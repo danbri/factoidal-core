@@ -38,9 +38,9 @@ def mkDur (ty : Builtin) (months : Int) (secs : Dec) : Atomic :=
 
 /-- Arithmetic on two atomic values (§3.5.1 and the F&O 4.0 §9 tables
     for durations, dates and times). -/
-def arith0 (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
-  let a0 ← if a.ty == .untyped then castAtomic a (.b .double) else pure a
-  let b0 ← if b.ty == .untyped then castAtomic b (.b .double) else pure b
+def arith0 (tz : Int) (op : ArOp) (a b : Atomic) (version : XSD.Version := .v11) : M Atomic := do
+  let a0 ← if a.ty == .untyped then castAtomicVersion version a (.b .double) else pure a
+  let b0 ← if b.ty == .untyped then castAtomicVersion version b (.b .double) else pure b
   -- commute `number * duration` and `duration + date`
   let swap := match a0.v, b0.v, op with
     | _, .x (.dur _), .mul => a0.isNumeric
@@ -114,8 +114,8 @@ def arith0 (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
 /-- Arithmetic with the date and duration limits (`checkLimits`): an
     overflowing result of date arithmetic is FODT0001, of duration
     arithmetic FODT0002. -/
-def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
-  let r ← arith0 tz op a b
+def arith (tz : Int) (op : ArOp) (a b : Atomic) (version : XSD.Version := .v11) : M Atomic := do
+  let r ← arith0 tz op a b version
   match r.v with
   | .x (.dur d) =>
     if durWithinLimits d then pure r
@@ -146,7 +146,7 @@ def valueCmp (tz : Int) (op : BOp) (a b : Atomic) (coll : Coll := .codepoint) : 
 
 /-- General comparison of one pair, with the untyped conversions of
     §3.7.1. -/
-def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option String) (coll : Coll := .codepoint) : M Bool := do
+def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option String) (coll : Coll := .codepoint) (version : XSD.Version := .v11) : M Bool := do
   let conv (x y : Atomic) : M Atomic :=
     if x.ty == .untyped then
       if y.ty == .untyped || y.isStringLike then pure (Atomic.ofStr x.str)
@@ -157,11 +157,11 @@ def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option Str
         -- numeric comparison of 4.0 that makes `untypedAtomic('6.58') = 6.58` false)
         let prim : L4Factoidal.XSD.Builtin :=
           if y.is .decimal then .decimal else if y.is .float then .float else .double
-        match castAtomic x (.b prim) with
+        match castAtomicVersion version x (.b prim) with
         | .ok v => pure v
-        | .error _ => castAtomic x (.b .double)
+        | .error _ => castAtomicVersion version x (.b .double)
       else match y.ty with
-        | .b bt => castAtomic x (.b (match bt.primitive with | some p => if derivedFrom bt .dayTimeDuration then .dayTimeDuration else if derivedFrom bt .yearMonthDuration then .yearMonthDuration else p | none => bt)) ns
+        | .b bt => castAtomicVersion version x (.b (match bt.primitive with | some p => if derivedFrom bt .dayTimeDuration then .dayTimeDuration else if derivedFrom bt .yearMonthDuration then .yearMonthDuration else p | none => bt)) ns
         | .untyped => pure (Atomic.ofStr x.str)
     else pure x
   let a' ← conv a b
@@ -210,7 +210,7 @@ def compatOperand (env : Env) (s : Seq) : M (Option Atomic) := do
 /-- Arithmetic in XPath 1.0 compatibility mode. -/
 def compatArith (env : Env) (ar : ArOp) (x y : Seq) : M Seq := do
   match ← compatOperand env x, ← compatOperand env y with
-  | some a, some b => pure (single (← arith env.tz ar a b))
+  | some a, some b => pure (single (← arith env.tz ar a b env.features.xsdVersion))
   | _, _ => pure (single (Atomic.ofDbl (0.0 / 0.0)))
 
 /-- A general comparison in XPath 1.0 compatibility mode. -/
@@ -234,8 +234,8 @@ def compatGeneral (env : Env) (op : BOp) (xs ys : Seq) : M Bool := do
         if rel || a.isNumeric || b.isNumeric then pure (compatNum a, compatNum b)
         else if a.isStringLike || b.isStringLike || (a.ty == .untyped && b.ty == .untyped) then
           pure (Atomic.ofStr a.str, Atomic.ofStr b.str)
-        else if a.ty == .untyped then pure (← castAtomic (Atomic.ofStr a.str) (primOf b.ty), b)
-        else if b.ty == .untyped then pure (a, ← castAtomic (Atomic.ofStr b.str) (primOf a.ty))
+        else if a.ty == .untyped then pure (← env.castAtomic (Atomic.ofStr a.str) (primOf b.ty), b)
+        else if b.ty == .untyped then pure (a, ← env.castAtomic (Atomic.ofStr b.str) (primOf a.ty))
         else pure (a, b)
       if ← valueCmp env.tz valOp a' b' env.defaultColl then return true
   pure false
@@ -347,18 +347,18 @@ def castToF (e : Env) : Nat → Seq → IType → Bool → M Seq
         else
           let toks := ((applyWhiteSpace .collapse a.str).splitOn " ").filter (· != "")
           if toks.isEmpty then err "FORG0001" "an empty string is not a list value"
-          else return (← toks.mapM (fun tk => castAtomic (Atomic.untypedOf tk) (.b it) e.nsResolve)).map Item.atom
+          else return (← toks.mapM (fun tk => e.castAtomic (Atomic.untypedOf tk) (.b it))).map Item.atom
       | none =>
         let aty := AType.b lb
         if aty == .b .anyAtomicType || aty == .b .notation then err "XPST0080" "cast to an abstract type"
         else if (aty == .b .qname) && !(a.isStringLike || a.is .qname) then
           err "XPTY0004" "cannot cast to xs:QName"
-        else pure (single (← castAtomic a aty e.nsResolve))
+        else pure (single (← e.castAtomic a aty))
     | .atomic aty =>
         if aty == .b .anyAtomicType || aty == .b .notation then err "XPST0080" "cast to an abstract type"
         else if (aty == .b .qname) && !(a.isStringLike || a.is .qname) then
           err "XPTY0004" "cannot cast to xs:QName"
-        else pure (single (← castAtomic a aty e.nsResolve))
+        else pure (single (← e.castAtomic a aty))
     | .choice ts =>
         -- F&O 4.0 §21.3.5 (casting to union types): a string or untyped
         -- value is cast from its lexical form to the members in order; a
@@ -369,7 +369,7 @@ def castToF (e : Env) : Nat → Seq → IType → Bool → M Seq
         for t in ts do
           match t with
           | .atomic aty =>
-            match castAtomic a aty e.nsResolve with
+            match e.castAtomic a aty with
             | .ok v => res := some v; break
             | .error _ => pure ()
           -- an enumeration member: the string value must be one of its values
@@ -719,6 +719,15 @@ def eval : Nat → Env → Expr → M Seq
             | none => err "XPST0017" ("unknown constructor function xs:" ++ q.loc)
         | [none] => pure [.fn (.papp (.fn (.builtin q 1)) [none])]
         | _ => err "XPST0017" ("constructor function xs:" ++ q.loc ++ " takes one argument")
+      else if ((env.schema.typeInfo q).bind (·.cast)).isSome then
+        let args ← match args, kw with
+          | _, [] => pure args
+          | [], [("value", v)] => pure [v]
+          | _, _ => err "XPST0017" ("constructor function " ++ q.show ++ " has one parameter, $value")
+        match (if args.isEmpty then [some Expr.ctx] else args) with
+        | [some x] => env.schemaConstructor q (← eval n env x)
+        | [none] => pure [.fn (.papp (.fn (.scoped env.schema env.features (.builtin q 1))) [none])]
+        | _ => err "XPST0017" ("constructor function " ++ q.show ++ " takes one argument")
       else
       let total := args.length + kw.length
       -- keyword arguments of a host function are placed by its
@@ -858,6 +867,13 @@ def eval : Nat → Env → Expr → M Seq
           | some c => pure [.fn (.papp (.fn (.builtin q 1)) [some c])]
           | none => pure [.fn (.builtin q 0)]
         else err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
+      else if ((env.schema.typeInfo q).bind (·.cast)).isSome then
+        if k == 1 then pure [.fn (.scoped env.schema env.features (.builtin q 1))]
+        else if k == 0 then
+          match env.ctx with
+          | some c => pure [.fn (.papp (.fn (.scoped env.schema env.features (.builtin q 1))) [some c])]
+          | none => pure [.fn (.scoped env.schema env.features (.builtin q 0))]
+        else err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
       else if q.uri == nsFN && q.loc == "concat" then pure [.fn (.builtin q k)]
       -- fn:position#0 and fn:last#0 capture the focus (F&O 4.0 §1.5.2)
       else if q.uri == nsFN && k == 0 && (q.loc == "position" || q.loc == "last") && env.ctx.isSome then
@@ -891,7 +907,8 @@ def eval : Nat → Env → Expr → M Seq
   -- code runs as untrusted code
   | .inline ps ret body focus =>
       let body := if env.untrusted then .ext "untrusted" [body] [] [] [] else body
-      pure [.fn (.inline ps ret body focus env.vars)]
+      let f := FnItem.inline ps ret body focus env.vars
+      pure [.fn (if env.features.schemaLocationHints then .scoped env.schema env.features f else f)]
   | .mapC es => do
       let mut acc : MB := {}
       for (k, v) in es do
@@ -945,7 +962,7 @@ def eval : Nat → Env → Expr → M Seq
       match ← env.atomizeOpt (← eval n env a) with
       | none => pure []
       | some x =>
-        let x ← if x.ty == .untyped then castAtomic x (.b .double) else pure x
+        let x ← if x.ty == .untyped then env.castAtomic x (.b .double) else pure x
         match x.num? with
         | some v => pure (single (numNeg v).atomic)
         | none => err "XPTY0004" "unary minus on a non-numeric value"
@@ -953,7 +970,7 @@ def eval : Nat → Env → Expr → M Seq
       match ← env.atomizeOpt (← eval n env a) with
       | none => pure []
       | some x =>
-        let x ← if x.ty == .untyped then castAtomic x (.b .double) else pure x
+        let x ← if x.ty == .untyped then env.castAtomic x (.b .double) else pure x
         match x.num? with
         | some v => pure (single v.atomic)
         | none => err "XPTY0004" "unary plus on a non-numeric value"
@@ -1123,7 +1140,7 @@ def lookupIn : Nat → Env → Item → Option Expr → M Seq
         let ks ← env.atomize (← eval n env kx)
         let mut out : Array Item := #[]
         for key in ks do
-          let key ← if key.ty == .untyped then castAtomic key (.b .integer) else pure key
+          let key ← if key.ty == .untyped then env.castAtomic key (.b .integer) else pure key
           -- a numeric key equal to an integer selects that member
           -- (XPath 4.0 §4.13.3, the key is coerced to xs:integer)
           let key := match key.v with
@@ -1203,7 +1220,7 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
         let mut res := false
         for x in xs do
           for y in ys do
-            if ← generalPair env.tz op x y env.nsResolve env.defaultColl then res := true; break
+            if ← generalPair env.tz op x y env.nsResolve env.defaultColl env.features.xsdVersion then res := true; break
           if res then break
         pure (sBool res)
       else if op.isValue then do
@@ -1238,7 +1255,7 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
           let x ← env.atomizeOpt (← eval n env a)
           let y ← env.atomizeOpt (← eval n env b)
           match x, y with
-          | some x, some y => pure (single (← arith env.tz ar x y))
+          | some x, some y => pure (single (← arith env.tz ar x y env.features.xsdVersion))
           | _, _ => pure []
         | none => err "XPST0003" "unknown operator"
 
@@ -1256,11 +1273,13 @@ def apply : Nat → Env → Item → List Seq → M Seq
         if args.length != 1 then err "XPTY0004" "an array takes one argument"
         match ← env.atomizeOpt (args.headD []) with
         | some k =>
-          let k ← if k.ty == .untyped then castAtomic k (.b .integer) else pure k
+          let k ← if k.ty == .untyped then env.castAtomic k (.b .integer) else pure k
           match k.v with
           | .int j => arrIdx ms j
           | _ => err "XPTY0004" "array index must be an integer"
         | none => err "XPTY0004" "array index must be a single integer"
+    | .fn (.scoped schema features f) =>
+        apply n { env with schema, features } (.fn f) args
     | .fn (.builtin q k) => do
         if !env.features.serialization && q.uri == nsFN && q.loc == "serialize" then
           err "FODC0010" "serialization is disabled"
@@ -1278,6 +1297,10 @@ def apply : Nat → Env → Item → List Seq → M Seq
           match xsCtorType? q.loc with
           | some t => castTo env (args.headD []) t true
           | none => err "XPST0017" ("unknown constructor function " ++ q.show)
+        else if ((env.schema.typeInfo q).bind (·.cast)).isSome then
+          if k == 0 then err "XPDY0002" "the context value is absent"
+          else if k == 1 then env.schemaConstructor q (args.headD [])
+          else err "XPST0017" ("constructor function " ++ q.show ++ " takes one argument")
         else if q.uri == nsFN && q.loc == "concat" then callFn n env q args
         else
         match findSig q k with
@@ -1605,6 +1628,13 @@ def genShortcut : Nat → Env → Expr → M (Option Seq)
     | _ => pure none
 end
 
+/-- Calling a loaded function restores its defining schema and feature
+    configuration before the ordinary application rules run. -/
+theorem apply_scoped (fuel : Nat) (env : Env) (schema : SchemaHook)
+    (features : FeatureSettings) (f : FnItem) (args : List Seq) :
+    apply (fuel + 1) env (.fn (.scoped schema features f)) args =
+      apply fuel { env with schema, features } (.fn f) args := rfl
+
 /-- Parse an XPath 4.0 expression with the computed node constructors
     (XPath 4.0 §4.12, `XQuery4.xpathGrammar`). -/
 def parseXPath4 (src : String) (ns : List (String × String) := [])
@@ -1657,5 +1687,16 @@ def evalShow (src : String) : String :=
 #guard evalShow "xs:double('1e3') instance of xs:double" == "true"
 #guard evalShow "() otherwise 5" == "5"
 #guard evalShow "`x{1+1}y`" == "x2y"
+
+-- A loaded function uses its own lexical rules even in a 1.1 caller.
+#guard match apply 1000 {} (.fn (.scoped {} { xsdVersion := .v10 }
+    (.inline [] .item (.call { uri := nsXS, loc := "double" }
+      [some (.lit (Atomic.ofStr "+INF"))] []) false []))) [] with
+  | .error e => e.code == "FORG0001"
+  | .ok _ => false
+
+#print axioms apply_scoped
+#print axioms fnSigOf_scoped
+#print axioms FnItem.arity_scoped
 
 end L4Factoidal.XPath4

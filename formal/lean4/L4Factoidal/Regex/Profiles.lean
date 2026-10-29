@@ -158,4 +158,11 @@ def replaceSparql (pattern flags text replacement : String) : Except Error Strin
 def compileXPath40 (pattern flags : String) : Except RegexError Compiled :=
   XPath40.compile pattern flags
 
+/-- The same XPath dialect, with selectable XSD character-class admission. -/
+def compileXPath40Version (version : XSD.Version) (pattern flags : String) : Except RegexError Compiled :=
+  XPath40.compileVersion version pattern flags
+
+theorem compileXPath40Version_default (pattern flags : String) :
+    compileXPath40Version .v11 pattern flags = compileXPath40 pattern flags := rfl
+
 end L4Factoidal.Regex.Profiles

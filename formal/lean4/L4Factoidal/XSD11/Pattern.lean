@@ -66,6 +66,14 @@ def xsdPatternRe (p : String) : Option Re :=
       | some (node, _) => some (XPath40.toRe { ci := false, dotAll := false, multiline := false } node)
       | none => none
 
+/-- XSD 1.0 uses the shared compiler with its stricter character-class
+grammar. In the default edition the existing compiler is unchanged. -/
+def xsdPatternReVersion (version : XSD.Version) (p : String) : Option Re :=
+  if version == .v10 && !XPath40.xsd10Admitted p "" then none else xsdPatternRe p
+
+@[simp] theorem xsdPatternReVersion_default (p : String) :
+    xsdPatternReVersion .v11 p = xsdPatternRe p := rfl
+
 /-- §4.3.4.4: the literal is in the pattern's language. -/
 def patternMatch11 (p : String) (lit : String) : Option Bool :=
   (xsdPatternRe p).map (fun r => Exec.acceptsNorm r (lit.toList.map Char.toNat))
@@ -81,5 +89,21 @@ def patternOk11 (groups : List (List String)) (lit : String) : Bool :=
 /-- The patterns no dialect reads. -/
 def unreadablePatterns11 (groups : List (List String)) : List String :=
   groups.flatMap (fun alts => alts.filter (fun p => (xsdPatternRe p).isNone))
+
+def patternOkVersion (version : XSD.Version) (groups : List (List String)) (lit : String) : Bool :=
+  if version == .v10 then
+    groups.flatten.all (fun p => XPath40.xsd10Admitted p "") && patternOk11 groups lit
+  else patternOk11 groups lit
+
+@[simp] theorem patternOkVersion_default (groups : List (List String)) (lit : String) :
+    patternOkVersion .v11 groups lit = patternOk11 groups lit := rfl
+
+theorem patternOkVersion_common (groups : List (List String)) (lit : String)
+    (h : groups.flatten.all (fun p => XPath40.xsd10Admitted p "") = true) :
+    patternOkVersion .v10 groups lit = patternOk11 groups lit := by
+  simp [patternOkVersion, h]
+
+def unreadablePatternsVersion (version : XSD.Version) (groups : List (List String)) : List String :=
+  groups.flatMap (fun alts => alts.filter (fun p => (xsdPatternReVersion version p).isNone))
 
 end L4Factoidal.XSD11

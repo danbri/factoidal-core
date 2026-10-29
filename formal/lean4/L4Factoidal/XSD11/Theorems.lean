@@ -123,16 +123,25 @@ theorem checkBody_of_not_qEnum (sd : SimpleDef) (h : sd.qEnum = false) : sd.chec
 theorem validateSimple_ok (s : Schema) (h : Hooks) (bs : NsBindings) (t : Nat) (lit : String)
     (u : List String) (sd : SimpleDef) (hsd : s.simpleOf? t = some sd)
     (r : String × XSD.Val) (hr : (validateSimple s h bs t lit u).1 = .ok r) :
-    XSD.validate sd.checkBody lit = true ∧ bodyPatternsOk 16 sd.body lit = true := by
+    (XSD.valueOfVersion s.version sd.checkBody lit).isSome = true ∧ bodyPatternsOk 16 sd.body lit s.version = true := by
   unfold validateSimple at hr
   rw [hsd] at hr
   simp only at hr
-  cases hv : XSD.valueOf sd.checkBody lit with
+  cases hv : XSD.valueOfVersion s.version sd.checkBody lit with
   | none => simp [hv, Option.filter] at hr
   | some v =>
-    cases hp : bodyPatternsOk 16 sd.body lit with
+    cases hp : bodyPatternsOk 16 sd.body lit s.version with
     | false => simp [hv, hp, Option.filter] at hr
-    | true => exact ⟨by simp [XSD.validate, hv], rfl⟩
+    | true => exact ⟨by simp, rfl⟩
+
+/-- The existing Part 2 validity theorem in the default edition. -/
+theorem validateSimple_ok_v11 (s : Schema) (h : Hooks) (bs : NsBindings) (t : Nat) (lit : String)
+    (u : List String) (sd : SimpleDef) (hsd : s.simpleOf? t = some sd)
+    (r : String × XSD.Val) (hr : (validateSimple s h bs t lit u).1 = .ok r)
+    (hv : s.version = .v11) :
+    XSD.validate sd.checkBody lit = true ∧ bodyPatternsOk 16 sd.body lit = true := by
+  have hp := validateSimple_ok s h bs t lit u sd hsd r hr
+  simpa [hv, XSD.valueOfVersion, XSD.validate] using hp
 
 /-! ## One pattern dialect -/
 

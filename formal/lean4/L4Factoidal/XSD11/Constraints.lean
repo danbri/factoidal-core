@@ -145,7 +145,7 @@ def declRestricts (s : Schema) (r b : Nat) : Bool :=
     | some ⟨.fixed, lb⟩ => match er.vc with
       | some ⟨.fixed, lr⟩ => lr == lb ||
         (match s.simpleOf? er.typ with
-         | some sd => match XSD.valueOf sd.body lr, XSD.valueOf sd.body lb with
+         | some sd => match XSD.valueOfVersion s.version sd.body lr, XSD.valueOfVersion s.version sd.body lb with
            | some a, some c => XSD.valEqualOrIdentical a c
            | _, _ => false
          | none => false)
@@ -246,7 +246,7 @@ def attrRestrictErrors (s : Schema) (c : ComplexDef) (b : ComplexDef) : List Str
           match s.useVc u with
           | some ⟨.fixed, lr⟩ =>
             let same := lr == lb || (match s.simpleOf? (s.attr u.decl).typ with
-              | some sd => match XSD.valueOf sd.body lr, XSD.valueOf sd.body lb with
+              | some sd => match XSD.valueOfVersion s.version sd.body lr, XSD.valueOfVersion s.version sd.body lb with
                 | some x, some y => XSD.valEqualOrIdentical x y
                 | _, _ => false
               | none => false)
@@ -348,11 +348,11 @@ def wsRank : XSD.WhiteSpace → Nat
   | .preserve => 0 | .replace => 1 | .collapse => 2
 
 /-- Compare two bound literals in the value space of base type `bt`. -/
-def cmpIn (bt : SimpleType) (a b : String) : Option Ordering :=
+def cmpIn (bt : SimpleType) (a b : String) (version : XSD.Version := .v11) : Option Ordering :=
   let strip : SimpleType → SimpleType := fun t => match t with
     | .atomic x _ => .atomic x {}
     | other => other
-  match XSD.valueOf (strip bt) a, XSD.valueOf (strip bt) b with
+  match XSD.valueOfVersion version (strip bt) a, XSD.valueOfVersion version (strip bt) b with
   | some x, some y => valCompare x y
   | _, _ => none
 
@@ -445,7 +445,7 @@ def simpleErrors (s : Schema) (t : Nat) (sd : SimpleDef) : List String :=
     [("minInclusive", f.minInclusive, bf.minInclusive), ("minExclusive", f.minExclusive, bf.minExclusive),
      ("maxInclusive", f.maxInclusive, bf.maxInclusive), ("maxExclusive", f.maxExclusive, bf.maxExclusive)]
   let valErr := bounds.filterMap (fun (k, v, _) => match v with
-    | some lit => if (XSD.valueOf bbody lit).isNone && inapplicable.isEmpty then
+    | some lit => if (XSD.valueOfVersion s.version bbody lit).isNone && inapplicable.isEmpty then
         some s!"{nm}: {k} value {lit} is not in the base type's value space" else none
     | none => none)
   let eff (a : Option String) (b : Option String) := a.orElse (fun _ => b)
@@ -457,7 +457,7 @@ def simpleErrors (s : Schema) (t : Nat) (sd : SimpleDef) : List String :=
               (if f.maxInclusive.isSome && f.maxExclusive.isSome then [s!"{nm}: maxInclusive with maxExclusive"] else [])
   let lt (a b : Option String) (strict : Bool) (msg : String) : List String :=
     match a, b with
-    | some x, some y => match cmpIn bbody x y with
+    | some x, some y => match cmpIn bbody x y s.version with
       | some .gt => [s!"{nm}: {msg}"]
       | some .eq => if strict then [s!"{nm}: {msg}"] else []
       | _ => []
@@ -471,34 +471,34 @@ def simpleErrors (s : Schema) (t : Nat) (sd : SimpleDef) : List String :=
   -- no loosening of the base's bounds (§4.3.7-§4.3.10)
   let loosen := if !valErr.isEmpty then [] else
     (match f.maxInclusive, bf.maxInclusive with
-     | some a, some b => if cmpIn bbody a b == some .gt then [s!"{nm}: maxInclusive loosens the base's"] else []
+     | some a, some b => if cmpIn bbody a b s.version == some .gt then [s!"{nm}: maxInclusive loosens the base's"] else []
      | _, _ => []) ++
     (match f.maxInclusive, bf.maxExclusive with
-     | some a, some b => if cmpIn bbody a b != some .lt && (cmpIn bbody a b).isSome then [s!"{nm}: maxInclusive not below the base maxExclusive"] else []
+     | some a, some b => if cmpIn bbody a b s.version != some .lt && (cmpIn bbody a b s.version).isSome then [s!"{nm}: maxInclusive not below the base maxExclusive"] else []
      | _, _ => []) ++
     (match f.maxExclusive, bf.maxExclusive with
-     | some a, some b => if cmpIn bbody a b == some .gt then [s!"{nm}: maxExclusive loosens the base's"] else []
+     | some a, some b => if cmpIn bbody a b s.version == some .gt then [s!"{nm}: maxExclusive loosens the base's"] else []
      | _, _ => []) ++
     (match f.maxExclusive, bf.maxInclusive with
-     | some a, some b => if cmpIn bbody a b == some .gt then [s!"{nm}: maxExclusive above the base maxInclusive"] else []
+     | some a, some b => if cmpIn bbody a b s.version == some .gt then [s!"{nm}: maxExclusive above the base maxInclusive"] else []
      | _, _ => []) ++
     (match f.minInclusive, bf.minInclusive with
-     | some a, some b => if cmpIn bbody a b == some .lt then [s!"{nm}: minInclusive loosens the base's"] else []
+     | some a, some b => if cmpIn bbody a b s.version == some .lt then [s!"{nm}: minInclusive loosens the base's"] else []
      | _, _ => []) ++
     (match f.minInclusive, bf.minExclusive with
-     | some a, some b => if cmpIn bbody a b != some .gt && (cmpIn bbody a b).isSome then [s!"{nm}: minInclusive not above the base minExclusive"] else []
+     | some a, some b => if cmpIn bbody a b s.version != some .gt && (cmpIn bbody a b s.version).isSome then [s!"{nm}: minInclusive not above the base minExclusive"] else []
      | _, _ => []) ++
     (match f.minExclusive, bf.minExclusive with
-     | some a, some b => if cmpIn bbody a b == some .lt then [s!"{nm}: minExclusive loosens the base's"] else []
+     | some a, some b => if cmpIn bbody a b s.version == some .lt then [s!"{nm}: minExclusive loosens the base's"] else []
      | _, _ => []) ++
     (match f.minExclusive, bf.minInclusive with
-     | some a, some b => if cmpIn bbody a b == some .lt then [s!"{nm}: minExclusive below the base minInclusive"] else []
+     | some a, some b => if cmpIn bbody a b s.version == some .lt then [s!"{nm}: minExclusive below the base minInclusive"] else []
      | _, _ => []) ++
     (match f.minInclusive, bf.maxInclusive with
-     | some a, some b => if cmpIn bbody a b == some .gt then [s!"{nm}: minInclusive above the base maxInclusive"] else []
+     | some a, some b => if cmpIn bbody a b s.version == some .gt then [s!"{nm}: minInclusive above the base maxInclusive"] else []
      | _, _ => []) ++
     (match f.maxInclusive, bf.minInclusive with
-     | some a, some b => if cmpIn bbody a b == some .lt then [s!"{nm}: maxInclusive below the base minInclusive"] else []
+     | some a, some b => if cmpIn bbody a b s.version == some .lt then [s!"{nm}: maxInclusive below the base minInclusive"] else []
      | _, _ => [])
   -- fixed facets of the base may not change
   let baseFixed := match base with
@@ -522,9 +522,9 @@ def simpleErrors (s : Schema) (t : Nat) (sd : SimpleDef) : List String :=
   -- enumeration values in the base type
   let enumErr := match f.enumeration with
     | some vs => vs.filterMap (fun v =>
-        if (XSD.valueOf bbody v).isNone then some s!"{nm}: enumeration value {v} is not valid for the base type" else none)
+        if (XSD.valueOfVersion s.version bbody v).isNone then some s!"{nm}: enumeration value {v} is not valid for the base type" else none)
     | none => []
-  let patErr := (unreadablePatterns11 f.patterns).map (fun p => s!"{nm}: pattern {p} is not a valid regular expression")
+  let patErr := (unreadablePatternsVersion s.version f.patterns).map (fun p => s!"{nm}: pattern {p} is not a valid regular expression")
   let etzErr := match bf.explicitTimezone, f.explicitTimezone with
     | some .required, some .optional | some .required, some .prohibited
     | some .prohibited, some .optional | some .prohibited, some .required =>
@@ -541,7 +541,7 @@ def vcErrors (s : Schema) (what : String) (t : Nat) (vc : Option ValueConstraint
   | some v =>
     match s.simpleOf? t with
     | some sd =>
-      if (XSD.valueOf sd.body v.lex).isNone then [s!"{what}: value constraint '{v.lex}' is not valid for its type"]
+      if (XSD.valueOfVersion s.version sd.body v.lex).isNone then [s!"{what}: value constraint '{v.lex}' is not valid for its type"]
       else if (s.idKind t).isSome && what.startsWith "attribute" then []
       else []
     | none =>

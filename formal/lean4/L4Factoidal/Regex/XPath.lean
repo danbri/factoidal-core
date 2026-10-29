@@ -507,6 +507,26 @@ def findCap : List Cap → Nat → Option (Nat × Nat)
   | [], _ => none
   | c :: t, n => if c.group = n then some (c.start, c.stop) else findCap t n
 
+/-- The capturing groups inside a subexpression, including captures in
+lookaround. Re-entering an enclosing group starts a new matching attempt
+for these groups; a reference within it cannot read a previous iteration. -/
+def CRe.captureGroups : CRe → List Nat
+  | .group n inner => n :: inner.captureGroups
+  | .cat a b | .alt a b => a.captureGroups ++ b.captureGroups
+  | .star _ inner | .ahead _ inner | .behind _ _ inner => inner.captureGroups
+  | _ => []
+
+/-- Preserve captures outside the group being re-entered. The match result
+still records the groups that participated; this clears the incoming
+back-reference environment, rather than creating empty captured groups. -/
+def clearGroupEnv (r : CRe) (env : List Cap) : List Cap :=
+  let groups := r.captureGroups
+  env.filter (fun c => !groups.contains c.group)
+
+@[simp] theorem clearGroupEnv_leaf (r : Re) (env : List Cap) :
+    clearGroupEnv (.leaf r) env = env := by
+  simp [clearGroupEnv, CRe.captureGroups]
+
 /-- Does `w` start with `ref`? With `ci`, a character may also be a
     case-variant of the referenced one (F&O 4.0 §6.2, flag `i`). -/
 def prefixMatch (ci : Bool) : List Nat → List Nat → Bool
@@ -552,7 +572,7 @@ def cmatchE (input : List Nat) (multiline : Bool) :
       | some result => some result
       | none => cmatchE input multiline fuel b w pos env accept
     | .group n inner =>
-      cmatchE input multiline fuel inner w pos env fun o =>
+      cmatchE input multiline fuel inner w pos (clearGroupEnv (.group n inner) env) fun o =>
         accept ⟨o.rest, o.endPos, ⟨n, pos, o.endPos⟩ :: o.caps⟩
     | .star greedy inner =>
       let more := fun (_ : Unit) => cmatchE input multiline fuel inner w pos env fun oi =>

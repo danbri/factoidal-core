@@ -27,11 +27,11 @@ def collectionOpts (opts : Seq) : M Unit := do
 /-- The `match` and `match-flags` options (F&O 4.0 §14.6.6): a filter on
     resource URIs by the F&O 4.0 regular expressions (`compileRe4`, the
     shared `Regex` engine); `none` when there is no `match` option. -/
-def collectionMatch (opts : Seq) : M (Option (String → Bool)) := do
+def collectionMatch (opts : Seq) (version : XSD.Version := .v11) : M (Option (String → Bool)) := do
   let pat := optionStr opts "match" ""
   if pat == "" && (match opts with | [.map kvs] => !(kvs.any (fun (k, _) => k.str == "match")) | _ => true) then
     return none
-  let re ← compileRe4 pat (optionStr opts "match-flags" "")
+  let re ← compileRe4 pat (optionStr opts "match-flags" "") version
   pure (some (fun u => Regex.isMatch re.r u))
 
 /-- The key of a collection URI: `""` for the default collection; a
@@ -51,7 +51,7 @@ def collectionTable : List (String × LibFn) := [
   ent "collection" (fun _ e a => do
     collectionOpts (argN a 1)
     let k ← collectionKey e (argN a 0)
-    let keep ← collectionMatch (argN a 1)
+    let keep ← collectionMatch (argN a 1) e.features.xsdVersion
     let filt (s : Seq) : Seq := match keep with
       | none => s
       | some m => s.filter (fun i => match i with
@@ -74,7 +74,7 @@ def collectionTable : List (String × LibFn) := [
       | none => match optAtom (argN a 0) with
         | some u => e.uriCollections.lookup u.str
         | none => none
-    let keep ← collectionMatch (argN a 1)
+    let keep ← collectionMatch (argN a 1) e.features.xsdVersion
     match found with
     | some us => pure ((us.filter (fun u => match keep with | some m => m u | none => true)).map (fun u => .atom ⟨.b .anyURI, .str u⟩))
     | none => err "FODC0002" ("no URI collection is available for " ++ (if k == "" then "the default" else k))),

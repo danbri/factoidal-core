@@ -4,8 +4,8 @@ version declaration, the prolog, main and library modules, and their
 evaluation over `XPath4.eval`.
 
 Prolog declarations read: `declare namespace`, `declare default
-element namespace`, `declare default function namespace` (only the
-`fn` namespace), `declare boundary-space`, `declare default
+element namespace`, `declare default function namespace`,
+`declare boundary-space`, `declare default
 collation`, `declare base-uri`, `declare construction`, `declare
 ordering`, `declare default order empty`, `declare copy-namespaces`,
 `declare (default) decimal-format`, `declare option`, `declare
@@ -13,8 +13,10 @@ variable` (with `external` and a default), `declare context item`/
 `value`, `declare function` (with annotations, default parameter values
 of 4.0, and `external` refused with XPST0017 at the call), `import
 module` (from the module texts the caller gives in `Env.resources`
-under `#module <uri>`). `import schema` binds its prefix; the schema itself is the host's (no schema
-support); `declare type` and `declare record` raise `XPST0003`.
+under `#module <uri>`). `import schema` binds its prefix and uses the
+host's schema. With `schemaLocationHints` enabled, it also assembles
+schemas from host-supplied resources before the checked parse. Named
+types and records are read by `declare type` and `declare record`.
 
 A main module is evaluated as follows: the functions are bound
 (`Runtime.fnKey`), then each global variable in order, each with the
@@ -24,6 +26,7 @@ import L4Factoidal.XQuery4.Grammar
 import L4Factoidal.XQueryUpdate.Grammar
 import L4Factoidal.XQuery4.Static
 import L4Factoidal.XPath4.Eval
+import L4Factoidal.XQuery4.SchemaResources
 
 namespace L4Factoidal.XQuery4
 
@@ -65,6 +68,8 @@ structure Module where
   types : List (QN × IType) := []
   /-- `import schema`: the target namespaces (XQuery 4.0 §5.11). -/
   schemaImports : List String := []
+  /-- Target namespace and document location hints for each schema import. -/
+  schemaLocations : List (String × List String) := []
   /-- `declare construction strip` (§5.6); the default is `preserve`. -/
   constructionStrip : Bool := false
   /-- Variables and functions declared `%private` (§5.15): not seen
@@ -229,14 +234,16 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
         else if ← eatKw "default" then
           expectKw "element"; expectKw "namespace"; pfx := some ""
         let u ← pUriLit
+        let mut locations : List String := []
         if ← eatKw "at" then
           for _ in [0:1000] do
-            let _ ← pUriLit
+            locations := locations ++ [← pUriLit]
             if !(← eatS ",") then break
         expectS ";"
         if u == "" && (pfx.map (· != "")).getD false then qerr "XQST0057" "a schema import with a prefix and an empty namespace"
         if m.schemaImports.contains u then qerr "XQST0058" "the same schema namespace imported twice"
-        m := { m with schemaImports := m.schemaImports ++ [u] }
+        m := { m with schemaImports := m.schemaImports ++ [u],
+                       schemaLocations := m.schemaLocations ++ [(u, locations)] }
         match pfx with
         | some "xml" | some "xmlns" => qerr "XQST0070" "import prefix xml or xmlns"
         | some p =>
@@ -570,6 +577,33 @@ def parseModule (src : String) (ns : List (String × String) := [])
   | .ok (m, _) => .ok m
   | .error e => .error e
 
+/-- Resolve schema imports before the schema-aware parse. The preparatory
+pass admits declaration references only to collect the import locations;
+the final parse checks them against the resulting schema. -/
+def prepareModule (src : String) (env : Env) : M (Env × Module) := do
+  if !env.features.schemaLocationHints then
+    return (env, ← parseModule src env.ns env.schema.declared env.features)
+  let preliminary ← match ((pModule [] true).run
+      { s := src.toList.toArray, ns := env.ns, schemaDecl := fun _ _ => true,
+        features := env.features }).run 0 with
+    | .ok (m, _) => pure m
+    | .error e => throw e
+  let base := preliminary.baseUri.getD env.baseUri
+  let loaded ← withSchemaLocations { env with baseUri := base } preliminary.schemaLocations
+  let m ← parseModule src loaded.ns loaded.schema.declared loaded.features
+  let m := { m with schemaLocations := m.schemaLocations.map (fun (u, ls) =>
+    (u, ls.map (fun loc => ((schemaResource loaded loc).map (·.1)).getD loc))) }
+  return (loaded, m)
+
+theorem prepareModule_disabled (src : String) (env : Env)
+    (h : env.features.schemaLocationHints = false) :
+    prepareModule src env = (do
+      let m ← parseModule src env.ns env.schema.declared env.features
+      pure (env, m)) := by
+  simp [prepareModule, h]
+
+#print axioms prepareModule_disabled
+
 /-! ## Evaluation -/
 
 def markStatic (e : Env) : Env := e.bind staticKey []
@@ -607,9 +641,9 @@ def loadImports (env : Env) : Nat → List String → Module → M (List Module 
       let texts := moduleTexts env u
       if texts.isEmpty then err "XQST0059" ("no module found for namespace " ++ u)
       for t in texts do
-        let lm ← parseModule t [] env.schema.declared env.features
+        let (loaded, lm) ← prepareModule t { env with ns := [] }
         if (lm.libNs.map (·.2)) != some u then err "XQST0059" ("the module text is not a module for " ++ u)
-        let (sub, seen') ← loadImports env d seen lm
+        let (sub, seen') ← loadImports loaded d seen lm
         seen := seen'
         out := out ++ sub ++ [lm]
     pure (out, seen)
@@ -639,6 +673,10 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
     if (fns.filter (fun (q2, lo2, hi2) => q2 == q && !(hi < lo2 || hi2 < lo))).length > 1 then
       err "XQST0034" ("function " ++ q.show ++ " declared twice")
   for m in ms do
+    if env.features.schemaLocationHints then
+      for u in m.schemaImports do
+        if !env.schema.targetNamespaces.contains u then
+          err "XQST0059" ("no schema for the imported namespace " ++ u)
     if !env.features.schemaImport && !m.schemaImports.isEmpty then
       err "XQST0009" "schema import is disabled"
     for d in m.decls do
@@ -655,6 +693,8 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
     let fnsM := ms.flatMap (fun m2 => m2.fnArities.filter (fun (q, _, _) => vis m2 q))
     let knownM (q : QN) (k : Nat) : Bool :=
       (findSigAny q).isSome || (q.uri == nsFN && q.loc == "concat") ||
+      (env.features.schemaLocationHints && k == 1 && m.schemaImports.contains q.uri &&
+        ((env.schema.typeInfo q).bind (·.cast)).isSome) ||
       -- XQuery Update Facility 3.0 §6.1
       (q.uri == nsFN && q.loc == "put" && (k == 2 || k == 3)) ||
       fnsM.any (fun (q2, lo, hi) => (q2 == q || (q.uri == nsFN && q.pfx == "" && q2 == { q with uri := "" }))
@@ -766,6 +806,7 @@ def moduleEnv (env : Env) (m : Module) : Env :=
 def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
   if !env.features.schemaImport && !m.schemaImports.isEmpty then
     err "XQST0009" "schema import is disabled"
+  let env ← withSchemaLocations env m.schemaLocations
   -- XQuery 4.0 §5.11: an imported schema namespace must be one the in-scope
   -- schema definitions (`XPath4.SchemaHook`) have components for
   for u in m.schemaImports do
@@ -773,6 +814,7 @@ def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
       err "XQST0059" ("no schema for the imported namespace " ++ u)
   let env := moduleEnv env m
   let (libs, _) ← loadImports env 50 ((m.libNs.map (·.2)).toList) m
+  let env ← withSchemaLocations env (libs.flatMap (·.schemaLocations))
   checkModules env (libs ++ [m])
   let env ← bindModules fuel env (libs ++ [m])
   match m.body with
@@ -781,7 +823,7 @@ def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
 
 /-- Parse and evaluate an XQuery 4.0 main module. -/
 def evalQuery (src : String) (env : Env := {}) (fuel : Nat := 100000) : M Seq := do
-  let m ← parseModule src env.ns env.schema.declared env.features
+  let (env, m) ← prepareModule src env
   evalModule fuel env m
 
 def evalQShow (src : String) : String :=
@@ -806,5 +848,10 @@ def evalQShow (src : String) : String :=
 #guard evalQShow "name(element foo { 'x' })" == "foo"
 #guard evalQShow "string(text { 1, 2 })" == "1 2"
 #guard evalQShow "'&lt;'" == "<"
+
+-- A literal nested constructor inherits explicit declarations. A node
+-- returned by an enclosed expression also inherits the parent's name fixup.
+#guard evalQShow "declare namespace p='urn:p'; not(in-scope-prefixes(<p:p><c/></p:p>/*)='p')" == "true"
+#guard evalQShow "declare namespace p='urn:p'; in-scope-prefixes(<p:p>{<c/>}</p:p>/*)='p'" == "true"
 
 end L4Factoidal.XQuery4

@@ -94,12 +94,13 @@ theorem loadImports_nil (env : Env) (d : Nat) (seen : List String) (m : Module) 
     variable). -/
 theorem evalModule_emptyProlog (fuel : Nat) (env : Env) (m : Module) (e : Expr)
     (hd : m.decls = []) (hi : m.imports = []) (hs : m.schemaImports = []) (hb : m.body = some e)
-    (hl : m.libNs = none) :
+    (hl : m.libNs = none) (hsl : m.schemaLocations = []) :
     evalModule fuel env m =
       (do checkModules (moduleEnv env m) [m]; eval fuel (markStatic (moduleEnv env m)) e) := by
   have h50 : ∀ (env' : Env) (seen : List String), loadImports env' 50 seen m = pure ([], seen) :=
     fun env' seen => loadImports_nil env' 49 seen m hi
-  simp only [evalModule, h50, hs]
+  simp only [evalModule, h50, hs, hsl, withSchemaLocations_nil]
   simp [hb, hl, bindModules_empty _ _ _ hd]
+  rfl
 
 end L4Factoidal.XQuery4

@@ -641,6 +641,13 @@ in the main theorem.
 
 ## 10. Gate before commit
 
+Record updates: put `with` at the end of its own line and align the fields
+on the following lines. On 2026-10-29, extending the XSD configuration
+changed the width of record prefixes while leaving continuation fields at
+their old columns. Lean reported `unexpected identifier; expected '}'` in
+three modules. A newline after `with` avoids coupling field indentation to
+the length of the record expression.
+
 - `#print axioms <thm>` at the end of the module: only `propext`,
   `Classical.choice`, `Quot.sound`.
 - No `sorry`, no user `axiom`, no `native_decide`, no new `partial`

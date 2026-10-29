@@ -32,6 +32,7 @@ as cast targets give FORG0001 for a value of more than one token
 being a sequence (list types are not atomic); `xs:precisionDecimal`.
 -/
 import L4Factoidal.XSD.Datatypes
+import L4Factoidal.XSD.Version
 import L4Factoidal.XSD.IEEE754
 import L4Factoidal.Fn.DateTime
 import L4Factoidal.Fn.Numeric
@@ -99,6 +100,14 @@ def atypeOfName? (s : String) : Option AType :=
     | some .anySimpleType => none
     | some x => some (.b x)
     | none => none
+
+/-- XPath retains the F&O duration extensions in XSD 1.0 mode. Only
+    `dateTimeStamp` is an XSD 1.1-only atomic type in this context. -/
+def AType.available (version : XSD.Version) (t : AType) : Bool :=
+  version != .v10 || t != .b .dateTimeStamp
+
+def atypeOfNameVersion? (version : XSD.Version) (name : String) : Option AType :=
+  (atypeOfName? name).filter (AType.available version)
 
 /-- `t` is `s` or derived from it. `xs:untypedAtomic` derives from
     `xs:anyAtomicType` only. -/
@@ -499,6 +508,30 @@ def castFromString (s : String) (t : AType) (nsResolve : String → Option Strin
         | some v => pure ⟨t, .x v⟩
         | none => bad
 
+/-- Cast a lexical form under the selected XSD version. The default
+    path is the existing XPath mapping. Calendar values reuse the XSD
+    edition adapter, including its BCE calendar translation. -/
+def castFromStringVersion (version : XSD.Version) (s : String) (t : AType)
+    (nsResolve : String → Option String := fun _ => none) : M Atomic := do
+  if version == .v11 then return ← castFromString s t nsResolve
+  if !t.available version then err "XPST0051" ("unknown type xs:" ++ t.name)
+  match t with
+  | .untyped => castFromString s t nsResolve
+  | .b b =>
+    let w := applyWhiteSpace b.whiteSpace s
+    let bad : M Atomic := err "FORG0001" ("invalid lexical form '" ++ s ++ "' for xs:" ++ t.name)
+    if (b == .float || b == .double) && w == "+INF" then bad
+    else if b == .anyURI && !XSD.percentEscapesOk w.toList then bad
+    else if (XSD.dtKindOf? b).isSome then
+      match XSD.lexicalMapVersion version b w with
+      | some v => pure ⟨t, .x v⟩
+      | none => bad
+    else castFromString s t nsResolve
+
+@[simp] theorem castFromStringVersion_default (s : String) (t : AType)
+    (nsResolve : String → Option String) :
+    castFromStringVersion .v11 s t nsResolve = castFromString s t nsResolve := rfl
+
 def intRangeCheck (b : Builtin) (i : Int) : M Atomic :=
   if inIntBounds b i then pure ⟨.b b, .int i⟩
   else err "FORG0001" ("value " ++ toString i ++ " out of range for xs:" ++ b.localName)
@@ -631,6 +664,19 @@ def castAtomic (a : Atomic) (t : AType) (nsResolve : String → Option String :=
     | .x (.dt _ v) => if v.tz.isNone then err "FORG0001" "an xs:dateTimeStamp needs a timezone"
     | _ => pure ()
   checkLimits r
+
+/-- Cast with the lexical space and type library of the static context. -/
+def castAtomicVersion (version : XSD.Version) (a : Atomic) (t : AType)
+    (nsResolve : String → Option String := fun _ => none) : M Atomic := do
+  if version == .v11 then return ← castAtomic a t nsResolve
+  if !t.available version then err "XPST0051" ("unknown type xs:" ++ t.name)
+  if a.isStringLike && !(a.is .anyURI) then
+    checkLimits (← castFromStringVersion version a.str t nsResolve)
+  else castAtomic a t nsResolve
+
+@[simp] theorem castAtomicVersion_default (a : Atomic) (t : AType)
+    (nsResolve : String → Option String) :
+    castAtomicVersion .v11 a t nsResolve = castAtomic a t nsResolve := rfl
 
 /-- The primitive type, for comparability. -/
 def AType.prim : AType → String

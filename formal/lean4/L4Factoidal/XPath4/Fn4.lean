@@ -6,6 +6,7 @@ L4Factoidal.XPath4.Fn4 — F&O 4.0 functions added after Stage 2:
 Spec: F&O 4.0 editor's draft (read 2026-10-28).
 -/
 import L4Factoidal.XPath4.Serialize
+import L4Factoidal.XPath4.ConfigurationTheorems
 import L4Factoidal.Crypto.MD5
 import L4Factoidal.Crypto.SHA1
 import L4Factoidal.Crypto.Blake3
@@ -214,7 +215,7 @@ dateTime with a timezone is an `xs:dateTimeStamp`. -/
 def tzDuration (m : Int) : Atomic :=
   ⟨.b .dayTimeDuration, .x (.dur { months := 0, seconds := Dec.ofInt (m * 60) })⟩
 
-def partsOfDateTimeFn : LibFn := fun _ _ a =>
+def partsOfDateTimeFn : LibFn := fun _ e a =>
   match optAtom (argN a 0) with
   | none => pure []
   | some ⟨_, .x (.dt _ v)⟩ =>
@@ -222,7 +223,7 @@ def partsOfDateTimeFn : LibFn := fun _ _ a =>
       match x with
       | some y => [(Atomic.ofStr k, [.atom y])]
       | none => [(Atomic.ofStr k, [])]
-    pure [.map (ent "year" (v.year.map Atomic.ofInt) ++ ent "month" (v.month.map (Atomic.ofInt ·)) ++
+    pure [.map (ent "year" ((XSD.yearForEdition (if e.features.xsdVersion == .v10 then .xsd10 else .xsd11) v).map Atomic.ofInt) ++ ent "month" (v.month.map (Atomic.ofInt ·)) ++
       ent "day" (v.day.map (Atomic.ofInt ·)) ++ ent "hours" (v.hour.map (Atomic.ofInt ·)) ++
       ent "minutes" (v.minute.map (Atomic.ofInt ·)) ++ ent "seconds" (v.second.map Atomic.ofDec) ++
       ent "timezone" (v.tz.map tzDuration))]
@@ -240,7 +241,7 @@ def bdInt (e : Env) (name : String) (v : Seq) : M (Option Int) := do
   match ← e.atomize v with
   | [] => pure none
   | [x] =>
-    let x ← if x.ty == .untyped then castAtomic x (.b .integer) else pure x
+    let x ← if x.ty == .untyped then e.castAtomic x (.b .integer) else pure x
     match x.num? with
     | some (.i i) => pure (some i)
     | some (.d d) =>
@@ -252,7 +253,7 @@ def bdDec (e : Env) (name : String) (v : Seq) : M (Option Dec) := do
   match ← e.atomize v with
   | [] => pure none
   | [x] =>
-    let x ← if x.ty == .untyped then castAtomic x (.b .decimal) else pure x
+    let x ← if x.ty == .untyped then e.castAtomic x (.b .decimal) else pure x
     match x.num? with
     | some (.i i) => pure (some (Dec.ofInt i))
     | some (.d d) => pure (some d)
@@ -279,6 +280,8 @@ def buildDateTimeFn : LibFn := fun _ e a => do
   | [.map kvs] =>
     let get (k : String) : Seq := (mapGet kvs (Atomic.ofStr k)).getD []
     let y ← bdInt e "year" (get "year")
+    if e.features.xsdVersion == .v10 && y == some 0 then err "FORG0001" "XSD 1.0 has no year zero"
+    let y := if e.features.xsdVersion == .v10 then y.map (fun y => if y < 0 then y + 1 else y) else y
     let mo ← bdInt e "month" (get "month")
     let d ← bdInt e "day" (get "day")
     let h ← bdInt e "hours" (get "hours")
@@ -298,7 +301,7 @@ def buildDateTimeFn : LibFn := fun _ e a => do
       if Dec.cmp ss Dec.zero == .lt || Dec.cmp ss (Dec.ofInt 60) != .lt then rng "seconds out of range"
     let pres := (y.isSome, mo.isSome, d.isSome, h.isSome, mi.isSome, sec.isSome)
     let kt : Option (DTKind × Builtin) := match pres with
-      | (true, true, true, true, true, true) => some (.dateTime, if tz.isSome then .dateTimeStamp else .dateTime)
+      | (true, true, true, true, true, true) => some (.dateTime, if tz.isSome && e.features.xsdVersion != .v10 then .dateTimeStamp else .dateTime)
       | (true, true, true, false, false, false) => some (.date, .date)
       | (false, false, false, true, true, true) => some (.time, .time)
       | (true, true, false, false, false, false) => some (.gYearMonth, .gYearMonth)
@@ -387,7 +390,7 @@ def civilFromDays (z : Int) : Int × Nat × Nat :=
   let m := if mp < 10 then mp + 3 else mp - 9
   ((if m ≤ 2 then y + 1 else y), m.toNat, d.toNat)
 
-def unixDateTimeFn : LibFn := fun _ _ a => do
+def unixDateTimeFn : LibFn := fun _ e a => do
   let ms := if (argN a 0).isEmpty then 0 else intOf (argN a 0)
   let days := Int.fdiv ms 86400000
   let rest := ms - days * 86400000
@@ -395,7 +398,7 @@ def unixDateTimeFn : LibFn := fun _ _ a => do
   let secMs := rest % 60000
   let v : DTValue := DTValue.mk (some y) (some m) (some d) (some (rest / 3600000).toNat)
     (some ((rest % 3600000) / 60000).toNat) (some (Dec.norm ⟨secMs, 3⟩)) (some 0)
-  pure [.atom ⟨.b .dateTimeStamp, .x (.dt .dateTime v)⟩]
+  pure [.atom ⟨.b (if e.features.xsdVersion == .v10 then .dateTime else .dateTimeStamp), .x (.dt .dateTime v)⟩]
 
 def enumOpt (e : Env) (opts : Seq) (key dflt : String) (allowed : List String) : M String := do
   match optLookup opts key with
@@ -446,7 +449,7 @@ def systemPropertiesFn : LibFn := fun _ e _ =>
   let hostHas (l : String) (k : Nat) : Bool := (e.host { uri := nsFN, loc := l } k).isSome
   pure [.map [
     (q "xpath-version", [.atom (Atomic.ofDec ⟨40, 1⟩)]),
-    (q "xsd-version", [.atom (Atomic.ofDec ⟨11, 1⟩)]),
+    (q "xsd-version", [.atom (Atomic.ofDec (if e.features.xsdVersion == .v10 then ⟨10, 1⟩ else ⟨11, 1⟩))]),
     (q "product-name", [.atom (Atomic.ofStr "Factoidal")]),
     (q "product-version", [.atom (Atomic.ofStr "0.21")]),
     (q "schema-aware", [.atom (Atomic.ofBool e.features.schemaImport)]),
@@ -697,7 +700,7 @@ def minMax4 (isMax : Bool) : LibFn := fun _ e a => do
   let xs ← e.atomize (argN a 0)
   let mut best : Option Atomic := none
   for x0 in xs do
-    let x ← if x0.ty == .untyped then castAtomic x0 (.b .double) else pure x0
+    let x ← if x0.ty == .untyped then e.castAtomic x0 (.b .double) else pure x0
     if isNaNAtom x then return [.atom x]
     match best with
     | none => best := some x

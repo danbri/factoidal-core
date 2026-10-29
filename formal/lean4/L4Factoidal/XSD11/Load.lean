@@ -61,26 +61,26 @@ def fnSchemaFile : String := "#fn"
 
 /-- A schema from schema document files (component constraints checked);
 `fnSchemaFile` adds the F&O 4.0 result schemas. -/
-def loadSchema (files : List String) : IO Schema := do
+def loadSchema (files : List String) (version : XSD.Version := .v11) : IO Schema := do
   let withFn := files.contains fnSchemaFile
   let files := (files.filter (· != fnSchemaFile)).map pathNormalize
   let (docs, _) ← loadClosure files
   let extra := if withFn then fnSchemaDocs else []
-  return buildSchema none xpathHooks (docs ++ extra) (files ++ extra.map (·.loc))
+  return buildSchema none xpathHooks (docs ++ extra) (files ++ extra.map (·.loc)) version
 
 /-- The schema of the F&O 4.0 result schemas alone. -/
 def fnSchema : Schema := buildSchema none xpathHooks fnSchemaDocs (fnSchemaDocs.map (·.loc))
 
 /-- Schemas already read in this process, by their document files. -/
-initialize schemaCache : IO.Ref (List (List String × Schema)) ← IO.mkRef []
+initialize schemaCache : IO.Ref (List ((XSD.Version × List String) × Schema)) ← IO.mkRef []
 
 /-- `loadSchema`, reading each set of files once per process. -/
-def loadSchemaCached (files : List String) : IO Schema := do
-  match (← schemaCache.get).lookup files with
+def loadSchemaCached (files : List String) (version : XSD.Version := .v11) : IO Schema := do
+  match (← schemaCache.get).lookup (version, files) with
   | some s => return s
   | none =>
-    let s ← loadSchema files
-    schemaCache.modify (fun c => (files, s) :: c)
+    let s ← loadSchema files version
+    schemaCache.modify (fun c => ((version, files), s) :: c)
     return s
 
 def qnXName (q : XPath4.QN) : XName := ⟨q.uri, q.loc⟩
@@ -144,6 +144,42 @@ def nodeTree (d : XPath4.Doc) : Nat → Nat → Node
     | .pi => .pi r.name.loc r.value
     | _ => .text ""
 
+/-- Namespace fixup needed by an output name, including a schema-defaulted
+attribute. Existing matching bindings leave the original list unchanged. -/
+def nameNamespace (bs : NsBindings) (q : XPath4.QN) : NsBindings :=
+  if q.uri == "" || q.pfx == "xml" || bs.lookup q.pfx == some q.uri then bs
+  else (q.pfx, q.uri) :: bs.filter (fun b => b.1 != q.pfx)
+
+theorem nameNamespace_present (bs : NsBindings) (q : XPath4.QN)
+    (h : bs.lookup q.pfx = some q.uri) : nameNamespace bs q = bs := by
+  simp [nameNamespace, h]
+
+/-- Validation can add attributes and text, or remove element-only
+whitespace. Element order is unchanged. Restore the input XDM namespace
+properties, which cannot be represented by an XML tree when a child's
+namespace bindings exclude a prefix on its parent. -/
+def preserveNamespaces (original : XPath4.Doc) (root : Nat) (validated : XPath4.Doc) : XPath4.Doc :=
+  let before := original.nodes.toList.zipIdx.filterMap (fun (r, i) =>
+    if root ≤ i && i ≤ (original.get root).last && r.kind == .element then some r else none)
+  let after := validated.nodes.toList.zipIdx.filter (fun (r, _) => r.kind == .element)
+  let pairs := before.zip after
+  -- A shape mismatch must not copy properties onto a different element.
+  if before.length != after.length || pairs.any (fun (a, (b, _)) =>
+      a.name != b.name || a.name.pfx != b.name.pfx) then validated else
+  let scopes : Std.HashMap Nat NsBindings := pairs.foldl (fun m (a, (b, i)) =>
+    let scope := nameNamespace a.inscope b.name
+    let scope := b.attrs.toList.foldl (fun bs j =>
+      let q := (validated.get j).name
+      if q.pfx == "" then bs else nameNamespace bs q) scope
+    m.insert i scope) {}
+  { validated with nodes := validated.nodes.mapIdx (fun i r =>
+      let scope := if r.kind == .element then scopes[i]?
+        else if r.kind == .attribute then r.parent.bind (fun p => scopes[p]?)
+        else none
+      match scope with
+      | some bs => { r with inscope := bs }
+      | none => r) }
+
 /-- `validateFor` on a node of an XDM document: an element, or the document
 element of a document node. -/
 def validateNodeIn (s : Schema) (mode : String) (d : XPath4.Doc) (i : Nat) (uri : String) : Except XPath4.Err XPath4.Doc :=
@@ -153,7 +189,7 @@ def validateNodeIn (s : Schema) (mode : String) (d : XPath4.Doc) (i : Nat) (uri 
     else some i
   match elemIdx with
   | none => .error { code := "XQDY0061", msg := "the document node has no element child" }
-  | some j => validateFor s mode (nodeTree d 100000 j) uri
+  | some j => (validateFor s mode (nodeTree d 100000 j) uri).map (preserveNamespaces d j)
 
 /-- `fn:xsd-validator`: validate a node of an XDM document; with schema
 documents from the options, against the schema they make. -/
@@ -165,7 +201,7 @@ def validateWithFor (s : Schema) (mode : String) (extra : List (XPath4.Doc × Na
       let el := if r.kind == .document then r.children.toList.find? (fun c => (xd.get c).kind == .element) else some j
       el.map (fun e => { loc := s!"#xsd-validator-schema-{k}",
                          doc := { decl := none, doctype := none, prolog := [], root := nodeTree xd 100000 e, epilog := [] } }))
-    buildSchema none xpathHooks docs (docs.map (·.loc))
+    buildSchema none xpathHooks docs (docs.map (·.loc)) s.version
   if !s.errors.isEmpty then .error { code := "FODC0007", msg := s!"the schema is not valid: {s.errors.take 2}" } else
   match validateNodeIn s mode d i uri with
   | .ok nd => .ok (some nd, [])
@@ -197,7 +233,13 @@ def typeInfoOf (s : Schema) (q : XPath4.QN) : Option XPath4.SchemaTypeInfo :=
 
 /-- The in-scope schema definitions of `s` for XPath 4.0. -/
 def schemaHookOf (s : Schema) : XPath4.SchemaHook :=
-  { derives := fun t u =>
+  { sourceDocuments := s.sourceDocuments, sourceRoots := s.sourceRoots,
+    elemAbstract := fun q => (s.elemIdx? (qnXName q)).any (fun d => (s.elem d).abstract),
+    substitutionType := fun n h =>
+      match s.elemIdx? (qnXName n), s.elemIdx? (qnXName h) with
+      | some ni, some hi => s.substOk hi ni
+      | _, _ => false,
+    derives := fun t u =>
       match s.typeOfQN? t, s.typeOfQN? u with
       | some ti, some ui => s.derivesFrom ti ui
       | _, _ => XPath4.builtinTypeDerives t u,
@@ -206,7 +248,7 @@ def schemaHookOf (s : Schema) : XPath4.SchemaHook :=
     attrDecl := fun q => (s.attrIdx? (qnXName q)).map (fun d => s.typeQN (s.attr d).typ),
     substitutes := fun n h =>
       match s.elemIdx? (qnXName n), s.elemIdx? (qnXName h) with
-      | some ni, some hi => s.substOk hi ni
+      | some ni, some hi => !(s.elem ni).abstract && s.substOk hi ni
       | _, _ => false,
     targetNamespaces := ((s.gTypes.map (·.1.ns)) ++ (s.gElems.map (·.1.ns)) ++ (s.gAttrs.map (·.1.ns))).filter
       (fun u => u != xsNS && u != xsiNS) |>.eraseDups,

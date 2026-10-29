@@ -200,22 +200,28 @@ def valueFacetsOk (b : Builtin) (f : Facets) (v : Val) : Bool :=
 /-! ## §4.1.4 / §3.1.2 — validation -/
 
 /-- The value a literal denotes under this simple type, or `none` when
-it is not ·locally valid·. The fuel bounds the union/list nesting. -/
-def valueOfFuel : Nat → SimpleType → String → Option Val
-  | 0, _, _ => none
-  | fuel + 1, t, lit =>
+it is not ·locally valid·. The fuel bounds the union/list nesting.
+The optional callbacks select an edition's lexical mapping and facets;
+all editions share the whitespace, list and union evaluation. -/
+def valueOfFuel (fuel : Nat) (t : SimpleType) (lit : String)
+    (mapLexical : Builtin → String → Option Val := lexicalMap)
+    (checkFacets : Builtin → Facets → Val → Bool := valueFacetsOk)
+    (checkPatterns : List (List String) → String → Bool := patternMatches) : Option Val :=
+  match fuel with
+  | 0 => none
+  | fuel + 1 =>
     let ws := t.whiteSpaceOf
     let norm := applyWhiteSpace ws lit
     let f := t.facets
-    if !patternMatches f.patterns norm then none
+    if !checkPatterns f.patterns norm then none
     else match t with
     | .atomic b bf =>
-        match lexicalMap b norm with
+        match mapLexical b norm with
         | none => none
-        | some v => if valueFacetsOk b bf v then some v else none
+        | some v => if checkFacets b bf v then some v else none
     | .list item lf =>
         let toks := norm.splitOn " " |>.filter (fun s => s != "")
-        let vs := toks.map (fun s => valueOfFuel fuel item s)
+        let vs := toks.map (fun s => valueOfFuel fuel item s mapLexical checkFacets checkPatterns)
         if vs.any Option.isNone then none
         else
           let v := Val.seq (vs.filterMap id)
@@ -229,7 +235,7 @@ def valueOfFuel : Nat → SimpleType → String → Option Val
             | some lexs => lexs.any (fun lex =>
                 let ets := (applyWhiteSpace .collapse lex).splitOn " "
                              |>.filter (fun t => t != "")
-                let evs := ets.map (fun t => valueOfFuel fuel item t)
+                let evs := ets.map (fun t => valueOfFuel fuel item t mapLexical checkFacets checkPatterns)
                 !evs.any Option.isNone && valEqualOrIdentical v (.seq (evs.filterMap id)))
           if (match lf.length with | some n => vs.length == n | none => true) &&
              (match lf.minLength with | some n => vs.length ≥ n | none => true) &&
@@ -237,7 +243,7 @@ def valueOfFuel : Nat → SimpleType → String → Option Val
              enumOk
           then some v else none
     | .union members uf =>
-        match members.filterMap (fun m => valueOfFuel fuel m norm) |>.head? with
+        match members.filterMap (fun m => valueOfFuel fuel m norm mapLexical checkFacets checkPatterns) |>.head? with
         | none => none
         | some v =>
           -- §4.3.5 on a union: the enumeration members are literals of
@@ -246,7 +252,7 @@ def valueOfFuel : Nat → SimpleType → String → Option Val
             match uf.enumeration with
             | none => true
             | some lexs => lexs.any (fun lex =>
-                match members.filterMap (fun m => valueOfFuel fuel m lex) |>.head? with
+                match members.filterMap (fun m => valueOfFuel fuel m lex mapLexical checkFacets checkPatterns) |>.head? with
                 | some ev => valEqualOrIdentical v ev
                 | none    => false)
           if enumOk then some v else none

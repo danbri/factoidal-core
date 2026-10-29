@@ -1,0 +1,1206 @@
+{
+  "families": [
+    {
+      "mode": "xpath",
+      "name": "fn",
+      "before": {
+        "pass": 15570,
+        "fail": 35,
+        "unsupported": 2253,
+        "total": 17858,
+        "excluded": 5
+      },
+      "after": {
+        "pass": 15572,
+        "fail": 35,
+        "unsupported": 2251,
+        "total": 17858,
+        "excluded": 5
+      }
+    },
+    {
+      "mode": "xquery",
+      "name": "fn",
+      "before": {
+        "pass": 17217,
+        "fail": 236,
+        "unsupported": 409,
+        "total": 17862,
+        "excluded": 1
+      },
+      "after": {
+        "pass": 17223,
+        "fail": 233,
+        "unsupported": 406,
+        "total": 17862,
+        "excluded": 1
+      }
+    },
+    {
+      "mode": "xpath",
+      "name": "xs",
+      "before": {
+        "pass": 196,
+        "fail": 0,
+        "unsupported": 36,
+        "total": 232,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 196,
+        "fail": 0,
+        "unsupported": 36,
+        "total": 232,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xquery",
+      "name": "xs",
+      "before": {
+        "pass": 219,
+        "fail": 1,
+        "unsupported": 12,
+        "total": 232,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 219,
+        "fail": 1,
+        "unsupported": 12,
+        "total": 232,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xpath",
+      "name": "prod",
+      "before": {
+        "pass": 8917,
+        "fail": 19,
+        "unsupported": 6012,
+        "total": 14948,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 8917,
+        "fail": 19,
+        "unsupported": 6012,
+        "total": 14948,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xquery",
+      "name": "prod",
+      "before": {
+        "pass": 13823,
+        "fail": 688,
+        "unsupported": 437,
+        "total": 14948,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 13858,
+        "fail": 671,
+        "unsupported": 419,
+        "total": 14948,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xpath",
+      "name": "misc",
+      "before": {
+        "pass": 786,
+        "fail": 0,
+        "unsupported": 3446,
+        "total": 4232,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 786,
+        "fail": 0,
+        "unsupported": 3446,
+        "total": 4232,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xquery",
+      "name": "misc",
+      "before": {
+        "pass": 4037,
+        "fail": 88,
+        "unsupported": 107,
+        "total": 4232,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 4095,
+        "fail": 71,
+        "unsupported": 66,
+        "total": 4232,
+        "excluded": 0
+      }
+    }
+  ],
+  "sets": [
+    {
+      "mode": "xpath",
+      "name": "fn-matches",
+      "before": {
+        "pass": 199,
+        "fail": 2,
+        "unsupported": 7,
+        "total": 208,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 199,
+        "fail": 2,
+        "unsupported": 7,
+        "total": 208,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xquery",
+      "name": "fn-matches",
+      "before": {
+        "pass": 199,
+        "fail": 2,
+        "unsupported": 7,
+        "total": 208,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 200,
+        "fail": 2,
+        "unsupported": 6,
+        "total": 208,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xpath",
+      "name": "fn-matches.re",
+      "before": {
+        "pass": 1082,
+        "fail": 0,
+        "unsupported": 34,
+        "total": 1116,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 1082,
+        "fail": 0,
+        "unsupported": 34,
+        "total": 1116,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xquery",
+      "name": "fn-matches.re",
+      "before": {
+        "pass": 1083,
+        "fail": 0,
+        "unsupported": 33,
+        "total": 1116,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 1083,
+        "fail": 0,
+        "unsupported": 33,
+        "total": 1116,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xpath",
+      "name": "fn-system-properties",
+      "before": {
+        "pass": 30,
+        "fail": 0,
+        "unsupported": 5,
+        "total": 35,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 32,
+        "fail": 0,
+        "unsupported": 3,
+        "total": 35,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xquery",
+      "name": "fn-system-properties",
+      "before": {
+        "pass": 30,
+        "fail": 0,
+        "unsupported": 5,
+        "total": 35,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 32,
+        "fail": 0,
+        "unsupported": 3,
+        "total": 35,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xpath",
+      "name": "xs-double",
+      "before": {
+        "pass": 13,
+        "fail": 0,
+        "unsupported": 3,
+        "total": 16,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 13,
+        "fail": 0,
+        "unsupported": 3,
+        "total": 16,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xquery",
+      "name": "xs-double",
+      "before": {
+        "pass": 15,
+        "fail": 0,
+        "unsupported": 1,
+        "total": 16,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 15,
+        "fail": 0,
+        "unsupported": 1,
+        "total": 16,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xpath",
+      "name": "xs-float",
+      "before": {
+        "pass": 11,
+        "fail": 0,
+        "unsupported": 1,
+        "total": 12,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 11,
+        "fail": 0,
+        "unsupported": 1,
+        "total": 12,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xquery",
+      "name": "xs-float",
+      "before": {
+        "pass": 11,
+        "fail": 0,
+        "unsupported": 1,
+        "total": 12,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 11,
+        "fail": 0,
+        "unsupported": 1,
+        "total": 12,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xpath",
+      "name": "prod-CastExpr",
+      "before": {
+        "pass": 2764,
+        "fail": 0,
+        "unsupported": 73,
+        "total": 2837,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 2764,
+        "fail": 0,
+        "unsupported": 73,
+        "total": 2837,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xquery",
+      "name": "prod-CastExpr",
+      "before": {
+        "pass": 2773,
+        "fail": 16,
+        "unsupported": 48,
+        "total": 2837,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 2773,
+        "fail": 16,
+        "unsupported": 48,
+        "total": 2837,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xpath",
+      "name": "prod-CastExpr.derived",
+      "before": {
+        "pass": 163,
+        "fail": 0,
+        "unsupported": 7,
+        "total": 170,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 163,
+        "fail": 0,
+        "unsupported": 7,
+        "total": 170,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xquery",
+      "name": "prod-CastExpr.derived",
+      "before": {
+        "pass": 163,
+        "fail": 1,
+        "unsupported": 6,
+        "total": 170,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 163,
+        "fail": 1,
+        "unsupported": 6,
+        "total": 170,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xpath",
+      "name": "prod-SchemaImport",
+      "before": {
+        "pass": 0,
+        "fail": 0,
+        "unsupported": 145,
+        "total": 145,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 0,
+        "fail": 0,
+        "unsupported": 145,
+        "total": 145,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xquery",
+      "name": "prod-SchemaImport",
+      "before": {
+        "pass": 98,
+        "fail": 27,
+        "unsupported": 20,
+        "total": 145,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 124,
+        "fail": 19,
+        "unsupported": 2,
+        "total": 145,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xpath",
+      "name": "misc-Subtyping",
+      "before": {
+        "pass": 0,
+        "fail": 0,
+        "unsupported": 159,
+        "total": 159,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 0,
+        "fail": 0,
+        "unsupported": 159,
+        "total": 159,
+        "excluded": 0
+      }
+    },
+    {
+      "mode": "xquery",
+      "name": "misc-Subtyping",
+      "before": {
+        "pass": 95,
+        "fail": 23,
+        "unsupported": 41,
+        "total": 159,
+        "excluded": 0
+      },
+      "after": {
+        "pass": 150,
+        "fail": 9,
+        "unsupported": 0,
+        "total": 159,
+        "excluded": 0
+      }
+    }
+  ],
+  "sourceBase": "f4c005efc9104d9b733ff3942f6dadc23b1710ac",
+  "targetSummary": {
+    "xpath": {
+      "pass": 2,
+      "fail": 0,
+      "unsupported": 71
+    },
+    "xquery": {
+      "pass": 62,
+      "fail": 0,
+      "unsupported": 11
+    }
+  },
+  "targets": [
+    {
+      "set": "fn-matches",
+      "case": "fn-matches-50a",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ40+"
+      ]
+    },
+    {
+      "set": "fn-matches",
+      "case": "K2-MatchesFunc-16a",
+      "xquery": "unsupported",
+      "xpath": "unsupported",
+      "cause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "xpathCause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "spec": [
+        "XP20 XP30 XP31 XQ10 XQ30 XQ31"
+      ]
+    },
+    {
+      "set": "fn-matches.re",
+      "case": "re00056",
+      "xquery": "unsupported",
+      "xpath": "unsupported",
+      "cause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "xpathCause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "spec": [
+        "XP30 XP31 XQ30 XQ31"
+      ]
+    },
+    {
+      "set": "fn-matches.re",
+      "case": "re00086",
+      "xquery": "unsupported",
+      "xpath": "unsupported",
+      "cause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "xpathCause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "spec": [
+        "XP30 XP31 XQ30 XQ31"
+      ]
+    },
+    {
+      "set": "fn-matches.re",
+      "case": "re00102a",
+      "xquery": "unsupported",
+      "xpath": "unsupported",
+      "cause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "xpathCause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "spec": [
+        "XP30 XP31 XQ30 XQ31"
+      ]
+    },
+    {
+      "set": "fn-system-properties",
+      "case": "system-properties-002",
+      "xquery": "pass",
+      "xpath": "pass",
+      "cause": "",
+      "xpathCause": "",
+      "spec": []
+    },
+    {
+      "set": "fn-system-properties",
+      "case": "fn-system-properties-0021",
+      "xquery": "pass",
+      "xpath": "pass",
+      "cause": "",
+      "xpathCause": "",
+      "spec": []
+    },
+    {
+      "set": "xs-double",
+      "case": "xs-double-004",
+      "xquery": "unsupported",
+      "xpath": "unsupported",
+      "cause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "xpathCause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "spec": [
+        "XP20 XP30 XP31 XQ30 XQ31"
+      ]
+    },
+    {
+      "set": "xs-float",
+      "case": "xs-float-004",
+      "xquery": "unsupported",
+      "xpath": "unsupported",
+      "cause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "xpathCause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "spec": [
+        "XP20 XP30 XP31 XQ30 XQ31"
+      ]
+    },
+    {
+      "set": "prod-CastExpr",
+      "case": "K2-SeqExprCast-210",
+      "xquery": "unsupported",
+      "xpath": "unsupported",
+      "cause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "xpathCause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "spec": [
+        "XP20 XP30 XP31 XQ30 XQ31"
+      ]
+    },
+    {
+      "set": "prod-CastExpr",
+      "case": "K2-SeqExprCast-231",
+      "xquery": "unsupported",
+      "xpath": "unsupported",
+      "cause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "xpathCause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "spec": [
+        "XP20 XP30 XP31 XQ30 XQ31"
+      ]
+    },
+    {
+      "set": "prod-CastExpr",
+      "case": "K2-SeqExprCast-232",
+      "xquery": "unsupported",
+      "xpath": "unsupported",
+      "cause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "xpathCause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "spec": [
+        "XP20 XP30 XP31 XQ30 XQ31"
+      ]
+    },
+    {
+      "set": "prod-CastExpr.derived",
+      "case": "cbcl-cast-gYear-002",
+      "xquery": "unsupported",
+      "xpath": "unsupported",
+      "cause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "xpathCause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "spec": [
+        "XP20 XP30 XP31 XQ30 XQ31"
+      ]
+    },
+    {
+      "set": "prod-CastExpr.derived",
+      "case": "cbcl-cast-gYearMonth-003",
+      "xquery": "unsupported",
+      "xpath": "unsupported",
+      "cause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "xpathCause": "Requires a selectable pre-4.0 language profile; the runner advertises XPath/XQuery 4.0 only.",
+      "spec": [
+        "XP20 XP30 XP31 XQ30 XQ31"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "qischema041",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ10+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "qischema042",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ10+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "qischema083",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ10+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-001",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-002",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-003",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-004",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-005",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-006",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-007",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-008",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-009",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-010",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-011",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-030",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-031",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-032",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "prod-SchemaImport",
+      "case": "substitution-033",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": [
+        "XQ30+"
+      ]
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-301",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-302",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-303",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-304",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-305",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-306",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-307",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-308",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-309",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-310",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-311",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-320",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-321",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-322",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-323",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-324",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-325",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-326",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-327",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-328",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-329",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-330",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-331",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-332",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-333",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-334",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-335",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-340",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-341",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-342",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-343",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-344",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-345",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-346",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-347",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-350",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-351",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-352",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-353",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-354",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    },
+    {
+      "set": "misc-Subtyping",
+      "case": "subtyping-355",
+      "xquery": "pass",
+      "xpath": "unsupported",
+      "cause": "",
+      "xpathCause": "Requires an XQuery language profile.",
+      "spec": []
+    }
+  ]
+}

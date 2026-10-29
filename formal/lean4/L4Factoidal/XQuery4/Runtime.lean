@@ -203,7 +203,7 @@ def newDocId (tag : String) (e : Env) (content : String) (ss : List String := []
 /-- A piece of element or document content after §4.12.1.3. -/
 inductive Piece where
   | text (s : String)
-  | node (n : NodeRef)
+  | node (n : NodeRef) (directChild : Bool := false)
 
 /-- Copy the subtree of `src` (in `env`) to the end of `out`, with
     parent `par`. A subtree is the index range `[src.idx, last]`, so
@@ -241,12 +241,15 @@ def copyInto (env : Env) (src : NodeRef) (par : Option Nat) (inh : List (String 
     one part, adjacent atomic values are joined by a space. Arrays are
     flattened; a map or function is `XQTY0105`; a document node gives
     its children. Attribute nodes come first, in `attrs`. -/
-def contentPieces (env : Env) (parts : List Seq) (forDoc : Bool) :
+def contentPieces (env : Env) (parts : List Seq) (forDoc : Bool) (directParts : List Bool := []) :
     M (List NodeRef × List Piece) := do
   let mut attrs : Array NodeRef := #[]
   let mut ps : Array Piece := #[]
   let mut seenOther := false
+  let mut directFlags := directParts
   for part in parts do
+    let directChild := directFlags.headD false
+    directFlags := directFlags.drop 1
     let mut atoms : Option String := none
     let flat : Seq := part.flatMap (fun i => match i with
       | .arr ms => ms.flatten
@@ -276,10 +279,10 @@ def contentPieces (env : Env) (parts : List Seq) (forDoc : Bool) :
             for c in r.children do
               let cr := (env.doc n).get c
               if cr.kind == .text then ps := ps.push (.text cr.value)
-              else ps := ps.push (.node (n.at c))
+              else ps := ps.push (.node (n.at c) directChild)
             seenOther := true
         | .text => ps := ps.push (.text r.value); seenOther := true
-        | _ => ps := ps.push (.node n); seenOther := true
+        | _ => ps := ps.push (.node n directChild); seenOther := true
     if let some s := atoms then
       ps := ps.push (.text s); seenOther := true
   -- merge adjacent text, drop empty text
@@ -294,7 +297,7 @@ def contentPieces (env : Env) (parts : List Seq) (forDoc : Bool) :
 /-- Push the children pieces under `par`; returns the new array and the
     child indices. -/
 def pushPieces (env : Env) (par : Nat) (inh : List (String × String)) (ps : List Piece)
-    (out : Array NRec) (preserve : Bool := true) : Array NRec × Array Nat := Id.run do
+    (out : Array NRec) (preserve : Bool := true) (directInh : List (String × String) := []) : Array NRec × Array Nat := Id.run do
   let mut o := out
   let mut cs : Array Nat := #[]
   for p in ps do
@@ -303,8 +306,9 @@ def pushPieces (env : Env) (par : Nat) (inh : List (String × String)) (ps : Lis
         let i := o.size
         o := o.push { kind := .text, value := s, parent := some par, last := i }
         cs := cs.push i
-    | .node n =>
-        let (o', i) := copyInto env n (some par) inh o preserve
+    | .node n directChild =>
+        let bindings := if directChild then directInh else inh
+        let (o', i) := copyInto env n (some par) bindings o preserve
         o := o'
         cs := cs.push i
   (o, cs)
@@ -324,15 +328,31 @@ def freshPrefix (used : List (String × String)) : String := Id.run do
     strip` (XQuery 4.0 §5.6). -/
 def constructionStripKey : QN := { uri := "#xq", loc := "construction-strip" }
 
+/-- Filter bindings supplied to namespace inheritance. Direct literal
+    children receive explicit declarations; copied nodes receive the full
+    parent scope, including element and attribute name bindings. -/
+def constructorInheritedNamespaces (inherit : Bool) (explicit : List (String × String)) : List (String × String) :=
+  if inherit then explicit.filter (fun (p, u) => p != "xml" && !(p == "" && u == "")) else []
+
+/-- Namespace inheritance introduces no binding beyond the supplied
+    declaration or parent-scope list. -/
+theorem constructorInheritedNamespaces_mem (inherit : Bool) (explicit : List (String × String))
+    (binding : String × String) (h : binding ∈ constructorInheritedNamespaces inherit explicit) :
+    binding ∈ explicit := by
+  cases inherit with
+  | false => simp [constructorInheritedNamespaces] at h
+  | true => exact (List.mem_filter.mp h).1
+
 /-- Build an element node: name, namespace declarations, content. -/
 def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × String))
-    (parts : List Seq) (preserve inherit : Bool := true) : M Seq := do
+    (parts : List Seq) (preserve inherit : Bool := true) (directParts : List Bool := []) : M Seq := do
   if isXmlnsName name then err "XQDY0096" "the element name is in the xmlns namespace"
   if name.pfx == "xml" && name.uri != nsXML then err "XQDY0096" "prefix xml bound to another namespace"
   if name.uri == nsXML && name.pfx != "xml" && name.pfx != "" then err "XQDY0096" "the xml namespace with another prefix"
-  let (ats, ps) ← contentPieces env parts false
+  let (ats, ps) ← contentPieces env parts false directParts
   -- in-scope namespaces: declarations, the element name, the attribute names
   let mut scope : List (String × String) := decls
+  let mut inherited := decls
   let mut name := name
   if name.uri != "" then
     match scope.lookup name.pfx with
@@ -358,6 +378,7 @@ def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × Str
       match scope.lookup p with
       | some u => if u != r.value then err "XQDY0102" ("namespace prefix " ++ p ++ " bound twice")
       | none => scope := (p, r.value) :: scope
+      inherited := (p, r.value) :: inherited.filter (·.1 != p)
       continue
     if seen.any (· == r.name) then err "XQDY0025" ("duplicate attribute " ++ r.name.show)
     seen := r.name :: seen
@@ -385,8 +406,9 @@ def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × Str
     let i := out.size
     out := out.push { r with last := i }
     aIdx := aIdx.push i
-  let inh := if inherit then scope.filter (fun (p, _) => p != "xml") else []
-  let (o2, cs) := pushPieces env 0 inh ps out preserve
+  let inh := constructorInheritedNamespaces inherit scope
+  let directInh := constructorInheritedNamespaces inherit inherited
+  let (o2, cs) := pushPieces env 0 inh ps out preserve directInh
   let o3 := o2.set! 0 { (o2.getD 0 default) with children := cs, attrs := aIdx, last := o2.size - 1 }
   let doc : Doc := { nodes := o3, baseUri := env.baseUri }
   pure [.node { doc := id, idx := 0, rt := some doc }]
@@ -720,10 +742,15 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
       let decls := (ss.drop 1).filterMap (fun d => match d.splitOn "\x00" with
         | [p, u] => some (p, u) | _ => none)
       let mut vals : Array Seq := #[]
-      for p in parts do vals := vals.push (← cb.eval env p)
+      let mut directParts : Array Bool := #[]
+      for p in parts do
+        directParts := directParts.push (match p with
+          | .ext "elem" _ _ _ flags => flags.contains "#direct-child"
+          | _ => false)
+        vals := vals.push (← cb.eval env p)
       let id := newDocId "elem" env (name.eqn ++ "|" ++ ss.headD "" ++ "|" ++
         String.intercalate "," (vals.toList.map (fun s => String.intercalate "," (s.map itemSig)))) ss
-      buildElement env id name decls vals.toList (!ss.contains "#no-preserve") (!ss.contains "#no-inherit")
+      buildElement env id name decls vals.toList (!ss.contains "#no-preserve") (!ss.contains "#no-inherit") directParts.toList
     | [] => err "XPST0003" "element constructor without name"
   | "attr" =>
     match es with
@@ -896,5 +923,29 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
                              newId := fun t e c => newDocId t e c }
         XQueryUpdate.revalidate env tag es ts qs ss
     else err "XPST0003" ("unknown XQuery construct " ++ tag)
+
+private def constructorNamespaceCheck (inherit directChild : Bool) : Bool :=
+  let result : M Bool := do
+    let child ← buildElement {} 1 { uri := "urn:child", loc := "child", pfx := "child" } [] []
+    let parent ← buildElement {} 2 { uri := "urn:parent", loc := "parent", pfx := "parent" }
+      [("explicit", "urn:explicit")] [child] true inherit [directChild]
+    match parent with
+    | [.node n] =>
+      let e : Env := {}
+      let r := e.nrec n
+      let c := e.nrec (n.at (r.children.getD 0 0))
+      pure (r.inscope.lookup "parent" == some "urn:parent" &&
+        c.inscope.lookup "child" == some "urn:child" &&
+        c.inscope.lookup "parent" == (if inherit && !directChild then some "urn:parent" else none) &&
+        c.inscope.lookup "explicit" == (if inherit then some "urn:explicit" else none))
+    | _ => pure false
+  match result with
+  | .ok valid => valid
+  | .error _ => false
+
+#guard constructorNamespaceCheck true true
+#guard constructorNamespaceCheck true false
+#guard constructorNamespaceCheck false false
+#print axioms constructorInheritedNamespaces_mem
 
 end L4Factoidal.XQuery4

@@ -12,12 +12,13 @@ and `misc`), and scores every test case for XPath 4.0 or, with
 * **unsupported** — the test case or its test set has a dependency
   this processor does not satisfy: a spec that is not XPath 4.0
   (`XQ*` only, or an `XP` version range that excludes 4.0), a feature
-  it does not have, XML 1.1, a
-  non-English default language, or an environment that needs a schema,
-  a collection, a decimal format or a resource. An unsupported test is
+  it does not have, XML 1.1, a non-English default language, or an
+  environment that cannot be loaded. An unsupported test is
   NEVER a pass;
 * Negative optional-feature dependencies select an engine configuration
   with those features disabled; the test still runs.
+* XSD version and schema location hint dependencies select their engine
+  settings before schemas and validated sources are loaded.
 * **pass** — every assertion holds; an `error` assertion holds only
   when the error raised has the expected code (or the code is `*`);
 * **fail** — anything else, including a wrong error code.
@@ -175,7 +176,7 @@ def featureSupported (f : String) : Bool :=
   || f == "non_empty_sequence_collection"
   -- XML Schema 1.1 (`L4Factoidal.XSD11`): in-scope schema definitions from
   -- the environment's `schema`, validated sources, typed data
-  || f == "schemaImport" || f == "schemaValidation" || f == "typedData"
+  || f == "schemaImport" || f == "schemaValidation" || f == "typedData" || f == "schema-location-hint"
   -- XQuery and XPath Full Text 3.0 (`L4Factoidal.FullText`), with the
   -- ignore option, every FTUnit and FTBigUnit, and the default match options
   || f == "fullText" || f == "fullText-ignore" || f == "fullText-units" || f == "fullText-defaults"
@@ -185,10 +186,29 @@ def featureSupported (f : String) : Bool :=
 /-- Select a processor configuration for negative feature dependencies.
     The query and its assertions use this same configuration. -/
 def featureSettings (deps : List Node) : FeatureSettings :=
-  deps.foldl (fun settings d =>
+  let settings := deps.foldl (fun settings d =>
     if attrD d "type" == "feature" && attrD d "satisfied" "true" == "false" then
       (attrD d "value").splitOn " " |>.foldl FeatureSettings.disable settings
-    else settings) {}
+    else if attrD d "type" == "feature" &&
+        ((attrD d "value").splitOn " ").contains "schema-location-hint" then
+      { settings with schemaLocationHints := true }
+    else if attrD d "type" == "xsd-version" then
+      let versions := (attrD d "value").splitOn " "
+      let satisfied := attrD d "satisfied" "true" != "false"
+      if satisfied then
+        if versions.contains "1.1" then { settings with xsdVersion := .v11 }
+        else if versions.contains "1.0" then { settings with xsdVersion := .v10, schemaLocationHints := true } else settings
+      else if versions.contains "1.1" && !(versions.contains "1.0") then
+        { settings with xsdVersion := .v10, schemaLocationHints := true }
+      else if versions.contains "1.0" && !(versions.contains "1.1") then
+        { settings with xsdVersion := .v11 }
+      else settings
+    else settings) ({} : FeatureSettings)
+  if deps.any (fun d => attrD d "type" == "feature" &&
+      attrD d "satisfied" "true" == "false" &&
+      ((attrD d "value").splitOn " ").contains "schema-location-hint") then
+    { settings with schemaLocationHints := false }
+  else settings
 
 def depOk (xq : Bool) (d : Node) : Bool :=
   let ty := attrD d "type"
@@ -203,7 +223,10 @@ def depOk (xq : Bool) (d : Node) : Bool :=
   | "xml-version" =>
       let has := (v.splitOn " ").any (fun x => x == "1.0" || x == "1.0:4-" || x.startsWith "1.0")
       if sat then has else !has
-  | "xsd-version" => if sat then v == "1.1" else v != "1.1"
+  | "xsd-version" =>
+      let vs := v.splitOn " "
+      if sat then vs.any (fun v => v == "1.0" || v == "1.1")
+      else !(vs.contains "1.0" && vs.contains "1.1")
   -- `XPath4.NumberWords`: German, French and Italian words and names
   | "language" =>
       let has := v == "en" || NumberWords.hasLang v
@@ -446,7 +469,7 @@ def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
     declarations of its prolog (`XPath4.declParams`); none in XPath. -/
 def queryParams (env : Env) (src : String) : M SerParams :=
   if isXqEnv env && env.features.serialization then do
-    let m ← L4Factoidal.XQuery4.parseModule src env.ns env.schema.declared env.features
+    let (env, m) ← L4Factoidal.XQuery4.prepareModule src env
     -- `output:parameter-document`: the document first, then the other
     -- output declarations over it
     let init ← match m.outputDecls.lookup "parameter-document" with
@@ -736,7 +759,7 @@ def systemIds (txt : String) : List String :=
     file under the test suite root, resolved against the test set's
     directory. Read in advance, as text, because the evaluator does no
     I/O. Only files under the suite root are read. -/
-def scanResources (root dir src : String) : IO (List (String × String) × List (String × ByteArray)) := do
+def scanResources (root dir src : String) (schemaHints : Bool := false) : IO (List (String × String) × List (String × ByteArray)) := do
   let isPathChar (c : Char) := c.isAlphanum || c == '_' || c == '.' || c == '/' || c == '-'
   let mut toks : List String := []
   let mut cur : String := ""
@@ -773,19 +796,44 @@ def scanResources (root dir src : String) : IO (List (String × String) × List 
       match ← readBytesSafe path with
       | some bs => bins := (t, bs) :: bins
       | none => pure ()
+  -- Follow schema includes/imports relative to the schema that names them.
+  -- Keys retain the test-set-relative spelling used by the pure resource loader.
+  let mut pending := if schemaHints then out else []
+  let mut seen : List String := []
+  for _ in [0:500] do
+    let (key, txt) ← match pending with
+      | [] => break
+      | entry :: rest => pending := rest; pure entry
+    let key := L4Factoidal.XSD11.pathNormalize key
+    if (out.lookup key).isNone then out := (key, txt) :: out
+    if seen.contains key then continue
+    seen := key :: seen
+    match L4Factoidal.XML.parseXML txt with
+    | .error _ => pure ()
+    | .ok doc =>
+      for ref in L4Factoidal.XSD11.refsOf key doc do
+        if (ref.splitOn "://").length > 1 || (out.lookup ref).isSome then continue
+        let some p := normPath (rel ++ "/" ++ ref) | continue
+        match ← readFileSafe (root ++ "/" ++ p) with
+        | none => pure ()
+        | some text =>
+          out := (ref, text) :: out
+          let normalized := L4Factoidal.XSD11.pathNormalize ref
+          if (out.lookup normalized).isNone then out := (normalized, text) :: out
+          pending := pending ++ [(normalized, text)]
   return (out, bins)
 
 /-- Build the dynamic context for an environment; `none` with a reason
     when it cannot be built. -/
-def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool := false) : IO (Except String Env) := do
+def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool := false) (features : FeatureSettings := {}) : IO (Except String Env) := do
   if let some why := spec.unsupported then return .error why
-  let mut env : Env := { ns := spec.ns, baseUri := if spec.baseUri == "#UNDEFINED" then "" else spec.baseUri,
+  let mut env : Env := { features, ns := spec.ns, baseUri := if spec.baseUri == "#UNDEFINED" then "" else spec.baseUri,
                          resourceEncodings := spec.resourceEncodings }
   if xq then env := env.bind xqMode []
   if let some c := spec.defaultCollation then env := { env with defaultCollation := c }
   -- XSD11: the in-scope schema definitions and the validated sources
   let sch ← if spec.schemas.isEmpty then pure none
-    else pure (some (← L4Factoidal.XSD11.loadSchemaCached (spec.schemas.map (·.2))))
+    else pure (some (← L4Factoidal.XSD11.loadSchemaCached (spec.schemas.map (·.2)) features.xsdVersion))
   match sch with
   | some s =>
     if !s.errors.isEmpty then return .error ("schema not valid: " ++ toString (s.errors.take 2))
@@ -793,7 +841,7 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool
   | none =>
     -- no schema in the environment: the built-in types only (lax validation,
     -- xsi:type with built-in types, fn:xsd-validator with a schema option)
-    env := { env with schema := L4Factoidal.XSD11.schemaHookOf L4Factoidal.XSD11.Schema.builtins }
+    env := { env with schema := L4Factoidal.XSD11.schemaHookOf (L4Factoidal.XSD11.Schema.builtinsFor features.xsdVersion) }
   for (role, file, uri0) in spec.sources do
     -- a source without a uri gets its file URI as its document URI
     -- (implementation-defined, F&O 4.0 §2.5)
@@ -934,12 +982,13 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       t := { t with fail := t.fail + 1 }
       if o.listFails then fails := fails ++ [s!"FAIL {setName}/{name}: not run (does not terminate in this implementation)"]
       continue
-    match ← buildEnv spec cache xq with
+    let settings := featureSettings (setDeps ++ deps)
+    match ← buildEnv spec cache xq settings with
     | .error why =>
         t := { t with unsup := t.unsup + 1 }
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
     | .ok env =>
-      let env := (configureUpd (setDeps ++ deps) env).restrictFeatures (featureSettings (setDeps ++ deps))
+      let env := (configureUpd (setDeps ++ deps) env).restrictFeatures settings
       -- the static base URI, when the environment sets none, is the
       -- location of the test set (implementation-defined, XPath 4.0 C.1)
       -- (`#UNDEFINED`: the test wants the base URI absent)
@@ -948,7 +997,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         let abs ← try pure (← IO.FS.realPath dir).toString catch _ => pure dir
         pure { env with baseUri := "file://" ++ abs ++ "/" }
       let (scanned, scannedBins) ← if undefBase then pure ([], []) else
-        scanResources o.root dir (String.intercalate " " (src :: spec.params.map (·.2)))
+        scanResources o.root dir (String.intercalate " " (src :: spec.params.map (·.2))) env.features.schemaLocationHints
       let env := { env with resources := env.resources ++ scanned,
                             resourceBytes := env.resourceBytes ++ scannedBins }
       -- the files that the source documents name (an XSLT module that a
@@ -957,7 +1006,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       for (_, file, _) in spec.sources do
         if !file.endsWith ".xsl" then continue
         if let some txt ← readFileSafe file then
-          let (found, _) ← scanResources o.root (dirOf file) txt
+          let (found, _) ← scanResources o.root (dirOf file) txt env.features.schemaLocationHints
           fromSources := fromSources ++ found.filter (fun (k, _) => !(env.resources.any (·.1 == k)))
       let env := { env with resources := env.resources ++ fromSources }
       -- XQuery library modules named by the test case (`import module`)
@@ -971,7 +1020,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       for md in kidsNamed tc "module" do
         let f := dir ++ "/" ++ attrD md "file"
         if let some txt ← readFileSafe f then
-          let (found, _) ← scanResources o.root (dirOf f) txt
+          let (found, _) ← scanResources o.root (dirOf f) txt env.features.schemaLocationHints
           fromMods := fromMods ++ found.filter (fun (k, _) => !(env.resources.any (·.1 == k)))
       let env := { env with resources := env.resources ++ mods ++ fromMods }
       -- fn:load-xquery-module through the XQuery 4.0 processor

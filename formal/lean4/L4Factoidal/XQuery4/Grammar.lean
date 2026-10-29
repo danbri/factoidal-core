@@ -800,6 +800,11 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) (encl : List (String × String) := []
             let e ← if chAt s (j+1) == '!' then pDirComment
               else if chAt s (j+1) == '?' then pDirPI
               else pDirElem cfg sp encl' f
+            -- A literal child is newly constructed in its own namespace
+            -- context. Enclosed expressions instead supply nodes to copy.
+            let e := match e with
+              | .ext "elem" es ts qs ss => .ext "elem" es ts qs (ss ++ ["#direct-child"])
+              | other => other
             ps := ps.push (.bound (tagAt j e))
         else if ch == '{' && chAt s (j+1) == '{' then buf := buf.push '{'; adv 2
         else if ch == '}' && chAt s (j+1) == '}' then buf := buf.push '}'; adv 2

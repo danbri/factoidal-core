@@ -216,9 +216,9 @@ def maxQuant (p : String) : Nat := Id.run do
       cur := if c == ',' then (if cur.isSome then some 0 else none) else none
   pure best
 
-def compileRe (p f : String) : M Regex.Compiled :=
+def compileRe (p f : String) (version : XSD.Version := .v11) : M Regex.Compiled :=
   if maxQuant p > 1000 then err "FOER0000" "implementation limit: regex quantifier above 1000" else
-  match Regex.Profiles.compileXPath40 p f with
+  match Regex.Profiles.compileXPath40Version version p f with
   | .ok r => pure r
   | .error e => regexErr e
 
@@ -280,8 +280,8 @@ def fCeil (f : Float) : Float := let r := f.ceil; if r == 0 && f < 0 then -0.0 e
 
 /-! ## Aggregates -/
 
-def untypedToDouble (a : Atomic) : M Atomic :=
-  if a.ty == .untyped then castAtomic a (.b .double) else pure a
+def untypedToDouble (a : Atomic) (version : XSD.Version := .v11) : M Atomic :=
+  if a.ty == .untyped then castAtomicVersion version a (.b .double) else pure a
 
 def addAtoms0 (a b : Atomic) : M Atomic := do
   match a.num?, b.num? with
@@ -299,24 +299,24 @@ def addAtoms0 (a b : Atomic) : M Atomic := do
 /-- `addAtoms0` with the duration limits (`checkLimits`). -/
 def addAtoms (a b : Atomic) : M Atomic := do checkLimits (← addAtoms0 a b)
 
-def sumAtoms (as : List Atomic) (zero : Seq) : M Seq := do
+def sumAtoms (as : List Atomic) (zero : Seq) (version : XSD.Version := .v11) : M Seq := do
   match as with
   | [] => pure zero
   | a :: rest =>
-    let a ← untypedToDouble a
+    let a ← untypedToDouble a version
     if !(a.isNumeric || a.is .yearMonthDuration || a.is .dayTimeDuration) then
       err "FORG0006" ("cannot sum xs:" ++ a.ty.name)
     let mut acc := a
     for b in rest do
-      let b ← untypedToDouble b
+      let b ← untypedToDouble b version
       acc ← addAtoms acc b
     pure (single acc)
 
-def minMax (isMax : Bool) (as : List Atomic) : M Seq := do
+def minMax (isMax : Bool) (as : List Atomic) (version : XSD.Version := .v11) : M Seq := do
   match as with
   | [] => pure []
   | _ =>
-    let as ← as.mapM (fun a => if a.ty == .untyped then castAtomic a (.b .double) else pure a)
+    let as ← as.mapM (fun a => if a.ty == .untyped then castAtomicVersion version a (.b .double) else pure a)
     -- promote numerics to a common type
     let numeric := as.all Atomic.isNumeric
     let as := if numeric then
@@ -340,9 +340,9 @@ def minMax (isMax : Bool) (as : List Atomic) : M Seq := do
 
 /-- `fn:min`/`fn:max` under a collation (F&O 4.0 §14.4.3): strings
     compare under `c`; other values as without one. -/
-def minMaxC (c : Coll) (isMax : Bool) (as : List Atomic) : M Seq := do
-  if c.isCodepoint then minMax isMax as else
-  let as' ← as.mapM (fun a => if a.ty == .untyped then castAtomic a (.b .double) else pure a)
+def minMaxC (c : Coll) (isMax : Bool) (as : List Atomic) (version : XSD.Version := .v11) : M Seq := do
+  if c.isCodepoint then minMax isMax as version else
+  let as' ← as.mapM (fun a => if a.ty == .untyped then castAtomicVersion version a (.b .double) else pure a)
   match as' with
   | x :: rest =>
     if as'.all (fun a => a.is .string || a.is .anyURI) then
@@ -354,7 +354,7 @@ def minMaxC (c : Coll) (isMax : Bool) (as : List Atomic) : M Seq := do
         | .eq => pure ()
       let mixed := as'.any (fun a => a.is .anyURI) && as'.any (fun a => a.is .string)
       pure (single (if mixed then Atomic.ofStr best.str else best))
-    else minMax isMax as
+    else minMax isMax as version
   | [] => pure []
 
 /-! ## Sorting -/
@@ -384,8 +384,8 @@ def msortM {α} (lt : α → α → M Bool) : Nat → List α → M (List α)
 
 /-- `fn:highest` and `fn:lowest` (F&O 4.0 §14.4.4): an untyped key value
     is cast to xs:double (FORG0001 when it cannot be). -/
-def untypedToDoubleKey (k : Atomic) : M Atomic :=
-  if k.ty == .untyped then castAtomic k (.b .double) else pure k
+def untypedToDoubleKey (k : Atomic) (version : XSD.Version := .v11) : M Atomic :=
+  if k.ty == .untyped then castAtomicVersion version k (.b .double) else pure k
 
 /-- Compare two atomic values for sorting (F&O 4.0 §15.2.4): NaN is
     least, values compare by `lt`; incomparable is XPTY0004. -/
@@ -718,30 +718,30 @@ def fnTable : List (String × LibFn) := [
   ent "encode-for-uri" (fun _ _ a => pure (sStr (Fn.String.encodeForUri (strOf (argN a 0))))),
   ent "iri-to-uri" (fun _ _ a => pure (sStr (Fn.String.iriToUri (strOf (argN a 0))))),
   ent "escape-html-uri" (fun _ _ a => pure (sStr (Fn.String.escapeHtmlUri (strOf (argN a 0))))),
-  ent "matches" (fun _ _ a => do
-    let r ← compileRe (strOf (argN a 1)) (strOf (argN a 2))
+  ent "matches" (fun _ e a => do
+    let r ← compileRe (strOf (argN a 1)) (strOf (argN a 2)) e.features.xsdVersion
     pure (sBool (Regex.isMatch r (strOf (argN a 0))))),
-  ent "replace" (fun _ _ a => do
+  ent "replace" (fun _ e a => do
     match argN a 2 with
     | [.fn _] | [.map _] | [.arr _] => err "XPST0017" "fn:replace with an action function is not implemented"
     | _ => pure ()
-    let r ← compileRe (strOf (argN a 1)) (strOf (argN a 3))
+    let r ← compileRe (strOf (argN a 1)) (strOf (argN a 3)) e.features.xsdVersion
     match Regex.replace r (strOf (argN a 0)) (strOf (argN a 2)) with
     | .ok out => pure (sStr out)
     | .error e => regexErr e),
-  ent "tokenize" (fun _ _ a => do
+  ent "tokenize" (fun _ e a => do
     let s := strOf (argN a 0)
     if (argN a 1).isEmpty then
       pure ((normSpace s).splitOn " " |>.filter (· != "") |>.map (fun t => .atom (Atomic.ofStr t)))
     else
       let p := strOf (argN a 1)
       let f := strOf (argN a 2)
-      let _ ← compileRe p f
+      let _ ← compileRe p f e.features.xsdVersion
       if s == "" then pure [] else
       -- every match becomes a separator character absent from the input
       -- (fn:replace with a literal replacement), then the string is split
       let sep : Char := (([0xE000, 0xE001, 0xE002, 0xF8FF, 0x10FFFD].map Char.ofNat).find? (fun c => !s.toList.contains c)).getD (Char.ofNat 0x10FFFC)
-      let r ← compileRe p f
+      let r ← compileRe p f e.features.xsdVersion
       match Regex.replace r s (String.ofList [sep]) with
       | .ok out => pure ((out.splitOn (String.ofList [sep])).map (fun t => .atom (Atomic.ofStr t)))
       | .error e => regexErr e),
@@ -763,7 +763,7 @@ def fnTable : List (String × LibFn) := [
     | some x => single (roundNum x (if (argN a 1).isEmpty then 0 else intOf (argN a 1)) true) | none => [])),
   ent "number" (fun _ e a => do
     match ← e.atomize (argN a 0) with
-    | [x] => match castAtomic x (.b .double) with
+    | [x] => match e.castAtomic x (.b .double) with
         | .ok d => pure (single d)
         | .error _ => pure (single (Atomic.ofDbl (0.0 / 0.0)))
     | _ => pure (single (Atomic.ofDbl (0.0 / 0.0)))),
@@ -846,15 +846,15 @@ def fnTable : List (String × LibFn) := [
   ent "zero-or-one" (fun _ _ a => if (argN a 0).length ≤ 1 then pure (argN a 0) else err "FORG0003" "more than one item"),
   ent "one-or-more" (fun _ _ a => if (argN a 0).length ≥ 1 then pure (argN a 0) else err "FORG0004" "empty sequence"),
   ent "exactly-one" (fun _ _ a => if (argN a 0).length == 1 then pure (argN a 0) else err "FORG0005" "not exactly one item"),
-  ent "sum" (fun _ _ a => do
+  ent "sum" (fun _ e a => do
     let as := (argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none)
-    sumAtoms as (if (argN a 1).isEmpty && a.length < 2 then sInt 0 else argN a 1)),
-  ent "avg" (fun _ _ a => do
+    sumAtoms as (if (argN a 1).isEmpty && a.length < 2 then sInt 0 else argN a 1) e.features.xsdVersion),
+  ent "avg" (fun _ e a => do
     let as := (argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none)
     match as with
     | [] => pure []
     | _ =>
-      let s ← sumAtoms as []
+      let s ← sumAtoms as [] e.features.xsdVersion
       match s with
       | [.atom t] =>
         match t.num? with
@@ -871,10 +871,10 @@ def fnTable : List (String × LibFn) := [
       | _ => pure []),
   ent "max" (fun _ e a => do
     let c ← e.collation (argN a 1)
-    minMaxC c true ((argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none))),
+    minMaxC c true ((argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none)) e.features.xsdVersion),
   ent "min" (fun _ e a => do
     let c ← e.collation (argN a 1)
-    minMaxC c false ((argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none))),
+    minMaxC c false ((argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none)) e.features.xsdVersion),
   ent "all-equal" (fun _ e a => do
     let c ← e.collation (argN a 1)
     let as := (argN a 0).filterMap (fun i => match i with | .atom x => some (collProxy c x) | _ => none)
@@ -959,8 +959,8 @@ def fnTable : List (String × LibFn) := [
     let xs := argN a 0
     let keyOf (x : Item) : M (List Atomic) := do
       match argN a 2 with
-      | [] => ((← e.atomize [x]).mapM (fun k => untypedToDoubleKey k)).map (·.map (collProxy c))
-      | f :: _ => ((← e.atomize (← h.callN f [[x]])).mapM (fun k => untypedToDoubleKey k)).map (·.map (collProxy c))
+      | [] => ((← e.atomize [x]).mapM (fun k => untypedToDoubleKey k e.features.xsdVersion)).map (·.map (collProxy c))
+      | f :: _ => ((← e.atomize (← h.callN f [[x]])).mapM (fun k => untypedToDoubleKey k e.features.xsdVersion)).map (·.map (collProxy c))
     let ks ← xs.mapM keyOf
     let mut best : List (Item × List Atomic) := []
     for (x, k) in xs.zip ks do
@@ -977,8 +977,8 @@ def fnTable : List (String × LibFn) := [
     let xs := argN a 0
     let keyOf (x : Item) : M (List Atomic) := do
       match argN a 2 with
-      | [] => ((← e.atomize [x]).mapM (fun k => untypedToDoubleKey k)).map (·.map (collProxy c))
-      | f :: _ => ((← e.atomize (← h.callN f [[x]])).mapM (fun k => untypedToDoubleKey k)).map (·.map (collProxy c))
+      | [] => ((← e.atomize [x]).mapM (fun k => untypedToDoubleKey k e.features.xsdVersion)).map (·.map (collProxy c))
+      | f :: _ => ((← e.atomize (← h.callN f [[x]])).mapM (fun k => untypedToDoubleKey k e.features.xsdVersion)).map (·.map (collProxy c))
     let ks ← xs.mapM keyOf
     let mut best : List (Item × List Atomic) := []
     for (x, k) in xs.zip ks do
@@ -1109,9 +1109,9 @@ def fnTable : List (String × LibFn) := [
   ent "default-collation" (fun _ e _ => pure (sStr e.defaultCollation)),
   ent "default-language" (fun _ _ _ => pure (single ⟨.b .language, .str "en"⟩)),
   ent "static-base-uri" (fun _ e _ => pure (if e.baseUri == "" then [] else single (Atomic.ofUri e.baseUri))),
-  ent "current-dateTime" (fun _ e _ => do pure (single (← castFromString e.now (.b .dateTimeStamp)))),
-  ent "current-date" (fun _ e _ => do pure (single (← castAtomic (← castFromString e.now (.b .dateTime)) (.b .date)))),
-  ent "current-time" (fun _ e _ => do pure (single (← castAtomic (← castFromString e.now (.b .dateTime)) (.b .time)))),
+  ent "current-dateTime" (fun _ e _ => do pure (single (← castFromStringVersion e.features.xsdVersion e.now (.b (if e.features.xsdVersion == .v10 then .dateTime else .dateTimeStamp))))),
+  ent "current-date" (fun _ e _ => do pure (single (← e.castAtomic (← castFromStringVersion e.features.xsdVersion e.now (.b .dateTime)) (.b .date)))),
+  ent "current-time" (fun _ e _ => do pure (single (← e.castAtomic (← castFromStringVersion e.features.xsdVersion e.now (.b .dateTime)) (.b .time)))),
   ent "implicit-timezone" (fun _ e _ => pure (single ⟨.b .dayTimeDuration, .x (.dur { months := 0, seconds := Dec.ofInt (e.tz * 60) })⟩)),
   -- QNames
   ent "QName" (fun _ _ a => do
@@ -1404,6 +1404,14 @@ def fnTable2 : List (String × LibFn) := [
             match e.ctx with
             | some c => pure [.fn (.papp (.fn (.builtin q 1)) [some c])]
             | none => pure [.fn (.builtin q 0)]
+          else pure []
+        else if ((e.schema.typeInfo q).bind (·.cast)).isSome then
+          let f := FnItem.scoped e.schema e.features (.builtin q 1)
+          if k == 1 then pure [.fn f]
+          else if k == 0 then
+            match e.ctx with
+            | some c => pure [.fn (.papp (.fn f) [some c])]
+            | none => pure [.fn (.scoped e.schema e.features (.builtin q 0))]
           else pure []
         else if q.uri == nsFN && q.loc == "concat" then pure [.fn (.builtin q k.toNat)]
         else if q.uri == nsFN && k == 0 && (q.loc == "position" || q.loc == "last") && e.ctx.isSome then

@@ -33,26 +33,28 @@ open L4Factoidal.XPath4 (Atomic AType QN Doc NRec Env Item NodeRef castFromStrin
 
 /-- The XDM atomic values of a schema-normalized literal of simple type
 `body` (a Part 2 type). `none` when the literal is not valid. -/
-def atomsOfBody (ns : String → Option String) : Nat → XSD.SimpleType → String → Option (List Atomic)
+def atomsOfBodyVersion (version : XSD.Version) (ns : String → Option String) : Nat → XSD.SimpleType → String → Option (List Atomic)
   | 0, _, _ => none
   | f + 1, t, lit =>
     match t with
     | .atomic b _ =>
       if b == .anySimpleType || b == .anyAtomicType then some [Atomic.untypedOf lit]
-      else match castFromString lit (.b b) ns with
+      else match XPath4.castFromStringVersion version lit (.b b) ns with
         | .ok a => some [a]
         | .error _ => none
     | .list item _ =>
       let toks := (lit.splitOn " ").filter (· != "")
-      let rs := toks.map (atomsOfBody ns f item)
+      let rs := toks.map (atomsOfBodyVersion version ns f item)
       if rs.all Option.isSome then some (rs.filterMap id).flatten else none
     | .union ms _ =>
-      (ms.find? (fun m => (XSD.valueOf m lit).isSome)).bind (fun m => atomsOfBody ns f m lit)
+      (ms.find? (fun m => (XSD.valueOfVersion version m lit).isSome)).bind (fun m => atomsOfBodyVersion version ns f m lit)
+
+def atomsOfBody (ns : String → Option String) := atomsOfBodyVersion .v11 ns
 
 /-- The typed value of a node of simple type (or simple content) `t`. -/
 def atomsOf (s : Schema) (ns : String → Option String) (t : Nat) (norm : String) : Option (List Atomic) :=
   match s.simpleOf? t with
-  | some sd => atomsOfBody ns 16 sd.body norm
+  | some sd => atomsOfBodyVersion s.version ns 16 sd.body norm
   | none => none
 
 def xnameQN (n : XName) : QN := { uri := n.ns, loc := n.loc }

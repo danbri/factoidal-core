@@ -551,3 +551,8 @@ The settings also reach the parser and module checks. The qt4tests runner
 selects restrictions from negative feature dependencies. See the
 [design record](../../docs/designissues/2026-10-29-processor-feature-settings.md)
 and [measured report](../../docs/20261029-processor-feature-settings.md).
+
+For XML Schema edition settings and schema location hints, see the
+[XSD 1.0 configuration design](../../docs/designissues/2026-10-29-xsd10-configuration.md)
+and [worknote](../../docs/20261029-xsd10-configuration.md). Choose the edition
+before schema loading and source validation; keep it in the schema cache key.

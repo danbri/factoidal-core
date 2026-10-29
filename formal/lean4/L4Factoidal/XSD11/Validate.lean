@@ -180,15 +180,17 @@ def Schema.simpleAsserts (s : Schema) : Nat → Nat → List Assertion
 level on the whole literal, the item type on each item, a union's member
 on the value), decided by `XSD11.Pattern` (the shared XSD profile, then
 the F&O 4.0 parser for the XSD 1.1 syntax the profile refuses). -/
-def bodyPatternsOk : Nat → XSD.SimpleType → String → Bool
-  | 0, _, _ => true
-  | f + 1, t, lit =>
+def bodyPatternsOk (fuel : Nat) (t : XSD.SimpleType) (lit : String)
+    (version : XSD.Version := .v11) : Bool :=
+  match fuel with
+  | 0 => true
+  | f + 1 =>
     let norm := XSD.applyWhiteSpace t.whiteSpaceOf lit
-    patternOk11 t.facets.patterns norm &&
+    patternOkVersion version t.facets.patterns norm &&
     (match t with
      | .atomic _ _ => true
-     | .list it _ => ((norm.splitOn " ").filter (· != "")).all (bodyPatternsOk f it)
-     | .union ms _ => ms.any (fun m => (XSD.valueOf m norm).isSome && bodyPatternsOk f m norm))
+     | .list it _ => ((norm.splitOn " ").filter (· != "")).all (fun v => bodyPatternsOk f it v version)
+     | .union ms _ => ms.any (fun m => (XSD.valueOfVersion version m norm).isSome && bodyPatternsOk f m norm version))
 
 /-- The enumeration in force on a simple type and the bindings of the
 step that declared it. -/
@@ -231,7 +233,7 @@ def validateSimple (s : Schema) (h : Hooks) (bs : NsBindings) (t : Nat) (lit : S
     -- QName and NOTATION enumerations compare expanded names (Part 2
     -- §3.3.18): the facet values with the schema's bindings, below
     let qEnum := sd.qEnum
-    match (XSD.valueOf sd.checkBody lit).filter (fun _ => bodyPatternsOk 16 sd.body lit) with
+    match (XSD.valueOfVersion s.version sd.checkBody lit).filter (fun _ => bodyPatternsOk 16 sd.body lit s.version) with
     | none => (.error s!"'{lit}' is not valid for {(sd.name.map XName.show).getD "an anonymous type"}", unsup)
     | some v =>
       -- QName and NOTATION values need their prefixes declared.

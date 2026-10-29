@@ -17,12 +17,17 @@ A NODE is a reference `(document, index)` into a document table
 in lexicographic order.
 -/
 import L4Factoidal.XPath4.Atomic
+import L4Factoidal.XML.Document
 
 namespace L4Factoidal.XPath4
+
+open L4Factoidal.XSD
 
 /-- Optional processor features (XPath 4.0 §2.2.1, XQuery 4.0 §2.2.1).
     The default configuration enables every implemented feature. -/
 structure FeatureSettings where
+  xsdVersion : XSD.Version := .v11
+  schemaLocationHints : Bool := false
   loadXQueryModule : Bool := true
   transform : Bool := true
   transform30 : Bool := true
@@ -44,6 +49,7 @@ def FeatureSettings.disable (s : FeatureSettings) (name : String) : FeatureSetti
   | "fn-invisible-xml" => { s with invisibleXml := false }
   | "binary" => { s with binary := false }
   | "expath-file" => { s with file := false }
+  | "schema-location-hint" => { s with schemaLocationHints := false }
   | "schemaImport" => { s with schemaImport := false }
   | "schemaValidation" => { s with schemaValidation := false }
   | "typedData" => { s with typedData := false }
@@ -54,14 +60,15 @@ def FeatureSettings.disable (s : FeatureSettings) (name : String) : FeatureSetti
 def FeatureSettings.switchable (name : String) : Bool :=
   ["fn-load-xquery-module", "fn-transform-XSLT", "fn-transform-XSLT30",
    "fn-invisible-xml", "binary", "expath-file", "schemaImport",
-   "schemaValidation", "typedData", "serialization"].contains name
+   "schemaValidation", "typedData", "serialization", "schema-location-hint"].contains name
 
 /-- Functions absent from the static context when their feature is off.
     `transform`, `serialize`, and `load-xquery-module` retain their
     F&O error fallbacks (FOXT0004, FODC0010 and FOQM0006), as
     required by qt4tests fn-load-xquery-module-901 through -914. -/
 def FeatureSettings.functionEnabled (s : FeatureSettings) (q : QN) : Bool :=
-  if q.uri == "http://expath.org/ns/binary" then s.binary
+  if q.uri == nsXS && s.xsdVersion == .v10 && q.loc == "dateTimeStamp" then false
+  else if q.uri == "http://expath.org/ns/binary" then s.binary
   else if q.uri == "http://expath.org/ns/file" then s.file
   else if q.uri == nsFN then
     match q.loc with
@@ -321,6 +328,97 @@ structure JStep where
   pos : Nat
 deriving Inhabited
 
+def untypedQN : QN := { uri := nsXS, loc := "untyped" }
+def untypedAtomicQN : QN := { uri := nsXS, loc := "untypedAtomic" }
+def anyTypeQN : QN := { uri := nsXS, loc := "anyType" }
+
+/-- Type derivation between built-in type names (XDM 4.0 §2.7.4): every
+type derives from `xs:anyType`; `xs:untyped` and the simple types from it;
+`xs:untypedAtomic` and the atomic built-ins from `xs:anyAtomicType`. -/
+def builtinTypeDerives (t u : QN) : Bool :=
+  t == u || u == anyTypeQN ||
+  -- xs:numeric is the union of xs:double, xs:float and xs:decimal: a type
+  -- derives from it when it derives from a member (XPath 4.0 §3.3.1.1)
+  (u.uri == nsXS && u.loc == "numeric" && t.uri == nsXS &&
+    (match builtinOfName? t.loc with
+     | some a => derivedFrom a .double || derivedFrom a .float || derivedFrom a .decimal
+     | none => false)) ||
+  (t.uri == nsXS && u.uri == nsXS &&
+    (if t.loc == "untypedAtomic" then u.loc == "anyAtomicType" || u.loc == "anySimpleType"
+     else match builtinOfName? t.loc, builtinOfName? u.loc with
+       | some a, some b => derivedFrom a b || b == .anySimpleType
+       | _, _ => false))
+
+/-- A type definition of the in-scope schema that is not a built-in type
+(`fn:schema-type`, `fn:node-type-annotation`, F&O 4.0 §20.1). -/
+structure SchemaTypeInfo where
+  /-- The type name; `none` for an anonymous type. -/
+  name : Option QN
+  simple : Bool
+  /-- The annotation name of the base type (a built-in type, or one that
+      `SchemaHook.typeInfo` knows). -/
+  base : QN
+  /-- The primitive type of an atomic type. -/
+  primitive : Option QN := none
+  /-- `atomic`, `list`, `union`, or for a complex type the content type
+      variety: `empty`, `simple`, `element-only`, `mixed`. -/
+  variety : String
+  /-- The typed value of a lexical form validated against the type;
+      `none` when the form is not valid. Absent for a complex type. -/
+  cast : Option (String → Option (List Atomic)) := none
+deriving Inhabited
+
+/-- Hook for schema-aware processing (`L4Factoidal.XSD11` supplies one
+from a schema): type derivation by type name, the global element and
+attribute declarations, and substitution groups. The default knows the
+built-in types only and has no declarations. -/
+structure SchemaHook where
+  sourceDocuments : List (String × L4Factoidal.XML.Document) := []
+  sourceRoots : List String := []
+  substitutionType : QN → QN → Bool := fun _ _ => false
+  elemAbstract : QN → Bool := fun _ => false
+  /-- `derives t u`: type `t` is `u` or derived from it. -/
+  derives : QN → QN → Bool := builtinTypeDerives
+  /-- The type and `nillable` of the global element declaration of a name. -/
+  elemDecl : QN → Option (QN × Bool) := fun _ => none
+  /-- The type of the global attribute declaration of a name. -/
+  attrDecl : QN → Option QN := fun _ => none
+  /-- `substitutes n h`: an element named `n` may stand for head `h`. -/
+  substitutes : QN → QN → Bool := fun _ _ => false
+  /-- The target namespaces the schema has components for (XQuery
+      `import schema`, XQST0059). -/
+  targetNamespaces : List String := []
+  /-- Validate a document element against the in-scope schema (`xsd-validation`
+      of `fn:parse-xml` and `fn:doc`): the mode (`strict`, `lax` or
+      `type Q{uri}local`), the element, the document URI; the typed document
+      or the error. `none`: this processor has no schema to validate with. -/
+  validate : Option (String → L4Factoidal.XML.Node → String → Except Err Doc) := none
+  /-- The same for a node of a document already built (XQuery `validate`):
+      the mode, the document, the node's index, the document URI. -/
+  validateIn : Option (String → Doc → Nat → String → Except Err Doc) := none
+  /-- `fn:xsd-validator`: the mode, schema documents given in the options
+      (document or element nodes; none means the in-scope schema), the
+      document, the node's index, the URI; the typed document when valid,
+      and the error messages. -/
+  validateWith : Option (String → List (Doc × Nat) → Doc → Nat → String →
+      Except Err (Option Doc × List String)) := none
+  /-- Validate the XML result of an F&O 4.0 function in the `fn` namespace
+      (`fn:json-to-xml` with `validate`, `fn:analyze-string`) against the
+      F&O 4.0 result schemas (`XSD11.FnSchemas`): the document element and
+      the document URI; the typed document or the error. `none`: this
+      processor is not schema-aware. -/
+  validateFnNs : Option (L4Factoidal.XML.Node → String → Except Err Doc) := none
+  /-- The type definitions of the in-scope schema by annotation name
+      (`NRec.tann`); `none` for a built-in type or an unknown name. -/
+  typeInfo : QN → Option SchemaTypeInfo := fun _ => none
+deriving Inhabited
+
+/-- The in-scope element (`true`) or attribute (`false`) declaration test
+    for the parser (`PCtx.schemaDecl`, XPST0008 of `schema-element()` and
+    `schema-attribute()`). -/
+def SchemaHook.declared (h : SchemaHook) (isElem : Bool) (q : QN) : Bool :=
+  if isElem then (h.elemDecl q).isSome else (h.attrDecl q).isSome
+
 mutual
 inductive Item where
   | atom (a : Atomic)
@@ -336,6 +434,9 @@ inductive Item where
       `root` with the step positions; ·jparent· drops the first step. -/
   | jnode (root : UInt64) (steps : List JStep) (val : List Item) (up : List (List Item))
 inductive FnItem where
+  /-- A function returned by a loaded module retains its static schema
+      and processor configuration when called from another context. -/
+  | scoped (schema : SchemaHook) (features : FeatureSettings) (fn : FnItem)
   | builtin (q : QN) (arity : Nat)
   | inline (ps : List (QN × IType)) (ret : IType) (body : Expr) (focus : Bool)
            (closure : List (QN × List Item))
@@ -349,8 +450,12 @@ instance : Inhabited Item := ⟨.atom default⟩
 abbrev Seq := List Item
 
 def FnItem.arity : FnItem → Nat
+  | .scoped _ _ f => f.arity
   | .builtin _ n => n
   | .inline ps _ _ focus _ => if focus then 1 else ps.length
   | .papp _ args => (args.filter Option.isNone).length
+
+@[simp] theorem FnItem.arity_scoped (schema : SchemaHook) (features : FeatureSettings) (f : FnItem) :
+    (FnItem.scoped schema features f).arity = f.arity := rfl
 
 end L4Factoidal.XPath4
