@@ -2017,3 +2017,4 @@ L4Factoidal_RIF_Prd_qualifyLocalTm  # (b) nesting of one RIF term; the sibling l
 # --- WHATWG URL in Lean (https://github.com/danbri/factoidal/issues/1167, milestone 3)
 Harness_WhatwgUrl_allStrings  # (c) depth is the generated string length, the constant 6 in `l4whatwg-url rfc3986`
 L4Factoidal_WHATWG_URL_Theorems_joinSlash  # (s) used only by WHATWG/URL/Theorems.lean; the parser serializes paths with Array.foldl (Url.serializePath)
+L4Factoidal_XPath4_FeatureSettings_checkExpr  # (b) the depth is the nesting of the query expression: the static check of disabled features walks the AST (depth, L4Factoidal/XPath4/Eval.lean)
