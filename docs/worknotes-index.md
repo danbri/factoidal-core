@@ -165,3 +165,5 @@ worknote, kept as the record of a decision or a measurement),
 - [2026-10-30: Lean GPU render plans and remaining host boundary](designissues/2026-10-30-lean-render-plan.md).
 - [2026-10-30: FOAFNaut live presentation admission](20261030-foafnaut-live-presentation.md): opaque Lean state, acknowledged picking, retained approved geometry, 64 WASM/host tests and 12 C checks.
 | 2026-10-30 | [HTML parser and public API integration](20261030-html-public-integration.md) | same commit | current main integrated, both gate sets preserved, public PI/namespace/template/error regressions; fresh native API and HTML/QT4 controls pass; fresh WASM CI remains required; https://github.com/danbri/factoidal-core/pull/269 |
+
+| 2026-10-30 | [Hub Data Compositor and shared code output](20261030-hub-data-compositor.md) | same commit | pinned public engine, editable visual pipeline, honest component evidence, shared output controls and focused browser checks |
