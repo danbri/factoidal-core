@@ -1,0 +1,8 @@
+/* Scoped GitHub light/dark syntax colors; no global Primer CSS. */
+.code-output{display:block;min-width:0}.code-output pre,pre:has(>.shiki-code){background:#fff;color:#24292e;border:1px solid #d0d7de;border-radius:6px;overflow:auto;tab-size:2}
+.code-output pre{margin:0;padding:14px}.code-output code,.shiki-code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre;line-height:1.55}
+.code-output-controls{display:flex;gap:6px;justify-content:flex-end;margin:8px 0 4px}.code-output-controls button{font:12px system-ui;color:#24292e;background:#f6f8fa;border:1px solid #d0d7de;border-radius:5px;padding:4px 9px;cursor:pointer}.code-output-controls button:focus-visible{outline:2px solid #0969da;outline-offset:2px}.code-output-controls button[aria-pressed=true]{background:#ddf4ff}
+pre.code-wrap>.shiki-code{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(prefers-color-scheme:dark){.code-output pre,pre:has(>.shiki-code){background:#24292e;color:#e1e4e8;border-color:#444d56}.shiki-code span{color:var(--shiki-dark)!important}.code-output-controls button{color:#e1e4e8;background:#2f363d;border-color:#444d56}.code-output-controls button[aria-pressed=true]{background:#044289}}
+
+.code-output pre{max-height:28rem}.code-output-controls:has(+pre[hidden]){display:none}

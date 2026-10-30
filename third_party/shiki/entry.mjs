@@ -1,0 +1,20 @@
+import {createHighlighterCore} from '@shikijs/core';
+import {createJavaScriptRegexEngine} from '@shikijs/engine-javascript';
+import light from '@shikijs/themes/github-light';
+import dark from '@shikijs/themes/github-dark';
+import javascript from '@shikijs/langs/javascript';
+import typescript from '@shikijs/langs/typescript';
+import json from '@shikijs/langs/json';
+import xml from '@shikijs/langs/xml';
+import html from '@shikijs/langs/html';
+import css from '@shikijs/langs/css';
+import sql from '@shikijs/langs/sql';
+import turtle from '@shikijs/langs/turtle';
+import sparql from '@shikijs/langs/sparql';
+import lean from '@shikijs/langs/lean';
+import bash from '@shikijs/langs/bash';
+import markdown from '@shikijs/langs/markdown';
+import yaml from '@shikijs/langs/yaml';
+const highlighter = await createHighlighterCore({themes:[light,dark],langs:[javascript,typescript,json,xml,html,css,sql,turtle,sparql,lean,bash,markdown,yaml],engine:createJavaScriptRegexEngine({forgiving:true})});
+export const languages = highlighter.getLoadedLanguages();
+export function highlight(code,language='text'){ return highlighter.codeToHtml(code,{lang:languages.includes(language)?language:'text',themes:{light:'github-light',dark:'github-dark'}}); }
