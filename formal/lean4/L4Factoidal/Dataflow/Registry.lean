@@ -841,6 +841,18 @@ def registry : List Entry := [
     wireIn := .xml, wireOut := .xml, params := ["query"], status := .tested
     tests := ["qt4tests b39c4bc0 upd (lake exe l4qt4 --isolate 60 --lang xquery --family upd): 792 pass, 0 fail, 27 unsupported of 819; 6 excluded (defective test data, https://github.com/danbri/factoidal/issues/1176)"]
     note := "XQueryUpdate is not in the library root; its theorems (XQueryUpdate/Theorems.lean: docOfXT_wf, applyDoc_wf, applyUpdates_nil, flatU_true_eq_flatXT, agreement of copy modify and fn:update on examples) are checked by lake build l4qt4 (docs/designissues/2026-10-28-xquery-update.md)" },
+  { area := "xpath4Eval", dir := "XPath4"
+    wireIn := .text, wireOut := .xdmResult, params := ["expression"], status := .tested
+    tests := ["Wasm/Ops/Qt4.lean dispatch guards", "npm/factoidal/test/qt4.test.mjs", "npm/factoidal/test/qt4-public.test.mjs"]
+    note := "Public XPath 4.0 adapter: XML context text (empty means no context item) to a serialized XDM result envelope; no stage contract. The existing XPath4 engine is tested separately. Pure inline fn:transform is available; external resource I/O and schema-provider contexts are not supplied." },
+  { area := "xqueryEval", dir := "XQuery4"
+    wireIn := .text, wireOut := .xdmResult, params := ["query"], status := .tested
+    tests := ["Wasm/Ops/Qt4.lean dispatch guards", "npm/factoidal/test/qt4.test.mjs", "npm/factoidal/test/qt4-public.test.mjs"]
+    note := "Public XQuery 4.0 adapter: XML context text (empty means no context item) and a main-module setting to a serialized XDM result envelope; no stage contract. No external module, resource, or schema-provider context is supplied." },
+  { area := "xslt4Transform", dir := "XSLT4"
+    wireIn := .text, wireOut := .xsltResult, params := ["stylesheet"], status := .tested
+    tests := ["Wasm/Ops/Qt4.lean dispatch guards", "npm/factoidal/test/qt4.test.mjs", "npm/factoidal/test/qt4-public.test.mjs"]
+    note := "Public XSLT 4.0 adapter: source XML text and one stylesheet module to principal serialized output, method, secondary results and messages; no stage contract. The result may be text or JSON, so its wire is not XML. Secondary results are returned as data and are not written to files." },
   { area := "Schematron validation", dir := "Schematron"
     wireIn := .xml, wireOut := .report, params := ["schema"], status := .missing },
   { area := "Ed25519 verify primitive (HACL* call-out)", dir := "Crypto"

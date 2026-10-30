@@ -971,6 +971,7 @@ export interface EvidenceRecord {
  * `wireOut`: a Dataset for the graph wires, text for String (a writer), the
  * rows for Table (SELECT), a boolean for Answer (ASK), `[canonical, sha256]`
  * for String × String (rdfcStage), the report object for ValidationReport,
+ * a Qt4Result for Serialized XDM result, or an Xslt4Result for XSLT result,
  * the explain result for ExplainGraphResult. Since 0.20.0; before, a node
  * whose output was not a Dataset left its input on the wire.
  */
@@ -985,7 +986,12 @@ export interface NodePort {
   readonly wire: string;
 }
 
-/** A node: a registered stage with its parameters. */
+/** A node: a registered stage with its parameters. Public XML adapters use
+ * `xpath4Eval` with {expression}, `xqueryEval` with {query}, or
+ * `xslt4Transform` with {stylesheet}; each reads XML context text and has
+ * status tested, checked:false evidence and no proved evaluator contract.
+ * Their serialized output types are Qt4Result and Xslt4Result (see Wire).
+ */
 export interface FactoidalNode {
   readonly stage: string;
   readonly kind: string | null;
