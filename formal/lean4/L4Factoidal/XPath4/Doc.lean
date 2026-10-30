@@ -50,6 +50,22 @@ def pushRec (r : NRec) : B Nat :=
 def setRec (i : Nat) (f : NRec → NRec) : B Unit :=
   modify (fun a => if h : i < a.size then a.set i (f a[i]) else a)
 
+/-- A namespace declaration as recognised by the XDM document builder. -/
+def namespaceBinding (a : Attribute) : Option (String × String) :=
+  if a.name == "xmlns" then some ("", a.value)
+  else if a.name.startsWith "xmlns:" then some ((splitName a.name).2, a.value)
+  else none
+
+/-- Extend the inherited scope with this element's declarations. Later
+    declarations occur first, as in the original document-builder fold. -/
+def namespaceScope (scope : List (String × String)) (attrs : List Attribute) :
+    List (String × String) :=
+  attrs.foldl (fun sc a =>
+    if a.name == "xmlns" then ("", a.value) :: sc
+    else if a.name.startsWith "xmlns:" then
+      ((splitName a.name).2, a.value) :: sc
+    else sc) scope
+
 def buildNode : Nat → Option Nat → List (String × String) → Node → B (Option Nat)
   | 0, _, _, _ => pure none
   | f + 1, par, scope, n =>
@@ -68,11 +84,7 @@ def buildNode : Nat → Option Nat → List (String × String) → Node → B (O
         pure (some i)
     | .element tag attrs kids => do
         -- namespace declarations first
-        let scope := attrs.foldl (fun sc a =>
-          if a.name == "xmlns" then ("", a.value) :: sc
-          else if a.name.startsWith "xmlns:" then
-            ((splitName a.name).2, a.value) :: sc
-          else sc) scope
+        let scope := namespaceScope scope attrs
         let (p, l) := splitName tag
         let uri := (scope.lookup p).getD (if p == "xml" then nsXML else "")
         let i ← pushRec { kind := .element, name := { uri, loc := l, pfx := p }, parent := par,

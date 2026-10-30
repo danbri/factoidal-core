@@ -110,12 +110,23 @@ conformance files are the evidence for the rules.
 
 ## Reuse and overlap
 
-The XPath4 tree has its own normalization (`XPath4/Unicode.lean`, Unicode
-16.0.0) and grapheme clusters (`XPath4/Grapheme.lean`, Unicode 15.1.0), for
-F&O 4.0 `fn:normalize-unicode` and `fn:graphemes`. The new modules are based on
-them, with new tables and array loops. This PR does not change XPath4.
-https://github.com/danbri/factoidal/issues/1195 (XPath4 to use the 18.0.0
-modules) tracks the move.
+The initial Unicode implementation left XPath4 on normalization 16.0.0 and
+grapheme clusters 15.1.0. The follow-up for
+https://github.com/danbri/factoidal/issues/1195 makes `XPath4/Unicode.lean`
+an adapter over Unicode 18.0.0 normalization and removes the duplicate
+normalization tables and generator. XPath form handling, FULLY-NORMALIZED and the
+collation helper APIs remain at the XPath boundary. WHATWG IDNA also receives
+the new normalization through that adapter.
+
+The final combined candidate retains `XPath4/Grapheme.lean` and
+`XPath4/GraphemeData.lean` exactly as before, using Unicode 15.1. The shared
+Unicode 18 segmentation stays available directly. A prior candidate also
+migrated XPath graphemes, producing four visible failures against the pinned
+Unicode 15.1 QT4 expectations because Unicode 18 changes GB9c. That XPath
+grapheme change is deferred; no fixtures or exclusions changed, and the
+remaining migration stays open in the issue above. The case names,
+conformance evidence and separately labelled candidate measurements are in
+[the integration record](../20261029-qt4-unicode-namespace.md).
 
 The HTML tokenizer of milestone 5 and the URL code of milestone 3 can use
 `Unicode/Normalization` and `Unicode/Segmentation` directly. The browser proof

@@ -321,6 +321,9 @@ deriving Inhabited
 
 /-- A compiled stylesheet (all modules, import precedence applied). -/
 structure Sheet where
+  /-- Whether xsl:assert instructions run. Direct XSLT calls retain the
+      enabled default; fn:transform sets its own option (default false). -/
+  assertionsEnabled : Bool := true
   templates : Array Tmpl := #[]
   functions : List XFunction := []
   keys : List KeyDef := []
