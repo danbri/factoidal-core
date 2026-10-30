@@ -214,6 +214,178 @@ theorem decode_encode (b : ByteArray) : decode? (encode b) = some b := by
   simp [decode?, encode, encGo_toList, decGo_encSpec]
 
 
+/-! Compact runtime encoder. The reference above remains the theorem-facing
+meaning; only its proved compiler replacement indexes the compact input bytes
+and pushes directly into a UTF-8 String. No input-sized list/Char array. -/
+private def foldBytesGo (f : α → UInt8 → α) (bytes : ByteArray) : Nat → Nat → α → α
+  | 0, _, acc => acc
+  | n+1, i, acc =>
+    if h : i < bytes.size then foldBytesGo f bytes n (i+1) (f acc bytes[i]) else acc
+
+private theorem foldBytesGo_eq (f : α → UInt8 → α) (bytes : ByteArray) (n : Nat) :
+    ∀ i acc, bytes.size ≤ i+n →
+      foldBytesGo f bytes n i acc = (bytes.data.toList.drop i).foldl f acc := by
+  induction n with
+  | zero =>
+    intro i acc bound
+    have drop : bytes.data.toList.drop i = [] := List.drop_eq_nil_of_le (by simpa using bound)
+    simp [foldBytesGo,drop]
+  | succ n ih =>
+    intro i acc bound
+    by_cases inside : i < bytes.size
+    · have inList : i < bytes.data.toList.length := by simpa using inside
+      rw [List.drop_eq_getElem_cons inList]
+      simp only [List.foldl_cons]
+      simp only [foldBytesGo, dif_pos inside]
+      apply ih
+      omega
+    · have drop : bytes.data.toList.drop i = [] := List.drop_eq_nil_of_le (by simpa using Nat.le_of_not_gt inside)
+      simp [foldBytesGo,inside,drop]
+
+private inductive EncState where
+  | zero (out : String)
+  | one (out : String) (a : UInt8)
+  | two (out : String) (a b : UInt8)
+
+private def emit3 (out : String) (a b c : UInt8) : String :=
+  (((out.push (b64Sym (a.toNat/4))).push (b64Sym (a.toNat%4*16+b.toNat/16))).push
+    (b64Sym (b.toNat%16*4+c.toNat/64))).push (b64Sym (c.toNat%64))
+private def emit2 (out : String) (a b : UInt8) : String :=
+  (((out.push (b64Sym (a.toNat/4))).push (b64Sym (a.toNat%4*16+b.toNat/16))).push
+    (b64Sym (b.toNat%16*4))).push '='
+private def emit1 (out : String) (a : UInt8) : String :=
+  (((out.push (b64Sym (a.toNat/4))).push (b64Sym (a.toNat%4*16))).push '=').push '='
+
+private def encStep : EncState → UInt8 → EncState
+  | .zero out, a => .one out a
+  | .one out a, b => .two out a b
+  | .two out a b, c => .zero (emit3 out a b c)
+private def encFinish : EncState → String
+  | .zero out => out | .one out a => emit1 out a | .two out a b => emit2 out a b
+
+private theorem encFold_toList (bs : List UInt8) (out : String) :
+    (encFinish (bs.foldl encStep (.zero out))).toList = out.toList ++ encSpec bs := by
+  induction bs using encSpec.induct generalizing out with
+  | case1 a b c rest ih =>
+    simp [List.foldl_cons,encStep,ih,emit3,encSpec,group3,List.append_assoc]
+  | case2 a b => simp [encStep,encFinish,emit2,encSpec,group2,List.append_assoc]
+  | case3 a => simp [encStep,encFinish,emit1,encSpec,group1,List.append_assoc]
+  | case4 => simp [encFinish,encSpec]
+
+def encodeFast (b : ByteArray) : String :=
+  encFinish (foldBytesGo encStep b b.size 0 (.zero ""))
+
+@[csimp] theorem encode_eq_fast : @encode = @encodeFast := by
+  funext b
+  apply String.toList_inj.mp
+  unfold encode encodeFast
+  rw [foldBytesGo_eq encStep b b.size 0 (.zero "") (by omega)]
+  rw [List.drop_zero,encFold_toList]
+  simp [encGo_toList]
+
+
+/- Compact decoder: String.foldl traverses UTF-8 in place; the state retains
+at most three alphabet values and appends to a compact ByteArray. Padding
+finishes the stream, so any further character (including whitespace) fails.
+Unused pad bits remain accepted exactly as in decGo. -/
+private inductive DecState where
+  | bad
+  | done (out : ByteArray)
+  | zero (out : ByteArray)
+  | one (out : ByteArray) (v0 : Nat)
+  | two (out : ByteArray) (v0 v1 : Nat)
+  | three (out : ByteArray) (v0 v1 v2 : Nat)
+  | pad (out : ByteArray)
+
+private def decStep : DecState → Char → DecState
+  | .bad, _ | .done _, _ => .bad
+  | .zero out, c => match b64Val? c with
+    | some v => .one out v | none => .bad
+  | .one out v0, c => match b64Val? c with
+    | some v => .two out v0 v | none => .bad
+  | .two out v0 v1, c =>
+    if c == '=' then .pad (out.push (byte0 v0 v1))
+    else match b64Val? c with
+      | some v => .three out v0 v1 v | none => .bad
+  | .three out v0 v1 v2, c =>
+    if c == '=' then .done ((out.push (byte0 v0 v1)).push (byte1 v1 v2))
+    else match b64Val? c with
+      | some v => .zero (((out.push (byte0 v0 v1)).push (byte1 v1 v2)).push (byte2 v2 v))
+      | none => .bad
+  | .pad out, c => if c == '=' then .done out else .bad
+
+private def decFinish : DecState → Option ByteArray
+  | .zero out | .done out => some out
+  | _ => none
+
+private theorem fold_bad (cs : List Char) : cs.foldl decStep .bad = .bad := by
+  induction cs with
+  | nil => rfl
+  | cons c cs ih => simpa [List.foldl_cons,decStep] using ih
+
+private theorem val_ne_pad (c : Char) (v : Nat) (h : b64Val? c = some v) : c ≠ '=' := by
+  intro eq
+  subst c
+  simp [b64Val?] at h
+
+@[simp] private theorem mk_push (out : Array UInt8) (b : UInt8) :
+    (ByteArray.mk out).push b = ByteArray.mk (out.push b) := by
+  apply ByteArray.ext
+  simp [ByteArray.data_push]
+
+@[simp] private theorem pad_val : b64Val? '=' = none := rfl
+
+private theorem decFold_eq (cs : List Char) (out : Array UInt8) :
+    decFinish (cs.foldl decStep (.zero ⟨out⟩)) = (decGo cs out).map ByteArray.mk := by
+  induction cs, out using decGo.induct with
+  | case1 c0 c1 acc v0 v1 h1 h0 =>
+    simp [decStep,decFinish,h0,h1,decGo]
+  | case2 c0 c1 acc invalid =>
+    cases h0 : b64Val? c0 <;> cases h1 : b64Val? c1 <;>
+      simp_all [decStep,decFinish,decGo]
+  | case3 c0 c1 c2 acc n2 v0 v1 v2 h2 h1 h0 =>
+    simp only [List.foldl_cons, List.foldl_nil, decStep, h0, h1, h2, beq_iff_eq, if_neg n2, decFinish, mk_push]
+    simp [decGo,h0,h1,h2]
+  | case4 c0 c1 c2 acc n2 invalid =>
+    cases h0 : b64Val? c0 <;> cases h1 : b64Val? c1 <;> cases h2 : b64Val? c2 <;>
+      simp_all [decStep,decFinish,decGo]
+  | case5 c0 c1 c2 c3 rest acc _ _ v0 v1 v2 v3 h3 h2 h1 h0 ih =>
+    have n2 := val_ne_pad c2 v2 h2
+    have n3 := val_ne_pad c3 v3 h3
+    simpa [decStep,h0,h1,h2,h3,n2,n3,decGo] using ih
+  | case6 c0 c1 c2 c3 rest acc noPad2 noPad1 invalid =>
+    by_cases p2 : c2 = '=' <;> by_cases p3 : c3 = '=' <;> cases rest <;>
+      cases h0 : b64Val? c0 <;> cases h1 : b64Val? c1 <;>
+      cases h2 : b64Val? c2 <;> cases h3 : b64Val? c3 <;>
+      simp_all [decStep,decFinish,fold_bad,decGo]
+    all_goals exact False.elim (invalid _ _ _ _ rfl rfl rfl rfl)
+  | case7 acc => simp [decFinish,decGo]
+  | case8 cs acc noPad2 noPad1 noGroup nonempty =>
+    cases cs with
+    | nil => simp at nonempty
+    | cons a rest => cases rest with
+      | nil => cases h0 : b64Val? a <;> simp [decStep,decFinish,decGo,h0]
+      | cons b rest => cases rest with
+        | nil =>
+          cases h0 : b64Val? a <;> cases h1 : b64Val? b <;>
+            simp [decStep,decFinish,decGo,h0,h1]
+        | cons c rest => cases rest with
+          | nil =>
+            by_cases pad : c = '=' <;>
+              cases h0 : b64Val? a <;> cases h1 : b64Val? b <;> cases h2 : b64Val? c <;>
+              simp [decStep,decFinish,decGo,h0,h1,h2,pad]
+          | cons d rest => exact False.elim (noGroup a b c d rest rfl)
+
+def decodeFast? (s : String) : Option ByteArray :=
+  decFinish (s.foldl decStep (.zero ByteArray.empty))
+
+@[csimp] theorem decode_eq_fast : @decode? = @decodeFast? := by
+  funext s
+  unfold decode? decodeFast?
+  rw [String.foldl_eq_foldl_toList]
+  exact (decFold_eq s.toList #[]).symm
+
+
 
 end L4Factoidal.LWS.Base64
 

@@ -28,6 +28,12 @@ its workflow refuses to run without a typed confirmation phrase.
 
 ## What builds what
 
+Executable release alignment proposal (2026-10-29):
+[`docs/designissues/2026-10-29-executables-per-release.md`](../../docs/designissues/2026-10-29-executables-per-release.md).
+The current executable workflow follows engine builds, not npm publication;
+do not assume npm `latest` and the downloadable executables have the same
+version. Compare their `version --json` and release manifests explicitly.
+
 Since 2026-10-09 (iron rule 9) none of the built files named below is
 committed to `danbri/factoidal-core`; they are in `.gitignore`. The `web`
 release set of `danbri/factoidal-builds` carries the F\* JS and wasm
