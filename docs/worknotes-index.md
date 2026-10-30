@@ -149,3 +149,6 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-29 | [XQuery 4.0 merge against updated main](20261029-xquery4-merge-main2.md) | uncommitted | record |
 | 2026-10-29 | [QT4 optional features merge against updated main](20261029-qt4-optional-features-merge2.md) | uncommitted | record: both baselines, per-family validation |
 | 2026-10-30 | [Foafnaut native graphics and SVG lab](designissues/2026-10-30-foafnaut-native-graphics.md) | same commit | current: Lean WASM / raw WebGPU boundary, native demos and executable packaging, pinned SVG reftests and explicit validation limits |
+| 2026-10-30 | [FOAFNaut RDF-driven native study](designissues/2026-10-30-foafnaut-rdf-native.md) | same commit | current: typed FOAF graph, Lean radial layout and interaction, temporary GPU bitmap labels, modern visual direction and native packaging |
+
+- [2026-10-30: Lean GPU render plans and remaining host boundary](designissues/2026-10-30-lean-render-plan.md).

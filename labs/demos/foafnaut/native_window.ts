@@ -21,6 +21,9 @@ export function loadNativeWindow() {
     ng_can_present: { parameters: [], result: "i32" },
     ng_show_after_surface: { parameters: [], result: "void" },
     ng_set_input_trace: { parameters: ["i32"], result: "void" },
+    ng_clipboard_copy: { parameters: [], result: "pointer" },
+    ng_free: { parameters: ["pointer"], result: "void" },
+    ng_clipboard_write: { parameters: ["buffer"], result: "i32" },
   } as const);
   const symbols = library.symbols;
   const isMainThread = () => symbols.ng_is_main_thread() === 1;
@@ -32,6 +35,17 @@ export function loadNativeWindow() {
   const view = new DataView(buffer.buffer);
   return {
     isMainThread,
+    readClipboard() {
+      const pointer=symbols.ng_clipboard_copy();
+      if(!pointer)throw new Error("Clipboard text unavailable or exceeds the 1 MiB transport limit");
+      try { return new Deno.UnsafePointerView(pointer).getCString(); }
+      finally { symbols.ng_free(pointer); }
+    },
+    writeClipboard(text:string) {
+      if(text.includes("\0"))throw new Error("Clipboard text contains NUL");
+      if(!symbols.ng_clipboard_write(new TextEncoder().encode(text+"\0")))
+        throw new Error("Native clipboard write failed");
+    },
     setInputTrace:(enabled:boolean)=>symbols.ng_set_input_trace(enabled?1:0),
     create(width: number, height: number, title?:string) {
       const pointer = symbols.ng_create(width,height);

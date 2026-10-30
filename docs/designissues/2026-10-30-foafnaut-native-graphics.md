@@ -43,8 +43,9 @@ it must not silently acquire authority over the host filesystem or window loop.
 
 ## Reproducible source and releases
 
-The small build freshly compiles the five XML modules in the current source
-closure and the four lab modules. It can reuse pinned Lean runtime/Init/Std
+The small build freshly compiles the XML modules in the current source
+closure and the lab modules. The FOAFNaut follow-up adds the existing
+RDF/Turtle/JSON closure and a fifth engine. It can reuse pinned Lean runtime/Init/Std
 objects. `L4_WASM_RUNTIME_ONLY=1` in `formal/lean4/Wasm/build-wasm.sh` prepares
 that cache without building the full library or installing shipped WASM assets.
 The default build path is unchanged. All generated outputs stay under ignored
@@ -59,11 +60,12 @@ hashes in `build-info.json`. Only main commits publish. Older core commits
 without this lab retain their existing three-set requirement.
 
 The release is a directory, not one executable: its UI binary needs the
-adjacent native library. Launchers change into that directory. Deno's narrow
-relative library permission survives relocation, including spaces in paths.
-The pathless permission required by the native surface is requested while
-Terminal still has focus, before a window is created. Declining creates no
-window. The released executables need no preinstalled Node, Deno or Lean.
+adjacent native library. Launchers change into that directory; source launchers
+can also locate `.build/dist`. The initial build used a narrow library grant
+and requested the pathless native-surface permission before window creation.
+The owner subsequently requested no repeated prompt: the UI package now bakes
+in `--allow-ffi`, while source runs keep the preflight ordering. The executables
+need no preinstalled Node, Deno or Lean.
 
 ## Measurements and limits
 
@@ -103,3 +105,44 @@ reduces the selected denominator. Initial result: **38 unsupported, zero
 visual matches**. Missing engines produce 38 unavailable. Fixture-integrity
 CI does not count as rendering conformance; a real render run compares every
 pixel using the upstream relation/tolerances and reports every non-pass.
+
+## FOAF interaction repair
+
+Dragging now sets a persistent per-person pin. Release leaves that person in
+place while unpinned layout can ease. Reset clears pins and restores the
+initial radial layout. The plus head reveals loaded direct neighbors; the
+minus foot hides only the person and incident links. Neither control changes
+layout targets or reflows unrelated nodes. This is local data visibility, not
+network expansion. Lean definitional proofs show targets are independent of
+visibility/focus; native and WASM tests check capture, pins and unaffected nodes.
+
+Person records carry `labelIsFallback` through checked JSON. Explicit RDF
+literals retain priority, even when equal to the subject IRI. Only generated
+fallbacks use short display fragments/path segments or PERSON n. Full labels
+and typed IDs remain available in the model and terminal selection output.
+The default synthetic demo uses ASCII names; Unicode fixtures remain tests.
+
+## Local address editor
+
+The retro-futuristic header adds a local RDF locator, not network navigation.
+Lean owns the address buffer, scalar cursor/selection, bounded replacement,
+copy/cut selection, paste request, keyboard focus and exact loaded-ID matching.
+Committed Unicode scalars use event 9; event 7 remains the frame tick. Key
+event 5 carries normalized Shift/Command/Option/Control bits 1/2/4/8. Paste
+uses one bounded Lean string replacement, avoiding native event-queue overflow.
+Clipboard effects occur only in the transition response and never in the model.
+
+The address viewport has 64 fixed glyph slots plus fixed caret/selection
+shapes. Lowercase ASCII retains case; bitmap reinforcement changes uniform
+rows through the same CPU/WGSL glyph coverage rule. The native state tests
+cover Unicode replacement, repeated keys, cut/copy/paste effects, effect
+clearing, local matching, focus and malformed cursor refusal. Real AppKit
+clipboard/keyboard delivery and GPU presentation still need a desktop smoke
+for the newly built artifact.
+
+Review follow-up: the Lean viewport now retains physical framebuffer sizes
+from 16×16 upward, avoiding an input/surface mismatch below the former
+320×240 clamp on non-Retina windows. Paste above 65,536 scalars returns a
+normal frame and status without changing the address. The 512-scalar address
+cap reports truncation. Host clipboard errors use event 10 (read unavailable
+=1, write failure=2); Lean presents a status and does not repeat the effect.

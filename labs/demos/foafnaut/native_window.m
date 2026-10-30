@@ -7,6 +7,8 @@
 #include <stdint.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "native_coordinates.h"
 
 struct NGEvent { uint32_t type; int32_t a; int32_t b; uint32_t reserved; };
@@ -82,8 +84,26 @@ static void resizeEvent(void) {
 - (void)mouseDragged:(NSEvent *)event { [self sendPointer:event type:3]; }
 - (void)mouseUp:(NSEvent *)event { [self sendPointer:event type:4]; }
 - (void)keyDown:(NSEvent *)event {
-  if (!event.isARepeat) enqueue(5, event.keyCode, 0);
+  NSEventModifierFlags flags=event.modifierFlags;
+  int32_t modifiers=((flags&NSEventModifierFlagShift)?1:0) |
+    ((flags&NSEventModifierFlagCommand)?2:0) |
+    ((flags&NSEventModifierFlagOption)?4:0) |
+    ((flags&NSEventModifierFlagControl)?8:0);
+  enqueue(5,event.keyCode,modifiers);
+  // AppKit resolves keyboard layouts/dead keys into committed text. Lean
+  // receives special keys separately and owns all editing and shortcuts.
+  if (!(flags&(NSEventModifierFlagCommand|NSEventModifierFlagControl)))
+    [self interpretKeyEvents:@[event]];
 }
+- (void)insertText:(id)value { [self insertText:value replacementRange:NSMakeRange(NSNotFound,0)]; }
+- (void)insertText:(id)value replacementRange:(NSRange)range {
+  (void)range;
+  NSString *text=[value isKindOfClass:[NSAttributedString class]] ? [value string] : value;
+  NSData *scalars=[text dataUsingEncoding:NSUTF32LittleEndianStringEncoding];
+  const uint32_t *chars=scalars.bytes;
+  for (NSUInteger i=0;i<scalars.length/4;i++) enqueue(9,(int32_t)chars[i],0);
+}
+- (void)doCommandBySelector:(SEL)selector { (void)selector; /* key event already sent to Lean */ }
 @end
 
 @interface NGDelegate : NSObject <NSWindowDelegate, NSApplicationDelegate>
@@ -153,6 +173,31 @@ void *ng_window_handle(void) {
 void ng_set_title(const char *title) {
   if (!pthread_main_np()) return;
   @autoreleasepool { window.title = [NSString stringWithUTF8String:title] ?: @"Lean native demo"; }
+}
+// Clipboard requests are explicit effects from Lean. Returned text is a
+// UTF-8 snapshot owned by the caller until ng_free; no selection state here.
+char *ng_clipboard_copy(void) {
+  if (!pthread_main_np()) return NULL;
+  @autoreleasepool {
+    NSString *text=[[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString] ?: @"";
+    NSData *bytes=[text dataUsingEncoding:NSUTF8StringEncoding];
+    if (!bytes || bytes.length>1048576) return NULL;
+    char *copy=malloc(bytes.length+1);
+    if (!copy) return NULL;
+    memcpy(copy,bytes.bytes,bytes.length); copy[bytes.length]=0;
+    return copy;
+  }
+}
+void ng_free(void *pointer) { free(pointer); }
+int ng_clipboard_write(const char *text) {
+  if (!pthread_main_np() || !text) return 0;
+  @autoreleasepool {
+    NSString *value=[NSString stringWithUTF8String:text];
+    if (!value) return 0;
+    NSPasteboard *board=[NSPasteboard generalPasteboard];
+    [board clearContents];
+    return [board setString:value forType:NSPasteboardTypeString] ? 1 : 0;
+  }
 }
 void *ng_create(uint32_t width, uint32_t height) {
   if (!pthread_main_np() || window) return NULL;

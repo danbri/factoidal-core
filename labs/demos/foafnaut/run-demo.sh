@@ -2,11 +2,18 @@
 set -eu
 set -o pipefail
 DEMO_DIR="${0:A:h}"
+if [[ ! -x "$DEMO_DIR/native-webgpu-ui-darwin-arm64" && -x "$DEMO_DIR/.build/dist/native-webgpu-ui-darwin-arm64" ]]; then
+  DEMO_DIR="$DEMO_DIR/.build/dist"
+fi
+if [[ ! -x "$DEMO_DIR/native-webgpu-ui-darwin-arm64" ]]; then
+  print -u2 "Build the native demos first with: $DEMO_DIR/build-executables.sh"
+  exit 1
+fi
 cd "$DEMO_DIR"
 DEMO_NAME="${1:-springs}"
 case "$DEMO_NAME" in
-  vectors|springs|layout) ;;
-  *) print -u2 'Choose vectors, springs, or layout.'; exit 1 ;;
+  vectors|springs|layout|foafnaut) ;;
+  *) print -u2 'Choose vectors, springs, layout or foafnaut.'; exit 1 ;;
 esac
 if (( $# > 0 )); then shift; fi
 LOG_FILE="$DEMO_DIR/native-$DEMO_NAME.log"

@@ -22,6 +22,7 @@ cd PATH_TO_EXTRACTED_RELEASE
 ./native-webgpu-ui-darwin-arm64 --demo springs
 ./native-webgpu-ui-darwin-arm64 --demo layout
 ./native-webgpu-ui-darwin-arm64 --demo vectors
+./native-webgpu-ui-darwin-arm64 --demo foafnaut
 ./native-webgpu-lean-darwin-arm64 render-lean.ppm
 ./native-webgpu-svg-darwin-arm64 svg-fixtures/gallery.svg render-svg.ppm
 ```
@@ -40,6 +41,60 @@ responsive cards in Lean. Still images render offscreen, check Lean reference
 pixels, save PPM, and open the result on macOS; `--no-open` suppresses preview.
 No GPU adapter means exit 2 and no image; no CPU-rendered fallback is substituted.
 
+## FOAFNaut: RDF people in a native window
+
+`FOAFNaut.command` (menu option 4) opens a small graph from real Turtle parsed
+by Factoidal in Lean. The included eight-person data is synthetic. A fresh
+visual interpretation keeps the historical little-person idea, with a light
+canvas, pastel accents, rounded name cards and larger bitmap labels. This is
+inspiration from the original, not a pixel-accurate recreation.
+
+Drag name cards to pin people where you put them, including after release.
+The plus head reveals only already-loaded direct neighbors; the minus foot
+hides only that person and incident links. Neither action moves other people.
+R restores the initial radial layout, clears pins, and reveals everyone. Space
+pauses/resumes one-sixth easing of unpinned positions. No network fetch occurs.
+
+```sh
+# From the source checkout, launchers find the ignored .build/dist package:
+"labs/demos/foafnaut/FOAFNaut.command"
+# From an extracted native package:
+./native-webgpu-ui-darwin-arm64 --demo foafnaut --rdf /absolute/path/people.ttl
+./native-webgpu-ui-darwin-arm64 --demo foafnaut --snapshot graph.ppm
+./native-webgpu-ui-darwin-arm64 --demo foafnaut --emit-artifact graph.json
+```
+
+The graph view supports 16 people / 48 directed links. It preserves RDF identity,
+keeps labels separate from identity, and counts invalid literal `foaf:knows`
+objects. Default `foaf/fixtures/demo.ttl` has readable ASCII names;
+`people.ttl` remains the Unicode/escaping regression fixture. Explicit RDF
+names keep priority, including URI-valued literals. Generated fallback names
+show a short IRI fragment/path segment or PERSON n. Full original labels,
+Unicode and typed IDs remain in the model and selection log. The small
+5×7 bitmap alphabet has ASCII letters, digits and punctuation; other characters
+show `?`. Labels truncate to the available card width. This is lab lettering,
+not SVG `<text>`, font loading or shaping. Self-links are retained in data but
+their initial line representation is not a useful visible loop yet.
+
+The navy header has a local RDF address bar. Click it, press Tab, or use
+Cmd-L to edit. Enter selects and reveals an exact loaded IRI, typed ID, or
+`_:blank` locator. An unknown address leaves a clear local-only status; it
+does not start a Web request. Cmd-A/C/X/V select/copy/cut/paste. Arrows,
+Shift-arrows, Home/End, Backspace/Delete, Return and Escape operate in Lean.
+The address holds at most 512 Unicode scalars and scrolls within 64 fixed
+glyph slots; truncation is reported. Paste above 65,536 scalars leaves the
+address unchanged and shows a nonfatal status. OS clipboard failures also
+show a status. Framebuffer sizes from 16×16 through 4096×4096 retain their
+actual dimensions; small windows can clip content but keep pointer coordinates
+aligned. This is scalar editing, not full text shaping or IME composition.
+Clipboard requests are transient frame effects; the native bridge only moves
+clipboard text. Printable committed text and paste replacement happen in Lean.
+ASCII lowercase and URL punctuation preserve case, with slightly reinforced
+pixel lettering. Original Unicode and RDF identity remain in the model.
+
+See the [RDF adapter](foaf/README.md) and
+[original FOAFNaut reference/attributions](foafnaut-reference/README.md).
+
 Headless checks do not request a GPU/window:
 
 ```sh
@@ -53,11 +108,11 @@ shasum -a 256 -c SHA256SUMS
 `--check-engine` works for all three interactive modes. `--diagnose` loads the
 sidecar and checks the OS main thread; it does not create a window or validate
 presentation. Launchers `cd` to the release directory: Deno's relative baked
-read/FFI permissions then remain valid when the package is moved, including paths
-with spaces. The UI allowlist covers only `./libnative-window.dylib`; it still
-requests the already-required pathless surface FFI permission **before** any
-window can take focus. Declining it creates no window. No broad FFI compile
-permission is baked in. Still/SVG tools have read/write permissions and subprocess
+read/write permissions remain valid when the package moves, including paths
+with spaces. At the owner's request, the UI is compiled with `--allow-ffi`:
+its native surface/window bridge no longer asks on every launch. Source-host
+runs without that grant still finish permission preflight before creating a
+window. Still/SVG tools have read/write permissions and subprocess
 access restricted to `/usr/bin/open`, with no network/environment/FFI grant.
 
 ## Build engines on Linux or macOS
@@ -104,13 +159,13 @@ pinned Lean/mimalloc sources; warm lab builds do not rebuild the runtime.
 `test.sh` runs portable C coordinate checks, host type checking and actual-WASM
 local tests. It builds engines unless `--skip-build` is given. A build emits:
 
-- `.build/engines/{graphics-generator,ui-engine,demos-engine,svg-engine}.{mjs,wasm}`
+- `.build/engines/{graphics-generator,ui-engine,demos-engine,svg-engine,foafnaut-engine,render-plan}.{mjs,wasm}`
 - `.build/native-artifact.json` for native Lean/WASM comparison
 - `.build/source-SHA256SUMS` and `.build/tool-versions.txt`
 
 These are the artifacts needed to transfer Linux-built engines into the same
 core checkout on a macOS packaging worker; no C/object/native Lean cache needs
-transfer. The four modules use pure string ABIs with explicit owned-result frees.
+transfer. The six modules use pure string ABIs with explicit owned-result frees.
 The two known unused cached runtime IO signature warnings are allowed; any other
 link signature mismatch fails the build.
 
@@ -175,11 +230,14 @@ is requested. Traces count observed input and frames, not general correctness.
 
 ## Validation limits
 
-The local lab has 40 passing Deno tests and 12 portable C checks on the measured
-warm build. They cover native/WASM artifact equality, graphics transport,
+The browser/render-plan build measured 51 passing Deno tests and 12 portable C
+checks on the warm build. They cover native/WASM artifact equality, graphics transport,
 selection/capture, physics replay/energy/step partitions, responsive layout,
 permission ordering, visibility, coordinate conversion and the restricted SVG
-reader/compiler. The SVG groups are local regressions, not W3C conformance results.
+reader/compiler and RDF-driven graph interaction. The small native FOAF builds
+also run 12 RDF adapter and nine graph/editor-state test groups, plus the
+RenderPlan kernel proofs and native guards. The SVG groups are
+local regressions, not W3C conformance results.
 Official fixture audits are recorded in the [external SVG suite](../../../tests/external/svg/README.md),
 which reports accepted/refused inputs separately from actual raster comparisons.
 A test/reference relation rendered by this same implementation can share bugs;
@@ -191,3 +249,17 @@ compiled CPU/loader checks do not establish presentation. This integration's war
 engine build, tests, compiled CPU checks and relative-permission relocation probe
 have run locally. The cold runtime-only bootstrap and Linux path are provided but
 have not yet been measured in this local session; CI must validate them.
+
+## Lean rendering boundary
+
+`RenderPlan.lean` supplies pipeline entries/topology, buffer usage and byte sizes,
+bindings, clear/load/store operations, draw arguments and ordered window/offscreen
+commands. The shared `render_plan.ts` interpreter maps these values to WebGPU
+objects. SVG and the other scenes use this same transport. The accepted plan
+proves its uniform capacity and alignment against supplied limits; readback rows
+are proved to cover all pixels and obey 256-byte alignment.
+
+The interpreter and device reports remain trusted. Persistent resource lifetime,
+resize/visibility/dirty scheduling and error cleanup remain host policy in this
+first increment. Theorems do not establish WGSL semantics or GPU output. See the
+[render boundary record](../../../docs/designissues/2026-10-30-lean-render-plan.md).

@@ -1,5 +1,6 @@
 export type SceneFrame = { width:number; height:number; data:number[]; wgsl?:string };
 import { SurfaceLifecycle } from "./surface_lifecycle.ts";
+import { requestRenderPlan, createPlanResources, textureUsage, commandInterpreter } from "./render_plan.ts";
 
 export type FrameBackend = {
   configure: (width: number, height: number) => void;
@@ -43,43 +44,32 @@ export async function createWindowSession(device: GPUDevice, surface: Deno.Unsaf
   native:{prepare?:()=>void;state?:()=>unknown;ready?:()=>boolean}={}) {
   if (!initial.wgsl) throw new Error("Initial Lean UI response has no shader");
   return await PersistentSession.create(initial, async () => {
-    const format = navigator.gpu.getPreferredCanvasFormat();
+    const plan=await requestRenderPlan("window",navigator.gpu.getPreferredCanvasFormat(),initial,device.limits);
     const context = surface.getContext("webgpu") as GPUCanvasContext;
     if (!context) throw new Error("Native surface has no WebGPU context");
-    const shader = device.createShaderModule({ code: initial.wgsl! });
-    const diagnostics = await shader.getCompilationInfo();
-    for (const message of diagnostics.messages) console.log(`${message.type} ${message.lineNum}:${message.linePos}: ${message.message}`);
-    if (diagnostics.messages.some(m => m.type === "error")) throw new Error("Lean UI WGSL compilation failed");
-    const pipeline = await device.createRenderPipelineAsync({
-      layout:"auto", vertex:{module:shader,entryPoint:"vertex"},
-      fragment:{module:shader,entryPoint:"fragment",targets:[{format}]},
-      primitive:{topology:"triangle-list"},
-    });
-    const uniform = device.createBuffer({size:initial.data.length*4,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
-    const bindGroup = device.createBindGroup({layout:pipeline.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:uniform}}]});
+    const resources=await createPlanResources(device,plan,initial.wgsl!);
+    const {uniform}=resources;
     const presentation=new SurfaceLifecycle({
       configure(width,height) {
         surface.width=width;surface.height=height;
-        context.configure({device,format,alphaMode:"opaque"});
+        context.configure({device,format:plan.format,alphaMode:plan.surface!.alphaMode,usage:textureUsage(plan.surface!.usage)});
       },
       prepare:()=>native.prepare?.(),
       acquire:()=>context.getCurrentTexture(),
       present:()=>surface.present(),
       state:native.state,
       ready:native.ready,
-    },format);
+    },plan.format);
     return {
       configure:(width,height)=>presentation.configure(width,height),
-      upload(data) { device.queue.writeBuffer(uniform,0,data); },
+      upload(data) { device.queue.writeBuffer(uniform,plan.uniform.offset,data); },
       draw() {
         const texture=presentation.acquire();
         if(!texture)return false;
-        const encoder=device.createCommandEncoder();
-        const pass=encoder.beginRenderPass({colorAttachments:[{
-          view:texture.createView(),clearValue:[0,0,0,1],loadOp:"clear",storeOp:"store",
-        }]});
-        pass.setPipeline(pipeline); pass.setBindGroup(0,bindGroup); pass.draw(3); pass.end();
-        device.queue.submit([encoder.finish()]); presentation.present();
+        const interpreter=commandInterpreter(device,plan,resources,texture.createView(),{present:()=>presentation.present()});
+        for(const command of plan.commands) {
+          if(interpreter.step(command) instanceof Promise)throw new Error("Async command in a window render plan");
+        }
         return true;
       },
       dispose() { context.unconfigure(); uniform.destroy(); },

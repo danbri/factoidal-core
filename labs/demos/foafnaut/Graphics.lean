@@ -105,12 +105,23 @@ structure RGB where
   g : Nat
   b : Nat
   deriving Repr, BEq
+-- Lab-only bitmap, top row first; bit 4 is the leftmost of five cells.
+structure GlyphRows where
+  row0 : Nat
+  row1 : Nat
+  row2 : Nat
+  row3 : Nat
+  row4 : Nat
+  row5 : Nat
+  row6 : Nat
+  deriving Repr, BEq
 inductive Shape where
   | circle (center : Point) (radius : Nat) (color : RGB)
   | rectangle (origin size : Point) (color : RGB)
   | quadratic (a b c : Point) (stroke : Nat) (color : RGB)
   | cubic (a b c d : Point) (stroke : Nat) (color : RGB)
   | segment (a b : Point) (stroke : Nat) (color : RGB)
+  | glyph (origin : Point) (scale : Nat) (bitmap : GlyphRows) (color : RGB)
   deriving Repr
 
 -- Each command uses exactly four vec4 rows. Layout is specified here in Lean.
@@ -120,6 +131,8 @@ def Shape.rows : Shape → List Nat
   | .quadratic a b c stroke color => [a.x,a.y,b.x,b.y, c.x,c.y,0,0, stroke,64,0,0, color.r,color.g,color.b,255]
   | .cubic a b c d stroke color => [a.x,a.y,b.x,b.y, c.x,c.y,d.x,d.y, stroke,96,0,0, color.r,color.g,color.b,255]
   | .segment a b stroke color => [a.x,a.y,b.x,b.y, 0,0,0,0, stroke,0,0,0, color.r,color.g,color.b,255]
+  | .glyph p scale bits color => [p.x,p.y,scale,0, bits.row0,bits.row1,bits.row2,bits.row3,
+      bits.row4,bits.row5,bits.row6,0, color.r,color.g,color.b,255]
 
 theorem Shape.rows_length (s : Shape) : s.rows.length = 16 := by
   cases s <;> rfl
@@ -163,7 +176,21 @@ def rectangleHit (base : Nat) : Expr .boolean :=
     (.and (.le y py) (.le py (.add y (.param (base+3)))))
 
 def Shape.color : Shape → RGB
-  | .circle _ _ c | .rectangle _ _ c | .quadratic _ _ _ _ c | .cubic _ _ _ _ _ c | .segment _ _ _ c => c
+  | .circle _ _ c | .rectangle _ _ c | .quadratic _ _ _ _ c | .cubic _ _ _ _ _ c | .segment _ _ _ c
+  | .glyph _ _ _ c => c
+
+-- Half-open cells avoid painting a neighboring column/row at a glyph edge.
+-- This consumes the same serialized row values as the generated shader.
+def glyphHit (base : Nat) (env : Env) : Bool := Id.run do
+  let scale := env.data[base+2]!
+  if scale <= 0 then return false
+  let x := (env.position.1 - env.data[base]!) / scale
+  let y := (env.position.2 - env.data[base+1]!) / scale
+  if x < 0 || y < 0 || x >= 5 || y >= 7 then return false
+  let column := x.toUInt32.toNat
+  let row := y.toUInt32.toNat
+  let bits := env.data[base+4+row]!.toUInt32.toNat
+  return (bits >>> (4-column)) &&& 1 == 1
 
 def Shape.curve : Shape → Option (Nat × (Nat → Expr .vec2))
   | .quadratic .. => some (64, NativeGraphics.quadratic)
@@ -174,6 +201,7 @@ def Shape.hit (s : Shape) (base : Nat) (env : Env) : Bool := Id.run do
   match s with
   | .circle .. => return (circleHit base).eval env
   | .rectangle .. => return (rectangleHit base).eval env
+  | .glyph .. => return glyphHit base env
   | .segment .. =>
     let previous := (point base 0).eval env
     let q := (point base 2).eval env
@@ -198,6 +226,13 @@ def Shape.wgsl (s : Shape) (base : Nat) : String :=
   match s with
   | .circle .. => "if " ++ (circleHit base).wgsl ++ " {" ++ paint base ++ "}\n"
   | .rectangle .. => "if " ++ (rectangleHit base).wgsl ++ " {" ++ paint base ++ "}\n"
+  | .glyph .. =>
+    "{let glyphScale=" ++ (Expr.param (base+2)).wgsl ++ ";if(glyphScale>0.0){\n" ++
+    "let local=(p.xy-" ++ (point base 0).wgsl ++ ")/glyphScale;\n" ++
+    "if(all(local>=vec2f(0.0))&&local.x<5.0&&local.y<7.0){\n" ++
+    "let cell=vec2u(local);" ++ s!"let glyphOffset={base+4}u+cell.y;\n" ++
+    "let bits=u32(params.rows[glyphOffset/4u][glyphOffset%4u]);\n" ++
+    "if(((bits>>(4u-cell.x))&1u)==1u){" ++ paint base ++ "}}}}\n"
   | .segment .. =>
     "{let previous=" ++ (point base 0).wgsl ++ ";let d=" ++ (point base 2).wgsl ++
     "-previous;let h=" ++ segmentFraction.wgsl ++ ";if " ++ (segmentHit base).wgsl ++
