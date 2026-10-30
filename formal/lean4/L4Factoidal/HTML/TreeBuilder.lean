@@ -10,40 +10,36 @@ indexes into it. Each insertion mode is a function `Token → P Act`, where
 reprocessed in the (new) current mode, or it is processed "using the rules
 for" another mode. The dispatcher is a loop bounded by fuel.
 
-Implemented (section numbers of §13.2.6.4):
-  insertion modes initial, before html, before head, in head, in head
-  noscript (the scripting flag is OFF, so the content of `noscript` is
-  parsed as elements), after head, in body, text, in table, in table text,
-  in caption, in column group, in table body, in row, in cell, in select,
-  in select in table, in template, after body, in frameset, after frameset,
-  after after body, after after frameset;
-  tree construction dispatcher (§13.2.6.1) with MathML and HTML integration
-  points, and the rules for parsing tokens in foreign content (§13.2.6.5)
-  with the SVG tag name and attribute adjustments and the MathML ones;
-  implied `html`, `head`, `body`; void elements; "has an element in
-  scope" for the default, list item, button, table and select scopes;
-  implied end tags (also thorough); the list of active formatting elements
-  with markers, the Noah's Ark clause, "reconstruct the active formatting
-  elements" and the adoption agency algorithm (§13.2.6.4.7, including the
-  outer loop of 8 and the inner loop with its counter); foster parenting;
-  `template` (its children are the children of the `template` element in the
-  arena; there is no separate template contents document fragment);
-  the stack of template insertion modes and "reset the insertion mode
-  appropriately"; the LF after `pre`, `listing`, `textarea`; self-closing
-  flag acknowledgement; quirks mode from the DOCTYPE (a short list of public
-  identifier prefixes); generic RCDATA and raw text parsing for `title`,
-  `textarea`, `style`, `xmp`, `iframe`, `noembed`, `noframes`, `script`;
-  `plaintext`; parse errors for every rule that has one in the places above.
+Specification: HTML Living Standard, whatwg/html commit `93967771` (26 October
+2026), §13.2.6 and the HTML fragment parsing algorithm of §13.4
+(`parseFragmentState`). Changes of 2025 and 2026 that this code follows:
+customizable `select` (whatwg/html `172cccf`: no "in select" insertion modes;
+`select` is a default scope boundary), processing instruction tokens (`320c05f`,
+`255188e`), frameset-ok reset when `body` is implied (`83c0aa8`), the form
+element pointer ignored throughout template contents (`9ed7f27`), DOCTYPE
+missing and empty identifiers handled alike (`e7318c5`).
 
-Not implemented: the HTML fragment parsing algorithm (§13.2.6.4 "context
-element"; the function always parses a whole document); `form` element
-association other than the form element pointer; `isindex`; script
-execution (`document.write`, the script nesting level, the parser pause,
-`async`/`defer` handling); the `<meta charset>` change-the-encoding step
-(`HTML/Html.lean`'s caller does a prescan instead); the `srcdoc` and
-"iframe" document rules; the full quirks mode table (limited-quirks mode is
-not distinguished from no-quirks mode); the customizable `select` content
-model of the newest Living Standard (the older `in select` rules are used).
+Implemented: all 21 insertion modes; the tree construction dispatcher with the
+adjusted current node, MathML and HTML integration points, and the rules for
+foreign content (§13.2.6.5) with the SVG and MathML adjustments; implied tags;
+the list of active formatting elements and the adoption agency algorithm;
+foster parenting; `template` (its children are the children of the `template`
+element in the arena: there is no separate template contents fragment);
+"reset the insertion mode appropriately"; quirks mode from the DOCTYPE (the full
+list; limited-quirks mode is not distinguished, and no rule of §13.2.6 reads
+it); the scripting flag (`scripting`; `noscript` is raw text when it is on).
+
+Not implemented: script execution (`document.write`, the parser pause; 6 WPT
+cases, https://github.com/danbri/factoidal/issues/1205); the DOM steps that
+keep `selectedcontent` up to date (4 WPT cases,
+https://github.com/danbri/factoidal/issues/1206); the parser sanitizer
+configuration and `<template for>` insertion target redirection (no test
+in the vendored suites uses them); `<meta charset>` change of encoding (the
+caller sniffs first).
+
+Tests: web-platform-tests tree construction `.dat` files
+(`tests/html5lib/run.sh`): 1963 pass, 0 fail (out of 1963), plus the 10
+expected failures above. Speed: https://github.com/danbri/factoidal/issues/1208.
 -/
 import L4Factoidal.HTML.Tokenizer
 
@@ -54,7 +50,7 @@ inductive NS where
 deriving BEq, Inhabited
 
 inductive DKind where
-  | doc | elem | text | comment
+  | doc | elem | text | comment | doctype | pi
 deriving BEq, Inhabited
 
 structure DNode where
@@ -63,6 +59,9 @@ structure DNode where
   name : String := ""
   attrs : Array (String × String) := #[]
   data : String := ""
+  /-- A DOCTYPE node's public and system identifiers (`doctype` only). -/
+  pubId : String := ""
+  sysId : String := ""
   parent : Option Nat := none
   kids : Array Nat := #[]
 
@@ -71,7 +70,7 @@ instance : Inhabited DNode := ⟨{}⟩
 inductive Mode where
   | initial | beforeHtml | beforeHead | inHead | inHeadNoscript | afterHead | inBody | text
   | inTable | inTableText | inCaption | inColumnGroup | inTableBody | inRow | inCell
-  | inSelect | inSelectInTable | inTemplate | afterBody | inFrameset | afterFrameset
+  | inTemplate | afterBody | inFrameset | afterFrameset
   | afterAfterBody | afterAfterFrameset
 deriving BEq, Inhabited
 
@@ -93,6 +92,16 @@ structure TB where
   errs : Array String := #[]
   tk : Tok
   done : Bool := false
+  /-- The scripting flag (§13.2.4.5). -/
+  scripting : Bool := false
+  /-- The context element of the HTML fragment parsing algorithm (§13.4): an
+  arena node that is not a child of the Document. -/
+  ctx : Option Nat := none
+  /-- The target of the processing instruction token being processed. The tree
+  construction rules for a processing instruction token are those for a comment
+  token, with "insert a processing instruction" for "insert a comment"; `process`
+  dispatches a PI token as a comment token with this field set. -/
+  piTarget : Option String := none
 
 abbrev P := StateM TB
 
@@ -134,12 +143,12 @@ def htmlIP (n : DNode) : Bool :=
     || (n.ns == .svg && svgHtmlIPNames.contains n.name))
 
 inductive Scope where
-  | default | listItem | button | table | select
+  | default | listItem | button | table
 deriving BEq
 
 def defaultBoundary (n : DNode) : Bool :=
   match n.ns with
-  | .html => n.isAny ["applet", "caption", "html", "table", "td", "th", "marquee", "object", "template"]
+  | .html => n.isAny ["applet", "caption", "html", "table", "td", "th", "marquee", "object", "select", "template"]
   | .math => mathTextNames.contains n.name || n.name == "annotation-xml"
   | .svg => svgHtmlIPNames.contains n.name
 
@@ -149,7 +158,6 @@ def boundary (n : DNode) (s : Scope) : Bool :=
   | .listItem => defaultBoundary n || n.isAny ["ol", "ul"]
   | .button => defaultBoundary n || n.is "button"
   | .table => n.isAny ["html", "table", "template"]
-  | .select => !(n.isAny ["optgroup", "option"])
 
 def isTreeWs (c : Char) : Bool := c == '\t' || c == '\n' || c == '\x0C' || c == '\r' || c == ' '
 
@@ -163,29 +171,61 @@ def curNode : P DNode := do
   match tb.stack.back? with
   | some i => return tb.dom[i]!
   | none => return default
+/-- The adjusted current node (§13.2.4.1): the context element when the stack
+holds only the root `html` element of a fragment parse. -/
+def adjustedIdx (tb : TB) : Option Nat :=
+  match tb.ctx with
+  | some c => if tb.stack.size == 1 then some c else tb.stack.back?
+  | none => tb.stack.back?
+
+def adjustedCur : P DNode := do
+  let tb ← get
+  match adjustedIdx tb with
+  | some i => return tb.dom[i]!
+  | none => return default
+
+/-- The parser's fragment context element is a `select` element (fragment case). -/
+def ctxIsSelect : P Bool := do
+  let tb ← get
+  match tb.ctx with
+  | some c => return tb.dom[c]!.is "select"
+  | none => return false
+
+/-- "Parsing template contents" (§13.2.4.5): a `template` element is on the
+stack of open elements, or the fragment context element is a `template`. -/
+def parsingTemplate : P Bool := do
+  let tb ← get
+  let ctxT := match tb.ctx with
+    | some c => tb.dom[c]!.is "template"
+    | none => false
+  return ctxT || tb.stack.any (fun i => tb.dom[i]!.is "template")
+
 def setMode (m : Mode) : P Unit := modify fun tb => { tb with mode := m }
 def popCur : P Unit := modify fun tb => { tb with stack := tb.stack.pop }
 
-def newNode (n : DNode) : P Nat := do
-  let tb ← get
-  set { tb with dom := tb.dom.push n }
-  return tb.dom.size
+/-- Append a node to the arena and return its index. `modifyGet` keeps the
+arena unshared, so `push` does not copy it. -/
+def newNode (n : DNode) : P Nat :=
+  modifyGet fun tb => (tb.dom.size, { tb with dom := tb.dom.push n })
 
+/-- Insert `child` into `parent` before `before` (or at the end). `Array.modify`
+takes the parent out of the arena while its child list changes, so neither
+array is copied. -/
 def insertAt (parent : Nat) (before : Option Nat) (child : Nat) : P Unit := modify fun tb =>
-  let p := tb.dom[parent]!
-  let kids := match before with
-    | none => p.kids.push child
-    | some b => match p.kids.findIdx? (· == b) with
-      | some k => arrInsert p.kids k child
+  let add (p : DNode) : DNode :=
+    let kids := match before with
       | none => p.kids.push child
-  { tb with dom := (tb.dom.set! parent { p with kids }).modify child (fun c => { c with parent := some parent }) }
+      | some b => match p.kids.findIdx? (· == b) with
+        | some k => arrInsert p.kids k child
+        | none => p.kids.push child
+    { p with kids }
+  { tb with dom := (tb.dom.modify parent add).modify child (fun c => { c with parent := some parent }) }
 
 def detach (child : Nat) : P Unit := modify fun tb =>
   match tb.dom[child]!.parent with
   | none => tb
   | some p =>
-    let pn := tb.dom[p]!
-    let d1 := tb.dom.set! p { pn with kids := pn.kids.filter (· != child) }
+    let d1 := tb.dom.modify p (fun pn => { pn with kids := pn.kids.filter (· != child) })
     { tb with dom := d1.modify child (fun c => { c with parent := none }) }
 
 def lastIdx (tb : TB) (pred : DNode → Bool) : Option Nat := Id.run do
@@ -240,7 +280,9 @@ def insertChar (c : Char) : P Unit := do
 
 def insertComment (data : String) (target : Option Nat := none) : P Unit := do
   let (par, before) ← appropriatePlace target
-  let id ← newNode { kind := .comment, data }
+  let id ← match (← get).piTarget with
+    | some t => newNode { kind := .pi, name := t, data }
+    | none => newNode { kind := .comment, data }
   insertAt par before id
 
 def insertElement (ns : NS) (name : String) (attrs : Array (String × String)) : P Nat := do
@@ -495,22 +537,11 @@ def resetMode : P Unit := do
   for k in [0:n] do
     let i := n - 1 - k
     let last := (i == 0)
-    let nd := tb.dom[tb.stack[i]!]!
+    let nd := match tb.ctx with
+      | some c => if last then tb.dom[c]! else tb.dom[tb.stack[i]!]!
+      | none => tb.dom[tb.stack[i]!]!
     let r : Option Mode :=
-      if nd.is "select" then
-        some (Id.run do
-          let mut res := Mode.inSelect
-          let mut j := i
-          for _ in [0:i] do
-            if j == 0 then break
-            j := j - 1
-            let a := tb.dom[tb.stack[j]!]!
-            if a.is "template" then break
-            if a.is "table" then
-              res := .inSelectInTable
-              break
-          return res)
-      else if (nd.is "td" || nd.is "th") && !last then some .inCell
+      if (nd.is "td" || nd.is "th") && !last then some .inCell
       else if nd.is "tr" then some .inRow
       else if nd.isAny ["tbody", "thead", "tfoot"] then some .inTableBody
       else if nd.is "caption" then some .inCaption
@@ -572,11 +603,76 @@ def genericRaw (name : String) (attrs : List (String × String)) (st : TS) : P U
 
 def setAck : P Unit := modify fun tb => { tb with ack := true }
 
-def quirkyPublic (p : String) : Bool :=
-  ["-//w3o//dtd w3 html strict 3.0//", "-//w3c//dtd html 3.2", "-//ietf//dtd html", "-//netscape comm. corp.//dtd html",
-   "-//microsoft//dtd internet explorer", "-//sun microsystems corp.//dtd hotjava", "-//softquad", "-//spyglass//dtd html 2.0 extended//",
-   "-//as//dtd html 3.0 aswedit + extensions//", "-//advasoft ltd//dtd html 3.0 aswedit + extensions//"].any (fun x => p.startsWith x)
-  || p == "html" || p == "-//w3o//dtd w3 html strict 3.0//en//" || p == "-/w3c/dtd html 4.0 transitional/en"
+/-- The public identifier prefixes of the quirks mode list of the "initial"
+insertion mode (§13.2.6.4.1), lowercased. -/
+def quirkyPrefixes : List String :=
+  ["+//silmaril//dtd html pro v0r11 19970101//",
+   "-//as//dtd html 3.0 aswedit + extensions//",
+   "-//advasoft ltd//dtd html 3.0 aswedit + extensions//",
+   "-//ietf//dtd html 2.0 level 1//",
+   "-//ietf//dtd html 2.0 level 2//",
+   "-//ietf//dtd html 2.0 strict level 1//",
+   "-//ietf//dtd html 2.0 strict level 2//",
+   "-//ietf//dtd html 2.0 strict//",
+   "-//ietf//dtd html 2.0//",
+   "-//ietf//dtd html 2.1e//",
+   "-//ietf//dtd html 3.0//",
+   "-//ietf//dtd html 3.2 final//",
+   "-//ietf//dtd html 3.2//",
+   "-//ietf//dtd html 3//",
+   "-//ietf//dtd html level 0//",
+   "-//ietf//dtd html level 1//",
+   "-//ietf//dtd html level 2//",
+   "-//ietf//dtd html level 3//",
+   "-//ietf//dtd html strict level 0//",
+   "-//ietf//dtd html strict level 1//",
+   "-//ietf//dtd html strict level 2//",
+   "-//ietf//dtd html strict level 3//",
+   "-//ietf//dtd html strict//",
+   "-//ietf//dtd html//",
+   "-//metrius//dtd metrius presentational//",
+   "-//microsoft//dtd internet explorer 2.0 html strict//",
+   "-//microsoft//dtd internet explorer 2.0 html//",
+   "-//microsoft//dtd internet explorer 2.0 tables//",
+   "-//microsoft//dtd internet explorer 3.0 html strict//",
+   "-//microsoft//dtd internet explorer 3.0 html//",
+   "-//microsoft//dtd internet explorer 3.0 tables//",
+   "-//netscape comm. corp.//dtd html//",
+   "-//netscape comm. corp.//dtd strict html//",
+   "-//o'reilly and associates//dtd html 2.0//",
+   "-//o'reilly and associates//dtd html extended 1.0//",
+   "-//o'reilly and associates//dtd html extended relaxed 1.0//",
+   "-//sq//dtd html 2.0 hotmetal + extensions//",
+   "-//softquad software//dtd hotmetal pro 6.0::19990601::extensions to html 4.0//",
+   "-//softquad//dtd hotmetal pro 4.0::19971010::extensions to html 4.0//",
+   "-//spyglass//dtd html 2.0 extended//",
+   "-//sun microsystems corp.//dtd hotjava html//",
+   "-//sun microsystems corp.//dtd hotjava strict html//",
+   "-//w3c//dtd html 3 1995-03-24//",
+   "-//w3c//dtd html 3.2 draft//",
+   "-//w3c//dtd html 3.2 final//",
+   "-//w3c//dtd html 3.2//",
+   "-//w3c//dtd html 3.2s draft//",
+   "-//w3c//dtd html 4.0 frameset//",
+   "-//w3c//dtd html 4.0 transitional//",
+   "-//w3c//dtd html experimental 19960712//",
+   "-//w3c//dtd html experimental 970421//",
+   "-//w3c//dtd w3 html//",
+   "-//w3o//dtd w3 html 3.0//",
+   "-//webtechs//dtd mozilla html 2.0//",
+   "-//webtechs//dtd mozilla html//"]
+
+/-- The DOCTYPE token conditions that set the Document to quirks mode
+(§13.2.6.4.1); identifiers are compared ASCII case-insensitively. -/
+def doctypeQuirks (name pub sys : Option String) (fq : Bool) : Bool :=
+  let p := (pub.map lowerStr).getD ""
+  let hasPub := pub.isSome
+  let sysEmpty := (sys.getD "").isEmpty
+  fq || name != some "html"
+    || (hasPub && (p == "-//w3o//dtd w3 html strict 3.0//en//" || p == "-/w3c/dtd html 4.0 transitional/en" || p == "html"))
+    || (sys.map lowerStr) == some "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd"
+    || (hasPub && quirkyPrefixes.any (fun x => p.startsWith x))
+    || (hasPub && sysEmpty && (p.startsWith "-//w3c//dtd html 4.01 frameset//" || p.startsWith "-//w3c//dtd html 4.01 transitional//"))
 
 def initialH (tok : Token) : P Act := do
   match tok with
@@ -590,8 +686,9 @@ def initialH (tok : Token) : P Act := do
   | .doctype name pub sys fq =>
     if name != some "html" || pub.isSome || (sys.isSome && sys != some "about:legacy-compat") then
       perr "unexpected-doctype"
-    let q := fq || name != some "html" || (pub.any (fun p => quirkyPublic (lowerStr p)))
-      || (pub.any (fun p => sys.isNone && (lowerStr p).startsWith "-//w3c//dtd html 4.01 transitional//"))
+    let q := doctypeQuirks name pub sys fq
+    let id ← newNode { kind := .doctype, name := name.getD "", pubId := pub.getD "", sysId := sys.getD "" }
+    insertAt 0 none id
     modify fun tb => { tb with quirks := q }
     setMode .beforeHtml
     return .done
@@ -658,6 +755,7 @@ def inHeadH (tok : Token) : P Act := do
       return .done
     else if n == "title" then genericRaw n attrs .rcdata; return .done
     else if n == "noscript" then
+      if (← get).scripting then genericRaw n attrs .rawtext; return .done
       let _ ← insertHtml n attrs
       setMode .inHeadNoscript
       return .done
@@ -710,6 +808,8 @@ def inHeadNoscriptH (tok : Token) : P Act := do
 def afterHeadH (tok : Token) : P Act := do
   let anything : P Act := do
     let _ ← insertHtml "body"
+    -- whatwg/html 83c0aa8: the frameset-ok flag is "ok" again when body is implied
+    modify fun tb => { tb with framesetOk := true }
     setMode .inBody
     return .reprocess
   match tok with
@@ -771,6 +871,7 @@ def isVoidInBody (n : String) : Bool := ["area", "br", "embed", "img", "keygen",
 
 def inBodyH (tok : Token) : P Act := do
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char c =>
     if c == '\x00' then perr "unexpected-null-character"; return .done
     reconstructAfe
@@ -840,12 +941,12 @@ def inBodyH (tok : Token) : P Act := do
       return .done
     else if n == "form" then
       let tb ← get
-      if tb.formPtr.isSome && !(← hasOnStack (·.is "template")) then
+      if tb.formPtr.isSome && !(← parsingTemplate) then
         perr "unexpected-form-start-tag"
         return .done
       closeP
       let id ← insertHtml n attrs
-      if !(← hasOnStack (·.is "template")) then modify fun tb => { tb with formPtr := some id }
+      if !(← parsingTemplate) then modify fun tb => { tb with formPtr := some id }
       return .done
     else if n == "li" || n == "dd" || n == "dt" then
       modify fun tb => { tb with framesetOk := false }
@@ -923,6 +1024,10 @@ def inBodyH (tok : Token) : P Act := do
       modify fun tb => { tb with framesetOk := false }
       return .done
     else if n == "input" then
+      if ← ctxIsSelect then perr "unexpected-input-in-select"; return .done
+      if ← hasNamed "select" .default then
+        perr "unexpected-input-in-select"
+        popUntil (·.is "select")
       reconstructAfe
       let _ ← insertHtml n attrs
       popCur
@@ -937,6 +1042,9 @@ def inBodyH (tok : Token) : P Act := do
       return .done
     else if n == "hr" then
       closeP
+      if ← hasNamed "select" .default then
+        genImplied
+        if (← hasNamed "option" .default) || (← hasNamed "optgroup" .default) then perr "unexpected-hr-in-option"
       let _ ← insertHtml n attrs
       popCur
       setAck
@@ -957,16 +1065,31 @@ def inBodyH (tok : Token) : P Act := do
       modify fun tb => { tb with framesetOk := false }
       genericRaw n attrs .rawtext
       return .done
-    else if n == "noembed" then genericRaw n attrs .rawtext; return .done
+    else if n == "noembed" || (n == "noscript" && (← get).scripting) then genericRaw n attrs .rawtext; return .done
     else if n == "select" then
+      -- the customizable select content model: there is no "in select" mode
+      if ← ctxIsSelect then perr "unexpected-select-in-select"; return .done
+      if ← hasNamed "select" .default then
+        perr "unexpected-select-in-select"
+        popUntil (·.is "select")
+        return .done
       reconstructAfe
       let _ ← insertHtml n attrs
-      let tb ← get
-      let m := if [Mode.inTable, .inCaption, .inTableBody, .inRow, .inCell].contains tb.mode then Mode.inSelectInTable else .inSelect
-      modify fun tb => { tb with framesetOk := false, mode := m }
+      modify fun tb => { tb with framesetOk := false }
       return .done
-    else if n == "optgroup" || n == "option" then
-      if (← curNode).is "option" then popCur
+    else if n == "option" then
+      if ← hasNamed "select" .default then
+        genImplied false "optgroup"
+        if ← hasNamed "option" .default then perr "unexpected-option-in-option"
+      else if (← curNode).is "option" then popCur
+      reconstructAfe
+      let _ ← insertHtml n attrs
+      return .done
+    else if n == "optgroup" then
+      if ← hasNamed "select" .default then
+        genImplied
+        if (← hasNamed "option" .default) || (← hasNamed "optgroup" .default) then perr "unexpected-optgroup-in-option"
+      else if (← curNode).is "option" then popCur
       reconstructAfe
       let _ ← insertHtml n attrs
       return .done
@@ -1013,14 +1136,14 @@ def inBodyH (tok : Token) : P Act := do
     else if n == "template" then return .via .inHead
     else if ["address", "article", "aside", "blockquote", "button", "center", "details", "dialog", "dir", "div",
         "dl", "fieldset", "figcaption", "figure", "footer", "header", "hgroup", "listing", "main", "menu", "nav",
-        "ol", "pre", "search", "section", "summary", "ul"].contains n then
+        "ol", "pre", "search", "section", "select", "summary", "ul"].contains n then
       if !(← hasNamed n .default) then perr "unexpected-end-tag"; return .done
       genImplied
       if !(← curNode).is n then perr "end-tag-mismatch"
       popUntil (·.is n)
       return .done
     else if n == "form" then
-      if !(← hasOnStack (·.is "template")) then
+      if !(← parsingTemplate) then
         let tb ← get
         let node := tb.formPtr
         modify fun tb => { tb with formPtr := none }
@@ -1101,6 +1224,7 @@ def inBodyH (tok : Token) : P Act := do
 
 def foreignH (tok : Token) : P Act := do
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char c =>
     if c == '\x00' then
       perr "unexpected-null-character"
@@ -1122,9 +1246,12 @@ def foreignH (tok : Token) : P Act := do
           let nd := tb.dom[i]!
           if nd.ns == .html || mathTextIP nd || htmlIP nd then break
           popCur
-      return .reprocess
+      -- "according to the rules ... corresponding to the current insertion mode in
+      -- HTML content": not the dispatcher, whose adjusted current node may still be
+      -- a foreign context element (fragment case)
+      return .via (← get).mode
     else
-      let cn ← curNode
+      let cn ← adjustedCur
       let ns := cn.ns
       let name := if ns == .svg then adjustName svgTagNames n else n
       let ats := if ns == .svg then attrs.map (fun a => (adjustName svgAttrNames a.1, a.2))
@@ -1135,6 +1262,17 @@ def foreignH (tok : Token) : P Act := do
         setAck
       return .done
   | .endTag n =>
+    if n == "br" || n == "p" then
+      perr "unexpected-html-element-in-foreign-content"
+      for _ in [0:(← get).stack.size] do
+        let tb ← get
+        match tb.stack.back? with
+        | none => break
+        | some i =>
+          let nd := tb.dom[i]!
+          if nd.ns == .html || mathTextIP nd || htmlIP nd then break
+          popCur
+      return .via (← get).mode
     let tb ← get
     let top := tb.dom[tb.stack.back?.getD 0]!
     if top.ns == .svg && top.name == "script" && n == "script" then
@@ -1162,9 +1300,14 @@ def inTableH (tok : Token) : P Act := do
     perr "foster-parenting"
     modify fun tb => { tb with foster := true }
     let a ← inBodyH tok
+    -- "process using the rules for in head" happens while foster parenting is on
+    let a ← match a with
+      | .via .inHead => inHeadH tok
+      | a => pure a
     modify fun tb => { tb with foster := false }
     return a
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char _ =>
     if (← curNode).isAny ["table", "tbody", "template", "tfoot", "thead", "tr"] then
       modify fun tb => { tb with pend := #[], orig := tb.mode, mode := .inTableText }
@@ -1216,9 +1359,10 @@ def inTableH (tok : Token) : P Act := do
       else anything
     else if n == "form" then
       perr "unexpected-form-in-table"
-      if (← hasOnStack (·.is "template")) || (← get).formPtr.isSome then return .done
+      let pt ← parsingTemplate
+      if (← get).formPtr.isSome && !pt then return .done
       let id ← insertHtml n attrs
-      modify fun tb => { tb with formPtr := some id }
+      if !pt then modify fun tb => { tb with formPtr := some id }
       popCur
       return .done
     else anything
@@ -1286,6 +1430,7 @@ def inColumnGroupH (tok : Token) : P Act := do
     setMode .inTable
     return .reprocess
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char c => if isTreeWs c then insertChar c; return .done else anything
   | .comment d => insertComment d; return .done
   | .doctype .. => perr "unexpected-doctype"; return .done
@@ -1413,90 +1558,12 @@ def inCellH (tok : Token) : P Act := do
     else return .via .inBody
   | _ => return .via .inBody
 
-def inSelectH (tok : Token) : P Act := do
-  match tok with
-  | .char c =>
-    if c == '\x00' then perr "unexpected-null-character" else insertChar c
-    return .done
-  | .comment d => insertComment d; return .done
-  | .doctype .. => perr "unexpected-doctype"; return .done
-  | .startTag n attrs _ =>
-    if n == "html" then return .via .inBody
-    else if n == "option" then
-      if (← curNode).is "option" then popCur
-      let _ ← insertHtml n attrs
-      return .done
-    else if n == "optgroup" then
-      if (← curNode).is "option" then popCur
-      if (← curNode).is "optgroup" then popCur
-      let _ ← insertHtml n attrs
-      return .done
-    else if n == "hr" then
-      if (← curNode).is "option" then popCur
-      if (← curNode).is "optgroup" then popCur
-      let _ ← insertHtml n attrs
-      popCur
-      setAck
-      return .done
-    else if n == "select" then
-      perr "unexpected-select-in-select"
-      if !(← hasNamed "select" .select) then return .done
-      popUntil (·.is "select")
-      resetMode
-      return .done
-    else if n == "input" || n == "keygen" || n == "textarea" then
-      perr "unexpected-input-in-select"
-      if !(← hasNamed "select" .select) then return .done
-      popUntil (·.is "select")
-      resetMode
-      return .reprocess
-    else if n == "script" || n == "template" then return .via .inHead
-    else perr "unexpected-start-tag-in-select"; return .done
-  | .endTag n =>
-    if n == "optgroup" then
-      let tb ← get
-      let cur := tb.dom[tb.stack.back?.getD 0]!
-      let below := tb.dom[(tb.stack[tb.stack.size - 2]?).getD 0]!
-      if cur.is "option" && below.is "optgroup" then popCur
-      if (← curNode).is "optgroup" then popCur else perr "unexpected-end-tag"
-      return .done
-    else if n == "option" then
-      if (← curNode).is "option" then popCur else perr "unexpected-end-tag"
-      return .done
-    else if n == "select" then
-      if !(← hasNamed "select" .select) then perr "unexpected-end-tag"; return .done
-      popUntil (·.is "select")
-      resetMode
-      return .done
-    else if n == "template" then return .via .inHead
-    else perr "unexpected-end-tag-in-select"; return .done
-  | .eof => return .via .inBody
-
-def inSelectInTableH (tok : Token) : P Act := do
-  let tbl := ["caption", "table", "tbody", "tfoot", "thead", "tr", "td", "th"]
-  match tok with
-  | .startTag n _ _ =>
-    if tbl.contains n then
-      perr "unexpected-table-element-in-select"
-      popUntil (·.is "select")
-      resetMode
-      return .reprocess
-    else return .via .inSelect
-  | .endTag n =>
-    if tbl.contains n then
-      perr "unexpected-end-tag"
-      if !(← hasNamed n .table) then return .done
-      popUntil (·.is "select")
-      resetMode
-      return .reprocess
-    else return .via .inSelect
-  | _ => return .via .inSelect
-
 def inTemplateH (tok : Token) : P Act := do
   let switch (m : Mode) : P Act := do
     modify fun tb => { tb with tmodes := (tb.tmodes.pop).push m, mode := m }
     return .reprocess
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char _ | .comment _ | .doctype .. => return .via .inBody
   | .startTag n _ _ =>
     if ["base", "basefont", "bgsound", "link", "meta", "noframes", "script", "style", "template", "title"].contains n then
@@ -1532,7 +1599,9 @@ def afterBodyH (tok : Token) : P Act := do
     return .done
   | .doctype .. => perr "unexpected-doctype"; return .done
   | .startTag "html" _ _ => return .via .inBody
-  | .endTag "html" => setMode .afterAfterBody; return .done
+  | .endTag "html" =>
+    if (← get).ctx.isSome then perr "unexpected-end-tag"; return .done  -- fragment case
+    setMode .afterAfterBody; return .done
   | .eof => modify fun tb => { tb with done := true }; return .done
   | _ =>
     perr "unexpected-token-after-body"
@@ -1556,6 +1625,7 @@ def afterAfterBodyH (tok : Token) : P Act := do
 
 def inFramesetH (tok : Token) : P Act := do
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char c =>
     if isTreeWs c then insertChar c else perr "unexpected-char-in-frameset"
     return .done
@@ -1585,6 +1655,7 @@ def inFramesetH (tok : Token) : P Act := do
 
 def afterFramesetH (tok : Token) : P Act := do
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char c =>
     if isTreeWs c then insertChar c else perr "unexpected-char-after-frameset"
     return .done
@@ -1628,8 +1699,6 @@ def handler (m : Mode) (tok : Token) : P Act :=
   | .inTableBody => inTableBodyH tok
   | .inRow => inRowH tok
   | .inCell => inCellH tok
-  | .inSelect => inSelectH tok
-  | .inSelectInTable => inSelectInTableH tok
   | .inTemplate => inTemplateH tok
   | .afterBody => afterBodyH tok
   | .inFrameset => inFramesetH tok
@@ -1639,7 +1708,7 @@ def handler (m : Mode) (tok : Token) : P Act :=
 
 /-- The tree construction dispatcher (§13.2.6.1). -/
 def useHtmlRules (tb : TB) (tok : Token) : Bool :=
-  match tb.stack.back? with
+  match adjustedIdx tb with
   | none => true
   | some i =>
     let n := tb.dom[i]!
@@ -1674,7 +1743,12 @@ def process (tok : Token) : P Unit := do
     | .char '\n' => return
     | _ => pure ()
   modify fun tb => { tb with ack := false }
-  dispatch 32 none tok
+  match tok with
+  | .pi t d =>
+    modify fun tb => { tb with piTarget := some t }
+    dispatch 32 none (.comment d)
+    modify fun tb => { tb with piTarget := none }
+  | _ => dispatch 32 none tok
   match tok with
   | .startTag _ _ true =>
     if !(← get).ack then perr "non-void-html-element-start-tag-with-trailing-solidus"
@@ -1686,6 +1760,8 @@ inductive HNode where
   | element (ns : NS) (name : String) (attrs : List (String × String)) (kids : List HNode)
   | text (s : String)
   | comment (s : String)
+  /-- A processing instruction: target and data. -/
+  | pi (target data : String)
 
 structure Parsed where
   children : List HNode
@@ -1700,26 +1776,55 @@ def buildTree (dom : Array DNode) : Nat → Nat → List HNode
       match c.kind with
       | .text => some (HNode.text c.data)
       | .comment => some (HNode.comment c.data)
+      | .pi => some (HNode.pi c.name c.data)
       | .elem => some (HNode.element c.ns c.name c.attrs.toList (buildTree dom f k))
-      | .doc => none
+      | .doc | .doctype => none
 
 def runAll : P Unit := do
   let n := (← get).tk.inp.size
   for _ in [0:3 * n + 100] do
     if (← get).done then break
     let tb ← get
-    let foreign := match tb.stack.back? with
+    let foreign := match adjustedIdx tb with
       | some i => tb.dom[i]!.ns != .html
       | none => false
     let (tok, tk) := ({ tb.tk with foreign }).pull
     set { tb with tk }
     process tok
 
+/-- Parse a whole document (§13.2) and return the final parser state; its
+`dom` is the document arena (index 0 is the Document). -/
+def parseDocumentState (src : String) (scripting : Bool := false) : TB :=
+  let inp := normalizeNewlines src
+  let tb0 : TB := { tk := { inp }, errs := inputErrors inp, scripting }
+  (runAll.run tb0).2
+
 /-- Parse a whole document (§13.2). -/
 def parseHtml (src : String) : Parsed :=
-  let inp := normalizeNewlines src
-  let tb0 : TB := { tk := { inp }, errs := inputErrors inp }
-  let ((), tb) := runAll.run tb0
+  let tb := parseDocumentState src
   { children := buildTree tb.dom (tb.dom.size + 1) 0, errors := tb.errs ++ tb.tk.errs }
+
+/-- The HTML fragment parsing algorithm (§13.4) for a context element with
+namespace `ns` and local name `name`. Returns the final state and the arena
+index of the root `html` element, whose children are the result. -/
+def parseFragmentState (ns : NS) (name : String) (src : String) (scripting : Bool := false) : TB × Nat :=
+  let inp := normalizeNewlines src
+  let st : TS :=
+    if ns != .html then .data
+    else if name == "title" || name == "textarea" then .rcdata
+    else if ["style", "xmp", "iframe", "noembed", "noframes"].contains name then .rawtext
+    else if name == "script" then .scriptData
+    else if name == "noscript" then (if scripting then .rawtext else .data)
+    else if name == "plaintext" then .plaintext
+    else .data
+  -- arena: 0 Document, 1 root html, 2 the context element (not in the tree)
+  let dom : Array DNode := #[{ kind := .doc, kids := #[1] }, { kind := .elem, name := "html", parent := some 0 },
+    { kind := .elem, ns, name }]
+  -- no appropriate end tag exists in the fragment case (§13.4 note): `lastStart` stays empty
+  let tb0 : TB := { dom, stack := #[1], tk := { inp, st }, errs := inputErrors inp, scripting,
+                    ctx := some 2, tmodes := if ns == .html && name == "template" then #[.inTemplate] else #[] }
+  let ((), tb1) := resetMode.run tb0
+  let ((), tb) := runAll.run tb1
+  (tb, 1)
 
 end L4Factoidal.HTML
