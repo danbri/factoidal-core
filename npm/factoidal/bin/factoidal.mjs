@@ -37,6 +37,7 @@ import {
 } from './store.mjs'
 import { sbm11Api, setDefaultSbm11Reader } from '../lib/sbm11.mjs'
 import { nodeDefaultReaderFactory } from '../lib/sbm11-node.mjs'
+import { runQt4, Qt4UsageError } from './qt4.mjs'
 
 const EXIT_OK = 0
 const EXIT_FAILURE = 1
@@ -108,6 +109,9 @@ commands:
   sample-store [DIR]          pack a small built-in store and print its path
   inspect  STORE              report what the activated manifest commits
   query    STORE [QUERY]      evaluate a SPARQL query against a store
+  xpath4   EXPRESSION         XPath 4.0 over --input XML_FILE (optional)
+  xquery   QUERY              XQuery 4.0 over --input XML_FILE (optional)
+  xslt4    STYLESHEET_FILE    XSLT 4.0 over --input XML_FILE (optional)
   pack     INPUT OUTPUT       build one immutable generation from an RDF file
   activate STORE GENERATION   make one generation the activated generation
   update   STORE [UPDATE]     apply a SPARQL Update through the delta log
@@ -146,6 +150,23 @@ an RDF file with pack and activate, or try a small built-in one:
   factoidal query "$(factoidal sample-store)" 'SELECT * WHERE { ?s ?p ?o } LIMIT 5'`
 
 const COMMAND_USAGE = {
+  xpath4: `factoidal xpath4 - evaluate XPath 4.0
+usage: factoidal xpath4 [EXPRESSION] [--expression TEXT | --file PATH] [--input XML_FILE] [--format json|adaptive|xml]
+Supply exactly one expression source. No --input means no context item.
+Default output is the engine's JSON result, including typed serialized items.
+--format xml fails if XML serialization is unavailable (for example maps).
+Only explicitly named files are read. External resources and schema providers are not supplied.`,
+  xquery: `factoidal xquery - evaluate XQuery 4.0
+usage: factoidal xquery [QUERY] [--query TEXT | --file PATH] [--input XML_FILE] [--format json|adaptive|xml]
+Supply exactly one query source. No --input means no context item.
+Default output is the engine's JSON result; display serializations come from Lean.
+External modules/resources and schema providers are not supplied.`,
+  xslt4: `factoidal xslt4 - transform with XSLT 4.0
+usage: factoidal xslt4 [STYLESHEET_FILE] [--stylesheet PATH] [--input XML_FILE] [--format json|output]
+Supply exactly one stylesheet file. No --input means no global context item.
+Default JSON includes principal output, method, secondary results and messages.
+--format output prints only the principal output. Secondary results are never written to files.
+External stylesheet modules/resources and schema providers are not supplied.`,
   'sample-store': `factoidal sample-store - pack a small built-in store, print its path
 
 usage: factoidal sample-store [DIR] [--json]
@@ -1132,6 +1153,9 @@ class UsageError extends Error {}
 const REPEATABLE_OPTIONS = new Set(['cors-origin', 'saml-idp', 'saml-decrypt-key', 'allow-host', 'allow-origin'])
 
 const VALUE_OPTIONS = {
+  xpath4: new Set(['expression', 'file', 'input', 'format']),
+  xquery: new Set(['query', 'file', 'input', 'format']),
+  xslt4: new Set(['stylesheet', 'input', 'format']),
   version: new Set([]),
   'sample-store': new Set([]),
   inspect: new Set(['generation']),
@@ -2965,7 +2989,16 @@ async function commandLwsClient (positional, options) {
   return EXIT_OK
 }
 
+const qt4Host = {
+  loadEngine,
+  readText: (path) => new TextDecoder('utf-8', { fatal: true }).decode(readWhole(path)),
+  out, err,
+}
+
 const COMMANDS = {
+  xpath4: (positional, options) => runQt4('xpath4', positional, options, qt4Host),
+  xquery: (positional, options) => runQt4('xquery', positional, options, qt4Host),
+  xslt4: (positional, options) => runQt4('xslt4', positional, options, qt4Host),
   version: (positional, options) => commandVersion(options),
   'sample-store': (positional, options) => commandSampleStore(positional, options),
   inspect: commandInspect,
@@ -3017,7 +3050,7 @@ async function main () {
   try {
     parsed = parseArguments(argv.slice(1), VALUE_OPTIONS[command])
   } catch (error) {
-    if (error instanceof UsageError) {
+    if (error instanceof UsageError || error instanceof Qt4UsageError) {
       err(`factoidal ${command}: ${error.message}`)
       return EXIT_USAGE
     }
@@ -3034,7 +3067,7 @@ async function main () {
   try {
     return await COMMANDS[command](parsed.positional, parsed.options)
   } catch (error) {
-    if (error instanceof UsageError) {
+    if (error instanceof UsageError || error instanceof Qt4UsageError) {
       err(`factoidal ${command}: ${error.message}`)
       err('')
       err(COMMAND_USAGE[command])

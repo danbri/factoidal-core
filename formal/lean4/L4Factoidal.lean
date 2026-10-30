@@ -61,6 +61,7 @@ import L4Factoidal.Dataflow.Sources
 import L4Factoidal.Dataflow.SourcesTests
 import L4Factoidal.Dataflow.Registry
 import L4Factoidal.Dataflow.NodeSettings
+import L4Factoidal.Dataflow.Qt4NodeTests
 import L4Factoidal.Dataflow.PackSetStage
 import L4Factoidal.Storage.PackSet
 import L4Factoidal.Storage.PackSetTests
@@ -671,6 +672,8 @@ import L4Factoidal.XPath.Data
 import L4Factoidal.XPath.Expr
 import L4Factoidal.XPath.Eval
 import L4Factoidal.XPath.ExprTests
+import L4Factoidal.XPath4.NamespaceBridge
+import L4Factoidal.XSLT4.QtFnTransformTests
 import L4Factoidal.HTTP.Server
 import L4Factoidal.HTTP.Multipart
 import L4Factoidal.HTTP.Tests
@@ -1166,3 +1169,4 @@ import L4Factoidal.Unicode.BidiTheorems
 import L4Factoidal.Unicode.LineBreakData
 import L4Factoidal.Unicode.LineBreak
 import L4Factoidal.Unicode.LineBreakTheorems
+import L4Factoidal.XSD11.ElementMapTests

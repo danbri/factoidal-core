@@ -41,6 +41,7 @@ on:
       - 'tools/whatwg/**'
       - 'third_party/testing/unicode-18.0.0/**'
       - 'tests/unicode/**'
+      - 'tests/qt4-resource-base/**'
       - 'tools/unicode/**'
       - 'third_party/testing/html5lib-tests/**'
       - 'third_party/testing/wpt-html-parsing/**'
@@ -104,6 +105,13 @@ jobs:
       - name: Escape-hatch audit (sorry / axiom / native_decide / unsafe / partial def)
         working-directory: ${{ github.workspace }}
         run: python3 tools/lean-hygiene-audit.py --build-log "$RUNNER_TEMP/lake-build.log"
+
+      - name: Build QT4 runner for resource-base regressions
+        working-directory: formal/lean4
+        run: lake build l4qt4
+
+      - name: QT4 external-query and inline-stylesheet resource bases
+        run: bash tests/qt4-resource-base/run.sh
 
       - name: Compiled recursion and replacement audit controls
         run: |

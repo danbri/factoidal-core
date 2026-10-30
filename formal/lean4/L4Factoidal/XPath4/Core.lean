@@ -59,6 +59,19 @@ structure SchemaTypeInfo where
   cast : Option (String → Option (List Atomic)) := none
 deriving Inhabited
 
+/-- Schema component facts needed by F&O 4.0 §14.6.6. These describe the
+    declared content model, not the children and attributes in one instance. -/
+structure SchemaContentInfo where
+  /-- `simple`, `empty`, `element-only`, or `mixed`. -/
+  variety : String
+  list : Bool := false
+  zeroLength : Bool := false
+  attributes : Bool := false
+  wildcard : Bool := false
+  /-- Maximum occurrences per expanded child name; `none` is unbounded. -/
+  children : List (QN × Option Nat) := []
+deriving Inhabited
+
 /-- Hook for schema-aware processing (`L4Factoidal.XSD11` supplies one
 from a schema): type derivation by type name, the global element and
 attribute declarations, and substitution groups. The default knows the
@@ -98,6 +111,8 @@ structure SchemaHook where
   /-- The type definitions of the in-scope schema by annotation name
       (`NRec.tann`); `none` for a built-in type or an unknown name. -/
   typeInfo : QN → Option SchemaTypeInfo := fun _ => none
+  /-- Content model facts for schema-based element-to-map conversion. -/
+  contentInfo : QN → Option SchemaContentInfo := fun _ => none
 deriving Inhabited
 
 /-- The in-scope element (`true`) or attribute (`false`) declaration test

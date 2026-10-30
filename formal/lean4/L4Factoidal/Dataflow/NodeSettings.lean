@@ -208,6 +208,12 @@ def settingTable (stage : String) : List (String × SettingRole) :=
       ("mode", .parameter "standard or minimal mode (csv2rdf section 4)"),
       ("base", .parameter "the base IRI of the conversion"),
       ("url", .parameter "the URL of the tabular data") ]
+  else if stage == "xpath4Eval" then
+    [("expression", .parameter "XPath expression; tested adapter, no stage contract")]
+  else if stage == "xqueryEval" then
+    [("query", .parameter "XQuery main module; tested adapter, no stage contract")]
+  else if stage == "xslt4Transform" then
+    [("stylesheet", .parameter "single XSLT module; tested adapter, no stage contract")]
   else []
 
 /-! ## The canonical form -/
@@ -264,6 +270,22 @@ structure NodeSettings where
 private def lookupKey (kvs : List (String × Json)) (k : String) : Option Json :=
   (kvs.find? (·.1 == k)).map (·.2)
 
+/-- Public XML adapters have one required text setting. Unknown keys are refused
+instead of recording settings the runtime ignores. Parsing/evaluation errors
+remain the existing engine's QT4 errors, not a new host parser's decisions. -/
+def validateQt4Settings (stage : String) (given : List (String × Json)) : Except String Unit := do
+  let required := match stage with
+    | "xpath4Eval" => some "expression"
+    | "xqueryEval" => some "query"
+    | "xslt4Transform" => some "stylesheet"
+    | _ => none
+  if let some key := required then
+    if given.any (fun entry => entry.1 != key) then
+      throw s!"{stage}: unknown setting (only {key} is accepted)"
+    match lookupKey given key with
+    | some (.string _) => pure ()
+    | _ => throw s!"{stage}: setting {key} must be a string"
+
 /-- The output wire and derived values of an evaluator node: the form of the
 parsed query, when the settings carry one. -/
 def evaluatorWire (given : List (String × Json)) : Except String (Wire × List (String × Json)) :=
@@ -315,6 +337,7 @@ def nodeSettings (e : Entry) (given : List (String × Json)) : Except String Nod
   let keys := given.map (·.1)
   if keys.eraseDups.length != keys.length then
     throw "a setting is given twice"
+  validateQt4Settings e.nodeName given
   let table := settingTable e.nodeName
   let (outW, derived) ← if e.nodeName == "shippedEvaluator" then evaluatorWire given
     else pure (e.wireOut, [])

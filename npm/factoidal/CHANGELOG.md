@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.27.0 (2026-10-30)
+
+- New CLI commands `factoidal xpath4`, `factoidal xquery` and `factoidal xslt4` expose the existing Lean XML operations. They accept explicit local input files, display JSON or the engine's serialized result, and preserve QT4 error codes such as `XPST0003`. See the README for arguments and examples.
+- The public dataflow API now has `xpath4Eval`, `xqueryEval` and `xslt4Transform` nodes. Their output wires carry serialized XDM or XSLT results. These nodes are marked tested, with `checked: false` evidence; no evaluator correctness theorem is claimed. Existing registry IDs are preserved.
+- Public `xpath4Eval` and `xqueryEval` now install the pure inline `fn:transform` adapter already used by the QT4 harness. It supports supplied source nodes and stylesheet text without fetching external resources. Assertions default to disabled for `fn:transform` and can be enabled explicitly; direct `xslt4Transform` retains its enabled default. A nested `fn:transform` inside a `post-process` callback remains unsupported (`FOXT0004`).
+- QT4 fixes include assertion handling, QName environments and nested-transform resource bases (https://github.com/danbri/factoidal-core/pull/268). The native `fn-transform` set improves from 127 pass / 9 fail / 1 unsupported to 132 / 4 / 1. XPath grapheme behavior remains Unicode 15.1, with 1,189 / 0 / 0 on the pinned QT4 set. These are native measurements, not full WASM conformance claims.
+- Schema-aware `fn:element-to-map` now uses schema components and typed values, including inherited declarations and conversions (https://github.com/danbri/factoidal-core/pull/270). Native QT4 results improve from 186 pass / 35 fail / 0 unsupported to 219 / 2 / 0; the two remaining fixture/specification disagreements remain visible. Schema-driven behavior requires a validating host and is not newly exposed through the pure public API.
+
+The XProc atomic-step bridge to the Lean dataflow graph remains available in the Lean tree; this release adds no npm XProc operation. Native server executable publication is separate and remains blocked by the WebDAV regression failures tracked in https://github.com/danbri/factoidal/issues/1202.
+
 ## 0.26.0 (2026-10-29)
 
 - QT4 processor feature switches (https://github.com/danbri/factoidal-core/pull/252): the native qt4tests runner can run as a processor without a feature, so the tests written for such processors run instead of being unsupported; qt4tests in XQuery mode, measured on that PR: `fn` 17188 → 17217 pass, `prod` 13819 → 13823 pass, no new failures.
