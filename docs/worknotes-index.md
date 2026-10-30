@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-10-30 | [Compact WebDAV/LWS Base64 codecs](20261030-webdav-compact-base64.md) | pending | current: equivalent codec; native 49/51 MB probes pass; full WebDAV gate remains open |
 | 2026-10-29 | [WebDAV executable gate investigation](20261029-webdav-executable-gate.md) and [assurance boundary](designissues/2026-10-29-webdav-executable-assurance.md) | this change | current: startup fixed; large remote reads still fail |
 | 2026-10-29 | [Executables for each release](designissues/2026-10-29-executables-per-release.md) | this change | proposed: exact tarball, reusable executable jobs, visible distribution status |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |
