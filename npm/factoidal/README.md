@@ -132,6 +132,8 @@ XML test runners. They also have nodes named `xpath4Eval`, `xqueryEval`, and
 and requires its one string setting: `expression`, `query`, or `stylesheet`.
 
 ```js
+import { node, run } from '@factoidal/core';
+
 const evaluate = await node('xpath4Eval', { expression: 'count(//person)' });
 const result = await run(evaluate, '<people><person/></people>', { unchecked: true });
 console.log(result.graph.xml); // '1', serialized by Lean
