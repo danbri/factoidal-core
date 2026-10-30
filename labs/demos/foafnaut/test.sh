@@ -18,5 +18,5 @@ mkdir -p "$LAB/.build"
   -lm -o "$LAB/.build/native-coordinates-test"
 "$LAB/.build/native-coordinates-test"
 deno check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
-  "$LAB/run_ui.ts" "$LAB/run_lean.ts" "$LAB/run_svg.ts" "$LAB/"*_test.ts
+  "$LAB/run_ui.ts" "$LAB/run_lean.ts" "$LAB/run_svg.ts" "$LAB/run_foaf_svg.ts" "$LAB/"*_test.ts
 deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --allow-read "$LAB/"*_test.ts

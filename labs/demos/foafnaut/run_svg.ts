@@ -9,10 +9,10 @@ const width=Number(take("--width")??0),height=Number(take("--height")??0);
 const noOpen=args.includes("--no-open");if(noOpen)args.splice(args.indexOf("--no-open"),1);
 const [input,output="render-svg.ppm"]=args;
 if(!input||args.length>2)throw new Error("Usage: native-webgpu-svg-darwin-arm64 INPUT.svg [OUTPUT.ppm] [--no-open] [--emit-artifact PATH] [--width N --height N]");
-if((await Deno.stat(input)).size>262144)throw new Error("SVG UTF-8 file exceeds 262144 bytes");
+if((await Deno.stat(input)).size>4194304)throw new Error("SVG UTF-8 file exceeds 4194304 bytes");
 const xml=new TextDecoder("utf-8",{fatal:true}).decode(await Deno.readFile(input));
 const artifact=(await loadSVG()).compile(xml,width,height);
-console.log(`Lean SVG: ${artifact.primitiveCount} primitives, ${artifact.data.length} Float uniforms, ${artifact.width} × ${artifact.height}; XML.NamespaceView`);
+console.log(`Lean SVG: ${artifact.primitiveCount} primitives, ${artifact.data.length} storage floats, ${artifact.width} × ${artifact.height}; XML.NamespaceView`);
 if(artifactPath){
   await Deno.writeTextFile(artifactPath,JSON.stringify(artifact,null,2)+"\n");
   console.log(`Lean artifact saved: ${artifactPath}; GPU not requested`);

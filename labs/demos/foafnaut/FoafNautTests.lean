@@ -186,13 +186,37 @@ def runTests (args : List String) : IO Unit := do
   check (small.width == 192 && small.height == 128) "small physical viewport clamped away"
   check ((step small 2 96 64).selection == 1) "small viewport pointer and person disagree"
   let tiny := step m 1 16 16
-  check (tiny.width == 16 && tiny.height == 16 && (step tiny 2 8 8).selection == 1) "minimum viewport coordinates"
+  check (tiny.width == 16 && tiny.height == 16) "minimum viewport coordinates"
+  -- At this deliberately crowded size, the drawn foot sits over the body.
+  -- Picking must follow the foreground control instead of the old body box.
+  check ((tiny.pick 8 8).map PaintedPart.target == some (.person 0 2)) "tiny painted foot priority"
+  check ((step tiny 2 8 8).hidden[0]!) "tiny painted foot action"
   roundtrip small
   roundtrip tiny
   roundtrip selectedLocal
   roundtrip notFound
   IO.println "PASS local address navigation, focus and cursor validation"
-  IO.println "9 FOAFNaut native state test groups passed (no GPU)"
+  let alone := {m with hidden:=(Array.replicate m.hidden.size true).set! 0 false}
+  let wide := {alone with width:=2000,height:=700}
+  check ((wide.pick 1018 316).map PaintedPart.target == some (.person 0 0)) "wide viewport stretched head hit"
+  check ((alone.pick 512 385).map PaintedPart.target == some (.person 0 0)) "foot radius exceeds drawing"
+  check ((step alone 2 570 330).selection == 0) "blank card corner picked"
+  let tall := {alone with width:=1000,height:=1400}
+  check ((tall.pick 500 650).map PaintedPart.target != some (.person 0 1)) "tall viewport stretched head hit"
+  let overlap := {m with
+    hidden:=((Array.replicate m.hidden.size true).set! 0 false).set! 1 false
+    positions:=m.positions.set! 1 ⟨500,316⟩}
+  check ((overlap.pick 500 316).map PaintedPart.target == some (.person 1 0)) "front person did not occlude rear head"
+  let underChrome := {alone with positions:=alone.positions.set! 0 ⟨500,100⟩}
+  check ((underChrome.pick 500 55).map PaintedPart.target == some .blocked) "chrome forwarded a click to a hidden-under-header control"
+  check ((step underChrome 2 500 55).selection == 0) "blocked chrome selected a person"
+  check ((alone.pick (-1) 350).isNone && (alone.pick 1000 350).isNone) "outside canvas picked"
+  check (m.parts.all fun part => (NativeGeometry.hit part.shape 0 0).isSome) "unsupported picking geometry introduced"
+  check (alone.layoutChecks.length == 1 && alone.layoutChecks.all (fun (_,c) => c.accepted)) "hidden people entered footprint audit"
+  check (overlap.layoutChecks.any (fun (_,c) => !c.accepted && c.overlapSum > 0)) "actual drawn overlap not detected"
+  check (m.layoutChecks.all fun (_,c) => c.accepted) "default layout budget"
+  IO.println "PASS shared drawing/picking geometry, paint order and overlap reports"
+  IO.println "10 FOAFNaut native state test groups passed (no GPU)"
 
 #eval runTests ["../../labs/demos/foafnaut/foaf/fixtures/people.ttl"]
 end NativeFoafNautTests

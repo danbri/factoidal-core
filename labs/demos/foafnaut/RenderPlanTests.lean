@@ -29,6 +29,18 @@ private def refused {α : Type} : Except String α → Bool
 #guard bytesPerRow 65 == 512
 #guard readbackBytes 65 7 == 3584
 
+-- The SVG mode is explicitly storage backed, never a uniform-limit bypass.
+#guard match plan "svg-offscreen" "bgra8unorm" 16 16 134968 65536 4096 1048576 268435456 with
+  | .ok p => p.mode == .svgOffscreen && bindingType p.mode == "read-only-storage" &&
+      parameterUsage p.mode == [.storage,.copyDst] && p.format == .rgba8unorm
+  | .error _ => false
+#guard refused (plan "window" "rgba8unorm" 16 16 134968 65536 4096 1048576 268435456)
+#guard refused (plan "svg-offscreen" "rgba8unorm" 16 16 134968 65536 4096 500000 268435456)
+#guard refused (plan "svg-offscreen" "rgba8unorm" 16 16 134968 65536 4096 1048576 500000)
+#guard refused (plan "svg-offscreen" "rgba8unorm" 16 16 262148 65536 4096 16777216 268435456)
+#guard refused (plan "svg-offscreen" "rgba8unorm" 4096 4096 16 65536 4096 1048576 1048576)
+example : Command.present ∉ commands .svgOffscreen := by simp [commands]
+
 -- These statements are checked by the kernel, not native_decide.
 example (width : Nat) : bytesPerRow width % 256 = 0 := bytesPerRow_aligned width
 example (width height : Nat) : (4*width)*height ≤ readbackBytes width height :=

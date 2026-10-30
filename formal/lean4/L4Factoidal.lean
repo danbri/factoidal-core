@@ -1166,3 +1166,6 @@ import L4Factoidal.Unicode.BidiTheorems
 import L4Factoidal.Unicode.LineBreakData
 import L4Factoidal.Unicode.LineBreak
 import L4Factoidal.Unicode.LineBreakTheorems
+import L4Factoidal.UI.LayoutPolicyTests
+import L4Factoidal.UI.PolicyProtocolTests
+import L4Factoidal.UI.PresentationTests

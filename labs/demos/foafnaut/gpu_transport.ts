@@ -27,7 +27,7 @@ export function checkPixels(a: Renderable, rgba: Uint8Array) {
   }
 }
 
-export async function render(a: Renderable): Promise<Uint8Array | null> {
+export async function render(a: Renderable, mode:"offscreen"|"svg-offscreen"="offscreen"): Promise<Uint8Array | null> {
   if (!navigator.gpu) throw new Error("WebGPU API absent; add --unstable-webgpu");
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) return null;
@@ -35,7 +35,7 @@ export async function render(a: Renderable): Promise<Uint8Array | null> {
   const device = await adapter.requestDevice();
   try {
     device.pushErrorScope("validation");
-    const plan=await requestRenderPlan("offscreen","rgba8unorm",a,device.limits);
+    const plan=await requestRenderPlan(mode,"rgba8unorm",a,device.limits);
     const resources=await createPlanResources(device,plan,a.wgsl);
     const {uniform}=resources;
     device.queue.writeBuffer(uniform,plan.uniform.offset,new Float32Array(a.data));

@@ -6,9 +6,12 @@ extern void lean_initialize_runtime_module(void);
 extern void lean_io_mark_end_initialization(void);
 extern lean_object *initialize_FoafNaut(uint8_t builtin);
 extern lean_object *foafnaut_initialize(lean_object *rdf, uint32_t width, uint32_t height);
+extern lean_object *foafnaut_initialize_policy(lean_object *rdf, uint32_t width, uint32_t height, lean_object *policy);
 extern lean_object *foafnaut_transition(lean_object *wire, uint32_t kind, int32_t a, int32_t b);
 extern lean_object *foafnaut_snapshot(lean_object *wire);
 extern lean_object *foafnaut_insert_text(lean_object *wire, lean_object *text);
+extern lean_object *foafnaut_svg(lean_object *wire, lean_object *policy);
+extern lean_object *foafnaut_checked_picture(lean_object *wire, lean_object *policy);
 void initialize_libuv(void) {}
 static int ensure_init(void) {
   static int initialized;
@@ -23,6 +26,15 @@ static char *copy_result(lean_object *value) {
 }
 char *foafnaut_init(const char *rdf, uint32_t width, uint32_t height) {
   return ensure_init() ? copy_result(foafnaut_initialize(lean_mk_string(rdf), width, height)) : NULL;
+}
+char *foafnaut_init_policy(const char *rdf, uint32_t width, uint32_t height, const char *policy) {
+  return ensure_init() ? copy_result(foafnaut_initialize_policy(lean_mk_string(rdf), width, height, lean_mk_string(policy))) : NULL;
+}
+char *foafnaut_export_svg(const char *wire, const char *policy) {
+  return ensure_init() ? copy_result(foafnaut_svg(lean_mk_string(wire), lean_mk_string(policy))) : NULL;
+}
+char *foafnaut_picture_checked(const char *wire, const char *policy) {
+  return ensure_init() ? copy_result(foafnaut_checked_picture(lean_mk_string(wire), lean_mk_string(policy))) : NULL;
 }
 char *foafnaut_step(const char *wire, uint32_t kind, int32_t a, int32_t b) {
   return ensure_init() ? copy_result(foafnaut_transition(lean_mk_string(wire), kind, a, b)) : NULL;

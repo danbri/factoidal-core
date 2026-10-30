@@ -58,6 +58,14 @@ async function main() {
     console.log(`CPU render plan: ${plan.abi}; ${plan.uniform.bytes} uniform bytes`);
     console.log("CPU engine check complete; GPU/window not requested");return;
   }
+  const svgPath=option("--emit-svg");
+  if(svgPath) {
+    if(!foaf)throw new Error("Checked SVG export requires --demo foafnaut");
+    const checked=foaf.svg(frame.model);
+    await Deno.writeTextFile(svgPath,checked.svg);
+    await Deno.writeTextFile(`${svgPath}.policy.json`,JSON.stringify(checked.layout,null,2)+"\n");
+    console.log(`Lean checked SVG saved: ${svgPath}; GPU/window not requested`);return;
+  }
   const artifactPath=option("--emit-artifact"),snapshotPath=option("--snapshot");
   if(artifactPath||snapshotPath) {
     if(!foaf)throw new Error("UI snapshots currently require --demo foafnaut");

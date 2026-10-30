@@ -1,14 +1,25 @@
-// @deno-types="./foafnaut-engine.d.ts"
-import createModule from "./.build/engines/foafnaut-engine.mjs";
+import { loadFoafTransport } from "./foafnaut_transport.mjs";
 import type { UICommand, UIEvent } from "./ui_engine.ts";
 import type { Artifact } from "./lean_generator.ts";
 
+export type LayoutPolicy = {
+  application: { minOverlapBps: number; maxOverlapBps: number; minCheckHz: number; maxCheckHz: number };
+  configuration: { overlapBps: number; checkHz: number };
+};
+export type LayoutReport = {
+  metric: string; profile: string; policy: LayoutPolicy; thresholdBasisPoints: number;
+  enforced: boolean; targetCheckHz: number; timing: string; withinBudget: boolean;
+  nodes: { person: number; area: number; overlapUpperBound: number; withinBudget: boolean;
+    bounds: [number,number,number,number] | null }[];
+};
+export type CheckedSVG = { svg: string; width: number; height: number; checked: true; layout: LayoutReport };
 export type FoafFrame = {
   abi: "lean-foafnaut-v1"; demo: "foafnaut"; model: string;
   width: number; height: number; data: number[]; commands: UICommand[];
   animating: boolean; closed: boolean; selection: number; revision: number;
   dragging: boolean; facts: Record<string, number>; selectedLabel?: string; selectedId?: string; wgsl?: string;
   clipboardRead?: boolean; clipboardWrite?: string;
+  layout: LayoutReport;
 };
 const viewport = (n: number) => Number.isInteger(n) && n >= 16 && n <= 4096;
 const modelOK = (s: string) => typeof s === "string" && s.length <= 262144 && !s.includes("\0");
@@ -46,20 +57,22 @@ function validatePicture(value: unknown): Artifact {
 }
 export async function loadFoaf(rdf: string) {
   if (typeof rdf !== "string" || rdf.includes("\0") || [...rdf].length > 65536) throw new Error("Invalid Turtle input ABI");
-  const module = await createModule();
-  function call(name: string, types: string[], values: (string | number)[]) {
-    const pointer = module.ccall(name, "number", types, values);
-    if (!pointer) throw new Error("Lean FOAFNaut initialization/allocation failed");
-    try {
-      const result = JSON.parse(module.UTF8ToString(pointer));
-      if (result.error) throw new Error(`Lean FOAFNaut: ${result.error}`);
-      return result;
-    } finally { module.ccall("foafnaut_free", null, ["number"], [pointer]); }
+  const call = await loadFoafTransport();
+  let expectedPolicy: string | undefined;
+  function checkedCall(name: string, model: string) {
+    if (!modelOK(model)) throw new Error("Invalid FOAFNaut model ABI");
+    if (expectedPolicy === undefined) throw new Error("Initialize the application policy before checked export");
+    return call(name, ["string", "string"], [model, expectedPolicy]);
   }
   return {
-    initialize(width = 1000, height = 700) {
+    initialize(width = 1000, height = 700, policy?: LayoutPolicy) {
       if (![width, height].every(n => Number.isInteger(n) && n >= 0 && n <= 0xffffffff)) throw new Error("Invalid viewport ABI");
-      return validateFoafFrame(call("foafnaut_init", ["string", "number", "number"], [rdf, width, height]));
+      const frame = validateFoafFrame(policy === undefined
+        ? call("foafnaut_init", ["string", "number", "number"], [rdf, width, height])
+        : call("foafnaut_init_policy", ["string", "number", "number", "string"], [rdf, width, height, JSON.stringify(policy)]));
+      // Keep trusted application context separate from the caller-editable model.
+      expectedPolicy = JSON.stringify(frame.layout.policy);
+      return frame;
     },
     step(model: string, event: UIEvent) {
       if (!modelOK(model) || ![event.kind, event.a, event.b].every(Number.isInteger) ||
@@ -70,6 +83,15 @@ export async function loadFoaf(rdf: string) {
     snapshot(model: string) {
       if (!modelOK(model)) throw new Error("Invalid FOAFNaut model ABI");
       return validatePicture(call("foafnaut_picture", ["string"], [model]));
+    },
+    checkedSnapshot(model: string) {
+      return validatePicture(checkedCall("foafnaut_picture_checked", model));
+    },
+    svg(model: string): CheckedSVG {
+      const value = checkedCall("foafnaut_export_svg", model);
+      if (value.checked !== true || typeof value.svg !== "string" || !viewport(value.width) || !viewport(value.height))
+        throw new Error("Invalid checked SVG response");
+      return value;
     },
     insertText(model:string, text:string) {
       if(!modelOK(model) || typeof text!=="string" || text.length>1048576 || text.includes("\0"))

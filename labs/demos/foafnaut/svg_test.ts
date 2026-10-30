@@ -69,6 +69,24 @@ Deno.test("SVG element opacity composites fill and stroke once, unlike separate 
  rejects(()=>e.compile(wrap('<g opacity=".5"><rect width="20" height="20"/></g>')),"unsupported attribute");
 });
 
+Deno.test("SVG round line caps use capsule geometry with inherited overrides",async()=>{
+ const e=await loadSVG();
+ for(const [ax,ay,bx,by,width] of [[10,10.5,20,10.5,4],[7.25,8.75,23.25,22.75,5],[16.5,16.5,16.5,16.5,7]]) {
+  const doc=wrap(`<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" stroke="black" stroke-width="${width}" stroke-linecap="round"/>`);
+  e.compile(doc);
+  for(let y=0;y<32;y++)for(let x=0;x<32;x++) {
+   const dx=bx-ax,dy=by-ay,len=dx*dx+dy*dy;
+   const t=len===0?0:Math.max(0,Math.min(1,((x+.5-ax)*dx+(y+.5-ay)*dy)/len));
+   const hit=(x+.5-ax-t*dx)**2+(y+.5-ay-t*dy)**2<=(width/2)**2;
+   equal(e.sample(doc,x,y),hit?[0,0,0]:[255,255,255]);
+  }
+ }
+ const inherited=wrap('<g stroke="black" stroke-width="4" stroke-linecap="round"><line x1="10" y1="10.5" x2="20" y2="10.5"/><line x1="10" y1="30.5" x2="20" y2="30.5" stroke-linecap="butt"/></g>');
+ equal(e.sample(inherited,8,10),[0,0,0]);equal(e.sample(inherited,8,30),[255,255,255]);
+ equal(e.sample(wrap('<line x1="10" y1="10" x2="10" y2="10" stroke="black" stroke-width="0" stroke-linecap="round"/>'),10,10),[255,255,255]);
+ rejects(()=>e.compile(wrap('<line stroke="black" stroke-linecap="square"/>')),"unsupported stroke-linecap");
+});
+
 Deno.test("SVG ellipse fill and polygon nonzero/evenodd winding are implemented in Lean",async()=>{
  const e=await loadSVG();const ellipse=wrap('<ellipse cx="20.5" cy="20.5" rx="10" ry="5" fill="rgb(100%,0%,0%)"/>');
  equal(e.sample(ellipse,20,20),[255,0,0]);equal(e.sample(ellipse,20,26),[255,255,255]);
@@ -101,7 +119,7 @@ Deno.test("SVG fractional/tiny root viewport and explicit embedding viewport hav
 Deno.test("SVG refuses unsupported features rather than silently losing rendering semantics",async()=>{
  const e=await loadSVG();
  for(const element of ['path','polyline','text','use','image','foreignObject','defs','style','linearGradient','filter','clipPath','mask','script','svg'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
- for(const attrs of ['style="fill:red"','class="red"','transform="translate(1)"','stroke-dasharray="2 2"','stroke-linecap="round"','stroke-linejoin="bevel"','rx="2"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
+ for(const attrs of ['style="fill:red"','class="red"','transform="translate(1)"','stroke-dasharray="2 2"','stroke-linecap="square"','stroke-linejoin="bevel"','rx="2"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
  rejects(()=>e.compile('<?xml-stylesheet href="a.css"?>'+wrap('')),"processing instruction");
  rejects(()=>e.compile('<!DOCTYPE svg>'+wrap('')),"DOCTYPE");
  rejects(()=>e.compile('<?xml version="1.0" encoding="ISO-8859-1"?>'+wrap('')),"UTF-8");
@@ -111,12 +129,24 @@ Deno.test("SVG refuses unsupported features rather than silently losing renderin
 Deno.test("SVG artifact/input limits and GPU row/readback encoding are checked without a GPU",async()=>{
  const e=await loadSVG();const a=e.compile(wrap('<circle r="1"/>'));
  rejects(()=>e.compile(wrap('')+'\0'),"Invalid SVG input ABI");
- rejects(()=>e.compile('x'.repeat(65537)),"Invalid SVG input ABI");
- rejects(()=>e.compile(wrap('<rect width="1" height="1"/>'.repeat(65))),"primitive count");
+ rejects(()=>e.compile('x'.repeat(1048577)),"Invalid SVG input ABI");
+ rejects(()=>e.compile(wrap('<rect width="1" height="1"/>'.repeat(12289))),"primitive count");
  rejects(()=>validateSVG({...a,data:[NaN]}),"Invalid Lean SVG artifact");
  const rgba=new Uint8Array(a.width*a.height*4);for(const p of a.checks)rgba.set([...p.rgb,255],(p.y*a.width+p.x)*4);checkPixels(a,rgba);
  const p=a.checks[0];rgba[(p.y*a.width+p.x)*4]=255-p.rgb[0];rejects(()=>checkPixels(a,rgba),"readback mismatch");
  const rows=new Uint8Array(512);rows.set([1,2,3,255]);rows.set([4,5,6,255],256);equal([...encodePPM(unpad(rows,1,2,256),1,2).slice(11)],[1,2,3,4,5,6]);
+});
+
+Deno.test("SVG storage artifact stays bounded and uses compact data-driven geometry",async()=>{
+ const e=await loadSVG();
+ const large=e.compile(wrap('<circle cx="5" cy="5" r="2"/>'.repeat(2000)));
+ equal(large.binding,"read-only-storage");equal(large.primitiveCount,2000);equal(large.data.length,40008);
+ assert(large.wgsl.includes("var<storage,read>"),"SVG is not storage backed");
+ assert(large.wgsl.includes("for(var primitive=")&&large.wgsl.length<32768,"shader expands per primitive");
+ rejects(()=>validateSVG({...large,binding:"uniform"}),"Invalid Lean SVG artifact");
+ rejects(()=>validateSVG({...large,data:Array(262148).fill(0)}),"Invalid Lean SVG artifact");
+ const points=Array.from({length:64},(_,i)=>`${i%8},${Math.floor(i/8)}`).join(' ');
+ rejects(()=>e.compile(wrap(`<polygon points="${points}"/>`.repeat(1800))),"storage data");
 });
 
 Deno.test("SVG gallery is an actual parsed document with Float data and generated WGSL",async()=>{

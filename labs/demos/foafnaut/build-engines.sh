@@ -51,7 +51,7 @@ done
 # Fresh RDF/Turtle/JSON closure for the FOAF view. No JavaScript RDF parser.
 CORE_MODULES=(RDF/XmlCanon RDF/Core RDF/Graph Encoding/Hex Syntax/Lexing
   Syntax/NTriples Syntax/IriResolve RDF/IriSyntax NatBounds Syntax/Turtle
-  JSON/Value JSON/Parser JSON/Serialize)
+  JSON/Value JSON/Parser JSON/Serialize UI/Geometry UI/LayoutPolicy UI/PolicyProtocol UI/Presentation)
 CLOSURE=lean-4.33.1
 for module in "${CORE_MODULES[@]}"; do
   SOURCE="$PROJECT/L4Factoidal/$module.lean"
@@ -66,17 +66,24 @@ for module in "${CORE_MODULES[@]}"; do
 done
 "$TOOLCHAIN/bin/lean" -R "$LAB/foaf" -o "$BUILD/olean/FoafGraph.olean" \
   -c "$BUILD/ir/FoafGraph.c" "$LAB/foaf/FoafGraph.lean"
-for name in Graphics Font UI Demos SVG FoafNaut RenderPlan; do
+for name in Graphics Font Geometry UI Demos SVG SceneSVG FoafNaut RenderPlan PolicyBridge; do
   "$TOOLCHAIN/bin/lean" -R "$LAB" -o "$BUILD/olean/$name.olean" -c "$BUILD/ir/$name.c" "$LAB/$name.lean"
 done
 "$TOOLCHAIN/bin/lean" -R "$LAB/foaf" --run "$LAB/foaf/Tests.lean" "$LAB/foaf/fixtures/people.ttl"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/FoafNautTests.lean"
+"$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/GeometryTests.lean"
+"$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/FoafGeometryProofs.lean"
+"$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SceneSVGTests.lean"
+"$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGCapacityTests.lean"
+for module in LayoutPolicyTests PolicyProtocolTests PresentationTests; do
+  "$TOOLCHAIN/bin/lean" -R "$PROJECT" "$PROJECT/L4Factoidal/UI/$module.lean"
+done
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/RenderPlanTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" --run "$LAB/Graphics.lean" > "$BUILD/native-artifact.json"
 rmdir "$LOCK"
 trap - EXIT
 FLAGS=(-O3 -DNDEBUG -DLEAN_EMSCRIPTEN -fwasm-exceptions -I "$RUNTIME/wasm-include" -I "$TOOLCHAIN/include")
-for source in "$BUILD/ir/"*.c "$LAB/graphics_shim.c" "$LAB/ui_shim.c" "$LAB/demos_shim.c" "$LAB/svg_shim.c" "$LAB/foafnaut_shim.c" "$LAB/render_plan_shim.c"; do
+for source in "$BUILD/ir/"*.c "$LAB/graphics_shim.c" "$LAB/ui_shim.c" "$LAB/demos_shim.c" "$LAB/svg_shim.c" "$LAB/foafnaut_shim.c" "$LAB/render_plan_shim.c" "$LAB/policy_shim.c"; do
   name=$(basename "${source%.c}")
   HASH=$(hash_file "$source")
   if [ "$(cat "$BUILD/obj/$name.sha" 2>/dev/null || true)" != "$HASH" ]; then
@@ -102,14 +109,15 @@ link_engine ui-engine _ui_init,_ui_step,_ui_free "$BUILD/obj/Graphics.o" "$BUILD
 link_engine demos-engine _demos_init,_demos_step,_demos_free "$BUILD/obj/Graphics.o" "$BUILD/obj/Demos.o" "$BUILD/obj/demos_shim.o"
 link_engine svg-engine _svg_call,_svg_pixel,_svg_free "$BUILD/obj/Graphics.o" "$BUILD/obj/SVG.o" "$BUILD/obj/svg_shim.o" "$BUILD/obj/"XML_*.o
 link_engine render-plan _render_plan,_render_plan_free "$BUILD/obj/RenderPlan.o" "$BUILD/obj/render_plan_shim.o"
-link_engine foafnaut-engine _foafnaut_init,_foafnaut_step,_foafnaut_picture,_foafnaut_text,_foafnaut_free \
-  "$BUILD/obj/Graphics.o" "$BUILD/obj/Font.o" "$BUILD/obj/FoafGraph.o" "$BUILD/obj/FoafNaut.o" \
+link_engine layout-policy-engine _layout_policy,_layout_policy_free "$BUILD/obj/PolicyBridge.o" "$BUILD/obj/policy_shim.o" "$BUILD/obj/"Core_*.o
+link_engine foafnaut-engine _foafnaut_init,_foafnaut_init_policy,_foafnaut_step,_foafnaut_picture,_foafnaut_picture_checked,_foafnaut_export_svg,_foafnaut_text,_foafnaut_free \
+  "$BUILD/obj/Graphics.o" "$BUILD/obj/Font.o" "$BUILD/obj/Geometry.o" "$BUILD/obj/SceneSVG.o" "$BUILD/obj/FoafGraph.o" "$BUILD/obj/FoafNaut.o" \
   "$BUILD/obj/foafnaut_shim.o" "$BUILD/obj/"Core_*.o
 "$TOOLCHAIN/bin/lean" --version > "$BUILD/tool-versions.txt"
 cd "$REPO"
 if command -v sha256sum >/dev/null; then HASH_COMMAND=(sha256sum); else HASH_COMMAND=(shasum -a 256); fi
 "${HASH_COMMAND[@]}" formal/lean4/L4Factoidal/XML/{Document,Parser,Wellformedness,Namespaces,NamespaceView}.lean \
-  labs/demos/foafnaut/{Graphics,Font,UI,Demos,SVG,FoafNaut,RenderPlan}.lean \
+  labs/demos/foafnaut/{Graphics,Font,Geometry,UI,Demos,SVG,SceneSVG,FoafNaut,RenderPlan,PolicyBridge}.lean \
   labs/demos/foafnaut/foaf/FoafGraph.lean > "$BUILD/source-SHA256SUMS"
 for module in "${CORE_MODULES[@]}"; do
   "${HASH_COMMAND[@]}" "formal/lean4/L4Factoidal/$module.lean" >> "$BUILD/source-SHA256SUMS"

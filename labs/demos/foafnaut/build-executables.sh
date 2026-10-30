@@ -42,6 +42,12 @@ cp "$LAB/"*.command "$LAB/run-demo.sh" "$LAB/summarize-input.py" "$OUT/"
 cp -R "$LAB/svg-fixtures" "$OUT/"
 mkdir -p "$OUT/foaf-fixtures"
 cp "$LAB/foaf/fixtures/"*.ttl "$OUT/foaf-fixtures/"
+# The browser uses the same checked scene exporter and policy module. This is
+# a static site directory, not another executable or a separate implementation.
+mkdir -p "$OUT/web/.build/engines" "$OUT/web/foaf/fixtures"
+cp "$LAB/"{policy-demo.html,policy-demo.mjs,policy_engine.mjs,foafnaut_transport.mjs} "$OUT/web/"
+cp "$LAB/.build/engines/"{foafnaut-engine,layout-policy-engine}.{mjs,wasm} "$OUT/web/.build/engines/"
+cp "$LAB/foaf/fixtures/people.ttl" "$OUT/web/foaf/fixtures/"
 for doc in README.md SVG_README.md; do [ ! -f "$LAB/$doc" ] || cp "$LAB/$doc" "$OUT/$doc"; done
 cp "$LAB/.build/source-SHA256SUMS" "$LAB/.build/tool-versions.txt" "$OUT/"
 chmod +x "$OUT/"*.command "$OUT/run-demo.sh"

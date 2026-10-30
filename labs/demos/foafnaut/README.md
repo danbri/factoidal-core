@@ -228,7 +228,51 @@ one drag move per gesture, not continuous idle/animation output. Source users ca
 pass `--directory .build/dist` to the summarizer; it is read-only unless an output
 is requested. Traces count observed input and frames, not general correctness.
 
-## Validation limits
+## Shared geometry and checked SVG (source prototype)
+
+Drawing, hit-testing and node footprints now derive from one Lean shape list.
+The shared Factoidal policy accepts bounded application configurations (the
+experimental profile allows 3–7% bounding-box overlap and a 12–24 Hz target).
+`checkedSnapshot` and `svg` refuse a scene that fails that same checker. Ordinary
+interactive frames remain diagnostic; continuous presentation enforcement is
+not yet connected. The limits are human-designed and the cadence is a target,
+not an operating-system scheduling guarantee.
+
+After building the engines, serve this directory and visit `policy-demo.html`
+for the web-component SVG demo. It uses the same Lean WASM and offers the
+checked SVG for download. Export that scene and optionally render its SVG
+through the native WebGPU path from the core repository root:
+
+```sh
+deno run --allow-read --allow-write --allow-run=open --unstable-webgpu \
+  labs/demos/foafnaut/run_foaf_svg.ts \
+  labs/demos/foafnaut/foaf/fixtures/people.ttl checked.svg checked.ppm
+```
+
+Omit `checked.ppm` to export without a GPU. A `.policy.json` companion records
+the selected policy and the derived bounds. The exact theorem scope,
+adapter contract and remaining gaps are in the
+[shared policy record](../../../docs/designissues/2026-10-30-shared-ui-policy.md).
+
+The macOS package includes the static site under `web/`. It also supports
+exporting checked SVG without a development toolchain, then feeding that file
+to the native SVG renderer (run from the package directory):
+
+```sh
+./native-webgpu-ui-darwin-arm64 --demo foafnaut --emit-svg checked.svg
+./native-webgpu-svg-darwin-arm64 checked.svg checked.ppm
+```
+
+## Earlier validation baseline
+
+The shared-geometry/policy update passed 58 fresh WASM/Deno tests, 12 C coordinate
+checks, and all four compiled CPU modes in a relocated Mac package. The packaged
+FOAFNaut executable exported checked SVG; the packaged native SVG executable
+compiled that file to a storage-buffer artifact. Native geometry/policy proofs,
+ten FOAFNaut state groups, four serializer groups and three SVG capacity groups
+passed. This update has no new GPU/browser visual pass; the sandbox supplied no
+GPU adapter and browser automation could not connect. The figures below describe
+the preceding interaction/render-plan build.
 
 The browser/render-plan build measured 51 passing Deno tests and 12 portable C
 checks on the warm build. They cover native/WASM artifact equality, graphics transport,

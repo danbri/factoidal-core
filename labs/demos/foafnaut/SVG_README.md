@@ -21,7 +21,7 @@ adapter means exit 2 with no image, never a CPU image substituted for a GPU resu
 
 ## Supported subset
 
-SVG-namespace `svg`/`g`, sharp `rect`, `circle`, filled `ellipse`, butt-cap stroked
+SVG-namespace `svg`/`g`, sharp `rect`, `circle`, filled `ellipse`, butt- or round-cap stroked
 `line`, and filled `polygon` are supported, plus text-only `title`/`desc` metadata.
 Namespace prefixes resolve by expanded name; lookalike namespaces, unbound
 prefixes, duplicate expanded attributes and foreign elements/qualified attributes
@@ -37,8 +37,9 @@ comma-separated `rgb()` numeric/percentage triples, the 16 HTML4 color names and
 orange are supported. Paint channels/opacities clamp to their ranges.
 
 Rectangles/circles support centered strokes, with sharp miter rectangle corners
-and default miterlimit 4. Lines use butt caps; zero-length butt lines and zero
-stroke width paint nothing. Polygon fill implements nonzero and evenodd winding
+and default miterlimit 4. Lines default to butt caps and support inherited round caps. Round caps use
+a capsule, including a disk for zero-length lines; zero-length butt lines and
+zero stroke width paint nothing. Polygon fill implements nonzero and evenodd winding
 for 3–64 vertices; polygon strokes/joins are refused. Non-inherited leaf opacity
 is applied once after premultiplied fill/stroke composition, including overlap.
 Group/root opacity is refused rather than approximated per descendant.
@@ -60,20 +61,30 @@ without claiming all their semantics or other SVG features are implemented.
 CSS style/class, transforms, paths, polylines, text/fonts, nested viewports,
 images, use/links, scripting, animation, defs/gradients/patterns, filters, masks,
 clips, markers, rounded rects, conditional processing, visibility/display,
-paint-order changes, group opacity, non-butt caps, custom joins/miterlimits,
+paint-order changes, group opacity, square caps, custom joins/miterlimits,
 ellipse/polygon strokes, relative/non-px lengths, and unknown colors are errors.
 Unsupported features are not silently dropped, even on a zero-size primitive.
 IDs and version labels 1.1/2.0 are recognized metadata, not schema validation or
 an ID-reference implementation. Full SVG remains open work.
 
 DOCTYPE/DTD, processing instructions and non-UTF-8 encoding declarations are
-refused. Host UTF-8 decoding is strict. Profile limits: 65,536 characters (host
-file cap 262,144 bytes), 64 painted primitives, 32 SVG group levels, 4,096 Float
-uniform values, numeric token length 48, 24 mantissa digits, exponent magnitude
+refused. Host UTF-8 decoding is strict. Profile limits: 1,048,576 characters (host
+file cap 4,194,304 UTF-8 bytes), 12,288 painted primitives, 32 SVG group levels,
+262,144 Float values (1,048,576 bytes), numeric token length 48, 24 mantissa digits, exponent magnitude
 12, and numeric magnitude 1,000,000. SVG depth/count checks occur after XML
 parsing; they do not provide a pre-parse DOM-depth guarantee. The reused XML
 parser retains its existing behavior/limits. Initial parsing happens twice to
 inspect metadata and obtain the checked namespace view.
+
+SVG parameter data uses a read-only storage buffer, with a compact data-driven
+WGSL loop rather than shader code expanded for every primitive. Lean's render
+plan checks the actual device storage-binding and buffer-size limits before
+allocation; over-budget documents are refused without truncation. Small UI
+scenes retain their existing uniform-buffer path. The generated default
+8-person FOAF scene measured 128,347 characters, 1,880 SVG primitives and 37,608
+Float values; a dense 16-person/48-link scene measured 455,470 characters,
+6,748 primitives and 134,968 Float values. These measurements motivate the
+bounded profile, not a frame-rate guarantee.
 
 Geometry has hard boundaries without antialiasing. CPU reference Float and GPU
 f32 may differ at boundaries; readback comparisons allow one channel value of
@@ -90,11 +101,18 @@ closure. It does not link old XML objects from an unrelated checkout. Cached
 pinned Init/Std/runtime objects are shared; source hashes/tool versions travel
 with the release. No binaries, generated C/WASM/glue/JSON or caches are committed.
 
-Twelve local SVG regression groups cover namespace semantics, XML character
+Fourteen local SVG regression groups cover namespace semantics, XML character
 references, symbolic paint inheritance/defaults, fractional data, viewport
-mapping, butt/zero strokes, opacity overlap, polygon winding, zero/negative
+mapping, butt/round/zero strokes, opacity overlap, polygon winding, zero/negative
 geometry, tiny viewports, explicit refusal paths and GPU transport encodings.
-They execute the actual Lean WASM, but do not execute a GPU themselves.
+The WASM tests exercise the actual Lean engine and host transport, without
+executing a GPU. Native capacity tests also accepted both complete generated
+FOAF scenes and compared eight CPU reference samples per scene; serializer
+and render-plan tests cover explicit capacity refusals. The storage-path
+change passed named native Lean tests and Deno typechecking; fresh WASM test
+execution and actual GPU validation are separate checks, not implied by those
+results. CPU sample agreement does not prove all-pixel, floating-point boundary,
+or GPU equivalence.
 
 Official SVG inputs are managed separately in the [external SVG suite](../../../tests/external/svg/README.md).
 Accepted/refused input audits are not raster results. Test/reference relations

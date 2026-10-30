@@ -1,2 +1,5 @@
-// SVG uses the same Lean-planned WebGPU transport as the other scenes.
-export { unpad, encodePPM, checkPixels, render as renderSVG } from "./gpu_transport.ts";
+// SVG's explicit storage mode is interpreted from the Lean render plan.
+import type {SVGArtifact} from "./svg_engine.ts";
+import {render} from "./gpu_transport.ts";
+export {unpad,encodePPM,checkPixels} from "./gpu_transport.ts";
+export const renderSVG=(artifact:SVGArtifact)=>render(artifact,"svg-offscreen");

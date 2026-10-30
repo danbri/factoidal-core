@@ -1,4 +1,8 @@
 import Font
+import Geometry
+import SceneSVG
+import L4Factoidal.UI.PolicyProtocol
+import L4Factoidal.UI.Presentation
 import FoafGraph
 
 namespace NativeFoafNaut
@@ -15,6 +19,7 @@ structure Model where
   graph : FoafGraph.Data
   width : Nat
   height : Nat
+  policy : L4Factoidal.UI.LayoutPolicy.Config := L4Factoidal.UI.LayoutPolicy.defaultConfig
   positions : Array Position
   hidden : Array Bool
   pinned : Array Bool
@@ -58,9 +63,11 @@ theorem Model.targets_visibility (m : Model) (hidden : Array Bool) :
 theorem Model.targets_focus (m : Model) (focus : Nat) :
     ({m with focus:=focus} : Model).targets = m.targets := rfl
 
-def initial (graph : FoafGraph.Data) (width height : Nat) : Model := Id.run do
+def initial (graph : FoafGraph.Data) (width height : Nat)
+    (policy : L4Factoidal.UI.LayoutPolicy.Config := L4Factoidal.UI.LayoutPolicy.defaultConfig) : Model := Id.run do
   let m : Model := {
     graph := graph
+    policy := policy
     width := bound 16 4096 width
     height := bound 16 4096 height
     positions := Array.replicate graph.people.size ⟨500,350⟩
@@ -84,18 +91,169 @@ private def tick (m : Model) (ms : Nat) : Model := Id.run do
   for _ in List.range (min 8 (total/16)) do n := n.ease
   return n
 
+private def fontSize (m : Model) : Nat :=
+  max 1 (min ((2*m.width+999)/1000) ((2*m.height+699)/700))
+private def addressColumns (m : Model) : Nat := min 64 (max 1 ((720*m.width/1000)/(6*fontSize m)))
+private def addressScroll (m : Model) : Nat := m.cursor+1-addressColumns m
+
+inductive HitTarget where
+  | person (index control : Nat)
+  | address
+  | blocked
+  deriving Repr, BEq, DecidableEq
+
+structure PaintedPart where
+  shape : Shape
+  target : HitTarget
+  visible : Bool := true
+  deriving Repr
+
+private def canvas : RGB := ⟨247,249,252⟩
+private def slate : RGB := ⟨62,76,95⟩
+private def white : RGB := ⟨255,255,255⟩
+private def accent : RGB := ⟨105,103,218⟩
+private def point (m : Model) (x y : Int) : Point :=
+  ⟨x.toNat*m.width/1000,y.toNat*m.height/700⟩
+private def scale (m : Model) (n : Nat) : Nat := max 1 (min (n*m.width/1000) (n*m.height/700))
+private def offscreen : Position := ⟨100000,100000⟩
+private def displayedPosition (m : Model) (i : Nat) : Position := if m.hidden[i]! then offscreen else m.positions[i]!
+
+/-- Keep RDF literal labels as supplied. Only labels explicitly marked as
+adapter fallbacks are shortened; exact labels and typed IDs stay in the model. -/
+def displayName (m : Model) (i : Nat) : String :=
+  match m.graph.people[i]? with
+  | none => "PERSON " ++ toString (i+1)
+  | some person =>
+    if !person.labelIsFallback then person.label else
+      match person.subject with
+      | .bnode _ => "PERSON " ++ toString (i+1)
+      | .iri iri =>
+        let fragment := if (iri.val.splitOn "#").length > 1 then
+          (iri.val.splitOn "#").getLast?.getD "" else ""
+        let beforeFragment := (iri.val.splitOn "#").head!
+        let path := ((beforeFragment.splitOn "?").head!).splitOn "/"
+        let tail := (path.filter (!·.isEmpty)).getLast?.getD ""
+        if !fragment.isEmpty then fragment else
+          if !tail.isEmpty && !tail.contains ':' then tail else "PERSON " ++ toString (i+1)
+
+private def edgeShapes (m : Model) (l : FoafGraph.Link) : List Shape :=
+  let hidden := m.hidden[l.source]! || m.hidden[l.target]!
+  let a := if hidden then offscreen else m.positions[l.source]!
+  let b := if hidden then offscreen else m.positions[l.target]!
+  let dx := b.x-a.x
+  let dy := b.y-a.y
+  let norm := max 1 (max dx.natAbs dy.natAbs)
+  -- Wide cards need more horizontal clearance than the round person halo.
+  let clearance : Int := if dx.natAbs > dy.natAbs*2 then 88 else 54
+  let tip : Position := ⟨b.x-dx*clearance/Int.ofNat norm,b.y-dy*clearance/Int.ofNat norm⟩
+  let tail : Position := ⟨tip.x-dx*15/Int.ofNat norm,tip.y-dy*15/Int.ofNat norm⟩
+  let color := if m.selection == l.source+1 || m.selection == l.target+1 then accent else ⟨130,174,196⟩
+  [.segment (point m a.x a.y) (point m tip.x tip.y) (scale m 3) color,
+   .segment (point m tip.x tip.y) (point m (tail.x-dy*7/Int.ofNat norm) (tail.y+dx*7/Int.ofNat norm)) (scale m 3) color,
+   .segment (point m tip.x tip.y) (point m (tail.x+dy*7/Int.ofNat norm) (tail.y-dx*7/Int.ofNat norm)) (scale m 3) color]
+
+def personPieces (m : Model) (i : Nat) : List PaintedPart :=
+  let c := displayedPosition m i
+  let p := fun x y => point m (c.x+x) (c.y+y)
+  let rect := fun x y w h color => Shape.rectangle (p x y) ⟨scale m w,scale m h⟩ color
+  let circle := fun x y r color => Shape.circle (p x y) (scale m r) color
+  let line := fun x y x' y' color => Shape.segment (p x y) (p x' y') (scale m 2) color
+  let name := displayName m i
+  -- Base 2x bitmap cells, rounded up to keep normal desktop labels readable.
+  let fontScale := max 1 (min ((2*m.width+999)/1000) ((2*m.height+699)/700))
+  let columns := min 12 ((scale m 154 - 8)/(6*fontScale))
+  let shown := min columns name.length
+  let label := String.ofList (name.toList.take shown ++ List.replicate (12-shown) ' ')
+  let anchor := p 0 0
+  let textOrigin : Point := ⟨anchor.x-shown*6*fontScale/2,anchor.y+scale m 8-7*fontScale/2⟩
+  let halo : RGB := if i%3 == 0 then ⟨222,242,237⟩ else if i%3 == 1 then ⟨237,232,249⟩ else ⟨252,234,222⟩
+  let mint : RGB := if i%3 == 1 then ⟨142,195,192⟩ else ⟨130,202,174⟩
+  let capsule := fun x y x' y' stroke color => Shape.segment (p x y) (p x' y') (scale m stroke) color
+  let part (control : Nat) (shape : Shape) : PaintedPart :=
+    {shape, target:=.person i control, visible:=!m.hidden[i]!}
+  let drag := part 0
+  let reveal := part 1
+  let hide := part 2
+  [drag (circle 3 5 46 ⟨228,233,241⟩),
+   drag (circle 0 0 46 (if m.selection == i+1 then ⟨218,216,250⟩ else halo)),
+   drag (rect (-8) 9 16 27 slate),drag (rect (-6) 10 12 25 ⟨234,137,137⟩),
+   drag (capsule (-23) (-15) (-23) 6 9 slate),drag (capsule (-23) (-15) (-23) 6 6 ⟨246,193,161⟩),
+   drag (capsule 23 (-15) 23 6 9 slate),drag (capsule 23 (-15) 23 6 6 ⟨246,193,161⟩),
+   drag (rect (-20) (-23) 40 30 slate),drag (rect (-19) (-22) 38 28 mint),
+   reveal (circle 0 (-34) 12 slate),reveal (circle 0 (-34) 10 white),
+   drag (capsule (-64) 12 64 12 30 ⟨222,228,237⟩),
+   drag (capsule (-64) 8 64 8 30 (if m.selection == i+1 then accent else ⟨210,219,230⟩)),
+   drag (capsule (-64) 8 64 8 27 (if i%3 == 2 then ⟨255,250,239⟩ else white)),
+   reveal (line (-6) (-34) 6 (-34) slate),reveal (line 0 (-40) 0 (-28) slate),
+   hide (circle 0 35 11 slate),hide (circle 0 35 9 white),hide (line (-5) 35 5 35 slate)] ++
+   (NativeFont.text textOrigin fontScale label slate).map drag
+
+private def padded (text : String) (slots : Nat) : String :=
+  String.ofList (text.toList.take slots ++ List.replicate (slots-min slots text.length) ' ')
+
+def chromePieces (m : Model) : List PaintedPart :=
+  let p := fun x y => point m x y
+  let size := fontSize m
+  let origin := p 246 21
+  let columns := addressColumns m
+  let scroll := addressScroll m
+  let visible := String.ofList (m.address.toList.drop scroll |>.take columns)
+  let lo := min columns (min m.anchor m.cursor-scroll)
+  let hi := min columns (max m.anchor m.cursor-scroll)
+  let selected := m.editing && hi > lo
+  let selectOrigin := if selected then Point.mk (origin.x+lo*6*size) (origin.y-1) else ⟨100000,100000⟩
+  let caretOrigin := if m.editing then Point.mk (origin.x+(m.cursor-scroll)*6*size) origin.y else ⟨100000,100000⟩
+  let blocked (shape : Shape) : PaintedPart := {shape,target:=.blocked}
+  let address (shape : Shape) : PaintedPart := {shape,target:=.address}
+  [blocked (.rectangle (p 0 0) ⟨m.width,58*m.height/700⟩ ⟨26,36,58⟩),
+   blocked (.segment (p 0 57) (p 1000 57) (scale m 1) ⟨76,197,190⟩),
+   blocked (.circle (p 20 28) (scale m 4) ⟨96,230,190⟩)] ++
+  (NativeFont.text (p 34 21) size (padded "FOAFnaut" 12) ⟨181,244,226⟩).map blocked ++
+  [address (.segment (p 238 31) (p 965 31) (scale m 36) ⟨15,24,42⟩),
+   address (.segment (p 238 28) (p 965 28) (scale m 34) (if m.editing then ⟨93,225,205⟩ else ⟨81,104,138⟩)),
+   address (.segment (p 238 28) (p 965 28) (scale m 31) white),
+   address (.rectangle selectOrigin ⟨max 1 ((hi-lo)*6*size),7*size+2⟩ ⟨210,222,255⟩)] ++
+  (NativeFont.text origin size (padded visible 64) slate).map address ++
+  [address (.rectangle caretOrigin ⟨max 1 (scale m 2),7*size⟩ accent)] ++
+  (NativeFont.text (p 24 682) (max 1 (size-1)) (padded ("LOCAL | " ++ m.message) 32) ⟨93,114,143⟩).map blocked
+
+/-- One ordered drawing record feeds rendering and picking. Hidden slots stay
+outside the canvas to retain the persistent GPU pipeline, and cannot be picked.
+Blocking chrome participates in paint order instead of forwarding clicks. -/
+def Model.parts (m : Model) : List PaintedPart :=
+  ((m.graph.links.toList.flatMap (edgeShapes m)).map fun shape => {shape,target:=.blocked}) ++
+  (List.range m.graph.people.size).flatMap (personPieces m) ++ chromePieces m
+
+def Model.scene (m : Model) : Scene :=
+  {width:=m.width,height:=m.height,background:=canvas,shapes:=m.parts.map (·.shape)}
+
+/-- Integer pointer coordinates, not a claim about Float/WGSL raster rounding. -/
+def Model.pick (m : Model) (x y : Int) : Option PaintedPart :=
+  if x < 0 || y < 0 || x ≥ m.width || y ≥ m.height then none
+  else m.parts.reverse.find? fun part => part.visible && NativeGeometry.hit part.shape x y == some true
+
+def Model.visibleDrawings (m : Model) : List (Nat × List Shape) :=
+  (List.range m.graph.people.size).filterMap fun i =>
+    if m.hidden[i]! then none else some (i,(personPieces m i).map (·.shape))
+
+/-- Conservative configured aggregate box budget. This reports violations;
+layout transitions do not yet enforce the budget. No pixel-occlusion claim. -/
+def Model.footprints (m : Model) : List (Option NativeGeometry.Box) :=
+  let drawings := m.visibleDrawings
+  let viewport : NativeGeometry.Box := ⟨0,0,m.width,m.height⟩
+  drawings.map fun (_,shapes) => (NativeGeometry.footprint shapes).map (·.intersection viewport)
+
+def Model.layoutChecks (m : Model) : List (Nat × NativeGeometry.NodeCheck) :=
+  let drawings := m.visibleDrawings
+  let checks := L4Factoidal.UI.LayoutPolicy.checkFootprints m.policy m.footprints
+  (drawings.map (·.1)).zip checks
+
 private def logical (m : Model) (x y : Int) : Int × Int :=
   (x*1000/Int.ofNat m.width,y*700/Int.ofNat m.height)
-private def hit (m : Model) (x y : Int) : Nat × Nat := Id.run do
-  let (x,y) := logical m x y
-  -- Reverse paint order, with separate functional head/foot controls.
-  for i in (List.range m.positions.size).reverse do
-    if !m.hidden[i]! then
-      let p := m.positions[i]!
-      if (x-p.x)*(x-p.x)+(y-(p.y-34))*(y-(p.y-34)) <= 12*12 then return (i+1,1)
-      if (x-p.x)*(x-p.x)+(y-(p.y+35))*(y-(p.y+35)) <= 12*12 then return (i+1,2)
-      if (x-p.x).natAbs <= 79 && (y-p.y).natAbs <= 25 then return (i+1,0)
-  return (0,0)
+private def hit (m : Model) (x y : Int) : Nat × Nat :=
+  match (m.pick x y).map (fun (part : PaintedPart) => part.target) with
+  | some (HitTarget.person i control) => (i+1,control)
+  | _ => (0,0)
 
 /-- Event kinds match the native transport: resize/down/move/up/key/close/tick.
 Head reveals the person's already-loaded direct incoming/outgoing neighbors.
@@ -130,7 +288,7 @@ private def updateGraph (m : Model) (kind : Nat) (a b : Int) : Model × List Str
     n := {m with animating:=!m.animating}
     commands := [if n.animating then "startClock" else "stopClock"]
   else if kind == 5 && a == 15 then
-    n := {initial m.graph m.width m.height with revision:=m.revision}
+    n := {initial m.graph m.width m.height m.policy with revision:=m.revision}
     commands := ["startClock"]
   else if kind == 6 || (kind == 5 && a == 53) then
     return ({m with closed:=true,dragging:=false,revision:=m.revision+1},["close"])
@@ -146,10 +304,7 @@ structure Result where
   clipboardWrite : Option String := none
   clipboardRead : Bool := false
 
-private def fontSize (m : Model) : Nat :=
-  max 1 (min ((2*m.width+999)/1000) ((2*m.height+699)/700))
-private def addressColumns (m : Model) : Nat := min 64 (max 1 ((720*m.width/1000)/(6*fontSize m)))
-private def addressScroll (m : Model) : Nat := m.cursor+1-addressColumns m
+
 def selectedText (m : Model) : String :=
   String.ofList (m.address.toList.drop (min m.anchor m.cursor) |>.take (max m.anchor m.cursor-min m.anchor m.cursor))
 
@@ -238,9 +393,7 @@ def transitionModel (m : Model) (kind : Nat) (a b : Int) : Result := Id.run do
       cursor := m.address.length
       message := "Local RDF identity - no network fetching"}
   if kind == 2 then
-    let x := a*1000/Int.ofNat m.width
-    let y := b*700/Int.ofNat m.height
-    if x >= 220 && x <= 985 && y >= 8 && y <= 48 then
+    if (m.pick a b).map (·.target) == some .address then
       let cursor := min m.address.length (addressScroll m+(a-Int.ofNat (246*m.width/1000)).toNat/(6*fontSize m))
       return editorResult m {m with editing:=true,dragging:=false,cursor,anchor:=cursor}
   if m.editing && kind == 5 then return editKey m a.toNat b.toNat
@@ -262,116 +415,29 @@ def update (m : Model) (kind : Nat) (a b : Int) : Model × List String :=
   let result := transitionModel m kind a b
   (result.model,result.commands)
 
-private def canvas : RGB := ⟨247,249,252⟩
-private def slate : RGB := ⟨62,76,95⟩
-private def white : RGB := ⟨255,255,255⟩
-private def accent : RGB := ⟨105,103,218⟩
-private def point (m : Model) (x y : Int) : Point :=
-  ⟨x.toNat*m.width/1000,y.toNat*m.height/700⟩
-private def scale (m : Model) (n : Nat) : Nat := max 1 (min (n*m.width/1000) (n*m.height/700))
-private def offscreen : Position := ⟨100000,100000⟩
-private def displayedPosition (m : Model) (i : Nat) : Position := if m.hidden[i]! then offscreen else m.positions[i]!
-
-/-- Keep RDF literal labels as supplied. Only labels explicitly marked as
-adapter fallbacks are shortened; exact labels and typed IDs stay in the model. -/
-def displayName (m : Model) (i : Nat) : String :=
-  match m.graph.people[i]? with
-  | none => "PERSON " ++ toString (i+1)
-  | some person =>
-    if !person.labelIsFallback then person.label else
-      match person.subject with
-      | .bnode _ => "PERSON " ++ toString (i+1)
-      | .iri iri =>
-        let fragment := if (iri.val.splitOn "#").length > 1 then
-          (iri.val.splitOn "#").getLast?.getD "" else ""
-        let beforeFragment := (iri.val.splitOn "#").head!
-        let path := ((beforeFragment.splitOn "?").head!).splitOn "/"
-        let tail := (path.filter (!·.isEmpty)).getLast?.getD ""
-        if !fragment.isEmpty then fragment else
-          if !tail.isEmpty && !tail.contains ':' then tail else "PERSON " ++ toString (i+1)
-
-private def edgeShapes (m : Model) (l : FoafGraph.Link) : List Shape :=
-  let hidden := m.hidden[l.source]! || m.hidden[l.target]!
-  let a := if hidden then offscreen else m.positions[l.source]!
-  let b := if hidden then offscreen else m.positions[l.target]!
-  let dx := b.x-a.x
-  let dy := b.y-a.y
-  let norm := max 1 (max dx.natAbs dy.natAbs)
-  -- Wide cards need more horizontal clearance than the round person halo.
-  let clearance : Int := if dx.natAbs > dy.natAbs*2 then 88 else 54
-  let tip : Position := ⟨b.x-dx*clearance/Int.ofNat norm,b.y-dy*clearance/Int.ofNat norm⟩
-  let tail : Position := ⟨tip.x-dx*15/Int.ofNat norm,tip.y-dy*15/Int.ofNat norm⟩
-  let color := if m.selection == l.source+1 || m.selection == l.target+1 then accent else ⟨130,174,196⟩
-  [.segment (point m a.x a.y) (point m tip.x tip.y) (scale m 3) color,
-   .segment (point m tip.x tip.y) (point m (tail.x-dy*7/Int.ofNat norm) (tail.y+dx*7/Int.ofNat norm)) (scale m 3) color,
-   .segment (point m tip.x tip.y) (point m (tail.x+dy*7/Int.ofNat norm) (tail.y-dx*7/Int.ofNat norm)) (scale m 3) color]
-
-private def personShapes (m : Model) (i : Nat) : List Shape :=
-  let c := displayedPosition m i
-  let p := fun x y => point m (c.x+x) (c.y+y)
-  let rect := fun x y w h color => Shape.rectangle (p x y) ⟨scale m w,scale m h⟩ color
-  let circle := fun x y r color => Shape.circle (p x y) (scale m r) color
-  let line := fun x y x' y' color => Shape.segment (p x y) (p x' y') (scale m 2) color
-  let name := displayName m i
-  -- Base 2x bitmap cells, rounded up to keep normal desktop labels readable.
-  let fontScale := max 1 (min ((2*m.width+999)/1000) ((2*m.height+699)/700))
-  let columns := min 12 ((scale m 154 - 8)/(6*fontScale))
-  let shown := min columns name.length
-  let label := String.ofList (name.toList.take shown ++ List.replicate (12-shown) ' ')
-  let anchor := p 0 0
-  let textOrigin : Point := ⟨anchor.x-shown*6*fontScale/2,anchor.y+scale m 8-7*fontScale/2⟩
-  let halo : RGB := if i%3 == 0 then ⟨222,242,237⟩ else if i%3 == 1 then ⟨237,232,249⟩ else ⟨252,234,222⟩
-  let mint : RGB := if i%3 == 1 then ⟨142,195,192⟩ else ⟨130,202,174⟩
-  let capsule := fun x y x' y' stroke color => Shape.segment (p x y) (p x' y') (scale m stroke) color
-  [circle 3 5 46 ⟨228,233,241⟩,
-   circle 0 0 46 (if m.selection == i+1 then ⟨218,216,250⟩ else halo),
-   rect (-8) 9 16 27 slate,rect (-6) 10 12 25 ⟨234,137,137⟩,
-   capsule (-23) (-15) (-23) 6 9 slate,capsule (-23) (-15) (-23) 6 6 ⟨246,193,161⟩,
-   capsule 23 (-15) 23 6 9 slate,capsule 23 (-15) 23 6 6 ⟨246,193,161⟩,
-   rect (-20) (-23) 40 30 slate,rect (-19) (-22) 38 28 mint,
-   circle 0 (-34) 12 slate,circle 0 (-34) 10 white,
-   capsule (-64) 12 64 12 30 ⟨222,228,237⟩,
-   capsule (-64) 8 64 8 30 (if m.selection == i+1 then accent else ⟨210,219,230⟩),
-   capsule (-64) 8 64 8 27 (if i%3 == 2 then ⟨255,250,239⟩ else white),
-   line (-6) (-34) 6 (-34) slate,line 0 (-40) 0 (-28) slate,
-   circle 0 35 11 slate,circle 0 35 9 white,line (-5) 35 5 35 slate] ++
-   NativeFont.text textOrigin fontScale label slate
-
-private def padded (text : String) (slots : Nat) : String :=
-  String.ofList (text.toList.take slots ++ List.replicate (slots-min slots text.length) ' ')
-
-private def chrome (m : Model) : List Shape :=
-  let p := fun x y => point m x y
-  let size := fontSize m
-  let origin := p 246 21
-  let columns := addressColumns m
-  let scroll := addressScroll m
-  let visible := String.ofList (m.address.toList.drop scroll |>.take columns)
-  let lo := min columns (min m.anchor m.cursor-scroll)
-  let hi := min columns (max m.anchor m.cursor-scroll)
-  let selected := m.editing && hi > lo
-  let selectOrigin := if selected then Point.mk (origin.x+lo*6*size) (origin.y-1) else ⟨100000,100000⟩
-  let caretOrigin := if m.editing then Point.mk (origin.x+(m.cursor-scroll)*6*size) origin.y else ⟨100000,100000⟩
-  [Shape.rectangle (p 0 0) ⟨m.width,58*m.height/700⟩ ⟨26,36,58⟩,
-   .segment (p 0 57) (p 1000 57) (scale m 1) ⟨76,197,190⟩,
-   .circle (p 20 28) (scale m 4) ⟨96,230,190⟩] ++
-  NativeFont.text (p 34 21) size (padded "FOAFnaut" 12) ⟨181,244,226⟩ ++
-  [Shape.segment (p 238 31) (p 965 31) (scale m 36) ⟨15,24,42⟩,
-   .segment (p 238 28) (p 965 28) (scale m 34) (if m.editing then ⟨93,225,205⟩ else ⟨81,104,138⟩),
-   .segment (p 238 28) (p 965 28) (scale m 31) white,
-   .rectangle selectOrigin ⟨max 1 ((hi-lo)*6*size),7*size+2⟩ ⟨210,222,255⟩] ++
-  NativeFont.text origin size (padded visible 64) slate ++
-  [Shape.rectangle caretOrigin ⟨max 1 (scale m 2),7*size⟩ accent] ++
-  NativeFont.text (p 24 682) (max 1 (size-1)) (padded ("LOCAL | " ++ m.message) 32) ⟨93,114,143⟩
-
-def Model.scene (m : Model) : Scene :=
-  {width:=m.width,height:=m.height,background:=canvas,
-   shapes:=m.graph.links.toList.flatMap (edgeShapes m) ++ (List.range m.graph.people.size).flatMap (personShapes m) ++ chrome m}
 
 private def num (n : Nat) : Json := .number (toString n)
 private def int (n : Int) : Json := .number (toString n)
+
+def Model.layoutReport (m : Model) (checked : Bool := false) : Json :=
+  let checks := m.layoutChecks
+  .object [
+    ("metric",.string "viewport-clipped node bounding boxes; sum of pairwise intersections"),
+    ("profile",.string L4Factoidal.UI.LayoutPolicy.experimentalGraphBrowserV1.name),
+    ("policy",L4Factoidal.UI.PolicyProtocol.configJson m.policy),
+    ("thresholdBasisPoints",num m.policy.overlapBps),("enforced",.bool checked),
+    ("targetCheckHz",num m.policy.checkHz),
+    ("timing",.string (if checked then "checked at export; no scheduling claim"
+      else "diagnostic per response; presentation admission not enabled in this view")),
+    ("withinBudget",.bool (checks.all fun (_,c) => c.accepted)),
+    ("nodes",.array (checks.map fun (i,c) => .object [
+      ("person",num i),("area",num c.area),("overlapUpperBound",num c.overlapSum),
+      ("withinBudget",.bool c.accepted),
+      ("bounds",c.footprint.map (fun b => .array [int b.left,int b.top,int b.right,int b.bottom]) |>.getD .null)]))]
+
 def Model.toJson (m : Model) : Json := .object [
   ("graph",m.graph.toJson),("width",num m.width),("height",num m.height),
+  ("policy",L4Factoidal.UI.PolicyProtocol.configJson m.policy),
   ("positions",.array (m.positions.toList.map fun p => .array [int p.x,int p.y])),
   ("hidden",.array (m.hidden.toList.map Json.bool)),("focus",num m.focus),
   ("pinned",.array (m.pinned.toList.map Json.bool)),
@@ -392,15 +458,16 @@ private def integer (j : Json) : Option Int := do
 private def natField (j : Json) (k : String) := (j.field? k).bind natural
 
 def Model.decode (wire : String) : Option Model := do
-  if wire.length > 131072 then none else do
+  if wire.length > 131072 || !L4Factoidal.UI.PolicyProtocol.boundedNesting wire then none else do
     let j ← (parseJson wire).toOption
     let .object fs := j | none
-    let names := ["graph","width","height","positions","hidden","pinned","focus","selection","dragging","animating","closed","revision","accumulator",
+    let names := ["graph","width","height","policy","positions","hidden","pinned","focus","selection","dragging","animating","closed","revision","accumulator",
       "address","cursor","anchor","editing","message"]
     if fs.length != names.length || !names.all (fun name => (fs.filter (·.1 == name)).length == 1) then none else do
       let graph ← (FoafGraph.Data.fromJson (← j.field? "graph") graphLimits).toOption
       let width ← natField j "width"
       let height ← natField j "height"
+      let policy ← (L4Factoidal.UI.PolicyProtocol.readConfig (← j.field? "policy")).toOption
       let positions ← (← j.getArray? "positions").mapM fun item => do
         let .array [x,y] := item | none
         let x ← integer x
@@ -432,6 +499,7 @@ def Model.decode (wire : String) : Option Model := do
             graph := graph
             width := width
             height := height
+            policy := policy
             positions := positions.toArray
             hidden := hidden.toArray
             pinned := pinned.toArray
@@ -459,7 +527,7 @@ def response (m : Model) (commands : List String) (shader : Bool := false)
     ("commands",.array (commands.map Json.string)),("animating",.bool m.animating),
     ("closed",.bool m.closed),("selection",num m.selection),("revision",num m.revision),
     ("dragging",.bool m.dragging),("selectedLabel",.string selectedLabel),
-    ("selectedId",.string selectedId),
+    ("selectedId",.string selectedId),("layout",m.layoutReport),
     ("facts",.object [("people",num m.graph.people.size),("links",num m.graph.links.size),
       ("visiblePeople",num (m.hidden.toList.filter (!·)).length),("focus",num m.focus),
       ("pinnedPeople",num (m.pinned.toList.filter (fun pinned => pinned)).length),
@@ -472,7 +540,7 @@ def response (m : Model) (commands : List String) (shader : Bool := false)
 /-- Geometry-directed readback references, including an actual painted font
 cell when available. Values come from the same Lean CPU scene semantics;
 this checks GPU agreement, not an independent rendering specification. -/
-def Model.artifact (m : Model) : String := Id.run do
+def Model.artifact (m : Model) (checked : Bool := false) : String := Id.run do
   let scene := m.scene
   let mut probes : List Point := [⟨0,0⟩]
   match (List.range m.graph.people.size).find? (fun i => !m.hidden[i]!) with
@@ -503,7 +571,7 @@ def Model.artifact (m : Model) : String := Id.run do
   return toStringCompact (.object [
     ("abi",.string "lean-graphics-v1"),("width",num m.width),("height",num m.height),
     ("shapeCount",num scene.shapes.length),("data",.array (scene.data.map num)),
-    ("wgsl",.string scene.wgsl),("checks",.array checks)])
+    ("wgsl",.string scene.wgsl),("checks",.array checks),("layout",m.layoutReport checked)])
 
 @[export foafnaut_initialize]
 def initialResponse (rdf : String) (width height : UInt32) : String :=
@@ -512,6 +580,44 @@ def initialResponse (rdf : String) (width height : UInt32) : String :=
   | .ok graph =>
     if graph.people.isEmpty then "{\"error\":\"No FOAF people or resource-valued foaf:knows links found\"}"
     else response (initial graph width.toNat height.toNat) ["render","startClock"] true
+
+@[export foafnaut_initialize_policy]
+def initialPolicyResponse (rdf : String) (width height : UInt32) (policy : String) : String :=
+  match L4Factoidal.UI.PolicyProtocol.readConfigText policy with
+  | .error e => toStringCompact (.object [("error",.string e)])
+  | .ok cfg => match FoafGraph.fromTurtle rdf none graphLimits with
+    | .error e => toStringCompact (.object [("error",.string e)])
+    | .ok graph =>
+      if graph.people.isEmpty then "{\"error\":\"No FOAF people or resource-valued foaf:knows links found\"}"
+      else response (initial graph width.toNat height.toNat cfg) ["render","startClock"] true
+
+@[export foafnaut_svg]
+def svgResponse (wire policy : String) : String :=
+  match L4Factoidal.UI.PolicyProtocol.readConfigText policy with
+  | .error e => toStringCompact (.object [("error",.string e)])
+  | .ok expected =>
+    match Model.decode wire with
+    | none => "{\"error\":\"invalid FOAFNaut model\"}"
+    | some m => if m.policy != expected then "{\"error\":\"model policy differs from application configuration\"}"
+      else match L4Factoidal.UI.Presentation.inspect expected Model.footprints m with
+      | none => toStringCompact (.object [("error",.string "layout policy rejected this scene"),("layout",m.layoutReport)])
+      | some approved => match NativeSceneSVG.serialize approved.scene.scene with
+        | .error e => toStringCompact (.object [("error",.string e)])
+        | .ok svg => toStringCompact (.object [
+          ("svg",.string svg),("width",num m.width),("height",num m.height),
+          ("checked",.bool true),("layout",m.layoutReport true)])
+
+@[export foafnaut_checked_picture]
+def checkedPictureResponse (wire policy : String) : String :=
+  match L4Factoidal.UI.PolicyProtocol.readConfigText policy with
+  | .error e => toStringCompact (.object [("error",.string e)])
+  | .ok expected =>
+    match Model.decode wire with
+    | none => "{\"error\":\"invalid FOAFNaut model\"}"
+    | some m => if m.policy != expected then "{\"error\":\"model policy differs from application configuration\"}"
+      else match L4Factoidal.UI.Presentation.inspect expected Model.footprints m with
+      | none => toStringCompact (.object [("error",.string "layout policy rejected this scene"),("layout",m.layoutReport)])
+      | some approved => approved.scene.artifact true
 @[export foafnaut_transition]
 def transition (wire : String) (kind : UInt32) (a b : Int32) : String :=
   match Model.decode wire with

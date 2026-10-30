@@ -6,6 +6,11 @@ import L4Factoidal.XML.NamespaceView
    Geometry, paint inheritance, viewBox mapping, shader generation and reference
    sampling are Lean computations; hosts only transfer artifacts and pixels. -/
 namespace NativeSVG
+
+-- Bounded storage-backed profile, sized from generated 8/16-person scenes.
+def maxInputChars : Nat := 1048576
+def maxPrimitives : Nat := 12288
+def maxDataFloats : Nat := 262144
 open NativeGraphics
 open L4Factoidal.XML
 private def svgURI := "http://www.w3.org/2000/svg"
@@ -102,6 +107,8 @@ inductive Paint where
   deriving Repr
 inductive FillRule where | nonzero | evenodd
   deriving Repr, BEq
+inductive LineCap where | butt | round
+  deriving Repr, BEq
 structure Style where
   fill : Paint := .solid (rgb 0 0 0)
   stroke : Paint := .none
@@ -110,6 +117,7 @@ structure Style where
   fillOpacity : Float := 1
   strokeOpacity : Float := 1
   rule : FillRule := .nonzero
+  lineCap : LineCap := .butt
   deriving Repr
 private def readPaint (s : String) : Except String Paint :=
   if (trim s).toLower == "none" then pure .none
@@ -145,7 +153,12 @@ private def readStyle (attrs : List NamespaceAttribute) (parent : Style) : Excep
     match trim value with
     | "inherit" => pure () | "nonzero" => style := {style with rule:=.nonzero}
     | "evenodd" => style := {style with rule:=.evenodd} | _ => throw "unsupported fill-rule"
-  for (key,allowed) in [("stroke-linecap",["butt","inherit"]),("stroke-linejoin",["miter","inherit"]),("stroke-miterlimit",["4","inherit"])] do
+  if let some value := attr attrs "stroke-linecap" then
+    match trim value with
+    | "inherit" => pure () | "butt" => style := {style with lineCap:=.butt}
+    | "round" => style := {style with lineCap:=.round}
+    | _ => throw s!"unsupported stroke-linecap: {value}"
+  for (key,allowed) in [("stroke-linejoin",["miter","inherit"]),("stroke-miterlimit",["4","inherit"])] do
     if let some value := attr attrs key then
       if !allowed.contains (trim value) then throw s!"unsupported {key}: {value}"
   return style
@@ -246,10 +259,12 @@ private def readNode (depth : Nat) (style : Style) (node : NamespaceNode) : Exce
       let opacity ← match attr attrs "opacity" with | none => pure 1 | some s => number s
       return geometry.toList.map fun g => {geometry:=g,style:=inherited,opacity:=max 0 (min 1 opacity)}
 private def readChildren (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List Primitive) := do
-  let mut out := []
-  for node in nodes do out := out ++ (← readNode depth style node)
-  if out.length > 64 then throw "painted primitive count exceeds 64"
-  return out
+  let mut out : Array Primitive := #[]
+  for node in nodes do
+    let chunk ← readNode depth style node
+    if out.size+chunk.length > maxPrimitives then throw "painted primitive count exceeds 12288"
+    out := out ++ chunk.toArray
+  return out.toList
 end
 
 structure Mapping where
@@ -286,7 +301,7 @@ private def viewportMapping (w h : Float) (attrs : List NamespaceAttribute) : Ex
   return ⟨scale,scale,(w-vw*scale)*Float.ofNat ax/2,(h-vh*scale)*Float.ofNat ay/2,x,y,w,h⟩
 
 def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String Scene := do
-  if xml.length > 65536 then throw "SVG input exceeds 65536 characters"
+  if xml.length > maxInputChars then throw "SVG input exceeds 1048576 characters"
   let document ← (parseXML xml).mapError (fun e => s!"XML: {e.message} at {e.position}")
   if let some encoding := document.decl.bind (·.encoding) then
     if encoding.toLower != "utf-8" then throw "SVG host accepts UTF-8 input only"
@@ -347,7 +362,7 @@ private def fillCondition (g : Geometry) (base : Nat) : Test :=
     let dy := Expr.divide (.sub py (scalar base 1)) (scalar base 3)
     le (.add (.mul dx dx) (.mul dy dy)) (.lit 1)
   | _ => le (.lit 1) (.lit 0)
-private def strokeShapeCondition (g : Geometry) (base : Nat) : Test :=
+private def strokeShapeCondition (g : Geometry) (base : Nat) (cap : LineCap) : Test :=
   let half := Expr.divide (scalar base 16) (.lit 2)
   match g with
   | .rect .. =>
@@ -365,12 +380,25 @@ private def strokeShapeCondition (g : Geometry) (base : Nat) : Test :=
     let delta := Expr.subV (.var .position) (point base 0)
     let len := squared d
     let h := Expr.divide (.dot delta d) (.maximum len (.divide (.lit 1) (.lit 1000000000000)))
-    .both (.not (le len (.lit 0)))
+    let butt := .both (.not (le len (.lit 0)))
       (.both (.both (le (.lit 0) h) (le h (.lit 1)))
         (le (squared (.subV delta (.scale h d))) (.mul half half)))
+    if cap == .butt then butt else
+      -- Capsule = finite strip plus its endpoint disks. Cross multiplication
+      -- avoids division, including the zero-length round-cap disk case.
+      let projection := Expr.dot delta d
+      let cross := Expr.sub
+        (.mul (.sub px (scalar base 0)) (.sub (scalar base 3) (scalar base 1)))
+        (.mul (.sub py (scalar base 1)) (.sub (scalar base 2) (scalar base 0)))
+      let strip := Test.both (.not (le len (.lit 0)))
+        (.both (.both (le (.lit 0) projection) (le projection len))
+          (le (.mul cross cross) (.mul (.mul half half) len)))
+      .either strip (.either
+        (le (squared delta) (.mul half half))
+        (le (squared (.subV (.var .position) (point base 2))) (.mul half half)))
   | _ => le (.lit 1) (.lit 0)
-private def strokeCondition (g : Geometry) (base : Nat) : Test :=
-  .both (.not (le (scalar base 16) (.lit 0))) (strokeShapeCondition g base)
+private def strokeCondition (g : Geometry) (base : Nat) (cap : LineCap) : Test :=
+  .both (.not (le (scalar base 16) (.lit 0))) (strokeShapeCondition g base cap)
 private def windingConditions (base count i : Nat) : Test × Test :=
   let a := point base (20+2*i)
   let b := point base (20+2*((i+1)%count))
@@ -405,7 +433,11 @@ private def geometryRows : Geometry → List Float
   | .line x y u v => [x,y,u,v]
   | .polygon _ => [0,0,0,0]
 private def Primitive.rows (p : Primitive) : List Float :=
-  geometryRows p.geometry ++ [0,0,0,0] ++ resolved p.style.fill p.style p.style.fillOpacity ++
+  let (tag,count) : Nat × Nat := match p.geometry with
+    | .rect .. => (1,0) | .circle .. => (2,0) | .ellipse .. => (3,0)
+    | .line .. => (4,0) | .polygon points => (5,points.length)
+  geometryRows p.geometry ++ [Float.ofNat tag,Float.ofNat count,
+    if p.style.rule == .evenodd then 1 else 0,if p.style.lineCap == .round then 1 else 0] ++ resolved p.style.fill p.style p.style.fillOpacity ++
   resolved p.style.stroke p.style p.style.strokeOpacity ++ [p.style.strokeWidth,p.opacity,0,0] ++
   (match p.geometry with
    | .polygon points => points.flatMap (fun q => [q.x,q.y]) ++ (if points.length%2 == 1 then [0,0] else [])
@@ -419,29 +451,50 @@ private def Primitive.wgsl (p : Primitive) (base : Nat) : String :=
   (match p.geometry with
    | .polygon points => polygonWGSL base points.length p.style.rule
    | _ => "let fillHit=" ++ (fillCondition p.geometry base).wgsl ++ ";\n") ++
-  "let strokeHit=" ++ (strokeCondition p.geometry base).wgsl ++ ";\n" ++
+  "let strokeHit=" ++ (strokeCondition p.geometry base p.style.lineCap).wgsl ++ ";\n" ++
   s!"let fill=params.rows[{base/4+2}];let stroke=params.rows[{base/4+3}];\n" ++
   "var element=vec4f(0.0);\nif fillHit {element=vec4f(fill.rgb*fill.a,fill.a);}\n" ++
   "if strokeHit {element=vec4f(stroke.rgb*stroke.a,stroke.a)+element*(1.0-stroke.a);}\n" ++
   s!"let opacity=params.rows[{base/4+4}].y;\n" ++
   "rgb=element.rgb*opacity+rgb*(1.0-element.a*opacity);\n}\n"
-private def Scene.wgsl (s : Scene) : String := Id.run do
-  let mut body := ""
-  let mut base := 8
-  for primitive in s.primitives do
-    body := body ++ primitive.wgsl base
-    base := base+primitive.rows.length
-  return "struct Params {rows:array<vec4f," ++ toString (s.data.size/4) ++ ">};\n" ++
-    "@group(0) @binding(0) var<uniform> params:Params;\n" ++
-    "@vertex fn vertex(@builtin(vertex_index) i:u32)->@builtin(position) vec4f {\n" ++
-    "let vertices=array<vec2f,3>(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));return vec4f(vertices[i],0,1);}\n" ++
-    "@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {\n" ++
-    "var rgb=vec3f(1.0);\nif any(pixel.xy>=params.rows[1].zw) {return vec4f(rgb,1.0);}\n" ++
-    "let p=vec4f((pixel.xy-params.rows[0].zw)/params.rows[0].xy+params.rows[1].xy,0,1);\n" ++
-    body ++ "return vec4f(rgb,1.0);}\n"
+-- Conditions retain the shared typed expression semantics; only their parameter
+-- base is relocated to a runtime record row. No per-primitive shader expansion.
+private def relativeCondition (test : Test) : String :=
+  test.wgsl.replace "params.rows[" "params.rows[base+"
+private def shaderCase (tag : Nat) (g : Geometry) : String :=
+  s!"case {tag}u: " ++ "{fillHit=" ++ relativeCondition (fillCondition g 0) ++
+  ";strokeHit=" ++ relativeCondition (strokeCondition g 0 .butt) ++ ";}\n"
+private def Scene.wgsl (s : Scene) : String :=
+  "struct Params {rows:array<vec4f," ++ toString (s.data.size/4) ++ ">};\n" ++
+  "@group(0) @binding(0) var<storage,read> params:Params;\n" ++
+  "fn parameter(base:u32,offset:u32)->f32{return params.rows[base+offset/4u][offset%4u];}\n" ++
+  "fn polygonContains(base:u32,count:u32,rule:u32,p:vec2f)->bool {var winding:i32=0;" ++
+  "for(var i=0u;i<count;i++){let j=(i+1u)%count;" ++
+  "let a=vec2f(parameter(base,20u+2u*i),parameter(base,21u+2u*i));" ++
+  "let b=vec2f(parameter(base,20u+2u*j),parameter(base,21u+2u*j));" ++
+  "let cross=(b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x);" ++
+  "if(a.y<=p.y&&p.y<b.y&&cross>0.0){winding+=1;}" ++
+  "if(b.y<=p.y&&p.y<a.y&&cross<0.0){winding-=1;}}" ++
+  "if(rule==1u){return (winding%2)!=0;}return winding!=0; }\n" ++
+  "@vertex fn vertex(@builtin(vertex_index) i:u32)->@builtin(position) vec4f {" ++
+  "let vertices=array<vec2f,3>(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));return vec4f(vertices[i],0,1); }\n" ++
+  "@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {" ++
+  "var rgb=vec3f(1.0);if any(pixel.xy>=params.rows[1].zw){return vec4f(rgb,1.0);}" ++
+  "let p=vec4f((pixel.xy-params.rows[0].zw)/params.rows[0].xy+params.rows[1].xy,0,1);" ++
+  "var base=2u;\n" ++
+  s!"for(var primitive=0u;primitive<{s.primitives.length}u;primitive++)" ++ "{" ++
+  "let header=vec4u(params.rows[base+1u]);let tag=header.x;let count=header.y;" ++
+  "var fillHit=false;var strokeHit=false;switch tag {\n" ++
+  shaderCase 1 (.rect 0 0 0 0) ++ shaderCase 2 (.circle 0 0 0) ++ shaderCase 3 (.ellipse 0 0 0 0) ++
+  "case 4u: {if(header.w==1u){strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .round) ++
+  ";}else{strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}}\n" ++
+  "case 5u:{fillHit=polygonContains(base,count,header.z,p.xy);} default:{} }\n" ++
+  "let fill=params.rows[base+2u];let stroke=params.rows[base+3u];var element=vec4f(0.0);" ++
+  "if fillHit {element=vec4f(fill.rgb*fill.a,fill.a);}" ++
+  "if strokeHit {element=vec4f(stroke.rgb*stroke.a,stroke.a)+element*(1.0-stroke.a);}" ++
+  "let opacity=params.rows[base+4u].y;rgb=element.rgb*opacity+rgb*(1.0-element.a*opacity);" ++
+  "base+=5u+(count+1u)/2u;}return vec4f(rgb,1.0); }\n"
 
-private def blend (dst : Color) (src : Color) (alpha : Float) : Color :=
-  ⟨src.r*alpha+dst.r*(1-alpha),src.g*alpha+dst.g*(1-alpha),src.b*alpha+dst.b*(1-alpha)⟩
 private def Scene.sample (s : Scene) (x y : Nat) : Color := Id.run do
   let screenX := Float.ofNat x+0.5
   let screenY := Float.ofNat y+0.5
@@ -455,7 +508,7 @@ private def Scene.sample (s : Scene) (x y : Nat) : Color := Id.run do
     let fillHit := match primitive.geometry with
       | .polygon points => windingHit env base points.length primitive.style.rule
       | _ => (fillCondition primitive.geometry base).eval env
-    let strokeHit := (strokeCondition primitive.geometry base).eval env
+    let strokeHit := (strokeCondition primitive.geometry base primitive.style.lineCap).eval env
     let fill := resolved primitive.style.fill primitive.style primitive.style.fillOpacity
     let stroke := resolved primitive.style.stroke primitive.style primitive.style.strokeOpacity
     let fa := if fillHit then fill[3]! else 0
@@ -471,12 +524,12 @@ private def Scene.sample (s : Scene) (x y : Nat) : Color := Id.run do
   return result
 private def Color.json (c : Color) : String := jsonArray ([c.r,c.g,c.b].map fun f => toString ((max 0 (min 255 (f*255))).round.toUInt32.toNat))
 private def Scene.json (s : Scene) : Except String String := do
-  if s.data.size > 4096 then throw "uniform data exceeds 4096 floats"
+  if s.data.size > maxDataFloats then throw "storage data exceeds 262144 floats"
   let rawProbes := [(1,1),(s.width/4,s.height/4),(s.width/2,s.height/2),
     (s.width*3/4,s.height/2),(s.width/2,s.height*3/4),(s.width-2,s.height-2)]
   let probes := (rawProbes.map fun (x,y) => (min (s.width-1) x,min (s.height-1) y)).eraseDups
   let checks := probes.map fun (x,y) => "{\"x\":" ++ toString x ++ ",\"y\":" ++ toString y ++ ",\"rgb\":" ++ (s.sample x y).json ++ "}"
-  return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"width\":" ++ toString s.width ++
+  return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
     ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.primitives.length ++
     ",\"data\":" ++ jsonArray (s.data.toList.map toString) ++ ",\"wgsl\":" ++ quote s.wgsl ++ ",\"checks\":" ++ jsonArray checks ++ "}"
 @[export svg_compile]

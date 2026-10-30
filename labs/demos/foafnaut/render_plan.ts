@@ -3,9 +3,9 @@
 import createModule from "./.build/engines/render-plan.mjs";
 
 export type RenderPlan = {
-  abi:"lean-render-plan-v1"; mode:"window"|"offscreen";
+  abi:"lean-render-plan-v1"; mode:"window"|"offscreen"|"svg-offscreen";
   width:number; height:number; format:GPUTextureFormat;
-  uniform:{floatCount:number;rowCount:number;bytes:number;offset:number;usage:string[]};
+  uniform:{floatCount:number;rowCount:number;bytes:number;offset:number;bindingType:"uniform"|"read-only-storage";usage:string[]};
   pipeline:{layout:"auto";vertexEntry:string;fragmentEntry:string;topology:GPUPrimitiveTopology};
   bindGroup:{index:number;layoutIndex:number;binding:number};
   pass:{clear:[number,number,number,number];load:GPULoadOp;store:GPUStoreOp};
@@ -15,11 +15,19 @@ export type RenderPlan = {
   readback?:{offset:number;bytesPerRow:number;rowsPerImage:number;bytes:number;usage:string[];mapMode:"read";copyExtent:[number,number,number]};
   commands:string[];
 };
-export type DeviceFacts=Pick<GPUSupportedLimits,"maxUniformBufferBindingSize"|"maxTextureDimension2D"|"maxBufferSize">;
+export type DeviceFacts=Pick<GPUSupportedLimits,"maxUniformBufferBindingSize"|"maxTextureDimension2D"|"maxBufferSize"> & Partial<Pick<GPUSupportedLimits,"maxStorageBufferBindingSize">>;
 let modulePromise:ReturnType<typeof createModule>|undefined;
-export async function requestRenderPlan(mode:"window"|"offscreen",format:string,
+export async function requestRenderPlan(mode:"window"|"offscreen"|"svg-offscreen",format:string,
   frame:{width:number;height:number;data:number[]},limits:DeviceFacts):Promise<RenderPlan> {
-  const args=[frame.width,frame.height,frame.data.length,limits.maxUniformBufferBindingSize,limits.maxTextureDimension2D];
+  // Downward saturation only transports huge physical limits through UInt32;
+  // it never shrinks the payload or raises a device capability.
+  const capability=(value:number|undefined)=>{
+    if(value===undefined || !Number.isSafeInteger(value) || value<0)throw new Error("Invalid render-plan device capability");
+    return Math.min(value,0xffffffff);
+  };
+  const args=[frame.width,frame.height,frame.data.length,capability(limits.maxUniformBufferBindingSize),
+    capability(limits.maxTextureDimension2D),capability(limits.maxStorageBufferBindingSize??(mode==="svg-offscreen"?undefined:0)),
+    capability(limits.maxBufferSize)];
   if(!args.every(n=>Number.isInteger(n)&&n>=0&&n<=0xffffffff) || !frame.data.every(n=>Number.isFinite(n)&&Number.isFinite(Math.fround(n))))
     throw new Error("Invalid render-plan ABI inputs");
   const module=await (modulePromise??=createModule());
@@ -33,6 +41,7 @@ export async function requestRenderPlan(mode:"window"|"offscreen",format:string,
   } finally { module.ccall("render_plan_free",null,["number"],[pointer]); }
   // Validate ABI/capability correspondence at the trusted host boundary.
   if(p.abi!=="lean-render-plan-v1" || p.mode!==mode || p.width!==frame.width || p.height!==frame.height ||
+    p.uniform.bindingType!==(mode==="svg-offscreen"?"read-only-storage":"uniform") ||
     p.uniform.floatCount!==frame.data.length || p.uniform.bytes!==frame.data.length*Float32Array.BYTES_PER_ELEMENT ||
     !Number.isSafeInteger(p.uniform.bytes) || p.uniform.bytes>limits.maxBufferSize ||
     !["rgba8unorm","bgra8unorm"].includes(p.format) ||
@@ -41,7 +50,7 @@ export async function requestRenderPlan(mode:"window"|"offscreen",format:string,
   return p;
 }
 export function bufferUsage(names:string[]):number {
-  const flags:Record<string,number>={uniform:GPUBufferUsage.UNIFORM,"copy-dst":GPUBufferUsage.COPY_DST,"map-read":GPUBufferUsage.MAP_READ};
+  const flags:Record<string,number>={uniform:GPUBufferUsage.UNIFORM,storage:GPUBufferUsage.STORAGE,"copy-dst":GPUBufferUsage.COPY_DST,"map-read":GPUBufferUsage.MAP_READ};
   return names.reduce((n,k)=>{if(!(k in flags))throw new Error(`Unknown buffer usage ${k}`);return n|flags[k];},0);
 }
 export function textureUsage(names:string[]):number {
