@@ -47,7 +47,9 @@ no collections and no file system. So:
   * `import module` finds no library module (XQST0059);
   * `xsl:import`, `xsl:include` and `xsl:use-package` find no module
     (XTSE0165), because the stylesheet is the only module text given;
-  * `fn:transform` has no host (`extraHost` is unset).
+  * `fn:transform` uses the same pure inline stylesheet adapter as the QT4
+    harness. It receives only the supplied documents/resources; there is no
+    host fetch, stylesheet resolver, schema provider, or file system.
 Execution is bounded by the evaluator's fuel (`qt4Fuel`): each nested
 evaluation step uses one unit, and an exhausted fuel is the error FOER0000.
 The fuel does not bound the stack: parts of the engines take one stack frame
@@ -63,6 +65,7 @@ import L4Factoidal.XPath4.Eval
 import L4Factoidal.XPath4.Serialize
 import L4Factoidal.XQuery4.Module
 import L4Factoidal.XSLT4.Transform
+import L4Factoidal.XSLT4.QtFnTransform
 
 namespace L4Wasm.Ops
 
@@ -131,11 +134,18 @@ def qt4Env (xml : String) : Except Err Env :=
     | .ok d => .ok { docs := #[d], ctx := some [.node (NodeRef.mk' 0 0)], pos := 1, size := 1 }
     | .error m => .error { code := "FODC0002", msg := "the context document is not well-formed XML: " ++ m }
 
+/-- Attach the existing pure fn:transform adapter without introducing resource
+I/O or changing evaluator fuel. Function-item callbacks use the same fuel as
+the public evaluation entry; full callback/fuel semantics are not proved here. -/
+def qt4TransformEnv (env : Env) : Env :=
+  { env with host := L4Factoidal.XSLT4.Qt.transformHost env (fun f args => apply qt4Fuel env f args) env.host }
+
 /-- `xpath4Eval(xml, expr)`. -/
 def xpath4Eval (xml expr : String) : String :=
   match qt4Env xml with
   | .error e => qtErrJson "xpath4Eval" e
-  | .ok env =>
+  | .ok initial =>
+    let env := qt4TransformEnv initial
     match parseXPath expr env.ns >>= eval qt4Fuel env with
     | .ok s => qt4SeqJson "xpath4Eval" env s
     | .error e => qtErrJson "xpath4Eval" e
@@ -144,7 +154,8 @@ def xpath4Eval (xml expr : String) : String :=
 def xqueryEval (query contextXml : String) : String :=
   match qt4Env contextXml with
   | .error e => qtErrJson "xqueryEval" e
-  | .ok env =>
+  | .ok initial =>
+    let env := qt4TransformEnv initial
     match L4Factoidal.XQuery4.evalQuery query env qt4Fuel with
     | .ok s => qt4SeqJson "xqueryEval" env s
     | .error e => qtErrJson "xqueryEval" e
@@ -227,5 +238,23 @@ def callQt4 (op : String) (args : List String) : Option String :=
   "{\"ok\":true,\"output\":\"2\",\"method\":\"text\",\"secondary\":[],\"messages\":[]}"
 #guard ((xslt4Transform "<xsl:stylesheet version='3.0' xmlns:xsl='http://www.w3.org/1999/XSL/Transform'><xsl:include href='b.xsl'/></xsl:stylesheet>" "<r/>").splitOn
   "\"code\":\"XTSE0165\"").length == 2
+
+-- Public inline fn:transform reaches the same assertion toggle as the harness.
+private def publicAssertSheet (test : String) : String :=
+  "<xsl:stylesheet xmlns:xsl='http://www.w3.org/1999/XSL/Transform' version='3.0'>" ++
+  "<xsl:template name='main'><out>ok<xsl:assert test='" ++ test ++
+  "'/></out></xsl:template></xsl:stylesheet>"
+private def publicAssertCall (test option : String) : String :=
+  "transform(map{'stylesheet-text':\"" ++ publicAssertSheet test ++
+  "\",'initial-template':QName('','main')" ++ option ++ "})?output ! string()"
+
+#guard (xpath4Eval "" (publicAssertCall "false()" "")).endsWith "\"xml\":\"ok\"}"
+#guard ((xqueryEval (publicAssertCall "false()" ",'enable-assertions':true()") "").splitOn
+  "\"code\":\"XTMM9001\"").length == 2
+#guard (xpath4Eval "" (publicAssertCall "1 idiv 0 = 1" ",'enable-assertions':false()")).endsWith "\"xml\":\"ok\"}"
+#guard ((xpath4Eval "" "transform(map{'stylesheet-location':'https://example.org/not-fetched.xsl'})").splitOn
+  "\"ok\":false").length == 2
+#guard ((xqueryEval "element-to-map(<a>bad</a>, {'plan':{'a':{'layout':'simple','type':'boolean'}}})" "").splitOn
+  "\"code\":\"FOJS0010\"").length == 2
 
 end L4Wasm.Ops

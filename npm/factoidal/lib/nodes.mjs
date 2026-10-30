@@ -66,7 +66,7 @@ import { refusalFor, makeRecord, summarize, unionAssumptions, unionLists } from 
 export function buildNodes(deps) {
   const { entry, entryResult, requireEntryFn, Dataset,
     parse, closure, shaclValidate, query, serialize, canonicalize, canonicalHash, explain, csvwToRdf,
-    datasetMerge } = deps;
+    datasetMerge, xpath4Eval, xqueryEval, xslt4Transform } = deps;
 
   const reader = (format) => async (wire, params) => {
     if (typeof wire.graph !== 'string') {
@@ -92,6 +92,15 @@ export function buildNodes(deps) {
   // node's output wire (FactoidalNode.wireOut, the engine's), which run()
   // checks (wireHolds); `artefact` goes in the evidence record.
   const RUNNERS = {
+    xpath4Eval: async (wire, params) => ({
+      graph: await xpath4Eval(wire.graph, params.expression), artefact: { operation: 'xpath4Eval' },
+    }),
+    xqueryEval: async (wire, params) => ({
+      graph: await xqueryEval(params.query, wire.graph), artefact: { operation: 'xqueryEval' },
+    }),
+    xslt4Transform: async (wire, params) => ({
+      graph: await xslt4Transform(params.stylesheet, wire.graph), artefact: { operation: 'xslt4Transform' },
+    }),
     ntriplesDocumentReader: reader('ntriples'),
     nquadsDocumentReader: reader('nquads'),
     turtleDocumentReader: reader('turtle'),
@@ -181,6 +190,17 @@ export function buildNodes(deps) {
       case 'Table': return Array.isArray(value);
       case 'String × String':
         return Array.isArray(value) && value.length === 2 && value.every((v) => typeof v === 'string');
+      // Transport shapes of the existing Lean serializers, not live XDM nodes
+      // or a promise that arbitrary result text is a well-formed XML document.
+      case 'Serialized XDM result':
+        return value !== null && typeof value === 'object' && Number.isSafeInteger(value.count) && value.count >= 0 &&
+          Array.isArray(value.items) && value.items.length === value.count &&
+          value.items.every((item) => item && typeof item.type === 'string' && typeof item.value === 'string') &&
+          typeof value.adaptive === 'string' && (value.xml === null || typeof value.xml === 'string');
+      case 'XSLT result':
+        return value !== null && typeof value === 'object' && typeof value.output === 'string' && typeof value.method === 'string' &&
+          Array.isArray(value.secondary) && value.secondary.every((item) => item && typeof item.href === 'string' && typeof item.output === 'string') &&
+          Array.isArray(value.messages) && value.messages.every((item) => typeof item === 'string');
       default: return value !== undefined && value !== null;
     }
   }
