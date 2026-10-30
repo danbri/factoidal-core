@@ -1137,7 +1137,9 @@ def parseIetf (s : String) : M Atomic := do
     let s := toString n; String.ofList (List.replicate (k - min k s.length) '0') ++ s
   let secS :=
     let (ip, fp) := decDigits ss
-    let ipS := pad 2 (numOf ip)
+    -- decDigits omits the integer zero for 0 and fractional seconds below 1.
+    -- Do not send that valid empty part to the partial numeric parser.
+    let ipS := if ip.isEmpty then "00" else pad 2 (numOf ip)
     if fp.isEmpty then ipS else ipS ++ "." ++ String.ofList fp
   let tzS := if tz == 0 then "Z" else (if tz < 0 then "-" else "+") ++ pad 2 (tz.natAbs / 60) ++ ":" ++ pad 2 (tz.natAbs % 60)
   let lex := toString year ++ "-" ++ pad 2 mon ++ "-" ++ pad 2 day ++ "T" ++ pad 2 hh ++ ":" ++ pad 2 mm ++ ":" ++ secS ++ tzS
