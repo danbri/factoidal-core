@@ -127,6 +127,50 @@ test('public element-to-map explicit casts and pure resource refusal retain QT e
   assert.deepEqual(fetched, []);
 });
 
+test('parse-html preserves PI type, name and data through API, node and CLI adapters', async () => {
+  const pi = `parse-html('<?person retained?><p>x')/processing-instruction()`;
+  const expected = await f.xpath4Eval('', pi);
+  assert.equal(expected.count, 1, 'parse-html must preserve the processing instruction');
+  assert.deepEqual(expected.items.map((item) => item.type), ['processing-instruction()']);
+  assert.equal(expected.xml, '<?person retained?>');
+  assert.equal((await f.xpath4Eval('', `name((${pi})[1])`)).xml, 'person');
+  assert.equal((await f.xpath4Eval('', `string((${pi})[1])`)).xml, 'retained');
+  assert.deepEqual(await f.xqueryEval(pi), expected);
+  const node = await f.node('xpath4Eval', { expression: pi });
+  assert.deepEqual((await f.run(node, '', { unchecked: true })).graph, expected);
+  const cliResult = await command('xpath4', [pi]);
+  assert.equal(cliResult.code, 0, cliResult.stderr);
+  const { ok, ...cliValue } = JSON.parse(cliResult.stdout);
+  assert.equal(ok, true);
+  assert.deepEqual(cliValue, expected);
+});
+
+test('parse-html keeps SVG namespaces, template content and fail-on-error across public adapters', async () => {
+  for (const [query, expected] of [
+    [`namespace-uri(parse-html('<svg><circle/></svg>')//*:circle)`, 'http://www.w3.org/2000/svg'],
+    [`string(parse-html('<template><p>x</p></template>')//*:template/*:p)`, 'x'],
+  ]) {
+    assert.equal((await f.xpath4Eval('', query)).xml, expected);
+    const node = await f.node('xqueryEval', { query });
+    assert.equal((await f.run(node, '', { unchecked: true })).graph.xml, expected);
+    const cliResult = await command('xquery', [query]);
+    assert.equal(cliResult.code, 0, cliResult.stderr);
+    assert.equal(JSON.parse(cliResult.stdout).xml, expected);
+  }
+  const invalid = `parse-html('<p>x', {'fail-on-error':true()})`;
+  const htmlError = (error) => error.qtError?.code === 'FODC0011' &&
+    error.qtError.namespace === 'http://www.w3.org/2005/xqt-errors';
+  await assert.rejects(f.xpath4Eval('', invalid), htmlError);
+  await assert.rejects(f.xqueryEval(invalid), htmlError);
+  const node = await f.node('xpath4Eval', { expression: invalid });
+  await assert.rejects(f.run(node, '', { unchecked: true }), htmlError);
+  const cliResult = await command('xpath4', [invalid]);
+  assert.equal(cliResult.code, 1);
+  const error = JSON.parse(cliResult.stderr);
+  assert.equal(error.qtError.code, 'FODC0011');
+  assert.equal(error.qtError.namespace, 'http://www.w3.org/2005/xqt-errors');
+});
+
 test('CLI files and display modes preserve the existing engine result', async () => {
   const xml = join(directory, 'input.xml'), sheet = join(directory, 'sheet.xsl'), query = join(directory, 'query.xq');
   writeFileSync(xml, '<r><a/><a/></r>'); writeFileSync(sheet, textSheet); writeFileSync(query, 'count(//a)');
@@ -190,6 +234,13 @@ if (!native) test('shipped WASM actual CLI process returns success JSON and QT e
   const success = spawnSync(process.execPath, [cli, 'xpath4', 'count(//a)', '--input', xml], { encoding: 'utf8' });
   assert.equal(success.status, 0, success.stderr);
   assert.equal(JSON.parse(success.stdout).xml, '2');
+  const html = spawnSync(process.execPath, [cli, 'xpath4',
+    `parse-html('<?person retained?><p>x')/processing-instruction()`], { encoding: 'utf8' });
+  assert.equal(html.status, 0, html.stderr);
+  const parsedHtml = JSON.parse(html.stdout);
+  assert.equal(parsedHtml.count, 1);
+  assert.equal(parsedHtml.items[0].type, 'processing-instruction()');
+  assert.equal(parsedHtml.xml, '<?person retained?>');
   const failure = spawnSync(process.execPath, [cli, 'xquery', '1 +'], { encoding: 'utf8' });
   assert.equal(failure.status, 1, failure.stderr);
   assert.equal(JSON.parse(failure.stderr.trim().split('\n').at(-1)).qtError.code, 'XPST0003');

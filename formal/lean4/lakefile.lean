@@ -797,3 +797,8 @@ lean_exe l4xproc where root := `L4Factoidal.XProc31.Runner
 -- and line breaking (UAX #14) over the Unicode conformance files
 -- (Harness/UnicodeConformance.lean, tests/unicode/run.sh).
 @[default_target] lean_exe «l4unicode» where root := `Harness.UnicodeConformance
+
+-- The HTML parser in Lean (https://github.com/danbri/factoidal/issues/1167,
+-- milestone 5): html5lib tokenizer tests and the web-platform-tests tree
+-- construction tests (Harness/Html5lib.lean, tests/html5lib/run.sh).
+@[default_target] lean_exe «l4html5lib» where root := `Harness.Html5lib

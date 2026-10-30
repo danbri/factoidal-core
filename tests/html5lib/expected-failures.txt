@@ -1,0 +1,18 @@
+# Expected failures and defective test data for tests/html5lib/run.sh (l4html5lib --expect).
+# KIND<TAB>KEY<TAB>ISSUE. A listed case that passes is STALE and fails the run.
+xfail	tree:scripted_adoption01.dat:1	https://github.com/danbri/factoidal/issues/1205
+xfail	tree:scripted_ark.dat:1	https://github.com/danbri/factoidal/issues/1205
+xfail	tree:scripted_foster01.dat:1	https://github.com/danbri/factoidal/issues/1205
+xfail	tree:scripted_foster01.dat:12	https://github.com/danbri/factoidal/issues/1205
+xfail	tree:scripted_webkit01.dat:1	https://github.com/danbri/factoidal/issues/1205
+xfail	tree:scripted_webkit01.dat:14	https://github.com/danbri/factoidal/issues/1205
+xfail	tree:webkit02.dat:692	https://github.com/danbri/factoidal/issues/1206
+xfail	tree:webkit02.dat:706	https://github.com/danbri/factoidal/issues/1206
+xfail	tree:webkit02.dat:732	https://github.com/danbri/factoidal/issues/1206
+xfail	tree:webkit02.dat:748	https://github.com/danbri/factoidal/issues/1206
+xfail	tokenizer:xmlViolation.test:Non-XML character:Data state	https://github.com/danbri/factoidal/issues/1207
+xfail	tokenizer:xmlViolation.test:Non-XML space:Data state	https://github.com/danbri/factoidal/issues/1207
+xfail	tokenizer:xmlViolation.test:Double hyphen in comment:Data state	https://github.com/danbri/factoidal/issues/1207
+defective	tokenizer:domjs.test:CR in bogus comment state:Data state	https://github.com/danbri/factoidal/issues/1207
+defective	tokenizer:domjs.test:CRLF in bogus comment state:Data state	https://github.com/danbri/factoidal/issues/1207
+defective	tokenizer:domjs.test:CRLFLF in bogus comment state:Data state	https://github.com/danbri/factoidal/issues/1207

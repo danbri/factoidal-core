@@ -43,6 +43,9 @@ on:
       - 'tests/unicode/**'
       - 'tests/qt4-resource-base/**'
       - 'tools/unicode/**'
+      - 'third_party/testing/html5lib-tests/**'
+      - 'third_party/testing/wpt-html-parsing/**'
+      - 'tests/html5lib/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
 
@@ -238,3 +241,9 @@ jobs:
       # (https://github.com/danbri/factoidal/issues/1167, milestone 4).
       - name: Unicode algorithms, Unicode conformance files (tests/unicode/run.sh)
         run: bash tests/unicode/run.sh
+
+      # HTML tokenizer and tree builder (whatwg/html 93967771) over html5lib-tests
+      # and the WPT tree construction tests, and the XHTML/HTML agreement run
+      # (https://github.com/danbri/factoidal/issues/1167, milestone 5).
+      - name: HTML parser, html5lib-tests and WPT tree construction (tests/html5lib/run.sh)
+        run: bash tests/html5lib/run.sh
