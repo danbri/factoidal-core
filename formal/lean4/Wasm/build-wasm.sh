@@ -45,6 +45,9 @@
 #
 # See skills/lean4-wasm-export/SKILL.md for the routes that were
 # evaluated and rejected, and for the traps (they are not obvious).
+# L4_WASM_RUNTIME_ONLY=1 skips the Factoidal Lake build and stops after step 5;
+# its positional work directory (or L4_WASM_WORK) then holds reusable runtime,
+# Init and Std objects only. No shipped WASM assets are installed in this mode.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -82,7 +85,8 @@ LEAN_SRC="$TOOLCHAIN/src/lean"
 LEAN_LIB="$TOOLCHAIN/lib/lean"
 [ -d "$LEAN_SRC/Init" ] || { echo "toolchain does not ship core sources at $LEAN_SRC"; exit 1; }
 
-mkdir -p "$WORK" "$ASSETS"
+mkdir -p "$WORK"
+if [ "${L4_WASM_RUNTIME_ONLY:-0}" != "1" ]; then mkdir -p "$ASSETS"; fi
 CORE_C="$WORK/core-c"; CORE_OBJ="$WORK/core-obj"
 RT_SRC="$WORK/lean4-src/src"; RT_OBJ="$WORK/rt-obj"
 LIB_OBJ="$WORK/lib-obj"; INC="$WORK/wasm-include"
@@ -95,7 +99,11 @@ say "step 0 — build the Lean library natively (also emits its C)"
 # outside it (2026-10-27: L4Factoidal.JSONLD.Tests, built before a change to
 # parseJsonLd's arity) links with an old signature and the link stops on the
 # mismatch. Build the whole library too.
-( cd "$LEAN_DIR" && lake build l4wasm L4Factoidal )
+if [ "${L4_WASM_RUNTIME_ONLY:-0}" != "1" ]; then
+  ( cd "$LEAN_DIR" && lake build l4wasm L4Factoidal )
+else
+  echo "  L4_WASM_RUNTIME_ONLY=1: skip the full Factoidal library build"
+fi
 
 # ---------------------------------------------------------------------
 say "step 1 — fetch Lean's C++ runtime sources at $LEAN_TAG"
@@ -313,6 +321,13 @@ if [ ! -s "$RT_OBJ/mimalloc_static.o" ]; then
        -o "$RT_OBJ/mimalloc_static.o"
 fi
 echo "  runtime objects: $(ls "$RT_OBJ"/*.o | wc -l | tr -d ' ') (incl. mimalloc)"
+
+# Labs can share the same pinned runtime/Init/Std cache without building the
+# full library or installing/changing the shipped Factoidal WASM artifacts.
+if [ "${L4_WASM_RUNTIME_ONLY:-0}" = "1" ]; then
+  echo "L4_WASM_RUNTIME_ONLY=1: runtime/Init/Std objects ready in $WORK; no artifacts installed"
+  exit 0
+fi
 
 # ---------------------------------------------------------------------
 say "step 6 — compile our library's C, the shim and the stub"

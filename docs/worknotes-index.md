@@ -148,3 +148,4 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-29 | [Processor feature settings](20261029-processor-feature-settings.md) | uncommitted | record |
 | 2026-10-29 | [XQuery 4.0 merge against updated main](20261029-xquery4-merge-main2.md) | uncommitted | record |
 | 2026-10-29 | [QT4 optional features merge against updated main](20261029-qt4-optional-features-merge2.md) | uncommitted | record: both baselines, per-family validation |
+| 2026-10-30 | [Foafnaut native graphics and SVG lab](designissues/2026-10-30-foafnaut-native-graphics.md) | same commit | current: Lean WASM / raw WebGPU boundary, native demos and executable packaging, pinned SVG reftests and explicit validation limits |

@@ -1,0 +1,993 @@
+{
+  "repository": "https://github.com/web-platform-tests/wpt",
+  "revision": "70dae60789ef6220d9b4e60c92c5b2107b4e2b93",
+  "scope": {
+    "directories": [
+      "svg/shapes/reftests",
+      "svg/painting/reftests"
+    ],
+    "svgDocuments": 67,
+    "htmlDocuments": 54,
+    "selection": "All direct-child SVG documents with rel=match in both directory listings; no feature filtering",
+    "viewport": [
+      800,
+      600
+    ],
+    "directoryInventory": "source.json",
+    "htmlScriptDocuments": 8,
+    "manualDocuments": 0,
+    "svgDocumentsInSubdirectories": 4
+  },
+  "files": [
+    {
+      "path": "svg/shapes/reftests/disabled-shapes-01.svg",
+      "sha256": "98b264c9eb23e5295c7e5822d7af4b508ffacd935ba2d1a8dd60e50a257d6a6f",
+      "bytes": 2124
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-001-ref.svg",
+      "sha256": "6f71408ee577f26888be1532d925bcdedeb25734721e7acc99ffc0d9bbb61686",
+      "bytes": 633
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-001.svg",
+      "sha256": "7c9974a50830b22976d9aef5a33169f9203d37b36c30ddd8bfbb55ee1511fe60",
+      "bytes": 806
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-002-ref.svg",
+      "sha256": "3f875b7bbcbac09bd235e28e1840afbfa9652bcc3a861b4696194ceace6418c6",
+      "bytes": 686
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-002.svg",
+      "sha256": "e769332a94cbc2062a8252a84b4b69f96eeb77f4c8651fe7d9167ce220b157d0",
+      "bytes": 834
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-003-ref.svg",
+      "sha256": "83933b1d92c0bb6c1476394c27a5582ca53cca2835fbb433696f83ecafb132e2",
+      "bytes": 1312
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-003.svg",
+      "sha256": "865c33425a514280ae13e7f8e771ba586d61f06f90074f6985717a9a0699640a",
+      "bytes": 1463
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-004-ref.svg",
+      "sha256": "75ea53d5db388e50ac87dac77bb3b9656705930c7426c41bd05dde5d23c77fd9",
+      "bytes": 531
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-004a.svg",
+      "sha256": "c900f877bb07981cc625f8b99124af45347aa96da51699b1f6ee0de4ae9abf7f",
+      "bytes": 716
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-004b.svg",
+      "sha256": "9199fe0927a0d04fda91ccc059d9b24dd2c92cbf0985c4af99a70d92dfe616cd",
+      "bytes": 994
+    },
+    {
+      "path": "svg/painting/reftests/fallback-001.svg",
+      "sha256": "c3e06af477d94bfd5c8e54783ec194e7616d5b3474edc45d8b63db6d0338c9aa",
+      "bytes": 348
+    },
+    {
+      "path": "svg/painting/reftests/fallback-002.svg",
+      "sha256": "6723b6b23f611a12dcfa9b2e79b7a9a03a7e378ee168fa937d76018040bd8366",
+      "bytes": 285
+    },
+    {
+      "path": "svg/painting/reftests/gradient-external-reference.svg",
+      "sha256": "514eb2abd39276d67eb9fbf6cf245a067d1d819927a37bec99940fb72849072c",
+      "bytes": 850
+    },
+    {
+      "path": "svg/painting/reftests/green-100x100.svg",
+      "sha256": "b94e7d24d6d54a427ffbe1af8e7110c1ef10261eab7d169c03e742096b3a469f",
+      "bytes": 96
+    },
+    {
+      "path": "svg/painting/reftests/marker-external-reference.svg",
+      "sha256": "5a9521ae4182add57f9cfd8e574ad3d0679d33401d8a5e73e3766a1b269271a6",
+      "bytes": 700
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-001-ref.svg",
+      "sha256": "cdf8618fd05e3e1790baec2870ed74973b36a2fbb57ab1ecaa9842527ba80fea",
+      "bytes": 3377
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-001.svg",
+      "sha256": "02d017dc9dab654d002f56b4acf7b92fd09c12270641405c1ec8a399d5909913",
+      "bytes": 2181
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-002-ref.svg",
+      "sha256": "fba4e14a57a52604a6c5a42dbca5d2a05616ee516b1f61cd18e14ded161fd183",
+      "bytes": 3079
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-002.svg",
+      "sha256": "b9db37dd732ad89103b495fe8d6ca793c13a69b166c46613a82d12186e0b701f",
+      "bytes": 2262
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-003-ref.svg",
+      "sha256": "abcd78bd620afeaa03467d9091b2d9511ce15e4c2e1cb2dc2b4d2200ba67be78",
+      "bytes": 2492
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-003.svg",
+      "sha256": "7fb830d0843b4b7afa57f6ed75a6cfbcf6acf428ea46e6b9ef7898543ed11108",
+      "bytes": 1900
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-011-ref.svg",
+      "sha256": "dc63e9d2d4559e1cc86ae1dd52e7f34570175bc0becd36542db9e3b7cc4bb79b",
+      "bytes": 2972
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-011.svg",
+      "sha256": "ef489a59c31a6609094d8736bb6321fd2ff6492e33147beaefed2aeaf51420ad",
+      "bytes": 2094
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-012-ref.svg",
+      "sha256": "21f53c5078e96dcc53135105187f6d73d5c80386a432b442b3702e9903e094f3",
+      "bytes": 2438
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-012.svg",
+      "sha256": "4f7aa9ac6e41e7681260c0b7ed654eb293375b6d56438367060ea183667d0943",
+      "bytes": 1880
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-013-ref.svg",
+      "sha256": "9ed935eb7e7dfbf04007f626da0159d13ab17a5174e1054dff3883db235dab57",
+      "bytes": 2456
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-013.svg",
+      "sha256": "67c49c1042691ca3e2b7bd1033d9e3f8c2463e6bf28915ca50234af2faa4812d",
+      "bytes": 1864
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-021-ref.svg",
+      "sha256": "275ac450fd555871439f2b2c8453f992b98a418bce8ec96bd1a136d4d0da13a1",
+      "bytes": 2919
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-021.svg",
+      "sha256": "65704c4d9d2203c0784f106f6c2c162aec7819b06b8859e0d2ab2d7e773f793d",
+      "bytes": 2050
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-022-ref.svg",
+      "sha256": "fa4b740ce93beeeebb484a679d9c4d6f227307b6c0e44900be3c3dc3fcc74d85",
+      "bytes": 3449
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-022.svg",
+      "sha256": "95f2bfcc562643966110a4fb009c220a0c63cd69cc453f5df588e70cf88c7dca",
+      "bytes": 2568
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-023-ref.svg",
+      "sha256": "2ba69d2b4fd21f417e6f38b7041b47387ff67947f45405e592987eb6691ad3bd",
+      "bytes": 3516
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-023.svg",
+      "sha256": "160e3bd003f41568629ffad70ea136b2c5418ce3a78026aaaa01167ea9a7b6c7",
+      "bytes": 2639
+    },
+    {
+      "path": "svg/painting/reftests/marker-units-strokewidth-non-scaling-stroke.svg",
+      "sha256": "b4751a26ebde1e012eb681716a5133b988a4f0db5fc6f92d73b0c0518b8d8f6d",
+      "bytes": 687
+    },
+    {
+      "path": "svg/painting/reftests/marker-units-userspaceonuse-non-scaling-stroke.svg",
+      "sha256": "5d2f2462c03e71b51acd2f7e4142eaa527fbde99476bb5ecdef6fc4c15d3504c",
+      "bytes": 693
+    },
+    {
+      "path": "svg/painting/reftests/markers-orient-001-ref.svg",
+      "sha256": "c4bb6401f110a860c58b019cd1fafe439db76d12a1790223d784121e58386383",
+      "bytes": 1750
+    },
+    {
+      "path": "svg/painting/reftests/markers-orient-001.svg",
+      "sha256": "1a7ceb441028dfeea835d83ff120eed8ad70ce42b36d55d3ab91f7ec793c9333",
+      "bytes": 2662
+    },
+    {
+      "path": "svg/painting/reftests/markers-orient-002.svg",
+      "sha256": "0ed832375810e1c1b401178cad54678c55d2b4b92ce7119b33df1d3745090719",
+      "bytes": 657
+    },
+    {
+      "path": "svg/painting/reftests/mask-print-ref.svg",
+      "sha256": "bb73830a055fb9eddd175c59a00f6532ee4f5a81d82987483624cdd9319679ce",
+      "bytes": 361
+    },
+    {
+      "path": "svg/painting/reftests/mask-print.svg",
+      "sha256": "d0d3986ead38c64bb7eb047a99b17caa242080890be457367f76c2131f5f5f26",
+      "bytes": 624
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-001-ref.svg",
+      "sha256": "36016a932cc0f0b5f154cfb864cc9592c84501b85bf5a3e26285094a6f9b61f2",
+      "bytes": 1266
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-001.svg",
+      "sha256": "d72dfe11fb05af56fee66d66b74534e6eb84882fdccc1ef44ab6e4de3f75cedd",
+      "bytes": 1522
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-002-ref.svg",
+      "sha256": "556b23637f090c3c09f4df528475320eac7eaf5b4cf10ec7370d8d54c3465d8d",
+      "bytes": 1098
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-002.svg",
+      "sha256": "661b38e75da8f01837020a2ec562583969292167c58440b07c172f36924f9b86",
+      "bytes": 1337
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-003-ref.svg",
+      "sha256": "aa6f87e63089f9d27c7b63b754bd00c51a20e13fdde7fae6ce808d8bc8c0ed65",
+      "bytes": 620
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-003.svg",
+      "sha256": "0b891013ec770549849ec44a4e2309366e71603466ad01b823e78480479ca49f",
+      "bytes": 941
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-004-ref.svg",
+      "sha256": "d2d5465f73e02dc4dc2e7228ed017551201bfd4503a4a1845c6627eb300c5402",
+      "bytes": 963
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-004.svg",
+      "sha256": "d76f5c4579654e89556023285164856bac9147782cccb3aa3a6f40e576403bc3",
+      "bytes": 1099
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-005.svg",
+      "sha256": "e7deab24b2b4c9cd27145ceed0d1b245e1751951b690908d52926678f20471af",
+      "bytes": 1356
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-006-ref.svg",
+      "sha256": "44590f61b194117cfa25632d675f9c74c7a343abf1f37f5cc3cd59f054b75aa8",
+      "bytes": 705
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-006.svg",
+      "sha256": "f3c9477870c29005195549f5f23b86ce1059138507935ebd826a4b6a0bfc1872",
+      "bytes": 1300
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-007-ref.svg",
+      "sha256": "81a983f0edda57d5c7f0a4ce1e669fef6811bb7d7d1f3fbc27d6945879696320",
+      "bytes": 905
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-007.svg",
+      "sha256": "d46299d2af6a80cb6a8927e11f31056b68411f3348955661033c861c223af844",
+      "bytes": 1075
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-008-ref.svg",
+      "sha256": "6bff6521970a0813b18b9a4247d0cbe4cf75d0cdd1e6de3eddf81d9bd0d31c95",
+      "bytes": 807
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-008.svg",
+      "sha256": "869ccae15abe7c31d14615d27a6926782ed46958db8f41dc5e5b58c12226f7cd",
+      "bytes": 1149
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-001-ref.svg",
+      "sha256": "ab2c7c3e35f2e03fa273003f620a9762b3feabbccf9fe97072c80ebd11d4b1df",
+      "bytes": 2207
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-001.svg",
+      "sha256": "22a5656f2201a09063ec37581e4ca74f824bc93552ead8b213462abb57f3b42a",
+      "bytes": 2183
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-002-ref.svg",
+      "sha256": "553302d6f9c7b3feb87f42ebfcbb68622d46b711204e1b7ba2e4607e7a9d2611",
+      "bytes": 3717
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-002.svg",
+      "sha256": "7c49869a10787a27a1b89c07b087d4ff7524ce101c40dd566e32e0665839bc0c",
+      "bytes": 2318
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-003-ref.svg",
+      "sha256": "d8646027c71cf42b92ea152cd54c251cb21981baeb45ea99a65e0e522d9475c5",
+      "bytes": 3987
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-003.svg",
+      "sha256": "125f58e9552918b9843663d8aa8c6a053a7f08723c558cd74cbb46d03584bd66",
+      "bytes": 2336
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-text-decorations-ref.svg",
+      "sha256": "0e2f7ee67c1b84ebe4881751d14c4855831330ad43c438f68ff9056fb89e5aad",
+      "bytes": 4087
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-text-decorations.svg",
+      "sha256": "9f6759f5118764ac99bd1760833858306dbd54b78d0959f8a2ad948ded2fa294",
+      "bytes": 2378
+    },
+    {
+      "path": "svg/painting/reftests/pattern-external-reference.svg",
+      "sha256": "dfe2339d0bd4a735354c74baea68ac45542ce06f3f4995d5d01a76347db41a9f",
+      "bytes": 846
+    },
+    {
+      "path": "svg/painting/reftests/percentage-attribute.svg",
+      "sha256": "a02be96a1f2353cd01cddb500768b700368c74800c4a2646f5693df43655af62",
+      "bytes": 638
+    },
+    {
+      "path": "svg/painting/reftests/percentage-ref.svg",
+      "sha256": "d9c67773c0ea4bd77befd591639cb160e95a0591db4ac1259dc2fbdb629d2cc2",
+      "bytes": 467
+    },
+    {
+      "path": "svg/painting/reftests/percentage.svg",
+      "sha256": "3e27b9fdd7b9f20075753dff5be7f52d5bae3102f1b90a789f900b42d64dad00",
+      "bytes": 652
+    },
+    {
+      "path": "svg/shapes/reftests/reference/empty.svg",
+      "sha256": "fb91f9a03c202c5f160eef644da6f2f704b19ac5c5f8b4c124e1b0b485ad57a0",
+      "bytes": 42
+    },
+    {
+      "path": "svg/pservers/reftests/reference/green-100x100.svg",
+      "sha256": "b94e7d24d6d54a427ffbe1af8e7110c1ef10261eab7d169c03e742096b3a469f",
+      "bytes": 96
+    },
+    {
+      "path": "svg/embedded/reference/green-rect-100x100.svg",
+      "sha256": "b94e7d24d6d54a427ffbe1af8e7110c1ef10261eab7d169c03e742096b3a469f",
+      "bytes": 96
+    },
+    {
+      "path": "LICENSE.md",
+      "sha256": "5fac07febb0e2a97fb0d7b0def149ec08b642e1ba4b9c345283ab1cbd2af6570",
+      "bytes": 1500
+    },
+    {
+      "path": "svg/README.md",
+      "sha256": "5a01229007de52528544e164583cfb8797d9b037e209695b361334842611ca7b",
+      "bytes": 1469
+    },
+    {
+      "path": "svg/painting/reftests/support/resources.svg",
+      "bytes": 519,
+      "sha256": "a3a14be266a3f0bc1570e0dce7f99fc846bc776e989b69ff417fb7522de1fd17"
+    },
+    {
+      "path": "svg/painting/reftests/support/svg-marker-context-paint.svg",
+      "bytes": 1105,
+      "sha256": "724a2c095575fa1b877f056b83c99c534265fa459241c5237e7af2058c8c9a44"
+    },
+    {
+      "path": "svg/painting/reftests/support/svg-marker-ref.svg",
+      "bytes": 612,
+      "sha256": "3b16df9c55c671219201c22fb02109031530ec36f3e9a35717d10eb19e2f3794"
+    }
+  ],
+  "cases": [
+    {
+      "test": "svg/shapes/reftests/disabled-shapes-01.svg",
+      "reference": "svg/shapes/reftests/reference/empty.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/shapes/reftests/pathlength-001.svg",
+      "reference": "svg/shapes/reftests/pathlength-001-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/shapes/reftests/pathlength-002.svg",
+      "reference": "svg/shapes/reftests/pathlength-002-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          50
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/shapes/reftests/pathlength-003.svg",
+      "reference": "svg/shapes/reftests/pathlength-003-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          125
+        ],
+        [
+          0,
+          7315
+        ]
+      ],
+      "requiredRuntime": [
+        "CSS font loading (font assets not vendored)",
+        "external resource: ../fonts/FreeSans.woff"
+      ]
+    },
+    {
+      "test": "svg/shapes/reftests/pathlength-004a.svg",
+      "reference": "svg/shapes/reftests/pathlength-004-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/shapes/reftests/pathlength-004b.svg",
+      "reference": "svg/shapes/reftests/pathlength-004-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": [
+        "script/reftest-wait runtime"
+      ]
+    },
+    {
+      "test": "svg/painting/reftests/fallback-001.svg",
+      "reference": "svg/pservers/reftests/reference/green-100x100.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/fallback-002.svg",
+      "reference": "svg/pservers/reftests/reference/green-100x100.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/gradient-external-reference.svg",
+      "reference": "svg/pservers/reftests/reference/green-100x100.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": [
+        "external resource: support/resources.svg#greenGradient"
+      ]
+    },
+    {
+      "test": "svg/painting/reftests/marker-external-reference.svg",
+      "reference": "svg/pservers/reftests/reference/green-100x100.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": [
+        "external resource: support/resources.svg#greenMarkerOrient0"
+      ]
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-001.svg",
+      "reference": "svg/painting/reftests/marker-path-001-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          15
+        ],
+        [
+          0,
+          49
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-002.svg",
+      "reference": "svg/painting/reftests/marker-path-002-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          7
+        ],
+        [
+          0,
+          935
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-003.svg",
+      "reference": "svg/painting/reftests/marker-path-003-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-011.svg",
+      "reference": "svg/painting/reftests/marker-path-011-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          3
+        ],
+        [
+          0,
+          3
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-012.svg",
+      "reference": "svg/painting/reftests/marker-path-012-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          7
+        ],
+        [
+          0,
+          14
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-013.svg",
+      "reference": "svg/painting/reftests/marker-path-013-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-021.svg",
+      "reference": "svg/painting/reftests/marker-path-021-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-022.svg",
+      "reference": "svg/painting/reftests/marker-path-022-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-023.svg",
+      "reference": "svg/painting/reftests/marker-path-023-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/marker-units-strokewidth-non-scaling-stroke.svg",
+      "reference": "svg/embedded/reference/green-rect-100x100.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/marker-units-userspaceonuse-non-scaling-stroke.svg",
+      "reference": "svg/embedded/reference/green-rect-100x100.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/markers-orient-001.svg",
+      "reference": "svg/painting/reftests/markers-orient-001-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": [
+        "CSS font loading (font assets not vendored)",
+        "external resource: ../fonts/FreeSans.woff"
+      ]
+    },
+    {
+      "test": "svg/painting/reftests/markers-orient-002.svg",
+      "reference": "svg/pservers/reftests/reference/green-100x100.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/mask-print.svg",
+      "reference": "svg/painting/reftests/mask-print-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          17280
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/paint-context-001.svg",
+      "reference": "svg/painting/reftests/paint-context-001-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": [
+        "CSS font loading (font assets not vendored)",
+        "external resource: ../fonts/FreeSans.woff"
+      ]
+    },
+    {
+      "test": "svg/painting/reftests/paint-context-002.svg",
+      "reference": "svg/painting/reftests/paint-context-002-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": [
+        "CSS font loading (font assets not vendored)",
+        "external resource: ../fonts/FreeSans.woff"
+      ]
+    },
+    {
+      "test": "svg/painting/reftests/paint-context-003.svg",
+      "reference": "svg/painting/reftests/paint-context-003-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/paint-context-004.svg",
+      "reference": "svg/painting/reftests/paint-context-004-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/paint-context-006.svg",
+      "reference": "svg/painting/reftests/paint-context-006-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/paint-context-007.svg",
+      "reference": "svg/painting/reftests/paint-context-007-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/paint-context-008.svg",
+      "reference": "svg/painting/reftests/paint-context-008-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/paint-order-001.svg",
+      "reference": "svg/painting/reftests/paint-order-001-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": [
+        "CSS font loading (font assets not vendored)",
+        "external resource: ../fonts/FreeSans.woff"
+      ]
+    },
+    {
+      "test": "svg/painting/reftests/paint-order-002.svg",
+      "reference": "svg/painting/reftests/paint-order-002-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/paint-order-003.svg",
+      "reference": "svg/painting/reftests/paint-order-003-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/paint-order-text-decorations.svg",
+      "reference": "svg/painting/reftests/paint-order-text-decorations-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/pattern-external-reference.svg",
+      "reference": "svg/pservers/reftests/reference/green-100x100.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": [
+        "external resource: support/resources.svg#greenPattern"
+      ]
+    },
+    {
+      "test": "svg/painting/reftests/percentage-attribute.svg",
+      "reference": "svg/painting/reftests/percentage-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    },
+    {
+      "test": "svg/painting/reftests/percentage.svg",
+      "reference": "svg/painting/reftests/percentage-ref.svg",
+      "fuzzy": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "requiredRuntime": []
+    }
+  ]
+}

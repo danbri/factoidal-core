@@ -1,0 +1,219 @@
+{
+  "date": "2026-10-30",
+  "revision": "70dae60789ef6220d9b4e60c92c5b2107b4e2b93",
+  "engine": {
+    "platform": "darwin-arm64",
+    "kind": "development executable (not a published release)",
+    "sha256": "037c77d5ddd3a01611eee627b80958cb64cba06281c9303515f1559d334dba3d"
+  },
+  "total": 38,
+  "acceptanceCounts": {
+    "accepted": 0,
+    "rejected": 0,
+    "unsupported": 38,
+    "match": 0,
+    "mismatch": 0,
+    "unavailable": 0
+  },
+  "renderCounts": {
+    "accepted": 0,
+    "rejected": 0,
+    "unsupported": 38,
+    "match": 0,
+    "mismatch": 0,
+    "unavailable": 0
+  },
+  "sourceGate": "fixture integrity only; these counts are observations, not an allowlist",
+  "results": [
+    {
+      "test": "svg/shapes/reftests/disabled-shapes-01.svg",
+      "status": "unsupported",
+      "diagnostic": "unsupported SVG element: metadata"
+    },
+    {
+      "test": "svg/shapes/reftests/pathlength-001.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/shapes/reftests/pathlength-002.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/shapes/reftests/pathlength-003.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/shapes/reftests/pathlength-004a.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/shapes/reftests/pathlength-004b.svg",
+      "status": "unsupported",
+      "diagnostic": "unsupported attribute on svg: class"
+    },
+    {
+      "test": "svg/painting/reftests/fallback-001.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: link"
+    },
+    {
+      "test": "svg/painting/reftests/fallback-002.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: link"
+    },
+    {
+      "test": "svg/painting/reftests/gradient-external-reference.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: link"
+    },
+    {
+      "test": "svg/painting/reftests/marker-external-reference.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: link"
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-001.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-002.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-003.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-011.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-012.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-013.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-021.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-022.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/marker-path-023.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/marker-units-strokewidth-non-scaling-stroke.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: link"
+    },
+    {
+      "test": "svg/painting/reftests/marker-units-userspaceonuse-non-scaling-stroke.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: link"
+    },
+    {
+      "test": "svg/painting/reftests/markers-orient-001.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/markers-orient-002.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: link"
+    },
+    {
+      "test": "svg/painting/reftests/mask-print.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: meta"
+    },
+    {
+      "test": "svg/painting/reftests/paint-context-001.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/paint-context-002.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/paint-context-003.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/paint-context-004.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/paint-context-006.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: link"
+    },
+    {
+      "test": "svg/painting/reftests/paint-context-007.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/paint-context-008.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/paint-order-001.svg",
+      "status": "unsupported",
+      "diagnostic": "invalid SVG number or unsupported unit: 100%"
+    },
+    {
+      "test": "svg/painting/reftests/paint-order-002.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: link"
+    },
+    {
+      "test": "svg/painting/reftests/paint-order-003.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: link"
+    },
+    {
+      "test": "svg/painting/reftests/paint-order-text-decorations.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: link"
+    },
+    {
+      "test": "svg/painting/reftests/pattern-external-reference.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: link"
+    },
+    {
+      "test": "svg/painting/reftests/percentage-attribute.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: link"
+    },
+    {
+      "test": "svg/painting/reftests/percentage.svg",
+      "status": "unsupported",
+      "diagnostic": "foreign/non-SVG element: link"
+    }
+  ]
+}

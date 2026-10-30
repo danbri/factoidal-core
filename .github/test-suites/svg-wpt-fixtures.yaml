@@ -1,0 +1,17 @@
+name: WPT SVG fixture integrity (not rendering conformance)
+spec: https://www.w3.org/TR/SVG2/
+runner: tests/external/svg/suite.py
+runner_args:
+  - --check-fixtures
+manifest: tests/external/svg/manifest.json
+log_path: /tmp/factoidal-svg-wpt-fixtures.log
+result_path: /tmp/factoidal-svg-wpt-fixtures.json
+domain: XML
+foundational: false
+
+triggers:
+  paths:
+    - tests/external/svg/**
+    - labs/demos/foafnaut/**
+    - .github/test-suites/svg-wpt-fixtures.yaml
+  excludes: []
