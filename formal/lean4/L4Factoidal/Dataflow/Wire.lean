@@ -52,7 +52,7 @@ inductive Wire where
   | bundle | claim | graphBundle | graphClaim | explainGraphResult
   | canonical | bytes | digest
   | generations | fileGen | idTable | quadBlock | block | files | logState
-  | json | xml | xdmSequence | facts | csv | httpRequest | httpResponse
+  | json | xml | xdmSequence | xdmResult | xsltResult | facts | csv | httpRequest | httpResponse
   | vcSignIn | vcVerifyIn | ed25519Input
   deriving Repr, DecidableEq, Inhabited
 
@@ -99,6 +99,8 @@ def Wire.label : Wire → String
   | .json => "JSON"
   | .xml => "XML document"
   | .xdmSequence => "sequence"
+  | .xdmResult => "Serialized XDM result"
+  | .xsltResult => "XSLT result"
   | .facts => "Facts"
   | .csv => "CSV"
   | .httpRequest => "HTTP request"
@@ -117,7 +119,7 @@ def Wire.all : List Wire :=
   , .bundle, .claim, .graphBundle, .graphClaim, .explainGraphResult
   , .canonical, .bytes, .digest
   , .generations, .fileGen, .idTable, .quadBlock, .block, .files, .logState
-  , .json, .xml, .xdmSequence, .facts, .csv, .httpRequest, .httpResponse
+  , .json, .xml, .xdmSequence, .xdmResult, .xsltResult, .facts, .csv, .httpRequest, .httpResponse
   , .vcSignIn, .vcVerifyIn, .ed25519Input ]
 
 theorem Wire.mem_all (w : Wire) : w ∈ Wire.all := by
@@ -147,7 +149,7 @@ def Wire.ofLabel? (s : String) : Option Wire := Wire.all.find? (·.label == s)
 #guard Wire.all.all fun w => Wire.ofLabel? w.label == some w
 #guard Wire.ofLabel? "Datasets" == none
 #guard Wire.ofLabel? "dataset" == none
-#guard Wire.all.length == 48
+#guard Wire.all.length == 50
 #guard (Wire.all.filter fun a => (Wire.all.filter fun b => Wire.conv a b).length > 0).length == 3
 
 end L4Factoidal.Dataflow
