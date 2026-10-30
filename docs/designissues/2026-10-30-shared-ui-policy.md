@@ -92,12 +92,27 @@ stronger connection by deriving them from their own drawing records.
 
 ## Timing and remaining assurance boundaries
 
+The native FOAFNaut window now uses `NativeFoafPresentation.Session` and the
+opaque `FoafLiveBridge` WASM API. Candidate geometry, fixed policy and approved
+offers stay in Lean. After a successful surface submission the host acknowledges
+that offer's token; pointer-down uses the acknowledged scene. This does not
+claim GPU completion. Stale acknowledgments cannot advance the displayed scene.
+Changing viewport clears approval and pointer targets until the new geometry
+passes the same checker. Preparation of draw buffers and diagnostics is cached
+in Lean per render offer. Each WASM instance permits one session initialization,
+so tokens cannot be reused by restarting that holder.
+
+The [live presentation worknote](../20261030-foafnaut-live-presentation.md)
+records the controller, bridge, proofs and tests. The older raw/model APIs and
+browser component retain their previously stated static/diagnostic semantics.
+
 `Presentation.submit` refuses a backwards clock and prevents checks occurring
 closer than the configured interval. This is a **frequency ceiling**, not a
 proof that an operating system will schedule a check at least 12 times a second.
 `PolicyProtocol.targetIntervalMs` is the rounded-up scheduling target. The static
-browser and export demos check on request, and say so. Interactive admission,
-deadline/expiry behavior and scheduling integration remain unfinished.
+browser and export demos check on request, and say so. Native admission retries
+continue while physics is paused. Browser live integration, deadline/expiry
+behavior and host callback-liveness guarantees remain unfinished.
 
 The theorem is conditional on supplied geometry, configuration and time. It does
 not prove GPU execution, browser layout, DOM mutation safety, font behavior,

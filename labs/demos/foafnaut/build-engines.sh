@@ -66,13 +66,15 @@ for module in "${CORE_MODULES[@]}"; do
 done
 "$TOOLCHAIN/bin/lean" -R "$LAB/foaf" -o "$BUILD/olean/FoafGraph.olean" \
   -c "$BUILD/ir/FoafGraph.c" "$LAB/foaf/FoafGraph.lean"
-for name in Graphics Font Geometry UI Demos SVG SceneSVG FoafNaut RenderPlan PolicyBridge; do
+for name in Graphics Font Geometry UI Demos SVG SceneSVG FoafNaut FoafPresentation FoafLiveBridge RenderPlan PolicyBridge; do
   "$TOOLCHAIN/bin/lean" -R "$LAB" -o "$BUILD/olean/$name.olean" -c "$BUILD/ir/$name.c" "$LAB/$name.lean"
 done
 "$TOOLCHAIN/bin/lean" -R "$LAB/foaf" --run "$LAB/foaf/Tests.lean" "$LAB/foaf/fixtures/people.ttl"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/FoafNautTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/GeometryTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/FoafGeometryProofs.lean"
+"$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/FoafPresentationProofs.lean"
+"$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/FoafPresentationTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SceneSVGTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGCapacityTests.lean"
 for module in LayoutPolicyTests PolicyProtocolTests PresentationTests; do
@@ -93,12 +95,15 @@ for source in "$BUILD/ir/"*.c "$LAB/graphics_shim.c" "$LAB/ui_shim.c" "$LAB/demo
 done
 link_engine() {
   local name=$1 exports=$2; shift 2
-  em++ -O3 -DNDEBUG -fwasm-exceptions --no-entry "$@" \
+  if ! em++ -O3 -DNDEBUG -fwasm-exceptions --no-entry "$@" \
     "$RUNTIME/core-obj/"*.o "$RUNTIME/rt-obj/"*.o -o "$BUILD/engines/$name.mjs" \
     -sMODULARIZE=1 -sEXPORT_ES6=1 -sINVOKE_RUN=0 "-sEXPORTED_FUNCTIONS=$exports" \
     -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString -sALLOW_MEMORY_GROWTH=1 \
     -sSTACK_SIZE=4MB -sENVIRONMENT=node,web,worker -sASSERTIONS=1 \
-    2> "$BUILD/$name.link.stderr"
+    2> "$BUILD/$name.link.stderr"; then
+    cat "$BUILD/$name.link.stderr" >&2
+    return 1
+  fi
   cat "$BUILD/$name.link.stderr" >&2
   if sed -n 's/.*function signature mismatch: //p' "$BUILD/$name.link.stderr" | grep -Ev '^(lean_io_create_tempfile|lean_io_create_tempdir)$'; then
     echo "Unexpected ABI mismatch linking $name" >&2; return 1
@@ -110,14 +115,15 @@ link_engine demos-engine _demos_init,_demos_step,_demos_free "$BUILD/obj/Graphic
 link_engine svg-engine _svg_call,_svg_pixel,_svg_free "$BUILD/obj/Graphics.o" "$BUILD/obj/SVG.o" "$BUILD/obj/svg_shim.o" "$BUILD/obj/"XML_*.o
 link_engine render-plan _render_plan,_render_plan_free "$BUILD/obj/RenderPlan.o" "$BUILD/obj/render_plan_shim.o"
 link_engine layout-policy-engine _layout_policy,_layout_policy_free "$BUILD/obj/PolicyBridge.o" "$BUILD/obj/policy_shim.o" "$BUILD/obj/"Core_*.o
-link_engine foafnaut-engine _foafnaut_init,_foafnaut_init_policy,_foafnaut_step,_foafnaut_picture,_foafnaut_picture_checked,_foafnaut_export_svg,_foafnaut_text,_foafnaut_free \
+link_engine foafnaut-engine _foafnaut_init,_foafnaut_init_policy,_foafnaut_step,_foafnaut_picture,_foafnaut_picture_checked,_foafnaut_export_svg,_foafnaut_text,_foafnaut_free,_foafnaut_live_start,_foafnaut_live_event,_foafnaut_live_text,_foafnaut_live_tick,_foafnaut_live_acknowledge,_foafnaut_live_export_svg,_foafnaut_live_dispose \
   "$BUILD/obj/Graphics.o" "$BUILD/obj/Font.o" "$BUILD/obj/Geometry.o" "$BUILD/obj/SceneSVG.o" "$BUILD/obj/FoafGraph.o" "$BUILD/obj/FoafNaut.o" \
+  "$BUILD/obj/FoafPresentation.o" "$BUILD/obj/FoafLiveBridge.o" \
   "$BUILD/obj/foafnaut_shim.o" "$BUILD/obj/"Core_*.o
 "$TOOLCHAIN/bin/lean" --version > "$BUILD/tool-versions.txt"
 cd "$REPO"
 if command -v sha256sum >/dev/null; then HASH_COMMAND=(sha256sum); else HASH_COMMAND=(shasum -a 256); fi
 "${HASH_COMMAND[@]}" formal/lean4/L4Factoidal/XML/{Document,Parser,Wellformedness,Namespaces,NamespaceView}.lean \
-  labs/demos/foafnaut/{Graphics,Font,Geometry,UI,Demos,SVG,SceneSVG,FoafNaut,RenderPlan,PolicyBridge}.lean \
+  labs/demos/foafnaut/{Graphics,Font,Geometry,UI,Demos,SVG,SceneSVG,FoafNaut,FoafPresentation,FoafLiveBridge,RenderPlan,PolicyBridge}.lean \
   labs/demos/foafnaut/foaf/FoafGraph.lean > "$BUILD/source-SHA256SUMS"
 for module in "${CORE_MODULES[@]}"; do
   "${HASH_COMMAND[@]}" "formal/lean4/L4Factoidal/$module.lean" >> "$BUILD/source-SHA256SUMS"

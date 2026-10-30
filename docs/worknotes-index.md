@@ -158,6 +158,8 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-30 | [QT4 harness recursion audit classification](20261030-qt4-harness-recursion-audit.md) | same commit | five existing tree-depth recursions classified with actual fuel limits; runner and resource controls unchanged, scoped compiled audit passes; https://github.com/danbri/factoidal/issues/1101 |
 | 2026-10-30 | [QT4 public API, CLI and dataflow integration](20261030-qt4-public-integration.md) | same commit | three tested public nodes and CLI commands; pure inline transform connection; explicit serialized-result wires and unchecked evidence; https://github.com/danbri/factoidal/issues/1210 |
 | 2026-10-30 | [Foafnaut native graphics and SVG lab](designissues/2026-10-30-foafnaut-native-graphics.md) | same commit | current: Lean WASM / raw WebGPU boundary, native demos and executable packaging, pinned SVG reftests and explicit validation limits |
+| 2026-10-30 | [HTML, SVG, text and portable rendering](designissues/2026-10-30-document-layout-renderers.md) | same commit | current SVG/test limits and proposed Lean document/layout/scene pipeline; HarfBuzz boundary; CPU/embedded backend contracts and theorem scope |
 | 2026-10-30 | [FOAFNaut RDF-driven native study](designissues/2026-10-30-foafnaut-rdf-native.md) | same commit | current: typed FOAF graph, Lean radial layout and interaction, temporary GPU bitmap labels, modern visual direction and native packaging |
 
 - [2026-10-30: Lean GPU render plans and remaining host boundary](designissues/2026-10-30-lean-render-plan.md).
+- [2026-10-30: FOAFNaut live presentation admission](20261030-foafnaut-live-presentation.md): opaque Lean state, acknowledged picking, retained approved geometry, 64 WASM/host tests and 12 C checks.

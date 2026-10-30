@@ -233,10 +233,12 @@ is requested. Traces count observed input and frames, not general correctness.
 Drawing, hit-testing and node footprints now derive from one Lean shape list.
 The shared Factoidal policy accepts bounded application configurations (the
 experimental profile allows 3–7% bounding-box overlap and a 12–24 Hz target).
-`checkedSnapshot` and `svg` refuse a scene that fails that same checker. Ordinary
-interactive frames remain diagnostic; continuous presentation enforcement is
-not yet connected. The limits are human-designed and the cadence is a target,
-not an operating-system scheduling guarantee.
+`checkedSnapshot` and `svg` refuse a scene that fails that same checker. The
+native FOAFNaut window now uses the Lean live admission controller: invalid
+candidates retain the previous approved geometry, viewport changes clear it,
+and pointer-down uses the last successfully submitted frame. The older
+serialized-model API remains diagnostic. The limits are human-designed and
+the cadence is a target, not an operating-system scheduling guarantee.
 
 After building the engines, serve this directory and visit `policy-demo.html`
 for the web-component SVG demo. It uses the same Lean WASM and offers the
@@ -253,6 +255,9 @@ Omit `checked.ppm` to export without a GPU. A `.policy.json` companion records
 the selected policy and the derived bounds. The exact theorem scope,
 adapter contract and remaining gaps are in the
 [shared policy record](../../../docs/designissues/2026-10-30-shared-ui-policy.md).
+The browser component currently uses checked static exports; its live event
+integration is still outstanding. The live native protocol and its validation
+are recorded in [the live presentation worknote](../../../docs/20261030-foafnaut-live-presentation.md).
 
 The macOS package includes the static site under `web/`. It also supports
 exporting checked SVG without a development toolchain, then feeding that file

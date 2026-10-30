@@ -516,8 +516,9 @@ def Model.decode (wire : String) : Option Model := do
             editing := editing
             message := message}
 
-def response (m : Model) (commands : List String) (shader : Bool := false)
-    (clipboardWrite : Option String := none) (clipboardRead : Bool := false) : String :=
+def responseJson (m : Model) (commands : List String) (shader : Bool := false)
+    (clipboardWrite : Option String := none) (clipboardRead : Bool := false)
+    (layout : Option Json := none) : Json :=
   let scene := m.scene
   let selectedLabel := if m.selection == 0 then "" else ((m.graph.people[m.selection-1]?).map (·.label)).getD ""
   let selectedId := if m.selection == 0 then "" else ((m.graph.people[m.selection-1]?).map (·.id)).getD ""
@@ -527,15 +528,19 @@ def response (m : Model) (commands : List String) (shader : Bool := false)
     ("commands",.array (commands.map Json.string)),("animating",.bool m.animating),
     ("closed",.bool m.closed),("selection",num m.selection),("revision",num m.revision),
     ("dragging",.bool m.dragging),("selectedLabel",.string selectedLabel),
-    ("selectedId",.string selectedId),("layout",m.layoutReport),
+    ("selectedId",.string selectedId),("layout",match layout with | some report => report | none => m.layoutReport),
     ("facts",.object [("people",num m.graph.people.size),("links",num m.graph.links.size),
       ("visiblePeople",num (m.hidden.toList.filter (!·)).length),("focus",num m.focus),
       ("pinnedPeople",num (m.pinned.toList.filter (fun pinned => pinned)).length),
       ("ignoredKnows",num m.graph.ignoredKnows),("shapes",num scene.shapes.length)])]
-  toStringCompact (.object (fields ++
+  .object (fields ++
     (if shader then [("wgsl",.string scene.wgsl)] else []) ++
     (clipboardWrite.toList.map fun text => ("clipboardWrite",Json.string text)) ++
-    (if clipboardRead then [("clipboardRead",Json.bool true)] else [])))
+    (if clipboardRead then [("clipboardRead",Json.bool true)] else []))
+
+def response (m : Model) (commands : List String) (shader : Bool := false)
+    (clipboardWrite : Option String := none) (clipboardRead : Bool := false) : String :=
+  toStringCompact (responseJson m commands shader clipboardWrite clipboardRead)
 
 /-- Geometry-directed readback references, including an actual painted font
 cell when available. Values come from the same Lean CPU scene semantics;
