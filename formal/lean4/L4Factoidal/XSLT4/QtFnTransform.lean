@@ -22,9 +22,10 @@ output definition and `serialization-params`), or the raw value (`raw`);
 Not supported, FOXT0001 (F&O 4.0: "the XSLT processor API does not
 support some requested feature"): packages (`package-*`), delivery format
 `file`, an `xslt-version` above 4.0, and
-the request `xsl:is-schema-aware` true. `trusted`, `cache`,
-`enable-assertions`, `enable-messages`, `enable-trace` and `vendor-options`
-are accepted with no effect.
+the request `xsl:is-schema-aware` true. `enable-assertions` controls
+xsl:assert evaluation and defaults to false. `trusted`, `cache`,
+`enable-messages`, `enable-trace` and `vendor-options` are accepted with
+no effect.
 -/
 import L4Factoidal.XSLT4.Transform
 import L4Factoidal.XSLT4.Streaming.Check
@@ -70,7 +71,10 @@ def propString (e : Env) (v : Seq) : String :=
   match v with
   | [.atom ⟨_, .bool b⟩] => if b then "yes" else "no"
   | [.atom ⟨_, .qn q⟩] => q.eqn
-  | _ => String.intercalate " " ((e.atomize v).toOption.getD [] |>.map Atomic.str)
+  | _ => String.intercalate " " ((e.atomize v).toOption.getD [] |>.map (fun a =>
+      match a.v with
+      | .qn q => q.eqn
+      | _ => a.str))
 
 /-- `fn:transform($options)`. `apply` calls a function item (for
     `post-process`). -/
@@ -165,6 +169,10 @@ def fnTransform (env : Env) (applyF : Item → List Seq → M Seq) (args : List 
   let texts : List (String × String) := (pUri, pText) ::
     env.resources.flatMap (fun (k, v) => if k.startsWith "#" then [] else [(resolveUri pUri k, v), (k, v)])
   let S ← compileStylesheet pUri texts (qnameBindings (get "static-params"))
+  let assertionsEnabled := match get "enable-assertions" with
+    | some [.atom ⟨_, .bool b⟩] => b
+    | _ => false
+  let S := { S with assertionsEnabled }
   -- a request for a streaming processor: the streamability analysis of
   -- the principal module (XSLT Streaming 4.0 §3.1, XTSE3430)
   let wantsStreaming := (qnameBindings (get "requested-properties")).any (fun (q, v) =>
