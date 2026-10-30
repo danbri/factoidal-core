@@ -167,3 +167,5 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-30 | [HTML parser and public API integration](20261030-html-public-integration.md) | same commit | current main integrated, both gate sets preserved, public PI/namespace/template/error regressions; fresh native API and HTML/QT4 controls pass; fresh WASM CI remains required; https://github.com/danbri/factoidal-core/pull/269 |
 
 | 2026-10-30 | [Hub Data Compositor and shared code output](20261030-hub-data-compositor.md) | same commit | pinned public engine, editable visual pipeline, honest component evidence, shared output controls and focused browser checks |
+
+| 2026-10-30 | [FOAFNaut current-main refresh](20261030-foafnaut-main-refresh.md) | same commit | live presentation retained, engine source hashes agree, 64 Deno tests and 12 C checks; SVG oracle roadmap and official visual limits |
