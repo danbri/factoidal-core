@@ -62,3 +62,24 @@ API evidence; no local full WASM build was run.
 The same native sequence exposed a separate existing serialized-output gap:
 `queryRaw` did not pass SERVICE snapshots to its reference evaluator. This
 needs snapshot threading, not a JS serializer workaround, in a follow-up.
+
+## Serialized-output snapshot follow-up
+
+`queryRawBy` and `queryRawParsed` now accept explicit SERVICE providers,
+with an empty default for existing pure callers. `evalRaw` uses that same
+value for its failure check and evaluation. The IO entry and stored-dataset
+entry each read the registry once, before evaluation. The direct IO entry
+also now passes its extension-registry snapshot, as its existing contract
+comment required. No pure or scoped evaluator acquires ambient providers.
+
+Seven source controls pass: explicit-provider XML output; pure default deny
+despite an ambient registration; direct and stored-dataset IO output;
+provider removal visible to the next call at both entries; and a previously
+captured explicit snapshot retained after registry removal. The combined
+named build `lake build ServiceVariableRegression l4wasm-cli` passes
+(1746 jobs). A rebuilt native dispatch sequence now returns matching
+`one`/`two` values in both table bindings and XML, where the XML operation
+previously failed with `query.failed`. Public test source also exercises
+`queryRaw` and `query(dataset, ..., {output:'xml'})`; fresh WASM CI remains
+outstanding. No whole-query confidentiality or callback-isolation proof is
+claimed.

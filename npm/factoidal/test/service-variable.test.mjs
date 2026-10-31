@@ -53,7 +53,7 @@ test('nested variable SERVICE uses the same registered provider scope', async ()
   assert.deepEqual(projected(await evaluate(`SERVICE <urn:outer> { VALUES ?endpoint { <urn:one> } ${service} }`)), ['one']);
 });
 
-test('Dataset and registered node paths use corrected correlation', async () => {
+test('Dataset, serialized output and registered node paths use corrected correlation', async () => {
   const dataset = await core.parse('', {format:'ntriples'}), sparql = query(values + service);
   try {
     assert.deepEqual(projected(await dataset.query(sparql)), ['one','two']);
@@ -61,6 +61,10 @@ test('Dataset and registered node paths use corrected correlation', async () => 
     assert.deepEqual(projected(result.graph), ['one','two']);
     // Existing component metadata is retained; this is not a security certificate.
     assert.equal(result.evidence.at(-1).status, 'proved');
+    const xml = await core.queryRaw('', sparql, {dataFormat:'ntriples',output:'xml'});
+    assert.match(xml, /sparql-results#/); assert.match(xml, />one</); assert.match(xml, />two</);
+    const stored = await core.query(dataset, sparql, {output:'xml'});
+    assert.match(stored, />one</); assert.match(stored, />two</);
   } finally { dataset.dispose(); }
 });
 
