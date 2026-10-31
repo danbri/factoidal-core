@@ -86,6 +86,17 @@ jobs:
           # The source-wide csimp inventory also includes CryptoProbe.
           lake build L4Factoidal l4wasm +Harness.Qlvr +Harness.CryptoProbe ServiceVariableRegression 2>&1 | tee "$RUNNER_TEMP/lake-build.log"
 
+      # This prototype is intentionally absent from public dispatch/import roots.
+      # Name its proof/guard module explicitly so it cannot remain untested.
+      # Runtime output separates the known variable-SERVICE expected failure;
+      # a security regression or unexpected pass fails Lean elaboration.
+      - name: Check experimental scoped query provider grants
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -o pipefail
+          lake build ScopedQueryPrototype 2>&1 | tee -a "$RUNNER_TEMP/lake-build.log"
+
       # `lake build` alone is NOT the soundness gate, and it was the whole
       # gate until 2026-09-03. A `sorry` fails the build, because Lean emits
       # it with an elaboration error. A DELIBERATE user `axiom` does not: it

@@ -164,3 +164,5 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-30 | [Hub Data Compositor and shared code output](20261030-hub-data-compositor.md) | same commit | pinned public engine, editable visual pipeline, honest component evidence, shared output controls and focused browser checks |
 
 | 2026-10-31 | [LWS reader host-authority boundary](20261031-lws-reader-path-confinement.md) | — | current: path confinement, redirect refusal and explicit browser transport limits |
+
+| 2026-10-31 | [Scoped query provider grants prototype](20261031-scoped-query-context-prototype.md) | same commit | experimental/unwired: actual resolver bounds, captured providers, 14 runtime passes plus one visible variable-SERVICE expected failure |

@@ -272,7 +272,11 @@ extern_lib libl4hostread pkg := do
 
 @[default_target] lean_lib L4Factoidal
 
--- Explicit, non-default root: parsed public-query backend/reference controls.
+-- Explicit non-default roots: prototype tests stay outside production imports.
+lean_lib ScopedQueryPrototype where
+  roots := #[`Wasm.Ops.ScopedQuery, `Wasm.Ops.ScopedQueryTests]
+
+-- Parsed public-query backend/reference and serialization controls.
 lean_lib ServiceVariableRegression where
   roots := #[`Wasm.Ops.ServiceVariableTests, `Wasm.Ops.ServiceSerializationTests]
 
