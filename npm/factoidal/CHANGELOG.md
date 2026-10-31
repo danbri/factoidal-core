@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.28.0 (2026-10-31)
+
+- The public LWS SBM11 reader rejects resource paths that escape its configured container before calling transport. Default Node HTTP reads refuse redirects. Browser default XHR now rejects caller-supplied headers, including authorization; authenticated browser use requires an explicit trusted, redirect-safe transport. Custom transports remain responsible for redirect and credential policy. WebDAV read-only behavior is unchanged.
+- The Lean HTML parser improvements merged in PR269 now reach the package, including processing instructions, namespace/template handling and public parse-html regressions. This is parser support, not a browser layout engine or a claim of complete HTML conformance.
+- Valid zero-second IETF dates no longer emit panic diagnostics. The targeted native fn-parse-ietf-date set passes 105 cases.
+- Bounded slice and positional consumers of fn:generate evaluate finite prefixes without increasing the generation cap. Native fn-generate improves from 13 pass / 3 fail to 15 pass / 1 fail; the constructed-node identity failure remains visible. All 104 fn-slice cases pass. These targeted native results are not whole-catalog WASM conformance claims.
+
+Native server executables and the SVG graphics experiment have separate release gates; this package version does not claim new executable or SVG compatibility coverage.
+
 ## 0.27.0 (2026-10-30)
 
 - New CLI commands `factoidal xpath4`, `factoidal xquery` and `factoidal xslt4` expose the existing Lean XML operations. They accept explicit local input files, display JSON or the engine's serialized result, and preserve QT4 error codes such as `XPST0003`. See the README for arguments and examples.
