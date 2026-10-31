@@ -839,7 +839,7 @@ def eval : Nat → Env → Expr → M Seq
         -- a static call whose arguments are all placeholders is the
         -- named function `q#k` (XPath 4.0 §4.5.4)
         if !slots.isEmpty && slots.toList.all (fun s => match s with | some none => true | _ => false) && kw.isEmpty then
-          return [.fn (.builtin q slots.size)]
+          return [builtinRef env q slots.size]
         -- placeholders make a partial application
         if slots.toList.any (fun s => match s with | some none => true | _ => false) then
           let mut fixed : List (Option Seq) := []
@@ -855,7 +855,7 @@ def eval : Nat → Env → Expr → M Seq
               match p.dflt with
               | some d => fixed := fixed ++ [some (← eval n env d)]
               | none => err "XPST0017" ("missing argument " ++ p.name)
-          let it : Item := .fn (.papp (.fn (.builtin q fixed.length)) fixed)
+          let it : Item := .fn (.papp (builtinRef env q fixed.length) fixed)
           pure [if env.untrusted && isExternalFn q then untrustedItem it else it]
         else
           -- Place keywords/defaults before recognizing a bounded slice. The
@@ -958,8 +958,8 @@ def eval : Nat → Env → Expr → M Seq
           | some c, some p =>
             if dfltUsesFocus p.dflt then
               pure [.fn (.papp (.fn (.builtin q (k + 1))) (List.replicate k none ++ [some c]))]
-            else pure [.fn (.builtin q k)]
-          | _, _ => pure [.fn (.builtin q k)]
+            else pure [builtinRef env q k]
+          | _, _ => pure [builtinRef env q k]
         | none =>
           -- XQuery 4.0 hook: a function declared in the prolog
           match XQuery4.refUser? (fun f as => apply n env f as) env q k with

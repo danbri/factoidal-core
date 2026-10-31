@@ -67,6 +67,23 @@ def focusFn (which : String) (pos size : Nat) : Item :=
   if which == "position" then .fn (.inline [] (.atomic (.b .integer)) (.lit (Atomic.ofInt pos)) false [])
   else .fn (.inline [] (.atomic (.b .integer)) (.seq [.lit (Atomic.ofInt size)]) false [])
 
+/-- A built-in function item. `parse-QName` closes over static namespaces
+    (F&O 4.0 §10.1.2); its caller must not supply additional prefix bindings.
+    The existing module-context and function-name closure entries are consumed
+    by `XQuery4.withModCtx` and `fn:function-name`, respectively. -/
+def builtinRef (e : Env) (q : QN) (k : Nat) : Item :=
+  if q.uri == nsFN && q.loc == "parse-QName" && k == 1 then
+    let v : QN := { uri := "#builtin", loc := "arg" }
+    let ns : Seq := [.map (e.ns.map (fun (p, u) => (Atomic.ofStr p, [.atom (Atomic.ofStr u)])))]
+    let cl : List (QN × Seq) :=
+      [({ uri := "#xqm", loc := "ctx" }, [.map [(Atomic.ofStr "ns", ns)]])] ++
+      e.vars.filter (fun (v, _) => v.uri == "#ns") ++
+      [({ uri := "#xqn", loc := q.loc, pfx := q.uri }, [])]
+    -- No static marker/globals: lateClosure must not add caller namespaces.
+    .fn (.inline [(v, .seq (.atomic (.b .string)) .opt)]
+      (.seq (.atomic (.b .qname)) .opt) (.call q [some (.var v)] []) false cl)
+  else .fn (.builtin q k)
+
 def argN (a : List Seq) (i : Nat) : Seq := a.getD i []
 
 def optAtom (s : Seq) : Option Atomic :=
@@ -1167,9 +1184,13 @@ def fnTable : List (String × LibFn) := [
       | none => err "FOCA0002" "invalid EQName"
     else
       match parseQNameLex s with
-      | some (p, l) => match e.nsResolve p with
+      | some (p, l) =>
+          -- fn:parse-QName's unprefixed NCName case is always in no
+          -- namespace, even when a default element namespace is in scope.
+          if p == "" then pure (single (Atomic.ofQN { uri := "", loc := l })) else
+          match e.nsResolve p with
           | some u => pure (single (Atomic.ofQN { uri := u, loc := l, pfx := p }))
-          | none => if p == "" then pure (single (Atomic.ofQN { uri := "", loc := l })) else err "FONS0004" "undeclared prefix"
+          | none => err "FONS0004" "undeclared prefix"
       | none => err "FOCA0002" "invalid QName"),
   -- nodes
   ent "name" (fun _ e a => do
@@ -1435,8 +1456,8 @@ def fnTable2 : List (String × LibFn) := [
             | some c, some p =>
               if dfltUsesFocus p.dflt then
                 pure [.fn (.papp (.fn (.builtin q (k.toNat + 1))) (List.replicate k.toNat none ++ [some c]))]
-              else pure [.fn (.builtin q k.toNat)]
-            | _, _ => pure [.fn (.builtin q k.toNat)]
+              else pure [builtinRef e q k.toNat]
+            | _, _ => pure [builtinRef e q k.toNat]
           | none => pure []
     | _ => pure []),
   ent "collation-available" (fun _ e a =>
