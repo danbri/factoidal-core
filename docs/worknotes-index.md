@@ -159,3 +159,5 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-30 | [QT4 public API, CLI and dataflow integration](20261030-qt4-public-integration.md) | same commit | three tested public nodes and CLI commands; pure inline transform connection; explicit serialized-result wires and unchecked evidence; https://github.com/danbri/factoidal/issues/1210 |
 | 2026-10-30 | [HTML parser and public API integration](20261030-html-public-integration.md) | same commit | current main integrated, both gate sets preserved, public PI/namespace/template/error regressions; fresh native API and HTML/QT4 controls pass; fresh WASM CI remains required; https://github.com/danbri/factoidal-core/pull/269 |
 | 2026-10-30 | [IETF date zero-seconds panic](20261030-parse-ietf-date-zero-seconds.md) | same commit | seconds serialization avoids an empty numeric parse; native stderr regression detects panic fallback even when values match |
+
+| 2026-10-30 | [Hub Data Compositor and shared code output](20261030-hub-data-compositor.md) | same commit | pinned public engine, editable visual pipeline, honest component evidence, shared output controls and focused browser checks |

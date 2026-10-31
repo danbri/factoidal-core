@@ -102,6 +102,7 @@
 <link rel="stylesheet" href="{{ '/vendor/leaflet/leaflet.css' | url }}">
 <script src="{{ '/vendor/leaflet/leaflet.js' | url }}"></script>
 <script type="module" src="{{ '/web/hub/assets/sparql-result-elements.mjs' | url }}"></script>
+<link rel="stylesheet" href="{{ '/web/hub/assets/code-output.css' | url }}">
 <style>
   /* Mobile-first: base rules target a ~390px phone; the only
      widening is the max-width cap. No rule may cause page-level
@@ -534,6 +535,7 @@ tiles or query remote SPARQL endpoints (data, never scripts){% endif %}.
   docs/web/hub/README.md for the convention this implements.
 -->
 <script type="module">
+import { enhanceCodeBlocks } from "{{ '/web/hub/assets/code-output.mjs' | url }}";
 import { Runtime } from "{{ '/vendor/observable/runtime.esm.js' | url }}";
 import { Inspector } from "{{ '/vendor/observable/inspector.esm.js' | url }}";
 // The engine: on a page with `factoidalEngine: "release"` (every page of
@@ -1051,7 +1053,7 @@ function prettyBuildTable(columns, rows, captionText) {
   return wrap;
 }
 
-function pretty(value) {
+function pretty(value, { language = "text" } = {}) {
   // (a) array of Map -- SPARQL bindings rows.
   if (Array.isArray(value) && value.length > 0 && value.every((r) => r instanceof Map)) {
     const columns = [];
@@ -1092,9 +1094,17 @@ function pretty(value) {
     return prettyBuildTable(["key", "value"], entries, prettyCount(entries.length, "field"));
   }
 
-  // (e) scalars/strings -- a simple styled value span.
+  // String output keeps original whitespace. Optional language is display-only;
+  // no XML/RDF/JSON parsing or reformatting occurs here.
+  if (typeof value === "string") {
+    const output = document.createElement("factoidal-code-output");
+    void output.setValue(value, { language });
+    return output;
+  }
+
+  // (e) numeric/boolean scalars -- a simple styled value span.
   if (
-    typeof value === "string" || typeof value === "number" ||
+    typeof value === "number" ||
     typeof value === "boolean" || typeof value === "bigint"
   ) {
     const span = document.createElement("span");
@@ -1346,6 +1356,7 @@ function mountCell(codeEl, index) {
 
   pre.insertAdjacentElement("beforebegin", details);
   details.appendChild(pre);
+  enhanceCodeBlocks(details);
   details.appendChild(editor);
   details.appendChild(toolbar);
   details.appendChild(container);
@@ -1381,6 +1392,7 @@ function mountCell(codeEl, index) {
     const source = editing ? editor.value : currentSource;
     currentSource = source;
     codeEl.textContent = source; // keep the static view in sync for next Edit/toggle
+    enhanceCodeBlocks(details);
     let compiled;
     try {
       // Re-analyze the (possibly edited) source: the inputs it references
@@ -1607,6 +1619,7 @@ for (const el of cellEls) {
 cellEls.forEach((codeEl, index) => mountCell(codeEl, index));
 
 initUserCells();
+enhanceCodeBlocks(document);
 </script>
 <script>
 // Offline support (issue #69). Registered here too — hub posts render
