@@ -1213,7 +1213,7 @@ def engineTablesJson : Json :=
     , ("refusedRegimePrefixes", .object [("x-ikl", .string (iklRefusal "WHO" "REGIME"))])
     , ("closureRegimes", .array (closureRegimes.map Json.string))
     , ("closureAliases", strMap closureRegimeAliases)
-    , ("queryOutputs", .array (["json", "csv", "tsv", "xml", "table", "ntriples"].map Json.string))
+    , ("queryOutputs", .array (["json", "csv", "tsv", "xml", "xml-report", "table", "ntriples"].map Json.string))
     , ("packSyntaxes", .array (packSyntaxNames.map Json.string))
     , ("packSuffixes", strMap packSuffixes)
     , ("packUnsupportedSuffixes", strMap packUnsupportedSuffixes)
@@ -1293,7 +1293,7 @@ def apiOptionTable : List (String × List (String × OptionDomain)) :=
   , ("Dataset.has", [("match", .oneOf ["term", "value"])])
   , ("Dataset.delete", [("match", .oneOf ["term", "value"])]) ]
 
-private def queryOutputNames : List String := ["json", "csv", "tsv", "xml", "table", "ntriples"]
+private def queryOutputNames : List String := ["json", "csv", "tsv", "xml", "xml-report", "table", "ntriples"]
 
 /-- The refusal of `value` for option `key` of `who`, or `none`. -/
 def optionValueRefusal (who key value : String) : OptionDomain → Option String

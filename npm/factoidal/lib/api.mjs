@@ -693,7 +693,7 @@ function buildApi(driver) {
       }
       const r = await withExtensionRounds(() => entryResult(e.datasetQueryRaw(ds.handle, sparql,
         JSON.stringify({ entail, output })), 'query', sparql));
-      return output === 'json' && !graphForm ? JSON.parse(r.text) : r.text;
+      return (output === 'json' || output === 'xml-report') && !graphForm ? JSON.parse(r.text) : r.text;
     }
     const fn = sparql12 ? e.datasetQuery12 : e.datasetQuery;
     if (typeof fn !== 'function') {
@@ -2355,7 +2355,9 @@ function buildApi(driver) {
    * One call, serialised answer (op queryRaw): parse `dataString`, close
    * the default graph under `entail`, run the query, and write the answer
    * in `output`: 'json' (default; parsed SPARQL results JSON), or 'csv',
-   * 'tsv', 'xml', 'table', 'ntriples' (text). A CONSTRUCT or DESCRIBE
+   * 'tsv', 'xml', 'table', 'ntriples' (text), or 'xml-report' (a checked
+   * XML/diagnostic object from Lean). Ordinary 'xml' rejects an XML
+   * admission failure; 'xml-report' returns it as data. A CONSTRUCT or DESCRIBE
    * answer is a graph: 'ntriples' or 'table' only.
    * @param {string} dataString
    * @param {string} queryString
@@ -2379,7 +2381,7 @@ function buildApi(driver) {
     const r = entryResult(e.queryRaw(dataString, queryString,
       JSON.stringify({ dataFormat: tables.rawDataFormats[dataFormat], entail, output })),
     'queryRaw', queryString);
-    return output === 'json' ? JSON.parse(r.text) : r.text;
+    return output === 'json' || output === 'xml-report' ? JSON.parse(r.text) : r.text;
   }
 
   // ---------------------------------------------------------------

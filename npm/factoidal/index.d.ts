@@ -240,7 +240,7 @@ export type WriteFormat =
   | 'rdfxml' | 'rdf-xml' | 'rdf' | 'jsonld' | 'json-ld' | 'rdfc' | 'canonical';
 
 /** Results formats of query() with `output`. */
-export type ResultsFormat = 'json' | 'xml' | 'csv' | 'tsv' | 'table' | 'ntriples';
+export type ResultsFormat = 'json' | 'xml' | 'xml-report' | 'csv' | 'tsv' | 'table' | 'ntriples';
 
 /** One row of formats(). */
 export interface FormatCapability {
@@ -2216,13 +2216,22 @@ export interface SparqlResultsJson {
   boolean?: boolean;
 }
 
+/** The exact serialized result is checked by the Lean XML parser. This is
+ * parser admission, not a proof of SPARQL serialization fidelity or XSLT success.
+ * Invalid RDF/XML characters are refused, never removed or replaced.
+ */
+export type SparqlXmlReport =
+  | { kind: 'xml'; xml: string }
+  | { kind: 'diagnostic'; code: 'XML_ADMISSION_REFUSED'; message: string };
+
 export type OutputFormat =
-  | 'json' | 'csv' | 'tsv' | 'xml' | 'table' | 'ntriples';
+  | 'json' | 'csv' | 'tsv' | 'xml' | 'xml-report' | 'table' | 'ntriples';
 
 /**
  * One call, serialised answer: parse `dataString`, close the default
  * graph under `entail`, run the query. Resolves to parsed SPARQL Results
- * JSON when output is 'json' (default), the text otherwise. 'csv', 'tsv'
+ * JSON when output is 'json' (default), an XML/diagnostic object for
+ * 'xml-report', and text otherwise. 'csv', 'tsv'
  * and 'xml' are the W3C SPARQL results formats (CSV and TSV have no ASK
  * encoding, so an ASK with those rejects); 'table' and 'ntriples' are
  * display formats. A CONSTRUCT or DESCRIBE answer is a graph and takes
@@ -2236,7 +2245,7 @@ export function queryRaw(
     entail?: EntailRegime;
     output?: OutputFormat;
   }
-): Promise<SparqlResultsJson | string>;
+): Promise<SparqlResultsJson | SparqlXmlReport | string>;
 
 /** Package version string, e.g. '0.9.0'. */
 export const version: string;
