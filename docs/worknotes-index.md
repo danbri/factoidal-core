@@ -166,3 +166,5 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-31 | [LWS reader host-authority boundary](20261031-lws-reader-path-confinement.md) | — | current: path confinement, redirect refusal and explicit browser transport limits |
 
 | 2026-10-31 | [Browser release integrity gates](20261031-browser-release-integrity-gates.md) | — | stamped compilation, bad-digest refusal and CSP browser checks |
+
+| 2026-10-31 | [Published 0.28.0 and hub pin](20261031-release-028-published.md) | — | registry consumer, browser and hub validation |
