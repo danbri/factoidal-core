@@ -30,6 +30,8 @@ Targeted imports only — never the L4Factoidal umbrella (see
 import Wasm.Ops.Support
 import L4Factoidal.Dataflow.Reader
 import L4Factoidal.Dataflow.Reasoner
+import L4Factoidal.Dataflow.GraphProjection
+import L4Factoidal.RDF.DatasetNormalizePreservation
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.RDF.Datatypes
 import L4Factoidal.RDFS.Closure
@@ -245,6 +247,54 @@ def closureStreamOf (ds : Dataset) (regime : String) : Except String Graph :=
       match Graph.firstNTriplesError g .rdf12 with
       | some e => .error s!"closure serialisation: {e}"
       | none => .ok g
+
+/-- On the checked set-input subset, the actual successful producer returns
+exactly the existing sound reasoner's result. This is algorithm agreement,
+not a new completeness theorem for RDFS. -/
+theorem closureStreamOf_rdfs_safe_output (ds : Dataset) (hs : ds.IsSet)
+    (safe : roundTripSafe .rdf12 ds = true) (g : Graph)
+    (result : closureStreamOf ds "rdfs" = .ok g) :
+    g = (L4Factoidal.Dataflow.rdfsReasoner (withMinimalD [])).run ds.default := by
+  unfold closureStreamOf at result
+  rw [datasetForOps_safe_eq .rdf12 ds hs safe] at result
+  simp only at result
+  have defaultEq : ds.normalizeSet.default = ds.default := Graph.map_lowerTags_eq_self _
+  simp only [closureGraphOfRegime, defaultEq] at result
+  generalize L4Factoidal.Dataflow.rdfsReasoner (withMinimalD []) = reasoner at result ⊢
+  split at result
+  · cases result
+  · exact (Except.ok.inj result).symm
+
+/-- The actual closure producer is sound on the normalizer's syntactically
+checked set inputs. Success still requires the existing serialization check. -/
+theorem closureStreamOf_rdfs_safe_sound (ds : Dataset) (hs : ds.IsSet)
+    (safe : roundTripSafe .rdf12 ds = true) (g : Graph)
+    (result : closureStreamOf ds "rdfs" = .ok g) :
+    (L4Factoidal.Dataflow.rdfsReasoner (withMinimalD [])).regime.Entails ds.default g := by
+  rw [closureStreamOf_rdfs_safe_output ds hs safe g result]
+  exact (L4Factoidal.Dataflow.rdfsReasoner (withMinimalD [])).sound ds.default
+
+/-- The actual union-to-RDFS producer preserves the exact source union and
+entails its returned closure on this checked subset. No surrounding JS graph
+assignment, query, serialization transport or browser rendering is certified. -/
+theorem closureStreamOf_union_rdfs_handoff (source : Dataset) (g : Graph)
+    (safe : roundTripSafe .rdf12 (L4Factoidal.Dataflow.unionDefault source).certify.val = true)
+    (result : closureStreamOf (L4Factoidal.Dataflow.unionDefault source).certify.val "rdfs" = .ok g) :
+    g = (L4Factoidal.Dataflow.rdfsReasoner (withMinimalD [])).run
+      (L4Factoidal.Dataflow.unionDefault source).certify.val.default ∧
+    (L4Factoidal.Dataflow.rdfsReasoner (withMinimalD [])).regime.Entails
+      (L4Factoidal.Dataflow.unionDefault source).certify.val.default g ∧
+    ∀ t, (L4Factoidal.Dataflow.unionDefault source).certify.val.default.mem t = true ↔
+      ∃ gn, source.den.graph gn t := by
+  exact ⟨closureStreamOf_rdfs_safe_output _
+      (L4Factoidal.Dataflow.unionDefault source).certify.property safe g result,
+    closureStreamOf_rdfs_safe_sound _
+      (L4Factoidal.Dataflow.unionDefault source).certify.property safe g result,
+    L4Factoidal.Dataflow.unionDefault_certified_graph source⟩
+
+#print axioms closureStreamOf_rdfs_safe_output
+#print axioms closureStreamOf_rdfs_safe_sound
+#print axioms closureStreamOf_union_rdfs_handoff
 
 private theorem ntriplesEnvelope_lines (key : String) (g : Graph) (extra : List (String × Json)) :
     ntriplesEnvelope key g extra =
