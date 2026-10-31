@@ -82,7 +82,13 @@ SERVICE snapshot contents. Kernel proofs use only `propext`,
 `Classical.choice`, and `Quot.sound` (generic filter lemmas use `propext` only).
 No new axioms, sorry, native_decide or partial definitions were added.
 
-This module is a standalone prototype, not yet registered in a public engine or
-wired into a CI job. Production adoption needs that wiring, fresh artifact
-checks, captured host callback identities, capability propagation across adapters
-and explicit source/sink policy. It must not be called a shipped secure API.
+The existing Verify Lean 4 corpus workflow now explicitly builds
+`+L4Factoidal.Dataflow.ExecutionContext +Wasm.Ops.ScopedQueryTests` before its
+hygiene audit, appending proof/guard output to the audited build log. A guard
+failure or XPASS fails elaboration. This is CI source wiring; no remote run is
+claimed by this note. The full library build and existing gates are retained.
+
+The module remains a standalone prototype, not registered in public dispatch or
+adopted by existing APIs. Production adoption needs fresh artifact checks,
+captured host callback identities, capability propagation across adapters and
+explicit source/sink policy. It must not be called a shipped secure API.
