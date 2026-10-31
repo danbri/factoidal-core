@@ -436,6 +436,11 @@ def plannerFragment : QueryPattern → Bool
   | .graph (.iri _) p | .graph (.var _) p => graphFree p && plannerFragment p
   | _ => false
 
+/-- The restriction fragment excludes SERVICE variables. -/
+theorem plannerFragment_serviceVarRoot {p : QueryPattern}
+    (h : plannerFragment p = true) : serviceVarRoot p = false := by
+  cases p <;> simp_all [plannerFragment, serviceVarRoot]
+
 /-- The constant graph names the fragment reads. -/
 def graphNamesIn : QueryPattern → List WfIri
   | .join a b | .union a b | .minus a b => graphNamesIn a ++ graphNamesIn b
@@ -620,7 +625,8 @@ theorem evalPatternBackend_nil (env : EvalEnv) (dsb : DatasetBackend)
       simp only [PatternKept] at hk
       rcases evalPatternBackend_nil env dsb keep a hf.1 hg.1 hk.1 with ha | ha
       · rcases evalPatternBackend_nil env dsb keep b hf.2 hg.2 hk.2 with hb | hb
-        · exact Or.inl (by simp only [evalPatternBackend, ha, hb, SPARQL.hashJoin]; rfl)
+        · exact Or.inl (by simp [evalPatternBackend, plannerFragment_serviceVarRoot hf.1,
+            plannerFragment_serviceVarRoot hf.2, ha, hb, SPARQL.hashJoin]; rfl)
         · exact Or.inr hb
       · exact Or.inr ha
   | .union a b, hf, hg, hk => by
@@ -738,7 +744,8 @@ theorem evalPatternBackend_restrict (env : EvalEnv) {keep : Triple → Bool}
       simp only [PatternKept] at hk
       simp only [graphNamesIn, List.mem_append] at hn
       simp only [graphVarIn, Bool.or_eq_true] at hv
-      simp only [evalPatternBackend,
+      simp only [evalPatternBackend, plannerFragment_serviceVarRoot hf.1,
+        plannerFragment_serviceVarRoot hf.2, Bool.false_or, Bool.false_eq_true, ↓reduceIte,
         evalPatternBackend_restrict env hd a g hf.1 hk.1 (fun i hi => hn i (Or.inl hi))
           (fun h => hv (Or.inl h)),
         evalPatternBackend_restrict env hd b g hf.2 hk.2 (fun i hi => hn i (Or.inr hi))

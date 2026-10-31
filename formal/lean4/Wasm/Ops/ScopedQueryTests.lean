@@ -28,7 +28,6 @@ private def nestedQuery := "SELECT ?v WHERE { SERVICE <urn:outer> { SERVICE <urn
 
 private def runtimeTests : IO Unit := do
   let passCount ← IO.mkRef 0
-  let expectedFailureCount ← IO.mkRef 0
   let check := fun (condition : Bool) (message : String) => do
     expect condition message
     passCount.modify (· + 1)
@@ -48,15 +47,9 @@ private def runtimeTests : IO Unit := do
     check (ok silent && !containsText silent "LOCAL_SECRET") "SILENT preserves success without private value"
     check (ok (runCaptured allow "" query) && containsText (runCaptured allow "" query) "LOCAL_SECRET") "explicit SERVICE grant"
     check (!containsText (runCaptured deny "" variableQuery) "LOCAL_SECRET") "variable SERVICE denial"
-    -- Requested positive behavior (Federated Query section 4 is informative):
-    -- this is also empty in public 0.27 ambient
-    -- evaluation (VALUES, BIND and triple-bound endpoints). Preserve the gap;
-    -- a denial result here alone is not a nonvacuous enforcement control.
-    if containsText (runCaptured allow "" variableQuery) "LOCAL_SECRET" then
-      throw (IO.userError "XPASS variable SERVICE positive: promote this known gap to an ordinary passing guard")
-    else
-      expectedFailureCount.modify (· + 1)
-      IO.println "XFAIL: granted variable SERVICE should return LOCAL_SECRET; inherited ambient evaluator returns no rows (https://github.com/danbri/factoidal/issues/1212)"
+    check (ok (runCaptured allow "" variableQuery) &&
+      containsText (runCaptured allow "" variableQuery) "LOCAL_SECRET")
+      "explicit variable SERVICE grant is a nonvacuous positive control"
     check (!containsText (runCaptured outerOnly "" nestedQuery) "LOCAL_SECRET") "nested SERVICE cannot acquire inner authority"
     check (containsText (runCaptured both "" nestedQuery) "LOCAL_SECRET") "nested SERVICE explicit grants"
     let _ ← registerServiceEndpoint "urn:private" replacement
@@ -78,7 +71,7 @@ private def runtimeTests : IO Unit := do
     let _ ← extClear
     check (yesExtension.providers.extensions == ["urn:host"]) "captured extension IRIs immutable"
     check (extFnsWith noExtension.providers.extensions "urn:host" [] == none) "denied extension does not reach extern host branch"
-    IO.println s!"ScopedQuery runtime: {← passCount.get} pass / 0 unexpected fail / {← expectedFailureCount.get} expected failure (not a conformance pass)"
+    IO.println s!"ScopedQuery runtime: {← passCount.get} pass / 0 unexpected fail / 0 expected failure (not a conformance-suite result)"
   finally
     let _ ← clearServiceEndpoints
     let _ ← extClear

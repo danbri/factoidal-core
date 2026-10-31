@@ -272,9 +272,13 @@ extern_lib libl4hostread pkg := do
 
 @[default_target] lean_lib L4Factoidal
 
--- Explicit non-default root: prototype tests stay outside production imports.
+-- Explicit non-default roots: prototype tests stay outside production imports.
 lean_lib ScopedQueryPrototype where
   roots := #[`Wasm.Ops.ScopedQuery, `Wasm.Ops.ScopedQueryTests]
+
+-- Parsed public-query backend/reference and serialization controls.
+lean_lib ServiceVariableRegression where
+  roots := #[`Wasm.Ops.ServiceVariableTests, `Wasm.Ops.ServiceSerializationTests]
 
 -- Observable cardinality of the dataset handle store: 41 assertions over
 -- open / clone / update / add / delete (RDF 1.1 Concepts §3: a graph is a set).

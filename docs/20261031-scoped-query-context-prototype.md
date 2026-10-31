@@ -63,9 +63,9 @@ denial before the actual host branch. Four additional pure guards cover the
 empty policy and abstract callback dispatch. Generic callback guards are not
 reported as actual JS FFI callback tests.
 
-Bound-variable SERVICE currently returns no rows even with a registered/granted
+Before the SERVICE correlation repair, bound-variable SERVICE returned no rows even with a registered/granted
 provider, reproduced independently in published 0.27.0 with VALUES, BIND and a
-triple-bound endpoint. Its positive case remains a separate expected failure,
+triple-bound endpoint. Its positive case was recorded as a separate expected failure,
 with XPASS failing the probe:
 https://github.com/danbri/factoidal/issues/1212 (bound variable SERVICE coverage).
 The variable-denial case alone is vacuous as an enforcement control. SPARQL 1.1
@@ -102,3 +102,19 @@ by Lake and was corrected before relying on CI execution.
 Validation of the registered target: `lake build ScopedQueryPrototype`
 passed (339 jobs), including the same 14 ordinary runtime passes and one
 separate variable-SERVICE expected failure. No full local build was used.
+
+## Variable SERVICE repair dependency
+
+The prototype now includes the backend/reference repair from
+https://github.com/danbri/factoidal-core/pull/283 (variable SERVICE and serialized
+provider snapshots). Only after incorporating that behavior fix was its
+positive variable-SERVICE case promoted from the expected-failure bucket to
+an ordinary assertion. The paired denied case remains, so it no longer
+succeeds merely because both granted and denied requests produce no rows.
+Historical counts above describe the pre-repair run; current validation is
+recorded below. The prototype still has no public dispatch/API adoption.
+
+Current combined named build: `lake build ScopedQueryPrototype
+ServiceVariableRegression` passed (419 jobs): 15 scoped runtime passes,
+0 unexpected failures, 0 expected failures, plus 17 reference/backend
+controls and seven serialization controls. Four pure guards also pass.

@@ -109,7 +109,8 @@ private def rawOfAnswer : L4Factoidal.Dataflow.Answer → RawAnswer
 https://github.com/danbri/factoidal/issues/975 item 3) with no backend, which
 is the reference evaluation (`shippedRaw_reference`). -/
 private def evalRaw (ds : Dataset) (sparql : String) (now : Option String := none)
-    (ext : String → List EvalResult → Option EvalResult := extFnsWith []) :
+    (ext : String → List EvalResult → Option EvalResult := extFnsWith [])
+    (services : List (String × Graph) := []) :
     Except String RawAnswer :=
   match parseSparql sparql with
   | .error e => .error s!"SPARQL parse error: {fmtParseError e}"
@@ -119,7 +120,7 @@ private def evalRaw (ds : Dataset) (sparql : String) (now : Option String := non
     -- registry snapshot, so a registered function answers whatever the
     -- output format (https://github.com/danbri/factoidal/issues/1090).
     let env : EvalEnv := { base := q.base, ext := ext, dataset := some ds,
-                           now := now }
+                           now := now, services := services }
     -- Federated Query §2.3: a failed SERVICE call without SILENT is the
     -- answer (`Query.serviceFailure`, issue 717).
     match q.serviceFailure env ds with
@@ -202,14 +203,15 @@ private def renderRaw (output : String) (a : RawAnswer) : Except String String :
 `datasetQueryRaw` (`Wasm/Ops/Handles.lean`) calls it with a stored dataset. -/
 def queryRawParsed (ds0 : Dataset) (sparql entail output : String)
     (now : Option String := none)
-    (ext : String → List EvalResult → Option EvalResult := extFnsWith []) : String :=
+    (ext : String → List EvalResult → Option EvalResult := extFnsWith [])
+    (services : List (String × Graph) := []) : String :=
   if !(["json", "csv", "tsv", "xml", "table", "ntriples"].contains output) then
     errJson s!"queryRaw: output must be json, csv, tsv, xml, table or ntriples (got '{output}')"
   else
     match closeDefaultGraph entail ds0 with
     | .error e => errJson e
     | .ok ds =>
-      match evalRaw ds sparql now ext with
+      match evalRaw ds sparql now ext services with
       | .error e => errJson e
       | .ok a =>
         match renderRaw output a with
@@ -222,7 +224,8 @@ def queryRawParsed (ds0 : Dataset) (sparql entail output : String)
 is an error (https://github.com/danbri/factoidal/issues/743). -/
 def queryRawBy (extra : ExtraReader) (data sparql optsJson : String)
     (now : Option String := none)
-    (ext : String → List EvalResult → Option EvalResult := extFnsWith []) : String :=
+    (ext : String → List EvalResult → Option EvalResult := extFnsWith [])
+    (services : List (String × Graph) := []) : String :=
   let opts : Option Json := if optsJson == "" then none else parseJson? optsJson
   let field (k d : String) : String :=
     match opts.bind (fun j => j.getString? k) with
@@ -234,14 +237,17 @@ def queryRawBy (extra : ExtraReader) (data sparql optsJson : String)
   else
   match parseTextToDatasetBy extra data (field "dataFormat" "turtle") "" with
   | .error e => errJson s!"queryRaw: {e}"
-  | .ok ds0 => queryRawParsed ds0 sparql (field "entail" "none") output now ext
+  | .ok ds0 => queryRawParsed ds0 sparql (field "entail" "none") output now ext services
 
 /-- `queryRaw` through the IO dispatch entry: the same envelope, with the clock
 read ONCE for the query (SPARQL 1.1 §17.4.5.1), so `NOW()` is the instant of
-this call. -/
+this call. Extension and SERVICE registries are also captured once before
+evaluation; the output format does not change the provider context. -/
 def queryRawIOBy (extra : ExtraReader) (data sparql optsJson : String) : IO String := do
   let now ← nowDateTime
-  pure (queryRawBy extra data sparql optsJson (some now))
+  let extIris ← extSnapshot
+  let services ← serviceSnapshot
+  pure (queryRawBy extra data sparql optsJson (some now) (extFnsWith extIris) services)
 
 /-! ## Build-time checks (positive and negative) -/
 

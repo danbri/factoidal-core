@@ -84,7 +84,7 @@ jobs:
           # declared in Harness.Qlvr outside both import closures. Build its
           # Lean/C artifacts; the native l4qlvr executable is not needed.
           # The source-wide csimp inventory also includes CryptoProbe.
-          lake build L4Factoidal l4wasm +Harness.Qlvr +Harness.CryptoProbe 2>&1 | tee "$RUNNER_TEMP/lake-build.log"
+          lake build L4Factoidal l4wasm +Harness.Qlvr +Harness.CryptoProbe ServiceVariableRegression 2>&1 | tee "$RUNNER_TEMP/lake-build.log"
 
       # This prototype is intentionally absent from public dispatch/import roots.
       # Name its proof/guard module explicitly so it cannot remain untested.
