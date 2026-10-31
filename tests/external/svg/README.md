@@ -176,3 +176,5 @@ has a separate local scope and no WPT revision, so it cannot enter the pinned
 38-case score. Captures/readbacks/differences remain generated artifacts outside
 source control. The full-feature goal is tracked in the
 [project checklist](../../../docs/designissues/2026-10-31-svg2-static-feature-target.md).
+
+`browser_gpu.mjs --fixture INPUT.svg --repeat 20` measures a resident session with setup and frame/readback times separated. It creates one shader module/pipeline and uploads once; each frame still reads back and validates pixels. These are host round-trip timings, not GPU-only or CPU/GPU kernel comparisons. See [measured limitations](../../../docs/20261031-svg-resident-rendering.md).

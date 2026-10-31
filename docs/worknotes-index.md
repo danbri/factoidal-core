@@ -173,3 +173,5 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-31 | [SVG independent images and paint fallback](20261031-svg-independent-images.md) | same commit | 38-case denominator preserved; independent browser captures, explicit oracle disagreements, 2 compiler acceptances and zero GPU visual passes |
 
 | 2026-10-31 | [Shared SVG affine algebra and actual GPU comparisons](20261031-svg-affine-gpu.md) | same commit | TOAN reuse, typed scalar backend, transform/precision regressions; browser-host Apple Metal yields 2/38 independent full-image matches; native Deno remains unavailable |
+
+| 2026-10-31 | [Resident raw WebGPU snapshot sessions](20261031-svg-resident-rendering.md) | same commit | retained GPU resources, 68 Deno tests/12 C checks, twenty actual Apple Metal frame/readbacks; measured throughput remains below 12 Hz |

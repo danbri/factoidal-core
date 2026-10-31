@@ -9,7 +9,8 @@ import {createHash} from 'node:crypto';
 import {platform,release,arch} from 'node:os';
 const root=dirname(fileURLToPath(import.meta.url)),repo=resolve(root,'../../..'),lab=resolve(repo,'labs/demos/foafnaut');
 const args=process.argv.slice(2),option=n=>{const i=args.indexOf(n);return i<0?null:args[i+1];};
-const fixture=option('--fixture');
+const fixture=option('--fixture'),repeat=Number(option('--repeat')??1);
+if(!Number.isInteger(repeat)||repeat<1||repeat>120)throw Error('--repeat must be1..120');
 const output=option('--output'),browserPath=option('--browser'),playwright=option('--playwright'),typescript=option('--typescript');
 if(!output||!browserPath||!playwright||!typescript)throw Error('Usage: browser_gpu.mjs --output DIR --browser CHROME --playwright /path/to/playwright-core/index.mjs --typescript /path/to/typescript.js');
 const manifest=JSON.parse(await readFile(resolve(root,'manifest.json'),'utf8')),hash=b=>createHash('sha256').update(b).digest('hex');
@@ -45,12 +46,16 @@ try{
   if(c.requiredRuntime.length){row.reason='Original runtime/resource requirement: '+c.requiredRuntime.join(', ');report.cases.push(row);continue;}
   try{
    const xml=await readFile(fixture?resolve(fixture):resolve(root,'upstream',c.test),'utf8');row.sourceSha256=hash(Buffer.from(xml));
-   const result=await page.evaluate(async xml=>{
+   const result=await page.evaluate(async ({xml,repeat})=>{
     const start=performance.now(),a=window.engine.compile(xml,800,600),compiled=performance.now();
-    const rgba=await window.transport.render(a,'svg-offscreen');if(!rgba)return {blocked:true};
+    const session=await window.transport.createOffscreenSession(a,'svg-offscreen');if(!session)return {blocked:true};
+    const ready=performance.now(),frameMs=[];let rgba;
+    try{for(let i=0;i<repeat;i++){const t=performance.now();rgba=await session.draw();frameMs.push(performance.now()-t);}}
+    finally{session.close();}
     const ppm=window.transport.encodePPM(rgba,a.width,a.height);let binary='';for(let i=0;i<ppm.length;i+=32768)binary+=String.fromCharCode(...ppm.subarray(i,i+32768));
-    return {base64:btoa(binary),compileMs:compiled-start,renderAndReadbackMs:performance.now()-compiled,primitives:a.primitiveCount,floats:a.data.length,samplesVerified:a.checks.length};
-   },xml);
+    return {base64:btoa(binary),compileMs:compiled-start,gpuSetupMs:ready-compiled,frameReadbackMs:frameMs,
+      resourceStats:session.stats,primitives:a.primitiveCount,floats:a.data.length,samplesVerified:a.checks.length};
+   },{xml,repeat});
    if(result.blocked){row.reason='GPU adapter unavailable';report.cases.push(row);continue;}
    const bytes=Buffer.from(result.base64,'base64'),file=`${String(i).padStart(2,'0')}-actual.ppm`;
    await writeFile(resolve(output,file),bytes);const {base64,...facts}=result;

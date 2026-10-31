@@ -27,31 +27,71 @@ export function checkPixels(a: Renderable, rgba: Uint8Array) {
   }
 }
 
-export async function render(a: Renderable, mode:"offscreen"|"svg-offscreen"="offscreen"): Promise<Uint8Array | null> {
-  if (!navigator.gpu) throw new Error("WebGPU API absent; add --unstable-webgpu");
-  const adapter = await navigator.gpu.requestAdapter();
-  if (!adapter) return null;
-  console.log("GPU adapter:", adapter.info);
-  const device = await adapter.requestDevice();
+// Resource lifetime is a host concern; descriptors and every draw/copy/map
+// command remain supplied by Lean. Repeated frames keep device/pipeline/buffers.
+export async function createOffscreenSession(a:Renderable,mode:"offscreen"|"svg-offscreen"="offscreen") {
+  if(!navigator.gpu)throw new Error("WebGPU API absent; add --unstable-webgpu");
+  const verification={...a,checks:a.checks.map(p=>({...p,rgb:[...p.rgb]}))};
+  const adapter=await navigator.gpu.requestAdapter();
+  if(!adapter)return null;
+  console.log("GPU adapter:",adapter.info);
+  const device=await adapter.requestDevice();
+  let resources:Awaited<ReturnType<typeof createPlanResources>>|undefined;
+  let texture:GPUTexture|undefined,readback:GPUBuffer|undefined;
+  let closed=false,busy=false,failed=false,scope=false;
+  const counters={devices:1,shaderModules:0,pipelines:0,buffers:0,textures:0,uploads:0,submissions:0,frames:0};
+  const close=()=>{
+    if(closed)return;
+    if(busy)throw new Error("Cannot close GPU session during a frame");
+    closed=true;
+    const errors:unknown[]=[];
+    for(const resource of [readback,texture,resources?.uniform,device])try{resource?.destroy();}catch(error){errors.push(error);}
+    if(errors.length)console.warn("GPU session cleanup:",errors.map(String).join("; "));
+  };
   try {
-    device.pushErrorScope("validation");
+    device.pushErrorScope("validation");scope=true;
     const plan=await requestRenderPlan(mode,"rgba8unorm",a,device.limits);
-    const resources=await createPlanResources(device,plan,a.wgsl);
-    const {uniform}=resources;
-    device.queue.writeBuffer(uniform,plan.uniform.offset,new Float32Array(a.data));
-    const texture=device.createTexture({size:[plan.width,plan.height,plan.texture!.depth],format:plan.format,usage:textureUsage(plan.texture!.usage)});
-    const readback=device.createBuffer({size:plan.readback!.bytes,usage:bufferUsage(plan.readback!.usage)});
-    const interpreter=commandInterpreter(device,plan,resources,texture.createView(),{texture,readback});
-    for(const command of plan.commands)await interpreter.step(command);
-    const padded=interpreter.mapped();
-    if(!padded)throw new Error("Lean offscreen plan did not return pixels");
-    const rgba=unpad(padded,plan.width,plan.height,plan.readback!.bytesPerRow);
-    const error = await device.popErrorScope();
-    if (error) throw new Error(error.message);
-    checkPixels(a, rgba);
-    readback.destroy(); texture.destroy(); uniform.destroy();
-    return rgba;
-  } finally {
-    device.destroy();
+    resources=await createPlanResources(device,plan,a.wgsl);
+    counters.shaderModules=1;counters.pipelines=1;counters.buffers=1;
+    device.queue.writeBuffer(resources.uniform,plan.uniform.offset,new Float32Array(a.data));counters.uploads++;
+    texture=device.createTexture({size:[plan.width,plan.height,plan.texture!.depth],format:plan.format,usage:textureUsage(plan.texture!.usage)});counters.textures++;
+    readback=device.createBuffer({size:plan.readback!.bytes,usage:bufferUsage(plan.readback!.usage)});counters.buffers++;
+    const initialError=await device.popErrorScope();scope=false;
+    if(initialError)throw new Error(initialError.message);
+    return {
+      adapterInfo:adapter.info,
+      get stats(){return {...counters,closed,failed};},
+      async draw():Promise<Uint8Array> {
+        if(closed||failed)throw new Error("GPU session is closed or failed");
+        if(busy)throw new Error("Concurrent GPU readbacks are unsupported");
+        busy=true;
+        try {
+          device.pushErrorScope("validation");scope=true;
+          const interpreter=commandInterpreter(device,plan,resources!,texture!.createView(),{texture,readback});
+          for(const command of plan.commands){await interpreter.step(command);if(command==="submit")counters.submissions++;}
+          const padded=interpreter.mapped();
+          if(!padded)throw new Error("Lean offscreen plan did not return pixels");
+          const rgba=unpad(padded,plan.width,plan.height,plan.readback!.bytesPerRow);
+          const error=await device.popErrorScope();scope=false;
+          if(error)throw new Error(error.message);
+          checkPixels(verification,rgba);counters.frames++;
+          return rgba;
+        }catch(error){failed=true;throw error;}
+        finally {
+          if(scope){try{await device.popErrorScope();}catch{/* preserve frame error */}scope=false;}
+          busy=false;
+        }
+      },
+      close,
+    };
+  }catch(error){
+    if(scope){try{await device.popErrorScope();}catch{/* preserve setup error */}scope=false;}
+    close();throw error;
   }
+}
+
+export async function render(a:Renderable,mode:"offscreen"|"svg-offscreen"="offscreen"):Promise<Uint8Array|null> {
+  const session=await createOffscreenSession(a,mode);
+  if(!session)return null;
+  try{return await session.draw();}finally{session.close();}
 }
