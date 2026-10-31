@@ -9,7 +9,7 @@ The analyser is opt-in (`FeatureSettings.staticTyping` defaults to false).
 It reuses the engine's sequence types, subtype/conversion checks, function
 catalogue, schema hooks and update operand rules. It checks branches and
 function bodies independently of runtime selection. Unmodelled forms and the
-existing expression/type fuel approximations do not establish whole-language
+remaining conservative inference rules do not establish whole-language
 static-typing completeness. The original kernel theorem remains limited to
 its stated literal/sequence/conditional fragment; it is not a theorem about
 all XPath or XQuery expressions.
@@ -37,8 +37,13 @@ helpers already decrease explicit fuel on type/expression nesting, entered
 with 100 for type checks or 1000 for expression inference. The seven exact
 semantic-depth classifications name these bounds and their tests. There is no
 allowance for the removed clause-list recursion and no claim of arbitrary-depth
-C-stack safety. The pre-existing approximations at exhausted budgets remain
-explicit in the analyser and boundary tests.
+C-stack safety. A review follow-up changes every exhausted analysis budget
+into explicit FOER0000 with an incomplete-analysis message. Conversion,
+subtyping and atomic-family predicates now return monadic booleans, so a
+budget limit propagates rather than being mistaken for success or mismatch.
+Atomization, callback checking and expression inference likewise fail visibly.
+Unknown/unmodelled forms still produce conservative types; successful checking
+is not whole-language completeness or type-soundness assurance.
 
 ## Measurement and reachability
 
@@ -52,8 +57,10 @@ unrelated failures and 43 unsupported cases remain visible. These counts cover
 these 17 sets, not the full catalogue.
 
 The final named build (`StaticTypingTests`, `StaticTypingTheorems`, `l4qt4`)
-passes 383 jobs. There are 104 executable guards in the two new check modules:
-84 from the original implementation plus 20 integration/budget/order guards.
+passes 383 jobs. A subsequent test-only warm build passes 110 jobs and
+validates six additional child-callback budget propagation guards. The two
+check modules now contain 110 executable guards: 84 from the recovered
+implementation plus 26 integration/budget/order/propagation guards.
 Both fragment theorems retain only propext, Classical.choice and Quot.sound.
 The scoped generated-C recursion and csimp gates pass for the eleven changed
 producer modules. No blanket module allowance was added: the seven entries
@@ -73,9 +80,13 @@ unsupported scenarios must stay outstanding until those configurations run.
 
 Logs and membership inventory are `/private/tmp/qt4-static-targets-current.json`,
 `/private/tmp/qt4-static-{baseline,after,final}/*.log`,
-`/private/tmp/qt4-static-integration-build-green.log`,
+`/private/tmp/qt4-static-integration-build-green.log` and the subsequent
+`/private/tmp/qt4-static-budget-build.log` and test-only
+`/private/tmp/qt4-static-budget-propagation-build.log`,
 `/private/tmp/qt4-static-flwor-{before,after}.log` and
-`/private/tmp/qt4-static-tail-audit-final.log`. The original dated worknote describes
+`/private/tmp/qt4-static-tail-audit-final.log`. The budget follow-up rechecks
+all 104 cases in `/private/tmp/qt4-static-budget-final/` and compiled gates in
+`/private/tmp/qt4-static-budget-audit.log`. The original dated worknote describes
 its older baseline; this record supplies the current integration evidence.
 
 The obsolescence sweep changes “all-enabled” wording to “default” where the new

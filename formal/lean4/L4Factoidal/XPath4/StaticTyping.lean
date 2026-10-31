@@ -2,8 +2,9 @@
 Static sequence-type analysis shared by XPath and XQuery. The traversal is
 independent of evaluation: both conditional branches and function bodies are
 checked. Core supplies the sequence types, subtype relation and function catalog.
-Fuel exhaustion and expression forms without a rule have type item()*; these
-approximations do not establish whole-language static-typing completeness.
+Exhausted analysis budgets report FOER0000. Expression forms without a rule
+still have type item()*; this approximation does not establish whole-language
+static-typing completeness.
 -/
 import L4Factoidal.XPath4.Core
 import L4Factoidal.XQueryUpdate.TypeRules
@@ -75,47 +76,47 @@ def numericT : IType := .choice [.atomic (.b .decimal), .atomic (.b .float), .at
 
 /-- Function conversion for known atomic/node types. Unknown item types are
     admitted so that an unmodelled form cannot manufacture a type error. -/
-def convertible : Nat → IType → IType → Bool
-  | 0, _, _ => true
+def convertible : Nat → IType → IType → M Bool
+  | 0, _, _ => err "FOER0000" "incomplete static analysis: type conversion budget exhausted"
   | f + 1, a, b =>
-    if subtype a b then true else
+    if subtype a b then pure true else
     match a, b with
-    | .item, _ => true
-    | .seq .item .star, _ => true
-    | .choice ts, _ => ts.all (fun t => convertible f t b)
-    | .seq t o, .seq u p => occLe o p && convertible f t u
+    | .item, _ => pure true
+    | .seq .item .star, _ => pure true
+    | .choice ts, _ => ts.allM (fun t => convertible f t b)
+    | .seq t o, .seq u p => if occLe o p then convertible f t u else pure false
     | .seq t .one, u => convertible f t u
-    | _, .seq u p => occLe .one p && convertible f a u
-    | .atomic .untyped, .atomic _ => true
-    | .atomic (.b .anyURI), .atomic (.b .string) => true
-    | .atomic t, .atomic u =>
+    | _, .seq u p => if occLe .one p then convertible f a u else pure false
+    | .atomic .untyped, .atomic _ => pure true
+    | .atomic (.b .anyURI), .atomic (.b .string) => pure true
+    | .atomic t, .atomic u => pure (
       (t.derives (.b .decimal) && (u == .b .float || u == .b .double)) ||
-      (t == .b .float && u == .b .double)
-    | t, .atomic _ => subtype t .anyNode
-    | _, .choice ts => ts.any (fun t => convertible f a t)
-    | _, _ => false
+      (t == .b .float && u == .b .double))
+    | t, .atomic _ => pure (subtype t .anyNode)
+    | _, .choice ts => ts.anyM (fun t => convertible f a t)
+    | _, _ => pure false
 
-def require (a b : IType) (what : String) : M Unit :=
-  if convertible 100 a b then pure ()
+def require (a b : IType) (what : String) : M Unit := do
+  if ← convertible 100 a b then pure ()
   else err "XPTY0004" ("static type does not match " ++ what)
 
 /-- Declaration matching retains named PI types, which Core's approximate
     subtype relation does not compare for equality. -/
-def declaredSubtype : Nat → IType → IType → Bool
-  | 0, _, _ => false
+def declaredSubtype : Nat → IType → IType → M Bool
+  | 0, _, _ => err "FOER0000" "incomplete static analysis: subtype budget exhausted"
   | f + 1, a, b =>
-    if subtype a b then true else
+    if subtype a b then pure true else
     match a, b with
-    | .pi (some x), .pi (some y) => x == y
-    | .seq t o, .seq u p => occLe o p && declaredSubtype f t u
+    | .pi (some x), .pi (some y) => pure (x == y)
+    | .seq t o, .seq u p => if occLe o p then declaredSubtype f t u else pure false
     | .seq t .one, u => declaredSubtype f t u
-    | t, .seq u p => occLe .one p && declaredSubtype f t u
-    | .choice ts, u => ts.all (fun t => declaredSubtype f t u)
-    | _, _ => false
+    | t, .seq u p => if occLe .one p then declaredSubtype f t u else pure false
+    | .choice ts, u => ts.allM (fun t => declaredSubtype f t u)
+    | _, _ => pure false
 
 def bindType (actual declared : IType) : M IType := do
   if isTop declared then return actual
-  if !(declaredSubtype 100 actual declared) && !(convertible 100 actual declared) then
+  if !(← declaredSubtype 100 actual declared) && !(← convertible 100 actual declared) then
     err "XPTY0004" "binding expression does not match its declared static type"
   else pure declared
 
@@ -126,7 +127,7 @@ def checkEBV (t : IType) : M Unit := do
   let it := itemType t
   if subtype it .anyNode then return ()
   if allowsMany t then err "FORG0006" "static sequence type has no effective boolean value"
-  else if convertible 100 t (.seq (.choice [booleanT, numericT, .atomic (.b .string),
+  else if ← convertible 100 t (.seq (.choice [booleanT, numericT, .atomic (.b .string),
       .atomic (.b .anyURI), .atomic .untyped]) .opt) then pure ()
   else err "FORG0006" "static item type has no effective boolean value"
 
@@ -179,18 +180,18 @@ def fnType (ctx : Ctx) (q : QN) (arity : Nat) : IType :=
 
 /-- Primitive atomic families present in a union; unknown node atomization
     and unconstrained items supply no evidence of an incompatibility. -/
-def hasAtomicFamily : Nat → IType → String → Bool
-  | 0, _, _ => false
+def hasAtomicFamily : Nat → IType → String → M Bool
+  | 0, _, _ => err "FOER0000" "incomplete static analysis: atomic family budget exhausted"
   | f + 1, .seq t _, family => hasAtomicFamily f t family
-  | f + 1, .choice ts, family => ts.any (fun t => hasAtomicFamily f t family)
-  | _ + 1, .atomic a, family => a.prim == family
-  | _ + 1, _, _ => false
+  | f + 1, .choice ts, family => ts.anyM (fun t => hasAtomicFamily f t family)
+  | _ + 1, .atomic a, family => pure (a.prim == family)
+  | _ + 1, _, _ => pure false
 
 /-- A complex mixed annotation can have an element-only restriction. Static
     atomization must therefore account for an absent typed value even when
     a particular dynamic node happens to have mixed content. -/
 def checkAtomizable (env : Env) : Nat → IType → M Unit
-  | 0, _ => pure ()
+  | 0, _ => err "FOER0000" "incomplete static analysis: atomization budget exhausted"
   | f + 1, t =>
     match t with
     | .seq t _ => checkAtomizable env f t
@@ -205,7 +206,7 @@ def checkAtomizable (env : Env) : Nat → IType → M Unit
     | _ => pure ()
 
 def checkFilter : Nat → IType → IType → M Unit
-  | 0, _, _ => pure ()
+  | 0, _, _ => err "FOER0000" "incomplete static analysis: filter type budget exhausted"
   | f + 1, input, cb =>
     match cb with
     | .choice ts => ts.forM (checkFilter f input)
@@ -215,7 +216,7 @@ def checkFilter : Nat → IType → IType → M Unit
       let inputItem : IType := match input with | .empty => .choice [] | _ => itemType input
       require inputItem (ps.headD .item) "filter predicate argument"
       if ps.length == 2 then require integerT (ps.getD 1 integerT) "filter position argument"
-      if !(declaredSubtype 100 r booleanT) then
+      if !(← declaredSubtype 100 r booleanT) then
         err "XPTY0004" "filter predicate must return exactly one boolean"
     | .item => pure ()
     | _ => err "XPTY0004" "filter predicate must be exactly one function"
@@ -223,7 +224,7 @@ def checkFilter : Nat → IType → IType → M Unit
 /-- Infer an expression's sequence type. The fuel makes nested extension and
     clause traversals total without depending on the evaluator's recursion. -/
 def infer : Nat → Env → Ctx → Expr → M IType
-  | 0, _, _, _ => pure top
+  | 0, _, _, _ => err "FOER0000" "incomplete static analysis: expression budget exhausted"
   | fuel + 1, env, ctx, e => do
     let go := infer fuel env
     let all (es : List Expr) (c : Ctx) : M (List IType) := es.mapM (go c)
@@ -302,7 +303,7 @@ def infer : Nat → Env → Ctx → Expr → M IType
         checkEBV (positional.headD ctx.focus)
       if q.uri == nsFN && ["avg", "sum", "min", "max"].contains q.loc then
         let t := itemType (positional.headD top)
-        if hasAtomicFamily 100 t "numeric" && hasAtomicFamily 100 t "string" then
+        if (← hasAtomicFamily 100 t "numeric") && (← hasAtomicFamily 100 t "string") then
           err "FORG0006" "aggregate inputs have incompatible static types"
       match ctx.funcs q (args.length + kw.length) with
       | some (.fnT ps r) =>
@@ -355,7 +356,7 @@ def infer : Nat → Env → Ctx → Expr → M IType
           .atomic (.b .dateTime), .atomic (.b .date), .atomic (.b .time)]) .opt
         require ta arithmetic "arithmetic operand"
         require tb arithmetic "arithmetic operand"
-        if convertible 100 ta (.seq numericT .opt) && convertible 100 tb (.seq numericT .opt) then
+        if (← convertible 100 ta (.seq numericT .opt)) && (← convertible 100 tb (.seq numericT .opt)) then
           pure (withOcc numericT (allowsZero ta || allowsZero tb) false)
         else pure top
       | .to =>

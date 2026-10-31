@@ -131,8 +131,8 @@ private def sourceEnv : Env :=
 #guard xquery "for $x in (1,2) for $y in (3,4) where $x eq 1 count $c return $x+$y" true == "4 5"
 #guard update "let $x as xs:integer := 'bad' count $c return delete node 1" true == "error XUTY0007"
 
--- Explicit depth-budget boundaries. The analyser's existing approximations
--- remain documented; node-test exhaustion is a visible limit error.
+-- Every exhausted analysis budget reports incompleteness explicitly;
+-- exhaustion cannot turn an unchecked type or expression into acceptance.
 open StaticTyping in
 #guard match testType .child 2 (.union [.kind .comment]) with
   | .ok t => t == .choice [.comment]
@@ -144,15 +144,13 @@ private def outcome {α} : M α → String
 
 #guard outcome (StaticTyping.testType .child 0 (.kind .comment)) == "FOER0000"
 #guard outcome (StaticTyping.testType .child 1 (.union [.kind .comment])) == "FOER0000"
-#guard StaticTyping.convertible 0 StaticTyping.integerT StaticTyping.booleanT
-#guard !StaticTyping.declaredSubtype 0 StaticTyping.integerT StaticTyping.integerT
-#guard !StaticTyping.hasAtomicFamily 0 StaticTyping.integerT (.b .integer : AType).prim
-#guard StaticTyping.hasAtomicFamily 1 StaticTyping.integerT (.b .integer : AType).prim
-#guard outcome (StaticTyping.checkFilter 0 StaticTyping.integerT StaticTyping.integerT) == "ok"
+#guard outcome (StaticTyping.convertible 0 StaticTyping.integerT StaticTyping.booleanT) == "FOER0000"
+#guard outcome (StaticTyping.declaredSubtype 0 StaticTyping.integerT StaticTyping.integerT) == "FOER0000"
+#guard outcome (StaticTyping.hasAtomicFamily 0 StaticTyping.integerT (.b .integer : AType).prim) == "FOER0000"
+#guard (StaticTyping.hasAtomicFamily 1 StaticTyping.integerT (.b .integer : AType).prim).toOption == some true
+#guard outcome (StaticTyping.checkFilter 0 StaticTyping.integerT StaticTyping.integerT) == "FOER0000"
 #guard outcome (StaticTyping.checkFilter 1 StaticTyping.integerT StaticTyping.integerT) == "XPTY0004"
-#guard match StaticTyping.infer 0 {} {} (.lit (Atomic.ofInt 1)) with
-  | .ok t => StaticTyping.isTop t
-  | _ => false
+#guard outcome (StaticTyping.infer 0 {} {} (.lit (Atomic.ofInt 1))) == "FOER0000"
 
 private def mixedType : QN := { uri := "urn:budget", loc := "mixed" }
 private def mixedInfo : SchemaTypeInfo :=
@@ -160,7 +158,16 @@ private def mixedInfo : SchemaTypeInfo :=
     base := { uri := nsXS, loc := "anyType" }, variety := "mixed" }
 private def mixedEnv : Env :=
   { schema := { typeInfo := fun q => if q == mixedType then some mixedInfo else none } }
-#guard outcome (StaticTyping.checkAtomizable mixedEnv 0 (.elemT none mixedType false)) == "ok"
+#guard outcome (StaticTyping.checkAtomizable mixedEnv 0 (.elemT none mixedType false)) == "FOER0000"
 #guard outcome (StaticTyping.checkAtomizable mixedEnv 1 (.elemT none mixedType false)) == "FOTY0012"
+
+-- Exhaustion reached through a child check propagates through all/any/map
+-- callbacks as a resource error, rather than success or a type mismatch.
+#guard outcome (StaticTyping.convertible 1 (.choice [StaticTyping.integerT]) (.atomic (.b .string))) == "FOER0000"
+#guard outcome (StaticTyping.declaredSubtype 1 (.choice [StaticTyping.integerT]) (.atomic (.b .string))) == "FOER0000"
+#guard outcome (StaticTyping.hasAtomicFamily 1 (.choice [StaticTyping.integerT]) (.b .integer : AType).prim) == "FOER0000"
+#guard outcome (StaticTyping.checkAtomizable mixedEnv 1 (.choice [.elemT none mixedType false])) == "FOER0000"
+#guard outcome (StaticTyping.checkFilter 1 StaticTyping.integerT (.choice [.fnT [StaticTyping.integerT] StaticTyping.booleanT])) == "FOER0000"
+#guard outcome (StaticTyping.infer 1 {} {} (.seq [.lit (Atomic.ofInt 1)])) == "FOER0000"
 
 end L4Factoidal.XPath4.StaticTypingTests

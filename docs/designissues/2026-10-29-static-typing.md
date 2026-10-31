@@ -79,7 +79,11 @@ The proof and execution guards are imported by `Harness/Qt4Run.lean`, so
 
 ## Remaining analysis limits
 
-The inference walk is fuel bounded. Forms without a specific typing rule
+The inference walk and all recursive conversion/subtype/family/atomization/
+callback checks are fuel bounded. Exhaustion now reports FOER0000 with an
+incomplete-analysis message; it does not silently report compatibility,
+incompatibility, successful checking or an unknown inferred type. Forms
+without a specific typing rule
 return `item()*`; their operands are still checked. Unknown item types are
 admitted by function conversion checks. This permits evaluation but does not
 establish complete static type checking. General extension forms, precise
