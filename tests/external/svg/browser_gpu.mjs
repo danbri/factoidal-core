@@ -30,7 +30,7 @@ const origin=`http://127.0.0.1:${server.address().port}`;
 const {chromium}=await import(pathToFileURL(resolve(playwright)).href);
 const cases=fixture?[{test:`local:${basename(fixture)}`,reference:'',requiredRuntime:[]}]:manifest.cases;
 const report={scope:fixture?'local regression, not WPT':'unchanged 38-case WPT slice',revision:fixture?null:manifest.revision,host:{platform:platform(),release:release(),arch:arch()},backend:'browser-raw-webgpu',typescript:ts.version,browserExecutableSha256:hash(await readFile(browserPath)),viewport:{width:800,height:600,deviceScaleFactor:1},candidateSources:{},cases:[]};
-for(const name of ['SVG.lean','render_plan.ts','gpu_transport.ts','.build/engines/svg-engine.mjs','.build/engines/svg-engine.wasm','.build/engines/render-plan.mjs','.build/engines/render-plan.wasm'])report.candidateSources[name]=hash(await readFile(resolve(lab,name)));
+for(const name of ['SVG.lean','SVGPath.lean','render_plan.ts','gpu_transport.ts','.build/engines/svg-engine.mjs','.build/engines/svg-engine.wasm','.build/engines/render-plan.mjs','.build/engines/render-plan.wasm'])report.candidateSources[name]=hash(await readFile(resolve(lab,name)));
 for(const name of ['Math/Affine.lean','Tdb2/Format.lean'])report.candidateSources[name]=hash(await readFile(resolve(repo,'formal/lean4/L4Factoidal',name)));
 let browser,activeCase=null;const adapterEvents=[];
 try{

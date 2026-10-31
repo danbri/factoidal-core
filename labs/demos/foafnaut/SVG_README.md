@@ -22,7 +22,7 @@ adapter means exit 2 with no image, never a CPU image substituted for a GPU resu
 ## Supported subset
 
 SVG-namespace `svg`/`g`, sharp `rect`, `circle`, filled `ellipse`, butt- or round-cap stroked
-`line`, and filled `polygon` are supported, plus text-only `title`/`desc` metadata. SVG `metadata` subtrees are non-rendering; XHTML `link rel="match"` is recognized as reftest metadata. Other HTML links (including stylesheets) remain explicit refusals.
+`line`, filled `polygon`, and filled linear/compound `path` are supported, plus text-only `title`/`desc` metadata. SVG `metadata` subtrees are non-rendering; XHTML `link rel="match"` is recognized as reftest metadata. Other HTML links (including stylesheets) remain explicit refusals.
 Namespace prefixes resolve by expanded name; lookalike namespaces, unbound
 prefixes, duplicate expanded attributes and foreign elements/qualified attributes
 are refused. Geometry accepts signed fractional decimal/exponent numbers and
@@ -53,19 +53,19 @@ coverage. The transparent SVG canvas is composited over a documented white
 backdrop for opaque RGB PPM output.
 
 These choices refer to W3C [painting](https://www.w3.org/TR/SVG11/painting.html)
-and [viewport transformation](https://www.w3.org/TR/SVG2/coords.html#ComputingAViewportsTransform),
+and [viewport transformation](https://www.w3.org/TR/SVG 2/coords.html#ComputingAViewportsTransform),
 without claiming all their semantics or other SVG features are implemented.
 
 ## Explicit refusals and limits
 
-CSS style/class, root transforms, paths, polylines, text/fonts, nested viewports,
+CSS style/class, root transforms, curved/stroked paths, polylines, text/fonts, nested viewports,
 images, use/links, scripting, animation, defs/gradients/patterns, filters, masks,
 clips, markers, rounded rects, conditional processing, visibility/display,
 paint-order changes, group opacity, square caps, custom joins/miterlimits,
 ellipse/polygon strokes, relative/non-px lengths, and unknown colors are errors.
 Unsupported features are not silently dropped, even on a zero-size primitive.
-IDs and version labels 1.1/2.0 are recognized metadata, not schema validation or
-an ID-reference implementation. Full SVG remains open work.
+IDs and version labels 1.1/2.0 are recognized metadata, not schema validation.
+Only unresolved simple local paint-fragment fallback is currently implemented. Full SVG remains open work.
 
 DOCTYPE/DTD, processing instructions and non-UTF-8 encoding declarations are
 refused. Host UTF-8 decoding is strict. Profile limits: 1,048,576 characters (host
@@ -81,9 +81,10 @@ WGSL loop rather than shader code expanded for every primitive. Lean's render
 plan checks the actual device storage-binding and buffer-size limits before
 allocation; over-budget documents are refused without truncation. Small UI
 scenes retain their existing uniform-buffer path. The generated default
-8-person FOAF scene measured 128,347 characters, 1,880 SVG primitives and 37,608
-Float values; a dense 16-person/48-link scene measured 455,470 characters,
-6,748 primitives and 134,968 Float values. These measurements motivate the
+8-person FOAF scene now measures 47,845 characters, 292 SVG primitives and 32,792
+Float values; a dense 16-person/48-link scene measures 154,860 characters,
+716 primitives and 114,728 Float values. Before compound glyph paths these were
+128,347/1,880/37,608 and 455,470/6,748/134,968 respectively. These measurements motivate the
 bounded profile, not a frame-rate guarantee.
 
 Geometry has hard boundaries without antialiasing. CPU reference Float and GPU
@@ -101,7 +102,7 @@ closure. It does not link old XML objects from an unrelated checkout. Cached
 pinned Init/Std/runtime objects are shared; source hashes/tool versions travel
 with the release. No binaries, generated C/WASM/glue/JSON or caches are committed.
 
-Fourteen local SVG regression groups cover namespace semantics, XML character
+Seventeen local SVG regression groups cover namespace semantics, XML character
 references, symbolic paint inheritance/defaults, fractional data, viewport
 mapping, butt/round/zero strokes, opacity overlap, polygon winding, zero/negative
 geometry, tiny viewports, explicit refusal paths and GPU transport encodings.
@@ -134,7 +135,7 @@ The unchanged WPT `fallback-001.svg` and `fallback-002.svg` now compile and pass
 known green/white CPU sample regressions. This is compiler/CPU evidence, not a
 visual pass. See the [independent-image runner](../../../tests/external/svg/README.md)
 for the complete 38-case denominator, installed-browser oracle measurements and
-GPU result boundaries. Paths remain unsupported; group/primitive affine transforms are described below.
+GPU result boundaries. Curved/stroked paths remain unsupported; linear paths and affine transforms are described below.
 
 
 ## Shared affine transforms and actual GPU evidence
@@ -172,3 +173,35 @@ The affine gallery and full generated eight-person FOAF SVG also rendered and
 passed Lean readback samples on this GPU; these local examples do not add WPT
 passes. Full SVG feature goals and remaining work are in the
 [declared feature target](../../../docs/designissues/2026-10-31-svg2-static-feature-target.md).
+
+
+## Retained linear paths and compound glyphs
+
+Filled paths support absolute/relative M, L, H, V and Z, repeated numeric
+arguments, implicit lineto after moveto, adjacent signs/decimals/exponents,
+multiple subpaths, closepath current-point restoration, nonzero/evenodd rules
+and implicit closure for fill. Closedness is retained for future stroke work.
+Empty/moveto-only paths paint nothing. The SVG 2 `none` value is recognized.
+Curves/arcs, pathLength and path strokes/joins remain explicit refusals. Invalid
+data is currently rejected rather than implementing SVG 2 partial-prefix error
+recovery; this is a material remaining path-conformance gap.
+
+Additional per-path bounds are 65,536 raw characters, 4,096 tokens, 128 subpaths
+and 512 points/edges. Numeric scanning stops at 49 characters and refuses tokens
+over the existing 48-character numeric limit; long digit runs do not reach an
+unbounded numeric scanner. Resolved relative coordinates retain the existing
+1e6 magnitude bound. No consumer budget was raised or payload truncated.
+
+Each bitmap glyph now serializes as one compound path retaining exactly its
+painted cell squares. This remains vector bitmap geometry, not SVG text/fonts.
+Local path/polygon bounds avoid running winding tests outside the actual point
+bounds. The storage shader uses a runtime array and bounded data-driven loop;
+its source is identical across different valid scene sizes and primitive kinds,
+so it can be cached independently of the payload size.
+
+For the generated eight-person example, all old/new 800×600 PPM bytes match.
+On the same Apple Metal browser host, 20 resident frame/readbacks improved from
+median 131.4ms to 22.0ms while preserving one shader/pipeline/upload. These include
+queue/readback/byte costs and are not GPU-only timings or an interactive/OS
+scheduling guarantee. Source-branch changes are not automatically present in
+older downloaded executables. See the dated linear-path measurement worknote.

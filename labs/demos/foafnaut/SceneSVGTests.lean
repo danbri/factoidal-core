@@ -59,6 +59,7 @@ def run : IO Unit := do
     shapes:=NativeFont.text ⟨1,3⟩ 1 "a:/" black ++ [.glyph ⟨0,0⟩ 0 ⟨31,31,31,31,31,31,31⟩ black]}
   let glyphXML ← xmlOf glyphs
   check ((glyphXML.splitOn "<text").length == 1) "SVG text dependency introduced"
+  check ((glyphXML.splitOn "<path").length == 4) "glyphs were not batched into three compound paths"
   sampleAgreement glyphs glyphXML points
   check (match NativeSceneSVG.shapeElements (.glyph ⟨0,0⟩ 1 ⟨0,0,0,0,0,0,0⟩ black) with
     | .ok xs => xs.isEmpty | .error _ => false) "blank glyph paints"
@@ -73,7 +74,7 @@ def run : IO Unit := do
       .cubic ⟨1,2⟩ ⟨8,20⟩ ⟨16,0⟩ ⟨25,4⟩ 3 black]}
   let curveXML ← xmlOf curves
   check ((curveXML.splitOn "Q 8 20 25 4").length == 2 && (curveXML.splitOn "C 8 20 16 0 25 4").length == 2) "Bezier path semantics flattened"
-  check ((NativeSVG.parse curveXML).isOk == false) "native path support silently invented"
+  check ((NativeSVG.parse curveXML).isOk == false) "native curve support silently invented"
   for shape in [Shape.circle ⟨0,0⟩ 0 black,.rectangle ⟨0,0⟩ ⟨0,5⟩ black,
     .segment ⟨0,0⟩ ⟨3,3⟩ 0 black,.circle ⟨0,0⟩ 1 ⟨256,0,0⟩] do
     check ((NativeSceneSVG.shapeElements shape).isOk == false) "unrepresentable native shape silently accepted"

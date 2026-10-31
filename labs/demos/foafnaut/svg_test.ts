@@ -119,7 +119,7 @@ Deno.test("SVG fractional/tiny root viewport and explicit embedding viewport hav
 
 Deno.test("SVG refuses unsupported features rather than silently losing rendering semantics",async()=>{
  const e=await loadSVG();
- for(const element of ['path','polyline','text','use','image','foreignObject','defs','style','linearGradient','filter','clipPath','mask','script','svg'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
+ for(const element of ['polyline','text','use','image','foreignObject','defs','style','linearGradient','filter','clipPath','mask','script','svg'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
  for(const attrs of ['style="fill:red"','class="red"','transform="perspective(1)"','stroke-dasharray="2 2"','stroke-linecap="square"','stroke-linejoin="bevel"','rx="2"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
  rejects(()=>e.compile('<?xml-stylesheet href="a.css"?>'+wrap('')),"processing instruction");
  rejects(()=>e.compile('<!DOCTYPE svg>'+wrap('')),"DOCTYPE");
@@ -142,6 +142,7 @@ Deno.test("SVG artifact/input limits and GPU row/readback encoding are checked w
 Deno.test("SVG storage artifact stays bounded and uses compact data-driven geometry",async()=>{
  const e=await loadSVG();
  const large=e.compile(wrap('<circle cx="5" cy="5" r="2"/>'.repeat(2000)));
+ equal(large.wgsl,e.compile(wrap('<circle r="1"/>')).wgsl);
  equal(large.binding,"read-only-storage");equal(large.primitiveCount,2000);equal(large.data.length,40008);
  assert(large.wgsl.includes("var<storage,read>"),"SVG is not storage backed");
  assert(large.wgsl.includes("for(var primitive=")&&large.wgsl.length<32768,"shader expands per primitive");
@@ -204,4 +205,28 @@ Deno.test("SVG affine transforms compose in SVG order and preserve local stroke 
  for(const t of ['matrix(1,2)','translate(1),','scale(1e-12)','skewX(90)','translate(1)'.repeat(33)])rejects(()=>e.compile(doc(t)),"SVG profile:");
  rejects(()=>e.compile(wrap('<circle r="1" transform="translate(1)"/>'.repeat(10000))),"storage data");
  rejects(()=>e.compile('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" transform="translate(1)"/>'),"unsupported attribute");
+});
+
+Deno.test("SVG retained compound linear paths implement moveto, closure, winding and shared shader",async()=>{
+ const e=await loadSVG();const path=(d:string,attrs='')=>wrap(`<path d="${d}" ${attrs}/>`);
+ for(const d of ['M2 2H10V10H2Z','m2,2h8v8h-8z','M2 2 10 2 10 10 2 10'])
+  for(let y=0;y<16;y++)for(let x=0;x<16;x++)equal(e.sample(path(d),x,y),x>=2&&x<10&&y>=2&&y<10?[0,0,0]:[255,255,255]);
+ const outer='M2 2H26V26H2Z';const same=outer+'M8 8H20V20H8Z';
+ equal(e.sample(path(same),12,12),[0,0,0]);equal(e.sample(path(same,'fill-rule="evenodd"'),12,12),[255,255,255]);
+ equal(e.sample(path(outer+'M8 8V20H20V8Z'),12,12),[255,255,255]);
+ const disjoint=path('M1 1L6 1 1 6M20 20L26 20 20 26');
+ equal(e.sample(disjoint,2,2),[0,0,0]);equal(e.sample(disjoint,21,21),[0,0,0]);equal(e.sample(disjoint,12,12),[255,255,255]);
+ equal(e.sample(path('M2 2h4v4h-4z m10 0h4v4h-4z'),14,4),[0,0,0]);
+ const compact=e.compile(path('M1e1-2L20.5-2 20.5.5 10 .5z'));equal(compact.primitiveCount,1);
+ equal(e.compile(path('')).primitiveCount,0);equal(e.compile(path('none')).primitiveCount,0);equal(e.sample(path('M0 0'),0,0),[255,255,255]);
+ const mixed=wrap('<path d="M0 0H10V10H0Z" transform="translate(5,5)"/><circle cx="25" cy="25" r="3"/>');
+ equal(e.sample(mixed,6,6),[0,0,0]);equal(e.sample(mixed,25,25),[0,0,0]);
+ equal(e.compile(mixed).wgsl,e.compile(wrap('<rect width="1" height="1"/>')).wgsl);
+ for(const d of ['L0 0','M0','M,0 0','M0,,0','M0 0,','M0 0LZ','M0 0Z1 2','M0 0Q1 2 3 4','M0 0C1 2 3 4 5 6','M0 0A2 2 0 0 0 10 10','M1000000 0l1 0','M0 0L1. 2','M0 0L1.e2 2','M0 0p1 2'])rejects(()=>e.compile(path(d)),"SVG profile:");
+ rejects(()=>e.compile(path('M0 0L10 10','stroke="black"')),"path stroke/joins unsupported");
+ rejects(()=>e.compile(path('M0 0'.repeat(129))),"subpath count");
+ rejects(()=>e.compile(path('M0 0'+'L1 1'.repeat(512))),"point/edge count");
+ rejects(()=>e.compile(path(' '.repeat(65537))),"path data exceeds");
+ rejects(()=>e.compile(path('M'+'0'.repeat(40000)+' 0')),"path numeric token exceeds");
+ rejects(()=>e.compile(path('M0 0H1V1Z','pathLength="5"')),"unsupported attribute");
 });

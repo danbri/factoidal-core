@@ -20,8 +20,8 @@ private def stroke (width : Nat) (c : RGB) : String :=
 private def rows (bits : GlyphRows) : List Nat :=
   [bits.row0,bits.row1,bits.row2,bits.row3,bits.row4,bits.row5,bits.row6]
 
-/-- Glyphs become filled cells, preserving one geometric square per painted
-bit. Blank and zero-scale glyphs emit no geometry. Zero-radius circles,
+/-- Glyphs become one compound filled linear path per glyph, preserving the
+same geometric square for every painted bit. Blank and zero-scale glyphs emit no geometry. Zero-radius circles,
 zero-size rectangles and zero-width strokes are refused: their degenerate
 native predicates are not generally SVG's disabled-rendering semantics. -/
 def shapeElements (s : Shape) : Except String (List String) := do
@@ -45,12 +45,16 @@ def shapeElements (s : Shape) : Except String (List String) := do
   | .glyph p size bits paint =>
     if (rows bits).any (· > 31) then throw "SceneSVG glyph rows must contain five bits"
     if size == 0 then return []
-    let mut out := []
+    let mut cells : Array String := #[]
     for (bits,row) in (rows bits).zipIdx do
       for col in List.range 5 do
         if (bits >>> (4-col)) &&& 1 == 1 then
-          out := out ++ [rect ⟨p.x+col*size,p.y+row*size⟩ ⟨size,size⟩ paint]
-    return out
+          let x := p.x+col*size
+          let y := p.y+row*size
+          cells := cells.push s!"M{x} {y}h{size}v{size}h-{size}z"
+    if cells.isEmpty then return []
+    return [s!"<path d=\"{String.join cells.toList}\" fill=\"{color paint}\"/>"]
+
 
 /-- Standalone self-contained static SVG. Consumer limits remain independent:
 the current SVG compiler accepts 12,288 painted primitives, 1,048,576 input

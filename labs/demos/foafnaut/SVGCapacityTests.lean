@@ -8,7 +8,7 @@ private def check (ok : Bool) (message : String) : IO Unit :=
   unless ok do throw (IO.userError message)
 private def rgbJSON (c : RGB) : String :=
   "{\"rgb\":[" ++ toString c.r ++ "," ++ toString c.g ++ "," ++ toString c.b ++ "]}"
-private def measure (name text : String) (expected : Nat) : IO Unit := do
+private def measure (name text : String) (expected expectedFloats : Nat) : IO Unit := do
   let .ok graph := FoafGraph.fromTurtle text none NativeFoafNaut.graphLimits | throw (IO.userError "RDF parse")
   let scene := (NativeFoafNaut.initial graph 1000 700).scene
   let .ok xml := NativeSceneSVG.serialize scene | throw (IO.userError "SVG serialization")
@@ -19,20 +19,28 @@ private def measure (name text : String) (expected : Nat) : IO Unit := do
   check (artifact.getString? "binding" == some "read-only-storage") "storage contract missing"
   let some data := artifact.getArray? "data" | throw (IO.userError "missing data")
   let some shader := artifact.getString? "wgsl" | throw (IO.userError "missing WGSL")
-  check (data.length == 8+20*expected && data.length <= NativeSVG.maxDataFloats) "storage record count"
+  check (data.length == expectedFloats && data.length <= NativeSVG.maxDataFloats) "storage record count"
   check (shader.length < 32768 && (shader.splitOn "for(var primitive=").length == 2) "shader still expands per primitive"
   for (x,y) in [(0,100),(500,335),(494,311),(500,316),(427,358),(500,350),(100,100),(800,100)] do
     check (NativeSVG.sample xml 0 0 x y == rgbJSON (scene.sample x.toNat y.toNat)) "full-scene CPU sample disagreement"
   IO.println s!"PASS {name}: chars={xml.length} primitives={expected} floats={data.length} shaderChars={shader.length}"
 
 def run : IO Unit := do
-  measure "default8" (← IO.FS.readFile "../../labs/demos/foafnaut/foaf/fixtures/demo.ttl") 1880
+  measure "default8" (← IO.FS.readFile "../../labs/demos/foafnaut/foaf/fixtures/demo.ttl") 292 32792
   let people := (List.range 16).map fun i => s!"<https://example.org/p{i}> a f:Person; f:name \"WWWWWWWWWWWW\" ."
   let links := (List.range 48).map fun i => s!"<https://example.org/p{i/3}> f:knows <https://example.org/p{(i/3+i%3+1)%16}> ."
-  measure "dense16" ("@prefix f: <http://xmlns.com/foaf/0.1/> . " ++ String.join (people++links)) 6748
+  measure "dense16" ("@prefix f: <http://xmlns.com/foaf/0.1/> . " ++ String.join (people++links)) 716 114728
   let root (children : String) := "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'>" ++ children ++ "</svg>"
   check ((NativeSVG.parse (root (String.join (List.replicate 12289 "<circle r='1'/>")))).isOk == false) "primitive budget ignored"
   check ((NativeSVG.parse (String.ofList (List.replicate 1048577 'x'))).isOk == false) "character budget ignored"
+  let glyphs : Scene := {
+    width:=32
+    height:=24
+    background:=⟨255,255,255⟩
+    shapes:=List.replicate 500 (.glyph ⟨0,0⟩ 1 ⟨31,31,31,31,31,31,31⟩ ⟨0,0,0⟩)}
+  let .ok glyphXML := NativeSceneSVG.serialize glyphs | throw (IO.userError "glyph serialization")
+  let .ok overBudget := parseJson (NativeSVG.compile glyphXML 0 0) | throw (IO.userError "error artifact JSON")
+  check ((overBudget.getString? "error").getD "" |>.startsWith "storage data") "batched path storage budget ignored"
   IO.println "3 SVG storage-capacity native groups passed; no GPU result"
 
 #eval run
