@@ -769,7 +769,7 @@ theorem evalPatternBackend_allowedS (env : EvalEnv) (dsb : DatasetBackend) (ds :
   | .join l r, hp, gb, a, hr => by
     have e : evalPatternBackend env dsb (.join l r) gb =
         SPARQL.hashJoin (evalPatternBackend env dsb l gb) (evalPatternBackend env dsb r gb) := by
-      simp [evalPatternBackend]
+      simp [evalPatternBackend, hp.1.serviceVarRoot_false, hp.2.serviceVarRoot_false]
     rw [e, SPARQL.hashJoin_eq_join]
     exact .join (evalPatternBackend_allowedS env dsb ds hn hnd l hp.1 gb a hr)
       (evalPatternBackend_allowedS env dsb ds hn hnd r hp.2 gb a hr)
