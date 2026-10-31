@@ -3611,3 +3611,19 @@ names, 0 missing, `lake env lean` in `formal/lean4`):
 | parsers | 273 | 0 of 273 | 0 of 273 | 0 of 273 | 0 of 273 | 273 of 273 |
 | other | 107 | 0 of 107 | 0 of 107 | 0 of 107 | 0 of 107 | 107 of 107 |
 | total | 1383 | 142 of 1383 | 27 of 1383 | 483 of 1383 | 25 of 1383 | 706 of 1383 |
+
+## Checked conditional stages and SRX admission (2026-10-31)
+
+`L4Factoidal.Dataflow.Stage.runRouted_sound` and `Stage.choose` in
+`Dataflow/Conditional.lean` compose the selected branch's contract. The branch
+receives evidence or refutation of the application predicate on the exact
+input. This does not change the flat DAG scheduler or certify host effects.
+
+`SPARQL.QueryResult.toSrxReport_exact`, `toSrxReport_accepted`, and
+`toSrxReport_refused` in `SPARQL/ResultsXmlRouting.lean` cover the production
+SRX admission producer used by `queryRaw`/`datasetQueryRaw` XML modes. They
+establish original serialization identity, acceptance by `XPath4.Doc.ofString`,
+or its actual refusal. The namespace, schema, RDF round-trip, XSLT, host JSON
+transport and complete compositor obligations remain separate. Explicit
+query rendering remains outside the registry evaluator's proved domain.
+See [the implementation and tests](20261031-checked-conditional-routing.md).

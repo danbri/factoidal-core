@@ -829,7 +829,7 @@ note = "npm/factoidal/bin/factoidal.mjs commandServe: serve.mjs listen or listen
 id = "wasm:queryRaw"
 stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader", "rdfsReasoner", "owlRlReasoner", "rhoDfReasoner", "shippedEvaluator"]
 covers = "part"
-note = "Wasm/Ops/QueryExtras.lean queryRawBy: parseTextToDatasetBy (readerOf, the RdfReader table), closeDefaultGraph (RDFS: rdfsReasoner.run; OWL-RL: owlRlReasoner.run; x-rdfscore: rhoDfReasoner.run), then evalRaw: shippedEvaluator.run with no backend (shippedRaw_reference: the reference answer). Not covered: the x-rdfsplus closure (RDFS.rdfsPlusClosureFix, no stage), the SPARQL grammar, the results formats and the table text (renderRaw)."
+note = "Wasm/Ops/QueryExtras.lean queryRawBy: parseTextToDatasetBy (readerOf, the RdfReader table), closeDefaultGraph (RDFS: rdfsReasoner.run; OWL-RL: owlRlReasoner.run; x-rdfscore: rhoDfReasoner.run), then evalRaw: shippedEvaluator.run with no backend (shippedRaw_reference: the reference answer). Not covered: the x-rdfsplus closure (RDFS.rdfsPlusClosureFix, no stage), the SPARQL grammar, full results-format fidelity and the table text (renderRaw). XML and xml-report now use QueryResult.toSrxReport: exact original serialization accepted by the actual XQuery context loader or its actual refusal; this is not namespace/schema validity or RDF round-trip preservation."
 
 [[entry]]
 id = "wasm:datasetQueryRaw"

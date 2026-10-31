@@ -24,7 +24,13 @@ through its command-line driver; here it is a dispatch operation.
                 `owlClosure` closures of `Wasm/Ops/Reason.lean` for RDFS
                 and OWL-RL, its `rhoDfClosure` (core RDFS) and
                 `rdfsPlusClosure` (RDFS-Plus) closures for the other two
-  output      json (default) | csv | tsv | xml | table | ntriples
+  output      json (default) | csv | tsv | xml | xml-report | table | ntriples
+
+`xml-report` encodes a checked XML/diagnostic sum as JSON in `text`.
+The exact serialized XML is admitted by the same context-document parser as
+XQuery; an admission failure is data in this mode, an error in `xml` mode.
+Neither mode changes the RDF lexical forms to make them XML-compatible.
+Query/parse errors remain errors in both modes.
 
 `text` is the answer in the requested format. `json`, `csv`, `tsv` and
 `xml` are the W3C SPARQL results formats (`SPARQL/ResultsJson`,
@@ -51,6 +57,7 @@ import L4Factoidal.SPARQL.Results
 import L4Factoidal.SPARQL.ResultsJson
 import L4Factoidal.SPARQL.ResultsCsvTsv
 import L4Factoidal.SPARQL.ResultsXml
+import L4Factoidal.SPARQL.ResultsXmlRouting
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.Dataflow.Reasoner
 import L4Factoidal.RDFS.FullClosure
@@ -189,7 +196,16 @@ private def renderRaw (output : String) (a : RawAnswer) : Except String String :
   | .result r =>
     match output, r with
     | "json", _ => .ok (r.toSrj)
-    | "xml", _  => .ok (r.toSrx)
+    | "xml", _ =>
+      match r.toSrxReport with
+      | .xml text _ _ => .ok text
+      | .diagnostic error => .error ("XML_ADMISSION_REFUSED: " ++ error)
+    | "xml-report", _ =>
+      .ok ((match r.toSrxReport with
+        | .xml text _ _ => .object [("kind", .string "xml"), ("xml", .string text)]
+        | .diagnostic error => .object [("kind", .string "diagnostic"),
+            ("code", .string "XML_ADMISSION_REFUSED"),
+            ("message", .string (error))] : Json).toString)
     | "csv", _  => r.toCsv
     | "tsv", _  => r.toTsv
     | "table", .boolean b | "ntriples", .boolean b => .ok (if b then "true\n" else "false\n")
@@ -203,8 +219,8 @@ private def renderRaw (output : String) (a : RawAnswer) : Except String String :
 def queryRawParsed (ds0 : Dataset) (sparql entail output : String)
     (now : Option String := none)
     (ext : String → List EvalResult → Option EvalResult := extFnsWith []) : String :=
-  if !(["json", "csv", "tsv", "xml", "table", "ntriples"].contains output) then
-    errJson s!"queryRaw: output must be json, csv, tsv, xml, table or ntriples (got '{output}')"
+  if !(["json", "csv", "tsv", "xml", "xml-report", "table", "ntriples"].contains output) then
+    errJson s!"queryRaw: output must be json, csv, tsv, xml, xml-report, table or ntriples (got '{output}')"
   else
     match closeDefaultGraph entail ds0 with
     | .error e => errJson e
@@ -229,8 +245,8 @@ def queryRawBy (extra : ExtraReader) (data sparql optsJson : String)
     | some v => v
     | none   => d
   let output := field "output" "json"
-  if !(["json", "csv", "tsv", "xml", "table", "ntriples"].contains output) then
-    errJson s!"queryRaw: output must be json, csv, tsv, xml, table or ntriples (got '{output}')"
+  if !(["json", "csv", "tsv", "xml", "xml-report", "table", "ntriples"].contains output) then
+    errJson s!"queryRaw: output must be json, csv, tsv, xml, xml-report, table or ntriples (got '{output}')"
   else
   match parseTextToDatasetBy extra data (field "dataFormat" "turtle") "" with
   | .error e => errJson s!"queryRaw: {e}"

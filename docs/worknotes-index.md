@@ -15,6 +15,9 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-10-31 | [Conditional routing design](designissues/2026-10-31-checked-conditional-routing.md) | this commit | current |
+| 2026-10-31 | [Checked conditional routing](20261031-checked-conditional-routing.md) | this commit | current |
+| 2026-10-31 | [SRX context admission](20261031-srx-context-admission.md) | f70fc074a | current |
 | 2026-10-31 | [Readable compositor evidence](20261031-compositor-evidence-explanations.md) | this commit | current |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |
 | 2026-04-21 | [Large Turtle stack overflow fix sketch](2026-04-21-large-turtle-stack-overflow-fix-sketch.md) | c29698f98 | historical |

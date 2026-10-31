@@ -31,3 +31,9 @@
 @media(forced-colors:active){.assurance-badge,.evidence-toggle:has(input:checked){border:2px solid ButtonText;box-shadow:none;color:ButtonText!important;background:ButtonFace}.evidence-mode .node{border-color:CanvasText}.evidence-detail{color:CanvasText;background:Canvas;border-color:CanvasText}.evidence-detail h3,.evidence-detail a{color:LinkText}}
 
 .canvas.evidence-mode{height:450px}
+
+/* Unselected branches are visible without suggesting that they ran. */
+.node[data-state="skipped"] { opacity: .6; border-style: dashed; }
+.wire.skipped { opacity: .25; stroke-dasharray: 5 7; }
+.diagnostic-report { padding: 1.5rem; }
+.diagnostic-report pre { white-space: pre-wrap; overflow-wrap: anywhere; }

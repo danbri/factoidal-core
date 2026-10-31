@@ -10,6 +10,9 @@ export const WIRE_RECIPES = Object.freeze({
   'query:filter': ['Table display → query template + Dataset', 'Display sequencing, not a Table input wire: filtering runs SPARQL against the same dataset, then Lean XQuery projects rows from its XML.'],
   'filter:xml': ['Shared SPARQL Results XML', 'The identical XML string from the filtered query is retained; there is no second filtered SPARQL evaluation.'],
   'xml:xslt': ['String → XSLT result', 'The registered XSLT component consumes this XML string; its component status is tested, not proved.'],
+  'xml:diagnostic': ['XML refusal → Diagnostic', 'Only selected when the Lean XML parser refuses the exact serialized result. XML consumers are skipped.'],
+  'diagnostic:report': ['Diagnostic → Report', 'The refusal is displayed as text, not interpreted as HTML.'],
+  'html:report': ['HTML → Report', 'The final report identifies the HTML branch.'],
   'xslt:html': ['XSLT result → HTML preview', 'A sandboxed browser frame displays the engine output. Browser rendering has no component proof claim.'],
 });
 
@@ -18,7 +21,7 @@ export function nodeAssurance(stage) {
   const e = stage.evidence;
   const registered = e.source === 'core.node/run' || e.source === 'core.graph/run';
   return {
-    badge: registered ? (e.status === 'proved' ? (e.checked ? 'Proof contract applied' : 'Proof applicability unknown') : e.status === 'tested' ? 'Tests; no proof contract' : 'Proof not established') : 'Connection / display step',
+    badge: e.admission ? (e.admission.accepted ? 'XML parser accepted' : 'XML parser refused') : registered ? (e.status === 'proved' ? (e.checked ? 'Proof contract applied' : 'Proof applicability unknown') : e.status === 'tested' ? 'Tests; no proof contract' : 'Proof not established') : 'Connection / display step',
     status: e.status ?? 'unproved-adapter',
     registryStatus: e.registryStatus ?? null,
     checked: e.checked === true, proved: e.proved === true,
@@ -75,7 +78,8 @@ export function explainEvidence(stage) {
   return {
     title: known?.[0] ?? (a.status === 'tested' ? 'What do the tests establish?' : e ? 'What does this step do?' : 'Evidence is not available yet'),
     claim: known?.[1] ?? (a.status === 'tested' ? 'The registry lists executable tests for this component. There is no registered semantic proof contract for this operation; this run is an execution result, not a fresh conformance-suite report.' : e?.note ?? a.scope),
-    source: known ? PROOF_SOURCE + known[2] : null,
+    source: e?.admission?.source ?? (known ? PROOF_SOURCE + known[2] : null),
+    admission: e?.admission ?? null,
     registry: e?.registry ?? null,
     boundaries: [stage?.note, stage?.adapter?.note, e?.prepAdapter?.note].filter(Boolean),
     scope: a.scope,

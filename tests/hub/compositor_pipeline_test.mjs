@@ -1,16 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as core from '@factoidal/core';
+const core = await import(process.env.FACTOIDAL_COMPOSITOR_TEST_ENGINE || '@factoidal/core');
 import { DEFAULTS, runPipeline } from '../../docs/web/hub/data-compositor/pipeline.mjs';
 
-const ids = ['turtle', 'csvw', 'merge', 'closure', 'graphs', 'query', 'filter', 'xml', 'xslt', 'html'];
+const ids = ['turtle', 'csvw', 'merge', 'closure', 'graphs', 'query', 'filter', 'diagnostic', 'xml', 'xslt', 'html', 'report'];
 
-test('published core 0.27 runs all ten stages, three graph joins, inference, XML and XSLT', async () => {
-  assert.equal(core.version, '0.27.0');
+test('engine runs source stages, graph joins, inference, XML and HTML report', async () => {
   const events = [];
   const result = await runPipeline(core, DEFAULTS, event => events.push(structuredClone(event)));
   assert.deepEqual(result.stages.map(stage => stage.id), ids);
-  assert.deepEqual(events.map(event => `${event.id}:${event.status}`), ids.flatMap(id => [`${id}:running`, `${id}:done`]));
+  assert.deepEqual(events.map(event => `${event.id}:${event.status}`), ids.flatMap(id => id === 'diagnostic' ? [`${id}:skipped`] : [`${id}:running`, `${id}:done`]));
   assert.deepEqual(result.rows.map(row => row.name), ['Mina Chen', 'Luz Silva', 'Nora Patel']);
   assert.deepEqual(result.rows.map(row => row.project), ['Aurora / short film', 'Pulse / music video', 'Aurora / short film']);
   assert.equal(result.inferredPeople.length, 5);

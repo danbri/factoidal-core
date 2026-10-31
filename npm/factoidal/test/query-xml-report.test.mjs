@@ -80,3 +80,17 @@ test('query node explicit outputs use transport wires and retain unproved status
     assert.equal(typeof (await core.run(rendered,dataset,{unchecked:true})).graph,'string');
   } finally { dataset.dispose(); }
 });
+
+test('actual compositor routes XML-invalid RDF to a diagnostic before a broken stylesheet',async()=>{
+  const {runPipeline,DEFAULTS}=await import('../../../docs/web/hub/data-compositor/pipeline.mjs');
+  const events=[];
+  const result=await runPipeline(core,{
+    turtle:DEFAULTS.turtle.replace('Mina Chen','Mina\\u0001Chen'),
+    stylesheet:'<intentionally-broken',
+  },e=>events.push(e));
+  assert.equal(result.kind,'diagnostic'); assert.equal(result.html,null);
+  assert.equal(result.diagnostic.code,'XML_ADMISSION_REFUSED');
+  assert.equal(result.counts.selected,null);
+  assert.ok(!events.some(e=>e.id==='xslt'&&e.status==='running'));
+  assert.equal(result.stages.find(s=>s.id==='xml').evidence.admission.accepted,false);
+});

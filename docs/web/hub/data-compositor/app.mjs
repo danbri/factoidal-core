@@ -12,9 +12,11 @@ const NODES = [
   {id:'filter',title:'Score filter',kind:'FILTER · TABLE',color:'#edcf88',x:864,y:255,description:'An engine-evaluated FILTER controls the shortlist.',editable:['minScore']},
   {id:'xml',title:'Results → XML',kind:'SERIALIZE · XML',color:'#b8a1f4',x:1074,y:255,description:'Standard SPARQL Results XML from Lean.'},
   {id:'xslt',title:'XSLT transform',kind:'TRANSFORM · HTML',color:'#f5b591',x:1284,y:255,description:'A stylesheet turns result bindings into a page.',editable:['stylesheet']},
+  {id:'diagnostic',title:'XML diagnostic',kind:'REFUSAL · TEXT',color:'#edcf88',x:1074,y:54,description:'An explicit refusal; the XML consumers do not run.'},
+  {id:'report',title:'Pipeline report',kind:'OUTPUT · REPORT',color:'#8bbbf3',x:1494,y:154,description:'Either HTML or a diagnostic, with the selected path recorded.'},
   {id:'html',title:'HTML output',kind:'OUTPUT · VIEWER',color:'#f5b591',x:1284,y:54,description:'The actual stylesheet result, ready to export.'},
 ];
-const EDGES = [['turtle','merge'],['csvw','merge'],['merge','closure'],['turtle','graphs'],['csvw','graphs'],['closure','graphs'],['graphs','query'],['query','filter'],['filter','xml'],['xml','xslt'],['xslt','html']];
+const EDGES = [['turtle','merge'],['csvw','merge'],['merge','closure'],['turtle','graphs'],['csvw','graphs'],['closure','graphs'],['graphs','query'],['query','filter'],['filter','xml'],['xml','xslt'],['xslt','html'],['xml','diagnostic'],['diagnostic','report'],['html','report']];
 const LABELS = {turtle:'Turtle',csv:'CSV',metadata:'CSVW JSON-LD',query:'SPARQL',stylesheet:'XSLT',minScore:'Threshold'};
 const escapeHTML = value => String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const termText = value => value == null ? '' : typeof value === 'object' ? (value.value ?? JSON.stringify(value)) : String(value);
@@ -22,7 +24,7 @@ const termText = value => value == null ? '' : typeof value === 'object' ? (valu
 class FlowNode extends HTMLElement {
   configure(spec,index,onSelect,onMove){
     this.spec=spec; this.style.left=`${spec.x}px`;this.style.top=`${spec.y}px`;this.style.setProperty('--node-color',spec.color);
-    this.innerHTML=`<article class="node" role="group" aria-label="${spec.title} node" data-state="idle"><div class="node-head"><span class="node-number">${String(index+1).padStart(2,'0')}</span><button class="node-title" aria-label="Inspect ${spec.title}">${spec.title}</button><span class="node-state">○</span></div><div class="node-body"><div class="node-description">${spec.description}</div><div class="node-summary">${spec.kind}</div><button class="assurance-badge" hidden></button></div>${index>1?'<i class="socket in"></i>':''}${spec.id!=='html'?'<i class="socket out"></i>':''}</article>`;
+    this.innerHTML=`<article class="node" role="group" aria-label="${spec.title} node" data-state="idle"><div class="node-head"><span class="node-number">${String(index+1).padStart(2,'0')}</span><button class="node-title" aria-label="Inspect ${spec.title}">${spec.title}</button><span class="node-state">○</span></div><div class="node-body"><div class="node-description">${spec.description}</div><div class="node-summary">${spec.kind}</div><button class="assurance-badge" hidden></button></div>${index>1?'<i class="socket in"></i>':''}${spec.id!=='report'?'<i class="socket out"></i>':''}</article>`;
     this.onclick=()=>onSelect(spec.id);
     this.querySelector('.assurance-badge').onclick=e=>{e.stopPropagation();onSelect(spec.id,true);};
     this.querySelector('.node-head').onpointerdown=e=>{
@@ -35,7 +37,7 @@ class FlowNode extends HTMLElement {
   }
   update(stage,selected,showEvidence=false){
     const node=this.querySelector('.node');node.classList.toggle('selected',selected);node.dataset.state=stage?.status??'idle';
-    this.querySelector('.node-state').textContent=stage?.status==='done'?'✓':stage?.status==='running'?'◌':stage?.status==='error'?'!':'○';
+    this.querySelector('.node-state').textContent=stage?.status==='done'?'✓':stage?.status==='running'?'◌':stage?.status==='error'?'!':stage?.status==='skipped'?'–':'○';
     const badge=this.querySelector('.assurance-badge');const assurance=nodeAssurance(stage);badge.textContent=assurance.badge;badge.hidden=!showEvidence;badge.dataset.status=assurance.status;badge.setAttribute('aria-label',`${assurance.badge}: explain evidence for ${this.spec.title}`);badge.title='Open the claim, assumptions and proof or test references';
     this.querySelector('.node-summary').textContent=stage?.status==='running'?'Computing…':stage?.summary??this.spec.kind;
   }
@@ -53,7 +55,7 @@ class DataflowStudio extends HTMLElement {
       <div class="assurance-legend" id="evidence-help" hidden><strong>Evidence mode is on.</strong> Select a glowing label for the claim, its limits and source references. Select a dashed link for what is passed and which connection obligations remain open. A checked component is not a proof of the whole flow.</div>
       <div class="error-banner" role="alert"></div>
       <section class="lower"><aside class="inspector"><div class="section-head"><h2 id="inspect-title" tabindex="-1">Turtle reader</h2><span class="kicker">Node inspector</span></div><nav class="tabs inspect-tabs" aria-label="Node inspection"></nav><div class="inspect-body"></div></aside><section class="output-panel"><div class="output-head"><nav class="tabs output-tabs" aria-label="Output views"><button data-tab="preview" class="active">HTML viewer</button><button data-tab="rows">Results table</button><button data-tab="source">HTML source</button><button data-tab="log">Execution log</button></nav><button class="download" id="download" disabled>↓ Save HTML</button></div><div class="output-body"></div></section></section>
-      <footer class="stats"><span><b id="done-count">0</b> / 10 stages</span><span><b id="row-count">—</b> result rows</span><span><b id="run-time">—</b> elapsed</span><span class="scope">Runs locally in a worker. Each node exposes its real operation and evidence; a successful run is not an end-to-end proof.</span></footer>`;
+      <footer class="stats"><span><b id="done-count">0</b> completed stages</span><span><b id="row-count">—</b> result rows</span><span><b id="run-time">—</b> elapsed</span><span class="scope">Runs locally in a worker. Each node exposes its real operation and evidence; a successful run is not an end-to-end proof.</span></footer>`;
     this.$=s=>this.querySelector(s);this.world=this.$('.world');this.canvas=this.$('.canvas');
     for(const [i,spec] of NODES.entries()){
       const node=document.createElement('flow-node');node.configure({...spec},i,(id,evidence)=>{this.select(id);if(evidence){this.inspectTab='evidence';this.inspect();this.$('#inspect-title').focus();}},(spec,start,event)=>{spec.x=Math.max(0,start.nx+(event.clientX-start.x)/this.scale);spec.y=Math.max(0,start.ny+(event.clientY-start.y)/this.scale);node.style.left=`${spec.x}px`;node.style.top=`${spec.y}px`;this.drawWires();});
@@ -73,7 +75,7 @@ class DataflowStudio extends HTMLElement {
     };
     this.canvas.addEventListener('wheel',e=>{if(e.ctrlKey||e.metaKey){e.preventDefault();this.zoom(e.deltaY<0?1.08:1/1.08);}}, {passive:false});
     this.$('.output-tabs').onclick=e=>{const button=e.target.closest('button');if(button){this.outputTab=button.dataset.tab;this.output();}};
-    this.$('#download').onclick=()=>{if(!this.result?.html)return;const url=URL.createObjectURL(new Blob([this.result.html],{type:'text/html'}));const a=document.createElement('a');a.href=url;a.download='factoidal-studio-roster.html';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+    this.$('#download').onclick=()=>{if(typeof this.result?.html!=='string')return;const url=URL.createObjectURL(new Blob([this.result.html],{type:'text/html'}));const a=document.createElement('a');a.href=url;a.download='factoidal-studio-roster.html';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
     this.resizeObserver=new ResizeObserver(()=>this.fit());this.resizeObserver.observe(this.canvas);
     this.select('turtle');this.output();this.drawWires();this.fit();this.makeWorker();
     this.run();
@@ -85,14 +87,14 @@ class DataflowStudio extends HTMLElement {
     this.worker.onmessage=({data})=>{
       if(data.type==='stage'){
         const stage=data.stage;this.stages.set(stage.id,{...this.stages.get(stage.id),...stage});
-        if(stage.status==='done')this.logs.push(stage);
+        if(stage.status==='done'||stage.status==='skipped')this.logs.push(stage);
         this.updateNodes();this.$('#done-count').textContent=[...this.stages.values()].filter(s=>s.status==='done').length;
         if(stage.status==='running')this.status(`Running ${stage.label??stage.id}…`,'running');
         if(this.selected===stage.id&&!this.isEditing())this.inspect();
         if(this.outputTab==='log')this.output();
       }else if(data.type==='complete'){
-        this.result=data.result;this.busy=false;this.$('#run').disabled=false;this.$('#reset').disabled=false;this.$('#download').disabled=false;
-        this.status('Flow complete · all outputs refreshed','done');this.$('#row-count').textContent=this.result.rows?.length??0;this.$('#run-time').textContent=`${((performance.now()-this.started)/1000).toFixed(2)}s`;
+        this.result=data.result;this.$('.engine').textContent=`Lean → WASM · core ${this.result.coreVersion}`;this.busy=false;this.$('#run').disabled=false;this.$('#reset').disabled=false;this.$('#download').disabled=typeof this.result.html!=='string';
+        this.status(this.result.kind==='diagnostic'?'Flow complete · XML diagnostic (no HTML)':'Flow complete · HTML report','done');this.$('#row-count').textContent=this.result.kind==='diagnostic'?'—':this.result.rows?.length??0;this.$('#run-time').textContent=`${((performance.now()-this.started)/1000).toFixed(2)}s`;
         this.output();if(!this.isEditing())this.inspect();if(this.rerun){this.rerun=false;this.run();}
       }else if(data.type==='error')this.fail(data.message);
     };
@@ -101,7 +103,7 @@ class DataflowStudio extends HTMLElement {
   isEditing(){return this.$('.inspect-body').contains(document.activeElement)&&['TEXTAREA','INPUT'].includes(document.activeElement.tagName);}
   run(){
     if(this.busy){this.rerun=true;return;}
-    this.busy=true;this.result=null;this.stages.clear();this.logs=[];this.started=performance.now();this.$('.error-banner').textContent='';this.$('#run').disabled=true;this.$('#reset').disabled=true;this.$('#download').disabled=true;this.$('#done-count').textContent='0';this.$('#row-count').textContent='—';this.$('#run-time').textContent='—';this.status('Loading published core 0.27.0…','running');this.updateNodes();this.output();
+    this.busy=true;this.result=null;this.stages.clear();this.logs=[];this.started=performance.now();this.$('.error-banner').textContent='';this.$('#run').disabled=true;this.$('#reset').disabled=true;this.$('#download').disabled=true;this.$('#done-count').textContent='0';this.$('#row-count').textContent='—';this.$('#run-time').textContent='—';this.status('Loading engine…','running');this.updateNodes();this.output();
     this.worker.postMessage({type:'run',inputs:{...this.inputs}});
   }
   fail(message){this.busy=false;this.$('#run').disabled=false;this.$('#reset').disabled=false;this.status('Flow stopped · inspect the error below','error');this.$('.error-banner').textContent=message;this.updateNodes();}
@@ -136,12 +138,13 @@ class DataflowStudio extends HTMLElement {
     const heading=document.createElement('h3');heading.textContent=info.title;box.append(heading);
     const paragraph=text=>{const p=document.createElement('p');p.textContent=text;box.append(p);};
     paragraph(info.claim);
+    if(info.admission)paragraph(`Checked predicate: ${info.admission.predicate}. Source theorem: ${info.admission.theorem}. Proofs are checked at build time; the browser receives the engine result.`);
     if(a.checked)paragraph('“Applied” means the engine reports this registered contract as applicable to the bound component/settings. The browser does not re-run the Lean proof checker.');
     paragraph(info.scope);
     for(const boundary of info.boundaries)paragraph(boundary);
     if(a.assumptions.length)paragraph('Reported assumptions: '+a.assumptions.join('; '));
     else if(stage?.evidence)paragraph('No assumptions were listed in the runtime array. This is not evidence that the implementation has no assumptions; read the registry scope below.');
-    if(info.source){const link=document.createElement('a');link.href=info.source;link.textContent='Read the formal contract and its scope (published 0.27.0 source)';box.append(link);}
+    if(info.source){const link=document.createElement('a');link.href=info.source;link.textContent=info.admission?'Read the XML producer theorem and its scope (development source)':'Read the formal contract and its scope (published 0.27.0 source)';box.append(link);}
     if(info.registry){
       const registry=info.registry;
       if(registry.note)paragraph('Registry scope: '+registry.note);
@@ -180,6 +183,7 @@ class DataflowStudio extends HTMLElement {
       if(!this.logs.length)body.innerHTML='<div class="placeholder">The execution trace will appear here.</div>';return;
     }
     if(!this.result){body.innerHTML=`<div class="placeholder"><span class="large">${this.busy?'◌':'◇'}</span>${this.busy?'Composing the output…':'Your data becomes a document here.'}<br><span class="muted">Turtle + CSVW → RDF → SPARQL → XSLT → HTML</span></div>`;return;}
+    if(this.result.kind==='diagnostic'){const box=document.createElement('div');box.className='diagnostic-report';const title=document.createElement('h3');title.textContent='XML admission refused';const detail=document.createElement('pre');detail.textContent=this.result.diagnostic.message;const note=document.createElement('p');note.textContent='The RDF result was not changed. XQuery projection and XSLT did not run. Edit the source or choose a representation that supports these values.';box.append(title,detail,note);body.append(box);return;}
     if(this.outputTab==='rows')body.append(this.rowsTable(this.result.rows??[]));
     else if(this.outputTab==='source')body.append(this.codeOutput(this.result.html,'html'));
     else{const iframe=document.createElement('iframe');iframe.title='HTML emitted by the Lean XSLT engine';iframe.setAttribute('sandbox','');iframe.srcdoc=`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">`+this.result.html;body.append(iframe);}
