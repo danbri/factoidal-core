@@ -68,14 +68,14 @@ provider, reproduced independently in published 0.27.0 with VALUES, BIND and a
 triple-bound endpoint. Its positive case was recorded as a separate expected failure,
 with XPASS failing the probe:
 https://github.com/danbri/factoidal/issues/1212 (bound variable SERVICE coverage).
-The variable-denial case alone is vacuous as an enforcement control. SPARQL 1.1
+Before the repair, the variable-denial case alone was vacuous as an enforcement control. SPARQL 1.1
 Federated Query section 4 explicitly treats SERVICE variables informatively and
 supplies no official evaluation semantics, so this is a desired-support gap,
 not a normative SPARQL 1.1 conformance failure:
 https://www.w3.org/TR/sparql11-federated-query/#variableService
 
 Named Lean compilation uses the existing read-only dependency cache with private
-output files, never a full library/WASM build. Final compiled runtime checks:
+output files, never a full library/WASM build. Pre-repair compiled runtime checks:
 14 pass, 0 unexpected fail, 1 expected failure; four pure guards passed. The
 spawned pair of captured-context evaluations passed with separate old/new
 SERVICE snapshot contents. Kernel proofs use only `propext`,
@@ -83,9 +83,9 @@ SERVICE snapshot contents. Kernel proofs use only `propext`,
 No new axioms, sorry, native_decide or partial definitions were added.
 
 The existing Verify Lean 4 corpus workflow now explicitly builds
-`+L4Factoidal.Dataflow.ExecutionContext +Wasm.Ops.ScopedQueryTests` before its
+the registered `ScopedQueryPrototype` library before its
 hygiene audit, appending proof/guard output to the audited build log. A guard
-failure or XPASS fails elaboration. This is CI source wiring; no remote run is
+failure fails elaboration. This is CI source wiring; no remote run is
 claimed by this note. The full library build and existing gates are retained.
 
 The module remains a standalone prototype, not registered in public dispatch or
