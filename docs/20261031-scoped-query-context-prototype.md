@@ -92,3 +92,13 @@ The module remains a standalone prototype, not registered in public dispatch or
 adopted by existing APIs. Production adoption needs fresh artifact checks,
 captured host callback identities, capability propagation across adapters and
 explicit source/sink policy. It must not be called a shipped secure API.
+
+The assurance CI step builds the explicit non-default Lake library
+`ScopedQueryPrototype`. Its test root is registered in `lakefile.lean`;
+this does not add prototype imports to the public dispatch. A direct
+`+Wasm.Ops.ScopedQueryTests` target without registration is not discoverable
+by Lake and was corrected before relying on CI execution.
+
+Validation of the registered target: `lake build ScopedQueryPrototype`
+passed (339 jobs), including the same 14 ordinary runtime passes and one
+separate variable-SERVICE expected failure. No full local build was used.

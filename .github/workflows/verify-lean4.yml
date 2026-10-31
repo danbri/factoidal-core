@@ -95,7 +95,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          lake build +L4Factoidal.Dataflow.ExecutionContext +Wasm.Ops.ScopedQueryTests 2>&1 | tee -a "$RUNNER_TEMP/lake-build.log"
+          lake build ScopedQueryPrototype 2>&1 | tee -a "$RUNNER_TEMP/lake-build.log"
 
       # `lake build` alone is NOT the soundness gate, and it was the whole
       # gate until 2026-09-03. A `sorry` fails the build, because Lean emits
