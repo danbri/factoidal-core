@@ -161,3 +161,5 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-30 | [IETF date zero-seconds panic](20261030-parse-ietf-date-zero-seconds.md) | same commit | seconds serialization avoids an empty numeric parse; native stderr regression detects panic fallback even when values match |
 
 | 2026-10-30 | [Hub Data Compositor and shared code output](20261030-hub-data-compositor.md) | same commit | pinned public engine, editable visual pipeline, honest component evidence, shared output controls and focused browser checks |
+
+| 2026-10-31 | [LWS reader host-authority boundary](20261031-lws-reader-path-confinement.md) | — | current: path confinement, redirect refusal and explicit browser transport limits |

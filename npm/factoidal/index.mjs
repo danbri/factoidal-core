@@ -107,7 +107,12 @@ export { registerSbm11Source, mapReader };
 export function lwsSbm11Reader(url, opts = {}) {
   if (typeof opts.transport === 'function') return lwsSbm11ReaderWith(url, opts);
   const transport = nodeSyncTransport({ timeoutMs: opts.timeoutMs });
-  return lwsSbm11ReaderWith(url, { ...opts, transport, onClose: () => transport.close() });
+  try {
+    return lwsSbm11ReaderWith(url, { ...opts, transport, onClose: () => transport.close() });
+  } catch (error) {
+    transport.close();
+    throw error;
+  }
 }
 
 // The persisted store
