@@ -223,3 +223,10 @@ Update the dated repair note, assurance register, affected skills and
 worknote index when new evidence changes a claim. Preserve contrary evidence
 and unresolved interpretation questions. Link them rather than hiding them
 behind an aggregate conformance percentage.
+
+
+[RDF-to-XML representability](../../docs/20261031-compositor-xml-representability.md)
+is distinct from RDF literal well-formedness and generic String-wire compatibility.
+A necessary XML character admission predicate is not a complete document proof;
+markup escaping cannot represent XML 1.0-forbidden code points. Keep producer
+refusal, lossless format negotiation and an explicit lossy display policy distinct.

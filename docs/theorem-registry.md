@@ -3611,3 +3611,15 @@ names, 0 missing, `lake env lean` in `formal/lean4`):
 | parsers | 273 | 0 of 273 | 0 of 273 | 0 of 273 | 0 of 273 | 273 of 273 |
 | other | 107 | 0 of 107 | 0 of 107 | 0 of 107 | 0 of 107 | 107 of 107 |
 | total | 1383 | 142 of 1383 | 27 of 1383 | 483 of 1383 | 25 of 1383 | 706 of 1383 |
+
+
+## SPARQL Results XML admission counterexample (2026-10-31)
+
+`SPARQL/ResultsXmlAdmission.lean` proves `soh_not_xml10`,
+`containing_soh_not_admitted`, `srxEscape_not_universally_admitted` and
+`rdf_term_counterexample` over the actual XML predicate/SRX producer. These
+exhibit a missing representability premise; they do not certify the serializer
+or a complete XML admission algorithm. Four parser guards and the separate
+public expected-failure record are described in the
+[boundary report](20261031-compositor-xml-representability.md).
+Tracking: https://github.com/danbri/factoidal/issues/1215.
