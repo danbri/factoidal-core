@@ -123,7 +123,8 @@ Deno.test("SVG refuses unsupported features rather than silently losing renderin
  rejects(()=>e.compile('<?xml-stylesheet href="a.css"?>'+wrap('')),"processing instruction");
  rejects(()=>e.compile('<!DOCTYPE svg>'+wrap('')),"DOCTYPE");
  rejects(()=>e.compile('<?xml version="1.0" encoding="ISO-8859-1"?>'+wrap('')),"UTF-8");
- rejects(()=>e.compile(wrap('<rect width="20" height="20" fill="url(#gradient)"/>')),"unsupported color");
+ equal(e.sample(wrap('<rect width="20" height="20" fill="url(#missing)"/>'),5,5),[255,255,255]);
+ rejects(()=>e.compile(wrap('<rect id="gradient" width="20" height="20" fill="url(#gradient)"/>')),"referenced paint server unsupported");
 });
 
 Deno.test("SVG artifact/input limits and GPU row/readback encoding are checked without a GPU",async()=>{
@@ -154,4 +155,20 @@ Deno.test("SVG gallery is an actual parsed document with Float data and generate
  const a=e.compile(xml);equal([a.width,a.height,a.primitiveCount],[640,420,9]);
  assert(a.data.some(n=>n<0)&&a.data.some(n=>!Number.isInteger(n)),"Lost signed/fractional scene data");
  assert(a.wgsl.includes('var winding:i32')&&a.wgsl.includes('element.a*opacity'),"Missing polygon/composite lowering");
+});
+
+Deno.test("SVG non-rendering metadata and missing local paint fallback follow upstream cases",async()=>{
+ const e=await loadSVG();
+ for(const name of ['fallback-001.svg','fallback-002.svg']){
+  const xml=await Deno.readTextFile(new URL(`../../../tests/external/svg/upstream/svg/painting/reftests/${name}`,import.meta.url));
+  const artifact=e.compile(xml,800,600);equal([artifact.width,artifact.height],[800,600]);
+  equal(e.sample(xml,5,5,800,600),[0,128,0]);equal(e.sample(xml,101,5,800,600),[255,255,255]);
+ }
+ const hidden=wrap('<metadata><rect width="64" height="64" fill="red"/><data xmlns="urn:private">opaque</data></metadata>');
+ equal(e.sample(hidden,5,5),[255,255,255]);
+ equal(e.sample(wrap('<g fill="url(#missing) currentColor" color="red"><rect width="20" height="20" color="green"/></g>'),5,5),[0,128,0]);
+ for(const body of ['<h:link xmlns:h="http://www.w3.org/1999/xhtml" rel="stylesheet" href="x.css"/>',
+  '<rect width="20" height="20" fill="url(other.svg#x) green"/>',
+  '<rect id="x" width="20" height="20" fill="url(#%78) green"/>',
+  '<rect width="20" height="20" fill="url(#bad id) green"/>'])rejects(()=>e.compile(wrap(body)),"unsupported");
 });

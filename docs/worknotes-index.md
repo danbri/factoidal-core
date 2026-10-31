@@ -169,3 +169,5 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-30 | [Hub Data Compositor and shared code output](20261030-hub-data-compositor.md) | same commit | pinned public engine, editable visual pipeline, honest component evidence, shared output controls and focused browser checks |
 
 | 2026-10-30 | [FOAFNaut current-main refresh](20261030-foafnaut-main-refresh.md) | same commit | live presentation retained, engine source hashes agree, 64 Deno tests and 12 C checks; SVG oracle roadmap and official visual limits |
+
+| 2026-10-31 | [SVG independent images and paint fallback](20261031-svg-independent-images.md) | same commit | 38-case denominator preserved; independent browser captures, explicit oracle disagreements, 2 compiler acceptances and zero GPU visual passes |

@@ -119,9 +119,26 @@ structure Style where
   rule : FillRule := .nonzero
   lineCap : LineCap := .butt
   deriving Repr
-private def readPaint (s : String) : Except String Paint :=
-  if (trim s).toLower == "none" then pure .none
-  else if (trim s).toLower == "currentcolor" then pure .current
+private def readPaint (ids : List String) (source : String) : Except String Paint := do
+  let s := trim source
+  if s.startsWith "url(" then
+    let pieces := s.splitOn ")"
+    let [target, fallback] := pieces | throw "unsupported paint URL syntax"
+    let target := trim (String.ofList (target.toList.drop 4))
+    let target := if (target.startsWith "\"" && target.endsWith "\"") ||
+        (target.startsWith "'" && target.endsWith "'") then
+        String.ofList (target.toList.drop 1 |>.take (target.length-2)) else target
+    if !target.startsWith "#" || target.length < 2 then throw "external/unsupported paint URL"
+    let id := String.ofList (target.toList.drop 1)
+    if !id.toList.all (fun c => c.isAlphanum && c.toNat < 128 || ['_','-',':','.'].contains c) then
+      throw "unsupported paint fragment syntax/encoding"
+    if ids.contains id then throw "referenced paint server unsupported"
+    let fallback := trim fallback
+    if fallback.isEmpty || fallback.toLower == "none" then pure .none
+    else if fallback.toLower == "currentcolor" then pure .current
+    else Paint.solid <$> color fallback
+  else if s.toLower == "none" then pure .none
+  else if s.toLower == "currentcolor" then pure .current
   else Paint.solid <$> color s
 private def attr (attrs : List NamespaceAttribute) (key : String) : Option String :=
   (attrs.find? (fun a => a.name.namespace_.isNone && a.name.localPart == key)).map (·.value)
@@ -136,14 +153,14 @@ private def inheritedNumber (attrs : List NamespaceAttribute) (key : String) (ol
   | none => pure old
   | some value => if trim value == "inherit" then pure old else
       if key == "stroke-width" then lengthNumber value else number value
-private def readStyle (attrs : List NamespaceAttribute) (parent : Style) : Except String Style := do
+private def readStyle (ids : List String) (attrs : List NamespaceAttribute) (parent : Style) : Except String Style := do
   let mut style := parent
   if let some value := attr attrs "color" then
     if !["inherit","currentcolor"].contains (trim value).toLower then style := {style with currentColor:= ← color value}
   if let some value := attr attrs "fill" then
-    if trim value != "inherit" then style := {style with fill:= ← readPaint value}
+    if trim value != "inherit" then style := {style with fill:= ← readPaint ids value}
   if let some value := attr attrs "stroke" then
-    if trim value != "inherit" then style := {style with stroke:= ← readPaint value}
+    if trim value != "inherit" then style := {style with stroke:= ← readPaint ids value}
   let width ← inheritedNumber attrs "stroke-width" parent.strokeWidth
   if width < 0 then throw "negative stroke-width"
   let fillOpacity ← inheritedNumber attrs "fill-opacity" parent.fillOpacity
@@ -226,31 +243,37 @@ private def metadata (node : NamespaceNode) : Except String Unit := do
   match node with
   | .other (.text _) | .other (.cdata _) | .other (.comment _) => pure ()
   | _ => throw "descriptive metadata only supports text/comments"
-private def readNode (depth : Nat) (style : Style) (node : NamespaceNode) : Except String (List Primitive) := do
+private def readNode (ids : List String) (depth : Nat) (style : Style) (node : NamespaceNode) : Except String (List Primitive) := do
   if depth > 32 then throw "SVG group nesting exceeds 32"
   match node with
   | .other (.comment _) => pure []
   | .other (.text s) | .other (.cdata s) => if whitespace s then pure [] else throw "text painting unsupported"
   | .other _ => throw "processing instructions/other XML nodes unsupported"
   | .element name attrs children =>
+    if name.namespace_ == some "http://www.w3.org/1999/xhtml" && name.localPart == "link" then
+      -- Reftest links are HTML metadata, not graphics or active stylesheets.
+      if attr attrs "rel" != some "match" then throw "unsupported HTML link relation"
+      if !children.isEmpty then throw "HTML metadata link must be empty"
+      return []
     if name.namespace_ != some svgURI then throw s!"foreign/non-SVG element: {name.localPart}"
     let tag := name.localPart
+    if tag == "metadata" then return []
     if tag == "title" || tag == "desc" then
       validateAttrs tag attrs ["id"]
       for child in children do metadata child
       return []
     else if tag == "g" then
       validateAttrs tag attrs []
-      let inherited ← readStyle attrs style
-      readChildren (depth+1) inherited children
+      let inherited ← readStyle ids attrs style
+      readChildren ids (depth+1) inherited children
     else
       validateAttrs tag attrs (extraAttrs tag)
-      let inherited ← readStyle attrs style
+      let inherited ← readStyle ids attrs style
       let geometry ← readGeometry tag attrs inherited
       for child in children do
         match child with
         | .element n _ _ => if n.namespace_ == some svgURI && ["title","desc"].contains n.localPart then
-                              let _ ← readNode (depth+1) inherited child
+                              let _ ← readNode ids (depth+1) inherited child
                               pure ()
                             else throw "graphics children unsupported"
         | .other (.comment _) => pure ()
@@ -258,10 +281,10 @@ private def readNode (depth : Nat) (style : Style) (node : NamespaceNode) : Exce
         | _ => throw "processing instruction unsupported"
       let opacity ← match attr attrs "opacity" with | none => pure 1 | some s => number s
       return geometry.toList.map fun g => {geometry:=g,style:=inherited,opacity:=max 0 (min 1 opacity)}
-private def readChildren (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List Primitive) := do
+private def readChildren (ids : List String) (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List Primitive) := do
   let mut out : Array Primitive := #[]
   for node in nodes do
-    let chunk ← readNode depth style node
+    let chunk ← readNode ids depth style node
     if out.size+chunk.length > maxPrimitives then throw "painted primitive count exceeds 12288"
     out := out ++ chunk.toArray
   return out.toList
@@ -300,6 +323,21 @@ private def viewportMapping (w h : Float) (attrs : List NamespaceAttribute) : Ex
   let scale := if mode == "meet" then min (w/vw) (h/vh) else max (w/vw) (h/vh)
   return ⟨scale,scale,(w-vw*scale)*Float.ofNat ax/2,(h-vh*scale)*Float.ofNat ay/2,x,y,w,h⟩
 
+private def nodeIds (root : NamespaceNode) : Except String (List String) := do
+  let mut pending := [(root,0)]
+  let mut ids : Array String := #[]
+  for _ in [:maxInputChars+1] do
+    match pending with
+    | [] => return ids.toList
+    | (node,depth)::rest =>
+      if depth > 32 then throw "SVG metadata/identifier nesting exceeds 32"
+      match node with
+      | .other _ => pending := rest
+      | .element _ attrs children =>
+        if let some id := attr attrs "id" then ids := ids.push id
+        pending := children.map (fun child => (child,depth+1)) ++ rest
+  throw "SVG identifier node count exceeds input bound"
+
 def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String Scene := do
   if xml.length > maxInputChars then throw "SVG input exceeds 1048576 characters"
   let document ← (parseXML xml).mapError (fun e => s!"XML: {e.message} at {e.position}")
@@ -326,8 +364,9 @@ def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String S
       pure (← lengthNumber rw,← lengthNumber rh)
   if w <= 0 || h <= 0 || w > 4096 || h > 4096 then throw "output viewport must be positive and at most 4096 pixels"
   let mapping ← viewportMapping w h attrs
-  let inherited ← readStyle attrs {}
-  let primitives ← readChildren 0 inherited children
+  let ids ← nodeIds root
+  let inherited ← readStyle ids attrs {}
+  let primitives ← readChildren ids 0 inherited children
   return {width:=w.ceil.toUInt32.toNat,height:=h.ceil.toUInt32.toNat,mapping,primitives}
 
 /- Typed conditions reuse Graphics.Expr's CPU interpreter and WGSL lowering.

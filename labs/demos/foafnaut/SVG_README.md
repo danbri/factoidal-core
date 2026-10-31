@@ -22,7 +22,7 @@ adapter means exit 2 with no image, never a CPU image substituted for a GPU resu
 ## Supported subset
 
 SVG-namespace `svg`/`g`, sharp `rect`, `circle`, filled `ellipse`, butt- or round-cap stroked
-`line`, and filled `polygon` are supported, plus text-only `title`/`desc` metadata.
+`line`, and filled `polygon` are supported, plus text-only `title`/`desc` metadata. SVG `metadata` subtrees are non-rendering; XHTML `link rel="match"` is recognized as reftest metadata. Other HTML links (including stylesheets) remain explicit refusals.
 Namespace prefixes resolve by expanded name; lookalike namespaces, unbound
 prefixes, duplicate expanded attributes and foreign elements/qualified attributes
 are refused. Geometry accepts signed fractional decimal/exponent numbers and
@@ -120,3 +120,18 @@ rendered by this same implementation may share bugs, so those comparisons alone
 are not an independent conformance proof. The local
 gallery and regression tests are not official suite cases. Parser/CPU success
 and emitted artifacts must never be reported as a successful GPU render.
+
+
+Missing local paint-server fragments now use the specified color/none fallback;
+without a fallback they paint nothing. `currentColor` fallbacks remain symbolic
+until the leaf's color resolves. This is limited to simple ASCII fragment IDs:
+percent-escaped, escaped CSS, external URLs and existing paint-server targets
+remain explicit refusals. No gradients/patterns are implemented by this change.
+Identifier traversal is iterative and refuses nesting beyond 32 after XML parse;
+the existing 1 MiB character and primitive/float budgets are unchanged.
+
+The unchanged WPT `fallback-001.svg` and `fallback-002.svg` now compile and pass
+known green/white CPU sample regressions. This is compiler/CPU evidence, not a
+visual pass. See the [independent-image runner](../../../tests/external/svg/README.md)
+for the complete 38-case denominator, installed-browser oracle measurements and
+unavailable GPU results. Paths and transforms remain unsupported.

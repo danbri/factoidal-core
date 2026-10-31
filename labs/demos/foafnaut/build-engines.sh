@@ -76,6 +76,7 @@ done
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/FoafPresentationProofs.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/FoafPresentationTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SceneSVGTests.lean"
+"$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGPrerequisiteTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGCapacityTests.lean"
 for module in LayoutPolicyTests PolicyProtocolTests PresentationTests; do
   "$TOOLCHAIN/bin/lean" -R "$PROJECT" "$PROJECT/L4Factoidal/UI/$module.lean"

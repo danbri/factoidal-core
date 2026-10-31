@@ -40,7 +40,7 @@ The fixture check verifies SHA-256, upstream Git blob IDs, every selected
 `rel=match` pair, and its reference's presence. Missing or changed files
 fail with exit 2. The test dispatcher manifest runs **fixture integrity**,
 not rendering conformance; it does not turn current unsupported features
-into source CI failures or conformance passes. The six local runner tests
+into source CI failures or conformance passes. The original six local runner tests
 use synthetic process/image data and are not counted as WPT tests.
 
 The files are checked in, so CI needs no network. To restore missing or
@@ -102,3 +102,44 @@ The measured development executable is not included in this source tree;
 released binaries are separate build artifacts.
 The per-test diagnostic snapshot is in
 [baseline-2026-10-30.json](baseline-2026-10-30.json); it is not a gate override.
+
+## Independent browser reference images
+
+`capture_reference.mjs` uses an already installed Chrome and Playwright Core;
+no browser or package is downloaded. It verifies every pinned fixture first,
+serves only the fixture tree on a temporary loopback port, blocks requests to
+other origins and disables JavaScript. Original test/reference bytes remain
+unchanged. Capture is 800×600 CSS pixels, device scale 1, with the browser's
+white canvas. Cases with the manifest's script/font/resource requirements stay
+unavailable. Animation-bearing inputs are also refused. This restricted capture
+is not a general secure-static oracle: system fonts are not independently
+enumerated and browser processing modes need further validation for more cases.
+
+```sh
+node tests/external/svg/capture_reference.mjs --output /tmp/svg-oracle \
+  --browser /path/to/installed/chrome --playwright /path/to/playwright-core/index.mjs
+python3 tests/external/svg/oracle.py --oracle /tmp/svg-oracle \
+  --engine /path/to/native-webgpu-svg-darwin-arm64 --output /tmp/svg-comparison
+python3 -m unittest discover -s tests/external/svg -p 'test*.py' -v
+```
+
+Capture records browser version/executable hash, host facts, source/image hashes,
+viewport and restrictions in `oracle.json`. The comparator verifies source/image
+hashes and the exact 38-case inventory. It first checks the independently
+captured original test/reference relation using the unchanged upstream fuzzy
+ranges. A browser disagreement remains unavailable for candidate scoring and
+needs triage. It then compares candidate GPU PPM against the independent
+reference, also recording candidate-versus-independent-test metrics. Actual and
+difference PPMs are retained. Missing GPU, oracle or runtime output remains
+unavailable; acceptance is never an image match. No local tolerance is added.
+
+The initial installed Chrome 156.0.8078.76 capture retained all 38 cases: 29 pairs
+captured, nine unavailable for original runtime/resource requirements. Of the
+29 independent relations, 25 matched and four disagreed (`marker-path-022`,
+`marker-path-023`, `paint-context-003`, `paint-context-006`). No candidate GPU
+command was supplied, so the candidate score was **38 unavailable and zero
+visual matches**. These measurements do not replace the original same-renderer
+baseline or narrow its denominator. Images are external build artifacts, not
+new source fixtures.
+
+After the paint-fallback change, actual candidate CLI comparison reports 23 unsupported, 15 unavailable and zero visual matches: nine runtime/resource cases, four oracle disagreements and two GPU-adapter failures. Acceptance alone reports two accepted and 36 unsupported. These are separate tracks.
