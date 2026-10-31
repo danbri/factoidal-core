@@ -453,3 +453,13 @@ cheapest command that proves the shipped wasm loads and answers.
   https://github.com/danbri/factoidal/issues/641, with the byte
   transport it depends on at
   https://github.com/danbri/factoidal/issues/640.
+
+
+### Executable documentation deployment examples (2026-10-31)
+
+Changing a `js browser` fence to `js` also changes the package's documentation
+gate from syntax checking to execution. A deployment placeholder must then have
+a local fixture in `test/doc-examples.test.mjs`, with real transport and result
+assertions. Do not skip the example or contact the placeholder host. The 0.28
+candidate's LWS example exposed this when the package gate had 1975 passes and
+one missing-manifest failure; the authenticated HTTP fixture now executes it.

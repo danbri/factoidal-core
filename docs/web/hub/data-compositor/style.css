@@ -4,3 +4,30 @@
 /* The app has its own full-width shell; notebook widths do not apply. */
 .hub-app{max-width:none;padding:0;overflow-x:hidden}.hub-app-nav{display:flex;gap:20px;flex-wrap:wrap;padding:9px 28px;background:#10151b;border-bottom:1px solid var(--line);font-size:11px}.hub-app-nav a{color:var(--muted);text-decoration:none}.hub-app-nav a:hover{color:var(--green)}.hub-app main{display:block;width:100%;max-width:none}.inspect-body factoidal-code-output,.output-body factoidal-code-output{display:block;max-width:100%;min-width:0}.output-body>factoidal-code-output{margin:14px 18px}
 .evidence-toggle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--green)}.evidence-toggle input{accent-color:var(--green)}.assurance-badge{font:9px ui-monospace,monospace;padding-top:7px;color:var(--muted)}.assurance-badge[hidden],.assurance-legend[hidden]{display:none}.assurance-badge[data-status=proved]{color:var(--green)}.assurance-badge[data-status=tested]{color:var(--yellow)}.assurance-legend{padding:11px 28px;font-size:11px;line-height:1.6;color:#c8d5e1;background:#202c38;border-bottom:1px solid var(--line)}.evidence-mode .wire{stroke-dasharray:6 4;pointer-events:stroke;cursor:help;stroke-width:4}.evidence-mode .wire:focus{stroke:white;outline:none}
+
+/* Evidence is a readable, steady signal, not a flashing success ranking. */
+.node-title{border:0;background:transparent;padding:0;text-align:left;color:inherit;border-radius:3px}
+.node-title:hover{background:transparent;text-decoration:underline}
+.evidence-toggle{padding:7px 11px;border:1px solid #64758a;border-radius:8px;color:#e7f8ff;font-size:12px;font-weight:700;min-height:36px}
+.evidence-toggle:has(input:checked){border-color:#80eeff;background:#17313e;box-shadow:0 0 0 1px #80eeff44,0 0 18px #40dfff35}
+.evidence-state{font-size:10px;text-transform:uppercase;letter-spacing:.1em}
+.assurance-badge{display:block;width:100%;min-height:32px;margin-top:9px;padding:7px 8px;border:1px solid #80eeff;border-radius:6px;background:#12303e;color:#ecfcff!important;font:700 11px/1.35 system-ui,sans-serif;text-align:left;white-space:normal;box-shadow:0 0 0 1px #80eeff22,0 0 14px #40dfff35}
+.assurance-badge::after{content:'  ↗';color:#b9f4ff}
+.assurance-badge:hover{background:#234656;box-shadow:0 0 0 2px #80eeff55,0 0 20px #40dfff55}
+.assurance-badge:focus-visible{outline:3px solid #fff;outline-offset:3px}
+.assurance-badge[data-status=not-run]{box-shadow:none;border-style:dashed}
+.evidence-mode .node{border-color:#659eb0}
+.evidence-mode .node.selected{outline:2px solid #b0f3ff;outline-offset:3px}
+.assurance-legend strong{color:#ddfaff}
+.evidence-detail{background:#132832;border-color:#548e9d;color:#e1edf4;font-size:12px;line-height:1.65}
+.evidence-detail h3{margin:0 0 10px;font-size:15px;color:#edfcff}
+.evidence-detail h4{margin:14px 0 5px;font-size:12px}
+.evidence-detail p{margin:9px 0}
+.evidence-detail a{display:block;color:#a4edff;text-decoration:underline;text-underline-offset:3px;margin:10px 0}
+.evidence-detail li{overflow-wrap:anywhere;margin:5px 0}
+.inspect-body details>summary{cursor:pointer;color:#c6edff;padding:10px 0;font-weight:650}
+.inspect-body details>factoidal-code-output{margin-top:8px}
+@media(prefers-reduced-motion:reduce){.wire,.node,.status-dot{animation:none!important;transition:none!important}}
+@media(forced-colors:active){.assurance-badge,.evidence-toggle:has(input:checked){border:2px solid ButtonText;box-shadow:none;color:ButtonText!important;background:ButtonFace}.evidence-mode .node{border-color:CanvasText}.evidence-detail{color:CanvasText;background:Canvas;border-color:CanvasText}.evidence-detail h3,.evidence-detail a{color:LinkText}}
+
+.canvas.evidence-mode{height:450px}
