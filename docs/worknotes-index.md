@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-10-30 | [Shared UI geometry, policy and renderer admission](designissues/2026-10-30-shared-ui-policy.md) | pending | current: kernel checks and native regressions; interactive enforcement unfinished |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |
 | 2026-04-21 | [Large Turtle stack overflow fix sketch](2026-04-21-large-turtle-stack-overflow-fix-sketch.md) | c29698f98 | historical |
 | 2026-08 | [Factoidal verified RDF block engine](2026-08-blockengine.md) | 27f9308f4 | current: design, part 1 |
@@ -157,6 +158,20 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-29 | [Schema-aware element-to-map conversion](designissues/2026-10-29-element-map-schema.md) | same commit | component-driven layouts and PSVI values; 33 QT4 cases fixed, two nilled-record fixture disagreements remain visible; targeted build and recursion gates; https://github.com/danbri/factoidal/issues/1101 |
 | 2026-10-30 | [QT4 harness recursion audit classification](20261030-qt4-harness-recursion-audit.md) | same commit | five existing tree-depth recursions classified with actual fuel limits; runner and resource controls unchanged, scoped compiled audit passes; https://github.com/danbri/factoidal/issues/1101 |
 | 2026-10-30 | [QT4 public API, CLI and dataflow integration](20261030-qt4-public-integration.md) | same commit | three tested public nodes and CLI commands; pure inline transform connection; explicit serialized-result wires and unchecked evidence; https://github.com/danbri/factoidal/issues/1210 |
+| 2026-10-30 | [Foafnaut native graphics and SVG lab](designissues/2026-10-30-foafnaut-native-graphics.md) | same commit | current: Lean WASM / raw WebGPU boundary, native demos and executable packaging, pinned SVG reftests and explicit validation limits |
+| 2026-10-30 | [HTML, SVG, text and portable rendering](designissues/2026-10-30-document-layout-renderers.md) | same commit | current SVG/test limits and proposed Lean document/layout/scene pipeline; HarfBuzz boundary; CPU/embedded backend contracts and theorem scope |
+| 2026-10-30 | [FOAFNaut RDF-driven native study](designissues/2026-10-30-foafnaut-rdf-native.md) | same commit | current: typed FOAF graph, Lean radial layout and interaction, temporary GPU bitmap labels, modern visual direction and native packaging |
+
+- [2026-10-30: Lean GPU render plans and remaining host boundary](designissues/2026-10-30-lean-render-plan.md).
+- [2026-10-30: FOAFNaut live presentation admission](20261030-foafnaut-live-presentation.md): opaque Lean state, acknowledged picking, retained approved geometry, 64 WASM/host tests and 12 C checks.
 | 2026-10-30 | [HTML parser and public API integration](20261030-html-public-integration.md) | same commit | current main integrated, both gate sets preserved, public PI/namespace/template/error regressions; fresh native API and HTML/QT4 controls pass; fresh WASM CI remains required; https://github.com/danbri/factoidal-core/pull/269 |
 
 | 2026-10-30 | [Hub Data Compositor and shared code output](20261030-hub-data-compositor.md) | same commit | pinned public engine, editable visual pipeline, honest component evidence, shared output controls and focused browser checks |
+
+| 2026-10-30 | [FOAFNaut current-main refresh](20261030-foafnaut-main-refresh.md) | same commit | live presentation retained, engine source hashes agree, 64 Deno tests and 12 C checks; SVG oracle roadmap and official visual limits |
+
+| 2026-10-31 | [SVG independent images and paint fallback](20261031-svg-independent-images.md) | same commit | 38-case denominator preserved; independent browser captures, explicit oracle disagreements, 2 compiler acceptances and zero GPU visual passes |
+
+| 2026-10-31 | [Shared SVG affine algebra and actual GPU comparisons](20261031-svg-affine-gpu.md) | same commit | TOAN reuse, typed scalar backend, transform/precision regressions; browser-host Apple Metal yields 2/38 independent full-image matches; native Deno remains unavailable |
+
+| 2026-10-31 | [Resident raw WebGPU snapshot sessions](20261031-svg-resident-rendering.md) | same commit | retained GPU resources, 68 Deno tests/12 C checks, twenty actual Apple Metal frame/readbacks; measured throughput remains below 12 Hz |

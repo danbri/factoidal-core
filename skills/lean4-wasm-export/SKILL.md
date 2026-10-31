@@ -978,3 +978,7 @@ The Lean side keeps its proof policy across this boundary: no `sorry`,
 no `axiom`, no `partial`, no `native_decide`. The JSON reader recurses
 on an explicit `Nat` fuel precisely so it is structurally recursive and
 total without well-founded-recursion obligations.
+
+The independent native graphics lab uses small pure ABI modules, including a
+typed render-plan module. Its proof and host boundary is recorded in
+[Lean render plans](../../docs/designissues/2026-10-30-lean-render-plan.md).

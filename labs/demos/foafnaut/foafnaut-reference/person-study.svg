@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="240" viewBox="0 0 400 240">
+  <title>FOAFNaut person and relationship: a new primitive study</title>
+  <desc>New basic-shape geometry inspired by the historical FOAFNaut palette and person vocabulary. Original development: Jim Ley; graphics: Liz Turner; earlier FOAFcorp: Dean Jackson. Reference: foaf/foaf commit 24f1fd07665cbd20af7ebafe044e025bb22a4a65, foafnaut.org/htdocs/2003/snap1/foafnaut.svg, Blub and addLine. No original SVG paths, logo, code, or personal RDF are included. This is a static native-renderer study, not the original interactive application.</desc>
+  <rect width="400" height="240" fill="#99CCEE"/>
+  <circle cx="200" cy="124" r="36" fill="#0099CC"/>
+  <g stroke="#CCFFFF" stroke-width="3">
+    <line x1="76" y1="126" x2="88" y2="126"/>
+    <line x1="92" y1="126" x2="104" y2="126"/>
+    <line x1="108" y1="126" x2="120" y2="126"/>
+    <line x1="124" y1="126" x2="136" y2="126"/>
+    <line x1="140" y1="126" x2="152" y2="126"/>
+    <line x1="156" y1="126" x2="168" y2="126"/>
+  </g>
+  <rect x="194" y="124" width="12" height="26" fill="#F70F34" stroke="black" stroke-width="1.5"/>
+  <rect x="180" y="114" width="7" height="24" fill="#F69866" stroke="black" stroke-width="1.5"/>
+  <rect x="213" y="114" width="7" height="24" fill="#F69866" stroke="black" stroke-width="1.5"/>
+  <rect x="184" y="106" width="32" height="24" fill="#31A458" stroke="black" stroke-width="1.5"/>
+  <ellipse cx="200" cy="152" rx="11" ry="5" fill="black"/>
+  <ellipse cx="200" cy="152" rx="9.5" ry="3.5" fill="white"/>
+  <circle cx="200" cy="95" r="9" fill="white" stroke="black" stroke-width="1.5"/>
+  <line x1="195" y1="95" x2="205" y2="95" stroke="black" stroke-width="1.5"/>
+  <line x1="200" y1="90" x2="200" y2="100" stroke="black" stroke-width="1.5"/>
+  <line x1="196" y1="152" x2="204" y2="152" stroke="black" stroke-width="1.5"/>
+  <rect x="170" y="119" width="60" height="16" fill="#F5F8CA" stroke="black" stroke-width="1"/>
+  <g fill="black">
+    <rect x="194" y="123" width="2" height="8"/>
+    <rect x="204" y="123" width="2" height="8"/>
+    <rect x="196" y="121" width="8" height="2"/>
+    <rect x="196" y="126" width="8" height="2"/>
+  </g>
+</svg>
