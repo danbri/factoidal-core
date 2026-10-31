@@ -1495,7 +1495,7 @@ const accessToken = 'an LWS access token'
 const reader = lwsSbm11Reader(storeUrl, { auth: `Bearer ${accessToken}` })
 const store = await openSbm11(storeUrl, { reader })
 const answer = store.query('SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }')
-console.log(answer.json, store.evidence)   // evidence: [{ resource, etag, lastModified, requests, partial, bytes }]
+console.log(JSON.stringify(answer.json), store.evidence)   // evidence: [{ resource, etag, lastModified, requests, partial, bytes }]
 store.close()
 reader.close()
 ```

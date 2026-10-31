@@ -14,11 +14,11 @@ export const WIRE_RECIPES = Object.freeze({
 });
 
 export function nodeAssurance(stage) {
-  if (!stage?.evidence) return { badge: 'not run', status: 'not-run', scope: 'Run the flow to obtain actual registry/runtime evidence.' };
+  if (!stage?.evidence) return { badge: 'Awaiting evidence', status: 'not-run', contract: null, assumptions: [], scope: 'Run the flow to obtain actual registry/runtime evidence.' };
   const e = stage.evidence;
   const registered = e.source === 'core.node/run' || e.source === 'core.graph/run';
   return {
-    badge: registered ? `${e.status}${e.checked ? ' · checked' : ''}` : 'API / display adapter',
+    badge: registered ? (e.status === 'proved' ? (e.checked ? 'Proof contract applied' : 'Proof applicability unknown') : e.status === 'tested' ? 'Tests; no proof contract' : 'Proof not established') : 'Connection / display step',
     status: e.status ?? 'unproved-adapter',
     registryStatus: e.registryStatus ?? null,
     checked: e.checked === true, proved: e.proved === true,
@@ -30,11 +30,26 @@ export function nodeAssurance(stage) {
   };
 }
 
+const LINK_OBLIGATIONS = Object.freeze({
+  'turtle:merge': 'Prove that assigning urn:studio:turtle preserves the reader’s RDF terms and blank-node identity before the merge scopes the inputs.',
+  'csvw:merge': 'Establish the CSVW conversion contract, then prove graph assignment preserves its output before the merge.',
+  'merge:closure': 'Prove that selecting the default-graph union supplies exactly the triples to which the RDFS soundness contract applies.',
+  'turtle:graphs': 'Establish provenance: the final Turtle graph must come from this exact source run, through the merge and graph partition.',
+  'csvw:graphs': 'Establish provenance: the final CSV graph must come from this exact conversion run, through the merge and graph partition.',
+  'closure:graphs': 'Prove that closure minus the exact input union selects only additional triples, and retagging preserves their terms and scope.',
+  'graphs:query': 'Prove that the evaluator receives this exact named-graph dataset and establish its query/backend domain premises, including any named assumptions.',
+  'query:filter': 'This is a display dependency, not table-to-table filtering. Prove the threshold-template binding and relate the second dataset query to the displayed query; do not assume volatile expressions are equal across runs.',
+  'filter:xml': 'Prove that table projection and XML output refer to the identical query result, with escaping, datatypes and unbound bindings preserved by the projection.',
+  'xml:xslt': 'Establish a contract for this stylesheet over the SPARQL Results XML vocabulary, then prove it consumes the retained XML result and preserves the intended selected values.',
+  'xslt:html': 'Relate the emitted HTML to the displayed document under an explicit browser and rendering model. The current sandbox restricts capabilities; it is not a rendering-correctness proof.',
+});
+
 export function wireAssurance(from, to, stages) {
   const [wireKind, note] = WIRE_RECIPES[`${from}:${to}`] ?? ['display dependency', 'Manual app recipe link.'];
   const source = stages.get(from), target = stages.get(to);
   return {
     from, to, wireKind, note,
+    obligation: LINK_OBLIGATIONS[`${from}:${to}`] ?? 'No preservation obligation has been specified for this display link.',
     source: nodeAssurance(source), target: nodeAssurance(target),
     applicationLink: 'manual recipe / display dependency',
     graphWideProof: false, wholeWireProved: false,
@@ -43,5 +58,26 @@ export function wireAssurance(from, to, stages) {
       ...target.evidence.graphCheck,
     } : null,
     limitation: 'Visual adjacency and compatible-looking wire labels do not establish semantic preservation. No assurance ranking is invented.',
+  };
+}
+
+// Explanations are a view of named contracts, not new verdicts or evidence.
+export const PROOF_SOURCE = 'https://github.com/danbri/factoidal-core/blob/a9bd50c3b28b3d42c5071cc8c3e74a5ede8706db/';
+const CONTRACTS = {
+  'L4Factoidal.Dataflow.ReaderContract': ['What does the reader preserve?', 'The reader contract describes RDF set semantics, document-scoped blank nodes, and invariance under changes to blank-node labels. It does not certify that the source statements are true.', 'formal/lean4/L4Factoidal/Dataflow/Reader.lean'],
+  'L4Factoidal.RDF.DatasetDen.IsMerge': ['What does merging preserve?', 'The RDF merge contract combines the two datasets with the required blank-node scoping. Assigning the source graph names happens before this checked merge and has no adapter proof here.', 'formal/lean4/L4Factoidal/Dataflow/GraphStages.lean'],
+  'L4Factoidal.Dataflow.Regime.Entails': ['What does the inference proof establish?', 'The RDFS soundness contract says the inferred graph follows from the input under the formal RDFS entailment relation. This is not a proof of completeness, source truth, or the surrounding graph-selection steps.', 'formal/lean4/L4Factoidal/Dataflow/Reasoner.lean'],
+  'L4Factoidal.Dataflow.EvalContract': ['What does the query proof establish?', 'The evaluator contract relates answers to the reference semantics on its stated domain. Backend patterns outside the proved fragment and selected fast paths rely on named agreement assumptions. A checked flag does not remove those assumptions or prove the whole query-to-display path.', 'formal/lean4/L4Factoidal/Dataflow/Evaluator.lean'],
+};
+export function explainEvidence(stage) {
+  const a = nodeAssurance(stage), e = stage?.evidence;
+  const known = CONTRACTS[a.contract];
+  return {
+    title: known?.[0] ?? (a.status === 'tested' ? 'What do the tests establish?' : e ? 'What does this step do?' : 'Evidence is not available yet'),
+    claim: known?.[1] ?? (a.status === 'tested' ? 'The registry lists executable tests for this component. There is no registered semantic proof contract for this operation; this run is an execution result, not a fresh conformance-suite report.' : e?.note ?? a.scope),
+    source: known ? PROOF_SOURCE + known[2] : null,
+    registry: e?.registry ?? null,
+    boundaries: [stage?.note, stage?.adapter?.note, e?.prepAdapter?.note].filter(Boolean),
+    scope: a.scope,
   };
 }

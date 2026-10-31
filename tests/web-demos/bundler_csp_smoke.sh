@@ -90,6 +90,7 @@ cat >"$SERVE_ROOT/index.html" <<'HTML_EOF'
 <html>
 <head>
   <meta charset="utf-8">
+  <link rel="icon" href="data:,">
   <title>loading</title>
 </head>
 <body>

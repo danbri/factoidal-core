@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-10-31 | [Readable compositor evidence](20261031-compositor-evidence-explanations.md) | this commit | current |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |
 | 2026-04-21 | [Large Turtle stack overflow fix sketch](2026-04-21-large-turtle-stack-overflow-fix-sketch.md) | c29698f98 | historical |
 | 2026-08 | [Factoidal verified RDF block engine](2026-08-blockengine.md) | 27f9308f4 | current: design, part 1 |
@@ -165,3 +166,6 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-31 | [LWS reader host-authority boundary](20261031-lws-reader-path-confinement.md) | — | current: path confinement, redirect refusal and explicit browser transport limits |
 
 | 2026-10-31 | [Shared component descriptor model](designissues/2026-10-31-component-descriptor-model.md) | same commit | design proposal: one UI/API/CLI model, useful witnesses and human purposes, distinct semantic/authority/evidence scopes |
+| 2026-10-31 | [Browser release integrity gates](20261031-browser-release-integrity-gates.md) | — | stamped compilation, bad-digest refusal and CSP browser checks |
+
+| 2026-10-31 | [Published 0.28.0 and hub pin](20261031-release-028-published.md) | — | registry consumer, browser and hub validation |

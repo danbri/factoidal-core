@@ -1,6 +1,6 @@
 import { DEFAULTS } from './fixtures.mjs';
 import '../assets/code-output.mjs';
-import { nodeAssurance, wireAssurance } from './assurance.mjs';
+import { nodeAssurance, wireAssurance, explainEvidence, PROOF_SOURCE } from './assurance.mjs';
 
 const NODES = [
   {id:'turtle',title:'Turtle reader',kind:'INPUT · RDF',color:'#78dfb8',x:24,y:54,description:'People, projects and an RDFS vocabulary.',editable:['turtle']},
@@ -22,9 +22,9 @@ const termText = value => value == null ? '' : typeof value === 'object' ? (valu
 class FlowNode extends HTMLElement {
   configure(spec,index,onSelect,onMove){
     this.spec=spec; this.style.left=`${spec.x}px`;this.style.top=`${spec.y}px`;this.style.setProperty('--node-color',spec.color);
-    this.innerHTML=`<article class="node" tabindex="0" role="button" aria-label="Inspect ${spec.title}" data-state="idle"><div class="node-head"><span class="node-number">${String(index+1).padStart(2,'0')}</span><span class="node-title">${spec.title}</span><span class="node-state">○</span></div><div class="node-body"><div class="node-description">${spec.description}</div><div class="node-summary">${spec.kind}</div><div class="assurance-badge"></div></div>${index>1?'<i class="socket in"></i>':''}${spec.id!=='html'?'<i class="socket out"></i>':''}</article>`;
+    this.innerHTML=`<article class="node" role="group" aria-label="${spec.title} node" data-state="idle"><div class="node-head"><span class="node-number">${String(index+1).padStart(2,'0')}</span><button class="node-title" aria-label="Inspect ${spec.title}">${spec.title}</button><span class="node-state">○</span></div><div class="node-body"><div class="node-description">${spec.description}</div><div class="node-summary">${spec.kind}</div><button class="assurance-badge" hidden></button></div>${index>1?'<i class="socket in"></i>':''}${spec.id!=='html'?'<i class="socket out"></i>':''}</article>`;
     this.onclick=()=>onSelect(spec.id);
-    this.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onSelect(spec.id);}};
+    this.querySelector('.assurance-badge').onclick=e=>{e.stopPropagation();onSelect(spec.id,true);};
     this.querySelector('.node-head').onpointerdown=e=>{
       if(e.button!==0)return;e.stopPropagation(); const target=e.currentTarget;target.setPointerCapture(e.pointerId);
       const start={x:e.clientX,y:e.clientY,nx:spec.x,ny:spec.y};
@@ -36,7 +36,7 @@ class FlowNode extends HTMLElement {
   update(stage,selected,showEvidence=false){
     const node=this.querySelector('.node');node.classList.toggle('selected',selected);node.dataset.state=stage?.status??'idle';
     this.querySelector('.node-state').textContent=stage?.status==='done'?'✓':stage?.status==='running'?'◌':stage?.status==='error'?'!':'○';
-    const badge=this.querySelector('.assurance-badge');const assurance=nodeAssurance(stage);badge.textContent=assurance.badge;badge.hidden=!showEvidence;badge.dataset.status=assurance.status;
+    const badge=this.querySelector('.assurance-badge');const assurance=nodeAssurance(stage);badge.textContent=assurance.badge;badge.hidden=!showEvidence;badge.dataset.status=assurance.status;badge.setAttribute('aria-label',`${assurance.badge}: explain evidence for ${this.spec.title}`);badge.title='Open the claim, assumptions and proof or test references';
     this.querySelector('.node-summary').textContent=stage?.status==='running'?'Computing…':stage?.summary??this.spec.kind;
   }
 }
@@ -48,19 +48,19 @@ class DataflowStudio extends HTMLElement {
     this.innerHTML=`
       <header class="topbar"><div class="identity"><span class="mark">◇</span><div><div class="eyebrow">Factoidal laboratory</div><h1>Data Compositor</h1></div></div><div class="actions"><span class="engine"><b>●</b> Lean → WASM · core 0.27.0</span><button id="reset">Reset inputs</button><button id="run" class="primary">▶ Run flow</button></div></header>
       <section class="intro"><p><strong>Think compositor nodes, with data in the sockets.</strong><br>Parse two sources, infer what follows, join named graphs, filter a table, then turn it into HTML.</p><div class="run-status" data-state="idle" role="status" aria-live="polite"><i class="status-dot"></i><span id="status-text">Ready to compose</span></div></section>
-      <div class="toolbar"><label class="threshold">Keep score ≥ <output id="score-value">${escapeHTML(this.inputs.minScore)}</output><input id="score" aria-label="Minimum score" type="range" min="0" max="100" step="1" value="${escapeHTML(this.inputs.minScore)}"><span class="muted">Release to recompute</span></label><div class="view-controls"><label class="evidence-toggle"><input id="evidence-toggle" type="checkbox"> Evidence</label><span>NODE EDITOR</span><button class="icon" id="zoom-out" aria-label="Zoom out">−</button><button class="icon" id="zoom-in" aria-label="Zoom in">+</button><button class="icon" id="fit">Fit nodes</button></div></div>
+      <div class="toolbar"><label class="threshold">Keep score ≥ <output id="score-value">${escapeHTML(this.inputs.minScore)}</output><input id="score" aria-label="Minimum score" type="range" min="0" max="100" step="1" value="${escapeHTML(this.inputs.minScore)}"><span class="muted">Release to recompute</span></label><div class="view-controls"><label class="evidence-toggle"><input id="evidence-toggle" type="checkbox" aria-describedby="evidence-help"> Evidence <span class="evidence-state">off</span></label><span>NODE EDITOR</span><button class="icon" id="zoom-out" aria-label="Zoom out">−</button><button class="icon" id="zoom-in" aria-label="Zoom in">+</button><button class="icon" id="fit">Fit nodes</button></div></div>
       <section class="canvas" aria-label="Interactive dataflow graph"><div class="world"><svg class="wires" aria-hidden="true"></svg><div class="canvas-note">Two source branches. One reproducible flow.<br>Click a node to inspect its data and operation.</div></div><div class="legend"><span><i style="--c:var(--green)"></i>RDF</span><span><i style="--c:var(--blue)"></i>Dataset</span><span><i style="--c:var(--yellow)"></i>Table</span><span><i style="--c:var(--purple)"></i>XML</span><span><i style="--c:var(--orange)"></i>HTML</span></div><span class="canvas-hint">Drag headers to arrange · drag background to pan · Ctrl/⌘ + wheel to zoom</span></section>
-      <div class="assurance-legend" hidden>Node badges show actual component status, checked flag and contract scope. Dashed links are manual recipe/display dependencies, not a graph-wide proof. Click a wire to inspect its kinds and boundaries; only datasetMerge uses the engine graph checker for its tagged Dataset ports.</div>
+      <div class="assurance-legend" id="evidence-help" hidden><strong>Evidence mode is on.</strong> Select a glowing label for the claim, its limits and source references. Select a dashed link for what is passed and which connection obligations remain open. A checked component is not a proof of the whole flow.</div>
       <div class="error-banner" role="alert"></div>
-      <section class="lower"><aside class="inspector"><div class="section-head"><h2 id="inspect-title">Turtle reader</h2><span class="kicker">Node inspector</span></div><nav class="tabs inspect-tabs" aria-label="Node inspection"></nav><div class="inspect-body"></div></aside><section class="output-panel"><div class="output-head"><nav class="tabs output-tabs" aria-label="Output views"><button data-tab="preview" class="active">HTML viewer</button><button data-tab="rows">Results table</button><button data-tab="source">HTML source</button><button data-tab="log">Execution log</button></nav><button class="download" id="download" disabled>↓ Save HTML</button></div><div class="output-body"></div></section></section>
+      <section class="lower"><aside class="inspector"><div class="section-head"><h2 id="inspect-title" tabindex="-1">Turtle reader</h2><span class="kicker">Node inspector</span></div><nav class="tabs inspect-tabs" aria-label="Node inspection"></nav><div class="inspect-body"></div></aside><section class="output-panel"><div class="output-head"><nav class="tabs output-tabs" aria-label="Output views"><button data-tab="preview" class="active">HTML viewer</button><button data-tab="rows">Results table</button><button data-tab="source">HTML source</button><button data-tab="log">Execution log</button></nav><button class="download" id="download" disabled>↓ Save HTML</button></div><div class="output-body"></div></section></section>
       <footer class="stats"><span><b id="done-count">0</b> / 10 stages</span><span><b id="row-count">—</b> result rows</span><span><b id="run-time">—</b> elapsed</span><span class="scope">Runs locally in a worker. Each node exposes its real operation and evidence; a successful run is not an end-to-end proof.</span></footer>`;
     this.$=s=>this.querySelector(s);this.world=this.$('.world');this.canvas=this.$('.canvas');
     for(const [i,spec] of NODES.entries()){
-      const node=document.createElement('flow-node');node.configure({...spec},i,id=>this.select(id),(spec,start,event)=>{spec.x=Math.max(0,start.nx+(event.clientX-start.x)/this.scale);spec.y=Math.max(0,start.ny+(event.clientY-start.y)/this.scale);node.style.left=`${spec.x}px`;node.style.top=`${spec.y}px`;this.drawWires();});
+      const node=document.createElement('flow-node');node.configure({...spec},i,(id,evidence)=>{this.select(id);if(evidence){this.inspectTab='evidence';this.inspect();this.$('#inspect-title').focus();}},(spec,start,event)=>{spec.x=Math.max(0,start.nx+(event.clientX-start.x)/this.scale);spec.y=Math.max(0,start.ny+(event.clientY-start.y)/this.scale);node.style.left=`${spec.x}px`;node.style.top=`${spec.y}px`;this.drawWires();});
       this.world.append(node);
     }
     this.$('#run').onclick=()=>this.run();
-    this.$('#evidence-toggle').onchange=e=>{this.showEvidence=e.target.checked;this.canvas.classList.toggle('evidence-mode',this.showEvidence);this.$('.assurance-legend').hidden=!this.showEvidence;if(!this.showEvidence)this.selectedWire=null;this.updateNodes();this.inspect();};
+    this.$('#evidence-toggle').onchange=e=>{this.showEvidence=e.target.checked;this.$('.evidence-state').textContent=this.showEvidence?'on':'off';this.canvas.classList.toggle('evidence-mode',this.showEvidence);this.$('.assurance-legend').hidden=!this.showEvidence;if(!this.showEvidence)this.selectedWire=null;this.updateNodes();this.fit();this.inspect();};
     this.$('#reset').onclick=()=>{this.inputs={...DEFAULTS};this.$('#score').value=this.inputs.minScore;this.$('#score-value').textContent=this.inputs.minScore;this.inspect();this.run();};
     this.$('#score').oninput=e=>{this.inputs.minScore=e.target.value;this.$('#score-value').textContent=e.target.value;};
     this.$('#score').onchange=()=>{if(this.selected==='filter')this.inspect();this.run();};
@@ -114,7 +114,7 @@ class DataflowStudio extends HTMLElement {
     const tabs=[...(spec.editable??[]),'output','evidence'];this.$('.inspect-tabs').innerHTML=tabs.map(key=>`<button data-key="${key}" class="${this.inspectTab===key?'active':''}">${LABELS[key]??(key==='output'?'Node output':'Operation & evidence')}</button>`).join('');
     this.$('.inspect-tabs').onclick=e=>{const b=e.target.closest('button');if(b){this.inspectTab=b.dataset.key;this.inspect();}};
     const body=this.$('.inspect-body');body.replaceChildren();const p=document.createElement('p');p.className='inspect-description';p.textContent=spec.description;body.append(p);
-    if(this.showEvidence){const summary=document.createElement('p');summary.className='evidence';const a=nodeAssurance(stage);summary.textContent=`${a.badge} · ${a.scope} Contract: ${a.contract??'none'}. Assumptions: ${a.assumptions.length?a.assumptions.join('; '):'none reported'}.`;body.append(summary);}
+    if(this.showEvidence || this.inspectTab==='evidence')body.append(this.evidencePanel(stage));
     if(spec.editable?.includes(this.inspectTab)){
       if(this.inspectTab==='minScore'){
         const label=document.createElement('label');label.textContent='Minimum score ';const input=document.createElement('input');input.type='number';input.min='0';input.max='100';input.value=this.inputs.minScore;
@@ -125,11 +125,35 @@ class DataflowStudio extends HTMLElement {
         const note=document.createElement('p');note.className='edit-note';note.textContent='Editable source · press Run flow to recompute. Reset inputs restores the sample.';body.append(note);
       }
     }else if(this.inspectTab==='evidence'){
-      const text=stage?JSON.stringify({operation:stage.operation??stage.kind,kind:stage.kind,evidence:stage.evidence??null,adapter:stage.adapter??null,membershipEvidence:stage.membershipEvidence??null,note:stage.note??null,details:stage.details??null,durationMs:stage.durationMs},null,2):'Run the flow to inspect the actual operation and its evidence.';body.append(this.codeOutput(text,'json'));
+      const text=stage?JSON.stringify({operation:stage.operation??stage.kind,kind:stage.kind,evidence:stage.evidence??null,adapter:stage.adapter??null,membershipEvidence:stage.membershipEvidence??null,note:stage.note??null,details:stage.details??null,durationMs:stage.durationMs},null,2):'Run the flow to inspect the actual operation and its evidence.';const raw=document.createElement('details');const label=document.createElement('summary');label.textContent='Raw registry and runtime record';raw.append(label,this.codeOutput(text,'json'));body.append(raw);
       const note=document.createElement('p');note.className='edit-note';note.textContent='Registered dataflow nodes and public-API adapters are identified separately. Proof scope belongs to the engine evidence, not to the appearance of a wire.';body.append(note);
     }else{
       if(stage?.rows)body.append(this.rowsTable(stage.rows));else{const language=({turtle:'turtle',csvw:'turtle',merge:'trig',closure:'turtle',graphs:'trig',xml:'xml',xslt:'html',html:'html'})[spec.id]??'text';body.append(this.codeOutput(stage?.text??stage?.summary??'This output is populated by the real pipeline when you run it.',language));}
     }
+  }
+  evidencePanel(stage){
+    const a=nodeAssurance(stage), info=explainEvidence(stage), box=document.createElement('section');box.className='evidence evidence-detail';
+    const heading=document.createElement('h3');heading.textContent=info.title;box.append(heading);
+    const paragraph=text=>{const p=document.createElement('p');p.textContent=text;box.append(p);};
+    paragraph(info.claim);
+    if(a.checked)paragraph('“Applied” means the engine reports this registered contract as applicable to the bound component/settings. The browser does not re-run the Lean proof checker.');
+    paragraph(info.scope);
+    for(const boundary of info.boundaries)paragraph(boundary);
+    if(a.assumptions.length)paragraph('Reported assumptions: '+a.assumptions.join('; '));
+    else if(stage?.evidence)paragraph('No assumptions were listed in the runtime array. This is not evidence that the implementation has no assumptions; read the registry scope below.');
+    if(info.source){const link=document.createElement('a');link.href=info.source;link.textContent='Read the formal contract and its scope (published 0.27.0 source)';box.append(link);}
+    if(info.registry){
+      const registry=info.registry;
+      if(registry.note)paragraph('Registry scope: '+registry.note);
+      for(const [label,values] of [['Theorem references',registry.theorems],['Test references (not a fresh test run)',registry.tests]]){
+        if(!values?.length)continue;
+        const title=document.createElement('h4');title.textContent=label;box.append(title);
+        const list=document.createElement('ul');for(const value of values){const item=document.createElement('li');item.textContent=value;list.append(item);}box.append(list);
+      }
+      const link=document.createElement('a');link.href=PROOF_SOURCE+'docs/theorem-registry.md';link.textContent='Explore the theorem registry and assurance boundaries';box.append(link);
+    }
+    if(stage?.evidence?.projection){const p=document.createElement('p');p.textContent='The row projection is a separate component. Its evidence follows:';box.append(p,this.evidencePanel({evidence:stage.evidence.projection}));}
+    return box;
   }
   inspectWire(){
     const {from,to}=this.selectedWire;
@@ -137,7 +161,7 @@ class DataflowStudio extends HTMLElement {
     this.$('.inspect-tabs').replaceChildren();
     const body=this.$('.inspect-body');body.replaceChildren();
     const report=wireAssurance(from,to,this.stages);
-    const p=document.createElement('p');p.className='evidence';p.textContent=`${report.wireKind}. ${report.note} This display link does not carry a whole-wire or graph-wide proof.`;body.append(p,this.codeOutput(JSON.stringify(report,null,2),'json'));
+    const p=document.createElement('p');p.className='evidence';p.textContent=`${report.wireKind}. ${report.note} This display link does not carry a whole-wire or graph-wide proof.`;body.append(p);for(const text of ['What is connected: '+report.wireKind, 'What is established: '+(report.checkedSubcomposition?'The engine checks the tagged Dataset ports and merge contract inside this subgraph. The source graph-tagging adapters are outside that proof.':'This recipe records a dependency; no link-preservation proof is attached.'), 'What remains to prove: '+report.obligation]){const line=document.createElement('p');line.textContent=text;body.append(line);}const raw=document.createElement('details');const summary=document.createElement('summary');summary.textContent='Raw connection evidence';raw.append(summary,this.codeOutput(JSON.stringify(report,null,2),'json'));body.append(raw);
   }
   codeOutput(text,language='text'){
     const view=document.createElement('factoidal-code-output');
@@ -167,11 +191,11 @@ class DataflowStudio extends HTMLElement {
       if(from==='query'&&to==='filter')d=`M ${x1} ${y1} C ${x1+50} ${y1}, ${x1+50} ${y2-75}, ${b.x+88} ${y2-75} S ${x2-30} ${y2}, ${x2} ${y2}`;
       else if(from==='xslt'&&to==='html')d=`M ${x1} ${y1} C ${x1+40} ${y1}, ${x1+40} ${y2-80}, ${x2+88} ${y2-80} S ${x2-30} ${y2}, ${x2} ${y2}`;
       else {const bend=Math.max(45,Math.abs(x2-x1)*.5);d=`M ${x1} ${y1} C ${x1+bend} ${y1}, ${x2-bend} ${y2}, ${x2} ${y2}`;}
-      const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',d);path.setAttribute('class',`wire ${this.stages.get(to)?.status??''}`);path.style.setProperty('--wire-color',a.color);if(this.showEvidence){path.setAttribute('tabindex','0');path.setAttribute('role','button');path.setAttribute('aria-label',`Inspect ${from} to ${to} wire assurance`);const select=()=>{this.selectedWire={from,to};this.updateNodes();this.inspect();};path.onclick=e=>{e.stopPropagation();select();};path.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select();}};const title=document.createElementNS('http://www.w3.org/2000/svg','title');title.textContent=wireAssurance(from,to,this.stages).wireKind;path.append(title);}svg.append(path);
+      const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',d);path.setAttribute('class',`wire ${this.stages.get(to)?.status??''}`);path.style.setProperty('--wire-color',a.color);if(this.showEvidence){path.setAttribute('tabindex','0');path.setAttribute('role','button');path.setAttribute('aria-label',`Inspect ${from} to ${to} wire assurance`);const select=()=>{this.selectedWire={from,to};this.updateNodes();this.inspect();this.$('#inspect-title').focus();};path.onclick=e=>{e.stopPropagation();select();};path.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select();}};const title=document.createElementNS('http://www.w3.org/2000/svg','title');title.textContent=wireAssurance(from,to,this.stages).wireKind;path.append(title);}svg.append(path);
     }
   }
   transform(){this.world.style.transform=`translate(${this.pan.x}px,${this.pan.y}px) scale(${this.scale})`;}
-  fit(){const w=this.canvas.clientWidth,h=this.canvas.clientHeight;this.scale=Math.min(1,(w-32)/1490,(h-38)/410);this.pan={x:(w-1490*this.scale)/2,y:8};this.transform();}
+  fit(){const w=this.canvas.clientWidth,h=this.canvas.clientHeight,nodes=[...this.querySelectorAll('flow-node')];const width=Math.max(1490,...nodes.map(n=>n.spec.x+n.offsetWidth+30)),height=Math.max(410,...nodes.map(n=>n.spec.y+n.offsetHeight+20));this.scale=Math.min(1,(w-32)/width,(h-64)/height);this.pan={x:(w-width*this.scale)/2,y:8};this.transform();}
   zoom(multiplier){const next=Math.max(.35,Math.min(1.8,this.scale*multiplier));const cx=this.canvas.clientWidth/2,cy=this.canvas.clientHeight/2;this.pan={x:cx-(cx-this.pan.x)*next/this.scale,y:cy-(cy-this.pan.y)*next/this.scale};this.scale=next;this.transform();}
   disconnectedCallback(){this.worker?.terminate();this.resizeObserver?.disconnect();}
 }

@@ -5,7 +5,8 @@
 # headless Chromium (Playwright), from a static page a local node http
 # server serves. browser.js loads the Lean engine itself: it imports
 # l4-assets/l4factoidal.js and compiles l4-assets/l4factoidal.wasm with
-# fetch() + WebAssembly.instantiateStreaming (issue 713 stage 3).
+# fetch() and digest-checked byte compilation for release stamps; unstamped
+# development builds use instantiateStreaming (issues 713 and 1106).
 #
 # The page runs one parse, one SELECT, one canonicalize, one XPath
 # evaluation and one query against the sample store through a fetch()
@@ -60,7 +61,7 @@ PORT="${NPM_BROWSER_SMOKE_PORT:-8936}"
 cat >"$WORKDIR/index.html" <<'HTML_EOF'
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>loading</title></head>
+<head><meta charset="utf-8"><link rel="icon" href="data:,"><title>loading</title></head>
 <body>
 <script type="module">
 import { parse, query, canonicalize, xpathEval, openStore, engine, version }
@@ -107,6 +108,8 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
   '.mjs': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm', '.json': 'application/json' };
 
 const served = [];
+const releaseStamp = JSON.parse(readFileSync(path.join(PKG_DIR, "l4-assets/version.json"), "utf8"));
+const stamped = releaseStamp.stamped === true;
 const server = createServer((req, res) => {
   const urlPath = decodeURIComponent((req.url === '/' ? '/index.html' : req.url).split('?')[0]);
   let filePath;
@@ -137,11 +140,17 @@ try {
   server.close(); process.exit(2);
 }
 // One page in its own browser context: load it, wait for it to settle, and
-// answer its result, the instantiateStreaming count, the requests served and
+// answer its result, both compilation counts, the requests served and
 // the errors it raised.
 async function runPage(html) {
   served.length = 0;
   const context = await browser.newContext();
+  if (html === "bad-stamp") {
+    await context.route("**/version.json*", route => route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ ...releaseStamp, stamped: true, wasmSha256: "0".repeat(64) }),
+    }));
+  }
   const page = await context.newPage();
   const pageErrors = [];
   const consoleErrors = [];
@@ -150,6 +159,12 @@ async function runPage(html) {
   // Count the calls the entry makes, without changing what they do.
   await page.addInitScript(() => {
     window.__instantiateStreamingCalls = 0;
+    window.__instantiateCalls = 0;
+    const originalInstantiate = WebAssembly.instantiate;
+    WebAssembly.instantiate = function (...args) {
+      window.__instantiateCalls += 1;
+      return originalInstantiate.apply(this, args);
+    };
     const original = WebAssembly.instantiateStreaming;
     WebAssembly.instantiateStreaming = function (...args) {
       window.__instantiateStreamingCalls += 1;
@@ -159,7 +174,7 @@ async function runPage(html) {
   const failures = [];
   const t0 = Date.now();
   try {
-    await page.goto(`http://127.0.0.1:${PORT}/${html}`, { waitUntil: 'load', timeout: 20000 });
+    await page.goto(`http://127.0.0.1:${PORT}/${html === "bad-stamp" ? "index.html" : html}`, { waitUntil: 'load', timeout: 20000 });
     await page.waitForFunction(() => document.title !== 'loading', { timeout: 60000 });
   } catch (e) {
     failures.push(`${html}: page did not settle: ${e.message}`);
@@ -167,8 +182,9 @@ async function runPage(html) {
   const ms = Date.now() - t0;
   const result = await page.evaluate(() => window.__result).catch(() => null);
   const calls = await page.evaluate(() => window.__instantiateStreamingCalls).catch(() => null);
+  const byteCalls = await page.evaluate(() => window.__instantiateCalls).catch(() => null);
   await context.close().catch(() => {});
-  return { failures, ms, result, calls, served: [...served], pageErrors, consoleErrors };
+  return { failures, ms, result, calls, byteCalls, served: [...served], pageErrors, consoleErrors };
 }
 
 const failures = [];
@@ -176,7 +192,8 @@ const notes = [];
 const common = (html, run, wasmName) => {
   const check = (ok, what) => { if (!ok) failures.push(`${html}: ${what}`); };
   failures.push(...run.failures);
-  check(run.calls === 1, `WebAssembly.instantiateStreaming calls: ${run.calls}, expected 1`);
+  check(run.calls === (stamped ? 0 : 1), `WebAssembly.instantiateStreaming calls: ${run.calls}, expected ${stamped ? 0 : 1}`);
+  check(run.byteCalls === (stamped ? 1 : 0), `WebAssembly.instantiate calls: ${run.byteCalls}, expected ${stamped ? 1 : 0}`);
   const wasmServed = run.served.filter((s) => s.urlPath.endsWith('.wasm'));
   check(wasmServed.length === 1 && wasmServed[0].type === 'application/wasm' &&
         wasmServed[0].urlPath.endsWith('/' + wasmName),
@@ -204,6 +221,15 @@ const common = (html, run, wasmName) => {
   notes.push(`full entry: ${run.ms} ms to settle`);
 }
 
+// A wrong release digest must refuse the engine before either compilation path.
+{
+  const run = await runPage('bad-stamp');
+  failures.push(...run.failures);
+  if (!run.result?.error?.includes('not the engine of this release'))
+    failures.push('bad stamp: expected the engine-integrity error');
+  if (run.calls !== 0 || run.byteCalls !== 0)
+    failures.push('bad stamp: engine compiled before integrity refusal');
+}
 await browser.close().catch(() => {});
 server.close();
 
@@ -212,7 +238,7 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(`PASS npm_browser_smoke: parse, SELECT, canonicalize, xpathEval, openStore ` +
-  `over fetch; instantiateStreaming called once and the wasm served as application/wasm; ` +
+  `over fetch; ${stamped ? "digest-checked byte compilation" : "streaming compilation"}; bad stamp refused before compilation; wasm served as application/wasm; ` +
   `${notes.join(', ')}`);
 process.exit(0);
 DRIVER_EOF
