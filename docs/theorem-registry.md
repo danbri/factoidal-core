@@ -3625,3 +3625,16 @@ input membership with a `SoundReasoner`'s regime soundness, not completeness.
 The public closure normalizer's wider agreement remains open. See the
 [producer and execution-boundary record](20261031-compositor-union-handoff.md)
 and https://github.com/danbri/factoidal/issues/1214 (compositor links).
+
+
+### Checked normalization follow-up (2026-10-31)
+
+`RDF/DatasetNormalizePreservation.lean` proves exact default-graph list and
+membership preservation for set inputs passing roundTripSafe. The actual
+`Wasm/Ops/Reason.lean` producer is connected by
+`closureStreamOf_rdfs_safe_output`, `closureStreamOf_rdfs_safe_sound` and
+`closureStreamOf_union_rdfs_handoff`. The success-output equality excludes
+substituting an empty subset for the existing algorithm. This is not an RDFS
+completeness or output-existence theorem. Accepted parser fallbacks remain
+outside this checked profile; empty named-graph declarations can be dropped.
+See the [normalization record](20261031-union-rdfs-normalization-preservation.md).

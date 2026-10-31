@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-10-31 | [Checked union-to-RDFS normalization preservation](20261031-union-rdfs-normalization-preservation.md) | 14f7a1f15 | current |
 | 2026-10-31 | [Concrete compositor union handoff](20261031-compositor-union-handoff.md) | cee2a223e | current |
 | 2026-10-31 | [Readable compositor evidence](20261031-compositor-evidence-explanations.md) | this commit | current |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |
