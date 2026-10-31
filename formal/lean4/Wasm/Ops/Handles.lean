@@ -67,6 +67,7 @@ cannot reach the store and answers "unknown op" for them.
 -/
 import Std.Data.HashMap
 import L4Factoidal.Dataflow.Reader
+import L4Factoidal.Dataflow.GraphProjection
 import L4Factoidal.Dataflow.Writer
 import Wasm.Ops.Parse
 import Wasm.Ops.Query
@@ -1076,16 +1077,24 @@ def datasetGraphAsDefault (h graphJson : String) : IO String :=
       if j.getString? "type" == some "default" then
         storeNewHandle { default := ds.default, named := [] } prefixes
       else if j.getString? "type" == some "union" then
-        -- every quad with its graph name dropped, each triple once
-        let ts := (ds.default ++ ds.named.flatMap (·.graph)).foldl
-          (fun (seen, acc) t => if seen.contains t then (seen, acc) else (seen.insert t, t :: acc))
-          ((∅ : Std.HashSet Triple), ([] : List Triple))
-        storeNewHandle { default := ts.2.reverse, named := [] } prefixes
+        storeNewHandle (L4Factoidal.Dataflow.unionDefault ds) prefixes
       else match TermJson.decodeSubject j with
         | none => pure (errJson "datasetGraphAsDefault: a graph name is an IRI or a blank node")
         | some g =>
           let ts := (ds.named.filter (·.name == g)).flatMap (·.graph)
           storeNewHandle { default := ts, named := [] } prefixes
+
+/-- The actual public union operation delegates to the proved projection.
+The selector premises only recognize its parsed input; storeNewHandle then
+certifies the result, whose RDF membership is unionDefault_certified_graph. -/
+theorem datasetGraphAsDefault_union_producer (h options : String) (j : Json)
+    (parsed : parseJson? options = some j)
+    (selected : j.getString? "type" = some "union") :
+    datasetGraphAsDefault h options = withHandleDataset h (fun ds prefixes =>
+      storeNewHandle (L4Factoidal.Dataflow.unionDefault ds) prefixes) := by
+  simp [datasetGraphAsDefault, parsed, selected]
+
+#print axioms datasetGraphAsDefault_union_producer
 
 /-- `datasetIsomorphic(handle1, handle2)` — `Dataset.isomorphicOutcome`
 (RDF 1.1 Concepts §3.6 and §4; blank nodes inside triple terms included):
