@@ -223,3 +223,9 @@ Update the dated repair note, assurance register, affected skills and
 worknote index when new evidence changes a claim. Preserve contrary evidence
 and unresolved interpretation questions. Link them rather than hiding them
 behind an aggregate conformance percentage.
+
+
+Concrete graph-link example: [the public union adapter record](../../docs/20261031-compositor-union-handoff.md)
+connects `datasetGraphAsDefault` to `unionDefault_certified_graph`, including a
+mutation of the actual producer. Its sound-reasoner handoff does not discharge
+the separate public closure normalizer's source-preservation obligation.
