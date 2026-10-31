@@ -106,9 +106,12 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: python3 tools/lean-hygiene-audit.py --build-log "$RUNNER_TEMP/lake-build.log"
 
-      - name: Build QT4 runner for resource-base regressions
+      - name: Build QT4 runner and native dispatch for regressions
         working-directory: formal/lean4
-        run: lake build l4qt4
+        run: lake build l4qt4 l4wasm-cli
+
+      - name: Valid IETF dates return correct values without panic diagnostics
+        run: node --test tests/xpath4/parse-ietf-date-native.test.mjs
 
       - name: QT4 external-query and inline-stylesheet resource bases
         run: bash tests/qt4-resource-base/run.sh

@@ -673,6 +673,7 @@ import L4Factoidal.XPath.Expr
 import L4Factoidal.XPath.Eval
 import L4Factoidal.XPath.ExprTests
 import L4Factoidal.XPath4.NamespaceBridge
+import L4Factoidal.XPath4.FormatIetfTests
 import L4Factoidal.XSLT4.QtFnTransformTests
 import L4Factoidal.HTTP.Server
 import L4Factoidal.HTTP.Multipart
