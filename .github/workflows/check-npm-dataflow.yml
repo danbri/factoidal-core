@@ -21,6 +21,9 @@ on:
       - 'npm/**'
       - 'formal/lean4/**'
       - 'tests/dataflow/**'
+      - 'tests/hub/compositor_xml_admission_test.mjs'
+      - 'docs/web/hub/data-compositor/pipeline.mjs'
+      - 'docs/web/hub/data-compositor/fixtures.mjs'
       - 'tests/foundation/**'
       - 'foundation/**'
       - 'tools/**'
@@ -101,6 +104,19 @@ jobs:
           rc=0
           npm test 2>&1 | tee "$RUNNER_TEMP/npm-suite.txt" || rc=$?
           echo "$rc" > "$RUNNER_TEMP/npm-suite.rc"
+      - name: Compositor XML representability (separate expected-defect bucket)
+        shell: bash
+        env:
+          FACTOIDAL_COMPOSITOR_TEST_ENGINE: file://${{ github.workspace }}/npm/factoidal/index.mjs
+        run: |
+          set -euo pipefail
+          node --test tests/hub/compositor_xml_admission_test.mjs 2>&1 | tee "$RUNNER_TEMP/compositor-xml-admission.txt"
+          grep -Eq '^# tests 3$' "$RUNNER_TEMP/compositor-xml-admission.txt"
+          grep -Eq '^# skipped 0$' "$RUNNER_TEMP/compositor-xml-admission.txt"
+          xfails=$(grep -Ec '^ok [0-9]+ - xfail:' "$RUNNER_TEMP/compositor-xml-admission.txt" || true)
+          [ "$xfails" -eq 1 ]
+          echo "Compositor XML boundary: 2 controls; 1 expected serializer defect (not a conformance pass)."
+
       - name: Result (fail and skip counts)
         shell: bash
         env:
