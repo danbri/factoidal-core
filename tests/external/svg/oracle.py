@@ -61,13 +61,20 @@ def metrics(actual,expected,fuzzy):
     return mr[0]<=maximum<=mr[1] and pr[0]<=different<=pr[1],{'maxChannelDifference':maximum,'differentPixels':different},(aw,ah,bytes(diff))
 
 
-def compare_oracle(directory,command=None,output=None):
+def compare_oracle(directory,command=None,output=None,candidate_directory=None):
     root=Path(directory); manifest,errors=suite.fixtures()
     if errors: raise ValueError('; '.join(errors))
     report=json.loads((root/'oracle.json').read_text())
     if report['revision']!=manifest['revision'] or [(x['test'],x['reference']) for x in report['cases']]!=[(x['test'],x['reference']) for x in manifest['cases']]: raise ValueError('oracle inventory/pin mismatch')
     if report.get('viewport')!={'width':800,'height':600,'deviceScaleFactor':1} or report.get('scripts') is not False or report.get('externalFetch') is not False:
         raise ValueError('oracle capture conditions differ')
+    capture=None
+    if candidate_directory:
+        capture=json.loads((Path(candidate_directory)/'candidate.json').read_text())
+        if capture['revision']!=manifest['revision'] or [(x['test'],x['reference']) for x in capture['cases']]!=[(x['test'],x['reference']) for x in manifest['cases']]:
+            raise ValueError('candidate inventory/pin mismatch')
+        if capture.get('backend')!='browser-raw-webgpu' or capture.get('viewport')!={'width':800,'height':600,'deviceScaleFactor':1}:
+            raise ValueError('candidate backend/viewport differs')
     out=Path(output or root/'comparison');out.mkdir(parents=True,exist_ok=True)
     results=[]
     for i,(case,oracle) in enumerate(zip(manifest['cases'],report['cases'])):
@@ -85,9 +92,20 @@ def compare_oracle(directory,command=None,output=None):
             equal,detail,_=metrics(images['test'],images['reference'],case['fuzzy'])
             row['independentRelation']={'matches':equal,**detail}
             if not equal: raise ValueError('independent browser disagrees with original reftest relation')
-            if not command: raise ValueError('candidate GPU command not supplied')
             actual=out/f'{i:02}-actual.ppm'
-            state,detail=suite.invoke(command,suite.ROOT/'upstream'/case['test'],actual,False,60)
+            if capture:
+                candidate=capture['cases'][i]
+                if candidate.get('sourceSha256')!=hashlib.sha256((suite.ROOT/'upstream'/case['test']).read_bytes()).hexdigest(): raise ValueError('candidate source hash mismatch')
+                state=candidate['status'];detail=candidate.get('detail',candidate.get('reason',''))
+                if state not in ('accepted','unsupported','rejected','unavailable'): raise ValueError('invalid candidate state')
+                if state=='accepted':
+                    image=candidate['image']
+                    if Path(image['file']).name!=image['file']: raise ValueError('unsafe candidate filename')
+                    actual=Path(candidate_directory)/image['file']
+                    if hashlib.sha256(actual.read_bytes()).hexdigest()!=image['sha256']: raise ValueError('candidate image hash mismatch')
+            elif command:
+                state,detail=suite.invoke(command,suite.ROOT/'upstream'/case['test'],actual,False,60)
+            else: raise ValueError('candidate GPU command/capture not supplied')
             row['candidateLog']=detail
             if state!='accepted': row.update(status=state,detail=detail)
             else:
@@ -105,12 +123,14 @@ def compare_oracle(directory,command=None,output=None):
             for block in iter(lambda:stream.read(1048576),b''): digest.update(block)
         executable_hash=digest.hexdigest()
         candidate={'command':command,'executableSha256':executable_hash}
-    result={'candidate':candidate,'oracleCapture':{k:report.get(k) for k in ('browserVersion','browserExecutableSha256','host','fonts','viewport','scripts','externalFetch','scope')},'revision':manifest['revision'],'mode':'independent-browser-full-image','oracleBrowser':report.get('browserVersion'),'total':len(results),'counts':{s:sum(x['status']==s for x in results) for s in suite.STATES},'results':results}
+    captured_metadata={k:capture.get(k) for k in ('backend','host','browserVersion','browserExecutableSha256','typescript','viewport','candidateSources','adapters')} if capture else None
+    result={'candidateCapture':captured_metadata,'candidate':candidate,'oracleCapture':{k:report.get(k) for k in ('browserVersion','browserExecutableSha256','host','fonts','viewport','scripts','externalFetch','scope')},'revision':manifest['revision'],'mode':'independent-browser-full-image','oracleBrowser':report.get('browserVersion'),'total':len(results),'counts':{s:sum(x['status']==s for x in results) for s in suite.STATES},'results':results}
     (out/'report.json').write_text(json.dumps(result,indent=2)+'\n');return result
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--oracle',required=True);parser.add_argument('--engine');parser.add_argument('--output');args=parser.parse_args()
-    result=compare_oracle(args.oracle,[str(Path(args.engine).resolve())] if args.engine else None,args.output)
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--oracle',required=True);parser.add_argument('--engine');parser.add_argument('--candidate');parser.add_argument('--output');args=parser.parse_args()
+    if args.engine and args.candidate: parser.error('choose --engine or --candidate')
+    result=compare_oracle(args.oracle,[str(Path(args.engine).resolve())] if args.engine else None,args.output,args.candidate)
     print(json.dumps({'total':result['total'],'counts':result['counts']}))
     raise SystemExit(0 if result['counts']['match']==result['total'] else 1)

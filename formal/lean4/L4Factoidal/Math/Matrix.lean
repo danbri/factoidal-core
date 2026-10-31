@@ -13,9 +13,10 @@ The F* module indexes a matrix by its dimensions IN THE TYPE
 precondition a caller cannot even form a term without satisfying, and
 the result shape is PROVEN rather than checked.
 
-This port carries the shape two ways instead. `rect` and the
-`Rect`-preservation theorems below state it, and the DYNAMIC layer
-(`MRes`, `dynAdd`, `dynMul`, …) checks it at run time — which is what
+This port checks shape at run time. `rect` is an executable predicate;
+this module currently contains no shape-preservation or algebra-correctness
+theorems. The DYNAMIC layer (`MRes`, `dynAdd`, `dynMul`, …) checks shape,
+which is what
 a MathML front end needs anyway, since dimensions come from runtime
 XML and no static type can know them. A mismatch is an explicit
 `undef` carrying its REASON, never a bogus matrix. The difference

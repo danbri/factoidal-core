@@ -51,7 +51,7 @@ done
 # Fresh RDF/Turtle/JSON closure for the FOAF view. No JavaScript RDF parser.
 CORE_MODULES=(RDF/XmlCanon RDF/Core RDF/Graph Encoding/Hex Syntax/Lexing
   Syntax/NTriples Syntax/IriResolve RDF/IriSyntax NatBounds Syntax/Turtle
-  JSON/Value JSON/Parser JSON/Serialize UI/Geometry UI/LayoutPolicy UI/PolicyProtocol UI/Presentation)
+  JSON/Value JSON/Parser JSON/Serialize UI/Geometry UI/LayoutPolicy UI/PolicyProtocol UI/Presentation Math/Affine Tdb2/Format)
 CLOSURE=lean-4.33.1
 for module in "${CORE_MODULES[@]}"; do
   SOURCE="$PROJECT/L4Factoidal/$module.lean"
@@ -64,6 +64,12 @@ for module in "${CORE_MODULES[@]}"; do
     printf '%s' "$CLOSURE" > "$BUILD/ir/$NAME.stamp"
   fi
 done
+# Exact TOAN arithmetic/matrix modules are native test oracles, not GPU data.
+for module in MathML/Rat Math/Matrix; do
+  mkdir -p "$BUILD/olean/L4Factoidal/$(dirname "$module")"
+  "$TOOLCHAIN/bin/lean" -R "$PROJECT" -o "$BUILD/olean/L4Factoidal/$module.olean" "$PROJECT/L4Factoidal/$module.lean"
+done
+"$TOOLCHAIN/bin/lean" -R "$PROJECT" --run "$PROJECT/L4Factoidal/Math/AffineTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB/foaf" -o "$BUILD/olean/FoafGraph.olean" \
   -c "$BUILD/ir/FoafGraph.c" "$LAB/foaf/FoafGraph.lean"
 for name in Graphics Font Geometry UI Demos SVG SceneSVG FoafNaut FoafPresentation FoafLiveBridge RenderPlan PolicyBridge; do
@@ -77,6 +83,7 @@ done
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/FoafPresentationTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SceneSVGTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGPrerequisiteTests.lean"
+"$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGTransformTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGCapacityTests.lean"
 for module in LayoutPolicyTests PolicyProtocolTests PresentationTests; do
   "$TOOLCHAIN/bin/lean" -R "$PROJECT" "$PROJECT/L4Factoidal/UI/$module.lean"
@@ -113,7 +120,7 @@ link_engine() {
 link_engine graphics-generator _graphics_call,_graphics_free "$BUILD/obj/Graphics.o" "$BUILD/obj/graphics_shim.o"
 link_engine ui-engine _ui_init,_ui_step,_ui_free "$BUILD/obj/Graphics.o" "$BUILD/obj/UI.o" "$BUILD/obj/ui_shim.o"
 link_engine demos-engine _demos_init,_demos_step,_demos_free "$BUILD/obj/Graphics.o" "$BUILD/obj/Demos.o" "$BUILD/obj/demos_shim.o"
-link_engine svg-engine _svg_call,_svg_pixel,_svg_free "$BUILD/obj/Graphics.o" "$BUILD/obj/SVG.o" "$BUILD/obj/svg_shim.o" "$BUILD/obj/"XML_*.o
+link_engine svg-engine _svg_call,_svg_pixel,_svg_free "$BUILD/obj/Graphics.o" "$BUILD/obj/SVG.o" "$BUILD/obj/Core_Math_Affine.o" "$BUILD/obj/Core_Tdb2_Format.o" "$BUILD/obj/svg_shim.o" "$BUILD/obj/"XML_*.o
 link_engine render-plan _render_plan,_render_plan_free "$BUILD/obj/RenderPlan.o" "$BUILD/obj/render_plan_shim.o"
 link_engine layout-policy-engine _layout_policy,_layout_policy_free "$BUILD/obj/PolicyBridge.o" "$BUILD/obj/policy_shim.o" "$BUILD/obj/"Core_*.o
 link_engine foafnaut-engine _foafnaut_init,_foafnaut_init_policy,_foafnaut_step,_foafnaut_picture,_foafnaut_picture_checked,_foafnaut_export_svg,_foafnaut_text,_foafnaut_free,_foafnaut_live_start,_foafnaut_live_event,_foafnaut_live_text,_foafnaut_live_tick,_foafnaut_live_acknowledge,_foafnaut_live_export_svg,_foafnaut_live_dispose \

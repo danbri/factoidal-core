@@ -102,7 +102,8 @@ Deno.test("SVG zero dimensions disable painting; negative geometry is an explici
  const e=await loadSVG();const a=e.compile(wrap('<rect width="0" height="20"/><circle r="0"/><ellipse rx="0" ry="8"/>'));
  equal(a.primitiveCount,0);equal(e.sample(wrap(''),10,10),[255,255,255]);
  for(const shape of ['<rect width="-1" height="5"/>','<circle r="-1"/>','<ellipse rx="-1" ry="4"/>'])rejects(()=>e.compile(wrap(shape)),"negative");
- rejects(()=>e.compile(wrap('<rect width="0" height="20" transform="translate(1)"/>')),"unsupported attribute");
+ equal(e.compile(wrap('<rect width="0" height="20" transform="translate(1)"/>')).primitiveCount,0);
+ rejects(()=>e.compile(wrap('<rect width="0" height="20" transform="perspective(1)"/>')),"unsupported transform");
 });
 
 Deno.test("SVG fractional/tiny root viewport and explicit embedding viewport have valid artifacts",async()=>{
@@ -119,7 +120,7 @@ Deno.test("SVG fractional/tiny root viewport and explicit embedding viewport hav
 Deno.test("SVG refuses unsupported features rather than silently losing rendering semantics",async()=>{
  const e=await loadSVG();
  for(const element of ['path','polyline','text','use','image','foreignObject','defs','style','linearGradient','filter','clipPath','mask','script','svg'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
- for(const attrs of ['style="fill:red"','class="red"','transform="translate(1)"','stroke-dasharray="2 2"','stroke-linecap="square"','stroke-linejoin="bevel"','rx="2"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
+ for(const attrs of ['style="fill:red"','class="red"','transform="perspective(1)"','stroke-dasharray="2 2"','stroke-linecap="square"','stroke-linejoin="bevel"','rx="2"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
  rejects(()=>e.compile('<?xml-stylesheet href="a.css"?>'+wrap('')),"processing instruction");
  rejects(()=>e.compile('<!DOCTYPE svg>'+wrap('')),"DOCTYPE");
  rejects(()=>e.compile('<?xml version="1.0" encoding="ISO-8859-1"?>'+wrap('')),"UTF-8");
@@ -171,4 +172,36 @@ Deno.test("SVG non-rendering metadata and missing local paint fallback follow up
   '<rect width="20" height="20" fill="url(other.svg#x) green"/>',
   '<rect id="x" width="20" height="20" fill="url(#%78) green"/>',
   '<rect width="20" height="20" fill="url(#bad id) green"/>'])rejects(()=>e.compile(wrap(body)),"unsupported");
+});
+
+Deno.test("SVG affine transforms compose in SVG order and preserve local stroke geometry",async()=>{
+ const e=await loadSVG();
+ const doc=(t:string,shape='<rect width="8" height="6"/>')=>wrap(`<g transform="${t}">${shape}</g>`);
+ equal(e.sample(doc('translate(10,20) scale(2,3)'),11,21),[0,0,0]);
+ equal(e.sample(doc('scale(2,3) translate(10,20)'),11,21),[255,255,255]);
+ const nested=wrap('<g transform="translate(10,20)"><g transform="scale(2,3)"><rect width="8" height="6"/></g></g>');
+ for(const [x,y] of [[10,20],[25,37],[26,38],[9,20]])equal(e.sample(nested,x,y),e.sample(doc('translate(10,20)scale(2,3)'),x,y));
+ equal(e.sample(doc('rotate(90,10,10)','<rect x="10" y="10" width="6" height="3"/>'),8,12),[0,0,0]);
+ equal(e.sample(doc('skewX(45)','<rect width="4" height="4"/>'),5,2),[0,0,0]);
+ equal(e.sample(doc('skewY(45)','<rect width="4" height="4"/>'),2,5),[0,0,0]);
+ equal(e.sample(doc('scale(-1,1)','<rect x="-20" y="5" width="10" height="10"/>'),15,10),[0,0,0]);
+ // Independent analytic local-circle outline under a general affine CTM.
+ const [a,b,c,d,tx,ty]=[2,1,-.5,1,20,10],det=a*d-b*c;
+ const circle=doc(`matrix(${a},${b},${c},${d},${tx},${ty})`,'<circle cx="5" cy="5" r="4" fill="none" stroke="black" stroke-width="2"/>');
+ for(let y=0;y<40;y+=3)for(let x=0;x<50;x+=3){
+  const dx=x+.5-tx,dy=y+.5-ty,lx=(d*dx-c*dy)/det,ly=(-b*dx+a*dy)/det;
+  const r2=(lx-5)**2+(ly-5)**2;equal(e.sample(circle,x,y),r2>=9&&r2<=25?[0,0,0]:[255,255,255]);
+ }
+ const tiny=e.compile(doc('scale(1000)scale(1000)scale(1000)','<circle r="3"/>'));
+ equal(tiny.data.slice(-8),[1e-9,0,0,0,0,1e-9,0,0]);
+ equal(e.compile(wrap('<rect x=".0000001" width="1" height="1"/>')).data[8],1e-7);
+ const baseline=e.compile(wrap('<circle r="3"/>')),identity=e.compile(doc('translate(0) scale(1)','<circle r="3"/>'));
+ equal(identity.data,baseline.data);equal(e.compile(doc('translate(1)','<circle r="3"/>')).data.length,baseline.data.length+8);
+ const mixed=wrap('<rect width="2" height="2" transform="translate(5)"/><circle cx="20" cy="20" r="3"/><polygon points="0,0 5,0 0,5" transform="translate(30,30)"/>');
+ equal(e.sample(mixed,20,20),[0,0,0]);equal(e.sample(mixed,31,31),[0,0,0]);
+ assert(e.compile(mixed).wgsl.includes('var p=worldP')&&e.compile(mixed).wgsl.includes('header.w>=2u'),"Missing dynamic inverse CTM lowering");
+ equal(e.sample(doc('matrix(1,2,2,4,0,0)','<rect width="64" height="64"/>'),5,5),[255,255,255]);
+ for(const t of ['matrix(1,2)','translate(1),','scale(1e-12)','skewX(90)','translate(1)'.repeat(33)])rejects(()=>e.compile(doc(t)),"SVG profile:");
+ rejects(()=>e.compile(wrap('<circle r="1" transform="translate(1)"/>'.repeat(10000))),"storage data");
+ rejects(()=>e.compile('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" transform="translate(1)"/>'),"unsupported attribute");
 });

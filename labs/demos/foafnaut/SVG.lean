@@ -1,4 +1,6 @@
 import Graphics
+import L4Factoidal.Math.Affine
+import L4Factoidal.Tdb2.Format
 import L4Factoidal.XML.NamespaceView
 
 /- Isolated strict SVG document reader, not SVG Tiny/full conformance.
@@ -62,6 +64,61 @@ private def numbers (input : String) : Except String (List Float) := do
   let parts := groups.flatMap fun g =>
     ((g.replace "\t" " " |>.replace "\n" " " |>.replace "\r" " ").splitOn " ").filter (· != "")
   parts.mapM number
+
+/- Column-vector affine matrices: parent.compose local applies local first.
+   Sampling uses the inverse CTM, so nonuniform scale/shear also transform
+   local stroke outlines rather than merely scaling a stroke-width scalar. -/
+abbrev Transform := L4Factoidal.Math.Affine2 Float
+private def floatOps : L4Factoidal.Math.AffineScalarOps Float :=
+  .float
+private def identityTransform : Transform := L4Factoidal.Math.Affine2.identity floatOps
+private def Transform.compose (p q : Transform) : Transform := L4Factoidal.Math.Affine2.compose floatOps p q
+private def Transform.det (t : Transform) : Float := L4Factoidal.Math.Affine2.determinant floatOps t
+private def Transform.inverse (t : Transform) : Transform :=
+  -- A singular CTM paints nothing; its harmless identity record is never painted.
+  (L4Factoidal.Math.Affine2.inverse? floatOps t).getD identityTransform
+private def Transform.identity (t : Transform) : Bool :=
+  t.a == 1 && t.b == 0 && t.c == 0 && t.d == 1 && t.e == 0 && t.f == 0
+private def Transform.apply (t : Transform) (x y : Float) : Float × Float :=
+  L4Factoidal.Math.Affine2.applyPoint floatOps t x y
+private def checkedTransform (t : Transform) : Except String Transform := do
+  let values (m : Transform) := [m.a,m.b,m.c,m.d,m.e,m.f]
+  if !(values t).all (fun x => x.isFinite && x.abs <= 1000000000) || !t.det.isFinite then
+    throw "transform matrix exceeds finite profile bound"
+  if t.det != 0 && !(values t.inverse).all (fun x => x.isFinite && x.abs <= 1000000000) then
+    throw "inverse transform exceeds finite profile bound"
+  return t
+private def transformFunction (name : String) (values : List Float) : Except String Transform := do
+  let translate (x y : Float) : Transform := ⟨1,0,0,1,x,y⟩
+  let rotate (degrees : Float) : Transform :=
+    let angle := degrees*3.141592653589793/180
+    ⟨angle.cos,angle.sin,-angle.sin,angle.cos,0,0⟩
+  let result ← match name, values with
+    | "matrix",[a,b,c,d,e,f] => pure (⟨a,b,c,d,e,f⟩ : Transform)
+    | "translate",[x] => pure (translate x 0)
+    | "translate",[x,y] => pure (translate x y)
+    | "scale",[x] => pure (⟨x,0,0,x,0,0⟩ : Transform)
+    | "scale",[x,y] => pure (⟨x,0,0,y,0,0⟩ : Transform)
+    | "rotate",[a] => pure (rotate a)
+    | "rotate",[a,x,y] => pure ((translate x y).compose (rotate a) |>.compose (translate (-x) (-y)))
+    | "skewX",[a] => pure (⟨1,0,(a*3.141592653589793/180).tan,1,0,0⟩ : Transform)
+    | "skewY",[a] => pure (⟨1,(a*3.141592653589793/180).tan,0,1,0,0⟩ : Transform)
+    | _,_ => throw s!"unsupported transform function/arity: {name}"
+  checkedTransform result
+private def transformList (source : String) : Except String Transform := do
+  let source := trim source
+  if source.isEmpty then return identityTransform
+  let parts := source.splitOn ")"
+  if trim (parts.getLast!) != "" then throw "unterminated/invalid transform list"
+  if parts.length > 33 then throw "transform list exceeds 32 functions"
+  let mut result : Transform := identityTransform
+  for (part,i) in parts.dropLast.zipIdx do
+    let part := trim part
+    let part := if i > 0 && part.startsWith "," then trim (String.ofList (part.toList.drop 1)) else part
+    let [name,args] := part.splitOn "(" | throw "invalid transform syntax"
+    let nextTransform ← transformFunction (trim name) (← numbers args)
+    result ← checkedTransform (result.compose nextTransform)
+  return result
 
 structure Color where
   r : Float
@@ -196,6 +253,7 @@ structure Primitive where
   geometry : Geometry
   style : Style
   opacity : Float := 1
+  transform : Transform := identityTransform
   deriving Repr
 private def strokeEnabled (style : Style) : Bool :=
   match style.stroke with | .none => false | _ => style.strokeWidth > 0
@@ -231,11 +289,11 @@ private def readGeometry (tag : String) (attrs : List NamespaceAttribute) (style
   else throw s!"unsupported SVG element: {tag}"
 private def extraAttrs (tag : String) : List String :=
   match tag with
-  | "rect" => ["x","y","width","height","opacity"]
-  | "circle" => ["cx","cy","r","opacity"]
-  | "ellipse" => ["cx","cy","rx","ry","opacity"]
-  | "line" => ["x1","y1","x2","y2","opacity"]
-  | "polygon" => ["points","opacity"]
+  | "rect" => ["x","y","width","height","opacity","transform"]
+  | "circle" => ["cx","cy","r","opacity","transform"]
+  | "ellipse" => ["cx","cy","rx","ry","opacity","transform"]
+  | "line" => ["x1","y1","x2","y2","opacity","transform"]
+  | "polygon" => ["points","opacity","transform"]
   | _ => []
 private def whitespace (s : String) : Bool := s.toList.all isXmlSpace
 mutual
@@ -243,7 +301,7 @@ private def metadata (node : NamespaceNode) : Except String Unit := do
   match node with
   | .other (.text _) | .other (.cdata _) | .other (.comment _) => pure ()
   | _ => throw "descriptive metadata only supports text/comments"
-private def readNode (ids : List String) (depth : Nat) (style : Style) (node : NamespaceNode) : Except String (List Primitive) := do
+private def readNode (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (node : NamespaceNode) : Except String (List Primitive) := do
   if depth > 32 then throw "SVG group nesting exceeds 32"
   match node with
   | .other (.comment _) => pure []
@@ -263,28 +321,30 @@ private def readNode (ids : List String) (depth : Nat) (style : Style) (node : N
       for child in children do metadata child
       return []
     else if tag == "g" then
-      validateAttrs tag attrs []
+      validateAttrs tag attrs ["transform"]
+      let transform ← checkedTransform (parent.compose (← transformList ((attr attrs "transform").getD "")))
       let inherited ← readStyle ids attrs style
-      readChildren ids (depth+1) inherited children
+      readChildren ids transform (depth+1) inherited children
     else
       validateAttrs tag attrs (extraAttrs tag)
+      let transform ← checkedTransform (parent.compose (← transformList ((attr attrs "transform").getD "")))
       let inherited ← readStyle ids attrs style
       let geometry ← readGeometry tag attrs inherited
       for child in children do
         match child with
         | .element n _ _ => if n.namespace_ == some svgURI && ["title","desc"].contains n.localPart then
-                              let _ ← readNode ids (depth+1) inherited child
+                              let _ ← readNode ids transform (depth+1) inherited child
                               pure ()
                             else throw "graphics children unsupported"
         | .other (.comment _) => pure ()
         | .other (.text s) | .other (.cdata s) => if !whitespace s then throw "text painting unsupported"
         | _ => throw "processing instruction unsupported"
       let opacity ← match attr attrs "opacity" with | none => pure 1 | some s => number s
-      return geometry.toList.map fun g => {geometry:=g,style:=inherited,opacity:=max 0 (min 1 opacity)}
-private def readChildren (ids : List String) (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List Primitive) := do
+      return geometry.toList.map fun g => {geometry:=g,style:=inherited,opacity:=if transform.det == 0 then 0 else max 0 (min 1 opacity),transform}
+private def readChildren (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List Primitive) := do
   let mut out : Array Primitive := #[]
   for node in nodes do
-    let chunk ← readNode ids depth style node
+    let chunk ← readNode ids parent depth style node
     if out.size+chunk.length > maxPrimitives then throw "painted primitive count exceeds 12288"
     out := out ++ chunk.toArray
   return out.toList
@@ -366,7 +426,7 @@ def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String S
   let mapping ← viewportMapping w h attrs
   let ids ← nodeIds root
   let inherited ← readStyle ids attrs {}
-  let primitives ← readChildren ids 0 inherited children
+  let primitives ← readChildren ids identityTransform 0 inherited children
   return {width:=w.ceil.toUInt32.toNat,height:=h.ceil.toUInt32.toNat,mapping,primitives}
 
 /- Typed conditions reuse Graphics.Expr's CPU interpreter and WGSL lowering.
@@ -471,16 +531,21 @@ private def geometryRows : Geometry → List Float
   | .circle x y r => [x,y,r,0]
   | .line x y u v => [x,y,u,v]
   | .polygon _ => [0,0,0,0]
+private def Primitive.effectiveOpacity (p : Primitive) : Float :=
+  if p.transform.det == 0 then 0 else p.opacity
 private def Primitive.rows (p : Primitive) : List Float :=
   let (tag,count) : Nat × Nat := match p.geometry with
     | .rect .. => (1,0) | .circle .. => (2,0) | .ellipse .. => (3,0)
     | .line .. => (4,0) | .polygon points => (5,points.length)
   geometryRows p.geometry ++ [Float.ofNat tag,Float.ofNat count,
-    if p.style.rule == .evenodd then 1 else 0,if p.style.lineCap == .round then 1 else 0] ++ resolved p.style.fill p.style p.style.fillOpacity ++
-  resolved p.style.stroke p.style p.style.strokeOpacity ++ [p.style.strokeWidth,p.opacity,0,0] ++
+    if p.style.rule == .evenodd then 1 else 0,(if p.style.lineCap == .round then 1 else 0)+(if p.transform.identity then 0 else 2)] ++ resolved p.style.fill p.style p.style.fillOpacity ++
+  resolved p.style.stroke p.style p.style.strokeOpacity ++ [p.style.strokeWidth,p.effectiveOpacity,0,0] ++
   (match p.geometry with
    | .polygon points => points.flatMap (fun q => [q.x,q.y]) ++ (if points.length%2 == 1 then [0,0] else [])
-   | _ => [])
+   | _ => []) ++
+  (if p.transform.identity then [] else
+    let t := p.transform.inverse
+    [t.a,t.c,t.e,0,t.b,t.d,t.f,0])
 private def Scene.data (s : Scene) : Array Float :=
   ([s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
     s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight] ++
@@ -519,20 +584,22 @@ private def Scene.wgsl (s : Scene) : String :=
   "let vertices=array<vec2f,3>(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));return vec4f(vertices[i],0,1); }\n" ++
   "@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {" ++
   "var rgb=vec3f(1.0);if any(pixel.xy>=params.rows[1].zw){return vec4f(rgb,1.0);}" ++
-  "let p=vec4f((pixel.xy-params.rows[0].zw)/params.rows[0].xy+params.rows[1].xy,0,1);" ++
+  "let worldP=vec4f((pixel.xy-params.rows[0].zw)/params.rows[0].xy+params.rows[1].xy,0,1);" ++
   "var base=2u;\n" ++
   s!"for(var primitive=0u;primitive<{s.primitives.length}u;primitive++)" ++ "{" ++
   "let header=vec4u(params.rows[base+1u]);let tag=header.x;let count=header.y;" ++
+  "var p=worldP;if(header.w>=2u){let tb=base+5u+(count+1u)/2u;let x=params.rows[tb];let y=params.rows[tb+1u];" ++
+  "p=vec4f(dot(x.xy,worldP.xy)+x.z,dot(y.xy,worldP.xy)+y.z,0,1);}" ++
   "var fillHit=false;var strokeHit=false;switch tag {\n" ++
   shaderCase 1 (.rect 0 0 0 0) ++ shaderCase 2 (.circle 0 0 0) ++ shaderCase 3 (.ellipse 0 0 0 0) ++
-  "case 4u: {if(header.w==1u){strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .round) ++
+  "case 4u: {if((header.w%2u)==1u){strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .round) ++
   ";}else{strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}}\n" ++
   "case 5u:{fillHit=polygonContains(base,count,header.z,p.xy);} default:{} }\n" ++
   "let fill=params.rows[base+2u];let stroke=params.rows[base+3u];var element=vec4f(0.0);" ++
   "if fillHit {element=vec4f(fill.rgb*fill.a,fill.a);}" ++
   "if strokeHit {element=vec4f(stroke.rgb*stroke.a,stroke.a)+element*(1.0-stroke.a);}" ++
   "let opacity=params.rows[base+4u].y;rgb=element.rgb*opacity+rgb*(1.0-element.a*opacity);" ++
-  "base+=5u+(count+1u)/2u;}return vec4f(rgb,1.0); }\n"
+  "base+=5u+(count+1u)/2u+select(0u,2u,header.w>=2u);}return vec4f(rgb,1.0); }\n"
 
 private def Scene.sample (s : Scene) (x y : Nat) : Color := Id.run do
   let screenX := Float.ofNat x+0.5
@@ -540,10 +607,12 @@ private def Scene.sample (s : Scene) (x y : Nat) : Color := Id.run do
   if screenX >= s.mapping.viewportWidth || screenY >= s.mapping.viewportHeight then return rgb 255 255 255
   let position := ((screenX-s.mapping.tx)/s.mapping.sx+s.mapping.minX,
     (screenY-s.mapping.ty)/s.mapping.sy+s.mapping.minY)
-  let env : Env := {data:=s.data,position}
+  let data := s.data
   let mut result := rgb 255 255 255
   let mut base := 8
   for primitive in s.primitives do
+    let localPoint := primitive.transform.inverse.apply position.1 position.2
+    let env : Env := {data,position:=localPoint}
     let fillHit := match primitive.geometry with
       | .polygon points => windingHit env base points.length primitive.style.rule
       | _ => (fillCondition primitive.geometry base).eval env
@@ -556,12 +625,18 @@ private def Scene.sample (s : Scene) (x y : Nat) : Color := Id.run do
     -- non-inherited opacity once to the whole element, including their overlap.
     let alpha := sa+fa*(1-sa)
     let premul : Color := ⟨stroke[0]!*sa+fill[0]!*fa*(1-sa),stroke[1]!*sa+fill[1]!*fa*(1-sa),stroke[2]!*sa+fill[2]!*fa*(1-sa)⟩
-    result := ⟨premul.r*primitive.opacity+result.r*(1-alpha*primitive.opacity),
-      premul.g*primitive.opacity+result.g*(1-alpha*primitive.opacity),
-      premul.b*primitive.opacity+result.b*(1-alpha*primitive.opacity)⟩
+    let opacity := primitive.effectiveOpacity
+    result := ⟨premul.r*opacity+result.r*(1-alpha*opacity),
+      premul.g*opacity+result.g*(1-alpha*opacity),
+      premul.b*opacity+result.b*(1-alpha*opacity)⟩
     base := base+primitive.rows.length
   return result
 private def Color.json (c : Color) : String := jsonArray ([c.r,c.g,c.b].map fun f => toString ((max 0 (min 255 (f*255))).round.toUInt32.toNat))
+private def floatJSON (x : Float) : String :=
+  let integer := x.toInt64.toInt
+  if Float.ofInt integer == x then toString integer
+  else L4Factoidal.Tdb2.javaDoubleString x.toBits
+
 private def Scene.json (s : Scene) : Except String String := do
   if s.data.size > maxDataFloats then throw "storage data exceeds 262144 floats"
   let rawProbes := [(1,1),(s.width/4,s.height/4),(s.width/2,s.height/2),
@@ -570,7 +645,7 @@ private def Scene.json (s : Scene) : Except String String := do
   let checks := probes.map fun (x,y) => "{\"x\":" ++ toString x ++ ",\"y\":" ++ toString y ++ ",\"rgb\":" ++ (s.sample x y).json ++ "}"
   return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
     ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.primitives.length ++
-    ",\"data\":" ++ jsonArray (s.data.toList.map toString) ++ ",\"wgsl\":" ++ quote s.wgsl ++ ",\"checks\":" ++ jsonArray checks ++ "}"
+    ",\"data\":" ++ jsonArray (s.data.toList.map floatJSON) ++ ",\"wgsl\":" ++ quote s.wgsl ++ ",\"checks\":" ++ jsonArray checks ++ "}"
 @[export svg_compile]
 def compile (xml : String) (width height : UInt32) : String :=
   match parse xml width.toNat height.toNat >>= Scene.json with

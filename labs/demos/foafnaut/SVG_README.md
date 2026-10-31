@@ -58,7 +58,7 @@ without claiming all their semantics or other SVG features are implemented.
 
 ## Explicit refusals and limits
 
-CSS style/class, transforms, paths, polylines, text/fonts, nested viewports,
+CSS style/class, root transforms, paths, polylines, text/fonts, nested viewports,
 images, use/links, scripting, animation, defs/gradients/patterns, filters, masks,
 clips, markers, rounded rects, conditional processing, visibility/display,
 paint-order changes, group opacity, square caps, custom joins/miterlimits,
@@ -134,4 +134,41 @@ The unchanged WPT `fallback-001.svg` and `fallback-002.svg` now compile and pass
 known green/white CPU sample regressions. This is compiler/CPU evidence, not a
 visual pass. See the [independent-image runner](../../../tests/external/svg/README.md)
 for the complete 38-case denominator, installed-browser oracle measurements and
-unavailable GPU results. Paths and transforms remain unsupported.
+GPU result boundaries. Paths remain unsupported; group/primitive affine transforms are described below.
+
+
+## Shared affine transforms and actual GPU evidence
+
+`Math/Affine.lean` provides typed six-coefficient affine values with explicit
+scalar operations. SVG uses its Float specialization for composition, inverse
+and point mapping; exact tests reuse existing MathML rational and TOAN matrix
+operations. Matrix/translate/scale/rotate (including a center)/skewX/skewY lists
+work on groups and painted primitives, with column-vector composition in SVG
+order. Both CPU hit predicates and generated WGSL evaluate the local shape using
+the inverse composed transform, including local stroke geometry under shear and
+nonuniform scale. Singular matrices have effective opacity zero; their identity
+inverse fallback cannot paint. Point/direction/normal and corner helpers are
+shared algebra APIs, not a new arbitrary-SVG UI policy or picking controller.
+
+Transform lists have at most 32 functions, existing numeric bounds still apply,
+and composed/inverse coefficients are finite and bounded by 1e9. Ill-conditioned
+input can be refused; these bounds are not a numerical stability theorem. Root
+transform, CSS transform-origin/transform-box and nested viewport interactions
+remain unsupported. Identity records keep the previous 20-float primitive layout;
+other records append eight inverse floats. Existing storage/primitive/input
+budgets remain unchanged. Data serialization reuses the existing TDB2 shortest
+Float formatter so small inverse coefficients survive JSON transport.
+
+The actual browser-host raw WebGPU track now has **2 matches, 23 unsupported and
+13 unavailable** out of the unchanged 38 WPT cases, with no mismatches/rejections.
+The two missing-paint fallback cases match every pixel of their independently
+captured 800×600 references, with zero channel difference. This uses installed
+Chrome 156.0.8078.76 and an Apple `metal-3` non-fallback adapter, the exact Lean
+SVG/WGSL compiler and existing Lean render-plan/WebGPU bridge. The browser does
+not interpret SVG for the candidate image. Native Deno adapter lookup remains
+unavailable here; the result does not establish native-window presentation.
+
+The affine gallery and full generated eight-person FOAF SVG also rendered and
+passed Lean readback samples on this GPU; these local examples do not add WPT
+passes. Full SVG feature goals and remaining work are in the
+[declared feature target](../../../docs/designissues/2026-10-31-svg2-static-feature-target.md).

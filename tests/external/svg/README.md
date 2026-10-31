@@ -143,3 +143,36 @@ baseline or narrow its denominator. Images are external build artifacts, not
 new source fixtures.
 
 After the paint-fallback change, actual candidate CLI comparison reports 23 unsupported, 15 unavailable and zero visual matches: nine runtime/resource cases, four oracle disagreements and two GPU-adapter failures. Acceptance alone reports two accepted and 36 unsupported. These are separate tracks.
+
+
+## Actual browser-host raw WebGPU comparison
+
+The browser candidate uses the same Lean SVG/WGSL compiler, Lean render plan
+and existing WebGPU/byte bridge as the native screenshot path. It never asks
+the browser's SVG renderer to draw the candidate. TypeScript is transpiled by
+an already installed compiler solely for this test transport; no dependency
+or browser is downloaded.
+
+```sh
+node tests/external/svg/browser_gpu.mjs --output /tmp/svg-browser-gpu \
+  --browser /path/to/installed/chrome --playwright /path/to/playwright-core/index.mjs \
+  --typescript /path/to/typescript/lib/typescript.js
+python3 tests/external/svg/oracle.py --oracle /tmp/svg-oracle \
+  --candidate /tmp/svg-browser-gpu --output /tmp/svg-browser-comparison
+```
+
+Current actual result: **2 match, 23 unsupported, 13 unavailable, zero mismatch
+or rejection**, all 38 retained. `fallback-001` and `fallback-002` each have zero
+maximum channel difference and zero differing pixels against the independent
+reference. Unavailable remains nine original runtime/resource cases plus four
+independent-browser disagreements. Candidate data includes browser/executable,
+actual adapter and source/WASM hashes. Hardware was Apple `metal-3`, fallback
+false, Chrome156.0.8078.76, 800×600, device scale1; driver version is not exposed
+by the WebGPU info API. This browser transport evidence does not repair the
+native Deno adapter lookup or establish native window presentation.
+
+For an additional local SVG regression, supply `--fixture INPUT.svg`; its report
+has a separate local scope and no WPT revision, so it cannot enter the pinned
+38-case score. Captures/readbacks/differences remain generated artifacts outside
+source control. The full-feature goal is tracked in the
+[project checklist](../../../docs/designissues/2026-10-31-svg2-static-feature-target.md).
