@@ -21,8 +21,9 @@ import L4Factoidal.XPath4.Atomic
 namespace L4Factoidal.XPath4
 
 /-- Optional processor features (XPath 4.0 §2.2.1, XQuery 4.0 §2.2.1).
-    The default configuration enables every implemented feature. -/
+    Static typing (§2.3.3) is opt-in; the other features default to enabled. -/
 structure FeatureSettings where
+  staticTyping : Bool := false
   loadXQueryModule : Bool := true
   transform : Bool := true
   transform30 : Bool := true
@@ -38,6 +39,7 @@ deriving BEq, Repr, Inhabited
 /-- Disable a named optional feature, using the qt4tests dependency names. -/
 def FeatureSettings.disable (s : FeatureSettings) (name : String) : FeatureSettings :=
   match name with
+  | "staticTyping" => { s with staticTyping := false }
   | "fn-load-xquery-module" => { s with loadXQueryModule := false }
   | "fn-transform-XSLT" => { s with transform := false }
   | "fn-transform-XSLT30" => { s with transform30 := false }
@@ -52,7 +54,7 @@ def FeatureSettings.disable (s : FeatureSettings) (name : String) : FeatureSetti
 
 /-- Features with a selectable implementation in the processor. -/
 def FeatureSettings.switchable (name : String) : Bool :=
-  ["fn-load-xquery-module", "fn-transform-XSLT", "fn-transform-XSLT30",
+  ["staticTyping", "fn-load-xquery-module", "fn-transform-XSLT", "fn-transform-XSLT30",
    "fn-invisible-xml", "binary", "expath-file", "schemaImport",
    "schemaValidation", "typedData", "serialization"].contains name
 

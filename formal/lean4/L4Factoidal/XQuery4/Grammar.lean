@@ -41,6 +41,7 @@ open L4Factoidal.XPath4
 
 /-- The prolog settings the expression grammar needs. -/
 structure Cfg where
+  features : FeatureSettings := {}
   boundaryPreserve : Bool := false
   /-- Named item types of the prolog. -/
   types : List (QN × IType) := []
@@ -418,9 +419,17 @@ def pFlwor (sp : SubParsers) : P Expr := do
           cs := cs.push (.letC v (.seq .item .star) (.ext "ft.score" [← subE sp.exprSingle] [] [] []))
         else
           let v ← pVar
+          let explicitType ← atKw "as"
           let vt ← pOptType sp
           expectS ":="
-          cs := cs.push (.letC v vt (← subE sp.exprSingle))
+          let e ← subE sp.exprSingle
+          -- Keep the declared item()* type in static typing mode.
+          let e := if explicitType && (← read).features.staticTyping then
+            match vt with
+            | .seq .item .star => Expr.treat e vt
+            | _ => e
+            else e
+          cs := cs.push (.letC v vt e)
         if !(← eatS ",") then break
     else if ← eatKw "where" then cs := cs.push (.whereC (← subE sp.exprSingle))
     else if ← atKw "while" then
@@ -1211,9 +1220,9 @@ def exprSingleP (sp : SubParsers) : P (Option Expr) := do
 
 /-! ## The grammar extension -/
 
-def runP {α} (p : P α) (s : Array Char) (ns : List (String × String)) (i : Nat) :
-    Except Err (α × Nat) :=
-  (p.run { s, ns, xqRefs := true }).run i
+def runP {α} (p : P α) (s : Array Char) (ns : List (String × String)) (i : Nat)
+    (features : FeatureSettings := {}) : Except Err (α × Nat) :=
+  (p.run { s, ns, features, xqRefs := true }).run i
 
 def liftOpt (r : Except Err (Option Expr × Nat)) : Except Err (Option (Expr × Nat)) :=
   match r with
@@ -1223,8 +1232,8 @@ def liftOpt (r : Except Err (Option Expr × Nat)) : Except Err (Option (Expr × 
 
 /-- The XQuery 4.0 grammar extension for the XPath 4.0 parser. -/
 def grammar (cfg : Cfg) : ExtGrammar where
-  exprSingle s ns sp i := liftOpt (runP (exprSingleP sp) s ns i)
-  primary s ns sp i := liftOpt (runP (primaryP cfg sp) s ns i)
+  exprSingle s ns sp i := liftOpt (runP (exprSingleP sp) s ns i cfg.features)
+  primary s ns sp i := liftOpt (runP (primaryP cfg sp) s ns i cfg.features)
   startsPrimary s i := startsComputed s i
   stringLit t := expandRefs t cfg.xml11
   postConcat s ns sp lhs i := L4Factoidal.FullText.ftPostConcat (fun t => expandRefs t cfg.xml11) s ns sp lhs i

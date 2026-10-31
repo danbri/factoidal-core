@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-10-29 | [Selectable static typing](20261029-static-typing.md) | eddfd724 | current: implementation, proof boundary and measurements |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |
 | 2026-04-21 | [Large Turtle stack overflow fix sketch](2026-04-21-large-turtle-stack-overflow-fix-sketch.md) | c29698f98 | historical |
 | 2026-08 | [Factoidal verified RDF block engine](2026-08-blockengine.md) | 27f9308f4 | current: design, part 1 |
@@ -163,3 +164,5 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-30 | [Hub Data Compositor and shared code output](20261030-hub-data-compositor.md) | same commit | pinned public engine, editable visual pipeline, honest component evidence, shared output controls and focused browser checks |
 
 | 2026-10-31 | [LWS reader host-authority boundary](20261031-lws-reader-path-confinement.md) | — | current: path confinement, redirect refusal and explicit browser transport limits |
+
+| 2026-10-31 | [QT4 static typing integration](20261031-qt4-static-typing-integration.md) | same commit | current: PR263 recovery, 104-case inventory, iterative FLWOR traversal and bounded recursion audit |
