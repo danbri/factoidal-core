@@ -163,3 +163,5 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-30 | [Hub Data Compositor and shared code output](20261030-hub-data-compositor.md) | same commit | pinned public engine, editable visual pipeline, honest component evidence, shared output controls and focused browser checks |
 
 | 2026-10-31 | [LWS reader host-authority boundary](20261031-lws-reader-path-confinement.md) | — | current: path confinement, redirect refusal and explicit browser transport limits |
+
+| 2026-10-31 | [Browser release integrity gates](20261031-browser-release-integrity-gates.md) | — | stamped compilation, bad-digest refusal and CSP browser checks |
