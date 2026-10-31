@@ -39,7 +39,7 @@ valid starting point for the formal error-propagation argument.
 Pipeline.guarantee_sound and Graph.guarantee_sound establish contracts **given
 successful execution and the named assumptions**. They do not assert that an
 output exists. Pipeline.run_no_wire_error and Graph.run_stage_error_only exclude
-wire/configuration failures under their typing and actual-input premises;
+wire/source-reference/port-count failures under their typing and actual-input premises;
 stage failures remain possible. nodeChecked_iff describes proof-domain admission,
 not whether an unproved component will execute successfully.
 
@@ -135,3 +135,8 @@ Next assurance step: express successful output as a deliberate application
 contract (for example, nonempty HTML document versus an intentionally empty
 result), make SELECT-row admission explicit, and prove the host recipe refines
 the typed composition. Do not turn an unknown into a theorem-backed failure.
+
+Independent proof-scope review passed. The same 16 regressions also pass with
+the published 0.28.0 library, separately from the live page's 0.27.0 pin. Stage.lean
+is unchanged between the pinned source and the definitions used for the new
+lemmas. No browser code or runtime semantics are changed by this audit.
