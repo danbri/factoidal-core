@@ -250,3 +250,14 @@ Deno.test("SVG dash union retains pattern phase and single opacity",async()=>{
  rejects(()=>e.compile(wrap('<circle r="10" stroke="black" stroke-dasharray="2 2"/>')),"dashed strokes currently support rect and line only");
  rejects(()=>e.compile(wrap('<line stroke="black" stroke-dasharray="-1 2"/>')),"negative");
 });
+
+Deno.test("SVG pathLength calibrates nonpercentage dash distances",async()=>{
+ const e=await loadSVG();
+ const line=(attrs:string)=>wrap(`<line x1="8" y1="20" x2="56" y2="20" stroke="black" stroke-width="6" ${attrs}/>`);
+ equal(e.compile(line('pathLength="4.8" stroke-dasharray="1 1" stroke-dashoffset="-.5"')),
+       e.compile(line('stroke-dasharray="10 10" stroke-dashoffset="-5"')));
+ equal(e.compile(line('pathLength="1" stroke-dasharray="10% 20%" stroke-dashoffset="5%"')),
+       e.compile(line('stroke-dasharray="10% 20%" stroke-dashoffset="5%"')));
+ rejects(()=>e.compile(line('pathLength="-1"')),"negative pathLength");
+ rejects(()=>e.compile(line('pathLength="0" stroke-dasharray="1 1"')),"infinite dash calibration unsupported");
+});

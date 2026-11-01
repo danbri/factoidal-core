@@ -175,7 +175,9 @@ structure Style where
   currentColor : Color := rgb 0 0 0
   strokeWidth : Float := 1
   dashArray : List Float := []
+  dashPercent : List Bool := []
   dashOffset : Float := 0
+  dashOffsetPercent : Bool := false
   fillOpacity : Float := 1
   strokeOpacity : Float := 1
   rule : FillRule := .nonzero
@@ -227,14 +229,16 @@ private def inheritedNumber (lengths : LengthContext) (attrs : List NamespaceAtt
   | none => pure old
   | some value => if trim value == "inherit" then pure old else
       if key == "stroke-width" then relativeLength value lengths.diagonal else number value
-private def dashArray (lengths : LengthContext) (source : String) : Except String (List Float) := do
-  if trim source == "none" then return []
+private def dashArray (lengths : LengthContext) (source : String) : Except String (List Float × List Bool) := do
+  if trim source == "none" then return ([],[])
   let groups := source.splitOn ","
   if groups.any (fun g => (trim g).isEmpty) then throw "empty dash list item"
   let tokens := groups.flatMap (fun g => (g.splitOn " " |>.flatMap (·.splitOn "\t") |>.flatMap (·.splitOn "\n") |>.flatMap (·.splitOn "\r")).filter (· != ""))
   if tokens.isEmpty then throw "empty dash list"
   if tokens.length > 64 then throw "dash pattern exceeds 64 entries"
-  NativeSVGDash.normalize (← tokens.mapM (fun t => relativeLength t lengths.diagonal))
+  let values ← NativeSVGDash.normalize (← tokens.mapM (fun t => relativeLength t lengths.diagonal))
+  let percentages := tokens.map (fun t => (trim t).endsWith "%")
+  return (values,if values.isEmpty then [] else if percentages.length%2==1 then percentages++percentages else percentages)
 private def readStyle (lengths : LengthContext) (ids : List String) (attrs : List NamespaceAttribute) (parent : Style) : Except String Style := do
   let mut style := parent
   if let some value := attr attrs "color" then
@@ -244,9 +248,11 @@ private def readStyle (lengths : LengthContext) (ids : List String) (attrs : Lis
   if let some value := attr attrs "stroke" then
     if trim value != "inherit" then style := {style with stroke:= ← readPaint ids value}
   if let some value := attr attrs "stroke-dasharray" then
-    if trim value != "inherit" then style := {style with dashArray:= ← dashArray lengths value}
+    if trim value != "inherit" then
+      let (values,percentages) ← dashArray lengths value
+      style := {style with dashArray:=values,dashPercent:=percentages}
   if let some value := attr attrs "stroke-dashoffset" then
-    if trim value != "inherit" then style := {style with dashOffset:= ← relativeLength value lengths.diagonal}
+    if trim value != "inherit" then style := {style with dashOffset:= ← relativeLength value lengths.diagonal,dashOffsetPercent:=(trim value).endsWith "%"}
   let width ← inheritedNumber lengths attrs "stroke-width" parent.strokeWidth
   if width < 0 then throw "negative stroke-width"
   let fillOpacity ← inheritedNumber lengths attrs "fill-opacity" parent.fillOpacity
@@ -339,7 +345,7 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
   else throw s!"unsupported SVG element: {tag}"
 /-- Dashed stroke union, retained inside one painted primitive. Lines use butt
     strips; only actual dash ends receive caps. Rectangles keep perimeter phase. -/
-private def dashedParts (g : Geometry) (style : Style) : Except String (Option (List Geometry)) := do
+private def dashedParts (g : Geometry) (style : Style) (authorLength : Option Float) : Except String (Option (List Geometry)) := do
   if style.dashArray.isEmpty || !strokeEnabled style then return none
   let half := style.strokeWidth/2
   let (vertices,closed) ← match g with
@@ -347,9 +353,24 @@ private def dashedParts (g : Geometry) (style : Style) : Except String (Option (
     | .rect x y w h => pure ([Point.mk x y,Point.mk (x+w) y,Point.mk (x+w) (y+h),Point.mk x (y+h),Point.mk x y],true)
     | _ => throw "dashed strokes currently support rect and line only"
   let edges := vertices.zip vertices.tail
-  let lengths := edges.map (fun (a,b) => Float.sqrt ((b.x-a.x)*(b.x-a.x)+(b.y-a.y)*(b.y-a.y)))
-  let total := lengths.foldl (·+·) 0
-  let spans ← NativeSVGDash.intervals style.dashArray style.dashOffset total
+  let lengths : List Float := edges.map (fun (a,b) => Float.sqrt ((b.x-a.x)*(b.x-a.x)+(b.y-a.y)*(b.y-a.y)))
+  let total : Float := lengths.foldl (·+·) 0
+  if style.dashArray.length != style.dashPercent.length then throw "dash unit provenance count mismatch"
+  -- SVG 2 §9.6.1: percentage distances are exempt from pathLength calibration.
+  let (pattern,offset) ← match authorLength with
+    | none => pure (style.dashArray,style.dashOffset)
+    | some author => do
+      if author==0 then
+        if (style.dashArray.zip style.dashPercent).any (fun (value,percent) => value != 0 && !percent) ||
+            (style.dashOffset != 0 && !style.dashOffsetPercent) then
+          throw "zero pathLength infinite dash calibration unsupported"
+        pure (style.dashArray,style.dashOffset)
+      else
+        let scale := total/author
+        if !scale.isFinite then throw "pathLength calibration exceeds finite range"
+        let pattern := (style.dashArray.zip style.dashPercent).map (fun (value,percent) => if percent then value else value*scale)
+        pure (pattern,if style.dashOffsetPercent then style.dashOffset else style.dashOffset*scale)
+  let spans ← NativeSVGDash.intervals pattern offset total
   let seam := closed && spans.any (fun a => a.first==0 && a.last>0) && spans.any (fun a => a.last==total && a.first<total)
   let pointAt := fun (distance : Float) => Id.run do
     let mut left := distance
@@ -390,10 +411,10 @@ private def dashedParts (g : Geometry) (style : Style) : Except String (Option (
 
 private def extraAttrs (tag : String) : List String :=
   match tag with
-  | "rect" => ["x","y","width","height","opacity","transform"]
+  | "rect" => ["x","y","width","height","opacity","transform","pathLength"]
   | "circle" => ["cx","cy","r","opacity","transform"]
   | "ellipse" => ["cx","cy","rx","ry","opacity","transform"]
-  | "line" => ["x1","y1","x2","y2","opacity","transform"]
+  | "line" => ["x1","y1","x2","y2","opacity","transform","pathLength"]
   | "polygon" => ["points","opacity","transform"]
   | "path" => ["d","opacity","transform"]
   | _ => []
@@ -433,6 +454,12 @@ private def readNode (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) 
       validateAttrs tag attrs (extraAttrs tag)
       let transform ← checkedTransform (parent.compose (← transformList ((attr attrs "transform").getD "")))
       let inherited ← readStyle lengths ids attrs style
+      let authorLength ← match attr attrs "pathLength" with
+        | none => pure none
+        | some source => do
+          let value ← number source
+          if value < 0 then throw "negative pathLength"
+          pure (some value)
       let geometry ← readGeometry lengths tag attrs inherited
       for child in children do
         match child with
@@ -445,7 +472,7 @@ private def readNode (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) 
         | _ => throw "processing instruction unsupported"
       let opacity ← match attr attrs "opacity" with | none => pure 1 | some s => number s
       geometry.toList.mapM fun g => do
-        let dashParts ← dashedParts g inherited
+        let dashParts ← dashedParts g inherited authorLength
         pure {geometry:=g,style:=inherited,opacity:=if transform.det == 0 then 0 else max 0 (min 1 opacity),transform,dashParts}
 private def readChildren (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List Primitive) := do
   let mut out : Array Primitive := #[]
