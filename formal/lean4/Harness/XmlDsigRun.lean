@@ -10,6 +10,14 @@ Harness/XmlDsigRun — core validation (XML Signature 1.1 §3.2) by
     implementation) with RSA-2048, P-256 and HMAC keys, and negative cases
     made from them (`tests/xmldsig/make_fixtures.py`; `manifest.tsv` gives
     the expected outcome and the HMAC key).
+  * signature generation (§3.1, `L4Factoidal.XML.DSig11Sign`): the keys
+    of `tests/xmldsig/signing-keys.tsv` sign a document in each case of
+    `signCases` through the signers of `XML/DSig11Native.lean`; each result
+    must pass core validation with the key from its `ds:KeyInfo`, and must
+    be refused after one character of the signed content changes. With
+    `--sign-out DIR` the signed documents go to DIR, for
+    `tests/xmldsig/verify_lean_signed.py` (signxml, an independent
+    verifier).
   * the SAML 2.0 fixtures of `L4Factoidal.SAML.Fixtures`, verified by the
     profile verifier `XML.DSig.verifyEnveloped` and by `DSig11.validate`
     with the identity provider's key: the two verdicts are compared with
@@ -18,7 +26,7 @@ Harness/XmlDsigRun — core validation (XML Signature 1.1 §3.2) by
 Expected failures name an open issue. The run fails when one passes
 (STALE) or fails for a reason that does not name its issue.
 
-Usage: `lake exe l4xmldsig [repo-root]`. Exit 0 when nothing fails.
+Usage: `lake exe l4xmldsig [repo-root] [--sign-out DIR]`. Exit 0 when nothing fails.
 -/
 import L4Factoidal.XML.DSig11Native
 import L4Factoidal.SAML.Assertion
@@ -145,7 +153,85 @@ def runSaml (t0 : Tally) : IO Tally := do
           t := { t with fail := t.fail + 1 }
   return t
 
-def main (args : List String) : IO UInt32 := do
+/-- The document the generation cases sign (the signxml fixtures' document). -/
+def signDoc : String :=
+  "<doc xmlns=\"urn:example:doc\" xmlns:x=\"urn:example:x\" ID=\"d1\"><x:item n=\"1\">one</x:item>" ++
+  "<!--c--><item n=\"2\">two &amp; &lt;three&gt;</item></doc>"
+
+inductive KeyKind where | rsa | p256 | hmac
+
+/-- The generation cases: name, key, signature method, request. -/
+def signCases : List (String × KeyKind × DigestAlg × SignSpec) :=
+  let env (m : C14n.Method) (h : DigestAlg := .sha256) : SignSpec :=
+    { c14n := m, refs := [{ uri := "", transforms := [.enveloped, .c14n m], digest := h }] }
+  let exc : C14n.Method := { version := .exc10 }
+  [("rsa-sha256-exc", .rsa, .sha256, env exc),
+   ("rsa-sha1-exc", .rsa, .sha1, env exc),
+   ("rsa-sha224-exc", .rsa, .sha224, env exc),
+   ("rsa-sha384-exc", .rsa, .sha384, env exc .sha384),
+   ("rsa-sha512-exc", .rsa, .sha512, env exc .sha512),
+   ("rsa-sha256-c14n10", .rsa, .sha256, env { version := .c14n10 }),
+   ("rsa-sha256-c14n10c", .rsa, .sha256, env { version := .c14n10, comments := true }),
+   ("rsa-sha256-c14n11", .rsa, .sha256, env { version := .c14n11 }),
+   ("rsa-sha256-exc-prefixlist", .rsa, .sha256, env { version := .exc10, inclusivePrefixes := ["x"] }),
+   ("rsa-sha256-id", .rsa, .sha256,
+      { refs := [{ uri := "#d1", transforms := [.enveloped, .c14n exc] }] }),
+   ("rsa-sha256-enveloping", .rsa, .sha256,
+      { refs := [{ uri := "#obj", transforms := [.c14n exc] }],
+        placement := .enveloping "obj" "<x:item xmlns:x=\"urn:example:x\" n=\"1\">one</x:item>" }),
+   ("p256-sha256-exc", .p256, .sha256, env exc),
+   ("p256-sha256-c14n11", .p256, .sha256, env { version := .c14n11 }),
+   ("hmac-sha256-exc", .hmac, .sha256, env exc),
+   ("hmac-sha512-exc", .hmac, .sha512, env exc .sha512)]
+
+def keyHex (rows : List (String × String)) (k : String) : ByteArray :=
+  hexBytes ((rows.find? (·.1 == k)).map (·.2) |>.getD "")
+
+/-- One character of the signed content changed. -/
+def tamper (s : String) : String := s.replace ">one<" ">One<"
+
+def runSign (t0 : Tally) (keysFile : String) (outDir : Option String) : IO Tally := do
+  let rows := ((← IO.FS.readFile keysFile).splitOn "\n").filterMap fun l =>
+    if l.startsWith "#" then none else match l.splitOn "\t" with
+      | [a, b] => some (a, b.trimAscii.toString)
+      | _ => none
+  let n := keyHex rows "rsa2048-n"
+  let e := keyHex rows "rsa2048-e"
+  let d := keyHex rows "rsa2048-d"
+  let sk := keyHex rows "p256-secret"
+  let mk := keyHex rows "hmac"
+  if let some o := outDir then IO.FS.createDirAll o
+  let mut t := t0
+  let mut manifest := ""
+  for (name, kind, h, spec) in signCases do
+    let sg? := match kind with
+      | .rsa => rsaSigner h n e d
+      | .p256 => p256Signer sk
+      | .hmac => some (hmacSigner h mk)
+    let some sg := sg? | IO.println s!"FAIL sign {name}: the signer refused the key"; t := { t with fail := t.fail + 1 }; continue
+    let rand ← IO.getRandomBytes 32
+    match sign nativeBackend sg spec rand signDoc with
+    | .error err => IO.println s!"FAIL sign {name}: {err}"; t := { t with fail := t.fail + 1 }
+    | .ok out =>
+        let cfg : Config := { hmacKey := some mk }
+        let ok := (validateText nativeBackend cfg out).isOk
+        let tampered := (tamper out != out) && !(validateText nativeBackend cfg (tamper out)).isOk
+        if ok && tampered then
+          IO.println s!"PASS sign {name}: validates with its ds:KeyInfo key; refused after a change"
+          t := { t with pass := t.pass + 1 }
+          if let some o := outDir then
+            IO.FS.writeFile s!"{o}/{name}.xml" out
+            manifest := manifest ++ s!"{name}.xml\t{match kind with | .hmac => "hmac" | _ => "keyvalue"}\n"
+        else
+          IO.println s!"FAIL sign {name}: validates {ok}, tampered copy refused {tampered}"
+          t := { t with fail := t.fail + 1 }
+  if let some o := outDir then IO.FS.writeFile s!"{o}/manifest.tsv" manifest
+  return t
+
+def main (args0 : List String) : IO UInt32 := do
+  let (args, outDir) := match args0.dropWhile (· != "--sign-out") with
+    | _ :: o :: _ => (args0.takeWhile (· != "--sign-out"), some o)
+    | _ => (args0, none)
   let root := args.head? |>.getD "../.."
   let odir := s!"{root}/third_party/testing/xmldsig11-interop/oracle"
   let fdir := s!"{root}/tests/xmldsig/fixtures"
@@ -158,4 +244,6 @@ def main (args : List String) : IO UInt32 := do
   IO.println s!"fixtures: {u.pass} pass, {u.fail} fail (out of {u.pass + u.fail})"
   let v ← runSaml {}
   IO.println s!"saml differential: {v.pass} pass, {v.fail} fail (out of {v.pass + v.fail})"
-  return (if t.fail + u.fail + v.fail == 0 then 0 else 1)
+  let w ← runSign {} s!"{root}/tests/xmldsig/signing-keys.tsv" outDir
+  IO.println s!"signature generation: {w.pass} pass, {w.fail} fail (out of {w.pass + w.fail})"
+  return (if t.fail + u.fail + v.fail + w.fail == 0 then 0 else 1)
