@@ -51,11 +51,14 @@ five and two declarations respectively. Tests cover source order, inline priorit
 presentation fallback, selector case, comments, type validation before selection,
 and refusal boundaries. These are finite executable tests, not cascade proofs.
 
-Commands, from `labs/demos/foafnaut`:
+Original parser compilation (historical):
 
 ```sh
 lean +leanprover/lean4:v4.33.1 -o /private/tmp/SVGCSS.olean SVGCSS.lean
-LEAN_PATH=/private/tmp lean +leanprover/lean4:v4.33.1 SVGCSSTests.lean
+# The fixture tests now use the normal formal/lean4 working directory.
+# From formal/lean4, after compiling SVGCSS into the lab olean directory:
+LEAN_PATH=../../labs/demos/foafnaut/.build/olean:.lake/build/lib/lean \
+  lean -R ../../labs/demos/foafnaut ../../labs/demos/foafnaut/SVGCSSTests.lean
 ```
 
 The SVG adapter collects inert style text in document order (including later

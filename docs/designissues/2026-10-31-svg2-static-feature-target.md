@@ -17,12 +17,12 @@ cannot close a visual-coverage row. Every row below remains open.
 | Required feature | Current boundary / remaining work |
 | --- | --- |
 | XML and document structure | Actual Factoidal XML namespace view; metadata support is partial. Complete allowed descriptive/foreign metadata, processing rules and relevant limits. |
-| Root and nested viewports | Root viewBox/meet/slice/none works for explicit numeric/px sizes. Percentage/intrinsic sizing, root-transform ordering, nested SVG, overflow/clipping and unit resolution remain. |
+| Root and nested viewports | Root viewBox/meet/slice/none and viewport-relative geometry/stroke percentages work in source checks. Root percentages require an explicit final host viewport; CSS containing-block/intrinsic sizing, root-transform ordering, nested SVG, overflow/clipping and other units remain. |
 | Affine transforms | Group/primitive matrix/translate/scale/rotate/skew with ordered composition is the current implementation slice. Root/CSS transform-origin/transform-box and viewport interactions remain separate obligations. |
 | Basic geometry | Rect/circle/ellipse/line/polygon partial. Rounded corners, auto radii, polyline and all associated fill/stroke behavior remain. |
 | Paths | All M/m Z/z L/l H/h V/v C/c S/s Q/q T/t A/a forms; implicit/repeated arguments, multiple subpaths, close/open behavior, arc conversion and defined error handling. Filled retained linear/compound M/L/H/V/Z paths now work, including relative/repeated arguments, winding and implicit closure. Curves/arcs, strokes and partial-prefix error recovery remain. |
 | Fills and strokes | Solid/currentColor/inheritance, polygon winding, primitive strokes and butt/round line caps partial. All shape/path strokes, square caps, miter/round/bevel joins, miter limits, dashes, pathLength, vector effects and paint order remain. |
-| CSS presentation | Presentation attributes partial. Inline style, style elements, cascade/specificity/inheritance, supported selectors and CSS color/length syntax need explicit coverage. |
+| CSS presentation | Presentation attributes plus a bounded type-selector stylesheet/inline cascade now feed the Lean SVG reader. Source-order and inheritance tests pass; this strict-refusal subset is not general CSS parsing/error recovery or HTML styling. Broader selectors, cascade features and color/length syntax remain uncovered. |
 | Definitions and reuse | defs, symbol, use, same-document references, recursion/cycle bounds, instance style and viewport semantics remain. |
 | Paint servers | Linear/radial gradients, stops, units, transforms, spread and fallback; patterns remain. Only missing simple local fragment fallback currently works. |
 | Clipping and images | clipPath with units/transforms, same-document/data-URL raster images, intrinsic sizing/aspect/color policy remain. External fetching stays disabled. |
@@ -65,3 +65,13 @@ Primary semantics: [SVG 2 coordinates](https://www.w3.org/TR/SVG2/coords.html),
 [paths](https://www.w3.org/TR/SVG2/paths.html),
 [painting](https://www.w3.org/TR/SVG2/painting.html), and
 [processing modes](https://www.w3.org/TR/SVG2/conform.html#secure-static-mode).
+
+## Scope clarification, 2026-11-01
+
+The owner has not commissioned a general CSS implementation. The small
+SVGCSS module was introduced to reach existing SVG visual fixtures containing
+style blocks. XML namespace parsing and HTML tokenization preserve markup;
+neither thereby implements CSS interpretation. Keep broader CSS work a
+separately discussed scope, while continuing SVG geometry and shared rendering
+math. The feature table describes compatibility gaps, not authorization to
+start every adjacent subsystem. See the [CSS slice record](../20261101-svg-css-slice.md).
