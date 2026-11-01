@@ -58,6 +58,28 @@ with $WORKTREE_PATH, STOP and translate it.
 
 ## Rule 3 — COMMIT-FIRST: push VERIFIED source before building (load-bearing)
 
+**This rule applies to EVERY agent: Lean, F\*, JavaScript, docs.** Owner,
+2026-11-01, verbatim: "I thought naively you’d have got an off-laptop copy of
+the work. I prefer main but any beanch is better than no effing backup." and
+"Don’t fill laptop with lean build artifacts!"
+
+Every brief says: after each step that passes its own check, commit and
+`git push -u origin wip/<issue>-<topic>`. Never write "do not push" in a
+brief; write "do not merge". Prefer landing on `main` (through a PR) as soon
+as the gates pass.
+
+Cost of not having this for Lean and JavaScript agents: on 2026-10-29 two
+agents (issues 1125 with 1128, and 1126) were briefed "one commit, not
+pushed". Both stopped at the weekly usage limit before their first commit,
+and their worktrees were gone afterwards: all their work was lost. The same
+weeks, worktrees with their own Lean build caches filled the owner's laptop
+(more than 200 GB in one folder) until it was unusable. Run Lean and wasm
+builds in cloud sessions or in `danbri/factoidal-builds`, not in laptop
+worktrees; remove `formal/lean4/.lake` and `.wasm-work` of a worktree as soon
+as its commits are pushed.
+
+The F\*-specific text below is the original form of this rule (2026-07).
+
 The single highest-leverage agent-orchestration discipline, learned over
 ~25 agent dispatches in one multi-day session. **An F\* agent's deliverable
 is VERIFIED SOURCE, not a built binary.** Full builds take 15-25 min;
