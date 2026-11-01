@@ -2,12 +2,34 @@ import Init
 
 namespace NativeGraphics
 
-/-- Shared regular 2×2 coverage samples in unit-pixel coordinates. This is
-    a finite sampling rule, not analytic area coverage or a universal error bound. -/
-def pixelSampleOffsets : List (Float × Float) :=
-  [(0.25,0.25),(0.75,0.25),(0.25,0.75),(0.75,0.75)]
+/-- Exact quarter-pixel coordinates for the common 2×2 sampling rule. These
+    integer coordinates are the semantic source for both the SVG CPU reference
+    and generated WGSL; Float conversion happens only at those boundaries. -/
+def pixelSampleQuarterCoordinates : List (Nat × Nat) :=
+  [(1,1),(3,1),(1,3),(3,3)]
 
-theorem pixelSampleOffsets_count : pixelSampleOffsets.length = 4 := rfl
+theorem pixelSampleQuarterCoordinates_count : pixelSampleQuarterCoordinates.length = 4 := rfl
+
+/-- Every sample lies strictly inside its unit pixel, with one quarter-pixel
+    clearance from every edge. -/
+theorem pixelSampleQuarterCoordinates_interior :
+    pixelSampleQuarterCoordinates.all (fun p => 0 < p.1 && p.1 < 4 && 0 < p.2 && p.2 < 4) = true := by
+  decide
+
+/-- The grid is centered in both axes: its exact quarter-coordinate centroid
+    is (2,2), i.e. the unit pixel center. -/
+theorem pixelSampleQuarterCoordinates_centered :
+    (pixelSampleQuarterCoordinates.map Prod.fst).sum = 8 ∧
+    (pixelSampleQuarterCoordinates.map Prod.snd).sum = 8 := by
+  decide
+
+/-- Floating offsets used at raster boundaries, derived from the exact grid.
+    Four-point sampling is not analytic area coverage or a universal error bound. -/
+def pixelSampleOffsets : List (Float × Float) :=
+  pixelSampleQuarterCoordinates.map fun p => (Float.ofNat p.1 / 4, Float.ofNat p.2 / 4)
+
+theorem pixelSampleOffsets_count : pixelSampleOffsets.length = 4 := by
+  simp [pixelSampleOffsets, pixelSampleQuarterCoordinates_count]
 
 inductive Ty where | scalar | vec2 | boolean
 

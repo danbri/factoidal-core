@@ -81,9 +81,14 @@ viewport dimensions are supplied; source dimensions are still validated. Root
 percentage dimensions require that explicit host viewport. The supplied output
 size overrides root dimensions; this is an embedding contract, not CSS sizing. A
 fractional SVG viewport stays Float for mapping/clipping while the backing image
-size is its ceiling. Subpixel edges use a shared2×2 sampling approximation on CPU and GPU,
-not analytic area coverage. The transparent SVG canvas is composited over a documented white
-backdrop for opaque RGB PPM output.
+size is its ceiling. Subpixel edges use a shared 2×2 sampling approximation on
+CPU and GPU, not analytic area coverage. `Graphics.lean` defines its four
+sample coordinates as exact quarter-pixel integers; Lean proves the sample
+count, strict interior bounds and center symmetry before deriving the Float
+offsets consumed by both the CPU sampler and WGSL generator. This proves a
+shared sample schedule, not equal shader/CPU arithmetic or a raster error bound.
+The transparent SVG canvas is composited over a documented white backdrop for
+opaque RGB PPM output.
 
 These choices refer to W3C [painting](https://www.w3.org/TR/SVG11/painting.html)
 and [viewport transformation](https://www.w3.org/TR/SVG 2/coords.html#ComputingAViewportsTransform),
@@ -305,6 +310,15 @@ compositor and future HTML visuals, while work on that model and its backends ca
 expand the SVG features Solving can render. The current `Math/Affine.lean`
 sharing is an early concrete example; the broader cross-application guarantee is
 an architectural target, not something the demo has established yet.
+
+The current renderer still has two scene vocabularies: `NativeGraphics.Shape`
+in `Graphics.lean` and SVG `Primitive` in `SVG.lean`. They share affine
+algebra, but not yet a common retained scene, clipping model, paint model or
+hit-region representation. An SVG feature therefore does not automatically
+become available to graph/UI visuals, and a new graphics backend does not by
+itself increase SVG syntax coverage. The shared-scene criterion in the Solving
+design note requires this boundary to become real; until then, describe reuse
+per operation instead of inferring it from the architecture goal.
 
 The boundary should be a typed, backend-independent scene with shared transforms,
 shapes, bounds, hit regions and applicable layout-policy parameters. SVG parsing
