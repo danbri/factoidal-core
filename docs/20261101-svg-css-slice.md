@@ -88,3 +88,11 @@ Coordinator validation: corrected both fixture paths for the build script
 working directory formal/lean4, freshly compiled SVGCSS and SVG, and reran
 CSS parser, CSS integration and percentage tests there: all passed. Updated
 WASM regression expectations and README; those WASM tests await rebuilt assets.
+
+A subsequent local diagnostic used current checked SVG/CSS source through
+SVGArtifact.lean and raw WebGPU on Chrome156/Apple metal-3 (non-fallback).
+The rendered image has the expected inline-blue rectangle, inherited-green
+circle and white background at interior control pixels; all six emitted CPU
+sample checks also passed. Evidence: /private/tmp/svg-css-gpu-check/candidate.json
+and00-actual.ppm. This is a local GPU regression, not an independent full-image
+CSS conformance comparison or a rebuilt WASM producer test.
