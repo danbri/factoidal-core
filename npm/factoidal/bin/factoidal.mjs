@@ -748,6 +748,7 @@ Specification: https://solidproject.org/TR/protocol`,
 
 usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
                             [--accounts FILE] [--cert FILE --key FILE]
+                            [--dangerously-disable-ratelimits]
 
 Starts a Node TCP server that runs one engine session per connection and
 answers every byte through the engine's xmppSessionFeed operation.
@@ -766,6 +767,17 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
   --accounts FILE  the accounts file (default DIR/accounts)
   --cert FILE      PEM certificate chain: XEP-0368 direct TLS, no STARTTLS
   --key FILE       PEM private key for --cert
+  --dangerously-disable-ratelimits
+                   no failed SASL login limit (a warning is printed at
+                   start); any client can then try passwords without end
+
+Failed SASL logins are limited by default
+(https://github.com/danbri/factoidal/issues/1128): after 5 failed logins in
+60 seconds for one account name (known or not) or from one client address
+(an IPv6 client by its /64), on one stream or on new ones, an attempt gets
+the SASL failure temporary-auth-failure, and no password is checked, also
+the right one, until that window ends. A malformed SASL payload checks no
+password and does not count.
 
 The server makes no protocol decision. Stream negotiation, SASL PLAIN and
 SCRAM-SHA-256, resource binding, the roster, presence subscription and
@@ -840,7 +852,9 @@ usage: factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]
                               [--login-limit N] [--login-window SECONDS]
                               [--dangerously-disable-ratelimits]
        factoidal webdav-serve CONFIGDIR --xmpp JID --xmpp-password-file FILE
-                 --xmpp-allow JID[,JID...] [--guest NAME] [--xmpp-host H] [--xmpp-port P] [--xmpp-tls]
+                 --xmpp-allow JID[,JID...] [--guest NAME] [--users FILE]
+                 [--login-limit N] [--login-window SECONDS] [--dangerously-disable-ratelimits]
+                 [--xmpp-host H] [--xmpp-port P] [--xmpp-tls]
 
 EMERGENCY MODE (https://github.com/danbri/factoidal/issues/1147): the server
 is READ ONLY. Every write method (PUT, DELETE, MKCOL, COPY, MOVE, PROPPATCH,
@@ -949,12 +963,23 @@ NAT is reached this way with no inbound port.
                              --xmpp-host (127.0.0.0/8, ::1) is accepted.
   --xmpp-ca FILE             PEM certificates to trust for --xmpp-tls
   --dangerously-allow-writable-without-login
-                             start although a local mount is writable:
-                             there is no login on the XMPP path yet
-                             (https://github.com/danbri/factoidal/issues/1125),
-                             so every allowed JID writes as the owner.
-                             Without it such a start is refused.
+                             with no --users: start although a local mount
+                             is writable, so every allowed JID writes as the
+                             owner. Without it such a start is refused.
+                             With --users it is not needed.
   --xmpp-resource R          the resource to bind (default dav)
+
+Both checks apply to every request over XMPP
+(https://github.com/danbri/factoidal/issues/1125): the sender's bare JID must
+be in --xmpp-allow, and then the request acts as a user exactly as on TCP:
+the --guest user with no credentials, a user of --users with HTTP Basic
+credentials in the request's headers (xmpp-http-proxy passes Authorization
+unchanged). --users over XMPP needs --xmpp-tls or a loopback --xmpp-host.
+The failed-login limit over XMPP counts per user name and per bare JID of
+the sender (https://github.com/danbri/factoidal/issues/1128): one JID's
+failures do not block another JID. A request whose chunked body is not
+complete waits at most 60 seconds, and at most 4 such requests per sender
+(16 in total) wait at once; others get resource-constraint.
 
 It prints the bound JID (xmpp:user@domain/resource) on standard output.
 XEP-0332 is Deferred, and no WebDAV client speaks it: a reader runs
@@ -2596,20 +2621,32 @@ async function webdavOverXmpp (configDir, options, quiet) {
   if (typeof options.xmpp !== 'string') throw new UsageError('--xmpp needs a JID')
   if (typeof options['xmpp-password-file'] !== 'string') throw new UsageError('--xmpp needs --xmpp-password-file FILE')
   if (typeof options['xmpp-allow'] !== 'string') throw new UsageError('--xmpp needs --xmpp-allow JID[,JID...]')
-  // No login on the XMPP path yet: refuse --users rather than ignore it
-  // (https://github.com/danbri/factoidal/issues/1125).
-  if (['users', 'cert', 'key', 'login-limit', 'login-window', 'dangerously-disable-ratelimits'].some((k) => options[k] !== undefined)) {
-    throw new UsageError('--users, --cert, --key and the login-limit options do not apply with --xmpp yet (https://github.com/danbri/factoidal/issues/1125)')
+  // No port is open with --xmpp, so the HTTPS options do not apply. --users
+  // and the login-limit options do (https://github.com/danbri/factoidal/issues/1125).
+  if (['cert', 'key'].some((k) => options[k] !== undefined)) {
+    throw new UsageError('--cert and --key do not apply with --xmpp: no port is open; give --xmpp-tls for the XMPP stream')
   }
   const fs = await import('node:fs/promises')
+  const { resolve: resolvePath } = await import('node:path')
   const password = (await fs.readFile(options['xmpp-password-file'], 'utf8')).split(/\r?\n/)[0]
   const allow = options['xmpp-allow'].split(',').map((x) => x.trim()).filter((x) => x.length > 0)
   const { openWebdav, WebdavHostError } = await import('../webdav/server.mjs')
   const { connectHttpTarget, XmppClientError } = await import('../xmpp/client.mjs')
   if (options.guest !== undefined && typeof options.guest !== 'string') throw new UsageError('--guest needs a user name')
+  // The login (issue 1125): the same users file and limit options as on
+  // TCP, and the XMPP stream as the transport; the engine checks them all.
+  const davOptions = { configDir, transport: 'xmpp', jid: options.xmpp, tls: options['xmpp-tls'] === true }
+  if (typeof options['xmpp-host'] === 'string') davOptions.host = options['xmpp-host']
+  if (typeof options.guest === 'string') davOptions.guest = options.guest
+  if (typeof options.users === 'string') davOptions.users = resolvePath(options.users)
+  if (options['login-limit'] !== undefined) davOptions.loginLimit = String(options['login-limit'])
+  if (options['login-window'] !== undefined) davOptions.loginWindow = String(options['login-window'])
+  if (options['dangerously-disable-ratelimits'] !== undefined) {
+    davOptions.disableRateLimits = options['dangerously-disable-ratelimits'] === true
+  }
   let dav
   try {
-    dav = await openWebdav({ configDir, ...(typeof options.guest === 'string' ? { guest: options.guest } : {}) })
+    dav = await openWebdav(davOptions)
   } catch (error) {
     if (error instanceof WebdavHostError && error.unknownOp) return notWired('webdav-serve', error.message)
     if (error instanceof WebdavHostError || (error !== null && typeof error === 'object' && error.code === 'ENOENT')) {
@@ -2629,6 +2666,7 @@ async function webdavOverXmpp (configDir, options, quiet) {
     tls: options['xmpp-tls'] === true,
     mounts: dav.mounts,
     dangerouslyAllowWritableWithoutLogin: options['dangerously-allow-writable-without-login'] === true,
+    login: dav.login,
     step: (request) => dav.step(request),
     onError: (error) => { if (!quiet) err(`webdav-serve: xmpp: ${error.message}`) }
   }
@@ -2652,7 +2690,8 @@ async function webdavOverXmpp (configDir, options, quiet) {
     throw error
   }
   if (!quiet) {
-    err(`webdav-serve: connected to XMPP as ${conn.jid}; no port is open; requests from ${allow.join(', ')}`)
+    err(`webdav-serve: connected to XMPP as ${conn.jid}; no port is open; requests from ${allow.join(', ')}` +
+        (dav.login ? `, login from ${options.users} (failed logins limited per user name and per bare JID)` : ', no --users: credentials get 401'))
     if (conn.writableWithoutLogin.length > 0) {
       err(`webdav-serve: WARNING: --dangerously-allow-writable-without-login: every allowed JID can write ${conn.writableWithoutLogin.join(', ')} as the storage owner, with no login`)
     }
@@ -2833,6 +2872,11 @@ async function commandXmppServe (positional, options) {
   }
   if (typeof options.domain === 'string') settings.domain = options.domain
   if (typeof options.accounts === 'string') settings.accountsText = await fs.readFile(options.accounts, 'utf8')
+  // The failed SASL login limit (https://github.com/danbri/factoidal/issues/1128):
+  // on by default; the engine decides and words the warning.
+  if (options['dangerously-disable-ratelimits'] !== undefined) {
+    settings.disableRateLimits = options['dangerously-disable-ratelimits'] === true
+  }
   if (useTls) {
     settings.cert = await fs.readFile(options.cert)
     settings.key = await fs.readFile(options.key)
@@ -2846,6 +2890,9 @@ async function commandXmppServe (positional, options) {
     }
     throw error
   }
+  // The engine's start warnings (--dangerously-disable-ratelimits), printed
+  // also with --quiet.
+  for (const w of running.xmpp.warnings || []) err(`factoidal xmpp-serve: WARNING: ${w}`)
   if (!quiet) {
     err(`xmpp-serve: listening on ${running.origin} for domain ${running.xmpp.domain}` +
         ` (${running.xmpp.accounts} accounts, state ${positional[0]}` +

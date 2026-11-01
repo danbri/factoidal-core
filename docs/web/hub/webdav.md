@@ -414,17 +414,47 @@ accepted. To any other host the connection must be direct TLS (XEP-0368):
 `xmpp-serve --cert --key` serves; plain TCP to a host that is not loopback
 stops the start. STARTTLS is not implemented. There is no DNS SRV lookup.
 
-There is no login on the XMPP path yet
-(<https://github.com/danbri/factoidal/issues/1125>; the per-JID login limit:
-<https://github.com/danbri/factoidal/issues/1128>), so `--users` is refused
-with `--xmpp`. Every request from an allowed JID acts as the `--guest` user
-(with no `--guest`, every request gets 401), reads only, and reaches only
-the mounts that list the guest. `--xmpp-allow` must name bare JIDs.
+Every request over XMPP passes two checks
+(<https://github.com/danbri/factoidal/issues/1125>): the sender's bare JID
+must be in `--xmpp-allow` (bare JIDs only), and then the request acts as a
+user exactly as on TCP. A request with no credentials acts as the `--guest`
+user (with no `--guest` it gets 401). A request with HTTP Basic credentials
+in its headers logs in through `--users`; `xmpp-http-proxy` passes the
+file browser's `Authorization` unchanged. `--users` with `--xmpp` needs
+`--xmpp-tls` or a loopback `--xmpp-host`, because the password travels
+inside the XMPP stream. `--cert` and `--key` do not apply: no port opens.
+
+```sh
+factoidal webdav-user users.txt anna        # reads the password from standard input
+factoidal webdav-serve dav --xmpp bob@example.org --xmpp-password-file bob.password \
+  --xmpp-allow alice@example.org,carol@example.org --xmpp-tls --xmpp-host xmpp.example.org \
+  --users users.txt
+```
+
+Failed logins over XMPP are limited per user name and per bare JID of the
+sender (<https://github.com/danbri/factoidal/issues/1128>): after 5 failures
+in 60 seconds, that name, and that JID, get 429 with `Retry-After`. The
+failures of one JID do not block another JID. A request whose
+`chunkedBase64` body has not arrived waits at most 60 seconds; at most 4 such
+requests per sender and 16 in total wait at once, and others get
+`resource-constraint`. `xmpp-serve` limits failed SASL logins too: 5 in 60
+seconds per account name and per client address give
+`temporary-auth-failure`. Each limit is on by default;
+`--dangerously-disable-ratelimits` turns it off and prints a warning at
+start.
+
+Not met: `xmpp-serve` without `--cert` on an address that is not loopback
+still offers SASL PLAIN, which sends the password in clear text (expected
+failure in `tests/webdav/xmpp.mjs`,
+<https://github.com/danbri/factoidal/issues/1125>).
 
 What works now (`node tests/webdav/xmpp.mjs`): `alice@example.org` sends
 XEP-0332 `req` stanzas to `bob@example.org/dav` and gets PROPFIND 207, GET
 200 and PUT 403; a body above 65,536 bytes comes back in `chunkedBase64`
-chunks; `carol@example.org` gets `forbidden`.
+chunks; `carol@example.org` gets `forbidden`. With `--users`: 401 with no
+credentials, 200 with Basic credentials, 429 for a JID after 5 failures
+while another JID logs in, and `resource-constraint` for a fifth waiting
+chunked request from one JID.
 
 A file browser does not speak XEP-0332, so the reader runs a local proxy,
 `factoidal xmpp-http-proxy`. It connects to the XMPP server as an allowed JID
