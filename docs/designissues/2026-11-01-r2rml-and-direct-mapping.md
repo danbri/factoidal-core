@@ -116,6 +116,26 @@ numerics are held as the exact decimal of their literal; every double of the
 corpus (`80.25`, `1.65`, `30`, ...) has the canonical form that the expected
 graphs give.
 
+Step 2 is done (2026-11-01): `RDB2RDF/R2RML.lean` reads an R2RML mapping
+graph into the RML model by a term table (`toRmlGraph`: `rr:` to `rml:`,
+`rr:column` to `rml:reference`, `rr:logicalTable` to `rml:logicalSource`,
+the logical table as the iterator query under `rml:SQL2008Query`, SQL
+identifiers in normal form in `rr:column`, `rr:child`, `rr:parent` and the
+template references; `rr:sqlVersion` and `rr:inverseExpression` dropped
+after the checks). The RML validator and evaluator run it unchanged; the
+records are `sqlRecords` rows. R2RML-only checks: one logical table per
+triples map, one of `rr:tableName`/`rr:sqlQuery`, a known SQL version
+identifier, no duplicate result column names, and a valid `rr:language`
+(well-formed, with a primary subtag the IANA registry can hold; the other
+subtags are not checked against the registry:
+https://github.com/danbri/factoidal/issues/1221). `bash tests/rdb2rdf/run.sh`:
+R2RML 63 pass, 0 fail (out of 63). Theorems landed
+(`RDB2RDF/R2RMLTheorems.lean`): `r2rml2012_cell_natural`,
+`r2rml2012_null_no_value`, `r2rml2012_tableName_query`,
+`r2rml2012_rejected_no_quads`. Open: `dm2012_as_r2rml2012`, section 3
+item 1 (https://github.com/danbri/factoidal/issues/1222); items 3 and 4 of
+section 3 are not stated yet.
+
 ## 5. Order of work
 
 1. This record, the vendored suite, the SQL subset, the natural literals, the

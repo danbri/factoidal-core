@@ -10,14 +10,20 @@ and for each `rdb2rdftest:DirectMapping` case compares
 (`rdb2rdftest:output`, Turtle) by `Graph.isomorphicOutcome`. A case whose
 `rdb2rdftest:hasExpectedOutput` is false passes when the mapping is rejected.
 
-The R2RML cases (`rdb2rdftest:R2RML`) are counted and listed as "not run";
-they run when `RDB2RDF/R2RML.lean` lands (design record
-`docs/designissues/2026-11-01-r2rml-and-direct-mapping.md` §4).
+For each `rdb2rdftest:R2RML` case it reads the mapping document (Turtle),
+runs `R2RML2012.runR2RML` over the same database with the base IRI
+`http://example.com/base/`, and compares the produced dataset with the
+expected N-Quads (`rdb2rdftest:output`) as one graph whose predicates carry
+the graph name, by `Graph.isomorphicOutcome`. A case whose
+`rdb2rdftest:hasExpectedOutput` is false passes when the run is rejected.
 
-Usage: `lake exe l4rdb2rdf DIR` (exit 0 when every Direct Mapping case passes).
+Usage: `lake exe l4rdb2rdf DIR` (exit 0 when every case passes).
 Tracking: https://github.com/danbri/factoidal/issues/1165.
 -/
 import L4Factoidal.RDB2RDF.DirectMapping
+import L4Factoidal.RDB2RDF.R2RML
+import L4Factoidal.RML.Targets
+import L4Factoidal.Syntax.NQuads
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.Turtle
 
@@ -49,13 +55,15 @@ structure Case where
   kind : String
   output : Option String
   expectOutput : Bool
+  mapping : Option String := none
 
 def readCases (g : Graph) (kind : String) : List Case :=
   (subjectsOfType g (testNs ++ kind)).map fun s =>
     { id := ((objectsOf g s dcIdentifier).head?.bind lexOf).getD "?"
       kind
       output := (objectsOf g s (testNs ++ "output")).head?.bind lexOf
-      expectOutput := ((objectsOf g s (testNs ++ "hasExpectedOutput")).head?.bind lexOf) != some "false" }
+      expectOutput := ((objectsOf g s (testNs ++ "hasExpectedOutput")).head?.bind lexOf) != some "false"
+      mapping := (objectsOf g s (testNs ++ "mappingDocument")).head?.bind lexOf }
 
 def readTurtle (path : String) (base : String) : IO (Except String Graph) := do
   let text ← IO.FS.readFile path
@@ -87,13 +95,76 @@ def runDm (dir : System.FilePath) (db : Except String Database) (c : Case) : IO 
         return (false, s!"produced {g.length}, expected {want.length}\n" ++ "\n".intercalate detail)
       | .budgetExceeded => return (false, "isomorphism budget exceeded")
 
+/-- Percent-encode everything but the RFC 3986 unreserved set, so the
+    encoding of a (graph, predicate) pair is injective. -/
+def encQ (s : String) : String :=
+  let hex := fun (n : Nat) =>
+    if n < 10 then Char.ofNat ('0'.toNat + n) else Char.ofNat ('A'.toNat + n - 10)
+  s.toList.foldl (fun acc c =>
+    if ('A' ≤ c && c ≤ 'Z') || ('a' ≤ c && c ≤ 'z') || ('0' ≤ c && c ≤ '9')
+       || c == '-' || c == '.' || c == '_' || c == '~'
+    then acc ++ String.mk [c]
+    else acc ++ String.ofList ((String.mk [c]).toUTF8.toList.flatMap (fun b =>
+           ['%', hex (b.toNat / 16), hex (b.toNat % 16)]))) ""
+
+def quadPred (g : Option String) (p : String) : Option WfIri :=
+  let raw := "urn:x-rdb2rdf-quad:" ++ (match g with | none => "" | some x => encQ x) ++ ":" ++ encQ p
+  if h : isIri raw then some ⟨raw, h⟩ else none
+
+/-- A dataset as one graph, with the graph name folded into each predicate. -/
+def flattenDataset (ds : Dataset) : Graph :=
+  let dflt := ds.default.filterMap (fun t =>
+    (quadPred none t.p.val).map (fun p => ({ s := t.s, p := p, o := t.o } : Triple)))
+  let named := ds.named.flatMap (fun ng =>
+    let n := match ng.name with
+      | .iri i   => i.val
+      | .bnode b => "_:" ++ b
+    ng.graph.filterMap (fun t =>
+      (quadPred (some n) t.p.val).map (fun p => ({ s := t.s, p := p, o := t.o } : Triple))))
+  dflt ++ named
+
+def runR2rmlCase (dir : System.FilePath) (db : Except String Database) (c : Case) : IO (Bool × String) := do
+  let some mdoc := c.mapping | return (false, "no rdb2rdftest:mappingDocument")
+  let mg ← readTurtle (dir / mdoc).toString base
+  let got : Except String L4Factoidal.RML.EvalResult := do
+    let d ← db
+    let g ← mg
+    pure (R2RML2012.runR2RML g d base)
+  if !c.expectOutput then
+    return match got with
+      | .error e => (true, s!"rejected: {e}")
+      | .ok r =>
+        if r.rejected then (true, s!"rejected: {(r.errors.head?.map (·.render)).getD ""}")
+        else (false, s!"expected a rejection, produced {r.quads.length} quads")
+  let some out := c.output | return (false, "no rdb2rdftest:output")
+  match got with
+  | .error e => return (false, e)
+  | .ok r =>
+    if r.rejected then
+      return (false, s!"rejected: {"; ".intercalate (r.errors.take 3 |>.map (·.render))}")
+    let src ← IO.FS.readFile (dir / out)
+    match L4Factoidal.Syntax.parseNQuads src with
+    | .error e => return (false, s!"expected output {out} does not parse: {e.msg}")
+    | .ok want =>
+      let g := flattenDataset (L4Factoidal.RML.datasetOfQuads r.quads)
+      let w := flattenDataset want
+      match Graph.isomorphicOutcome g w with
+      | .equal => return (true, s!"{g.length} quads")
+      | .budgetExceeded => return (false, "isomorphism budget exceeded")
+      | .notEqual =>
+        let onlyGot := g.filter (fun t => !w.contains t)
+        let onlyWant := w.filter (fun t => !g.contains t)
+        let detail := (onlyGot.take 3).map (fun t => s!"    + {repr t}") ++ (onlyWant.take 3).map (fun t => s!"    - {repr t}")
+        return (false, s!"produced {g.length}, expected {w.length}\n" ++ "\n".intercalate detail)
+
 def main (args : List String) : IO UInt32 := do
   let root : System.FilePath := (args.head?.getD "third_party/testing/rdb2rdf-tests")
   let entries ← root.readDir
   let dirs := (entries.filter (·.fileName.startsWith "D")).map (·.path) |>.qsort (fun a b => a.toString < b.toString)
   let mut pass := 0
   let mut fail := 0
-  let mut notRun : List String := []
+  let mut rpass := 0
+  let mut rfail := 0
   for dir in dirs do
     let mpath := dir / "manifest.ttl"
     match ← readTurtle mpath.toString ("http://www.w3.org/2001/sw/rdb2rdf/test-cases/") with
@@ -112,7 +183,13 @@ def main (args : List String) : IO UInt32 := do
           fail := fail + 1
           IO.println s!"FAIL {c.id}: {msg}"
       for c in readCases mg "R2RML" do
-        notRun := notRun ++ [c.id]
+        let (ok, msg) ← runR2rmlCase dir db c
+        if ok then
+          rpass := rpass + 1
+          IO.println s!"PASS {c.id}"
+        else
+          rfail := rfail + 1
+          IO.println s!"FAIL {c.id}: {msg}"
   IO.println s!"rdb2rdf Direct Mapping: {pass} pass, {fail} fail (out of {pass + fail})"
-  IO.println s!"rdb2rdf R2RML: {notRun.length} cases not run (R2RML is the next step)"
-  pure (if fail == 0 && pass > 0 then 0 else 1)
+  IO.println s!"rdb2rdf R2RML: {rpass} pass, {rfail} fail (out of {rpass + rfail})"
+  pure (if fail == 0 && pass > 0 && rfail == 0 && rpass > 0 then 0 else 1)

@@ -8,8 +8,8 @@
 # Tracking: https://github.com/danbri/factoidal/issues/1165.
 #
 # Builds l4rdb2rdf in formal/lean4. Prints "N pass, M fail (out of T)"; exits 0
-# only when every Direct Mapping case passes. The R2RML cases are counted and
-# not run until RDB2RDF/R2RML.lean lands.
+# only when every Direct Mapping case and every R2RML case
+# (L4Factoidal/RDB2RDF/R2RML.lean, over RML.Eval) passes.
 set -euo pipefail
 export LC_ALL=C
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
