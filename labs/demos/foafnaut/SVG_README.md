@@ -19,6 +19,15 @@ open with `/usr/bin/open` unless `--no-open` is present. `--emit-artifact` write
 Lean geometry/WGSL/reference samples and exits before requesting a GPU. No
 adapter means exit 2 with no image, never a CPU image substituted for a GPU result.
 
+## Dashed strokes
+
+Rectangles and lines now support bounded dash arrays and signed offsets,
+including percentage lengths, odd-list repetition and zero-sum solid strokes.
+Dash pieces share one element opacity calculation. Dashed curves and general
+path strokes remain unsupported. Source tests and two unchanged WPT percentage
+fixtures match independent images through the diagnostic GPU path; packaged
+WASM validation is still pending.
+
 ## CSS subset
 
 Type-selector stylesheets and inline declarations now use a bounded Lean CSS
@@ -63,8 +72,8 @@ viewport dimensions are supplied; source dimensions are still validated. Root
 percentage dimensions require that explicit host viewport. The supplied output
 size overrides root dimensions; this is an embedding contract, not CSS sizing. A
 fractional SVG viewport stays Float for mapping/clipping while the backing image
-size is its ceiling. Subpixel edges use pixel-center classification, not area
-coverage. The transparent SVG canvas is composited over a documented white
+size is its ceiling. Subpixel edges use a shared2×2 sampling approximation on CPU and GPU,
+not analytic area coverage. The transparent SVG canvas is composited over a documented white
 backdrop for opaque RGB PPM output.
 
 These choices refer to W3C [painting](https://www.w3.org/TR/SVG11/painting.html)

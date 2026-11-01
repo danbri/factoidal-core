@@ -2,6 +2,13 @@ import Init
 
 namespace NativeGraphics
 
+/-- Shared regular 2×2 coverage samples in unit-pixel coordinates. This is
+    a finite sampling rule, not analytic area coverage or a universal error bound. -/
+def pixelSampleOffsets : List (Float × Float) :=
+  [(0.25,0.25),(0.75,0.25),(0.25,0.75),(0.75,0.75)]
+
+theorem pixelSampleOffsets_count : pixelSampleOffsets.length = 4 := rfl
+
 inductive Ty where | scalar | vec2 | boolean
 
 abbrev Ty.Value : Ty → Type

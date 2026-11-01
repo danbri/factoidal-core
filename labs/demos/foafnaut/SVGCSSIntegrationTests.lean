@@ -19,8 +19,8 @@ def run : IO Unit := do
   for file in ["percentage.svg", "percentage-attribute.svg"] do
     let xml ← IO.FS.readFile ("../../tests/external/svg/upstream/svg/painting/reftests/"++file)
     match NativeSVG.parse xml 800 600 with
-    | .ok _ => throw (IO.userError "unexpected dashed-stroke acceptance")
-    | .error e => check ((e.splitOn "stroke-dash").length > 1) ("expected dash blocker, got "++e)
-  IO.println "PASS SVG CSS cascade, inheritance, type/media/refusal boundaries; unchanged WPT fixtures reach dash blocker"
+    | .ok _ => pure ()
+    | .error e => throw (IO.userError ("unchanged percentage fixture refused: "++e))
+  IO.println "PASS SVG CSS cascade, inheritance, type/media/refusal boundaries; unchanged WPT percentage fixture admission"
 end NativeSVGCSSIntegrationTests
 #eval NativeSVGCSSIntegrationTests.run

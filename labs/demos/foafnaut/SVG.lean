@@ -1,6 +1,7 @@
 import Graphics
 import SVGPath
 import SVGCSS
+import SVGDash
 import L4Factoidal.Math.Affine
 import L4Factoidal.Tdb2.Format
 import L4Factoidal.XML.NamespaceView
@@ -173,6 +174,8 @@ structure Style where
   stroke : Paint := .none
   currentColor : Color := rgb 0 0 0
   strokeWidth : Float := 1
+  dashArray : List Float := []
+  dashOffset : Float := 0
   fillOpacity : Float := 1
   strokeOpacity : Float := 1
   rule : FillRule := .nonzero
@@ -214,7 +217,7 @@ private def relativeLength (source : String) (base : Float) : Except String Floa
   else lengthNumber s
 
 private def common := ["id","fill","stroke","color","fill-opacity","stroke-opacity","stroke-width",
-  "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule"]
+  "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule","stroke-dasharray","stroke-dashoffset"]
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
     if a.name.namespace_.isSome then throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
@@ -224,6 +227,14 @@ private def inheritedNumber (lengths : LengthContext) (attrs : List NamespaceAtt
   | none => pure old
   | some value => if trim value == "inherit" then pure old else
       if key == "stroke-width" then relativeLength value lengths.diagonal else number value
+private def dashArray (lengths : LengthContext) (source : String) : Except String (List Float) := do
+  if trim source == "none" then return []
+  let groups := source.splitOn ","
+  if groups.any (fun g => (trim g).isEmpty) then throw "empty dash list item"
+  let tokens := groups.flatMap (fun g => (g.splitOn " " |>.flatMap (·.splitOn "\t") |>.flatMap (·.splitOn "\n") |>.flatMap (·.splitOn "\r")).filter (· != ""))
+  if tokens.isEmpty then throw "empty dash list"
+  if tokens.length > 64 then throw "dash pattern exceeds 64 entries"
+  NativeSVGDash.normalize (← tokens.mapM (fun t => relativeLength t lengths.diagonal))
 private def readStyle (lengths : LengthContext) (ids : List String) (attrs : List NamespaceAttribute) (parent : Style) : Except String Style := do
   let mut style := parent
   if let some value := attr attrs "color" then
@@ -232,6 +243,10 @@ private def readStyle (lengths : LengthContext) (ids : List String) (attrs : Lis
     if trim value != "inherit" then style := {style with fill:= ← readPaint ids value}
   if let some value := attr attrs "stroke" then
     if trim value != "inherit" then style := {style with stroke:= ← readPaint ids value}
+  if let some value := attr attrs "stroke-dasharray" then
+    if trim value != "inherit" then style := {style with dashArray:= ← dashArray lengths value}
+  if let some value := attr attrs "stroke-dashoffset" then
+    if trim value != "inherit" then style := {style with dashOffset:= ← relativeLength value lengths.diagonal}
   let width ← inheritedNumber lengths attrs "stroke-width" parent.strokeWidth
   if width < 0 then throw "negative stroke-width"
   let fillOpacity ← inheritedNumber lengths attrs "fill-opacity" parent.fillOpacity
@@ -250,7 +265,7 @@ private def readStyle (lengths : LengthContext) (ids : List String) (attrs : Lis
     if let some value := attr attrs key then
       if !allowed.contains (trim value) then throw s!"unsupported {key}: {value}"
   return style
-private def cssProperties := (common.filter (· != "id")) ++ ["opacity","stroke-dasharray","stroke-dashoffset"]
+private def cssProperties := (common.filter (· != "id")) ++ ["opacity"]
 private def cssAttribute (d : NativeSVGCSS.Declaration) : NamespaceAttribute :=
   {name:={namespace_:=none,localPart:=d.property},value:=d.value}
 private def applyCSS (lengths : LengthContext) (ids : List String) (rules : List NativeSVGCSS.Rule)
@@ -260,8 +275,7 @@ private def applyCSS (lengths : LengthContext) (ids : List String) (rules : List
       some ({property:=a.name.localPart,value:=a.value} : NativeSVGCSS.Declaration) else none
   let inlineStyle ← NativeSVGCSS.parseDeclarations cssProperties ((attr attrs "style").getD "")
   let validate := fun (d : NativeSVGCSS.Declaration) => do
-    if ["stroke-dasharray","stroke-dashoffset"].contains d.property then throw ("unsupported CSS property implementation: "++d.property)
-    else if d.property == "opacity" then let _ ← number d.value; pure ()
+    if d.property == "opacity" then let _ ← number d.value; pure ()
     else let _ ← readStyle lengths ids [cssAttribute d] {}; pure ()
   let winning ← NativeSVGCSS.cascade validate tag presentation rules inlineStyle
   pure (attrs.filter (fun a => !(a.name.namespace_.isNone && (cssProperties.contains a.name.localPart || a.name.localPart=="style"))) ++ winning.map cssAttribute)
@@ -282,6 +296,7 @@ structure Primitive where
   style : Style
   opacity : Float := 1
   transform : Transform := identityTransform
+  dashParts : Option (List Geometry) := none
   deriving Repr
 private def strokeEnabled (style : Style) : Bool :=
   match style.stroke with | .none => false | _ => style.strokeWidth > 0
@@ -322,6 +337,57 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     let contours ← NativeSVGPath.parse number source
     return if contours.isEmpty then none else some (.path contours)
   else throw s!"unsupported SVG element: {tag}"
+/-- Dashed stroke union, retained inside one painted primitive. Lines use butt
+    strips; only actual dash ends receive caps. Rectangles keep perimeter phase. -/
+private def dashedParts (g : Geometry) (style : Style) : Except String (Option (List Geometry)) := do
+  if style.dashArray.isEmpty || !strokeEnabled style then return none
+  let half := style.strokeWidth/2
+  let (vertices,closed) ← match g with
+    | .line x y u v => pure ([Point.mk x y,Point.mk u v],false)
+    | .rect x y w h => pure ([Point.mk x y,Point.mk (x+w) y,Point.mk (x+w) (y+h),Point.mk x (y+h),Point.mk x y],true)
+    | _ => throw "dashed strokes currently support rect and line only"
+  let edges := vertices.zip vertices.tail
+  let lengths := edges.map (fun (a,b) => Float.sqrt ((b.x-a.x)*(b.x-a.x)+(b.y-a.y)*(b.y-a.y)))
+  let total := lengths.foldl (·+·) 0
+  let spans ← NativeSVGDash.intervals style.dashArray style.dashOffset total
+  let seam := closed && spans.any (fun a => a.first==0 && a.last>0) && spans.any (fun a => a.last==total && a.first<total)
+  let pointAt := fun (distance : Float) => Id.run do
+    let mut left := distance
+    for ((a,b),len) in edges.zip lengths do
+      if left <= len then
+        let t := if len==0 then 0 else left/len
+        return Point.mk (a.x+(b.x-a.x)*t) (a.y+(b.y-a.y)*t)
+      left := left-len
+    return vertices.headD (Point.mk 0 0)
+  let mut parts : Array Geometry := #[]
+  for span in spans do
+    let mut start := 0
+    for ((a,b),len) in edges.zip lengths do
+      let lo := max start span.first
+      let hi := min (start+len) span.last
+      if hi > lo && len > 0 then
+        let t := (lo-start)/len
+        let u := (hi-start)/len
+        parts := parts.push (.line (a.x+(b.x-a.x)*t) (a.y+(b.y-a.y)*t) (a.x+(b.x-a.x)*u) (a.y+(b.y-a.y)*u))
+      start := start+len
+    if style.lineCap == .round then
+      for endpoint in [span.first,span.last] do
+        if !(seam && (endpoint==0 || endpoint==total)) then
+          let q := pointAt endpoint
+          parts := parts.push (.circle q.x q.y half)
+  if closed then
+    match g with
+    | .rect x y w h =>
+      for (distance,corner) in [(0,Geometry.rect (x-half) (y-half) half half),
+          (w,Geometry.rect (x+w) (y-half) half half),
+          (w+h,Geometry.rect (x+w) (y+h) half half),
+          (2*w+h,Geometry.rect (x-half) (y+h) half half)] do
+        if (distance==0 && seam) || spans.any (fun a => a.first < distance && a.last > distance) then
+          parts := parts.push corner
+    | _ => pure ()
+  if parts.size > 4096 then throw "dash stroke union exceeds 4096 pieces"
+  return some parts.toList
+
 private def extraAttrs (tag : String) : List String :=
   match tag with
   | "rect" => ["x","y","width","height","opacity","transform"]
@@ -378,7 +444,9 @@ private def readNode (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) 
         | .other (.text s) | .other (.cdata s) => if !whitespace s then throw "text painting unsupported"
         | _ => throw "processing instruction unsupported"
       let opacity ← match attr attrs "opacity" with | none => pure 1 | some s => number s
-      return geometry.toList.map fun g => {geometry:=g,style:=inherited,opacity:=if transform.det == 0 then 0 else max 0 (min 1 opacity),transform}
+      geometry.toList.mapM fun g => do
+        let dashParts ← dashedParts g inherited
+        pure {geometry:=g,style:=inherited,opacity:=if transform.det == 0 then 0 else max 0 (min 1 opacity),transform,dashParts}
 private def readChildren (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List Primitive) := do
   let mut out : Array Primitive := #[]
   for node in nodes do
@@ -645,11 +713,14 @@ private def Primitive.rows (p : Primitive) : List Float :=
     | .path contours => (6,(NativeSVGPath.edges contours).length)
   geometryRows p.geometry ++ [Float.ofNat tag,Float.ofNat count,
     if p.style.rule == .evenodd then 1 else 0,(if p.style.lineCap == .round then 1 else 0)+(if p.transform.identity then 0 else 2)] ++ resolved p.style.fill p.style p.style.fillOpacity ++
-  resolved p.style.stroke p.style p.style.strokeOpacity ++ [p.style.strokeWidth,p.effectiveOpacity,0,0] ++
+  resolved p.style.stroke p.style p.style.strokeOpacity ++ [p.style.strokeWidth,p.effectiveOpacity,Float.ofNat (p.dashParts.getD []).length,if p.dashParts.isSome then 1 else 0] ++
   (match p.geometry with
    | .polygon points => points.flatMap (fun q => [q.x,q.y]) ++ (if points.length%2 == 1 then [0,0] else [])
    | .path contours => (NativeSVGPath.edges contours).flatMap fun (a,b) => [a.x,a.y,b.x,b.y]
    | _ => []) ++
+  ((p.dashParts.getD []).flatMap fun g => geometryRows g ++
+    [match g with | .line .. => 4 | .circle .. => 2 | _ => 1,0,0,0] ++
+    [0,0,0,0,0,0,0,0,p.style.strokeWidth,0,0,0]) ++
   (if p.transform.identity then [] else
     let t := p.transform.inverse
     (t.toPackedRows floatOps).toList)
@@ -691,13 +762,13 @@ private def Scene.wgsl (_s : Scene) : String :=
   "fn withinBounds(base:u32,p:vec2f)->bool{let b=params.rows[base];return all(p>=b.xy)&&all(p<=b.zw);}" ++
   "@vertex fn vertex(@builtin(vertex_index) i:u32)->@builtin(position) vec4f {" ++
   "let vertices=array<vec2f,3>(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));return vec4f(vertices[i],0,1); }\n" ++
-  "@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {" ++
+  "fn samplePixel(pixel:vec4f)->vec4f {" ++
   "var rgb=vec3f(1.0);if any(pixel.xy>=params.rows[1].zw){return vec4f(rgb,1.0);}" ++
   "let worldP=vec4f((pixel.xy-params.rows[0].zw)/params.rows[0].xy+params.rows[1].xy,0,1);" ++
   "var base=2u;\n" ++
   s!"for(var primitive=0u;primitive<{maxPrimitives}u&&base<arrayLength(&params.rows);primitive++)" ++ "{" ++
   "let header=vec4u(params.rows[base+1u]);let tag=header.x;let count=header.y;" ++
-  "let tailRows=select((count+1u)/2u,count,tag==6u);var p=worldP;if(header.w>=2u){let tb=base+5u+tailRows;let x=params.rows[tb];let y=params.rows[tb+1u];" ++
+  "let shapeRows=select((count+1u)/2u,count,tag==6u);let dashCount=u32(params.rows[base+4u].z);let tailRows=shapeRows+5u*dashCount;var p=worldP;if(header.w>=2u){let tb=base+5u+tailRows;let x=params.rows[tb];let y=params.rows[tb+1u];" ++
   "p=vec4f(dot(x.xy,worldP.xy)+x.z,dot(y.xy,worldP.xy)+y.z,0,1);}" ++
   "var fillHit=false;var strokeHit=false;switch tag {\n" ++
   shaderCase 1 (.rect 0 0 0 0) ++ shaderCase 2 (.circle 0 0 0) ++ shaderCase 3 (.ellipse 0 0 0 0) ++
@@ -705,15 +776,21 @@ private def Scene.wgsl (_s : Scene) : String :=
   ";}else{strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}}\n" ++
   "case 5u:{if(withinBounds(base,p.xy)){fillHit=windingContains(base,count,header.z,p.xy,2u);}}" ++
   "case 6u:{if(withinBounds(base,p.xy)){fillHit=windingContains(base,count,header.z,p.xy,4u);}} default:{} }\n" ++
+  "if(params.rows[base+4u].w==1.0){strokeHit=false;let parentBase=base;for(var di=0u;di<dashCount;di++){base=parentBase+5u+shapeRows+di*5u;let dt=u32(params.rows[base+1u].x);var piece=false;" ++
+  "if(dt==4u){piece=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}" ++
+  "else if(dt==2u){piece=" ++ relativeCondition (fillCondition (.circle 0 0 0) 0) ++ ";}" ++
+  "else{piece=" ++ relativeCondition (fillCondition (.rect 0 0 0 0) 0) ++ ";}strokeHit=strokeHit||piece;}base=parentBase;}" ++
   "let fill=params.rows[base+2u];let stroke=params.rows[base+3u];var element=vec4f(0.0);" ++
   "if fillHit {element=vec4f(fill.rgb*fill.a,fill.a);}" ++
   "if strokeHit {element=vec4f(stroke.rgb*stroke.a,stroke.a)+element*(1.0-stroke.a);}" ++
   "let opacity=params.rows[base+4u].y;rgb=element.rgb*opacity+rgb*(1.0-element.a*opacity);" ++
-  "base+=5u+tailRows+select(0u,2u,header.w>=2u);}return vec4f(rgb,1.0); }\n"
+  "base+=5u+tailRows+select(0u,2u,header.w>=2u);}return vec4f(rgb,1.0); }\n" ++
+  "@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {var total=vec4f(0.0);" ++
+  String.join (pixelSampleOffsets.map fun (x,y) =>
+    "total+=samplePixel(vec4f(pixel.xy+vec2f(" ++ toString (x-0.5) ++ "," ++ toString (y-0.5) ++ "),0.0,1.0));") ++
+  "return total/" ++ toString pixelSampleOffsets.length ++ ".0;}\n"
 
-private def Scene.sample (s : Scene) (x y : Nat) : Color := Id.run do
-  let screenX := Float.ofNat x+0.5
-  let screenY := Float.ofNat y+0.5
+private def Scene.sampleAt (s : Scene) (screenX screenY : Float) : Color := Id.run do
   if screenX >= s.mapping.viewportWidth || screenY >= s.mapping.viewportHeight then return rgb 255 255 255
   let position := ((screenX-s.mapping.tx)/s.mapping.sx+s.mapping.minX,
     (screenY-s.mapping.ty)/s.mapping.sy+s.mapping.minY)
@@ -727,11 +804,22 @@ private def Scene.sample (s : Scene) (x y : Nat) : Color := Id.run do
       | .polygon points => (boundsCondition base).eval env && windingHit env base points.length primitive.style.rule
       | .path contours => pathHit env base (NativeSVGPath.edges contours).length primitive.style.rule
       | _ => (fillCondition primitive.geometry base).eval env
-    let strokeHit := (strokeCondition primitive.geometry base primitive.style.lineCap).eval env
+    let strokeHit := match primitive.dashParts with
+      | none => (strokeCondition primitive.geometry base primitive.style.lineCap).eval env
+      | some pieces => Id.run do
+        let mut hit := false
+        let mut offset := base+20
+        for piece in pieces do
+          let condition := match piece with
+            | .line .. => strokeCondition piece offset .butt
+            | _ => fillCondition piece offset
+          hit := hit || condition.eval env
+          offset := offset+20
+        return hit
     let fill := resolved primitive.style.fill primitive.style primitive.style.fillOpacity
     let stroke := resolved primitive.style.stroke primitive.style primitive.style.strokeOpacity
-    let fa := if fillHit then fill[3]! else 0
-    let sa := if strokeHit then stroke[3]! else 0
+    let fa : Float := if fillHit then fill[3]! else 0
+    let sa : Float := if strokeHit then stroke[3]! else 0
     -- Compose this element's fill/stroke in premultiplied form, then apply its
     -- non-inherited opacity once to the whole element, including their overlap.
     let alpha := sa+fa*(1-sa)
@@ -742,6 +830,14 @@ private def Scene.sample (s : Scene) (x y : Nat) : Color := Id.run do
       premul.b*opacity+result.b*(1-alpha*opacity)⟩
     base := base+primitive.rows.length
   return result
+private def Scene.sample (s : Scene) (x y : Nat) : Color := Id.run do
+  let mut total : Color := ⟨0,0,0⟩
+  for (dx,dy) in pixelSampleOffsets do
+    let c := s.sampleAt (Float.ofNat x+dx) (Float.ofNat y+dy)
+    total := ⟨total.r+c.r,total.g+c.g,total.b+c.b⟩
+  let n := Float.ofNat pixelSampleOffsets.length
+  return ⟨total.r/n,total.g/n,total.b/n⟩
+
 private def Color.json (c : Color) : String := jsonArray ([c.r,c.g,c.b].map fun f => toString ((max 0 (min 255 (f*255))).round.toUInt32.toNat))
 private def floatJSON (x : Float) : String :=
   let integer := x.toInt64.toInt

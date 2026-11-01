@@ -129,7 +129,7 @@ Deno.test("SVG CSS stylesheet and inline declarations affect Lean geometry paint
 Deno.test("SVG refuses unsupported features rather than silently losing rendering semantics",async()=>{
  const e=await loadSVG();
  for(const element of ['polyline','text','use','image','foreignObject','defs','linearGradient','filter','clipPath','mask','script','svg'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
- for(const attrs of ['style="filter:blur(2px)"','class="red"','transform="perspective(1)"','stroke-dasharray="2 2"','stroke-linecap="square"','stroke-linejoin="bevel"','rx="2"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
+ for(const attrs of ['style="filter:blur(2px)"','class="red"','transform="perspective(1)"','stroke-linecap="square"','stroke-linejoin="bevel"','rx="2"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
  rejects(()=>e.compile('<?xml-stylesheet href="a.css"?>'+wrap('')),"processing instruction");
  rejects(()=>e.compile('<!DOCTYPE svg>'+wrap('')),"DOCTYPE");
  rejects(()=>e.compile('<?xml version="1.0" encoding="ISO-8859-1"?>'+wrap('')),"UTF-8");
@@ -238,4 +238,15 @@ Deno.test("SVG retained compound linear paths implement moveto, closure, winding
  rejects(()=>e.compile(path(' '.repeat(65537))),"path data exceeds");
  rejects(()=>e.compile(path('M'+'0'.repeat(40000)+' 0')),"path numeric token exceeds");
  rejects(()=>e.compile(path('M0 0H1V1Z','pathLength="5"')),"unsupported attribute");
+});
+
+Deno.test("SVG dash union retains pattern phase and single opacity",async()=>{
+ const e=await loadSVG();
+ const doc=wrap('<line x1="10" y1="20" x2="60" y2="20" stroke="black" stroke-width="6" stroke-dasharray="10 10"/>');
+ const artifact=e.compile(doc);assert(artifact.data[26]>0&&artifact.data[27]===1,"Missing retained dash region");
+ equal(e.sample(doc,15,20),[0,0,0]);equal(e.sample(doc,25,20),[255,255,255]);
+ const alpha=wrap('<line x1="20" y1="20" x2="60" y2="20" stroke="red" stroke-width="10" stroke-linecap="round" stroke-dasharray="2 2" stroke-opacity=".5" opacity=".5"/>');
+ equal(e.sample(alpha,23,20),[255,191,191]);
+ rejects(()=>e.compile(wrap('<circle r="10" stroke="black" stroke-dasharray="2 2"/>')),"dashed strokes currently support rect and line only");
+ rejects(()=>e.compile(wrap('<line stroke="black" stroke-dasharray="-1 2"/>')),"negative");
 });
