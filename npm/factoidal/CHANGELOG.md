@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.29.0 (2026-11-01)
+
+- The Data Compositor can open and save versioned pipeline JSON files. Import validates the recipe and never runs it automatically.
+- The Data Compositor can discover storage declared by an explicitly selected FOAF profile, browse and load pipelines, and create or update files with LWS preconditions. Remembered data contains pod metadata only; credentials stay in the dialog session. The server still controls write access.
+- The browser LWS client no longer eagerly imports its Node-only transport loader. Browser applications can import the public client and supply a browser transport without loading Node built-ins.
+
 ## 0.28.0 (2026-10-31)
 
 - The public LWS SBM11 reader rejects resource paths that escape its configured container before calling transport. Default Node HTTP reads refuse redirects. Browser default XHR now rejects caller-supplied headers, including authorization; authenticated browser use requires an explicit trusted, redirect-safe transport. Custom transports remain responsible for redirect and credential policy. WebDAV read-only behavior is unchanged.
