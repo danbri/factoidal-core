@@ -2759,7 +2759,7 @@ row. -/
     { orderBy := some [.asc (.existsPat (.bgp [sampleOtherTp]))] })).length == 2
 
 /-! https://github.com/danbri/factoidal/issues/656 — a FILTER may leave a plan
-unchanged or narrow it, and must never change the answer. A §17.6 extension
+unchanged or narrow it, and must never change the answer. An unknown §17.6 extension
 function and REGEX read no triple, but neither is `Expr.backendLocal`, so
 `evalPatternBackend` materialises the dataset and delegates them to the
 algebra evaluator, which the restriction theorem does not cover. The collector
@@ -2768,6 +2768,44 @@ recorded is back, deliberately, and costs reads rather than answers. Removing
 it again means extending `evalPatternBackend_restrict` to the delegating arms
 (<https://github.com/danbri/factoidal/issues/614>). -/
 private def sampleExtFn : WfIri := ⟨"https://example.test/z", by decide⟩
+
+/-! Regression from Londat's 2026-11-01 spatial benchmark: a built-in
+GeoSPARQL FILTER reads its arguments, not unrelated predicate blocks.
+Unknown extension functions below must retain the complete-store fallback. -/
+private def sampleGeoWithin : WfIri :=
+  ⟨"http://www.opengis.net/def/function/geosparql/sfWithin", by decide⟩
+
+#guard (quadEntriesForQuery sampleQuadManifest
+  (mkQuery (.select .all)
+    (.graph (.var "g")
+      (.filter (.functionCall sampleGeoWithin [.var "o", .var "o"])
+        (.bgp [sampleTp]))))).map Entry.predicate == [samplePredicate]
+
+-- The environment-independent predicate must remain narrower: its consumers
+-- prove equality even when two environments have DIFFERENT registries.
+#guard !Expr.backendLocal (.functionCall sampleGeoWithin [.var "o", .var "o"])
+#guard Expr.backendFilterLocal (.functionCall sampleGeoWithin [.var "o", .var "o"])
+
+-- Wrong arity and non-local arguments do not gain the new FILTER path.
+#guard !Expr.backendFilterLocal (.functionCall sampleGeoWithin [.var "o"])
+#guard !Expr.backendFilterLocal
+  (.functionCall sampleGeoWithin [.var "o", .functionCall sampleExtFn [.var "o"]])
+#guard !Expr.backendFilterLocal
+  (.functionCall sampleGeoWithin [.var "o", .existsPat (.bgp [sampleOtherTp])])
+
+-- BIND remains conservative even for a recognized GeoSPARQL function.
+#guard (quadEntriesForQuery sampleQuadManifest
+  (mkQuery (.select .all)
+    (.bind (.functionCall sampleGeoWithin [.var "o", .var "o"]) "inside"
+      (.bgp [sampleTp])))).length == 2
+
+-- Modifiers that read another active-graph predicate still force all blocks.
+#guard (quadEntriesForQuery sampleQuadManifest
+  (mkQuery (.select .all)
+    (.filter (.functionCall sampleGeoWithin [.var "o", .var "o"])
+      (.bgp [sampleTp])) [] none []
+    { orderBy := some [.asc (.existsPat (.bgp [sampleOtherTp]))] })).length == 2
+
 
 #guard (quadEntriesForQuery sampleQuadManifest
   (mkQuery (.select .all)

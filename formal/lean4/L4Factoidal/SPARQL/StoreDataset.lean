@@ -155,12 +155,12 @@ def evalPatternBackend (env : EvalEnv) (dsb : DatasetBackend) :
     QueryPattern → GraphBackend → SolutionSeq
   | .bgp b, gb => evalBgpBackend b gb
   -- A FILTER without active-graph-dependent expression forms can stay on the
-  -- backend path.  This is the intentionally conservative counterpart of the
-  -- `QueryPattern.lowerWith` closure: for `Expr.backendLocal`, existential
-  -- substitution is a no-op and `Expr.evalIn` needs only the row.  Other
-  -- filters retain the complete materialisation fallback below.
+  -- backend path. `backendFilterLocal` admits existing environment-independent
+  -- expressions plus the explicit GeoSPARQL built-ins with local arguments.
+  -- Neither contains EXISTS; the SAME environment is passed to Expr.evalIn.
+  -- Unknown extensions retain the complete materialisation fallback below.
   | .filter condition pattern, gb =>
-      if condition.backendLocal then
+      if condition.backendFilterLocal then
         (evalPatternBackend env dsb pattern gb).filter
           (fun row => ebvOrFalse (Expr.evalIn env row condition))
       else
@@ -172,8 +172,8 @@ def evalPatternBackend (env : EvalEnv) (dsb : DatasetBackend) :
   -- `IndexedEvalRefinement.lean`), as `GraphPattern.evalIn` already uses.
   | .join p1 p2, gb =>
       SPARQL.hashJoin (evalPatternBackend env dsb p1 gb) (evalPatternBackend env dsb p2 gb)
-  -- OPTIONAL stays on the backend path under the same condition the
-  -- `.filter` arm uses: a `backendLocal` condition needs only the row,
+  -- OPTIONAL retains its stricter `backendLocal` condition; the FILTER-only
+  -- GeoSPARQL allowance does not widen OPTIONAL. A local condition needs only the row,
   -- so existential substitution is a no-op and the condition the
   -- reference applies (`QueryPattern.lowerWith`'s `.leftJoin` arm,
   -- Query.lean) reduces to `ebvOrFalse ∘ Expr.evalIn env` under the

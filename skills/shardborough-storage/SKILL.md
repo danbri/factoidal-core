@@ -1837,3 +1837,20 @@ producers of RDF quads, and a file is one producer.
   (https://github.com/danbri/factoidal/issues/835).
 - Record: `docs/designissues/2026-10-13-tdb2-format.md`
   (https://github.com/danbri/factoidal/issues/834).
+
+
+## GeoSPARQL FILTER admission and proof scope (2026-11-01)
+
+The Londat mixed-store benchmark found a spatial FILTER could widen five
+geometry blocks to all 1,046 blocks. Loading GBI1 alone did not repair the
+planner: `plannerFragment` refused all function calls, then candidate filtering
+fell back on the mixed predicate set. The source candidate adds a FILTER-only
+`Expr.backendFilterLocal` allowlist with local arguments; it must not widen
+`Expr.backendLocal`, whose SBM11 consumers prove environment independence.
+Unknown calls, non-local arguments, BIND/OPTIONAL, conjunctions or other
+wrappers around geof remain conservative. Predicate pruning and GBI1 admission
+are separate checks. The existing restriction proof and planner guards pass;
+the separately saved draft WASM result gate is pending disk capacity, so this candidate is
+not a verified package release or a measured production-store speed-up.
+Details, exact commands and pending gates:
+[GeoSPARQL FILTER planning](../../docs/designissues/2026-11-01-geosparql-filter-planning.md).

@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-01 | [GeoSPARQL FILTER planning: narrow source repair](designissues/2026-11-01-geosparql-filter-planning.md) | this commit | current: restriction proof green; end-to-end gate pending disk capacity |
 | 2026-10-31 | [Readable compositor evidence](20261031-compositor-evidence-explanations.md) | this commit | current |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |
 | 2026-04-21 | [Large Turtle stack overflow fix sketch](2026-04-21-large-turtle-stack-overflow-fix-sketch.md) | c29698f98 | historical |
