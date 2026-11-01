@@ -31,6 +31,10 @@ private def fixtures : String :=
     ",\"direction\":" ++ pairJSON (a.applyDirection s 3.25 (-2.5)) ++ "}") ++ "]}"
 
 def run : IO Unit := do
+  let sentinel : Affine2 Float := ⟨2,3,5,7,11,13⟩
+  let packed := sentinel.toPackedRows AffineScalarOps.float
+  check (packed.toList == [2,5,11,0,3,7,13,0]) "GPU row coefficient order"
+  check (packed.applyPoint AffineScalarOps.float 17 19 == (140,197)) "packed point evaluation"
   for p in cases do
     check (determinant 3 (rows p) == some (p.determinant exact)) "TOAN determinant disagreement"
     let some inverse := p.inverse? exact | throw (IO.userError "unexpected singular exact matrix")

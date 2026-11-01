@@ -28,7 +28,51 @@ structure Affine2 (α : Type) where
   f : α
   deriving Repr
 
+/-- Two padded rows for GPU-friendly affine storage. Each row has four scalar
+    slots; byte width/alignment depends on the host scalar encoding. Padding
+    is not a coefficient and must not enter evaluation. -/
+structure AffineRows (α : Type) where
+  xx : α
+  xy : α
+  tx : α
+  pad0 : α
+  yx : α
+  yy : α
+  ty : α
+  pad1 : α
+  deriving Repr
+
+namespace AffineRows
+
+def toList (r : AffineRows α) : List α :=
+  [r.xx,r.xy,r.tx,r.pad0,r.yx,r.yy,r.ty,r.pad1]
+
+def decode (r : AffineRows α) : Affine2 α :=
+  ⟨r.xx,r.yx,r.xy,r.yy,r.tx,r.ty⟩
+
+/-- Same operation order as the affine reference; no reassociation or FMA
+    assumption. This models scalar evaluation, not a GPU floating ABI. -/
+def applyPoint (s : AffineScalarOps α) (r : AffineRows α) (x y : α) : α × α :=
+  (s.add (s.add (s.mul r.xx x) (s.mul r.xy y)) r.tx,
+   s.add (s.add (s.mul r.yx x) (s.mul r.yy y)) r.ty)
+
+theorem toList_length (r : AffineRows α) : r.toList.length = 8 := rfl
+
+theorem applyPoint_ignores_padding (s : AffineScalarOps α) (r : AffineRows α)
+    (p q x y : α) :
+    applyPoint s {r with pad0 := p, pad1 := q} x y = applyPoint s r x y := rfl
+
+end AffineRows
+
 namespace Affine2
+
+/-- Row-major padded affine payload: [a,c,e,0,b,d,f,0]. The final
+    homogeneous row [0,0,1] is implicit. Shared by SVG and other consumers. -/
+def toPackedRows (s : AffineScalarOps α) (m : Affine2 α) : AffineRows α :=
+  ⟨m.a,m.c,m.e,s.zero,m.b,m.d,m.f,s.zero⟩
+
+theorem packed_decode (s : AffineScalarOps α) (m : Affine2 α) :
+    (toPackedRows s m).decode = m := by cases m; rfl
 
 def identity (s : AffineScalarOps α) : Affine2 α :=
   ⟨s.one,s.zero,s.zero,s.one,s.zero,s.zero⟩
@@ -60,6 +104,12 @@ def applyPoint (s : AffineScalarOps α) (m : Affine2 α) (x y : α) : α × α :
 
 def applyDirection (s : AffineScalarOps α) (m : Affine2 α) (x y : α) : α × α :=
   (s.add (s.mul m.a x) (s.mul m.c y),s.add (s.mul m.b x) (s.mul m.d y))
+
+/-- Packing preserves the exact scalar expression used for point mapping.
+    Holds for every scalar backend, including Float; does not equate f64 CPU
+    arithmetic with f32 GPU arithmetic or permit shader reassociation. -/
+theorem packed_applyPoint (s : AffineScalarOps α) (m : Affine2 α) (x y : α) :
+    (toPackedRows s m).applyPoint s x y = applyPoint s m x y := rfl
 
 /-- Unnormalized normal covectors use the inverse transpose, not the point
     or direction transform. This can fail for a singular matrix/backend. -/

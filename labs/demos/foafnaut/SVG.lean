@@ -576,7 +576,7 @@ private def Primitive.rows (p : Primitive) : List Float :=
    | _ => []) ++
   (if p.transform.identity then [] else
     let t := p.transform.inverse
-    [t.a,t.c,t.e,0,t.b,t.d,t.f,0])
+    (t.toPackedRows floatOps).toList)
 private def Scene.data (s : Scene) : Array Float :=
   ([s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
     s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight] ++
