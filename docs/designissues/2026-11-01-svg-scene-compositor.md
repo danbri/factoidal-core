@@ -124,6 +124,8 @@ The SVG GPU shader generator uses `primitiveFixedRowCount`,
 `Primitive.fixedRows_length` proves the five-vec4 fixed prefix;
 `geometryTailData_length` proves padded polygon coordinates and path edges occupy
 the expected variable geometry rows;
+`Geometry.shaderTailRowsFromHeader_eq_tailRows` proves the Nat-level tag/count
+formula used by WGSL matches that geometry-tail count;
 `dashPieceData_length` and `dashPayloadData_length` prove the five-vec4 dash
 stride used by the loop. The affine row count is derived from shared
 `AffineRows.vec4RowCount`. These are producer-side layout proofs; the complete

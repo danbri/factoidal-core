@@ -208,7 +208,11 @@ prefix is exactly five vec4 rows. The affine tail row count comes from the
 shared `AffineRows.vec4RowCount`, whose theorem establishes two four-lane rows.
 `geometryTailData_length` proves that polygon point pairs (including odd-point
 padding) and retained path edges occupy the row count used by the shader's
-tail calculation.
+tail calculation. `Geometry.recordTagCount` now supplies the tag/count pair in
+the fixed header, and `Geometry.shaderTailRowsFromHeader_eq_tailRows` proves
+that the shader's path-versus-polygon row formula agrees with the Lean geometry
+tail count. This is a Nat-level relationship; exact `Float.ofNat` to WGSL
+`u32` conversion and the host upload remain outside the theorem.
 Dashed-stroke records now have a shared `dashPieceRowCount` used by the Lean
 layout theorem and WGSL offset generation. Kernel-checked theorems establish that
 each encoded dash piece occupies five vec4 rows and that concatenating pieces

@@ -292,6 +292,19 @@ inductive Geometry where
   | polygon (points : List Point)
   | path (contours : List NativeSVGPath.Contour)
   deriving Repr
+def Geometry.rectRecordTag : Nat := 1
+def Geometry.circleRecordTag : Nat := 2
+def Geometry.ellipseRecordTag : Nat := 3
+def Geometry.lineRecordTag : Nat := 4
+def Geometry.polygonRecordTag : Nat := 5
+def Geometry.pathRecordTag : Nat := 6
+def Geometry.recordTagCount : Geometry → Nat × Nat
+  | .rect .. => (rectRecordTag,0)
+  | .circle .. => (circleRecordTag,0)
+  | .ellipse .. => (ellipseRecordTag,0)
+  | .line .. => (lineRecordTag,0)
+  | .polygon points => (polygonRecordTag,points.length)
+  | .path contours => (pathRecordTag,(NativeSVGPath.edges contours).length)
 structure Primitive where
   geometry : Geometry
   style : Style
@@ -733,6 +746,15 @@ def geometryTailData : Geometry → List Float
       (if points.length%2 == 1 then [0,0] else [])
   | .path contours => (NativeSVGPath.edges contours).flatMap fun (a,b) => [a.x,a.y,b.x,b.y]
   | _ => []
+def shaderTailRowsFromHeader (tag count : Nat) : Nat :=
+  if tag == Geometry.pathRecordTag then count else (count+1)/2
+theorem Geometry.shaderTailRowsFromHeader_eq_tailRows (geometry : Geometry) :
+    shaderTailRowsFromHeader geometry.recordTagCount.1 geometry.recordTagCount.2 =
+      geometryTailRowCount geometry := by
+  cases geometry <;>
+    simp [shaderTailRowsFromHeader, Geometry.recordTagCount, Geometry.pathRecordTag,
+      Geometry.polygonRecordTag, geometryTailRowCount, Geometry.rectRecordTag,
+      Geometry.circleRecordTag, Geometry.ellipseRecordTag, Geometry.lineRecordTag]
 theorem geometryTailData_length (geometry : Geometry) :
     (geometryTailData geometry).length = geometryTailRowCount geometry * 4 := by
   cases geometry with
@@ -758,10 +780,7 @@ def primitiveFixedRowCount : Nat := 5
 def dashPieceRowCount : Nat := 5
 def affineTransformRowCount : Nat := L4Factoidal.Math.AffineRows.vec4RowCount
 def Primitive.fixedRows (p : Primitive) : List Float :=
-  let (tag,count) : Nat × Nat := match p.geometry with
-    | .rect .. => (1,0) | .circle .. => (2,0) | .ellipse .. => (3,0)
-    | .line .. => (4,0) | .polygon points => (5,points.length)
-    | .path contours => (6,(NativeSVGPath.edges contours).length)
+  let (tag,count) := p.geometry.recordTagCount
   geometryRows p.geometry ++ [Float.ofNat tag,Float.ofNat count,
     if p.style.rule == .evenodd then 1 else 0,(if p.style.lineCap == .round then 1 else 0)+(if p.transform.identity then 0 else 2)] ++
     resolved p.style.fill p.style p.style.fillOpacity ++
@@ -843,14 +862,14 @@ private def Scene.wgsl (_s : Scene) : String :=
   "var base=2u;\n" ++
   s!"for(var primitive=0u;primitive<{maxPrimitives}u&&base<arrayLength(&params.rows);primitive++)" ++ "{" ++
   "let header=vec4u(params.rows[base+1u]);let tag=header.x;let count=header.y;" ++
-  s!"let shapeRows=select((count+1u)/2u,count,tag==6u);let dashCount=u32(params.rows[base+4u].z);let tailRows=shapeRows+{dashPieceRowCount}u*dashCount;var p=worldP;if(header.w>=2u)" ++ "{let tb=base+" ++ toString primitiveFixedRowCount ++ "u+tailRows;let x=params.rows[tb];let y=params.rows[tb+1u];" ++
+  s!"let shapeRows=select((count+1u)/2u,count,tag=={Geometry.pathRecordTag}u);let dashCount=u32(params.rows[base+4u].z);let tailRows=shapeRows+{dashPieceRowCount}u*dashCount;var p=worldP;if(header.w>=2u)" ++ "{let tb=base+" ++ toString primitiveFixedRowCount ++ "u+tailRows;let x=params.rows[tb];let y=params.rows[tb+1u];" ++
   "p=vec4f(dot(x.xy,worldP.xy)+x.z,dot(y.xy,worldP.xy)+y.z,0,1);}" ++
   "var fillHit=false;var strokeHit=false;switch tag {\n" ++
-  shaderCase 1 (.rect 0 0 0 0) ++ shaderCase 2 (.circle 0 0 0) ++ shaderCase 3 (.ellipse 0 0 0 0) ++
-  "case 4u: {if((header.w%2u)==1u){strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .round) ++
+  shaderCase Geometry.rectRecordTag (.rect 0 0 0 0) ++ shaderCase Geometry.circleRecordTag (.circle 0 0 0) ++ shaderCase Geometry.ellipseRecordTag (.ellipse 0 0 0 0) ++
+  s!"case {Geometry.lineRecordTag}u: " ++ "{if((header.w%2u)==1u){strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .round) ++
   ";}else{strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}}\n" ++
-  "case 5u:{if(withinBounds(base,p.xy)){fillHit=windingContains(base,count,header.z,p.xy,2u);}}" ++
-  "case 6u:{if(withinBounds(base,p.xy)){fillHit=windingContains(base,count,header.z,p.xy,4u);}} default:{} }\n" ++
+  s!"case {Geometry.polygonRecordTag}u:" ++ "{if(withinBounds(base,p.xy)){fillHit=windingContains(base,count,header.z,p.xy,2u);}}" ++
+  s!"case {Geometry.pathRecordTag}u:" ++ "{if(withinBounds(base,p.xy)){fillHit=windingContains(base,count,header.z,p.xy,4u);}} default:{} }\n" ++
   s!"if(params.rows[base+4u].w==1.0)" ++ "{strokeHit=false;let parentBase=base;for(var di=0u;di<dashCount;di++){base=parentBase+" ++ toString primitiveFixedRowCount ++ s!"u+shapeRows+di*{dashPieceRowCount}u;let dt=u32(params.rows[base+1u].x);var piece=false;" ++
   "if(dt==4u){piece=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}" ++
   "else if(dt==2u){piece=" ++ relativeCondition (fillCondition (.circle 0 0 0) 0) ++ ";}" ++
