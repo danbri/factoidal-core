@@ -198,9 +198,51 @@ Filter 2.0, W3C Recommendation 08 November 2002, algorithm
   canonical output and checks each digest. The signatures are DSA, so core
   validation is an expected failure that names
   https://github.com/danbri/factoidal/issues/1224.
-- XSLT stays refused, with a message that names
-  https://github.com/danbri/factoidal/issues/1225; a `#guard` in
-  `DSig11.lean` checks the refusal.
+- XSLT stayed refused in this part (part 5 below adds it).
+
+## The XSLT transform and the 2001 interop vectors (2026-11-01, part 5)
+
+Code: `formal/lean4/L4Factoidal/XML/DSigXslt.lean` (§6.6.5, algorithm
+`http://www.w3.org/TR/1999/REC-xslt-19991116`), called from
+`DSig11.applyTransform`.
+
+- Input: octets. A node-set input is first written by Canonical XML 1.0
+  without comments (`DSig11.toOctets`, §4.4.3.2).
+- Stylesheet: the one element child of `ds:Transform`, which must be
+  `xsl:stylesheet` or `xsl:transform`. It is written out as text by
+  Canonical XML 1.0 over its subtree (`C14n.canonicalize`), so it keeps
+  every namespace binding that is in scope in the signature document. Any
+  other content is refused with the reason.
+- Processor: the XSLT 4.0 processor of `L4Factoidal/XSLT4/`
+  (`compileStylesheet`, `transform`). A `version="1.0"` stylesheet runs in
+  the backwards-compatible mode of XSLT 4.0. The XSLT 4.0 processor was
+  chosen over the XSLT 1.0 module of `L4Factoidal/XSLT/` because it applies
+  `xsl:output` (XSLT 1.0 §16) when it writes the result, and the octets of
+  the result are what the next transform or the digest reads. A relative
+  URI in the stylesheet (`xsl:import`, `document()`) gets no resource.
+- Output: the UTF-8 octets of the serialized principal result. §6.6.5
+  recommends a canonicalization after XSLT; that is the next transform of
+  the reference, not part of this one.
+- Theorems (1999 is the XSLT version of the algorithm URI):
+  `dsig11_xslt_1999_output` (the output is the UTF-8 encoding of the
+  serialized result of the named stylesheet on the input, with nothing
+  added), `dsig11_xslt_1999_no_stylesheet` (a `ds:Transform` with no
+  element child is refused).
+- Measured by: Merlin Hughes's `merlin-xmldsig-twenty-three`
+  (`third_party/testing/xmldsig-merlin-2001`, provenance there), the
+  interop vectors of XML Signature 1.0 (2001-2002). The runner checks the
+  digest of every `ds:Reference` of each file, those in `ds:Manifest`
+  included (36 references; reference 20 of `signature.xml` is the XSLT
+  transform, `c7wq5XKos6RqNVJyFy7/fl6+sAs=`, which libxslt also gives on the
+  same input), then core validation of the 16 signatures. The two external
+  references resolve to the vendored `xml-stylesheet.b64` and to its decoded
+  octets (the 1999 text of `http://www.w3.org/TR/xml-stylesheet`), never to
+  the network. Core validation: the HMAC-SHA1 signature passes; the
+  HMAC-SHA1 signature with `HMACOutputLength` 40 is refused, because XML
+  Signature 1.1 §6.3.1 requires it (the 2002 vectors were valid under 1.0);
+  13 DSA signatures are expected failures that name
+  https://github.com/danbri/factoidal/issues/1224, and the RSA signature
+  (a 1024-bit key) names https://github.com/danbri/factoidal/issues/1227.
 
 ## Open (each with an issue and an expected failure, or a refusal)
 
@@ -208,9 +250,12 @@ Filter 2.0, W3C Recommendation 08 November 2002, algorithm
   https://github.com/danbri/factoidal/issues/1223 (18 interop cases). HACL\*
   has no P-384 or P-521 (https://github.com/danbri/factoidal/issues/1166).
 - DSA: https://github.com/danbri/factoidal/issues/1224.
-- The XSLT transform: https://github.com/danbri/factoidal/issues/1225.
 - `ds:X509Data`: https://github.com/danbri/factoidal/issues/1226 (1 case).
 - RSA keys of 1024 bits: https://github.com/danbri/factoidal/issues/1227
   (10 cases; decision needed).
-- The 2001 interop vectors and a wasm op: open items of item 4 of
+- `ds:KeyName`, `ds:RetrievalMethod` and the X.509 forms of the 2001
+  vectors are not reached, because their signatures are DSA; they are part
+  of https://github.com/danbri/factoidal/issues/1224 and
+  https://github.com/danbri/factoidal/issues/1226.
+- A wasm op: an open item of item 4 of
   https://github.com/danbri/factoidal/issues/1165.
