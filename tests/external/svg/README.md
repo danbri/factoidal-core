@@ -204,3 +204,9 @@ is labelled local: the supplied artifact is not independently certified by the
 runner as having been generated from the fixture or this checkout. Record the
 export command, checked source, input hash, artifact hash and comparison scope.
 It must not silently replace the normal WASM-producer path or its 38-case score.
+
+The subsequent shared-linear-stroke source replay admits six of all 38 inputs,
+with 32 still unsupported. Targeted same-renderer GPU comparisons now match
+both pathlength-001 (rectangles versus paths) and pathlength-004a (polygons
+versus paths) exactly. These results retain their separate source-diagnostic
+scope; the last full artifact-backed score above has not been replaced.

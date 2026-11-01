@@ -28,3 +28,23 @@ Build ordering and link inputs include SVGStroke; shell syntax checks pass. Deno
 ## Endpoint rounding regression
 
 A follow-up reproduced loss of the terminal round cap on the open contour `(0,0), (1,1), (2,2), (3,3)`: summing three `sqrt(2)` lengths and repeatedly subtracting can leave a value just larger than the final segment. The former fallback placed that cap at the contour start. Endpoint lookup now selects the actual final stroke-edge endpoint at total distance and on traversal fallthrough; degenerate contours retain their sole point. The new regression failed before the fix and passes afterward, also checking that the start cap is not duplicated. This is a concrete floating-point regression check, not a proof covering all Float geometry.
+
+
+## Polygon reftest and full source admission replay
+
+A subsequent fresh source export and GPU run also matches the unchanged
+`pathlength-004a.svg` polygon test to `pathlength-004-ref.svg` exactly: zero
+pixel or channel differences, retaining the upstream zero tolerance. Both ran
+at 800×600 through Chrome 156 / Apple metal-3. All pinned fixture hashes passed
+before comparison. Evidence: `/private/tmp/solving-pathlength-004a-pair.json`
+and the corresponding `*-gpu/candidate.json` reports. Together with 001 this
+is two targeted same-renderer source-artifact reftest matches, not two new
+independent-browser matches or a complete binary-backed suite score.
+
+A replay of all 38 unchanged test inputs with the current source reports
+**six accepted and 32 unsupported**. Newly accepted relative to the earlier
+four-case admission are pathlength-001 and pathlength-004a. The other four
+are fallback-001/002 and percentage/percentage-attribute. All original runtime
+requirements remain recorded. This admission result means compilation only;
+it does not promote the other unsupported cases or prove visual conformance.
+Report: `/private/tmp/solving-linear-admission.json`.

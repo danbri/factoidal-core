@@ -15,7 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
-| 2026-11-01 | [Shared SVG linear strokes](20261101-svg-linear-strokes.md) | 957a060d4; b5f6a9150 | current — one exact same-renderer GPU pair; independent antialiasing gap remains |
+| 2026-11-01 | [Shared SVG linear strokes](20261101-svg-linear-strokes.md) | 957a060d4; b5f6a9150 | current — two exact same-renderer GPU pairs; six source admissions; independent antialiasing gap remains |
 | 2026-11-01 | [SVG dash numeric refinement](20261101-svg-dash-numeric-refinement.md) | pending | current — whole-result numeric equality and vacuous-output mutation rejection |
 | 2026-11-01 | [SVG dash unit provenance](20261101-svg-dash-unit-provenance.md) | 13f74302e | current — paired value/unit records, kernel proofs, unchanged fixture artifact |
 | 2026-11-01 | [SVG coverage diagnostics](20261101-svg-coverage-diagnostics.md) | 7631f3251 | current — exact-area probe distinguishes sampling quality from browser matching |
