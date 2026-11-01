@@ -45,96 +45,29 @@ same machine is a valid inbox.
 
 ## Limits, each a server choice
 
-* The check runs when a subscription is made. A name resolved then is not
-  resolved again at delivery time.
+* The check runs when a subscription is made. Requests to private and other
+  special-purpose addresses are a separate decision, made again just before
+  each delivery with the addresses resolved then (`L4Factoidal.Net.Egress`,
+  `Notifications.egressOf`, https://github.com/danbri/factoidal/issues/1126).
 * A name that leads to this server only through a proxy, or through an
   address the host did not report, is not detected. Under authorization a
   delivery is an anonymous POST, which the access policy refuses unless it
   grants Append to the public.
 -/
 import L4Factoidal.LWS.Operations
+import L4Factoidal.Net.Addr
 
 namespace L4Factoidal.LWS.InboxGuard
 
 open L4Factoidal.LWS
 
-/-! ## IP literals -/
+/-! ## IP literals and authorities
 
-/-- A decimal octet: one to three digits, at most 255, no leading zero
-(WHATWG and `inet_pton` read leading zeros differently, so they are not
-IP literals here; such a host is a name, which the host resolves). -/
-def octet? (s : String) : Option Nat :=
-  if s.isEmpty || s.length > 3 || !s.all Char.isDigit then none
-  else if s.length > 1 && s.front == '0' then none
-  else match s.toNat? with
-    | some n => if n ≤ 255 then some n else none
-    | none => none
+Moved to `L4Factoidal.Net.Addr` (issue 1126), so that `L4Factoidal.Net.Egress`
+and every fetching surface read addresses the same way. The names stay
+reachable here. -/
 
-/-- An IPv4 address in dotted decimal, as its four octets. -/
-def ipv4? (s : String) : Option (List Nat) :=
-  match s.splitOn "." with
-  | [a, b, c, d] => [a, b, c, d].mapM octet?
-  | _ => none
-
-/-- One IPv6 group: one to four hexadecimal digits. -/
-def hexGroup? (s : String) : Option Nat :=
-  if s.isEmpty || s.length > 4 then none
-  else s.foldl (fun acc c => acc.bind (fun n =>
-    if c.isDigit then some (n * 16 + (c.toNat - '0'.toNat))
-    else if 'a' ≤ c && c ≤ 'f' then some (n * 16 + (c.toNat - 'a'.toNat + 10))
-    else if 'A' ≤ c && c ≤ 'F' then some (n * 16 + (c.toNat - 'A'.toNat + 10))
-    else none)) (some 0)
-
-/-- The 16-bit groups of one side of `::`, with an IPv4 tail allowed
-when `tail` (two groups). -/
-def groups? (s : String) (tail : Bool) : Option (List Nat) :=
-  if s.isEmpty then some [] else
-  let parts := s.splitOn ":"
-  match parts.getLast? with
-  | none => some []
-  | some last =>
-      let front := parts.dropLast
-      match (if tail then ipv4? last else none) with
-      | some [a, b, c, d] =>
-          (front.mapM hexGroup?).map (· ++ [a * 256 + b, c * 256 + d])
-      | _ => parts.mapM hexGroup?
-
-/-- An IPv6 address (without brackets, an RFC 6874 zone removed), as its
-eight 16-bit groups. -/
-def ipv6? (s0 : String) : Option (List Nat) :=
-  let s := (s0.splitOn "%").head!
-  match s.splitOn "::" with
-  | [whole] =>
-      match groups? whole true with
-      | some gs => if gs.length == 8 then some gs else none
-      | none => none
-  | [l, r] =>
-      match groups? l false, groups? r true with
-      | some a, some b =>
-          if a.length + b.length ≤ 7 then
-            some (a ++ List.replicate (8 - a.length - b.length) 0 ++ b)
-          else none
-      | _, _ => none
-  | _ => none
-
-/-- An address, normalized: IPv4 as four octets; IPv6 as eight groups,
-except an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`), which is its IPv4
-address. -/
-inductive Addr where
-  | v4 (octets : List Nat)
-  | v6 (groups : List Nat)
-deriving Repr, DecidableEq, BEq
-
-/-- Read an IP literal: dotted decimal, or IPv6 with or without brackets. -/
-def addr? (s : String) : Option Addr :=
-  match ipv4? s with
-  | some o => some (.v4 o)
-  | none =>
-      let inner := if s.startsWith "[" && s.endsWith "]" then ((s.drop 1).dropEnd 1).toString else s
-      match ipv6? inner with
-      | some [0, 0, 0, 0, 0, 0xffff, hi, lo] => some (.v4 [hi / 256, hi % 256, lo / 256, lo % 256])
-      | some gs => some (.v6 gs)
-      | none => none
+export L4Factoidal.Net (octet? ipv4? hexGroup? groups? ipv6? Addr addr? authority? localhostName)
 
 /-- A loopback address (127.0.0.0/8, `::1`) or the unspecified address
 (`0.0.0.0`, `::`): this machine. -/
@@ -154,41 +87,6 @@ def unspecified : Addr → Bool
 addresses `locals` for a socket bound to every interface)? -/
 def sameAddr (locals : List Addr) (b x : Addr) : Bool :=
   b == x || (thisMachine b && thisMachine x) || (unspecified b && (thisMachine x || locals.contains x))
-
-/-! ## Authorities -/
-
-/-- The host (lower case, without brackets for IPv6, one trailing dot
-removed) and the port (by the scheme when absent) of an `http` or `https`
-URL; `none` for another URL. -/
-def authority? (u : String) : Option (String × Nat) :=
-  match u.splitOn "://" with
-  | [scheme, rest] =>
-      let sch := scheme.toLower
-      let dflt : Option Nat := if sch == "http" then some 80 else if sch == "https" then some 443 else none
-      match dflt with
-      | none => none
-      | some d =>
-          let auth := (String.ofList (rest.toList.takeWhile (fun c => c != '/' && c != '?' && c != '#'))).toLower
-          let auth := match auth.splitOn "@" with
-            | [a] => a
-            | parts => parts.getLast!
-          let (host, portText) :=
-            if auth.startsWith "[" then
-              match auth.splitOn "]" with
-              | [h, p] => (h.drop 1 |>.toString, if p.startsWith ":" then (p.drop 1).toString else p)
-              | _ => (auth, "")
-            else match auth.splitOn ":" with
-              | [h] => (h, "")
-              | [h, p] => (h, p)
-              | _ => (auth, "")
-          let host := if host.endsWith "." then (host.dropEnd 1).toString else host
-          if host.isEmpty then none else
-          if portText.isEmpty then some (host, d)
-          else (portText.toNat?).map (host, ·)
-  | _ => none
-
-/-- Is the name a localhost name (RFC 6761 §6.3)? -/
-def localhostName (h : String) : Bool := h == "localhost" || h.endsWith ".localhost"
 
 /-- The addresses an inbox host stands for: itself when it is an IP literal;
 otherwise what the host resolved for it, and the loopback addresses for a

@@ -163,7 +163,7 @@ def fullOnlyOpNames : List String :=
   , "storeServeKeys", "storeServeOpen", "storeServeRequest", "storeServeCommit"
   , "storeServeClose", "tdb2ServeKeys", "tdb2ServeOpen"
   , "packBegin", "packFeed", "packEndPass", "packNext", "packFinish", "packClose"
-  , "lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush", "lwsLoad", "lwsPersist", "lwsRead", "lwsDirLock", "lwsAtRestNotice", "lwsStorageKeyNew", "solidOpen", "solidStep", "solidClose"
+  , "lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush", "lwsEgress", "lwsLoad", "lwsPersist", "lwsRead", "lwsDirLock", "lwsAtRestNotice", "lwsStorageKeyNew", "solidOpen", "solidStep", "solidClose"
   , "solidSnapshot"
   , "solidFetched"
   , "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzOwns", "authzClose"

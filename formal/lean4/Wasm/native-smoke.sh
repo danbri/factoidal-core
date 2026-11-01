@@ -1959,17 +1959,20 @@ seq = [
                             body=json.dumps({"type": "WebhookSubscription",
                                              "topic": ["http://localhost/w/"],
                                              "inbox": "http://hook.example/in"}),
-                            resolved=[{"host": "hook.example", "addresses": ["192.0.2.7"]}])]],
+                            resolved=[{"host": "hook.example", "addresses": ["93.184.216.34"]}])]],
   ["lwsStep",  ["lws1", req(method="PUT", target="/w/a.txt",
                             headers=[["content-type", "text/plain"]], body="a")]],
   ["lwsDelivered", ["lws1", json.dumps({"id": "d3", "status": 503})]],
   ["lwsDelivered", ["lws1", json.dumps({"id": "d3", "status": 202})]],
   ["lwsSnapshot", ["lws1"]],
+  ["lwsEgress", ["lws1", json.dumps({"url": "http://hook.example/in", "addresses": ["10.0.0.1"]})]],
+  ["lwsEgress", ["lws1", json.dumps({"url": "http://hook.example/in", "addresses": ["93.184.216.34"]})]],
+  ["lwsEgress", ["lws1", json.dumps({"url": "http://100.64.0.1/in", "addresses": []})]],
 ]
 json.dump(seq, open(sys.argv[1], "w"))
 EOF
 
-checkseq "lwsStep delivers signed notifications; lwsDelivered decides retries" "$TMP/lws-notify.json" \
+checkseq "lwsStep delivers signed notifications; lwsDelivered decides retries; lwsEgress chooses the address (issue 1126)" "$TMP/lws-notify.json" \
   'any(s["type"] == "NotificationService" for s in json.loads(rs[1]["response"]["body"])["service"])
    and json.loads(rs[1]["response"]["body"])["verificationMethod"][0]["publicKeyJwk"]["crv"] == "Ed25519"
    and rs[2]["response"]["status"] == 201
@@ -1980,7 +1983,11 @@ checkseq "lwsStep delivers signed notifications; lwsDelivered decides retries" "
    and "signature" in dict(rs[3]["deliveries"][0]["headers"])
    and rs[4]["retry"]["after"] == 1 and rs[4]["retry"]["delivery"]["id"] == "d3"
    and "retry" not in rs[5]
-   and len(rs[6]["snapshot"]["notifications"]["subscriptions"]) == 1'
+   and len(rs[6]["snapshot"]["notifications"]["subscriptions"]) == 1
+   and rs[3]["deliveries"][0]["resolve"] == "hook.example"
+   and "special-purpose" in rs[7]["refused"] and "address" not in rs[7]
+   and rs[8]["address"] == "93.184.216.34" and rs[8]["host"] == "hook.example"
+   and "refused" in rs[9]'
 
 # Issues 914, 915 and 920: an inbox host name is resolved by the host first
 # (resolve), an inbox that names this server is 400, a delivery over the
@@ -1997,7 +2004,7 @@ seq = [
   ["lwsOpen",  [json.dumps({"now": 1000, "insecureNoAuth": True, "baseIri": base,
                             "deliveryLimit": 1, "deliveryWindow": 60,
                             "listen": {"address": "127.0.0.1", "port": 3000, "addresses": []},
-                            "controllerInbox": "http://192.0.2.9/ctl",
+                            "controllerInbox": "http://93.184.216.35/ctl",
                             "entropy": base64.b64encode(bytes(range(32))).decode()})]],
   ["lwsStep",  ["lws1", req(method="POST", target="/.well-known/lws-subscriptions/", headers=lj,
                             body=sub("http://localhost:3000/loop/"))]],
@@ -2005,7 +2012,7 @@ seq = [
                             body=sub("http://localhost:3000/loop/"),
                             resolved=[{"host": "localhost", "addresses": ["127.0.0.1"]}])]],
   ["lwsStep",  ["lws1", req(method="POST", target="/.well-known/lws-subscriptions/", headers=lj,
-                            body=sub("http://192.0.2.7/in"))]],
+                            body=sub("http://93.184.216.34/in"))]],
   ["lwsStep",  ["lws1", req(method="PUT", target="/w/a.txt", headers=[["content-type", "text/plain"]], body="a")]],
   ["lwsStep",  ["lws1", req(method="PUT", target="/w/b.txt", headers=[["content-type", "text/plain"]], body="b")]],
   ["lwsFlush", ["lws1", json.dumps({"now": 2000})]],
@@ -2032,13 +2039,13 @@ checkseq "LWS: resolve, inbox loop 400, rate limit with wake and lwsFlush, 301 a
    and rs[3]["response"]["status"] == 201
    and len(rs[4]["deliveries"]) == 1
    and "deliveries" not in rs[5] and rs[5]["wake"] >= 1
-   and len(rs[6]["deliveries"]) == 1 and rs[6]["deliveries"][0]["url"] == "http://192.0.2.7/in"
+   and len(rs[6]["deliveries"]) == 1 and rs[6]["deliveries"][0]["url"] == "http://93.184.216.34/in"
    and rs[9]["response"]["status"] == 200
    and rs[10]["response"]["status"] == 301
    and dict(rs[10]["response"]["headers"])["location"] == "http://127.0.0.1:3000/dst/m.txt"
    and ["/src/m.txt", "/dst/m.txt"] in rs[11]["snapshot"]["moved"]
    and rs[12]["response"]["status"] == 201
-   and [d["url"] for d in rs[12]["deliveries"]] == ["http://192.0.2.9/ctl"]'
+   and [d["url"] for d in rs[12]["deliveries"]] == ["http://93.184.216.35/ctl"]'
 
 # A storage kept in files (https://github.com/danbri/factoidal/issues/918):
 # lwsOpen names the control files to read; lwsLoad and lwsPersist carry file
@@ -3343,9 +3350,9 @@ check "cidValidate lists each failed MUST with its JSON Pointer" cidValidate "$T
 args "$TMP/cid-r1.json" '{"vm":"https://c.example/d#k","relationship":"authentication"}'
 check "cidRetrieve names the host to resolve" cidRetrieve "$TMP/cid-r1.json" \
   'r == {"ok": True, "step": "resolve", "host": "c.example"}'
-args "$TMP/cid-r2.json" '{"vm":"https://c.example/d#k","relationship":"authentication","resolved":[{"host":"c.example","addresses":["203.0.113.7"]}]}'
+args "$TMP/cid-r2.json" '{"vm":"https://c.example/d#k","relationship":"authentication","resolved":[{"host":"c.example","addresses":["93.184.216.34"]}]}'
 check "cidRetrieve names the fetch, its Accept and its address" cidRetrieve "$TMP/cid-r2.json" \
-  'r["step"] == "fetch" and r["url"] == "https://c.example/d" and r["address"] == "203.0.113.7"
+  'r["step"] == "fetch" and r["url"] == "https://c.example/d" and r["address"] == "93.184.216.34"
    and r["accept"] == "application/cid, application/cid+json, application/ld+json, application/json"'
 args "$TMP/cid-r3.json" '{"vm":"https://c.example/d#k","relationship":"authentication","resolved":[{"host":"c.example","addresses":["10.0.0.1"]}]}'
 check "cidRetrieve refuses a private address" cidRetrieve "$TMP/cid-r3.json" \
@@ -3358,7 +3365,7 @@ doc = {"id": "https://c.example/d", "authentication": [{"id": "#k", "type": "Mul
        "controller": "https://c.example/d",
        "publicKeyMultibase": "z6MkmM42vxfqZQsv4ehtTjFFxQ4sQKS2w6WR7emozFAn5cxu"}]}
 req = {"vm": "https://c.example/d#k", "relationship": "authentication",
-       "resolved": [{"host": "c.example", "addresses": ["203.0.113.7"]}],
+       "resolved": [{"host": "c.example", "addresses": ["93.184.216.34"]}],
        "fetched": [{"url": "https://c.example/d", "status": 200, "contentType": sys.argv[2],
                     "body": json.dumps(doc)}]}
 json.dump([json.dumps(req)], open(sys.argv[1], "w"))

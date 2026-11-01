@@ -22,19 +22,23 @@ one.
   answers `resolve`, the host passes back every address); a `localhost`
   name (RFC 6761 §6.3) is loopback whatever the resolution says.
 * Unless `allowPrivateFetch` is set, a fetch is refused when ANY address is
-  loopback (127.0.0.0/8, ::1), unspecified or "this network" (0.0.0.0/8,
-  ::), link-local (169.254.0.0/16, fe80::/10), private (RFC 1918:
-  10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16; RFC 4193: fc00::/7).
+  special-purpose: `L4Factoidal.Net.specialPurpose`, the IANA IPv4 and IPv6
+  special-purpose registries (loopback, unspecified, private, link-local,
+  shared address space 100.64.0.0/10, benchmarking, documentation,
+  multicast, reserved, site-local, and NAT64 or 6to4 with such an embedded
+  IPv4 address). The decision is `L4Factoidal.Net.Egress.choose`, the one
+  outbound decision of the engine (https://github.com/danbri/factoidal/issues/1126).
 * The fetch answer names the address the host connects to, so the host
   does not resolve the name again (no second answer from a name server can
   move the request). The host does not follow redirects.
 * Answers are kept for `docTtl` seconds, a failure too. At most
   `cacheMax` entries.
 
-Address parsing is `L4Factoidal.LWS.InboxGuard` (`addr?`, `authority?`,
+Address parsing is `L4Factoidal.Net.Addr` (`addr?`, `authority?`,
 `localhostName`).
 -/
 import L4Factoidal.LWS.InboxGuard
+import L4Factoidal.Net.Egress
 import L4Factoidal.Crypto.CipherCall
 
 namespace L4Factoidal.Authz
@@ -43,17 +47,9 @@ open L4Factoidal.LWS.InboxGuard (Addr addr? authority? localhostName)
 
 /-! ## Addresses -/
 
-/-- An address the guard refuses: loopback, unspecified or this network,
-link-local, RFC 1918 private, RFC 4193 unique local. -/
-def privateAddr : Addr → Bool
-  | .v4 (a :: b :: _) =>
-      a == 0 || a == 10 || a == 127 || (a == 169 && b == 254) ||
-      (a == 172 && 16 ≤ b && b ≤ 31) || (a == 192 && b == 168)
-  | .v4 _ => true
-  | .v6 gs =>
-      let g0 := gs.headD 0
-      gs == [0, 0, 0, 0, 0, 0, 0, 1] || gs == [0, 0, 0, 0, 0, 0, 0, 0] ||
-      (g0 / 64 == 0xfe80 / 64) || (g0 / 512 == 0xfc00 / 512)
+/-- An address the guard refuses: a special-purpose address
+(`L4Factoidal.Net.specialPurpose`, issue 1126). -/
+abbrev privateAddr : Addr → Bool := L4Factoidal.Net.specialPurpose
 
 /-- The fetch policy. -/
 structure FetchPolicy where
@@ -112,23 +108,15 @@ def withoutFragment (u : String) : String := (u.splitOn "#").headD u
 
 def schemeOf (u : String) : String := ((u.splitOn "://").headD "").toLower
 
-/-- May the server connect to these addresses? -/
-def addressesAllowed (p : FetchPolicy) (as : List Addr) : Bool :=
-  p.allowPrivateFetch || !(as.any privateAddr)
+/-- The egress policy of a fetch policy. -/
+def FetchPolicy.egress (p : FetchPolicy) : L4Factoidal.Net.EgressPolicy :=
+  { allowPrivate := p.allowPrivateFetch }
 
 /-- The decision for the addresses of a host: the address to connect to,
-or the refusal. -/
+or the refusal. It is `L4Factoidal.Net.choose` (issue 1126). -/
 def chooseAddress (p : FetchPolicy) (host : String) (texts : List String) :
     Except String String :=
-  let parsed := texts.filterMap addr?
-  if localhostName host && !p.allowPrivateFetch then
-    .error s!"{host} is a localhost name; fetching it is refused (--allow-private-fetch)"
-  else if parsed.isEmpty then .error s!"{host} did not resolve to an address"
-  else if !addressesAllowed p parsed then
-    .error s!"{host} resolves to a loopback, link-local or private address; fetching it is refused (--allow-private-fetch)"
-  else match texts.find? (fun t => (addr? t).isSome) with
-    | some a => .ok a
-    | none => .error s!"{host} did not resolve to an address"
+  L4Factoidal.Net.choose p.egress host texts
 
 /-- The address texts of a host, when known: a literal, a localhost name,
 or a fresh resolution. -/
@@ -191,19 +179,13 @@ def recordHost (p : FetchPolicy) (fs : FetchState) (host : String) (addresses : 
 
 /-! ## Theorems -/
 
-/-- **The guard.** Without `allowPrivateFetch`, a host with a private
-address among its addresses is never connected to. -/
+/-- **The guard.** Without `allowPrivateFetch`, a host with a
+special-purpose address among its addresses is never connected to. A
+restatement of `L4Factoidal.Net.egress_refuses_special`. -/
 theorem chooseAddress_refuses_private {p : FetchPolicy} {host : String} {texts : List String}
     {a : Addr} (hp : p.allowPrivateFetch = false) (ha : a ∈ texts.filterMap addr?)
-    (hpriv : privateAddr a = true) (x : String) : chooseAddress p host texts ≠ .ok x := by
-  unfold chooseAddress
-  have hany : (texts.filterMap addr?).any privateAddr = true := List.any_eq_true.mpr ⟨a, ha, hpriv⟩
-  simp only [hp]
-  split
-  · simp
-  · split
-    · simp
-    · simp [addressesAllowed, hp, hany]
+    (hpriv : privateAddr a = true) (x : String) : chooseAddress p host texts ≠ .ok x :=
+  L4Factoidal.Net.egress_refuses_special (p := p.egress) (by simp [FetchPolicy.egress, hp]) ha hpriv x
 
 /-- Without `allowHttp`, an `http` URL is never fetched. -/
 theorem lookup_http_refused {p : FetchPolicy} {fs : FetchState} {now : Nat} {url accept : String}
