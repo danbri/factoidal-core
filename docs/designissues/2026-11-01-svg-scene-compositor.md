@@ -82,6 +82,19 @@ capabilities and SVG coverage obligations, not silently abandoned requirements.
 - KR3: A small block/inline HTML producer with real shaped text follows, with
   defined CSS scope and preserved link/selection mappings. Label it a subset.
 
+### Cross-producer reuse acceptance criterion
+
+Owner emphasis, 2026-11-01: SVG improvements should benefit all visuals, and
+backend improvements should benefit SVG and every other scene producer.
+For each new scene operation, put its semantics and geometry in the shared
+layer and exercise it from both SVG and a programmatic scene. For each new
+backend or fast path, state its admitted capabilities, refinement theorem or
+remaining proof gap, numeric contract and benchmark evidence against the same
+scene corpus. Do not fork the geometry or move drawing decisions into host
+adapters to obtain a passing result. Frontend-only parsing/style improvements
+need not affect every producer; backend support does not itself add missing
+SVG syntax. Track semantic coverage and frontend conformance separately.
+
 ### O2: Optimizations carry explicit correctness obligations
 
 The statements below are targets, not existing proved theorems. Fix reference
