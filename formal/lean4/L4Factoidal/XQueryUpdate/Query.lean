@@ -75,8 +75,14 @@ def evalUpdModule (fuel : Nat) (env : Env) (m : Module) (v10 : Bool := true) : M
 /-- Parse and evaluate an XQuery main module with the update facility. -/
 def evalUpdQuery (src : String) (env : Env := {}) (fuel : Nat := 100000) (v10 : Bool := true) :
     M (Seq × Env) := do
-  let m ← parseModule src env.ns (typeLoader env 8 []) env.schema.declared env.features
+  let m ← parseModule src env.ns (typeLoader env 8 []) env.schema.declared env.xml11 env.features
   evalUpdModule fuel (withFnLookup fuel env) m v10
+
+-- The update entry point keeps the caller's XML version setting.
+#guard (match evalUpdQuery "string-to-codepoints('&#x1;')" { xml11 := true } with
+  | .ok (s, _) => showSeq s | .error e => e.code) == "1"
+#guard (match evalUpdQuery "string-to-codepoints('&#x1;')" { xml11 := false } with
+  | .ok (s, _) => showSeq s | .error e => e.code) == "XQST0090"
 
 /-- The result of a query with its updates applied, then a second query
     over the updated documents (for the `#guard`s below). -/

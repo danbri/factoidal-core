@@ -139,20 +139,22 @@ theorem schemaHookOf_validateIn (s : L4Factoidal.XSD11.Schema) :
     (L4Factoidal.XSD11.schemaHookOf s).validateIn = some (L4Factoidal.XSD11.validateNodeIn s) := rfl
 
 theorem validate_xsd11 (cb : XCb) (env : Env) (s : L4Factoidal.XSD11.Schema)
+    (hf : env.features.schemaValidation = true)
     (hs : env.schema = L4Factoidal.XSD11.schemaHookOf s) (e : Expr) (mode : String) (n : NodeRef)
     (he : cb.eval env e = .ok [.node n]) (hk : (env.nrec n).kind = .element) (nd : Doc)
     (hv : L4Factoidal.XSD11.validateNodeIn s mode (env.doc n) n.idx (env.doc n).uri = .ok nd) :
     evalExt cb env "validate" [e] [] [] [mode] =
       .ok [.node { doc := n.doc + (2 : Nat) ^ 41, idx := 1, rt := some nd }] := by
-  simp [evalExt, hs, schemaHookOf_validateIn, he, hk, hv, bind, Except.bind, pure, Except.pure]
+  simp [evalExt, hf, hs, schemaHookOf_validateIn, he, hk, hv, bind, Except.bind, pure, Except.pure]
 
 theorem validate_xsd11_error (cb : XCb) (env : Env) (s : L4Factoidal.XSD11.Schema)
+    (hf : env.features.schemaValidation = true)
     (hs : env.schema = L4Factoidal.XSD11.schemaHookOf s) (e : Expr) (mode : String) (n : NodeRef)
     (he : cb.eval env e = .ok [.node n]) (hk : (env.nrec n).kind = .element) (x : Err)
     (hv : L4Factoidal.XSD11.validateNodeIn s mode (env.doc n) n.idx (env.doc n).uri = .error x) :
     evalExt cb env "validate" [e] [] [] [mode] =
       .error { code := if x.code == "FODC0007" then "XQDY0027" else x.code, msg := x.msg } := by
-  simp [evalExt, hs, schemaHookOf_validateIn, he, hk, hv, bind, Except.bind, err]
+  simp [evalExt, hf, hs, schemaHookOf_validateIn, he, hk, hv, bind, Except.bind, err]
 
 /-! ## Names of constructed nodes are XML names
 

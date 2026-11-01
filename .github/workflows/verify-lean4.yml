@@ -41,6 +41,13 @@ on:
       - 'third_party/unicode-18.0.0/**'
       - 'tests/whatwg-url/**'
       - 'tools/whatwg/**'
+      - 'third_party/testing/unicode-18.0.0/**'
+      - 'tests/unicode/**'
+      - 'tests/qt4-resource-base/**'
+      - 'tools/unicode/**'
+      - 'third_party/testing/html5lib-tests/**'
+      - 'third_party/testing/wpt-html-parsing/**'
+      - 'tests/html5lib/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
 
@@ -79,7 +86,7 @@ jobs:
           # declared in Harness.Qlvr outside both import closures. Build its
           # Lean/C artifacts; the native l4qlvr executable is not needed.
           # The source-wide csimp inventory also includes CryptoProbe.
-          lake build L4Factoidal l4wasm +Harness.Qlvr +Harness.CryptoProbe 2>&1 | tee "$RUNNER_TEMP/lake-build.log"
+          lake build L4Factoidal l4wasm +Harness.Qlvr +Harness.CryptoProbe +L4Factoidal.Dataflow.FailureConditions 2>&1 | tee "$RUNNER_TEMP/lake-build.log"
 
       # `lake build` alone is NOT the soundness gate, and it was the whole
       # gate until 2026-09-03. A `sorry` fails the build, because Lean emits
@@ -100,6 +107,16 @@ jobs:
       - name: Escape-hatch audit (sorry / axiom / native_decide / unsafe / partial def)
         working-directory: ${{ github.workspace }}
         run: python3 tools/lean-hygiene-audit.py --build-log "$RUNNER_TEMP/lake-build.log"
+
+      - name: Build QT4 runner and native dispatch for regressions
+        working-directory: formal/lean4
+        run: lake build l4qt4 l4wasm-cli
+
+      - name: Valid IETF dates return correct values without panic diagnostics
+        run: node --test tests/xpath4/parse-ietf-date-native.test.mjs
+
+      - name: QT4 external-query and inline-stylesheet resource bases
+        run: bash tests/qt4-resource-base/run.sh
 
       - name: Compiled recursion and replacement audit controls
         run: |
@@ -230,3 +247,15 @@ jobs:
       # files (https://github.com/danbri/factoidal/issues/1167, milestone 3).
       - name: WHATWG URL, WPT url tests (tests/whatwg-url/run.sh)
         run: bash tests/whatwg-url/run.sh
+
+      # Unicode 18.0.0 algorithms (normalization, segmentation, bidi, line
+      # breaking) over the Unicode conformance files
+      # (https://github.com/danbri/factoidal/issues/1167, milestone 4).
+      - name: Unicode algorithms, Unicode conformance files (tests/unicode/run.sh)
+        run: bash tests/unicode/run.sh
+
+      # HTML tokenizer and tree builder (whatwg/html 93967771) over html5lib-tests
+      # and the WPT tree construction tests, and the XHTML/HTML agreement run
+      # (https://github.com/danbri/factoidal/issues/1167, milestone 5).
+      - name: HTML parser, html5lib-tests and WPT tree construction (tests/html5lib/run.sh)
+        run: bash tests/html5lib/run.sh

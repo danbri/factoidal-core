@@ -885,6 +885,13 @@ Owner, 2026-10-28, verbatim: "Decisions / 1 y / 2y", to these questions
    `danbri/factoidal-builds` (`exe.yml`, set `exe`). Stages 2 to 4 (the
    local web GUI, the Cosmopolitan study, signing) still need a decision.
 
+Owner, 2026-10-29, verbatim: "if we want to facilitate ios and android apps
+using it, what is our best path? C on ios?", then "Yes" to a design record and
+an issue: `docs/designissues/2026-10-29-mobile-native-library.md`,
+https://github.com/danbri/factoidal/issues/1198 (native library from Lean's C
+with the wasm's C ABI; graphics from Lean in its section 8). Its section 9
+decisions are still open.
+
 ### One owner per release (owner, 2026-10-28)
 
 Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" and

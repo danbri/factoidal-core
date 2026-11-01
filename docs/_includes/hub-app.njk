@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; connect-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <title>{{ title }} — Factoidal</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2L30 16 16 30 2 16Z' fill='%2378dfb8'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="{{ '/web/hub/data-compositor/style.css' | url }}">
+  <link rel="stylesheet" href="{{ '/web/hub/assets/code-output.css' | url }}">
+</head>
+<body class="hub-app">
+  <nav class="hub-app-nav" aria-label="Factoidal navigation">
+    <a href="{{ '/' | url }}">Factoidal</a>
+    <a href="{{ '/web/hub/' | url }}">Documentation hub</a>
+    <a href="https://www.npmjs.com/package/@factoidal/core/v/0.27.0">core 0.27.0</a>
+    <a href="https://github.com/danbri/factoidal-core/tree/main/docs/web/hub/data-compositor">Source</a>
+  </nav>
+  <main>{{ content | safe }}</main>
+  <script type="module" src="{{ '/web/hub/data-compositor/app.mjs' | url }}"></script>
+</body>
+</html>

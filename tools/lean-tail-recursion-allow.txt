@@ -2028,3 +2028,24 @@ L4Factoidal_XPath4_FeatureSettings_checkExpr  # (b) the depth is the nesting of 
 L4Factoidal_XQuery4_nodeTestStaticErr  # (b) XQuery4/Static: the depth is the nesting of a node test union in the query, and the fuel argument bounds it
 L4Factoidal_XQuery4_typeLoader  # (c) XQuery4/Module: the recursion is one level per module import, at most 8 (typeLoader env 8); the list folds are foldlM loops
 L4Factoidal_XQuery4_loadXQueryModule  # (c) XQuery4/LoadModule: one level per fn:load-xquery-module call made by a loaded module, at most 20 (the depth argument, loadModuleHost)
+L4Factoidal_XPath4_XInclude_expand  # (b) depth is the element nesting of the document plus the XInclude nesting (fuel 64 at the call in XmlParse.parseDocument); children visited by List.mapM
+L4Factoidal_XPath4_XInclude_runText_txt  # (b) #guard helper over the element nesting of a test document (fuel 50); children visited by List.map
+L4Factoidal_XPath4_XIncludeTheorems_noXi  # (b) specification predicate of expand_noXi over the element nesting of a document (fuel argument); children visited by List.all
+L4Factoidal_XPath4_stripElemContentWs  # (b) XPath4/XmlParse: depth is the element nesting of a DTD-validated document (fuel 100000, as stripWs); children visited by List.map
+L4Factoidal_HTML_xhtmlTree  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per tree level of an HTML document, as L4Factoidal_HTML_buildTree (length, L4Factoidal/HTML/XmlAgreement.lean)
+Harness_Html5lib_dumpChildren  # (c) Array.qsort over the attributes of one element of a test tree; median-of-three pivot, expected depth O(log n); the tree walk itself is a loop over a frame list
+Harness_Html5lib_tokenizerFile  # (c) Array.qsort over the error codes of one html5lib tokenizer test (at most 16) and the attributes of one tag; expected depth O(log n)
+Harness_Html5lib_genInline  # (c) depth is the generator's nesting argument, the constant 2 in `l4html5lib agree`
+Harness_Html5lib_genBlocks  # (c) depth is the generator's nesting argument, the constant 3 in `l4html5lib agree`
+Harness_Html5lib_normXml  # (b) element nesting of one generated document (at most 8 in `l4html5lib agree`); children visited by List.map and List.foldr
+
+# XSLT fn:transform callback nesting, newly compiled by assertion regressions.
+L4Factoidal_XSLT4_fnTransform  # (b) nested transformation depth; fuel decreases before installing fnTransformHost, whose callback decreases it again; zero/succ equations and real nested fuel-boundary tests in FnTransform/QtFnTransformTests.lean; production host fuel 3; https://github.com/danbri/factoidal/issues/1161
+L4Factoidal_XSLT4_fnTransformHost  # (b) lazy callback cycle with fnTransform, not traversal of the List arguments; predecessor fuel on every host/runner edge, zero host has no callback; exact equations and nested tests in FnTransform/QtFnTransformTests.lean; https://github.com/danbri/factoidal/issues/1161
+
+# QT4 runner tree-depth recursion, now compiled before the core corpus gate.
+Harness_Qt4Run_checkAssert  # (b) nested any-of/all-of/not catalog assertions; every recursive edge uses predecessor fuel, entered with 100; semantic-depth limit, not arbitrary-depth C-stack safety; docs/20261030-qt4-harness-recursion-audit.md; https://github.com/danbri/factoidal/issues/1101
+Harness_Qt4Run_fixXml  # (b) catalog XML nesting via child map; predecessor fuel, entered with 100000; innerXml starts a separately bounded traversal; semantic-depth limit, not arbitrary-depth C-stack safety; docs/20261030-qt4-harness-recursion-audit.md; https://github.com/danbri/factoidal/issues/1101
+Harness_Qt4Run_innerXml  # (b) nested expected-XML elements, sibling map is core tail iteration; predecessor fuel, entered with 1000 by fixXml; semantic-depth limit, not arbitrary-depth C-stack safety; docs/20261030-qt4-harness-recursion-audit.md; https://github.com/danbri/factoidal/issues/1101
+Harness_Qt4Run_resolveXmlFiles  # (b) nested result/assertion XML via child mapM; predecessor fuel, entered with 100; semantic-depth limit, not arbitrary-depth C-stack safety; docs/20261030-qt4-harness-recursion-audit.md; https://github.com/danbri/factoidal/issues/1101
+Harness_Qt4Run_serNode  # (b) result document/element nesting via child map; predecessor fuel, entered with 100000; semantic-depth limit, not arbitrary-depth C-stack safety; docs/20261030-qt4-harness-recursion-audit.md; https://github.com/danbri/factoidal/issues/1101

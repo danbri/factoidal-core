@@ -21,7 +21,8 @@ The evaluator does no I/O. An external DTD or entity, and the text of
 
 Options of `fn:parse-xml`: `base-uri`, `dtd-validation`, `strip-space`
 (`all`, `none`, `conditional` = `none`), `trust-external`, `xinclude`
-(`true` is `FODC0013`: there is no XInclude processor), `xsd-validation`
+(XInclude 1.1, `XPath4.XInclude`; `FODC0013` when the host turns it
+off, `Env.xinclude`), `xsd-validation`
 (`strict`, `lax` and `type T` validate through the schema hook
 `Env.schema`, `SchemaHook.validate`; another value is XPTY0004), `use-xsi-schema-location`,
 `line-numbers` (ignored, as the spec allows).
@@ -30,6 +31,7 @@ import L4Factoidal.XPath4.Lib
 import L4Factoidal.XML.Encoding
 import L4Factoidal.XML.Namespaces
 import L4Factoidal.XML.Validity
+import L4Factoidal.XPath4.XInclude
 
 namespace L4Factoidal.XPath4
 
@@ -140,6 +142,8 @@ structure ParseOpts where
   trustExternal : Bool := false
   /-- `xsd-validation`: `skip`, or a mode for `SchemaHook.validate`. -/
   xsd : String := "skip"
+  /-- `xinclude`: process XInclude 1.1 elements. -/
+  xinclude : Bool := false
 
 def parseOpts (e : Env) (opts : Seq) : M ParseOpts := do
   checkOptionKeys opts parseXmlOptionNames
@@ -147,16 +151,20 @@ def parseOpts (e : Env) (opts : Seq) : M ParseOpts := do
     | some s => strOf s
     | none => e.baseUri
   let dtd ← optBool opts "dtd-validation" false
+  if dtd && !e.dtdValidation then
+    err "FODC0013" "this processor is configured without DTD validation"
   let strip := optionStr opts "strip-space" "none"
   if !["all", "none", "conditional"].contains strip then
     err "XPTY0004" ("strip-space must be all, none or conditional, not " ++ strip)
   let trust ← optBool opts "trust-external" false
-  if ← optBool opts "xinclude" false then
-    err "FODC0013" "no XInclude processor is available"
+  let xi ← optBool opts "xinclude" false
+  if xi && !e.xinclude then
+    err "FODC0013" "this processor is configured without XInclude"
   let xsd := optionStr opts "xsd-validation" "skip"
   if !(["skip", "strict", "lax"].contains xsd || xsd.startsWith "type ") then
     err "XPTY0004" ("xsd-validation must be strict, lax, skip or type T, not " ++ xsd)
-  pure { baseUri := base, dtdValidation := dtd, stripAll := strip == "all", trustExternal := trust, xsd }
+  pure { baseUri := base, dtdValidation := dtd, stripAll := strip == "all", trustExternal := trust, xsd,
+         xinclude := xi }
 
 /-- An element node of a parsed tree (the document element is the first). -/
 def isElemKid (k : Node) : Bool :=
@@ -193,14 +201,21 @@ def siblingRef (docHref sys : String) : String :=
   | [] => sys
   | ds => String.intercalate "/" ds ++ "/" ++ sys
 
-/-- Parse a whole document (string or bytes) under the options;
-    `docHref` is the reference the document was read from, against which
-    its external DTD subset and external entities are resolved. -/
-def parseDocument (e : Env) (o : ParseOpts) (src : Atomic) (docHref : String := "") : M Document := do
+/-- A relative reference `h` against the URI of the document that names
+    it (its directory), for the external DTD subset and external entities
+    of a document read by `fn:doc`. -/
+def relToDoc (docUri h : String) : String :=
+  if docUri == "" || (h.splitOn "://").length > 1 || h.startsWith "/" then h
+  else match (docUri.splitOn "/").dropLast with
+    | [] => h
+    | dirs => String.intercalate "/" dirs ++ "/" ++ h
+
+/-- Parse a whole document (string or bytes) under the options. `docUri`
+    is the URI of the document (for `fn:doc`), against which its external
+    DTD subset and external entities are resolved first. -/
+def parseDocument (e : Env) (o : ParseOpts) (src : Atomic) (docUri : String := "") : M Document := do
   let resolve : Resolver := if o.trustExternal then
-      (fun h => match e.resource h with
-        | some t => some t
-        | none => if docHref == "" then none else e.resource (siblingRef docHref h))
+      (fun h => (e.resource (relToDoc docUri h)).orElse (fun _ => e.resource h))
     else (fun _ => none)
   let run (r : Resolver) : Except XmlError Document :=
     match bytesOfAtomic src with
@@ -220,7 +235,24 @@ def parseDocument (e : Env) (o : ParseOpts) (src : Atomic) (docHref : String := 
     if o.dtdValidation then
       if d.doctype.isNone then err "FODC0007" "DTD validation requested, and there is no DOCTYPE"
       if !(validate d).isEmpty then err "FODC0007" "the document is not valid against its DTD"
-    pure d
+    let d := if o.dtdValidation then
+        match d.doctype with
+        | some dt => { d with root := stripIgnorable dt 100000 d.root }
+        | none => d
+      else d
+    if o.xinclude then
+      -- an included resource is an external resource (`trust-external`)
+      let fetch : String → Option String := fun h => if o.trustExternal then e.resource h else none
+      let parseRoot (t : String) : Except String Node :=
+        match parseDecodedXMLWith resolve t with
+        | .ok d2 => if d2.namespaceWellFormed then .ok d2.root else .error "not namespace-well-formed"
+        | .error x => .error x.message
+      let base := if docUri != "" then docUri else o.baseUri
+      match XInclude.expand fetch parseRoot 64 [base] base [] d.root with
+      | .ok [r] => pure { d with root := r }
+      | .ok _ => err "FODC0002" "XInclude: the document element is not one element after inclusion"
+      | .error x => err "FODC0002" ("XInclude: " ++ x.msg)
+    else pure d
 
 def parseXmlFn : LibFn := fun _ e a => do
   match optAtom (argN a 0) with
@@ -442,7 +474,12 @@ def docFn (e : Env) (a : List Seq) : M Seq := do
     if !iriRefOk u.str then err "FODC0005" ("not a valid URI reference: " ++ u.str)
     let o ← parseOpts e (argN a 1)
     -- a relative reference is resolved against the static base URI
-    match e.docUris.lookup u.str |>.orElse (fun _ => e.docUris.lookup (resolveUri e.baseUri u.str)) with
+    let registered := e.docUris.lookup u.str |>.orElse (fun _ => e.docUris.lookup (resolveUri e.baseUri u.str))
+    -- Parsing options require the source text, even when the host also
+    -- registered a document under this URI. Keep registered documents for
+    -- ordinary reads (including documents modified by XQuery Update).
+    let reparse := o.dtdValidation || o.xinclude || o.stripAll || o.trustExternal || o.xsd != "skip"
+    match if reparse && (e.resource u.str).isSome then none else registered with
     | some d =>
       if o.dtdValidation then err "FODC0007" "DTD validation of a registered document" else
       pure [.node (NodeRef.mk' d 0)]
@@ -457,7 +494,7 @@ def docFn (e : Env) (a : List Seq) : M Seq := do
         let uri := resolveUri e.baseUri u.str
         let kids := docKids o d
         -- documents read with different options are different documents
-        let oSig := toString o.stripAll ++ toString o.dtdValidation ++ toString o.trustExternal ++ o.xsd
+        let oSig := toString o.stripAll ++ toString o.dtdValidation ++ toString o.trustExternal ++ toString o.xinclude ++ o.xsd
         -- fn:doc: a document that cannot be validated is not available (FODC0002)
         let doc ← match docOfKids e o kids uri with
           | .ok d => pure d

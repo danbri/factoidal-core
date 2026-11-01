@@ -17,9 +17,9 @@ UseSTD3ASCIIRules false, Transitional_Processing false, VerifyDnsLength false,
 IgnoreInvalidPunycode false. They are fields of `Options`, so a strict caller
 can set them.
 
-Normalization to NFC reuses `L4Factoidal.XPath4.Unicode.normalize`, whose
-tables are Unicode 16.0.0; the IDNA tables here are 18.0.0. A character new in
-17.0 or 18.0 with a canonical decomposition is therefore not decomposed.
+Normalization to NFC reuses `L4Factoidal.XPath4.Unicode.normalize`, which
+calls the shared Unicode 18.0.0 normalizer. Normalization and the IDNA
+mapping tables therefore use the same Unicode version.
 
 https://github.com/danbri/factoidal/issues/1167, milestone 3. No `partial`, no
 `sorry`.

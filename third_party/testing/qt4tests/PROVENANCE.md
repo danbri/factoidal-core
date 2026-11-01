@@ -70,9 +70,9 @@ evaluator; nothing in this directory is executed.
 Added 2026-10-28 for the `fn:update` tests of `fn/update.xml` (they read
 their source documents from `../upd/TestSources/`), from
 `https://raw.githubusercontent.com/qt4cg/qt4tests/b1616b79c7300167c79a8b0790ba79b5e0b7080d/upd/TestSources/`,
-files unchanged; only the 11 files that `fn/` names (the XQuery Update
-Facility test sets of `upd/` are not copied: that specification is out of
-scope, https://github.com/danbri/factoidal/issues/1101):
+files unchanged; initially the 11 files that `fn/` names. The complete
+`upd/` test family was added as recorded above
+(https://github.com/danbri/factoidal/issues/1101):
 
 - `upd/TestSources/`: `TopMany.xml`, `books.xml`, `books2.xml`,
   `employeesNIST.xml`, `emptydoc.xml`, `grant.xml`, `items.xml`,

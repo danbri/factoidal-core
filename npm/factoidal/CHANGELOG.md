@@ -4,6 +4,25 @@
 
 - Web Annotation Data Model and Vocabulary (W3C Recommendations, 2017) in the Lean engine, `L4Factoidal/WebAnnotation/`: the procedure of the W3C annotation-model tests (`JsonTest.lean`) over the JSON Schema validator, which gains a draft-04 dialect (`draft04Ajv4`: unknown keywords ignored, boolean `exclusiveMinimum`/`exclusiveMaximum`, `format` checked as ajv 4.0.4 "fast" mode checks `uri` and `date-time`); the vocabulary checks over the existing JSON-LD 1.1, N-Triples, Turtle and RDF/XML code (`Vocab.lean`). `bash tests/webannotation/run.sh`: model tests on the 44 Recommendation examples and 41 protocol samples 246 pass, 0 fail (out of 246 runs), 6 excluded (defective test data, https://github.com/danbri/factoidal/issues/1193); 19 negative documents 19 pass, 0 fail (out of 19); vocabulary 342 pass, 0 fail (out of 342). The Web Annotation Protocol (2017) as a Lean request handler over the LWS store (`Protocol.lean`): the `server-manual.html` assertions run against it (`ProtocolSuite.lean`), MUST 35 pass, 0 fail (out of 35), SHOULD 10 pass, 0 fail (out of 10). No npm or wasm op and no HTTP host yet, and no Turtle representation (https://github.com/danbri/factoidal/issues/1197).
 
+## 0.28.0 (2026-10-31)
+
+- The public LWS SBM11 reader rejects resource paths that escape its configured container before calling transport. Default Node HTTP reads refuse redirects. Browser default XHR now rejects caller-supplied headers, including authorization; authenticated browser use requires an explicit trusted, redirect-safe transport. Custom transports remain responsible for redirect and credential policy. WebDAV read-only behavior is unchanged.
+- The Lean HTML parser improvements merged in PR269 now reach the package, including processing instructions, namespace/template handling and public parse-html regressions. This is parser support, not a browser layout engine or a claim of complete HTML conformance.
+- Valid zero-second IETF dates no longer emit panic diagnostics. The targeted native fn-parse-ietf-date set passes 105 cases.
+- Bounded slice and positional consumers of fn:generate evaluate finite prefixes without increasing the generation cap. Native fn-generate improves from 13 pass / 3 fail to 15 pass / 1 fail; the constructed-node identity failure remains visible. All 104 fn-slice cases pass. These targeted native results are not whole-catalog WASM conformance claims.
+
+Native server executables and the SVG graphics experiment have separate release gates; this package version does not claim new executable or SVG compatibility coverage.
+
+## 0.27.0 (2026-10-30)
+
+- New CLI commands `factoidal xpath4`, `factoidal xquery` and `factoidal xslt4` expose the existing Lean XML operations. They accept explicit local input files, display JSON or the engine's serialized result, and preserve QT4 error codes such as `XPST0003`. See the README for arguments and examples.
+- The public dataflow API now has `xpath4Eval`, `xqueryEval` and `xslt4Transform` nodes. Their output wires carry serialized XDM or XSLT results. These nodes are marked tested, with `checked: false` evidence; no evaluator correctness theorem is claimed. Existing registry IDs are preserved.
+- Public `xpath4Eval` and `xqueryEval` now install the pure inline `fn:transform` adapter already used by the QT4 harness. It supports supplied source nodes and stylesheet text without fetching external resources. Assertions default to disabled for `fn:transform` and can be enabled explicitly; direct `xslt4Transform` retains its enabled default. A nested `fn:transform` inside a `post-process` callback remains unsupported (`FOXT0004`).
+- QT4 fixes include assertion handling, QName environments and nested-transform resource bases (https://github.com/danbri/factoidal-core/pull/268). The native `fn-transform` set improves from 127 pass / 9 fail / 1 unsupported to 132 / 4 / 1. XPath grapheme behavior remains Unicode 15.1, with 1,189 / 0 / 0 on the pinned QT4 set. These are native measurements, not full WASM conformance claims.
+- Schema-aware `fn:element-to-map` now uses schema components and typed values, including inherited declarations and conversions (https://github.com/danbri/factoidal-core/pull/270). Native QT4 results improve from 186 pass / 35 fail / 0 unsupported to 219 / 2 / 0; the two remaining fixture/specification disagreements remain visible. Schema-driven behavior requires a validating host and is not newly exposed through the pure public API.
+
+The XProc atomic-step bridge to the Lean dataflow graph remains available in the Lean tree; this release adds no npm XProc operation. Native server executable publication is separate and remains blocked by the WebDAV regression failures tracked in https://github.com/danbri/factoidal/issues/1202.
+
 ## 0.26.0 (2026-10-29)
 
 - QT4 processor feature switches (https://github.com/danbri/factoidal-core/pull/252): the native qt4tests runner can run as a processor without a feature, so the tests written for such processors run instead of being unsupported; qt4tests in XQuery mode, measured on that PR: `fn` 17188 → 17217 pass, `prod` 13819 → 13823 pass, no new failures.

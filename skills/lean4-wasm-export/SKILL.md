@@ -943,6 +943,13 @@ against the old core library.
    `pretty()` result in a later cell — keep raw values in their own named
    cells and call `pretty` only in display cells. (Anti-pattern #28.)
 
+## Other targets from the same C (iOS, Android)
+
+Steps 1 to 5 of "What the build actually does" do not depend on wasm. The
+proposal to compile the same C and runtime for iOS and Android, with the C ABI
+of `l4_shim.c`, is `docs/designissues/2026-10-29-mobile-native-library.md`
+(https://github.com/danbri/factoidal/issues/1198).
+
 ## Gates
 
 ```bash

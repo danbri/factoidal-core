@@ -945,7 +945,10 @@ def formatDT (kind : DTKind) (v0 : DTValue) (pic : String) (lang cal : Option St
                 let w := (tok.filter (fun c => isDigitU c || c == '#')).length
                 if w ≥ 2 then some w else none
               else none
-          let yv := y.natAbs
+          -- the AD and OS calendars have no year zero: the XSD 1.1 year
+          -- 0 is 1 BC, -55 is 56 BC; the ISO calendar numbers year zero
+          let iso := (cal.map (·.trim)) == some "ISO"
+          let yv := if y ≤ 0 && !iso then (1 - y).toNat else y.natAbs
           let yv := match n with | some k => yv % (10 ^ k) | none => yv
           if isNameTok mk.pres1 then fmtComp { mk with pres1 := "1" } "1" yv
           else fmtComp mk "1" yv
@@ -1134,7 +1137,9 @@ def parseIetf (s : String) : M Atomic := do
     let s := toString n; String.ofList (List.replicate (k - min k s.length) '0') ++ s
   let secS :=
     let (ip, fp) := decDigits ss
-    let ipS := pad 2 (numOf ip)
+    -- decDigits omits the integer zero for 0 and fractional seconds below 1.
+    -- Do not send that valid empty part to the partial numeric parser.
+    let ipS := if ip.isEmpty then "00" else pad 2 (numOf ip)
     if fp.isEmpty then ipS else ipS ++ "." ++ String.ofList fp
   let tzS := if tz == 0 then "Z" else (if tz < 0 then "-" else "+") ++ pad 2 (tz.natAbs / 60) ++ ":" ++ pad 2 (tz.natAbs % 60)
   let lex := toString year ++ "-" ++ pad 2 mon ++ "-" ++ pad 2 day ++ "T" ++ pad 2 hh ++ ":" ++ pad 2 mm ++ ":" ++ secS ++ tzS
