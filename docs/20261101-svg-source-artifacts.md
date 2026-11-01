@@ -28,3 +28,22 @@ This revalidates an already-supported case, not an increase in official suite
 coverage. The source-level SVG artifact uses the prior checked SVG module;
 this run is not evidence for newer CSS edits or a rebuilt package. The render
 plan still comes from the existing separately hashed WASM engine.
+
+## Intrinsic viewport diagnostic
+
+SVGArtifact now accepts SVG_WIDTH=0 and SVG_HEIGHT=0 together to use declared
+SVG dimensions. The diagnostic GPU runner places the result at the top left
+of its800x600 white screenshot canvas, cropping at the canvas boundary and
+never scaling the rendered pixels. This distinguishes SVG viewport dimensions
+from screenshot dimensions. It matters for percentage fixtures whose root is
+310x170 while the independent browser screenshot is800x600. It does not
+implement general CSS replaced-element sizing or change the default suite's
+WASM compilation path.
+
+With dash source, both unchanged percentage fixtures render on Apple Metal.
+Independent reference comparisons give533 differing pixels each, maximum
+channel difference191, against zero permitted differences. In percentage.svg,
+all differences are coverage edges:531 blue versus half-covered blue pixels
+and2 blue versus quarter-covered blue pixels. These are mismatches, not passes.
+Evidence: /private/tmp/solving-percentage-gpu and
+/private/tmp/solving-percentage-attribute-gpu, candidate.json/comparison.json.

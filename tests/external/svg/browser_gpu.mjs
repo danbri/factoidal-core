@@ -55,15 +55,22 @@ try{
     const start=performance.now();
     const a=artifact??window.engine.compile(xml,800,600);
     if(a.error)throw Error('SVG profile: '+a.error);
-    if(a.width!==800||a.height!==600)throw Error('Diagnostic artifact viewport must be800x600');
+    if(!Number.isInteger(a.width)||!Number.isInteger(a.height)||a.width<1||a.height<1||a.width>4096||a.height>4096)throw Error('Invalid artifact viewport');
     const compiled=performance.now();
     const session=await window.transport.createOffscreenSession(a,'svg-offscreen');if(!session)return {blocked:true};
     const ready=performance.now(),frameMs=[];let rgba;
     try{for(let i=0;i<repeat;i++){const t=performance.now();rgba=await session.draw();frameMs.push(performance.now()-t);}}
     finally{session.close();}
-    const ppm=window.transport.encodePPM(rgba,a.width,a.height);let binary='';for(let i=0;i<ppm.length;i+=32768)binary+=String.fromCharCode(...ppm.subarray(i,i+32768));
+    // Match the oracle's top-left inline SVG on an800x600 white page.
+    // Preserve the declared SVG viewport: no stretching of diagnostic pixels.
+    let screenshot=rgba;
+    if(a.width!==800||a.height!==600){
+      screenshot=new Uint8Array(800*600*4).fill(255);
+      for(let y=0;y<Math.min(600,a.height);y++)screenshot.set(rgba.subarray(y*a.width*4,(y*a.width+Math.min(800,a.width))*4),y*800*4);
+    }
+    const ppm=window.transport.encodePPM(screenshot,800,600);let binary='';for(let i=0;i<ppm.length;i+=32768)binary+=String.fromCharCode(...ppm.subarray(i,i+32768));
     return {base64:btoa(binary),compileMs:compiled-start,gpuSetupMs:ready-compiled,frameReadbackMs:frameMs,
-      resourceStats:session.stats,primitives:a.primitiveCount,floats:a.data.length,samplesVerified:a.checks.length};
+      svgViewport:{width:a.width,height:a.height},resourceStats:session.stats,primitives:a.primitiveCount,floats:a.data.length,samplesVerified:a.checks.length};
    },{xml,repeat,artifact:suppliedArtifact});
    if(result.blocked){row.reason='GPU adapter unavailable';report.cases.push(row);continue;}
    const bytes=Buffer.from(result.base64,'base64'),file=`${String(i).padStart(2,'0')}-actual.ppm`;
