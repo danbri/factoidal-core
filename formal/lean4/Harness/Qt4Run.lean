@@ -841,8 +841,10 @@ def xmlSystemIds (txt : String) : List String :=
     `fn:unparsed-text`, `fn:json-doc`, `fn:doc`, and external entities
     under `trust-external`): every run of path characters that names a
     file under the test suite root, resolved against the test set's
-    directory. Read in advance, as text, because the evaluator does no
-    I/O. Only files under the suite root are read. -/
+    directory and the directories of literal paths in the same input.
+    Read in advance because the evaluator does no I/O. Alternate-directory
+    candidates receive only absolute URI keys. Computed resource references
+    still need a resource provider. Only files under the suite root are read. -/
 def scanResources (root dir src : String) : IO (List (String × String) × List (String × ByteArray)) := do
   let isPathChar (c : Char) := c.isAlphanum || c == '_' || c == '.' || c == '/' || c == '-' || c == '+'
   let mut toks : List String := []
@@ -880,6 +882,36 @@ def scanResources (root dir src : String) : IO (List (String × String) × List 
       match ← readBytesSafe path with
       | some bs => bins := (t, bs) :: bins
       | none => pure ()
+  -- Inline resources can supply a different base directory. Discover
+  -- directories from literal paths, then preload literal references there.
+  -- No option interpretation or XML/XQuery parsing is performed here.
+  let mut dirs : List String := []
+  for t in toks do
+    if !t.contains '/' then continue
+    let some p := normPath (rel ++ "/" ++ t) | continue
+    let d := dirOf p
+    if dirs.contains d then continue
+    let directory := root ++ "/" ++ d
+    if !(← System.FilePath.pathExists directory) then continue
+    if ← System.FilePath.isDir directory then dirs := dirs ++ [d]
+  let rootAbs := (← IO.FS.realPath root).toString
+  for d in dirs do
+    for t in toks do
+      if t.startsWith "/" || t.startsWith "file:///" then continue
+      let some p := normPath (d ++ "/" ++ t) | continue
+      let file := root ++ "/" ++ p
+      if !(← System.FilePath.pathExists file) then continue
+      if ← System.FilePath.isDir file then continue
+      let absolute := (← IO.FS.realPath file).toString
+      if !absolute.startsWith (rootAbs ++ "/") then continue
+      -- Alternate-directory candidates have only an absolute URI key:
+      -- equal basenames in distinct directories must remain distinct.
+      let key := "file://" ++ absolute
+      if !(out.any (·.1 == key)) then
+        if let some txt ← readFileSafe file then out := out ++ [(key, txt)]
+      if !(bins.any (·.1 == key)) then
+        if let some bytes ← readBytesSafe file then bins := bins ++ [(key, bytes)]
+
   return (out, bins)
 
 /-- Build the dynamic context for an environment; `none` with a reason
@@ -1067,21 +1099,47 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
     | .ok env =>
       let env := configureFor (setDeps ++ deps) env
       let env := (configureUpd (setDeps ++ deps) env).restrictFeatures (featureSettings (setDeps ++ deps))
-      -- the static base URI, when the environment sets none, is the
-      -- location of the test set (implementation-defined, XPath 4.0 C.1)
+      -- External queries use their own file location; inline queries use
+      -- the test-set directory (implementation-defined, XPath 4.0 C.1).
       -- (`#UNDEFINED`: the test wants the base URI absent)
       let undefBase := spec.baseUri == "#UNDEFINED"
       let env ← if env.baseUri != "" || undefBase then pure env else do
-        let abs ← try pure (← IO.FS.realPath dir).toString catch _ => pure dir
-        pure { env with baseUri := "file://" ++ abs ++ "/" }
-      let (scanned, scannedBins) ← if undefBase then pure ([], []) else
-        scanResources o.root dir (String.intercalate " " (before ++ (src :: spec.params.map (·.2))))
-      -- XInclude resolves hrefs before retrieval. Register scanned files
-      -- under their absolute URI as well as their source spelling.
-      let env := { env with resources := env.resources ++ scanned ++
-                              scanned.map (fun (kv : String × String) => (resolveUri env.baseUri kv.1, kv.2)),
-                            resourceBytes := env.resourceBytes ++ scannedBins ++
-                              scannedBins.map (fun (kv : String × ByteArray) => (resolveUri env.baseUri kv.1, kv.2)) }
+        let location := (attr testNode "file").map (fun f => dir ++ "/" ++ f) |>.getD dir
+        let abs ← try pure (← IO.FS.realPath location).toString catch _ => pure location
+        let suffix := if (attr testNode "file").isSome then "" else "/"
+        pure { env with baseUri := "file://" ++ abs ++ suffix }
+      let (scanned, scannedBins) ← if undefBase then pure ([], []) else do
+        let mut found := ([], [])
+        -- Query references are relative to the query file. Environment
+        -- parameter expressions remain relative to the test-set directory.
+        let inputs := (testNodes.zip (before ++ [src])).map (fun (tn, text) =>
+          ((attr tn "file").map (fun f => dirOf (dir ++ "/" ++ f)) |>.getD dir, text)) ++
+          [(dir, String.intercalate " " (spec.params.map (·.2)))]
+        for (resourceDir, text) in inputs do
+          let (texts, bytes) ← scanResources o.root resourceDir text
+          let physicalDir ← try pure (← IO.FS.realPath resourceDir).toString catch _ => pure resourceDir
+          -- Explicit static bases identify resources logically; fixture files
+          -- still come from this input's physical directory. Otherwise each
+          -- input uses its own directory, never the last query's directory.
+          let inputBase := if spec.baseUri != "" then env.baseUri else "file://" ++ physicalDir ++ "/"
+          let physicalParts := (physicalDir.splitOn "/").filter (· != "")
+          let scopedKey (key : String) : String :=
+            if key.startsWith "file://" then
+              -- Inferred candidates already have canonical physical URI keys.
+              -- Rebase their relative paths into an explicit logical base too.
+              let parts := ((key.drop 7).toString.splitOn "/").filter (· != "")
+              let common := ((physicalParts.zip parts).takeWhile (fun (a, b) => a == b)).length
+              let relative := String.intercalate "/"
+                (List.replicate (physicalParts.length - common) ".." ++ parts.drop common)
+              resolveUri inputBase relative
+            else resolveUri inputBase key
+          found := (found.1 ++ texts.map (fun (key, value) => (scopedKey key, value)),
+                    found.2 ++ bytes.map (fun (key, value) => (scopedKey key, value)))
+        pure found
+      -- Input resources have absolute logical URI keys. A raw alias could
+      -- let a later query read a same-named file from another input's base.
+      let env := { env with resources := env.resources ++ scanned,
+                            resourceBytes := env.resourceBytes ++ scannedBins }
       -- the files that the source documents name (an XSLT module that a
       -- source stylesheet includes, for fn:transform), relative to each
       let mut fromSources : List (String × String) := []

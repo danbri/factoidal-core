@@ -97,8 +97,12 @@ def namedRef? (name : String) : Option String := entityMap.get? name
 #guard namedRef? "AElig" == some "\u00C6"
 #guard namedRef? "NotEqualTilde" == some "\u2242\u0338"
 
+/-- The names that the named character reference table (`entities.json`) also lists
+without a semicolon: 106 names. -/
 def legacyNames : List String :=
-  ["amp", "AMP", "lt", "LT", "gt", "GT", "quot", "QUOT"] ++ latin1Names
+  ["amp", "AMP", "lt", "LT", "gt", "GT", "quot", "QUOT", "COPY", "REG"] ++ latin1Names
+
+#guard legacyNames.length == 106
 
 /-- The C1 replacement table of the "Numeric character reference end state" (U+0080 to U+009F). -/
 def c1Table : List Nat :=

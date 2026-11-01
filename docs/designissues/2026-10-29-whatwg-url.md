@@ -100,9 +100,10 @@ input. With the new text, 0 fail.
 - `URLSearchParams` is only its serializer, as the `searchParams` attribute of
   `urltestdata.json` reads it. The WPT `urlsearchparams-*.any.js` files are not
   vendored.
-- NFC in UTS #46 uses the Unicode 16.0.0 tables of `XPath4.Unicode`. A
-  character that is new in 17.0 or 18.0 and has a canonical decomposition is
-  not decomposed. No WPT case reaches this.
+- NFC in UTS #46 now uses the Unicode 18.0.0 normalizer through the
+  `XPath4.Unicode` compatibility adapter. The follow-up retains all 4,570
+  WPT URL passes; see [the integration record](../20261029-qt4-unicode-namespace.md)
+  and https://github.com/danbri/factoidal/issues/1195.
 - No wasm or npm operation exposes the parser yet.
 
 ## Theorems

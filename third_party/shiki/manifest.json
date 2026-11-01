@@ -1,0 +1,95 @@
+{
+  "shiki": "3.13.0",
+  "esbuild": "0.25.11",
+  "sha256": "db57cd4e46fe4c93a9de50305322cb0da38f2d7104f3277ae2f160f7c4e7b4e6",
+  "packages": {
+    "@shikijs/types": {
+      "version": "3.13.0",
+      "license": "MIT"
+    },
+    "@shikijs/vscode-textmate": {
+      "version": "10.1.0",
+      "license": "MIT"
+    },
+    "html-void-elements": {
+      "version": "3.0.0",
+      "license": "MIT"
+    },
+    "property-information": {
+      "version": "7.2.0",
+      "license": "MIT"
+    },
+    "zwitch": {
+      "version": "2.0.4",
+      "license": "MIT"
+    },
+    "stringify-entities": {
+      "version": "4.0.4",
+      "license": "MIT"
+    },
+    "character-entities-legacy": {
+      "version": "3.0.0",
+      "license": "MIT"
+    },
+    "character-entities-html4": {
+      "version": "2.1.0",
+      "license": "MIT"
+    },
+    "hast-util-to-html": {
+      "version": "9.0.6",
+      "license": "MIT"
+    },
+    "ccount": {
+      "version": "2.0.1",
+      "license": "MIT"
+    },
+    "comma-separated-tokens": {
+      "version": "2.0.3",
+      "license": "MIT"
+    },
+    "space-separated-tokens": {
+      "version": "2.0.2",
+      "license": "MIT"
+    },
+    "hast-util-whitespace": {
+      "version": "3.0.0",
+      "license": "MIT"
+    },
+    "@shikijs/core": {
+      "version": "3.13.0",
+      "license": "MIT"
+    },
+    "oniguruma-parser": {
+      "version": "0.12.2",
+      "license": "MIT"
+    },
+    "regex": {
+      "version": "6.1.0",
+      "license": "MIT"
+    },
+    "regex-utilities": {
+      "version": "2.3.0",
+      "license": "MIT"
+    },
+    "regex-recursion": {
+      "version": "6.0.2",
+      "license": "MIT"
+    },
+    "oniguruma-to-es": {
+      "version": "4.3.6",
+      "license": "MIT"
+    },
+    "@shikijs/engine-javascript": {
+      "version": "3.13.0",
+      "license": "MIT"
+    },
+    "@shikijs/themes": {
+      "version": "3.13.0",
+      "license": "MIT"
+    },
+    "@shikijs/langs": {
+      "version": "3.13.0",
+      "license": "MIT"
+    }
+  }
+}

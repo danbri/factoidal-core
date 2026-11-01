@@ -1532,41 +1532,77 @@ id = "npm:./browser#cidRetrieveVerificationMethod"
 reason = "host loop over wasm:cidRetrieve (lib/cid.mjs) with the page's fetch; reads no RDF data"
 
 # XPath 4.0, XQuery 4.0 and XSLT 4.0 (formal/lean4/Wasm/Ops/Qt4.lean): XML
-# documents and expression texts in, a serialized XDM sequence out; no RDF
-# data, no stage.
+# documents and expression texts in, serialized result envelopes out. The
+# public adapter stages are tested; none claims a proved stage contract.
 
-[[nonstage]]
+[[entry]]
 id = "wasm:xpath4Eval"
-reason = "XML document evaluation: XPath 4.0 (L4Factoidal/XPath4: parseXPath, eval) over an XDM document, Serialization 4.0 of the result; reads no RDF data"
+stages = ["xpath4Eval"]
+covers = "part"
+note = "Public tested XML adapter xpath4Eval (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
 
-[[nonstage]]
+[[entry]]
 id = "wasm:xqueryEval"
-reason = "XML document evaluation: XQuery 4.0 (L4Factoidal/XQuery4/Module.lean evalQuery) over an XDM document, Serialization 4.0 of the result; reads no RDF data"
+stages = ["xqueryEval"]
+covers = "part"
+note = "Public tested XML adapter xqueryEval (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
 
-[[nonstage]]
+[[entry]]
 id = "wasm:xslt4Transform"
-reason = "XML document transformation: XSLT 4.0 (L4Factoidal/XSLT4: compileStylesheet, transform, serializeResult); reads no RDF data"
+stages = ["xslt4Transform"]
+covers = "part"
+note = "Public tested XML adapter xslt4Transform (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
 
-[[nonstage]]
+[[entry]]
 id = "npm:.#xpath4Eval"
-reason = "XML document evaluation over wasm:xpath4Eval (lib/api.mjs); reads no RDF data"
+stages = ["xpath4Eval"]
+covers = "part"
+note = "Public tested XML adapter xpath4Eval (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
 
-[[nonstage]]
+[[entry]]
 id = "npm:.#xqueryEval"
-reason = "XML document evaluation over wasm:xqueryEval (lib/api.mjs); reads no RDF data"
+stages = ["xqueryEval"]
+covers = "part"
+note = "Public tested XML adapter xqueryEval (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
 
-[[nonstage]]
+[[entry]]
 id = "npm:.#xslt4Transform"
-reason = "XML document transformation over wasm:xslt4Transform (lib/api.mjs); reads no RDF data"
+stages = ["xslt4Transform"]
+covers = "part"
+note = "Public tested XML adapter xslt4Transform (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
 
-[[nonstage]]
+[[entry]]
 id = "npm:./browser#xpath4Eval"
-reason = "XML document evaluation over wasm:xpath4Eval (lib/api.mjs); reads no RDF data"
+stages = ["xpath4Eval"]
+covers = "part"
+note = "Public tested XML adapter xpath4Eval (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
 
-[[nonstage]]
+[[entry]]
 id = "npm:./browser#xqueryEval"
-reason = "XML document evaluation over wasm:xqueryEval (lib/api.mjs); reads no RDF data"
+stages = ["xqueryEval"]
+covers = "part"
+note = "Public tested XML adapter xqueryEval (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
 
-[[nonstage]]
+[[entry]]
 id = "npm:./browser#xslt4Transform"
-reason = "XML document transformation over wasm:xslt4Transform (lib/api.mjs); reads no RDF data"
+stages = ["xslt4Transform"]
+covers = "part"
+note = "Public tested XML adapter xslt4Transform (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
+
+[[entry]]
+id = "cli:xpath4"
+stages = ["xpath4Eval"]
+covers = "part"
+note = "bin/factoidal.mjs and bin/qt4.mjs read explicit files, call xpath4Eval, and print the engine result or a supplied serialization; no XML or query parsing in the host."
+
+[[entry]]
+id = "cli:xquery"
+stages = ["xqueryEval"]
+covers = "part"
+note = "bin/factoidal.mjs and bin/qt4.mjs read explicit files, call xqueryEval, and print the engine result or a supplied serialization; no XML or query parsing in the host."
+
+[[entry]]
+id = "cli:xslt4"
+stages = ["xslt4Transform"]
+covers = "part"
+note = "bin/factoidal.mjs and bin/qt4.mjs read explicit files, call xslt4Transform, and print the engine result or a supplied serialization; no XML or query parsing in the host."

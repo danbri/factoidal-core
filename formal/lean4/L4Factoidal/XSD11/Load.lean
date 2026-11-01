@@ -177,6 +177,87 @@ def validateWithFor (s : Schema) (mode : String) (extra : List (XPath4.Doc × Na
   | .ok nd => .ok (some nd, [])
   | .error x => if x.code == "FODC0007" || x.code == "XQDY0061" || x.code == "XQDY0084" then .ok (none, [x.msg]) else .error x
 
+/-- Whether a simple type's effective facets force zero-length content
+    (F&O 4.0 §14.6.6). Facets include the whole derivation chain. -/
+def conversionZeroLength (sd : SimpleDef) : Bool :=
+  let facets := sd.body.facets
+  let lengthZero := facets.length == some 0 || facets.maxLength == some 0
+  match sd.variety with
+  | .list => lengthZero
+  | .atomic => lengthZero ||
+      (facets.enumeration.map (fun es => !es.isEmpty &&
+        es.all (fun v => (XSD.applyWhiteSpace sd.body.whiteSpaceOf v).isEmpty))).getD false ||
+      facets.patterns.any (fun ps => !ps.isEmpty && ps.all (· == ""))
+  | .union => false
+
+private def maxCardAdd : Option Nat → Option Nat → Option Nat
+  | some a, some b => some (a + b)
+  | _, _ => none
+
+private def maxCardMul : Option Nat → Option Nat → Option Nat
+  | some 0, _ | _, some 0 => some 0
+  | some a, some b => some (a * b)
+  | _, _ => none
+
+private def maxCardChoice : Option Nat → Option Nat → Option Nat
+  | some a, some b => some (max a b)
+  | _, _ => none
+
+/-- Wildcard presence and per-name maximum occurrences. Sequence/all
+    groups add occurrences; choice groups take their maximum. An explicit
+    worklist avoids native recursion through nested particles and foldl. -/
+def conversionParticle (s : Schema) (p : Particle) : Bool × List (XName × Option Nat) := Id.run do
+  -- A combine frame follows its children in the worklist.
+  let mut pending : List (Sum Particle (Nat × Option Nat × Compositor)) := [.inl p]
+  let mut results : List (Bool × List (XName × Option Nat)) := []
+  while !pending.isEmpty do
+    match pending with
+    | [] => pure ()
+    | task :: rest =>
+      pending := rest
+      match task with
+      | .inl (.elem _ mx d) => results := (false, [((s.elem d).name, mx)]) :: results
+      | .inl (.wild ..) => results := (true, []) :: results
+      | .inl (.group _ mx comp ps) =>
+        pending := ps.map Sum.inl ++ .inr (ps.length, mx, comp) :: pending
+      | .inr (count, mx, comp) =>
+        let children := (results.take count).reverse
+        results := results.drop count
+        let mut wildcard := false
+        let mut counts : List (XName × Option Nat) := []
+        for (wild, entries) in children do
+          wildcard := wildcard || wild
+          for (name, value) in entries do
+            match counts.lookup name with
+            | none => counts := counts ++ [(name, value)]
+            | some old => counts := counts.map (fun (n, c) => if n == name then
+                (n, if comp == .choice then maxCardChoice old value else maxCardAdd old value)
+                else (n, c))
+        results := (wildcard, counts.map (fun (name, value) => (name, maxCardMul mx value))) :: results
+  return results.headD (false, [])
+
+/-- Component facts for F&O schema-based conversion, including built-in
+    simple types. The XPath layer chooses the conversion layout. -/
+def conversionInfoOf (s : Schema) (q : XPath4.QN) : Option XPath4.SchemaContentInfo := do
+  let t ← s.typeOfQN? q
+  let simple (st : Nat) : XPath4.SchemaContentInfo :=
+    match s.type st with
+    | .simple sd => { variety := "simple",
+                      list := sd.variety == .list, zeroLength := conversionZeroLength sd }
+    | _ => { variety := "simple" }
+  match s.type t with
+  | .simple _ => pure (simple t)
+  | .complex c =>
+    let attributes := !c.attrUses.isEmpty || c.attrWild.isSome
+    match c.content with
+    | .empty => pure { variety := "empty", attributes }
+    | .simple st => pure { simple st with attributes }
+    | .elems p mixed =>
+      let (wildcard, children) := conversionParticle s p
+      pure { variety := if mixed then "mixed" else "element-only", attributes,
+             wildcard := wildcard || c.openContent.isSome,
+             children := children.map (fun (n, count) => (xnameQN n, count)) }
+
 /-- The description of a type definition that is not a built-in type, for
 `fn:schema-type` and `fn:node-type-annotation` (F&O 4.0 §20.1). -/
 def typeInfoOf (s : Schema) (q : XPath4.QN) : Option XPath4.SchemaTypeInfo :=
@@ -220,7 +301,8 @@ def schemaHookOf (s : Schema) : XPath4.SchemaHook :=
     validateIn := some (validateNodeIn s),
     validateWith := some (validateWithFor s),
     validateFnNs := some (validateFor fnSchema "strict"),
-    typeInfo := typeInfoOf s }
+    typeInfo := typeInfoOf s,
+    contentInfo := conversionInfoOf s }
 
 /-- Validate a document (§5.2, strict) and give its XDM 4.0 document with
 the PSVI type annotations. -/

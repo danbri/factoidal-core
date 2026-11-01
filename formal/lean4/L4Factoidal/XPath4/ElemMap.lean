@@ -10,9 +10,9 @@ plan), 14.6.7 (selecting a layout), 14.6.8 (names), 14.6.9 (content),
 tests decide (for example: without a plan, attributes are untyped, and the
 `child` entry of a list layout is always present).
 
-Not modelled: the schema-based layouts of 14.6.6 and the `nilled` property
-(there are no type annotations: every element is untyped, so an
-`xsi:nil="true"` attribute is only dropped, never mapped).
+Schema-based layouts (14.6.6) use component facts supplied by
+`SchemaHook.contentInfo`; content conversion reuses PSVI typed values.
+Untyped elements retain instance-based inference.
 
 Elements built by `fn:map-to-element` are new parentless elements of a
 runtime document (`NodeRef.rt`); the document number is derived from the
@@ -497,6 +497,62 @@ def e2mInfer (e : Env) (ees : List NodeRef) : Layout × Option String × Option 
       else (.sequence, none, none)
     else (.mixed, none, none)
 
+/-- Schema information for a validated node; anyType and untyped nodes
+    retain instance-based inference (F&O 4.0 §14.6.7). -/
+def e2mSchemaInfo (e : Env) (n : NodeRef) : Option SchemaContentInfo := do
+  let q ← (e.nrec n).tann
+  if q.uri == nsXS && (q.loc == "untyped" || q.loc == "untypedAtomic" || q.loc == "anyType") then none
+  else e.schema.contentInfo q
+
+/-- Schema-derived layout, using permitted attributes and the maximum
+    occurrences in the content model rather than the current instance.
+    Schema types select layouts, not explicit plan casts of typed values. -/
+def e2mSchemaPlan (info : SchemaContentInfo) : ElemPlan :=
+  let simple : ElemPlan :=
+    { layout := if info.zeroLength then (if info.attributes then .emptyPlus else .empty)
+                else if info.attributes then .simplePlus else .simple }
+  match info.variety with
+  | "simple" => simple
+  | "empty" => { layout := if info.attributes then .emptyPlus else .empty }
+  | "element-only" =>
+    match info.children with
+    | [(name, count)] =>
+      if !info.wildcard && (count.map (fun n => decide (n > 1))).getD true then
+        { layout := if info.attributes then .listPlus else .list, child := some (e2mNameKey name) }
+      else if !info.wildcard && count == some 1 then { layout := .record }
+      else { layout := .sequence }
+    | children =>
+      if !info.wildcard && children.all (fun (_, count) => count == some 1) then { layout := .record }
+      else { layout := .sequence }
+  | _ => { layout := .mixed }
+
+/-- Atomized content with its schema type retained. List-typed values
+    remain arrays even when atomization produces zero or one item.
+    Element-only content falls back to its untyped string value. -/
+def e2mNodeContent (o : E2MOpts) (e : Env) (n : NodeRef) (ty : Option String) : M Item := do
+  let r := e.nrec n
+  if r.tann.isNone || r.tann == some untypedQN || r.tann == some untypedAtomicQN then
+    return .atom (← e2mContent o (e.nodeString n) ty)
+  let values ← if r.noTypedValue then pure [Atomic.untypedOf (e.nodeString n)]
+                else e.atomize [.node n]
+  if ((e2mSchemaInfo e n).map (·.list)).getD false then
+    return .arr (values.map (fun a => [.atom a]))
+  let converted ← values.mapM (fun a => do
+    if trimWs a.str == "" then return a
+    let target : Option AType := match ty with
+      | some "boolean" => some (.b .boolean) | some "integer" => some (.b .integer)
+      | some "decimal" => some (.b .decimal) | some "double" => some (.b .double)
+      | _ => none
+    match target with
+    | none => pure a
+    | some t => match castAtomic a t e.nsResolve with
+      | .ok v => pure v
+      | .error _ => if o.liberal then pure a else err "FOJS0010" ("cannot cast content to xs:" ++ t.name))
+  match converted with
+  | [a] => return .atom a
+  | [] => return untypedItem ""
+  | many => return .arr (many.map (fun a => [.atom a]))
+
 /-! ## fn:element-to-map -/
 
 /-- Apply one layout to an element. `none` is "this layout cannot be used
@@ -509,6 +565,7 @@ def e2mApply (o : E2MOpts) (e : Env) (conv : NodeRef → M (Option Item))
   let kinds := kids.map (kidKind e)
   let hasElem := kinds.any (· == .elem)
   let hasText := kinds.any (· == .text)
+  let nilled := r.nilled
   -- the attributes: (formatted name, value)
   let attrs : M (List (String × Item)) := do
     let mut out : Array (String × Item) := #[]
@@ -518,30 +575,33 @@ def e2mApply (o : E2MOpts) (e : Env) (conv : NodeRef → M (Option Item))
       match t with
       | some (some "skip") => pure ()
       | _ =>
-        let v ← e2mContent o ra.value (t.bind id)
-        out := out.push (← e2mAttrName o ra.name, Item.atom v)
+        let v ← e2mNodeContent o e a (t.bind id)
+        out := out.push (← e2mAttrName o ra.name, v)
     pure out.toList
   let elemKids := kids.filter (fun c => kidKind e c == .elem)
   let childKey : NodeRef → M String := fun c => e2mElemName o (some r.name.uri) (e.nrec c).name
   match l with
   | .empty =>
     if hasElem || hasText then pure none
-    else pure (some (stringItem ""))
+    else pure (some (if nilled then nullItem else stringItem ""))
   | .emptyPlus =>
     if hasElem || hasText then pure none
     else
       let acc := (← attrs).foldl (fun (a : Acc) (k, v) => a.add (o.marker ++ k) v) {}
-      pure (some acc.toItem)
+      pure (some ((if nilled then acc.add (uniqueKey o.contentKey (acc.ents.toList.map (·.1))) nullItem else acc).toItem))
   | .simple =>
     if hasElem then pure none
-    else pure (some (.atom (← e2mContent o (e.nodeString n) ty)))
+    else do
+      let content ← if nilled then pure nullItem else e2mNodeContent o e n ty
+      pure (some content)
   | .simplePlus =>
     if hasElem then pure none
     else
       let ats := (← attrs).map (fun (k, v) => (o.marker ++ k, v))
       let ck := uniqueKey o.contentKey (ats.map (·.1))
       let acc := ats.foldl (fun (a : Acc) (k, v) => a.add k v) {}
-      let acc := acc.add ck (.atom (← e2mContent o (e.nodeString n) ty))
+      let content ← if nilled then pure nullItem else e2mNodeContent o e n ty
+      let acc := acc.add ck content
       pure (some acc.toItem)
   | .list | .listPlus =>
     let cname := child.getD ""
@@ -553,7 +613,7 @@ def e2mApply (o : E2MOpts) (e : Env) (conv : NodeRef → M (Option Item))
         | some v => vals := vals.push v
         | none => pure ()
       let arr := Item.arr (vals.toList.map (fun v => [v]))
-      if l == .list then pure (some arr)
+      if l == .list then pure (some (if nilled then nullItem else arr))
       else
         let (cu, cl) := (e2mPlanName? cname).getD ("", cname)
         let pfx := match elemKids.head? with
@@ -563,7 +623,8 @@ def e2mApply (o : E2MOpts) (e : Env) (conv : NodeRef → M (Option Item))
         let ats ← attrs
         let marker := if ats.any (fun (k, _) => o.marker ++ k == key) then "@" else o.marker
         let acc := ats.foldl (fun (a : Acc) (k, v) => a.add (marker ++ k) v) {}
-        pure (some (acc.add key arr).toItem)
+        let contentKey := if nilled then uniqueKey o.contentKey (acc.ents.toList.map (·.1)) else key
+        pure (some (acc.add contentKey (if nilled then nullItem else arr)).toItem)
   | .record =>
     if hasText then pure none
     else
@@ -576,13 +637,14 @@ def e2mApply (o : E2MOpts) (e : Env) (conv : NodeRef → M (Option Item))
       let marker := if ats.any (fun (k, _) => ents.any (fun (ck, _) => o.marker ++ k == ck)) then "@" else o.marker
       let acc := ats.foldl (fun (a : Acc) (k, v) => a.add (marker ++ k) v) {}
       let acc := ents.foldl (fun (a : Acc) (k, v) => a.add k v) acc
-      pure (some acc.toItem)
+      pure (some ((if nilled then acc.add (uniqueKey o.contentKey (acc.ents.toList.map (·.1))) nullItem else acc).toItem))
   | .sequence | .mixed =>
     if l == .sequence && hasText then pure none
     else
       let mut items : Array Item := #[]
       for (k, v) in (← attrs) do
         items := items.push (single1 (o.marker ++ k) v)
+      if nilled then items := items.push (single1 o.contentKey nullItem)
       for c in kids do
         let rc := e.nrec c
         match kidKind e c with
@@ -630,10 +692,20 @@ def e2mElem (o : E2MOpts) (e : Env) : Nat → NodeRef → M (Option Item)
       | some res => pure res
       | none => fallback
     | none =>
-      match fb with
+      match e2mSchemaInfo e n with
+      | some info =>
+        let p := e2mSchemaPlan info
+        match ← run p with
+        | some res => pure res
+        | none => fallback
+      | none => match fb with
       | some _ => fallback
       | none =>
         let (l, ch, ty) := e2mInfer e [n]
+        -- An input-derived type hint is not an explicit plan cast for
+        -- an already typed value, even if its host supplies no component facts.
+        let ty := if r.tann.isSome && r.tann != some untypedQN && r.tann != some untypedAtomicQN
+                  then none else ty
         match ← e2mApply o e conv n l ch ty with
         | some v => pure (some v)
         | none => err "FOJS0008" "no layout fits the element"

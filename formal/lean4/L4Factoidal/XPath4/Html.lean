@@ -146,6 +146,7 @@ def toXml : Nat → Option HTML.NS → HTML.HNode → Node
     match n with
     | .text s => .text s
     | .comment s => .comment s
+    | .pi t d => .pi t d
     | .element ns name attrs kids =>
       let (ats, xl) := attrNodes attrs
       let decl : List Attribute :=

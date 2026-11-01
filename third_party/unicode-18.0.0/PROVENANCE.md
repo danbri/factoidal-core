@@ -13,3 +13,16 @@
 - Why 18.0.0: the web-platform-tests `IdnaTestV2.json` that
   `tests/whatwg-url/run.sh` runs is generated from IdnaTestV2.txt 18.0.0
   (see `third_party/testing/wpt-url-PROVENANCE.md`).
+
+## Added 2026-10-29 (milestone 4, Unicode algorithms)
+
+- Source: https://www.unicode.org/Public/18.0.0/ucd/ — `UnicodeData.txt`,
+  `DerivedNormalizationProps.txt`, `CompositionExclusions.txt`,
+  `BidiBrackets.txt`, `BidiMirroring.txt`, `LineBreak.txt`,
+  `EastAsianWidth.txt`, `DerivedCoreProperties.txt`,
+  `auxiliary/GraphemeBreakProperty.txt`, `auxiliary/WordBreakProperty.txt`,
+  `auxiliary/SentenceBreakProperty.txt`, `emoji/emoji-data.txt`, `ReadMe.txt`.
+- Copied unchanged on 2026-10-29.
+- Use: the generators in `tools/unicode/` write the data modules under
+  `formal/lean4/L4Factoidal/Unicode/` from these files; `--check` (run by
+  `tests/unicode/run.sh`) fails when a module is stale.

@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-10-31 | [Readable compositor evidence](20261031-compositor-evidence-explanations.md) | this commit | current |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |
 | 2026-04-21 | [Large Turtle stack overflow fix sketch](2026-04-21-large-turtle-stack-overflow-fix-sketch.md) | c29698f98 | historical |
 | 2026-08 | [Factoidal verified RDF block engine](2026-08-blockengine.md) | 27f9308f4 | current: design, part 1 |
@@ -148,3 +149,25 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-29 | [Processor feature settings](20261029-processor-feature-settings.md) | uncommitted | record |
 | 2026-10-29 | [XQuery 4.0 merge against updated main](20261029-xquery4-merge-main2.md) | uncommitted | record |
 | 2026-10-29 | [QT4 optional features merge against updated main](20261029-qt4-optional-features-merge2.md) | uncommitted | record: both baselines, per-family validation |
+| 2026-10-29 | [The HTML parser in Lean, measured by html5lib-tests](designissues/2026-10-29-html-parser.md) | (this commit) | record: tokenizer and tree builder at whatwg/html `93967771` (processing instructions, customizable select), fragment parsing; WPT tree construction 1963 pass, 0 fail, html5lib tokenizer 7043 pass, 0 fail, expected failures with issues; quadratic arena copy removed, 4.2 times slower than parse5; theorems connecting HTML and XML 1.0 (newlines, numeric references), whole tree measured on 5000 documents; tracking https://github.com/danbri/factoidal/issues/1167 |
+| 2026-10-29 | [QT4 Unicode reuse and namespace lookup agreement](20261029-qt4-unicode-namespace.md) | same commit | Unicode 18 normalization, retained XPath 15.1 graphemes, verified namespace lookup bridge and remaining proof obligations; https://github.com/danbri/factoidal/issues/1195, https://github.com/danbri/factoidal/issues/1181 |
+| 2026-10-29 | [QName lists in fn:transform serialization parameters](20261029-qt4-transform-qname-lists.md) | same commit | two QT4 failures fixed; namespace-sensitive public regressions; https://github.com/danbri/factoidal/issues/1161 |
+| 2026-10-29 | [fn:transform assertion option](20261029-qt4-transform-assertions.md) | same commit | public and nested adapters honor enable-assertions; direct XSLT default retained; https://github.com/danbri/factoidal/issues/1161 |
+| 2026-10-29 | [QT4 query and stylesheet resource bases](20261029-qt4-resource-bases.md) | same commit | two more transform failures fixed; twelve resource identity and traversal regressions; https://github.com/danbri/factoidal/issues/1161 |
+| 2026-10-29 | [QT4 catalogue inventory and XQuery measurement](20261029-qt4-catalogue-baseline.md) | same commit | all 742 sets accounted for across fourteen families; 47457 pass, 591 fail, 1076 unsupported, 35 existing exclusions; https://github.com/danbri/factoidal/issues/1101 |
+| 2026-10-29 | [Schema-aware element-to-map conversion](designissues/2026-10-29-element-map-schema.md) | same commit | component-driven layouts and PSVI values; 33 QT4 cases fixed, two nilled-record fixture disagreements remain visible; targeted build and recursion gates; https://github.com/danbri/factoidal/issues/1101 |
+| 2026-10-30 | [QT4 harness recursion audit classification](20261030-qt4-harness-recursion-audit.md) | same commit | five existing tree-depth recursions classified with actual fuel limits; runner and resource controls unchanged, scoped compiled audit passes; https://github.com/danbri/factoidal/issues/1101 |
+| 2026-10-30 | [QT4 public API, CLI and dataflow integration](20261030-qt4-public-integration.md) | same commit | three tested public nodes and CLI commands; pure inline transform connection; explicit serialized-result wires and unchecked evidence; https://github.com/danbri/factoidal/issues/1210 |
+| 2026-10-30 | [HTML parser and public API integration](20261030-html-public-integration.md) | same commit | current main integrated, both gate sets preserved, public PI/namespace/template/error regressions; fresh native API and HTML/QT4 controls pass; fresh WASM CI remains required; https://github.com/danbri/factoidal-core/pull/269 |
+| 2026-10-30 | [IETF date zero-seconds panic](20261030-parse-ietf-date-zero-seconds.md) | same commit | seconds serialization avoids an empty numeric parse; native stderr regression detects panic fallback even when values match |
+
+| 2026-10-30 | [Hub Data Compositor and shared code output](20261030-hub-data-compositor.md) | same commit | pinned public engine, editable visual pipeline, honest component evidence, shared output controls and focused browser checks |
+
+| 2026-10-31 | [LWS reader host-authority boundary](20261031-lws-reader-path-confinement.md) | — | current: path confinement, redirect refusal and explicit browser transport limits |
+
+| 2026-10-31 | [Shared component descriptor model](designissues/2026-10-31-component-descriptor-model.md) | same commit | design proposal: one UI/API/CLI model, useful witnesses and human purposes, distinct semantic/authority/evidence scopes |
+| 2026-10-31 | [Browser release integrity gates](20261031-browser-release-integrity-gates.md) | — | stamped compilation, bad-digest refusal and CSP browser checks |
+
+| 2026-10-31 | [Published 0.28.0 and hub pin](20261031-release-028-published.md) | — | registry consumer, browser and hub validation |
+
+| 2026-10-31 | [Compositor HTML failure conditions](20261031-compositor-html-failure-analysis.md) | — | three kernel-checked failure lemmas, pinned-engine counterexamples and browser boundary |

@@ -26,6 +26,24 @@ function computeBuildVersion() {
 const BUILD_VERSION = computeBuildVersion();
 
 module.exports = function(eleventyConfig) {
+  // One pinned, offline Shiki bundle serves static fences and live output.
+  let highlightCode;
+  eleventyConfig.on("eleventy.before", async () => {
+    const { highlight } = await import("../third_party/shiki/highlight.mjs");
+    highlightCode = (source, language) => {
+      const aliases = { "observable-js": "javascript", js: "javascript", ts: "typescript", ttl: "turtle", sh: "bash" };
+      const html = highlight(source, aliases[language] || language || "text");
+      return html.slice(html.indexOf("<code>") + 6, html.lastIndexOf("</code>"));
+    };
+  });
+  eleventyConfig.addPassthroughCopy({ "../third_party/shiki": "vendor/shiki" });
+  for (const name of ["code-output.mjs", "code-output.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/assets/${name}`);
+  }
+  for (const name of ["app.mjs", "worker.mjs", "pipeline.mjs", "fixtures.mjs", "assurance.mjs", "style.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/data-compositor/${name}`);
+  }
+
   // Pass-through copy: F*-extracted browser artifacts (js_of_ocaml + wasm_of_ocaml).
   // fstar-extracted/ holds w3c-runner.js (pure JS) and the wasm_of_ocaml loader
   // w3c-runner.wasm.js plus its companion assets directory. Keep directory layout
@@ -318,9 +336,11 @@ module.exports = function(eleventyConfig) {
   // way and every existing `pre > code.language-observable-js` selector
   // keeps matching.
   eleventyConfig.amendLibrary("md", (md) => {
+    md.options.highlight = (source, language) => highlightCode ? highlightCode(source, language) : "";
     const defaultFence = md.renderer.rules.fence || md.renderer.renderToken.bind(md.renderer);
     md.renderer.rules.fence = (tokens, idx, options, env, self) => {
       const token = tokens[idx];
+      token.attrJoin("class", "shiki-code");
       const info = token.info ? md.utils.unescapeAll(token.info).trim() : "";
       const m = /^observable-js(?:\s+(.*))?$/.exec(info);
       const rest = m && m[1] ? m[1].trim() : "";

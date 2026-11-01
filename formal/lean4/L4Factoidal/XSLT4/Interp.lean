@@ -1543,7 +1543,8 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         | some false => pure []
         | none => xerr "XTDE0030" ("invalid terminate value '" ++ t ++ "'")
     | .assertI test sel body code =>
-        if ← evalBool cx test then pure []
+        if !S.assertionsEnabled then pure []
+        else if ← evalBool cx test then pure []
         else
           let os ← match sel with
             | some e => do pure (Out.ofSeq (← evalX cx e))

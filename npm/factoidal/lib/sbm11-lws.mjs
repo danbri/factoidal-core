@@ -20,7 +20,11 @@
 // mixed). The engine checks every byte it decodes against the manifest's
 // Merkle roots (openSbm11's default `verify: 'merkle'`), so it asks for whole
 // 65,536-byte chunks and the `.merkle` sidecars; this file does no check.
-// Limits: no eviction of the in-memory copies, no retry.
+// Limits: no eviction of the in-memory copies, no retry. Resource paths are
+// confined to the configured container. A custom transport must independently
+// refuse redirects before forwarding headers. Default Node fetch refuses them;
+// default worker XHR accepts no caller headers and checks the final response URL
+// only after sending. XHR may still use ambient same-origin browser cookies.
 //
 // EVIDENCE
 // `evidence()` lists each resource read: { resource, etag, lastModified,
@@ -35,13 +39,41 @@
 // browser worker it is a synchronous XMLHttpRequest. A browser window
 // thread has neither: pass `transport` or run the engine in a worker.
 
+// This reader grants its transport authority only within one HTTP container.
+// A file is a raw relative filename/path, never a URL reference. Reject both
+// literal traversal and encoded structural characters before attaching headers.
 function containerUrl (url) {
-  const s = String(url)
-  return s.endsWith('/') ? s : s + '/'
+  let base
+  try { base = new URL(String(url)) } catch { throw new TypeError('lwsSbm11Reader: expected an absolute HTTP(S) container URL') }
+  if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || /[?#]/.test(base.href)) {
+    throw new TypeError('lwsSbm11Reader: container must be HTTP(S), without userinfo, query or fragment; use opts.auth/headers')
+  }
+  if (!base.pathname.endsWith('/')) base.pathname += '/'
+  return base
 }
 
 function resourceUrl (base, file) {
-  return new URL(String(file).split('/').map(encodeURIComponent).join('/'), base).href
+  if (typeof file !== 'string' || file.length === 0 || file.length > 4096) {
+    throw new TypeError('invalid relative resource path')
+  }
+  let probe = file
+  for (;;) {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(probe) || /[\\?#\x00-\x1f\x7f]/.test(probe) ||
+        probe.split('/').some(part => part === '' || part === '.' || part === '..') ||
+        /%(?:2f|5c|3f|23)/i.test(probe)) {
+      throw new TypeError('resource path must remain inside the configured container')
+    }
+    // Decode only for rejection, never for the requested filename. Each changed
+    // pass shortens the string, so nested percent encodings are also bounded.
+    const next = probe.replace(/%([a-f0-9]{2})/gi, (_match, hex) => String.fromCharCode(parseInt(hex, 16)))
+    if (next === probe) break
+    probe = next
+  }
+  const resource = new URL(file.split('/').map(encodeURIComponent).join('/'), base)
+  if (resource.origin !== base.origin || !resource.pathname.startsWith(base.pathname)) {
+    throw new TypeError('resource URL escaped the configured container')
+  }
+  return resource.href
 }
 
 /** A synchronous GET with XMLHttpRequest (a browser worker). */
@@ -51,6 +83,9 @@ export function xhrSyncTransport (url, headers) {
   x.responseType = 'arraybuffer'
   for (const [k, v] of Object.entries(headers)) x.setRequestHeader(k, v)
   x.send()
+  // XHR follows redirects internally. This rejects returned bytes, not the
+  // already-sent request. Caller headers require an explicit trusted transport.
+  if (x.responseURL !== new URL(url).href) throw new Error('LWS reader: redirected XHR resource refused')
   return {
     status: x.status,
     header: (name) => x.getResponseHeader(name),
@@ -73,26 +108,27 @@ function unsatisfiedTotal (value) {
  * A reader ({ readAt, size, evidence, close }) of the SBM11 files held as
  * LWS resources under the container `url`.
  *
- * @param {string} url the container that holds CURRENT and the generation
+ * @param {string} url absolute HTTP(S), no userinfo/query/fragment; container that holds CURRENT and the generation
  *   (or the generation container itself)
  * @param {object} [opts]
- * @param {Function} [opts.transport] the synchronous GET (see above)
+ * @param {Function} [opts.transport] trusted synchronous GET; must constrain redirect/header forwarding
  * @param {string} [opts.auth] a value for the Authorization header, such as
  *   `Bearer <access token>` (an LWS access token)
- * @param {object} [opts.headers] further request headers
+ * @param {object} [opts.headers] further request headers; browser use requires explicit trusted transport
  */
 export function lwsSbm11Reader (url, opts = {}) {
   const base = containerUrl(url)
+  const extra = { ...(opts.headers || {}) }
+  if (opts.auth) extra.authorization = String(opts.auth)
   let transport = opts.transport
   if (typeof transport !== 'function') {
     if (typeof XMLHttpRequest === 'function' && typeof document === 'undefined') {
+      if (Object.keys(extra).length > 0) throw new TypeError('lwsSbm11Reader: caller headers require an explicit redirect-safe transport; default XHR cannot constrain forwarding')
       transport = xhrSyncTransport
     } else {
       throw new TypeError('lwsSbm11Reader: no synchronous transport here; pass opts.transport (Node: @factoidal/core gives one)')
     }
   }
-  const extra = { ...(opts.headers || {}) }
-  if (opts.auth) extra.authorization = String(opts.auth)
   // file -> { url, etag, lastModified, total, whole, requests, partial, bytes }
   const files = new Map()
   const errors = []
@@ -100,7 +136,12 @@ export function lwsSbm11Reader (url, opts = {}) {
   function entry (file) {
     let e = files.get(file)
     if (!e) {
-      e = { url: resourceUrl(base, file), etag: null, lastModified: null, total: undefined, whole: null, requests: 0, partial: 0, bytes: 0 }
+      let url
+      try { url = resourceUrl(base, file) } catch (error) {
+        fail(file, error.message)
+        return null
+      }
+      e = { url, etag: null, lastModified: null, total: undefined, whole: null, requests: 0, partial: 0, bytes: 0 }
       files.set(file, e)
     }
     return e
@@ -136,6 +177,7 @@ export function lwsSbm11Reader (url, opts = {}) {
 
   function sizeOf (file) {
     const e = entry(file)
+    if (e === null) return null
     if (e.total !== undefined) return e.total
     const r = get(e, file, 0, 0)
     if (r === null) return null
@@ -161,6 +203,7 @@ export function lwsSbm11Reader (url, opts = {}) {
   return {
     readAt (file, offset, length) {
       const e = entry(file)
+      if (e === null) return null
       if (length === 0) return new Uint8Array(0)
       if (e.whole !== null) {
         return offset + length <= e.whole.length ? e.whole.subarray(offset, offset + length) : null

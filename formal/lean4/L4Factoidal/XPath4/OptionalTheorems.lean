@@ -23,10 +23,17 @@ Proved here (no `sorry`, no new axioms):
   agree, so the XML 1.1 repertoire changes nothing for a text written
   only in XML 1.0 characters.
 
-Not proved here (https://github.com/danbri/factoidal/issues/1154 stays
-the record): that `XPath4.buildNode` makes `inscope` equal to
-`convScope` of the scope `XML.applyDeclarations` computes for the same
-element. The `#guard`s at the end test it on sample documents.
+Exact list equality between `XPath4.buildNode`'s `inscope` and
+`convScope` of `XML.applyDeclarations`'s result is false in general:
+the builder reverses the declarations while XML retains source order.
+`XPath4.NamespaceBridge` proves pointwise lookup agreement for the
+production `namespaceScope` helper under per-attribute lexical
+recognition agreement, unique declaration prefixes, and successful XML
+declaration processing. It also supplies namespace-node soundness and
+completeness under lookup agreement. Discharging lexical agreement for
+all parsed valid QNames and proving stateful `buildNode` preservation
+remain open (https://github.com/danbri/factoidal/issues/1181, item 2).
+The `#guard`s below compare namespace nodes on sample documents.
 -/
 import L4Factoidal.XPath4.Doc
 import L4Factoidal.XPath4.Lib

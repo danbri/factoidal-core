@@ -971,6 +971,7 @@ export interface EvidenceRecord {
  * `wireOut`: a Dataset for the graph wires, text for String (a writer), the
  * rows for Table (SELECT), a boolean for Answer (ASK), `[canonical, sha256]`
  * for String × String (rdfcStage), the report object for ValidationReport,
+ * a Qt4Result for Serialized XDM result, or an Xslt4Result for XSLT result,
  * the explain result for ExplainGraphResult. Since 0.20.0; before, a node
  * whose output was not a Dataset left its input on the wire.
  */
@@ -985,7 +986,12 @@ export interface NodePort {
   readonly wire: string;
 }
 
-/** A node: a registered stage with its parameters. */
+/** A node: a registered stage with its parameters. Public XML adapters use
+ * `xpath4Eval` with {expression}, `xqueryEval` with {query}, or
+ * `xslt4Transform` with {stylesheet}; each reads XML context text and has
+ * status tested, checked:false evidence and no proved evaluator contract.
+ * Their serialized output types are Qt4Result and Xslt4Result (see Wire).
+ */
 export interface FactoidalNode {
   readonly stage: string;
   readonly kind: string | null;
@@ -1550,14 +1556,21 @@ export interface Sbm11ReadEvidence {
   bytes: number;
 }
 
-/** A synchronous HTTP GET: `(url, headers) -> answer`. */
+/** A trusted synchronous HTTP GET: `(url, headers) -> answer`.
+ * It must refuse redirects before forwarding scoped headers. */
 export type Sbm11Transport = (url: string, headers: Record<string, string>) =>
   { status: number; header(name: string): string | null; bytes: Uint8Array };
 
 /** A reader of the SBM11 files held as LWS resources under the container
  * `url` (one resource per file, CURRENT a resource too), by HTTP Range GETs
  * when the server answers 206, else by whole GETs kept in memory. Node: the
- * default transport is a fetch in a worker thread; close() stops it. */
+ * default transport is a fetch in a worker thread that refuses redirects;
+ * close() stops it. `url` must be absolute HTTP(S), without userinfo, query
+ * or fragment. File arguments are raw relative paths; invalid paths return
+ * null before transport and appear in errors().
+ * Browser worker default XHR accepts no caller auth/headers; provide an explicit
+ * trusted transport for those. Its final-URL check cannot prevent an already
+ * sent anonymous request or ambient same-origin browser cookies. */
 export function lwsSbm11Reader(url: string, opts?: {
   auth?: string; headers?: Record<string, string>; transport?: Sbm11Transport; timeoutMs?: number
 }): Sbm11Reader & { evidence(): Sbm11ReadEvidence[]; errors(): string[]; close(): void };

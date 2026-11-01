@@ -2696,7 +2696,7 @@ function buildApi(driver) {
   const nodeApi = buildNodes({
     entry, entryResult, requireEntryFn, Dataset,
     parse, closure, shaclValidate, query, serialize, canonicalize, canonicalHash, explain, csvwToRdf,
-    datasetMerge,
+    datasetMerge, xpath4Eval, xqueryEval, xslt4Transform,
   });
 
   // Controlled Identifiers v1.0 (lib/cid.mjs, issue 1100 items 7 and 9).
