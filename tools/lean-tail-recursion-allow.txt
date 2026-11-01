@@ -2122,3 +2122,4 @@ L4Factoidal_SQL_evalExpr  # (b) SQL/Database: one call per node of one SQL expre
 L4Factoidal_SQL_evalExpr_pick  # (b) SQL/Database: one call per WHEN branch of one CASE expression of a query text
 L4Factoidal_SQL_hasCountF  # (b) SQL/Database: one call per node of one SQL expression of a query text
 Harness_DomDump_dump  # (c) Array.qsort over the attributes of one element in the DOM test dump; median-of-three pivot, expected depth O(log n), worst case n
+L4Factoidal_XML_DSigFilter2_zFrom  # (s) specification only: the single-pass flag of XPath Filter 2.0 §3.4, used by theorem filter2_2002_single_pass; the executed path is DSigFilter2.run (foldl over the XPath elements, Array per set)
