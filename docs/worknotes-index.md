@@ -190,3 +190,5 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-31 | [Retained SVG linear paths](20261031-svg-linear-paths.md) | — | bounded Lean paths, compound glyphs, real GPU comparison and measured limits |
 
 | 2026-11-01 | [Shared retained SVG linear strokes](20261101-svg-linear-strokes.md) | same commit | open/closed contours, miter fallback, total pathLength, one-opacity union; one official same-renderer GPU reference pair exactly matches |
+
+| 2026-11-01 | [SVG stroke topology contracts](20261101-svg-stroke-topology.md) | same commit | exact open/closed edge theorems over real stroker; unconditional closure mutation rejected |
