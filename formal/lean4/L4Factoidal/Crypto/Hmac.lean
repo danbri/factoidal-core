@@ -126,6 +126,39 @@ def hmacSha512 (key msg : ByteArray) : ByteArray :=
   let inner := sha512 (xorPad512 k0 0x36 ++ msg)
   sha512 (xorPad512 k0 0x5c ++ inner)
 
+/-! ## HMAC over any hash (RFC 2104)
+
+XML Signature 1.1 §6.3 names HMAC over SHA-1, SHA-224, SHA-256, SHA-384
+and SHA-512. `hmacWith H B` is RFC 2104 with the hash `H` and its block
+size `B` in bytes (64 for SHA-1, SHA-224 and SHA-256; 128 for SHA-384
+and SHA-512). `hmacSha256_eq_hmacWith` and `hmacSha512_eq_hmacWith` say
+that the two fixed forms above are its instances. -/
+
+/-- RFC 2104's `K0` for a hash `H` with block size `block`. -/
+def hmacKey0With (H : ByteArray → ByteArray) (block : Nat) (key : ByteArray) : ByteArray :=
+  let k := if key.size > block then H key else key
+  let need := block - k.size
+  k ++ ByteArray.mk (Array.replicate need (0 : UInt8))
+
+/-- `K0 ^ pad`, one block. -/
+def xorPadWith (block : Nat) (k : ByteArray) (b : UInt8) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity block
+  for i in [0:block] do
+    out := out.push ((k.get! i) ^^^ b)
+  return out
+
+/-- HMAC (RFC 2104) over the hash `H` with block size `block` bytes. -/
+def hmacWith (H : ByteArray → ByteArray) (block : Nat) (key msg : ByteArray) : ByteArray :=
+  let k0 := hmacKey0With H block key
+  let inner := H (xorPadWith block k0 0x36 ++ msg)
+  H (xorPadWith block k0 0x5c ++ inner)
+
+theorem hmacSha256_eq_hmacWith (key msg : ByteArray) :
+    hmacSha256 key msg = hmacWith sha256 64 key msg := rfl
+
+theorem hmacSha512_eq_hmacWith (key msg : ByteArray) :
+    hmacSha512 key msg = hmacWith sha512 128 key msg := rfl
+
 /-- The OR of the byte-wise XOR of `a` and `b` from index `i` on: zero exactly
 when the two agree there. Every byte is visited whatever the earlier bytes
 were, so the time does not depend on where the first difference is.
@@ -187,6 +220,12 @@ private def repeatByte (b : UInt8) (n : Nat) : ByteArray :=
 #guard hexOf (hmacSha512 (bytesOfStr "Jefe") (bytesOfStr "what do ya want for nothing?"))
   == ("164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea250554" ++
       "9758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737")
+
+-- `hmacWith` over SHA-224 and SHA-384: RFC 4231 §4.3 (test case 2).
+#guard hexOf (hmacWith sha224 64 (bytesOfStr "Jefe") (bytesOfStr "what do ya want for nothing?"))
+  == "a30e01098bc6dbbf45690f3a7e9e6d0f8bbea2a39e6148008fd05e44"
+#guard hexOf (hmacWith sha384 128 (bytesOfStr "Jefe") (bytesOfStr "what do ya want for nothing?"))
+  == "af45d2e376484031617f78d2b58a6b1b9c7ef464f5a01b47e42ec3736322445e8e2240ca5e69e2c78b3239ecfab21649"
 
 -- RFC 4231 section 4.7, case 6, HMAC-SHA-512: the 131-byte key is longer than
 -- the 128-byte block, so `hmacSha512Key0` hashes it.

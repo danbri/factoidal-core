@@ -628,6 +628,11 @@ lean_exe «l4dict-fold-bench» where
 -- XInclude 1.1 with XPointer over the W3C XInclude test suite (175 cases).
 @[default_target] lean_exe «l4xinclude» where root := `Harness.XIncludeRun
 
+-- XML Signature 1.1 core validation (L4Factoidal/XML/DSig11.lean) over the
+-- W3C XML Signature 1.1 interop vectors (third_party/testing/xmldsig11-interop),
+-- the signxml fixtures of tests/xmldsig, and the SAML profile fixtures.
+@[default_target] lean_exe «l4xmldsig» where root := `Harness.XmlDsigRun
+
 -- RELAX NG (ISO/IEC 19757-2:2008, OASIS 2001-12-03) XML syntax: James
 -- Clark's spectest.xml, simplification and validation by derivatives.
 @[default_target] lean_exe «l4relaxng» where root := `Harness.RelaxNGRun
