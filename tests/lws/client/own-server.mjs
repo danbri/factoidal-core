@@ -27,6 +27,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { keyPair, didKeyOf } from '../../authz/fixtures.mjs'
 
+// Deliveries in this suite go to receivers on 127.0.0.1, a special-purpose
+// address: each storage opts in (`allowPrivateFetch`, lws-serve
+// --allow-private-fetch, https://github.com/danbri/factoidal/issues/1126),
+// and the limit per destination is off because every hook of the suite
+// shares one receiver. The checks of issue 1126 open their own storages
+// without these members.
+const LOCAL_TARGETS = { allowPrivateFetch: true, deliveryDestLimit: 0 }
+
 let passed = 0
 let failed = 0
 let skipped = 0
@@ -279,8 +287,8 @@ async function main () {
     }
   }
 
-  const open = await listen({ engine, port: 0, insecureNoAuth: true, pageSize: 3, realClock: true })
-  const noPut = await listen({ engine, port: 0, insecureNoAuth: true, linksetPut: false })
+  const open = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, pageSize: 3, realClock: true })
+  const noPut = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, linksetPut: false })
   const o = open.origin
   const rec = recording()
   const client = await createLwsClient({ engine, fetch: rec.wire })
@@ -579,7 +587,7 @@ async function main () {
   }
 
   const issuer = await startIssuer()
-  const secured = await listen({ engine, port: 0, owner: ALICE, realClock: true,
+  const secured = await listen({ ...LOCAL_TARGETS, engine, port: 0, owner: ALICE, realClock: true,
     auth: { issuers: [{ issuer: issuer.origin }], refreshInterval: 0 } })
   const so = secured.origin
   try {
@@ -754,7 +762,7 @@ async function cidRound (makeAgent) {
   let lws = null
   try {
     authz = await startAuthz(join(dir, 'authz'), storage)
-    lws = await listen({ engine, port, owner: did, realClock: true,
+    lws = await listen({ ...LOCAL_TARGETS, engine, port, owner: did, realClock: true,
       auth: { issuers: [{ issuer: authz.origin }], refreshInterval: 0 } })
     const rec = recording()
     const c = await createLwsClient({ engine, fetch: rec.wire, selfIssued })

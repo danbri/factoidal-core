@@ -23,6 +23,14 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto'
 
+// Deliveries in this suite go to receivers on 127.0.0.1, a special-purpose
+// address: each storage opts in (`allowPrivateFetch`, lws-serve
+// --allow-private-fetch, https://github.com/danbri/factoidal/issues/1126),
+// and the limit per destination is off because every hook of the suite
+// shares one receiver. The checks of issue 1126 open their own storages
+// without these members.
+const LOCAL_TARGETS = { allowPrivateFetch: true, deliveryDestLimit: 0 }
+
 let passed = 0
 let failed = 0
 let xfailed = 0
@@ -305,7 +313,7 @@ async function main () {
     }
   }
 
-  const running = await listen({ engine, port: 0, insecureNoAuth: true, now: 1000 })
+  const running = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, now: 1000 })
   const o = running.origin
   try {
     await fetch(`${o}/docs/a.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'abcdefghij' }).then((r) => r.text())
@@ -429,7 +437,7 @@ async function main () {
     // trusted issuer) refuses the write. The full validation suite is
     // tests/lws/authorization.mjs.
     await check(CHECKS[14], async () => {
-      const guarded = await listen({ engine, port: 0, auth: { issuers: [{ issuer: 'https://as.example' }] } })
+      const guarded = await listen({ ...LOCAL_TARGETS, engine, port: 0, auth: { issuers: [{ issuer: 'https://as.example' }] } })
       try {
         const r = await fetch(`${guarded.origin}/private`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'x' })
         await r.text()
@@ -997,7 +1005,7 @@ async function main () {
       // activities into a single notification envelope by providing an
       // array of activity objects as the value of the activity property."
       await check('Notifications: changes over the limit wait and go in one batched envelope when the window ends (issue 915)', async () => {
-        const rc = await listen({ engine, port: 0, insecureNoAuth: true, realClock: true, deliveryLimit: 2, deliveryWindow: 2 })
+        const rc = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, realClock: true, deliveryLimit: 2, deliveryWindow: 2 })
         try {
           const s = await fetch(`${rc.origin}/.well-known/lws-subscriptions/`, {
             method: 'POST',
@@ -1022,6 +1030,93 @@ async function main () {
             `no batched envelope: ${ds.map((d) => activitiesOf(d).length)}`)
         } finally {
           await rc.close()
+        }
+      })
+
+      // Requests to private addresses (https://github.com/danbri/factoidal/issues/1126,
+      // row C5 and invariant I5 of
+      // docs/designissues/2026-10-28-feature-combination-safety.md). Decided by
+      // formal/lean4/L4Factoidal/Net/Egress.lean and Notifications.lean
+      // (`subscriptionEgress`, `egressOf`, `admitDest`). These storages do not
+      // opt in (no LOCAL_TARGETS) unless the check says so.
+      await check('Notifications: an inbox at a private or other special-purpose address answers 400 without --allow-private-fetch (issue 1126)', async () => {
+        const strict = await listen({ engine, port: 0, insecureNoAuth: true })
+        try {
+          for (const inbox of ['http://10.0.0.1/', 'http://100.64.0.1/in', 'http://169.254.169.254/latest',
+            'http://[fd00::1]/', 'http://[::ffff:192.168.0.1]/', 'http://[64:ff9b::a00:1]/', `${receiver.origin}/hook/strict`]) {
+            const r = await fetch(`${strict.origin}/.well-known/lws-subscriptions/`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/lws+json' },
+              body: JSON.stringify({ '@context': ctx, type: 'WebhookSubscription', topic: [`${strict.origin}/w/`], inbox })
+            })
+            const text = await r.text()
+            assert(r.status === 400, `${inbox} answered ${r.status} ${text}`)
+          }
+          const listing = await (await fetch(`${strict.origin}/.well-known/lws-subscriptions/`)).json()
+          assert(listing.totalItems === 0, `subscriptions made: ${listing.totalItems}`)
+        } finally {
+          await strict.close()
+        }
+      })
+      await check('Notifications: a name public at subscription and private at delivery is refused at delivery; the server connects to no address of it (issue 1126)', async () => {
+        const dns = await import('node:dns')
+        const original = dns.promises.lookup
+        const originalError = console.error
+        const logged = []
+        let lookups = 0
+        // The first answer is a public address, every later one is loopback,
+        // where the receiver listens (DNS rebinding).
+        dns.promises.lookup = async (host, options) => {
+          if (host !== 'rebind.test') return original.call(dns.promises, host, options)
+          lookups += 1
+          return [{ address: lookups === 1 ? '93.184.216.34' : '127.0.0.1', family: 4 }]
+        }
+        console.error = (...args) => { logged.push(args.join(' ')) }
+        const strict = await listen({ engine, port: 0, insecureNoAuth: true, realClock: true })
+        try {
+          const port = new URL(receiver.origin).port
+          const before = receiver.got.filter((d) => d.path === '/hook/rebind').length
+          const s = await fetch(`${strict.origin}/.well-known/lws-subscriptions/`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/lws+json' },
+            body: JSON.stringify({ '@context': ctx, type: 'WebhookSubscription', topic: [`${strict.origin}/rb/`], inbox: `http://rebind.test:${port}/hook/rebind` })
+          })
+          const sub = await s.json()
+          assert(s.status === 201, `subscribe answered ${s.status} ${JSON.stringify(sub)}`)
+          for (let i = 0; i < 3; i += 1) {
+            await fetch(`${strict.origin}/rb/r${i}.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: `${i}` }).then((x) => x.text())
+            await (await strict.storage()).settled()
+          }
+          assert(lookups >= 2, `the name was resolved ${lookups} times: once at subscription, again at each delivery`)
+          assert(receiver.got.filter((d) => d.path === '/hook/rebind').length === before, 'a delivery reached the private address')
+          assert(logged.some((line) => line.indexOf('not made') >= 0 && line.indexOf('rebind.test') >= 0), `no refusal reported: ${JSON.stringify(logged)}`)
+          // Three refused deliveries in a row deactivate the subscription.
+          const state = await (await fetch(sub.subscription)).json()
+          assert(state.active === false, `subscription after three refused deliveries: ${JSON.stringify(state)}`)
+        } finally {
+          dns.promises.lookup = original
+          console.error = originalError
+          await strict.close()
+        }
+      })
+      await check('Notifications: 20 subscriptions to one inbox get at most --delivery-dest-limit (10) deliveries in one window (issue 1126)', async () => {
+        const many = await listen({ engine, port: 0, insecureNoAuth: true, allowPrivateFetch: true })
+        try {
+          for (let i = 0; i < 20; i += 1) {
+            const r = await fetch(`${many.origin}/.well-known/lws-subscriptions/`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/lws+json' },
+              body: JSON.stringify({ '@context': ctx, type: 'WebhookSubscription', topic: [`${many.origin}/dl/`], inbox: `${receiver.origin}/hook/dest` })
+            })
+            await r.text()
+            assert(r.status === 201, `subscription ${i} answered ${r.status}`)
+          }
+          await fetch(`${many.origin}/dl/one.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: '1' }).then((x) => x.text())
+          await (await many.storage()).settled()
+          const n = receiver.got.filter((d) => d.path === '/hook/dest').length
+          assert(n === 10, `${n} deliveries to one destination in one window`)
+        } finally {
+          await many.close()
         }
       })
 
@@ -1145,7 +1240,7 @@ async function main () {
         assert(receiver.got.length === before, 'a delivery with no controller inbox configured')
       })
       await check('Access Requests and Grants: with --controller-inbox, creating an access request notifies the storage controller with a Create (issue 920)', async () => {
-        const ctl = await listen({ engine, port: 0, insecureNoAuth: true, controllerInbox: `${receiver.origin}/hook/controller` })
+        const ctl = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, controllerInbox: `${receiver.origin}/hook/controller` })
         try {
           const creq = `${ctl.origin}/.well-known/lws-access-requests/`
           const doc = Object.assign(grantDoc({ type: ['AccessRequest'] }), { storage: `${ctl.origin}/.well-known/lws-storage` })
@@ -1193,7 +1288,7 @@ async function main () {
   // same second, so the check exercises that case.
   // LWS Search and Type Index Services (lws10-index), issue 912.
   {
-    const s = await listen({ engine, port: 0, insecureNoAuth: true, pageSize: 2 })
+    const s = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, pageSize: 2 })
     const so = s.origin
     const SP = 'https://schema.org/Person'
     const SE = 'https://schema.org/Event'
@@ -1235,7 +1330,7 @@ async function main () {
         assert(ti && ti.serviceEndpoint === `${so}/.well-known/lws-type-index`, JSON.stringify(d.service))
         assert(ts && ts.serviceEndpoint === `${so}/.well-known/lws-type-search`, JSON.stringify(d.service))
         // Negative: a storage opened with typeIndex: false advertises neither.
-        const off = await listen({ engine, port: 0, insecureNoAuth: true, typeIndex: false })
+        const off = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, typeIndex: false })
         try {
           const d2 = await (await fetch(`${off.origin}/.well-known/lws-storage`)).json()
           assert(!d2.service.some((x) => /^Type(Index|Search)Service$/.test(x.type)), JSON.stringify(d2.service))
@@ -1357,7 +1452,7 @@ async function main () {
     await check('Type search: the index is rebuilt from DIR/lws-state.json after a restart', async () => {
       const idir = mkdtempSync(join(tmpdir(), 'lws912-index-'))
       try {
-        const first = await listen({ engine, port: 0, insecureNoAuth: true, dir: idir })
+        const first = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, dir: idir })
         const fo = first.origin
         try {
           const r = await fetch(`${fo}/kept/a.ttl`, { method: 'PUT', headers: { 'content-type': 'text/turtle', link: '<https://schema.org/Thing>; rel="type"' }, body: '<> a <https://schema.org/Event> .' })
@@ -1367,7 +1462,7 @@ async function main () {
         } finally {
           await first.close()
         }
-        const second = await listen({ engine, port: 0, insecureNoAuth: true, dir: idir, baseIri: `${fo}/` })
+        const second = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, dir: idir, baseIri: `${fo}/` })
         try {
           for (const t of ['https://schema.org/Thing', 'https://schema.org/Event']) {
             const r = await fetch(`${second.origin}/.well-known/lws-type-search`, { method: 'QUERY', headers: { 'content-type': 'application/lws-query+json' }, body: JSON.stringify({ type: [t] }) })
@@ -1405,7 +1500,7 @@ async function main () {
     }
 
     await check('Type search results (unstable, issue 922): off by default, a QUERY answer carries no Content-Location and the storage description no extension member', async () => {
-      const off = await listen({ engine, port: 0, insecureNoAuth: true, agent: ALICE922 })
+      const off = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, agent: ALICE922 })
       try {
         await typedPut(off.origin, '/p/a')
         const r = await query(off.origin, { type: [SP] })
@@ -1420,7 +1515,7 @@ async function main () {
     })
 
     const rdir = mkdtempSync(join(tmpdir(), 'lws922-results-'))
-    const on = await listen({ engine, port: 0, insecureNoAuth: true, agent: ALICE922, now: 1000, pageSize: 1, searchResults: true, searchResultsTtl: 20, dir: rdir })
+    const on = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, agent: ALICE922, now: 1000, pageSize: 1, searchResults: true, searchResultsTtl: 20, dir: rdir })
     const ro = on.origin
     let results = null
     try {
@@ -1467,7 +1562,7 @@ async function main () {
       })
 
       await check('Type search results (unstable, issue 922): an anonymous QUERY names no results resource, and an unknown name answers 404', async () => {
-        const anon = await listen({ engine, port: 0, insecureNoAuth: true, searchResults: true })
+        const anon = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, searchResults: true })
         try {
           await typedPut(anon.origin, '/p/a')
           const r = await query(anon.origin, { type: [SP] })
@@ -1486,7 +1581,7 @@ async function main () {
 
     await check('Type search results (unstable, issue 922): the records survive a restart (snapshot member searchResults), and a results resource answers 410 after searchResultsTtl', async () => {
       assert(results !== null, 'no results resource')
-      const again = await listen({ engine, port: 0, insecureNoAuth: true, agent: ALICE922, pageSize: 1, searchResults: true, searchResultsTtl: 20, dir: rdir, baseIri: `${ro}/` })
+      const again = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, agent: ALICE922, pageSize: 1, searchResults: true, searchResultsTtl: 20, dir: rdir, baseIri: `${ro}/` })
       try {
         const path = new URL(results).pathname
         const r = await fetch(`${again.origin}${path}`)
@@ -1512,7 +1607,7 @@ async function main () {
   }
 
   await check(CHECKS[37], async () => {
-    const rc = await listen({ engine, port: 0, insecureNoAuth: true, realClock: true })
+    const rc = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, realClock: true })
     try {
       let tried = 0
       for (;;) {
@@ -1548,7 +1643,7 @@ async function main () {
   })
 
   await check(CHECKS[42], async () => {
-    const rc = await listen({ engine, port: 0, insecureNoAuth: true, realClock: true })
+    const rc = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, realClock: true })
     try {
       await fetch(`${rc.origin}/five/`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: '' }).then((r) => r.text())
       const posts = await Promise.all(['1', '2', '3', '4', '5'].map((n) =>
@@ -1567,7 +1662,7 @@ async function main () {
   })
 
   await check(CHECKS[38], async () => {
-    const guarded = await listen({ engine, port: 0, auth: { issuers: [{ issuer: 'https://as.example' }] } })
+    const guarded = await listen({ ...LOCAL_TARGETS, engine, port: 0, auth: { issuers: [{ issuer: 'https://as.example' }] } })
     try {
       const r = await fetch(`${guarded.origin}/private`)
       await r.text()
@@ -1732,7 +1827,7 @@ async function main () {
   const dir = mkdtempSync(join(tmpdir(), 'lws-draft-binding-'))
   try {
     await check(CHECKS[12], async () => {
-      const first = await listen({ engine, port: 0, insecureNoAuth: true, now: 2000, dir })
+      const first = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, now: 2000, dir })
       try {
         const r = await fetch(`${first.origin}/kept/note.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'kept' })
         await r.text()
@@ -1748,7 +1843,7 @@ async function main () {
         assert(existsSync(join(dir, 'lws-state.json')), 'no lws-state.json')
         assert(names.length === 1 && names[0] === 'lws-state.json', `DIR holds ${names}`)
       }
-      const second = await listen({ engine, port: 0, insecureNoAuth: true, dir })
+      const second = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, dir })
       try {
         const g = await fetch(`${second.origin}/kept/note.txt`)
         const body = await g.text()
@@ -1759,7 +1854,7 @@ async function main () {
     })
 
     await check(CHECKS[24], async () => {
-      const first = await listen({ engine, port: 0, insecureNoAuth: true, now: 3000, dir })
+      const first = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, now: 3000, dir })
       try {
         const r = await fetch(`${first.origin}/kept/lic.txt`, { method: 'PUT', headers: { 'content-type': 'text/plain', prefer: 'set-linkset', link: '<https://creativecommons.org/licenses/by/4.0/>; rel="license"' }, body: 'x' })
         await r.text()
@@ -1767,7 +1862,7 @@ async function main () {
       } finally {
         await first.close()
       }
-      const second = await listen({ engine, port: 0, insecureNoAuth: true, dir })
+      const second = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, dir })
       try {
         const ls = await (await fetch(`${second.origin}/kept/lic.txt?linkset`)).json()
         assert(ls.linkset[0].license && ls.linkset[0].license[0].href === 'https://creativecommons.org/licenses/by/4.0/', JSON.stringify(ls))
@@ -1779,7 +1874,7 @@ async function main () {
     await check(CHECKS[33], async () => {
       const receiver = await startReceiver()
       try {
-        const first = await listen({ engine, port: 0, insecureNoAuth: true, now: 4000, dir })
+        const first = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, now: 4000, dir })
         let subscription
         let keyX
         try {
@@ -1795,7 +1890,7 @@ async function main () {
         } finally {
           await first.close()
         }
-        const second = await listen({ engine, port: 0, insecureNoAuth: true, dir, baseIri: `${first.origin}/` })
+        const second = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, dir, baseIri: `${first.origin}/` })
         try {
           const g = await fetch(`${second.origin}${new URL(subscription).pathname}`)
           await g.text()
@@ -1811,7 +1906,7 @@ async function main () {
     })
 
     await check('Access Requests and Grants: grants and requests survive a restart', async () => {
-      const first = await listen({ engine, port: 0, insecureNoAuth: true, now: 5000, dir })
+      const first = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, now: 5000, dir })
       let grant
       let request
       try {
@@ -1837,7 +1932,7 @@ async function main () {
       } finally {
         await first.close()
       }
-      const second = await listen({ engine, port: 0, insecureNoAuth: true, dir, baseIri: `${first.origin}/` })
+      const second = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, dir, baseIri: `${first.origin}/` })
       try {
         for (const p of [grant, request]) {
           const g = await fetch(`${second.origin}${p}`)
@@ -1850,7 +1945,7 @@ async function main () {
     })
 
     await check(CHECKS[13], async () => {
-      const s = await listen({ engine, port: 0, insecureNoAuth: true, dir })
+      const s = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, dir })
       try {
         const before = readdirSync(dirname(dir)).length
         for (const t of ['/../outside', '/../../outside', '/x/../../outside']) {

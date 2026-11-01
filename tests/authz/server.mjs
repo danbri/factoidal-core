@@ -357,6 +357,18 @@ async function main () {
         }))
         assert(a.status === 400 && /private/.test(a.json.error_description), `${a.status} ${a.text}`)
       })
+      // https://github.com/danbri/factoidal/issues/1126: the shared address
+      // space 100.64.0.0/10 (Tailscale, carrier-grade NAT) and the other IANA
+      // special-purpose ranges are refused too (L4Factoidal/Net/Egress.lean).
+      await check('Fetch guard: a subject on 100.64.0.1 (shared address space) is refused without --allow-private-fetch (issue 1126)', async () => {
+        const shared = cidSub.replace(/127\.0\.0\.1(:\d+)?/, '100.64.0.1')
+        const a = await postForm(`${guarded.origin}/token`, exchangeForm({
+          grant_type: TOKEN_EXCHANGE, resource: STORAGE, subject_token_type: JWT_TYPE,
+          subject_token: selfIssued(shared, cidPair, { kid: 'k1', audience: guarded.issuer })
+        }))
+        assert(a.status === 400 && /special-purpose/.test(a.json.error_description) && /100\.64\.0\.1/.test(a.json.error_description),
+          `${a.status} ${a.text}`)
+      })
       await check('Fetch guard: a localhost subject is refused too', async () => {
         const local = cidSub.replace('127.0.0.1', 'localhost')
         const a = await postForm(`${guarded.origin}/token`, exchangeForm({

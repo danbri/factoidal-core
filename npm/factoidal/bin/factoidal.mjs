@@ -445,8 +445,11 @@ DIR holds the signing keys (DIR/authz-keys.json, mode 0600), sealed with
 FACTOIDAL_LWS_KEY when it is set. --rotate-after makes a new key when the
 current one is that old; the old key stays published until its tokens expire.
 --allow-http accepts http subject identifiers; --allow-private-fetch lets the
-server fetch documents from loopback, link-local and private addresses. Both
-are off by default and are for tests.
+server fetch documents from special-purpose addresses: loopback, private,
+link-local, shared (100.64.0.0/10), multicast, reserved and the other ranges
+of the IANA special-purpose registries, and localhost names
+(https://github.com/danbri/factoidal/issues/1126). Both are off by default
+and are for tests.
 CORS (https://github.com/danbri/factoidal/issues/923): by default every answer
 echoes a valid request Origin in Access-Control-Allow-Origin, so a page on
 another origin can read the metadata and keys and exchange a token; a
@@ -474,7 +477,8 @@ usage: factoidal lws-serve DIR (--authz DIR | --issuer IRI | --auth-config FILE 
                          [--paginate-always] [--moves all|data|off]
                          [--no-linkset-put] [--unstable-search-results] [--merkle]
                          [--controller-inbox URL] [--delivery-limit N]
-                         [--delivery-window SECONDS] [--redirects-max N]
+                         [--delivery-window SECONDS] [--delivery-dest-limit N]
+                         [--redirects-max N]
                          [--storage snapshot|files]
                          [--cors-origin ORIGIN]... [--no-cors]
 
@@ -569,6 +573,25 @@ The engine decides the file, its contents and every refusal
   --delivery-window SECONDS
                   the length of that window (config member deliveryWindow;
                   default 60)
+  --delivery-dest-limit N
+                  the most deliveries one destination (host and port of the
+                  inbox URL) gets in one window, for all subscriptions and
+                  access records together (config member deliveryDestLimit;
+                  default 10, 0 turns the limit off)
+                  https://github.com/danbri/factoidal/issues/1126
+  --allow-private-fetch
+                  let webhook, access-request, access-grant and controller
+                  inboxes be special-purpose addresses (loopback, private,
+                  link-local, shared 100.64.0.0/10, multicast, reserved and
+                  the other IANA special-purpose ranges) or localhost names,
+                  and let the --authz server fetch from them (config member
+                  allowPrivateFetch; default off). Without it such an inbox
+                  is refused with 400 when its address is known at
+                  subscription, and every delivery is checked again just
+                  before it is made, against the addresses resolved then;
+                  the server connects to the address it checked. For tests
+                  and closed networks only.
+                  https://github.com/danbri/factoidal/issues/1126
   --redirects-max N
                   the most previous identifiers of moved resources kept to
                   answer 301 Moved Permanently (config member redirectsMax;
@@ -1166,7 +1189,7 @@ const VALUE_OPTIONS = {
   compact: new Set([]),
   serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2', 'allow-host', 'allow-origin']),
   'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
-    'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window',
+    'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window', 'delivery-dest-limit',
     'redirects-max', 'storage', 'cors-origin', 'authz', 'alg', 'token-lifetime', 'rotate-after',
     'saml-idp', 'saml-decrypt-key', 'allow-host', 'allow-origin']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config', 'allow-host', 'allow-origin']),
@@ -2294,6 +2317,10 @@ async function commandLwsServe (positional, options) {
       ...(typeof options['controller-inbox'] === 'string' ? { controllerInbox: options['controller-inbox'] } : {}),
       ...(options['delivery-limit'] !== undefined ? { deliveryLimit: natOption('delivery-limit', options['delivery-limit']) } : {}),
       ...(options['delivery-window'] !== undefined ? { deliveryWindow: natOption('delivery-window', options['delivery-window']) } : {}),
+      ...(options['delivery-dest-limit'] !== undefined ? { deliveryDestLimit: natOption('delivery-dest-limit', options['delivery-dest-limit']) } : {}),
+      // Inboxes at special-purpose addresses (issue 1126): passed unread;
+      // L4Factoidal/Net/Egress.lean decides.
+      ...(options['allow-private-fetch'] === true ? { allowPrivateFetch: true } : {}),
       ...(options['redirects-max'] !== undefined ? { redirectsMax: natOption('redirects-max', options['redirects-max']) } : {}),
       ...(typeof options.storage === 'string' ? { storage: options.storage } : {}),
       ...corsConfig(options),
@@ -2323,11 +2350,16 @@ async function commandLwsServe (positional, options) {
   // The engine's start notices (a stale lock taken over; encryption at rest
   // on or off), printed also with --quiet.
   for (const n of (await running.storage()).notices || []) err(`lws-serve: ${n}`)
+  // Printed also with --quiet: this option opens the local network to
+  // requests that remote parties choose (issue 1126).
+  if (options['allow-private-fetch'] === true) {
+    err('lws-serve: WARNING: --allow-private-fetch: webhook and inbox deliveries and authorization ' +
+      'server fetches may go to loopback, private, link-local and other special-purpose addresses')
+  }
   if (!quiet) {
     err(`lws-serve: listening on ${running.origin} for ${positional[0]}`)
     if (running.authz() !== null) err(`lws-serve: authorization server ${running.authz().issuer} (keys in ${authzDir})`)
     if (options['allow-http'] === true) err('lws-serve: WARNING: --allow-http: http subject identifiers are accepted')
-    if (options['allow-private-fetch'] === true) err('lws-serve: WARNING: --allow-private-fetch: private addresses may be fetched')
     if (insecure) {
       err('lws-serve: WARNING: --insecure-no-auth: every request is served without authorization')
       err('lws-serve: --insecure-no-auth: only the Host names of this listener are answered, and a ' +
