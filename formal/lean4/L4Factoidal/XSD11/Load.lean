@@ -123,12 +123,35 @@ def validateHow (s : Schema) (mode : String) (how : How) (root : Node) (uri : St
     .error { code := "FODC0007", msg := s!"the document is not valid: {(dupIds ++ r.2.errors ++ idcErrs).take 2}" }
   else .ok (psviDoc s r.1 uri)
 
-/-- Validate a document element for `xsd-validation` (F&O 4.0 `fn:parse-xml`). -/
+/-- Shared validation result, also consumed by XQuery validate and XProc.
+XML parsing uses `validateXmlFor` for its context-specific error codes. -/
 def validateFor (s : Schema) (mode : String) (root : Node) (uri : String) : Except XPath4.Err XPath4.Doc :=
   match howFor s mode root with
   | none => .error { code := if mode == "strict" then "XQDY0084" else "FODC0007",
                      msg := s!"xsd-validation {mode}: no declaration or type to validate against" }
   | some how => validateHow s mode how root uri
+
+/-- F&O 4.0 XML parsing distinguishes an invalid option/type (FODC0008)
+from invalid XSD content (FODC0014). FODC0007 is reserved for DTD validity
+in that context. Keep the shared validator's XQuery/XProc contract intact. -/
+def validateXmlFor (s : Schema) (mode : String) (root : Node) (uri : String) :
+    Except XPath4.Err XPath4.Doc :=
+  match howFor s mode root with
+  | none => .error { code := if mode == "strict" then "FODC0014" else "FODC0008",
+                     msg := s!"xsd-validation {mode}: no declaration or type to validate against" }
+  | some how =>
+    match validateHow s mode how root uri with
+    | .ok d => .ok d
+    | .error e => .error (if e.code == "FODC0007" then { e with code := "FODC0014" } else e)
+
+/-- Adapting parsing errors cannot change which documents succeed or their PSVI. -/
+theorem validateXmlFor_ok_iff (s : Schema) (mode : String) (root : Node)
+    (uri : String) (d : XPath4.Doc) :
+    validateXmlFor s mode root uri = .ok d ↔ validateFor s mode root uri = .ok d := by
+  unfold validateXmlFor validateFor
+  cases howFor s mode root with
+  | none => simp
+  | some how => cases h : validateHow s mode how root uri <;> simp [h]
 
 /-- The XML tree of a node of an XDM document (element names with their
 prefixes, and the in-scope namespaces declared on every element, so the
@@ -297,7 +320,7 @@ def schemaHookOf (s : Schema) : XPath4.SchemaHook :=
       | _, _ => false,
     targetNamespaces := ((s.gTypes.map (·.1.ns)) ++ (s.gElems.map (·.1.ns)) ++ (s.gAttrs.map (·.1.ns))).filter
       (fun u => u != xsNS && u != xsiNS) |>.eraseDups,
-    validate := some (validateFor s),
+    validate := some (validateXmlFor s),
     validateIn := some (validateNodeIn s),
     validateWith := some (validateWithFor s),
     validateFnNs := some (validateFor fnSchema "strict"),

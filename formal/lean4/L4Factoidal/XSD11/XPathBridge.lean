@@ -8,7 +8,7 @@ XPath 4.0 and F&O 4.0 (`L4Factoidal.XPath4`) to XML Schema 1.1 validation
   tree (`Doc.ofNodes`).
 * `docOfKids_validate`: with the in-scope schema definitions of
   `schemaHookOf s` and another `xsd-validation` mode, that document is the
-  result of `validateFor s` on the document element of the parsed tree
+  result of `validateXmlFor s` on the document element of the parsed tree
   (`XML.Parser`): XPath 4.0 has no validation of its own.
 * `validateFor_ok`: a document that `validateFor` gives is the XDM
   document (`psviDoc`) of the PSVI that `validateElement` makes from that
@@ -37,10 +37,10 @@ theorem docOfKids_validate (s : Schema) (e : XPath4.Env) (o : XPath4.ParseOpts)
     (hi : e.features.schemaImport = true) (hv : e.features.schemaValidation = true)
     (hx : o.xsd ≠ "skip")
     (hr : kids.find? XPath4.isElemKid = some root) :
-    XPath4.docOfKids e o kids uri = validateFor s o.xsd root uri := by
+    XPath4.docOfKids e o kids uri = validateXmlFor s o.xsd root uri := by
   unfold XPath4.docOfKids
   simp only [hs, schemaHookOf, hi, hv, Bool.not_true, Bool.or_self, hr, beq_iff_eq, hx, if_false]
-  cases validateFor s o.xsd root uri <;> rfl
+  cases validateXmlFor s o.xsd root uri <;> rfl
 
 theorem validateFor_ok (s : Schema) (mode : String) (root : Node) (uri : String) (d : XPath4.Doc)
     (h : validateFor s mode root uri = .ok d) :
@@ -72,6 +72,6 @@ theorem parseXml_validate (s : Schema) (e : XPath4.Env) (o : XPath4.ParseOpts)
     ∃ how, d = psviDoc s (validateElement s xpathHooks 10000 [] how root {}).1 uri ∧
       (validateElement s xpathHooks 10000 [] how root {}).1.erase = root := by
   rw [docOfKids_validate s e o kids uri root hs hi hv hx hr] at hd
-  exact validateFor_ok s o.xsd root uri d hd
+  exact validateFor_ok s o.xsd root uri d ((validateXmlFor_ok_iff s o.xsd root uri d).mp hd)
 
 end L4Factoidal.XSD11
