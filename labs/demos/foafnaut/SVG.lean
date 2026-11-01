@@ -2,6 +2,7 @@ import Graphics
 import SVGPath
 import SVGCSS
 import SVGDash
+import SVGDashUnits
 import L4Factoidal.Math.Affine
 import L4Factoidal.Tdb2.Format
 import L4Factoidal.XML.NamespaceView
@@ -174,10 +175,8 @@ structure Style where
   stroke : Paint := .none
   currentColor : Color := rgb 0 0 0
   strokeWidth : Float := 1
-  dashArray : List Float := []
-  dashPercent : List Bool := []
-  dashOffset : Float := 0
-  dashOffsetPercent : Bool := false
+  dashArray : List NativeSVGDash.Length := []
+  dashOffset : NativeSVGDash.Length := ⟨0,false⟩
   fillOpacity : Float := 1
   strokeOpacity : Float := 1
   rule : FillRule := .nonzero
@@ -229,16 +228,15 @@ private def inheritedNumber (lengths : LengthContext) (attrs : List NamespaceAtt
   | none => pure old
   | some value => if trim value == "inherit" then pure old else
       if key == "stroke-width" then relativeLength value lengths.diagonal else number value
-private def dashArray (lengths : LengthContext) (source : String) : Except String (List Float × List Bool) := do
-  if trim source == "none" then return ([],[])
+private def dashArray (lengths : LengthContext) (source : String) : Except String (List NativeSVGDash.Length) := do
+  if trim source == "none" then return []
   let groups := source.splitOn ","
   if groups.any (fun g => (trim g).isEmpty) then throw "empty dash list item"
   let tokens := groups.flatMap (fun g => (g.splitOn " " |>.flatMap (·.splitOn "\t") |>.flatMap (·.splitOn "\n") |>.flatMap (·.splitOn "\r")).filter (· != ""))
   if tokens.isEmpty then throw "empty dash list"
   if tokens.length > 64 then throw "dash pattern exceeds 64 entries"
-  let values ← NativeSVGDash.normalize (← tokens.mapM (fun t => relativeLength t lengths.diagonal))
-  let percentages := tokens.map (fun t => (trim t).endsWith "%")
-  return (values,if values.isEmpty then [] else if percentages.length%2==1 then percentages++percentages else percentages)
+  NativeSVGDash.normalizeLengths (← tokens.mapM fun token => do
+    pure {value:= ← relativeLength token lengths.diagonal,percentage:=(trim token).endsWith "%"})
 private def readStyle (lengths : LengthContext) (ids : List String) (attrs : List NamespaceAttribute) (parent : Style) : Except String Style := do
   let mut style := parent
   if let some value := attr attrs "color" then
@@ -249,10 +247,9 @@ private def readStyle (lengths : LengthContext) (ids : List String) (attrs : Lis
     if trim value != "inherit" then style := {style with stroke:= ← readPaint ids value}
   if let some value := attr attrs "stroke-dasharray" then
     if trim value != "inherit" then
-      let (values,percentages) ← dashArray lengths value
-      style := {style with dashArray:=values,dashPercent:=percentages}
+      style := {style with dashArray:= ← dashArray lengths value}
   if let some value := attr attrs "stroke-dashoffset" then
-    if trim value != "inherit" then style := {style with dashOffset:= ← relativeLength value lengths.diagonal,dashOffsetPercent:=(trim value).endsWith "%"}
+    if trim value != "inherit" then style := {style with dashOffset:={value:= ← relativeLength value lengths.diagonal,percentage:=(trim value).endsWith "%"}}
   let width ← inheritedNumber lengths attrs "stroke-width" parent.strokeWidth
   if width < 0 then throw "negative stroke-width"
   let fillOpacity ← inheritedNumber lengths attrs "fill-opacity" parent.fillOpacity
@@ -355,21 +352,20 @@ private def dashedParts (g : Geometry) (style : Style) (authorLength : Option Fl
   let edges := vertices.zip vertices.tail
   let lengths : List Float := edges.map (fun (a,b) => Float.sqrt ((b.x-a.x)*(b.x-a.x)+(b.y-a.y)*(b.y-a.y)))
   let total : Float := lengths.foldl (·+·) 0
-  if style.dashArray.length != style.dashPercent.length then throw "dash unit provenance count mismatch"
   -- SVG 2 §9.6.1: percentage distances are exempt from pathLength calibration.
   let (pattern,offset) ← match authorLength with
-    | none => pure (style.dashArray,style.dashOffset)
+    | none => pure (style.dashArray.map (·.value),style.dashOffset.value)
     | some author => do
       if author==0 then
-        if (style.dashArray.zip style.dashPercent).any (fun (value,percent) => value != 0 && !percent) ||
-            (style.dashOffset != 0 && !style.dashOffsetPercent) then
+        if style.dashArray.any (fun length => length.value != 0 && !length.percentage) ||
+            (style.dashOffset.value != 0 && !style.dashOffset.percentage) then
           throw "zero pathLength infinite dash calibration unsupported"
-        pure (style.dashArray,style.dashOffset)
+        pure (style.dashArray.map (·.value),style.dashOffset.value)
       else
         let scale := total/author
         if !scale.isFinite then throw "pathLength calibration exceeds finite range"
-        let pattern := (style.dashArray.zip style.dashPercent).map (fun (value,percent) => if percent then value else value*scale)
-        pure (pattern,if style.dashOffsetPercent then style.dashOffset else style.dashOffset*scale)
+        let pattern := style.dashArray.map (·.calibrated scale)
+        pure (pattern,style.dashOffset.calibrated scale)
   let spans ← NativeSVGDash.intervals pattern offset total
   let seam := closed && spans.any (fun a => a.first==0 && a.last>0) && spans.any (fun a => a.last==total && a.first<total)
   let pointAt := fun (distance : Float) => Id.run do
