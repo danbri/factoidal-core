@@ -2111,4 +2111,14 @@ Harness_Qt4Run_fixXml  # (b) catalog XML nesting via child map; predecessor fuel
 Harness_Qt4Run_innerXml  # (b) nested expected-XML elements, sibling map is core tail iteration; predecessor fuel, entered with 1000 by fixXml; semantic-depth limit, not arbitrary-depth C-stack safety; docs/20261030-qt4-harness-recursion-audit.md; https://github.com/danbri/factoidal/issues/1101
 Harness_Qt4Run_resolveXmlFiles  # (b) nested result/assertion XML via child mapM; predecessor fuel, entered with 100; semantic-depth limit, not arbitrary-depth C-stack safety; docs/20261030-qt4-harness-recursion-audit.md; https://github.com/danbri/factoidal/issues/1101
 Harness_Qt4Run_serNode  # (b) result document/element nesting via child map; predecessor fuel, entered with 100000; semantic-depth limit, not arbitrary-depth C-stack safety; docs/20261030-qt4-harness-recursion-audit.md; https://github.com/danbri/factoidal/issues/1101
+L4Factoidal_SQL_parseOr  # (b) SQL/Syntax: one call per OR operand and per parenthesis level of one SQL query (an rr:sqlQuery text or one INSERT value); fuel = 4 * number of tokens; rows and statements are read by loops
+L4Factoidal_SQL_parseAnd  # (b) SQL/Syntax: one call per AND operand of one SQL condition; fuel = 4 * number of tokens
+L4Factoidal_SQL_parseNot  # (b) SQL/Syntax: one call per NOT of one SQL condition; fuel = 4 * number of tokens
+L4Factoidal_SQL_parseCmp  # (b) SQL/Syntax: one call per nesting level of one SQL expression; fuel = 4 * number of tokens
+L4Factoidal_SQL_parseConcat  # (b) SQL/Syntax: one call per || operand of one SQL expression (the corpus has at most 5); fuel = 4 * number of tokens
+L4Factoidal_SQL_parsePrimary  # (b) SQL/Syntax: one call per parenthesis, CASE or COUNT level of one SQL expression; fuel = 4 * number of tokens
+L4Factoidal_SQL_parseWhens  # (b) SQL/Syntax: one call per WHEN branch of one CASE expression of a query text
+L4Factoidal_SQL_evalExpr  # (b) SQL/Database: one call per node of one SQL expression of a query text; rows and groups are folded by loops
+L4Factoidal_SQL_evalExpr_pick  # (b) SQL/Database: one call per WHEN branch of one CASE expression of a query text
+L4Factoidal_SQL_hasCountF  # (b) SQL/Database: one call per node of one SQL expression of a query text
 Harness_DomDump_dump  # (c) Array.qsort over the attributes of one element in the DOM test dump; median-of-three pivot, expected depth O(log n), worst case n

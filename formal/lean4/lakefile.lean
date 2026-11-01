@@ -656,6 +656,10 @@ lean_exe «l4dict-fold-bench» where
 -- IC-21 over tests/datacube/ (Harness/DataCubeRun.lean).
 @[default_target] lean_exe «l4datacube» where root := `Harness.DataCubeRun
 
+-- W3C RDB2RDF test cases: the Direct Mapping (2012) over the Lean SQL subset
+-- (Harness/Rdb2RdfRun.lean, tests/rdb2rdf/run.sh).
+@[default_target] lean_exe «l4rdb2rdf» where root := `Harness.Rdb2RdfRun
+
 -- YAML-LD 1.0 (Editor's Draft) over third_party/testing/yaml-ld/
 -- (Harness/YamlLdRun.lean); `--json-superset` loads the JSON-LD 1.1 suite's
 -- inputs through the YAML 1.2.2 loader.
