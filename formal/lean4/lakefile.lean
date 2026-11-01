@@ -625,6 +625,9 @@ lean_exe «l4dict-fold-bench» where
 -- the W3C XInclude test suite.
 @[default_target] lean_exe «l4xpointer» where root := `Harness.XPointerRun
 
+-- XInclude 1.1 with XPointer over the W3C XInclude test suite (175 cases).
+@[default_target] lean_exe «l4xinclude» where root := `Harness.XIncludeRun
+
 -- RELAX NG (ISO/IEC 19757-2:2008, OASIS 2001-12-03) XML syntax: James
 -- Clark's spectest.xml, simplification and validation by derivatives.
 @[default_target] lean_exe «l4relaxng» where root := `Harness.RelaxNGRun

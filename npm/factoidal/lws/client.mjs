@@ -34,7 +34,6 @@
 // browser's, or one that carries each request as a message over another
 // transport (XMPP, a worker port). The client needs no global fetch.
 
-import { loadEngine } from '../bin/engine.mjs'
 import { FactoidalError } from '../lib/errors.mjs'
 
 /** The ops this host needs from the engine. */
@@ -159,7 +158,9 @@ export async function lwsClientOpsAvailable (engine) {
  * @returns {Promise<object>} the client
  */
 export async function createLwsClient (options = {}) {
-  const engine = options.engine !== undefined ? options.engine : await loadEngine()
+  // Browsers inject their already loaded engine. Only the Node/Deno default
+  // loader imports the file-backed store host; keep it out of that import graph.
+  const engine = options.engine !== undefined ? options.engine : await (await import('../bin/engine.mjs')).loadEngine()
   const wire = typeof options.fetch === 'function' ? options.fetch : globalThis.fetch
   if (typeof wire !== 'function') throw new TypeError('no fetch is available in this runtime')
   const maxSteps = typeof options.maxSteps === 'number' ? options.maxSteps : 1024
@@ -310,7 +311,7 @@ export async function createLwsClient (options = {}) {
  *   `selfIssued` is the `createLwsClient` option of that name
  */
 export async function createDidKey (options = {}) {
-  const engine = options.engine !== undefined ? options.engine : await loadEngine()
+  const engine = options.engine !== undefined ? options.engine : await (await import('../bin/engine.mjs')).loadEngine()
   const algorithm = typeof options.algorithm === 'string' ? options.algorithm : 'ES256'
   const random = new Uint8Array(64)
   globalThis.crypto.getRandomValues(random)
