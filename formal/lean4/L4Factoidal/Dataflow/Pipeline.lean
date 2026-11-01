@@ -322,6 +322,65 @@ def run : Pipeline S A → Packed S → Except PipelineError (Packed S)
     | .ok y => run p y
     | .error e => .error e
 
+/-- Splitting a pipeline into subpipelines preserves both outputs and errors.
+This is about the executable runner, with no component-soundness premises. -/
+theorem run_append (p q : Pipeline S A) (x : Packed S) :
+    run (p ++ q) x = (run p x).bind (run q) := by
+  induction p generalizing x with
+  | nil => rfl
+  | cons c p ih =>
+    simp only [List.cons_append, run]
+    cases c.packedRun x with
+    | error e => rfl
+    | ok y => exact ih y
+
+/-- A composed pipeline produces output exactly when both subpipelines
+succeed on the same intermediate value. Well-typedness alone is insufficient. -/
+theorem run_append_ok_iff (p q : Pipeline S A) (x y : Packed S) :
+    run (p ++ q) x = .ok y ↔
+      ∃ z, run p x = .ok z ∧ run q z = .ok y := by
+  rw [run_append]
+  cases hp : run p x with
+  | error e => simp [Except.bind]
+  | ok z => simp [Except.bind]
+
+/-- Exact failure propagation: a prefix failure is preserved; otherwise
+failure comes from the suffix on the successful prefix's output. -/
+theorem run_append_error_iff (p q : Pipeline S A) (x : Packed S) (e : PipelineError) :
+    run (p ++ q) x = .error e ↔
+      run p x = .error e ∨
+        ∃ z, run p x = .ok z ∧ run q z = .error e := by
+  rw [run_append]
+  cases hp : run p x with
+  | error err => simp [Except.bind]
+  | ok z => simp [Except.bind]
+
+/-- Every pipeline error has an executable witness: a successful prefix and
+one failing component. Conversely, such a witness forces that exact error,
+regardless of the remaining components. Names need not be unique. -/
+theorem run_error_iff (p : Pipeline S A) (x : Packed S) (e : PipelineError) :
+    run p x = .error e ↔
+      ∃ before c after z, p = before ++ c :: after ∧
+        run before x = .ok z ∧ c.packedRun z = .error e := by
+  constructor
+  · intro h
+    induction p generalizing x with
+    | nil => cases h
+    | cons c rest ih =>
+      cases hc : c.packedRun x with
+      | error err =>
+        have he : err = e := by simpa [run, hc] using h
+        exact ⟨[], c, rest, x, rfl, rfl, he ▸ hc⟩
+      | ok y =>
+        have hr : run rest y = .error e := by simpa [run, hc] using h
+        obtain ⟨before, d, after, z, hp, hz, hd⟩ := ih y hr
+        refine ⟨c :: before, d, after, z, ?_, ?_, hd⟩
+        · simp [hp]
+        · simpa [run, hc] using hz
+  · rintro ⟨before, c, after, z, rfl, hp, hc⟩
+    rw [run_append, hp]
+    simp [Except.bind, run, hc]
+
 /-- The composed contract: the relational composition of the components'
 packed contracts; the empty pipeline passes its input on. -/
 def contract : Pipeline S A → Packed S → Packed S → Prop
@@ -473,6 +532,10 @@ end Pipelines
 
 #print axioms wellTyped_iff
 #print axioms mem_assumptionUnion
+#print axioms Pipeline.run_error_iff
+#print axioms Pipeline.run_append
+#print axioms Pipeline.run_append_ok_iff
+#print axioms Pipeline.run_append_error_iff
 #print axioms Pipeline.guarantee_sound
 #print axioms Pipeline.sound_of_components
 #print axioms Pipeline.assumptions_iff
