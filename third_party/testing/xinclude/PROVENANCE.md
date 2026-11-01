@@ -3,8 +3,8 @@
 Vendored 2026-10-29 for `lake exe l4xpointer`
 (`formal/lean4/Harness/XPointerRun.lean`), the runner of
 `formal/lean4/L4Factoidal/XML/XPointer.lean` (XPointer Framework, element(),
-xmlns()) and `XML/XPointerXPath.lean` (xpointer()). Later it is the suite of
-the XInclude processor. Tracking: https://github.com/danbri/factoidal/issues/1165
+xmlns()) and `XML/XPointerXPath.lean` (xpointer()). Since 2026-11-01 it is also the suite of the XInclude processor
+(`lake exe l4xinclude`, `formal/lean4/Harness/XIncludeRun.lean`). Tracking: https://github.com/danbri/factoidal/issues/1165
 (track B, item 2).
 
 - Source: https://www.w3.org/XML/Test/XInclude/XIncl20060927.zip, the W3C

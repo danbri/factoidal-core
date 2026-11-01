@@ -14,8 +14,8 @@ target document and, where the suite has one, the expected output of the
 including test case. Two lines are `no-subresource` on the source
 infoset and identify an element only on the acquired infoset, after the
 target's own inclusions (XInclude 1.1 §4.2): `EdUni/test/extract.xml`
-(`chap1`) and `Harold/test/tobintop.xml` (`element(/1/1/2)`). They are
-checked as XInclude cases when XInclude calls this module.
+(`chap1`) and `Harold/test/tobintop.xml` (`element(/1/1/2)`). They pass
+as XInclude cases in `lake exe l4xinclude` (`Harness/XIncludeRun.lean`).
 
 Usage: `lake exe l4xpointer [suite-dir] [expected.tsv]`; with `--write`
 as a third argument the lines are written instead of compared. Exit 0

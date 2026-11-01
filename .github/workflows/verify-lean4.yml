@@ -208,6 +208,14 @@ jobs:
         working-directory: formal/lean4
         run: lake exe l4xpointer
 
+      # XInclude 1.1 with XPointer (XInclude.expandX) over the 174 cases of the
+      # W3C XInclude test suite (https://github.com/danbri/factoidal/issues/1165,
+      # track B item 2). Exits non-zero on a failure or a stale expected
+      # failure (tests/xinclude/expected-fail.tsv).
+      - name: XInclude (lake exe l4xinclude)
+        working-directory: formal/lean4
+        run: lake exe l4xinclude
+
       # RELAX NG (OASIS 2001, ISO/IEC 19757-2) XML syntax over James Clark's
       # spectest.xml in third_party/testing/relaxng
       # (https://github.com/danbri/factoidal/issues/1165, track B item 3).
