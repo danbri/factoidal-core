@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Web Annotation Data Model and Vocabulary (W3C Recommendations, 2017) in the Lean engine, `L4Factoidal/WebAnnotation/`: the procedure of the W3C annotation-model tests (`JsonTest.lean`) over the JSON Schema validator, which gains a draft-04 dialect (`draft04Ajv4`: unknown keywords ignored, boolean `exclusiveMinimum`/`exclusiveMaximum`, `format` checked as ajv 4.0.4 "fast" mode checks `uri` and `date-time`); the vocabulary checks over the existing JSON-LD 1.1, N-Triples, Turtle and RDF/XML code (`Vocab.lean`). `bash tests/webannotation/run.sh`: model tests on the 44 Recommendation examples and 41 protocol samples 246 pass, 0 fail (out of 246 runs), 6 excluded (defective test data, https://github.com/danbri/factoidal/issues/1193); 19 negative documents 19 pass, 0 fail (out of 19); vocabulary 342 pass, 0 fail (out of 342). The Web Annotation Protocol (2017) as a Lean request handler over the LWS store (`Protocol.lean`): the `server-manual.html` assertions run against it (`ProtocolSuite.lean`), MUST 35 pass, 0 fail (out of 35), SHOULD 10 pass, 0 fail (out of 10). No npm or wasm op and no HTTP host yet, and no Turtle representation (https://github.com/danbri/factoidal/issues/1197).
+
 ## 0.28.0 (2026-10-31)
 
 - The public LWS SBM11 reader rejects resource paths that escape its configured container before calling transport. Default Node HTTP reads refuse redirects. Browser default XHR now rejects caller-supplied headers, including authorization; authenticated browser use requires an explicit trusted, redirect-safe transport. Custom transports remain responsible for redirect and credential policy. WebDAV read-only behavior is unchanged.

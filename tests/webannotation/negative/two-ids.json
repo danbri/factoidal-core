@@ -1,0 +1,10 @@
+{
+  "@context": "http://www.w3.org/ns/anno.jsonld",
+  "id": [
+    "http://example.org/anno1",
+    "http://example.org/anno1b"
+  ],
+  "type": "Annotation",
+  "body": "http://example.org/post1",
+  "target": "http://example.com/page1"
+}
