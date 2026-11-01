@@ -699,37 +699,67 @@ private def pointBounds (points : List Point) : List Float :=
     let bounds := rest.foldl (fun (b : Float × Float × Float × Float) p =>
       (min b.1 p.x,min b.2.1 p.y,max b.2.2.1 p.x,max b.2.2.2 p.y)) (p.x,p.y,p.x,p.y)
     [bounds.1,bounds.2.1,bounds.2.2.1,bounds.2.2.2]
+theorem pointBounds_length (points : List Point) : (pointBounds points).length = 4 := by
+  cases points <;> simp [pointBounds]
 private def geometryRows : Geometry → List Float
   | .rect x y w h | .ellipse x y w h => [x,y,w,h]
   | .circle x y r => [x,y,r,0]
   | .line x y u v => [x,y,u,v]
   | .polygon points => pointBounds points
   | .path contours => pointBounds (contours.flatMap (·.points))
+theorem geometryRows_length (geometry : Geometry) : (geometryRows geometry).length = 4 := by
+  cases geometry <;> simp [geometryRows, pointBounds_length]
+private theorem resolved_length (paint : Paint) (style : Style) (alpha : Float) :
+    (resolved paint style alpha).length = 4 := by
+  cases paint <;> simp [resolved]
 private def Primitive.effectiveOpacity (p : Primitive) : Float :=
   if p.transform.det == 0 then 0 else p.opacity
 private def geometryTailSize : Geometry → Nat
   | .polygon points => ((points.length+1)/2)*4
   | .path contours => (NativeSVGPath.edges contours).length*4
   | _ => 0
-private def pieceRows (width : Float) (piece : NativeSVGStroke.Piece) : List Float :=
-  let (geometry,tag,extra) : List Float × Float × List Float := match piece with
-    | .strip a b => ([a.x,a.y,b.x,b.y],4, [0,0,0,0])
-    | .disk c r => ([c.x,c.y,r,0],2,[0,0,0,0])
-    | .triangle a b c => ([a.x,a.y,b.x,b.y],7,[c.x,c.y,0,0])
-  geometry ++ [tag,0,0,0] ++ extra ++ [0,0,0,0,width,0,0,0]
-private def Primitive.rows (p : Primitive) : List Float :=
+def primitiveFixedRowCount : Nat := 5
+def dashPieceRowCount : Nat := 5
+def affineTransformRowCount : Nat := L4Factoidal.Math.AffineRows.vec4RowCount
+def Primitive.fixedRows (p : Primitive) : List Float :=
   let (tag,count) : Nat × Nat := match p.geometry with
     | .rect .. => (1,0) | .circle .. => (2,0) | .ellipse .. => (3,0)
     | .line .. => (4,0) | .polygon points => (5,points.length)
     | .path contours => (6,(NativeSVGPath.edges contours).length)
   geometryRows p.geometry ++ [Float.ofNat tag,Float.ofNat count,
-    if p.style.rule == .evenodd then 1 else 0,(if p.style.lineCap == .round then 1 else 0)+(if p.transform.identity then 0 else 2)] ++ resolved p.style.fill p.style p.style.fillOpacity ++
-  resolved p.style.stroke p.style p.style.strokeOpacity ++ [p.style.strokeWidth,p.effectiveOpacity,Float.ofNat (p.dashParts.getD []).length,if p.dashParts.isSome then 1 else 0] ++
+    if p.style.rule == .evenodd then 1 else 0,(if p.style.lineCap == .round then 1 else 0)+(if p.transform.identity then 0 else 2)] ++
+    resolved p.style.fill p.style p.style.fillOpacity ++
+    resolved p.style.stroke p.style p.style.strokeOpacity ++
+    [p.style.strokeWidth,p.effectiveOpacity,Float.ofNat (p.dashParts.getD []).length,if p.dashParts.isSome then 1 else 0]
+theorem Primitive.fixedRows_length (p : Primitive) :
+    p.fixedRows.length = primitiveFixedRowCount * 4 := by
+  simp [Primitive.fixedRows, geometryRows_length, resolved_length, primitiveFixedRowCount]
+def dashPieceData (width : Float) (piece : NativeSVGStroke.Piece) : List Float :=
+  let (geometry,tag,extra) : List Float × Float × List Float := match piece with
+    | .strip a b => ([a.x,a.y,b.x,b.y],4, [0,0,0,0])
+    | .disk c r => ([c.x,c.y,r,0],2,[0,0,0,0])
+    | .triangle a b c => ([a.x,a.y,b.x,b.y],7,[c.x,c.y,0,0])
+  geometry ++ [tag,0,0,0] ++ extra ++ [0,0,0,0,width,0,0,0]
+theorem dashPieceData_length (width : Float) (piece : NativeSVGStroke.Piece) :
+    (dashPieceData width piece).length = dashPieceRowCount * 4 := by
+  cases piece <;> simp [dashPieceData, dashPieceRowCount]
+def dashPayloadData (width : Float) (pieces : List NativeSVGStroke.Piece) : List Float :=
+  pieces.flatMap (dashPieceData width)
+theorem dashPayloadData_length (width : Float) (pieces : List NativeSVGStroke.Piece) :
+    (dashPayloadData width pieces).length = pieces.length * (dashPieceRowCount * 4) := by
+  induction pieces with
+  | nil => rfl
+  | cons piece rest ih =>
+    change (dashPieceData width piece ++ dashPayloadData width rest).length = _
+    rw [List.length_append, dashPieceData_length, ih]
+    simp [Nat.add_mul, Nat.one_mul, Nat.add_comm]
+private def Primitive.rows (p : Primitive) : List Float :=
+  p.fixedRows ++
   (match p.geometry with
    | .polygon points => points.flatMap (fun q => [q.x,q.y]) ++ (if points.length%2 == 1 then [0,0] else [])
    | .path contours => (NativeSVGPath.edges contours).flatMap fun (a,b) => [a.x,a.y,b.x,b.y]
    | _ => []) ++
-  ((p.dashParts.getD []).flatMap (pieceRows p.style.strokeWidth)) ++
+  dashPayloadData p.style.strokeWidth (p.dashParts.getD []) ++
   (if p.transform.identity then [] else
     let t := p.transform.inverse
     -- Keep the CPU payload's scalar order tied to the two vec4 rows the WGSL
@@ -780,7 +810,7 @@ private def Scene.wgsl (_s : Scene) : String :=
   "var base=2u;\n" ++
   s!"for(var primitive=0u;primitive<{maxPrimitives}u&&base<arrayLength(&params.rows);primitive++)" ++ "{" ++
   "let header=vec4u(params.rows[base+1u]);let tag=header.x;let count=header.y;" ++
-  "let shapeRows=select((count+1u)/2u,count,tag==6u);let dashCount=u32(params.rows[base+4u].z);let tailRows=shapeRows+5u*dashCount;var p=worldP;if(header.w>=2u){let tb=base+5u+tailRows;let x=params.rows[tb];let y=params.rows[tb+1u];" ++
+  s!"let shapeRows=select((count+1u)/2u,count,tag==6u);let dashCount=u32(params.rows[base+4u].z);let tailRows=shapeRows+{dashPieceRowCount}u*dashCount;var p=worldP;if(header.w>=2u)" ++ "{let tb=base+" ++ toString primitiveFixedRowCount ++ "u+tailRows;let x=params.rows[tb];let y=params.rows[tb+1u];" ++
   "p=vec4f(dot(x.xy,worldP.xy)+x.z,dot(y.xy,worldP.xy)+y.z,0,1);}" ++
   "var fillHit=false;var strokeHit=false;switch tag {\n" ++
   shaderCase 1 (.rect 0 0 0 0) ++ shaderCase 2 (.circle 0 0 0) ++ shaderCase 3 (.ellipse 0 0 0 0) ++
@@ -788,7 +818,7 @@ private def Scene.wgsl (_s : Scene) : String :=
   ";}else{strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}}\n" ++
   "case 5u:{if(withinBounds(base,p.xy)){fillHit=windingContains(base,count,header.z,p.xy,2u);}}" ++
   "case 6u:{if(withinBounds(base,p.xy)){fillHit=windingContains(base,count,header.z,p.xy,4u);}} default:{} }\n" ++
-  "if(params.rows[base+4u].w==1.0){strokeHit=false;let parentBase=base;for(var di=0u;di<dashCount;di++){base=parentBase+5u+shapeRows+di*5u;let dt=u32(params.rows[base+1u].x);var piece=false;" ++
+  s!"if(params.rows[base+4u].w==1.0)" ++ "{strokeHit=false;let parentBase=base;for(var di=0u;di<dashCount;di++){base=parentBase+" ++ toString primitiveFixedRowCount ++ s!"u+shapeRows+di*{dashPieceRowCount}u;let dt=u32(params.rows[base+1u].x);var piece=false;" ++
   "if(dt==4u){piece=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}" ++
   "else if(dt==2u){piece=" ++ relativeCondition (fillCondition (.circle 0 0 0) 0) ++ ";}" ++
   "else if(dt==7u){piece=" ++ relativeCondition (triangleCondition 0) ++ ";}strokeHit=strokeHit||piece;}base=parentBase;}" ++
@@ -796,7 +826,7 @@ private def Scene.wgsl (_s : Scene) : String :=
   "if fillHit {element=vec4f(fill.rgb*fill.a,fill.a);}" ++
   "if strokeHit {element=vec4f(stroke.rgb*stroke.a,stroke.a)+element*(1.0-stroke.a);}" ++
   "let opacity=params.rows[base+4u].y;rgb=element.rgb*opacity+rgb*(1.0-element.a*opacity);" ++
-  "base+=5u+tailRows+select(0u,2u,header.w>=2u);}return vec4f(rgb,1.0); }\n" ++
+  "base+=" ++ toString primitiveFixedRowCount ++ "u+tailRows+select(0u," ++ toString affineTransformRowCount ++ "u,header.w>=2u);}return vec4f(rgb,1.0); }\n" ++
   "@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {var total=vec4f(0.0);" ++
   String.join (pixelSampleOffsets.map fun (x,y) =>
     "total+=samplePixel(vec4f(pixel.xy+vec2f(" ++ toString (x-0.5) ++ "," ++ toString (y-0.5) ++ "),0.0,1.0));") ++

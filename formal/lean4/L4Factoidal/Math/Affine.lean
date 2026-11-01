@@ -44,6 +44,9 @@ structure AffineRows (α : Type) where
 
 namespace AffineRows
 
+def vec4RowCount : Nat := 2
+def vec4LaneCount : Nat := 4
+
 def toList (r : AffineRows α) : List α :=
   [r.xx,r.xy,r.tx,r.pad0,r.yx,r.yy,r.ty,r.pad1]
 
@@ -58,10 +61,10 @@ def toVec4Rows (r : AffineRows α) : List (List α) :=
 theorem toVec4Rows_flatten (r : AffineRows α) :
     r.toVec4Rows.flatten = r.toList := rfl
 
-theorem toVec4Rows_length (r : AffineRows α) : r.toVec4Rows.length = 2 := rfl
+theorem toVec4Rows_length (r : AffineRows α) : r.toVec4Rows.length = vec4RowCount := rfl
 
 theorem toVec4Rows_lane_lengths (r : AffineRows α) :
-    r.toVec4Rows.map List.length = [4,4] := rfl
+    r.toVec4Rows.map List.length = [vec4LaneCount,vec4LaneCount] := rfl
 
 def decode (r : AffineRows α) : Affine2 α :=
   ⟨r.xx,r.yx,r.xy,r.yy,r.tx,r.ty⟩

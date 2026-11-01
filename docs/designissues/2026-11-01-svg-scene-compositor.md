@@ -119,6 +119,14 @@ for Float. Exact geometry theorems and rounded backend execution are separate
 links in the argument. Bounds on allocations/operations require a cost model;
 logical equivalence alone proves no speedup.
 
+The SVG GPU shader generator uses `primitiveFixedRowCount`,
+`dashPieceRowCount` and `affineTransformRowCount` when emitting record offsets.
+`Primitive.fixedRows_length` proves the five-vec4 fixed prefix;
+`dashPieceData_length` and `dashPayloadData_length` prove the five-vec4 dash
+stride used by the loop. The affine row count is derived from shared
+`AffineRows.vec4RowCount`. These are producer-side layout proofs; the complete
+host upload and shader-load refinement remains open.
+
 ### Progress: ordered source-over batches (2026-11-01)
 
 `NativeGraphics.PremultipliedLayer.overOpaque` is now the shared CPU source-over
