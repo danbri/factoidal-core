@@ -87,3 +87,16 @@ suites pass after the coverage change. These two exact visual matches are
 source-artifact diagnostics, not a fresh full38-case run or rebuilt WASM claim.
 Four samples do not guarantee exact results for arbitrary curves/transforms;
 performance and broader antialiasing quality remain open obligations.
+
+## Finite performance comparison
+
+Same Chrome156/Apple metal-3 host, percentage.svg310x170 intrinsic viewport,
+20 resident frames per artifact, measured sequentially. Before four-sample
+coverage, median frame plus readback0.60ms (first3.10ms); after1.40ms
+(first3.90ms). Excluding the first frame gives the same medians. Both use one
+pipeline, one upload, two buffers, one texture and20 submissions. This is a
+small-scene host round-trip comparison, not GPU-only timing, throughput at
+other scene sizes or a general frame-rate guarantee. Four samples increase
+work; future culling/coverage optimizations must preserve the image result.
+Evidence: /private/tmp/solving-percentage-before-perf/candidate.json and
+/private/tmp/solving-percentage-aa-perf/candidate.json.
