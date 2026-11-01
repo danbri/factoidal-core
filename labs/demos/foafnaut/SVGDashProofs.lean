@@ -10,7 +10,7 @@ theorem normalize_even (pattern result : List Float)
   repeat first | (split at h) | (simp_all)
   all_goals try simp_all
   all_goals subst result
-  all_goals simp only [List.length_append]
+  all_goals try simp only [List.length_append]
   all_goals omega
 
 #print axioms normalize_even

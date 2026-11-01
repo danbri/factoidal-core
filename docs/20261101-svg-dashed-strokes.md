@@ -19,7 +19,8 @@ are interpreted by Lean on the CPU and lowered to WGSL, where their boolean unio
 is evaluated before stroke/fill compositing. Overlapping caps do not apply stroke
 or element opacity twice. Child affine transforms apply to the complete region.
 
-Bounds: at most 64 input dash lengths (odd lists duplicate), 8192 interval steps
+Bounds: at most 128 input dash lengths for even lists, or 64 for odd lists
+(which duplicate), 8192 interval steps
 and 4096 retained pieces per primitive, within the existing whole-artifact storage
 bound. Negative/nonfinite lengths, nonfinite totals including after duplication,
 and offset/period magnitudes above 10^12 refuse explicitly. Float phase and
@@ -130,3 +131,17 @@ has complete pairs. The kernel check uses only propext, Classical.choice and
 Quot.sound. The build script now checks this theorem alongside dash tests.
 This structural property does not prove dash distances, Float accuracy or
 pixel equivalence.
+
+
+## Mutation control for the normalization theorem
+
+Run `python3 tools/check-svg-dash-proof.py` from the repository root. The
+checker compiles isolated copies of the actual implementation and proof with
+this checkout's Lean toolchain, without replacing source or checked modules.
+The unchanged implementation passes, with no `sorryAx`. Removing odd-list
+duplication still compiles the implementation, but the theorem fails at `omega`
+with an unresolved odd-length case. The checker requires that arithmetic
+rejection; a missing import or compilation failure does not count as success.
+Both checks passed on 2026-11-01. This is a targeted proof sensitivity check,
+not a complete mutation campaign or a new rendering equivalence claim. It is
+an explicitly runnable development check, not yet a CI gate.
