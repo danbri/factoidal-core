@@ -13,7 +13,9 @@ establish the calibration contract. Percentage distances are exempt. The parser
 now retains a percentage flag for each normalized dash and for the offset,
 including through inheritance and odd-pattern duplication. An explicit length
 check prevents parallel value/flag lists being silently truncated by zip.
-A paired per-dash representation remains a possible later API cleanup.
+The [paired-record follow-up](20261101-svg-dash-unit-provenance.md) replaces
+these parallel lists and their guard with one typed list, with kernel-checked
+normalization provenance.
 
 Zero pathLength is valid in the specification. This implementation accepts it
 when calibration is irrelevant (solid stroke or percentage-only distances).
