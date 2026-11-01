@@ -7,6 +7,7 @@ import SVGStroke
 import L4Factoidal.Math.Affine
 import L4Factoidal.Tdb2.Format
 import L4Factoidal.XML.NamespaceView
+import Std.Tactic
 
 /- Isolated strict SVG document reader, not SVG Tiny/full conformance.
    XML and expanded names come from the current Factoidal XML implementation.
@@ -714,10 +715,45 @@ private theorem resolved_length (paint : Paint) (style : Style) (alpha : Float) 
   cases paint <;> simp [resolved]
 private def Primitive.effectiveOpacity (p : Primitive) : Float :=
   if p.transform.det == 0 then 0 else p.opacity
-private def geometryTailSize : Geometry → Nat
-  | .polygon points => ((points.length+1)/2)*4
-  | .path contours => (NativeSVGPath.edges contours).length*4
+private theorem flatMap_fixed_length {α β : Type} (f : α → List β) (width : Nat)
+    (hf : ∀ x, (f x).length = width) (xs : List α) :
+    (xs.flatMap f).length = xs.length * width := by
+  induction xs with
+  | nil => simp
+  | cons x rest ih =>
+    simp only [List.flatMap_cons, List.length_append, hf x, ih,
+      List.length_cons, Nat.succ_mul]
+    exact Nat.add_comm _ _
+def geometryTailRowCount : Geometry → Nat
+  | .polygon points => (points.length+1)/2
+  | .path contours => (NativeSVGPath.edges contours).length
   | _ => 0
+def geometryTailData : Geometry → List Float
+  | .polygon points => points.flatMap (fun p => [p.x,p.y]) ++
+      (if points.length%2 == 1 then [0,0] else [])
+  | .path contours => (NativeSVGPath.edges contours).flatMap fun (a,b) => [a.x,a.y,b.x,b.y]
+  | _ => []
+theorem geometryTailData_length (geometry : Geometry) :
+    (geometryTailData geometry).length = geometryTailRowCount geometry * 4 := by
+  cases geometry with
+  | rect x y w h => rfl
+  | circle x y r => rfl
+  | ellipse x y rx ry => rfl
+  | line x1 y1 x2 y2 => rfl
+  | polygon points =>
+    have hflat := flatMap_fixed_length (fun p : Point => [p.x,p.y]) 2 (by intro; rfl) points
+    by_cases hodd : points.length % 2 = 1
+    · simp [geometryTailData, geometryTailRowCount, hflat, hodd]
+      omega
+    · have heven : points.length % 2 = 0 := by omega
+      simp [geometryTailData, geometryTailRowCount, hflat, heven]
+      omega
+  | path contours =>
+    have hflat := flatMap_fixed_length
+      (fun edge : Point × Point => [edge.1.x,edge.1.y,edge.2.x,edge.2.y])
+      4 (by intro; rfl) (NativeSVGPath.edges contours)
+    simp [geometryTailData, geometryTailRowCount, hflat]
+private def geometryTailSize (geometry : Geometry) : Nat := geometryTailRowCount geometry * 4
 def primitiveFixedRowCount : Nat := 5
 def dashPieceRowCount : Nat := 5
 def affineTransformRowCount : Nat := L4Factoidal.Math.AffineRows.vec4RowCount
@@ -755,10 +791,7 @@ theorem dashPayloadData_length (width : Float) (pieces : List NativeSVGStroke.Pi
     simp [Nat.add_mul, Nat.one_mul, Nat.add_comm]
 private def Primitive.rows (p : Primitive) : List Float :=
   p.fixedRows ++
-  (match p.geometry with
-   | .polygon points => points.flatMap (fun q => [q.x,q.y]) ++ (if points.length%2 == 1 then [0,0] else [])
-   | .path contours => (NativeSVGPath.edges contours).flatMap fun (a,b) => [a.x,a.y,b.x,b.y]
-   | _ => []) ++
+  geometryTailData p.geometry ++
   dashPayloadData p.style.strokeWidth (p.dashParts.getD []) ++
   (if p.transform.identity then [] else
     let t := p.transform.inverse

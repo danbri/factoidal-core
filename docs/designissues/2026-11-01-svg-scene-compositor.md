@@ -122,6 +122,8 @@ logical equivalence alone proves no speedup.
 The SVG GPU shader generator uses `primitiveFixedRowCount`,
 `dashPieceRowCount` and `affineTransformRowCount` when emitting record offsets.
 `Primitive.fixedRows_length` proves the five-vec4 fixed prefix;
+`geometryTailData_length` proves padded polygon coordinates and path edges occupy
+the expected variable geometry rows;
 `dashPieceData_length` and `dashPayloadData_length` prove the five-vec4 dash
 stride used by the loop. The affine row count is derived from shared
 `AffineRows.vec4RowCount`. These are producer-side layout proofs; the complete

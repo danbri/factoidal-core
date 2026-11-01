@@ -206,12 +206,17 @@ GPU speedup.
 `Primitive.fixedRows_length` proves that the bounds, header and paint/style
 prefix is exactly five vec4 rows. The affine tail row count comes from the
 shared `AffineRows.vec4RowCount`, whose theorem establishes two four-lane rows.
+`geometryTailData_length` proves that polygon point pairs (including odd-point
+padding) and retained path edges occupy the row count used by the shader's
+tail calculation.
 Dashed-stroke records now have a shared `dashPieceRowCount` used by the Lean
 layout theorem and WGSL offset generation. Kernel-checked theorems establish that
 each encoded dash piece occupies five vec4 rows and that concatenating pieces
 has exactly the row-stride length the shader loop advances over. This closes
 the Lean-side variable-record stride gap; it does not yet verify the host's
-Float32 upload or the shader's field interpretation.
+Float32 upload or the shader's field interpretation. The new Lean theorems
+compile with only Lean's standard `propext`, `Classical.choice` and `Quot.sound`
+axioms in their dependency sets.
 
 The actual browser-host raw WebGPU track now has **2 matches, 23 unsupported and
 13 unavailable** out of the unchanged 38 WPT cases, with no mismatches/rejections.
