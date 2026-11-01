@@ -1,9 +1,15 @@
 # Retained dashed SVG strokes
 
-Source: SVGDash.lean and SVG.lean in labs/demos/foafnaut. The scope is rect and
-line strokes, including viewport-relative dash lengths and offsets, existing
-butt/round caps and rectangle miter joins. Square caps, rounded rectangles,
-curved/path/polygon strokes and variable join styles remain unsupported.
+This note records the first dashed-stroke implementation. At that stage its
+scope was rectangles and lines. The later
+[shared linear-stroke work](20261101-svg-linear-strokes.md) extended the same
+stroke union to polygons, polylines and linear paths. Current feature limits
+are summarized in [SVG_README.md](../labs/demos/foafnaut/SVG_README.md).
+
+The original scope was rect and line strokes, including viewport-relative dash
+lengths and offsets, butt/round caps and rectangle miter joins. Square caps,
+rounded rectangles, curved path strokes and variable join styles remain
+unsupported.
 Positive pathLength calibration was added in the [subsequent work](20261101-svg-pathlength.md).
 No extra CSS support was added.
 

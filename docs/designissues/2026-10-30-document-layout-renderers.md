@@ -7,13 +7,26 @@ code and theorems? Graphics tracking:
 
 ## Current boundary
 
-The SVG input parser supports a restricted set of rectangles, circles,
-ellipses, lines and polygons, inherited paint, and root viewBox mapping.
-Paths, transforms, CSS, reuse, images and general text are missing. The
-FOAFNaut scene is constructed directly in Lean, so its visible capabilities
+As of 2026-11-01, the SVG input parser supports rectangles, circles, filled
+ellipses, lines, polygons, polylines and filled/stroked linear paths. The
+linear-path grammar is M/L/H/V/Z with relative and repeated arguments;
+curves/arcs remain unsupported. A bounded affine transform subset, root
+viewBox mapping, inherited paint, and a strict type-selector/inline CSS slice
+are also implemented. Markers, reuse, images, text and general CSS layout
+remain missing. See the current
+[SVG feature and refusal list](../../labs/demos/foafnaut/SVG_README.md) and
+[declared static feature target](2026-10-31-svg2-static-feature-target.md).
+
+The pinned 38-case WPT slice now has separate source-admission, browser-GPU
+and published-artifact evidence. The last complete WASM-backed browser-GPU
+run reports 2 matches, 23 unsupported and 13 unavailable; newer source
+diagnostics admit six cases, but they do not replace that full run. The
+[coverage record](../../tests/external/svg/README.md) keeps these scopes
+separate. No WPT count is a claim of SVG Tiny 1.1 or SVG 2 conformance.
+
+The FOAFNaut scene is constructed directly in Lean, so its visible capabilities
 do not measure the SVG input language. Its temporary font emits geometry;
-this is not SVG text support. The exact restrictions are in
-[SVG_README.md](../../labs/demos/foafnaut/SVG_README.md).
+this is not SVG text support.
 
 [SVG Tiny 1.1](https://www.w3.org/TR/2003/REC-SVGMobile-20030114/) includes
 paths, transformations, images, text and reuse, as well as nonstatic

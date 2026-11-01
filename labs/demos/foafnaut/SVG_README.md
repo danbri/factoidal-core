@@ -21,12 +21,12 @@ adapter means exit 2 with no image, never a CPU image substituted for a GPU resu
 
 ## Dashed strokes
 
-Rectangles and lines now support bounded dash arrays and signed offsets,
-including percentage lengths, odd-list repetition and zero-sum solid strokes.
-Dash pieces share one element opacity calculation. Dashed curves and general
-path strokes remain unsupported. Source tests and two unchanged WPT percentage
-fixtures match independent images through the diagnostic GPU path; packaged
-WASM validation is still pending.
+Rectangles, lines, polygons, polylines and linear paths now support bounded dash
+arrays and signed offsets, including percentage lengths, odd-list repetition
+and zero-sum solid strokes. Dash pieces share one element opacity calculation.
+Curved path strokes and dashed ellipses remain unsupported. Source tests and
+unchanged WPT cases have targeted GPU comparisons; see the coverage report for
+which renderer/artifact each result covers.
 
 ## CSS subset
 
@@ -40,8 +40,14 @@ CSS error recovery remains unimplemented. This is not full CSS conformance.
 
 ## Supported subset
 
-SVG-namespace `svg`/`g`, sharp `rect`, `circle`, filled `ellipse`, butt- or round-cap stroked
-`line`, filled `polygon`, and filled linear/compound `path` are supported, plus text-only `title`/`desc` metadata. SVG `metadata` subtrees are non-rendering; XHTML `link rel="match"` and `link rel="help"` are recognized as reftest metadata. Other HTML links (including stylesheets) remain explicit refusals.
+SVG-namespace `svg`/`g`, sharp `rect`, `circle`, filled `ellipse`, butt- or
+round-cap stroked `line`, filled and stroked `polygon`/`polyline`, and filled
+and stroked linear/compound `path` are supported, plus text-only
+`title`/`desc` metadata. Stroked contours support bounded dash arrays and
+offsets, butt/round caps, and default miter joins with bevel fallback. SVG
+`metadata` subtrees are non-rendering; XHTML `link rel="match"` and
+`link rel="help"` are recognized as reftest metadata. Other HTML links
+(including stylesheets) remain explicit refusals.
 Namespace prefixes resolve by expanded name; lookalike namespaces, unbound
 prefixes, duplicate expanded attributes and foreign elements/qualified attributes
 are refused. Geometry accepts signed fractional decimal/exponent numbers and
@@ -58,12 +64,15 @@ under an inherited currentColor fill. `inherit`, `none`, 3/6-digit hex colors,
 comma-separated `rgb()` numeric/percentage triples, the 16 HTML4 color names and
 orange are supported. Paint channels/opacities clamp to their ranges.
 
-Rectangles/circles support centered strokes, with sharp miter rectangle corners
-and default miterlimit 4. Lines default to butt caps and support inherited round caps. Round caps use
-a capsule, including a disk for zero-length lines; zero-length butt lines and
-zero stroke width paint nothing. Polygon fill implements nonzero and evenodd winding
-for 3–64 vertices; polygon strokes/joins are refused. Non-inherited leaf opacity
-is applied once after premultiplied fill/stroke composition, including overlap.
+Rectangles/circles support centered strokes; rectangles use sharp miter corners.
+Lines default to butt caps and support inherited round caps. Round caps use a
+capsule, including a disk for zero-length lines; zero-length butt lines and
+zero stroke width paint nothing. Polygon fill implements nonzero and evenodd
+winding for 3–64 vertices. Shared stroke construction handles open/closed
+polygon, polyline and linear-path contours, including total `pathLength` dash
+calibration. Ellipse strokes and curved path commands remain unsupported.
+Non-inherited leaf opacity is applied once after premultiplied fill/stroke
+composition, including overlap.
 Group/root opacity is refused rather than approximated per descendant.
 
 Root viewBox mapping follows default xMidYMid meet, all nine alignments, slice,
@@ -82,11 +91,13 @@ without claiming all their semantics or other SVG features are implemented.
 
 ## Explicit refusals and limits
 
-CSS style/class, root transforms, curved/stroked paths, polylines, text/fonts, nested viewports,
-images, use/links, scripting, animation, defs/gradients/patterns, filters, masks,
+CSS class/id selectors and broader CSS cascade, root transforms, curved path
+commands and their strokes, text/fonts, nested viewports, images, use/links,
+scripting, animation, defs/gradients/patterns, filters, masks,
 clips, markers, rounded rects, conditional processing, visibility/display,
 paint-order changes, group opacity, square caps, custom joins/miterlimits,
-ellipse/polygon strokes, relative/non-px lengths, and unknown colors are errors.
+ellipse strokes, font-relative/other non-px lengths, and unknown colors are
+errors.
 Unsupported features are not silently dropped, even on a zero-size primitive.
 IDs and version labels 1.1/2.0 are recognized metadata, not schema validation.
 Only unresolved simple local paint-fragment fallback is currently implemented. Full SVG remains open work.
@@ -159,7 +170,8 @@ The unchanged WPT `fallback-001.svg` and `fallback-002.svg` now compile and pass
 known green/white CPU sample regressions. This is compiler/CPU evidence, not a
 visual pass. See the [independent-image runner](../../../tests/external/svg/README.md)
 for the complete 38-case denominator, installed-browser oracle measurements and
-GPU result boundaries. Curved/stroked paths remain unsupported; linear paths and affine transforms are described below.
+GPU result boundaries. Curved path commands and their strokes remain
+unsupported; linear paths and affine transforms are described below.
 
 
 ## Shared affine transforms and actual GPU evidence
@@ -209,11 +221,12 @@ recorded in the [worknote](../../../docs/20261101-solving-source-over-batching.m
 Filled paths support absolute/relative M, L, H, V and Z, repeated numeric
 arguments, implicit lineto after moveto, adjacent signs/decimals/exponents,
 multiple subpaths, closepath current-point restoration, nonzero/evenodd rules
-and implicit closure for fill. Closedness is retained for future stroke work.
+and implicit closure for fill. Closedness is retained separately for stroke.
 Empty/moveto-only paths paint nothing. The SVG 2 `none` value is recognized.
-Curves/arcs, pathLength and path strokes/joins remain explicit refusals. Invalid
-data is currently rejected rather than implementing SVG 2 partial-prefix error
-recovery; this is a material remaining path-conformance gap.
+The stroker supports these linear contours, including `pathLength` calibration.
+Curves/arcs and their strokes remain explicit refusals. Invalid data is currently
+rejected rather than implementing SVG 2 partial-prefix error recovery; this is a
+material remaining path-conformance gap.
 
 Additional per-path bounds are 65,536 raw characters, 4,096 tokens, 128 subpaths
 and 512 points/edges. Numeric scanning stops at 49 characters and refuses tokens
