@@ -25,6 +25,7 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-01 | [SVG source artifacts](20261101-svg-source-artifacts.md) | pending | current — source artifact GPU replay matches one existing oracle case |
 | 2026-11-01 | [SVG percentage lengths](20261101-svg-percentage-lengths.md) | pending | current — source tests pass; CSS/strokes still block official cases |
 | 2026-11-01 | [Solving: SVG-scene rendering pipeline](designissues/2026-11-01-svg-scene-compositor.md) | pending | current — proposed shared rendering semantics and proof targets |
+| 2026-11-01 | [Solving ordered source-over batches](20261101-solving-source-over-batching.md) | pending | current — shared SVG CPU compositing operation and kernel-checked order-preserving batch partition theorem |
 | 2026-11-01 | [Shared affine GPU row packing](20261101-affine-gpu-packing.md) | pending | current — representation proofs; GPU numeric refinement remains |
 | 2026-10-30 | [Shared UI geometry, policy and renderer admission](designissues/2026-10-30-shared-ui-policy.md) | pending | current: kernel checks and native regressions; interactive enforcement unfinished |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |

@@ -119,6 +119,21 @@ for Float. Exact geometry theorems and rounded backend execution are separate
 links in the argument. Bounds on allocations/operations require a cost model;
 logical equivalence alone proves no speedup.
 
+### Progress: ordered source-over batches (2026-11-01)
+
+`NativeGraphics.PremultipliedLayer.overOpaque` is now the shared CPU source-over
+operation, and SVG's CPU reference calls it for each painted element. The
+kernel-checked `compositeOpaqueLayers_append` theorem proves that folding an
+ordered layer list in two batches gives the same result as folding the
+concatenated list. The induction preserves each Float operation's order; it
+does not authorize painter-order changes or arithmetic reassociation.
+
+This is a reference-level partition theorem, not an implemented batching
+optimization. No WGSL blend path, GPU numeric-refinement theorem, alpha-bearing
+destination, group-isolation semantics or clip/cull theorem follows yet. A
+future optimized backend must consume the same layer meaning and prove its own
+lowering contract.
+
 ### O3: Demonstrate useful performance without losing scope
 
 - KR1: Record before/after frame, upload, allocation and memory measurements

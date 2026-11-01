@@ -198,6 +198,11 @@ passed Lean readback samples on this GPU; these local examples do not add WPT
 passes. Full SVG feature goals and remaining work are in the
 [declared feature target](../../../docs/designissues/2026-10-31-svg2-static-feature-target.md).
 
+The shared rendering scene and cross-backend proof objectives are in the
+[Solving design](../../../docs/designissues/2026-11-01-svg-scene-compositor.md).
+The first shared source-over operation and ordered batch partition theorem are
+recorded in the [worknote](../../../docs/20261101-solving-source-over-batching.md).
+
 
 ## Retained linear paths and compound glyphs
 

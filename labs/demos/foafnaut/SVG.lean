@@ -125,11 +125,7 @@ private def transformList (source : String) : Except String Transform := do
     result ← checkedTransform (result.compose nextTransform)
   return result
 
-structure Color where
-  r : Float
-  g : Float
-  b : Float
-  deriving Repr
+abbrev Color := NativeGraphics.FloatRGB
 private def rgb (r g b : Nat) : Color := ⟨Float.ofNat r/255,Float.ofNat g/255,Float.ofNat b/255⟩
 private def hex (c : Char) : Option Nat :=
   if c >= '0' && c <= '9' then some (c.toNat-'0'.toNat)
@@ -833,12 +829,11 @@ private def Scene.sampleAt (s : Scene) (screenX screenY : Float) : Color := Id.r
     let sa : Float := if strokeHit then stroke[3]! else 0
     -- Compose this element's fill/stroke in premultiplied form, then apply its
     -- non-inherited opacity once to the whole element, including their overlap.
-    let alpha := sa+fa*(1-sa)
     let premul : Color := ⟨stroke[0]!*sa+fill[0]!*fa*(1-sa),stroke[1]!*sa+fill[1]!*fa*(1-sa),stroke[2]!*sa+fill[2]!*fa*(1-sa)⟩
     let opacity := primitive.effectiveOpacity
-    result := ⟨premul.r*opacity+result.r*(1-alpha*opacity),
-      premul.g*opacity+result.g*(1-alpha*opacity),
-      premul.b*opacity+result.b*(1-alpha*opacity)⟩
+    let layer : NativeGraphics.PremultipliedLayer :=
+      ⟨premul.r*opacity,premul.g*opacity,premul.b*opacity,(sa+fa*(1-sa))*opacity⟩
+    result := layer.overOpaque result
     base := base+primitive.rows.length
   return result
 private def Scene.sample (s : Scene) (x y : Nat) : Color := Id.run do

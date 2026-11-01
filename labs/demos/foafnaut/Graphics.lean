@@ -112,6 +112,48 @@ structure RGB where
   g : Nat
   b : Nat
   deriving Repr, BEq
+
+/-- Floating-point RGB values used by the shared CPU visual reference. These
+    channels do not imply linear-light color management. -/
+structure FloatRGB where
+  r : Float
+  g : Float
+  b : Float
+  deriving Repr
+
+/-- Premultiplied source color and coverage for one ordered paint operation. -/
+structure PremultipliedLayer where
+  r : Float
+  g : Float
+  b : Float
+  alpha : Float
+  deriving Repr
+
+/-- Source-over onto an opaque backdrop. The SVG CPU reference and future
+    scene backends share this operation order. -/
+def PremultipliedLayer.overOpaque (src : PremultipliedLayer) (dst : FloatRGB) : FloatRGB :=
+  ⟨src.r + dst.r * (1 - src.alpha),
+   src.g + dst.g * (1 - src.alpha),
+   src.b + dst.b * (1 - src.alpha)⟩
+
+/-- Apply an ordered list of paint operations, back to front. -/
+def compositeOpaqueLayers (background : FloatRGB) : List PremultipliedLayer → FloatRGB
+  | [] => background
+  | layer :: rest => compositeOpaqueLayers (layer.overOpaque background) rest
+
+/-- Splitting an ordered list into batches does not change the exact sequence
+    of source-over operations. This does not permit reordering or reassociation
+    of Float arithmetic, and says nothing about a GPU backend's arithmetic. -/
+theorem compositeOpaqueLayers_append (background : FloatRGB)
+    (first second : List PremultipliedLayer) :
+    compositeOpaqueLayers background (first ++ second) =
+      compositeOpaqueLayers (compositeOpaqueLayers background first) second := by
+  induction first generalizing background with
+  | nil => rfl
+  | cons layer rest ih =>
+    simp only [List.cons_append, compositeOpaqueLayers]
+    exact ih (layer.overOpaque background)
+
 -- Lab-only bitmap, top row first; bit 4 is the leftmost of five cells.
 structure GlyphRows where
   row0 : Nat
