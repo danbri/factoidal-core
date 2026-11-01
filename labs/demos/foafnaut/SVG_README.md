@@ -229,3 +229,29 @@ median 131.4ms to 22.0ms while preserving one shader/pipeline/upload. These incl
 queue/readback/byte costs and are not GPU-only timings or an interactive/OS
 scheduling guarantee. Source-branch changes are not automatically present in
 older downloaded executables. See the dated linear-path measurement worknote.
+
+## Solving and the shared visuals engine
+
+**Solving** is the SVG-scene rendering pipeline. It is intended to sit on top of
+Factoidal's shared visual model, so work on SVG geometry can benefit graph,
+compositor and future HTML visuals, while work on that model and its backends can
+expand the SVG features Solving can render. The current `Math/Affine.lean`
+sharing is an early concrete example; the broader cross-application guarantee is
+an architectural target, not something the demo has established yet.
+
+The boundary should be a typed, backend-independent scene with shared transforms,
+shapes, bounds, hit regions and applicable layout-policy parameters. SVG parsing
+lowers supported source into that scene. Web-platform SVG, raw WebGPU, CPU raster
+and future device-specific targets are separate lowerings of the same scene;
+none is privileged as the only possible backend. Policies such as overlap bounds
+belong to the shared scene/application layer and should be stated once, with
+application-chosen values checked against proved useful lower and upper limits.
+
+Theorems worth building toward are: lowering preserves scene meaning; hit testing
+and rendering use the same geometry; backend fast paths agree with a reference
+lowering (or state a proved error bound); and policy checks apply to the scene
+before backend choice. This lets a new backend add speed or reach without
+weakening application-level guarantees. Where the backend contract cannot yet be
+proved, the evidence must say so and the feature must not be presented as covered
+by the shared theorem. Backend-specific GPU execution and floating-point
+boundaries remain separate obligations.
