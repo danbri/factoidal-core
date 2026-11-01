@@ -55,6 +55,17 @@ print at start (`Login.limitsWarnings`). A request document carries
 counts failures under it and the user name, and answers 429 with
 `Retry-After` with no derivation when either is over its limit.
 
+HTTP over XMPP (https://github.com/danbri/factoidal/issues/1125 and
+https://github.com/danbri/factoidal/issues/1128): `login.transport:
+"xmpp"` (with `login.jid`, and `login.tls`/`login.host` of the XMPP stream)
+opens a handle that `webdav-serve --xmpp` steps. Each request then passes the
+same `Login.admit` as on TCP, with the requester `.xmpp BAREJID` from the
+request document's `requester: {"xmpp": BAREJID}`, which the XMPP client
+handle names after its allow list let the request through
+(`HttpOverXmpp.plan`). The limit key is `jid:` and the bare JID
+(`Login.requesterKey`). With a users file, the start is refused unless the
+XMPP stream is TLS or to a loopback address (`Login.transportAllowsBasic`).
+
 `webdavUser` (`factoidal webdav-user FILE NAME`): `{name, file, text|null,
 passwordBase64, saltBase64, iterations?, answers: [{request, answer}]}` →
 the one derivation as `need` (as `runWithCipher` in cipher-host.mjs expects),
@@ -82,7 +93,7 @@ opens it with the ops `lws-serve` uses and carries each `lws` request to it.
 `write: [{path, text, mode}]` is a key file this engine made.
 
 A request document is `{method, target, headers, now, randomBase64,
-remoteAddress}`; the
+remoteAddress}` (on an XMPP handle `requester` in place of `remoteAddress`); the
 content is the region (`webdavStep` through `l4_call_blob_io`) or
 `body`/`bodyBase64` (the string entry). An answer to `lws` is `{status,
 headers}` and the response content; an answer to `fetch` is `{status,
@@ -103,6 +114,7 @@ import L4Factoidal.WebDAV.State
 import L4Factoidal.WebDAV.Local
 import L4Factoidal.WebDAV.Remote
 import L4Factoidal.WebDAV.Login
+import L4Factoidal.XMPP.Jid
 import L4Factoidal.WebDAV.Route
 import L4Factoidal.HTTP.LocalGuard
 import L4Factoidal.Crypto.SHA2Native
@@ -166,6 +178,11 @@ structure DavHandle where
   `localGuard`, which the HTTP host always passes; the XMPP transport passes
   none. -/
   guard : Option L4Factoidal.HTTP.LocalGuard.LocalGuard := none
+  /-- The transport the host carries requests on (issue 1125):
+  `false`, the HTTP listener (the requester is the socket's address);
+  `true`, HTTP over XMPP (the requester is the sender's bare JID, which
+  the XMPP client handle names). -/
+  overXmpp : Bool := false
 
 initialize davCounter : IO.Ref Nat ← IO.mkRef 0
 initialize davTable : IO.Ref (Std.HashMap String DavHandle) ← IO.mkRef ∅
@@ -182,6 +199,28 @@ def davCrypto : L4Factoidal.Authz.Crypto := L4Factoidal.Authz.hacl
 
 def davB64 (b : ByteArray) : String := L4Factoidal.LWS.Base64.encode b
 def davUnb64 (t : String) : Option ByteArray := L4Factoidal.LWS.Base64.decode? t
+
+/-- The start refusal of `--users` over XMPP on a stream that is neither TLS
+nor to a loopback address (issue 1125). -/
+def davXmppTransportRefusal (host : String) : String :=
+  s!"--users with HTTP Basic over XMPP sends each password inside the XMPP stream, and the stream to {host} " ++
+  "is neither TLS nor to a loopback address: give --xmpp-tls, or a loopback --xmpp-host " ++
+  "(https://github.com/danbri/factoidal/issues/1125)"
+
+/-- The requester of a request document (issue 1128). On an XMPP handle:
+`requester: {"xmpp": BAREJID}`, which the XMPP client handle names
+(`xmppClientFeed`; the sender's bare JID from the `from` the server stamps);
+none is `.xmpp ""`, which no login accepts. On the HTTP listener: the
+socket's `remoteAddress`. -/
+def davRequesterOf (overXmpp : Bool) (j : Json) : Login.Requester :=
+  if overXmpp then .xmpp (((j.field? "requester").bind (·.getString? "xmpp")).getD "")
+  else .tcp ((j.getString? "remoteAddress").getD "")
+
+#guard davRequesterOf true (.object [("requester", .object [("xmpp", .string "a@example.org")])]) == .xmpp "a@example.org"
+#guard davRequesterOf true (.object [("remoteAddress", .string "10.0.0.1")]) == .xmpp ""
+#guard davRequesterOf false (.object [("requester", .object [("xmpp", .string "a@example.org")]),
+  ("remoteAddress", .string "10.0.0.1")]) == .tcp "10.0.0.1"
+#guard (davXmppTransportRefusal "xmpp.example.org").startsWith "--users with HTTP Basic over XMPP"
 
 /-- `webdavOpen(configJson)`. -/
 def webdavOpen (configJson : String) : IO String := do
@@ -203,9 +242,19 @@ def webdavOpen (configJson : String) : IO String := do
     let login := (j.field? "login").getD (.object [])
     let usersFile := login.getString? "users"
     let tls := login.field? "tls" == some (.bool true)
-    let host := (login.getString? "host").getD "127.0.0.1"
+    -- `transport: "xmpp"` (issue 1125): Basic travels inside the XMPP
+    -- stream, so the same rule applies to that stream: `tls` is
+    -- `--xmpp-tls` and `host` the XMPP server's address (default the
+    -- domain of `login.jid`).
+    let overXmpp := login.getString? "transport" == some "xmpp"
+    let host := match login.getString? "host" with
+      | some h => h
+      | none =>
+        if overXmpp then
+          (((login.getString? "jid").bind L4Factoidal.XMPP.Jid.parse).map (·.domainpart)).getD ""
+        else "127.0.0.1"
     if usersFile.isSome && !Login.transportAllowsBasic tls host then
-      return errJson (Login.transportRefusal host)
+      return errJson (if overXmpp then davXmppTransportRefusal host else Login.transportRefusal host)
     -- The guest user (issue 1147): a user name; checked against the users
     -- file when it is read.
     let guest := login.getString? "guest"
@@ -225,7 +274,7 @@ def webdavOpen (configJson : String) : IO String := do
         | .error e => return errJson s!"webdavOpen: {e}"
     let n ← davCounter.modifyGet (fun c => (c + 1, c + 1))
     let h := s!"webdav{n}"
-    davTable.modify (·.insert h { load := .mountFiles files, entropy, now, usersFile, limits, guard, guest })
+    davTable.modify (·.insert h { load := .mountFiles files, entropy, now, usersFile, limits, guard, guest, overXmpp })
     pure (okWith [("handle", .string h), ("need", davNeedJson (files ++ [stateFileName] ++ usersFile.toList) [])])
 
 /-- A file the host read: its text, or `none` when it does not exist. -/
@@ -345,6 +394,7 @@ def davFinishLoad (hd : DavHandle) (ms : List Mount) (j : Json) : Except String 
   let mountsJ := ms.map (fun m => davMountJson m (sessions.lookup m.name))
   pure ({ hd with load := .ready, mounts := ms, sessions },
         .object [("mounts", .array mountsJ), ("local", .array locals), ("write", .array writes)
+                , ("login", .bool hd.usersFile.isSome)
                 , ("warnings", .array ((davStartWarnings ms hd.guest ++ Login.limitsWarnings hd.limits).map Json.string))])
 
 /-- The hash of the login cache: SHA-256 through HACL\* (crypto policy: a
@@ -575,12 +625,14 @@ def webdavStepWith (h requestJson : String) (blob : Option ByteArray) : IO (Stri
           | none =>
           -- Who the request acts as (issue 1147): the guest, a user of the
           -- users file, or nobody (401).
-          let address := (j.getString? "remoteAddress").getD ""
+          -- The requester (issue 1128): the socket's address on TCP, the
+          -- sender's bare JID over XMPP; the login keys its limit on it.
+          let q := davRequesterOf hd.overXmpp j
           let lgs := hd.login.map (·.settings)
           let cache := (hd.login.map (·.cache)).getD {}
           let withCache (c : Login.Cache) (p : Option DavLoginPending := none) : DavHandle :=
             { hd with login := hd.login.map (fun lg => { lg with cache := c, pending := p }) }
-          match Login.admit davLoginHash lgs hd.guest cache now address (r.header? "authorization") with
+          match Login.admit davLoginHash lgs hd.guest cache now q (r.header? "authorization") with
           | (.refuse, c) => davFinishOut h (withCache c) (.response Login.unauthorized) blobOut
           | (.limited seconds, c) => davFinishOut h (withCache c) (.response (Login.tooManyFailures seconds)) blobOut
           | (.allow user, c) =>

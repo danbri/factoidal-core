@@ -106,6 +106,7 @@ address (`127.0.0.0/8`, `::1`, `localhost`); else the start stops.
 No `sorry`, no `axiom`, no `partial`.
 -/
 import L4Factoidal.WebDAV.Server
+import L4Factoidal.Net.LoginLimit
 import L4Factoidal.LWS.Snapshot
 import Std.Data.HashSet
 
@@ -237,13 +238,8 @@ def usersForServer (file text : String) : Except String (List User) := do
 
 /-! ## The transport -/
 
-/-- An IPv4 address in dotted decimal, each part 0 to 255. -/
-def ipv4Parts? (h : String) : Option (List Nat) :=
-  let ps := h.splitOn "."
-  if ps.length != 4 then none
-  else ps.mapM (fun p => match countOf? p with
-    | some v => if v ≤ 255 && p.length ≤ 3 then some v else none
-    | none => none)
+-- `ipv4Parts?` is `L4Factoidal.Net.LoginLimit.ipv4Parts?`.
+export L4Factoidal.Net.LoginLimit (ipv4Parts?)
 
 /-- A loopback address: `127.0.0.0/8` (RFC 1122 §3.2.1.3), `::1` (RFC 4291
 §2.5.3), with or without brackets, or the name `localhost` (RFC 6761 §6.3). -/
@@ -293,132 +289,12 @@ def credentialsOf? (value : String) : Option Credentials :=
 
 /-! ## The failed-login limit (https://github.com/danbri/factoidal/issues/1119) -/
 
-/-- The default count of failures per key in one window. -/
-def defaultLimitFailures : Nat := 5
-/-- The default window, in seconds. -/
-def defaultLimitWindow : Nat := 60
-/-- The most keys that have a counter at one time. -/
-def maxTrackedKeys : Nat := 10000
-/-- The largest `--login-limit`. -/
-def maxLimitFailures : Nat := 1000
-/-- The largest `--login-window` (one day). -/
-def maxLimitWindow : Nat := 86400
+/-! The counters, the requester and its keys are in `L4Factoidal.Net.LoginLimit`
+(shared with the SASL login of `xmpp-serve`, https://github.com/danbri/factoidal/issues/1128). -/
 
-structure Limits where
-  enabled : Bool := true
-  maxFailures : Nat := defaultLimitFailures
-  window : Nat := defaultLimitWindow
-  maxKeys : Nat := maxTrackedKeys
-
-/-- The failures of one key in its window. -/
-structure Counter where
-  key : String
-  start : Nat
-  failures : Nat
-deriving Inhabited
-
-structure Failures where
-  counters : Array Counter := #[]
-
-def Counter.live (l : Limits) (now : Nat) (c : Counter) : Bool := decide (now < c.start + l.window)
-
-def Counter.blocked (l : Limits) (now : Nat) (c : Counter) : Bool :=
-  c.live l now && decide (c.failures ≥ l.maxFailures)
-
-def hexDigit? (c : Char) : Option Nat :=
-  if c.isDigit then some (c.toNat - '0'.toNat)
-  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
-  else none
-
-/-- One IPv6 group: one to four hexadecimal digits (lower case). -/
-def hexGroup? (g : String) : Option Nat :=
-  if g.isEmpty || g.length > 4 then none
-  else g.foldl (fun acc c => acc.bind (fun n => (hexDigit? c).map (fun d => n * 16 + d))) (some 0)
-
-/-- The eight groups of an IPv6 address in text form (RFC 4291 §2.2, forms 1
-and 2; an address with an IPv4 tail other than `::ffff:` is `none`). -/
-def ipv6Groups? (h : String) : Option (List Nat) :=
-  let parts (t : String) : List String := if t.isEmpty then [] else t.splitOn ":"
-  match h.splitOn "::" with
-  | [a] => if (parts a).length == 8 then (parts a).mapM hexGroup? else none
-  | [a, b] =>
-    let n := (parts a).length + (parts b).length
-    if n ≤ 7 then ((parts a) ++ List.replicate (8 - n) "0" ++ (parts b)).mapM hexGroup? else none
-  | _ => none
-
-/-- The part of a client address that a counter keys on: an IPv4 address
-(also from `::ffff:a.b.c.d`), the /64 prefix of an IPv6 address, or the text
-as given when it is neither. -/
-def clientPrefix (addr : String) : String :=
-  let h := (if addr.startsWith "[" && addr.endsWith "]" then ((addr.drop 1).dropEnd 1).toString else addr).toLower
-  let v4 := if h.startsWith "::ffff:" then (h.drop 7).toString else h
-  if (ipv4Parts? v4).isSome then v4
-  else match ipv6Groups? h with
-    | some gs => ":".intercalate ((gs.take 4).map (fun g => String.ofList (Nat.toDigits 16 g))) ++ "::/64"
-    | none => h
-
-/-- The two keys of a login attempt. -/
-def loginKeys (user address : String) : List String :=
-  ["name:" ++ user, "address:" ++ clientPrefix address]
-
-def Failures.blocked (l : Limits) (f : Failures) (now : Nat) (k : String) : Bool :=
-  f.counters.any (fun c => c.key == k && c.blocked l now)
-
-/-- The seconds until the last blocked window of `keys` ends (at least 1). -/
-def Failures.retryAfter (l : Limits) (f : Failures) (now : Nat) (keys : List String) : Nat :=
-  max 1 (f.counters.foldl (fun acc c =>
-    if keys.contains c.key && c.blocked l now then max acc (c.start + l.window - now) else acc) 0)
-
-/-- The seconds until the first live window ends (at least 1). -/
-def Failures.soonest (l : Limits) (f : Failures) (now : Nat) : Nat :=
-  max 1 (f.counters.foldl (fun acc c =>
-    if c.live l now then
-      (if acc == 0 then c.start + l.window - now else min acc (c.start + l.window - now))
-    else acc) 0)
-
-/-- How many new counters fit: free places, plus live counters that are not
-blocked and are not in `keep`. -/
-def Failures.room (l : Limits) (f : Failures) (now : Nat) (keep : List String) : Nat :=
-  let live := f.counters.filter (·.live l now)
-  (l.maxKeys - live.size) + (live.filter (fun c => !c.blocked l now && !keep.contains c.key)).size
-
-/-- `some seconds` when an attempt with these keys gets 429 before any
-derivation: a key is blocked, or the keys that have no counter would not
-fit. -/
-def Failures.check (l : Limits) (f : Failures) (now : Nat) (keys : List String) : Option Nat :=
-  if !l.enabled then none
-  else if keys.any (f.blocked l now) then some (f.retryAfter l now keys)
-  else
-    let untracked := keys.filter (fun k => !f.counters.any (fun c => c.key == k && c.live l now))
-    if f.room l now keys < untracked.length then some (f.soonest l now) else none
-
-/-- The index of the counter to evict: the oldest window that is not
-blocked and not one of `keep`. -/
-def evictable (l : Limits) (now : Nat) (keep : List String) (cs : Array Counter) : Option Nat := Id.run do
-  let mut best : Option (Nat × Nat) := none
-  for i in [0:cs.size] do
-    let c := cs[i]!
-    if !c.blocked l now && !keep.contains c.key then
-      match best with
-      | some (_, s) => if c.start < s then best := some (i, c.start)
-      | none => best := some (i, c.start)
-  return best.map (·.1)
-
-/-- One failure for each of `keys`: expired counters dropped, live ones
-counted up, a new counter for a key that has none. -/
-def Failures.record (l : Limits) (f : Failures) (now : Nat) (keys : List String) : Failures := Id.run do
-  if !l.enabled then return f
-  let mut cs := f.counters.filter (·.live l now)
-  for k in keys do
-    match cs.findIdx? (·.key == k) with
-    | some i => cs := cs.modify i (fun c => { c with failures := c.failures + 1 })
-    | none =>
-      if cs.size ≥ l.maxKeys then
-        match evictable l now keys cs with
-        | some i => cs := cs.eraseIdxIfInBounds i
-        | none => pure ()
-      if cs.size < l.maxKeys then cs := cs.push { key := k, start := now, failures := 1 }
-  return { counters := cs }
+export L4Factoidal.Net.LoginLimit (defaultLimitFailures defaultLimitWindow maxTrackedKeys
+  maxLimitFailures maxLimitWindow Limits Counter Failures hexDigit? hexGroup? ipv6Groups? clientPrefix
+  evictable Requester requesterKey loginKeys)
 
 /-- The limit options of `webdav-serve`, as the host read them (values
 unread): `--login-limit N`, `--login-window SECONDS`,
@@ -528,18 +404,19 @@ def gateCredentials (hash : ByteArray → ByteArray) (s : Settings) (c : Cache) 
     else .derive { user := u.name, known := true, password := cr.password, salt := u.salt
                    iterations := u.iterations, expected := u.hash, keys }
 
-/-- The first decision: the client's address, the `Authorization` value
-(`none` when the request has none), the cache and the clock. The limit is
-checked before the cache and before any derivation. -/
-def gate (hash : ByteArray → ByteArray) (s : Settings) (c : Cache) (now : Nat) (address : String)
+/-- The first decision: the requester (the client's address on TCP, the
+sender's bare JID on XMPP), the `Authorization` value (`none` when the
+request has none), the cache and the clock. The limit is checked before the
+cache and before any derivation. -/
+def gate (hash : ByteArray → ByteArray) (s : Settings) (c : Cache) (now : Nat) (q : Requester)
     (authorization : Option String) : Gate × Cache :=
   let c := c.prune now
   match authorization.bind credentialsOf? with
   | none => (.refuse, c)
   | some cr =>
-    match c.failures.check s.limits now (loginKeys cr.user address) with
+    match c.failures.check s.limits now (loginKeys cr.user q) with
     | some seconds => (.limited seconds, c)
-    | none => (gateCredentials hash s c cr (loginKeys cr.user address), c)
+    | none => (gateCredentials hash s c cr (loginKeys cr.user q), c)
 
 /-- One failure of the attempt `d`, counted under its keys. -/
 def Cache.fail (s : Settings) (c : Cache) (now : Nat) (d : Derive) : Cache :=
@@ -589,9 +466,12 @@ def guestCheck (guest : String) (users : List User) : Except String String :=
 
 /-- The first decision of a request: `.allow user` (the guest, or a user the
 cache knows), `.refuse` (401), `.limited` (429), or one derivation. `s` is
-the login of the listener (`none`: no users file). -/
+the login of the listener (`none`: no users file). `q` is the requester as
+its transport authenticated it (issue 1128): a request with credentials
+from a requester that is not valid (an empty address or JID) gets 401 with
+no derivation, so no failure counts against an empty key. -/
 def admit (hash : ByteArray → ByteArray) (s : Option Settings) (guest : Option String) (c : Cache)
-    (now : Nat) (address : String) (authorization : Option String) : Gate × Cache :=
+    (now : Nat) (q : Requester) (authorization : Option String) : Gate × Cache :=
   match authorization with
   | none =>
     match guest with
@@ -600,7 +480,7 @@ def admit (hash : ByteArray → ByteArray) (s : Option Settings) (guest : Option
   | some a =>
     match s with
     | none => (.refuse, c)
-    | some s => gate hash s c now address (some a)
+    | some s => if q.valid then gate hash s c now q (some a) else (.refuse, c)
 
 /-! ## `webdav-user`: one line added or replaced -/
 
@@ -659,42 +539,29 @@ def finishAdd (p : AddPlan) (derived : ByteArray) (text : String) : Except Strin
 
 /-- A request with no `Authorization` field is refused, and no derivation is
 asked for. -/
-theorem gate_none (hash : ByteArray → ByteArray) (s : Settings) (c : Cache) (now : Nat) (address : String) :
-    (gate hash s c now address none).1 = .refuse := by
+theorem gate_none (hash : ByteArray → ByteArray) (s : Settings) (c : Cache) (now : Nat) (q : Requester) :
+    (gate hash s c now q none).1 = .refuse := by
   simp [gate, Option.bind]
 
 /-- When the limit check answers `some seconds`, the gate answers 429 with
 those seconds: no cache read, no derivation. -/
-theorem gate_limited (hash : ByteArray → ByteArray) (s : Settings) (c : Cache) (now : Nat) (address : String)
+theorem gate_limited (hash : ByteArray → ByteArray) (s : Settings) (c : Cache) (now : Nat) (q : Requester)
     (authorization : Option String) (cr : Credentials) (seconds : Nat)
     (hcr : authorization.bind credentialsOf? = some cr)
-    (hl : c.failures.check s.limits now (loginKeys cr.user address) = some seconds) :
-    (gate hash s c now address authorization).1 = .limited seconds := by
+    (hl : c.failures.check s.limits now (loginKeys cr.user q) = some seconds) :
+    (gate hash s c now q authorization).1 = .limited seconds := by
   simp [gate, hcr, Cache.prune, hl]
-
-/-- With the limit on, a blocked key among the attempt's keys makes the
-check answer 429. -/
-theorem check_blocked (l : Limits) (f : Failures) (now : Nat) (keys : List String) (k : String)
-    (he : l.enabled = true) (hk : k ∈ keys) (hb : f.blocked l now k = true) :
-    (f.check l now keys).isSome = true := by
-  have hany : keys.any (f.blocked l now) = true := List.any_eq_true.mpr ⟨k, hk, hb⟩
-  simp [Failures.check, he, hany]
 
 /-- With the limit on, no derivation is asked for when the name key or the
 address key of the attempt is blocked: the gate answers 429. -/
 theorem gate_no_derive_of_blocked (hash : ByteArray → ByteArray) (s : Settings) (c : Cache) (now : Nat)
-    (address : String) (authorization : Option String) (cr : Credentials) (k : String)
+    (q : Requester) (authorization : Option String) (cr : Credentials) (k : String)
     (hcr : authorization.bind credentialsOf? = some cr) (he : s.limits.enabled = true)
-    (hk : k ∈ loginKeys cr.user address) (hb : c.failures.blocked s.limits now k = true) :
-    ∃ seconds, (gate hash s c now address authorization).1 = .limited seconds := by
-  have h := check_blocked s.limits c.failures now (loginKeys cr.user address) k he hk hb
-  match hc : c.failures.check s.limits now (loginKeys cr.user address), h with
-  | some seconds, _ => exact ⟨seconds, gate_limited hash s c now address authorization cr seconds hcr hc⟩
-
-/-- With the limit off, the check never answers 429. -/
-theorem check_disabled (l : Limits) (f : Failures) (now : Nat) (keys : List String)
-    (he : l.enabled = false) : f.check l now keys = none := by
-  simp [Failures.check, he]
+    (hk : k ∈ loginKeys cr.user q) (hb : c.failures.blocked s.limits now k = true) :
+    ∃ seconds, (gate hash s c now q authorization).1 = .limited seconds := by
+  have h := L4Factoidal.Net.LoginLimit.check_blocked s.limits c.failures now (loginKeys cr.user q) k he hk hb
+  match hc : c.failures.check s.limits now (loginKeys cr.user q), h with
+  | some seconds, _ => exact ⟨seconds, gate_limited hash s c now q authorization cr seconds hcr hc⟩
 
 /-- A derivation for a name that is not in the users file never allows the
 request, whatever the host answers. -/
@@ -772,22 +639,22 @@ def sA : Settings := { users := [alice], secret := ⟨Array.replicate 32 9⟩ }
 -- The decision.
 def authA (pw : String) : Option String := some ("Basic " ++ b64 ("alice:" ++ pw).toUTF8)
 
-#guard (match (gate H sA {} 100 "127.0.0.1" none).1 with | .refuse => true | _ => false)
-#guard (match (gate H sA {} 100 "127.0.0.1" (some "Digest x")).1 with | .refuse => true | _ => false)
+#guard (match (gate H sA {} 100 (.tcp "127.0.0.1") none).1 with | .refuse => true | _ => false)
+#guard (match (gate H sA {} 100 (.tcp "127.0.0.1") (some "Digest x")).1 with | .refuse => true | _ => false)
 -- A known user, no cache: one derivation with the stored salt and count.
-#guard (match (gate H sA {} 100 "127.0.0.1" (authA "pw")).1 with
+#guard (match (gate H sA {} 100 (.tcp "127.0.0.1") (authA "pw")).1 with
   | .derive d => d.known && d.user == "alice" && d.iterations == 600000 && ctEq d.salt saltA && ctEq d.expected hashA
   | _ => false)
 -- An unknown user: a derivation too (the time of the 401 does not tell),
 -- with the default count, and it never allows.
-#guard (match (gate H sA {} 100 "127.0.0.1" (some ("Basic " ++ b64 "mallory:pw".toUTF8))).1 with
+#guard (match (gate H sA {} 100 (.tcp "127.0.0.1") (some ("Basic " ++ b64 "mallory:pw".toUTF8))).1 with
   | .derive d => !d.known && d.iterations == defaultIterations && d.salt.size == saltBytes &&
       !(finish H sA {} 100 d (some hashA)).1
   | _ => false)
 
 instance : Inhabited Derive := ⟨{ user := "", known := false, password := .empty, salt := .empty, iterations := 0, expected := .empty }⟩
 
-def dA : Derive := match (gate H sA {} 100 "127.0.0.1" (authA "pw")).1 with
+def dA : Derive := match (gate H sA {} 100 (.tcp "127.0.0.1") (authA "pw")).1 with
   | .derive d => d
   | _ => default
 
@@ -802,14 +669,14 @@ def dA : Derive := match (gate H sA {} 100 "127.0.0.1" (authA "pw")).1 with
 def cA : Cache := (finish H sA {} 100 dA (some hashA)).2
 
 -- With the cache: the same password is allowed with no derivation...
-#guard (match (gate H sA cA 150 "127.0.0.1" (authA "pw")).1 with | .allow u => u == "alice" | _ => false)
+#guard (match (gate H sA cA 150 (.tcp "127.0.0.1") (authA "pw")).1 with | .allow u => u == "alice" | _ => false)
 -- ... another password still derives (and then fails) ...
-#guard (match (gate H sA cA 150 "127.0.0.1" (authA "other")).1 with | .derive _ => true | _ => false)
+#guard (match (gate H sA cA 150 (.tcp "127.0.0.1") (authA "other")).1 with | .derive _ => true | _ => false)
 -- ... and the entry ends after cacheSeconds.
-#guard (match (gate H sA cA (100 + cacheSeconds) "127.0.0.1" (authA "pw")).1 with | .derive _ => true | _ => false)
-#guard (gate H sA cA (100 + cacheSeconds) "127.0.0.1" (authA "pw")).2.entries.isEmpty
+#guard (match (gate H sA cA (100 + cacheSeconds) (.tcp "127.0.0.1") (authA "pw")).1 with | .derive _ => true | _ => false)
+#guard (gate H sA cA (100 + cacheSeconds) (.tcp "127.0.0.1") (authA "pw")).2.entries.isEmpty
 -- A users file whose hash for alice changed does not use the old entry.
-#guard (match (gate H { sA with users := [{ alice with hash := ⟨Array.replicate 32 3⟩ }] } cA 150 "127.0.0.1" (authA "pw")).1 with
+#guard (match (gate H { sA with users := [{ alice with hash := ⟨Array.replicate 32 3⟩ }] } cA 150 (.tcp "127.0.0.1") (authA "pw")).1 with
   | .derive _ => true | _ => false)
 
 -- The failed-login limit (https://github.com/danbri/factoidal/issues/1119).
@@ -825,7 +692,7 @@ at `t0`, one second apart: the cache after them. -/
 def failN (s : Settings) (c : Cache) (user addr : String) (n t0 : Nat) : Cache := Id.run do
   let mut c := c
   for i in [0:n] do
-    match gate H s c (t0 + i) addr (some ("Basic " ++ b64 (user ++ ":wrong").toUTF8)) with
+    match gate H s c (t0 + i) (.tcp addr) (some ("Basic " ++ b64 (user ++ ":wrong").toUTF8)) with
     | (.derive d, c') => c := (finish H s c' (t0 + i) d (some ⟨Array.replicate 32 8⟩)).2
     | (_, c') => c := c'
   return c
@@ -833,32 +700,32 @@ def failN (s : Settings) (c : Cache) (user addr : String) (n t0 : Nat) : Cache :
 def authU (u pw : String) : Option String := some ("Basic " ++ b64 (u ++ ":" ++ pw).toUTF8)
 
 -- Under the limit: four failures, the fifth attempt still derives.
-#guard isDerive (gate H sA (failN sA {} "alice" "10.0.0.1" 4 100) 104 "10.0.0.1" (authA "wrong")).1
+#guard isDerive (gate H sA (failN sA {} "alice" "10.0.0.1" 4 100) 104 (.tcp "10.0.0.1") (authA "wrong")).1
 -- At the limit: five failures, the sixth attempt is 429 with no derivation,
 -- with the right password too, and Retry-After is the rest of the window.
-#guard isLimited (gate H sA (failN sA {} "alice" "10.0.0.1" 5 100) 105 "10.0.0.1" (authA "pw")).1 == some 55
+#guard isLimited (gate H sA (failN sA {} "alice" "10.0.0.1" 5 100) 105 (.tcp "10.0.0.1") (authA "pw")).1 == some 55
 -- The name is blocked from every address; the address for every name.
-#guard isLimited (gate H sA (failN sA {} "alice" "10.0.0.1" 5 100) 105 "10.0.0.2" (authA "pw")).1 == some 55
-#guard isLimited (gate H sA (failN sA {} "alice" "10.0.0.1" 5 100) 105 "10.0.0.1" (authU "bob" "x")).1 == some 55
+#guard isLimited (gate H sA (failN sA {} "alice" "10.0.0.1" 5 100) 105 (.tcp "10.0.0.2") (authA "pw")).1 == some 55
+#guard isLimited (gate H sA (failN sA {} "alice" "10.0.0.1" 5 100) 105 (.tcp "10.0.0.1") (authU "bob" "x")).1 == some 55
 -- Another name from another address is not blocked.
-#guard isDerive (gate H sA (failN sA {} "alice" "10.0.0.1" 5 100) 105 "10.0.0.2" (authU "bob" "x")).1
+#guard isDerive (gate H sA (failN sA {} "alice" "10.0.0.1" 5 100) 105 (.tcp "10.0.0.2") (authU "bob" "x")).1
 -- Window expiry: at 160 (100 + 60) the window has ended.
-#guard isLimited (gate H sA (failN sA {} "alice" "10.0.0.1" 5 100) 159 "10.0.0.1" (authA "pw")).1 == some 1
-#guard isDerive (gate H sA (failN sA {} "alice" "10.0.0.1" 5 100) 160 "10.0.0.1" (authA "pw")).1
+#guard isLimited (gate H sA (failN sA {} "alice" "10.0.0.1" 5 100) 159 (.tcp "10.0.0.1") (authA "pw")).1 == some 1
+#guard isDerive (gate H sA (failN sA {} "alice" "10.0.0.1" 5 100) 160 (.tcp "10.0.0.1") (authA "pw")).1
 -- No credentials stays 401 (not counted, not 429).
-#guard (match (gate H sA (failN sA {} "alice" "10.0.0.1" 5 100) 105 "10.0.0.1" none).1 with | .refuse => true | _ => false)
+#guard (match (gate H sA (failN sA {} "alice" "10.0.0.1" 5 100) 105 (.tcp "10.0.0.1") none).1 with | .refuse => true | _ => false)
 -- An unknown name gets the same answers as a known one.
-#guard isDerive (gate H sA (failN sA {} "mallory" "10.0.0.1" 4 100) 104 "10.0.0.3" (authU "mallory" "x")).1
-#guard isLimited (gate H sA (failN sA {} "mallory" "10.0.0.1" 5 100) 105 "10.0.0.3" (authU "mallory" "x")).1 == some 55
-#guard isLimited (gate H sA (failN sA {} "mallory" "10.0.0.1" 5 100) 105 "10.0.0.1" (authU "alice" "pw")).1 == some 55
+#guard isDerive (gate H sA (failN sA {} "mallory" "10.0.0.1" 4 100) 104 (.tcp "10.0.0.3") (authU "mallory" "x")).1
+#guard isLimited (gate H sA (failN sA {} "mallory" "10.0.0.1" 5 100) 105 (.tcp "10.0.0.3") (authU "mallory" "x")).1 == some 55
+#guard isLimited (gate H sA (failN sA {} "mallory" "10.0.0.1" 5 100) 105 (.tcp "10.0.0.1") (authU "alice" "pw")).1 == some 55
 -- A success counts nothing and resets nothing.
 #guard (finish H sA (failN sA {} "alice" "10.0.0.1" 3 100) 103 dA (some hashA)).2.failures.counters.map (·.failures) ==
   #[3, 3]
 -- A blocked cache entry is not read: alice cached, then blocked, gets 429.
-#guard isLimited (gate H sA (failN sA cA "alice" "10.0.0.1" 5 100) 105 "10.0.0.1" (authA "pw")).1 == some 55
+#guard isLimited (gate H sA (failN sA cA "alice" "10.0.0.1" 5 100) 105 (.tcp "10.0.0.1") (authA "pw")).1 == some 55
 -- Disabled: eight failures, the ninth still derives; the warning is given.
 def sOff : Settings := { sA with limits := { enabled := false } }
-#guard isDerive (gate H sOff (failN sOff {} "alice" "10.0.0.1" 8 100) 108 "10.0.0.1" (authA "pw")).1
+#guard isDerive (gate H sOff (failN sOff {} "alice" "10.0.0.1" 8 100) 108 (.tcp "10.0.0.1") (authA "pw")).1
 #guard (failN sOff {} "alice" "10.0.0.1" 8 100).failures.counters.isEmpty
 #guard (limitsWarnings { enabled := false }).length == 1 && (limitsWarnings {}).isEmpty
 
@@ -890,7 +757,7 @@ def fFull : Failures := { counters := #[{ key := "a", start := 100, failures := 
 #guard clientPrefix "2001:DB8:1:2::9" == clientPrefix "2001:db8:1:2:ffff::1"
 #guard clientPrefix "::1" == "0:0:0:0::/64"
 #guard clientPrefix "" == ""
-#guard loginKeys "alice" "10.0.0.1" == ["name:alice", "address:10.0.0.1"]
+#guard loginKeys "alice" (.tcp "10.0.0.1") == ["name:alice", "address:10.0.0.1"]
 
 -- The options.
 #guard (limitsOf true none none false).toOption.map (fun l => (l.enabled, l.maxFailures, l.window)) == some (true, 5, 60)
@@ -927,40 +794,75 @@ def bob : User := { alice with name := "bob" }
 #guard (parseUsers "u" (withUser (withUser "" alice).1 bob).1).toOption.map (·.map (·.name)) == some ["alice", "bob"]
 
 -- Issue 1147: who a request acts as.
-#guard (match (admit H (some sA) (some "guest") {} 100 "127.0.0.1" none).1 with | .allow u => u == "guest" | _ => false)
-#guard (match (admit H none (some "guest") {} 100 "127.0.0.1" none).1 with | .allow u => u == "guest" | _ => false)
-#guard (match (admit H (some sA) none {} 100 "127.0.0.1" none).1 with | .refuse => true | _ => false)
-#guard (match (admit H none none {} 100 "127.0.0.1" none).1 with | .refuse => true | _ => false)
+#guard (match (admit H (some sA) (some "guest") {} 100 (.tcp "127.0.0.1") none).1 with | .allow u => u == "guest" | _ => false)
+#guard (match (admit H none (some "guest") {} 100 (.tcp "127.0.0.1") none).1 with | .allow u => u == "guest" | _ => false)
+#guard (match (admit H (some sA) none {} 100 (.tcp "127.0.0.1") none).1 with | .refuse => true | _ => false)
+#guard (match (admit H none none {} 100 (.tcp "127.0.0.1") none).1 with | .refuse => true | _ => false)
 -- Credentials with no users file: 401, also with a guest.
-#guard (match (admit H none (some "guest") {} 100 "127.0.0.1" (authA "pw")).1 with | .refuse => true | _ => false)
+#guard (match (admit H none (some "guest") {} 100 (.tcp "127.0.0.1") (authA "pw")).1 with | .refuse => true | _ => false)
 -- Credentials that are not Basic: 401, never the guest.
-#guard (match (admit H (some sA) (some "guest") {} 100 "127.0.0.1" (some "Digest x")).1 with | .refuse => true | _ => false)
-#guard (match (admit H (some sA) (some "guest") {} 100 "127.0.0.1" (some "")).1 with | .refuse => true | _ => false)
+#guard (match (admit H (some sA) (some "guest") {} 100 (.tcp "127.0.0.1") (some "Digest x")).1 with | .refuse => true | _ => false)
+#guard (match (admit H (some sA) (some "guest") {} 100 (.tcp "127.0.0.1") (some "")).1 with | .refuse => true | _ => false)
 -- Credentials with a users file: the login.
-#guard (match (admit H (some sA) (some "guest") {} 100 "127.0.0.1" (authA "pw")).1 with
+#guard (match (admit H (some sA) (some "guest") {} 100 (.tcp "127.0.0.1") (authA "pw")).1 with
   | .derive d => d.known && d.user == "alice" | _ => false)
-#guard (match (admit H (some sA) none cA 150 "127.0.0.1" (authA "pw")).1 with | .allow u => u == "alice" | _ => false)
+#guard (match (admit H (some sA) none cA 150 (.tcp "127.0.0.1") (authA "pw")).1 with | .allow u => u == "alice" | _ => false)
 -- A failed login still counts toward the limit.
-#guard (match (admit H (some { sA with limits := { maxFailures := 1 } }) (some "guest") (cA.fail { sA with limits := { maxFailures := 1 } } 100 dA) 101
-  "127.0.0.1" (authA "pw")).1 with | .limited _ => true | _ => false)
+#guard (match (admit H (some { sA with limits := { maxFailures := 1 } }) (some "guest") (cA.fail { sA with limits := { maxFailures := 1 } } 100 dA) 101 (.tcp "127.0.0.1") (authA "pw")).1 with | .limited _ => true | _ => false)
 #guard (guestCheck "guest" [alice]).toOption == some "guest"
 #guard (guestCheck "alice" [alice]).toOption.isNone
 #guard (guestCheck "" []).toOption.isNone
 #guard (guestCheck "a:b" []).toOption.isNone
 #guard (guestCheck "a,b" []).toOption.isNone
 
+-- Issue 1128: the requester of HTTP over XMPP is the sender's bare JID.
+def failJ (s : Settings) (c : Cache) (user : String) (q : Requester) (n t0 : Nat) : Cache := Id.run do
+  let mut c := c
+  for i in [0:n] do
+    match admit H (some s) none c (t0 + i) q (some ("Basic " ++ b64 (user ++ ":wrong").toUTF8)) with
+    | (.derive d, c') => c := (finish H s c' (t0 + i) d (some ⟨Array.replicate 32 8⟩)).2
+    | (_, c') => c := c'
+  return c
+def jA : Requester := .xmpp "a@example.org"
+def jB : Requester := .xmpp "b@example.org"
+-- Six wrong passwords for mallory from JID A: alice's right password from
+-- JID B still derives (not blocked).
+#guard isDerive (admit H (some sA) none (failJ sA {} "mallory" jA 6 100) 106 jB (authA "pw")).1
+-- ... and JID A is refused for every name, with no derivation.
+#guard isLimited (admit H (some sA) none (failJ sA {} "mallory" jA 6 100) 106 jA (authA "pw")).1 == some 54
+-- One JID that tries a new name each time: the sixth attempt is refused.
+def failNames (n : Nat) : Cache := Id.run do
+  let mut c : Cache := {}
+  for i in [0:n] do
+    match admit H (some sA) none c (100 + i) jA (authU s!"u{i}" "wrong") with
+    | (.derive d, c') => c := (finish H sA c' (100 + i) d (some ⟨Array.replicate 32 8⟩)).2
+    | (_, c') => c := c'
+  return c
+#guard isDerive (admit H (some sA) none (failNames 4) 104 jA (authU "u4" "wrong")).1
+#guard isLimited (admit H (some sA) none (failNames 5) 105 jA (authU "u5" "wrong")).1 == some 55
+-- The counters name the JID, never an empty key.
+#guard (failNames 5).failures.counters.any (·.key == "jid:a@example.org")
+#guard !(failNames 5).failures.counters.any (fun c => c.key == "address:" || c.key == "jid:" || c.key == "")
+-- A request with credentials and no requester (an empty address or JID):
+-- 401, no derivation, nothing counted.
+#guard (match admit H (some sA) none {} 100 (.tcp "") (authA "pw") with
+  | (.refuse, c) => c.failures.counters.isEmpty | _ => false)
+#guard (match (admit H (some sA) none {} 100 (.xmpp "") (authA "pw")).1 with | .refuse => true | _ => false)
+-- With no credentials the requester does not matter (the guest).
+#guard (match (admit H (some sA) (some "guest") {} 100 (.xmpp "") none).1 with | .allow u => u == "guest" | _ => false)
+
 end Checks
 
 /-- With no credentials, a request acts as the guest, or is refused when
 there is no guest. -/
 theorem admit_none (hash : ByteArray → ByteArray) (s : Option Settings) (guest : Option String)
-    (c : Cache) (now : Nat) (address : String) :
-    (admit hash s guest c now address none).1 = (match guest with | some g => .allow g | none => .refuse) := by
+    (c : Cache) (now : Nat) (q : Requester) :
+    (admit hash s guest c now q none).1 = (match guest with | some g => .allow g | none => .refuse) := by
   cases guest <;> rfl
 
 /-- With credentials and no users file, a request is refused (401). -/
 theorem admit_no_users (hash : ByteArray → ByteArray) (guest : Option String) (c : Cache) (now : Nat)
-    (address a : String) : (admit hash none guest c now address (some a)).1 = .refuse := rfl
+    (q : Requester) (a : String) : (admit hash none guest c now q (some a)).1 = .refuse := rfl
 
 /-- The credentials step allows only a user of the users file. -/
 theorem gateCredentials_allow (hash : ByteArray → ByteArray) (s : Settings) (c : Cache) (cr : Credentials)
@@ -978,19 +880,54 @@ theorem gateCredentials_allow (hash : ByteArray → ByteArray) (s : Settings) (c
 /-- With credentials, `admit` allows only a user of the users file (never
 the guest by a fall back). -/
 theorem admit_some_allow (hash : ByteArray → ByteArray) (s : Option Settings) (guest : Option String)
-    (c : Cache) (now : Nat) (address a u : String)
-    (h : (admit hash s guest c now address (some a)).1 = .allow u) :
+    (c : Cache) (now : Nat) (q : Requester) (a u : String)
+    (h : (admit hash s guest c now q (some a)).1 = .allow u) :
     ∃ s' x, s = some s' ∧ x ∈ s'.users ∧ x.name = u := by
   cases s with
   | none => cases h
   | some s' =>
-    simp only [admit, gate] at h
-    split at h
-    · cases h
-    · rename_i cr _
+    by_cases hv : q.valid = true
+    · simp only [admit, hv, ↓reduceIte, gate] at h
       split at h
       · cases h
-      · exact (gateCredentials_allow hash s' _ cr _ u h).elim (fun x hx => ⟨s', x, rfl, hx.1, hx.2⟩)
+      · rename_i cr _
+        split at h
+        · cases h
+        · exact (gateCredentials_allow hash s' _ cr _ u h).elim (fun x hx => ⟨s', x, rfl, hx.1, hx.2⟩)
+    · simp [admit, hv] at h
+
+/-- A request with credentials from a requester that is not valid (an
+empty address or JID) is refused before any derivation, so no failure is
+ever counted against an empty key (issue 1128). -/
+theorem admit_invalid_requester (hash : ByteArray → ByteArray) (s : Option Settings) (guest : Option String)
+    (c : Cache) (now : Nat) (q : Requester) (a : String) (h : q.valid = false) :
+    admit hash s guest c now q (some a) = (.refuse, c) := by
+  cases s <;> simp [admit, h]
+
+/-- The derivation the gate asks for counts its failure under the keys of
+the attempt's user name and of the requester, so a failure from one
+requester counts against that requester's key (issue 1128). -/
+theorem gate_derive_keys (hash : ByteArray → ByteArray) (s : Settings) (c : Cache) (now : Nat)
+    (q : Requester) (authorization : Option String) (d : Derive) (c' : Cache)
+    (h : gate hash s c now q authorization = (.derive d, c')) :
+    d.keys = loginKeys d.user q := by
+  simp only [gate] at h
+  split at h
+  · cases h
+  · rename_i cr _
+    split at h
+    · cases h
+    · unfold gateCredentials at h
+      split at h
+      · cases h; rfl
+      · rename_i u hu
+        dsimp only at h
+        split at h
+        · cases h
+        · cases h
+          have he := List.find?_some hu
+          simp only [beq_iff_eq] at he
+          simp [he]
 
 /-- A login that `finish` allows is a user of the users file. -/
 theorem finish_allow_known (hash : ByteArray → ByteArray) (s : Settings) (c : Cache) (now : Nat) (d : Derive)

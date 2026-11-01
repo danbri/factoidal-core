@@ -137,6 +137,37 @@ def has (s sub : String) : Bool := (s.splitOn sub).length > 1
   let w := run [iq alice "c1" "CONNECT" "example.org:443"]
   has (w.out.getD 0 "") "type=\"error\"" && has (w.out.getD 0 "") "<not-allowed"
 
+-- Per-sender limits (https://github.com/danbri/factoidal/issues/1128): JID A
+-- opens 16 chunked requests; 4 wait, the other 12 get resource-constraint;
+-- JID B can still open one. Both are in the allow list.
+def cfg2 : Config := { cfg with allow := ["alice@example.org", "bob@example.org"] }
+def feed2 (w : W) (stanza : String) : W :=
+  match (step cfg2 cx w.dav w.st stanza).runPure lwsRun 100000 w.store with
+  | some (o, store) => { dav := o.dav, st := o.st, store, out := w.out ++ o.out, handled := o.handled }
+  | none => { w with handled := false }
+def aliceOpens (n : Nat) : W :=
+  (List.range n).foldl (fun w i => feed2 w (iq alice s!"u{i}" "PUT" s!"/m/f{i}" [] (.chunked s!"s{i}"))) {}
+#guard (aliceOpens 16).st.pending.length == 4
+#guard (aliceOpens 16).out.length == 12 && (aliceOpens 16).out.all (fun o => has o "resource-constraint")
+#guard
+  let w := feed2 (aliceOpens 16) (iq "bob@example.org/pc" "b1" "PUT" "/m/g" [] (.chunked "t1"))
+  w.st.pending.length == 5 && w.out.length == 12
+-- A second request with the same streamId from the same sender: bad-request.
+#guard
+  let w := feed2 (aliceOpens 1) (iq alice "dup" "PUT" "/m/h" [] (.chunked "s0"))
+  w.st.pending.length == 1 && w.out.length == 1 && has (w.out.getD 0 "") "bad-request"
+-- The time limit: the host's clock (tick). A request that arrived at 1000 ms
+-- is dropped at 61000 ms with resource-constraint, not at 60999 ms.
+#guard
+  let w0 : W := { st := (tick cfg2 {} 1000).2 }
+  let w1 := feed2 w0 (iq alice "late" "PUT" "/m/l" [] (.chunked "l1"))
+  let (o1, s1) := tick cfg2 w1.st 60999
+  let (o2, s2) := tick cfg2 w1.st 61000
+  w1.st.pending.length == 1 && o1.isEmpty && s1.pending.length == 1 &&
+  o2.length == 1 && has (o2.getD 0 "") "resource-constraint" && has (o2.getD 0 "") "id=\"late\"" && s2.pending.isEmpty
+-- The clock does not go back.
+#guard (tick cfg2 (tick cfg2 {} 5000).2 10).2.clock == 5000
+
 -- Other stanzas are not handled here; the host passes them on.
 #guard !(run ["<message from='alice@example.org/l'><body>hi</body></message>"]).handled
 #guard !(run ["<iq type='get' id='v'><query xmlns='jabber:iq:version'/></iq>"]).handled
