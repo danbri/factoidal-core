@@ -15,6 +15,8 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-01 | [QT4 XML schema-option errors](20261101-qt4-xsd-option-errors.md) | 3b2759a86 | current — targeted native replay repairs parse-xml-437; other failures retained |
+| 2026-11-01 | [LWS browser import boundary](20261101-lws-browser-import.md) | 23c95cb3c | current — injected-engine browser import tests pass; live socket test blocked by sandbox |
 | 2026-11-01 | [Periodic independent Lean checking](20261101-periodic-kernel-checks.md) | pending | current — nightly advice; commands unavailable on pinned toolchain |
 | 2026-11-01 | [XML parsing retain-location option](20261101-qt4-retain-location.md) | pending | current — strict boolean admission and regression checks |
 | 2026-11-01 | [Foafpod private history](designissues/2026-11-01-foafpod-private-history.md) | pending | current — design, not activated |
