@@ -122,3 +122,25 @@ review/build/release, rerun the full mixed-store browser benchmark with identica
 result hashes, report actual block counts and bytes, verify decoded GBI1 counts,
 and measure load/open/first/repeated-query costs. A five-block production plan
 is an expectation to test, not a result measured by this source-only change.
+
+## Final local handoff: 2026-11-01
+
+The genuinely serialized import-DAG check freshly compiled PlannerSoundness,
+ShardManifest and SBM11 ExprLocalTheorems, then failed at BackendRefinement
+(module 313 of 341). Its existing NativeFrag FILTER case still assumes
+backendLocal, and its simplifier needs the new backendFilterLocal implication.
+A minimal one-line repair using backendFilterLocal_of_backendLocal was prepared,
+but NOT compiled: free disk fell below the 1.5 GiB stop threshold before any
+compiler started on the retry. NativeFrag was not widened, so preserving that
+theorem would still cover only its existing subset, not prove full reference
+semantics of the newly admitted geof cases.
+
+The uncompiled repair and mixed-store exact-result gate are saved together at
+`/private/tmp/factoidal-spatial-pending-proof-and-gate.patch`. Both source files
+were restored to the local committed baseline. The gate has NOT passed.
+The source candidate remains WIP and is NOT merge-ready or full-source green.
+No full WASM build, npm package change, release or push was made.
+The serial driver stopped safely before compilation on retry; disk scarcity
+is the outstanding execution blocker. Resume only with adequate capacity, then
+compile the refinement repair, run the exact-result gate, and retain the
+distinction between the old NativeFrag theorem and the new restriction proof.
