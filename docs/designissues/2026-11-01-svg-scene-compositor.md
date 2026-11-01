@@ -135,6 +135,12 @@ caps and transform presence are also checked. The WGSL remains generated text;
 equivalence of that text to the cursor expression, Float-to-u32 conversion,
 host upload and shader-load refinement remain open.
 
+`AffineScalarOps.float32` now makes the shared affine algebra executable over
+Lean's IEEE binary32 model, and `inverse_float32_zero_det` proves that a
+determinant which compares equal to zero is refused. This gives future CPU/GPU
+refinement work a binary32 Lean reference; the current SVG path still composes
+and inverts with binary64 `Float`.
+
 ### Progress: ordered source-over batches (2026-11-01)
 
 `NativeGraphics.PremultipliedLayer.overOpaque` is now the shared CPU source-over

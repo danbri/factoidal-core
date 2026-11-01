@@ -179,7 +179,15 @@ unsupported; linear paths and affine transforms are described below.
 `Math/Affine.lean` provides typed six-coefficient affine values with explicit
 scalar operations. SVG uses its Float specialization for composition, inverse
 and point mapping; exact tests reuse existing MathML rational and TOAN matrix
-operations. Matrix/translate/scale/rotate (including a center)/skewX/skewY lists
+operations. A `Float32` scalar backend now supplies the same affine operations
+at WGSL's binary32 width, including a proved rejection of determinants equal to
+zero. It is a Lean reference backend; SVG does not yet use it, and this does
+not prove equivalence to WGSL evaluation. The generic
+`Affine2.packed_applyPoint` theorem has no axiom dependencies and applies to
+binary32, binary64 and exact scalar operations. It proves that packed Lean
+evaluation preserves the scalar reference's operation order, not GPU arithmetic.
+Matrix/translate/scale/rotate
+(including a center)/skewX/skewY lists
 work on groups and painted primitives, with column-vector composition in SVG
 order. Both CPU hit predicates and generated WGSL evaluate the local shape using
 the inverse composed transform, including local stroke geometry under shear and

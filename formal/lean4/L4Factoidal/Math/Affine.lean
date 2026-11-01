@@ -1,4 +1,5 @@
 import Init
+import Init.Data.Float.Float32
 
 /- Reusable homogeneous affine algebra. Explicit scalar operations keep exact
    rational, floating and future backends distinct. No ring laws, numerical
@@ -17,6 +18,12 @@ structure AffineScalarOps (α : Type) where
 /-- IEEE Float backend. Exact rational callers supply their existing arithmetic
     instead. Division failure denotes a zero divisor, not a stability proof. -/
 def AffineScalarOps.float : AffineScalarOps Float :=
+  ⟨0,1,(·+·),(·-·),(·*·),fun a b => if b == 0 then none else some (a/b)⟩
+
+/-- IEEE binary32 backend for affine reference calculations. This matches the
+    scalar width used by WGSL, but does not prove WGSL's evaluation order,
+    contraction behavior, or driver implementation equivalent to Lean. -/
+def AffineScalarOps.float32 : AffineScalarOps Float32 :=
   ⟨0,1,(·+·),(·-·),(·*·),fun a b => if b == 0 then none else some (a/b)⟩
 
 structure Affine2 (α : Type) where
@@ -172,6 +179,17 @@ theorem inverse_float_zero_det (m : Affine2 Float)
   have first : AffineScalarOps.float.div? m.d (determinant AffineScalarOps.float m) = none := by
     change (if determinant AffineScalarOps.float m == 0 then none else
       some (m.d / determinant AffineScalarOps.float m)) = none
+    simp [h]
+  simp [inverse?, first]
+
+/-- A determinant that compares equal to binary32 zero is refused by the
+    shared binary32 inverse, including signed zero. -/
+theorem inverse_float32_zero_det (m : Affine2 Float32)
+    (h : (determinant AffineScalarOps.float32 m == 0) = true) :
+    inverse? AffineScalarOps.float32 m = none := by
+  have first : AffineScalarOps.float32.div? m.d (determinant AffineScalarOps.float32 m) = none := by
+    change (if determinant AffineScalarOps.float32 m == 0 then none else
+      some (m.d / determinant AffineScalarOps.float32 m)) = none
     simp [h]
   simp [inverse?, first]
 
