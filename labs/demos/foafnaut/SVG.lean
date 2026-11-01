@@ -3,6 +3,7 @@ import SVGPath
 import SVGCSS
 import SVGDash
 import SVGDashUnits
+import SVGStroke
 import L4Factoidal.Math.Affine
 import L4Factoidal.Tdb2.Format
 import L4Factoidal.XML.NamespaceView
@@ -299,7 +300,7 @@ structure Primitive where
   style : Style
   opacity : Float := 1
   transform : Transform := identityTransform
-  dashParts : Option (List Geometry) := none
+  dashParts : Option (List NativeSVGStroke.Piece) := none
   deriving Repr
 private def strokeEnabled (style : Style) : Bool :=
   match style.stroke with | .none => false | _ => style.strokeWidth > 0
@@ -325,38 +326,36 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     let x1 ← geometryNumber lengths attrs "x1"; let y1 ← geometryNumber lengths attrs "y1"
     let x2 ← geometryNumber lengths attrs "x2"; let y2 ← geometryNumber lengths attrs "y2"
     return some (.line x1 y1 x2 y2)
-  else if tag == "polygon" then
-    if strokeEnabled style then throw "polygon stroke/joins unsupported"
+  else if tag == "polygon" || tag == "polyline" then
     let source ← need (attr attrs "points") "polygon requires points"
     let values ← numbers source
-    if values.length < 6 || values.length%2 != 0 || values.length > 128 then throw "polygon requires 3–64 coordinate pairs"
+    if values.length < (if tag=="polygon" then 6 else 4) || values.length%2 != 0 || values.length > 128 then throw "polygon/polyline requires 2–64 pairs (polygon at least 3)"
     let pairs := (List.range (values.length/2)).map fun i => Point.mk values[i*2]! values[i*2+1]!
-    return some (.polygon pairs)
+    return if tag=="polygon" then some (.polygon pairs) else some (.path [⟨pairs,false⟩])
   else if tag == "path" then
-    if strokeEnabled style then throw "linear path stroke/joins unsupported"
     let source := (attr attrs "d").getD ""
     if source.length > 65536 then throw "path data exceeds 65536 characters"
     if (trim source).toLower == "none" then return none
     let contours ← NativeSVGPath.parse number source
     return if contours.isEmpty then none else some (.path contours)
   else throw s!"unsupported SVG element: {tag}"
-/-- Dashed stroke union, retained inside one painted primitive. Lines use butt
-    strips; only actual dash ends receive caps. Rectangles keep perimeter phase. -/
-private def dashedParts (g : Geometry) (style : Style) (authorLength : Option Float) : Except String (Option (List Geometry)) := do
-  if style.dashArray.isEmpty || !strokeEnabled style then return none
-  let half := style.strokeWidth/2
-  let (vertices,closed) ← match g with
-    | .line x y u v => pure ([Point.mk x y,Point.mk u v],false)
-    | .rect x y w h => pure ([Point.mk x y,Point.mk (x+w) y,Point.mk (x+w) (y+h),Point.mk x (y+h),Point.mk x y],true)
-    | _ => throw "dashed strokes currently support rect and line only"
-  let edges := vertices.zip vertices.tail
-  let lengths : List Float := edges.map (fun (a,b) => Float.sqrt ((b.x-a.x)*(b.x-a.x)+(b.y-a.y)*(b.y-a.y)))
-  let total : Float := lengths.foldl (·+·) 0
+/-- One retained stroke union across all linear contours. Closedness and
+    per-subpath dash phase are distinct from implicit fill closure. -/
+private def dashedParts (g : Geometry) (style : Style) (authorLength : Option Float) : Except String (Option (List NativeSVGStroke.Piece)) := do
+  if !strokeEnabled style then return none
+  let contours ← match g with
+    | .line x y u v => pure [NativeSVGPath.Contour.mk [Point.mk x y,Point.mk u v] false]
+    | .rect x y w h => pure [NativeSVGPath.Contour.mk [Point.mk x y,Point.mk (x+w) y,Point.mk (x+w) (y+h),Point.mk x (y+h)] true]
+    | .polygon points => pure [NativeSVGPath.Contour.mk points true]
+    | .path contours => pure contours
+    | _ => if style.dashArray.isEmpty then return none else throw "dashed curved strokes unsupported"
+  let total : Float := contours.foldl (fun n c => n+NativeSVGStroke.length c) 0
   -- SVG 2 §9.6.1: percentage distances are exempt from pathLength calibration.
   let (pattern,offset) ← match authorLength with
     | none => pure (style.dashArray.map (·.value),style.dashOffset.value)
     | some author => do
-      if author==0 then
+      if style.dashArray.isEmpty then pure ([],0)
+      else if author==0 then
         if style.dashArray.any (fun length => length.value != 0 && !length.percentage) ||
             (style.dashOffset.value != 0 && !style.dashOffset.percentage) then
           throw "zero pathLength infinite dash calibration unsupported"
@@ -366,44 +365,7 @@ private def dashedParts (g : Geometry) (style : Style) (authorLength : Option Fl
         if !scale.isFinite then throw "pathLength calibration exceeds finite range"
         let pattern := style.dashArray.map (·.calibrated scale)
         pure (pattern,style.dashOffset.calibrated scale)
-  let spans ← NativeSVGDash.intervals pattern offset total
-  let seam := closed && spans.any (fun a => a.first==0 && a.last>0) && spans.any (fun a => a.last==total && a.first<total)
-  let pointAt := fun (distance : Float) => Id.run do
-    let mut left := distance
-    for ((a,b),len) in edges.zip lengths do
-      if left <= len then
-        let t := if len==0 then 0 else left/len
-        return Point.mk (a.x+(b.x-a.x)*t) (a.y+(b.y-a.y)*t)
-      left := left-len
-    return vertices.headD (Point.mk 0 0)
-  let mut parts : Array Geometry := #[]
-  for span in spans do
-    let mut start := 0
-    for ((a,b),len) in edges.zip lengths do
-      let lo := max start span.first
-      let hi := min (start+len) span.last
-      if hi > lo && len > 0 then
-        let t := (lo-start)/len
-        let u := (hi-start)/len
-        parts := parts.push (.line (a.x+(b.x-a.x)*t) (a.y+(b.y-a.y)*t) (a.x+(b.x-a.x)*u) (a.y+(b.y-a.y)*u))
-      start := start+len
-    if style.lineCap == .round then
-      for endpoint in [span.first,span.last] do
-        if !(seam && (endpoint==0 || endpoint==total)) then
-          let q := pointAt endpoint
-          parts := parts.push (.circle q.x q.y half)
-  if closed then
-    match g with
-    | .rect x y w h =>
-      for (distance,corner) in [(0,Geometry.rect (x-half) (y-half) half half),
-          (w,Geometry.rect (x+w) (y-half) half half),
-          (w+h,Geometry.rect (x+w) (y+h) half half),
-          (2*w+h,Geometry.rect (x-half) (y+h) half half)] do
-        if (distance==0 && seam) || spans.any (fun a => a.first < distance && a.last > distance) then
-          parts := parts.push corner
-    | _ => pure ()
-  if parts.size > 4096 then throw "dash stroke union exceeds 4096 pieces"
-  return some parts.toList
+  return some (← NativeSVGStroke.retain contours pattern offset style.strokeWidth (style.lineCap == .round))
 
 private def extraAttrs (tag : String) : List String :=
   match tag with
@@ -411,8 +373,8 @@ private def extraAttrs (tag : String) : List String :=
   | "circle" => ["cx","cy","r","opacity","transform"]
   | "ellipse" => ["cx","cy","rx","ry","opacity","transform"]
   | "line" => ["x1","y1","x2","y2","opacity","transform","pathLength"]
-  | "polygon" => ["points","opacity","transform"]
-  | "path" => ["d","opacity","transform"]
+  | "polygon" | "polyline" => ["points","opacity","transform","pathLength"]
+  | "path" => ["d","opacity","transform","pathLength"]
   | _ => []
 private def whitespace (s : String) : Bool := s.toList.all isXmlSpace
 mutual
@@ -671,6 +633,26 @@ private def strokeShapeCondition (g : Geometry) (base : Nat) (cap : LineCap) : T
   | _ => le (.lit 1) (.lit 0)
 private def strokeCondition (g : Geometry) (base : Nat) (cap : LineCap) : Test :=
   .both (.not (le (scalar base 16) (.lit 0))) (strokeShapeCondition g base cap)
+private def triangleCondition (base : Nat) : Test :=
+  let a := point base 0
+  let b := point base 2
+  let c := point base 8
+  let cross := fun (u v : Expr .vec2) =>
+    Expr.sub (.mul (.dot u (.vec (.lit 1) (.lit 0))) (.dot v (.vec (.lit 0) (.lit 1))))
+      (.mul (.dot u (.vec (.lit 0) (.lit 1))) (.dot v (.vec (.lit 1) (.lit 0))))
+  let edge := fun u v => cross (.subV v u) (.subV (.var .position) u)
+  let ab := edge a b
+  let bc := edge b c
+  let ca := edge c a
+  let area := cross (.subV b a) (.subV c a)
+  .both (.not (le (.mul area area) (.lit 0)))
+    (.either (.both (le (.lit 0) ab) (.both (le (.lit 0) bc) (le (.lit 0) ca)))
+      (.both (le ab (.lit 0)) (.both (le bc (.lit 0)) (le ca (.lit 0)))))
+private def pieceCondition (piece : NativeSVGStroke.Piece) (base : Nat) : Test :=
+  match piece with
+  | .strip .. => strokeCondition (.line 0 0 0 0) base .butt
+  | .disk .. => fillCondition (.circle 0 0 0) base
+  | .triangle .. => triangleCondition base
 private def edgeConditions (a b : Expr .vec2) : Test × Test :=
   let ax := Expr.dot a (.vec (.lit 1) (.lit 0))
   let ay := Expr.dot a (.vec (.lit 0) (.lit 1))
@@ -729,6 +711,16 @@ private def geometryRows : Geometry → List Float
   | .path contours => pointBounds (contours.flatMap (·.points))
 private def Primitive.effectiveOpacity (p : Primitive) : Float :=
   if p.transform.det == 0 then 0 else p.opacity
+private def geometryTailSize : Geometry → Nat
+  | .polygon points => ((points.length+1)/2)*4
+  | .path contours => (NativeSVGPath.edges contours).length*4
+  | _ => 0
+private def pieceRows (width : Float) (piece : NativeSVGStroke.Piece) : List Float :=
+  let (geometry,tag,extra) : List Float × Float × List Float := match piece with
+    | .strip a b => ([a.x,a.y,b.x,b.y],4, [0,0,0,0])
+    | .disk c r => ([c.x,c.y,r,0],2,[0,0,0,0])
+    | .triangle a b c => ([a.x,a.y,b.x,b.y],7,[c.x,c.y,0,0])
+  geometry ++ [tag,0,0,0] ++ extra ++ [0,0,0,0,width,0,0,0]
 private def Primitive.rows (p : Primitive) : List Float :=
   let (tag,count) : Nat × Nat := match p.geometry with
     | .rect .. => (1,0) | .circle .. => (2,0) | .ellipse .. => (3,0)
@@ -741,9 +733,7 @@ private def Primitive.rows (p : Primitive) : List Float :=
    | .polygon points => points.flatMap (fun q => [q.x,q.y]) ++ (if points.length%2 == 1 then [0,0] else [])
    | .path contours => (NativeSVGPath.edges contours).flatMap fun (a,b) => [a.x,a.y,b.x,b.y]
    | _ => []) ++
-  ((p.dashParts.getD []).flatMap fun g => geometryRows g ++
-    [match g with | .line .. => 4 | .circle .. => 2 | _ => 1,0,0,0] ++
-    [0,0,0,0,0,0,0,0,p.style.strokeWidth,0,0,0]) ++
+  ((p.dashParts.getD []).flatMap (pieceRows p.style.strokeWidth)) ++
   (if p.transform.identity then [] else
     let t := p.transform.inverse
     (t.toPackedRows floatOps).toList)
@@ -802,7 +792,7 @@ private def Scene.wgsl (_s : Scene) : String :=
   "if(params.rows[base+4u].w==1.0){strokeHit=false;let parentBase=base;for(var di=0u;di<dashCount;di++){base=parentBase+5u+shapeRows+di*5u;let dt=u32(params.rows[base+1u].x);var piece=false;" ++
   "if(dt==4u){piece=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}" ++
   "else if(dt==2u){piece=" ++ relativeCondition (fillCondition (.circle 0 0 0) 0) ++ ";}" ++
-  "else{piece=" ++ relativeCondition (fillCondition (.rect 0 0 0 0) 0) ++ ";}strokeHit=strokeHit||piece;}base=parentBase;}" ++
+  "else if(dt==7u){piece=" ++ relativeCondition (triangleCondition 0) ++ ";}strokeHit=strokeHit||piece;}base=parentBase;}" ++
   "let fill=params.rows[base+2u];let stroke=params.rows[base+3u];var element=vec4f(0.0);" ++
   "if fillHit {element=vec4f(fill.rgb*fill.a,fill.a);}" ++
   "if strokeHit {element=vec4f(stroke.rgb*stroke.a,stroke.a)+element*(1.0-stroke.a);}" ++
@@ -831,11 +821,9 @@ private def Scene.sampleAt (s : Scene) (screenX screenY : Float) : Color := Id.r
       | none => (strokeCondition primitive.geometry base primitive.style.lineCap).eval env
       | some pieces => Id.run do
         let mut hit := false
-        let mut offset := base+20
+        let mut offset := base+20+geometryTailSize primitive.geometry
         for piece in pieces do
-          let condition := match piece with
-            | .line .. => strokeCondition piece offset .butt
-            | _ => fillCondition piece offset
+          let condition := pieceCondition piece offset
           hit := hit || condition.eval env
           offset := offset+20
         return hit

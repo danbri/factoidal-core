@@ -187,3 +187,5 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-31 | [Resident raw WebGPU snapshot sessions](20261031-svg-resident-rendering.md) | same commit | retained GPU resources, 68 Deno tests/12 C checks, twenty actual Apple Metal frame/readbacks; measured throughput remains below 12 Hz |
 
 | 2026-10-31 | [Retained SVG linear paths](20261031-svg-linear-paths.md) | — | bounded Lean paths, compound glyphs, real GPU comparison and measured limits |
+
+| 2026-11-01 | [Shared retained SVG linear strokes](20261101-svg-linear-strokes.md) | same commit | open/closed contours, miter fallback, total pathLength, one-opacity union; one official same-renderer GPU reference pair exactly matches |

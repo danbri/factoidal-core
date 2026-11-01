@@ -30,7 +30,7 @@ def run : IO Unit := do
   check (sample (path "M0 0L20 0L0 20" "transform='translate(5,5)'") 6 6 == black) "path CTM"
   for d in ["L0 0","M0","M,0 0","M0,,0","M0 0,","M0 0LZ","M0 0Z1 2","M0 0Q1 2 3 4","M1000000 0l1 0","M0 0L1. 2","M0 0L1.e2 2","M0 0p1 2"] do
     check (!(NativeSVG.parse (path d)).isOk) ("invalid/unsupported path accepted: "++d)
-  check (!(NativeSVG.parse (path "M0 0L10 10" "stroke='black'")).isOk) "unsupported path stroke accepted"
+  check ((NativeSVG.parse (path "M0 0L10 10" "stroke='black'")).isOk) "linear path stroke refused"
   check (!(NativeSVG.parse (path (String.join (List.replicate 129 "M0 0")))).isOk) "subpath budget ignored"
   check (!(NativeSVG.parse (path ("M"++String.ofList (List.replicate 40000 '0')++" 0"))).isOk) "numeric scan budget ignored"
   let excessiveData := "M0 0" ++ String.join (List.replicate 512 "L1 1")

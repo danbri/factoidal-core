@@ -1,7 +1,7 @@
 import Init
 
 /- Bounded retained linear SVG path syntax. Numeric conversion is injected from
-   the existing SVG reader, not duplicated here. Curves/arcs/strokes remain an
+   the existing SVG reader, not duplicated here. Curves/arcs remain an
    explicit unsupported feature; this is not the complete SVG path grammar. -/
 namespace NativeSVG
 structure Point where
@@ -134,7 +134,7 @@ def parse (number : String → Except String Float) (source : String) : Except S
   throw "path parser exceeded token bound"
 
 /-- Fill implicitly closes every open subpath. Closedness is retained separately
-    for future stroke semantics. No edge connects distinct contours. -/
+    for the separate SVGStroke stroke-edge traversal. No edge connects distinct contours. -/
 def edges (contours : List Contour) : List (Point × Point) :=
   contours.flatMap fun contour =>
     contour.points.zip (contour.points.drop 1 ++ contour.points.take 1)

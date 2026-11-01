@@ -95,7 +95,7 @@ Deno.test("SVG ellipse fill and polygon nonzero/evenodd winding are implemented 
  rejects(()=>e.compile(wrap('<ellipse rx="auto" ry="5"/>')),"SVG profile:");
  rejects(()=>e.compile(wrap('<ellipse rx="5"/>')),"explicit numeric rx and ry");
  rejects(()=>e.compile(wrap('<ellipse rx="5" ry="5" stroke="black"/>')),"ellipse stroke");
- rejects(()=>e.compile(wrap('<polygon points="0 0 10 0 10 10" stroke="black"/>')),"polygon stroke");
+ assert(e.compile(wrap('<polygon points="0 0 10 0 10 10" stroke="black"/>')).primitiveCount===1,"Polygon stroke admission");
 });
 
 Deno.test("SVG zero dimensions disable painting; negative geometry is an explicit refusal",async()=>{
@@ -128,7 +128,7 @@ Deno.test("SVG CSS stylesheet and inline declarations affect Lean geometry paint
 
 Deno.test("SVG refuses unsupported features rather than silently losing rendering semantics",async()=>{
  const e=await loadSVG();
- for(const element of ['polyline','text','use','image','foreignObject','defs','linearGradient','filter','clipPath','mask','script','svg'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
+ for(const element of ['text','use','image','foreignObject','defs','linearGradient','filter','clipPath','mask','script','svg'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
  for(const attrs of ['style="filter:blur(2px)"','class="red"','transform="perspective(1)"','stroke-linecap="square"','stroke-linejoin="bevel"','rx="2"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
  rejects(()=>e.compile('<?xml-stylesheet href="a.css"?>'+wrap('')),"processing instruction");
  rejects(()=>e.compile('<!DOCTYPE svg>'+wrap('')),"DOCTYPE");
@@ -232,12 +232,12 @@ Deno.test("SVG retained compound linear paths implement moveto, closure, winding
  equal(e.sample(mixed,6,6),[0,0,0]);equal(e.sample(mixed,25,25),[0,0,0]);
  equal(e.compile(mixed).wgsl,e.compile(wrap('<rect width="1" height="1"/>')).wgsl);
  for(const d of ['L0 0','M0','M,0 0','M0,,0','M0 0,','M0 0LZ','M0 0Z1 2','M0 0Q1 2 3 4','M0 0C1 2 3 4 5 6','M0 0A2 2 0 0 0 10 10','M1000000 0l1 0','M0 0L1. 2','M0 0L1.e2 2','M0 0p1 2'])rejects(()=>e.compile(path(d)),"SVG profile:");
- rejects(()=>e.compile(path('M0 0L10 10','stroke="black"')),"path stroke/joins unsupported");
+ assert(e.compile(path('M0 0L10 10','stroke="black"')).primitiveCount===1,"Linear path stroke admission");
  rejects(()=>e.compile(path('M0 0'.repeat(129))),"subpath count");
  rejects(()=>e.compile(path('M0 0'+'L1 1'.repeat(512))),"point/edge count");
  rejects(()=>e.compile(path(' '.repeat(65537))),"path data exceeds");
  rejects(()=>e.compile(path('M'+'0'.repeat(40000)+' 0')),"path numeric token exceeds");
- rejects(()=>e.compile(path('M0 0H1V1Z','pathLength="5"')),"unsupported attribute");
+ assert(e.compile(path('M0 0H1V1Z','pathLength="5"')).primitiveCount===1,"Path calibration admission");
 });
 
 Deno.test("SVG dash union retains pattern phase and single opacity",async()=>{
@@ -247,7 +247,7 @@ Deno.test("SVG dash union retains pattern phase and single opacity",async()=>{
  equal(e.sample(doc,15,20),[0,0,0]);equal(e.sample(doc,25,20),[255,255,255]);
  const alpha=wrap('<line x1="20" y1="20" x2="60" y2="20" stroke="red" stroke-width="10" stroke-linecap="round" stroke-dasharray="2 2" stroke-opacity=".5" opacity=".5"/>');
  equal(e.sample(alpha,23,20),[255,191,191]);
- rejects(()=>e.compile(wrap('<circle r="10" stroke="black" stroke-dasharray="2 2"/>')),"dashed strokes currently support rect and line only");
+ rejects(()=>e.compile(wrap('<circle r="10" stroke="black" stroke-dasharray="2 2"/>')),"dashed curved strokes unsupported");
  rejects(()=>e.compile(wrap('<line stroke="black" stroke-dasharray="-1 2"/>')),"negative");
 });
 
@@ -260,4 +260,14 @@ Deno.test("SVG pathLength calibrates nonpercentage dash distances",async()=>{
        e.compile(line('stroke-dasharray="10% 20%" stroke-dashoffset="5%"')));
  rejects(()=>e.compile(line('pathLength="-1"')),"negative pathLength");
  rejects(()=>e.compile(line('pathLength="0" stroke-dasharray="1 1"')),"infinite dash calibration unsupported");
+});
+
+Deno.test("SVG linear strokes keep open paths open and compose subpaths once",async()=>{
+ const e=await loadSVG();
+ const open=wrap('<polyline points="10,10 30,10 30,30" fill="none" stroke="black" stroke-width="4"/>');
+ equal(e.sample(open,20,20),[255,255,255]);equal(e.sample(open,31,8),[0,0,0]);
+ const closed=wrap('<path d="M10 10H30V30Z" fill="none" stroke="black" stroke-width="4"/>');
+ equal(e.sample(closed,20,20),[0,0,0]);
+ const overlap=wrap('<path d="M10 30H60 M30 10V60" fill="none" stroke="red" stroke-width="10" stroke-opacity=".5" opacity=".5"/>');
+ equal(e.sample(overlap,30,30),[255,191,191]);
 });
