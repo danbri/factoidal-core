@@ -24,3 +24,7 @@ Final source-artifact SHA256:
 - reference: `62688f139ea86db3463cd50d08fad3fe4bcb0811756dbca5048b510294f5c91d`
 
 Build ordering and link inputs include SVGStroke; shell syntax checks pass. Deno artifact tests were updated for supported linear strokes but were not run against a freshly rebuilt WASM engine. No heavy WASM rebuild, executable release or browser runtime deployment was performed.
+
+## Endpoint rounding regression
+
+A follow-up reproduced loss of the terminal round cap on the open contour `(0,0), (1,1), (2,2), (3,3)`: summing three `sqrt(2)` lengths and repeatedly subtracting can leave a value just larger than the final segment. The former fallback placed that cap at the contour start. Endpoint lookup now selects the actual final stroke-edge endpoint at total distance and on traversal fallthrough; degenerate contours retain their sole point. The new regression failed before the fix and passes afterward, also checking that the start cap is not duplicated. This is a concrete floating-point regression check, not a proof covering all Float geometry.

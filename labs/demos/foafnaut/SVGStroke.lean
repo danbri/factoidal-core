@@ -53,12 +53,15 @@ def retain (contours : List Contour) (pattern : List Float) (offset width : Floa
     let total : Float := sizes.foldl (·+·) 0
     let spans ← NativeSVGDash.intervals pattern offset total
     let seam := contour.closed && total > 0 && spans.any (fun a => a.first==0 && a.last>0) && spans.any (fun a => a.last==total && a.first<total)
+    let terminal := (segments.getLast?.map (·.2)).getD (contour.points.headD ⟨0,0⟩)
     let pointAt := fun (distance : Float) => Id.run do
+      -- Repeated Float subtraction need not recover the final segment length.
+      if distance >= total then return terminal
       let mut left := distance
       for ((a,b),size) in segments.zip sizes do
         if left <= size then return interpolate a b (left/size)
         left := left-size
-      return contour.points.headD ⟨0,0⟩
+      return terminal
     for span in spans do
       let mut start : Float := 0
       for ((a,b),size) in segments.zip sizes do

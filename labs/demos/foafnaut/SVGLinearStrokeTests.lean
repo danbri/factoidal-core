@@ -14,6 +14,10 @@ def run : IO Unit := do
   check ((NativeSVGStroke.join ⟨0,0⟩ ⟨10,0⟩ ⟨10,10⟩ 2 4).length==2) "right-angle miter"
   check ((NativeSVGStroke.join ⟨0,0⟩ ⟨10,0⟩ ⟨0,1⟩ 2 4).length==1) "acute miter must bevel"
   check ((NativeSVGStroke.join ⟨0,0⟩ ⟨10,0⟩ ⟨0,0⟩ 2 4).isEmpty) "reversal fabricated join"
+  let .ok diagonal := NativeSVGStroke.retain [⟨[⟨0,0⟩,⟨1,1⟩,⟨2,2⟩,⟨3,3⟩],false⟩] [] 0 2 true
+    | throw (IO.userError "diagonal stroke refused")
+  check (diagonal.any (fun p => match p with | .disk c _ => c.x==3 && c.y==3 | _ => false)) "Float subtraction lost terminal round cap"
+  check ((diagonal.filter (fun p => match p with | .disk c _ => c.x==0 && c.y==0 | _ => false)).length==1) "terminal cap duplicated at start"
   let openPath := "<path d='M10 10H30V30' fill='none' stroke='black' stroke-width='4'/>"
   let closedPath := "<path d='M10 10H30V30Z' fill='none' stroke='black' stroke-width='4'/>"
   check (sample openPath 20 20==white && sample closedPath 20 20==black) "fill closure leaked into stroke"
