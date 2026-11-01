@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-01 | [SVG dash numeric refinement](20261101-svg-dash-numeric-refinement.md) | pending | current — whole-result numeric equality and vacuous-output mutation rejection |
 | 2026-11-01 | [SVG dash unit provenance](20261101-svg-dash-unit-provenance.md) | 13f74302e | current — paired value/unit records, kernel proofs, unchanged fixture artifact |
 | 2026-11-01 | [SVG coverage diagnostics](20261101-svg-coverage-diagnostics.md) | 7631f3251 | current — exact-area probe distinguishes sampling quality from browser matching |
 | 2026-11-01 | [SVG pathLength calibration](20261101-svg-pathlength.md) | 7f21726a3 | current — source tests pass; official GPU comparison still fails at stroke edges |

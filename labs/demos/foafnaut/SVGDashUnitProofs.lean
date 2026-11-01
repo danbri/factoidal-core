@@ -28,6 +28,41 @@ theorem normalizeLengths_even (pattern result : List Length)
   all_goals try simp only [List.length_append]
   all_goals omega
 
+private theorem numeric_result_form (pattern result : List Float)
+    (h : normalize pattern = .ok result) :
+    result = [] ∨ result = (if pattern.length%2 == 1 then pattern++pattern else pattern) := by
+  simp only [normalize, bind, pure, Except.bind, Except.pure] at h
+  repeat first | (split at h) | simp_all
+  all_goals simp_all
+
+/-- Forgetting unit provenance commutes with the actual numeric normalizer,
+    including its exact error strings. This prevents vacuous all-empty output. -/
+theorem normalizeLengths_numeric (pattern : List Length) :
+    (normalizeLengths pattern).map (List.map Length.value) =
+      normalize (pattern.map Length.value) := by
+  cases h : normalize (pattern.map Length.value) with
+  | error message => simp [normalizeLengths, h, bind, Except.bind, Except.map]
+  | ok values =>
+    rcases numeric_result_form _ _ h with empty | shape
+    · subst values
+      simp [normalizeLengths, h, bind, pure, Except.bind, Except.pure, Except.map]
+    · subst values
+      by_cases odd : pattern.length % 2 = 1
+      · by_cases empty : pattern = []
+        · simp [empty] at odd
+        · simp [normalizeLengths, h, bind, pure, Except.bind, Except.pure, Except.map, odd, empty, List.map_append]
+      · by_cases empty : pattern = []
+        · have hz : normalize [] = .ok [] := by simpa [empty] using h
+          simp [normalizeLengths, empty, hz, bind, pure, Except.bind, Except.pure, Except.map]
+        · simp [normalizeLengths, h, bind, pure, Except.bind, Except.pure, Except.map, odd, empty]
+
+/-- Percentage distances are unchanged by every supplied calibration scale. -/
+theorem Length.calibrated_percentage (length : Length) (scale : Float)
+    (h : length.percentage = true) : length.calibrated scale = length.value := by
+  simp [Length.calibrated, h]
+
+#print axioms normalizeLengths_numeric
+#print axioms Length.calibrated_percentage
 #print axioms normalizeLengths_provenance
 #print axioms normalizeLengths_even
 end NativeSVGDash

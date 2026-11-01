@@ -10,4 +10,10 @@ private def values (p : List Length) := (normalizeLengths p).toOption.map (List.
 #guard !(normalizeLengths [⟨-1,true⟩]).isOk
 #guard Length.calibrated ⟨3,true⟩ 5 == 3
 #guard Length.calibrated ⟨3,false⟩ 5 == 15
+-- A vacuous normalizer returning [] would preserve evenness/provenance but
+-- must fail this numeric-result control and normalizeLengths_numeric.
+#guard values [⟨2,false⟩,⟨3,true⟩] == some [2,3]
+#guard match normalizeLengths [⟨-1,false⟩] with
+  | .error message => message == "invalid negative/nonfinite dash length"
+  | .ok _ => false
 end NativeSVGDashUnitTests
