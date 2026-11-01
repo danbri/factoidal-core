@@ -192,11 +192,70 @@ def docOfKids (e : Env) (o : ParseOpts) (kids : List Node) (uri : String) : M Do
       | .error x => throw x
     | _, _ => err "FODC0009" "no schema to validate with"
 
+/-- Whether validation identifies simple or complex-with-simple content.
+This exception is local to the parent; unlike xml:space, it is not inherited. -/
+def schemaSimpleContent (s : SchemaHook) (r : NRec) : Bool :=
+  match r.tann with
+  | none => false
+  | some q => match s.contentInfo q with
+    | some info => info.variety == "simple"
+    | none => builtinTypeDerives q { uri := "http://www.w3.org/2001/XMLSchema", loc := "anySimpleType" }
+
+/-- Strip whitespace text leaves only after schema validation, preserving
+simple content and inherited xml:space. Compact the preorder node array:
+merely unlinking children leaves text visible to range-based string values
+and axes. Attributes, annotations and typed values are copied unchanged.
+Input is a freshly constructed XDM document with parents before children. -/
+def stripValidatedWs (s : SchemaHook) (d : Doc) : Doc := Id.run do
+  let mut spaces : Array Bool := #[]
+  let mut retained : Array Bool := #[]
+  let mut ranks : Array Nat := #[0]
+  let mut count := 0
+  for r in d.nodes do
+    let inherited := r.parent.map (fun p => spaces.getD p false) |>.getD false
+    let space := r.attrs.toList.findSome? (fun j =>
+      let a := d.get j
+      if a.name.uri == "http://www.w3.org/XML/1998/namespace" && a.name.loc == "space"
+      then some a.value else none)
+    let preserve := match space with
+      | some "preserve" => true
+      | some "default" => false
+      | _ => inherited
+    spaces := spaces.push preserve
+    let simple := r.parent.map (fun p => schemaSimpleContent s (d.get p)) |>.getD false
+    let keep := r.kind != .text || !isXmlWs r.value || preserve || simple
+    retained := retained.push keep
+    if keep then count := count + 1
+    ranks := ranks.push count
+  let remap := fun i => ranks.getD i 0
+  let links := fun (is : Array Nat) => (is.filter (fun i => retained.getD i false)).map remap
+  let mut nodes := #[]
+  for i in [:d.nodes.size] do
+    if retained.getD i false then
+      let r := d.get i
+      nodes := nodes.push { r with
+        parent := r.parent.map remap, children := links r.children, attrs := links r.attrs,
+        last := (ranks.getD (r.last + 1) count) - 1 }
+  let origin := d.origin.map (fun (id, indices, source) =>
+    (id, (indices.toList.zipIdx.filter (fun (_, i) => retained.getD i false)).map Prod.fst |>.toArray, source))
+  return { d with nodes, origin }
+
+/-- Parsing applies whitespace policy to the typed document, after the
+validator has seen the full lexical content and computed its annotations. -/
+def parsedDocOfKids (e : Env) (o : ParseOpts) (kids : List Node) (uri : String) : M Doc := do
+  let d ← docOfKids e o kids uri
+  pure (if o.stripAll && o.xsd != "skip" then stripValidatedWs e.schema d else d)
+
+theorem parsedDocOfKids_no_strip (e : Env) (o : ParseOpts) (kids : List Node) (uri : String)
+    (h : o.stripAll = false) : parsedDocOfKids e o kids uri = docOfKids e o kids uri := by
+  unfold parsedDocOfKids
+  cases docOfKids e o kids uri <;> simp [h] <;> rfl
+
 /-- The children of a parsed document after the whitespace rules of the
     options (`strip-space`, and ignorable whitespace under DTD
     validation) and xml:id processing. -/
 def docKids (o : ParseOpts) (d : Document) : List Node :=
-  let ks := if o.stripAll then d.children.map (stripWs 100000 false) else d.children
+  let ks := if o.stripAll && o.xsd == "skip" then d.children.map (stripWs 100000 false) else d.children
   let ks := match d.doctype with
     | some dt => if o.dtdValidation then ks.map (stripIgnorable dt 100000) else ks
     | none => ks
@@ -270,7 +329,7 @@ def parseXmlFn : LibFn := fun _ e a => do
     let o ← parseOpts e (argN a 1)
     let d ← parseDocument e o src
     let kids := docKids o d
-    let doc := { (← docOfKids e o kids "") with baseUri := o.baseUri }
+    let doc := { (← parsedDocOfKids e o kids "") with baseUri := o.baseUri }
     pure [doc.rootItem (runtimeDocId "parse-xml" src.str)]
 
 /-! ## fn:parse-xml-fragment -/
@@ -309,9 +368,9 @@ def parseFragmentFn : LibFn := fun _ e a => do
       let kids := match d.root with
         | .element _ _ ks => ks
         | _ => []
-      let kids := if o.stripAll then (kids.filter (fun k => match k with
+      let kids := if o.stripAll && o.xsd == "skip" then (kids.filter (fun k => match k with
           | .text t => !isXmlWs t | _ => true)).map (stripWs 100000 false) else kids
-      let doc := { (← docOfKids e o kids "") with baseUri := o.baseUri }
+      let doc := { (← parsedDocOfKids e o kids "") with baseUri := o.baseUri }
       pure [doc.rootItem (runtimeDocId "parse-xml-fragment" src.str)]
 
 /-! ## Text resources -/
@@ -505,7 +564,7 @@ def docFn (e : Env) (a : List Seq) : M Seq := do
         -- documents read with different options are different documents
         let oSig := toString o.stripAll ++ toString o.dtdValidation ++ toString o.trustExternal ++ toString o.xinclude ++ o.xsd
         -- fn:doc: a document that cannot be validated is not available (FODC0002)
-        let doc ← match docOfKids e o kids uri with
+        let doc ← match parsedDocOfKids e o kids uri with
           | .ok d => pure d
           | .error x => err "FODC0002" x.msg
         pure [doc.rootItem (runtimeDocId "doc" (uri ++ "|" ++ oSig))]
