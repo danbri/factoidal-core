@@ -222,6 +222,14 @@ Float32 upload or the shader's field interpretation. The new Lean theorems
 compile with only Lean's standard `propext`, `Classical.choice` and `Quot.sound`
 axioms in their dependency sets.
 
+`Primitive.rows_length` proves the complete flattened record has exactly four
+scalars per `Primitive.rowCount`, and
+`Primitive.shaderRowAdvance_eq_rowCount` proves the Nat-level cursor formula
+agrees with that count. `headerModeCode_roundCap` and
+`headerModeCode_hasTransform` prove the low and high mode bits mean round cap
+and transform-present respectively. The generated WGSL remains text, so these
+theorems do not certify that text's parsing or the `Float`-to-`u32` header cast.
+
 The actual browser-host raw WebGPU track now has **2 matches, 23 unsupported and
 13 unavailable** out of the unchanged 38 WPT cases, with no mismatches/rejections.
 The two missing-paint fallback cases match every pixel of their independently

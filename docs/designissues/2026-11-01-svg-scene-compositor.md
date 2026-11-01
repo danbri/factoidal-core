@@ -128,8 +128,11 @@ the expected variable geometry rows;
 formula used by WGSL matches that geometry-tail count;
 `dashPieceData_length` and `dashPayloadData_length` prove the five-vec4 dash
 stride used by the loop. The affine row count is derived from shared
-`AffineRows.vec4RowCount`. These are producer-side layout proofs; the complete
-host upload and shader-load refinement remains open.
+`AffineRows.vec4RowCount`. `Primitive.rows_length` proves the complete payload
+length is four scalar lanes per row, and `Primitive.shaderRowAdvance_eq_rowCount`
+ties that length to the Lean-level cursor formula. Header mode bits for round
+caps and transform presence are also checked. The WGSL remains generated text,
+and Float-to-u32 conversion, host upload and shader-load refinement remain open.
 
 ### Progress: ordered source-over batches (2026-11-01)
 

@@ -61,6 +61,11 @@ def toVec4Rows (r : AffineRows α) : List (List α) :=
 theorem toVec4Rows_flatten (r : AffineRows α) :
     r.toVec4Rows.flatten = r.toList := rfl
 
+theorem toVec4Rows_flatten_length (r : AffineRows α) :
+    r.toVec4Rows.flatten.length = vec4RowCount * vec4LaneCount := by
+  rw [toVec4Rows_flatten]
+  simp [toList, vec4RowCount, vec4LaneCount]
+
 theorem toVec4Rows_length (r : AffineRows α) : r.toVec4Rows.length = vec4RowCount := rfl
 
 theorem toVec4Rows_lane_lengths (r : AffineRows α) :

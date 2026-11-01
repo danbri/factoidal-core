@@ -168,6 +168,9 @@ inductive FillRule where | nonzero | evenodd
   deriving Repr, BEq
 inductive LineCap where | butt | round
   deriving Repr, BEq
+def LineCap.headerModeBit : LineCap → Nat
+  | .butt => 0
+  | .round => 1
 structure Style where
   fill : Paint := .solid (rgb 0 0 0)
   stroke : Paint := .none
@@ -779,10 +782,21 @@ private def geometryTailSize (geometry : Geometry) : Nat := geometryTailRowCount
 def primitiveFixedRowCount : Nat := 5
 def dashPieceRowCount : Nat := 5
 def affineTransformRowCount : Nat := L4Factoidal.Math.AffineRows.vec4RowCount
+def Primitive.headerModeCode (p : Primitive) : Nat :=
+  p.style.lineCap.headerModeBit +
+    (if p.transform.identity then 0 else 2)
+theorem Primitive.headerModeCode_roundCap (p : Primitive) :
+    p.headerModeCode % 2 = p.style.lineCap.headerModeBit := by
+  cases hcap : p.style.lineCap <;> cases h : p.transform.identity <;>
+    simp [Primitive.headerModeCode, LineCap.headerModeBit, hcap, h]
+theorem Primitive.headerModeCode_hasTransform (p : Primitive) :
+    (p.headerModeCode >= 2) = (!p.transform.identity) := by
+  cases hcap : p.style.lineCap <;> cases h : p.transform.identity <;>
+    simp [Primitive.headerModeCode, LineCap.headerModeBit, hcap, h]
 def Primitive.fixedRows (p : Primitive) : List Float :=
   let (tag,count) := p.geometry.recordTagCount
   geometryRows p.geometry ++ [Float.ofNat tag,Float.ofNat count,
-    if p.style.rule == .evenodd then 1 else 0,(if p.style.lineCap == .round then 1 else 0)+(if p.transform.identity then 0 else 2)] ++
+    if p.style.rule == .evenodd then 1 else 0,Float.ofNat p.headerModeCode] ++
     resolved p.style.fill p.style p.style.fillOpacity ++
     resolved p.style.stroke p.style p.style.strokeOpacity ++
     [p.style.strokeWidth,p.effectiveOpacity,Float.ofNat (p.dashParts.getD []).length,if p.dashParts.isSome then 1 else 0]
@@ -808,16 +822,52 @@ theorem dashPayloadData_length (width : Float) (pieces : List NativeSVGStroke.Pi
     change (dashPieceData width piece ++ dashPayloadData width rest).length = _
     rw [List.length_append, dashPieceData_length, ih]
     simp [Nat.add_mul, Nat.one_mul, Nat.add_comm]
-private def Primitive.rows (p : Primitive) : List Float :=
+/-- Optional inverse CTM tail, represented by the shared two-vec4 affine rows. -/
+def Primitive.transformTailData (p : Primitive) : List Float :=
+  if p.transform.identity then [] else
+    let t := p.transform.inverse
+    (t.toPackedRows floatOps).toVec4Rows.flatten
+theorem Primitive.transformTailData_length (p : Primitive) :
+    p.transformTailData.length = if p.transform.identity then 0 else affineTransformRowCount * 4 := by
+  by_cases h : p.transform.identity
+  · simp [Primitive.transformTailData, h]
+  · simp only [Primitive.transformTailData, if_neg h]
+    rw [L4Factoidal.Math.AffineRows.toVec4Rows_flatten_length]
+    rfl
+def Primitive.rows (p : Primitive) : List Float :=
   p.fixedRows ++
   geometryTailData p.geometry ++
   dashPayloadData p.style.strokeWidth (p.dashParts.getD []) ++
-  (if p.transform.identity then [] else
-    let t := p.transform.inverse
-    -- Keep the CPU payload's scalar order tied to the two vec4 rows the WGSL
-    -- path indexes. Affine.toVec4Rows_flatten proves this flattening preserves
-    -- the canonical scalar representation used by packed affine evaluation.
-    (t.toPackedRows floatOps).toVec4Rows.flatten)
+  p.transformTailData
+def Primitive.rowCount (p : Primitive) : Nat :=
+  primitiveFixedRowCount + geometryTailRowCount p.geometry +
+  (p.dashParts.getD []).length * dashPieceRowCount +
+  (if p.transform.identity then 0 else affineTransformRowCount)
+def Primitive.shaderRowAdvance (p : Primitive) : Nat :=
+  primitiveFixedRowCount +
+  shaderTailRowsFromHeader p.geometry.recordTagCount.1 p.geometry.recordTagCount.2 +
+  dashPieceRowCount * (p.dashParts.getD []).length +
+  (if p.headerModeCode >= 2 then affineTransformRowCount else 0)
+theorem Primitive.shaderRowAdvance_eq_rowCount (p : Primitive) :
+    p.shaderRowAdvance = p.rowCount := by
+  cases h : p.transform.identity <;>
+    simp [Primitive.shaderRowAdvance, Primitive.rowCount,
+      Geometry.shaderTailRowsFromHeader_eq_tailRows,
+      Primitive.headerModeCode_hasTransform, h, Nat.mul_comm]
+theorem Primitive.rows_length (p : Primitive) :
+    p.rows.length = p.rowCount * 4 := by
+  by_cases h : p.transform.identity
+  · simp [Primitive.rows, Primitive.rowCount, h, Primitive.fixedRows_length,
+      geometryTailData_length, dashPayloadData_length, Primitive.transformTailData_length,
+      primitiveFixedRowCount, dashPieceRowCount, Nat.add_mul, Nat.mul_assoc, Nat.add_assoc]
+  · simp [Primitive.rows, Primitive.rowCount, h, Primitive.fixedRows_length,
+      geometryTailData_length, dashPayloadData_length, Primitive.transformTailData_length,
+      primitiveFixedRowCount, dashPieceRowCount, affineTransformRowCount,
+      L4Factoidal.Math.AffineRows.vec4RowCount,
+      Nat.add_mul, Nat.mul_assoc, Nat.add_assoc]
+theorem Primitive.rows_length_matches_shaderRowAdvance (p : Primitive) :
+    p.rows.length = p.shaderRowAdvance * 4 := by
+  rw [Primitive.rows_length, Primitive.shaderRowAdvance_eq_rowCount]
 private def Scene.data (s : Scene) : Array Float :=
   ([s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
     s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight] ++
