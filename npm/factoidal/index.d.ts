@@ -1570,10 +1570,14 @@ export type Sbm11Transport = (url: string, headers: Record<string, string>) =>
  * null before transport and appear in errors().
  * Browser worker default XHR accepts no caller auth/headers; provide an explicit
  * trusted transport for those. Its final-URL check cannot prevent an already
- * sent anonymous request or ambient same-origin browser cookies. */
+ * sent anonymous request or ambient same-origin browser cookies.
+ * Asynchronous: the engine's op containerPath (Lean, L4Factoidal.LWS.ContainerPath)
+ * decides the container URL and every resource URL. */
 export function lwsSbm11Reader(url: string, opts?: {
-  auth?: string; headers?: Record<string, string>; transport?: Sbm11Transport; timeoutMs?: number
-}): Sbm11Reader & { evidence(): Sbm11ReadEvidence[]; errors(): string[]; close(): void };
+  auth?: string; headers?: Record<string, string>; transport?: Sbm11Transport; timeoutMs?: number;
+  /** a loaded engine handle (default: loadEngine()); its op containerPath decides every URL */
+  engine?: object
+}): Promise<Sbm11Reader & { evidence(): Sbm11ReadEvidence[]; errors(): string[]; close(): void }>;
 
 /** One query against a store: open with the query's plan, query, close. */
 export function queryStore(

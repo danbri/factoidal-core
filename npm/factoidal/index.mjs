@@ -103,12 +103,15 @@ export { registerSbm11Source, mapReader };
 // A reader of an SBM11 generation held as LWS resources (lib/sbm11-lws.mjs;
 // https://github.com/danbri/factoidal/issues/1010 KR3). In Node the default
 // synchronous transport is a fetch in a worker thread (lib/sync-http-node.mjs),
-// stopped by the reader's close().
-export function lwsSbm11Reader(url, opts = {}) {
-  if (typeof opts.transport === 'function') return lwsSbm11ReaderWith(url, opts);
+// stopped by the reader's close(). Asynchronous: it loads the engine, whose
+// op containerPath decides the container URL and every resource URL
+// (formal/lean4/L4Factoidal/LWS/ContainerPath.lean).
+export async function lwsSbm11Reader(url, opts = {}) {
+  const engine = opts.engine ?? await loadEngine();
+  if (typeof opts.transport === 'function') return lwsSbm11ReaderWith(url, { ...opts, engine });
   const transport = nodeSyncTransport({ timeoutMs: opts.timeoutMs });
   try {
-    return lwsSbm11ReaderWith(url, { ...opts, transport, onClose: () => transport.close() });
+    return lwsSbm11ReaderWith(url, { ...opts, engine, transport, onClose: () => transport.close() });
   } catch (error) {
     transport.close();
     throw error;

@@ -11,28 +11,32 @@ const ROOT_QUERY = `SELECT ?subject ?predicate ?root WHERE {
   FILTER(isIRI(?root))
 }`;
 
-function httpUrl(value) {
-  if (typeof value !== 'string' || !value || value.trim() !== value || /[\\\u0000-\u0020]/u.test(value))
-    throw new TypeError('Expected an absolute HTTP(S) URL without whitespace or backslashes.');
-  const parsed = new URL(value);
-  if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash)
-    throw new TypeError('HTTP(S) URLs must not contain credentials, a query, or a fragment.');
-  // Refuse URL-parser repairs and ambiguous path encodings, rather than allow
-  // a target to acquire a different identity during request construction.
-  if (parsed.href !== value || /%(?:2f|5c|2e|25)/iu.test(parsed.pathname))
-    throw new TypeError('Use a canonical URL without dot segments or encoded path separators.');
-  return parsed;
-}
-function rootUrl(value) {
-  const parsed = httpUrl(value);
-  if (!parsed.pathname.endsWith('/')) throw new TypeError('A pod root must end with /.');
-  return parsed.href;
-}
-function within(root, value) {
-  const target = httpUrl(value);
-  if (target.origin !== new URL(root).origin || !target.href.startsWith(root))
-    throw new TypeError('The resource must be inside the selected pod root.');
-  return target.href;
+/** The engine's URL decisions for one pod (op containerPath,
+ * formal/lean4/L4Factoidal/LWS/ContainerPath.lean). A refusal becomes a
+ * TypeError here; no URL is parsed or compared in JavaScript. An engine
+ * without the op refuses every pod operation. */
+export async function podPaths(core) {
+  const engine = await core.loadEngine();
+  const ops = engine.call('ops', []).ops ?? [];
+  if (!ops.includes('containerPath'))
+    throw new TypeError('This engine has no containerPath op; pod storage needs @factoidal/core with containerPath (Lean URL checks).');
+  const decide = (request, message) => {
+    const r = engine.call('containerPath', [JSON.stringify(request)]);
+    if (!r.allowed) throw new TypeError(message ? `${message} (${r.reason})` : `${r.reason}.`);
+    return r.url;
+  };
+  return Object.freeze({
+    /** An absolute HTTP(S) URL in canonical form (a bootstrap profile). */
+    http: value => decide({ kind: 'target', url: value, canonical: true }, 'Expected a canonical absolute HTTP(S) URL without credentials, a query, or a fragment'),
+    /** A pod root: canonical, ending with /. */
+    root: value => decide({ kind: 'container', url: value, canonical: true }, 'A pod root must be a canonical HTTP(S) URL ending with /'),
+    /** A URL inside the root, at a path-segment boundary (theorem within_canonical_under). */
+    within: (root, value) => decide({ kind: 'within', root, url: value, canonical: true }, 'The resource must be inside the selected pod root'),
+    /** One new filename inside a folder of the root (theorem segmentIn_under). */
+    segment: (root, name) => decide({ kind: 'segment', root, name }, 'Choose one filename without path separators, escapes, or control characters'),
+    /** The folder above `folder`, never above the root (theorem parentIn_under). */
+    parent: (root, folder) => decide({ kind: 'parent', root, folder }, 'The folder must be inside the selected pod root'),
+  });
 }
 function readText(result) {
   if (typeof result?.body === 'string') return result.body;
@@ -53,7 +57,8 @@ function termText(term) {
  * No recursive profile/seeAlso traversal or implicit same-origin root guessing.
  * Discovery is provenance, not authorization or a storage conformance verdict. */
 export async function discoverPods({ core, client, bootstrapUrl }) {
-  const source = httpUrl(bootstrapUrl).href;
+  const paths = await podPaths(core);
+  const source = paths.http(bootstrapUrl);
   const fetched = await client.read(source, { accept: 'text/turtle' });
   const dataset = await core.parse(readText(fetched), { format: 'turtle', baseIRI: source });
   try {
@@ -65,7 +70,7 @@ export async function discoverPods({ core, client, bootstrapUrl }) {
       const declaration = { url: root.value, bootstrapUrl: source,
         subject: termText(row.get('subject')), predicate: termText(row.get('predicate')) };
       try {
-        declaration.url = rootUrl(declaration.url);
+        declaration.url = paths.root(declaration.url);
         const key = JSON.stringify(declaration);
         if (!seen.has(key)) { seen.add(key); roots.push(Object.freeze(declaration)); }
       } catch (error) { rejected.push({ ...declaration, message: error.message }); }
@@ -74,11 +79,19 @@ export async function discoverPods({ core, client, bootstrapUrl }) {
   } finally { dataset.dispose(); }
 }
 
+// The fields of a remembered pod, copied by name. Their URLs are decided by
+// the engine (podPaths) in the storage worker before any request; the page
+// that remembers them has no engine and makes no URL decision.
 function metadata(value) {
   if (!value || typeof value.subject !== 'string' || !value.subject ||
+      typeof value.url !== 'string' || typeof value.bootstrapUrl !== 'string' ||
       ![PIM + 'storage', RDF_TYPE].includes(value.predicate)) throw new TypeError('Invalid pod provenance.');
-  return { url: rootUrl(value.url), bootstrapUrl: httpUrl(value.bootstrapUrl).href,
+  return { url: value.url, bootstrapUrl: value.bootstrapUrl,
     subject: value.subject, predicate: value.predicate };
+}
+function checkedMetadata(paths, value) {
+  const pod = metadata(value);
+  return { ...pod, url: paths.root(pod.url), bootstrapUrl: paths.http(pod.bootstrapUrl) };
 }
 /** Persist allowlisted discovery metadata only, never arbitrary input fields. */
 export function rememberPods(discovery, storage = globalThis.localStorage) {
@@ -98,7 +111,7 @@ export function loadKnownPods(storage = globalThis.localStorage) {
   } catch { return []; }
 }
 export async function revalidateKnownPod({ core, client, pod }) {
-  const expected = metadata(pod);
+  const expected = checkedMetadata(await podPaths(core), pod);
   const discovery = await discoverPods({ core, client, bootstrapUrl: expected.bootstrapUrl });
   const current = discovery.roots.find(root => root.url === expected.url &&
     root.subject === expected.subject && root.predicate === expected.predicate);
@@ -109,11 +122,16 @@ export async function revalidateKnownPod({ core, client, pod }) {
 /** Explicit caller-supplied client owns transient credentials. A remembered
  * root carries provenance and is re-read before every write. A string root
  * is a directly selected target, not a claim of discovered provenance. */
-export function createPodStorage({ core, client, root }) {
-  const pod = typeof root === 'string' ? null : metadata(root);
-  const base = rootUrl(pod?.url ?? root);
+export function createPodStorage({ core, paths, client, root }) {
+  const pod = typeof root === 'string' ? null : checkedMetadata(paths, root);
+  const base = paths.root(pod?.url ?? root);
+  const within = paths.within;
   return Object.freeze({
     root: base,
+    /** One new filename inside `folder` (a folder of this root). */
+    rooted(folder, filename) { return within(base, paths.segment(within(base, folder), filename)); },
+    /** The folder above `folder` inside this root. */
+    parent(folder) { return paths.parent(base, folder); },
     async list(containerUrl = base) {
       const container = within(base, containerUrl);
       const result = await client.list(container);
@@ -143,10 +161,7 @@ export function createPodStorage({ core, client, root }) {
 }
 
 /** One editor-chosen filename below a selected root, never an arbitrary URL. */
-export function rootedPath(root, filename) {
-  const base = rootUrl(typeof root === 'string' ? root : root.url);
-  if (typeof filename !== 'string' || !filename || filename.trim() !== filename ||
-      filename === '.' || filename === '..' || /[/%\\?#\u0000-\u001f\u007f]/u.test(filename))
-    throw new TypeError('Choose one filename without path separators, escapes, or control characters.');
-  return within(base, base + encodeURIComponent(filename));
+export function rootedPath(paths, root, filename) {
+  const base = paths.root(typeof root === 'string' ? root : root.url);
+  return paths.within(base, paths.segment(base, filename));
 }

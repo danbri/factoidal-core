@@ -40,10 +40,12 @@ const eng = await loadEngine()
 const opsText = (() => { const r = eng.call('ops', []); return typeof r === 'string' ? r : JSON.stringify(r) })()
 const hasLws = opsText.includes('"lwsStep"')
 const hasSbm11 = opsText.includes('"sbm11Query"')
+const hasContainerPath = opsText.includes('"containerPath"')
 
 test('the package wasm serves the lws and sbm11 ops', () => {
   assert.ok(hasLws, 'ops reflection names lwsStep')
   assert.ok(hasSbm11, 'ops reflection names sbm11Query')
+  assert.ok(hasContainerPath, 'ops reflection names containerPath (the reader\'s URL decisions)')
 })
 
 /** Every file under the collection root, as relative names. */
@@ -92,9 +94,9 @@ test('start lws-serve and upload the fixture generation', async () => {
   assert.ok(FILES.includes('CURRENT') && FILES.includes('gen/manifest.sbm11'))
 })
 
-test('the LWS reader gives the bytes of the directory reader; the server answers 206', () => {
+test('the LWS reader gives the bytes of the directory reader; the server answers 206', async () => {
   const local = nodeDirectoryReader(ROOT)
-  const lws = lwsSbm11Reader(storeUrl)
+  const lws = await lwsSbm11Reader(storeUrl)
   try {
     assert.equal(lws.size('no-such-file'), null)
     for (const f of FILES) {
@@ -117,7 +119,7 @@ test('the LWS reader gives the bytes of the directory reader; the server answers
   }
 })
 
-test('a server that ignores Range: whole GETs, one request per file', () => {
+test('a server that ignores Range: whole GETs, one request per file', async () => {
   const inner = nodeSyncTransport()
   const noRange = (url, headers) => {
     const h = { ...headers }
@@ -125,7 +127,7 @@ test('a server that ignores Range: whole GETs, one request per file', () => {
     return inner(url, h)
   }
   const local = nodeDirectoryReader(ROOT)
-  const lws = lwsSbm11Reader(storeUrl, { transport: noRange })
+  const lws = await lwsSbm11Reader(storeUrl, { transport: noRange })
   try {
     for (const f of FILES) {
       const n = local.size(f)
@@ -147,7 +149,7 @@ test('a server that ignores Range: whole GETs, one request per file', () => {
 test('a changed entity tag between two reads of one file refuses the read', async () => {
   const url = `${origin}/stores/changing/`
   await fetch(url + 'CURRENT', { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: 'gen' })
-  const lws = lwsSbm11Reader(url)
+  const lws = await lwsSbm11Reader(url)
   try {
     assert.equal(lws.size('CURRENT'), 3)
     await fetch(url + 'CURRENT', { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: 'g2x' })
@@ -163,7 +165,7 @@ let remote = null
 let reader = null
 test('open the generation through LWS and through the directory', async () => {
   local = await openSbm11(ROOT)
-  reader = lwsSbm11Reader(storeUrl)
+  reader = await lwsSbm11Reader(storeUrl)
   remote = await openSbm11(storeUrl, { reader })
   assert.equal(remote.generation, 'gen')
   assert.equal(remote.terms, local.terms)

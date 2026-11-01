@@ -1,5 +1,5 @@
 import {boundedFetch} from './bounded-fetch.mjs';
-import {discoverPods,createPodStorage} from './pod-storage.mjs';
+import {discoverPods,createPodStorage,podPaths} from './pod-storage.mjs';
 import {decodePipelineDocument,MAX_PIPELINE_BYTES} from './pipeline-document.mjs';
 
 // Reuse the compositor worker's engine. Only the shared LWS client moves HTTP
@@ -18,12 +18,16 @@ export function createStorageHandler(getCore, clientModule = () => import('../ru
     if(!client){const {createLwsClient}=await clientModule();client=await createLwsClient({engine:await core.loadEngine(),fetch:transport,...(args.bearer?{bearer:args.bearer}:{})});clients.set(key,client);}
     if(operation==='discover')return discoverPods({core,client,bootstrapUrl:args.bootstrapUrl});
     if(!args.pod || typeof args.pod!=='object')throw Error('Select a discovered pod first.');
-    const store=createPodStorage({core,client,root:args.pod});
+    // Every URL below is decided by the engine (op containerPath) before a request.
+    const store=createPodStorage({core,paths:await podPaths(core),client,root:args.pod});
     if(operation==='list')return store.list(args.url);
     if(operation==='load')return store.load(args.url);
+    if(operation==='parent')return {url:store.parent(args.url)};
     if(operation==='save'){
       decodePipelineDocument(args.text); // do not save credentials/arbitrary objects as pipelines
-      return store.save(args.url,args.text,{etag:args.etag,create:args.create});
+      // A new file is a folder and one name; the engine forms its URL.
+      const url=args.name!==undefined?store.rooted(args.folder,args.name):args.url;
+      return store.save(url,args.text,{etag:args.etag,create:args.create});
     }
     throw Error('Unknown pipeline storage operation.');
   };

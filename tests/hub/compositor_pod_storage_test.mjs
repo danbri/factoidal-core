@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { discoverPods, createPodStorage, rootedPath, rememberPods, loadKnownPods,
-  revalidateKnownPod, KNOWN_PODS_KEY } from '../../docs/web/hub/data-compositor/pod-storage.mjs';
+  revalidateKnownPod, podPaths, KNOWN_PODS_KEY } from '../../docs/web/hub/data-compositor/pod-storage.mjs';
 import { createLwsClient, createDidKey } from '../../npm/factoidal/lws/client.mjs';
 const core = await import(process.env.FACTOIDAL_COMPOSITOR_TEST_ENGINE || '@factoidal/core');
+// The engine's URL decisions (op containerPath, L4Factoidal.LWS.ContainerPath).
+const paths = await podPaths(core);
 const bootstrapUrl='https://profile.example/foaf.ttl';
 const root='https://pod.example/alice/';
 const profile=`@prefix pim: <http://www.w3.org/ns/pim/space#>.
@@ -45,8 +47,8 @@ test('load retains exact text and ETag; update and create use explicit non-overw
   const client={read:async()=>readResult(' {"name":"😀"}\n'),
     update:async(url,args)=>{calls.push([url,args]);return {report:{etag:'"two"'}};},
     list:async()=>({report:{items:[{id:root+'one.json',format:'application/json'}]}})};
-  const pod=createPodStorage({client,root});
-  const url=rootedPath(root,'one.json');
+  const pod=createPodStorage({paths,client,root});
+  const url=rootedPath(paths,root,'one.json');
   const loaded=await pod.load(url);
   assert.equal(loaded.text,' {"name":"😀"}\n');assert.equal(loaded.etag,'"one"');
   assert.equal((await pod.save(url,loaded.text,{etag:loaded.etag})).etag,'"two"');
@@ -62,7 +64,7 @@ test('load retains exact text and ETag; update and create use explicit non-overw
 
 test('stale-tag conflicts propagate unchanged without retry or fallback overwrite',async()=>{
   let writes=0;const conflict=Object.assign(new Error('conflict'),{reason:'preconditionFailed'});
-  const pod=createPodStorage({root,client:{update:async()=>{writes++;throw conflict;}}});
+  const pod=createPodStorage({paths,root,client:{update:async()=>{writes++;throw conflict;}}});
   await assert.rejects(pod.save(root+'one.json','{}',{etag:'"stale"'}),error=>error===conflict);
   assert.equal(writes,1);
 });
@@ -71,7 +73,7 @@ test('provenance-bearing saves re-read bootstrap every time, and stale provenanc
   let body=profile,reads=0,writes=0;
   const client={read:async()=>{reads++;return readResult(body);},update:async()=>{writes++;return {};}};
   const discovered=await discoverPods({core,client,bootstrapUrl});
-  const pod=createPodStorage({core,client,root:discovered.roots.find(p=>p.url===root)});
+  const pod=createPodStorage({paths,core,client,root:discovered.roots.find(p=>p.url===root)});
   await pod.save(root+'one.json','{}',{create:true});
   assert.equal(reads,2);assert.equal(writes,1);
   body='';await assert.rejects(pod.save(root+'two.json','{}',{create:true}),/no longer declares/);
@@ -81,13 +83,13 @@ test('provenance-bearing saves re-read bootstrap every time, and stale provenanc
 test('URL boundaries reject repaired traversal, sibling prefixes, credentials, fragments and encoded escapes before requests',async()=>{
   const calls=[];const client={read:async url=>{calls.push(url);return readResult('{}');},update:async()=>{throw new Error('unexpected write');},
     list:async()=>({report:{items:[{id:'https://elsewhere.example/x.json'}]}})};
-  const pod=createPodStorage({root,client});
+  const pod=createPodStorage({paths,root,client});
   for(const url of ['https://pod.example/alice2/x','https://elsewhere.example/x',root+'../x',root+'%2e%2e/x',root+'%252e/x',root+'x?token=x',root+'x#fragment','https://user:pass@pod.example/alice/x',root+'a\\x'])
     await assert.rejects(pod.load(url),TypeError);
   assert.equal(calls.length,0);
   await assert.rejects(pod.list(),/selected pod root/);
-  for(const file of ['../x','a/b','a\\b','%2e','a?x','a#x','.', '..','\u0001'])assert.throws(()=>rootedPath(root,file),TypeError);
-  assert.equal(rootedPath(root,'résumé.json'),root+'r%C3%A9sum%C3%A9.json');
+  for(const file of ['../x','a/b','a\\b','%2e','a?x','a#x','.', '..','\u0001'])assert.throws(()=>rootedPath(paths,root,file),TypeError);
+  assert.equal(rootedPath(paths,root,'résumé.json'),root+'r%C3%A9sum%C3%A9.json');
 });
 
 test('browser-compatible LWS host uses injected engine without importing Node engine loader',async()=>{
@@ -170,8 +172,8 @@ test('real public LWS client/server roundtrip: discovery, listing, exact load/up
       mediaType:'text/turtle',precondition:'ifNoneMatchStar',retry412:0});
     const discovered=await discoverPods({core,client,bootstrapUrl:bootstrap});
     assert.equal(discovered.roots.length,1);assert.equal(discovered.roots[0].url,localRoot);
-    const pod=createPodStorage({core,client,root:discovered.roots[0]});
-    const url=rootedPath(localRoot,'pipeline.json');
+    const pod=createPodStorage({paths,core,client,root:discovered.roots[0]});
+    const url=rootedPath(paths,localRoot,'pipeline.json');
     const first=' {"title":"Original 😀"}\n';
     const created=await pod.save(url,first,{create:true});
     assert.ok(created.etag);
@@ -207,7 +209,7 @@ test('published engine client/server machines enforce non-overwrite and stale ET
       return new Response(response.body.length?response.body:null,
         {status:response.status,headers:response.headers});
     }});
-    const pod=createPodStorage({client,root:localRoot}), url=localRoot+'p.json';
+    const pod=createPodStorage({paths,client,root:localRoot}), url=localRoot+'p.json';
     const created=await pod.save(url,'{}',{create:true});
     const loaded=await pod.load(url);
     assert.equal(loaded.etag,created.etag);assert.equal(loaded.text,'{}');
