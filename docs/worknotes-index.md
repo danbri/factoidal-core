@@ -15,6 +15,8 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-01 | [Parse-specific schema errors](20261101-qt4-parse-schema-errors.md) | 789d0ba42 | current — parse-xml 53 pass, one fail, three unsupported in targeted native replay |
+| 2026-11-01 | [Routing package-gate repair](20261101-routing-package-gate-repair.md) | 242ae8751 | current — two failed test files pass against exact CI WASM; full rerun pending |
 | 2026-11-01 | [QT4 XML schema-option errors](20261101-qt4-xsd-option-errors.md) | 3b2759a86 | current — targeted native replay repairs parse-xml-437; other failures retained |
 | 2026-11-01 | [LWS browser import boundary](20261101-lws-browser-import.md) | 23c95cb3c | current — injected-engine browser import tests pass; live socket test blocked by sandbox |
 | 2026-11-01 | [Periodic independent Lean checking](20261101-periodic-kernel-checks.md) | pending | current — nightly advice; commands unavailable on pinned toolchain |
