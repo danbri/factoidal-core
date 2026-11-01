@@ -73,6 +73,74 @@ over an assertion that is not the document element).
 - `dsig11_rsa_template`: an accepted RSA signature is
   `rsaPkcs1Verify = true` under the key that is returned.
 
+## Signature generation (§3.1)
+
+Code: `formal/lean4/L4Factoidal/XML/DSig11Sign.lean`; signers in
+`XML/DSig11Native.lean`. Added 2026-11-01.
+
+`DSig11.sign be signer spec rand src` makes one `ds:Signature`:
+
+1. §3.1.1: the signature, with empty digest and signature values, is put
+   in its place (`enveloped`: the last child of the document element;
+   `enveloping`: the signature is the document and the content is in a
+   `ds:Object` with an `Id`). Each reference is digested by
+   `DSig11.referenceOctets`, the function core validation uses, in that
+   document.
+2. §3.1.2: `ds:SignedInfo` with the digests is put in place and
+   canonicalized by `DSig11.signedInfoOctets`, the function core validation
+   uses. An inclusive method takes the namespaces of the ancestors, so the
+   octets must come from the document that is returned, not from the
+   `ds:SignedInfo` text alone.
+3. The signer signs those octets. The value goes into `ds:SignatureValue`,
+   and `ds:KeyInfo` gets the public key as `ds:KeyValue`.
+4. Self-check: the result must pass core validation with the signer's
+   public key and `ds:KeyInfo` not read (for HMAC: the references, and the
+   MAC recomputed by the custodian). `dsig11_sign_validates` states this
+   for every backend. A request whose reference covers the signature value
+   (`URI=""` without the enveloped-signature transform) is refused here.
+
+### Signer component
+
+`Signer` is the custodian of one key (`docs/web/hub/webdav-lws-design.md`,
+"One custodian per privileged resource"). It gives its algorithm, its
+public key and signature values; the key stays in the closure of
+`hmacSigner`, `rsaSigner` or `p256Signer`. Decisions:
+
+- `rsaSigner` makes the EMSA-PKCS1-v1_5 block with
+  `JOSE.Pkcs1.emsaEncodeGen` (the function the verifier compares with) and
+  uses the constant-time HACL\* private operation of `Crypto/RsaOaep.lean`
+  (2048, 3072 and 4096-bit moduli; a smaller modulus is refused when the
+  signer is made). It verifies its value with the public operation before
+  it gives it out (fault attacks on RSA signing, Boneh, DeMillo and Lipton
+  1997).
+- `p256Signer`: the ECDSA nonce is the `rand` argument of each `sign` call
+  (32 octets from the host's random source), not a value fixed when the
+  signer is made, so one signer cannot sign two messages with one nonce.
+  `VC.Cryptosuite.diSigner` takes its nonce when it is made; the wasm op
+  `vcDiSecure` makes a new signer for each call (`Wasm/Ops/Vc.lean`).
+- XML Encryption (item 5) will take its private keys through the same kind
+  of component.
+
+### Round trips
+
+`lake exe l4xmldsig` signs the document of the signxml fixtures in 15 cases
+(`signCases`) with the test keys of `tests/xmldsig/signing-keys.tsv`
+(published; for tests only). Each result must validate with the key of its
+`ds:KeyInfo` and be refused after one character of the signed content
+changes. With `--sign-out DIR` the documents are written for
+`tests/xmldsig/verify_lean_signed.py`, which verifies them with signxml 5.2.
+Result of 2026-11-01: 15 pass, 0 fail (out of 15) in both. Two signxml
+differences are handled by name in that script:
+
+- `rsa-sha256-c14n10c`: `URI=""` gives the document "minus any comment
+  nodes" (§4.4.3.3), also before a WithComments method. signxml digests the
+  comments, so it refuses this signature, as expected; the case fails if
+  signxml starts to accept it.
+- signxml's copy of the XML Signature schema has no declaration of
+  `ec:InclusiveNamespaces`, which the strict wildcard of
+  `ds:CanonicalizationMethod` needs. The PrefixList case is verified again
+  without that schema check, and the output line says so.
+
 ## Open (each with an issue and an expected failure, or a refusal)
 
 - ECDSA other than P-256 with SHA-256:
@@ -83,7 +151,5 @@ over an assertion that is not the document element).
 - `ds:X509Data`: https://github.com/danbri/factoidal/issues/1226 (1 case).
 - RSA keys of 1024 bits: https://github.com/danbri/factoidal/issues/1227
   (10 cases; decision needed).
-- Signature generation through the one signer component
-  (`docs/web/hub/webdav-lws-design.md`, custodian principle), the 2001
-  interop vectors, and a wasm op: open items of item 4 of
+- The 2001 interop vectors and a wasm op: open items of item 4 of
   https://github.com/danbri/factoidal/issues/1165.
