@@ -168,14 +168,47 @@ input whatever its length argument is). HACL\*'s own `..._sha384` and
   `ecdsa_secp256r1_sha512_p1363_test.json` through
   `nativeBackend.ecdsaVerify`; four new generation cases.
 
+## XPath Filter 2.0 (2026-11-01, part 4)
+
+Code: `formal/lean4/L4Factoidal/XML/DSigFilter2.lean` (XML-Signature XPath
+Filter 2.0, W3C Recommendation 08 November 2002, algorithm
+`http://www.w3.org/2002/06/xmldsig-filter2`), called from
+`DSig11.applyTransform`.
+
+- §3.4: the filter node-set F starts as every node of the input document.
+  For each `XPath` element in order, the expression is evaluated once, with
+  the root node as the context node (`C14nXPath.xpathSelect`, the XPath 4.0
+  engine), the result is subtree-expanded (`expandArr`, one pass in node
+  table order, because a parent is always before its children, attributes
+  and namespace nodes), and F becomes F ∩ S', F − S' or F ∪ S'. The output
+  is the input node-set ∩ F.
+- `here()` (§3.3 of Filter 2.0, §6.6.3.1 of XML Signature) is a host
+  function of the XPath 4.0 engine (`C14nXPath.hereHost`). It names the
+  `XPath` element when the input is a node-set of the signature's document,
+  and is an error otherwise, as both specifications say. The XPath
+  filtering transform of §6.6.3 now has it too.
+- Theorems (2002 in the name): `filter2_2002_single_pass` (F equals the
+  flag Z of the single-pass method that §3.4 describes, for every operation
+  list), `filter2_2002_output_subset`, `filter2_2002_empty_input`,
+  `filter2_2002_union_only` (a transform of only `union` filters gives its
+  input, §4), `expandSpec_self` and `expandSpec_parent`.
+- Measured by: Merlin Hughes's vectors `merlin-xpath-filter2-three`
+  (`third_party/testing/xmldsig-filter2-interop`, provenance there). The
+  runner compares the octets of each reference with the published
+  canonical output and checks each digest. The signatures are DSA, so core
+  validation is an expected failure that names
+  https://github.com/danbri/factoidal/issues/1224.
+- XSLT stays refused, with a message that names
+  https://github.com/danbri/factoidal/issues/1225; a `#guard` in
+  `DSig11.lean` checks the refusal.
+
 ## Open (each with an issue and an expected failure, or a refusal)
 
 - ECDSA P-384 and P-521:
   https://github.com/danbri/factoidal/issues/1223 (18 interop cases). HACL\*
   has no P-384 or P-521 (https://github.com/danbri/factoidal/issues/1166).
 - DSA: https://github.com/danbri/factoidal/issues/1224.
-- XSLT and XPath Filter 2.0 transforms:
-  https://github.com/danbri/factoidal/issues/1225.
+- The XSLT transform: https://github.com/danbri/factoidal/issues/1225.
 - `ds:X509Data`: https://github.com/danbri/factoidal/issues/1226 (1 case).
 - RSA keys of 1024 bits: https://github.com/danbri/factoidal/issues/1227
   (10 cases; decision needed).

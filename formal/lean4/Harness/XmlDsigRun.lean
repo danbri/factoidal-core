@@ -6,6 +6,11 @@ Harness/XmlDsigRun — core validation (XML Signature 1.1 §3.2) by
     the XML Signature 1.1 Interop Test Report (W3C Note, 2012), provenance
     in its PROVENANCE.md. `hmac-sha1-truncated40` must be refused (report
     §6.2); every other one must validate. The HMAC key is "testkey".
+  * `third_party/testing/xmldsig-filter2-interop/`: Merlin Hughes's XPath
+    Filter 2.0 vectors (2002). Reference validation: the octets of each
+    reference equal the published canonical output and the digests match.
+    The signatures are DSA, so core validation is an expected failure
+    (https://github.com/danbri/factoidal/issues/1224).
   * `tests/xmldsig/fixtures/`: signatures made by signxml (an independent
     implementation) with RSA-2048, P-256 and HMAC keys, and negative cases
     made from them (`tests/xmldsig/make_fixtures.py`; `manifest.tsv` gives
@@ -97,6 +102,53 @@ def runOracle (t0 : Tally) (dir : String) : IO Tally := do
     let want := n != "signature-enveloping-hmac-sha1-truncated40.xml"
     t ← record t s!"xmldsig11-interop {n}" want ((oracleXfail.find? (·.1 == n)).map (·.2))
       (outcome (validateText nativeBackend cfg src))
+  return t
+
+/-- The XPath Filter 2.0 vectors (`merlin-xpath-filter2-three`): the
+file, and the number of references. `sign-F-c14n-N.txt` is the octets of
+reference N; for `sign-spec` the next N is the canonical `ds:SignedInfo`. -/
+def filter2Cases : List (String × Nat × Bool) :=
+  [("sign-spec", 2, true), ("sign-xfdl", 1, false)]
+
+/-- Reference validation (§3.2.1) of the XPath Filter 2.0 vectors: each
+reference's octets must equal the published canonical output and its
+digest must match; the canonical `ds:SignedInfo` likewise. Core validation
+of the whole signature is an expected failure (DSA,
+https://github.com/danbri/factoidal/issues/1224). -/
+def runFilter2 (t0 : Tally) (dir : String) : IO Tally := do
+  let mut t := t0
+  for (f, nrefs, hasSi) in filter2Cases do
+    let src ← IO.FS.readFile s!"{dir}/{f}.xml"
+    let r : Except String (C14n.C14nDoc × Signature) := do
+      let cd ← C14n.C14nDoc.ofString? src
+      let some s := (signatures cd).head? | throw "no ds:Signature"
+      let sg ← parseSignature cd.doc s
+      pure (cd, sg)
+    match r with
+    | .error e => IO.println s!"FAIL filter2 {f}: {e}"; t := { t with fail := t.fail + 1 }
+    | .ok (cd, sg) =>
+      for (ref, k) in sg.si.refs.zipIdx do
+        if k ≥ nrefs then continue
+        let want ← IO.FS.readBinFile s!"{dir}/{f}-c14n-{k}.txt"
+        match referenceOctets {} cd sg.node ref with
+        | .error e => IO.println s!"FAIL filter2 {f} reference {k}: {e}"; t := { t with fail := t.fail + 1 }
+        | .ok o =>
+            let dOk := ref.digest.digest o == ref.value
+            if o == want && dOk then
+              IO.println s!"PASS filter2 {f} reference {k}: {o.size} octets equal {f}-c14n-{k}.txt, digest matches"
+              t := { t with pass := t.pass + 1 }
+            else
+              IO.println s!"FAIL filter2 {f} reference {k}: octets equal {o == want} ({o.size} vs {want.size}), digest matches {dOk}"
+              t := { t with fail := t.fail + 1 }
+      if hasSi then
+        let want ← IO.FS.readBinFile s!"{dir}/{f}-c14n-{nrefs}.txt"
+        match signedInfoOctets cd sg with
+        | .ok o =>
+            if o.toUTF8 == want then
+              IO.println s!"PASS filter2 {f} SignedInfo: equals {f}-c14n-{nrefs}.txt"; t := { t with pass := t.pass + 1 }
+            else IO.println s!"FAIL filter2 {f} SignedInfo: differs from {f}-c14n-{nrefs}.txt"; t := { t with fail := t.fail + 1 }
+        | .error e => IO.println s!"FAIL filter2 {f} SignedInfo: {e}"; t := { t with fail := t.fail + 1 }
+      t ← record t s!"filter2 {f} core validation" true (some 1224) (outcome (validateParsed nativeBackend {} cd sg))
   return t
 
 def runFixtures (t0 : Tally) (dir : String) : IO Tally := do
@@ -291,6 +343,8 @@ def main (args0 : List String) : IO UInt32 := do
     return 1
   let t ← runOracle {} odir
   IO.println s!"xmldsig11-interop: {t.pass} pass, {t.fail} fail, {t.xfail} expected failures (out of {t.pass + t.fail + t.xfail})"
+  let x2 ← runFilter2 {} s!"{root}/third_party/testing/xmldsig-filter2-interop/merlin-xpath-filter2-three"
+  IO.println s!"xmldsig-filter2-interop: {x2.pass} pass, {x2.fail} fail, {x2.xfail} expected failures (out of {x2.pass + x2.fail + x2.xfail})"
   let u ← runFixtures {} fdir
   IO.println s!"fixtures: {u.pass} pass, {u.fail} fail (out of {u.pass + u.fail})"
   let v ← runSaml {}
@@ -304,4 +358,4 @@ def main (args0 : List String) : IO UInt32 := do
     let x ← runWycheproof s!"{wp}/{file}" label h
     IO.println s!"{label}: {x.pass} pass, {x.fail} fail, {x.acceptable} acceptable (out of {x.pass + x.fail + x.acceptable})"
     wf := wf + x.fail
-  return (if t.fail + u.fail + v.fail + w.fail + wf == 0 then 0 else 1)
+  return (if t.fail + x2.fail + u.fail + v.fail + w.fail + wf == 0 then 0 else 1)
