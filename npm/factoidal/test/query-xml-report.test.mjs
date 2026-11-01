@@ -45,7 +45,7 @@ test('empty SELECT and ASK admit XML; syntax errors and graph results remain err
     assert.equal(report.kind,'xml');
     assert.equal((await core.xqueryEval('count(/*)',report.xml)).xml,'1');
   }
-  await assert.rejects(core.queryRaw('','SELECT WITHOUT',options),/query does not parse/);
+  await assert.rejects(core.queryRaw('','SELECT WITHOUT',options),/SPARQL parse error: expected select variables/);
   await assert.rejects(core.queryRaw('', 'CONSTRUCT {} WHERE {}',options),/answer is a graph/);
 });
 
