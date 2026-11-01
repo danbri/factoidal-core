@@ -51,8 +51,8 @@ caller's resolver, which gives octets; with no resolver it is refused.
   * Canonicalization: the six methods of `L4Factoidal.XML.C14n`.
   * Transforms: the canonicalization methods, enveloped signature
     (§6.6.4), XPath filtering (§6.6.3, `C14nXPath.xpathFilter`), base64
-    (§6.6.2), XPath Filter 2.0 (`L4Factoidal.XML.DSigFilter2`). XSLT
-    is refused (https://github.com/danbri/factoidal/issues/1225).
+    (§6.6.2), XPath Filter 2.0 (`L4Factoidal.XML.DSigFilter2`), XSLT
+    (§6.6.5, `L4Factoidal.XML.DSigXslt`, on the XSLT 4.0 processor).
     `here()` names the `ds:XPath` or filter `XPath` element when the
     input is a node-set of the signature's document.
 
@@ -72,6 +72,7 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.XML.C14nXPath
 import L4Factoidal.XML.DSigFilter2
+import L4Factoidal.XML.DSigXslt
 import L4Factoidal.Crypto.SHA1
 import L4Factoidal.Crypto.Hmac
 import L4Factoidal.JOSE.Pkcs1
@@ -93,7 +94,7 @@ def excNs : String := "http://www.w3.org/2001/10/xml-exc-c14n#"
 def envelopedAlg : String := "http://www.w3.org/2000/09/xmldsig#enveloped-signature"
 def base64Alg : String := "http://www.w3.org/2000/09/xmldsig#base64"
 def xpathAlg : String := "http://www.w3.org/TR/1999/REC-xpath-19991116"
-def xsltAlg : String := "http://www.w3.org/TR/1999/REC-xslt-19991116"
+def xsltAlg : String := DSigXslt.xsltAlg
 
 /-- The digest algorithms of XML Signature 1.1 §6.2. -/
 inductive DigestAlg where
@@ -474,7 +475,9 @@ def applyTransform (sigDoc : C14nDoc) (sig : Nat) (t : Nat) (x : Data) : Except 
     | some b => return .octets b
     | none => throw "the base64 transform input is not base64"
   if alg == xsltAlg then
-    throw "the XSLT transform is not supported (https://github.com/danbri/factoidal/issues/1225)"
+    -- §6.6.5: octets in (a node-set is canonicalized first), octets out
+    let b ← toOctets x
+    return .octets (← DSigXslt.apply sigDoc t b)
   throw s!"transform not supported: {alg}"
 
 def applyTransformsAcc (sigDoc : C14nDoc) (sig : Nat) : List Nat → Data → Except String Data
@@ -879,8 +882,8 @@ def macDoc (obj : String) (dv sv : String) : String :=
   "<ds:DigestValue>" ++ dv ++ "</ds:DigestValue></ds:Reference></ds:SignedInfo>" ++
   "<ds:SignatureValue>" ++ sv ++ "</ds:SignatureValue><ds:Object Id=\"o\">" ++ obj ++ "</ds:Object></ds:Signature>"
 
--- The XSLT transform is refused with the issue that tracks it; when it is
--- implemented this check fails, and the issue is closed with it.
+-- The XSLT transform (§6.6.5) with no stylesheet in its ds:Transform is
+-- refused with the reason.
 #guard (match validateText macOnly { hmacKey := some "k".toUTF8 }
     ("<ds:Signature xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\"><ds:SignedInfo>" ++
      "<ds:CanonicalizationMethod Algorithm=\"http://www.w3.org/TR/2001/REC-xml-c14n-20010315\"/>" ++
@@ -889,7 +892,29 @@ def macDoc (obj : String) (dv sv : String) : String :=
      "<ds:DigestMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#sha256\"/>" ++
      "<ds:DigestValue>AA==</ds:DigestValue></ds:Reference></ds:SignedInfo>" ++
      "<ds:SignatureValue>AA==</ds:SignatureValue><ds:Object Id=\"o\">x</ds:Object></ds:Signature>") with
-  | .error e => (e.splitOn "https://github.com/danbri/factoidal/issues/1225").length > 1
+  | .error e => (e.splitOn "has no stylesheet").length > 1
   | .ok _ => false)
+
+-- The XSLT transform runs the stylesheet of its ds:Transform on the
+-- canonical form of the referenced element; the stylesheet keeps the
+-- namespace bindings it inherits from the signature (here `xsl`).
+#guard (match (do
+    let cd ← C14nDoc.ofString?
+      ("<ds:Signature xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\" xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\"><ds:SignedInfo>" ++
+       "<ds:CanonicalizationMethod Algorithm=\"http://www.w3.org/TR/2001/REC-xml-c14n-20010315\"/>" ++
+       "<ds:SignatureMethod Algorithm=\"http://www.w3.org/2001/04/xmldsig-more#hmac-sha256\"/>" ++
+       "<ds:Reference URI=\"#o\"><ds:Transforms><ds:Transform Algorithm=\"" ++ xsltAlg ++ "\">" ++
+       "<xsl:stylesheet version=\"1.0\"><xsl:output method=\"text\"/>" ++
+       "<xsl:template match=\"/\">[<xsl:value-of select=\"count(//b)\"/>]</xsl:template></xsl:stylesheet>" ++
+       "</ds:Transform></ds:Transforms>" ++
+       "<ds:DigestMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#sha256\"/>" ++
+       "<ds:DigestValue>AA==</ds:DigestValue></ds:Reference></ds:SignedInfo>" ++
+       "<ds:SignatureValue>AA==</ds:SignatureValue><ds:Object Id=\"o\"><a><b/><b/></a></ds:Object></ds:Signature>")
+    let some s := (signatures cd).head? | throw "no signature"
+    let sg ← parseSignature cd.doc s
+    let some r := sg.si.refs.head? | throw "no reference"
+    referenceOctets {} cd sg.node r) with
+  | .ok o => o == "[2]".toUTF8
+  | .error _ => false)
 
 end L4Factoidal.XML.DSig11

@@ -11,6 +11,14 @@ Harness/XmlDsigRun — core validation (XML Signature 1.1 §3.2) by
     reference equal the published canonical output and the digests match.
     The signatures are DSA, so core validation is an expected failure
     (https://github.com/danbri/factoidal/issues/1224).
+  * `third_party/testing/xmldsig-merlin-2001/`: Merlin Hughes's
+    `merlin-xmldsig-twenty-three` (the XML Signature interop vectors of
+    2001-2002). Reference validation of every `ds:Reference` (those of
+    `ds:Manifest` included; one has the XSLT transform of §6.6.5), then
+    core validation; DSA signatures are expected failures
+    (https://github.com/danbri/factoidal/issues/1224). The HMAC key is
+    "secret". External references resolve to the vendored
+    `xml-stylesheet.b64` and its decoded octets, never to the network.
   * `tests/xmldsig/fixtures/`: signatures made by signxml (an independent
     implementation) with RSA-2048, P-256 and HMAC keys, and negative cases
     made from them (`tests/xmldsig/make_fixtures.py`; `manifest.tsv` gives
@@ -149,6 +157,67 @@ def runFilter2 (t0 : Tally) (dir : String) : IO Tally := do
             else IO.println s!"FAIL filter2 {f} SignedInfo: differs from {f}-c14n-{nrefs}.txt"; t := { t with fail := t.fail + 1 }
         | .error e => IO.println s!"FAIL filter2 {f} SignedInfo: {e}"; t := { t with fail := t.fail + 1 }
       t ← record t s!"filter2 {f} core validation" true (some 1224) (outcome (validateParsed nativeBackend {} cd sg))
+  return t
+
+/-- The 2001 interop vectors (`merlin-xmldsig-twenty-three`) whose core
+validation fails today, each with the issue whose URL the error must name.
+Every other one must validate, except `signature-enveloping-hmac-sha1-40`,
+which XML Signature 1.1 §6.3.1 refuses (40 bits is below 80). -/
+def merlinXfail : List (String × Nat) :=
+  ["signature-enveloped-dsa.xml", "signature-enveloping-b64-dsa.xml", "signature-enveloping-dsa.xml",
+   "signature-external-b64-dsa.xml", "signature-external-dsa.xml", "signature-keyname.xml",
+   "signature-retrievalmethod-rawx509crt.xml", "signature-x509-crt-crl.xml", "signature-x509-crt.xml",
+   "signature-x509-is.xml", "signature-x509-ski.xml", "signature-x509-sn.xml", "signature.xml"].map (·, 1224) ++
+  [("signature-enveloping-rsa.xml", 1227)]
+
+/-- The two external resources of the 2001 vectors, from the vendored
+`xml-stylesheet.b64`: the file itself, and its decoded octets, which are
+the 1999 text of `http://www.w3.org/TR/xml-stylesheet` that the vectors
+signed (SHA-1 `60NvZvtdTB+7UnlLp/H24p7h4bs=`). -/
+def merlinResolve (b64 : ByteArray) : String → Option ByteArray := fun u =>
+  if u == "http://www.w3.org/Signature/2002/04/xml-stylesheet.b64" then some b64
+  else if u == "http://www.w3.org/TR/xml-stylesheet" then (String.fromUTF8? b64).bind b64?
+  else none
+
+/-- The 2001 interop vectors: reference validation (§3.2.1) of every
+`ds:Reference` of each file, those of `ds:Manifest` included (the XSLT
+transform of §6.6.5 is one of them), then core validation of the
+signature. The HMAC key is "secret" (`Readme.txt`). -/
+def runMerlin (t0 : Tally) (dir : String) : IO Tally := do
+  let mut t := t0
+  let b64 ← IO.FS.readBinFile s!"{dir}/xml-stylesheet.b64"
+  let cfg : Config := { hmacKey := some "secret".toUTF8, resolve := merlinResolve b64 }
+  let sums ← IO.FS.readFile s!"{dir}/SHA256SUMS"
+  let names := (sums.splitOn "\n").filterMap (fun l => (l.splitOn "  ")[1]?)
+    |>.filter (fun n => n.endsWith ".xml")
+  for path in names do
+    let f := (path.splitOn "/").getLast!
+    let src ← IO.FS.readFile s!"{dir}/{path}"
+    let r : Except String (C14n.C14nDoc × Signature) := do
+      let cd ← C14n.C14nDoc.ofString? src
+      let some s := (signatures cd).head? | throw "no ds:Signature"
+      let sg ← parseSignature cd.doc s
+      pure (cd, sg)
+    match r with
+    | .error e => IO.println s!"FAIL merlin-2001 {f}: {e}"; t := { t with fail := t.fail + 1 }
+    | .ok (cd, sg) =>
+      let refs := (List.range cd.n0).filter fun i => isEl cd.doc i dsNs "Reference"
+      for (i, k) in refs.zipIdx do
+        let name := s!"merlin-2001 {f} reference {k}"
+        match parseReference cd.doc i with
+        | .error e => IO.println s!"FAIL {name}: {e}"; t := { t with fail := t.fail + 1 }
+        | .ok ref =>
+          match referenceOctets cfg cd sg.node ref with
+          | .error e => IO.println s!"FAIL {name} ({ref.uri.getD ""}): {e}"; t := { t with fail := t.fail + 1 }
+          | .ok o =>
+            if ref.digest.digest o == ref.value then
+              IO.println s!"PASS {name} ({ref.uri.getD ""}): digest matches"; t := { t with pass := t.pass + 1 }
+            else
+              IO.println s!"FAIL {name} ({ref.uri.getD ""}): digest does not match ({o.size} octets)"
+              t := { t with fail := t.fail + 1 }
+      let want := f != "signature-enveloping-hmac-sha1-40.xml"
+      t ← record t s!"merlin-2001 {f} core validation" want ((merlinXfail.find? (·.1 == f)).map (·.2))
+        (outcome (validateParsed nativeBackend cfg cd sg))
   return t
 
 def runFixtures (t0 : Tally) (dir : String) : IO Tally := do
@@ -345,6 +414,8 @@ def main (args0 : List String) : IO UInt32 := do
   IO.println s!"xmldsig11-interop: {t.pass} pass, {t.fail} fail, {t.xfail} expected failures (out of {t.pass + t.fail + t.xfail})"
   let x2 ← runFilter2 {} s!"{root}/third_party/testing/xmldsig-filter2-interop/merlin-xpath-filter2-three"
   IO.println s!"xmldsig-filter2-interop: {x2.pass} pass, {x2.fail} fail, {x2.xfail} expected failures (out of {x2.pass + x2.fail + x2.xfail})"
+  let m ← runMerlin {} s!"{root}/third_party/testing/xmldsig-merlin-2001"
+  IO.println s!"xmldsig-merlin-2001: {m.pass} pass, {m.fail} fail, {m.xfail} expected failures (out of {m.pass + m.fail + m.xfail})"
   let u ← runFixtures {} fdir
   IO.println s!"fixtures: {u.pass} pass, {u.fail} fail (out of {u.pass + u.fail})"
   let v ← runSaml {}
@@ -358,4 +429,4 @@ def main (args0 : List String) : IO UInt32 := do
     let x ← runWycheproof s!"{wp}/{file}" label h
     IO.println s!"{label}: {x.pass} pass, {x.fail} fail, {x.acceptable} acceptable (out of {x.pass + x.fail + x.acceptable})"
     wf := wf + x.fail
-  return (if t.fail + x2.fail + u.fail + v.fail + w.fail + wf == 0 then 0 else 1)
+  return (if t.fail + x2.fail + m.fail + u.fail + v.fail + w.fail + wf == 0 then 0 else 1)
