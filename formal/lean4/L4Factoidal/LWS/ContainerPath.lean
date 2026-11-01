@@ -42,6 +42,10 @@ URLs are read with the URL Standard parser of this tree
 - `within root url canonical`: `root` is a container (`containerOf`), `url`
   passes the same checks (except the final `/`), has the root's origin, and
   starts with the root.
+- `target url canonical`: the checks of `containerOf` except the final `/`
+  (the compositor's bootstrap profile URL).
+- `parentIn root folder`: the folder above `folder` inside the root, or the
+  root (the compositor's "Up one folder").
 
 `underAtSegment root url` is the segment boundary: `root` ends with `/` and
 is a prefix of `url`. So `https://s.example/alice-other/` is never within
@@ -56,6 +60,7 @@ URL continues with `/`, `?` or `#`, or that is the whole URL.
 - `resourceIn_under`: an answer of `resourceIn` has the container's origin
   and is under the container at a segment boundary.
 - `segmentIn_under`: the same for `segmentIn`.
+- `parentIn_under`: the parent folder is the root or inside it.
 - `within_under`: when `within` accepts, the URL is under the root at a
   segment boundary; `within_canonical_under` states it for the input texts.
 - `within_sibling_refused`: `within "https://s.example/alice/"
@@ -362,6 +367,20 @@ def segmentIn (root name : String) : Except String String :=
       | .error e => .error e
       | .ok t => guardUnder r t
 
+/-- `parentIn root folder`: the folder above `folder` inside the canonical
+container `root` (the folder without its last segment), or `root` itself
+when that folder would be above the root. -/
+def parentIn (root folder : String) : Except String String :=
+  match containerOf root true with
+  | .error e => .error e
+  | .ok r =>
+    match within r folder true with
+    | .error e => .error e
+    | .ok f =>
+      let body := if f.toList.getLast? == some '/' then f.toList.dropLast else f.toList
+      let p := String.ofList (body.reverse.dropWhile (· != '/')).reverse
+      if underAtSegment r p then guardUnder r p else .ok r
+
 /-! ## Theorems -/
 
 /-- **An answer of `resourceIn` is inside the container**: it has the
@@ -392,6 +411,24 @@ theorem segmentIn_under {root name x : String} (h : segmentIn root name = .ok x)
       · cases h
       · obtain ⟨_, ho, hu⟩ := guardUnder_ok h
         exact ⟨r, hr, ho, hu⟩
+
+/-- **The parent folder is the root or inside the root.** -/
+theorem parentIn_under {root folder x : String} (h : parentIn root folder = .ok x) :
+    ∃ r, containerOf root true = .ok r ∧ (x = r ∨ UnderAtSegment r x) := by
+  unfold parentIn at h
+  cases hr : containerOf root true with
+  | error e => simp [hr] at h
+  | ok r =>
+    simp only [hr] at h
+    refine ⟨r, rfl, ?_⟩
+    cases hw : within r folder true with
+    | error e => simp [hw] at h
+    | ok f =>
+      simp only [hw] at h
+      split at h <;> split at h
+      all_goals first
+        | exact Or.inr (guardUnder_ok h).2.2
+        | exact Or.inl (Except.ok.inj h).symm
 
 /-- **When `within` accepts, the URL is inside the root.** -/
 theorem within_under {root url x : String} {canonical : Bool}
@@ -494,6 +531,11 @@ theorem within_sibling_refused (x : String) :
     "https://user:pass@pod.example/alice/x", "https://pod.example/alice/a\\x"].all fun u =>
   !(within "https://pod.example/alice/" u true).toBool
 #guard !(containerOf "https://pod.example/alice/no-slash" true).toBool
+#guard (parentIn "https://pod.example/alice/" "https://pod.example/alice/a/b/").toOption == some "https://pod.example/alice/a/"
+#guard (parentIn "https://pod.example/alice/" "https://pod.example/alice/a/").toOption == some "https://pod.example/alice/"
+#guard (parentIn "https://pod.example/alice/" "https://pod.example/alice/").toOption == some "https://pod.example/alice/"
+#guard !(parentIn "https://pod.example/alice/" "https://pod.example/bob/").toBool
+#guard (target "https://profile.example/foaf.ttl" true).toOption == some "https://profile.example/foaf.ttl"
 #guard !(containerOf "https://bad.example/pod/?secret=bad" true).toBool
 
 end L4Factoidal.LWS.ContainerPath

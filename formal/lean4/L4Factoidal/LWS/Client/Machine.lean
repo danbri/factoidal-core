@@ -104,6 +104,7 @@ for every state and event; the `#guard`s of `Client/Tests.lean` show that
 the ordinary flows never reach the refusal.
 -/
 import L4Factoidal.LWS.Client.Wire
+import L4Factoidal.LWS.ContainerPath
 import L4Factoidal.LWS.Client.Report
 import L4Factoidal.JOSE.Jws
 import L4Factoidal.Authz.Keys
@@ -552,9 +553,13 @@ def failWith (s : ClientState) (code : String) (extra : List (String × Json) :=
   finish s (.fail (errJ code extra))
 
 /-- Is a URL in the scope of a token entry: under its root, or under one of
-its service endpoints? -/
+its service endpoints, at a path-segment boundary
+(`ContainerPath.coversAtSegment`; https://github.com/danbri/factoidal/issues/1127):
+a root `https://s.example/alice` covers `https://s.example/alice/x`, not
+`https://s.example/alice-other/x`. -/
 def TokenEntry.covers (t : TokenEntry) (url : String) : Bool :=
-  (t.root != "" && url.startsWith t.root) || t.endpoints.any (fun e => e != "" && url.startsWith e)
+  ContainerPath.coversAtSegment t.root url ||
+    t.endpoints.any (fun e => ContainerPath.coversAtSegment e url)
 
 /-- Attach the access token of the storage whose root, or one of whose
 service endpoints, the URL is under (lws10-core §Presentation: the
