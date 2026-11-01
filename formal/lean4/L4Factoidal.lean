@@ -638,6 +638,13 @@ import L4Factoidal.DataCube.Queries
 import L4Factoidal.DataCube.Normalize
 import L4Factoidal.DataCube.NormalizeTheorems
 import L4Factoidal.DataCube.Constraints
+import L4Factoidal.SQL.Syntax
+import L4Factoidal.SQL.Database
+import L4Factoidal.RDB2RDF.NaturalLiteral
+import L4Factoidal.RDB2RDF.DirectMapping
+import L4Factoidal.RDB2RDF.DirectMappingTheorems
+import L4Factoidal.RDB2RDF.R2RML
+import L4Factoidal.RDB2RDF.R2RMLTheorems
 import L4Factoidal.YAML.Loader
 import L4Factoidal.YAMLLD.Api
 import L4Factoidal.YAMLLD.Theorems
