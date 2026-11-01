@@ -100,3 +100,23 @@ other scene sizes or a general frame-rate guarantee. Four samples increase
 work; future culling/coverage optimizations must preserve the image result.
 Evidence: /private/tmp/solving-percentage-before-perf/candidate.json and
 /private/tmp/solving-percentage-aa-perf/candidate.json.
+
+## Full admission replay and earlier-case regression
+
+The current source admission replay checks all38 unchanged cases with75/75
+fixture hashes/sizes verified:4accepted,34unsupported. Nine cases have original
+runtime/resource requirements and are all unsupported; the remaining29 have
+4accepted and25unsupported. This is not a rebuilt-artifact suite score.
+
+Both previous fallback001/002 cases were regenerated with the new coverage
+rule and an explicit800x600 host viewport (their roots omit dimensions).
+GPU results each exactly match the independently captured reference: zero
+pixel/channel differences. Together with the two percentage cases, four
+individual source-artifact visual comparisons now match. The first intrinsic
+attempt correctly refused omitted root dimensions; the hosted replay supplies
+the required context rather than inventing intrinsic dimensions.
+
+The16 first-error link failures in the admission report are rel=author,
+not stylesheet links as an earlier note suggested. Added author to the inert
+metadata allowlist with a regression check; stylesheet rejection remains.
+This removes a metadata blocker, not a rendering feature or visual pass.

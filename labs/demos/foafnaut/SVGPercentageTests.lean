@@ -34,7 +34,7 @@ def run : IO Unit := do
   match negative.primitives.map (fun (p : NativeSVG.Primitive) => p.geometry) with
   | [.rect x y w h] => check (x == -20 && y==120 && w==10 && h==10) "signed or over-100 coordinate/absolute regression"
   | _ => throw (IO.userError "signed coordinate primitive")
-  for relation in ["help", "match"] do
+  for relation in ["help", "match", "author"] do
     check ((NativeSVG.parse (wrap "width='100' height='100' xmlns:h='http://www.w3.org/1999/xhtml'" ("<h:link rel='"++relation++"' href='https://invalid.example/no-fetch'/><rect width='50%' height='50%'/>") )).isOk) "inert metadata refused"
   check (!(NativeSVG.parse (wrap "width='100' height='100' xmlns:h='http://www.w3.org/1999/xhtml'" "<h:link rel='stylesheet' href='https://invalid.example/no-fetch'/>")).isOk) "stylesheet silently accepted"
   IO.println "PASS SVG percentage axes, diagonal, viewBox meet/slice/none, transformed inheritance, host viewport and refusals"

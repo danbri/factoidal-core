@@ -411,8 +411,8 @@ private def readNode (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) 
   | .other _ => throw "processing instructions/other XML nodes unsupported"
   | .element name attrs children =>
     if name.namespace_ == some "http://www.w3.org/1999/xhtml" && name.localPart == "link" then
-      -- Reftest match/help links are inert metadata, not graphics or stylesheets.
-      if ![some "match", some "help"].contains (attr attrs "rel") then throw "unsupported HTML link relation"
+      -- Reftest match/help/author links are inert metadata, not graphics or stylesheets.
+      if ![some "match", some "help", some "author"].contains (attr attrs "rel") then throw "unsupported HTML link relation"
       if !children.isEmpty then throw "HTML metadata link must be empty"
       return []
     if name.namespace_ != some svgURI then throw s!"foreign/non-SVG element: {name.localPart}"
