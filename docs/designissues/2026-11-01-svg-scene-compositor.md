@@ -1,4 +1,7 @@
-# SVG vocabulary as a shared rendering scene
+# Solving: an SVG-scene rendering pipeline
+
+**Component name:** Solving (`solving` in lowercase contexts).
+**Role:** an SVG-scene rendering pipeline.
 
 The owner proposes modeling visual output from HTML layout in SVG terms,
 with explicit compositing layers, to reduce backend-specific complexity and
@@ -116,3 +119,34 @@ logical equivalence alone proves no speedup.
 Status: draft objectives. Existing affine packing and source renderer tests are
 inputs, not completion evidence for O1–O3. No new scheduler, release or GPU
 correctness claim is created by this plan.
+
+## Appendix: naming decision and future candidates
+
+Owner decision, 2026-11-01: call this component **Solving** or **solving**.
+The connection to Lean proofs and theorems is intentional. The suggested
+stylization “SolVinG” inspired the choice, but do not use fiddly internal
+capitalization in the component name. No acronym expansion is prescribed.
+
+“SVG-scene rendering pipeline” describes its role: typed scenes expressed in
+SVG graphical concepts, with composition and backend rendering. The name does
+not assert full SVG conformance, a complete HTML/browser layout engine, or that
+every optimization and backend is already proved correct. Existing implementation
+and proof boundaries in this document remain in force. This records a component
+name, not a package/module/API rename or a legal availability determination.
+
+The owner's candidate list, retained for reference:
+
+- savage
+- saving
+- serving
+- salvage
+- solving
+- surviving
+- surveying
+- sovereign
+- scavenger
+- disadvantage
+
+**saving**, **serving**, **salvage**, and **scavenger** are possible future
+component names. No responsibilities or implementation commitments are assigned
+to them yet.
