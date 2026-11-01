@@ -45,3 +45,30 @@ undeclared assumptions are absent, or that compiled native/WASM/GPU code and
 FFI match the proved semantics. Keep axiom audits, semantic tests and artifact
 checks; do not disable ordinary kernel checking in builds as a side effect of
 this maintenance recommendation.
+
+## Findings must reach people (owner, 2026-11-01)
+
+Non-blocking CI must not mean invisible findings. For a reproducible checker
+rejection, disagreement, unexpected axiom/prelude mismatch or missing intended
+export scope, search existing issues and file/update a tracked issue in
+`danbri/factoidal`. Include exact revision, affected declarations/modules,
+checker/toolchain versions, reproduction command, expected/actual result,
+coverage and redacted logs. State severity and a concrete next action; link
+an upstream Lean issue if one is needed. Do not label an unexplained mismatch
+a confirmed kernel vulnerability before triage.
+
+Surface new serious findings promptly in development commentary and the final
+report, with the issue URL and affected assurance claim. Put a visible warning
+and issue link in the audit job summary even when the job is advisory. Suspend
+claims that the affected scope has passed independent checking; do not silently
+remove the checker, weaken the theorem, or accept a green build as resolution.
+Ordinary missing tools/timeouts get a distinct infrastructure notice; open or
+update a deduplicated issue when persistent or when intended coverage is lost.
+Avoid nightly duplicate issues and repeated unchanged alerts.
+
+If issue creation fails, retain a local finding with reproduction details and
+explicitly tell the user that it is not filed. For potentially exploitable
+security defects, redact secrets and use the appropriate private reporting
+channel rather than publishing exploit details. This instruction authorizes
+issues for findings from these audits; it does not request an issue merely
+because the pinned toolchain predates the planned commands.
