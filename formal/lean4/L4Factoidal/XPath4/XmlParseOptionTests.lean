@@ -23,7 +23,18 @@ example : outcome [] = "ok" := by decide
 example : outcome (opts "unknown-option" (sBool true)) = "XPTY0004" := by decide
 example : outcome (opts "strip-space" (sStr "all")) = "ok" := by decide
 example : outcome (opts "strip-space" (sStr "invalid")) = "XPTY0004" := by decide
-#guard outcome (opts "xsd-validation" (sStr "invalid")) == "XPTY0004"
+#guard outcome (opts "xsd-validation" (sStr "invalid")) == "FODC0008"
+-- Official QT4 fn-parse-xml/parse-xml-437: option value versus option type.
+#guard outcome (opts "xsd-validation" (sStr "sporadic")) == "FODC0008"
+#guard outcome (opts "xsd-validation" (sBool true)) == "XPTY0004"
+#guard outcome (opts "xsd-validation" (sInt 1)) == "XPTY0004"
+#guard outcome (opts "xsd-validation" []) == "XPTY0004"
+#guard outcome (opts "xsd-validation" (sStr "strict" ++ sStr "lax")) == "XPTY0004"
+#guard outcome (opts "xsd-validation" (sStr "skip")) == "ok"
+#guard outcome (opts "xsd-validation" (sStr "strict")) == "ok"
+#guard outcome (opts "xsd-validation" (sStr "lax")) == "ok"
+#guard outcome (opts "xsd-validation" [.atom (Atomic.ofUri "strict")]) == "ok"
+#guard outcome (opts "xsd-validation" [.atom (Atomic.untypedOf "lax")]) == "ok"
 example : outcome (opts "trust-external" (sStr "yes")) = "XPTY0004" := by decide
 example : outcome (opts "dtd-validation" (sBool true)) { dtdValidation := false } = "FODC0013" := by decide
 example : outcome (opts "xinclude" (sBool true)) { xinclude := false } = "FODC0013" := by decide

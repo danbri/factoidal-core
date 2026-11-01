@@ -24,7 +24,8 @@ Options of `fn:parse-xml`: `base-uri`, `dtd-validation`, `strip-space`
 (XInclude 1.1, `XPath4.XInclude`; `FODC0013` when the host turns it
 off, `Env.xinclude`), `xsd-validation`
 (`strict`, `lax` and `type T` validate through the schema hook
-`Env.schema`, `SchemaHook.validate`; another value is XPTY0004), `use-xsi-schema-location`,
+`Env.schema`, `SchemaHook.validate`; an invalid mode is FODC0008 after
+coercion to xs:string, with conversion failures retaining their type errors), `use-xsi-schema-location`,
 `line-numbers` (ignored, as the spec allows).
 -/
 import L4Factoidal.XPath4.Lib
@@ -162,9 +163,15 @@ def parseOpts (e : Env) (opts : Seq) : M ParseOpts := do
   let xi ← optBool opts "xinclude" false
   if xi && !e.xinclude then
     err "FODC0013" "this processor is configured without XInclude"
-  let xsd := optionStr opts "xsd-validation" "skip"
+  -- F&O 4.0 §1.7.4: coerce an option to its declared type before checking
+  -- permitted values. Stringification would hide cardinality/type errors.
+  let xsd ← match optLookup opts "xsd-validation" with
+    | none => pure "skip"
+    | some value => match ← e.coerce (parseTy "xs:string") value "xsd-validation" with
+      | [.atom a] => pure a.str
+      | _ => err "XPTY0004" "xsd-validation must be one xs:string"
   if !(["skip", "strict", "lax"].contains xsd || xsd.startsWith "type ") then
-    err "XPTY0004" ("xsd-validation must be strict, lax, skip or type T, not " ++ xsd)
+    err "FODC0008" ("xsd-validation must be strict, lax, skip or type T, not " ++ xsd)
   pure { baseUri := base, dtdValidation := dtd, stripAll := strip == "all", trustExternal := trust, xsd,
          xinclude := xi }
 
