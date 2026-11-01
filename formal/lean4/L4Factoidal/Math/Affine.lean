@@ -47,6 +47,22 @@ namespace AffineRows
 def toList (r : AffineRows α) : List α :=
   [r.xx,r.xy,r.tx,r.pad0,r.yx,r.yy,r.ty,r.pad1]
 
+/-- The two four-lane records consumed by the current WGSL affine path. This
+    names the lane boundary in Lean instead of relying on an implicit
+    `chunked 4` convention in a host adapter. It is a logical packing shape,
+    not a claim about byte alignment or a particular GPU ABI. -/
+def toVec4Rows (r : AffineRows α) : List (List α) :=
+  [[r.xx,r.xy,r.tx,r.pad0],[r.yx,r.yy,r.ty,r.pad1]]
+
+/-- Flattening the two WGSL lanes recovers the canonical scalar payload. -/
+theorem toVec4Rows_flatten (r : AffineRows α) :
+    r.toVec4Rows.flatten = r.toList := rfl
+
+theorem toVec4Rows_length (r : AffineRows α) : r.toVec4Rows.length = 2 := rfl
+
+theorem toVec4Rows_lane_lengths (r : AffineRows α) :
+    r.toVec4Rows.map List.length = [4,4] := rfl
+
 def decode (r : AffineRows α) : Affine2 α :=
   ⟨r.xx,r.yx,r.xy,r.yy,r.tx,r.ty⟩
 

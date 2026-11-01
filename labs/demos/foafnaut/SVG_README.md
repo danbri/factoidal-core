@@ -196,6 +196,13 @@ other records append eight inverse floats. Existing storage/primitive/input
 budgets remain unchanged. Data serialization reuses the existing TDB2 shortest
 Float formatter so small inverse coefficients survive JSON transport.
 
+The shared `AffineRows.toVec4Rows` representation names the two four-lane
+groups that WGSL indexes. `toVec4Rows_flatten` proves that flattening those
+groups reproduces the canonical eight-scalar payload, and the SVG producer
+uses that flattening for inverse transforms. This checks the Lean-side lane
+ordering; it does not prove host byte encoding, GPU `f32` equivalence, or a
+GPU speedup.
+
 The actual browser-host raw WebGPU track now has **2 matches, 23 unsupported and
 13 unavailable** out of the unchanged 38 WPT cases, with no mismatches/rejections.
 The two missing-paint fallback cases match every pixel of their independently

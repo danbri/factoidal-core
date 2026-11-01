@@ -732,7 +732,10 @@ private def Primitive.rows (p : Primitive) : List Float :=
   ((p.dashParts.getD []).flatMap (pieceRows p.style.strokeWidth)) ++
   (if p.transform.identity then [] else
     let t := p.transform.inverse
-    (t.toPackedRows floatOps).toList)
+    -- Keep the CPU payload's scalar order tied to the two vec4 rows the WGSL
+    -- path indexes. Affine.toVec4Rows_flatten proves this flattening preserves
+    -- the canonical scalar representation used by packed affine evaluation.
+    (t.toPackedRows floatOps).toVec4Rows.flatten)
 private def Scene.data (s : Scene) : Array Float :=
   ([s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
     s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight] ++
