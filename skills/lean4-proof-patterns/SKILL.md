@@ -12,6 +12,11 @@ Review a finished diff with
 This file carries what those two assume and this tree needs. Every rule
 below names the proof that paid for it.
 
+## Periodic independent checking
+
+For maintenance audits, follow the [nightly kernel-checking recommendation](../factoidal-lean-basics/references/periodic-kernel-checks.md).
+This supplements local proof/axiom review; it is not a per-proof or release gate.
+
 ## 1. What is available here
 
 For semantic API correctness, start with

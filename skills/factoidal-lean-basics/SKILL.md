@@ -5,6 +5,13 @@ description: Work with Factoidal's Lean 4 tree under formal/lean4/, including sc
 
 # Factoidal Lean basics
 
+## Periodic kernel audits
+
+Prefer a nightly, resource-aware independent-checking audit, not a check on
+every commit/build/release. Follow [periodic kernel checks](references/periodic-kernel-checks.md)
+for command availability, checker coverage and evidence recording. The pinned
+Lean 4.33.1 does not yet advertise the roadmap's `lake check` commands.
+
 ## What exists (started 2026-08-22; re-measure before scope claims)
 
 `formal/lean4/` is a self-contained lake project, library name
