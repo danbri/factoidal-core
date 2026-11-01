@@ -1049,6 +1049,8 @@ import L4Factoidal.Authz.Tests
 import L4Factoidal.XML.ExcC14n
 import L4Factoidal.XML.C14n
 import L4Factoidal.XML.C14nXPath
+import L4Factoidal.XML.DSig11
+import L4Factoidal.XML.DSig11Native
 import L4Factoidal.XML.XPointer
 import L4Factoidal.XML.XPointerXPath
 import L4Factoidal.XML.XPointerTheorems
