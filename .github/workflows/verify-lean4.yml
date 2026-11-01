@@ -48,6 +48,7 @@ on:
       - 'third_party/testing/html5lib-tests/**'
       - 'third_party/testing/wpt-html-parsing/**'
       - 'tests/html5lib/**'
+      - 'tests/dom/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
 
@@ -267,3 +268,9 @@ jobs:
       # (https://github.com/danbri/factoidal/issues/1167, milestone 5).
       - name: HTML parser, html5lib-tests and WPT tree construction (tests/html5lib/run.sh)
         run: bash tests/html5lib/run.sh
+
+      # DOM node tree as an arena (whatwg/dom 3c53f93a): WPT tree construction
+      # through the DOM arena, the differential against jsdom 30.1.3, and the
+      # scaling checks (https://github.com/danbri/factoidal/issues/1167, milestone 6).
+      - name: DOM arena, jsdom differential and WPT tree construction (tests/dom/run.sh)
+        run: bash tests/dom/run.sh
