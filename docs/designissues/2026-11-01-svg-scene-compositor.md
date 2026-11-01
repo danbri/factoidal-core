@@ -131,8 +131,9 @@ stride used by the loop. The affine row count is derived from shared
 `AffineRows.vec4RowCount`. `Primitive.rows_length` proves the complete payload
 length is four scalar lanes per row, and `Primitive.shaderRowAdvance_eq_rowCount`
 ties that length to the Lean-level cursor formula. Header mode bits for round
-caps and transform presence are also checked. The WGSL remains generated text,
-and Float-to-u32 conversion, host upload and shader-load refinement remain open.
+caps and transform presence are also checked. The WGSL remains generated text;
+equivalence of that text to the cursor expression, Float-to-u32 conversion,
+host upload and shader-load refinement remain open.
 
 ### Progress: ordered source-over batches (2026-11-01)
 

@@ -222,6 +222,13 @@ Float32 upload or the shader's field interpretation. The new Lean theorems
 compile with only Lean's standard `propext`, `Classical.choice` and `Quot.sound`
 axioms in their dependency sets.
 
+`Primitive.rows_length` proves that the entire flattened primitive buffer is
+four scalars per `Primitive.rowCount`; `Primitive.shaderRowAdvance_eq_rowCount`
+equates this to the Lean-level cursor calculation. The header-mode proofs tie
+its low bit to round-cap selection and its high bit to transform presence. The
+WGSL generator still emits a string, so we have not proved that WGSL parses the
+same way or that its `Float`-to-`u32` casts preserve these fields.
+
 `Primitive.rows_length` proves the complete flattened record has exactly four
 scalars per `Primitive.rowCount`, and
 `Primitive.shaderRowAdvance_eq_rowCount` proves the Nat-level cursor formula
