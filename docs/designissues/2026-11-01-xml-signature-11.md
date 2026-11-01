@@ -141,10 +141,38 @@ differences are handled by name in that script:
   `ds:CanonicalizationMethod` needs. The PrefixList case is verified again
   without that schema check, and the output line says so.
 
+## ECDSA P-256 with every digest (2026-11-01, part 3)
+
+FIPS 186-4 §6.4 makes the integer `e` from the leftmost `min(N, outlen)`
+bits of the hash (`N = 256` for P-256). The digest is computed in Lean
+(`DigestAlg.digest`), and `Crypto.P256.p256MsgRep` gives `e` as 32
+big-endian octets: the first 32 octets of a hash of 32 octets or more, or a
+shorter hash (SHA-1, SHA-224) left-padded with zero octets. HACL\*
+`Hacl_P256_ecdsa_verif_without_hash` and
+`Hacl_P256_ecdsa_sign_p256_without_hash` take `e` (`ffi/hacl_p256.c`,
+`l4_hacl_p256_verify_prehashed` and `l4_hacl_p256_sign_prehashed`; the shim
+refuses an `e` that is not 32 octets, because HACL\* reads 32 octets of its
+input whatever its length argument is). HACL\*'s own `..._sha384` and
+`..._sha512` entries take the first 32 octets of the hash in the same way.
+
+- Theorems: `p256MsgRep_size` (32 octets), `p256MsgRep_of_size32` (a
+  SHA-256 hash is its own representative), `dsig11_native_ecdsa_p256` (each
+  `ecdsa-sha*` method at P-256 is the HACL\* check over the representative
+  of the Lean digest), `dsig11_native_ecdsa_other_curves` (P-384 and P-521
+  stay `none`).
+- `p256Signer sk h` signs with any of the five digests and checks the value
+  with the verifier before it gives it out.
+- Measured by: the 7 P-256 interop vectors with SHA-1, SHA-224, SHA-384 and
+  SHA-512 (RFC 4050 key form included), which now pass; Wycheproof
+  `ecdsa_secp256r1_sha256_p1363_test.json` and
+  `ecdsa_secp256r1_sha512_p1363_test.json` through
+  `nativeBackend.ecdsaVerify`; four new generation cases.
+
 ## Open (each with an issue and an expected failure, or a refusal)
 
-- ECDSA other than P-256 with SHA-256:
-  https://github.com/danbri/factoidal/issues/1223 (25 interop cases).
+- ECDSA P-384 and P-521:
+  https://github.com/danbri/factoidal/issues/1223 (18 interop cases). HACL\*
+  has no P-384 or P-521 (https://github.com/danbri/factoidal/issues/1166).
 - DSA: https://github.com/danbri/factoidal/issues/1224.
 - XSLT and XPath Filter 2.0 transforms:
   https://github.com/danbri/factoidal/issues/1225.
