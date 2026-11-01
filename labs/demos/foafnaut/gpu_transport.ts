@@ -1,4 +1,5 @@
 // WebGPU/byte transport. Rendering descriptors and command order come from Lean.
+import type { ShaderSubmission } from "./render_plan.ts";
 import type { Artifact } from "./lean_generator.ts";
 import { requestRenderPlan, createPlanResources, textureUsage, bufferUsage, commandInterpreter } from "./render_plan.ts";
 type Renderable=Pick<Artifact,"width"|"height"|"data"|"wgsl"|"checks">;
@@ -29,7 +30,7 @@ export function checkPixels(a: Renderable, rgba: Uint8Array) {
 
 // Resource lifetime is a host concern; descriptors and every draw/copy/map
 // command remain supplied by Lean. Repeated frames keep device/pipeline/buffers.
-export async function createOffscreenSession(a:Renderable,mode:"offscreen"|"svg-offscreen"="offscreen") {
+export async function createOffscreenSession(a:Renderable,mode:"offscreen"|"svg-offscreen"="offscreen",observeShader?:(event:ShaderSubmission)=>void) {
   if(!navigator.gpu)throw new Error("WebGPU API absent; add --unstable-webgpu");
   const verification={...a,checks:a.checks.map(p=>({...p,rgb:[...p.rgb]}))};
   const adapter=await navigator.gpu.requestAdapter();
@@ -51,7 +52,7 @@ export async function createOffscreenSession(a:Renderable,mode:"offscreen"|"svg-
   try {
     device.pushErrorScope("validation");scope=true;
     const plan=await requestRenderPlan(mode,"rgba8unorm",a,device.limits);
-    resources=await createPlanResources(device,plan,a.wgsl);
+    resources=await createPlanResources(device,plan,a.wgsl,observeShader);
     counters.shaderModules=1;counters.pipelines=1;counters.buffers=1;
     device.queue.writeBuffer(resources.uniform,plan.uniform.offset,new Float32Array(a.data));counters.uploads++;
     texture=device.createTexture({size:[plan.width,plan.height,plan.texture!.depth],format:plan.format,usage:textureUsage(plan.texture!.usage)});counters.textures++;

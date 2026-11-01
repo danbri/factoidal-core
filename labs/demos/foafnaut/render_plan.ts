@@ -57,11 +57,15 @@ export function textureUsage(names:string[]):number {
   const flags:Record<string,number>={"render-attachment":GPUTextureUsage.RENDER_ATTACHMENT,"copy-src":GPUTextureUsage.COPY_SRC};
   return names.reduce((n,k)=>{if(!(k in flags))throw new Error(`Unknown texture usage ${k}`);return n|flags[k];},0);
 }
-export async function createPlanResources(device:GPUDevice,p:RenderPlan,code:string) {
+export type ShaderSubmission = {code:string;vertexEntry:string;fragmentEntry:string;diagnostics?:{type:string;lineNum:number;linePos:number;message:string}[]};
+export async function createPlanResources(device:GPUDevice,p:RenderPlan,code:string,observe?:(event:ShaderSubmission)=>void) {
   const shader=device.createShaderModule({code});
+  const submission={code,vertexEntry:p.pipeline.vertexEntry,fragmentEntry:p.pipeline.fragmentEntry};
+  observe?.(submission);
   const diagnostics=await shader.getCompilationInfo();
+  observe?.({...submission,diagnostics:diagnostics.messages.map(m=>({type:m.type,lineNum:m.lineNum,linePos:m.linePos,message:m.message}))});
   for(const m of diagnostics.messages)console.log(`${m.type} ${m.lineNum}:${m.linePos}: ${m.message}`);
-  if(diagnostics.messages.some(m=>m.type==="error"))throw new Error("Lean WGSL compilation failed");
+  if(diagnostics.messages.some(m=>m.type==="error"))throw new Error("WGSL compilation failed: " + diagnostics.messages.filter(m=>m.type==="error").map(m=>`${m.lineNum}:${m.linePos} ${m.message}`).join("; "));
   const pipeline=await device.createRenderPipelineAsync({layout:p.pipeline.layout,
     vertex:{module:shader,entryPoint:p.pipeline.vertexEntry},
     fragment:{module:shader,entryPoint:p.pipeline.fragmentEntry,targets:[{format:p.format}]},
