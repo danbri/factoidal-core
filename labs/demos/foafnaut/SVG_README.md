@@ -86,7 +86,10 @@ CPU and GPU, not analytic area coverage. `Graphics.lean` defines its four
 sample coordinates as exact quarter-pixel integers; Lean proves the sample
 count, strict interior bounds and center symmetry before deriving the Float
 offsets consumed by both the CPU sampler and WGSL generator. This proves a
-shared sample schedule, not equal shader/CPU arithmetic or a raster error bound.
+shared sample schedule, and `pixelSample_cpu_gpu_coordinate_agreement` proves
+that pixel-origin plus offset and fragment-center plus relative offset identify
+the same exact quarter-pixel locations. Neither theorem proves equal
+Float/Float32 shader/CPU arithmetic or a raster error bound.
 The transparent SVG canvas is composited over a documented white backdrop for
 opaque RGB PPM output.
 

@@ -23,6 +23,27 @@ theorem pixelSampleQuarterCoordinates_centered :
     (pixelSampleQuarterCoordinates.map Prod.snd).sum = 8 := by
   decide
 
+/-- Exact quarter-pixel coordinate reached by the CPU-style pixel-origin
+    plus sample-offset calculation. -/
+def pixelSampleAbsoluteQuarter (pixel sample : Nat) : Nat := 4 * pixel + sample
+
+/-- Exact quarter-pixel location of the GPU fragment center. -/
+def fragmentCenterQuarter (pixel : Nat) : Nat := 4 * pixel + 2
+
+/-- Exact quarter-pixel displacement from the fragment center used by the
+    WGSL `pixel.xy + (offset - 0.5)` expression. -/
+def sampleFromFragmentCenterQuarter (sample : Nat) : Int := (sample : Int) - 2
+
+/-- CPU origin-plus-offset and GPU center-plus-relative-offset identify the
+    same mathematical sample positions. This is an exact coordinate theorem;
+    it does not prove that Float/Float32 operations preserve the equality. -/
+theorem pixelSample_cpu_gpu_coordinate_agreement (pixel sample : Nat) :
+    (fragmentCenterQuarter pixel : Int) + sampleFromFragmentCenterQuarter sample =
+      (pixelSampleAbsoluteQuarter pixel sample : Int) := by
+  simp [fragmentCenterQuarter, sampleFromFragmentCenterQuarter, pixelSampleAbsoluteQuarter,
+    Int.add_assoc]
+  rw [Int.add_comm (2 : Int) ((sample : Int) - 2), Int.sub_add_cancel]
+
 /-- Floating offsets used at raster boundaries, derived from the exact grid.
     Four-point sampling is not analytic area coverage or a universal error bound. -/
 def pixelSampleOffsets : List (Float × Float) :=
