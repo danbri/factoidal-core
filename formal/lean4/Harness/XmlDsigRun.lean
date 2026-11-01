@@ -19,6 +19,12 @@ Harness/XmlDsigRun — core validation (XML Signature 1.1 §3.2) by
     (https://github.com/danbri/factoidal/issues/1224). The HMAC key is
     "secret". External references resolve to the vendored
     `xml-stylesheet.b64` and its decoded octets, never to the network.
+  * the `ds:X509Data` of the six X.509 vectors of the 2001 set: the
+    certificate selected (§4.5.4) must be the one whose serial number
+    `openssl x509 -serial` gives (`merlinX509`); its DSA key is refused.
+  * `tests/xmldsig/x509/`: `ds:X509Data` fixtures made by signxml and
+    pyca/cryptography (`tests/xmldsig/make_x509_fixtures.py`; the caller's
+    certificates are named in `manifest.tsv`).
   * `tests/xmldsig/fixtures/`: signatures made by signxml (an independent
     implementation) with RSA-2048, P-256 and HMAC keys, and negative cases
     made from them (`tests/xmldsig/make_fixtures.py`; `manifest.tsv` gives
@@ -69,7 +75,13 @@ def oracleXfail : List (String × Nat) :=
     "p521_sha384_4050", "p521_sha512", "p521_sha512_4050"]
   (rsa1024.map fun n => (s!"signature-enveloping-{n}.xml", 1227)) ++
   (ec.map fun n => (s!"signature-enveloping-{n}.xml", 1223)) ++
-  [("signature-enveloping-x509digest-rsa.xml", 1226)]
+  [("signature-enveloping-x509digest-rsa.xml", 1229)]
+
+/-- Expected failures whose error cannot name the issue, because the
+missing piece is data, not code: the text the error must contain. -/
+def xfailNeedle : Nat → Option String
+  | 1229 => some "of ds:X509Data or of the caller matches every identifier"
+  | _ => none
 
 structure Tally where
   pass : Nat := 0
@@ -87,7 +99,8 @@ def record (t : Tally) (name : String) (wantValid : Bool) (xf : Option Nat)
       IO.println s!"FAIL {name}: STALE expected failure (it validates now; remove it and close {issueUrl n})"
       return { t with fail := t.fail + 1 }
   | some n, .error e =>
-      if (e.splitOn (issueUrl n)).length > 1 then
+      if (e.splitOn (issueUrl n)).length > 1 ||
+          (xfailNeedle n).any (fun k => (e.splitOn k).length > 1) then
         IO.println s!"XFAIL {name}: {e}"; return { t with xfail := t.xfail + 1 }
       else
         IO.println s!"FAIL {name}: expected failure for {issueUrl n}, but: {e}"
@@ -218,6 +231,66 @@ def runMerlin (t0 : Tally) (dir : String) : IO Tally := do
       let want := f != "signature-enveloping-hmac-sha1-40.xml"
       t ← record t s!"merlin-2001 {f} core validation" want ((merlinXfail.find? (·.1 == f)).map (·.2))
         (outcome (validateParsed nativeBackend cfg cd sg))
+  return t
+
+/-- The key selection of `ds:X509Data` (§4.5.4) in the 2001 vectors:
+the file, and the serial number (hexadecimal, from `openssl x509
+-serial`) of the certificate it names among its own and those of
+`certs/`. For `signature.xml` the `ds:X509Data` is the target of a
+`ds:RetrievalMethod` (https://github.com/danbri/factoidal/issues/1228);
+it is read here directly. Each selected key is DSA, so `certKey` must
+refuse it naming https://github.com/danbri/factoidal/issues/1224. -/
+def merlinX509 : List (String × String) :=
+  [("signature-x509-crt.xml", "ECF92151D3"), ("signature-x509-crt-crl.xml", "ECF921DE7F"),
+   ("signature-x509-is.xml", "ECF9217BFA"), ("signature-x509-sn.xml", "ECF921674A"),
+   ("signature-x509-ski.xml", "ECF92190C7"), ("signature.xml", "ECF8EA0DAC")]
+
+def hexOfInt (n : Int) : String :=
+  (String.ofList (Nat.toDigits 16 n.toNat)).toUpper
+
+def runMerlinX509 (t0 : Tally) (dir : String) : IO Tally := do
+  let mut t := t0
+  let mut certs : List ByteArray := []
+  for n in ["badb", "balor", "bres", "ca", "lugh", "macha", "morigu", "nemain"] do
+    certs := certs ++ [← IO.FS.readBinFile s!"{dir}/certs/{n}.crt"]
+  for (f, serial) in merlinX509 do
+    let src ← IO.FS.readFile s!"{dir}/{f}"
+    let r : Except String L4Factoidal.X509.Cert := do
+      let cd ← C14n.C14nDoc.ofString? src
+      let some xd := (List.range cd.n0).find? (fun i => isEl cd.doc i dsNs "X509Data") | throw "no ds:X509Data"
+      x509Select certs cd.doc xd
+    let name := s!"merlin-2001 {f} X509Data selection"
+    match r with
+    | .error e => IO.println s!"FAIL {name}: {e}"; t := { t with fail := t.fail + 1 }
+    | .ok c =>
+        if hexOfInt c.serial != serial then
+          IO.println s!"FAIL {name}: selected serial {hexOfInt c.serial}, expected {serial}"
+          t := { t with fail := t.fail + 1 }
+        else
+          match certKey c with
+          | .error e =>
+              if (e.splitOn (issueUrl 1224)).length > 1 then
+                IO.println s!"PASS {name}: serial {serial}, DSA key refused"; t := { t with pass := t.pass + 1 }
+              else IO.println s!"FAIL {name}: {e}"; t := { t with fail := t.fail + 1 }
+          | .ok _ => IO.println s!"FAIL {name}: the key is DSA, but certKey read it"; t := { t with fail := t.fail + 1 }
+  return t
+
+/-- The `ds:X509Data` fixtures (`tests/xmldsig/make_x509_fixtures.py`):
+`manifest.tsv` gives the expected outcome and the certificates the
+caller gives. -/
+def runX509Fixtures (t0 : Tally) (dir : String) : IO Tally := do
+  let mut t := t0
+  for line in (← IO.FS.readFile s!"{dir}/manifest.tsv").splitOn "\n" do
+    match line.splitOn "\t" with
+    | [file, want, given, _] =>
+        let src ← IO.FS.readFile s!"{dir}/{file}"
+        let mut certs : List ByteArray := []
+        if given != "-" then
+          for g in given.splitOn "," do
+            certs := certs ++ [← IO.FS.readBinFile s!"{dir}/{g}"]
+        let cfg : Config := { certificates := certs }
+        t ← record t s!"x509 {file}" (want == "valid") none (outcome (validateText nativeBackend cfg src))
+    | _ => pure ()
   return t
 
 def runFixtures (t0 : Tally) (dir : String) : IO Tally := do
@@ -416,8 +489,12 @@ def main (args0 : List String) : IO UInt32 := do
   IO.println s!"xmldsig-filter2-interop: {x2.pass} pass, {x2.fail} fail, {x2.xfail} expected failures (out of {x2.pass + x2.fail + x2.xfail})"
   let m ← runMerlin {} s!"{root}/third_party/testing/xmldsig-merlin-2001"
   IO.println s!"xmldsig-merlin-2001: {m.pass} pass, {m.fail} fail, {m.xfail} expected failures (out of {m.pass + m.fail + m.xfail})"
+  let mx ← runMerlinX509 {} s!"{root}/third_party/testing/xmldsig-merlin-2001/merlin-xmldsig-twenty-three"
+  IO.println s!"xmldsig-merlin-2001 X509Data selection: {mx.pass} pass, {mx.fail} fail (out of {mx.pass + mx.fail})"
   let u ← runFixtures {} fdir
   IO.println s!"fixtures: {u.pass} pass, {u.fail} fail (out of {u.pass + u.fail})"
+  let ux ← runX509Fixtures {} s!"{root}/tests/xmldsig/x509"
+  IO.println s!"x509 fixtures: {ux.pass} pass, {ux.fail} fail (out of {ux.pass + ux.fail})"
   let v ← runSaml {}
   IO.println s!"saml differential: {v.pass} pass, {v.fail} fail (out of {v.pass + v.fail})"
   let w ← runSign {} s!"{root}/tests/xmldsig/signing-keys.tsv" outDir
@@ -429,4 +506,4 @@ def main (args0 : List String) : IO UInt32 := do
     let x ← runWycheproof s!"{wp}/{file}" label h
     IO.println s!"{label}: {x.pass} pass, {x.fail} fail, {x.acceptable} acceptable (out of {x.pass + x.fail + x.acceptable})"
     wf := wf + x.fail
-  return (if t.fail + x2.fail + m.fail + u.fail + v.fail + w.fail + wf == 0 then 0 else 1)
+  return (if t.fail + x2.fail + m.fail + mx.fail + u.fail + ux.fail + v.fail + w.fail + wf == 0 then 0 else 1)

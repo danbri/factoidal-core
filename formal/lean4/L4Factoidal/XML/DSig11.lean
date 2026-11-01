@@ -63,10 +63,17 @@ key of `ds:KeyInfo` (`Config.keyFromKeyInfo`): `ds:KeyValue` with
 `ds:RSAKeyValue`, `dsig11:ECKeyValue` (named curve) or the RFC 4050
 `ECDSAKeyValue`; `dsig11:DEREncodedKeyValue` (an RSA or EC
 SubjectPublicKeyInfo); `dsig11:KeyInfoReference` to a `ds:KeyInfo` of the
-same document. A key from `ds:KeyInfo` only says that the signature
-verifies under that key; `Validated.key` returns it so the caller decides
-whether it trusts it. `ds:X509Data` is not read
-(https://github.com/danbri/factoidal/issues/1226).
+same document; `ds:X509Data` (§4.5.4): the certificate that its
+`X509IssuerSerial`, `X509SubjectName`, `X509SKI` and `dsig11:X509Digest`
+identify among its `X509Certificate`s and the caller's certificates
+(`Config.certificates`), or, with no identifier, its one end-entity
+certificate; the key is that certificate's SubjectPublicKeyInfo
+(`L4Factoidal.XML.X509`). A key from `ds:KeyInfo` only says that the
+signature verifies under that key; `Validated.key` returns it, and
+`signingCertificate?` the certificate, so the caller decides whether it
+trusts it (certificate path validation and revocation, `X509CRL`
+included, are the caller's). `ds:RetrievalMethod` is not followed
+(https://github.com/danbri/factoidal/issues/1228).
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -78,6 +85,7 @@ import L4Factoidal.Crypto.Hmac
 import L4Factoidal.JOSE.Pkcs1
 import L4Factoidal.VC.Multibase
 import L4Factoidal.XML.DSig
+import L4Factoidal.XML.X509
 
 namespace L4Factoidal.XML.DSig11
 
@@ -212,6 +220,9 @@ structure Config where
   keyFromKeyInfo : Bool := true
   /-- Octets of a URI that is not a same-document reference. -/
   resolve : String → Option ByteArray := fun _ => none
+  /-- DER certificates that `ds:X509Data` identifiers may name (§4.5.4).
+      Giving one is not trusting it: it only lets an identifier find it. -/
+  certificates : List ByteArray := []
 
 /-! ## Navigation in the node table -/
 
@@ -519,20 +530,9 @@ def natBytes (n len : Nat) : Option ByteArray :=
 def uncompressed? (c : Curve) (b : ByteArray) : Option ByteArray :=
   if b.size == 1 + 2 * c.coordSize && b.get! 0 == 4 then some (b.extract 1 b.size) else none
 
-/-- A DER TLV at `i` with a definite length: tag, content start, content end. -/
-def derTlv? (b : ByteArray) (i : Nat) : Option (UInt8 × Nat × Nat) :=
-  if i + 2 > b.size then none else
-  let tag := b.get! i
-  let l0 := (b.get! (i + 1)).toNat
-  if l0 < 128 then
-    if i + 2 + l0 ≤ b.size then some (tag, i + 2, i + 2 + l0) else none
-  else if l0 == 0x81 && i + 3 ≤ b.size then
-    let l := (b.get! (i + 2)).toNat
-    if i + 3 + l ≤ b.size then some (tag, i + 3, i + 3 + l) else none
-  else if l0 == 0x82 && i + 4 ≤ b.size then
-    let l := (b.get! (i + 2)).toNat * 256 + (b.get! (i + 3)).toNat
-    if i + 4 + l ≤ b.size then some (tag, i + 4, i + 4 + l) else none
-  else none
+/-- A DER TLV at `i` with a definite length: tag, content start, content
+end (`X509.derTlv?`). -/
+def derTlv? (b : ByteArray) (i : Nat) : Option (UInt8 × Nat × Nat) := X509.derTlv? b i
 
 def oidRsa : List UInt8 := [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01]
 def oidEc : List UInt8 := [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]
@@ -612,9 +612,111 @@ def keyValue? (d : Doc) (kv : Nat) : Except String PublicKey :=
       else .error "ds:KeyValue holds an unknown key type"
   | _ => .error "ds:KeyValue must hold one key"
 
+/-! ## ds:X509Data (§4.5.4) -/
+
+/-- One identifier of a certificate in `ds:X509Data`. -/
+inductive X509Id where
+  | issuerSerial (issuer : String) (serial : Int)
+  | subjectName (name : String)
+  | ski (id : ByteArray)
+  | digest (h : DigestAlg) (value : ByteArray)
+
+/-- The certificate is the one the identifier names. -/
+def X509Id.matches (c : X509.Cert) : X509Id → Bool
+  | .issuerSerial i n => c.serial == n && X509.nameMatches i c.issuer
+  | .subjectName n => X509.nameMatches n c.subject
+  | .ski k => match c.ski with
+    | some k' => k' == k
+    | none => false
+  | .digest h v => h.digest c.der == v
+
+def trimText (d : Doc) (i : Nat) : String := (textOf d i).trimAscii.toString
+
+/-- The identifiers and the certificates of one `ds:X509Data`.
+`X509CRL` and elements of other namespaces are skipped. -/
+def x509Contents (d : Doc) (xd : Nat) : Except String (List X509Id × List ByteArray) := do
+  let mut ids : Array X509Id := #[]
+  let mut certs : Array ByteArray := #[]
+  for k in elemKids d xd do
+    if isEl d k dsNs "X509IssuerSerial" then
+      match kidNamed? d k dsNs "X509IssuerName", kidNamed? d k dsNs "X509SerialNumber" with
+      | some n, some sn =>
+          match (trimText d sn).toInt? with
+          | some v => ids := ids.push (.issuerSerial (textOf d n) v)
+          | none => throw "ds:X509SerialNumber is not an integer"
+      | _, _ => throw "ds:X509IssuerSerial needs ds:X509IssuerName and ds:X509SerialNumber"
+    else if isEl d k dsNs "X509SubjectName" then ids := ids.push (.subjectName (textOf d k))
+    else if isEl d k dsNs "X509SKI" then
+      match b64Text? d k with
+      | some v => ids := ids.push (.ski v)
+      | none => throw "ds:X509SKI is not base64"
+    else if isEl d k ds11Ns "X509Digest" then
+      match (attrVal? d k "Algorithm").bind DigestAlg.ofUri?, b64Text? d k with
+      | some h, some v => ids := ids.push (.digest h v)
+      | none, _ => throw "dsig11:X509Digest has no digest algorithm of §6.2"
+      | _, none => throw "dsig11:X509Digest is not base64"
+    else if isEl d k dsNs "X509Certificate" then
+      match b64Text? d k with
+      | some v => certs := certs.push v
+      | none => throw "ds:X509Certificate is not base64"
+  return (ids.toList, certs.toList)
+
+/-- The one element of a list; an error naming `what` otherwise. -/
+def pickOne (what : String) : List X509.Cert → Except String X509.Cert
+  | [c] => .ok c
+  | [] => .error s!"no certificate {what}"
+  | _ => .error s!"more than one certificate {what}"
+
+/-- Certificates, without repeats of the same DER octets. -/
+def dedupCerts (l : List X509.Cert) : List X509.Cert :=
+  l.foldl (fun acc c => if acc.any (·.der == c.der) then acc else acc ++ [c]) []
+
+/-- The certificates that are not the issuer of another one of `cs`: the
+end-entity certificates of a chain. -/
+def endEntities (cs : List X509.Cert) : List X509.Cert :=
+  cs.filter fun c => !(cs.any fun o => o.der != c.der && X509.Name.same o.issuer c.subject)
+
+/-- §4.5.4: the certificate of one `ds:X509Data` that holds the
+validation key. With identifiers: the one certificate, among those of the
+element and the caller's, that every identifier names. With none: the
+one end-entity certificate of the element. -/
+def x509SelectCore (ids : List X509Id) (inData extra : List ByteArray) : Except String X509.Cert := do
+  let some own := inData.mapM X509.parseCert? | throw "ds:X509Certificate is not a DER X.509 certificate"
+  if ids.isEmpty then
+    if own.isEmpty then throw "ds:X509Data holds no certificate and no identifier this verifier reads"
+    pickOne "of ds:X509Data is an end-entity certificate of the others" (endEntities (dedupCerts own))
+  else
+    let cands := dedupCerts (own ++ extra.filterMap X509.parseCert?)
+    pickOne "of ds:X509Data or of the caller matches every identifier of ds:X509Data"
+      (cands.filter fun c => ids.all (·.matches c))
+
+/-- The DSA OID 1.2.840.10040.4.1 (RFC 3279 §2.3.2). -/
+def oidDsa : List UInt8 := [0x2a, 0x86, 0x48, 0xce, 0x38, 0x04, 0x01]
+
+/-- The key of a certificate: its SubjectPublicKeyInfo, read as
+`dsig11:DEREncodedKeyValue` is. -/
+def certKey (c : X509.Cert) : Except String PublicKey :=
+  match spkiKey? c.spki with
+  | some k => .ok k
+  | none =>
+      let isDsa := match derTlv? c.spki 0 with
+        | some (_, s0, _) => match derTlv? c.spki s0 with
+          | some (_, s1, _) => match derTlv? c.spki s1 with
+            | some (0x06, s2, e2) => slice c.spki s2 e2 == oidDsa
+            | _ => false
+          | none => false
+        | none => false
+      if isDsa then .error "the certificate holds a DSA key; DSA is not supported (https://github.com/danbri/factoidal/issues/1224)"
+      else .error "the certificate's key is not RSA or named-curve EC"
+
+/-- The certificate a `ds:X509Data` element names. -/
+def x509Select (certs : List ByteArray) (d : Doc) (xd : Nat) : Except String X509.Cert := do
+  let (ids, own) ← x509Contents d xd
+  x509SelectCore ids own certs
+
 /-- The key of a `ds:KeyInfo` element, without following
 `dsig11:KeyInfoReference`. -/
-def keyInfoDirect? (d : Doc) (ki : Nat) : Except String PublicKey :=
+def keyInfoDirect? (certs : List ByteArray) (d : Doc) (ki : Nat) : Except String PublicKey :=
   match kidNamed? d ki dsNs "KeyValue" with
   | some kv => keyValue? d kv
   | none =>
@@ -624,23 +726,26 @@ def keyInfoDirect? (d : Doc) (ki : Nat) : Except String PublicKey :=
           | some k => .ok k
           | none => .error "dsig11:DEREncodedKeyValue is not an RSA or named-curve EC SubjectPublicKeyInfo"
       | none =>
-          if (kidNamed? d ki dsNs "X509Data").isSome then
-            .error "ds:X509Data is not read (https://github.com/danbri/factoidal/issues/1226)"
-          else .error "ds:KeyInfo holds no key this verifier reads"
+          match kidNamed? d ki dsNs "X509Data" with
+          | some xd => (x509Select certs d xd).bind certKey
+          | none =>
+              if (kidNamed? d ki dsNs "RetrievalMethod").isSome then
+                .error "ds:RetrievalMethod is not followed (https://github.com/danbri/factoidal/issues/1228)"
+              else .error "ds:KeyInfo holds no key this verifier reads"
 
 /-- §4.5: the key of `ds:KeyInfo`; a `dsig11:KeyInfoReference` (§4.5.10)
 is followed once, to a `ds:KeyInfo` of the same document. -/
-def keyInfoKey? (cd : C14nDoc) (ki : Nat) : Except String PublicKey :=
+def keyInfoKey? (certs : List ByteArray) (cd : C14nDoc) (ki : Nat) : Except String PublicKey :=
   let d := cd.doc
   match kidNamed? d ki ds11Ns "KeyInfoReference" with
-  | none => keyInfoDirect? d ki
+  | none => keyInfoDirect? certs d ki
   | some r =>
       match attrVal? d r "URI" with
       | some u =>
           if u.startsWith "#" then
             match idTarget cd (u.drop 1).toString with
             | .ok t =>
-                if isEl d t dsNs "KeyInfo" then keyInfoDirect? d t
+                if isEl d t dsNs "KeyInfo" then keyInfoDirect? certs d t
                 else .error "dsig11:KeyInfoReference does not point to a ds:KeyInfo"
             | .error e => .error e
           else .error "dsig11:KeyInfoReference to another document is not followed"
@@ -680,8 +785,14 @@ def keyFor (cfg : Config) (cd : C14nDoc) (s : Signature) : Except String PublicK
   | none =>
       if !cfg.keyFromKeyInfo then .error "no key was given"
       else match s.keyInfo with
-        | some ki => keyInfoKey? cd ki
+        | some ki => keyInfoKey? cfg.certificates cd ki
         | none => .error "no key was given and the signature has no ds:KeyInfo"
+
+/-- The certificate that the first `ds:X509Data` of the signature's
+`ds:KeyInfo` names (§4.5.4), for the caller's path validation; `none`
+when there is no such element. -/
+def signingCertificate? (cfg : Config) (cd : C14nDoc) (s : Signature) : Option (Except String X509.Cert) :=
+  s.keyInfo.bind fun ki => (kidNamed? cd.doc ki dsNs "X509Data").map (x509Select cfg.certificates cd.doc)
 
 /-- The check of `ds:SignatureValue` over the canonical `ds:SignedInfo`.
 `.ok (b, k)`: the check gave `b`, with the public key `k` (none for a MAC). -/
@@ -916,5 +1027,42 @@ def macDoc (obj : String) (dv sv : String) : String :=
     referenceOctets {} cd sg.node r) with
   | .ok o => o == "[2]".toUTF8
   | .error _ => false)
+
+/-! ## Theorems: ds:X509Data (XML Signature 1.1, 2013, §4.5.4) -/
+
+theorem pickOne_mem {w : String} : ∀ {l : List X509.Cert} {c}, pickOne w l = .ok c → c ∈ l
+  | [c'], c, h => by simp only [pickOne, Except.ok.injEq] at h; simp [h]
+  | [], _, h => by simp [pickOne] at h
+  | _ :: _ :: _, _, h => by simp [pickOne] at h
+
+/-- XML Signature 1.1 (2013) §4.5.4: when `ds:X509Data` has identifiers,
+the certificate selected is named by every one of them. -/
+theorem x509SelectCore_2013_identified {ids : List X509Id} {a b : List ByteArray} {c : X509.Cert}
+    (hne : ids ≠ []) (h : x509SelectCore ids a b = .ok c) : ∀ i ∈ ids, i.matches c = true := by
+  have hnil : ids.isEmpty = false := by cases ids <;> simp_all
+  unfold x509SelectCore at h
+  cases ho : a.mapM X509.parseCert? with
+  | none => simp only [ho] at h; cases h
+  | some own =>
+    simp only [ho, hnil] at h
+    have hm := pickOne_mem h
+    simp only [List.mem_filter, List.all_eq_true] at hm
+    exact hm.2
+
+/-- An `X509Digest` names exactly the certificates whose DER octets have
+that digest. -/
+theorem x509Id_2013_digest_matches (c : X509.Cert) (h : DigestAlg) (v : ByteArray) :
+    (X509Id.digest h v).matches c = true ↔ h.digest c.der = v := by
+  show ByteArray.beq (h.digest c.der) v = true ↔ _
+  unfold ByteArray.beq
+  rw [beq_iff_eq]
+  exact ⟨ByteArray.ext, fun e => e ▸ rfl⟩
+
+/-- XML Signature 1.1 (2013) §4.5.4 and §4.5.8: the key of a certificate
+in `ds:X509Data` is its SubjectPublicKeyInfo read as a
+`dsig11:DEREncodedKeyValue` is, so the two routes give the same key. -/
+theorem dsig11_2013_x509_key_eq_derEncoded (c : X509.Cert) (k : PublicKey)
+    (h : spkiKey? c.spki = some k) : certKey c = .ok k := by
+  simp [certKey, h]
 
 end L4Factoidal.XML.DSig11

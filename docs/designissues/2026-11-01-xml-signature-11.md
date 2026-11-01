@@ -244,18 +244,67 @@ Code: `formal/lean4/L4Factoidal/XML/DSigXslt.lean` (§6.6.5, algorithm
   https://github.com/danbri/factoidal/issues/1224, and the RSA signature
   (a 1024-bit key) names https://github.com/danbri/factoidal/issues/1227.
 
+## `ds:X509Data` (2026-11-01, part 6)
+
+Code: `formal/lean4/L4Factoidal/XML/X509.lean` (DER certificates and RFC
+4514 names) and the `ds:X509Data` section of `DSig11.lean` (§4.5.4).
+Issue: https://github.com/danbri/factoidal/issues/1226.
+
+- Certificate fields read (RFC 5280 §4.1): serial number, issuer, subject,
+  SubjectPublicKeyInfo, and the subject key identifier extension
+  (§4.2.1.2). The signature, validity and other extensions of the
+  certificate are not checked: path validation and revocation (an
+  `X509CRL` is skipped) are the caller's decision, with the certificate
+  from `signingCertificate?`.
+- Selection (`x509SelectCore`): with identifiers (`X509IssuerSerial`,
+  `X509SubjectName`, `X509SKI`, `dsig11:X509Digest`), exactly one
+  certificate among those of the element and those the caller gives
+  (`Config.certificates`) must match every identifier; with none, the
+  element's certificates must have exactly one end-entity certificate (one
+  that issues no other certificate of the set). Otherwise the key is
+  refused with the reason. A caller's certificate is not trusted by being
+  given; it only lets an identifier find it.
+- Names: the RFC 4514 string is parsed (escapes, `#hex`, multi-valued
+  RDNs, `,` and `;`), reversed, and compared RDN by RDN with the DER name.
+  String values are compared after ASCII case folding and white space
+  folding, a subset of the RFC 4518 caseIgnoreMatch preparation. Decision
+  (coordinator's): no Unicode case folding or normalisation; a test that
+  needs it gets its own issue.
+- The key: the certificate's SubjectPublicKeyInfo, read by the same
+  `spkiKey?` as `dsig11:DEREncodedKeyValue`. A DSA key is refused naming
+  https://github.com/danbri/factoidal/issues/1224.
+- `ds:RetrievalMethod` is not followed:
+  https://github.com/danbri/factoidal/issues/1228.
+- Theorems (2013 is the XML Signature 1.1 Recommendation):
+  `x509SelectCore_2013_identified` (the selected certificate matches every
+  identifier), `x509Id_2013_digest_matches`,
+  `dsig11_2013_x509_key_eq_derEncoded` (the `X509Certificate` route and the
+  `DEREncodedKeyValue` route give the same key).
+- Measured by: project fixtures made by signxml and pyca/cryptography
+  (`tests/xmldsig/make_x509_fixtures.py`, `tests/xmldsig/x509/`; RSA-2048
+  and P-256 signers under a test CA; every identifier form, chains in both
+  orders, and 6 negative cases), which signxml also verifies with the
+  signer's certificate (`tests/xmldsig/verify_x509_fixtures.py`); and the
+  selection of the certificate in the six X.509 vectors of
+  `merlin-xmldsig-twenty-three`, against the serial numbers that `openssl
+  x509 -serial` gives for the expected files of `certs/`. Their keys are
+  DSA, so core validation stays an expected failure.
+- The 2012 vector `signature-enveloping-x509digest-rsa.xml` names a
+  certificate that is not published:
+  https://github.com/danbri/factoidal/issues/1229.
+
 ## Open (each with an issue and an expected failure, or a refusal)
 
 - ECDSA P-384 and P-521:
   https://github.com/danbri/factoidal/issues/1223 (18 interop cases). HACL\*
   has no P-384 or P-521 (https://github.com/danbri/factoidal/issues/1166).
 - DSA: https://github.com/danbri/factoidal/issues/1224.
-- `ds:X509Data`: https://github.com/danbri/factoidal/issues/1226 (1 case).
+- The certificate of the 2012 `X509Digest` vector is not published:
+  https://github.com/danbri/factoidal/issues/1229 (1 case).
+- `ds:RetrievalMethod`: https://github.com/danbri/factoidal/issues/1228.
 - RSA keys of 1024 bits: https://github.com/danbri/factoidal/issues/1227
   (10 cases; decision needed).
-- `ds:KeyName`, `ds:RetrievalMethod` and the X.509 forms of the 2001
-  vectors are not reached, because their signatures are DSA; they are part
-  of https://github.com/danbri/factoidal/issues/1224 and
-  https://github.com/danbri/factoidal/issues/1226.
+- `ds:KeyName` of the 2001 vectors is not reached, because its signature
+  is DSA (https://github.com/danbri/factoidal/issues/1224).
 - A wasm op: an open item of item 4 of
   https://github.com/danbri/factoidal/issues/1165.
