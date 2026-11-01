@@ -120,3 +120,13 @@ The16 first-error link failures in the admission report are rel=author,
 not stylesheet links as an earlier note suggested. Added author to the inert
 metadata allowlist with a regression check; stylesheet rejection remains.
 This removes a metadata blocker, not a rendering feature or visual pass.
+
+## Normalization invariant
+
+`NativeSVGDash.normalize_even` in `SVGDashProofs.lean` proves that every successful result from the
+actual `SVGDash.normalize` has even length, including empty for a solid stroke.
+Odd source lists are doubled; therefore the alternating dash/gap interpretation
+has complete pairs. The kernel check uses only propext, Classical.choice and
+Quot.sound. The build script now checks this theorem alongside dash tests.
+This structural property does not prove dash distances, Float accuracy or
+pixel equivalence.

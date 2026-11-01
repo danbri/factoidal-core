@@ -86,6 +86,7 @@ done
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGTransformTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGPercentageTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGDashTests.lean"
+"$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGDashProofs.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGSamplingTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGCSSTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGCSSIntegrationTests.lean"
