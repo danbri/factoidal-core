@@ -171,3 +171,4 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-31 | [Published 0.28.0 and hub pin](20261031-release-028-published.md) | — | registry consumer, browser and hub validation |
 
 | 2026-10-31 | [Compositor HTML failure conditions](20261031-compositor-html-failure-analysis.md) | — | three kernel-checked failure lemmas, pinned-engine counterexamples and browser boundary |
+| 2026-11-01 | [Compositor pipeline files and FOAF pod library](20261101-compositor-pipeline-library.md) | — | bounded versioned documents, explicit FOAF storage discovery, ETag guarded writes and honest local validation limits |
