@@ -5,6 +5,9 @@ description: Run, test and extend Factoidal's Linked Web Storage 1.0 and Solid P
 
 # Linked Web Storage 1.0 and the Solid Protocol
 
+Private revision history and RDF-configured commit grouping (design only):
+[foafpod history](../../docs/designissues/2026-11-01-foafpod-private-history.md).
+
 Two standards, one engine, four hosts.
 
 One-page overview (what LWS is, what the server does, strengths, gaps):
