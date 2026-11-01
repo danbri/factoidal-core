@@ -131,7 +131,7 @@ def checkOptionKeys (opts : Seq) (known : List String) : M Unit := do
   | _ => pure ()
 
 def parseXmlOptionNames : List String := ["base-uri", "dtd-validation", "strip-space", "trust-external",
-  "xinclude", "xsd-validation", "use-xsi-schema-location", "line-numbers", "stable"]
+  "xinclude", "xsd-validation", "use-xsi-schema-location", "line-numbers", "stable", "retain-location"]
 
 /-! ## fn:parse-xml -/
 
@@ -147,6 +147,8 @@ structure ParseOpts where
 
 def parseOpts (e : Env) (opts : Seq) : M ParseOpts := do
   checkOptionKeys opts parseXmlOptionNames
+  -- F&O 4.0 permits ignoring this request, but its value must be boolean.
+  let _ ← optBool opts "retain-location" false
   let base := match optLookup opts "base-uri" with
     | some s => strOf s
     | none => e.baseUri

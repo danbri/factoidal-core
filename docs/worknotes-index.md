@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-01 | [XML parsing retain-location option](20261101-qt4-retain-location.md) | pending | current — strict boolean admission and regression checks |
 | 2026-11-01 | [Foafpod private history](designissues/2026-11-01-foafpod-private-history.md) | pending | current — design, not activated |
 | 2026-11-01 | [Pipeline failure composition](20261101-pipeline-failure-composition.md) | pending | current — Lean checked; compositor storage tests rerun |
 | 2026-10-31 | [Conditional routing design](designissues/2026-10-31-checked-conditional-routing.md) | this commit | current |
