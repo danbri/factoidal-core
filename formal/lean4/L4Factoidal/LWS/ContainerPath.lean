@@ -11,8 +11,8 @@ JavaScript checks this module replaces:
 Until 0.28.0 these decisions were JavaScript (`npm/factoidal/lib/sbm11-lws.mjs`
 `containerUrl`/`resourceUrl`, `docs/web/hub/data-compositor/pod-storage.mjs`
 `httpUrl`/`rootUrl`/`within`/`rootedPath`): an iron rule 7 violation
-(anti-pattern 36). The hosts now call the pure op `lwsPath`
-(`Wasm/Ops/LwsPath.lean`), which answers with the functions below.
+(anti-pattern 36). The hosts now call the pure op `containerPath`
+(`Wasm/Ops/ContainerPath.lean`), which answers with the functions below.
 
 URLs are read with the URL Standard parser of this tree
 (`L4Factoidal.WHATWG.URL.parseUrl`, the parser of `new URL(input)`).

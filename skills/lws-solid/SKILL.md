@@ -942,7 +942,11 @@ request (`fetch`) and ends with `done` or `fail`. In Lean: the 401 flow
 (the three checks of §Discovery Validation by a Client, RFC 8414 metadata
 at `/.well-known/lws-configuration`, RFC 8693 token exchange, `Bearer`
 only to URLs under the StorageRoot of the token's storage or under a
-`serviceEndpoint` of its storage description on the requested URI's origin),
+`serviceEndpoint` of its storage description on the requested URI's origin,
+at a path-segment boundary: `TokenEntry.covers` is
+`LWS.ContainerPath.coversAtSegment`, so a root `https://s.example/alice`
+does not cover `https://s.example/alice-other/x`; theorem
+`covers_sibling_refused`, https://github.com/danbri/factoidal/issues/1127),
 preconditions
 (`update`, `patch`, `updateLinkset`, `move` default to the current ETag),
 the 412, 405/415 and 5xx retry rules, paging by `rel="next"` only, linkset
@@ -1040,6 +1044,26 @@ algorithm })` (wasm op `lwsClientNewKey`, `Client/Keys.lean`) makes a
 `did:key` agent. An operation can name its linkset (`linksetUrl`), service
 endpoint (`endpoint`) or storage description (`storage`) directly. Rule:
 the adapter reads no response; `tools/host-purity-lint.sh` group 4 checks it.
+
+## URLs under one container: op `containerPath` (https://github.com/danbri/factoidal/issues/1127)
+
+A host whose authority is one HTTP(S) container (a credential, a selected
+pod) asks the engine which URL it may request. Lean:
+`formal/lean4/L4Factoidal/LWS/ContainerPath.lean` over the URL Standard
+parser; op `containerPath` (`formal/lean4/Wasm/Ops/ContainerPath.lean`, core and full
+engines). Request kinds: `target`, `container` (`canonical` or not),
+`resource` (a raw relative path, the SBM11 LWS reader), `segment` (one new
+file name), `within`, `parent`. Answer `{ok, allowed, url}` or
+`{ok, allowed: false, reason}`. Theorems `resourceIn_under`,
+`segmentIn_under`, `within_under`, `within_canonical_under`,
+`parentIn_under`, `within_sibling_refused`.
+
+Hosts: `npm/factoidal/lib/sbm11-lws.mjs` (`lwsSbm11Reader`, now
+asynchronous because it loads the engine) and
+`docs/web/hub/data-compositor/pod-storage.mjs` (`podPaths(core)`; the
+compositor's storage worker forms every pod URL, the page forms none). Neither
+file parses or compares a URL; anti-pattern 36. Record:
+`docs/20261031-lws-reader-path-confinement.md`.
 
 ## WebDAV for file browsers (https://github.com/danbri/factoidal/issues/1066)
 
