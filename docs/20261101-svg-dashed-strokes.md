@@ -3,8 +3,9 @@
 Source: SVGDash.lean and SVG.lean in labs/demos/foafnaut. The scope is rect and
 line strokes, including viewport-relative dash lengths and offsets, existing
 butt/round caps and rectangle miter joins. Square caps, rounded rectangles,
-curved/path/polygon strokes, variable join styles and pathLength calibration
-remain unsupported. No extra CSS support was added.
+curved/path/polygon strokes and variable join styles remain unsupported.
+Positive pathLength calibration was added in the [subsequent work](20261101-svg-pathlength.md).
+No extra CSS support was added.
 
 [SVG 2 stroke dashing](https://www.w3.org/TR/SVG2/painting.html#StrokeDashing)
 defines repeating dash/gap arrays, odd-list duplication, zero-total solid strokes
@@ -19,8 +20,9 @@ are interpreted by Lean on the CPU and lowered to WGSL, where their boolean unio
 is evaluated before stroke/fill compositing. Overlapping caps do not apply stroke
 or element opacity twice. Child affine transforms apply to the complete region.
 
-Bounds: at most 128 input dash lengths for even lists, or 64 for odd lists
-(which duplicate), 8192 interval steps
+Bounds: the SVG parser accepts at most 64 input dash lengths. The shared
+normalizer accepts up to 128 for even lists, or 64 for odd lists (which
+duplicate). Rendering permits 8192 interval steps
 and 4096 retained pieces per primitive, within the existing whole-artifact storage
 bound. Negative/nonfinite lengths, nonfinite totals including after duplication,
 and offset/period magnitudes above 10^12 refuse explicitly. Float phase and

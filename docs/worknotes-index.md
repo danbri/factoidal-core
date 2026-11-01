@@ -15,8 +15,9 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-01 | [SVG pathLength calibration](20261101-svg-pathlength.md) | 7f21726a3 | current — source tests pass; official GPU comparison still fails at stroke edges |
 | 2026-11-01 | [SVG dashed strokes and coverage](20261101-svg-dashed-strokes.md) | pending | current — two additional exact source-artifact visual matches; WASM rebuild pending |
-| 2026-11-01 | [SVG CSS integration](20261101-svg-css-slice.md) | pending | current — cascade source tests pass; dashed strokes remain |
+| 2026-11-01 | [SVG CSS integration](20261101-svg-css-slice.md) | pending | current — cascade source tests pass; broader CSS remains unsupported |
 | 2026-11-01 | [SVG source artifacts](20261101-svg-source-artifacts.md) | pending | current — source artifact GPU replay matches one existing oracle case |
 | 2026-11-01 | [SVG percentage lengths](20261101-svg-percentage-lengths.md) | pending | current — source tests pass; CSS/strokes still block official cases |
 | 2026-11-01 | [Solving: SVG-scene rendering pipeline](designissues/2026-11-01-svg-scene-compositor.md) | pending | current — proposed shared rendering semantics and proof targets |
