@@ -1008,6 +1008,7 @@ import L4Factoidal.LWS.SearchResultsTests
 import L4Factoidal.LWS.SnapshotSeal
 import L4Factoidal.LWS.SnapshotSealTests
 import L4Factoidal.LWS.DirLock
+import L4Factoidal.LWS.ContainerPath
 import L4Factoidal.LWS.AccessPolicy
 import L4Factoidal.LWS.AccessGrants
 import L4Factoidal.LWS.AccessGrantsTests
