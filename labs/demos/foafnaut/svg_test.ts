@@ -114,7 +114,9 @@ Deno.test("SVG fractional/tiny root viewport and explicit embedding viewport hav
  equal(e.compile('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>',40,20).data.slice(0,4),[2,2,10,0]);
  rejects(()=>e.compile('<svg xmlns="http://www.w3.org/2000/svg"/>'),"root width");
  rejects(()=>e.compile(wrap(''),40,0),"both output dimensions");
- rejects(()=>e.compile('<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"/>',40,20),"unsupported unit");
+ const hosted=e.compile('<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"><rect width="50%" height="50%"/></svg>',40,20);
+ equal([hosted.width,hosted.height,hosted.primitiveCount],[40,20,1]);
+ rejects(()=>e.compile('<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"/>'),"explicit host output viewport");
 });
 
 Deno.test("SVG refuses unsupported features rather than silently losing rendering semantics",async()=>{

@@ -84,6 +84,7 @@ done
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SceneSVGTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGPrerequisiteTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGTransformTests.lean"
+"$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGPercentageTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGPathTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGCapacityTests.lean"
 for module in LayoutPolicyTests PolicyProtocolTests PresentationTests; do

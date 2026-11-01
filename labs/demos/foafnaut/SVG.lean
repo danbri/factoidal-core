@@ -200,18 +200,30 @@ private def readPaint (ids : List String) (source : String) : Except String Pain
   else Paint.solid <$> color s
 private def attr (attrs : List NamespaceAttribute) (key : String) : Option String :=
   (attrs.find? (fun a => a.name.namespace_.isNone && a.name.localPart == key)).map (·.value)
+/-- SVG 2 §8.9: percentage bases belong to the viewport's user space. -/
+private structure LengthContext where
+  width : Float
+  height : Float
+private def LengthContext.diagonal (c : LengthContext) : Float :=
+  Float.sqrt ((c.width*c.width+c.height*c.height)/2)
+private def relativeLength (source : String) (base : Float) : Except String Float := do
+  let s := trim source
+  if s.endsWith "%" then
+    pure ((← number (String.ofList (s.toList.take (s.length-1))))/100*base)
+  else lengthNumber s
+
 private def common := ["id","fill","stroke","color","fill-opacity","stroke-opacity","stroke-width",
   "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule"]
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
     if a.name.namespace_.isSome then throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
     if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
-private def inheritedNumber (attrs : List NamespaceAttribute) (key : String) (old : Float) : Except String Float :=
+private def inheritedNumber (lengths : LengthContext) (attrs : List NamespaceAttribute) (key : String) (old : Float) : Except String Float :=
   match attr attrs key with
   | none => pure old
   | some value => if trim value == "inherit" then pure old else
-      if key == "stroke-width" then lengthNumber value else number value
-private def readStyle (ids : List String) (attrs : List NamespaceAttribute) (parent : Style) : Except String Style := do
+      if key == "stroke-width" then relativeLength value lengths.diagonal else number value
+private def readStyle (lengths : LengthContext) (ids : List String) (attrs : List NamespaceAttribute) (parent : Style) : Except String Style := do
   let mut style := parent
   if let some value := attr attrs "color" then
     if !["inherit","currentcolor"].contains (trim value).toLower then style := {style with currentColor:= ← color value}
@@ -219,10 +231,10 @@ private def readStyle (ids : List String) (attrs : List NamespaceAttribute) (par
     if trim value != "inherit" then style := {style with fill:= ← readPaint ids value}
   if let some value := attr attrs "stroke" then
     if trim value != "inherit" then style := {style with stroke:= ← readPaint ids value}
-  let width ← inheritedNumber attrs "stroke-width" parent.strokeWidth
+  let width ← inheritedNumber lengths attrs "stroke-width" parent.strokeWidth
   if width < 0 then throw "negative stroke-width"
-  let fillOpacity ← inheritedNumber attrs "fill-opacity" parent.fillOpacity
-  let strokeOpacity ← inheritedNumber attrs "stroke-opacity" parent.strokeOpacity
+  let fillOpacity ← inheritedNumber lengths attrs "fill-opacity" parent.fillOpacity
+  let strokeOpacity ← inheritedNumber lengths attrs "stroke-opacity" parent.strokeOpacity
   style := {style with strokeWidth:=width,fillOpacity:=max 0 (min 1 fillOpacity),strokeOpacity:=max 0 (min 1 strokeOpacity)}
   if let some value := attr attrs "fill-rule" then
     match trim value with
@@ -237,8 +249,9 @@ private def readStyle (ids : List String) (attrs : List NamespaceAttribute) (par
     if let some value := attr attrs key then
       if !allowed.contains (trim value) then throw s!"unsupported {key}: {value}"
   return style
-private def geometryNumber (attrs : List NamespaceAttribute) (key : String) (fallback : Float := 0) : Except String Float :=
-  match attr attrs key with | none => pure fallback | some s => lengthNumber s
+private def geometryNumber (lengths : LengthContext) (attrs : List NamespaceAttribute) (key : String) (fallback : Float := 0) : Except String Float :=
+  match attr attrs key with | none => pure fallback | some s => relativeLength s (if ["x","x1","x2","cx","width","rx"].contains key then lengths.width
+    else if ["y","y1","y2","cy","height","ry"].contains key then lengths.height else lengths.diagonal)
 inductive Geometry where
   | rect (x y width height : Float)
   | circle (cx cy radius : Float)
@@ -256,26 +269,26 @@ structure Primitive where
 private def strokeEnabled (style : Style) : Bool :=
   match style.stroke with | .none => false | _ => style.strokeWidth > 0
 
-private def readGeometry (tag : String) (attrs : List NamespaceAttribute) (style : Style) : Except String (Option Geometry) := do
+private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List NamespaceAttribute) (style : Style) : Except String (Option Geometry) := do
   if tag == "rect" then
-    let x ← geometryNumber attrs "x"; let y ← geometryNumber attrs "y"
-    let w ← geometryNumber attrs "width"; let h ← geometryNumber attrs "height"
+    let x ← geometryNumber lengths attrs "x"; let y ← geometryNumber lengths attrs "y"
+    let w ← geometryNumber lengths attrs "width"; let h ← geometryNumber lengths attrs "height"
     if w < 0 || h < 0 then throw "negative rectangle dimensions"
     return if w == 0 || h == 0 then none else some (.rect x y w h)
   else if tag == "circle" then
-    let x ← geometryNumber attrs "cx"; let y ← geometryNumber attrs "cy"; let r ← geometryNumber attrs "r"
+    let x ← geometryNumber lengths attrs "cx"; let y ← geometryNumber lengths attrs "cy"; let r ← geometryNumber lengths attrs "r"
     if r < 0 then throw "negative circle radius"
     return if r == 0 then none else some (.circle x y r)
   else if tag == "ellipse" then
     if (attr attrs "rx").isNone || (attr attrs "ry").isNone then throw "ellipse requires explicit numeric rx and ry; auto radii unsupported"
-    let x ← geometryNumber attrs "cx"; let y ← geometryNumber attrs "cy"
-    let rx ← geometryNumber attrs "rx"; let ry ← geometryNumber attrs "ry"
+    let x ← geometryNumber lengths attrs "cx"; let y ← geometryNumber lengths attrs "cy"
+    let rx ← geometryNumber lengths attrs "rx"; let ry ← geometryNumber lengths attrs "ry"
     if rx < 0 || ry < 0 then throw "negative ellipse radius"
     if strokeEnabled style then throw "ellipse stroke unsupported"
     return if rx == 0 || ry == 0 then none else some (.ellipse x y rx ry)
   else if tag == "line" then
-    let x1 ← geometryNumber attrs "x1"; let y1 ← geometryNumber attrs "y1"
-    let x2 ← geometryNumber attrs "x2"; let y2 ← geometryNumber attrs "y2"
+    let x1 ← geometryNumber lengths attrs "x1"; let y1 ← geometryNumber lengths attrs "y1"
+    let x2 ← geometryNumber lengths attrs "x2"; let y2 ← geometryNumber lengths attrs "y2"
     return some (.line x1 y1 x2 y2)
   else if tag == "polygon" then
     if strokeEnabled style then throw "polygon stroke/joins unsupported"
@@ -307,7 +320,7 @@ private def metadata (node : NamespaceNode) : Except String Unit := do
   match node with
   | .other (.text _) | .other (.cdata _) | .other (.comment _) => pure ()
   | _ => throw "descriptive metadata only supports text/comments"
-private def readNode (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (node : NamespaceNode) : Except String (List Primitive) := do
+private def readNode (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (node : NamespaceNode) : Except String (List Primitive) := do
   if depth > 32 then throw "SVG group nesting exceeds 32"
   match node with
   | .other (.comment _) => pure []
@@ -315,8 +328,8 @@ private def readNode (ids : List String) (parent : Transform) (depth : Nat) (sty
   | .other _ => throw "processing instructions/other XML nodes unsupported"
   | .element name attrs children =>
     if name.namespace_ == some "http://www.w3.org/1999/xhtml" && name.localPart == "link" then
-      -- Reftest links are HTML metadata, not graphics or active stylesheets.
-      if attr attrs "rel" != some "match" then throw "unsupported HTML link relation"
+      -- Reftest match/help links are inert metadata, not graphics or stylesheets.
+      if ![some "match", some "help"].contains (attr attrs "rel") then throw "unsupported HTML link relation"
       if !children.isEmpty then throw "HTML metadata link must be empty"
       return []
     if name.namespace_ != some svgURI then throw s!"foreign/non-SVG element: {name.localPart}"
@@ -329,17 +342,17 @@ private def readNode (ids : List String) (parent : Transform) (depth : Nat) (sty
     else if tag == "g" then
       validateAttrs tag attrs ["transform"]
       let transform ← checkedTransform (parent.compose (← transformList ((attr attrs "transform").getD "")))
-      let inherited ← readStyle ids attrs style
-      readChildren ids transform (depth+1) inherited children
+      let inherited ← readStyle lengths ids attrs style
+      readChildren lengths ids transform (depth+1) inherited children
     else
       validateAttrs tag attrs (extraAttrs tag)
       let transform ← checkedTransform (parent.compose (← transformList ((attr attrs "transform").getD "")))
-      let inherited ← readStyle ids attrs style
-      let geometry ← readGeometry tag attrs inherited
+      let inherited ← readStyle lengths ids attrs style
+      let geometry ← readGeometry lengths tag attrs inherited
       for child in children do
         match child with
         | .element n _ _ => if n.namespace_ == some svgURI && ["title","desc","metadata"].contains n.localPart then
-                              let _ ← readNode ids transform (depth+1) inherited child
+                              let _ ← readNode lengths ids transform (depth+1) inherited child
                               pure ()
                             else throw "graphics children unsupported"
         | .other (.comment _) => pure ()
@@ -347,10 +360,10 @@ private def readNode (ids : List String) (parent : Transform) (depth : Nat) (sty
         | _ => throw "processing instruction unsupported"
       let opacity ← match attr attrs "opacity" with | none => pure 1 | some s => number s
       return geometry.toList.map fun g => {geometry:=g,style:=inherited,opacity:=if transform.det == 0 then 0 else max 0 (min 1 opacity),transform}
-private def readChildren (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List Primitive) := do
+private def readChildren (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List Primitive) := do
   let mut out : Array Primitive := #[]
   for node in nodes do
-    let chunk ← readNode ids parent depth style node
+    let chunk ← readNode lengths ids parent depth style node
     if out.size+chunk.length > maxPrimitives then throw "painted primitive count exceeds 12288"
     out := out ++ chunk.toArray
   return out.toList
@@ -420,7 +433,10 @@ def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String S
     if !["1.1","2.0"].contains version then throw "unsupported SVG version label"
   for key in ["width","height"] do
     if let some source := attr attrs key then
-      let size ← lengthNumber source
+      let size ← if (trim source).endsWith "%" then
+        if outputWidth == 0 || outputHeight == 0 then throw "percentage root dimensions require explicit host output viewport"
+        else relativeLength source (Float.ofNat (if key == "width" then outputWidth else outputHeight))
+      else lengthNumber source
       if size < 0 then throw "negative root dimensions"
   let (w,h) ← if outputWidth > 0 && outputHeight > 0 then pure (Float.ofNat outputWidth,Float.ofNat outputHeight)
     else if outputWidth != 0 || outputHeight != 0 then throw "both output dimensions are required"
@@ -430,9 +446,14 @@ def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String S
       pure (← lengthNumber rw,← lengthNumber rh)
   if w <= 0 || h <= 0 || w > 4096 || h > 4096 then throw "output viewport must be positive and at most 4096 pixels"
   let mapping ← viewportMapping w h attrs
+  let lengths ← match attr attrs "viewBox" with
+    | none => pure ({width:=w,height:=h} : LengthContext)
+    | some source => do
+      let [_,_,vw,vh] ← numbers source | throw "viewBox requires four numbers"
+      pure {width:=vw,height:=vh}
   let ids ← nodeIds root
-  let inherited ← readStyle ids attrs {}
-  let primitives ← readChildren ids identityTransform 0 inherited children
+  let inherited ← readStyle lengths ids attrs {}
+  let primitives ← readChildren lengths ids identityTransform 0 inherited children
   return {width:=w.ceil.toUInt32.toNat,height:=h.ceil.toUInt32.toNat,mapping,primitives}
 
 /- Typed conditions reuse Graphics.Expr's CPU interpreter and WGSL lowering.

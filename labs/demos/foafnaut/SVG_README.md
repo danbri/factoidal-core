@@ -22,11 +22,14 @@ adapter means exit 2 with no image, never a CPU image substituted for a GPU resu
 ## Supported subset
 
 SVG-namespace `svg`/`g`, sharp `rect`, `circle`, filled `ellipse`, butt- or round-cap stroked
-`line`, filled `polygon`, and filled linear/compound `path` are supported, plus text-only `title`/`desc` metadata. SVG `metadata` subtrees are non-rendering; XHTML `link rel="match"` is recognized as reftest metadata. Other HTML links (including stylesheets) remain explicit refusals.
+`line`, filled `polygon`, and filled linear/compound `path` are supported, plus text-only `title`/`desc` metadata. SVG `metadata` subtrees are non-rendering; XHTML `link rel="match"` and `link rel="help"` are recognized as reftest metadata. Other HTML links (including stylesheets) remain explicit refusals.
 Namespace prefixes resolve by expanded name; lookalike namespaces, unbound
 prefixes, duplicate expanded attributes and foreign elements/qualified attributes
 are refused. Geometry accepts signed fractional decimal/exponent numbers and
-unitless/px lengths. Rect/circle/ellipse zero size disables painting; negative
+unitless/px lengths and viewport-relative percentages for shape coordinates,
+dimensions, radii and stroke width. Horizontal/vertical lengths use the respective
+viewport axis; circle radius and stroke width use the normalized diagonal.
+With a viewBox, its dimensions supply these bases. Rect/circle/ellipse zero size disables painting; negative
 sizes are errors. Ellipses require explicit numeric rx/ry and have no stroke.
 
 Default paint is black fill and no stroke. Fill/stroke/color/width, fill/stroke
@@ -46,7 +49,9 @@ Group/root opacity is refused rather than approximated per descendant.
 
 Root viewBox mapping follows default xMidYMid meet, all nine alignments, slice,
 and none. Positive unitless/px root width/height are required unless both output
-viewport dimensions are supplied; source dimensions are still validated. A
+viewport dimensions are supplied; source dimensions are still validated. Root
+percentage dimensions require that explicit host viewport. The supplied output
+size overrides root dimensions; this is an embedding contract, not CSS sizing. A
 fractional SVG viewport stays Float for mapping/clipping while the backing image
 size is its ceiling. Subpixel edges use pixel-center classification, not area
 coverage. The transparent SVG canvas is composited over a documented white
