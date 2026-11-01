@@ -3185,6 +3185,22 @@ conformance files (`tests/unicode/run.sh`), not proved.
 | `breaks_not_zero` — UAX #14 LB2: no break at the start of the text | ✅ PROVED (2026-10-29) | text non-empty |
 | `revRange_size`, `revRange_perm` — the UAX #9 L2 range reversal keeps the size and permutes its input | ✅ PROVED (2026-10-29) | none |
 
+## DOM node tree as an arena (Lean 4, 2026-11-01)
+
+Milestone 6 of [#1167](https://github.com/danbri/factoidal/issues/1167). Design
+record: [`designissues/2026-11-01-dom-arena.md`](designissues/2026-11-01-dom-arena.md).
+Module `formal/lean4/L4Factoidal/DOM/Theorems.lean`; `#print axioms`: at most
+`propext`, `Classical.choice`, `Quot.sound`. The mutation algorithms themselves
+are measured by the differential against jsdom (`tests/dom/run.sh`), not proved.
+
+| Theorem | Status | Hypotheses |
+|---|---|---|
+| `ensurePreInsertValidity_rejects_ancestor` — DOM §4.2.3 step 2: when `node` is a host-including inclusive ancestor of `parent`, ensure pre-insert validity throws HierarchyRequestError | ✅ PROVED (2026-11-01) | the ancestor walk returns `true` |
+| `preInsert_rejects_ancestor`, `replace_rejects_ancestor` — the same for pre-insert and replace, and the arena is given back unchanged | ✅ PROVED (2026-11-01) | as above |
+| `hostIncluding_self`, `appendChild_self` — `n.appendChild(n)` throws HierarchyRequestError and changes nothing | ✅ PROVED (2026-11-01) | none |
+| `remove_parent_none`, `remove_not_child` — after "remove", the node has no parent and is not a child of its old parent | ✅ PROVED (2026-11-01) | the node and its parent are in the arena; the parent is not the node |
+| every operation keeps `Dom.wellFormed` | ❌ NOT PROVED; checked after every operation of the differential ([#1216](https://github.com/danbri/factoidal/issues/1216)) | — |
+
 ## 10. JOSE, DPoP and Solid-OIDC over HACL\* — Lean tree
 
 Landed 2026-09-06. Design record:

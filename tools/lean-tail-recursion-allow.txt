@@ -2118,3 +2118,4 @@ L4Factoidal_SQL_parseWhens  # (b) SQL/Syntax: one call per WHEN branch of one CA
 L4Factoidal_SQL_evalExpr  # (b) SQL/Database: one call per node of one SQL expression of a query text; rows and groups are folded by loops
 L4Factoidal_SQL_evalExpr_pick  # (b) SQL/Database: one call per WHEN branch of one CASE expression of a query text
 L4Factoidal_SQL_hasCountF  # (b) SQL/Database: one call per node of one SQL expression of a query text
+Harness_DomDump_dump  # (c) Array.qsort over the attributes of one element in the DOM test dump; median-of-three pivot, expected depth O(log n), worst case n

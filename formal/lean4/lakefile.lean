@@ -289,7 +289,7 @@ extern_lib libl4hostread pkg := do
     `Harness.Sbm11Gen, `Harness.RunHeap, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11Update, `Harness.Sbm11PackLib, `Harness.Sbm11Compact, `Harness.Sbm11PermCheck,
     `Harness.Sbm11Export, `Harness.Sbm11MemGenCheck, `Harness.Sbm11PackSpecCheck,
     `Harness.PlannerCheck, `Harness.PlannerKinds, `Harness.PlannerSbm11IO,
-    `Harness.ProofObligations, `Harness.WorkerPool] : Array Lean.Name).map Glob.one
+    `Harness.ProofObligations, `Harness.WorkerPool, `Harness.DomDump] : Array Lean.Name).map Glob.one
   ++ #[Glob.submodules `Harness.Unicode]
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI
@@ -815,3 +815,8 @@ lean_exe l4xproc where root := `L4Factoidal.XProc31.Runner
 -- milestone 5): html5lib tokenizer tests and the web-platform-tests tree
 -- construction tests (Harness/Html5lib.lean, tests/html5lib/run.sh).
 @[default_target] lean_exe «l4html5lib» where root := `Harness.Html5lib
+
+-- The DOM node tree as an arena in Lean (https://github.com/danbri/factoidal/issues/1167,
+-- milestone 6): DOM operation scripts compared with jsdom (Harness/Dom.lean,
+-- tests/dom/run.sh).
+@[default_target] lean_exe «l4dom» where root := `Harness.Dom
