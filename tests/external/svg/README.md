@@ -193,8 +193,10 @@ source. Its official pathlength-001 input now compiles, but the current 2×2 GPU
 sampler differs from the independent browser image at 1,512 edge pixels.
 [Coverage diagnostics](../../../docs/20261101-svg-coverage-diagnostics.md)
 compare sample grids against both browser pixels and exact area of the decoded
-scene. No tolerance was changed. Original path references still require linear
-path stroking before Solving can execute that same-renderer reftest.
+scene. No tolerance was changed. [Shared linear stroking](../../../docs/20261101-svg-linear-strokes.md) now
+admits its original path reference too: the test/reference GPU images match
+exactly within Solving. This single source-artifact pair is separate from the
+independent browser mismatch and the last complete artifact-backed run.
 
 Source export via `SVGArtifact.lean` and `browser_gpu.mjs --artifact FILE
 --fixture INPUT.svg` permits diagnosis without a full WASM rebuild. That route
