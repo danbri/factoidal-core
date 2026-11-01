@@ -161,7 +161,7 @@ python3 tests/external/svg/oracle.py --oracle /tmp/svg-oracle \
   --candidate /tmp/svg-browser-gpu --output /tmp/svg-browser-comparison
 ```
 
-Current actual result: **2 match, 23 unsupported, 13 unavailable, zero mismatch
+Last full artifact-backed result (2026-10-31): **2 match, 23 unsupported, 13 unavailable, zero mismatch
 or rejection**, all 38 retained. `fallback-001` and `fallback-002` each have zero
 maximum channel difference and zero differing pixels against the independent
 reference. Unavailable remains nine original runtime/resource cases plus four
@@ -178,3 +178,27 @@ source control. The full-feature goal is tracked in the
 [project checklist](../../../docs/designissues/2026-10-31-svg2-static-feature-target.md).
 
 `browser_gpu.mjs --fixture INPUT.svg --repeat 20` measures a resident session with setup and frame/readback times separated. It creates one shader module/pipeline and uploads once; each frame still reads back and validates pixels. These are host round-trip timings, not GPU-only or CPU/GPU kernel comparisons. See [measured limitations](../../../docs/20261031-svg-resident-rendering.md).
+
+
+## Newer source diagnostics (2026-11-01)
+
+The full artifact-backed result above predates the current Lean source changes.
+Four individual source-exported GPU comparisons now match their independent
+browser images exactly: fallback-001, fallback-002, percentage and
+percentage-attribute. These are targeted diagnostics, not a new full-suite or
+published-binary score. See [dash and coverage evidence](../../../docs/20261101-svg-dashed-strokes.md).
+
+Positive `pathLength` calibration for rectangle/line dashes is also checked in
+source. Its official pathlength-001 input now compiles, but the current 2×2 GPU
+sampler differs from the independent browser image at 1,512 edge pixels.
+[Coverage diagnostics](../../../docs/20261101-svg-coverage-diagnostics.md)
+compare sample grids against both browser pixels and exact area of the decoded
+scene. No tolerance was changed. Original path references still require linear
+path stroking before Solving can execute that same-renderer reftest.
+
+Source export via `SVGArtifact.lean` and `browser_gpu.mjs --artifact FILE
+--fixture INPUT.svg` permits diagnosis without a full WASM rebuild. That route
+is labelled local: the supplied artifact is not independently certified by the
+runner as having been generated from the fixture or this checkout. Record the
+export command, checked source, input hash, artifact hash and comparison scope.
+It must not silently replace the normal WASM-producer path or its 38-case score.
