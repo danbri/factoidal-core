@@ -1,10 +1,13 @@
 /-
 L4Factoidal.XML.DSig11Native — the backend of `L4Factoidal.XML.DSig11`
 over HACL*: the RSA public operation (`Crypto.Rsa.rsaPublicOp`, moduli of
-2048, 3072 and 4096 bits) and ECDSA P-256 with SHA-256
-(`Crypto.P256.p256VerifySha256`). Every other curve and digest gives
-`none`, which `DSig11.signatureValueOk` reports as not available
-(https://github.com/danbri/factoidal/issues/1223).
+2048, 3072 and 4096 bits) and ECDSA P-256 with each of the five digests of
+§6.2 (`Crypto.P256.p256VerifyHash`: the digest is computed in Lean by
+`DigestAlg.digest`, and HACL* checks the signature over its FIPS 186-4 §6.4
+representative). P-384 and P-521 give `none`, which
+`DSig11.signatureValueOk` reports as not available
+(https://github.com/danbri/factoidal/issues/1223): HACL* has no P-384 or
+P-521 (https://github.com/danbri/factoidal/issues/1166).
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -19,7 +22,19 @@ namespace L4Factoidal.XML.DSig11
 def nativeBackend : Backend where
   rsaPublicOp := Crypto.Rsa.rsaPublicOp
   ecdsaVerify := fun c h xy msg sig =>
-    if c == .p256 && h == .sha256 then some (Crypto.P256.p256VerifySha256 xy msg sig) else none
+    if c == .p256 then some (Crypto.P256.p256VerifyHash xy (h.digest msg) sig) else none
+
+/-- XML Signature 1.1 §6.4.3 over HACL*: every `ecdsa-sha*` method at P-256
+is the HACL* check over the FIPS 186-4 §6.4 representative of the Lean
+digest of the canonical `ds:SignedInfo`. -/
+theorem dsig11_native_ecdsa_p256 (h : DigestAlg) (xy msg sig : ByteArray) :
+    nativeBackend.ecdsaVerify .p256 h xy msg sig =
+      some (Crypto.P256.p256VerifyPrehashed xy (Crypto.P256.p256MsgRep (h.digest msg)) sig) := rfl
+
+/-- P-384 and P-521 stay unavailable (https://github.com/danbri/factoidal/issues/1223). -/
+theorem dsig11_native_ecdsa_other_curves (c : Curve) (hc : c ≠ .p256) (h : DigestAlg)
+    (xy msg sig : ByteArray) : nativeBackend.ecdsaVerify c h xy msg sig = none := by
+  simp [nativeBackend, hc]
 
 /-! ## Signers (the custodians of `XML/DSig11Sign.lean`)
 
@@ -44,17 +59,20 @@ def rsaSigner (h : DigestAlg) (n e d : ByteArray) : Option Signer :=
            if JOSE.Pkcs1.rsaPkcs1Verify Crypto.Rsa.rsaPublicOp h.digestInfo h.size n e s (h.digest m)
            then some s else none }
 
-/-- ECDSA P-256 with SHA-256 (§6.4.3; FIPS 186-4) by HACL*
-`Hacl_P256_ecdsa_sign_p256_sha2`, with the value `r || s`. The nonce is the
-`rand` of each call: 32 fresh random octets from the host. `none` for a
-secret HACL* refuses. Other digests are not available
-(https://github.com/danbri/factoidal/issues/1223). -/
-def p256Signer (sk : ByteArray) : Option Signer :=
+/-- ECDSA P-256 with the digest `h` (§6.4.3; FIPS 186-4 §6.4) by HACL*
+`Hacl_P256_ecdsa_sign_p256_without_hash` over the representative of
+`h.digest m` (`Crypto.P256.p256SignHash`), with the value `r || s`. The
+nonce is the `rand` of each call: 32 fresh random octets from the host.
+`none` for a secret HACL* refuses. Before a value is given out it is checked
+with the verifier of `nativeBackend`. -/
+def p256Signer (sk : ByteArray) (h : DigestAlg := .sha256) : Option Signer :=
   match Crypto.P256.p256SecretToPublic sk with
   | none => none
-  | some xy => some { alg := .ecdsa .sha256
+  | some xy => some { alg := .ecdsa h
                       publicKey := some (.ec .p256 xy)
                       sign := fun m rand =>
-                        if rand.size != 32 then none else Crypto.P256.p256SignSha256 sk m rand }
+                        if rand.size != 32 then none else do
+                          let s ← Crypto.P256.p256SignHash sk (h.digest m) rand
+                          if Crypto.P256.p256VerifyHash xy (h.digest m) s then some s else none }
 
 end L4Factoidal.XML.DSig11

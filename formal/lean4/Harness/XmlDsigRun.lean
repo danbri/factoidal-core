@@ -18,6 +18,12 @@ Harness/XmlDsigRun — core validation (XML Signature 1.1 §3.2) by
     `--sign-out DIR` the signed documents go to DIR, for
     `tests/xmldsig/verify_lean_signed.py` (signxml, an independent
     verifier).
+  * Wycheproof `ecdsa_secp256r1_sha256_p1363_test.json` and
+    `ecdsa_secp256r1_sha512_p1363_test.json`
+    (`third_party/testing/wycheproof`), through `nativeBackend.ecdsaVerify`
+    at P-256 with SHA-256 and SHA-512: the path that `ecdsa-sha256` and
+    `ecdsa-sha512` signatures take. `valid` must verify, `invalid` must be
+    refused; `acceptable` is counted apart.
   * the SAML 2.0 fixtures of `L4Factoidal.SAML.Fixtures`, verified by the
     profile verifier `XML.DSig.verifyEnveloped` and by `DSig11.validate`
     with the identity provider's key: the two verdicts are compared with
@@ -32,6 +38,7 @@ import L4Factoidal.XML.DSig11Native
 import L4Factoidal.SAML.Assertion
 import L4Factoidal.SAML.Fixtures
 import L4Factoidal.JOSE.Pkcs1
+import L4Factoidal.JSON.Parser
 
 open L4Factoidal.XML
 open L4Factoidal.XML.DSig11
@@ -43,9 +50,7 @@ error must name. -/
 def oracleXfail : List (String × Nat) :=
   let rsa1024 := ["derencoded-rsa", "keyinforeference-rsa", "rsa-sha224", "rsa-sha256", "rsa_sha384",
     "rsa_sha512", "sha224-rsa_sha256", "sha256-rsa-sha256", "sha384-rsa_sha256", "sha512-rsa_sha256"]
-  let ec := ["p256_sha1", "p256_sha1_4050", "p256_sha224", "p256_sha384", "p256_sha384_4050",
-    "p256_sha512", "p256_sha512_4050",
-    "p384_sha1", "p384_sha1_4050", "p384_sha224", "p384_sha256", "p384_sha256_4050", "p384_sha384",
+  let ec := ["p384_sha1", "p384_sha1_4050", "p384_sha224", "p384_sha256", "p384_sha256_4050", "p384_sha384",
     "p384_sha384_4050", "p384_sha512", "p384_sha512_4050",
     "p521_sha1", "p521_sha1_4050", "p521_sha224", "p521_sha256", "p521_sha256_4050", "p521_sha384",
     "p521_sha384_4050", "p521_sha512", "p521_sha512_4050"]
@@ -181,6 +186,10 @@ def signCases : List (String × KeyKind × DigestAlg × SignSpec) :=
         placement := .enveloping "obj" "<x:item xmlns:x=\"urn:example:x\" n=\"1\">one</x:item>" }),
    ("p256-sha256-exc", .p256, .sha256, env exc),
    ("p256-sha256-c14n11", .p256, .sha256, env { version := .c14n11 }),
+   ("p256-sha1-exc", .p256, .sha1, env exc),
+   ("p256-sha224-exc", .p256, .sha224, env exc),
+   ("p256-sha384-exc", .p256, .sha384, env exc .sha384),
+   ("p256-sha512-exc", .p256, .sha512, env exc .sha512),
    ("hmac-sha256-exc", .hmac, .sha256, env exc),
    ("hmac-sha512-exc", .hmac, .sha512, env exc .sha512)]
 
@@ -206,7 +215,7 @@ def runSign (t0 : Tally) (keysFile : String) (outDir : Option String) : IO Tally
   for (name, kind, h, spec) in signCases do
     let sg? := match kind with
       | .rsa => rsaSigner h n e d
-      | .p256 => p256Signer sk
+      | .p256 => p256Signer sk h
       | .hmac => some (hmacSigner h mk)
     let some sg := sg? | IO.println s!"FAIL sign {name}: the signer refused the key"; t := { t with fail := t.fail + 1 }; continue
     let rand ← IO.getRandomBytes 32
@@ -228,6 +237,48 @@ def runSign (t0 : Tally) (keysFile : String) (outDir : Option String) : IO Tally
   if let some o := outDir then IO.FS.writeFile s!"{o}/manifest.tsv" manifest
   return t
 
+
+/-! ## Wycheproof ECDSA P-256 through the XML Signature backend -/
+
+def hexBytes? (s : String) : Option ByteArray :=
+  if s.length % 2 != 0 || !s.all (fun c => c.isDigit || ('a' ≤ c && c ≤ 'f')) then none
+  else some (hexBytes s)
+
+/-- Left-pad to `n` octets after dropping leading zero octets; `none` when longer. -/
+def fixLen (n : Nat) (b : ByteArray) : Option ByteArray :=
+  let l := b.data.toList.dropWhile (· == 0)
+  if l.length > n then none else some ⟨(List.replicate (n - l.length) (0 : UInt8) ++ l).toArray⟩
+
+structure WyTally where
+  pass : Nat := 0
+  fail : Nat := 0
+  acceptable : Nat := 0
+
+open L4Factoidal.JSON in
+def runWycheproof (path : String) (label : String) (h : DigestAlg) : IO WyTally := do
+  let some j := parseJson? (← IO.FS.readFile path)
+    | IO.println s!"FAIL {label}: cannot read {path}"; return { fail := 1 }
+  let mut t : WyTally := {}
+  for g in (j.getArray? "testGroups").getD [] do
+    let pk := (g.field? "publicKey").getD .null
+    let xy? : Option ByteArray := do
+      let x ← fixLen 32 (← hexBytes? (← pk.getString? "wx"))
+      let y ← fixLen 32 (← hexBytes? (← pk.getString? "wy"))
+      pure (x ++ y)
+    for tc in (g.getArray? "tests").getD [] do
+      let id := match tc.field? "tcId" with | some (.number n) => n | _ => "?"
+      let res := (tc.getString? "result").getD ""
+      let accepted := match xy?, hexBytes? ((tc.getString? "msg").getD ""),
+          hexBytes? ((tc.getString? "sig").getD "") with
+        | some xy, some msg, some sig => nativeBackend.ecdsaVerify .p256 h xy msg sig == some true
+        | _, _, _ => false
+      if res == "acceptable" then t := { t with acceptable := t.acceptable + 1 }
+      else if (res == "valid") == accepted then t := { t with pass := t.pass + 1 }
+      else
+        IO.println s!"FAIL {label} tcId={id}: expected {res}, verifier {if accepted then "accepted" else "refused"}"
+        t := { t with fail := t.fail + 1 }
+  return t
+
 def main (args0 : List String) : IO UInt32 := do
   let (args, outDir) := match args0.dropWhile (· != "--sign-out") with
     | _ :: o :: _ => (args0.takeWhile (· != "--sign-out"), some o)
@@ -246,4 +297,11 @@ def main (args0 : List String) : IO UInt32 := do
   IO.println s!"saml differential: {v.pass} pass, {v.fail} fail (out of {v.pass + v.fail})"
   let w ← runSign {} s!"{root}/tests/xmldsig/signing-keys.tsv" outDir
   IO.println s!"signature generation: {w.pass} pass, {w.fail} fail (out of {w.pass + w.fail})"
-  return (if t.fail + u.fail + v.fail + w.fail == 0 then 0 else 1)
+  let wp := s!"{root}/third_party/testing/wycheproof/testvectors_v1"
+  let mut wf := 0
+  for (file, label, h) in [("ecdsa_secp256r1_sha256_p1363_test.json", "wycheproof-ecdsa-p256-sha256", DigestAlg.sha256),
+                           ("ecdsa_secp256r1_sha512_p1363_test.json", "wycheproof-ecdsa-p256-sha512", .sha512)] do
+    let x ← runWycheproof s!"{wp}/{file}" label h
+    IO.println s!"{label}: {x.pass} pass, {x.fail} fail, {x.acceptable} acceptable (out of {x.pass + x.fail + x.acceptable})"
+    wf := wf + x.fail
+  return (if t.fail + u.fail + v.fail + w.fail + wf == 0 then 0 else 1)
