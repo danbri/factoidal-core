@@ -119,10 +119,17 @@ Deno.test("SVG fractional/tiny root viewport and explicit embedding viewport hav
  rejects(()=>e.compile('<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"/>'),"explicit host output viewport");
 });
 
+Deno.test("SVG CSS stylesheet and inline declarations affect Lean geometry paint",async()=>{
+ const e=await loadSVG();
+ const a=e.compile(wrap('<style>rect {fill:red}</style><rect width="20" height="20" style="fill:blue"/>'));
+ equal(a.primitiveCount,1);
+ equal(a.checks.find(p=>p.x===1&&p.y===1)?.rgb,[0,0,255]);
+});
+
 Deno.test("SVG refuses unsupported features rather than silently losing rendering semantics",async()=>{
  const e=await loadSVG();
- for(const element of ['polyline','text','use','image','foreignObject','defs','style','linearGradient','filter','clipPath','mask','script','svg'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
- for(const attrs of ['style="fill:red"','class="red"','transform="perspective(1)"','stroke-dasharray="2 2"','stroke-linecap="square"','stroke-linejoin="bevel"','rx="2"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
+ for(const element of ['polyline','text','use','image','foreignObject','defs','linearGradient','filter','clipPath','mask','script','svg'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
+ for(const attrs of ['style="filter:blur(2px)"','class="red"','transform="perspective(1)"','stroke-dasharray="2 2"','stroke-linecap="square"','stroke-linejoin="bevel"','rx="2"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
  rejects(()=>e.compile('<?xml-stylesheet href="a.css"?>'+wrap('')),"processing instruction");
  rejects(()=>e.compile('<!DOCTYPE svg>'+wrap('')),"DOCTYPE");
  rejects(()=>e.compile('<?xml version="1.0" encoding="ISO-8859-1"?>'+wrap('')),"UTF-8");

@@ -1,5 +1,6 @@
 import Graphics
 import SVGPath
+import SVGCSS
 import L4Factoidal.Math.Affine
 import L4Factoidal.Tdb2.Format
 import L4Factoidal.XML.NamespaceView
@@ -249,6 +250,22 @@ private def readStyle (lengths : LengthContext) (ids : List String) (attrs : Lis
     if let some value := attr attrs key then
       if !allowed.contains (trim value) then throw s!"unsupported {key}: {value}"
   return style
+private def cssProperties := (common.filter (· != "id")) ++ ["opacity","stroke-dasharray","stroke-dashoffset"]
+private def cssAttribute (d : NativeSVGCSS.Declaration) : NamespaceAttribute :=
+  {name:={namespace_:=none,localPart:=d.property},value:=d.value}
+private def applyCSS (lengths : LengthContext) (ids : List String) (rules : List NativeSVGCSS.Rule)
+    (tag : String) (attrs : List NamespaceAttribute) : Except String (List NamespaceAttribute) := do
+  let presentation := attrs.filterMap fun a =>
+    if a.name.namespace_.isNone && cssProperties.contains a.name.localPart then
+      some ({property:=a.name.localPart,value:=a.value} : NativeSVGCSS.Declaration) else none
+  let inlineStyle ← NativeSVGCSS.parseDeclarations cssProperties ((attr attrs "style").getD "")
+  let validate := fun (d : NativeSVGCSS.Declaration) => do
+    if ["stroke-dasharray","stroke-dashoffset"].contains d.property then throw ("unsupported CSS property implementation: "++d.property)
+    else if d.property == "opacity" then let _ ← number d.value; pure ()
+    else let _ ← readStyle lengths ids [cssAttribute d] {}; pure ()
+  let winning ← NativeSVGCSS.cascade validate tag presentation rules inlineStyle
+  pure (attrs.filter (fun a => !(a.name.namespace_.isNone && (cssProperties.contains a.name.localPart || a.name.localPart=="style"))) ++ winning.map cssAttribute)
+
 private def geometryNumber (lengths : LengthContext) (attrs : List NamespaceAttribute) (key : String) (fallback : Float := 0) : Except String Float :=
   match attr attrs key with | none => pure fallback | some s => relativeLength s (if ["x","x1","x2","cx","width","rx"].contains key then lengths.width
     else if ["y","y1","y2","cy","height","ry"].contains key then lengths.height else lengths.diagonal)
@@ -320,7 +337,7 @@ private def metadata (node : NamespaceNode) : Except String Unit := do
   match node with
   | .other (.text _) | .other (.cdata _) | .other (.comment _) => pure ()
   | _ => throw "descriptive metadata only supports text/comments"
-private def readNode (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (node : NamespaceNode) : Except String (List Primitive) := do
+private def readNode (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (node : NamespaceNode) : Except String (List Primitive) := do
   if depth > 32 then throw "SVG group nesting exceeds 32"
   match node with
   | .other (.comment _) => pure []
@@ -334,6 +351,8 @@ private def readNode (lengths : LengthContext) (ids : List String) (parent : Tra
       return []
     if name.namespace_ != some svgURI then throw s!"foreign/non-SVG element: {name.localPart}"
     let tag := name.localPart
+    if tag == "style" then return []
+    let attrs ← applyCSS lengths ids rules tag attrs
     if tag == "metadata" then return []
     if tag == "title" || tag == "desc" then
       validateAttrs tag attrs ["id"]
@@ -343,7 +362,7 @@ private def readNode (lengths : LengthContext) (ids : List String) (parent : Tra
       validateAttrs tag attrs ["transform"]
       let transform ← checkedTransform (parent.compose (← transformList ((attr attrs "transform").getD "")))
       let inherited ← readStyle lengths ids attrs style
-      readChildren lengths ids transform (depth+1) inherited children
+      readChildren rules lengths ids transform (depth+1) inherited children
     else
       validateAttrs tag attrs (extraAttrs tag)
       let transform ← checkedTransform (parent.compose (← transformList ((attr attrs "transform").getD "")))
@@ -352,7 +371,7 @@ private def readNode (lengths : LengthContext) (ids : List String) (parent : Tra
       for child in children do
         match child with
         | .element n _ _ => if n.namespace_ == some svgURI && ["title","desc","metadata"].contains n.localPart then
-                              let _ ← readNode lengths ids transform (depth+1) inherited child
+                              let _ ← readNode rules lengths ids transform (depth+1) inherited child
                               pure ()
                             else throw "graphics children unsupported"
         | .other (.comment _) => pure ()
@@ -360,10 +379,10 @@ private def readNode (lengths : LengthContext) (ids : List String) (parent : Tra
         | _ => throw "processing instruction unsupported"
       let opacity ← match attr attrs "opacity" with | none => pure 1 | some s => number s
       return geometry.toList.map fun g => {geometry:=g,style:=inherited,opacity:=if transform.det == 0 then 0 else max 0 (min 1 opacity),transform}
-private def readChildren (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List Primitive) := do
+private def readChildren (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List Primitive) := do
   let mut out : Array Primitive := #[]
   for node in nodes do
-    let chunk ← readNode lengths ids parent depth style node
+    let chunk ← readNode rules lengths ids parent depth style node
     if out.size+chunk.length > maxPrimitives then throw "painted primitive count exceeds 12288"
     out := out ++ chunk.toArray
   return out.toList
@@ -417,6 +436,39 @@ private def nodeIds (root : NamespaceNode) : Except String (List String) := do
         pending := children.map (fun child => (child,depth+1)) ++ rest
   throw "SVG identifier node count exceeds input bound"
 
+/-- Collect inert author style elements in document order, with explicit profile
+    refusals for non-CSS type or conditional media. No external resources. -/
+private def styleRules (root : NamespaceNode) : Except String (List NativeSVGCSS.Rule) := do
+  let mut pending := [root]
+  let mut out : Array NativeSVGCSS.Rule := #[]
+  for _ in [:maxInputChars+1] do
+    match pending with
+    | [] => return out.toList
+    | node::rest =>
+      pending := rest
+      match node with
+      | .other _ => pure ()
+      | .element name attrs children =>
+        if name.namespace_ == some svgURI && name.localPart == "style" then
+          for a in attrs do
+            if a.name.namespace_.isSome || !["id","type","media"].contains a.name.localPart then throw "unsupported style element attribute"
+          let typ := trim ((attr attrs "type").getD "text/css") |>.toLower
+          if !["","text/css"].contains typ then throw "unsupported stylesheet type"
+          let media := trim ((attr attrs "media").getD "all") |>.toLower
+          if !["","all"].contains media then throw "conditional stylesheet media unsupported"
+          let mut text : Array String := #[]
+          for child in children do
+            match child with
+            | .other (.text value) | .other (.cdata value) => text := text.push value
+            | .other (.comment _) => pure ()
+            | _ => throw "style requires text/CDATA"
+          let parsed ← NativeSVGCSS.parseSheet cssProperties (String.join text.toList)
+          if out.size+parsed.length > 256 then throw "document CSS rule count exceeds 256"
+          out := out ++ parsed.toArray
+        else if !(name.namespace_ == some svgURI && ["metadata","title","desc"].contains name.localPart) then
+          pending := children ++ pending
+  throw "stylesheet traversal exceeds input bound"
+
 def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String Scene := do
   if xml.length > maxInputChars then throw "SVG input exceeds 1048576 characters"
   let document ← (parseXML xml).mapError (fun e => s!"XML: {e.message} at {e.position}")
@@ -428,7 +480,7 @@ def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String S
   let root ← parseNamespaceView xml
   let .element name attrs children := root | throw "SVG root must be an element"
   if name.namespace_ != some svgURI || name.localPart != "svg" then throw "root must be svg in the SVG namespace"
-  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version"]
+  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version","style"]
   if let some version := attr attrs "version" then
     if !["1.1","2.0"].contains version then throw "unsupported SVG version label"
   for key in ["width","height"] do
@@ -452,8 +504,11 @@ def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String S
       let [_,_,vw,vh] ← numbers source | throw "viewBox requires four numbers"
       pure {width:=vw,height:=vh}
   let ids ← nodeIds root
+  let rules ← styleRules root
+  let attrs ← applyCSS lengths ids rules "svg" attrs
+  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version"]
   let inherited ← readStyle lengths ids attrs {}
-  let primitives ← readChildren lengths ids identityTransform 0 inherited children
+  let primitives ← readChildren rules lengths ids identityTransform 0 inherited children
   return {width:=w.ceil.toUInt32.toNat,height:=h.ceil.toUInt32.toNat,mapping,primitives}
 
 /- Typed conditions reuse Graphics.Expr's CPU interpreter and WGSL lowering.

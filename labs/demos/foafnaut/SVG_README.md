@@ -19,6 +19,16 @@ open with `/usr/bin/open` unless `--no-open` is present. `--emit-artifact` write
 Lean geometry/WGSL/reference samples and exits before requesting a GPU. No
 adapter means exit 2 with no image, never a CPU image substituted for a GPU result.
 
+## CSS subset
+
+Type-selector stylesheets and inline declarations now use a bounded Lean CSS
+reader. Presentation attributes have lower priority than matched author rules;
+inline declarations win, and later equal-priority declarations win. Inherited
+paint values still flow through groups. Only absent/empty/all media and
+absent/empty/text/css type are admitted. Unsupported selectors, properties,
+!important and invalid declarations explicitly refuse the document; normal
+CSS error recovery remains unimplemented. This is not full CSS conformance.
+
 ## Supported subset
 
 SVG-namespace `svg`/`g`, sharp `rect`, `circle`, filled `ellipse`, butt- or round-cap stroked
