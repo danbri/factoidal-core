@@ -382,7 +382,7 @@ def main (args : List String) : IO UInt32 := do
       finished := ← IO.mkRef false }
     let poller ← IO.asTask (pollMailbox h o.maxPollTicks)
     let _ ← loop h inp
-      { session := session0, env := ⟨[]⟩, buffer := "", seq := 0
+      { session := session0, env := { roster := [] }, buffer := "", seq := 0
         eof := false, done := false } o.maxUnits
     h.finished.set true
     let _ ← IO.wait poller

@@ -55,6 +55,7 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 import L4Factoidal.XMPP.Core
 import L4Factoidal.XMPP.Framing
 import L4Factoidal.XMPP.Scram
+import L4Factoidal.Net.LoginLimit
 
 namespace L4Factoidal.XMPP.Server
 
@@ -188,6 +189,51 @@ inductive Out where
   | close
   deriving Repr, DecidableEq, Inhabited
 
+/-! ## The failed SASL login limit (https://github.com/danbri/factoidal/issues/1128)
+
+Audit row C2 of `docs/designissues/2026-10-28-feature-combination-safety.md`
+(invariant I2) and the owner's rule of 2026-10-28 (a login surface limits
+failed logins by default; `--dangerously-disable-ratelimits` turns it off,
+with a warning at start). The counters are `L4Factoidal.Net.LoginLimit`, the
+same as the WebDAV login's. The numbers are the implementer's: at most 5
+failures in 60 seconds for one account name (`account:` and the name as
+sent; a name with no account counts the same way) and for one client address
+(`address:` and `clientPrefix`; IPv6 by its /64). An attempt whose name or
+address is blocked gets `temporary-auth-failure` (RFC 6120 §6.5.12) before
+any password check: the right password too, until the window ends. A
+failure is a PLAIN payload whose password does not match, a SCRAM
+client-first for a name with no account, and a SCRAM proof or nonce that
+does not verify. A malformed payload (`incorrect-encoding`,
+`malformed-request`, `invalid-mechanism`) checks no password and is not
+counted. A key with an empty part (no name, no address) is not used. -/
+
+structure AuthGuard where
+  limits : L4Factoidal.Net.LoginLimit.Limits := {}
+  failures : L4Factoidal.Net.LoginLimit.Failures := {}
+  /-- The host's clock, in seconds. -/
+  now : Nat := 0
+  /-- The client's address as the socket gives it (`""`: unknown). -/
+  address : String := ""
+  deriving Inhabited
+
+/-- The keys of a SASL attempt for the account name `user`. -/
+def AuthGuard.keys (g : AuthGuard) (user : String) : List String :=
+  let q : L4Factoidal.Net.LoginLimit.Requester := .tcp g.address
+  (if user.isEmpty then [] else ["account:" ++ user]) ++
+  (if q.valid then [L4Factoidal.Net.LoginLimit.requesterKey q] else [])
+
+def AuthGuard.blocked (g : AuthGuard) (user : String) : Bool :=
+  (g.failures.check g.limits g.now (g.keys user)).isSome
+
+def AuthGuard.fail (g : AuthGuard) (user : String) : AuthGuard :=
+  { g with failures := g.failures.record g.limits g.now (g.keys user) }
+
+/-- The start warning of `xmpp-serve --dangerously-disable-ratelimits`. -/
+def saslLimitWarnings (l : L4Factoidal.Net.LoginLimit.Limits) : List String :=
+  if l.enabled then []
+  else ["--dangerously-disable-ratelimits: failed SASL logins are NOT limited; any client that can reach this port " ++
+        "can try passwords without end (https://github.com/danbri/factoidal/issues/1128)"]
+
 /-! ## Session state -/
 
 /-- What the server is waiting for. The constructors are the RFC 6120
@@ -237,6 +283,10 @@ def Session.fullJid (s : Session) : Option String :=
 after. Only the authenticated user's roster is ever needed. -/
 structure Env where
   roster : Roster
+  /-- The failed SASL login limit and its counters (issue 1128). The host
+  keeps `guard.failures` between connections of one server and gives the
+  clock and the client's address. -/
+  guard : AuthGuard := {}
   deriving Inhabited
 
 def Session.init (cfg : Config) : Session := { cfg := cfg, stage := .initial }
@@ -390,62 +440,94 @@ def bareOf (s : String) : String :=
   | some j => Jid.render { j with resourcepart := none }
   | none => s
 
-/-- Handle `<auth/>` — the SASL first step (RFC 6120 section 6.4.2). -/
-def handleAuth (s : Session) (n : Node) : Session × List Out :=
+/-- The account name of an `<auth/>` element, when it can be read: the
+authcid of a PLAIN payload, the username of a SCRAM client-first. -/
+def authUser? (n : Node) : Option String :=
+  let mech := (elemAttr n "mechanism").getD ""
+  match Scram.b64Decode (textOf n) with
+  | none => none
+  | some bytes =>
+    if mech == "PLAIN" then
+      match splitNul bytes with
+      | [_, authcid, _] => some authcid
+      | _ => none
+    else if mech == "SCRAM-SHA-256" then
+      (Sasl.ClientFirstMessage.parse (String.fromUTF8! bytes)).map (·.username)
+    else none
+
+/-- `<auth/>` after the limit check. -/
+def handleAuthChecked (s : Session) (g : AuthGuard) (n : Node) : Session × AuthGuard × List Out :=
   let mech := (elemAttr n "mechanism").getD ""
   let payload := textOf n
   if mech == "PLAIN" then
     match Scram.b64Decode payload with
-    | none => (s, [.send (saslFailure "incorrect-encoding")])
+    | none => (s, g, [.send (saslFailure "incorrect-encoding")])
     | some bytes =>
       match checkPlain s.cfg (splitNul bytes) with
-      | some user => ({ s with stage := .authenticated user }, [.send (saslSuccess "")])
-      | none => (s, [.send (saslFailure "not-authorized")])
+      | some user => ({ s with stage := .authenticated user }, g, [.send (saslSuccess "")])
+      | none => (s, g.fail ((authUser? n).getD ""), [.send (saslFailure "not-authorized")])
   else if mech == "SCRAM-SHA-256" then
     match Scram.b64Decode payload with
-    | none => (s, [.send (saslFailure "incorrect-encoding")])
+    | none => (s, g, [.send (saslFailure "incorrect-encoding")])
     | some bytes =>
       let text := String.fromUTF8! bytes
       match Sasl.ClientFirstMessage.parse text with
-      | none => (s, [.send (saslFailure "malformed-request")])
+      | none => (s, g, [.send (saslFailure "malformed-request")])
       | some cf =>
         match s.cfg.accountOf cf.username with
-        | none => (s, [.send (saslFailure "not-authorized")])
+        | none => (s, g.fail cf.username, [.send (saslFailure "not-authorized")])
         | some acct =>
           match Scram.credentialsOfPassword acct.password s.cfg.saltB64 s.cfg.iterationCount with
-          | none => (s, [.send (saslFailure "temporary-auth-failure")])
+          | none => (s, g, [.send (saslFailure "temporary-auth-failure")])
           | some cred =>
             let nonce := cf.clientNonce ++ s.cfg.serverNonce
             let serverFirst := Scram.serverFirstOf cred nonce
             ({ s with stage := .awaitingScramResponse cf.username nonce
-                        (Scram.clientFirstBare cf) serverFirst },
+                        (Scram.clientFirstBare cf) serverFirst }, g,
              [.send (saslChallenge (Scram.b64Encode serverFirst.toUTF8))])
-  else (s, [.send (saslFailure "invalid-mechanism")])
+  else (s, g, [.send (saslFailure "invalid-mechanism")])
 
-/-- Handle `<response/>` — the SCRAM second step (RFC 5802 section 3). -/
-def handleScramResponse (s : Session) (user nonce cfb sf : String) (n : Node) :
-    Session × List Out :=
+/-- Handle `<auth/>` — the SASL first step (RFC 6120 section 6.4.2). An
+attempt whose account name or client address is blocked by the failed-login
+limit gets `temporary-auth-failure` with no password check
+(`handleAuth_blocked`). -/
+def handleAuth (s : Session) (g : AuthGuard) (n : Node) : Session × AuthGuard × List Out :=
+  match authUser? n with
+  | some u => if g.blocked u then (s, g, [.send (saslFailure "temporary-auth-failure")]) else handleAuthChecked s g n
+  | none => handleAuthChecked s g n
+
+/-- A blocked account name or address: `temporary-auth-failure`, the stage
+and the counters unchanged, no password checked. -/
+theorem handleAuth_blocked (s : Session) (g : AuthGuard) (n : Node) (u : String)
+    (hu : authUser? n = some u) (hb : g.blocked u = true) :
+    handleAuth s g n = (s, g, [.send (saslFailure "temporary-auth-failure")]) := by
+  simp [handleAuth, hu, hb]
+
+/-- Handle `<response/>` — the SCRAM second step (RFC 5802 section 3). A
+proof or nonce that does not verify is a failure of `user`. -/
+def handleScramResponse (s : Session) (g : AuthGuard) (user nonce cfb sf : String) (n : Node) :
+    Session × AuthGuard × List Out :=
   match Scram.b64Decode (textOf n) with
-  | none => (s, [.send (saslFailure "incorrect-encoding")])
+  | none => (s, g, [.send (saslFailure "incorrect-encoding")])
   | some bytes =>
     match Sasl.ClientFinalMessage.parse (String.fromUTF8! bytes) with
-    | none => (s, [.send (saslFailure "malformed-request")])
+    | none => (s, g, [.send (saslFailure "malformed-request")])
     | some cfin =>
       -- RFC 5802 section 5.1: the client MUST echo the combined nonce. A
       -- server that skips this check accepts a replayed client-first.
-      if cfin.nonce != nonce then (s, [.send (saslFailure "not-authorized")])
+      if cfin.nonce != nonce then (s, g.fail user, [.send (saslFailure "not-authorized")])
       else
         match s.cfg.accountOf user with
-        | none => (s, [.send (saslFailure "not-authorized")])
+        | none => (s, g.fail user, [.send (saslFailure "not-authorized")])
         | some acct =>
           match Scram.credentialsOfPassword acct.password s.cfg.saltB64 s.cfg.iterationCount with
-          | none => (s, [.send (saslFailure "temporary-auth-failure")])
+          | none => (s, g, [.send (saslFailure "temporary-auth-failure")])
           | some cred =>
             let auth := Scram.authMessage cfb sf (Scram.clientFinalNoProof cfin)
             match Scram.verifyClientProof cred auth cfin.proof with
-            | none => (s, [.send (saslFailure "not-authorized")])
+            | none => (s, g.fail user, [.send (saslFailure "not-authorized")])
             | some serverSig =>
-              ({ s with stage := .authenticated user },
+              ({ s with stage := .authenticated user }, g,
                [.send (saslSuccess (Scram.b64Encode ("v=" ++ serverSig).toUTF8))])
 
 /-- Handle an IQ once bound. -/
@@ -608,13 +690,13 @@ def step (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × List O
          streamError "not-well-formed" "a stanza before the stream header")
       | .awaitingAuth =>
         if tag == "auth" then
-          let (s', outs) := handleAuth s node
-          (s', env, outs)
+          let (s', g', outs) := handleAuth s env.guard node
+          (s', { env with guard := g' }, outs)
         else (s, env, [.send (saslFailure "malformed-request")])
       | .awaitingScramResponse user nonce cfb sf =>
         if tag == "response" then
-          let (s', outs) := handleScramResponse s user nonce cfb sf node
-          (s', env, outs)
+          let (s', g', outs) := handleScramResponse s env.guard user nonce cfb sf node
+          (s', { env with guard := g' }, outs)
         else if tag == "abort" then
           ({ s with stage := .awaitingAuth }, env, [.send (saslFailure "aborted")])
         else (s, env, [.send (saslFailure "malformed-request")])
@@ -718,7 +800,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 -- RFC 6120 section 4.2: the stream header is answered with a header and
 -- features, and the features offer SASL.
 #guard
-  let (s, _, outs) := step (Session.init testCfg) ⟨[]⟩
+  let (s, _, outs) := step (Session.init testCfg) { roster := [] }
     (.streamOpen "<stream:stream to='example.com' version='1.0'>")
   s.stage == .awaitingAuth &&
   (sends outs).length == 2 &&
@@ -727,7 +809,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 -- RFC 6120 section 4.9.3.6: a stream for the wrong domain is
 -- `host-unknown` and the stream closes.
 #guard
-  let (s, _, outs) := step (Session.init testCfg) ⟨[]⟩
+  let (s, _, outs) := step (Session.init testCfg) { roster := [] }
     (.streamOpen "<stream:stream to='elsewhere.example' version='1.0'>")
   s.stage == .closed && has (String.join (sends outs)) "host-unknown"
 
@@ -735,7 +817,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 #guard
   let payload := Scram.b64Encode (ByteArray.mk
     (((" juliet r0m30").toUTF8).toList.toArray))
-  let (s, _, _) := run (Session.init testCfg) ⟨[]⟩
+  let (s, _, _) := run (Session.init testCfg) { roster := [] }
     [ .streamOpen "<stream:stream to='example.com' version='1.0'>",
       .element s!"<auth xmlns='{nsSasl}' mechanism='PLAIN'>{payload}</auth>" ]
   s.stage == .authenticated "juliet"
@@ -744,7 +826,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 #guard
   let payload := Scram.b64Encode (ByteArray.mk
     (((" juliet wrong").toUTF8).toList.toArray))
-  let (s, _, outs) := run (Session.init testCfg) ⟨[]⟩
+  let (s, _, outs) := run (Session.init testCfg) { roster := [] }
     [ .streamOpen "<stream:stream to='example.com' version='1.0'>",
       .element s!"<auth xmlns='{nsSasl}' mechanism='PLAIN'>{payload}</auth>" ]
   s.stage == .awaitingAuth &&
@@ -752,7 +834,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 
 -- An unknown mechanism is refused rather than accepted by default.
 #guard
-  let (s, _, outs) := run (Session.init testCfg) ⟨[]⟩
+  let (s, _, outs) := run (Session.init testCfg) { roster := [] }
     [ .streamOpen "<stream:stream to='example.com' version='1.0'>",
       .element s!"<auth xmlns='{nsSasl}' mechanism='ANONYMOUS'/>" ]
   s.stage == .awaitingAuth &&
@@ -763,7 +845,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 #guard
   let payload := Scram.b64Encode (ByteArray.mk
     (((" juliet r0m30").toUTF8).toList.toArray))
-  let (s, _, outs) := run (Session.init testCfg) ⟨[]⟩
+  let (s, _, outs) := run (Session.init testCfg) { roster := [] }
     [ .streamOpen "<stream:stream to='example.com' version='1.0'>",
       .element s!"<auth xmlns='{nsSasl}' mechanism='PLAIN'>{payload}</auth>",
       .streamOpen "<stream:stream to='example.com' version='1.0'>",
@@ -775,7 +857,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 #guard
   let payload := Scram.b64Encode (ByteArray.mk
     (((" juliet r0m30").toUTF8).toList.toArray))
-  let (s, _, _) := run (Session.init testCfg) ⟨[]⟩
+  let (s, _, _) := run (Session.init testCfg) { roster := [] }
     [ .streamOpen "<stream:stream to='example.com' version='1.0'>",
       .element s!"<auth xmlns='{nsSasl}' mechanism='PLAIN'>{payload}</auth>",
       .streamOpen "<stream:stream to='example.com' version='1.0'>",
@@ -785,7 +867,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 -- RFC 6120 section 6: a stanza sent before authentication is a stream
 -- error, not a silently dropped stanza.
 #guard
-  let (s, _, outs) := step (Session.init testCfg) ⟨[]⟩ (.element "<message to='x'/>")
+  let (s, _, outs) := step (Session.init testCfg) { roster := [] } (.element "<message to='x'/>")
   s.stage == .closed &&
   has (String.join (sends outs)) "not-well-formed"
 
@@ -794,7 +876,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 -- claimed.
 #guard
   let s : Session := { cfg := testCfg, stage := .bound "juliet" "balcony" }
-  let (_, _, outs) := step s ⟨[]⟩
+  let (_, _, outs) := step s { roster := [] }
     (.element "<message to='romeo@example.com' from='mallory@evil.example' type='chat'><body>hi</body></message>")
   outs.any (fun o => match o with
     | .route t x => t == "romeo@example.com" &&
@@ -804,7 +886,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 -- RFC 6121 section 2.1.3: the roster get returns every stored item.
 #guard
   let s : Session := { cfg := testCfg, stage := .bound "juliet" "balcony" }
-  let env : Env := ⟨[⟨"romeo@example.com", "Romeo", "both", false⟩]⟩
+  let env : Env := { roster := [⟨"romeo@example.com", "Romeo", "both", false⟩] }
   let (_, _, outs) := step s env (.element s!"<iq type='get' id='r1'><query xmlns='{nsRoster}'/></iq>")
   has (String.join (sends outs)) "romeo@example.com"
 
@@ -812,7 +894,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 -- pushes the change back.
 #guard
   let s : Session := { cfg := testCfg, stage := .bound "juliet" "balcony" }
-  let (_, env', outs) := step s ⟨[]⟩
+  let (_, env', outs) := step s { roster := [] }
     (.element s!"<iq type='set' id='r2'><query xmlns='{nsRoster}'><item jid='nurse@example.com' name='Nurse'/></query></iq>")
   env'.roster == [⟨"nurse@example.com", "Nurse", "none", false⟩] &&
   outs.any (fun o => match o with
@@ -821,7 +903,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 -- RFC 6121 section 2.5: `subscription='remove'` deletes the item.
 #guard
   let s : Session := { cfg := testCfg, stage := .bound "juliet" "balcony" }
-  let env : Env := ⟨[⟨"romeo@example.com", "Romeo", "both", false⟩]⟩
+  let env : Env := { roster := [⟨"romeo@example.com", "Romeo", "both", false⟩] }
   let (_, env', _) := step s env
     (.element s!"<iq type='set' id='r3'><query xmlns='{nsRoster}'><item jid='romeo@example.com' subscription='remove'/></query></iq>")
   env'.roster == []
@@ -830,8 +912,8 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 -- contact with subscription `from` or `both`, and back to the sender.
 #guard
   let s : Session := { cfg := testCfg, stage := .bound "juliet" "balcony" }
-  let env : Env := ⟨[⟨"romeo@example.com", "", "both", false⟩,
-                     ⟨"nurse@example.com", "", "to", false⟩]⟩
+  let env : Env := { roster := [⟨"romeo@example.com", "", "both", false⟩,
+                     ⟨"nurse@example.com", "", "to", false⟩] }
   let (_, _, outs) := step s env (.element "<presence/>")
   (outs.filterMap (fun o => match o with | .route t _ => some t | _ => none))
     == ["romeo@example.com"]
@@ -840,7 +922,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 -- forwarded.
 #guard
   let s : Session := { cfg := testCfg, stage := .bound "juliet" "balcony" }
-  let (_, env', outs) := step s ⟨[]⟩
+  let (_, env', outs) := step s { roster := [] }
     (.element "<presence to='romeo@example.com' type='subscribe'/>")
   env'.roster == [⟨"romeo@example.com", "", "none", true⟩] &&
   outs.any (fun o => match o with | .route t _ => t == "romeo@example.com" | _ => false)
@@ -848,7 +930,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 -- RFC 6120 section 8.4: an IQ nobody handles gets `service-unavailable`.
 #guard
   let s : Session := { cfg := testCfg, stage := .bound "juliet" "balcony" }
-  let (_, _, outs) := step s ⟨[]⟩
+  let (_, _, outs) := step s { roster := [] }
     (.element "<iq type='get' id='q1'><query xmlns='urn:example:nothing'/></iq>")
   has (String.join (sends outs)) "service-unavailable"
 
@@ -856,7 +938,7 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 -- session ends.
 #guard
   let s : Session := { cfg := testCfg, stage := .bound "juliet" "balcony" }
-  let (s', _, outs) := step s ⟨[]⟩ .streamClose
+  let (s', _, outs) := step s { roster := [] } .streamClose
   s'.stage == .closed && outs.contains .close
 
 -- A stanza that arrives for an unbound session is held, not delivered.
@@ -867,11 +949,78 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 -- Nothing at all happens after the stream is closed.
 #guard
   let s : Session := { cfg := testCfg, stage := .closed }
-  let (_, _, outs) := step s ⟨[]⟩ (.element "<message to='x'/>")
+  let (_, _, outs) := step s { roster := [] } (.element "<message to='x'/>")
   outs == []
 
 -- The roster's on-disk form round-trips.
 #guard rosterDecode (rosterEncode [⟨"a@b", "A", "both", false⟩, ⟨"c@d", "", "to", true⟩])
   == [⟨"a@b", "A", "both", false⟩, ⟨"c@d", "", "to", true⟩]
+
+-- The failed SASL login limit (https://github.com/danbri/factoidal/issues/1128).
+private def plainAuth (user pw : String) : Framing.Unit :=
+  let payload := Scram.b64Encode ((String.singleton (Char.ofNat 0) ++ user ++ String.singleton (Char.ofNat 0) ++ pw).toUTF8)
+  .element s!"<auth xmlns='{nsSasl}' mechanism='PLAIN'>{payload}</auth>"
+
+private def openUnit : Framing.Unit := .streamOpen "<stream:stream to='example.com' version='1.0'>"
+
+private def guard0 : AuthGuard := { now := 100, address := "192.0.2.7" }
+
+-- Five wrong passwords on one stream are `not-authorized`; the sixth attempt
+-- is `temporary-auth-failure`, also with the right password.
+#guard
+  let (s, env, outs) := run (Session.init testCfg) { roster := [], guard := guard0 }
+    (openUnit :: (List.replicate 5 (plainAuth "juliet" "wrong")))
+  let (s2, _, outs2) := step s env (plainAuth "juliet" "r0m30")
+  s.stage == .awaitingAuth && ((sends outs).filter (has · "not-authorized")).length == 5 &&
+  s2.stage == .awaitingAuth && has (String.join (sends outs2)) "temporary-auth-failure"
+
+-- New streams from one address: the counters are the server's, so the sixth
+-- stream's attempt is refused, for another account name too.
+#guard
+  let g := (List.range 5).foldl (fun g _ =>
+    (run (Session.init testCfg) { roster := [], guard := g } [openUnit, plainAuth "juliet" "wrong"]).2.1.guard) guard0
+  let (s2, _, outs2) := run (Session.init testCfg) { roster := [], guard := g } [openUnit, plainAuth "romeo" "juli3t"]
+  s2.stage == .awaitingAuth && has (String.join (sends outs2)) "temporary-auth-failure"
+
+-- ... but from another address, another account logs in.
+#guard
+  let g := (List.range 5).foldl (fun g _ =>
+    (run (Session.init testCfg) { roster := [], guard := g } [openUnit, plainAuth "juliet" "wrong"]).2.1.guard) guard0
+  let (s2, _, _) := run (Session.init testCfg) { roster := [], guard := { g with address := "198.51.100.9" } }
+    [openUnit, plainAuth "romeo" "juli3t"]
+  s2.stage == .authenticated "romeo"
+
+-- After the window (60 s of the host's clock) the account logs in again.
+#guard
+  let (_, env, _) := run (Session.init testCfg) { roster := [], guard := guard0 }
+    (openUnit :: (List.replicate 5 (plainAuth "juliet" "wrong")))
+  let (s2, _, _) := run (Session.init testCfg) { env with guard := { env.guard with now := 160 } }
+    [openUnit, plainAuth "juliet" "r0m30"]
+  s2.stage == .authenticated "juliet"
+
+-- A name with no account counts the same way; a malformed payload does not.
+#guard
+  let (_, env, _) := run (Session.init testCfg) { roster := [], guard := guard0 }
+    (openUnit :: (List.replicate 5 (plainAuth "nobody" "x")))
+  (env.guard.failures.counters.map (·.key)) == #["account:nobody", "address:192.0.2.7"]
+#guard
+  let (_, env, _) := run (Session.init testCfg) { roster := [], guard := guard0 }
+    [openUnit, .element s!"<auth xmlns='{nsSasl}' mechanism='PLAIN'>***</auth>"]
+  env.guard.failures.counters.isEmpty
+
+-- No address: only the account key; never an empty key.
+#guard
+  let (_, env, _) := run (Session.init testCfg) { roster := [], guard := { guard0 with address := "" } }
+    [openUnit, plainAuth "juliet" "wrong"]
+  (env.guard.failures.counters.map (·.key)) == #["account:juliet"]
+
+-- Disabled: eight failures, then the right password logs in; the warning.
+#guard
+  let gOff : AuthGuard := { guard0 with limits := { enabled := false } }
+  let (s, env, _) := run (Session.init testCfg) { roster := [], guard := gOff }
+    (openUnit :: (List.replicate 8 (plainAuth "juliet" "wrong")))
+  let (s2, _, _) := step s env (plainAuth "juliet" "r0m30")
+  s.stage == .awaitingAuth && s2.stage == .authenticated "juliet"
+#guard (saslLimitWarnings { enabled := false }).length == 1 && (saslLimitWarnings {}).isEmpty
 
 end L4Factoidal.XMPP.Server

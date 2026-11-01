@@ -3,8 +3,8 @@ Wasm.Ops.XmppSession — the XMPP SERVER as handles: open a server, open
 one session per client connection on it, feed the session the bytes a
 socket read, perform what it answers.
 
-  xmppOpen(configJson)
-    -> {"ok":true,"handle":"xmpp1","domain":"…","accounts":N}
+  xmppOpen(configJson)          (configJson may hold "disableRateLimits":true)
+    -> {"ok":true,"handle":"xmpp1","domain":"…","accounts":N,"warnings":[…]}
   xmppSessionOpen(serverHandle, optionsJson)
     -> {"ok":true,"handle":"xmpps1"}
   xmppSessionFeed(sessionHandle, text)
@@ -63,6 +63,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 import Std.Data.HashMap
 import Wasm.Ops.Support
 import L4Factoidal.XMPP.Server
+import L4Factoidal.Net.LoginLimit
 
 namespace L4Wasm.Ops
 
@@ -107,6 +108,8 @@ structure XmppServerConfig where
   iterationCount : Nat
   accounts : List Account
   tlsCarrier : Bool
+  /-- The failed SASL login limit (on unless `disableRateLimits`). -/
+  limits : L4Factoidal.Net.LoginLimit.Limits := {}
   deriving Inhabited
 
 def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
@@ -128,7 +131,8 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
       if iterationCount < 1 then .error "config: \"iterationCount\" must be at least 1"
       else
         .ok { domain, saltB64, iterationCount, accounts,
-              tlsCarrier := (j.getBool? "tlsCarrier").getD false }
+              tlsCarrier := (j.getBool? "tlsCarrier").getD false
+              limits := if (j.getBool? "disableRateLimits").getD false then { enabled := false } else {} }
 
 /-! ## The handle tables -/
 
@@ -139,6 +143,11 @@ structure XmppOpenServer where
   cfg : XmppServerConfig
   rosters : Std.HashMap String Roster
   presence : Std.HashMap String (List String)
+  /-- The counters of the failed SASL login limit, shared by every session
+  of this server (https://github.com/danbri/factoidal/issues/1128). -/
+  failures : L4Factoidal.Net.LoginLimit.Failures := {}
+  /-- The host's clock, in seconds: the latest `now` of `xmppSessionOpen`. -/
+  now : Nat := 0
 
 /-- One open client connection on a server. -/
 structure XmppOpenSession where
@@ -153,6 +162,8 @@ structure XmppOpenSession where
   than an unbounded loop. -/
   maxUnits : Nat
   closed : Bool
+  /-- The client's address as the socket gives it (`remoteAddress`). -/
+  address : String := ""
 
 initialize xmppServerCounter : IO.Ref Nat ← IO.mkRef 0
 initialize xmppSessionCounter : IO.Ref Nat ← IO.mkRef 0
@@ -222,8 +233,10 @@ private def drain (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollect
           let roster := match os.session.bareJid with
             | some b => srv.rosters.getD b []
             | none => []
-          let (s', _env', outs) := Server.step os.session ⟨roster⟩ unit
-          let (srv', c') := performAll srv c outs
+          let guard : Server.AuthGuard :=
+            { limits := srv.cfg.limits, failures := srv.failures, now := srv.now, address := os.address }
+          let (s', env', outs) := Server.step os.session { roster, guard } unit
+          let (srv', c') := performAll { srv with failures := env'.guard.failures } c outs
           let closed := c'.close || s'.stage == .closed
           drain srv'
             { os with session := s', buffer := rest, units := os.units + 1, closed }
@@ -264,7 +277,8 @@ def xmppOpen (configJson : String) : IO String := do
       xmppServers.modify (·.insert h { cfg, rosters := ∅, presence := ∅ })
       pure (okWith [ ("handle", .string h)
                    , ("domain", .string cfg.domain)
-                   , ("accounts", .number (toString cfg.accounts.length)) ])
+                   , ("accounts", .number (toString cfg.accounts.length))
+                   , ("warnings", .array ((Server.saslLimitWarnings cfg.limits).map Json.string)) ])
 
 def xmppClose (h : String) : IO String := do
   let servers ← xmppServers.get
@@ -278,7 +292,11 @@ def xmppClose (h : String) : IO String := do
   else
     pure (unknownXmppServer h)
 
-/-- `xmppSessionOpen(serverHandle, {"streamId","nonce","tlsCarrier"?,"maxUnits"?})`.
+/-- `xmppSessionOpen(serverHandle, {"streamId","nonce","tlsCarrier"?,"maxUnits"?,
+"remoteAddress"?,"now"?})`. `remoteAddress` (the socket's) and `now` (the
+host's clock, seconds) feed the failed SASL login limit
+(https://github.com/danbri/factoidal/issues/1128): failures count per
+account name and per client address, across the sessions of the server.
 `streamId` and `nonce` are required: they must be unpredictable and this
 module has no random source. -/
 def xmppSessionOpen (server optionsJson : String) : IO String := do
@@ -305,9 +323,13 @@ def xmppSessionOpen (server optionsJson : String) : IO String := do
               tlsCarrier := (j.getBool? "tlsCarrier").getD srv.cfg.tlsCarrier }
           let n ← xmppSessionCounter.modifyGet fun n => (n + 1, n + 1)
           let h := s!"xmpps{n}"
+          -- The host's clock (seconds) moves the server's clock forward.
+          if let some now := natField? j "now" then
+            xmppServers.modify (·.insert server { srv with now := max srv.now now })
           xmppSessions.modify (·.insert h
             { server, session := Session.init cfg, buffer := "", units := 0
-              maxUnits := (natField? j "maxUnits").getD 1000000, closed := false })
+              maxUnits := (natField? j "maxUnits").getD 1000000, closed := false
+              address := (j.getString? "remoteAddress").getD "" })
           pure (okWith [("handle", .string h)])
 
 /-- `xmppSessionFeed(sessionHandle, text)`: the bytes a socket read, as
