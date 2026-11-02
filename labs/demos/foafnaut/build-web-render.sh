@@ -30,14 +30,15 @@ PY
   cp -R "$TOOL_CACHE/." "$EM_CACHE/"
 fi
 fi
-CORE=(L4Factoidal.Rendering.Layout L4Factoidal.Rendering.Links L4Factoidal.XML.NamespaceView L4Factoidal.Tdb2.Format L4Factoidal.Rendering.FloatFormat)
+CORE=(L4Factoidal.Rendering.Layout L4Factoidal.Rendering.Links L4Factoidal.XML.NamespaceView L4Factoidal.Tdb2.Format L4Factoidal.Rendering.FloatFormat L4Factoidal.Syntax.IriResolve)
 lake build "${CORE[@]}" L4Factoidal.Rendering.Tests
 export LEAN_PATH="$BUILD/olean:$PROJECT/.lake/build/lib/lean"
-LAB_MODULES=(Graphics Font SVGPath SVGCSS SVGDash SVGDashUnits SVGStroke SVG WebRenderSVG WebRender RenderPlan)
+LAB_MODULES=(Graphics GraphicsPrepared Font SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke SVG WebRenderSVG WebRender RenderPlan)
 for module in "${LAB_MODULES[@]}"; do
   printf 'LEAN %s %s\n' "$module" "$(date -u)"
   lean -R "$LAB" -o "$BUILD/olean/$module.olean" -c "$BUILD/ir/$module.c" "$LAB/$module.lean"
 done
+lean -R "$LAB" "$LAB/WebRenderTests.lean"
 lean -R "$LAB" -c "$BUILD/ir/WebRenderCLI.c" "$LAB/WebRenderCLI.lean"
 # Enumerate exactly the project import closure, excluding the unrelated library.
 python3 - "$PROJECT" "$BUILD/core-c-files.txt" <<'PY'
@@ -49,7 +50,7 @@ def visit(module):
     seen.add(module); source=project/Path(*module.split('.')).with_suffix('.lean')
     for imported in re.findall(r'^import\s+(\S+)',source.read_text(),re.M): visit(imported)
     order.append(str(project/'.lake/build/ir'/Path(*module.split('.')).with_suffix('.c')))
-for module in ['L4Factoidal.Rendering.Layout','L4Factoidal.Rendering.Links','L4Factoidal.XML.NamespaceView','L4Factoidal.Tdb2.Format','L4Factoidal.Rendering.FloatFormat']: visit(module)
+for module in ['L4Factoidal.Rendering.Layout','L4Factoidal.Rendering.Links','L4Factoidal.XML.NamespaceView','L4Factoidal.Tdb2.Format','L4Factoidal.Rendering.FloatFormat','L4Factoidal.Syntax.IriResolve']: visit(module)
 Path(sys.argv[2]).write_text('\n'.join(order)+'\n')
 PY
 SOURCES=()

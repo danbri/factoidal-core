@@ -72,3 +72,22 @@ item at every pixel; spatial indexing and glyph batching need their own
 order/coverage arguments. No samples, bounds, pixel checks or tolerances were
 removed for this change. Real fonts, incremental layout and resource reuse
 remain separate work; this is not a full browser-performance claim.
+
+## Prepared CPU sampler: proof checkpoint
+
+`GraphicsPrepared.Expr.prepare_correct` establishes typed interpreter equivalence
+for all expressions, arrays and environments. It folds scene constants without
+using algebraic Float rewrites. Invalid array parameters remain delayed, including
+inside short-circuit branches; explicit guards exercise this behavior.
+
+The SVG coverage, primitive composition, paint-order fold and four-quarter sample
+proofs connect preparation back to the existing CPU reference implementation.
+A tail-recursive list builder has its own equivalence proof. The compiled batch
+sampler selects the proved replacement through `@[csimp]`; it shares preparation
+across all requested coordinates. Clipped, dashed and complex path primitives
+retain their reference coverage implementation.
+
+This checkpoint is source-checked. A fresh combined engine, emitted-call inspection,
+byte comparisons and paired timings are pending; no second speedup is claimed yet.
+The proofs preserve Lean CPU Float operations. They do not establish equivalence
+to GPU Float32 evaluation or resolve the rotated-edge GPU numerical disagreement.

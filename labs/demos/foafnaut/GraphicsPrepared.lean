@@ -1,0 +1,91 @@
+import Graphics
+import Init.Data.Array.Lemmas
+
+/-! Partial evaluation of the existing typed coverage interpreter. Arithmetic
+operations retain their exact order; no real/Float algebra laws are used.
+Out-of-range parameters remain delayed so preparation does not move a panic
+from an unvisited short-circuit branch into scene construction. -/
+namespace NativeGraphics
+
+inductive Prepared (α : Type) where
+  | constant (value : α)
+  | dynamic (run : Env → α)
+
+def Prepared.eval (env : Env) : Prepared α → α
+  | .constant value => value
+  | .dynamic run => run env
+
+def Prepared.map (f : α → β) : Prepared α → Prepared β
+  | .constant value => .constant (f value)
+  | .dynamic run => .dynamic (fun env => f (run env))
+
+def Prepared.combine (f : α → β → γ) : Prepared α → Prepared β → Prepared γ
+  | .constant a,.constant b => .constant (f a b)
+  | a,b => .dynamic (fun env => f (a.eval env) (b.eval env))
+
+def Prepared.and : Prepared Bool → Prepared Bool → Prepared Bool
+  | .constant a,.constant b => .constant (a && b)
+  | a,b => .dynamic (fun env => a.eval env && b.eval env)
+
+def Prepared.or : Prepared Bool → Prepared Bool → Prepared Bool
+  | .constant a,.constant b => .constant (a || b)
+  | a,b => .dynamic (fun env => a.eval env || b.eval env)
+
+@[simp] theorem Prepared.eval_map (env : Env) (f : α → β) (a : Prepared α) :
+    (a.map f).eval env = f (a.eval env) := by cases a <;> rfl
+@[simp] theorem Prepared.eval_combine (env : Env) (f : α → β → γ)
+    (a : Prepared α) (b : Prepared β) :
+    (Prepared.combine f a b).eval env = f (a.eval env) (b.eval env) := by
+  cases a <;> cases b <;> rfl
+@[simp] theorem Prepared.eval_and (env : Env) (a b : Prepared Bool) :
+    (a.and b).eval env = (a.eval env && b.eval env) := by cases a <;> cases b <;> rfl
+@[simp] theorem Prepared.eval_or (env : Env) (a b : Prepared Bool) :
+    (a.or b).eval env = (a.eval env || b.eval env) := by cases a <;> cases b <;> rfl
+
+theorem Var.eval_with_data (v : Var ty) (env : Env) (data : Array Float) :
+    v.eval {env with data := data} = v.eval env := by cases v <;> rfl
+
+def Expr.prepare (data : Array Float) {ty : Ty} : Expr ty → Prepared ty.Value
+  | .lit n => .constant (Float.ofNat n)
+  | .param i => match data[i]? with
+    | some value => .constant value
+    | none => .dynamic (fun _ => data[i]!)
+  | .var v => .dynamic (fun env => v.eval env)
+  | .vec a b => Prepared.combine Prod.mk (a.prepare data) (b.prepare data)
+  | .add a b => Prepared.combine (·+·) (a.prepare data) (b.prepare data)
+  | .sub a b => Prepared.combine (·-·) (a.prepare data) (b.prepare data)
+  | .mul a b => Prepared.combine (·*·) (a.prepare data) (b.prepare data)
+  | .divide a b => Prepared.combine (·/·) (a.prepare data) (b.prepare data)
+  | .maximum a b => Prepared.combine max (a.prepare data) (b.prepare data)
+  | .clamp01 a => (a.prepare data).map (fun x => max 0 (min 1 x))
+  | .addV a b => Prepared.combine (fun x y => (x.1+y.1,x.2+y.2)) (a.prepare data) (b.prepare data)
+  | .subV a b => Prepared.combine (fun x y => (x.1-y.1,x.2-y.2)) (a.prepare data) (b.prepare data)
+  | .scale a b => Prepared.combine (fun x y => (x*y.1,x*y.2)) (a.prepare data) (b.prepare data)
+  | .dot a b => Prepared.combine (fun x y => x.1*y.1+x.2*y.2) (a.prepare data) (b.prepare data)
+  | .le a b => Prepared.combine (·<=·) (a.prepare data) (b.prepare data)
+  | .and a b => (a.prepare data).and (b.prepare data)
+
+theorem Expr.prepare_correct (data : Array Float) {ty : Ty} (expr : Expr ty) (env : Env) :
+    (expr.prepare data).eval env = expr.eval {env with data := data} := by
+  induction expr with
+  | lit n => rfl
+  | param i =>
+    cases found : data[i]? with
+    | none => simp [Expr.prepare,Prepared.eval,found,Expr.eval]
+    | some value =>
+      have atIndex : data[i]! = value := by
+        simp [Array.getElem!_eq_getD,Array.getD_eq_getD_getElem?,found]
+      simp [Expr.prepare,Prepared.eval,found,Expr.eval,atIndex]
+  | var v => simp [Expr.prepare,Prepared.eval,Expr.eval,Var.eval_with_data]
+  | _ => simp_all only [Expr.prepare,Expr.eval,Prepared.eval_map,
+      Prepared.eval_combine,Prepared.eval_and]
+
+#guard ((Expr.add (.param 0) (.lit 2)).prepare #[3]).eval {data := #[]} == 5
+#guard ((Expr.dot (.var .position) (.vec (.lit 1) (.lit 0))).prepare #[]).eval
+  {data := #[],position := (7,9)} == 7
+-- An unreachable invalid parameter must remain unreachable after preparation.
+#guard !((Expr.and (.le (.lit 1) (.lit 0)) (.le (.param 99) (.lit 0))).prepare #[]).eval {data := #[]}
+#guard ((Prepared.constant true).or (.dynamic (fun _ => panic! "unreachable"))).eval {data := #[]}
+#guard !((Prepared.constant false).and (.dynamic (fun _ => panic! "unreachable"))).eval {data := #[]}
+#print axioms Expr.prepare_correct
+end NativeGraphics
