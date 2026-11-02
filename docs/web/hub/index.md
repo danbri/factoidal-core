@@ -23,6 +23,7 @@ in your browser.
 ## Pages
 
 <ul class="post-series">
+  <li><a href="./html-webgpu/">HTML and CSS in Lean</a> — editable HTML/CSS, Lean block and inline layout, shared vector geometry, WebGPU pixels and clickable source-mapped links</li>
   <li><a href="./data-compositor/">Data Compositor</a> — a visual studio roster pipeline: CSVW, RDF inference, named graphs, SPARQL and XSLT, with editable inputs, component evidence, portable pipeline files and FOAF pod storage</li>
   <li><a href="./rdf-syntaxes/">RDF syntaxes</a> — Turtle, N-Triples, N-Quads, TriG, RDF/XML, JSON-LD; RDF 1.2 triple terms, reifiers, annotations and base direction; error positions</li>
   <li><a href="./jsonld-star/">JSON-LD-star and JSON-LD 1.3</a> — RDF 1.2 triple terms, reifiers, annotations and base direction in JSON-LD (<code>@triple</code>, <code>@reifies</code>, <code>@annotation</code>, option <code>rdfstar</code>); the draft, the choices made, scores, and the plan towards JSON-LD 1.3</li>

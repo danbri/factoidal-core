@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-02 | [HTML/CSS WebGPU hub page and runtime contract](20261102-html-webgpu-hub.md) | this commit | current — actual prefixed worker/GPU page checks; runtime installation and publication remain separate |
 | 2026-11-02 | [Proved formatting cache in the Lean renderer](20261102-lean-renderer-performance.md) | this commit | current — exact number strings and full artifacts; paired WASM compile speedup1.70–2.00; CPU sampling and GPU scaling remain |
 | 2026-11-02 | [Lean link painting, hit testing and stdout logging](20261102-lean-renderer-links.md) | this commit | current — 32 source guards and six browser groups; wrapped spaces, CSS overrides and embedded SVG anchors |
 | 2026-11-02 | [First Lean HTML/CSS WASM and WebGPU images](20261102-lean-web-renderer-first-images.md) | this commit | current — actual HTML input, five local browser checks, whole CPU/GPU/original-browser image equality; real-font shaping remains |

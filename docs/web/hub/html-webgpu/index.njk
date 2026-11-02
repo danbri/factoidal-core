@@ -1,0 +1,38 @@
+---
+layout: hub-app.njk
+title: HTML and CSS in Lean
+appBase: /web/hub/html-webgpu
+appSource: https://github.com/danbri/factoidal-core/tree/main/docs/web/hub/html-webgpu
+appEngineLabel: Renderer evidence
+appEngineUrl: '#evidence'
+permalink: /web/hub/html-webgpu/
+---
+<section class="renderer-intro">
+  <h1>HTML and CSS in Lean</h1>
+  <p>Edit a small page. Lean parses the HTML, computes its CSS and lays out its text and boxes. WebGPU paints the resulting vector scene.</p>
+</section>
+<div class="renderer-workspace">
+  <section class="renderer-input" aria-labelledby="input-heading">
+    <div class="renderer-heading"><h2 id="input-heading">HTML and CSS input</h2><label>Example <select id="fixture"><option value="default.html">Page with a link</option><option value="links.html">Wrapped links</option><option value="boxes.html">Boxes and embedded SVG</option><option value="flow.html">Text flow</option></select></label></div>
+    <label for="source" class="visually-hidden">HTML and CSS source</label>
+    <textarea id="source" spellcheck="false" autocapitalize="off" aria-describedby="font-scope"></textarea>
+    <div class="renderer-controls"><label>Width <input id="width" type="number" value="380" min="1" max="4096"></label><label>Height <input id="height" type="number" value="340" min="1" max="4096"></label><button id="render" type="button">Render</button><label class="renderer-auto"><input id="auto" type="checkbox" checked> Render edits</label></div>
+    <p id="font-scope" class="renderer-scope">Current text profile: an ASCII bitmap font with word wrapping, baselines and source glyph clusters. Real font shaping, full CSS and scripting remain work. Unsupported input produces an error.</p>
+  </section>
+  <section class="renderer-output" aria-labelledby="output-heading">
+    <h2 id="output-heading">Lean-rendered page</h2>
+    <div class="renderer-canvas-wrap"><canvas id="output" hidden aria-label="Page painted from the Lean layout scene"></canvas></div>
+    <p id="status" role="status" aria-live="polite">Loading renderer…</p>
+    <p class="renderer-scope">Blue underlined links have a hand cursor. A click records the URL and source node below and in your browser console.</p>
+    <pre id="events" aria-live="polite" hidden></pre>
+  </section>
+</div>
+<section id="evidence" class="renderer-evidence">
+  <h2>Evidence and scope</h2>
+  <p>The HTML parser, DOM, CSS subset, layout, glyph positions, shared vector scene and link picker run in Lean WebAssembly. The browser host transports input, executes the generated WebGPU shader and displays its pixels. It does not use browser HTML layout for this output.</p>
+  <p>The initial box and SVG embedding fixture matched the full CPU image and independently rendered original HTML in Chrome: 0 different pixels out of 7,680. Wrapped links, CSS color changes, text changes and reflow have separate browser checks. These local results are not a full HTML/CSS or WPT conformance score.</p>
+  <details><summary>Layout boxes and source-mapped glyph runs</summary><pre id="layout">Render a page to inspect its layout.</pre></details>
+  <details><summary>Runtime provenance</summary><pre id="provenance">Loading runtime manifest…</pre></details>
+  <p><a href="{{ '/20261102-lean-web-renderer-first-images/' | url }}">First image checks</a> · <a href="{{ '/20261102-lean-renderer-links/' | url }}">Link checks and proofs</a> · <a href="{{ '/designissues/2026-11-02-lean-web-rendering/' | url }}">Architecture and admitted scope</a> · <a href="https://github.com/danbri/factoidal/issues/1230">Rendering work tracker</a></p>
+</section>
+<noscript>This renderer needs JavaScript, WebAssembly and WebGPU. It does not send the input document to a rendering service.</noscript>
