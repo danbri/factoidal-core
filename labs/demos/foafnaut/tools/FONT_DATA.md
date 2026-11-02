@@ -61,3 +61,27 @@ with the separate `hb-shape` CLI for Latin, Greek, Arabic, combining text
 and ZWJ. Other checks cover exact font identity, empty runs, RTL byte
 clusters, closed curved contours, true grayscale coverage and size changes,
 and invalid input. These are adapter checks, not WPT or text conformance.
+
+The Lean consumer is `L4Factoidal.Rendering.FontData`. It uses the existing
+Factoidal JSON parser and rejects ambiguous duplicate fields, invalid integer
+coordinates, broken contour structure, missing/duplicate glyph resources,
+invalid grayscale coverage and mismatched bitmap sizes. It checks clusters
+against the actual UTF-8 scalar boundaries and preserves visual glyph order.
+Decoded glyphs carry source character start/end spans; repeated clusters and
+RTL runs are retained. Default decoding refuses missing glyph0, with an
+explicit policy option for a caller implementing fallback. The font identity
+is a checked SHA-256 string supplied by the native producer; this decoder
+does not independently reopen/hash the font or prove HarfBuzz correctness.
+
+From `formal/lean4`:
+
+```sh
+LEAN_NUM_THREADS=2 lake build L4Factoidal.Rendering.FontDataTests
+LEAN_NUM_THREADS=2 lake env lean --run ../../labs/demos/foafnaut/tools/check-font-data.lean /path/to/font-data.json
+```
+
+There are37 compiled protocol guards, including malformed-data mutations,
+UTF-8 boundaries, merged source clusters, RTL order and missing-glyph policy.
+The runtime driver additionally checks actual local HB/FT data through Lean.
+This is data transport validation; RTL paragraph layout and font rendering
+remain separate integration work. The decoder's JSON transport bound is16MiB.
