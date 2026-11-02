@@ -144,3 +144,36 @@ The serial driver stopped safely before compilation on retry; disk scarcity
 is the outstanding execution blocker. Resume only with adequate capacity, then
 compile the refinement repair, run the exact-result gate, and retain the
 distinction between the old NativeFrag theorem and the new restriction proof.
+
+## Resumed verification: 2026-11-01
+
+This update supersedes the pending handoff above. The temporary patch files
+were absent on resume. The FILTER proof adjustments in BackendRefinement
+and BackendAgreement and the StorePlanGateTests fixture were reconstructed
+and retained in the source working tree. The absent patches are no longer
+required. `NativeFrag` remains unchanged; its theorems retain their existing
+scope. Details: [resume worknote](../20261101-geosparql-planning-resume.md).
+
+The actual check used `/private/tmp/spatial-resume-check.py` and completed
+with exit status 0. All 341 local modules were freshly checked serially
+through `lake env lean`, producing `.olean` and `.ilean` files without C
+output. PlannerSoundness, BackendRefinement, BackendAgreement,
+Sbm11.ExprLocalTheorems, and Wasm.StorePlanGateTests passed. The spatial
+guards passed exact full-source multiset comparisons with two/two/one rows
+for within/intersects/disjoint, duplicate preservation, one geometry block,
+and conservative unknown-function/BIND/ORDER-BY-EXISTS/DESCRIBE plans.
+The driver enforced a 1.5 GiB free-disk threshold; final free disk was
+4.38 GiB.
+
+A normal repeat build option, from `formal/lean4/`, is below. This command
+was not run during the resume:
+
+```sh
+LEAN_NUM_THREADS=2 lake build L4Factoidal.Storage.PlannerSoundness L4Factoidal.Storage.BackendRefinement L4Factoidal.Storage.BackendAgreement L4Factoidal.Storage.Sbm11.ExprLocalTheorems Wasm.StorePlanGateTests
+```
+
+No full `lake build`, C build, native or WASM artifact build, production
+browser benchmark, npm change, release, or push was made. The candidate
+still requires the full configured gates and review. This check establishes
+no new geof full-reference equivalence theorem or production block-count
+measurement.
