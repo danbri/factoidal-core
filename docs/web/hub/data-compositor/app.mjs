@@ -50,7 +50,7 @@ class DataflowStudio extends HTMLElement {
   connectedCallback(){
     this.inputs={...DEFAULTS};this.stages=new Map();this.selected='turtle';this.inspectTab='turtle';this.outputTab='preview';this.scale=1;this.pan={x:0,y:0};this.result=null;this.busy=false;this.logs=[];this.showEvidence=false;this.selectedWire=null;
     this.innerHTML=`
-      <header class="topbar"><div class="identity"><span class="mark">◇</span><div><div class="eyebrow">Factoidal laboratory</div><h1>Data Compositor</h1></div></div><div class="actions"><span class="engine"><b>●</b> Lean → WASM · core 0.29.0</span><button id="reset">Reset inputs</button><button id="run" class="primary">▶ Run flow</button></div></header>
+      <header class="topbar"><div class="identity"><span class="mark">◇</span><div><div class="eyebrow">Factoidal laboratory</div><h1>Data Compositor</h1></div></div><div class="actions"><span class="engine"><b>●</b> Lean → WASM · core 0.28.0</span><button id="reset">Reset inputs</button><button id="run" class="primary">▶ Run flow</button></div></header>
       <pipeline-library></pipeline-library>
       <section class="intro"><p><strong>Think compositor nodes, with data in the sockets.</strong><br>Parse two sources, infer what follows, join named graphs, filter a table, then turn it into HTML.</p><div class="run-status" data-state="idle" role="status" aria-live="polite"><i class="status-dot"></i><span id="status-text">Ready to compose</span></div></section>
       <div class="toolbar"><label class="threshold">Keep score ≥ <output id="score-value">${escapeHTML(this.inputs.minScore)}</output><input id="score" aria-label="Minimum score" type="range" min="0" max="100" step="1" value="${escapeHTML(this.inputs.minScore)}"><span class="muted">Release to recompute</span></label><div class="view-controls"><label class="evidence-toggle"><input id="evidence-toggle" type="checkbox" aria-describedby="evidence-help"> Evidence <span class="evidence-state">off</span></label><span>NODE EDITOR</span><button class="icon" id="zoom-out" aria-label="Zoom out">−</button><button class="icon" id="zoom-in" aria-label="Zoom in">+</button><button class="icon" id="fit">Fit nodes</button></div></div>
@@ -90,7 +90,7 @@ class DataflowStudio extends HTMLElement {
   }
   makeWorker(){
     const workerURL=new URL('./worker.mjs',import.meta.url);
-    workerURL.searchParams.set('engine',new URL(this.getAttribute('data-engine-url')??'https://cdn.jsdelivr.net/npm/@factoidal/core@0.29.0/browser.js',document.baseURI).href);
+    workerURL.searchParams.set('engine',new URL(this.getAttribute('data-engine-url')??'https://cdn.jsdelivr.net/npm/@factoidal/core@0.28.0/browser.js',document.baseURI).href);
     this.worker=new Worker(workerURL,{type:'module'});
     this.worker.onmessage=({data})=>{
       if(data.type==='storage-result'){
@@ -177,7 +177,7 @@ class DataflowStudio extends HTMLElement {
     for(const boundary of info.boundaries)paragraph(boundary);
     if(a.assumptions.length)paragraph('Reported assumptions: '+a.assumptions.join('; '));
     else if(stage?.evidence)paragraph('No assumptions were listed in the runtime array. This is not evidence that the implementation has no assumptions; read the registry scope below.');
-    if(info.source){const link=document.createElement('a');link.href=info.source;link.textContent=info.admission?'Read the XML producer theorem and its scope (development source)':'Read the formal contract and its scope (published 0.29.0 source)';box.append(link);}
+    if(info.source){const link=document.createElement('a');link.href=info.source;link.textContent=info.admission?'Read the XML producer theorem and its scope (development source)':'Read the formal contract and its scope (published 0.28.0 source)';box.append(link);}
     if(info.registry){
       const registry=info.registry;
       if(registry.note)paragraph('Registry scope: '+registry.note);
