@@ -60,32 +60,39 @@ end WebRender
 namespace WebRender
 open L4Factoidal
 
-/-- Until the native clip-stack extension lands, embedded viewports admit only
-untransformed fill rectangles wholly inside their viewport. Other valid SVG
-scenes remain accepted by the standalone shared-scene SVG producer. -/
-private def embeddingNeedsNoClip (scene : NativeSVG.Scene) : Bool :=
-  scene.primitives.all fun p =>
-    let t := p.transform
-    let identity := t.a == 1 && t.b == 0 && t.c == 0 && t.d == 1 && t.e == 0 && t.f == 0
-    let noStroke := match p.style.stroke with | .none => true | _ => false
-    match p.geometry with
-    | .rect x y w h => identity && noStroke && x >= 0 && y >= 0 && w >= 0 && h >= 0 &&
-      (x-scene.mapping.minX)*scene.mapping.sx+scene.mapping.tx >= 0 &&
-      (y-scene.mapping.minY)*scene.mapping.sy+scene.mapping.ty >= 0 &&
-      (x+w-scene.mapping.minX)*scene.mapping.sx+scene.mapping.tx <= scene.mapping.viewportWidth &&
-      (y+h-scene.mapping.minY)*scene.mapping.sy+scene.mapping.ty <= scene.mapping.viewportHeight
-    | _ => false
+/-- CSS dimensions and overflow belong to HTML layout for the embedded root.
+SVG paint declarations remain in the existing SVG frontend. -/
+private def embeddedRoot (root : XML.NamespaceNode) : Except String XML.NamespaceNode := do
+  let .element name attrs children := root | throw "embedded SVG root must be an element"
+  let mut out : List XML.NamespaceAttribute := []
+  for attr in attrs do
+    if attr.name.namespace_.isNone && attr.name.localPart == "style" then
+      let declarations ← Rendering.CSS.declarations attr.value
+      let declarations := declarations.filter (fun d =>
+        !["width","height","overflow","margin","padding","font-size","font-family","line-height","background","background-color","text-decoration","text-decoration-line","color","visibility","display"].contains d.property)
+      if !declarations.isEmpty then
+        let value := String.intercalate ";" (declarations.map fun d => d.property ++ ":" ++ d.value ++ if d.important then "!important" else "")
+        out := {attr with value} :: out
+    else if attr.name.namespace_.isNone && ["overflow","color","visibility","display"].contains attr.name.localPart then pure ()
+    else out := attr :: out
+  return .element name out.reverse children
 
 def embedding (dom : DOM.Dom) (id : Nat) (style : Rendering.CSS.Computed) (width height : Float) : Except String (List Rendering.Node) := do
   if Float.ofNat width.toUInt32.toNat != width || Float.ofNat height.toUInt32.toNat != height then
     throw "unsupported fractional embedded SVG viewport"
-  let root ← namespaceTree dom 64 id
+  let root ← embeddedRoot (← namespaceTree dom 64 id)
   let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
   let scene ← NativeSVG.parseRoot root width.toUInt32.toNat height.toUInt32.toNat inherited
-  if !embeddingNeedsNoClip scene then throw "unsupported embedded SVG requiring viewport clipping (clip extension pending)"
   let m := scene.mapping
   let transform : Rendering.Transform := ⟨m.sx,0,0,m.sy,m.tx-m.minX*m.sx,m.ty-m.minY*m.sy⟩
-  return [.group none transform (WebRenderSVG.fromScene scene).tree]
+  let background := match style.background with
+    | none => []
+    | some color => if style.visible then [.paint ⟨some id,{geometry := .rect 0 0 width height,style := {fill := .solid color}}⟩] else []
+  let tree := (WebRenderSVG.fromScene scene).tree
+  let content := if style.clipOverflow then
+    Rendering.Node.clipped none transform ⟨0,0,width,height,Rendering.identity⟩ tree
+    else .group none transform tree
+  return background ++ [content]
 
 def render (html : String) (width height : Nat) : Except String (Rendering.Scene × Array Rendering.Layout.Box) := do
   if html.length > 1048576 then throw "unsupported HTML input exceeding 1048576 characters"

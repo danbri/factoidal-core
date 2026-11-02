@@ -59,6 +59,19 @@ structure Style where
   rule : FillRule := .nonzero
   lineCap : LineCap := .butt
   deriving Repr
+/-- Rectangular clip in an independent local frame. Content and clip frames
+remain distinct so a viewport can clip before a viewBox mapping. -/
+structure ClipRect where
+  x : Float
+  y : Float
+  width : Float
+  height : Float
+  transform : Transform := identity
+  deriving Repr
+
+def ClipRect.lowerUnder (parent : Transform) (clip : ClipRect) : ClipRect :=
+  {clip with transform := Math.Affine2.compose .float parent clip.transform}
+
 structure Primitive where
   geometry : Geometry
   style : Style := {}
@@ -66,6 +79,7 @@ structure Primitive where
   transform : Transform := identity
   dashParts : Option (List StrokePiece) := none
   groupPath : List (Option String) := []
+  clips : List ClipRect := []
   deriving Repr
 structure PaintItem where
   /-- Index in the source DOM arena, shared by boxes, glyphs and input targets. -/
@@ -75,6 +89,7 @@ structure PaintItem where
 inductive Node where
   | paint (item : PaintItem)
   | group (id : Option String) (transform : Transform) (children : List Node)
+  | clipped (id : Option String) (contentTransform : Transform) (clip : ClipRect) (children : List Node)
   deriving Repr
 structure Mapping where
   sx : Float := 1
@@ -138,12 +153,21 @@ structure Scene where
 def Primitive.lowerUnder (parent : Transform) (groups : List (Option String))
     (p : Primitive) : Primitive :=
   {p with transform := Math.Affine2.compose .float parent p.transform,
-          groupPath := groups ++ p.groupPath}
+          groupPath := groups ++ p.groupPath, clips := p.clips.map (ClipRect.lowerUnder parent)}
+def Primitive.addClip (clip : ClipRect) (primitive : Primitive) : Primitive :=
+  {primitive with clips := clip :: primitive.clips}
+
+def PaintItem.addClip (clip : ClipRect) (item : PaintItem) : PaintItem :=
+  {item with primitive := item.primitive.addClip clip}
+
 mutual
   def Node.lower (parent : Transform) (groups : List (Option String)) : Node → List PaintItem
     | .paint item => [{item with primitive := item.primitive.lowerUnder parent groups}]
     | .group id transform children =>
         Node.lowerList (Math.Affine2.compose .float parent transform) (groups ++ [id]) children
+    | .clipped id content clip children =>
+        (Node.lowerList (Math.Affine2.compose .float parent content) (groups ++ [id]) children).map
+          (PaintItem.addClip (clip.lowerUnder parent))
   termination_by node => sizeOf node
   def Node.lowerList (parent : Transform) (groups : List (Option String)) : List Node → List PaintItem
     | [] => []
@@ -157,6 +181,10 @@ def Node.lowerTR (parent : Transform) (groups : List (Option String))
   | .group id transform children =>
       (children.foldl (fun acc child =>
         (child.lowerTR (Math.Affine2.compose .float parent transform) (groups ++ [id])).reverse ++ acc) []).reverse
+  | .clipped id content clip children =>
+      ((children.foldl (fun acc child =>
+        (child.lowerTR (Math.Affine2.compose .float parent content) (groups ++ [id])).reverse ++ acc) []).reverse).map
+          (PaintItem.addClip (clip.lowerUnder parent))
 termination_by sizeOf node
 
 
@@ -168,12 +196,16 @@ theorem Node.lowerTR_eq (node : Node) :
     (motive_2 := fun (nodes : List Node) => ∀ (parent : Transform) (groups : List (Option String)) (acc : List PaintItem),
       (nodes.foldl (fun acc child => (child.lowerTR parent groups).reverse ++ acc) acc).reverse =
         acc.reverse ++ Node.lowerList parent groups nodes)
-    ?_ ?_ ?_ ?_ node
+    ?_ ?_ ?_ ?_ ?_ node
   · intro primitive parent groups
     simp [Node.lowerTR, Node.lower]
   · intro id transform children ih parent groups
     simpa [Node.lowerTR, Node.lower] using
       ih (Math.Affine2.compose .float parent transform) (groups ++ [id]) []
+  · intro id transform clip children ih parent groups
+    simpa only [Node.lowerTR, Node.lower, List.reverse_nil, List.nil_append] using
+      congrArg (List.map (PaintItem.addClip (clip.lowerUnder parent)))
+        (ih (Math.Affine2.compose .float parent transform) (groups ++ [id]) [])
   · intro parent groups acc
     simp [Node.lowerList]
   · intro head tail ihHead ihTail parent groups acc

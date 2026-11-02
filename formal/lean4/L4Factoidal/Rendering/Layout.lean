@@ -32,6 +32,13 @@ structure Result where
   deriving Repr
 abbrev Embedding := Nat → CSS.Computed → Float → Float → Except String (List Node)
 
+private def checkSVGBox (s : Computed) : Except String Unit := do
+  if s.margin.top != 0 || s.margin.right != 0 || s.margin.bottom != 0 || s.margin.left != 0 ||
+      s.padding.top != 0 || s.padding.right != 0 || s.padding.bottom != 0 || s.padding.left != 0 then
+    throw "unsupported embedded SVG margin or padding"
+  if let .percent _ := s.height then
+    throw "unsupported percentage SVG height without definite containing height"
+
 inductive Inline where
   | word (source : Nat) (style : Computed) (text : String) (start : Nat)
   | space (source : Nat) (style : Computed)
@@ -79,9 +86,10 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (a
     if s.display == .block then throw "unsupported block descendant inside inline context"
     if n.ns != some DOM.svgNS && (s.background.isSome ||
       s.margin.top != 0 || s.margin.right != 0 || s.margin.bottom != 0 || s.margin.left != 0 ||
-      s.padding.top != 0 || s.padding.right != 0 || s.padding.bottom != 0 || s.padding.left != 0) then
+      s.padding.top != 0 || s.padding.right != 0 || s.padding.bottom != 0 || s.padding.left != 0 || s.clipOverflow) then
       throw "unsupported inline box decoration or spacing"
     if n.ns == some DOM.svgNS then
+      checkSVGBox s
       let attrLength := fun key fallback => do
         let v := CSS.attrValue n key
         if v.isEmpty then pure fallback else CSS.number v
@@ -225,6 +233,7 @@ def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding 
     let innerX := outerX+padding.left
     let innerY := outerY+padding.top
     if n.ns == some DOM.svgNS then
+      checkSVGBox s
       let v := CSS.attrValue n "width"
       let intrinsicWidth ← if v.isEmpty then pure 300 else CSS.number v
       let v := CSS.attrValue n "height"
@@ -251,6 +260,9 @@ def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding 
     let borderWidth := width+padding.left+padding.right
     let borderHeight := height+padding.top+padding.bottom
     let nodes := background id s outerX outerY borderWidth borderHeight ++ content.nodes
+    let nodes := if s.clipOverflow then
+      #[.clipped none identity ⟨outerX,outerY,borderWidth,borderHeight,identity⟩ nodes.toList]
+      else nodes
     let box : Box := ⟨id,outerX,outerY,borderWidth,borderHeight⟩
     return {content with nodes, boxes := #[box] ++ content.boxes, height := margin.top+borderHeight+margin.bottom}
 
@@ -283,14 +295,30 @@ theorem anchorAncestor_is_anchor (dom : Dom) (fuel start id : Nat) (href : Strin
       | none => simp [parent] at found
       | some p => exact ih p (by simpa [parent] using found)
 
+private def clipLinkBox (dom : Dom) (clips : Std.TreeMap Nat Box) : Nat → Nat → Box → Box
+  | 0, _, box => box
+  | fuel+1, id, box =>
+    let box := match clips.get? id with
+      | none => box
+      | some clip =>
+        let left := max box.x clip.x
+        let top := max box.y clip.y
+        {box with x := left,y := top,width := max 0 (min (box.x+box.width) (clip.x+clip.width)-left), height := max 0 (min (box.y+box.height) (clip.y+clip.height)-top)}
+    match (dom.get id).parent with
+    | none => box
+    | some parent => clipLinkBox dom clips fuel parent box
+
 /-- Link fragments come from the same visible layout boxes as glyphs and
 replaced elements. Collapsed spaces produce boxes only when retained on a line. -/
 def linkRegions (dom : Dom) (styles : Array Computed) (boxes : Array Box)
     (width height : Float) : Array LinkRegion :=
+  let clipBoxes := boxes.foldl (fun (out : Std.TreeMap Nat Box) box =>
+    if (styles[box.source]!).clipOverflow && (dom.get box.source).type == .element then out.insert box.source box else out) {}
   boxes.foldl (fun (out : Array LinkRegion) (box : Box) =>
     match anchorAncestor dom (dom.size+1) box.source with
     | none => out
     | some (source,href) =>
+      let box := clipLinkBox dom clipBoxes (dom.size+1) box.source box
       if (styles[box.source]!).visible && box.width > 0 && box.height > 0 then
         let left := max 0 box.x
         let top := max 0 box.y

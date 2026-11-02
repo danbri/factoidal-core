@@ -31,8 +31,9 @@ mapping, retained tree and complete paint records. This preserves all Float
 values and paint order; it does not prove binary64/binary32 raster equality.
 The common scene can lower into the current SVG CPU/WGSL backend without
 serializing or reparsing SVG. Shared operation extensions must update both
-adapters and their theorems. Curves, clips and isolated group effects require
-explicit semantics and backend capability work; they must not be stored as
+adapters and their theorems. Clips now have explicit shared geometry and
+separate content/clip affine frames. Curves and isolated group effects require
+further semantics and backend capability work; they must not be stored as
 opaque source-specific cases.
 
 `Style.lean` computes styles over the existing DOM arena. `Layout.lean`
@@ -110,3 +111,11 @@ line/replaced-element boxes. Blue underlines, CSS overrides and the Lean
 region picker are exercised from the browser, with clicks logged to console
 and server stdout. Exact DOM-anchor and picker membership proofs, test
 results and limits: [link worknote](../20261102-lean-renderer-links.md).
+
+## Shared viewport clips, 2026-11-02
+
+HTML block overflow, embedded SVG viewport clips and SVG symbol instances use
+the same retained clip algebra. Complete clip fields survive the adapter
+roundtrip, and clipped link regions follow actual ancestor boxes. Source,
+CPU checks and remaining cascade/font boundaries:
+[shared clip worknote](../20261102-lean-html-shared-clips.md).

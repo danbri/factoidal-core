@@ -52,19 +52,26 @@ def toStyle (s : Rendering.Style) : NativeSVG.Style :=
    fillOpacity := s.fillOpacity,strokeOpacity := s.strokeOpacity,visible := s.visible,
    rule := match s.rule with | .nonzero => .nonzero | .evenodd => .evenodd,
    lineCap := match s.lineCap with | .butt => .butt | .round => .round}
+def fromClip (clip : NativeSVG.ClipRect) : Rendering.ClipRect :=
+  ⟨clip.x,clip.y,clip.width,clip.height,clip.transform⟩
+def toClip (clip : Rendering.ClipRect) : NativeSVG.ClipRect :=
+  ⟨clip.x,clip.y,clip.width,clip.height,clip.transform⟩
+
 def fromPrimitive (p : NativeSVG.Primitive) : Rendering.Primitive :=
-  ⟨fromGeometry p.geometry,fromStyle p.style,p.opacity,p.transform,p.dashParts.map (·.map fromPiece),p.groupPath⟩
+  ⟨fromGeometry p.geometry,fromStyle p.style,p.opacity,p.transform,p.dashParts.map (·.map fromPiece),p.groupPath,p.clips.map fromClip⟩
 def toPrimitive (p : Rendering.Primitive) : NativeSVG.Primitive :=
-  ⟨toGeometry p.geometry,toStyle p.style,p.opacity,p.transform,p.dashParts.map (·.map toPiece),p.groupPath⟩
+  ⟨toGeometry p.geometry,toStyle p.style,p.opacity,p.transform,p.dashParts.map (·.map toPiece),p.groupPath,p.clips.map toClip⟩
 
 def fromNode : NativeSVG.DisplayNode → Rendering.Node
   | .paint p => .paint ⟨none,fromPrimitive p⟩
   | .group id t children => .group id t (children.map fromNode)
+  | .clipped id t clip children => .clipped id t (fromClip clip) (children.map fromNode)
 termination_by n => sizeOf n
 
 def toNode : Rendering.Node → NativeSVG.DisplayNode
   | .paint p => .paint (toPrimitive p.primitive)
   | .group id t children => .group id t (children.map toNode)
+  | .clipped id t clip children => .clipped id t (toClip clip) (children.map toNode)
 termination_by n => sizeOf n
 
 def fromMapping (m : NativeSVG.Mapping) : Rendering.Mapping :=
@@ -95,20 +102,27 @@ def toScene (s : Rendering.Scene) : NativeSVG.Scene :=
   | mk fill stroke color width dash offset fillOpacity strokeOpacity visible rule cap =>
     cases rule <;> cases cap <;>
       simp [toStyle,fromStyle,List.map_map,Function.comp_def]
+@[simp] theorem clip_roundtrip (clip : NativeSVG.ClipRect) : toClip (fromClip clip) = clip := by
+  cases clip
+  rfl
+
 @[simp] theorem primitive_roundtrip (p : NativeSVG.Primitive) : toPrimitive (fromPrimitive p) = p := by
   cases p with
-  | mk geometry style opacity transform parts groups =>
+  | mk geometry style opacity transform parts groups clips =>
     cases parts <;> simp [toPrimitive,fromPrimitive,List.map_map,Function.comp_def]
 
 @[simp] theorem node_roundtrip (node : NativeSVG.DisplayNode) : toNode (fromNode node) = node := by
   refine NativeSVG.DisplayNode.rec
     (motive_1 := fun node => toNode (fromNode node) = node)
     (motive_2 := fun nodes => (nodes.map fromNode).map toNode = nodes)
-    ?_ ?_ ?_ ?_ node
+    ?_ ?_ ?_ ?_ ?_ node
   · intro p
     simp [fromNode,toNode]
   · intro id transform children ih
     simp only [fromNode,toNode]
+    rw [ih]
+  · intro id transform clip children ih
+    simp only [fromNode,toNode,clip_roundtrip]
     rw [ih]
   · rfl
   · intro head tail ihHead ihTail
@@ -136,6 +150,8 @@ theorem fromScene_preserves_tree_order (s : NativeSVG.Scene) :
 
 #print axioms geometry_roundtrip
 #print axioms style_roundtrip
+#print axioms clip_roundtrip
 #print axioms primitive_roundtrip
+#print axioms node_roundtrip
 #print axioms scene_roundtrip
 end WebRenderSVG

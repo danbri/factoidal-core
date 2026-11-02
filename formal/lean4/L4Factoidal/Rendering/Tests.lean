@@ -65,6 +65,34 @@ private def spacedLink := run "<div style='width:60px'><a href='url'>AA BB</a></
 #guard ((computedAt "<a id='x' href=''>AA</a>" "" "x").toOption.map (·.underline)) == some true
 #guard ((run "<a href='url' style='visibility:hidden'>AA</a>" css).toOption.map fun r => r.1.links.size) == some 0
 #guard ((run "<a href='url' style='display:none'>AA</a>" css).toOption.map fun r => r.1.links.size) == some 0
+
+/-- Overflow affects both paint clips and the Lean link picker. -/
+private def clippedLink := run "<div style='height:7px;overflow:clip'><a href='url'>AA BB</a></div>" css
+#guard (clippedLink.toOption.map fun r => r.1.links.size) == some 1
+#guard (clippedLink.toOption.bind fun r => hitLink r.1.links.toList 3 3 |>.map (·.href)) == some "url"
+#guard (clippedLink.toOption.bind fun r => hitLink r.1.links.toList 3 8) |>.isNone
+#guard (clippedLink.toOption.map fun r => (Node.lowerList identity [] r.1.tree).all
+  (fun p => p.primitive.clips.any (fun c => c.width == 24 && c.height == 7))) == some true
+#guard ((run "<div style='height:7px;overflow:visible'><a href='url'>AA BB</a></div>" css).toOption.map fun r => r.1.links.size) == some 2
+#guard ((run "<body style='overflow:clip'>A</body>" css).toOption.isNone)
+#guard ((run "<span style='overflow:clip'>A</span>" css).toOption.isNone)
+#guard ((run "<svg style='padding:1px'></svg>" css).toOption.isNone)
+#guard ((run "<svg style='height:50%'></svg>" css).toOption.isNone)
+#guard ((computedAt "<svg id='x' style='fill:red;stroke:blue'></svg>" "" "x").toOption.isSome)
+#guard ((computedAt "<svg id='x'><rect style='fill:red'/></svg>" "rect{fill:blue}" "x").toOption.isNone)
+#guard ((computedAt "<svg id='x' color='red'></svg>" "" "x").toOption.map (·.color.r)) == some 1
+#guard ((computedAt "<svg id='x' color='red' style='color:blue'></svg>" "svg{color:green!important}" "x").toOption.map (·.color.g)) == some (128/255)
+
+/-- Content and clip frames compose independently under the parent frame. -/
+private def framedClip : Node := .group (some "parent") ⟨1,0,0,1,10,20⟩
+  [.clipped (some "viewport") ⟨2,0,0,3,0,0⟩ ⟨0,0,5,7,⟨1,0,0,1,3,4⟩⟩
+    [.paint ⟨some 9,{geometry := .rect 0 0 1 1}⟩]]
+private def framedPaint := (framedClip.lower identity []).head?
+#guard (framedPaint.map fun p => (p.primitive.transform.a,p.primitive.transform.d,
+  p.primitive.transform.e,p.primitive.transform.f)) == some (2,3,10,20)
+#guard (framedPaint.bind fun p => p.primitive.clips.head? |>.map
+  (fun c => (c.transform.e,c.transform.f,c.width,c.height))) == some (13,24,5,7)
+#guard (framedPaint.map fun p => (p.source,p.primitive.groupPath)) == some (some 9,[some "parent",some "viewport"])
 #print axioms anchorAncestor_is_anchor
 #print axioms hitLink_mem
 

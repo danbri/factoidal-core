@@ -31,6 +31,7 @@ structure Computed where
   lineHeight : Float := 19.2
   lineHeightFactor : Option Float := some 1.2
   visible : Bool := true
+  clipOverflow : Bool := false
   underline : Bool := false
   decorationColor : Option Color := none
   deriving Repr
@@ -227,6 +228,10 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "visible" => return {s with visible := true}
     | "hidden" | "collapse" => return {s with visible := false}
     | _ => throw "unsupported CSS visibility"
+  | "overflow" =>
+    if d.value == "visible" then return {s with clipOverflow := false}
+    if d.value == "hidden" || d.value == "clip" then return {s with clipOverflow := true}
+    throw "unsupported CSS overflow mode"
   | "text-decoration" | "text-decoration-line" =>
     if d.value == "underline" then return {s with underline := true}
     if d.value == "none" then return {s with underline := false}
@@ -248,11 +253,22 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
   let block := ["html","body","div","p","section","main","article","header","footer","h1","h2","ul","li"].contains n.lname
   let hidden := ["head","style","script","title","meta","link","template"].contains n.lname
   let hyperlink := n.lname == "a" && hasAttribute n "href"
-  let initial : Computed := {
-    color := if hyperlink then ⟨0,0,1⟩ else parent.color, underline := hyperlink, fontSize := parent.fontSize,
+  let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg"
+  let svgOverflow := attrValue n "overflow"
+  if svgViewport && !["","hidden","clip","visible"].contains svgOverflow then
+    throw "unsupported embedded SVG overflow attribute"
+  let mut initial : Computed := {
+    color := if hyperlink then ⟨0,0,1⟩ else parent.color, underline := hyperlink,
+    clipOverflow := svgViewport && svgOverflow != "visible", fontSize := parent.fontSize,
     lineHeight := parent.lineHeight, lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
     display := if hidden then .none else if block then .block else .inline,
     margin := if n.lname == "body" then ⟨8,8,8,8⟩ else {}}
+  -- SVG presentation attributes have lower priority than author CSS.
+  -- These properties affect HTML layout/inheritance, so compute them here.
+  if svgViewport then
+    for property in ["color","visibility","display"] do
+      let value := attrValue n property
+      if !value.isEmpty then initial ← apply initial ⟨property,value,false⟩
   let mut winners : Std.TreeMap String (List Nat × Declaration) := {}
   let mut order : Nat := 0
   for rule in rules do
@@ -272,8 +288,15 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
   -- Font size precedes line-height and inheritance-sensitive dependent values.
   let mut result := initial
   if let some (_,d) := winners.get? "font-size" then result ← apply result d
-  for (key,(_,d)) in winners.toList do
-    if key != "font-size" then result ← apply result d
+  let htmlProperties := ["display","width","height","margin","padding","color","background","background-color","font-size","font-family","line-height","visibility","overflow","text-decoration","text-decoration-line"]
+  for (key,(priority,d)) in winners.toList do
+    if key != "font-size" then
+      -- Inline SVG paint declarations stay with the existing SVG producer.
+      -- External HTML paint rules are refused until that cascade is unified.
+      if n.ns == some DOM.svgNS && priority[1]? == some 1 && !htmlProperties.contains key then pure ()
+      else result ← apply result d
+  if ["html","body"].contains n.lname && result.clipOverflow then
+    throw "unsupported HTML root/body overflow propagation"
   let decoration := parent.decorationColor.orElse (fun _ => if result.underline then some result.color else none)
   return {result with underline := decoration.isSome, decorationColor := decoration}
 
@@ -287,9 +310,12 @@ def computeAll (dom : Dom) (rules : List Rule) : Except String (Array Computed) 
     | id::rest =>
       let n := dom.get id
       let parent := (n.parent.bind (styles[·]?)).getD {}
-      let style ← if n.type == .element then computed dom id rules parent else pure {parent with
+      let svgDescendant := n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
+      if svgDescendant && rules.any (fun rule => rule.selectors.any (selectorMatches dom id) && !rule.declarations.isEmpty) then
+        throw "unsupported HTML stylesheet rule targeting embedded SVG descendants"
+      let style ← if n.type == .element && !svgDescendant then computed dom id rules parent else pure {parent with
         display := .inline, width := .auto, height := .auto,
-        margin := {}, padding := {}, background := none}
+        margin := {}, padding := {}, background := none, clipOverflow := false}
       styles := styles.set! id style
       pending := n.kids.toList ++ rest
   throw "DOM style traversal exceeds arena bound"
