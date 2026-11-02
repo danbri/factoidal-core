@@ -1,0 +1,17 @@
+rm-x509data-xpath.xml	valid	-	Type X509Data; same-document URI and an XPath transform (as Merlin's signature.xml)
+rm-raw-base64.xml	valid	-	Type rawX509Certificate; a ds:Object with base64 DER and the base64 transform
+rm-raw-external.xml	valid	-	Type rawX509Certificate; a relative URI that the caller's resolver gives
+rm-der-encoded.xml	valid	-	Type dsig11:DEREncodedKeyValue; the element's Id
+rm-rsa-keyvalue.xml	valid	-	Type RSAKeyValue; an XPath transform selects it in a ds:Object
+rm-no-type.xml	valid	-	no Type; the element's name says what it is
+rm-ec-keyvalue.xml	valid	-	Type dsig11:ECKeyValue (P-256, named curve)
+neg-rm-type-mismatch.xml	invalid	not its Type	Type RSAKeyValue, but the URI gives dsig11:DEREncodedKeyValue
+neg-rm-no-transform.xml	invalid	not its Type	Type X509Data without the XPath transform: the URI gives the ds:Object
+neg-rm-chained.xml	invalid	is not followed	the URI gives another ds:RetrievalMethod: one level only
+neg-rm-wrong-key.xml	invalid	-	the certificate is of another key: the signature does not verify
+neg-rm-no-uri.xml	invalid	has no URI	no URI (§4.5.3 makes it mandatory)
+neg-rm-missing-id.xml	invalid	no element has the ID	a same-document URI with an ID no element has
+neg-rm-raw-nodeset.xml	invalid	must give octets	Type rawX509Certificate without the base64 transform: a node-set
+neg-rm-unresolved.xml	invalid	cannot dereference	a URI the caller's resolver does not give; nothing is fetched
+neg-rm-two-elements.xml	invalid	more than one element	the transform gives two ds:X509Data elements
+neg-rm-content-changed.xml	invalid	does not match	content changed after signing

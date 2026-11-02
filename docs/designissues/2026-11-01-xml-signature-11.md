@@ -273,8 +273,7 @@ Issue: https://github.com/danbri/factoidal/issues/1226.
 - The key: the certificate's SubjectPublicKeyInfo, read by the same
   `spkiKey?` as `dsig11:DEREncodedKeyValue`. A DSA key is refused naming
   https://github.com/danbri/factoidal/issues/1224.
-- `ds:RetrievalMethod` is not followed:
-  https://github.com/danbri/factoidal/issues/1228.
+- `ds:RetrievalMethod`: see the next section.
 - Theorems (2013 is the XML Signature 1.1 Recommendation):
   `x509SelectCore_2013_identified` (the selected certificate matches every
   identifier), `x509Id_2013_digest_matches`,
@@ -293,6 +292,58 @@ Issue: https://github.com/danbri/factoidal/issues/1226.
   certificate that is not published:
   https://github.com/danbri/factoidal/issues/1229.
 
+## `ds:RetrievalMethod` (2026-11-02, part 7)
+
+Code: the `ds:RetrievalMethod` section of `DSig11.lean` (§4.5.3). Issue:
+https://github.com/danbri/factoidal/issues/1228.
+
+- Reuse: the `URI` is dereferenced by `dereference` (§4.4.3.3, the same
+  code as a `ds:Reference`; a URI to another document goes to the
+  caller's resolver, `Config.resolve`, and nothing is fetched by the
+  engine), and the `ds:Transforms` are applied by `applyTransformsAcc`.
+  The result is read by `readRetrieved`:
+  - `Type` `rawX509Certificate`: the data must be octets (for example
+    after the base64 transform, or from the resolver); they are a DER
+    certificate, read by `X509.parseCert?`. A node-set is refused.
+  - any other `Type`, or none: the data is a node-set (octets are parsed
+    as XML) and must have exactly one apex element (an element of the set
+    whose parent element is not in the set). With a `Type`, the element's
+    expanded name (namespace name followed by local name) must equal it.
+- The key of the element (`retrievedKey`): `ds:X509Data` as in
+  `ds:KeyInfo` (`x509Select`, `certKey`); `dsig11:DEREncodedKeyValue`;
+  `ds:KeyValue`; `ds:RSAKeyValue`, `dsig11:ECKeyValue`, the RFC 4050
+  `ECDSAKeyValue`; `ds:DSAKeyValue` is refused naming
+  https://github.com/danbri/factoidal/issues/1224. `PGPData`, `SPKIData`
+  and `MgmtData` give no key.
+- One level only: a `ds:RetrievalMethod` that gives another
+  `ds:RetrievalMethod` is refused, as a `dsig11:KeyInfoReference` is
+  followed once. Decision (coordinator's): the 1.1 Recommendation does not
+  require a chain, and a bound on the depth removes the loop case.
+- Order in `ds:KeyInfo`: `ds:KeyValue`, `dsig11:DEREncodedKeyValue`,
+  `ds:X509Data`, then `ds:RetrievalMethod`; the first present is read.
+- `signingCertificate?` gives the certificate of a `ds:RetrievalMethod`
+  of Type `rawX509Certificate` or `X509Data` when `ds:KeyInfo` has no
+  `ds:X509Data`.
+- Theorems: `dsig11_2013_retrieved_x509Data_eq_direct` (a retrieved
+  `ds:X509Data` gives the key of the same element in `ds:KeyInfo`),
+  `dsig11_2013_raw_eq_x509Certificate` (a `rawX509Certificate` gives the
+  key and the certificate of a `ds:X509Data` that holds only that
+  `ds:X509Certificate`), `dsig11_2013_retrieved_type` (an element is read
+  only when its name is the `Type`), `dsig11_2013_raw_needs_octets`.
+- Measured by: the two `ds:RetrievalMethod` vectors of
+  `merlin-xmldsig-twenty-three` (`signature.xml`: Type X509Data, the URI
+  `#object-4` and an XPath transform; `signature-retrievalmethod-rawx509crt.xml`:
+  Type rawX509Certificate, the URI `certs/balor.crt`, which the runner
+  resolves to the vendored file), whose selected certificates must have
+  the serial numbers that `openssl x509 -serial` gives (their keys are DSA,
+  so core validation stays an expected failure); and project fixtures
+  (`tests/xmldsig/make_retrieval_fixtures.py`, `tests/xmldsig/retrieval/`)
+  made from the signxml X.509 fixtures by rewriting the unsigned
+  `ds:KeyInfo` (the references are enveloped, so the signature value stays
+  valid): 7 valid cases (each `Type`, no `Type`, a same-document URI with
+  the XPath and base64 transforms, a resolved relative URI) and 10 refused
+  cases, each with the text its refusal must contain.
+
 ## Open (each with an issue and an expected failure, or a refusal)
 
 - ECDSA P-384 and P-521:
@@ -301,7 +352,6 @@ Issue: https://github.com/danbri/factoidal/issues/1226.
 - DSA: https://github.com/danbri/factoidal/issues/1224.
 - The certificate of the 2012 `X509Digest` vector is not published:
   https://github.com/danbri/factoidal/issues/1229 (1 case).
-- `ds:RetrievalMethod`: https://github.com/danbri/factoidal/issues/1228.
 - RSA keys of 1024 bits: https://github.com/danbri/factoidal/issues/1227
   (10 cases; decision needed).
 - `ds:KeyName` of the 2001 vectors is not reached, because its signature
