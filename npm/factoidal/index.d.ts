@@ -1979,6 +1979,50 @@ export function xmlEncrypt(
 ): Promise<{ document: string; canonical: string }>;
 
 /**
+ * XML Signature 1.1 core validation (§3.2). A signature that does not
+ * validate resolves to `{valid: false, reason}`; wrong arguments reject with
+ * a FactoidalError. A key read from ds:KeyInfo is returned, not trusted:
+ * the caller decides whether to trust `key` and `certificate`.
+ */
+export function xmlVerify(
+  document: string,
+  options?: {
+    key?: object;
+    hmacKey?: Uint8Array;
+    keyFromKeyInfo?: boolean;
+    certificates?: Uint8Array[];
+    documents?: Record<string, Uint8Array | string>;
+  }
+): Promise<
+  | {
+      valid: true;
+      signedInfo: string;
+      references: { uri: string; octets: Uint8Array }[];
+      key: object | null;
+      certificate: Uint8Array | null;
+    }
+  | { valid: false; reason: string }
+>;
+
+/**
+ * XML Signature 1.1 signature generation (§3.1). `key` is a private JWK
+ * (RSA 2048/3072/4096, EC P-256, or oct for HMAC). The returned document
+ * has passed core validation in the engine.
+ */
+export function xmlSign(
+  document: string,
+  options: {
+    key: object;
+    signatureMethod?: string;
+    canonicalizationMethod?: string;
+    inclusivePrefixes?: string[];
+    references?: { uri: string; transforms?: string[]; digestMethod?: string }[];
+    enveloping?: { id: string; content: string };
+    keyValue?: boolean;
+  }
+): Promise<{ document: string }>;
+
+/**
  * Decrypt a compact JWE (RFC 7516). Every failure after the allowlist is
  * the one error "decryption failed".
  */
@@ -2330,6 +2374,8 @@ declare const _default: {
   vcEd25519Verify: typeof vcEd25519Verify;
   xmlDecrypt: typeof xmlDecrypt;
   xmlEncrypt: typeof xmlEncrypt;
+  xmlVerify: typeof xmlVerify;
+  xmlSign: typeof xmlSign;
   jweDecrypt: typeof jweDecrypt;
   jweEncrypt: typeof jweEncrypt;
   vcEddsaCreateFromCanonical: typeof vcEddsaCreateFromCanonical;
