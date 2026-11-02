@@ -843,15 +843,11 @@ private def styleRules (root : NamespaceNode) : Except String (List NativeSVGCSS
           pending := children ++ pending
   throw "stylesheet traversal exceeds input bound"
 
-def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String Scene := do
-  if xml.length > maxInputChars then throw "SVG input exceeds 1048576 characters"
-  let document ← (parseXML xml).mapError (fun e => s!"XML: {e.message} at {e.position}")
-  if let some encoding := document.decl.bind (·.encoding) then
-    if encoding.toLower != "utf-8" then throw "SVG host accepts UTF-8 input only"
-  if document.doctype.isSome then throw "DOCTYPE/DTD unsupported in SVG profile"
-  for node in document.prolog ++ document.epilog do
-    match node with | .pi .. => throw "processing instruction unsupported" | _ => pure ()
-  let root ← parseNamespaceView xml
+/-- SVG 2 §5.1: render an already namespace-expanded SVG fragment, including
+    one supplied by an HTML foreign-content parser. The caller owns DOM parsing;
+    root validation, SVG style, geometry and viewport semantics remain here. -/
+def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
+    (inheritedStyle : Style := {}) : Except String Scene := do
   let .element name attrs children := root | throw "SVG root must be an element"
   if name.namespace_ != some svgURI || name.localPart != "svg" then throw "root must be svg in the SVG namespace"
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version","style"]
@@ -881,11 +877,22 @@ def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String S
   let rules ← styleRules root
   let attrs ← applyCSS lengths ids rules "svg" attrs
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version"]
-  let inherited ← readStyle lengths ids attrs {}
+  let inherited ← readStyle lengths ids attrs inheritedStyle
   let parsedTree ← readChildren rules lengths ids identityTransform 0 inherited children
   let tree := if displaySuppressed attrs then [] else parsedTree
   let primitives := DisplayNode.lowerFromRootList tree
   return ⟨w.ceil.toUInt32.toNat,h.ceil.toUInt32.toNat,mapping,tree,primitives,rfl⟩
+
+def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String Scene := do
+  if xml.length > maxInputChars then throw "SVG input exceeds 1048576 characters"
+  let document ← (parseXML xml).mapError (fun e => s!"XML: {e.message} at {e.position}")
+  if let some encoding := document.decl.bind (·.encoding) then
+    if encoding.toLower != "utf-8" then throw "SVG host accepts UTF-8 input only"
+  if document.doctype.isSome then throw "DOCTYPE/DTD unsupported in SVG profile"
+  for node in document.prolog ++ document.epilog do
+    match node with | .pi .. => throw "processing instruction unsupported" | _ => pure ()
+  let root ← parseNamespaceView xml
+  parseRoot root outputWidth outputHeight
 
 /- Typed conditions reuse Graphics.Expr's CPU interpreter and WGSL lowering.
    The float scene is separate from the integer-only demo Shape representation. -/
@@ -1390,15 +1397,32 @@ private def Scene.json (s : Scene) : Except String String := do
     ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.primitives.length ++
     ",\"tree\":" ++ tree ++
     ",\"data\":" ++ jsonArray (data.toList.map floatJSON) ++ ",\"wgsl\":" ++ quote s.wgsl ++ ",\"checks\":" ++ jsonArray checks ++ "}"
+/-- Serialize an existing checked SVG scene through the same packed-data/WGSL
+    producer as the string ABI; no XML serialization or reparsing is required. -/
+def Scene.artifact (s : Scene) : Except String String := s.json
+
+/-- Four-quarter-point CPU reference color for an existing scene. SVG 2 §3
+    rendering order and the lab's explicit sample grid match the string ABI. -/
+def Scene.samplePixel (s : Scene) (x y : Nat) : Color := s.sample x y
+
+/-- Batch the same CPU reference samples while constructing the packed scene
+    array once. Coordinates and operation order within each sample are unchanged. -/
+def Scene.samplePixels (s : Scene) (coordinates : List (Nat × Nat)) : List Color :=
+  let data := s.data
+  coordinates.map (fun (x,y) => s.sampleWithData data x y)
+
+theorem Scene.samplePixels_eq_samplePixel (s : Scene) (coordinates : List (Nat × Nat)) :
+    s.samplePixels coordinates = coordinates.map (fun (x,y) => s.samplePixel x y) := rfl
+
 @[export svg_compile]
 def compile (xml : String) (width height : UInt32) : String :=
-  match parse xml width.toNat height.toNat >>= Scene.json with
+  match parse xml width.toNat height.toNat >>= Scene.artifact with
   | .ok artifact => artifact | .error message => "{\"error\":" ++ quote message ++ "}"
 @[export svg_sample]
 def sample (xml : String) (width height x y : UInt32) : String :=
   match parse xml width.toNat height.toNat with
   | .error message => "{\"error\":" ++ quote message ++ "}"
-  | .ok s => "{\"rgb\":" ++ (s.sample x.toNat y.toNat).json ++ "}"
+  | .ok s => "{\"rgb\":" ++ (s.samplePixel x.toNat y.toNat).json ++ "}"
 @[export svg_hit]
 def hit (xml : String) (width height : UInt32) (x y : Float) : String :=
   match parse xml width.toNat height.toNat with
