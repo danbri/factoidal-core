@@ -602,3 +602,15 @@ bound sibling width. Keep the declarative traversal/count definitions, prove
 paired node/list execution twins equal, check actual compiler reach across
 mutual blocks, and exercise admitted wide groups plus explicit budget refusals
 in WASM. The build record contains the named stack and six exact equalities.
+
+## Lean HTML/CSS rendering (2026-11-02)
+
+`L4Factoidal/Rendering/{Scene,Style,Layout,Tests}.lean` contains the common
+Float scene, CSS cascade and block/inline HTML layout. Run the targeted
+`LEAN_NUM_THREADS=2 lake build L4Factoidal.Rendering.Tests` from `formal/lean4`.
+The lab `WebRenderSVG.lean` adapter preserves complete SVG numeric records and
+retained trees with checked roundtrip theorems. No SVG string is the HTML
+layout intermediate. The initial ASCII bitmap profile is incomplete text
+support, not shaped real-font coverage. Scope, architecture reconciliation
+and evidence: [design record](../../docs/designissues/2026-11-02-lean-web-rendering.md),
+https://github.com/danbri/factoidal/issues/1230 (shared Lean web renderer).

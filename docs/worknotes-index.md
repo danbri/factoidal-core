@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-02 | [Lean HTML/CSS layout and common retained scene](designissues/2026-11-02-lean-web-rendering.md) | this commit | current — actual DOM/CSS/layout source checks; CPU/GPU/WASM and real shaping milestones remain |
 | 2026-11-02 | [Browser SVG/WebGPU harness, whole-image diagnostics and fault controls](20261102-svg-browser-harness.md) | this commit | current — unchanged 38-case WPT slice and separate sensitivity controls |
 | 2026-11-01 | [Solving retained scene slice](20261101-solving-scene-slice.md) | this commit | current — Lean scene, hit testing, clip and SVG export; a shared bounded layout certificate now guards the SVG backend; parsed-SVG/WebGPU scene unification remains |
 | 2026-11-01 | [Shared SVG linear strokes](20261101-svg-linear-strokes.md) | 957a060d4; b5f6a9150 | current — two exact same-renderer GPU pairs; six source admissions; independent antialiasing gap remains |
