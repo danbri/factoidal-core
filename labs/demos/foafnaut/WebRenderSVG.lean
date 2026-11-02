@@ -72,7 +72,7 @@ def fromMapping (m : NativeSVG.Mapping) : Rendering.Mapping :=
 def toMapping (m : Rendering.Mapping) : NativeSVG.Mapping :=
   ⟨m.sx,m.sy,m.tx,m.ty,m.minX,m.minY,m.viewportWidth,m.viewportHeight⟩
 def fromScene (s : NativeSVG.Scene) : Rendering.Scene :=
-  ⟨s.width,s.height,fromMapping s.mapping,s.tree.map fromNode,#[]⟩
+  ⟨s.width,s.height,fromMapping s.mapping,s.tree.map fromNode,#[],#[]⟩
 def toScene (s : Rendering.Scene) : NativeSVG.Scene :=
   let tree := s.tree.map toNode
   ⟨s.width,s.height,toMapping s.mapping,tree,

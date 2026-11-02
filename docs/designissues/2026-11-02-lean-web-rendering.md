@@ -102,3 +102,11 @@ status; font and CSS limitations remain. Full evidence and build limits:
 [first image worknote](../20261102-lean-web-renderer-first-images.md).
 The vetted native [font-data adapter](../../labs/demos/foafnaut/tools/FONT_DATA.md)
 is separate from layout and awaits typed Lean consumption.
+
+## Link activation, 2026-11-02
+
+The shared scene now carries typed link fragments built from the actual Lean
+line/replaced-element boxes. Blue underlines, CSS overrides and the Lean
+region picker are exercised from the browser, with clicks logged to console
+and server stdout. Exact DOM-anchor and picker membership proofs, test
+results and limits: [link worknote](../20261102-lean-renderer-links.md).

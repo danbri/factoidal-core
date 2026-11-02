@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-02 | [Lean link painting, hit testing and stdout logging](20261102-lean-renderer-links.md) | this commit | current — 32 source guards and six browser groups; wrapped spaces, CSS overrides and embedded SVG anchors |
 | 2026-11-02 | [First Lean HTML/CSS WASM and WebGPU images](20261102-lean-web-renderer-first-images.md) | this commit | current — actual HTML input, five local browser checks, whole CPU/GPU/original-browser image equality; real-font shaping remains |
 | 2026-11-02 | [Lean HTML/CSS layout and common retained scene](designissues/2026-11-02-lean-web-rendering.md) | this commit | current — actual DOM/CSS/layout source checks; CPU/GPU/WASM and real shaping milestones remain |
 | 2026-11-02 | [Browser SVG/WebGPU harness, whole-image diagnostics and fault controls](20261102-svg-browser-harness.md) | this commit | current — unchanged 38-case WPT slice and separate sensitivity controls |

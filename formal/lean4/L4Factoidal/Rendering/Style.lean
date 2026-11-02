@@ -31,6 +31,8 @@ structure Computed where
   lineHeight : Float := 19.2
   lineHeightFactor : Option Float := some 1.2
   visible : Bool := true
+  underline : Bool := false
+  decorationColor : Option Color := none
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -56,6 +58,9 @@ structure Rule where
 
 def attrValue (n : DOM.Node) (key : String) : String :=
   ((n.attrs.find? fun a => a.ns.isNone && a.lname == key).map (·.value)).getD ""
+def hasAttribute (n : DOM.Node) (key : String) : Bool :=
+  n.attrs.any (fun a => a.ns.isNone && a.lname == key)
+
 private def words (s : String) : List String :=
   (s.replace "\n" " " |>.replace "\t" " " |>.replace "\r" " ").splitOn " " |>.filter (· != "")
 private def ident (s : String) : Bool := !s.isEmpty && s.toList.all (fun c => c.isAlphanum || c == '-' || c == '_')
@@ -222,6 +227,10 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "visible" => return {s with visible := true}
     | "hidden" | "collapse" => return {s with visible := false}
     | _ => throw "unsupported CSS visibility"
+  | "text-decoration" | "text-decoration-line" =>
+    if d.value == "underline" then return {s with underline := true}
+    if d.value == "none" then return {s with underline := false}
+    throw "unsupported CSS text decoration"
   | "font-family" =>
     if ["monospace","ascii-bitmap"].contains d.value then return s
     throw "unsupported font family: this build uses the explicit ASCII bitmap font profile"
@@ -238,8 +247,9 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
   let n := dom.get id
   let block := ["html","body","div","p","section","main","article","header","footer","h1","h2","ul","li"].contains n.lname
   let hidden := ["head","style","script","title","meta","link","template"].contains n.lname
+  let hyperlink := n.lname == "a" && hasAttribute n "href"
   let initial : Computed := {
-    color := parent.color, fontSize := parent.fontSize,
+    color := if hyperlink then ⟨0,0,1⟩ else parent.color, underline := hyperlink, fontSize := parent.fontSize,
     lineHeight := parent.lineHeight, lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
     display := if hidden then .none else if block then .block else .inline,
     margin := if n.lname == "body" then ⟨8,8,8,8⟩ else {}}
@@ -248,6 +258,8 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
   for rule in rules do
     let specificity := (rule.selectors.filter (selectorMatches dom id)).foldl (fun m s => if lexLE [m.1,m.2.1,m.2.2] [s.specificity.1,s.specificity.2.1,s.specificity.2.2] then s.specificity else m) (0,0,0)
     if rule.selectors.any (selectorMatches dom id) then
+      if n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false && !rule.declarations.isEmpty then
+        throw "unsupported HTML stylesheet rule targeting embedded SVG descendants"
       for d in rule.declarations do
         let key := [if d.important then 1 else 0,0,specificity.1,specificity.2.1,specificity.2.2,order]
         if (winners.get? d.property).all (fun old => lexLE old.1 key) then
@@ -262,7 +274,8 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
   if let some (_,d) := winners.get? "font-size" then result ← apply result d
   for (key,(_,d)) in winners.toList do
     if key != "font-size" then result ← apply result d
-  return result
+  let decoration := parent.decorationColor.orElse (fun _ => if result.underline then some result.color else none)
+  return {result with underline := decoration.isSome, decorationColor := decoration}
 
 /-- Visit parents before children, using a work list and bounded arena size. -/
 def computeAll (dom : Dom) (rules : List Rule) : Except String (Array Computed) := do

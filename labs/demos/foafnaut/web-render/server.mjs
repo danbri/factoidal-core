@@ -8,7 +8,7 @@ import {stripTypeScriptTypes} from 'node:module';
 import {createHash} from 'node:crypto';
 const here=dirname(fileURLToPath(import.meta.url)),lab=resolve(here,'..'),files=new Map();
 for(const name of ['index.html','app.mjs','engine.mjs','style.css'])files.set('/'+name,resolve(here,name));
-for(const name of ['default.html','boxes.html','flow.html'])files.set('/fixtures/'+name,resolve(here,'fixtures',name));
+for(const name of ['default.html','boxes.html','flow.html','links.html'])files.set('/fixtures/'+name,resolve(here,'fixtures',name));
 for(const name of ['gpu_transport.ts','render_plan.ts'])files.set('/lab/'+name,resolve(lab,name));
 for(const name of ['web-render.mjs','web-render.wasm'])files.set('/lab/.build/web-render/engines/'+name,resolve(lab,'.build/web-render/engines',name));
 for(const name of ['render-plan.mjs','render-plan.wasm'])files.set('/lab/.build/engines/'+name,resolve(lab,'.build/web-render/engines',name));
@@ -17,9 +17,18 @@ const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Co
 const mime=path=>path.endsWith('.wasm')?'application/wasm':path.endsWith('.html')?'text/html; charset=utf-8':path.endsWith('.css')?'text/css; charset=utf-8':path.endsWith('.json')?'application/json':'text/javascript; charset=utf-8';
 export function makeServer(){return createServer(async(req,res)=>{
  try{
-  if(!['GET','HEAD'].includes(req.method)){res.writeHead(405,headers);res.end();return;}
   if(!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(req.headers.host??'')){res.writeHead(403,headers);res.end('Loopback host required');return;}
   const u=new URL(req.url,'http://127.0.0.1'),name=u.pathname==='/'?'/index.html':u.pathname;
+  if(req.method==='POST'&&name==='/events'){
+    if(req.headers.origin!==`http://${req.headers.host}`||!(req.headers['content-type']??'').startsWith('application/json')){res.writeHead(403,headers);res.end('Same-origin JSON required');return;}
+    const chunks=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>16384){res.writeHead(413,headers);res.end('Event too large');return;}chunks.push(chunk);}
+    let event;try{event=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{res.writeHead(400,headers);res.end('Invalid JSON');return;}
+    if(!event||typeof event!=='object'||Array.isArray(event)||event.type!=='link-click'||typeof event.href!=='string'||Buffer.byteLength(event.href,'utf8')>2048||!Number.isSafeInteger(event.sourceNode)||event.sourceNode<0||event.sourceNode>1048576||![event.x,event.y].every(n=>Number.isFinite(n)&&n>=0&&n<=4096)){res.writeHead(400,headers);res.end('Invalid link event');return;}
+    const record={type:'lean-link-click',sourceNode:event.sourceNode,href:event.href,x:event.x,y:event.y};
+    console.log(JSON.stringify(record));
+    res.writeHead(200,{...headers,'Content-Type':'application/json'});res.end(JSON.stringify({ok:true}));return;
+  }
+  if(!['GET','HEAD'].includes(req.method)){res.writeHead(405,headers);res.end();return;}
   if(name==='/provenance.json'){
     const entries=[];for(const [url,path]of files){const data=await readFile(path);entries.push({url,bytes:data.length,sha256:createHash('sha256').update(data).digest('hex')});}
     res.writeHead(200,{...headers,'Content-Type':'application/json'});res.end(JSON.stringify({format:'factoidal-web-render-local-v1',renderer:'Lean HTML/DOM/CSS/layout/common scene + existing Lean SVG WGSL + raw WebGPU transport',files:entries},null,2));return;

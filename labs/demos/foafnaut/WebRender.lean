@@ -1,14 +1,14 @@
 import WebRenderSVG
 import Font
 import L4Factoidal.Rendering.Layout
+import L4Factoidal.Rendering.Links
 
 /-! HTML source → existing Lean DOM → computed CSS → layout → common scene.
 The bitmap font is an explicit temporary profile, not font-backed shaping. -/
 namespace WebRender
 open L4Factoidal
 
-private def quote (s : String) : String :=
-  "\"" ++ (s.replace "\\" "\\\\" |>.replace "\"" "\\\"" |>.replace "\n" "\\n" |>.replace "\r" "\\r" |>.replace "\t" "\\t") ++ "\""
+private def quote (s : String) : String := "\"" ++ JSON.escapeString s ++ "\""
 def errorJSON (message : String) : String := "{\"error\":" ++ quote message ++ "}"
 
 def bitmapOutline (index : Nat) : List Rendering.Geometry := Id.run do
@@ -76,11 +76,12 @@ private def embeddingNeedsNoClip (scene : NativeSVG.Scene) : Bool :=
       (y+h-scene.mapping.minY)*scene.mapping.sy+scene.mapping.ty <= scene.mapping.viewportHeight
     | _ => false
 
-def embedding (dom : DOM.Dom) (id : Nat) (width height : Float) : Except String (List Rendering.Node) := do
+def embedding (dom : DOM.Dom) (id : Nat) (style : Rendering.CSS.Computed) (width height : Float) : Except String (List Rendering.Node) := do
   if Float.ofNat width.toUInt32.toNat != width || Float.ofNat height.toUInt32.toNat != height then
     throw "unsupported fractional embedded SVG viewport"
   let root ← namespaceTree dom 64 id
-  let scene ← NativeSVG.parseRoot root width.toUInt32.toNat height.toUInt32.toNat
+  let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
+  let scene ← NativeSVG.parseRoot root width.toUInt32.toNat height.toUInt32.toNat inherited
   if !embeddingNeedsNoClip scene then throw "unsupported embedded SVG requiring viewport clipping (clip extension pending)"
   let m := scene.mapping
   let transform : Rendering.Transform := ⟨m.sx,0,0,m.sy,m.tx-m.minX*m.sx,m.ty-m.minY*m.sy⟩
@@ -99,7 +100,7 @@ private def runJSON (r : Rendering.GlyphRun) : String :=
 private def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box) : String :=
   "{\"profile\":\"lean-block-inline-ascii-bitmap-v1\",\"fontScope\":\"ASCII bitmap; no real font shaping\",\"boxes\":" ++
   array (boxes.toList.map fun b => array [toString b.source,toString b.x,toString b.y,toString b.width,toString b.height]) ++
-  ",\"glyphRuns\":" ++ array (s.glyphRuns.toList.map runJSON) ++ "}"
+  ",\"glyphRuns\":" ++ array (s.glyphRuns.toList.map runJSON) ++ ",\"links\":" ++ Rendering.Links.encode s.links ++ "}"
 
 @[export web_render_compile]
 def compile (html : String) (width height : UInt32) : String :=

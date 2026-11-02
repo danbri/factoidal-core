@@ -1194,3 +1194,5 @@ import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.Theorems
 import L4Factoidal.DOM.Tests
 import L4Factoidal.Rendering.Tests
+import L4Factoidal.Rendering.Links
+import L4Factoidal.Rendering.FontDataTests

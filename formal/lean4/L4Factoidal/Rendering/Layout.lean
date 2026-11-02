@@ -30,11 +30,11 @@ structure Result where
   runs : Array GlyphRun := #[]
   height : Float := 0
   deriving Repr
-abbrev Embedding := Nat → Float → Float → Except String (List Node)
+abbrev Embedding := Nat → CSS.Computed → Float → Float → Except String (List Node)
 
 inductive Inline where
   | word (source : Nat) (style : Computed) (text : String) (start : Nat)
-  | space (style : Computed)
+  | space (source : Nat) (style : Computed)
   | lineBreak
   | replaced (source : Nat) (width height : Float) (nodes : List Node)
   deriving Repr
@@ -50,7 +50,7 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
       if !word.isEmpty then
         result := .word id style word start :: result
         word := ""
-      if !spaced then result := .space style :: result
+      if !spaced then result := .space id style :: result
       spaced := true
     else
       if word.isEmpty then start := index
@@ -62,7 +62,7 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
 
 /-- Inline descendants are flattened in DOM order; the nesting budget is a
 profile error, never a silent truncation. Siblings use a fold. -/
-def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) :
+def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (available : Float) :
     Nat → Nat → Except String (Array Inline)
   | 0, _ => throw "unsupported HTML nesting depth (maximum 64)"
   | fuel+1, id => do
@@ -76,6 +76,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) :
     if ["img","input","textarea","select","video","audio","canvas","iframe","object","embed","table","ruby","ul","ol","li"].contains n.lname then
       throw s!"unsupported HTML layout element: {n.lname}"
     if n.lname == "br" then return #[.lineBreak]
+    if s.display == .block then throw "unsupported block descendant inside inline context"
     if n.ns != some DOM.svgNS && (s.background.isSome ||
       s.margin.top != 0 || s.margin.right != 0 || s.margin.bottom != 0 || s.margin.left != 0 ||
       s.padding.top != 0 || s.padding.right != 0 || s.padding.bottom != 0 || s.padding.left != 0) then
@@ -84,12 +85,12 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) :
       let attrLength := fun key fallback => do
         let v := CSS.attrValue n key
         if v.isEmpty then pure fallback else CSS.number v
-      let width := (CSS.resolve 300 s.width).getD (← attrLength "width" 300)
+      let width := (CSS.resolve available s.width).getD (← attrLength "width" 300)
       let height := (CSS.resolve 150 s.height).getD (← attrLength "height" 150)
       if width <= 0 || height <= 0 then return #[]
-      return #[.replaced id width height (← embedding id width height)]
+      return #[.replaced id width height (← embedding id s width height)]
     let mut out := #[]
-    for child in n.kids do out := out ++ (← inlineItems dom styles embedding fuel child)
+    for child in n.kids do out := out ++ (← inlineItems dom styles embedding available fuel child)
     return out
 
 private def translate (x y : Float) : Transform := ⟨1,0,0,1,x,y⟩
@@ -101,6 +102,13 @@ private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Ar
     for geometry in font.outline g.index do
       let primitive : Primitive := {geometry,style := {fill := .solid s.color}, transform := ⟨scale,0,0,scale,g.x,g.y⟩}
       out := out.push (.paint ⟨some run.source,primitive⟩)
+  if s.underline && !run.glyphs.isEmpty then
+    let left := (run.glyphs[0]?).map (·.x) |>.getD 0
+    let top := (run.glyphs[0]?).map (·.y) |>.getD 0
+    let width := run.glyphs.foldl (fun w g => w+g.advance) 0
+    let thickness := max 1 (run.fontSize/14)
+    let baseline := top+font.ascent*scale
+    out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
   return out
 
 private def itemWidth (font : FontProfile) : Inline → Float
@@ -116,7 +124,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   let mut descent : Float := 0
   for (_,item) in items do
     match item with
-    | .word _ s _ _ =>
+    | .word _ s _ _ | .space _ s =>
       let leading := (s.lineHeight-s.fontSize)/2
       ascent := max ascent (font.ascent*s.fontSize/font.unitsPerEm+leading)
       descent := max descent (font.descent*s.fontSize/font.unitsPerEm+leading)
@@ -134,7 +142,16 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let glyphs := chars.toArray.mapIdx fun i c =>
         ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
       let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
-      out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run}
+      let leading := (s.lineHeight-s.fontSize)/2
+      out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source,x+offset,y+ascent-font.ascent*s.fontSize/font.unitsPerEm-leading,advance*Float.ofNat chars.length,s.lineHeight⟩}
+    | .space source s =>
+      let advance := font.advance*s.fontSize/font.unitsPerEm
+      let leading := (s.lineHeight-s.fontSize)/2
+      let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm-leading
+      out := {out with boxes := out.boxes.push ⟨source,x+offset,top,advance,s.lineHeight⟩}
+      if s.underline && s.visible then
+        let thickness := max 1 (s.fontSize/14)
+        out := {out with nodes := out.nodes.push (.paint ⟨some source,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
     | .replaced source width height nodes =>
       let top := y+ascent-height
       out := {out with nodes := out.nodes.push (.group none (translate (x+offset) top) nodes), boxes := out.boxes.push ⟨source,x+offset,top,width,height⟩}
@@ -149,28 +166,31 @@ positioned glyph runs are consumed to paint the actual word geometry. -/
 def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Float) : Except String Result := do
   let mut out : Result := {}
   let mut cursorX : Float := 0
-  let mut pendingSpace : Float := 0
+  let mut pendingSpace : Option (Nat × Computed) := none
   let mut line : Array (Float × Inline) := #[]
   for item in items do
     match item with
-    | .space s => pendingSpace := font.advance*s.fontSize/font.unitsPerEm
+    | .space source s => pendingSpace := some (source,s)
     | .lineBreak =>
       let row ← lineLayout font line x (y+out.height)
       out := appendResult out {row with height := max row.height 19.2}
       line := #[]
       cursorX := 0
-      pendingSpace := 0
+      pendingSpace := none
     | _ =>
       let width := itemWidth font item
-      let gap := if cursorX > 0 then pendingSpace else 0
+      let gap := if cursorX > 0 then pendingSpace.map (fun (_,s) => font.advance*s.fontSize/font.unitsPerEm) |>.getD 0 else 0
       if cursorX > 0 && cursorX+gap+width > available then
         out := appendResult out (← lineLayout font line x (y+out.height))
         line := #[]
         cursorX := 0
-      else cursorX := cursorX+gap
+      else
+        if gap > 0 then
+          if let some (source,s) := pendingSpace then line := line.push (cursorX,.space source s)
+        cursorX := cursorX+gap
       line := line.push (cursorX,item)
       cursorX := cursorX+width
-      pendingSpace := 0
+      pendingSpace := none
   if !line.isEmpty then out := appendResult out (← lineLayout font line x (y+out.height))
   return out
 
@@ -211,7 +231,7 @@ def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding 
       let intrinsicHeight ← if v.isEmpty then pure 150 else CSS.number v
       let sw := max 0 ((CSS.resolve available s.width).getD intrinsicWidth)
       let sh := max 0 ((CSS.resolve 0 s.height).getD intrinsicHeight)
-      let nodes ← embedding id sw sh
+      let nodes ← embedding id s sw sh
       return {nodes := #[.group none (translate outerX outerY) nodes], boxes := #[⟨id,outerX,outerY,sw,sh⟩],height := margin.top+sh+margin.bottom}
     let mut content : Result := {}
     let mut inline : Array Inline := #[]
@@ -224,7 +244,7 @@ def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding 
         content := append content (← block dom styles font embedding fuel child innerX (innerY+content.height) width)
       else
         if cs.display == .inlineBlock then throw "unsupported CSS inline-block layout"
-        inline := inline ++ (← inlineItems dom styles embedding fuel child)
+        inline := inline ++ (← inlineItems dom styles embedding width fuel child)
     if !inline.isEmpty then content := append content (← inlineLayout font inline innerX (innerY+content.height) width)
     if let .percent _ := s.height then throw "unsupported percentage height without definite containing height"
     let height := max 0 ((CSS.resolve 0 s.height).getD content.height)
@@ -234,6 +254,51 @@ def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding 
     let box : Box := ⟨id,outerX,outerY,borderWidth,borderHeight⟩
     return {content with nodes, boxes := #[box] ++ content.boxes, height := margin.top+borderHeight+margin.bottom}
 
+/-- The nearest HTML anchor with an href attribute, including href="". -/
+def anchorAncestor (dom : Dom) : Nat → Nat → Option (Nat × String)
+  | 0, _ => none
+  | fuel+1, id =>
+    let n := dom.get id
+    if DOM.Dom.isHtmlElement n "a" && CSS.hasAttribute n "href" then
+      some (id,CSS.attrValue n "href")
+    else n.parent.bind (anchorAncestor dom fuel)
+
+/-- A resolved target is an actual HTML anchor with an href attribute in
+this DOM arena, and the returned URL is that attribute's exact value. -/
+theorem anchorAncestor_is_anchor (dom : Dom) (fuel start id : Nat) (href : String)
+    (found : anchorAncestor dom fuel start = some (id,href)) :
+    DOM.Dom.isHtmlElement (dom.get id) "a" = true ∧
+      CSS.hasAttribute (dom.get id) "href" = true ∧ CSS.attrValue (dom.get id) "href" = href := by
+  induction fuel generalizing start with
+  | zero => simp [anchorAncestor] at found
+  | succ fuel ih =>
+    simp only [anchorAncestor] at found
+    split at found
+    · rename_i condition
+      simp only [Option.some.injEq, Prod.mk.injEq] at found
+      rcases found with ⟨rfl,rfl⟩
+      have both := Bool.and_eq_true_iff.mp condition
+      exact ⟨both.1,both.2,rfl⟩
+    · cases parent : (dom.get start).parent with
+      | none => simp [parent] at found
+      | some p => exact ih p (by simpa [parent] using found)
+
+/-- Link fragments come from the same visible layout boxes as glyphs and
+replaced elements. Collapsed spaces produce boxes only when retained on a line. -/
+def linkRegions (dom : Dom) (styles : Array Computed) (boxes : Array Box)
+    (width height : Float) : Array LinkRegion :=
+  boxes.foldl (fun (out : Array LinkRegion) (box : Box) =>
+    match anchorAncestor dom (dom.size+1) box.source with
+    | none => out
+    | some (source,href) =>
+      if (styles[box.source]!).visible && box.width > 0 && box.height > 0 then
+        let left := max 0 box.x
+        let top := max 0 box.y
+        let right := min width (box.x+box.width)
+        let bottom := min height (box.y+box.height)
+        if right > left && bottom > top then out.push ⟨source,href,left,top,right-left,bottom-top⟩ else out
+      else out) #[]
+
 /-- Existing DOM input, explicit viewport and font data, immutable scene output. -/
 def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding : Embedding)
     (width height : Nat) : Except String (Scene × Array Box) := do
@@ -241,6 +306,9 @@ def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding :
   let styles ← CSS.computeAll dom rules
   let result ← block dom styles font embedding 64 0 0 0 (Float.ofNat width)
   if result.nodes.size > 12288 then throw "HTML paint count exceeds 12288"
-  return (⟨width,height,⟨1,1,0,0,0,0,Float.ofNat width,Float.ofNat height⟩, result.nodes.toList,result.runs⟩,result.boxes)
+  let links := linkRegions dom styles result.boxes (Float.ofNat width) (Float.ofNat height)
+  if links.size > 12288 || links.any (fun link => link.href.utf8ByteSize > 2048) then
+    throw "unsupported link region count or href exceeding 2048 UTF-8 bytes"
+  return (⟨width,height,⟨1,1,0,0,0,0,Float.ofNat width,Float.ofNat height⟩, result.nodes.toList,result.runs,links⟩,result.boxes)
 
 end L4Factoidal.Rendering.Layout

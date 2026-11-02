@@ -23,7 +23,11 @@ and requires at least 3 GiB free before a heavy build.
 
 Open http://127.0.0.1:8099/ . Edits to source, CSS or viewport dimensions are
 compiled by the new Lean WASM engine and change GPU output. The inspector
-shows source DOM indexes, layout boxes and consumed glyph runs.
+shows source DOM indexes, layout boxes and consumed glyph runs. Links default
+to blue underlined paint and a pointer cursor on a Lean hit. Clicking logs the
+href and stable DOM source node to the browser console and server stdout;
+there is no navigation. The bounded same-origin `/events` route accepts only
+link event records.
 
 Native CLI:
 

@@ -103,12 +103,36 @@ structure GlyphRun where
   text : String
   glyphs : Array Glyph
   deriving Repr
+/-- An inline/block link fragment in scene coordinates. Source is the stable
+DOM anchor node, not a paint-list index. The href is data, never navigation. -/
+structure LinkRegion where
+  sourceNode : Nat
+  href : String
+  x : Float
+  y : Float
+  width : Float
+  height : Float
+  deriving Repr
+
+def LinkRegion.contains (r : LinkRegion) (x y : Float) : Bool :=
+  r.width > 0 && r.height > 0 && x >= r.x && y >= r.y &&
+    x < r.x+r.width && y < r.y+r.height
+
+def hitLink (regions : List LinkRegion) (x y : Float) : Option LinkRegion :=
+  regions.reverse.find? (fun r => r.contains x y)
+
+theorem hitLink_mem (regions : List LinkRegion) (x y : Float) (target : LinkRegion)
+    (hit : hitLink regions x y = some target) : target ∈ regions := by
+  have member := List.mem_of_find?_eq_some hit
+  simpa using member
+
 structure Scene where
   width : Nat
   height : Nat
   mapping : Mapping
   tree : List Node
   glyphRuns : Array GlyphRun := #[]
+  links : Array LinkRegion := #[]
   deriving Repr
 
 def Primitive.lowerUnder (parent : Transform) (groups : List (Option String))
@@ -174,11 +198,11 @@ private theorem lowerFold_eq (nodes : List Node) (parent : Transform)
       simp only [Node.lowerList, List.append_assoc]
 
 
-@[csimp] theorem Node.lower_eq_lowerTR : Node.lower = Node.lowerTR := by
+@[csimp] theorem Node.lower_eq_lowerTR : @Node.lower = @Node.lowerTR := by
   funext parent groups node
   exact (Node.lowerTR_eq node parent groups).symm
 
-@[csimp] theorem Node.lowerList_eq_lowerListTR : Node.lowerList = Node.lowerListTR := by
+@[csimp] theorem Node.lowerList_eq_lowerListTR : @Node.lowerList = @Node.lowerListTR := by
   funext parent groups nodes
   exact (show Node.lowerListTR parent groups nodes = Node.lowerList parent groups nodes by
     simpa only [Node.lowerListTR, List.reverse_nil, List.nil_append] using

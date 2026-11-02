@@ -1,10 +1,11 @@
 import L4Factoidal.Rendering.Layout
+import L4Factoidal.Rendering.Links
 
 namespace L4Factoidal.Rendering.Tests
 open DOM CSS Layout
 private def font : FontProfile :=
   {family := "layout-test-monospace",unitsPerEm := 7,advance := 6, ascent := 7,descent := 0,outline := fun _ => [.rect 0 0 5 7],admits := fun n => n >= 32 && n <= 126}
-private def noSVG : Embedding := fun _ _ _ => throw "unsupported SVG test embedding"
+private def noSVG : Embedding := fun _ _ _ _ => throw "unsupported SVG test embedding"
 private def run (html css : String) : Except String (Scene × Array Box) := do
   let dom := DOM.parseHtmlDocument html
   Layout.render dom (← CSS.parse css) font noSVG 120 100
@@ -49,6 +50,23 @@ private def mutated : Except String (List Float × List Float) := do
 /-- Larger text raises the common baseline before either run is emitted. -/
 private def baseline := run "<div style='width:100px'>A <span style='font-size:14px;line-height:14px'>B</span></div>" css
 #guard (baseline.toOption.map fun r => r.1.glyphRuns.toList.map (fun g => (g.glyphs[0]?).map (·.y))) == some [some 7,some 0]
+
+private def links := run "<div><a id='target' href='https://example.test/link'>AA BB CC</a><a>Plain</a></div>" css
+#guard (links.toOption.map fun r => r.1.links.size) == some 3
+#guard (links.toOption.map fun r => r.1.links.toList.map (fun a => (a.x,a.y,a.width))) == some [(0,0,12),(0,7,12),(0,14,12)]
+#guard (links.toOption.bind fun r => hitLink r.1.links.toList 3 8 |>.map (·.href)) == some "https://example.test/link"
+#guard (links.toOption.bind fun r => hitLink r.1.links.toList 18 14) |>.isNone
+private def spacedLink := run "<div style='width:60px'><a href='url'>AA BB</a></div>" css
+#guard (spacedLink.toOption.map fun r => r.1.links.size) == some 3
+#guard (spacedLink.toOption.bind fun r => hitLink r.1.links.toList 14 3 |>.map (·.href)) == some "url"
+#guard ((computedAt "<a id='x' href='url'>AA</a>" "" "x").toOption.map fun s => (s.color.b,s.underline)) == some (1,true)
+#guard ((computedAt "<a id='x' href='url'>AA</a>" "a{color:red}" "x").toOption.map fun s => (s.color.r,s.decorationColor.map (·.r))) == some (1,some 1)
+#guard ((computedAt "<a id='x'>AA</a>" "" "x").toOption.map (·.underline)) == some false
+#guard ((computedAt "<a id='x' href=''>AA</a>" "" "x").toOption.map (·.underline)) == some true
+#guard ((run "<a href='url' style='visibility:hidden'>AA</a>" css).toOption.map fun r => r.1.links.size) == some 0
+#guard ((run "<a href='url' style='display:none'>AA</a>" css).toOption.map fun r => r.1.links.size) == some 0
+#print axioms anchorAncestor_is_anchor
+#print axioms hitLink_mem
 
 #print axioms Node.lower_eq_lowerTR
 #print axioms Node.lowerList_eq_lowerListTR

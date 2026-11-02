@@ -14,3 +14,17 @@ export async function compile(source,width,height){
   if(artifact.abi!=='lean-svg-v1'||artifact.width!==width||artifact.height!==height||!Array.isArray(artifact.data)||!artifact.data.every(Number.isFinite))throw Error('Unexpected Lean scene artifact');
   return artifact;
 }
+
+const linkWires=new WeakMap();
+// The rectangles and DOM anchor targets were emitted by Lean layout. Lean also
+// performs containment/painter-order picking; host geometry is only coordinates.
+export async function hitLink(artifact,x,y){
+  if(!Number.isFinite(x)||!Number.isFinite(y))return null;
+  let regions=linkWires.get(artifact);
+  if(regions===undefined){regions=JSON.stringify(artifact.webRender.links??[]);linkWires.set(artifact,regions);}
+  const module=await(pending??=createModule());
+  const pointer=module.ccall('web_render_hit','number',['string','number','number','number','number'],[regions,artifact.width,artifact.height,x,y]);
+  if(!pointer)throw Error('Lean link picker allocation failed');
+  let target;try{target=JSON.parse(module.UTF8ToString(pointer));}finally{module.ccall('web_render_free',null,['number'],[pointer]);}
+  if(target?.error)throw Error(target.error);return target;
+}
