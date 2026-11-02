@@ -62,7 +62,7 @@ that the first implementation must meet.
 | `webdav-serve`, remote `lws` mounts | same | `WebDAV/Remote.lean` | credentials `did-key` or `bearer` (`sessionOf` `Remote.lean:129`); mount URL is http or https (`Config.lean:177`, `:226`) |
 | `webdav-serve --users`, TLS | same | `WebDAV/Login.lean`, `Wasm/Ops/WebDAV.lean` | Basic only on TLS or loopback (`transportAllowsBasic` `Login.lean:220`, checked at start `Wasm/Ops/WebDAV.lean:169`); gate before every request (`Wasm/Ops/WebDAV.lean:471-483`); `gate_none`, `finish_unknown`, `finish_refused` (`Login.lean:399-416`) |
 | failed-login limit (issue 1119, uncommitted) | `webdav/server.mjs` passes `remoteAddress` | `Login.lean` `Failures.check`, `loginKeys` | keys `name:` and `address:` (`loginKeys`); theorems `gate_limited`, `check_blocked`, `gate_no_derive_of_blocked`, `check_disabled` (uncommitted) |
-| `xmpp-serve` | `npm/factoidal/xmpp/server.mjs` | `XMPP/Server.lean`, `Core.lean`, `Scram.lean` | server-stamped `from` (`#guard`, `XMPP/Server.lean:791-800`); RFC 6120 feature-order theorems (`Core.lean:150-168`); PLAIN and SCRAM-SHA-256 (`Server.lean:271`) |
+| `xmpp-serve` | `npm/factoidal/xmpp/server.mjs` | `XMPP/Server.lean`, `Core.lean`, `Scram.lean` | server-stamped `from` (`#guard` in `XMPP/Server.lean`); RFC 6120 feature-order theorems (`Core.lean:150-168`); PLAIN and SCRAM-SHA-256; STARTTLS required with `--starttls` (`Server.steps_requiresStartTls`, `step_tlsPending`, `XmppSession.bufferAfter_startTls`, `drain_tlsPending`, 2026-11-02); plaintext listener on loopback only (CLI) |
 | HTTP over XMPP, stage 1 | none yet | `XMPP/HttpOverXmpp.lean` (origin/main) | bare-JID allow list (`allowed` `:503`, checked first in `step` `:552`; `#guard`s `:667-670`); CONNECT refused; size limits `maxBodyBytes`, `maxPending` (`Config` `:432-443`) |
 | `webdav-serve --xmpp`, step 1 (uncommitted) | host carries requests to `webdavStep` | `Wasm/Ops/XmppClient.lean`, `XMPP/ClientStream.lean` | SCRAM only, PLAIN refused; plain TCP accepted from the host (`ClientStream.lean` header items 1-2) |
 | `factoidal serve` (SPARQL Protocol, Graph Store) | `npm/factoidal/bin/serve.mjs` | `SPARQL/StoreEndpoint.lean`, `SPARQL/Protocol.lean` | bound to 127.0.0.1 by default (`serve.mjs:359`); no authentication (not found) |
@@ -282,7 +282,11 @@ certificate verification, or the server is on loopback. A server offers a
 password mechanism that sends the password (PLAIN) only on TLS or loopback.
 
 Enforced today. HTTP Basic: yes (`transportAllowsBasic`). XMPP client stream:
-not enforced. `xmpp-serve` PLAIN: not enforced. `from` stamping: `#guard` only.
+not enforced. `xmpp-serve` PLAIN: enforced since 2026-11-02 for a listener
+that is not loopback — with `--starttls` by `Server.steps_requiresStartTls`
+(no credential is checked before the TLS handshake), with `--cert`/`--key`
+by the carrier, and without either the CLI refuses a non-loopback `--host`.
+`from` stamping: `#guard` only.
 
 Proposed check.
 

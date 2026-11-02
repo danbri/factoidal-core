@@ -12,6 +12,11 @@
 // (`formal/lean4/Harness/XmppServe.lean`) does with files:
 //
 //   * one engine session per TCP (or direct-TLS, XEP-0368) connection;
+//   * `startTls` → the engine sent `<proceed/>` (RFC 6120 section 5.4.2.3):
+//     stop reading in clear, run the TLS handshake on the same socket as
+//     the server, and call `xmppSessionTlsUp` when it finishes. The
+//     engine has already discarded every byte that arrived after
+//     `<starttls/>`; this host also drops its UTF-8 decoder's tail;
 //   * `route` → find the sessions bound to that bare JID and call
 //     `xmppSessionDeliver` on each; none bound → hold the stanza in
 //     memory until one binds (`xmppSessionDeliver` itself refuses an
@@ -28,9 +33,8 @@
 // `xmppSessionDeliver`, `xmppSessionClose`, `xmppRosterGet`,
 // `xmppRosterSet`, `xmppClose`) is stated in the Lean module's header.
 //
-// Not implemented, said here rather than left to be discovered: STARTTLS
-// (RFC 6120 section 5 — give `cert` and `key` for direct TLS on 5223
-// instead), server-to-server federation, and any limit on how many bytes
+// Not implemented, said here rather than left to be discovered:
+// server-to-server federation, and any limit on how many bytes
 // a client may send without completing a unit beyond `maxBuffered`,
 // which is a transport limit this host applies by closing the socket.
 
@@ -44,7 +48,7 @@ import { loadEngine } from '../bin/engine.mjs'
 export const XMPP_SERVER_OPS = [
   'xmppOpen', 'xmppClose',
   'xmppSessionOpen', 'xmppSessionFeed', 'xmppSessionDeliver', 'xmppSessionClose',
-  'xmppRosterGet', 'xmppRosterSet'
+  'xmppSessionTlsUp', 'xmppRosterGet', 'xmppRosterSet'
 ]
 
 /** An error raised by this host, as opposed to one the engine reported.
@@ -150,7 +154,7 @@ export async function openXmppServer (options = {}) {
     accounts: typeof opened.accounts === 'number' ? opened.accounts : undefined,
     /**
      * One client connection.
-     * @param {{streamId?: string, nonce?: string, tlsCarrier?: boolean, maxUnits?: number}} [sessionOptions]
+     * @param {{streamId?: string, nonce?: string, tlsCarrier?: boolean, startTls?: boolean, maxUnits?: number}} [sessionOptions]
      */
     openSession (sessionOptions = {}) {
       const record = {
@@ -158,6 +162,7 @@ export async function openXmppServer (options = {}) {
         nonce: typeof sessionOptions.nonce === 'string' ? sessionOptions.nonce : randomToken()
       }
       if (typeof sessionOptions.tlsCarrier === 'boolean') record.tlsCarrier = sessionOptions.tlsCarrier
+      if (typeof sessionOptions.startTls === 'boolean') record.startTls = sessionOptions.startTls
       if (typeof sessionOptions.maxUnits === 'number') record.maxUnits = sessionOptions.maxUnits
       const answer = engine.call('xmppSessionOpen', [handle, JSON.stringify(record)])
       if (typeof answer.handle !== 'string') throw new XmppHostError('xmppSessionOpen answered with no handle')
@@ -168,6 +173,10 @@ export async function openXmppServer (options = {}) {
         /** Feed received text; returns the engine's answer document. */
         feed (text) {
           return engine.call('xmppSessionFeed', [session, text])
+        },
+        /** The TLS handshake a feed asked for (`startTls: true`) finished. */
+        tlsUp () {
+          return engine.call('xmppSessionTlsUp', [session])
         },
         /** Hand this session a stanza another session routed to it. */
         deliver (text) {
@@ -221,6 +230,9 @@ async function readAccountsFile (path) {
  *   polled for stanzas written by other processes
  * @param {string|Buffer} [options.cert] PEM certificate chain for direct TLS
  * @param {string|Buffer} [options.key] PEM private key for direct TLS
+ * @param {boolean} [options.startTls] listen in clear and use `cert` and
+ *   `key` for STARTTLS (RFC 6120 section 5), which the engine then requires
+ *   before anything else; without it, `cert` and `key` mean direct TLS
  * @param {number} [options.pollMs] spool poll interval (default 250; 0 disables)
  * @param {number} [options.maxBuffered] residual UTF-8 bytes held by the engine
  *   after a feed before the socket is closed (default 1 MiB); the decoder
@@ -249,7 +261,12 @@ export async function createXmppServer (options = {}) {
     const text = await readAccountsFile(join(dir, 'accounts'))
     if (text !== null) serverOptions.accountsText = text
   }
-  const useTls = options.cert !== undefined && options.key !== undefined
+  const haveKey = options.cert !== undefined && options.key !== undefined
+  if (options.startTls === true && !haveKey) {
+    throw new XmppHostError('STARTTLS requires both cert and key')
+  }
+  const startTls = options.startTls === true
+  const useTls = haveKey && !startTls
   if (typeof serverOptions.tlsCarrier !== 'boolean') serverOptions.tlsCarrier = useTls
   const xmpp = await openXmppServer(serverOptions)
 
@@ -358,10 +375,45 @@ export async function createXmppServer (options = {}) {
       persistRosters(answer.rostersSaved)
     }
     if (!wasBound && c.full !== null) flushPending(c)
+    if (answer.startTls === true && answer.close !== true) upgrade(c)
     if (answer.close === true) {
       c.closing = true
       c.socket.end()
     }
+  }
+
+  /** RFC 6120 section 5.4.3: the `<proceed/>` is already written. Stop
+   *  reading in clear and become the TLS server on the same socket. */
+  function upgrade (c) {
+    c.upgrading = true
+    const raw = c.socket
+    raw.removeListener('data', c.onData)
+    import('node:tls').then((tls) => {
+      const secure = new tls.TLSSocket(raw, {
+        isServer: true,
+        secureContext: tls.createSecureContext({ cert: options.cert, key: options.key })
+      })
+      secure.once('secure', () => {
+        let answer
+        try { answer = c.session.tlsUp() } catch (error) { onError(error); answer = null }
+        if (answer === null || answer.ok === false) {
+          onError(new XmppHostError(`xmppSessionTlsUp refused: ${answer && answer.error}`))
+          secure.destroy()
+          endSession(c)
+          return
+        }
+        c.socket = secure
+        c.decoder = new StringDecoder('utf8')
+        c.upgrading = false
+        secure.on('data', c.onData)
+      })
+      secure.on('error', (error) => {
+        onError(new XmppHostError(`STARTTLS handshake: ${error.message}`))
+        secure.destroy()
+        endSession(c)
+      })
+      secure.on('close', () => endSession(c))
+    }).catch((error) => { onError(error); raw.destroy(); endSession(c) })
   }
 
   function endSession (c) {
@@ -378,7 +430,7 @@ export async function createXmppServer (options = {}) {
   function onConnection (socket) {
     let session
     try {
-      session = xmpp.openSession({ tlsCarrier: useTls })
+      session = xmpp.openSession({ tlsCarrier: useTls, startTls })
     } catch (error) {
       onError(error)
       socket.destroy()
@@ -394,8 +446,8 @@ export async function createXmppServer (options = {}) {
     }
     connections.add(c)
     onLog(`connection from ${socket.remoteAddress}:${socket.remotePort}`)
-    socket.on('data', (chunk) => {
-      if (!connections.has(c) || c.closing) return
+    c.onData = (chunk) => {
+      if (!connections.has(c) || c.closing || c.upgrading) return
       const text = c.decoder.write(chunk)
       if (text.length === 0) return
       let answer
@@ -418,7 +470,8 @@ export async function createXmppServer (options = {}) {
         socket.destroy()
         endSession(c)
       }
-    })
+    }
+    socket.on('data', c.onData)
     socket.on('end', () => endSession(c))
     socket.on('close', () => endSession(c))
     socket.on('error', (error) => {

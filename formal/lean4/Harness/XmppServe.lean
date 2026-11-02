@@ -189,6 +189,10 @@ def performOut (h : Host) (seq : Nat) : Out → IO Bool
       else if ← p.pathExists then IO.FS.removeFile p
       return false
   | .close => return true
+  -- This harness never sets `Config.startTls` (socat holds TLS, XEP-0368),
+  -- so `step` never asks for the upgrade. If it did, closing is the only
+  -- safe answer: this process cannot do a TLS handshake.
+  | .startTls => return true
 
 /-- Drain this session's mailbox: read every file, unlink it, and hand
 its bytes to `Server.deliver`, which decides whether the session may

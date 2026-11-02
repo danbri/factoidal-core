@@ -18,6 +18,8 @@ Specifications implemented, by section:
   RFC 6120 section 4.2   stream open, `<stream:features>`
   RFC 6120 section 4.4   `</stream:stream>` close
   RFC 6120 section 4.9   stream errors
+  RFC 6120 section 5     STARTTLS, when `Config.startTls` is set: see
+                         `stepPreTls` and the theorems at the end
   RFC 6120 section 6     SASL, with the mechanism list from `Core`
   RFC 6120 section 7     resource binding
   RFC 6120 section 8     stanza addressing and the three stanza kinds
@@ -27,15 +29,17 @@ Specifications implemented, by section:
   RFC 6121 section 4     presence broadcast to the roster
   RFC 6121 section 8     message delivery
   RFC 7677               SASL SCRAM-SHA-256 (via `XMPP.Scram`)
-  XEP-0368               direct TLS: the carrier terminates it, so this
-                         module never negotiates STARTTLS — see
-                         `tlsCarrier` below.
+  XEP-0368               direct TLS: the carrier terminates it, and
+                         STARTTLS is not offered — see `tlsCarrier`.
 
 NOT implemented, stated rather than silently skipped:
-  * STARTTLS (RFC 6120 section 5). Confidentiality is the carrier's, per
-    XEP-0368. On the plaintext test listener there is none, and
-    `featuresFor` is still asked for the post-TLS stage: the code says so
-    at `initialFeatures` rather than pretending otherwise.
+  * TLS itself. STARTTLS is decided here (offer it, require it, accept
+    `<starttls/>`, answer `<proceed/>`, refuse everything else, cut the
+    stream), but the handshake is the host's: `Out.startTls` tells it to
+    upgrade the socket, and `Session.tlsEstablished` is how it says the
+    handshake finished. A listener with neither `tlsCarrier` nor
+    `startTls` has no confidentiality at all; `featuresFor` is asked for
+    the post-TLS stage there, as `initialFeatures` says.
   * SCRAM channel binding (`p=tls-server-end-point`). The Lean process
     cannot see the TLS layer, so only `n`/`y` gs2 headers are accepted.
   * SASL mechanisms other than PLAIN and SCRAM-SHA-256. SCRAM-SHA-1 is
@@ -73,6 +77,7 @@ def nsStanzas : String := "urn:ietf:params:xml:ns:xmpp-stanzas"
 def nsStreamErr : String := "urn:ietf:params:xml:ns:xmpp-streams"
 def nsRoster : String := "jabber:iq:roster"
 def nsDiscoInfo : String := "http://jabber.org/protocol/disco#info"
+def nsTls : String := "urn:ietf:params:xml:ns:xmpp-tls"
 
 /-! ## The roster (RFC 6121 section 2)
 
@@ -165,6 +170,13 @@ structure Config where
   carried so a later STARTTLS implementation has one place to branch, and
   so the value is visible rather than assumed. -/
   tlsCarrier : Bool
+  /-- True when the host can upgrade this connection to TLS in place (it
+  holds a certificate and key). On a connection that is not already
+  secure (`tlsCarrier` false) the server then offers STARTTLS as
+  REQUIRED and refuses everything before it: RFC 6120 section 5.3.1 lets
+  a server make TLS mandatory-to-negotiate, and with a key in hand there
+  is no reason to accept credentials in clear. -/
+  startTls : Bool := false
   deriving Inhabited
 
 def Config.accountOf (c : Config) (user : String) : Option Account :=
@@ -186,6 +198,14 @@ inductive Out where
   | presence (bareJid : String) (fullJid : String) (available : Bool)
   /-- Close the connection after flushing. -/
   | close
+  /-- RFC 6120 section 5.4.3.3: flush the sends before this one (the
+  `<proceed/>`), then start the TLS handshake on this socket as the
+  server, reading nothing more in clear. When the handshake finishes,
+  call `Session.tlsEstablished`; when it fails, close. Any bytes that
+  arrived after `<starttls/>` and before the handshake are discarded by
+  the caller of `step` (see `Wasm/Ops/XmppSession.lean`): they were
+  sent in clear and must not be read as part of the secured stream. -/
+  | startTls
   deriving Repr, DecidableEq, Inhabited
 
 /-! ## Session state -/
@@ -195,6 +215,13 @@ section 4.3 negotiation sequence in order. -/
 inductive Stage where
   /-- No stream open seen yet. -/
   | initial
+  /-- Stream open seen on a connection that is not secure, STARTTLS
+  offered as required (RFC 6120 section 5.4.1); waiting for
+  `<starttls/>`. -/
+  | awaitingStartTls
+  /-- `<proceed/>` sent (RFC 6120 section 5.4.2.3). The host is doing the
+  TLS handshake; no unit is accepted until `Session.tlsEstablished`. -/
+  | tlsPending
   /-- Stream open seen, SASL features sent, waiting for `<auth/>`. -/
   | awaitingAuth
   /-- SCRAM client-first seen and challenged; waiting for `<response/>`.
@@ -215,7 +242,15 @@ inductive Stage where
 structure Session where
   cfg : Config
   stage : Stage
+  /-- Is this connection protected by TLS — by the carrier (XEP-0368) or
+  by a completed STARTTLS? Only `Session.init` and
+  `Session.tlsEstablished` set it. -/
+  tls : Bool := false
   deriving Inhabited
+
+/-- STARTTLS must happen before anything else on this connection. -/
+def Session.requiresStartTls (s : Session) : Bool :=
+  !s.tls && s.cfg.startTls
 
 def Session.user (s : Session) : Option String :=
   match s.stage with
@@ -239,7 +274,18 @@ structure Env where
   roster : Roster
   deriving Inhabited
 
-def Session.init (cfg : Config) : Session := { cfg := cfg, stage := .initial }
+def Session.init (cfg : Config) : Session :=
+  { cfg := cfg, stage := .initial, tls := cfg.tlsCarrier }
+
+/-- The host reports that the TLS handshake asked for by `Out.startTls`
+finished. Only a session in `tlsPending` accepts it; the result expects
+a NEW stream header (RFC 6120 section 5.4.3.3: "the initiating entity
+MUST initiate a new stream"). Anything else is `none`: a host that calls
+it at another time has a bug, and the session must not become `tls`. -/
+def Session.tlsEstablished (s : Session) : Option Session :=
+  match s.stage with
+  | .tlsPending => some { s with tls := true, stage := .initial }
+  | _ => none
 
 /-- Is the next unit expected to be a `<stream:stream>` opening tag? True
 twice per connection: at the start (RFC 6120 section 4.2) and again right
@@ -282,6 +328,17 @@ def initialFeatures (_cfg : Config) : String :=
 resource binding, plus the legacy session element clients still ask for. -/
 def postAuthFeatures : String :=
   render (Core.StreamFeatures.toXml (featuresFor .authenticated []))
+
+/-- RFC 6120 section 5.4.1: the features of the first stream on a
+connection that is not secure, when the host can do STARTTLS: STARTTLS
+alone, marked required, and no SASL mechanism, so no client is invited to
+send credentials in clear. `Core.featuresFor_startTls_iff_preTls` and
+`Core.featuresFor_sasl_iff_postTls` say what `.preTls` contains. -/
+def preTlsFeatures : String :=
+  render (Core.StreamFeatures.toXml (featuresFor .preTls mechanisms))
+
+/-- RFC 6120 section 5.4.2.3. -/
+def proceedText : String := s!"<proceed xmlns='{nsTls}'/>"
 
 /-- RFC 6120 section 4.9: a stream error closes the stream. -/
 def streamError (condition : String) (text : String) : List Out :=
@@ -561,9 +618,9 @@ def handlePresence (s : Session) (env : Env) (st : Stanza) (bare full : String) 
        [.saveRoster bare (rosterEncode r'), .route t out])
     else (env, [.route t out])
 
-/-- Handle one framed unit. Total: every input produces a session, an
-environment and a list of actions, and no input can fail to be answered. -/
-def step (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × List Out :=
+/-- Handle one framed unit on a connection that is secure, or on which
+STARTTLS is not required. See `step`. -/
+def stepMain (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × List Out :=
   match s.stage with
   | .closed => (s, env, [])
   | _ =>
@@ -621,6 +678,10 @@ def step (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × List O
       | .authenticated _ =>
         ({ s with stage := .closed }, env,
          streamError "not-authorized" "a stanza before the stream restart")
+      | .awaitingStartTls | .tlsPending =>
+        -- Only `stepPreTls` handles these stages; a session reaches
+        -- `stepMain` in one only through a host bug. Fail closed.
+        ({ s with stage := .closed }, env, [.close])
       | .awaitingBind user =>
         -- RFC 6120 section 7.5/7.6: bind, with a client-proposed
         -- resource or a server-generated one.
@@ -663,6 +724,79 @@ def step (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × List O
               (s, env, [.route (bareOf (Jid.render target))
                 (render (Core.Stanza.toXml { st with from_ := Jid.parse full }))])
       | .closed => (s, env, [])
+
+/-- Is a stage one that a connection which still requires STARTTLS may
+be in? None of these has a user, so no credential has been accepted. -/
+def Stage.preTls : Stage → Bool
+  | .initial | .awaitingStartTls | .tlsPending | .closed => true
+  | _ => false
+
+/-- Every decision on a connection that must negotiate STARTTLS first
+(RFC 6120 section 5). Small on purpose: the theorems below are about this
+function, and through `step_requiresStartTls` about `step`.
+
+  * a stream header is answered with `preTlsFeatures` (STARTTLS required,
+    no SASL);
+  * `<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>` is answered
+    with `<proceed/>` and `Out.startTls`, and the session waits;
+  * any other element is `policy-violation` (RFC 6120 section 4.9.3.14),
+    so a client that sends `<auth/>` in clear is disconnected rather than
+    told which mechanisms exist;
+  * in `tlsPending` every unit closes the connection with nothing sent:
+    a client MUST NOT send anything between `<starttls/>` and the
+    handshake (RFC 6120 section 5.4.3.3), so whatever arrives there was
+    injected or is broken. -/
+def stepPreTls (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × List Out :=
+  match s.stage with
+  | .closed => (s, env, [])
+  | .tlsPending => ({ s with stage := .closed }, env, [.close])
+  | .initial =>
+    match u with
+    | .decl _ => (s, env, [])
+    | .streamOpen text =>
+      match Core.StreamHeader.parse text with
+      | none =>
+        ({ s with stage := .closed }, env,
+         [.send (streamOpenText s.cfg)] ++
+           streamError "invalid-xml" "the stream header did not parse")
+      | some (h, _) =>
+        if (h.to.map (·.domainpart)).elim false (fun d => d != s.cfg.domain) then
+          ({ s with stage := .closed }, env,
+           [.send (streamOpenText s.cfg)] ++
+             streamError "host-unknown" "this server is not authoritative for that domain")
+        else
+          ({ s with stage := .awaitingStartTls }, env,
+           [.send (streamOpenText s.cfg), .send preTlsFeatures])
+    | _ =>
+      ({ s with stage := .closed }, env,
+       streamError "not-well-formed" "a stanza before the stream header")
+  | .awaitingStartTls =>
+    match u with
+    | .decl _ => (s, env, [])
+    | .streamClose => ({ s with stage := .closed }, env, [.send "</stream:stream>", .close])
+    | .streamOpen _ =>
+      ({ s with stage := .closed }, env,
+       streamError "not-well-formed" "a second stream header in this state")
+    | .element text =>
+      match Wire.parseElement text with
+      | none =>
+        ({ s with stage := .closed }, env,
+         streamError "not-well-formed" "the element did not parse")
+      | some node =>
+        if elemName node == some "starttls" && elemAttr node "xmlns" == some nsTls then
+          ({ s with stage := .tlsPending }, env, [.send proceedText, .startTls])
+        else
+          ({ s with stage := .closed }, env,
+           streamError "policy-violation" "STARTTLS is required before anything else")
+  | _ =>
+    -- A stage with a user on a connection that still requires STARTTLS is
+    -- unreachable (`stepPreTls_preTls`). Fail closed rather than trust it.
+    ({ s with stage := .closed }, env, [.close])
+
+/-- Handle one framed unit. Total: every input produces a session, an
+environment and a list of actions, and no input can fail to be answered. -/
+def step (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × List Out :=
+  if s.requiresStartTls then stepPreTls s env u else stepMain s env u
 
 /-- May this session receive a stanza that arrived for it from another
 connection? Only a BOUND session may (RFC 6121 section 8.5.3: an
@@ -873,5 +1007,203 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
 -- The roster's on-disk form round-trips.
 #guard rosterDecode (rosterEncode [⟨"a@b", "A", "both", false⟩, ⟨"c@d", "", "to", true⟩])
   == [⟨"a@b", "A", "both", false⟩, ⟨"c@d", "", "to", true⟩]
+
+/-! ## STARTTLS: checks -/
+
+private def tlsCfg : Config := { testCfg with tlsCarrier := false, startTls := true }
+
+private def openHdr : Framing.Unit := .streamOpen "<stream:stream to='example.com' version='1.0'>"
+
+-- RFC 6120 section 5.4.1: on a connection that is not secure, the first
+-- features are STARTTLS, required, and nothing else.
+#guard
+  let (s, _, outs) := step (Session.init tlsCfg) ⟨[]⟩ openHdr
+  s.stage == .awaitingStartTls &&
+  has (String.join (sends outs)) "<starttls xmlns=\"urn:ietf:params:xml:ns:xmpp-tls\"><required/></starttls>" &&
+  !has (String.join (sends outs)) "mechanism"
+
+-- RFC 6120 section 5.4.2.3: `<starttls/>` is answered with `<proceed/>`
+-- and the host is told to upgrade.
+#guard
+  let (s, _, outs) := run (Session.init tlsCfg) ⟨[]⟩
+    [openHdr, .element s!"<starttls xmlns='{nsTls}'/>"]
+  s.stage == .tlsPending && outs.contains .startTls &&
+  has (String.join (sends outs)) "<proceed"
+
+-- SASL in clear when STARTTLS is required: policy-violation, closed, and
+-- no SASL answer of any kind.
+#guard
+  let payload := Scram.b64Encode (ByteArray.mk
+    ((("\x00juliet\x00r0m30").toUTF8).toList.toArray))
+  let (s, _, outs) := run (Session.init tlsCfg) ⟨[]⟩
+    [openHdr, .element s!"<auth xmlns='{nsSasl}' mechanism='PLAIN'>{payload}</auth>"]
+  s.stage == .closed && s.user == none &&
+  has (String.join (sends outs)) "policy-violation" &&
+  !has (String.join (sends outs)) "success"
+
+-- `<starttls/>` in a wrong namespace is not STARTTLS.
+#guard
+  let (s, _, _) := run (Session.init tlsCfg) ⟨[]⟩
+    [openHdr, .element "<starttls xmlns='urn:example:not-tls'/>"]
+  s.stage == .closed
+
+-- RFC 6120 section 5.4.3.3: after `<proceed/>`, any unit closes the
+-- connection and nothing is sent in clear.
+#guard
+  let (s, _, outs) := run (Session.init tlsCfg) ⟨[]⟩
+    [openHdr, .element s!"<starttls xmlns='{nsTls}'/>", .element "<message to='x'/>"]
+  s.stage == .closed && (sends outs).getLast? == some proceedText
+
+-- The whole sequence: STARTTLS, handshake, a NEW stream offering SASL,
+-- PLAIN, restart, bind.
+#guard
+  let payload := Scram.b64Encode (ByteArray.mk
+    ((("\x00juliet\x00r0m30").toUTF8).toList.toArray))
+  let (s1, _, _) := run (Session.init tlsCfg) ⟨[]⟩
+    [openHdr, .element s!"<starttls xmlns='{nsTls}'/>"]
+  match s1.tlsEstablished with
+  | none => false
+  | some s2 =>
+    let (s3, _, outs) := run s2 ⟨[]⟩
+      [ openHdr,
+        .element s!"<auth xmlns='{nsSasl}' mechanism='PLAIN'>{payload}</auth>",
+        openHdr,
+        .element s!"<iq type='set' id='b1'><bind xmlns='{nsBind}'><resource>r</resource></bind></iq>" ]
+    s2.tls && s3.stage == .bound "juliet" "r" &&
+    has (String.join (sends outs)) "SCRAM-SHA-256" &&
+    !has (String.join (sends outs)) "starttls"
+
+-- `tlsEstablished` is refused outside `tlsPending`.
+#guard (Session.init tlsCfg).tlsEstablished.isNone
+#guard ({ cfg := tlsCfg, stage := .bound "juliet" "r" } : Session).tlsEstablished.isNone
+
+-- With the carrier holding TLS, STARTTLS is never offered (XEP-0368).
+#guard
+  let (_, _, outs) := step (Session.init { tlsCfg with tlsCarrier := true }) ⟨[]⟩ openHdr
+  !has (String.join (sends outs)) "starttls" && has (String.join (sends outs)) "SCRAM-SHA-256"
+
+/-! ## STARTTLS: theorems
+
+What a deployment relies on, stated over `step` itself. Together they say:
+on a connection that requires STARTTLS, until the host reports a finished
+handshake, (1) no unit, in any number and any order, gets the session a
+user (so no password or SCRAM proof is ever checked in clear), (2) no
+stanza is routed, no roster is written and no presence is published, and
+(3) after `<proceed/>` nothing more is accepted. -/
+
+/-- The only actions a pre-TLS connection can produce. -/
+def Out.preTlsSafe : Out → Bool
+  | .send _ | .close | .startTls => true
+  | _ => false
+
+theorem step_requiresStartTls (s : Session) (env : Env) (u : Framing.Unit)
+    (h : s.requiresStartTls = true) : step s env u = stepPreTls s env u := by
+  simp [step, h]
+
+theorem stepPreTls_keeps (s : Session) (env : Env) (u : Framing.Unit) :
+    (stepPreTls s env u).1.tls = s.tls ∧ (stepPreTls s env u).1.cfg = s.cfg ∧
+    (stepPreTls s env u).2.1 = env := by
+  unfold stepPreTls
+  repeat' split
+  all_goals simp_all
+
+theorem stepPreTls_preTls (s : Session) (env : Env) (u : Framing.Unit) :
+    (stepPreTls s env u).1.stage.preTls = true := by
+  unfold stepPreTls
+  repeat' split
+  all_goals simp_all [Stage.preTls]
+
+theorem stepPreTls_safe (s : Session) (env : Env) (u : Framing.Unit) :
+    ∀ o ∈ (stepPreTls s env u).2.2, o.preTlsSafe = true := by
+  unfold stepPreTls
+  repeat' split
+  all_goals simp_all [Out.preTlsSafe, streamError]
+
+/-- After `<proceed/>`, every unit closes the connection and sends nothing. -/
+theorem step_tlsPending (s : Session) (env : Env) (u : Framing.Unit)
+    (hr : s.requiresStartTls = true) (hp : s.stage = .tlsPending) :
+    step s env u = ({ s with stage := .closed }, env, [.close]) := by
+  rw [step_requiresStartTls s env u hr]
+  unfold stepPreTls
+  simp [hp]
+
+/-- `Out.startTls` comes only from `awaitingStartTls`, and leaves the
+session in `tlsPending`. -/
+theorem stepPreTls_startTls (s : Session) (env : Env) (u : Framing.Unit)
+    (h : Out.startTls ∈ (stepPreTls s env u).2.2) :
+    s.stage = .awaitingStartTls ∧ (stepPreTls s env u).1.stage = .tlsPending := by
+  revert h
+  unfold stepPreTls
+  repeat' split
+  all_goals simp_all [streamError]
+
+theorem Stage.preTls_user (s : Session) (h : s.stage.preTls = true) : s.user = none := by
+  unfold Session.user
+  cases hs : s.stage <;> simp_all [Stage.preTls]
+
+/-- `step` over a list of units, in order; `acc` holds the actions so far.
+A tail call, so a long sequence does not grow the stack
+(`tools/lean-tail-recursion-audit.py`). -/
+def stepsAcc (s : Session) (env : Env) : List Framing.Unit → List Out → Session × Env × List Out
+  | [], acc => (s, env, acc)
+  | u :: us, acc =>
+    let r := step s env u
+    stepsAcc r.1 r.2.1 us (acc ++ r.2.2)
+
+/-- `step` over a list of units, in order. -/
+def steps (s : Session) (env : Env) (us : List Framing.Unit) : Session × Env × List Out :=
+  stepsAcc s env us []
+
+theorem stepsAcc_requiresStartTls (us : List Framing.Unit) :
+    ∀ (s : Session) (env : Env) (acc : List Out),
+    s.requiresStartTls = true → s.stage.preTls = true → (∀ o ∈ acc, o.preTlsSafe = true) →
+    let r := stepsAcc s env us acc
+    r.1.requiresStartTls = true ∧ r.1.user = none ∧ r.2.1 = env ∧
+    ∀ o ∈ r.2.2, o.preTlsSafe = true := by
+  induction us with
+  | nil => intro s env acc hr hp ha; simp [stepsAcc, hr, Stage.preTls_user s hp]; exact ha
+  | cons u us ih =>
+    intro s env acc hr hp ha
+    simp only [stepsAcc]
+    rw [step_requiresStartTls s env u hr]
+    have ⟨htls, hcfg, henv⟩ := stepPreTls_keeps s env u
+    have hr' : (stepPreTls s env u).1.requiresStartTls = true := by
+      simp_all [Session.requiresStartTls]
+    have ha' : ∀ o ∈ acc ++ (stepPreTls s env u).2.2, o.preTlsSafe = true := by
+      intro o ho
+      simp only [List.mem_append] at ho
+      rcases ho with ho | ho
+      · exact ha o ho
+      · exact stepPreTls_safe s env u o ho
+    have ⟨h1, h2, h3, h4⟩ := ih (stepPreTls s env u).1 (stepPreTls s env u).2.1 _ hr'
+      (stepPreTls_preTls s env u) ha'
+    exact ⟨h1, h2, by simp_all, h4⟩
+
+/-- The main property. A connection that requires STARTTLS, fed ANY
+sequence of units without the host reporting a finished handshake: still
+requires STARTTLS, has no user, has an unchanged environment, and has
+asked the host for nothing but socket writes, a close or the upgrade. -/
+theorem steps_requiresStartTls (us : List Framing.Unit) (s : Session) (env : Env)
+    (hr : s.requiresStartTls = true) (hp : s.stage.preTls = true) :
+    let r := steps s env us
+    r.1.requiresStartTls = true ∧ r.1.user = none ∧ r.2.1 = env ∧
+    ∀ o ∈ r.2.2, o.preTlsSafe = true :=
+  stepsAcc_requiresStartTls us s env [] hr hp (by simp)
+
+/-- The handshake report: only from `tlsPending`, and the result is
+secure and waits for a new stream header. -/
+theorem tlsEstablished_spec (s s' : Session) (h : s.tlsEstablished = some s') :
+    s.stage = .tlsPending ∧ s'.tls = true ∧ s'.stage = .initial ∧ s'.cfg = s.cfg ∧
+    s'.requiresStartTls = false := by
+  unfold Session.tlsEstablished at h
+  split at h <;> simp_all [Session.requiresStartTls]
+  subst h; simp_all
+
+/-- The first stream on a connection that requires STARTTLS offers no SASL
+mechanism: the features are exactly `featuresFor .preTls`. -/
+theorem preTlsFeatures_no_sasl :
+    (featuresFor .preTls mechanisms).saslMechanisms = [] ∧
+    (featuresFor .preTls mechanisms).startTls = some true := by
+  simp [featuresFor]
 
 end L4Factoidal.XMPP.Server

@@ -173,3 +173,5 @@ worknote, kept as the record of a decision or a measurement),
 
 | 2026-10-31 | [Compositor HTML failure conditions](20261031-compositor-html-failure-analysis.md) | — | three kernel-checked failure lemmas, pinned-engine counterexamples and browser boundary |
 | 2026-11-01 | [Compositor pipeline files and FOAF pod library](20261101-compositor-pipeline-library.md) | — | bounded versioned documents, explicit FOAF storage discovery, ETag guarded writes and honest local validation limits |
+
+| 2026-11-02 | [XMPP: STARTTLS, then WebSocket, MUC, MIX, GC3](20261102-xmpp-starttls.md) | same commit | current: step 1 (STARTTLS) landed; steps 2 to 5 in order |
