@@ -18,6 +18,16 @@ in [the aggregate-order note](../../docs/designissues/2026-10-22-shared-aggregat
 
 ## Recursion and collection rules
 
+- **Repeated exact Float decimal formatting can dominate scene output.**
+  Measure formatting separately from layout and CPU pixel checks. The renderer's
+  bit-keyed `Rendering.FloatFormat` cache stores only `javaDoubleString(bits)`;
+  `formatList_eq_map` proves exact strings and order without assuming Float-bit
+  injectivity. The SVG `@[csimp]` caller is checked in generated C. Native
+  formatting improved from599–1,348ms to8–30ms, while paired whole WASM
+  compilation improved1.70–2.00 times, not by the formatter's larger ratio.
+  Preserve full raw artifacts and use alternating paired measurements; see
+  [the renderer performance record](../../docs/20261102-lean-renderer-performance.md).
+
 - In a repeatedly invoked path, treat `xs.length`, `List.reverse`, `++`, and
   `String.toList` as costs to account for. `remaining.length` used to choose
   fuel inside every parser step is often an accidental quadratic scan.

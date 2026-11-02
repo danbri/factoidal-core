@@ -30,7 +30,7 @@ PY
   cp -R "$TOOL_CACHE/." "$EM_CACHE/"
 fi
 fi
-CORE=(L4Factoidal.Rendering.Layout L4Factoidal.Rendering.Links L4Factoidal.XML.NamespaceView L4Factoidal.Tdb2.Format)
+CORE=(L4Factoidal.Rendering.Layout L4Factoidal.Rendering.Links L4Factoidal.XML.NamespaceView L4Factoidal.Tdb2.Format L4Factoidal.Rendering.FloatFormat)
 lake build "${CORE[@]}" L4Factoidal.Rendering.Tests
 export LEAN_PATH="$BUILD/olean:$PROJECT/.lake/build/lib/lean"
 LAB_MODULES=(Graphics Font SVGPath SVGCSS SVGDash SVGDashUnits SVGStroke SVG WebRenderSVG WebRender RenderPlan)
@@ -49,7 +49,7 @@ def visit(module):
     seen.add(module); source=project/Path(*module.split('.')).with_suffix('.lean')
     for imported in re.findall(r'^import\s+(\S+)',source.read_text(),re.M): visit(imported)
     order.append(str(project/'.lake/build/ir'/Path(*module.split('.')).with_suffix('.c')))
-for module in ['L4Factoidal.Rendering.Layout','L4Factoidal.Rendering.Links','L4Factoidal.XML.NamespaceView','L4Factoidal.Tdb2.Format']: visit(module)
+for module in ['L4Factoidal.Rendering.Layout','L4Factoidal.Rendering.Links','L4Factoidal.XML.NamespaceView','L4Factoidal.Tdb2.Format','L4Factoidal.Rendering.FloatFormat']: visit(module)
 Path(sys.argv[2]).write_text('\n'.join(order)+'\n')
 PY
 SOURCES=()

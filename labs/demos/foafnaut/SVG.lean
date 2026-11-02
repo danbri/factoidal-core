@@ -6,6 +6,7 @@ import SVGDashUnits
 import SVGStroke
 import L4Factoidal.Math.Affine
 import L4Factoidal.Tdb2.Format
+import L4Factoidal.Rendering.FloatFormat
 import L4Factoidal.XML.NamespaceView
 
 /- Isolated strict SVG document reader, not SVG Tiny/full conformance.
@@ -1356,6 +1357,16 @@ private def floatJSON (x : Float) : String :=
   if Float.ofInt integer == x then toString integer
   else L4Factoidal.Tdb2.javaDoubleString x.toBits
 
+/-- Reference list formatting stays visible; compilation selects the proved
+    memoized twin, preserving every decimal byte and the original order. -/
+private def floatJSONList (xs : List Float) : List String := xs.map floatJSON
+
+@[csimp] private theorem floatJSONList_eq_cached :
+    floatJSONList = L4Factoidal.Rendering.FloatFormat.formatList := by
+  funext xs
+  change xs.map L4Factoidal.Rendering.FloatFormat.format = _
+  exact (L4Factoidal.Rendering.FloatFormat.formatList_eq_map xs).symm
+
 private def Geometry.name : Geometry → String
   | .rect .. => "rect"
   | .circle .. => "circle"
@@ -1396,7 +1407,7 @@ private def Scene.json (s : Scene) : Except String String := do
   return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
     ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.primitives.length ++
     ",\"tree\":" ++ tree ++
-    ",\"data\":" ++ jsonArray (data.toList.map floatJSON) ++ ",\"wgsl\":" ++ quote s.wgsl ++ ",\"checks\":" ++ jsonArray checks ++ "}"
+    ",\"data\":" ++ jsonArray (floatJSONList data.toList) ++ ",\"wgsl\":" ++ quote s.wgsl ++ ",\"checks\":" ++ jsonArray checks ++ "}"
 /-- Serialize an existing checked SVG scene through the same packed-data/WGSL
     producer as the string ABI; no XML serialization or reparsing is required. -/
 def Scene.artifact (s : Scene) : Except String String := s.json
