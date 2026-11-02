@@ -95,6 +95,20 @@ inspected pairs show dense gray versus dashed strokes for tentative CSS
 with maximum channel difference one, and a black versus green CSS link-parameter circle. These
 observations do not establish that all 89 failures belong to the browser.
 
+A focused capture at
+`/tmp/factoidal-overnight-corpus-rejected-artifact/run.json` verifies evidence
+retention on the rotated inner SVG rejection, alongside one exact accepted
+use/symbol control case. The original rejected artifact SHA-256 is
+`e009e50d1cf4a72738524fe0d4bc07ea73a2dfb21c95a7b58746ab8b62b5ec7c`,
+and its actual submitted shader agrees with the artifact's WGSL hash
+`d6fb1e07e854d7c2a78a2a1f4a34e81a0aa2e2c4bf833b26bbe0099e1f787950`.
+The existing sample rejection is preserved. A separate instrumented 16x16
+numeric diagnostic (zero production sample checks, no WPT score) is recorded
+under `/tmp/factoidal-svg-rotate-numeric-gpu/`: at (1,1) it encodes negative
+GPU `dot`, zero ordinary sum, and positive explicit `fma` for the same
+near-boundary coordinates. This helps locate the numeric discrepancy without
+changing the renderer or comparison tolerance.
+
 Harness integrity is independently exercised by corrupting a relation, fuzzy
 limit, reference, resource hash and whole inventory; all must fail. The
 comparator also tests that an incorrect blank negative-relation candidate

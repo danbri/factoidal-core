@@ -30,7 +30,7 @@ try{
  const rgba=Buffer.from(result.rgba,'base64'),png=encodeRGBA(a.width,a.height,rgba);await writeFile(resolve(output,'actual.png'),png);
  const {rgba:_,submittedCode,...facts}=result;Object.assign(report,facts,{width:a.width,height:a.height,samplesVerified:a.checks.length,image:{file:'actual.png',sha256:hash(png),rgbaSha256:hash(rgba)},submittedShaderSha256:hash(Buffer.from(submittedCode))});
  if(report.submittedShaderSha256!==hash(Buffer.from(a.wgsl)))throw Error('Submitted shader differs from artifact');
- report.status='rendered-samples-checked';code=0;
+ report.status=a.checks.length?'rendered-samples-checked':'rendered-diagnostic-no-samples';code=0;
  if(expectedPath){
   const bytes=await readFile(expectedPath);let pixels,channels;
   if(expectedPath.endsWith('.rgba')){pixels=bytes;channels=4;if(bytes.length!==a.width*a.height*4)throw Error('Expected raw RGBA dimensions differ');}

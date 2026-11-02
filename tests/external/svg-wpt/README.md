@@ -86,6 +86,8 @@ These controls are separate from the standards denominator. Images are
 lossless PNG, accepted artifacts are gzip, and differences remain on failures.
 Source/fixture/runtime/browser/artifact/submitted-shader hashes and capture
 tool snapshots are retained. The capture refuses heavy work below 3 GiB free.
+GPU sample rejection retains the original generated artifact and actual
+submitted-shader hash; it remains a rejected case.
 
 ## Reconstruct the pinned snapshot
 

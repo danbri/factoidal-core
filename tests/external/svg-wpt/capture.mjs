@@ -127,18 +127,22 @@ async function gpu(xml,artifact,eligible,documentURL){
     a=compile(800,600);policy={mode:'inventoried-full-viewport-root',compilerWidth:800,compilerHeight:600,documentURL,URLAware:typeof window.engine.compileWithURL==='function',reason};
    }}
   }
-  if(a.error)return {error:a.error,viewportPolicy:policy};window.validate(a);
+  if(a.error)return {error:a.error,viewportPolicy:policy};
+  const identity={artifactJSON:JSON.stringify(a),width:a.width,height:a.height,rootViewport:a.rootViewport??null,viewportPolicy:policy};
+  try{window.validate(a);}catch(error){return {...identity,error:String(error)};}
   const encode=rgba=>{let binary='';for(let i=0;i<rgba.length;i+=32768)binary+=String.fromCharCode(...rgba.subarray(i,i+32768));return btoa(binary);};
   async function draw(value){let submitted;const session=await window.transport.createOffscreenSession(value,'svg-offscreen',s=>submitted=s);if(!session)return {unavailable:'GPU adapter unavailable'};
-   try{const rgba=await session.draw();return {rgba:encode(rgba),stats:session.stats,adapter:{vendor:session.adapterInfo.vendor,architecture:session.adapterInfo.architecture,isFallbackAdapter:session.adapterInfo.isFallbackAdapter},submittedCode:submitted?.code??value.wgsl};}finally{session.close();}}
+   try{const rgba=await session.draw();return {rgba:encode(rgba),stats:session.stats,adapter:{vendor:session.adapterInfo.vendor,architecture:session.adapterInfo.architecture,isFallbackAdapter:session.adapterInfo.isFallbackAdapter},submittedCode:submitted?.code??value.wgsl};}
+   catch(error){return {error:String(error),submittedCode:submitted?.code??null};}finally{session.close();}}
   const frame=await draw(a);if(frame.unavailable)return frame;
+  if(frame.error)return {...identity,...frame};
   const controlFrames={};
   if(controls){
-   for(const [name,value] of [['unchangedReplay',a],['gpuFlatMagenta',{...a,checks:[],wgsl:a.wgsl.replace(/@fragment\s+fn\s+fragment\b[\s\S]*$/,'@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {return vec4f(1.0,0.0,1.0,1.0)+clamp(params.rows[0],vec4f(0.0),vec4f(1.0))*0.000001;}')}]])try{controlFrames[name]={...await draw(value),leanChecks:value.checks.length};}catch(error){controlFrames[name]={unavailable:String(error)};}
+   for(const [name,value] of [['unchangedReplay',a],['gpuFlatMagenta',{...a,checks:[],wgsl:a.wgsl.replace(/@fragment\s+fn\s+fragment\b[\s\S]*$/,'@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {return vec4f(1.0,0.0,1.0,1.0)+clamp(params.rows[0],vec4f(0.0),vec4f(1.0))*0.000001;}')}]])try{const control=await draw(value);controlFrames[name]=control.error?{unavailable:control.error}:{...control,leanChecks:value.checks.length};}catch(error){controlFrames[name]={unavailable:String(error)};}
    const original=Uint8Array.from(atob(frame.rgba),c=>c.charCodeAt(0)),changed=original.slice(),sampled=new Set(a.checks.map(p=>p.y*a.width+p.x));let pixel=0;while(sampled.has(pixel)&&pixel<a.width*a.height)pixel++;
    if(pixel<a.width*a.height){changed[pixel*4]^=255;window.transport.checkPixels(a,changed);controlFrames.unsampledReadbackPixel={rgba:encode(changed),pixel:{x:pixel%a.width,y:Math.floor(pixel/a.width)},leanSamplesStillPass:true};}
   }
-  return {...frame,controlFrames,artifactJSON:JSON.stringify(a),width:a.width,height:a.height,rootViewport:a.rootViewport??null,viewportPolicy:policy,samplesVerified:a.checks.length};
+  return {...frame,controlFrames,...identity,samplesVerified:a.checks.length};
  },{xml,artifact,eligible,controls,documentURL}),'Candidate compile/GPU');
 }
 function fullPageRGBA(bytes,width,height){
@@ -168,10 +172,13 @@ try{
    }
    const dimensions=inventory.resourceMetadata[c.test].rootSVGDimensions,eligible=dimensions&&((dimensions.width==null&&dimensions.height==null)||(dimensions.width==='100%'&&dimensions.height==='100%'));
    const result=await gpu(files.get(c.test).toString('utf8'),supplied,Boolean(eligible),origin+'/'+c.test);
+   if(result.artifactJSON){
+    const artifact=Buffer.from(result.artifactJSON),name=String(index).padStart(4,'0')+'-artifact.json.gz';await writeFile(resolve(output,name),gzipSync(artifact));row.artifact={file:name,sha256:hash(artifact),wgslSha256:hash(Buffer.from(JSON.parse(result.artifactJSON).wgsl))};
+    if(result.submittedCode)row.submittedShaderSha256=hash(Buffer.from(result.submittedCode));
+   }
    if(result.unavailable){row.reason=result.unavailable;row.viewportPolicy=result.viewportPolicy;report.cases.push(row);continue;}
    if(result.error)throw Error(result.error);
    const {controlFrames,artifactJSON,rgba,submittedCode,...facts}=result;Object.assign(row,await saveFrame({rgba,submittedCode,...facts},String(index).padStart(4,'0')+'-candidate',result.width,result.height));
-   const artifact=Buffer.from(artifactJSON),name=String(index).padStart(4,'0')+'-artifact.json.gz';await writeFile(resolve(output,name),gzipSync(artifact));row.artifact={file:name,sha256:hash(artifact),wgslSha256:hash(Buffer.from(JSON.parse(artifactJSON).wgsl))};
    row.controls={};for(const [name,frame] of Object.entries(controlFrames))row.controls[name]=await saveFrame(frame,String(index).padStart(4,'0')+'-control-'+name,result.width,result.height);
    row.status='accepted';
   }catch(error){const detail=String(error);row.detail=detail;row.status=/unsupported|foreign\/non-SVG|profile limit/i.test(detail)?'unsupported':/timeout|WebGPU API absent|GPU adapter unavailable/.test(detail)?'unavailable':'rejected';
