@@ -557,6 +557,13 @@ and [measured report](../../docs/20261029-processor-feature-settings.md).
 
 ## Solving retained graphics scenes (2026-11-01)
 
+Cold small-engine builds must emit `.olean` files for proof modules imported
+by subsequent proof/test modules. On 2026-11-02 the fresh SVG worktree caught
+`FoafPresentationProofs` importing a missing `FoafGeometryProofs` artifact:
+checking a source file without `-o` had passed only with an older cache present.
+The lab script now emits both in dependency order. See the
+[overnight SVG record](../../docs/20261102-svg-standards-overnight.md).
+
 The initial retained-scene source is the lab module
 `labs/demos/foafnaut/Solving.lean`, compiled by
 `labs/demos/foafnaut/build-engines.sh`. It reuses `NativeGraphics.Shape` and
