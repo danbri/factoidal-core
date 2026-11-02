@@ -33,6 +33,12 @@ def save_diff(path,array):Image.fromarray(array).save(path,format='PNG',compress
 def relation_state(relation,equal_to_reference,exact_test):
     holds=equal_to_reference if relation=='match' else not equal_to_reference
     return ('match' if holds and (relation=='match' or exact_test) else 'negative-only' if holds else 'mismatch'),holds
+def control_problems(rows,requested):
+    if not requested:return []
+    return [{'test':row['test'],'control':name,'status':row.get('controls',{}).get(name,{}).get('status','unavailable')}
+      for row in rows if row.get('againstIndependentTest',{}).get('exact')
+      for name in ('unchangedReplay','gpuFlatMagenta','unsampledReadbackPixel')
+      if row.get('controls',{}).get(name,{}).get('status')!='pass']
 def score(directory):
     corpus.check();root=Path(directory);capture=json.loads((root/'capture.json').read_text());inventory=json.loads((corpus.ROOT/'inventory.json').read_text())
     if capture['revision']!=corpus.PIN or capture['sourceManifestSha256']!=sha((corpus.ROOT/'source.json').read_bytes()) or capture['inventorySha256']!=sha((corpus.ROOT/'inventory.json').read_bytes()):raise ValueError('Capture source/pin/metadata identity differs')
@@ -99,11 +105,11 @@ def score(directory):
       'old38OverlapDiagnostic':{'total':sum(row['baseline38'] for row in rows),'counts':counts([row for row in rows if row['baseline38']])},
       'positiveMatches':sum(row['status']=='match' and row['relation']=='match' for row in rows),
       'negativeRelations':{'total':sum(row['relation']=='mismatch' for row in rows),'qualifiedImageMatches':sum(row['status']=='match' and row['relation']=='mismatch' for row in rows),'relationOnly':sum(row['status']=='negative-only' for row in rows)},
-      'controls':{'scope':'Exact independent-test sensitivity, separate from upstream relation/denominator; negative relations alone cannot establish sensitivity','counts':control_counts},
+      'controls':{'scope':'Exact independent-test sensitivity, separate from upstream relation/denominator; negative relations alone cannot establish sensitivity','counts':control_counts,'requiredProblems':control_problems(rows,capture.get('controlsRequested'))},
       'runtime':{'python':sys.version,'executable':sys.executable,'pillow':pillow_version,'numpy':np.__version__,'platform':platform.platform()},
       'comparatorSha256':sha(Path(__file__).read_bytes()),'captureSha256':sha((root/'capture.json').read_bytes()),'results':rows}
     (root/'report.json').write_text(json.dumps(result,indent=2)+'\n')
-    problems=any(value['fail'] for value in control_counts.values())
+    problems=any(value['fail'] for value in control_counts.values()) or bool(result['controls']['requiredProblems'])
     code=2 if capture.get('fatal') or problems else 0 if result['counts']['match']==601 and capture['complete'] else 1
     (root/'comparison.exit').write_text(str(code)+'\n')
     print(json.dumps({k:result[k] for k in ('total','counts','static','negativeRelations','controls')}))

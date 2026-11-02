@@ -67,6 +67,34 @@ glue `4716f7b83cb27c462d3223f2761e00e3177bfa5b017204699fc281665d6f3607`,
 and TypeScript host
 `38511f26402f218874db4090d090314f582dd720fd92bec44473df4e46b6f370`.
 
+The subsequent full 601-relation use/symbol feature measurement is
+`/tmp/factoidal-overnight-corpus-use-full/run.json`: 28 matches, 16 mismatches,
+279 unsupported, 21 rejected and 257 unavailable. The static subset has the
+same counts with 118 unavailable. All three controls pass on all 28 exact
+baselines. The formatter-fresh WASM is
+`1829bdb48f3cf6620ee583349033ad6484321c6f684450249258dcd0622e0a08`;
+glue and TypeScript hashes above remain unchanged. The native HTML producer
+was frozen at the same b814 executable, so the comparison changes SVG only.
+Thirteen previously unsupported cases now match exactly. Newly reached
+failures remain visible: rotated inner SVG fails the existing Lean sample/GPU
+check at (1,1), with GPU RGB (191,223,191) versus Lean (64,160,64); transformed
+inner SVG/viewBox differs at 45 pixels (maximum 27), and twelve nested SVG
+sizing cases differ at 65 or 260 pixels (maximum 39). No tolerance changed.
+
+Separate oracle investigation accounts for all 17 declared-font failures:
+the original FreeSans URLs `/svg/shapes/fonts/FreeSans.woff` and
+`/svg/text/reftests/fonts/FreeSans.woff` are absent at this WPT pin, with Git
+tree absence witnesses. They were not replaced with another font. The 89
+original Chrome test/reference disagreements remain unavailable pending
+audit; the fixed browser viewport is 800x600, independent of SVG root sizing.
+Their area groups are styling 24, text 19, linking 16, painting 11, path 7,
+struct 4, shapes 3, pservers 2, and fonts/render/animations one each. Eighty-four
+use exact upstream comparison and five have original fuzzy ranges. Three
+inspected pairs show dense gray versus dashed strokes for tentative CSS
+`path-length`, visually aligned context-fill transforms differing at 88 pixels
+with maximum channel difference one, and a black versus green CSS link-parameter circle. These
+observations do not establish that all 89 failures belong to the browser.
+
 Harness integrity is independently exercised by corrupting a relation, fuzzy
 limit, reference, resource hash and whole inventory; all must fail. The
 comparator also tests that an incorrect blank negative-relation candidate

@@ -4,6 +4,13 @@ import numpy as np
 import compare
 
 class ScoringGuards(unittest.TestCase):
+    def test_missing_control_on_exact_baseline_is_command_failure(self):
+        row={'test':'original.svg','againstIndependentTest':{'exact':True},'controls':{
+          'unchangedReplay':{'status':'pass'},'gpuFlatMagenta':{'status':'unavailable'},'unsampledReadbackPixel':{'status':'pass'}}}
+        self.assertEqual(compare.control_problems([row],True),[{'test':'original.svg','control':'gpuFlatMagenta','status':'unavailable'}])
+        self.assertEqual(compare.control_problems([row],False),[])
+        self.assertEqual(compare.control_problems([{'test':'unsupported.svg','status':'unsupported'}],True),[])
+
     def test_blank_negative_is_not_image_match(self):
         white=np.full((600,800,3),255,dtype=np.uint8)
         reference=white.copy();reference[10:30,10:30]=0
