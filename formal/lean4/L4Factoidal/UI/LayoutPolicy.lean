@@ -108,6 +108,15 @@ theorem validate_rejects_outside (bps hz : Nat) (h : ¬ InProfile bps hz) :
 def overlapSum (b : Box) (others : List Box) : Nat :=
   (others.map fun other => (b.intersection other).area).sum
 
+-- Nat addition is associative: accumulate the same repeated overlap areas
+-- without allocating a mapped list or returning through a right-fold stack.
+def overlapSumTR (b : Box) (others : List Box) : Nat :=
+  others.foldl (fun total other => total + (b.intersection other).area) 0
+
+@[csimp] theorem overlapSum_eq_overlapSumTR : @overlapSum = @overlapSumTR := by
+  funext b others
+  simp only [overlapSum, overlapSumTR, List.sum_eq_foldl, List.foldl_map]
+
 abbrev Budget (cfg : Config) (area sum : Nat) : Prop :=
   0 < area ∧ 10000*sum ≤ cfg.overlapBps*area
 
