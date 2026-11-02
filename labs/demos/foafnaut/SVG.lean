@@ -7,7 +7,6 @@ import SVGStroke
 import L4Factoidal.Math.Affine
 import L4Factoidal.Tdb2.Format
 import L4Factoidal.XML.NamespaceView
-import Std.Tactic
 
 /- Isolated strict SVG document reader, not SVG Tiny/full conformance.
    XML and expanded names come from the current Factoidal XML implementation.
@@ -19,6 +18,7 @@ namespace NativeSVG
 def maxInputChars : Nat := 1048576
 def maxPrimitives : Nat := 12288
 def maxDataFloats : Nat := 262144
+def maxInspectorNodes : Nat := 16384
 open NativeGraphics
 open L4Factoidal.XML
 private def svgURI := "http://www.w3.org/2000/svg"
@@ -180,6 +180,7 @@ structure Style where
   dashOffset : NativeSVGDash.Length := ⟨0,false⟩
   fillOpacity : Float := 1
   strokeOpacity : Float := 1
+  visible : Bool := true
   rule : FillRule := .nonzero
   lineCap : LineCap := .butt
   deriving Repr
@@ -219,7 +220,8 @@ private def relativeLength (source : String) (base : Float) : Except String Floa
   else lengthNumber s
 
 private def common := ["id","fill","stroke","color","fill-opacity","stroke-opacity","stroke-width",
-  "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule","stroke-dasharray","stroke-dashoffset"]
+  "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule","stroke-dasharray","stroke-dashoffset",
+  "display","visibility"]
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
     if a.name.namespace_.isSome then throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
@@ -251,6 +253,12 @@ private def readStyle (lengths : LengthContext) (ids : List String) (attrs : Lis
       style := {style with dashArray:= ← dashArray lengths value}
   if let some value := attr attrs "stroke-dashoffset" then
     if trim value != "inherit" then style := {style with dashOffset:={value:= ← relativeLength value lengths.diagonal,percentage:=(trim value).endsWith "%"}}
+  if let some value := attr attrs "visibility" then
+    match (trim value).toLower with
+    | "inherit" => pure ()
+    | "visible" => style := {style with visible:=true}
+    | "hidden" | "collapse" => style := {style with visible:=false}
+    | _ => throw s!"unsupported visibility: {value}"
   let width ← inheritedNumber lengths attrs "stroke-width" parent.strokeWidth
   if width < 0 then throw "negative stroke-width"
   let fillOpacity ← inheritedNumber lengths attrs "fill-opacity" parent.fillOpacity
@@ -270,6 +278,8 @@ private def readStyle (lengths : LengthContext) (ids : List String) (attrs : Lis
       if !allowed.contains (trim value) then throw s!"unsupported {key}: {value}"
   return style
 private def cssProperties := (common.filter (· != "id")) ++ ["opacity"]
+private def displaySuppressed (attrs : List NamespaceAttribute) : Bool :=
+  (attr attrs "display").any (fun value => (trim value).toLower == "none")
 private def cssAttribute (d : NativeSVGCSS.Declaration) : NamespaceAttribute :=
   {name:={namespace_:=none,localPart:=d.property},value:=d.value}
 private def applyCSS (lengths : LengthContext) (ids : List String) (rules : List NativeSVGCSS.Rule)
@@ -314,7 +324,292 @@ structure Primitive where
   opacity : Float := 1
   transform : Transform := identityTransform
   dashParts : Option (List NativeSVGStroke.Piece) := none
+  /-- Ordered enclosing SVG group IDs; `none` records an anonymous group.
+      Geometry and transforms are still lowered to painter-ordered leaves. -/
+  groupPath : List (Option String) := []
   deriving Repr
+
+def Primitive.lowerUnder (parent : Transform) (groups : List (Option String))
+    (primitive : Primitive) : Primitive := Id.run do
+  let transformed := {primitive with transform := parent.compose primitive.transform}
+  return {transformed with groupPath := groups ++ primitive.groupPath}
+
+theorem Primitive.lowerUnder_preserves_rendering_data (parent : Transform)
+    (groups : List (Option String)) (items : List Primitive) :
+    (items.map (Primitive.lowerUnder parent groups)).map
+      (fun p => (p.geometry, p.style, p.opacity, p.transform, p.dashParts)) =
+    items.map (fun p =>
+      (p.geometry, p.style, p.opacity, parent.compose p.transform, p.dashParts)) := by
+  simp [Primitive.lowerUnder]
+
+theorem Primitive.lowerUnder_records_group_path (parent : Transform)
+    (groups : List (Option String)) (primitive : Primitive) :
+    (Primitive.lowerUnder parent groups primitive).groupPath = groups ++ primitive.groupPath := by
+  simp [Primitive.lowerUnder]
+
+/- Retained SVG tree. Transforms remain local here and are composed only in the
+   compatibility lowering used by the current flat renderer. -/
+inductive DisplayNode where
+  | paint (primitive : Primitive)
+  | group (id : Option String) (transform : Transform) (children : List DisplayNode)
+  deriving Repr
+
+mutual
+  def DisplayNode.paintCount : DisplayNode → Nat
+    | .paint _ => 1
+    | .group _ _ children => DisplayNode.paintCountList children
+  termination_by node => sizeOf node
+
+  def DisplayNode.paintCountList : List DisplayNode → Nat
+    | [] => 0
+    | node :: rest => node.paintCount + DisplayNode.paintCountList rest
+  termination_by nodes => sizeOf nodes
+end
+
+mutual
+  def DisplayNode.nodeCount : DisplayNode → Nat
+    | .paint _ => 1
+    | .group _ _ children => 1 + DisplayNode.listNodeCount children
+  termination_by node => sizeOf node
+
+  def DisplayNode.listNodeCount : List DisplayNode → Nat
+    | [] => 0
+    | node :: rest => node.nodeCount + DisplayNode.listNodeCount rest
+  termination_by nodes => sizeOf nodes
+end
+
+mutual
+  def DisplayNode.lower (parent : Transform) (groups : List (Option String)) :
+      DisplayNode → List Primitive
+    | .paint primitive => [primitive.lowerUnder parent groups]
+    | .group id transform children =>
+        DisplayNode.lowerList (parent.compose transform) (groups ++ [id]) children
+  termination_by node => sizeOf node
+
+  def DisplayNode.lowerList (parent : Transform) (groups : List (Option String)) :
+      List DisplayNode → List Primitive
+    | [] => []
+    | node :: rest => node.lower parent groups ++ DisplayNode.lowerList parent groups rest
+  termination_by nodes => sizeOf nodes
+end
+
+
+/-- Same painter-ordered primitives as `lower`; sibling traversal uses a reverse
+    accumulator. Recursive calls follow group depth, bounded by the parser at 32. -/
+def DisplayNode.lowerTR (parent : Transform) (groups : List (Option String))
+    (node : DisplayNode) : List Primitive :=
+  match node with
+  | .paint primitive => [primitive.lowerUnder parent groups]
+  | .group id transform children =>
+      (children.foldl (fun acc child =>
+        (child.lowerTR (parent.compose transform) (groups ++ [id])).reverse ++ acc) []).reverse
+termination_by sizeOf node
+
+/-- Exact paint count with a sibling fold; `paintCountTR_eq` retains the reference meaning. -/
+def DisplayNode.paintCountTR (node : DisplayNode) : Nat :=
+  match node with
+  | .paint _ => 1
+  | .group _ _ children => children.foldl (fun acc child => acc + child.paintCountTR) 0
+termination_by sizeOf node
+
+/-- Exact inspector node count with sibling folds, including each group itself. -/
+def DisplayNode.nodeCountTR (node : DisplayNode) : Nat :=
+  match node with
+  | .paint _ => 1
+  | .group _ _ children => children.foldl (fun acc child => acc + child.nodeCountTR) 1
+termination_by sizeOf node
+
+theorem DisplayNode.paintCountTR_eq (node : DisplayNode) :
+    node.paintCountTR = node.paintCount := by
+  refine DisplayNode.rec
+    (motive_1 := fun node => node.paintCountTR = node.paintCount)
+    (motive_2 := fun nodes => ∀ acc,
+      nodes.foldl (fun acc child => acc + child.paintCountTR) acc =
+        acc + DisplayNode.paintCountList nodes)
+    ?_ ?_ ?_ ?_ node
+  · intro primitive
+    simp [DisplayNode.paintCountTR, DisplayNode.paintCount]
+  · intro id transform children ih
+    simpa [DisplayNode.paintCountTR, DisplayNode.paintCount] using ih 0
+  · intro acc
+    simp [DisplayNode.paintCountList]
+  · intro head tail ihHead ihTail acc
+    simp [List.foldl_cons, ihHead, ihTail, DisplayNode.paintCountList, Nat.add_assoc]
+
+theorem DisplayNode.nodeCountTR_eq (node : DisplayNode) :
+    node.nodeCountTR = node.nodeCount := by
+  refine DisplayNode.rec
+    (motive_1 := fun node => node.nodeCountTR = node.nodeCount)
+    (motive_2 := fun nodes => ∀ acc,
+      nodes.foldl (fun acc child => acc + child.nodeCountTR) acc =
+        acc + DisplayNode.listNodeCount nodes)
+    ?_ ?_ ?_ ?_ node
+  · intro primitive
+    simp [DisplayNode.nodeCountTR, DisplayNode.nodeCount]
+  · intro id transform children ih
+    simpa [DisplayNode.nodeCountTR, DisplayNode.nodeCount] using ih 1
+  · intro acc
+    simp [DisplayNode.listNodeCount]
+  · intro head tail ihHead ihTail acc
+    simp [List.foldl_cons, ihHead, ihTail, DisplayNode.listNodeCount, Nat.add_assoc]
+
+theorem DisplayNode.lowerTR_eq (node : DisplayNode) :
+    ∀ parent groups, node.lowerTR parent groups = node.lower parent groups := by
+  refine DisplayNode.rec
+    (motive_1 := fun node => ∀ parent groups,
+      node.lowerTR parent groups = node.lower parent groups)
+    (motive_2 := fun (nodes : List DisplayNode) => ∀ (parent : Transform) (groups : List (Option String)) (acc : List Primitive),
+      (nodes.foldl (fun acc child => (child.lowerTR parent groups).reverse ++ acc) acc).reverse =
+        acc.reverse ++ DisplayNode.lowerList parent groups nodes)
+    ?_ ?_ ?_ ?_ node
+  · intro primitive parent groups
+    simp [DisplayNode.lowerTR, DisplayNode.lower]
+  · intro id transform children ih parent groups
+    simpa [DisplayNode.lowerTR, DisplayNode.lower] using
+      ih (parent.compose transform) (groups ++ [id]) []
+  · intro parent groups acc
+    simp [DisplayNode.lowerList]
+  · intro head tail ihHead ihTail parent groups acc
+    simp only [List.foldl_cons]
+    rw [ihTail, List.reverse_append, List.reverse_reverse, ihHead]
+    simp only [DisplayNode.lowerList, List.append_assoc]
+
+/-- Reverse-accumulator sibling lowering using the fast recursive group twin. -/
+def DisplayNode.lowerListTR (parent : Transform) (groups : List (Option String))
+    (nodes : List DisplayNode) : List Primitive :=
+  (nodes.foldl (fun acc node => (node.lowerTR parent groups).reverse ++ acc) []).reverse
+
+private theorem lowerFold_eq (nodes : List DisplayNode) (parent : Transform)
+    (groups : List (Option String)) (acc : List Primitive) :
+    (nodes.foldl (fun acc node => (node.lowerTR parent groups).reverse ++ acc) acc).reverse =
+      acc.reverse ++ DisplayNode.lowerList parent groups nodes := by
+  induction nodes generalizing acc with
+  | nil => simp [DisplayNode.lowerList]
+  | cons head tail ih =>
+      simp only [List.foldl_cons]
+      rw [ih, List.reverse_append, List.reverse_reverse, DisplayNode.lowerTR_eq]
+      simp only [DisplayNode.lowerList, List.append_assoc]
+
+/-- Exact total paint count over arbitrarily wide sibling lists. -/
+def DisplayNode.paintCountListTR (nodes : List DisplayNode) : Nat :=
+  nodes.foldl (fun acc node => acc + node.paintCountTR) 0
+
+private theorem paintCountFold_eq (nodes : List DisplayNode) (acc : Nat) :
+    nodes.foldl (fun acc node => acc + node.paintCountTR) acc =
+      acc + DisplayNode.paintCountList nodes := by
+  induction nodes generalizing acc with
+  | nil => simp [DisplayNode.paintCountList]
+  | cons head tail ih =>
+      simp only [List.foldl_cons]
+      rw [ih, DisplayNode.paintCountTR_eq]
+      simp only [DisplayNode.paintCountList, Nat.add_assoc]
+
+/-- Exact total inspector count over arbitrarily wide sibling lists. -/
+def DisplayNode.listNodeCountTR (nodes : List DisplayNode) : Nat :=
+  nodes.foldl (fun acc node => acc + node.nodeCountTR) 0
+
+private theorem nodeCountFold_eq (nodes : List DisplayNode) (acc : Nat) :
+    nodes.foldl (fun acc node => acc + node.nodeCountTR) acc =
+      acc + DisplayNode.listNodeCount nodes := by
+  induction nodes generalizing acc with
+  | nil => simp [DisplayNode.listNodeCount]
+  | cons head tail ih =>
+      simp only [List.foldl_cons]
+      rw [ih, DisplayNode.nodeCountTR_eq]
+      simp only [DisplayNode.listNodeCount, Nat.add_assoc]
+
+@[csimp] theorem DisplayNode.lower_eq_lowerTR : DisplayNode.lower = DisplayNode.lowerTR := by
+  funext parent groups node
+  exact (DisplayNode.lowerTR_eq node parent groups).symm
+
+@[csimp] theorem DisplayNode.lowerList_eq_lowerListTR : DisplayNode.lowerList = DisplayNode.lowerListTR := by
+  funext parent groups nodes
+  exact (show DisplayNode.lowerListTR parent groups nodes = DisplayNode.lowerList parent groups nodes by
+    simpa only [DisplayNode.lowerListTR, List.reverse_nil, List.nil_append] using
+      lowerFold_eq nodes parent groups []).symm
+
+@[csimp] theorem DisplayNode.paintCount_eq_paintCountTR : DisplayNode.paintCount = DisplayNode.paintCountTR := by
+  funext node
+  exact (DisplayNode.paintCountTR_eq node).symm
+
+@[csimp] theorem DisplayNode.paintCountList_eq_paintCountListTR : DisplayNode.paintCountList = DisplayNode.paintCountListTR := by
+  funext nodes
+  exact (show DisplayNode.paintCountListTR nodes = DisplayNode.paintCountList nodes by
+    simpa only [DisplayNode.paintCountListTR, Nat.zero_add] using paintCountFold_eq nodes 0).symm
+
+@[csimp] theorem DisplayNode.nodeCount_eq_nodeCountTR : DisplayNode.nodeCount = DisplayNode.nodeCountTR := by
+  funext node
+  exact (DisplayNode.nodeCountTR_eq node).symm
+
+@[csimp] theorem DisplayNode.listNodeCount_eq_listNodeCountTR : DisplayNode.listNodeCount = DisplayNode.listNodeCountTR := by
+  funext nodes
+  exact (show DisplayNode.listNodeCountTR nodes = DisplayNode.listNodeCount nodes by
+    simpa only [DisplayNode.listNodeCountTR, Nat.zero_add] using nodeCountFold_eq nodes 0).symm
+
+
+def DisplayNode.lowerFromRoot (node : DisplayNode) : List Primitive :=
+  node.lower identityTransform []
+
+def DisplayNode.lowerFromRootList (nodes : List DisplayNode) : List Primitive :=
+  DisplayNode.lowerList identityTransform [] nodes
+
+theorem DisplayNode.paintCount_eq_lowerLength (node : DisplayNode)
+    (parent : Transform) (groups : List (Option String)) :
+    node.paintCount = (node.lower parent groups).length := by
+  refine DisplayNode.rec
+    (motive_1 := fun node => ∀ parent groups,
+      node.paintCount = (node.lower parent groups).length)
+    (motive_2 := fun nodes => ∀ parent groups,
+      DisplayNode.paintCountList nodes = (DisplayNode.lowerList parent groups nodes).length)
+    ?_ ?_ ?_ ?_ node parent groups
+  · intro primitive parent groups
+    simp [DisplayNode.paintCount, DisplayNode.lower]
+  · intro id transform children childrenCount parent groups
+    simpa [DisplayNode.paintCount, DisplayNode.lower] using
+      childrenCount (parent.compose transform) (groups ++ [id])
+  · intro parent groups
+    simp [DisplayNode.paintCountList, DisplayNode.lowerList]
+  · intro node rest nodeCount restCount parent groups
+    simp [DisplayNode.paintCountList, DisplayNode.lowerList,
+      nodeCount parent groups, restCount parent groups, List.length_append]
+
+theorem DisplayNode.paintCountList_eq_lowerLength (nodes : List DisplayNode)
+    (parent : Transform) (groups : List (Option String)) :
+    DisplayNode.paintCountList nodes = (DisplayNode.lowerList parent groups nodes).length := by
+  induction nodes with
+  | nil => simp [DisplayNode.paintCountList, DisplayNode.lowerList]
+  | cons node rest ih =>
+      simp [DisplayNode.paintCountList, DisplayNode.lowerList,
+        DisplayNode.paintCount_eq_lowerLength node parent groups, ih, List.length_append]
+
+theorem DisplayNode.lowerList_append (parent : Transform) (groups : List (Option String))
+    (before after : List DisplayNode) :
+    DisplayNode.lowerList parent groups (before ++ after) =
+      DisplayNode.lowerList parent groups before ++ DisplayNode.lowerList parent groups after := by
+  induction before with
+  | nil => simp [DisplayNode.lowerList]
+  | cons head tail ih => simp [DisplayNode.lowerList, ih, List.append_assoc]
+
+theorem DisplayNode.lowerList_singletons (parent : Transform) (groups : List (Option String))
+    (nodes : List DisplayNode) :
+    List.flatten (nodes.map (fun node => node.lower parent groups)) =
+      DisplayNode.lowerList parent groups nodes := by
+  induction nodes with
+  | nil => simp [DisplayNode.lowerList]
+  | cons node rest ih => simp [DisplayNode.lowerList, ih]
+
+theorem DisplayNode.lowerFromRootList_flatten (nodes : List DisplayNode) :
+    List.flatten (nodes.map DisplayNode.lowerFromRoot) = DisplayNode.lowerFromRootList nodes := by
+  change List.flatten (nodes.map (fun node => node.lower identityTransform [])) =
+    DisplayNode.lowerList identityTransform [] nodes
+  exact DisplayNode.lowerList_singletons identityTransform [] nodes
+
+theorem DisplayNode.lower_group (parent : Transform) (groups : List (Option String))
+    (id : Option String) (transform : Transform) (children : List DisplayNode) :
+    DisplayNode.lower parent groups (.group id transform children) =
+      DisplayNode.lowerList (parent.compose transform) (groups ++ [id]) children := by
+  simp [DisplayNode.lower]
+
 private def strokeEnabled (style : Style) : Bool :=
   match style.stroke with | .none => false | _ => style.strokeWidth > 0
 
@@ -395,7 +690,7 @@ private def metadata (node : NamespaceNode) : Except String Unit := do
   match node with
   | .other (.text _) | .other (.cdata _) | .other (.comment _) => pure ()
   | _ => throw "descriptive metadata only supports text/comments"
-private def readNode (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (node : NamespaceNode) : Except String (List Primitive) := do
+private def readNode (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (node : NamespaceNode) : Except String (List DisplayNode) := do
   if depth > 32 then throw "SVG group nesting exceeds 32"
   match node with
   | .other (.comment _) => pure []
@@ -418,12 +713,16 @@ private def readNode (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) 
       return []
     else if tag == "g" then
       validateAttrs tag attrs ["transform"]
-      let transform ← checkedTransform (parent.compose (← transformList ((attr attrs "transform").getD "")))
+      let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
+      let cumulative ← checkedTransform (parent.compose transform)
       let inherited ← readStyle lengths ids attrs style
-      readChildren rules lengths ids transform (depth+1) inherited children
+      let retainedChildren ← readChildren rules lengths ids cumulative (depth+1) inherited children
+      if displaySuppressed attrs then return []
+      return [.group (attr attrs "id") transform retainedChildren]
     else
       validateAttrs tag attrs (extraAttrs tag)
-      let transform ← checkedTransform (parent.compose (← transformList ((attr attrs "transform").getD "")))
+      let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
+      let cumulative ← checkedTransform (parent.compose transform)
       let inherited ← readStyle lengths ids attrs style
       let authorLength ← match attr attrs "pathLength" with
         | none => pure none
@@ -435,21 +734,26 @@ private def readNode (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) 
       for child in children do
         match child with
         | .element n _ _ => if n.namespace_ == some svgURI && ["title","desc","metadata"].contains n.localPart then
-                              let _ ← readNode rules lengths ids transform (depth+1) inherited child
+                              let _ ← readNode rules lengths ids cumulative (depth+1) inherited child
                               pure ()
                             else throw "graphics children unsupported"
         | .other (.comment _) => pure ()
         | .other (.text s) | .other (.cdata s) => if !whitespace s then throw "text painting unsupported"
         | _ => throw "processing instruction unsupported"
       let opacity ← match attr attrs "opacity" with | none => pure 1 | some s => number s
-      geometry.toList.mapM fun g => do
+      let painted ← geometry.toList.mapM fun g => do
         let dashParts ← dashedParts g inherited authorLength
-        pure {geometry:=g,style:=inherited,opacity:=if transform.det == 0 then 0 else max 0 (min 1 opacity),transform,dashParts}
-private def readChildren (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List Primitive) := do
-  let mut out : Array Primitive := #[]
+        pure (.paint {geometry:=g,style:=inherited,opacity:=max 0 (min 1 opacity),transform,dashParts})
+      if displaySuppressed attrs then return []
+      return painted
+private def readChildren (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List DisplayNode) := do
+  let mut out : Array DisplayNode := #[]
+  let mut primitiveCount := 0
   for node in nodes do
     let chunk ← readNode rules lengths ids parent depth style node
-    if out.size+chunk.length > maxPrimitives then throw "painted primitive count exceeds 12288"
+    let added := DisplayNode.paintCountList chunk
+    if primitiveCount+added > maxPrimitives then throw "painted primitive count exceeds 12288"
+    primitiveCount := primitiveCount+added
     out := out ++ chunk.toArray
   return out.toList
 end
@@ -468,7 +772,11 @@ structure Scene where
   width : Nat
   height : Nat
   mapping : Mapping
+  tree : List DisplayNode
+  /-- Cached backend lowering. It is computed once after parsing, not once per
+      sample or hit query. The proof binds it to the retained tree. -/
   primitives : List Primitive
+  loweringCorrect : primitives = DisplayNode.lowerFromRootList tree
   deriving Repr
 private def viewportMapping (w h : Float) (attrs : List NamespaceAttribute) : Except String Mapping := do
   let view ← match attr attrs "viewBox" with
@@ -574,8 +882,10 @@ def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String S
   let attrs ← applyCSS lengths ids rules "svg" attrs
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version"]
   let inherited ← readStyle lengths ids attrs {}
-  let primitives ← readChildren rules lengths ids identityTransform 0 inherited children
-  return {width:=w.ceil.toUInt32.toNat,height:=h.ceil.toUInt32.toNat,mapping,primitives}
+  let parsedTree ← readChildren rules lengths ids identityTransform 0 inherited children
+  let tree := if displaySuppressed attrs then [] else parsedTree
+  let primitives := DisplayNode.lowerFromRootList tree
+  return ⟨w.ceil.toUInt32.toNat,h.ceil.toUInt32.toNat,mapping,tree,primitives,rfl⟩
 
 /- Typed conditions reuse Graphics.Expr's CPU interpreter and WGSL lowering.
    The float scene is separate from the integer-only demo Shape representation. -/
@@ -730,7 +1040,11 @@ private theorem resolved_length (paint : Paint) (style : Style) (alpha : Float) 
     (resolved paint style alpha).length = 4 := by
   cases paint <;> simp [resolved]
 private def Primitive.effectiveOpacity (p : Primitive) : Float :=
-  if p.transform.det == 0 then 0 else p.opacity
+  if p.transform.det == 0 || !p.style.visible then 0 else p.opacity
+
+theorem Primitive.effectiveOpacity_eq_zero_when_hidden (p : Primitive)
+    (hidden : p.style.visible = false) : p.effectiveOpacity = 0 := by
+  simp [Primitive.effectiveOpacity, hidden]
 private theorem flatMap_fixed_length {α β : Type} (f : α → List β) (width : Nat)
     (hf : ∀ x, (f x).length = width) (xs : List α) :
     (xs.flatMap f).length = xs.length * width := by
@@ -868,10 +1182,26 @@ theorem Primitive.rows_length (p : Primitive) :
 theorem Primitive.rows_length_matches_shaderRowAdvance (p : Primitive) :
     p.rows.length = p.shaderRowAdvance * 4 := by
   rw [Primitive.rows_length, Primitive.shaderRowAdvance_eq_rowCount]
+
+theorem Primitive.rows_offsets_eq_flattened_length (items : List Primitive) :
+    (items.map fun p => p.rowCount*4).sum = (items.flatMap Primitive.rows).length := by
+  rw [List.length_flatMap]
+  congr 1
+  apply List.map_congr_left
+  intro primitive _
+  exact (Primitive.rows_length primitive).symm
 private def Scene.data (s : Scene) : Array Float :=
   ([s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
     s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight] ++
     s.primitives.flatMap Primitive.rows).toArray
+
+theorem Scene.data_size_eq_record_cursor (s : Scene) :
+    s.data.size = 8 + (s.primitives.map fun p => p.rowCount*4).sum := by
+  change ([s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
+    s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight] ++
+    s.primitives.flatMap Primitive.rows).length = _
+  simp only [List.length_append, List.length_cons, List.length_nil]
+  rw [Primitive.rows_offsets_eq_flattened_length]
 private def Primitive.wgsl (p : Primitive) (base : Nat) : String :=
   "{\n" ++
   (match p.geometry with
@@ -934,30 +1264,60 @@ private def Scene.wgsl (_s : Scene) : String :=
     "total+=samplePixel(vec4f(pixel.xy+vec2f(" ++ toString (x-0.5) ++ "," ++ toString (y-0.5) ++ "),0.0,1.0));") ++
   "return total/" ++ toString pixelSampleOffsets.length ++ ".0;}\n"
 
-private def Scene.sampleAt (s : Scene) (screenX screenY : Float) : Color := Id.run do
-  if screenX >= s.mapping.viewportWidth || screenY >= s.mapping.viewportHeight then return rgb 255 255 255
+private def Primitive.coverageAt (primitive : Primitive) (data : Array Float)
+    (base : Nat) (position : Float × Float) : Bool × Bool := Id.run do
+  let localPoint := primitive.transform.inverse.apply position.1 position.2
+  let env : Env := {data,position:=localPoint}
+  let fillHit := match primitive.geometry with
+    | .polygon points => (boundsCondition base).eval env && windingHit env base points.length primitive.style.rule
+    | .path contours => pathHit env base (NativeSVGPath.edges contours).length primitive.style.rule
+    | _ => (fillCondition primitive.geometry base).eval env
+  let strokeHit := match primitive.dashParts with
+    | none => (strokeCondition primitive.geometry base primitive.style.lineCap).eval env
+    | some pieces => Id.run do
+      let mut hit := false
+      let mut offset := base+20+geometryTailSize primitive.geometry
+      for piece in pieces do
+        hit := hit || (pieceCondition piece offset).eval env
+        offset := offset+20
+      return hit
+  return (fillHit,strokeHit)
+
+/-- Topmost geometric paint item at a viewport coordinate, in the same
+    painter order and using the exact retained coverage predicates as sampling.
+    The result is the zero-based index in `primitives`; it is a paint-item
+    identity, not yet an XML element identity or a DOM event-target guarantee. -/
+def Scene.hitTestAt (s : Scene) (screenX screenY : Float) : Option (Fin s.primitives.length) := Id.run do
+  if screenX < 0 || screenY < 0 || screenX >= s.mapping.viewportWidth || screenY >= s.mapping.viewportHeight then
+    return none
   let position := ((screenX-s.mapping.tx)/s.mapping.sx+s.mapping.minX,
     (screenY-s.mapping.ty)/s.mapping.sy+s.mapping.minY)
   let data := s.data
+  let mut records : Array (Fin s.primitives.length × Primitive × Nat) := #[]
+  let mut base := 8
+  for (index,primitive) in (List.finRange s.primitives.length).zip s.primitives do
+    records := records.push (index,primitive,base)
+    base := base+primitive.rowCount*4
+  for (index,primitive,recordBase) in records.toList.reverse do
+    let (fillHit,strokeHit) := primitive.coverageAt data recordBase position
+    if fillHit || strokeHit then return some index
+  return none
+
+theorem Scene.hitTestAt_none_outside_viewport (s : Scene) (screenX screenY : Float)
+    (outside : (screenX < 0 || screenY < 0 || screenX >= s.mapping.viewportWidth ||
+      screenY >= s.mapping.viewportHeight) = true) :
+    s.hitTestAt screenX screenY = none := by
+  simp [Scene.hitTestAt, outside]
+
+private def Scene.sampleAt (s : Scene) (data : Array Float)
+    (screenX screenY : Float) : Color := Id.run do
+  if screenX >= s.mapping.viewportWidth || screenY >= s.mapping.viewportHeight then return rgb 255 255 255
+  let position := ((screenX-s.mapping.tx)/s.mapping.sx+s.mapping.minX,
+    (screenY-s.mapping.ty)/s.mapping.sy+s.mapping.minY)
   let mut result := rgb 255 255 255
   let mut base := 8
   for primitive in s.primitives do
-    let localPoint := primitive.transform.inverse.apply position.1 position.2
-    let env : Env := {data,position:=localPoint}
-    let fillHit := match primitive.geometry with
-      | .polygon points => (boundsCondition base).eval env && windingHit env base points.length primitive.style.rule
-      | .path contours => pathHit env base (NativeSVGPath.edges contours).length primitive.style.rule
-      | _ => (fillCondition primitive.geometry base).eval env
-    let strokeHit := match primitive.dashParts with
-      | none => (strokeCondition primitive.geometry base primitive.style.lineCap).eval env
-      | some pieces => Id.run do
-        let mut hit := false
-        let mut offset := base+20+geometryTailSize primitive.geometry
-        for piece in pieces do
-          let condition := pieceCondition piece offset
-          hit := hit || condition.eval env
-          offset := offset+20
-        return hit
+    let (fillHit,strokeHit) := primitive.coverageAt data base position
     let fill := resolved primitive.style.fill primitive.style primitive.style.fillOpacity
     let stroke := resolved primitive.style.stroke primitive.style primitive.style.strokeOpacity
     let fa : Float := if fillHit then fill[3]! else 0
@@ -969,15 +1329,19 @@ private def Scene.sampleAt (s : Scene) (screenX screenY : Float) : Color := Id.r
     let layer : NativeGraphics.PremultipliedLayer :=
       ⟨premul.r*opacity,premul.g*opacity,premul.b*opacity,(sa+fa*(1-sa))*opacity⟩
     result := layer.overOpaque result
-    base := base+primitive.rows.length
+    base := base+primitive.rowCount*4
   return result
-private def Scene.sample (s : Scene) (x y : Nat) : Color := Id.run do
+
+private def Scene.sampleWithData (s : Scene) (data : Array Float) (x y : Nat) : Color := Id.run do
   let mut total : Color := ⟨0,0,0⟩
   for (dx,dy) in pixelSampleOffsets do
-    let c := s.sampleAt (Float.ofNat x+dx) (Float.ofNat y+dy)
+    let c := s.sampleAt data (Float.ofNat x+dx) (Float.ofNat y+dy)
     total := ⟨total.r+c.r,total.g+c.g,total.b+c.b⟩
   let n := Float.ofNat pixelSampleOffsets.length
   return ⟨total.r/n,total.g/n,total.b/n⟩
+
+private def Scene.sample (s : Scene) (x y : Nat) : Color :=
+  s.sampleWithData s.data x y
 
 private def Color.json (c : Color) : String := jsonArray ([c.r,c.g,c.b].map fun f => toString ((max 0 (min 255 (f*255))).round.toUInt32.toNat))
 private def floatJSON (x : Float) : String :=
@@ -985,15 +1349,47 @@ private def floatJSON (x : Float) : String :=
   if Float.ofInt integer == x then toString integer
   else L4Factoidal.Tdb2.javaDoubleString x.toBits
 
+private def Geometry.name : Geometry → String
+  | .rect .. => "rect"
+  | .circle .. => "circle"
+  | .ellipse .. => "ellipse"
+  | .line .. => "line"
+  | .polygon .. => "polygon"
+  | .path .. => "path"
+
+mutual
+  private def DisplayNode.json : DisplayNode → String
+    | .paint primitive =>
+        "{\"kind\":\"paint\",\"geometry\":" ++ quote primitive.geometry.name ++
+        "}"
+    | .group id transform children =>
+        "{\"kind\":\"group\",\"id\":" ++
+        (match id with | none => "null" | some value => quote value) ++
+        ",\"transform\":" ++ jsonArray
+          ([transform.a,transform.b,transform.c,transform.d,transform.e,transform.f].map floatJSON) ++
+        ",\"children\":" ++ DisplayNode.listJSON children ++ "}"
+  termination_by node => sizeOf node
+
+  private def DisplayNode.listJSON : List DisplayNode → String
+    | [] => "[]"
+    | node :: rest => "[" ++ DisplayNode.json node ++
+        String.join (rest.map fun child => "," ++ DisplayNode.json child) ++ "]"
+  termination_by nodes => sizeOf nodes
+end
+
 private def Scene.json (s : Scene) : Except String String := do
-  if s.data.size > maxDataFloats then throw "storage data exceeds 262144 floats"
+  let data := s.data
+  if data.size > maxDataFloats then throw "storage data exceeds 262144 floats"
   let rawProbes := [(1,1),(s.width/4,s.height/4),(s.width/2,s.height/2),
     (s.width*3/4,s.height/2),(s.width/2,s.height*3/4),(s.width-2,s.height-2)]
   let probes := (rawProbes.map fun (x,y) => (min (s.width-1) x,min (s.height-1) y)).eraseDups
-  let checks := probes.map fun (x,y) => "{\"x\":" ++ toString x ++ ",\"y\":" ++ toString y ++ ",\"rgb\":" ++ (s.sample x y).json ++ "}"
+  let checks := probes.map fun (x,y) => "{\"x\":" ++ toString x ++ ",\"y\":" ++ toString y ++ ",\"rgb\":" ++ (s.sampleWithData data x y).json ++ "}"
+  let tree := if DisplayNode.listNodeCount s.tree <= maxInspectorNodes
+    then DisplayNode.listJSON s.tree else "null"
   return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
     ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.primitives.length ++
-    ",\"data\":" ++ jsonArray (s.data.toList.map floatJSON) ++ ",\"wgsl\":" ++ quote s.wgsl ++ ",\"checks\":" ++ jsonArray checks ++ "}"
+    ",\"tree\":" ++ tree ++
+    ",\"data\":" ++ jsonArray (data.toList.map floatJSON) ++ ",\"wgsl\":" ++ quote s.wgsl ++ ",\"checks\":" ++ jsonArray checks ++ "}"
 @[export svg_compile]
 def compile (xml : String) (width height : UInt32) : String :=
   match parse xml width.toNat height.toNat >>= Scene.json with
@@ -1003,4 +1399,12 @@ def sample (xml : String) (width height x y : UInt32) : String :=
   match parse xml width.toNat height.toNat with
   | .error message => "{\"error\":" ++ quote message ++ "}"
   | .ok s => "{\"rgb\":" ++ (s.sample x.toNat y.toNat).json ++ "}"
+@[export svg_hit]
+def hit (xml : String) (width height : UInt32) (x y : Float) : String :=
+  match parse xml width.toNat height.toNat with
+  | .error message => "{\"error\":" ++ quote message ++ "}"
+  | .ok s =>
+    match s.hitTestAt x y with
+    | none => "{\"paintIndex\":null}"
+    | some index => "{\"paintIndex\":" ++ toString index.val ++ "}"
 end NativeSVG

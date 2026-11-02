@@ -13,6 +13,7 @@ for(const name of ['svg_engine.ts','gpu_transport.ts','render_plan.ts',
   '.build/engines/svg-engine.mjs','.build/engines/svg-engine.wasm',
   '.build/engines/render-plan.mjs','.build/engines/render-plan.wasm'])files.set('/lab/'+name,resolve(lab,name));
 for(const name of ['gallery.svg','affine.svg','linear-paths.svg'])files.set('/fixtures/'+name,resolve(lab,'svg-fixtures',name));
+files.set('/fixtures/solving-browser-scene.svg',resolve(here,'fixtures/solving-browser-scene.svg'));
 const mime=p=>p.endsWith('.wasm')?'application/wasm':p.endsWith('.html')?'text/html; charset=utf-8':p.endsWith('.css')?'text/css; charset=utf-8':p.endsWith('.svg')?'image/svg+xml; charset=utf-8':'text/javascript; charset=utf-8';
 export async function provenance(){
  const entries=[];

@@ -407,10 +407,10 @@ def generate (width height variant : UInt32) : String :=
 example : Expr.wgsl (.add (.lit 2) (.lit 3)) = "(2.0+3.0)" := rfl
 example : (demo 384 256 0).shapes.length = 4 := rfl
 
-end NativeGraphics
-
 def main (args : List String) : IO Unit := do
   let width := (args[0]?.getD "384").toNat!.toUInt32
   let height := (args[1]?.getD "256").toNat!.toUInt32
   let variant := (args[2]?.getD "0").toNat!.toUInt32
-  IO.println (NativeGraphics.generate width height variant)
+  IO.println (generate width height variant)
+
+end NativeGraphics

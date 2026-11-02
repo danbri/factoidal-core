@@ -71,6 +71,14 @@ WORK="$(mkdir -p "$WORK" && cd "$WORK" && pwd)"   # absolute, before the cd belo
 cd "$LEAN_DIR"
 
 say() { printf '\n=== %s\n' "$*"; }
+runtime_hash_file() {
+  if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+runtime_object_witness() {
+  printf 'wasm32-string-list-v1\n%s\n%s\n' \
+    "$(runtime_hash_file "$OBJ_CPP")" "$(runtime_hash_file "$RT_OBJ/object.o")"
+}
 
 say "configuration"
 echo "  lean tag     : $LEAN_TAG"
@@ -142,7 +150,7 @@ OBJ_CPP="$RT_SRC/runtime/object.cpp"
 if grep -q 'obj_res  r = lean_box_uint32(0);' "$OBJ_CPP"; then
   sed -i.bak 's|obj_res  r = lean_box_uint32(0);|obj_res  r = lean_box(0); /* wasm32 patch (build-wasm.sh step 1b): List.nil must be the scalar lean_box(0); lean_box_uint32 heap-allocates on 32-bit, and lean_string_mk then never sees a list terminator */|' \
     "$OBJ_CPP"
-  rm -f "$OBJ_CPP.bak" "$RT_OBJ/object.o"
+  rm -f "$OBJ_CPP.bak" "$RT_OBJ/object.o" "$RT_OBJ/object.wasm32-string-list.sha256"
   echo "  patched string_to_list_core (object.o invalidated)"
 else
   grep -q 'wasm32 patch (build-wasm.sh step 1b)' "$OBJ_CPP" \
@@ -304,10 +312,21 @@ for d in /opt/homebrew/include /usr/local/include /usr/include; do
   fi
 done
 [ -n "$UVINC" ] || { echo "uv.h not found (apt-get install libuv1-dev / brew install libuv) — needed for declarations only"; exit 1; }
+# A restored cache can contain the old unpatched object despite matching Lean
+# headers. Require a witness written only after this script compiled the patched
+# source; a missing/mismatched witness invalidates object.o only, not Init/Std.
+OBJECT_WITNESS="$RT_OBJ/object.wasm32-string-list.sha256"
+if [ -s "$RT_OBJ/object.o" ] && \
+   [ "$(cat "$OBJECT_WITNESS" 2>/dev/null || true)" != "$(runtime_object_witness)" ]; then
+  echo '  runtime object patch witness missing/mismatched: rebuild object.o'
+  rm -f "$RT_OBJ/object.o" "$OBJECT_WITNESS"
+fi
 for s in $RT_SRCS; do
   [ -s "$RT_OBJ/$s.o" ] && continue
   em++ -std=c++20 $CFLAGS -I "$RT_SRC" $UVINC -c "$RT_SRC/runtime/$s.cpp" -o "$RT_OBJ/$s.o"
 done
+runtime_object_witness > "$OBJECT_WITNESS.tmp"
+mv "$OBJECT_WITNESS.tmp" "$OBJECT_WITNESS"
 # L4_WASM_MIMALLOC_CFLAGS is the hook for a MEASURING build. mimalloc's
 # commit and requested-byte counters are only maintained when it is
 # compiled with MI_STAT above zero, so a memory investigation needs

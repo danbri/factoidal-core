@@ -6,6 +6,12 @@ function equal(a:unknown,b:unknown){if(JSON.stringify(a)!==JSON.stringify(b))thr
 function assert(b:boolean,message:string){if(!b)throw new Error(message);}
 function rejects(action:()=>unknown,contains:string){let message="";try{action();}catch(error){message=String(error);}assert(message.includes(contains),`Expected ${contains}; got ${message||"success"}`);}
 const wrap=(body:string,attrs="")=>`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" ${attrs}>${body}</svg>`;
+// Independent analytic membership, sampled at the specified four quarter
+// positions. These black-on-white cases need no renderer-derived expectation.
+function quarterBlackRGB(x:number,y:number,contains:(x:number,y:number)=>boolean){
+ const covered=[[.25,.25],[.75,.25],[.25,.75],[.75,.75]].filter(([dx,dy])=>contains(x+dx,y+dy)).length;
+ const channel=Math.round(255*(1-covered/4));return [channel,channel,channel];
+}
 
 Deno.test("SVG XML.NamespaceView resolves real namespaces and rejects lexical lookalikes",async()=>{
  const e=await loadSVG();const simple=wrap('<rect width="20" height="20" fill="red"/>');
@@ -33,7 +39,8 @@ Deno.test("SVG preserves signed fractional/exponent coordinates and px lengths",
  const e=await loadSVG();const a=e.compile(wrap('<rect x="-.25e1" y="+.125" width="1.275e1px" height="8.5"/>'));
  equal(a.data.slice(8,12),[-2.5,.125,12.75,8.5]);
  equal(e.sample(wrap('<circle cx="10.5" cy="10.5" r="4.25" fill="#0f0"/>'),10,10),[0,255,0]);
- for(const value of ['NaN','Infinity','1e','--2','1.2.3','1e13','1000001','20%','1cm'])rejects(()=>e.compile(wrap(`<rect x="${value}" width="4" height="4"/>`)),"SVG profile:");
+ equal(e.compile(wrap('<rect x="20%" width="4" height="4"/>')).data[8],12.8);
+ for(const value of ['NaN','Infinity','1e','--2','1.2.3','1e13','1000001','1cm'])rejects(()=>e.compile(wrap(`<rect x="${value}" width="4" height="4"/>`)),"SVG profile:");
 });
 
 Deno.test("SVG viewBox meet alignment, none and slice match known viewport examples",async()=>{
@@ -76,11 +83,16 @@ Deno.test("SVG round line caps use capsule geometry with inherited overrides",as
   e.compile(doc);
   for(let y=0;y<32;y++)for(let x=0;x<32;x++) {
    const dx=bx-ax,dy=by-ay,len=dx*dx+dy*dy;
-   const t=len===0?0:Math.max(0,Math.min(1,((x+.5-ax)*dx+(y+.5-ay)*dy)/len));
-   const hit=(x+.5-ax-t*dx)**2+(y+.5-ay-t*dy)**2<=(width/2)**2;
-   equal(e.sample(doc,x,y),hit?[0,0,0]:[255,255,255]);
+   const contains=(px:number,py:number)=>{
+    const t=len===0?0:Math.max(0,Math.min(1,((px-ax)*dx+(py-ay)*dy)/len));
+    return (px-ax-t*dx)**2+(py-ay-t*dy)**2<=(width/2)**2;
+   };
+   equal(e.sample(doc,x,y),quarterBlackRGB(x,y,contains));
   }
  }
+ const edge=wrap('<line x1="10" y1="10.5" x2="20" y2="10.5" stroke="black" stroke-width="4" stroke-linecap="round"/>');
+ equal(e.sample(edge,9,8),[128,128,128]); // two of four quarter points are inside
+ equal(e.sample(edge,15,10),[0,0,0]);equal(e.sample(edge,0,0),[255,255,255]);
  const inherited=wrap('<g stroke="black" stroke-width="4" stroke-linecap="round"><line x1="10" y1="10.5" x2="20" y2="10.5"/><line x1="10" y1="30.5" x2="20" y2="30.5" stroke-linecap="butt"/></g>');
  equal(e.sample(inherited,8,10),[0,0,0]);equal(e.sample(inherited,8,30),[255,255,255]);
  equal(e.sample(wrap('<line x1="10" y1="10" x2="10" y2="10" stroke="black" stroke-width="0" stroke-linecap="round"/>'),10,10),[255,255,255]);
@@ -198,10 +210,15 @@ Deno.test("SVG affine transforms compose in SVG order and preserve local stroke 
  // Independent analytic local-circle outline under a general affine CTM.
  const [a,b,c,d,tx,ty]=[2,1,-.5,1,20,10],det=a*d-b*c;
  const circle=doc(`matrix(${a},${b},${c},${d},${tx},${ty})`,'<circle cx="5" cy="5" r="4" fill="none" stroke="black" stroke-width="2"/>');
+ const annulusContains=(px:number,py:number)=>{
+  const dx=px-tx,dy=py-ty,lx=(d*dx-c*dy)/det,ly=(-b*dx+a*dy)/det;
+  const r2=(lx-5)**2+(ly-5)**2;return r2>=9&&r2<=25;
+ };
  for(let y=0;y<40;y+=3)for(let x=0;x<50;x+=3){
-  const dx=x+.5-tx,dy=y+.5-ty,lx=(d*dx-c*dy)/det,ly=(-b*dx+a*dy)/det;
-  const r2=(lx-5)**2+(ly-5)**2;equal(e.sample(circle,x,y),r2>=9&&r2<=25?[0,0,0]:[255,255,255]);
+  equal(e.sample(circle,x,y),quarterBlackRGB(x,y,annulusContains));
  }
+ equal(e.sample(circle,30,15),[64,64,64]); // three quarter points are inside
+ equal(e.sample(circle,35,23),[0,0,0]);equal(e.sample(circle,0,0),[255,255,255]);
  const tiny=e.compile(doc('scale(1000)scale(1000)scale(1000)','<circle r="3"/>'));
  equal(tiny.data.slice(-8),[1e-9,0,0,0,0,1e-9,0,0]);
  equal(e.compile(wrap('<rect x=".0000001" width="1" height="1"/>')).data[8],1e-7);
@@ -214,6 +231,20 @@ Deno.test("SVG affine transforms compose in SVG order and preserve local stroke 
  for(const t of ['matrix(1,2)','translate(1),','scale(1e-12)','skewX(90)','translate(1)'.repeat(33)])rejects(()=>e.compile(doc(t)),"SVG profile:");
  rejects(()=>e.compile(wrap('<circle r="1" transform="translate(1)"/>'.repeat(10000))),"storage data");
  rejects(()=>e.compile('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" transform="translate(1)"/>'),"unsupported attribute");
+});
+
+Deno.test("SVG wide retained sibling lists preserve admitted data and group inspection",async()=>{
+ const e=await loadSVG(),rects='<rect width="4" height="4"/>'.repeat(10000);
+ const flat=e.compile(wrap(rects)),grouped=e.compile(wrap(`<g id="wide">${rects}</g>`));
+ for(const artifact of [flat,grouped]){
+  equal(artifact.primitiveCount,10000);equal(artifact.data.length,200008);
+  equal(artifact.checks[0],{x:1,y:1,rgb:[0,0,0]});
+ }
+ equal(grouped.data,flat.data);equal(grouped.wgsl,flat.wgsl);equal(grouped.checks,flat.checks);
+ equal(flat.tree?.length,10000);equal(grouped.tree?.length,1);
+ const group=grouped.tree?.[0];if(group?.kind!=="group")throw new Error("Retained wide group missing");
+ equal(group.id,"wide");equal(group.children.length,10000);
+ // Geometry is the same. Only the source inspection tree records the group.
 });
 
 Deno.test("SVG retained compound linear paths implement moveto, closure, winding and shared shader",async()=>{

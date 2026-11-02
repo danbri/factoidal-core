@@ -156,6 +156,79 @@ destination, group-isolation semantics or clip/cull theorem follows yet. A
 future optimized backend must consume the same layer meaning and prove its own
 lowering contract.
 
+### Progress: retained Solving scene slice (2026-11-01)
+
+`labs/demos/foafnaut/Solving.lean` defines an ordered retained `Scene`,
+numeric node identities, the existing Lean `NativeGraphics.Shape` geometry,
+integer translation, optional rectangular clips, and backend `RenderItem`s.
+Lean proves that lowering preserves node order and shape values, that a
+successful pick names a source-scene node, and that a point outside a node's
+clip cannot hit. Hit testing calls the existing `NativeGeometry.hit` predicate
+on the same shape record, after applying the inverse translation. Duplicate
+IDs and empty or inverted clips are refused by SVG export.
+
+The first executable backend is Lean-generated SVG. `Solving.serializeSVG`
+serializes the retained records, including painter order, translation and clip
+scope. `labs/demos/foafnaut/Solving.command` compiles the Lean module and opens
+the generated showcase. This is a programmatic-scene demonstration. The SVG
+document parser still lowers to its separate `NativeSVG.Scene`; the current
+WebGPU frontend still consumes its own primitive artifact. No shared SVG/HTML
+producer or WebGPU `RenderItem` consumer exists yet. Float SVG transforms,
+curves in hit testing, shaped text, isolated opacity groups, and backend pixel
+equivalence remain open. See the [implementation worknote](../20261101-solving-scene-slice.md).
+
+### Progress: SVG scene picking uses retained paint coverage (2026-11-01)
+
+`NativeSVG.Scene.hitTestAt` now walks the retained primitive list in reverse
+painter order and queries `Primitive.coverageAt`. The CPU reference sampler
+uses that same coverage function. Both evaluate the existing typed fill/stroke
+conditions; the WGSL generator lowers those same condition expressions. The
+`Solving.SVGScene`, `parseSVG` and `pickSVG` facade in
+`labs/demos/foafnaut/SolvingSVG.lean` exposes this parsed scene without
+serializing and reparsing SVG. Its result is an
+`Option (Fin primitiveCount)`, so every successful result is a valid
+retained-scene index by construction. It is not a source XML element ID or a
+browser event target. `NativeSVG.Scene.hitTestAt_none_outside_viewport` is a
+kernel proof that a query outside the viewport returns no target. The new
+`svg_hit` export is source compiled, but the checked-in browser host/shim is
+not yet wired to it, and the warm WASM engine has not been rebuilt. This is a
+Lean API slice, not yet an interactive browser-picker demo or a proof that GPU
+pixels and browser pointer events agree. The programmatic `Solving.Scene` also
+remains a separate integer-shape vocabulary until the common model replaces
+both.
+
+### Progress: common ordered producer envelope (2026-11-01)
+
+`SolvingSVG.lean` now defines one `RetainedScene` item list with two tagged
+payloads: a complete programmatic `Solving.Node`, or a complete
+`NativeSVG.DisplayNode` tree, including nested groups and local transforms.
+The adapters preserve programmatic IDs and nodes, and preserve SVG painter
+order and viewport mapping. The theorems
+`RetainedScene.fromSVG_roundTrips` and
+`RetainedScene.fromProgrammatic_roundTrips` prove exact conversion back to
+each producer's original scene. `toSVGScene?` and `toProgrammatic?` refuse a
+mixed list; `RetainedScene.toSVGScene?_refuses_programmatic_item` and
+`RetainedScene.toProgrammatic?_refuses_svg_item` prove an item from the other
+producer cannot be silently dropped. `#print axioms` reports only `propext`
+and `Quot.sound` for the conversion and refusal theorems.
+
+`#print axioms` reports only `propext`, `Quot.sound`, and the Lean core's
+`Classical.choice` for the viewport theorem.
+
+This is one ordered scene envelope, not yet one geometry algebra. The existing
+SVG CPU, WGSL and artifact code still consumes `NativeSVG.Scene` directly; the
+programmatic GPU renderer still consumes `NativeGraphics.Shape`. The parser retains nested groups and local transforms in
+`NativeSVG.DisplayNode`. Its compatibility lowering records each painted item's
+ordered enclosing group IDs in `Primitive.groupPath`; anonymous groups use
+`none`. Kernel theorems show that lowering keeps each primitive's geometry,
+style, opacity, transform and stroke data in painter order. It does not retain
+a source paint-element ID as a pick target or represent groups as independently
+composited surfaces. The next step is to move shared paint/transform/geometry
+semantics into the common model and have both backend paths consume its render
+items, while
+keeping quadratic/cubic curves, glyph bitmaps, paths, styles and transforms
+intact.
+
 ### O3: Demonstrate useful performance without losing scope
 
 - KR1: Record before/after frame, upload, allocation and memory measurements
@@ -200,3 +273,69 @@ The owner's candidate list, retained for reference:
 **saving**, **serving**, **salvage**, and **scavenger** are possible future
 component names. No responsibilities or implementation commitments are assigned
 to them yet.
+
+### Progress: one scene source with two visible render backends (2026-11-01)
+
+The local browser-WebGPU page now defaults to a browser-like SVG composition
+with three author groups: browser shell, page content and interaction overlay.
+After the Lean compiler accepts the source, the page previews those exact source
+bytes in the browser SVG renderer and renders them through the Lean WASM/WGSL/
+WebGPU path. This is an observable shared-SVG-input experiment for Solving. The Lean parser
+now retains the nested SVG groups and local transforms as a display tree, with a
+proof-carrying cached flat list for its current renderer. The HTML parser/layout
+engine does not yet emit this scene, and renderer agreement remains unproved.
+The implementation and exact limitations are in the
+[backend comparison worknote](../20261101-solving-backend-comparison.md).
+
+
+### Progress: Lean retains SVG group structure (2026-11-01)
+
+`SVG.lean` now parses SVG paint leaves into `NativeSVG.DisplayNode`: groups
+retain nested children, IDs and local transforms. `NativeSVG.Scene` keeps that
+tree plus a cached painter list and a proof field that the list is exactly the
+tree's lowering. Lowering theorems preserve sibling order, compose ancestor
+transforms in order, and accumulate group paths; `SolvingSVG.lean` round-trips
+the retained tree through Solving's ordered envelope. A structural paint-count
+theorem equates the parser limit count to the lowered leaf length without
+materializing temporary primitive lists at each nested group. The Lean SVG
+artifact includes the tree as optional inspection JSON for scenes with at most
+16,384 retained nodes. The browser inspector formats that Lean output; larger
+scenes still render and omit only the inspector data. The CPU reference probes
+now share one packed scene array per artifact, rather than rebuilding it for
+each antialias sample, and row cursors advance by `Primitive.rowCount * 4`,
+whose equality to `Primitive.rows.length` is proved by
+`Primitive.rows_offsets_eq_flattened_length` and
+`Scene.data_size_eq_record_cursor`. `#print axioms` reports only Lean standard
+axioms (`propext`, `Classical.choice`, `Quot.sound`) for both cursor theorems.
+
+The parser also handles the graphics-relevant SVG 2 visibility subset:
+`display="none"` removes an element/subtree after strict parsing, while
+inherited `visibility="hidden"`/`collapse` produces retained but transparent
+paint records and descendants may restore `visible`. The opacity-zero lemma is
+proved for hidden records. The picker remains geometric and does not implement
+DOM `pointer-events`; see the SVG 2
+[rendering model](https://www.w3.org/TR/SVG2/render.html).
+
+### Progress: Solving carries a layout certificate to its SVG backend (2026-11-01)
+
+`SolvingPolicy.lean` selects semantic layout participants by stable node IDs and
+derives their conservative footprints from the same `Solving.Node` values used
+by scene rendering. It applies translation, clips and viewport bounds, then
+uses the shared bounded `LayoutPolicy.Config`. `CertifiedScene` carries both
+the valid participant selection and successful policy check. The theorem
+`CertifiedScene.applicationOverlapBound` gives the configured maximum for
+pairwise intersection-box area; `lower_preserves_policyFootprints` and
+`lower_preserves_policyCertificate` establish that renderer-item lowering
+cannot change the policy input. The sample showcase now passes IDs 10, 11, 12,
+13 and 20 to the checker and writes SVG only through a backend that takes the
+certified value. This remains a conservative-box guarantee for the programmatic
+integer scene. The parsed SVG scene, a WebGPU backend that consumes the same
+certified scene, paint equivalence and pixel guarantees are not implemented.
+
+This is the first real retained scene slice for the proposed SVG-based graphics
+core. The existing GPU path still consumes the flattened list. Logical groups
+do not yet create compositor surfaces, and group opacity/isolation, clips,
+HTML layout fragments, shaped text and a common geometry algebra remain open.
+`SVG.lean` and `SolvingSVG.lean` compile directly with Lean 4.33.1; the
+prebuilt WASM engine has not been rebuilt, and browser rendering has not been
+validated against this updated Lean source.

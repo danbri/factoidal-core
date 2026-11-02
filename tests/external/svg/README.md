@@ -161,7 +161,7 @@ python3 tests/external/svg/oracle.py --oracle /tmp/svg-oracle \
   --candidate /tmp/svg-browser-gpu --output /tmp/svg-browser-comparison
 ```
 
-Last full artifact-backed result (2026-10-31): **2 match, 23 unsupported, 13 unavailable, zero mismatch
+Previous full artifact-backed result (2026-10-31): **2 match, 23 unsupported, 13 unavailable, zero mismatch
 or rejection**, all 38 retained. `fallback-001` and `fallback-002` each have zero
 maximum channel difference and zero differing pixels against the independent
 reference. Unavailable remains nine original runtime/resource cases plus four
@@ -204,6 +204,90 @@ is labelled local: the supplied artifact is not independently certified by the
 runner as having been generated from the fixture or this checkout. Record the
 export command, checked source, input hash, artifact hash and comparison scope.
 It must not silently replace the normal WASM-producer path or its 38-case score.
+
+## Browser sensitivity controls and provenance, 2026-11-02
+
+The rebuilt and corrected browser run retains all 38 inputs: **4 match,
+2 mismatch, 1 rejected, 18 unsupported, 13 unavailable**. Both fallback and
+percentage pairs match exactly. The two pathlength cases each differ at 1,512
+pixels (maximum channel difference 64); the negative-rectangle case remains
+rejected. Each sensitivity control separately reports 4 pass, 0 fail and
+34 unavailable. The viewer smoke with required retained-tree data also passes.
+The [worknote](../../../docs/20261102-svg-browser-harness.md) records exact
+artifact hashes, the runtime failure found and repaired, and the viewport
+transport error found and corrected. This is not full SVG conformance.
+
+Run capture, actual GPU rendering, comparison and sensitivity controls in one
+command, using installed tools only and a new output directory:
+
+```sh
+node tests/external/svg/run_browser.mjs --output /tmp/svg-browser-run \
+  --browser /path/to/installed/chrome \
+  --playwright /path/to/playwright-core/index.mjs
+```
+
+`--python /path/to/python3` and `--typescript /path/to/typescript.js` are optional.
+The default uses the current Node executable, its TypeScript stripping, and
+`python3` on PATH. `run.json` separates image results from each command's exit
+status and records exact arguments. Exit 0 requires the complete 38-image match;
+exit 1 reports incomplete conformance, which is expected for the current slice.
+Exit 2 means a harness failure or a failed/unavailable sensitivity control on
+an actually matching baseline. Unsupported cases retain unavailable controls.
+The wrapper refuses nonempty output directories so stale files cannot be reused.
+
+The candidate first asks Lean to retain the SVG's intrinsic viewport (`0,0`),
+then places its pixels at the top left of the unchanged 800×600 white capture.
+It does not stretch a declared SVG viewport to fill the page. For this exact
+WPT pin, the complete root-dimension inventory is 22 `100%`/`100%`, 13 omitted-
+both, two `310`×`170`, and one `200`×`200`. Only exact Lean errors requesting
+host dimensions for the first two classes permit an 800×600 retry. This retry
+is limited to the verified pinned manifest; it is not a general CSS root-sizing
+implementation. Arbitrary local inputs without an intrinsic viewport remain
+unavailable. Each candidate row records the policy and produced viewport.
+
+The runner also reports a viewport regression for the two existing 310×170
+percentage inputs: they must retain their declared dimensions and match the
+original oracle exactly. This does not add test cases or WPT passes. The
+previous forced-800×600 transport gave 48,552 differing pixels on those inputs;
+the intrinsic-size GPU diagnostic gave zero. See the dated worknote for the
+unchanged historical reports and the corrected full-slice measurement.
+
+Add `--controls` to the normal `browser_gpu.mjs` command to capture three
+separate diagnostics for every input the actual WASM producer accepts:
+
+- `unchangedReplay`: a fresh GPU session with the unchanged artifact.
+- `gpuFlatMagenta`: a real GPU render with a changed fragment shader. A bounded
+  storage read preserves the required bind-group layout. Its contribution is
+  below one 8-bit channel step. Lean sample checks are disabled for this
+  deliberate shader fault and this fact is recorded.
+- `unsampledReadbackPixel`: one changed RGB byte after GPU readback, at a pixel
+  outside all Lean sample locations. The runner confirms that the original
+  sample checks still pass. This tests the whole-image comparator's sensitivity.
+
+The comparator reports these controls separately from the unchanged 38-case
+score. A control can pass only when the unmodified candidate matches the
+independent reference. Replay must retain identical pixels; both faults must
+change pixels and fail the original upstream image relation. A rejected shader,
+missing image or unmatched baseline gives an unavailable control. A fault that
+escapes detection gives a failed control. These controls do not add WPT passes.
+
+Browser candidate/oracle comparison requires the same Chrome version and
+executable SHA-256. The capture freezes runtime bytes before launch and checks
+that they stayed stable during the snapshot. It records source and served
+hashes separately for TypeScript, all runtime artifacts, generated artifact and
+shader hashes, and the current source import closure. Git HEAD, dirty status,
+tracked-diff hash and harness hashes identify the measured checkout. External
+Lean toolchain imports remain listed. These records identify inputs; they do
+not certify that warm WASM was built from current source.
+
+The local viewer smoke accepts `--report FILE` to retain JSON and
+`--require-tree` to require the rebuilt Lean scene-tree inspector. It checks
+browser-preview source bytes, the submitted GPU shader, desktop comparison
+alignment, narrow-screen stacking, real manual shader faults, error cleanup,
+and restoration of the original full image. It records every loaded asset hash
+and whole-image browser/GPU metrics. Viewer image differences remain diagnostics,
+not additional WPT results. See the
+[measurement worknote](../../../docs/20261102-svg-browser-harness.md).
 
 The subsequent shared-linear-stroke source replay admits six of all 38 inputs,
 with 32 still unsupported. Targeted same-renderer GPU comparisons now match

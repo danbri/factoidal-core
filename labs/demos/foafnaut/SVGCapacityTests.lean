@@ -19,17 +19,18 @@ private def measure (name text : String) (expected expectedFloats : Nat) : IO Un
   check (artifact.getString? "binding" == some "read-only-storage") "storage contract missing"
   let some data := artifact.getArray? "data" | throw (IO.userError "missing data")
   let some shader := artifact.getString? "wgsl" | throw (IO.userError "missing WGSL")
-  check (data.length == expectedFloats && data.length <= NativeSVG.maxDataFloats) "storage record count"
+  check (data.length == expectedFloats && data.length <= NativeSVG.maxDataFloats)
+    s!"storage record count: expected {expectedFloats}, got {data.length}"
   check (shader.length < 32768 && (shader.splitOn "for(var primitive=").length == 2) "shader still expands per primitive"
   for (x,y) in [(0,100),(500,335),(494,311),(500,316),(427,358),(500,350),(100,100),(800,100)] do
     check (NativeSVG.sample xml 0 0 x y == rgbJSON (scene.sample x.toNat y.toNat)) "full-scene CPU sample disagreement"
   IO.println s!"PASS {name}: chars={xml.length} primitives={expected} floats={data.length} shaderChars={shader.length}"
 
 def run : IO Unit := do
-  measure "default8" (← IO.FS.readFile "../../labs/demos/foafnaut/foaf/fixtures/demo.ttl") 292 32792
+  measure "default8" (← IO.FS.readFile "../../labs/demos/foafnaut/foaf/fixtures/demo.ttl") 292 39452
   let people := (List.range 16).map fun i => s!"<https://example.org/p{i}> a f:Person; f:name \"WWWWWWWWWWWW\" ."
   let links := (List.range 48).map fun i => s!"<https://example.org/p{i/3}> f:knows <https://example.org/p{(i/3+i%3+1)%16}> ."
-  measure "dense16" ("@prefix f: <http://xmlns.com/foaf/0.1/> . " ++ String.join (people++links)) 716 114728
+  measure "dense16" ("@prefix f: <http://xmlns.com/foaf/0.1/> . " ++ String.join (people++links)) 716 133208
   let root (children : String) := "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'>" ++ children ++ "</svg>"
   check ((NativeSVG.parse (root (String.join (List.replicate 12289 "<circle r='1'/>")))).isOk == false) "primitive budget ignored"
   check ((NativeSVG.parse (String.ofList (List.replicate 1048577 'x'))).isOk == false) "character budget ignored"

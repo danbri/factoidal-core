@@ -11,6 +11,37 @@ claims about the current implementation. SVG scope and refusals are in
 [SVG_README.md](SVG_README.md). Local tests, official-suite input audits, and real
 GPU observations are separate evidence classes.
 
+## Solving retained-scene showcase
+
+In a source checkout, double-click [`Solving.command`](Solving.command) to compile
+the Lean scene, write an SVG backend artifact under `.build/`, and ask macOS to
+open it. The macOS package contains a certified static `Solving Showcase.svg`
+next to that launcher. Its launcher opens the adjacent file without Lean or
+source files, including after package relocation. This showcase uses the browser
+SVG backend; it is not a native WebGPU rendering test. If no SVG handler is set,
+the launcher prints the full file path for browser use.
+The Lean scene owns the nodes, paint order, clips, translations and integer
+shape hit-test geometry. `SolvingSVG.lean` exposes `Solving.pickSVG` for reverse-painter-order
+geometric picking over the parsed SVG scene as `Option (Fin primitiveCount)`,
+sharing its coverage expressions with Lean's CPU sampler and WGSL generation.
+The Lean theorem `NativeSVG.Scene.hitTestAt_none_outside_viewport` rejects
+out-of-viewport queries.
+That SVG picker is not wired to the browser controls yet, and its result is a
+paint-item index rather than a source-element ID. `Solving.RetainedScene` now
+holds either complete programmatic nodes or full parsed SVG display nodes
+in one ordered list. SVG nodes retain group boundaries and local transforms;
+proved round trips preserve each source scene. It is still a tagged envelope: Lean also proves that each backend adapter rejects
+the other producer's nodes. Geometry and render operations are not unified, and
+the WebGPU host still consumes the SVG artifact. See the
+[scene worknote](../../../docs/20261101-solving-scene-slice.md).
+`SolvingPolicy.lean` derives clipped, viewport-bounded footprints from these
+same nodes. Applications nominate semantic layout participants by stable node
+ID, so connector paint need not count as an overlapping UI node. The showcase
+is exported through `svgBackend` only after `certifyScene` returns a
+`CertifiedScene`; Lean proves the configured overlap bound for those
+conservative boxes. This does not certify exact pixel overlap or WebGPU
+execution; see the scene worknote for the distinction.
+
 ## Run a native release directory
 
 Keep the three executables, Cocoa sidecar, launchers and fixtures together.

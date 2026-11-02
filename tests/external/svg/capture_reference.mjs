@@ -21,11 +21,12 @@ const server=createServer(async(req,res)=>{try{
  if(relative(upstream,path).split(sep).includes('..')) throw Error('outside fixture root');
  const body=await readFile(path);res.writeHead(200,{'Content-Type':path.endsWith('.svg')?'image/svg+xml':'application/octet-stream','Cache-Control':'no-store'});res.end(body);
 }catch{res.writeHead(404);res.end();}});
-await new Promise(r=>server.listen(0,'127.0.0.1',r));
+await new Promise((r,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',r);});
 const origin=`http://127.0.0.1:${server.address().port}`;
 const { chromium }=await import(pathToFileURL(resolve(playwright)).href);
 let browser;
 const report={revision:manifest.revision,mode:'independent-browser-static-candidate',viewport:{width:800,height:600,deviceScaleFactor:1},background:'white browser canvas',scripts:false,externalFetch:false,host:{platform:platform(),release:release(),arch:arch()},fonts:'System fonts not independently enumerated; external-font cases excluded explicitly.',scope:'Original unchanged standalone SVG documents; no general secure-static mode equivalence claim.',browserExecutableSha256:hash(await readFile(executable)),cases:[]};
+report.capturedAt=new Date().toISOString();report.harnessSha256=hash(await readFile(fileURLToPath(import.meta.url)));report.node=process.version;
 try{
  browser=await chromium.launch({executablePath:executable,headless:true}); report.browserVersion=browser.version();
  const context=await browser.newContext({viewport:{width:800,height:600},deviceScaleFactor:1,javaScriptEnabled:false,colorScheme:'light',reducedMotion:'reduce'});

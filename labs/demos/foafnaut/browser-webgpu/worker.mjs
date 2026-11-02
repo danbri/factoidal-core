@@ -16,7 +16,7 @@ self.onmessage=async({data})=>{
   const ready=performance.now(),rgba=await session.draw(),finished=performance.now();
   const info=session.adapterInfo;
   self.postMessage({type:'frame',id:data.id,width:a.width,height:a.height,rgba:rgba.buffer,
-   wgsl:a.wgsl,generatedWGSL:generated.wgsl,manualShader,primitives:a.primitiveCount,floats:a.data.length,checks:a.checks.length,
+   wgsl:a.wgsl,generatedWGSL:generated.wgsl,tree:a.tree??null,manualShader,primitives:a.primitiveCount,floats:a.data.length,checks:a.checks.length,
    stats:session.stats,adapter:{vendor:info.vendor,architecture:info.architecture,description:info.description,isFallbackAdapter:info.isFallbackAdapter},
    time:{compileMs:compiled-start,gpuSetupMs:ready-compiled,drawAndReadbackMs:finished-ready}},[rgba.buffer]);
  }catch(e){self.postMessage({type:'error',id:data.id,error:String(e.message??e)});}

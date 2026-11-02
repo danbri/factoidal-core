@@ -15,6 +15,8 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-02 | [Browser SVG/WebGPU harness, whole-image diagnostics and fault controls](20261102-svg-browser-harness.md) | this commit | current — unchanged 38-case WPT slice and separate sensitivity controls |
+| 2026-11-01 | [Solving retained scene slice](20261101-solving-scene-slice.md) | this commit | current — Lean scene, hit testing, clip and SVG export; a shared bounded layout certificate now guards the SVG backend; parsed-SVG/WebGPU scene unification remains |
 | 2026-11-01 | [Shared SVG linear strokes](20261101-svg-linear-strokes.md) | 957a060d4; b5f6a9150 | current — two exact same-renderer GPU pairs; six source admissions; independent antialiasing gap remains |
 | 2026-11-01 | [SVG dash numeric refinement](20261101-svg-dash-numeric-refinement.md) | pending | current — whole-result numeric equality and vacuous-output mutation rejection |
 | 2026-11-01 | [SVG dash unit provenance](20261101-svg-dash-unit-provenance.md) | 13f74302e | current — paired value/unit records, kernel proofs, unchanged fixture artifact |
@@ -194,3 +196,6 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-01 | [Shared retained SVG linear strokes](20261101-svg-linear-strokes.md) | same commit | open/closed contours, miter fallback, total pathLength, one-opacity union; one official same-renderer GPU reference pair exactly matches |
 
 | 2026-11-01 | [SVG stroke topology contracts](20261101-svg-stroke-topology.md) | same commit | exact open/closed edge theorems over real stroker; unconditional closure mutation rejected |
+| 2026-11-01 | [Solving: one SVG scene, two rendering backends](20261101-solving-backend-comparison.md) | this commit | layered browser scene uses same accepted SVG source in browser renderer and Lean/WebGPU path; Lean now retains nested SVG groups with local transforms, proves the cached painter-order lowering and emits bounded optional tree-inspector JSON; CPU probes now reuse one packed array with a proved record cursor; compositor surfaces, HTML/layout integration and cross-renderer equivalence remain open |
+
+| 2026-11-02 | [FOAFNaut macOS build and Solving package](20261102-foafnaut-macos-build.md) | this commit | fresh engine/package validation, official runtime cache provenance, renderer equality with distinct retained trees, and static browser SVG launcher relocation without Lean |

@@ -94,7 +94,7 @@ The transparent SVG canvas is composited over a documented white backdrop for
 opaque RGB PPM output.
 
 These choices refer to W3C [painting](https://www.w3.org/TR/SVG11/painting.html)
-and [viewport transformation](https://www.w3.org/TR/SVG 2/coords.html#ComputingAViewportsTransform),
+and [viewport transformation](https://www.w3.org/TR/SVG2/coords.html#ComputingAViewportsTransform),
 without claiming all their semantics or other SVG features are implemented.
 
 ## Explicit refusals and limits
@@ -102,13 +102,29 @@ without claiming all their semantics or other SVG features are implemented.
 CSS class/id selectors and broader CSS cascade, root transforms, curved path
 commands and their strokes, text/fonts, nested viewports, images, use/links,
 scripting, animation, defs/gradients/patterns, filters, masks,
-clips, markers, rounded rects, conditional processing, visibility/display,
+clips, markers, rounded rects, conditional processing,
 paint-order changes, group opacity, square caps, custom joins/miterlimits,
 ellipse strokes, font-relative/other non-px lengths, and unknown colors are
 errors.
 Unsupported features are not silently dropped, even on a zero-size primitive.
 IDs and version labels 1.1/2.0 are recognized metadata, not schema validation.
 Only unresolved simple local paint-fragment fallback is currently implemented. Full SVG remains open work.
+
+### `display` and `visibility` subset
+
+The parser supports SVG 2 `display="none"` by omitting that element and its
+subtree from the retained paint scene. It still parses and validates the
+subtree before omitting it, so unsupported markup does not become silently
+accepted just because it is hidden. Other `display` values use the ordinary
+paint path in this restricted profile; this is not full CSS `display`
+validation. `visibility="visible"`, `hidden`, and `collapse` are inherited.
+Hidden/collapsed paint records remain in the retained scene but lower with zero
+effective opacity; a descendant can set `visibility="visible"` again.
+
+This graphics picker is geometric, not a browser DOM event target. It does not
+implement `pointer-events` or claim SVG event-dispatch behavior. See the SVG 2
+[rendering model](https://www.w3.org/TR/SVG2/render.html) for full browser
+semantics.
 
 DOCTYPE/DTD, processing instructions and non-UTF-8 encoding declarations are
 refused. Host UTF-8 decoding is strict. Profile limits: 1,048,576 characters (host
@@ -124,11 +140,13 @@ WGSL loop rather than shader code expanded for every primitive. Lean's render
 plan checks the actual device storage-binding and buffer-size limits before
 allocation; over-budget documents are refused without truncation. Small UI
 scenes retain their existing uniform-buffer path. The generated default
-8-person FOAF scene now measures 47,845 characters, 292 SVG primitives and 32,792
+8-person FOAF scene measures 47,845 characters, 292 SVG primitives and 39,452
 Float values; a dense 16-person/48-link scene measures 154,860 characters,
-716 primitives and 114,728 Float values. Before compound glyph paths these were
-128,347/1,880/37,608 and 455,470/6,748/134,968 respectively. These measurements motivate the
-bounded profile, not a frame-rate guarantee.
+716 primitives and 133,208 Float values. The current counts include retained
+linear-stroke geometry; the previous 32,792/114,728 totals predate that storage
+tail. Both remain below the 262,144-float cap. Before compound glyph paths the
+scenes were 128,347/1,880/37,608 and 455,470/6,748/134,968 respectively. These
+measurements motivate the bounded profile, not a frame-rate guarantee.
 
 Geometry has hard boundaries without antialiasing. CPU reference Float and GPU
 f32 may differ at boundaries; readback comparisons allow one channel value of
@@ -252,6 +270,13 @@ agrees with that count. `headerModeCode_roundCap` and
 `headerModeCode_hasTransform` prove the low and high mode bits mean round cap
 and transform-present respectively. The generated WGSL remains text, so these
 theorems do not certify that text's parsing or the `Float`-to-`u32` header cast.
+The CPU reference sampler builds the packed array once for all antialias samples
+in a pixel. `Scene.json` reuses one array for every reference probe and for the
+returned GPU payload. Cursor advancement uses the proved four-lane row length
+instead of rebuilding each primitive's scalar list to count it.
+`Primitive.rows_offsets_eq_flattened_length` and
+`Scene.data_size_eq_record_cursor` have only Lean standard axioms in their
+`#print axioms` reports.
 
 The actual browser-host raw WebGPU track now has **2 matches, 23 unsupported and
 13 unavailable** out of the unchanged 38 WPT cases, with no mismatches/rejections.

@@ -36,13 +36,23 @@ def png(path):
     for y in range(h):
         start=y*(stride+1); method=raw[start]; row=bytearray(raw[start+1:start+1+stride])
         if method>4: raise ValueError('invalid PNG filter')
-        for x in range(stride):
-            a=row[x-channels] if x>=channels else 0; b=previous[x]; c=previous[x-channels] if x>=channels else 0
-            p=a+b-c; distances=(abs(p-a),abs(p-b),abs(p-c)); paeth=(a,b,c)[distances.index(min(distances))]
-            row[x]=(row[x]+(0,a,b,(a+b)//2,paeth)[method])&255
-        for x in range(0,stride,channels):
-            alpha=row[x+3] if channels==4 else 255
-            rgb.extend((row[x+i]*alpha+255*(255-alpha)+127)//255 for i in range(3))
+        if method==1:
+            for x in range(channels,stride): row[x]=(row[x]+row[x-channels])&255
+        elif method==2:
+            row=bytearray((value+previous[x])&255 for x,value in enumerate(row))
+        elif method in (3,4):
+            for x in range(stride):
+                a=row[x-channels] if x>=channels else 0; b=previous[x]; c=previous[x-channels] if x>=channels else 0
+                if method==3: predictor=(a+b)//2
+                else:
+                    p=a+b-c;pa,pb,pc=abs(p-a),abs(p-b),abs(p-c)
+                    predictor=a if pa<=pb and pa<=pc else b if pb<=pc else c
+                row[x]=(row[x]+predictor)&255
+        if channels==3: rgb.extend(row)
+        else:
+            for x in range(0,stride,channels):
+                alpha=row[x+3]
+                rgb.extend((row[x+i]*alpha+255*(255-alpha)+127)//255 for i in range(3))
         previous=row
     return w,h,bytes(rgb)
 
@@ -55,6 +65,9 @@ def metrics(actual,expected,fuzzy):
     aw,ah,a=actual;ew,eh,e=expected
     if (aw,ah)!=(800,600) or (aw,ah)!=(ew,eh): raise ValueError('expected full800x600 images')
     maximum=different=0;diff=bytearray()
+    if a==e:
+        mr,pr=fuzzy
+        return mr[0]<=0<=mr[1] and pr[0]<=0<=pr[1],{'maxChannelDifference':0,'differentPixels':0},(aw,ah,bytes(len(a)))
     for i in range(0,len(a),3):
         d=[abs(a[i+j]-e[i+j]) for j in range(3)];maximum=max(maximum,*d);different+=any(d);diff.extend(d)
     mr,pr=fuzzy
@@ -75,8 +88,10 @@ def compare_oracle(directory,command=None,output=None,candidate_directory=None):
             raise ValueError('candidate inventory/pin mismatch')
         if capture.get('backend')!='browser-raw-webgpu' or capture.get('viewport')!={'width':800,'height':600,'deviceScaleFactor':1}:
             raise ValueError('candidate backend/viewport differs')
+        if any(not report.get(key) or capture.get(key)!=report[key] for key in ('browserVersion','browserExecutableSha256')):
+            raise ValueError('candidate and oracle must use the same browser version and executable bytes')
     out=Path(output or root/'comparison');out.mkdir(parents=True,exist_ok=True)
-    results=[]
+    results=[];decoded={}
     for i,(case,oracle) in enumerate(zip(manifest['cases'],report['cases'])):
         row={'test':case['test'],'reference':case['reference'],'status':'unavailable'}
         try:
@@ -88,7 +103,8 @@ def compare_oracle(directory,command=None,output=None,candidate_directory=None):
                 if hashlib.sha256(path.read_bytes()).hexdigest()!=image['sha256']: raise ValueError('oracle image hash mismatch')
                 source=suite.ROOT/'upstream'/case[role]
                 if hashlib.sha256(source.read_bytes()).hexdigest()!=image['sourceSha256']: raise ValueError('oracle source hash mismatch')
-                images[role]=png(path)
+                if image['sha256'] not in decoded: decoded[image['sha256']]=png(path)
+                images[role]=decoded[image['sha256']]
             equal,detail,_=metrics(images['test'],images['reference'],case['fuzzy'])
             row['independentRelation']={'matches':equal,**detail}
             if not equal: raise ValueError('independent browser disagrees with original reftest relation')
@@ -113,6 +129,26 @@ def compare_oracle(directory,command=None,output=None,candidate_directory=None):
                 write_ppm(out/f'{i:02}-difference.ppm',diff)
                 _,against_test,_=metrics(suite.ppm(actual),images['test'],case['fuzzy'])
                 row.update(status='match' if equal else 'mismatch',detail=detail,againstIndependentTest=against_test)
+                if capture: row.update(viewportPolicy=candidate.get('viewportPolicy'),svgViewport=candidate.get('svgViewport'))
+                if capture and capture.get('controlsRequested'):
+                    row['controls']={}
+                    for name in ('unchangedReplay','gpuFlatMagenta','unsampledReadbackPixel'):
+                        control=candidate.get('controls',{}).get(name,{})
+                        result={'status':'unavailable','expected':'identical' if name=='unchangedReplay' else 'different'}
+                        try:
+                            image=control['image'];path=Path(candidate_directory)/image['file']
+                            if Path(image['file']).name!=image['file']: raise ValueError('unsafe control filename')
+                            if hashlib.sha256(path.read_bytes()).hexdigest()!=image['sha256']: raise ValueError('control image hash mismatch')
+                            pixels=suite.ppm(path)
+                            same,vs_candidate,_=metrics(pixels,suite.ppm(actual),[[0,0],[0,0]])
+                            oracle_equal,vs_oracle,diff=metrics(pixels,images['reference'],case['fuzzy'])
+                            result.update(againstCandidate=vs_candidate,againstIndependentReference=vs_oracle,
+                                          oracleMatches=oracle_equal,metadata={k:v for k,v in control.items() if k!='image'})
+                            write_ppm(out/f'{i:02}-control-{name}-difference.ppm',diff)
+                            if not equal: result['reason']='Baseline does not match independent reference; oracle sensitivity is not established'
+                            else: result['status']='pass' if (same and oracle_equal if name=='unchangedReplay' else not same and not oracle_equal) else 'fail'
+                        except (ValueError,OSError,KeyError,TypeError) as error: result['reason']=control.get('error',str(error))
+                        row['controls'][name]=result
         except (ValueError,OSError,KeyError,TypeError) as error: row['reason']=str(error)
         results.append(row)
     candidate=None
@@ -123,8 +159,12 @@ def compare_oracle(directory,command=None,output=None,candidate_directory=None):
             for block in iter(lambda:stream.read(1048576),b''): digest.update(block)
         executable_hash=digest.hexdigest()
         candidate={'command':command,'executableSha256':executable_hash}
-    captured_metadata={k:capture.get(k) for k in ('backend','host','browserVersion','browserExecutableSha256','typescript','viewport','candidateSources','adapters')} if capture else None
-    result={'candidateCapture':captured_metadata,'candidate':candidate,'oracleCapture':{k:report.get(k) for k in ('browserVersion','browserExecutableSha256','host','fonts','viewport','scripts','externalFetch','scope')},'revision':manifest['revision'],'mode':'independent-browser-full-image','oracleBrowser':report.get('browserVersion'),'total':len(results),'counts':{s:sum(x['status']==s for x in results) for s in suite.STATES},'results':results}
+    captured_metadata={k:capture.get(k) for k in ('backend','host','browserVersion','browserExecutableSha256','typescript','viewport','viewportPolicy','candidateSources','sourceSnapshot','runtimeAssets','harnessSha256','harnessSources','controlsRequested','adapters')} if capture else None
+    result={'candidateCapture':captured_metadata,'candidate':candidate,'oracleCapture':{k:report.get(k) for k in ('browserVersion','browserExecutableSha256','host','fonts','viewport','scripts','externalFetch','scope','capturedAt','harnessSha256','node')},'revision':manifest['revision'],'mode':'independent-browser-full-image','oracleBrowser':report.get('browserVersion'),'total':len(results),'counts':{s:sum(x['status']==s for x in results) for s in suite.STATES},'results':results}
+    result['comparatorSha256']=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    if capture and capture.get('controlsRequested'):
+        result['controls']={'scope':'Sensitivity diagnostics only; no additional WPT cases or passes',
+          'counts':{name:{state:sum(row.get('controls',{}).get(name,{}).get('status','unavailable')==state for row in results) for state in ('pass','fail','unavailable')} for name in ('unchangedReplay','gpuFlatMagenta','unsampledReadbackPixel')}}
     (out/'report.json').write_text(json.dumps(result,indent=2)+'\n');return result
 
 
@@ -132,5 +172,5 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--oracle',required=True);parser.add_argument('--engine');parser.add_argument('--candidate');parser.add_argument('--output');args=parser.parse_args()
     if args.engine and args.candidate: parser.error('choose --engine or --candidate')
     result=compare_oracle(args.oracle,[str(Path(args.engine).resolve())] if args.engine else None,args.output,args.candidate)
-    print(json.dumps({'total':result['total'],'counts':result['counts']}))
+    print(json.dumps({k:result[k] for k in ('total','counts','controls') if k in result}))
     raise SystemExit(0 if result['counts']['match']==result['total'] else 1)
