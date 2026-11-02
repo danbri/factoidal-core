@@ -32,7 +32,7 @@ def namespaceTree (dom : DOM.Dom) : Nat → Nat → Except String XML.NamespaceN
     let n := dom.get id
     if n.type == .element then
       let children ← n.kids.toList.mapM (namespaceTree dom fuel)
-      let attrs := n.attrs.toList.map fun a =>
+      let attrs := (n.attrs.toList.filter (fun a => a.ns != some DOM.xmlnsNS)).map fun a =>
         ({name := ⟨a.ns,a.lname⟩,value := a.value} : XML.NamespaceAttribute)
       return .element ⟨n.ns,n.lname⟩ attrs children
     else if n.type == .text || n.type == .cdata then return .other (.text n.data)
@@ -54,5 +54,60 @@ def renderDOM (dom : DOM.Dom) (width height : Nat)
     (embedding : Rendering.Layout.Embedding) : Except String (Rendering.Scene × Array Rendering.Layout.Box) := do
   let rules ← Rendering.CSS.parse (styleSource dom)
   Rendering.Layout.render dom rules asciiFont embedding width height
+
+end WebRender
+
+namespace WebRender
+open L4Factoidal
+
+/-- Until the native clip-stack extension lands, embedded viewports admit only
+untransformed fill rectangles wholly inside their viewport. Other valid SVG
+scenes remain accepted by the standalone shared-scene SVG producer. -/
+private def embeddingNeedsNoClip (scene : NativeSVG.Scene) : Bool :=
+  scene.primitives.all fun p =>
+    let t := p.transform
+    let identity := t.a == 1 && t.b == 0 && t.c == 0 && t.d == 1 && t.e == 0 && t.f == 0
+    let noStroke := match p.style.stroke with | .none => true | _ => false
+    match p.geometry with
+    | .rect x y w h => identity && noStroke && x >= 0 && y >= 0 && w >= 0 && h >= 0 &&
+      (x-scene.mapping.minX)*scene.mapping.sx+scene.mapping.tx >= 0 &&
+      (y-scene.mapping.minY)*scene.mapping.sy+scene.mapping.ty >= 0 &&
+      (x+w-scene.mapping.minX)*scene.mapping.sx+scene.mapping.tx <= scene.mapping.viewportWidth &&
+      (y+h-scene.mapping.minY)*scene.mapping.sy+scene.mapping.ty <= scene.mapping.viewportHeight
+    | _ => false
+
+def embedding (dom : DOM.Dom) (id : Nat) (width height : Float) : Except String (List Rendering.Node) := do
+  if Float.ofNat width.toUInt32.toNat != width || Float.ofNat height.toUInt32.toNat != height then
+    throw "unsupported fractional embedded SVG viewport"
+  let root ← namespaceTree dom 64 id
+  let scene ← NativeSVG.parseRoot root width.toUInt32.toNat height.toUInt32.toNat
+  if !embeddingNeedsNoClip scene then throw "unsupported embedded SVG requiring viewport clipping (clip extension pending)"
+  let m := scene.mapping
+  let transform : Rendering.Transform := ⟨m.sx,0,0,m.sy,m.tx-m.minX*m.sx,m.ty-m.minY*m.sy⟩
+  return [.group none transform (WebRenderSVG.fromScene scene).tree]
+
+def render (html : String) (width height : Nat) : Except String (Rendering.Scene × Array Rendering.Layout.Box) := do
+  if html.length > 1048576 then throw "unsupported HTML input exceeding 1048576 characters"
+  let dom := DOM.parseHtmlDocument html
+  renderDOM dom width height (embedding dom)
+
+private def array (xs : List String) := "[" ++ String.intercalate "," xs ++ "]"
+private def runJSON (r : Rendering.GlyphRun) : String :=
+  "{\"source\":" ++ toString r.source ++ ",\"font\":" ++ quote r.font ++ ",\"size\":" ++ toString r.fontSize ++
+  ",\"text\":" ++ quote r.text ++ ",\"glyphs\":" ++ array (r.glyphs.toList.map fun g =>
+    array [toString g.index,toString g.x,toString g.y,toString g.advance,toString g.clusterStart,toString g.clusterEnd]) ++ "}"
+private def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box) : String :=
+  "{\"profile\":\"lean-block-inline-ascii-bitmap-v1\",\"fontScope\":\"ASCII bitmap; no real font shaping\",\"boxes\":" ++
+  array (boxes.toList.map fun b => array [toString b.source,toString b.x,toString b.y,toString b.width,toString b.height]) ++
+  ",\"glyphRuns\":" ++ array (s.glyphRuns.toList.map runJSON) ++ "}"
+
+@[export web_render_compile]
+def compile (html : String) (width height : UInt32) : String :=
+  match render html width.toNat height.toNat with
+  | .error message => errorJSON message
+  | .ok (scene,boxes) =>
+    match (WebRenderSVG.toScene scene).artifact with
+    | .error message => errorJSON message
+    | .ok artifact => (artifact.dropEnd 1).toString ++ ",\"webRender\":" ++ layoutJSON scene boxes ++ "}"
 
 end WebRender

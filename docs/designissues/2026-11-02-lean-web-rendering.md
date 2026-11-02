@@ -90,3 +90,15 @@ Those are separate required milestones. Logs are
 GitHub API DNS was unavailable and unrelated fixtures/binaries were absent.
 No unavailable corpus is reported as a passing zero-test run. Disk free was
 4.2 GiB; heavy builds require at least 3 GiB.
+
+## Actual browser vertical slice, 2026-11-02 23:07 UTC
+
+The native and WASM frontend, existing WGSL/WebGPU backend, editable HTML/CSS
+viewer and independent whole-image comparison now run. Five local named
+checks pass, including exact CPU/GPU/original-HTML browser agreement over a
+7,680-pixel box/embedding fixture. The default has actual word flow and
+1,579 paint items. This supersedes only the earlier checkpoint's missing-image
+status; font and CSS limitations remain. Full evidence and build limits:
+[first image worknote](../20261102-lean-web-renderer-first-images.md).
+The vetted native [font-data adapter](../../labs/demos/foafnaut/tools/FONT_DATA.md)
+is separate from layout and awaits typed Lean consumption.

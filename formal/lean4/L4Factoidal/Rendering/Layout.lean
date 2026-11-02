@@ -71,6 +71,10 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) :
     if s.display == .none then return #[]
     if n.type == .text then return (textItems id s n.data).toArray
     if n.type != .element then return #[]
+    if n.ns != some DOM.htmlNS && n.ns != some DOM.svgNS then
+      throw "unsupported foreign namespace in HTML layout"
+    if ["img","input","textarea","select","video","audio","canvas","iframe","object","embed","table","ruby","ul","ol","li"].contains n.lname then
+      throw s!"unsupported HTML layout element: {n.lname}"
     if n.lname == "br" then return #[.lineBreak]
     if n.ns != some DOM.svgNS && (s.background.isSome ||
       s.margin.top != 0 || s.margin.right != 0 || s.margin.bottom != 0 || s.margin.left != 0 ||
@@ -187,6 +191,9 @@ def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding 
     let n := dom.get id
     let s := styles[id]!
     if s.display == .none then return {}
+    if n.type == .element && n.ns != some DOM.htmlNS && n.ns != some DOM.svgNS then
+      throw "unsupported foreign namespace in HTML layout"
+    if ["table","ul","ol","li"].contains n.lname then throw s!"unsupported HTML layout element: {n.lname}"
     let margin := s.margin
     if n.lname != "body" && (margin.top != 0 || margin.bottom != 0) then
       throw "unsupported collapsing vertical block margins"
