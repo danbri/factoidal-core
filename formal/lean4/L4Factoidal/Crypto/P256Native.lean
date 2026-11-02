@@ -179,4 +179,66 @@ def p256Ecdh (theirXY sk : ByteArray) : Option ByteArray :=
   let p := p256EcdhRaw theirXY sk
   if p.size == 64 then some (p.extract 0 32) else none
 
+/-! ## ECDSA over a message representative computed in Lean
+
+FIPS 186-4 §6.4 (signature generation, step 4; verification, step 3): the
+integer `e` is the leftmost `min(N, outlen)` bits of the hash, with `N = 256`
+for P-256. `p256MsgRep` gives `e` as 32 big-endian octets: the first 32
+octets of a hash of 32 octets or more (SHA-256, SHA-384, SHA-512), or a
+shorter hash (SHA-1, SHA-224) left-padded with zero octets, which keeps its
+integer value. HACL* `Hacl_P256_ecdsa_verif_without_hash` and
+`Hacl_P256_ecdsa_sign_p256_without_hash` take this `e`; HACL*'s own
+`..._sha384` and `..._sha512` entries take the first 32 octets of the hash in
+the same way (`third_party/hacl/src/Hacl_P256.c`). Added for XML Signature
+1.1 §6.4.3 (https://github.com/danbri/factoidal/issues/1223). -/
+
+/-- The 32-octet message representative of a hash for P-256 (FIPS 186-4 §6.4). -/
+def p256MsgRep (h : ByteArray) : ByteArray :=
+  if 32 ≤ h.size then h.extract 0 32
+  else ⟨(List.replicate (32 - h.size) (0 : UInt8)).toArray⟩ ++ h
+
+theorem p256MsgRep_size (h : ByteArray) : (p256MsgRep h).size = 32 := by
+  unfold p256MsgRep
+  split
+  · simp [ByteArray.size_extract]; omega
+  · rename_i hlt
+    simp only [ByteArray.size_append]
+    show (List.replicate (32 - h.size) (0 : UInt8)).toArray.size + h.size = 32
+    simp only [List.size_toArray, List.length_replicate]
+    omega
+
+/-- A 32-octet hash (SHA-256) is its own representative, so the
+`..._without_hash` path checks the same integer as `Hacl_P256_ecdsa_verif_p256_sha2`. -/
+theorem p256MsgRep_of_size32 (h : ByteArray) (hs : h.size = 32) : p256MsgRep h = h := by
+  unfold p256MsgRep
+  simp only [hs, Nat.le_refl, if_true]
+  rw [← hs]
+  exact ByteArray.extract_zero_size
+
+#guard p256MsgRep ⟨#[1, 2]⟩ == ⟨(List.replicate 30 (0 : UInt8) ++ [1, 2]).toArray⟩
+#guard (p256MsgRep ⟨(List.range 48).toArray.map UInt8.ofNat⟩).data.toList ==
+  (List.range 32).map UInt8.ofNat
+
+/-- ECDSA P-256 verification of `sig = r || s` with the representative `e`
+(32 octets) via HACL* `Hacl_P256_ecdsa_verif_without_hash`. `false` on a
+length refusal, an invalid public key, or a rejected signature. -/
+@[extern "l4_hacl_p256_verify_prehashed"]
+opaque p256VerifyPrehashed (pubXY : @& ByteArray) (e : @& ByteArray)
+    (sig : @& ByteArray) : Bool
+
+/-- ECDSA P-256 signing with the representative `e` via HACL*
+`Hacl_P256_ecdsa_sign_p256_without_hash`: `r || s`, or EMPTY on a refusal. -/
+@[extern "l4_hacl_p256_sign_prehashed"]
+opaque p256SignPrehashedRaw (sk : @& ByteArray) (e : @& ByteArray)
+    (nonce : @& ByteArray) : ByteArray
+
+/-- ECDSA P-256 verification over the hash `h` of the message (any length). -/
+def p256VerifyHash (pubXY h sig : ByteArray) : Bool :=
+  p256VerifyPrehashed pubXY (p256MsgRep h) sig
+
+/-- ECDSA P-256 signing over the hash `h`, with its refusal as `none`. -/
+def p256SignHash (sk h nonce : ByteArray) : Option ByteArray :=
+  let s := p256SignPrehashedRaw sk (p256MsgRep h) nonce
+  if s.size == 64 then some s else none
+
 end L4Factoidal.Crypto.P256
