@@ -25,6 +25,10 @@ Harness/XmlDsigRun — core validation (XML Signature 1.1 §3.2) by
   * `tests/xmldsig/x509/`: `ds:X509Data` fixtures made by signxml and
     pyca/cryptography (`tests/xmldsig/make_x509_fixtures.py`; the caller's
     certificates are named in `manifest.tsv`).
+  * `tests/xmldsig/retrieval/`: `ds:RetrievalMethod` fixtures (§4.5.3),
+    the signxml X.509 fixtures with their unsigned `ds:KeyInfo` rewritten
+    (`tests/xmldsig/make_retrieval_fixtures.py`); refusals must contain
+    the text that `manifest.tsv` gives.
   * `tests/xmldsig/fixtures/`: signatures made by signxml (an independent
     implementation) with RSA-2048, P-256 and HMAC keys, and negative cases
     made from them (`tests/xmldsig/make_fixtures.py`; `manifest.tsv` gives
@@ -236,14 +240,19 @@ def runMerlin (t0 : Tally) (dir : String) : IO Tally := do
 /-- The key selection of `ds:X509Data` (§4.5.4) in the 2001 vectors:
 the file, and the serial number (hexadecimal, from `openssl x509
 -serial`) of the certificate it names among its own and those of
-`certs/`. For `signature.xml` the `ds:X509Data` is the target of a
-`ds:RetrievalMethod` (https://github.com/danbri/factoidal/issues/1228);
-it is read here directly. Each selected key is DSA, so `certKey` must
-refuse it naming https://github.com/danbri/factoidal/issues/1224. -/
+`certs/`, through `signingCertificate?`. Two of them reach the
+certificate through `ds:RetrievalMethod` (§4.5.3,
+https://github.com/danbri/factoidal/issues/1228): `signature.xml` (Type
+X509Data, a same-document URI and an XPath transform) and
+`signature-retrievalmethod-rawx509crt.xml` (Type rawX509Certificate, the
+relative URI `certs/balor.crt`, which the runner resolves to the vendored
+file). Each selected key is DSA, so `certKey` must refuse it naming
+https://github.com/danbri/factoidal/issues/1224. -/
 def merlinX509 : List (String × String) :=
   [("signature-x509-crt.xml", "ECF92151D3"), ("signature-x509-crt-crl.xml", "ECF921DE7F"),
    ("signature-x509-is.xml", "ECF9217BFA"), ("signature-x509-sn.xml", "ECF921674A"),
-   ("signature-x509-ski.xml", "ECF92190C7"), ("signature.xml", "ECF8EA0DAC")]
+   ("signature-x509-ski.xml", "ECF92190C7"), ("signature.xml", "ECF8EA0DAC"),
+   ("signature-retrievalmethod-rawx509crt.xml", "ECF921AC47")]
 
 def hexOfInt (n : Int) : String :=
   (String.ofList (Nat.toDigits 16 n.toNat)).toUpper
@@ -251,14 +260,21 @@ def hexOfInt (n : Int) : String :=
 def runMerlinX509 (t0 : Tally) (dir : String) : IO Tally := do
   let mut t := t0
   let mut certs : List ByteArray := []
+  let mut files : List (String × ByteArray) := []
   for n in ["badb", "balor", "bres", "ca", "lugh", "macha", "morigu", "nemain"] do
-    certs := certs ++ [← IO.FS.readBinFile s!"{dir}/certs/{n}.crt"]
+    let b ← IO.FS.readBinFile s!"{dir}/certs/{n}.crt"
+    certs := certs ++ [b]
+    files := files ++ [(s!"certs/{n}.crt", b)]
+  let fs := files
+  let cfg : Config := { certificates := certs, resolve := fun u => (fs.find? (·.1 == u)).map (·.2) }
   for (f, serial) in merlinX509 do
     let src ← IO.FS.readFile s!"{dir}/{f}"
     let r : Except String L4Factoidal.X509.Cert := do
       let cd ← C14n.C14nDoc.ofString? src
-      let some xd := (List.range cd.n0).find? (fun i => isEl cd.doc i dsNs "X509Data") | throw "no ds:X509Data"
-      x509Select certs cd.doc xd
+      let some s := (signatures cd).head? | throw "no ds:Signature"
+      let sg ← parseSignature cd.doc s
+      let some c := signingCertificate? cfg cd sg | throw "no ds:X509Data and no ds:RetrievalMethod that gives a certificate"
+      c
     let name := s!"merlin-2001 {f} X509Data selection"
     match r with
     | .error e => IO.println s!"FAIL {name}: {e}"; t := { t with fail := t.fail + 1 }
@@ -290,6 +306,37 @@ def runX509Fixtures (t0 : Tally) (dir : String) : IO Tally := do
             certs := certs ++ [← IO.FS.readBinFile s!"{dir}/{g}"]
         let cfg : Config := { certificates := certs }
         t ← record t s!"x509 {file}" (want == "valid") none (outcome (validateText nativeBackend cfg src))
+    | _ => pure ()
+  return t
+
+/-- The `ds:RetrievalMethod` fixtures (§4.5.3,
+`tests/xmldsig/make_retrieval_fixtures.py`, made from the signxml
+fixtures of `tests/xmldsig/x509/`): `manifest.tsv` gives the expected
+outcome and a text that the refusal must contain (`-` for any). The
+caller's resolver gives the `.der` files of the directory by their
+relative names; nothing else is resolved. -/
+def runRetrievalFixtures (t0 : Tally) (dir : String) : IO Tally := do
+  let mut t := t0
+  let mut files : List (String × ByteArray) := []
+  for n in ["leaf-rsa.der", "other.der"] do
+    files := files ++ [(n, ← IO.FS.readBinFile s!"{dir}/{n}")]
+  let fs := files
+  let cfg : Config := { resolve := fun u => (fs.find? (·.1 == u)).map (·.2) }
+  for line in (← IO.FS.readFile s!"{dir}/manifest.tsv").splitOn "\n" do
+    match line.splitOn "\t" with
+    | [file, want, needle, _] =>
+        let src ← IO.FS.readFile s!"{dir}/{file}"
+        let name := s!"retrieval {file}"
+        match want == "valid", outcome (validateText nativeBackend cfg src) with
+        | true, .ok () => IO.println s!"PASS {name}: validates"; t := { t with pass := t.pass + 1 }
+        | true, .error e => IO.println s!"FAIL {name}: {e}"; t := { t with fail := t.fail + 1 }
+        | false, .ok () => IO.println s!"FAIL {name}: validates, but must be refused"; t := { t with fail := t.fail + 1 }
+        | false, .error e =>
+            if needle == "-" || (e.splitOn needle).length > 1 then
+              IO.println s!"PASS {name}: refused: {e}"; t := { t with pass := t.pass + 1 }
+            else
+              IO.println s!"FAIL {name}: refused, but the message does not contain {repr needle}: {e}"
+              t := { t with fail := t.fail + 1 }
     | _ => pure ()
   return t
 
@@ -495,6 +542,8 @@ def main (args0 : List String) : IO UInt32 := do
   IO.println s!"fixtures: {u.pass} pass, {u.fail} fail (out of {u.pass + u.fail})"
   let ux ← runX509Fixtures {} s!"{root}/tests/xmldsig/x509"
   IO.println s!"x509 fixtures: {ux.pass} pass, {ux.fail} fail (out of {ux.pass + ux.fail})"
+  let ur ← runRetrievalFixtures {} s!"{root}/tests/xmldsig/retrieval"
+  IO.println s!"retrieval fixtures: {ur.pass} pass, {ur.fail} fail (out of {ur.pass + ur.fail})"
   let v ← runSaml {}
   IO.println s!"saml differential: {v.pass} pass, {v.fail} fail (out of {v.pass + v.fail})"
   let w ← runSign {} s!"{root}/tests/xmldsig/signing-keys.tsv" outDir
@@ -506,4 +555,4 @@ def main (args0 : List String) : IO UInt32 := do
     let x ← runWycheproof s!"{wp}/{file}" label h
     IO.println s!"{label}: {x.pass} pass, {x.fail} fail, {x.acceptable} acceptable (out of {x.pass + x.fail + x.acceptable})"
     wf := wf + x.fail
-  return (if t.fail + x2.fail + m.fail + mx.fail + u.fail + ux.fail + v.fail + w.fail + wf == 0 then 0 else 1)
+  return (if t.fail + x2.fail + m.fail + mx.fail + u.fail + ux.fail + ur.fail + v.fail + w.fail + wf == 0 then 0 else 1)

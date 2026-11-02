@@ -72,8 +72,13 @@ certificate; the key is that certificate's SubjectPublicKeyInfo
 signature verifies under that key; `Validated.key` returns it, and
 `signingCertificate?` the certificate, so the caller decides whether it
 trusts it (certificate path validation and revocation, `X509CRL`
-included, are the caller's). `ds:RetrievalMethod` is not followed
-(https://github.com/danbri/factoidal/issues/1228).
+included, are the caller's). `ds:RetrievalMethod` (§4.5.3) is
+followed one level: its `URI` is dereferenced as a reference's (the
+caller's resolver for other documents), its `ds:Transforms` are applied,
+and the result is read as its `Type` says: `rawX509Certificate` octets,
+or one apex element (`ds:X509Data`, `ds:RSAKeyValue`,
+`dsig11:ECKeyValue`, `dsig11:DEREncodedKeyValue`, `ds:KeyValue`) whose
+expanded name is the `Type` (https://github.com/danbri/factoidal/issues/1228).
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -574,42 +579,47 @@ def spkiKey? (b : ByteArray) : Option PublicKey := do
     (uncompressed? c key).map (.ec c)
   else none
 
+/-- One key element of `ds:KeyValue` (§4.5.2): `ds:RSAKeyValue`,
+`dsig11:ECKeyValue`, the RFC 4050 `ECDSAKeyValue`, or `ds:DSAKeyValue`
+(refused). -/
+def keyElement? (d : Doc) (k : Nat) : Except String PublicKey :=
+  if isEl d k dsNs "RSAKeyValue" then
+    match kidNamed? d k dsNs "Modulus", kidNamed? d k dsNs "Exponent" with
+    | some m, some e =>
+        match b64Text? d m, b64Text? d e with
+        | some mb, some eb => .ok (.rsa (stripZeros mb) (stripZeros eb))
+        | _, _ => .error "ds:RSAKeyValue is not base64"
+    | _, _ => .error "ds:RSAKeyValue must have ds:Modulus and ds:Exponent"
+  else if isEl d k ds11Ns "ECKeyValue" then
+    match kidNamed? d k ds11Ns "NamedCurve", kidNamed? d k ds11Ns "PublicKey" with
+    | some nc, some pk =>
+        match (attrVal? d nc "URI").bind Curve.ofOid? with
+        | none => .error "dsig11:NamedCurve is not P-256, P-384 or P-521"
+        | some c =>
+            match (b64Text? d pk).bind (uncompressed? c) with
+            | some xy => .ok (.ec c xy)
+            | none => .error "dsig11:PublicKey is not an uncompressed point of the curve"
+    | _, _ => .error "dsig11:ECKeyValue needs dsig11:NamedCurve (explicit ECParameters are not read) and dsig11:PublicKey"
+  else if isEl d k dsMoreNs "ECDSAKeyValue" then
+    -- RFC 4050 §3.3: NamedCurve URN, and X and Y as decimal Value attributes
+    let nc := (kidNamed? d k dsMoreNs "DomainParameters").bind fun dp => kidNamed? d dp dsMoreNs "NamedCurve"
+    let pk := kidNamed? d k dsMoreNs "PublicKey"
+    match (nc.bind fun n => attrVal? d n "URN").bind Curve.ofOid?, pk with
+    | some c, some p =>
+        let coord (loc : String) : Option ByteArray :=
+          ((kidNamed? d p dsMoreNs loc).bind fun x => attrVal? d x "Value").bind fun v =>
+            v.toNat?.bind fun n => natBytes n c.coordSize
+        match coord "X", coord "Y" with
+        | some x, some y => .ok (.ec c (x ++ y))
+        | _, _ => .error "ECDSAKeyValue X or Y is not a coordinate of the curve"
+    | _, _ => .error "ECDSAKeyValue needs a named curve P-256, P-384 or P-521 and a PublicKey"
+  else if isEl d k dsNs "DSAKeyValue" then .error "DSA keys are not supported (https://github.com/danbri/factoidal/issues/1224)"
+  else .error "ds:KeyValue holds an unknown key type"
+
 /-- A `ds:KeyValue` (§4.5.2). -/
 def keyValue? (d : Doc) (kv : Nat) : Except String PublicKey :=
   match elemKids d kv with
-  | [k] =>
-      if isEl d k dsNs "RSAKeyValue" then
-        match kidNamed? d k dsNs "Modulus", kidNamed? d k dsNs "Exponent" with
-        | some m, some e =>
-            match b64Text? d m, b64Text? d e with
-            | some mb, some eb => .ok (.rsa (stripZeros mb) (stripZeros eb))
-            | _, _ => .error "ds:RSAKeyValue is not base64"
-        | _, _ => .error "ds:RSAKeyValue must have ds:Modulus and ds:Exponent"
-      else if isEl d k ds11Ns "ECKeyValue" then
-        match kidNamed? d k ds11Ns "NamedCurve", kidNamed? d k ds11Ns "PublicKey" with
-        | some nc, some pk =>
-            match (attrVal? d nc "URI").bind Curve.ofOid? with
-            | none => .error "dsig11:NamedCurve is not P-256, P-384 or P-521"
-            | some c =>
-                match (b64Text? d pk).bind (uncompressed? c) with
-                | some xy => .ok (.ec c xy)
-                | none => .error "dsig11:PublicKey is not an uncompressed point of the curve"
-        | _, _ => .error "dsig11:ECKeyValue needs dsig11:NamedCurve (explicit ECParameters are not read) and dsig11:PublicKey"
-      else if isEl d k dsMoreNs "ECDSAKeyValue" then
-        -- RFC 4050 §3.3: NamedCurve URN, and X and Y as decimal Value attributes
-        let nc := (kidNamed? d k dsMoreNs "DomainParameters").bind fun dp => kidNamed? d dp dsMoreNs "NamedCurve"
-        let pk := kidNamed? d k dsMoreNs "PublicKey"
-        match (nc.bind fun n => attrVal? d n "URN").bind Curve.ofOid?, pk with
-        | some c, some p =>
-            let coord (loc : String) : Option ByteArray :=
-              ((kidNamed? d p dsMoreNs loc).bind fun x => attrVal? d x "Value").bind fun v =>
-                v.toNat?.bind fun n => natBytes n c.coordSize
-            match coord "X", coord "Y" with
-            | some x, some y => .ok (.ec c (x ++ y))
-            | _, _ => .error "ECDSAKeyValue X or Y is not a coordinate of the curve"
-        | _, _ => .error "ECDSAKeyValue needs a named curve P-256, P-384 or P-521 and a PublicKey"
-      else if isEl d k dsNs "DSAKeyValue" then .error "DSA keys are not supported (https://github.com/danbri/factoidal/issues/1224)"
-      else .error "ds:KeyValue holds an unknown key type"
+  | [k] => keyElement? d k
   | _ => .error "ds:KeyValue must hold one key"
 
 /-! ## ds:X509Data (§4.5.4) -/
@@ -714,9 +724,128 @@ def x509Select (certs : List ByteArray) (d : Doc) (xd : Nat) : Except String X50
   let (ids, own) ← x509Contents d xd
   x509SelectCore ids own certs
 
-/-- The key of a `ds:KeyInfo` element, without following
+/-! ## ds:RetrievalMethod (§4.5.3) -/
+
+/-- The `Type` identifiers of §4.5.3 (and of §4.5.2.3 and §4.5.11 in 1.1)
+that name an element: the namespace name followed by the local name. -/
+def rmTypeX509Data : String := dsNs ++ "X509Data"
+def rmTypeRSAKeyValue : String := dsNs ++ "RSAKeyValue"
+def rmTypeDSAKeyValue : String := dsNs ++ "DSAKeyValue"
+def rmTypeECKeyValue : String := ds11Ns ++ "ECKeyValue"
+def rmTypeDEREncoded : String := ds11Ns ++ "DEREncodedKeyValue"
+/-- §4.5.3: a binary (ASN.1 DER) X.509 certificate. -/
+def rmTypeRawX509 : String := dsNs ++ "rawX509Certificate"
+
+/-- What a `ds:RetrievalMethod` gives: one element (of the signature's
+document, or of a document parsed from octets), or the octets of a DER
+certificate. -/
+inductive Retrieved where
+  | element (d : Doc) (e : Nat)
+  | rawCert (der : ByteArray)
+
+/-- The expanded name of an element, written as a §4.5.3 `Type` is. -/
+def typeOf (d : Doc) (e : Nat) : String := (d.get e).name.uri ++ (d.get e).name.loc
+
+/-- The elements of a node-set whose parent element is not in it, in
+document order. -/
+def apexElements (cd : C14nDoc) (s : Nat → Bool) : List Nat :=
+  (List.range cd.n0).filter fun i =>
+    kindOf cd.doc i == .element && s i &&
+      match parentElem? cd.doc i with
+      | some p => !s p
+      | none => true
+
+/-- The `ds:Transform` children of the `ds:Transforms` of a
+`ds:RetrievalMethod`. -/
+def retrievalTransforms (d : Doc) (rm : Nat) : Except String (List Nat) :=
+  match elemKids d rm with
+  | [] => .ok []
+  | [t] =>
+      if isEl d t dsNs "Transforms" then
+        let ts := elemKids d t
+        if ts.all fun x => isEl d x dsNs "Transform" then .ok ts
+        else .error "ds:Transforms holds an element that is not ds:Transform"
+      else .error "ds:RetrievalMethod may hold only ds:Transforms"
+  | _ => .error "ds:RetrievalMethod may hold only ds:Transforms"
+
+/-- The data after the URI and the transforms are read as `Type` says.
+Octets with `rawX509Certificate` are the certificate. Otherwise the data
+is a node-set (octets are parsed as XML) with exactly one apex element,
+whose expanded name is `Type` when `Type` is given. -/
+def readRetrieved (ty : Option String) (y : Data) : Except String Retrieved :=
+  if ty == some rmTypeRawX509 then
+    match y with
+    | .octets b => .ok (.rawCert b)
+    | .nodes .. => .error "a ds:RetrievalMethod of Type rawX509Certificate must give octets, not a node-set"
+  else
+    match toNodes y with
+    | .error e => .error e
+    | .ok (cd, s, _) =>
+        match apexElements cd s with
+        | [e] =>
+            match ty with
+            | some t =>
+                if typeOf cd.doc e == t then .ok (.element cd.doc e)
+                else .error s!"the ds:RetrievalMethod gives {typeOf cd.doc e}, not its Type {t}"
+            | none => .ok (.element cd.doc e)
+        | [] => .error "the ds:RetrievalMethod gives no element"
+        | _ => .error "the ds:RetrievalMethod gives more than one element"
+
+/-- §4.5.3: the `URI` (mandatory) is dereferenced as the `URI` of a
+`ds:Reference` (§4.4.3.3, `dereference`, the caller's resolver for other
+documents), its `ds:Transforms` are applied (`applyTransformsAcc`), and
+the result is read as `Type` says (`readRetrieved`). `sig`: the
+`ds:Signature` element, for the transforms. -/
+def retrieve (cfg : Config) (cd : C14nDoc) (sig rm : Nat) : Except String Retrieved :=
+  let d := cd.doc
+  match attrVal? d rm "URI" with
+  | none => .error "ds:RetrievalMethod has no URI"
+  | some u =>
+      match retrievalTransforms d rm with
+      | .error e => .error e
+      | .ok ts =>
+          match dereference cfg cd (some u) with
+          | .error e => .error e
+          | .ok x =>
+              match applyTransformsAcc cd sig ts x with
+              | .error e => .error e
+              | .ok y => readRetrieved (attrVal? d rm "Type") y
+
+/-- The key of what a `ds:RetrievalMethod` gives. A `ds:RetrievalMethod`
+that gives another one is not followed: one level only, as for
 `dsig11:KeyInfoReference`. -/
-def keyInfoDirect? (certs : List ByteArray) (d : Doc) (ki : Nat) : Except String PublicKey :=
+def retrievedKey (certs : List ByteArray) : Retrieved → Except String PublicKey
+  | .rawCert b =>
+      match X509.parseCert? b with
+      | some c => certKey c
+      | none => .error "the rawX509Certificate octets are not a DER X.509 certificate"
+  | .element d e =>
+      if isEl d e dsNs "X509Data" then (x509Select certs d e).bind certKey
+      else if isEl d e ds11Ns "DEREncodedKeyValue" then
+        match (b64Text? d e).bind spkiKey? with
+        | some k => .ok k
+        | none => .error "dsig11:DEREncodedKeyValue is not an RSA or named-curve EC SubjectPublicKeyInfo"
+      else if isEl d e dsNs "KeyValue" then keyValue? d e
+      else if isEl d e dsNs "RetrievalMethod" then
+        .error "a ds:RetrievalMethod that gives another ds:RetrievalMethod is not followed"
+      else keyElement? d e
+
+/-- The certificate of what a `ds:RetrievalMethod` gives, when it is a
+certificate or a `ds:X509Data`. -/
+def retrievedCert? (certs : List ByteArray) : Retrieved → Option (Except String X509.Cert)
+  | .rawCert b =>
+      some (match X509.parseCert? b with
+        | some c => .ok c
+        | none => .error "the rawX509Certificate octets are not a DER X.509 certificate")
+  | .element d e => if isEl d e dsNs "X509Data" then some (x509Select certs d e) else none
+
+/-- The key of a `ds:KeyInfo` element, without following
+`dsig11:KeyInfoReference`. The first of these that is present is read:
+`ds:KeyValue`, `dsig11:DEREncodedKeyValue`, `ds:X509Data`,
+`ds:RetrievalMethod`. -/
+def keyInfoDirect? (cfg : Config) (cd : C14nDoc) (sig ki : Nat) : Except String PublicKey :=
+  let d := cd.doc
+  let certs := cfg.certificates
   match kidNamed? d ki dsNs "KeyValue" with
   | some kv => keyValue? d kv
   | none =>
@@ -729,23 +858,23 @@ def keyInfoDirect? (certs : List ByteArray) (d : Doc) (ki : Nat) : Except String
           match kidNamed? d ki dsNs "X509Data" with
           | some xd => (x509Select certs d xd).bind certKey
           | none =>
-              if (kidNamed? d ki dsNs "RetrievalMethod").isSome then
-                .error "ds:RetrievalMethod is not followed (https://github.com/danbri/factoidal/issues/1228)"
-              else .error "ds:KeyInfo holds no key this verifier reads"
+              match kidNamed? d ki dsNs "RetrievalMethod" with
+              | some rm => (retrieve cfg cd sig rm).bind (retrievedKey certs)
+              | none => .error "ds:KeyInfo holds no key this verifier reads"
 
 /-- §4.5: the key of `ds:KeyInfo`; a `dsig11:KeyInfoReference` (§4.5.10)
 is followed once, to a `ds:KeyInfo` of the same document. -/
-def keyInfoKey? (certs : List ByteArray) (cd : C14nDoc) (ki : Nat) : Except String PublicKey :=
+def keyInfoKey? (cfg : Config) (cd : C14nDoc) (sig ki : Nat) : Except String PublicKey :=
   let d := cd.doc
   match kidNamed? d ki ds11Ns "KeyInfoReference" with
-  | none => keyInfoDirect? certs d ki
+  | none => keyInfoDirect? cfg cd sig ki
   | some r =>
       match attrVal? d r "URI" with
       | some u =>
           if u.startsWith "#" then
             match idTarget cd (u.drop 1).toString with
             | .ok t =>
-                if isEl d t dsNs "KeyInfo" then keyInfoDirect? certs d t
+                if isEl d t dsNs "KeyInfo" then keyInfoDirect? cfg cd sig t
                 else .error "dsig11:KeyInfoReference does not point to a ds:KeyInfo"
             | .error e => .error e
           else .error "dsig11:KeyInfoReference to another document is not followed"
@@ -785,14 +914,22 @@ def keyFor (cfg : Config) (cd : C14nDoc) (s : Signature) : Except String PublicK
   | none =>
       if !cfg.keyFromKeyInfo then .error "no key was given"
       else match s.keyInfo with
-        | some ki => keyInfoKey? cfg.certificates cd ki
+        | some ki => keyInfoKey? cfg cd s.node ki
         | none => .error "no key was given and the signature has no ds:KeyInfo"
 
 /-- The certificate that the first `ds:X509Data` of the signature's
-`ds:KeyInfo` names (§4.5.4), for the caller's path validation; `none`
+`ds:KeyInfo` names (§4.5.4), or, with no `ds:X509Data`, the certificate
+that its `ds:RetrievalMethod` gives (§4.5.3), for the caller's path validation; `none`
 when there is no such element. -/
 def signingCertificate? (cfg : Config) (cd : C14nDoc) (s : Signature) : Option (Except String X509.Cert) :=
-  s.keyInfo.bind fun ki => (kidNamed? cd.doc ki dsNs "X509Data").map (x509Select cfg.certificates cd.doc)
+  s.keyInfo.bind fun ki =>
+    match kidNamed? cd.doc ki dsNs "X509Data" with
+    | some xd => some (x509Select cfg.certificates cd.doc xd)
+    | none =>
+        (kidNamed? cd.doc ki dsNs "RetrievalMethod").bind fun rm =>
+          match retrieve cfg cd s.node rm with
+          | .ok r => retrievedCert? cfg.certificates r
+          | .error e => some (.error e)
 
 /-- The check of `ds:SignatureValue` over the canonical `ds:SignedInfo`.
 `.ok (b, k)`: the check gave `b`, with the public key `k` (none for a MAC). -/
@@ -1064,5 +1201,52 @@ in `ds:X509Data` is its SubjectPublicKeyInfo read as a
 theorem dsig11_2013_x509_key_eq_derEncoded (c : X509.Cert) (k : PublicKey)
     (h : spkiKey? c.spki = some k) : certKey c = .ok k := by
   simp [certKey, h]
+
+/-! ## Theorems: ds:RetrievalMethod (XML Signature 1.1, 2013, §4.5.3) -/
+
+/-- XML Signature 1.1 (2013) §4.5.3 and §4.5.4: a `ds:X509Data` that a
+`ds:RetrievalMethod` gives yields the key that the same element yields
+as a child of `ds:KeyInfo`. -/
+theorem dsig11_2013_retrieved_x509Data_eq_direct (certs : List ByteArray) (d : Doc) (e : Nat)
+    (h : isEl d e dsNs "X509Data" = true) :
+    retrievedKey certs (.element d e) = (x509Select certs d e).bind certKey := by
+  simp [retrievedKey, h]
+
+/-- XML Signature 1.1 (2013) §4.5.3: with a `Type` other than
+`rawX509Certificate`, an element is read only when its expanded name is
+that `Type`. -/
+theorem dsig11_2013_retrieved_type {t : String} {y : Data} {d : Doc} {e : Nat}
+    (ht : t ≠ rmTypeRawX509) (h : readRetrieved (some t) y = .ok (.element d e)) : typeOf d e = t := by
+  have hne : (some t == some rmTypeRawX509) = false := by simp [ht]
+  unfold readRetrieved at h
+  rw [hne] at h
+  simp only [Bool.false_eq_true, if_false] at h
+  split at h
+  · cases h
+  · split at h
+    · split at h
+      · cases h; simpa using ‹(typeOf _ _ == t) = true›
+      · cases h
+    · cases h
+    · cases h
+
+/-- XML Signature 1.1 (2013) §4.5.3: `rawX509Certificate` takes octets;
+a node-set is refused. -/
+theorem dsig11_2013_raw_needs_octets (cd : C14nDoc) (s : Nat → Bool) (b : Bool) :
+    ∃ m, readRetrieved (some rmTypeRawX509) (.nodes cd s b) = .error m := by
+  simp [readRetrieved]
+
+/-- XML Signature 1.1 (2013) §4.5.3 and §4.5.4: a `rawX509Certificate`
+gives the key and the certificate that a `ds:X509Data` holding only that
+`ds:X509Certificate` gives. -/
+theorem dsig11_2013_raw_eq_x509Certificate (certs : List ByteArray) (b : ByteArray) (c : X509.Cert)
+    (h : X509.parseCert? b = some c) :
+    retrievedKey certs (.rawCert b) = certKey c ∧ x509SelectCore [] [b] certs = .ok c := by
+  refine ⟨by simp [retrievedKey, h], ?_⟩
+  have hb : (c.der != c.der) = false := by
+    show (!(ByteArray.beq c.der c.der)) = false
+    unfold ByteArray.beq
+    simp
+  simp [x509SelectCore, h, endEntities, dedupCerts, pickOne, hb]
 
 end L4Factoidal.XML.DSig11
