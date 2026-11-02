@@ -1486,20 +1486,32 @@ resource per file under the container `url`, and the `CURRENT` pointer of a
 collection root as one more resource (https://github.com/danbri/factoidal/issues/1010).
 Give it to `openSbm11` as `reader` (or to `registerSbm11Source`):
 
-```js browser
-// In a dedicated worker: the engine asks for bytes synchronously, and the
-// default transport there is a synchronous XMLHttpRequest.
-import { openSbm11, lwsSbm11Reader } from '@factoidal/core/browser'
+```js
+// Node: the default transport refuses redirects before forwarding headers.
+import { openSbm11, lwsSbm11Reader } from '@factoidal/core'
 
 const storeUrl = 'https://storage.example/stores/tiny/'   // holds CURRENT and gen/...
 const accessToken = 'an LWS access token'
 const reader = lwsSbm11Reader(storeUrl, { auth: `Bearer ${accessToken}` })
 const store = await openSbm11(storeUrl, { reader })
 const answer = store.query('SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }')
-console.log(answer.json, store.evidence)   // evidence: [{ resource, etag, lastModified, requests, partial, bytes }]
+console.log(JSON.stringify(answer.json), store.evidence)   // evidence: [{ resource, etag, lastModified, requests, partial, bytes }]
 store.close()
 reader.close()
 ```
+
+Authority boundary. The container must be an absolute HTTP(S) URL without
+userinfo, query or fragment; use `opts.auth`/`opts.headers` for caller headers.
+Resource names are raw relative paths, not URL references. Invalid paths return
+null and appear in `reader.errors()` before any transport call.
+
+Browser compatibility: the default dedicated-worker XHR transport now refuses
+all caller-supplied `auth` and `headers`. Browser authentication requires an
+explicit trusted synchronous `opts.transport` that constrains redirects before
+forwarding headers. No such authenticated browser transport is supplied by this
+API. Without caller headers, worker XHR checks its final response URL only after
+sending; it cannot prevent that already-sent request or ambient same-origin
+browser cookies. A window thread still needs an explicit synchronous transport.
 
 How it reads. Each read is a GET with `Range: bytes=a-b` (RFC 9110 §14).
 The answer is used as the range only when it is `206` with `Content-Range:
@@ -1518,11 +1530,13 @@ the bytes received, so an answer can say which bytes it came from.
 
 Transport. The engine is inside WebAssembly and cannot wait for a promise, so
 the reader needs a synchronous GET. In Node the default is a `fetch` in a
-worker thread that this thread waits for (`Atomics.wait`), stopped by
-`reader.close()`; the server must then run in another process or worker,
+worker thread that this thread waits for (`Atomics.wait`), with redirects
+refused before following, stopped by `reader.close()`; the server must then run in another process or worker,
 not on the thread that queries. In a browser worker the default is a
 synchronous `XMLHttpRequest`; a window thread has neither, so pass
-`opts.transport` (`(url, headers) => ({ status, header(name), bytes })`).
+`opts.transport` (`(url, headers) => ({ status, header(name), bytes })`). A custom
+transport is trusted and must independently constrain redirect/header forwarding;
+the reader cannot impose that restriction on arbitrary caller code.
 `opts.auth` is sent as the `Authorization` header; `opts.headers` adds more.
 
 The storage medium. In Lean every reader is a `Medium`
@@ -1960,6 +1974,7 @@ section "Stage 1" of
 | `toanSummation`, `toanProduct`, `toanSimplify`, `toanDiff`, `toanSubst` | | symbolic algebra over Content MathML |
 | `vcSha256Hex`, `vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`, `vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical` | | VC Data Integrity `eddsa-rdfc-2022`; Ed25519 is HACL\*'s C code in the wasm module; no initialisation step |
 | `xmlDecrypt`, `xmlEncrypt` | `(document, {keys, allowCbc?})`, `(document, {recipient, algorithm?, keyTransport?, keyWrap?, content?, saml?}) => {document, canonical}` | XML Encryption 1.1. Allowlist: `aes128-gcm`, `aes256-gcm` (CBC only with `allowCbc`), `rsa-oaep-mgf1p`, `xmlenc11#rsa-oaep`, `kw-aes128`, `kw-aes256`, ECDH-ES (P-256, X25519); `rsa-1_5` and remote references refused. Keys are JWKs, `kid` is the `ds:KeyName`. Every failure after the structure check is one error, `XML decryption failed` |
+| `xmlVerify`, `xmlSign` | `(document, {key?, hmacKey?, keyFromKeyInfo?, certificates?, documents?}) => {valid: true, signedInfo, references: [{uri, octets}], key, certificate} \| {valid: false, reason}`, `(document, {key, signatureMethod?, canonicalizationMethod?, inclusivePrefixes?, references?, enveloping?, keyValue?}) => {document}` | XML Signature 1.1: core validation (§3.2) and generation (§3.1). Methods: RSASSA-PKCS1-v1_5 (2048 to 4096 bits), ECDSA P-256 with SHA-1 to SHA-512, HMAC; digests SHA-1 to SHA-512; the six canonicalization methods, enveloped-signature, XPath, XPath Filter 2.0, XSLT and base64 transforms; `ds:KeyValue`, `dsig11:DEREncodedKeyValue`, `ds:X509Data`, `ds:RetrievalMethod`. Keys are JWKs; octets are `Uint8Array`. A key read from `ds:KeyInfo` is returned (`key`, `certificate`), not trusted: certificate path validation is the caller's. The engine fetches nothing (`documents`). A signature that does not validate is `valid: false`, not an exception. Not yet: DSA (https://github.com/danbri/factoidal/issues/1224), ECDSA P-384 and P-521 (https://github.com/danbri/factoidal/issues/1223) |
 | `jweDecrypt`, `jweEncrypt` | `(token, {jwk}) => {header, plaintext: Uint8Array}`, `(plaintext, {alg, enc, jwk, header?}) => token` | JWE Compact Serialization (RFC 7516). `alg` RSA-OAEP, RSA-OAEP-256, ECDH-ES, ECDH-ES+A128KW, ECDH-ES+A256KW, A128KW, A256KW, dir; `enc` A128GCM, A256GCM, A128CBC-HS256, A256CBC-HS512. RSA, P-256 and X25519 run in the wasm (HACL\*); AES runs in the host's WebCrypto (`globalThis.crypto.subtle`), so these four functions are asynchronous on every host |
 | `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | | VCDM 2.0 checks; `did:key` (Ed25519) resolution |
 | `cidValidate`, `cidRetrieveVerificationMethod` | `(doc) => {valid, errors}`, `(url, relationship, {fetch?, resolve?, now?, allowHttp?, allowPrivateFetch?}) => {ok, …}` | Controlled Identifiers v1.0 §2 and §3.3; see "Controlled identifier documents" |

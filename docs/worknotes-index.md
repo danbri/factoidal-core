@@ -31,6 +31,8 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-01 | [Signed WGSL scalar controls](20261101-webgpu-signed-shader-controls.md) | pending | current — signed float selection and CPU tests pass; local GPU smoke and fresh WASM build unavailable in this environment |
 | 2026-11-01 | [Shared affine GPU row packing](20261101-affine-gpu-packing.md) | pending | current — representation proofs; GPU numeric refinement remains |
 | 2026-10-30 | [Shared UI geometry, policy and renderer admission](designissues/2026-10-30-shared-ui-policy.md) | pending | current: kernel checks and native regressions; interactive enforcement unfinished |
+| 2026-11-02 | [0.29 release public version pins](20261102-release-029-public-pins.md) | this commit | current |
+| 2026-10-31 | [Readable compositor evidence](20261031-compositor-evidence-explanations.md) | this commit | current |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |
 | 2026-04-21 | [Large Turtle stack overflow fix sketch](2026-04-21-large-turtle-stack-overflow-fix-sketch.md) | c29698f98 | historical |
 | 2026-08 | [Factoidal verified RDF block engine](2026-08-blockengine.md) | 27f9308f4 | current: design, part 1 |
@@ -180,6 +182,7 @@ worknote, kept as the record of a decision or a measurement),
 - [2026-10-30: Lean GPU render plans and remaining host boundary](designissues/2026-10-30-lean-render-plan.md).
 - [2026-10-30: FOAFNaut live presentation admission](20261030-foafnaut-live-presentation.md): opaque Lean state, acknowledged picking, retained approved geometry, 64 WASM/host tests and 12 C checks.
 | 2026-10-30 | [HTML parser and public API integration](20261030-html-public-integration.md) | same commit | current main integrated, both gate sets preserved, public PI/namespace/template/error regressions; fresh native API and HTML/QT4 controls pass; fresh WASM CI remains required; https://github.com/danbri/factoidal-core/pull/269 |
+| 2026-10-30 | [IETF date zero-seconds panic](20261030-parse-ietf-date-zero-seconds.md) | same commit | seconds serialization avoids an empty numeric parse; native stderr regression detects panic fallback even when values match |
 
 | 2026-10-30 | [Hub Data Compositor and shared code output](20261030-hub-data-compositor.md) | same commit | pinned public engine, editable visual pipeline, honest component evidence, shared output controls and focused browser checks |
 
@@ -199,3 +202,12 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-01 | [Solving: one SVG scene, two rendering backends](20261101-solving-backend-comparison.md) | this commit | layered browser scene uses same accepted SVG source in browser renderer and Lean/WebGPU path; Lean now retains nested SVG groups with local transforms, proves the cached painter-order lowering and emits bounded optional tree-inspector JSON; CPU probes now reuse one packed array with a proved record cursor; compositor surfaces, HTML/layout integration and cross-renderer equivalence remain open |
 
 | 2026-11-02 | [FOAFNaut macOS build and Solving package](20261102-foafnaut-macos-build.md) | this commit | fresh engine/package validation, official runtime cache provenance, renderer equality with distinct retained trees, and static browser SVG launcher relocation without Lean |
+| 2026-10-31 | [LWS reader host-authority boundary](20261031-lws-reader-path-confinement.md) | — | current: path confinement, redirect refusal and explicit browser transport limits |
+
+| 2026-10-31 | [Shared component descriptor model](designissues/2026-10-31-component-descriptor-model.md) | same commit | design proposal: one UI/API/CLI model, useful witnesses and human purposes, distinct semantic/authority/evidence scopes |
+| 2026-10-31 | [Browser release integrity gates](20261031-browser-release-integrity-gates.md) | — | stamped compilation, bad-digest refusal and CSP browser checks |
+
+| 2026-10-31 | [Published 0.28.0 and hub pin](20261031-release-028-published.md) | — | registry consumer, browser and hub validation |
+
+| 2026-10-31 | [Compositor HTML failure conditions](20261031-compositor-html-failure-analysis.md) | — | three kernel-checked failure lemmas, pinned-engine counterexamples and browser boundary |
+| 2026-11-01 | [Compositor pipeline files and FOAF pod library](20261101-compositor-pipeline-library.md) | — | bounded versioned documents, explicit FOAF storage discovery, ETag guarded writes and honest local validation limits |

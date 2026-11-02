@@ -191,3 +191,4 @@ npm/factoidal/node_modules/
 third_party/testing/vc-bitstring-status-list/node_modules/
 third_party/testing/vc-bitstring-status-list/localConfig.cjs
 third_party/testing/vc-bitstring-status-list/reports/*.json
+tests/dom/node_modules/

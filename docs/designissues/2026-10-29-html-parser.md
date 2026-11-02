@@ -131,9 +131,11 @@ and a parse error respectively.
   (`93967771`), not an older one. The wpt tests of `ce5ca396` (2026-10-28) test
   the 2026 changes (processing instructions, customizable `select`, frameset-ok),
   and an older snapshot would make them fail.
-- Template contents stay the children of the `template` element in the arena.
-  The test dump prints them under `content`. The DOM arena of milestone 6 will
-  decide whether a separate fragment node is needed.
+- Template contents stay the children of the `template` element in the parser
+  arena. The test dump prints them under `content`. The DOM arena of milestone 6
+  (`docs/designissues/2026-11-01-dom-arena.md`) gives each `template` element a
+  separate DocumentFragment, whose host is the element; `DOM.ofTreeBuilder`
+  moves the children there.
 - `defective` is used for 3 `domjs.test` cases only: their expected error code
   was written before processing instructions, and the tokens agree.
 

@@ -1,0 +1,16 @@
+x509-rsa-crt.xml	valid	-	X509Certificate of the RSA-2048 signer
+x509-ec-crt.xml	valid	-	X509Certificate of the P-256 signer
+x509-rsa-chain-leaf-first.xml	valid	-	end-entity certificate, then its CA
+x509-rsa-chain-ca-first.xml	valid	-	CA certificate, then the end-entity one
+x509-rsa-digest.xml	valid	ca.der,leaf-rsa.der,other.der	only dsig11:X509Digest (SHA-256); the caller gives three certificates
+x509-rsa-digest-sha512.xml	valid	ca.der,leaf-rsa.der	only dsig11:X509Digest (SHA-512)
+x509-rsa-ski.xml	valid	ca.der,leaf-rsa.der	only X509SKI
+x509-rsa-subject.xml	valid	ca.der,leaf-rsa.der	only X509SubjectName (RFC 4514, with an escaped comma)
+x509-ec-issuer-serial.xml	valid	ca.der,leaf-rsa.der,leaf-ec.der	only X509IssuerSerial (an 80-bit serial number)
+x509-rsa-all.xml	valid	-	certificate, subject name, issuer and serial, SKI and digest together
+neg-x509-wrong-crt.xml	invalid	-	the X509Certificate is of another key: the signature does not verify
+neg-x509-digest-unknown.xml	invalid	ca.der,other.der	X509Digest of a certificate the caller does not give
+neg-x509-conflict.xml	invalid	ca.der,leaf-rsa.der	X509SubjectName of the signer and X509SKI of the CA: no certificate matches both
+neg-x509-two-leaves.xml	invalid	-	two unrelated certificates and no identifier: no single end-entity certificate
+neg-x509-wrong-serial.xml	invalid	ca.der,leaf-rsa.der	X509IssuerSerial with a serial number no certificate has
+neg-x509-content-changed.xml	invalid	-	content changed after signing

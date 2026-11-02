@@ -6,6 +6,8 @@ milestone 5).
   l4html5lib tree FILE.dat ...       tree construction tests (web-platform-tests
                                      html/syntax/parsing/resources/*.dat)
   l4html5lib tokenizer FILE.test ... tokenizer tests (html5lib-tests tokenizer/)
+  l4html5lib dom-tree FILE.dat ...   the tree construction tests, the tree read
+                                     from the DOM arena (L4Factoidal/DOM, milestone 6)
   l4html5lib dump [--fragment CTX] [--script-on] FILE
                                      print the tree of one input in the test format
 
@@ -16,6 +18,8 @@ case. The test files are read and parsed here, in Lean.
 import L4Factoidal.HTML.TreeBuilder
 import L4Factoidal.HTML.XmlAgreement
 import L4Factoidal.JSON.Parser
+import L4Factoidal.DOM.OfHtml
+import Harness.DomDump
 
 namespace Harness.Html5lib
 
@@ -137,15 +141,23 @@ def contextOf (s : String) : NS × String :=
   else if s.startsWith "math " then (.math, (s.drop 5).toString)
   else (.html, s)
 
-def runTree (t : DatTest) (scripting : Bool) : String :=
+/-- The tree dump of the DOM arena (`L4Factoidal/DOM/OfHtml.lean`) of a parser
+arena: the children of `root`. -/
+def domChildren (dom : Array DNode) (root : Nat) : Array String :=
+  let d := L4Factoidal.DOM.ofTreeBuilder dom
+  (d.get root).kids.foldl (init := #[]) fun acc k => acc ++ Harness.DomDump.dump d k
+
+def runTree (t : DatTest) (scripting : Bool) (viaDom : Bool := false) : String :=
+  let dumpOf (dom : Array DNode) (root : Nat) : Array String :=
+    if viaDom then domChildren dom root else dumpChildren dom root 0
   match t.fragment with
   | none =>
     let tb := parseDocumentState t.data scripting
-    "\n".intercalate (dumpChildren tb.dom 0 0).toList
+    "\n".intercalate (dumpOf tb.dom 0).toList
   | some c =>
     let (ns, nm) := contextOf c
     let (tb, root) := parseFragmentState ns nm t.data scripting
-    "\n".intercalate (dumpChildren tb.dom root 0).toList
+    "\n".intercalate (dumpOf tb.dom root).toList
 
 /-! ## Expected failures and defective test data
 
@@ -186,7 +198,7 @@ def classify (key : String) (ok : Bool) : IO Bool := do
 initialize errCountSame : IO.Ref Nat ← IO.mkRef 0
 initialize errCountDiff : IO.Ref Nat ← IO.mkRef 0
 
-def treeFile (path : System.FilePath) (verbose : Bool) : IO (Nat × Nat) := do
+def treeFile (path : System.FilePath) (verbose : Bool) (viaDom : Bool := false) : IO (Nat × Nat) := do
   let txt ← IO.FS.readFile path
   let tests := parseDat txt
   let mut p := 0
@@ -197,7 +209,7 @@ def treeFile (path : System.FilePath) (verbose : Bool) : IO (Nat × Nat) := do
       | none => [false, true]
     let mut ok := true
     for m in modes do
-      let got := runTree t m
+      let got := runTree t m viaDom
       if got != t.document then
         ok := false
         if verbose then
@@ -577,6 +589,17 @@ def main (args : List String) : IO UInt32 := do
       tf := tf + f
     IO.println s!"tree construction: {tp} pass, {tf} fail (out of {tp + tf}); {← apart}"
     IO.println s!"parse error counts (documents, measured only): {← errCountSame.get} same, {← errCountDiff.get} different"
+    pure (if tf == 0 && tp > 0 && (← staleCount.get) == 0 then 0 else 1)
+  | "dom-tree" :: files =>
+    -- the same tree construction tests, the expected tree compared with the
+    -- dump of the DOM arena (`L4Factoidal.DOM.ofTreeBuilder`) of the parse
+    let mut tp := 0
+    let mut tf := 0
+    for fl in files do
+      let (p, f) ← treeFile fl verbose (viaDom := true)
+      tp := tp + p
+      tf := tf + f
+    IO.println s!"tree construction through the DOM arena: {tp} pass, {tf} fail (out of {tp + tf}); {← apart}"
     pure (if tf == 0 && tp > 0 && (← staleCount.get) == 0 then 0 else 1)
   | "tokenizer" :: files =>
     let mut t : TokCounts := {}

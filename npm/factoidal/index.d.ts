@@ -1556,14 +1556,21 @@ export interface Sbm11ReadEvidence {
   bytes: number;
 }
 
-/** A synchronous HTTP GET: `(url, headers) -> answer`. */
+/** A trusted synchronous HTTP GET: `(url, headers) -> answer`.
+ * It must refuse redirects before forwarding scoped headers. */
 export type Sbm11Transport = (url: string, headers: Record<string, string>) =>
   { status: number; header(name: string): string | null; bytes: Uint8Array };
 
 /** A reader of the SBM11 files held as LWS resources under the container
  * `url` (one resource per file, CURRENT a resource too), by HTTP Range GETs
  * when the server answers 206, else by whole GETs kept in memory. Node: the
- * default transport is a fetch in a worker thread; close() stops it. */
+ * default transport is a fetch in a worker thread that refuses redirects;
+ * close() stops it. `url` must be absolute HTTP(S), without userinfo, query
+ * or fragment. File arguments are raw relative paths; invalid paths return
+ * null before transport and appear in errors().
+ * Browser worker default XHR accepts no caller auth/headers; provide an explicit
+ * trusted transport for those. Its final-URL check cannot prevent an already
+ * sent anonymous request or ambient same-origin browser cookies. */
 export function lwsSbm11Reader(url: string, opts?: {
   auth?: string; headers?: Record<string, string>; transport?: Sbm11Transport; timeoutMs?: number
 }): Sbm11Reader & { evidence(): Sbm11ReadEvidence[]; errors(): string[]; close(): void };
@@ -1972,6 +1979,50 @@ export function xmlEncrypt(
 ): Promise<{ document: string; canonical: string }>;
 
 /**
+ * XML Signature 1.1 core validation (§3.2). A signature that does not
+ * validate resolves to `{valid: false, reason}`; wrong arguments reject with
+ * a FactoidalError. A key read from ds:KeyInfo is returned, not trusted:
+ * the caller decides whether to trust `key` and `certificate`.
+ */
+export function xmlVerify(
+  document: string,
+  options?: {
+    key?: object;
+    hmacKey?: Uint8Array;
+    keyFromKeyInfo?: boolean;
+    certificates?: Uint8Array[];
+    documents?: Record<string, Uint8Array | string>;
+  }
+): Promise<
+  | {
+      valid: true;
+      signedInfo: string;
+      references: { uri: string; octets: Uint8Array }[];
+      key: object | null;
+      certificate: Uint8Array | null;
+    }
+  | { valid: false; reason: string }
+>;
+
+/**
+ * XML Signature 1.1 signature generation (§3.1). `key` is a private JWK
+ * (RSA 2048/3072/4096, EC P-256, or oct for HMAC). The returned document
+ * has passed core validation in the engine.
+ */
+export function xmlSign(
+  document: string,
+  options: {
+    key: object;
+    signatureMethod?: string;
+    canonicalizationMethod?: string;
+    inclusivePrefixes?: string[];
+    references?: { uri: string; transforms?: string[]; digestMethod?: string }[];
+    enveloping?: { id: string; content: string };
+    keyValue?: boolean;
+  }
+): Promise<{ document: string }>;
+
+/**
  * Decrypt a compact JWE (RFC 7516). Every failure after the allowlist is
  * the one error "decryption failed".
  */
@@ -2323,6 +2374,8 @@ declare const _default: {
   vcEd25519Verify: typeof vcEd25519Verify;
   xmlDecrypt: typeof xmlDecrypt;
   xmlEncrypt: typeof xmlEncrypt;
+  xmlVerify: typeof xmlVerify;
+  xmlSign: typeof xmlSign;
   jweDecrypt: typeof jweDecrypt;
   jweEncrypt: typeof jweEncrypt;
   vcEddsaCreateFromCanonical: typeof vcEddsaCreateFromCanonical;

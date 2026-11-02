@@ -33,6 +33,7 @@ const decodeRows = result => {
 export async function runPipeline(core, inputs = {}, onStage = () => {}) {
   const config = { ...DEFAULTS, ...inputs };
   const stages = [], owned = new Set();
+  const registry = new Map((await core.stages()).map(entry => [entry.name, entry]));
   const keep = dataset => (owned.add(dataset), dataset);
   let inferredPeople = [], actualGraphNames = [];
   const stage = async (id, label, kind, work) => {
@@ -56,7 +57,7 @@ export async function runPipeline(core, inputs = {}, onStage = () => {}) {
     if (result.graph && typeof result.graph.dispose === 'function') keep(result.graph);
     const record = result.evidence.at(-1);
     return { value: result.graph, evidence: {
-      source: 'core.node/run', stage: name, status: record.status, registryStatus: node.registryStatus,
+      source: 'core.node/run', registry: registry.get(name) ?? null, stage: name, status: record.status, registryStatus: node.registryStatus,
       checked: record.checked, proved: result.proved, contract: record.contract,
       assumptions: result.assumptions, wellTyped: result.wellTyped,
       unchecked: !!record.unchecked, settingsDigest: node.settingsDigest,
@@ -92,7 +93,7 @@ export async function runPipeline(core, inputs = {}, onStage = () => {}) {
       const value = keep(r.graph), e = r.evidence.at(-1);
       return { value, input: json({ turtle: await textOf(left), csv: await textOf(right) }), text: await value.serialize({ format: 'trig' }), count: value.size,
         summary: `${value.size} quads in two source graphs; engine RDF merge scopes blank nodes`,
-        evidence: { source: 'core.graph/run', stage: 'datasetMerge', status: e.status, checked: e.checked, proved: r.proved,
+        evidence: { source: 'core.graph/run', registry: registry.get('datasetMerge') ?? null, stage: 'datasetMerge', status: e.status, checked: e.checked, proved: r.proved,
           contract: e.contract, assumptions: r.assumptions, wellTyped: r.wellTyped, wireOut: node.wireOut, ports: node.ports,
           graphCheck: { wellTyped: r.wellTyped, contract: graph.check.contract, assumptions: graph.check.assumptions, wireOut: graph.check.wireOut, issues: graph.check.issues },
           prepAdapter: adapterEvidence('fromQuads', 'Tag each source with its graph IRI; this graph assignment is not a proved adapter.') } };

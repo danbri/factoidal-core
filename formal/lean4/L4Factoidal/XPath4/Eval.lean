@@ -516,11 +516,31 @@ def genSrc? : Expr → Option (Expr × Expr × List GenStage)
   | .smap a b => (genSrc? a).map (fun (i, f, st) => (i, f, st ++ [.smap b]))
   | _ => none
 
-/-- The largest position that a positional predicate of literals selects:
-    `[k]` or `[a to b]`. -/
+/-- Is this the zero-argument context position function? -/
+def isPosition : Expr → Bool
+  | .call q [] [] => q.uri == nsFN && q.loc == "position"
+  | .seq [x] => isPosition x
+  | _ => false
+
+/-- A finite upper bound for literal numeric predicates and comparisons
+    of `position()` against an integer literal. -/
 def litPositions? : Expr → Option Int
   | .lit ⟨_, .int k⟩ => some k
   | .bin .to (.lit ⟨_, .int _⟩) (.lit ⟨_, .int b⟩) => some b
+  | .bin op a (.lit ⟨_, .int k⟩) =>
+    if isPosition a then
+      match op with
+      | .vlt | .glt => some (k - 1)
+      | .vle | .gle | .veq | .geq => some k
+      | _ => none
+    else none
+  | .bin op (.lit ⟨_, .int k⟩) b =>
+    if isPosition b then
+      match op with
+      | .vgt | .ggt => some (k - 1)
+      | .vge | .gge | .veq | .geq => some k
+      | _ => none
+    else none
   | .seq [x] => litPositions? x
   | _ => none
 
@@ -838,6 +858,14 @@ def eval : Nat → Env → Expr → M Seq
           let it : Item := .fn (.papp (.fn (.builtin q fixed.length)) fixed)
           pure [if env.untrusted && isExternalFn q then untrustedItem it else it]
         else
+          -- Place keywords/defaults before recognizing a bounded slice. The
+          -- ordinary binder above still rejects duplicates and handles placeholders.
+          if q.uri == nsFN && q.loc == "slice" then
+            let exprs := (slots.toList.zip sig.ps).map fun (sl, p) =>
+              match sl with
+              | some (some x) => some x
+              | _ => p.dflt
+            if let some r ← genShortcut n env (.call q exprs []) then return r
           let mut vals : List Seq := []
           let mut lastGiven := 0
           for (sl, i) in slots.toList.zip (List.range slots.size) do
@@ -1594,8 +1622,9 @@ def genPull : Nat → Env → Expr → Expr → List GenStage → (Array Item �
       pos := pos + 1
     err "XPDY0130" "fn:generate made more states than this implementation allows (an implementation limit)"
 
-/-- Consumers of `fn:generate` that need only a prefix: a predicate of
-    literal positions, `subsequence` with a length, `take-while`, `head`.
+/-- Consumers of `fn:generate` that need only a prefix: a bounded
+    positional predicate, `subsequence` with a length, `slice` with
+    input-length-independent bounds, `take-while`, and `head`.
     `none`: evaluate as usual. -/
 def genShortcut : Nat → Env → Expr → M (Option Seq)
   | 0, _, _ => pure none
@@ -1654,6 +1683,27 @@ def genShortcut : Nat → Env → Expr → M (Option Seq)
               pure !(← ebv r)
             | none => pure false)
           pure (some (← callFn n env q [out.toList, ps]))
+        | none => pure none
+      | [some a, some start, some stop, some step] =>
+        if q.loc != "slice" then pure none else
+        match genSrc? a with
+        | some (i, f, st) => do
+          -- F&O §2.5.10 requires incremental consumption by bounded slice.
+          -- Negative offsets, an omitted end, and reverse slicing from an
+          -- omitted start need the input length; evaluate those in full.
+          let ty := IType.seq (.atomic (.b .integer)) .opt
+          let sv ← env.coerce ty (← eval n env start) "$start of fn:slice"
+          let ev ← env.coerce ty (← eval n env stop) "$end of fn:slice"
+          let dv ← env.coerce ty (← eval n env step) "$step of fn:slice"
+          let s := intOf sv
+          let e := intOf ev
+          let d := intOf dv
+          if s ≥ 0 && e > 0 && (s > 0 || d ≥ 0) then
+            let bound := max s e
+            let out ← genPull n env i f st (fun o => pure ((o.size : Int) ≥ bound))
+            pure (some (← callFn n env q [out.toList, sv, ev, dv]))
+          else
+            pure (some (← callFn n env q [← eval n env a, sv, ev, dv]))
         | none => pure none
       | [some a, some s0, some l0] =>
         if q.loc != "subsequence" then pure none else

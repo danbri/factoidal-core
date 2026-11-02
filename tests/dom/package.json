@@ -1,0 +1,9 @@
+{
+  "name": "factoidal-dom-differential",
+  "private": true,
+  "description": "Differential test of the Lean DOM arena (formal/lean4/L4Factoidal/DOM) against jsdom",
+  "type": "module",
+  "dependencies": {
+    "jsdom": "30.1.3"
+  }
+}

@@ -3,7 +3,8 @@
 // The engine is inside WebAssembly and asks for bytes synchronously; Node's
 // fetch is asynchronous. A worker thread makes the fetch; this thread waits
 // on a shared Int32Array (Atomics.wait) and takes the answer with
-// receiveMessageOnPort. Pure I/O: no header is read here, no status judged.
+// receiveMessageOnPort. Redirects are refused before forwarding scoped headers.
+// No RDF or response-header decision is made here.
 //
 // The thread that calls the transport is blocked until the answer comes, so
 // the server must not run on that thread (start it in another process or
@@ -18,7 +19,7 @@ const flag = new Int32Array(signal)
 port.on('message', async (req) => {
   let out
   try {
-    const r = await fetch(req.url, { headers: req.headers, redirect: 'follow' })
+    const r = await fetch(req.url, { headers: req.headers, redirect: 'error' })
     const headers = {}
     r.headers.forEach((v, k) => { headers[k] = v })
     out = { status: r.status, headers, bytes: new Uint8Array(await r.arrayBuffer()) }

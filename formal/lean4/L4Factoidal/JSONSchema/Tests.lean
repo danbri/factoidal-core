@@ -3,6 +3,7 @@ L4Factoidal.JSONSchema.Tests — build-time checks, with the
 three-valued result and the exact-rational arithmetic pinned.
 -/
 import L4Factoidal.JSONSchema.Validate
+import L4Factoidal.JSON.Parser
 
 namespace L4Factoidal.JSONSchema
 open L4Factoidal.JSON
@@ -203,3 +204,37 @@ rather than the bound turned into a float. -/
 #guard validate (.object [("maxItems", .string "2")]) (.array []) == .unsupported
 
 end L4Factoidal.JSONSchema
+
+/-! ## The draft-04 / ajv 4.0.4 dialect (Web Annotation test suite) -/
+
+namespace L4Factoidal.JSONSchema.DialectTests
+open L4Factoidal.JSONSchema L4Factoidal.JSON
+
+private def j (s : String) : Json := (parseJson s).toOption.getD .null
+private def v04 (schema inst : String) : VResult :=
+  validateIn [] (j schema) "" 64 (j schema) (j inst) draft04Ajv4
+
+-- An unknown keyword is `unsupported` by default and ignored in draft-04.
+#guard validate (j "{\"assertionType\": \"must\"}") (j "1") == .unsupported
+#guard v04 "{\"assertionType\": \"must\", \"$ref \": \"#/nowhere\"}" "1" == .pass
+-- Draft-04 boolean exclusiveMinimum makes `minimum` strict.
+#guard v04 "{\"minimum\": 0, \"exclusiveMinimum\": true}" "0" == .fail
+#guard v04 "{\"minimum\": 0, \"exclusiveMinimum\": true}" "1" == .pass
+#guard v04 "{\"minimum\": 0, \"exclusiveMinimum\": false}" "0" == .pass
+-- `format` is checked as ajv 4.0.4 "fast" mode checks it.
+#guard v04 "{\"format\": \"date-time\"}" "\"2015-01-28T12:00:00Z\"" == .pass
+#guard v04 "{\"format\": \"date-time\"}" "\"2015-01-28T12:00:00z\"" == .pass
+#guard v04 "{\"format\": \"date-time\"}" "\"2015-01-28T12:00:00\"" == .fail
+#guard v04 "{\"format\": \"date-time\"}" "\"2015-01-28\"" == .fail
+#guard v04 "{\"format\": \"uri\"}" "\"http://example.org/anno1\"" == .pass
+#guard v04 "{\"format\": \"uri\"}" "\"urn:uuid:dbfb1861\"" == .pass
+#guard v04 "{\"format\": \"uri\"}" "\"not a uri\"" == .fail
+#guard v04 "{\"format\": \"uri\"}" "\"anno1\"" == .fail
+#guard v04 "{\"format\": \"uri\"}" "17" == .pass
+#guard v04 "{\"format\": \"uri\"}" "\"/relative\"" == .pass
+#guard v04 "{\"format\": \"date-time\"}" "\"2015-01-28T12:00:00.123+01:00\"" == .pass
+-- A format ajv does not know is ignored; the default dialect never checks format.
+#guard v04 "{\"format\": \"color\"}" "\"x\"" == .pass
+#guard validate (j "{\"format\": \"date-time\"}") (j "\"x\"") == .pass
+
+end L4Factoidal.JSONSchema.DialectTests
