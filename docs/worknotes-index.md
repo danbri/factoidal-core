@@ -211,3 +211,5 @@ worknote, kept as the record of a decision or a measurement),
 
 | 2026-10-31 | [Compositor HTML failure conditions](20261031-compositor-html-failure-analysis.md) | — | three kernel-checked failure lemmas, pinned-engine counterexamples and browser boundary |
 | 2026-11-01 | [Compositor pipeline files and FOAF pod library](20261101-compositor-pipeline-library.md) | — | bounded versioned documents, explicit FOAF storage discovery, ETag guarded writes and honest local validation limits |
+
+| 2026-11-02 | [Whole WPT SVG corpus and browser measurements](20261102-svg-whole-wpt-corpus.md) | this commit | complete pinned SVG subtree, original HTML transport, all601 relation states, full-image oracle and fault controls; stable baseline15matches and separate10use/symbol exact diagnostics |
