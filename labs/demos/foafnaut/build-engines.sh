@@ -99,6 +99,7 @@ done
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/FoafPresentationTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SceneSVGTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGRootTests.lean"
+"$TOOLCHAIN/bin/lean" -R "$LAB" -o "$BUILD/olean/SVGClipTests.olean" "$LAB/SVGClipTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGPrerequisiteTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGTransformTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGPercentageTests.lean"

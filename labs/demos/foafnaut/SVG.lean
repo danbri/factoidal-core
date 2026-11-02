@@ -319,6 +319,36 @@ def Geometry.recordTagCount : Geometry → Nat × Nat
   | .line .. => (lineRecordTag,0)
   | .polygon points => (polygonRecordTag,points.length)
   | .path contours => (pathRecordTag,(NativeSVGPath.edges contours).length)
+/-- An exact rectangular clip in its own Float coordinate frame. SVG 2 §8
+    viewport clipping is tested through the inverse CTM, never a world AABB. -/
+structure ClipRect where
+  x : Float
+  y : Float
+  width : Float
+  height : Float
+  transform : Transform := identityTransform
+  deriving Repr
+
+def ClipRect.lowerUnder (parent : Transform) (clip : ClipRect) : ClipRect :=
+  {clip with transform:=parent.compose clip.transform}
+
+/-- Zero-area or singular clips have empty coverage. Invalid numeric values
+    also cannot produce coverage or a divide by zero. -/
+def ClipRect.valid (clip : ClipRect) : Bool :=
+  let inverse := clip.transform.inverse
+  [clip.x,clip.y,clip.width,clip.height,clip.transform.a,clip.transform.b,
+    clip.transform.c,clip.transform.d,clip.transform.e,clip.transform.f].all
+      (fun value => value.isFinite && value.abs <= 1000000000) &&
+    clip.width > 0 && clip.height > 0 && clip.transform.det != 0 &&
+    [inverse.a,inverse.b,inverse.c,inverse.d,inverse.e,inverse.f].all
+      (fun value => value.isFinite && value.abs <= 1000000000)
+
+def ClipRect.contains (clip : ClipRect) (x y : Float) : Bool :=
+  if !clip.valid then false else
+    let point := clip.transform.inverse.apply x y
+    clip.x <= point.1 && point.1 <= clip.x+clip.width &&
+      clip.y <= point.2 && point.2 <= clip.y+clip.height
+
 structure Primitive where
   geometry : Geometry
   style : Style
@@ -328,11 +358,14 @@ structure Primitive where
   /-- Ordered enclosing SVG group IDs; `none` records an anonymous group.
       Geometry and transforms are still lowered to painter-ordered leaves. -/
   groupPath : List (Option String) := []
+  clips : List ClipRect := []
   deriving Repr
 
 def Primitive.lowerUnder (parent : Transform) (groups : List (Option String))
     (primitive : Primitive) : Primitive := Id.run do
-  let transformed := {primitive with transform := parent.compose primitive.transform}
+  let transformed := {primitive with
+    transform := parent.compose primitive.transform
+    clips := primitive.clips.map (ClipRect.lowerUnder parent)}
   return {transformed with groupPath := groups ++ primitive.groupPath}
 
 theorem Primitive.lowerUnder_preserves_rendering_data (parent : Transform)
@@ -348,17 +381,27 @@ theorem Primitive.lowerUnder_records_group_path (parent : Transform)
     (Primitive.lowerUnder parent groups primitive).groupPath = groups ++ primitive.groupPath := by
   simp [Primitive.lowerUnder]
 
+def Primitive.addClip (clip : ClipRect) (primitive : Primitive) : Primitive :=
+  {primitive with clips:=clip :: primitive.clips}
+
+theorem Primitive.lowerUnder_clip_frames (parent : Transform)
+    (groups : List (Option String)) (primitive : Primitive) :
+    (primitive.lowerUnder parent groups).clips =
+      primitive.clips.map (ClipRect.lowerUnder parent) := by
+  simp [Primitive.lowerUnder]
+
 /- Retained SVG tree. Transforms remain local here and are composed only in the
    compatibility lowering used by the current flat renderer. -/
 inductive DisplayNode where
   | paint (primitive : Primitive)
   | group (id : Option String) (transform : Transform) (children : List DisplayNode)
+  | clipped (id : Option String) (contentTransform : Transform) (clip : ClipRect) (children : List DisplayNode)
   deriving Repr
 
 mutual
   def DisplayNode.paintCount : DisplayNode → Nat
     | .paint _ => 1
-    | .group _ _ children => DisplayNode.paintCountList children
+    | .group _ _ children | .clipped _ _ _ children => DisplayNode.paintCountList children
   termination_by node => sizeOf node
 
   def DisplayNode.paintCountList : List DisplayNode → Nat
@@ -370,7 +413,7 @@ end
 mutual
   def DisplayNode.nodeCount : DisplayNode → Nat
     | .paint _ => 1
-    | .group _ _ children => 1 + DisplayNode.listNodeCount children
+    | .group _ _ children | .clipped _ _ _ children => 1 + DisplayNode.listNodeCount children
   termination_by node => sizeOf node
 
   def DisplayNode.listNodeCount : List DisplayNode → Nat
@@ -385,6 +428,9 @@ mutual
     | .paint primitive => [primitive.lowerUnder parent groups]
     | .group id transform children =>
         DisplayNode.lowerList (parent.compose transform) (groups ++ [id]) children
+    | .clipped id contentTransform clip children =>
+        (DisplayNode.lowerList (parent.compose contentTransform) (groups ++ [id]) children).map
+          (Primitive.addClip (clip.lowerUnder parent))
   termination_by node => sizeOf node
 
   def DisplayNode.lowerList (parent : Transform) (groups : List (Option String)) :
@@ -404,20 +450,24 @@ def DisplayNode.lowerTR (parent : Transform) (groups : List (Option String))
   | .group id transform children =>
       (children.foldl (fun acc child =>
         (child.lowerTR (parent.compose transform) (groups ++ [id])).reverse ++ acc) []).reverse
+  | .clipped id contentTransform clip children =>
+      ((children.foldl (fun acc child =>
+        (child.lowerTR (parent.compose contentTransform) (groups ++ [id])).reverse ++ acc) []).reverse).map
+          (Primitive.addClip (clip.lowerUnder parent))
 termination_by sizeOf node
 
 /-- Exact paint count with a sibling fold; `paintCountTR_eq` retains the reference meaning. -/
 def DisplayNode.paintCountTR (node : DisplayNode) : Nat :=
   match node with
   | .paint _ => 1
-  | .group _ _ children => children.foldl (fun acc child => acc + child.paintCountTR) 0
+  | .group _ _ children | .clipped _ _ _ children => children.foldl (fun acc child => acc + child.paintCountTR) 0
 termination_by sizeOf node
 
 /-- Exact inspector node count with sibling folds, including each group itself. -/
 def DisplayNode.nodeCountTR (node : DisplayNode) : Nat :=
   match node with
   | .paint _ => 1
-  | .group _ _ children => children.foldl (fun acc child => acc + child.nodeCountTR) 1
+  | .group _ _ children | .clipped _ _ _ children => children.foldl (fun acc child => acc + child.nodeCountTR) 1
 termination_by sizeOf node
 
 theorem DisplayNode.paintCountTR_eq (node : DisplayNode) :
@@ -427,10 +477,12 @@ theorem DisplayNode.paintCountTR_eq (node : DisplayNode) :
     (motive_2 := fun nodes => ∀ acc,
       nodes.foldl (fun acc child => acc + child.paintCountTR) acc =
         acc + DisplayNode.paintCountList nodes)
-    ?_ ?_ ?_ ?_ node
+    ?_ ?_ ?_ ?_ ?_ node
   · intro primitive
     simp [DisplayNode.paintCountTR, DisplayNode.paintCount]
   · intro id transform children ih
+    simpa [DisplayNode.paintCountTR, DisplayNode.paintCount] using ih 0
+  · intro id transform clip children ih
     simpa [DisplayNode.paintCountTR, DisplayNode.paintCount] using ih 0
   · intro acc
     simp [DisplayNode.paintCountList]
@@ -444,10 +496,12 @@ theorem DisplayNode.nodeCountTR_eq (node : DisplayNode) :
     (motive_2 := fun nodes => ∀ acc,
       nodes.foldl (fun acc child => acc + child.nodeCountTR) acc =
         acc + DisplayNode.listNodeCount nodes)
-    ?_ ?_ ?_ ?_ node
+    ?_ ?_ ?_ ?_ ?_ node
   · intro primitive
     simp [DisplayNode.nodeCountTR, DisplayNode.nodeCount]
   · intro id transform children ih
+    simpa [DisplayNode.nodeCountTR, DisplayNode.nodeCount] using ih 1
+  · intro id transform clip children ih
     simpa [DisplayNode.nodeCountTR, DisplayNode.nodeCount] using ih 1
   · intro acc
     simp [DisplayNode.listNodeCount]
@@ -462,12 +516,16 @@ theorem DisplayNode.lowerTR_eq (node : DisplayNode) :
     (motive_2 := fun (nodes : List DisplayNode) => ∀ (parent : Transform) (groups : List (Option String)) (acc : List Primitive),
       (nodes.foldl (fun acc child => (child.lowerTR parent groups).reverse ++ acc) acc).reverse =
         acc.reverse ++ DisplayNode.lowerList parent groups nodes)
-    ?_ ?_ ?_ ?_ node
+    ?_ ?_ ?_ ?_ ?_ node
   · intro primitive parent groups
     simp [DisplayNode.lowerTR, DisplayNode.lower]
   · intro id transform children ih parent groups
     simpa [DisplayNode.lowerTR, DisplayNode.lower] using
       ih (parent.compose transform) (groups ++ [id]) []
+  · intro id transform clip children ih parent groups
+    simpa only [DisplayNode.lowerTR, DisplayNode.lower, List.reverse_nil, List.nil_append] using
+      congrArg (List.map (Primitive.addClip (clip.lowerUnder parent)))
+        (ih (parent.compose transform) (groups ++ [id]) [])
   · intro parent groups acc
     simp [DisplayNode.lowerList]
   · intro head tail ihHead ihTail parent groups acc
@@ -562,10 +620,13 @@ theorem DisplayNode.paintCount_eq_lowerLength (node : DisplayNode)
       node.paintCount = (node.lower parent groups).length)
     (motive_2 := fun nodes => ∀ parent groups,
       DisplayNode.paintCountList nodes = (DisplayNode.lowerList parent groups nodes).length)
-    ?_ ?_ ?_ ?_ node parent groups
+    ?_ ?_ ?_ ?_ ?_ node parent groups
   · intro primitive parent groups
     simp [DisplayNode.paintCount, DisplayNode.lower]
   · intro id transform children childrenCount parent groups
+    simpa [DisplayNode.paintCount, DisplayNode.lower] using
+      childrenCount (parent.compose transform) (groups ++ [id])
+  · intro id transform clip children childrenCount parent groups
     simpa [DisplayNode.paintCount, DisplayNode.lower] using
       childrenCount (parent.compose transform) (groups ++ [id])
   · intro parent groups
@@ -609,6 +670,13 @@ theorem DisplayNode.lower_group (parent : Transform) (groups : List (Option Stri
     (id : Option String) (transform : Transform) (children : List DisplayNode) :
     DisplayNode.lower parent groups (.group id transform children) =
       DisplayNode.lowerList (parent.compose transform) (groups ++ [id]) children := by
+  simp [DisplayNode.lower]
+
+theorem DisplayNode.lower_clipped (parent : Transform) (groups : List (Option String))
+    (id : Option String) (content : Transform) (clip : ClipRect) (children : List DisplayNode) :
+    DisplayNode.lower parent groups (.clipped id content clip children) =
+      (DisplayNode.lowerList (parent.compose content) (groups ++ [id]) children).map
+        (Primitive.addClip (clip.lowerUnder parent)) := by
   simp [DisplayNode.lower]
 
 private def strokeEnabled (style : Style) : Bool :=
@@ -1104,17 +1172,25 @@ private def geometryTailSize (geometry : Geometry) : Nat := geometryTailRowCount
 def primitiveFixedRowCount : Nat := 5
 def dashPieceRowCount : Nat := 5
 def affineTransformRowCount : Nat := L4Factoidal.Math.AffineRows.vec4RowCount
+def clipRowCount : Nat := 3
 def Primitive.headerModeCode (p : Primitive) : Nat :=
   p.style.lineCap.headerModeBit +
-    (if p.transform.identity then 0 else 2)
+    (if p.transform.identity then 0 else 2) + 4*p.clips.length
 theorem Primitive.headerModeCode_roundCap (p : Primitive) :
     p.headerModeCode % 2 = p.style.lineCap.headerModeBit := by
   cases hcap : p.style.lineCap <;> cases h : p.transform.identity <;>
     simp [Primitive.headerModeCode, LineCap.headerModeBit, hcap, h]
+    <;> omega
 theorem Primitive.headerModeCode_hasTransform (p : Primitive) :
-    (p.headerModeCode >= 2) = (!p.transform.identity) := by
+    (p.headerModeCode % 4 >= 2) = (!p.transform.identity) := by
   cases hcap : p.style.lineCap <;> cases h : p.transform.identity <;>
     simp [Primitive.headerModeCode, LineCap.headerModeBit, hcap, h]
+    <;> omega
+theorem Primitive.headerModeCode_clipCount (p : Primitive) :
+    p.headerModeCode / 4 = p.clips.length := by
+  cases hcap : p.style.lineCap <;> cases h : p.transform.identity <;>
+    simp [Primitive.headerModeCode, LineCap.headerModeBit, hcap, h]
+    <;> omega
 def Primitive.fixedRows (p : Primitive) : List Float :=
   let (tag,count) := p.geometry.recordTagCount
   geometryRows p.geometry ++ [Float.ofNat tag,Float.ofNat count,
@@ -1156,35 +1232,74 @@ theorem Primitive.transformTailData_length (p : Primitive) :
   · simp only [Primitive.transformTailData, if_neg h]
     rw [L4Factoidal.Math.AffineRows.toVec4Rows_flatten_length]
     rfl
+/-- Clip wire record: inverse affine rows (first w is an active flag), then
+    local x/y/width/height. Empty/singular clips have a finite inactive record. -/
+def ClipRect.rows (clip : ClipRect) : List Float :=
+  let active := clip.valid
+  let t := if active then clip.transform.inverse else identityTransform
+  [t.a,t.c,t.e,if active then 1 else 0,t.b,t.d,t.f,0,
+    if active then clip.x else 0,if active then clip.y else 0,
+    if active then clip.width else 0,if active then clip.height else 0]
+
+theorem ClipRect.rows_length (clip : ClipRect) : clip.rows.length = clipRowCount*4 := by
+  simp [ClipRect.rows,clipRowCount]
+
+def clipPayloadData (clips : List ClipRect) : List Float := clips.flatMap ClipRect.rows
+
+theorem clipPayloadData_length (clips : List ClipRect) :
+    (clipPayloadData clips).length = clips.length*(clipRowCount*4) := by
+  induction clips with
+  | nil => rfl
+  | cons clip rest ih =>
+      change (clip.rows ++ clipPayloadData rest).length = _
+      rw [List.length_append,ClipRect.rows_length,ih]
+      simp [List.length_cons,Nat.add_mul,Nat.one_mul,Nat.add_comm]
+
 def Primitive.rows (p : Primitive) : List Float :=
   p.fixedRows ++
   geometryTailData p.geometry ++
   dashPayloadData p.style.strokeWidth (p.dashParts.getD []) ++
-  p.transformTailData
+  p.transformTailData ++ clipPayloadData p.clips
 def Primitive.rowCount (p : Primitive) : Nat :=
   primitiveFixedRowCount + geometryTailRowCount p.geometry +
   (p.dashParts.getD []).length * dashPieceRowCount +
-  (if p.transform.identity then 0 else affineTransformRowCount)
+  (if p.transform.identity then 0 else affineTransformRowCount) + p.clips.length*clipRowCount
 def Primitive.shaderRowAdvance (p : Primitive) : Nat :=
   primitiveFixedRowCount +
   shaderTailRowsFromHeader p.geometry.recordTagCount.1 p.geometry.recordTagCount.2 +
   dashPieceRowCount * (p.dashParts.getD []).length +
-  (if p.headerModeCode >= 2 then affineTransformRowCount else 0)
+  (if p.headerModeCode % 4 >= 2 then affineTransformRowCount else 0) +
+  (p.headerModeCode / 4)*clipRowCount
+
+theorem Primitive.clipOffsetRows (p : Primitive) :
+    p.rowCount-p.clips.length*clipRowCount =
+      primitiveFixedRowCount + geometryTailRowCount p.geometry +
+        (p.dashParts.getD []).length*dashPieceRowCount +
+        (if p.transform.identity then 0 else affineTransformRowCount) := by
+  simp [Primitive.rowCount]
+
+theorem Primitive.clipRows_within_record (p : Primitive) (index : Nat)
+    (inside : index < p.clips.length) :
+    (p.rowCount-p.clips.length*clipRowCount)*4 + (index+1)*(clipRowCount*4) ≤
+      p.rowCount*4 := by
+  rw [Primitive.clipOffsetRows]
+  simp only [Primitive.rowCount,clipRowCount,Nat.add_mul]
+  omega
 theorem Primitive.shaderRowAdvance_eq_rowCount (p : Primitive) :
     p.shaderRowAdvance = p.rowCount := by
   cases h : p.transform.identity <;>
     simp [Primitive.shaderRowAdvance, Primitive.rowCount,
       Geometry.shaderTailRowsFromHeader_eq_tailRows,
-      Primitive.headerModeCode_hasTransform, h, Nat.mul_comm]
+      Primitive.headerModeCode_hasTransform, Primitive.headerModeCode_clipCount, h, Nat.mul_comm]
 theorem Primitive.rows_length (p : Primitive) :
     p.rows.length = p.rowCount * 4 := by
   by_cases h : p.transform.identity
   · simp [Primitive.rows, Primitive.rowCount, h, Primitive.fixedRows_length,
-      geometryTailData_length, dashPayloadData_length, Primitive.transformTailData_length,
-      primitiveFixedRowCount, dashPieceRowCount, Nat.add_mul, Nat.mul_assoc, Nat.add_assoc]
+      geometryTailData_length, dashPayloadData_length, Primitive.transformTailData_length, clipPayloadData_length,
+      primitiveFixedRowCount, dashPieceRowCount, clipRowCount, Nat.add_mul, Nat.mul_assoc, Nat.add_assoc]
   · simp [Primitive.rows, Primitive.rowCount, h, Primitive.fixedRows_length,
-      geometryTailData_length, dashPayloadData_length, Primitive.transformTailData_length,
-      primitiveFixedRowCount, dashPieceRowCount, affineTransformRowCount,
+      geometryTailData_length, dashPayloadData_length, Primitive.transformTailData_length, clipPayloadData_length,
+      primitiveFixedRowCount, dashPieceRowCount, affineTransformRowCount, clipRowCount,
       L4Factoidal.Math.AffineRows.vec4RowCount,
       Nat.add_mul, Nat.mul_assoc, Nat.add_assoc]
 theorem Primitive.rows_length_matches_shaderRowAdvance (p : Primitive) :
@@ -1245,13 +1360,15 @@ private def Scene.wgsl (_s : Scene) : String :=
   "@vertex fn vertex(@builtin(vertex_index) i:u32)->@builtin(position) vec4f {" ++
   "let vertices=array<vec2f,3>(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));return vec4f(vertices[i],0,1); }\n" ++
   "fn samplePixel(pixel:vec4f)->vec4f {" ++
-  "var rgb=vec3f(1.0);if any(pixel.xy>=params.rows[1].zw){return vec4f(rgb,1.0);}" ++
+  "var rgb=vec3f(1.0);let rowLimit=arrayLength(&params.rows);if(rowLimit<2u){return vec4f(rgb,1.0);}if any(pixel.xy>=params.rows[1].zw){return vec4f(rgb,1.0);}" ++
   "let worldP=vec4f((pixel.xy-params.rows[0].zw)/params.rows[0].xy+params.rows[1].xy,0,1);" ++
   "var base=2u;\n" ++
   s!"for(var primitive=0u;primitive<{maxPrimitives}u&&base<arrayLength(&params.rows);primitive++)" ++ "{" ++
-  "let header=vec4u(params.rows[base+1u]);let tag=header.x;let count=header.y;" ++
-  s!"let shapeRows=select((count+1u)/2u,count,tag=={Geometry.pathRecordTag}u);let dashCount=u32(params.rows[base+4u].z);let tailRows=shapeRows+{dashPieceRowCount}u*dashCount;var p=worldP;if(header.w>=2u)" ++ "{let tb=base+" ++ toString primitiveFixedRowCount ++ "u+tailRows;let x=params.rows[tb];let y=params.rows[tb+1u];" ++
+  "let remaining=rowLimit-base;if(remaining<5u){break;}let header=vec4u(params.rows[base+1u]);let tag=header.x;let count=header.y;" ++
+  "if(count>2u*remaining){break;}let shapeRows=select((count+1u)/2u,count,tag==" ++ toString Geometry.pathRecordTag ++ "u);let dashCount=u32(params.rows[base+4u].z);let clipCount=header.w/4u;" ++
+  "if(shapeRows>remaining||dashCount>remaining/" ++ toString dashPieceRowCount ++ "u||clipCount>remaining/" ++ toString clipRowCount ++ "u){break;}let tailRows=shapeRows+" ++ toString dashPieceRowCount ++ "u*dashCount;let affineRows=select(0u," ++ toString affineTransformRowCount ++ "u,(header.w%4u)>=2u);let recordRows=" ++ toString primitiveFixedRowCount ++ "u+tailRows+affineRows+" ++ toString clipRowCount ++ "u*clipCount;if(recordRows>remaining){break;}var p=worldP;if((header.w%4u)>=2u)" ++ "{let tb=base+" ++ toString primitiveFixedRowCount ++ "u+tailRows;let x=params.rows[tb];let y=params.rows[tb+1u];" ++
   "p=vec4f(dot(x.xy,worldP.xy)+x.z,dot(y.xy,worldP.xy)+y.z,0,1);}" ++
+  "var clipHit=true;let clipBase=base+" ++ toString primitiveFixedRowCount ++ "u+tailRows+affineRows;for(var ci=0u;ci<clipCount;ci++){let cb=clipBase+" ++ toString clipRowCount ++ "u*ci;let x=params.rows[cb];let y=params.rows[cb+1u];let bounds=params.rows[cb+2u];let q=vec2f(dot(x.xy,worldP.xy)+x.z,dot(y.xy,worldP.xy)+y.z);if(x.w!=1.0||any(q<bounds.xy)||any(q>bounds.xy+bounds.zw)){clipHit=false;break;}}" ++
   "var fillHit=false;var strokeHit=false;switch tag {\n" ++
   shaderCase Geometry.rectRecordTag (.rect 0 0 0 0) ++ shaderCase Geometry.circleRecordTag (.circle 0 0 0) ++ shaderCase Geometry.ellipseRecordTag (.ellipse 0 0 0 0) ++
   s!"case {Geometry.lineRecordTag}u: " ++ "{if((header.w%2u)==1u){strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .round) ++
@@ -1262,11 +1379,11 @@ private def Scene.wgsl (_s : Scene) : String :=
   "if(dt==4u){piece=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}" ++
   "else if(dt==2u){piece=" ++ relativeCondition (fillCondition (.circle 0 0 0) 0) ++ ";}" ++
   "else if(dt==7u){piece=" ++ relativeCondition (triangleCondition 0) ++ ";}strokeHit=strokeHit||piece;}base=parentBase;}" ++
-  "let fill=params.rows[base+2u];let stroke=params.rows[base+3u];var element=vec4f(0.0);" ++
+  "fillHit=fillHit&&clipHit;strokeHit=strokeHit&&clipHit;let fill=params.rows[base+2u];let stroke=params.rows[base+3u];var element=vec4f(0.0);" ++
   "if fillHit {element=vec4f(fill.rgb*fill.a,fill.a);}" ++
   "if strokeHit {element=vec4f(stroke.rgb*stroke.a,stroke.a)+element*(1.0-stroke.a);}" ++
   "let opacity=params.rows[base+4u].y;rgb=element.rgb*opacity+rgb*(1.0-element.a*opacity);" ++
-  "base+=" ++ toString primitiveFixedRowCount ++ "u+tailRows+select(0u," ++ toString affineTransformRowCount ++ "u,header.w>=2u);}return vec4f(rgb,1.0); }\n" ++
+  "base+=recordRows;}return vec4f(rgb,1.0); }\n" ++
   "@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {var total=vec4f(0.0);" ++
   String.join (pixelSampleOffsets.map fun (x,y) =>
     "total+=samplePixel(vec4f(pixel.xy+vec2f(" ++ toString (x-0.5) ++ "," ++ toString (y-0.5) ++ "),0.0,1.0));") ++
@@ -1274,6 +1391,16 @@ private def Scene.wgsl (_s : Scene) : String :=
 
 private def Primitive.coverageAt (primitive : Primitive) (data : Array Float)
     (base : Nat) (position : Float × Float) : Bool × Bool := Id.run do
+  let clipCount := primitive.clips.length
+  let mut clipBase := base + (primitive.rowCount-clipCount*clipRowCount)*4
+  for _ in primitive.clips do
+    if data[clipBase+3]! != 1 then return (false,false)
+    let x := data[clipBase]! * position.1 + data[clipBase+1]! * position.2 + data[clipBase+2]!
+    let y := data[clipBase+4]! * position.1 + data[clipBase+5]! * position.2 + data[clipBase+6]!
+    if x < data[clipBase+8]! || y < data[clipBase+9]! ||
+        x > data[clipBase+8]!+data[clipBase+10]! || y > data[clipBase+9]!+data[clipBase+11]! then
+      return (false,false)
+    clipBase := clipBase+clipRowCount*4
   let localPoint := primitive.transform.inverse.apply position.1 position.2
   let env : Env := {data,position:=localPoint}
   let fillHit := match primitive.geometry with
@@ -1386,6 +1513,15 @@ mutual
         ",\"transform\":" ++ jsonArray
           ([transform.a,transform.b,transform.c,transform.d,transform.e,transform.f].map floatJSON) ++
         ",\"children\":" ++ DisplayNode.listJSON children ++ "}"
+    | .clipped id transform clip children =>
+        "{\"kind\":\"group\",\"id\":" ++
+        (match id with | none => "null" | some value => quote value) ++
+        ",\"transform\":" ++ jsonArray
+          ([transform.a,transform.b,transform.c,transform.d,transform.e,transform.f].map floatJSON) ++
+        ",\"clip\":{\"bounds\":" ++ jsonArray ([clip.x,clip.y,clip.width,clip.height].map floatJSON) ++
+        ",\"transform\":" ++ jsonArray
+          ([clip.transform.a,clip.transform.b,clip.transform.c,clip.transform.d,clip.transform.e,clip.transform.f].map floatJSON) ++
+        "},\"children\":" ++ DisplayNode.listJSON children ++ "}"
   termination_by node => sizeOf node
 
   private def DisplayNode.listJSON : List DisplayNode → String
