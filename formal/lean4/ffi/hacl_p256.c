@@ -27,6 +27,8 @@
  *   l4_hacl_p256_secret_to_public(sk[32]) -> pubXY[64] or empty
  *   l4_hacl_p256_compressed_to_raw(pk[33]) -> pubXY[64] or empty
  *   l4_hacl_p256_ecdh(theirXY[64], sk[32]) -> x||y of sk*Q [64] or empty
+ *   l4_hacl_p256_verify_prehashed(pubXY[64], e[32], sig[64]) -> 0 / 1
+ *   l4_hacl_p256_sign_prehashed(sk[32], e[32], nonce[32]) -> sig[64] or empty
  * Every length refusal is 0 or an empty ByteArray, and so is every
  * refusal HACL* reports (a private key or nonce outside [1, n-1], a
  * compressed point that is not on the curve).  There is no "unknown"
@@ -138,5 +140,43 @@ LEAN_EXPORT lean_obj_res l4_hacl_p256_ecdh(b_lean_obj_arg their_xy,
   lean_obj_res out = lean_alloc_sarray(1, 64, 64);
   memcpy(lean_sarray_cptr(out), shared, 64);
   memset(shared, 0, sizeof shared);
+  return out;
+}
+
+/* ECDSA P-256 over a message representative that Lean computed: HACL*
+ * Hacl_P256_ecdsa_verif_without_hash and Hacl_P256_ecdsa_sign_p256_without_hash.
+ * `e` is EXACTLY 32 bytes: the leftmost 256 bits of the hash, or a shorter
+ * hash left-padded with zero octets (FIPS 186-4 section 6.4; the conversion
+ * is P256Native.p256MsgRep in Lean).  HACL* reads the first 32 bytes of its
+ * `msg` argument whatever `msg_len` is, so the length check here is what
+ * keeps it inside the buffer.  The hash itself is computed in Lean, so the
+ * five digests of XML Signature 1.1 section 6.4.3 use one HACL* entry each
+ * for verification and signing (https://github.com/danbri/factoidal/issues/1223).
+ * No cryptographic logic here: length checks and one HACL* call. */
+LEAN_EXPORT uint8_t l4_hacl_p256_verify_prehashed(b_lean_obj_arg pub_xy,
+                                                  b_lean_obj_arg e,
+                                                  b_lean_obj_arg sig) {
+  if (lean_sarray_size(pub_xy) != 64) return 0;
+  if (lean_sarray_size(e) != 32) return 0;
+  if (lean_sarray_size(sig) != 64) return 0;
+  uint8_t *s = lean_sarray_cptr(sig);
+  return Hacl_P256_ecdsa_verif_without_hash(32U, lean_sarray_cptr(e),
+                                            lean_sarray_cptr(pub_xy),
+                                            s, s + 32) ? 1 : 0;
+}
+
+LEAN_EXPORT lean_obj_res l4_hacl_p256_sign_prehashed(b_lean_obj_arg sk,
+                                                     b_lean_obj_arg e,
+                                                     b_lean_obj_arg nonce) {
+  if (lean_sarray_size(sk) != 32) return l4_p256_empty_bytes();
+  if (lean_sarray_size(e) != 32) return l4_p256_empty_bytes();
+  if (lean_sarray_size(nonce) != 32) return l4_p256_empty_bytes();
+  uint8_t sig[64];
+  if (!Hacl_P256_ecdsa_sign_p256_without_hash(sig, 32U, lean_sarray_cptr(e),
+                                              lean_sarray_cptr(sk),
+                                              lean_sarray_cptr(nonce)))
+    return l4_p256_empty_bytes();
+  lean_obj_res out = lean_alloc_sarray(1, 64, 64);
+  memcpy(lean_sarray_cptr(out), sig, 64);
   return out;
 }
