@@ -42,3 +42,13 @@ explicitly unbuilt locally; these results do not claim the full repository CI
 has run. The separate stale dataflow inventory failure in
 https://github.com/danbri/factoidal-core/actions/runs/41535751593 still requires
 fresh registry generation; it is not repaired by this proof change.
+
+The dataflow workflow now runs that generator against its freshly built
+registry and preserves both outputs, their SHA-256 values, the source commit,
+generator hash and Lean version as a seven-day CI artifact. It then runs the
+existing negative/positive gates and requires the generated files to match
+the committed tree. A stale document therefore still fails CI. The upload
+runs after later failures only if fresh generation itself succeeded; checkout
+files are never relabeled generated output after a failed build/generation.
+This permits retrieval of actual generator output for review when the local
+disk cannot accommodate the 456-module registry closure.
