@@ -60,10 +60,12 @@ export function validateSVG(value:unknown):SVGArtifact {
 }
 export async function loadSVG(){
   const module=await createModule();
-  const call=(name:string,xml:string,width:number,height:number,extra:number[]=[])=>{
+  const call=(name:string,xml:string,width:number,height:number,extra:number[]=[],documentURL?:string)=>{
     if(typeof xml!=="string"||xml.includes("\0")||[...xml].length>1048576)throw new Error("Invalid SVG input ABI");
     if(![width,height,...extra].every(n=>Number.isInteger(n)&&n>=0&&n<=0xffffffff))throw new Error("Invalid SVG numeric ABI");
-    const values=[xml,width,height,...extra],types=["string",...values.slice(1).map(()=>"number")];
+    if((name==="svg_call_url"&&documentURL===undefined)||(documentURL!==undefined&&(typeof documentURL!=="string"||documentURL.includes("\0")||[...documentURL].length>1048576)))throw new Error("Invalid SVG URL ABI");
+    const values:(string|number)[]=[xml,width,height,...extra],types=["string",...values.slice(1).map(()=>"number")];
+    if(documentURL!==undefined){values.push(documentURL);types.push("string");}
     const pointer=module.ccall(name,"number",types,values);
     if(!pointer)throw new Error("SVG WASM initialization/allocation failed");
     try{const result=JSON.parse(module.UTF8ToString(pointer));if(result.error)throw new Error(`SVG profile: ${result.error}`);return result;}
@@ -71,6 +73,7 @@ export async function loadSVG(){
   };
   return {
     compile:(xml:string,width=0,height=0)=>validateSVG(call("svg_call",xml,width,height)),
+    compileWithURL:(xml:string,documentURL:string,width=0,height=0)=>validateSVG(call("svg_call_url",xml,width,height,[],documentURL)),
     sample:(xml:string,x:number,y:number,width=0,height=0):number[]=>call("svg_pixel",xml,width,height,[x,y]).rgb,
   };
 }

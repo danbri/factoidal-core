@@ -97,3 +97,76 @@ clarify that width/height CSS properties apply to outer SVG (and rect/image/
 foreignObject), but are ignored on nested svg/use/symbol; their XML dimensions
 still apply. This supersedes conflicting older prose. Instancing tests must
 check this rule alongside specified target style overriding inherited use style.
+
+## Definition and instance reader (in validation)
+
+The reader now collects original document IDs in a persistent `Std.TreeMap`,
+keeping the first matching element in tree order, including a foreign element
+that makes that target invalid for SVG use. Each entry retains an original
+source path independently from its ID string. An active source-path stack
+suppresses an ancestor or recursive use instance; duplicate ID strings alone
+do not manufacture a cycle, and sibling instances do not share active state.
+Expansion is total and fuel-bounded within the existing group-depth budget.
+
+Definitions and uninstantiated symbols do not paint. Instances inherit the
+host's paint style, then apply the target's own specified attributes/style;
+target parents are not cloned into the instance. `use` appends x/y translation
+on the right of its transform. Symbol and nested-svg dimensions establish the
+percentage context and viewBox transform, while their actual rectangular
+viewport clip retains its separate CTM. Explicit visible overflow is supported;
+zero viewport/viewBox disables that instance. Partial container opacity still
+requires a real compositing surface and is explicitly refused.
+
+References prefer `href` to `xlink:href`, even for an empty href; fragments
+percent-decode UTF-8 exactly once and do not decode plus as form whitespace.
+Missing, malformed and cyclic references draw no instance without dropping
+unrelated graphics. A host document URL can now be supplied to `parseRoot`,
+`parse` or the transported `compileWithURL` export. The existing RFC3986 resolver
+checks the resolved nonfragment document identity before choosing a local ID.
+Original source xml:base context is retained across cloning; it is not replaced
+by a use host's different base. External-document references remain explicitly
+unsupported without fetching. URL equivalence follows this resolver's component
+serialization; a complete WHATWG URL canonicalizer is not claimed.
+
+Foreign qualified metadata attributes and xml:lang/xml:space are inert here;
+xml:base affects URL resolution. SVG-qualified lookalike paint attributes still
+fail namespace validation. Empty XHTML meta annotations used by original WPT
+files are inert; active http-equiv metadata remains unsupported.
+
+Native tests passed full rendering-field comparisons (only retained `tree`
+inspection removed), plus independent raster rectangles for symbol viewBox,
+use dimension override, nested hidden/visible viewport overflow, CSS dimension
+ignore rules, duplicate/source identity, direct/indirect cycles, href precedence,
+UTF-8/plus/single percent decoding, relative/absolute self URLs and original
+xml:base across a differently based host. Logs:
+`/tmp/factoidal-overnight-svg-use-{compile,native,url-compile,url-native}.log`.
+The first version of a painter-order test encoded a translated rectangle in
+world geometry rather than the instance's equivalent local geometry+CTM. The
+reference fixture was corrected to the explicit equivalent translated group;
+all rendering fields continue to be compared, without weakening the helper.
+Standard small-engine build exited 0 (`...-use-engines.log`). The fresh
+WASM passed 27 SVG Deno tests and 52 other lab tests (79 total, zero failures),
+with type checking enabled under the isolated configuration. The original
+negative list contained empty use/defs/nested-svg cases; those three were
+replaced by explicit zero-paint checks while all other negatives and all pixel
+tolerances remain unchanged. The first 26-pass/1-failure run is retained, along
+with the final green logs `...-use-deno-final.log` and `...-use-deno-other.log`.
+
+All TEN nominated original pinned upstream relations matched independent
+browser test/reference renders exactly through the fresh Lean WASM/WGSL path:
+zero differing pixels/max delta zero in every case, with ten controls passing.
+The selection includes the four symbol display/CSS cases, two symbol dimension
+override cases, two svg dimension override cases, use-svg-inline-css, and zero
+symbol viewBox. The original HTTP document URL is a host input to Lean URL
+resolution; no browser bbox/layout is fed to the candidate. Evidence:
+`/tmp/factoidal-overnight-corpus-use-symbol/capture/{report,capture}.json` and
+its `diagnostics/use-symbol.json` selection. All 601 inventory rows remain;
+591 unselected rows are explicitly unavailable in this diagnostic. This is
+10/10 selected rendering evidence, not a full-601 or full-SVG conformance claim.
+
+Frozen engine SHA256: WASM
+`6e1de3a3fbf8bb2b215fcd53e272a35978c2def46223c90848f5069db816c58d`,
+glue `4716f7b83cb27c462d3223f2761e00e3177bfa5b017204699fc281665d6f3607`.
+The capture records exact matching source/TS/runtime witness identities.
+The broader baseline reason inventory contains no root-sizing unavailable
+cases yet, so the next implementation priority is actual curved path geometry.
