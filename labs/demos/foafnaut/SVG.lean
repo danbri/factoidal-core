@@ -1,5 +1,6 @@
 import Graphics
 import SVGPath
+import SVGReferences
 import SVGCSS
 import SVGDash
 import SVGDashUnits
@@ -225,8 +226,11 @@ private def common := ["id","fill","stroke","color","fill-opacity","stroke-opaci
   "display","visibility"]
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
-    if a.name.namespace_.isSome then throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
-    if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
+    if let some uri := a.name.namespace_ then
+      if uri == svgURI || (uri == "http://www.w3.org/1999/xlink" && !(tag == "use" && a.name.localPart == "href")) ||
+          (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base"].contains a.name.localPart) then
+        throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
+    else if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
 private def inheritedNumber (lengths : LengthContext) (attrs : List NamespaceAttribute) (key : String) (old : Float) : Except String Float :=
   match attr attrs key with
   | none => pure old
@@ -278,19 +282,27 @@ private def readStyle (lengths : LengthContext) (ids : List String) (attrs : Lis
     if let some value := attr attrs key then
       if !allowed.contains (trim value) then throw s!"unsupported {key}: {value}"
   return style
-private def cssProperties := (common.filter (· != "id")) ++ ["opacity"]
+private def cssProperties := (common.filter (· != "id")) ++ ["opacity","overflow"]
+private def sheetProperties := cssProperties ++ ["width","height"]
 private def displaySuppressed (attrs : List NamespaceAttribute) : Bool :=
   (attr attrs "display").any (fun value => (trim value).toLower == "none")
 private def cssAttribute (d : NativeSVGCSS.Declaration) : NamespaceAttribute :=
   {name:={namespace_:=none,localPart:=d.property},value:=d.value}
 private def applyCSS (lengths : LengthContext) (ids : List String) (rules : List NativeSVGCSS.Rule)
-    (tag : String) (attrs : List NamespaceAttribute) : Except String (List NamespaceAttribute) := do
+    (tag : String) (attrs : List NamespaceAttribute) (nested : Bool := false) : Except String (List NamespaceAttribute) := do
   let presentation := attrs.filterMap fun a =>
     if a.name.namespace_.isNone && cssProperties.contains a.name.localPart then
       some ({property:=a.name.localPart,value:=a.value} : NativeSVGCSS.Declaration) else none
-  let inlineStyle ← NativeSVGCSS.parseDeclarations cssProperties ((attr attrs "style").getD "")
+  let inlineStyle ← NativeSVGCSS.parseDeclarations sheetProperties ((attr attrs "style").getD "")
+  let ignoredDimension := fun (d : NativeSVGCSS.Declaration) =>
+    (["use","symbol"].contains tag || (tag == "svg" && nested)) && ["width","height"].contains d.property
+  let inlineStyle := inlineStyle.filter (!ignoredDimension ·)
+  let rules := rules.map fun rule => {rule with declarations:=rule.declarations.filter (!ignoredDimension ·)}
   let validate := fun (d : NativeSVGCSS.Declaration) => do
     if d.property == "opacity" then let _ ← number d.value; pure ()
+    else if d.property == "overflow" then
+      if !["hidden","visible","scroll","auto"].contains (trim d.value) then throw "unsupported overflow"
+    else if ["width","height"].contains d.property then throw "unsupported CSS geometry property"
     else let _ ← readStyle lengths ids [cssAttribute d] {}; pure ()
   let winning ← NativeSVGCSS.cascade validate tag presentation rules inlineStyle
   pure (attrs.filter (fun a => !(a.name.namespace_.isNone && (cssProperties.contains a.name.localPart || a.name.localPart=="style"))) ++ winning.map cssAttribute)
@@ -754,79 +766,6 @@ private def extraAttrs (tag : String) : List String :=
   | "path" => ["d","opacity","transform","pathLength"]
   | _ => []
 private def whitespace (s : String) : Bool := s.toList.all isXmlSpace
-mutual
-private def metadata (node : NamespaceNode) : Except String Unit := do
-  match node with
-  | .other (.text _) | .other (.cdata _) | .other (.comment _) => pure ()
-  | _ => throw "descriptive metadata only supports text/comments"
-private def readNode (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (node : NamespaceNode) : Except String (List DisplayNode) := do
-  if depth > 32 then throw "SVG group nesting exceeds 32"
-  match node with
-  | .other (.comment _) => pure []
-  | .other (.text s) | .other (.cdata s) => if whitespace s then pure [] else throw "text painting unsupported"
-  | .other _ => throw "processing instructions/other XML nodes unsupported"
-  | .element name attrs children =>
-    if name.namespace_ == some "http://www.w3.org/1999/xhtml" && name.localPart == "link" then
-      -- Reftest match/help/author links are inert metadata, not graphics or stylesheets.
-      if ![some "match", some "help", some "author"].contains (attr attrs "rel") then throw "unsupported HTML link relation"
-      if !children.isEmpty then throw "HTML metadata link must be empty"
-      return []
-    if name.namespace_ != some svgURI then throw s!"foreign/non-SVG element: {name.localPart}"
-    let tag := name.localPart
-    if tag == "style" then return []
-    let attrs ← applyCSS lengths ids rules tag attrs
-    if tag == "metadata" then return []
-    if tag == "title" || tag == "desc" then
-      validateAttrs tag attrs ["id"]
-      for child in children do metadata child
-      return []
-    else if tag == "g" then
-      validateAttrs tag attrs ["transform"]
-      let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
-      let cumulative ← checkedTransform (parent.compose transform)
-      let inherited ← readStyle lengths ids attrs style
-      let retainedChildren ← readChildren rules lengths ids cumulative (depth+1) inherited children
-      if displaySuppressed attrs then return []
-      return [.group (attr attrs "id") transform retainedChildren]
-    else
-      validateAttrs tag attrs (extraAttrs tag)
-      let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
-      let cumulative ← checkedTransform (parent.compose transform)
-      let inherited ← readStyle lengths ids attrs style
-      let authorLength ← match attr attrs "pathLength" with
-        | none => pure none
-        | some source => do
-          let value ← number source
-          if value < 0 then throw "negative pathLength"
-          pure (some value)
-      let geometry ← readGeometry lengths tag attrs inherited
-      for child in children do
-        match child with
-        | .element n _ _ => if n.namespace_ == some svgURI && ["title","desc","metadata"].contains n.localPart then
-                              let _ ← readNode rules lengths ids cumulative (depth+1) inherited child
-                              pure ()
-                            else throw "graphics children unsupported"
-        | .other (.comment _) => pure ()
-        | .other (.text s) | .other (.cdata s) => if !whitespace s then throw "text painting unsupported"
-        | _ => throw "processing instruction unsupported"
-      let opacity ← match attr attrs "opacity" with | none => pure 1 | some s => number s
-      let painted ← geometry.toList.mapM fun g => do
-        let dashParts ← dashedParts g inherited authorLength
-        pure (.paint {geometry:=g,style:=inherited,opacity:=max 0 (min 1 opacity),transform,dashParts})
-      if displaySuppressed attrs then return []
-      return painted
-private def readChildren (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List DisplayNode) := do
-  let mut out : Array DisplayNode := #[]
-  let mut primitiveCount := 0
-  for node in nodes do
-    let chunk ← readNode rules lengths ids parent depth style node
-    let added := DisplayNode.paintCountList chunk
-    if primitiveCount+added > maxPrimitives then throw "painted primitive count exceeds 12288"
-    primitiveCount := primitiveCount+added
-    out := out ++ chunk.toArray
-  return out.toList
-end
-
 structure Mapping where
   sx : Float
   sy : Float
@@ -837,16 +776,7 @@ structure Mapping where
   viewportWidth : Float
   viewportHeight : Float
   deriving Repr
-structure Scene where
-  width : Nat
-  height : Nat
-  mapping : Mapping
-  tree : List DisplayNode
-  /-- Cached backend lowering. It is computed once after parsing, not once per
-      sample or hit query. The proof binds it to the retained tree. -/
-  primitives : List Primitive
-  loweringCorrect : primitives = DisplayNode.lowerFromRootList tree
-  deriving Repr
+
 private def viewportMapping (w h : Float) (attrs : List NamespaceAttribute) : Except String Mapping := do
   let view ← match attr attrs "viewBox" with
     | none => pure [0,0,w,h] | some value => numbers value
@@ -863,6 +793,187 @@ private def viewportMapping (w h : Float) (attrs : List NamespaceAttribute) : Ex
   let some (_,ax,ay) := alignments.find? (fun item => item.1 == align) | throw "unsupported viewBox alignment"
   let scale := if mode == "meet" then min (w/vw) (h/vh) else max (w/vw) (h/vh)
   return ⟨scale,scale,(w-vw*scale)*Float.ofNat ax/2,(h-vh*scale)*Float.ofNat ay/2,x,y,w,h⟩
+
+
+private def metadata (node : NamespaceNode) : Except String Unit := do
+  match node with
+  | .other (.text _) | .other (.cdata _) | .other (.comment _) => pure ()
+  | _ => throw "descriptive metadata only supports text/comments"
+
+private structure ReadContext where
+  lengths : LengthContext
+  parent : Transform
+  style : Style
+  path : List Nat
+  ancestors : List (List Nat)
+  instanceRoot : Bool := false
+  baseURL : Option String := none
+
+private def readListWith (read : NamespaceNode → Nat → Except String (List DisplayNode))
+    (nodes : List NamespaceNode) : Except String (List DisplayNode) := do
+  let mut out : Array DisplayNode := #[]
+  let mut count := 0
+  for (node,index) in nodes.zipIdx do
+    let chunk ← read node index
+    count := count + DisplayNode.paintCountList chunk
+    if count > maxPrimitives then throw "painted primitive count exceeds 12288"
+    out := out ++ chunk.toArray
+  return out.toList
+
+private def replaceAttr (attrs : List NamespaceAttribute) (key value : String) : List NamespaceAttribute :=
+  attrs.filter (fun a => !(a.name.namespace_.isNone && a.name.localPart == key)) ++
+    [{name:={namespace_:=none,localPart:=key},value}]
+
+/-- Non-inherited container opacity requires an offscreen group surface for
+    values strictly between zero and one; do not approximate it per leaf. -/
+private def containerVisible (attrs : List NamespaceAttribute) : Except String Bool := do
+  let opacity ← match attr attrs "opacity" with | none => pure 1 | some value => number value
+  if opacity > 0 && opacity < 1 then throw "container opacity requires compositing surface"
+  return !displaySuppressed attrs && opacity > 0
+
+private def readNode (references : NativeSVGReferences.Index) (rules : List NativeSVGCSS.Rule)
+    (ids : List String) : Nat → ReadContext → NamespaceNode → Except String (List DisplayNode)
+  | 0,_,_ => throw "SVG group/instance nesting exceeds 32"
+  | fuel+1,context,node => do
+    let context := match node with
+      | .element _ attrs _ => {context with baseURL:=NativeSVGReferences.elementBase attrs context.baseURL}
+      | _ => context
+    let {lengths,parent,style,path,ancestors,instanceRoot,baseURL} := context
+    let active := path :: ancestors
+    let readChildren := fun (lengths : LengthContext) (parent : Transform) (style : Style)
+        (children : List NamespaceNode) =>
+      readListWith (fun child i => readNode references rules ids fuel
+        {lengths,parent,style,path:=path++[i],ancestors:=active,baseURL} child) children
+    match node with
+    | .other (.comment _) => pure []
+    | .other (.text text) | .other (.cdata text) =>
+      if whitespace text then pure [] else throw "text painting unsupported"
+    | .other _ => throw "processing instructions/other XML nodes unsupported"
+    | .element name rawAttrs children =>
+      if name.namespace_ == some "http://www.w3.org/1999/xhtml" && name.localPart == "link" then
+        if ![some "match",some "help",some "author"].contains (attr rawAttrs "rel") then
+          throw "unsupported HTML link relation"
+        if !children.isEmpty then throw "HTML metadata link must be empty"
+        return []
+      if name.namespace_ == some "http://www.w3.org/1999/xhtml" && name.localPart == "meta" then
+        if (attr rawAttrs "http-equiv").isSome then throw "active HTML metadata unsupported"
+        if !children.isEmpty then throw "HTML metadata must be empty"
+        return []
+      if name.namespace_ != some svgURI then throw s!"foreign/non-SVG element: {name.localPart}"
+      let tag := name.localPart
+      if ["style","metadata","defs"].contains tag || (tag == "symbol" && !instanceRoot) then return []
+      let attrs ← applyCSS lengths ids rules tag rawAttrs true
+      if tag == "title" || tag == "desc" then
+        validateAttrs tag attrs ["id"]
+        for child in children do metadata child
+        return []
+      else if tag == "use" then
+        validateAttrs tag attrs ["href","x","y","width","height","transform","opacity"]
+        if !(← containerVisible attrs) then return []
+        let inherited ← readStyle lengths ids attrs style
+        let x ← geometryNumber lengths attrs "x"
+        let y ← geometryNumber lengths attrs "y"
+        let transform ← checkedTransform ((← transformList ((attr attrs "transform").getD "")).compose ⟨1,0,0,1,x,y⟩)
+        let cumulative ← checkedTransform (parent.compose transform)
+        let some source := NativeSVGReferences.href attrs | return []
+        let some id ← NativeSVGReferences.fragment source references.documentURL baseURL | return []
+        let some target := references.get? id | return []
+        if active.contains target.path then return []
+        let .element targetName targetAttrs targetChildren := target.node | return []
+        if targetName.namespace_ != some svgURI then return []
+        let mut targetAttrs := targetAttrs
+        if ["svg","symbol"].contains targetName.localPart then
+          for key in ["width","height"] do
+            if let some value := attr attrs key then
+              if trim value != "auto" then
+                let size ← relativeLength value (if key == "width" then lengths.width else lengths.height)
+                if size < 0 then throw "negative use viewport dimensions unsupported"
+                targetAttrs := replaceAttr targetAttrs key value
+        let targetTree ← readNode references rules ids fuel
+          {lengths,parent:=cumulative,style:=inherited,path:=target.path,ancestors:=active,instanceRoot:=true,baseURL:=target.parentBase}
+          (.element targetName targetAttrs targetChildren)
+        return [.group (attr attrs "id") transform targetTree]
+      else if tag == "svg" || tag == "symbol" then
+        validateAttrs tag attrs ["x","y","width","height","viewBox","preserveAspectRatio","overflow","transform","opacity","version"]
+        if !(← containerVisible attrs) then return []
+        let x ← geometryNumber lengths attrs "x"
+        let y ← geometryNumber lengths attrs "y"
+        let dimension := fun key base => do
+          let value := (attr attrs key).getD "100%"
+          if trim value == "auto" then pure base else relativeLength value base
+        let w ← dimension "width" lengths.width
+        let h ← dimension "height" lengths.height
+        if w < 0 || h < 0 then throw "negative nested viewport dimensions"
+        if w == 0 || h == 0 then return []
+        if let some source := attr attrs "viewBox" then
+          let [_,_,vw,vh] ← numbers source | throw "viewBox requires four numbers"
+          if vw < 0 || vh < 0 then throw "negative viewBox dimensions"
+          if vw == 0 || vh == 0 then return []
+        let mapping ← viewportMapping w h attrs
+        let viewportTransform ← checkedTransform ((← transformList ((attr attrs "transform").getD "")).compose ⟨1,0,0,1,x,y⟩)
+        let contentTransform ← checkedTransform (viewportTransform.compose
+          ⟨mapping.sx,0,0,mapping.sy,mapping.tx-mapping.minX*mapping.sx,mapping.ty-mapping.minY*mapping.sy⟩)
+        let cumulative ← checkedTransform (parent.compose contentTransform)
+        let childLengths ← match attr attrs "viewBox" with
+          | none => pure ({width:=w,height:=h} : LengthContext)
+          | some source => do
+            let [_,_,vw,vh] ← numbers source | throw "viewBox requires four numbers"
+            pure {width:=vw,height:=vh}
+        let inherited ← readStyle childLengths ids attrs style
+        let retainedChildren ← readChildren childLengths cumulative inherited children
+        let overflow := trim ((attr attrs "overflow").getD "hidden")
+        if overflow == "visible" then
+          return [.group (attr attrs "id") contentTransform retainedChildren]
+        if !["hidden","scroll","auto"].contains overflow then throw "unsupported viewport overflow"
+        return [.clipped (attr attrs "id") contentTransform ⟨0,0,w,h,viewportTransform⟩ retainedChildren]
+      else if tag == "g" then
+        validateAttrs tag attrs ["transform"]
+        let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
+        let cumulative ← checkedTransform (parent.compose transform)
+        let inherited ← readStyle lengths ids attrs style
+        let retainedChildren ← readChildren lengths cumulative inherited children
+        if displaySuppressed attrs then return []
+        return [.group (attr attrs "id") transform retainedChildren]
+      else
+        validateAttrs tag attrs (extraAttrs tag)
+        let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
+        let cumulative ← checkedTransform (parent.compose transform)
+        let inherited ← readStyle lengths ids attrs style
+        let authorLength ← match attr attrs "pathLength" with
+          | none => pure none
+          | some source => do
+            let value ← number source
+            if value < 0 then throw "negative pathLength"
+            pure (some value)
+        let geometry ← readGeometry lengths tag attrs inherited
+        for child in children do
+          match child with
+          | .element n _ _ =>
+            if n.namespace_ == some svgURI && ["title","desc","metadata"].contains n.localPart then
+              let _ ← readNode references rules ids fuel
+                {lengths,parent:=cumulative,style:=inherited,path,ancestors:=active,baseURL} child
+              pure ()
+            else throw "graphics children unsupported"
+          | .other (.comment _) => pure ()
+          | .other (.text text) | .other (.cdata text) => if !whitespace text then throw "text painting unsupported"
+          | _ => throw "processing instruction unsupported"
+        let opacity ← match attr attrs "opacity" with | none => pure 1 | some value => number value
+        let painted ← geometry.toList.mapM fun g => do
+          let dashParts ← dashedParts g inherited authorLength
+          pure (.paint {geometry:=g,style:=inherited,opacity:=max 0 (min 1 opacity),transform,dashParts})
+        if displaySuppressed attrs then return []
+        return painted
+
+structure Scene where
+  width : Nat
+  height : Nat
+  mapping : Mapping
+  tree : List DisplayNode
+  /-- Cached backend lowering. It is computed once after parsing, not once per
+      sample or hit query. The proof binds it to the retained tree. -/
+  primitives : List Primitive
+  loweringCorrect : primitives = DisplayNode.lowerFromRootList tree
+  deriving Repr
 
 private def nodeIds (root : NamespaceNode) : Except String (List String) := do
   let mut pending := [(root,0)]
@@ -905,7 +1016,7 @@ private def styleRules (root : NamespaceNode) : Except String (List NativeSVGCSS
             | .other (.text value) | .other (.cdata value) => text := text.push value
             | .other (.comment _) => pure ()
             | _ => throw "style requires text/CDATA"
-          let parsed ← NativeSVGCSS.parseSheet cssProperties (String.join text.toList)
+          let parsed ← NativeSVGCSS.parseSheet sheetProperties (String.join text.toList)
           if out.size+parsed.length > 256 then throw "document CSS rule count exceeds 256"
           out := out ++ parsed.toArray
         else if !(name.namespace_ == some svgURI && ["metadata","title","desc"].contains name.localPart) then
@@ -916,7 +1027,7 @@ private def styleRules (root : NamespaceNode) : Except String (List NativeSVGCSS
     one supplied by an HTML foreign-content parser. The caller owns DOM parsing;
     root validation, SVG style, geometry and viewport semantics remain here. -/
 def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
-    (inheritedStyle : Style := {}) : Except String Scene := do
+    (inheritedStyle : Style := {}) (documentURL : Option String := none) : Except String Scene := do
   let .element name attrs children := root | throw "SVG root must be an element"
   if name.namespace_ != some svgURI || name.localPart != "svg" then throw "root must be svg in the SVG namespace"
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version","style"]
@@ -947,12 +1058,15 @@ def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
   let attrs ← applyCSS lengths ids rules "svg" attrs
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version"]
   let inherited ← readStyle lengths ids attrs inheritedStyle
-  let parsedTree ← readChildren rules lengths ids identityTransform 0 inherited children
+  let references ← NativeSVGReferences.collect root (maxInputChars+1) documentURL
+  let parsedTree ← readListWith (fun child i => readNode references rules ids 33
+    {lengths,parent:=identityTransform,style:=inherited,path:=[i],ancestors:=[[]],baseURL:=NativeSVGReferences.elementBase attrs documentURL} child) children
   let tree := if displaySuppressed attrs then [] else parsedTree
   let primitives := DisplayNode.lowerFromRootList tree
   return ⟨w.ceil.toUInt32.toNat,h.ceil.toUInt32.toNat,mapping,tree,primitives,rfl⟩
 
-def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String Scene := do
+def parse (xml : String) (outputWidth outputHeight : Nat := 0)
+    (documentURL : Option String := none) : Except String Scene := do
   if xml.length > maxInputChars then throw "SVG input exceeds 1048576 characters"
   let document ← (parseXML xml).mapError (fun e => s!"XML: {e.message} at {e.position}")
   if let some encoding := document.decl.bind (·.encoding) then
@@ -961,7 +1075,7 @@ def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String S
   for node in document.prolog ++ document.epilog do
     match node with | .pi .. => throw "processing instruction unsupported" | _ => pure ()
   let root ← parseNamespaceView xml
-  parseRoot root outputWidth outputHeight
+  parseRoot root outputWidth outputHeight {} documentURL
 
 /- Typed conditions reuse Graphics.Expr's CPU interpreter and WGSL lowering.
    The float scene is separate from the integer-only demo Shape representation. -/
@@ -1564,6 +1678,11 @@ theorem Scene.samplePixels_eq_samplePixel (s : Scene) (coordinates : List (Nat �
 @[export svg_compile]
 def compile (xml : String) (width height : UInt32) : String :=
   match parse xml width.toNat height.toNat >>= Scene.artifact with
+  | .ok artifact => artifact | .error message => "{\"error\":" ++ quote message ++ "}"
+/-- URL context is supplied by the host; reference resolution stays in Lean. -/
+@[export svg_compile_url]
+def compileWithURL (xml : String) (width height : UInt32) (documentURL : String) : String :=
+  match parse xml width.toNat height.toNat (some documentURL) >>= Scene.artifact with
   | .ok artifact => artifact | .error message => "{\"error\":" ++ quote message ++ "}"
 @[export svg_sample]
 def sample (xml : String) (width height x y : UInt32) : String :=

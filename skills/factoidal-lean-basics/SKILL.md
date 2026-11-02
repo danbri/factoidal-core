@@ -564,6 +564,16 @@ checking a source file without `-o` had passed only with an older cache present.
 The lab script now emits both in dependency order. See the
 [overnight SVG record](../../docs/20261102-svg-standards-overnight.md).
 
+The overnight SVG reader now supports defs/use/symbol and nested SVG viewport
+clips. IDs select the first original tree-order element; active original source
+paths detect cycles without conflating duplicate ID strings. A use host supplies
+inherited paint; the target's own specified style wins. Clip and content/viewBox
+CTMs are separate, including in sampling/picking/packed WGSL. URL-aware parsing
+retains the original source xml:base across cloning. Exact analytic GPU controls
+and ten selected original upstream rendering matches are separate evidence;
+neither establishes full SVG or GPU arithmetic equivalence. Typed curves remain
+next work. See the [overnight record](../../docs/20261102-svg-standards-overnight.md).
+
 The initial retained-scene source is the lab module
 `labs/demos/foafnaut/Solving.lean`, compiled by
 `labs/demos/foafnaut/build-engines.sh`. It reuses `NativeGraphics.Shape` and

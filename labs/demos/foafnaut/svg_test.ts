@@ -140,7 +140,7 @@ Deno.test("SVG CSS stylesheet and inline declarations affect Lean geometry paint
 
 Deno.test("SVG refuses unsupported features rather than silently losing rendering semantics",async()=>{
  const e=await loadSVG();
- for(const element of ['text','use','image','foreignObject','defs','linearGradient','filter','clipPath','mask','script','svg'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
+ for(const element of ['text','image','foreignObject','linearGradient','filter','clipPath','mask','script'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
  for(const attrs of ['style="filter:blur(2px)"','class="red"','transform="perspective(1)"','stroke-linecap="square"','stroke-linejoin="bevel"','rx="2"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
  rejects(()=>e.compile('<?xml-stylesheet href="a.css"?>'+wrap('')),"processing instruction");
  rejects(()=>e.compile('<!DOCTYPE svg>'+wrap('')),"DOCTYPE");
@@ -317,4 +317,39 @@ Deno.test("SVG packed ABI rejects fractional counts, truncated clips and forged 
  rejects(()=>validateSVG({...clipped,data:clipped.data.map((v,i)=>i===31?.5:v)}),"clip record");
  rejects(()=>validateSVG({...clipped,data:clipped.data.map((v,i)=>i===38?0:v)}),"clip record");
  rejects(()=>validateSVG(change(15,0x100000000)),"integer header");
+});
+
+Deno.test("SVG defs and use resolve actual instances with style, transform and painter order",async()=>{
+ const empty=await loadSVG();for(const element of ["use","defs","svg"])equal(empty.compile(wrap(`<${element}/>`)).primitiveCount,0);
+ const e=await loadSVG(),body='<defs><rect id="r" width="8" height="8" fill="red"/></defs><use href="#r" fill="blue"/><rect x="4" width="8" height="8" fill="blue"/><use href="#r" x="8"/>';
+ equal(e.sample(wrap(body),2,2),[255,0,0]);equal(e.sample(wrap(body),6,2),[0,0,255]);equal(e.sample(wrap(body),10,2),[255,0,0]);
+ const transformed=wrap('<defs><rect id="r" width="4" height="4"/></defs><use href="#r" x="5" transform="scale(2)"/>');
+ equal(e.sample(transformed,11,2),[0,0,0]);equal(e.sample(transformed,6,2),[255,255,255]);
+ const inherited=wrap('<defs fill="blue"><g id="r"><rect width="8" height="8" fill="currentColor"/></g></defs><use href="#r" color="red"/>');
+ equal(e.sample(inherited,2,2),[255,0,0]);
+});
+Deno.test("SVG symbol viewBox and nested SVG retain independent viewport clips",async()=>{
+ const e=await loadSVG(),doc=wrap('<defs><symbol id="s" viewBox="0 0 5 5" preserveAspectRatio="none"><rect x="-1" y="-1" width="7" height="7" fill="red"/></symbol></defs><use href="#s" x="12" y="8" width="20" height="10"/>');
+ for(const [x,y,rgb] of [[11,10,[255,255,255]],[12,8,[255,0,0]],[31,17,[255,0,0]],[32,10,[255,255,255]],[20,18,[255,255,255]]] as const)equal(e.sample(doc,x,y),rgb);
+ const a=e.compile(doc);assert(a.tree?.some(n=>n.kind==='group'&&n.children.some(c=>c.kind==='group'&&c.clip!==undefined))??false,'instance viewport clip missing from retained tree');
+ equal(e.sample(wrap('<svg x="10" y="10" width="5" height="5"><rect width="10" height="10"/></svg>'),16,12),[255,255,255]);
+ equal(e.sample(wrap('<svg x="10" y="10" width="5" height="5" overflow="visible"><rect width="10" height="10"/></svg>'),16,12),[0,0,0]);
+ equal(e.sample(wrap('<symbol id="s" viewBox="0 0 0 5"><rect width="8" height="8"/></symbol><use href="#s"/>'),2,2),[255,255,255]);
+});
+Deno.test("SVG use missing, duplicate, cyclic and percent encoded references follow source identity",async()=>{
+ const e=await loadSVG(),doc=wrap('<defs><rect id="r" width="8" height="8" fill="red"/><rect id="r" width="8" height="8" fill="blue"/></defs><use id="r" href="#r"/><use href="#missing"/><use href="#%GG"/>');
+ equal(e.sample(doc,2,2),[255,0,0]);
+ const cycle=wrap('<defs><g id="a"><rect width="4" height="4"/><use href="#b"/></g><g id="b"><rect x="4" width="4" height="4"/><use href="#a"/></g></defs><use href="#a"/>');
+ equal(e.compile(cycle).primitiveCount,2);equal(e.sample(cycle,6,2),[0,0,0]);
+ equal(e.sample(wrap('<defs><rect id="α" width="8" height="8"/></defs><use href="#%CE%B1"/>'),2,2),[0,0,0]);
+ equal(e.compile(wrap('<defs><rect id="r" width="8" height="8"/></defs><use href="" xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="#r"/>')).primitiveCount,0);
+});
+Deno.test("SVG URL context resolves same-document paths and original xml base in Lean",async()=>{
+ const e=await loadSVG(),url='https://example.test/a/doc.svg',target='<defs><rect id="r" width="8" height="8" fill="red"/></defs>';
+ const plain=e.compile(wrap('<rect width="8" height="8" fill="red"/>'));
+ const render=(a:ReturnType<typeof e.compile>)=>{const {tree,...fields}=a;return fields;};
+ for(const body of [target+'<use href="https://example.test/a/doc.svg#r"/>',target+'<use href="./sub/../doc.svg#r"/>',target+'<defs xml:base="deep/sub/"><g id="t"><use href="../../doc.svg#r"/></g></defs><g xml:base="other/"><use href="../doc.svg#t"/></g>'])equal(render(e.compileWithURL(wrap(body),url)),render(plain));
+ rejects(()=>e.compileWithURL(wrap(target+'<g xml:base="https://other.test/"><use href="#r"/></g>'),url),'external use reference');
+ rejects(()=>e.compileWithURL(wrap(''),url+'\0'),'URL ABI');
+ rejects(()=>e.compileWithURL(wrap(''),undefined as unknown as string),'URL ABI');
 });

@@ -40,17 +40,19 @@ CSS error recovery remains unimplemented. This is not full CSS conformance.
 
 ## Supported subset
 
-SVG-namespace `svg`/`g`, sharp `rect`, `circle`, filled `ellipse`, butt- or
+SVG-namespace root/nested `svg`, `g`, `defs`/`use`/`symbol`, sharp `rect`, `circle`, filled `ellipse`, butt- or
 round-cap stroked `line`, filled and stroked `polygon`/`polyline`, and filled
 and stroked linear/compound `path` are supported, plus text-only
 `title`/`desc` metadata. Stroked contours support bounded dash arrays and
 offsets, butt/round caps, and default miter joins with bevel fallback. SVG
 `metadata` subtrees are non-rendering; XHTML `link rel="match"` and
-`link rel="help"` are recognized as reftest metadata. Other HTML links
+`link rel="help"` and empty XHTML `meta` annotations are recognized as reftest metadata. Other HTML links
 (including stylesheets) remain explicit refusals.
 Namespace prefixes resolve by expanded name; lookalike namespaces, unbound
-prefixes, duplicate expanded attributes and foreign elements/qualified attributes
-are refused. Geometry accepts signed fractional decimal/exponent numbers and
+prefixes and duplicate expanded attributes are refused. Foreign metadata attributes
+are inert, while SVG-qualified paint lookalikes remain errors. xml:lang/xml:space
+are metadata; xml:base affects URL resolution. Foreign painting elements remain
+unsupported. Geometry accepts signed fractional decimal/exponent numbers and
 unitless/px lengths and viewport-relative percentages for shape coordinates,
 dimensions, radii and stroke width. Horizontal/vertical lengths use the respective
 viewport axis; circle radius and stroke width use the normalized diagonal.
@@ -97,25 +99,55 @@ These choices refer to W3C [painting](https://www.w3.org/TR/SVG11/painting.html)
 and [viewport transformation](https://www.w3.org/TR/SVG2/coords.html#ComputingAViewportsTransform),
 without claiming all their semantics or other SVG features are implemented.
 
+## Definitions, instances and viewport clips
+
+`defs` and uninstantiated `symbol` containers do not paint. `use` resolves the
+first original document element with the ID, inherits host paint then applies
+the target's own specified style, and appends its x/y translation after its
+transform. Source identity is independent from possibly duplicated IDs;
+missing/invalid/cyclic instances paint nothing while unrelated graphics remain.
+`href` takes precedence over deprecated `xlink:href`, including an empty href.
+Fragments percent-decode UTF-8 once and preserve literal plus signs.
+
+Symbols and nested SVG establish new viewports and percentage bases. Their
+viewport rectangle is clipped through its own affine frame, independently from
+the content viewBox transform. Nested clips intersect; singular/empty clips and
+zero nested viewBox dimensions paint nothing. Explicit `overflow="visible"`
+removes that viewport clip. Arbitrary clipPath resources remain unsupported.
+CSS width/height are ignored on use/symbol/nested-svg per the
+[2026 SVGWG resolution](https://github.com/w3c/svgwg/pull/1059); their XML
+attributes still determine dimensions and use overrides.
+
+The existing `compile(xml,width,height)` contract still forces an embedding
+viewport. `loadSVG().compileWithURL(xml,documentURL,width,height)` adds retrieval
+context without changing that sizing contract. Same-document relative/absolute
+URLs resolve in Lean through the repository's RFC3986 resolver; original source
+xml:base context survives cloning under a differently based use host. External
+use documents are unsupported and never fetched. Without retrieval context,
+only fragment-only references without a changed base are admitted. This is not
+a complete WHATWG URL canonicalization or browser event model.
+
 ## Explicit refusals and limits
 
 CSS class/id selectors and broader CSS cascade, root transforms, curved path
-commands and their strokes, text/fonts, nested viewports, images, use/links,
-scripting, animation, defs/gradients/patterns, filters, masks,
-clips, markers, rounded rects, conditional processing,
+commands and their strokes, text/fonts, images and outbound graphic links,
+scripting, animation, gradients/patterns, filters, masks,
+clipPath resources, markers, rounded rects, conditional processing,
 paint-order changes, group opacity, square caps, custom joins/miterlimits,
 ellipse strokes, font-relative/other non-px lengths, and unknown colors are
 errors.
-Unsupported features are not silently dropped, even on a zero-size primitive.
+Unsupported painted features are explicitly refused, including on zero-size
+primitives. Definition templates are interpreted for painting only when instanced;
+uninstantiated definitions and disabled viewports do not force their child geometry.
 IDs and version labels 1.1/2.0 are recognized metadata, not schema validation.
 Only unresolved simple local paint-fragment fallback is currently implemented. Full SVG remains open work.
 
 ### `display` and `visibility` subset
 
 The parser supports SVG 2 `display="none"` by omitting that element and its
-subtree from the retained paint scene. It still parses and validates the
-subtree before omitting it, so unsupported markup does not become silently
-accepted just because it is hidden. Other `display` values use the ordinary
+subtree from the retained paint scene. Ordinary shape/group subtrees still
+undergo strict geometry validation before omission. Hidden use instances do not
+expand their references; uninstantiated definition containers do not paint. Other `display` values use the ordinary
 paint path in this restricted profile; this is not full CSS `display`
 validation. `visibility="visible"`, `hidden`, and `collapse` are inherited.
 Hidden/collapsed paint records remain in the retained scene but lower with zero
@@ -148,7 +180,7 @@ tail. Both remain below the 262,144-float cap. Before compound glyph paths the
 scenes were 128,347/1,880/37,608 and 455,470/6,748/134,968 respectively. These
 measurements motivate the bounded profile, not a frame-rate guarantee.
 
-Geometry has hard boundaries without antialiasing. CPU reference Float and GPU
+Geometry uses the explicit four-quarter-point sampling approximation above. CPU reference Float and GPU
 f32 may differ at boundaries; readback comparisons allow one channel value of
 rounding tolerance. Typed expressions and shared predicates are useful checks,
 not proofs of WGSL validity, compiler correctness, CPU/GPU equivalence, or SVG
@@ -163,7 +195,7 @@ closure. It does not link old XML objects from an unrelated checkout. Cached
 pinned Init/Std/runtime objects are shared; source hashes/tool versions travel
 with the release. No binaries, generated C/WASM/glue/JSON or caches are committed.
 
-Seventeen local SVG regression groups cover namespace semantics, XML character
+Local SVG regression groups cover namespace semantics, XML character
 references, symbolic paint inheritance/defaults, fractional data, viewport
 mapping, butt/round/zero strokes, opacity overlap, polygon winding, zero/negative
 geometry, tiny viewports, explicit refusal paths and GPU transport encodings.
