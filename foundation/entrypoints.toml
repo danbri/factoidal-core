@@ -193,6 +193,14 @@ id = "npm:./browser#xmlEncrypt"
 reason = "npm/factoidal/lib/api.mjs xmlEncrypt calls the wasm op xmlEncrypt through runWithCipher (see wasm:xmlEncrypt)"
 
 [[nonstage]]
+id = "wasm:xmlVerify"
+reason = "XML Signature 1.1 core validation of an XML document (Wasm/Ops/XmlDsig.lean verifyCore over XML/DSig11.lean validateParsed; RSA and P-256 by HACL*), reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmlSign"
+reason = "XML Signature 1.1 signature generation (XML/DSig11Sign.lean sign with the custodians of XML/DSig11Native.lean), reads no RDF data"
+
+[[nonstage]]
 id = "wasm:jweDecrypt"
 reason = "JWE compact decryption (JOSE/Jwe.lean; AES by the host through CipherCall.replayCipher), reads no RDF data"
 

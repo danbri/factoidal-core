@@ -344,6 +344,39 @@ https://github.com/danbri/factoidal/issues/1228.
   the XPath and base64 transforms, a resolved relative URI) and 10 refused
   cases, each with the text its refusal must contain.
 
+## The wasm ops `xmlVerify` and `xmlSign` (2026-11-02, part 8)
+
+`formal/lean4/Wasm/Ops/XmlDsig.lean` puts core validation and signature
+generation on the dispatch surface, with the HACL\* backend of
+`XML/DSig11Native.lean` (`nativeBackend`). The arguments are one JSON object;
+keys are JWKs (RFC 7517, RFC 7518 §6).
+
+- `xmlVerify`: `{document, key?, hmacKey?, keyFromKeyInfo?, certificates?,
+  documents?}`. A signature that does not validate is a result
+  (`{"ok":true,"valid":false,"reason":…}`); `{"ok":false}` is for wrong
+  arguments only. A valid result gives the canonical `ds:SignedInfo`, the
+  octets of each reference (what was signed), the key (a public JWK) and the
+  certificate that `ds:X509Data` or `ds:RetrievalMethod` names. The caller
+  decides whether it trusts that key. `documents` are the octets of other
+  documents; the engine fetches nothing.
+- `xmlSign`: `{document, key, signatureMethod?, canonicalizationMethod?,
+  inclusivePrefixes?, references?, enveloping?, keyValue?, random?}`.
+  Decisions (coordinator's): the default method is rsa-sha256, ecdsa-sha256
+  or hmac-sha256 by the key; a method of another key kind is refused; the
+  default reference is `URI=""` with the enveloped-signature transform and the
+  canonicalization method (`#id` for `enveloping`); an EC key needs `random`,
+  32 octets from the host, as the nonce of that one signature.
+- The private key goes only to the custodians (`rsaSigner`, `p256Signer`,
+  `hmacSigner`), as for the harness. The op keeps no copy and makes a new
+  signer for each call.
+- Theorems: `xmlVerify_2013_core` (a `valid` result is the `Validated`
+  record of `DSig11.validateText` with the same backend and configuration),
+  `xmlSign_2013_default_kind`, `xmlSign_2013_no_dsa`.
+- Tests: 13 cases in `formal/lean4/Wasm/native-smoke.sh` (sign with RSA,
+  ECDSA and HMAC, enveloped and enveloping; refusals; four sign-then-verify
+  round trips with a changed copy refused; the signxml fixtures through
+  `xmlVerify`; a duplicate-ID wrapped reference refused).
+
 ## Open (each with an issue and an expected failure, or a refusal)
 
 - ECDSA P-384 and P-521:
@@ -356,5 +389,3 @@ https://github.com/danbri/factoidal/issues/1228.
   (10 cases; decision needed).
 - `ds:KeyName` of the 2001 vectors is not reached, because its signature
   is DSA (https://github.com/danbri/factoidal/issues/1224).
-- A wasm op: an open item of item 4 of
-  https://github.com/danbri/factoidal/issues/1165.

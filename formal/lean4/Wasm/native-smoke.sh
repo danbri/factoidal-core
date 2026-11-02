@@ -3842,5 +3842,91 @@ checkseq "lists and containers: add, container items, nil, refusal" "$TMP/coll-s
    and rs[3] == {"ok": True, "items": []}
    and rs[4]["ok"] is False and rs[4]["reason"] == "no-first"'
 
+# --- XML Signature 1.1: xmlSign and xmlVerify (Wasm/Ops/XmlDsig.lean) --------
+# Keys: tests/xmldsig/signing-keys.tsv (test keys only). Fixtures: tests/xmldsig/fixtures.
+DSIG="$LEAN_DIR/../../tests/xmldsig"
+python3 - "$DSIG" "$TMP" <<'EOF2'
+import base64, json, os, sys
+d, tmp = sys.argv[1], sys.argv[2]
+k = dict(l.rstrip("\n").split("\t") for l in open(os.path.join(d, "signing-keys.tsv")) if not l.startswith("#"))
+u = lambda h: base64.urlsafe_b64encode(bytes.fromhex(h)).decode().rstrip("=")
+DOC = '<doc xmlns="urn:example:doc" ID="d1"><item n="1">one</item></doc>'
+rsa = {"kty": "RSA", "n": u(k["rsa2048-n"]), "e": u(k["rsa2048-e"]), "d": u(k["rsa2048-d"])}
+ec = {"kty": "EC", "crv": "P-256", "d": u(k["p256-secret"])}
+mac = {"kty": "oct", "k": u(k["hmac"])}
+rnd = base64.b64encode(os.urandom(32)).decode()
+def w(name, obj): json.dump([json.dumps(obj)], open(os.path.join(tmp, name), "w"))
+w("dsig-sign-rsa.json", {"document": DOC, "key": rsa})
+w("dsig-sign-rsa512-c14n11.json", {"document": DOC, "key": rsa,
+  "signatureMethod": "http://www.w3.org/2001/04/xmldsig-more#rsa-sha512",
+  "canonicalizationMethod": "http://www.w3.org/2006/12/xml-c14n11",
+  "references": [{"uri": "#d1", "transforms": ["http://www.w3.org/2000/09/xmldsig#enveloped-signature",
+                  "http://www.w3.org/2006/12/xml-c14n11"], "digestMethod": "http://www.w3.org/2001/04/xmlenc#sha512"}]})
+w("dsig-sign-ec.json", {"document": DOC, "key": ec, "random": rnd,
+  "signatureMethod": "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha384"})
+w("dsig-sign-ec-norandom.json", {"document": DOC, "key": ec})
+w("dsig-sign-mac.json", {"document": DOC, "key": mac,
+  "enveloping": {"id": "obj", "content": '<item xmlns="urn:example:doc">one</item>'}})
+w("dsig-sign-kind.json", {"document": DOC, "key": rsa,
+  "signatureMethod": "http://www.w3.org/2001/04/xmldsig-more#hmac-sha256"})
+w("dsig-sign-dsa.json", {"document": DOC, "key": rsa,
+  "signatureMethod": "http://www.w3.org/2000/09/xmldsig#dsa-sha1"})
+fx = lambda f: open(os.path.join(d, "fixtures", f)).read()
+w("dsig-verify-fixture.json", {"document": fx("rsa2048-sha256.xml")})
+w("dsig-verify-fixture-nokeyinfo.json", {"document": fx("rsa2048-sha256.xml"), "keyFromKeyInfo": False})
+w("dsig-verify-hmac.json", {"document": fx("hmac-sha256.xml"), "hmacKey": base64.b64encode(b"secret").decode()})
+w("dsig-verify-hmac-wrong.json", {"document": fx("hmac-sha256.xml"), "hmacKey": base64.b64encode(b"wrong").decode()})
+w("dsig-verify-wrapped.json", {"document": fx("neg-wrapped-duplicate-id.xml")})
+w("dsig-verify-badkey.json", {"document": DOC, "key": {"kty": "EC", "crv": "P-192"}})
+open(os.path.join(tmp, "dsig-hmac-key"), "w").write(base64.b64encode(bytes.fromhex(k["hmac"])).decode())
+EOF2
+check "xmlSign rsa-sha256 enveloped, exc-c14n (defaults)" xmlSign "$TMP/dsig-sign-rsa.json" \
+  'r["ok"] is True and "SignatureValue" in r["document"] and "xml-exc-c14n#" in r["document"]'
+check "xmlSign rsa-sha512 over #d1, C14N 1.1" xmlSign "$TMP/dsig-sign-rsa512-c14n11.json" \
+  'r["ok"] is True and "rsa-sha512" in r["document"] and "URI=\"#d1\"" in r["document"]'
+check "xmlSign ecdsa-sha384 at P-256" xmlSign "$TMP/dsig-sign-ec.json" \
+  'r["ok"] is True and "ecdsa-sha384" in r["document"] and "ECKeyValue" in r["document"]'
+check "xmlSign refuses ECDSA with no random octets" xmlSign "$TMP/dsig-sign-ec-norandom.json" \
+  'r["ok"] is False and "random" in r["error"]'
+check "xmlSign hmac-sha256 enveloping" xmlSign "$TMP/dsig-sign-mac.json" \
+  'r["ok"] is True and r["document"].startswith("<ds:Signature") and "Id=\"obj\"" in r["document"]'
+check "xmlSign refuses a method of another key kind" xmlSign "$TMP/dsig-sign-kind.json" \
+  'r["ok"] is False and "kind of key" in r["error"]'
+check "xmlSign refuses DSA and names issue 1224" xmlSign "$TMP/dsig-sign-dsa.json" \
+  'r["ok"] is False and "1224" in r["error"]'
+# Round trips: each signed document goes back through xmlVerify, then a changed copy.
+if python3 - "$CLI" "$TMP" <<'EOF2'
+import json, os, subprocess, sys
+cli, tmp = sys.argv[1], sys.argv[2]
+mk = open(os.path.join(tmp, "dsig-hmac-key")).read()
+def call(op, obj):
+    f = os.path.join(tmp, "dsig-rt.json")
+    json.dump([json.dumps(obj)], open(f, "w"))
+    return json.loads(subprocess.run([cli, "call", op, f], capture_output=True, text=True, check=True).stdout)
+bad = 0
+for name, extra in [("rsa", {}), ("rsa512-c14n11", {}), ("ec", {}), ("mac", {"hmacKey": mk})]:
+    signed = call("xmlSign", json.loads(json.load(open(os.path.join(tmp, f"dsig-sign-{name}.json")))[0]))
+    v = call("xmlVerify", {"document": signed["document"], **extra})
+    t = call("xmlVerify", {"document": signed["document"].replace(">one<", ">One<"), **extra})
+    good = v.get("valid") is True and t.get("valid") is False and v["references"]
+    if name != "mac": good = good and v["key"] is not None
+    print(("ok  " if good else "FAIL") + f" round trip {name}: {v.get('valid')}, changed copy {t.get('valid')}")
+    bad += not good
+sys.exit(1 if bad else 0)
+EOF2
+then echo "ok   xmlSign then xmlVerify round trips (4), changed copies refused"; PASS=$((PASS + 1)); else echo "FAIL xmlSign then xmlVerify round trips"; FAIL=$((FAIL + 1)); fi
+check "xmlVerify signxml fixture rsa2048-sha256 (key of ds:KeyInfo, returned as JWK)" xmlVerify "$TMP/dsig-verify-fixture.json" \
+  'r["ok"] is True and r["valid"] is True and r["key"]["kty"] == "RSA" and len(r["references"]) == 1 and r["signedInfo"].startswith("<ds:SignedInfo")'
+check "xmlVerify with keyFromKeyInfo false and no key -> not valid" xmlVerify "$TMP/dsig-verify-fixture-nokeyinfo.json" \
+  'r["ok"] is True and r["valid"] is False and "no key" in r["reason"]'
+check "xmlVerify signxml fixture hmac-sha256" xmlVerify "$TMP/dsig-verify-hmac.json" \
+  'r["ok"] is True and r["valid"] is True and r["key"] is None'
+check "xmlVerify hmac-sha256 with the wrong key -> not valid" xmlVerify "$TMP/dsig-verify-hmac-wrong.json" \
+  'r["ok"] is True and r["valid"] is False'
+check "xmlVerify refuses a duplicate-ID wrapped reference" xmlVerify "$TMP/dsig-verify-wrapped.json" \
+  'r["ok"] is True and r["valid"] is False'
+check "xmlVerify argument error: unknown curve" xmlVerify "$TMP/dsig-verify-badkey.json" \
+  'r["ok"] is False and "P-256" in r["error"]'
+
 echo "=== native-smoke: $PASS pass, $FAIL fail, $XFAIL xfail (out of $((PASS + FAIL + XFAIL)))"
 [ "$FAIL" -eq 0 ]
