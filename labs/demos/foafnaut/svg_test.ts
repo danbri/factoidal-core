@@ -226,7 +226,7 @@ Deno.test("SVG affine transforms compose in SVG order and preserve local stroke 
  equal(identity.data,baseline.data);equal(e.compile(doc('translate(1)','<circle r="3"/>')).data.length,baseline.data.length+8);
  const mixed=wrap('<rect width="2" height="2" transform="translate(5)"/><circle cx="20" cy="20" r="3"/><polygon points="0,0 5,0 0,5" transform="translate(30,30)"/>');
  equal(e.sample(mixed,20,20),[0,0,0]);equal(e.sample(mixed,31,31),[0,0,0]);
- assert(e.compile(mixed).wgsl.includes('var p=worldP')&&e.compile(mixed).wgsl.includes('header.w>=2u'),"Missing dynamic inverse CTM lowering");
+ assert(e.compile(mixed).wgsl.includes('var p=worldP')&&e.compile(mixed).wgsl.includes('(header.w%4u)>=2u'),"Missing dynamic inverse CTM lowering");
  equal(e.sample(doc('matrix(1,2,2,4,0,0)','<rect width="64" height="64"/>'),5,5),[255,255,255]);
  for(const t of ['matrix(1,2)','translate(1),','scale(1e-12)','skewX(90)','translate(1)'.repeat(33)])rejects(()=>e.compile(doc(t)),"SVG profile:");
  rejects(()=>e.compile(wrap('<circle r="1" transform="translate(1)"/>'.repeat(10000))),"storage data");
@@ -301,4 +301,20 @@ Deno.test("SVG linear strokes keep open paths open and compose subpaths once",as
  equal(e.sample(closed,20,20),[0,0,0]);
  const overlap=wrap('<path d="M10 30H60 M30 10V60" fill="none" stroke="red" stroke-width="10" stroke-opacity=".5" opacity=".5"/>');
  equal(e.sample(overlap,30,30),[255,191,191]);
+});
+
+Deno.test("SVG packed ABI rejects fractional counts, truncated clips and forged cursors",async()=>{
+ const e=await loadSVG(),a=e.compile(wrap('<rect width="20" height="20"/>'));
+ const change=(index:number,value:number)=>({...a,data:a.data.map((x,i)=>i===index?value:x)});
+ rejects(()=>validateSVG(change(13,.5)),"integer header");
+ rejects(()=>validateSVG(change(15,4)),"storage bounds");
+ rejects(()=>validateSVG({...a,primitiveCount:0}),"storage cursor");
+ rejects(()=>validateSVG({...a,data:[...a.data,0,0,0,0]}),"storage cursor");
+ // One active axis clip after the five fixed rows. No geometry is computed here.
+ const clipped={...a,data:[...a.data,1,0,0,1,0,1,0,0,0,0,10,10]};
+ clipped.data[15]=4;validateSVG(clipped);
+ rejects(()=>validateSVG({...clipped,data:clipped.data.slice(0,-4)}),"storage bounds");
+ rejects(()=>validateSVG({...clipped,data:clipped.data.map((v,i)=>i===31?.5:v)}),"clip record");
+ rejects(()=>validateSVG({...clipped,data:clipped.data.map((v,i)=>i===38?0:v)}),"clip record");
+ rejects(()=>validateSVG(change(15,0x100000000)),"integer header");
 });

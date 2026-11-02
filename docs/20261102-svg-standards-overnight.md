@@ -50,3 +50,50 @@ and [URL processing](https://www.w3.org/TR/SVG2/linking.html#processingIRI).
 The corpus lane supplies original upstream relations; original fixtures,
 denominators and tolerances remain unchanged. Acceptance alone is not a
 rendering pass.
+
+## Viewport clip foundation
+
+SVG symbols need actual viewport clipping before they can be admitted. A new
+`ClipRect` records local bounds and a Float affine transform. `DisplayNode.clipped`
+keeps the content CTM independent from the viewport CTM: a symbol viewBox moves
+and scales its contents, while its viewport rectangle stays in the containing
+coordinate frame. Lowering transforms both frames through each parent and
+retains nested intersections on each primitive. Existing reference traversals
+remain declarative, with the same proved tail-recursive replacements extended
+for the new constructor.
+
+The packed storage adds three rows per clip after existing geometry, dash and
+affine rows. Unclipped records retain their old bytes. Header mode bits preserve
+line-cap and affine flags and encode clip count above those bits. Lean theorems
+bind clip counts, payload lengths, record cursors and bounded clip-row access;
+shader and host validate remaining storage and exact integer counts. The host
+validation interprets only the ABI, with no SVG geometry or layout semantics.
+CPU sampling, picking and WGSL apply inverse clip-local half planes rather than
+world-space bounding boxes. Singular or empty clip frames paint and pick nothing.
+
+Native tests independently describe a rotated square by half-plane equations,
+including partial quarter-grid coverage, translated parent, distinct content
+transform and nested intersection. Five generated artifacts include independent
+full 64×64 RGBA expectations. These are backend diagnostics, not WPT cases or
+proof that an SVG source document was interpreted correctly. Source/model/CPU
+checks pass in `/tmp/factoidal-overnight-svg-clip-{model,wire,renderer,native,controls}.log`;
+All five actual WebGPU controls passed every RGBA pixel exactly (4096 pixels
+each, zero differing channels/max delta zero) on Apple Metal, using the frozen
+raw bridge. Evidence: `/tmp/factoidal-overnight-corpus-clip-math/report.json`,
+with full native-size PNGs and readback hashes matching independent expected
+bytes. Standard small-engine build exited 0 (`...-clip-engines.log`), using the
+verified runtime cache read-only and our own EM_CACHE/outputs. The rebuilt
+SVG WASM passed 23 Deno tests; the remaining lab files passed 52 tests (75 total,
+zero failures), including ABI rejection for fractional counts, truncated clips,
+forged cursors, inactive flags and zero active bounds. Logs:
+`/tmp/factoidal-overnight-svg-clip-deno-{isolated,other}.log`. Tests type-check
+with `--no-config --no-lock` because the unrelated root Deno configuration
+requires missing node_modules types; the original failed environment attempt
+is retained as `...-clip-deno.log`. No type checking was skipped.
+
+The selected original upstream symbol cases include CSS dimensions. The
+[SVGWG February 2026 resolution and merged PR1059](https://github.com/w3c/svgwg/pull/1059)
+clarify that width/height CSS properties apply to outer SVG (and rect/image/
+foreignObject), but are ignored on nested svg/use/symbol; their XML dimensions
+still apply. This supersedes conflicting older prose. Instancing tests must
+check this rule alongside specified target style overriding inherited use style.
