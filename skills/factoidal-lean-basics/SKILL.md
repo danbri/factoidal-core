@@ -574,6 +574,14 @@ and ten selected original upstream rendering matches are separate evidence;
 neither establishes full SVG or GPU arithmetic equivalence. Typed curves remain
 next work. See the [overnight record](../../docs/20261102-svg-standards-overnight.md).
 
+SVG artifact list formatting uses the proved bit-keyed
+`Rendering/FloatFormat.lean` cache through a csimp-selected wrapper. The
+all-Float-list theorem preserves every reference decimal string and list order;
+inspect the actual `Scene_json` C caller as well as testing full raw artifacts.
+Do not replace this with numeric-equality caching or change rounding as a speed
+fix. Exact output and actual timing are separate gates; the overnight record
+keeps both.
+
 The initial retained-scene source is the lab module
 `labs/demos/foafnaut/Solving.lean`, compiled by
 `labs/demos/foafnaut/build-engines.sh`. It reuses `NativeGraphics.Shape` and

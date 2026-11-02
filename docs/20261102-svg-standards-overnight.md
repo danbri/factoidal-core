@@ -170,3 +170,39 @@ glue `4716f7b83cb27c462d3223f2761e00e3177bfa5b017204699fc281665d6f3607`.
 The capture records exact matching source/TS/runtime witness identities.
 The broader baseline reason inventory contains no root-sizing unavailable
 cases yet, so the next implementation priority is actual curved path geometry.
+
+## Proved formatter cache checkpoint
+
+The root lane's narrow `Rendering/FloatFormat.lean` patch is ported without its
+HTML-specific modules. The bit-keyed cache stores the existing formatter's
+`javaDoubleString(bits)` result. Its invariant, single-step theorem and general
+accumulator theorem prove `formatList xs = xs.map format` for **every Float
+list**, preserving order and every decimal byte without assuming Float equality
+implies bit equality. The csimp wrapper keeps the original reference visible.
+A central `L4Factoidal.lean` import registers the module; the small lab's targeted
+core closure, source inventory and SVG link explicitly include it. No full
+library/native build was run.
+
+The actual generated C `Scene_json` caller invokes
+`l_L4Factoidal_Rendering_FloatFormat_formatList`; its excerpt and source/runtime
+hashes are in `/tmp/factoidal-overnight-svg-format-caller.txt`. A theorem that
+was not selected at this caller would not establish the optimization executed.
+The proof prints only the standard propext/Classical.choice/Quot.sound axioms.
+
+The standard small build and all 79 type-checked Deno tests pass. Full raw UTF-8
+artifacts are byte-identical before/after for the ten original use/symbol cases
+and a 512-rectangle fractional scene, including every data, shader, probe and
+inspection byte. Before/after manifests and exact outputs are under
+`/tmp/factoidal-overnight-svg-format-{before,after}`. Five warm repetitions of
+the fractional case measured median 585.50 ms before and 355.38 ms after
+(approximately 1.65×); these are diagnostic timings under concurrent test
+activity, while the general proof and exact raw bytes are the correctness gates.
+
+The fresh formatter engine also matched all ten upstream GPU cases exactly,
+with all three sensitivity controls passing for every case. Evidence:
+`/tmp/factoidal-overnight-corpus-formatter-symbol/run.json`. New WASM SHA256 is
+`1829bdb48f3cf6620ee583349033ad6484321c6f684450249258dcd0622e0a08`;
+MJS glue remains `4716f7b83cb27c462d3223f2761e00e3177bfa5b017204699fc281665d6f3607`,
+and TS source remains `38511f26402f218874db4090d090314f582dd720fd92bec44473df4e46b6f370`.
+The broader 601-case run has separately frozen this exact runtime and source
+witness. It remains pending; this checkpoint claims no complete-corpus score.
