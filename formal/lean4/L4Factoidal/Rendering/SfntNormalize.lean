@@ -1,5 +1,5 @@
 import L4Factoidal.Unicode.Normalization
-import L4Factoidal.Rendering.SfntMetrics
+import L4Factoidal.Rendering.SfntFallback
 
 /-!
 # Font-aware normalization before glyph mapping
@@ -11,8 +11,10 @@ UAX #15 tables of `Unicode.Normalization`; the font decides what is kept:
 1. Decompose: a character that the font has is kept. A character that the font
    does not have is replaced by its full canonical decomposition, if the font
    has every character of it; otherwise it is kept (and maps to `.notdef`).
-2. Reorder: each run of characters with a non-zero Canonical_Combining_Class
-   is sorted stably by that class (UAX #15 section 3).
+2. Reorder: each run of characters with a non-zero combining class is sorted
+   stably by HarfBuzz's modified combining class (`SfntFallback.modifiedCcc`),
+   which orders some Hebrew, Arabic, Thai, Lao and Tibetan marks differently
+   from Canonical_Combining_Class.
 3. Compose: a character with a non-zero combining class that is not blocked
    from the last starter (UAX #15 section 4) is composed with it, if the
    primary composite exists and the font has it.
@@ -23,6 +25,7 @@ marks of General_Category Mn, Mc or Me and has script-specific reordering
 -/
 namespace L4Factoidal.Rendering.SfntNormalize
 open SfntMetrics Unicode.Normalization
+open SfntFallback (modifiedCcc)
 
 /-- Code points of `text`, normalized for the font, each with the index of
 the source character it came from (a composite keeps its starter's index). -/
@@ -48,14 +51,14 @@ def forFontIndexed (f : Face) (b : ByteArray) (text : String) : Except String (A
   -- non-starters by combining class (insertion sort inside the run).
   let mut ordered : Array (Nat × Nat) := Array.mkEmpty dec.size
   for e in dec do
-    let cc := ccc e.1
+    let cc := modifiedCcc e.1
     ordered := ordered.push e
     if cc != 0 then
       let mut k := ordered.size - 1
       for _ in [0:ordered.size] do
         if k == 0 then break
         let prev := ordered[k - 1]!
-        let pc := ccc prev.1
+        let pc := modifiedCcc prev.1
         if pc != 0 && pc > cc then
           ordered := (ordered.set! k prev).set! (k - 1) e
           k := k - 1
@@ -66,7 +69,7 @@ def forFontIndexed (f : Face) (b : ByteArray) (text : String) : Except String (A
   let mut lastCcc : Nat := 0
   for e in ordered do
     let c := e.1
-    let cc := ccc c
+    let cc := modifiedCcc c
     let mut done := false
     if let some si := starter then
       let adjacent := out.size == si + 1

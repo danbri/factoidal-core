@@ -1,5 +1,5 @@
 import L4Factoidal.Rendering.SfntNormalize
-import L4Factoidal.Rendering.SfntGpos
+import L4Factoidal.Rendering.SfntFallback
 import L4Factoidal.Unicode.Segmentation
 
 /-!
@@ -12,13 +12,11 @@ GPOS. Clusters are given as UTF-8 byte offsets into the input text, as in the
 `factoidal-font-data-v1` record.
 
 Refused, with a message: a strong right-to-left character (the RTL shaper is
-not implemented); a mark in a font with no GPOS table, where HarfBuzz uses its
-own fallback mark positioning (a heuristic from glyph extents and combining
-classes, not part of OpenType; not implemented); and everything the stages
-refuse.
+not implemented), and everything the stages refuse. A font with no GPOS table
+gets HarfBuzz's fallback mark positioning (`SfntFallback`).
 -/
 namespace L4Factoidal.Rendering.SfntShape
-open FontPolicy SfntMetrics SfntGpos
+open FontPolicy SfntMetrics SfntGpos SfntFallback
 
 def isExtendedPictographic (c : Nat) : Bool :=
   Unicode.Segmentation.extPictTable.get c.toUInt32 != 0
@@ -55,13 +53,6 @@ Samaritan, Mandaic and their presentation forms). -/
 def isStrongRtl (c : Nat) : Bool :=
   (0x0590 ≤ c && c ≤ 0x08FF) || (0xFB1D ≤ c && c ≤ 0xFDFF) || (0xFE70 ≤ c && c ≤ 0xFEFF) ||
   (0x10800 ≤ c && c ≤ 0x10FFF) || (0x1E800 ≤ c && c ≤ 0x1EFFF)
-
-/-- HarfBuzz `is_default_ignorable` (hb-unicode.hh, 15.0.0). -/
-def isDefaultIgnorable (c : Nat) : Bool :=
-  c == 0x00AD || c == 0x034F || c == 0x061C || (0x17B4 ≤ c && c ≤ 0x17B5) ||
-  (0x180B ≤ c && c ≤ 0x180F) || (0x200B ≤ c && c ≤ 0x200F) || (0x202A ≤ c && c ≤ 0x202E) ||
-  (0x2060 ≤ c && c ≤ 0x206F) || (0xFE00 ≤ c && c ≤ 0xFE0F) || c == 0xFEFF ||
-  (0xFFF0 ≤ c && c ≤ 0xFFF8) || (0x1D173 ≤ c && c ≤ 0x1D17A) || (0xE0000 ≤ c && c ≤ 0xE0FFF)
 
 /-- HarfBuzz `space_fallback_type` (hb-unicode.hh, 15.0.0): 1 to 16 is a
 divisor of the em; 17 is 4/18 em; 18 the space itself; 19 figure; 20
@@ -105,12 +96,17 @@ def shape (b : ByteArray) (dir : Array TableRecord) (face : Face) (text : String
     if cont[k]! then
       let g := nominal[k]!
       nominal := nominal.set! k { g with cluster := nominal[k - 1]!.cluster }
-  let run ← SfntSubst.substitute face b dir text nominal limits
-  if !dir.any (·.tag == "GPOS") then
-    if let some g := run.find? (isUnicodeMark ·.codepoint) then
-      throw s!"font.layout.unsupported: mark U+{(String.ofList (Nat.toDigits 16 g.codepoint)).toUpper} in a font with no GPOS table needs fallback mark positioning (https://github.com/danbri/factoidal/issues/1233)"
-  let mut glyphs ← position b dir text run limits
-  -- Space fallback widths (HarfBuzz `_hb_ot_shape_fallback_spaces`).
+  let mut run ← SfntSubst.substitute face b dir text nominal limits
+  -- Hide default ignorables before positioning (HarfBuzz
+  -- `hb_ot_hide_default_ignorables`): the space glyph, or deleted when the
+  -- font has no space glyph.
+  let ignorableN (g : NominalGlyph) : Bool := isDefaultIgnorable g.codepoint && !g.substituted
+  if spaceGlyph != 0 then
+    run := run.map fun g => if ignorableN g then { g with id := spaceGlyph, advance := face.advances[spaceGlyph]! } else g
+  else
+    run := run.filter (!ignorableN ·)
+  -- Space fallback widths, before GPOS as in HarfBuzz `hb_ot_position_default`
+  -- (`_hb_ot_shape_fallback_spaces`).
   let upem := face.unitsPerEm
   let advanceOf (c : Char) : Except String (Option Nat) := do
     let g ← face.glyph b c
@@ -118,28 +114,28 @@ def shape (b : ByteArray) (dir : Array TableRecord) (face : Face) (text : String
   let mut figure : Option Nat := none
   for d in "0123456789".toList do
     if figure.isNone then figure ← advanceOf d
-  let punct := (← advanceOf '.').orElse fun _ => none
-  let punct ← if punct.isSome then pure punct else advanceOf ','
-  for k in [0:glyphs.size] do
-    let g := glyphs[k]!
+  let punct ← match ← advanceOf '.' with
+    | some a => pure (some a)
+    | none => advanceOf ','
+  for k in [0:run.size] do
+    let g := run[k]!
     if g.spaceFallback != 0 && !g.ligated then
       let st := g.spaceFallback
-      let adv : Int :=
-        if st ≤ 16 then ((upem + st / 2) / st : Nat)
-        else if st == 17 then (upem * 4 / 18 : Nat)
-        else if st == 19 then (figure.map (·: Nat → Int)).getD g.advance
-        else if st == 20 then (punct.map (·: Nat → Int)).getD g.advance
-        else if st == 21 then g.advance.tdiv 2
+      let adv : Nat :=
+        if st ≤ 16 then (upem + st / 2) / st
+        else if st == 17 then upem * 4 / 18
+        else if st == 19 then figure.getD g.advance
+        else if st == 20 then punct.getD g.advance
+        else if st == 21 then g.advance / 2
         else g.advance
-      glyphs := glyphs.set! k { g with advance := adv }
-  -- Default ignorables (HarfBuzz `hb_ot_zero_width_default_ignorables` and
-  -- `hb_ot_hide_default_ignorables`): zero advance and x offset, then the
-  -- space glyph, or deleted when the font has no space glyph.
-  let ignorable (g : Glyph) : Bool := isDefaultIgnorable g.codepoint && !g.substituted
-  if spaceGlyph != 0 then
-    glyphs := glyphs.map fun g => if ignorable g then { g with id := spaceGlyph, advance := 0, xOffset := 0 } else g
-  else
-    glyphs := glyphs.filter (!ignorable ·)
+      run := run.set! k { g with advance := adv }
+  let mut glyphs ← position b dir text run limits
+  -- HarfBuzz `hb_ot_zero_width_default_ignorables`.
+  glyphs := glyphs.map fun g =>
+    if isDefaultIgnorable g.codepoint && !g.substituted then { g with advance := 0, xOffset := 0 } else g
+  -- HarfBuzz fallback mark positioning, for a font with no GPOS table.
+  if !dir.any (·.tag == "GPOS") then
+    glyphs ← SfntFallback.position b dir face.unitsPerEm face.advances (fun g => isUnicodeMark g.codepoint) glyphs
   -- Source character index to UTF-8 byte offset.
   let mut offsets : Array Nat := #[]
   let mut acc := 0

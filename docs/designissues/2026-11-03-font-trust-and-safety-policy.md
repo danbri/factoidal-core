@@ -243,3 +243,17 @@ Licence record (condition of decision 2). Nothing is vendored yet.
 | `aots` | 404 | Apache-2.0, Adobe (`aots/COPYING`) | permitted, with NOTICE |
 | `text-rendering-tests` | 847 | Apache-2.0, Unicode Inc. (`text-rendering-tests/COPYING`) | permitted, with NOTICE |
 | `in-house` | 5,212 | no own COPYING; HarfBuzz top-level "Old MIT" by its own rule, but the 221 fonts are subsets of third-party fonts named by hash, with no recorded origin | not cleared: run from a local download only |
+
+### 8.1 Fallback mark positioning (later the same day)
+
+`SfntFallback` ports HarfBuzz 15.0.0 `hb-ot-shape-fallback.cc` for a font with
+no GPOS table: the modified combining class, `recategorize_combining_class`,
+`position_mark`, `position_around_base`, `glyf` extents with the `hmtx` left
+side bearing as x bearing. Normalization now orders marks by the modified
+class, as HarfBuzz does. Still refused: fallback positioning in a CFF font, and
+marks after a ligature glyph.
+
+Suite result after this change: 4,038 pass, 520 fail, 227 refused (out of
+4,785 applicable); 1,433 not applicable; 2 oracle mismatch. No test that passed
+before fails now. Font-level differential: 56 same, 0 different, 0 refused
+(out of 56). `check-document-fonts.mjs` and `check-document-browser.mjs` PASS.
