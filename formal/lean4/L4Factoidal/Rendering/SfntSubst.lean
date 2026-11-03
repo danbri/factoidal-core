@@ -324,14 +324,14 @@ def edit (c : Ctx) (run : Array NominalGlyph) (i : Nat) (step : Step) :
   | .replace gs =>
     if gs.any (· ≥ c.f.numGlyphs) then throw "font.file.malformed: GSUB glyph id beyond numGlyphs"
     let src := run[i]!
-    let repl := gs.toArray.map fun g => { src with id := g, advance := c.f.advances[g]! }
+    let repl := gs.toArray.map fun g => { src with id := g, advance := c.f.advances[g]!, substituted := true }
     let shift := gs.length
     return (run.extract 0 i ++ repl ++ run.extract (i + 1) run.size,
             fun k => if k < i then some k else if k == i then (if shift == 0 then none else some i) else some (k + shift - 1))
   | .ligate lig remove =>
     if lig ≥ c.f.numGlyphs then throw "font.file.malformed: GSUB glyph id beyond numGlyphs"
     let src := run[i]!
-    let mut run := run.set! i { src with id := lig, advance := c.f.advances[lig]! }
+    let mut run := run.set! i { src with id := lig, advance := c.f.advances[lig]!, substituted := true, ligated := true }
     -- HarfBuzz merges the clusters of the whole matched range into the first.
     let last := remove.foldl max i
     for k in [i:last + 1] do

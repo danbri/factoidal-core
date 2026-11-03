@@ -208,3 +208,38 @@ Not done: RTL and the Arabic, Indic and USE shapers; outlines in Lean (`glyf`,
 CFF); the HarfBuzz test suite (licence record first); `safe` mode in `Layout`;
 the policy reaching the broker for AAT (`morx` is not applied by the Lean
 shaper, so on this path the AAT refusal holds).
+
+## 8. HarfBuzz shaping suite, and its licence record
+
+Runner: `labs/demos/foafnaut/tools/run-harfbuzz-suite.py`, over
+`test/shape/data` of the HarfBuzz 15.0.0 source (the version of the local
+`hb-shape`). A test passes when `hb-shape` gives the expected string and the
+Lean adapter equals `hb-shape` in glyph-id form (ids, clusters, advances,
+offsets). That transitive check needs no glyph-name table in Lean.
+
+Result, 2026-11-03, commit after `3f12ccf04` on `claude/lean-shaper`:
+2,682 pass, 571 fail, 1,532 refused by Lean (out of 4,785 applicable); 1,433
+not applicable (the test sets an option the adapter does not take: most are
+`--font-size` 746, `--features` 333, `--variations` 127); 2 oracle mismatch
+(HarfBuzz 15.0.0 itself does not give the expected string); 243 lines are
+directives.
+
+Largest failing groups: USE, Khmer, Indic, Tibetan and Mongolian shaping
+(complex-script shapers not implemented). Largest refused group: 1,284
+emoji-cluster tests in a font with marks and no GPOS (HarfBuzz fallback mark
+positioning, a heuristic, not implemented). RTL tests are refused.
+
+Fixes that this suite found and that are now in Lean, ported from the
+HarfBuzz 15.0.0 source: `cmap` format 13; continuation rules for clusters
+(`hb_set_unicode_props`: marks, emoji modifiers, regional indicator pairs,
+ZWJ with Extended_Pictographic, tags; ZWNJ is not a continuation); space
+fallback widths (`_hb_ot_shape_fallback_spaces`); default ignorables
+(`hb_ot_zero_width_default_ignorables`, `hb_ot_hide_default_ignorables`).
+
+Licence record (condition of decision 2). Nothing is vendored yet.
+
+| Directory | Lines | Licence | Vendoring |
+|---|---|---|---|
+| `aots` | 404 | Apache-2.0, Adobe (`aots/COPYING`) | permitted, with NOTICE |
+| `text-rendering-tests` | 847 | Apache-2.0, Unicode Inc. (`text-rendering-tests/COPYING`) | permitted, with NOTICE |
+| `in-house` | 5,212 | no own COPYING; HarfBuzz top-level "Old MIT" by its own rule, but the 221 fonts are subsets of third-party fonts named by hash, with no recorded origin | not cleared: run from a local download only |

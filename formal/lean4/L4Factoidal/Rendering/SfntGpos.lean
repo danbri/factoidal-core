@@ -46,6 +46,10 @@ structure Glyph where
   cluster : Nat
   /-- Position of the glyph this mark is attached to. -/
   attachedTo : Option Nat := none
+  codepoint : Nat := 0
+  substituted : Bool := false
+  ligated : Bool := false
+  spaceFallback : Nat := 0
   deriving Repr, BEq, Inhabited
 
 def defaultFeatures : List String := ["abvm", "blwm", "dist", "kern", "mark", "mkmk"]
@@ -100,7 +104,9 @@ def isUnicodeMark (c : Nat) : Bool := unicodeMarkRanges.any fun (a, z) => a ≤ 
 glyph class uses the glyph's source code point (`NominalGlyph.codepoint`). -/
 def position (b : ByteArray) (dir : Array TableRecord) (text : String)
     (run : Array NominalGlyph) (limits : Limits := {}) : Except String (Array Glyph) := do
-  let mut out : Array Glyph := run.map fun g => { id := g.id, advance := g.advance, xOffset := 0, yOffset := 0, cluster := g.cluster }
+  let mut out : Array Glyph := run.map fun g =>
+    { id := g.id, advance := g.advance, xOffset := 0, yOffset := 0, cluster := g.cluster,
+      codepoint := g.codepoint, substituted := g.substituted, ligated := g.ligated, spaceFallback := g.spaceFallback }
   let gdef? := (dir.find? (·.tag == "GDEF")).map (·.offset)
   let hasGlyphClasses : Bool := match gdef? with
     | some gd => gd + 6 ≤ b.size && u16 b (gd + 4) != 0

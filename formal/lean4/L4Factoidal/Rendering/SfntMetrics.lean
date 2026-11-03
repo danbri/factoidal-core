@@ -8,8 +8,8 @@ https://github.com/danbri/factoidal/issues/1233). This module reads, with
 bounds checks, the tables needed to map text to glyphs without layout lookups:
 `head` (units per em), `hhea` (ascender, descender, line gap, number of
 long metrics), `maxp` (number of glyphs), `hmtx` (advance widths) and `cmap`
-(subtable format 4 for the Basic Multilingual Plane and format 12 for all
-Unicode scalar values). The OpenType specification is the reference;
+(subtable format 4 for the Basic Multilingual Plane, format 12 for all
+Unicode scalar values, format 13 for many-to-one ranges). The OpenType specification is the reference;
 HarfBuzz is the differential oracle.
 
 It does not apply GSUB or GPOS. A run that needs them (ligatures, kerning,
@@ -33,6 +33,8 @@ inductive CharMap where
   | format4 (offset segCount : Nat)
   /-- Format 12 at this absolute offset, with its group count. -/
   | format12 (offset groups : Nat)
+  /-- Format 13 (many-to-one ranges) at this absolute offset, with its group count. -/
+  | format13 (offset groups : Nat)
   deriving Repr, BEq
 
 structure Face where
@@ -70,11 +72,11 @@ private def chooseCmap (b : ByteArray) (t : TableRecord) : Except String CharMap
     let some rank := rank? | continue
     need b sub 2 "cmap subtable"
     let format := u16 b sub
-    let cand? ← if format == 12 then do
+    let cand? ← if format == 12 || format == 13 then do
         need b sub 16 "cmap format 12 header"
         let groups := u32 b (sub + 12)
         need b (sub + 16) (12 * groups) "cmap format 12 groups"
-        pure (some (CharMap.format12 sub groups))
+        pure (some (if format == 12 then CharMap.format12 sub groups else CharMap.format13 sub groups))
       else if format == 4 then do
         need b sub 14 "cmap format 4 header"
         let segCount := u16 b (sub + 6) / 2
@@ -87,7 +89,7 @@ private def chooseCmap (b : ByteArray) (t : TableRecord) : Except String CharMap
     | none, _ => pure ()
   match best with
   | some (_, c) => pure c
-  | none => throw "font.file.unsupported-cmap: no Unicode cmap subtable of format 4 or 12"
+  | none => throw "font.file.unsupported-cmap: no Unicode cmap subtable of format 4, 12 or 13"
 
 /-- Read the face from the bytes and its checked table directory. -/
 def Face.read (b : ByteArray) (dir : Array TableRecord) : Except String Face := do
@@ -126,6 +128,14 @@ def Face.glyph (f : Face) (b : ByteArray) (c : Char) : Except String Nat := do
           found := u32 b (r + 8) + (cp - lo)
           break
       pure found
+    | .format13 sub groups => do
+      let mut found := 0
+      for k in [0:groups] do
+        let r := sub + 16 + 12 * k
+        if u32 b r ≤ cp && cp ≤ u32 b (r + 4) then
+          found := u32 b (r + 8)
+          break
+      pure found
     | .format4 sub segCount => do
       if cp > 0xFFFF then pure 0 else
       let ends := sub + 14
@@ -157,6 +167,13 @@ structure NominalGlyph where
   cluster : Nat
   /-- The code point this glyph was mapped from (kept through substitution). -/
   codepoint : Nat := 0
+  /-- GSUB replaced this glyph (HarfBuzz `_hb_glyph_info_substituted`). -/
+  substituted : Bool := false
+  /-- GSUB formed a ligature at this glyph (HarfBuzz `_hb_glyph_info_ligated`). -/
+  ligated : Bool := false
+  /-- HarfBuzz space fallback type of a space mapped to the U+0020 glyph
+  (`hb_unicode_funcs_t::space_t`; 0 = none). -/
+  spaceFallback : Nat := 0
   deriving Repr, BEq, Inhabited
 
 /-- One glyph for each character, by `cmap` and `hmtx` only (no GSUB/GPOS). -/
