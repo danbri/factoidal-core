@@ -377,3 +377,53 @@ propext/Quot.sound dependencies (`path-alias-native.log`). The central root
 import, small closure/source inventory and explicit SVG link register the core
 Path module. A fresh standard engine build is in progress; this alias source
 checkpoint does not claim its link or GPU result before that build completes.
+
+
+The shared aliases' first standard build caught missing field-notation parameter
+metadata on a bare `Contour.closed` abbreviation. An explicit argument fixes
+that compatibility method (`767c51a87`); the targeted full path guard passes.
+Standard retry then finishes successfully: `path-alias-engines-retry.log`, exit0.
+All 83 Deno groups pass (`path-alias-deno.log`), and all five complete raw UTF-8
+curve artifacts are byte-identical to the preceding WASM outputs
+(`path-alias-raw.log`). The fresh WASM SHA256 is
+`830431a9c2344ad0963d113a60629738c6daa851c496632ed46c2360e90f9704`.
+MJS/TS hashes remain the separate identities recorded above.
+
+The four original zero-viewBox/radius fixtures now also pass the fresh WASM
+reader (`viewport-wasm.log`, exit0), with exact source hashes and artifacts.
+Their independent browser relations all match exactly on real GPU: zero differing
+pixels, with all three fault controls passing each of the four cases.
+`/tmp/factoidal-overnight-corpus-zero-viewport-radius/run.json` retains all 601
+rows, 597 explicitly unselected. This is a four-case diagnostic, not a new full
+suite score. The preceding curve9aaa full wave changed no SVG statuses across
+322 SVG rows; all 44 accepted SVG PNG hashes equal the use/formatter baseline.
+Its extra overall match came from HTML overflow clipping, not curves. Fresh
+WASM curve GPU controls remain 4/5 exact; the stroke failure image is identical
+to the native four-pixel failure. No failure or tolerance was removed.
+
+## Document-wide SVG references in HTML (2026-11-03)
+
+The original `svg/linking/reftests/href-use-element.html` defines targets in a
+hidden first SVG root, then uses the rectangle from a second SVG root. The HTML
+lane's actual corpus measurement found 10000 missing red pixels because each SVG
+root indexed only its own subtree. The new [document-reference design](designissues/2026-11-03-svg-document-references.md)
+keeps the whole namespace DOM in Lean, with one bounded source-bound cache.
+`ReferenceContext.create(document, documentURL, initialBaseURL)` separates
+retrieval identity from the effective document base. `parseRootInContext`
+selects the actual root by its absolute source path. Its optional pure Lean
+root-attribute normalizer preserves original names, children, reference targets,
+source identity and bases. Existing standalone `parseRoot` stays local and
+still suppresses zero viewports before constructing its context.
+
+Closed proofs bind cached index/ID/style results to the original document,
+reconstruct every admitted context exactly, and show successful path selection
+returns the exact requested absolute path. Native authored counterexamples pass
+hidden definitions, href/xlink precedence, original child indices including
+text/comments, global duplicate IDs, cross-root cycles with sibling survival,
+original xml:base across cloning/root normalization, distinct effective base and
+retrieval URL, global SVG style rules and explicit paint-server refusals.
+The existing root/use suites also pass (`document-context-tests-retry.log`, exit0).
+The first API compile/test logs preserve record syntax/proof setup and a reserved
+local-variable-name error; no sorry remains and printed proof dependencies are
+standard Lean axioms. This is a native API checkpoint; HTML caller integration
+and fresh compiled end-to-end corpus validation are still pending.

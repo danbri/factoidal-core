@@ -17,6 +17,7 @@ worknote, kept as the record of a decision or a measurement),
 | --- | --- | --- | --- |
 | 2026-11-03 | [Prepared path sampling in the Lean renderer](20261103-lean-path-sampling-preparation.md) | this commit | current — exact prepared path/polygon source proofs and emitted-C hoisting; runtime speed measurement remains |
 | 2026-11-03 | [One canonical path for HTML, SVG and real fonts](20261103-shared-path-fonts.md) | this commit | current — exact SVG/cache adapters and real Arial CPU text; combined runtime, document-wide refs and broader font conformance remain |
+| 2026-11-03 | [SVG references across HTML SVG roots](designissues/2026-11-03-svg-document-references.md) | this commit | current — source-bound document context, absolute paths, original bases and native cross-root regressions; compiled HTML integration pending |
 | 2026-11-03 | [SVG curves and checked backend cache](designissues/2026-11-03-svg-curves-cache.md) | this commit | current — canonical curve geometry, exact cache/count/storage proofs, four exact GPU fill controls and one retained stroke failure |
 | 2026-11-02 | [Typed shaped words into common font geometry](20261102-typed-font-provider.md) | this commit | current — 32 provider/face and 15 shaped-layout guards, actual pinned Ahem HTML geometry; supplied-data WASM image gate next |
 | 2026-11-02 | [Shared clipping for HTML and embedded SVG](20261102-lean-html-shared-clips.md) | this commit | current — exact Float adapters, CPU sampling guards and five whole CPU/GPU/original-Chrome diagnostic images |

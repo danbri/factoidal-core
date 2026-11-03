@@ -26,8 +26,9 @@ def elementBase (attrs : List NamespaceAttribute) (parent : Option String) : Opt
   | none => parent
   | some baseAttr => some (L4Factoidal.Syntax.resolveAgainst? parent baseAttr.value)
 
-def collect (root : NamespaceNode) (maxNodes : Nat) (documentURL : Option String := none) : Except String Index := do
-  let mut pending := [(root,([] : List Nat),documentURL)]
+def collect (root : NamespaceNode) (maxNodes : Nat) (documentURL : Option String := none)
+    (initialBaseURL : Option String := none) : Except String Index := do
+  let mut pending := [(root,([] : List Nat),initialBaseURL.orElse (fun _ => documentURL))]
   let mut out : Std.TreeMap String Entry := {}
   for _ in [:maxNodes] do
     match pending with
@@ -44,6 +45,49 @@ def collect (root : NamespaceNode) (maxNodes : Nat) (documentURL : Option String
         pending := (children.zipIdx.map fun (child,i) => (child,path ++ [i],base)) ++ pending
   if pending.isEmpty then return ⟨out,documentURL⟩
   throw "SVG identifier node count exceeds input bound"
+
+private def locateAux (node : NamespaceNode) (here : List Nat) (parentBase : Option String) :
+    List Nat → Except String Entry
+  | [] => .ok ⟨node,here,parentBase⟩
+  | index::rest =>
+    match node with
+    | .other _ => .error "SVG root source path enters a non-element"
+    | .element _ attrs children =>
+      match children[index]? with
+      | none => .error "SVG root source path is outside the original document"
+      | some child => locateAux child (here ++ [index]) (elementBase attrs parentBase) rest
+
+private theorem locateAux_path (node : NamespaceNode) (here : List Nat)
+    (parentBase : Option String) (path : List Nat) (entry : Entry)
+    (found : locateAux node here parentBase path = .ok entry) : entry.path = here ++ path := by
+  induction path generalizing node here parentBase with
+  | nil => simp only [locateAux,Except.ok.injEq] at found; cases found; simp
+  | cons index rest ih =>
+    cases node with
+    | other raw => simp [locateAux] at found
+    | element name attrs children =>
+      simp only [locateAux] at found
+      split at found
+      · contradiction
+      · rename_i child selected
+        simpa [List.append_assoc] using ih child (here ++ [index]) (elementBase attrs parentBase) found
+
+/-- Select the root from the same original DOM used by the ID index. Child
+    positions include text/comments; a caller cannot substitute another root. -/
+def locate (document : NamespaceNode) (path : List Nat)
+    (initialBaseURL : Option String := none) : Except String Entry :=
+  if path.length > 32 then .error "SVG root source path nesting exceeds 32"
+  else locateAux document [] initialBaseURL path
+
+theorem locate_path (document : NamespaceNode) (path : List Nat)
+    (initialBaseURL : Option String) (entry : Entry)
+    (found : locate document path initialBaseURL = .ok entry) : entry.path = path := by
+  simp only [locate] at found
+  split at found
+  · contradiction
+  · simpa using locateAux_path document [] initialBaseURL path entry found
+
+#print axioms locate_path
 
 /-- Prefer SVG2 href even when empty; deprecated xlink is fallback only. -/
 def href (attrs : List NamespaceAttribute) : Option String :=
