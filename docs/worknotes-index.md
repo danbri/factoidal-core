@@ -15,6 +15,9 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-03 | [Checked browser development bundle](20261103-browser-development-bundle.md) | this commit | current — deterministic package, relocated Chrome/GPU tests and explicit external dependencies |
+| 2026-11-03 | [Browser alpha packaging audit](20261103-browser-alpha-packaging-audit.md) | this commit | current — actual document ABI gates and package scope |
+| 2026-11-03 | [Browser alpha release architecture](designissues/2026-11-03-browser-alpha-packaging.md) | this commit | current — fixed main commit, independent release candidate and npm capability boundary |
 | 2026-11-03 | [Browser MVP checkpoint](20261103-browser-mvp-checkpoint.md) | this commit | current — frozen local browser, actual native/WASM/GPU checks and release boundary |
 | 2026-11-03 | [Layout recursion audit](20261103-layout-stack-audit.md) | this commit | current — generated C fuel bound, proof guards and 50,000-sibling native/WASM stress |
 | 2026-11-03 | [Linear path stack repair](20261103-rendering-path-stack-repair.md) | this commit | current — exact tail-loop compiler replacement and generated C gates |

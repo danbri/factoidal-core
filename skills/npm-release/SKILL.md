@@ -5,6 +5,12 @@ description: Release the Factoidal npm packages — which artifacts each build s
 
 # Releasing the Factoidal npm packages
 
+For the browser work, read the [alpha packaging plan](../../docs/designissues/2026-11-03-browser-alpha-packaging.md).
+The publisher accepts an `alpha` tag and prerelease version, but the experimental
+document CLI/WASM and browser host bundle are separate from the current core
+npm contents. Pin a tested main commit while main advances; a new tag does not
+add missing browser APIs or assets to the package.
+
 Two packages exist. Only one is current.
 
 | Package | Directory | Status |

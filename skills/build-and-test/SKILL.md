@@ -296,6 +296,11 @@ Both files are gitignored (`formal/fstar/.gitignore`).
 
 ## Cross-references
 
+- [Browser development bundle](../../docs/20261103-browser-development-bundle.md)
+  records deterministic packaging, complete source/C/engine witnesses,
+  relocated actual Chrome checks, integrity rejection and external font/library
+  requirements. Creating an archive alone is not a browser runtime test.
+
 - [Lean browser URL navigation](../../docs/designissues/2026-11-03-lean-browser-navigation.md)
   records the native byte broker, unchanged-source boundary, cancellation,
   history and actual HTTP/browser fixture checks.
