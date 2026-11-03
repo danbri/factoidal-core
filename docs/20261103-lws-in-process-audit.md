@@ -49,3 +49,13 @@ Follow-up 3 is now built: **a component principal.**
   exclusivity; a sealed files storage survives a reopen and a wrong key refuses to open.
 - Found: a provisioned `rootAcl` with a relative subject (`<#c>`) grants nothing:
   https://github.com/danbri/factoidal/issues/1241.
+
+## Fixed: ACL documents with relative references (issue 1241)
+
+`Solid.Server.aclGraphOf` parsed an ACL document with NO base IRI. Under RDF 1.1 Turtle a
+relative reference (`<#owner>`, `<./>`) is then a parse error; the error gave an EMPTY graph, and
+an empty ACL grants nothing. So every ACL written with relative references, as Solid clients
+write them, denied everything (fail-closed, but a lock-out). Now `allowed` and the `WAC-Allow`
+field parse an ACL with the IRI of the ACL document as the base (RFC 3986 section 5.1.3). Guard in
+`L4Factoidal/Solid/Tests.lean`; `npm/factoidal/test/lws-principal.test.mjs` now uses the relative
+form.
