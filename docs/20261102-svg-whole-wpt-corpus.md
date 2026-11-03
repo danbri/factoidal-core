@@ -1,5 +1,9 @@
 # Whole SVG standards corpus and actual browser measurements
 
+Draft review: https://github.com/danbri/factoidal-core/pull/310 (whole pinned
+corpus and executable SVG/HTML image transport). Tracker update:
+https://github.com/danbri/factoidal/issues/1209#issuecomment-6591712565.
+
 The harness now inventories the entire pinned WPT SVG subtree, rather than a
 pair of selected directories. Its 2,452 original files include 1,327 SVG and
 1,042 HTML documents. Forty original external dependencies/license files bring

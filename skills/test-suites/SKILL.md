@@ -950,3 +950,30 @@ record. Conventions, by test kind:
 
 Every score line that includes expected failures prints them separately;
 they never count as passes.
+
+## Whole SVG subtree image transport (2026-11-03)
+
+Use [`tests/external/svg-wpt/README.md`](../../tests/external/svg-wpt/README.md)
+for the complete pinned SVG/HTML inventory and configurable actual-browser /
+Lean artifact / WebGPU runner. The older 38-case suite remains independent.
+Run `corpus.py --check`: it must rederive relations, fuzzy limits, requirements
+and resource closure from original bytes, rather than trusting edited metadata.
+Inventory, compiler acceptance, analytic math controls and selected diagnostics
+are separate from the complete relation score.
+
+Serve original documents at their original root paths; a `/wpt/` prefix breaks
+absolute font/resource URLs. Keep the original browser viewport fixed at
+800x600; intrinsic author dimensions belong to the candidate scene, with only
+explicitly recorded eligible host-viewport retries. Keep script/font/print and
+unresolved base contexts visible. Original browser relation failures remain
+unavailable; do not add fuzzy limits to make them pass. Negative relations
+require independent test-image agreement before qualifying as image matches.
+Retain generated artifact and submitted-shader identity even when production
+GPU sample validation rejects a frame.
+
+In the managed macOS session, launch the installed Node22 helper by script
+filename. Wrapped/inline launches have failed with sandbox EPERM while the
+same helper as a direct file command worked. Headless readiness uses fonts
+completion and screenshot paint flushing; an animation-frame wait has stalled.
+The measured failures, controls and reproduction are recorded in
+[`docs/20261102-svg-whole-wpt-corpus.md`](../../docs/20261102-svg-whole-wpt-corpus.md).
