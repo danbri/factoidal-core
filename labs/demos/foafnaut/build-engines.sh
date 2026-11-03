@@ -93,7 +93,7 @@ done
 "$TOOLCHAIN/bin/lean" -R "$PROJECT" --run "$PROJECT/L4Factoidal/Math/AffineTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB/foaf" -o "$BUILD/olean/FoafGraph.olean" \
   -c "$BUILD/ir/FoafGraph.c" "$LAB/foaf/FoafGraph.lean"
-for name in Graphics GraphicsPrepared Font Geometry UI Demos SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke SVG SceneSVG Solving SolvingPolicy SolvingSVG FoafNaut FoafPresentation FoafLiveBridge RenderPlan PolicyBridge; do
+for name in Graphics GraphicsPrepared Font Geometry UI Demos SVGPathData SVGCurves SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke SVG SceneSVG Solving SolvingPolicy SolvingSVG FoafNaut FoafPresentation FoafLiveBridge RenderPlan PolicyBridge; do
   "$TOOLCHAIN/bin/lean" -R "$LAB" -o "$BUILD/olean/$name.olean" -c "$BUILD/ir/$name.c" "$LAB/$name.lean"
 done
 "$TOOLCHAIN/bin/lean" -R "$LAB/foaf" --run "$LAB/foaf/Tests.lean" "$LAB/foaf/fixtures/people.ttl"
@@ -106,6 +106,7 @@ done
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGRootTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" -o "$BUILD/olean/SVGClipTests.olean" "$LAB/SVGClipTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" -o "$BUILD/olean/SVGUseTests.olean" "$LAB/SVGUseTests.lean"
+"$TOOLCHAIN/bin/lean" -R "$LAB" -o "$BUILD/olean/SVGCurveTests.olean" "$LAB/SVGCurveTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGPrerequisiteTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGTransformTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGPercentageTests.lean"
@@ -160,7 +161,7 @@ link_engine() {
 link_engine graphics-generator _graphics_call,_graphics_free "$BUILD/obj/Graphics.o" "$BUILD/obj/graphics_shim.o"
 link_engine ui-engine _ui_init,_ui_step,_ui_free "$BUILD/obj/Graphics.o" "$BUILD/obj/UI.o" "$BUILD/obj/ui_shim.o"
 link_engine demos-engine _demos_init,_demos_step,_demos_free "$BUILD/obj/Graphics.o" "$BUILD/obj/Demos.o" "$BUILD/obj/demos_shim.o"
-link_engine svg-engine _svg_call,_svg_call_url,_svg_pixel,_svg_free "$BUILD/obj/Graphics.o" "$BUILD/obj/GraphicsPrepared.o" "$BUILD/obj/SVG.o" "$BUILD/obj/SVGCSS.o" "$BUILD/obj/SVGDash.o" "$BUILD/obj/SVGDashUnits.o" "$BUILD/obj/SVGStroke.o" "$BUILD/obj/SVGPath.o" "$BUILD/obj/SVGReferences.o" "$BUILD/obj/Core_Math_Affine.o" "$BUILD/obj/Core_Tdb2_Format.o" "$BUILD/obj/Core_Rendering_FloatFormat.o" "$BUILD/obj/Core_Syntax_IriResolve.o" "$BUILD/obj/svg_shim.o" "$BUILD/obj/"XML_*.o
+link_engine svg-engine _svg_call,_svg_call_url,_svg_pixel,_svg_free "$BUILD/obj/Graphics.o" "$BUILD/obj/GraphicsPrepared.o" "$BUILD/obj/SVG.o" "$BUILD/obj/SVGCSS.o" "$BUILD/obj/SVGDash.o" "$BUILD/obj/SVGDashUnits.o" "$BUILD/obj/SVGStroke.o" "$BUILD/obj/SVGPath.o" "$BUILD/obj/SVGPathData.o" "$BUILD/obj/SVGCurves.o" "$BUILD/obj/SVGReferences.o" "$BUILD/obj/Core_Math_Affine.o" "$BUILD/obj/Core_Tdb2_Format.o" "$BUILD/obj/Core_Rendering_FloatFormat.o" "$BUILD/obj/Core_Syntax_IriResolve.o" "$BUILD/obj/svg_shim.o" "$BUILD/obj/"XML_*.o
 link_engine render-plan _render_plan,_render_plan_free "$BUILD/obj/RenderPlan.o" "$BUILD/obj/render_plan_shim.o"
 link_engine layout-policy-engine _layout_policy,_layout_policy_free "$BUILD/obj/PolicyBridge.o" "$BUILD/obj/policy_shim.o" "$BUILD/obj/"Core_*.o
 link_engine foafnaut-engine _foafnaut_init,_foafnaut_init_policy,_foafnaut_step,_foafnaut_picture,_foafnaut_picture_checked,_foafnaut_export_svg,_foafnaut_text,_foafnaut_free,_foafnaut_live_start,_foafnaut_live_event,_foafnaut_live_text,_foafnaut_live_tick,_foafnaut_live_acknowledge,_foafnaut_live_export_svg,_foafnaut_live_dispose \
@@ -172,7 +173,7 @@ cd "$REPO"
 if command -v sha256sum >/dev/null; then HASH_COMMAND=(sha256sum); else HASH_COMMAND=(shasum -a 256); fi
 "${HASH_COMMAND[@]}" formal/lean4/L4Factoidal/XML/{Document,Parser,Wellformedness,Namespaces,NamespaceView}.lean \
   formal/lean4/Wasm/build-wasm.sh labs/demos/foafnaut/build-engines.sh \
-  labs/demos/foafnaut/{Graphics,GraphicsPrepared,GraphicsArtifact,Font,Geometry,UI,Demos,SVGPath,SVGReferences,SVGCSS,SVGDash,SVGDashUnits,SVGStroke,SVG,SceneSVG,Solving,SolvingArtifact,SolvingPolicy,SolvingSVG,FoafNaut,FoafPresentation,FoafLiveBridge,RenderPlan,PolicyBridge}.lean \
+  labs/demos/foafnaut/{Graphics,GraphicsPrepared,GraphicsArtifact,Font,Geometry,UI,Demos,SVGPathData,SVGCurves,SVGPath,SVGReferences,SVGCSS,SVGDash,SVGDashUnits,SVGStroke,SVG,SceneSVG,Solving,SolvingArtifact,SolvingPolicy,SolvingSVG,FoafNaut,FoafPresentation,FoafLiveBridge,RenderPlan,PolicyBridge}.lean \
   labs/demos/foafnaut/foaf/FoafGraph.lean > "$BUILD/source-SHA256SUMS"
 for module in "${CORE_MODULES[@]}"; do
   "${HASH_COMMAND[@]}" "formal/lean4/L4Factoidal/$module.lean" >> "$BUILD/source-SHA256SUMS"

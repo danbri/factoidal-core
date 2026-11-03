@@ -13,10 +13,10 @@ private def magnitude (a : Point) := Float.sqrt (a.x*a.x+a.y*a.y)
 private def interpolate (a b : Point) (t : Float) : Point := ⟨a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t⟩
 /-- Stroke edges close only explicit closed contours; fill edges are separate.
     Zero edges do not provide a direction for joins. Their point survives for caps. -/
-def edges (c : Contour) : List (Point × Point) :=
+def edges (c : LinearContour) : List (Point × Point) :=
   let pairs := c.points.zip (c.points.drop 1 ++ if c.closed then c.points.take 1 else [])
   pairs.filter (fun (a,b) => a.x != b.x || a.y != b.y)
-def length (c : Contour) : Float := (edges c).foldl (fun n (a,b) => n+magnitude (delta a b)) 0
+def length (c : LinearContour) : Float := (edges c).foldl (fun n (a,b) => n+magnitude (delta a b)) 0
 
 /-- Default miter join, with required bevel fallback beyond the limit. -/
 def join (a vertex b : Point) (half limit : Float) : List Piece := Id.run do
@@ -40,7 +40,7 @@ def join (a vertex b : Point) (half limit : Float) : List Piece := Id.run do
 
 /-- All pieces remain one stroke region. Dash phase restarts per contour;
     callers calibrate author distances using total element length first. -/
-def retain (contours : List Contour) (pattern : List Float) (offset width : Float)
+def retain (contours : List LinearContour) (pattern : List Float) (offset width : Float)
     (roundCaps : Bool) (miterLimit : Float := 4) : Except String (List Piece) := do
   if !width.isFinite || width < 0 || !miterLimit.isFinite || miterLimit < 1 then throw "invalid stroke dimensions"
   if width==0 then return []
@@ -69,7 +69,7 @@ def retain (contours : List Contour) (pattern : List Float) (offset width : Floa
         let hi := min (start+size) span.last
         if hi > lo then pieces := pieces.push (.strip (interpolate a b ((lo-start)/size)) (interpolate a b ((hi-start)/size)))
         start := start+size
-      if roundCaps && !contour.points.isEmpty then
+      if roundCaps && !contour.points.isEmpty && (contour.closed || contour.points.length > 1) then
         for endpoint in [span.first,span.last] do
           if !(seam && (endpoint==0 || endpoint==total)) then pieces := pieces.push (.disk (pointAt endpoint) half)
       if pieces.size > 4096 then throw "stroke union exceeds 4096 pieces"

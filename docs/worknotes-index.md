@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-03 | [SVG curves and checked backend cache](designissues/2026-11-03-svg-curves-cache.md) | this commit | current — canonical curve geometry, exact cache/count/storage proofs, four exact GPU fill controls and one retained stroke failure |
 | 2026-11-02 | [Typed shaped words into common font geometry](20261102-typed-font-provider.md) | this commit | current — 32 provider/face and 15 shaped-layout guards, actual pinned Ahem HTML geometry; supplied-data WASM image gate next |
 | 2026-11-02 | [Shared clipping for HTML and embedded SVG](20261102-lean-html-shared-clips.md) | this commit | current — exact Float adapters, CPU sampling guards and five whole CPU/GPU/original-Chrome diagnostic images |
 | 2026-11-02 | [HTML/CSS WebGPU hub page and runtime contract](20261102-html-webgpu-hub.md) | this commit | current — actual prefixed worker/GPU page checks; runtime installation and publication remain separate |
@@ -218,7 +219,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | 2026-10-31 | [Compositor HTML failure conditions](20261031-compositor-html-failure-analysis.md) | — | three kernel-checked failure lemmas, pinned-engine counterexamples and browser boundary |
 | 2026-11-01 | [Compositor pipeline files and FOAF pod library](20261101-compositor-pipeline-library.md) | — | bounded versioned documents, explicit FOAF storage discovery, ETag guarded writes and honest local validation limits |
-| 2026-11-02 | [SVG standards implementation overnight](20261102-svg-standards-overnight.md) | uncommitted | isolated SVG lane; public namespace DOM/artifact/sample interfaces, fresh proof closure repair, then defs/use/symbol and exact clipping |
+| 2026-11-02 | [SVG standards implementation overnight](20261102-svg-standards-overnight.md) | uncommitted | isolated SVG lane; defs/use/symbol, affine clipping, typed C/S/Q/T/A geometry and checked backend cache; native/WASM/GPU evidence and numeric limits recorded |
 
 | 2026-11-02 | [Exact compiled UI overlap loop](20261102-ui-overlap-compiled-loop.md) | this commit | kernel-proved foldl compiler replacement, 106 UI guards and targeted emitted-C recursion/replacement audits; no allow-list exemption |
 

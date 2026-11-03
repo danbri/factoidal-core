@@ -571,8 +571,14 @@ inherited paint; the target's own specified style wins. Clip and content/viewBox
 CTMs are separate, including in sampling/picking/packed WGSL. URL-aware parsing
 retains the original source xml:base across cloning. Exact analytic GPU controls
 and ten selected original upstream rendering matches are separate evidence;
-neither establishes full SVG or GPU arithmetic equivalence. Typed curves remain
-next work. See the [overnight record](../../docs/20261102-svg-standards-overnight.md).
+neither establishes full SVG or GPU arithmetic equivalence. Typed C/S/Q/T/A
+curves now retain canonical segments separately from checked linear backend
+contours. `Scene.make` returns `Except` and binds its compiled cache by an exact
+equality proof; adapters must propagate failure and preserve canonical Float
+parameters. Cache correspondence and packed-buffer bounds do not prove the
+numeric flatness policy or GPU arithmetic equivalence. Keep independent image
+failures visible. See the [curve/cache design](../../docs/designissues/2026-11-03-svg-curves-cache.md)
+and [overnight record](../../docs/20261102-svg-standards-overnight.md).
 
 The initial retained-scene source is the lab module
 `labs/demos/foafnaut/Solving.lean`, compiled by
