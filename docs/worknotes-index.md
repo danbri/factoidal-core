@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-03 | [Browser WPT baseline and native provenance](20261103-browser-wpt-baseline.md) | pending | current — fresh Lean parser/DOM, QuickJS assertions, native embedded-SVG images, pinned upstream bytes and cache cleanup |
 | 2026-11-03 | [foafnaut2525 main-thread handoff review](20261103-foafnaut2525-handoff-review.md) | this commit | current — rechecked artifacts and CI, actual guest-DOM defect, native GPU blocker and next application acceptance target |
 | 2026-11-03 | [foafnaut2525 side-conversation handoff](20261103-foafnaut2525-side-thread-handoff.md) | pending | current — owner requests, dated demo/test/native evidence, LWS and recovery proposals, issue and main-thread review checklist |
 | 2026-11-03 | [foafnaut2525 runtime maturity and XSLT](designissues/2026-11-03-foafnaut2525-runtime-maturity.md) | pending | current — JS/DOM/event-loop and WASM evidence boundaries, requested XSLT integration and Apple distribution constraints; documentation only |
@@ -26,6 +27,7 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-03 | [Layout recursion audit](20261103-layout-stack-audit.md) | this commit | current — generated C fuel bound, proof guards and 50,000-sibling native/WASM stress |
 | 2026-11-03 | [Linear path stack repair](20261103-rendering-path-stack-repair.md) | this commit | current — exact tail-loop compiler replacement and generated C gates |
 | 2026-11-03 | [Scene stack lowering](20261103-rendering-scene-stack-lowering.md) | this commit | current — exact traversal proof, compiled-C gates and native stack stress |
+| 2026-11-03 | [Font trust and safety policy](designissues/2026-11-03-font-trust-and-safety-policy.md) | this commit | current — owner decisions 1-4: understandable configurable refusals, safe ASCII mode, Lean shaper with HarfBuzz oracle, DSIG reported not trusted, pinned OFL fonts; https://github.com/danbri/factoidal/issues/1233 |
 | 2026-11-03 | [Dynamic font request architecture](designissues/2026-11-03-dynamic-font-requests.md) | this commit | current — Lean decides shaping requests; host supplies bounded glyph data |
 | 2026-11-03 | [Browser navigation and byte transport](20261103-lean-browser-navigation.md) | this commit | current — HTTP navigation controls, browser integration |
 | 2026-11-03 | [Dynamic font requests](20261103-web-render-dynamic-font-requests.md) | this commit | current — Lean requests, actual HarfBuzz/FreeType broker and arbitrary edited text |
