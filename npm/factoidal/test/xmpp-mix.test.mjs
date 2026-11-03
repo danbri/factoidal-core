@@ -150,7 +150,8 @@ function xfail (name, issueUrl, fn) {
     assert.ok(failed, `unexpected pass: ${name} now works; flip this xfail to an assertion and close ${issueUrl}`)
   })
 }
-xfail('past 1,000 held stanzas for an offline account, the sender gets resource-constraint', PENDING_ISSUE, async () => {
+// Fixed 2026-11-03: the engine holds, bounded (L4Factoidal/XMPP/Held.lean, hold_perAccount).
+test(`past 1,000 held stanzas for an offline account, the sender gets resource-constraint (${PENDING_ISSUE})`, async () => {
   const server = await start()
   try {
     const hag = await bound(server.wsOrigin, 'hag66', 'h3c4t3', 'a')

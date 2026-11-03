@@ -1086,6 +1086,7 @@ import L4Factoidal.XMPP.WebSocket
 import L4Factoidal.XMPP.Muc
 import L4Factoidal.XMPP.Mix
 import L4Factoidal.XMPP.Gc3
+import L4Factoidal.XMPP.Held
 import L4Factoidal.XMPP.HttpOverXmpp
 import L4Factoidal.XMPP.HttpOverXmppTests
 import L4Factoidal.XMPP.ClientStream

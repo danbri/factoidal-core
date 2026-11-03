@@ -67,6 +67,7 @@ import L4Factoidal.XMPP.WebSocket
 import L4Factoidal.XMPP.Muc
 import L4Factoidal.XMPP.Mix
 import L4Factoidal.XMPP.Gc3
+import L4Factoidal.XMPP.Held
 import L4Factoidal.HTTP.WebSocket
 import L4Factoidal.HTTP.Wire
 
@@ -167,6 +168,12 @@ structure XmppOpenServer where
   mix : Option Mix.Service := none
   /-- The GC3 prototype groups, when `cfg.gc3Domain` is set. -/
   gc3 : Option Gc3.Service := none
+  /-- The full JIDs of this server's bound sessions, kept by the ops layer
+  (`bindTransition`, `sessionGone`), so the hold-or-deliver decision is made
+  here, not in the host. -/
+  bound : List String := []
+  /-- Stanzas held for accounts with no bound session (`XMPP/Held.lean`). -/
+  held : Held.Held := {}
 
 /-- One open client connection on a server. -/
 structure XmppOpenSession where
@@ -217,7 +224,23 @@ structure XmppCollected where
 
 private def perform (srv : XmppOpenServer) (c : XmppCollected) : Out → XmppOpenServer × XmppCollected
   | .send text => (srv, { c with send := c.send ++ [text] })
-  | .route bare text => (srv, { c with route := c.route ++ [(bare, text)] })
+  | .route bare text =>
+    if srv.bound.any (fun f => Server.bareOf f == bare) then
+      (srv, { c with route := c.route ++ [(bare, text)] })
+    else
+      -- RFC 6121 section 8.5.2.1.1: no bound session; hold it, within the bounds.
+      let (h', ok) := Held.hold srv.held bare text
+      if ok then ({ srv with held := h' }, c)
+      else
+        -- RFC 6120 section 8.3.3.18: past a bound, a message is answered
+        -- `resource-constraint`; anything else is dropped.
+        match (Wire.parseElement text).bind Core.Stanza.ofXml with
+        | some st =>
+          if st.kind == .message && st.type != some "error" then
+            (srv, { c with send := c.send ++ [Server.stanzaError .message st.id
+              (st.from_.map Jid.render) (some bare) "wait" "resource-constraint"] })
+          else (srv, c)
+        | none => (srv, c)
   | .routeFull full text bounce => (srv, { c with routeFull := c.routeFull ++ [(full, text, bounce)] })
   | .muc fromFull text =>
     -- The room service: one step over the server's shared rooms; every
@@ -266,6 +289,21 @@ private def performAll (srv : XmppOpenServer) (c : XmppCollected) : List Out →
     let (srv', c') := perform srv c o
     performAll srv' c' os
 
+/-- A session's full JID changed by one step (it bound, or it closed): keep
+`bound`, and hand a newly bound account what was held for it, oldest first. -/
+def bindTransition (srv : XmppOpenServer) (c : XmppCollected) (before after : Option String) :
+    XmppOpenServer × XmppCollected :=
+  if before == after then (srv, c)
+  else
+    let kept := srv.bound.filter (fun f => some f != before)
+    match after with
+    | none => ({ srv with bound := kept }, c)
+    | some f =>
+      let bare := Server.bareOf f
+      let (out, h') := Held.release srv.held bare
+      ({ srv with bound := kept ++ [f], held := h' },
+       { c with route := c.route ++ out.map (fun t => (bare, t)) })
+
 /-- The buffer left after a unit's actions. When they ask for the TLS
 upgrade it is EMPTY: those bytes arrived in clear after `<starttls/>`,
 and reading them as part of the secured stream is the plaintext-injection
@@ -303,10 +341,11 @@ def drain (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected) :
             | none => []
           let (s', _env', outs) := Server.step os.session ⟨roster⟩ unit
           let (srv', c') := performAll srv c outs
-          let closed := c'.close || s'.stage == .closed
-          drain srv'
+          let (srv'', c'') := bindTransition srv' c' os.session.fullJid s'.fullJid
+          let closed := c''.close || s'.stage == .closed
+          drain srv''
             { os with session := s', buffer := bufferAfter outs rest, units := os.units + 1, closed }
-            c' fuel
+            c'' fuel
 
 /-- While the handshake runs, a feed changes nothing and reports nothing.
 With `bufferAfter_startTls` (the buffer is empty when `tlsPending` is
@@ -444,8 +483,11 @@ def xmppSessionDeliver (h text : String) : IO String := do
 7.14), and the other occupants are told. The deliveries, as `routeFull`
 JSON, for the host to perform. -/
 def mucLeaveAll (server : String) (full : Option String) : IO Json := do
+  -- The session is gone: it is no longer a delivery target.
   match full, (← xmppServers.get)[server]? with
-  | some f, some srv =>
+  | some f, some srv0 =>
+    let srv := { srv0 with bound := srv0.bound.filter (· != f) }
+    xmppServers.modify (·.insert server srv)
     match srv.muc with
     | some svc =>
       let (svc', ds) := Muc.leaveAll svc f
@@ -567,7 +609,8 @@ def stepOneUnit (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected
       | none => []
     let (s', _env', outs) := Server.step os.session ⟨roster⟩ unit
     let (srv', c') := performAll srv c outs
-    (srv', { os with session := s', units := os.units + 1, closed := c'.close || s'.stage == .closed }, c')
+    let (srv'', c'') := bindTransition srv' c' os.session.fullJid s'.fullJid
+    (srv'', { os with session := s', units := os.units + 1, closed := c''.close || s'.stage == .closed }, c'')
 
 /-- The frames for the `send` texts of one step, in order. -/
 def wsFramesOf (cfg : Config) (sends : List String) : ByteArray :=
