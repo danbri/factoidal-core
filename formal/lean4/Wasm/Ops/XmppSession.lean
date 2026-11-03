@@ -179,6 +179,9 @@ structure XmppCollected where
   a host that persists rosters knows which to fetch with `xmppRosterGet`. -/
   rostersSaved : List String := []
   close : Bool := false
+  /-- `Out.startTls`: flush `send`, then start the TLS handshake as the
+  server and call `xmppSessionTlsUp` when it finishes. -/
+  startTls : Bool := false
 
 private def perform (srv : XmppOpenServer) (c : XmppCollected) : Out → XmppOpenServer × XmppCollected
   | .send text => (srv, { c with send := c.send ++ [text] })
@@ -193,6 +196,7 @@ private def perform (srv : XmppOpenServer) (c : XmppCollected) : Out → XmppOpe
       ({ srv with presence := srv.presence.insert bare now },
        { c with presence := c.presence ++ [(bare, full, available)] })
   | .close => (srv, { c with close := true })
+  | .startTls => (srv, { c with startTls := true })
 
 private def performAll (srv : XmppOpenServer) (c : XmppCollected) : List Out → XmppOpenServer × XmppCollected
   | [] => (srv, c)
@@ -200,16 +204,29 @@ private def performAll (srv : XmppOpenServer) (c : XmppCollected) : List Out →
     let (srv', c') := perform srv c o
     performAll srv' c' os
 
+/-- The buffer left after a unit's actions. When they ask for the TLS
+upgrade it is EMPTY: those bytes arrived in clear after `<starttls/>`,
+and reading them as part of the secured stream is the plaintext-injection
+fault of STARTTLS implementations (CVE-2011-0411 and its successors;
+RFC 6120 section 5.4.3.3). -/
+def bufferAfter (outs : List Out) (rest : String) : String :=
+  if outs.contains .startTls then "" else rest
+
+theorem bufferAfter_startTls (outs : List Out) (rest : String)
+    (h : Out.startTls ∈ outs) : bufferAfter outs rest = "" := by
+  simp [bufferAfter, h]
+
 /-- Process every complete unit in the buffer, as `Harness.XmppServe.drainBuffer`
 does. `fuel` bounds the recursion: every unit consumes at least one
 character, so the buffer's length is always enough. The roster handed to
 `step` is read from the server table fresh for every unit, so a change
 another session made is seen, as the harness reads the file fresh. -/
-private def drain (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected) :
+def drain (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected) :
     Nat → XmppOpenServer × XmppOpenSession × XmppCollected
   | 0 => (srv, os, c)
   | fuel + 1 =>
-    if os.closed then (srv, os, c)
+    -- `tlsPending`: the host is doing the handshake; nothing is read.
+    if os.closed || os.session.stage == .tlsPending then (srv, os, c)
     else
       match Framing.nextUnit (!os.session.awaitingStreamOpen) os.buffer with
       | none => (srv, os, c)
@@ -226,11 +243,21 @@ private def drain (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollect
           let (srv', c') := performAll srv c outs
           let closed := c'.close || s'.stage == .closed
           drain srv'
-            { os with session := s', buffer := rest, units := os.units + 1, closed }
+            { os with session := s', buffer := bufferAfter outs rest, units := os.units + 1, closed }
             c' fuel
+
+/-- While the handshake runs, a feed changes nothing and reports nothing.
+With `bufferAfter_startTls` (the buffer is empty when `tlsPending` is
+entered) and `Server.step_tlsPending`, no byte sent in clear after
+`<starttls/>` is ever read. -/
+theorem drain_tlsPending (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected)
+    (fuel : Nat) (h : os.session.stage = .tlsPending) : drain srv os c fuel = (srv, os, c) := by
+  cases fuel <;> simp [drain, h]
 
 private def stageName : Server.Stage → String
   | .initial => "initial"
+  | .awaitingStartTls => "awaitingStartTls"
+  | .tlsPending => "tlsPending"
   | .awaitingAuth => "awaitingAuth"
   | .awaitingScramResponse .. => "awaitingScramResponse"
   | .authenticated _ => "authenticated"
@@ -246,6 +273,7 @@ private def jsonOfCollected (os : XmppOpenSession) (c : XmppCollected) : List (S
       .object [("bare", .string bare), ("full", .string full), ("available", .bool available)])))
   , ("rostersSaved", .array (c.rostersSaved.map .string))
   , ("close", .bool c.close)
+  , ("startTls", .bool c.startTls)
   , ("stage", .string (stageName os.session.stage))
   -- The carrier applies its transport limit to the actual residual buffer,
   -- independently of whether a complete unit happened to produce output.
@@ -302,7 +330,8 @@ def xmppSessionOpen (server optionsJson : String) : IO String := do
               saltB64 := srv.cfg.saltB64
               iterationCount := srv.cfg.iterationCount
               accounts := srv.cfg.accounts
-              tlsCarrier := (j.getBool? "tlsCarrier").getD srv.cfg.tlsCarrier }
+              tlsCarrier := (j.getBool? "tlsCarrier").getD srv.cfg.tlsCarrier
+              startTls := (j.getBool? "startTls").getD false }
           let n ← xmppSessionCounter.modifyGet fun n => (n + 1, n + 1)
           let h := s!"xmpps{n}"
           xmppSessions.modify (·.insert h
@@ -355,6 +384,23 @@ def xmppSessionClose (h : String) : IO String := do
     xmppSessions.modify (·.erase h)
     pure (okWith [("send", .array (closing.map .string))])
 
+/-- `xmppSessionTlsUp(sessionHandle)`: the TLS handshake that a feed asked
+for (`startTls: true`) finished. Refused unless the session is in
+`tlsPending` with an empty buffer (`Server.Session.tlsEstablished`); the
+client must now send a new stream header. -/
+def xmppSessionTlsUp (h : String) : IO String := do
+  match (← xmppSessions.get)[h]? with
+  | none => pure (unknownXmppSession h)
+  | some os =>
+    if os.closed || !os.buffer.isEmpty then
+      pure (errJson "xmppSessionTlsUp: the session is closed or holds unread bytes")
+    else
+      match os.session.tlsEstablished with
+      | none => pure (errJson s!"xmppSessionTlsUp: no STARTTLS is pending (stage {stageName os.session.stage})")
+      | some s' =>
+        xmppSessions.modify (·.insert h { os with session := s' })
+        pure (okWith [("stage", .string (stageName s'.stage))])
+
 private def jsonOfRosterItem (i : RosterItem) : Json :=
   .object [ ("jid", .string i.jid), ("name", .string i.name)
           , ("subscription", .string i.subscription), ("ask", .bool i.ask) ]
@@ -387,6 +433,6 @@ def xmppRosterSet (server bare encoded : String) : IO String := do
 def xmppSessionOpNames : List String :=
   [ "xmppOpen", "xmppClose"
   , "xmppSessionOpen", "xmppSessionFeed", "xmppSessionDeliver", "xmppSessionClose"
-  , "xmppRosterGet", "xmppRosterSet" ]
+  , "xmppSessionTlsUp", "xmppRosterGet", "xmppRosterSet" ]
 
 end L4Wasm.Ops

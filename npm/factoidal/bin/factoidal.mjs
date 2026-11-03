@@ -128,7 +128,7 @@ commands:
   authz-serve DIR             serve an OAuth 2.0 authorization server for LWS
                               (RFC 8414 metadata, JWK Set, RFC 8693 token exchange)
   authz-keys DIR              print the public JWK Set of an authorization server
-  xmpp-serve DIR              serve XMPP (RFC 6120/6121) over TCP or direct TLS
+  xmpp-serve DIR              serve XMPP (RFC 6120/6121): TCP, STARTTLS or direct TLS
   webdav-serve CONFIGDIR      serve local and remote LWS storages to file
                               browsers over WebDAV (RFC 4918)
   webdav-user FILE NAME       add or replace a user in a webdav-serve users
@@ -744,10 +744,10 @@ those operations landed makes this command exit 3 and say so.
 
 Specification: https://solidproject.org/TR/protocol`,
 
-  'xmpp-serve': `factoidal xmpp-serve - serve XMPP (RFC 6120 and RFC 6121) over TCP or direct TLS
+  'xmpp-serve': `factoidal xmpp-serve - serve XMPP (RFC 6120 and RFC 6121) over TCP, STARTTLS or direct TLS
 
 usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
-                            [--accounts FILE] [--cert FILE --key FILE]
+                            [--accounts FILE] [--cert FILE --key FILE [--starttls]]
 
 Starts a Node TCP server that runs one engine session per connection and
 answers every byte through the engine's xmppSessionFeed operation.
@@ -761,11 +761,15 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
   --domain NAME    the domain the server is authoritative for (default localhost);
                    a stream for any other domain is answered host-unknown
   --port N         the port to bind; 0 takes an ephemeral one
-                   (default 5222, or 5223 with --cert and --key)
-  --host ADDRESS   the address to bind (default 127.0.0.1)
+                   (default 5222; 5223 with --cert and --key and no --starttls)
+  --host ADDRESS   the address to bind (default 127.0.0.1); without
+                   --cert and --key only a loopback address is accepted
   --accounts FILE  the accounts file (default DIR/accounts)
-  --cert FILE      PEM certificate chain: XEP-0368 direct TLS, no STARTTLS
+  --cert FILE      PEM certificate chain: XEP-0368 direct TLS, or STARTTLS with --starttls
   --key FILE       PEM private key for --cert
+  --starttls       listen in clear and REQUIRE STARTTLS (RFC 6120 section 5)
+                   before anything else; no SASL mechanism is offered and no
+                   credential is accepted until the TLS handshake finishes
 
 The server makes no protocol decision. Stream negotiation, SASL PLAIN and
 SCRAM-SHA-256, resource binding, the roster, presence subscription and
@@ -774,7 +778,7 @@ disco#info are answered by formal/lean4/L4Factoidal/XMPP/. A WebAssembly
 module built before the session operations landed makes this command
 exit 3 and say so.
 
-Not implemented: STARTTLS (use --cert/--key), server-to-server federation,
+Not implemented: SCRAM channel binding, server-to-server federation,
 MUC/MIX/GC3 rooms.
 
 Specifications: https://www.rfc-editor.org/rfc/rfc6120 and
@@ -2825,9 +2829,11 @@ async function commandXmppServe (positional, options) {
   if (useTls && (typeof options.cert !== 'string' || typeof options.key !== 'string')) {
     throw new UsageError('--cert and --key go together')
   }
+  const startTls = options.starttls === true
+  if (startTls && !useTls) throw new UsageError('--starttls needs --cert and --key')
   const settings = {
     dir: positional[0],
-    port: servePort(options, useTls ? 5223 : 5222),
+    port: servePort(options, useTls && !startTls ? 5223 : 5222),
     host: serveHost(options),
     onError: (error) => { if (!quiet) err(`xmpp-serve: ${error.message}`) }
   }
@@ -2836,6 +2842,13 @@ async function commandXmppServe (positional, options) {
   if (useTls) {
     settings.cert = await fs.readFile(options.cert)
     settings.key = await fs.readFile(options.key)
+  }
+  if (startTls) settings.startTls = true
+  // Invariant I4 (docs/designissues/2026-10-28-feature-combination-safety.md,
+  // C4): with no TLS this listener offers PLAIN, which sends the password in
+  // clear, so it binds to loopback only.
+  if (!useTls && !/^(127\.\d+\.\d+\.\d+|::1|localhost)$/.test(settings.host)) {
+    throw new UsageError(`xmpp-serve: no TLS on ${settings.host}: give --cert and --key (with --starttls for port 5222), or bind to loopback`)
   }
   let running
   try {
@@ -2849,7 +2862,7 @@ async function commandXmppServe (positional, options) {
   if (!quiet) {
     err(`xmpp-serve: listening on ${running.origin} for domain ${running.xmpp.domain}` +
         ` (${running.xmpp.accounts} accounts, state ${positional[0]}` +
-        (useTls ? ', direct TLS)' : ', PLAINTEXT: no TLS on this listener)'))
+        (startTls ? ', STARTTLS required)' : useTls ? ', direct TLS)' : ', PLAINTEXT: no TLS on this listener)'))
   }
   out(running.origin)
   return untilInterrupted(running, quiet)

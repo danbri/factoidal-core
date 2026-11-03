@@ -236,6 +236,7 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-01 | [Compositor pipeline files and FOAF pod library](20261101-compositor-pipeline-library.md) | — | bounded versioned documents, explicit FOAF storage discovery, ETag guarded writes and honest local validation limits |
 | 2026-11-02 | [SVG standards implementation overnight](20261102-svg-standards-overnight.md) | uncommitted | isolated SVG lane; defs/use/symbol, affine clipping, typed C/S/Q/T/A geometry and checked backend cache; native/WASM/GPU evidence and numeric limits recorded |
 
+| 2026-11-02 | [XMPP: STARTTLS, then WebSocket, MUC, MIX, GC3](20261102-xmpp-starttls.md) | same commit | current: step 1 (STARTTLS) landed; steps 2 to 5 in order |
 | 2026-11-02 | [Exact compiled UI overlap loop](20261102-ui-overlap-compiled-loop.md) | this commit | kernel-proved foldl compiler replacement, 106 UI guards and targeted emitted-C recursion/replacement audits; no allow-list exemption |
 
 | 2026-11-03 | [Linked RDF graphs in the Lean renderer](20261103-lean-rdf-renderer.md) | — | strict N-Triples to direct DOM and shared scene; complete native/WASM artifact equality and12,288 exact CPU/GPU image pixels |

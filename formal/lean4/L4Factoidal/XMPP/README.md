@@ -494,3 +494,37 @@ https://github.com/danbri/factoidal/issues/1107, step 2. Record:
   (`proxyTarget`, start rule `xcProxyRefusal`), ops `xmppClientRequest`,
   `xmppClientTick`; host `npm/factoidal/xmpp/proxy.mjs`; command
   `factoidal xmpp-http-proxy`. Test `node tests/webdav/xmpp-proxy.mjs`.
+
+### 2026-11-02: STARTTLS (RFC 6120 section 5)
+
+Owner, 2026-11-02: STARTTLS, a Strophe.js WebSocket endpoint, MUC and the
+two other group protocols, all in Lean, "with more validated theorems
+connecting us to realworld constraints", landed in `main` in small steps.
+This is step 1. Record of the order: `docs/20261102-xmpp-starttls.md`.
+
+- `Config.startTls` (the host holds a certificate and key) and
+  `Session.tls` (TLS from the carrier or from a completed STARTTLS). When
+  `startTls` is set and the connection is not secure, `step` hands every
+  unit to `stepPreTls`: STARTTLS offered as required and no SASL mechanism;
+  `<starttls/>` answered with `<proceed/>` and `Out.startTls`; any other
+  element is `policy-violation`; in `tlsPending` every unit closes the
+  connection with nothing sent. The host does the handshake and reports it
+  with `Session.tlsEstablished` (op `xmppSessionTlsUp`).
+- Theorems (`Server.lean`, end of file): `steps_requiresStartTls` (any
+  sequence of units before the handshake leaves no user, no environment
+  change and no action except a write, a close or the upgrade, so no
+  password or SCRAM proof is checked in clear), `step_tlsPending`,
+  `stepPreTls_startTls`, `tlsEstablished_spec`, `preTlsFeatures_no_sasl`;
+  in `Wasm/Ops/XmppSession.lean`, `bufferAfter_startTls` and
+  `drain_tlsPending` (bytes that arrive after `<starttls/>` in clear are
+  discarded and never read: the plaintext-injection fault, CVE-2011-0411).
+  `#print axioms`: `propext`, `Classical.choice`, `Quot.sound` only.
+- Host: `npm/factoidal/xmpp/server.mjs` option `startTls`, command
+  `factoidal xmpp-serve DIR --cert F --key F --starttls`. The plaintext
+  listener now binds to loopback only (invariant I4 of
+  `docs/designissues/2026-10-28-feature-combination-safety.md`).
+- Test: `node --test npm/factoidal/test/xmpp-starttls.test.mjs` (real
+  sockets, a real handshake, an injected `<auth/>` after `<starttls/>`).
+- Not changed: the native harness (`Harness/XmppServe.lean`) never sets
+  `startTls`; socat holds TLS there. SCRAM channel binding stays out: the
+  engine does not see the TLS layer.
