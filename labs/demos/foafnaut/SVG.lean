@@ -1706,7 +1706,7 @@ private def Primitive.coverageAt (primitive : BackendPrimitive) (data : Array Fl
     geometry keeps its existing coverage function, including every clip check. -/
 private inductive PreparedCoverage where
   | analytic (inverse : Transform) (data : Array Float) (fill stroke : Prepared Bool)
-  | reference (primitive : Primitive) (data : Array Float) (base : Nat)
+  | reference (primitive : BackendPrimitive) (data : Array Float) (base : Nat)
 
 private def PreparedCoverage.eval : PreparedCoverage → (Float × Float) → Bool × Bool
   | .analytic inverse data fill stroke,position =>
@@ -1714,14 +1714,14 @@ private def PreparedCoverage.eval : PreparedCoverage → (Float × Float) → Bo
     (fill.eval env,stroke.eval env)
   | .reference p data base,position => p.coverageAt data base position
 
-private def Primitive.prepareCoverage (p : Primitive) (data : Array Float) (base : Nat) : PreparedCoverage :=
+private def Primitive.prepareCoverage (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedCoverage :=
   match p.clips,p.dashParts,p.geometry with
   | [],none,.rect .. | [],none,.circle .. | [],none,.ellipse .. | [],none,.line .. =>
     .analytic p.transform.inverse data ((fillCondition p.geometry base).prepare data)
       ((strokeCondition p.geometry base p.style.lineCap).prepare data)
   | _,_,_ => .reference p data base
 
-private theorem Primitive.prepareCoverage_correct (p : Primitive) (data : Array Float)
+private theorem Primitive.prepareCoverage_correct (p : BackendPrimitive) (data : Array Float)
     (base : Nat) (position : Float × Float) :
     (p.prepareCoverage data base).eval position = p.coverageAt data base position := by
   cases clips : p.clips with
@@ -1769,7 +1769,7 @@ private def overColors (fill stroke : List Float) (opacity : Float)
     ⟨premul.r*opacity,premul.g*opacity,premul.b*opacity,(sa+fa*(1-sa))*opacity⟩
   layer.overOpaque result
 
-private def Primitive.sampleStep (p : Primitive) (data : Array Float) (base : Nat)
+private def Primitive.sampleStep (p : BackendPrimitive) (data : Array Float) (base : Nat)
     (position : Float × Float) (result : Color) : Color :=
   overColors (resolved p.style.fill p.style p.style.fillOpacity)
     (resolved p.style.stroke p.style p.style.strokeOpacity) p.effectiveOpacity
@@ -1784,17 +1784,17 @@ private structure PreparedSample where
 private def PreparedSample.apply (p : PreparedSample) (position : Float × Float) (result : Color) : Color :=
   overColors p.fill p.stroke p.opacity (p.coverage.eval position) result
 
-private def Primitive.prepareSample (p : Primitive) (data : Array Float) (base : Nat) : PreparedSample :=
+private def Primitive.prepareSample (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedSample :=
   ⟨p.prepareCoverage data base,
     resolved p.style.fill p.style p.style.fillOpacity,
     resolved p.style.stroke p.style p.style.strokeOpacity,p.effectiveOpacity⟩
 
-private theorem Primitive.prepareSample_correct (p : Primitive) (data : Array Float)
+private theorem Primitive.prepareSample_correct (p : BackendPrimitive) (data : Array Float)
     (base : Nat) (position : Float × Float) (result : Color) :
     (p.prepareSample data base).apply position result = p.sampleStep data base position result := by
   simp only [Primitive.prepareSample,PreparedSample.apply,Primitive.sampleStep,Primitive.prepareCoverage_correct]
 
-private def sampleFold (items : List Primitive) (data : Array Float) (position : Float × Float)
+private def sampleFold (items : List BackendPrimitive) (data : Array Float) (position : Float × Float)
     (base : Nat) (initial : Color) : Color × Nat :=
   items.foldl (fun state p =>
     (p.sampleStep data state.2 position state.1,state.2+p.rowCount*4)) (initial,base)
@@ -1828,7 +1828,7 @@ private def Scene.sampleAtFold (s : Scene) (data : Array Float)
   else
     let position := ((screenX-s.mapping.tx)/s.mapping.sx+s.mapping.minX,
       (screenY-s.mapping.ty)/s.mapping.sy+s.mapping.minY)
-    (sampleFold s.primitives data position 8 (rgb 255 255 255)).1
+    (sampleFold s.compiled data position 8 (rgb 255 255 255)).1
 
 private theorem Scene.sampleAt_eq_fold (s : Scene) (data : Array Float) (x y : Float) :
     s.sampleAt data x y = s.sampleAtFold data x y := by
@@ -1836,23 +1836,23 @@ private theorem Scene.sampleAt_eq_fold (s : Scene) (data : Array Float) (x y : F
   rfl
 
 -- Prepare each primitive once, preserving its packed-data cursor and paint order.
-private def prepareSamples (data : Array Float) : List Primitive → Nat → List PreparedSample
+private def prepareSamples (data : Array Float) : List BackendPrimitive → Nat → List PreparedSample
   | [],_ => []
   | p::ps,base => p.prepareSample data base :: prepareSamples data ps (base+p.rowCount*4)
 
-private def prepareSamplesLoop (data : Array Float) : List Primitive → Nat →
+private def prepareSamplesLoop (data : Array Float) : List BackendPrimitive → Nat →
     List PreparedSample → List PreparedSample
   | [],_,acc => acc.reverse
   | p::ps,base,acc => prepareSamplesLoop data ps (base+p.rowCount*4) (p.prepareSample data base::acc)
 
-private theorem prepareSamplesLoop_correct (data : Array Float) (items : List Primitive)
+private theorem prepareSamplesLoop_correct (data : Array Float) (items : List BackendPrimitive)
     (base : Nat) (acc : List PreparedSample) :
     prepareSamplesLoop data items base acc = acc.reverse ++ prepareSamples data items base := by
   induction items generalizing base acc with
   | nil => simp [prepareSamplesLoop,prepareSamples]
   | cons p ps ih => simp [prepareSamplesLoop,prepareSamples,ih,List.reverse_cons,List.append_assoc]
 
-private def prepareSamplesFast (data : Array Float) (items : List Primitive) (base : Nat) :=
+private def prepareSamplesFast (data : Array Float) (items : List BackendPrimitive) (base : Nat) :=
   prepareSamplesLoop data items base []
 
 @[csimp] private theorem prepareSamples_eq_loop :
@@ -1860,7 +1860,7 @@ private def prepareSamplesFast (data : Array Float) (items : List Primitive) (ba
   funext data items base
   simp [prepareSamplesFast,prepareSamplesLoop_correct]
 
-private theorem preparedSamples_fold (data : Array Float) (items : List Primitive)
+private theorem preparedSamples_fold (data : Array Float) (items : List BackendPrimitive)
     (position : Float × Float) (base : Nat) (initial : Color) :
     (prepareSamples data items base).foldl (fun color run => run.apply position color) initial =
       (sampleFold items data position base initial).1 := by
@@ -1880,7 +1880,7 @@ private def Scene.sampleAtPrepared (s : Scene)
     prepared.foldl (fun color run => run.apply position color) (rgb 255 255 255)
 
 private theorem Scene.sampleAtPrepared_correct (s : Scene) (data : Array Float) (x y : Float) :
-    s.sampleAtPrepared (prepareSamples data s.primitives 8) x y = s.sampleAt data x y := by
+    s.sampleAtPrepared (prepareSamples data s.compiled 8) x y = s.sampleAt data x y := by
   rw [Scene.sampleAt_eq_fold]
   simp only [Scene.sampleAtPrepared,Scene.sampleAtFold,preparedSamples_fold]
 
@@ -1902,14 +1902,14 @@ private def Scene.sampleWithPrepared (s : Scene)
   return ⟨total.r/n,total.g/n,total.b/n⟩
 
 private theorem Scene.sampleWithPrepared_correct (s : Scene) (data : Array Float) (x y : Nat) :
-    s.sampleWithPrepared (prepareSamples data s.primitives 8) x y = s.sampleWithData data x y := by
+    s.sampleWithPrepared (prepareSamples data s.compiled 8) x y = s.sampleWithData data x y := by
   simp only [Scene.sampleWithPrepared,Scene.sampleWithData,Scene.sampleAtPrepared_correct]
 
 private def Scene.samplesWithData (s : Scene) (data : Array Float) (coordinates : List (Nat × Nat)) : List Color :=
   coordinates.map (fun (x,y) => s.sampleWithData data x y)
 
 private def Scene.samplesWithDataFast (s : Scene) (data : Array Float) (coordinates : List (Nat × Nat)) : List Color :=
-  let prepared := prepareSamples data s.primitives 8
+  let prepared := prepareSamples data s.compiled 8
   coordinates.map (fun (x,y) => s.sampleWithPrepared prepared x y)
 
 @[csimp] private theorem Scene.samplesWithData_eq_fast :
