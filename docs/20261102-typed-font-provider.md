@@ -135,3 +135,26 @@ array SHA-256:
 `9aa616b08fd7769dff5533721dcd4c9fa113ef3550724042d0989135a6c990a7`.
 The fixture and test are committed; the font bytes remain in the separately
 pinned upstream corpus rather than being copied into the renderer source.
+
+## Lean font-request collector source checkpoint
+
+`Rendering.FontRequests` is a separate preflight module, not yet imported by
+the frozen font runtime. It visits the existing DOM and computed styles and
+calls `Layout.inlineItems` only on text nodes; that executes rendering's exact
+`textItems` scanner. There is no second HTML/word tokenizer or host layout.
+Requests retain family, integer pixel size and exact decoded word text,
+deduplicated by family/size/text. Potential retained spaces and parent strut
+metrics are included. Hidden-by-display ancestors, metadata/script subtrees
+and foreign SVG text do not supply HTML shaping requests; visibility-hidden
+text remains because its advances affect layout. Visible metadata/script
+overrides are an explicit unsupported result in this request profile.
+
+Sixteen source guards cover whitespace, entity-decoded words, duplicates,
+ancestor display suppression, hidden visibility, metadata and SVG skipping,
+parent/child font sizes, empty contexts, line-break metrics, fractional/large
+sizes and request/word/family caps. The module is reachable from the central
+build root. The planned CLI `--font-requests`/C export will return these typed
+requests; a bounded host adapter can invoke vetted HB/FT and return unchanged
+font-data-v1 records. Arbitrary new text must use this preflight rather than
+manually preparing the eight demonstration words. Runtime integration of the
+collector follows the coordinated canonical path/cache migration.
