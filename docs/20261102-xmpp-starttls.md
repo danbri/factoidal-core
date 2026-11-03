@@ -163,3 +163,46 @@ MIX-PAM in `Server.lean` (3 `#guard`s), the channels in the ops layer, `xmpp-ser
 `npm/factoidal/test/xmpp-mix.test.mjs`. Record row: `xmpp-serve --mix`. One gap found while
 writing the row: messages held for an offline account sit in the host's in-memory queue with no
 bound; that was already true of direct messages.
+
+## Step 5 design: GC3 (Groupchat 3.0), 2026-11-03
+
+Source: Matthew Wild, "Groupchat 3.0", slides, 2025-01-30,
+https://matthewwild.co.uk/uploads/xmpp-gc3-jan-2025.pdf ("Very early spec, prototype
+implementations in progress (Prosody, xmpp-rs)"). A web search on 2026-11-03 found no published
+ProtoXEP or registered namespace. What the slides fix:
+
+1. Joins are persistent: membership is not linked to presence; an offline member is still in the
+   group. The nick is set at join time and shared by all of a user's clients.
+2. Participant JIDs are stable: the resource is a stable participant id (as XEP-0421), unchanged
+   when the nick changes, e.g. `mygroup@conference.example.com/ZjM5Y2M3M2MtZGQ5Mi0`.
+3. Presence is optional: a member chooses what traffic it receives.
+4. "Maybe": one set of affiliations instead of roles; knocking.
+
+What this implementation adds, every point an INVENTED wire choice, listed in one issue with an
+xfail each:
+
+- namespace `urn:xmpp:gc3:prototype:0` (deliberately not a plausible final name);
+- a separate service domain (`--gc3`), not a mode of the MUC service;
+- `<join nick='' presence='true|false'/>` as an IQ set to the group's bare JID; the first join
+  creates the group, its creator is `owner`; a second join is no change;
+- `<leave/>`, `<nick>new</nick>` (rename, id unchanged), `<remove id=''/>` (owner only),
+  `<members/>` (IQ get: id, nick, affiliation; no real JIDs) as IQs to the group;
+- messages to every member's bare JID (held for offline members), from `group@service/<id>`, with
+  XEP-0421 `<occupant-id/>` and XEP-0172 `<nick/>`;
+- membership events (`<event type='joined|left|renamed|removed'/>` in a groupchat message) only to
+  members who joined with `presence='true'`;
+- participant ids `p1`, `p2`, … per group (opaque, never reused in a group).
+
+Theorems wanted: membership grows only by the joiner's own command (no ghost member: the
+attestation design's "membership changes only by authenticated member commands"); a rename keeps
+every id; ids and nicks stay distinct; only an owner removes; fan-out to exactly the members'
+accounts.
+
+## Step 5 result (2026-11-03)
+
+GC3 prototype as designed above: `L4Factoidal/XMPP/Gc3.lean` (7 theorems, including
+`apply_no_ghost`; 8 `#guard`s), `Out.gc3` in `Server.lean`, the groups in the ops layer,
+`xmpp-serve --gc3`. Tests: `npm/factoidal/test/xmpp-gc3.test.mjs` (behaviour, plus one xfail per
+invented wire choice, https://github.com/danbri/factoidal/issues/1236). With this, the five steps
+of the 2026-11-02 request are built; what each leaves out is stated in its module header, the XMPP
+README and the feature-combination record.

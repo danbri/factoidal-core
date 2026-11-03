@@ -38,6 +38,9 @@ Specifications implemented, by section:
                          stanza to that domain, and a MIX-PAM join or leave
                          to the user's own JID, go to `XMPP/Mix.lean` as
                          `Out.mix` (2026-11-03)
+  GC3 (prototype)        Groupchat 3.0, when `Config.gc3Domain` is set; NO
+                         published spec: `XMPP/Gc3.lean` names every invented
+                         wire choice (2026-11-03)
 
 NOT implemented, stated rather than silently skipped:
   * TLS itself. STARTTLS is decided here (offer it, require it, accept
@@ -195,6 +198,9 @@ structure Config where
   `<client-leave/>` (XEP-0405) in an IQ to the user's own JID, become
   `Out.mix`; the channel logic is `L4Factoidal.XMPP.Mix`. -/
   mixDomain : Option String := none
+  /-- The GC3 prototype service's domain (`L4Factoidal.XMPP.Gc3`; there is no
+  published GC3 specification), or none. -/
+  gc3Domain : Option String := none
   deriving Inhabited
 
 def Config.accountOf (c : Config) (user : String) : Option Account :=
@@ -226,6 +232,9 @@ inductive Out where
   JID from the session. The service answers with `route` (a channel message
   to an account, which may be held) and `routeFull` (an IQ answer). -/
   | mix (fromFull : String) (text : String)
+  /-- A stanza for the GC3 prototype service (`Config.gc3Domain`), with the
+  sender's full JID from the session. Answered like `mix`. -/
+  | gc3 (fromFull : String) (text : String)
   /-- Replace that bare JID's roster file with this exact text. -/
   | saveRoster (bareJid : String) (encoded : String)
   /-- Record this full JID as available or not, so other connections can
@@ -556,6 +565,12 @@ def Config.isMix (c : Config) (st : Stanza) : Bool :=
   | some d, some t => t.domainpart == d
   | _, _ => false
 
+/-- Is this stanza addressed to the GC3 prototype service of this server? -/
+def Config.isGc3 (c : Config) (st : Stanza) : Bool :=
+  match c.gc3Domain, st.to with
+  | some d, some t => t.domainpart == d
+  | _, _ => false
+
 /-- Does this JID text carry a resourcepart? -/
 def hasResource (t : String) : Bool :=
   ((Jid.parse t).bind (·.resourcepart)).isSome
@@ -651,7 +666,7 @@ where
             -- so a client can find it (XEP-0045 section 6.1).
             (env, [.send (iqResult st.id none
               [.element "query" [⟨"xmlns", nsDiscoItems⟩]
-                ((s.cfg.mucDomain.toList ++ s.cfg.mixDomain.toList).map (fun d => .element "item" [⟨"jid", d⟩] []))])])
+                ((s.cfg.mucDomain.toList ++ s.cfg.mixDomain.toList ++ s.cfg.gc3Domain.toList).map (fun d => .element "item" [⟨"jid", d⟩] []))])])
           | none =>
           if ty == "result" || ty == "error" then (env, [])
           else
@@ -795,6 +810,8 @@ def stepMain (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × Li
             (s, env, [.muc full (render (Core.Stanza.toXml { st with from_ := Jid.parse full }))])
           else if s.cfg.isMix st then
             (s, env, [.mix full (render (Core.Stanza.toXml { st with from_ := Jid.parse full }))])
+          else if s.cfg.isGc3 st then
+            (s, env, [.gc3 full (render (Core.Stanza.toXml { st with from_ := Jid.parse full }))])
           else
           match st.kind with
           | .iq =>
@@ -1388,6 +1405,14 @@ private def boundMix : Session :=
   let (_, _, b) := step boundMix ⟨[]⟩ (.element "<iq type='get' id='d3' to='juliet@example.com'><query xmlns='http://jabber.org/protocol/disco#info'/></iq>")
   (match a with | [.mix _ _] => true | _ => false) &&
   (match b with | [.send t] => has t "urn:xmpp:mix:pam:2" | _ => false)
+
+-- GC3: a stanza to the prototype service is handed off, sender from the session.
+#guard
+  let b : Session := { Session.init { testCfg with gc3Domain := some "gc3.example.com" } with stage := .bound "juliet" "balcony" }
+  let (_, _, outs) := step b ⟨[]⟩ (.element "<iq type='set' id='g1' to='tea@gc3.example.com'><join xmlns='urn:xmpp:gc3:prototype:0' nick='jul'/></iq>")
+  match outs with
+  | [.gc3 "juliet@example.com/balcony" _] => true
+  | _ => false
 
 /-! ## IQ routing (2026-11-03): never held
 

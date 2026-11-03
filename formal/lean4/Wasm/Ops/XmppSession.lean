@@ -66,6 +66,7 @@ import L4Factoidal.XMPP.Server
 import L4Factoidal.XMPP.WebSocket
 import L4Factoidal.XMPP.Muc
 import L4Factoidal.XMPP.Mix
+import L4Factoidal.XMPP.Gc3
 import L4Factoidal.HTTP.WebSocket
 import L4Factoidal.HTTP.Wire
 
@@ -116,6 +117,8 @@ structure XmppServerConfig where
   mucDomain : Option String := none
   /-- XEP-0369 MIX service domain, from `"mixDomain"`; none: no MIX. -/
   mixDomain : Option String := none
+  /-- GC3 prototype service domain, from `"gc3Domain"`; none: no GC3. -/
+  gc3Domain : Option String := none
   deriving Inhabited
 
 def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
@@ -136,14 +139,18 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
       let iterationCount := (natField? j "iterationCount").getD 4096
       let mucDomain := j.getString? "mucDomain"
       let mixDomain := j.getString? "mixDomain"
+      let gc3Domain := j.getString? "gc3Domain"
       if iterationCount < 1 then .error "config: \"iterationCount\" must be at least 1"
       else if mucDomain == some "" || mucDomain == some domain then
         .error "config: \"mucDomain\" must be a domain other than \"domain\""
       else if mixDomain == some "" || mixDomain == some domain || (mixDomain.isSome && mixDomain == mucDomain) then
         .error "config: \"mixDomain\" must be a domain other than \"domain\" and \"mucDomain\""
+      else if gc3Domain == some "" || gc3Domain == some domain ||
+          (gc3Domain.isSome && (gc3Domain == mucDomain || gc3Domain == mixDomain)) then
+        .error "config: \"gc3Domain\" must be a domain of its own"
       else
         .ok { domain, saltB64, iterationCount, accounts,
-              tlsCarrier := (j.getBool? "tlsCarrier").getD false, mucDomain, mixDomain }
+              tlsCarrier := (j.getBool? "tlsCarrier").getD false, mucDomain, mixDomain, gc3Domain }
 
 /-! ## The handle tables -/
 
@@ -158,6 +165,8 @@ structure XmppOpenServer where
   muc : Option Muc.Service := none
   /-- The XEP-0369 channels, when `cfg.mixDomain` is set. -/
   mix : Option Mix.Service := none
+  /-- The GC3 prototype groups, when `cfg.gc3Domain` is set. -/
+  gc3 : Option Gc3.Service := none
 
 /-- One open client connection on a server. -/
 structure XmppOpenSession where
@@ -226,6 +235,16 @@ private def perform (srv : XmppOpenServer) (c : XmppCollected) : Out → XmppOpe
     | some svc, some st =>
       let (svc', ds) := Mix.step svc fromFull st
       ({ srv with mix := some svc' },
+       { c with route := c.route ++ (ds.filter (·.held)).map (fun d => (d.to, d.render)),
+                routeFull := c.routeFull ++ (ds.filter (!·.held)).map (fun d => (d.to, d.render, none)) })
+    | _, _ => (srv, c)
+  | .gc3 fromFull text =>
+    -- GC3 prototype: membership is the account's, so group traffic to a member
+    -- may be held (`route`); an IQ answer goes to the asking session.
+    match srv.gc3, (Wire.parseElement text).bind Core.Stanza.ofXml with
+    | some svc, some st =>
+      let (svc', ds) := Gc3.step svc fromFull st
+      ({ srv with gc3 := some svc' },
        { c with route := c.route ++ (ds.filter (·.held)).map (fun d => (d.to, d.render)),
                 routeFull := c.routeFull ++ (ds.filter (!·.held)).map (fun d => (d.to, d.render, none)) })
     | _, _ => (srv, c)
@@ -336,7 +355,8 @@ def xmppOpen (configJson : String) : IO String := do
       let h := s!"xmpp{n}"
       let muc : Option Muc.Service := cfg.mucDomain.map (fun d => { domain := d })
       let mix : Option Mix.Service := cfg.mixDomain.map (fun d => { domain := d })
-      xmppServers.modify (·.insert h { cfg := cfg, rosters := ∅, presence := ∅, muc := muc, mix := mix })
+      let gc3 : Option Gc3.Service := cfg.gc3Domain.map (fun d => { domain := d })
+      xmppServers.modify (·.insert h { cfg := cfg, rosters := ∅, presence := ∅, muc := muc, mix := mix, gc3 := gc3 })
       pure (okWith [ ("handle", .string h)
                    , ("domain", .string cfg.domain)
                    , ("accounts", .number (toString cfg.accounts.length)) ])
@@ -380,7 +400,8 @@ def xmppSessionOpen (server optionsJson : String) : IO String := do
               tlsCarrier := (j.getBool? "tlsCarrier").getD srv.cfg.tlsCarrier
               startTls := (j.getBool? "startTls").getD false
               mucDomain := srv.cfg.mucDomain
-              mixDomain := srv.cfg.mixDomain }
+              mixDomain := srv.cfg.mixDomain
+              gc3Domain := srv.cfg.gc3Domain }
           let n ← xmppSessionCounter.modifyGet fun n => (n + 1, n + 1)
           let h := s!"xmpps{n}"
           xmppSessions.modify (·.insert h
@@ -647,7 +668,8 @@ def xmppWsOpen (server optionsJson : String) : IO String := do
               tlsCarrier := (j.getBool? "tlsCarrier").getD false
               startTls := false
               mucDomain := srv.cfg.mucDomain
-              mixDomain := srv.cfg.mixDomain }
+              mixDomain := srv.cfg.mixDomain
+              gc3Domain := srv.cfg.gc3Domain }
           let origins := ((j.getArray? "allowedOrigins").getD []).filterMap Json.asString?
           let policy : L4Factoidal.HTTP.WebSocket.Policy :=
             { allowedOrigins := origins.map (·.toLower), allowNoOrigin := (j.getBool? "allowNoOrigin").getD false
