@@ -809,6 +809,7 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "xmppWsOpen"         => withArgs (arityIO2 op Ops.xmppWsOpen)
   | "xmppRosterGet"      => withArgs (arityIO2 op Ops.xmppRosterGet)
   | "xmppRosterSet"      => withArgs (arityIO3 op Ops.xmppRosterSet)
+  | "xmppStateLoad"      => withArgs (arityIO3 op Ops.xmppStateLoad)
   -- The outgoing XMPP client stream with HTTP over XMPP (`Wasm/Ops/XmppClient.lean`).
   | "xmppClientOpen"     => withArgs (arityIO1 op Ops.xmppClientOpen)
   | "xmppClientFeed"     => withArgs (arityIO2 op Ops.xmppClientFeed)
