@@ -64,7 +64,7 @@ export const STORAGE_MODE_VARIABLE = 'FACTOIDAL_LWS_STORAGE'
 /**
  * The text of the storage mode: `explicit` when the caller gave a string,
  * and otherwise the environment variable, passed unread; the engine checks
- * it. An empty value is none (the engine's default, the snapshot).
+ * it. An empty value is none (the host's default with a DIR, "files").
  */
 export function storageModeText (explicit) {
   if (typeof explicit === 'string') return explicit

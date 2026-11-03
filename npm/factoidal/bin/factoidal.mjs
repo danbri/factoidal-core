@@ -481,14 +481,8 @@ usage: factoidal lws-serve DIR (--authz DIR | --issuer IRI | --auth-config FILE 
 Starts a Node HTTP server that answers every request through the engine's
 lwsStep operation.
 
-DIR names the storage directory. The storage is kept in the engine
-handle and written to DIR/lws-state.json after every request that
-changed it (temporary file, fsync, rename), and read back on the next
-start. The engine decides the snapshot format and refuses a snapshot
-path with a dot segment or other traversal form
-(formal/lean4/L4Factoidal/LWS/Snapshot.lean).
-
-With --storage files (off by default) a write costs the same whatever the
+DIR names the storage directory. By default (--storage files, since
+2026-11-03) a write costs the same whatever the
 size of the storage: DIR holds one file per resource body (DIR/bodies/),
 a journal of metadata changes (DIR/lws-journal) and a metadata file
 (DIR/lws-files.json) that the journal is folded into from time to time.
@@ -499,6 +493,12 @@ lws-state.json.migrated. The engine decides every file name and every
 byte (formal/lean4/L4Factoidal/LWS/FileLayout.lean); the storage is still
 held in memory while the server runs
 (docs/designissues/2026-10-22-lws-storage-on-disk.md).
+
+With --storage snapshot the storage is written whole to DIR/lws-state.json
+after every request that changed it (temporary file, fsync, rename), and
+read back on the next start. The engine decides the snapshot format and
+refuses a snapshot path with a dot segment or other traversal form
+(formal/lean4/L4Factoidal/LWS/Snapshot.lean).
 
 Encryption at rest (off by default): when the environment variable
 FACTOIDAL_LWS_KEY holds a 32-byte key (64 hex digits, or 43 characters of
@@ -577,9 +577,9 @@ The engine decides the file, its contents and every refusal
   --storage snapshot|files
                   how DIR keeps the storage (config member storage;
                   default the environment variable FACTOIDAL_LWS_STORAGE,
-                  else snapshot): one snapshot file written whole after
-                  each change, or one file per body with a journal, so a
-                  write costs the same whatever the storage size
+                  else files): one file per body with a journal, so a
+                  write costs the same whatever the storage size, or one
+                  snapshot file written whole after each change
                   https://github.com/danbri/factoidal/issues/918
   --cors-origin ORIGIN
                   answer CORS (Fetch Standard) only for this origin, written
