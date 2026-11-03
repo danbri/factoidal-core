@@ -709,8 +709,9 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     return if w == 0 || h == 0 then none else some (.rect x y w h)
   else if tag == "circle" then
     let x ← geometryNumber lengths attrs "cx"; let y ← geometryNumber lengths attrs "cy"; let r ← geometryNumber lengths attrs "r"
-    if r < 0 then throw "negative circle radius"
-    return if r == 0 then none else some (.circle x y r)
+    -- SVG 2 §10.3: an invalid negative r presentation value is ignored;
+    -- the admitted attribute-only geometry cascade has initial r = 0.
+    return if r <= 0 then none else some (.circle x y r)
   else if tag == "ellipse" then
     if (attr attrs "rx").isNone || (attr attrs "ry").isNone then throw "ellipse requires explicit numeric rx and ry; auto radii unsupported"
     let x ← geometryNumber lengths attrs "cx"; let y ← geometryNumber lengths attrs "cy"
@@ -792,11 +793,17 @@ structure Mapping where
   viewportHeight : Float
   deriving Repr
 
+/-- SVG 2 §8.6: a negative viewBox extent invalidates the attribute;
+    a zero extent is valid and disables rendering at its viewport boundary. -/
+private def viewBoxValues (attrs : List NamespaceAttribute) : Except String (Option (Float × Float × Float × Float)) := do
+  let some source := attr attrs "viewBox" | return none
+  let [x,y,w,h] ← numbers source | throw "viewBox requires four numbers"
+  return if w < 0 || h < 0 then none else some (x,y,w,h)
+
 private def viewportMapping (w h : Float) (attrs : List NamespaceAttribute) : Except String Mapping := do
-  let view ← match attr attrs "viewBox" with
-    | none => pure [0,0,w,h] | some value => numbers value
-  let [x,y,vw,vh] := view | throw "viewBox requires four numbers"
-  if vw <= 0 || vh <= 0 then throw "viewBox dimensions must be positive"
+  let view ← viewBoxValues attrs
+  let (x,y,vw,vh) := view.getD (0,0,w,h)
+  if vw == 0 || vh == 0 then throw "zero viewBox must suppress its viewport before mapping"
   let preserve := (attr attrs "preserveAspectRatio").getD "xMidYMid meet" |>.splitOn " " |>.filter (· != "")
   let (align,mode) ← match preserve with
     | [a] => pure (a,"meet") | [a,m] => pure (a,m) | _ => throw "unsupported preserveAspectRatio syntax"
@@ -920,20 +927,17 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         let h ← dimension "height" lengths.height
         if w < 0 || h < 0 then throw "negative nested viewport dimensions"
         if w == 0 || h == 0 then return []
-        if let some source := attr attrs "viewBox" then
-          let [_,_,vw,vh] ← numbers source | throw "viewBox requires four numbers"
-          if vw < 0 || vh < 0 then throw "negative viewBox dimensions"
+        let view ← viewBoxValues attrs
+        if let some (_,_,vw,vh) := view then
           if vw == 0 || vh == 0 then return []
         let mapping ← viewportMapping w h attrs
         let viewportTransform ← checkedTransform ((← transformList ((attr attrs "transform").getD "")).compose ⟨1,0,0,1,x,y⟩)
         let contentTransform ← checkedTransform (viewportTransform.compose
           ⟨mapping.sx,0,0,mapping.sy,mapping.tx-mapping.minX*mapping.sx,mapping.ty-mapping.minY*mapping.sy⟩)
         let cumulative ← checkedTransform (parent.compose contentTransform)
-        let childLengths ← match attr attrs "viewBox" with
-          | none => pure ({width:=w,height:=h} : LengthContext)
-          | some source => do
-            let [_,_,vw,vh] ← numbers source | throw "viewBox requires four numbers"
-            pure {width:=vw,height:=vh}
+        let childLengths : LengthContext := match view with
+          | none => {width:=w,height:=h}
+          | some (_,_,vw,vh) => {width:=vw,height:=vh}
         let inherited ← readStyle childLengths ids attrs style
         let retainedChildren ← readChildren childLengths cumulative inherited children
         let overflow := trim ((attr attrs "overflow").getD "hidden")
@@ -1182,12 +1186,16 @@ def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
       let rh ← need (attr attrs "height") "root height required unless explicit output viewport is supplied"
       pure (← lengthNumber rw,← lengthNumber rh)
   if w <= 0 || h <= 0 || w > 4096 || h > 4096 then throw "output viewport must be positive and at most 4096 pixels"
+  let view ← viewBoxValues attrs
+  if let some (_,_,vw,vh) := view then
+    if vw == 0 || vh == 0 then
+      -- Keep a finite identity mapping and the actual backing viewport;
+      -- no zero-divisor or hidden subtree is sent to the backend compiler.
+      return ← Scene.make w.ceil.toUInt32.toNat h.ceil.toUInt32.toNat (← viewportMapping w h []) []
   let mapping ← viewportMapping w h attrs
-  let lengths ← match attr attrs "viewBox" with
-    | none => pure ({width:=w,height:=h} : LengthContext)
-    | some source => do
-      let [_,_,vw,vh] ← numbers source | throw "viewBox requires four numbers"
-      pure {width:=vw,height:=vh}
+  let lengths : LengthContext := match view with
+    | none => {width:=w,height:=h}
+    | some (_,_,vw,vh) => {width:=vw,height:=vh}
   let ids ← nodeIds root
   let rules ← styleRules root
   let attrs ← applyCSS lengths ids rules "svg" attrs
