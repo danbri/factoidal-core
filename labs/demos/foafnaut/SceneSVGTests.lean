@@ -80,7 +80,19 @@ def run : IO Unit := do
       .cubic ⟨1,2⟩ ⟨8,20⟩ ⟨16,0⟩ ⟨25,4⟩ 3 black]}
   let curveXML ← xmlOf curves
   check ((curveXML.splitOn "Q 8 20 25 4").length == 2 && (curveXML.splitOn "C 8 20 16 0 25 4").length == 2) "Bezier path semantics flattened"
-  check ((NativeSVG.parse curveXML).isOk == false) "native curve support silently invented"
+  let .ok parsedCurves := NativeSVG.parse curveXML | throw (IO.userError "serialized native Q/C curves refused")
+  let some qPrimitive := parsedCurves.primitives[1]? | throw (IO.userError "quadratic paint missing")
+  let .path [.path qStart [.quadratic qControl qEnd] false] := qPrimitive.geometry
+    | throw (IO.userError "quadratic canonical controls were flattened or lost")
+  check (qStart.x == 1 && qStart.y == 2 && qControl.x == 8 && qControl.y == 20 && qEnd.x == 25 && qEnd.y == 4)
+    "serialized quadratic control coordinates changed"
+  let some cPrimitive := parsedCurves.primitives[2]? | throw (IO.userError "cubic paint missing")
+  let .path [.path cStart [.cubic first second cEnd] false] := cPrimitive.geometry
+    | throw (IO.userError "cubic canonical controls were flattened or lost")
+  check (cStart.x == 1 && cStart.y == 2 && first.x == 8 && first.y == 20 && second.x == 16 && second.y == 0 && cEnd.x == 25 && cEnd.y == 4)
+    "serialized cubic control coordinates changed"
+  check ((parsedCurves.samplePixel 1 2).r == 0 && (parsedCurves.samplePixel 31 23).r == 1)
+    "serialized Q/C curves did not paint their round start cap or painted outside their hull"
   for shape in [Shape.circle ⟨0,0⟩ 0 black,.rectangle ⟨0,0⟩ ⟨0,5⟩ black,
     .segment ⟨0,0⟩ ⟨3,3⟩ 0 black,.circle ⟨0,0⟩ 1 ⟨256,0,0⟩] do
     check ((NativeSceneSVG.shapeElements shape).isOk == false) "unrepresentable native shape silently accepted"

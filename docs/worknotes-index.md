@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-03 | [SVG curves and checked backend cache](designissues/2026-11-03-svg-curves-cache.md) | this commit | current — canonical curve geometry, exact cache/count/storage proofs, four exact GPU fill controls and one retained stroke failure |
 | 2026-11-02 | [Browser SVG/WebGPU harness, whole-image diagnostics and fault controls](20261102-svg-browser-harness.md) | this commit | current — unchanged 38-case WPT slice and separate sensitivity controls |
 | 2026-11-01 | [Solving retained scene slice](20261101-solving-scene-slice.md) | this commit | current — Lean scene, hit testing, clip and SVG export; a shared bounded layout certificate now guards the SVG backend; parsed-SVG/WebGPU scene unification remains |
 | 2026-11-01 | [Shared SVG linear strokes](20261101-svg-linear-strokes.md) | 957a060d4; b5f6a9150 | current — two exact same-renderer GPU pairs; six source admissions; independent antialiasing gap remains |
@@ -211,4 +212,4 @@ worknote, kept as the record of a decision or a measurement),
 
 | 2026-10-31 | [Compositor HTML failure conditions](20261031-compositor-html-failure-analysis.md) | — | three kernel-checked failure lemmas, pinned-engine counterexamples and browser boundary |
 | 2026-11-01 | [Compositor pipeline files and FOAF pod library](20261101-compositor-pipeline-library.md) | — | bounded versioned documents, explicit FOAF storage discovery, ETag guarded writes and honest local validation limits |
-| 2026-11-02 | [SVG standards implementation overnight](20261102-svg-standards-overnight.md) | uncommitted | isolated SVG lane; public namespace DOM/artifact/sample interfaces, fresh proof closure repair, then defs/use/symbol and exact clipping |
+| 2026-11-02 | [SVG standards implementation overnight](20261102-svg-standards-overnight.md) | uncommitted | isolated SVG lane; defs/use/symbol, affine clipping, typed C/S/Q/T/A geometry and checked backend cache; native/WASM/GPU evidence and numeric limits recorded |

@@ -262,12 +262,13 @@ Deno.test("SVG retained compound linear paths implement moveto, closure, winding
  const mixed=wrap('<path d="M0 0H10V10H0Z" transform="translate(5,5)"/><circle cx="25" cy="25" r="3"/>');
  equal(e.sample(mixed,6,6),[0,0,0]);equal(e.sample(mixed,25,25),[0,0,0]);
  equal(e.compile(mixed).wgsl,e.compile(wrap('<rect width="1" height="1"/>')).wgsl);
- for(const d of ['L0 0','M0','M,0 0','M0,,0','M0 0,','M0 0LZ','M0 0Z1 2','M0 0Q1 2 3 4','M0 0C1 2 3 4 5 6','M0 0A2 2 0 0 0 10 10','M1000000 0l1 0','M0 0L1. 2','M0 0L1.e2 2','M0 0p1 2'])rejects(()=>e.compile(path(d)),"SVG profile:");
+ for(const d of ['L0 0','M0','M,0 0','M0,,0','M0 0,','M0 0LZ','M0 0Z1 2','M1000000 0l1 0','M0 0L1. 2','M0 0L1.e2 2','M0 0p1 2'])rejects(()=>e.compile(path(d)),"SVG profile:");
  assert(e.compile(path('M0 0L10 10','stroke="black"')).primitiveCount===1,"Linear path stroke admission");
  rejects(()=>e.compile(path('M0 0'.repeat(129))),"subpath count");
  rejects(()=>e.compile(path('M0 0'+'L1 1'.repeat(512))),"point/edge count");
  rejects(()=>e.compile(path(' '.repeat(65537))),"path data exceeds");
- rejects(()=>e.compile(path('M'+'0'.repeat(40000)+' 0')),"path numeric token exceeds");
+ rejects(()=>e.compile(path('M'+'0'.repeat(40000)+' 0')),"path numeric/compact-flag token exceeds 50 characters");
+ rejects(()=>e.compile(path('M'+'0'.repeat(49)+' 0')),"path numeric token exceeds 48 characters");
  assert(e.compile(path('M0 0H1V1Z','pathLength="5"')).primitiveCount===1,"Path calibration admission");
 });
 
@@ -352,4 +353,39 @@ Deno.test("SVG URL context resolves same-document paths and original xml base in
  rejects(()=>e.compileWithURL(wrap(target+'<g xml:base="https://other.test/"><use href="#r"/></g>'),url),'external use reference');
  rejects(()=>e.compileWithURL(wrap(''),url+'\0'),'URL ABI');
  rejects(()=>e.compileWithURL(wrap(''),undefined as unknown as string),'URL ABI');
+});
+
+Deno.test("SVG actual quadratic, cubic and elliptical arc fills match independent geometry",async()=>{
+ const e=await loadSVG(),path=(d:string)=>wrap(`<path d="${d}" fill="red"/>`);
+ const red=(x:number,y:number,f:(x:number,y:number)=>boolean)=>[255,...quarterBlackRGB(x,y,f).slice(1)];
+ const quadratic=path('M0 0Q16 32 32 0Z');
+ for(const [x,y] of [[8,8],[16,17],[31,1],[31,2]])equal(e.sample(quadratic,x,y),red(x,y,(x,y)=>0<=x&&x<=32&&0<=y&&y<=2*x-x*x/16));
+ const cubic=path('M0 0C8 0 16 0 24 24L0 24Z');
+ for(const [x,y] of [[8,12],[20,8],[20,16],[24,16]])equal(e.sample(cubic,x,y),red(x,y,(x,y)=>0<=x&&x<=24&&x*x*x/576<=y&&y<=24));
+ const arc=path('M16 24A8 8 0 0 1 32 24A8 8 0 0 1 16 24Z');
+ for(const [x,y] of [[24,24],[33,24],[31,24],[31,26]])equal(e.sample(arc,x,y),red(x,y,(x,y)=>(x-24)**2+(y-24)**2<=64));
+ for(const d of ['M0 0Q1 2 3 4','M0 0C1 2 3 4 5 6','M0 0A2 2 0 0 0 10 10'])assert(e.compile(path(d)).data.length>28,'Curve was accepted without real geometry data');
+});
+Deno.test("SVG smooth, repeated and compact relative curve syntax preserves compiled geometry",async()=>{
+ const e=await loadSVG(),path=(d:string)=>wrap(`<path d="${d}" fill="red"/>`);
+ for(const [a,b] of [
+  ['M2 20c4-16 8-16 12 0s8 16 12 0','M2 20C6 4 10 4 14 20C18 36 22 36 26 20'],
+  ['M2 20q6-16 12 0t12 0','M2 20Q8 4 14 20Q20 36 26 20'],
+  ['m16 24a8 8 0 0116 0 8 8 0 01-16 0z','M16 24A8 8 0 0 1 32 24A8 8 0 0 1 16 24Z'],
+  ['M16 24A-8-8 0 0132 24 8 8 0 0116 24Z','M16 24A8 8 0 0 1 32 24A8 8 0 0 1 16 24Z']])equal(e.compile(path(a)),e.compile(path(b)));
+ for(const d of ['M0 0C1 2 3 4','M0 0S1 2','M0 0T1','M0 0A8 8 0 2 0 4 4','M0 0A8 8 0 0 +1 4 4'])rejects(()=>e.compile(path(d)),'SVG profile:');
+ rejects(()=>e.compile(wrap('<path d="M0 0Q16 32 32 0Z" transform="scale(1000000)"/>')),'point/edge count');
+});
+Deno.test("SVG curved stroke, dash intervals and pathLength affect actual sampled pixels",async()=>{
+ const e=await loadSVG(),d='M16 24A8 8 0 0 1 32 24A8 8 0 0 1 16 24Z';
+ const doc=(attrs='')=>wrap(`<path d="${d}" fill="none" stroke="red" stroke-width="2" ${attrs}/>`);
+ for(const [x,y,rgb] of [[31,23,[255,0,0]],[32,23,[255,0,0]],[30,23,[255,255,255]],[33,23,[255,255,255]]] as const)equal(e.sample(doc(),x,y),rgb);
+ equal(e.sample(doc('stroke-dasharray="4 100"'),16,22),[255,0,0]);equal(e.sample(doc('stroke-dasharray="4 100"'),23,16),[255,255,255]);
+ equal(e.sample(doc('stroke-dasharray="10 100" pathLength="100"'),18,18),[255,255,255]);equal(e.sample(doc('stroke-dasharray="10 100"'),18,18),[255,0,0]);
+ equal(e.compile(doc('stroke-dasharray="10% 100%"')),e.compile(doc('stroke-dasharray="10% 100%" pathLength="100"')));
+});
+Deno.test("SVG omitted arcs and moveto-only paths differ from zero drawing segments",async()=>{
+ const e=await loadSVG(),doc=(d:string)=>wrap(`<path d="${d}" fill="none" stroke="red" stroke-width="4" stroke-linecap="round"/>`);
+ for(const d of ['M10 10','M10 10A8 8 0 0 1 10 10'])equal(e.sample(doc(d),10,10),[255,255,255]);
+ for(const d of ['M10 10L10 10','M10 10Z'])equal(e.sample(doc(d),10,10),[255,0,0]);
 });

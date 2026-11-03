@@ -1,5 +1,6 @@
 import Graphics
 import SVGPath
+import SVGCurves
 import SVGReferences
 import SVGCSS
 import SVGDash
@@ -310,21 +311,23 @@ private def applyCSS (lengths : LengthContext) (ids : List String) (rules : List
 private def geometryNumber (lengths : LengthContext) (attrs : List NamespaceAttribute) (key : String) (fallback : Float := 0) : Except String Float :=
   match attr attrs key with | none => pure fallback | some s => relativeLength s (if ["x","x1","x2","cx","width","rx"].contains key then lengths.width
     else if ["y","y1","y2","cy","height","ry"].contains key then lengths.height else lengths.diagonal)
-inductive Geometry where
+inductive Geometry (contourType : Type := NativeSVGPath.Contour) where
   | rect (x y width height : Float)
   | circle (cx cy radius : Float)
   | ellipse (cx cy rx ry : Float)
   | line (x1 y1 x2 y2 : Float)
   | polygon (points : List Point)
-  | path (contours : List NativeSVGPath.Contour)
+  | path (contours : List contourType)
   deriving Repr
+abbrev BackendGeometry := Geometry NativeSVGPath.LinearContour
+
 def Geometry.rectRecordTag : Nat := 1
 def Geometry.circleRecordTag : Nat := 2
 def Geometry.ellipseRecordTag : Nat := 3
 def Geometry.lineRecordTag : Nat := 4
 def Geometry.polygonRecordTag : Nat := 5
 def Geometry.pathRecordTag : Nat := 6
-def Geometry.recordTagCount : Geometry → Nat × Nat
+def Geometry.recordTagCount : BackendGeometry → Nat × Nat
   | .rect .. => (rectRecordTag,0)
   | .circle .. => (circleRecordTag,0)
   | .ellipse .. => (ellipseRecordTag,0)
@@ -361,8 +364,8 @@ def ClipRect.contains (clip : ClipRect) (x y : Float) : Bool :=
     clip.x <= point.1 && point.1 <= clip.x+clip.width &&
       clip.y <= point.2 && point.2 <= clip.y+clip.height
 
-structure Primitive where
-  geometry : Geometry
+structure Primitive (contourType : Type := NativeSVGPath.Contour) where
+  geometry : Geometry contourType
   style : Style
   opacity : Float := 1
   transform : Transform := identityTransform
@@ -371,7 +374,10 @@ structure Primitive where
       Geometry and transforms are still lowered to painter-ordered leaves. -/
   groupPath : List (Option String) := []
   clips : List ClipRect := []
+  pathLength : Option Float := none
   deriving Repr
+
+abbrev BackendPrimitive := Primitive NativeSVGPath.LinearContour
 
 def Primitive.lowerUnder (parent : Transform) (groups : List (Option String))
     (primitive : Primitive) : Primitive := Id.run do
@@ -720,7 +726,7 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     let values ← numbers source
     if values.length < (if tag=="polygon" then 6 else 4) || values.length%2 != 0 || values.length > 128 then throw "polygon/polyline requires 2–64 pairs (polygon at least 3)"
     let pairs := (List.range (values.length/2)).map fun i => Point.mk values[i*2]! values[i*2+1]!
-    return if tag=="polygon" then some (.polygon pairs) else some (.path [⟨pairs,false⟩])
+    return if tag=="polygon" then some (.polygon pairs) else some (.path [NativeSVGPath.ofLinear ⟨pairs,false⟩])
   else if tag == "path" then
     let source := (attr attrs "d").getD ""
     if source.length > 65536 then throw "path data exceeds 65536 characters"
@@ -730,12 +736,20 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
   else throw s!"unsupported SVG element: {tag}"
 /-- One retained stroke union across all linear contours. Closedness and
     per-subpath dash phase are distinct from implicit fill closure. -/
-private def dashedParts (g : Geometry) (style : Style) (authorLength : Option Float) : Except String (Option (List NativeSVGStroke.Piece)) := do
+private def Geometry.compile (screen : Transform) : Geometry → Except String BackendGeometry
+  | .rect x y w h => pure (.rect x y w h)
+  | .circle x y r => pure (.circle x y r)
+  | .ellipse x y rx ry => pure (.ellipse x y rx ry)
+  | .line x y u v => pure (.line x y u v)
+  | .polygon points => pure (.polygon points)
+  | .path contours => (fun result => (Geometry.path result : BackendGeometry)) <$> NativeSVGCurves.flatten screen contours
+
+private def dashedParts (g : BackendGeometry) (style : Style) (authorLength : Option Float) : Except String (Option (List NativeSVGStroke.Piece)) := do
   if !strokeEnabled style then return none
   let contours ← match g with
-    | .line x y u v => pure [NativeSVGPath.Contour.mk [Point.mk x y,Point.mk u v] false]
-    | .rect x y w h => pure [NativeSVGPath.Contour.mk [Point.mk x y,Point.mk (x+w) y,Point.mk (x+w) (y+h),Point.mk x (y+h)] true]
-    | .polygon points => pure [NativeSVGPath.Contour.mk points true]
+    | .line x y u v => pure [NativeSVGPath.LinearContour.mk [Point.mk x y,Point.mk u v] false]
+    | .rect x y w h => pure [NativeSVGPath.LinearContour.mk [Point.mk x y,Point.mk (x+w) y,Point.mk (x+w) (y+h),Point.mk x (y+h)] true]
+    | .polygon points => pure [NativeSVGPath.LinearContour.mk points true]
     | .path contours => pure contours
     | _ => if style.dashArray.isEmpty then return none else throw "dashed curved strokes unsupported"
   let total : Float := contours.foldl (fun n c => n+NativeSVGStroke.length c) 0
@@ -959,21 +973,141 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
           | _ => throw "processing instruction unsupported"
         let opacity ← match attr attrs "opacity" with | none => pure 1 | some value => number value
         let painted ← geometry.toList.mapM fun g => do
-          let dashParts ← dashedParts g inherited authorLength
-          pure (.paint {geometry:=g,style:=inherited,opacity:=max 0 (min 1 opacity),transform,dashParts})
+          let dashParts ← match g with
+            | .path _ => pure none
+            | _ => do dashedParts (← g.compile identityTransform) inherited authorLength
+          pure (.paint {geometry:=g,style:=inherited,opacity:=max 0 (min 1 opacity),transform,dashParts,pathLength:=authorLength})
         if displaySuppressed attrs then return []
         return painted
+
+/-- Rows admitted before allocating a scene buffer. It matches the packed
+    backend record size; each primitive is counted cumulatively during compile. -/
+def BackendPrimitive.storageRows (p : BackendPrimitive) : Nat :=
+  let shapeRows := match p.geometry with
+    | .polygon points => (points.length+1)/2
+    | .path contours => (NativeSVGPath.edges contours).length
+    | _ => 0
+  5+shapeRows+(p.dashParts.getD []).length*5+
+    (if p.transform.identity then 0 else 2)+p.clips.length*3
+
+private def compilePrimitive (mapping : Mapping) (p : Primitive) : Except String BackendPrimitive := do
+  let root : Transform := ⟨mapping.sx,0,0,mapping.sy,
+    mapping.tx-mapping.minX*mapping.sx,mapping.ty-mapping.minY*mapping.sy⟩
+  let geometry ← p.geometry.compile (root.compose p.transform)
+  let dashParts ← match p.dashParts,p.geometry with
+    | some parts,_ => pure (some parts)
+    | none,.path _ => dashedParts geometry p.style p.pathLength
+    | none,_ => pure none
+  return {geometry,style:=p.style,opacity:=p.opacity,transform:=p.transform,dashParts,groupPath:=p.groupPath,clips:=p.clips,pathLength:=p.pathLength}
+
+private def compilePrimitivesLoop (mapping : Mapping) : List Primitive →
+    List BackendPrimitive → Nat → Except String (List BackendPrimitive)
+  | [],acc,_ => pure acc.reverse
+  | primitive::rest,acc,rows => do
+    let compiled ← compilePrimitive mapping primitive
+    let rows := rows+compiled.storageRows
+    if rows*4 > maxDataFloats then throw "storage data exceeds 262144 floats"
+    compilePrimitivesLoop mapping rest (compiled::acc) rows
+
+/-- Canonical Float path geometry becomes checked linear backend geometry once,
+    using the full viewport/primitive CTM and the existing cumulative budget.
+    A non-flat or over-budget curve is an error, never a substituted chord. -/
+def compilePrimitives (mapping : Mapping) (primitives : List Primitive) : Except String (List BackendPrimitive) :=
+  compilePrimitivesLoop mapping primitives [] 2
+
+private theorem compilePrimitivesLoop_length (mapping : Mapping) (source : List Primitive) :
+    ∀ acc rows compiled, compilePrimitivesLoop mapping source acc rows = .ok compiled →
+      compiled.length = source.length+acc.length := by
+  induction source with
+  | nil =>
+    intro acc rows compiled found
+    have same : acc.reverse = compiled := Except.ok.inj found
+    rw [← same,List.length_reverse]
+    simp
+  | cons primitive rest ih =>
+    intro acc rows compiled found
+    cases one : compilePrimitive mapping primitive with
+    | error message => simp [compilePrimitivesLoop,one,bind,Except.bind] at found
+    | ok value =>
+      by_cases over : (rows+value.storageRows)*4 > maxDataFloats
+      · simp [compilePrimitivesLoop,one,over,bind,Except.bind] at found
+      · have tail : compilePrimitivesLoop mapping rest (value::acc) (rows+value.storageRows) = .ok compiled := by
+          simpa [compilePrimitivesLoop,one,over,bind,pure,Except.bind,Except.pure] using found
+        have count := ih (value::acc) (rows+value.storageRows) compiled tail
+        simpa [List.length_cons,Nat.add_assoc,Nat.add_comm,Nat.add_left_comm] using count
+
+theorem compilePrimitives_length (mapping : Mapping) (source : List Primitive)
+    (compiled : List BackendPrimitive) (found : compilePrimitives mapping source = .ok compiled) :
+    compiled.length = source.length := by
+  simpa [compilePrimitives] using compilePrimitivesLoop_length mapping source [] 2 compiled found
+
+private theorem compilePrimitivesLoop_budget (mapping : Mapping) (source : List Primitive) :
+    ∀ acc rows compiled, rows = 2+(acc.map BackendPrimitive.storageRows).sum →
+      rows*4 ≤ maxDataFloats → compilePrimitivesLoop mapping source acc rows = .ok compiled →
+      (2+(compiled.map BackendPrimitive.storageRows).sum)*4 ≤ maxDataFloats := by
+  induction source with
+  | nil =>
+    intro acc rows compiled invariant bounded found
+    have same : acc.reverse = compiled := Except.ok.inj found
+    subst compiled
+    rw [invariant] at bounded
+    simpa [List.map_reverse,List.sum_reverse] using bounded
+  | cons primitive rest ih =>
+    intro acc rows compiled invariant bounded found
+    cases one : compilePrimitive mapping primitive with
+    | error message => simp [compilePrimitivesLoop,one,bind,Except.bind] at found
+    | ok value =>
+      by_cases over : (rows+value.storageRows)*4 > maxDataFloats
+      · simp [compilePrimitivesLoop,one,over,bind,Except.bind] at found
+      · have tail : compilePrimitivesLoop mapping rest (value::acc) (rows+value.storageRows) = .ok compiled := by
+          simpa [compilePrimitivesLoop,one,over,bind,pure,Except.bind,Except.pure] using found
+        apply ih (value::acc) (rows+value.storageRows) compiled
+        · simp only [List.map_cons,List.sum_cons]
+          omega
+        · omega
+        · exact tail
+
+theorem compilePrimitives_budget (mapping : Mapping) (source : List Primitive)
+    (compiled : List BackendPrimitive) (found : compilePrimitives mapping source = .ok compiled) :
+    (2+(compiled.map BackendPrimitive.storageRows).sum)*4 ≤ maxDataFloats := by
+  exact compilePrimitivesLoop_budget mapping source [] 2 compiled rfl (by decide) found
 
 structure Scene where
   width : Nat
   height : Nat
   mapping : Mapping
   tree : List DisplayNode
-  /-- Cached backend lowering. It is computed once after parsing, not once per
-      sample or hit query. The proof binds it to the retained tree. -/
+  /-- Painter-order lowering preserves the canonical geometry and all controls. -/
   primitives : List Primitive
   loweringCorrect : primitives = DisplayNode.lowerFromRootList tree
+  /-- Explicitly admitted backend cache, separate from retained curve geometry. -/
+  compiled : List BackendPrimitive
+  compilationCorrect : compilePrimitives mapping primitives = .ok compiled
   deriving Repr
+
+/-- All public sampling runs on an admitted scene. Failed geometry compilation
+    propagates before an artifact, image, or successful scene can be returned. -/
+def Scene.make (width height : Nat) (mapping : Mapping) (tree : List DisplayNode) : Except String Scene :=
+  let primitives := DisplayNode.lowerFromRootList tree
+  match found : compilePrimitives mapping primitives with
+  | .error message => .error message
+  | .ok compiled => .ok {width,height,mapping,tree,primitives,loweringCorrect:=rfl,compiled,compilationCorrect:=found}
+
+theorem Scene.compiled_length (s : Scene) : s.compiled.length = s.primitives.length :=
+  compilePrimitives_length s.mapping s.primitives s.compiled s.compilationCorrect
+
+theorem Scene.make_existing (s : Scene) : Scene.make s.width s.height s.mapping s.tree = .ok s := by
+  rcases s with ⟨width,height,mapping,tree,primitives,lowering,compiled,compilation⟩
+  subst primitives
+  simp only [Scene.make]
+  split
+  · rename_i message found
+    rw [compilation] at found
+    cases found
+  · rename_i result found
+    have same : result = compiled := Except.ok.inj (found.symm.trans compilation)
+    subst result
+    rfl
 
 private def nodeIds (root : NamespaceNode) : Except String (List String) := do
   let mut pending := [(root,0)]
@@ -1062,8 +1196,7 @@ def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
   let parsedTree ← readListWith (fun child i => readNode references rules ids 33
     {lengths,parent:=identityTransform,style:=inherited,path:=[i],ancestors:=[[]],baseURL:=NativeSVGReferences.elementBase attrs documentURL} child) children
   let tree := if displaySuppressed attrs then [] else parsedTree
-  let primitives := DisplayNode.lowerFromRootList tree
-  return ⟨w.ceil.toUInt32.toNat,h.ceil.toUInt32.toNat,mapping,tree,primitives,rfl⟩
+  Scene.make w.ceil.toUInt32.toNat h.ceil.toUInt32.toNat mapping tree
 
 def parse (xml : String) (outputWidth outputHeight : Nat := 0)
     (documentURL : Option String := none) : Except String Scene := do
@@ -1100,7 +1233,7 @@ private def le (a b : Expr .scalar) : Test := .expr (.le a b)
 private def box (x y w h : Expr .scalar) : Test :=
   .both (.both (le (.lit 0) w) (le (.lit 0) h))
     (.both (.both (le x px) (le px (.add x w))) (.both (le y py) (le py (.add y h))))
-private def fillCondition (g : Geometry) (base : Nat) : Test :=
+private def fillCondition (g : BackendGeometry) (base : Nat) : Test :=
   match g with
   | .rect .. => box (scalar base 0) (scalar base 1) (scalar base 2) (scalar base 3)
   | .circle .. => le (squared (.subV (.var .position) (point base 0))) (.mul (scalar base 2) (scalar base 2))
@@ -1109,7 +1242,7 @@ private def fillCondition (g : Geometry) (base : Nat) : Test :=
     let dy := Expr.divide (.sub py (scalar base 1)) (scalar base 3)
     le (.add (.mul dx dx) (.mul dy dy)) (.lit 1)
   | _ => le (.lit 1) (.lit 0)
-private def strokeShapeCondition (g : Geometry) (base : Nat) (cap : LineCap) : Test :=
+private def strokeShapeCondition (g : BackendGeometry) (base : Nat) (cap : LineCap) : Test :=
   let half := Expr.divide (scalar base 16) (.lit 2)
   match g with
   | .rect .. =>
@@ -1144,7 +1277,7 @@ private def strokeShapeCondition (g : Geometry) (base : Nat) (cap : LineCap) : T
         (le (squared delta) (.mul half half))
         (le (squared (.subV (.var .position) (point base 2))) (.mul half half)))
   | _ => le (.lit 1) (.lit 0)
-private def strokeCondition (g : Geometry) (base : Nat) (cap : LineCap) : Test :=
+private def strokeCondition (g : BackendGeometry) (base : Nat) (cap : LineCap) : Test :=
   .both (.not (le (scalar base 16) (.lit 0))) (strokeShapeCondition g base cap)
 private def triangleCondition (base : Nat) : Test :=
   let a := point base 0
@@ -1218,21 +1351,21 @@ private def pointBounds (points : List Point) : List Float :=
     [bounds.1,bounds.2.1,bounds.2.2.1,bounds.2.2.2]
 theorem pointBounds_length (points : List Point) : (pointBounds points).length = 4 := by
   cases points <;> simp [pointBounds]
-private def geometryRows : Geometry → List Float
+private def geometryRows : BackendGeometry → List Float
   | .rect x y w h | .ellipse x y w h => [x,y,w,h]
   | .circle x y r => [x,y,r,0]
   | .line x y u v => [x,y,u,v]
   | .polygon points => pointBounds points
   | .path contours => pointBounds (contours.flatMap (·.points))
-theorem geometryRows_length (geometry : Geometry) : (geometryRows geometry).length = 4 := by
+theorem geometryRows_length (geometry : BackendGeometry) : (geometryRows geometry).length = 4 := by
   cases geometry <;> simp [geometryRows, pointBounds_length]
 private theorem resolved_length (paint : Paint) (style : Style) (alpha : Float) :
     (resolved paint style alpha).length = 4 := by
   cases paint <;> simp [resolved]
-private def Primitive.effectiveOpacity (p : Primitive) : Float :=
+private def Primitive.effectiveOpacity (p : BackendPrimitive) : Float :=
   if p.transform.det == 0 || !p.style.visible then 0 else p.opacity
 
-theorem Primitive.effectiveOpacity_eq_zero_when_hidden (p : Primitive)
+theorem Primitive.effectiveOpacity_eq_zero_when_hidden (p : BackendPrimitive)
     (hidden : p.style.visible = false) : p.effectiveOpacity = 0 := by
   simp [Primitive.effectiveOpacity, hidden]
 private theorem flatMap_fixed_length {α β : Type} (f : α → List β) (width : Nat)
@@ -1244,25 +1377,25 @@ private theorem flatMap_fixed_length {α β : Type} (f : α → List β) (width 
     simp only [List.flatMap_cons, List.length_append, hf x, ih,
       List.length_cons, Nat.succ_mul]
     exact Nat.add_comm _ _
-def geometryTailRowCount : Geometry → Nat
+def geometryTailRowCount : BackendGeometry → Nat
   | .polygon points => (points.length+1)/2
   | .path contours => (NativeSVGPath.edges contours).length
   | _ => 0
-def geometryTailData : Geometry → List Float
+def geometryTailData : BackendGeometry → List Float
   | .polygon points => points.flatMap (fun p => [p.x,p.y]) ++
       (if points.length%2 == 1 then [0,0] else [])
   | .path contours => (NativeSVGPath.edges contours).flatMap fun (a,b) => [a.x,a.y,b.x,b.y]
   | _ => []
 def shaderTailRowsFromHeader (tag count : Nat) : Nat :=
   if tag == Geometry.pathRecordTag then count else (count+1)/2
-theorem Geometry.shaderTailRowsFromHeader_eq_tailRows (geometry : Geometry) :
+theorem Geometry.shaderTailRowsFromHeader_eq_tailRows (geometry : BackendGeometry) :
     shaderTailRowsFromHeader geometry.recordTagCount.1 geometry.recordTagCount.2 =
       geometryTailRowCount geometry := by
   cases geometry <;>
     simp [shaderTailRowsFromHeader, Geometry.recordTagCount, Geometry.pathRecordTag,
       Geometry.polygonRecordTag, geometryTailRowCount, Geometry.rectRecordTag,
       Geometry.circleRecordTag, Geometry.ellipseRecordTag, Geometry.lineRecordTag]
-theorem geometryTailData_length (geometry : Geometry) :
+theorem geometryTailData_length (geometry : BackendGeometry) :
     (geometryTailData geometry).length = geometryTailRowCount geometry * 4 := by
   cases geometry with
   | rect x y w h => rfl
@@ -1282,37 +1415,37 @@ theorem geometryTailData_length (geometry : Geometry) :
       (fun edge : Point × Point => [edge.1.x,edge.1.y,edge.2.x,edge.2.y])
       4 (by intro; rfl) (NativeSVGPath.edges contours)
     simp [geometryTailData, geometryTailRowCount, hflat]
-private def geometryTailSize (geometry : Geometry) : Nat := geometryTailRowCount geometry * 4
+private def geometryTailSize (geometry : BackendGeometry) : Nat := geometryTailRowCount geometry * 4
 def primitiveFixedRowCount : Nat := 5
 def dashPieceRowCount : Nat := 5
 def affineTransformRowCount : Nat := L4Factoidal.Math.AffineRows.vec4RowCount
 def clipRowCount : Nat := 3
-def Primitive.headerModeCode (p : Primitive) : Nat :=
+def Primitive.headerModeCode (p : BackendPrimitive) : Nat :=
   p.style.lineCap.headerModeBit +
     (if p.transform.identity then 0 else 2) + 4*p.clips.length
-theorem Primitive.headerModeCode_roundCap (p : Primitive) :
+theorem Primitive.headerModeCode_roundCap (p : BackendPrimitive) :
     p.headerModeCode % 2 = p.style.lineCap.headerModeBit := by
   cases hcap : p.style.lineCap <;> cases h : p.transform.identity <;>
     simp [Primitive.headerModeCode, LineCap.headerModeBit, hcap, h]
     <;> omega
-theorem Primitive.headerModeCode_hasTransform (p : Primitive) :
+theorem Primitive.headerModeCode_hasTransform (p : BackendPrimitive) :
     (p.headerModeCode % 4 >= 2) = (!p.transform.identity) := by
   cases hcap : p.style.lineCap <;> cases h : p.transform.identity <;>
     simp [Primitive.headerModeCode, LineCap.headerModeBit, hcap, h]
     <;> omega
-theorem Primitive.headerModeCode_clipCount (p : Primitive) :
+theorem Primitive.headerModeCode_clipCount (p : BackendPrimitive) :
     p.headerModeCode / 4 = p.clips.length := by
   cases hcap : p.style.lineCap <;> cases h : p.transform.identity <;>
     simp [Primitive.headerModeCode, LineCap.headerModeBit, hcap, h]
     <;> omega
-def Primitive.fixedRows (p : Primitive) : List Float :=
+def Primitive.fixedRows (p : BackendPrimitive) : List Float :=
   let (tag,count) := p.geometry.recordTagCount
   geometryRows p.geometry ++ [Float.ofNat tag,Float.ofNat count,
     if p.style.rule == .evenodd then 1 else 0,Float.ofNat p.headerModeCode] ++
     resolved p.style.fill p.style p.style.fillOpacity ++
     resolved p.style.stroke p.style p.style.strokeOpacity ++
     [p.style.strokeWidth,p.effectiveOpacity,Float.ofNat (p.dashParts.getD []).length,if p.dashParts.isSome then 1 else 0]
-theorem Primitive.fixedRows_length (p : Primitive) :
+theorem Primitive.fixedRows_length (p : BackendPrimitive) :
     p.fixedRows.length = primitiveFixedRowCount * 4 := by
   simp [Primitive.fixedRows, geometryRows_length, resolved_length, primitiveFixedRowCount]
 def dashPieceData (width : Float) (piece : NativeSVGStroke.Piece) : List Float :=
@@ -1335,11 +1468,11 @@ theorem dashPayloadData_length (width : Float) (pieces : List NativeSVGStroke.Pi
     rw [List.length_append, dashPieceData_length, ih]
     simp [Nat.add_mul, Nat.one_mul, Nat.add_comm]
 /-- Optional inverse CTM tail, represented by the shared two-vec4 affine rows. -/
-def Primitive.transformTailData (p : Primitive) : List Float :=
+def Primitive.transformTailData (p : BackendPrimitive) : List Float :=
   if p.transform.identity then [] else
     let t := p.transform.inverse
     (t.toPackedRows floatOps).toVec4Rows.flatten
-theorem Primitive.transformTailData_length (p : Primitive) :
+theorem Primitive.transformTailData_length (p : BackendPrimitive) :
     p.transformTailData.length = if p.transform.identity then 0 else affineTransformRowCount * 4 := by
   by_cases h : p.transform.identity
   · simp [Primitive.transformTailData, h]
@@ -1369,43 +1502,46 @@ theorem clipPayloadData_length (clips : List ClipRect) :
       rw [List.length_append,ClipRect.rows_length,ih]
       simp [List.length_cons,Nat.add_mul,Nat.one_mul,Nat.add_comm]
 
-def Primitive.rows (p : Primitive) : List Float :=
+def Primitive.rows (p : BackendPrimitive) : List Float :=
   p.fixedRows ++
   geometryTailData p.geometry ++
   dashPayloadData p.style.strokeWidth (p.dashParts.getD []) ++
   p.transformTailData ++ clipPayloadData p.clips
-def Primitive.rowCount (p : Primitive) : Nat :=
+def Primitive.rowCount (p : BackendPrimitive) : Nat :=
   primitiveFixedRowCount + geometryTailRowCount p.geometry +
   (p.dashParts.getD []).length * dashPieceRowCount +
   (if p.transform.identity then 0 else affineTransformRowCount) + p.clips.length*clipRowCount
-def Primitive.shaderRowAdvance (p : Primitive) : Nat :=
+theorem Primitive.rowCount_eq_storageRows (p : BackendPrimitive) : p.rowCount = p.storageRows := by
+  rfl
+
+def Primitive.shaderRowAdvance (p : BackendPrimitive) : Nat :=
   primitiveFixedRowCount +
   shaderTailRowsFromHeader p.geometry.recordTagCount.1 p.geometry.recordTagCount.2 +
   dashPieceRowCount * (p.dashParts.getD []).length +
   (if p.headerModeCode % 4 >= 2 then affineTransformRowCount else 0) +
   (p.headerModeCode / 4)*clipRowCount
 
-theorem Primitive.clipOffsetRows (p : Primitive) :
+theorem Primitive.clipOffsetRows (p : BackendPrimitive) :
     p.rowCount-p.clips.length*clipRowCount =
       primitiveFixedRowCount + geometryTailRowCount p.geometry +
         (p.dashParts.getD []).length*dashPieceRowCount +
         (if p.transform.identity then 0 else affineTransformRowCount) := by
   simp [Primitive.rowCount]
 
-theorem Primitive.clipRows_within_record (p : Primitive) (index : Nat)
+theorem Primitive.clipRows_within_record (p : BackendPrimitive) (index : Nat)
     (inside : index < p.clips.length) :
     (p.rowCount-p.clips.length*clipRowCount)*4 + (index+1)*(clipRowCount*4) ≤
       p.rowCount*4 := by
   rw [Primitive.clipOffsetRows]
   simp only [Primitive.rowCount,clipRowCount,Nat.add_mul]
   omega
-theorem Primitive.shaderRowAdvance_eq_rowCount (p : Primitive) :
+theorem Primitive.shaderRowAdvance_eq_rowCount (p : BackendPrimitive) :
     p.shaderRowAdvance = p.rowCount := by
   cases h : p.transform.identity <;>
     simp [Primitive.shaderRowAdvance, Primitive.rowCount,
       Geometry.shaderTailRowsFromHeader_eq_tailRows,
       Primitive.headerModeCode_hasTransform, Primitive.headerModeCode_clipCount, h, Nat.mul_comm]
-theorem Primitive.rows_length (p : Primitive) :
+theorem Primitive.rows_length (p : BackendPrimitive) :
     p.rows.length = p.rowCount * 4 := by
   by_cases h : p.transform.identity
   · simp [Primitive.rows, Primitive.rowCount, h, Primitive.fixedRows_length,
@@ -1416,30 +1552,52 @@ theorem Primitive.rows_length (p : Primitive) :
       primitiveFixedRowCount, dashPieceRowCount, affineTransformRowCount, clipRowCount,
       L4Factoidal.Math.AffineRows.vec4RowCount,
       Nat.add_mul, Nat.mul_assoc, Nat.add_assoc]
-theorem Primitive.rows_length_matches_shaderRowAdvance (p : Primitive) :
+theorem Primitive.rows_length_matches_shaderRowAdvance (p : BackendPrimitive) :
     p.rows.length = p.shaderRowAdvance * 4 := by
   rw [Primitive.rows_length, Primitive.shaderRowAdvance_eq_rowCount]
 
-theorem Primitive.rows_offsets_eq_flattened_length (items : List Primitive) :
+theorem Primitive.rows_offsets_eq_flattened_length (items : List BackendPrimitive) :
     (items.map fun p => p.rowCount*4).sum = (items.flatMap Primitive.rows).length := by
   rw [List.length_flatMap]
   congr 1
   apply List.map_congr_left
   intro primitive _
   exact (Primitive.rows_length primitive).symm
+theorem BackendPrimitive.data_length (items : List BackendPrimitive) :
+    (items.flatMap Primitive.rows).length = (items.map BackendPrimitive.storageRows).sum*4 := by
+  induction items with
+  | nil => rfl
+  | cons item rest ih =>
+    simp only [List.flatMap_cons,List.length_append,List.map_cons,List.sum_cons]
+    rw [Primitive.rows_length,Primitive.rowCount_eq_storageRows,ih]
+    exact (Nat.add_mul _ _ _).symm
+
 private def Scene.data (s : Scene) : Array Float :=
   ([s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
     s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight] ++
-    s.primitives.flatMap Primitive.rows).toArray
+    s.compiled.flatMap Primitive.rows).toArray
 
 theorem Scene.data_size_eq_record_cursor (s : Scene) :
-    s.data.size = 8 + (s.primitives.map fun p => p.rowCount*4).sum := by
+    s.data.size = 8 + (s.compiled.map fun p => p.rowCount*4).sum := by
   change ([s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
     s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight] ++
-    s.primitives.flatMap Primitive.rows).length = _
+    s.compiled.flatMap Primitive.rows).length = _
   simp only [List.length_append, List.length_cons, List.length_nil]
   rw [Primitive.rows_offsets_eq_flattened_length]
-private def Primitive.wgsl (p : Primitive) (base : Nat) : String :=
+theorem Scene.data_within_storage_budget (s : Scene) : s.data.size ≤ maxDataFloats := by
+  change ([s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
+    s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight] ++
+    s.compiled.flatMap Primitive.rows).length ≤ maxDataFloats
+  simp only [List.length_append,List.length_cons,List.length_nil]
+  rw [BackendPrimitive.data_length]
+  simpa [Nat.add_mul] using compilePrimitives_budget s.mapping s.primitives s.compiled s.compilationCorrect
+
+#print axioms compilePrimitives_length
+#print axioms compilePrimitives_budget
+#print axioms Scene.make_existing
+#print axioms Scene.data_within_storage_budget
+
+private def Primitive.wgsl (p : BackendPrimitive) (base : Nat) : String :=
   "{\n" ++
   (match p.geometry with
    | .polygon points => polygonWGSL base points.length p.style.rule
@@ -1455,7 +1613,7 @@ private def Primitive.wgsl (p : Primitive) (base : Nat) : String :=
 -- base is relocated to a runtime record row. No per-primitive shader expansion.
 private def relativeCondition (test : Test) : String :=
   test.wgsl.replace "params.rows[" "params.rows[base+"
-private def shaderCase (tag : Nat) (g : Geometry) : String :=
+private def shaderCase (tag : Nat) (g : BackendGeometry) : String :=
   s!"case {tag}u: " ++ "{fillHit=" ++ relativeCondition (fillCondition g 0) ++
   ";strokeHit=" ++ relativeCondition (strokeCondition g 0 .butt) ++ ";}\n"
 private def Scene.wgsl (_s : Scene) : String :=
@@ -1503,7 +1661,7 @@ private def Scene.wgsl (_s : Scene) : String :=
     "total+=samplePixel(vec4f(pixel.xy+vec2f(" ++ toString (x-0.5) ++ "," ++ toString (y-0.5) ++ "),0.0,1.0));") ++
   "return total/" ++ toString pixelSampleOffsets.length ++ ".0;}\n"
 
-private def Primitive.coverageAt (primitive : Primitive) (data : Array Float)
+private def Primitive.coverageAt (primitive : BackendPrimitive) (data : Array Float)
     (base : Nat) (position : Float × Float) : Bool × Bool := Id.run do
   let clipCount := primitive.clips.length
   let mut clipBase := base + (primitive.rowCount-clipCount*clipRowCount)*4
@@ -1542,14 +1700,15 @@ def Scene.hitTestAt (s : Scene) (screenX screenY : Float) : Option (Fin s.primit
   let position := ((screenX-s.mapping.tx)/s.mapping.sx+s.mapping.minX,
     (screenY-s.mapping.ty)/s.mapping.sy+s.mapping.minY)
   let data := s.data
-  let mut records : Array (Fin s.primitives.length × Primitive × Nat) := #[]
+  let mut records : Array (Fin s.compiled.length × BackendPrimitive × Nat) := #[]
   let mut base := 8
-  for (index,primitive) in (List.finRange s.primitives.length).zip s.primitives do
+  for (index,primitive) in (List.finRange s.compiled.length).zip s.compiled do
     records := records.push (index,primitive,base)
     base := base+primitive.rowCount*4
   for (index,primitive,recordBase) in records.toList.reverse do
     let (fillHit,strokeHit) := primitive.coverageAt data recordBase position
-    if fillHit || strokeHit then return some index
+    if fillHit || strokeHit then
+      return some ⟨index.val,by rw [← s.compiled_length]; exact index.isLt⟩
   return none
 
 theorem Scene.hitTestAt_none_outside_viewport (s : Scene) (screenX screenY : Float)
@@ -1565,7 +1724,7 @@ private def Scene.sampleAt (s : Scene) (data : Array Float)
     (screenY-s.mapping.ty)/s.mapping.sy+s.mapping.minY)
   let mut result := rgb 255 255 255
   let mut base := 8
-  for primitive in s.primitives do
+  for primitive in s.compiled do
     let (fillHit,strokeHit) := primitive.coverageAt data base position
     let fill := resolved primitive.style.fill primitive.style primitive.style.fillOpacity
     let stroke := resolved primitive.style.stroke primitive.style primitive.style.strokeOpacity
@@ -1608,7 +1767,7 @@ private def floatJSONList (xs : List Float) : List String := xs.map floatJSON
   change xs.map L4Factoidal.Rendering.FloatFormat.format = _
   exact (L4Factoidal.Rendering.FloatFormat.formatList_eq_map xs).symm
 
-private def Geometry.name : Geometry → String
+private def Geometry.name {contourType : Type} : Geometry contourType → String
   | .rect .. => "rect"
   | .circle .. => "circle"
   | .ellipse .. => "ellipse"
@@ -1655,7 +1814,7 @@ private def Scene.json (s : Scene) : Except String String := do
   let tree := if DisplayNode.listNodeCount s.tree <= maxInspectorNodes
     then DisplayNode.listJSON s.tree else "null"
   return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
-    ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.primitives.length ++
+    ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.compiled.length ++
     ",\"tree\":" ++ tree ++
     ",\"data\":" ++ jsonArray (floatJSONList data.toList) ++ ",\"wgsl\":" ++ quote s.wgsl ++ ",\"checks\":" ++ jsonArray checks ++ "}"
 /-- Serialize an existing checked SVG scene through the same packed-data/WGSL

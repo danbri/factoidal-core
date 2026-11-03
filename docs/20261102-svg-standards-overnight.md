@@ -204,5 +204,124 @@ with all three sensitivity controls passing for every case. Evidence:
 `1829bdb48f3cf6620ee583349033ad6484321c6f684450249258dcd0622e0a08`;
 MJS glue remains `4716f7b83cb27c462d3223f2761e00e3177bfa5b017204699fc281665d6f3607`,
 and TS source remains `38511f26402f218874db4090d090314f582dd720fd92bec44473df4e46b6f370`.
-The broader 601-case run has separately frozen this exact runtime and source
-witness. It remains pending; this checkpoint claims no complete-corpus score.
+The full 601-case run froze this exact runtime/source witness and completed:
+28 matches, 16 mismatches, 279 unsupported, 21 rejected, 257 unavailable.
+The corrected baseline was 15/3/310/16/257 in those same categories. Thirteen
+new exact matches and thirteen newly accepted mismatches were reached; four
+negative-geometry inputs and one numeric probe disagreement became newly
+rejected. The original denominator and tolerances are unchanged. Evidence:
+`/tmp/factoidal-overnight-corpus-use-full/capture` and
+`/tmp/factoidal-overnight-corpus-use-delta.json`.
+
+The rotated inner-svg square exposes a real boundary disagreement: CPU probes
+cover three quarters at (1,1), while Metal covers one. Instrumented shaders
+retain the original data and all pre-fragment code; they show negative dot
+results, zero ordinary sums, and positive opposite-order explicit fma results
+on the diagonal. Those diagnostics are not WPT passes and intentionally have
+no production probes. Original input, rejection, source/runtime identities,
+full images and mutation hashes remain under
+`/tmp/factoidal-svg-rotate-numeric` and `...-numeric-gpu`. WGSL permits numeric
+variation; no strictMath flag, tolerance increase or coordinate snapping is
+introduced. This measured limitation remains open with the root lane.
+
+
+## Canonical curves and admitted backend cache (2026-11-03)
+
+`SVGPathData.lean` introduces typed line/quadratic/cubic/elliptical-arc segments
+and `Contour.empty(closed) | Contour.path(start, segments, closed)`. The empty
+constructor preserves every legacy empty contour and its closed flag, without
+a fabricated head point. The all-legacy-linear-contour round-trip theorem is
+closed. Original Float controls, radii, rotations and arc flags remain in the
+canonical retained tree. A separate `LinearContour` is backend geometry.
+The shared web/font lane will factor these exact types into its sole core
+`Rendering/Path` module after the verified SVG checkpoint; this is not a second
+font path model or opaque producer payload.
+
+The reader now normalizes absolute/relative/repeated C/S/Q/T/A commands and
+resets reflected controls after unrelated M/L/A/Z commands. Raw numeric lexemes
+preserve compact adjacent arc flags until the grammar consumes them. A combined
+lexeme may contain two flag characters plus a 48-character number; the actual
+numeric-parameter limit remains 48. All existing source, token, point/subpath,
+primitive and storage caps remain unchanged. Negative arc radii are normalized
+only by the geometry compiler; zero radii draw a line, coincident endpoints omit
+the arc, and insufficient radii receive the SVG endpoint-to-center correction.
+
+The geometry compiler performs bounded de Casteljau subdivision and SVG arc
+parameter conversion using the complete viewport/primitive screen CTM. Its
+flatness threshold is 1/64 screen pixel, with explicit finite-resolution padding,
+a depth limit of 20, and the existing 512-generated-point limit. These are
+numeric flatness/budget admission checks, not a proved universal real-geometry
+or Float32 error bound. Non-flat or over-budget paths return errors; there is
+no chord or empty-list substitution on failure. Fill, stroke, dash/pathLength,
+picking, packed data and WGSL all consume the same checked linear geometry.
+
+`NativeSVG.Scene` retains canonical primitives and their tree-lowering proof,
+plus backend primitives and `compilePrimitives mapping canonical = .ok compiled`.
+`Scene.make` propagates compilation failures. Closed theorems show successful
+compilation preserves primitive count, its cumulative row budget equals the
+packed record sizes, actual scene data fits the 262144-float budget, and
+`Scene.make_existing` reconstructs every admitted native scene exactly.
+Only standard Lean axioms appear in the printed dependencies. This cache
+correspondence is separate from an ideal-curve geometric-error proof.
+The legacy Solving adapter now exposes a structured Except result and retains
+its Option compatibility view; both reconstruction proofs use the cache witness.
+
+Native tests pass independent analytic quarter-grid rasters for a quadratic
+parabola, a genuine cubic graph, a circle, compact relative arcs and a stroked
+annulus. They also check smooth resets, repeated commands, flag syntax, negative/
+corrected/zero radii, omitted arcs, actual curved dash gaps and pathLength,
+percentage exemption, screen magnification refinement and explicit budget refusal.
+Moveto-only paths previously manufactured a round-cap disk; SVG2 painting §13.5.1
+requires no stroke there. The fix keeps round caps for actual zero-length drawing
+segments and closed subpaths, with independent regressions for all cases.
+
+The raw GPU math controls match all 4096 RGBA pixels exactly for Q/C/circular
+fill/compact relative arcs. Annular stroke differs at four diagonal pixels,
+maximum channel delta 64, despite passing the producer's six reference probes.
+The independent full image exposes this unsampled defect; it is retained as a
+failure, with no oracle/tolerance changes or claimed GPU-stroke pass. Evidence:
+`/tmp/factoidal-overnight-corpus-curve-math/report.json`, full PNGs/differences,
+and frozen source/generator/witness inputs. These authored math controls are
+separate from original upstream relations. Original static curved-path WPT
+relations also need markers/textPath, which remain unsupported; curves alone
+must not be credited with a complete pass on those fixtures.
+
+The first standard build stopped at the legacy Solving direct constructor;
+its structured/cache-preserving adapter now compiles. The retry reached an
+obsolete SceneSVG test asserting that emitted Q/C must be rejected. Only that
+refusal was replaced with exact canonical control checks and stable
+stroke interior/exterior samples; other degenerate/capacity negatives stay.
+The disk guard first stopped the targeted check before Lean at 3107584 KiB
+(exit 73). After disk recovery, that check passes in
+`curve-scenesvg-retry.log` (exit 0). Standard retry2 passes all native guards
+and finishes fresh C/WASM linking: `curve-engines-retry2.log`, exit 0.
+The first Deno run has 82 passes and one stale error-message expectation for
+a 40000-digit numeric token. The original negative input remains; its expected
+message now names the combined compact-flag lexical bound of 50. A separate
+49-character number checks the unchanged actual-number bound of 48. The retry
+passes all 83 groups: `curve-deno-retry.log`, exit 0.
+The separate [curve/cache design](designissues/2026-11-03-svg-curves-cache.md)
+records the shared model and proof boundaries.
+
+
+Fresh curve WASM SHA256 is
+`9aaacedafaa880d27acfcb70f8902049a380ee3955393f0608334d6ef9bacfc1`;
+MJS remains `4716f7b83cb27c462d3223f2761e00e3177bfa5b017204699fc281665d6f3607`
+and TS remains `38511f26402f218874db4090d090314f582dd720fd92bec44473df4e46b6f370`.
+The normal build writes the complete input inventory to `.build/source-SHA256SUMS`.
+The source-only builder gate also now permits native source preparation without
+Emscripten, and executable packaging prepares its own Lean closure before tests;
+this checkpoint did not build or publish native packages.
+
+A direct fresh WASM/native comparison retains a failed raw-artifact check:
+quadratic/cubic full UTF-8 artifacts are identical, but circular arc artifacts
+have two differing Double coordinates (maximum absolute delta
+3.552713678800501e-15); the stroked arc has twenty differing data values
+(maximum 4.618527782440651e-14). No other artifact fields differ. All five
+complete Float32 storage buffers are byte-identical, and shaders/reference
+checks match exactly. This establishes the submitted representation identity
+for these five controls only. It does not establish general native/WASM
+trigonometric equality or Float32 refinement. The mismatch logs and every
+changed value remain in `curve-wasm-differences.log` and
+`/tmp/factoidal-overnight-svg-curve-wasm-controls`, with full artifacts,
+independent expected RGBA, exact hashes and a storage-comparison manifest.
