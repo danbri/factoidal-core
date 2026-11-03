@@ -2,9 +2,9 @@ import L4Factoidal.Rendering.FontData
 import L4Factoidal.Rendering.Scene
 
 /-! Typed font-data consumption, separate from line breaking and CSS.
-The initial geometry adapter admits closed linear font outlines only. It
-refuses curves and vertical/RTL shaping rather than flattening or reshaping
-font-library results. This module is not yet imported by the HTML engine. -/
+Font outlines retain canonical line/quadratic/cubic segments. The shared
+backend compiler alone tessellates them; this adapter never drops controls
+or reshapes the font-library results. Vertical/RTL layout remains refused. -/
 namespace L4Factoidal.Rendering.FontProvider
 
 structure Glyph where
@@ -39,27 +39,32 @@ private def fromInt (value : Int) : Float :=
 /-- Convert actual font-unit points to the common y-down geometry convention.
 The subtraction establishes a metric top origin; no host font/layout API is
 called, and the original outlines remain available in FontData.ShapedWord. -/
-def linearOutline (ascent : Float) (outline : FontData.Outline) : Except String (List Geometry) := do
+def outlineGeometry (ascent : Float) (outline : FontData.Outline) : Except String (List Geometry) := do
   let mut contours : List Contour := []
-  let mut points : Array Point := #[]
-  let mut opened := false
+  let mut start : Option Point := none
+  let mut segments : Array PathSegment := #[]
+  let point := fun x y => (⟨fromInt x,ascent-fromInt y⟩ : Point)
   for command in outline.commands do
     match command with
     | .move x y =>
-      if opened then throw "font provider: contour not closed before move"
-      opened := true
-      points := #[⟨fromInt x,ascent-fromInt y⟩]
+      if start.isSome then throw "font provider: contour not closed before move"
+      start := some (point x y)
+      segments := #[]
     | .line x y =>
-      if !opened then throw "font provider: line outside contour"
-      points := points.push ⟨fromInt x,ascent-fromInt y⟩
+      if start.isNone then throw "font provider: line outside contour"
+      segments := segments.push (.line (point x y))
+    | .quadratic cx cy x y =>
+      if start.isNone then throw "font provider: quadratic outside contour"
+      segments := segments.push (.quadratic (point cx cy) (point x y))
+    | .cubic ax ay bx cy x y =>
+      if start.isNone then throw "font provider: cubic outside contour"
+      segments := segments.push (.cubic (point ax ay) (point bx cy) (point x y))
     | .close =>
-      if !opened then throw "font provider: close outside contour"
-      contours := ⟨points.toList,true⟩ :: contours
-      opened := false
-      points := #[]
-    | .quadratic .. | .cubic .. =>
-      throw "unsupported font outline curve: checked curve backend required"
-  if opened then throw "font provider: unclosed outline"
+      let some first := start | throw "font provider: close outside contour"
+      contours := .path first segments.toList true :: contours
+      start := none
+      segments := #[]
+  if start.isSome then throw "font provider: unclosed outline"
   return if contours.isEmpty then [] else [.path contours.reverse]
 
 /-- Consume one already-shaped horizontal LTR word. Glyph IDs, advances,
@@ -80,7 +85,7 @@ def prepare (input : FontData.ShapedWord) : Except String Word := do
     if outlines.contains outline.id then throw "font provider: duplicate glyph outline"
     commands := commands+outline.commands.size
     if commands > 2097152 then throw "font provider: aggregate outline bound exceeded"
-    outlines := outlines.insert outline.id (← linearOutline m.ascender outline)
+    outlines := outlines.insert outline.id (← outlineGeometry m.ascender outline)
   let mut glyphs := #[]
   let mut pen : Float := 0
   for glyph in input.glyphs do

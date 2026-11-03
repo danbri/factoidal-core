@@ -14,7 +14,7 @@ def main (args : List String) : IO Unit := do
   let nodes := word.glyphs.toList.flatMap fun glyph => glyph.geometry.map fun geometry =>
     Rendering.Node.paint ⟨none,{geometry,transform := ⟨scale,0,0,scale,glyph.x*scale,glyph.y*scale⟩}⟩
   let scene : Rendering.Scene := ⟨80,20,⟨1,1,0,0,0,0,80,20⟩,nodes,#[],#[]⟩
-  let native := WebRenderSVG.toScene scene
+  let .ok native := WebRenderSVG.toScene scene | throw (IO.userError "actual Ahem scene compilation rejected")
   for (x,expected) in [(10,0),(30,0),(50,1),(70,0)] do
     let pixel := native.samplePixel x 10
     unless pixel.r == expected && pixel.g == expected && pixel.b == expected do

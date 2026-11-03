@@ -10,8 +10,22 @@ def fromPoint (p : NativeSVG.Point) : Rendering.Point := ⟨p.x,p.y⟩
 def toPoint (p : Rendering.Point) : NativeSVG.Point := ⟨p.x,p.y⟩
 def fromColor (p : NativeGraphics.FloatRGB) : Rendering.Color := ⟨p.r,p.g,p.b⟩
 def toColor (p : Rendering.Color) : NativeGraphics.FloatRGB := ⟨p.r,p.g,p.b⟩
-def fromContour (p : NativeSVGPath.Contour) : Rendering.Contour := ⟨p.points.map fromPoint,p.closed⟩
-def toContour (p : Rendering.Contour) : NativeSVGPath.Contour := ⟨p.points.map toPoint,p.closed⟩
+def fromSegment : NativeSVGPath.Segment → Rendering.PathSegment
+  | .line point => .line (fromPoint point)
+  | .quadratic a b => .quadratic (fromPoint a) (fromPoint b)
+  | .cubic a b c => .cubic (fromPoint a) (fromPoint b) (fromPoint c)
+  | .arc rx ry rotation large sweep point => .arc rx ry rotation large sweep (fromPoint point)
+def toSegment : Rendering.PathSegment → NativeSVGPath.Segment
+  | .line point => .line (toPoint point)
+  | .quadratic a b => .quadratic (toPoint a) (toPoint b)
+  | .cubic a b c => .cubic (toPoint a) (toPoint b) (toPoint c)
+  | .arc rx ry rotation large sweep point => .arc rx ry rotation large sweep (toPoint point)
+def fromContour : NativeSVGPath.Contour → Rendering.Contour
+  | .empty closed => .empty closed
+  | .path start segments closed => .path (fromPoint start) (segments.map fromSegment) closed
+def toContour : Rendering.Contour → NativeSVGPath.Contour
+  | .empty closed => .empty closed
+  | .path start segments closed => .path (toPoint start) (segments.map toSegment) closed
 def fromGeometry : NativeSVG.Geometry → Rendering.Geometry
   | .rect x y w h => .rect x y w h
   | .circle x y r => .circle x y r
@@ -58,9 +72,9 @@ def toClip (clip : Rendering.ClipRect) : NativeSVG.ClipRect :=
   ⟨clip.x,clip.y,clip.width,clip.height,clip.transform⟩
 
 def fromPrimitive (p : NativeSVG.Primitive) : Rendering.Primitive :=
-  ⟨fromGeometry p.geometry,fromStyle p.style,p.opacity,p.transform,p.dashParts.map (·.map fromPiece),p.groupPath,p.clips.map fromClip⟩
+  ⟨fromGeometry p.geometry,fromStyle p.style,p.opacity,p.transform,p.dashParts.map (·.map fromPiece),p.groupPath,p.clips.map fromClip,p.pathLength⟩
 def toPrimitive (p : Rendering.Primitive) : NativeSVG.Primitive :=
-  ⟨toGeometry p.geometry,toStyle p.style,p.opacity,p.transform,p.dashParts.map (·.map toPiece),p.groupPath,p.clips.map toClip⟩
+  ⟨toGeometry p.geometry,toStyle p.style,p.opacity,p.transform,p.dashParts.map (·.map toPiece),p.groupPath,p.clips.map toClip,p.pathLength⟩
 
 def fromNode : NativeSVG.DisplayNode → Rendering.Node
   | .paint p => .paint ⟨none,fromPrimitive p⟩
@@ -80,16 +94,16 @@ def toMapping (m : Rendering.Mapping) : NativeSVG.Mapping :=
   ⟨m.sx,m.sy,m.tx,m.ty,m.minX,m.minY,m.viewportWidth,m.viewportHeight⟩
 def fromScene (s : NativeSVG.Scene) : Rendering.Scene :=
   ⟨s.width,s.height,fromMapping s.mapping,s.tree.map fromNode,#[],#[]⟩
-def toScene (s : Rendering.Scene) : NativeSVG.Scene :=
+def toScene (s : Rendering.Scene) : Except String NativeSVG.Scene :=
   let tree := s.tree.map toNode
-  ⟨s.width,s.height,toMapping s.mapping,tree,
-    NativeSVG.DisplayNode.lowerFromRootList tree,rfl⟩
+  NativeSVG.Scene.make s.width s.height (toMapping s.mapping) tree
 
 @[simp] theorem point_roundtrip (p : NativeSVG.Point) : toPoint (fromPoint p) = p := by cases p; rfl
 @[simp] theorem color_roundtrip (p : NativeGraphics.FloatRGB) : toColor (fromColor p) = p := by cases p; rfl
+@[simp] theorem segment_roundtrip (p : NativeSVGPath.Segment) : toSegment (fromSegment p) = p := by
+  cases p <;> simp [toSegment,fromSegment]
 @[simp] theorem contour_roundtrip (p : NativeSVGPath.Contour) : toContour (fromContour p) = p := by
-  cases p
-  simp [toContour,fromContour,List.map_map,Function.comp_def]
+  cases p <;> simp [toContour,fromContour,List.map_map,Function.comp_def]
 @[simp] theorem geometry_roundtrip (g : NativeSVG.Geometry) : toGeometry (fromGeometry g) = g := by
   cases g <;> simp [toGeometry,fromGeometry,List.map_map,Function.comp_def]
 @[simp] theorem paint_roundtrip (p : NativeSVG.Paint) : toPaint (fromPaint p) = p := by
@@ -108,7 +122,7 @@ def toScene (s : Rendering.Scene) : NativeSVG.Scene :=
 
 @[simp] theorem primitive_roundtrip (p : NativeSVG.Primitive) : toPrimitive (fromPrimitive p) = p := by
   cases p with
-  | mk geometry style opacity transform parts groups clips =>
+  | mk geometry style opacity transform parts groups clips pathLength =>
     cases parts <;> simp [toPrimitive,fromPrimitive,List.map_map,Function.comp_def]
 
 @[simp] theorem node_roundtrip (node : NativeSVG.DisplayNode) : toNode (fromNode node) = node := by
@@ -130,17 +144,12 @@ def toScene (s : Rendering.Scene) : NativeSVG.Scene :=
 
 /-- Every original retained SVG paint value and its painter position survives
 passage through the shared algebra and back to the existing raster backend. -/
-theorem scene_roundtrip (s : NativeSVG.Scene) : toScene (fromScene s) = s := by
+theorem scene_roundtrip (s : NativeSVG.Scene) : toScene (fromScene s) = .ok s := by
   have tree : (s.tree.map fromNode).map toNode = s.tree := by
     simp [List.map_map,Function.comp_def]
-  cases s with
-  | mk width height mapping nodes primitives correct =>
-    simp only [fromScene,toScene] at *
-    simp only [tree]
-    cases mapping
-    simp only [toMapping,fromMapping]
-    subst primitives
-    rfl
+  have mapping : toMapping (fromMapping s.mapping) = s.mapping := by cases s.mapping; rfl
+  simp only [fromScene,toScene,tree,mapping]
+  exact NativeSVG.Scene.make_existing s
 
 theorem toPrimitive_preserves_geometry (p : Rendering.Primitive) :
     (toPrimitive p).geometry = toGeometry p.geometry := rfl
@@ -149,6 +158,7 @@ theorem fromScene_preserves_tree_order (s : NativeSVG.Scene) :
     (fromScene s).tree = s.tree.map fromNode := rfl
 
 #print axioms geometry_roundtrip
+#print axioms segment_roundtrip
 #print axioms style_roundtrip
 #print axioms clip_roundtrip
 #print axioms primitive_roundtrip

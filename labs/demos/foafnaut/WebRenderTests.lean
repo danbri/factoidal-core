@@ -4,7 +4,8 @@ namespace WebRenderTests
 open L4Factoidal
 private def pixel (html : String) (x y : Nat) : Except String (Float × Float × Float) := do
   let (scene,_) ← WebRender.render html 128 128
-  let color := (WebRenderSVG.toScene scene).samplePixel x y
+  let native ← WebRenderSVG.toScene scene
+  let color := native.samplePixel x y
   return (color.r,color.g,color.b)
 private def clipHTML := "<style>body{margin:0}svg{display:block;width:40px;height:30px;background:yellow;color:red}</style><svg viewBox='0 0 20 10' preserveAspectRatio='none'><rect width='10' height='20' fill='currentColor'/></svg>"
 #guard (pixel clipHTML 10 10).toOption == some (1,0,0)

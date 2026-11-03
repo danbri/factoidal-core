@@ -45,4 +45,12 @@ private def svgBaseline : Except String Float := do
 #guard svgBaseline.toOption == some 6
 #guard ((strutScene "<div><br><br>AA</div>").toOption.bind fun (_,scene,_) =>
   scene.glyphRuns[0]? >>= fun run => run.glyphs[0]? |>.map (·.y)) == some 40
+private def nonEmMetrics : Except String (List Float) := do
+  let metrics : FontMetrics := ⟨1000,900,-300,0⟩
+  let face ← Face.make #[{aa with metrics},{space with metrics}]
+  let dom := DOM.parseHtmlDocument "<div>AA<br>AA</div>"
+  let rules ← CSS.parse "body{margin:0;font-family:TestShape;font-size:20px;line-height:20px}"
+  let (scene,_) ← Layout.render dom rules (.ofFace face) noSVG 100 100
+  return scene.glyphRuns.toList.map fun run => (run.glyphs[0]?).map (·.y) |>.getD 999
+#guard nonEmMetrics.toOption == some [(-2 : Float),18]
 end L4Factoidal.Rendering.FontLayoutTests

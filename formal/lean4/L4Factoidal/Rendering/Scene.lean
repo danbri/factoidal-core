@@ -1,4 +1,5 @@
 import L4Factoidal.Math.Affine
+import L4Factoidal.Rendering.Path
 
 /-! Shared retained vector model for SVG and HTML layout. Coordinates use
 binary64 Float. The native GPU adapter uses binary32; equality of rasterized
@@ -7,21 +8,12 @@ namespace L4Factoidal.Rendering
 
 abbrev Transform := Math.Affine2 Float
 def identity : Transform := Math.Affine2.identity .float
-structure Point where
-  x : Float
-  y : Float
-  deriving Repr
 structure Color where
   r : Float
   g : Float
   b : Float
   deriving Repr
-structure Contour where
-  points : List Point
-  closed : Bool
-  deriving Repr
-/-- The current path profile is polygonal. Future curved segments extend this
-algebra; producers must refuse curves until a backend admits their semantics. -/
+/-- Path controls remain canonical until checked backend compilation. -/
 inductive Geometry where
   | rect (x y width height : Float)
   | circle (cx cy radius : Float)
@@ -80,6 +72,7 @@ structure Primitive where
   dashParts : Option (List StrokePiece) := none
   groupPath : List (Option String) := []
   clips : List ClipRect := []
+  pathLength : Option Float := none
   deriving Repr
 structure PaintItem where
   /-- Index in the source DOM arena, shared by boxes, glyphs and input targets. -/

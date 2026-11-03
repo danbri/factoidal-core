@@ -56,6 +56,11 @@ private def spaceWidth (font : FontProfile) (style : Computed) : Except String F
       throw "unsupported painted whitespace glyph in collapsed space profile"
     return word.advance*style.fontSize/font.unitsPerEm
 
+/-- CSS leading surrounds the actual ascent+descent metric box, which need
+not equal one em (ordinary real fonts often differ). -/
+private def lineLeading (font : FontProfile) (style : Computed) : Float :=
+  (style.lineHeight-(font.ascent+font.descent)*style.fontSize/font.unitsPerEm)/2
+
 structure Box where
   source : Nat
   x : Float
@@ -187,14 +192,14 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   let mut descent : Float := 0
   if let some style := strut then
     font.checkFamily style
-    let leading := (style.lineHeight-style.fontSize)/2
+    let leading := lineLeading font style
     ascent := font.ascent*style.fontSize/font.unitsPerEm+leading
     descent := font.descent*style.fontSize/font.unitsPerEm+leading
   for (_,item) in items do
     match item with
     | .word _ s _ _ | .space _ s | .lineBreak s =>
       font.checkFamily s
-      let leading := (s.lineHeight-s.fontSize)/2
+      let leading := lineLeading font s
       ascent := max ascent (font.ascent*s.fontSize/font.unitsPerEm+leading)
       descent := max descent (font.descent*s.fontSize/font.unitsPerEm+leading)
     | .replaced _ _ h _ => ascent := max ascent h
@@ -203,7 +208,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     match item with
     | .word source s text start =>
       let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm
-      let leading := (s.lineHeight-s.fontSize)/2
+      let leading := lineLeading font s
       match ← font.word s text with
       | none =>
         let chars := text.toList
@@ -223,7 +228,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source,x+offset,top-leading,width,s.lineHeight⟩}
     | .space source s =>
       let advance ← spaceWidth font s
-      let leading := (s.lineHeight-s.fontSize)/2
+      let leading := lineLeading font s
       let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm-leading
       out := {out with boxes := out.boxes.push ⟨source,x+offset,top,advance,s.lineHeight⟩}
       if s.underline && s.visible then

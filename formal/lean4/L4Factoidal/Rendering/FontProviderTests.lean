@@ -18,7 +18,7 @@ private def points : Except String (List (Float × Float)) := do
   let word ← prepare shaped
   let some g := word.glyphs[0]? | throw "missing test glyph"
   let [.path [contour]] := g.geometry | throw "missing test path"
-  return contour.points.map fun p => (p.x,p.y)
+  return (← contour.toLinear).points.map fun p => (p.x,p.y)
 #guard points.toOption == some [(0,0),(500,0),(500,1000),(0,1000)]
 private def withMark := prepare {shaped with
   glyphs := #[⟨77,0,0,2,500,0,0,0⟩,⟨88,0,0,2,0,0,-100,100⟩],
@@ -31,9 +31,15 @@ private def withMark := prepare {shaped with
 #guard (prepare {shaped with glyphs := #[⟨77,0,0,2,500,1,0,0⟩]}).toOption.isNone
 #guard (prepare {shaped with glyphs := #[⟨77,0,0,3,500,0,0,0⟩]}).toOption.isNone
 #guard (prepare {shaped with advance := 501}).toOption.isNone
-#guard (prepare {shaped with outlines := #[⟨77,#[.move 0 0,.quadratic 1 1 2 2,.close]⟩]}).toOption.isNone
-#guard (prepare {shaped with outlines := #[⟨77,#[.move 0 0,.cubic 1 1 2 2 3 3,.close]⟩]}).toOption.isNone
-#guard ((linearOutline 800 ⟨77,#[]⟩).toOption.map List.isEmpty) == some true
-#guard (linearOutline 800 ⟨77,#[.move 0 0]⟩).toOption.isNone
-#guard (linearOutline 800 ⟨77,#[.line 0 0]⟩).toOption.isNone
+private def quadraticControls : Except String (Float × Float × Float × Float) := do
+  let [.path [.path _ [.quadratic control endpoint] true]] ← outlineGeometry 800 ⟨77,#[.move 0 0,.quadratic 1 1 2 2,.close]⟩ | throw "missing quadratic controls"
+  return (control.x,control.y,endpoint.x,endpoint.y)
+#guard quadraticControls.toOption == some (1,799,2,798)
+private def cubicControls : Except String (Float × Float × Float × Float × Float × Float) := do
+  let [.path [.path _ [.cubic a b endpoint] true]] ← outlineGeometry 800 ⟨77,#[.move 0 0,.cubic 1 1 2 2 3 3,.close]⟩ | throw "missing cubic controls"
+  return (a.x,a.y,b.x,b.y,endpoint.x,endpoint.y)
+#guard cubicControls.toOption == some (1,799,2,798,3,797)
+#guard ((outlineGeometry 800 ⟨77,#[]⟩).toOption.map List.isEmpty) == some true
+#guard (outlineGeometry 800 ⟨77,#[.move 0 0]⟩).toOption.isNone
+#guard (outlineGeometry 800 ⟨77,#[.line 0 0]⟩).toOption.isNone
 end L4Factoidal.Rendering.FontProviderTests

@@ -4,8 +4,8 @@ import WebRenderFont
 open L4Factoidal
 private def byte (v : Float) : String := toString ((max 0 (min 255 (v*255))).round.toUInt32.toNat)
 
-private def pixels (scene : Rendering.Scene) (w h : Nat) : String := Id.run do
-  let scene := WebRenderSVG.toScene scene
+private def pixels (scene : Rendering.Scene) (w h : Nat) : Except String String := do
+  let scene ← WebRenderSVG.toScene scene
   let coordinates := (List.range h).flatMap fun y => (List.range w).map fun x => (x,y)
   let colors := scene.samplePixels coordinates
   let values := colors.flatMap fun c => [byte c.r,byte c.g,byte c.b]
@@ -40,7 +40,10 @@ def main (args : List String) : IO UInt32 := do
           else (WebRender.render source w h).map (·.1)
       match result with
       | .error message => IO.println (WebRender.errorJSON message)
-      | .ok scene => IO.println (pixels scene w h)
+      | .ok scene =>
+        match pixels scene w h with
+        | .error message => IO.println (WebRender.errorJSON message)
+        | .ok value => IO.println value
     else
       IO.println (match fontData with
         | some data => WebRenderFont.compile source data w.toUInt32 h.toUInt32
