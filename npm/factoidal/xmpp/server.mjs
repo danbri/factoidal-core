@@ -48,7 +48,7 @@ import { loadEngine } from '../bin/engine.mjs'
 export const XMPP_SERVER_OPS = [
   'xmppOpen', 'xmppClose',
   'xmppSessionOpen', 'xmppSessionFeed', 'xmppSessionDeliver', 'xmppSessionClose',
-  'xmppSessionTlsUp', 'xmppRosterGet', 'xmppRosterSet'
+  'xmppSessionTlsUp', 'xmppRosterGet', 'xmppRosterSet', 'xmppWsOpen'
 ]
 
 /** An error raised by this host, as opposed to one the engine reported.
@@ -318,9 +318,9 @@ export async function createXmppServer (options = {}) {
     }
     for (const t of targets) {
       let answer
-      try { answer = t.session.deliver(text) } catch (error) { onError(error); continue }
-      if (answer.delivered === true) writeAll(t, answer.send)
-      else {
+      let delivered = false
+      try { delivered = t.deliver(text) } catch (error) { onError(error); continue }
+      if (!delivered) {
         if (!pending.has(bare)) pending.set(bare, [])
         pending.get(bare).push(text)
       }
@@ -423,6 +423,7 @@ export async function createXmppServer (options = {}) {
     try { answer = c.session.close() } catch (error) { onError(error); answer = { send: [] } }
     if (!c.closing && !c.socket.destroyed) {
       writeAll(c, answer.send)
+      if (answer.bytes instanceof Uint8Array && answer.bytes.length > 0) c.socket.write(answer.bytes)
       c.socket.end()
     }
   }
@@ -442,7 +443,12 @@ export async function createXmppServer (options = {}) {
       bare: null,
       full: null,
       closing: false,
-      decoder: new StringDecoder('utf8')
+      decoder: new StringDecoder('utf8'),
+      deliver (text) {
+        const answer = c.session.deliver(text)
+        if (answer.delivered === true) { writeAll(c, answer.send); return true }
+        return false
+      }
     }
     connections.add(c)
     onLog(`connection from ${socket.remoteAddress}:${socket.remotePort}`)
@@ -477,6 +483,92 @@ export async function createXmppServer (options = {}) {
     socket.on('error', (error) => {
       if (error && error.code !== 'ECONNRESET') onError(error)
       endSession(c)
+    })
+  }
+
+  // XMPP over WebSocket (RFC 7395): every byte goes to xmppWsFeed, which
+  // does the HTTP handshake, the frames and Server.step; this host writes
+  // the bytes it is given and performs route/presence/rostersSaved as for TCP.
+  const ws = options.websocket && typeof options.websocket === 'object' ? options.websocket : null
+  function wsCall (op, args, bytes) {
+    const got = xmpp.engine.callBlobIO(op, args, bytes)
+    return { envelope: got.envelope, bytes: got.bytes instanceof Uint8Array ? got.bytes : new Uint8Array(0) }
+  }
+  function onWsConnection (socket) {
+    let handle
+    try {
+      const opened = xmpp.engine.call('xmppWsOpen', [xmpp.handle, JSON.stringify({
+        streamId: randomToken(), nonce: randomToken(),
+        path: typeof ws.path === 'string' ? ws.path : '/xmpp-websocket',
+        allowedOrigins: Array.isArray(ws.allowedOrigins) ? ws.allowedOrigins : [],
+        allowNoOrigin: ws.allowNoOrigin === true,
+        tlsCarrier: ws.cert !== undefined && ws.key !== undefined
+      })])
+      handle = opened.handle
+    } catch (error) {
+      onError(error)
+      socket.destroy()
+      return
+    }
+    const c = {
+      socket,
+      bare: null,
+      full: null,
+      closing: false,
+      session: {
+        close () {
+          try { const got = wsCall('xmppWsClose', [handle], new Uint8Array(0)); return { send: [], bytes: got.bytes } } catch (_error) { return { send: [] } }
+        }
+      },
+      deliver (text) {
+        const got = wsCall('xmppWsDeliver', [handle, text], new Uint8Array(0))
+        if (got.envelope.delivered === true) { if (!socket.destroyed) socket.write(got.bytes); return true }
+        return false
+      }
+    }
+    connections.add(c)
+    socket.on('data', (chunk) => {
+      if (!connections.has(c) || c.closing) return
+      let got
+      try {
+        got = wsCall('xmppWsFeed', [handle], new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength))
+      } catch (error) {
+        onError(error)
+        socket.destroy()
+        endSession(c)
+        return
+      }
+      if (got.bytes.length > 0 && !socket.destroyed) socket.write(got.bytes)
+      perform(c, { ...got.envelope, send: [] })
+      if (got.envelope.bufferedBytes > maxBuffered) {
+        onError(new XmppHostError(`connection exceeded ${maxBuffered} buffered bytes`))
+        socket.destroy()
+        endSession(c)
+      }
+    })
+    socket.on('end', () => endSession(c))
+    socket.on('close', () => endSession(c))
+    socket.on('error', (error) => {
+      if (error && error.code !== 'ECONNRESET') onError(error)
+      endSession(c)
+    })
+  }
+  let wsServer = null
+  if (ws !== null) {
+    if ((ws.cert !== undefined) !== (ws.key !== undefined)) {
+      xmpp.close()
+      throw new XmppHostError('the WebSocket listener needs both cert and key for TLS')
+    }
+    if (ws.cert !== undefined) {
+      const tls = await import('node:tls')
+      wsServer = tls.createServer({ cert: ws.cert, key: ws.key }, onWsConnection)
+    } else {
+      const net = await import('node:net')
+      wsServer = net.createServer(onWsConnection)
+    }
+    wsServer.on('connection', socket => {
+      transports.add(socket)
+      socket.once('close', () => transports.delete(socket))
     })
   }
 
@@ -523,8 +615,7 @@ export async function createXmppServer (options = {}) {
           let accepted = false
           for (const t of targets) {
             try {
-              const answer = t.session.deliver(text)
-              if (answer.delivered === true) { writeAll(t, answer.send); accepted = true }
+              if (t.deliver(text)) accepted = true
             } catch (error) { onError(error) }
           }
           if (accepted) await unlink(path).catch(() => {})
@@ -544,6 +635,7 @@ export async function createXmppServer (options = {}) {
   let closePromise = null
   return {
     server,
+    wsServer,
     xmpp,
     /** The live connections' `{bare, full}` pairs, for a host's own view. */
     sessions () {
@@ -564,6 +656,7 @@ export async function createXmppServer (options = {}) {
         for (const socket of transports) socket.destroy()
         try {
           await new Promise(resolve => server.close(resolve))
+          if (wsServer !== null) await new Promise(resolve => wsServer.close(resolve))
           await pollTask
           await rosterWrites
           if (persistenceError !== null) throw persistenceError
@@ -596,7 +689,23 @@ export async function listen (options = {}) {
     await created.close()
     throw error
   }
+  let wsOrigin = null
+  if (created.wsServer !== null) {
+    const wsPort = typeof options.websocket.port === 'number' ? options.websocket.port : 0
+    try {
+      await new Promise((resolve, reject) => {
+        created.wsServer.once('error', reject)
+        created.wsServer.listen(wsPort, host, resolve)
+      })
+    } catch (error) {
+      await created.close()
+      throw error
+    }
+    const wsScheme = options.websocket.cert !== undefined ? 'wss' : 'ws'
+    const path = typeof options.websocket.path === 'string' ? options.websocket.path : '/xmpp-websocket'
+    wsOrigin = `${wsScheme}://${host}:${created.wsServer.address().port}${path}`
+  }
   const bound = created.server.address()
   const scheme = options.cert !== undefined && options.key !== undefined ? 'xmpps' : 'xmpp'
-  return { ...created, port: bound.port, host, origin: `${scheme}://${host}:${bound.port}` }
+  return { ...created, port: bound.port, host, origin: `${scheme}://${host}:${bound.port}`, wsOrigin }
 }

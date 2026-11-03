@@ -63,6 +63,9 @@ Targeted imports only — never the L4Factoidal umbrella (see
 import Std.Data.HashMap
 import Wasm.Ops.Support
 import L4Factoidal.XMPP.Server
+import L4Factoidal.XMPP.WebSocket
+import L4Factoidal.HTTP.WebSocket
+import L4Factoidal.HTTP.Wire
 
 namespace L4Wasm.Ops
 
@@ -429,10 +432,220 @@ def xmppRosterSet (server bare encoded : String) : IO String := do
       { srv with rosters := srv.rosters.insert bare (rosterDecode encoded) })
     pure (okWith [])
 
+/-! ## XMPP over WebSocket (RFC 7395 over RFC 6455)
+
+One connection, from its first byte: an HTTP/1.1 opening handshake
+(`HTTP.Wire.frameRequest`, `HTTP.WebSocket.upgrade`, the path check
+here), then frames (`HTTP.WebSocket.Reader`), each text message one unit
+for `Server.step` (`XMPP.WebSocket.unitOfMessage`), each `Out.send` one
+text frame (`XMPP.WebSocket.messageOfSend`, `HTTP.WebSocket.encode`). The
+host moves bytes; every decision is here or below.
+
+The ops cross the blob ABI (`Dispatch.blobIoOpNames`): the IN region is
+what the socket read, the OUT region is what the host must write. -/
+
+open L4Factoidal.HTTP.WebSocket (Policy Reader Event) in
+inductive XmppWsPhase where
+  /-- Reading the opening handshake. -/
+  | handshake (buf : ByteArray)
+  /-- Frames. -/
+  | frames (reader : L4Factoidal.HTTP.WebSocket.Reader) (buf : ByteArray)
+  /-- Closed; nothing more is read. -/
+  | done
+
+structure XmppWsSession where
+  inner : XmppOpenSession
+  policy : L4Factoidal.HTTP.WebSocket.Policy
+  /-- The request path the handshake must name (e.g. `/xmpp-websocket`). -/
+  path : String
+  phase : XmppWsPhase
+
+initialize xmppWsCounter : IO.Ref Nat ← IO.mkRef 0
+initialize xmppWsSessions : IO.Ref (Std.HashMap String XmppWsSession) ← IO.mkRef ∅
+
+/-- An HTTP error response that closes the connection. -/
+def wsHttpRefusal (status : Nat) (reason : String) : ByteArray :=
+  let phrase := L4Factoidal.HTTP.Wire.reasonPhrase status
+  let body := reason ++ "\n"
+  (s!"HTTP/1.1 {status} {phrase}\r\nContent-Type: text/plain; charset=utf-8\r\n" ++
+   (if status == 426 then "Sec-WebSocket-Version: 13\r\n" else "") ++
+   s!"Content-Length: {body.utf8ByteSize}\r\nConnection: close\r\n\r\n{body}").toUTF8
+
+/-- One unit through `Server.step`, as `drain` does for one unit: the
+roster read fresh, `maxUnits` enforced, actions performed. -/
+def stepOneUnit (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected)
+    (unit : Framing.Unit) : XmppOpenServer × XmppOpenSession × XmppCollected :=
+  if os.closed then (srv, os, c)
+  else if os.units ≥ os.maxUnits then
+    let (srv', c') := performAll srv c (Server.streamError "policy-violation" "too many stream units")
+    (srv', { os with closed := true }, { c' with close := true })
+  else
+    let roster := match os.session.bareJid with
+      | some b => srv.rosters.getD b []
+      | none => []
+    let (s', _env', outs) := Server.step os.session ⟨roster⟩ unit
+    let (srv', c') := performAll srv c outs
+    (srv', { os with session := s', units := os.units + 1, closed := c'.close || s'.stage == .closed }, c')
+
+/-- The frames for the `send` texts of one step, in order. -/
+def wsFramesOf (cfg : Config) (sends : List String) : ByteArray :=
+  sends.foldl (fun acc t =>
+    acc ++ L4Factoidal.HTTP.WebSocket.encode .text (L4Factoidal.XMPP.WebSocket.messageOfSend cfg t).toUTF8)
+    ByteArray.empty
+
+/-- Apply the events of one read, in order. A tail call over the list. -/
+def wsApplyEvents (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected) (out : ByteArray) :
+    List L4Factoidal.HTTP.WebSocket.Event → XmppOpenServer × XmppOpenSession × XmppCollected × ByteArray × Bool
+  | [] => (srv, os, c, out, false)
+  | e :: es =>
+    match e with
+    | .text msg =>
+      let before := c.send.length
+      let (srv', os', c') := stepOneUnit srv os c (L4Factoidal.XMPP.WebSocket.unitOfMessage msg)
+      let out' := out ++ wsFramesOf os'.session.cfg (c'.send.drop before)
+      if os'.closed then
+        (srv', os', c', out' ++ L4Factoidal.HTTP.WebSocket.closeFrame 1000, true)
+      else wsApplyEvents srv' os' c' out' es
+    | .ping p => wsApplyEvents srv os c (out ++ L4Factoidal.HTTP.WebSocket.encode .pong p) es
+    | .close _ =>
+      -- RFC 6455 section 5.5.1: answer a close with a close. The XMPP
+      -- stream ends with it (RFC 7395 section 3.6).
+      (srv, { os with closed := true }, { c with close := true },
+       out ++ L4Factoidal.HTTP.WebSocket.closeFrame 1000, true)
+    | .fail code _ =>
+      (srv, { os with closed := true }, { c with close := true },
+       out ++ L4Factoidal.HTTP.WebSocket.closeFrame code, true)
+
+/-- One read from the socket. -/
+def wsFeedPure (srv : XmppOpenServer) (ws : XmppWsSession) (bytes : ByteArray) :
+    XmppOpenServer × XmppWsSession × XmppCollected × ByteArray :=
+  let frames (srv : XmppOpenServer) (ws : XmppWsSession) (r : L4Factoidal.HTTP.WebSocket.Reader)
+      (buf : ByteArray) (out : ByteArray) : XmppOpenServer × XmppWsSession × XmppCollected × ByteArray :=
+    let (r', rest, evs) := r.feed buf [] (buf.size + 1)
+    let (srv', os', c', out', ended) := wsApplyEvents srv ws.inner {} out evs
+    let phase := if ended || r'.done then XmppWsPhase.done else .frames r' rest
+    (srv', { ws with inner := os', phase }, { c' with close := c'.close || ended || r'.done }, out')
+  match ws.phase with
+  | .done => (srv, ws, {}, ByteArray.empty)
+  | .frames r buf => frames srv ws r (buf ++ bytes) ByteArray.empty
+  | .handshake buf =>
+    let buf := buf ++ bytes
+    match L4Factoidal.HTTP.Wire.frameRequest buf (bodyLimit := 0) with
+    | .incomplete _ => (srv, { ws with phase := .handshake buf }, {}, ByteArray.empty)
+    | .reject status reason =>
+      (srv, { ws with phase := .done }, { close := true }, wsHttpRefusal status reason)
+    | .request req used _ =>
+      if req.path != ws.path then
+        (srv, { ws with phase := .done }, { close := true }, wsHttpRefusal 404 "no WebSocket endpoint at this path")
+      else
+        match L4Factoidal.HTTP.WebSocket.upgrade ws.policy req.method req.headers with
+        | .refuse status reason =>
+          (srv, { ws with phase := .done }, { close := true }, wsHttpRefusal status reason)
+        | .accept response =>
+          frames srv ws {} (buf.extract used buf.size) response.toUTF8
+
+/-- Before the handshake is accepted, no unit reaches `Server.step`: a
+connection whose opening handshake is refused (or incomplete) never
+authenticates anybody and routes nothing. -/
+theorem wsFeedPure_handshake_refused (srv : XmppOpenServer) (ws : XmppWsSession)
+    (buf bytes : ByteArray) (h : ws.phase = .handshake buf)
+    (hr : ∀ r u x, L4Factoidal.HTTP.Wire.frameRequest (buf ++ bytes) (bodyLimit := 0) ≠ .request r u x) :
+    (wsFeedPure srv ws bytes).2.1.inner = ws.inner ∧ (wsFeedPure srv ws bytes).2.2.1.route = [] := by
+  unfold wsFeedPure
+  simp only [h]
+  split
+  · simp
+  · simp
+  · rename_i r u x heq; exact absurd heq (hr r u x)
+
+def xmppWsJson (ws : XmppWsSession) (c : XmppCollected) : String :=
+  okWith ((jsonOfCollected ws.inner c).filter (fun (k, _) => k != "send" && k != "bufferedBytes") ++
+    [("phase", .string (match ws.phase with
+        | .handshake _ => "handshake" | .frames .. => "frames" | .done => "done")),
+     ("bufferedBytes", .number (toString (match ws.phase with
+        | .handshake b => b.size | .frames _ b => b.size | .done => 0)))])
+
+/-- `xmppWsOpen(serverHandle, {"streamId","nonce","path","allowedOrigins"?,
+"allowNoOrigin"?,"tlsCarrier"?,"maxUnits"?,"maxFrame"?,"maxMessage"?})`. -/
+def xmppWsOpen (server optionsJson : String) : IO String := do
+  match (← xmppServers.get)[server]? with
+  | none => pure (unknownXmppServer server)
+  | some srv =>
+    match parseJson (if optionsJson.trim.isEmpty then "{}" else optionsJson) with
+    | .error e => pure (errJson s!"options: {toString e}")
+    | .ok j =>
+      match j.getString? "streamId", j.getString? "nonce", j.getString? "path" with
+      | some streamId, some nonce, some path =>
+        if streamId.isEmpty || nonce.isEmpty || !path.startsWith "/" then
+          pure (errJson "xmppWsOpen: \"streamId\" and \"nonce\" must not be empty, and \"path\" must start with /")
+        else
+          let cfg : Config :=
+            { domain := srv.cfg.domain, streamId, serverNonce := nonce
+              saltB64 := srv.cfg.saltB64, iterationCount := srv.cfg.iterationCount
+              accounts := srv.cfg.accounts
+              tlsCarrier := (j.getBool? "tlsCarrier").getD false
+              startTls := false }
+          let origins := ((j.getArray? "allowedOrigins").getD []).filterMap Json.asString?
+          let policy : L4Factoidal.HTTP.WebSocket.Policy :=
+            { allowedOrigins := origins.map (·.toLower), allowNoOrigin := (j.getBool? "allowNoOrigin").getD false
+              protocol := "xmpp" }
+          let n ← xmppWsCounter.modifyGet fun n => (n + 1, n + 1)
+          let h := s!"xmppws{n}"
+          xmppWsSessions.modify (·.insert h
+            { inner := { server, session := Session.init cfg, buffer := "", units := 0
+                         maxUnits := (natField? j "maxUnits").getD 1000000, closed := false }
+              policy, path, phase := .handshake ByteArray.empty })
+          pure (okWith [("handle", .string h)])
+      | _, _, _ => pure (errJson "xmppWsOpen: \"streamId\", \"nonce\" and \"path\" are required")
+
+/-- `xmppWsFeed(handle)` with the bytes the socket read as the IN region;
+the OUT region is what to write. -/
+def xmppWsFeedWith (h : String) (bytes : ByteArray) : IO (String × ByteArray) := do
+  match (← xmppWsSessions.get)[h]? with
+  | none => pure (errJson s!"unknown XMPP WebSocket session handle: {h}", ByteArray.empty)
+  | some ws =>
+    match (← xmppServers.get)[ws.inner.server]? with
+    | none => pure (unknownXmppServer ws.inner.server, ByteArray.empty)
+    | some srv =>
+      let (srv', ws', c, out) := wsFeedPure srv ws bytes
+      xmppServers.modify (·.insert ws.inner.server srv')
+      xmppWsSessions.modify (·.insert h ws')
+      pure (xmppWsJson ws' c, out)
+
+/-- `xmppWsDeliver(handle, text)`: a stanza routed to this session. OUT
+region: its frame, when the session is bound. -/
+def xmppWsDeliverWith (h text : String) : IO (String × ByteArray) := do
+  match (← xmppWsSessions.get)[h]? with
+  | none => pure (errJson s!"unknown XMPP WebSocket session handle: {h}", ByteArray.empty)
+  | some ws =>
+    let live := match ws.phase with | .frames .. => true | _ => false
+    if !live || ws.inner.closed || !ws.inner.session.canDeliver then
+      pure (okWith [("delivered", .bool false)], ByteArray.empty)
+    else
+      let sends := (Server.deliver ws.inner.session text).filterMap (fun o =>
+        match o with | .send t => some t | _ => none)
+      pure (okWith [("delivered", .bool true)], wsFramesOf ws.inner.session.cfg sends)
+
+/-- `xmppWsClose(handle)`: release the handle. OUT region: `<close/>` and
+a close frame when the stream was open (RFC 7395 section 3.6). -/
+def xmppWsCloseWith (h : String) : IO (String × ByteArray) := do
+  match (← xmppWsSessions.get)[h]? with
+  | none => pure (errJson s!"unknown XMPP WebSocket session handle: {h}", ByteArray.empty)
+  | some ws =>
+    xmppWsSessions.modify (·.erase h)
+    match ws.phase with
+    | .frames .. =>
+      if ws.inner.closed then pure (okWith [], ByteArray.empty)
+      else pure (okWith [], wsFramesOf ws.inner.session.cfg [Server.streamCloseText] ++
+                          L4Factoidal.HTTP.WebSocket.closeFrame 1000)
+    | _ => pure (okWith [], ByteArray.empty)
+
+def xmppWsBlobIoOpNames : List String := ["xmppWsFeed", "xmppWsDeliver", "xmppWsClose"]
+
 /-- The op names this module serves, through `callIO` only. -/
 def xmppSessionOpNames : List String :=
   [ "xmppOpen", "xmppClose"
   , "xmppSessionOpen", "xmppSessionFeed", "xmppSessionDeliver", "xmppSessionClose"
-  , "xmppSessionTlsUp", "xmppRosterGet", "xmppRosterSet" ]
+  , "xmppSessionTlsUp", "xmppRosterGet", "xmppRosterSet", "xmppWsOpen" ]
 
 end L4Wasm.Ops

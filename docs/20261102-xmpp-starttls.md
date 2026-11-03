@@ -51,3 +51,12 @@ starts, so no step waits on a long-lived branch.
   listener binds to loopback only.
 - Tests: the `#guard`s of `Server.lean` (8 new), and
   `npm/factoidal/test/xmpp-starttls.test.mjs` against a locally built wasm.
+
+## Step 2 result (2026-11-03)
+
+XMPP over WebSocket, RFC 7395 over RFC 6455, all decisions in Lean:
+`HTTP/WebSocket.lean`, `XMPP/WebSocket.lean`, the `xmppWs*` ops; host
+`--ws-port`. No translating proxy: the server speaks RFC 7395 itself, so a
+Strophe.js client connects to `ws://` or `wss://` directly. A proxy to
+OTHER servers is not built (an open-relay surface; it would need its own
+row in the feature-combination record).
