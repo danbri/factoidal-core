@@ -296,6 +296,17 @@ Both files are gitignored (`formal/fstar/.gitignore`).
 
 ## Cross-references
 
+- [foafnaut2525 runtime maturity and XSLT](../../docs/designissues/2026-11-03-foafnaut2525-runtime-maturity.md)
+  separates existing JS/WASM behavior from DOM, event-loop, guest-WASM and
+  native-app targets; records the requested XML stylesheet browser flow.
+  Run standards tests against the actual guest and Lean document, and report
+  engine conformance separately from host integration and packaging checks.
+
+- [Browser development bundle](../../docs/20261103-browser-development-bundle.md)
+  records deterministic packaging, complete source/C/engine witnesses,
+  relocated actual Chrome checks, integrity rejection and external font/library
+  requirements. Creating an archive alone is not a browser runtime test.
+
 - [Lean browser URL navigation](../../docs/designissues/2026-11-03-lean-browser-navigation.md)
   records the native byte broker, unchanged-source boundary, cancellation,
   history and actual HTTP/browser fixture checks.

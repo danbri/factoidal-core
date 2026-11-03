@@ -51,8 +51,21 @@ The host does not call JavaScript `eval` or `Function` on page source.
 creates a new worker, installs the projection, then evaluates the ordered
 classic sources in one QuickJS context. Top-level lexical bindings persist
 across scripts and click turns. `dispatch({type:'click',nodeId})` invokes a
-registered callback. Both calls return `{commands,listeners,logs}`.
+registered callback. Both calls return `{commands,listeners,logs,defaultPrevented}`.
 `reset()` rejects outstanding work and terminates the worker.
+
+Click events are cancelable and expose `preventDefault()` and a read-only
+`defaultPrevented` flag. The flag belongs to that event; retaining an old event
+cannot cancel a later click. An `onclick` property handler returning `false`
+also cancels its event; an `addEventListener` return value does not. Cancellation
+is validated message metadata, not a Lean DOM mutation command.
+
+After a listener turn, the host applies commands and renders again. An anchor
+follows its updated Lean-emitted link target unless the event was cancelled.
+This requires the same anchor to remain in the rendered link regions; removing
+or hiding it reports an unsupported default action. General activation steps
+and event propagation are outside this profile. Counter examples cancel their
+anchor action explicitly.
 
 Node projections have `{id,tagName,attributes,textContent}`. IDs are Lean
 arena indexes, not browser DOM nodes or raw memory addresses. Commands are:
@@ -74,7 +87,7 @@ for `click`, and bounded `console.log`. Script discovery reports a Lean
 `kind` of `classic`, `module` or `data`. Data scripts remain inert. Module
 execution is outside this profile. The demo runs scripts after document
 preparation; it does not implement parser-blocking script scheduling,
-`async`/`defer` order, event propagation/default actions, timers, modules,
+`async`/`defer` order, general event propagation/activation, timers, modules,
 Promise jobs, network APIs, arbitrary selectors or WebIDL conversions.
 
 The guest stores a provisional element projection so simple scripts can read
@@ -201,7 +214,7 @@ node --test labs/demos/foafnaut/web-render/script-engine/session.test.mjs
 
 An existing local reactor can be the fetch helper's first argument. Its hash
 is checked before installation. On 3 November, the real upstream reactor
-passed 7 Node worker tests: engine execution/isolation and hash refusal;
+passed 10 Node worker tests: engine execution/isolation and hash refusal;
 ordered scripts and click commands; infinite-loop interruption and restart;
 hard worker termination before the cooperative deadline; allocation failure
 and exception discard; malformed-command refusal; reset during startup.

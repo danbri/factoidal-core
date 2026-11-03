@@ -314,12 +314,20 @@ export async function createXmppServer (options = {}) {
     for (const line of lines) if (!c.socket.destroyed) c.socket.write(line)
   }
 
-  /** Deliver one stanza to every session bound to `bare`, or hold it. */
+  /**
+   * Deliver one stanza to every session bound to `bare`. The engine holds
+   * stanzas for accounts with no bound session (L4Factoidal/XMPP/Held.lean,
+   * bounded; issue 1235), so a route reaches here only for a bound account.
+   * `pending` covers the race where that session closed between the
+   * engine's decision and this delivery; it is bounded too.
+   */
   function routeStanza (bare, text) {
     const targets = boundTo(bare)
     if (targets.length === 0) {
       if (!pending.has(bare)) pending.set(bare, [])
-      pending.get(bare).push(text)
+      const q = pending.get(bare)
+      if (q.length < 100) q.push(text)
+      else onError(new XmppHostError(`dropped a stanza for ${bare}: the host fallback queue is full`))
       return
     }
     for (const t of targets) {

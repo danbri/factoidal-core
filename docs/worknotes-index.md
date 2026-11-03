@@ -15,10 +15,19 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-03 | [Browser WPT baseline and native provenance](20261103-browser-wpt-baseline.md) | pending | current — fresh Lean parser/DOM, QuickJS assertions, native embedded-SVG images, pinned upstream bytes and cache cleanup |
+| 2026-11-03 | [foafnaut2525 main-thread handoff review](20261103-foafnaut2525-handoff-review.md) | this commit | current — rechecked artifacts and CI, actual guest-DOM defect, native GPU blocker and next application acceptance target |
+| 2026-11-03 | [foafnaut2525 side-conversation handoff](20261103-foafnaut2525-side-thread-handoff.md) | pending | current — owner requests, dated demo/test/native evidence, LWS and recovery proposals, issue and main-thread review checklist |
+| 2026-11-03 | [foafnaut2525 runtime maturity and XSLT](designissues/2026-11-03-foafnaut2525-runtime-maturity.md) | pending | current — JS/DOM/event-loop and WASM evidence boundaries, requested XSLT integration and Apple distribution constraints; documentation only |
+| 2026-11-03 | [Browser document transactions](20261103-browser-document-transactions.md) | this commit | current — navigation rollback, dynamic CSS identity, cancellable script links and actual Chrome controls; independent fast host CI |
+| 2026-11-03 | [Checked browser development bundle](20261103-browser-development-bundle.md) | this commit | current — deterministic package, relocated Chrome/GPU tests and explicit external dependencies |
+| 2026-11-03 | [Browser alpha packaging audit](20261103-browser-alpha-packaging-audit.md) | this commit | current — actual document ABI gates and package scope |
+| 2026-11-03 | [Browser alpha release architecture](designissues/2026-11-03-browser-alpha-packaging.md) | this commit | current — fixed main commit, independent release candidate and npm capability boundary |
 | 2026-11-03 | [Browser MVP checkpoint](20261103-browser-mvp-checkpoint.md) | this commit | current — frozen local browser, actual native/WASM/GPU checks and release boundary |
 | 2026-11-03 | [Layout recursion audit](20261103-layout-stack-audit.md) | this commit | current — generated C fuel bound, proof guards and 50,000-sibling native/WASM stress |
 | 2026-11-03 | [Linear path stack repair](20261103-rendering-path-stack-repair.md) | this commit | current — exact tail-loop compiler replacement and generated C gates |
 | 2026-11-03 | [Scene stack lowering](20261103-rendering-scene-stack-lowering.md) | this commit | current — exact traversal proof, compiled-C gates and native stack stress |
+| 2026-11-03 | [Font trust and safety policy](designissues/2026-11-03-font-trust-and-safety-policy.md) | this commit | current — owner decisions 1-4: understandable configurable refusals, safe ASCII mode, Lean shaper with HarfBuzz oracle, DSIG reported not trusted, pinned OFL fonts; https://github.com/danbri/factoidal/issues/1233 |
 | 2026-11-03 | [Dynamic font request architecture](designissues/2026-11-03-dynamic-font-requests.md) | this commit | current — Lean decides shaping requests; host supplies bounded glyph data |
 | 2026-11-03 | [Browser navigation and byte transport](20261103-lean-browser-navigation.md) | this commit | current — HTTP navigation controls, browser integration |
 | 2026-11-03 | [Dynamic font requests](20261103-web-render-dynamic-font-requests.md) | this commit | current — Lean requests, actual HarfBuzz/FreeType broker and arbitrary edited text |
@@ -241,4 +250,5 @@ worknote, kept as the record of a decision or a measurement),
 
 | 2026-11-03 | [Linked RDF graphs in the Lean renderer](20261103-lean-rdf-renderer.md) | — | strict N-Triples to direct DOM and shared scene; complete native/WASM artifact equality and12,288 exact CPU/GPU image pixels |
 | 2026-11-03 | [Fresh web registry inventory](20261103-web-inventory-generation.md) | this commit | actual fresh remote Registry/Tests generation, witnessed UI/Rendering directory inventory and unchanged stage kinds; directory counts are not renderer passes |
+| 2026-11-03 | [LWS with large bodies](20261103-lws-large-bodies.md) | this commit | measured 1 MiB to 200 MiB PUT/GET in files mode, sealed; no size limits or quotas today (issue 1240); guidance: about 1 MiB per item, no media |
 | 2026-11-03 | [LWS ops: which reach resources without authorization?](20261103-lws-in-process-audit.md) | this commit | audit for issue 1238: only `lwsSnapshot` returns the whole storage with no authorization (host-only by design; clear text without a key); components get `{step, settled, close}`, not the engine |

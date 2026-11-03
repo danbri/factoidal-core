@@ -218,7 +218,9 @@ test('xmpp-serve: a full session over a TCP socket, through wasm', async (t) => 
     const juliet = await bound(running.port, 'juliet', 'r0m30', 'balcony')
     juliet.client.write(`<message to='romeo@${DOMAIN}'><body>later</body></message>`)
     await new Promise((resolve) => setTimeout(resolve, 100))
-    assert.equal(running.pending().get(`romeo@${DOMAIN}`)?.length, 1)
+    // The ENGINE holds it now (L4Factoidal/XMPP/Held.lean, bounded; issue 1235),
+    // not the host's fallback queue.
+    assert.equal(running.pending().has(`romeo@${DOMAIN}`), false)
     const romeo = await bound(running.port, 'romeo', 'juli3t', 'orchard')
     const got = await romeo.client.waitFor('</message>')
     assert.ok(got.includes('<body>later</body>'), got)
