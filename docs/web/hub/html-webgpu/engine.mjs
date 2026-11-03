@@ -6,10 +6,11 @@ async function engine(){
     catch(error){throw Error('The renderer runtime could not load. '+String(error.message??error));}
   })();
 }
-export async function compile(source,width,height){
-  if(typeof source!=='string'||source.includes('\0')||new TextEncoder().encode(source).length>1048576)throw Error('HTML input exceeds 1 MiB');
+export async function compile(source,width,height,syntax='html'){
+  if(!['html','ntriples'].includes(syntax))throw Error('Unknown input format');
+  if(typeof source!=='string'||source.includes('\0')||new TextEncoder().encode(source).length>1048576)throw Error('Input exceeds 1 MiB');
   if(![width,height].every(n=>Number.isInteger(n)&&n>0&&n<=4096))throw Error('Viewport dimensions must be integers from 1 to 4096');
-  const module=await engine(),pointer=module.ccall('web_render_call','number',['string','number','number'],[source,width,height]);
+  const module=await engine(),pointer=module.ccall(syntax==='ntriples'?'web_render_rdf_call':'web_render_call','number',['string','number','number'],[source,width,height]);
   if(!pointer)throw Error('Lean renderer initialization or allocation failed');
   let artifact;try{artifact=JSON.parse(module.UTF8ToString(pointer));}finally{module.ccall('web_render_free',null,['number'],[pointer]);}
   if(artifact.error)throw Error(artifact.error);

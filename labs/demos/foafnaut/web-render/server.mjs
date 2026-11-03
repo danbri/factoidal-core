@@ -8,7 +8,7 @@ import {stripTypeScriptTypes} from 'node:module';
 import {createHash} from 'node:crypto';
 const here=dirname(fileURLToPath(import.meta.url)),lab=resolve(here,'..'),files=new Map();
 for(const name of ['index.html','app.mjs','engine.mjs','style.css'])files.set('/'+name,resolve(here,name));
-for(const name of ['default.html','boxes.html','flow.html','links.html'])files.set('/fixtures/'+name,resolve(here,'fixtures',name));
+for(const name of ['default.html','boxes.html','flow.html','links.html','graph.nt'])files.set('/fixtures/'+name,resolve(here,'fixtures',name));
 for(const name of ['gpu_transport.ts','render_plan.ts'])files.set('/lab/'+name,resolve(lab,name));
 for(const name of ['web-render.mjs','web-render.wasm'])files.set('/lab/.build/web-render/engines/'+name,resolve(lab,'.build/web-render/engines',name));
 for(const name of ['render-plan.mjs','render-plan.wasm'])files.set('/lab/.build/engines/'+name,resolve(lab,'.build/web-render/engines',name));

@@ -9,7 +9,7 @@ async function render(){
  button.disabled=true;
  try{
   const start=performance.now(),width=Number(document.querySelector('#width').value),height=Number(document.querySelector('#height').value);
-  const artifact=await compile(source.value,width,height),compiled=performance.now();
+  const artifact=await compile(source.value,width,height,document.querySelector('#syntax').value),compiled=performance.now();
   const session=await createOffscreenSession(artifact,'svg-offscreen');
   if(!session)throw Error('WebGPU adapter unavailable');
   let rgba;
@@ -25,6 +25,11 @@ async function render(){
  finally{if(request===sequence)button.disabled=false;}
 }
 button.addEventListener('click',render);
+document.querySelector('#example').addEventListener('click',async()=>{
+ const name=document.querySelector('#syntax').value==='ntriples'?'graph.nt':'default.html';
+ const response=await fetch('/fixtures/'+name);if(!response.ok)throw Error('Example unavailable');source.value=await response.text();await render();
+});
+document.querySelector('#syntax').addEventListener('change',render);
 for(const input of [source,document.querySelector('#width'),document.querySelector('#height')])input.addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(render,350);});
 await render();
 

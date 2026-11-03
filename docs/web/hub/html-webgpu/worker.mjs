@@ -10,7 +10,7 @@ self.onmessage=async({data})=>{
  let session;
  try{
   if(!navigator.gpu)throw Error('This browser does not provide WebGPU. Use a browser with WebGPU enabled.');
-  const start=performance.now(),artifact=await compile(data.source,data.width,data.height),compiled=performance.now();
+  const start=performance.now(),artifact=await compile(data.source,data.width,data.height,data.syntax??'html'),compiled=performance.now();
   const {createOffscreenSession}=await import('./runtime/gpu-transport.mjs');
   session=await createOffscreenSession(artifact,'svg-offscreen');if(!session)throw Error('A WebGPU adapter is unavailable in this browser.');
   const ready=performance.now(),rgba=await session.draw(),finished=performance.now();

@@ -2,7 +2,7 @@ const source=document.querySelector('#source'),canvas=document.querySelector('#o
 const worker=new Worker(new URL('./worker.mjs',import.meta.url),{type:'module'});
 let serial=0,latest=0,busy=false,queued,current,timer;const hits=new Map();
 function request(){
- const request={type:'render',id:++serial,source:source.value,width:Number(document.querySelector('#width').value),height:Number(document.querySelector('#height').value)};
+ const request={type:'render',id:++serial,source:source.value,syntax:document.querySelector('#syntax').value,width:Number(document.querySelector('#width').value),height:Number(document.querySelector('#height').value)};
  latest=request.id;current=undefined;canvas.style.cursor='default';clearTimeout(timer);status.textContent=busy?'An updated page is queued…':'Lean is laying out the page…';
  if(busy){queued=request;return;}busy=true;button.disabled=true;worker.postMessage(request);
 }
@@ -23,9 +23,9 @@ function pick(frame,p){return new Promise(resolve=>{const id=++serial;hits.set(i
 canvas.addEventListener('pointermove',async event=>{const frame=current;if(!frame)return;const target=await pick(frame,point(event));if(frame===current)canvas.style.cursor=target?'pointer':'default';});
 canvas.addEventListener('pointerleave',()=>{canvas.style.cursor='default';});
 canvas.addEventListener('click',async event=>{const frame=current;if(!frame)return;const p=point(event),target=await pick(frame,p);if(!target||frame!==current)return;event.preventDefault();const message={type:'link-click',sourceNode:target.sourceNode,href:target.href,...p};console.log('Lean link click',JSON.stringify(message));const output=document.querySelector('#events');output.hidden=false;output.textContent=JSON.stringify(message,null,2);});
-button.addEventListener('click',request);source.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault();request();}});
+button.addEventListener('click',request);document.querySelector('#syntax').addEventListener('change',request);source.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault();request();}});
 for(const input of [source,document.querySelector('#width'),document.querySelector('#height')])input.addEventListener('input',()=>{if(!document.querySelector('#auto').checked)return;clearTimeout(timer);timer=setTimeout(request,400);});
 document.querySelector('#auto').addEventListener('change',event=>{if(event.target.checked)request();else clearTimeout(timer);});
-document.querySelector('#fixture').addEventListener('change',async event=>{try{const response=await fetch('./fixtures/'+event.target.value);if(!response.ok)throw Error('Example unavailable');source.value=await response.text();request();}catch(error){status.textContent=error.message;}});
+document.querySelector('#fixture').addEventListener('change',async event=>{try{const response=await fetch('./fixtures/'+event.target.value);if(!response.ok)throw Error('Example unavailable');source.value=await response.text();document.querySelector('#syntax').value=event.target.value.endsWith('.nt')?'ntriples':'html';request();}catch(error){status.textContent=error.message;}});
 try{const response=await fetch('./fixtures/default.html');if(!response.ok)throw Error('Default example unavailable');source.value=await response.text();request();}catch(error){status.textContent=error.message;}
 (async()=>{try{const response=await fetch('./runtime/manifest.json');if(!response.ok)throw Error('Runtime manifest unavailable');document.querySelector('#provenance').textContent=JSON.stringify(await response.json(),null,2);}catch(error){document.querySelector('#provenance').textContent=String(error.message??error);}})();

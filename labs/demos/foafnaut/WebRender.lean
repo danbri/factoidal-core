@@ -109,13 +109,15 @@ private def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box
   array (boxes.toList.map fun b => array [toString b.source,toString b.x,toString b.y,toString b.width,toString b.height]) ++
   ",\"glyphRuns\":" ++ array (s.glyphRuns.toList.map runJSON) ++ ",\"links\":" ++ Rendering.Links.encode s.links ++ "}"
 
+/-- Shared checked scene serialization for HTML and structured-document frontends. -/
+def artifact (scene : Rendering.Scene) (boxes : Array Rendering.Layout.Box) : Except String String := do
+  let value ← (WebRenderSVG.toScene scene).artifact
+  return (value.dropEnd 1).toString ++ ",\"webRender\":" ++ layoutJSON scene boxes ++ "}"
+
 @[export web_render_compile]
 def compile (html : String) (width height : UInt32) : String :=
-  match render html width.toNat height.toNat with
+  match render html width.toNat height.toNat >>= (fun (scene,boxes) => artifact scene boxes) with
   | .error message => errorJSON message
-  | .ok (scene,boxes) =>
-    match (WebRenderSVG.toScene scene).artifact with
-    | .error message => errorJSON message
-    | .ok artifact => (artifact.dropEnd 1).toString ++ ",\"webRender\":" ++ layoutJSON scene boxes ++ "}"
+  | .ok value => value
 
 end WebRender

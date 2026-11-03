@@ -13,11 +13,11 @@ permalink: /web/hub/html-webgpu/
 </section>
 <div class="renderer-workspace">
   <section class="renderer-input" aria-labelledby="input-heading">
-    <div class="renderer-heading"><h2 id="input-heading">HTML and CSS input</h2><label>Example <select id="fixture"><option value="default.html">Page with a link</option><option value="links.html">Wrapped links</option><option value="boxes.html">Boxes and embedded SVG</option><option value="flow.html">Text flow</option></select></label></div>
-    <label for="source" class="visually-hidden">HTML and CSS source</label>
+    <div class="renderer-heading"><h2 id="input-heading">HTML and CSS input</h2><label>Example <select id="fixture"><option value="default.html">Page with a link</option><option value="links.html">Wrapped links</option><option value="boxes.html">Boxes and embedded SVG</option><option value="flow.html">Text flow</option><option value="graph.nt">RDF graph</option></select></label></div>
+    <label for="source" class="visually-hidden">HTML, CSS or RDF source</label>
     <textarea id="source" spellcheck="false" autocapitalize="off" aria-describedby="font-scope"></textarea>
-    <div class="renderer-controls"><label>Width <input id="width" type="number" value="380" min="1" max="4096"></label><label>Height <input id="height" type="number" value="340" min="1" max="4096"></label><button id="render" type="button">Render</button><label class="renderer-auto"><input id="auto" type="checkbox" checked> Render edits</label></div>
-    <p id="font-scope" class="renderer-scope">Current text profile: an ASCII bitmap font with word wrapping, baselines and source glyph clusters. Real font shaping, full CSS and scripting remain work. Unsupported input produces an error.</p>
+    <div class="renderer-controls"><label>Format <select id="syntax"><option value="html">HTML + CSS</option><option value="ntriples">RDF N-Triples</option></select></label><label>Width <input id="width" type="number" value="380" min="1" max="4096"></label><label>Height <input id="height" type="number" value="340" min="1" max="4096"></label><button id="render" type="button">Render</button><label class="renderer-auto"><input id="auto" type="checkbox" checked> Render edits</label></div>
+    <p id="font-scope" class="renderer-scope">Current text profile: an ASCII bitmap font with word wrapping, baselines and source glyph clusters. RDF mode reads N-Triples 1.1 in Lean and builds linked DOM text nodes. Real font shaping, full CSS and scripting remain work. Unsupported input produces an error.</p>
   </section>
   <section class="renderer-output" aria-labelledby="output-heading">
     <h2 id="output-heading">Lean-rendered page</h2>

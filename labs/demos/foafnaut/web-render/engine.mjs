@@ -1,11 +1,12 @@
 // String/byte transport only. HTML/CSS/layout/paint decisions run in Lean WASM.
 import createModule from '/lab/.build/web-render/engines/web-render.mjs';
 let pending;
-export async function compile(source,width,height){
-  if(typeof source!=='string'||new TextEncoder().encode(source).length>1048576)throw Error('HTML input exceeds transport limit');
+export async function compile(source,width,height,syntax='html'){
+  if(!['html','ntriples'].includes(syntax))throw Error('Unknown input format');
+  if(typeof source!=='string'||source.includes('\0')||new TextEncoder().encode(source).length>1048576)throw Error('Input exceeds transport limit');
   if(![width,height].every(n=>Number.isInteger(n)&&n>0&&n<=4096))throw Error('Viewport dimensions must be integers from 1 to 4096');
   const module=await(pending??=createModule());
-  const pointer=module.ccall('web_render_call','number',['string','number','number'],[source,width,height]);
+  const pointer=module.ccall(syntax==='ntriples'?'web_render_rdf_call':'web_render_call','number',['string','number','number'],[source,width,height]);
   if(!pointer)throw Error('Lean engine initialization or allocation failed');
   let artifact;
   try{artifact=JSON.parse(module.UTF8ToString(pointer));}

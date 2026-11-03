@@ -31,7 +31,17 @@ for(const name of ['boxes','flow','links']){
  }
  fixtures.push({name,sourceSha256:hash(source),rawArtifactSha256:hash(raw),primitives:artifact.primitiveCount,probes:artifact.checks.length});
 }
+const rdf=await readFile(resolve(here,'fixtures/graph.nt'),'utf8');
+const rdfRaw=call('web_render_rdf_call',['string','number','number'],[rdf,380,340]);
+const graph=JSON.parse(rdfRaw);assert(!graph.error,graph.error);
+assert.deepEqual(graph.rdf,{syntax:'N-Triples 1.1',triples:3});
+assert(graph.webRender.links.some(r=>r[1]==='https://e.test/alice'));
+assert(!graph.webRender.links.some(r=>r[1].includes('Bob')),'literal became a link');
+assert.equal(call('web_render_rdf_call',['string','number','number'],[rdf,380,340]),rdfRaw);
+const badRdf=JSON.parse(call('web_render_rdf_call',['string','number','number'],[rdf+'malformed',380,340]));
+assert.match(badRdf.error,/N-Triples error/,'malformed suffix was silently accepted');
+fixtures.push({name:'graph.nt',triples:3,sourceSha256:hash(rdf),rawArtifactSha256:hash(rdfRaw),primitives:graph.primitiveCount,probes:graph.checks.length});
 const refused=JSON.parse(compile('<html><body><div style="display:grid">unsupported</div></body></html>'));
 assert.equal(typeof refused.error,'string','unsupported layout did not fail closed');
-const report={status:'PASS',scope:'Fresh Lean/WASM frontend ABI, deterministic artifacts, reference-probe structure, actual link picking and explicit unsupported-input refusal. No GPU or browser conformance claim.',node:process.version,engineSha256:hash(await readFile(engine)),wasmSha256:hash(await readFile(engine.replace(/\.mjs$/,'.wasm'))),fixtures};
+const report={status:'PASS',scope:'Fresh Lean/WASM frontend ABI, deterministic artifacts, reference-probe structure, actual link picking, strict N-Triples linked graph rendering and explicit unsupported-input refusal. No GPU or browser conformance claim.',node:process.version,engineSha256:hash(await readFile(engine)),wasmSha256:hash(await readFile(engine.replace(/\.mjs$/,'.wasm'))),fixtures};
 await writeFile(outPath,JSON.stringify(report,null,2)+'\n',{flag:'wx'});console.log(JSON.stringify(report,null,2));
