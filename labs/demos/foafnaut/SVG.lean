@@ -1702,8 +1702,9 @@ private def Primitive.coverageAt (primitive : BackendPrimitive) (data : Array Fl
       return hit
   return (fillHit,strokeHit)
 
-/-- Prepare the common un-clipped, un-dashed analytic shapes once. Other
-    geometry keeps its existing coverage function, including every clip check. -/
+/-- Prepare un-clipped, un-dashed geometry once. Winding paths retain the
+    reference edge traversal, with its edge count shared across all samples.
+    Clipped and dashed geometry keeps every existing coverage check. -/
 private inductive PreparedCoverage where
   | analytic (inverse : Transform) (data : Array Float) (fill stroke : Prepared Bool)
   | reference (primitive : BackendPrimitive) (data : Array Float) (base : Nat)
@@ -1719,6 +1720,17 @@ private def Primitive.prepareCoverage (p : BackendPrimitive) (data : Array Float
   | [],none,.rect .. | [],none,.circle .. | [],none,.ellipse .. | [],none,.line .. =>
     .analytic p.transform.inverse data ((fillCondition p.geometry base).prepare data)
       ((strokeCondition p.geometry base p.style.lineCap).prepare data)
+  | [],none,.polygon points =>
+    let count := points.length
+    .analytic p.transform.inverse data
+      (((boundsCondition base).prepare data).and
+        (.dynamic (fun env => windingHit env base count p.style.rule)))
+      ((strokeCondition p.geometry base p.style.lineCap).prepare data)
+  | [],none,.path contours =>
+    let count := (NativeSVGPath.edges contours).length
+    .analytic p.transform.inverse data
+      (.dynamic (fun env => pathHit env base count p.style.rule))
+      ((strokeCondition p.geometry base p.style.lineCap).prepare data)
   | _,_,_ => .reference p data base
 
 private theorem Primitive.prepareCoverage_correct (p : BackendPrimitive) (data : Array Float)
@@ -1731,7 +1743,8 @@ private theorem Primitive.prepareCoverage_correct (p : BackendPrimitive) (data :
     | some pieces => simp [Primitive.prepareCoverage,PreparedCoverage.eval,clips,dash]
     | none =>
       cases geo : p.geometry <;>
-        simp [Primitive.prepareCoverage,PreparedCoverage.eval,Primitive.coverageAt,clips,dash,geo,Test.prepare_correct]
+        simp [Primitive.prepareCoverage,PreparedCoverage.eval,Primitive.coverageAt,clips,dash,geo,
+          Prepared.eval_and,Test.prepare_correct] <;> simp [Prepared.eval]
 
 /-- Topmost geometric paint item at a viewport coordinate, in the same
     painter order and using the exact retained coverage predicates as sampling.
