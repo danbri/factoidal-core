@@ -30,12 +30,58 @@ test('classic scripts share VM bindings; callback produces typed commands', asyn
     ] });
     assert.deepEqual(first.commands, [{ op: 'setTextContent', nodeId: 4, value: 'loaded' }]);
     assert.deepEqual(first.listeners, [{ nodeId: 5, type: 'click' }]);
+    assert.equal(first.defaultPrevented, false);
     assert.deepEqual((await session.dispatch({ type: 'click', nodeId: 5 })).commands, [
       { op: 'setTextContent', nodeId: 4, value: 'click 1' },
       { op: 'setAttribute', nodeId: 5, name: 'data-clicked', value: 'click' }
     ]);
     assert.equal((await session.dispatch({ type: 'click', nodeId: 5 })).commands[0].value, 'click 2');
     await assert.rejects(session.dispatch({ type: 'click', nodeId: 999 }), /Unknown script click target/);
+  } finally { session.reset(); }
+});
+
+test('a click listener can mutate an anchor without cancelling its default action', async () => {
+  const session = create();
+  try {
+    await session.start({ nodes, source: `document.getElementById('change').addEventListener('click', function(event) {
+      console.log(event.cancelable, event.defaultPrevented);
+      this.setAttribute('href', '/updated-target');
+      return false;
+    });` });
+    const result = await session.dispatch({ type: 'click', nodeId: 5 });
+    assert.equal(result.defaultPrevented, false, 'an addEventListener return value does not cancel navigation');
+    assert.deepEqual(result.logs, ['true false']);
+    assert.deepEqual(result.commands, [{ op: 'setAttribute', nodeId: 5, name: 'href', value: '/updated-target' }]);
+  } finally { session.reset(); }
+});
+
+test('preventDefault cancels only its own click and is visible to subsequent listeners', async () => {
+  const session = create();
+  try {
+    await session.start({ nodes, source: `let turn = 0, previous;
+      const anchor = document.getElementById('change');
+      anchor.addEventListener('click', function(event) {
+        'use strict';
+        try { event.defaultPrevented = true; } catch {}
+        console.log('before', event.defaultPrevented);
+        if (++turn === 1) { event.preventDefault(); previous = event; }
+        else previous.preventDefault();
+      });
+      anchor.addEventListener('click', event => console.log('after', event.defaultPrevented));` });
+    const first = await session.dispatch({ type: 'click', nodeId: 5 });
+    assert.equal(first.defaultPrevented, true);
+    assert.deepEqual(first.logs, ['before false', 'after true']);
+    const second = await session.dispatch({ type: 'click', nodeId: 5 });
+    assert.equal(second.defaultPrevented, false, 'a saved event must not cancel the next event');
+    assert.deepEqual(second.logs, ['before false', 'after false']);
+  } finally { session.reset(); }
+});
+
+test('an onclick property handler returning false cancels its click', async () => {
+  const session = create();
+  try {
+    await session.start({ nodes, source: 'document.getElementById("change").onclick = () => false;' });
+    assert.equal((await session.dispatch({ type: 'click', nodeId: 5 })).defaultPrevented, true);
   } finally { session.reset(); }
 });
 
@@ -69,10 +115,11 @@ test('allocation exhaustion and guest exception do not commit pending commands',
 });
 
 test('message validator refuses unknown handles and command forms', () => {
-  const allowed = new Set([4, 5]), base = { listeners: [], logs: [] };
+  const allowed = new Set([4, 5]), base = { listeners: [], logs: [], defaultPrevented: false };
   assert.throws(() => validateBatch({ ...base, commands: [{ op: 'setTextContent', nodeId: 999, value: 'bad' }] }, allowed), /Invalid/);
   assert.throws(() => validateBatch({ ...base, commands: [{ op: 'innerHTML', nodeId: 4, value: '<p>bad</p>' }] }, allowed), /Unsupported/);
   assert.throws(() => validateBatch({ ...base, commands: [{ op: 'setTextContent', nodeId: 4, value: 'a'.repeat(65537) }] }, allowed), /Invalid/);
+  assert.throws(() => validateBatch({ ...base, commands: [], defaultPrevented: 'true' }, allowed), /Invalid script result envelope/);
 });
 
 test('reset cancels an outstanding turn', async () => {
