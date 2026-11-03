@@ -892,6 +892,30 @@ https://github.com/danbri/factoidal/issues/1198 (native library from Lean's C
 with the wasm's C ABI; graphics from Lean in its section 8). Its section 9
 decisions are still open.
 
+### Fonts: safety policy, Lean shaper, pinned OFL fonts (owner, 2026-11-03)
+
+Owner, verbatim: "fonts embed software". Answers to four questions:
+"1. Make refusals understandable, and configurable, with current safety
+settings easily accessed. We can also have a \"safe\" mode that uses only a
+baked in, no wasm etc. ascii font." "2 yes, if license good." "3. we should
+note dsig and exercise our factoidal/core signature checking but not read too
+much into it." "4. our npm already huge so pinned i guess".
+
+- One Lean `FontPolicy` value decides what font content is used; modes `safe`
+  (baked-in ASCII bitmap font only), `standard`, `custom`. CFF, GSUB/GPOS and
+  COLR are interpreted in Lean with fuel; hinting is not run; AAT, Graphite and
+  `Wasm` tables are refused. A refusal names the code, the font, the table,
+  the risk, the setting and its source, and what the renderer did instead.
+  Allowing a table refused by default needs a `--dangerously-allow-font-*`
+  option and a start warning.
+- The shaper is ported to Lean; HarfBuzz's tests are the target and native
+  HarfBuzz/FreeType is a differential oracle. No test data is vendored before
+  its licence is recorded.
+- `DSIG` is checked and the result recorded; it never changes trust or policy.
+- Fonts are a pinned OFL set fetched and checked by sha256; not in npm.
+- Record: `docs/designissues/2026-11-03-font-trust-and-safety-policy.md`;
+  tracking https://github.com/danbri/factoidal/issues/1233.
+
 ### One owner per release (owner, 2026-10-28)
 
 Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" and

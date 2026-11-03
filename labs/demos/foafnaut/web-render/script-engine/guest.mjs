@@ -2,8 +2,9 @@
 // browser's JS realm. It exposes only a bounded projection of Lean node handles.
 export function installGuest(snapshot) {
   const stringify = JSON.stringify.bind(JSON), parse = JSON.parse.bind(JSON);
+  const freeze = Object.freeze.bind(Object);
   const nodes = new Map(), callbacks = new Map();
-  let commands = [], logs = [];
+  let commands = [], logs = [], lastDefaultPrevented = false;
   const emit = command => {
     if (commands.length >= 256) throw new RangeError('DOM command budget exceeded');
     commands.push(command);
@@ -59,15 +60,22 @@ export function installGuest(snapshot) {
   Object.defineProperty(globalThis, '__factoidalDispatch', { value: wire => {
     const event = parse(wire), state = callbacks.get(event.nodeId);
     if (event.type !== 'click' || !state) throw new TypeError('Unknown click target');
-    const delivered = Object.freeze({ type: 'click', target: state.node, currentTarget: state.node });
-    if (state.onclick) state.onclick.call(state.node, delivered);
+    // Each event owns its flag. A saved event cannot cancel a later click.
+    let defaultPrevented = false;
+    const delivered = freeze({ type: 'click', target: state.node, currentTarget: state.node,
+      cancelable: true,
+      get defaultPrevented() { return defaultPrevented; },
+      preventDefault() { defaultPrevented = true; }
+    });
+    if (state.onclick && state.onclick.call(state.node, delivered) === false) delivered.preventDefault();
     for (const callback of state.listeners.slice()) callback.call(state.node, delivered);
+    lastDefaultPrevented = defaultPrevented;
   } });
   Object.defineProperty(globalThis, '__factoidalDrain', { value: () => {
     const listeners = [];
     for (const [nodeId, state] of callbacks) if (state.onclick || state.listeners.length) listeners.push({ nodeId, type: 'click' });
-    const wire = stringify({ commands, listeners, logs });
-    commands = []; logs = [];
+    const wire = stringify({ commands, listeners, logs, defaultPrevented: lastDefaultPrevented });
+    commands = []; logs = []; lastDefaultPrevented = false;
     return wire;
   } });
 }

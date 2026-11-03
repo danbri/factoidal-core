@@ -9,7 +9,8 @@ const boundedString = (value, maximum = 65536) => typeof value === 'string' && e
 export function validateBatch(batch, allowedIds) {
   if (!batch || !Array.isArray(batch.commands) || batch.commands.length > 256 ||
       !Array.isArray(batch.listeners) || batch.listeners.length > 16384 ||
-      !Array.isArray(batch.logs) || batch.logs.length > 32) throw Error('Invalid script result envelope');
+      !Array.isArray(batch.logs) || batch.logs.length > 32 ||
+      typeof batch.defaultPrevented !== 'boolean') throw Error('Invalid script result envelope');
   for (const command of batch.commands) {
     if (!command || !validId(command.nodeId) || !allowedIds.has(command.nodeId) || !boundedString(command.value)) throw Error('Invalid script DOM command');
     if (command.op === 'setTextContent' && Object.keys(command).length === 3) continue;
