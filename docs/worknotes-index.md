@@ -241,3 +241,4 @@ worknote, kept as the record of a decision or a measurement),
 
 | 2026-11-03 | [Linked RDF graphs in the Lean renderer](20261103-lean-rdf-renderer.md) | — | strict N-Triples to direct DOM and shared scene; complete native/WASM artifact equality and12,288 exact CPU/GPU image pixels |
 | 2026-11-03 | [Fresh web registry inventory](20261103-web-inventory-generation.md) | this commit | actual fresh remote Registry/Tests generation, witnessed UI/Rendering directory inventory and unchanged stage kinds; directory counts are not renderer passes |
+| 2026-11-03 | [LWS with large bodies](20261103-lws-large-bodies.md) | this commit | measured 1 MiB to 200 MiB PUT/GET in files mode, sealed; no size limits or quotas today (issue 1240); guidance: about 1 MiB per item, no media |
