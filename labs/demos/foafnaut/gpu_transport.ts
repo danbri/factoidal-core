@@ -32,7 +32,8 @@ export function checkPixels(a: Renderable, rgba: Uint8Array) {
 // command remain supplied by Lean. Repeated frames keep device/pipeline/buffers.
 export async function createOffscreenSession(a:Renderable,mode:"offscreen"|"svg-offscreen"="offscreen",observeShader?:(event:ShaderSubmission)=>void) {
   if(!navigator.gpu)throw new Error("WebGPU API absent; add --unstable-webgpu");
-  const verification={...a,checks:a.checks.map(p=>({...p,rgb:[...p.rgb]}))};
+  let verification={...a,checks:a.checks.map(p=>({...p,rgb:[...p.rgb]}))};
+  const shape={width:a.width,height:a.height,wgsl:a.wgsl,floatCount:a.data.length};
   const adapter=await navigator.gpu.requestAdapter();
   if(!adapter)return null;
   console.log("GPU adapter:",adapter.info);
@@ -62,6 +63,29 @@ export async function createOffscreenSession(a:Renderable,mode:"offscreen"|"svg-
     return {
       adapterInfo:adapter.info,
       get stats(){return {...counters,closed,failed};},
+      async update(next:Renderable):Promise<boolean> {
+        if(closed||failed)throw new Error("GPU session is closed or failed");
+        if(busy)throw new Error("Concurrent GPU updates/readbacks are unsupported");
+        if(next.width!==shape.width||next.height!==shape.height||next.wgsl!==shape.wgsl||next.data.length!==shape.floatCount)return false;
+        busy=true;
+        try {
+          // Lean revalidates the new payload and supplies the complete plan.
+          // Reuse is allowed only when all descriptors and commands agree.
+          const nextPlan=await requestRenderPlan(mode,"rgba8unorm",next,device.limits);
+          if(JSON.stringify(nextPlan)!==JSON.stringify(plan))return false;
+          const checks=next.checks.map(p=>({...p,rgb:[...p.rgb]}));
+          device.pushErrorScope("validation");scope=true;
+          device.queue.writeBuffer(resources!.uniform,plan.uniform.offset,new Float32Array(next.data));
+          const error=await device.popErrorScope();scope=false;
+          if(error)throw new Error(error.message);
+          verification={...next,checks};counters.uploads++;
+          return true;
+        }catch(error){failed=true;throw error;}
+        finally {
+          if(scope){try{await device.popErrorScope();}catch{/* preserve update error */}scope=false;}
+          busy=false;
+        }
+      },
       async draw():Promise<Uint8Array> {
         if(closed||failed)throw new Error("GPU session is closed or failed");
         if(busy)throw new Error("Concurrent GPU readbacks are unsupported");

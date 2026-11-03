@@ -3,24 +3,32 @@ import {createOffscreenSession} from '/lab/gpu_transport.ts';
 const source=document.querySelector('#source'),button=document.querySelector('#render'),status=document.querySelector('#status'),canvas=document.querySelector('#output');
 source.value=await(await fetch('/fixtures/default.html')).text();
 let timer;
-let current,sequence=0;
+let current,sequence=0,gpuSession,gpuQueue=Promise.resolve();
 async function render(){
  const request=++sequence; clearTimeout(timer); current=undefined; canvas.style.cursor='default';
  button.disabled=true;
  try{
   const start=performance.now(),width=Number(document.querySelector('#width').value),height=Number(document.querySelector('#height').value);
   const artifact=await compile(source.value,width,height,document.querySelector('#syntax').value),compiled=performance.now();
-  const session=await createOffscreenSession(artifact,'svg-offscreen');
-  if(!session)throw Error('WebGPU adapter unavailable');
-  let rgba;
-  try{rgba=await session.draw();}finally{session.close();}
-  if(request!==sequence)return;
+  const frame=gpuQueue.then(async()=>{
+   if(request!==sequence)return null;
+   try{
+    if(gpuSession&&!(await gpuSession.update(artifact))){gpuSession.close();gpuSession=undefined;}
+    if(!gpuSession)gpuSession=await createOffscreenSession(artifact,'svg-offscreen');
+    if(!gpuSession)throw Error('WebGPU adapter unavailable');
+    return {rgba:await gpuSession.draw(),stats:gpuSession.stats};
+   }catch(error){gpuSession?.close();gpuSession=undefined;throw error;}
+  });
+  gpuQueue=frame.catch(()=>{});
+  const result=await frame;
+  if(!result||request!==sequence)return;
+  const {rgba}=result;
   canvas.hidden=false;canvas.width=width;canvas.height=height;
   canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba),width,height),0,0);
   current={artifact,rgba};
   document.querySelector('#layout').textContent=JSON.stringify(artifact.webRender,null,2);
   status.textContent=`Lean WASM compiled ${artifact.primitiveCount} paint items in ${(compiled-start).toFixed(1)} ms. GPU render and readback: ${(performance.now()-compiled).toFixed(1)} ms.\n${artifact.webRender.glyphRuns.length} glyph runs. Font: ASCII bitmap profile.`;
-  window.webRenderResult={artifact,rgba:Array.from(rgba)};
+  window.webRenderResult={artifact,rgba:Array.from(rgba),gpuStats:result.stats};
  }catch(error){if(request!==sequence)return; canvas.hidden=true; status.textContent=String(error.message??error);window.webRenderResult={error:String(error.message??error)};}
  finally{if(request===sequence)button.disabled=false;}
 }
@@ -32,6 +40,7 @@ document.querySelector('#example').addEventListener('click',async()=>{
 document.querySelector('#syntax').addEventListener('change',render);
 for(const input of [source,document.querySelector('#width'),document.querySelector('#height')])input.addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(render,350);});
 await render();
+window.addEventListener('pagehide',()=>{gpuQueue.then(()=>{gpuSession?.close();gpuSession=undefined;}).catch(console.error);});
 
 function scenePoint(event){const rect=canvas.getBoundingClientRect();return {x:(event.clientX-rect.left-canvas.clientLeft)*canvas.width/canvas.clientWidth,y:(event.clientY-rect.top-canvas.clientTop)*canvas.height/canvas.clientHeight};}
 canvas.addEventListener('pointermove',async event=>{
