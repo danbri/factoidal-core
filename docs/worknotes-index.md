@@ -15,9 +15,14 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-03 | [Browser navigation and byte transport](20261103-lean-browser-navigation.md) | this commit | current — HTTP navigation controls, browser integration |
+| 2026-11-03 | [Dynamic font requests](20261103-web-render-dynamic-font-requests.md) | this commit | current — Lean requests, actual HarfBuzz/FreeType broker and arbitrary edited text |
+| 2026-11-03 | [QuickJS scripting boundary](20261103-web-render-script-engine.md) | this commit | current — actual isolated QuickJS WASM, typed Lean DOM commands |
+| 2026-11-03 | [Script engine architecture](designissues/2026-11-03-script-engine-architecture.md) | this commit | current — separate instances and heaps, message transactions, verified-JS research limits |
+
 | 2026-11-03 | [Original HTML document context for embedded SVG](20261103-html-svg-document-context.md) | this commit | current — original DOM paths and cross-root source guards; linked runtime and original browser comparison next |
 | 2026-11-03 | [Reuse WebGPU sessions for editor changes](20261103-gpu-edit-session-reuse.md) | 50f735802 | current — bounded full-buffer updates, exact whole-image and stale-request controls; published runtime qualification separate |
-| 2026-11-03 | [Prepared path sampling in the Lean renderer](20261103-lean-path-sampling-preparation.md) | this commit | current — exact prepared path/polygon source proofs and emitted-C hoisting; runtime speed measurement remains |
+| 2026-11-03 | [Prepared path sampling in the Lean renderer](20261103-lean-path-sampling-preparation.md) | this commit | current — exact prepared path/polygon source proofs and emitted-C hoisting; paired current-curve WASM speed measurements recorded |
 | 2026-11-03 | [One canonical path for HTML, SVG and real fonts](20261103-shared-path-fonts.md) | this commit | current — exact SVG/cache adapters and real Arial CPU text; combined runtime, document-wide refs and broader font conformance remain |
 | 2026-11-03 | [SVG references across HTML SVG roots](designissues/2026-11-03-svg-document-references.md) | this commit | current — source-bound document context, absolute paths, original bases and native cross-root regressions; compiled HTML integration pending |
 | 2026-11-03 | [SVG curves and checked backend cache](designissues/2026-11-03-svg-curves-cache.md) | this commit | current — canonical curve geometry, exact cache/count/storage proofs, four exact GPU fill controls and one retained stroke failure |

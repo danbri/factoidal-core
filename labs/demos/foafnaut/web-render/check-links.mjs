@@ -12,6 +12,7 @@ try{
  page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.text().startsWith('Lean link click'))consoleLogs.push(m.text());});page.on('request',r=>{if(r.url()===origin+'events'&&r.method()==='POST')posts.push(JSON.parse(r.postData()));});
  await page.goto(origin);await page.waitForFunction(()=>window.webRenderResult,{},{timeout:90000});
  assert(!await page.evaluate(()=>window.webRenderResult.error));
+ await page.locator('#follow-links').uncheck();
  await page.locator('#source').fill(await readFile(resolve(here,'fixtures/links.html'),'utf8'));
  await page.locator('#width').fill('120');await page.locator('#height').fill('160');
  await page.waitForFunction(()=>window.webRenderResult?.artifact?.width===120&&window.webRenderResult.artifact.webRender.links.some(r=>r[1].includes('/first?')),{},{timeout:90000});
@@ -32,7 +33,7 @@ try{
  assert.deepEqual(pixel(Math.floor(plain.glyphs[0][1]+5),Math.floor(plain.glyphs[0][2]+15)),[255,255,255]);report.checks.push('actual blue underline, author red override, non-href anchor has no underline');
  const point=await canvasPoint(plain.glyphs[0][1]+5,plain.glyphs[0][2]+5),before=posts.length;await page.mouse.move(point.x,point.y);await page.waitForFunction(()=>document.querySelector('#output').style.cursor==='default');await page.mouse.click(point.x,point.y);assert.equal(posts.length,before);report.checks.push('non-href anchor has default cursor and emits no click');
  const icon=links.find(r=>r[1]==='https://example.test/icon');assert(icon);assert.deepEqual(pixel(Math.floor(icon[2]+icon[4]/2),Math.floor(icon[3]+icon[5]/2)),[255,0,0]);await clickAt(icon[2]+icon[4]/2,icon[3]+icon[5]/2,icon[1]);report.checks.push('HTML anchor CSS currentColor reaches affine-mapped embedded SVG and picks source anchor');
- assert.equal(consoleLogs.length,4);assert.equal(posts.length,4);assert(errors.length===0,errors.join('\n'));assert.equal(page.url(),origin);report.checks.push('clicks log bounded URLs/source nodes in browser console and server endpoint without navigation');
+ assert.equal(consoleLogs.length,4);assert.equal(posts.length,4);assert(errors.length===0,errors.join('\n'));assert.equal(page.url(),origin);report.checks.push('link diagnostics mode logs bounded URLs/source nodes in browser console and server endpoint');
  const invalidOrigin=await page.request.post(origin+'events',{headers:{Origin:'https://example.invalid','Content-Type':'application/json'},data:{type:'link-click',sourceNode:1,href:'x',x:1,y:1}});assert.equal(invalidOrigin.status(),403);
  const malformed=await page.request.post(origin+'events',{headers:{Origin:origin.replace(/\/$/,''),'Content-Type':'application/json'},data:null});assert.equal(malformed.status(),400);report.checks.push('event transport rejects foreign origin and malformed event');
  await page.screenshot({path:resolve(outDir,'links.png'),fullPage:true});report.events=posts;report.console=consoleLogs;report.regions=links;report.status='PASS';

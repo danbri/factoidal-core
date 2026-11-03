@@ -1,5 +1,6 @@
 import WebRenderRDF
 import WebRenderFont
+import WebDocument
 
 open L4Factoidal
 private def byte (v : Float) : String := toString ((max 0 (min 255 (v*255))).round.toUInt32.toNat)
@@ -14,6 +15,15 @@ private def pixels (scene : Rendering.Scene) (w h : Nat) : Except String String 
 def main (args : List String) : IO UInt32 := do
   match args with
   | path::width::height::flags =>
+    if flags == ["--font-requests"] then
+      IO.println (WebRenderFontRequests.compile (← IO.FS.readFile path))
+      return 0
+    if let ["--document",options] := flags then
+      let some w := width.toNat? | throw (IO.userError "invalid width")
+      let some h := height.toNat? | throw (IO.userError "invalid height")
+      if w > 4096 || h > 4096 then throw (IO.userError "viewport exceeds4096")
+      IO.println (WebDocument.compile (← IO.FS.readFile path) (← IO.FS.readFile options) w.toUInt32 h.toUInt32)
+      return 0
     let fontPath := match flags with
       | ["--font-data",path] | ["--font-data",path,"--pixels"] | ["--pixels","--font-data",path] => some path
       | _ => none

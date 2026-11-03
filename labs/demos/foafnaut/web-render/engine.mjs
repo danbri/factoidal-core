@@ -33,6 +33,33 @@ export async function compileWithFontData(source,fontData,width,height){
 }
 
 const linkWires=new WeakMap();
+async function documentCall(source,options,width=1,height=1){
+  if(typeof source!=='string'||source.includes('\0')||new TextEncoder().encode(source).length>1048576)throw Error('Document input exceeds transport limit');
+  if(![width,height].every(n=>Number.isInteger(n)&&n>0&&n<=4096))throw Error('Invalid document viewport');
+  const request=JSON.stringify({...options,...(options.fontData?{fontData:typeof options.fontData==='string'?options.fontData:JSON.stringify(options.fontData)}:{})});
+  if(request.includes('\u0000')||new TextEncoder().encode(request).length>20971520)throw Error('Document request exceeds transport limit');
+  const module=await(pending??=createModule());
+  const ptr=module.ccall('web_document_call','number',['string','string','number','number'],[source,request,width,height]);
+  if(!ptr)throw Error('Lean document allocation failed');
+  let result;try{result=JSON.parse(module.UTF8ToString(ptr));}finally{module.ccall('web_render_free',null,['number'],[ptr]);}
+  if(result?.error)throw Error(result.error);return result;
+}
+export const inspectDocument=(source,options={})=>documentCall(source,{...options,op:'inspect'});
+export const documentFontRequests=(source,options={})=>documentCall(source,{...options,op:'fontRequests'});
+export async function compileDocument(source,width,height,options={}){
+  const result=await documentCall(source,{...options,op:'render'},width,height);
+  if(result.abi!=='lean-svg-v1'||result.width!==width||result.height!==height||!Array.isArray(result.data)||!result.data.every(Number.isFinite))throw Error('Unexpected Lean document artifact');
+  return result;
+}
+export const fontRequests=source=>documentFontRequests(source);
+export const compileFont=(source,data,width,height)=>compileWithFontData(source,typeof data==='string'?data:JSON.stringify(data),width,height);
+
+// Project retained source boxes to the existing Lean containment/painter picker.
+export async function hitNode(artifact,x,y,allowedNodeIds){
+  const allowed=new Set(allowedNodeIds);
+  const links=(artifact.webRender?.boxes??[]).filter(row=>allowed.has(row[0])).map(([id,bx,by,w,h])=>[id,'',bx,by,w,h]);
+  return hitLink({...artifact,webRender:{links}},x,y);
+}
 // The rectangles and DOM anchor targets were emitted by Lean layout. Lean also
 // performs containment/painter-order picking; host geometry is only coordinates.
 export async function hitLink(artifact,x,y){

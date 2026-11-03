@@ -88,7 +88,7 @@ def styleSource (dom : DOM.Dom) : String := Id.run do
       sheets := text :: sheets
   return String.intercalate "\n" sheets.reverse
 
-def styleRules (dom : DOM.Dom) : Except String (List Rendering.CSS.Rule) := do
+def validateStyleBoundaries (dom : DOM.Dom) : Except String Unit := do
   for node in dom.nodes do
     if DOM.Dom.isHtmlElement node "link" then
       let rel := ((Rendering.CSS.attrValue node "rel").toLower.replace "\t" " " |>.replace "\n" " " |>.replace "\r" " ").splitOn " "
@@ -104,6 +104,8 @@ def styleRules (dom : DOM.Dom) : Except String (List Rendering.CSS.Rule) := do
                  (target.parent.map (fun p => (dom.get p).ns != some DOM.svgNS)).getD true &&
                  rule.declarations.any (fun d => Rendering.CSS.htmlProperties.contains d.property)) then
               throw "unsupported SVG stylesheet affecting HTML layout or outer SVG computed style"
+def styleRules (dom : DOM.Dom) : Except String (List Rendering.CSS.Rule) := do
+  validateStyleBoundaries dom
   Rendering.CSS.parse (styleSource dom)
 
 /-- SVG embedding is injected only at the frontend adapter boundary. Tests can
@@ -159,13 +161,13 @@ def embedding (dom : DOM.Dom) (id : Nat) (style : Rendering.CSS.Computed) (width
   return placeSVG scene id style width height
 
 /-- One source-bound index per render, shared by all embedded SVG roots. -/
-def makeEmbedding (dom : DOM.Dom) : Except String Rendering.Layout.Embedding := do
+def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none) : Except String Rendering.Layout.Embedding := do
   if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
     return embedding dom
-  if dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
+  if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
   let (root,tree) ← documentNamespaceTree dom
-  let context ← NativeSVG.ReferenceContext.create tree
+  let context ← NativeSVG.ReferenceContext.create tree documentURL
   return fun id style width height => do
     if Float.ofNat width.toUInt32.toNat != width || Float.ofNat height.toUInt32.toNat != height then
       throw "unsupported fractional embedded SVG viewport"

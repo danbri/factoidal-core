@@ -1,0 +1,138 @@
+import WebRenderFontRequests
+import WebRenderScript
+import L4Factoidal.Syntax.IriResolve
+
+/-! Browser document transaction. Lean discovers resources, applies DOM commands,
+orders supplied CSS, collects font requests and renders the resulting arena.
+Hosts fetch bytes and execute the separately bounded JavaScript engine. -/
+namespace WebDocument
+open L4Factoidal
+
+private def str (j : JSON.Json) (key : String) (fallback : String := "") : String :=
+  match j.field? key with | some (.string s) => s | _ => fallback
+private def attr (n : DOM.Node) (key : String) := Rendering.CSS.attrValue n key
+private def stylesheet (n : DOM.Node) : Bool :=
+  DOM.Dom.isHtmlElement n "link" &&
+    (((attr n "rel").toLower.replace "\t" " " |>.replace "\n" " " |>.replace "\r" " ").splitOn " ").contains "stylesheet"
+
+private def activeSheet (n : DOM.Node) : Except String Bool := do
+  if Rendering.CSS.hasAttribute n "disabled" || !["","text/css"].contains (attr n "type") then return false
+  if (attr n "media").toLower == "print" then return false
+  if !["","all","screen"].contains (attr n "media").toLower then throw "unsupported stylesheet media condition"
+  return true
+
+private def validateResources (dom : DOM.Dom) (request : JSON.Json) : Except String Unit := do
+  let .array resources := (request.field? "resources").getD (.array []) | throw "document resources must be an array"
+  if resources.length > 64 then throw "document resource limit exceeded"
+  let mut ids : List Nat := []
+  let mut bytes := 0
+  for resource in resources do
+    let .object fields := resource | throw "document resource must be an object"
+    if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate resource field"
+    let some (.number raw) := resource.field? "nodeId" | throw "resource nodeId required"
+    let some id := raw.toNat? | throw "resource nodeId must be natural"
+    let some node := dom.nodes[id]? | throw "unknown resource nodeId"
+    if ids.contains id then throw "duplicate resource nodeId"
+    if !(dom.treeOrder 0).contains id || !(stylesheet node || DOM.Dom.isHtmlElement node "script") then
+      throw "resource is not a connected stylesheet or script"
+    let some (.string source) := resource.field? "source" | throw "resource source must be a string"
+    if source.utf8ByteSize > 1048576 then throw "resource exceeds1MiB"
+    bytes := bytes+source.utf8ByteSize
+    if bytes > 4194304 then throw "resources exceed4MiB"
+    ids := id::ids
+
+def prepareDOM (html : String) (request : JSON.Json) : Except String DOM.Dom := do
+  if html.utf8ByteSize > 1048576 then throw "document HTML exceeds 1MiB"
+  WebRenderScript.applyCommands (DOM.parseHtmlDocument html)
+    ((request.field? "commands").getD (.array []))
+
+def baseURL (dom : DOM.Dom) (url : String) : String := Id.run do
+  for id in dom.treeOrder 0 do
+    let n := dom.get id
+    if DOM.Dom.isHtmlElement n "base" && Rendering.CSS.hasAttribute n "href" then
+      return Syntax.resolveIri url (attr n "href")
+  return url
+
+private def supplied (request : JSON.Json) (id : Nat) : Except String String := do
+  let .array resources := (request.field? "resources").getD (.array [])
+    | throw "document resources must be an array"
+  if resources.length > 64 then throw "document resource limit exceeded"
+  let foundResources := resources.filter (fun r => r.field? "nodeId" == some (.number (toString id)))
+  let [resource] := foundResources | throw s!"stylesheet resource missing or duplicated for node {id}"
+  let some (.string source) := resource.field? "source" | throw "stylesheet source must be a string"
+  if source.utf8ByteSize > 1048576 then throw "stylesheet exceeds 1MiB"
+  return source
+
+def rules (dom : DOM.Dom) (request : JSON.Json) : Except String (List Rendering.CSS.Rule) := do
+  -- Preserve the existing SVG/HTML stylesheet boundary validation. This copy
+  -- removes only the external-fetch refusal; it is never used for layout.
+  let validation := {dom with nodes := dom.nodes.map (fun n =>
+    if stylesheet n then {n with attrs := n.attrs.filter (fun a => a.lname != "href")} else n)}
+  WebRender.validateStyleBoundaries validation
+  let mut sheets : List String := []
+  let mut bytes := 0
+  for id in dom.treeOrder 0 do
+    let n := dom.get id
+    let source ← if DOM.Dom.isHtmlElement n "style" then do
+        if ← activeSheet n then pure ((dom.textContent id).getD "") else pure ""
+      else if stylesheet n && Rendering.CSS.hasAttribute n "href" then do
+        if ← activeSheet n then supplied request id else pure ""
+      else pure ""
+    bytes := bytes+source.utf8ByteSize
+    if bytes > 2097152 then throw "document stylesheets exceed 2MiB"
+    sheets := source::sheets
+  Rendering.CSS.parse (String.intercalate "\n" sheets.reverse)
+
+def inspect (dom : DOM.Dom) (url : String) : Except String JSON.Json := do
+  let base := baseURL dom url
+  let snapshot := WebRenderScript.snapshot dom
+  let mut sheets : List JSON.Json := []
+  for id in dom.treeOrder 0 do
+    let n := dom.get id
+    if stylesheet n && Rendering.CSS.hasAttribute n "href" && (← activeSheet n) then
+      sheets := .object [("nodeId",.number (toString id)),("href",.string (attr n "href")),
+        ("url",.string (Syntax.resolveIri base (attr n "href")))]::sheets
+  let scripts := match snapshot.field? "scripts" with
+    | some (.array xs) => (xs.filter (fun s => ["","text/javascript","application/javascript"].contains (str s "type").toLower)).map fun script =>
+      match script with
+      | .object fields => .object (fields ++ [("url",.string (Syntax.resolveIri base (str script "src")))])
+      | other => other
+    | _ => []
+  return .object [("nodes",(snapshot.field? "nodes").getD (.array [])),
+    ("scripts",.array scripts),("stylesheets",.array sheets.reverse),("baseURL",.string base)]
+
+def run (html : String) (request : JSON.Json) (width height : Nat) : Except String String := do
+  let .object fields := request | throw "document request must be an object"
+  if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
+  let dom ← prepareDOM html request
+  validateResources dom request
+  if dom.nodes.any (fun n => DOM.Dom.isHtmlElement n "script" && (attr n "type").toLower == "module") then
+    throw "unsupported JavaScript module script"
+  let op := str request "op" "render"
+  if op == "inspect" then return (← inspect dom (str request "url")).toString
+  let rules ← rules dom request
+  if op == "fontRequests" then
+    return WebRenderFontRequests.requestsJSON (← WebRenderFontRequests.collectDOMWithRules dom rules)
+  if op != "render" then throw "unknown document operation"
+  if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported document viewport"
+  let fontData := str request "fontData"
+  if !fontData.isEmpty then
+    let _ ← WebRenderFontRequests.collectDOMWithRules dom rules
+  let face ← if fontData.isEmpty then pure none else
+    some <$> Rendering.FontProvider.Face.decode fontData
+  let font := match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont
+  let url := baseURL dom (str request "url")
+  let embedding ← WebRender.makeEmbedding dom (if url.isEmpty then none else some url)
+  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding width height
+  WebRender.artifact scene boxes face
+
+@[export web_document_compile]
+def compile (html request : String) (width height : UInt32) : String :=
+  if request.utf8ByteSize > 20971520 then WebRender.errorJSON "document request exceeds20MiB"
+  else match JSON.parseJsonText request with
+  | .error _ => WebRender.errorJSON "invalid document request JSON"
+  | .ok (j,pos) =>
+    if !(request.toList.drop pos).all Char.isWhitespace then WebRender.errorJSON "trailing document request data"
+    else match run html j width.toNat height.toNat with
+      | .ok value => value | .error message => WebRender.errorJSON message
+end WebDocument
