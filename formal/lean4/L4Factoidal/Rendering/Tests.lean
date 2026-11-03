@@ -11,6 +11,28 @@ private def run (html css : String) : Except String (Scene × Array Box) := do
   Layout.render dom (← CSS.parse css) font noSVG 120 100
 private def css := "body {margin:0;font-size:7px;line-height:7px} div {width:24px;background:red}"
 private def wrapped := run "<div id='box'>AA BB</div>" css
+/-- The parent flushes its first line before entering the child, then resumes
+at the child's bottom. The following sibling starts below the entire parent. -/
+private def mixedFlow := run "<div>A<div>B</div>C</div><div>D</div>" css
+#guard (mixedFlow.toOption.map fun r => r.1.glyphRuns.toList.map (fun g =>
+  (g.text,(g.glyphs[0]?).map (·.y)))) ==
+    some [("A",some 0),("B",some 7),("C",some 14),("D",some 21)]
+
+/-- Refusals visit descendants before later siblings. -/
+private def firstRefusal := run "<div><span><img></span><input></div>" css
+#guard (match firstRefusal with
+  | .error why => why
+  | .ok _ => "") == "unsupported HTML layout element: img"
+
+/-- The depth budget applies on entry to a descendant, including a text leaf. -/
+private def depthRefusal : Except String (Array Inline) := do
+  let dom := DOM.parseHtmlDocument "<span id='root'>A</span>"
+  let some id := dom.getElementById 0 "root" | throw "missing test element"
+  inlineItems dom (← CSS.computeAll dom []) noSVG 120 1 id
+#guard (match depthRefusal with
+  | .error why => why
+  | .ok _ => "") == "unsupported HTML nesting depth (maximum 64)"
+
 #guard wrapped matches .ok _
 #guard (wrapped.toOption.map fun r => r.1.glyphRuns.size) == some 2
 #guard (wrapped.toOption.map fun r => r.1.glyphRuns.toList.map (fun g => g.glyphs.toList.map (·.y))) == some [[0,0],[7,7]]

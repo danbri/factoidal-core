@@ -111,22 +111,27 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
   if !word.isEmpty then result := .word id style word start :: result
   return result.reverse
 
-/-- Inline descendants are flattened in DOM order; the nesting budget is a
-profile error, never a silent truncation. Siblings use a fold. -/
-def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (available : Float) :
-    Nat → Nat → Except String (Array Inline)
-  | 0, _ => throw "unsupported HTML nesting depth (maximum 64)"
-  | fuel+1, id => do
+/- At most k children per node gives at most (k+1)^depth node visits,
+including visits at depth zero: V(0)=1, V(d+1) ≤ 1+k*V(d) ≤ (k+1)^(d+1).
+This bound follows from the input, including for cyclic arenas. It only
+bounds iterations; the loop exits as soon as the pending work is empty. -/
+private def visitBound (dom : Dom) (depth : Nat) : Nat :=
+  let k := dom.nodes.foldl (fun k n => max k n.kids.size) 0
+  (k+1)^depth
+
+/-- A leaf emits inline items; an ordinary inline element visits its children. -/
+private def inlineStep (dom : Dom) (styles : Array Computed) (embedding : Embedding)
+    (available : Float) (id : Nat) : Except String (Sum (Array Inline) (Array Nat)) := do
     let n := dom.get id
     let s := styles[id]!
-    if s.display == .none then return #[]
-    if n.type == .text then return (textItems id s n.data).toArray
-    if n.type != .element then return #[]
+    if s.display == .none then return .inl #[]
+    if n.type == .text then return .inl (textItems id s n.data).toArray
+    if n.type != .element then return .inl #[]
     if n.ns != some DOM.htmlNS && n.ns != some DOM.svgNS then
       throw "unsupported foreign namespace in HTML layout"
     if ["img","input","textarea","select","video","audio","canvas","iframe","object","embed","table","ruby","ul","ol","li"].contains n.lname then
       throw s!"unsupported HTML layout element: {n.lname}"
-    if n.lname == "br" then return #[.lineBreak s]
+    if n.lname == "br" then return .inl #[.lineBreak s]
     if s.display == .block then throw "unsupported block descendant inside inline context"
     if n.ns != some DOM.svgNS && (s.background.isSome ||
       s.margin.top != 0 || s.margin.right != 0 || s.margin.bottom != 0 || s.margin.left != 0 ||
@@ -139,11 +144,32 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (a
         if v.isEmpty then pure fallback else CSS.number v
       let width := (CSS.resolve available s.width).getD (← attrLength "width" 300)
       let height := (CSS.resolve 150 s.height).getD (← attrLength "height" 150)
-      if width <= 0 || height <= 0 then return #[]
-      return #[.replaced id width height (← embedding id s width height)]
-    let mut out := #[]
-    for child in n.kids do out := out ++ (← inlineItems dom styles embedding available fuel child)
-    return out
+      if width <= 0 || height <= 0 then return .inl #[]
+      return .inl #[.replaced id width height (← embedding id s width height)]
+    return .inr n.kids
+
+/-- Pending node IDs replace recursive calls under the sibling fold.
+Children precede remaining siblings, so both output and errors stay in DOM order. -/
+private def walkInline (dom : Dom) (styles : Array Computed) (embedding : Embedding)
+    (available : Float) (maxVisits depth id : Nat) : Except String (Array Inline) := do
+  let mut pending : List (Nat × Nat) := [(depth,id)]
+  let mut out : Array Inline := #[]
+  for _ in [:maxVisits+1] do
+    match pending with
+    | [] => return out
+    | (0,_) :: _ => throw "unsupported HTML nesting depth (maximum 64)"
+    | (d+1,nodeId) :: rest =>
+      match ← inlineStep dom styles embedding available nodeId with
+      | .inl items =>
+        out := out ++ items
+        pending := rest
+      | .inr children =>
+        pending := children.foldr (fun child todo => (d,child) :: todo) rest
+  throw "internal inline traversal bound exhausted"
+
+def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding)
+    (available : Float) (depth id : Nat) : Except String (Array Inline) :=
+  walkInline dom styles embedding available (visitBound dom depth) depth id
 
 private def translate (x y : Float) : Transform := ⟨1,0,0,1,x,y⟩
 private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Array Node := Id.run do
@@ -288,15 +314,25 @@ private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node 
   | some c => if !s.visible || w <= 0 || h <= 0 then #[] else
     #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
 
-/-- Block children stack vertically, and adjacent inline children share an
-anonymous inline formatting context. Width/height use the CSS content box. -/
-def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding) :
-    Nat → Nat → Float → Float → Float → Except String Result
-  | 0, _, _, _, _ => throw "unsupported HTML nesting depth (maximum 64)"
-  | fuel+1, id, x, y, available => do
+/-- State held by a parent while a block child is laid out. -/
+private structure BlockFrame where
+  id : Nat
+  childDepth : Nat
+  style : Computed
+  outerX : Float
+  outerY : Float
+  innerX : Float
+  innerY : Float
+  width : Float
+  children : List Nat
+  content : Result := {}
+  items : Array Inline := #[]
+
+private def enterBlock (dom : Dom) (styles : Array Computed) (embedding : Embedding)
+    (childDepth id : Nat) (x y available : Float) : Except String (Sum Result BlockFrame) := do
     let n := dom.get id
     let s := styles[id]!
-    if s.display == .none then return {}
+    if s.display == .none then return .inl {}
     if n.type == .element && n.ns != some DOM.htmlNS && n.ns != some DOM.svgNS then
       throw "unsupported foreign namespace in HTML layout"
     if ["table","ul","ol","li"].contains n.lname then throw s!"unsupported HTML layout element: {n.lname}"
@@ -319,30 +355,70 @@ def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding 
       let sw := max 0 ((CSS.resolve available s.width).getD intrinsicWidth)
       let sh := max 0 ((CSS.resolve 0 s.height).getD intrinsicHeight)
       let nodes ← embedding id s sw sh
-      return {nodes := #[.group none (translate outerX outerY) nodes], boxes := #[⟨id,outerX,outerY,sw,sh⟩],height := margin.top+sh+margin.bottom}
-    let mut content : Result := {}
-    let mut inline : Array Inline := #[]
-    for child in n.kids do
-      let cs := styles[child]!
-      if cs.display == .block then
-        if !inline.isEmpty then
-          content := append content (← inlineLayout font inline innerX (innerY+content.height) width (some s))
-          inline := #[]
-        content := append content (← block dom styles font embedding fuel child innerX (innerY+content.height) width)
-      else
-        if cs.display == .inlineBlock then throw "unsupported CSS inline-block layout"
-        inline := inline ++ (← inlineItems dom styles embedding width fuel child)
-    if !inline.isEmpty then content := append content (← inlineLayout font inline innerX (innerY+content.height) width (some s))
-    if let .percent _ := s.height then throw "unsupported percentage height without definite containing height"
-    let height := max 0 ((CSS.resolve 0 s.height).getD content.height)
-    let borderWidth := width+padding.left+padding.right
-    let borderHeight := height+padding.top+padding.bottom
-    let nodes := background id s outerX outerY borderWidth borderHeight ++ content.nodes
-    let nodes := if s.clipOverflow then
-      #[.clipped none identity ⟨outerX,outerY,borderWidth,borderHeight,identity⟩ nodes.toList]
-      else nodes
-    let box : Box := ⟨id,outerX,outerY,borderWidth,borderHeight⟩
-    return {content with nodes, boxes := #[box] ++ content.boxes, height := margin.top+borderHeight+margin.bottom}
+      return .inl {nodes := #[.group none (translate outerX outerY) nodes], boxes := #[⟨id,outerX,outerY,sw,sh⟩],height := margin.top+sh+margin.bottom}
+    return .inr {id,childDepth,style := s,outerX,outerY,innerX,innerY,width,children := n.kids.toList}
+
+private def flushInline (font : FontProfile) (f : BlockFrame) : Except String BlockFrame := do
+  if f.items.isEmpty then return f
+  let row ← inlineLayout font f.items f.innerX (f.innerY+f.content.height) f.width (some f.style)
+  return {f with content := append f.content row, items := #[]}
+
+private def finishBlock (font : FontProfile) (frame : BlockFrame) : Except String Result := do
+  let f ← flushInline font frame
+  let s := f.style
+  if let .percent _ := s.height then throw "unsupported percentage height without definite containing height"
+  let height := max 0 ((CSS.resolve 0 s.height).getD f.content.height)
+  let borderWidth := f.width+s.padding.left+s.padding.right
+  let borderHeight := height+s.padding.top+s.padding.bottom
+  let nodes := background f.id s f.outerX f.outerY borderWidth borderHeight ++ f.content.nodes
+  let nodes := if s.clipOverflow then
+    #[.clipped none identity ⟨f.outerX,f.outerY,borderWidth,borderHeight,identity⟩ nodes.toList]
+    else nodes
+  let box : Box := ⟨f.id,f.outerX,f.outerY,borderWidth,borderHeight⟩
+  return {f.content with nodes, boxes := #[box] ++ f.content.boxes, height := s.margin.top+borderHeight+s.margin.bottom}
+
+private inductive BlockAction where
+  | enter (depth id : Nat) (x y available : Float)
+  | children (frame : BlockFrame)
+  | deliver (result : Result)
+
+/-- Block children stack vertically. Finish the current inline run before
+entering a block child, and resume its parent only after the child returns.
+The loop uses at most three actions per visited block (entry, finish,
+delivery) plus one action per child edge. -/
+def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding)
+    (depth id : Nat) (x y available : Float) : Except String Result := do
+  let maxVisits := visitBound dom depth
+  let mut parents : List BlockFrame := []
+  let mut action := BlockAction.enter depth id x y available
+  for _ in [:4*maxVisits+1] do
+    match action with
+    | .enter 0 _ _ _ _ => throw "unsupported HTML nesting depth (maximum 64)"
+    | .enter (d+1) source left top width =>
+      match ← enterBlock dom styles embedding d source left top width with
+      | .inl result => action := .deliver result
+      | .inr frame => action := .children frame
+    | .children frame =>
+      match frame.children with
+      | [] => action := .deliver (← finishBlock font frame)
+      | child :: rest =>
+        let frame := {frame with children := rest}
+        let cs := styles[child]!
+        if cs.display == .block then
+          let frame ← flushInline font frame
+          parents := frame :: parents
+          action := .enter frame.childDepth child frame.innerX (frame.innerY+frame.content.height) frame.width
+        else
+          if cs.display == .inlineBlock then throw "unsupported CSS inline-block layout"
+          let more ← walkInline dom styles embedding frame.width maxVisits frame.childDepth child
+          action := .children {frame with items := frame.items ++ more}
+    | .deliver result =>
+      match parents with
+      | [] => return result
+      | parent :: rest =>
+        parents := rest
+        action := .children {parent with content := append parent.content result}
+  throw "internal block traversal bound exhausted"
 
 /-- The nearest HTML anchor with an href attribute, including href="". -/
 def anchorAncestor (dom : Dom) : Nat → Nat → Option (Nat × String)

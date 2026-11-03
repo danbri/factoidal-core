@@ -167,61 +167,87 @@ mutual
     | node :: rest => node.lower parent groups ++ Node.lowerList parent groups rest
   termination_by nodes => sizeOf nodes
 end
+/-- One DFS frame retains a cursor over siblings. Pushing a group does not copy
+its subtree or flatten its children; its untouched siblings keep their frame. -/
+private structure LowerFrame where
+  parent : Transform
+  /-- Innermost first; descent conses one ID and shares the outer path. -/
+  revGroups : List (Option String)
+  /-- Innermost first: folding `addClip` restores outermost-first clip order. -/
+  clips : List ClipRect
+  nodes : List Node
+
+private def applyClips (clips : List ClipRect) (item : PaintItem) : PaintItem :=
+  clips.foldl (fun p clip => PaintItem.addClip clip p) item
+
+/-- Only the termination proof examines this weight. It is independent of the
+possibly growing transform/group/clip context; no runtime fuel cutoff is used. -/
+private noncomputable def lowerWeight (todo : List LowerFrame) : Nat :=
+  (todo.map (fun frame => sizeOf frame.nodes + 1)).sum
+
+/-- Tail calls for children *and* siblings; neither the input tree depth nor
+its width is recursion depth on the native/WASM call stack. -/
+private def lowerStack (todo : List LowerFrame) (out : List PaintItem) : List PaintItem :=
+  match todo with
+  | [] => out.reverse
+  | ⟨_, _, _, []⟩ :: more => lowerStack more out
+  | ⟨p, gs, clips, .paint item :: ns⟩ :: more =>
+    lowerStack (⟨p, gs, clips, ns⟩ :: more)
+      (applyClips clips {item with primitive := item.primitive.lowerUnder p gs.reverse} :: out)
+  | ⟨p, gs, clips, .group id tx cs :: ns⟩ :: more =>
+    lowerStack (⟨Math.Affine2.compose .float p tx, id :: gs, clips, cs⟩ ::
+      ⟨p, gs, clips, ns⟩ :: more) out
+  | ⟨p, gs, clips, .clipped id tx clip cs :: ns⟩ :: more =>
+    lowerStack (⟨Math.Affine2.compose .float p tx, id :: gs, clip.lowerUnder p :: clips, cs⟩ ::
+      ⟨p, gs, clips, ns⟩ :: more) out
+termination_by lowerWeight todo
+decreasing_by all_goals simp [lowerWeight] <;> omega
+
+private def LowerFrame.paints (f : LowerFrame) : List PaintItem :=
+  (Node.lowerList f.parent f.revGroups.reverse f.nodes).map (applyClips f.clips)
+
+/-- The reverse accumulator followed by the reference meaning of all pending
+frames is invariant. In particular the clip applied by a group uses its
+parent's transform, independently of its children's content transform. -/
+private theorem lowerStack_eq : ∀ (todo : List LowerFrame) (out : List PaintItem),
+    lowerStack todo out = out.reverse ++ todo.flatMap LowerFrame.paints
+  | [], out => by simp [lowerStack]
+  | ⟨p, gs, clips, []⟩ :: more, out => by
+    rw [lowerStack, lowerStack_eq]
+    simp [LowerFrame.paints, Node.lowerList]
+  | ⟨p, gs, clips, .paint item :: ns⟩ :: more, out => by
+    rw [lowerStack, lowerStack_eq]
+    simp [LowerFrame.paints, Node.lowerList, Node.lower, List.append_assoc]
+  | ⟨p, gs, clips, .group id tx cs :: ns⟩ :: more, out => by
+    rw [lowerStack, lowerStack_eq]
+    simp [LowerFrame.paints, Node.lowerList, Node.lower, List.append_assoc]
+  | ⟨p, gs, clips, .clipped id tx clip cs :: ns⟩ :: more, out => by
+    rw [lowerStack, lowerStack_eq]
+    simp [LowerFrame.paints, Node.lowerList, Node.lower, List.append_assoc,
+      applyClips, List.map_map, Function.comp_def]
+termination_by todo _ => lowerWeight todo
+decreasing_by all_goals simp [lowerWeight] <;> omega
+
+/-- Lower the complete ordered forest in one traversal, including deep groups. -/
+def Node.lowerListTR (parent : Transform) (groups : List (Option String))
+    (nodes : List Node) : List PaintItem :=
+  lowerStack [⟨parent, groups.reverse, [], nodes⟩] []
+
 def Node.lowerTR (parent : Transform) (groups : List (Option String))
     (node : Node) : List PaintItem :=
-  match node with
-  | .paint item => [{item with primitive := item.primitive.lowerUnder parent groups}]
-  | .group id transform children =>
-      (children.foldl (fun acc child =>
-        (child.lowerTR (Math.Affine2.compose .float parent transform) (groups ++ [id])).reverse ++ acc) []).reverse
-  | .clipped id content clip children =>
-      ((children.foldl (fun acc child =>
-        (child.lowerTR (Math.Affine2.compose .float parent content) (groups ++ [id])).reverse ++ acc) []).reverse).map
-          (PaintItem.addClip (clip.lowerUnder parent))
-termination_by sizeOf node
+  Node.lowerListTR parent groups [node]
 
+private theorem lowerListTR_eq (nodes : List Node) (parent : Transform)
+    (groups : List (Option String)) :
+    Node.lowerListTR parent groups nodes = Node.lowerList parent groups nodes := by
+  rw [Node.lowerListTR, lowerStack_eq]
+  simp [LowerFrame.paints, applyClips]
 
 theorem Node.lowerTR_eq (node : Node) :
     ∀ parent groups, node.lowerTR parent groups = node.lower parent groups := by
-  refine Node.rec
-    (motive_1 := fun node => ∀ parent groups,
-      node.lowerTR parent groups = node.lower parent groups)
-    (motive_2 := fun (nodes : List Node) => ∀ (parent : Transform) (groups : List (Option String)) (acc : List PaintItem),
-      (nodes.foldl (fun acc child => (child.lowerTR parent groups).reverse ++ acc) acc).reverse =
-        acc.reverse ++ Node.lowerList parent groups nodes)
-    ?_ ?_ ?_ ?_ ?_ node
-  · intro primitive parent groups
-    simp [Node.lowerTR, Node.lower]
-  · intro id transform children ih parent groups
-    simpa [Node.lowerTR, Node.lower] using
-      ih (Math.Affine2.compose .float parent transform) (groups ++ [id]) []
-  · intro id transform clip children ih parent groups
-    simpa only [Node.lowerTR, Node.lower, List.reverse_nil, List.nil_append] using
-      congrArg (List.map (PaintItem.addClip (clip.lowerUnder parent)))
-        (ih (Math.Affine2.compose .float parent transform) (groups ++ [id]) [])
-  · intro parent groups acc
-    simp [Node.lowerList]
-  · intro head tail ihHead ihTail parent groups acc
-    simp only [List.foldl_cons]
-    rw [ihTail, List.reverse_append, List.reverse_reverse, ihHead]
-    simp only [Node.lowerList, List.append_assoc]
-
-/-- Reverse-accumulator sibling lowering using the fast recursive group twin. -/
-def Node.lowerListTR (parent : Transform) (groups : List (Option String))
-    (nodes : List Node) : List PaintItem :=
-  (nodes.foldl (fun acc node => (node.lowerTR parent groups).reverse ++ acc) []).reverse
-
-private theorem lowerFold_eq (nodes : List Node) (parent : Transform)
-    (groups : List (Option String)) (acc : List PaintItem) :
-    (nodes.foldl (fun acc node => (node.lowerTR parent groups).reverse ++ acc) acc).reverse =
-      acc.reverse ++ Node.lowerList parent groups nodes := by
-  induction nodes generalizing acc with
-  | nil => simp [Node.lowerList]
-  | cons head tail ih =>
-      simp only [List.foldl_cons]
-      rw [ih, List.reverse_append, List.reverse_reverse, Node.lowerTR_eq]
-      simp only [Node.lowerList, List.append_assoc]
-
+  intro parent groups
+  rw [Node.lowerTR, lowerListTR_eq]
+  simp [Node.lowerList]
 
 @[csimp] theorem Node.lower_eq_lowerTR : @Node.lower = @Node.lowerTR := by
   funext parent groups node
@@ -229,9 +255,7 @@ private theorem lowerFold_eq (nodes : List Node) (parent : Transform)
 
 @[csimp] theorem Node.lowerList_eq_lowerListTR : @Node.lowerList = @Node.lowerListTR := by
   funext parent groups nodes
-  exact (show Node.lowerListTR parent groups nodes = Node.lowerList parent groups nodes by
-    simpa only [Node.lowerListTR, List.reverse_nil, List.nil_append] using
-      lowerFold_eq nodes parent groups []).symm
+  exact (lowerListTR_eq nodes parent groups).symm
 
 
 /-- Partitioning an ordered scene into batches preserves its precise painter
