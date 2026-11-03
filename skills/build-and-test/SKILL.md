@@ -296,6 +296,10 @@ Both files are gitignored (`formal/fstar/.gitignore`).
 
 ## Cross-references
 
+- [HTML, SVG, text and portable rendering](../../docs/designissues/2026-10-30-document-layout-renderers.md)
+  records the Foafnaut backend boundaries, official SVG test limitations and
+  proposed CPU/embedded validation. CPU artifacts are not GPU visual passes.
+
 - `fstar-env` skill — toolchain setup, z3 install, opam switch.
 - `fast-verify-extract` skill — skip the full `./build-ocaml.sh` cycle
   for a single-module change: `.checked` caching, targeted

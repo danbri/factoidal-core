@@ -554,3 +554,51 @@ The settings also reach the parser and module checks. The qt4tests runner
 selects restrictions from negative feature dependencies. See the
 [design record](../../docs/designissues/2026-10-29-processor-feature-settings.md)
 and [measured report](../../docs/20261029-processor-feature-settings.md).
+
+## Solving retained graphics scenes (2026-11-01)
+
+The initial retained-scene source is the lab module
+`labs/demos/foafnaut/Solving.lean`, compiled by
+`labs/demos/foafnaut/build-engines.sh`. It reuses `NativeGraphics.Shape` and
+`NativeGeometry.hit`; its current scene transform is integer translation and
+its clip is an integer rectangle. Do not describe the current SVG parser or
+WebGPU path as consuming this scene yet. The evidence and open integration
+steps are recorded in
+[`docs/20261101-solving-scene-slice.md`](../../docs/20261101-solving-scene-slice.md).
+`SolvingSVG.lean` adds a `RetainedScene` envelope over complete native nodes
+and nested SVG display nodes. `SVG.lean` now retains `<g>` boundaries, IDs and
+local transforms in `NativeSVG.DisplayNode`. A cached painter list is tied to
+that tree by `Scene.loweringCorrect`; order and transform/path accumulation are
+proved. `paintCount_eq_lowerLength` and `paintCountList_eq_lowerLength` prove
+the structural count used for the parser limit agrees with lowered paint count,
+without allocating temporary primitive lists at each group. The SVG CPU
+reference probes share one packed array; `rows_offsets_eq_flattened_length` and
+`Scene.data_size_eq_record_cursor` prove the cursor advances match the buffer.
+`display="none"` removes subtrees after strict parsing, while inherited
+`visibility="hidden"`/`collapse` retains zero-opacity paint; a Lean theorem
+establishes that opacity result. The picker is geometric and does not model
+browser `pointer-events`.
+Exact SVG and programmatic round-trip theorems preserve the adapter's source scenes, and
+mixed producer lists are refused. The renderers still consume producer-specific
+representations; this is not yet a common geometry algebra, compositing surface
+model or WebGPU proof boundary. Evidence and open steps:
+[`docs/20261101-solving-scene-slice.md`](../../docs/20261101-solving-scene-slice.md)
+and the [scene design record](../../docs/designissues/2026-11-01-svg-scene-compositor.md).
+
+The fresh 2026-11-02 build caught a pathLength regression test that compared
+whole JSON artifacts for grouped and ungrouped SVG. Only their retained `tree`
+fields differed; every rendering field was equal. A rendering-equivalence test
+may remove that named inspection field only, must compare all remaining fields,
+and must separately assert the intended distinct tree structures. See the
+[build and package record](../../docs/20261102-foafnaut-macos-build.md).
+That link also exposed an existing unused `Std.Tactic` umbrella import in
+`SVG.lean`, which emitted `initialize_Std_Tactic` outside the small runtime
+cache closure. Source proof checks alone did not detect this link dependency.
+Remove unused broad tactic imports, recheck the unchanged proofs and real WASM
+link, and do not hide missing import closures with linker stubs.
+The same fresh WASM run reached a 10,000-element retained-list stack overflow
+that native guards had not caught. The parser's group-depth bound does not
+bound sibling width. Keep the declarative traversal/count definitions, prove
+paired node/list execution twins equal, check actual compiler reach across
+mutual blocks, and exercise admitted wide groups plus explicit budget refusals
+in WASM. The build record contains the named stack and six exact equalities.

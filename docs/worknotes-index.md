@@ -15,6 +15,22 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-02 | [Browser SVG/WebGPU harness, whole-image diagnostics and fault controls](20261102-svg-browser-harness.md) | this commit | current — unchanged 38-case WPT slice and separate sensitivity controls |
+| 2026-11-01 | [Solving retained scene slice](20261101-solving-scene-slice.md) | this commit | current — Lean scene, hit testing, clip and SVG export; a shared bounded layout certificate now guards the SVG backend; parsed-SVG/WebGPU scene unification remains |
+| 2026-11-01 | [Shared SVG linear strokes](20261101-svg-linear-strokes.md) | 957a060d4; b5f6a9150 | current — two exact same-renderer GPU pairs; six source admissions; independent antialiasing gap remains |
+| 2026-11-01 | [SVG dash numeric refinement](20261101-svg-dash-numeric-refinement.md) | pending | current — whole-result numeric equality and vacuous-output mutation rejection |
+| 2026-11-01 | [SVG dash unit provenance](20261101-svg-dash-unit-provenance.md) | 13f74302e | current — paired value/unit records, kernel proofs, unchanged fixture artifact |
+| 2026-11-01 | [SVG coverage diagnostics](20261101-svg-coverage-diagnostics.md) | 7631f3251 | current — exact-area probe distinguishes sampling quality from browser matching |
+| 2026-11-01 | [SVG pathLength calibration](20261101-svg-pathlength.md) | 7f21726a3 | current — source tests pass; official GPU comparison still fails at stroke edges |
+| 2026-11-01 | [SVG dashed strokes and coverage](20261101-svg-dashed-strokes.md) | pending | current — initial dashed-stroke work and coverage evidence; later linear-stroke expansion is recorded separately |
+| 2026-11-01 | [SVG CSS integration](20261101-svg-css-slice.md) | pending | current — cascade source tests pass; broader CSS remains unsupported |
+| 2026-11-01 | [SVG source artifacts](20261101-svg-source-artifacts.md) | pending | current — source artifact GPU replay matches one existing oracle case |
+| 2026-11-01 | [SVG percentage lengths](20261101-svg-percentage-lengths.md) | pending | current — source tests pass; CSS/strokes still block official cases |
+| 2026-11-01 | [Solving: SVG-scene rendering pipeline](designissues/2026-11-01-svg-scene-compositor.md) | pending | current — proposed shared rendering semantics and proof targets |
+| 2026-11-01 | [Solving ordered source-over batches](20261101-solving-source-over-batching.md) | pending | current — shared SVG CPU compositing operation and kernel-checked order-preserving batch partition theorem |
+| 2026-11-01 | [Signed WGSL scalar controls](20261101-webgpu-signed-shader-controls.md) | pending | current — signed float selection and CPU tests pass; local GPU smoke and fresh WASM build unavailable in this environment |
+| 2026-11-01 | [Shared affine GPU row packing](20261101-affine-gpu-packing.md) | pending | current — representation proofs; GPU numeric refinement remains |
+| 2026-10-30 | [Shared UI geometry, policy and renderer admission](designissues/2026-10-30-shared-ui-policy.md) | pending | current: kernel checks and native regressions; interactive enforcement unfinished |
 | 2026-11-02 | [0.29 release public version pins](20261102-release-029-public-pins.md) | this commit | current |
 | 2026-10-31 | [Readable compositor evidence](20261031-compositor-evidence-explanations.md) | this commit | current |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |
@@ -159,11 +175,33 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-29 | [Schema-aware element-to-map conversion](designissues/2026-10-29-element-map-schema.md) | same commit | component-driven layouts and PSVI values; 33 QT4 cases fixed, two nilled-record fixture disagreements remain visible; targeted build and recursion gates; https://github.com/danbri/factoidal/issues/1101 |
 | 2026-10-30 | [QT4 harness recursion audit classification](20261030-qt4-harness-recursion-audit.md) | same commit | five existing tree-depth recursions classified with actual fuel limits; runner and resource controls unchanged, scoped compiled audit passes; https://github.com/danbri/factoidal/issues/1101 |
 | 2026-10-30 | [QT4 public API, CLI and dataflow integration](20261030-qt4-public-integration.md) | same commit | three tested public nodes and CLI commands; pure inline transform connection; explicit serialized-result wires and unchecked evidence; https://github.com/danbri/factoidal/issues/1210 |
+| 2026-10-30 | [Foafnaut native graphics and SVG lab](designissues/2026-10-30-foafnaut-native-graphics.md) | same commit | current: Lean WASM / raw WebGPU boundary, native demos and executable packaging, pinned SVG reftests and explicit validation limits |
+| 2026-10-30 | [HTML, SVG, text and portable rendering](designissues/2026-10-30-document-layout-renderers.md) | same commit | current SVG/test limits and proposed Lean document/layout/scene pipeline; HarfBuzz boundary; CPU/embedded backend contracts and theorem scope |
+| 2026-10-30 | [FOAFNaut RDF-driven native study](designissues/2026-10-30-foafnaut-rdf-native.md) | same commit | current: typed FOAF graph, Lean radial layout and interaction, temporary GPU bitmap labels, modern visual direction and native packaging |
+
+- [2026-10-30: Lean GPU render plans and remaining host boundary](designissues/2026-10-30-lean-render-plan.md).
+- [2026-10-30: FOAFNaut live presentation admission](20261030-foafnaut-live-presentation.md): opaque Lean state, acknowledged picking, retained approved geometry, 64 WASM/host tests and 12 C checks.
 | 2026-10-30 | [HTML parser and public API integration](20261030-html-public-integration.md) | same commit | current main integrated, both gate sets preserved, public PI/namespace/template/error regressions; fresh native API and HTML/QT4 controls pass; fresh WASM CI remains required; https://github.com/danbri/factoidal-core/pull/269 |
 | 2026-10-30 | [IETF date zero-seconds panic](20261030-parse-ietf-date-zero-seconds.md) | same commit | seconds serialization avoids an empty numeric parse; native stderr regression detects panic fallback even when values match |
 
 | 2026-10-30 | [Hub Data Compositor and shared code output](20261030-hub-data-compositor.md) | same commit | pinned public engine, editable visual pipeline, honest component evidence, shared output controls and focused browser checks |
 
+| 2026-10-30 | [FOAFNaut current-main refresh](20261030-foafnaut-main-refresh.md) | same commit | live presentation retained, engine source hashes agree, 64 Deno tests and 12 C checks; SVG oracle roadmap and official visual limits |
+
+| 2026-10-31 | [SVG independent images and paint fallback](20261031-svg-independent-images.md) | same commit | 38-case denominator preserved; independent browser captures, explicit oracle disagreements, 2 compiler acceptances and zero GPU visual passes |
+
+| 2026-10-31 | [Shared SVG affine algebra and actual GPU comparisons](20261031-svg-affine-gpu.md) | same commit | TOAN reuse, typed scalar backend, transform/precision regressions; browser-host Apple Metal yields 2/38 independent full-image matches; native Deno remains unavailable |
+
+| 2026-10-31 | [Resident raw WebGPU snapshot sessions](20261031-svg-resident-rendering.md) | same commit | retained GPU resources, 68 Deno tests/12 C checks, twenty actual Apple Metal frame/readbacks; measured throughput remains below 12 Hz |
+
+| 2026-10-31 | [Retained SVG linear paths](20261031-svg-linear-paths.md) | — | bounded Lean paths, compound glyphs, real GPU comparison and measured limits |
+
+| 2026-11-01 | [Shared retained SVG linear strokes](20261101-svg-linear-strokes.md) | same commit | open/closed contours, miter fallback, total pathLength, one-opacity union; one official same-renderer GPU reference pair exactly matches |
+
+| 2026-11-01 | [SVG stroke topology contracts](20261101-svg-stroke-topology.md) | same commit | exact open/closed edge theorems over real stroker; unconditional closure mutation rejected |
+| 2026-11-01 | [Solving: one SVG scene, two rendering backends](20261101-solving-backend-comparison.md) | this commit | layered browser scene uses same accepted SVG source in browser renderer and Lean/WebGPU path; Lean now retains nested SVG groups with local transforms, proves the cached painter-order lowering and emits bounded optional tree-inspector JSON; CPU probes now reuse one packed array with a proved record cursor; compositor surfaces, HTML/layout integration and cross-renderer equivalence remain open |
+
+| 2026-11-02 | [FOAFNaut macOS build and Solving package](20261102-foafnaut-macos-build.md) | this commit | fresh engine/package validation, official runtime cache provenance, renderer equality with distinct retained trees, and static browser SVG launcher relocation without Lean |
 | 2026-10-31 | [LWS reader host-authority boundary](20261031-lws-reader-path-confinement.md) | — | current: path confinement, redirect refusal and explicit browser transport limits |
 
 | 2026-10-31 | [Shared component descriptor model](designissues/2026-10-31-component-descriptor-model.md) | same commit | design proposal: one UI/API/CLI model, useful witnesses and human purposes, distinct semantic/authority/evidence scopes |
@@ -173,3 +211,5 @@ worknote, kept as the record of a decision or a measurement),
 
 | 2026-10-31 | [Compositor HTML failure conditions](20261031-compositor-html-failure-analysis.md) | — | three kernel-checked failure lemmas, pinned-engine counterexamples and browser boundary |
 | 2026-11-01 | [Compositor pipeline files and FOAF pod library](20261101-compositor-pipeline-library.md) | — | bounded versioned documents, explicit FOAF storage discovery, ETag guarded writes and honest local validation limits |
+
+| 2026-11-02 | [Exact compiled UI overlap loop](20261102-ui-overlap-compiled-loop.md) | this commit | kernel-proved foldl compiler replacement, 106 UI guards and targeted emitted-C recursion/replacement audits; no allow-list exemption |
