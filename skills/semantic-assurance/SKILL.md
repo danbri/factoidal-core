@@ -223,3 +223,9 @@ Update the dated repair note, assurance register, affected skills and
 worknote index when new evidence changes a claim. Preserve contrary evidence
 and unresolved interpretation questions. Link them rather than hiding them
 behind an aggregate conformance percentage.
+
+## Rendering transformations
+
+See [SVG scene/compositor proof boundaries](../../docs/designissues/2026-11-01-svg-scene-compositor.md)
+for pixel versus interaction equivalence, group opacity and floating-point
+refinement obligations when optimizing shared HTML/SVG rendering.

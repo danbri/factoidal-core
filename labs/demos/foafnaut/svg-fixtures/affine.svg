@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600">
+<title>Lean affine composition, reflection, rotation and local stroke geometry</title>
+<rect width="800" height="600" fill="#f1f5f9"/>
+<g transform="translate(40,40) scale(2,3)"><rect width="60" height="30" fill="#35c9a0"/></g>
+<g transform="translate(320,40)"><g transform="scale(-2,3)"><rect width="60" height="30" fill="#5c8dfa"/></g></g>
+<rect width="90" height="60" transform="translate(480,40) rotate(90)" fill="#ef8585"/>
+<g transform="translate(80,220) skewX(30)"><rect width="120" height="80" fill="#ffbe4f"/></g>
+<g transform="matrix(2,.5,-.5,1,360,250)"><circle r="45" fill="#35c9a0" stroke="#182438" stroke-width="8"/></g>
+<g transform="translate(600,280) rotate(35)"><line x1="-80" x2="80" stroke="#5c8dfa" stroke-width="24" stroke-linecap="round"/></g>
+<g transform="translate(100,450) scale(1.5,.75)"><polygon points="0,0 100,0 120,80 20,100" fill="#b89de9"/></g>
+<rect x="450" y="430" width="100" height="80" transform="rotate(20,500,470)" fill="#ffbe4f" stroke="#182438" stroke-width="6"/>
+<rect x="650" y="450" width="40" height="50" fill="#ef8585"/>
+<rect width="800" height="600" transform="matrix(1,2,2,4,0,0)" fill="red"/>
+</svg>

@@ -45,6 +45,9 @@
 #
 # See skills/lean4-wasm-export/SKILL.md for the routes that were
 # evaluated and rejected, and for the traps (they are not obvious).
+# L4_WASM_RUNTIME_ONLY=1 skips the Factoidal Lake build and stops after step 5;
+# its positional work directory (or L4_WASM_WORK) then holds reusable runtime,
+# Init and Std objects only. No shipped WASM assets are installed in this mode.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -68,6 +71,14 @@ WORK="$(mkdir -p "$WORK" && cd "$WORK" && pwd)"   # absolute, before the cd belo
 cd "$LEAN_DIR"
 
 say() { printf '\n=== %s\n' "$*"; }
+runtime_hash_file() {
+  if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+runtime_object_witness() {
+  printf 'wasm32-string-list-v1\n%s\n%s\n' \
+    "$(runtime_hash_file "$OBJ_CPP")" "$(runtime_hash_file "$RT_OBJ/object.o")"
+}
 
 say "configuration"
 echo "  lean tag     : $LEAN_TAG"
@@ -82,7 +93,8 @@ LEAN_SRC="$TOOLCHAIN/src/lean"
 LEAN_LIB="$TOOLCHAIN/lib/lean"
 [ -d "$LEAN_SRC/Init" ] || { echo "toolchain does not ship core sources at $LEAN_SRC"; exit 1; }
 
-mkdir -p "$WORK" "$ASSETS"
+mkdir -p "$WORK"
+if [ "${L4_WASM_RUNTIME_ONLY:-0}" != "1" ]; then mkdir -p "$ASSETS"; fi
 CORE_C="$WORK/core-c"; CORE_OBJ="$WORK/core-obj"
 RT_SRC="$WORK/lean4-src/src"; RT_OBJ="$WORK/rt-obj"
 LIB_OBJ="$WORK/lib-obj"; INC="$WORK/wasm-include"
@@ -95,7 +107,11 @@ say "step 0 — build the Lean library natively (also emits its C)"
 # outside it (2026-10-27: L4Factoidal.JSONLD.Tests, built before a change to
 # parseJsonLd's arity) links with an old signature and the link stops on the
 # mismatch. Build the whole library too.
-( cd "$LEAN_DIR" && lake build l4wasm L4Factoidal )
+if [ "${L4_WASM_RUNTIME_ONLY:-0}" != "1" ]; then
+  ( cd "$LEAN_DIR" && lake build l4wasm L4Factoidal )
+else
+  echo "  L4_WASM_RUNTIME_ONLY=1: skip the full Factoidal library build"
+fi
 
 # ---------------------------------------------------------------------
 say "step 1 — fetch Lean's C++ runtime sources at $LEAN_TAG"
@@ -134,7 +150,7 @@ OBJ_CPP="$RT_SRC/runtime/object.cpp"
 if grep -q 'obj_res  r = lean_box_uint32(0);' "$OBJ_CPP"; then
   sed -i.bak 's|obj_res  r = lean_box_uint32(0);|obj_res  r = lean_box(0); /* wasm32 patch (build-wasm.sh step 1b): List.nil must be the scalar lean_box(0); lean_box_uint32 heap-allocates on 32-bit, and lean_string_mk then never sees a list terminator */|' \
     "$OBJ_CPP"
-  rm -f "$OBJ_CPP.bak" "$RT_OBJ/object.o"
+  rm -f "$OBJ_CPP.bak" "$RT_OBJ/object.o" "$RT_OBJ/object.wasm32-string-list.sha256"
   echo "  patched string_to_list_core (object.o invalidated)"
 else
   grep -q 'wasm32 patch (build-wasm.sh step 1b)' "$OBJ_CPP" \
@@ -296,10 +312,21 @@ for d in /opt/homebrew/include /usr/local/include /usr/include; do
   fi
 done
 [ -n "$UVINC" ] || { echo "uv.h not found (apt-get install libuv1-dev / brew install libuv) — needed for declarations only"; exit 1; }
+# A restored cache can contain the old unpatched object despite matching Lean
+# headers. Require a witness written only after this script compiled the patched
+# source; a missing/mismatched witness invalidates object.o only, not Init/Std.
+OBJECT_WITNESS="$RT_OBJ/object.wasm32-string-list.sha256"
+if [ -s "$RT_OBJ/object.o" ] && \
+   [ "$(cat "$OBJECT_WITNESS" 2>/dev/null || true)" != "$(runtime_object_witness)" ]; then
+  echo '  runtime object patch witness missing/mismatched: rebuild object.o'
+  rm -f "$RT_OBJ/object.o" "$OBJECT_WITNESS"
+fi
 for s in $RT_SRCS; do
   [ -s "$RT_OBJ/$s.o" ] && continue
   em++ -std=c++20 $CFLAGS -I "$RT_SRC" $UVINC -c "$RT_SRC/runtime/$s.cpp" -o "$RT_OBJ/$s.o"
 done
+runtime_object_witness > "$OBJECT_WITNESS.tmp"
+mv "$OBJECT_WITNESS.tmp" "$OBJECT_WITNESS"
 # L4_WASM_MIMALLOC_CFLAGS is the hook for a MEASURING build. mimalloc's
 # commit and requested-byte counters are only maintained when it is
 # compiled with MI_STAT above zero, so a memory investigation needs
@@ -313,6 +340,13 @@ if [ ! -s "$RT_OBJ/mimalloc_static.o" ]; then
        -o "$RT_OBJ/mimalloc_static.o"
 fi
 echo "  runtime objects: $(ls "$RT_OBJ"/*.o | wc -l | tr -d ' ') (incl. mimalloc)"
+
+# Labs can share the same pinned runtime/Init/Std cache without building the
+# full library or installing/changing the shipped Factoidal WASM artifacts.
+if [ "${L4_WASM_RUNTIME_ONLY:-0}" = "1" ]; then
+  echo "L4_WASM_RUNTIME_ONLY=1: runtime/Init/Std objects ready in $WORK; no artifacts installed"
+  exit 0
+fi
 
 # ---------------------------------------------------------------------
 say "step 6 — compile our library's C, the shim and the stub"

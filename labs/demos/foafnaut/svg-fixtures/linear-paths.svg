@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600">
+<title>Retained linear subpaths, winding, close and affine placement</title>
+<rect width="800" height="600" fill="#f1f5f9"/>
+<path d="M40 40h120v32H72v100H40Z" fill="#35c9a0"/>
+<path d="M220 80l70-40 70 40h-30v90h-80V80z" fill="#5c8dfa"/>
+<path d="M450 40H610V180H450ZM490 80H570V140H490Z" fill="#ef8585" fill-rule="evenodd"/>
+<path d="M660 40H760V180H660ZM680 60V160H740V60Z" fill="#b89de9"/>
+<path d="M0 0H100V80H0ZM25 20V60H75V20Z" transform="translate(90,300) rotate(20)" fill="#ffbe4f"/>
+<path d="M300 280L390 280 300 380M440 330L530 330 440 430" fill="#35c9a0"/>
+<path d="M600 280h90v80h-90z m20 20h50v40h-50z" fill="#5c8dfa" fill-rule="evenodd"/>
+<path d="M40 500H760" fill="#ef8585"/>
+</svg>
