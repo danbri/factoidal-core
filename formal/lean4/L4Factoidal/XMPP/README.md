@@ -557,3 +557,19 @@ Step 2 of `docs/20261102-xmpp-starttls.md`.
 - Test: `npm/factoidal/test/xmpp-websocket.test.mjs` (Node's own WebSocket
   client as an independent RFC 6455 implementation; raw sockets for a bad
   Origin, path, subprotocol and an unmasked frame).
+
+## 2026-11-03 (later): IQ routing by full JID
+
+- `Out.routeFull full text bounce` (`Server.lean`): deliver to the one session bound to that full
+  JID now, or deliver `bounce` to the sender. Never held.
+- `handleIq`: a get or set to a full JID is `routeFull` with a `service-unavailable` bounce
+  (RFC 6120 section 10.5.3.2); a result or error has no bounce (section 8.3.1); a get or set to
+  the bare JID of another account is answered by the server (RFC 6121 section 8.5.2.1.3).
+- Theorem `handleIq_no_route`: no IQ produces `Out.route`, the action that may hold a stanza.
+- Hosts: `Wasm/Ops/XmppSession.lean` collects `routeFull`; `npm/factoidal/xmpp/server.mjs`
+  delivers to the session whose full JID matches, or the bounce to the sender;
+  `Harness/XmppServe.lean` uses its presence files and its per-account mailbox (a stated limit).
+- Fixes https://github.com/danbri/factoidal/issues/1234 and
+  https://github.com/danbri/factoidal/issues/1139. Tests: 5 `#guard`s in `Server.lean`,
+  `npm/factoidal/test/xmpp-iq-routing.test.mjs` (5), and the former xfail in
+  `tests/webdav/xmpp.mjs`, now a check.

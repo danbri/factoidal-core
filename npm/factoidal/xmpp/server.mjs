@@ -327,6 +327,22 @@ export async function createXmppServer (options = {}) {
     }
   }
 
+  /**
+   * `Out.routeFull`: deliver to the ONE session bound to `full`, now. With no
+   * such session (or one that refuses), deliver the engine's bounce, if it
+   * gave one, back to the sending session. Never held (RFC 6120 section
+   * 10.5.3.2; https://github.com/danbri/factoidal/issues/1234).
+   */
+  function routeFull (sender, full, text, bounce) {
+    for (const t of connections) {
+      if (t.full !== full) continue
+      try { if (t.deliver(text)) return } catch (error) { onError(error) }
+    }
+    if (typeof bounce === 'string') {
+      try { sender.deliver(bounce) } catch (error) { onError(error) }
+    }
+  }
+
   /** A session just bound: hand it what was waiting. */
   function flushPending (c) {
     const queue = pending.get(c.bare)
@@ -371,6 +387,7 @@ export async function createXmppServer (options = {}) {
     c.bare = typeof answer.bare === 'string' ? answer.bare : null
     c.full = typeof answer.full === 'string' ? answer.full : null
     for (const r of answer.route) routeStanza(r.to, r.text)
+    for (const r of answer.routeFull || []) routeFull(c, r.to, r.text, r.bounce)
     if (Array.isArray(answer.rostersSaved) && answer.rostersSaved.length > 0) {
       persistRosters(answer.rostersSaved)
     }

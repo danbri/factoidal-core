@@ -189,8 +189,17 @@ inductive Out where
   | send (text : String)
   /-- Append these bytes to the mailbox of that bare JID, as one framed
   stanza. The host chooses the file name; the bytes and the destination
-  are decided here. -/
+  are decided here. A stanza routed this way may be HELD until a session of
+  that account binds, so it is never used for an IQ get or set
+  (`handleIq_no_route`). -/
   | route (bareJid : String) (text : String)
+  /-- Deliver these bytes to the ONE session bound to that full JID, now;
+  never hold them. When there is no such session, deliver `bounce` (if
+  any) to THIS session instead. RFC 6120 section 10.5.3.2 and RFC 6121
+  section 8.5.3.2.1: an IQ to a full JID with no matching resource is
+  answered `service-unavailable`. The bounce text is decided here; the host
+  only knows which full JIDs are bound. -/
+  | routeFull (fullJid : String) (text : String) (bounce : Option String)
   /-- Replace that bare JID's roster file with this exact text. -/
   | saveRoster (bareJid : String) (encoded : String)
   /-- Record this full JID as available or not, so other connections can
@@ -509,18 +518,35 @@ def handleScramResponse (s : Session) (user nonce cfb sf : String) (n : Node) :
               ({ s with stage := .authenticated user },
                [.send (saslSuccess (Scram.b64Encode ("v=" ++ serverSig).toUTF8))])
 
+/-- Does this JID text carry a resourcepart? -/
+def hasResource (t : String) : Bool :=
+  ((Jid.parse t).bind (·.resourcepart)).isSome
+
+/-- The `service-unavailable` answer to an IQ that cannot be delivered,
+from the address it was sent to, back to its sender. -/
+def iqBounce (st : Stanza) (sender target : String) : String :=
+  stanzaError .iq st.id (some sender) (some target) "cancel" "service-unavailable"
+
 /-- Handle an IQ once bound. -/
 def handleIq (s : Session) (env : Env) (st : Stanza) (raw : String) (bare full : String) :
     Env × List Out :=
   let ty := st.type.getD "get"
   let target := st.to.map Jid.render
-  -- Addressed to another entity: route it there (RFC 6120 section 8.1.1).
   match target with
   | some t =>
-    if bareOf t != bare && bareOf t != s.cfg.domain then
-      (env, [.route (bareOf t) (Wire.render (Core.Stanza.toXml
-        { st with from_ := Jid.parse full }))])
-    else handleLocal ty
+    if bareOf t == s.cfg.domain || t == full then handleLocal ty
+    -- RFC 6120 section 10.5.3.2: to a full JID, of another account or
+    -- another resource of this one, deliver to that resource or bounce.
+    -- An IQ result or error is never bounced (RFC 6120 section 8.3.1).
+    else if hasResource t then
+      (env, [.routeFull t (Wire.render (Core.Stanza.toXml { st with from_ := Jid.parse full }))
+        (if ty == "get" || ty == "set" then some (iqBounce st full t) else none)])
+    -- RFC 6121 section 8.5.2.1.3: to the bare JID of an account, the server
+    -- answers for the account. It handles no namespace there, so a get or
+    -- set is `service-unavailable` (RFC 6120 section 8.4).
+    else if bareOf t == bare then handleLocal ty
+    else if ty == "get" || ty == "set" then (env, [.send (iqBounce st full t)])
+    else (env, [])
   | none => handleLocal ty
 where
   handleLocal (ty : String) : Env × List Out :=
@@ -1209,5 +1235,64 @@ theorem preTlsFeatures_no_sasl :
     (featuresFor .preTls mechanisms).saslMechanisms = [] ∧
     (featuresFor .preTls mechanisms).startTls = some true := by
   simp [featuresFor]
+
+/-! ### IQ routing checks (2026-11-03) -/
+
+private def boundJuliet : Session := { Session.init testCfg with stage := .bound "juliet" "balcony" }
+
+-- To a full JID of another account: delivered to that resource, or bounced
+-- `service-unavailable`, from the target, back to the sender, same id.
+#guard
+  let (_, _, outs) := step boundJuliet ⟨[]⟩ (.element "<iq type='get' id='q1' to='romeo@example.com/orchard'><query xmlns='jabber:iq:version'/></iq>")
+  match outs with
+  | [.routeFull to text (some bounce)] =>
+    to == "romeo@example.com/orchard" && has text "from=\"juliet@example.com/balcony\"" &&
+    has bounce "service-unavailable" && has bounce "id=\"q1\"" &&
+    has bounce "to=\"juliet@example.com/balcony\"" && has bounce "from=\"romeo@example.com/orchard\""
+  | _ => false
+
+-- To another resource of the SAME account (issue 1139): routed, not handled here.
+#guard
+  let (_, _, outs) := step boundJuliet ⟨[]⟩ (.element "<iq type='get' id='q2' to='juliet@example.com/tower'><query xmlns='jabber:iq:version'/></iq>")
+  match outs with
+  | [.routeFull "juliet@example.com/tower" _ (some _)] => true
+  | _ => false
+
+-- An IQ result to a full JID is delivered and never bounced.
+#guard
+  let (_, _, outs) := step boundJuliet ⟨[]⟩ (.element "<iq type='result' id='q3' to='romeo@example.com/orchard'/>")
+  match outs with
+  | [.routeFull "romeo@example.com/orchard" _ none] => true
+  | _ => false
+
+-- To the bare JID of another account: the server answers for it.
+#guard
+  let (_, _, outs) := step boundJuliet ⟨[]⟩ (.element "<iq type='get' id='q4' to='romeo@example.com'><query xmlns='jabber:iq:version'/></iq>")
+  match outs with
+  | [.send t] => has t "service-unavailable" && has t "id=\"q4\""
+  | _ => false
+
+-- Roster get to one's own bare JID is still handled locally.
+#guard
+  let (_, _, outs) := step boundJuliet ⟨[]⟩ (.element s!"<iq type='get' id='q5' to='juliet@example.com'><query xmlns='{nsRoster}'/></iq>")
+  match outs with
+  | [.send t] => has t "type=\"result\""
+  | _ => false
+
+/-! ## IQ routing (2026-11-03): never held
+
+https://github.com/danbri/factoidal/issues/1234 and /1139. An IQ get or set
+must be answered: delivered to its full JID now, or bounced
+(`Out.routeFull`). `Out.route` may be held in a mailbox, so no IQ uses it. -/
+
+theorem handleIq_no_route (s : Session) (env : Env) (st : Stanza) (raw bare full : String)
+    (b t : String) : Out.route b t ∉ (handleIq s env st raw bare full).2 := by
+  unfold handleIq handleIq.handleLocal
+  generalize Option.map Jid.render st.to = tgt
+  generalize childByNs st.payload nsRoster (some "query") = r
+  generalize childByNs st.payload nsSession (some "session") = se
+  generalize childByNs st.payload nsDiscoInfo (some "query") = di
+  cases tgt <;> cases r <;> cases se <;> cases di <;> simp only [] <;>
+    simp [apply_ite (f := Prod.snd), apply_ite (f := fun l : List Out => Out.route b t ∈ l)]
 
 end L4Factoidal.XMPP.Server
