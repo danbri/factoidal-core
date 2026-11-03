@@ -297,3 +297,10 @@ The held queue is in Lean and bounded (`XMPP/Held.lean`; fixes issue 1235). Owne
 on the storage for the rest of step 6: use LWS in-process, through the same authorization path,
 with no bypass of auth or ACLs; tracked as https://github.com/danbri/factoidal/issues/1238. The
 sealed-file design above is therefore provisional: parts 2 to 4 wait on the audit in issue 1238.
+
+### Step 6, parts 2 to 4 result (2026-11-03)
+
+Built on LWS, as the owner decided: the component principal
+(https://github.com/danbri/factoidal-core/pull/323), then the state in an in-process LWS storage,
+sealed, with the codec's round-trip theorems; `xmpp-serve --state-key FILE`. Details and the
+stated gaps: `formal/lean4/L4Factoidal/XMPP/README.md`, "2026-11-03 (evening)".

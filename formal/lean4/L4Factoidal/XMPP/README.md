@@ -648,3 +648,28 @@ real namespaces.
 - Tests: `npm/factoidal/test/xmpp-mix.test.mjs` (the former 1235 xfail, now a check),
   `xmpp-serve.test.mjs` (held, then delivered once on bind).
 - Persisting the held queue across a restart: issues 1237 and 1238.
+
+## 2026-11-03 (evening): state across restarts, in LWS, sealed (issue 1237; step 6)
+
+- `xmpp-serve DIR --state-key FILE`: rosters, stanzas held for offline accounts, MIX channels and
+  GC3 groups are kept as resources under `/xmpp/<kind>/<name in hex>` of an LWS storage in
+  `DIR/state` (files mode, sealed with ChaCha20-Poly1305 under the key), opened IN-PROCESS as the
+  component principal `urn:factoidal:component:xmpp-serve` (no listener; Web Access Control
+  decides; `LWS/Authorization.lean`, `decide_principal_agents`).
+- `XMPP/StateCodec.lean`: encoders and decoders with round-trip theorems
+  (`decodeHeld_encodeHeld`, `decodeChannel_encodeChannel`, `decodeGroup_encodeGroup`); one resource
+  per item, so a change rewrites one small resource.
+- The ops layer decides what to write: a feed answer carries `store` and `unstore` (only with
+  `persist`, which the host sets with a state key). `xmppStateLoad` installs each item at start;
+  an item that does not decode stops the start. A wrong key stops the start.
+- Plaintext roster files of an earlier run are migrated into the sealed state, then deleted.
+  Without `--state-key` the server warns that state is lost at a restart and rosters are in clear.
+- Tests: `npm/factoidal/test/xmpp-state.test.mjs` (a channel, a held message and a roster survive
+  a restart, and no file holds a JID, nick or body in clear; a wrong key refuses; migration).
+- Stated, not done:
+  - the hex form of names (`hexOf`, `nameOfHex`) is checked by `#guard`s, not proved;
+  - with persistence on, each hold rewrites the whole queue of that account (bounded at 1,000
+    stanzas, but quadratic near the bound): one resource per held stanza would make it constant;
+  - a stanza sent to a session that is closing is delivered to it and lost (no XEP-0198 stream
+    management), as in other servers without it;
+  - the key across an unattended reboot, rollback, and swap: issue 1237.
