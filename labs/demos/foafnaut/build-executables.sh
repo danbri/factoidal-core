@@ -29,10 +29,14 @@ mv "$OUT/libnative-window.dylib.tmp" "$OUT/libnative-window.dylib"
 cp "$OUT/libnative-window.dylib" "$LAB/.build/native/libnative-window.dylib"
 # The owner requested no repeated FFI prompt for the native window bridge.
 # UnsafeWindowSurface requires pathless FFI permission; grant it in this UI build.
-# Launchers still cd to OUT for relative read/write permissions and fixtures.
+# Deno compile resolves path-scoped permissions against the *build* directory.
+# These binaries are relocated by release packaging, and the explicit --rdf,
+# --emit-artifact and --emit-svg options accept paths in that new directory.
+# Match the other two renderer CLIs: grant filesystem read/write at compile time;
+# the package's relocation smoke then checks actual output paths.
 cd "$OUT"
 deno compile --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
-  --allow-read=. --allow-write=. --allow-run=/usr/bin/open --allow-ffi \
+  --allow-read --allow-write --allow-run=/usr/bin/open --allow-ffi \
   --include "$LAB/.build/engines/ui-engine.wasm" --include "$LAB/.build/engines/demos-engine.wasm" \
   --include "$LAB/.build/engines/render-plan.wasm" \
   --include "$LAB/.build/engines/foafnaut-engine.wasm" --include "$LAB/foaf/fixtures/demo.ttl" \
