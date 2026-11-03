@@ -58,9 +58,10 @@ and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
   Jena TDB2 read only), Linked Web Storage 1.0, Solid, an OAuth 2.0
   authorization server (token exchange for OpenID Connect ID tokens,
   self-issued CID credentials and SAML 2.0 assertions)
-- Security: JWS/JWT (ES256, RS256, EdDSA), XML Signature verification in the
-  SAML Core profile (Exclusive XML Canonicalization 1.0, rsa-sha256), with
-  HACL\* primitives. XML Encryption 1.1 and JWE (RFC 7516), decryption and
+- Security: JWS/JWT (ES256, RS256, EdDSA), XML Signature 1.1 verification
+  and signing (`xmlVerify`, `xmlSign`; RSA, ECDSA P-256, HMAC; not DSA,
+  https://github.com/danbri/factoidal/issues/1224, nor ECDSA P-384 and P-521,
+  https://github.com/danbri/factoidal/issues/1223), with HACL\* primitives. XML Encryption 1.1 and JWE (RFC 7516), decryption and
   encryption (`xmlDecrypt`, `xmlEncrypt`, `jweDecrypt`, `jweEncrypt`):
   RSA-OAEP, P-256 and X25519 run in the wasm (HACL\*), AES runs in the host's
   WebCrypto. The authorization server decrypts encrypted SAML assertions
@@ -122,6 +123,50 @@ console.log(r.assumptions, r.proved);       // what the answer depends on
 `run(p, input, { unchecked: true })` also runs components that are not proved,
 and marks those steps in the evidence. Details: API.md, "Stages as nodes" and
 "Explaining an entailment" (`explain()` is the same check as one call).
+
+### XPath, XQuery and XSLT 4.0
+
+`xpath4Eval(xml, expression)`, `xqueryEval(query, xml?)`, and
+`xslt4Transform(stylesheet, xml)` use the same Lean engines as the native
+XML test runners. They also have nodes named `xpath4Eval`, `xqueryEval`, and
+`xslt4Transform`. Each node reads XML context **text** (`''` means no context)
+and requires its one string setting: `expression`, `query`, or `stylesheet`.
+
+```js
+import { node, run } from '@factoidal/core';
+
+const evaluate = await node('xpath4Eval', { expression: 'count(//person)' });
+const result = await run(evaluate, '<people><person/></people>', { unchecked: true });
+console.log(result.graph.xml); // '1', serialized by Lean
+console.log(result.proved);    // false: this adapter is tested, with no stage contract
+```
+
+XPath/XQuery nodes output `Qt4Result` (`count`, typed serialized `items`,
+`adaptive`, nullable `xml`), not live XDM values. XSLT nodes output `Xslt4Result`
+(`output`, `method`, `secondary`, `messages`); text or JSON results are not
+mislabelled as XML. There is no implicit result-to-input conversion. Unknown
+or wrongly typed settings fail in Lean. Under the existing node policy these
+tested nodes can run, but return `proved: false` and `checked: false` evidence.
+`unchecked: true` additionally records the explicit opt-in and its reason;
+neither mode claims a proved evaluator contract.
+
+The CLI has `factoidal xpath4 EXPRESSION`, `factoidal xquery QUERY` (or
+`--file PATH`), and `factoidal xslt4 STYLESHEET_FILE`. Each accepts
+`--input XML_FILE`; omission supplies no context item. Default output is the
+engine's JSON envelope. XPath/XQuery accept `--format adaptive|xml`; XSLT
+accepts `--format output` for the principal serialization. `--help` describes
+the complete syntax. QT4 failures exit 1 and retain the error QName in JSON
+on stderr; usage failures exit 2. Secondary results stay in the JSON envelope
+and are not written to files.
+
+Inline `fn:transform` uses the existing pure XSLT adapter, including its
+`enable-assertions` option (default false). Direct `xslt4Transform` retains
+enabled assertions. Calling `fn:transform` from its own `post-process`
+callback currently fails with `FOXT0004`; callback reentrancy is not provided.
+No stylesheet/module/resource fetch or schema provider
+is added. Schema-dependent PSVI tests and XProc execution remain native/
+host-dependent: the Lean XProc 3.1 reader and atomic dataflow bridge exist,
+but there is no public npm XProc WASM entry point.
 
 Formats (generated from `formats()`):
 
@@ -214,6 +259,38 @@ $ npx factoidal lws-serve DIR --issuer IRI         # Linked Web Storage
 $ npx factoidal solid-serve DIR                    # Solid Protocol
 $ npx factoidal authz-serve DIR --resource IRI --saml-idp idp.json   # OAuth 2.0 authorization server
 ```
+
+### Storage directories of `lws-serve`, `solid-serve` and `webdav-serve`
+
+One process writes a storage directory
+(https://github.com/danbri/factoidal/issues/1135). The server holds
+`DIR/lws.lock` while it runs; a second server on the same directory is
+refused, with a message that names the lock file and the process that holds
+it. A lock left by a process that does not run (after a crash) is taken over
+with a warning.
+
+#### Encryption at rest
+
+Off by default. Without a key the storage is written to disk in clear text,
+and the server says so at start. To turn it on:
+
+```console
+$ export FACTOIDAL_LWS_KEY="$(npx factoidal lws-keygen)"   # keep a copy of the key
+$ npx factoidal lws-serve DIR --issuer IRI
+lws-serve: encryption at rest is ON: the storage in DIR is sealed with ChaCha20-Poly1305 under key id ...
+```
+
+- Sealed (ChaCha20-Poly1305, HACL*): the snapshot `DIR/lws-state.json`; with
+  `--storage files`, every body file, the journal and `lws-files.json`.
+- Not protected: file names, file sizes and write times; the lock file; the
+  storage in the memory of the running server; the key in its environment.
+- A lost key is lost data. A wrong key, a changed file, a clear storage with
+  a key and a sealed storage without the key each stop the start.
+- Start on an empty directory: a key change, and sealing an existing clear
+  storage, are not possible yet
+  (https://github.com/danbri/factoidal/issues/1136).
+
+Details: https://danbri.github.io/factoidal/web/hub/servers/#encryption-at-rest
 
 `npx factoidal --help` lists every command. Replacing Apache Jena Fuseki:
 [docs/fuseki-replacement.md](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/docs/fuseki-replacement.md).

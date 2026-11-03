@@ -25,6 +25,7 @@ import { sbm11Api, registerSbm11Source, setDefaultSbm11Reader, mapReader } from 
 import { nodeDefaultReaderFactory } from './lib/sbm11-node.mjs';
 import { lwsSbm11Reader as lwsSbm11ReaderWith } from './lib/sbm11-lws.mjs';
 import { nodeSyncTransport } from './lib/sync-http-node.mjs';
+import { nodeCidHost } from './lib/cid-node.mjs';
 
 /**
  * The loaded Lean engine handle: `call(op, args)`, `callBlob`,
@@ -45,6 +46,8 @@ const api = buildApi({
   engineName: 'lean4-wasm',
   loadEntry: async () => entryFromEngine(await loadEngine()),
   storeReaderFor: (root) => (path) => readFileSync(join(root, path)),
+  // Name resolution and a GET pinned to one address (issue 1100 item 9).
+  cidHost: nodeCidHost,
 });
 
 // RDF and SPARQL
@@ -57,6 +60,7 @@ export const graphs = api.graphs;
 export const canonicalHash = api.canonicalHash;
 export const asDefaultGraph = api.asDefaultGraph;
 export const isomorphic = api.isomorphic;
+export const datasetMerge = api.datasetMerge;
 export const fromQuads = api.fromQuads;
 // Literal values (https://github.com/danbri/factoidal/issues/1051): synchronous
 // after the engine is loaded.
@@ -103,7 +107,12 @@ export { registerSbm11Source, mapReader };
 export function lwsSbm11Reader(url, opts = {}) {
   if (typeof opts.transport === 'function') return lwsSbm11ReaderWith(url, opts);
   const transport = nodeSyncTransport({ timeoutMs: opts.timeoutMs });
-  return lwsSbm11ReaderWith(url, { ...opts, transport, onClose: () => transport.close() });
+  try {
+    return lwsSbm11ReaderWith(url, { ...opts, transport, onClose: () => transport.close() });
+  } catch (error) {
+    transport.close();
+    throw error;
+  }
 }
 
 // The persisted store
@@ -130,6 +139,7 @@ export const explain = api.explain;
 export const stages = api.stages;
 export const node = api.node;
 export const pipe = api.pipe;
+export const graph = api.graph;
 export const run = api.run;
 export const rdfsPlusClosure = api.rdfsPlusClosure;
 export const rhoDfClosure = api.rhoDfClosure;
@@ -148,6 +158,10 @@ export const jsonldFromRdf = api.jsonldFromRdf;
 export const xmlWellformed = api.xmlWellformed;
 export const xpathEval = api.xpathEval;
 export const xsltTransform = api.xsltTransform;
+// XPath 4.0, XQuery 4.0 and XSLT 4.0 (formal/lean4/Wasm/Ops/Qt4.lean).
+export const xpath4Eval = api.xpath4Eval;
+export const xqueryEval = api.xqueryEval;
+export const xslt4Transform = api.xslt4Transform;
 export const schematronValidate = api.schematronValidate;
 export const jsonSchemaValidate = api.jsonSchemaValidate;
 export const mathmlEval = api.mathmlEval;
@@ -175,6 +189,8 @@ export const vcEd25519Verify = api.vcEd25519Verify;
 // XML Encryption 1.1 and JWE; AES through WebCrypto (lib/cipher-host.mjs)
 export const xmlDecrypt = api.xmlDecrypt;
 export const xmlEncrypt = api.xmlEncrypt;
+export const xmlVerify = api.xmlVerify;
+export const xmlSign = api.xmlSign;
 export const jweDecrypt = api.jweDecrypt;
 export const jweEncrypt = api.jweEncrypt;
 export const vcEddsaCreateFromCanonical = api.vcEddsaCreateFromCanonical;
@@ -183,6 +199,9 @@ export const vcCheckCredential = api.vcCheckCredential;
 export const vcCheckCredentialSubject = api.vcCheckCredentialSubject;
 export const vcCheckNoDataLoss = api.vcCheckNoDataLoss;
 export const vcCheckRelatedResourceDigests = api.vcCheckRelatedResourceDigests;
+// Controlled Identifiers v1.0 (https://github.com/danbri/factoidal/issues/1100).
+export const cidValidate = api.cidValidate;
+export const cidRetrieveVerificationMethod = api.cidRetrieveVerificationMethod;
 export const didKeyResolve = api.didKeyResolve;
 
 // Types, probes and metadata

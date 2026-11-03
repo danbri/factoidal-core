@@ -40,19 +40,6 @@ namespace L4Factoidal.XPath4
 
 open L4Factoidal.XSD
 
-/-! ## Errors -/
-
-/-- A dynamic or static error, with its `err:` code (local name only,
-    for example `"XPTY0004"`). -/
-structure Err where
-  code : String
-  msg  : String := ""
-deriving Repr, Inhabited
-
-abbrev M := Except Err
-
-def err {α} (code : String) (msg : String := "") : M α := .error { code, msg }
-
 /-! ## Names -/
 
 /-- An expanded QName. Equality ignores the prefix. -/
@@ -121,6 +108,32 @@ structure Atomic where
   ty : AType
   v  : AV
 deriving Repr, Inhabited
+
+/-! ## Errors -/
+
+/-- A dynamic or static error, with its `err:` code (local name only,
+    for example `"XPTY0004"`). -/
+structure Err where
+  code : String
+  msg  : String := ""
+  /-- The namespace of the error code; empty for `err:` (the
+      `http://www.w3.org/2005/xqt-errors` namespace). Set by `fn:error`
+      with a QName in another namespace (XQuery 4.0 `catch`). -/
+  uri  : String := ""
+  /-- The prefix of the error code QName (`fn:error`). -/
+  pfx  : String := ""
+  /-- The error code QName is in no namespace (`fn:error(xs:QName('a'))`). -/
+  noNs : Bool := false
+  /-- The error value (the third argument of `fn:error`, F&O 4.0 §3.1.1):
+      its atomic items; a node or function item is kept as its string
+      value, as `xs:untypedAtomic`. -/
+  value : List Atomic := []
+deriving Repr, Inhabited
+
+abbrev M := Except Err
+
+def err {α} (code : String) (msg : String := "") : M α := .error { code, msg }
+
 
 def Atomic.ofStr (s : String) : Atomic := ⟨.b .string, .str s⟩
 def Atomic.ofBool (b : Bool) : Atomic := ⟨.b .boolean, .bool b⟩
@@ -240,9 +253,10 @@ def fmtFloating (isF32 : Bool) (f : Float) : String :=
     let (d, q) := shortestDigits isF32 f
     let ds := (toString d).toList
     let ds := let t := stripTrailingZeros ds; if t.isEmpty then ['0'] else t
-    let a := f.abs
+    -- the range test is on the value the shortest digits denote, so an
+    -- xs:float such as 1.0E-6 (stored as 9.99999997E-7) is 0.000001
     let body :=
-      if a ≥ 1e-6 && a < 1e6 then
+      if q ≥ -6 && q ≤ 5 then
         -- decimal notation
         if q ≥ 0 then
           let qn := q.toNat
@@ -456,10 +470,9 @@ def castFromString (s : String) (t : AType) (nsResolve : String → Option Strin
         | none => bad
     | .anyURI => pure ⟨t, .str w⟩
     | .boolean =>
-        match w with
-        | "true" | "1" => pure (Atomic.ofBool true)
-        | "false" | "0" => pure (Atomic.ofBool false)
-        | _ => bad
+        match XSD.parseBooleanLex w with
+        | some v => pure (Atomic.ofBool v)
+        | none => bad
     | .decimal =>
         match parseDecimalLex w with
         | some d => pure (Atomic.ofDec d)
@@ -515,7 +528,7 @@ def isIntegerTy (b : Builtin) : Bool := derivedFrom b .integer
 /-- `cast as` between atomic types (§22.1). The source is never
     `xs:untypedAtomic`/`xs:string` here unless the caller wants the
     lexical route; both go through `castFromString`. -/
-def castAtomic (a : Atomic) (t : AType) (nsResolve : String → Option String := fun _ => none) : M Atomic :=
+def castAtomic0 (a : Atomic) (t : AType) (nsResolve : String → Option String := fun _ => none) : M Atomic :=
   if a.ty == t then pure a
   else
   match t with
@@ -592,6 +605,42 @@ def castAtomic (a : Atomic) (t : AType) (nsResolve : String → Option String :=
 
 /-! ## Equality and ordering of atomic values -/
 
+/-- The implementation limits of this processor for dates and durations
+    (XPath 4.0 §5.3, implementation-defined): a date's day number from
+    0001-01-01 and a duration's month count and day count are 64-bit
+    signed integers. Beyond them a cast raises FODT0001 (dates) or
+    FODT0002 (durations), as F&O 4.0 §9.1.2 says for overflow. -/
+def limit63 : Int := 9223372036854775808
+
+def dtWithinLimits (v : XSD.DTValue) : Bool :=
+  match v.year with
+  | none => true
+  | some y =>
+    let d := XSD.daysFromCivil y (v.month.getD 1) (v.day.getD 1) + 719162
+    d ≥ -limit63 && d < limit63
+
+def durWithinLimits (d : XSD.DurValue) : Bool :=
+  let secs := d.seconds
+  let days : Int := Int.tdiv secs.mantissa ((10 : Int) ^ secs.scale * 86400)
+  d.months > -limit63 && d.months < limit63 && days > -limit63 && days < limit63
+
+/-- Raise the overflow error when a date or duration value is beyond
+    the limits. -/
+def checkLimits (a : Atomic) : M Atomic :=
+  match a.v with
+  | .x (.dt _ v) => if dtWithinLimits v then pure a else err "FODT0001" "date/time value out of the supported range"
+  | .x (.dur d) => if durWithinLimits d then pure a else err "FODT0002" "duration value out of the supported range"
+  | _ => pure a
+
+def castAtomic (a : Atomic) (t : AType) (nsResolve : String → Option String := fun _ => none) : M Atomic := do
+  let r ← castAtomic0 a t nsResolve
+  -- xs:dateTimeStamp requires a timezone (XSD 1.1 Part 2 §3.4.28)
+  if t == .b .dateTimeStamp then
+    match r.v with
+    | .x (.dt _ v) => if v.tz.isNone then err "FORG0001" "an xs:dateTimeStamp needs a timezone"
+    | _ => pure ()
+  checkLimits r
+
 /-- The primitive type, for comparability. -/
 def AType.prim : AType → String
   | .untyped => "untypedAtomic"
@@ -636,7 +685,10 @@ def atomicCmp (a b : Atomic) (implicitTz : Int := 0) : M (Option Ordering) :=
     match a.v, b.v with
     | .x (.dt _ x), .x (.dt _ y) => pure (Fn.DateTime.compare implicitTz x y)
     | .x (.bin _ x), .x (.bin _ y) => pure (some (compare x y))
-    | .qn x, .qn y => pure (if x == y then some .eq else some .lt)
+    | .qn x, .qn y =>
+        -- XPath 4.0: QNames are ordered by namespace URI, then local name
+        if x.uri != y.uri then pure (some (compare x.uri y.uri))
+        else pure (some (compare x.loc y.loc))
     | _, _ => pure (some (if a.str == b.str then .eq else if a.str < b.str then .lt else .gt))
   else err "XPTY0004" ("cannot compare xs:" ++ a.ty.name ++ " with xs:" ++ b.ty.name)
 
@@ -645,6 +697,8 @@ def AType.ordered (t : AType) : Bool :=
   match t.prim with
   | "boolean" | "numeric" | "string" | "untypedAtomic" | "date" | "time" | "dateTime"
   | "binary" => true
+  -- XPath 4.0 (PR 2256): the Gregorian types and QNames are ordered too
+  | "gYear" | "gYearMonth" | "gMonth" | "gMonthDay" | "gDay" | "QName" | "NOTATION" => true
   | "duration" => true
   | _ => false
 

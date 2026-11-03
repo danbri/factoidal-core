@@ -245,6 +245,23 @@ inductive CRe where
   | anchorStart : CRe
   | anchorEnd : CRe
   | group : Nat → CRe → CRe
+  /-- F&O 4.0 §6.1.6: a back-reference to group `n`; with `ci` (flag `i`) each
+      character may also be a case-variant of the captured one. -/
+  | backref : Bool → Nat → CRe
+  /-- F&O 4.0 §6.1.8.3 and §6.1.8.4: lookahead; `true` is negative. -/
+  | ahead : Bool → CRe → CRe
+  /-- F&O 4.0 §6.1.8.5 and §6.1.8.6: lookbehind over one alternative of fixed
+      length `k`; `true` is negative. -/
+  | behind : Bool → Nat → CRe → CRe
+  /-- F&O 4.0 §6.1.8.2: `\b` (`false`) or `\B` (`true`), over the given `\w`
+      code point ranges. -/
+  | wordB : Bool → List (Nat × Nat) → CRe
+  /-- F&O 4.0 §6.1.8.1, multi-line mode: `^` does not match after a final
+      newline. -/
+  | lineStart : CRe
+  /-- F&O 4.0 §6.1.8.1, multi-line mode: `$` matches before a newline, or at the
+      end when there is no final newline. -/
+  | lineEnd : CRe
   deriving DecidableEq, Repr, Inhabited
 
 namespace CRe
@@ -259,6 +276,8 @@ def eraseAssertions : CRe → Re
   | .alt a b => .alt (eraseAssertions a) (eraseAssertions b)
   | .star _ a => .star (eraseAssertions a)
   | .group _ a => eraseAssertions a
+  | .backref _ _ => Exec.dotStar
+  | .ahead _ _ | .behind _ _ _ | .wordB _ _ | .lineStart | .lineEnd => .eps
 
 def size : CRe → Nat
   | .leaf _ => 1
@@ -267,6 +286,8 @@ def size : CRe → Nat
   | .alt a b => 1 + size a + size b
   | .star _ a => 1 + size a
   | .group _ a => 1 + size a
+  | .backref _ _ | .wordB _ _ | .lineStart | .lineEnd => 1
+  | .ahead _ a | .behind _ _ a => 1 + size a
 
 /-- F* `rx_cre_dotall`. -/
 def dotAll : CRe → CRe
@@ -278,6 +299,12 @@ def dotAll : CRe → CRe
   | .anchorStart => .anchorStart
   | .anchorEnd => .anchorEnd
   | .group n a => .group n (dotAll a)
+  | .ahead neg a => .ahead neg (dotAll a)
+  | .behind neg k a => .behind neg k (dotAll a)
+  | .backref ci n => .backref ci n
+  | .wordB neg ws => .wordB neg ws
+  | .lineStart => .lineStart
+  | .lineEnd => .lineEnd
 
 def repeatExact (r : CRe) : Nat → CRe
   | 0 => .eps
@@ -475,36 +502,62 @@ def atStart (input : List Nat) (multiline : Bool) (pos : Nat) : Bool :=
 def atEnd (suffix : List Nat) (multiline : Bool) : Bool :=
   suffix.isEmpty || (multiline && suffix.head? == some 0x0A)
 
+/-- The latest capture of group `n` in a capture list (newest first). -/
+def findCap : List Cap → Nat → Option (Nat × Nat)
+  | [], _ => none
+  | c :: t, n => if c.group = n then some (c.start, c.stop) else findCap t n
+
+/-- Does `w` start with `ref`? With `ci`, a character may also be a
+    case-variant of the referenced one (F&O 4.0 §6.2, flag `i`). -/
+def prefixMatch (ci : Bool) : List Nat → List Nat → Bool
+  | [], _ => true
+  | _ :: _, [] => false
+  | r :: rs, c :: cs =>
+    (r == c || (ci && Text.CaseMap.isCaseVariant r c)) && prefixMatch ci rs cs
+
+/-- F&O 4.0 §6.1.8.2: is the character at `pos` of `input` (if any) a word
+    character, and the one before it? `\b` holds where they differ. -/
+def wordBoundaryAt (ws : List (Nat × Nat)) (input : List Nat) (pos : Nat) : Bool :=
+  let before := match input[pos - 1]? with
+    | some c => pos > 0 && inRanges c ws
+    | none => false
+  let after := match input[pos]? with
+    | some c => inRanges c ws
+    | none => false
+  before != after
+
 /-- First successful outcome in backtracking preference order. The continuation
     tests the rest of a concatenation before committing to an alternative. This
     avoids materializing every possible match. Greedy repetition tries another
     consuming iteration before stopping; reluctant repetition reverses that order.
     Leaves use the verified derivative engine, and later captures override earlier
-    iterations. Fuel adequacy and worst-case search cost remain unproved. -/
-def cmatch (input : List Nat) (multiline : Bool) :
-    Nat → CRe → List Nat → Nat → (COut → Option COut) → Option COut
-  | 0, _, _, _, _ => none
-  | fuel + 1, r, w, pos, accept =>
+    iterations. `env` holds the captures made before the current node (newest
+    first); back-references read it. Fuel adequacy and worst-case search cost
+    remain unproved. -/
+def cmatchE (input : List Nat) (multiline : Bool) :
+    Nat → CRe → List Nat → Nat → List Cap → (COut → Option COut) → Option COut
+  | 0, _, _, _, _, _ => none
+  | fuel + 1, r, w, pos, env, accept =>
     match r with
     | .eps => accept ⟨w, pos, []⟩
     | .anchorStart => if atStart input multiline pos then accept ⟨w, pos, []⟩ else none
     | .anchorEnd => if atEnd w multiline then accept ⟨w, pos, []⟩ else none
     | .leaf x => (leafEnds x w).reverse.findSome? fun k => accept ⟨w.drop k, pos + k, []⟩
     | .cat a b =>
-      cmatch input multiline fuel a w pos fun oa =>
-        cmatch input multiline fuel b oa.rest oa.endPos fun ob =>
+      cmatchE input multiline fuel a w pos env fun oa =>
+        cmatchE input multiline fuel b oa.rest oa.endPos (oa.caps ++ env) fun ob =>
           accept ⟨ob.rest, ob.endPos, ob.caps ++ oa.caps⟩
     | .alt a b =>
-      match cmatch input multiline fuel a w pos accept with
+      match cmatchE input multiline fuel a w pos env accept with
       | some result => some result
-      | none => cmatch input multiline fuel b w pos accept
+      | none => cmatchE input multiline fuel b w pos env accept
     | .group n inner =>
-      cmatch input multiline fuel inner w pos fun o =>
+      cmatchE input multiline fuel inner w pos env fun o =>
         accept ⟨o.rest, o.endPos, ⟨n, pos, o.endPos⟩ :: o.caps⟩
     | .star greedy inner =>
-      let more := fun (_ : Unit) => cmatch input multiline fuel inner w pos fun oi =>
+      let more := fun (_ : Unit) => cmatchE input multiline fuel inner w pos env fun oi =>
         if oi.rest.length < w.length then
-          cmatch input multiline fuel (.star greedy inner) oi.rest oi.endPos fun o2 =>
+          cmatchE input multiline fuel (.star greedy inner) oi.rest oi.endPos (oi.caps ++ env) fun o2 =>
             accept ⟨o2.rest, o2.endPos, o2.caps ++ oi.caps⟩
         else none
       let stop := fun (_ : Unit) => accept ⟨w, pos, []⟩
@@ -512,10 +565,35 @@ def cmatch (input : List Nat) (multiline : Bool) :
         match more () with | some result => some result | none => stop ()
       else
         match stop () with | some result => some result | none => more ()
+    | .backref ci n =>
+      -- §6.1.6: a group that has matched nothing matches the empty string
+      let ref := match findCap env n with
+        | some (s, e) => slice input s e
+        | none => []
+      if prefixMatch ci ref w then accept ⟨w.drop ref.length, pos + ref.length, []⟩ else none
+    | .ahead neg inner =>
+      -- §6.1.8.3: the captures of the first successful evaluation are kept
+      match cmatchE input multiline fuel inner w pos env some with
+      | some o => if neg then none else accept ⟨w, pos, o.caps⟩
+      | none => if neg then accept ⟨w, pos, []⟩ else none
+    | .behind neg k inner =>
+      let found := pos ≥ k &&
+        (cmatchE input multiline fuel inner (input.drop (pos - k)) (pos - k) env
+          (fun o => if o.endPos == pos then some o else none)).isSome
+      if found != neg then accept ⟨w, pos, []⟩ else none
+    | .wordB neg ws =>
+      if wordBoundaryAt ws input pos != neg then accept ⟨w, pos, []⟩ else none
+    | .lineStart =>
+      if pos == 0 || (pos < input.length && input[pos - 1]? == some 0x0A) then accept ⟨w, pos, []⟩
+      else none
+    | .lineEnd =>
+      if (w.isEmpty && input.getLast? != some 0x0A) || w.head? == some 0x0A then accept ⟨w, pos, []⟩
+      else none
 
-def findCap : List Cap → Nat → Option (Nat × Nat)
-  | [], _ => none
-  | c :: t, n => if c.group = n then some (c.start, c.stop) else findCap t n
+/-- The ordered matcher with no earlier captures. -/
+def cmatch (input : List Nat) (multiline : Bool) (fuel : Nat) (r : CRe) (w : List Nat) (pos : Nat)
+    (accept : COut → Option COut) : Option COut :=
+  cmatchE input multiline fuel r w pos [] accept
 
 def groupText (input : List Nat) (caps : List Cap) (n : Nat) : List Nat :=
   match findCap caps n with
@@ -639,6 +717,25 @@ def replaceLoopFast (cre : CRe) (prefixRe : Re) (multiline : Bool) (rep inputAll
   funext cre prefixRe multiline rep inputAll fuel suffix pos
   simp [replaceLoopFast, replaceLoopAcc_eq]
 
+/-- Is there a start position at which the ordered matcher succeeds? The
+    erased prefix language filters the start positions first. -/
+def orderedSearchFrom (cre : CRe) (prefixRe : Re) (multiline : Bool) (input : List Nat) :
+    List Nat → Nat → Bool
+  | suffix, pos =>
+    let here := Exec.acceptsNorm prefixRe suffix &&
+      (cmatch input multiline (cmatchFuel cre suffix) cre suffix pos some).isSome
+    match suffix with
+    | [] => here
+    | _ :: rest => here || orderedSearchFrom cre prefixRe multiline input rest (pos + 1)
+
+def orderedSearch (cre : CRe) (multiline : Bool) (input : List Nat) : Bool :=
+  orderedSearchFrom cre (Exec.anchoredPrefix cre.eraseAssertions) multiline input input 0
+
+/-- `m` mode input wrapping under F&O 4.0 §6.1.8.1: as `wrapMultiline`, but a
+    final newline starts no line, so its BEGIN / END pair is left out. -/
+def wrapMultilineFinal (cps : List Nat) : List Nat :=
+  if cps.getLast? == some 0x0A then (wrapMultiline cps).dropLast.dropLast else wrapMultiline cps
+
 /-! ## Public API for the SPARQL evaluator -/
 
 /-- Errors of the XPath regex functions, named by their F&O error codes. -/
@@ -664,6 +761,17 @@ structure Compiled where
   multiline : Bool
   /-- F&O 3.x q: replacement dollars and backslashes are literal too. -/
   literalReplacement : Bool := false
+  /-- The pattern is not a regular language over the sentinel encoding
+      (back-references, lookaround, word boundaries, or anchors that the
+      sentinel encoding cannot count): `isMatch` searches with the ordered
+      matcher `cmatch`, and `matchRe` is not used. Only the F&O 4.0 compiler
+      sets it. -/
+  ordered : Bool := false
+  /-- F&O 4.0 §6.1.8.1, multi-line mode: no line follows a final newline, so the
+      sentinel wrapping of the input leaves out the last BEGIN / END pair. -/
+  finalNewline : Bool := false
+  /-- F&O 4.0 §6.1.5: the names of named capturing groups, by group number. -/
+  names : List (Nat × String) := []
   deriving Repr
 
 /-- The flag characters XPath F&O §5.6.1 defines. -/
@@ -703,8 +811,12 @@ honoured as string anchors. (`matches` is a Lean keyword, hence
 `isMatch`.) -/
 def isMatch (r : Compiled) (s : String) : Bool :=
   let cps := cpsOfString s
-  let wrapped := if r.multiline then wrapMultiline cps else beginSentinel :: (cps ++ [endSentinel])
-  Exec.acceptsNorm r.matchRe wrapped
+  if r.ordered then orderedSearch r.capt r.multiline cps
+  else
+    let wrapped := if r.multiline then
+        (if r.finalNewline then wrapMultilineFinal cps else wrapMultiline cps)
+      else beginSentinel :: (cps ++ [endSentinel])
+    Exec.acceptsNorm r.matchRe wrapped
 
 /-- F&O 3.x §5.6: quote a literal replacement for the shared template expander.
     Only the two template metacharacters need escaping. -/

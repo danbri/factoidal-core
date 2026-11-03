@@ -94,23 +94,27 @@ def formatDerived (stage : String) (given : List (String × Json)) :
     | none, none => .ok []
   | some _ => .error s!"stage {stage}: the setting format must be a string"
 
-/-- One node of the request: its entry and settings. -/
-def nodeOfJson (i : Nat) : Json → Except String (Entry × NodeSettings)
+/-- One node of the request: its entry and settings. `who` is the op name
+that the error messages start with (`graphCheckNodes` reads its registry nodes
+with this function too, `Wasm/Ops/GraphNodes.lean`). -/
+def nodeOfJson (i : Nat) (j : Json) (who : String := "pipelineCheckNodes") :
+    Except String (Entry × NodeSettings) :=
+  match j with
   | .object kvs => do
     let name ← match ((kvs.find? (·.1 == "stage")).map (·.2) : Option Json) with
       | some (.string n) => pure n
-      | _ => throw s!"pipelineCheckNodes: node {i} has no string member stage"
+      | _ => throw s!"{who}: node {i} has no string member stage"
     let e ← match entryOfName name with
       | some e => pure e
-      | none => throw s!"pipelineCheckNodes: no registered stage named '{name}'"
+      | none => throw s!"{who}: no registered stage named '{name}'"
     let given ← match ((kvs.find? (·.1 == "settings")).map (·.2) : Option Json) with
       | none | some .null => pure []
       | some (.object g) => pure g
-      | some _ => throw s!"pipelineCheckNodes: node {i} ({name}): settings must be an object"
-    let fmt ← (formatDerived name given).mapError fun m => s!"pipelineCheckNodes: node {i}: {m}"
-    let r ← (nodeSettings e given).mapError fun m => s!"pipelineCheckNodes: node {i} ({name}): {m}"
+      | some _ => throw s!"{who}: node {i} ({name}): settings must be an object"
+    let fmt ← (formatDerived name given).mapError fun m => s!"{who}: node {i}: {m}"
+    let r ← (nodeSettings e given).mapError fun m => s!"{who}: node {i} ({name}): {m}"
     pure (e, { r with derived := r.derived ++ fmt })
-  | _ => .error s!"pipelineCheckNodes: node {i} is not an object"
+  | _ => .error s!"{who}: node {i} is not an object"
 
 private def wireJsonOpt : Option Wire → Json
   | some w => .string w.label

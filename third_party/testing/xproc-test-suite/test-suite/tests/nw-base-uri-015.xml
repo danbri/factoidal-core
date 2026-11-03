@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<t:test expected="pass"
+        xmlns:t="http://xproc.org/ns/testsuite/3.0">
+   <t:info>
+      <t:title>nw-base-uri-015</t:title>
+      <t:revision-history>
+         <t:revision>
+            <t:date>2026-06-29</t:date>
+            <t:author>
+               <t:name>Norm Tovey-Walsh</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Created test</p>
+            </t:description>
+         </t:revision>
+      </t:revision-history>
+   </t:info>
+   <t:description xmlns="http://www.w3.org/1999/xhtml">
+     <p>Test that the result of p:invisible-xml has no base URI.</p>
+   </t:description>
+   <t:pipeline>
+     <p:declare-step version="3.0"
+                     xmlns:p="http://www.w3.org/ns/xproc"
+                     xmlns:c="http://www.w3.org/ns/xproc-step">
+       <p:output port="result"/>
+
+       <p:invisible-xml>
+         <p:with-input port="grammar">
+           <p:inline content-type="text/plain">
+             date: s?, day, s, month, (s, year)? .
+             -s: -" "+ .
+             day: digit, digit? .
+             -digit: "0"; "1"; "2"; "3"; "4"; "5"; "6"; "7"; "8"; "9".
+             month: "January"; "February"; "March"; "April";
+             "May"; "June"; "July"; "August";
+             "September"; "October"; "November"; "December".
+             year: (digit, digit)?, digit, digit .
+           </p:inline>
+         </p:with-input>
+         <p:with-input port="source">
+           <p:inline content-type="text/plain">31 December 2021</p:inline>
+         </p:with-input>
+       </p:invisible-xml>
+
+       <p:cast-content-type content-type="application/xml">
+         <p:with-input select="p:document-properties(.)"/>
+       </p:cast-content-type>
+     </p:declare-step>
+   </t:pipeline>
+   <t:schematron>
+      <s:schema queryBinding="xslt2"
+                xmlns:s="http://purl.oclc.org/dsdl/schematron"
+                xmlns="http://www.w3.org/1999/xhtml">
+         <s:ns prefix="fn" uri="http://www.w3.org/2005/xpath-functions"/>
+         <s:pattern>
+            <s:rule context="/">
+               <s:assert test="fn:map">Document element is wrong</s:assert>
+            </s:rule>
+         </s:pattern>
+         <s:pattern>
+            <s:rule context="/fn:map">
+               <s:assert test="not(exists(*[@key='base-uri']))"
+                         >There should be no base-uri property</s:assert>
+            </s:rule>
+         </s:pattern>
+      </s:schema>
+   </t:schematron>
+</t:test>

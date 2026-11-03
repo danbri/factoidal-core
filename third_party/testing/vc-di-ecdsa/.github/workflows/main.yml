@@ -1,0 +1,67 @@
+# Copyright 2023 Digital Bazaar, Inc.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+name: Generate Interop Report
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  push:
+  schedule:
+    # update the integration suite once per week at Sunday 5am UTC
+    - cron: '0 5 * * 0'
+
+jobs:
+  lint:
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22.x]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm install
+      - name: Run eslint
+        run: npm run lint
+  test-node:
+    if: ${{ github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        node-version: [22.x]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install npm dependencies
+        run: npm install
+      - name: Run test with Node.js ${{ matrix.node-version }}
+        env:
+          CLIENT_SECRET_DB: ${{ secrets.CLIENT_SECRET_DB }}
+          KEY_SEED_DB: ${{ secrets.KEY_SEED_DB }}
+          DISABLE_INTEROP: false
+        run: npm run test
+        continue-on-error: true
+      - name: Deploy to Github Pages
+        uses: JamesIves/github-pages-deploy-action@6c2d9db40f9296374acc17b90404b6e8864128c8 # v4.7.3
+        with:
+          branch: gh-pages
+          folder: reports
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Report Github Pages Deployment Status
+        run: echo $deployment_status

@@ -21,6 +21,7 @@
 // digest, decodes a block, or chooses an artifact.
 
 import { readWhole } from '../store-host/index.mjs'
+import { checkEngineStamp } from '../lib/engine-integrity.mjs'
 import { fileUrlToPath, joinPath } from '../store-host/paths.mjs'
 
 /** Read one environment variable, or null where reading it is refused. */
@@ -114,7 +115,27 @@ export function loadEngine (name = 'l4factoidal') {
       ? loaderPath
       : 'file://' + encodeURI(loaderPath).replace(/#/g, '%23')
     const module = await import(url)
-    return module.loadL4()
+    // The release stamp check (lib/engine-integrity.mjs, issue 1106): the
+    // full engine's bytes against l4-assets/version.json, before they are
+    // instantiated. The stamp describes l4factoidal.wasm only.
+    if (name !== 'l4factoidal') return module.loadL4()
+    const dir = loaderPath.slice(0, loaderPath.length - `${name}.js`.length)
+    const wasmPath = dir + `${name}.wasm`
+    let stamp = null
+    try {
+      stamp = JSON.parse(new TextDecoder().decode(readWhole(dir + 'version.json')))
+    } catch (_error) {
+      stamp = null // no version.json: an unstamped copy
+    }
+    const bytes = readWhole(wasmPath)
+    await checkEngineStamp(bytes, stamp, {
+      where: wasmPath,
+      allowModified: environment('FACTOIDAL_ALLOW_MODIFIED_ENGINE') !== null,
+      warn: (msg) => { try { console.warn(msg) } catch (_e) {} }
+    })
+    return module.loadL4({
+      instantiateWasm: (imports) => WebAssembly.instantiate(bytes, imports)
+    })
   })()
   enginePromises.set(name, promise)
   return promise

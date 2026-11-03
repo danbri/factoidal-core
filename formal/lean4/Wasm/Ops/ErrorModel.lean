@@ -230,7 +230,7 @@ def familyCode (op : String) : String :=
              "coreRdfs"] then "reason.failed"
   else if p ["shacl", "shex", "datasetShacl", "datasetShex", "jsonSchema", "schematron"] then
     "validate.failed"
-  else if p ["xml", "xpath", "xslt", "mathml", "xforms"] then "xml.failed"
+  else if p ["xml", "xpath", "xquery", "xslt", "mathml", "xforms"] then "xml.failed"
   else if p ["vc", "did", "aead", "hpke"] then "crypto.failed"
   else if p ["store", "activateVerify", "scanIBK", "queryIBK", "pack", "tdb2", "blob",
              "queryHdt"] then "store.failed"
@@ -276,7 +276,7 @@ def uncodedOps : List String :=
   [ "lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush", "lwsLoad", "lwsPersist", "lwsRead", "solidOpen", "solidStep",
     "solidClose", "solidSnapshot", "solidFetched", "solidClientRequest", "solidClientResponse",
     "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzOwns", "authzClose",
-    "webdavOpen", "webdavLoad", "webdavStep", "webdavResume", "webdavClose" ]
+    "webdavOpen", "webdavLoad", "webdavStep", "webdavResume", "webdavClose", "webdavUser" ]
 
 private def isErrorEnvelope (s : String) : Bool := s.startsWith "{\"ok\":false"
 

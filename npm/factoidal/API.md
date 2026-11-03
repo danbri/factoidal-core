@@ -644,7 +644,8 @@ RDF/XML `application/rdf+xml` `.rdf`, JSON-LD `application/ld+json` `.jsonld`.
 The media type wins when it is given, and its parameters and letter case do not
 change the answer. An unknown media type (`text/plain`) gives `null`; it does not
 fall back to the name. The query and the fragment of an IRI are ignored.
-`.owl` and `.xml` are not registered and give `null`. Each row of `formats()`
+`.xml` is not registered and gives `null`. `.owl` is not registered either, but
+gives RDF/XML when no media type is given, as Jena does (since 0.20.0). Each row of `formats()`
 has the same `mediaTypes` and `extensions`.
 
 This table is not the one the file readers use. When `factoidal pack` or
@@ -652,8 +653,8 @@ another file-reading command gets no `--format`, it uses the extension table
 `RDF.formatOfExtension` (`formal/lean4/L4Factoidal/RDF/Format.lean`). That
 table also maps `.owl`, `.xml` and `.rdfxml` to RDF/XML, `.ntriples` to
 N-Triples, `.turtle` to Turtle, `.nquads` to N-Quads and `.json-ld` to JSON-LD.
-`syntaxFor` keeps to the registrations, so `syntaxFor('onto.owl')` is `null`.
-Jena's `RDFLanguages.filenameToLang('onto.owl')` gives RDF/XML. The tests are
+`syntaxFor` keeps to the registrations, except `.owl`: `syntaxFor('onto.owl')` is
+`'rdfxml'`, as Jena's `RDFLanguages.filenameToLang('onto.owl')`. The tests are
 in `test/syntax-names-1053.test.mjs`.
 
 `splitIri(iri)` gives `{namespace, localName}`
@@ -1372,6 +1373,160 @@ held at one instant. The Lean source theorem `lwsSource_query_sound`
 identifies at the snapshot instant. A TriG or N-Quads resource gives its
 default graph only.
 
+## XPath 4.0, XQuery 4.0 and XSLT 4.0
+
+Three functions, in Node, Deno and the browser, over the Lean engines
+`L4Factoidal/XPath4`, `L4Factoidal/XQuery4` and `L4Factoidal/XSLT4` (the
+engines that `lake exe l4qt4` and `lake exe l4xslt4` score against the QT4 CG
+test suites). The engine evaluates and serializes (Serialization 4.0); the
+package checks argument types. `xpathEval` (XPath 1.0) and `xsltTransform`
+(XSLT 1.0) are separate functions and do not change.
+
+```js
+import { xpath4Eval, xqueryEval, xslt4Transform } from '@factoidal/core';
+
+await xpath4Eval('<r><a>1</a><a>2</a></r>', '//a ! (. * 10) => sum()');
+// { count: 1, items: [{ type: 'xs:double', value: '30' }], adaptive: '30', xml: '30' }
+
+await xqueryEval('for $a in //a order by xs:integer($a) descending return <b>{string($a)}</b>',
+                 '<r><a>1</a><a>2</a></r>');
+// { count: 2, items: [...], adaptive: '<b>2</b>\n<b>1</b>', xml: '<b>2</b><b>1</b>' }
+
+await xslt4Transform(
+  `<xsl:stylesheet version="4.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes">
+     <xsl:output method="text"/>
+     <xsl:template match="/">n={count(//a)}</xsl:template>
+   </xsl:stylesheet>`, '<r><a/><a/></r>');
+// { output: 'n=2', method: 'text', secondary: [], messages: [] }
+```
+
+| Function | Arguments | Result |
+|---|---|---|
+| `xpath4Eval` | `(xmlText, expr)`; `xmlText` `''`: no context item | `{count, items, adaptive, xml}` |
+| `xqueryEval` | `(query, contextXml?)`; `contextXml` absent or `''`: no context item | `{count, items, adaptive, xml}` |
+| `xslt4Transform` | `(stylesheetXml, sourceXml)`; `sourceXml` `''`: no global context item (use `xsl:initial-template`) | `{output, method, secondary, messages}` |
+
+- `items`: each item of the result, with its type (`xs:integer`,
+  `element()`, `map(*)`, `array(*)`, `function(*)`, ...) and its adaptive
+  serialization. `adaptive`: the whole sequence with the adaptive method.
+  `xml`: the whole sequence with the xml method and no XML declaration, or
+  `null` when the xml method cannot serialize it (a map, an array, a
+  function: SENR0001).
+- `output`: the principal result of the transformation, serialized with the
+  stylesheet's unnamed output definition (`xsl:output`; the default method
+  writes the XML declaration). `secondary`: each `xsl:result-document`
+  result, `{href, output}`, serialized with its own output definition.
+  `messages`: the texts of `xsl:message`.
+- An error rejects with a `FactoidalError` with code `xml.failed` and
+  `qtError: {code, namespace, message}`: the error that the specification
+  names, for example `{code: 'XPST0003', namespace:
+  'http://www.w3.org/2005/xqt-errors'}`. EXPath File errors have the
+  namespace `http://expath.org/ns/file`.
+- No I/O. The dynamic context holds only the documents given as arguments.
+  `fn:doc` of any other URI fails with FODC0002, `fn:unparsed-text` and
+  `fn:json-doc` with FOUT1170, `fn:collection` with XPST0017, EXPath `file:`
+  functions with `file:io-error`, `import module` with XQST0059, and
+  `xsl:import`, `xsl:include` and `xsl:use-package` with XTSE0165. Nothing
+  is fetched and no file is read.
+- Bounds: an evaluation deeper than 4,000 nested steps fails with FOER0000.
+  There is no bound on the total number of steps or on memory. In the wasm
+  module the host's call stack is the tighter limit today: parts of the
+  engines take one stack frame per item
+  (https://github.com/danbri/factoidal/issues/1110), and the call rejects with
+  `Maximum call stack size exceeded` (code `op.failed`; the engine answers the
+  next call). Measured in Node 2026-10-28: a document of 6,000 sibling elements
+  is read and one of 8,000 is not; a user function recursion 400 calls deep
+  runs and one 600 deep does not; an expression nested 200 parentheses deep
+  parses and one 400 deep does not. The limits depend on the host's stack
+  size: with a larger stack (the CI runners' Node) a deep recursion reaches the
+  engine's own bound first and fails with FOER0000. The document and nesting
+  cases are expected failures in `test/qt4.test.mjs`; the recursion case accepts
+  either outcome. `xpathEval` (XPath 1.0) reads a document of 10,000
+  sibling elements.
+- `fn:current-dateTime()` is a fixed instant of the engine
+  (`2026-10-27T12:00:00Z`), not the clock.
+
+## Controlled identifier documents (CID 1.0)
+
+[Controlled Identifiers v1.0](https://www.w3.org/TR/cid-1.0/) (W3C
+Recommendation, 15 May 2025). Two functions, in Node, Deno and the browser
+(https://github.com/danbri/factoidal/issues/1100). The Lean engine
+(`L4Factoidal/CID/`) makes every decision; the package moves bytes.
+
+```js
+import { cidValidate, cidRetrieveVerificationMethod } from '@factoidal/core'
+
+const doc = {
+  id: 'https://controller.example/123',
+  verificationMethod: [{
+    id: 'https://controller.example/123#key-456', type: 'Multikey',
+    controller: 'https://controller.example/123',
+    publicKeyMultibase: 'z6MkmM42vxfqZQsv4ehtTjFFxQ4sQKS2w6WR7emozFAn5cxu' }],
+  assertionMethod: ['#key-456'],
+}
+console.log(await cidValidate(doc))                  // { valid: true, errors: [] }
+console.log((await cidValidate({ id: 'x' })).errors) // [{ code: 'idNotUrl', message: …, path: '/id' }]
+
+// Here the host name and the GET are answered locally; by default the
+// package resolves the name and GETs the document itself.
+const r = await cidRetrieveVerificationMethod(
+  'https://controller.example/123#key-456', 'assertionMethod', {
+    now: new Date(),
+    resolve: async () => ['203.0.113.7'],
+    fetch: async () => new Response(JSON.stringify(doc), { headers: { 'content-type': 'application/cid' } }),
+  })
+if (r.ok) console.log(r.verificationMethod.type)     // 'Multikey'
+else console.log(r.code, r.problem)                  // RFC 9457 { type, title, detail }
+```
+
+**`cidValidate(doc)`** checks every MUST of §2. `valid` is the answer of
+the engine's document parser; `errors` lists each failed MUST it finds, with
+the engine's name (`code`), a message, and an RFC 6901 JSON Pointer (`path`;
+`''` is the whole document). A controlled identifier document is public, so
+`secretKeyMultibase`, `secretKeyJwk` and a private JWK member are errors.
+
+**`cidRetrieveVerificationMethod(url, relationship, options)`** is §3.3
+Retrieve Verification Method. `relationship` is one of `authentication`,
+`assertionMethod`, `keyAgreement`, `capabilityInvocation`,
+`capabilityDelegation`. The engine names each request; the package does it:
+
+1. The document URL is `https` (`http` only with `allowHttp: true`).
+2. The host name is resolved (`options.resolve`, default the system
+   resolver under Node and Deno). The fetch is refused (`FETCH_REFUSED`) when
+   any address is loopback, unspecified, link-local or private (RFC 1918,
+   RFC 4193), or the name is a `localhost` name, unless
+   `allowPrivateFetch: true`. This is the guard of `authz-serve`.
+3. The document is fetched from the address the engine chose, with
+   `Accept: application/cid, application/cid+json, application/ld+json, application/json`.
+   No redirect is followed.
+4. The answer must have status 200 (`FETCH_FAILED`) and one of those four
+   media types as its `Content-Type` (`UNSUPPORTED_MEDIA_TYPE`).
+5. §3.3 steps 5–12; a failure is a §3.5 processing error:
+   `INVALID_VERIFICATION_METHOD_URL`, `INVALID_CONTROLLED_IDENTIFIER_DOCUMENT`,
+   `INVALID_CONTROLLED_IDENTIFIER_DOCUMENT_ID`, `INVALID_VERIFICATION_METHOD`,
+   `INVALID_RELATIONSHIP_FOR_VERIFICATION_METHOD`, with `problem.type`
+   `https://w3id.org/security#<code>`.
+6. With `now` (a `Date`, or seconds since the epoch), a method at or after
+   its `expires` or `revoked` time is `VERIFICATION_METHOD_NOT_IN_FORCE`.
+
+The four codes that are not §3.5 errors have a `problem.type` of
+`tag:danbri.github.io,2026:factoidal/cid#<code>`. A failed retrieval does not
+reject; an unknown relationship rejects with a `FactoidalError`.
+
+`options.fetch(url, init)` replaces the GET. It gets `init.headers.accept`,
+`init.redirect: 'manual'` and, when the engine chose one, `init.address`
+(connect there; a replacement that ignores it loses the guard against a
+second DNS answer). It answers a `Response`, or
+`{ status, headers: { get(name) }, text() }`.
+
+**In a browser** a page cannot resolve names, so the guard covers IP
+literals and `localhost` names only; the browser chooses the address of a
+name. The default fetch there is the page's `fetch` with
+`redirect: 'manual'` and `credentials: 'omit'`, under the page's CORS rules.
+
+The design record: `docs/designissues/2026-10-27-cid-1.0.md`.
+
+
 ## An SBM11 store held in Linked Web Storage: `lwsSbm11Reader`
 
 `openSbm11` (the Shardborough store, https://github.com/danbri/factoidal/issues/1009)
@@ -1382,20 +1537,32 @@ resource per file under the container `url`, and the `CURRENT` pointer of a
 collection root as one more resource (https://github.com/danbri/factoidal/issues/1010).
 Give it to `openSbm11` as `reader` (or to `registerSbm11Source`):
 
-```js browser
-// In a dedicated worker: the engine asks for bytes synchronously, and the
-// default transport there is a synchronous XMLHttpRequest.
-import { openSbm11, lwsSbm11Reader } from '@factoidal/core/browser'
+```js
+// Node: the default transport refuses redirects before forwarding headers.
+import { openSbm11, lwsSbm11Reader } from '@factoidal/core'
 
 const storeUrl = 'https://storage.example/stores/tiny/'   // holds CURRENT and gen/...
 const accessToken = 'an LWS access token'
 const reader = lwsSbm11Reader(storeUrl, { auth: `Bearer ${accessToken}` })
 const store = await openSbm11(storeUrl, { reader })
 const answer = store.query('SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }')
-console.log(answer.json, store.evidence)   // evidence: [{ resource, etag, lastModified, requests, partial, bytes }]
+console.log(JSON.stringify(answer.json), store.evidence)   // evidence: [{ resource, etag, lastModified, requests, partial, bytes }]
 store.close()
 reader.close()
 ```
+
+Authority boundary. The container must be an absolute HTTP(S) URL without
+userinfo, query or fragment; use `opts.auth`/`opts.headers` for caller headers.
+Resource names are raw relative paths, not URL references. Invalid paths return
+null and appear in `reader.errors()` before any transport call.
+
+Browser compatibility: the default dedicated-worker XHR transport now refuses
+all caller-supplied `auth` and `headers`. Browser authentication requires an
+explicit trusted synchronous `opts.transport` that constrains redirects before
+forwarding headers. No such authenticated browser transport is supplied by this
+API. Without caller headers, worker XHR checks its final response URL only after
+sending; it cannot prevent that already-sent request or ambient same-origin
+browser cookies. A window thread still needs an explicit synchronous transport.
 
 How it reads. Each read is a GET with `Range: bytes=a-b` (RFC 9110 §14).
 The answer is used as the range only when it is `206` with `Content-Range:
@@ -1414,11 +1581,13 @@ the bytes received, so an answer can say which bytes it came from.
 
 Transport. The engine is inside WebAssembly and cannot wait for a promise, so
 the reader needs a synchronous GET. In Node the default is a `fetch` in a
-worker thread that this thread waits for (`Atomics.wait`), stopped by
-`reader.close()`; the server must then run in another process or worker,
+worker thread that this thread waits for (`Atomics.wait`), with redirects
+refused before following, stopped by `reader.close()`; the server must then run in another process or worker,
 not on the thread that queries. In a browser worker the default is a
 synchronous `XMLHttpRequest`; a window thread has neither, so pass
-`opts.transport` (`(url, headers) => ({ status, header(name), bytes })`).
+`opts.transport` (`(url, headers) => ({ status, header(name), bytes })`). A custom
+transport is trusted and must independently constrain redirect/header forwarding;
+the reader cannot impose that restriction on arbitrary caller code.
 `opts.auth` is sent as the `Authorization` header; `opts.headers` adds more.
 
 The storage medium. In Lean every reader is a `Medium`
@@ -1434,14 +1603,44 @@ Integrity. `openSbm11(source, { verify })` checks reads by default
 (`verify: 'merkle'`, Lean `Storage/Sbm11/HostVerify.lean`, as native
 `l4sbm11 query --verify merkle`). The open reads the `.merkle` sidecar of each
 file and refuses it unless its leaves rebuild the Merkle root in
-`manifest.sbm11`. Each read is then widened to its 65,536-byte chunks, and
-each chunk is checked by its Merkle proof before the engine decodes a byte of
-it; checked chunks are kept for later queries (at most 256 per file). A
+`manifest.sbm11`. Each read is then widened to its chunks (65,536 bytes as
+every packer writes them; any chunk size of 1 to 16 MiB that agrees with the
+file's length and chunk count is admitted), and each chunk is checked by its
+Merkle proof before the engine decodes a byte of it; checked chunks are kept
+for later queries (16 MiB per file). A
 changed byte in a data file, a sidecar or a Merkle reference of the manifest
 refuses the open or the query, and the error names the file.
 `verify: 'none'` checks only the lengths against the manifest and hashes
-nothing. The manifest has no digest of its own; the full-file SHA-256 of each
-file is checked by `factoidal activate` (the op `sbm11Verify`).
+nothing but the manifest. Every open also checks the term count of the
+manifest against the dictionary header (`dict.gdx1`).
+
+Trust anchor (https://github.com/danbri/factoidal/issues/1105). The manifest
+has no digest of its own, so the Merkle check does not bind the manifest
+fields that no read uses: the SHA-256 of each file, the length and SHA-256 of
+the source, the quad count. Give the SHA-256 of the bytes of `manifest.sbm11`
+as `manifestSha256` (64 hex digits; from a signed release, a CID document, or
+a value your application pins):
+
+```js
+import { packSbm11, mapReader, openSbm11 } from "@factoidal/core";
+
+const files = await packSbm11('<http://e/s> <http://e/p> "x" .\n', { syntax: "ntriples" });
+// first open: no anchor; pin the digest the engine computed
+const first = await openSbm11("pinned", { reader: mapReader(files) });
+const pinned = first.manifestSha256;   // 64 lowercase hex digits
+first.close();
+// later opens: the engine refuses a manifest with another digest
+const store = await openSbm11("pinned", { manifestSha256: pinned });
+console.log(store.manifestSha256 === pinned);   // true
+store.close();
+```
+
+The engine computes the digest (HACL* SHA-256) and refuses the open when it
+is not the anchor; the error names `manifest.sbm11` and both digests. With no
+anchor the open is as before, and `store.manifestSha256` gives the digest to
+pin. The open reads no file whole: the full-file SHA-256 of each file is
+checked by `factoidal activate` (the op `sbm11Verify`, whose answer also
+gives `manifestSha256`).
 
 ## Packing an SBM11 generation in memory: `packSbm11`, `mapReader`
 
@@ -1686,6 +1885,96 @@ contract, so `checked` is false and `run()` needs `{ unchecked: true }`)
 `stages()` marks a stage `bound` only when the engine also reports it
 runnable.
 
+### Graphs: nodes with named ports, `graph`, `datasetMerge` (after 0.20.0)
+
+> These need a wasm module built after 0.20.0 (the ops `graphCheckNodes` and
+> `datasetMerge`). With an older module `graph()` throws a `FactoidalError`
+> with code `op.unknown`, and `node('datasetMerge')` rejects as an unknown
+> stage. `capabilities()` reports `graphCheck` and `datasetMerge`.
+
+```js
+import { node, graph, run, datasetMerge, parse } from "@factoidal/core";
+
+const doc = "_:b <http://example.org/p> <http://example.org/o> .\n";
+const reader = await node("nquadsDocumentReader");
+const g = graph({
+  inputs: ["String", "String"],            // the wire of each graph input
+  nodes: [
+    { node: reader, from: [{ input: 0 }] },                       // node 0
+    { node: reader, from: [{ input: 1 }] },                       // node 1
+    { node: await node("datasetMerge"), from: [{ node: 0 }, { node: 1 }] },
+    { node: await node("shippedEvaluator", { query: "SELECT ?s WHERE { ?s ?p ?o }" }),
+      from: [{ node: 2 }] },
+  ],
+});
+const r = await run(g, [doc, doc]);
+console.log(r.graph.length);   // 2: one blank node from each document
+console.log(r.values[2].size); // 2 quads in the merge
+console.log(r.assumptions, r.proved); // [] true
+
+const m = await datasetMerge(await parse(doc, "nquads"), await parse(doc, "nquads"));
+console.log(m.size); // 2
+```
+
+A node has input ports: `node.ports` is a list of `{name, wire}`. A
+registry stage has one port, `in`, on its `wireIn`. A port stage has more
+than one port; today there is one, `datasetMerge`, with ports `left` and
+`right` on `Dataset` and output `Dataset`. Its contract is the Lean predicate
+`DatasetDen.IsMerge`: the output denotes an RDF merge of the two inputs (RDF
+1.1 Semantics section 5.2), so the blank nodes of the two inputs are kept
+apart. Its status is `proved` and it has no named assumption. A port stage
+is not in `stages()`: the registry has one input wire per stage.
+`node('datasetMerge')` reads it from the op `graphCheckNodes`. A setting on
+it is outside its proved domain, and the node is then `unproved`.
+
+`graph({ inputs, nodes })` makes a graph. `inputs` is the wire of each graph
+input (a wire label of `stages()`: `String` for text, `Dataset`, ...).
+`nodes` lists the nodes in order; each is `{ node, from }`, where `from` has
+one source per input port, in port order: `{ input: k }` (graph input `k`) or
+`{ node: j }` (the output of node `j`). One output can feed many nodes. The
+last node's output is the graph's output. The engine checks the graph (op
+`graphCheckNodes`, Lean `graphIssues` of
+`formal/lean4/L4Factoidal/Dataflow/Graph.lean`), and `graph()` throws a
+`FactoidalError` with code `op.failed` when the check finds an issue;
+`err.issues` is the engine's list:
+
+| `kind` | Meaning | Fields |
+|---|---|---|
+| `unknownInput` | a port reads a graph input that does not exist | `node`, `port`, `portName`, `input` |
+| `forwardRef` | a port reads the node itself or a later node (a cycle; XProc 3.1 static error XS0001) | `node`, `port`, `portName`, `ref` |
+| `portCount` | the number of sources is not the number of ports | `node`, `ports`, `sources` |
+| `wireMismatch` | the source's wire neither equals the port's wire nor converts to it | `node`, `port`, `portName`, `source`, `portWire` |
+
+A graph with no issue has `g.check`: `wireOut` (the last node's output
+wire), `assumptions` (the union of the nodes' named assumptions), `contract`
+(`theorem`: `L4Factoidal.Dataflow.Graph.guarantee_sound`; `staticCheck`:
+`L4Factoidal.Dataflow.Graph.run_stage_error_only`) and `nodes` (per node the
+fields of `pipelineCheckNodes`, plus `kind`, `theorems`, `ports` and
+`wireOut`). The two theorems: when every assumption of the union holds, a
+successful run satisfies every node's contract on the values of its
+sources; and a run of a checked graph on inputs of the declared wires fails
+only in a stage's own run, never on a source, a port count or a wire.
+
+`run(g, inputs, options)` takes an array, one value per graph input (a value,
+or a wire value `{graph, evidence}`, whose records are kept). Each node runs
+on the values of its sources; a node with more than one port gets them in
+port order. The answer is `{graph, values, evidence, assumptions, proved,
+uncheckedSteps, wellTyped, issues}`: `graph` is the last node's value,
+`values` the value of every node, and `evidence` one record per node with
+`node` (its index) and `from` (its sources). The rules of the list `run()`
+apply: a stage that is not `proved` runs only with `{ unchecked: true }`, and
+`proved` is then false. `pipe()` refuses a node with more than one port.
+
+`datasetMerge(a, b, {format?, baseIRI?})` is the merge as a function: a new
+Dataset with the quads of both, the blank nodes of each input in their own
+scope (op `datasetMerge`, Lean theorem `mergeDatasets_isMerge`). The
+prefixes are those of `a`, then those of `b` whose label `a` does not
+declare. The inputs do not change.
+
+Design: [issue 1130](https://github.com/danbri/factoidal/issues/1130) and
+section "Stage 1" of
+[2026-10-28-dataflow-and-xproc.md](../../docs/designissues/2026-10-28-dataflow-and-xproc.md).
+
 ## API
 
 | Function | Signature (informal) | Notes |
@@ -1707,7 +1996,7 @@ runnable.
 | `memberOrdinal` | `(iri) => number \| null` | the `n` of `rdf:_n`; synchronous |
 | `canonicalize` | `(data, {format?, baseIRI?}) => string` | RDFC-1.0 canonical N-Quads |
 | `graphs` | `(Dataset) => Array<[NamedNode \| BlankNode, Dataset]>` | named graphs, default graph excluded |
-| `canonicalHash` | `(Dataset) => string` | SHA-256 (64 lowercase hex digits) of the RDFC-1.0 canonical N-Quads that `canonicalize` answers, graph names included (since 0.20.0; before, graph names were dropped) |
+| `canonicalHash` | `(data, {format?, baseIRI?}) => string` | SHA-256 (64 lowercase hex digits) of the RDFC-1.0 canonical N-Quads that `canonicalize` answers, graph names included (since 0.20.0; before, graph names were dropped). `data` as for `canonicalize`: a Dataset or text; text is a string of characters, so decode bytes first (UTF-8) |
 | `asDefaultGraph` | `(Dataset) => Dataset` | the triples of every graph, all in the default graph; `canonicalHash(asDefaultGraph(g))` hashes a graph whatever its name |
 | `queryRaw` | `(dataText, sparql, {dataFormat?, entail?, output?}) => object \| string` | one call, serialized answer: `json` (parsed), `csv`, `tsv`, `xml`, `table`, `ntriples` |
 | `queryHdt` | `(hdtBytes, sparql) => Bindings[] \| boolean` | SELECT/ASK over an HDT file's bytes |
@@ -1719,6 +2008,8 @@ runnable.
 | `owlClosure` | `(data, 'RDFS' \| 'OWL-RL') => Dataset` | input + derived triples, default graph |
 | `explain` | `(sources, description, {profile?, format?}) => {entailed, bundle, assumptions, rejection, entailedMeans}` | RDFS entailment of a graph with shared blank nodes, with evidence; see "Explaining an entailment" |
 | `stages`, `node`, `pipe`, `run` | `() => StageInfo[]`; `(name, params?) => Node`; `(...nodes) => Pipeline`; `(pipeline, input, {unchecked?}) => {graph, evidence, assumptions, proved, uncheckedSteps, wellTyped}` | registered Lean stages as nodes, evidence on the wires; see "Stages as nodes" |
+| `graph` | `({inputs, nodes: [{node, from}]}) => Graph`; `run(graph, inputs[], {unchecked?}) => {graph, values, evidence, assumptions, proved, …}` | nodes with named ports in an acyclic graph, checked by the engine (op `graphCheckNodes`); see "Graphs" |
+| `datasetMerge` | `(a, b, {format?, baseIRI?}) => Dataset` | the RDF merge of two datasets: blank nodes of each input kept apart (op `datasetMerge`) |
 | `coreRdfsClosure`/`rhoDfClosure`, `rdfsPlusClosure` | `(data) => Dataset` | ρdf closure, RDFS-Plus closure |
 | `coreRdfsCheck`/`rhoDfFragmentCheck` | `(data) => {ok, fragment}` | ρdf fragment check |
 | `tableauMaterialise` | `(data) => {dataset, addedCount, budgetHit}` | class-expression memberships; `budgetHit` true when the work budget ran out |
@@ -1729,12 +2020,15 @@ runnable.
 | `jsonldToRdf`, `jsonldFromRdf` | | JSON-LD 1.1 to and from RDF; a remote `@context` is not fetched. Option `rdfstar`: JSON-LD-star (`@triple`, `@reifies`, `@annotation` as RDF 1.2 triple terms and reifiers; also `serialize` with `format: "jsonld"`) |
 | `rifEval` | `(data, rifXml) => Dataset` | RIF Core forward chaining |
 | `xmlWellformed`, `xpathEval`, `xsltTransform`, `schematronValidate`, `jsonSchemaValidate`, `xformsRecalc`, `mathmlEval` | | XML 1.0, XPath 1.0, XSLT 1.0, Schematron, JSON Schema draft-07, XForms recalculation, Content MathML |
+| `xpath4Eval`, `xqueryEval`, `xslt4Transform` | `(xmlText, expr)`, `(query, contextXml?)`, `(stylesheetXml, sourceXml)` | XPath 4.0, XQuery 4.0, XSLT 4.0; no I/O (see [XPath 4.0, XQuery 4.0 and XSLT 4.0](#xpath-40-xquery-40-and-xslt-40)) |
 | `clParse`, `clSerialize`, `clAlphaNorm`, `clNormalize` | `(clifText) => {…}` | Common Logic (ISO/IEC 24707) and IKL; `clSerialize` reports `roundTripProved: false`, `clNormalize` reports `preserves: "satisfiability"` |
 | `toanSummation`, `toanProduct`, `toanSimplify`, `toanDiff`, `toanSubst` | | symbolic algebra over Content MathML |
 | `vcSha256Hex`, `vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`, `vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical` | | VC Data Integrity `eddsa-rdfc-2022`; Ed25519 is HACL\*'s C code in the wasm module; no initialisation step |
 | `xmlDecrypt`, `xmlEncrypt` | `(document, {keys, allowCbc?})`, `(document, {recipient, algorithm?, keyTransport?, keyWrap?, content?, saml?}) => {document, canonical}` | XML Encryption 1.1. Allowlist: `aes128-gcm`, `aes256-gcm` (CBC only with `allowCbc`), `rsa-oaep-mgf1p`, `xmlenc11#rsa-oaep`, `kw-aes128`, `kw-aes256`, ECDH-ES (P-256, X25519); `rsa-1_5` and remote references refused. Keys are JWKs, `kid` is the `ds:KeyName`. Every failure after the structure check is one error, `XML decryption failed` |
+| `xmlVerify`, `xmlSign` | `(document, {key?, hmacKey?, keyFromKeyInfo?, certificates?, documents?}) => {valid: true, signedInfo, references: [{uri, octets}], key, certificate} \| {valid: false, reason}`, `(document, {key, signatureMethod?, canonicalizationMethod?, inclusivePrefixes?, references?, enveloping?, keyValue?}) => {document}` | XML Signature 1.1: core validation (§3.2) and generation (§3.1). Methods: RSASSA-PKCS1-v1_5 (2048 to 4096 bits), ECDSA P-256 with SHA-1 to SHA-512, HMAC; digests SHA-1 to SHA-512; the six canonicalization methods, enveloped-signature, XPath, XPath Filter 2.0, XSLT and base64 transforms; `ds:KeyValue`, `dsig11:DEREncodedKeyValue`, `ds:X509Data`, `ds:RetrievalMethod`. Keys are JWKs; octets are `Uint8Array`. A key read from `ds:KeyInfo` is returned (`key`, `certificate`), not trusted: certificate path validation is the caller's. The engine fetches nothing (`documents`). A signature that does not validate is `valid: false`, not an exception. Not yet: DSA (https://github.com/danbri/factoidal/issues/1224), ECDSA P-384 and P-521 (https://github.com/danbri/factoidal/issues/1223) |
 | `jweDecrypt`, `jweEncrypt` | `(token, {jwk}) => {header, plaintext: Uint8Array}`, `(plaintext, {alg, enc, jwk, header?}) => token` | JWE Compact Serialization (RFC 7516). `alg` RSA-OAEP, RSA-OAEP-256, ECDH-ES, ECDH-ES+A128KW, ECDH-ES+A256KW, A128KW, A256KW, dir; `enc` A128GCM, A256GCM, A128CBC-HS256, A256CBC-HS512. RSA, P-256 and X25519 run in the wasm (HACL\*); AES runs in the host's WebCrypto (`globalThis.crypto.subtle`), so these four functions are asynchronous on every host |
 | `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | | VCDM 2.0 checks; `did:key` (Ed25519) resolution |
+| `cidValidate`, `cidRetrieveVerificationMethod` | `(doc) => {valid, errors}`, `(url, relationship, {fetch?, resolve?, now?, allowHttp?, allowPrivateFetch?}) => {ok, …}` | Controlled Identifiers v1.0 §2 and §3.3; see "Controlled identifier documents" |
 | `literalValue`, `isValidLiteral`, `canonicalLiteral` | `(Literal) => {datatype, recognized, valid, value?, canonical?}`, `=> boolean \| null`, `=> Literal \| null` | synchronous after `ready()`; see "Literal values" |
 | `literalFromValue` | `(boolean \| number \| bigint \| string \| Date, {datatype?}) => Literal` | synchronous after `ready()`; the engine table, or a named datatype; see "Literal values" |
 | `capabilities` | `() => {…}` | which ops the loaded wasm serves |

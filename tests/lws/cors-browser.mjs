@@ -35,7 +35,9 @@ const CHECKS = [
   'the page reads the new content back',
   'the page gets 401 with no token and reads WWW-Authenticate and Link',
   'a storage with cors false: the browser refuses the answer (fetch rejects)',
-  'a storage whose cors list does not name the page origin: the browser refuses the answer'
+  'a storage whose cors list does not name the page origin: the browser refuses the answer',
+  'a storage with --insecure-no-auth and no cors list: the browser refuses the answer (issue 1124)',
+  'a cross-site no-cors POST to a --insecure-no-auth storage creates nothing (issue 1124)'
 ]
 
 function record (name, ok, why) {
@@ -144,6 +146,7 @@ async function main () {
   const storage = await listen({ engine, port: 0, auth: { issuers: [{ issuer: issuer.origin }] }, owner: ALICE, realClock: true })
   const closed = await listen({ engine, port: 0, insecureNoAuth: true, cors: false })
   const listed = await listen({ engine, port: 0, insecureNoAuth: true, cors: ['https://danbri.github.io'] })
+  const open = await listen({ engine, port: 0, insecureNoAuth: true })
   try {
     if (storage.origin === page0.origin) throw new Error('one origin for the page and the storage')
     const token = issuer.token(`${storage.origin}/.well-known/lws-storage`, ALICE)
@@ -194,6 +197,23 @@ async function main () {
     record(CHECKS[4], c.rejected !== undefined, JSON.stringify(c))
     const l = await refused(listed.origin)
     record(CHECKS[5], l.rejected !== undefined, JSON.stringify(l))
+    const o = await refused(open.origin)
+    record(CHECKS[6], o.rejected !== undefined, JSON.stringify(o))
+    // A simple request (Fetch section 3.2): no preflight, the page cannot
+    // read the answer, but the server would act on it without the guard.
+    await page.evaluate(async (lws) => {
+      try {
+        await fetch(`${lws}/`, { method: 'POST', mode: 'no-cors', headers: { 'content-type': 'text/plain', slug: 'csrf' }, body: 'x' })
+      } catch (_error) { /* opaque */ }
+    }, open.origin)
+    const listing = await new Promise((resolve, reject) => {
+      http.get(`${open.origin}/`, { headers: { accept: 'application/lws+json' } }, (res) => {
+        let text = ''
+        res.on('data', (d) => { text += d })
+        res.on('end', () => resolve(text))
+      }).on('error', reject)
+    })
+    record(CHECKS[7], !/csrf/.test(listing), listing.slice(0, 200))
     if (pageErrors.length > 0) {
       failed += 1
       failures.push(`page errors: ${pageErrors.join('; ')}`)
@@ -204,6 +224,7 @@ async function main () {
     await storage.close()
     await closed.close()
     await listed.close()
+    await open.close()
     await page0.close()
     await issuer.close()
   }

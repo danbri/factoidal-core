@@ -1,0 +1,24 @@
+# Copyright 2023 Digital Bazaar, Inc.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+*.sw[nop]
+*.py[co]
+*~
+*.log
+.DS_Store
+.project
+.settings
+results/
+mochawesome-report/
+TAGS
+config.json
+node_modules/
+*.vswp
+config.json
+reports/**
+!.gitkeep
+credentials/*.json
+.vscode
+localConfig.cjs
+tests/input/**

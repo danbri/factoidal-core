@@ -26,6 +26,40 @@ function computeBuildVersion() {
 const BUILD_VERSION = computeBuildVersion();
 
 module.exports = function(eleventyConfig) {
+  // One pinned, offline Shiki bundle serves static fences and live output.
+  let highlightCode;
+  eleventyConfig.on("eleventy.before", async () => {
+    const { highlight } = await import("../third_party/shiki/highlight.mjs");
+    highlightCode = (source, language) => {
+      const aliases = { "observable-js": "javascript", js: "javascript", ts: "typescript", ttl: "turtle", sh: "bash" };
+      const html = highlight(source, aliases[language] || language || "text");
+      return html.slice(html.indexOf("<code>") + 6, html.lastIndexOf("</code>"));
+    };
+  });
+  eleventyConfig.addPassthroughCopy({ "../third_party/shiki": "vendor/shiki" });
+  for (const name of ["code-output.mjs", "code-output.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/assets/${name}`);
+  }
+  for (const name of ["app.mjs", "worker.mjs", "pipeline.mjs", "fixtures.mjs", "assurance.mjs", "style.css", "pipeline-document.mjs", "pipeline-files.mjs", "pod-storage.mjs", "storage-worker.mjs", "bounded-fetch.mjs"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/data-compositor/${name}`);
+  }
+  // HTML/CSS renderer source and original HTML fixtures. Runtime binaries and
+  // generated JS transports are installed from Builds, never committed here.
+  for (const name of ["app.mjs", "engine.mjs", "worker.mjs", "style.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/html-webgpu/${name}`);
+  }
+  eleventyConfig.addPassthroughCopy({
+    "../labs/demos/foafnaut/web-render/fixtures": "web/hub/html-webgpu/fixtures"
+  });
+  if (fs.existsSync(path.join(__dirname, "web/hub/html-webgpu/runtime"))) {
+    eleventyConfig.addPassthroughCopy("web/hub/html-webgpu/runtime");
+  }
+
+  // Browser-host facade. Lean's LWS client still makes every protocol decision;
+  // the compositor injects its already loaded engine and fetch transport.
+  eleventyConfig.addPassthroughCopy({ "../npm/factoidal/lws/client.mjs": "web/hub/runtime/lws/client.mjs" });
+  eleventyConfig.addPassthroughCopy({ "../npm/factoidal/lib/errors.mjs": "web/hub/runtime/lib/errors.mjs" });
+
   // Pass-through copy: F*-extracted browser artifacts (js_of_ocaml + wasm_of_ocaml).
   // fstar-extracted/ holds w3c-runner.js (pure JS) and the wasm_of_ocaml loader
   // w3c-runner.wasm.js plus its companion assets directory. Keep directory layout
@@ -74,6 +108,9 @@ module.exports = function(eleventyConfig) {
   // under third_party/, since it's project-derived (clipped,
   // simplified, re-keyed) rather than an unmodified vendored file.
   eleventyConfig.addPassthroughCopy("web/hub/assets/geo");
+
+  // The figures (SVG) of the hub page "Pods, bots and access control".
+  eleventyConfig.addPassthroughCopy("web/hub/assets/pods");
 
   // Pass-through the vendored Valis vocabulary and example circuits
   // (third_party/valis/ -- MIT, see its PROVENANCE.md) so hub post 55's
@@ -315,9 +352,11 @@ module.exports = function(eleventyConfig) {
   // way and every existing `pre > code.language-observable-js` selector
   // keeps matching.
   eleventyConfig.amendLibrary("md", (md) => {
+    md.options.highlight = (source, language) => highlightCode ? highlightCode(source, language) : "";
     const defaultFence = md.renderer.rules.fence || md.renderer.renderToken.bind(md.renderer);
     md.renderer.rules.fence = (tokens, idx, options, env, self) => {
       const token = tokens[idx];
+      token.attrJoin("class", "shiki-code");
       const info = token.info ? md.utils.unescapeAll(token.info).trim() : "";
       const m = /^observable-js(?:\s+(.*))?$/.exec(info);
       const rest = m && m[1] ? m[1].trim() : "";

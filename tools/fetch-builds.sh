@@ -10,6 +10,7 @@
 #   tag   build-<12-hex core commit>-<set>
 #   set   linux-x86_64 | darwin-arm64   native binaries -> bin/<platform>/
 #         web                           wasm + JS bundles -> npm/, docs/
+#         foafnaut-web                  SVG scene runtime -> docs/web/hub/svg-webgpu/runtime/
 #
 # Each release carries <set>.tar.gz (paths relative to the repository root)
 # and build-info.json (source commit, toolchain versions, sha256 and size of
@@ -18,9 +19,10 @@
 # build-info.json, and only then installs. A checksum mismatch installs
 # nothing and exits 1.
 #
-# Usage: tools/fetch-builds.sh [--set native|web|all] [--commit <sha>]
+# Usage: tools/fetch-builds.sh [--set native|web|foafnaut-web|all] [--commit <sha>]
 #                              [--allow-unrelated] [--check] [--strict]
-#   --set              which artifact sets (default: all = native + web)
+#   --set              which artifact sets (default: all = native + web;
+#                      foafnaut-web is opt-in)
 #   --commit           use the release built from exactly this commit
 #   --allow-unrelated  if no release is in HEAD's history (shallow clone,
 #                      unpushed branch), take the newest release instead,
@@ -33,8 +35,8 @@
 # Drift (danbri/factoidal issue 1038, P4): the release picked is often an
 # older ancestor of HEAD. When that commit and HEAD differ in the source
 # the set is built from (web: formal/lean4/ and npm/; native: formal/lean4/
-# and formal/fstar/), the installed products may not match HEAD: a test of
-# a new op then runs against an old wasm. The script warns and names the
+# and formal/fstar/; foafnaut-web: formal/lean4/ and labs/demos/foafnaut/),
+# the installed products may not match HEAD. The script warns and names the
 # changed files; --strict makes it a failure. The comparison is between
 # commits (HEAD, not the working tree).
 #
@@ -69,8 +71,9 @@ SETS=()
 case "$SET" in
   native) [ -n "$PLAT" ] && SETS=("$PLAT") ;;
   web)    SETS=(web) ;;
+  foafnaut-web) SETS=(foafnaut-web) ;;
   all)    [ -n "$PLAT" ] && SETS=("$PLAT"); SETS+=(web) ;;
-  *) echo "fetch-builds: --set must be native, web or all" >&2; exit 2 ;;
+    *) echo "fetch-builds: --set must be native, web, foafnaut-web or all" >&2; exit 2 ;;
 esac
 [ ${#SETS[@]} -gt 0 ] || { echo "fetch-builds: no native builds for $(uname -s)-$(uname -m)" >&2; exit 2; }
 
@@ -120,7 +123,11 @@ PY
     RC=2; continue
   fi
   # Drift between the release's commit and HEAD (see the header).
-  if [ "$S" = web ]; then DRIFT_PATHS=(formal/lean4 npm); else DRIFT_PATHS=(formal/lean4 formal/fstar); fi
+  case "$S" in
+    web) DRIFT_PATHS=(formal/lean4 npm) ;;
+    foafnaut-web) DRIFT_PATHS=(formal/lean4 labs/demos/foafnaut) ;;
+    *) DRIFT_PATHS=(formal/lean4 formal/fstar) ;;
+  esac
   RFULL=$(git -C "$REPO_ROOT" rev-parse -q --verify "$SHA^{commit}" 2>/dev/null || true)
   if [ -z "$RFULL" ]; then
     log "WARNING: $S: release commit $SHA is not in this clone; cannot compare it with HEAD"

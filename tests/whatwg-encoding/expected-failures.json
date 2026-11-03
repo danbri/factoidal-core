@@ -1,0 +1,7 @@
+{
+ "comment": "Keys are '<file> :: <test name>'. 'failures': engine shortfalls (expected failures). 'defective': defective test data, reported apart and not in the total. Each value names its open issue. A listed case that passes fails the run.",
+ "failures": {},
+ "defective": {
+  "textdecoder-mistakes.any.js :: fatal stream: utf-8": "https://github.com/danbri/factoidal/issues/1183 (test expects '' where Encoding Standard 7.2 keeps 0xEF in the I/O queue and throws)"
+ }
+}

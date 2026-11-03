@@ -1,0 +1,54 @@
+<t:test xmlns:t="http://xproc.org/ns/testsuite/3.0" 
+   xmlns:err="http://www.w3.org/ns/xproc-error"
+   code="err:XC0200" expected="fail" features="p-run">
+   <t:info>
+      <t:title>p:run-036a</t:title>
+      <t:revision-history>
+         <t:revision>
+            <t:date>2024-10-26</t:date>
+            <t:author>
+               <t:name>Norm Tovey-Walsh</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Added expand-text=false where necessary.</p>
+            </t:description>
+         </t:revision>
+         <t:revision>
+            <t:date>2024-05-28</t:date>
+            <t:author>
+               <t:name>Achim Berndzen</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Created new test to check "exclude-inline-prefix" is correctly handled.</p>
+            </t:description>
+         </t:revision>
+      </t:revision-history>
+   </t:info>
+   <t:description xmlns="http://www.w3.org/1999/xhtml">
+      <p>Tests p:run: Tests exclude-inline-prefixes.</p>
+   </t:description>
+   <t:pipeline>
+      <p:declare-step version="3.0" xmlns:p="http://www.w3.org/ns/xproc"
+         xmlns:xs = "http://www.w3.org/2001/XMLSchema"
+         xmlns:map ="http://www.w3.org/2005/xpath-functions/map"
+         xmlns:test="http://test"
+         exclude-inline-prefixes="#all">
+         <p:output port="result" />
+         <p:run>
+            <p:with-input>
+               <p:inline expand-text="false">
+                  <p:declare-step version="3.0">
+                     <p:output port="result" />
+                     <p:option name="opt" as="map(xs:QName, xs:string)" required="true" />
+                     <p:identity>
+                        <p:with-input><result>{map:keys($opt)[1] instance of xs:QName}</result></p:with-input>
+                     </p:identity>
+                  </p:declare-step>
+               </p:inline>
+            </p:with-input>
+            <p:run-option name="opt" select="map{'key':'value'}" />
+            <p:output port="result" />
+         </p:run>    
+      </p:declare-step>
+   </t:pipeline>
+</t:test>

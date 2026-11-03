@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<t:test expected="fail" xmlns:err="http://www.w3.org/ns/xproc-error" code="err:XD0079"
+        xmlns:t="http://xproc.org/ns/testsuite/3.0">
+   <t:info>
+      <t:title>Contenttypes 033</t:title>
+      <t:revision-history>
+         <t:revision>
+            <t:date>2026-07-18</t:date>
+            <t:author>
+               <t:name>Achim Berndzen</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Additional tests for content-type on p:load</p>
+            </t:description>
+         </t:revision>
+      </t:revision-history>
+   </t:info>
+   <t:description xmlns="http://www.w3.org/1999/xhtml">
+      <p>Tests that document-property?content-type is correct.</p>
+   </t:description>
+   <t:pipeline>
+      <p:declare-step version="3.0"
+                      xmlns:p="http://www.w3.org/ns/xproc">
+         <p:output port="result"/>
+         
+         <p:load href="../documents/ab-doc.xml" document-properties="map{'content-type' : 'this-is-no-correct'}" />
+      </p:declare-step>
+   </t:pipeline>
+</t:test>

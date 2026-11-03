@@ -1,5 +1,20 @@
 {
   "contexts": {
+    "https://json-ld.org/contexts/person.jsonld": {
+      "domain": "json-ld.org",
+      "url_sha256": "312ccaaaa006a4019193cfd3a147cdaab11db9f75e6d28eef8229edae462cb87",
+      "versions": [
+        {
+          "bytes": 2436,
+          "content_sha256": "fca62875b9f18b27c15be69bd98b91992887bcc595b3a8b3348fa11a9347df5d",
+          "content_type": "application/ld+json",
+          "final_url": "https://json-ld.org/contexts/person.jsonld",
+          "path": "json-ld.org/312ccaaaa006a4019193cfd3a147cdaab11db9f75e6d28eef8229edae462cb87/v1.jsonld",
+          "retrieved": "2026-10-29",
+          "version": 1
+        }
+      ]
+    },
     "https://w3id.org/security/multikey/v1": {
       "domain": "w3id.org",
       "url_sha256": "05a185dbdc5412767aaeecb5843e0de455d1f04e45a739d239c97891aa00ad6a",

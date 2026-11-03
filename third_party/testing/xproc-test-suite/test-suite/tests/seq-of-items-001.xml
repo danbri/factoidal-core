@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<t:test expected="pass"
+        xmlns:t="http://xproc.org/ns/testsuite/3.0">
+   <t:info>
+      <t:title>seq-of-items-001</t:title>
+      <t:revision-history>
+         <t:revision>
+            <t:date>2026-08-04</t:date>
+            <t:author>
+               <t:name>Achim Berndzen</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Changed expected type of variable to 'xs:double*'.</p>
+            </t:description>
+         </t:revision>
+         <t:revision>
+            <t:date>2026-08-03</t:date>
+            <t:author>
+               <t:name>Norm Tovey-Walsh</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Added test.</p>
+            </t:description>
+         </t:revision>
+      </t:revision-history>
+   </t:info>
+   <t:description xmlns="http://www.w3.org/1999/xhtml">
+      <p>Test that type checking works for a sequence of numbers.</p>
+   </t:description>
+   <t:pipeline>
+
+<p:declare-step xmlns:p="http://www.w3.org/ns/xproc"
+                xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                name="main" version="3.0">
+  <p:output port="result" primary="true" sequence="false"/>
+  <p:input port="source" primary="true" sequence="true" content-types="application/json">
+    <p:inline content-type="application/json">1.1</p:inline>
+    <p:inline content-type="application/json">2.2</p:inline>
+  </p:input>
+
+  <p:variable name="v" as="xs:double*" collection="true" select="collection()"/>
+
+  <p:identity>
+    <p:with-input select="count($v)">
+      <p:inline><doc/></p:inline>
+    </p:with-input>
+  </p:identity>
+
+  <p:cast-content-type content-type="application/xml"/>
+</p:declare-step>
+   </t:pipeline>
+   <t:schematron>
+      <s:schema queryBinding="xslt2"
+                xmlns:s="http://purl.oclc.org/dsdl/schematron"
+                xmlns="http://www.w3.org/1999/xhtml">
+        <s:ns prefix="fn" uri="http://www.w3.org/2005/xpath-functions"/>
+         <s:pattern>
+           <s:rule context="/">
+             <s:assert test="fn:number = 2">The result is incorrect.</s:assert>
+            </s:rule>
+         </s:pattern>
+      </s:schema>
+   </t:schematron>
+</t:test>

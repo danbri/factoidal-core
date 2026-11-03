@@ -37,7 +37,13 @@ test('asDefaultGraph: a graph hashes the same whatever its name', async () => {
   for (const d of [d1, d2, g1, g2, ds]) d.dispose();
 });
 
-test('asDefaultGraph and canonicalHash refuse what is not a Dataset', async () => {
+test('canonicalHash takes text as canonicalize does; bytes are refused', async () => {
+  const text = '<http://e/s> <http://e/p> "é" <http://e/g> .';
+  const ds = await f.parse(text, { format: 'nquads' });
+  assert.equal(await f.canonicalHash(text, { format: 'nquads' }), await f.canonicalHash(ds));
+  assert.equal(await f.canonicalHash({ text, format: 'nquads' }), await f.canonicalHash(ds));
+  assert.equal(await f.canonicalHash(text, { format: 'nquads' }), sha(await f.canonicalize(text, { format: 'nquads' })));
+  await assert.rejects(f.canonicalHash(new TextEncoder().encode(text), { format: 'nquads' }), TypeError);
   assert.throws(() => f.asDefaultGraph('<a> <b> <c> .'), TypeError);
-  await assert.rejects(f.canonicalHash('<a> <b> <c> .'), TypeError);
+  ds.dispose();
 });

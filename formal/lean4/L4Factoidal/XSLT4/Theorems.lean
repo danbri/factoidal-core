@@ -1,0 +1,429 @@
+/-
+L4Factoidal.XSLT4.Theorems — what is proved and what is tested of the
+XSLT 4.0 processor, bound to the code it states things about.
+
+Proved (no `sorry`; `#print axioms` below):
+
+* `parse_eq_parseXPath`: with no `xpath-default-namespace` and no named
+  item types, an XPath
+  expression of a stylesheet is the expression that `XPath4.parseXPath`
+  reads, in the stylesheet's namespace bindings — XSLT adds nothing to
+  the XPath 4.0 grammar (XSLT 4.0 §5.3);
+* `materialize_item`: an existing item is
+  delivered as itself — the result of `xsl:sequence` is the value of its
+  expression, with the identity of its nodes (§10.4.1);
+* `patMatch_ctx`, `patMatch_type`: the pattern `.` matches every item,
+  and the type pattern `~T` matches exactly the items of type `T`
+  (§6.3.3; XPath 4.0 §3.2 sequence type matching through
+  `Env.itemMatches`);
+* `stripDoc_noRules`: with no `xsl:strip-space`, whitespace stripping
+  is the identity on source documents (§4.3);
+* `findRule_empty`: with no template rules, no rule matches, so the
+  built-in rules of the mode apply (§6.10);
+* `mangle_inj`: the fresh names that a used package's hidden components
+  get are injective, so two hidden components never get one name
+  (§3.4.5.2); `cmpVersion_refl`, `exact_matches_self`: a package version
+  equals itself and a version range that is a version matches it
+  (§3.4.1); the ordering and range examples of §3.4.1 are `#guard`s;
+* `defaultPriority_*`: the default priorities of the basic pattern
+  forms are the values of §6.4;
+* `copyTree_run`, `copyAsTree_nodes`, `copy_content`, `copy_structure`,
+  `copyRecs_length`: a deep copy (`xsl:copy-of`, `fn:copy-of`, the
+  `deep-copy` built-in rule) has one node for each node of the source
+  subtree, with the same kind, name and value, and the same children and
+  attributes at the same relative indices (§11.9.2).
+
+Tested (`#guard`, checked at build time):
+
+* the identity transform (`xsl:copy` with `xsl:apply-templates` over
+  `@* | node()`, and `xsl:mode on-no-match="shallow-copy"`) gives a
+  document deep-equal to its source (`Env.nodeDeepEq`);
+* the serialized result of a transformation is well-formed XML under the
+  project's XML parser (`L4Factoidal.XML.isWellFormed`);
+* on XSLT 1.0 stylesheets, XSLT4 gives the same serialized result as
+  the XSLT 1.0 engine `L4Factoidal.XSLT.transform` (the full comparison
+  over the vendored XSLT 1.0 corpora is `l4xslt4 --xslt10 DIR`).
+
+Open (https://github.com/danbri/factoidal/issues/1149): a theorem that
+XSLT4 agrees with `L4Factoidal.XSLT` on the XSLT 1.0 fragment, and a
+theorem that the identity transform is the identity on every document.
+Both need a semantics of `run` over its fuel and state that this file
+does not yet have.
+-/
+import L4Factoidal.XSLT4.Transform
+import L4Factoidal.XSLT.Transform
+
+namespace L4Factoidal.XSLT4
+
+open L4Factoidal.XPath4
+
+/-! ## XPath expressions of a stylesheet -/
+
+theorem expandTypes_nil (ns : List (String × String)) (f : Nat) (s : String) : expandTypes [] ns f s = s := by
+  cases f <;> simp [expandTypes]
+
+theorem parse_eq_parseXPath (c : SCx) (src : String) (e : Expr)
+    (hns : c.xpathNs = "") (hty : c.types = []) (h : parseXPath src c.xpNs none c.schemaDecl = .ok e) :
+    c.parse src = .ok e := by
+  simp [SCx.parse, hty, expandTypes_nil, h, hns]
+  rfl
+
+/-! ## Items are delivered as themselves -/
+
+theorem materialize_item (env : Env) (id : Nat) (i : Item) : materialize env id (.item i) = .ok i := rfl
+
+/-! ## Patterns -/
+
+theorem patMatch_ctx (env : Env) (f : Nat) (it : Item) : patMatch env (f + 1) .ctx it = .ok true := by
+  simp [patMatch]; rfl
+
+theorem patMatch_type (env : Env) (f : Nat) (ty : IType) (it : Item) :
+    patMatch env (f + 1) (.instOf .ctx ty) it = .ok (env.itemMatches it ty) := by
+  simp [patMatch]; rfl
+
+theorem defaultPriority_name (q : QN) : defaultPriority (.step .child (.name (.name q)) []) = 0 := rfl
+theorem defaultPriority_attrName (q : QN) : defaultPriority (.step .attribute (.name (.name q)) []) = 0 := rfl
+theorem defaultPriority_nsWild (u : String) : defaultPriority (.step .child (.name (.ns u)) []) = -0.25 := rfl
+theorem defaultPriority_wild : defaultPriority (.step .child (.name .any) []) = -0.5 := rfl
+theorem defaultPriority_node : defaultPriority (.step .child (.kind .anyNode) []) = -0.5 := rfl
+theorem defaultPriority_root : defaultPriority .root = -0.5 := rfl
+theorem defaultPriority_dot : defaultPriority .ctx = -1 := rfl
+
+/-! ## Whitespace stripping and rule selection -/
+
+theorem stripDoc_noRules (S : Sheet) (d : Doc) (h : S.space = []) : stripDoc S d = d := by
+  simp [stripDoc, h]
+
+#print axioms parse_eq_parseXPath
+#print axioms patMatch_type
+#print axioms stripDoc_noRules
+
+theorem findRule_empty (S : Sheet) (env : Env) (mode : String) (it : Item) (ok : Tmpl → Bool)
+    (h : S.templates = #[]) : findRule S env mode it ok = .ok none := by
+  simp [findRule, h]
+  rfl
+
+/-! ## Tested properties (`#guard`) -/
+
+/-- Compile and run a stylesheet text on a source text; the serialized
+    principal result. -/
+def runText (style src : String) : Except String String :=
+  match compileStylesheet "file:///t.xsl" [("file:///t.xsl", style)] with
+  | .error e => .error ("compile " ++ e.code ++ " " ++ e.msg)
+  | .ok S =>
+    match Doc.ofString src "file:///s.xml" with
+    | .error e => .error e
+    | .ok d =>
+      let env : Env := { docs := #[d] }
+      match transform S { globalCtx := some (.node (NodeRef.mk' 0 0)), env } with
+      | .error e => .error ("run " ++ e.code ++ " " ++ e.msg)
+      | .ok r =>
+        let v : M Seq := match r.raw with
+          | [.node n] => if (env.nrec n).kind == .document then pure r.raw
+              else do pure [← materialize env (2 ^ 45) (.doc (Out.ofSeq r.raw) "")]
+          | _ => do pure [← materialize env (2 ^ 45) (.doc (Out.ofSeq r.raw) "")]
+        match v with
+        | .error e => .error e.code
+        | .ok v =>
+          match serializeResult S env [("omit-xml-declaration", "yes")] v with
+          | .ok t => .ok t
+          | .error e => .error ("serialize " ++ e.code)
+
+/-- Is the result of transforming `src` deep-equal to `src`? -/
+def resultIsSource (style src : String) : Bool :=
+  match compileStylesheet "file:///t.xsl" [("file:///t.xsl", style)], Doc.ofString src "file:///s.xml" with
+  | .ok S, .ok d =>
+    let env : Env := { docs := #[d] }
+    match transform S { globalCtx := some (.node (NodeRef.mk' 0 0)), env } with
+    | .ok r =>
+      -- the delivered result is the raw result in a document node: its
+      -- children against the children of the source document
+      let kidsOf (m : NodeRef) := ((env.nrec m).children.toList.map (m.at ·))
+      let a : List NodeRef := match r.raw with
+        | [.node n] => if (env.nrec n).kind == .document then kidsOf n else [n]
+        | s => s.filterMap (fun i => match i with | .node n => some n | _ => none)
+      let b := kidsOf (NodeRef.mk' 0 0)
+      a.length == b.length && (a.zip b).all (fun (x, y) => env.nodeDeepEq 100000 x y)
+    | .error _ => false
+  | _, _ => false
+
+def identityXsl : String :=
+  "<xsl:stylesheet version='3.0' xmlns:xsl='http://www.w3.org/1999/XSL/Transform'>" ++
+  "<xsl:template match='@*|node()'><xsl:copy><xsl:apply-templates select='@*|node()'/></xsl:copy></xsl:template>" ++
+  "</xsl:stylesheet>"
+
+def shallowCopyXsl : String :=
+  "<xsl:stylesheet version='3.0' xmlns:xsl='http://www.w3.org/1999/XSL/Transform'>" ++
+  "<xsl:mode on-no-match='shallow-copy'/></xsl:stylesheet>"
+
+def sampleDocs : List String :=
+  ["<a/>", "<a x='1' y='2'><b>text</b><c/><!--note--><?pi data?>tail</a>",
+   "<p:r xmlns:p='urn:p' xmlns='urn:d'><e p:a='v'>x<f/>y</e></p:r>",
+   "<doc><list><item n='1'>one</item><item n='2'>two</item></list></doc>"]
+
+#guard sampleDocs.all (resultIsSource identityXsl)
+#guard sampleDocs.all (resultIsSource shallowCopyXsl)
+
+/-- The serialized result parses as well-formed XML. -/
+def wellFormedResult (style src : String) : Bool :=
+  match runText style src with
+  | .ok t => L4Factoidal.XML.isWellFormed t
+  | .error _ => false
+
+def sampleStyles : List String :=
+  [identityXsl,
+   "<xsl:stylesheet version='3.0' xmlns:xsl='http://www.w3.org/1999/XSL/Transform'>" ++
+   "<xsl:template match='/'><out><xsl:for-each select='//*'><n name='{name()}'><xsl:value-of select='count(*)'/></n></xsl:for-each></out></xsl:template></xsl:stylesheet>",
+   "<xsl:stylesheet version='3.0' xmlns:xsl='http://www.w3.org/1999/XSL/Transform'>" ++
+   "<xsl:template match='/'><r><xsl:attribute name='a'>&lt;&amp;&quot;</xsl:attribute><xsl:text>&lt;&amp;]]&gt;</xsl:text><xsl:comment>c--d</xsl:comment></r></xsl:template></xsl:stylesheet>"]
+
+#guard sampleStyles.all (fun st => sampleDocs.all (wellFormedResult st))
+
+/-! ## Agreement with the XSLT 1.0 engine on XSLT 1.0 stylesheets -/
+
+/-- The result of the XSLT 1.0 engine, without its XML declaration. -/
+def run10 (style src : String) : Option String :=
+  match L4Factoidal.XML.parseXML style, L4Factoidal.XML.parseXML src with
+  | .ok s1, .ok s2 =>
+    match L4Factoidal.XSLT.transform s1 s2 with
+    | .produced t =>
+      let t := t.trimAscii.toString
+      if t.startsWith "<?xml" then
+        match t.splitOn "?>" with
+        | _ :: rest => some (String.intercalate "?>" rest).trimAscii.toString
+        | [] => some t
+      else some t
+    | .refused _ => none
+  | _, _ => none
+
+def agrees (style src : String) : Bool :=
+  match run10 style src, runText style src with
+  | some a, .ok b => a == b.trimAscii.toString
+  | _, _ => false
+
+def styles10 : List String :=
+  ["<xsl:stylesheet version='1.0' xmlns:xsl='http://www.w3.org/1999/XSL/Transform'>" ++
+   "<xsl:template match='/'><out><xsl:apply-templates/></out></xsl:template>" ++
+   "<xsl:template match='item'><i><xsl:value-of select='@n'/>:<xsl:value-of select='.'/></i></xsl:template>" ++
+   "</xsl:stylesheet>",
+   "<xsl:stylesheet version='1.0' xmlns:xsl='http://www.w3.org/1999/XSL/Transform'>" ++
+   "<xsl:template match='/'><out><xsl:for-each select='//item'><xsl:sort select='.' order='descending'/>" ++
+   "<xsl:if test='position() &gt; 0'><x><xsl:value-of select='.'/></x></xsl:if></xsl:for-each></out></xsl:template>" ++
+   "</xsl:stylesheet>",
+   "<xsl:stylesheet version='1.0' xmlns:xsl='http://www.w3.org/1999/XSL/Transform'>" ++
+   "<xsl:variable name='v' select='count(//item)'/>" ++
+   "<xsl:template match='/'><out total='{$v}'><xsl:call-template name='t'><xsl:with-param name='p' select='2'/></xsl:call-template></out></xsl:template>" ++
+   "<xsl:template name='t'><xsl:param name='p'/><xsl:choose><xsl:when test='$p = 2'>two</xsl:when><xsl:otherwise>other</xsl:otherwise></xsl:choose></xsl:template>" ++
+   "</xsl:stylesheet>"]
+
+#guard styles10.all (fun st => agrees st "<doc><list><item n='1'>one</item><item n='2'>two</item></list></doc>")
+
+/-! ## Packages (§3.4) -/
+
+/-- The fresh names of the components of a package instance are distinct
+    for distinct names (§3.4.5.2: hidden components do not collide). -/
+theorem mangle_inj (n : Nat) (a b : QN) (h : mangle n a = mangle n b) : a.uri = b.uri ∧ a.loc = b.loc := by
+  have hu := congrArg QN.uri h
+  have hl := congrArg QN.loc h
+  simp [mangle] at hu hl
+  exact ⟨hu, hl⟩
+
+theorem cmpPortion_self (p : Portion) : cmpPortion p p = .eq := by
+  cases p <;> simp [cmpPortion]
+
+theorem cmpPortions_self : (ps : List Portion) → cmpPortions ps ps = .eq
+  | [] => rfl
+  | p :: ps => by simp [cmpPortions, cmpPortion_self, cmpPortions_self ps]
+
+theorem cmpVersion_refl (v : List Portion) : cmpVersion v v = .eq := cmpPortions_self _
+
+theorem exact_matches_self (v : List Portion) : (VRange.exact v).matches v = true := by
+  simp [VRange.matches, cmpVersion_refl]
+
+theorem any_matches (v : List Portion) : VRange.any.matches v = true := rfl
+
+#guard (parseVersion "1.0.3-rc1").isSome
+#guard (parseVersion "1.").isNone
+#guard (parseVersion "-5").isNone
+#guard (parseVersion "34E9").isNone
+#guard (parseVersion "2.0.0-alpha:beta").isNone
+def vlt (a b : String) : Bool := match parseVersion a, parseVersion b with
+  | some x, some y => cmpVersion x y == .lt
+  | _, _ => false
+#guard ["0-rc1", "0-rc2", "0", "1", "1.0.2", "1.0.3-rc1", "1.0.3", "1.0.3.2", "1.0.10"].zip
+  ["0-rc2", "0", "1", "1.0.2", "1.0.3-rc1", "1.0.3", "1.0.3.2", "1.0.10", "2"] |>.all (fun (a, b) => vlt a b)
+def inRange (r v : String) : Bool := match parseRange r, parseVersion v with
+  | some rs, some x => rs.any (·.matches x)
+  | _, _ => false
+#guard ["1.3", "1.3.5", "1.3.10.2", "1.3-beta"].all (inRange "1.3.*") && !inRange "1.3.*" "1.4" && !inRange "1.3.*" "1.35"
+#guard ["1.3", "1.3.2", "1.4", "2.1"].all (inRange "1.3+") && !inRange "1.3+" "1.3-beta"
+#guard ["1.5", "4.0", "4.0-beta"].all (inRange "to 4.0") && !inRange "to 4.0" "4.0.1"
+#guard ["1.1", "5.0"].all (inRange "1 to 5") && !inRange "1 to 5" "5.1" && inRange "1 to 5.*" "5.7.2"
+#guard inRange "9.5.0.8, 9.6+" "9.7" && !inRange "9.5.0.8, 9.6+" "9.5.1"
+
+/-! ## `xsl:analyze-string` is `fn:matching-segments` (shared `Regex`)
+
+The matching segments that `xsl:analyze-string` processes are the
+records of F&O 4.0 `fn:matching-segments` (`XPath4.matchingSegments`),
+in order: the same substrings and the same captured groups, both from
+`XPath4.segments` over the shared `L4Factoidal.Regex` engine (§17.1,
+§17.2.1). -/
+
+theorem partsFrom_matches (input : List Nat) (re : Re4) :
+    (cur : Nat) → (segs : List Seg) →
+    (partsFrom input re cur segs).filter (·.isMatch) = segs.map (matchPart input re)
+  | cur, [] => by
+    simp only [partsFrom]
+    split <;> simp
+  | cur, sg :: rest => by
+    simp only [partsFrom, List.map_cons]
+    have ih := partsFrom_matches input re (max cur sg.stop) rest
+    split <;> simp [List.filter_append, ih, matchPart]
+
+/-- The `substring` of a `fn:matching-segments` record (its first entry). -/
+def segSubstring : Item → Seq
+  | .map ((_, v) :: _) => v
+  | _ => []
+
+/-- The `groups` of a `fn:matching-segments` record (its third entry). -/
+def segGroups : Item → List (Atomic × Seq)
+  | .map [_, _, (_, [.map gs])] => gs
+  | _ => []
+
+theorem analyzeParts_substrings (s : String) (re : Re4) :
+    ((analyzeParts s re).filter (·.isMatch)).map (fun p => sStr p.str) =
+    (matchingSegments s re).map segSubstring := by
+  simp only [analyzeParts, matchingSegments, partsFrom_matches, List.map_map]
+  rfl
+
+theorem analyzeParts_groups (s : String) (re : Re4) :
+    ((analyzeParts s re).filter (·.isMatch)).map (fun p => p.groups.drop 1) =
+    (matchingSegments s re).map segGroups := by
+  simp only [analyzeParts, matchingSegments, partsFrom_matches, List.map_map]
+  rfl
+
+#print axioms analyzeParts_substrings
+#print axioms analyzeParts_groups
+
+/-! ## `xsl:number` formats with `fn:format-integer`
+
+With a format of one token and no prefix or suffix, no grouping and no
+ordinal, the text of `xsl:number` for one non-negative number is the
+result of F&O 4.0 `fn:format-integer` with that token as the picture
+(§12.4; F&O 4.0 §4.6.1), unless the token starts one of the numbering
+sequences of `numberingSequences`. -/
+
+theorem numberText_single (env : Env) (x : Int) (fs tok : String) (lng : Option String)
+    (hf : numberFormatParts fs = ("", [("", tok)], "")) :
+    numberText env [x] fs none none none lng = formatOne env x tok none lng := by
+  simp only [numberText, hf]
+  cases h : formatOne env x tok none lng <;> simp [h, bind, Except.bind, pure, Except.pure, forIn, ForIn.forIn,
+    List.forIn', List.getD, String.append_empty, String.empty_append] <;> rfl
+
+theorem formatOne_eq (env : Env) (x : Int) (tok : String) (lng : Option String) (hx : ¬ x < 0)
+    (hs : seqNumber tok x = none) :
+    formatOne env x tok none lng = (fun r => match r with | [.atom a] => a.str | _ => toString x) <$>
+      callFn 100000 env { uri := nsFN, loc := "format-integer" }
+        [sInt x, sStr tok, match lng with | some l => sStr l | none => []] := by
+  simp only [formatOne, hx, if_false, hs]
+  cases callFn 100000 env { uri := nsFN, loc := "format-integer" } [sInt x, sStr tok,
+    match lng with | some l => sStr l | none => []] <;> rfl
+
+#print axioms numberText_single
+#print axioms formatOne_eq
+
+/-! ## The copy of a node (§11.9.2)
+
+`copyAsTree` makes the deep copy of `xsl:copy-of`, `fn:copy-of` and the
+`deep-copy` built-in rule. Its tree has one record for each node of the
+subtree of the source node, in document order, and each record has the
+kind, name and value of its source node, and its children and attributes
+at the same indices relative to the copied node. This is the identity of
+the copy on node content; the namespace scope (§5.7.3 fixup) and the type
+annotation (`validation`) are what the copy may change. -/
+
+
+theorem tPush_bind_run {α} (y : NRec) (k : Nat → TB α) (a : Array NRec) :
+    (tPush y >>= k).run a = (k a.size).run (a.push y) := rfl
+
+theorem pushAll_run (g : Nat → NRec) (l : List Nat) (a : Array NRec) :
+    (forIn l PUnit.unit (fun i (_ : PUnit) => do
+        let _ ← tPush (g i)
+        pure (ForInStep.yield PUnit.unit)) : TB PUnit).run a
+      = Except.ok (PUnit.unit, a ++ (l.map g).toArray) := by
+  induction l generalizing a with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [List.forIn_cons, bind_assoc, pure_bind]
+    rw [tPush_bind_run, ih]
+    simp
+
+theorem get_bind_run {α} (k : Array NRec → TB α) (a : Array NRec) :
+    (get >>= k).run a = (k a).run a := rfl
+
+theorem copyTree_run (env : Env) (src : NodeRef) (par : Option Nat) (ps : List (String × String))
+    (cn keep : Bool) (a : Array NRec) :
+    (copyTree env src par ps cn keep).run a =
+      Except.ok (a.size, a ++ ((List.range' src.idx (copyHi env src + 1 - src.idx)).map
+        (copyRecOf env src par ps cn keep a.size)).toArray) := by
+  unfold copyTree
+  simp only [Std.Legacy.Range.forIn_eq_forIn_range']
+  rw [get_bind_run, StateT.run_bind, pushAll_run]
+  simp [Std.Legacy.Range.size]
+  rfl
+
+/-- The records of a copy: one for each node of the subtree. -/
+def copyRecs (env : Env) (n : NodeRef) (cn keep : Bool) : List NRec :=
+  (List.range' n.idx (copyHi env n + 1 - n.idx)).map (copyRecOf env n none [("xml", nsXML)] cn keep 0)
+
+theorem copyAsTree_nodes (env : Env) (id : Nat) (n : NodeRef) (cn keep : Bool) :
+    ∃ uri base, copyAsTree env id n cn keep =
+      .ok (.node { doc := id, idx := 0, rt := some { nodes := (copyRecs env n cn keep).toArray, uri, baseUri := base } }) := by
+  refine ⟨if n.idx == 0 then (env.doc n).uri else "",
+    if (env.xmlBaseOf n).isSome && env.baseUri != "" then env.baseUri else (env.baseUriOf n).getD "", ?_⟩
+  have h := copyTree_run env n none [("xml", nsXML)] cn keep #[]
+  unfold copyAsTree
+  simp only [StateT.run_bind, h]
+  simp [copyRecs]
+  rfl
+
+theorem copyRecOf_content (env : Env) (src : NodeRef) (par : Option Nat) (ps : List (String × String))
+    (cn keep : Bool) (base i : Nat) :
+    (copyRecOf env src par ps cn keep base i).kind = ((env.doc src).get i).kind ∧
+    (copyRecOf env src par ps cn keep base i).name = ((env.doc src).get i).name ∧
+    (copyRecOf env src par ps cn keep base i).value = ((env.doc src).get i).value := by
+  unfold copyRecOf
+  cases keep <;> simp [NRec.untyped]
+
+theorem copy_content (env : Env) (n : NodeRef) (cn keep : Bool) (k : Nat)
+    (hk : k < (copyRecs env n cn keep).length) :
+    (copyRecs env n cn keep)[k].kind = ((env.doc n).get (n.idx + k)).kind ∧
+    (copyRecs env n cn keep)[k].name = ((env.doc n).get (n.idx + k)).name ∧
+    (copyRecs env n cn keep)[k].value = ((env.doc n).get (n.idx + k)).value := by
+  simp only [copyRecs, List.getElem_map, List.getElem_range']
+  simpa using copyRecOf_content env n none [("xml", nsXML)] cn keep 0 (n.idx + k)
+
+theorem copyRecs_length (env : Env) (n : NodeRef) (cn keep : Bool) :
+    (copyRecs env n cn keep).length = copyHi env n + 1 - n.idx := by
+  simp [copyRecs]
+
+theorem copy_structure (env : Env) (n : NodeRef) (cn keep : Bool) (k : Nat)
+    (hk : k < (copyRecs env n cn keep).length) :
+    (copyRecs env n cn keep)[k].children = ((env.doc n).get (n.idx + k)).children.map (· - n.idx) ∧
+    (copyRecs env n cn keep)[k].attrs = ((env.doc n).get (n.idx + k)).attrs.map (· - n.idx) := by
+  simp only [copyRecs, List.getElem_map, List.getElem_range']
+  unfold copyRecOf
+  cases keep <;> simp [NRec.untyped]
+
+
+#print axioms tPush_bind_run
+#print axioms pushAll_run
+#print axioms get_bind_run
+#print axioms copyTree_run
+#print axioms copyAsTree_nodes
+#print axioms copyRecOf_content
+#print axioms copy_content
+#print axioms copyRecs_length
+#print axioms copy_structure
+
+end L4Factoidal.XSLT4

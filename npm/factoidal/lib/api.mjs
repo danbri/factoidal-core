@@ -31,6 +31,7 @@ import { memoryDeltaLogStore } from './delta-log-hosts.mjs';
 import { FactoidalError, errorFromEnvelope, envelopeResult } from './errors.mjs';
 import { buildNodes } from './nodes.mjs';
 import { runWithCipher } from './cipher-host.mjs';
+import { cidFunctions } from './cid.mjs';
 
 // The format names, regimes and query outputs are the engine's tables (op
 // engineTables, formal/lean4/Wasm/Ops/Handles.lean), read once per engine:
@@ -266,6 +267,10 @@ class Store {
  *        Where the deltaLog* functions keep their records
  *        (lib/delta-log-hosts.mjs): IndexedDB in the browser entries. The
  *        default keeps them in the memory of this process.
+ * @param {object} [driver.cidHost]
+ *        Name resolution and the GET of cidRetrieveVerificationMethod
+ *        (lib/cid-node.mjs under Node and Deno). The default is the browser
+ *        host of lib/cid.mjs: the page's fetch, no name resolution.
  */
 function buildApi(driver) {
   let entryPromise; // memoized; a failed load is retried on the next call
@@ -676,15 +681,18 @@ function buildApi(driver) {
       requireEntryFn(e, 'datasetQueryRaw', `query {entail/output}`);
       if (opts.output === undefined) {
         // An entailment regime with the default answer shape.
-        const r = entryResult(e.datasetQueryRaw(ds.handle, sparql, JSON.stringify({
-          entail, output: graphForm ? 'ntriples' : 'json' })), 'query', sparql);
+        // withExtensionRounds: a registered async extension function
+        // (SPARQL 1.1 §17.6) is resolved here as in datasetQuery
+        // (https://github.com/danbri/factoidal/issues/1090).
+        const r = await withExtensionRounds(() => entryResult(e.datasetQueryRaw(ds.handle, sparql,
+          JSON.stringify({ entail, output: graphForm ? 'ntriples' : 'json' })), 'query', sparql));
         if (graphForm) return c.fromNQuads(r.text, ds.prefixes);
         const srj = JSON.parse(r.text);
         if (typeof srj.boolean === 'boolean') return srj.boolean;
         return bindingsFromSrj(srj);
       }
-      const r = entryResult(e.datasetQueryRaw(ds.handle, sparql,
-        JSON.stringify({ entail, output })), 'query', sparql);
+      const r = await withExtensionRounds(() => entryResult(e.datasetQueryRaw(ds.handle, sparql,
+        JSON.stringify({ entail, output })), 'query', sparql));
       return output === 'json' && !graphForm ? JSON.parse(r.text) : r.text;
     }
     const fn = sparql12 ? e.datasetQuery12 : e.datasetQuery;
@@ -922,17 +930,28 @@ function buildApi(driver) {
    * name first, so datasets that differ only in their graph names got the
    * same hash. To hash a graph whatever its name, use
    * canonicalHash(asDefaultGraph(g)).
-   * @param {Dataset} dataset
+   *
+   * The input is what canonicalize() takes: a Dataset, or text (a string,
+   * or {text, format, baseIRI}), with the options {format, baseIRI}. Text is
+   * a JavaScript string: characters, not bytes. Decode bytes first (the RDF
+   * text syntaxes are UTF-8: `new TextDecoder('utf-8', { fatal: true })`);
+   * a Uint8Array is refused.
+   * @param {Dataset|string|{text: string, format?: string, baseIRI?: string}} data
+   * @param {{format?: string, baseIRI?: string}} [options]
    * @returns {Promise<string>}
    */
-  async function canonicalHash(dataset) {
-    if (!(dataset instanceof Dataset)) {
-      throw new TypeError('canonicalHash: expected a Dataset');
+  async function canonicalHash(data, options) {
+    const hashOf = (e, ds) => {
+      requireEntryFn(e, 'datasetCanonicalHash', 'canonicalHash');
+      return entryResult(e.datasetCanonicalHash(ds.handle), 'canonicalHash').hash;
+    };
+    if (data instanceof Dataset && options === undefined) {
+      data.size; // throws the disposed error
+      return hashOf(data._ctx.e, data);
     }
-    dataset.size; // throws the disposed error
-    const c = dataset._ctx;
-    requireEntryFn(c.e, 'datasetCanonicalHash', 'canonicalHash');
-    return entryResult(c.e.datasetCanonicalHash(dataset.handle), 'canonicalHash').hash;
+    // The options are canonicalize()'s, checked by the engine's table for it.
+    const opts = await checkedOptions('canonicalize', optionsOf('canonicalize', options));
+    return withDataset(data, opts, 'canonicalHash', (c, ds) => hashOf(c.e, ds));
   }
 
   /**
@@ -970,6 +989,30 @@ function buildApi(driver) {
         requireEntryFn(c.e, 'datasetIsomorphic', 'isomorphic');
         return entryResult(c.e.datasetIsomorphic(da.handle, db.handle), 'isomorphic').isomorphic;
       }));
+  }
+
+  /**
+   * The RDF merge of two datasets (RDF 1.1 Semantics section 5.2): a new
+   * Dataset that holds the quads of both, with the blank nodes of each input
+   * kept apart, so `_:b` in `a` and `_:b` in `b` are two blank nodes. The
+   * engine computes it (op datasetMerge, formal/lean4/Wasm/Ops/GraphNodes.lean,
+   * theorem mergeDatasets_isMerge); the prefixes are those of `a`, then those
+   * of `b` whose label `a` does not declare. A text argument is read as by
+   * parse() (`options.format`, `options.baseIRI`), in its own blank-node
+   * scope. Since 0.21.0 (https://github.com/danbri/factoidal/issues/1130).
+   * @param {Dataset|string|Array} a
+   * @param {Dataset|string|Array} b
+   * @param {{format?: string, baseIRI?: string}} [options] read text arguments
+   * @returns {Promise<Dataset>}
+   */
+  async function datasetMerge(a, b, options) {
+    // An engine built before the op refuses with op.unknown before the
+    // options are read (its option table has no row for this function).
+    requireEntryFn((await ctx()).e, 'datasetMerge', 'datasetMerge');
+    const opts = await checkedOptions('datasetMerge', optionsOf('datasetMerge', options));
+    return withDataset(a, opts, 'datasetMerge', (c, da) =>
+      withDataset(b, opts, 'datasetMerge', (_c, db) =>
+        c.wrap(entryResult(c.e.datasetMerge(da.handle, db.handle), 'datasetMerge'))));
   }
 
   /**
@@ -1778,6 +1821,138 @@ function buildApi(driver) {
     return { document: r.document, canonical: r.canonical };
   }
 
+  // -----------------------------------------------------------------
+  // XML Signature 1.1 (https://github.com/danbri/factoidal/issues/1165,
+  // track B, item 4). Every decision is in Lean (formal/lean4/Wasm/Ops/
+  // XmlDsig.lean over XML/DSig11.lean and XML/DSig11Sign.lean); RSA and
+  // P-256 run in the wasm (HACL*), HMAC in Lean. This code converts octets
+  // to base64 and draws the ECDSA nonce; it reads no document and chooses
+  // no algorithm or key.
+  // -----------------------------------------------------------------
+
+  // Octets given as a Uint8Array (or an ArrayBuffer view), as base64.
+  function octetsToBase64(fnName, name, value) {
+    if (value instanceof Uint8Array) return bytesToBase64(value);
+    if (ArrayBuffer.isView(value)) {
+      return bytesToBase64(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+    }
+    if (value instanceof ArrayBuffer) return bytesToBase64(new Uint8Array(value));
+    throw new TypeError(`${fnName}: ${name} must be a Uint8Array`);
+  }
+
+  // A document for `documents`: a string is written as UTF-8.
+  function documentOctetsToBase64(fnName, uri, value) {
+    if (typeof value === 'string') return bytesToBase64(new TextEncoder().encode(value));
+    return octetsToBase64(fnName, `documents[${JSON.stringify(uri)}]`, value);
+  }
+
+  // One XML Signature op: the engine's envelope, or a FactoidalError when
+  // the arguments are wrong (`{ok: false}`).
+  async function dsigOp(fnName, what, args) {
+    const e = await entry();
+    requireEntryFn(e, fnName, what);
+    return entryResult(e[fnName](JSON.stringify(args)), fnName);
+  }
+
+  /**
+   * XML Signature 1.1 core validation (§3.2) of the one ds:Signature of an
+   * XML document. A signature that does not validate is a result
+   * (`valid: false` with the engine's reason), not an exception; wrong
+   * arguments throw a FactoidalError.
+   *
+   * With no `key` and no `hmacKey`, the key of ds:KeyInfo is used (unless
+   * `keyFromKeyInfo` is false). Such a key only says that the signature
+   * verifies under it: the result gives the key (`key`, a JWK) and the
+   * certificate that ds:X509Data names (`certificate`, DER), and the caller
+   * decides whether to trust them. The engine fetches nothing: `documents`
+   * gives the octets of each URI that is not a same-document reference.
+   *
+   * @param {string} document the XML document
+   * @param {{key?: object, hmacKey?: Uint8Array, keyFromKeyInfo?: boolean,
+   *   certificates?: Uint8Array[], documents?: Object<string, Uint8Array|string>}} [options]
+   *   `key` is a public JWK (RSA, or EC on P-256, P-384, P-521); `hmacKey`
+   *   the HMAC key octets; `certificates` DER certificates to select from
+   * @returns {Promise<{valid: true, signedInfo: string,
+   *   references: {uri: string, octets: Uint8Array}[], key: object|null,
+   *   certificate: Uint8Array|null} | {valid: false, reason: string}>}
+   */
+  async function xmlVerify(document, options) {
+    if (typeof document !== 'string') throw new TypeError('xmlVerify: document must be a string');
+    const o = options || {};
+    const args = { document };
+    if (o.key !== undefined) {
+      if (o.key === null || typeof o.key !== 'object') {
+        throw new TypeError('xmlVerify: options.key must be a JWK object');
+      }
+      args.key = o.key;
+    }
+    if (o.hmacKey !== undefined) args.hmacKey = octetsToBase64('xmlVerify', 'options.hmacKey', o.hmacKey);
+    if (o.keyFromKeyInfo !== undefined) args.keyFromKeyInfo = o.keyFromKeyInfo === true;
+    if (o.certificates !== undefined) {
+      if (!Array.isArray(o.certificates)) {
+        throw new TypeError('xmlVerify: options.certificates must be an array of Uint8Array');
+      }
+      args.certificates = o.certificates.map((c, i) =>
+        octetsToBase64('xmlVerify', `options.certificates[${i}]`, c));
+    }
+    if (o.documents !== undefined) {
+      if (o.documents === null || typeof o.documents !== 'object' || Array.isArray(o.documents)) {
+        throw new TypeError('xmlVerify: options.documents must be an object from URI to octets');
+      }
+      args.documents = {};
+      for (const [uri, v] of Object.entries(o.documents)) {
+        args.documents[uri] = documentOctetsToBase64('xmlVerify', uri, v);
+      }
+    }
+    const r = await dsigOp('xmlVerify', 'XML Signature verification', args);
+    if (r.valid !== true) return { valid: false, reason: String(r.reason) };
+    return {
+      valid: true,
+      signedInfo: r.signedInfo,
+      references: (r.references || []).map((x) => ({ uri: x.uri, octets: base64ToBytes(x.octets) })),
+      key: r.key ?? null,
+      certificate: typeof r.certificate === 'string' ? base64ToBytes(r.certificate) : null
+    };
+  }
+
+  /**
+   * XML Signature 1.1 signature generation (§3.1). The returned document
+   * has passed core validation in the engine before it is returned.
+   *
+   * `key` is a private JWK: RSA (`n`, `e`, `d`; 2048, 3072 or 4096 bits),
+   * EC on P-256 (`d`), or `oct` (`k`) for HMAC. The engine chooses the
+   * default method by the key kind (rsa-sha256, ecdsa-sha256, hmac-sha256)
+   * and refuses a method of another key kind. The default reference is the
+   * whole document with the enveloped-signature transform; with
+   * `enveloping`, the signature is the document and holds `content` in a
+   * ds:Object. The ECDSA nonce is 32 octets of `crypto.getRandomValues`.
+   *
+   * @param {string} document the XML document
+   * @param {{key: object, signatureMethod?: string, canonicalizationMethod?: string,
+   *   inclusivePrefixes?: string[],
+   *   references?: {uri: string, transforms?: string[], digestMethod?: string}[],
+   *   enveloping?: {id: string, content: string}, keyValue?: boolean}} options
+   *   algorithm identifiers are the URIs of XML Signature 1.1 §6
+   * @returns {Promise<{document: string}>}
+   */
+  async function xmlSign(document, options) {
+    if (typeof document !== 'string') throw new TypeError('xmlSign: document must be a string');
+    const o = options || {};
+    if (o.key === null || typeof o.key !== 'object') {
+      throw new TypeError('xmlSign: options.key must be a private JWK object');
+    }
+    const args = { document, key: o.key };
+    for (const k of ['signatureMethod', 'canonicalizationMethod', 'inclusivePrefixes',
+      'references', 'enveloping']) {
+      if (o[k] !== undefined) args[k] = o[k];
+    }
+    if (o.keyValue !== undefined) args.keyValue = o.keyValue === true;
+    // The nonce is given for every key; the engine reads it only for ECDSA.
+    args.random = randomBase64(32);
+    const r = await dsigOp('xmlSign', 'XML Signature generation', args);
+    return { document: r.document };
+  }
+
   /**
    * Decrypt a JWE in the Compact Serialization (RFC 7516).
    * @param {string} token the compact JWE
@@ -1988,6 +2163,67 @@ function buildApi(driver) {
     requireEntryFn(e, 'xsltTransform', 'XSLT transform');
     const r = entryResult(e.xsltTransform(stylesheetXml, sourceXml), 'xsltTransform');
     return r.output;
+  }
+
+  // XPath 4.0, XQuery 4.0 and XSLT 4.0 (formal/lean4/Wasm/Ops/Qt4.lean). The
+  // engine evaluates and serializes; these functions check argument types and
+  // unwrap the envelope. A QT4 error rejects with a FactoidalError (code
+  // `xml.failed`) whose `qtError` is {code, namespace, message}: the error
+  // code the specification names (XPST0003, FODC0002, XTSE0165, ...).
+  // The engine does no I/O: fn:doc, fn:unparsed-text, import module,
+  // xsl:import and xsl:include of anything but the arguments fail with the
+  // specification's error code.
+  function qt4Result(r) {
+    const { ok: _ok, ...rest } = r;
+    return rest;
+  }
+
+  /**
+   * Evaluate an XPath 4.0 expression with an XML document as context item.
+   * @param {string} xmlText the context document, or '' for no context item
+   * @param {string} expr an XPath 4.0 expression
+   * @returns {Promise<{count:number, items:Array<{type:string,value:string}>, adaptive:string, xml:string|null}>}
+   */
+  async function xpath4Eval(xmlText, expr) {
+    if (typeof xmlText !== 'string' || typeof expr !== 'string') {
+      throw new TypeError('xpath4Eval: xmlText and expr must be strings');
+    }
+    const e = await entry();
+    requireEntryFn(e, 'xpath4Eval', 'XPath 4.0 evaluation');
+    return qt4Result(entryResult(e.xpath4Eval(xmlText, expr), 'xpath4Eval'));
+  }
+
+  /**
+   * Evaluate an XQuery 4.0 main module, optionally with an XML document as
+   * context item.
+   * @param {string} query an XQuery 4.0 main module
+   * @param {string} [contextXml] the context document ('' or absent: none)
+   * @returns {Promise<{count:number, items:Array<{type:string,value:string}>, adaptive:string, xml:string|null}>}
+   */
+  async function xqueryEval(query, contextXml) {
+    if (typeof query !== 'string' || (contextXml !== undefined && typeof contextXml !== 'string')) {
+      throw new TypeError('xqueryEval: query must be a string, contextXml a string when given');
+    }
+    const e = await entry();
+    requireEntryFn(e, 'xqueryEval', 'XQuery 4.0 evaluation');
+    return qt4Result(entryResult(e.xqueryEval(query, contextXml ?? ''), 'xqueryEval'));
+  }
+
+  /**
+   * XSLT 4.0 transform. The principal result is serialized with the
+   * stylesheet's unnamed output definition; `secondary` holds the results of
+   * xsl:result-document, `messages` the xsl:message texts.
+   * @param {string} stylesheetXml an XSLT stylesheet (one module)
+   * @param {string} sourceXml the source document, or '' for no global context item
+   * @returns {Promise<{output:string, method:string, secondary:Array<{href:string,output:string}>, messages:string[]}>}
+   */
+  async function xslt4Transform(stylesheetXml, sourceXml) {
+    if (typeof stylesheetXml !== 'string' || typeof sourceXml !== 'string') {
+      throw new TypeError('xslt4Transform: stylesheetXml and sourceXml must be strings');
+    }
+    const e = await entry();
+    requireEntryFn(e, 'xslt4Transform', 'XSLT 4.0 transform');
+    return qt4Result(entryResult(e.xslt4Transform(stylesheetXml, sourceXml), 'xslt4Transform'));
   }
 
   /**
@@ -2452,6 +2688,8 @@ function buildApi(driver) {
       stages: has('stageList'),
       pipelineCheck: has('pipelineCheck'),
       pipelineCheckNodes: has('pipelineCheckNodes'),
+      graphCheck: has('graphCheckNodes'),
+      datasetMerge: has('datasetMerge'),
       entailment: has('queryRaw'),
       tableau: has('tableauMaterialise') && has('tableauDlInconsistent'),
       rml: has('rmlMap'),
@@ -2463,6 +2701,9 @@ function buildApi(driver) {
       xpath: has('xpathEval'),
       rif: has('rifEval'),
       xslt: has('xsltTransform'),
+      xpath4: has('xpath4Eval'),
+      xquery: has('xqueryEval'),
+      xslt4: has('xslt4Transform'),
       mathml: has('mathmlEval'),
       xforms: has('xformsRecalc'),
       jsonSchema: has('jsonSchemaValidate'),
@@ -2483,6 +2724,7 @@ function buildApi(driver) {
       store: has('storeOpen') && has('storeHandleQuery'),
       deltaLog: has('deltaLogEncode') && has('deltaLogDecode') && has('deltaLogMerge'),
       literalValues: has('literalValue') && has('literalFromValue'),
+      cid: has('cidValidate') && has('cidRetrieve'),
     };
   }
 
@@ -2586,7 +2828,11 @@ function buildApi(driver) {
   const nodeApi = buildNodes({
     entry, entryResult, requireEntryFn, Dataset,
     parse, closure, shaclValidate, query, serialize, canonicalize, canonicalHash, explain, csvwToRdf,
+    datasetMerge, xpath4Eval, xqueryEval, xslt4Transform,
   });
+
+  // Controlled Identifiers v1.0 (lib/cid.mjs, issue 1100 items 7 and 9).
+  const cid = cidFunctions({ entry, entryResult, requireEntryFn, host: driver.cidHost });
 
   return {
     parse,
@@ -2616,6 +2862,7 @@ function buildApi(driver) {
     stages: nodeApi.stages,
     node: nodeApi.node,
     pipe: nodeApi.pipe,
+    graph: nodeApi.graph,
     run: nodeApi.run,
     rdfsPlusClosure,
     rhoDfClosure,
@@ -2637,6 +2884,9 @@ function buildApi(driver) {
     clNormalize,
     rifEval,
     xsltTransform,
+    xpath4Eval,
+    xqueryEval,
+    xslt4Transform,
     mathmlEval,
     xformsRecalc,
     jsonSchemaValidate,
@@ -2652,6 +2902,8 @@ function buildApi(driver) {
     vcEd25519Verify,
     xmlDecrypt,
     xmlEncrypt,
+    xmlVerify,
+    xmlSign,
     jweDecrypt,
     jweEncrypt,
     vcEddsaCreateFromCanonical,
@@ -2660,6 +2912,8 @@ function buildApi(driver) {
     vcCheckCredentialSubject,
     vcCheckNoDataLoss,
     vcCheckRelatedResourceDigests,
+    cidValidate: cid.cidValidate,
+    cidRetrieveVerificationMethod: cid.cidRetrieveVerificationMethod,
     capabilities,
     openStore,
     queryStore,
@@ -2673,6 +2927,7 @@ function buildApi(driver) {
     _deltaLogCorruptLastForTest,
     queryRaw,
     isomorphic,
+    datasetMerge,
     fromQuads,
     literalValue,
     isValidLiteral,

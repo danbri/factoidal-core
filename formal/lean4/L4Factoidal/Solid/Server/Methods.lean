@@ -108,9 +108,14 @@ deriving Inhabited
 /-- Parse an ACL resource body. Web Access Control §3.2: "Servers MUST
 accept an HTTP GET and HEAD request targeting an ACL resource when the value
 of the Accept header requests a representation in text/turtle." A body that
-does not parse holds no Authorization, so it grants nothing. -/
-def aclGraphOf (body : String) : List Triple :=
-  match parseTurtle body none .rdf11 with
+does not parse holds no Authorization, so it grants nothing.
+
+Relative references are resolved against `base`, the IRI of the ACL document
+(RFC 3986 section 5.1.3). With no base, `<#owner>` or `<./>` was a parse error,
+the graph was empty and the ACL granted nothing: issue
+https://github.com/danbri/factoidal/issues/1241. -/
+def aclGraphOf (base body : String) : List Triple :=
+  match parseTurtle body (some base) .rdf11 with
   | .ok g    => g
   | .error _ => []
 
@@ -225,7 +230,7 @@ where
         match S.lookup st (aclPathOf owner) with
         | none => "user=\"\",public=\"\""
         | some e =>
-            wacAllow (aclGraphOf e.text) (iriOfPath cfg.lws.baseIri target)
+            wacAllow (aclGraphOf (iriOfPath cfg.lws.baseIri (aclPathOf owner)) e.text) (iriOfPath cfg.lws.baseIri target)
                      (iriOfPath cfg.lws.baseIri owner) inherited who
   /-- Everything after the access decision and the redirect. -/
   solidStep (S : Store σ) (cfg : ServerConfig) (r : Request) (st : σ)

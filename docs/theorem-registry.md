@@ -3138,6 +3138,69 @@ audit in `Planner/ExecTests.lean` (`propext`, `Classical.choice`,
 | `wantProbe_iff`, `wantProbe_iff_saving`, `wantProbe_no_scenarios` — the probe decision is `c * |scenarios| + Σ costWith < Σ costWithout`, that is `c * |scenarios| < expSaving` | ✅ PROVED (2026-10-22, KR 4.3) | none |
 | `probeStep_cases`, `probeAll_reachable`, `chooseStart_reachable`, `runProbed_reachable`, `runProbed_final`, `runProbed_spec` — the driver with probes takes `Next` steps, probes only when `wantProbe` holds, ends `done` or `stopped`, keeps I1, I2 (calls and tuples) and the probe records, and a `done` output is the `Plan.run` of a member of `search` | ✅ PROVED (2026-10-22, KR 4.3) | `ExactSourcesSound` for the I1 part |
 
+## Data Integrity cryptosuites (Lean 4, 2026-10-28)
+
+VC family of [#1165](https://github.com/danbri/factoidal/issues/1165). Design
+record: [`designissues/2026-10-28-vc-di-cryptosuites.md`](designissues/2026-10-28-vc-di-cryptosuites.md).
+Module `formal/lean4/L4Factoidal/VC/CryptosuiteTheorems.lean`; `#print axioms`
+in the same file (`propext`, `Classical.choice`, `Quot.sound` only).
+
+| Theorem | Status | Hypotheses |
+|---|---|---|
+| `vcDiEcdsa10_ecdsaRdfc2019_p256_shares_eddsaRdfc2022` — VC DI ECDSA 1.0 ecdsa-rdfc-2019 with P-256 and VC DI EdDSA 1.0 eddsa-rdfc-2022 have the same transform and hash | ✅ PROVED (2026-10-28) | none |
+| `verifyDataset_eddsaRdfc2022`, `verifyDataset_ecdsaRdfc2019_p256` — both table rows are `DataIntegrity.verifyProofValue` at SHA-256 | ✅ PROVED (2026-10-28) | none |
+| `transform_rdfc10_sha256` — the table's RDFC-1.0 transform at SHA-256 is `DataIntegrity.canonicalizeJsonLd` | ✅ PROVED (2026-10-28) | none |
+| `verifyDataset_canonical_only`, `verifyJcs_canonical_only` — verification reads a credential only through its RDFC-1.0 or RFC 8785 canonical form | ✅ PROVED (2026-10-28) | none |
+| `vcDi10_rdfc10_isomorphic_verify_alike` — RDF-isomorphic credentials verify alike | ✅ PROVED as a reduction (2026-10-28) | `RDF.Canonical.RelabellingInvariance` (RDFC-1.0, STATED, NOT PROVED) |
+
+## WHATWG URL and RFC 3986 (Lean 4, 2026-10-29)
+
+Milestone 3 of [#1167](https://github.com/danbri/factoidal/issues/1167). Design
+record: [`designissues/2026-10-29-whatwg-url.md`](designissues/2026-10-29-whatwg-url.md).
+Module `formal/lean4/L4Factoidal/WHATWG/URL/Theorems.lean` (URL Standard snapshot
+`845bafca`, 2026-10-19; RFC 3986 §5.2.4 as `Syntax.removeDotSegments`);
+`#print axioms`: `propext`, `Classical.choice`, `Quot.sound` only.
+
+| Theorem | Status | Hypotheses |
+|---|---|---|
+| `pathSegment_segments` — the parser's path-state segment rule `Url.pathSegment` acts on a non-file URL's segments as the list function `segRule` | ✅ PROVED (2026-10-29) | scheme is not "file"; the segment reads alike (`ReadAlike`: no `/`, dot segment only when `.` or `..`) |
+| `rfc3986_removeDotSegments_eq_whatwg` — RFC 3986 `removeDotSegments ("/" ++ "/".intercalate segs)` is the URL path serialization of `wpFold [] segs` | ✅ PROVED (2026-10-29) | segs non-empty; no `/` in a segment |
+| `whatwg2026_path_eq_rfc3986` — folding `Url.pathSegment` from an empty path gives `removeDotSegments` of the path | ✅ PROVED (2026-10-29) | the two above |
+| the whole parser: `(parseUrl ref base).href = resolveIri base ref` where both read the input alike | 🟡 MEASURED, NOT PROVED: `l4whatwg-url rfc3986` 403407 agree, 0 disagree (out of 403407) | https://github.com/danbri/factoidal/issues/1188 |
+
+## Unicode 18.0.0 algorithms (Lean 4, 2026-10-29)
+
+Milestone 4 of [#1167](https://github.com/danbri/factoidal/issues/1167). Design
+record: [`designissues/2026-10-29-unicode-algorithms.md`](designissues/2026-10-29-unicode-algorithms.md).
+Modules `formal/lean4/L4Factoidal/Unicode/{Segmentation,LineBreak,Bidi}Theorems.lean`;
+`#print axioms`: at most `propext`, `Classical.choice`, `Quot.sound`. These are
+structural properties; the rules themselves are measured by the Unicode
+conformance files (`tests/unicode/run.sh`), not proved.
+
+| Theorem | Status | Hypotheses |
+|---|---|---|
+| `cutAt_flatten` — the pieces of a list cut at any array of positions concatenate back to the list | ✅ PROVED (2026-10-29) | none |
+| `graphemes_join`, `words_join`, `sentences_join` — UAX #29 segments of a string concatenate back to the string | ✅ PROVED (2026-10-29) | none |
+| `breaks_contains_end` — UAX #14 LB3: the end of the text is a break opportunity | ✅ PROVED (2026-10-29) | text non-empty |
+| `breaks_not_zero` — UAX #14 LB2: no break at the start of the text | ✅ PROVED (2026-10-29) | text non-empty |
+| `revRange_size`, `revRange_perm` — the UAX #9 L2 range reversal keeps the size and permutes its input | ✅ PROVED (2026-10-29) | none |
+
+## DOM node tree as an arena (Lean 4, 2026-11-01)
+
+Milestone 6 of [#1167](https://github.com/danbri/factoidal/issues/1167). Design
+record: [`designissues/2026-11-01-dom-arena.md`](designissues/2026-11-01-dom-arena.md).
+Module `formal/lean4/L4Factoidal/DOM/Theorems.lean`; `#print axioms`: at most
+`propext`, `Classical.choice`, `Quot.sound`. The mutation algorithms themselves
+are measured by the differential against jsdom (`tests/dom/run.sh`), not proved.
+
+| Theorem | Status | Hypotheses |
+|---|---|---|
+| `ensurePreInsertValidity_rejects_ancestor` — DOM §4.2.3 step 2: when `node` is a host-including inclusive ancestor of `parent`, ensure pre-insert validity throws HierarchyRequestError | ✅ PROVED (2026-11-01) | the ancestor walk returns `true` |
+| `preInsert_rejects_ancestor`, `replace_rejects_ancestor` — the same for pre-insert and replace, and the arena is given back unchanged | ✅ PROVED (2026-11-01) | as above |
+| `hostIncluding_self`, `appendChild_self` — `n.appendChild(n)` throws HierarchyRequestError and changes nothing | ✅ PROVED (2026-11-01) | none |
+| `remove_parent_none`, `remove_not_child` — after "remove", the node has no parent and is not a child of its old parent | ✅ PROVED (2026-11-01) | the node and its parent are in the arena; the parent is not the node |
+| every operation keeps `Dom.wellFormed` | ❌ NOT PROVED; checked after every operation of the differential ([#1216](https://github.com/danbri/factoidal/issues/1216)) | — |
+
 ## 10. JOSE, DPoP and Solid-OIDC over HACL\* — Lean tree
 
 Landed 2026-09-06. Design record:

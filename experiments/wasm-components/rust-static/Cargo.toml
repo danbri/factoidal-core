@@ -1,0 +1,16 @@
+[package]
+name = "wc-static"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The static-link variant (issue 1167, strategy 3): a Rust static library
+# linked by wasm-ld with the Lean objects and the Lean runtime into ONE core
+# module (one memory, direct calls). build.sh static links it.
+[lib]
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = "s"
+panic = "abort"

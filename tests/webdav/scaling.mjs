@@ -15,10 +15,16 @@
 // A case passes when every size answers (no crash) and the time ratio from
 // n to 4n is below MAX_RATIO (default 8: linear is 4, quadratic 16).
 //
+// Emergency mode (https://github.com/danbri/factoidal/issues/1147): the
+// server is read only, so PROPPATCH is 403 before its body is read, and
+// proppatch-wide and deep-value are skipped (not passed); the mount is an
+// lws mount that lists the guest, and propfind-wide asks the root
+// collection, which needs no storage.
+//
 // Score line: "N pass, M fail, S skipped (out of T)".
 
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -37,11 +43,13 @@ async function runCase (name, n) {
   const { openWebdav } = await import('../../npm/factoidal/webdav/server.mjs')
   const dir = mkdtempSync(join(tmpdir(), 'factoidal-webdav-scaling-'))
   try {
-    mkdirSync(join(dir, 'store'))
+    if (name === 'proppatch-wide' || name === 'deep-value') {
+      return { ok: false, skip: true, detail: 'PROPPATCH is 403 in emergency mode (https://github.com/danbri/factoidal/issues/1147): the body is not read' }
+    }
     const head = name === 'mount-lines' ? 'free text\n'.repeat(n) : ''
-    writeFileSync(join(dir, 'm.md'), head + '# M\n- kind: local\n- path: ./store\n')
+    writeFileSync(join(dir, 'm.md'), head + '# M\n- kind: lws\n- url: http://127.0.0.1:9/\n- users: guest\n')
     const t0 = performance.now()
-    const dav = await openWebdav({ configDir: dir })
+    const dav = await openWebdav({ configDir: dir, guest: 'guest' })
     const req = (method, target, headers, body) =>
       dav.step({ method, target, headers: [['host', 'localhost'], ...headers], body: new TextEncoder().encode(body || '') })
     let detail = ''
@@ -49,8 +57,7 @@ async function runCase (name, n) {
       detail = `mounts ${dav.mounts.length}`
       if (dav.mounts.length !== 1) throw new Error(detail)
     } else {
-      let r = await req('PUT', '/m/a.txt', [], 'x')
-      if (r.status !== 201) throw new Error(`PUT ${r.status}`)
+      let r
       if (name === 'proppatch-wide') {
         let props = ''
         for (let i = 0; i < n; i += 1) props += `<Z:p${i}>v${i}</Z:p${i}>`
@@ -64,7 +71,7 @@ async function runCase (name, n) {
       } else if (name === 'propfind-wide') {
         let names = ''
         for (let i = 0; i < n; i += 1) names += `<Z:q${i}/>`
-        r = await req('PROPFIND', '/m/a.txt', [['depth', '0']], `<D:propfind xmlns:D="DAV:" xmlns:Z="http://z/"><D:prop>${names}</D:prop></D:propfind>`)
+        r = await req('PROPFIND', '/', [['depth', '0']], `<D:propfind xmlns:D="DAV:" xmlns:Z="http://z/"><D:prop>${names}</D:prop></D:propfind>`)
         const text = new TextDecoder().decode(r.body)
         const count = text.split('<R:q').length - 1
         detail = `404 names ${count}`

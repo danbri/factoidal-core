@@ -113,7 +113,7 @@ solely so offline parsing can resolve a context without a network fetch.
 ⚠️ **`w3id.org` is only a redirector, and its URLs do not all resolve to
 the same publisher.** The licence follows the document that was actually
 served, so it must be read off `final_url` in `index.json`, never assumed
-from the requested URL. For the four snapshots cached today:
+from the requested URL. For the five snapshots cached today:
 
 | Requested URL | Served by | Licence |
 |---|---|---|
@@ -121,6 +121,7 @@ from the requested URL. For the four snapshots cached today:
 | `https://w3id.org/security/multikey/v1` | `www.w3.org` | as above |
 | `https://w3id.org/security/suites/jws-2020/v1` | `w3c.github.io` (w3c/vc-jws-2020) | as above |
 | `https://w3id.org/security/suites/ed25519-2020/v1` | `digitalbazaar.github.io` | **BSD 3-Clause, Copyright (c) 2021 Digital Bazaar, Inc.** — not a W3C document |
+| `https://json-ld.org/contexts/person.jsonld` | `json-ld.org` (repository json-ld/json-ld.org) | W3C Software and Document License (`LICENSE.md` of that repository). Added 2026-10-29 for the YAML-LD HTML tests |
 
 W3C terms: <https://www.w3.org/copyright/document-license-2023/> and
 <https://www.w3.org/copyright/software-license-2023/>. The Digital Bazaar

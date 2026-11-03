@@ -28,6 +28,7 @@ https://github.com/danbri/factoidal/issues/466
 | RDFS | `RDFS/Vocabulary.lean`, `RdfsCore.lean`, `Closure*.lean` | rdfs-core derivation relation + closure; extensive/sound/complete-at-saturation proved |
 | OWL 2 | `OWL/*.lean` (RL closure, `ClassExpr.lean` class-expression reader, `Materialise.lean`, the tableau refuter `Refute.lean` with `NegationGoals.lean` and `CountingOracle.lean`, the refutation-certificate checker `DirectCert.lean` (`checkCert_sound`) with its reader and emitter `RefuteCert.lean` (`docs/designissues/2026-10-10-owl-dl-refutation-certificates.md`), species `SyntaxDL.lean`, the OWL 2 RDF-Based Semantics regime `OWL/RdfBased/{Spec,Rules,Witness,Engine,Clash,Tests}.lean`), `Harness/OwlProbe.lean` (`l4owl-probe`) | default regime = OWL 2 RL/RDF closure; `--dl` = closure + materialisation + refuter (`some false` must hold in every model); `--rdf-based` = OWL 2 RDF-Based Semantics (https://github.com/danbri/factoidal/issues/721): RL closure + 17 rule constructors and the Table 5.6 existential witnesses, each proved sound against `RdfBased.RdfBasedConditions` (36 cited conditions, satisfiability witness), and 5 clash rows (`Clash.lean`) proved against the same bundle, no comprehension layer, no refuter; buckets pass = PROVED, `not-refuted` = never counted as proved (`docs/designissues/2026-10-10-owl2-rdf-based-semantics.md`). Measured 2026-10-10, `--dl --refute-ms 3000`: type-inconsistency 126 pass, 1 fail, 1 skip (out of 128); type-positive-entailment PositiveEntailmentTest 194 pass, 12 fail (out of 206), the 12 are `test:species FULL`-only cases annotated DIRECT and are also judged by `--rdf-based`; type-consistency ConsistencyTest 354 pass, 0 fail (out of 354); syntax-dl 422 pass, 1 fail, 1 skip (out of 424); type-negative-entailment 46 pass, 0 fail (out of 46) with the refuter asked on 11 units; default RL run TOTAL 1234 pass, 221 fail, 2 skip (out of 1457); `--rdf-based all.rdf` PositiveEntailmentTest 147 pass, 54 fail (out of 201), InconsistencyTest 55 pass, 73 fail (out of 128), NegativeEntailmentTest 0 pass, 0 fail, 23 not-refuted (out of 23), ConsistencyTest 0 pass, 0 fail, 347 not-refuted (out of 347), the 12 FULL-only DIRECT cases 7 pass, 5 fail; `--species` 488 pass, 0 fail, 1 local-override (out of 489; `WebOnt-I5.5-005`, https://github.com/danbri/factoidal/issues/711). Left failing and why: `docs/designissues/2026-09-07-lean-owl-corpus-gap.md` § 15, and § 7 of the RDF-Based record. Two refuter soundness defects were found on 2026-10-10 by probes, not by the corpus (`skills/measuring-inference` §§ 12-13) |
 | RDF syntaxes | `Syntax/Lexing.lean`, `NTriples.lean`, `NQuads.lean`, `Turtle.lean`, `TriG.lean`, `IriResolve.lean`, `Harness/TurtleProbe.lean` | rdf11+rdf12 parse/serialise; RFC 3986 resolution (all §5.4 examples guarded); rdf-turtle eval 111 of 111, rdf-trig 107 of 108 |
+| Notation3 (N3) | `N3/Syntax.lean`, `Parser.lean`, `Rdf.lean`, `Writer.lean`, `Compare.lean`, `Tests.lean`, `Harness/N3Run.lean` (`lake exe l4n3`), `tests/n3/run.sh` | https://github.com/danbri/factoidal/issues/1171: reader over the Turtle reader's terminals (formulae, quick variables, paths, `=>`, `<=`, `is ... of`, `<-`, IRI property lists; RDF 1.2 Turtle forms in RDF 1.2 mode), writer, conversion to RDF, comparison for the eval tests. N3 CG suite (w3c/N3 `1d29dea7`, submodule `third_party/testing/n3`): parser 207 of 207 (1 excluded, defective data), extended 871 of 871; agrees with the Turtle reader on 715 of 715 Turtle tests (theorem open, https://github.com/danbri/factoidal/issues/1172). No reasoner yet. Record: [`docs/designissues/2026-10-28-n3.md`](../../docs/designissues/2026-10-28-n3.md) |
 | RDF syntaxes, lenient (recovery) mode | `Syntax/Diagnostics.lean`, `NQuadsLenient.lean`, `TurtleLenient.lean`, `LenientFeed.lean`, `*LenientTheorems.lean`, `Wasm/Ops/Lenient.lean`, `Harness/LenientRun.lean` | https://github.com/danbri/factoidal/issues/716: skip a bad statement (N-Triples, N-Quads: to the end of its line; Turtle, TriG: to the next `TurtleStatementScan` cut at or after the error), report a `Diagnostic` (16 stable classes, offset, line, column), keep the good statements; `maxErrors`; reference and streaming walks (TriG: reference only). Proved for all four syntaxes: the lenient parse reports nothing exactly when the strict parser accepts, and then returns the strict result (`parse*Lenient_of_ok`, `parse*_ok_of_lenient_quiet`). Streaming = reference is checked by split `#guard`s and by `l4w3c --lenient` (5-character chunks), not proved. `l4w3c --lenient` over the RDF 1.1 and 1.2 Turtle, TriG, N-Triples and N-Quads syntax manifests: 1050 pass, 0 fail (out of 1050). Surfaces: dispatch op `parseDocument`, npm `parse(text, {lenient: true, maxErrors})`, `l4factoidal parse --lenient FILE` (JSON-line diagnostics on stderr). Streaming, `tests/stack/lenient_scaling.sh`: 204 MB of N-Quads in 28.6 s of CPU at 27 MB peak, time linear and memory flat from 25 MB (16 pass, 0 fail (out of 16)). Record: section 3a of the parsing strategy record below |
 | RDF syntaxes, strict parse of a file in chunks | `Syntax/StrictFeed.lean`, `Wasm/Cli.lean` (`streamStrictFile`) | https://github.com/danbri/factoidal/issues/813: `l4factoidal parse FILE [--out nquads]` reads N-Triples, N-Quads and Turtle in 64 KiB chunks, writes each chunk's lines (N-Quads: the set, at the end), and the count keeps only the set of distinct triples; same bytes and errors as the whole-file path (`tools/strict-parse-differential.sh`, chunk sizes 65,536, 7 and 1). Proved: `drainRun_eq` (Turtle chunks = the whole walk), `LineFeed.run_quad11_eq_batch`; not proved: the N-Triples chunk boundary. 400,000 N-Triples to N-Quads: 24 MB (was 1,186 MB), 4.4 times Serd's time. `--out F` takes any of the six syntaxes (`nquads`, `ntriples`, `turtle`, `trig`, `rdfxml`, `jsonld`; https://github.com/danbri/factoidal/issues/853): `ntriples`, `trig`, `rdfxml` and `jsonld` go through the serialiser layer (`RDF/Sink.lean`, whole dataset in memory); `nquads` and `turtle` keep their older writers. Record: sections 3b and 3g of the parsing strategy record |
 | XML | `XML/*.lean`, `Harness/XmlConfRun.lean` (`l4xmlconf`), `xmlconf-probe` | non-validating XML 1.0 and 1.1 parser (version from the declaration) with 20 WFCs, a bytes decoder (`XML/Encoding.lean`: UTF-8, UTF-16, ISO-8859-1, US-ASCII), Namespaces, and a validity layer (`XML/Validity.lean`). DTD attribute defaults are supplied (3.3.2, 5.1); `XML/XmlAttributes.lean` checks `xml:lang`, `xml:id` and `xml:base` values. `l4xmlconf` 2026-10-10: plain 1861 pass, 0 fail (out of 1861); namespaces 56 pass, 0 fail (out of 56); encodings 65 pass, 0 fail (out of 65); XML 1.1 258 pass, 0 fail (out of 258); validating 2184 pass, 0 fail (out of 2184); output (defaults) 46 pass, 0 fail (out of 46); xml-local 47 pass, 0 fail, 0 expected-fail (out of 47). Record: [`docs/designissues/2026-10-10-xml-profile-widened.md`](../../docs/designissues/2026-10-10-xml-profile-widened.md) |
@@ -108,6 +109,9 @@ shard packer, the proofs between them, the costs paid and open):
   proof check: `#guard` expressions evaluate during elaboration, so a
   wrong answer is a build error; every theorem is kernel-rechecked.
 - **Gates after a full `lake build`**, each run from the repository root and read by its exit code:
+  Run gates that read generated C only after the build finishes. On 2026-10-29,
+  running the tail-recursion audit during an incremental QT4 rebuild failed
+  when Lake replaced `XPath4/Theorems.c`; that run provided no gate result.
   `python3 tools/lean-tail-recursion-audit.py --gate` (recursion that consumes stack),
   `python3 tools/lean-unbuilt-modules.py --gate` (a module no build root imports), and
   `python3 tools/lean-csimp-reach.py --gate` (a `@[csimp]` replacement that a caller does not
@@ -542,3 +546,110 @@ next to the issue URL that tracks X and with an expected-failure case in the
 relevant probe or Node suite (`skills/test-suites/SKILL.md` § Expected
 failures). Owner, 2026-09-07: prose alone "is close to nothing". First
 instance: `L4Factoidal/XMPP/Jid.lean` and https://github.com/danbri/factoidal/issues/676.
+
+## XPath and XQuery optional feature settings (2026-10-29)
+
+Use `XPath4.Env.restrictFeatures` to disable optional processor features.
+The settings also reach the parser and module checks. The qt4tests runner
+selects restrictions from negative feature dependencies. See the
+[design record](../../docs/designissues/2026-10-29-processor-feature-settings.md)
+and [measured report](../../docs/20261029-processor-feature-settings.md).
+
+## Solving retained graphics scenes (2026-11-01)
+
+Cold small-engine builds must emit `.olean` files for proof modules imported
+by subsequent proof/test modules. On 2026-11-02 the fresh SVG worktree caught
+`FoafPresentationProofs` importing a missing `FoafGeometryProofs` artifact:
+checking a source file without `-o` had passed only with an older cache present.
+The lab script now emits both in dependency order. See the
+[overnight SVG record](../../docs/20261102-svg-standards-overnight.md).
+
+The overnight SVG reader now supports defs/use/symbol and nested SVG viewport
+clips. IDs select the first original tree-order element; active original source
+paths detect cycles without conflating duplicate ID strings. A use host supplies
+inherited paint; the target's own specified style wins. Clip and content/viewBox
+CTMs are separate, including in sampling/picking/packed WGSL. URL-aware parsing
+retains the original source xml:base across cloning. Exact analytic GPU controls
+and ten selected original upstream rendering matches are separate evidence;
+neither establishes full SVG or GPU arithmetic equivalence. Typed C/S/Q/T/A
+curves now retain canonical segments separately from checked linear backend
+contours. `Scene.make` returns `Except` and binds its compiled cache by an exact
+equality proof; adapters must propagate failure and preserve canonical Float
+parameters. Cache correspondence and packed-buffer bounds do not prove the
+numeric flatness policy or GPU arithmetic equivalence. Keep independent image
+failures visible. See the [curve/cache design](../../docs/designissues/2026-11-03-svg-curves-cache.md)
+and [overnight record](../../docs/20261102-svg-standards-overnight.md).
+
+HTML SVG roots must share the original document ID index. Build one
+`NativeSVG.ReferenceContext` from the complete Lean namespace DOM and select
+roots with `parseRootInContext` and absolute child paths (text/comments count).
+Its root-only attribute normalizer must preserve original target styles and
+bases; never construct host DOM extracts or independent per-root ID maps.
+Retrieval URL and effective HTML base are separate. See the
+[document-reference design](../../docs/designissues/2026-11-03-svg-document-references.md).
+
+SVG artifact list formatting uses the proved bit-keyed
+`Rendering/FloatFormat.lean` cache through a csimp-selected wrapper. The
+all-Float-list theorem preserves every reference decimal string and list order;
+inspect the actual `Scene_json` C caller as well as testing full raw artifacts.
+Do not replace this with numeric-equality caching or change rounding as a speed
+fix. Exact output and actual timing are separate gates; the overnight record
+keeps both.
+
+The initial retained-scene source is the lab module
+`labs/demos/foafnaut/Solving.lean`, compiled by
+`labs/demos/foafnaut/build-engines.sh`. It reuses `NativeGraphics.Shape` and
+`NativeGeometry.hit`; its current scene transform is integer translation and
+its clip is an integer rectangle. Do not describe the current SVG parser or
+WebGPU path as consuming this scene yet. The evidence and open integration
+steps are recorded in
+[`docs/20261101-solving-scene-slice.md`](../../docs/20261101-solving-scene-slice.md).
+`SolvingSVG.lean` adds a `RetainedScene` envelope over complete native nodes
+and nested SVG display nodes. `SVG.lean` now retains `<g>` boundaries, IDs and
+local transforms in `NativeSVG.DisplayNode`. A cached painter list is tied to
+that tree by `Scene.loweringCorrect`; order and transform/path accumulation are
+proved. `paintCount_eq_lowerLength` and `paintCountList_eq_lowerLength` prove
+the structural count used for the parser limit agrees with lowered paint count,
+without allocating temporary primitive lists at each group. The SVG CPU
+reference probes share one packed array; `rows_offsets_eq_flattened_length` and
+`Scene.data_size_eq_record_cursor` prove the cursor advances match the buffer.
+`display="none"` removes subtrees after strict parsing, while inherited
+`visibility="hidden"`/`collapse` retains zero-opacity paint; a Lean theorem
+establishes that opacity result. The picker is geometric and does not model
+browser `pointer-events`.
+Exact SVG and programmatic round-trip theorems preserve the adapter's source scenes, and
+mixed producer lists are refused. The renderers still consume producer-specific
+representations; this is not yet a common geometry algebra, compositing surface
+model or WebGPU proof boundary. Evidence and open steps:
+[`docs/20261101-solving-scene-slice.md`](../../docs/20261101-solving-scene-slice.md)
+and the [scene design record](../../docs/designissues/2026-11-01-svg-scene-compositor.md).
+
+The fresh 2026-11-02 build caught a pathLength regression test that compared
+whole JSON artifacts for grouped and ungrouped SVG. Only their retained `tree`
+fields differed; every rendering field was equal. A rendering-equivalence test
+may remove that named inspection field only, must compare all remaining fields,
+and must separately assert the intended distinct tree structures. See the
+[build and package record](../../docs/20261102-foafnaut-macos-build.md).
+That link also exposed an existing unused `Std.Tactic` umbrella import in
+`SVG.lean`, which emitted `initialize_Std_Tactic` outside the small runtime
+cache closure. Source proof checks alone did not detect this link dependency.
+Remove unused broad tactic imports, recheck the unchanged proofs and real WASM
+link, and do not hide missing import closures with linker stubs.
+The same fresh WASM run reached a 10,000-element retained-list stack overflow
+that native guards had not caught. The parser's group-depth bound does not
+bound sibling width. Keep the declarative traversal/count definitions, prove
+paired node/list execution twins equal, check actual compiler reach across
+mutual blocks, and exercise admitted wide groups plus explicit budget refusals
+in WASM. The build record contains the named stack and six exact equalities.
+
+## Lean HTML/CSS rendering (2026-11-02)
+
+`L4Factoidal/Rendering/{Scene,Style,Layout,Tests}.lean` contains the common
+Float scene, CSS cascade and block/inline HTML layout. Run the targeted
+`LEAN_NUM_THREADS=2 lake build L4Factoidal.Rendering.Tests` from `formal/lean4`.
+The lab `WebRenderSVG.lean` adapter preserves complete SVG numeric records and
+retained trees with checked roundtrip theorems. No SVG string is the HTML
+layout intermediate. The initial ASCII bitmap profile is incomplete text
+support, not shaped real-font coverage. Scope, architecture reconciliation
+and evidence: [design record](../../docs/designissues/2026-11-02-lean-web-rendering.md),
+https://github.com/danbri/factoidal/issues/1230 (shared Lean web renderer).

@@ -34,7 +34,6 @@
 // browser's, or one that carries each request as a message over another
 // transport (XMPP, a worker port). The client needs no global fetch.
 
-import { loadEngine } from '../bin/engine.mjs'
 import { FactoidalError } from '../lib/errors.mjs'
 
 /** The ops this host needs from the engine. */
@@ -151,12 +150,17 @@ export async function lwsClientOpsAvailable (engine) {
  * @param {boolean} [options.legacyChallenge] follow the 401 challenge
  *   `Bearer as_uri="…", realm="…"` of the drafts before 2026-10-19 (default
  *   false: it skips two of the discovery checks of lws10-core)
+ * @param {boolean} [options.requireHttps] send no request to a URL whose
+ *   scheme is not https, in any phase; such an operation fails with code
+ *   `insecureTransport` (default false; the engine decides)
  * @param {object} [options.session] a session from an earlier client
  * @param {number} [options.maxSteps] the loop cap of one operation
  * @returns {Promise<object>} the client
  */
 export async function createLwsClient (options = {}) {
-  const engine = options.engine !== undefined ? options.engine : await loadEngine()
+  // Browsers inject their already loaded engine. Only the Node/Deno default
+  // loader imports the file-backed store host; keep it out of that import graph.
+  const engine = options.engine !== undefined ? options.engine : await (await import('../bin/engine.mjs')).loadEngine()
   const wire = typeof options.fetch === 'function' ? options.fetch : globalThis.fetch
   if (typeof wire !== 'function') throw new TypeError('no fetch is available in this runtime')
   const maxSteps = typeof options.maxSteps === 'number' ? options.maxSteps : 1024
@@ -174,6 +178,8 @@ export async function createLwsClient (options = {}) {
   // Follow the `Bearer as_uri, realm` challenge of the drafts before
   // 2026-10-19 (`Machine.on401`); the engine decides, off by default.
   if (options.legacyChallenge === true) session.legacyChallenge = true
+  // Refuse every request to a URL that is not https (`Machine.enforce`).
+  if (options.requireHttps === true) session.requireHttps = true
 
   function call (op, args) {
     try {
@@ -254,7 +260,9 @@ export async function createLwsClient (options = {}) {
     head: with_('head'),
     /** `create(containerUrl, { body, mediaType, slug, container, types, links })` */
     create: with_('create'),
-    /** `update(url, { body, mediaType, precondition, tag, retry412, links })` */
+    /** `update(url, { body, mediaType, precondition, tag, ifNoneMatchTags, retry412, links })`;
+     *  `ifNoneMatchTags` (entity tags, or field values of them) sends
+     *  `If-None-Match`, alone or with the `If-Match` of `precondition` */
     update: with_('update'),
     patch: with_('patch'),
     /** `delete(url, { recursive, precondition, tag })` */
@@ -279,6 +287,8 @@ export async function createLwsClient (options = {}) {
     subscribe: with_('subscribe'),
     getSubscription: with_('getSubscription'),
     unsubscribe: with_('unsubscribe'),
+    /** `requestAccess(url, { policies: [{ actions, assignee, targets, constraint }], inbox })`,
+     *  or one policy as `{ actions, assignee, targets, constraint }` */
     requestAccess: with_('requestAccess'),
     grantAccess: with_('grantAccess'),
     getAccess: with_('getAccess'),
@@ -301,7 +311,7 @@ export async function createLwsClient (options = {}) {
  *   `selfIssued` is the `createLwsClient` option of that name
  */
 export async function createDidKey (options = {}) {
-  const engine = options.engine !== undefined ? options.engine : await loadEngine()
+  const engine = options.engine !== undefined ? options.engine : await (await import('../bin/engine.mjs')).loadEngine()
   const algorithm = typeof options.algorithm === 'string' ? options.algorithm : 'ES256'
   const random = new Uint8Array(64)
   globalThis.crypto.getRandomValues(random)

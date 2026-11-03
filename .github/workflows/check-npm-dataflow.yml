@@ -54,8 +54,39 @@ jobs:
       - name: Build the registry tests
         working-directory: formal/lean4
         run: lake build L4Factoidal.Dataflow.RegistryTests
+      - name: Generate the dataflow inventories from the Lean registry
+        id: generated
+        run: |
+          python3 tools/dataflow-inventory.py
+          python3 - <<'PY'
+          import hashlib, json, pathlib, subprocess
+          root = pathlib.Path.cwd()
+          paths = ['docs/dataflow-inventory.md', 'formal/lean4/L4Factoidal/Dataflow/StageKinds.lean']
+          witness = {
+            'sourceCommit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+            'generatorSha256': hashlib.sha256((root / 'tools/dataflow-inventory.py').read_bytes()).hexdigest(),
+            'leanVersion': subprocess.check_output(['lean', '--version'], cwd=root / 'formal/lean4', text=True).strip(),
+            'outputs': {p: hashlib.sha256((root / p).read_bytes()).hexdigest() for p in paths},
+          }
+          (root / 'dataflow-generation-witness.json').write_text(json.dumps(witness, indent=2) + '\n')
+          PY
       - name: Dataflow gate
         run: bash tests/dataflow/run.sh
+      - name: Require committed generated inventories
+        run: git diff --exit-code -- docs/dataflow-inventory.md formal/lean4/L4Factoidal/Dataflow/StageKinds.lean
+      # Preserve fresh generator output even when a later gate detects drift.
+      # Never upload checkout files as generated output after generation fails.
+      - name: Preserve generated dataflow inventories
+        if: always() && steps.generated.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dataflow-generated-inventory
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            docs/dataflow-inventory.md
+            formal/lean4/L4Factoidal/Dataflow/StageKinds.lean
+            dataflow-generation-witness.json
 
   npm:
     name: npm package suite (newest ancestor web release)

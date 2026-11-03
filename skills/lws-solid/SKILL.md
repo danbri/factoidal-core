@@ -111,6 +111,33 @@ paths; request paths with dot segments or encoded traversal get 400
 `lws-serve --storage files` keeps `DIR` as one file per body and a journal
 instead (section "Storage on disk" below).
 
+### One writing process per storage directory; the encryption notice (https://github.com/danbri/factoidal/issues/1135)
+
+`openLwsStorage({dir})` (so `lws-serve DIR` and every `webdav-serve` local
+mount) and `openSolidStorage({dir})` take the lock `DIR/lws.lock` before they
+read DIR, and release it in `close()` and at process exit. Lean decides the
+file, its JSON (format `lws-lock-1`: pid, command, started, host, token) and
+the action (`L4Factoidal/LWS/DirLock.lean`, `decide`; pure op `lwsDirLock`:
+`create`, `probe`, `refuse`, `replace`). The host (`lws/persist.mjs`,
+`acquireDirLock`) does the `wx` create, `process.kill(pid, 0)` and the
+unlink. `token` is random per process, so a lock with this pid and another
+token (a restarted container) is stale. A refusal is a `StorageLockedError`
+with `envelope`, which the CLIs print and exit 1. Two opens of one DIR in one
+process are refused too: a test that restarts a storage in-process must
+`close()` the first one. Theorems: `decide_alive_refuses`,
+`decide_otherHost_refuses`, `decide_sameInstance_refuses`,
+`decide_replace_dead`, `decide_create_absent`. Test:
+`node tests/lws/dir-lock.mjs`.
+
+The same open also gives `notices` (pure op `lwsAtRestNotice`,
+`DirLock.atRestNotice`): a stale-lock warning, and "encryption at rest is
+OFF ... `factoidal lws-keygen` ..." or "... is ON ... key id K". The CLIs
+print them on standard error, also with `--quiet`. `factoidal lws-keygen`
+calls the pure op `lwsStorageKeyNew` with 32 random bytes. Owner, 2026-10-28:
+"For our lws encourage attention to encryption at rest also"; it stays off
+by default. No re-key yet: https://github.com/danbri/factoidal/issues/1136
+(xfail in `tests/lws/encryption.mjs`).
+
 ### Storage on disk, stages 1 and 2 (https://github.com/danbri/factoidal/issues/918)
 
 Design record: `docs/designissues/2026-10-22-lws-storage-on-disk.md`. Off by
@@ -741,9 +768,15 @@ field value.
   (theorem `around_preflight`). Every other answer goes through
   `Cors.decorate` (status and content unchanged, `decorate_status`). A new
   answer path in `lwsStepWith` must call `Cors.decorate` too.
-* Default: echo a valid request `Origin` (Solid §8.1), never `null`, no
-  `Access-Control-Allow-Credentials` (the token is in `Authorization`), and
-  `Vary: Origin` on every answer, merged into the answer's own `Vary`.
+* Default under authorization: echo a valid request `Origin` (Solid §8.1),
+  never `null`, no `Access-Control-Allow-Credentials` (the token is in
+  `Authorization`; theorems `LWS.Cors.decorate_no_credentials`,
+  `preflight_no_credentials`), and `Vary: Origin` on every answer, merged
+  into the answer's own `Vary`. Default with `insecureNoAuth`: NO CORS field,
+  and `cors: true` stops the start (`LWS.Cors.policyFor`, theorem
+  `insecure_no_echo`, https://github.com/danbri/factoidal/issues/1124): an
+  echo there let any web page read and write the storage. A test that needs
+  CORS on an open storage passes `cors: [PAGE]`.
   Config `cors`: `false` (`--no-cors`) or a list (`--cors-origin ORIGIN`,
   repeatable); a malformed origin stops the start.
 * `authz-serve` has the same config and flags (`Authz.stepCors`, its own
@@ -758,6 +791,35 @@ Tests: `#guard`s in `HTTP/Cors.lean`, `LWS/Cors.lean`, `Authz/Tests.lean`,
 `Solid/Tests.lean`; `node tests/lws/cors.mjs`; `node tests/lws/cors-browser.mjs`
 (Chromium through Playwright, `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`,
 never `playwright install`; exit 2 when it cannot run).
+
+### Host and Origin guard of listeners without authentication (https://github.com/danbri/factoidal/issues/1124)
+
+Row C7 and invariant I7 of
+`docs/designissues/2026-10-28-feature-combination-safety.md`.
+
+* Lean: `L4Factoidal/HTTP/LocalGuard.lean`. `admit g r`: 421 when `Host`
+  names no name of the listener (`localGuard_foreign_host`); 403 when the
+  method is not GET, HEAD or OPTIONS and `Origin` is neither the listener's
+  own origin (`host[:port]` equal to `Host`) nor on the list
+  (`localGuard_cross_origin_write`); otherwise `none`. No `Host` (no browser)
+  and no `Origin` (curl) are admitted.
+* Names: `localhost`, `127.0.0.1`, `[::1]`, the `--host` address, the
+  interface addresses, the host of `baseIri`, and `--allow-host NAME`
+  (config `allowHosts`). Origins: `--allow-origin ORIGIN` (`allowOrigins`),
+  and for LWS every `--cors-origin`. The name check ignores the port.
+* Where: `lwsStepWith` and `solidStepWith` with `insecureNoAuth` (first, before
+  the preflight); `StoreEndpoint.handle` of `factoidal serve` (config
+  `localGuard`, always; `handle_guard_refused`); `webdavStepWith` (config
+  `localGuard`, always, also with `--users`, before the login; not over
+  XMPP). Hosts pass `listen: {host, address, port, addresses}` (LWS, Solid) or
+  `localGuard: {host, addresses, allowHosts, allowOrigins}` (serve, WebDAV),
+  unread. Under authorization, `allowHosts`/`allowOrigins` are refused.
+* A host test or harness that reaches a listener by another name passes
+  `--allow-host` (the Solid conformance harness: `host.docker.internal`).
+* Still open (expected failures in
+  `npm/factoidal/test/local-guard-1124.test.mjs`): `solid-serve` echoes any
+  `Origin` and sends `Access-Control-Allow-Credentials: true`
+  (`Solid/Server/Cors.lean`).
 
 ### LWS authorization (https://github.com/danbri/factoidal/issues/886)
 
@@ -902,14 +964,38 @@ it always (https://github.com/danbri/factoidal/issues/1115). `subscribe`
 with `endpoint` (CLI `--endpoint`) POSTs to the named notification endpoint
 with no storage-link discovery.
 
+Three options of https://github.com/danbri/factoidal/issues/1116:
+
+- Session option `requireHttps` (npm `createLwsClient({ requireHttps: true })`,
+  CLI `--require-https`; off by default): `enforce` refuses, before it is sent,
+  every request whose URL scheme is not `https`, in every phase (the
+  operation, discovery, the protected resource metadata, the authorization
+  server metadata, the token endpoint). The failure has code
+  `insecureTransport` with the URL; the driver error kind is `TransportError`.
+  Theorems `step_requireHttps`, `start_requireHttps`. The driver adapter maps
+  `allowInsecureHttp: false` to it (stricter than the lws-client design,
+  which asks https only of the authorization server and excepts loopback).
+- Operation member `ifNoneMatchTags` (CLI `--if-none-match TAG[,TAG]`; for
+  `read` the CLI flag sets the GET's `ifNoneMatch`): `If-None-Match` with
+  entity tags on a write (RFC 9110 §13.1.2), read by `entityTagList?` (each
+  member may be a list; `*` only alone). With no `precondition` it is
+  `ifNoneMatch` (the field alone); with `ifMatch`, `ifMatchCurrent` or
+  `ifUnmodifiedSince` both fields go (RFC 9110 §13.2.2 orders their
+  evaluation). Refused with `none` and `ifNoneMatchStar`. Every conditional
+  kind takes it, `patch` included.
+- Operation member `policies` (CLI `--policies JSON`): an access request or
+  grant with N policies, each `{actions, assignee, targets, constraint}`, in
+  the caller's order. The single-policy members stay as one policy; giving
+  both is `badArguments`.
+
 | path | what it is |
 | --- | --- |
 | `formal/lean4/L4Factoidal/LWS/Client/Wire.lean` | requests, responses, `Link`, `WWW-Authenticate`, `Allow`, `Accept-Patch`, form bodies, JSON forms |
 | `formal/lean4/L4Factoidal/LWS/Client/Machine.lean` | `Op`, `ClientState`, `step`, `enforce`, state JSON |
-| `formal/lean4/L4Factoidal/LWS/Client/Theorems.lean` | `walk_concat`, `walk_paths`, `walk_members_once`, `walk_listedMembers`, `step_write_precondition`, `step_no_token_request_without_validation`, `step_no_blind_create_retry`, `step_no_retry_after_lost_post`, `step_no_repeat_after_refusal` |
+| `formal/lean4/L4Factoidal/LWS/Client/Theorems.lean` | `walk_concat`, `walk_paths`, `walk_members_once`, `walk_listedMembers`, `step_write_precondition`, `step_no_token_request_without_validation`, `step_no_blind_create_retry`, `step_no_retry_after_lost_post`, `step_no_repeat_after_refusal`, `step_requireHttps`, `start_requireHttps` |
 | `formal/lean4/L4Factoidal/LWS/Client/Tests.lean` | `#guard`s: canned responses (decoys, stale tags, 405, 503, forged notifications) and a loopback against `LWS.step MemStore` |
 | `formal/lean4/Wasm/Ops/LwsClient.lean` | `lwsClientStart(opJson, sessionJson)`, `lwsClientStep(stateJson, eventJson)` → `{ok, state, action}` |
-| `npm/factoidal/lws/client.mjs` | `createLwsClient({ fetch, subjectToken, subjectTokenType, session, legacyChallenge })`, `createNotificationReceiver({ client })` |
+| `npm/factoidal/lws/client.mjs` | `createLwsClient({ fetch, subjectToken, subjectTokenType, session, legacyChallenge, requireHttps })`, `createNotificationReceiver({ client })` |
 | `tests/lws/client/own-server.mjs` | our client against our server, open and with authorization |
 | `tools/lws-touchstone-client.sh` | our client in Touchstone's client lab (53 rules) |
 
@@ -920,10 +1006,11 @@ reach it. The state crosses the ABI as JSON; bodies as `bodyBase64`.
 ```
 factoidal lws-client <op> URL [--body TEXT|--file PATH] [--content-type M]
     [--if-match TAG|--if-match-current|--if-none-match-star|--no-precondition]
+    [--if-none-match TAG[,TAG]] [--require-https]
     [--retry-412 N] [--recursive] [--container] [--slug S] [--type IRI]
     [--subject-token-file F --subject-token-type URI] [--query JSON]
     [--inbox URL] [--topic URL] [--endpoint URL] [--legacy-challenge]
-    [--action A,B --assignee URI --target URL]
+    [--action A,B --assignee URI --target URL | --policies JSON]
 ```
 
 ```js
@@ -961,7 +1048,36 @@ the WebDAV and LWS mapping, statuses, limits, what each client needs).
 
 ```
 factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]   # default 127.0.0.1:8090
+                       [--users FILE] [--cert FILE --key FILE]
+                       [--login-limit N] [--login-window SECONDS]
+                       [--dangerously-disable-ratelimits]
+factoidal webdav-user FILE NAME [--iterations N]              # password on standard input
 ```
+
+Login and HTTPS (https://github.com/danbri/factoidal/issues/1108; expert
+review requested, https://github.com/danbri/factoidal/issues/1117): with
+`--users`, every request needs HTTP Basic against a users file of
+`NAME:pbkdf2-sha256:ITERATIONS:SALT_B64:HASH_B64` lines (PBKDF2-HMAC-SHA256,
+16-byte salt, 600,000 iterations by default, at least 100,000). PBKDF2 runs
+in WebCrypto: the engine answers `{need: {op: 'pbkdf2-hmac-sha256', ...}}`
+and the host gives `answerCipherRequest`'s answer to `webdavResume` (as AES,
+`lib/cipher-host.mjs`). A login is cached for 300 s in the handle. Without
+`--cert`/`--key` the start stops unless the address is loopback. Every
+decision: `L4Factoidal/WebDAV/Login.lean`; design record § "Login and
+HTTPS".
+
+Failed-login limit (https://github.com/danbri/factoidal/issues/1119), on by
+default with `--users` (owner, 2026-10-28: "default to protection but have a
+—dangerously-disable-ratelimits option"): 5 failures per 60 s per user name
+as sent and per client address (IPv6 by /64), fixed window from the first
+failure. Over the limit: 429 with `Retry-After`, before the cache and with
+no derivation (the right password too). A success resets nothing. At most
+10,000 counters; a blocked one is never evicted; a full table answers 429.
+The host passes `remoteAddress` with each request and prints
+`ready.warnings` (the `--dangerously-disable-ratelimits` warning) at start;
+`Login.limitsOf` checks the options. Theorem `gate_no_derive_of_blocked`.
+Any new login surface follows the same rule: limit on by default, off only
+by an option whose name starts with `--dangerously-`, with a start warning.
 
 CONFIGDIR holds one Markdown file per mount (`README.md` is not one):
 
@@ -993,17 +1109,25 @@ CONFIGDIR holds one Markdown file per mount (`README.md` is not one):
   checked with these clients: https://github.com/danbri/factoidal/issues/1079.
   rclone and cadaver are: `node tests/webdav/clients.mjs` (11 pass, 0 fail,
   out of 11, on 2026-10-28; `apt-get install rclone cadaver`).
+* Desktop clients: `node tests/webdav-desktop/serve-labs.mjs` serves the lab
+  trees of `labs/filetrees/` through a recording proxy on 127.0.0.1:8091;
+  `probe-macos.sh`, `probe-linux.sh`, `probe-windows.ps1` and `checklist.md`
+  in the same folder; results in `tests/webdav-desktop/results/`. First run:
+  gvfs 1.54.4 through `gio`, 21 ok, 0 FAIL (2026-10-28). Record:
+  `docs/designissues/2026-10-28-desktop-webdav-labs.md`.
 
 | path | what it is |
 | --- | --- |
 | `formal/lean4/L4Factoidal/WebDAV/Config.lean` | mount files (one loop; theorem `scan_known`) |
 | `formal/lean4/L4Factoidal/WebDAV/Server.lean` | every method as a program over six storage operations (`Backend.Prog`); theorem `refused_keeps_state` |
 | `formal/lean4/L4Factoidal/WebDAV/Local.lean`, `Remote.lean` | an operation as one LWS request; as one LWS client operation (the one module that uses the client API) |
+| `formal/lean4/L4Factoidal/WebDAV/MediaType.lean` | the media type of a PUT or LOCK with no Content-Type, from the name's extension (https://github.com/danbri/factoidal/issues/1122) |
 | `formal/lean4/L4Factoidal/WebDAV/Xml.lean`, `If.lean`, `Path.lean` | XML bodies (depth limit 256, work-list serializer), the `If` header, targets |
+| `formal/lean4/L4Factoidal/WebDAV/Login.lean` | the users file, HTTP Basic, the PBKDF2 request, `ctEq`, the login cache, the failed-login limit (`Failures`, `limitsOf`), the loopback rule, `webdav-user`'s line edit; theorems `gate_none`, `finish_unknown`, `gate_no_derive_of_blocked` |
 | `formal/lean4/L4Factoidal/WebDAV/State.lean` | `DavState` (dead properties, locks) as the JSON text of `CONFIGDIR/.webdav-state.json`, and back; refuses an unknown format or version |
 | `formal/lean4/L4Factoidal/WebDAV/Tests.lean`, `Theorems.lean` | `#guard`s of every method against `LWS.step MemStore`, directly and through the client; `browse_no_write` |
-| `formal/lean4/Wasm/Ops/WebDAV.lean` | `webdavOpen`, `webdavLoad`, `webdavStep`, `webdavResume`, `webdavClose` |
-| `npm/factoidal/webdav/server.mjs` | the host: sockets, the files the engine names, `lws` requests to the storage handle, `fetch`es |
+| `formal/lean4/Wasm/Ops/WebDAV.lean` | `webdavOpen`, `webdavLoad`, `webdavStep`, `webdavResume`, `webdavClose`, `webdavUser` |
+| `npm/factoidal/webdav/server.mjs` | the host: sockets (`http`, or `https` with `--cert`/`--key`), the files the engine names, `lws` requests to the storage handle, `fetch`es, the PBKDF2 `need` of a login |
 
 Tests: `node tests/webdav/server.mjs` (every method through a local and a
 remote mount on `lws-serve --authz`; dead properties and locks survive a
@@ -1012,7 +1136,58 @@ form in `L4Factoidal/WebDAV/State.lean`,
 https://github.com/danbri/factoidal/issues/1078), `node tests/webdav/litmus.mjs` (needs `apt-get install
 litmus`; expected failures in `tests/webdav/litmus-xfail.tsv`; 2026-10-27:
 208 pass, 0 fail, 0 xfail (out of 208)), `node tests/webdav/scaling.mjs`
-(the decoders at n, 2n, 4n through the wasm module).
+(the decoders at n, 2n, 4n through the wasm module). The login: `tests/webdav/server.mjs`
+§ login (`webdav-user`, 401 and 207, 429 with `Retry-After` after
+failures, the window end, `--dangerously-disable-ratelimits` and its warning,
+the cache counted in derivations, the refusals at start) and `node --test tests/hub/hub_webdav_test.mjs` (HTTPS with
+an `openssl req -x509` certificate).
+
+### WebDAV over XMPP (https://github.com/danbri/factoidal/issues/1107)
+
+```
+factoidal webdav-serve CONFIGDIR --xmpp bob@example.org --xmpp-password-file bob.password \
+  --xmpp-allow alice@example.org --xmpp-tls [--xmpp-ca FILE] [--xmpp-host H] [--xmpp-port P] \
+  [--dangerously-allow-writable-without-login]
+```
+
+The allow list is the only access control on this path (local mounts act as
+the owner). Lean refuses the start (`xcStartRefusal`) with an empty list, a
+JID with a resource, plain TCP to a host that is not loopback, or a writable
+local mount without the `--dangerously-` opt-in
+(https://github.com/danbri/factoidal/issues/1125). No login and no per-JID
+login limit yet (https://github.com/danbri/factoidal/issues/1125,
+https://github.com/danbri/factoidal/issues/1128): expected failures in the
+test.
+
+No port opens: the process connects out to an XMPP server, logs in with
+SCRAM-SHA-256, binds `bob@example.org/dav` (printed as `xmpp:JID`) and serves
+HTTP over XMPP (XEP-0332) requests from the allowed bare JIDs through the same
+WebDAV handle as the HTTP listener. Lean: `L4Factoidal/XMPP/ClientStream.lean`
+(the RFC 6120 client), `HttpOverXmpp.lean` (`plan`, `finish`); ops
+`xmppClientOpen`/`Feed`/`Answer`/`Close` (`Wasm/Ops/XmppClient.lean`); host
+`npm/factoidal/xmpp/client.mjs`. Test: `node tests/webdav/xmpp.mjs` (starts
+`xmpp-serve`; the test client is `tests/webdav/xmpp-client.mjs`).
+
+A file browser reaches it through the local proxy (step 2):
+
+```
+factoidal xmpp-http-proxy --xmpp alice@example.org --xmpp-password-file alice.password \
+  --target bob@example.org/dav --xmpp-tls [--xmpp-ca FILE] [--xmpp-host H] [--xmpp-port P] \
+  [--port 8091] [--timeout 60]
+# prints http://127.0.0.1:8091/
+```
+
+Lean `L4Factoidal/XMPP/HttpRequester.lean` (`send`, `receive`, `tick`,
+`abortAll`; theorems `send_to_target`, `receiveNode_other_sender`,
+`forwardHeaders_sublist`, `forwardHeaders_keeps_authorization`); requester
+mode of `xmppClientOpen` (`proxyTarget`), ops `xmppClientRequest`,
+`xmppClientTick`; start rule `xcProxyRefusal` (listener 127.0.0.1 only, full
+target JID, TLS or loopback XMPP). Host `npm/factoidal/xmpp/proxy.mjs`. Test:
+`node tests/webdav/xmpp-proxy.mjs` (fetch, litmus, rclone, cadaver through the
+proxy; 403 for a JID not on the allow list; 504 on timeout; a forged answer
+from another JID dropped). Expected failure: no `Host`/`Origin` check on the
+listener (https://github.com/danbri/factoidal/issues/1124). Record:
+`docs/designissues/2026-10-28-http-over-xmpp.md` § Step 2.
 
 ## Run the tests
 

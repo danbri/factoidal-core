@@ -21,6 +21,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { keyPair, didKeyOf } from '../authz/fixtures.mjs'
 
 let passed = 0
 let failed = 0
@@ -51,8 +52,8 @@ function assert (condition, message) {
 const CLI = fileURLToPath(new URL('../../npm/factoidal/bin/factoidal.mjs', import.meta.url))
 const has = (cmd) => spawnSync('sh', ['-c', `command -v ${cmd}`]).status === 0
 
-function start (dir) {
-  const child = spawn(process.execPath, [CLI, 'webdav-serve', 'dav', '--port', '0'], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] })
+function start (dir, args) {
+  const child = spawn(process.execPath, [CLI, ...(args || ['webdav-serve', 'dav', '--port', '0', '--guest', 'guest'])], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] })
   return new Promise((resolve, reject) => {
     let out = ''
     let err = ''
@@ -76,12 +77,23 @@ function run (cmd, args, opts = {}) {
 async function main () {
   const dir = mkdtempSync(join(tmpdir(), 'factoidal-webdav-clients-'))
   let server = null
+  let lws = null
   try {
-    mkdirSync(join(dir, 'dav', 'notes'), { recursive: true })
-    writeFileSync(join(dir, 'dav', 'notes.md'), '# Notes\n- kind: local\n- path: ./notes\n')
-    mkdirSync(join(dir, 'src', 'sub'), { recursive: true })
-    writeFileSync(join(dir, 'src', 'a.txt'), 'hello\n')
-    writeFileSync(join(dir, 'src', 'sub', 'b.txt'), 'world\n')
+    // Emergency mode (https://github.com/danbri/factoidal/issues/1147):
+    // webdav-serve is read only and has no local mounts. The mount is an lws
+    // mount of an `lws-serve --authz` storage, filled through the LWS client
+    // as its owner; the clients read it, and their writes are refused.
+    mkdirSync(join(dir, 'dav'), { recursive: true })
+    const owner = keyPair('ES256')
+    const did = didKeyOf(owner)
+    const ownerJwk = owner.privateKey.export({ format: 'jwk' })
+    writeFileSync(join(dir, 'dav', 'owner.jwk'), JSON.stringify(ownerJwk), { mode: 0o600 })
+    lws = await start(dir, ['lws-serve', 'lws', '--port', '0', '--authz', 'lws-as', '--owner', did, '--quiet'])
+    const { createLwsClient } = await import('../../npm/factoidal/lws/client.mjs')
+    const ownerClient = await createLwsClient({ selfIssued: { subject: did, keyId: `${did}#${did.slice(8)}`, jwk: ownerJwk } })
+    await ownerClient.update(`${lws.origin}/hello.txt`, { body: 'hello\n', mediaType: 'text/plain', precondition: 'none' })
+    writeFileSync(join(dir, 'dav', 'notes.md'),
+      `# Notes\n- kind: lws\n- url: ${lws.origin}/\n- auth: did-key\n- key-file: owner.jwk\n- users: guest\n`)
     writeFileSync(join(dir, 'up.txt'), 'hi\n')
     server = await start(dir)
 
@@ -92,50 +104,38 @@ async function main () {
         RCLONE_CONFIG_F_TYPE: 'webdav', RCLONE_CONFIG_F_URL: `${server.origin}/`, RCLONE_CONFIG_F_VENDOR: 'other' }
       writeFileSync(join(dir, 'rclone.conf'), '')
       const rc = (...args) => run('rclone', args, { env, cwd: dir })
-      await check('rclone: copy a tree, list it, and its bytes match', async () => {
-        rc('copy', 'src', 'f:notes/proj')
-        const ls = rc('lsf', '-R', 'f:notes/proj').split('\n').filter(Boolean).sort()
-        assert(JSON.stringify(ls) === JSON.stringify(['a.txt', 'sub/', 'sub/b.txt']), `listing ${JSON.stringify(ls)}`)
-        rc('check', 'src', 'f:notes/proj')
-      })
-      await check('rclone: move, mkdir, read', async () => {
-        rc('moveto', 'f:notes/proj/a.txt', 'f:notes/proj/renamed.txt')
-        rc('mkdir', 'f:notes/empty')
+      await check('rclone: list and read', async () => {
         const ls = rc('lsf', '-R', 'f:notes').split('\n').filter(Boolean).sort()
-        assert(ls.includes('proj/renamed.txt') && !ls.includes('proj/a.txt') && ls.includes('empty/'), `listing ${JSON.stringify(ls)}`)
-        assert(rc('cat', 'f:notes/proj/renamed.txt') === 'hello\n', 'content after move')
+        assert(ls.includes('hello.txt'), `listing ${JSON.stringify(ls)}`)
+        assert(rc('cat', 'f:notes/hello.txt') === 'hello\n', 'content')
       })
-      await check('rclone: purge a collection', async () => {
-        rc('purge', 'f:notes/proj')
-        const ls = rc('lsf', '-R', 'f:notes').split('\n').filter(Boolean)
-        assert(!ls.some((l) => l.startsWith('proj')), `listing ${JSON.stringify(ls)}`)
+      await check('rclone: a copy in, a mkdir and a delete are refused (read only, issue 1147)', async () => {
+        for (const args of [['copyto', 'up.txt', 'f:notes/up.txt'], ['mkdir', 'f:notes/empty'], ['deletefile', 'f:notes/hello.txt']]) {
+          let refused = false
+          try { rc(...args) } catch (_error) { refused = true }
+          assert(refused, `rclone ${args.join(' ')} succeeded`)
+        }
+        assert(rc('cat', 'f:notes/hello.txt') === 'hello\n', 'content changed')
       })
     }
 
     if (!has('cadaver')) {
       skip('cadaver', 'cadaver is not installed')
     } else {
-      const script = ['cd notes', 'mkcol d1', 'put up.txt d1/up.txt', 'ls d1',
-        'propset d1/up.txt color blue', 'propget d1/up.txt color',
-        'lock d1/up.txt', 'discover d1/up.txt', 'unlock d1/up.txt',
-        'copy d1/up.txt d1/copy.txt', 'move d1/copy.txt d1/moved.txt', 'ls d1',
-        'cat d1/moved.txt', 'rm d1/moved.txt', 'rm d1/up.txt', 'rmcol d1', 'quit', ''].join('\n')
+      const script = ['cd notes', 'ls', 'cat hello.txt', 'mkcol d1', 'put up.txt up.txt', 'lock hello.txt', 'quit', ''].join('\n')
       const r = spawnSync('cadaver', [`${server.origin}/`], { input: script, encoding: 'utf8', cwd: dir, timeout: 120000 })
       const out = `${r.stdout}${r.stderr}`
       const expect = (name, re) => check(`cadaver: ${name}`, async () => assert(re.test(out), `no match for ${re} in:\n${out}`))
-      await expect('MKCOL', /Creating `d1': succeeded/)
-      await expect('PUT', /Uploading up\.txt to `\/notes\/d1\/up\.txt': .*succeeded/)
-      await expect('PROPPATCH and PROPFIND of a dead property', /Value of color is: blue/)
-      await expect('LOCK, discovery, UNLOCK', /Locking `d1\/up\.txt': succeeded[\s\S]*Lock token <urn:uuid:[0-9a-f-]+>[\s\S]*Unlocking `d1\/up\.txt': succeeded/)
-      await expect('COPY and MOVE', /Copying[^\n]*succeeded[\s\S]*Moving[^\n]*succeeded/)
-      await expect('GET after MOVE', /cat d1\/moved\.txt\nhi\n/)
-      await expect('DELETE of a file and a collection', /Deleting `d1\/moved\.txt': succeeded[\s\S]*Deleting collection `d1': succeeded/)
-      await check('cadaver: no failed command', async () => assert(!/failed/i.test(out), `a command failed:\n${out}`))
+      await expect('ls and cat', /hello\.txt[\s\S]*cat hello\.txt\nhello\n/)
+      await expect('MKCOL refused', /Creating `d1': failed/)
+      await expect('PUT refused', /Uploading up\.txt to `\/notes\/up\.txt': [^\n]*failed/)
+      await expect('LOCK refused', /Locking `hello\.txt': failed/)
     }
   } finally {
-    if (server !== null) {
-      server.child.kill('SIGTERM')
-      await new Promise((resolve) => server.child.on('close', resolve))
+    for (const p of [server, lws]) {
+      if (p === null) continue
+      p.child.kill('SIGTERM')
+      await new Promise((resolve) => p.child.on('close', resolve))
     }
     rmSync(dir, { recursive: true, force: true })
   }

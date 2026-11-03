@@ -1,0 +1,21 @@
+# Documents that break one MUST of the Web Annotation Data Model (2017) each.
+# document	test file	assertion file that must fail (reason in negative/README.md)
+no-context.json	annotations/annotationMusts.test	annotations/3.1-annotationContextValidated.json
+wrong-context.json	annotations/annotationMusts.test	annotations/3.1-annotationContextValidated.json
+no-id.json	annotations/annotationMusts.test	annotations/3.1-annotationIdValidated.json
+two-ids.json	annotations/annotationMusts.test	annotations/3.1-annotationIdValidated.json
+no-type.json	annotations/annotationMusts.test	annotations/3.1-annotationTypeValidated.json
+wrong-type.json	annotations/annotationMusts.test	annotations/3.1-annotationTypeValidated.json
+no-target.json	annotations/annotationMusts.test	annotations/3.1-targetKeyFound.json
+body-and-bodyValue.json	annotations/annotationMusts.test	annotations/3.2.5-notBodyBodyValue.json
+bodyValue-object.json	annotations/annotationMusts.test	annotations/3.2.5-bodyValueValidated.json
+created-not-datetime.json	annotations/annotationMusts.test	annotations/3.3.1-annotationCreatedValidated.json
+modified-two-values.json	annotations/annotationMusts.test	annotations/3.3.1-annotationModifiedValidated.json
+generated-date-only.json	annotations/annotationMusts.test	annotations/3.3.1-annotationGeneratedValidated.json
+rights-not-iri.json	annotations/annotationMusts.test	annotations/3.3.6-annotationRightsValidated.json
+canonical-two.json	annotations/annotationMusts.test	annotations/3.3.7-annotationCanonicalValidated.json
+via-not-iri.json	annotations/annotationMusts.test	annotations/3.3.7-annotationViaValidated.json
+body-textDirection.json	annotations/annotationMusts.test	annotations/bodiesTargets/3.2.1-bodyTextDirectionValidated.json
+collection-wrong-type.json	collections/collectionMusts.test	collections/5.1-collectionTypeValidated.json
+collection-total-negative.json	collections/collectionMusts.test	collections/5.1-collectionTotalValidated.json
+page-no-items.json	collections/pages/pageMusts.test	collections/pages/5.2-pageItemsValidated.json

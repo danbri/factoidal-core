@@ -24,6 +24,10 @@
  * - `cause`: the underlying error, when there is one.
  * - `format`, `formatInferred`: for a parse failure of text, the syntax it
  *   was read as and whether that syntax was inferred.
+ * - `qtError`: for xpath4Eval, xqueryEval and xslt4Transform, the error the
+ *   XPath, XQuery or XSLT 4.0 specification names: `{code, namespace,
+ *   message}` (for example code `XPST0003` in
+ *   http://www.w3.org/2005/xqt-errors).
  */
 export class FactoidalError extends Error {
   constructor(message, info) {
@@ -35,6 +39,7 @@ export class FactoidalError extends Error {
     this.spec = i.spec || null;
     if (i.format !== undefined) this.format = i.format;
     if (i.formatInferred !== undefined) this.formatInferred = i.formatInferred;
+    if (i.qtError !== undefined) this.qtError = i.qtError;
     if (typeof Error.captureStackTrace === 'function') {
       Error.captureStackTrace(this, FactoidalError);
     }
@@ -81,6 +86,7 @@ export function errorFromEnvelope(env, text) {
     spec: env && env.spec,
     position,
     format: env && env.format,
+    qtError: env && env.qtError && typeof env.qtError === 'object' ? env.qtError : undefined,
   });
 }
 

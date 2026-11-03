@@ -1,0 +1,4 @@
+And(
+    External(pred:iri-string("http://example.org/example#a"^^rif:iri "http://example.org/example#a"))
+    External(pred:iri-string("http://example.org/example#b"^^rif:iri "http://example.org/example#a"))
+  )

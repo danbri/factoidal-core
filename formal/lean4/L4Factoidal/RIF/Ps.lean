@@ -2,7 +2,9 @@
 L4Factoidal.RIF.Ps — the RIF Core PRESENTATION SYNTAX parser.
 
 Spec: RIF Core §3 (EBNF of the presentation syntax) plus the shared
-`Const` production of RIF-BLD §3.
+`Const` production of RIF-BLD §3. The RIF-BLD 2013 additions read here:
+named-argument uniterms, open lists and conjunctive rule conclusions
+(the BLD engine is `RIF/Bld.lean`).
 
 ## The grammar accepted, stated in full
 
@@ -12,14 +14,15 @@ Spec: RIF Core §3 (EBNF of the presentation syntax) plus the shared
     Import   ::= 'Import' '(' IRI IRI? ')'
     Group    ::= 'Group' '(' (Rule | Group)* ')'
     Rule     ::= 'Forall' Var+ '(' Clause ')' | Clause
-    Clause   ::= Atomic (':-' Formula)?
+    Clause   ::= Atomic (':-' Formula)? | 'And' '(' Atomic* ')' ':-' Formula
     Formula  ::= 'And' '(' Formula* ')' | 'Or' '(' Formula* ')'
                | 'Exists' Var+ '(' Formula ')'
                | 'External' '(' Atom ')' | Atomic
     Atomic   ::= Term ( '[' (Term '->' Term)* ']'
                       | '##' Term | '#' Term | '=' Term
                       | '(' Term* ')' )?
-    Term     ::= Var | Const | 'List' '(' Term* ')'
+    Term     ::= Var | Const | 'List' '(' Term* ( '|' Term )? ')'
+               | Const '(' (NCName '->' Term)* ')'
                | 'External' '(' Const '(' Term* ')' ')'
                | Const '(' Term* ')'
     Const    ::= '"' chars '"' '^^' Const | '"' chars '"'
@@ -54,6 +57,8 @@ inductive Tok where
   | var   (s : String)          -- `?x`
   | lparen | rparen | lbrack | rbrack
   | arrow | implies | hash | hashhash | eq | caretcaret | comma
+  /-- `|` before the tail of an open list (RIF-BLD). -/
+  | bar
 deriving Repr, DecidableEq, Inhabited
 
 structure PErr where
@@ -110,6 +115,7 @@ def tokenize (input : String) : Except PErr (List Tok) :=
       | '[' :: r => go (.lbrack :: acc) fuel r
       | ']' :: r => go (.rbrack :: acc) fuel r
       | ',' :: r => go (.comma :: acc) fuel r
+      | '|' :: r => go (.bar :: acc) fuel r
       | ':' :: '-' :: r => go (.implies :: acc) fuel r
       | '-' :: '>' :: r => go (.arrow :: acc) fuel r
       | '#' :: '#' :: r => go (.hashhash :: acc) fuel r
@@ -233,6 +239,37 @@ than a wrong parse. -/
 
 def parseFuel (ts : List Tok) : Nat := 3 * ts.length + 3
 
+/-! ## RIF-BLD term forms: named arguments and open lists -/
+
+/-- Insert a named argument, keeping the list sorted by name. -/
+def insertNamedArg (p : String × Tm) : List (String × Tm) → List (String × Tm)
+  | [] => [p]
+  | q :: qs => if decide (p.1 < q.1) then p :: q :: qs else q :: insertNamedArg p qs
+
+/-- The positional encoding of a named-argument list (see `namedArgSpace`):
+    sorted by name. `none` when a name repeats, which RIF-BLD §2.1 forbids. -/
+def encodeNamedArgs (ps : List (String × Tm)) : Option (List Tm) :=
+  let names := ps.map (·.1)
+  if names.eraseDups.length != names.length then none
+  else some ((ps.foldl (fun acc p => insertNamedArg p acc) []).map
+    (fun (n, t) => Tm.fapp n namedArgSpace [t]))
+
+/-- Is this the `| tail` marker the argument parser leaves? -/
+def isOpenTail : Tm → Bool
+  | .fapp _ sp [_] => sp == openTailSpace
+  | _ => false
+
+/-- Build `List(…)` from parsed elements, folding an open tail. -/
+def mkListTm (xs : List Tm) : Tm :=
+  match xs.reverse with
+  | (.fapp _ sp [tail]) :: revInit =>
+      if sp == openTailSpace then
+        match tail with
+        | .list ys => .list (revInit.reverse ++ ys)
+        | _ => .fapp "List" openListSpace (revInit.reverse ++ [tail])
+      else .list xs
+  | _ => .list xs
+
 mutual
 
 /-- `Term`, with a fuel bound. -/
@@ -242,7 +279,7 @@ def parseTermF (c : Ctx) : Nat → List Tok → PRes Tm
   | f + 1, .name "List" :: .lparen :: r =>
       (match parseTermsGoF c f [] r with
        | .error e => .error e
-       | .ok (xs, r2) => .ok (.list xs, r2))
+       | .ok (xs, r2) => .ok (mkListTm xs, r2))
   | f + 1, .name "External" :: .lparen :: r =>
       (match parseConst c r with
        | .error e => .error e
@@ -252,6 +289,7 @@ def parseTermF (c : Ctx) : Nat → List Tok → PRes Tm
               (match parseTermsGoF c f [] r3 with
                | .error e => .error e
                | .ok (args, r4) =>
+                 if args.any isOpenTail then .error (fail r3 "'|' outside List(") else
                  (match r4 with
                   | .rparen :: r5 => .ok (.external fn args, r5)
                   | _ => .error (fail r4 "expected ')' closing External(")))
@@ -261,10 +299,20 @@ def parseTermF (c : Ctx) : Nat → List Tok → PRes Tm
        | .error e => .error e
        | .ok ((lex, sp), r) =>
          (match r with
+          -- RIF-BLD named arguments: `f(name -> term …)`.
+          | .lparen :: .name n :: .arrow :: r2 =>
+              (match parseNamedArgsGoF c f [] (.name n :: .arrow :: r2) with
+               | .error e => .error e
+               | .ok (ps, r3) =>
+                 match encodeNamedArgs ps with
+                 | none => .error (fail r2 "an argument name repeats")
+                 | some args => .ok (.fapp lex sp args, r3))
           | .lparen :: r2 =>
               (match parseTermsGoF c f [] r2 with
                | .error e => .error e
-               | .ok (args, r3) => .ok (.fapp lex sp args, r3))
+               | .ok (args, r3) =>
+                 if args.any isOpenTail then .error (fail r2 "'|' outside List(")
+                 else .ok (.fapp lex sp args, r3))
           | _ => .ok (.const lex sp, r)))
 
 /-- The comma-separated argument list up to `)`, with a fuel bound. -/
@@ -272,11 +320,27 @@ def parseTermsGoF (c : Ctx) : Nat → List Tm → List Tok → PRes (List Tm)
   | 0, _, ts => .error (fail ts "argument list is too long")
   | _ + 1, acc, .rparen :: r => .ok (acc, r)
   | f + 1, acc, .comma :: r  => parseTermsGoF c f acc r
+  -- `| tail )` closes an open list; `mkListTm` folds the marker.
+  | f + 1, acc, .bar :: r =>
+      (match parseTermF c f r with
+       | .error e => .error e
+       | .ok (t, .rparen :: r2) => .ok (acc ++ [.fapp "|" openTailSpace [t]], r2)
+       | .ok (_, r2) => .error (fail r2 "expected ')' after the tail of an open list"))
   | _ + 1, _, [] => .error (fail [] "expected ')' closing an argument list")
   | f + 1, acc, ts =>
       (match parseTermF c f ts with
        | .error e => .error e
        | .ok (t, r) => parseTermsGoF c f (acc ++ [t]) r)
+
+/-- RIF-BLD named arguments `name -> term`, up to `)`, with a fuel bound. -/
+def parseNamedArgsGoF (c : Ctx) : Nat → List (String × Tm) → List Tok → PRes (List (String × Tm))
+  | 0, _, ts => .error (fail ts "argument list is too long")
+  | _ + 1, acc, .rparen :: r => .ok (acc, r)
+  | f + 1, acc, .name n :: .arrow :: r =>
+      (match parseTermF c f r with
+       | .error e => .error e
+       | .ok (t, r2) => parseNamedArgsGoF c f (acc ++ [(n, t)]) r2)
+  | _ + 1, _, ts => .error (fail ts "expected 'name -> term' or ')' in named arguments")
 
 end
 
@@ -410,7 +474,21 @@ def parseFormula (c : Ctx) (ts : List Tok) : PRes Formula :=
 /-- `Clause` — one or more head atoms (a frame with several slots is
     several atoms) and an optional body. -/
 def parseClause (c : Ctx) (vars : List String) (ts : List Tok) : PRes (List Rule) :=
-  match parseAtomic c ts with
+  -- RIF-BLD §2.3 (rule conclusions): `And( ATOMIC* )` as a head is one
+  -- rule per conjunct, each with the whole body.
+  let heads? : PRes (List Atom) := match ts with
+    | .name "And" :: .lparen :: r =>
+        (match parseFormulasGoF c (parseFuel r) [] r with
+         | .error e => .error e
+         | .ok (fs, r2) =>
+           let atoms := fs.flatMap (fun f => match f with
+             | .atom a => [some a]
+             | .and gs => gs.map (fun g => match g with | .atom a => some a | _ => none)
+             | _ => [none])
+           if atoms.all Option.isSome then .ok (atoms.filterMap id, r2)
+           else .error (fail r "a rule conclusion is a conjunction of atomic formulas"))
+    | _ => parseAtomic c ts
+  match heads? with
   | .error e => .error e
   | .ok (heads, r) =>
     match r with

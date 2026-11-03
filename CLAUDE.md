@@ -823,11 +823,121 @@ risk file issue to flag for expert review", to these questions:
    (`docs/index.md`, `docs/web/how-it-works.md`, the three conformance
    pages): yes.
 3. WebDAV listener login (https://github.com/danbri/factoidal/issues/1108):
-   PBKDF2-HMAC-SHA256 over the vendored HACL\* HMAC, yes. If the choice is
-   disputed or carries risk, open an issue that asks for expert review and
-   link it from the code and the docs.
+   PBKDF2-HMAC-SHA256, yes. The question named "the vendored HACL\* HMAC" as
+   the source; the coordinator then chose WebCrypto PBKDF2 (`deriveBits`)
+   through the host instead, as for AES above (`webdav-serve` runs only on
+   Node; no PBKDF2 composed in Lean). That source choice is the coordinator's,
+   not the owner's, and is named in the expert-review issue
+   https://github.com/danbri/factoidal/issues/1117, as the owner asked: "if
+   controversial or risk file issue to flag for expert review".
 4. HTTP over XMPP (https://github.com/danbri/factoidal/issues/1107): start
    stage 1 of `docs/designissues/2026-10-28-http-over-xmpp.md`.
+
+Owner, 2026-10-28, verbatim, on the WebDAV login: "Does “no rate limit”
+expose our server passwords to automated hacking tools? In which case default
+to protection but have a —dangerously-disable-ratelimits option ?" Rule: a
+login surface limits failed logins by default; turning the limit off needs an
+option whose name starts with `--dangerously-`, and the server warns at start
+when it is used. First instance: `webdav-serve --users`
+(https://github.com/danbri/factoidal/issues/1119).
+
+### Feature-combination safety; MCP over XMPP (owner, 2026-10-28)
+
+Owner, verbatim: "Thanks for your care re open proxy. We will need careful
+documentation and theorems to ensure that subtle combinations of these
+features are not disasterous." Tracking:
+https://github.com/danbri/factoidal/issues/1120. A PR that adds a server
+target, a transport, a client option or a tool states the invariants of that
+issue it touches, and the theorem or test for each. Audit and the gate for a new
+surface: `docs/designissues/2026-10-28-feature-combination-safety.md`
+(section 5).
+
+Owner, verbatim: "there is value in implementing both sides of mcp-over-xmpp
+(“xmpcp”?), please progress that - issues, subagent, lit review", then "maybe
+i meant xmpp+mcp as “xmcpp”; needs a bacronym" and "Note also we will want mcp
+controls for factoidal CLIs too; or subsets. And webmcp options for our
+browser-visible servers." Tracking:
+https://github.com/danbri/factoidal/issues/1121; review and order:
+`docs/designissues/2026-10-28-mcp-over-xmpp.md`. The name's expansion is the
+owner's to choose.
+
+Owner, 2026-10-28, verbatim: "Stateless mcp is future of mcp afaik; can we
+align even if support classic for historical reasons and legacy
+deployments?" Rule: the Lean MCP core is 2026-07-28 stateless only; the
+2025-11-25 `initialize`/session flow is a separate compatibility layer over
+it, for stdio and HTTP only. Record: section 7a of the design record above.
+
+### WebDAV media types; single-file executables (owner, 2026-10-28)
+
+Owner, 2026-10-28, verbatim: "Decisions / 1 y / 2y", to these questions
+(https://github.com/danbri/factoidal-core/pull/179, desktop WebDAV labs):
+
+1. https://github.com/danbri/factoidal/issues/1122 (PUT with no
+   Content-Type): yes. A PUT with no Content-Type, and a LOCK that makes an
+   empty resource, get the media type of the name's extension from a fixed
+   table in Lean (`formal/lean4/L4Factoidal/WebDAV/MediaType.lean`); a name
+   with no known extension stays `application/octet-stream`; a client's
+   Content-Type is kept.
+2. Single-file executables, stage 1 of
+   `docs/designissues/2026-10-28-single-file-app.md`: yes. `deno compile` of
+   the CLI with the wasm included, for six targets (`tools/build-exe.sh`,
+   checked by `tools/check-exe.sh`), built and released by
+   `danbri/factoidal-builds` (`exe.yml`, set `exe`). Stages 2 to 4 (the
+   local web GUI, the Cosmopolitan study, signing) still need a decision.
+
+Owner, 2026-10-29, verbatim: "if we want to facilitate ios and android apps
+using it, what is our best path? C on ios?", then "Yes" to a design record and
+an issue: `docs/designissues/2026-10-29-mobile-native-library.md`,
+https://github.com/danbri/factoidal/issues/1198 (native library from Lean's C
+with the wasm's C ABI; graphics from Lean in its section 8). Its section 9
+decisions are still open.
+
+### Fonts: safety policy, Lean shaper, pinned OFL fonts (owner, 2026-11-03)
+
+Owner, verbatim: "fonts embed software". Answers to four questions:
+"1. Make refusals understandable, and configurable, with current safety
+settings easily accessed. We can also have a \"safe\" mode that uses only a
+baked in, no wasm etc. ascii font." "2 yes, if license good." "3. we should
+note dsig and exercise our factoidal/core signature checking but not read too
+much into it." "4. our npm already huge so pinned i guess".
+
+- One Lean `FontPolicy` value decides what font content is used; modes `safe`
+  (baked-in ASCII bitmap font only), `standard`, `custom`. CFF, GSUB/GPOS and
+  COLR are interpreted in Lean with fuel; hinting is not run; AAT, Graphite and
+  `Wasm` tables are refused. A refusal names the code, the font, the table,
+  the risk, the setting and its source, and what the renderer did instead.
+  Allowing a table refused by default needs a `--dangerously-allow-font-*`
+  option and a start warning.
+- The shaper is ported to Lean; HarfBuzz's tests are the target and native
+  HarfBuzz/FreeType is a differential oracle. No test data is vendored before
+  its licence is recorded.
+- `DSIG` is checked and the result recorded; it never changes trust or policy.
+- Fonts are a pinned OFL set fetched and checked by sha256; not in npm.
+- Record: `docs/designissues/2026-11-03-font-trust-and-safety-policy.md`;
+  tracking https://github.com/danbri/factoidal/issues/1233.
+
+### One owner per release (owner, 2026-10-28)
+
+Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" and
+"Yes, re one owner". From the first build of a release commit until the
+version is on npm, only the release manager named in the release issue
+dispatches, cancels or re-runs builds in `danbri/factoidal-builds`, pushes
+to its `main`, or runs `npm-publish.yml`; other sessions comment on the
+release issue (first instance: https://github.com/danbri/factoidal/issues/1140).
+Reason and cost: `skills/npm-release/SKILL.md` § One owner per release.
+
+### Pipelines after XProc 3.1 (owner, 2026-10-28)
+
+Owner, 2026-10-28, verbatim: "Merged
+https://github.com/danbri/factoidal-core/pull/185 - do it!" and "Also we add a
+lot more xml stuff soon". The five proposals of
+`docs/designissues/2026-10-28-dataflow-and-xproc.md` are approved, in their
+order: (1) an acyclic graph of stages with named, typed ports, (2) sequence
+ports and for-each, (3) choose and try/catch, (4) a pipeline document, (5) an
+XProc 3.1 subset read in Lean. Epic: https://github.com/danbri/factoidal/issues/1129;
+stages https://github.com/danbri/factoidal/issues/1130 to
+https://github.com/danbri/factoidal/issues/1134. More XML support (XPath 2.0
+and later) widens stage 5.
 
 ### There are no users. Prefer the right structure to the compatible one
 
@@ -927,7 +1037,17 @@ https://github.com/danbri/factoidal/issues/914 (moving resources).
   option, off by default. Build on `L4Factoidal/Storage/BlockMerkle.lean`
   (hash as a parameter; pure Lean SHA-256 as the specification instance).
 - Encryption at rest of the LWS storage: key from an environment variable,
-  off by default. Crypto per `skills/crypto-policy`.
+  off by default. Crypto per `skills/crypto-policy`. Owner, 2026-10-28,
+  verbatim: "For our lws encourage attention to encryption at rest also".
+  Rule: it stays off by default; every server that keeps a storage in a
+  directory (`lws-serve`, `solid-serve`, `webdav-serve` local mounts) says
+  at start, on standard error after the experimental code notice, whether
+  the storage is sealed (with the key id) or written in clear text, and how
+  to make a key (`factoidal lws-keygen`). The engine words the notice
+  (`LWS/DirLock.lean`, `atRestNotice`). Docs: the hub servers page and the
+  npm README, section "Encryption at rest". No re-key or seal-in-place yet:
+  https://github.com/danbri/factoidal/issues/1136 (expected failure in
+  `tests/lws/encryption.mjs`).
 - Confidential computing (SEV-SNP, TDX, Nitro, SGX, TPM measured boot): a
   research note only.
 - Type search `Content-Location` results resource: an anticipatory

@@ -290,7 +290,8 @@ private def lossDoc (ctx types subject : String) : String :=
   "{\"@context\":" ++ ctx ++ ",\"type\":" ++ types ++ ",\"credentialSubject\":" ++ subject ++ "}"
 
 private def ctxDefined : String :=
-  "{\"Known\":\"https://ex.org/Known\",\"name\":\"https://schema.org/name\"}"
+  "{\"Known\":\"https://ex.org/Known\",\"name\":\"https://schema.org/name\"," ++
+  "\"credentialSubject\":\"https://ex.org/credentialSubject\"}"
 
 #guard (loss (lossDoc ctxDefined "[\"Known\"]" "{\"name\":\"x\"}")).ok
 -- An undefined type term would be dropped by a lenient processor.
@@ -304,6 +305,10 @@ private def ctxDefined : String :=
 #guard !(loss (lossDoc ctxDefined "[\"Known\"]" "[{\"name\":\"x\"},{\"nick\":\"y\"}]")).ok
 -- An absolute IRI as a type, and a compact IRI whose prefix is defined, resolve.
 #guard (loss (lossDoc ctxDefined "[\"https://ex.org/Absolute\"]" "{\"name\":\"x\"}")).ok
+-- So would an undefined member of the document itself (the shape of the W3C
+-- vc-bitstring-status-list-test-suite's MALFORMED_VALUE_ERROR test).
+#guard !(loss ("{\"@context\":" ++ ctxDefined ++ ",\"type\":[\"Known\"],\"credentialSubject\":{}," ++
+  "\"statusEntry\":{\"statusListIndex\":true}}")).ok
 -- @vocab defines everything vocabulary-relative.
 #guard (loss (lossDoc "{\"@vocab\":\"https://ex.org/\"}" "[\"Anything\"]" "{\"anything\":\"x\"}")).ok
 -- An array context folds in order.

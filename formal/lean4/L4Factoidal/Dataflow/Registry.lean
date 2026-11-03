@@ -821,8 +821,38 @@ def registry : List Entry := [
     wireIn := .text, wireOut := .xml, status := .missing },
   { area := "XPath evaluation", dir := "XPath"
     wireIn := .xml, wireOut := .xdmSequence, params := ["expression"], status := .missing },
+  { area := "XPath 4.0 evaluation (XDM 4.0, F&O 4.0 subset)", dir := "XPath4"
+    wireIn := .xml, wireOut := .xdmSequence, params := ["expression"], status := .tested
+    tests := ["qt4tests b39c4bc0 prod op fn map array math (lake exe l4qt4 --isolate 60): 24152 pass, 4327 fail, 10180 unsupported of 38659"]
+    note := "XPath4 is not in the library root; its theorems (XPath4/Theorems.lean: parseXml_eq, parseJsonText_eq, Fn.String sharing, document order) are checked by lake build l4qt4; a proved entry would put XPath4 in the library root (docs/20261028-xpath4-stage2.md)" },
   { area := "XSLT transformation", dir := "XSLT"
     wireIn := .xml, wireOut := .xml, params := ["stylesheet"], status := .missing },
+  { area := "XSLT 4.0 transformation", dir := "XSLT4"
+    wireIn := .xml, wireOut := .xml, params := ["stylesheet"], status := .tested
+    tests := ["xslt40-test 91328fbf non-streaming subset (lake exe l4xslt4 --isolate 30): 6766 pass, 1280 fail, 3053 unsupported of 11099",
+      "XSLT 1.0 corpora (l4xslt4 --xslt10): xslt 84 of 88 pass, xslt1-xalan 1455 of 1686 pass"]
+    note := "XSLT4 is not in the library root; its theorems and #guards (XSLT4/Theorems.lean: parse_eq_parseXPath, patMatch_type, stripDoc_noRules, the identity transform, agreement with the XSLT 1.0 engine) are checked by lake build l4xslt4 (docs/20261028-xslt4-stage1.md)" },
+  { area := "XSLT Streaming 4.0 transformation", dir := "XSLT4"
+    wireIn := .xml, wireOut := .xml, params := ["stylesheet"], status := .tested
+    tests := ["xslt40-test 91328fbf streaming sets tests/strm and tests/attr/streamable (lake exe l4xslt4 --isolate 30): strm 2049 pass, 332 fail, 183 unsupported of 2564; attr/streamable 58 pass, 4 fail, 77 unsupported of 139",
+      "l4xslt4 --stream-diff: the streamed selection core against the XPath 4.0 evaluator: 237 of 237 (document, path) pairs agree"]
+    note := "XSLT4 is not in the library root; the streamability analysis (XTSE3430) and the theorems of XSLT4/Streaming (build_docEvents, parse_events_rebuild, streamAcc_events, maxOpen_eventsList, streamSelect_docEvents) are checked by lake build l4xslt4; results of accepted stylesheets come from the non-streaming XSLT 4.0 evaluator (docs/20261028-xslt-streaming.md)" },
+  { area := "XQuery Update Facility 3.0 (updating expressions, copy modify, fn:put)", dir := "XQueryUpdate"
+    wireIn := .xml, wireOut := .xml, params := ["query"], status := .tested
+    tests := ["qt4tests b39c4bc0 upd (lake exe l4qt4 --isolate 60 --lang xquery --family upd): 792 pass, 0 fail, 27 unsupported of 819; 6 excluded (defective test data, https://github.com/danbri/factoidal/issues/1176)"]
+    note := "XQueryUpdate is not in the library root; its theorems (XQueryUpdate/Theorems.lean: docOfXT_wf, applyDoc_wf, applyUpdates_nil, flatU_true_eq_flatXT, agreement of copy modify and fn:update on examples) are checked by lake build l4qt4 (docs/designissues/2026-10-28-xquery-update.md)" },
+  { area := "xpath4Eval", dir := "XPath4"
+    wireIn := .text, wireOut := .xdmResult, params := ["expression"], status := .tested
+    tests := ["Wasm/Ops/Qt4.lean dispatch guards", "npm/factoidal/test/qt4.test.mjs", "npm/factoidal/test/qt4-public.test.mjs"]
+    note := "Public XPath 4.0 adapter: XML context text (empty means no context item) to a serialized XDM result envelope; no stage contract. The existing XPath4 engine is tested separately. Pure inline fn:transform is available; external resource I/O and schema-provider contexts are not supplied." },
+  { area := "xqueryEval", dir := "XQuery4"
+    wireIn := .text, wireOut := .xdmResult, params := ["query"], status := .tested
+    tests := ["Wasm/Ops/Qt4.lean dispatch guards", "npm/factoidal/test/qt4.test.mjs", "npm/factoidal/test/qt4-public.test.mjs"]
+    note := "Public XQuery 4.0 adapter: XML context text (empty means no context item) and a main-module setting to a serialized XDM result envelope; no stage contract. No external module, resource, or schema-provider context is supplied." },
+  { area := "xslt4Transform", dir := "XSLT4"
+    wireIn := .text, wireOut := .xsltResult, params := ["stylesheet"], status := .tested
+    tests := ["Wasm/Ops/Qt4.lean dispatch guards", "npm/factoidal/test/qt4.test.mjs", "npm/factoidal/test/qt4-public.test.mjs"]
+    note := "Public XSLT 4.0 adapter: source XML text and one stylesheet module to principal serialized output, method, secondary results and messages; no stage contract. The result may be text or JSON, so its wire is not XML. Secondary results are returned as data and are not written to files." },
   { area := "Schematron validation", dir := "Schematron"
     wireIn := .xml, wireOut := .report, params := ["schema"], status := .missing },
   { area := "Ed25519 verify primitive (HACL* call-out)", dir := "Crypto"

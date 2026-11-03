@@ -20,6 +20,55 @@ import L4Factoidal.XPath4.Atomic
 
 namespace L4Factoidal.XPath4
 
+/-- Optional processor features (XPath 4.0 §2.2.1, XQuery 4.0 §2.2.1).
+    The default configuration enables every implemented feature. -/
+structure FeatureSettings where
+  loadXQueryModule : Bool := true
+  transform : Bool := true
+  transform30 : Bool := true
+  invisibleXml : Bool := true
+  binary : Bool := true
+  file : Bool := true
+  schemaImport : Bool := true
+  schemaValidation : Bool := true
+  typedData : Bool := true
+  serialization : Bool := true
+deriving BEq, Repr, Inhabited
+
+/-- Disable a named optional feature, using the qt4tests dependency names. -/
+def FeatureSettings.disable (s : FeatureSettings) (name : String) : FeatureSettings :=
+  match name with
+  | "fn-load-xquery-module" => { s with loadXQueryModule := false }
+  | "fn-transform-XSLT" => { s with transform := false }
+  | "fn-transform-XSLT30" => { s with transform30 := false }
+  | "fn-invisible-xml" => { s with invisibleXml := false }
+  | "binary" => { s with binary := false }
+  | "expath-file" => { s with file := false }
+  | "schemaImport" => { s with schemaImport := false }
+  | "schemaValidation" => { s with schemaValidation := false }
+  | "typedData" => { s with typedData := false }
+  | "serialization" => { s with serialization := false }
+  | _ => s
+
+/-- Features with a selectable implementation in the processor. -/
+def FeatureSettings.switchable (name : String) : Bool :=
+  ["fn-load-xquery-module", "fn-transform-XSLT", "fn-transform-XSLT30",
+   "fn-invisible-xml", "binary", "expath-file", "schemaImport",
+   "schemaValidation", "typedData", "serialization"].contains name
+
+/-- Functions absent from the static context when their feature is off.
+    `transform`, `serialize`, and `load-xquery-module` retain their
+    F&O error fallbacks (FOXT0004, FODC0010 and FOQM0006), as
+    required by qt4tests fn-load-xquery-module-901 through -914. -/
+def FeatureSettings.functionEnabled (s : FeatureSettings) (q : QN) : Bool :=
+  if q.uri == "http://expath.org/ns/binary" then s.binary
+  else if q.uri == "http://expath.org/ns/file" then s.file
+  else if q.uri == nsFN then
+    match q.loc with
+    | "invisible-xml" => s.invisibleXml
+    | _ => true
+  else true
+
 /-! ## Axes and node tests -/
 
 inductive Axis where
@@ -27,6 +76,8 @@ inductive Axis where
   | followingSibling | following | namespace
   | parent | ancestor | precedingSibling | preceding | ancestorOrSelf
   | followingOrSelf | followingSiblingOrSelf | precedingOrSelf | precedingSiblingOrSelf
+  /-- The item axis (XPath 4.0 §4.7.5.1), defined only for JNodes. -/
+  | item
 deriving DecidableEq, Repr, Inhabited
 
 def Axis.reverse : Axis → Bool
@@ -46,6 +97,7 @@ def axisOfName? : String → Option Axis
   | "following-sibling-or-self" => some .followingSiblingOrSelf
   | "preceding-or-self" => some .precedingOrSelf
   | "preceding-sibling-or-self" => some .precedingSiblingOrSelf
+  | "item" => some .item
   | _ => none
 
 /-- `NameTest`: `*`, `prefix:*`, `*:local`, `Q{uri}*`, or a QName. -/
@@ -54,6 +106,15 @@ inductive NameTest where
   | ns (uri : String)
   | loc (l : String)
   | name (q : QN)
+deriving Repr, Inhabited
+
+/-- The key constraint of a `jnode(...)` type (XPath 4.0 §3.2.12): `*`
+    (any key, or none), `()` (a root JNode), or a constant matched with
+    `fn:atomic-equal`. -/
+inductive JKeyTest where
+  | any
+  | root
+  | key (a : Atomic)
 deriving Repr, Inhabited
 
 inductive Occ where
@@ -66,9 +127,24 @@ deriving DecidableEq, Repr, Inhabited
 inductive IType where
   | item
   | anyNode
+  /-- `xnode()`: an XNode (a node of an XML tree), not a JNode. -/
+  | xnode
+  /-- `jnode(K, T)` (XPath 4.0 §3.2.12); `none` for an absent `T`. -/
+  | jnodeT (k : JKeyTest) (vt : Option IType)
   | atomic (t : AType)
   | elem (n : Option NameTest)
   | attr (n : Option NameTest)
+  /-- `element(N, T)` / `element(N, T?)` (XPath 4.0 §3.2.8.2): the type
+      annotation must be `T` or derived from it (`Env.schema`); `nillable`
+      is the `?`. -/
+  | elemT (n : Option NameTest) (ty : QN) (nillable : Bool)
+  /-- `attribute(N, T)` (XPath 4.0 §3.2.8.3). -/
+  | attrT (n : Option NameTest) (ty : QN)
+  /-- `schema-element(N)` (XPath 4.0 §3.2.8.4): needs the in-scope element
+      declaration of `N` (`Env.schema`). -/
+  | schemaElem (n : QN)
+  /-- `schema-attribute(N)` (XPath 4.0 §3.2.8.5). -/
+  | schemaAttr (n : QN)
   | text | comment | nsNode
   | pi (target : Option String)
   | doc (inner : Option IType)
@@ -88,6 +164,10 @@ deriving Repr, Inhabited
 /-- A node test in a step. -/
 inductive NodeTest where
   | name (t : NameTest)
+  /-- A name test written as an unprefixed NCName `l`: for an XNode it is
+      the name test `t`; for a JNode it matches a string-like key equal
+      to `l` (XPath 4.0 §4.7.5.4). -/
+  | ncname (t : NameTest) (l : String)
   | kind (t : IType)
   | union (ts : List NodeTest)
 deriving Repr, Inhabited
@@ -120,6 +200,8 @@ inductive Expr where
   | slash (a b : Expr)
   /-- An axis step with its predicates. -/
   | step (ax : Axis) (t : NodeTest) (preds : List Expr)
+  /-- An axis step with a dynamic node test `ax::{e}` (XPath 4.0 §4.7.5.2). -/
+  | dstep (ax : Axis) (e : Expr) (preds : List Expr)
   /-- A filter expression `e[p]`. -/
   | filter (e p : Expr)
   /-- A static function call. `none` in an argument is `?`. -/
@@ -153,15 +235,91 @@ inductive Expr where
       item prepended to `args`. -/
   | mapArrow (a : Expr) (f : Expr) (args : List (Option Expr))
   | tmpl (parts : List Expr)
+  /-- An XQuery 4.0 construct (`L4Factoidal.XQuery4`): `tag` names it,
+      `es` are its operand expressions, `ts` its types, `qs` its names
+      and `ss` its strings. The XPath 4.0 grammar never builds one;
+      `eval` gives it to `XQuery4.Runtime.evalExt`. -/
+  | ext (tag : String) (es : List Expr) (ts : List IType) (qs : List QN) (ss : List String)
 deriving Inhabited
 
 /-! ## Items (XDM 4.0 §2) -/
 
-/-- A node reference: document number and node index. -/
+/-! ## Document tables (the node store of `XPath4.Doc`) -/
+
+inductive NKind where
+  | document | element | attribute | text | comment | pi | namespace
+deriving DecidableEq, Repr, Inhabited
+
+structure NRec where
+  kind : NKind
+  name : QN := default
+  value : String := ""
+  parent : Option Nat := none
+  children : Array Nat := #[]
+  attrs : Array Nat := #[]
+  inscope : List (String × String) := []
+  last : Nat := 0
+  /-- Hook for schema validation (`L4Factoidal.XSD11`): the type
+      annotation of an element or attribute (XDM 4.0 §2.7, `dm:type-name`);
+      `none` is `xs:untyped` (element) or `xs:untypedAtomic` (attribute). -/
+  tann : Option QN := none
+  /-- Hook for schema validation: the typed value (`dm:typed-value`);
+      `none` means the string value as `xs:untypedAtomic`. -/
+  tval : Option (List Atomic) := none
+  /-- Hook for schema validation: `dm:nilled`. -/
+  nilled : Bool := false
+  /-- Hook for schema validation: the element has element-only content,
+      so `dm:typed-value` is absent and atomization fails (FOTY0012). -/
+  noTypedValue : Bool := false
+deriving Inhabited
+
+structure Doc where
+  nodes : Array NRec
+  /-- The document URI (`fn:document-uri`); empty when absent. -/
+  uri : String := ""
+  /-- The base URI of the document node when it differs from `uri`
+      (`fn:parse-xml` with the `base-uri` option). -/
+  baseUri : String := ""
+  /-- `(element, attribute)` names (as written) that the DTD declares
+      `ID`, and those it declares `IDREF` or `IDREFS` (`fn:id`, `fn:idref`). -/
+  idAttrs : List (String × String) := []
+  idrefAttrs : List (String × String) := []
+  /-- For a copy made by XSLT `fn:copy-of` or `fn:snapshot`: the document
+      number of the original, for each node of the copy the index of its
+      original, and the original's nodes when it is a tree built at run
+      time. The copy keeps the accumulator values of the original (XSLT
+      4.0 §18.2.3). -/
+  origin : Option (Nat × Array Nat × Option (Array NRec)) := none
+deriving Inhabited
+
+/-- A node reference: document number and node index. A document built
+    at run time (`fn:parse-xml` and friends) travels WITH its nodes in
+    `rt`, because the dynamic context is read-only; `doc` is then a
+    number derived from the content, outside the range the caller's
+    documents use. Identity and order use `doc` and `idx` only. -/
 structure NodeRef where
   doc : Nat
   idx : Nat
-deriving DecidableEq, Repr, Inhabited
+  rt : Option Doc := none
+deriving Inhabited
+
+instance : BEq NodeRef := ⟨fun a b => a.doc == b.doc && a.idx == b.idx⟩
+
+instance : Repr NodeRef := ⟨fun n _ => "node(" ++ repr n.doc ++ ", " ++ repr n.idx ++ ")"⟩
+
+/-- Another node of the same document. -/
+def NodeRef.at (n : NodeRef) (i : Nat) : NodeRef := { n with idx := i }
+
+def NodeRef.mk' (d i : Nat) : NodeRef := { doc := d, idx := i }
+
+/-- One step of a JNode's path from its parent (XDM 4.0 §8.5): the
+    ·jkey· and the 1-based position among the parent's j-children.
+    Position 0 marks the JNode that the item axis makes for a singleton
+    value: its parent is the origin, but it is not a child. -/
+structure JStep where
+  key : Atomic
+  pos : Nat
+deriving Inhabited
 
 mutual
 inductive Item where
@@ -171,6 +329,12 @@ inductive Item where
   | map (kvs : List (Atomic × List Item))
   | arr (ms : List (List Item))
   | fn (f : FnItem)
+  /-- A JNode (XDM 4.0 §8.5), kept as a zipper: `root` is the identity of
+      the root JNode, `steps` the path from this JNode up to the root
+      (nearest step first), `val` the ·jvalue·, and `up` the ·jvalue·s
+      of the ancestors (nearest first; as long as `steps`). Identity is
+      `root` with the step positions; ·jparent· drops the first step. -/
+  | jnode (root : UInt64) (steps : List JStep) (val : List Item) (up : List (List Item))
 inductive FnItem where
   | builtin (q : QN) (arity : Nat)
   | inline (ps : List (QN × IType)) (ret : IType) (body : Expr) (focus : Bool)

@@ -167,6 +167,20 @@ export class FactoidalError extends Error {
   readonly format?: string;
   /** For a parse failure of text: true when the syntax was inferred. */
   readonly formatInferred?: boolean;
+  /**
+   * For xpath4Eval, xqueryEval and xslt4Transform: the error that the
+   * XPath, XQuery or XSLT 4.0 specification names (code `XPST0003`,
+   * namespace `http://www.w3.org/2005/xqt-errors`, ...).
+   */
+  readonly qtError?: QtError;
+}
+
+/** An error of XPath 4.0, XQuery 4.0 or XSLT 4.0: the local part and the
+ *  namespace of the error QName, and the engine's message. */
+export interface QtError {
+  code: string;
+  namespace: string;
+  message: string;
 }
 
 /** One recoverable-parse diagnostic from a `{lenient:true}` parse() call. */
@@ -586,9 +600,16 @@ export function graphs(dataset: Dataset): Array<[name: NamedNode | BlankNode, gr
  * differ only in their graph names got the same hash. To hash a graph
  * whatever its name (for example one entry of graphs()), use
  * canonicalHash(asDefaultGraph(g)). Rejects when the input holds an RDF 1.2
- * triple term or the section 4.4 call budget is exceeded.
+ * triple term or the section 4.4 call budget is exceeded. The input is what
+ * canonicalize() takes: a Dataset, or text with `format` and `baseIRI`.
+ * Text is a JavaScript string (characters, not bytes): decode bytes first;
+ * the RDF text syntaxes are UTF-8 (`new TextDecoder('utf-8', { fatal: true })`).
+ * A Uint8Array is refused.
  */
-export function canonicalHash(dataset: Dataset): Promise<string>;
+export function canonicalHash(
+  data: Dataset | string | { text: string; format?: DataFormat; baseIRI?: string },
+  options?: { format?: DataFormat; baseIRI?: string },
+): Promise<string>;
 
 /**
  * A new Dataset with the triples of every graph of `dataset`, all in the
@@ -604,6 +625,15 @@ export function asDefaultGraph(dataset: Dataset): Dataset;
  * exceeded.
  */
 export function isomorphic(a: DataInput, b: DataInput, options?: { format?: string; baseIRI?: string }): Promise<boolean>;
+
+/**
+ * The RDF merge of two datasets (RDF 1.1 Semantics 5.2): the quads of both,
+ * with the blank nodes of each input kept apart (`_:b` in `a` and `_:b` in
+ * `b` are two blank nodes). The engine computes it (op datasetMerge, Lean
+ * theorem mergeDatasets_isMerge). Prefixes: those of `a`, then those of `b`
+ * whose label `a` does not declare. Since 0.21.0.
+ */
+export function datasetMerge(a: DataInput, b: DataInput, options?: { format?: string; baseIRI?: string }): Promise<Dataset>;
 
 /** A Dataset holding RDF/JS quads; each term is sent to the engine as its components. */
 export function fromQuads(quads: Iterable<Quad>): Promise<Dataset>;
@@ -941,6 +971,7 @@ export interface EvidenceRecord {
  * `wireOut`: a Dataset for the graph wires, text for String (a writer), the
  * rows for Table (SELECT), a boolean for Answer (ASK), `[canonical, sha256]`
  * for String × String (rdfcStage), the report object for ValidationReport,
+ * a Qt4Result for Serialized XDM result, or an Xslt4Result for XSLT result,
  * the explain result for ExplainGraphResult. Since 0.20.0; before, a node
  * whose output was not a Dataset left its input on the wire.
  */
@@ -949,17 +980,35 @@ export interface Wire<G = unknown> {
   evidence: EvidenceRecord[];
 }
 
-/** A node: a registered stage with its parameters. */
+/** An input port of a node: its name and its wire. */
+export interface NodePort {
+  readonly name: string;
+  readonly wire: string;
+}
+
+/** A node: a registered stage with its parameters. Public XML adapters use
+ * `xpath4Eval` with {expression}, `xqueryEval` with {query}, or
+ * `xslt4Transform` with {stylesheet}; each reads XML context text and has
+ * status tested, checked:false evidence and no proved evaluator contract.
+ * Their serialized output types are Qt4Result and Xslt4Result (see Wire).
+ */
 export interface FactoidalNode {
   readonly stage: string;
   readonly kind: string | null;
   /** The engine's status of this node with its settings (see NodeStatus). */
   readonly status: NodeStatus;
-  /** The registry status of the stage. */
-  readonly registryStatus: StageInfo['status'];
+  /** The registry status of the stage; null for a stage with more than one port (not a registry entry). */
+  readonly registryStatus: StageInfo['status'] | null;
   readonly contract: string | null;
   readonly assumptions: readonly string[];
-  readonly wireIn: string;
+  /**
+   * The input ports: one port 'in' for a registry stage; for a stage with
+   * more than one port (datasetMerge: 'left', 'right'), the engine's list
+   * (op graphCheckNodes). Such a node runs only in graph().
+   */
+  readonly ports: readonly NodePort[];
+  /** The input wire of a one-port stage; null for a stage with more than one port. */
+  readonly wireIn: string | null;
   /**
    * The output wire with these settings: for shippedEvaluator, 'Table' for
    * SELECT, 'Answer' for ASK, 'Dataset' for CONSTRUCT and DESCRIBE (Lean
@@ -1059,8 +1108,73 @@ export function stages(): Promise<StageInfo[]>;
  */
 export function node(name: string, params?: Record<string, unknown>): Promise<FactoidalNode>;
 
-/** Compose nodes and pipelines left to right. */
+/** Compose nodes and pipelines left to right. A node with more than one input port throws a TypeError (use graph()). */
 export function pipe(...nodes: Array<FactoidalNode | Pipeline>): Pipeline;
+
+/** Where a port's value comes from: graph input `input`, or the output of node `node` (an earlier node). */
+export type GraphSource = { readonly input: number } | { readonly node: number };
+
+/** The request of graph(). */
+export interface GraphSpec {
+  /** The wire of each graph input: a wire label of stages() (e.g. 'String', 'Dataset'). */
+  inputs?: string[];
+  /** The nodes in order; `from` has one source per input port of the node. */
+  nodes: Array<{ node: FactoidalNode; from: GraphSource[] }>;
+}
+
+/** An issue of the engine's static check of a graph (op graphCheckNodes, Lean graphIssues). */
+export type GraphIssue =
+  | { readonly kind: 'unknownInput'; readonly node: number; readonly port: number; readonly portName: string; readonly input: number }
+  | { readonly kind: 'forwardRef'; readonly node: number; readonly port: number; readonly portName: string; readonly ref: number }
+  | { readonly kind: 'portCount'; readonly node: number; readonly ports: number; readonly sources: number }
+  | { readonly kind: 'wireMismatch'; readonly node: number; readonly port: number; readonly portName: string; readonly source: string; readonly portWire: string };
+
+/** The engine's check of a graph with no issue (op graphCheckNodes). */
+export interface GraphCheck {
+  readonly issues: readonly GraphIssue[];
+  /** The output wire of the last node. */
+  readonly wireOut: string | null;
+  /** The union of the nodes' named assumptions: the premises of Graph.guarantee_sound. */
+  readonly assumptions: readonly string[];
+  readonly contract: { readonly theorem: string; readonly staticCheck: string };
+  readonly nodes: readonly {
+    readonly name: string; readonly kind: string | null; readonly status: NodeStatus;
+    /** null for a stage with more than one port (not a registry entry). */
+    readonly registryStatus: StageInfo['status'] | null;
+    readonly checked: boolean; readonly contract: string | null;
+    readonly theorems: readonly string[]; readonly assumptions: readonly string[];
+    readonly ports: readonly NodePort[]; readonly wireOut: string;
+    readonly settings: Record<string, unknown>; readonly settingsDigest: string;
+    readonly roles: Readonly<Record<string, string>>;
+    readonly outside: readonly OutsideSetting[];
+    readonly derived: Readonly<Record<string, string>>;
+  }[];
+}
+
+/** A graph from graph(): checked by the engine, with no issue. */
+export interface FactoidalGraph {
+  readonly inputs: readonly string[];
+  readonly nodes: readonly { readonly node: FactoidalNode; readonly from: readonly GraphSource[] }[];
+  readonly wireOut: string | null;
+  readonly assumptions: readonly string[];
+  readonly check: GraphCheck;
+}
+
+/** The result of run() on a graph. */
+export interface GraphRunResult<G = unknown> extends RunResult<G> {
+  /** The output of each node, in order; `graph` is the last one. */
+  values: unknown[];
+  issues: GraphIssue[];
+}
+
+/**
+ * A pipeline that is an acyclic graph of nodes with named input ports
+ * (https://github.com/danbri/factoidal/issues/1130). The engine's op
+ * graphCheckNodes checks it: a graph with an issue throws a FactoidalError
+ * (code 'op.failed') whose `issues` is the engine's list; an engine without
+ * the op throws code 'op.unknown'. Since 0.21.0.
+ */
+export function graph(spec: GraphSpec): FactoidalGraph;
 
 /**
  * Run a node or pipeline on `input` (a Wire, or the graph: text for a
@@ -1073,6 +1187,12 @@ export function pipe(...nodes: Array<FactoidalNode | Pipeline>): Pipeline;
  * `wireOut` (see Wire).
  */
 export function run(pipeline: FactoidalNode | Pipeline, input: unknown, options?: RunOptions): Promise<RunResult>;
+/**
+ * Run a graph on `inputs`, one value per graph input. Each node runs on the
+ * values of its sources (a node with more than one port gets them in port
+ * order); one evidence record per node, with `node` (its index) and `from`.
+ */
+export function run(graph: FactoidalGraph, inputs: unknown[], options?: RunOptions): Promise<GraphRunResult>;
 
 /** Literature-name alias for coreRdfsClosure (ρdf). */
 export function rhoDfClosure(
@@ -1386,6 +1506,10 @@ export interface Sbm11Store {
   terms: number;
   /** how the engine checks reads; undefined from a wasm module built before the Merkle check */
   verify: 'merkle' | 'none' | undefined;
+  /** the SHA-256 of the bytes of manifest.sbm11, 64 lowercase hex digits, as
+   * the engine computed it at open (pin it, then give it as
+   * `manifestSha256`); undefined from a wasm module built before issue 1105 */
+  manifestSha256: string | undefined;
   query(sparql: string, options?: { base?: string; sparql12?: boolean; reference?: boolean }): Sbm11Answer;
   /** the resources the reader read, when its reader records them (lwsSbm11Reader) */
   readonly evidence: Sbm11ReadEvidence[] | undefined;
@@ -1396,8 +1520,13 @@ export interface Sbm11Store {
  * Node: `source` is a directory unless a reader is given or registered.
  * `verify` (default 'merkle'): the engine checks every byte it decodes against
  * the manifest's Merkle roots and refuses a changed file with its name;
- * 'none' checks lengths only. */
-export function openSbm11(source: string, options?: { reader?: Sbm11Reader; verify?: 'merkle' | 'none' }): Promise<Sbm11Store>;
+ * 'none' checks lengths only.
+ * `manifestSha256`: the trust anchor, the SHA-256 of the bytes of
+ * manifest.sbm11 as 64 hex digits (https://github.com/danbri/factoidal/issues/1105);
+ * the engine refuses the open when the manifest has another digest. */
+export function openSbm11(source: string, options?: {
+  reader?: Sbm11Reader; verify?: 'merkle' | 'none'; manifestSha256?: string
+}): Promise<Sbm11Store>;
 
 /** Serve `source` with `reader`; `null` removes it. */
 export function registerSbm11Source(source: string, reader: Sbm11Reader | null): void;
@@ -1427,14 +1556,21 @@ export interface Sbm11ReadEvidence {
   bytes: number;
 }
 
-/** A synchronous HTTP GET: `(url, headers) -> answer`. */
+/** A trusted synchronous HTTP GET: `(url, headers) -> answer`.
+ * It must refuse redirects before forwarding scoped headers. */
 export type Sbm11Transport = (url: string, headers: Record<string, string>) =>
   { status: number; header(name: string): string | null; bytes: Uint8Array };
 
 /** A reader of the SBM11 files held as LWS resources under the container
  * `url` (one resource per file, CURRENT a resource too), by HTTP Range GETs
  * when the server answers 206, else by whole GETs kept in memory. Node: the
- * default transport is a fetch in a worker thread; close() stops it. */
+ * default transport is a fetch in a worker thread that refuses redirects;
+ * close() stops it. `url` must be absolute HTTP(S), without userinfo, query
+ * or fragment. File arguments are raw relative paths; invalid paths return
+ * null before transport and appear in errors().
+ * Browser worker default XHR accepts no caller auth/headers; provide an explicit
+ * trusted transport for those. Its final-URL check cannot prevent an already
+ * sent anonymous request or ambient same-origin browser cookies. */
 export function lwsSbm11Reader(url: string, opts?: {
   auth?: string; headers?: Record<string, string>; transport?: Sbm11Transport; timeoutMs?: number
 }): Sbm11Reader & { evidence(): Sbm11ReadEvidence[]; errors(): string[]; close(): void };
@@ -1599,6 +1735,63 @@ export function xsltTransform(
   stylesheetXml: string,
   sourceXml: string
 ): Promise<string>;
+
+/** One item of an XPath 4.0 or XQuery 4.0 result. */
+export interface Qt4Item {
+  /** The item's type: `xs:integer`, `element()`, `map(*)`, `array(*)`,
+   *  `function(*)`, ... */
+  type: string;
+  /** The item serialized with the Serialization 4.0 adaptive method. */
+  value: string;
+}
+
+/** The value shape returned by {@link xpath4Eval} and {@link xqueryEval}. */
+export interface Qt4Result {
+  count: number;
+  items: Qt4Item[];
+  /** The whole sequence, Serialization 4.0 adaptive method. */
+  adaptive: string;
+  /** The whole sequence, xml method (no XML declaration); null when the
+   *  xml method cannot serialize it (a map, an array, a function). */
+  xml: string | null;
+}
+
+/**
+ * Evaluate an XPath 4.0 expression with `xmlText` as the context item
+ * ('' for no context item). The engine does no I/O: fn:doc and
+ * fn:unparsed-text of a URI fail (FODC0002, FOUT1170). A QT4 error rejects
+ * with a FactoidalError whose `qtError` names the error code.
+ */
+export function xpath4Eval(xmlText: string, expr: string): Promise<Qt4Result>;
+
+/**
+ * Evaluate an XQuery 4.0 main module, with `contextXml` as the context item
+ * when it is given and not ''. `import module` of a module that is not
+ * given fails with XQST0059; no resource is fetched.
+ */
+export function xqueryEval(query: string, contextXml?: string): Promise<Qt4Result>;
+
+/** The value shape returned by {@link xslt4Transform}. */
+export interface Xslt4Result {
+  /** The principal result, serialized with the stylesheet's unnamed output definition. */
+  output: string;
+  /** The output method used for `output` (xml, html, xhtml, text, json, adaptive, csv). */
+  method: string;
+  /** The results of xsl:result-document, each serialized with its output definition. */
+  secondary: Array<{ href: string; output: string }>;
+  /** The texts of xsl:message. */
+  messages: string[];
+}
+
+/**
+ * XSLT 4.0 transform of `sourceXml` ('' for no global context item) by a
+ * stylesheet of one module. xsl:import and xsl:include of another module
+ * fail with XTSE0165: no module is fetched.
+ */
+export function xslt4Transform(
+  stylesheetXml: string,
+  sourceXml: string
+): Promise<Xslt4Result>;
 
 /** The exact value a Content MathML expression evaluates to. */
 export type MathValue =
@@ -1786,6 +1979,50 @@ export function xmlEncrypt(
 ): Promise<{ document: string; canonical: string }>;
 
 /**
+ * XML Signature 1.1 core validation (§3.2). A signature that does not
+ * validate resolves to `{valid: false, reason}`; wrong arguments reject with
+ * a FactoidalError. A key read from ds:KeyInfo is returned, not trusted:
+ * the caller decides whether to trust `key` and `certificate`.
+ */
+export function xmlVerify(
+  document: string,
+  options?: {
+    key?: object;
+    hmacKey?: Uint8Array;
+    keyFromKeyInfo?: boolean;
+    certificates?: Uint8Array[];
+    documents?: Record<string, Uint8Array | string>;
+  }
+): Promise<
+  | {
+      valid: true;
+      signedInfo: string;
+      references: { uri: string; octets: Uint8Array }[];
+      key: object | null;
+      certificate: Uint8Array | null;
+    }
+  | { valid: false; reason: string }
+>;
+
+/**
+ * XML Signature 1.1 signature generation (§3.1). `key` is a private JWK
+ * (RSA 2048/3072/4096, EC P-256, or oct for HMAC). The returned document
+ * has passed core validation in the engine.
+ */
+export function xmlSign(
+  document: string,
+  options: {
+    key: object;
+    signatureMethod?: string;
+    canonicalizationMethod?: string;
+    inclusivePrefixes?: string[];
+    references?: { uri: string; transforms?: string[]; digestMethod?: string }[];
+    enveloping?: { id: string; content: string };
+    keyValue?: boolean;
+  }
+): Promise<{ document: string }>;
+
+/**
  * Decrypt a compact JWE (RFC 7516). Every failure after the allowlist is
  * the one error "decryption failed".
  */
@@ -1868,6 +2105,70 @@ export function vcCheckRelatedResourceDigests(
   credentialJson: string
 ): Promise<{ valid: boolean; reason?: string }>;
 
+/** One failed MUST of CID 1.0 §2 (cidValidate). */
+export interface CidValidationError {
+  /** The engine's name of the failed MUST, e.g. 'idNotUrl', 'jwkPrivateMember'. */
+  code: string;
+  message: string;
+  /** RFC 6901 JSON Pointer to the member, e.g. '/verificationMethod/1/publicKeyJwk/d'; '' is the whole document. */
+  path: string;
+}
+
+/**
+ * Controlled Identifiers v1.0 §2 (https://www.w3.org/TR/cid-1.0/): check a
+ * controlled identifier document. `valid` is the engine's answer
+ * (L4Factoidal.CID.parseDocument); `errors` lists every failed MUST it found,
+ * empty when valid. Issue 1100 item 9.
+ */
+export function cidValidate(doc: string | object): Promise<{ valid: boolean; errors: CidValidationError[] }>;
+
+/** An RFC 9457 problem details object. */
+export interface CidProblem {
+  /** https://w3id.org/security#<NAME> for a §3.5 error; a tag: URI for the others. */
+  type: string;
+  title: string;
+  detail: string;
+}
+
+export interface CidRetrieveOptions {
+  /**
+   * GET the URL the engine names. Called as fetch(url, init) with
+   * init.headers.accept, init.redirect 'manual' and, when the engine chose
+   * one, init.address (the address to connect to). Answers a Response, or
+   * { status, headers: { get(name) }, text() }. Default: Node and Deno
+   * connect to init.address; a browser uses the page's fetch.
+   */
+  fetch?: (url: string, init: { method: 'GET'; headers: { accept: string }; redirect: 'manual'; address?: string }) =>
+    Promise<{ status: number; headers: { get(name: string): string | null }; text(): Promise<string> }>;
+  /** Every address of a host name. Default: the system resolver (Node, Deno); none in a browser. null: none. */
+  resolve?: ((host: string) => Promise<string[]>) | null;
+  /** Refuse a method that has expired or been revoked at this time (a Date, or seconds since the epoch). */
+  now?: Date | number;
+  /** Allow an http document URL (default: https only). */
+  allowHttp?: boolean;
+  /** Allow loopback, link-local, private and localhost addresses (default: refused). */
+  allowPrivateFetch?: boolean;
+}
+
+/**
+ * Controlled Identifiers v1.0 §3.3 Retrieve Verification Method. The engine
+ * names each fetch and decides each answer (the private-address guard of the
+ * authorization server, the status, the Content-Type: application/cid,
+ * application/cid+json, application/ld+json or application/json, then §3.3);
+ * this function does the fetch. Never rejects for a failed retrieval: it
+ * answers `ok: false` with the §3.5 name (or FETCH_REFUSED, FETCH_FAILED,
+ * UNSUPPORTED_MEDIA_TYPE, VERIFICATION_METHOD_NOT_IN_FORCE) and an RFC 9457
+ * object. Issue 1100 items 7 and 9.
+ */
+export function cidRetrieveVerificationMethod(
+  url: string,
+  relationship: 'authentication' | 'assertionMethod' | 'keyAgreement' | 'capabilityInvocation' | 'capabilityDelegation',
+  options?: CidRetrieveOptions
+): Promise<
+  | { ok: true; verificationMethod: Record<string, unknown>; controllerDocument: string }
+  | { ok: false; code: string; problem: CidProblem }
+>;
+
 /**
  * Feature probe: which ops the loaded wasm module serves. A module older
  * than this package can lack some; an operation whose op is missing
@@ -1891,6 +2192,10 @@ export function capabilities(): Promise<{
   pipelineCheck: boolean;
   /** The op pipelineCheckNodes: node settings in evidence, and the evaluator's output wire from the query form. */
   pipelineCheckNodes: boolean;
+  /** The op graphCheckNodes: graph() and run() of a graph, and node('datasetMerge'). */
+  graphCheck: boolean;
+  /** The op datasetMerge: datasetMerge(). */
+  datasetMerge: boolean;
   tableau: boolean;
   rml: boolean;
   csvw: boolean;
@@ -1901,6 +2206,9 @@ export function capabilities(): Promise<{
   xpath: boolean;
   rif: boolean;
   xslt: boolean;
+  xpath4: boolean;
+  xquery: boolean;
+  xslt4: boolean;
   mathml: boolean;
   xforms: boolean;
   jsonSchema: boolean;
@@ -1920,6 +2228,8 @@ export function capabilities(): Promise<{
   deltaLog: boolean;
   /** ops literalValue and literalFromValue (issue 1051). */
   literalValues: boolean;
+  /** ops cidValidate and cidRetrieve (issue 1100). */
+  cid: boolean;
   /** 'full': the whole library is in the wasm module. */
   profile: 'full' | string;
   /** The dispatch ABI version string of the loaded wasm module. */
@@ -2046,6 +2356,9 @@ declare const _default: {
   deltaLogDestroy: typeof deltaLogDestroy;
   _deltaLogCorruptLastForTest: typeof _deltaLogCorruptLastForTest;
   xsltTransform: typeof xsltTransform;
+  xpath4Eval: typeof xpath4Eval;
+  xqueryEval: typeof xqueryEval;
+  xslt4Transform: typeof xslt4Transform;
   mathmlEval: typeof mathmlEval;
   xformsRecalc: typeof xformsRecalc;
   jsonSchemaValidate: typeof jsonSchemaValidate;
@@ -2061,6 +2374,8 @@ declare const _default: {
   vcEd25519Verify: typeof vcEd25519Verify;
   xmlDecrypt: typeof xmlDecrypt;
   xmlEncrypt: typeof xmlEncrypt;
+  xmlVerify: typeof xmlVerify;
+  xmlSign: typeof xmlSign;
   jweDecrypt: typeof jweDecrypt;
   jweEncrypt: typeof jweEncrypt;
   vcEddsaCreateFromCanonical: typeof vcEddsaCreateFromCanonical;
@@ -2069,6 +2384,8 @@ declare const _default: {
   vcCheckCredentialSubject: typeof vcCheckCredentialSubject;
   vcCheckNoDataLoss: typeof vcCheckNoDataLoss;
   vcCheckRelatedResourceDigests: typeof vcCheckRelatedResourceDigests;
+  cidValidate: typeof cidValidate;
+  cidRetrieveVerificationMethod: typeof cidRetrieveVerificationMethod;
   capabilities: typeof capabilities;
   Dataset: typeof Dataset;
   Store: typeof Store;

@@ -223,13 +223,14 @@ async function main () {
     rowsOf(all.text)[0] === 'literal:12::http://www.w3.org/2001/XMLSchema#integer', all.text)
 
   // --- 4. framing --------------------------------------------------------
+  // Host names the listener: another name gets 421 (issue 1124, HTTP/LocalGuard.lean).
   const pipelined = await raw(server.origin,
-    'GET /sparql?query=ASK%7B%7D HTTP/1.1\r\nHost: x\r\n\r\n' +
-    'GET /sparql?query=ASK%7B%7D HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n')
+    'GET /sparql?query=ASK%7B%7D HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n' +
+    'GET /sparql?query=ASK%7B%7D HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n')
   record('two pipelined requests get two responses', (pipelined.match(/HTTP\/1\.1 200 OK/g) ?? []).length === 2, pipelined.slice(0, 200))
   const body = `ASK { <${EX}a> ?p ?o }`
   const chunked = await raw(server.origin,
-    'POST /sparql HTTP/1.1\r\nHost: x\r\nContent-Type: application/sparql-query\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n' +
+    'POST /sparql HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/sparql-query\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n' +
     `${Buffer.byteLength(body).toString(16)}\r\n${body}\r\n0\r\n\r\n`)
   record('a chunked request body is read', /HTTP\/1\.1 200 OK/.test(chunked) && /true/.test(chunked), chunked.slice(0, 300))
   const malformed = await raw(server.origin, 'GARBAGE\r\n\r\n')

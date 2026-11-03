@@ -1,0 +1,45 @@
+<t:test xmlns:t="http://xproc.org/ns/testsuite/3.0" 
+        expected="pass"
+        xmlns:err="http://www.w3.org/ns/xproc-error" features="p-run">
+   <t:info>
+      <t:title>nw p-run-001</t:title>
+      <t:revision-history>
+         <t:revision>
+            <t:date>2026-07-18</t:date>
+            <t:author>
+               <t:name>Norm Tovey-Walsh</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Added tests for p:run</p>
+            </t:description>
+         </t:revision>
+      </t:revision-history>
+   </t:info>
+   <t:description xmlns="http://www.w3.org/1999/xhtml">
+      <p>Test passing map to step with p:run</p>
+   </t:description>
+   <t:pipeline>
+<p:declare-step version="3.0" xmlns:p="http://www.w3.org/ns/xproc">
+  <p:output port="result"/>
+  <p:variable name="params" as="map(*)" select="map{'foo': 'bar'}"/>
+  <p:run name="run-fix">
+    <p:with-input href="../pipelines/invoked-map.xpl"/>
+    <p:run-input port="source" primary="true"><p:empty/></p:run-input>
+    <p:run-option name="parameters" select="$params" />
+    <p:output port="result" primary="true"/>
+  </p:run>
+</p:declare-step>
+</t:pipeline>
+<t:schematron>
+  <s:schema queryBinding="xslt2"
+            xmlns:s="http://purl.oclc.org/dsdl/schematron">
+    <s:ns prefix="fn" uri="http://www.w3.org/2005/xpath-functions"/>
+    <s:pattern>
+      <s:rule context="/">
+        <s:assert test="fn:map">The root element is not fn:map.</s:assert>
+        <s:assert test="fn:map/fn:string[@key='foo'] = 'bar'">Map is incorrect.</s:assert>
+      </s:rule>
+    </s:pattern>
+  </s:schema>
+</t:schematron>
+</t:test>

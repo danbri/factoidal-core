@@ -61,6 +61,13 @@ test('each node puts a value of its output wire on the wire', async () => {
   assert.equal(r.graph.conforms, true);
 });
 
+test('rdfcStage takes text as well as a Dataset', async () => {
+  const n = await f.node('rdfcStage', { format: 'turtle' });
+  const r = await f.run(n, TTL, { unchecked: true });
+  const ds = await f.parse(TTL);
+  assert.deepEqual(r.graph, [await f.canonicalize(ds), await f.canonicalHash(ds)]);
+});
+
 test('a writer then a SPARQL evaluator is not well typed, and run() refuses it', async () => {
   const p = f.pipe(await f.node('turtleDocumentReader'), await f.node('turtleDocumentWriter'),
     await f.node('shippedEvaluator', { query: 'ASK {}' }));

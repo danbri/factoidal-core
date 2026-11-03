@@ -296,6 +296,25 @@ Both files are gitignored (`formal/fstar/.gitignore`).
 
 ## Cross-references
 
+- [foafnaut2525 runtime maturity and XSLT](../../docs/designissues/2026-11-03-foafnaut2525-runtime-maturity.md)
+  separates existing JS/WASM behavior from DOM, event-loop, guest-WASM and
+  native-app targets; records the requested XML stylesheet browser flow.
+  Run standards tests against the actual guest and Lean document, and report
+  engine conformance separately from host integration and packaging checks.
+
+- [Browser development bundle](../../docs/20261103-browser-development-bundle.md)
+  records deterministic packaging, complete source/C/engine witnesses,
+  relocated actual Chrome checks, integrity rejection and external font/library
+  requirements. Creating an archive alone is not a browser runtime test.
+
+- [Lean browser URL navigation](../../docs/designissues/2026-11-03-lean-browser-navigation.md)
+  records the native byte broker, unchanged-source boundary, cancellation,
+  history and actual HTTP/browser fixture checks.
+
+- [HTML, SVG, text and portable rendering](../../docs/designissues/2026-10-30-document-layout-renderers.md)
+  records the Foafnaut backend boundaries, official SVG test limitations and
+  proposed CPU/embedded validation. CPU artifacts are not GPU visual passes.
+
 - `fstar-env` skill — toolchain setup, z3 install, opam switch.
 - `fast-verify-extract` skill — skip the full `./build-ocaml.sh` cycle
   for a single-module change: `.checked` caching, targeted
@@ -306,3 +325,5 @@ Both files are gitignored (`formal/fstar/.gitignore`).
   and the reporting discipline.
 - `perf-benchmarking` skill — timing and performance measurement.
 - `ocaml-boundary` skill — what may be hand-written OCaml at all.
+
+Browser scripting architecture and checks: [separate QuickJS WASM and Lean document transactions](../../docs/designissues/2026-11-03-script-engine-architecture.md).

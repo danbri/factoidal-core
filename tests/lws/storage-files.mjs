@@ -268,6 +268,11 @@ async function runFiles (engine, listen) {
           for (let k = 0; k <= last; k++) {
             rmSync(dir, { recursive: true, force: true })
             cpSync(saved, dir, { recursive: true })
+            // The copy was taken while this process served DIR, so it holds
+            // this process's lock (issue 1135). A crashed server is another
+            // process; its lock would be taken over as stale. Here the
+            // holder is this process, so the copy's lock is removed.
+            rmSync(join(dir, 'lws.lock'), { force: true })
             for (const [f, b] of newBodies) {
               mkdirSync(dirname(join(dir, f)), { recursive: true })
               writeFileSync(join(dir, f), b)

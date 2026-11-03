@@ -1,0 +1,33 @@
+# RDF Data Cube (W3C Recommendation 2014-01-16) integrity-constraint fixtures.
+# FILE<TAB>constraints its normalized form violates (comma-separated) or none.
+spec/appendix-c-example.ttl	IC-4
+cases/appendix-c-with-sdmx-sex.ttl	none
+cases/base-pass.ttl	none
+cases/ic-0-fail.ttl	IC-0
+cases/ic-1-fail.ttl	IC-1
+cases/ic-2-fail.ttl	IC-2
+cases/ic-3-fail.ttl	IC-3
+cases/ic-4-fail.ttl	IC-4
+cases/ic-5-fail.ttl	IC-5
+cases/ic-6-fail.ttl	IC-6
+cases/ic-7-fail.ttl	IC-7
+cases/ic-8-fail.ttl	IC-8
+cases/ic-9-fail.ttl	IC-9
+cases/ic-10-fail.ttl	IC-10
+cases/ic-11-fail.ttl	IC-11
+cases/ic-12-fail.ttl	IC-12
+cases/ic-13-fail.ttl	IC-13
+cases/ic-14-fail.ttl	IC-14
+cases/ic-15-fail.ttl	IC-15
+cases/ic-16-fail.ttl	IC-16
+cases/ic-17-fail.ttl	IC-17
+cases/ic-18-fail.ttl	IC-18
+cases/ic-19-collection-fail.ttl	IC-19
+cases/ic-19-collection-pass.ttl	none
+cases/ic-19-fail.ttl	IC-19
+cases/ic-20-fail.ttl	IC-20
+cases/ic-20-pass.ttl	none
+cases/ic-21-fail.ttl	IC-21
+cases/ic-21-pass.ttl	none
+cases/measure-dimension-pass.ttl	none
+cases/normalize-dataset-attachment-pass.ttl	none

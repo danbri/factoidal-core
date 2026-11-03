@@ -11,6 +11,13 @@ Design decision (owner-approved 2026-08-22):
 
 ## What exists
 
+For foafnaut2525 capability or shipping questions, read the dated
+[JS/WASM maturity and XSLT integration record](../../docs/designissues/2026-11-03-foafnaut2525-runtime-maturity.md).
+Distinguish the Lean renderer, the external QuickJS WASM engine, the limited
+DOM/event binding and a future page-facing WASM API. Recheck its pinned
+checkpoint before reporting current support. Native CLI, web bundle and
+standalone macOS/iOS app evidence are separate.
+
 For stateful transport adapters, test the host's lifecycle independently of
 the protocol engine, then replay through the rebuilt Wasm artifact. An empty
 `send`/`route` answer says nothing about input consumption: export the actual
@@ -99,7 +106,14 @@ Rejected, with reasons:
   is why it is recorded here rather than left for someone to rediscover.
   Setting `isModule: true` (Init uses Lean's new module system — the
   sources begin with `module`) did not change the output.
-- **WASI (`wasi-sdk` / `clang --target=wasm32-wasi`) and `zig cc`.** Not
+- **WASI (`wasi-sdk` / `clang --target=wasm32-wasi`) and `zig cc`.**
+  *Update 2026-10-29:* the WASI route was built and measured as an
+  experiment (`experiments/wasm-components/`, results in its `RESULTS.md`,
+  record `docs/designissues/2026-10-29-wasm-components.md`, issue
+  https://github.com/danbri/factoidal/issues/1167). It needs wasi-sdk 34 or
+  later (earlier releases have no libunwind), 14 runtime accommodations,
+  and gives a real WIT component with the same throughput as Emscripten; the
+  shipped build stays on Emscripten for now. The original note follows. Not
   attempted after Emscripten linked, per the brief's instruction to take
   the route that links first and document the rest. The blocking risk to
   check first if this is revisited: Lean's runtime throws C++ exceptions
@@ -611,6 +625,21 @@ which reads the HDT file as the byte region and is therefore in
 included), and the JavaScript side (`npm/factoidal/l4-core.js`'s `OPS`
 list and exports, `l4-core.d.ts`).
 
+A change to the envelope of an existing op (a new member, a longer `need`
+list) changes its `Wasm/native-smoke.sh` case in the same commit. Core CI
+does not run `native-smoke.sh`; only `danbri/factoidal-builds` runs it
+("Dispatch ABI and CLI smoke"), after the change is on `main`. So run it
+before you land: `export PATH=$HOME/.elan/bin:$PATH`, then
+`bash formal/lean4/Wasm/native-smoke.sh` (it builds `l4wasm-cli` first).
+Cost of not doing this: commit `ba8d733f` (2026-10-28, WebDAV dead
+properties and locks, https://github.com/danbri/factoidal/issues/1078)
+added `.webdav-state.json` to the `need.read` list of `webdavOpen`, and
+the smoke case still expected `["a.md"]`. Core CI stayed green. Builds run
+https://github.com/danbri/factoidal-builds/actions/runs/40644490534 failed
+that step on both Lean jobs (427 pass, 1 fail (out of 428)), so the wasm
+job, the web gates (with the packed-package OWL checks) and the release
+did not run.
+
 The three ops of the browser update log (`deltaLogEncode`, `deltaLogDecode`,
 `deltaLogMerge`, `Wasm/Ops/DeltaLog.lean`, 2026-10-13,
 https://github.com/danbri/factoidal/issues/728) are core-table ops: a name in
@@ -829,6 +858,18 @@ against the old core library.
    `object.o`). If the patch anchor ever vanishes on a toolchain bump,
    the build fails loudly — re-audit `string_to_list_core` upstream
    before deleting the step.
+   **A matching cache checksum/version does not establish this patch.** On
+   2026-11-02 the official runtime archive still held unpatched August 24
+   `object.cpp`/`object.o`. The lab skipped step 1b because the three expected
+   object files existed; fresh FOAF and browser tests then failed with 3.263 GB
+   allocation requests. The runtime builder now writes
+   `rt-obj/object.wasm32-string-list.sha256` only after compiling the patched
+   source. It binds both source and object hashes; absent/mismatched witnesses
+   rebuild only `object.o`. The lab checks the marker and witness, invoking the
+   standard runtime-only repair for unverified caches, including missing cached
+   sources. Preserve this witness when exporting/restoring runtime caches.
+   [Measured repair and cache pin](../../docs/20261102-foafnaut-macos-build.md).
+
 9. **Editing a Lean source WHILE `lake build` runs produces link
    errors that name modules which are, in fact, present.** Lake plans
    the link from the dependency graph it read at startup; an import
@@ -921,6 +962,13 @@ against the old core library.
    `pretty()` result in a later cell — keep raw values in their own named
    cells and call `pretty` only in display cells. (Anti-pattern #28.)
 
+## Other targets from the same C (iOS, Android)
+
+Steps 1 to 5 of "What the build actually does" do not depend on wasm. The
+proposal to compile the same C and runtime for iOS and Android, with the C ABI
+of `l4_shim.c`, is `docs/designissues/2026-10-29-mobile-native-library.md`
+(https://github.com/danbri/factoidal/issues/1198).
+
 ## Gates
 
 ```bash
@@ -949,3 +997,7 @@ The Lean side keeps its proof policy across this boundary: no `sorry`,
 no `axiom`, no `partial`, no `native_decide`. The JSON reader recurses
 on an explicit `Nat` fuel precisely so it is structurally recursive and
 total without well-founded-recursion obligations.
+
+The independent native graphics lab uses small pure ABI modules, including a
+typed render-plan module. Its proof and host boundary is recorded in
+[Lean render plans](../../docs/designissues/2026-10-30-lean-render-plan.md).

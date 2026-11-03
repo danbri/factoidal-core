@@ -289,7 +289,8 @@ extern_lib libl4hostread pkg := do
     `Harness.Sbm11Gen, `Harness.RunHeap, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11Update, `Harness.Sbm11PackLib, `Harness.Sbm11Compact, `Harness.Sbm11PermCheck,
     `Harness.Sbm11Export, `Harness.Sbm11MemGenCheck, `Harness.Sbm11PackSpecCheck,
     `Harness.PlannerCheck, `Harness.PlannerKinds, `Harness.PlannerSbm11IO,
-    `Harness.ProofObligations, `Harness.WorkerPool] : Array Lean.Name).map Glob.one
+    `Harness.ProofObligations, `Harness.WorkerPool, `Harness.DomDump] : Array Lean.Name).map Glob.one
+  ++ #[Glob.submodules `Harness.Unicode]
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI
 -- (Wasm/Abi.lean) and the `@[export]` C symbols (Wasm/Exports.lean).
@@ -311,6 +312,7 @@ extern_lib libl4hostread pkg := do
              `Wasm.Ops.Explain,
              `Wasm.Ops.StageList,
              `Wasm.Ops.PipelineNodes,
+             `Wasm.Ops.GraphNodes, `Wasm.GraphNodesTests,
              `Wasm.Ops.Handles,
              `Wasm.Ops.DatasetFull,
              `Wasm.Ops.Pack,
@@ -323,11 +325,12 @@ extern_lib libl4hostread pkg := do
              `Wasm.Ops.Toan,
              `Wasm.Ops.Xmpp,
              `Wasm.Ops.XmppSession,
-             `Wasm.Ops.Crypto, `Wasm.Ops.XmlEnc,
+             `Wasm.Ops.XmppClient,
+             `Wasm.Ops.Crypto, `Wasm.Ops.XmlEnc, `Wasm.Ops.XmlDsig,
              `Wasm.Ops.Formats, `Wasm.FormatsBoundaryTests, `Wasm.GraphSetTests,
              `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
              `Wasm.Ops.Maths,
-             `Wasm.Ops.Vc,
+             `Wasm.Ops.Vc, `Wasm.Ops.Cid, `Wasm.Ops.Qt4,
              `Wasm.Ops.Lenient, `Wasm.Ops.Validate,
              `Wasm.Ops.DeltaLog, `Wasm.Ops.LiteralValue,
              `Wasm.Ops.Terms, `Wasm.Ops.Collections,
@@ -614,6 +617,27 @@ lean_exe «l4dict-fold-bench» where
 
 @[default_target] lean_exe «l4xmlconf» where root := `Harness.XmlConfRun
 
+-- Canonical XML 1.0 and 1.1 and Exclusive XML Canonicalization over the
+-- vendored Recommendation examples and the C14N 1.1 interop cases
+-- (third_party/testing/xml-c14n).
+@[default_target] lean_exe «l4c14n» where root := `Harness.C14nRun
+
+-- XPointer (Framework, element(), xmlns(), xpointer()) over the pointers of
+-- the W3C XInclude test suite.
+@[default_target] lean_exe «l4xpointer» where root := `Harness.XPointerRun
+
+-- XInclude 1.1 with XPointer over the W3C XInclude test suite (175 cases).
+@[default_target] lean_exe «l4xinclude» where root := `Harness.XIncludeRun
+
+-- XML Signature 1.1 core validation (L4Factoidal/XML/DSig11.lean) over the
+-- W3C XML Signature 1.1 interop vectors (third_party/testing/xmldsig11-interop),
+-- the signxml fixtures of tests/xmldsig, and the SAML profile fixtures.
+@[default_target] lean_exe «l4xmldsig» where root := `Harness.XmlDsigRun
+
+-- RELAX NG (ISO/IEC 19757-2:2008, OASIS 2001-12-03) XML syntax: James
+-- Clark's spectest.xml, simplification and validation by derivatives.
+@[default_target] lean_exe «l4relaxng» where root := `Harness.RelaxNGRun
+
 -- The W3C XML Schema Test Suite, Part 2 Datatypes slice: suite.xml ->
 -- the *Meta/*.testSet manifests -> the datatype-only test groups.
 @[default_target] lean_exe «l4xsd-datatypes» where root := `Harness.XsdDatatypesRun
@@ -631,6 +655,26 @@ lean_exe «l4dict-fold-bench» where
 -- RIF Core conformance: syntax and entailment cases from the W3C
 -- suite (Harness/RifRun.lean).
 @[default_target] lean_exe «l4rif» where root := `Harness.RifRun
+-- The W3C N3 Community Group suite with the Notation3 reader (Harness/N3Run.lean).
+@[default_target] lean_exe «l4n3» where root := `Harness.N3Run
+
+-- RDF Data Cube (2014) normalization and integrity constraints IC-0 to
+-- IC-21 over tests/datacube/ (Harness/DataCubeRun.lean).
+@[default_target] lean_exe «l4datacube» where root := `Harness.DataCubeRun
+
+-- W3C RDB2RDF test cases: the Direct Mapping (2012) over the Lean SQL subset
+-- (Harness/Rdb2RdfRun.lean, tests/rdb2rdf/run.sh).
+@[default_target] lean_exe «l4rdb2rdf» where root := `Harness.Rdb2RdfRun
+
+-- YAML-LD 1.0 (Editor's Draft) over third_party/testing/yaml-ld/
+-- (Harness/YamlLdRun.lean); `--json-superset` loads the JSON-LD 1.1 suite's
+-- inputs through the YAML 1.2.2 loader.
+@[default_target] lean_exe «l4yamlld» where root := `Harness.YamlLdRun
+
+-- W3C Web Annotation Data Model and Vocabulary (2017) over
+-- third_party/testing/web-annotation/ (Harness/WebAnnotationRun.lean):
+-- the annotation-model JSON Schema tests and the vocabulary checks.
+@[default_target] lean_exe «l4webannotation» where root := `Harness.WebAnnotationRun
 
 -- XSLT 1.0 conformance over the vendored w3c/xslt30-test subset:
 -- XSLT/Transform runs the stylesheet, the result tree is serialised
@@ -641,6 +685,16 @@ lean_exe «l4dict-fold-bench» where
 -- (Harness/Qt4Run.lean). Reads third_party/testing/qt4tests; prints
 -- per-test-set and total pass / fail / unsupported counts.
 lean_exe «l4qt4» where root := `Harness.Qt4Run
+
+-- W3C XML Schema Test Suite (third_party/testing/xsd) over
+-- L4Factoidal.XSD11, XML Schema 1.1 Structures (Harness/Xsd11Run.lean).
+-- Prints per-test-set and total pass / fail / unsupported counts.
+lean_exe «l4xsd11» where root := `Harness.Xsd11Run
+
+-- xslt40-test (QT4 CG XSLT 4.0) runner over L4Factoidal.XSLT4
+-- (Harness/Xslt4Run.lean). Reads third_party/testing/xslt40-test; prints
+-- per-test-set and total pass / fail / unsupported counts.
+lean_exe «l4xslt4» where root := `Harness.Xslt4Run
 
 -- ShExC differential: every schemas/*.shex read by ShEx/Compact and
 -- compared with the ShExJ twin the same directory ships
@@ -747,3 +801,31 @@ lean_exe «l4qt4» where root := `Harness.Qt4Run
 -- protocol decision is in L4Factoidal/XMPP/Server.lean, not here.
 @[default_target] lean_exe «l4xmpp-serve» where root := `Harness.XmppServe
 @[default_target] lean_exe «l4xml-namespaces» where root := `Harness.NamespaceRun
+
+-- XProc 3.1 processor and upstream conformance runner; excluded from library root.
+lean_exe l4xproc where root := `L4Factoidal.XProc31.Runner
+-- WHATWG Encoding Standard in Lean (https://github.com/danbri/factoidal/issues/1167,
+-- milestone 2): the engine behind tests/whatwg-encoding/run.mjs, the
+-- web-platform-tests encoding runner (Harness/WhatwgEncodingServe.lean).
+@[default_target] lean_exe «l4whatwg-encoding» where root := `Harness.WhatwgEncodingServe
+
+-- WHATWG URL Standard in Lean (https://github.com/danbri/factoidal/issues/1167,
+-- milestone 3): the engine behind tests/whatwg-url/run.mjs, the
+-- web-platform-tests url runner (Harness/WhatwgUrl.lean).
+@[default_target] lean_exe «l4whatwg-url» where root := `Harness.WhatwgUrl
+
+-- Unicode algorithms in Lean, Unicode 18.0.0 (https://github.com/danbri/factoidal/issues/1167,
+-- milestone 4): normalization (UAX #15), segmentation (UAX #29), bidi (UAX #9)
+-- and line breaking (UAX #14) over the Unicode conformance files
+-- (Harness/UnicodeConformance.lean, tests/unicode/run.sh).
+@[default_target] lean_exe «l4unicode» where root := `Harness.UnicodeConformance
+
+-- The HTML parser in Lean (https://github.com/danbri/factoidal/issues/1167,
+-- milestone 5): html5lib tokenizer tests and the web-platform-tests tree
+-- construction tests (Harness/Html5lib.lean, tests/html5lib/run.sh).
+@[default_target] lean_exe «l4html5lib» where root := `Harness.Html5lib
+
+-- The DOM node tree as an arena in Lean (https://github.com/danbri/factoidal/issues/1167,
+-- milestone 6): DOM operation scripts compared with jsdom (Harness/Dom.lean,
+-- tests/dom/run.sh).
+@[default_target] lean_exe «l4dom» where root := `Harness.Dom

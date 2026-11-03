@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<t:test expected="fail" code="err:XS0088"
+        xmlns:err="http://www.w3.org/ns/xproc-error"
+        xmlns:t="http://xproc.org/ns/testsuite/3.0">
+   <t:info>
+      <t:title>Library import 024 (AB)</t:title>
+      <t:revision-history>
+         <t:revision>
+            <t:date>2024-12-06</t:date>
+            <t:author>
+               <t:name>Norm Tovey-Walsh</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>On closer examination, this test shadows static option1, which is an error.</p>
+            </t:description>
+         </t:revision>
+         <t:revision>
+            <t:date>2021-06-10</t:date>
+            <t:author>
+               <t:name>Achim Berndzen</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Added attribute 'queryBinding' to schematron's schema.</p>
+            </t:description>
+         </t:revision>
+         <t:revision>
+            <t:date>2019-02-28</t:date>
+            <t:author>
+               <t:name>Achim Berndzen</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Added new tests for p:declare-step and p:import.</p>
+            </t:description>
+         </t:revision>
+      </t:revision-history>
+   </t:info>
+   <t:description xmlns="http://www.w3.org/1999/xhtml">
+      <p>Tests cascading import with identical option names.</p>
+   </t:description>
+   <t:pipeline>
+      <p:declare-step version="3.0"
+                      xmlns:p="http://www.w3.org/ns/xproc"
+                      xmlns:x="http://test">
+         <p:import href="../pipelines/ab-library-019.xpl"/>
+         <p:output port="result"/>
+         <p:option name="option1"
+                   static="true"
+                   select="99"/>
+         <p:identity name="step1">
+            <p:with-input>
+               <doc>{$option1}</doc>
+            </p:with-input>
+         </p:identity>
+         <x:step name="step2"/>
+         <p:wrap-sequence wrapper="result">
+            <p:with-input pipe="@step1 @step2"/>
+         </p:wrap-sequence>
+      </p:declare-step>
+   </t:pipeline>
+</t:test>

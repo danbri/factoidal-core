@@ -352,7 +352,7 @@ test('l4-core vcCheckCredentialSubject: no @context gate', async (t) => {
 
 test('l4-core vcCheckNoDataLoss: undefined terms are refused, defined ones pass', async (t) => {
   if (await skipUnlessOps(t, ...VC_CHECKS)) return;
-  const ctx = '{"Known":"https://ex.org/Known","name":"https://schema.org/name"}';
+  const ctx = '{"Known":"https://ex.org/Known","name":"https://schema.org/name","credentialSubject":{"@id":"https://www.w3.org/2018/credentials#credentialSubject","@type":"@id"}}';
   const doc = (types, subject, context = ctx) =>
     `{"@context":${context},"type":${types},"credentialSubject":${subject}}`;
   assert.deepEqual(await l4core.vcCheckNoDataLoss(doc('["Known"]', '{"name":"x"}')), { valid: true });

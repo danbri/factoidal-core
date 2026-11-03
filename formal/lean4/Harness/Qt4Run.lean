@@ -2,37 +2,123 @@
 Harness/Qt4Run — the qt4tests (QT4 Community Group XPath/XQuery/F&O
 test suite) runner for the XPath 4.0 evaluator `L4Factoidal.XPath4`.
 
-    lake exe l4qt4 [--root DIR] [--family F]... [--set NAME] [--list-fails]
+    lake exe l4qt4 [--root DIR] [--lang xpath|xquery] [--family F]... [--set NAME] [--list-fails]
 
 It reads `catalog.xml`, then every test set of the selected families
-(default `prod op fn map array math`), and scores every test case:
+(default `prod op fn map array math`; with `--lang xquery` also `app`
+and `misc`), and scores every test case for XPath 4.0 or, with
+`--lang xquery`, for XQuery 4.0 (`L4Factoidal.XQuery4`):
 
 * **unsupported** — the test case or its test set has a dependency
   this processor does not satisfy: a spec that is not XPath 4.0
   (`XQ*` only, or an `XP` version range that excludes 4.0), a feature
-  it does not have (schema import/validation, typed data, static
-  typing, the namespace axis, `fn:transform`, ...), XML 1.1, a
-  non-English default language, or an environment that needs a schema,
-  a collection, a decimal format or a resource. An unsupported test is
-  NEVER a pass;
+  it does not have (static typing, which XPath 4.0 and XQuery 4.0 have
+  dropped, `fn:transform`, ...), a language other than English, XML 1.0
+  before the fifth edition, or an environment that needs a collection
+  or a function library. An unsupported test is NEVER a pass. The
+  settings of the dynamic context that a test names (the default
+  language, the XML version, XPath 1.0 compatibility mode) are set for
+  that test (`configureFor`); the namespace axis is on in XPath mode;
+* Negative optional-feature dependencies select an engine configuration
+  with those features disabled; the test still runs.
 * **pass** — every assertion holds; an `error` assertion holds only
   when the error raised has the expected code (or the code is `*`);
-* **fail** — anything else, including an assertion kind this runner
-  does not evaluate (`serialization-matches`), and a wrong error code.
+* **fail** — anything else, including a wrong error code.
 
 The assertions are evaluated with the same XPath 4.0 evaluator
 (`assert-eq` compares with `eq`, `assert-deep-eq` with `fn:deep-equal`,
 `assert` evaluates the expression with `$result` bound). `assert-xml`
 serialises the result nodes and compares them, with the expected XML,
-by `fn:deep-equal` on the two parsed fragments.
+by `fn:deep-equal` on the two parsed fragments (`assert-xml` with a
+`file` attribute reads the expected XML from that file).
+`serialization-matches`, `assert-serialization` and
+`assert-serialization-error` serialize the result with
+`XPath4.Serialize` (method `xml`, the map-form defaults).
 
 The test data is untrusted input: it is parsed, never executed as
 anything but XPath expressions in this evaluator.
 -/
 import L4Factoidal.XPath4.Eval
+import L4Factoidal.XPath4.FeatureTests
+import L4Factoidal.XSD11.Load
+import L4Factoidal.XSD11.XPathBridge
+import L4Factoidal.XPath4.Theorems
+import L4Factoidal.XPath4.OptionalTheorems
+import L4Factoidal.XQuery4.XmlVersionTheorems
+import L4Factoidal.XPath4.XIncludeTheorems
+import L4Factoidal.XQuery4.Module
+import L4Factoidal.XQuery4.LoadModule
+import L4Factoidal.XSLT4.QtFnTransform
+import L4Factoidal.XQuery4.Theorems
+import L4Factoidal.FullText.Theorems
+import L4Factoidal.XQueryUpdate.Query
+import L4Factoidal.XQueryUpdate.Theorems
+import L4Factoidal.XPath4.SerializeTheorems
+import L4Factoidal.EXPath.File.IOHost
+import L4Factoidal.EXPath.File.Theorems
+import L4Factoidal.EXPath.Binary.Theorems
 
 open L4Factoidal.XPath4
 open L4Factoidal.XML
+
+/-! ## Defective test data
+
+qt4tests cases whose expected result
+contradicts the normative text of the specification they test
+(defective test data, `skills/test-suites/SKILL.md` § Defective test
+data). `l4qt4` reports them apart as "excluded (defective test data)",
+not in pass, fail or the total; a case on this list that PASSES counts
+as a FAIL, so the exclusion cannot outlive a corrected test.
+-/
+namespace Harness.Qt4Defective
+
+/-- `(test-case name, issue URL)`. -/
+def defective : List (String × String) :=
+  let i1141 := "https://github.com/danbri/factoidal/issues/1141"
+  -- EXPath Binary 4.0: a wrong $order is XPTY0004 (§ Octet order), an
+  -- octet outside 0..255 is XPTY0004 (xs:unsignedByte arguments)
+  [ "EXPath-binary-pack-double-001", "bin-pack-double15", "bin-pack-float15",
+    "EXPath-binary-pack-integer-001", "bin-pack-integer14",
+    "EXPath-binary-unpack-double-001", "bin-unpack-double18",
+    "EXPath-binary-unpack-float-001", "bin-unpack-float18",
+    "EXPath-binary-unpack-integer-001", "bin-unpack-integer16",
+    "EXPath-binary-unpack-unsigned-integer-001", "bin-unpack-unsigned-integer20",
+    "EXPath-binary-from-octets-003", "EXPath-binary-from-octets-004",
+    "bin-from-octets4", "bin-from-octets5",
+    "EXPath-binary-pad-left-003", "EXPath-binary-pad-left-004", "bin-pad-left5",
+    "EXPath-binary-pad-right-003", "EXPath-binary-pad-right-004", "bin-pad-right5"
+  ].map (fun n => (n, i1141)) ++
+  -- Full Text 3.0: expected XML with the white space of copied source
+  -- text changed; `window $x paragraphs` with $x = 1 expecting the result
+  -- of a window of 2 paragraphs
+  [ "ignore-queries-results-q2", "ignore-queries-results-q2b", "ignore-queries-results-q3",
+    "ignore-queries-results-q3b", "ignore-queries-results-q4", "ignore-queries-results-q4b",
+    "full-text-composability-queries-results-q1", "full-text-composability-queries-results-q4",
+    "FTWindow-paragraphs3", "FTWindow-unconstrained-paragraphs3"
+  ].map (fun n => (n, "https://github.com/danbri/factoidal/issues/1173"))
+  -- F&O 4.0: fn:collection and fn:uri-collection take $options, so two
+  -- arguments are XPTY0004, not XPST0017
+  ++ [ ("fn-collection-1", "https://github.com/danbri/factoidal/issues/1150"),
+       ("fn-uri-collection-1", "https://github.com/danbri/factoidal/issues/1150") ]
+  -- F&O 4.0: fn:duration-to-seconds takes xs:dayTimeDuration?, so an
+  -- xs:yearMonthDuration argument is XPTY0004
+  ++ [ ("duration-to-seconds-016", "https://github.com/danbri/factoidal/issues/1158") ]
+  -- Serialization 4.0 §11: the adaptive method names the primitive type
+  ++ [ ("Serialization-adaptive-37a", "https://github.com/danbri/factoidal/issues/1160") ]
+
+  -- The former Update namespace exclusions pass with the indentation-aware
+  -- assert-xml comparison below (https://github.com/danbri/factoidal/issues/1176).
+
+/-- Defective in XPath mode only: the expected result reads an XQuery
+    predefined entity reference or a character reference in a string
+    literal (XPath 4.0 has neither). -/
+def defectiveXPath : List (String × String) :=
+  [ ("map-to-element-014", "https://github.com/danbri/factoidal/issues/1159"),
+    ("map-to-element-021", "https://github.com/danbri/factoidal/issues/1159"),
+    ("serialize-csv-002", "https://github.com/danbri/factoidal/issues/1159"),
+    ("serialize-csv-003", "https://github.com/danbri/factoidal/issues/1159") ]
+
+end Harness.Qt4Defective
 
 namespace Harness.Qt4Run
 
@@ -53,14 +139,30 @@ def dirOf (p : String) : String :=
   | [] => "."
   | ps => String.intercalate "/" ps
 
+/-- Read a file; when its directory is not there, try a directory of the
+    same name in another letter case (the catalog writes
+    `recordTypeDecl/module1.xq` for the directory `RecordTypeDecl`). -/
 def readFileSafe (p : String) : IO (Option String) := do
-  try pure (some (← IO.FS.readFile p)) catch _ => pure none
+  try pure (some (← IO.FS.readFile p)) catch _ =>
+    try
+      match p.splitOn "/" |>.reverse with
+      | file :: dir :: up =>
+        let parent := "/".intercalate up.reverse
+        let ents ← System.FilePath.readDir (if parent == "" then "." else parent)
+        match ents.find? (fun e => e.fileName.toLower == dir.toLower) with
+        | some e => pure (some (← IO.FS.readFile (e.path.toString ++ "/" ++ file)))
+        | none => pure none
+      | _ => pure none
+    catch _ => pure none
+
+def readBytesSafe (p : String) : IO (Option ByteArray) := do
+  try pure (some (← IO.FS.readBinFile p)) catch _ => pure none
 
 /-! ## Dependencies -/
 
-def specOk (v : String) : Bool :=
+def specOk (v : String) (xq : Bool := false) : Bool :=
   (v.splitOn " ").any (fun t =>
-    if t.startsWith "XP" then
+    if t.startsWith (if xq then "XQ" else "XP") then
       let rest := (t.drop 2).toString
       let plus := rest.endsWith "+"
       let num := (if plus then (rest.dropEnd 1).toString else rest).toNat?
@@ -71,23 +173,133 @@ def specOk (v : String) : Bool :=
 
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
-  f == "higherOrderFunctions"
+  f == "higherOrderFunctions" || f == "serialization"
+    -- UCA collations: unknown parameters are ignored with fallback=yes,
+    -- and the parameters of `XPath4.Collation` are implemented
+    || f == "simple-uca-fallback" || f == "advanced-uca-fallback"
+  -- EXPath Binary 4.0 and File 4.0 (`L4Factoidal.EXPath`)
+  || f == "binary" || f == "expath-file"
+  -- `XQuery4.LoadModule` through the host hook
+  || f == "fn-load-xquery-module"
+  -- `XSLT4.QtFnTransform` through the host hook (an XSLT 4.0 processor)
+  || f == "fn-transform-XSLT" || f == "fn-transform-XSLT30"
+  -- IANA zone names (`XPath4.Tz`)
+  || f == "olson-timezone"
+  -- fn:invisible-xml (`XPath4.Ixml`)
+  || f == "fn-invisible-xml"
+  -- a collection may hold any items (`Env.collections`)
+  || f == "non_empty_sequence_collection"
+  -- XML Schema 1.1 (`L4Factoidal.XSD11`): in-scope schema definitions from
+  -- the environment's `schema`, validated sources, typed data
+  || f == "schemaImport" || f == "schemaValidation" || f == "typedData"
+  -- XQuery and XPath Full Text 3.0 (`L4Factoidal.FullText`), with the
+  -- ignore option, every FTUnit and FTBigUnit, and the default match options
+  || f == "fullText" || f == "fullText-ignore" || f == "fullText-units" || f == "fullText-defaults"
+  -- XQuery Update Facility 3.0 (`L4Factoidal.XQueryUpdate`)
+  || f == "XQUpdate"
 
-def depOk (d : Node) : Bool :=
+/-- The features this processor has in one mode: `featureSupported`,
+    plus the namespace axis (XPath 4.0 §4.7.2.1; XQuery 4.0 does not
+    have it, XQST0134), XPath 1.0 compatibility mode (XPath 4.0
+    §2.2.1.1, which only a host language sets: `configureFor` sets
+    `Env.compat10` for the test that asks for it) and a collation other
+    than the codepoint collation (`XPath4.Collation`), and a cast from
+    `xs:double` or `xs:float` to `xs:decimal` that keeps every digit
+    (`XPath4.decOfFloat`). -/
+def featureSupportedIn (xq : Bool) (f : String) : Bool :=
+  featureSupported f || f == "non_unicode_codepoint_collation" || f == "arbitraryPrecisionDecimal"
+    -- the dtd-validation option is a setting (`Env.dtdValidation`):
+    -- `configureFor` turns it off for a test that needs it absent
+    || f == "dtd-validation-option" || f == "xinclude-option"
+    || (!xq && (f == "namespace-axis" || f == "xpath-1.0-compatibility"))
+
+/-- The dynamic context settings that a test case's dependencies select:
+    XPath 1.0 compatibility mode, the default language, the XML version,
+    and whether the `dtd-validation` and `xinclude` options are available. -/
+def configureFor (deps : List Node) (env : Env) : Env :=
+  deps.foldl (fun env d =>
+    let sat := attrD d "satisfied" "true" != "false"
+    match attrD d "type" with
+    | "feature" =>
+        let fs := (attrD d "value").splitOn " "
+        let env := if sat && fs.contains "xpath-1.0-compatibility" then { env with compat10 := true } else env
+        let env := if !sat && fs.contains "dtd-validation-option" then { env with dtdValidation := false } else env
+        if !sat && fs.contains "xinclude-option" then { env with xinclude := false } else env
+    | "default-language" => if sat then { env with defaultLanguage := attrD d "value" } else env
+    | "xml-version" =>
+        if sat && ((attrD d "value").splitOn " ").all (· == "1.1") then { env with xml11 := true } else env
+    | _ => env) env
+
+/-- Select a processor configuration for negative feature dependencies.
+    The query and its assertions use this same configuration. -/
+def featureSettings (deps : List Node) : FeatureSettings :=
+  deps.foldl (fun settings d =>
+    if attrD d "type" == "feature" && attrD d "satisfied" "true" == "false" then
+      (attrD d "value").splitOn " " |>.foldl FeatureSettings.disable settings
+    else settings) {}
+
+def depOk (xq : Bool) (d : Node) : Bool :=
   let ty := attrD d "type"
   let v := attrD d "value"
   let sat := attrD d "satisfied" "true" != "false"
   match ty with
-  | "spec" => specOk v
+  | "spec" => specOk v xq
   | "feature" =>
+      -- XQuery: the Module Feature (XQuery 4.0 §5.2, `XQuery4.Module`); the
+      -- DTD information of the infoset (attribute defaults, ID and IDREF
+      -- attributes, `XML.Parser` with `XPath4.docKids`)
+      let has (f : String) : Bool := featureSupportedIn xq f || (xq && f == "moduleImport") || f == "infoset-dtd"
       let fs := v.splitOn " "
-      if sat then fs.all featureSupported else !(fs.all featureSupported)
+      -- a feature that is a setting (`dtd-validation-option`) can also be
+      -- absent: `configureFor` turns it off
+      if sat then fs.all has
+      else fs.any FeatureSettings.switchable || !(fs.all has)
+        || fs.all (fun f => f == "dtd-validation-option" || f == "xinclude-option")
+  -- The version of XML and XML Names is a setting of this processor
+  -- (XPath 4.0 §A.2, constraint xml-version): `configureFor` sets
+  -- `Env.xml11` for a test that names only XML 1.1. Strings hold every
+  -- XML 1.1 character in both settings (XDM 4.0 §4.1.6). "1.0:4-" is
+  -- XML 1.0 before the fifth edition, which this processor never uses.
   | "xml-version" =>
-      let has := (v.splitOn " ").any (fun x => x == "1.0" || x == "1.0:4-" || x.startsWith "1.0")
+      let has := (v.splitOn " ").any (fun x => x == "1.1" || (x.startsWith "1.0" && x != "1.0:4-"))
       if sat then has else !has
   | "xsd-version" => if sat then v == "1.1" else v != "1.1"
-  | "default-language" | "language" => if sat then v == "en" else v != "en"
+  | "language" =>
+      let has := v == "en" || NumberWords.hasLang v
+      if sat then has else !has
+  -- the default language is a setting of the dynamic context
+  -- (`Env.defaultLanguage`); `configureFor` sets the one a test names
+  | "default-language" => if sat then true else v != "en"
+  -- `big_integer`: `xs:integer` is Lean's `Int` (no bound);
+  -- `year_lt_0`: years before 1 are dates (`XPath4.Atomic`)
+  -- `XPath4.Unicode`: UAX #15 NFC, NFD, NFKC, NFKD, and FULLY-NORMALIZED
+  -- of F&O 4.0 §5.4.9
+  | "unicode-normalization-form" =>
+      let has := ["NFC", "NFD", "NFKC", "NFKD", "FULLY-NORMALIZED"].contains v
+      if sat then has else !has
+  | "limits" => if sat then v == "big_integer" || v == "year_lt_0" else !(v == "big_integer" || v == "year_lt_0")
+  -- `XPath4.Format.fmtIntToken`: decimal digit families and the
+  -- circled, parenthesised, full-stop and Greek sequences
+  | "format-integer-sequence" =>
+      let has := match v.toList with
+        | [c] => isDigitU c || [0x2460, 0x2474, 0x2488, 0x3B1, 0x391].contains c.toNat
+        | _ => false
+      if sat then has else !has
+  -- XQuery Update Facility: the revalidation modes this processor
+  -- supports are a setting (all three by default, `XQueryUpdate.Revalidate`);
+  -- `configureUpd` turns a mode off for a test that needs it unsupported
+  | "revalidation" => ["strict", "lax", "skip"].contains v
   | _ => !sat
+
+/-- XQuery Update Facility 3.0 §3.1: the revalidation modes are an
+    implementation-defined setting; a test whose dependency says a mode is
+    not supported runs with that mode refused (XUST0026). -/
+def configureUpd (deps : List Node) (env : Env) : Env :=
+  let off := deps.filterMap (fun d =>
+    if attrD d "type" == "revalidation" && attrD d "satisfied" "true" == "false" then some (attrD d "value") else none)
+  if off.isEmpty then env
+  else env.bind L4Factoidal.XQueryUpdate.revalSupportedKey
+    ((["strict", "lax", "skip"].filter (fun m => !off.contains m)).map (fun m => Item.atom (Atomic.ofStr m)))
 
 /-! ## Environments -/
 
@@ -98,28 +310,78 @@ structure EnvSpec where
   ctxSelect : Option String := none
   unsupported : Option String := none
   baseUri : String := ""
+  /-- A `collation` element with `default="true"`. -/
+  defaultCollation : Option String := none
+  /-- `resource` elements: (uri, file). -/
+  resources : List (String × String) := []
+  /-- The `encoding` attributes of `resource` elements: (uri, encoding). -/
+  resourceEncodings : List (String × String) := []
+  decimalFormats : List (String × List (String × String)) := []
+  /-- EXPath File 4.0: the `sandpit` directory, copied for each test. -/
+  sandpit : Option String := none
+  /-- `collection` elements: the URI (`""` for the default collection),
+      the sources (file resolved, uri) and the `query` texts. -/
+  collections : List (String × List (String × String) × List String) := []
+  /-- XSD11: `schema` elements (target namespace, file) and the sources to
+      validate (file, `strict` or `lax`). -/
+  schemas : List (String × String) := []
+  validated : List (String × String) := []
 deriving Inhabited
 
-def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
+def parseEnv (dir : String) (e : Node) (xq : Bool := false) : EnvSpec := Id.run do
   let mut s : EnvSpec := {}
   for c in kids e do
     match localTag c with
     | "source" =>
         if attrD c "validation" == "strict" || attrD c "validation" == "lax" then
-          s := { s with unsupported := some "schema-validated source" }
+          s := { s with validated := s.validated ++ [(dir ++ "/" ++ attrD c "file", attrD c "validation")] }
         s := { s with sources := s.sources ++ [(attrD c "role", dir ++ "/" ++ attrD c "file", attrD c "uri")] }
     | "param" =>
-        if attrD c "declared" != "true" then
-          s := { s with params := s.params ++ [(attrD c "name", attrD c "select" "()")] }
+        if xq || attrD c "declared" != "true" then
+          -- a prefixed name is resolved by the xmlns declaration on the element
+          let nm := attrD c "name"
+          let nm := match nm.splitOn ":" with
+            | [p, l] => match attr c ("xmlns:" ++ p) with | some u => "Q{" ++ u ++ "}" ++ l | none => nm
+            | _ => nm
+          s := { s with params := s.params ++ [(nm, attrD c "select" "()")] }
     | "namespace" => s := { s with ns := s.ns ++ [(attrD c "prefix", attrD c "uri")] }
     | "context-item" => s := { s with ctxSelect := attr c "select" }
-    | "schema" => s := { s with unsupported := some "schema" }
-    | "collection" => s := { s with unsupported := some "collection" }
-    | "resource" => s := { s with unsupported := some "resource" }
-    | "decimal-format" => s := { s with unsupported := some "decimal-format" }
-    | "collation" => s := { s with unsupported := some "collation" }
+    | "schema" =>
+        -- a schema with no file: the F&O 4.0 result schemas for the `fn`
+        -- namespace (the catalog asks the driver to know that URI)
+        if attrD c "file" == "" then
+          if attrD c "uri" == nsFN then s := { s with schemas := s.schemas ++ [(nsFN, L4Factoidal.XSD11.fnSchemaFile)] }
+          else s := { s with unsupported := some "schema with no file" }
+        else s := { s with schemas := s.schemas ++ [(attrD c "uri", dir ++ "/" ++ attrD c "file")] }
+    | "collection" =>
+        let srcs := (kidsNamed c "source").map (fun x => (dir ++ "/" ++ attrD x "file", attrD x "uri"))
+        let qs := (kidsNamed c "query").map (fun x => x.textContent)
+        s := { s with collections := s.collections ++ [(attrD c "uri", srcs, qs)] }
+    | "resource" =>
+        s := { s with resources := s.resources ++ [(attrD c "uri", dir ++ "/" ++ attrD c "file")] }
+        if attrD c "encoding" != "" then
+          s := { s with resourceEncodings := s.resourceEncodings ++ [(attrD c "uri", attrD c "encoding")] }
+    | "decimal-format" =>
+        let ats := c.elementAttrs
+        let nsOf (p : String) : String :=
+          match ats.find? (fun a => a.name == "xmlns:" ++ p) with
+          | some a => a.value
+          | none => (s.ns.lookup p).getD ""
+        let key := match attr c "name" with
+          | none => ""
+          | some n => match n.splitOn ":" with
+            | [p, l] => "Q{" ++ nsOf p ++ "}" ++ l
+            | _ => "Q{}" ++ n
+        let props := (ats.filter (fun a => a.name != "name" && !a.name.startsWith "xmlns")).map (fun a => (a.name, a.value))
+        s := { s with decimalFormats := s.decimalFormats ++ [(key, props)] }
+    | "collation" =>
+        let u := attrD c "uri"
+        match collationOf "" u with
+        | .ok _ => if attrD c "default" == "true" then s := { s with defaultCollation := some u }
+        | .error _ => s := { s with unsupported := some ("collation " ++ u) }
     | "static-base-uri" => s := { s with baseUri := attrD c "uri" }
     | "function-library" => s := { s with unsupported := some "function-library" }
+    | "sandpit" => s := { s with sandpit := some (dir ++ "/" ++ attrD c "path") }
     | _ => pure ()
   pure s
 
@@ -135,18 +397,18 @@ deriving Inhabited
 
 def escText (s : String) : String :=
   String.join (s.toList.map (fun c => match c with
-    | '&' => "&amp;" | '<' => "&lt;" | '>' => "&gt;" | c => String.ofList [c]))
+    | '&' => "&amp;" | '<' => "&lt;" | '>' => "&gt;" | '\r' => "&#xD;" | c => String.ofList [c]))
 
 def escAttr (s : String) : String :=
   String.join (s.toList.map (fun c => match c with
     | '&' => "&amp;" | '<' => "&lt;" | '"' => "&quot;" | '\n' => "&#xA;" | '\t' => "&#x9;" | '\r' => "&#xD;" | c => String.ofList [c]))
 
-def serNode (env : Env) : Nat → NodeRef → String
+def serNode (env : Env) (dflt : String := "") : Nat → NodeRef → String
   | 0, _ => ""
   | f + 1, n =>
     let r := env.nrec n
     match r.kind with
-    | .document => String.join (r.children.toList.map (fun c => serNode env f ⟨n.doc, c⟩))
+    | .document => String.join (r.children.toList.map (fun c => serNode env dflt f (n.at (c))))
     | .text => escText r.value
     | .comment => "<!--" ++ r.value ++ "-->"
     | .pi => "<?" ++ r.name.loc ++ (if r.value == "" then "" else " " ++ r.value) ++ "?>"
@@ -154,14 +416,23 @@ def serNode (env : Env) : Nat → NodeRef → String
     | .namespace => ""
     | .element =>
       let nm := r.name.show
-      let decl := if r.name.uri == "" then (if r.name.pfx == "" then "" else "")
+      -- an unprefixed name in no namespace under a default namespace
+      -- needs the undeclaration xmlns=""
+      let decl := if r.name.uri == "" then (if r.name.pfx == "" && dflt != "" then " xmlns=\"\"" else "")
         else " xmlns" ++ (if r.name.pfx == "" then "" else ":" ++ r.name.pfx) ++ "=\"" ++ escAttr r.name.uri ++ "\""
-      let ats := r.attrs.toList.map (fun a =>
-        let ra := env.nrec ⟨n.doc, a⟩
-        let d := if ra.name.uri != "" && ra.name.pfx != "" && ra.name.pfx != "xml" then
-          " xmlns:" ++ ra.name.pfx ++ "=\"" ++ escAttr ra.name.uri ++ "\"" else ""
-        d ++ " " ++ ra.name.show ++ "=\"" ++ escAttr ra.value ++ "\"")
-      let body := String.join (r.children.toList.map (fun c => serNode env f ⟨n.doc, c⟩))
+      let dflt' := if r.name.pfx == "" then r.name.uri else dflt
+      -- one declaration per prefix the attributes need (and not the
+      -- element's own prefix again)
+      let attrDecls := (r.attrs.toList.filterMap (fun a =>
+        let ra := env.nrec (n.at (a))
+        if ra.name.uri != "" && ra.name.pfx != "" && ra.name.pfx != "xml" &&
+           !(ra.name.pfx == r.name.pfx && ra.name.uri == r.name.uri) then
+          some (ra.name.pfx, ra.name.uri) else none)).eraseDups
+      let ats := attrDecls.map (fun (p, u) => " xmlns:" ++ p ++ "=\"" ++ escAttr u ++ "\"") ++
+        r.attrs.toList.map (fun a =>
+        let ra := env.nrec (n.at (a))
+        " " ++ ra.name.show ++ "=\"" ++ escAttr ra.value ++ "\"")
+      let body := String.join (r.children.toList.map (fun c => serNode env dflt' f (n.at (c))))
       "<" ++ nm ++ decl ++ String.join ats ++ (if body == "" then "/>" else ">" ++ body ++ "</" ++ nm ++ ">")
 
 def serSeq (env : Env) (s : Seq) : String := Id.run do
@@ -172,7 +443,7 @@ def serSeq (env : Env) (s : Seq) : String := Id.run do
     | .atom a =>
         out := out ++ (if prevAtom then " " else "") ++ escText a.str
         prevAtom := true
-    | .node n => out := out ++ serNode env 100000 n; prevAtom := false
+    | .node n => out := out ++ serNode env "" 100000 n; prevAtom := false
     | _ => out := out ++ "?"; prevAtom := false
   pure out
 
@@ -190,21 +461,101 @@ def stringValueOf (env : Env) (s : Seq) : String :=
 def normSp (s : String) : String :=
   String.intercalate " " ((String.ofList (s.toList.map (fun c => if c == '\n' || c == '\t' || c == '\r' then ' ' else c))).splitOn " " |>.filter (· != ""))
 
-def evalIn (env : Env) (src : String) : M Seq := do
-  let e ← parseXPath src env.ns
-  eval 20000 env e
+/-- The language of the run: XPath 4.0, or XQuery 4.0 (`--lang xquery`),
+    read from a marker binding so that the helpers keep their shape. -/
+def xqMode : QN := { uri := "#qt4run", loc := "xquery" }
+def isXqEnv (env : Env) : Bool := env.vars.any (fun (q, _) => q == xqMode)
 
-def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
+def evalIn (env : Env) (src : String) : M Seq := do
+  -- XQuery mode: an assertion that is an XPath expression over the EXPath
+  -- file system takes the file path below (its writing calls)
+  let xp := if isXqEnv env && env.fileSys.isSome then (parseXPath4 src env.ns env.schema.declared env.features).toOption else none
+  if isXqEnv env && xp.isNone then (·.1) <$> L4Factoidal.XQueryUpdate.evalUpdQuery src env 20000 else
+  let e ← match xp with | some e => pure e | none => parseXPath4 src env.ns env.schema.declared env.features
+  match env.fileSys with
+  -- EXPath File 4.0: an assertion may also call a writing `file:` function
+  | some fs => (·.1) <$> L4Factoidal.EXPath.File.evalMem env fs e
+  | none => eval 20000 env e
+
+def xmlEq1 (env : Env) (got : Seq) (expected : String) : Bool :=
   let gs := serSeq env got
   match Doc.ofString ("<w>" ++ gs ++ "</w>"), Doc.ofString ("<w>" ++ expected ++ "</w>") with
   | .ok d1, .ok d2 =>
     let e2 : Env := { docs := #[d1, d2] }
     let root1 := (d1.get 0).children.getD 0 0
     let root2 := (d2.get 0).children.getD 0 0
-    e2.nodeDeepEq 100000 ⟨0, root1⟩ ⟨1, root2⟩
+    e2.nodeDeepEq 100000 (NodeRef.mk' 0 root1) (NodeRef.mk' 1 root2)
   | _, _ => gs == expected
 
-def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
+/-- Does the expected XML carry indentation (a whitespace-only text node
+    with a line end between two tags)? -/
+def hasIndentation (expected : String) : Bool :=
+  ((expected.splitOn ">").drop 1).any (fun piece =>
+    let cs := piece.toList
+    let ws := cs.takeWhile (fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r')
+    ws.contains '\n' && (cs.drop ws.length).head? == some '<')
+
+/-- `assert-xml` by `fn:deep-equal` with the whitespace-only text nodes of
+    both sides removed: for expected XML written with indentation (the
+    catalog allows a deep-equal comparison, `catalog-schema.xsd`
+    assert-xml). -/
+def xmlEqWs (env : Env) (got : Seq) (expected : String) : Bool :=
+  let gs := serSeq env got
+  match L4Factoidal.XML.parseXML ("<w>" ++ gs ++ "</w>"), L4Factoidal.XML.parseXML ("<w>" ++ expected ++ "</w>") with
+  | .ok a, .ok b =>
+    let d1 := Doc.ofNodes [stripWs 100000 false a.root]
+    let d2 := Doc.ofNodes [stripWs 100000 false b.root]
+    let e2 : Env := { docs := #[d1, d2] }
+    let root1 := (d1.get 0).children.getD 0 0
+    let root2 := (d2.get 0).children.getD 0 0
+    e2.nodeDeepEq 100000 (NodeRef.mk' 0 root1) (NodeRef.mk' 1 root2)
+  | _, _ => false
+
+/-- `assert-xml` for a result that is a sequence of nodes and no text:
+    the whitespace-only text between the top-level nodes of the expected
+    XML is layout of the test (a sequence written one node per line), not
+    part of the expected sequence. -/
+def xmlEqSeq (env : Env) (got : Seq) (expected : String) : Bool :=
+  let gs := serSeq env got
+  match Doc.ofString ("<w>" ++ gs ++ "</w>"), Doc.ofString ("<w>" ++ expected ++ "</w>") with
+  | .ok d1, .ok d2 =>
+    let e2 : Env := { docs := #[d1, d2] }
+    let top (d : Doc) : List Nat :=
+      let w := (d.get 0).children.getD 0 0
+      (d.get w).children.toList
+    let isWsText (d : Doc) (i : Nat) : Bool :=
+      (d.get i).kind == .text && (d.get i).value.all (fun c => c == ' ' || c == '\n' || c == '\r' || c == '\t')
+    let k1 := top d1
+    let k2 := (top d2).filter (fun i => !isWsText d2 i)
+    !k1.any (fun i => (d1.get i).kind == .text) && k1.length == k2.length &&
+      (k1.zip k2).all (fun (a, b) => e2.nodeDeepEq 100000 (NodeRef.mk' 0 a) (NodeRef.mk' 1 b))
+  | _, _ => false
+
+/-- `assert-xml`: also with the whitespace around the expected XML
+    removed (the catalog's CDATA sections often end with a space or a
+    newline that is not part of the expected result), and with the
+    whitespace between the top-level nodes removed (`xmlEqSeq`). -/
+def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
+  xmlEq1 env got expected || xmlEq1 env got expected.trimAscii.toString ||
+  (hasIndentation expected && xmlEqWs env got expected) ||
+  (got.length > 1 && xmlEqSeq env got expected)
+
+/-- The serialization parameters of a query: the XQuery output
+    declarations of its prolog (`XPath4.declParams`); none in XPath. -/
+def queryParams (env : Env) (src : String) : M SerParams :=
+  if isXqEnv env && env.features.serialization then do
+    let m ← L4Factoidal.XQuery4.parseModule src env.ns (L4Factoidal.XQuery4.typeLoader env 8 []) env.schema.declared env.xml11 env.features
+    -- `output:parameter-document`: the document first, then the other
+    -- output declarations over it
+    let init ← match m.outputDecls.lookup "parameter-document" with
+      | some u => match env.resource u with
+        | some txt => paramDocParams env txt
+        | none => err "XQST0119" ("parameter document not available: " ++ u)
+      | none => pure { omitDecl := false }
+    declParams m.ns m.outputDecls init
+  else pure {}
+
+def checkAssert (env : Env) (res : M Seq) (sp : SerParams) : Nat → Node → Outcome
   | 0, _ => .fail "assertion nesting"
   | f + 1, a =>
     let txt := a.textContent
@@ -213,28 +564,45 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
     | "error" =>
         let code := attrD a "code"
         match res with
-        | .error e => ok? (code == "*" || code == e.code || ("err:" ++ e.code) == code || code.endsWith (":" ++ e.code)) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ ")")
+        | .error e =>
+          -- an error code already written as `Q{uri}local` (EXPath) is kept
+          let eqn := if e.code.startsWith "Q{" then e.code
+            else "Q{" ++ (if e.uri == "" then nsERR else e.uri) ++ "}" ++ e.code
+          let ok := if code.startsWith "Q{" then code == eqn
+            else code == "*" || code == e.code || ("err:" ++ e.code) == code || code.endsWith (":" ++ e.code)
+          ok? ok ("wrong error code " ++ (if e.uri == "" then e.code else eqn) ++ " (expected " ++ code ++ ")")
         | .ok s => .fail ("expected error " ++ code ++ ", got " ++ (sh s 80))
     | "any-of" =>
-        let rs := (kids a).map (fun c => checkAssert env res f c)
+        let rs := (kids a).map (fun c => checkAssert env res sp f c)
         if rs.any (fun r => match r with | .pass => true | _ => false) then .pass
         else .fail ("any-of: " ++ String.intercalate "; " (rs.map (fun r => match r with | .fail w => w | _ => "")))
     | "all-of" =>
-        let rs := (kids a).map (fun c => checkAssert env res f c)
+        let rs := (kids a).map (fun c => checkAssert env res sp f c)
         match rs.find? (fun r => match r with | .pass => false | _ => true) with
         | some r => r
         | none => .pass
     | "not" =>
         match (kids a).head? with
-        | some c => match checkAssert env res f c with
+        | some c => match checkAssert env res sp f c with
           | .pass => .fail "not: inner assertion held"
           | _ => .pass
         | none => .fail "empty not"
+    | "assert-serialization-error" =>
+        let code := attrD a "code"
+        let codeOk (c : String) := code == "*" || code == c || ("err:" ++ c) == code || code.endsWith (":" ++ c)
+        match res with
+        | .error e => ok? (codeOk e.code) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ ")")
+        | .ok s =>
+          match env.serializeWith sp s with
+          | .error e => ok? (codeOk e.code) ("wrong serialization error " ++ e.code ++ " (expected " ++ code ++ ")")
+          | .ok out => .fail ("expected serialization error " ++ code ++ ", got " ++ cut out 80)
     | tag =>
       match res with
       | .error e => .fail ("error " ++ e.code ++ ": " ++ e.msg)
       | .ok s =>
       let envR := env.bind { uri := "", loc := "result" } s
+      -- QT3 test-suite assertions: the context item is the result when it is one item
+      let envR := match s with | [_] => { envR with ctx := some s, pos := 1, size := 1 } | _ => envR
       match tag with
       | "assert-true" => ok? (match s with | [.atom ⟨_, .bool true⟩] => true | _ => false) ("got " ++ (sh s 80))
       | "assert-false" => ok? (match s with | [.atom ⟨_, .bool false⟩] => true | _ => false) ("got " ++ (sh s 80))
@@ -247,6 +615,19 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
       | "assert-eq" =>
           match evalIn env txt with
           | .ok exp =>
+            -- a single node (XNode or JNode) is compared by its typed value
+            -- a single node (XNode or JNode) or array is compared by its
+            -- typed value (`eq` atomizes its operands)
+            let s : Seq := match s with
+              | [.node _] | [.jnode ..] | [.arr _] => match env.atomize s with
+                | .ok [x] => [Item.atom x]
+                | _ => s
+              | _ => s
+            let exp : Seq := match exp with
+              | [.arr _] => match env.atomize exp with
+                | .ok [x] => [Item.atom x]
+                | _ => exp
+              | _ => exp
             match s, exp with
             | [.atom x], [.atom y] =>
               let nan (z : Atomic) := (z.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
@@ -269,15 +650,37 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
       | "assert" =>
           match evalIn envR txt with
           | .ok [.atom ⟨_, .bool true⟩] => .pass
-          | .ok r => .fail ("assert gave " ++ (sh r 60) ++ " for result " ++ (sh s 60))
+          | .ok r =>
+            -- QT3 catalog: `assert` holds when the effective boolean value is true
+            match ebv r with
+            | .ok true => .pass
+            | _ => .fail ("assert gave " ++ (sh r 60) ++ " for result " ++ (sh s 60))
           | .error e => .fail ("assert raised " ++ e.code ++ " " ++ e.msg)
       | "assert-type" =>
-          match parseSeqType txt with
+          match parseSeqTypeNs txt env.ns with
           | .ok t => ok? (env.seqMatches s t) ("type mismatch: got " ++ (sh s 60))
           | .error e => .fail ("bad type in assert-type: " ++ e.msg)
+      | "serialization-matches" =>
+          match env.serializeWith sp s with
+          | .error e => .fail ("serialization raised " ++ e.code ++ " " ++ e.msg)
+          | .ok out =>
+            let q : QN := { uri := "", loc := "l4ser" }
+            let pq : QN := { uri := "", loc := "l4pat" }
+            let fq : QN := { uri := "", loc := "l4flags" }
+            let envM := ((env.bind q (sStr out)).bind pq (sStr txt)).bind fq (sStr (attrD a "flags"))
+            match evalIn envM "matches($l4ser, $l4pat, $l4flags)" with
+            | .ok [.atom ⟨_, .bool true⟩] => .pass
+            | .ok _ => .fail ("serialization '" ++ cut out 80 ++ "' does not match")
+            | .error e => .fail ("serialization-matches raised " ++ e.code)
+      | "assert-serialization" =>
+          match env.serializeWith sp s with
+          | .error e => .fail ("serialization raised " ++ e.code ++ " " ++ e.msg)
+          | .ok out =>
+            let ok := if attrD a "normalize-space" == "true" then normSp out == normSp txt else out == txt || xmlEq env s txt
+            ok? ok ("serialization '" ++ cut out 80 ++ "'")
       | "assert-xml" =>
           match attr a "file" with
-          | some _ => .fail "assert-xml with file is not evaluated"
+          | some _ => .fail "assert-xml file could not be read"
           | none =>
             let exp := match a with
               | .element _ _ cs => String.join (cs.map (fun c => match c with
@@ -287,7 +690,7 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
               | _ => txt
             -- the expected fragment as written (child markup included)
             let exp := if (kids a).isEmpty then exp else exp
-            ok? (xmlEq env s txt || xmlEq env s exp) ("xml " ++ (cut (serSeq env s) 80))
+            ok? (xmlEq env s txt || xmlEq env s exp) ("xml " ++ (cut (serSeq env s) 400))
       | other => .fail ("assertion " ++ other ++ " is not evaluated")
 
 /-- The assert-xml expected value is the element's inner markup; the
@@ -313,9 +716,59 @@ def fixXml : Nat → Node → Node
   | f + 1, n =>
     match n with
     | .element tag ats cs =>
-        if (splitName tag).2 == "assert-xml" then .element tag ats [.text (innerXml 1000 n)]
+        if (splitName tag).2 == "assert-xml" then
+          -- a text child at the top is the expected markup itself
+          -- (written with `&lt;`); deeper text is element content
+          let top := match n with
+            | .element _ _ cs => String.join (cs.map (fun c => match c with
+                | .text t => if t.contains (Char.ofNat 60) then t else escText t
+                | other => innerXml 1000 (.element "w" [] [other])))
+            | _ => ""
+          .element tag ats [.text top]
         else .element tag ats (cs.map (fixXml f))
     | other => other
+
+/-- Normalise a relative file path (`a/./b/../c` to `a/c`); `none` when
+    it climbs above its start. -/
+def normPath (p : String) : Option String := Id.run do
+  let mut out : List String := []
+  for seg in p.splitOn "/" do
+    if seg == "." || seg == "" then continue
+    if seg == ".." then
+      match out with
+      | _ :: r => out := r
+      | [] => return none
+    else out := seg :: out
+  return some (String.intercalate "/" out.reverse)
+
+/-- Read the expected XML of each `assert-xml file="..."` (relative to
+    the test set's directory, only under the suite root) into the
+    element's text, without its XML declaration. -/
+def resolveXmlFiles (root dir : String) : Nat → Node → IO Node
+  | 0, n => pure n
+  | f + 1, n =>
+    match n with
+    | .element tag ats cs => do
+      if (splitName tag).2 == "assert-xml" then
+        match ats.find? (fun x => x.name == "file") with
+        | some fa =>
+          let rel := if dir.startsWith (root ++ "/") then (dir.drop (root.length + 1)).toString else dir
+          match normPath (rel ++ "/" ++ fa.value) with
+          | none => pure n
+          | some pth =>
+            match ← readFileSafe (root ++ "/" ++ pth) with
+            | none => pure n
+            | some txt =>
+              let txt := if txt.startsWith "<?xml" then
+                  match txt.splitOn "?>" with
+                  | _ :: rest => String.intercalate "?>" rest
+                  | [] => txt
+                else txt
+              pure (.element tag (ats.filter (fun x => x.name != "file")) [.text txt])
+        | none => pure n
+      else
+        pure (.element tag ats (← cs.mapM (resolveXmlFiles root dir f)))
+    | other => pure other
 
 /-! ## Running -/
 
@@ -323,12 +776,15 @@ structure Tally where
   pass : Nat := 0
   fail : Nat := 0
   unsup : Nat := 0
+  /-- Defective test data (`Harness.Qt4Defective`): not in the total. -/
+  excl : Nat := 0
 deriving Inhabited
 
-def Tally.add (a b : Tally) : Tally := ⟨a.pass + b.pass, a.fail + b.fail, a.unsup + b.unsup⟩
+def Tally.add (a b : Tally) : Tally := ⟨a.pass + b.pass, a.fail + b.fail, a.unsup + b.unsup, a.excl + b.excl⟩
 def Tally.total (t : Tally) : Nat := t.pass + t.fail + t.unsup
 def Tally.show (t : Tally) : String :=
   s!"{t.pass} pass, {t.fail} fail, {t.unsup} unsupported (out of {t.total})"
+    ++ (if t.excl > 0 then s!"; {t.excl} excluded (defective test data)" else "")
 
 structure Opts where
   root : String := "../../third_party/testing/qt4tests"
@@ -344,6 +800,11 @@ structure Opts where
   isolate : Option Nat := none
   progress : Option String := none
   childMode : Bool := false
+  /-- `xpath` (default) or `xquery`. -/
+  lang : String := "xpath"
+  /-- EXPath File 4.0 tests: `memory` (the in-memory file system) or
+      `io` (a copy of the sandpit in a temporary directory). -/
+  fileHost : String := "memory"
 
 def parseArgs : List String → Opts → Opts
   | "--root" :: r :: rest, o => parseArgs rest { o with root := r }
@@ -354,19 +815,149 @@ def parseArgs : List String → Opts → Opts
   | "--isolate" :: n :: rest, o => parseArgs rest { o with isolate := n.toNat? }
   | "--progress" :: f :: rest, o => parseArgs rest { o with progress := some f, childMode := true }
   | "--hang" :: h :: rest, o => parseArgs rest { o with hang := o.hang ++ [h] }
+  | "--lang" :: l :: rest, o => parseArgs rest { o with lang := l }
+  | "--file-host" :: h :: rest, o => parseArgs rest { o with fileHost := h }
   | _ :: rest, o => parseArgs rest o
   | [], o => o
 
+
+/-- The files an XML text names: its system identifiers (`SYSTEM "x"`,
+    `PUBLIC "p" "x"`: the last quoted literal after each `SYSTEM` or
+    `PUBLIC` keyword, up to the next `>`) and the `href` of its XInclude
+    elements. -/
+def xmlSystemIds (txt : String) : List String :=
+  let quoted (upto : String) : Array String :=
+    let a := (upto.splitOn "\"").toArray
+    if a.size ≥ 3 then a else (upto.splitOn "'").toArray
+  let sys := ((txt.splitOn "SYSTEM").drop 1 ++ (txt.splitOn "PUBLIC").drop 1).filterMap (fun p =>
+    let a := quoted ((p.splitOn ">").headD "")
+    if a.size ≥ 3 then some a[a.size - 2]! else none)
+  let hrefs := ((txt.splitOn "href=").drop 1).filterMap (fun p =>
+    let a := quoted ((p.splitOn ">").headD "")
+    if a.size ≥ 3 then some a[1]! else none)
+  sys ++ hrefs
+
+/-- The files a test names by a relative reference in its text (for
+    `fn:unparsed-text`, `fn:json-doc`, `fn:doc`, and external entities
+    under `trust-external`): every run of path characters that names a
+    file under the test suite root, resolved against the test set's
+    directory and the directories of literal paths in the same input.
+    Read in advance because the evaluator does no I/O. Alternate-directory
+    candidates receive only absolute URI keys. Computed resource references
+    still need a resource provider. Only files under the suite root are read. -/
+def scanResources (root dir src : String) : IO (List (String × String) × List (String × ByteArray)) := do
+  let isPathChar (c : Char) := c.isAlphanum || c == '_' || c == '.' || c == '/' || c == '-' || c == '+'
+  let mut toks : List String := []
+  let mut cur : String := ""
+  for c in src.toList ++ [' '] do
+    if isPathChar c then cur := cur.push c
+    else
+      if cur.length > 2 && cur.length < 200 && (cur.splitOn ".").length > 1 && !toks.contains cur then
+        toks := cur :: toks
+      cur := ""
+  let rel := if dir.startsWith (root ++ "/") then (dir.drop (root.length + 1)).toString else dir
+  let mut out : List (String × String) := []
+  let mut bins : List (String × ByteArray) := []
+  for t in toks do
+    let t' := if t.startsWith "file:///" then none else some t
+    let some t := t' | continue
+    let some p := normPath (rel ++ "/" ++ t) | continue
+    let path := root ++ "/" ++ p
+    if ← System.FilePath.pathExists path then
+      if (← System.FilePath.isDir path) then continue
+      match ← readFileSafe path with
+      | some txt =>
+        out := (t, txt) :: out
+        -- the external DTD subset and external entities of a document,
+        -- relative to the document (`SYSTEM "..."`)
+        for sys in xmlSystemIds txt do
+          let key := L4Factoidal.XPath4.siblingRef t sys
+          if (out.lookup key).isNone then
+            let some p2 := normPath (rel ++ "/" ++ key) | continue
+            if ← System.FilePath.pathExists (root ++ "/" ++ p2) then
+              match ← readFileSafe (root ++ "/" ++ p2) with
+              | some t2 => out := (key, t2) :: out
+              | none => pure ()
+      | none => pure ()
+      match ← readBytesSafe path with
+      | some bs => bins := (t, bs) :: bins
+      | none => pure ()
+  -- Inline resources can supply a different base directory. Discover
+  -- directories from literal paths, then preload literal references there.
+  -- No option interpretation or XML/XQuery parsing is performed here.
+  let mut dirs : List String := []
+  for t in toks do
+    if !t.contains '/' then continue
+    let some p := normPath (rel ++ "/" ++ t) | continue
+    let d := dirOf p
+    if dirs.contains d then continue
+    let directory := root ++ "/" ++ d
+    if !(← System.FilePath.pathExists directory) then continue
+    if ← System.FilePath.isDir directory then dirs := dirs ++ [d]
+  let rootAbs := (← IO.FS.realPath root).toString
+  for d in dirs do
+    for t in toks do
+      if t.startsWith "/" || t.startsWith "file:///" then continue
+      let some p := normPath (d ++ "/" ++ t) | continue
+      let file := root ++ "/" ++ p
+      if !(← System.FilePath.pathExists file) then continue
+      if ← System.FilePath.isDir file then continue
+      let absolute := (← IO.FS.realPath file).toString
+      if !absolute.startsWith (rootAbs ++ "/") then continue
+      -- Alternate-directory candidates have only an absolute URI key:
+      -- equal basenames in distinct directories must remain distinct.
+      let key := "file://" ++ absolute
+      if !(out.any (·.1 == key)) then
+        if let some txt ← readFileSafe file then out := out ++ [(key, txt)]
+      if !(bins.any (·.1 == key)) then
+        if let some bytes ← readBytesSafe file then bins := bins ++ [(key, bytes)]
+
+  return (out, bins)
+
 /-- Build the dynamic context for an environment; `none` with a reason
     when it cannot be built. -/
-def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) : IO (Except String Env) := do
+def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool := false) : IO (Except String Env) := do
   if let some why := spec.unsupported then return .error why
-  let mut env : Env := { ns := spec.ns, baseUri := spec.baseUri }
-  for (role, file, uri) in spec.sources do
-    let doc ← match (← cache.get).lookup file with
+  let mut env : Env := { ns := spec.ns, baseUri := if spec.baseUri == "#UNDEFINED" then "" else spec.baseUri,
+                         resourceEncodings := spec.resourceEncodings }
+  if xq then env := env.bind xqMode []
+  if let some c := spec.defaultCollation then env := { env with defaultCollation := c }
+  -- XSD11: the in-scope schema definitions and the validated sources
+  let sch ← if spec.schemas.isEmpty then pure none
+    else pure (some (← L4Factoidal.XSD11.loadSchemaCached (spec.schemas.map (·.2))))
+  match sch with
+  | some s =>
+    if !s.errors.isEmpty then return .error ("schema not valid: " ++ toString (s.errors.take 2))
+    env := { env with schema := L4Factoidal.XSD11.schemaHookOf s }
+  | none =>
+    -- no schema in the environment: the built-in types only (lax validation,
+    -- xsi:type with built-in types, fn:xsd-validator with a schema option)
+    env := { env with schema := L4Factoidal.XSD11.schemaHookOf L4Factoidal.XSD11.Schema.builtinsFn }
+  for (role, file, uri0) in spec.sources do
+    -- a source without a uri gets its file URI as its document URI
+    -- (implementation-defined, F&O 4.0 §2.5)
+    let uri ← if uri0 != "" then pure uri0 else do
+      try pure ("file://" ++ (← IO.FS.realPath file).toString) catch _ => pure ""
+    let doc ← match spec.validated.lookup file, sch with
+      | some mode, some s =>
+        match ← L4Factoidal.XSD11.readDocFile file with
+        | none => pure none
+        | some xd =>
+          let (d, a) := L4Factoidal.XSD11.validatedDoc s xd uri
+          if mode == "strict" && !a.valid then return .error ("source not valid: " ++ toString (a.errors.take 2))
+          pure (some d)
+      | some _, none => return .error "validated source without a schema"
+      | none, _ =>
+      match (← cache.get).lookup file with
       | some d => pure (some d)
       | none =>
-        match ← readFileSafe file with
+        -- the encoding of the source by its XML declaration (ISO-8859-1 sources)
+        let txt? ← match ← readBytesSafe file with
+          | some bs => pure (match L4Factoidal.XML.decodeXmlBytesE bs with
+            | .ok s => some s
+            | .error _ => none)
+          | none => pure none
+        match txt? with
         | none => pure none
         | some txt =>
           match Doc.ofString txt uri with
@@ -378,12 +969,58 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) : IO (Exce
       let idx := env.docs.size
       env := { env with docs := env.docs.push d,
                         docUris := if uri == "" then env.docUris else (uri, idx) :: env.docUris }
-      if role == "." then env := { env with ctx := some [.node ⟨idx, 0⟩], pos := 1, size := 1 }
+      if role == "." then env := { env with ctx := some [.node (NodeRef.mk' idx 0)], pos := 1, size := 1 }
       else if role.startsWith "$" then
-        env := env.bind { uri := "", loc := (role.drop 1).toString } [.node ⟨idx, 0⟩]
+        env := env.bind { uri := "", loc := (role.drop 1).toString } [.node (NodeRef.mk' idx 0)]
+  -- collections (F&O 4.0 §1.7.2): documents are loaded like sources
+  for (curi, srcs, qs) in spec.collections do
+    let mut items : Seq := []
+    let mut uris : List String := []
+    for (file, uri0) in srcs do
+      let uri ← if uri0 != "" then pure uri0 else do
+        try pure ("file://" ++ (← IO.FS.realPath file).toString) catch _ => pure ""
+      let doc ← match (← cache.get).lookup file with
+        | some d => pure (some d)
+        | none =>
+          match ← readFileSafe file with
+          | none => pure none
+          | some txt =>
+            match Doc.ofString txt uri with
+            | .ok d => cache.modify (fun c => (file, d) :: c); pure (some d)
+            | .error _ => pure none
+      match doc with
+      | none => return .error ("collection source not loadable: " ++ file)
+      | some d =>
+        let idx := env.docs.size
+        env := { env with docs := env.docs.push d,
+                          docUris := if uri == "" then env.docUris else (uri, idx) :: env.docUris }
+        items := items ++ [.node (NodeRef.mk' idx 0)]
+        if uri != "" then uris := uris ++ [uri]
+    for q in qs do
+      match evalIn env q with
+      | .ok v => items := items ++ v
+      | .error e => return .error ("collection query: " ++ e.code)
+    env := { env with collections := (curi, items) :: env.collections,
+                      uriCollections := (curi, uris) :: env.uriCollections }
+  env := { env with decimalFormats := spec.decimalFormats }
+  for (uri, file) in spec.resources do
+    match ← readBytesSafe file with
+    | some bs =>
+      env := { env with resourceBytes := (uri, bs) :: env.resourceBytes }
+      if let some txt := String.fromUTF8? bs then
+        env := { env with resources := (uri, txt) :: env.resources }
+    -- a resource whose file is absent is not given to the evaluator (the
+    -- full-text tests name absent stop word lists and thesauri on purpose)
+    | none => pure ()
   for (name, sel) in spec.params do
     match evalIn env sel with
-    | .ok v => env := env.bind { uri := "", loc := name } v
+    | .ok v =>
+      let q : QN := if name.startsWith "Q{" then
+          match (name.drop 2).toString.splitOn "}" with
+          | [u, l] => { uri := u, loc := l }
+          | _ => { uri := "", loc := name }
+        else { uri := "", loc := name }
+      env := env.bind q v
     | .error e => return .error ("param " ++ name ++ ": " ++ e.code)
   if let some sel := spec.ctxSelect then
     match evalIn env sel with
@@ -400,22 +1037,33 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
   let ts := fixXml 100000 d.root
   let dir := dirOf file
   let setName := attrD ts "name"
+  let xq := o.lang == "xquery"
   let setDeps := kidsNamed ts "dependency"
-  let setOk := setDeps.all depOk
+  let setOk := setDeps.all (depOk xq)
   let localEnvs := (kidsNamed ts "environment").filterMap (fun e =>
-    match attr e "name" with | some n => some (n, parseEnv dir e) | none => none)
+    match attr e "name" with | some n => some (n, parseEnv dir e xq) | none => none)
   let mut t : Tally := {}
   let mut fails : List String := []
   for tc in kidsNamed ts "test-case" do
     let name := attrD tc "name"
     if let some pf := o.progress then
-      IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} {name}\n"
+      IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} {name} {t.excl}\n"
     let deps := kidsNamed tc "dependency"
     let specGiven := deps.any (fun x => attrD x "type" == "spec")
     -- a test case's spec dependency replaces the set's
-    let setOk' := if specGiven then (setDeps.filter (fun x => attrD x "type" != "spec")).all depOk else setOk
-    if !(setOk' && deps.all depOk) then
+    let setOk' := if specGiven then (setDeps.filter (fun x => attrD x "type" != "spec")).all (depOk xq) else setOk
+    if !(setOk' && deps.all (depOk xq)) then
       t := { t with unsup := t.unsup + 1 }
+      if o.listFails then
+        let setDeps' := if specGiven then setDeps.filter (fun x => attrD x "type" != "spec") else setDeps
+        let bad := (setDeps' ++ deps).filter (fun x => !depOk xq x)
+        -- a spec dependency first: the case is for another specification
+        let bad := bad.filter (fun x => attrD x "type" == "spec") ++ bad.filter (fun x => attrD x "type" != "spec")
+        let why := match bad.head? with
+          | some x => (if attrD x "satisfied" "true" == "false" then "!" else "") ++
+              attrD x "type" ++ "=" ++ attrD x "value"
+          | none => "dependency"
+        fails := fails ++ [s!"UNSUP {setName}/{name}: dependency {why}"]
       continue
     let envSpec : Option EnvSpec :=
       match (kidsNamed tc "environment").head? with
@@ -423,45 +1071,179 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       | some e =>
         match attr e "ref" with
         | some r => (localEnvs.lookup r).orElse (fun _ => catEnvs.lookup r)
-        | none => some (parseEnv dir e)
-    let some spec := envSpec | do t := { t with unsup := t.unsup + 1 }; continue
-    let some testNode := (kidsNamed tc "test").head? | do t := { t with fail := t.fail + 1 }; continue
-    let src ← match attr testNode "file" with
+        | none => some (parseEnv dir e xq)
+    let some spec := envSpec | do
+      t := { t with unsup := t.unsup + 1 }
+      if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: environment not found"]
+      continue
+    let testNodes := kidsNamed tc "test"
+    let some testNode := testNodes.getLast? | do t := { t with fail := t.fail + 1 }; continue
+    let srcOf (tn : Node) : IO String := do
+      match attr tn "file" with
       | some f => pure ((← readFileSafe (dir ++ "/" ++ f)).getD "")
-      | none => pure testNode.textContent
+      | none => pure tn.textContent
+    let src ← srcOf testNode
+    -- XQuery Update test cases: the queries before the last one run in
+    -- order, each on the documents the one before it left (`update="true"`)
+    let mut before : List String := []
+    for tn in testNodes.dropLast do before := before ++ [← srcOf tn]
     if o.trace then IO.eprintln s!"  test {name}"
     if o.hang.contains name then
       t := { t with fail := t.fail + 1 }
       if o.listFails then fails := fails ++ [s!"FAIL {setName}/{name}: not run (does not terminate in this implementation)"]
       continue
-    match ← buildEnv spec cache with
+    match ← buildEnv spec cache xq with
     | .error why =>
         t := { t with unsup := t.unsup + 1 }
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
     | .ok env =>
-      let res := evalIn env src
+      let env := configureFor (setDeps ++ deps) env
+      let env := (configureUpd (setDeps ++ deps) env).restrictFeatures (featureSettings (setDeps ++ deps))
+      -- External queries use their own file location; inline queries use
+      -- the test-set directory (implementation-defined, XPath 4.0 C.1).
+      -- (`#UNDEFINED`: the test wants the base URI absent)
+      let undefBase := spec.baseUri == "#UNDEFINED"
+      let env ← if env.baseUri != "" || undefBase then pure env else do
+        let location := (attr testNode "file").map (fun f => dir ++ "/" ++ f) |>.getD dir
+        let abs ← try pure (← IO.FS.realPath location).toString catch _ => pure location
+        let suffix := if (attr testNode "file").isSome then "" else "/"
+        pure { env with baseUri := "file://" ++ abs ++ suffix }
+      let (scanned, scannedBins) ← if undefBase then pure ([], []) else do
+        let mut found := ([], [])
+        -- Query references are relative to the query file. Environment
+        -- parameter expressions remain relative to the test-set directory.
+        let inputs := (testNodes.zip (before ++ [src])).map (fun (tn, text) =>
+          ((attr tn "file").map (fun f => dirOf (dir ++ "/" ++ f)) |>.getD dir, text)) ++
+          [(dir, String.intercalate " " (spec.params.map (·.2)))]
+        for (resourceDir, text) in inputs do
+          let (texts, bytes) ← scanResources o.root resourceDir text
+          let physicalDir ← try pure (← IO.FS.realPath resourceDir).toString catch _ => pure resourceDir
+          -- Explicit static bases identify resources logically; fixture files
+          -- still come from this input's physical directory. Otherwise each
+          -- input uses its own directory, never the last query's directory.
+          let inputBase := if spec.baseUri != "" then env.baseUri else "file://" ++ physicalDir ++ "/"
+          let physicalParts := (physicalDir.splitOn "/").filter (· != "")
+          let scopedKey (key : String) : String :=
+            if key.startsWith "file://" then
+              -- Inferred candidates already have canonical physical URI keys.
+              -- Rebase their relative paths into an explicit logical base too.
+              let parts := ((key.drop 7).toString.splitOn "/").filter (· != "")
+              let common := ((physicalParts.zip parts).takeWhile (fun (a, b) => a == b)).length
+              let relative := String.intercalate "/"
+                (List.replicate (physicalParts.length - common) ".." ++ parts.drop common)
+              resolveUri inputBase relative
+            else resolveUri inputBase key
+          found := (found.1 ++ texts.map (fun (key, value) => (scopedKey key, value)),
+                    found.2 ++ bytes.map (fun (key, value) => (scopedKey key, value)))
+        pure found
+      -- Input resources have absolute logical URI keys. A raw alias could
+      -- let a later query read a same-named file from another input's base.
+      let env := { env with resources := env.resources ++ scanned,
+                            resourceBytes := env.resourceBytes ++ scannedBins }
+      -- the files that the source documents name (an XSLT module that a
+      -- source stylesheet includes, for fn:transform), relative to each
+      let mut fromSources : List (String × String) := []
+      for (_, file, _) in spec.sources do
+        if !file.endsWith ".xsl" then continue
+        if let some txt ← readFileSafe file then
+          let (found, _) ← scanResources o.root (dirOf file) txt
+          fromSources := fromSources ++ found.filter (fun (k, _) => !(env.resources.any (·.1 == k)))
+      let env := { env with resources := env.resources ++ fromSources }
+      -- XQuery library modules named by the test case (`import module`)
+      let mut mods : List (String × String) := []
+      for md in kidsNamed tc "module" do
+        match ← readFileSafe (dir ++ "/" ++ attrD md "file") with
+        | some txt => mods := mods ++ [("#module " ++ attrD md "uri", txt)]
+        | none => pure ()
+      -- the files that a module names (fn:doc in a loaded module)
+      let mut fromMods : List (String × String) := []
+      for md in kidsNamed tc "module" do
+        let f := dir ++ "/" ++ attrD md "file"
+        if let some txt ← readFileSafe f then
+          let (found, _) ← scanResources o.root (dirOf f) txt
+          fromMods := fromMods ++ found.filter (fun (k, _) => !(env.resources.any (·.1 == k)))
+      let env := { env with resources := env.resources ++ mods ++ fromMods }
+      -- fn:load-xquery-module through the XQuery 4.0 processor
+      let env := { env with host := L4Factoidal.XQuery4.loadModuleHost env env.host }
+      -- fn:transform through the XSLT 4.0 processor
+      let env := { env with host := L4Factoidal.XSLT4.Qt.transformHost env (fun f a => apply 20000 env f a) env.host }
+      -- the earlier queries of an XQuery Update test case; an error ends the chain
+      let mut chainEnv := env
+      let mut chainErr : Option Err := none
+      -- the later queries of an update test case read the first source
+      -- document (the mutable one) as the context value
+      let ctx0 := env.ctx.isNone && env.docs.size > 0
+      for (b, k) in before.zipIdx do
+        if chainErr.isSome then break
+        let e0 := if k > 0 && ctx0 then { chainEnv with ctx := some [.node (NodeRef.mk' 0 0)], pos := 1, size := 1 } else chainEnv
+        match L4Factoidal.XQueryUpdate.evalUpdQuery b e0 20000 with
+        | .ok (_, e') => chainEnv := { e' with ctx := chainEnv.ctx, pos := chainEnv.pos, size := chainEnv.size }
+        | .error e => chainErr := some e
+      if !before.isEmpty && ctx0 then
+        chainEnv := { chainEnv with ctx := some [.node (NodeRef.mk' 0 0)], pos := 1, size := 1 }
+      let env := chainEnv
+      let (res, env) ← match chainErr, spec.sandpit with
+        | some e, _ => pure (.error e, env)
+        | none, some sp =>
+          -- XQuery mode: a main module with an empty prolog is its body
+          -- (`XQuery4.evalModule_emptyProlog`), given to the file evaluator
+          let xqBody : Option Expr := if !isXqEnv env || (parseXPath4 src env.ns env.schema.declared).isOk then none else
+            match L4Factoidal.XQuery4.parseModule src env.ns (L4Factoidal.XQuery4.typeLoader env 8 []) env.schema.declared env.xml11 with
+            | .ok m => if m.decls.isEmpty && m.imports.isEmpty && m.schemaImports.isEmpty && m.libNs.isNone then m.body else none
+            | .error _ => none
+          match xqBody with
+          | some b => L4Factoidal.EXPath.File.evalSandpitExpr (o.fileHost == "io") sp env b
+          | none => L4Factoidal.EXPath.File.evalSandpit (o.fileHost == "io") sp env src
+        | none, none =>
+          if isXqEnv env then
+            -- XQuery: the assertions see the documents after the updates (fn:put)
+            match L4Factoidal.XQueryUpdate.evalUpdQuery src env 20000 with
+            | .ok (s, e') => pure (.ok s, { e' with ctx := env.ctx, pos := env.pos, size := env.size })
+            | .error e => pure (.error e, env)
+          else pure (evalIn env src, env)
       let some r := (kidsNamed tc "result").head? | do t := { t with fail := t.fail + 1 }; continue
+      let r ← resolveXmlFiles o.root dir 100 r
       match (kids r).head? with
       | none => t := { t with fail := t.fail + 1 }
       | some a =>
-        match checkAssert env res 100 a with
-        | .pass => t := { t with pass := t.pass + 1 }
-        | .fail why =>
+        let bad := match Harness.Qt4Defective.defective.lookup name with
+          | some i => some i
+          | none => if xq then none else Harness.Qt4Defective.defectiveXPath.lookup name
+        -- the query's output declarations; a value error there is the
+        -- query's error (SEPM0016)
+        let (sp, res) := match queryParams env src with
+          | .ok p => (p, res)
+          | .error ex => ({}, (match res with | .error e0 => .error e0 | .ok _ => .error ex))
+        match checkAssert env res sp 100 a, bad with
+        | .pass, none => t := { t with pass := t.pass + 1 }
+        | .pass, some iss =>
+            t := { t with fail := t.fail + 1 }
+            fails := fails ++ [s!"FAIL {setName}/{name}: STALE exclusion: the test passes; remove it from Harness.Qt4Defective in Harness/Qt4Run.lean ({iss})"]
+        | .fail _, some iss =>
+            t := { t with excl := t.excl + 1 }
+            if o.listFails then fails := fails ++ [s!"EXCLUDED {setName}/{name}: defective test data, {iss}"]
+        | .fail why, none =>
             t := { t with fail := t.fail + 1 }
             if o.listFails then fails := fails ++ [s!"FAIL {setName}/{name}: {why}"]
-        | .unsupported _ => t := { t with unsup := t.unsup + 1 }
+        | .unsupported why, _ =>
+            t := { t with unsup := t.unsup + 1 }
+            if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
   if let some pf := o.progress then
-    IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} DONE\n"
+    IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} DONE {t.excl}\n"
   return (setName, t, fails)
 
 /-- Run one test set in a child process with a time limit (an IO loop
     that ends on an outside event: the child exiting, or the clock). -/
 def runIsolated (o : Opts) (secs : Nat) (fam setName file : String) : IO (Tally × String) := do
-  let pf := (← IO.getEnv "TMPDIR").getD "/tmp" ++ "/l4qt4-progress-" ++ setName
+  -- the mode and the process id keep two runs at the same time (XPath
+  -- and XQuery mode) from reading each other's progress files
+  let pf := (← IO.getEnv "TMPDIR").getD "/tmp" ++ "/l4qt4-progress-" ++ o.lang ++ "-" ++
+    toString (← IO.Process.getPID) ++ "-" ++ setName
   IO.FS.writeFile pf ""
-  let mut args : Array String := #["--root", o.root, "--family", fam, "--set", setName, "--progress", pf]
+  let mut args : Array String := #["--root", o.root, "--family", fam, "--set", setName, "--progress", pf, "--lang", o.lang]
   if o.listFails then args := args.push "--list-fails"
   for h in o.hang do args := args ++ #["--hang", h]
+  args := args ++ #["--file-host", o.fileHost]
   let child ← IO.Process.spawn { cmd := (← IO.appPath).toString, args, stdin := .null, stdout := .inherit, stderr := .null }
   let start ← IO.monoMsNow
   let mut finished := false
@@ -478,7 +1260,7 @@ def runIsolated (o : Opts) (secs : Nat) (fam setName file : String) : IO (Tally 
   try IO.FS.removeFile pf catch _ => pure ()
   let parts := line.splitOn " "
   let num (i : Nat) : Nat := ((parts.getD i "0").toNat?).getD 0
-  let t : Tally := ⟨num 0, num 1, num 2⟩
+  let t : Tally := ⟨num 0, num 1, num 2, num 4⟩
   let last := parts.getD 3 ""
   if finished && last == "DONE" then return (t, "")
   -- count the test cases of the set; those not reached are failures
@@ -487,20 +1269,24 @@ def runIsolated (o : Opts) (secs : Nat) (fam setName file : String) : IO (Tally 
       | .ok d => pure (kidsNamed d.root "test-case").length
       | .error _ => pure t.total
     | none => pure t.total
-  let rest := total - t.total
+  let rest := total - t.total - t.excl
   return ({ t with fail := t.fail + rest },
     s!" [TIMEOUT or crash at test {last}: {rest} tests not finished, counted as fail]")
 
 def main (args : List String) : IO UInt32 := do
   let o := parseArgs args {}
-  let fams := if o.families.isEmpty then ["prod", "op", "fn", "map", "array", "math"] else o.families
+  -- XQuery mode also scores `app` and `misc` (use cases, FunctX, ...);
+  -- the XPath mode keeps its six families
+  let fams := if !o.families.isEmpty then o.families
+    else if o.lang == "xquery" then ["prod", "op", "fn", "map", "array", "math", "app", "misc", "ft", "upd"]
+    else ["prod", "op", "fn", "map", "array", "math"]
   let some ctxt ← readFileSafe (o.root ++ "/catalog.xml")
     | IO.eprintln s!"cannot read {o.root}/catalog.xml"; return 2
   let cat ← match parseXML ctxt with
     | .ok d => pure d.root
     | .error _ => IO.eprintln "cannot parse catalog.xml"; return 2
   let catEnvs := (kidsNamed cat "environment").filterMap (fun e =>
-    match attr e "name" with | some n => some (n, parseEnv o.root e) | none => none)
+    match attr e "name" with | some n => some (n, parseEnv o.root e (o.lang == "xquery")) | none => none)
   let cache ← IO.mkRef ([] : List (String × Doc))
   let mut famT : List (String × Tally) := fams.map (fun f => (f, {}))
   let mut total : Tally := {}

@@ -18,8 +18,14 @@ will be linked to from this section"). The tests are:
         strings.
   * one negative case per MUST of §2 (one per `DocError` constructor) and
     one per processing error of §3.5.
+  * the report of `CID.check` (`cidValidate`): codes and JSON Pointers;
+  * `CID.Fetch.step` (`cidRetrieveVerificationMethod`): the private-address
+    guard, the scheme, the `Content-Type` of the answer (issue 1100 item 7),
+    the status, and `now` (§2.2).
 -/
 import L4Factoidal.CID.Retrieve
+import L4Factoidal.CID.Validate
+import L4Factoidal.CID.Fetch
 
 namespace L4Factoidal.CID.Tests
 
@@ -818,5 +824,128 @@ def abcDigest : List UInt8 :=
 #guard acceptHeader == "application/cid, application/cid+json, application/ld+json, application/json"
 #guard Relationship.all.all fun r => Relationship.ofName? r.name == some r
 #guard Relationship.ofName? "proofOfWork" == none
+
+/-! ## The report of `check` (cidValidate) -/
+
+def issuesOf (t : String) : List (String × String) :=
+  (checkText t).issues.map fun i => (i.error.code, i.path)
+
+#guard (checkText ex20).valid && (checkText ex20).issues.isEmpty
+#guard (checkText ex2).valid && (checkText ex22).valid
+#guard !(checkText ex29AsPrinted).valid && issuesOf ex29AsPrinted == [("notJson", "")]
+#guard issuesOf "[1]" == [("notMap", "")]
+-- Every failure, each at its place: a bad id, two bad methods, a bad relationship entry.
+def manyBad : String :=
+  "{\"id\": \"not a url\", \"verificationMethod\": [" ++ goodVm ++ ", " ++
+  "{\"id\": \"https://controller.example#j\", \"type\": \"JsonWebKey\", \"controller\": \"https://controller.example\", \"publicKeyJwk\": {\"kty\": \"OKP\", \"d\": \"x\"}}, " ++
+  "{\"id\": \"https://controller.example#e\", \"type\": \"Multikey\", \"controller\": \"https://controller.example\", \"expires\": \"soon\"}], " ++
+  "\"assertionMethod\": [\"#k\", 3], \"keyAgreement\": []}"
+#guard issuesOf manyBad ==
+  [("idNotUrl", "/id"),
+   ("jwkPrivateMember", "/verificationMethod/1/publicKeyJwk/d"),
+   ("methodExpiresInvalid", "/verificationMethod/2/expires"),
+   ("relationshipEntryInvalid", "/assertionMethod/1"),
+   ("relationshipEmpty", "/keyAgreement")]
+#guard issuesOf "{\"id\": \"https://c.example\", \"service\": [{\"id\": \"#s\", \"type\": \"T\", \"serviceEndpoint\": \"https://e.example\"}, {\"id\": \"https://c.example#s\", \"type\": \"T\", \"serviceEndpoint\": \"https://e.example\"}, {\"type\": 1, \"serviceEndpoint\": \"https://e.example\"}]}"
+  == [("serviceTypeInvalid", "/service/2/type"), ("serviceIdDuplicate", "/service")]
+#guard issuesOf (withVm (goodVm ", \"secretKeyMultibase\": \"z3u2en7t5LR2WtQH5PfsqMDPFSLwhwPvAcp8f5ZH4ZDxM9nT\""))
+  == [("secretMaterial", "/verificationMethod/0/secretKeyMultibase")]
+#guard issuesOf "{\"verificationMethod\": {}}" == [("idMissing", "/id"), ("verificationMethodNotSet", "/verificationMethod")]
+#guard pointerToken "a/b~c" == "a~1b~0c"
+-- The error parseDocument stops at is always listed, and `valid` is its answer.
+#guard [ex1, ex2, ex20, ex22, manyBad, "{}", "[1]", "{\"id\": \"https://c.example\", \"controller\": 7}"].all fun t =>
+  (checkText t).valid == (parseDocumentText t).toBool &&
+  (match parseDocumentText t with
+   | .error e => (checkText t).issues.any (·.error == e)
+   | .ok _ => (checkText t).issues.isEmpty)
+
+/-! ## §3.3 with the host (cidRetrieveVerificationMethod) -/
+
+open L4Factoidal.CID.Fetch in
+def q20 : Fetch.Request :=
+  { vm := "https://controller.example/123#key-456", rel := .authentication }
+
+open L4Factoidal.CID.Fetch in
+def okDoc (ct : String) (body : String := ex20) (status : Nat := 200) : Fetched :=
+  { url := "https://controller.example/123", status, contentType := ct, body }
+
+open L4Factoidal.CID.Fetch in
+def codeOf (q : Fetch.Request) : String :=
+  match step q with
+  | .failure f => f.code
+  | .method _ => "method"
+  | .resolve h => "resolve " ++ h
+  | .fetch u _ a => "fetch " ++ u ++ " " ++ a.getD "-"
+
+-- The engine names each step: resolve, then fetch at the address it chose.
+#guard codeOf q20 == "resolve controller.example"
+#guard codeOf { q20 with resolved := [("controller.example", ["203.0.113.7"])] }
+  == "fetch https://controller.example/123 203.0.113.7"
+#guard (Fetch.step { q20 with resolved := [("controller.example", ["203.0.113.7"])] }) ==
+  .fetch "https://controller.example/123" acceptHeader (some "203.0.113.7")
+-- The guard: a private, loopback or link-local address of the name, a
+-- private literal, a localhost name; http.
+#guard codeOf { q20 with resolved := [("controller.example", ["203.0.113.7", "10.1.2.3"])] } == "FETCH_REFUSED"
+#guard codeOf { q20 with resolved := [("controller.example", ["::1"])] } == "FETCH_REFUSED"
+#guard codeOf { q20 with resolved := [("controller.example", ["169.254.169.254"])] } == "FETCH_REFUSED"
+#guard codeOf { q20 with resolved := [("controller.example", [])] } == "FETCH_REFUSED"
+#guard codeOf { q20 with vm := "https://127.0.0.1/123#key-456" } == "FETCH_REFUSED"
+#guard codeOf { q20 with vm := "https://[fe80::1]/123#key-456" } == "FETCH_REFUSED"
+#guard codeOf { q20 with vm := "https://localhost:8443/123#key-456" } == "FETCH_REFUSED"
+#guard codeOf { q20 with vm := "http://controller.example/123#key-456" } == "FETCH_REFUSED"
+#guard codeOf { q20 with vm := "ftp://controller.example/123#key-456" } == "FETCH_REFUSED"
+-- ... each allowed only by its explicit option.
+#guard codeOf { q20 with resolved := [("controller.example", ["10.1.2.3"])], allowPrivateFetch := true }
+  == "fetch https://controller.example/123 10.1.2.3"
+#guard codeOf { q20 with vm := "https://localhost:8443/123#key-456", allowPrivateFetch := true }
+  == "fetch https://localhost:8443/123 127.0.0.1"
+#guard codeOf { q20 with vm := "http://127.0.0.1:9/123#key-456", allowHttp := true, allowPrivateFetch := true }
+  == "fetch http://127.0.0.1:9/123 127.0.0.1"
+#guard codeOf { q20 with vm := "http://controller.example/123#key-456", allowHttp := true }
+  == "resolve controller.example"
+-- A host that cannot resolve names (a browser page): names pass as they
+-- are; literals and localhost names are still checked.
+#guard codeOf { q20 with resolver := false } == "fetch https://controller.example/123 -"
+#guard codeOf { q20 with resolver := false, vm := "https://192.168.1.1/123#key-456" } == "FETCH_REFUSED"
+#guard codeOf { q20 with resolver := false, vm := "https://localhost/123#key-456" } == "FETCH_REFUSED"
+-- A document passed for a refused URL is not read.
+#guard codeOf { q20 with resolved := [("controller.example", ["10.1.2.3"])], fetched := [okDoc "application/cid"] }
+  == "FETCH_REFUSED"
+-- The answer: status, then Content-Type (item 7), then §3.3.
+def pub : List (String × List String) := [("controller.example", ["203.0.113.7"])]
+#guard codeOf { q20 with resolved := pub, fetched := [okDoc "application/cid"] } == "method"
+#guard ["application/cid", "application/cid+json", "application/ld+json", "application/json",
+        "application/json; charset=utf-8", "APPLICATION/CID"].all fun ct =>
+  codeOf { q20 with resolved := pub, fetched := [okDoc ct] } == "method"
+#guard ["text/html", "", "application/did+json", "text/plain; x=application/cid"].all fun ct =>
+  codeOf { q20 with resolved := pub, fetched := [okDoc ct] } == "UNSUPPORTED_MEDIA_TYPE"
+#guard codeOf { q20 with resolver := false, fetched := [okDoc "application/cid"] } == "method"
+#guard codeOf { q20 with resolved := pub, fetched := [okDoc "application/cid" ex20 404] } == "FETCH_FAILED"
+#guard codeOf { q20 with resolved := pub, fetched := [okDoc "application/cid" ex20 0] } == "FETCH_FAILED"
+#guard codeOf { q20 with resolved := pub, fetched := [okDoc "text/html" ex20 302] } == "FETCH_FAILED"
+#guard codeOf { q20 with resolved := pub, fetched := [okDoc "application/cid" "{"] } == "INVALID_CONTROLLED_IDENTIFIER_DOCUMENT"
+#guard codeOf { q20 with rel := .keyAgreement, resolved := pub, fetched := [okDoc "application/cid"] }
+  == "INVALID_RELATIONSHIP_FOR_VERIFICATION_METHOD"
+#guard codeOf { q20 with vm := "key-456" } == "INVALID_VERIFICATION_METHOD_URL"
+-- §2.2 with `now`: Example 7's first method, named by a relationship.
+def ex7auth : String := r##"{
+  "id": "https://controller.example/123",
+  "authentication": [{
+    "id": "https://controller.example/123#key-456",
+    "type": "Multikey",
+    "controller": "https://controller.example/123",
+    "expires": "2025-12-01T00:00:00Z",
+    "publicKeyMultibase": "z6MkmM42vxfqZQsv4ehtTjFFxQ4sQKS2w6WR7emozFAn5cxu"
+  }]
+}"##
+#guard codeOf { q20 with resolved := pub, fetched := [okDoc "application/cid" ex7auth] } == "method"
+#guard codeOf { q20 with resolved := pub, fetched := [okDoc "application/cid" ex7auth], now := some 1764547199 } == "method"
+#guard codeOf { q20 with resolved := pub, fetched := [okDoc "application/cid" ex7auth], now := some 1764547200 }
+  == "VERIFICATION_METHOD_NOT_IN_FORCE"
+-- Problem objects: §3.5 types for §3.5 errors, tag URIs for the others.
+#guard (Fetch.Failure.processing (.invalidVerificationMethodUrl "x")).problem.getString? "type"
+  == some "https://w3id.org/security#INVALID_VERIFICATION_METHOD_URL"
+#guard (Fetch.Failure.mediaType "https://c.example" "text/html").problem.getString? "type"
+  == some "tag:danbri.github.io,2026:factoidal/cid#UNSUPPORTED_MEDIA_TYPE"
 
 end L4Factoidal.CID.Tests

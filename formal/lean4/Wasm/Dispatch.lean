@@ -58,6 +58,7 @@ import Wasm.Ops.Proof
 import Wasm.Ops.Explain
 import Wasm.Ops.StageList
 import Wasm.Ops.PipelineNodes
+import Wasm.Ops.GraphNodes
 import Wasm.Ops.Handles
 import Wasm.Ops.DatasetFull
 import Wasm.Ops.Pack
@@ -71,15 +72,19 @@ import Wasm.Ops.Authz
 import Wasm.Ops.Toan
 import Wasm.Ops.Xmpp
 import Wasm.Ops.XmppSession
+import Wasm.Ops.XmppClient
 import Wasm.Ops.Crypto
 import Wasm.Ops.Jwe
 import Wasm.Ops.XmlEnc
+import Wasm.Ops.XmlDsig
 import Wasm.Ops.Formats
 import Wasm.Ops.Reasoning
 import Wasm.Ops.QueryExtras
 import Wasm.Ops.ServiceReg
 import Wasm.Ops.Maths
 import Wasm.Ops.Vc
+import Wasm.Ops.Cid
+import Wasm.Ops.Qt4
 import Wasm.Ops.Lenient
 import Wasm.Ops.Validate
 import Wasm.Ops.ShExValidate
@@ -131,6 +136,7 @@ def opNames : List String :=
   , "stageList"
   , "pipelineCheck"
   , "pipelineCheckNodes"
+  , "graphCheckNodes"
   , "toanSummation"
   , "toanProduct"
   , "toanSimplify"
@@ -149,6 +155,8 @@ def opNames : List String :=
   , "jweEncrypt"
   , "xmlDecrypt"
   , "xmlEncrypt"
+  , "xmlVerify"
+  , "xmlSign"
   , "xmppStanzaParse"
   , "ops" ]
 
@@ -189,7 +197,7 @@ def blobIoOpNames : List String :=
   [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit",
     "datasetQuadsBin", "sbm11Query", "sbm11PackFiles",
     "storeManifestInspectBytes", "storeQueryPlanBytes", "storeOpenBytes" ] ++
-  Ops.lwsBlobIoOpNames ++ Ops.webdavBlobIoOpNames
+  Ops.lwsBlobIoOpNames ++ Ops.webdavBlobIoOpNames ++ Ops.xmppWsBlobIoOpNames
 
 /-- Largest out region `blobEcho` builds: 67,108,864 bytes. A count above
 this is refused by name rather than made into an allocation the module
@@ -288,7 +296,8 @@ def handleOpNames : List String :=
   , "datasetFromJsonLd"
   , "datasetToJsonLd"
   , "datasetShexValidate"
-  , "datasetRifEval" ] ++ collectionOpNames
+  , "datasetRifEval"
+  , "datasetMerge" ] ++ collectionOpNames
 
 /-- The store-handle op names (`Wasm/Ops/StoreHandles.lean`), served ONLY by
 `callIO` and `callBlobIO` — the pure `call` cannot reach the store-handle
@@ -361,6 +370,9 @@ def lwsSolidOpNames : List String :=
   , "lwsLoad"
   , "lwsPersist"
   , "lwsRead"
+  , "lwsDirLock"
+  , "lwsAtRestNotice"
+  , "lwsStorageKeyNew"
   , "solidOpen"
   , "solidStep"
   , "solidClose"
@@ -419,13 +431,15 @@ def serviceOpNames : List String :=
   , "clearServiceEndpoints" ]
 
 /-- Stage 2 of https://github.com/danbri/factoidal/issues/713: the matrix and
-sigmoid ops (`Wasm/Ops/Maths.lean`) and the VC and DID ops (`Wasm/Ops/Vc.lean`).
+sigmoid ops (`Wasm/Ops/Maths.lean`), the VC and DID ops (`Wasm/Ops/Vc.lean`),
+the Controlled Identifiers ops (`Wasm/Ops/Cid.lean`, issue 1100) and the
+XPath 4.0, XQuery 4.0 and XSLT 4.0 ops (`Wasm/Ops/Qt4.lean`).
 They are stateless, so `call` serves them and `callIO` reaches them through its
 fall-through to `call`. The names are appended to every `ops` reflection by
 `opsReflectionFor`; the arms are in the fall-through case of `call`. -/
 def stage2OpNames : List String :=
   mathsOpNames ++ vcOpNames ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames ++ termsOpNames
-    ++ literalOpNames
+    ++ literalOpNames ++ cidOpNames ++ qt4OpNames
 
 /-- Serve a stage 2 op of the full table, or answer the unknown-op error.
 `serializeTurtleWith` and `parseDocument` (the lenient parse,
@@ -437,7 +451,15 @@ private def callStage2 (op : String) (args : List String) : String :=
   | none =>
     match callVc op args with
     | some r => r
-    | none => errJson s!"unknown op '{op}'"
+    | none =>
+      -- Controlled Identifiers v1.0 (Wasm/Ops/Cid.lean, issue 1100).
+      match callCid op args with
+      | some r => r
+      | none =>
+        -- XPath 4.0, XQuery 4.0 and XSLT 4.0 (Wasm/Ops/Qt4.lean).
+        match callQt4 op args with
+        | some r => r
+        | none => errJson s!"unknown op '{op}'"
 
 /-- `{"ok":true,"abiVersion":"…","ops":[…],"blobOps":[…],"blobIoOps":[…]}`. -/
 private def opsReflectionFor (names : List String) : String :=
@@ -455,7 +477,7 @@ private def opsReflection : String := opsReflectionFor (opNames ++ formatOpNames
 def opsReflectionIO : String :=
   opsReflectionFor
     (opNames ++ handleOpNames ++ storeHandleOpNames ++ Ops.sbm11OpNames ++ storeServeOpNames ++ packOpNames
-       ++ extOpNames ++ lwsSolidOpNames ++ Ops.authzOpNames ++ Ops.webdavOpNames ++ xmppSessionOpNamesList
+       ++ extOpNames ++ lwsSolidOpNames ++ Ops.authzOpNames ++ Ops.webdavOpNames ++ xmppSessionOpNamesList ++ Ops.xmppClientOpNames
        ++ formatOpNames ++ serviceOpNames
        ++ query12OpNames)
 
@@ -501,6 +523,7 @@ def callUncoded (op : String) (argsJson : String) : String :=
                                   | _ => errJson s!"{op} expects 0 arguments, got {args.length}")
     | "pipelineCheck"        => arity1 op pipelineCheck args
     | "pipelineCheckNodes"   => arity1 op pipelineCheckNodes args
+    | "graphCheckNodes"      => arity1 op graphCheckNodes args
     | "toanSummation"        => arity4 op toanSummation args
     | "toanProduct"          => arity4 op toanProduct args
     | "toanSimplify"         => arity1 op toanSimplify args
@@ -519,6 +542,8 @@ def callUncoded (op : String) (argsJson : String) : String :=
     | "jweEncrypt"           => arity1 op jweEncrypt args
     | "xmlDecrypt"           => arity1 op xmlDecrypt args
     | "xmlEncrypt"           => arity1 op xmlEncrypt args
+    | "xmlVerify"            => arity1 op xmlVerify args
+    | "xmlSign"              => arity1 op xmlSign args
     | "xmppStanzaParse"      => arity1 op xmppStanzaParse args
     -- Format, transform and reasoning ops (`formatOpNames`).
     | "jsonldToRdf"          => arity2 op jsonldToRdf args
@@ -659,6 +684,9 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
       | [a, b, c, d] => Ops.datasetShexValidate a b c d
       | _ => pure (errJson s!"{op} expects 4 arguments, got {args.length}"))
   | "datasetRifEval"   => withArgs (arityIO2 op Ops.datasetRifEval)
+  -- The RDF merge of two stored datasets (`Wasm/Ops/GraphNodes.lean`,
+  -- https://github.com/danbri/factoidal/issues/1130).
+  | "datasetMerge"     => withArgs (arityIO2 op Ops.datasetMergeOp)
   | "storeHandleClose" => withArgs (arityIO1 op Ops.storeHandleClose)
   -- The SPARQL endpoint over a served generation (issue 669). The open
   -- carries a byte region; through this entry it takes the hex descriptor
@@ -704,6 +732,7 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "webdavStep"       => withArgs (arityIO2 op Ops.webdavStep)
   | "webdavResume"     => withArgs (arityIO2 op Ops.webdavResume)
   | "webdavClose"      => withArgs (arityIO1 op Ops.webdavClose)
+  | "webdavUser"       => withArgs (arityIO1 op Ops.webdavUser)
   | "lwsOpen"          => withArgs (arityIO1 op Ops.lwsOpen)
   | "lwsStep"          => withArgs (arityIO2 op Ops.lwsStep)
   | "lwsClose"         => withArgs (arityIO1 op Ops.lwsClose)
@@ -717,6 +746,20 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "lwsFetched"       => withArgs (arityIO2 op Ops.lwsFetched)
   | "lwsDelivered"     => withArgs (arityIO2 op Ops.lwsDelivered)
   | "lwsFlush"         => withArgs (arityIO2 op Ops.lwsFlush)
+  -- One writing process per storage directory and the encryption-at-rest
+  -- notice (https://github.com/danbri/factoidal/issues/1135): pure.
+  | "lwsDirLock"       => withArgs (fun args =>
+      match args with
+      | [a] => pure (Ops.lwsDirLock a)
+      | args => pure (errJson s!"lwsDirLock expects 1 argument, got {args.length}"))
+  | "lwsAtRestNotice"  => withArgs (fun args =>
+      match args with
+      | [a] => pure (Ops.lwsAtRestNotice a)
+      | args => pure (errJson s!"lwsAtRestNotice expects 1 argument, got {args.length}"))
+  | "lwsStorageKeyNew" => withArgs (fun args =>
+      match args with
+      | [a] => pure (Ops.lwsStorageKeyNew a)
+      | args => pure (errJson s!"lwsStorageKeyNew expects 1 argument, got {args.length}"))
   -- A storage kept in files (https://github.com/danbri/factoidal/issues/918):
   -- both carry file bytes, in and out.
   | "lwsLoad" | "lwsPersist" | "lwsRead" =>
@@ -776,8 +819,18 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "xmppSessionFeed"    => withArgs (arityIO2 op Ops.xmppSessionFeed)
   | "xmppSessionDeliver" => withArgs (arityIO2 op Ops.xmppSessionDeliver)
   | "xmppSessionClose"   => withArgs (arityIO1 op Ops.xmppSessionClose)
+  | "xmppSessionTlsUp"   => withArgs (arityIO1 op Ops.xmppSessionTlsUp)
+  | "xmppWsOpen"         => withArgs (arityIO2 op Ops.xmppWsOpen)
   | "xmppRosterGet"      => withArgs (arityIO2 op Ops.xmppRosterGet)
   | "xmppRosterSet"      => withArgs (arityIO3 op Ops.xmppRosterSet)
+  | "xmppStateLoad"      => withArgs (arityIO3 op Ops.xmppStateLoad)
+  -- The outgoing XMPP client stream with HTTP over XMPP (`Wasm/Ops/XmppClient.lean`).
+  | "xmppClientOpen"     => withArgs (arityIO1 op Ops.xmppClientOpen)
+  | "xmppClientFeed"     => withArgs (arityIO2 op Ops.xmppClientFeed)
+  | "xmppClientAnswer"   => withArgs (arityIO3 op Ops.xmppClientAnswer)
+  | "xmppClientClose"    => withArgs (arityIO1 op Ops.xmppClientClose)
+  | "xmppClientRequest"  => withArgs (arityIO3 op Ops.xmppClientRequest)
+  | "xmppClientTick"     => withArgs (arityIO2 op Ops.xmppClientTick)
   | "storeHandleList" =>
       withArgs (fun args =>
         match args with
@@ -925,6 +978,23 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a, b] => Ops.webdavStepWith a b (some blob)
       | .ok args   => pure (errJson s!"webdavStep expects 2 arguments, got {args.length}",
                             ByteArray.empty)
+  -- XMPP over WebSocket (`Wasm/Ops/XmppSession.lean`): IN is what the
+  -- socket read, OUT what the host writes.
+  | "xmppWsFeed" =>
+      match decodeArgs argsJson with
+      | .error e => pure (errJson e, ByteArray.empty)
+      | .ok [a]  => Ops.xmppWsFeedWith a blob
+      | .ok args => pure (errJson s!"xmppWsFeed expects 1 argument, got {args.length}", ByteArray.empty)
+  | "xmppWsDeliver" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.xmppWsDeliverWith a b
+      | .ok args   => pure (errJson s!"xmppWsDeliver expects 2 arguments, got {args.length}", ByteArray.empty)
+  | "xmppWsClose" =>
+      match decodeArgs argsJson with
+      | .error e => pure (errJson e, ByteArray.empty)
+      | .ok [a]  => Ops.xmppWsCloseWith a
+      | .ok args => pure (errJson s!"xmppWsClose expects 1 argument, got {args.length}", ByteArray.empty)
   | "webdavResume" =>
       match decodeArgs argsJson with
       | .error e   => pure (errJson e, ByteArray.empty)
@@ -1153,5 +1223,24 @@ private def refusesNow (bad : String) : Bool :=
   "expects 1 or 2 arguments"
 #guard dispatchHas (callBlob "storeQuery" (pureArgs ["00", "ASK {}"]) ByteArray.empty)
   "expects 3 or 4 arguments"
+
+-- XPath 4.0, XQuery 4.0 and XSLT 4.0 (Wasm/Ops/Qt4.lean): the full table
+-- serves them; an error carries the QT4 error code; an external resource is
+-- refused with the specification's error code (no I/O).
+#guard dispatchHas (call "xpath4Eval" (pureArgs ["<r><a/><a/></r>", "count(//a)"]))
+  "\"items\":[{\"type\":\"xs:integer\",\"value\":\"2\"}]"
+#guard dispatchHas (call "xpath4Eval" (pureArgs ["", "1 +"])) "\"qtError\":{\"code\":\"XPST0003\""
+#guard dispatchHas (call "xpath4Eval" (pureArgs ["", "doc('https://example.org/a.xml')"]))
+  "\"qtError\":{\"code\":\"FODC0002\""
+#guard dispatchHas (call "xqueryEval" (pureArgs ["for $x in 1 to 3 return $x * 2"])) "\"adaptive\":\"2\\n4\\n6\""
+#guard dispatchHas (call "xqueryEval"
+    (pureArgs ["import module namespace m = 'urn:m' at 'https://example.org/m.xq'; m:f()", ""]))
+  "\"qtError\":{\"code\":\"XQST0059\""
+#guard dispatchHas (call "xslt4Transform" (pureArgs
+    ["<xsl:stylesheet version='3.0' xmlns:xsl='http://www.w3.org/1999/XSL/Transform'><xsl:import href='https://example.org/a.xsl'/></xsl:stylesheet>", "<r/>"]))
+  "\"qtError\":{\"code\":\"XTSE0165\""
+#guard dispatchHas (call "xpath4Eval" (pureArgs ["<a/>"])) "expects 2 arguments"
+#guard (call "xpath4Eval" (pureArgs ["", "1 +"])).startsWith "{\"ok\":false,\"error\":\"xpath4Eval: err:XPST0003"
+#guard qt4OpNames.all (fun o => !dispatchHas (call o "[]") "unknown op")
 
 end L4Wasm

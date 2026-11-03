@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Generate formal/lean4/L4Factoidal/XPath4/UcaData.lean from the Default
+Unicode Collation Element Table (DUCET, allkeys.txt of UCA 16.0.0,
+https://www.unicode.org/Public/UCA/16.0.0/allkeys.txt) and the Unicode
+Character Database file UnicodeData.txt (16.0.0).
+
+    python3 tools/xpath4/gen-uca-data.py allkeys.txt UnicodeData.txt \
+        > formal/lean4/L4Factoidal/XPath4/UcaData.lean
+
+What the generated module holds:
+
+* every DUCET entry, except the entries whose characters have a canonical
+  decomposition (UTS #10 S1.1 normalizes the input to NFD first, so these
+  entries are never looked up);
+* runs of consecutive code points whose single collation elements share
+  the variable flag, secondary and tertiary weight and have consecutive
+  primary weights are written as one record (`CP+N:CE`);
+* the implicit-weight ranges of the file (`@implicitweights`), and the
+  Unified_Ideograph ranges (the `CJK Ideograph` ranges of UnicodeData.txt
+  plus the twelve unified ideographs of the CJK Compatibility Ideographs
+  block) for UTS #10 §10.1.3;
+* the last primary weight of the space, punctuation, symbol and currency
+  groups (for the `maxVariable` parameter).
+
+Record syntax: `KEY:CE|CE...;` where KEY is one hex code point, `CP+N`
+(N more code points, primaries incremented by one per code point), or
+several hex code points separated by spaces (a contraction). A CE is
+`[*]P[.S[.T]]` in hex; S defaults to 20 and T to 2; `*` marks a variable
+collation element.
+"""
+import re
+import sys
+
+allkeys, unicodedata = sys.argv[1], sys.argv[2]
+
+ent = {}
+implicit = []
+version = None
+for line in open(allkeys, encoding='utf-8'):
+    raw = line.rstrip('\n')
+    if raw.startswith('@version'):
+        version = raw.split()[1]
+        continue
+    if raw.startswith('@implicitweights'):
+        body = raw.split(None, 1)[1].split('#')[0]
+        rng, base = body.split(';')
+        lo, hi = rng.strip().split('..')
+        implicit.append((int(lo, 16), int(hi, 16), int(base.strip(), 16)))
+        continue
+    body = raw.split('#')[0].strip()
+    if not body or body.startswith('@'):
+        continue
+    k, v = body.split(';')
+    cps = tuple(int(x, 16) for x in k.split())
+    ces = re.findall(r'\[([.*])([0-9A-F]{4})\.([0-9A-F]{4})\.([0-9A-F]{4})\]', v)
+    ent[cps] = [(m == '*', int(p, 16), int(s, 16), int(t, 16)) for m, p, s, t in ces]
+
+canon = set()
+gc = {}
+ideo = []
+first = None
+for line in open(unicodedata, encoding='utf-8'):
+    f = line.rstrip('\n').split(';')
+    cp = int(f[0], 16)
+    gc[cp] = f[2]
+    if f[5] and not f[5].startswith('<'):
+        canon.add(cp)
+    if f[1].startswith('<CJK Ideograph') and f[1].endswith('First>'):
+        first = cp
+    elif f[1].startswith('<CJK Ideograph') and f[1].endswith('Last>'):
+        ideo.append((first, cp))
+compat_unified = [0xFA0E, 0xFA0F, 0xFA11, 0xFA13, 0xFA14, 0xFA1F, 0xFA21,
+                  0xFA23, 0xFA24, 0xFA27, 0xFA28, 0xFA29]
+for c in compat_unified:
+    ideo.append((c, c))
+ideo.sort()
+
+
+def cefmt(e):
+    v, p, s, t = e
+    r = ('*' if v else '') + '%X' % p
+    if s != 0x20 or t != 2:
+        r += '.%X' % s
+        if t != 2:
+            r += '.%X' % t
+    return r
+
+
+recs = []
+singles = sorted(k[0] for k in ent if len(k) == 1 and k[0] not in canon)
+i = 0
+while i < len(singles):
+    c = singles[i]
+    e = ent[(c,)]
+    j = i
+    if len(e) == 1:
+        while j + 1 < len(singles) and singles[j + 1] == singles[j] + 1 and len(ent[(singles[j + 1],)]) == 1:
+            a = ent[(singles[j],)][0]
+            b = ent[(singles[j + 1],)][0]
+            if b[0] == a[0] and b[2:] == a[2:] and b[1] == a[1] + 1 and a[1] != 0:
+                j += 1
+            else:
+                break
+    n = j - i
+    recs.append('%X%s:%s' % (c, ('+%X' % n) if n else '', '|'.join(cefmt(x) for x in e)))
+    i = j + 1
+multi = sorted(k for k in ent if len(k) > 1 and not any(c in canon for c in k))
+for k in multi:
+    recs.append(' '.join('%X' % c for c in k) + ':' + '|'.join(cefmt(x) for x in ent[k]))
+maxlen = max(len(k) for k in multi)
+
+# group tops (UTS #35 reorder groups space < punct < symbol < currency < digit)
+pts = []
+for k, v in ent.items():
+    if len(k) == 1 and v and v[0][1] != 0:
+        pts.append((v[0][1], v[0][0], gc.get(k[0], 'Cn')))
+zero = ent[(0x30,)][0][1]
+vp = [p for p, var, g in pts if var and g.startswith('P')]
+top_space = max(p for p, var, g in pts if var and g[0] in 'CZ' and p < min(vp))
+top_punct = max(vp)
+top_symbol = max(p for p, var, g in pts if var)
+top_currency = max(p for p, var, g in pts if g == 'Sc' and not var and p < zero)
+assert top_space < top_punct < top_symbol < top_currency < zero
+
+data = ';'.join(recs)
+chunks = [data[k:k + 200] for k in range(0, len(data), 200)]
+
+
+def lean_str(s):
+    return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+out = []
+out.append('/-')
+out.append('L4Factoidal.XPath4.UcaData — generated by tools/xpath4/gen-uca-data.py from the')
+out.append('Default Unicode Collation Element Table of UCA %s (allkeys.txt) and the' % version)
+out.append('Unicode Character Database 16.0.0 (UnicodeData.txt). Do not edit by hand.')
+out.append('')
+out.append('Coverage: every DUCET entry except those of characters with a canonical')
+out.append('decomposition (the collation algorithm normalizes to NFD first, so they are')
+out.append('never looked up): %d entries in %d records, %d of them contractions.' % (
+    sum(1 for k in ent if not any(c in canon for c in k)), len(recs), len(multi)))
+out.append('-/')
+out.append('namespace L4Factoidal.XPath4.UcaData')
+out.append('')
+out.append('/-- The UCA version of the table. -/')
+out.append('def ucaVersion : String := %s' % lean_str(version))
+out.append('')
+out.append('/-- The longest contraction, in code points. -/')
+out.append('def maxContraction : Nat := %d' % maxlen)
+out.append('')
+out.append('/-- The last primary weight of the space, punctuation, symbol and currency')
+out.append('    groups. -/')
+out.append('def topSpace : Nat := 0x%X' % top_space)
+out.append('def topPunct : Nat := 0x%X' % top_punct)
+out.append('def topSymbol : Nat := 0x%X' % top_symbol)
+out.append('def topCurrency : Nat := 0x%X' % top_currency)
+out.append('')
+out.append('/-- `@implicitweights` ranges: (first, last, base). -/')
+out.append('def implicitRanges : List (Nat × Nat × Nat) := [%s]' % ', '.join(
+    '(0x%X, 0x%X, 0x%X)' % r for r in implicit))
+out.append('')
+out.append('/-- Unified_Ideograph ranges: (first, last). -/')
+out.append('def unifiedIdeographs : List (Nat × Nat) := [%s]' % ', '.join(
+    '(0x%X, 0x%X)' % r for r in ideo))
+out.append('')
+out.append('/-- The DUCET records (syntax in the generator\'s header). -/')
+out.append('def ducetText : String := String.join [')
+out.append(',\n'.join('  ' + lean_str(c) for c in chunks))
+out.append('  ]')
+out.append('')
+out.append('end L4Factoidal.XPath4.UcaData')
+print('\n'.join(out))

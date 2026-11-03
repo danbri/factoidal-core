@@ -37,6 +37,26 @@ def localSpace : String := "http://www.w3.org/2007/rif#local"
 def xsdNs : String := "http://www.w3.org/2001/XMLSchema#"
 def rdfNs : String := "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 
+/-- The symbol space that marks one NAMED ARGUMENT of a RIF-BLD uniterm
+    (RIF BLD 2013 §2.1, "Terms" item 5). `p(a->1 b->2)` is stored as the
+    positional uniterm `p(a<1> b<2>)` whose arguments are
+    `.fapp name namedArgSpace [value]`, sorted by name: BLD gives named
+    arguments bag semantics (§3.2, `I_psma`), so the order the document
+    writes them in is not part of the term. The space contains `>`,
+    which no RIF-PS constant can contain (the tokenizer ends an IRI at
+    `>`), so no document can write a constant in it. -/
+def namedArgSpace : String := "rif-bld:named-argument>"
+
+/-- The symbol space of an OPEN LIST `List(t1 … tn | tail)` (RIF BLD
+    2013 §2.1, "Terms" item 4), stored as
+    `.fapp "List" openListSpace [t1, …, tn, tail]`. A tail that is a
+    closed list is folded into a closed list, so `List(a | List(b))` and
+    `List(a b)` are one term. Same `>` argument as `namedArgSpace`. -/
+def openListSpace : String := "rif-bld:open-list>"
+
+/-- The marker the argument parser leaves for `| tail`. -/
+def openTailSpace : String := "rif-bld:open-tail>"
+
 /-- A GROUND term: a constant in a symbol space, or a list. -/
 inductive GTerm where
   | const (lex : String) (space : String)

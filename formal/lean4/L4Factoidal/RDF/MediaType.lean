@@ -126,7 +126,18 @@ def nameWithoutQuery (name : String) : String :=
 fragment. The media type wins when there is one; an unknown media type does not
 fall back to the name. -/
 def syntaxOfNames (mediaType name : String) : Option RdfFormat :=
-  formatOfDocument mediaType (nameWithoutQuery name)
+  match formatOfDocument mediaType (nameWithoutQuery name) with
+  | some f => some f
+  | none =>
+    -- With no media type and no registered extension: `.owl` is RDF/XML, as
+    -- Jena's RDFLanguages.filenameToLang has it (owner decision 2026-10-27,
+    -- D6 B). `.owl` is not registered for RDF/XML; `formatOfDocument`, and so
+    -- the proved `decodeStage`, keep to the registrations.
+    if mediaTypeEssence mediaType = "" then
+      match (System.FilePath.mk (nameWithoutQuery name)).extension with
+      | some ext => if ext.toLower == "owl" then some .rdfxml else none
+      | none => none
+    else none
 
 #guard syntaxOfNames "" "data.ttl" == some .turtle
 #guard syntaxOfNames "" "/tmp/x/DATA.NQ" == some .nquads
@@ -136,7 +147,10 @@ def syntaxOfNames (mediaType name : String) : Option RdfFormat :=
 #guard syntaxOfNames "" "a.nt" == some .nt
 #guard syntaxOfNames "" "data.unknown" == none
 #guard syntaxOfNames "" "data" == none
-#guard syntaxOfNames "" "a.owl" == none
+#guard syntaxOfNames "" "a.owl" == some .rdfxml
+#guard syntaxOfNames "" "http://e/ONTO.OWL#x" == some .rdfxml
+#guard syntaxOfNames "text/plain" "a.owl" == none
+#guard syntaxOfNames "" "a.xml" == none
 #guard syntaxOfNames "text/turtle; charset=utf-8" "a.nt" == some .turtle
 #guard syntaxOfNames "Application/N-Quads" "" == some .nquads
 #guard syntaxOfNames "text/plain" "a.ttl" == none

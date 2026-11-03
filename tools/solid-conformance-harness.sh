@@ -83,6 +83,7 @@ cleanup() {
 trap cleanup EXIT
 
 node npm/factoidal/bin/factoidal.mjs solid-serve "$(mktemp -d)" --port 0 --insecure-no-auth \
+  --allow-host host.docker.internal \
   > "$PORT_FILE" 2> "$SERVER_LOG" &
 SERVER_PID=$!
 
@@ -104,6 +105,8 @@ echo "solid-conformance-harness: our Solid server is at $ORIGIN"
 
 # The container reaches the host's ephemeral port through the Docker
 # host gateway; the tests directory and the report directory are mounted.
+# The server answers Host host.docker.internal because it was started with
+# --allow-host host.docker.internal (https://github.com/danbri/factoidal/issues/1124).
 HOST_ORIGIN="$(printf '%s' "$ORIGIN" | sed 's#127\.0\.0\.1#host.docker.internal#')"
 
 RC=0

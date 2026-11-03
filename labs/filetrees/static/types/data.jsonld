@@ -1,0 +1,6 @@
+{
+  "@context": {"@vocab": "https://schema.org/"},
+  "@id": "https://example.org/ada",
+  "@type": "Person",
+  "name": "Ada Lovelace"
+}

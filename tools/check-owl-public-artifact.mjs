@@ -10,19 +10,44 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
 const PREFIX = 'OWL_ARTIFACT_CASE=';
-const IDS = [
-  'empty', 'annotation-domain', 'annotation-plus-real-clash', 'same-different',
-  'same-chain', 'top-below-bottom', 'generated-looking-source-name', 'class-individual-punning',
-  'unsupported-equivalence-contradiction', 'unsupported-import', 'unsupported-negative-property',
-  'named-contradiction-is-outside-default', 'default-clash-with-named-data',
-  'default-annotation-with-named-clash', 'named-declaration-does-not-classify-default',
-  'zero-search-fuel', 'malformed-options', 'rdf12-refusal', 'named-rdf12-preflight', 'parse-error',
+// The expected verdict of each case of tools/check-owl-public-boundary.py,
+// pinned here so a changed source inventory fails this tool until it is
+// reviewed: [id, ok, consistent, reason prefix]. Since issue 960
+// (https://github.com/danbri/factoidal/issues/960) a checked finite model
+// gives consistent true with reason ''.
+const EXPECTED = [
+  ['empty', true, true, ''],
+  ['annotation-domain', true, true, ''],
+  ['annotation-plus-real-clash', true, false, ''],
+  ['same-different', true, false, ''],
+  ['same-chain', true, false, ''],
+  ['top-below-bottom', true, false, ''],
+  ['generated-looking-source-name', true, true, ''],
+  ['class-individual-punning', true, true, ''],
+  ['unsupported-equivalence-contradiction', true, null, 'unsupported-syntax'],
+  ['unsupported-import', true, null, 'unsupported-syntax'],
+  ['unsupported-negative-property', true, null, 'unsupported-syntax'],
+  ['named-contradiction-is-outside-default', true, true, ''],
+  ['default-clash-with-named-data', true, false, ''],
+  ['default-annotation-with-named-clash', true, true, ''],
+  ['named-declaration-does-not-classify-default', true, null, 'unsupported-syntax'],
+  ['zero-search-fuel', true, false, ''],
+  ['malformed-options', true, false, ''],
+  ['rdf12-refusal', false, null, ''],
+  ['named-rdf12-preflight', false, null, ''],
+  ['parse-error', false, null, ''],
+  ['cyclic-some-values-from', true, true, ''],
+  ['cyclic-some-values-from-fuel-one', true, null, 'budget-out'],
+  ['some-values-from-witness-clash', true, false, ''],
 ];
-const FALSE_IDS = new Set(['annotation-plus-real-clash', 'same-different', 'same-chain',
-  'top-below-bottom', 'default-clash-with-named-data', 'zero-search-fuel', 'malformed-options']);
-const ERROR_IDS = new Set(['rdf12-refusal', 'named-rdf12-preflight', 'parse-error']);
-const UNSUPPORTED_IDS = new Set(['unsupported-equivalence-contradiction', 'unsupported-import',
-  'unsupported-negative-property', 'named-declaration-does-not-classify-default']);
+const IDS = EXPECTED.map(e => e[0]);
+const EXPECT = new Map(EXPECTED.map(([id, ok, consistent, reason]) => [id, { ok, consistent, reason }]));
+// Cases whose public-API result is a known defect: each is an expected
+// failure, and the run fails when one passes (the issue is then fixed).
+const KNOWN_DEFECTS = new Map([
+  ['rdf12-refusal', 'https://github.com/danbri/factoidal/issues/1118'],
+  ['named-rdf12-preflight', 'https://github.com/danbri/factoidal/issues/1118'],
+]);
 const digest = data => createHash('sha256').update(data).digest('hex');
 
 function inventory(path) {
@@ -35,11 +60,10 @@ function inventory(path) {
     assert.equal(typeof c.input, 'string');
     assert.equal(typeof c.options, 'string');
     assert.equal(c.passed, true);
-    assert.equal(c.expectedOk, !ERROR_IDS.has(c.id));
-    assert.equal(c.expectedConsistent, FALSE_IDS.has(c.id) ? false : null);
-    const reason = UNSUPPORTED_IDS.has(c.id) ? 'unsupported-syntax' :
-      FALSE_IDS.has(c.id) || ERROR_IDS.has(c.id) ? '' : 'incomplete-search';
-    assert.equal(c.expectedReasonPrefix, reason);
+    const e = EXPECT.get(c.id);
+    assert.equal(c.expectedOk, e.ok, `${c.id}: ok`);
+    assert.equal(c.expectedConsistent, e.consistent, `${c.id}: consistent`);
+    assert.equal(c.expectedReasonPrefix, e.reason, `${c.id}: reason`);
   }
   return report.cases;
 }
@@ -68,10 +92,15 @@ async function child(pkg, casesPath, id) {
     observed.lowLevel = low;
     assert.equal(low.ok, c.expectedOk);
     if (c.expectedOk) {
-      assert.deepEqual(Object.keys(low).sort(), ['consistent', 'ok', 'reason']);
+      // Since issue 960 a consistent answer (a checked finite model) has no
+      // reason; false and null carry one.
+      const keys = c.expectedConsistent === true ? ['consistent', 'ok'] : ['consistent', 'ok', 'reason'];
+      assert.deepEqual(Object.keys(low).sort(), keys);
       assert.equal(low.consistent, c.expectedConsistent);
-      assert.equal(typeof low.reason, 'string');
-      assert(low.reason.startsWith(c.expectedReasonPrefix));
+      if (c.expectedConsistent !== true) {
+        assert.equal(typeof low.reason, 'string');
+        assert(low.reason.startsWith(c.expectedReasonPrefix));
+      }
     } else {
       assert(dispatchFailure, 'loader must throw for an error envelope');
       // main's ErrorModel adds dispatch metadata; the raw producer theorem
@@ -89,7 +118,9 @@ async function child(pkg, casesPath, id) {
       if (c.expectedOk) {
         const answer = await api.owlIsConsistent(c.input, opts);
         observed.publicApi = answer;
-        assert.deepEqual(answer, { consistent: low.consistent, reason: low.reason });
+        const expected = { consistent: low.consistent };
+        if ('reason' in low) expected.reason = low.reason;
+        assert.deepEqual(answer, expected);
       } else {
         let failure;
         try { await api.owlIsConsistent(c.input, opts); } catch (error) { failure = error; }
@@ -150,6 +181,11 @@ async function main() {
       assert(bytes.length > 0, `empty artifact: ${file}`);
       report.artifact[file] = { bytes: bytes.length, sha256: digest(bytes) };
     }
+    // The runner-control package of test-owl-public-artifact.mjs declares
+    // itself synthetic and has no engine, so it has no known defects.
+    const synthetic = JSON.parse(readFileSync(join(pkg, 'package.json'), 'utf8')).synthetic === true;
+    const knownDefects = synthetic ? new Map() : KNOWN_DEFECTS;
+    report.knownDefects = Object.fromEntries(knownDefects);
     const env = { ...process.env, FACTOIDAL_L4_ASSETS: join(pkg, 'l4-assets') };
     for (const c of cases) {
       const run = spawnSync(process.execPath, [SELF, '--child', pkg, casesPath, c.id],
@@ -157,14 +193,19 @@ async function main() {
       const lines = (run.stdout || '').split('\n').filter(line => line.startsWith(PREFIX));
       let observed;
       if (lines.length === 1) observed = JSON.parse(lines[0].slice(PREFIX.length));
-      const passed = !run.error && run.status === 0 && observed?.id === c.id && observed?.status === 'pass';
-      report.cases.push({ id: c.id, passed, observed, exitCode: run.status, signal: run.signal,
-        error: run.error?.message, stdout: run.stdout, stderr: run.stderr });
+      const ran = !run.error && run.status === 0 && observed?.id === c.id && observed?.status === 'pass';
+      const knownDefect = knownDefects.get(c.id);
+      // A known defect passes the run while it still fails; when it passes,
+      // the expected failure is stale and the run fails.
+      const passed = knownDefect ? !ran && observed?.status === 'error' : ran;
+      report.cases.push({ id: c.id, passed, knownDefect, stale: knownDefect ? ran : undefined, observed,
+        exitCode: run.status, signal: run.signal, error: run.error?.message, stdout: run.stdout, stderr: run.stderr });
     }
     report.status = report.cases.every(c => c.passed) ? 'pass' : 'fail';
   } catch (error) { report.error = String(error.stack || error); }
   writeFileSync(output, JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });
-  console.log(`OWL public artifact: ${report.status}; ${report.cases.filter(c => c.passed).length}/${report.cases.length} cases`);
+  const xfail = report.cases.filter(c => c.knownDefect && c.passed).length;
+  console.log(`OWL public artifact: ${report.status}; ${report.cases.filter(c => c.passed).length}/${report.cases.length} cases (${xfail} expected failures)`);
   console.log(`Evidence: ${output}`);
   process.exitCode = report.status === 'pass' ? 0 : report.status === 'fail' ? 1 : 2;
 }

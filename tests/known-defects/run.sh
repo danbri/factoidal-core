@@ -1001,6 +1001,29 @@ else
 fi
 
 # ---------------------------------------------------------------------
+# N3-1 (https://github.com/danbri/factoidal/issues/1172) -- no theorem says
+# that the N3 reader on Turtle text gives the Turtle reader's graph. The
+# agreement is measured only (`turtle-agreement` lines of tests/n3/run.sh).
+# This probe reads the SOURCE: XFAIL while neither `parseN3_turtle11` (RDF 1.1
+# Turtle) nor `parseN3_turtle12` (RDF 1.2 Turtle) is declared under
+# formal/lean4/L4Factoidal/N3. When both exist this reads XPASS: retire the
+# case and close issue 1172 in the same commit. One of the two is not enough.
+# ---------------------------------------------------------------------
+if [ ! -f "${LEAN_SRC}/L4Factoidal/N3/Parser.lean" ]; then
+  record N3-1 1172 "N3 reader = Turtle reader on Turtle text has no theorem" ERROR \
+    "formal/lean4/L4Factoidal/N3/Parser.lean not found"
+elif grep -rqE '^[[:space:]]*(@\[[^]]*\][[:space:]]*)?theorem[[:space:]]+([A-Za-z0-9_.]*\.)?parseN3_turtle11\b' \
+       "${LEAN_SRC}/L4Factoidal/N3" --include='*.lean' \
+     && grep -rqE '^[[:space:]]*(@\[[^]]*\][[:space:]]*)?theorem[[:space:]]+([A-Za-z0-9_.]*\.)?parseN3_turtle12\b' \
+       "${LEAN_SRC}/L4Factoidal/N3" --include='*.lean'; then
+  record N3-1 1172 "N3 reader = Turtle reader on Turtle text has no theorem" XPASS \
+    "theorems parseN3_turtle11 and parseN3_turtle12 now exist"
+else
+  record N3-1 1172 "N3 reader = Turtle reader on Turtle text has no theorem" XFAIL \
+    "no parseN3_turtle11 / parseN3_turtle12 theorem under formal/lean4/L4Factoidal/N3 (agreement measured only)"
+fi
+
+# ---------------------------------------------------------------------
 # SF-1 to SF-4 (https://github.com/danbri/factoidal/issues/826) -- the
 # strict chunked parse (formal/lean4/L4Factoidal/Syntax/StrictFeed.lean,
 # https://github.com/danbri/factoidal/issues/813) has three equalities with

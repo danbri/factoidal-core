@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<t:test expected="pass"
+        xmlns:t="http://xproc.org/ns/testsuite/3.0">
+   <t:info>
+      <t:title>NW Viewport 005</t:title>
+      <t:revision-history>
+         <t:revision>
+            <t:date>2026-05-01</t:date>
+            <t:author>
+               <t:name>Norm Tovey-Walsh</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Initial publication</p>
+            </t:description>
+         </t:revision>
+      </t:revision-history>
+   </t:info>
+   <t:description xmlns="http://www.w3.org/1999/xhtml">
+      <p>Test that matched text nodes, comments, and processing instructions
+      are wrapped in document nodes. H/t @galtm for the test case.</p>
+   </t:description>
+<t:pipeline>
+<p:declare-step version="3.0"
+                xmlns:p="http://www.w3.org/ns/xproc"
+                xmlns:ex="http://example.com/sample">
+  <p:output port="result"/>
+
+  <p:identity name="input">
+    <p:with-input>
+      <doc>ABC<!--ABC--><?ABC?></doc>
+    </p:with-input>
+  </p:identity>
+  
+  <p:viewport name="comment" match="/doc/comment()">
+    <p:identity>
+      <p:with-input>
+        <ex:comment unwrapped="{. instance of text()}"
+                    wrapped="{. instance of document-node()}"/>
+      </p:with-input>
+    </p:identity>
+  </p:viewport>
+
+  <p:viewport name="pi" match="/doc/processing-instruction()">
+    <p:with-input pipe="result@input"/>
+    <p:identity>
+      <p:with-input>
+        <ex:processing-instruction unwrapped="{. instance of processing-instruction()}"
+                                   wrapped="{. instance of document-node()}"/>
+      </p:with-input>
+    </p:identity>
+  </p:viewport>
+
+  <p:viewport name="text" match="/doc/text()">
+    <p:with-input pipe="result@input"/>
+    <p:identity>
+      <p:with-input>
+        <ex:text unwrapped="{. instance of text()}"
+                 wrapped="{. instance of document-node()}"/>
+      </p:with-input>
+    </p:identity>
+  </p:viewport>
+
+  <p:viewport name="element" match="/doc">
+    <p:with-input pipe="result@input"/>
+    <p:identity>
+      <p:with-input>
+        <ex:element unwrapped="{. instance of element()}"
+                    wrapped="{. instance of document-node()}"/>
+      </p:with-input>
+    </p:identity>
+  </p:viewport>
+
+  <p:wrap-sequence wrapper="ex:results">
+    <p:with-input pipe="result@comment result@pi result@text result@element"
+                  select="//ex:*"/>
+  </p:wrap-sequence>
+</p:declare-step>
+</t:pipeline>
+
+<t:schematron>
+  <s:schema queryBinding="xslt2"
+            xmlns:s="http://purl.oclc.org/dsdl/schematron"
+            xmlns="http://www.w3.org/1999/xhtml">
+    <s:ns prefix="ex" uri="http://example.com/sample"/>
+    <s:pattern>
+      <s:rule context="/">
+        <s:assert test="ex:results">The pipeline root is not “results”.</s:assert>
+      </s:rule>
+    </s:pattern>
+    <s:pattern>
+      <s:rule context="/ex:results">
+        <s:assert test="exists(ex:comment)">No ex:comment element.</s:assert>
+        <s:assert test="count(ex:comment) eq 1">Too many ex:comment elements.</s:assert>
+        <s:assert test="ex:comment/@unwrapped = 'false' and ex:comment/@wrapped = 'true'"
+                  >The ex:comment results are incorrect</s:assert>
+
+        <s:assert test="exists(ex:processing-instruction)">No ex:processing-instruction element.</s:assert>
+        <s:assert test="count(ex:processing-instruction) eq 1">Too many ex:processing-instruction elements.</s:assert>
+        <s:assert test="ex:processing-instruction/@unwrapped = 'false' and ex:processing-instruction/@wrapped = 'true'"
+                  >The ex:processing-instruction results are incorrect</s:assert>
+
+        <s:assert test="exists(ex:text)">No ex:text element.</s:assert>
+        <s:assert test="count(ex:text) eq 1">Too many ex:text elements.</s:assert>
+        <s:assert test="ex:text/@unwrapped = 'false' and ex:text/@wrapped = 'true'"
+                  >The ex:text results are incorrect</s:assert>
+
+        <s:assert test="exists(ex:element)">No ex:element element.</s:assert>
+        <s:assert test="count(ex:element) eq 1">Too many ex:element elements.</s:assert>
+        <s:assert test="ex:element/@unwrapped = 'false' and ex:element/@wrapped = 'true'"
+                  >The ex:element results are incorrect</s:assert>
+      </s:rule>
+    </s:pattern>
+  </s:schema>
+</t:schematron>
+</t:test>

@@ -1,0 +1,21 @@
+// The WIT interface of the experimental Factoidal component
+// (https://github.com/danbri/factoidal/issues/1167, milestone 1).
+// Coarse operations only: one call parses a document or runs a query.
+package factoidal:core@0.1.0;
+
+interface rdf {
+  /// RDF 1.1 Turtle to canonical N-Quads. `base` resolves relative IRIs.
+  turtle-to-nquads: func(turtle: string, base: option<string>) -> result<string, string>;
+  /// Parse Turtle, run one SPARQL 1.1 query. The answer is the JSON
+  /// envelope of the shipped `queryDataset` op (`"ok":true` or `"error"`).
+  query: func(turtle: string, sparql: string) -> string;
+}
+
+world engine {
+  export rdf;
+}
+
+// A command component (wasm32-wasip2 `main`) that calls the engine.
+world client {
+  import rdf;
+}

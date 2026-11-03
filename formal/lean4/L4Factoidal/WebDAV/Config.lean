@@ -26,14 +26,22 @@ root shows for it is `<name>`. The format (design record
   backquotes) are not read.
 * Everything else is ignored.
 
-Keys: `kind` (`local` or `lws`, required), `path` (local: the storage
+Keys: `kind` (`local` or `lws`, required), `users` (required: the names
+of the WebDAV users who may use this mount, separated by commas; issue
+https://github.com/danbri/factoidal/issues/1147), `path` (local: the storage
 directory, relative to CONFIGDIR), `url` (lws: the storage root),
 `auth` (`none`, `did-key` or `bearer`), `key-file` (did-key: a private P-256
 JWK), `token-file` (bearer: an access token), `writable` (`true` or
 `false`; default `true` for local, `false` for lws), `storage` (local:
 `snapshot` or `files`, the storage format of `lws-serve --storage`; default:
 what the directory holds), `base` (local: the IRI the storage root has when
-`lws-serve` serves it; default `http://localhost/`).
+`lws-serve` serves it; default `http://localhost/`), `allow-external-token`
+(lws with auth `bearer`: `true` is required, because the token file is a
+credential from outside this installation; issue 1147).
+
+Emergency mode (https://github.com/danbri/factoidal/issues/1147): every
+mount is read only. `writable` is still read and checked, but the server
+ignores it (`Server.precheck` refuses every write method).
 
 An unknown key, a repeated key, an item with no `:`, a value outside its
 set, or a key that does not apply to the kind stops the start with the file
@@ -92,11 +100,19 @@ structure Mount where
   storage : Option String := none
   /-- local: the IRI of the storage root. -/
   base : String := "http://localhost/"
+  /-- The WebDAV users who may use this mount (`users:`, required). -/
+  users : List String := []
+  /-- lws, auth `bearer`: the operator accepts a token from outside this
+  installation (`allow-external-token: true`). -/
+  allowExternalToken : Bool := false
+  /-- The line of `kind` in the mount file. -/
+  kindLine : Nat := 0
 deriving Repr, Inhabited
 
 /-- The keys a mount file may hold. -/
 def knownKeys : List String :=
-  ["kind", "path", "url", "auth", "key-file", "token-file", "writable", "storage", "base"]
+  ["kind", "path", "url", "auth", "key-file", "token-file", "writable", "storage", "base", "users",
+   "allow-external-token"]
 
 /-- Where the reader is in the file. -/
 inductive Phase where
@@ -176,6 +192,30 @@ def Scan.get? (st : Scan) (k : String) : Option (String × Nat) :=
 def isHttpUrl (u : String) : Bool :=
   (u.startsWith "http://" && u.length > 7) || (u.startsWith "https://" && u.length > 8)
 
+/-- A user name a mount may list: not empty, no `:`, `,` or control
+character (the names of a users file, `Login.validName`, less `,`). -/
+def userNameOk (n : String) : Bool :=
+  n != "" && n.all (fun c => c != ':' && c != ',' && c.toNat ≥ 0x20 && c.toNat != 0x7f)
+
+/-- The value of `users:`: names separated by commas, spaces removed at both
+ends of each. Refused: no name, an empty name, a name given twice, a name
+with `:` or a control character. -/
+def usersOf (v : String) : Except String (List String) := do
+  let names := (v.splitOn ",").map trimS
+  if names.all (· == "") then throw "users names at least one user (`users: alice, bob`)"
+  let mut acc : List String := []
+  for n in names do
+    if !userNameOk n then throw s!"the user name \"{n}\" is empty or holds `:` or a control character"
+    if acc.contains n then throw s!"the user \"{n}\" is given twice"
+    acc := acc ++ [n]
+  pure acc
+
+#guard (usersOf "alice, bob").toOption == some ["alice", "bob"]
+#guard (usersOf "guest").toOption == some ["guest"]
+#guard (usersOf "").toOption.isNone
+#guard (usersOf "a,,b").toOption.isNone
+#guard (usersOf "a, a").toOption.isNone
+
 /-- The checks that need the whole list: required keys, values in their
 sets, keys that do not apply to the kind. -/
 def validate (name : String) (st : Scan) : Except (Nat × String) Mount := do
@@ -201,9 +241,19 @@ def validate (name : String) (st : Scan) : Except (Nat × String) Mount := do
     | some (_, n) => throw (n, s!"the key \"{k}\" does not apply to kind `{kind.name}`")
     | none => pure ()
   let title := (st.title.filter (· != "")).getD name
+  -- `users` (issue 1147): required. With no `users`, the refusal names the
+  -- first line of the settings list.
+  let firstLine := ((st.items.head?).map (·.2.2)).getD 0
+  let users ← match value "users" with
+    | some v => (usersOf v).mapError (fun e => (line "users", e))
+    | none => throw (firstLine, "the settings list has no `users` (the WebDAV users who may use this mount, `users: alice, bob`; https://github.com/danbri/factoidal/issues/1147)")
+  let allowExternalToken ← match value "allow-external-token" with
+    | none | some "false" => pure false
+    | some "true" => pure true
+    | some v => throw (line "allow-external-token", s!"allow-external-token is `true` or `false`, not \"{v}\"")
   match kind with
   | .localStore =>
-    notFor "url"; notFor "key-file"; notFor "token-file"
+    notFor "url"; notFor "key-file"; notFor "token-file"; notFor "allow-external-token"
     if auth != .none then throw (line "auth", "a local mount opens the storage as its owner; it takes no `auth`")
     let path ← match value "path" with
       | some p => if p == "" then throw (line "path", "path is empty") else pure p
@@ -218,7 +268,7 @@ def validate (name : String) (st : Scan) : Except (Nat × String) Mount := do
       | some b =>
         if isHttpUrl b && b.endsWith "/" then pure b
         else throw (line "base", "base is an http or https IRI that ends with `/`")
-    pure { name, title, kind, path, writable, storage, base }
+    pure { name, title, kind, path, writable, storage, base, users, kindLine := line "kind" }
   | .lws =>
     notFor "path"; notFor "storage"; notFor "base"
     let url ← match value "url" with
@@ -236,7 +286,14 @@ def validate (name : String) (st : Scan) : Except (Nat × String) Mount := do
       | .bearer, none => throw (line "auth", "auth `bearer` needs `token-file`")
       | _, some _ => throw (line "token-file", "token-file applies to auth `bearer` only")
       | _, none => pure ""
-    pure { name, title, kind, url, auth, keyFile, tokenFile, writable }
+    -- A bearer token file is a credential from outside this installation
+    -- (issue 1147): refused unless the file says it is wanted.
+    if auth == .bearer && !allowExternalToken then
+      throw (line "auth", "auth `bearer` uses the token file, a credential from outside this installation; refused unless the mount file says `allow-external-token: true` (https://github.com/danbri/factoidal/issues/1147)")
+    if auth != .bearer && (st.get? "allow-external-token").isSome then
+      throw (line "allow-external-token", "allow-external-token applies to auth `bearer` only")
+    pure { name, title, kind, url, auth, keyFile, tokenFile, writable, users, allowExternalToken,
+           kindLine := line "kind" }
 
 /-- Is `name` usable as the folder name of a mount: not empty, not starting
 with `.`, with no `/`, `\` or control character? -/
@@ -258,6 +315,25 @@ def mountOfMarkdown (file : String) (text : String) : Except String Mount :=
     | .error (0, why) => .error s!"{file}: {why}"
     | .error (n, why) => .error s!"{file}:{n}: {why}"
 
+/-- Emergency mode (https://github.com/danbri/factoidal/issues/1147, item 3):
+a `kind: local` mount opens its storage with no authorization
+(`insecureNoAuth`), so whoever reaches the listener could read a storage
+whose access control says otherwise. Until the server can tell from a
+storage's own data that it has no access control, every local mount is
+refused at start. `none`: the mount may be served. -/
+def startRefusal (file : String) (m : Mount) : Option String :=
+  if m.kind == .localStore then
+    some s!"{file}:{m.kindLine}: a `kind: local` mount opens its storage with no authorization and is refused (emergency mode, https://github.com/danbri/factoidal/issues/1147); use kind: lws with an agent key (`auth: did-key`, `key-file`) and the storage's own access control"
+  else none
+
+/-- The mount files, read and checked for the start: `mountOfMarkdown`,
+then `startRefusal`. -/
+def mountForStart (file text : String) : Except String Mount := do
+  let m ← mountOfMarkdown file text
+  match startRefusal file m with
+  | some why => throw why
+  | none => pure m
+
 /-- Which names of CONFIGDIR are mount files: a regular name that ends with
 `.md`, other than `README.md` in any case, and not starting with `.`. The
 host lists the directory; this decides. -/
@@ -275,39 +351,78 @@ private def errOf : Except String Mount → String
   | .ok _ => ""
   | .error e => e
 
-#guard okName (mountOfMarkdown "alice.md" "# Alice\n- kind: local\n- path: ./alice\n") == some "alice"
-#guard (match mountOfMarkdown "alice.md" "# Alice's files\n- kind: local\n- path: ./alice\n" with
-        | .ok m => m.title == "Alice's files" && m.writable && m.path == "./alice" && m.storage.isNone
+#guard okName (mountOfMarkdown "alice.md" "# Alice\n- kind: local\n- path: ./alice\n- users: alice\n") == some "alice"
+#guard (match mountOfMarkdown "alice.md" "# Alice's files\n- kind: local\n- path: ./alice\n- users: alice, bob\n" with
+        | .ok m => m.title == "Alice's files" && m.writable && m.path == "./alice" && m.storage.isNone && m.users == ["alice", "bob"]
         | .error _ => false)
-#guard (match mountOfMarkdown "bob.md" "- kind: lws\n- url: https://s.example/bob\n- auth: did-key\n- key-file: bob.jwk\n\nNotes for people.\n- kind: local\n" with
+#guard (match mountOfMarkdown "bob.md" "- kind: lws\n- url: https://s.example/bob\n- auth: did-key\n- key-file: bob.jwk\n- users: bob\n\nNotes for people.\n- kind: local\n" with
         | .ok m => m.title == "bob" && m.url == "https://s.example/bob/" && !m.writable &&
                    m.auth == .didKey && m.keyFile == "bob.jwk"
         | .error _ => false)
 -- CRLF line ends, a fenced block before the list, free text after it.
-#guard (match mountOfMarkdown "c.md" "Intro\r\n```\n- kind: nonsense\n```\r\n# Title\r\n- kind: lws\r\n- url: http://h/\r\n- writable: true\r\n\r\ntext\r\n" with
+#guard (match mountOfMarkdown "c.md" "Intro\r\n```\n- kind: nonsense\n```\r\n# Title\r\n- kind: lws\r\n- url: http://h/\r\n- writable: true\r\n- users: g\r\n\r\ntext\r\n" with
         | .ok m => m.title == "Title" && m.writable && m.url == "http://h/"
         | .error _ => false)
 #guard errOf (mountOfMarkdown "a.md" "# A\n- kind: local\n- colour: red\n") ==
-  "a.md:3: unknown key \"colour\" (known: kind, path, url, auth, key-file, token-file, writable, storage, base)"
+  "a.md:3: unknown key \"colour\" (known: kind, path, url, auth, key-file, token-file, writable, storage, base, users, allow-external-token)"
 #guard errOf (mountOfMarkdown "a.md" "- kind: local\n- kind: lws\n") == "a.md:2: the key \"kind\" is given twice"
 #guard errOf (mountOfMarkdown "a.md" "- kind local\n") == "a.md:1: a settings item is `- key: value`; this one has no `:`"
 #guard errOf (mountOfMarkdown "a.md" "# no list\n") == "a.md: the settings list has no `kind` (`local` or `lws`)"
-#guard errOf (mountOfMarkdown "a.md" "- kind: local\n") == "a.md: a local mount needs `path` (the storage directory)"
-#guard errOf (mountOfMarkdown "a.md" "- kind: local\n- path: x\n- url: http://h/\n") ==
+#guard errOf (mountOfMarkdown "a.md" "- kind: local\n- users: a\n") == "a.md: a local mount needs `path` (the storage directory)"
+#guard errOf (mountOfMarkdown "a.md" "- kind: local\n- path: x\n- url: http://h/\n- users: a\n") ==
   "a.md:3: the key \"url\" does not apply to kind `local`"
-#guard errOf (mountOfMarkdown "a.md" "- kind: lws\n- url: ftp://h/\n") ==
+#guard errOf (mountOfMarkdown "a.md" "- kind: lws\n- url: ftp://h/\n- users: a\n") ==
   "a.md:2: url is an http or https URL (the storage root)"
-#guard errOf (mountOfMarkdown "a.md" "- kind: lws\n- url: http://h/\n- auth: did-key\n") ==
+#guard errOf (mountOfMarkdown "a.md" "- kind: lws\n- url: http://h/\n- auth: did-key\n- users: a\n") ==
   "a.md:3: auth `did-key` needs `key-file`"
-#guard errOf (mountOfMarkdown "a.md" "- kind: lws\n- url: http://h/\n- writable: yes\n") ==
+#guard errOf (mountOfMarkdown "a.md" "- kind: lws\n- url: http://h/\n- writable: yes\n- users: a\n") ==
   "a.md:3: writable is `true` or `false`, not \"yes\""
 #guard errOf (mountOfMarkdown ".x.md" "- kind: local\n- path: p\n") ==
   ".x.md: the file name does not give a usable folder name"
 -- Only the first list is read: a second list after free text is ignored.
-#guard okName (mountOfMarkdown "z.md" "- kind: local\n- path: p\n\n- colour: red\n") == some "z"
+#guard okName (mountOfMarkdown "z.md" "- kind: local\n- path: p\n- users: z\n\n- colour: red\n") == some "z"
+-- Issue 1147: `users` is required; a bearer token file needs
+-- `allow-external-token: true`.
+#guard errOf (mountOfMarkdown "a.md" "# A\n- kind: local\n- path: p\n") ==
+  "a.md:2: the settings list has no `users` (the WebDAV users who may use this mount, `users: alice, bob`; https://github.com/danbri/factoidal/issues/1147)"
+#guard errOf (mountOfMarkdown "a.md" "- kind: local\n- path: p\n- users: ,\n") ==
+  "a.md:3: users names at least one user (`users: alice, bob`)"
+#guard errOf (mountOfMarkdown "a.md" "- kind: local\n- path: p\n- users: a, a\n") ==
+  "a.md:3: the user \"a\" is given twice"
+#guard errOf (mountOfMarkdown "t.md" "- kind: lws\n- url: http://h/\n- auth: bearer\n- token-file: t.token\n- users: a\n") ==
+  "t.md:3: auth `bearer` uses the token file, a credential from outside this installation; refused unless the mount file says `allow-external-token: true` (https://github.com/danbri/factoidal/issues/1147)"
+#guard (match mountOfMarkdown "t.md" "- kind: lws\n- url: http://h/\n- auth: bearer\n- token-file: t.token\n- users: a\n- allow-external-token: true\n" with
+        | .ok m => m.allowExternalToken && m.tokenFile == "t.token"
+        | .error _ => false)
+#guard errOf (mountOfMarkdown "t.md" "- kind: lws\n- url: http://h/\n- users: a\n- allow-external-token: true\n") ==
+  "t.md:4: allow-external-token applies to auth `bearer` only"
+#guard errOf (mountOfMarkdown "t.md" "- kind: local\n- path: p\n- users: a\n- allow-external-token: true\n") ==
+  "t.md:4: the key \"allow-external-token\" does not apply to kind `local`"
+-- Every local mount is refused at start (issue 1147, item 3); an lws mount is not.
+#guard (match mountForStart "alice.md" "# Alice\n- kind: local\n- path: ./alice\n- users: alice\n" with
+        | .ok _ => false
+        | .error e => e.startsWith "alice.md:2: a `kind: local` mount opens its storage with no authorization" &&
+                      (e.splitOn "use kind: lws with an agent key").length == 2)
+#guard (match mountForStart "bob.md" "- kind: lws\n- url: https://s.example/bob/\n- auth: did-key\n- key-file: bob.jwk\n- users: bob\n" with
+        | .ok m => m.kind == .lws
+        | .error _ => false)
 #guard isMountFile "alice.md" && !isMountFile "README.md" && !isMountFile "notes.txt" && !isMountFile ".hidden.md"
 
 /-! ## Theorems -/
+
+/-- A mount the start accepts is never a local mount (issue 1147). -/
+theorem mountForStart_not_local {file text : String} {m : Mount}
+    (h : mountForStart file text = .ok m) : m.kind = .lws := by
+  unfold mountForStart at h
+  cases h0 : mountOfMarkdown file text with
+  | error e => rw [h0] at h; cases h
+  | ok m0 =>
+    rw [h0] at h
+    simp only [bind, Except.bind] at h
+    unfold startRefusal at h
+    cases hk : m0.kind with
+    | lws => rw [hk] at h; simp at h; cases h; exact hk
+    | localStore => rw [hk] at h; simp at h
 
 theorem addItem_known {st st' : Scan} {n : Nat} {l : String}
     (h : addItem st n l = .ok st') (hk : ∀ i ∈ st.items, knownKeys.contains i.1 = true) :

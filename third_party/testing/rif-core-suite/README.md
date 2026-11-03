@@ -19,8 +19,9 @@ original 4 hardcoded SPARQL-manifest cases.
   schema `rif-testcase.xsd`.
 - Date of mirror: 2026-07-05.
 
-Sibling BLD (`BLD_v1.22.zip`) and PRD (`PRD_v1.22.zip`) dialect zips
-were fetched **for inventory only** (counted, not vendored) — see
+The sibling BLD zip (`BLD_v1.22.zip`) is vendored since 2026-10-29 in
+`third_party/testing/rif-bld-suite/` (Lean engine `RIF/Bld.lean`). The PRD
+zip (`PRD_v1.22.zip`) was fetched **for inventory only** (counted, not vendored) — see
 "Inventory" below and `docs/claude-rules/scope.md`'s RIF paragraph for
 why RIF-BLD/RIF-PRD stay out of scope.
 

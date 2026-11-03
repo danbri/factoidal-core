@@ -1,0 +1,6 @@
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+SELECT ?name (COUNT(?f) AS ?friends) WHERE {
+  ?p foaf:name ?name ; foaf:age ?age ; foaf:knows ?f .
+  ?f foaf:age ?fage .
+  FILTER (?age > 40 && ?fage < 30)
+} GROUP BY ?name ORDER BY DESC(?friends) ?name LIMIT 10

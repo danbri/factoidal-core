@@ -48,6 +48,14 @@ not proof rejection. The public integration's equality-chain failure also
 shows why model preservation does not establish reasoning completeness;
 see [the record](../../docs/20261021-owl-public-boundary.md).
 
+For shared visual operations and backend proofs, see the
+[Solving scene design](../../docs/designissues/2026-11-01-svg-scene-compositor.md)
+and the [ordered source-over batch theorem](../../docs/20261101-solving-source-over-batching.md).
+Keep CPU reference semantics, packed representations, GPU numeric behavior
+and host/driver behavior as separate proof obligations. In particular, Float
+operation order can be proved preserved without claiming associativity or
+GPU equivalence.
+
 - Core Lean 4 only (`formal/lean4/lakefile`, no Mathlib, no Batteries):
   `cases`, `induction`, `split`, `simp`, `simp only`, `dsimp only`,
   `decide`, `omega`, `rfl`, `exact`, `rw`, `generalize`, `rename_i`,
@@ -627,6 +635,17 @@ by a specification that no live code reaches (the left side of another theorem) 
 `#guard` and `#eval` is not emitted, but a `private def` that only the guards call is, and is listed with
 the reason `guard`. `L4Factoidal/CsimpReachFixture.lean` holds the known-bad cases on purpose;
 `tools/test_lean_csimp_reach.py` asserts that the tool reports them.
+
+## 9f. `simp [loop]` on a fuel loop whose fuel is `k * n + c` does not return
+
+Found 2026-10-29 in `WHATWG/Encoding/Theorems.lean` (the lift of the UTF-8
+round trip through `decodeLoop`). With the fuel term `7 * L.length + 23`,
+`simp [decodeLoop]` never returned: the literal `23` unifies with `n + 1`, so
+simp unfolds the loop again on each pass. Fix: `generalize` the fuel to a
+variable with a hypothesis `fuel > bytes left`, then `rw [decodeLoop]` once per
+step. Prove a lemma "the loop agrees with the plain step function when the fuel
+exceeds the input" (`decodeLoop_run`) and use it, rather than unfolding the loop
+in the main theorem.
 
 ## 10. Gate before commit
 

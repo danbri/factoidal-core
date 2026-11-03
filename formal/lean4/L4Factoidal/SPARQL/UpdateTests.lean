@@ -314,4 +314,23 @@ def labelsAfter (ds : Dataset) (text : String) : Option (List BNodeId) :=
 #guard parses "INSERT DATA { <http://e/a> <http://e/p> true. }"
 #guard parses "INSERT DATA { <http://e/a> <http://e/p> false.<http://e/a> <http://e/q> true }"
 
+-- §3.1.3: a template quad whose graph variable is bound to a literal, or is
+-- unbound, is not included: INSERT adds nothing (not even to the default
+-- graph) and DELETE removes nothing
+-- (https://github.com/danbri/factoidal/issues/1096).
+#guard run? Dataset.empty
+  "INSERT { GRAPH ?g { <http://example.org/s> <http://example.org/p> <http://example.org/o> } } WHERE { BIND('g' AS ?g) }"
+  == some Dataset.empty
+#guard run? Dataset.empty
+  "INSERT { GRAPH ?g { <http://example.org/s> <http://example.org/p> <http://example.org/o> } } WHERE {}"
+  == some Dataset.empty
+#guard run? dsDefault
+  "DELETE { GRAPH ?g { <http://example.org/s> <http://example.org/p> <http://example.org/o> } } WHERE { BIND(1 AS ?g) }"
+  == some dsDefault
+-- An IRI graph name still targets that graph; a triple outside the GRAPH
+-- block still goes to the default graph.
+#guard run? Dataset.empty
+  "INSERT { GRAPH ?g { <http://example.org/s> <http://example.org/p> <http://example.org/o> } <http://example.org/s> <http://example.org/p> <http://example.org/o2> } WHERE { BIND(<http://example.org/g1> AS ?g) }"
+  == some { default := [tSPO2], named := [{ name := .iri g1, graph := [tSPO] }] }
+
 end L4Factoidal.SPARQL.UpdateTests

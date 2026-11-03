@@ -106,6 +106,11 @@ in flight. The agent is a WebID the HOST verified; the engine only decides
 access from it (see `L4Factoidal.Solid.Server.WAC`). -/
 structure Config where
   baseIri : String := "http://localhost/"
+  /-- The largest content one PUT, POST or PATCH may carry, in bytes; above it
+  the answer is 413 and nothing changes (`step_tooLarge`). Issue
+  https://github.com/danbri/factoidal/issues/1240: a whole body goes through
+  the engine's memory, so an unbounded one can exhaust it. -/
+  maxBody : Nat := 16 * 1024 * 1024
   owner   : Option String := none
   agent   : Option String := none
   /-- The patch media types the `Accept-Patch` field advertises. The LWS
@@ -878,6 +883,16 @@ def stepPath (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response ×
                    | none => ResourceKind.dataResource)
       (problem 405 "the method is not supported by the target" target (allowHdr kind), st)
 
+/-- The size of a request's content in bytes. -/
+def contentSize (r : Request) : Nat :=
+  match r.bytes with
+  | some b => b.size
+  | none => r.body.utf8ByteSize
+
+/-- Does this request write content? -/
+def writesContent (r : Request) : Bool :=
+  r.method == "PUT" || r.method == "POST" || r.method == "PATCH"
+
 /-- One operation. Total: every request, well formed or not, has a response.
 
 The request target is split into its path and its query first, and a path
@@ -907,8 +922,29 @@ def step (S : Store σ) (cfg : Config) (r : Request) (st : σ) : Response × σ 
   let r := { r with path, queryStr := query }
   if !validTarget path then
     (problem 400 "the request target is not a valid storage path" path, st)
+  -- Issue 1240: content over the limit is refused before anything reads it.
+  else if writesContent r && contentSize r > cfg.maxBody then
+    (problem 413 s!"the content is over {cfg.maxBody} bytes, the limit of this storage" path, st)
   else if query == linksetQuery then linksetStep S cfg r st path
   else if path == storagePath then (storageStep cfg r, st)
   else stepPath S cfg r st
+
+/-- The size and the method do not depend on the target, which `step` rewrites. -/
+theorem writesContent_with (r : Request) (p q : String) :
+    writesContent { r with path := p, queryStr := q } = writesContent r := rfl
+
+theorem contentSize_with (r : Request) (p q : String) :
+    contentSize { r with path := p, queryStr := q } = contentSize r := rfl
+
+/-- **Content over the limit changes nothing.** A PUT, POST or PATCH whose
+content is larger than `maxBody`, at a valid target, leaves the storage as it
+was, and is answered 413. -/
+theorem step_tooLarge (S : Store σ) (cfg : Config) (r : Request) (st : σ)
+    (hv : validTarget (splitTarget r.path).1 = true) (hw : writesContent r = true)
+    (hs : contentSize r > cfg.maxBody) :
+    (step S cfg r st).2 = st ∧ (step S cfg r st).1.status = 413 := by
+  simp only [step, hv, writesContent_with, contentSize_with, hw, hs, Bool.not_true,
+    Bool.false_eq_true, ↓reduceIte, decide_true, Bool.and_self]
+  exact ⟨trivial, rfl⟩
 
 end L4Factoidal.LWS

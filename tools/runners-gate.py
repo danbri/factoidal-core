@@ -18,6 +18,15 @@ An entry that calls no package function or wasm op fails (nothing shows what
 it runs). An empty RUNNERS table, an empty inventory, or an empty mapping
 fails.
 
+nodes.mjs may also hold a table `PORT_RUNNERS`: a stage with more than one
+input port (a port stage, https://github.com/danbri/factoidal/issues/1130) ->
+the function that runs it. A port stage is not a registry entry. The gate
+checks: 3. each PORT_RUNNERS key is a name of the Lean list `portStageNames`
+(formal/lean4/Wasm/Ops/GraphNodes.lean, read on every run; an absent or empty
+list fails when PORT_RUNNERS is present); 4. each PORT_RUNNERS entry calls at
+least one package function or wasm op, and every one it calls is an [[entry]]
+in foundation/entrypoints.toml.
+
 Usage: python3 -I tools/runners-gate.py [--root DIR]
 """
 import argparse
@@ -28,6 +37,11 @@ import sys
 import tomllib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def text_of(path):
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
 _spec = importlib.util.spec_from_file_location("entrypoint_gate", os.path.join(HERE, "entrypoint-gate.py"))
 eg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eg)
@@ -80,6 +94,46 @@ def split_top(body):
         i += 1
     parts.append(cur)
     return [p for p in parts if p.strip()]
+
+
+def parse_table(text, name, errors):
+    """{key: body} of `const <name> = { ... }`, or None when there is none."""
+    rm = re.search(r"const\s+" + name + r"\s*=\s*\{", text)
+    if not rm:
+        return None
+    start = rm.end() - 1
+    end = balanced(text, start, "{", "}")
+    if end < 0:
+        errors.append(f"nodes.mjs: {name} table is not balanced")
+        return {}
+    out = {}
+    for part in split_top(text[start + 1:end - 1]):
+        km = re.match(r"\s*(?:'([^']+)'|\"([^\"]+)\"|([A-Za-z_$][\w$]*))\s*:", part)
+        if not km:
+            errors.append(f"nodes.mjs: cannot read a {name} entry: {part.strip()[:60]!r}")
+            continue
+        key = km.group(1) or km.group(2) or km.group(3)
+        if key in out:
+            errors.append(f"nodes.mjs: {name} key {key} appears twice")
+        out[key] = part[km.end():]
+    return out
+
+
+def port_stage_names(path, errors):
+    """The string literals of `def portStageNames : List String := [...]`."""
+    if not os.path.isfile(path):
+        errors.append(f"{path}: missing (the Lean list portStageNames)")
+        return set()
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    m = re.search(r"^def\s+portStageNames\s*:\s*List\s+String\s*:=\s*\[(.*?)\]", text, re.S | re.M)
+    if not m:
+        errors.append(f"{path}: no `def portStageNames : List String := [...]`")
+        return set()
+    names = set(re.findall(r'"([^"]+)"', m.group(1)))
+    if not names:
+        errors.append(f"{path}: portStageNames is empty (empty enumeration)")
+    return names
 
 
 def parse_nodes(text, errors):
@@ -160,20 +214,33 @@ def check(root):
             elif key not in stage_of[t]:
                 errors.append(f"RUNNERS.{key}: calls {t}, whose mapped stages "
                               f"({', '.join(sorted(stage_of[t]))}) do not include {key}")
-    return errors, len(runners)
+    ports = parse_table(eg.strip_js_comments(text_of(nodes_path)), "PORT_RUNNERS", errors)
+    if ports is not None:
+        names = port_stage_names(os.path.join(root, "formal", "lean4", "Wasm", "Ops", "GraphNodes.lean"), errors)
+        for key, body in ports.items():
+            if names and key not in names:
+                errors.append(f"PORT_RUNNERS.{key}: not a name of portStageNames (formal/lean4/Wasm/Ops/GraphNodes.lean)")
+            targets = called_targets(body, deps, helpers)
+            if not targets:
+                errors.append(f"PORT_RUNNERS.{key}: calls no package function or wasm op; nothing shows what it runs")
+            for t in sorted(targets):
+                if t not in stage_of:
+                    errors.append(f"PORT_RUNNERS.{key}: calls {t}, which has no [[entry]] in foundation/entrypoints.toml")
+    return errors, (len(runners), len(ports) if ports else 0)
 
 
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=os.path.join(HERE, ".."))
     args = ap.parse_args(argv)
-    errors, n = check(os.path.abspath(args.root))
+    errors, (n, n_ports) = check(os.path.abspath(args.root))
     for e in errors:
         print("ERROR " + e)
     if errors:
-        print(f"runners gate: {n} RUNNERS keys; {len(errors)} errors")
+        print(f"runners gate: {n} RUNNERS keys, {n_ports} PORT_RUNNERS keys; {len(errors)} errors")
         return 1
-    print(f"runners gate: {n} RUNNERS keys, each a registry stage that calls only entries mapped to it; pass")
+    print(f"runners gate: {n} RUNNERS keys, each a registry stage that calls only entries mapped to it; "
+          f"{n_ports} PORT_RUNNERS keys, each in portStageNames and calling only mapped entries; pass")
     return 0
 
 

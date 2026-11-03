@@ -1,5 +1,7 @@
 {
   "_comment": "TEST KEY ONLY. Not for production use, not a secret. Deterministically derived (sha256 of the seed string below) so the shim's issuer identity is reproducible across runs and machines. See bin/vc-api-shim/server.mjs and docs/designissues/2026-07-10-canivc-community-compat.md (task #88).",
   "seed": "factoidal-vc-api-shim-test-issuer-seed-v1",
-  "secretKeyHex": "3350592759c6cc4abd00351470bca21540ee2d25245189bfd844b6ed3ec106d6"
+  "secretKeyHex": "3350592759c6cc4abd00351470bca21540ee2d25245189bfd844b6ed3ec106d6",
+  "_comment_p256": "TEST KEY ONLY. The P-256 secret key for the ECDSA cryptosuites: sha256 of the seed string with the suffix -p256 (a valid P-256 scalar, below the group order).",
+  "p256SecretKeyHex": "aaea1e57183e1f453fbc274fbba491c6a2e6beb3baeac30437bb60b50e2cd947"
 }

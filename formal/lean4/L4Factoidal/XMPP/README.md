@@ -431,3 +431,245 @@ with the SCRAM exchange computed independently in `node:crypto`.
 
 The BEAM host of the "Runtime" section above is now the third option,
 after socat-per-process and Node-per-socket, not the second.
+
+### 2026-10-28: HTTP over XMPP (XEP-0332), stage 1
+
+https://github.com/danbri/factoidal/issues/1107 (a WebDAV server behind NAT
+reached through an XMPP account). Plan and choices:
+`docs/designissues/2026-10-28-http-over-xmpp.md`.
+
+- `HttpOverXmpp.lean` — the XEP-0332 (v0.5.1, Deferred) `req`/`resp` codec in
+  `urn:xmpp:http`, XEP-0131 headers, bodies `text`, `xml`, `base64` and
+  `chunkedBase64` (`chunk` messages with `streamId`, `nr`, `last`; `close`);
+  the mapping to and from the `WebDAV.DavRequest` / `DavResponse` records of
+  `webdav-serve`; the access decision (sender's bare JID in an allow list; no
+  roster logic yet); and `step`, one stanza in, stanzas out, as a
+  `WebDAV.Prog`. Methods: the XEP's eight plus the RFC 4918 methods
+  (implementer choice; the target is `webdav-serve`); CONNECT refused.
+- `HttpOverXmppTests.lean` — end-to-end `#guard`s: XEP-0332 stanza text
+  through `step` and `WebDAV.handle` against the reference LWS server over a
+  model storage (PROPFIND gives 207, chunked bodies both ways, `forbidden`
+  for a JID not in the list).
+- Lean only: no wasm op, no network surface. Stage 2 adds the outgoing
+  client stream, the local proxy and the op.
+
+### 2026-10-28: the client stream, and WebDAV over XMPP (step 1)
+
+https://github.com/danbri/factoidal/issues/1107, step 1 of the order the
+owner approved on 2026-10-28 ("Ordering: whatever is fastest and safest to
+implement", "Do it"). Record: `docs/designissues/2026-10-28-http-over-xmpp.md`
+§ Step 1.
+
+- `ClientStream.lean` — the CLIENT half of RFC 6120 as one total state
+  machine: stream open, SASL SCRAM-SHA-256 (RFC 5802/7677 client arithmetic
+  over `Crypto/Hmac.lean`; the server signature is checked; the nonce must
+  extend ours; iteration count 4,096 to 1,000,000), the stream restart,
+  resource binding, initial presence, stream errors, and RFC 6120 §8.4
+  `service-unavailable` for an IQ that is not HTTP. No STARTTLS: the host
+  does direct TLS (XEP-0368) or plain TCP. `#guard`s run it against
+  `Server.step`.
+- `HttpOverXmpp.step` = `plan`, `WebDAV.handle`, `finish`, so a host can run
+  the WebDAV request through its own handle.
+- `Wasm/Ops/XmppClient.lean` — ops `xmppClientOpen`, `xmppClientFeed`,
+  `xmppClientAnswer`, `xmppClientClose`; host `npm/factoidal/xmpp/client.mjs`;
+  command `factoidal webdav-serve CONFIGDIR --xmpp JID`. Test
+  `node tests/webdav/xmpp.mjs`.
+
+### 2026-10-28: the requester side, and the local proxy (step 2)
+
+https://github.com/danbri/factoidal/issues/1107, step 2. Record:
+`docs/designissues/2026-10-28-http-over-xmpp.md` § Step 2.
+
+- `HttpRequester.lean` — the XEP-0332 requester as one total state machine:
+  `send` (an HTTP request to a `req` iq and `chunk` messages for one target
+  JID, or a refusal: 400 absolute-form target, 405 CONNECT, 413 body above
+  16 MiB, 503 more than 16 waiting), `receive` (a `resp`, a stanza error, a
+  `chunk` from the target only), `tick` (504 past the deadline), `abortAll`
+  (502). Theorems: every stanza goes to the target (`send_to_target`,
+  `receive_to_target`, `tick_to_target`); a stanza from another JID changes
+  nothing (`receiveNode_other_sender`); the forwarded headers are a sublist
+  of the client's and keep `Authorization` (`forwardHeaders_sublist`,
+  `forwardHeaders_keeps_authorization`).
+- `Wasm/Ops/XmppClient.lean` — requester mode of `xmppClientOpen`
+  (`proxyTarget`, start rule `xcProxyRefusal`), ops `xmppClientRequest`,
+  `xmppClientTick`; host `npm/factoidal/xmpp/proxy.mjs`; command
+  `factoidal xmpp-http-proxy`. Test `node tests/webdav/xmpp-proxy.mjs`.
+
+### 2026-11-02: STARTTLS (RFC 6120 section 5)
+
+Owner, 2026-11-02: STARTTLS, a Strophe.js WebSocket endpoint, MUC and the
+two other group protocols, all in Lean, "with more validated theorems
+connecting us to realworld constraints", landed in `main` in small steps.
+This is step 1. Record of the order: `docs/20261102-xmpp-starttls.md`.
+
+- `Config.startTls` (the host holds a certificate and key) and
+  `Session.tls` (TLS from the carrier or from a completed STARTTLS). When
+  `startTls` is set and the connection is not secure, `step` hands every
+  unit to `stepPreTls`: STARTTLS offered as required and no SASL mechanism;
+  `<starttls/>` answered with `<proceed/>` and `Out.startTls`; any other
+  element is `policy-violation`; in `tlsPending` every unit closes the
+  connection with nothing sent. The host does the handshake and reports it
+  with `Session.tlsEstablished` (op `xmppSessionTlsUp`).
+- Theorems (`Server.lean`, end of file): `steps_requiresStartTls` (any
+  sequence of units before the handshake leaves no user, no environment
+  change and no action except a write, a close or the upgrade, so no
+  password or SCRAM proof is checked in clear), `step_tlsPending`,
+  `stepPreTls_startTls`, `tlsEstablished_spec`, `preTlsFeatures_no_sasl`;
+  in `Wasm/Ops/XmppSession.lean`, `bufferAfter_startTls` and
+  `drain_tlsPending` (bytes that arrive after `<starttls/>` in clear are
+  discarded and never read: the plaintext-injection fault, CVE-2011-0411).
+  `#print axioms`: `propext`, `Classical.choice`, `Quot.sound` only.
+- Host: `npm/factoidal/xmpp/server.mjs` option `startTls`, command
+  `factoidal xmpp-serve DIR --cert F --key F --starttls`. The plaintext
+  listener now binds to loopback only (invariant I4 of
+  `docs/designissues/2026-10-28-feature-combination-safety.md`).
+- Test: `node --test npm/factoidal/test/xmpp-starttls.test.mjs` (real
+  sockets, a real handshake, an injected `<auth/>` after `<starttls/>`).
+- Not changed: the native harness (`Harness/XmppServe.lean`) never sets
+  `startTls`; socat holds TLS there. SCRAM channel binding stays out: the
+  engine does not see the TLS layer.
+
+### 2026-11-03: XMPP over WebSocket (RFC 7395 over RFC 6455), for Strophe.js
+
+Step 2 of `docs/20261102-xmpp-starttls.md`.
+
+- `HTTP/WebSocket.lean` — RFC 6455 server side: `upgrade` (GET, version
+  13, the `Origin` allow list, the required subprotocol, a 16-byte key;
+  `Sec-WebSocket-Accept` by SHA-1 of public data, tier 1 of
+  `skills/crypto-policy`), `decode` (masking required, RSV bits, opcodes,
+  control frames, minimal lengths, a frame limit), `Reader` (fragments,
+  ping, close, UTF-8, a message limit), `encode`. Theorems
+  `upgrade_accept_checked`, `decode_frame_masked`, `decode_frame_bounded`,
+  `feed_done`; `#guard`s with the examples of RFC 6455 sections 1.3 and 5.7.
+- `XMPP/WebSocket.lean` — RFC 7395 as a translation at the edge of
+  `Server.step`: `unitOfMessage` (`<open/>`, `<close/>`, one element per
+  message; a `<stream:stream>` over a WebSocket is refused) and
+  `messageOfSend` (by equality with `Server.streamOpenText` and
+  `Server.streamCloseText`). Theorems `messageOfSend_open`,
+  `messageOfSend_close`, `streamClose_ne_open`. `Server.step` is unchanged.
+- `Wasm/Ops/XmppSession.lean` — ops `xmppWsOpen`, and on the blob ABI
+  `xmppWsFeed`, `xmppWsDeliver`, `xmppWsClose`; `wsFeedPure` takes a
+  connection from its first byte (HTTP handshake, path check, frames,
+  units). Theorem `wsFeedPure_handshake_refused`: before an accepted
+  handshake no unit reaches `Server.step` and nothing is routed.
+- Host and CLI: `xmpp-serve --ws-port N [--ws-path P] [--ws-origin O]...`;
+  WebSocket and TCP sessions share one routing table.
+- Test: `npm/factoidal/test/xmpp-websocket.test.mjs` (Node's own WebSocket
+  client as an independent RFC 6455 implementation; raw sockets for a bad
+  Origin, path, subprotocol and an unmasked frame).
+
+## 2026-11-03 (later): IQ routing by full JID
+
+- `Out.routeFull full text bounce` (`Server.lean`): deliver to the one session bound to that full
+  JID now, or deliver `bounce` to the sender. Never held.
+- `handleIq`: a get or set to a full JID is `routeFull` with a `service-unavailable` bounce
+  (RFC 6120 section 10.5.3.2); a result or error has no bounce (section 8.3.1); a get or set to
+  the bare JID of another account is answered by the server (RFC 6121 section 8.5.2.1.3).
+- Theorem `handleIq_no_route`: no IQ produces `Out.route`, the action that may hold a stanza.
+- Hosts: `Wasm/Ops/XmppSession.lean` collects `routeFull`; `npm/factoidal/xmpp/server.mjs`
+  delivers to the session whose full JID matches, or the bounce to the sender;
+  `Harness/XmppServe.lean` uses its presence files and its per-account mailbox (a stated limit).
+- Fixes https://github.com/danbri/factoidal/issues/1234 and
+  https://github.com/danbri/factoidal/issues/1139. Tests: 5 `#guard`s in `Server.lean`,
+  `npm/factoidal/test/xmpp-iq-routing.test.mjs` (5), and the former xfail in
+  `tests/webdav/xmpp.mjs`, now a check.
+
+## 2026-11-03 (later): MUC, XEP-0045 (step 3)
+
+- `L4Factoidal/XMPP/Muc.lean`: `Muc.step : Service → full JID → Stanza → Service × List Delivery`
+  over shared, temporary rooms. Join (instant room, status 110 and 201, the subject), nick conflict,
+  groupchat, private messages, leave, disco#info and disco#items. A `Delivery` goes to one
+  occupant's full JID; `Body` has no field for a real JID.
+- `Server.lean`: `Config.mucDomain`; a bound session's stanza to that domain becomes
+  `Out.muc fromFull text`, with the sender from the session; disco#items on the server names the
+  service.
+- `Wasm/Ops/XmppSession.lean`: one `Muc.Service` per server; `.muc` runs `Muc.step` and performs
+  each delivery as `routeFull`; `xmppSessionClose` and `xmppWsClose` run `Muc.leaveAll` and return
+  the deliveries.
+- Host and CLI: `xmpp-serve --muc conference.<domain>` (`mucDomain` in `listen`).
+- Theorems: `groupchat_recipients`, `groupchat_from_sender`, `byReal_real`,
+  `groupchat_nonoccupant`, `privateMsg_one`, `joinRoom_nodup`, `leaveRoom_gone`, `put_empty`,
+  `leaveRoom_nodup`. 9 `#guard`s in `Muc.lean`, 3 in `Server.lean`.
+- Not in this step, stated in the module header: nick change, kick, ban, voice, configuration,
+  passwords, members-only rooms, history, subject change, persistent rooms. Real JIDs are sent to
+  nobody, moderators included.
+- MIX (XEP-0369, step 4) and GC3 (step 5) are next.
+
+## 2026-11-03 (later): MIX, XEP-0369 with XEP-0405 MIX-PAM (step 4)
+
+- `L4Factoidal/XMPP/Mix.lean`: `Mix.step` over channels whose participants are ACCOUNTS (bare
+  JIDs). Create (IQ `<create/>` to the service), join and leave through the user's own server
+  (`<client-join/>`, `<client-leave/>`), channel messages to every participant's bare JID
+  (`Delivery.held`: the server may hold them for an offline account), disco. JID-hidden: `<mix/>`
+  carries a nick, never a `<jid>`.
+- `Server.lean`: `Config.mixDomain`; `Out.mix`; the MIX-PAM interception in `handleLocal`; the
+  server's disco#info offers `urn:xmpp:mix:pam:2`, its disco#items names the service.
+- Ops layer: a held delivery becomes `route` (may be held), an IQ answer `routeFull`.
+- CLI: `xmpp-serve --mix mix.<domain>`.
+- Theorems: `message_recipients` (exactly the participants' accounts, every copy held),
+  `message_from_sender`, `message_nonparticipant`, `joinChannel_bares_nodup`,
+  `joinChannel_nicks_nodup`, `joinChannel_again`, `leaveChannel_gone`. 8 `#guard`s in `Mix.lean`,
+  3 in `Server.lean`. `handleIq_no_route` still holds with the MIX-PAM branch.
+- Not in this step (module header): PubSub nodes and subscriptions, channel presence, MAM, nick
+  registration, private messages, destruction, administration, persistence.
+
+## 2026-11-03 (later): GC3 prototype (step 5)
+
+There is no published GC3 specification. `L4Factoidal/XMPP/Gc3.lean` (formerly a scope stub)
+implements what Matthew Wild's slides of 2025-01-30 fix
+(https://matthewwild.co.uk/uploads/xmpp-gc3-jan-2025.pdf): persistent joins (membership is the
+account's), stable participant JIDs (`group@service/<id>`, unchanged by a rename), optional
+presence (membership events only for members that ask), one affiliation scale. Every wire format
+is invented and listed in https://github.com/danbri/factoidal/issues/1236, with one xfail each in
+`npm/factoidal/test/xmpp-gc3.test.mjs`. XEP-0421 `<occupant-id/>` and XEP-0172 `<nick/>` use their
+real namespaces.
+
+- The membership transition relation is `apply : Group → Command → Option Group`; every command
+  carries its actor, the authenticated account from the session.
+- Theorems: `apply_no_ghost` (no transition adds a member except that member's own join; the
+  attestation design's "membership changes only by authenticated member commands"),
+  `apply_rename_ids`, `apply_remove_owner`, `apply_join_nicks_nodup`, `message_recipients`,
+  `message_nonmember`. 8 `#guard`s; 1 in `Server.lean`.
+- `Server.lean`: `Config.gc3Domain`, `Out.gc3`. CLI: `xmpp-serve --gc3 gc3.<domain>`.
+- Not covered: knocking, configuration, history, MLS or any encryption, spaces, persistence.
+
+## 2026-11-03 (later): held stanzas in Lean, bounded (issue 1235; step 6, part 1)
+
+- `L4Factoidal/XMPP/Held.lean`: `hold` (refuses past `perAccount` 1,000 or `total` 100,000) and
+  `release` (hands back everything held for an account and empties its queue). Theorems:
+  `hold_perAccount`, `hold_refused`, `hold_limits`, `release_empties`, `release_returns`. The total
+  bound is checked by a `#guard`; its proof needs the one-queue-per-account invariant (to do).
+- `Wasm/Ops/XmppSession.lean`: the ops layer keeps the bound full JIDs (`bound`) and the held
+  queue (`held`). `Out.route` to an account with a bound session is delivered; otherwise it is held,
+  or, past a bound, a message is answered `resource-constraint` (RFC 6120 section 8.3.3.18).
+  `bindTransition` hands a newly bound account what was held, oldest first.
+- The JS host no longer decides holding; its `pending` map is a fallback for a session that closed
+  between the engine's decision and the delivery, bounded at 100.
+- Tests: `npm/factoidal/test/xmpp-mix.test.mjs` (the former 1235 xfail, now a check),
+  `xmpp-serve.test.mjs` (held, then delivered once on bind).
+- Persisting the held queue across a restart: issues 1237 and 1238.
+
+## 2026-11-03 (evening): state across restarts, in LWS, sealed (issue 1237; step 6)
+
+- `xmpp-serve DIR --state-key FILE`: rosters, stanzas held for offline accounts, MIX channels and
+  GC3 groups are kept as resources under `/xmpp/<kind>/<name in hex>` of an LWS storage in
+  `DIR/state` (files mode, sealed with ChaCha20-Poly1305 under the key), opened IN-PROCESS as the
+  component principal `urn:factoidal:component:xmpp-serve` (no listener; Web Access Control
+  decides; `LWS/Authorization.lean`, `decide_principal_agents`).
+- `XMPP/StateCodec.lean`: encoders and decoders with round-trip theorems
+  (`decodeHeld_encodeHeld`, `decodeChannel_encodeChannel`, `decodeGroup_encodeGroup`); one resource
+  per item, so a change rewrites one small resource.
+- The ops layer decides what to write: a feed answer carries `store` and `unstore` (only with
+  `persist`, which the host sets with a state key). `xmppStateLoad` installs each item at start;
+  an item that does not decode stops the start. A wrong key stops the start.
+- Plaintext roster files of an earlier run are migrated into the sealed state, then deleted.
+  Without `--state-key` the server warns that state is lost at a restart and rosters are in clear.
+- Tests: `npm/factoidal/test/xmpp-state.test.mjs` (a channel, a held message and a roster survive
+  a restart, and no file holds a JID, nick or body in clear; a wrong key refuses; migration).
+- Stated, not done:
+  - the hex form of names (`hexOf`, `nameOfHex`) is checked by `#guard`s, not proved;
+  - with persistence on, each hold rewrites the whole queue of that account (bounded at 1,000
+    stanzas, but quadratic near the bound): one resource per held stanza would make it constant;
+  - a stanza sent to a session that is closing is delivered to it and lost (no XEP-0198 stream
+    management), as in other servers without it;
+  - the key across an unattended reboot, rollback, and swap: issue 1237.

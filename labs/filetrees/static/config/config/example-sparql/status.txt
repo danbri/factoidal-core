@@ -1,0 +1,1 @@
+A fixture status file. Edit remote_sparql.txt and watch the request log.

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<t:test expected="pass"
+        xmlns:t="http://xproc.org/ns/testsuite/3.0">
+   <t:info>
+      <t:title>nw-inline-unique-001</t:title>
+      <t:revision-history>
+         <t:revision>
+            <t:date>2026-07-21</t:date>
+            <t:author>
+               <t:name>Norm Tovey-Walsh</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Initial test</p>
+            </t:description>
+         </t:revision>
+      </t:revision-history>
+   </t:info>
+   <t:description xmlns="http://www.w3.org/1999/xhtml">
+      <p>Tests that a p:inline that appears in a loop returns distinct
+      documents on each iteration and not the same node multiple times.</p>
+   </t:description>
+   <t:pipeline>
+<p:declare-step name="main" version="3.0"
+                xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                xmlns:p="http://www.w3.org/ns/xproc">
+<p:output port="result"/>
+<p:option name="num" as="xs:integer" select="3"/>
+<p:for-each>
+  <p:with-input select="1 to $num">
+    <p:inline/>
+  </p:with-input>
+  <p:identity>
+    <p:with-input>
+      <output/>
+    </p:with-input>
+  </p:identity>
+</p:for-each>
+
+<p:variable name="elements" select="collection()/*"
+            collection="true"/>
+
+<p:identity>
+  <p:with-input>
+    <count>{count($elements)}</count>
+  </p:with-input>
+</p:identity>
+
+</p:declare-step>
+</t:pipeline>
+<t:schematron>
+  <s:schema queryBinding="xslt2"
+            xmlns:s="http://purl.oclc.org/dsdl/schematron"
+            xmlns="http://www.w3.org/1999/xhtml">
+    <s:pattern>
+      <s:rule context="/">
+        <s:assert test="count">The root element is incorrect.</s:assert>
+        <s:assert test="count = 3">The count is incorrect.</s:assert>
+      </s:rule>
+    </s:pattern>
+  </s:schema>
+</t:schematron>
+</t:test>

@@ -97,6 +97,73 @@ def preflight? (cfg : Config) (r : Request) : Option Response :=
 def decorate (cfg : Config) (r : Request) (resp : Response) : Response :=
   HTTP.Cors.decorate profile cfg.cors r resp
 
+/-! ## No credentials (invariant I7, https://github.com/danbri/factoidal/issues/1124)
+
+The profile sends no `Access-Control-Allow-Credentials`, so an echoed or
+listed origin never makes a browser send cookies or cached HTTP credentials
+in a way that lets the page read the answer (Fetch §3.2.5). Before issue 1124
+only the `#guard` below checked this. -/
+
+theorem profile_no_credentials : profile.credentials = false := rfl
+
+/-- `decorate` adds no `Access-Control-Allow-Credentials` field, under any
+policy: such a field of the answer was in the step's own answer. -/
+theorem decorate_no_credentials (cfg : Config) (r : Request) (resp : Response)
+    (x : String × String) (hx : x ∈ (decorate cfg r resp).headers)
+    (hk : x.1 = "access-control-allow-credentials") : x ∈ resp.headers :=
+  HTTP.Cors.decorate_no_credentials profile rfl cfg.cors r resp x hx hk
+
+/-- A preflight answer never carries `Access-Control-Allow-Credentials`. -/
+theorem preflight_no_credentials (cfg : Config) (r : Request) (resp : Response)
+    (h : preflight? cfg r = some resp) :
+    ∀ x ∈ resp.headers, x.1 ≠ "access-control-allow-credentials" :=
+  HTTP.Cors.preflight?_no_credentials profile rfl cfg.cors r resp h
+
+/-! ## No echo without authorization (invariant I7)
+
+With `insecureNoAuth` every request is served with no authorization, so an
+echoed `Origin` would let any web page read and write the storage. The
+configuration member `cors` is then read by `policyFor`: absent means no
+CORS fields, a list names the origins, and `true` (echo) stops the start. -/
+
+/-- The message when `cors: true` meets `insecureNoAuth`. -/
+def insecureEchoRefusal : String :=
+  "config: \"cors\": true (echo every Origin) is refused with \"insecureNoAuth\": " ++
+  "any web page could read and write the storage; list the origins " ++
+  "(--cors-origin ORIGIN) instead (https://github.com/danbri/factoidal/issues/1124)"
+
+/-- The CORS policy of a storage: `policyOfJson` with authorization on; with
+`insecureNoAuth`, absent is `.off` and echo is refused. -/
+def policyFor (insecureNoAuth : Bool) (j : Option Json) : Except String Policy :=
+  if insecureNoAuth then
+    match j with
+    | none => .ok .off
+    | some _ =>
+        match policyOfJson j with
+        | .ok .echo => .error insecureEchoRefusal
+        | .ok p => .ok p
+        | .error e => .error e
+  else policyOfJson j
+
+/-- With `insecureNoAuth`, the policy is never echo. -/
+theorem insecure_no_echo (j : Option Json) (p : Policy) (h : policyFor true j = .ok p) :
+    p ≠ .echo := by
+  intro hp
+  subst hp
+  unfold policyFor at h
+  cases j with
+  | none => simp at h
+  | some v =>
+      simp only [if_true] at h
+      split at h <;> simp_all
+
+#guard (policyFor true none).toOption == some .off
+#guard (policyFor true (some (.bool true))).toOption.isNone
+#guard (policyFor true (some (.bool false))).toOption == some .off
+#guard (policyFor true (some (.array [.string "https://danbri.github.io"]))).toOption ==
+  some (.allow ["https://danbri.github.io"])
+#guard (policyFor false none).toOption == some .echo
+
 /-! ## Checks through the authorized step
 
 The storage is under authorization with no trusted issuer key, so every

@@ -175,6 +175,15 @@ factoidal lws-serve /tmp/dev --port 3000 --insecure-no-auth
 One of `--issuer`, `--auth-config FILE` or `--insecure-no-auth` is
 required.
 
+With `--insecure-no-auth` every request is served, so the storage answers
+only its own host names (421 for any other `Host`: DNS rebinding), refuses a
+write from another origin (403: a cross-site form or `fetch`), and sends no
+CORS fields unless `--cors-origin ORIGIN` names a page. `--allow-host NAME`
+and `--allow-origin ORIGIN` add names and origins (a reverse proxy, a
+Tailscale name). The engine decides all of this
+(`L4Factoidal/HTTP/LocalGuard.lean`,
+https://github.com/danbri/factoidal/issues/1124).
+
 `--port 0` takes an ephemeral port and the command prints the one it got;
 `--base IRI` sets `baseIri`, which defaults to the bound origin. `DIR`
 names the storage directory, but the first slice keeps the resource tree

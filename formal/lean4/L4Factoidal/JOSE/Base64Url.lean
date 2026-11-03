@@ -149,6 +149,75 @@ def digitsOf? : List Char → Option (List Nat)
       | none => none
       | some d => (digitsOf? cs).map (d :: ·)
 
+/-! ### Loop forms of the decoder
+
+`digitsOf?` and `decodeDigits` take one native frame for each character and
+each group of four digits. A Bitstring Status List `encodedList` of 16KB is
+about 22,000 characters, which overflowed the wasm stack (found 2026-10-28 by
+the W3C vc-bitstring-status-list-test-suite: "Maximum call stack size
+exceeded"). The forms below run with an accumulator; the `csimp` theorems make
+the compiler use them, and prove them equal to the definitions above. -/
+
+def digitsOfGo (acc : Array Nat) : List Char → Option (List Nat)
+  | [] => some acc.toList
+  | c :: cs =>
+      match decodeDigit? c with
+      | none => none
+      | some d => digitsOfGo (acc.push d) cs
+
+theorem digitsOfGo_eq : ∀ (acc : Array Nat) (cs : List Char),
+    digitsOfGo acc cs = (digitsOf? cs).map (acc.toList ++ ·)
+  | acc, [] => by simp [digitsOfGo, digitsOf?]
+  | acc, c :: cs => by
+    unfold digitsOfGo digitsOf?
+    cases h : decodeDigit? c with
+    | none => simp
+    | some d =>
+      simp only [digitsOfGo_eq (acc.push d) cs, Option.map_map]
+      congr 1
+      funext l
+      simp
+
+def digitsOfFast (cs : List Char) : Option (List Nat) := digitsOfGo #[] cs
+
+@[csimp] theorem digitsOf_eq_fast : @digitsOf? = @digitsOfFast := by
+  funext cs; simp [digitsOfFast, digitsOfGo_eq]
+
+def decodeDigitsGo (acc : Array UInt8) : List Nat → Option (List UInt8)
+  | [] => some acc.toList
+  | [_] => none
+  | [d0, d1] =>
+      if (d0 * 64 + d1) % 16 == 0 then some (acc.toList ++ [UInt8.ofNat ((d0 * 64 + d1) / 16)])
+      else none
+  | [d0, d1, d2] =>
+      if (d0 * 4096 + d1 * 64 + d2) % 4 == 0 then
+        some (acc.toList ++ [UInt8.ofNat ((d0 * 4096 + d1 * 64 + d2) / 1024),
+              UInt8.ofNat ((d0 * 4096 + d1 * 64 + d2) / 4 % 256)])
+      else none
+  | d0 :: d1 :: d2 :: d3 :: rest =>
+      decodeDigitsGo (((acc.push (UInt8.ofNat ((d0 * 262144 + d1 * 4096 + d2 * 64 + d3) / 65536))).push
+        (UInt8.ofNat ((d0 * 262144 + d1 * 4096 + d2 * 64 + d3) / 256 % 256))).push
+        (UInt8.ofNat ((d0 * 262144 + d1 * 4096 + d2 * 64 + d3) % 256))) rest
+
+theorem decodeDigitsGo_eq : ∀ (acc : Array UInt8) (l : List Nat),
+    decodeDigitsGo acc l = (decodeDigits l).map (acc.toList ++ ·)
+  | acc, [] => by simp [decodeDigitsGo, decodeDigits]
+  | acc, [_] => by simp [decodeDigitsGo, decodeDigits]
+  | acc, [d0, d1] => by
+    simp only [decodeDigitsGo, decodeDigits]; split <;> simp
+  | acc, [d0, d1, d2] => by
+    simp only [decodeDigitsGo, decodeDigits]; split <;> simp
+  | acc, d0 :: d1 :: d2 :: d3 :: rest => by
+    simp only [decodeDigitsGo, decodeDigits, decodeDigitsGo_eq _ rest, Option.map_map]
+    congr 1
+    funext l
+    simp
+
+def decodeDigitsFast (l : List Nat) : Option (List UInt8) := decodeDigitsGo #[] l
+
+@[csimp] theorem decodeDigits_eq_fast : @decodeDigits = @decodeDigitsFast := by
+  funext l; simp [decodeDigitsFast, decodeDigitsGo_eq]
+
 /-! ## The codec -/
 
 /-- RFC 7515 §2 `BASE64URL(OCTETS)`. -/

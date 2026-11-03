@@ -9,6 +9,8 @@
 // This file decides only where the one file lives and how it is written:
 //
 //   DIR/lws-state.json      the snapshot, replaced atomically
+//   DIR/lws.lock            the lock of the one writing process (named by
+//                           the engine, issue 1135; see the end of this file)
 //
 // No request target ever becomes a file name here, so a request cannot
 // address a file outside DIR.
@@ -26,6 +28,7 @@
 
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync, existsSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
+import { hostname } from 'node:os'
 
 export const STATE_FILE = 'lws-state.json'
 
@@ -322,4 +325,170 @@ export function persistFilesIfChanged (engine, handle, envelope, dir) {
   if (envelope.changed !== true) return
   const answered = engine.callBlobIO('lwsPersist', [handle, JSON.stringify({ seed: seedBase64() })], new Uint8Array(0))
   performPlan(dir, answered.envelope.plan, answered.bytes)
+}
+
+// ---------------------------------------------------------------------------
+// ONE WRITING PROCESS PER STORAGE DIRECTORY
+// (https://github.com/danbri/factoidal/issues/1135)
+//
+// The engine decides the lock file name, its contents and what a start does
+// (`lwsDirLock`, formal/lean4/L4Factoidal/LWS/DirLock.lean). This host does
+// three things only: the exclusive create of the file it names (flag `wx`,
+// O_EXCL), the liveness probe of a process id it names (`kill(pid, 0)`), and
+// the removal of the file at a clean exit. Each result goes back to the
+// engine as data.
+
+/** Random text of this process, drawn once: it tells a lock this process
+ *  wrote from the lock of an earlier process with the same process id. */
+let processToken = null
+function processTokenText () {
+  if (processToken === null) {
+    const bytes = new Uint8Array(18)
+    globalThis.crypto.getRandomValues(bytes)
+    let text = ''
+    for (const b of bytes) text += String.fromCharCode(b)
+    processToken = btoa(text)
+  }
+  return processToken
+}
+
+/** The lock files this process holds: absolute path -> contents. */
+const heldLocks = new Map()
+let exitHookSet = false
+
+/** Remove a lock file this process holds, when it still holds this
+ *  process's contents. Pure I/O. */
+function removeHeldLock (file) {
+  if (!heldLocks.has(file)) return
+  const contents = heldLocks.get(file)
+  heldLocks.delete(file)
+  try {
+    if (readFileSync(file, 'utf8') === contents) unlinkSync(file)
+  } catch (_error) {
+    // Already gone, or not readable: nothing to remove.
+  }
+}
+
+/** At process exit (normal end, `process.exit`, and after a SIGINT or
+ *  SIGTERM handler ends the process), remove every lock still held. */
+function ensureExitHook () {
+  if (exitHookSet || globalThis.process === undefined || typeof globalThis.process.on !== 'function') return
+  exitHookSet = true
+  globalThis.process.on('exit', () => {
+    for (const file of [...heldLocks.keys()]) removeHeldLock(file)
+  })
+}
+
+/** Is process `pid` alive on this host? Pure I/O: `kill(pid, 0)`; EPERM
+ *  means it exists under another user. */
+function processAlive (pid) {
+  try {
+    globalThis.process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error !== null && typeof error === 'object' && error.code === 'EPERM'
+  }
+}
+
+/** Create `file` with O_EXCL and write `contents`; false when it exists. */
+function createExclusive (file, contents) {
+  let fd
+  try {
+    fd = openSync(file, 'wx', 0o600)
+  } catch (error) {
+    if (error.code === 'EEXIST') return false
+    throw error
+  }
+  try {
+    writeSync(fd, contents)
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+  return true
+}
+
+/** An error that stops a start because another process holds the storage
+ *  directory. `envelope` carries the engine's message, as for every other
+ *  refusal of a start. */
+export class StorageLockedError extends Error {
+  constructor (message) {
+    super(message)
+    this.name = 'StorageLockedError'
+    this.envelope = { ok: false, error: message }
+  }
+}
+
+/**
+ * Take the lock of storage directory `dir` for `command` (`lws-serve`,
+ * `solid-serve`, `webdav-serve`). Returns `{ file, warning, release }`:
+ * `warning` is the engine's text when it took over a stale lock, else null;
+ * `release()` removes the lock. Throws `StorageLockedError` with the
+ * engine's message when the engine refuses.
+ */
+export function acquireDirLock (engine, dir, command) {
+  const root = resolve(dir)
+  mkdirSync(root, { recursive: true })
+  const base = {
+    dir: root,
+    pid: globalThis.process.pid,
+    command,
+    started: new Date().toISOString(),
+    host: hostname(),
+    token: processTokenText()
+  }
+  let request = { ...base }
+  // Each round is one engine answer; a create that loses to another start
+  // reads the file again and asks again.
+  for (let round = 0; round < 8; round += 1) {
+    const told = engine.call('lwsDirLock', [JSON.stringify(request)])
+    if (told === null || typeof told !== 'object' || told.ok === false) {
+      throw Object.assign(new Error(`lwsDirLock: ${told && told.error ? told.error : 'no answer'}`), { envelope: told })
+    }
+    switch (told.action) {
+      case 'create':
+      case 'replace': {
+        const file = insideDir(root, told.file)
+        if (told.action === 'replace') {
+          try { unlinkSync(file) } catch (error) { if (error.code !== 'ENOENT') throw error }
+        }
+        if (createExclusive(file, told.contents)) {
+          heldLocks.set(file, told.contents)
+          ensureExitHook()
+          return {
+            file,
+            warning: told.action === 'replace' ? told.warning : null,
+            release: () => removeHeldLock(file)
+          }
+        }
+        let present = null
+        try { present = readFileSync(file, 'utf8') } catch (error) { if (error.code !== 'ENOENT') throw error }
+        request = present === null ? { ...base } : { ...base, present }
+        break
+      }
+      case 'probe':
+        request = { ...request, alive: processAlive(Number(told.pid)) }
+        break
+      case 'refuse':
+        throw new StorageLockedError(told.message)
+      default:
+        throw new Error(`lwsDirLock answered an unknown action ${String(told.action)}`)
+    }
+  }
+  throw new Error('lwsDirLock: the lock file changed on every attempt')
+}
+
+/**
+ * The start notice about encryption at rest of the storage in `dir`
+ * (`lwsAtRestNotice`): `{ sealed, keyId?, notice }`. The key text is passed
+ * unread; the engine checks it.
+ */
+export function atRestNotice (engine, dir, storageKey) {
+  const request = { dir: resolve(dir) }
+  if (typeof storageKey === 'string') request.storageKey = storageKey
+  const told = engine.call('lwsAtRestNotice', [JSON.stringify(request)])
+  if (told === null || typeof told !== 'object' || told.ok === false) {
+    throw Object.assign(new Error(`lwsAtRestNotice: ${told && told.error ? told.error : 'no answer'}`), { envelope: told })
+  }
+  return told
 }

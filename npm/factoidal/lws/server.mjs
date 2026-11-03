@@ -84,11 +84,11 @@
 // produced and this code keeps working unchanged.
 
 import { loadEngine } from '../bin/engine.mjs'
-import { readSnapshot, persistIfChanged, storageKeyText, storageModeText, loadFiles, persistFilesIfChanged, readStepBodies } from './persist.mjs'
+import { readSnapshot, persistIfChanged, storageKeyText, storageModeText, loadFiles, persistFilesIfChanged, readStepBodies, acquireDirLock, atRestNotice } from './persist.mjs'
 
 /** The ops this host needs from the engine. */
 export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot', 'lwsFetched', 'lwsDelivered',
-  'lwsLoad', 'lwsPersist', 'lwsRead']
+  'lwsLoad', 'lwsPersist', 'lwsRead', 'lwsDirLock', 'lwsAtRestNotice']
 
 /** How long this host waits for the answer to one delivery request before
  *  it reports "no answer" (status 0) to the engine. */
@@ -254,8 +254,11 @@ function contentBytes (request) {
  *   file) or "files" (one file per body and a journal, issue 918); passed unread
  * @param {boolean|string[]} [options.cors] CORS (issue 923): false for none, a list of
  *   origins to answer; default: echo any valid request Origin. Passed unread
+ * @param {string} [options.lockCommand] the command named in the lock file of DIR
+ *   (default "lws-serve"; https://github.com/danbri/factoidal/issues/1135)
  * @param {object} [options.engine] an engine handle to reuse
- * @returns {Promise<{step: Function, close: Function, handle: string, engine: object}>}
+ * @returns {Promise<{step: Function, close: Function, handle: string, engine: object,
+ *                    lockFile: string|null, notices: string[]}>}
  */
 export async function openLwsStorage (options = {}) {
   const engine = options.engine !== undefined ? options.engine : await loadEngine()
@@ -267,12 +270,20 @@ export async function openLwsStorage (options = {}) {
   // The pagination threshold and page size of container listings; the
   // engine decides what it means (L4Factoidal/LWS/Pagination.lean).
   if (typeof options.pageSize === 'number') config.pageSize = options.pageSize
+  // The largest content of one write; the engine answers 413 above it
+  // (L4Factoidal/LWS/Operations.lean, step_tooLarge; issue 1240).
+  if (typeof options.maxBody === 'number') config.maxBody = options.maxBody
   // Authorization (L4Factoidal/LWS/Authorization.lean). `auth` is passed
   // through unread; `insecureNoAuth` is the explicit development mode.
   // With neither, the engine enforces authorization with no trusted
   // issuer.
   if (options.auth !== undefined && options.auth !== null) config.auth = options.auth
   if (options.insecureNoAuth === true) config.insecureNoAuth = true
+  // A component principal (issue 1238): a storage a component opens
+  // in-process. No token is read; every request is this agent's, and WAC
+  // decides it (Authorization.decide_principal_agents). Never served over
+  // HTTP: createLwsServer refuses it.
+  if (typeof options.principal === 'string') config.principal = options.principal
   if (typeof options.rootAcl === 'string') config.rootAcl = options.rootAcl
   // Notifications are on unless the caller turns them off; the engine
   // decides everything else about them.
@@ -315,8 +326,14 @@ export async function openLwsStorage (options = {}) {
   if (typeof options.controllerInbox === 'string') config.controllerInbox = options.controllerInbox
   // CORS (https://github.com/danbri/factoidal/issues/923): `cors` is false or
   // a list of origins, passed unread; absent, the engine echoes the request
-  // Origin. L4Factoidal/LWS/Cors.lean decides every CORS field.
+  // Origin under authorization and sends no CORS field with insecureNoAuth
+  // (issue 1124). L4Factoidal/LWS/Cors.lean decides every CORS field.
   if (options.cors !== undefined) config.cors = options.cors
+  // The Host and Origin guard of a storage with insecureNoAuth
+  // (https://github.com/danbri/factoidal/issues/1124): extra host names and
+  // origins, passed unread; L4Factoidal/HTTP/LocalGuard.lean decides.
+  if (Array.isArray(options.allowHosts)) config.allowHosts = options.allowHosts
+  if (Array.isArray(options.allowOrigins)) config.allowOrigins = options.allowOrigins
   // What this host bound: data for the engine's inbox check (issue 915).
   if (options.listen !== undefined && options.listen !== null) config.listen = options.listen
   config.entropy = entropyBase64()
@@ -335,35 +352,68 @@ export async function openLwsStorage (options = {}) {
   const dir = typeof options.dir === 'string' ? options.dir : null
   const storage = dir !== null ? storageModeText(options.storage) : options.storage
   if (typeof storage === 'string') config.storage = storage
-  // `dir` names the storage directory. The snapshot found there, if any,
-  // is the storage to continue from; the engine checks it.
-  if (dir !== null && storage !== 'files') {
-    const snapshot = readSnapshot(dir)
-    if (snapshot !== null) config.snapshot = snapshot
+  // One writing process per storage directory
+  // (https://github.com/danbri/factoidal/issues/1135): the lock is taken
+  // before anything in DIR is read, and released by `close` and at process
+  // exit. The engine decides the file, its contents and every refusal
+  // (L4Factoidal/LWS/DirLock.lean); a refusal is thrown with its message.
+  let lock = null
+  if (dir !== null) {
+    try {
+      lock = acquireDirLock(engine, dir, typeof options.lockCommand === 'string' ? options.lockCommand : 'lws-serve')
+    } catch (error) {
+      if (isUnknownOp(error)) {
+        throw new LwsHostError(
+          'the loaded l4factoidal WebAssembly module does not carry lwsDirLock',
+          { unknownOp: true })
+      }
+      throw error
+    }
   }
   let opened
+  let handle
+  let filesMode
+  let notices = []
   try {
-    opened = engine.call('lwsOpen', [JSON.stringify(config)])
-  } catch (error) {
-    if (isUnknownOp(error)) {
-      throw new LwsHostError(
-        'the loaded l4factoidal WebAssembly module does not carry lwsOpen',
-        { unknownOp: true })
+    // `dir` names the storage directory. The snapshot found there, if any,
+    // is the storage to continue from; the engine checks it.
+    if (dir !== null && storage !== 'files') {
+      const snapshot = readSnapshot(dir)
+      if (snapshot !== null) config.snapshot = snapshot
     }
+    try {
+      opened = engine.call('lwsOpen', [JSON.stringify(config)])
+    } catch (error) {
+      if (isUnknownOp(error)) {
+        throw new LwsHostError(
+          'the loaded l4factoidal WebAssembly module does not carry lwsOpen',
+          { unknownOp: true })
+      }
+      throw error
+    }
+    handle = handleOf(opened)
+    if (handle === null) {
+      throw new LwsHostError('lwsOpen answered with no handle')
+    }
+    // A storage kept in files: read the files the engine names until it is
+    // ready, and perform the plan of the start. Without a DIR, there are no
+    // files: the engine is told none is present.
+    filesMode = opened !== null && typeof opened === 'object' &&
+      opened.load !== undefined && opened.load !== null
+    if (filesMode) {
+      if (dir === null) throw new LwsHostError('a storage kept in files needs a storage directory (dir)')
+      loadFiles(engine, handle, opened, dir)
+    }
+    // What a server prints at start, after the experimental code notice:
+    // a take-over of a stale lock, and whether the storage on disk is
+    // sealed (encryption at rest; the engine words both).
+    if (dir !== null) {
+      if (lock.warning !== null) notices.push(`WARNING: ${lock.warning}`)
+      notices.push(atRestNotice(engine, dir, storageKey).notice)
+    }
+  } catch (error) {
+    if (lock !== null) lock.release()
     throw error
-  }
-  const handle = handleOf(opened)
-  if (handle === null) {
-    throw new LwsHostError('lwsOpen answered with no handle')
-  }
-  // A storage kept in files: read the files the engine names until it is
-  // ready, and perform the plan of the start. Without a DIR, there are no
-  // files: the engine is told none is present.
-  const filesMode = opened !== null && typeof opened === 'object' &&
-    opened.load !== undefined && opened.load !== null
-  if (filesMode) {
-    if (dir === null) throw new LwsHostError('a storage kept in files needs a storage directory (dir)')
-    loadFiles(engine, handle, opened, dir)
   }
   /** After a call whose envelope may say `changed`: write what the engine
    *  gives (the snapshot, or the plan of a storage kept in files). */
@@ -448,6 +498,10 @@ export async function openLwsStorage (options = {}) {
   return {
     engine,
     handle,
+    /** The lock file of the storage directory, or null with no DIR. */
+    lockFile: lock !== null ? lock.file : null,
+    /** The start notices, for the server to print on standard error. */
+    notices,
     /**
      * One protocol step.
      * @param {{method: string, target: string,
@@ -538,17 +592,35 @@ export async function openLwsStorage (options = {}) {
       closed = true
       if (flushTimer !== null) clearTimeout(flushTimer)
       try { engine.call('lwsClose', [handle]) } catch (_error) { /* already gone */ }
+      if (lock !== null) lock.release()
     }
   }
 }
 
-/** Read a Node request body as its bytes. */
-function readBody (request) {
+/** The engine's default `maxBody` (L4Factoidal/LWS/Operations.lean). */
+export const DEFAULT_MAX_BODY = 16 * 1024 * 1024
+
+/**
+ * Read a Node request body as its bytes, at most `limit` of them. Past the
+ * limit (by Content-Length, or while reading a chunked body) it resolves
+ * `null` and stops reading, so an oversized upload never reaches memory
+ * whole (issue 1240); the caller answers 413, as the engine would.
+ */
+function readBody (request, limit = DEFAULT_MAX_BODY) {
   return new Promise((resolve, reject) => {
+    const declared = Number(request.headers['content-length'])
+    if (Number.isFinite(declared) && declared > limit) { resolve(null); return }
     const chunks = []
-    request.on('data', (chunk) => chunks.push(chunk))
+    let size = 0
+    let over = false
+    request.on('data', (chunk) => {
+      if (over) return
+      size += chunk.length
+      if (size > limit) { over = true; chunks.length = 0; resolve(null); request.resume(); return }
+      chunks.push(chunk)
+    })
     request.on('error', reject)
-    request.on('end', () => resolve(new Uint8Array(Buffer.concat(chunks))))
+    request.on('end', () => { if (!over) resolve(new Uint8Array(Buffer.concat(chunks))) })
   })
 }
 
@@ -576,6 +648,11 @@ function headerPairs (raw) {
  *                    setBaseIri: Function}>}
  */
 export async function createLwsServer (options = {}) {
+  if (options.principal !== undefined) {
+    // Served over HTTP, a principal storage would let every client act as
+    // the component. It is for in-process use only (issue 1238).
+    throw new LwsHostError('a storage with a component principal is in-process only; it is not served over HTTP')
+  }
   const http = await import('node:http')
   const onError = typeof options.onError === 'function'
     ? options.onError
@@ -593,6 +670,12 @@ export async function createLwsServer (options = {}) {
    *  (L4Factoidal/Authz/Mount.lean). */
   function storage () {
     if (opening === null) {
+      // What the socket bound, when the caller listened itself and did not
+      // say (data for the engine's Host check, issue 1124).
+      const bound = server.address()
+      if (settings.listen === undefined && bound !== null && typeof bound === 'object') {
+        settings = { ...settings, listen: { address: bound.address, port: bound.port, addresses: [] } }
+      }
       opening = (async () => {
         let storageSettings = settings
         if (settings.authz !== undefined && settings.authz !== null) {
@@ -622,7 +705,14 @@ export async function createLwsServer (options = {}) {
         method: request.method,
         target: request.url,
         headers: headerPairs(request.rawHeaders),
-        body: await readBody(request)
+        body: await readBody(request, typeof settings.maxBody === 'number' ? settings.maxBody : DEFAULT_MAX_BODY)
+      }
+      if (record.body === null) {
+        const limit = typeof settings.maxBody === 'number' ? settings.maxBody : DEFAULT_MAX_BODY
+        response.writeHead(413, { 'content-type': 'application/problem+json', connection: 'close' })
+        response.end(JSON.stringify({ type: 'about:blank', title: 'Content Too Large', status: 413,
+          detail: `the content is over ${limit} bytes, the limit of this storage` }))
+        return
       }
     } catch (error) {
       onError(error)
@@ -720,7 +810,7 @@ export async function listen (options = {}) {
   const bound = created.server.address()
   const origin = `http://${host}:${bound.port}`
   if (typeof options.baseIri !== 'string') created.setBaseIri(`${origin}/`)
-  created.setListen({ address: bound.address, port: bound.port, addresses: await interfaceAddresses() })
+  created.setListen({ host, address: bound.address, port: bound.port, addresses: await interfaceAddresses() })
   try {
     await created.storage()
   } catch (error) {

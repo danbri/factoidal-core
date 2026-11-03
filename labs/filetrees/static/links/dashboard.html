@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Factoidal labs dashboard</title>
+<style>body{font:16px system-ui;margin:2em;max-width:44em} code{background:#eee;padding:0 .2em} li{margin:.2em 0}</style>
+<h1>Factoidal labs dashboard</h1>
+<p>Served from <code>{{ORIGIN}}/{{MOUNT}}/dashboard.html</code>. When this page
+is opened from that URL, the list below comes from a WebDAV PROPFIND of the
+server root. When it is opened as a file (from the mounted folder), the
+request has origin <code>null</code> and the list stays empty.</p>
+<p id="where"></p>
+<ul id="mounts"><li>(not loaded)</li></ul>
+<script>
+document.getElementById('where').textContent = 'This page has origin: ' + location.origin
+fetch('/', { method: 'PROPFIND', headers: { Depth: '1' } })
+  .then(function (r) { return r.text() })
+  .then(function (text) {
+    var doc = new DOMParser().parseFromString(text, 'application/xml')
+    var items = doc.getElementsByTagNameNS('DAV:', 'response')
+    var ul = document.getElementById('mounts')
+    ul.textContent = ''
+    for (var i = 0; i < items.length; i++) {
+      var href = items[i].getElementsByTagNameNS('DAV:', 'href')[0].textContent
+      var name = items[i].getElementsByTagNameNS('DAV:', 'displayname')[0]
+      var li = document.createElement('li')
+      var a = document.createElement('a')
+      a.href = href
+      a.textContent = (name ? name.textContent : href) + ' (' + href + ')'
+      li.appendChild(a)
+      ul.appendChild(li)
+    }
+  })
+  .catch(function (e) { document.getElementById('mounts').textContent = 'PROPFIND failed: ' + e })
+</script>
+</html>

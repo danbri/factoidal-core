@@ -1,0 +1,59 @@
+<t:test xmlns:t="http://xproc.org/ns/testsuite/3.0"
+        xmlns:err="http://www.w3.org/ns/xproc-error"
+        expected="fail" code="err:XS0018" features="p-run">
+   <t:info>
+      <t:title>p:run-040</t:title>
+      <t:revision-history>
+         <t:revision>
+            <t:date>2024-10-26</t:date>
+            <t:author>
+               <t:name>Norm Tovey-Walsh</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Added expand-text=false where necessary.</p>
+            </t:description>
+         </t:revision>
+         <t:revision>
+            <t:date>2024-08-02</t:date>
+            <t:author>
+               <t:name>Achim Berndzen</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Changed test (and description) as now the specs says required options have to be bound.</p>
+            </t:description>
+         </t:revision>
+         <t:revision>
+            <t:date>2022-10-01</t:date>
+            <t:author>
+               <t:name>Achim Berndzen</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Added tests for p:run</p>
+            </t:description>
+         </t:revision>
+      </t:revision-history>
+   </t:info>
+   <t:description xmlns="http://www.w3.org/1999/xhtml">
+      <p>Tests p:run: Error to be raised if required option is not bound.</p>
+   </t:description>
+   <t:pipeline>
+      <p:declare-step version="3.0" xmlns:p="http://www.w3.org/ns/xproc">
+         <p:output port="result" />
+         <p:run>
+            <p:with-input>
+               <p:inline expand-text="false">
+                  <p:declare-step version="3.0" xmlns:fn="http://www.w3.org/2005/xpath-functions"
+                     xmlns:xs="http://www.w3.org/2001/XMLSchema">
+                     <p:output port="result" />
+                     <p:option name="opt" as="xs:string" required="true"/>
+                     <p:identity>
+                        <p:with-input><result>{fn:empty($opt)}</result></p:with-input>
+                     </p:identity>
+                  </p:declare-step>
+               </p:inline>
+            </p:with-input>
+            <p:output port="result" />
+         </p:run>    
+      </p:declare-step>
+   </t:pipeline>
+</t:test>

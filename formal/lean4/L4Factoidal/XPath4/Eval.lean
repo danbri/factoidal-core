@@ -17,7 +17,9 @@ references, partial application, dynamic calls, keyword arguments,
 `instance of`, `treat as`, `cast as`, `castable as`, string templates.
 Static calls are coerced to the F&O 4.0 signature first (§3.4.3).
 -/
-import L4Factoidal.XPath4.Lib
+import L4Factoidal.XPath4.Ext
+import L4Factoidal.XQuery4.Runtime
+import L4Factoidal.XQuery4.Grammar
 
 namespace L4Factoidal.XPath4
 
@@ -36,7 +38,7 @@ def mkDur (ty : Builtin) (months : Int) (secs : Dec) : Atomic :=
 
 /-- Arithmetic on two atomic values (§3.5.1 and the F&O 4.0 §9 tables
     for durations, dates and times). -/
-def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
+def arith0 (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
   let a0 ← if a.ty == .untyped then castAtomic a (.b .double) else pure a
   let b0 ← if b.ty == .untyped then castAtomic b (.b .double) else pure b
   -- commute `number * duration` and `duration + date`
@@ -72,7 +74,6 @@ def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
     match b.num? with
     | some n =>
       let f := n.toFloat
-      if op == .div && f == 0 && n.rank < 2 then err "FOAR0001" "division of a duration by zero" else
       if f.isNaN then err "FOCA0005" "NaN in duration arithmetic" else
       if f.isInf && op == .mul then err "FODT0002" "duration overflow" else
       if op == .div && f == 0 then err "FODT0002" "duration overflow" else
@@ -92,7 +93,9 @@ def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
         pure (mkDur .duration 0 (factorExact x.seconds))
       else if decIsZero x.seconds then
         pure (mkDur .duration (Fn.Numeric.decRound (factorExact (Dec.ofInt x.months))) Dec.zero)
-      else err "XPTY0004" "cannot multiply an xs:duration with both month and second parts"
+      -- XPath 4.0 / F&O 4.0 §8.4.4: an xs:duration with both parts is
+      -- scaled part by part, the month count rounded
+      else pure (mkDur .duration (Fn.Numeric.decRound (factorExact (Dec.ofInt x.months))) (factorExact x.seconds))
     | none => err "XPTY0004" "invalid duration arithmetic"
   | .x (.dt k1 x), .x (.dt k2 y), .sub =>
       if k1 == k2 && (k1 == .dateTime || k1 == .date || k1 == .time) then
@@ -108,11 +111,26 @@ def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
       else err "XPTY0004" "invalid date/duration arithmetic"
   | _, _, _ => err "XPTY0004" ("invalid arithmetic on xs:" ++ a.ty.name ++ " and xs:" ++ b.ty.name)
 
+/-- Arithmetic with the date and duration limits (`checkLimits`): an
+    overflowing result of date arithmetic is FODT0001, of duration
+    arithmetic FODT0002. -/
+def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
+  let r ← arith0 tz op a b
+  match r.v with
+  | .x (.dur d) =>
+    if durWithinLimits d then pure r
+    else if (match a.v, b.v with | .x (.dt ..), _ | _, .x (.dt ..) => true | _, _ => false) then
+      err "FODT0001" "date/time arithmetic overflows"
+    else err "FODT0002" "duration arithmetic overflows"
+  | _ => checkLimits r
+
 /-- Value comparison of two atomic values (§3.7.2). -/
-def valueCmp (tz : Int) (op : BOp) (a b : Atomic) : M Bool := do
+def valueCmp (tz : Int) (op : BOp) (a b : Atomic) (coll : Coll := .codepoint) : M Bool := do
   let a := if a.ty == .untyped then Atomic.ofStr a.str else a
   let b := if b.ty == .untyped then Atomic.ofStr b.str else b
-  let c ← atomicCmp a b tz
+  -- strings compare under the default collation (§3.7.2)
+  let c ← if !coll.isCodepoint && a.isStringLike && b.isStringLike then pure (some (coll.compare a.str b.str))
+    else atomicCmp a b tz
   match op with
   | .veq | .geq => pure (c == some .eq)
   | .vne | .gne => pure (c != some .eq)
@@ -128,18 +146,27 @@ def valueCmp (tz : Int) (op : BOp) (a b : Atomic) : M Bool := do
 
 /-- General comparison of one pair, with the untyped conversions of
     §3.7.1. -/
-def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option String) : M Bool := do
+def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option String) (coll : Coll := .codepoint) : M Bool := do
   let conv (x y : Atomic) : M Atomic :=
     if x.ty == .untyped then
       if y.ty == .untyped || y.isStringLike then pure (Atomic.ofStr x.str)
-      else if y.isNumeric then castAtomic x (.b .double)
+      else if y.isNumeric then
+        -- XPath 4.0 §4.11.2: to the primitive base type of the numeric
+        -- operand (xs:decimal, xs:double or xs:float), or, if that cast
+        -- fails, to xs:double (3.1 cast to xs:double; with the exact
+        -- numeric comparison of 4.0 that makes `untypedAtomic('6.58') = 6.58` false)
+        let prim : L4Factoidal.XSD.Builtin :=
+          if y.is .decimal then .decimal else if y.is .float then .float else .double
+        match castAtomic x (.b prim) with
+        | .ok v => pure v
+        | .error _ => castAtomic x (.b .double)
       else match y.ty with
         | .b bt => castAtomic x (.b (match bt.primitive with | some p => if derivedFrom bt .dayTimeDuration then .dayTimeDuration else if derivedFrom bt .yearMonthDuration then .yearMonthDuration else p | none => bt)) ns
         | .untyped => pure (Atomic.ofStr x.str)
     else pure x
   let a' ← conv a b
   let b' ← conv b a
-  valueCmp tz op a' b'
+  valueCmp tz op a' b' coll
 
 def BOp.isGeneral : BOp → Bool
   | .geq | .gne | .glt | .gle | .ggt | .gge => true | _ => false
@@ -151,27 +178,210 @@ def BOp.arOp? : BOp → Option ArOp
   | .add => some .add | .sub => some .sub | .mul => some .mul | .div => some .div
   | .idiv => some .idiv | .mod => some .mod | _ => none
 
+/-! ## XPath 1.0 compatibility mode
+
+The rules that apply when `Env.compat10` is true: argument coercion of
+static function calls (§3.4.1), arithmetic operands (§4.8.1) and general
+comparisons (§4.10.2). -/
+
+/-- The primitive type of an atomic type (itself if it has none). -/
+def primOf : AType → AType
+  | .b bt => .b (bt.primitive.getD bt)
+  | t => t
+
+/-- `fn:number` of one atomic item. -/
+def compatNum (a : Atomic) : Atomic :=
+  if a.isNumeric && a.ty == .b .double then a else
+  let a := if a.ty == .untyped then Atomic.ofStr a.str else a
+  match castAtomic a (.b .double) with
+  | .ok d => d
+  | .error _ => Atomic.ofDbl (0.0 / 0.0)
+
+/-- An arithmetic operand: the first atomized item, converted by
+    `fn:number` when it is a boolean, string, decimal, float or untyped
+    value; `none` when empty (the result is then NaN). -/
+def compatOperand (env : Env) (s : Seq) : M (Option Atomic) := do
+  match ← env.atomize s with
+  | [] => pure none
+  | a :: _ =>
+    let conv := a.ty == .untyped || a.isStringLike || a.isNumeric || a.ty == .b .boolean
+    pure (some (if conv then compatNum a else a))
+
+/-- Arithmetic in XPath 1.0 compatibility mode. -/
+def compatArith (env : Env) (ar : ArOp) (x y : Seq) : M Seq := do
+  match ← compatOperand env x, ← compatOperand env y with
+  | some a, some b => pure (single (← arith env.tz ar a b))
+  | _, _ => pure (single (Atomic.ofDbl (0.0 / 0.0)))
+
+/-- A general comparison in XPath 1.0 compatibility mode. -/
+def compatGeneral (env : Env) (op : BOp) (xs ys : Seq) : M Bool := do
+  let isBool (s : Seq) : Bool := match s with
+    | [.atom a] => a.ty == .b .boolean
+    | _ => false
+  let valOp : BOp := match op with
+    | .geq => .veq | .gne => .vne | .glt => .vlt | .gle => .vle | .ggt => .vgt | _ => .vge
+  if isBool xs || isBool ys then
+    let a ← ebv xs
+    let b ← ebv ys
+    if op == .geq || op == .gne then return ← valueCmp env.tz valOp (Atomic.ofBool a) (Atomic.ofBool b)
+    else return ← valueCmp env.tz valOp (compatNum (Atomic.ofBool a)) (compatNum (Atomic.ofBool b))
+  let as ← env.atomize xs
+  let bs ← env.atomize ys
+  let rel := !(op == .geq || op == .gne)
+  for a in as do
+    for b in bs do
+      let (a', b') ←
+        if rel || a.isNumeric || b.isNumeric then pure (compatNum a, compatNum b)
+        else if a.isStringLike || b.isStringLike || (a.ty == .untyped && b.ty == .untyped) then
+          pure (Atomic.ofStr a.str, Atomic.ofStr b.str)
+        else if a.ty == .untyped then pure (← castAtomic (Atomic.ofStr a.str) (primOf b.ty), b)
+        else if b.ty == .untyped then pure (a, ← castAtomic (Atomic.ofStr b.str) (primOf a.ty))
+        else pure (a, b)
+      if ← valueCmp env.tz valOp a' b' env.defaultColl then return true
+  pure false
+
+/-- Coerce a static function call argument in XPath 1.0 compatibility
+    mode (§3.4.1): `V[1]` for a single or optional type, then `fn:string`
+    for `xs:string`, `fn:number` for `xs:double`. -/
+def compatArg (env : Env) (t : IType) (v : Seq) : M Seq := do
+  let (it, single?) := match t with
+    | .seq i o => (i, o == Occ.opt)
+    | i => (i, true)
+  if !single? then return v
+  let v := v.take 1
+  match it with
+  | .atomic (.b .string) =>
+    match v with
+    | [] => pure (sStr "")
+    | [.atom x] => pure (sStr x.str)
+    | [.node n] => pure (sStr (env.nodeString n))
+    | _ => pure v
+  | .atomic (.b .double) =>
+    match ← env.atomize v with
+    | [] => pure (single (Atomic.ofDbl (0.0 / 0.0)))
+    | a :: _ => pure (single (compatNum a))
+  -- `xs:numeric?` (the choice of the three numeric types): `fn:number`
+  -- of the first item when it is not numeric (XPath 4.0 §3.4.3)
+  | .choice [.atomic (.b .double), .atomic (.b .float), .atomic (.b .decimal)] =>
+    match ← env.atomize v with
+    | [] => pure (if t matches .seq _ .opt then [] else single (Atomic.ofDbl (0.0 / 0.0)))
+    | a :: _ => pure (single (if a.isNumeric then a else compatNum a))
+  | _ => pure v
+
 def maxRange : Int := 20000000
 
-/-- `cast as` to an item type. -/
-def castTo (e : Env) (s : Seq) (t : IType) (opt : Bool) : M Seq := do
+/-- Give the runtime documents of a result a new identity from `salt`
+    (the call's source offset and the dynamic bindings); nodes of one
+    document keep one identity. -/
+def rekeyTrees (salt : String) (r : Seq) : Seq :=
+  r.map (fun i => match i with
+    | .node nr => if nr.rt.isSome then .node { nr with doc := runtimeDocId "tree" (toString nr.doc ++ "\x00" ++ salt) } else i
+    | other => other)
+
+/-- The static error for a type that is not a cast target (XPath 4.0
+    §4.19.2): XPST0080 for a function type or a choice with a member that
+    is not atomic, XPST0051 for any other type that is not a generalized
+    atomic, array, map or record type; `none` for a cast target. -/
+def castTargetError : IType → Option String
+  | .anyFn | .fnT .. => some "XPST0080"
+  | .choice ts => if ts.all (fun t => match t with | .atomic _ | .enum _ | .choice _ => true | _ => false) then none else some "XPST0080"
+  | .atomic aty => if aty == .b .anyAtomicType || aty == .b .notation then some "XPST0080" else none
+  | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap => none
+  | .jnodeT .. | .xnode => some "XPST0080"
+  | _ => some "XPST0051"
+
+/-- Whether an item type is a valid cast target (XPath 4.0 §4.19.2). -/
+def isCastTarget : IType → Bool
+  | .atomic _ | .choice _ | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap => true
+  | _ => false
+
+mutual
+/-- `cast as` (XPath 4.0 §4.19.2): generalized atomic types, and array,
+    map and record types (§4.19.2.5 to §4.19.2.7). -/
+def castToF (e : Env) : Nat → Seq → IType → Bool → M Seq
+  | 0, _, _, _ => err "FOER0000" "cast nested too deeply"
+  | f + 1, s, t, opt => do
+  match t with
+  | .anyArr | .anyMap => return ← e.coerce (if opt then .seq t .opt else t) s "cast target"
+  | .arrT m =>
+    match ← e.coerce (if opt then .seq .anyArr .opt else .anyArr) s "cast target" with
+    | [] => return []
+    | [.arr ms] => return [.arr (← ms.mapM (fun x => e.castSeqF f x m))]
+    | _ => err "XPTY0004" "cast to an array type needs an array"
+  | .mapT kt vt =>
+    match ← e.coerce (if opt then .seq .anyMap .opt else .anyMap) s "cast target" with
+    | [] => return []
+    | [.map kvs] =>
+      let mut out : List (Atomic × Seq) := []
+      for (k, v) in kvs do
+        let k1 ← if e.itemMatches (.atom k) kt then pure k
+          else match ← castToF e f [.atom k] kt false with
+            | [.atom k1] => pure k1
+            | _ => err "XPTY0004" "a map key must cast to an atomic value"
+        if out.any (fun (k2, _) => atomicEqual k1 k2) then err "XQDY0137" "the cast gives two equal keys"
+        out := out ++ [(k1, ← e.castSeqF f v vt)]
+      return [.map out]
+    | _ => err "XPTY0004" "cast to a map type needs a map"
+  | .record fs ext =>
+    if fs.isEmpty && ext then return ← e.coerce (if opt then .seq .anyMap .opt else .anyMap) s "cast target"
+    match ← e.coerce (if opt then .seq .anyMap .opt else .anyMap) s "cast target" with
+    | [] => return []
+    | [.map kvs] =>
+      let mut out : List (Atomic × Seq) := []
+      for (name, _, ft) in fs do
+        match kvs.find? (fun (k, _) => k.isStringLike && k.str == name) with
+        | some (_, v) => out := out ++ [(Atomic.ofStr name, ← e.castSeqF f v ft)]
+        | none =>
+          if e.seqMatches [] ft then out := out ++ [(Atomic.ofStr name, [])]
+          else err "XPTY0004" ("the map has no entry " ++ name ++ " for the record type")
+      return [.map out]
+    | _ => err "XPTY0004" "cast to a record type needs a map"
+  | .jnodeT .. | .xnode => err "XPST0080" "cast target is not an atomic, array or map type"
+  | _ => pure ()
   let as ← e.atomize s
   match as with
   | [] => if opt then pure [] else err "XPTY0004" "empty sequence cannot be cast"
   | [a] =>
     match t with
+    | .atomic (.b lb) =>
+      match builtinListItem? lb with
+      | some it =>
+        -- a built-in list type (xs:NMTOKENS, xs:IDREFS, xs:ENTITIES, XPath
+        -- 4.0 §4.19.2): the tokens of a string or untyped value (not of an
+        -- xs:anyURI), each cast to the item type
+        if !(a.is .string || a.ty == .untyped) then err "XPTY0004" "only a string can be cast to a list type"
+        else
+          let toks := ((applyWhiteSpace .collapse a.str).splitOn " ").filter (· != "")
+          if toks.isEmpty then err "FORG0001" "an empty string is not a list value"
+          else return (← toks.mapM (fun tk => castAtomic (Atomic.untypedOf tk) (.b it) e.nsResolve)).map Item.atom
+      | none =>
+        let aty := AType.b lb
+        if aty == .b .anyAtomicType || aty == .b .notation then err "XPST0080" "cast to an abstract type"
+        else if (aty == .b .qname) && !(a.isStringLike || a.is .qname) then
+          err "XPTY0004" "cannot cast to xs:QName"
+        else pure (single (← castAtomic a aty e.nsResolve))
     | .atomic aty =>
         if aty == .b .anyAtomicType || aty == .b .notation then err "XPST0080" "cast to an abstract type"
         else if (aty == .b .qname) && !(a.isStringLike || a.is .qname) then
           err "XPTY0004" "cannot cast to xs:QName"
         else pure (single (← castAtomic a aty e.nsResolve))
     | .choice ts =>
+        -- F&O 4.0 §21.3.5 (casting to union types): a string or untyped
+        -- value is cast from its lexical form to the members in order; a
+        -- value of a member type is kept; other values are cast to the
+        -- members in order
+        if !(a.is .string || a.ty == .untyped) && ts.any (fun t => e.itemMatches (.atom a) t) then return single a
         let mut res : Option Atomic := none
         for t in ts do
           match t with
           | .atomic aty =>
             match castAtomic a aty e.nsResolve with
             | .ok v => res := some v; break
+            | .error _ => pure ()
+          -- an enumeration member: the string value must be one of its values
+          | .enum vs =>
+            match castAtomic a (.b .string) with
+            | .ok v => if vs.contains v.str then res := some v; break
             | .error _ => pure ()
           | _ => pure ()
         match res with
@@ -181,6 +391,25 @@ def castTo (e : Env) (s : Seq) (t : IType) (opt : Bool) : M Seq := do
         if vs.contains a.str then pure (sStr a.str) else err "FORG0001" "value not in enumeration"
     | _ => err "XPST0051" "cast target is not an atomic type"
   | _ => err "XPTY0004" "more than one item cannot be cast"
+
+/-- Casting a sequence to a sequence type (XPath 4.0 §4.19.2.4). -/
+def Env.castSeqF (e : Env) : Nat → Seq → IType → M Seq
+  | 0, _, _ => err "FOER0000" "cast nested too deeply"
+  | f + 1, s, st => do
+    match st with
+    | .empty => if s.isEmpty then pure [] else err "XPTY0004" "the value must be empty"
+    | _ =>
+      let (t, occ) := splitST st
+      let mut out : Array Item := #[]
+      for j in s do
+        if e.itemMatches j t then out := out.push j
+        else if isCastTarget t then out := out ++ (← castToF e f [j] t false).toArray
+        else err "XPTY0004" "an item does not match the required type and cannot be cast to it"
+      if !occOk occ out.size then err "XPTY0004" "the cast value does not have the required number of items"
+      pure out.toList
+end
+
+def castTo (e : Env) (s : Seq) (t : IType) (opt : Bool) : M Seq := castToF e 64 s t opt
 
 /-- The root of the tree containing `n`. -/
 def Env.treeRoot (e : Env) (n : NodeRef) : NodeRef :=
@@ -206,9 +435,153 @@ def Env.ctxNode (e : Env) : M NodeRef :=
   | some [_] => err "XPTY0020" "the context item is not a node"
   | some _ => err "XPTY0020" "the context value is not a single node"
 
+/-- A navigational expression (XPath 4.0 §4.7.3): one that keeps the
+    focus as the right operand of `/` on a JNode; any other right operand
+    is a selector of children by key (the selector interpretation). -/
+def isNavF : Nat → Expr → Bool
+  | 0, _ => false
+  | f + 1, ex =>
+    match ex with
+    | .ctx | .root | .step .. | .dstep .. => true
+    | .slash a b => isNavF f a && isNavF f b
+    | .bin op a b =>
+        (op == .union || op == .intersect || op == .except || op == .otherwise) &&
+        isNavF f a && isNavF f b
+    | .seq es => !es.isEmpty && es.all (isNavF f)
+    | .filter a _ => isNavF f a
+    | .forE _ _ _ _ _ _ body => isNavF f body
+    | .letE _ _ _ body => isNavF f body
+    | .ifE _ t e => isNavF f t && (isNavF f e || (match e with | .seq [] => true | _ => false))
+    | _ => false
+
+def isNavigational (e : Expr) : Bool := isNavF 1000 e
+
+/-- The context value of an axis step as GNodes: maps and arrays become
+    root JNodes (the implicit `fn:jtree`); any other item is an error. -/
+def Env.stepOrigins (e : Env) : M (List Item) :=
+  match e.ctx with
+  | none => err "XPDY0002" "the context item is absent"
+  | some s =>
+    let s := (s.zip (List.range s.length)).map (fun (i, k) => jwrap (k + 1).toUInt64 i)
+    if s.all Item.isGNode then pure s
+    else match s with
+      | [_] => err "XPTY0004" "the context item is not a node"
+      | _ => err "XPTY0004" "the context value is not a sequence of nodes"
+
 def isNumericLit : Expr → Option Int
   | .lit ⟨_, .int i⟩ => some i
   | _ => none
+
+/-- The functions that read external resources (documents, text and
+    binary resources, collections, files): under `Env.untrusted` they
+    raise FODC0016 (F&O 4.0 §17.4.1, the `trusted` option). -/
+def isExternalFn (q : QN) : Bool :=
+  (q.uri == nsFN && ["doc", "doc-available", "unparsed-text", "unparsed-text-lines",
+     "unparsed-text-available", "unparsed-binary", "json-doc", "collection", "uri-collection",
+     "load-xquery-module", "transform", "csv-doc", "html-doc"].contains q.loc)
+  || q.uri == "http://expath.org/ns/file"
+
+/-- Does the function item name a function that reads external resources? -/
+def extFnItem : Item → Bool
+  | .fn (.builtin q _) => isExternalFn q
+  | .fn (.papp (.fn (.builtin q _)) _) => isExternalFn q
+  | _ => false
+
+/-- An item made by untrusted code from a function that reads external
+    resources stays untrusted when it is called from trusted code
+    (F&O 4.0 §17.4.1): a wrapper whose body runs untrusted. -/
+def untrustedItem (it : Item) : Item :=
+  match it with
+  | .fn f =>
+    let fv : QN := { uri := "#untrusted", loc := "f" }
+    let ps : List (QN × IType) := (List.range f.arity).map (fun i => ({ uri := "#untrusted", loc := "a" ++ toString i }, .seq .item .star))
+    .fn (.inline ps (.seq .item .star)
+      (.ext "untrusted" [.dyn (.var fv) (ps.map (fun (v, _) => some (.var v)))] [] [] []) false [(fv, [it])])
+  | _ => it
+
+
+/-- A step applied to each item of a `fn:generate` sequence before its
+    consumer: a lookup `?k` or a simple map `! e`. -/
+inductive GenStage where
+  | look (k : Option Expr)
+  | smap (b : Expr)
+
+/-- `fn:generate(init, step)` under lookups and simple maps (in order of
+    application), as `(init, step, stages)`. -/
+def genSrc? : Expr → Option (Expr × Expr × List GenStage)
+  | .seq [x] => genSrc? x
+  | .call q [some i, some f] [] =>
+    if q.uri == nsFN && q.loc == "generate" then some (i, f, []) else none
+  | .lookup a k => (genSrc? a).map (fun (i, f, st) => (i, f, st ++ [.look k]))
+  | .smap a b => (genSrc? a).map (fun (i, f, st) => (i, f, st ++ [.smap b]))
+  | _ => none
+
+/-- Is this the zero-argument context position function? -/
+def isPosition : Expr → Bool
+  | .call q [] [] => q.uri == nsFN && q.loc == "position"
+  | .seq [x] => isPosition x
+  | _ => false
+
+/-- A finite upper bound for literal numeric predicates and comparisons
+    of `position()` against an integer literal. -/
+def litPositions? : Expr → Option Int
+  | .lit ⟨_, .int k⟩ => some k
+  | .bin .to (.lit ⟨_, .int _⟩) (.lit ⟨_, .int b⟩) => some b
+  | .bin op a (.lit ⟨_, .int k⟩) =>
+    if isPosition a then
+      match op with
+      | .vlt | .glt => some (k - 1)
+      | .vle | .gle | .veq | .geq => some k
+      | _ => none
+    else none
+  | .bin op (.lit ⟨_, .int k⟩) b =>
+    if isPosition b then
+      match op with
+      | .vgt | .ggt => some (k - 1)
+      | .vge | .gge | .veq | .geq => some k
+      | _ => none
+    else none
+  | .seq [x] => litPositions? x
+  | _ => none
+
+/-- The number of states that `fn:generate` makes before it stops with
+    an implementation limit (XPDY0130). -/
+def genCap : Nat := 100000
+
+/-- Disabled functions and validation are static errors even in an
+    unevaluated branch (XPath 4.0 §2.4.1; XQuery 4.0 §3.21). -/
+def FeatureSettings.checkExpr (settings : FeatureSettings) : Nat → Expr → M Unit
+  | 0, _ => err "XPST0003" "feature check nesting limit"
+  | f + 1, ex => do
+    let go := settings.checkExpr f
+    match ex with
+    | .call q args kw =>
+      if !settings.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
+      for e in args.filterMap id ++ kw.filterMap (·.2) do go e
+    | .fref q _ =>
+      if !settings.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
+    | .ext tag es _ _ _ =>
+      if tag == "validate" && !settings.schemaValidation then
+        err "XQST0075" "schema validation is disabled"
+      for e in es do go e
+    | .seq es | .arrS es | .tmpl es => for e in es do go e
+    | .slash a b | .filter a b | .bin _ a b | .smap a b | .pipe a b => go a; go b
+    | .step _ _ ps => for p in ps do go p
+    | .dstep _ x ps => go x; for p in ps do go p
+    | .dyn g args => go g; for e in args.filterMap id do go e
+    | .inline _ _ body _ => go body
+    | .mapC es => for (a, b) in es do go a; go b
+    | .arrC x | .neg x | .plus x | .instOf x _ | .treat x _ | .cast x _ _ | .castable x _ _ => go x
+    | .lookup x k => go x; for e in k.toList do go e
+    | .ulookup k => for e in k.toList do go e
+    | .ifE c t e => go c; go t; go e
+    | .forE _ _ _ _ _ a b | .letE _ _ a b | .quant _ _ _ a b => go a; go b
+    | .mapArrow a g args => go a; go g; for e in args.filterMap id do go e
+    | _ => pure ()
+
+/-- No feature walk is needed for the default context. -/
+def FeatureSettings.check (settings : FeatureSettings) (e : Expr) : M Unit :=
+  if settings == ({} : FeatureSettings) then pure () else settings.checkExpr 100000 e
 
 mutual
 
@@ -227,6 +600,12 @@ def eval : Nat → Env → Expr → M Seq
       | some s => pure s
       | none => err "XPDY0002" "the context value is absent"
   | .root => do
+      match env.ctx with
+      | some [j@(.jnode ..)] => return [jrootOf j]
+      | some [i@(.map _)] | some [i@(.arr _)] => return [jwrap 1 i]
+      -- a leading `/` needs a node: `treat as node()` (XPath 4.0 §4.7.1)
+      | some [.node _] | none => pure ()
+      | some _ => err "XPTY0004" "the context value of a leading / is not a node"
       let c ← env.ctxNode
       let r := env.treeRoot c
       if (env.nrec r).kind != .document then err "XPDY0050" "the root of the tree is not a document node"
@@ -234,7 +613,6 @@ def eval : Nat → Env → Expr → M Seq
   | .slash a b => do
       let left ← eval n env a
       match nodesOf left with
-      | none => err "XPTY0004" "the left operand of '/' must be nodes"
       | some ns =>
         let ns := sortNodes ns
         let sz := ns.length
@@ -246,17 +624,101 @@ def eval : Nat → Env → Expr → M Seq
         let res := out.toList
         match nodesOf res with
         | some rs => pure ((sortNodes rs).map Item.node)
-        | none => if res.any Item.isNode then err "XPTY0018" "a path step returned both nodes and non-nodes" else pure res
+        | none =>
+          if res.all Item.isGNode then pure (sortGNodes res)
+          else if res.any Item.isGNode then err "XPTY0018" "a path step returned both nodes and non-nodes" else pure res
+      | none =>
+        -- XPath 4.0 §4.7.3: maps and arrays become root JNodes; a JNode
+        -- with a non-navigational right operand selects children by key
+        let s1 := (left.zip (List.range left.length)).map (fun (i, k) => jwrap (k + 1).toUInt64 i)
+        if !(s1.all Item.isGNode) then err "XPTY0004" "the left operand of '/' must be nodes"
+        let ns := sortGNodes s1
+        let sz := ns.length
+        let nav := isNavigational b
+        let mut keys : Option (List Atomic) := none
+        let mut out : Array Item := #[]
+        let mut idx := 1
+        for nd in ns do
+          if nd.isJNode && !nav then
+            let ks ← match keys with
+              | some ks => pure ks
+              | none => do
+                let ks ← env.atomize (← eval n { env with ctx := none, pos := 0, size := 0 } b)
+                pure ks
+            keys := some ks
+            for i in jselect nd ks do out := out.push i
+          else
+            for i in ← eval n (env.focus nd idx sz) b do out := out.push i
+          idx := idx + 1
+        let res := out.toList
+        if res.all Item.isGNode then pure (sortGNodes res)
+        else if res.any Item.isGNode then err "XPTY0018" "a path step returned both nodes and non-nodes"
+        else pure res
   | .step ax t preds => do
-      let c ← env.ctxNode
-      let ns := (env.axis ax c).filter (fun m => env.testMatches ax m t)
-      let mut cur : Seq := ns.map Item.node
-      for p in preds do
-        cur ← filterSeq n env cur p
-      match nodesOf cur with
-      | some rs => pure ((sortNodes rs).map Item.node)
-      | none => pure cur
+      -- schema-element(N), schema-attribute(N): N must be declared in the
+      -- in-scope schema definitions (XPath 4.0 §3.2.7.3, XPST0008), a
+      -- static error, so it comes before the context check
+      match t with
+      | .kind (.schemaElem q) | .kind (.doc (some (.schemaElem q))) =>
+        if (env.schema.elemDecl q).isNone then
+          err "XPST0008" ("schema-element(" ++ q.show ++ "): no such element declaration")
+      | .kind (.schemaAttr q) =>
+        if (env.schema.attrDecl q).isNone then
+          err "XPST0008" ("schema-attribute(" ++ q.show ++ "): no such attribute declaration")
+      | _ => pure ()
+      match env.ctx with
+      | some [.node c] =>
+        if ax == .item then err "XPTY0004" "the item axis is defined only for JNodes"
+        let ns := (env.axis ax c).filter (fun m => env.testMatches ax m t)
+        let mut cur : Seq := ns.map Item.node
+        for p in preds do
+          cur ← filterSeq n env cur p
+        match nodesOf cur with
+        | some rs => pure ((sortNodes rs).map Item.node)
+        | none => pure cur
+      | _ =>
+        let os ← env.stepOrigins
+        let mut out : Array Item := #[]
+        for o in os do
+          let cands ← match o with
+            | .node c =>
+              if ax == .item then err "XPTY0004" "the item axis is defined only for JNodes"
+              pure (((env.axis ax c).filter (fun m => env.testMatches ax m t)).map Item.node)
+            | j =>
+              if ax == .attribute || ax == .namespace then
+                err "XPTY0004" "the attribute and namespace axes are not defined for JNodes"
+              pure ((jaxis ax j).filter (fun m => env.jtestMatches m t))
+          let mut cur : Seq := cands
+          for p in preds do
+            cur ← filterSeq n env cur p
+          for i in cur do out := out.push i
+        pure (sortGNodes out.toList)
+  | .dstep ax ke preds => do
+      -- the dynamic node test (XPath 4.0 §4.7.5.3, §4.7.5.4): the key
+      -- expression is evaluated with an absent focus
+      let ks ← env.atomize (← eval n { env with ctx := none, pos := 0, size := 0 } ke)
+      let os ← env.stepOrigins
+      let mut out : Array Item := #[]
+      for o in os do
+        let cands ← match o with
+          | .node c =>
+            if ax == .item then err "XPTY0004" "the item axis is defined only for JNodes"
+            pure (((env.axis ax c).filter (fun m =>
+              env.testMatches ax m (.name .any) &&
+              (let q := (env.nrec m).name
+               ks.any (fun a => atomicEqual a (Atomic.ofQN q) || atomicEqual a (Atomic.ofStr q.loc))))).map Item.node)
+          | j =>
+            if ax == .attribute || ax == .namespace then
+              err "XPTY0004" "the attribute and namespace axes are not defined for JNodes"
+            pure ((jaxis ax j).filter (jkeyIn ks))
+        let mut cur : Seq := cands
+        for p in preds do
+          cur ← filterSeq n env cur p
+        for i in cur do out := out.push i
+      pure (sortGNodes out.toList)
   | .filter a p => do
+      if let some r ← rangeShortcut n env (.filter a p) then return r
+      if let some r ← genShortcut n env (.filter a p) then return r
       match a, isNumericLit p with
       | .seq es, some k =>
         -- `(e1, e2, ...)[k]`: evaluate only as far as item k
@@ -268,7 +730,19 @@ def eval : Nat → Env → Expr → M Seq
       | _, _ =>
         let s ← eval n env a
         filterSeq n env s p
-  | .call q args kw => do
+  | .call q args kw0 => do
+      if !env.features.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
+      -- the source offset of a call that builds a new tree (`newTreeFns`)
+      let at? := kw0.find? (·.1 == "#at")
+      let kw := kw0.filter (·.1 != "#at")
+      if let some (_, some (.lit offs)) := at? then
+        let r ← eval n env (.call q args kw)
+        return rekeyTrees (offs.str ++ "|" ++ XQuery4.envSalt env) r
+      if q.uri == nsFN && kw.isEmpty && (q.loc == "count" || q.loc == "head" || q.loc == "starts-with-subsequence" || q.loc == "ends-with-subsequence"
+          || q.loc == "subsequence" || q.loc == "codepoints-to-string") then
+        if let some r ← rangeShortcut n env (.call q args kw) then return r
+      if q.uri == nsFN && kw.isEmpty && (q.loc == "head" || q.loc == "take-while" || q.loc == "subsequence") then
+        if let some r ← genShortcut n env (.call q args kw) then return r
       if isTmplMarker q then
         let s ← match args with | [some x] => eval n env x | _ => pure []
         let as ← env.atomize s
@@ -277,26 +751,75 @@ def eval : Nat → Env → Expr → M Seq
         if q.loc == "NOTATION" || q.loc == "anyAtomicType" || q.loc == "anySimpleType" then
           err "XPST0017" ("no constructor function xs:" ++ q.loc)
         else
+        -- the parameter of a constructor function is `$value` (F&O 4.0 §21.1)
+        let args ← match args, kw with
+          | _, [] => pure args
+          | [], [("value", v)] => pure [v]
+          | _, _ => err "XPST0017" ("constructor function xs:" ++ q.loc ++ " has one parameter, $value")
         match (if args.isEmpty then [some Expr.ctx] else args) with
         | [some x] =>
             let s ← eval n env x
             if s.length > 1 then err "XPTY0004" "constructor function argument has more than one item"
-            match atypeOfName? q.loc with
-            | some t => castTo env s (.atomic t) true
-            | none => if q.loc == "numeric" then castTo env s (.choice [.atomic (.b .double)]) true
-                      else err "XPST0017" ("unknown constructor function xs:" ++ q.loc)
+            match xsCtorType? q.loc with
+            | some t => castTo env s t true
+            | none => err "XPST0017" ("unknown constructor function xs:" ++ q.loc)
         | [none] => pure [.fn (.papp (.fn (.builtin q 1)) [none])]
         | _ => err "XPST0017" ("constructor function xs:" ++ q.loc ++ " takes one argument")
       else
       let total := args.length + kw.length
-      let sig? := if q.uri == nsFN && q.loc == "concat" then
-          (if total ≥ 2 then some (default : Sig) else none) else findSig q total
+      -- keyword arguments of a host function are placed by its
+      -- parameter names (XPath 4.0 §4.5.1.1)
+      let (args, kw) ← match (if kw.isEmpty then none else env.hostParams q total) with
+        | some names => do
+          let mut slots : Array (Option (Option Expr)) := (names.map (fun _ => none)).toArray
+          for (a, i) in args.zip (List.range args.length) do
+            slots := slots.set! i (some a)
+          for (k, a) in kw do
+            match names.findIdx? (· == k) with
+            | some i =>
+              if (slots.getD i none).isSome then err "XPST0017" ("duplicate argument " ++ k)
+              slots := slots.set! i (some a)
+            | none => err "XPST0017" ("no parameter named " ++ k ++ " in " ++ q.show)
+          let placed := slots.toList.take total
+          if placed.any Option.isNone then
+            err "XPST0017" ("the keyword arguments of " ++ q.show ++ " leave a parameter without a value")
+          pure (placed.map (·.getD none), [])
+        | none => pure (args, kw)
+      -- host hook: a function of the host language (XSLT 4.0)
+      match (if kw.isEmpty && (q.uri != nsFN ||
+          ((env.features.loadXQueryModule || q.loc != "load-xquery-module") &&
+           (env.features.transform || q.loc != "transform") &&
+           (env.features.serialization || q.loc != "serialize"))) then env.host q total else none) with
+      | some h =>
+          let vs ← evalArgs n env args
+          if args.any Option.isNone then pure [.fn (.papp (.fn (.builtin q args.length)) vs)]
+          else h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns, untrusted := env.untrusted, baseUri := env.baseUri } (vs.map (·.getD []))
+      | none =>
+      -- XQuery 4.0 §5.18.1: an unprefixed name finds a function in no
+      -- namespace (a record constructor, a named item type) before the
+      -- default function namespace
+      let noNsUser := if q.uri == nsFN && q.pfx == "" && XQuery4.userAny env { q with uri := "" } then
+          XQuery4.callUser? { eval := fun x => eval n env x, apply := fun f as => apply n env f as } env q args kw
+        else none
+      match noNsUser with
+      | some r => r
+      | none =>
+      -- fn:concat is sequence-variadic (F&O 4.0 §5.4.1): any arity
+      let sig? := if q.uri == nsFN && q.loc == "concat" then some (default : Sig) else findSig q total
       match sig? with
       | none =>
+          -- XQuery 4.0 hook: a function declared in the prolog
+          match XQuery4.callUser? { eval := fun x => eval n env x, apply := fun f as => apply n env f as } env q args kw with
+          | some r => r
+          | none =>
           if (findSigAny q).isSome then err "XPST0017" ("wrong number of arguments for " ++ q.show)
           else err "XPST0017" ("unknown function " ++ q.show)
       | some sig =>
         if q.uri == nsFN && q.loc == "concat" then
+          let args ← match args, kw with
+            | _, [] => pure args
+            | [], [("values", a)] => pure [a]
+            | _, _ => err "XPST0017" "fn:concat has one parameter, $values"
           if args.any Option.isNone then
             pure [.fn (.papp (.fn (.builtin q args.length)) (← evalArgs n env args))]
           else
@@ -313,6 +836,10 @@ def eval : Nat → Env → Expr → M Seq
             if (slots.getD i none).isSome then err "XPST0017" ("duplicate argument " ++ k)
             slots := slots.set! i (some a)
           | none => err "XPST0017" ("no parameter named " ++ k)
+        -- a static call whose arguments are all placeholders is the
+        -- named function `q#k` (XPath 4.0 §4.5.4)
+        if !slots.isEmpty && slots.toList.all (fun s => match s with | some none => true | _ => false) && kw.isEmpty then
+          return [.fn (.builtin q slots.size)]
         -- placeholders make a partial application
         if slots.toList.any (fun s => match s with | some none => true | _ => false) then
           let mut fixed : List (Option Seq) := []
@@ -320,13 +847,25 @@ def eval : Nat → Env → Expr → M Seq
           for (sl, p) in slots.toList.zip sig.ps do
             match sl with
             | some none => fixed := fixed ++ [none]; arity := arity + 1
-            | some (some x) => fixed := fixed ++ [some (← eval n env x)]
+            | some (some x) =>
+              -- the supplied argument is converted to the parameter type
+              -- now (XPath 4.0 §4.5.1.2, XPTY0004)
+              fixed := fixed ++ [some (← env.coerce p.ty (← eval n env x) ("$" ++ p.name ++ " of " ++ q.show))]
             | none =>
               match p.dflt with
               | some d => fixed := fixed ++ [some (← eval n env d)]
               | none => err "XPST0017" ("missing argument " ++ p.name)
-          pure [.fn (.papp (.fn (.builtin q fixed.length)) fixed)]
+          let it : Item := .fn (.papp (.fn (.builtin q fixed.length)) fixed)
+          pure [if env.untrusted && isExternalFn q then untrustedItem it else it]
         else
+          -- Place keywords/defaults before recognizing a bounded slice. The
+          -- ordinary binder above still rejects duplicates and handles placeholders.
+          if q.uri == nsFN && q.loc == "slice" then
+            let exprs := (slots.toList.zip sig.ps).map fun (sl, p) =>
+              match sl with
+              | some (some x) => some x
+              | _ => p.dflt
+            if let some r ← genShortcut n env (.call q exprs []) then return r
           let mut vals : List Seq := []
           let mut lastGiven := 0
           for (sl, i) in slots.toList.zip (List.range slots.size) do
@@ -339,32 +878,110 @@ def eval : Nat → Env → Expr → M Seq
               match p.dflt with
               | some d => vals := vals ++ [← eval n env d]
               | none => err "XPST0017" ("missing argument " ++ p.name)
+          if env.compat10 then vals ← (vals.zip sig.ps).mapM (fun (v, p) => compatArg env p.ty v)
           callFn n env q vals
   | .dyn f args => do
       let fs ← eval n env f
+      let fs := env.unwrapJ 64 .anyFn fs
       match fs with
       | [fi] =>
           if !fi.isFn then err "XPTY0004" "dynamic call of a value that is not a function"
           if args.any Option.isNone then
+            -- the argument count must be the arity (XPath 4.0 §4.5.4)
+            if let some k := fi.fnArity then
+              if k != args.length then err "XPTY0004" "partial application with the wrong number of arguments"
             pure [.fn (.papp fi (← evalArgs n env args))]
           else
+            -- XQuery Update Facility 3.0 §7.11: an updating function needs `invoke updating`
+            if XQueryUpdate.isUpdatingFn fi then err "XUDY0038" "a dynamic call of an updating function"
             let vs ← evalArgs n env args
             apply n env fi (vs.map (·.getD []))
-      | _ => err "XPTY0004" "dynamic call requires exactly one function item"
+      | _ =>
+        -- XPath 4.0 (PR 1975): a sequence of function items is called item by
+        -- item and the results are concatenated; the empty sequence gives ()
+        if !fs.all Item.isFn then err "XPTY0004" "dynamic call of a value that is not a function"
+        if args.any Option.isNone then
+          let fixed ← evalArgs n env args
+          pure (fs.map (fun fi => .fn (.papp fi fixed)))
+        else
+          let vs ← evalArgs n env args
+          let mut out : Seq := []
+          for fi in fs do
+            out := out ++ (← apply n env fi (vs.map (·.getD [])))
+          pure out
   | .fref q k => do
+      if !env.features.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
+      -- a reference made by untrusted code to a function that reads
+      -- external resources stays untrusted (F&O 4.0 §17.4.1)
+      if env.untrusted && isExternalFn q then
+        let ps : List (QN × IType) := (List.range k).map (fun i => ({ uri := "#untrusted", loc := "a" ++ toString i }, .seq .item .star))
+        return [.fn (.inline ps (.seq .item .star)
+          (.ext "untrusted" [.call q (ps.map (fun (v, _) => some (.var v))) []] [] [] []) false env.vars)]
+      -- a reference made by trusted code keeps its trust when untrusted
+      -- code calls it (a wrapper whose body runs trusted)
+      if !env.untrusted && (isExternalFn q || (q.uri == nsFN && (q.loc == "parse-xml" || q.loc == "parse-xml-fragment")))
+          && (findSig q k).isSome then
+        let ps : List (QN × IType) := (List.range k).map (fun i => ({ uri := "#trusted", loc := "a" ++ toString i }, .seq .item .star))
+        return [.fn (.inline ps (.seq .item .star) (.call q (ps.map (fun (v, _) => some (.var v))) []) false [])]
+      -- XQuery 4.0 §5.18.1: an unprefixed name finds a no-namespace function first
+      if q.uri == nsFN && q.pfx == "" && XQuery4.userAny env { q with uri := "" } then
+        match XQuery4.refUser? (fun f as => apply n env f as) env q k with
+        | some r => return (← r)
+        | none => pure ()
       if q.uri == nsXS then
-        if k == 1 && ((atypeOfName? q.loc).isSome || q.loc == "numeric") && q.loc != "NOTATION" && q.loc != "anyAtomicType" then pure [.fn (.builtin q 1)]
+        if k == 1 && (xsCtorType? q.loc).isSome then pure [.fn (.builtin q 1)]
+        -- arity 0: the argument defaults to the focus at the reference
+        else if k == 0 && (xsCtorType? q.loc).isSome then
+          match env.ctx with
+          | some c => pure [.fn (.papp (.fn (.builtin q 1)) [some c])]
+          | none => pure [.fn (.builtin q 0)]
         else err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
-      else if q.uri == nsFN && q.loc == "concat" && k ≥ 2 then pure [.fn (.builtin q k)]
+      else if q.uri == nsFN && q.loc == "concat" then pure [.fn (.builtin q k)]
+      -- fn:position#0 and fn:last#0 capture the focus (F&O 4.0 §1.5.2)
+      else if q.uri == nsFN && k == 0 && (q.loc == "position" || q.loc == "last") && env.ctx.isSome then
+        pure [focusFn q.loc env.pos env.size]
+      else if q.uri == nsFN && ((!env.features.transform && q.loc == "transform") ||
+          (!env.features.loadXQueryModule && q.loc == "load-xquery-module") ||
+          (!env.features.serialization && q.loc == "serialize")) then
+        if (findSig q k).isSome then pure [.fn (.builtin q k)]
+        else err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
+      else if (env.host q k).isSome then
+        -- a host function item closes over the bindings of the reference
+        -- (XSLT `current-group#0` keeps the group of its creation)
+        let ps : List (QN × IType) := (List.range k).map (fun i => ({ uri := "#host", loc := "a" ++ toString i }, .seq .item .star))
+        pure [.fn (.inline ps (.seq .item .star) (.call q (ps.map (fun (v, _) => some (.var v))) []) false env.vars)]
       else match findSig q k with
-        | some _ => pure [.fn (.builtin q k)]
-        | none => err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
-  | .inline ps ret body focus => pure [.fn (.inline ps ret body focus env.vars)]
+        | some sig =>
+          -- a reference to a context-dependent function whose omitted
+          -- argument defaults to `.` captures the focus (F&O 4.0 §1.5.2)
+          match env.ctx, (sig.ps.drop k).head? with
+          | some c, some p =>
+            if dfltUsesFocus p.dflt then
+              pure [.fn (.papp (.fn (.builtin q (k + 1))) (List.replicate k none ++ [some c]))]
+            else pure [.fn (.builtin q k)]
+          | _, _ => pure [.fn (.builtin q k)]
+        | none =>
+          -- XQuery 4.0 hook: a function declared in the prolog
+          match XQuery4.refUser? (fun f as => apply n env f as) env q k with
+          | some r => r
+          | none => err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
+  -- trust is lexical (F&O 4.0 §17.4.1): a function made by untrusted
+  -- code runs as untrusted code
+  | .inline ps ret body focus =>
+      let body := if env.untrusted then .ext "untrusted" [body] [] [] [] else body
+      pure [.fn (.inline ps ret body focus env.vars)]
   | .mapC es => do
       let mut acc : MB := {}
       for (k, v) in es do
         if isMergeMarker v then
-          let ms ← eval n env k
+          let ms0 ← eval n env k
+          -- XPath 4.0 §4.14.1.1 (PR 2541): a JNode with a ·jkey· is the
+          -- one-entry map of its key and value; one without (a root) is
+          -- its ·jvalue·, which must be maps
+          let ms : Seq := ms0.flatMap (fun m => match m with
+            | .jnode _ (st :: _) v _ => [Item.map [(st.key, v)]]
+            | .jnode _ [] v _ => v
+            | other => [other])
           for m in ms do
             match m with
             | .map kvs =>
@@ -398,7 +1015,10 @@ def eval : Nat → Env → Expr → M Seq
       | some [i] => lookupIn n env i k
       | some _ => err "XPTY0004" "unary lookup needs a single context item"
       | none => err "XPDY0002" "the context item is absent"
-  | .bin op a b => evalBin n env op a b
+  | .bin op a b => do
+      if op.isGeneral then
+        if let some r ← rangeShortcut n env (.bin op a b) then return r
+      evalBin n env op a b
   | .neg a => do
       match ← env.atomizeOpt (← eval n env a) with
       | none => pure []
@@ -421,12 +1041,14 @@ def eval : Nat → Env → Expr → M Seq
       let s ← eval n env src
       let items : List (Seq × Option Seq) ← match kind with
         | .item => pure (s.map (fun i => ([i], none)))
-        | .member => match s with
-            | [.arr ms] => pure (ms.map (fun m => (m, none)))
-            | _ => err "XPTY0004" "for member requires a single array"
-        | .entry => match s with
-            | [.map kvs] => pure (kvs.map (fun (k, vv) => ([.atom k], some vv)))
-            | _ => err "XPTY0004" "for key/value requires a single map"
+        -- a sequence of arrays or maps is iterated in turn (XPath 4.0
+        -- §4.13.2, PR 2715)
+        | .member => s.flatMapM (fun i => match i with
+            | .arr ms => pure (ms.map (fun m => (m, none)))
+            | _ => err "XPTY0004" "for member requires arrays")
+        | .entry => s.flatMapM (fun i => match i with
+            | .map kvs => pure (kvs.map (fun (k, vv) => ([.atom k], some vv)))
+            | _ => err "XPTY0004" "for key/value requires maps")
       let mut out : Array Item := #[]
       let mut idx := 1
       for (x, y) in items do
@@ -460,15 +1082,23 @@ def eval : Nat → Env → Expr → M Seq
   | .treat a t => do
       let s ← eval n env a
       if env.seqMatches s t then pure s else err "XPDY0050" "treat as: value does not match the type"
-  | .cast a t opt => do castTo env (← eval n env a) t opt
+  | .cast a t opt => do
+      if let some c := castTargetError t then err c "cast target is not an atomic, array, map or record type"
+      castTo env (← eval n env a) t opt
   | .castable a t opt => do
+      if let some c := castTargetError t then err c "castable target is not an atomic, array, map or record type"
       let s ← eval n env a
       match t with
       | .atomic aty =>
         if aty == .b .anyAtomicType || aty == .b .notation then err "XPST0080" "castable to an abstract type"
-      | _ => pure ()
+      | .jnodeT .. | .xnode => err "XPST0080" "castable target is not an atomic, array or map type"
+      | .anyArr | .anyMap | .arrT _ | .mapT _ _ | .record _ _ =>
+        return sBool (match castTo env s t opt with | .ok _ => true | .error _ => false)
+      | t => if let some c := castTargetError t then err c "castable target is not an atomic, array, map or record type"
+      -- XPath 4.0 (PR 2899): when atomization fails (a map, an array of
+      -- maps, a function), the value is not castable: false, not FOTY0013
       match env.atomize s with
-      | .error e => if e.code == "FOTY0013" then throw e else pure (sBool false)
+      | .error _ => pure (sBool false)
       | .ok _ =>
         match castTo env s t opt with
         | .ok _ => pure (sBool true)
@@ -487,21 +1117,30 @@ def eval : Nat → Env → Expr → M Seq
       eval n { env with ctx := some s, pos := 1, size := 1 } b
   | .mapArrow a f args => do
       let s ← eval n env a
+      -- the target may be a sequence of functions (XPath 4.0 §4.20.2,
+      -- PR 1975): each item is given to each function in turn
       let fs ← eval n env f
-      match fs with
-      | [fi] =>
-        let rest ← evalArgs n env args
-        let mut out : Array Item := #[]
-        for i in s do
+      let rest ← evalArgs n env args
+      let mut out : Array Item := #[]
+      for i in s do
+        for fi in fs do
+          -- a placeholder makes a partial application for each item
+          if rest.any Option.isNone then out := out.push (.fn (.papp fi (some [i] :: rest)))
+          else
           for r in ← apply n env fi ([i] :: rest.map (·.getD [])) do out := out.push r
-        pure out.toList
-      | _ => err "XPTY0004" "=!> target must be a single function"
+      pure out.toList
   | .tmpl parts => do
       let mut out := ""
       for p in parts do
         let s ← eval n env p
         for x in ← env.atomize s do out := out ++ x.str
       pure (sStr out)
+  -- the body of a function of an untrusted module (`XQuery4.LoadModule`)
+  | .ext "untrusted" [b] _ _ _ => eval n { env with untrusted := true } b
+  -- XQuery 4.0 hook: the constructs of `XQuery4.Runtime`
+  | .ext tag es ts qs ss =>
+      XQuery4.evalExt { eval := fun e x => eval n e x, apply := fun e f as => apply n e f as }
+        env tag es ts qs ss
 
 def evalArgs : Nat → Env → List (Option Expr) → M (List (Option Seq))
   | 0, _, _ => fuelErr
@@ -563,10 +1202,24 @@ def lookupIn : Nat → Env → Item → Option Expr → M Seq
         let mut out : Array Item := #[]
         for key in ks do
           let key ← if key.ty == .untyped then castAtomic key (.b .integer) else pure key
+          -- a numeric key equal to an integer selects that member
+          -- (XPath 4.0 §4.13.3, the key is coerced to xs:integer)
+          let key := match key.v with
+            | .dec d => if (Dec.norm d).scale == 0 then Atomic.ofInt (Dec.norm d).mantissa else key
+            | .dbl f => if f.floor == f && f.abs < 1.0e15 then Atomic.ofInt f.toInt64.toInt else key
+            | _ => key
           match key.v with
           | .int j => for x in ← arrIdx ms j do out := out.push x
           | _ => err "XPTY0004" "array lookup key must be an integer"
         pure out.toList
+    | .jnode _ _ v _ => do
+      -- XPath 4.0 §4.13.3: the ·jvalue· of a JNode is looked up
+      let mut out : Array Item := #[]
+      for x in v do
+        match x with
+        | .map _ | .arr _ => for r in ← lookupIn n env x k do out := out.push r
+        | _ => err "XPTY0004" "lookup on a JNode whose value is not a map or array"
+      pure out.toList
     | _ => err "XPTY0004" "lookup on a value that is not a map or array"
 
 def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
@@ -581,9 +1234,11 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
         let s ← eval n env a
         if s.isEmpty then eval n env b else pure s
     | .concat => do
-        let x ← env.atomizeOpt (← eval n env a)
-        let y ← env.atomizeOpt (← eval n env b)
-        pure (sStr ((x.map Atomic.str).getD "" ++ (y.map Atomic.str).getD ""))
+        -- XPath 4.0 §4.11: `a || b` is `fn:concat(a, b)`, whose arguments
+        -- are sequences of atomic items
+        let x ← env.atomize (← eval n env a)
+        let y ← env.atomize (← eval n env b)
+        pure (sStr (String.join ((x ++ y).map Atomic.str)))
     | .to => do
         let x ← env.atomizeOpt (← eval n env a)
         let y ← env.atomizeOpt (← eval n env b)
@@ -594,7 +1249,7 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
           match x.v, y.v with
           | .int lo, .int hi =>
             if hi < lo then pure []
-            else if hi - lo > maxRange then err "FOAR0002" "range too large for this implementation"
+            else if hi - lo > maxRange then err "XPDY0130" "range too large for this implementation (an implementation limit)"
             else pure ((List.range (hi - lo + 1).toNat).map (fun (k : Nat) => .atom (Atomic.ofInt (lo + (k : Int)))))
           | _, _ => err "XPTY0004" "range bounds must be integers"
         | _, _ => pure []
@@ -608,22 +1263,32 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
             | .intersect => xs.filter (fun m => ys.contains m)
             | _ => xs.filter (fun m => !ys.contains m)
           pure ((sortNodes r).map Item.node)
-        | _, _ => err "XPTY0004" "union/intersect/except operands must be nodes"
+        | _, _ =>
+          match gnodesOf x, gnodesOf y with
+          | some xs, some ys =>
+            let r := match op with
+              | .union => xs ++ ys
+              | .intersect => xs.filter (fun m => ys.any (gnodeEq m))
+              | _ => xs.filter (fun m => !ys.any (gnodeEq m))
+            pure (sortGNodes r)
+          | _, _ => err "XPTY0004" "union/intersect/except operands must be nodes"
     | _ =>
-      if op.isGeneral then do
+      if op.isGeneral && env.compat10 then do
+        pure (sBool (← compatGeneral env op (← eval n env a) (← eval n env b)))
+      else if op.isGeneral then do
         let xs ← env.atomize (← eval n env a)
         let ys ← env.atomize (← eval n env b)
         let mut res := false
         for x in xs do
           for y in ys do
-            if ← generalPair env.tz op x y env.nsResolve then res := true; break
+            if ← generalPair env.tz op x y env.nsResolve env.defaultColl then res := true; break
           if res then break
         pure (sBool res)
       else if op.isValue then do
         let x ← env.atomizeOpt (← eval n env a)
         let y ← env.atomizeOpt (← eval n env b)
         match x, y with
-        | some x, some y => pure (sBool (← valueCmp env.tz op x y))
+        | some x, some y => pure (sBool (← valueCmp env.tz op x y env.defaultColl))
         | _, _ => pure []
       else if op.isNodeCmp then do
         let x ← eval n env a
@@ -637,9 +1302,17 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
             | .precedes => nodeLt p q | .follows => nodeLt q p
             | .precedesOrIs => p == q || nodeLt p q
             | _ => p == q || nodeLt q p))
+        | [p], [q] =>
+          if !(p.isGNode && q.isGNode) then err "XPTY0004" "node comparison operands must be single nodes"
+          else pure (sBool (match op with
+            | .is => gnodeEq p q | .isNot => !gnodeEq p q
+            | .precedes => gnodeLt p q | .follows => gnodeLt q p
+            | .precedesOrIs => gnodeEq p q || gnodeLt p q
+            | _ => gnodeEq p q || gnodeLt q p))
         | _, _ => err "XPTY0004" "node comparison operands must be single nodes"
       else match op.arOp? with
-        | some ar => do
+        | some ar =>
+          if env.compat10 then do compatArith env ar (← eval n env a) (← eval n env b) else do
           let x ← env.atomizeOpt (← eval n env a)
           let y ← env.atomizeOpt (← eval n env b)
           match x, y with
@@ -667,11 +1340,22 @@ def apply : Nat → Env → Item → List Seq → M Seq
           | _ => err "XPTY0004" "array index must be an integer"
         | none => err "XPTY0004" "array index must be a single integer"
     | .fn (.builtin q k) => do
+        if !env.features.serialization && q.uri == nsFN && q.loc == "serialize" then
+          err "FODC0010" "serialization is disabled"
+        if !env.features.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
+        if !env.features.loadXQueryModule && q.uri == nsFN && q.loc == "load-xquery-module" then
+          err "FOQM0006" "dynamic XQuery is disabled"
+        if !env.features.transform && q.uri == nsFN && q.loc == "transform" then
+          err "FOXT0004" "dynamic XSLT is disabled"
         if args.length != k then err "XPTY0004" ("function " ++ q.show ++ " expects " ++ toString k ++ " arguments")
+        if let some h := env.host q k then
+          h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns, untrusted := env.untrusted, baseUri := env.baseUri } args
+        else
         if q.uri == nsXS then
-          match atypeOfName? q.loc with
-          | some t => castTo env (args.headD []) (.atomic t) true
-          | none => castTo env (args.headD []) (.choice [.atomic (.b .double)]) true
+          if k == 0 then err "XPDY0002" "the context value is absent"
+          match xsCtorType? q.loc with
+          | some t => castTo env (args.headD []) t true
+          | none => err "XPST0017" ("unknown constructor function " ++ q.show)
         else if q.uri == nsFN && q.loc == "concat" then callFn n env q args
         else
         match findSig q k with
@@ -686,19 +1370,29 @@ def apply : Nat → Env → Item → List Seq → M Seq
         | none => err "XPST0017" ("unknown function " ++ q.show)
     | .fn (.inline ps ret body focus cl) => do
         if focus then
-          if args.length != 1 then err "XPTY0004" "a focus function takes one argument"
-          let a := args.headD []
-          let env' := { env with vars := cl, ctx := some a, pos := 1, size := 1 }
+          -- one argument: the context value; three: the context value,
+          -- position and size (the default of a parameter, XQuery 4.0
+          -- §5.18.2); none: an absent focus
+          let sz1 (s : Seq) : Nat := match s with | [.atom ⟨_, .int i⟩] => i.toNat | _ => 1
+          let env' ← match args with
+            | [] => pure { env with vars := cl, ctx := none, pos := 0, size := 0, untrusted := false }
+            | [a] => pure { env with vars := cl, ctx := some a, pos := 1, size := 1, untrusted := false }
+            | [a, p, z] => pure { env with vars := cl, ctx := some a, pos := sz1 p, size := sz1 z, untrusted := false }
+            | _ => err "XPTY0004" "a focus function takes one argument"
           eval n env' body
         else
           if args.length != ps.length then
             err "XPTY0004" ("inline function expects " ++ toString ps.length ++ " arguments, got " ++ toString args.length)
-          let mut vars := cl
+          let mut vars := XQuery4.lateClosure cl env.vars
           for ((v, t), a) in ps.zip args do
             vars := (v, ← env.coerce t a ("$" ++ v.show)) :: vars
-          let env' := { env with vars, ctx := none, pos := 0, size := 0 }
+          let env' := XQuery4.withModCtx cl { env with vars, ctx := none, pos := 0, size := 0, untrusted := false }
           let r ← eval n env' body
-          env.coerce ret r "function result"
+          -- XQuery Update: the pending update list is not part of the
+          -- XDM instance that the return type describes
+          let (pu, xs) := r.partition XQueryUpdate.isPulItem
+          if pu.isEmpty then env.coerce ret r "function result"
+          else return (← env.coerce ret xs "function result") ++ pu
     | .fn (.papp g fixed) => do
         let mut rest := args
         let mut full : List Seq := []
@@ -718,21 +1412,339 @@ def apply : Nat → Env → Item → List Seq → M Seq
 def callFn : Nat → Env → QN → List Seq → M Seq
   | 0, _, _, _ => fuelErr
   | n + 1, env, q, args => do
+    if !env.features.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
+    if !env.features.loadXQueryModule && q.uri == nsFN && q.loc == "load-xquery-module" then
+      err "FOQM0006" "dynamic XQuery is disabled"
+    if !env.features.transform && q.uri == nsFN && q.loc == "transform" then
+      err "FOXT0004" "dynamic XSLT is disabled"
+    if !env.features.serialization && q.uri == nsFN && q.loc == "serialize" then
+      err "FODC0010" "serialization is disabled"
+    if env.untrusted && isExternalFn q then
+      err "FODC0016" ("untrusted code may not read external resources (" ++ q.show ++ ")")
+    -- untrusted code may not turn on `trust-external` (F&O 4.0 §17.4.1)
+    if env.untrusted && q.uri == nsFN && (q.loc == "parse-xml" || q.loc == "parse-xml-fragment") then
+      match args with
+      | [_, [.map kvs]] =>
+        if kvs.any (fun (k, v) => k.str == "trust-external" && (match v with | [.atom ⟨_, .bool true⟩] => true | _ => false)) then
+          err "FODC0016" ("untrusted code may not read external resources (" ++ q.show ++ ")")
+      | _ => pure ()
     let args ← if q.uri == nsFN && q.loc == "concat" then
         args.mapM (fun a => do pure (seqOfAtoms (← env.atomize a)))
       else match findSig q args.length with
         | some sig => (args.zip sig.ps).mapM (fun (a, p) => env.coerce p.ty a ("$" ++ p.name ++ " of " ++ q.show))
         | none => pure args
-    match libLookup q with
-    | some impl => impl { call := fun f as => apply n env f as } env args
+    match libLookupAll q with
+    | some impl => do
+      let r ← impl { call := fun f as => apply n env f as } env args
+      -- a function item that untrusted code looks up stays untrusted
+      let r := if env.untrusted && q.uri == nsFN && q.loc == "function-lookup" && r.any extFnItem
+        then r.map untrustedItem else r
+      -- date results stay within the limits (`checkLimits`)
+      match r with
+      | [.atom a@⟨_, .x (.dt ..)⟩] => pure [.atom (← checkLimits a)]
+      | _ => pure r
     | none => err "XPST0017" ("function " ++ q.show ++ " is not implemented")
 
+/-- A range expression `a to b` (possibly parenthesised, possibly under
+    `fn:reverse`) whose bounds are integers and whose length is above
+    `maxRange`: `(lo, hi, reversed)`. Such a range is not materialized;
+    `rangeShortcut` answers the expressions over it that need only its
+    bounds (XPath 4.0 §4.8.1: the value is the same). -/
+def largeRangeOf? : Nat → Env → Expr → M (Option (Int × Int × Bool))
+  | 0, _, _ => pure none
+  | n + 1, env, e =>
+    match e with
+    | .seq [x] => largeRangeOf? n env x
+    | .bin .to a b => do
+        let x ← env.atomizeOpt (← eval n env a)
+        let y ← env.atomizeOpt (← eval n env b)
+        match x, y with
+        | some x, some y =>
+          let x ← coerceAtom [.b .integer] x
+          let y ← coerceAtom [.b .integer] y
+          match x.v, y.v with
+          | .int lo, .int hi => pure (if hi - lo > maxRange then some (lo, hi, false) else none)
+          | _, _ => pure none
+        | _, _ => pure none
+    | .call q [some x] [] =>
+        if q.uri == nsFN && q.loc == "reverse" then do
+          pure ((← largeRangeOf? n env x).map (fun (lo, hi, r) => (lo, hi, !r)))
+        else pure none
+    | _ => pure none
+
+/-- The `k`-th item (1-based) of a range. -/
+def rangeAt (lo hi : Int) (rev : Bool) (k : Int) : Seq :=
+  if k < 1 || k > hi - lo + 1 then [] else sInt (if rev then hi - k + 1 else lo + k - 1)
+
+/-- The items of a range from position `i` (1-based), `len` of them. -/
+def rangeSlice (lo hi : Int) (rev : Bool) (i len : Nat) : Seq :=
+  (List.range len).filterMap (fun (j : Nat) => match rangeAt lo hi rev (i + j) with
+    | [x] => some x
+    | _ => none)
+
+/-- Expressions over a large range that need only its bounds: `count`,
+    a numeric predicate, a general comparison with one integer,
+    `starts-with-subsequence`, `ends-with-subsequence`, and
+    `head(drop-while(...))`. `none`: evaluate as usual. -/
+def rangeShortcut : Nat → Env → Expr → M (Option Seq)
+  | 0, _, _ => pure none
+  | n + 1, env, e =>
+    match e with
+    | .call q [some x] [] =>
+      if q.uri != nsFN then pure none
+      else if q.loc == "count" then do
+        match ← largeRangeOf? n env x with
+        | some (lo, hi, _) => pure (some (sInt (hi - lo + 1)))
+        | none => pure none
+      else if q.loc == "head" then do
+        match x with
+        | .call q2 [some r, some f] [] =>
+          if q2.uri == nsFN && q2.loc == "drop-while" then
+            match ← largeRangeOf? n env r with
+            | some (lo, hi, rev) =>
+              let fs ← eval n env f
+              let some fi := fs.head? | pure none
+              let size := (hi - lo + 1).toNat
+              let mut res : Seq := []
+              for j in [0:size] do
+                let v := rangeAt lo hi rev (j + 1)
+                let keep ← ebv (← apply n env fi (if fi.fnArity == some 1 then [v] else [v, sInt (j + 1)]))
+                if !keep then res := v; break
+              pure (some res)
+            | none => pure none
+          else pure none
+        | _ => pure none
+      -- codepoints-to-string of a large range: a code point above
+      -- U+10FFFF is in it (FOCH0001)
+      else if q.loc == "codepoints-to-string" then do
+        match ← largeRangeOf? n env x with
+        | some (_, hi, _) => if hi > 0x10FFFF then err "FOCH0001" "not a valid XML character" else pure none
+        | none => pure none
+      else pure none
+    | .call q (some r :: some s :: rest) [] =>
+      -- subsequence of a large range: the selected positions, by
+      -- the rules of `fn:subsequence` (rounding with `roundX`)
+      if q.uri == nsFN && q.loc == "subsequence" && rest.length ≤ 1 then do
+        match ← largeRangeOf? n env r with
+        | some (lo, hi, rev) =>
+          let st := roundX (← eval n env s)
+          let en ← match rest with
+            | [some l] => pure (st.add (roundX (← eval n env l)))
+            | _ => pure XInt.posInf
+          let size := hi - lo + 1
+          let first : Int := match st with | .fin a => max a 1 | .negInf => 1 | _ => size + 1
+          let last : Int := match en with | .fin b => min (b - 1) size | .posInf => size | _ => 0
+          if last < first then pure (some [])
+          else if last - first > maxRange then err "XPDY0130" "range too large for this implementation (an implementation limit)"
+          else pure (some (rangeSlice lo hi rev first.toNat (last - first + 1).toNat))
+        | none => pure none
+      else
+      if q.uri == nsFN && (q.loc == "starts-with-subsequence" || q.loc == "ends-with-subsequence") then do
+        match ← largeRangeOf? n env r with
+        | some (lo, hi, rev) =>
+          let sv ← eval n env s
+          let size := (hi - lo + 1).toNat
+          let k := min sv.length size
+          let part := if q.loc == "starts-with-subsequence" then rangeSlice lo hi rev 1 k
+            else rangeSlice lo hi rev (size - k + 1) k
+          let restV ← rest.mapM (fun a => match a with | some y => eval n env y | none => pure [])
+          pure (some (← callFn n env q (part :: sv :: restV)))
+        | none => pure none
+      else pure none
+    | .filter r p =>
+      match isNumericLit p with
+      | some k => do
+        match ← largeRangeOf? n env r with
+        | some (lo, hi, rev) => pure (some (rangeAt lo hi rev k))
+        | none => pure none
+      | none => pure none
+    | .bin op a b =>
+      if !op.isGeneral then pure none else do
+      -- one side a large range, the other one integer
+      let (rangeSide, other, flipped) ← match ← largeRangeOf? n env a with
+        | some rg => pure (some rg, b, true)
+        | none => pure ((← largeRangeOf? n env b), a, false)
+      match rangeSide with
+      | none => pure none
+      | some (lo, hi, _) =>
+        match ← env.atomize (← eval n env other) with
+        | [⟨_, .int x⟩] =>
+          -- `x op v` for some v in lo..hi (the operands in source order)
+          let op' := if flipped then (match op with
+            | .glt => .ggt | .gle => .gge | .ggt => .glt | .gge => .gle | o => o) else op
+          let r := match op' with
+            | .geq => lo ≤ x && x ≤ hi
+            | .gne => hi > lo || x != lo
+            | .glt => x < hi
+            | .gle => x ≤ hi
+            | .ggt => x > lo
+            | .gge => x ≥ lo
+            | _ => false
+          pure (some (sBool r))
+        | _ => pure none
+    | _ => pure none
+
+
+/-- Pull the items of `fn:generate(init, step)` through `stages`, one
+    state at a time, until `stop` holds of the output so far or the step
+    function gives the empty sequence (F&O 4.0 §15.5.4: a consumer that
+    needs only a prefix ends the evaluation). -/
+def genPull : Nat → Env → Expr → Expr → List GenStage → (Array Item → M Bool) → M (Array Item)
+  | 0, _, _, _, _, _ => fuelErr
+  | n + 1, env, init, step, stages, stop => do
+    let st0 ← eval n env init
+    let some first := st0.head? | err "XPTY0004" "fn:generate: $init must be one item"
+    if st0.length != 1 then err "XPTY0004" "fn:generate: $init must be one item"
+    let fs ← eval n env step
+    let some f := fs.head? | err "XPTY0004" "fn:generate: $step must be a function"
+    let mut state := first
+    let mut out : Array Item := #[]
+    let mut pos : Nat := 1
+    for _ in [0:genCap] do
+      let mut items : Seq := [state]
+      for sg in stages do
+        let mut nx : Array Item := #[]
+        let mut idx := 1
+        for i in items do
+          match sg with
+          | .look k => for r in ← lookupIn n env i k do nx := nx.push r
+          | .smap b => for r in ← eval n (env.focus i idx 0) b do nx := nx.push r
+          idx := idx + 1
+        items := nx.toList
+      for r in items do out := out.push r
+      if ← stop out then return out
+      -- an arity-0 or arity-1 step function gets the first arguments only
+      let nxt ← apply n env f (([[state], sInt pos] : List Seq).take ((f.fnArity.getD 2).min 2))
+      match nxt with
+      | [] => return out
+      | [x] => state := x
+      | _ => err "XPTY0004" "fn:generate: $step must return at most one item"
+      pos := pos + 1
+    err "XPDY0130" "fn:generate made more states than this implementation allows (an implementation limit)"
+
+/-- Consumers of `fn:generate` that need only a prefix: a bounded
+    positional predicate, `subsequence` with a length, `slice` with
+    input-length-independent bounds, `take-while`, and `head`.
+    `none`: evaluate as usual. -/
+def genShortcut : Nat → Env → Expr → M (Option Seq)
+  | 0, _, _ => pure none
+  | n + 1, env, e =>
+    match e with
+    | .filter a p =>
+      match genSrc? a, litPositions? p with
+      | some (i, f, st), some k => do
+        let out ← genPull n env i f st (fun o => pure (o.size ≥ k.toNat))
+        pure (some (← filterSeq n env out.toList p))
+      | none, some k =>
+        -- `index-of(G, t)[k]`, `index-where(G, f)[k]`: pull until k matches
+        let a' := match a with | .seq [x] => x | x => x
+        match a' with
+        | .call q [some g, some t] [] =>
+          if q.uri == nsFN && (q.loc == "index-of" || q.loc == "index-where") then
+            match genSrc? g with
+            | some (i, f, st) => do
+              let tv ← eval n env t
+              let out ← genPull n env i f st (fun o => do
+                match o.back? with
+                | none => pure false
+                | some x =>
+                  let hit ← if q.loc == "index-of" then pure !(← callFn n env q [[x], tv]).isEmpty
+                    else match tv.head? with
+                      | some pf => ebv (← apply n env pf (([[x], sInt o.size] : List Seq).take ((pf.fnArity.getD 2).min 2)))
+                      | none => pure false
+                  if !hit then pure false
+                  else pure ((← callFn n env q [o.toList, tv]).length ≥ k.toNat))
+              pure (some (← filterSeq n env (← callFn n env q [out.toList, tv]) p))
+            | none => pure none
+          else pure none
+        | _ => pure none
+      | _, _ => pure none
+    | .call q args [] =>
+      if q.uri != nsFN then pure none else
+      match args with
+      | [some a] =>
+        if q.loc != "head" then pure none else
+        match genSrc? a with
+        | some (i, f, st) => do
+          let out ← genPull n env i f st (fun o => pure (o.size ≥ 1))
+          pure (some (out.toList.take 1))
+        | none => pure none
+      | [some a, some b] =>
+        if q.loc != "take-while" then pure none else
+        match genSrc? a with
+        | some (i, f, st) => do
+          let ps ← eval n env b
+          let some pf := ps.head? | pure none
+          -- stop at the first item that fails the predicate
+          let out ← genPull n env i f st (fun o => do
+            match o.back? with
+            | some x =>
+              let r ← apply n env pf (if pf.fnArity == some 1 then [[x]] else [[x], sInt o.size])
+              pure !(← ebv r)
+            | none => pure false)
+          pure (some (← callFn n env q [out.toList, ps]))
+        | none => pure none
+      | [some a, some start, some stop, some step] =>
+        if q.loc != "slice" then pure none else
+        match genSrc? a with
+        | some (i, f, st) => do
+          -- F&O §2.5.10 requires incremental consumption by bounded slice.
+          -- Negative offsets, an omitted end, and reverse slicing from an
+          -- omitted start need the input length; evaluate those in full.
+          let ty := IType.seq (.atomic (.b .integer)) .opt
+          let sv ← env.coerce ty (← eval n env start) "$start of fn:slice"
+          let ev ← env.coerce ty (← eval n env stop) "$end of fn:slice"
+          let dv ← env.coerce ty (← eval n env step) "$step of fn:slice"
+          let s := intOf sv
+          let e := intOf ev
+          let d := intOf dv
+          if s ≥ 0 && e > 0 && (s > 0 || d ≥ 0) then
+            let bound := max s e
+            let out ← genPull n env i f st (fun o => pure ((o.size : Int) ≥ bound))
+            pure (some (← callFn n env q [out.toList, sv, ev, dv]))
+          else
+            pure (some (← callFn n env q [← eval n env a, sv, ev, dv]))
+        | none => pure none
+      | [some a, some s0, some l0] =>
+        if q.loc != "subsequence" then pure none else
+        match genSrc? a with
+        | some (i, f, st) => do
+          let sv ← eval n env s0
+          let lv ← eval n env l0
+          match (roundX sv).add (roundX lv) with
+          | .fin e =>
+            let out ← genPull n env i f st (fun o => pure ((o.size : Int) ≥ e - 1))
+            pure (some (← callFn n env q [out.toList, sv, lv]))
+          | _ => pure none
+        | none => pure none
+      | _ => pure none
+    | _ => pure none
 end
+
+/-- Parse an XPath 4.0 expression with the computed node constructors
+    (XPath 4.0 §4.12, `XQuery4.xpathGrammar`). -/
+def parseXPath4 (src : String) (ns : List (String × String) := [])
+    (schemaDecl : Bool → QN → Bool := fun _ _ => false)
+    (features : FeatureSettings := {}) : M Expr := do
+  let e ← parseXPath src ns (some L4Factoidal.XQuery4.xpathGrammar) schemaDecl features
+  features.check e
+  -- static check (XPath 4.0 §2.4.1, XPST0017): a call of a function in
+  -- the fn, math, map or array namespace needs a signature of its arity
+  for (q, k) in Expr.callsF 100000 e do
+    if (q.uri == nsFN || q.uri == nsMATH || q.uri == nsMAP || q.uri == nsARR) && !(q.uri == nsFN && q.loc == "concat")
+        && (findSigAny q).isSome && (findSig q k).isNone then
+      err "XPST0017" ("wrong number of arguments for " ++ q.show)
+  pure e
 
 /-- Evaluate an XPath 4.0 expression string. -/
 def evalString (src : String) (env : Env := {}) : M Seq := do
-  let e ← parseXPath src env.ns
+  let e ← parseXPath4 src env.ns env.schema.declared env.features
   eval 100000 env e
+
+/-- Applying the all-enabled settings leaves evaluation definitionally
+    unchanged. This theorem concerns configuration application. -/
+theorem eval_allFeaturesEnabled (fuel : Nat) (env : Env) (e : Expr) :
+    eval fuel (env.restrictFeatures {}) e = eval fuel env e := rfl
 
 def showSeq (s : Seq) : String :=
   String.intercalate " " (s.map (fun i => match i with
@@ -740,7 +1752,8 @@ def showSeq (s : Seq) : String :=
     | .node _ => "<node>"
     | .map _ => "map{...}"
     | .arr _ => "[...]"
-    | .fn _ => "function"))
+    | .fn _ => "function"
+    | .jnode .. => "<jnode>"))
 
 def evalShow (src : String) : String :=
   match evalString src with

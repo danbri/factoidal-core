@@ -124,6 +124,42 @@ class RunnersGateTest(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("RUNNERS is empty", out)
 
+    def put_ports(self, ports, lean_names='"datasetMerge"'):
+        nodes = NODES.replace("  const RUNNERS = {", "  const PORT_RUNNERS = {\n" + ports + "\n  };\n  const RUNNERS = {")
+        nodes = nodes.replace("const { entry, parse, closure, query } = deps;",
+                              "const { entry, parse, closure, query, datasetMerge } = deps;")
+        self.put(nodes=nodes, mapping=MAPPING + '[[entry]]\nid = "npm:.#datasetMerge"\nstages = ["otherStage"]\n'
+                 'covers = "part"\nnote = "n"\n')
+        if lean_names is not None:
+            write(os.path.join(self.root, "formal", "lean4", "Wasm", "Ops", "GraphNodes.lean"),
+                  "def portStageNames : List String := [" + lean_names + "]\n")
+
+    def test_port_runners_pass(self):
+        self.put_ports("    datasetMerge: async (wire) => ({ graph: await datasetMerge(wire.graph[0], wire.graph[1]) }),")
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1 PORT_RUNNERS keys", out)
+
+    def test_port_runner_not_in_lean_list_fails(self):
+        self.put_ports("    datasetMerge: async (wire) => ({ graph: await datasetMerge(wire.graph[0], wire.graph[1]) }),",
+                       lean_names='"otherMerge"')
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("PORT_RUNNERS.datasetMerge: not a name of portStageNames", out)
+
+    def test_port_runners_without_lean_list_fails(self):
+        self.put_ports("    datasetMerge: async (wire) => ({ graph: await datasetMerge(wire.graph[0], wire.graph[1]) }),",
+                       lean_names=None)
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("the Lean list portStageNames", out)
+
+    def test_port_runner_calling_nothing_fails(self):
+        self.put_ports("    datasetMerge: async (wire) => ({ graph: wire.graph[0] }),")
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("PORT_RUNNERS.datasetMerge: calls no package function", out)
+
     def test_empty_inventory_fails(self):
         self.put(inventory="")
         rc, out = self.run_gate()

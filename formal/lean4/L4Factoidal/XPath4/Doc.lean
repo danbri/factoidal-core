@@ -12,8 +12,8 @@ Names are expanded with the in-scope namespace declarations (Namespaces
 in XML 1.0 §6). Adjacent text and CDATA nodes are merged into one text
 node (XDM 4.0 §6.7.1: no two adjacent text nodes).
 
-Not modelled: namespace nodes as items on the `namespace` axis (the
-axis returns the in-scope bindings as records), type annotations from
+Namespace nodes are not stored: `Doc.get` makes them from the in-scope
+bindings of their element (see `nsBase`). Not modelled: type annotations from
 schema validation, `is-id`/`is-idrefs`, base URIs other than the
 document URI.
 -/
@@ -23,26 +23,6 @@ import L4Factoidal.XML.Parser
 namespace L4Factoidal.XPath4
 
 open L4Factoidal.XML
-
-inductive NKind where
-  | document | element | attribute | text | comment | pi | namespace
-deriving DecidableEq, Repr, Inhabited
-
-structure NRec where
-  kind : NKind
-  name : QN := default
-  value : String := ""
-  parent : Option Nat := none
-  children : Array Nat := #[]
-  attrs : Array Nat := #[]
-  inscope : List (String × String) := []
-  last : Nat := 0
-deriving Inhabited
-
-structure Doc where
-  nodes : Array NRec
-  uri : String := ""
-deriving Inhabited
 
 def splitName (n : String) : String × String :=
   match n.splitOn ":" with
@@ -63,13 +43,28 @@ def mergeText : List Node → List Node
 
 abbrev B := StateM (Array NRec)
 
-def pushRec (r : NRec) : B Nat := do
-  let a ← get
-  set (a.push r)
-  pure a.size
+def pushRec (r : NRec) : B Nat :=
+  -- `modifyGet` keeps the array unshared, so `push` does not copy it
+  modifyGet (fun a => (a.size, a.push r))
 
 def setRec (i : Nat) (f : NRec → NRec) : B Unit :=
   modify (fun a => if h : i < a.size then a.set i (f a[i]) else a)
+
+/-- A namespace declaration as recognised by the XDM document builder. -/
+def namespaceBinding (a : Attribute) : Option (String × String) :=
+  if a.name == "xmlns" then some ("", a.value)
+  else if a.name.startsWith "xmlns:" then some ((splitName a.name).2, a.value)
+  else none
+
+/-- Extend the inherited scope with this element's declarations. Later
+    declarations occur first, as in the original document-builder fold. -/
+def namespaceScope (scope : List (String × String)) (attrs : List Attribute) :
+    List (String × String) :=
+  attrs.foldl (fun sc a =>
+    if a.name == "xmlns" then ("", a.value) :: sc
+    else if a.name.startsWith "xmlns:" then
+      ((splitName a.name).2, a.value) :: sc
+    else sc) scope
 
 def buildNode : Nat → Option Nat → List (String × String) → Node → B (Option Nat)
   | 0, _, _, _ => pure none
@@ -89,11 +84,7 @@ def buildNode : Nat → Option Nat → List (String × String) → Node → B (O
         pure (some i)
     | .element tag attrs kids => do
         -- namespace declarations first
-        let scope := attrs.foldl (fun sc a =>
-          if a.name == "xmlns" then ("", a.value) :: sc
-          else if a.name.startsWith "xmlns:" then
-            ((splitName a.name).2, a.value) :: sc
-          else sc) scope
+        let scope := namespaceScope scope attrs
         let (p, l) := splitName tag
         let uri := (scope.lookup p).getD (if p == "xml" then nsXML else "")
         let i ← pushRec { kind := .element, name := { uri, loc := l, pfx := p }, parent := par,
@@ -116,11 +107,13 @@ def buildNode : Nat → Option Nat → List (String × String) → Node → B (O
         setRec i (fun r => { r with children := cs, attrs := ats, last := sz - 1 })
         pure (some i)
 
-def Doc.ofDocument (d : Document) (uri : String := "") : Doc :=
+/-- A document node whose children are `ns` (a document's prolog, element
+    and epilog, or the content of a parsed fragment). -/
+def Doc.ofNodes (ns : List Node) (uri : String := "") : Doc :=
   let act : B Unit := do
     let i ← pushRec { kind := .document }
     let mut cs : Array Nat := #[]
-    for k in mergeText d.children do
+    for k in mergeText ns do
       match ← buildNode 100000 (some i) [("xml", nsXML)] k with
       | some j => cs := cs.push j
       | none => pure ()
@@ -129,12 +122,72 @@ def Doc.ofDocument (d : Document) (uri : String := "") : Doc :=
   let ((), a) := act.run #[]
   { nodes := a, uri }
 
+/-- xml:id processing (xml:id 1.0 §4): the value of an `xml:id`
+    attribute is whitespace-normalized (leading and trailing spaces
+    removed, inner runs of spaces collapsed). -/
+def normXmlId : Nat → Node → Node
+  | 0, n => n
+  | f + 1, n =>
+    match n with
+    | .element tag attrs kids =>
+      let attrs := attrs.map (fun a => if a.name == "xml:id" then
+        { a with value := String.intercalate " " ((a.value.split (fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r')).toList.map (·.toString) |>.filter (· != "")) }
+        else a)
+      .element tag attrs (kids.map (normXmlId f))
+    | other => other
+
+def Doc.ofDocument (d : Document) (uri : String := "") : Doc :=
+  let base := Doc.ofNodes (d.children.map (normXmlId 100000)) uri
+  match d.doctype with
+  | some dt =>
+    { base with idAttrs := dt.idAttrs,
+                idrefAttrs := (dt.attDecls.filter (fun a => a.type == AttType.IDREF || a.type == AttType.IDREFS)).map
+                  (fun a => (a.element, a.name)) }
+  | none => base
+
 def Doc.ofString (s : String) (uri : String := "") : Except String Doc :=
   match parseXML s with
   | .ok d => .ok (Doc.ofDocument d uri)
   | .error e => .error (reprStr e)
 
-def Doc.get (d : Doc) (i : Nat) : NRec := d.nodes.getD i default
+/-! ## Namespace nodes (XDM 4.0 §6.4)
+
+A namespace node is not stored in the node table. Its index is
+`nsBase + e * nsSlot + k`: namespace node `k` of the element at index
+`e`, where the namespace nodes of an element are `nsNodesOf` of its
+record. `Doc.get` makes the record from the element. -/
+
+/-- The first index of a namespace node (above every stored node). -/
+def nsBase : Nat := 1099511627776
+/-- The number of namespace node indices for each element. -/
+def nsSlot : Nat := 4096
+
+/-- The namespace nodes of an element record, as (prefix, URI): the
+    in-scope bindings (the first binding of a prefix is in force),
+    without the undeclarations, and the `xml` binding. -/
+def nsNodesOf (r : NRec) : List (String × String) :=
+  if r.kind != .element then [] else
+  let sc := r.inscope.foldl (fun acc (p, u) => if acc.any (·.1 == p) then acc else acc ++ [(p, u)]) []
+  let sc := sc.filter (fun (_, u) => u != "")
+  let sc := sc.take (nsSlot - 2)
+  if sc.any (·.1 == "xml") then sc else sc ++ [("xml", nsXML)]
+
+/-- The index of namespace node `k` of the element at index `e`. -/
+def nsNodeIdx (e k : Nat) : Nat := nsBase + e * nsSlot + k
+
+/-- The key of an index in document order: a namespace node comes after
+    its element and before the element's attributes and children. -/
+def ordKey (i : Nat) : Nat :=
+  if i < nsBase then i * nsSlot
+  else ((i - nsBase) / nsSlot) * nsSlot + min ((i - nsBase) % nsSlot + 1) (nsSlot - 1)
+
+def Doc.get (d : Doc) (i : Nat) : NRec :=
+  if i < nsBase then d.nodes.getD i default else
+  let e := (i - nsBase) / nsSlot
+  match (nsNodesOf (d.nodes.getD e default))[(i - nsBase) % nsSlot]? with
+  | some (p, u) => { kind := .namespace, name := { uri := "", loc := p }, value := u,
+                     parent := some e, last := i }
+  | none => default
 
 def Doc.textFrom (d : Doc) (last : Nat) : Nat → Nat → String → String
   | 0, _, acc => acc

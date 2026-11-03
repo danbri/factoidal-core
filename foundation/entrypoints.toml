@@ -193,6 +193,54 @@ id = "npm:./browser#xmlEncrypt"
 reason = "npm/factoidal/lib/api.mjs xmlEncrypt calls the wasm op xmlEncrypt through runWithCipher (see wasm:xmlEncrypt)"
 
 [[nonstage]]
+id = "wasm:xmlVerify"
+reason = "XML Signature 1.1 core validation of an XML document (Wasm/Ops/XmlDsig.lean verifyCore over XML/DSig11.lean validateParsed; RSA and P-256 by HACL*), reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmlSign"
+reason = "XML Signature 1.1 signature generation (XML/DSig11Sign.lean sign with the custodians of XML/DSig11Native.lean), reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppWsOpen"
+reason = "opens an XMPP-over-WebSocket session with its Origin, path and subprotocol policy (Wasm/Ops/XmppSession.lean; RFC 6455 and RFC 7395 over Server.step); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppWsFeed"
+reason = "one socket read of an XMPP-over-WebSocket connection: handshake, frames, Server.step (Wasm/Ops/XmppSession.lean; RFC 6455 and RFC 7395 over Server.step); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppWsDeliver"
+reason = "a stanza routed to a bound XMPP-over-WebSocket session, as a text frame (Wasm/Ops/XmppSession.lean; RFC 6455 and RFC 7395 over Server.step); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppWsClose"
+reason = "ends an XMPP-over-WebSocket session with <close/> and a close frame (Wasm/Ops/XmppSession.lean; RFC 6455 and RFC 7395 over Server.step); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppStateLoad"
+reason = "the host installs one item of an XMPP server's state, read from its LWS state storage at start (Wasm/Ops/XmppSession.lean over XMPP/StateCodec.lean, round-trip theorems decodeHeld_encodeHeld, decodeChannel_encodeChannel, decodeGroup_encodeGroup); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppSessionTlsUp"
+reason = "the host reports a finished STARTTLS handshake to an XMPP session (Wasm/Ops/XmppSession.lean over Server.Session.tlsEstablished, theorem tlsEstablished_spec); reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#xmlVerify"
+reason = "npm/factoidal/lib/api.mjs xmlVerify calls the wasm op xmlVerify (see wasm:xmlVerify)"
+
+[[nonstage]]
+id = "npm:./browser#xmlVerify"
+reason = "npm/factoidal/lib/api.mjs xmlVerify calls the wasm op xmlVerify (see wasm:xmlVerify)"
+
+[[nonstage]]
+id = "npm:.#xmlSign"
+reason = "npm/factoidal/lib/api.mjs xmlSign calls the wasm op xmlSign (see wasm:xmlSign)"
+
+[[nonstage]]
+id = "npm:./browser#xmlSign"
+reason = "npm/factoidal/lib/api.mjs xmlSign calls the wasm op xmlSign (see wasm:xmlSign)"
+
+[[nonstage]]
 id = "wasm:jweDecrypt"
 reason = "JWE compact decryption (JOSE/Jwe.lean; AES by the host through CipherCall.replayCipher), reads no RDF data"
 
@@ -218,7 +266,7 @@ reason = "npm/factoidal/lib/api.mjs jweEncrypt calls the wasm op jweEncrypt thro
 
 [[nonstage]]
 id = "npm:./cipher-host#answerCipherRequest"
-reason = "runs one WebCrypto AES operation that a Lean CipherCall.Req names; reads no RDF data and makes no decision"
+reason = "runs one WebCrypto AES operation that a Lean CipherCall.Req names, or the PBKDF2 derivation a WebDAV login names (WebDAV.Login); reads no RDF data and makes no decision"
 
 [[nonstage]]
 id = "npm:./cipher-host#runWithCipher"
@@ -329,6 +377,38 @@ covers = "part"
 note = "VC.DataIntegrity.verifyFromCanonical with Ed25519.verify: the first conjunct of VerifyContract, on caller-given canonical forms."
 
 [[entry]]
+id = "wasm:vcDiSecure"
+stages = ["vcSignStage"]
+covers = "part"
+note = "Wasm/Ops/Vc.lean vcDiSecure: VC.Cryptosuite.secureDocument, which canonicalizes (RDFC-1.0 or RFC 8785 by suite) and calls DataIntegrity.createFromCanonical with the signer of VC.Cryptosuite.diSigner (Ed25519 or ECDSA P-256). Not covered: the ECDSA suites and the JCS transform (vcSignStage is eddsa-rdfc-2022), the proof configuration and the returned document."
+
+[[entry]]
+id = "wasm:vcDiVerify"
+stages = ["vcVerifyStage"]
+covers = "part"
+note = "Wasm/Ops/Vc.lean vcDiVerify: VC.Cryptosuite.verifyDocument, which ends in DataIntegrity.verifyFromCanonical with VC.Cryptosuite.diPrimitives. Not covered: the ECDSA suites, the JCS transform, did:key and CID key resolution, the context rule."
+
+[[nonstage]]
+id = "wasm:vcStatusEntryNew"
+reason = "builds one Bitstring Status List v1.0 BitstringStatusListEntry object (VC.StatusList); reads no document"
+
+[[nonstage]]
+id = "wasm:vcStatusListCredential"
+reason = "builds an unsigned BitstringStatusListCredential: the bitstring, GZIP and base64url of VC.StatusList.generate; reads no RDF"
+
+[[nonstage]]
+id = "wasm:vcStatusEntryCheck"
+reason = "JSON-level check of the credentialStatus entries (VC.StatusList.checkEntry); reads no RDF"
+
+[[nonstage]]
+id = "wasm:vcStatusValidate"
+reason = "Bitstring Status List v1.0 section 3.2 on a list credential already verified by vcDiVerify (VC.StatusList.validate); reads no RDF"
+
+[[nonstage]]
+id = "wasm:vcDiKey"
+reason = "key-level: the did:key verification method of a secret key (VC.Cryptosuite.diSigner, HACL* secret-to-public, SEC 1 point compression); reads no document"
+
+[[entry]]
 id = "npm:.#update"
 stages = ["updateStage"]
 covers = "part"
@@ -387,6 +467,16 @@ reason = "reflection: one row of the stage registry with its parameters, runs no
 [[nonstage]]
 id = "npm:.#pipe"
 reason = "composition of nodes into a list, runs nothing"
+
+[[nonstage]]
+id = "npm:.#graph"
+reason = "composition of nodes into an acyclic graph with named ports, runs nothing; the check is the wasm op graphCheckNodes (reflection) (issue 1130)"
+
+[[entry]]
+id = "npm:.#datasetMerge"
+stages = ["scopeStage"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs datasetMerge: the wasm op datasetMerge (see wasm:datasetMerge) on the two datasets. Covers scopeStage's run on each input. Not covered: Dataset.combine of the two scoped datasets, which no registry stage covers (the port stage datasetMerge of Wasm/Ops/GraphNodes.lean portStages, theorem mergeDatasets_isMerge), and the prefixes (mergePrefixes) (issue 1130)."
 
 [[entry]]
 id = "npm:.#explain"
@@ -490,6 +580,16 @@ reason = "reflection: one row of the stage registry with its parameters, runs no
 id = "npm:./browser#pipe"
 reason = "composition of nodes into a list, runs nothing"
 
+[[nonstage]]
+id = "npm:./browser#graph"
+reason = "composition of nodes into an acyclic graph with named ports, runs nothing; the check is the wasm op graphCheckNodes (reflection) (issue 1130)"
+
+[[entry]]
+id = "npm:./browser#datasetMerge"
+stages = ["scopeStage"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs datasetMerge: the wasm op datasetMerge (see wasm:datasetMerge) on the two datasets. Covers scopeStage's run on each input. Not covered: Dataset.combine of the two scoped datasets, which no registry stage covers (the port stage datasetMerge of Wasm/Ops/GraphNodes.lean portStages, theorem mergeDatasets_isMerge), and the prefixes (mergePrefixes) (issue 1130)."
+
 [[entry]]
 id = "npm:./browser#explain"
 stages = ["rdfsExplainGraphStage"]
@@ -543,6 +643,16 @@ reason = "reflection: the stage registry (L4Factoidal.Dataflow.registry, Wasm/Op
 [[nonstage]]
 id = "wasm:pipelineCheck"
 reason = "reflection: the type check and the guarantee data (pipelineReport) of a list of registry stages (Wasm/Ops/StageList.lean), reads no data"
+
+[[nonstage]]
+id = "wasm:graphCheckNodes"
+reason = "reflection: the static check graphIssues of a graph of nodes with named ports (registry stages with Entry.nodeSig and settings, and the port stages of portStages), its output wire and the assumption union sigAssumptions (Wasm/Ops/GraphNodes.lean, Dataflow/Graph.lean); parses an evaluator node's query to read its form, reads no data (issue 1130)"
+
+[[entry]]
+id = "wasm:datasetMerge"
+stages = ["scopeStage"]
+covers = "part"
+note = "Wasm/Ops/GraphNodes.lean datasetMergeOp: mergeDatasets n = datasetMergeAt n (n + 1), scopeStage's run (Dataset.scopeDocument) on each stored dataset with two scope numbers from documentScopeCounter, then Dataset.combine. Not covered: the combine, which no registry stage covers (the port stage datasetMerge, theorem mergeDatasets_isMerge: the result denotes an RDF 1.1 Semantics 5.2 merge), the counter (IO), and the prefixes (mergePrefixes) (issue 1130)."
 
 [[nonstage]]
 id = "wasm:pipelineCheckNodes"
@@ -1203,7 +1313,7 @@ note = "npm/factoidal/lib/api.mjs vcEd25519Verify (fn.js re-exports it) calls th
 id = "wasm:sbm11Open"
 stages = ["sbm11Disk"]
 covers = "part"
-note = "Wasm/Ops/Sbm11.lean sbm11Open: HostSession.resolveHost (CURRENT) and openSession over the host reads of Wasm/HostRead.lean (ffi/l4_hostread.c): the manifest decoded, each artifact's size checked against it, a delta log refused, the GDX1 header read; under verify merkle (the default) every .merkle sidecar admitted against the manifest's root (HostVerify.admit) and every byte read through a 65,536-byte chunk checked by its proof (HostVerify.checkChunk, #guards in HostVerifyTests), verify none checks lengths only. The reads are those of sbm11Disk, under its assumption ReadsWritten; under merkle a changed byte is refused under the collision resistance of SHA-256, which is tested and not proved."
+note = "Wasm/Ops/Sbm11.lean sbm11Open: HostSession.resolveHost (CURRENT) and openSession over the host reads of Wasm/HostRead.lean (ffi/l4_hostread.c): the manifest decoded, each artifact's size checked against it, a delta log refused, the GDX1 header read; under verify merkle (the default) every .merkle sidecar admitted against the manifest's root (HostVerify.admit) and every byte read through a 65,536-byte chunk checked by its proof (HostVerify.checkChunk, #guards in HostVerifyTests), verify none checks lengths only. With the option manifestSha256 (the trust anchor, https://github.com/danbri/factoidal/issues/1105) the SHA-256 of the manifest bytes must be the anchor (HostVerify.checkAnchor, HACL* SHA-256), checked before the manifest is decoded; every open checks the manifest's term count against the GDX1 header (HostVerify.checkTerms); the answer gives manifestSha256, the digest. #guards in HostVerifyTests: a changed manifest refused with the anchor of the old one, the untampered generation opened with its anchor, a wrong anchor refused. The open reads no file whole (the full-file SHA-256 is wasm:sbm11Verify). The reads are those of sbm11Disk, under its assumption ReadsWritten; under merkle a changed byte is refused under the collision resistance of SHA-256, which is tested and not proved."
 
 [[entry]]
 id = "wasm:sbm11Query"
@@ -1217,7 +1327,7 @@ reason = "handle lifecycle: removes an SBM11 handle from the table, reads no RDF
 
 [[nonstage]]
 id = "wasm:sbm11Verify"
-reason = "integrity check of an SBM11 generation before activation (Wasm/Ops/Sbm11.lean): openSession, then for each file the manifest entry of its bytes (PackBytes.artifactOf: length, HACL* SHA-256, Merkle root) and its .merkle sidecar against the manifest; decodes no RDF data. The decoder checks of native l4sbm11 activate are not run"
+reason = "integrity check of an SBM11 generation before activation (Wasm/Ops/Sbm11.lean): openSession, then for each file the manifest entry of its bytes (PackBytes.artifactOf: length, HACL* SHA-256, Merkle root) and its .merkle sidecar against the manifest; decodes no RDF data; the answer gives manifestSha256, the SHA-256 of the manifest bytes, to pin as the trust anchor of openSbm11 (https://github.com/danbri/factoidal/issues/1105). The decoder checks of native l4sbm11 activate are not run"
 
 [[nonstage]]
 id = "wasm:storeLayout"
@@ -1227,7 +1337,7 @@ reason = "store kind (Wasm/Ops/Sbm11.lean): resolves CURRENT and says whether ma
 id = "npm:.#openSbm11"
 stages = ["sbm11Disk", "sbm11WhereStage", "sbm11DecodeStage"]
 covers = "part"
-note = "npm/factoidal/lib/sbm11.mjs openSbm11: the wasm op sbm11Open, and Sbm11Store.query, the wasm op sbm11Query (see wasm:sbm11Open, wasm:sbm11Query); the Node reader lib/sbm11-node.mjs moves bytes only. Not covered: as wasm:sbm11Open and wasm:sbm11Query."
+note = "npm/factoidal/lib/sbm11.mjs openSbm11: the wasm op sbm11Open, and Sbm11Store.query, the wasm op sbm11Query (see wasm:sbm11Open, wasm:sbm11Query); the Node reader lib/sbm11-node.mjs moves bytes only. options.manifestSha256 (the trust anchor, issue 1105) is passed as a string; the engine reads and checks it (see wasm:sbm11Open), and store.manifestSha256 is the digest the engine gives. npm test/sbm11-verify.test.mjs. Not covered: as wasm:sbm11Open and wasm:sbm11Query."
 
 [[entry]]
 id = "npm:./browser#openSbm11"
@@ -1336,6 +1446,34 @@ id = "wasm:webdavClose"
 reason = "lifecycle: drops a WebDAV handle; reads no data"
 
 [[nonstage]]
+id = "wasm:xmppClientOpen"
+reason = "protocol: opens an outgoing XMPP client stream (XMPP.ClientStream.start, RFC 6120) for HTTP over XMPP (https://github.com/danbri/factoidal/issues/1107); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppClientFeed"
+reason = "protocol: the bytes of the client stream (XMPP.ClientStream.feed: SASL SCRAM-SHA-256, binding) and each XEP-0332 request planned by XMPP.HttpOverXmpp.plan; moves resource bytes, reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppClientAnswer"
+reason = "protocol: the WebDAV response to a planned XEP-0332 request as stanzas (XMPP.HttpOverXmpp.finish); moves resource bytes, reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppClientClose"
+reason = "lifecycle: ends an XMPP client stream and drops its handle (in requester mode, 502 for every waiting request: XMPP.HttpRequester.abortAll); reads no data"
+
+[[nonstage]]
+id = "wasm:xmppClientRequest"
+reason = "protocol: an HTTP request from the xmpp-http-proxy loopback listener as XEP-0332 stanzas to the one target JID (XMPP.HttpRequester.send, https://github.com/danbri/factoidal/issues/1107 step 2); moves resource bytes, reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppClientTick"
+reason = "protocol: the host clock for the XEP-0332 requester; requests past their deadline get 504 (XMPP.HttpRequester.tick); reads no data"
+
+[[nonstage]]
+id = "wasm:webdavUser"
+reason = "configuration: one line of a webdav-serve users file added or replaced (WebDAV.Login.planAdd, withUser); names one PBKDF2 derivation for the host; reads no RDF data"
+
+[[nonstage]]
 id = "npm:./webdav#openWebdav"
 reason = "host (webdav/server.mjs): lists the mount directory, reads and writes the files the engine names, opens local storages with openLwsStorage, carries lws requests and fetches; decides nothing (tools/host-purity-lint.sh); reads no RDF data"
 
@@ -1346,6 +1484,30 @@ reason = "host (webdav/server.mjs): a Node HTTP socket over openWebdav; reads no
 [[nonstage]]
 id = "cli:webdav-serve"
 reason = "host command: starts npm:./webdav#listen on a mount directory and prints the origin; reads no RDF data"
+
+[[nonstage]]
+id = "cli:xmpp-http-proxy"
+reason = "host command: a 127.0.0.1 HTTP listener whose requests go over XMPP (XEP-0332) to one target JID (XMPP.HttpRequester, https://github.com/danbri/factoidal/issues/1107 step 2); moves resource bytes, reads no RDF data"
+
+[[nonstage]]
+id = "cli:webdav-user"
+reason = "host command: reads a password from standard input, runs the PBKDF2 derivation wasm:webdavUser names (WebCrypto) and writes the users file the engine gives; reads no RDF data"
+
+[[nonstage]]
+id = "wasm:lwsDirLock"
+reason = "decides the lock file of an LWS or Solid storage directory (create, probe, refuse, take over) from the host's results; reads no RDF data (https://github.com/danbri/factoidal/issues/1135)"
+
+[[nonstage]]
+id = "wasm:lwsAtRestNotice"
+reason = "words the start notice about encryption at rest (clear text, or sealed and the key id) from the storage key text; reads no RDF data (https://github.com/danbri/factoidal/issues/1135)"
+
+[[nonstage]]
+id = "wasm:lwsStorageKeyNew"
+reason = "makes the text and key id of a storage key from 32 random bytes the host gives; reads no RDF data (https://github.com/danbri/factoidal/issues/1135)"
+
+[[nonstage]]
+id = "cli:lws-keygen"
+reason = "host command: draws 32 random bytes and prints the key wasm:lwsStorageKeyNew gives; reads no RDF data"
 
 # Literal values (https://github.com/danbri/factoidal/issues/1051): term-level
 # functions over one literal or one JavaScript value; no graph, no dataset.
@@ -1409,3 +1571,106 @@ reason = "the crawl plan of one container listing (LWS.DatasetView.planListing):
 [[nonstage]]
 id = "npm:./lws/dataset#lwsDatasetOpsAvailable"
 reason = "reflection: whether the loaded engine has the op lwsViewPlan; reads no RDF data"
+
+# Controlled Identifiers v1.0 (https://github.com/danbri/factoidal/issues/1100,
+# items 7 and 9): JSON documents and one host fetch; no RDF data, no stage.
+
+[[nonstage]]
+id = "wasm:cidValidate"
+reason = "JSON document check: CID 1.0 §2 (L4Factoidal/CID/Validate.lean check over CID.parseDocument); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:cidRetrieve"
+reason = "one step of CID 1.0 §3.3 with the host (L4Factoidal/CID/Fetch.lean step: the private-address guard, status and Content-Type, then CID.retrieveFromText); reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#cidValidate"
+reason = "JSON document check over wasm:cidValidate (lib/cid.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#cidRetrieveVerificationMethod"
+reason = "host loop over wasm:cidRetrieve (lib/cid.mjs): resolves and fetches what the engine names (lib/cid-node.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#cidValidate"
+reason = "JSON document check over wasm:cidValidate (lib/cid.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#cidRetrieveVerificationMethod"
+reason = "host loop over wasm:cidRetrieve (lib/cid.mjs) with the page's fetch; reads no RDF data"
+
+# XPath 4.0, XQuery 4.0 and XSLT 4.0 (formal/lean4/Wasm/Ops/Qt4.lean): XML
+# documents and expression texts in, serialized result envelopes out. The
+# public adapter stages are tested; none claims a proved stage contract.
+
+[[entry]]
+id = "wasm:xpath4Eval"
+stages = ["xpath4Eval"]
+covers = "part"
+note = "Public tested XML adapter xpath4Eval (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
+
+[[entry]]
+id = "wasm:xqueryEval"
+stages = ["xqueryEval"]
+covers = "part"
+note = "Public tested XML adapter xqueryEval (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
+
+[[entry]]
+id = "wasm:xslt4Transform"
+stages = ["xslt4Transform"]
+covers = "part"
+note = "Public tested XML adapter xslt4Transform (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
+
+[[entry]]
+id = "npm:.#xpath4Eval"
+stages = ["xpath4Eval"]
+covers = "part"
+note = "Public tested XML adapter xpath4Eval (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
+
+[[entry]]
+id = "npm:.#xqueryEval"
+stages = ["xqueryEval"]
+covers = "part"
+note = "Public tested XML adapter xqueryEval (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
+
+[[entry]]
+id = "npm:.#xslt4Transform"
+stages = ["xslt4Transform"]
+covers = "part"
+note = "Public tested XML adapter xslt4Transform (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
+
+[[entry]]
+id = "npm:./browser#xpath4Eval"
+stages = ["xpath4Eval"]
+covers = "part"
+note = "Public tested XML adapter xpath4Eval (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
+
+[[entry]]
+id = "npm:./browser#xqueryEval"
+stages = ["xqueryEval"]
+covers = "part"
+note = "Public tested XML adapter xqueryEval (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
+
+[[entry]]
+id = "npm:./browser#xslt4Transform"
+stages = ["xslt4Transform"]
+covers = "part"
+note = "Public tested XML adapter xslt4Transform (Wasm/Ops/Qt4.lean; lib/api.mjs). No stage contract. Input context parsing and result/error serialization are part of the adapter; no external resources or schema provider are supplied."
+
+[[entry]]
+id = "cli:xpath4"
+stages = ["xpath4Eval"]
+covers = "part"
+note = "bin/factoidal.mjs and bin/qt4.mjs read explicit files, call xpath4Eval, and print the engine result or a supplied serialization; no XML or query parsing in the host."
+
+[[entry]]
+id = "cli:xquery"
+stages = ["xqueryEval"]
+covers = "part"
+note = "bin/factoidal.mjs and bin/qt4.mjs read explicit files, call xqueryEval, and print the engine result or a supplied serialization; no XML or query parsing in the host."
+
+[[entry]]
+id = "cli:xslt4"
+stages = ["xslt4Transform"]
+covers = "part"
+note = "bin/factoidal.mjs and bin/qt4.mjs read explicit files, call xslt4Transform, and print the engine result or a supplied serialization; no XML or query parsing in the host."

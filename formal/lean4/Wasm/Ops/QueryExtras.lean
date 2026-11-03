@@ -108,12 +108,17 @@ private def rawOfAnswer : L4Factoidal.Dataflow.Answer → RawAnswer
 `LawfulEvaluator` `shippedEvaluator` (`Dataflow/Evaluator.lean`,
 https://github.com/danbri/factoidal/issues/975 item 3) with no backend, which
 is the reference evaluation (`shippedRaw_reference`). -/
-private def evalRaw (ds : Dataset) (sparql : String) (now : Option String := none) :
+private def evalRaw (ds : Dataset) (sparql : String) (now : Option String := none)
+    (ext : String → List EvalResult → Option EvalResult := extFnsWith []) :
     Except String RawAnswer :=
   match parseSparql sparql with
   | .error e => .error s!"SPARQL parse error: {fmtParseError e}"
   | .ok q =>
-    let env : EvalEnv := { base := q.base, ext := extFnsWith [], dataset := some ds,
+    -- SPARQL 1.1 §17.6: `ext` is the extension table of the caller, as in
+    -- `queryParsedDatasetWith`; the IO entries pass `extFnsWith` of the
+    -- registry snapshot, so a registered function answers whatever the
+    -- output format (https://github.com/danbri/factoidal/issues/1090).
+    let env : EvalEnv := { base := q.base, ext := ext, dataset := some ds,
                            now := now }
     -- Federated Query §2.3: a failed SERVICE call without SILENT is the
     -- answer (`Query.serviceFailure`, issue 717).
@@ -196,14 +201,15 @@ private def renderRaw (output : String) (a : RawAnswer) : Except String String :
 `entail`, evaluate, and write the answer in `output`. The dataset-handle op
 `datasetQueryRaw` (`Wasm/Ops/Handles.lean`) calls it with a stored dataset. -/
 def queryRawParsed (ds0 : Dataset) (sparql entail output : String)
-    (now : Option String := none) : String :=
+    (now : Option String := none)
+    (ext : String → List EvalResult → Option EvalResult := extFnsWith []) : String :=
   if !(["json", "csv", "tsv", "xml", "table", "ntriples"].contains output) then
     errJson s!"queryRaw: output must be json, csv, tsv, xml, table or ntriples (got '{output}')"
   else
     match closeDefaultGraph entail ds0 with
     | .error e => errJson e
     | .ok ds =>
-      match evalRaw ds sparql now with
+      match evalRaw ds sparql now ext with
       | .error e => errJson e
       | .ok a =>
         match renderRaw output a with
@@ -215,7 +221,8 @@ def queryRawParsed (ds0 : Dataset) (sparql entail output : String)
 §17.4.5.1); this pure form reads no clock, so with `now = none` a `NOW()` call
 is an error (https://github.com/danbri/factoidal/issues/743). -/
 def queryRawBy (extra : ExtraReader) (data sparql optsJson : String)
-    (now : Option String := none) : String :=
+    (now : Option String := none)
+    (ext : String → List EvalResult → Option EvalResult := extFnsWith []) : String :=
   let opts : Option Json := if optsJson == "" then none else parseJson? optsJson
   let field (k d : String) : String :=
     match opts.bind (fun j => j.getString? k) with
@@ -227,7 +234,7 @@ def queryRawBy (extra : ExtraReader) (data sparql optsJson : String)
   else
   match parseTextToDatasetBy extra data (field "dataFormat" "turtle") "" with
   | .error e => errJson s!"queryRaw: {e}"
-  | .ok ds0 => queryRawParsed ds0 sparql (field "entail" "none") output now
+  | .ok ds0 => queryRawParsed ds0 sparql (field "entail" "none") output now ext
 
 /-- `queryRaw` through the IO dispatch entry: the same envelope, with the clock
 read ONCE for the query (SPARQL 1.1 §17.4.5.1), so `NOW()` is the instant of
@@ -291,6 +298,21 @@ private def rawNow (now : Option String) : String :=
 #guard rawNow (some "2026-10-10T12:34:56Z") == "{\"ok\":true,\"text\":\"n\\r\\n2026-10-10T12:34:56Z\\r\\n\"}"
 #guard rawNow none == "{\"ok\":true,\"text\":\"n\\r\\n\\r\\n\"}"
 #guard rawNow (some "2000-01-01T00:00:00Z") != rawNow (some "2026-10-10T12:34:56Z")
+
+-- SPARQL 1.1 §17.6 (https://github.com/danbri/factoidal/issues/1090): the
+-- extension table of the caller answers in every output format. With the
+-- empty registry the call is an error and the variable is unbound.
+private def upExt (iri : String) (_ : List EvalResult) : Option EvalResult :=
+  if iri == "http://e/up" then some (.term (.literal (Literal.string "ABC"))) else none
+private def rawExt (output : String) (ext : String → List EvalResult → Option EvalResult) : String :=
+  queryRawBy noExtraReader "" "SELECT (<http://e/up>(\"abc\") AS ?u) {}"
+    ("{\"dataFormat\":\"ntriples\",\"output\":\"" ++ output ++ "\"}") none ext
+#guard rawExt "csv" upExt == "{\"ok\":true,\"text\":\"u\\r\\nABC\\r\\n\"}"
+#guard ((rawExt "json" upExt).splitOn "ABC").length > 1
+#guard ((rawExt "xml" upExt).splitOn "ABC").length > 1
+#guard ((rawExt "tsv" upExt).splitOn "ABC").length > 1
+#guard ((rawExt "table" upExt).splitOn "ABC").length > 1
+#guard rawExt "csv" (extFnsWith []) == "{\"ok\":true,\"text\":\"u\\r\\n\\r\\n\"}"
 
 
 end L4Wasm.Ops

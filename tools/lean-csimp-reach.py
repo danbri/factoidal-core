@@ -1001,6 +1001,14 @@ def run(ir_dir, lean_dir, allow_path, package=None):
         sys.stderr.write("no .c file under %s has a Lean source -- refusing to report a zero\n" % ir_dir)
         return 2
     defs, dup = scan_definitions(cfiles)
+    # A theorem in a module that this build did not compile at all (no `.c`
+    # file: the module is outside every built target, as XSLT4 is in CI) has
+    # no compiled code to check. It is listed, counted apart, and not a
+    # problem; a theorem in a compiled module whose left side has no symbol
+    # stays a problem.
+    built = {m for _p, _r, m in cfiles}
+    not_built = [th for th in sc.theorems if th["module"] not in built]
+    sc.theorems = [th for th in sc.theorems if th["module"] in built]
     targets, problems = resolve_theorems(sc, defs, prefix)
     raw, uses = collect(cfiles, defs, prefix, targets)
     right_total = sum(len(v) for v in uses.values())
@@ -1051,10 +1059,10 @@ def run(ir_dir, lean_dir, allow_path, package=None):
                                      replacement_callers=sorted(uses.get(t.sym, ()))))
     return dict(
         package=package, prefix=prefix, theorems=theorem_rows, problems=problems, findings=findings,
-        allow=allow, targets=targets, stats=dict(
+        not_built=not_built, allow=allow, targets=targets, stats=dict(
             cfiles=len(cfiles), stale_cfiles=stale, definitions=len(defs), duplicate_definitions=dup,
             lean_modules=len(sc.modules), theorems=len(sc.theorems), left_sides=len(targets),
-            replacement_uses=right_total))
+            replacement_uses=right_total, not_built=len(not_built)))
 
 
 def explain(sc, target, finding, closure_cache):
@@ -1220,6 +1228,10 @@ def main(argv=None):
             "%s:%d" % (t["file"], t["line"]) for t in res["theorems"] if t["left"] == n)))
     for th, why in res["problems"]:
         print("  NOT RESOLVED %s:%d %s: %s" % (th["file"], th["line"], th["thm"] or "?", why))
+    if res["not_built"]:
+        print("@[csimp] theorems in modules this build did not compile (not checked): %d" % len(res["not_built"]))
+        for th in res["not_built"]:
+            print("  NOT BUILT %s:%d %s" % (th["file"], th["line"], th["thm"] or "?"))
     print("Findings (a left side that compiled code still reaches): %d" % len(findings))
     print("  new: %d   allowed: %d   suppressed, held by a specification nothing reaches: %d"
           % (len(new), len(allowed), len(internal)))
@@ -1273,6 +1285,7 @@ def main(argv=None):
         slim = dict(
             package=res["package"], stats=st, theorems=res["theorems"],
             problems=[dict(file=th["file"], line=th["line"], theorem=th["thm"], why=why) for th, why in res["problems"]],
+            not_built=[dict(file=th["file"], line=th["line"], theorem=th["thm"]) for th in res["not_built"]],
             findings=[{k: v for k, v in f.items() if k not in ("owner_comps", "spec", "allowed_by")} for f in findings],
             stale_allow=[dict(left=e[0], caller=e[1], line=e[3]) for e in stale],
             allow_errors=allow.errors)

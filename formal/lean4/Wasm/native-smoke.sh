@@ -1845,43 +1845,66 @@ checkseq "lwsStep drives create, read, update and delete" "$TMP/lws-crud.json" \
 
 # --- WebDAV server (https://github.com/danbri/factoidal/issues/1066) ---
 # The handle reads mount files (webdavOpen, webdavLoad), then each request
-# is a program over storage operations: a local mount's operation comes out
-# as an `lws` request, answered with webdavResume. A malformed mount file is
-# refused with its name and line.
+# is a program over storage operations: an lws mount's operation comes out
+# as a `fetch` of the LWS client. A malformed mount file is refused with its
+# name and line. webdavOpen also asks for the state file `.webdav-state.json`
+# (dead properties and locks, https://github.com/danbri/factoidal/issues/1078).
+# Emergency mode (https://github.com/danbri/factoidal/issues/1147): read
+# only (PUT 403, DAV 1), a request with no credentials acts as the guest
+# (`login.guest`), with no guest it is 401; a mount whose `users:` do not
+# name the user is 404 and not listed; a local mount and a mount with no
+# `users:` are refused at start.
 python3 - "$TMP/webdav.json" <<'EOF'
 import json, sys, base64
 r = lambda **kw: json.dumps(kw)
 ent = base64.b64encode(bytes(range(32))).decode()
+lws = "# A\n- kind: lws\n- url: http://127.0.0.1:9/st/\n- users: guest\n"
+hid = "- kind: lws\n- url: http://127.0.0.1:9/h/\n- users: alice\n"
 seq = [
-  ["webdavOpen", [r(listing=["a.md", "README.md", "notes.txt"], entropy=ent)]],
-  ["webdavLoad", ["webdav1", r(files=[{"name": "a.md", "text": "# A\n- kind: local\n- path: st\n"}])]],
-  ["webdavLoad", ["webdav1", r(exists=[{"path": "st", "present": True}])]],
+  ["webdavOpen", [r(listing=["a.md", "h.md", "README.md", "notes.txt"], entropy=ent, login={"guest": "guest"})]],
+  ["webdavLoad", ["webdav1", r(files=[{"name": "a.md", "text": lws}, {"name": "h.md", "text": hid}])]],
+  ["webdavLoad", ["webdav1", r(files=[], exists=[])]],
   ["webdavStep", ["webdav1", r(method="OPTIONS", target="/a/")]],
   ["webdavStep", ["webdav1", r(method="PROPFIND", target="/", headers=[["Depth", "1"]])]],
+  ["webdavStep", ["webdav1", r(method="PUT", target="/a/x", body="x")]],
+  ["webdavStep", ["webdav1", r(method="GET", target="/h/x")]],
   ["webdavStep", ["webdav1", r(method="GET", target="/a/x")]],
-  ["webdavResume", ["webdav1", r(status=404, headers=[])]],
-  ["webdavResume", ["webdav1", r(status=404, headers=[])]],
   ["webdavClose", ["webdav1"]],
   ["webdavStep", ["webdav1", r(method="OPTIONS", target="/")]],
   ["webdavOpen", [r(listing=["bad.md"], entropy=ent)]],
   ["webdavLoad", ["webdav2", r(files=[{"name": "bad.md", "text": "- kind: local\n- colour: red\n"}])]],
+  ["webdavOpen", [r(listing=["l.md"], entropy=ent)]],
+  ["webdavLoad", ["webdav3", r(files=[{"name": "l.md", "text": "- kind: local\n- path: st\n- users: guest\n"}])]],
+  ["webdavOpen", [r(listing=["n.md"], entropy=ent)]],
+  ["webdavLoad", ["webdav4", r(files=[{"name": "n.md", "text": "- kind: lws\n- url: http://h/\n"}])]],
+  ["webdavOpen", [r(listing=["a.md"], entropy=ent)]],
+  ["webdavLoad", ["webdav5", r(files=[{"name": "a.md", "text": lws}])]],
+  ["webdavLoad", ["webdav5", r(files=[], exists=[])]],
+  ["webdavStep", ["webdav5", r(method="GET", target="/a/x")]],
 ]
 json.dump(seq, open(sys.argv[1], "w"))
 EOF
 
-checkseq "webdav: mount files, OPTIONS, PROPFIND of the root, a GET carried as lws requests" "$TMP/webdav.json" \
-  'rs[0]["ok"] is True and rs[0]["need"]["read"] == ["a.md"]
-   and rs[1]["need"]["exists"] == ["st", "st/lws-state.json", "st/lws-files.json"]
-   and rs[2]["ready"]["local"][0]["config"]["storage"] == "snapshot"
+checkseq "webdav: mount files, read only, guest, users, refused local mounts" "$TMP/webdav.json" \
+  'rs[0]["ok"] is True and rs[0]["need"]["read"] == ["a.md", "h.md", ".webdav-state.json"]
+   and rs[2]["ready"]["local"] == []
+   and rs[2]["ready"]["warnings"][0].startswith("read only (emergency mode, issue 1147)")
+   and rs[2]["ready"]["mounts"][0]["users"] == ["guest"] and rs[2]["ready"]["mounts"][0]["writable"] is False
    and rs[3]["response"]["status"] == 200
-   and dict(rs[3]["response"]["headers"])["dav"] == "1, 2"
+   and dict(rs[3]["response"]["headers"])["dav"] == "1"
+   and dict(rs[3]["response"]["headers"])["allow"] == "OPTIONS, GET, HEAD, PROPFIND"
    and rs[4]["response"]["status"] == 207 and "<D:href>/a/</D:href>" in rs[4]["response"]["body"]
-   and rs[5]["lws"]["request"] == {"method": "HEAD", "target": "/x", "headers": [], "body": ""}
-   and rs[6]["lws"]["request"]["target"] == "/x/"
-   and rs[7]["response"]["status"] == 404
+   and "<D:href>/h/</D:href>" not in rs[4]["response"]["body"]
+   and rs[5]["response"]["status"] == 403
+   and rs[6]["response"]["status"] == 404
+   and rs[7]["fetch"]["method"] == "HEAD" and rs[7]["fetch"]["url"] == "http://127.0.0.1:9/st/x"
    and rs[8]["ok"] is True
    and rs[9]["ok"] is False and "unknown WebDAV handle" in rs[9]["error"]
-   and rs[11]["ok"] is False and rs[11]["error"].startswith("bad.md:2: unknown key")'
+   and rs[11]["ok"] is False and rs[11]["error"].startswith("bad.md:2: unknown key")
+   and rs[13]["ok"] is False and rs[13]["error"].startswith("l.md:1: a `kind: local` mount opens its storage with no authorization")
+   and rs[15]["ok"] is False and rs[15]["error"].startswith("n.md:1: the settings list has no `users`")
+   and rs[19]["response"]["status"] == 401
+   and dict(rs[19]["response"]["headers"])["www-authenticate"].startswith("Basic")'
 
 # Bodies are bytes (https://github.com/danbri/factoidal/issues/889). Through
 # the string entry a body that is not UTF-8 travels as `bodyBase64` both
@@ -3065,6 +3088,26 @@ check "vcEddsaVerifyFromCanonical REJECTS a proofValue with no multibase prefix"
   vcEddsaVerifyFromCanonical "$TMP/dix-verify-nomb.json" \
   'r["ok"] is True and r["verified"] is False'
 
+# Data Integrity cryptosuite table (VC/Cryptosuite.lean): ECDSA P-256 through HACL*,
+# over the vectors of Data Integrity ECDSA Cryptosuites v1.0.
+ECV="$REPO_ROOT/third_party/testing/vc-di-ecdsa-vectors"
+stage2args "$TMP/di-key.json" "P-256" "aaea1e57183e1f453fbc274fbba491c6a2e6beb3baeac30437bb60b50e2cd947"
+check "vcDiKey derives a P-256 did:key (zDna...)" vcDiKey "$TMP/di-key.json" \
+  'r["ok"] is True and r["verificationMethod"].startswith("did:key:zDna")'
+stage2args "$TMP/di-jcs256.json" "assertionMethod" "{}" "$ECV/ecdsa-jcs-2019-p256/signedJCSECDSAP256.json"
+check "vcDiVerify accepts the published ecdsa-jcs-2019 P-256 proof" vcDiVerify "$TMP/di-jcs256.json" \
+  'r["ok"] is True and r["verified"] is True'
+stage2args "$TMP/di-jcs384.json" "assertionMethod" "{}" "$ECV/ecdsa-jcs-2019-p384/signedJCSECDSAP384.json"
+check "vcDiVerify refuses P-384 (expected failure, issue 1166)" vcDiVerify "$TMP/di-jcs384.json" \
+  'r["ok"] is True and r["verified"] is False and "1166" in r["reason"]'
+stage2args "$TMP/di-secure.json" "ecdsa-jcs-2019" "P-256" \
+  "aaea1e57183e1f453fbc274fbba491c6a2e6beb3baeac30437bb60b50e2cd947" \
+  "7d1b5b7d0c3e5f4a9a1d2c3b4e5f60718293a4b5c6d7e8f90112233445566778" \
+  "assertionMethod" "2026-10-28T00:00:00Z" "{}" "$ECV/unsigned.json"
+check "vcDiSecure gives an ecdsa-jcs-2019 proof" vcDiSecure "$TMP/di-secure.json" \
+  'r["ok"] is True and r["document"]["proof"]["cryptosuite"] == "ecdsa-jcs-2019"
+   and r["document"]["proof"]["proofValue"].startswith("z")'
+
 # did:key
 args "$TMP/did.json" "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
 check "didKeyResolve returns the DID document as N-Triples" didKeyResolve "$TMP/did.json" \
@@ -3103,7 +3146,7 @@ check "vcCheckCredentialSubject accepts a subject with no @context" vcCheckCrede
 args "$TMP/vcs-bad.json" '{"type":["VerifiableCredential"],"credentialSubject":{}}'
 check "vcCheckCredentialSubject REJECTS an empty subject" vcCheckCredentialSubject "$TMP/vcs-bad.json" \
   'r["ok"] is True and r["valid"] is False and "no claims" in r["reason"]'
-args "$TMP/vcl-ok.json" '{"@context":{"Known":"https://ex.org/Known","name":"https://schema.org/name"},"type":["Known"],"credentialSubject":{"name":"x"}}'
+args "$TMP/vcl-ok.json" '{"@context":{"Known":"https://ex.org/Known","name":"https://schema.org/name","credentialSubject":{"@id":"https://www.w3.org/2018/credentials#credentialSubject","@type":"@id"}},"type":["Known"],"credentialSubject":{"name":"x"}}'
 check "vcCheckNoDataLoss accepts defined terms" vcCheckNoDataLoss "$TMP/vcl-ok.json" \
   'r["ok"] is True and r["valid"] is True'
 args "$TMP/vcl-type.json" '{"@context":{"Known":"https://ex.org/Known"},"type":["Unknown"],"credentialSubject":{"a":1}}'
@@ -3289,6 +3332,93 @@ check "literalFromValue 300 as byte -> literal.value error" literalFromValue "$T
 check "ops reflection lists the literal-value ops" ops "$TMP/dl-empty.json" \
   'set(["literalValue","literalFromValue"]) <= set(r["ops"])'
 
+# --- Controlled Identifiers v1.0 (https://github.com/danbri/factoidal/issues/1100) ---
+args "$TMP/cid-ok.json" '{"id":"https://c.example/d","authentication":[{"id":"#k","type":"Multikey","controller":"https://c.example/d","publicKeyMultibase":"z6MkmM42vxfqZQsv4ehtTjFFxQ4sQKS2w6WR7emozFAn5cxu"}]}'
+check "cidValidate accepts a conforming document" cidValidate "$TMP/cid-ok.json" \
+  'r == {"ok": True, "valid": True, "errors": []}'
+args "$TMP/cid-bad.json" '{"id":"x","verificationMethod":[{"id":"#k","type":"JsonWebKey","controller":"https://c.example","publicKeyJwk":{"kty":"OKP","d":"s"}}]}'
+check "cidValidate lists each failed MUST with its JSON Pointer" cidValidate "$TMP/cid-bad.json" \
+  'r["ok"] is True and r["valid"] is False
+   and [(e["code"], e["path"]) for e in r["errors"]] == [("idNotUrl", "/id"), ("jwkPrivateMember", "/verificationMethod/0/publicKeyJwk/d")]'
+args "$TMP/cid-r1.json" '{"vm":"https://c.example/d#k","relationship":"authentication"}'
+check "cidRetrieve names the host to resolve" cidRetrieve "$TMP/cid-r1.json" \
+  'r == {"ok": True, "step": "resolve", "host": "c.example"}'
+args "$TMP/cid-r2.json" '{"vm":"https://c.example/d#k","relationship":"authentication","resolved":[{"host":"c.example","addresses":["203.0.113.7"]}]}'
+check "cidRetrieve names the fetch, its Accept and its address" cidRetrieve "$TMP/cid-r2.json" \
+  'r["step"] == "fetch" and r["url"] == "https://c.example/d" and r["address"] == "203.0.113.7"
+   and r["accept"] == "application/cid, application/cid+json, application/ld+json, application/json"'
+args "$TMP/cid-r3.json" '{"vm":"https://c.example/d#k","relationship":"authentication","resolved":[{"host":"c.example","addresses":["10.0.0.1"]}]}'
+check "cidRetrieve refuses a private address" cidRetrieve "$TMP/cid-r3.json" \
+  'r["step"] == "error" and r["code"] == "FETCH_REFUSED"'
+# cidreq <file> <contentType>: a request with the document fetched.
+cidreq() {
+  python3 - "$1" "$2" <<'PYEOF'
+import json, sys
+doc = {"id": "https://c.example/d", "authentication": [{"id": "#k", "type": "Multikey",
+       "controller": "https://c.example/d",
+       "publicKeyMultibase": "z6MkmM42vxfqZQsv4ehtTjFFxQ4sQKS2w6WR7emozFAn5cxu"}]}
+req = {"vm": "https://c.example/d#k", "relationship": "authentication",
+       "resolved": [{"host": "c.example", "addresses": ["203.0.113.7"]}],
+       "fetched": [{"url": "https://c.example/d", "status": 200, "contentType": sys.argv[2],
+                    "body": json.dumps(doc)}]}
+json.dump([json.dumps(req)], open(sys.argv[1], "w"))
+PYEOF
+}
+cidreq "$TMP/cid-r4.json" "application/cid"
+check "cidRetrieve returns the method (CID 1.0 3.3)" cidRetrieve "$TMP/cid-r4.json" \
+  'r["step"] == "method" and r["verificationMethod"]["id"] == "#k" and r["controllerDocument"] == "https://c.example/d"'
+cidreq "$TMP/cid-r5.json" "text/html"
+check "cidRetrieve refuses a Content-Type that is not a CID media type" cidRetrieve "$TMP/cid-r5.json" \
+  'r["step"] == "error" and r["code"] == "UNSUPPORTED_MEDIA_TYPE"'
+args "$TMP/cid-r6.json" '{"vm":"https://c.example/d#k","relationship":"proofOfWork"}'
+check "cidRetrieve refuses an unknown relationship" cidRetrieve "$TMP/cid-r6.json" \
+  'r["ok"] is False and "proofOfWork" in r["error"]'
+check "ops reflection lists the CID ops" ops "$TMP/dl-empty.json" \
+  'set(["cidValidate","cidRetrieve"]) <= set(r["ops"])'
+
+# --- XPath 4.0, XQuery 4.0, XSLT 4.0 (Wasm/Ops/Qt4.lean) ----------------
+# No I/O: fn:doc, fn:unparsed-text, import module, xsl:import and
+# xsl:include fail with the specification's error code.
+args "$TMP/xp4.json" '<r><a>1</a><a>2</a></r>' '//a ! (. * 10) => sum()'
+check "xpath4Eval: arrow and simple map -> 30" xpath4Eval "$TMP/xp4.json" \
+  'r["ok"] is True and r["count"] == 1 and r["items"] == [{"type": "xs:double", "value": "30"}]'
+args "$TMP/xp4-map.json" '' 'map { "a": [1, 2] }'
+check "xpath4Eval: a map, adaptive JSON, no xml form" xpath4Eval "$TMP/xp4-map.json" \
+  'r["ok"] is True and r["items"][0]["type"] == "map(*)" and r["adaptive"] == "{\"a\":[1,2]}" and r["xml"] is None'
+args "$TMP/xp4-bad.json" '' '1 +'
+check "xpath4Eval: syntax error -> XPST0003" xpath4Eval "$TMP/xp4-bad.json" \
+  'r["ok"] is False and r["code"] == "xml.failed" and r["qtError"]["code"] == "XPST0003"
+   and r["qtError"]["namespace"] == "http://www.w3.org/2005/xqt-errors"'
+args "$TMP/xp4-doc.json" '' "doc('https://example.org/a.xml')"
+check "xpath4Eval: fn:doc of a URI -> FODC0002, no fetch" xpath4Eval "$TMP/xp4-doc.json" \
+  'r["ok"] is False and r["qtError"]["code"] == "FODC0002"'
+args "$TMP/xp4-txt.json" '' "unparsed-text('file:///etc/passwd')"
+check "xpath4Eval: fn:unparsed-text of a file -> FOUT1170, no read" xpath4Eval "$TMP/xp4-txt.json" \
+  'r["ok"] is False and r["qtError"]["code"] == "FOUT1170"'
+args "$TMP/xq.json" 'for $a in //a order by xs:integer($a) descending return <b>{string($a)}</b>' '<r><a>1</a><a>2</a></r>'
+check "xqueryEval: FLWOR with constructors over the context document" xqueryEval "$TMP/xq.json" \
+  'r["ok"] is True and r["count"] == 2 and r["xml"] == "<b>2</b><b>1</b>"'
+args "$TMP/xq-noctx.json" 'string-join(for $i in 1 to 3 return string($i), "-")'
+check "xqueryEval: one argument (no context item)" xqueryEval "$TMP/xq-noctx.json" \
+  'r["ok"] is True and r["xml"] == "1-2-3"'
+args "$TMP/xq-mod.json" "import module namespace m = 'urn:m' at 'https://example.org/m.xq'; m:f()" ''
+check "xqueryEval: import module of an external module -> XQST0059" xqueryEval "$TMP/xq-mod.json" \
+  'r["ok"] is False and r["qtError"]["code"] == "XQST0059"'
+args "$TMP/xq-deep.json" 'declare function local:f($n) { if ($n le 0) then 0 else 1 + local:f($n - 1) }; local:f(100000)' ''
+check "xqueryEval: deep recursion stops at the fuel -> FOER0000" xqueryEval "$TMP/xq-deep.json" \
+  'r["ok"] is False and r["qtError"]["code"] == "FOER0000"'
+args "$TMP/x4.json" '<xsl:stylesheet version="4.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes"><xsl:output method="text"/><xsl:template match="/">n={count(//a)}</xsl:template></xsl:stylesheet>' '<r><a/><a/></r>'
+check "xslt4Transform: text value template, method text" xslt4Transform "$TMP/x4.json" \
+  'r == {"ok": True, "output": "n=2", "method": "text", "secondary": [], "messages": []}'
+args "$TMP/x4-imp.json" '<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"><xsl:import href="https://example.org/a.xsl"/></xsl:stylesheet>' '<r/>'
+check "xslt4Transform: xsl:import of an external module -> XTSE0165, no fetch" xslt4Transform "$TMP/x4-imp.json" \
+  'r["ok"] is False and r["qtError"]["code"] == "XTSE0165"'
+args "$TMP/x4-ar.json" '<a/>'
+check "xslt4Transform with one argument -> call.arity" xslt4Transform "$TMP/x4-ar.json" \
+  'r["ok"] is False and r["code"] == "call.arity"'
+check "ops reflection lists the XPath 4.0, XQuery 4.0 and XSLT 4.0 ops" ops "$TMP/dl-empty.json" \
+  'set(["xpath4Eval","xqueryEval","xslt4Transform"]) <= set(r["ops"])'
+
 # --- Dispatch reflection + unknown op ---------------------------------
 args "$TMP/empty.json"
 check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
@@ -3430,6 +3560,33 @@ args "$TMP/verify-side.json" "$TMP/verify-side"
 check "sbm11Open of a generation with a changed .merkle sidecar -> error naming the sidecar" sbm11Open \
   "$TMP/verify-side.json" 'r["ok"] is False and "spo.prb1.merkle" in r["error"]'
 
+# The trust anchor of sbm11Open (`manifestSha256`, the SHA-256 of the manifest
+# bytes; HostVerify.checkAnchor, https://github.com/danbri/factoidal/issues/1105):
+# the anchor of the fixture generation opens it and is the digest the answer
+# gives; one changed hex digit refuses it, naming the manifest and both
+# digests; a value that is not 64 hex digits is refused; sbm11Verify gives
+# the same digest.
+python3 - "$SBM11_ROOT/gen" "$TMP/sbm11-anchor-seq.json" "$TMP/sbm11-anchor.txt" <<'EOF'
+import hashlib, json, sys
+gen, out, txt = sys.argv[1], sys.argv[2], sys.argv[3]
+d = hashlib.sha256(open(gen + "/manifest.sbm11", "rb").read()).hexdigest()
+wrong = d[:63] + ("1" if d[63] == "0" else "0")
+open(txt, "w").write(d + " " + wrong + "\n")
+json.dump([["sbm11Open", [gen, json.dumps({"manifestSha256": d})]],
+           ["sbm11Open", [gen, json.dumps({"manifestSha256": wrong})]],
+           ["sbm11Open", [gen, json.dumps({"manifestSha256": "abc"})]],
+           ["sbm11Verify", [gen]],
+           ["sbm11Close", ["sbm11-1"]]], open(out, "w"))
+EOF
+read -r SBM11_ANCHOR SBM11_WRONG < "$TMP/sbm11-anchor.txt"
+checkseq "sbm11Open manifestSha256: the anchor opens, a wrong anchor and a malformed one are refused" \
+  "$TMP/sbm11-anchor-seq.json" \
+  'rs[0]["ok"] is True and rs[0]["manifestSha256"] == "'"$SBM11_ANCHOR"'"
+   and rs[1]["ok"] is False and "manifest.sbm11" in rs[1]["error"]
+   and "'"$SBM11_ANCHOR"'" in rs[1]["error"] and "'"$SBM11_WRONG"'" in rs[1]["error"]
+   and rs[2]["ok"] is False and "manifestSha256" in rs[2]["error"]
+   and rs[3]["ok"] is True and rs[3]["manifestSha256"] == "'"$SBM11_ANCHOR"'"'
+
 # SBM11 pack in memory (https://github.com/danbri/factoidal/issues/1009 stage 2):
 # the op through the string entry is refused by name; through the byte-region
 # entry (`l4factoidal sbm11-pack`, one call per file) it gives the files of
@@ -3547,6 +3704,9 @@ corecheck "core: ops reflection names the engine and the full-only ops" ops "$TM
   'r["ok"] is True and r["engine"] == "core" and "datasetOpen" in r["ops"]
    and "shaclValidate" in r["ops"] and "xpathEval" not in r["ops"]
    and "xpathEval" in r["fullOnlyOps"] and r["blobOps"] == [] and r["blobIoOps"] == []
+   and "cidValidate" in r["fullOnlyOps"] and "cidRetrieve" in r["fullOnlyOps"]
+   and set(["xpath4Eval","xqueryEval","xslt4Transform"]) <= set(r["fullOnlyOps"])
+   and "xpath4Eval" not in r["ops"]
    and r["fullOnlyFormats"] == ["jsonld", "json-ld", "application/ld+json"]'
 corecheck "core: parseToDatasetJson turtle" parseToDatasetJson "$TMP/parse.json" \
   'r["ok"] is True and r["count"] == 1 and "example.org/alice" in r["nquads"]'
@@ -3681,6 +3841,92 @@ checkseq "lists and containers: add, container items, nil, refusal" "$TMP/coll-s
    and [m["ordinal"] for m in rs[2]["items"]] == [1, 2]
    and rs[3] == {"ok": True, "items": []}
    and rs[4]["ok"] is False and rs[4]["reason"] == "no-first"'
+
+# --- XML Signature 1.1: xmlSign and xmlVerify (Wasm/Ops/XmlDsig.lean) --------
+# Keys: tests/xmldsig/signing-keys.tsv (test keys only). Fixtures: tests/xmldsig/fixtures.
+DSIG="$LEAN_DIR/../../tests/xmldsig"
+python3 - "$DSIG" "$TMP" <<'EOF2'
+import base64, json, os, sys
+d, tmp = sys.argv[1], sys.argv[2]
+k = dict(l.rstrip("\n").split("\t") for l in open(os.path.join(d, "signing-keys.tsv")) if not l.startswith("#"))
+u = lambda h: base64.urlsafe_b64encode(bytes.fromhex(h)).decode().rstrip("=")
+DOC = '<doc xmlns="urn:example:doc" ID="d1"><item n="1">one</item></doc>'
+rsa = {"kty": "RSA", "n": u(k["rsa2048-n"]), "e": u(k["rsa2048-e"]), "d": u(k["rsa2048-d"])}
+ec = {"kty": "EC", "crv": "P-256", "d": u(k["p256-secret"])}
+mac = {"kty": "oct", "k": u(k["hmac"])}
+rnd = base64.b64encode(os.urandom(32)).decode()
+def w(name, obj): json.dump([json.dumps(obj)], open(os.path.join(tmp, name), "w"))
+w("dsig-sign-rsa.json", {"document": DOC, "key": rsa})
+w("dsig-sign-rsa512-c14n11.json", {"document": DOC, "key": rsa,
+  "signatureMethod": "http://www.w3.org/2001/04/xmldsig-more#rsa-sha512",
+  "canonicalizationMethod": "http://www.w3.org/2006/12/xml-c14n11",
+  "references": [{"uri": "#d1", "transforms": ["http://www.w3.org/2000/09/xmldsig#enveloped-signature",
+                  "http://www.w3.org/2006/12/xml-c14n11"], "digestMethod": "http://www.w3.org/2001/04/xmlenc#sha512"}]})
+w("dsig-sign-ec.json", {"document": DOC, "key": ec, "random": rnd,
+  "signatureMethod": "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha384"})
+w("dsig-sign-ec-norandom.json", {"document": DOC, "key": ec})
+w("dsig-sign-mac.json", {"document": DOC, "key": mac,
+  "enveloping": {"id": "obj", "content": '<item xmlns="urn:example:doc">one</item>'}})
+w("dsig-sign-kind.json", {"document": DOC, "key": rsa,
+  "signatureMethod": "http://www.w3.org/2001/04/xmldsig-more#hmac-sha256"})
+w("dsig-sign-dsa.json", {"document": DOC, "key": rsa,
+  "signatureMethod": "http://www.w3.org/2000/09/xmldsig#dsa-sha1"})
+fx = lambda f: open(os.path.join(d, "fixtures", f)).read()
+w("dsig-verify-fixture.json", {"document": fx("rsa2048-sha256.xml")})
+w("dsig-verify-fixture-nokeyinfo.json", {"document": fx("rsa2048-sha256.xml"), "keyFromKeyInfo": False})
+w("dsig-verify-hmac.json", {"document": fx("hmac-sha256.xml"), "hmacKey": base64.b64encode(b"secret").decode()})
+w("dsig-verify-hmac-wrong.json", {"document": fx("hmac-sha256.xml"), "hmacKey": base64.b64encode(b"wrong").decode()})
+w("dsig-verify-wrapped.json", {"document": fx("neg-wrapped-duplicate-id.xml")})
+w("dsig-verify-badkey.json", {"document": DOC, "key": {"kty": "EC", "crv": "P-192"}})
+open(os.path.join(tmp, "dsig-hmac-key"), "w").write(base64.b64encode(bytes.fromhex(k["hmac"])).decode())
+EOF2
+check "xmlSign rsa-sha256 enveloped, exc-c14n (defaults)" xmlSign "$TMP/dsig-sign-rsa.json" \
+  'r["ok"] is True and "SignatureValue" in r["document"] and "xml-exc-c14n#" in r["document"]'
+check "xmlSign rsa-sha512 over #d1, C14N 1.1" xmlSign "$TMP/dsig-sign-rsa512-c14n11.json" \
+  'r["ok"] is True and "rsa-sha512" in r["document"] and "URI=\"#d1\"" in r["document"]'
+check "xmlSign ecdsa-sha384 at P-256" xmlSign "$TMP/dsig-sign-ec.json" \
+  'r["ok"] is True and "ecdsa-sha384" in r["document"] and "ECKeyValue" in r["document"]'
+check "xmlSign refuses ECDSA with no random octets" xmlSign "$TMP/dsig-sign-ec-norandom.json" \
+  'r["ok"] is False and "random" in r["error"]'
+check "xmlSign hmac-sha256 enveloping" xmlSign "$TMP/dsig-sign-mac.json" \
+  'r["ok"] is True and r["document"].startswith("<ds:Signature") and "Id=\"obj\"" in r["document"]'
+check "xmlSign refuses a method of another key kind" xmlSign "$TMP/dsig-sign-kind.json" \
+  'r["ok"] is False and "kind of key" in r["error"]'
+check "xmlSign refuses DSA and names issue 1224" xmlSign "$TMP/dsig-sign-dsa.json" \
+  'r["ok"] is False and "1224" in r["error"]'
+# Round trips: each signed document goes back through xmlVerify, then a changed copy.
+if python3 - "$CLI" "$TMP" <<'EOF2'
+import json, os, subprocess, sys
+cli, tmp = sys.argv[1], sys.argv[2]
+mk = open(os.path.join(tmp, "dsig-hmac-key")).read()
+def call(op, obj):
+    f = os.path.join(tmp, "dsig-rt.json")
+    json.dump([json.dumps(obj)], open(f, "w"))
+    return json.loads(subprocess.run([cli, "call", op, f], capture_output=True, text=True, check=True).stdout)
+bad = 0
+for name, extra in [("rsa", {}), ("rsa512-c14n11", {}), ("ec", {}), ("mac", {"hmacKey": mk})]:
+    signed = call("xmlSign", json.loads(json.load(open(os.path.join(tmp, f"dsig-sign-{name}.json")))[0]))
+    v = call("xmlVerify", {"document": signed["document"], **extra})
+    t = call("xmlVerify", {"document": signed["document"].replace(">one<", ">One<"), **extra})
+    good = v.get("valid") is True and t.get("valid") is False and v["references"]
+    if name != "mac": good = good and v["key"] is not None
+    print(("ok  " if good else "FAIL") + f" round trip {name}: {v.get('valid')}, changed copy {t.get('valid')}")
+    bad += not good
+sys.exit(1 if bad else 0)
+EOF2
+then echo "ok   xmlSign then xmlVerify round trips (4), changed copies refused"; PASS=$((PASS + 1)); else echo "FAIL xmlSign then xmlVerify round trips"; FAIL=$((FAIL + 1)); fi
+check "xmlVerify signxml fixture rsa2048-sha256 (key of ds:KeyInfo, returned as JWK)" xmlVerify "$TMP/dsig-verify-fixture.json" \
+  'r["ok"] is True and r["valid"] is True and r["key"]["kty"] == "RSA" and len(r["references"]) == 1 and r["signedInfo"].startswith("<ds:SignedInfo")'
+check "xmlVerify with keyFromKeyInfo false and no key -> not valid" xmlVerify "$TMP/dsig-verify-fixture-nokeyinfo.json" \
+  'r["ok"] is True and r["valid"] is False and "no key" in r["reason"]'
+check "xmlVerify signxml fixture hmac-sha256" xmlVerify "$TMP/dsig-verify-hmac.json" \
+  'r["ok"] is True and r["valid"] is True and r["key"] is None'
+check "xmlVerify hmac-sha256 with the wrong key -> not valid" xmlVerify "$TMP/dsig-verify-hmac-wrong.json" \
+  'r["ok"] is True and r["valid"] is False'
+check "xmlVerify refuses a duplicate-ID wrapped reference" xmlVerify "$TMP/dsig-verify-wrapped.json" \
+  'r["ok"] is True and r["valid"] is False'
+check "xmlVerify argument error: unknown curve" xmlVerify "$TMP/dsig-verify-badkey.json" \
+  'r["ok"] is False and "P-256" in r["error"]'
 
 echo "=== native-smoke: $PASS pass, $FAIL fail, $XFAIL xfail (out of $((PASS + FAIL + XFAIL)))"
 [ "$FAIL" -eq 0 ]

@@ -65,11 +65,23 @@ path. The adapter does these things only:
    The library's default stays off.
 4. It gives the client's `fetch` only what `configure` asked for: the
    `userAgent`, extra `headers`, a `timeoutSeconds` abort.
-5. It gives an access request or grant to the client as its members (actions,
-   assignee, targets, constraint, inbox); the client writes the document.
+5. It gives an access request or grant to the client as its members: one
+   `policies` member per policy of the document (actions, assignee, targets,
+   constraint), and the inbox; the client writes the document.
 6. It gives `subscribe` its `serviceUrl` as the operation's `endpoint`, so the
    client POSTs the subscription to it with no discovery (lwsd's notification
    endpoint sends no storage link).
+7. It gives a write's `ifNoneMatch` to the client whole, as
+   `ifNoneMatchTags`; the client reads the entity-tag list (RFC 9110
+   §13.1.2) and sends it alone or with the `If-Match` of `ifMatch`.
+8. It maps `configure` `allowInsecureHttp: false` to the session option
+   `requireHttps`: the client sends no request to a URL that is not https, in
+   any phase, and the operation fails with `TransportError` (code
+   `insecureTransport`) before the request is sent. This is stricter than
+   step 8 (Transport security) of the token exchange in the lws-client
+   `design/client-api.md`, which asks only the authorization server and its token endpoint to
+   be https and excepts loopback hosts. When the argument is absent or
+   `true`, the option is off.
 
 Four readings that the adapter made in JavaScript until commit ec300a9 are in
 Lean now (`formal/lean4/L4Factoidal/LWS/Client/`):
@@ -90,15 +102,13 @@ sign-in of its own (authorization code flow with PKCE), so a caller cannot
 ask it to obtain an ID Token:
 https://github.com/danbri/factoidal/issues/1043 (LWS client OpenID sign-in).
 
-Options that answer `Unsupported` (the operation stays in the list):
-
-| operation and option | reason |
-|---|---|
-| `update` `ifNoneMatch` other than `*` | The client has `If-None-Match: *` only. |
-| `patch` `ifNoneMatch` | A conditional create-only patch is not a case of the drafts. |
-| `ifMatch` with `ifNoneMatch` | One precondition per write. |
-| `configure` `allowInsecureHttp: false` | The client does not refuse `http`. |
-| `request_access`, `grant_access` with other than one policy | The client writes one policy per document. |
+No option answers `Unsupported`. The last three
+(https://github.com/danbri/factoidal/issues/1116) work now: `update` and
+`patch` with `ifNoneMatch` entity tags, alone or with `ifMatch`
+(`patch` takes them as one more case of the same precondition code, although
+`PROTOCOL.md` lists no `ifNoneMatch` for it); `configure`
+`allowInsecureHttp: false`; `request_access` and `grant_access` with any
+number of policies. A document with no policy is `InvalidArguments`.
 
 A session key that is neither a P-256 nor an Ed25519 private JWK of 32 bytes
 ends the first operation with `InvalidArguments`. Results the client cannot

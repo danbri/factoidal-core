@@ -1,0 +1,52 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Lean component in the browser</title>
+<!-- The jco-transpiled engine component (WC_EH=trap build) served from
+     /opt/wc; browser.mjs runs it in headless Chromium. -->
+<script type="importmap">
+{ "imports": {
+  "@bytecodealliance/preview2-shim/cli": "/node_modules/@bytecodealliance/preview2-shim/dist/browser/cli.js",
+  "@bytecodealliance/preview2-shim/clocks": "/node_modules/@bytecodealliance/preview2-shim/dist/browser/clocks.js",
+  "@bytecodealliance/preview2-shim/filesystem": "/node_modules/@bytecodealliance/preview2-shim/dist/browser/filesystem.js",
+  "@bytecodealliance/preview2-shim/io": "/node_modules/@bytecodealliance/preview2-shim/dist/browser/io.js",
+  "@bytecodealliance/preview2-shim/random": "/node_modules/@bytecodealliance/preview2-shim/dist/browser/random.js"
+} }
+</script>
+<pre id="out">running</pre>
+<script type="module">
+// ?jco=<dir> (default jco-trap) or ?emcc=<path of the .mjs under /opt/wc>
+const params = new URLSearchParams(location.search);
+const t0 = performance.now();
+let rdf;
+if (params.has('emcc')) {
+  const { default: create } = await import('/' + params.get('emcc'));
+  const M = await create();
+  if (!M._wc_init()) throw new Error('wc_init failed');
+  const put = (s) => { const n = M.lengthBytesUTF8(s) + 1, p = M._malloc(n); M.stringToUTF8(s, p, n); return p; };
+  const call = (fn, a, b) => { const pa = put(a), pb = put(b);
+    try { const r = fn(pa, pb); try { return M.UTF8ToString(r); } finally { M._wc_free(r); } }
+    finally { M._free(pa); M._free(pb); } };
+  rdf = { turtleToNquads: (t) => call(M._wc_turtle_to_nquads_c, t, ''),
+          query: (t, q) => call(M._wc_query_turtle_c, t, q) };
+} else {
+  ({ rdf } = await import('/' + (params.get('jco') ?? 'jco-trap') + '/engine.js'));
+  rdf.turtleToNquads('', undefined);
+}
+const t1 = performance.now();
+const ttl = await (await fetch('/p1000.ttl')).text();
+const rq = await (await fetch('/q1.rq')).text();
+let nq, ans, t3, t4;
+const ps = [], qs = [];
+for (let i = 0; i < 5; i++) {
+  const a = performance.now(); nq = rdf.turtleToNquads(ttl, undefined); t3 = performance.now();
+  ans = rdf.query(ttl, rq); t4 = performance.now();
+  ps.push(t3 - a); qs.push(t4 - t3);
+}
+const median = (xs) => [...xs].sort((x, y) => x - y)[2];
+const sha = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))]
+  .map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+document.getElementById('out').textContent = JSON.stringify({
+  instantiate_ms: +(t1 - t0).toFixed(1), parse_ms: +median(ps).toFixed(1), query_ms: +median(qs).toFixed(1),
+  first_parse_ms: +ps[0].toFixed(1), first_query_ms: +qs[0].toFixed(1),
+  nquads_sha: await sha(nq), answer_sha: await sha(ans) });
+</script>

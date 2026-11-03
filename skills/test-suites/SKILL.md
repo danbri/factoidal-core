@@ -784,6 +784,11 @@ cannot be read (for example an undeclared prefix). Rules:
 
 Model: `formal/lean4/Harness/CsvwValidateRun.lean`, test308,
 https://github.com/danbri/factoidal/issues/700.
+Second instance: qt4tests `bin/` (EXPath Binary 4.0), 23 cases that expect the
+1.0 error codes the 4.0 text replaces with XPTY0004; list
+`Harness.Qt4Defective.defective` in `formal/lean4/Harness/Qt4Run.lean`,
+https://github.com/danbri/factoidal/issues/1141. Record of the EXPath stage:
+`docs/designissues/2026-10-28-expath-binary-file.md`.
 
 ## ⚠️ An npm test of a new op is a plain assertion, never "xfail until the wasm is rebuilt"
 

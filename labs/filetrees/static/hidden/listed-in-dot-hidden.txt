@@ -1,0 +1,1 @@
+GNOME Files hides this file because .hidden lists it.

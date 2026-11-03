@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<t:test expected="pass"
+        features="p-validate-with-dtd"
+        xmlns:t="http://xproc.org/ns/testsuite/3.0">
+   <t:info>
+      <t:title>nw-base-uri-034</t:title>
+      <t:revision-history>
+         <t:revision>
+            <t:date>2026-06-29</t:date>
+            <t:author>
+               <t:name>Norm Tovey-Walsh</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Created test</p>
+            </t:description>
+         </t:revision>
+      </t:revision-history>
+   </t:info>
+   <t:description xmlns="http://www.w3.org/1999/xhtml">
+     <p>Test that the result of p:validate-with-dtd *has* a base URI on the
+     result port but not on the report port.</p>
+   </t:description>
+
+   <t:pipeline>
+     <p:declare-step version="3.0"
+                     xmlns:p="http://www.w3.org/ns/xproc">
+       <p:output port="result"/>
+
+         <p:validate-with-dtd serialization="map{'doctype-system' : '../documents/address.dtd'}"
+                              name="validate">
+            <p:with-input>
+               <address >
+                  <first>Douglas</first>
+                  <last>Adams</last>
+                  <phone>42</phone>
+               </address>
+            </p:with-input>
+         </p:validate-with-dtd>
+
+       <p:cast-content-type content-type="application/xml" name="result-properties">
+         <p:with-input select="p:document-properties(.)">
+           <p:pipe step="validate" port="result"/>
+         </p:with-input>
+       </p:cast-content-type>
+
+       <p:cast-content-type content-type="application/xml" name="report-properties">
+         <p:with-input select="p:document-properties(.)">
+           <p:pipe step="validate" port="report"/>
+         </p:with-input>
+       </p:cast-content-type>
+
+       <p:wrap-sequence wrapper="wrapper">
+         <p:with-input>
+           <p:pipe step="result-properties"/>
+           <p:pipe step="report-properties"/>
+         </p:with-input>
+       </p:wrap-sequence>
+     </p:declare-step>
+   </t:pipeline>
+   <t:schematron>
+      <s:schema queryBinding="xslt2"
+                xmlns:s="http://purl.oclc.org/dsdl/schematron"
+                xmlns="http://www.w3.org/1999/xhtml">
+         <s:ns prefix="fn" uri="http://www.w3.org/2005/xpath-functions"/>
+         <s:pattern>
+            <s:rule context="/">
+               <s:assert test="wrapper">Document element is wrong</s:assert>
+            </s:rule>
+         </s:pattern>
+         <s:pattern>
+            <s:rule context="/wrapper">
+               <s:assert test="exists(fn:map[1]/*[@key='base-uri'])"
+                         >There should be a base-uri property on the result</s:assert>
+               <s:assert test="not(exists(fn:map[2]/*[@key='base-uri']))"
+                         >There should not be a base-uri property on the report</s:assert>
+            </s:rule>
+         </s:pattern>
+      </s:schema>
+   </t:schematron>
+</t:test>

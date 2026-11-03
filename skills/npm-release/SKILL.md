@@ -5,6 +5,12 @@ description: Release the Factoidal npm packages — which artifacts each build s
 
 # Releasing the Factoidal npm packages
 
+For the browser work, read the [alpha packaging plan](../../docs/designissues/2026-11-03-browser-alpha-packaging.md).
+The publisher accepts an `alpha` tag and prerelease version, but the experimental
+document CLI/WASM and browser host bundle are separate from the current core
+npm contents. Pin a tested main commit while main advances; a new tag does not
+add missing browser APIs or assets to the package.
+
 Two packages exist. Only one is current.
 
 | Package | Directory | Status |
@@ -186,6 +192,49 @@ Check the lock file too: `node -e "const d=require('./npm/factoidal/package-lock
 must print the new version twice. No test checks it: 0.11.0 was published
 with `package-lock.json` still at 0.10.0, found and corrected at the 0.12.0
 bump (2026-10-22).
+
+## One owner per release (owner, 2026-10-28)
+
+Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" (to
+the LWS-compatibility session) and "Yes, re one owner" (to the proposal to
+record this rule here).
+
+From the first build of the release commit until the version is on npm:
+
+1. One session is the release manager. A release issue names it and lists
+   the steps (first instance: https://github.com/danbri/factoidal/issues/1140,
+   0.20.0).
+2. Only the release manager dispatches, cancels or re-runs a build in
+   `danbri/factoidal-builds`, pushes to its `main`, or runs
+   `npm-publish.yml`. Another session that needs a build step comments on
+   the release issue.
+3. Other sessions can merge to `danbri/factoidal-core` `main` as usual: the
+   release is built from a fixed core commit.
+4. The release manager runs `npm-publish.yml` when the release
+   `build-<12 hex>-web` of the release commit exists.
+
+Why: `build.yml` has the concurrency group `build-factoidal` with
+`cancel-in-progress: false`. It keeps one running run and one waiting run.
+A newer waiting run cancels the run that waited before it. A waiting run
+comes from a dispatch, from the hourly schedule (minute 23), or from a push
+to `factoidal-builds` `main` that changes `.github/workflows/build.yml`,
+`scripts/` or `requests/`. The queue does not cancel a running run.
+
+A gate added to `factoidal-builds` also runs on the release commit, which is
+usually older than core `main`. Before you merge a new gate, check that it
+passes on the commit that is being released.
+
+Cost of not having these rules, 2026-10-28: run 218, the first build of the
+0.20.0 commit `0c9a222b` (05:36 UTC), made no web release because a TLS error
+stopped the Lean toolchain download. Then two sessions dispatched, pushed and
+cancelled builds in the same hours, and the 0.20.0 build was cancelled four
+times. Builds PR 1 had added OWL package steps that run the tools of the
+built commit; the tools in `0c9a222b` stop before any case, so a rebuild
+would have failed too
+(https://github.com/danbri/factoidal-builds/pull/8 is the fix). The web
+release came from run 228
+(https://github.com/danbri/factoidal-builds/actions/runs/40662145237), and
+0.20.0 reached npm at 09:57 UTC, 4 hours 21 minutes after run 218 started.
 
 ## How publishing works
 
@@ -410,3 +459,13 @@ cheapest command that proves the shipped wasm loads and answers.
   https://github.com/danbri/factoidal/issues/641, with the byte
   transport it depends on at
   https://github.com/danbri/factoidal/issues/640.
+
+
+### Executable documentation deployment examples (2026-10-31)
+
+Changing a `js browser` fence to `js` also changes the package's documentation
+gate from syntax checking to execution. A deployment placeholder must then have
+a local fixture in `test/doc-examples.test.mjs`, with real transport and result
+assertions. Do not skip the example or contact the placeholder host. The 0.28
+candidate's LWS example exposed this when the package gate had 1975 passes and
+one missing-manifest failure; the authenticated HTTP fixture now executes it.
