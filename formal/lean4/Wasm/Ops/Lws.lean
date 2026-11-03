@@ -332,12 +332,20 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
           | some (.number s) => (s.toNat?).getD 0
           | _ => 0
         let insecure := j.field? "insecureNoAuth" == some (.bool true)
-        let authz ← match j.field? "auth", insecure with
-          | some _, true =>
+        -- A component principal (issue 1238): an in-process storage with no
+        -- listener; the host names the agent, WAC decides.
+        let principal := j.getString? "principal"
+        let authz ← match j.field? "auth", insecure, principal with
+          | some _, true, _ =>
               .error "config: \"auth\" and \"insecureNoAuth\" are exclusive"
-          | none, true => .ok { insecureNoAuth := true }
-          | none, false => .ok {}
-          | some aj, false => Authorization.authzConfigOfJson aj now
+          | _, true, some _ | some _, _, some _ =>
+              .error "config: \"principal\" is exclusive with \"auth\" and \"insecureNoAuth\""
+          | none, false, some p =>
+              if p.isEmpty then .error "config: \"principal\" must not be empty"
+              else .ok { principal := some p }
+          | none, true, none => .ok { insecureNoAuth := true }
+          | none, false, none => .ok {}
+          | some aj, false, none => Authorization.authzConfigOfJson aj now
         -- Encryption at rest (issue 921): the key is checked first, then
         -- the document the host read is opened and authenticated before any
         -- of it is used (`Seal.openSnapshot`). With no key and a clear-text
