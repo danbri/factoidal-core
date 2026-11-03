@@ -5,8 +5,10 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
+import {createRequire} from 'node:module';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
+const release=createRequire(import.meta.url)('../../docs/_data/factoidalRelease.js');
 test('compositor publishes pipeline file and FOAF pod controls under the Pages prefix',()=>{
   const out=mkdtempSync(join(tmpdir(),'factoidal-compositor-site-'));
   try{
@@ -15,7 +17,7 @@ test('compositor publishes pipeline file and FOAF pod controls under the Pages p
     const page=readFileSync(join(out,'web/hub/data-compositor/index.html'),'utf8');
     assert.match(page,/\/factoidal\/web\/hub\/data-compositor\/app\.mjs/);
     assert.match(page,/\/factoidal\/web\/hub\/assets\/code-output\.css/);
-    assert.match(page,/@factoidal\/core@0\.28\.0\/browser\.js/);
+    assert.ok(page.includes(release.browserUrl),`page loads published core ${release.version}`);
     assert.match(page,/connect-src[^\"]*https:/);
     assert.match(page,/class="hub-app"/);
     for(const file of ['pipeline.mjs','fixtures.mjs','worker.mjs','app.mjs','assurance.mjs','pipeline-document.mjs','pipeline-files.mjs','pod-storage.mjs','storage-worker.mjs','bounded-fetch.mjs']){
@@ -25,7 +27,7 @@ test('compositor publishes pipeline file and FOAF pod controls under the Pages p
       assert.equal(readFileSync(join(out,output),'utf8'),readFileSync(join(root,source),'utf8'));
     const worker=readFileSync(join(out,'web/hub/data-compositor/worker.mjs'),'utf8');
     assert.doesNotMatch(worker,/\/node_modules\//);
-    assert.match(worker,/core\.version!=='0\.28\.0'/);
+    assert.ok(worker.includes(`core.version!=='${release.version}'`),`worker checks published core ${release.version}`);
     const app=readFileSync(join(out,'web/hub/data-compositor/app.mjs'),'utf8');
     assert.match(app,/new URL\('\.\/worker\.mjs',import\.meta\.url\)/);
     assert.match(app,/id="evidence-toggle"/);
