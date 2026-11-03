@@ -21,10 +21,10 @@ adapter means exit 2 with no image, never a CPU image substituted for a GPU resu
 
 ## Dashed strokes
 
-Rectangles, lines, polygons, polylines and linear paths now support bounded dash
+Rectangles, lines, polygons, polylines and straight/curved paths support bounded dash
 arrays and signed offsets, including percentage lengths, odd-list repetition
 and zero-sum solid strokes. Dash pieces share one element opacity calculation.
-Curved path strokes and dashed ellipses remain unsupported. Source tests and
+Dashed ellipses remain unsupported. Source tests and
 unchanged WPT cases have targeted GPU comparisons; see the coverage report for
 which renderer/artifact each result covers.
 
@@ -42,7 +42,7 @@ CSS error recovery remains unimplemented. This is not full CSS conformance.
 
 SVG-namespace root/nested `svg`, `g`, `defs`/`use`/`symbol`, sharp `rect`, `circle`, filled `ellipse`, butt- or
 round-cap stroked `line`, filled and stroked `polygon`/`polyline`, and filled
-and stroked linear/compound `path` are supported, plus text-only
+and stroked straight/curved/compound `path` are supported, plus text-only
 `title`/`desc` metadata. Stroked contours support bounded dash arrays and
 offsets, butt/round caps, and default miter joins with bevel fallback. SVG
 `metadata` subtrees are non-rendering; XHTML `link rel="match"` and
@@ -56,8 +56,11 @@ unsupported. Geometry accepts signed fractional decimal/exponent numbers and
 unitless/px lengths and viewport-relative percentages for shape coordinates,
 dimensions, radii and stroke width. Horizontal/vertical lengths use the respective
 viewport axis; circle radius and stroke width use the normalized diagonal.
-With a viewBox, its dimensions supply these bases. Rect/circle/ellipse zero size disables painting; negative
-sizes are errors. Ellipses require explicit numeric rx/ry and have no stroke.
+With a valid positive viewBox, its dimensions supply these bases. Rect/circle/ellipse
+zero size disables painting. An invalid negative circle radius uses its initial
+zero value; negative rectangle/ellipse dimensions remain explicit profile
+refusals. CSS circle-radius geometry is not yet implemented. Ellipses require
+explicit numeric rx/ry and have no stroke.
 
 Default paint is black fill and no stroke. Fill/stroke/color/width, fill/stroke
 opacity and fill-rule inherit through groups. `currentColor` stays symbolic
@@ -71,14 +74,16 @@ Lines default to butt caps and support inherited round caps. Round caps use a
 capsule, including a disk for zero-length lines; zero-length butt lines and
 zero stroke width paint nothing. Polygon fill implements nonzero and evenodd
 winding for 3–64 vertices. Shared stroke construction handles open/closed
-polygon, polyline and linear-path contours, including total `pathLength` dash
-calibration. Ellipse strokes and curved path commands remain unsupported.
+polygon, polyline and path contours, including total `pathLength` dash
+calibration. Ellipse strokes remain unsupported.
 Non-inherited leaf opacity is applied once after premultiplied fill/stroke
 composition, including overlap.
 Group/root opacity is refused rather than approximated per descendant.
 
 Root viewBox mapping follows default xMidYMid meet, all nine alignments, slice,
-and none. Positive unitless/px root width/height are required unless both output
+and none. A zero viewBox width/height suppresses the viewport subtree. A negative
+viewBox extent invalidates that attribute, so mapping and percentage bases use
+the viewport dimensions instead; this rule also applies to nested SVG/symbols. Positive unitless/px root width/height are required unless both output
 viewport dimensions are supplied; source dimensions are still validated. Root
 percentage dimensions require that explicit host viewport. The supplied output
 size overrides root dimensions; this is an embedding contract, not CSS sizing. A
@@ -98,6 +103,26 @@ opaque RGB PPM output.
 These choices refer to W3C [painting](https://www.w3.org/TR/SVG11/painting.html)
 and [viewport transformation](https://www.w3.org/TR/SVG2/coords.html#ComputingAViewportsTransform),
 without claiming all their semantics or other SVG features are implemented.
+
+## Curved paths and checked lowering
+
+The Lean reader retains absolute/relative/repeated M/L/H/V/C/S/Q/T/A/Z commands
+as canonical typed segments, including smooth control reflection and compact arc
+flags. Quadratic/cubic controls and arc radii/rotation/flags remain in the scene.
+Zero-radius arcs draw a line; coincident-endpoint arcs are omitted. Moveto-only
+subpaths do not stroke, while actual zero-length drawing segments keep their caps.
+
+Checked de Casteljau/arc lowering produces separate linear backend contours for
+fill, stroke, dash, picking and GPU data. It uses the full screen transform,
+1/64-pixel flatness policy, depth limit20, and the existing512 generated-point
+budget. Over-budget/non-flat inputs fail explicitly. The scene carries a proof
+that its backend cache is exactly the successful compiler result, plus painter
+count and actual packed-storage bounds proofs. These are not universal ideal
+curve error or Float32 arithmetic proofs. Native analytic grids and four complete
+GPU fill controls pass; the annular-stroke GPU control still differs at four
+pixels. Native/WASM arc Double coordinates can differ even where the tested
+Float32 upload bytes match. See the [curve/cache design](../../../docs/designissues/2026-11-03-svg-curves-cache.md)
+and [measurement record](../../../docs/20261102-svg-standards-overnight.md).
 
 ## Definitions, instances and viewport clips
 

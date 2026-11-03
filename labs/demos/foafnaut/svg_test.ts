@@ -53,7 +53,8 @@ Deno.test("SVG viewBox meet alignment, none and slice match known viewport examp
  equal(e.compile(doc('preserveAspectRatio="xMidYMid slice"')).data.slice(0,4),[2,2,0,-50]);
  equal(e.sample(doc('preserveAspectRatio="xMidYMid slice"'),0,0),[0,0,0]);
  equal(e.compile(doc('', '-10 -20 100 100')).data.slice(0,6),[1,1,50,0,-10,-20]);
- rejects(()=>e.compile(doc('', '0 0 0 100')),"viewBox dimensions");
+ for(const vb of ['0 0 0 100','0 0 100 0','0 0 0 0']){const xml=doc('',vb);equal(e.compile(xml).primitiveCount,0);equal(e.sample(xml,50,50),[255,255,255]);equal(e.compile(xml).data.slice(0,8),[1,1,0,0,0,0,200,100]);}
+ for(const vb of ['0 0 -100 100','0 0 100 -100'])equal(e.compile(doc('',vb)).data.slice(0,8),[1,1,0,0,0,0,200,100]);
  rejects(()=>e.compile(doc('', '0,0,,100,100')),"numeric list");
 });
 
@@ -110,10 +111,12 @@ Deno.test("SVG ellipse fill and polygon nonzero/evenodd winding are implemented 
  assert(e.compile(wrap('<polygon points="0 0 10 0 10 10" stroke="black"/>')).primitiveCount===1,"Polygon stroke admission");
 });
 
-Deno.test("SVG zero dimensions disable painting; negative geometry is an explicit refusal",async()=>{
+Deno.test("SVG zero dimensions and invalid radii disable painting; other negative geometry remains refused",async()=>{
  const e=await loadSVG();const a=e.compile(wrap('<rect width="0" height="20"/><circle r="0"/><ellipse rx="0" ry="8"/>'));
  equal(a.primitiveCount,0);equal(e.sample(wrap(''),10,10),[255,255,255]);
- for(const shape of ['<rect width="-1" height="5"/>','<circle r="-1"/>','<ellipse rx="-1" ry="4"/>'])rejects(()=>e.compile(wrap(shape)),"negative");
+ for(const shape of ['<rect width="-1" height="5"/>','<ellipse rx="-1" ry="4"/>'])rejects(()=>e.compile(wrap(shape)),"negative");
+ for(const r of ['-1','-1%']){const xml=wrap(`<rect width="8" height="8" fill="blue"/><circle cx="4" cy="4" r="${r}" fill="red"/>`);equal(e.compile(xml).primitiveCount,1);equal(e.sample(xml,4,4),[0,0,255]);}
+ rejects(()=>e.compile(wrap('<circle r="-1" style="r:4"/>')),'unsupported CSS property: r');
  equal(e.compile(wrap('<rect width="0" height="20" transform="translate(1)"/>')).primitiveCount,0);
  rejects(()=>e.compile(wrap('<rect width="0" height="20" transform="perspective(1)"/>')),"unsupported transform");
 });

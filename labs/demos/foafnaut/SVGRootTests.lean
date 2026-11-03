@@ -45,6 +45,37 @@ def run : IO Unit := do
   check (!(parse "<!DOCTYPE svg><svg xmlns='http://www.w3.org/2000/svg' width='8' height='8'/>").isOk)
     "standalone DTD restriction lost"
   check (!(parse "<svg>").isOk) "standalone XML validation lost"
+  for viewBox in ["0 0 0 16","0 0 16 0","0 0 0 0"] do
+    let zeroRoot := element "svg" [xmlAttr "width" "64",xmlAttr "height" "64",xmlAttr "viewBox" viewBox] [shape]
+    let zero ← unwrap (parseRoot zeroRoot)
+    check (zero.width == 64 && zero.height == 64 && zero.primitives.isEmpty)
+      "zero viewBox must retain the backing viewport but suppress all paint"
+    check (zero.mapping.sx == 1 && zero.mapping.sy == 1)
+      "zero viewBox reached a division in viewport mapping"
+    for color in zero.samplePixels [(0,0),(31,31),(63,63)] do
+      check (color.r == 1 && color.g == 1 && color.b == 1) "zero root viewBox painted"
+  let percentages := element "rect" [xmlAttr "x" "50%",xmlAttr "width" "50%",xmlAttr "height" "100%"]
+  for viewBox in ["0 0 -32 32","0 0 32 -32"] do
+    let invalidRoot := element "svg" [xmlAttr "width" "64",xmlAttr "height" "64",xmlAttr "viewBox" viewBox] [percentages]
+    let invalid ← unwrap (parseRoot invalidRoot)
+    let [primitive] := invalid.primitives
+      | throw (IO.userError "invalid viewBox disabled rendering instead of being ignored")
+    let .rect x y w h := primitive.geometry
+      | throw (IO.userError "invalid viewBox lost rectangle geometry")
+    check (x == 32 && y == 0 && w == 32 && h == 64)
+      "ignored invalid viewBox changed viewport percentage bases"
+    check (invalid.mapping.sx == 1 && invalid.mapping.sy == 1 && (invalid.samplePixel 40 20).r == 0)
+      "negative viewBox applied a transform"
+  let nested ← unwrap (parse "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'><svg x='8' y='8' width='16' height='16' viewBox='0 0 -8 8'><rect width='100%' height='100%'/></svg><rect x='40' width='8' height='8' fill='blue'/></svg>")
+  check ((nested.samplePixel 16 16).r == 0 && (nested.samplePixel 32 16).r == 1 &&
+    (nested.samplePixel 42 2).b == 1 && (nested.samplePixel 42 2).r == 0)
+    "ignored nested viewBox changed its viewport clip, percentages or sibling paint"
+  for radius in ["-40","-1%"] do
+    let invalidCircle ← unwrap (parse ("<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'><rect width='8' height='8' fill='blue'/><circle cx='4' cy='4' r='" ++ radius ++ "' fill='red'/></svg>"))
+    check (invalidCircle.primitives.length == 1 && (invalidCircle.samplePixel 4 4).b == 1 &&
+      (invalidCircle.samplePixel 4 4).r == 0)
+      "invalid negative radius painted or suppressed an unrelated sibling"
+  IO.println "PASS zero root viewBox no paint, invalid-negative viewBox fallback/percentages/clips and invalid circle radius initial value"
   IO.println "PASS public namespace DOM root, inherited style, exact artifact, viewport sampling and standalone validation"
 
 #eval run
