@@ -318,7 +318,8 @@ export async function createXmppServer (options = {}) {
       state = await openLwsStorage({
         engine: xmpp.engine, baseIri: base, dir: join(dir, 'state'), storage: 'files',
         storageKey: options.stateKey, principal, realClock: true, lockCommand: 'xmpp-serve',
-        // The absolute subject: issue https://github.com/danbri/factoidal/issues/1241.
+        // Absolute IRIs, which never depended on the base (relative ones work
+        // since issue https://github.com/danbri/factoidal/issues/1241 was fixed).
         rootAcl: `@prefix acl: <http://www.w3.org/ns/auth/acl#> .\n<${base}.acl#xmpp> a acl:Authorization ;\n` +
           `  acl:agent <${principal}> ;\n  acl:accessTo <${base}> ;\n  acl:default <${base}> ;\n` +
           '  acl:mode acl:Read, acl:Write, acl:Control .\n'

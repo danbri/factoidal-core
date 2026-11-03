@@ -13,10 +13,10 @@ const { openLwsStorage, createLwsServer } = await import('../lws/server.mjs')
 const BASE = 'https://xmpp-state.invalid/'
 const XMPP = 'urn:factoidal:component:xmpp-serve'
 const OTHER = 'urn:factoidal:component:something-else'
-// The subject is absolute: a relative `<#c>` grants nothing in a provisioned rootAcl
-// (https://github.com/danbri/factoidal/issues/1241).
+// Relative references (`<#c>`, `<./>`) as Solid clients write them: an ACL document is parsed
+// with its own IRI as the base (https://github.com/danbri/factoidal/issues/1241, fixed).
 const acl = (agent) => `@prefix acl: <http://www.w3.org/ns/auth/acl#> .
-<${BASE}.acl#c> a acl:Authorization ; acl:agent <${agent}> ; acl:accessTo <${BASE}> ; acl:default <${BASE}> ;
+<#c> a acl:Authorization ; acl:agent <${agent}> ; acl:accessTo <./> ; acl:default <./> ;
   acl:mode acl:Read, acl:Write, acl:Control .
 `
 const text = (s) => new TextEncoder().encode(s)
