@@ -257,3 +257,18 @@ Suite result after this change: 4,038 pass, 520 fail, 227 refused (out of
 4,785 applicable); 1,433 not applicable; 2 oracle mismatch. No test that passed
 before fails now. Font-level differential: 56 same, 0 different, 0 refused
 (out of 56). `check-document-fonts.mjs` and `check-document-browser.mjs` PASS.
+
+### 8.2 CFF glyph extents
+
+`SfntCff` interprets CFF1 Type 2 charstrings in Lean (decision 1), with fuel
+(100,000 operations per glyph), the stack limit 48 and subroutine depth 10, on
+an explicit frame stack. It gives extents as HarfBuzz does (path bounds with
+control points, rounding half away from zero). CID fonts use FDSelect formats
+0 and 3. Refused: `seac`, the deprecated arithmetic operators, CFF2.
+
+`labs/demos/foafnaut/tools/check-cff-extents.py` against
+`hb-shape --show-extents`: 697 same, 0 different (out of 697 glyphs) over the
+CFF fonts of the HarfBuzz suite.
+
+Suite: 4,042 pass, 573 fail, 170 refused (out of 4,785 applicable); no
+regressions. Of the 170 refusals, 140 are right-to-left text.

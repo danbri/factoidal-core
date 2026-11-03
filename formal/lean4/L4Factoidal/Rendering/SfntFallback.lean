@@ -1,4 +1,5 @@
 import L4Factoidal.Rendering.SfntGpos
+import L4Factoidal.Rendering.SfntCff
 import L4Factoidal.Unicode.Normalization
 
 /-!
@@ -15,9 +16,10 @@ Ported: the modified combining class (`hb-unicode.hh`, `_hb_modified_combining_c
 `position_cluster`, glyph extents of `glyf` fonts (`GlyphHeader::get_extents_without_var_scaled`:
 the x bearing is the `hmtx` left side bearing). Left-to-right only.
 
-Refused: a CFF font (glyph extents need the charstrings), and a mark after a
-ligature glyph (HarfBuzz places it by ligature component; components are not
-tracked here).
+CFF fonts get extents from `SfntCff` (Type 2 charstrings interpreted in
+Lean). A font with neither `glyf` nor CFF has no extents: HarfBuzz then leaves
+the marks zeroed. Refused: CFF2, and a mark after a ligature glyph (HarfBuzz
+places it by ligature component; components are not tracked here).
 -/
 namespace L4Factoidal.Rendering.SfntFallback
 open FontPolicy SfntMetrics SfntGpos
@@ -78,10 +80,21 @@ structure Extents where
   height : Int
   deriving Repr, Inhabited
 
-/-- `glyf` glyph extents as HarfBuzz computes them for a font with no
-variations; none for a font without `glyf` (CFF). -/
-def extents (b : ByteArray) (dir : Array TableRecord) (g : Nat) : Except String (Option Extents) := do
-  let some glyf := dir.find? (·.tag == "glyf") | return none
+/-- Glyph extents as HarfBuzz computes them for a font with no variations:
+`glyf` with the `hmtx` left side bearing, or CFF charstring bounds (`cff`, the
+parsed CFF table); none when HarfBuzz gets none. -/
+def extents (b : ByteArray) (dir : Array TableRecord) (cff : Option SfntCff.Font) (g : Nat) :
+    Except String (Option Extents) := do
+  let some glyf := dir.find? (·.tag == "glyf") | do
+    match cff with
+    | some f =>
+      match ← SfntCff.extents b f g with
+      | some (xb, yb, w, h) => return some ⟨xb, yb, w, h⟩
+      | none => return none
+    | none =>
+      if dir.any (·.tag == "CFF2") then
+        throw "font.layout.unsupported: fallback mark positioning in a CFF2 font (https://github.com/danbri/factoidal/issues/1233)"
+      return none
   let some loca := dir.find? (·.tag == "loca") | throw "font.file.malformed: glyf without loca"
   let some head := dir.find? (·.tag == "head") | throw "font.file.malformed: no head table"
   let some hhea := dir.find? (·.tag == "hhea") | throw "font.file.malformed: no hhea table"
@@ -154,6 +167,9 @@ def position (b : ByteArray) (dir : Array TableRecord) (upem : Nat) (advances : 
   let ignorable (g : Glyph) : Bool := isHidden g.codepoint ||
     (isDefaultIgnorable g.codepoint && !g.substituted)
   let yGap : Int := (upem / 16 : Nat)
+  let cff ← match dir.find? (·.tag == "CFF ") with
+    | some t => pure (some (← SfntCff.readFont b t.offset t.length))
+    | none => pure none
   -- Cluster starts: a glyph that is not a mark, not hidden and not ignorable.
   let mut starts : Array Nat := #[0]
   for i in [1:n] do
@@ -185,8 +201,10 @@ def position (b : ByteArray) (dir : Array TableRecord) (upem : Nat) (advances : 
       if j > i + 1 then
         if base.ligated then
           throw s!"font.layout.unsupported: fallback mark positioning on a ligature glyph (https://github.com/danbri/factoidal/issues/1233)"
-        let some be ← extents b dir base.id |
-          throw s!"font.layout.unsupported: fallback mark positioning in a CFF font needs glyph extents (https://github.com/danbri/factoidal/issues/1233)"
+        -- No base extents: HarfBuzz zeroes the marks (already zero) and stops.
+        let some be ← extents b dir cff base.id | do
+          i := j
+          continue
         let baseWidth : Nat := advances[base.id]?.getD 0
         let baseExt : Extents := { be with yBearing := be.yBearing + base.yOffset, xBearing := 0, width := baseWidth }
         let mut xOff : Int := -base.advance
@@ -199,10 +217,14 @@ def position (b : ByteArray) (dir : Array TableRecord) (upem : Nat) (advances : 
             if lastCc != cc then
               lastCc := cc
               cluster := baseExt
-            let some me ← extents b dir g.id | throw "font.layout.unsupported: fallback mark positioning in a CFF font"
-            let (c2, x, y) := positionMark cluster me cc yGap
-            cluster := c2
-            out := out.set! m { g with advance := 0, xOffset := x + xOff, yOffset := y }
+            match ← extents b dir cff g.id with
+            | some me =>
+              let (c2, x, y) := positionMark cluster me cc yGap
+              cluster := c2
+              out := out.set! m { g with advance := 0, xOffset := x + xOff, yOffset := y }
+            | none =>
+              -- No mark extents: HarfBuzz keeps the offsets and adds the run offset.
+              out := out.set! m { g with advance := 0, xOffset := g.xOffset + xOff }
           else
             xOff := xOff - g.advance
       i := j
