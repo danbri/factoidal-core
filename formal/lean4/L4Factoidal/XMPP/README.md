@@ -594,3 +594,21 @@ Step 2 of `docs/20261102-xmpp-starttls.md`.
   passwords, members-only rooms, history, subject change, persistent rooms. Real JIDs are sent to
   nobody, moderators included.
 - MIX (XEP-0369, step 4) and GC3 (step 5) are next.
+
+## 2026-11-03 (later): MIX, XEP-0369 with XEP-0405 MIX-PAM (step 4)
+
+- `L4Factoidal/XMPP/Mix.lean`: `Mix.step` over channels whose participants are ACCOUNTS (bare
+  JIDs). Create (IQ `<create/>` to the service), join and leave through the user's own server
+  (`<client-join/>`, `<client-leave/>`), channel messages to every participant's bare JID
+  (`Delivery.held`: the server may hold them for an offline account), disco. JID-hidden: `<mix/>`
+  carries a nick, never a `<jid>`.
+- `Server.lean`: `Config.mixDomain`; `Out.mix`; the MIX-PAM interception in `handleLocal`; the
+  server's disco#info offers `urn:xmpp:mix:pam:2`, its disco#items names the service.
+- Ops layer: a held delivery becomes `route` (may be held), an IQ answer `routeFull`.
+- CLI: `xmpp-serve --mix mix.<domain>`.
+- Theorems: `message_recipients` (exactly the participants' accounts, every copy held),
+  `message_from_sender`, `message_nonparticipant`, `joinChannel_bares_nodup`,
+  `joinChannel_nicks_nodup`, `joinChannel_again`, `leaveChannel_gone`. 8 `#guard`s in `Mix.lean`,
+  3 in `Server.lean`. `handleIq_no_route` still holds with the MIX-PAM branch.
+- Not in this step (module header): PubSub nodes and subscriptions, channel presence, MAM, nick
+  registration, private messages, destruction, administration, persistence.

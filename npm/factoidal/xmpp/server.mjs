@@ -134,6 +134,8 @@ export async function openXmppServer (options = {}) {
   if (typeof options.tlsCarrier === 'boolean') config.tlsCarrier = options.tlsCarrier
   // XEP-0045 room service (L4Factoidal/XMPP/Muc.lean); off unless named.
   if (typeof options.mucDomain === 'string') config.mucDomain = options.mucDomain
+  // XEP-0369 channels (L4Factoidal/XMPP/Mix.lean), joined through MIX-PAM; off unless named.
+  if (typeof options.mixDomain === 'string') config.mixDomain = options.mixDomain
   let opened
   try {
     opened = engine.call('xmppOpen', [JSON.stringify(config)])
