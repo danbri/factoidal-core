@@ -42,3 +42,20 @@ identity rather than silently mapping names to the bitmap profile. The shared
 canonical curve adapter will then admit Q/C font outlines without changing
 host layout responsibilities. Real default fonts, UA paragraph metrics,
 margin collapse, bidi, fallback and full shaping conformance remain open.
+
+## Exact face lookup, 2026-11-03
+
+`Rendering.FontFace` adds a bounded single-face dictionary keyed by the exact
+word text and supplied pixel size. It checks consistent font SHA, family,
+face index, style and metrics across runs, and rejects differing outline
+commands for the same glyph identity. Missing text/size data is an error,
+without character substitution or a width estimate. The transport is a
+bounded JSON array of unchanged native font-data-v1 records. Budgets apply
+across all words, not just individually decoded runs.
+
+The provider now retains pixel size. Eighteen provider guards and fourteen
+face guards pass, including size mismatch, inconsistent resource identity,
+duplicate text/size, missing data and schema failures. The actual pinned Ahem
+probe also passes through the face decoder and exact `fi A`, 20px lookup.
+These modules remain outside the frozen HTML engine's import closure until
+the coordinated word-shaping callback integration.

@@ -10,6 +10,7 @@ private def shaped : ShapedWord := {
   pixelSize := 20,glyphs := #[⟨77,0,0,2,500,0,50,10⟩],outlines := #[outline],bitmaps := #[],advance := 500}
 #guard (prepare shaped).toOption.isSome
 #guard ((prepare shaped).toOption.map (·.advance)) == some 500
+#guard ((prepare shaped).toOption.map (·.pixelSize)) == some 20
 #guard ((prepare shaped).toOption.map fun word => (word.unitsPerEm,word.ascent,word.descent)) == some (1000,800,200)
 #guard ((prepare shaped).toOption.bind fun word => word.glyphs[0]? |>.map
   (fun g => (g.index,g.x,g.y,g.clusterStart,g.clusterEnd))) == some (77,50,(-10 : Float),0,2)

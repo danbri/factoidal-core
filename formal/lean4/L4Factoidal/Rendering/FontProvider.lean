@@ -24,6 +24,7 @@ structure Word where
   faceIndex : Nat
   family : String
   style : String
+  pixelSize : Nat
   unitsPerEm : Float
   ascent : Float
   descent : Float
@@ -66,6 +67,7 @@ ligature/mark source spans and offsets come from the typed font adapter; this
 function neither substitutes characters nor computes shaping. -/
 def prepare (input : FontData.ShapedWord) : Except String Word := do
   if input.direction != "ltr" then throw "unsupported font direction: horizontal LTR required"
+  if input.pixelSize == 0 || input.pixelSize > 512 then throw "unsupported shaped font size: require 1 to 512 pixels"
   let m := input.metrics
   if ![m.upem,m.ascender,m.descender,m.lineGap,input.advance].all Float.isFinite ||
       m.upem <= 0 || m.ascender <= 0 || m.ascender <= m.descender || m.descender > 0 then
@@ -94,7 +96,7 @@ def prepare (input : FontData.ShapedWord) : Except String Word := do
     pen := pen+glyph.xAdvance
   if pen != input.advance then throw "font provider: inconsistent shaped advance"
   if !input.text.isEmpty && glyphs.isEmpty then throw "font provider: nonempty word has no glyphs"
-  return ⟨input.text,input.fontSha256,input.faceIndex,input.family,input.style,m.upem,
+  return ⟨input.text,input.fontSha256,input.faceIndex,input.family,input.style,input.pixelSize,m.upem,
     m.ascender,-m.descender,m.lineGap,glyphs,input.advance⟩
 
 /-- JSON always passes through the checked native font-data schema decoder. -/

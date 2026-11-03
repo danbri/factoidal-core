@@ -15,7 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
-| 2026-11-02 | [Typed shaped words into common font geometry](20261102-typed-font-provider.md) | this commit | current — 17 guards and actual pinned Ahem HB/FT outlines consumed; HTML layout integration remains |
+| 2026-11-02 | [Typed shaped words into common font geometry](20261102-typed-font-provider.md) | this commit | current — 32 provider/face guards and actual pinned Ahem HB/FT outlines consumed; HTML layout integration remains |
 | 2026-11-02 | [Shared clipping for HTML and embedded SVG](20261102-lean-html-shared-clips.md) | this commit | current — exact Float adapters, CPU sampling guards and five whole CPU/GPU/original-Chrome diagnostic images |
 | 2026-11-02 | [HTML/CSS WebGPU hub page and runtime contract](20261102-html-webgpu-hub.md) | this commit | current — actual prefixed worker/GPU page checks; runtime installation and publication remain separate |
 | 2026-11-02 | [Proved formatting cache in the Lean renderer](20261102-lean-renderer-performance.md) | this commit | current — exact number strings and full artifacts; paired WASM compile speedup1.70–2.00; CPU sampling and GPU scaling remain |

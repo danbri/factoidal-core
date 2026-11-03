@@ -1197,5 +1197,6 @@ import L4Factoidal.Rendering.Tests
 import L4Factoidal.Rendering.Links
 import L4Factoidal.Rendering.FontDataTests
 import L4Factoidal.Rendering.FontProviderTests
+import L4Factoidal.Rendering.FontFaceTests
 import L4Factoidal.Rendering.RdfViewTests
 import L4Factoidal.Rendering.FloatFormat
