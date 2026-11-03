@@ -43,6 +43,7 @@ import { StringDecoder } from 'node:string_decoder'
 import { mkdir, readFile, writeFile, readdir, unlink, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { loadEngine } from '../bin/engine.mjs'
+import { createXmppRouter } from './router.mjs'
 
 /** The ops this host needs from the engine. */
 export const XMPP_SERVER_OPS = [
@@ -375,73 +376,17 @@ export async function createXmppServer (options = {}) {
     }
   }
 
-  /** Every live connection: socket, engine session, and the last `bare`/`full` the engine reported. */
-  const connections = new Set()
+  // The routing table (router.mjs, shared with the in-page host): every live
+  // connection, with the last `bare`/`full` the engine reported, and the
+  // bounded fallback queue for stanzas routed to a session that closed.
+  const router = createXmppRouter({ onError: (error) => onError(new XmppHostError(error.message)) })
+  const { connections, pending, boundTo, routeFull } = router
   // Raw transports also include TLS peers that have not reached the secure
   // connection callback and therefore have no engine session yet.
   const transports = new Set()
-  /** bare JID → stanzas routed to it while no session was bound. */
-  const pending = new Map()
-
-  function boundTo (bare) {
-    const found = []
-    for (const c of connections) if (c.full !== null && c.bare === bare) found.push(c)
-    return found
-  }
 
   function writeAll (c, lines) {
     for (const line of lines) if (!c.socket.destroyed) c.socket.write(line)
-  }
-
-  /**
-   * Deliver one stanza to every session bound to `bare`. The engine holds
-   * stanzas for accounts with no bound session (L4Factoidal/XMPP/Held.lean,
-   * bounded; issue 1235), so a route reaches here only for a bound account.
-   * `pending` covers the race where that session closed between the
-   * engine's decision and this delivery; it is bounded too.
-   */
-  function routeStanza (bare, text) {
-    const targets = boundTo(bare)
-    if (targets.length === 0) {
-      if (!pending.has(bare)) pending.set(bare, [])
-      const q = pending.get(bare)
-      if (q.length < 100) q.push(text)
-      else onError(new XmppHostError(`dropped a stanza for ${bare}: the host fallback queue is full`))
-      return
-    }
-    for (const t of targets) {
-      let answer
-      let delivered = false
-      try { delivered = t.deliver(text) } catch (error) { onError(error); continue }
-      if (!delivered) {
-        if (!pending.has(bare)) pending.set(bare, [])
-        pending.get(bare).push(text)
-      }
-    }
-  }
-
-  /**
-   * `Out.routeFull`: deliver to the ONE session bound to `full`, now. With no
-   * such session (or one that refuses), deliver the engine's bounce, if it
-   * gave one, back to the sending session. Never held (RFC 6120 section
-   * 10.5.3.2; https://github.com/danbri/factoidal/issues/1234).
-   */
-  function routeFull (sender, full, text, bounce) {
-    for (const t of connections) {
-      if (t.full !== full) continue
-      try { if (t.deliver(text)) return } catch (error) { onError(error) }
-    }
-    if (typeof bounce === 'string') {
-      try { sender.deliver(bounce) } catch (error) { onError(error) }
-    }
-  }
-
-  /** A session just bound: hand it what was waiting. */
-  function flushPending (c) {
-    const queue = pending.get(c.bare)
-    if (!queue || queue.length === 0) return
-    pending.delete(c.bare)
-    for (const text of queue) routeStanza(c.bare, text)
   }
 
   let rosterWrites = Promise.resolve()
@@ -478,15 +423,10 @@ export async function createXmppServer (options = {}) {
   function perform (c, answer) {
     persistState(answer)
     writeAll(c, answer.send)
-    const wasBound = c.full !== null
-    c.bare = typeof answer.bare === 'string' ? answer.bare : null
-    c.full = typeof answer.full === 'string' ? answer.full : null
-    for (const r of answer.route) routeStanza(r.to, r.text)
-    for (const r of answer.routeFull || []) routeFull(c, r.to, r.text, r.bounce)
+    router.apply(c, answer)
     if (Array.isArray(answer.rostersSaved) && answer.rostersSaved.length > 0) {
       persistRosters(answer.rostersSaved)
     }
-    if (!wasBound && c.full !== null) flushPending(c)
     if (answer.startTls === true && answer.close !== true) upgrade(c)
     if (answer.close === true) {
       c.closing = true

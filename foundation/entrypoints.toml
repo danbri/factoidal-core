@@ -217,6 +217,22 @@ id = "wasm:xmppWsClose"
 reason = "ends an XMPP-over-WebSocket session with <close/> and a close frame (Wasm/Ops/XmppSession.lean; RFC 6455 and RFC 7395 over Server.step); reads no RDF data"
 
 [[nonstage]]
+id = "wasm:xmppMsgOpen"
+reason = "opens an XMPP session on a message carrier (RFC 7395 messages without HTTP or WebSocket frames: a MessagePort, postMessage), Wasm/Ops/XmppSession.lean over Server.step; reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppMsgFeed"
+reason = "one whole RFC 7395 message of a message-carrier XMPP session through Server.step (Wasm/Ops/XmppSession.lean msgFeedPure, theorem msgFeedPure_closed); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppMsgDeliver"
+reason = "a stanza routed to a bound message-carrier XMPP session, as one message (Wasm/Ops/XmppSession.lean over Server.deliver); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppMsgClose"
+reason = "ends a message-carrier XMPP session with <close/> and leaves its MUC rooms (Wasm/Ops/XmppSession.lean); reads no RDF data"
+
+[[nonstage]]
 id = "wasm:xmppStateLoad"
 reason = "the host installs one item of an XMPP server's state, read from its LWS state storage at start (Wasm/Ops/XmppSession.lean over XMPP/StateCodec.lean, round-trip theorems decodeHeld_encodeHeld, decodeChannel_encodeChannel, decodeGroup_encodeGroup); reads no RDF data"
 
