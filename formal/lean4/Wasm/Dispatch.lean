@@ -196,7 +196,7 @@ def blobIoOpNames : List String :=
   [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit",
     "datasetQuadsBin", "sbm11Query", "sbm11PackFiles",
     "storeManifestInspectBytes", "storeQueryPlanBytes", "storeOpenBytes" ] ++
-  Ops.lwsBlobIoOpNames ++ Ops.webdavBlobIoOpNames
+  Ops.lwsBlobIoOpNames ++ Ops.webdavBlobIoOpNames ++ Ops.xmppWsBlobIoOpNames
 
 /-- Largest out region `blobEcho` builds: 67,108,864 bytes. A count above
 this is refused by name rather than made into an allocation the module
@@ -806,6 +806,7 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "xmppSessionDeliver" => withArgs (arityIO2 op Ops.xmppSessionDeliver)
   | "xmppSessionClose"   => withArgs (arityIO1 op Ops.xmppSessionClose)
   | "xmppSessionTlsUp"   => withArgs (arityIO1 op Ops.xmppSessionTlsUp)
+  | "xmppWsOpen"         => withArgs (arityIO2 op Ops.xmppWsOpen)
   | "xmppRosterGet"      => withArgs (arityIO2 op Ops.xmppRosterGet)
   | "xmppRosterSet"      => withArgs (arityIO3 op Ops.xmppRosterSet)
   -- The outgoing XMPP client stream with HTTP over XMPP (`Wasm/Ops/XmppClient.lean`).
@@ -962,6 +963,23 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a, b] => Ops.webdavStepWith a b (some blob)
       | .ok args   => pure (errJson s!"webdavStep expects 2 arguments, got {args.length}",
                             ByteArray.empty)
+  -- XMPP over WebSocket (`Wasm/Ops/XmppSession.lean`): IN is what the
+  -- socket read, OUT what the host writes.
+  | "xmppWsFeed" =>
+      match decodeArgs argsJson with
+      | .error e => pure (errJson e, ByteArray.empty)
+      | .ok [a]  => Ops.xmppWsFeedWith a blob
+      | .ok args => pure (errJson s!"xmppWsFeed expects 1 argument, got {args.length}", ByteArray.empty)
+  | "xmppWsDeliver" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.xmppWsDeliverWith a b
+      | .ok args   => pure (errJson s!"xmppWsDeliver expects 2 arguments, got {args.length}", ByteArray.empty)
+  | "xmppWsClose" =>
+      match decodeArgs argsJson with
+      | .error e => pure (errJson e, ByteArray.empty)
+      | .ok [a]  => Ops.xmppWsCloseWith a
+      | .ok args => pure (errJson s!"xmppWsClose expects 1 argument, got {args.length}", ByteArray.empty)
   | "webdavResume" =>
       match decodeArgs argsJson with
       | .error e   => pure (errJson e, ByteArray.empty)

@@ -737,6 +737,7 @@ import L4Factoidal.HTTP.RunQuery
 import L4Factoidal.HTTP.RunQueryTests
 import L4Factoidal.HTTP.Ops
 import L4Factoidal.HTTP.Wire
+import L4Factoidal.HTTP.WebSocket
 import L4Factoidal.SPARQL.StoreEndpoint
 import L4Factoidal.HTTP.OpsTests
 import L4Factoidal.Math.Subst
@@ -1081,6 +1082,7 @@ import L4Factoidal.XMPP.Sasl
 import L4Factoidal.XMPP.Scram
 import L4Factoidal.XMPP.Framing
 import L4Factoidal.XMPP.Server
+import L4Factoidal.XMPP.WebSocket
 import L4Factoidal.XMPP.Gc3
 import L4Factoidal.XMPP.HttpOverXmpp
 import L4Factoidal.XMPP.HttpOverXmppTests

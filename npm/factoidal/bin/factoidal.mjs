@@ -748,6 +748,7 @@ Specification: https://solidproject.org/TR/protocol`,
 
 usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
                             [--accounts FILE] [--cert FILE --key FILE [--starttls]]
+                            [--ws-port N [--ws-path PATH] [--ws-origin ORIGIN]...]
 
 Starts a Node TCP server that runs one engine session per connection and
 answers every byte through the engine's xmppSessionFeed operation.
@@ -770,6 +771,14 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
   --starttls       listen in clear and REQUIRE STARTTLS (RFC 6120 section 5)
                    before anything else; no SASL mechanism is offered and no
                    credential is accepted until the TLS handshake finishes
+  --ws-port N      also serve XMPP over WebSocket (RFC 7395, the "xmpp"
+                   subprotocol of RFC 6455) for browser clients such as
+                   Strophe.js; wss: with --cert and --key, else loopback only
+  --ws-path PATH   the WebSocket endpoint path (default /xmpp-websocket)
+  --ws-origin ORIGIN  a browser Origin allowed to connect, e.g.
+                   http://localhost:5173 (repeatable); a request from any
+                   other Origin is refused 403, and one with no Origin
+                   (not a browser) is accepted only when no --ws-origin is given
 
 The server makes no protocol decision. Stream negotiation, SASL PLAIN and
 SCRAM-SHA-256, resource binding, the roster, presence subscription and
@@ -1154,7 +1163,7 @@ function parseArguments (args, valueOptions) {
 class UsageError extends Error {}
 
 /** Options that may be given more than once; their value is the list. */
-const REPEATABLE_OPTIONS = new Set(['cors-origin', 'saml-idp', 'saml-decrypt-key', 'allow-host', 'allow-origin'])
+const REPEATABLE_OPTIONS = new Set(['cors-origin', 'saml-idp', 'saml-decrypt-key', 'allow-host', 'allow-origin', 'ws-origin'])
 
 const VALUE_OPTIONS = {
   xpath4: new Set(['expression', 'file', 'input', 'format']),
@@ -1182,7 +1191,7 @@ const VALUE_OPTIONS = {
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
-  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key']),
+  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'ws-port', 'ws-path', 'ws-origin']),
   'webdav-serve': new Set(['port', 'host', 'users', 'guest', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
@@ -2844,6 +2853,19 @@ async function commandXmppServe (positional, options) {
     settings.key = await fs.readFile(options.key)
   }
   if (startTls) settings.startTls = true
+  if (options['ws-port'] !== undefined) {
+    const wsPort = Number(options['ws-port'])
+    if (!Number.isInteger(wsPort) || wsPort < 0 || wsPort > 65535) throw new UsageError('--ws-port needs a port number')
+    const origins = options['ws-origin'] === undefined ? []
+      : Array.isArray(options['ws-origin']) ? options['ws-origin'] : [options['ws-origin']]
+    settings.websocket = {
+      port: wsPort,
+      path: typeof options['ws-path'] === 'string' ? options['ws-path'] : '/xmpp-websocket',
+      allowedOrigins: origins,
+      allowNoOrigin: origins.length === 0
+    }
+    if (useTls) { settings.websocket.cert = settings.cert; settings.websocket.key = settings.key }
+  }
   // Invariant I4 (docs/designissues/2026-10-28-feature-combination-safety.md,
   // C4): with no TLS this listener offers PLAIN, which sends the password in
   // clear, so it binds to loopback only.
@@ -2864,7 +2886,12 @@ async function commandXmppServe (positional, options) {
         ` (${running.xmpp.accounts} accounts, state ${positional[0]}` +
         (startTls ? ', STARTTLS required)' : useTls ? ', direct TLS)' : ', PLAINTEXT: no TLS on this listener)'))
   }
+  if (running.wsOrigin && !quiet) {
+    err(`xmpp-serve: XMPP over WebSocket on ${running.wsOrigin}` +
+        (settings.websocket.allowedOrigins.length ? ` for Origin ${settings.websocket.allowedOrigins.join(', ')}` : ' (no browser Origin allowed)'))
+  }
   out(running.origin)
+  if (running.wsOrigin) out(running.wsOrigin)
   return untilInterrupted(running, quiet)
 }
 

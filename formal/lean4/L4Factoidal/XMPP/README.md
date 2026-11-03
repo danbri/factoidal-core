@@ -528,3 +528,32 @@ This is step 1. Record of the order: `docs/20261102-xmpp-starttls.md`.
 - Not changed: the native harness (`Harness/XmppServe.lean`) never sets
   `startTls`; socat holds TLS there. SCRAM channel binding stays out: the
   engine does not see the TLS layer.
+
+### 2026-11-03: XMPP over WebSocket (RFC 7395 over RFC 6455), for Strophe.js
+
+Step 2 of `docs/20261102-xmpp-starttls.md`.
+
+- `HTTP/WebSocket.lean` — RFC 6455 server side: `upgrade` (GET, version
+  13, the `Origin` allow list, the required subprotocol, a 16-byte key;
+  `Sec-WebSocket-Accept` by SHA-1 of public data, tier 1 of
+  `skills/crypto-policy`), `decode` (masking required, RSV bits, opcodes,
+  control frames, minimal lengths, a frame limit), `Reader` (fragments,
+  ping, close, UTF-8, a message limit), `encode`. Theorems
+  `upgrade_accept_checked`, `decode_frame_masked`, `decode_frame_bounded`,
+  `feed_done`; `#guard`s with the examples of RFC 6455 sections 1.3 and 5.7.
+- `XMPP/WebSocket.lean` — RFC 7395 as a translation at the edge of
+  `Server.step`: `unitOfMessage` (`<open/>`, `<close/>`, one element per
+  message; a `<stream:stream>` over a WebSocket is refused) and
+  `messageOfSend` (by equality with `Server.streamOpenText` and
+  `Server.streamCloseText`). Theorems `messageOfSend_open`,
+  `messageOfSend_close`, `streamClose_ne_open`. `Server.step` is unchanged.
+- `Wasm/Ops/XmppSession.lean` — ops `xmppWsOpen`, and on the blob ABI
+  `xmppWsFeed`, `xmppWsDeliver`, `xmppWsClose`; `wsFeedPure` takes a
+  connection from its first byte (HTTP handshake, path check, frames,
+  units). Theorem `wsFeedPure_handshake_refused`: before an accepted
+  handshake no unit reaches `Server.step` and nothing is routed.
+- Host and CLI: `xmpp-serve --ws-port N [--ws-path P] [--ws-origin O]...`;
+  WebSocket and TCP sessions share one routing table.
+- Test: `npm/factoidal/test/xmpp-websocket.test.mjs` (Node's own WebSocket
+  client as an independent RFC 6455 implementation; raw sockets for a bad
+  Origin, path, subprotocol and an unmasked frame).
