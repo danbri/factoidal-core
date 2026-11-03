@@ -5,7 +5,7 @@ import {spawn} from 'node:child_process';
 import {dirname,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 const here=dirname(fileURLToPath(import.meta.url)),args=process.argv.slice(2),index=args.indexOf('--output'),output=index<0?null:args[index+1];
-if(!output)throw Error('Usage: run.mjs --output EMPTY_DIR --browser CHROME --playwright CORE --svg-lab LAB [--html-engine CLI] [--html-witness FILE] [--controls]');
+if(!output)throw Error('Usage: run.mjs --output EMPTY_DIR --browser CHROME --playwright CORE --svg-lab LAB [--html-engine CLI | --html-lab LAB] [--html-witness FILE] [--controls]');
 await mkdir(output,{recursive:true});if((await readdir(output)).length)throw Error('Use empty output directory');
 const report={format:'whole-svg-corpus-run-v1',startedAt:new Date().toISOString(),commands:[]};let code=2;
 async function command(name,executable,argv){

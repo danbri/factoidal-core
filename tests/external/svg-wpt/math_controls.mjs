@@ -8,14 +8,17 @@ import {createHash} from 'node:crypto';
 const args=process.argv.slice(2),opt=n=>{const i=args.indexOf(n);return i<0?null:args[i+1];},directory=opt('--directory'),output=opt('--output');
 if(!directory||!output)throw Error('Usage: math_controls.mjs --directory NATIVE_CONTROLS --output DIR --svg-lab LAB --browser CHROME --playwright CORE');
 const manifestBytes=await readFile(resolve(directory,'manifest.json')),manifest=JSON.parse(manifestBytes),hash=b=>createHash('sha256').update(b).digest('hex');await mkdir(output,{recursive:true});if((await readdir(output)).length)throw Error('Use an empty math-control output directory');
+const declared=manifest.outputs??Object.fromEntries(Object.entries(manifest.files??{}).map(([name,entry])=>[name,entry.sha256]));
+const cases=Object.keys(declared).filter(name=>name.endsWith('.json')&&declared[name.slice(0,-5)+'.expected.rgba']).sort();
+if(!cases.length)throw Error('No declared artifact/independent expected-RGBA pairs');
 const frozen=resolve(output,'inputs');await mkdir(frozen);await writeFile(resolve(frozen,'manifest.json'),manifestBytes);
-for(const [file,expected] of Object.entries(manifest.outputs)){
+for(const [file,expected] of Object.entries(declared)){
  if(file.includes('/')||file.includes('\\')||file==='..')throw Error('Unsafe control filename');
  const bytes=await readFile(resolve(directory,file));if(hash(bytes)!==expected)throw Error('Control identity mismatch: '+file);await writeFile(resolve(frozen,file),bytes);
 }
-const report={scope:'Independent native artifact/GPU math diagnostics; separate from WPT and full SVG conformance',producerScope:manifest.scope,manifestSha256:hash(manifestBytes),harnessSources:{},cases:[]};let code=0;
+const report={scope:'Independent Lean artifact/GPU math diagnostics; separate from WPT and full SVG conformance',producerScope:manifest.scope??manifest.purpose,manifestSha256:hash(manifestBytes),harnessSources:{},cases:[]};let code=0;
 for(const file of ['math_controls.mjs','artifact_gpu.mjs','png.mjs'])report.harnessSources[file]=hash(await readFile(resolve(dirname(fileURLToPath(import.meta.url)),file)));
-for(const file of Object.keys(manifest.outputs).filter(name=>name.endsWith('.json')).sort()){
+for(const file of cases){
  const name=file.slice(0,-5),expected=name+'.expected.rgba';
  const argv=[resolve(dirname(fileURLToPath(import.meta.url)),'artifact_gpu.mjs'),'--artifact',resolve(frozen,file),'--expected',resolve(frozen,expected),'--witness',resolve(frozen,'manifest.json'),'--output',resolve(output,name)];
  for(const flag of ['--svg-lab','--browser','--playwright']){if(!opt(flag))throw Error('Missing '+flag);argv.push(flag,resolve(opt(flag)));}

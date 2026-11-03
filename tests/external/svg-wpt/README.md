@@ -49,6 +49,18 @@ the actual TS, JS and WASM bytes are independently frozen and hashed.
 diagnostic while retaining explicit unavailable rows for every unselected case.
 Do not describe a selected diagnostic as the full suite.
 
+Alternatively, replace `--html-engine CLI` with `--html-lab WEB_LAB` to run the
+browser-shipped Lean HTML WASM. This requires `--html-witness FILE` and freezes
+the original `web-render/engine.mjs`, generated MJS/WASM, and exact witness.
+Engine hashes must match the witness. The entry wrapper is copied unchanged;
+the host calls its existing `compile(originalHTML,800,600)` and supplies no font
+data or markup rewrite. The two HTML producer selectors are mutually exclusive.
+Native executable hashes are also checked against a supplied witness when it
+declares a native hash. All runtime assets and supplied witnesses are archived
+with the capture. Compare native/default, WASM/default and future supplied-font
+profiles separately; a runtime that exports a font API has not exercised it
+through the default path.
+
 Exit 0 requires all 601 qualified image matches. Exit 1 means incomplete
 conformance, including unsupported/unavailable cases. Exit 2 means harness,
 identity or control failure. `run.json` preserves individual command statuses;
@@ -119,3 +131,5 @@ editing an original resource does. Tests inject these metadata corruptions.
 
 The dated measurement and environment limits are in
 [`docs/20261102-svg-whole-wpt-corpus.md`](../../../docs/20261102-svg-whole-wpt-corpus.md).
+The later browser-shipped HTML WASM profile and separate SVG diagnostics are in
+[`docs/20261103-svg-html-wasm-corpus.md`](../../../docs/20261103-svg-html-wasm-corpus.md).

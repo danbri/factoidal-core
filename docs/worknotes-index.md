@@ -213,3 +213,5 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-01 | [Compositor pipeline files and FOAF pod library](20261101-compositor-pipeline-library.md) | — | bounded versioned documents, explicit FOAF storage discovery, ETag guarded writes and honest local validation limits |
 
 | 2026-11-02 | [Whole WPT SVG corpus and browser measurements](20261102-svg-whole-wpt-corpus.md) | this commit | complete pinned SVG subtree, original HTML transport, all601 relation states, full-image oracle and fault controls; stable baseline15matches and separate10use/symbol exact diagnostics |
+
+| 2026-11-03 | [SVG/HTML browser-WASM corpus profile](20261103-svg-html-wasm-corpus.md) | this commit | full601 image states split by SVG/HTML producer, exact frozen witnesses, paired native/WASM originals and separate zero-viewport/curve diagnostics; numeric and sizing failures retained |

@@ -12,7 +12,9 @@ import {stripTypeScriptTypes} from 'node:module';
 import {encodeRGBA} from './png.mjs';
 import {sourceSnapshot} from '../svg/provenance.mjs';
 const here=dirname(fileURLToPath(import.meta.url)),args=process.argv.slice(2),option=name=>{const i=args.indexOf(name);return i<0?null:args[i+1];};
-const output=option('--output'),chrome=option('--browser'),playwright=option('--playwright'),svgLab=option('--svg-lab'),htmlEngine=option('--html-engine');
+const output=option('--output'),chrome=option('--browser'),playwright=option('--playwright'),svgLab=option('--svg-lab'),htmlEngine=option('--html-engine'),htmlLab=option('--html-lab');
+if(htmlLab&&htmlEngine)throw Error('Select one original HTML producer: --html-lab or --html-engine');
+if(htmlLab&&!option('--html-witness'))throw Error('--html-lab requires its exact --html-witness');
 const requestedCases=args.flatMap((arg,index)=>arg==='--case'?[args[index+1]]:[]);
 if(option('--cases'))requestedCases.push(...JSON.parse(await readFile(resolve(option('--cases')),'utf8')));
 const selection=requestedCases.length?[...new Set(requestedCases)]:null,controls=args.includes('--controls'),timeout=Number(option('--timeout-ms')??30000);
@@ -27,16 +29,38 @@ if(selection&&selection.some(path=>typeof path!=='string'||!inventory.cases.some
 const runtime=new Map(),runtimeAssets={};let svgReady=false,svgUnavailable=null;
 const runtimeNames=['svg_engine.ts','render_plan.ts','gpu_transport.ts','.build/engines/svg-engine.mjs','.build/engines/svg-engine.wasm','.build/engines/render-plan.mjs','.build/engines/render-plan.wasm'];
 if(svgLab)try{
- for(const name of runtimeNames){const bytes=await readFile(resolve(svgLab,name)),served=name.endsWith('.ts')?Buffer.from(stripTypeScriptTypes(bytes.toString('utf8'))):bytes;runtime.set(name,served);runtimeAssets[name]={sourceSha256:hash(bytes),servedSha256:hash(served),bytes:served.length};}
+ for(const name of runtimeNames){const bytes=await readFile(resolve(svgLab,name)),served=name.endsWith('.ts')?Buffer.from(stripTypeScriptTypes(bytes.toString('utf8'))):bytes;runtime.set(name,served);runtimeAssets[name]={sourceSha256:hash(bytes),servedSha256:hash(served),bytes:served.length};await writeFile(resolve(output,'svg-runtime-'+name.replaceAll('/','_')+'.gz'),gzipSync(bytes));}
  for(const name of runtimeNames)if(hash(await readFile(resolve(svgLab,name)))!==runtimeAssets[name].sourceSha256)throw Error('Runtime changed during snapshot');
  svgReady=true;
 }catch(error){svgUnavailable=String(error);}
+const webRuntime=new Map(),webAssets={};let webReady=false,webUnavailable=null;
+const webNames=['web-render/engine.mjs','.build/web-render/engines/web-render.mjs','.build/web-render/engines/web-render.wasm'];
+if(htmlLab)try{
+ for(const name of webNames){const bytes=await readFile(resolve(htmlLab,name));webRuntime.set(name,bytes);webAssets[name]={sha256:hash(bytes),bytes:bytes.length};await writeFile(resolve(output,'html-runtime-'+name.replaceAll('/','_')+'.gz'),gzipSync(bytes));}
+ for(const name of webNames)if(hash(await readFile(resolve(htmlLab,name)))!==webAssets[name].sha256)throw Error('HTML WASM runtime changed during snapshot');
+ webReady=true;
+}catch(error){webUnavailable=String(error);}
 const producer={svg:{lab:svgLab,ready:svgReady,reason:svgUnavailable,runtimeAssets,
  source:svgLab?await sourceSnapshot(resolve(svgLab,'../../..'),resolve(svgLab)):null,
  correspondence:'Existing frozen artifact bytes; current checkout hashes alone do not attest build correspondence'},
- html:htmlEngine?{command:resolve(htmlEngine),sha256:hash(await readFile(htmlEngine)),argv:'INPUT.html WIDTH HEIGHT',correspondence:'Native executable identity; source witness recorded separately'}:null};
+ html:htmlEngine?{kind:'native-cli',command:resolve(htmlEngine),sha256:hash(await readFile(htmlEngine)),argv:'INPUT.html WIDTH HEIGHT',correspondence:'Native executable identity; source witness recorded separately'}:htmlLab?{kind:'browser-wasm',lab:resolve(htmlLab),ready:webReady,reason:webUnavailable,runtimeAssets:webAssets,correspondence:'Frozen browser-shipped runtime bytes; exact producer source witness recorded separately',fontInputs:'Default compile only; no font fallback or supplied font data'}:null};
 for(const [kind,flag] of [['svg','--svg-witness'],['html','--html-witness']])if(option(flag)){
  const bytes=await readFile(resolve(option(flag)));producer[kind].witness={file:resolve(option(flag)),sha256:hash(bytes),value:JSON.parse(bytes)};
+ await writeFile(resolve(output,kind+'-source-witness.json.gz'),gzipSync(bytes));
+}
+if(htmlLab&&webReady){
+ const witness=producer.html.witness.value;
+ if(witness.format!=='factoidal-web-render-source-witness-v1')throw Error('Unsupported HTML source witness format');
+ for(const name of webNames.filter(n=>n.startsWith('.build/')))if(witness.engines['labs/demos/foafnaut/'+name]!==webAssets[name].sha256)throw Error('Frozen HTML engine differs from source witness: '+name);
+ producer.html.witnessValidatedEngines=true;
+}
+if(svgReady&&producer.svg.witness?.value.enginesSHA256){
+ for(const name of runtimeNames)if(producer.svg.witness.value.enginesSHA256[name]!==runtimeAssets[name].sourceSha256)throw Error('Frozen SVG runtime differs from source witness: '+name);
+ producer.svg.witnessValidatedEngines=true;
+}
+if(htmlEngine&&producer.html.witness?.value.nativeSha256){
+ if(producer.html.witness.value.nativeSha256!==producer.html.sha256)throw Error('Native HTML executable differs from source witness');
+ producer.html.witnessValidatedNativeBytes=true;
 }
 const report={format:'wpt-svg-whole-tree-capture-v1',revision:source.revision,scope:selection?'Diagnostic selection; all 601 rows retained, unselected unavailable':'All 601 original SVG-subtree reftest relations; old 38 identified separately',selection,
  startedAt:new Date().toISOString(),sourceManifestSha256:hash(sourceBytes),inventorySha256:hash(inventoryBytes),producer,
@@ -57,6 +81,7 @@ const server=createServer((req,res)=>{
   if(name==='/transport'){res.writeHead(200,{'Content-Type':'text/html','Cache-Control':'no-store'});res.end('<!doctype html><title>Raw WebGPU transport</title>');return;}
   let bytes,type,headers={};
   if(name.startsWith('/engine/')){const key=name.slice(8);bytes=runtime.get(key);type=mime(key);}
+  else if(name.startsWith('/lab/')){const key=name.slice(5);bytes=webRuntime.get(key);type=mime(key);}
   else{
    const key=name.slice(1);bytes=files.get(key);type=mime(key);
    const headerFiles=inventory.resourceMetadata[key]?.responseHeaderFiles??[];
@@ -98,9 +123,10 @@ async function oracle(target,requirements){
 }
 async function loadTransport(){
  await transportContext?.close();transportContext=await browser.newContext({viewport:{width:800,height:600},deviceScaleFactor:1});
- await transportContext.route('**/*',r=>r.request().url().startsWith(origin+'/engine/')||r.request().url()===origin+'/transport'?r.continue():r.abort());
+ await transportContext.route('**/*',r=>r.request().url().startsWith(origin+'/engine/')||r.request().url().startsWith(origin+'/lab/')||r.request().url()===origin+'/transport'?r.continue():r.abort());
  transportPage=await transportContext.newPage();await transportPage.goto(origin+'/transport');
  await bounded(transportPage.evaluate(async()=>{window.transport=await import('/engine/gpu_transport.ts');const svg=await import('/engine/svg_engine.ts');window.validate=svg.validateSVG;window.engine=await svg.loadSVG();}),'Engine initialization');
+ if(htmlLab&&producer.html.ready)try{await bounded(transportPage.evaluate(async()=>{window.webEngine=await import('/lab/web-render/engine.mjs');}),'HTML WASM entry initialization');}catch(error){producer.html.ready=false;producer.html.reason=String(error);}
 }
 async function nativeHTML(path){
  if(!htmlEngine)return {unavailable:'HTML producer not configured; original document not extracted or rewritten'};
@@ -116,9 +142,10 @@ async function nativeHTML(path){
  if(result.code!==0)return {error:'Native process failure '+JSON.stringify(result)};
  const artifact=JSON.parse(result.stdout);return {artifact,command:[resolve(htmlEngine),...argv],stderr:result.stderr};
 }
-async function gpu(xml,artifact,eligible,documentURL){
- return bounded(transportPage.evaluate(async({xml,artifact,eligible,controls,documentURL})=>{
+async function gpu(xml,artifact,eligible,documentURL,isHTML){
+ return bounded(transportPage.evaluate(async({xml,artifact,eligible,controls,documentURL,isHTML})=>{
   let a=artifact,policy={mode:'native-original-html-artifact'};
+  if(!a&&isHTML){a=await window.webEngine.compile(xml,800,600);policy={mode:'wasm-original-html-artifact',compilerWidth:800,compilerHeight:600,fontInputs:'none'};}
   if(!a){
    if(typeof window.engine.compileDocument==='function'){a=window.engine.compileDocument(xml,800,600);policy={mode:'Lean-document-available-viewport',availableWidth:800,availableHeight:600};}
    else{const compile=(w,h)=>typeof window.engine.compileWithURL==='function'?window.engine.compileWithURL(xml,documentURL,w,h):window.engine.compile(xml,w,h);policy={mode:'intrinsic',compilerWidth:0,compilerHeight:0,documentURL,URLAware:typeof window.engine.compileWithURL==='function'};try{a=compile(0,0);}catch(error){
@@ -143,7 +170,7 @@ async function gpu(xml,artifact,eligible,documentURL){
    if(pixel<a.width*a.height){changed[pixel*4]^=255;window.transport.checkPixels(a,changed);controlFrames.unsampledReadbackPixel={rgba:encode(changed),pixel:{x:pixel%a.width,y:Math.floor(pixel/a.width)},leanSamplesStillPass:true};}
   }
   return {...frame,controlFrames,...identity,samplesVerified:a.checks.length};
- },{xml,artifact,eligible,controls,documentURL}),'Candidate compile/GPU');
+ },{xml,artifact,eligible,controls,documentURL,isHTML}),'Candidate compile/GPU');
 }
 function fullPageRGBA(bytes,width,height){
  if(width===800&&height===600)return bytes;
@@ -166,12 +193,14 @@ try{
   if(!producer.svg.ready){row.reason='Raw GPU runtime unavailable: '+(producer.svg.reason??'--svg-lab not supplied');report.cases.push(row);continue;}
   try{
    const html=!c.test.endsWith('.svg');let supplied=null;
-   if(html){const result=await nativeHTML(c.test);row.nativeProducer=result.command?{command:result.command,stderr:result.stderr}:null;
+   if(html&&htmlLab&&!producer.html.ready){row.reason='Original HTML WASM producer unavailable: '+producer.html.reason;report.cases.push(row);continue;}
+   if(html&&!htmlLab){const result=await nativeHTML(c.test);row.nativeProducer=result.command?{command:result.command,stderr:result.stderr}:null;
     if(result.unavailable){row.reason=result.unavailable;report.cases.push(row);continue;}if(result.error)throw Error(result.error);supplied=result.artifact;
     if(supplied.error)throw Error(supplied.error);
    }
    const dimensions=inventory.resourceMetadata[c.test].rootSVGDimensions,eligible=dimensions&&((dimensions.width==null&&dimensions.height==null)||(dimensions.width==='100%'&&dimensions.height==='100%'));
-   const result=await gpu(files.get(c.test).toString('utf8'),supplied,Boolean(eligible),origin+'/'+c.test);
+   row.producerKind=html?(htmlLab?'html-browser-wasm':'html-native-cli'):'svg-browser-wasm';
+   const result=await gpu(files.get(c.test).toString('utf8'),supplied,Boolean(eligible),origin+'/'+c.test,html&&Boolean(htmlLab));
    if(result.artifactJSON){
     const artifact=Buffer.from(result.artifactJSON),name=String(index).padStart(4,'0')+'-artifact.json.gz';await writeFile(resolve(output,name),gzipSync(artifact));row.artifact={file:name,sha256:hash(artifact),wgslSha256:hash(Buffer.from(JSON.parse(result.artifactJSON).wgsl))};
     if(result.submittedCode)row.submittedShaderSha256=hash(Buffer.from(result.submittedCode));
