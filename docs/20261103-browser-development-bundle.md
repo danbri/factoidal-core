@@ -6,6 +6,14 @@ the complete Lean source and generated-C closure, engine hashes and the separate
 QuickJS pin before it writes a deterministic archive. The launcher verifies the
 inventory and probes the actual font adapter before binding a loopback server.
 
+A later host commit can reuse an ancestor engine only when every witnessed
+engine source file is byte-identical to that build commit and to the committed
+checkout. Generated C and binary hashes must still match, and the complete
+source/C dependency checks still apply. The manifest records `sourceCommit`
+for the host and `engineSourceCommit` for the engines separately. This permits
+UI fixes without recompiling unchanged Lean code; a changed Lean file cannot
+be admitted by simply editing its witness hash.
+
 The bundle contains the HTML/CSS UI, navigation and resource clients, document
 host, four Lean renderer/plan engine files, the QuickJS worker/runtime and MIT
 notice, font broker and native font adapter. The development fixtures are kept
@@ -45,9 +53,11 @@ Reports: `/tmp/factoidal-mvp-stack-document-fonts/report.json`,
 
 ## Packaging checks
 
-Seven structural/negative controls pass. They reject stale source, missing
+Ten structural/negative controls pass. They reject stale source, missing
 source/C dependencies, unreviewed initializer imports, wrong engine/dependency
-bytes and unsafe inputs. These structural fixtures do not claim to run Lean.
+bytes and unsafe inputs. The three additional controls admit a host-only
+descendant, reject changed Lean bytes even with a modified witness hash, and
+reject an unknown engine commit. These structural fixtures do not claim to run Lean.
 
 The separate integration check packages the actual runtime twice and compares
 the entire archives, extracts into a directory containing spaces, verifies the

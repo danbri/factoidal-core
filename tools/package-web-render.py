@@ -174,13 +174,20 @@ def package(core: Path, out: Path, archive: Path | None = None, source_commit: s
         raise ValueError('Requested source commit differs from checkout HEAD')
     witness_bytes = read_regular(core, BUILD + '/source-witness.json')
     witness = json.loads(witness_bytes)
-    if witness.get('format') != 'factoidal-web-render-source-witness-v1' or witness.get('commit') != head:
+    engine_commit = witness.get('commit', '')
+    if witness.get('format') != 'factoidal-web-render-source-witness-v1' or not re.fullmatch('[0-9a-f]{40}', engine_commit):
         raise ValueError('Missing or wrong-source build witness')
+    ancestry = subprocess.run(['git', '-C', str(core), 'merge-base', '--is-ancestor', engine_commit, head],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    if ancestry.returncode:
+        raise ValueError('Engine source commit is not an ancestor of this checkout')
     for group in ('files', 'generatedC', 'engines'):
         if not isinstance(witness.get(group), dict) or not witness[group]:
             raise ValueError('Missing build witness group: ' + group)
         for name, expected in witness[group].items():
             data = committed(core, name, head) if group == 'files' else read_regular(core, name)
+            if group == 'files' and data != git(core, 'show', engine_commit + ':' + safe_path(name)):
+                raise ValueError('Engine source differs from witnessed build commit: ' + name)
             if not isinstance(expected, str) or not re.fullmatch('[0-9a-f]{64}', expected) or sha(data) != expected:
                 raise ValueError('Stale ' + group + ' witness: ' + name)
     closure = source_closure(core)
@@ -256,6 +263,7 @@ No browser/GPU/conformance pass is implied by creating this bundle.
 '''
     products['README.txt'] = (readme.encode(), 0o644)
     manifest = {'format': 'factoidal-browser-development-v1', 'kind': 'development', 'sourceCommit': head,
+        'engineSourceCommit': engine_commit,
         'sourceWitnessSha256': sha(witness_bytes), 'runtimeSourceInputs': inputs,
         'builderSha256': sha(Path(__file__).read_bytes()),
         'quickjs': {'url': url[1], 'sha256': pin[1], 'notice': 'lab/web-render/script-engine/NOTICE'},

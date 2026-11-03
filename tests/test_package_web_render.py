@@ -123,6 +123,35 @@ class PackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'omits source dependency'):
             self.build()
 
+    def commit_change(self, name, content):
+        (self.core / name).write_bytes(content)
+        subprocess.run(['git', '-C', str(self.core), 'add', name], check=True)
+        subprocess.run(['git', '-C', str(self.core), '-c', 'user.name=Package Test',
+                        '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'change fixture'], check=True)
+
+    def test_host_commit_can_reuse_exact_ancestor_engine(self):
+        name = PKG.LAB + '/web-render/app.mjs'
+        self.commit_change(name, b'// new committed host\n')
+        manifest = self.build()
+        self.assertNotEqual(manifest['sourceCommit'], manifest['engineSourceCommit'])
+        self.assertEqual(manifest['engineSourceCommit'], self.witness['commit'])
+        self.assertEqual((self.base / 'bundle/lab/web-render/app.mjs').read_bytes(), b'// new committed host\n')
+
+    def test_changed_engine_source_cannot_reuse_ancestor_witness(self):
+        name = 'formal/lean4/L4Factoidal/Nested.lean'
+        self.commit_change(name, b'def nested := 2\n')
+        # Updating a source hash alone must not bind old binaries to new code.
+        self.witness['files'][name] = PKG.sha((self.core / name).read_bytes())
+        self.save_witness()
+        with self.assertRaisesRegex(ValueError, 'differs from witnessed build commit'):
+            self.build()
+
+    def test_unknown_engine_commit_refused(self):
+        self.witness['commit'] = '1' * 40
+        self.save_witness()
+        with self.assertRaisesRegex(ValueError, 'not an ancestor'):
+            self.build()
+
     def test_stale_generated_and_source_bytes_refused(self):
         generated = self.core / 'formal/lean4/.lake/build/ir/Fixture.c'
         generated.write_text('tampered')

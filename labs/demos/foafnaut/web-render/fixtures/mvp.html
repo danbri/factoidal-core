@@ -17,7 +17,8 @@ svg{display:block}
 </main><script>
 let clicks=0;
 document.getElementById('counter').textContent='QuickJS is ready. Clicks: 0';
-document.getElementById('change').addEventListener('click',function(){
+document.getElementById('change').addEventListener('click',function(event){
+  event.preventDefault();
   document.getElementById('counter').textContent='QuickJS changed the Lean DOM. Clicks: '+(++clicks);
 });
 </script></body></html>

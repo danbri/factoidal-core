@@ -8,7 +8,7 @@ export function makeNavigationFixture(){
   '/sheet.css':'body{background:red}',
   '/dynamic':'<!doctype html><base href="/nested/"><link rel="stylesheet" href="../dynamic.css"><p id="message">Before</p><a id="change" href="#changed">Change text</a><br><a href="../two">Next page</a><script src="../dynamic.js"></script>',
   '/dynamic.css':'body{margin:0;font-family:Arial;font-size:16px;line-height:24px;background:#f0f8ff}a{color:blue}',
-  '/dynamic.js':"let count=0;document.getElementById('message').textContent='Loaded';document.getElementById('change').addEventListener('click',()=>{count++;document.getElementById('message').textContent='Count '+count;});",
+  '/dynamic.js':"let count=0;document.getElementById('message').textContent='Loaded';document.getElementById('change').addEventListener('click',event=>{event.preventDefault();count++;document.getElementById('message').textContent='Count '+count;});",
   '/slow':'<!doctype html><p>Slow page</p>',
   '/bad-utf8':Buffer.from([0xff,0xfe,0x61]),
   '/large':'x'.repeat(1048577),

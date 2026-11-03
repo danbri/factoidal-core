@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-03 | [Browser document transactions](20261103-browser-document-transactions.md) | this commit | current — navigation rollback, dynamic CSS identity, cancellable script links and actual Chrome controls; independent fast host CI |
 | 2026-11-03 | [Checked browser development bundle](20261103-browser-development-bundle.md) | this commit | current — deterministic package, relocated Chrome/GPU tests and explicit external dependencies |
 | 2026-11-03 | [Browser alpha packaging audit](20261103-browser-alpha-packaging-audit.md) | this commit | current — actual document ABI gates and package scope |
 | 2026-11-03 | [Browser alpha release architecture](designissues/2026-11-03-browser-alpha-packaging.md) | this commit | current — fixed main commit, independent release candidate and npm capability boundary |
