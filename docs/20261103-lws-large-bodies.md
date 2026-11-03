@@ -37,3 +37,16 @@ per PUT at 1,000 to 16,000 resources; memory flat).
 - Per item: about 1 MiB or less; up to about 10 MiB now and then; not media.
 - Per storage: tens of thousands of resources in files mode (measured flat to 16,000).
 - Media: a blob store, with metadata and a link in LWS, until issue 1240's streaming bodies exist.
+
+## 2026-11-03 (evening): a maximum per write (built)
+
+- `L4Factoidal/LWS/Operations.lean`: `Config.maxBody` (default 16 MiB; `"maxBody"` in the storage
+  configuration, `openLwsStorage({ maxBody })`). A PUT, POST or PATCH whose content is larger is
+  answered 413 and changes nothing: theorem `step_tooLarge`.
+- `npm/factoidal/lws/server.mjs`: the HTTP host refuses a declared `Content-Length` over the limit
+  without reading the body, and stops reading a chunked body once it passes the limit; 413 either
+  way. So an oversized upload never reaches memory whole.
+- Tests: `npm/factoidal/test/lws-maxbody.test.mjs` (in-process over and at the limit, the default,
+  HTTP declared and chunked). `tests/lws/large-bodies.mjs` sets `maxBody` to 1 GiB, as a measurement.
+- Not done (issue 1240): a quota per storage and per agent (507), the files-mode default, chunked
+  sealing for media (the LFS-style blobs in the issue), and isolation under pressure.
