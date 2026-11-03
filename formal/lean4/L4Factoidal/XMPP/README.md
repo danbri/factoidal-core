@@ -632,3 +632,19 @@ real namespaces.
   `message_nonmember`. 8 `#guard`s; 1 in `Server.lean`.
 - `Server.lean`: `Config.gc3Domain`, `Out.gc3`. CLI: `xmpp-serve --gc3 gc3.<domain>`.
 - Not covered: knocking, configuration, history, MLS or any encryption, spaces, persistence.
+
+## 2026-11-03 (later): held stanzas in Lean, bounded (issue 1235; step 6, part 1)
+
+- `L4Factoidal/XMPP/Held.lean`: `hold` (refuses past `perAccount` 1,000 or `total` 100,000) and
+  `release` (hands back everything held for an account and empties its queue). Theorems:
+  `hold_perAccount`, `hold_refused`, `hold_limits`, `release_empties`, `release_returns`. The total
+  bound is checked by a `#guard`; its proof needs the one-queue-per-account invariant (to do).
+- `Wasm/Ops/XmppSession.lean`: the ops layer keeps the bound full JIDs (`bound`) and the held
+  queue (`held`). `Out.route` to an account with a bound session is delivered; otherwise it is held,
+  or, past a bound, a message is answered `resource-constraint` (RFC 6120 section 8.3.3.18).
+  `bindTransition` hands a newly bound account what was held, oldest first.
+- The JS host no longer decides holding; its `pending` map is a fallback for a session that closed
+  between the engine's decision and the delivery, bounded at 100.
+- Tests: `npm/factoidal/test/xmpp-mix.test.mjs` (the former 1235 xfail, now a check),
+  `xmpp-serve.test.mjs` (held, then delivered once on bind).
+- Persisting the held queue across a restart: issues 1237 and 1238.
