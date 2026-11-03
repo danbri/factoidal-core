@@ -85,3 +85,9 @@ UTF-8 boundaries, merged source clusters, RTL order and missing-glyph policy.
 The runtime driver additionally checks actual local HB/FT data through Lean.
 This is data transport validation; RTL paragraph layout and font rendering
 remain separate integration work. The decoder's JSON transport bound is16MiB.
+
+The v1 outline data has an implicit nonzero fill rule. The native producer
+refuses `FT_OUTLINE_EVEN_ODD_FILL` before writing JSON. An instrumented test build
+loads an actual font through FreeType and sets that flag to exercise the refusal;
+it is not evidence that the tested font requires even-odd filling. A future
+schema may transport the rule for direct admission into the shared scene.

@@ -11,6 +11,9 @@ from pathlib import Path
 import shutil
 import subprocess
 import unittest
+import tempfile
+import shlex
+import sys
 
 LAB = Path(__file__).resolve().parent.parent
 ADAPTER = LAB / '.build/font-shape'
@@ -115,6 +118,33 @@ class FontDataTests(unittest.TestCase):
         for bitmap in small['bitmaps'] + large['bitmaps']:
             self.assertEqual(len(bitmap['alpha']), bitmap['width']*bitmap['height'])
             self.assertTrue(all(0<=v<=255 for v in bitmap['alpha']))
+
+    def test_evenodd_outline_refused_before_any_json(self):
+        # Instrument ONLY a test build of the actual producer: FreeType still
+        # loads the real font, then this wrapper sets the unsupported fill flag.
+        # This is a refusal control, not evidence that this font uses that flag.
+        with tempfile.TemporaryDirectory(prefix='font-fill-refusal-') as directory:
+            temp = Path(directory)
+            header = temp / 'force-evenodd.h'
+            header.write_text("""#include <ft2build.h>
+#include FT_FREETYPE_H
+#include FT_OUTLINE_H
+static FT_Error force_evenodd(FT_Face face, FT_UInt glyph, FT_Int32 flags) {
+  FT_Error error = FT_Load_Glyph(face, glyph, flags);
+  if (!error) face->glyph->outline.flags |= FT_OUTLINE_EVEN_ODD_FILL;
+  return error;
+}
+#define FT_Load_Glyph force_evenodd
+""")
+            libraries = ['harfbuzz','freetype2'] + ([] if sys.platform == 'darwin' else ['openssl'])
+            flags = shlex.split(subprocess.check_output(['pkg-config','--cflags','--libs',*libraries], text=True))
+            binary = temp / 'instrumented-font-shape'
+            subprocess.run(['clang','-std=c11','-O2','-Wall','-Wextra','-Werror',
+                '-include',str(header),str(LAB / 'tools/font-shape.c'),*flags,'-o',str(binary)], check=True)
+            result = subprocess.run([str(binary),str(FONT),'A','20'], capture_output=True, timeout=20)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, b'')
+            self.assertIn(b'even-odd font outline fill unsupported', result.stderr)
 
     def test_invalid_inputs_fail_without_json(self):
         for args in [[str(FONT),'A','0'],[str(FONT),'A','513'],

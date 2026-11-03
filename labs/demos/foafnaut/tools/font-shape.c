@@ -129,6 +129,10 @@ int main(int argc,char **argv) {
         return fail("FreeType could not load outline");
       if(face->glyph->format!=FT_GLYPH_FORMAT_OUTLINE) return fail("non-outline glyph unsupported");
       if(FT_Outline_Check(&face->glyph->outline)) return fail("invalid glyph outline");
+      /* v1 transports nonzero contour geometry, not an outline fill-rule tag.
+       * Refuse a different rule before any JSON instead of changing its fill. */
+      if(face->glyph->outline.flags & FT_OUTLINE_EVEN_ODD_FILL)
+        return fail("even-odd font outline fill unsupported by font-data-v1");
       total_points+=(unsigned)face->glyph->outline.n_points;
       if(total_points>1048576) return fail("run exceeds1048576 outline points");
       seen[id]=1;
