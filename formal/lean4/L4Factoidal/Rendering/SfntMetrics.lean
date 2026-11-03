@@ -153,8 +153,10 @@ def Face.glyph (f : Face) (b : ByteArray) (c : Char) : Except String Nat := do
 structure NominalGlyph where
   id : Nat
   advance : Nat
-  /-- Unicode scalar offset of the source character. -/
+  /-- Cluster: index of the source character (Unicode scalar offset). -/
   cluster : Nat
+  /-- The code point this glyph was mapped from (kept through substitution). -/
+  codepoint : Nat := 0
   deriving Repr, BEq, Inhabited
 
 /-- One glyph for each character, by `cmap` and `hmtx` only (no GSUB/GPOS). -/
@@ -163,8 +165,16 @@ def Face.nominalRun (f : Face) (b : ByteArray) (text : String) : Except String (
   let mut i := 0
   for c in text.toList do
     let g ← f.glyph b c
-    out := out.push ⟨g, f.advances[g]!, i⟩
+    out := out.push { id := g, advance := f.advances[g]!, cluster := i, codepoint := c.toNat }
     i := i + 1
+  return out
+
+/-- One glyph for each (code point, source character index) pair. -/
+def Face.nominalOf (f : Face) (b : ByteArray) (cps : Array (Nat × Nat)) : Except String (Array NominalGlyph) := do
+  let mut out : Array NominalGlyph := Array.mkEmpty cps.size
+  for (cp, src) in cps do
+    let g ← if cp > 0x10FFFF || (0xD800 ≤ cp && cp ≤ 0xDFFF) then pure 0 else f.glyph b (Char.ofNat cp)
+    out := out.push { id := g, advance := f.advances[g]!, cluster := src, codepoint := cp }
   return out
 
 end L4Factoidal.Rendering.SfntMetrics

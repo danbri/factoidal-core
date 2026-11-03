@@ -58,7 +58,9 @@ def featureLookups (b : ByteArray) (tbl : Nat) (script : String) (features : Lis
   let nfl := u16 b featureList
   need b (featureList + 2) (6 * nfl) "feature records"
   let indices := (List.range nf).map (fun k => u16 b (lang + 6 + 2 * k)) ++ (if required == 0xFFFF then [] else [required])
-  let mut out : List (Nat × Nat) := []
+  -- One flag for each (stage, lookup index); reading them in order gives the
+  -- sorted, distinct list with no recursion.
+  let mut used : Array Bool := Array.replicate (2 * 65536) false
   for fi in indices do
     if fi ≥ nfl then throw "font.file.malformed: GSUB feature index"
     let r := featureList + 2 + 6 * fi
@@ -69,9 +71,12 @@ def featureLookups (b : ByteArray) (tbl : Nat) (script : String) (features : Lis
       let nl := u16 b (f + 2)
       need b (f + 4) (2 * nl) "feature lookups"
       for j in [0:nl] do
-        let e := (if tag == "rvrn" then 0 else 1, u16 b (f + 4 + 2 * j))
-        unless out.contains e do out := e :: out
-  return (out.toArray.qsort (fun a c => a.1 < c.1 || (a.1 == c.1 && a.2 < c.2))).toList
+        let stage := if tag == "rvrn" then 0 else 1
+        used := used.set! (stage * 65536 + u16 b (f + 4 + 2 * j)) true
+  let mut out : Array (Nat × Nat) := #[]
+  for k in [0:2 * 65536] do
+    if used[k]! then out := out.push (k / 65536, k % 65536)
+  return out.toList
 
 /-- The result of one lookup at one position. -/
 inductive Step where
@@ -326,7 +331,12 @@ def edit (c : Ctx) (run : Array NominalGlyph) (i : Nat) (step : Step) :
   | .ligate lig remove =>
     if lig ≥ c.f.numGlyphs then throw "font.file.malformed: GSUB glyph id beyond numGlyphs"
     let src := run[i]!
-    let run := run.set! i { src with id := lig, advance := c.f.advances[lig]! }
+    let mut run := run.set! i { src with id := lig, advance := c.f.advances[lig]! }
+    -- HarfBuzz merges the clusters of the whole matched range into the first.
+    let last := remove.foldl max i
+    for k in [i:last + 1] do
+      let g := run[k]!
+      run := run.set! k { g with cluster := min g.cluster src.cluster }
     let mut kept : Array NominalGlyph := #[]
     for k in [0:run.size] do
       unless remove.contains k do kept := kept.push run[k]!

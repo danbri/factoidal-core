@@ -96,10 +96,9 @@ def unicodeMarkRanges : Array (Nat × Nat) :=
 
 def isUnicodeMark (c : Nat) : Bool := unicodeMarkRanges.any fun (a, z) => a ≤ c && c ≤ z
 
-/-- Apply the default GPOS features to a substituted run. `cps` are the
-normalized code points the run was mapped from (`SfntNormalize.forFont`);
-glyph clusters index into them. -/
-def position (b : ByteArray) (dir : Array TableRecord) (text : String) (cps : Array Nat)
+/-- Apply the default GPOS features to a substituted run. A synthesized
+glyph class uses the glyph's source code point (`NominalGlyph.codepoint`). -/
+def position (b : ByteArray) (dir : Array TableRecord) (text : String)
     (run : Array NominalGlyph) (limits : Limits := {}) : Except String (Array Glyph) := do
   let mut out : Array Glyph := run.map fun g => { id := g.id, advance := g.advance, xOffset := 0, yOffset := 0, cluster := g.cluster }
   let gdef? := (dir.find? (·.tag == "GDEF")).map (·.offset)
@@ -110,7 +109,7 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String) (cps : Ar
     if hasGlyphClasses then gdefClasses b gdef? g.id
     else
       let (_, mc) ← gdefClasses b gdef? g.id
-      pure (if isUnicodeMark (cps[g.cluster]?.getD 0) then 3 else 1, mc)
+      pure (if isUnicodeMark g.codepoint then 3 else 1, mc)
   let isMark (k : Nat) : Bool := classes[k]!.1 == 3
   if let some gposRec := dir.find? (·.tag == "GPOS") then
     let gpos := gposRec.offset

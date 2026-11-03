@@ -174,7 +174,9 @@ def kernLookups (b : ByteArray) (gpos : Nat) (script : String) : Except String (
   need b features 2 "feature list"
   let nfl := u16 b features
   need b (features + 2) (6 * nfl) "feature records"
-  let mut out : List Nat := []
+  -- One flag for each possible lookup index; reading the flags in order
+  -- gives the sorted, distinct list with no recursion.
+  let mut used : Array Bool := Array.replicate 65536 false
   for k in [0:nf] do
     let fi := u16 b (lang + 6 + 2 * k)
     if fi ≥ nfl then throw "font.file.malformed: GPOS feature index"
@@ -185,9 +187,11 @@ def kernLookups (b : ByteArray) (gpos : Nat) (script : String) : Except String (
       let nl := u16 b (f + 2)
       need b (f + 4) (2 * nl) "feature lookups"
       for j in [0:nl] do
-        let l := u16 b (f + 4 + 2 * j)
-        unless out.contains l do out := l :: out
-  return (out.toArray.qsort (· < ·)).toList
+        used := used.set! (u16 b (f + 4 + 2 * j)) true
+  let mut out : Array Nat := #[]
+  for l in [0:65536] do
+    if used[l]! then out := out.push l
+  return out.toList
 
 /-- Positioned glyph after kerning: advance and x offset in font units. -/
 structure Positioned where

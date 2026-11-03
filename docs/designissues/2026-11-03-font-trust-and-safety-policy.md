@@ -161,3 +161,50 @@ with source URL, version, licence and sha256, fetched and checked by a tool in
 the manner of `tools/fetch-builds.sh`. Fonts are not committed and not in the
 npm package. The `safe` mode font is Lean source and needs no fetch. The
 default binding stops being the local Arial file.
+
+## 7. Implementation, 2026-11-03 (branch `claude/lean-shaper`)
+
+The Lean shaper of decision 2 runs in the browser, in a local instance on port
+8104. It is not on `main`, and the frozen ports 8099 to 8103 do not use it.
+
+Pipeline (`formal/lean4/L4Factoidal/Rendering/`):
+
+| Stage | Module | Content |
+|---|---|---|
+| Font check | `FontPolicy` | sfnt/TTC table directory, table classes, modes, refusals |
+| Tables | `SfntMetrics` | `head`, `hhea`, `maxp`, `hmtx`; `cmap` formats 4 and 12 |
+| Normalization | `SfntNormalize` | HarfBuzz "composed" mode on the UAX #15 tables of `Unicode.Normalization` |
+| Substitution | `SfntSubst` | GSUB `rvrn`, `ccmp`, `locl`, `rlig`, `liga`, `clig`, `calt`; types 1, 2, 4, 5, 6 (formats 1 to 3), 7 |
+| Positioning | `SfntGpos` | GPOS `abvm`, `blwm`, `dist`, `kern`, `mark`, `mkmk`; types 1, 2, 4, 6, 9 |
+| Run | `SfntShape` | clusters at HarfBuzz's monotone-grapheme level, as UTF-8 byte offsets |
+| Adapter | `LeanFontShape` (`lake build l4font-shape`) | same arguments as `font-shape` |
+
+`l4font-shape` shapes in Lean, then runs `font-shape FONT TEXT PX FACE
+--glyphs SCRIPT SPEC`. In that mode HarfBuzz does not run: FreeType loads the
+glyphs that Lean chose and adds outlines and rasters. The record says
+`"harfbuzzVersion": "none (Lean shaper)"`. Without `--glyphs`, `font-shape`
+gives output byte-identical to the frozen binary (4 of 4 records compared).
+
+Refused with a message (`font.layout.unsupported`, naming the lookup or code
+point): strong right-to-left text; GSUB types 3 and 8; GPOS types 3, 5, 7, 8;
+mark filtering sets; a combining mark in a font with no GPOS table, where
+HarfBuzz uses its own fallback mark positioning (a heuristic, not OpenType).
+
+Measured:
+
+- `labs/demos/foafnaut/tools/check-lean-shaper.py`, complete records against
+  the HarfBuzz path at 20 px: 54 same, 0 different, 2 refused (out of 56), over
+  Ahem, Arial, Lato (OFL), Liberation Sans Bold (OFL); Latin, Greek, Cyrillic,
+  emoji, ligatures, kerning, combining marks. The 2 refusals are Ahem with
+  combining marks (no GPOS).
+- `check-document-fonts.mjs` with the Lean adapter: PASS, native and WASM
+  engines give identical document results from Lean-shaped records.
+- `check-document-browser.mjs` against port 8104 in Chrome with WebGPU: PASS
+  (4 groups: external CSS and JS, QuickJS click, reflow, source edit).
+- Time for one adapter call, `Hello` in Arial: 50 ms (Lean) against 10 ms
+  (HarfBuzz path). Ahem: 30 ms. The FreeType child is 10 ms of each.
+
+Not done: RTL and the Arabic, Indic and USE shapers; outlines in Lean (`glyf`,
+CFF); the HarfBuzz test suite (licence record first); `safe` mode in `Layout`;
+the policy reaching the broker for AAT (`morx` is not applied by the Lean
+shaper, so on this path the AAT refusal holds).
