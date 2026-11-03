@@ -97,3 +97,41 @@ RTL, fallback, painted collapsed-space glyphs, and missing exact integer
 sizes. General paragraph itemization, browser UA font/paragraph defaults and
 margin collapse remain open. The forthcoming canonical curve compiler must
 be the same model for SVG and font outlines.
+
+## Fresh WASM/native and actual-font image evidence
+
+The frozen `af1c1dd87` supplied-data implementation now builds and runs in the
+actual browser WASM frontend. Renderer WASM SHA-256:
+`2cc861f917d5ee8bd1097b8569cacbbdc8e5be0bf97658c217b3906b8bf32e2e`.
+Fresh standalone native executable SHA-256:
+`ec95971ab8130ae1d59a841c26b5e541d957b7ba0ea20f9f2be16fc5c874840c`.
+
+`web-render/check-fonts.mjs` runs the original HTML fixture and independently
+loads the pinned Ahem bytes into the Chrome oracle. Candidate styling,
+wrapping, glyph positions, source spans and SVG alignment are all generated
+by Lean; the host transfers supplied font records and raw GPU buffers.
+
+All five complete native/WASM artifacts compare exactly. All five whole
+native CPU/browser GPU images compare exactly (10,240 pixels each). Actual
+HarfBuzz glyph IDs and the font SHA agree with the producer data. CSS color,
+width, font size and text mutations change actual pixels. Missing word/size,
+wrong family, empty data, and requesting Ahem on the bitmap-only route refuse
+output. The 10px following SVG agrees at the parent-baseline position.
+
+The independent Chrome comparison **fails**, with 40, 60, 40, 40 and 73
+mismatched pixels for the base/width/color/text/size images; maximum channel
+differences are 26–29. The first case differs only on column x=40 across
+rows 0–39: Chrome paints a faint text-edge fringe where the sampled geometry
+is white. Font-edge filtering is a possible explanation, not a proven cause.
+No tolerance, oracle source change or image exclusion was used. The test
+records `ORACLE_MISMATCH` and exits 1, while retaining all images and successful
+runtime controls. This is real-font data consumption, not completed browser
+font raster equivalence or a complete HTML/text MVP.
+
+Full evidence: `/tmp/factoidal-web-font-native-gpu/report.json`. GPU-only
+capture: `/tmp/factoidal-web-font-gpu-all/report.json`. Exact original WASM
+source witness: `/tmp/factoidal-web-font-gpu/source-witness.json`. Font-data
+array SHA-256:
+`9aa616b08fd7769dff5533721dcd4c9fa113ef3550724042d0989135a6c990a7`.
+The fixture and test are committed; the font bytes remain in the separately
+pinned upstream corpus rather than being copied into the renderer source.
