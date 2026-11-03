@@ -203,7 +203,9 @@ private def lowerStack (todo : List LowerFrame) (out : List PaintItem) : List Pa
 termination_by lowerWeight todo
 decreasing_by all_goals simp [lowerWeight] <;> omega
 
-private def LowerFrame.paints (f : LowerFrame) : List PaintItem :=
+-- Proof-only reference semantics: this helper must not emit a compiled caller
+-- of Node.lowerList before its @[csimp] replacement is installed.
+private noncomputable def LowerFrame.paints (f : LowerFrame) : List PaintItem :=
   (Node.lowerList f.parent f.revGroups.reverse f.nodes).map (applyClips f.clips)
 
 /-- The reverse accumulator followed by the reference meaning of all pending
