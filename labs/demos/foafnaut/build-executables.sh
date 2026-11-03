@@ -12,6 +12,9 @@ fi
 OUT=${1:-$LAB/.build/dist}
 mkdir -p "$OUT" "$LAB/.build/native"
 OUT=$(cd "$OUT" && pwd)
+# Rebuild the small source/proof closure on clean native packaging runners.
+# Existing downloaded WASM files are retained; this does not compile WASM.
+bash "$LAB/build-engines.sh" --source-only
 bash "$LAB/test.sh" --skip-build
 # The static browser SVG uses the checked Lean scene/policy backend. An
 # extracted native package does not contain Lean sources or a Lean toolchain.
