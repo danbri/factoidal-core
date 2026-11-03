@@ -121,3 +121,45 @@ MUC as designed above: `L4Factoidal/XMPP/Muc.lean` (9 theorems, 9 `#guard`s), th
 `Server.lean` (`Out.muc`, 3 `#guard`s), the rooms in the ops layer, `xmpp-serve --muc`. Tests:
 `npm/factoidal/test/xmpp-muc.test.mjs`. Record row: `xmpp-serve --muc` in
 `docs/designissues/2026-10-28-feature-combination-safety.md`.
+
+## Step 4 design: MIX (XEP-0369 MIX-CORE, XEP-0405 MIX-PAM), 2026-11-03
+
+MIX differs from MUC where it matters for state: a MUC occupant is a SESSION (a full JID; leaving
+or disconnecting ends it); a MIX participant is an ACCOUNT (a bare JID; membership survives
+disconnects, and messages go to the bare JID, held for an offline account like any message).
+
+Scope for the first landing:
+
+- **Service.** `Config.mixDomain : Option String` (CLI `--mix mix.<domain>`). Off by default.
+  Channels in memory; not persistent across a restart (stated).
+- **Create.** An IQ set `<create xmlns='urn:xmpp:mix:core:1' channel='name'/>` to the service
+  (XEP-0369 section 7.3.2). The creator is recorded as owner. Joining a channel that does not exist
+  is `item-not-found`.
+- **Join and leave through the user's server (MIX-PAM).** An IQ set to the user's OWN bare JID with
+  `<client-join xmlns='urn:xmpp:mix:pam:2' channel='…'><join xmlns='urn:xmpp:mix:core:1'>…`
+  joins that bare JID (XEP-0405 section 5.1). The result carries the participant id
+  (`<join id='…'>`). `<client-leave>` leaves. A direct `<join/>` to the channel is refused
+  (`not-allowed`): MIX-PAM servers are to proxy joins. Joining twice is one participant.
+- **Messages.** A groupchat message from a participant to `channel@service` goes to every
+  participant's BARE JID (held for offline accounts, `Out.route`), from the channel's bare JID with
+  `<mix xmlns='urn:xmpp:mix:core:1'><nick>…</nick></mix>` (XEP-0369 section 7.1.2). The sender gets
+  its copy the same way. A non-participant gets `not-acceptable` and nobody else gets anything.
+- **JID-hidden.** The `<mix/>` element never carries `<jid>`: participants see nicks only.
+- **Discovery.** disco#info on the service (identity `conference`/`mix`, feature
+  `urn:xmpp:mix:core:1`, `#create-channel`), disco#items (the channels), disco#info on a channel;
+  the server's own disco#info lists `urn:xmpp:mix:pam:2` when MIX is on.
+- **Not in this landing.** PubSub nodes (participants, info, config) and their subscriptions,
+  presence in channels, MAM, nick registration, private messages, channel destruction,
+  administration. The `<subscribe/>` elements of a join are echoed back as given; no node is
+  served.
+- **Theorems wanted.** Fan-out to exactly the participants' bare JIDs; every delivery from the
+  channel with the sender's own nick; a non-participant reaches nobody else; joining twice keeps
+  one entry per bare JID (bare JIDs distinct); nicks distinct; leaving removes the participant.
+
+## Step 4 result (2026-11-03)
+
+MIX as designed above: `L4Factoidal/XMPP/Mix.lean` (8 theorems, 8 `#guard`s), the hand-off and
+MIX-PAM in `Server.lean` (3 `#guard`s), the channels in the ops layer, `xmpp-serve --mix`. Tests:
+`npm/factoidal/test/xmpp-mix.test.mjs`. Record row: `xmpp-serve --mix`. One gap found while
+writing the row: messages held for an offline account sit in the host's in-memory queue with no
+bound; that was already true of direct messages.

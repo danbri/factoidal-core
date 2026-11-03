@@ -34,6 +34,10 @@ Specifications implemented, by section:
   XEP-0045               multi-user chat, when `Config.mucDomain` is set: a
                          stanza to that domain is handed to `XMPP/Muc.lean`
                          as `Out.muc` (2026-11-03)
+  XEP-0369, XEP-0405     MIX channels, when `Config.mixDomain` is set: a
+                         stanza to that domain, and a MIX-PAM join or leave
+                         to the user's own JID, go to `XMPP/Mix.lean` as
+                         `Out.mix` (2026-11-03)
 
 NOT implemented, stated rather than silently skipped:
   * TLS itself. STARTTLS is decided here (offer it, require it, accept
@@ -82,6 +86,7 @@ def nsRoster : String := "jabber:iq:roster"
 def nsDiscoInfo : String := "http://jabber.org/protocol/disco#info"
 def nsTls : String := "urn:ietf:params:xml:ns:xmpp-tls"
 def nsDiscoItems : String := "http://jabber.org/protocol/disco#items"
+def nsMixPam : String := "urn:xmpp:mix:pam:2"
 
 /-! ## The roster (RFC 6121 section 2)
 
@@ -185,6 +190,11 @@ structure Config where
   none for no MUC. A bound session's stanza addressed there becomes
   `Out.muc`; the room logic is `L4Factoidal.XMPP.Muc`. -/
   mucDomain : Option String := none
+  /-- The XEP-0369 MIX service's domain (e.g. `mix.example.com`), or none for
+  no MIX. A stanza addressed there, and a MIX-PAM `<client-join/>` or
+  `<client-leave/>` (XEP-0405) in an IQ to the user's own JID, become
+  `Out.mix`; the channel logic is `L4Factoidal.XMPP.Mix`. -/
+  mixDomain : Option String := none
   deriving Inhabited
 
 def Config.accountOf (c : Config) (user : String) : Option Account :=
@@ -212,6 +222,10 @@ inductive Out where
   hand it to the room service with the sender's full JID, taken from the
   session, never from the stanza. The service answers with `routeFull`s. -/
   | muc (fromFull : String) (text : String)
+  /-- A stanza for the MIX service (`Config.mixDomain`), with the sender's full
+  JID from the session. The service answers with `route` (a channel message
+  to an account, which may be held) and `routeFull` (an IQ answer). -/
+  | mix (fromFull : String) (text : String)
   /-- Replace that bare JID's roster file with this exact text. -/
   | saveRoster (bareJid : String) (encoded : String)
   /-- Record this full JID as available or not, so other connections can
@@ -536,6 +550,12 @@ def Config.isMuc (c : Config) (st : Stanza) : Bool :=
   | some d, some t => t.domainpart == d
   | _, _ => false
 
+/-- Is this stanza addressed to the MIX service of this server? -/
+def Config.isMix (c : Config) (st : Stanza) : Bool :=
+  match c.mixDomain, st.to with
+  | some d, some t => t.domainpart == d
+  | _, _ => false
+
 /-- Does this JID text carry a resourcepart? -/
 def hasResource (t : String) : Bool :=
   ((Jid.parse t).bind (·.resourcepart)).isSome
@@ -568,6 +588,13 @@ def handleIq (s : Session) (env : Env) (st : Stanza) (raw : String) (bare full :
   | none => handleLocal ty
 where
   handleLocal (ty : String) : Env × List Out :=
+    -- XEP-0405 section 5: MIX-PAM, a join or leave sent to the user's own
+    -- server, which acts for the account at the MIX service.
+    if s.cfg.mixDomain.isSome &&
+       ((childByNs st.payload nsMixPam (some "client-join")).isSome ||
+        (childByNs st.payload nsMixPam (some "client-leave")).isSome) then
+      (env, [.mix full (render (Core.Stanza.toXml { st with from_ := Jid.parse full }))])
+    else
     let roster := childByNs st.payload nsRoster (some "query")
     let session := childByNs st.payload nsSession (some "session")
     let disco := childByNs st.payload nsDiscoInfo (some "query")
@@ -612,10 +639,11 @@ where
         | some _ =>
           (env, [.send (iqResult st.id none
             [.element "query" [⟨"xmlns", nsDiscoInfo⟩]
-              [ .element "identity"
+              ([ .element "identity"
                   [⟨"category", "server"⟩, ⟨"type", "im"⟩, ⟨"name", "Factoidal XMPP"⟩] [],
                 .element "feature" [⟨"var", nsRoster⟩] [],
-                .element "feature" [⟨"var", nsDiscoInfo⟩] [] ]])])
+                .element "feature" [⟨"var", nsDiscoInfo⟩] [] ] ++
+                (if s.cfg.mixDomain.isSome then [.element "feature" [⟨"var", nsMixPam⟩] []] else []))])])
         | none =>
           match childByNs st.payload nsDiscoItems (some "query") with
           | some _ =>
@@ -623,7 +651,7 @@ where
             -- so a client can find it (XEP-0045 section 6.1).
             (env, [.send (iqResult st.id none
               [.element "query" [⟨"xmlns", nsDiscoItems⟩]
-                (s.cfg.mucDomain.toList.map (fun d => .element "item" [⟨"jid", d⟩] []))])])
+                ((s.cfg.mucDomain.toList ++ s.cfg.mixDomain.toList).map (fun d => .element "item" [⟨"jid", d⟩] []))])])
           | none =>
           if ty == "result" || ty == "error" then (env, [])
           else
@@ -765,6 +793,8 @@ def stepMain (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × Li
         | some st =>
           if s.cfg.isMuc st then
             (s, env, [.muc full (render (Core.Stanza.toXml { st with from_ := Jid.parse full }))])
+          else if s.cfg.isMix st then
+            (s, env, [.mix full (render (Core.Stanza.toXml { st with from_ := Jid.parse full }))])
           else
           match st.kind with
           | .iq =>
@@ -1333,6 +1363,32 @@ private def boundMuc : Session :=
   | [.send t] => has t "jid=\"conference.example.com\""
   | _ => false
 
+/-! ### MIX hand-off checks (2026-11-03) -/
+
+private def boundMix : Session :=
+  { Session.init { testCfg with mixDomain := some "mix.example.com" } with stage := .bound "juliet" "balcony" }
+
+-- MIX-PAM: a client-join to one's own bare JID goes to the MIX service, sender from the session.
+#guard
+  let (_, _, outs) := step boundMix ⟨[]⟩ (.element "<iq type='set' id='j1' to='juliet@example.com' from='mallory@evil.example/x'><client-join xmlns='urn:xmpp:mix:pam:2' channel='coven@mix.example.com'><join xmlns='urn:xmpp:mix:core:1'/></client-join></iq>")
+  match outs with
+  | [.mix "juliet@example.com/balcony" text] => has text "client-join" && !has text "mallory"
+  | _ => false
+
+-- Without MIX the same IQ is handled locally (service-unavailable), not handed off.
+#guard
+  let (_, _, outs) := step boundJuliet ⟨[]⟩ (.element "<iq type='set' id='j2' to='juliet@example.com'><client-join xmlns='urn:xmpp:mix:pam:2' channel='coven@mix.example.com'/></iq>")
+  match outs with
+  | [.send t] => has t "service-unavailable"
+  | _ => false
+
+-- A channel message goes to the MIX service; the server's disco#info offers MIX-PAM.
+#guard
+  let (_, _, a) := step boundMix ⟨[]⟩ (.element "<message to='coven@mix.example.com' type='groupchat'><body>x</body></message>")
+  let (_, _, b) := step boundMix ⟨[]⟩ (.element "<iq type='get' id='d3' to='juliet@example.com'><query xmlns='http://jabber.org/protocol/disco#info'/></iq>")
+  (match a with | [.mix _ _] => true | _ => false) &&
+  (match b with | [.send t] => has t "urn:xmpp:mix:pam:2" | _ => false)
+
 /-! ## IQ routing (2026-11-03): never held
 
 https://github.com/danbri/factoidal/issues/1234 and /1139. An IQ get or set
@@ -1347,7 +1403,9 @@ theorem handleIq_no_route (s : Session) (env : Env) (st : Stanza) (raw bare full
   generalize childByNs st.payload nsSession (some "session") = se
   generalize childByNs st.payload nsDiscoInfo (some "query") = di
   generalize childByNs st.payload nsDiscoItems (some "query") = dit
-  cases tgt <;> cases r <;> cases se <;> cases di <;> cases dit <;> simp only [] <;>
+  generalize childByNs st.payload nsMixPam (some "client-join") = pj
+  generalize childByNs st.payload nsMixPam (some "client-leave") = pl
+  cases tgt <;> cases r <;> cases se <;> cases di <;> cases dit <;> cases pj <;> cases pl <;> simp only [] <;>
     simp [apply_ite (f := Prod.snd), apply_ite (f := fun l : List Out => Out.route b t ∈ l)]
 
 end L4Factoidal.XMPP.Server

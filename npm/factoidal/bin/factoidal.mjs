@@ -749,7 +749,7 @@ Specification: https://solidproject.org/TR/protocol`,
 usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
                             [--accounts FILE] [--cert FILE --key FILE [--starttls]]
                             [--ws-port N [--ws-path PATH] [--ws-origin ORIGIN]...]
-                            [--muc DOMAIN]
+                            [--muc DOMAIN] [--mix DOMAIN]
 
 Starts a Node TCP server that runs one engine session per connection and
 answers every byte through the engine's xmppSessionFeed operation.
@@ -784,6 +784,10 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
                    conference.example.com: temporary rooms, made by the first
                    join and gone with the last occupant; no history, no
                    configuration, no persistence (L4Factoidal/XMPP/Muc.lean)
+  --mix DOMAIN     also serve XEP-0369 MIX channels at DOMAIN, e.g. mix.example.com,
+                   joined through this server (XEP-0405 MIX-PAM); channels are
+                   made by an IQ <create/>, kept in memory only, JID-hidden; no
+                   PubSub nodes, no archive (L4Factoidal/XMPP/Mix.lean)
 
 The server makes no protocol decision. Stream negotiation, SASL PLAIN and
 SCRAM-SHA-256, resource binding, the roster, presence subscription and
@@ -1196,7 +1200,7 @@ const VALUE_OPTIONS = {
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
-  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'ws-port', 'ws-path', 'ws-origin', 'muc']),
+  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'mix']),
   'webdav-serve': new Set(['port', 'host', 'users', 'guest', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
@@ -2864,6 +2868,13 @@ async function commandXmppServe (positional, options) {
     }
     settings.mucDomain = options.muc
   }
+  if (options.mix !== undefined) {
+    if (typeof options.mix !== 'string' || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(options.mix)) {
+      throw new UsageError('--mix needs a domain name, e.g. mix.example.com')
+    }
+    if (options.mix === options.muc) throw new UsageError('--mix and --muc need different domains')
+    settings.mixDomain = options.mix
+  }
   if (options['ws-port'] !== undefined) {
     const wsPort = Number(options['ws-port'])
     if (!Number.isInteger(wsPort) || wsPort < 0 || wsPort > 65535) throw new UsageError('--ws-port needs a port number')
@@ -2897,6 +2908,7 @@ async function commandXmppServe (positional, options) {
         ` (${running.xmpp.accounts} accounts, state ${positional[0]}` +
         (startTls ? ', STARTTLS required)' : useTls ? ', direct TLS)' : ', PLAINTEXT: no TLS on this listener)'))
     if (settings.mucDomain) err(`xmpp-serve: multi-user chat (XEP-0045) at ${settings.mucDomain}`)
+    if (settings.mixDomain) err(`xmpp-serve: MIX channels (XEP-0369, joined by XEP-0405) at ${settings.mixDomain}`)
   }
   if (running.wsOrigin && !quiet) {
     err(`xmpp-serve: XMPP over WebSocket on ${running.wsOrigin}` +
