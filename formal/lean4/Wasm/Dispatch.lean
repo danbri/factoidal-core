@@ -806,7 +806,8 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
       withArgs (fun args =>
         match args with
         | [a] => pure (Ops.lwsViewPlan a)
-        | args => pure (errJson s!"lwsViewPlan expects 1 argument, got {args.length}"))
+        | [a, b] => pure (Ops.lwsViewPlan a (some b))
+        | args => pure (errJson s!"lwsViewPlan expects 1 or 2 arguments, got {args.length}"))
   | "lwsDatasetView" =>
       withArgs (fun args =>
         match args with

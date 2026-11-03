@@ -1326,22 +1326,48 @@ Details: `lws/README.md`, `solid/server/README.md`,
 
 `openLwsDataset(storageRootUrl, { fetch, auth, engine })` from
 `@factoidal/core/lws/dataset` crawls one LWS storage with the LWS client and
-answers it as an RDF dataset (https://github.com/danbri/factoidal/issues/1011):
+answers it as an RDF dataset (https://github.com/danbri/factoidal/issues/1011,
+version 2 of the view):
 
+- the default graph is empty;
+- the first named graph is the table of contents. Its name is the storage
+  description IRI: the target of the `https://www.w3.org/ns/lws#storage` link
+  in the linkset of the storage root (the result member `toc`). It holds
+  `<container> lws:items <member>` for each member of each listing read, each
+  member's `rdf:type` (`lws:Container` or `lws:DataResource`), for a data
+  resource its `dcterms:format`, `schema:size` (`xsd:long`) and
+  `dcterms:modified` (`xsd:dateTime`) from the listing, and
+  `<resource> <http://www.iana.org/assignments/relation/linkset> <linkset>`
+  for each linkset read;
 - each RDF resource is one named graph, named by the resource IRI;
-- the default graph holds `<container> ldp:contains <member>` for each member
-  of each container listing read;
-- a resource whose media type has no RDF reader is left out and listed in
-  `skipped` with the reason.
+- each linkset read is one named graph, named by the linkset IRI, with one
+  triple `<context> <relation> <target>` per link (RFC 9264 §4.2). A
+  relation type that is an absolute IRI stays as it is; `items` is
+  `lws:items`; `type` is `rdf:type`; every other registered name, in lower
+  case, is `http://www.iana.org/assignments/relation/<name>` (RFC 8288
+  Appendix A.2). Target attributes (`title`, `type`, `hreflang`) are not in
+  the view;
+- a resource whose media type has no RDF reader has no document graph (it is
+  in the table of contents and has a linkset graph) and is listed in
+  `skipped` with the reason. A link that has no relation IRI or no `href`,
+  and a document or linkset whose IRI is already the name of another graph,
+  are listed in `skipped` too.
+
+When no linkset read of the storage root gives the storage description IRI,
+`openLwsDataset` throws: the view needs that IRI as the name of its table of
+contents.
 
 LWS 1.0 does not define this view; it is Factoidal's definition
-(`formal/lean4/L4Factoidal/LWS/DatasetView.lean`). The result has `dataset`
-(a `Dataset`), `evidence` (`[{ resource, etag, lastModified }]`, every RDF
-resource read), `skipped`, `graphs` (the number of named graphs),
-`query(sparql, options)`, which answers `{ result, evidence }` (`result` as
-`Dataset.query` answers it), and `dispose()`. `auth` is passed to
-`createLwsClient` (`{ subjectToken, subjectTokenType }`, `{ selfIssued }` or
-`{ session }`).
+(`formal/lean4/L4Factoidal/LWS/DatasetView.lean`; design record
+`docs/designissues/2026-10-25-lws-dataset-view.md`). The result has `dataset`
+(a `Dataset`), `toc` (the name of the table-of-contents graph), `evidence`
+(`[{ resource, etag, lastModified }]` for every RDF resource read, then
+`[{ resource, linkset, etag }]` for every linkset read), `skipped`, `graphs`
+(the number of named graphs: the table of contents, the documents and the
+linksets), `query(sparql, options)`, which answers `{ result, evidence }`
+(`result` as `Dataset.query` answers it), and `dispose()`. `auth` is passed
+to `createLwsClient` (`{ subjectToken, subjectTokenType }`, `{ selfIssued }`
+or `{ session }`).
 
 ```js
 import { listen } from '@factoidal/core/lws'
@@ -1356,22 +1382,23 @@ if ((await lwsDatasetOpsAvailable(engine)).available) {
   const client = await createLwsClient({ engine })
   await client.create(root, { slug: 'a.ttl', mediaType: 'text/turtle', body: '<> <http://e/p> 1 .' })
   const lws = await openLwsDataset(root, { engine })
-  const { result, evidence } = await lws.query('SELECT ?g WHERE { GRAPH ?g { ?s ?p ?o } }')
-  console.log(result.length, evidence[0].etag)   // 1 and the ETag of a.ttl
+  const { result } = await lws.query(
+    `SELECT ?m WHERE { GRAPH <${lws.toc}> { <${root}> <https://www.w3.org/ns/lws#items> ?m } }`)
+  console.log(result.length, lws.graphs)   // 1 and 4: the table of contents, a.ttl, two linksets
   lws.dispose()
   await running.close()
 }
 ```
 
-Limits of this first version: a full crawl on every open (one `list` per
-container and one `GET` per RDF resource); no use of a search index; no
-caching; metadata resources are not crawled; the crawl is a sequence of
-GETs, so a write during the crawl can give a dataset that the storage never
-held at one instant. The Lean source theorem `lwsSource_query_sound`
-(`Dataflow/LwsSource.lean`) rests on the named assumption
-`lwsReadsAtSnapshot`: each GET returned the representation its ETag
-identifies at the snapshot instant. A TriG or N-Quads resource gives its
-default graph only.
+Limits of this version: a full crawl on every open (one `list` per
+container, one `GET` per RDF resource, and one `HEAD` and one `GET` per
+resource for its linkset); no use of a search index; no caching; the crawl
+is a sequence of GETs, so a write during the crawl can give a dataset that
+the storage never held at one instant. The Lean source theorem
+`lwsSource_query_sound` (`Dataflow/LwsSource.lean`) rests on the named
+assumption `lwsReadsAtSnapshot`: each GET returned the representation (or
+the linkset) its ETag identifies at the snapshot instant. A TriG or N-Quads
+resource gives its default graph only.
 
 ## XPath 4.0, XQuery 4.0 and XSLT 4.0
 

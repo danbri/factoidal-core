@@ -9,8 +9,10 @@ under one named assumption, `lwsReadsAtSnapshot` (`ReadsAtSnapshot`):
 
   each GET returned the representation that its entity tag identifies at the
   snapshot instant (LWS 1.0 Core, "Read Resource"; RFC 9110 §8.8.3), the
-  graph is the graph that representation denotes, and the container listings
-  were the storage's containment at that instant.
+  graph is the graph that representation denotes, each linkset GET returned
+  the linkset (RFC 9264) that its entity tag identifies at that instant, and
+  the container listings (the containment and the listing members) and the
+  storage description IRI were those of the storage at that instant.
 
 The storage at an instant (`StorageAt`) is not observable by a client; it is
 the object the assumption is about. HTTP gives no snapshot read of several
@@ -37,39 +39,58 @@ open L4Factoidal.SPARQL.StoreDataset
 open L4Factoidal.Storage.PlannerSoundness
 open L4Factoidal.LWS.DatasetView
 
-/-- A storage at one instant: for each resource IRI, the entity tag of its
-current representation and the RDF graph that representation denotes (`none`
-for no resource or a non-RDF one), and the containment pairs of its
-containers. -/
+/-- A storage at one instant: its storage description IRI; for each resource
+IRI, the entity tag of its current representation and the RDF graph that
+representation denotes (`none` for no resource or a non-RDF one); the
+containment pairs and the listing members of its containers; and for each
+resource IRI, the IRI, the entity tag and the links of its linkset (`none`
+for no linkset). -/
 structure StorageAt where
+  storage : WfIri
   current : WfIri → Option (String × Graph)
   members : List (WfIri × WfIri)
+  entries : List Entry
+  linksetOf : WfIri → Option (WfIri × String × List Link)
 
 /-- The snapshot the storage would have given for the resources of `s`: the
-storage's containment, and each read with the storage's entity tag and graph. -/
+storage's description IRI, containment and listing members, each read with
+the storage's entity tag and graph, and each linkset read with the storage's
+linkset. -/
 def StorageAt.at (st : StorageAt) (s : Snapshot) : Snapshot :=
-  { members := st.members
+  { storage := st.storage
+    members := st.members
+    entries := st.entries
     reads := s.reads.map (fun r => match st.current r.resource with
       | some (e, g) => { r with etag := e, graph := g }
-      | none => r) }
+      | none => r)
+    linksets := s.linksets.map (fun l => match st.linksetOf l.resource with
+      | some (li, e, ls) => { l with linkset := li, etag := e, links := ls }
+      | none => l) }
 
 /-- **The named assumption**: the reads are the storage at the instant. -/
 def ReadsAtSnapshot (st : StorageAt) (s : Snapshot) : Prop :=
-  st.members = s.members ∧ ∀ r ∈ s.reads, st.current r.resource = some (r.etag, r.graph)
+  st.storage = s.storage ∧ st.members = s.members ∧ st.entries = s.entries ∧
+    (∀ r ∈ s.reads, st.current r.resource = some (r.etag, r.graph)) ∧
+    (∀ l ∈ s.linksets, st.linksetOf l.resource = some (l.linkset, l.etag, l.links))
 
 /-- Under the assumption the storage's snapshot is the read snapshot. -/
 theorem StorageAt.at_eq {st : StorageAt} {s : Snapshot} (h : ReadsAtSnapshot st s) :
     st.at s = s := by
-  obtain ⟨members, reads⟩ := s
-  obtain ⟨hm, hr⟩ := h
-  show Snapshot.mk st.members _ = _
-  rw [hm]
+  obtain ⟨storage, members, entries, reads, linksets⟩ := s
+  obtain ⟨hs, hm, he, hr, hl⟩ := h
+  show Snapshot.mk st.storage st.members st.entries _ _ = _
+  rw [hs, hm, he]
   congr 1
-  conv => rhs; rw [← List.map_id reads]
-  apply List.map_congr_left
-  intro r hr'
-  rw [hr r hr']
-  rfl
+  · conv => rhs; rw [← List.map_id reads]
+    apply List.map_congr_left
+    intro r hr'
+    rw [hr r hr']
+    rfl
+  · conv => rhs; rw [← List.map_id linksets]
+    apply List.map_congr_left
+    intro l hl'
+    rw [hl l hl']
+    rfl
 
 /-- The record of a snapshot: the indexed record of the certified view of the
 reads, with the den of the storage's view. -/
