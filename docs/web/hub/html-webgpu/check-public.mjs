@@ -24,6 +24,20 @@ try{
  await page.locator('#source').fill('<div style="font-family:Ahem">A</div>');await page.locator('#render').click();await page.waitForFunction(()=>window.webRenderResult?.error,{},{timeout:90000});assert.match(await page.locator('#status').textContent(),/unsupported font family/);assert(await page.locator('#output').isHidden());report.checks.push('unsupported font scope is explicit and removes stale output');
  await page.locator('#source').fill(original);await page.locator('#render').click();await page.waitForFunction(()=>window.webRenderResult?.artifact&&!document.querySelector('#render').disabled,{},{timeout:90000});
  await page.screenshot({path:resolve(outDir,'desktop.png'),fullPage:true});await page.setViewportSize({width:390,height:1050});await page.screenshot({path:resolve(outDir,'mobile.png'),fullPage:true});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));report.checks.push('mobile layout fits viewport and recovers after refusal');
+ await page.setViewportSize({width:1300,height:1000});
+ await page.locator('#fixture').selectOption('graph.nt');
+ await page.waitForFunction(()=>window.webRenderResult?.artifact?.rdf?.triples===3&&!document.querySelector('#render').disabled,{},{timeout:90000});
+ const rdf=await page.evaluate(()=>window.webRenderResult);assert(rdf.artifact.webRender.glyphRuns.some(r=>r.text.includes('Alice')));
+ assert(rdf.rgba.some((v,i)=>i%4===0&&v===0&&rdf.rgba[i+1]===0&&rdf.rgba[i+2]===255));
+ const rdfTarget=rdf.artifact.webRender.links.find(r=>r[1]==='https://e.test/alice');assert(rdfTarget);
+ const rdfPoint=await page.locator('#output').evaluate((c,r)=>{const b=c.getBoundingClientRect();return{x:b.left+c.clientLeft+(r[2]+r[4]/2)*c.clientWidth/c.width,y:b.top+c.clientTop+(r[3]+r[5]/2)*c.clientHeight/c.height};},rdfTarget);
+ await page.mouse.move(rdfPoint.x,rdfPoint.y);await page.waitForFunction(()=>document.querySelector('#output').style.cursor==='pointer');await page.mouse.click(rdfPoint.x,rdfPoint.y);
+ await page.waitForFunction(()=>document.querySelector('#events').textContent.includes('https://e.test/alice'));
+ assert.equal(logs.length,2);assert(!requests.some(r=>r.method==='POST'));await page.screenshot({path:resolve(outDir,'rdf.png'),fullPage:true});
+ const rdfSource=await page.locator('#source').inputValue();await page.locator('#source').fill(rdfSource+'malformed');await page.locator('#render').click();
+ await page.waitForFunction(()=>window.webRenderResult?.error?.includes('N-Triples error'),{},{timeout:90000});assert(await page.locator('#output').isHidden());
+ await page.locator('#fixture').selectOption('default.html');await page.waitForFunction(()=>window.webRenderResult?.artifact&&!window.webRenderResult.artifact.rdf&&!document.querySelector('#render').disabled,{},{timeout:90000});
+ report.checks.push('RDF example parses and renders in the same worker, original IRI clicks log, malformed suffix clears stale image, HTML mode recovers');
  const base=new URL(url),outside=requests.filter(r=>!r.url.startsWith(base.origin)&&!r.url.startsWith('data:')&&!r.url.startsWith('blob:'));assert.deepEqual(outside,[]);assert(requests.some(r=>r.url.endsWith('/runtime/web-render.wasm')));assert(requests.some(r=>r.url.endsWith('/runtime/render-plan.wasm')));assert.deepEqual(errors,[]);report.checks.push('runtime assets stay same origin under the Pages path prefix');
  report.requests=requests;report.click=event;report.console=logs;report.status='PASS';
 }finally{await browser.close();await writeFile(resolve(outDir,'report.json'),JSON.stringify(report,null,2)+'\n');}
