@@ -6,7 +6,6 @@ REPO=$(cd "$LAB/../../.." && pwd)
 PROJECT="$REPO/formal/lean4"
 . "$LAB/toolchain-versions.env"
 [ "$(deno --version | sed -n '1s/^deno \([^ ]*\).*/\1/p')" = "$DENO_VERSION" ] || { echo "Use Deno $DENO_VERSION" >&2; exit 1; }
-emcc --version | sed -n '1p' | grep -q "$EMSCRIPTEN_VERSION" || { echo "Use Emscripten $EMSCRIPTEN_VERSION" >&2; exit 1; }
 BUILD="$LAB/.build"
 hash_file() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 RUNTIME=${FACTOIDAL_WASM_RUNTIME_CACHE:-${L4_WASM_WORK:-$BUILD/runtime}}
@@ -18,6 +17,11 @@ while [ $# -gt 0 ]; do
     *) echo "usage: $0 [--source-only] [--runtime-cache DIR]" >&2; exit 2 ;;
   esac
 done
+# Native source preparation does not compile/link WASM or require Emscripten.
+if [ "$SOURCE_ONLY" != true ]; then
+  emcc --version | sed -n '1p' | grep -q "$EMSCRIPTEN_VERSION" || { echo "Use Emscripten $EMSCRIPTEN_VERSION" >&2; exit 1; }
+fi
+export LEAN_NUM_THREADS=${LEAN_NUM_THREADS:-2}
 mkdir -p "$BUILD/ir" "$BUILD/olean/L4Factoidal/XML" "$BUILD/obj" "$BUILD/engines"
 RUNTIME=$(mkdir -p "$RUNTIME" && cd "$RUNTIME" && pwd)
 LOCK=${FOAFNAUT_BUILD_LOCK:-$BUILD/lean.lock}
