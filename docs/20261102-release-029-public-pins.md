@@ -33,3 +33,18 @@ version and browser URL from `docs/_data/factoidalRelease.js`.
 it must be applied after the release manager confirms npm publication.
 The test change removes the stale 0.28.0 literals that otherwise fail the
 next site build. This patch does not claim to test CDN delivery.
+
+## Prepared publication update
+
+The isolated branch `codex/release-0.29.0-public-pins`, based on
+`8fcf8d787a55cf26ab8e561798a5662e0f40e7d7`, contains the prepared update.
+Its five public files name 0.29.0; the page test reads the expected version
+and browser URL from `factoidalRelease.js`. The release candidate keeps the
+published 0.28.0 pins. This branch waits for actual npm registry availability
+of `@factoidal/core@0.29.0` before its changes can reach the public site.
+
+Validation on this branch: Node 22 ran the actual
+`tests/hub/compositor_page_test.mjs`, including its bounded Eleventy build:
+1 pass, 0 fail, 0 skipped. The build uses the candidate checkout's installed
+Eleventy dependencies through a temporary `docs/node_modules` symlink, removed after the test. No
+CDN request or npm publication is part of this test.
