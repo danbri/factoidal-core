@@ -270,6 +270,9 @@ export async function openLwsStorage (options = {}) {
   // The pagination threshold and page size of container listings; the
   // engine decides what it means (L4Factoidal/LWS/Pagination.lean).
   if (typeof options.pageSize === 'number') config.pageSize = options.pageSize
+  // The largest content of one write; the engine answers 413 above it
+  // (L4Factoidal/LWS/Operations.lean, step_tooLarge; issue 1240).
+  if (typeof options.maxBody === 'number') config.maxBody = options.maxBody
   // Authorization (L4Factoidal/LWS/Authorization.lean). `auth` is passed
   // through unread; `insecureNoAuth` is the explicit development mode.
   // With neither, the engine enforces authorization with no trusted
@@ -594,13 +597,30 @@ export async function openLwsStorage (options = {}) {
   }
 }
 
-/** Read a Node request body as its bytes. */
-function readBody (request) {
+/** The engine's default `maxBody` (L4Factoidal/LWS/Operations.lean). */
+export const DEFAULT_MAX_BODY = 16 * 1024 * 1024
+
+/**
+ * Read a Node request body as its bytes, at most `limit` of them. Past the
+ * limit (by Content-Length, or while reading a chunked body) it resolves
+ * `null` and stops reading, so an oversized upload never reaches memory
+ * whole (issue 1240); the caller answers 413, as the engine would.
+ */
+function readBody (request, limit = DEFAULT_MAX_BODY) {
   return new Promise((resolve, reject) => {
+    const declared = Number(request.headers['content-length'])
+    if (Number.isFinite(declared) && declared > limit) { resolve(null); return }
     const chunks = []
-    request.on('data', (chunk) => chunks.push(chunk))
+    let size = 0
+    let over = false
+    request.on('data', (chunk) => {
+      if (over) return
+      size += chunk.length
+      if (size > limit) { over = true; chunks.length = 0; resolve(null); request.resume(); return }
+      chunks.push(chunk)
+    })
     request.on('error', reject)
-    request.on('end', () => resolve(new Uint8Array(Buffer.concat(chunks))))
+    request.on('end', () => { if (!over) resolve(new Uint8Array(Buffer.concat(chunks))) })
   })
 }
 
@@ -685,7 +705,14 @@ export async function createLwsServer (options = {}) {
         method: request.method,
         target: request.url,
         headers: headerPairs(request.rawHeaders),
-        body: await readBody(request)
+        body: await readBody(request, typeof settings.maxBody === 'number' ? settings.maxBody : DEFAULT_MAX_BODY)
+      }
+      if (record.body === null) {
+        const limit = typeof settings.maxBody === 'number' ? settings.maxBody : DEFAULT_MAX_BODY
+        response.writeHead(413, { 'content-type': 'application/problem+json', connection: 'close' })
+        response.end(JSON.stringify({ type: 'about:blank', title: 'Content Too Large', status: 413,
+          detail: `the content is over ${limit} bytes, the limit of this storage` }))
+        return
       }
     } catch (error) {
       onError(error)

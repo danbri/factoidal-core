@@ -378,6 +378,10 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
                 | some body => .ok (some body)
                 | none => .error "config: \"owner\" and \"baseIri\" must be IRIs with no space, <, >, \", {, }, |, ^, ` or \\"
         -- The pagination threshold and page size (LWS §Pagination); default 100.
+        -- The largest content of one write (issue 1240; default 16 MiB).
+        let maxBody := match j.field? "maxBody" with
+          | some (.number s) => (s.toNat?).getD (16 * 1024 * 1024)
+          | _ => 16 * 1024 * 1024
         let pageSize := match j.field? "pageSize" with
           | some (.number s) => (s.toNat?).getD 100
           | _ => 100
@@ -440,7 +444,7 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
           | _, _ => .ok {}
         let authz := { authz with access := side.access }
         let (moved, results, notif, signingKey) := (side.moved, side.results, side.notif, side.signingKey)
-        .ok { cfg := { baseIri, owner, agent, pageSize, moveContainers, linksetPut, paginateAlways,
+        .ok { cfg := { baseIri, owner, agent, maxBody, pageSize, moveContainers, linksetPut, paginateAlways,
                        redirectsMax, deliveryLimit, deliveryWindow, listenAddress, listenPort,
                        localAddresses, controllerInbox, cors },
               moved,
