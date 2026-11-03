@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factoidal Lean browser</title><link rel="stylesheet" href="/style.css"></head><body>
+<header><h1>Factoidal Lean browser</h1><p>HTML, DOM, CSS, text flow and link picking run in Lean. WebGPU paints the scene.</p></header>
+<main>
+<section class="browser" aria-label="Browser">
+ <form id="navigation" class="navigation"><button id="back" type="button" disabled aria-label="Back">←</button><button id="forward" type="button" disabled aria-label="Forward">→</button><button id="reload" type="button" disabled>Reload</button><input id="address" aria-label="Page URL" type="url" placeholder="https://example.org/" required><button id="go" type="submit">Go</button><button id="stop" type="button" disabled>Stop</button></form>
+ <p id="current-url" class="current-url">Local example</p>
+ <div class="viewport"><canvas id="output" aria-label="Lean rendered page"></canvas></div>
+ <pre id="status" role="status">Loading Lean engine...</pre>
+ <p class="scope">Native network access through this loopback server. UTF-8 HTML, external CSS, bounded classic scripts and an exact Arial font binding. Lean rejects unsupported HTML or CSS. Fragments retain their URL but do not scroll. <label class="inline"><input id="follow-links" type="checkbox" checked> Follow rendered links</label></p>
+</section>
+<section class="editor" aria-label="Source and diagnostics"><details open><summary>HTML, CSS or RDF source</summary><label for="source">Input bytes decoded as UTF-8</label><textarea id="source" spellcheck="false"></textarea><div class="controls"><label>Format <select id="syntax"><option value="html">HTML + CSS</option><option value="ntriples">RDF N-Triples</option></select></label><button id="example" type="button">Load example</button><label>Width <input id="width" type="number" value="760" min="1" max="4096"></label><label>Height <input id="height" type="number" value="520" min="1" max="4096"></label><button id="render" type="button">Render input</button></div></details>
+ <details><summary>Layout boxes and glyph runs</summary><pre id="layout"></pre></details><details open><summary>Navigation and link events</summary><pre id="events" aria-live="polite"></pre></details>
+</section>
+</main><script type="module" src="/app.mjs"></script></body></html>
