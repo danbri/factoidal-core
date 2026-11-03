@@ -39,6 +39,46 @@ def namespaceTree (dom : DOM.Dom) : Nat → Nat → Except String XML.NamespaceN
     else if n.type == .comment then return .other (.comment n.data)
     else throw "unsupported node in embedded SVG DOM"
 
+/-- Convert the original HTML element subtree bottom-up. Every original child
+index survives, including text/comments; no host extraction or XML reparse. -/
+def documentNamespaceTree (dom : DOM.Dom) : Except String (Nat × XML.NamespaceNode) := do
+  let some document := dom.nodes[0]? | throw "HTML document root missing"
+  let some root := document.kids.find? (fun id => DOM.Dom.isHtmlElement (dom.get id) "html")
+    | throw "HTML element root missing"
+  let mut values : Std.TreeMap Nat XML.NamespaceNode := {}
+  let mut pending := [(false,root)]
+  for _ in [:2*dom.size+1] do
+    match pending with
+    | [] =>
+      let some tree := values.get? root | throw "HTML namespace root not constructed"
+      return (root,tree)
+    | (finished,id)::rest =>
+      let some node := dom.nodes[id]? | throw "invalid node in HTML namespace tree"
+      pending := rest
+      if node.type == .element then
+        if !finished then pending := node.kids.toList.map (fun child => (false,child)) ++ ((true,id)::rest)
+        else
+          let children ← node.kids.toList.mapM (fun child =>
+            match values.get? child with | some tree => .ok tree | none => .error "HTML namespace child missing")
+          let attrs := (node.attrs.toList.filter (fun a => a.ns != some DOM.xmlnsNS)).map fun a =>
+            ({name := ⟨a.ns,a.lname⟩,value := a.value} : XML.NamespaceAttribute)
+          values := values.insert id (.element ⟨node.ns,node.lname⟩ attrs children)
+      else if node.type == .text || node.type == .cdata then
+        values := values.insert id (.other (.text node.data))
+      else if node.type == .comment then values := values.insert id (.other (.comment node.data))
+      else throw "unsupported node in original HTML namespace document"
+  throw "HTML namespace conversion exceeds DOM arena"
+
+def sourcePath (dom : DOM.Dom) (root : Nat) : Nat → Nat → List Nat → Except String (List Nat)
+  | 0,_,_ => throw "SVG original source path exceeds DOM arena"
+  | fuel+1,id,path => do
+    if id == root then return path
+    let some node := dom.nodes[id]? | throw "SVG source path node missing"
+    let some parent := node.parent | throw "SVG root is outside original HTML document"
+    let some p := dom.nodes[parent]? | throw "SVG source path parent missing"
+    let some index := p.kids.findIdx? (· == id) | throw "SVG source path child index missing"
+    sourcePath dom root fuel parent (index::path)
+
 /-- Embedded style sheets are read from their DOM text nodes. No host selector, computed-style or layout API participates in this pipeline. -/
 def styleSource (dom : DOM.Dom) : String := Id.run do
   let mut sheets : List String := []
@@ -48,11 +88,29 @@ def styleSource (dom : DOM.Dom) : String := Id.run do
       sheets := text :: sheets
   return String.intercalate "\n" sheets.reverse
 
+def styleRules (dom : DOM.Dom) : Except String (List Rendering.CSS.Rule) := do
+  for node in dom.nodes do
+    if DOM.Dom.isHtmlElement node "link" then
+      let rel := ((Rendering.CSS.attrValue node "rel").toLower.replace "\t" " " |>.replace "\n" " " |>.replace "\r" " ").splitOn " "
+      if rel.contains "stylesheet" && Rendering.CSS.hasAttribute node "href" then
+        throw "unsupported external HTML stylesheet without supplied resource transport"
+    if node.type == .element && node.ns == some DOM.svgNS && node.lname == "style" then
+      let text := node.kids.foldl (fun text id => text ++ (dom.get id).data) ""
+      for rule in ← Rendering.CSS.parse text do
+        for (target,id) in dom.nodes.zipIdx do
+          if rule.selectors.any (Rendering.CSS.selectorMatches dom id) then
+            if target.ns == some DOM.htmlNS ||
+                (target.ns == some DOM.svgNS && target.lname == "svg" &&
+                 (target.parent.map (fun p => (dom.get p).ns != some DOM.svgNS)).getD true &&
+                 rule.declarations.any (fun d => Rendering.CSS.htmlProperties.contains d.property)) then
+              throw "unsupported SVG stylesheet affecting HTML layout or outer SVG computed style"
+  Rendering.CSS.parse (styleSource dom)
+
 /-- SVG embedding is injected only at the frontend adapter boundary. Tests can
 supply an independent shape producer without changing CSS/layout semantics. -/
 def renderDOM (dom : DOM.Dom) (width height : Nat)
     (embedding : Rendering.Layout.Embedding) : Except String (Rendering.Scene × Array Rendering.Layout.Box) := do
-  let rules ← Rendering.CSS.parse (styleSource dom)
+  let rules ← styleRules dom
   Rendering.Layout.render dom rules asciiFont embedding width height
 
 end WebRender
@@ -62,8 +120,7 @@ open L4Factoidal
 
 /-- CSS dimensions and overflow belong to HTML layout for the embedded root.
 SVG paint declarations remain in the existing SVG frontend. -/
-private def embeddedRoot (root : XML.NamespaceNode) : Except String XML.NamespaceNode := do
-  let .element name attrs children := root | throw "embedded SVG root must be an element"
+private def embeddedAttributes (attrs : List XML.NamespaceAttribute) : Except String (List XML.NamespaceAttribute) := do
   let mut out : List XML.NamespaceAttribute := []
   for attr in attrs do
     if attr.name.namespace_.isNone && attr.name.localPart == "style" then
@@ -75,14 +132,13 @@ private def embeddedRoot (root : XML.NamespaceNode) : Except String XML.Namespac
         out := {attr with value} :: out
     else if attr.name.namespace_.isNone && ["overflow","color","visibility","display"].contains attr.name.localPart then pure ()
     else out := attr :: out
-  return .element name out.reverse children
+  return out.reverse
 
-def embedding (dom : DOM.Dom) (id : Nat) (style : Rendering.CSS.Computed) (width height : Float) : Except String (List Rendering.Node) := do
-  if Float.ofNat width.toUInt32.toNat != width || Float.ofNat height.toUInt32.toNat != height then
-    throw "unsupported fractional embedded SVG viewport"
-  let root ← embeddedRoot (← namespaceTree dom 64 id)
-  let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
-  let scene ← NativeSVG.parseRoot root width.toUInt32.toNat height.toUInt32.toNat inherited
+private def embeddedRoot (root : XML.NamespaceNode) : Except String XML.NamespaceNode := do
+  let .element name attrs children := root | throw "embedded SVG root must be an element"
+  return .element name (← embeddedAttributes attrs) children
+
+private def placeSVG (scene : NativeSVG.Scene) (id : Nat) (style : Rendering.CSS.Computed) (width height : Float) : List Rendering.Node :=
   let m := scene.mapping
   let transform : Rendering.Transform := ⟨m.sx,0,0,m.sy,m.tx-m.minX*m.sx,m.ty-m.minY*m.sy⟩
   let background := match style.background with
@@ -92,12 +148,36 @@ def embedding (dom : DOM.Dom) (id : Nat) (style : Rendering.CSS.Computed) (width
   let content := if style.clipOverflow then
     Rendering.Node.clipped none transform ⟨0,0,width,height,Rendering.identity⟩ tree
     else .group none transform tree
-  return background ++ [content]
+  background ++ [content]
+
+def embedding (dom : DOM.Dom) (id : Nat) (style : Rendering.CSS.Computed) (width height : Float) : Except String (List Rendering.Node) := do
+  if Float.ofNat width.toUInt32.toNat != width || Float.ofNat height.toUInt32.toNat != height then
+    throw "unsupported fractional embedded SVG viewport"
+  let root ← embeddedRoot (← namespaceTree dom 64 id)
+  let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
+  let scene ← NativeSVG.parseRoot root width.toUInt32.toNat height.toUInt32.toNat inherited
+  return placeSVG scene id style width height
+
+/-- One source-bound index per render, shared by all embedded SVG roots. -/
+def makeEmbedding (dom : DOM.Dom) : Except String Rendering.Layout.Embedding := do
+  if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
+    return embedding dom
+  if dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
+    throw "unsupported HTML base href without explicit document URL/base transport"
+  let (root,tree) ← documentNamespaceTree dom
+  let context ← NativeSVG.ReferenceContext.create tree
+  return fun id style width height => do
+    if Float.ofNat width.toUInt32.toNat != width || Float.ofNat height.toUInt32.toNat != height then
+      throw "unsupported fractional embedded SVG viewport"
+    let path ← sourcePath dom root (dom.size+1) id []
+    let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
+    let scene ← NativeSVG.parseRootInContext context path width.toUInt32.toNat height.toUInt32.toNat inherited embeddedAttributes
+    return placeSVG scene id style width height
 
 def render (html : String) (width height : Nat) : Except String (Rendering.Scene × Array Rendering.Layout.Box) := do
   if html.length > 1048576 then throw "unsupported HTML input exceeding 1048576 characters"
   let dom := DOM.parseHtmlDocument html
-  renderDOM dom width height (embedding dom)
+  renderDOM dom width height (← makeEmbedding dom)
 
 private def array (xs : List String) := "[" ++ String.intercalate "," xs ++ "]"
 private def runJSON (r : Rendering.GlyphRun) : String :=

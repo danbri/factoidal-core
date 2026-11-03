@@ -12,8 +12,8 @@ def render (html fontData : String) (width height : Nat) :
   if html.length > 1048576 then throw "unsupported HTML input exceeding 1048576 characters"
   let face ← Rendering.FontProvider.Face.decode fontData
   let dom := DOM.parseHtmlDocument html
-  let rules ← Rendering.CSS.parse (WebRender.styleSource dom)
-  let (scene,boxes) ← Rendering.Layout.render dom rules (.ofFace face) (WebRender.embedding dom) width height
+  let rules ← WebRender.styleRules dom
+  let (scene,boxes) ← Rendering.Layout.render dom rules (.ofFace face) (← WebRender.makeEmbedding dom) width height
   return (scene,boxes,face)
 
 @[export web_render_font_compile]

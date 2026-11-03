@@ -23,4 +23,16 @@ private def overBudget : Rendering.Scene := {
   width := 32,height := 32,mapping := {viewportWidth := 32,viewportHeight := 32},
   tree := [.paint ⟨none,{geometry := .path [.path ⟨0,0⟩ (List.replicate 513 (.line ⟨0,0⟩)) true]}⟩]}
 #guard (WebRenderSVG.toScene overBudget).toOption.isNone
+
+-- Original child indices include text/comments, and hidden SVG roots still
+-- contribute document-wide fragment targets. href wins over xlink:href.
+private def crossRoot := "<style>body{margin:0}svg{display:block}</style><!--before--><svg style='display:none'><circle id='c' cx='16' cy='16' r='16' fill='orange'/><rect id='r' width='32' height='32' fill='red'/></svg>\n<!--between--><svg width='32' height='32' xmlns:xlink='http://www.w3.org/1999/xlink'><use href='#r' xlink:href='#c'/></svg>"
+#guard (pixel crossRoot 0 0).toOption == some (1,0,0)
+#guard (pixel crossRoot 31 31).toOption == some (1,0,0)
+#guard (pixel (crossRoot.replace "href='#r'" "href='#c'") 0 0).toOption == some (1,1,1)
+-- Resource and outer-root style boundaries must be explicit failures.
+#guard (WebRender.render "<link rel='stylesheet' href='x.css'><svg/>" 32 32).toOption.isNone
+#guard (WebRender.render "<base href='https://example.org/'><svg/>" 32 32).toOption.isNone
+#guard (WebRender.render "<svg><style>svg{color:red}</style></svg>" 32 32).toOption.isNone
+#guard (pixel "<style>body{margin:0}svg{display:block;width:32px;height:32px}</style><svg><style>rect{fill:red}</style><rect width='32' height='32'/></svg>" 0 0).toOption == some (1,0,0)
 end WebRenderCurveTests

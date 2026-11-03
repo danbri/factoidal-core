@@ -6,7 +6,7 @@ open L4Factoidal
 
 def render (source : String) (width height : Nat) : Except String (Rendering.Scene × Array Rendering.Layout.Box × Nat) := do
   let (graph,dom) ← Rendering.RdfView.parse source
-  let (scene,boxes) ← WebRender.renderDOM dom width height (WebRender.embedding dom)
+  let (scene,boxes) ← WebRender.renderDOM dom width height (← WebRender.makeEmbedding dom)
   return (scene,boxes,graph.length)
 
 @[export web_render_rdf_compile]

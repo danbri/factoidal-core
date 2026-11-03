@@ -15,6 +15,8 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-03 | [Original HTML document context for embedded SVG](20261103-html-svg-document-context.md) | this commit | current — original DOM paths and cross-root source guards; linked runtime and original browser comparison next |
+| 2026-11-03 | [Reuse WebGPU sessions for editor changes](20261103-gpu-edit-session-reuse.md) | 50f735802 | current — bounded full-buffer updates, exact whole-image and stale-request controls; published runtime qualification separate |
 | 2026-11-03 | [Prepared path sampling in the Lean renderer](20261103-lean-path-sampling-preparation.md) | this commit | current — exact prepared path/polygon source proofs and emitted-C hoisting; runtime speed measurement remains |
 | 2026-11-03 | [One canonical path for HTML, SVG and real fonts](20261103-shared-path-fonts.md) | this commit | current — exact SVG/cache adapters and real Arial CPU text; combined runtime, document-wide refs and broader font conformance remain |
 | 2026-11-03 | [SVG references across HTML SVG roots](designissues/2026-11-03-svg-document-references.md) | this commit | current — source-bound document context, absolute paths, original bases and native cross-root regressions; compiled HTML integration pending |
