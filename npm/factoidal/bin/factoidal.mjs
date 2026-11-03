@@ -749,6 +749,7 @@ Specification: https://solidproject.org/TR/protocol`,
 usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
                             [--accounts FILE] [--cert FILE --key FILE [--starttls]]
                             [--ws-port N [--ws-path PATH] [--ws-origin ORIGIN]...]
+                            [--muc DOMAIN]
 
 Starts a Node TCP server that runs one engine session per connection and
 answers every byte through the engine's xmppSessionFeed operation.
@@ -779,6 +780,10 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
                    http://localhost:5173 (repeatable); a request from any
                    other Origin is refused 403, and one with no Origin
                    (not a browser) is accepted only when no --ws-origin is given
+  --muc DOMAIN     also serve XEP-0045 multi-user chat rooms at DOMAIN, e.g.
+                   conference.example.com: temporary rooms, made by the first
+                   join and gone with the last occupant; no history, no
+                   configuration, no persistence (L4Factoidal/XMPP/Muc.lean)
 
 The server makes no protocol decision. Stream negotiation, SASL PLAIN and
 SCRAM-SHA-256, resource binding, the roster, presence subscription and
@@ -1191,7 +1196,7 @@ const VALUE_OPTIONS = {
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
-  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'ws-port', 'ws-path', 'ws-origin']),
+  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'ws-port', 'ws-path', 'ws-origin', 'muc']),
   'webdav-serve': new Set(['port', 'host', 'users', 'guest', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
@@ -2853,6 +2858,12 @@ async function commandXmppServe (positional, options) {
     settings.key = await fs.readFile(options.key)
   }
   if (startTls) settings.startTls = true
+  if (options.muc !== undefined) {
+    if (typeof options.muc !== 'string' || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(options.muc)) {
+      throw new UsageError('--muc needs a domain name, e.g. conference.example.com')
+    }
+    settings.mucDomain = options.muc
+  }
   if (options['ws-port'] !== undefined) {
     const wsPort = Number(options['ws-port'])
     if (!Number.isInteger(wsPort) || wsPort < 0 || wsPort > 65535) throw new UsageError('--ws-port needs a port number')
@@ -2885,6 +2896,7 @@ async function commandXmppServe (positional, options) {
     err(`xmpp-serve: listening on ${running.origin} for domain ${running.xmpp.domain}` +
         ` (${running.xmpp.accounts} accounts, state ${positional[0]}` +
         (startTls ? ', STARTTLS required)' : useTls ? ', direct TLS)' : ', PLAINTEXT: no TLS on this listener)'))
+    if (settings.mucDomain) err(`xmpp-serve: multi-user chat (XEP-0045) at ${settings.mucDomain}`)
   }
   if (running.wsOrigin && !quiet) {
     err(`xmpp-serve: XMPP over WebSocket on ${running.wsOrigin}` +

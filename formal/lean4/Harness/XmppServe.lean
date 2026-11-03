@@ -203,6 +203,9 @@ def performOut (h : Host) (seq : Nat) : Out → IO Bool
   -- so `step` never asks for the upgrade. If it did, closing is the only
   -- safe answer: this process cannot do a TLS handshake.
   | .startTls => return true
+  -- This harness never sets `Config.mucDomain`, so `step` never hands a
+  -- stanza to a room service; the rooms live in the wasm ops layer.
+  | .muc _ _ => return false
 
 /-- Drain this session's mailbox: read every file, unlink it, and hand
 its bytes to `Server.deliver`, which decides whether the session may

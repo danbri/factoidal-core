@@ -573,3 +573,24 @@ Step 2 of `docs/20261102-xmpp-starttls.md`.
   https://github.com/danbri/factoidal/issues/1139. Tests: 5 `#guard`s in `Server.lean`,
   `npm/factoidal/test/xmpp-iq-routing.test.mjs` (5), and the former xfail in
   `tests/webdav/xmpp.mjs`, now a check.
+
+## 2026-11-03 (later): MUC, XEP-0045 (step 3)
+
+- `L4Factoidal/XMPP/Muc.lean`: `Muc.step : Service → full JID → Stanza → Service × List Delivery`
+  over shared, temporary rooms. Join (instant room, status 110 and 201, the subject), nick conflict,
+  groupchat, private messages, leave, disco#info and disco#items. A `Delivery` goes to one
+  occupant's full JID; `Body` has no field for a real JID.
+- `Server.lean`: `Config.mucDomain`; a bound session's stanza to that domain becomes
+  `Out.muc fromFull text`, with the sender from the session; disco#items on the server names the
+  service.
+- `Wasm/Ops/XmppSession.lean`: one `Muc.Service` per server; `.muc` runs `Muc.step` and performs
+  each delivery as `routeFull`; `xmppSessionClose` and `xmppWsClose` run `Muc.leaveAll` and return
+  the deliveries.
+- Host and CLI: `xmpp-serve --muc conference.<domain>` (`mucDomain` in `listen`).
+- Theorems: `groupchat_recipients`, `groupchat_from_sender`, `byReal_real`,
+  `groupchat_nonoccupant`, `privateMsg_one`, `joinRoom_nodup`, `leaveRoom_gone`, `put_empty`,
+  `leaveRoom_nodup`. 9 `#guard`s in `Muc.lean`, 3 in `Server.lean`.
+- Not in this step, stated in the module header: nick change, kick, ban, voice, configuration,
+  passwords, members-only rooms, history, subject change, persistent rooms. Real JIDs are sent to
+  nobody, moderators included.
+- MIX (XEP-0369, step 4) and GC3 (step 5) are next.

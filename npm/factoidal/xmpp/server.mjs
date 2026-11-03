@@ -132,6 +132,8 @@ export async function openXmppServer (options = {}) {
   if (typeof options.saltB64 === 'string') config.saltB64 = options.saltB64
   if (typeof options.iterationCount === 'number') config.iterationCount = options.iterationCount
   if (typeof options.tlsCarrier === 'boolean') config.tlsCarrier = options.tlsCarrier
+  // XEP-0045 room service (L4Factoidal/XMPP/Muc.lean); off unless named.
+  if (typeof options.mucDomain === 'string') config.mucDomain = options.mucDomain
   let opened
   try {
     opened = engine.call('xmppOpen', [JSON.stringify(config)])
@@ -184,12 +186,12 @@ export async function openXmppServer (options = {}) {
         },
         /** End of input: returns `{send: string[]}` and releases the handle. */
         close () {
-          if (!open) return { send: [] }
+          if (!open) return { send: [], routeFull: [] }
           open = false
           try {
             return engine.call('xmppSessionClose', [session])
           } catch (_error) {
-            return { send: [] }
+            return { send: [], routeFull: [] }
           }
         }
       }
@@ -438,6 +440,8 @@ export async function createXmppServer (options = {}) {
     connections.delete(c)
     let answer
     try { answer = c.session.close() } catch (error) { onError(error); answer = { send: [] } }
+    // The session left its MUC rooms (Muc.leaveAll): tell the other occupants.
+    for (const r of answer.routeFull || []) routeFull(c, r.to, r.text, null)
     if (!c.closing && !c.socket.destroyed) {
       writeAll(c, answer.send)
       if (answer.bytes instanceof Uint8Array && answer.bytes.length > 0) c.socket.write(answer.bytes)
@@ -534,7 +538,10 @@ export async function createXmppServer (options = {}) {
       closing: false,
       session: {
         close () {
-          try { const got = wsCall('xmppWsClose', [handle], new Uint8Array(0)); return { send: [], bytes: got.bytes } } catch (_error) { return { send: [] } }
+          try {
+            const got = wsCall('xmppWsClose', [handle], new Uint8Array(0))
+            return { send: [], bytes: got.bytes, routeFull: got.envelope.routeFull || [] }
+          } catch (_error) { return { send: [] } }
         }
       },
       deliver (text) {
