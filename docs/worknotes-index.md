@@ -219,3 +219,5 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-31 | [Compositor HTML failure conditions](20261031-compositor-html-failure-analysis.md) | — | three kernel-checked failure lemmas, pinned-engine counterexamples and browser boundary |
 | 2026-11-01 | [Compositor pipeline files and FOAF pod library](20261101-compositor-pipeline-library.md) | — | bounded versioned documents, explicit FOAF storage discovery, ETag guarded writes and honest local validation limits |
 | 2026-11-02 | [SVG standards implementation overnight](20261102-svg-standards-overnight.md) | uncommitted | isolated SVG lane; public namespace DOM/artifact/sample interfaces, fresh proof closure repair, then defs/use/symbol and exact clipping |
+
+| 2026-11-03 | [Fresh web registry inventory](20261103-web-inventory-generation.md) | this commit | actual fresh remote Registry/Tests generation, witnessed UI/Rendering directory inventory and unchanged stage kinds; directory counts are not renderer passes |
