@@ -311,6 +311,10 @@ def streamOpenText (cfg : Config) : String :=
   s!"<stream:stream xmlns='{nsClient}' xmlns:stream='{nsStreams}'" ++
   s!" from='{cfg.domain}' id='{cfg.streamId}' version='1.0' xml:lang='en'>"
 
+/-- RFC 6120 section 4.4: the end of the stream. One definition, so
+`XMPP/WebSocket.lean` can recognise it by equality. -/
+def streamCloseText : String := "</stream:stream>"
+
 /-- RFC 6120 section 6.4.1: the mechanisms this build actually
 implements. Nothing else is advertised — a mechanism in this list that
 `handleAuth` cannot finish would be a lie the client pays for. -/
@@ -346,7 +350,7 @@ def streamError (condition : String) (text : String) : List Out :=
     [.element condition [⟨"xmlns", nsStreamErr⟩] []] ++
     (if text.isEmpty then []
      else [.element "text" [⟨"xmlns", nsStreamErr⟩, ⟨"xml:lang", "en"⟩] [.text text]])
-  [ .send (render (.element "stream:error" [] body)), .send "</stream:stream>", .close ]
+  [ .send (render (.element "stream:error" [] body)), .send streamCloseText, .close ]
 
 /-- RFC 6120 section 8.3: a stanza error reply, `type='error'`, keeping
 the original id and swapping the addresses. -/
@@ -627,7 +631,7 @@ def stepMain (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × Li
   match u with
   | .decl _ => (s, env, [])
   | .streamClose =>
-    ({ s with stage := .closed }, env, [.send "</stream:stream>", .close])
+    ({ s with stage := .closed }, env, [.send streamCloseText, .close])
   | .streamOpen text =>
     (match Core.StreamHeader.parse text with
      | none =>
@@ -773,7 +777,7 @@ def stepPreTls (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × 
   | .awaitingStartTls =>
     match u with
     | .decl _ => (s, env, [])
-    | .streamClose => ({ s with stage := .closed }, env, [.send "</stream:stream>", .close])
+    | .streamClose => ({ s with stage := .closed }, env, [.send streamCloseText, .close])
     | .streamOpen _ =>
       ({ s with stage := .closed }, env,
        streamError "not-well-formed" "a second stream header in this state")

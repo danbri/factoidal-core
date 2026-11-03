@@ -1082,6 +1082,7 @@ import L4Factoidal.XMPP.Sasl
 import L4Factoidal.XMPP.Scram
 import L4Factoidal.XMPP.Framing
 import L4Factoidal.XMPP.Server
+import L4Factoidal.XMPP.WebSocket
 import L4Factoidal.XMPP.Gc3
 import L4Factoidal.XMPP.HttpOverXmpp
 import L4Factoidal.XMPP.HttpOverXmppTests
