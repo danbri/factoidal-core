@@ -89,6 +89,13 @@ tool snapshots are retained. The capture refuses heavy work below 3 GiB free.
 GPU sample rejection retains the original generated artifact and actual
 submitted-shader hash; it remains a rejected case.
 
+`math_controls.mjs --directory NATIVE_CONTROLS --output EMPTY_DIR` accepts the
+same browser/Playwright/SVG-lab flags for separate native-artifact controls.
+Its producer manifest declares original SVG inputs (when present), artifacts
+and independent full expected RGBA rasters. Every declared file is hash-checked
+and frozen before rendering, including the original inputs; helper hashes are
+recorded. These analytic diagnostics never change the WPT denominator.
+
 ## Reconstruct the pinned snapshot
 
 The vendored originals make execution offline. For a fresh audit, clone only

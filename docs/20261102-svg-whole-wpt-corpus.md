@@ -113,6 +113,26 @@ GPU `dot`, zero ordinary sum, and positive explicit `fma` for the same
 near-boundary coordinates. This helps locate the numeric discrepancy without
 changing the renderer or comparison tolerance.
 
+Five subsequent native-reader curve controls use actual SVG source strings
+and independent analytic full 64x64 RGBA expectations. Evidence:
+`/tmp/factoidal-overnight-corpus-curve-math/report.json`. Quadratic, genuine
+cubic, circular arc and compact relative arc controls match every RGBA pixel
+exactly. The arc-stroke control differs at four pixels with maximum channel
+difference 64, despite all six embedded Lean sample checks passing. Aggregate
+command exit is 1; this is four passes and one mismatch, separate from WPT.
+The failing pixels are (17,17), (18,18), (29,29), (30,30), each missing one
+expected red quarter contribution. Actual, expected and difference PNGs plus
+per-pixel values are retained; the numeric cause is not proved.
+
+All fifteen original SVG/artifact/expected files and the manifest were
+hash-checked and frozen under the report's `inputs/` directory before GPU
+submission. Manifest SHA-256:
+`228f6fa595e1004565a7de20bac20b939692cdeccac68cc555129844f30ff881`.
+These artifacts came from the new native Lean reader and checked tessellation
+cache; its feature WASM build was still pending. The declared numeric policy
+is a 1/64 screen-flatness threshold, 512 generated-point bound and bounded
+subdivision. It does not prove a universal ideal-real or Float32 error bound.
+
 Harness integrity is independently exercised by corrupting a relation, fuzzy
 limit, reference, resource hash and whole inventory; all must fail. The
 comparator also tests that an incorrect blank negative-relation candidate
