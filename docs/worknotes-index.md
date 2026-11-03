@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-03 | [SVG references across HTML SVG roots](designissues/2026-11-03-svg-document-references.md) | this commit | current — source-bound document context, absolute paths, original bases and native cross-root regressions; compiled HTML integration pending |
 | 2026-11-03 | [SVG curves and checked backend cache](designissues/2026-11-03-svg-curves-cache.md) | this commit | current — canonical curve geometry, exact cache/count/storage proofs, four exact GPU fill controls and one retained stroke failure |
 | 2026-11-02 | [Browser SVG/WebGPU harness, whole-image diagnostics and fault controls](20261102-svg-browser-harness.md) | this commit | current — unchanged 38-case WPT slice and separate sensitivity controls |
 | 2026-11-01 | [Solving retained scene slice](20261101-solving-scene-slice.md) | this commit | current — Lean scene, hit testing, clip and SVG export; a shared bounded layout certificate now guards the SVG backend; parsed-SVG/WebGPU scene unification remains |

@@ -580,6 +580,14 @@ numeric flatness policy or GPU arithmetic equivalence. Keep independent image
 failures visible. See the [curve/cache design](../../docs/designissues/2026-11-03-svg-curves-cache.md)
 and [overnight record](../../docs/20261102-svg-standards-overnight.md).
 
+HTML SVG roots must share the original document ID index. Build one
+`NativeSVG.ReferenceContext` from the complete Lean namespace DOM and select
+roots with `parseRootInContext` and absolute child paths (text/comments count).
+Its root-only attribute normalizer must preserve original target styles and
+bases; never construct host DOM extracts or independent per-root ID maps.
+Retrieval URL and effective HTML base are separate. See the
+[document-reference design](../../docs/designissues/2026-11-03-svg-document-references.md).
+
 SVG artifact list formatting uses the proved bit-keyed
 `Rendering/FloatFormat.lean` cache through a csimp-selected wrapper. The
 all-Float-list theorem preserves every reference decimal string and list order;

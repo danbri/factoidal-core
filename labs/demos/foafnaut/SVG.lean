@@ -1161,11 +1161,60 @@ private def styleRules (root : NamespaceNode) : Except String (List NativeSVGCSS
           pending := children ++ pending
   throw "stylesheet traversal exceeds input bound"
 
+/-- One source-bound, bounded document index shared by all SVG roots in an
+    HTML document. Cached errors remain errors when a painting root needs them;
+    a zero viewport can still suppress its subtree without style interpretation. -/
+structure ReferenceContext where
+  document : NamespaceNode
+  documentURL : Option String
+  initialBaseURL : Option String
+  references : NativeSVGReferences.Index
+  indexingCorrect : NativeSVGReferences.collect document (maxInputChars+1) documentURL initialBaseURL = .ok references
+  idsResult : Except String (List String)
+  idsCorrect : idsResult = nodeIds document
+  rulesResult : Except String (List NativeSVGCSS.Rule)
+  rulesCorrect : rulesResult = styleRules document
+
+/-- The initial document base may come from the Lean HTML frontend. Retrieval
+    URL identity remains separate for same-document IRI comparisons. -/
+def ReferenceContext.create (document : NamespaceNode) (documentURL : Option String := none)
+    (initialBaseURL : Option String := none) : Except String ReferenceContext :=
+  match indexed : NativeSVGReferences.collect document (maxInputChars+1) documentURL initialBaseURL with
+  | .error message => .error message
+  | .ok references => .ok {
+      document := document
+      documentURL := documentURL
+      initialBaseURL := initialBaseURL
+      references := references
+      indexingCorrect := indexed
+      idsResult := nodeIds document
+      idsCorrect := rfl
+      rulesResult := styleRules document
+      rulesCorrect := rfl }
+
+theorem ReferenceContext.create_existing (context : ReferenceContext) :
+    ReferenceContext.create context.document context.documentURL context.initialBaseURL = .ok context := by
+  rcases context with ⟨document,url,base,references,indexed,ids,idsCorrect,rules,rulesCorrect⟩
+  subst ids
+  subst rules
+  simp only [ReferenceContext.create]
+  split
+  · rename_i message found
+    rw [indexed] at found
+    cases found
+  · rename_i cached found
+    have same : cached = references := Except.ok.inj (found.symm.trans indexed)
+    subst cached
+    rfl
+
+#print axioms ReferenceContext.create_existing
+
 /-- SVG 2 §5.1: render an already namespace-expanded SVG fragment, including
     one supplied by an HTML foreign-content parser. The caller owns DOM parsing;
     root validation, SVG style, geometry and viewport semantics remain here. -/
-def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
-    (inheritedStyle : Style := {}) (documentURL : Option String := none) : Except String Scene := do
+private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeight : Nat)
+    (inheritedStyle : Style)
+    (referenceSource : Unit → Except String (ReferenceContext × List Nat × Option String)) : Except String Scene := do
   let .element name attrs children := root | throw "SVG root must be an element"
   if name.namespace_ != some svgURI || name.localPart != "svg" then throw "root must be svg in the SVG namespace"
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version","style"]
@@ -1195,16 +1244,42 @@ def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
   let lengths : LengthContext := match view with
     | none => {width:=w,height:=h}
     | some (_,_,vw,vh) => {width:=vw,height:=vh}
-  let ids ← nodeIds root
-  let rules ← styleRules root
+  let (context,sourcePath,rootBase) ← referenceSource ()
+  let ids ← context.idsResult
+  let rules ← context.rulesResult
   let attrs ← applyCSS lengths ids rules "svg" attrs
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version"]
   let inherited ← readStyle lengths ids attrs inheritedStyle
-  let references ← NativeSVGReferences.collect root (maxInputChars+1) documentURL
-  let parsedTree ← readListWith (fun child i => readNode references rules ids 33
-    {lengths,parent:=identityTransform,style:=inherited,path:=[i],ancestors:=[[]],baseURL:=NativeSVGReferences.elementBase attrs documentURL} child) children
+  let ancestors := (List.range (sourcePath.length+1)).map (fun depth => sourcePath.take depth)
+  let parsedTree ← readListWith (fun child i => readNode context.references rules ids 33
+    {lengths,parent:=identityTransform,style:=inherited,path:=sourcePath ++ [i],ancestors,baseURL:=rootBase} child) children
   let tree := if displaySuppressed attrs then [] else parsedTree
   Scene.make w.ceil.toUInt32.toNat h.ceil.toUInt32.toNat mapping tree
+
+/-- Standalone SVG keeps a local original document and the existing public API.
+    Context creation is delayed until after zero-viewport suppression. -/
+def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
+    (inheritedStyle : Style := {}) (documentURL : Option String := none) : Except String Scene :=
+  parseRootWithContext root outputWidth outputHeight inheritedStyle fun _ => do
+    let context ← ReferenceContext.create root documentURL
+    let base := match root with
+      | .element _ attrs _ => NativeSVGReferences.elementBase attrs documentURL
+      | _ => documentURL
+    pure (context,[],base)
+
+/-- Select an SVG root from the indexed original document in Lean. The caller
+    may normalize only root attributes after its own Lean HTML/CSS computation;
+    original children, reference targets, source identity and bases are retained. -/
+def parseRootInContext (context : ReferenceContext) (rootSourcePath : List Nat)
+    (outputWidth outputHeight : Nat := 0) (inheritedStyle : Style := {})
+    (rootAttributeNormalizer : List NamespaceAttribute → Except String (List NamespaceAttribute) := fun attrs => .ok attrs) : Except String Scene := do
+  let initialBase := context.initialBaseURL.orElse (fun _ => context.documentURL)
+  let entry ← NativeSVGReferences.locate context.document rootSourcePath initialBase
+  let .element name originalAttrs children := entry.node | throw "SVG root source path must select an element"
+  let base := NativeSVGReferences.elementBase originalAttrs entry.parentBase
+  let attrs ← rootAttributeNormalizer originalAttrs
+  parseRootWithContext (.element name attrs children) outputWidth outputHeight inheritedStyle
+    (fun _ => .ok (context,entry.path,base))
 
 def parse (xml : String) (outputWidth outputHeight : Nat := 0)
     (documentURL : Option String := none) : Except String Scene := do

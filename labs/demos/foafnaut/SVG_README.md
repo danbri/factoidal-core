@@ -421,3 +421,15 @@ weakening application-level guarantees. Where the backend contract cannot yet be
 proved, the evidence must say so and the feature must not be presented as covered
 by the shared theorem. Backend-specific GPU execution and floating-point
 boundaries remain separate obligations.
+
+
+For HTML documents with multiple SVG roots, the Lean frontend builds one
+`ReferenceContext.create(wholeNamespaceDOM, documentURL, initialBaseURL)` and
+calls `parseRootInContext` with an absolute root source path. Text/comments
+count in child indices. IDs, original xml:base and SVG style rules remain
+shared across roots, including hidden definition roots. The optional Lean
+root-attribute normalizer changes only the selected root's attributes after
+HTML/CSS computation; referenced source nodes and their bases remain intact.
+Standalone `parseRoot` retains its local document default. This API's native
+regressions are separate from compiled HTML/browser integration; see the
+[document-reference design](../../../docs/designissues/2026-11-03-svg-document-references.md).

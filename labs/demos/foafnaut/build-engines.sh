@@ -104,6 +104,7 @@ done
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGRootTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" -o "$BUILD/olean/SVGClipTests.olean" "$LAB/SVGClipTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" -o "$BUILD/olean/SVGUseTests.olean" "$LAB/SVGUseTests.lean"
+"$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGDocumentTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" -o "$BUILD/olean/SVGCurveTests.olean" "$LAB/SVGCurveTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGPrerequisiteTests.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" "$LAB/SVGTransformTests.lean"
