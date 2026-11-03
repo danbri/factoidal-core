@@ -25,3 +25,22 @@ These are source/CPU regression results. A newly linked native/WASM candidate
 and original-source browser image comparison are required before recording a
 new WPT pass. This work is tracked in
 [issue 1230](https://github.com/danbri/factoidal/issues/1230).
+
+The subsequent sizing checkpoint also fixes the generic missing-dimension
+calculation exposed by original `svg/coordinate-systems/viewBox-fractional-valid.html`:
+height 200 and viewBox 100.5 by 100 now produce width 201, in both block and
+inline flow. SVG presentation width/height enter the cascade before author CSS;
+auto dimensions derive from a positive viewBox ratio. Ratio-only SVG uses the
+definite containing width. Without a usable ratio the existing 300 by 150
+fallback remains. This follows [SVG intrinsic sizing](https://www.w3.org/TR/SVG/coords.html#IntrinsicSizing)
+and [CSS replaced-element sizing](https://www.w3.org/TR/CSS22/visudet.html#inline-replaced-width).
+
+Thirteen independent sizing guards cover fractional ratios, px/percentage
+widths, CSS overrides including auto, missing dimensions and invalid/zero ratio
+fallbacks. The original fractional-ratio guard caught premature Float division;
+the implementation retains numerator/denominator until the final calculation.
+Fresh whole closure source checks pass in
+`/tmp/factoidal-web-context-size-source.log`. Fractional final viewport sizes,
+percentage height without a definite container, unsupported CSS units and
+unsupported numeric syntax remain explicit profile errors. These guards do not
+prove general CSS layout or browser raster equivalence.

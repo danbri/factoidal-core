@@ -83,6 +83,29 @@ private def checkSVGBox (s : Computed) : Except String Unit := do
   if let .percent _ := s.height then
     throw "unsupported percentage SVG height without definite containing height"
 
+/-- Replaced SVG dimensions share the same calculation in inline and block
+flow. A positive viewBox supplies the intrinsic ratio when a dimension is auto.
+The ratio-only case uses the definite available containing width (CSS 2.2 10.3.2).
+Presentation lengths participate in the CSS cascade before this calculation. -/
+def svgSize (node : DOM.Node) (style : Computed) (available : Float) : Except String (Float × Float) := do
+  checkSVGBox style
+  let width := CSS.resolve available style.width
+  let height := CSS.resolve 0 style.height
+  if let (some w,some h) := (width,height) then return (max 0 w,max 0 h)
+  let source := CSS.attrValue node "viewBox"
+  let mut ratio : Option (Float × Float) := none
+  if !source.isEmpty then
+    let fields := (source.replace "," " ").splitOn " " |>.flatMap (fun s => (s.replace "\n" " " |>.replace "\t" " " |>.replace "\r" " ").splitOn " ") |>.filter (!·.isEmpty)
+    let [_,_,w,h] := fields | throw "unsupported SVG intrinsic viewBox: four numbers required"
+    let w ← CSS.number w
+    let h ← CSS.number h
+    if w > 0 && h > 0 then ratio := some (w,h)
+  match width,height,ratio with
+  | some w,none,some (rw,rh) => return (max 0 w,max 0 (w*rh/rw))
+  | none,some h,some (rw,rh) => return (max 0 (h*rw/rh),max 0 h)
+  | none,none,some (rw,rh) => return (max 0 available,max 0 (available*rh/rw))
+  | _,_,_ => return (max 0 (width.getD 300),max 0 (height.getD 150))
+
 inductive Inline where
   | word (source : Nat) (style : Computed) (text : String) (start : Nat)
   | space (source : Nat) (style : Computed)
@@ -133,12 +156,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (a
       s.padding.top != 0 || s.padding.right != 0 || s.padding.bottom != 0 || s.padding.left != 0 || s.clipOverflow) then
       throw "unsupported inline box decoration or spacing"
     if n.ns == some DOM.svgNS then
-      checkSVGBox s
-      let attrLength := fun key fallback => do
-        let v := CSS.attrValue n key
-        if v.isEmpty then pure fallback else CSS.number v
-      let width := (CSS.resolve available s.width).getD (← attrLength "width" 300)
-      let height := (CSS.resolve 150 s.height).getD (← attrLength "height" 150)
+      let (width,height) ← svgSize n s available
       if width <= 0 || height <= 0 then return #[]
       return #[.replaced id width height (← embedding id s width height)]
     let mut out := #[]
@@ -311,13 +329,7 @@ def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding 
     let innerX := outerX+padding.left
     let innerY := outerY+padding.top
     if n.ns == some DOM.svgNS then
-      checkSVGBox s
-      let v := CSS.attrValue n "width"
-      let intrinsicWidth ← if v.isEmpty then pure 300 else CSS.number v
-      let v := CSS.attrValue n "height"
-      let intrinsicHeight ← if v.isEmpty then pure 150 else CSS.number v
-      let sw := max 0 ((CSS.resolve available s.width).getD intrinsicWidth)
-      let sh := max 0 ((CSS.resolve 0 s.height).getD intrinsicHeight)
+      let (sw,sh) ← svgSize n s available
       let nodes ← embedding id s sw sh
       return {nodes := #[.group none (translate outerX outerY) nodes], boxes := #[⟨id,outerX,outerY,sw,sh⟩],height := margin.top+sh+margin.bottom}
     let mut content : Result := {}

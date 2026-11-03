@@ -307,6 +307,13 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
     for property in ["color","visibility","display"] do
       let value := attrValue n property
       if !value.isEmpty then initial ← apply initial ⟨property,value,false⟩
+    for property in ["width","height"] do
+      let value := trim (attrValue n property)
+      if !value.isEmpty then
+        let dimension ← if value == "auto" || value.endsWith "px" || value.endsWith "%" then length value
+          else pure (.px (← number value))
+        initial := if property == "width" then {initial with width := dimension}
+          else {initial with height := dimension}
   let mut winners : Std.TreeMap String (List Nat × Declaration) := {}
   let mut order : Nat := 0
   for rule in rules do

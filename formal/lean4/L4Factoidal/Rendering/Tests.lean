@@ -104,6 +104,29 @@ private def clippedLink := run "<div style='height:7px;overflow:clip'><a href='u
 #guard ((computedAt "<svg id='x' color='red'></svg>" "" "x").toOption.map (·.color.r)) == some 1
 #guard ((computedAt "<svg id='x' color='red' style='color:blue'></svg>" "svg{color:green!important}" "x").toOption.map (·.color.g)) == some (128/255)
 
+private def svgDimensions (attributes css : String) : Except String (Float × Float) := do
+  let dom := DOM.parseHtmlDocument ("<svg id='s' " ++ attributes ++ "></svg>")
+  let some id := dom.getElementById 0 "s" | throw "SVG sizing target missing"
+  let styles ← CSS.computeAll dom (← CSS.parse css)
+  svgSize (dom.get id) styles[id]! 120
+#guard (svgDimensions "height='200' viewBox='0 0 100.5 100'" "").toOption == some (201,200)
+#guard (svgDimensions "width='80' viewBox='0 0 2 1'" "").toOption == some (80,40)
+#guard (svgDimensions "height='20px' viewBox='0,0,2,1'" "").toOption == some (40,20)
+#guard (svgDimensions "viewBox='0 0 2 1'" "").toOption == some (120,60)
+#guard (svgDimensions "height='20' viewBox='0 0 2 1'" "svg{height:30px}").toOption == some (60,30)
+#guard (svgDimensions "width='80' height='20' viewBox='0 0 2 1'" "svg{width:auto}").toOption == some (40,20)
+#guard (svgDimensions "viewBox='0 0 2 1'" "svg{width:50%}").toOption == some (60,30)
+#guard (svgDimensions "width='80' height='20' viewBox='0 0 2 1'" "").toOption == some (80,20)
+#guard (svgDimensions "height='20' viewBox='0 0 0 1'" "").toOption == some (300,20)
+#guard (svgDimensions "height='20' viewBox='0 0 -2 1'" "").toOption == some (300,20)
+#guard (svgDimensions "" "").toOption == some (300,150)
+private def svgFlow (display : String) : Except String (List (Float × Float)) := do
+  let dom := DOM.parseHtmlDocument "<svg height='200' viewBox='0 0 100.5 100'></svg>"
+  let (_,boxes) ← Layout.render dom (← CSS.parse ("body{margin:0}svg{display:" ++ display ++ "}")) font (fun _ _ _ _ => .ok []) 800 600
+  return boxes.toList.filterMap (fun box => if (dom.get box.source).ns == some DOM.svgNS then some (box.width,box.height) else none)
+#guard (svgFlow "inline").toOption == some [(201,200)]
+#guard (svgFlow "block").toOption == some [(201,200)]
+
 /-- Content and clip frames compose independently under the parent frame. -/
 private def framedClip : Node := .group (some "parent") ⟨1,0,0,1,10,20⟩
   [.clipped (some "viewport") ⟨2,0,0,3,0,0⟩ ⟨0,0,5,7,⟨1,0,0,1,3,4⟩⟩
