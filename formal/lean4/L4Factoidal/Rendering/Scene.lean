@@ -167,61 +167,93 @@ mutual
     | node :: rest => node.lower parent groups ++ Node.lowerList parent groups rest
   termination_by nodes => sizeOf nodes
 end
+/-- A pending sibling list and its inherited frames. Reversed group/clip paths
+share their tails across sibling frames; only a paint item needs forward order. -/
+private structure LowerFrame where
+  nodes : List Node
+  parent : Transform
+  groupsRev : List (Option String)
+  clipsRev : List ClipRect
+
+private def addClips (clips : List ClipRect) (item : PaintItem) : PaintItem :=
+  {item with primitive := {item.primitive with clips := clips ++ item.primitive.clips}}
+
+-- These definitions are proof-only: the executable loop never traverses a
+-- subtree to measure it, or calls the recursive reference lowering functions.
+private noncomputable def lowerWeight (pending : List LowerFrame) : Nat :=
+  ((pending.map fun frame => 1 + sizeOf frame.nodes)).sum
+
+private noncomputable def lowerPending (pending : List LowerFrame) : List PaintItem :=
+  pending.flatMap fun frame =>
+    (Node.lowerList frame.parent frame.groupsRev.reverse frame.nodes).map
+      (addClips frame.clipsRev.reverse)
+
+/-- Explicit depth-first work stack. Each recursive call is a direct tail call;
+neither a sibling fold nor a clip map calls back into the traversal. -/
+private def lowerLoop (pending : List LowerFrame) (acc : List PaintItem) : List PaintItem :=
+  match pending with
+  | [] => acc.reverse
+  | ⟨[],_,_,_⟩ :: rest => lowerLoop rest acc
+  | ⟨.paint item :: siblings,parent,groups,clips⟩ :: rest =>
+    lowerLoop (⟨siblings,parent,groups,clips⟩ :: rest)
+      (addClips clips.reverse {item with primitive := item.primitive.lowerUnder parent groups.reverse} :: acc)
+  | ⟨.group id transform children :: siblings,parent,groups,clips⟩ :: rest =>
+    lowerLoop (⟨children,Math.Affine2.compose .float parent transform,id :: groups,clips⟩ ::
+      ⟨siblings,parent,groups,clips⟩ :: rest) acc
+  | ⟨.clipped id content clip children :: siblings,parent,groups,clips⟩ :: rest =>
+    lowerLoop (⟨children,Math.Affine2.compose .float parent content,id :: groups,
+      clip.lowerUnder parent :: clips⟩ :: ⟨siblings,parent,groups,clips⟩ :: rest) acc
+termination_by lowerWeight pending
+decreasing_by
+  all_goals simp_all [lowerWeight, List.cons.sizeOf_spec, Node.paint.sizeOf_spec,
+    Node.group.sizeOf_spec, Node.clipped.sizeOf_spec]
+  all_goals omega
+
+private theorem addClips_addClip (clips : List ClipRect) (clip : ClipRect) (item : PaintItem) :
+    addClips clips (item.addClip clip) = addClips (clips ++ [clip]) item := by
+  simp [addClips, PaintItem.addClip, Primitive.addClip, List.append_assoc]
+
+private theorem addClips_nil : addClips [] = id := by
+  funext item
+  cases item with
+  | mk source primitive => cases primitive; rfl
+
+private theorem lowerLoop_eq (pending : List LowerFrame) (acc : List PaintItem) :
+    lowerLoop pending acc = acc.reverse ++ lowerPending pending := by
+  induction pending, acc using lowerLoop.induct with
+  | case1 acc => simp [lowerLoop, lowerPending]
+  | case2 acc parent groups clips rest ih =>
+    rw [lowerLoop, ih]
+    simp [lowerPending, Node.lowerList]
+  | case3 acc item siblings parent groups clips rest ih =>
+    simp only [List.unattach_reverse, List.unattach_attach] at ih
+    rw [lowerLoop, ih]
+    simp [lowerPending, Node.lowerList, Node.lower, List.append_assoc]
+  | case4 acc id transform children siblings parent groups clips rest ih =>
+    rw [lowerLoop, ih]
+    simp [lowerPending, Node.lowerList, Node.lower, List.map_append, List.append_assoc]
+  | case5 acc id content clip children siblings parent groups clips rest ih =>
+    rw [lowerLoop, ih]
+    simp [lowerPending, Node.lowerList, Node.lower, List.map_append, List.map_map,
+      Function.comp_def, addClips_addClip, List.append_assoc]
+
+def Node.lowerListTR (parent : Transform) (groups : List (Option String))
+    (nodes : List Node) : List PaintItem :=
+  lowerLoop [⟨nodes,parent,groups.reverse,[]⟩] []
+
 def Node.lowerTR (parent : Transform) (groups : List (Option String))
     (node : Node) : List PaintItem :=
-  match node with
-  | .paint item => [{item with primitive := item.primitive.lowerUnder parent groups}]
-  | .group id transform children =>
-      (children.foldl (fun acc child =>
-        (child.lowerTR (Math.Affine2.compose .float parent transform) (groups ++ [id])).reverse ++ acc) []).reverse
-  | .clipped id content clip children =>
-      ((children.foldl (fun acc child =>
-        (child.lowerTR (Math.Affine2.compose .float parent content) (groups ++ [id])).reverse ++ acc) []).reverse).map
-          (PaintItem.addClip (clip.lowerUnder parent))
-termination_by sizeOf node
+  Node.lowerListTR parent groups [node]
 
+theorem Node.lowerListTR_eq (nodes : List Node) (parent : Transform)
+    (groups : List (Option String)) :
+    Node.lowerListTR parent groups nodes = Node.lowerList parent groups nodes := by
+  simp [Node.lowerListTR, lowerLoop_eq, lowerPending, addClips_nil]
 
 theorem Node.lowerTR_eq (node : Node) :
     ∀ parent groups, node.lowerTR parent groups = node.lower parent groups := by
-  refine Node.rec
-    (motive_1 := fun node => ∀ parent groups,
-      node.lowerTR parent groups = node.lower parent groups)
-    (motive_2 := fun (nodes : List Node) => ∀ (parent : Transform) (groups : List (Option String)) (acc : List PaintItem),
-      (nodes.foldl (fun acc child => (child.lowerTR parent groups).reverse ++ acc) acc).reverse =
-        acc.reverse ++ Node.lowerList parent groups nodes)
-    ?_ ?_ ?_ ?_ ?_ node
-  · intro primitive parent groups
-    simp [Node.lowerTR, Node.lower]
-  · intro id transform children ih parent groups
-    simpa [Node.lowerTR, Node.lower] using
-      ih (Math.Affine2.compose .float parent transform) (groups ++ [id]) []
-  · intro id transform clip children ih parent groups
-    simpa only [Node.lowerTR, Node.lower, List.reverse_nil, List.nil_append] using
-      congrArg (List.map (PaintItem.addClip (clip.lowerUnder parent)))
-        (ih (Math.Affine2.compose .float parent transform) (groups ++ [id]) [])
-  · intro parent groups acc
-    simp [Node.lowerList]
-  · intro head tail ihHead ihTail parent groups acc
-    simp only [List.foldl_cons]
-    rw [ihTail, List.reverse_append, List.reverse_reverse, ihHead]
-    simp only [Node.lowerList, List.append_assoc]
-
-/-- Reverse-accumulator sibling lowering using the fast recursive group twin. -/
-def Node.lowerListTR (parent : Transform) (groups : List (Option String))
-    (nodes : List Node) : List PaintItem :=
-  (nodes.foldl (fun acc node => (node.lowerTR parent groups).reverse ++ acc) []).reverse
-
-private theorem lowerFold_eq (nodes : List Node) (parent : Transform)
-    (groups : List (Option String)) (acc : List PaintItem) :
-    (nodes.foldl (fun acc node => (node.lowerTR parent groups).reverse ++ acc) acc).reverse =
-      acc.reverse ++ Node.lowerList parent groups nodes := by
-  induction nodes generalizing acc with
-  | nil => simp [Node.lowerList]
-  | cons head tail ih =>
-      simp only [List.foldl_cons]
-      rw [ih, List.reverse_append, List.reverse_reverse, Node.lowerTR_eq]
-      simp only [Node.lowerList, List.append_assoc]
-
+  intro parent groups
+  simp [Node.lowerTR, Node.lowerListTR_eq, Node.lowerList]
 
 @[csimp] theorem Node.lower_eq_lowerTR : @Node.lower = @Node.lowerTR := by
   funext parent groups node
@@ -229,9 +261,7 @@ private theorem lowerFold_eq (nodes : List Node) (parent : Transform)
 
 @[csimp] theorem Node.lowerList_eq_lowerListTR : @Node.lowerList = @Node.lowerListTR := by
   funext parent groups nodes
-  exact (show Node.lowerListTR parent groups nodes = Node.lowerList parent groups nodes by
-    simpa only [Node.lowerListTR, List.reverse_nil, List.nil_append] using
-      lowerFold_eq nodes parent groups []).symm
+  exact (Node.lowerListTR_eq nodes parent groups).symm
 
 
 /-- Partitioning an ordered scene into batches preserves its precise painter

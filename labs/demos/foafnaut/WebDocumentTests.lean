@@ -45,6 +45,20 @@ private def inspected := (WebDocument.inspect urlDOM "https://example.test/a/pag
   | some (.array [script]) => script.field? "url" == some (.string "https://example.test/a/assets/scripts/app.js")
   | _ => false
 
+-- The scripting snapshot is the authoritative MIME classifier. Legacy classic
+-- types survive inspection; data blocks remain inert; padded modules refuse.
+private def ecmaInspection := WebDocument.inspect
+  (DOM.parseHtmlDocument "<script type=' text/ecmascript '>classic()</script><script type='application/json'>{}</script>")
+  "https://example.test/"
+#guard match ecmaInspection with
+  | .ok value => match value.field? "scripts" with
+    | some (.array [script]) => script.field? "kind" == some (.string "classic") &&
+        script.field? "source" == some (.string "classic()")
+    | _ => false
+  | .error _ => false
+#guard (WebDocument.inspect (DOM.parseHtmlDocument "<script type=' module '>export{}</script>") "https://example.test/").toOption.isNone
+#guard (WebDocument.run "<script type=' module '>export{}</script>" (json [("op",.string "inspect")]) 1 1).toOption.isNone
+
 private def dynamicHTML := "<link rel=stylesheet href=font.css><p id=target>stale</p><span>office</span>"
 private def dynamicDOM := DOM.parseHtmlDocument dynamicHTML
 private def target := (dynamicDOM.getElementById 0 "target").getD 0

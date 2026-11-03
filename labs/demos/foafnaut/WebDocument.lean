@@ -83,6 +83,17 @@ def rules (dom : DOM.Dom) (request : JSON.Json) : Except String (List Rendering.
     sheets := source::sheets
   Rendering.CSS.parse (String.intercalate "\n" sheets.reverse)
 
+/-- Script MIME classification has one owner: the Lean scripting snapshot.
+All callers use its normalized kind, including whitespace/case and legacy
+classic JavaScript MIME types. Modules stay an explicit profile refusal. -/
+private def classicScripts (snapshot : JSON.Json) : Except String (List JSON.Json) := do
+  let scripts := match snapshot.field? "scripts" with
+    | some (.array scripts) => scripts
+    | _ => []
+  if scripts.any (fun script => str script "kind" == "module") then
+    throw "unsupported JavaScript module script"
+  return scripts.filter (fun script => str script "kind" == "classic")
+
 def inspect (dom : DOM.Dom) (url : String) : Except String JSON.Json := do
   let base := baseURL dom url
   let snapshot := WebRenderScript.snapshot dom
@@ -92,12 +103,11 @@ def inspect (dom : DOM.Dom) (url : String) : Except String JSON.Json := do
     if stylesheet n && Rendering.CSS.hasAttribute n "href" && (← activeSheet n) then
       sheets := .object [("nodeId",.number (toString id)),("href",.string (attr n "href")),
         ("url",.string (Syntax.resolveIri base (attr n "href")))]::sheets
-  let scripts := match snapshot.field? "scripts" with
-    | some (.array xs) => (xs.filter (fun s => ["","text/javascript","application/javascript"].contains (str s "type").toLower)).map fun script =>
-      match script with
-      | .object fields => .object (fields ++ [("url",.string (Syntax.resolveIri base (str script "src")))])
-      | other => other
-    | _ => []
+  let scripts ← classicScripts snapshot
+  let scripts := scripts.map fun script =>
+    match script with
+    | .object fields => .object (fields ++ [("url",.string (Syntax.resolveIri base (str script "src")))])
+    | other => other
   return .object [("nodes",(snapshot.field? "nodes").getD (.array [])),
     ("scripts",.array scripts),("stylesheets",.array sheets.reverse),("baseURL",.string base)]
 
@@ -106,8 +116,7 @@ def run (html : String) (request : JSON.Json) (width height : Nat) : Except Stri
   if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
   let dom ← prepareDOM html request
   validateResources dom request
-  if dom.nodes.any (fun n => DOM.Dom.isHtmlElement n "script" && (attr n "type").toLower == "module") then
-    throw "unsupported JavaScript module script"
+  let _ ← classicScripts (WebRenderScript.snapshot dom)
   let op := str request "op" "render"
   if op == "inspect" then return (← inspect dom (str request "url")).toString
   let rules ← rules dom request

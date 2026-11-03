@@ -53,10 +53,37 @@ loads. Reports and screenshots go to the caller's output directory.
 
 JavaScript syntax and pure navigation state checks passed. The child agent's
 loopback run stopped at `listen EPERM`; its sandbox does not permit listeners.
-The coordinator ran `check-navigation.mjs` successfully: five check groups,
-22 actual HTTP fixture requests. The combined browser tests still need the
-fresh document engine build before promotion. The stable port 8099 was not
-changed or restarted by this work.
+The coordinator and browser agent each ran `check-navigation.mjs`
+successfully: five check groups, 22 actual HTTP fixture requests. The browser
+agent's later run used Node 22 directly; the default Node 26 sandbox route
+was the one with the listener failure.
+
+The fresh document engine at port 8102 passed `check-navigation-browser.mjs`:
+five browser check groups and 11 actual fixture requests. The initial history
+entry is the local MVP URL, so Back includes the initial page. The report is
+`/private/tmp/factoidal-mvp-navigation/report.json`. Its full initial screenshot,
+`/private/tmp/factoidal-mvp-navigation/initial-mvp.png`, was opened and visually
+checked: the address controls, actual Arial text, cubic SVG shape, ready
+QuickJS counter, link and source editor fit without clipping.
+
+The coordinator ran `check-document-browser.mjs` successfully: four combined
+check groups over HTML base resolution, external CSS/JS, initial script text,
+actual Arial shaping, click DOM mutations, changed GPU pixels, retained VM
+state during viewport reflow and a fresh VM after source edits. Report:
+`/private/tmp/factoidal-mvp-document/report.json`. Initial font identity is
+Arial Regular, face 0, UPEM 2048, SHA-256
+`525979822591a3447cfc49d943d6f7683508e25543407871c0ed8fed05fd2bd9`.
+
+Every render now has a local AbortController linked to any navigation abort
+signal. Editor changes therefore abort stale resource/font/script preparation,
+as well as preventing stale GPU and history commits. The initial HTML example
+uses the same broker/navigation path as typed URLs. Source edits retain the
+fetched document URL as their resource base even after a cancelled load.
+
+The old fixtures remain byte-identical. The new `fixtures/mvp.html` is the
+initial example and contains the real font, SVG curve, script counter and a
+link to the preserved bitmap example. The stable port 8099 was not changed
+or restarted by this work. Promotion remains the coordinator's separate step.
 
 See the [renderer design record](designissues/2026-11-02-lean-web-rendering.md)
 and [browser architecture](designissues/2026-11-03-lean-browser-navigation.md).

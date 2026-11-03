@@ -135,7 +135,12 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
   return result.reverse
 
 /-- Inline descendants are flattened in DOM order; the nesting budget is a
-profile error, never a silent truncation. Siblings use a fold. -/
+profile error, never a silent truncation. Siblings use a fold. The recursive
+call receives the predecessor `fuel`; the compiled sibling fold is a loop.
+This lower-level API accepts arbitrary fuel and therefore has stack depth
+O(fuel), not a universal constant bound. Production rendering shares the
+fixed 64-level budget from `render` with `block`; FontRequests uses fuel 1
+only for a text node. See `docs/20261103-layout-stack-audit.md`. -/
 def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (available : Float) :
     Nat → Nat → Except String (Array Inline)
   | 0, _ => throw "unsupported HTML nesting depth (maximum 64)"
@@ -307,7 +312,12 @@ private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node 
     #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
 
 /-- Block children stack vertically, and adjacent inline children share an
-anonymous inline formatting context. Width/height use the CSS content box. -/
+anonymous inline formatting context. Width/height use the CSS content box.
+Every descent to either `block` or `inlineItems` passes the predecessor
+`fuel`, and the compiled sibling fold is a loop. This lower-level API has
+stack depth O(fuel); production `render` starts it with the fixed budget 64.
+The budget is shared across block and inline descendants, never reset for
+a formatting context. See `docs/20261103-layout-stack-audit.md`. -/
 def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding) :
     Nat → Nat → Float → Float → Float → Except String Result
   | 0, _, _, _, _ => throw "unsupported HTML nesting depth (maximum 64)"

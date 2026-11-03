@@ -15,6 +15,11 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-03 | [Browser MVP checkpoint](20261103-browser-mvp-checkpoint.md) | this commit | current — frozen local browser, actual native/WASM/GPU checks and release boundary |
+| 2026-11-03 | [Layout recursion audit](20261103-layout-stack-audit.md) | this commit | current — generated C fuel bound, proof guards and 50,000-sibling native/WASM stress |
+| 2026-11-03 | [Linear path stack repair](20261103-rendering-path-stack-repair.md) | this commit | current — exact tail-loop compiler replacement and generated C gates |
+| 2026-11-03 | [Scene stack lowering](20261103-rendering-scene-stack-lowering.md) | this commit | current — exact traversal proof, compiled-C gates and native stack stress |
+| 2026-11-03 | [Dynamic font request architecture](designissues/2026-11-03-dynamic-font-requests.md) | this commit | current — Lean decides shaping requests; host supplies bounded glyph data |
 | 2026-11-03 | [Browser navigation and byte transport](20261103-lean-browser-navigation.md) | this commit | current — HTTP navigation controls, browser integration |
 | 2026-11-03 | [Dynamic font requests](20261103-web-render-dynamic-font-requests.md) | this commit | current — Lean requests, actual HarfBuzz/FreeType broker and arbitrary edited text |
 | 2026-11-03 | [QuickJS scripting boundary](20261103-web-render-script-engine.md) | this commit | current — actual isolated QuickJS WASM, typed Lean DOM commands |

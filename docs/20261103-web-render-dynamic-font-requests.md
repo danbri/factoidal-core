@@ -1,5 +1,7 @@
 # Dynamic font requests, 2026-11-03
 
+Architecture: [dynamic font requests](designissues/2026-11-03-dynamic-font-requests.md).
+
 The dynamic font frontend uses the existing Lean HTML parser, stylesheet reader,
 computed styles and `Layout.inlineItems` scanner. `WebRenderFontRequests.collect`
 returns the exact text/family/integer-size requests needed by the current inline
@@ -85,3 +87,14 @@ fetches no page and runs no browser DOM APIs. It obtains exact resource node
 handles from Lean inspection, applies typed text commands, supplies ordered CSS,
 uses the actual-font broker for fresh words and sizes, compares emitted scenes,
 and checks a second arbitrary edit plus resource/bidi refusal controls.
+
+The linked dynamic document differential passed against native SHA-256
+`82053979c7960447ff10318f4ca32e280dcf7d80a96941489b11d63698001b40` and WASM
+SHA-256 `ce2f61b2ba4fe11f7ba86075025bb5d9630e039b836327f8e65f5e6499a4104a`.
+It verified complete native/WASM result equality for the bitmap default,
+relative resource URLs, external CSS source order and important priority,
+script-command text changes, actual Arial shaping and a second arbitrary edit.
+Missing/duplicate resources and mixed bidi text were refused. The report is
+`/tmp/factoidal-document-font-check/report.json`. These hashes identify the
+validated browser MVP checkpoint before the separate CI recursion repairs and
+script MIME classifier correction.

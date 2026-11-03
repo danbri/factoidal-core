@@ -34,6 +34,42 @@ private def lineEndpoints : List PathSegment → Except String (List Point)
   | [] => pure []
   | .line point::rest => (point::·) <$> lineEndpoints rest
   | _ => throw "nonlinear contour requires checked tessellation"
+private def lineEndpointsGo (reversed : List Point) : List PathSegment → Except String (List Point)
+  | [] => .ok reversed.reverse
+  | .line point::rest => lineEndpointsGo (point::reversed) rest
+  | _ => .error "nonlinear contour requires checked tessellation"
+
+private def lineEndpointsTR (segments : List PathSegment) : Except String (List Point) :=
+  lineEndpointsGo [] segments
+
+private theorem lineEndpointsGo_eq (segments : List PathSegment) (reversed : List Point) :
+    lineEndpointsGo reversed segments =
+      (lineEndpoints segments).map (fun points => reversed.reverse ++ points) := by
+  induction segments generalizing reversed with
+  | nil =>
+    change Except.ok reversed.reverse = Except.ok (reversed.reverse ++ [])
+    rw [List.append_nil]
+  | cons segment rest ih =>
+    cases segment with
+    | line point =>
+      rw [lineEndpointsGo,ih]
+      simp only [lineEndpoints]
+      cases result : lineEndpoints rest with
+      | error message => rfl
+      | ok points =>
+        change Except.ok ((point::reversed).reverse ++ points) =
+          Except.ok (reversed.reverse ++ point::points)
+        simp [List.reverse_cons,List.append_assoc]
+    | quadratic control endpoint => rfl
+    | cubic first second endpoint => rfl
+    | arc rx ry rotation large sweep endpoint => rfl
+
+@[csimp] private theorem lineEndpoints_eq : @lineEndpoints = @lineEndpointsTR := by
+  funext segments
+  have equal := (lineEndpointsGo_eq segments []).symm
+  cases result : lineEndpoints segments <;>
+    simpa [result,Except.map,lineEndpointsTR] using equal
+
 def Contour.toLinear : Contour → Except String LinearContour
   | .empty closed => pure ⟨[],closed⟩
   | .path start segments closed => do pure ⟨start::(← lineEndpoints segments),closed⟩

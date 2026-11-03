@@ -4,8 +4,8 @@ import {fetchResource} from './resource-client.mjs';
 import {prepareDocument} from './document-client.mjs';
 import {createOffscreenSession} from '/lab/gpu_transport.ts';
 const $=selector=>document.querySelector(selector),source=$('#source'),button=$('#render'),status=$('#status'),canvas=$('#output');
-let timer,current,sequence=0,gpuSession,gpuQueue=Promise.resolve(),documentURL,activeDocument;
-function invalidate(){sequence++;current=undefined;canvas.style.cursor='default';clearTimeout(timer);}
+let timer,current,sequence=0,gpuSession,gpuQueue=Promise.resolve(),documentURL,sourceURL,activeDocument,renderAbort;
+function invalidate(){sequence++;renderAbort?.abort();current=undefined;canvas.style.cursor='default';clearTimeout(timer);}
 function log(message){console.log('Lean browser',JSON.stringify(message));$('#events').textContent=JSON.stringify(message,null,2)+'\n'+$('#events').textContent.slice(0,8000);}
 async function compileSource(html,width,height,syntax,signal,url,isCurrent){
  if(syntax==='html'&&engine.inspectDocument&&engine.compileDocument&&engine.documentFontRequests){
@@ -28,8 +28,10 @@ async function compileSource(html,width,height,syntax,signal,url,isCurrent){
  }
  return engine.compile(html,width,height,syntax);
 }
-async function render({text=source.value,syntax=$('#syntax').value,isCurrent=()=>true,signal,url=documentURL}={}){
- const request=++sequence;clearTimeout(timer);current=undefined;canvas.style.cursor='default';button.disabled=true;
+async function render({text=source.value,syntax=$('#syntax').value,isCurrent=()=>true,signal,url=sourceURL??documentURL}={}){
+ const request=++sequence;renderAbort?.abort();renderAbort=new AbortController();
+ signal=signal?AbortSignal.any([signal,renderAbort.signal]):renderAbort.signal;
+ clearTimeout(timer);current=undefined;canvas.style.cursor='default';button.disabled=true;
  const active=()=>request===sequence&&isCurrent()&&!signal?.aborted;
  try{
   const start=performance.now(),width=Number($('#width').value),height=Number($('#height').value);
@@ -53,7 +55,7 @@ async function render({text=source.value,syntax=$('#syntax').value,isCurrent=()=
  finally{if(request===sequence)button.disabled=false;}
 }
 const navigation=new NavigationController({load:fetchResource,render:async(resource,context)=>{
- const text=resource.text();source.value=text;$('#syntax').value='html';
+ const text=resource.text();source.value=text;sourceURL=context.url;$('#syntax').value='html';
  await render({text,syntax:'html',...context});
 },onState:state=>{
  window.webBrowserState=state;$('#back').disabled=!state.canBack;$('#forward').disabled=!state.canForward;$('#reload').disabled=!state.url;$('#stop').disabled=!state.loading;
@@ -65,9 +67,12 @@ const navigation=new NavigationController({load:fetchResource,render:async(resou
 window.webBrowser={navigation,render:()=>render().catch(()=>{}),get currentURL(){return documentURL;}};
 $('#navigation').addEventListener('submit',event=>{event.preventDefault();navigation.go($('#address').value,{base:documentURL});});
 $('#back').addEventListener('click',()=>navigation.back());$('#forward').addEventListener('click',()=>navigation.forward());$('#reload').addEventListener('click',()=>navigation.reload());$('#stop').addEventListener('click',()=>navigation.cancel());
-function renderEdited(){navigation.cancel();$('#current-url').textContent=(documentURL??'Local example')+' · edited source';return render().catch(()=>{});}
+function renderEdited(){navigation.cancel();$('#current-url').textContent=(sourceURL??documentURL??'Local example')+' · edited source';return render().catch(()=>{});}
 button.addEventListener('click',renderEdited);$('#syntax').addEventListener('change',renderEdited);
-$('#example').addEventListener('click',async()=>{navigation.cancel();const name=$('#syntax').value==='ntriples'?'graph.nt':'mvp.html';const response=await fetch('/fixtures/'+name);if(!response.ok){status.textContent='Example unavailable';return;}source.value=await response.text();documentURL=new URL('/fixtures/'+name,location.href).href;$('#current-url').textContent=documentURL+' · local example';await render().catch(()=>{});});
+$('#example').addEventListener('click',async()=>{
+ if($('#syntax').value==='html'){await navigation.go(new URL('/fixtures/mvp.html',location.href).href);return;}
+ navigation.cancel();const response=await fetch('/fixtures/graph.nt');if(!response.ok){status.textContent='Example unavailable';return;}source.value=await response.text();sourceURL=documentURL=new URL('/fixtures/graph.nt',location.href).href;$('#current-url').textContent=documentURL+' · RDF editor';await render().catch(()=>{});
+});
 for(const input of [source,$('#width'),$('#height')])input.addEventListener('input',()=>{navigation.cancel();clearTimeout(timer);timer=setTimeout(renderEdited,350);});
 window.addEventListener('pagehide',()=>{navigation.cancel();gpuQueue.then(()=>{gpuSession?.close();gpuSession=undefined;}).catch(console.error);});
 function scenePoint(event){const rect=canvas.getBoundingClientRect();return {x:(event.clientX-rect.left-canvas.clientLeft)*canvas.width/canvas.clientWidth,y:(event.clientY-rect.top-canvas.clientTop)*canvas.height/canvas.clientHeight};}
@@ -89,4 +94,4 @@ canvas.addEventListener('click',async event=>{
 });
 const initialURL=new URL(location.href).searchParams.get('url');
 if(initialURL)await navigation.go(initialURL);
-else{source.value=await(await fetch('/fixtures/mvp.html')).text();documentURL=new URL('/fixtures/mvp.html',location.href).href;$('#current-url').textContent=documentURL+' · local example';await render().catch(()=>{});}
+else await navigation.go(new URL('/fixtures/mvp.html',location.href).href);

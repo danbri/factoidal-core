@@ -32,6 +32,13 @@ try{
  const bitmap=await both('<p>default bitmap words</p>',{op:'render'});assert(!bitmap.error,bitmap.error);
  assert.equal(bitmap.webRender.profile,'lean-block-inline-ascii-bitmap-v1');
  report.checks.push('Lean chooses default bitmap profile without host generic-family matching');
+ const scriptTypes=await both("<script type=' text/ecmascript '>classic()</script><script type='application/json'>{}</script>",{op:'inspect'});
+ assert.equal(scriptTypes.scripts.length,1);assert.equal(scriptTypes.scripts[0].kind,'classic');assert.equal(scriptTypes.scripts[0].source,'classic()');
+ for(const op of ['inspect','render']){
+  const moduleRefusal=await both("<script type=' module '>export{}</script>",{op});
+  assert.match(moduleRefusal.error,/unsupported JavaScript module script/);
+ }
+ report.checks.push('Lean normalizes classic script MIME types, keeps data blocks inert and refuses modules');
  const html="<!doctype html><base href='./assets/'><style>body{font-family:Arial;font-size:20px;line-height:35px;background:white;color:black}p{font-size:12px}</style><link rel=stylesheet href='../css/main.css'><style>p{font-size:21px}</style><p id=message>stale</p><span style='font-size:28px'>office</span><script src='./scripts/app.js'></script>";
  const inspected=await both(html,{op:'inspect',url:'https://example.test/a/page.html'});
  assert.equal(inspected.baseURL,'https://example.test/a/assets/');

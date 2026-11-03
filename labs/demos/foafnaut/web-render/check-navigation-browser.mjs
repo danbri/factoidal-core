@@ -17,6 +17,8 @@ try{
  const page=await browser.newPage({viewport:{width:1440,height:1050}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(origin);await page.waitForFunction(()=>window.webRenderResult,{},{timeout:90000});
  assert(!await page.evaluate(()=>window.webRenderResult.error));
+ report.initial=await page.evaluate(()=>({url:window.webBrowserState.url,profile:window.webRenderResult.artifact.webRender.profile,fontResource:window.webRenderResult.artifact.webRender.fontResource}));
+ await page.screenshot({path:resolve(outDir,'initial-mvp.png'),fullPage:true});
  async function url(expected){await page.waitForFunction(expected=>window.webBrowserState?.url===expected&&!window.webBrowserState.loading,expected,{timeout:90000});assert.equal(await page.locator('#current-url').textContent(),expected);assert(!await page.evaluate(()=>window.webRenderResult.error));}
  async function go(path){await page.locator('#address').fill(target+path);await page.locator('#go').click();}
  await go('/one');await url(target+'/one');assert.equal(await page.locator('#source').inputValue(),fixture.pages['/one']);
