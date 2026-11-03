@@ -588,6 +588,13 @@ bases; never construct host DOM extracts or independent per-root ID maps.
 Retrieval URL and effective HTML base are separate. See the
 [document-reference design](../../docs/designissues/2026-11-03-svg-document-references.md).
 
+SVG CPU batch sampling selects the proved `GraphicsPrepared` partial evaluator
+through csimp. Inspect actual `Scene.json`/`samplePixels` C callers, preserve
+short-circuit panic behavior and exact Float operation order, and compare full
+raw artifacts. Winding counts can be cached while retaining original traversal;
+clipped/dashed cases keep their reference coverage. Never infer GPU numeric
+refinement or a timing gain merely from the interpreter equality theorem.
+
 SVG artifact list formatting uses the proved bit-keyed
 `Rendering/FloatFormat.lean` cache through a csimp-selected wrapper. The
 all-Float-list theorem preserves every reference decimal string and list order;

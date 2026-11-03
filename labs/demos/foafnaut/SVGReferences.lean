@@ -57,6 +57,32 @@ private def locateAux (node : NamespaceNode) (here : List Nat) (parentBase : Opt
       | none => .error "SVG root source path is outside the original document"
       | some child => locateAux child (here ++ [index]) (elementBase attrs parentBase) rest
 
+/-- Declarative source-node identity, separate from the selector's cached path
+    label. A successful selector must return this actual original DOM node. -/
+inductive AtPath : NamespaceNode → List Nat → NamespaceNode → Prop where
+  | here (node : NamespaceNode) : AtPath node [] node
+  | child (name : ExpandedName) (attrs : List NamespaceAttribute)
+      (children : List NamespaceNode) (index : Nat) (rest : List Nat)
+      (source target : NamespaceNode) (selected : children[index]? = some source)
+      (descended : AtPath source rest target) :
+      AtPath (.element name attrs children) (index::rest) target
+
+private theorem locateAux_atPath (node : NamespaceNode) (here : List Nat)
+    (parentBase : Option String) (path : List Nat) (entry : Entry)
+    (found : locateAux node here parentBase path = .ok entry) : AtPath node path entry.node := by
+  induction path generalizing node here parentBase with
+  | nil => simp only [locateAux,Except.ok.injEq] at found; cases found; exact .here node
+  | cons index rest ih =>
+    cases node with
+    | other raw => simp [locateAux] at found
+    | element name attrs children =>
+      simp only [locateAux] at found
+      split at found
+      · contradiction
+      · rename_i child selected
+        exact .child name attrs children index rest child entry.node selected
+          (ih child (here ++ [index]) (elementBase attrs parentBase) found)
+
 private theorem locateAux_path (node : NamespaceNode) (here : List Nat)
     (parentBase : Option String) (path : List Nat) (entry : Entry)
     (found : locateAux node here parentBase path = .ok entry) : entry.path = here ++ path := by
@@ -87,7 +113,16 @@ theorem locate_path (document : NamespaceNode) (path : List Nat)
   · contradiction
   · simpa using locateAux_path document [] initialBaseURL path entry found
 
+theorem locate_atPath (document : NamespaceNode) (path : List Nat)
+    (initialBaseURL : Option String) (entry : Entry)
+    (found : locate document path initialBaseURL = .ok entry) : AtPath document path entry.node := by
+  simp only [locate] at found
+  split at found
+  · contradiction
+  · exact locateAux_atPath document [] initialBaseURL path entry found
+
 #print axioms locate_path
+#print axioms locate_atPath
 
 /-- Prefer SVG2 href even when empty; deprecated xlink is fallback only. -/
 def href (attrs : List NamespaceAttribute) : Option String :=

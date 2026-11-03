@@ -14,8 +14,9 @@ Equality witnesses bind those caches to that source. The reconstruction theorem
 covers every admitted context, including cached unsupported-style errors.
 
 `parseRootInContext` selects the actual source root in Lean. No independent
-root argument can disagree with the index. A closed path theorem connects
-successful selection to the exact requested path. The reader uses absolute
+root argument can disagree with the index. Closed theorems connect
+successful selection to the exact requested path and to a declarative `AtPath`
+relation for the actual original node, beyond checking a cached path label. The reader uses absolute
 source paths for cycle checks. Duplicate IDs still select the first original
 document element; active source identity does not conflate duplicate strings.
 Original parent xml:base values stay with targets during cloning. The effective

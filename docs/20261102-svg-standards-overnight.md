@@ -427,3 +427,38 @@ The first API compile/test logs preserve record syntax/proof setup and a reserve
 local-variable-name error; no sorry remains and printed proof dependencies are
 standard Lean axioms. This is a native API checkpoint; HTML caller integration
 and fresh compiled end-to-end corpus validation are still pending.
+
+
+## Prepared CPU sampling on the shared path model (2026-11-03)
+
+The root lane's narrow shared-path sampler patches are applied to this SVG
+branch, with `GraphicsPrepared` registered immediately after `Graphics` in the
+standard source/C closure, input inventory and SVG link. Typed expression
+preparation specializes fixed scene-data parameters while preserving arithmetic
+and short-circuit order. Invalid array parameters stay delayed in unreachable
+branches. Closed interpreter, coverage, painter-order fold, batch and tail-loop
+proofs connect the optimized code to the original sampler. Polygon/path counts
+are cached once, but their actual winding traversal remains the original one.
+Clipped and dashed geometry keeps every original coverage check.
+
+The target compile and standard native/WASM build finish successfully:
+`prepared-native.log` and `prepared-engines.log`, exit0. All83 Deno groups pass
+(`prepared-deno.log`, exit0). All five complete raw curve artifacts are byte
+identical to the preceding WASM (`prepared-raw.log`, exit0). The fresh WASM hash is
+`520224f6274333deb13a70b55ecf29db20edf1cbc3720beed5b421424171af36`;
+MJS/TS retain their separate hashes above. Generated-C call/capture paths from
+both `Scene.json` and `Scene.samplePixels` reach `samplesWithDataFast`, the
+proved tail loop, `prepareCoverage`, typed `Expr.prepare` and original `pathHit`.
+Exact C source hash, caller bodies and paths are retained in
+`/tmp/factoidal-overnight-svg-prepared-callers.json` and adjacent text files.
+A same-feature paired WASM benchmark is still pending; no new speed factor is
+claimed here from unrelated build durations.
+
+The root selector proof is also strengthened. A declarative `AtPath` relation
+states which actual original namespace node lies at a child path.
+`locate_atPath` proves that successful selection returns that node, in addition
+to the earlier exact path-label theorem. This prevents a same-label/different-node
+selector from satisfying the source-node proof. All printed dependencies are
+standard Lean axioms. The standalone compiled freeze includes the document
+reference API, but the actual HTML caller integration/measurement remains in
+the web lane; a local standalone SVG compile cannot establish that integration.

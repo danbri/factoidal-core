@@ -48,3 +48,13 @@ and [stroke rules](https://www.w3.org/TR/SVG2/painting.html#SpecifyingStrokePain
 The latter distinguishes a moveto-only subpath from an actual zero-length
 drawing segment. The former produces no round-cap disk; the latter retains
 the specified line cap.
+
+
+The CPU sampler uses typed partial evaluation of its original expression AST.
+It caches fixed parameters, inverse transforms, colors and winding counts for
+batch samples, with exact evaluation-order and painter-order theorems. The
+reference winding traversal and all clipped/dashed coverage checks remain.
+A proved tail-loop replacement avoids recursive batch-list stack growth.
+This optimizes the CPU reference checks; it changes neither WGSL nor its numeric
+semantics. The SVG port's complete raw artifacts and all83 Deno groups pass.
+Paired same-feature timing is a separate measurement gate.

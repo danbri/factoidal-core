@@ -1,4 +1,5 @@
 import Graphics
+import GraphicsPrepared
 import SVGPath
 import SVGCurves
 import SVGReferences
@@ -1303,6 +1304,17 @@ inductive Test where
 private def Test.eval (env : Env) : Test → Bool
   | .expr e => e.eval env | .not a => !(a.eval env)
   | .both a b => a.eval env && b.eval env | .either a b => a.eval env || b.eval env
+private def Test.prepare (data : Array Float) : Test → Prepared Bool
+  | .expr e => e.prepare data
+  | .not a => (a.prepare data).map Bool.not
+  | .both a b => (a.prepare data).and (b.prepare data)
+  | .either a b => (a.prepare data).or (b.prepare data)
+private theorem Test.prepare_correct (data : Array Float) (test : Test) (env : Env) :
+    (test.prepare data).eval env = test.eval {env with data := data} := by
+  induction test with
+  | expr e => exact Expr.prepare_correct data e env
+  | _ => simp_all only [Test.prepare,Test.eval,Prepared.eval_map,
+      Prepared.eval_and,Prepared.eval_or]
 private def Test.wgsl : Test → String
   | .expr e => e.wgsl | .not a => "!(" ++ a.wgsl ++ ")"
   | .both a b => "(" ++ a.wgsl ++ "&&" ++ b.wgsl ++ ")"
@@ -1773,6 +1785,50 @@ private def Primitive.coverageAt (primitive : BackendPrimitive) (data : Array Fl
       return hit
   return (fillHit,strokeHit)
 
+/-- Prepare un-clipped, un-dashed geometry once. Winding paths retain the
+    reference edge traversal, with its edge count shared across all samples.
+    Clipped and dashed geometry keeps every existing coverage check. -/
+private inductive PreparedCoverage where
+  | analytic (inverse : Transform) (data : Array Float) (fill stroke : Prepared Bool)
+  | reference (primitive : BackendPrimitive) (data : Array Float) (base : Nat)
+
+private def PreparedCoverage.eval : PreparedCoverage → (Float × Float) → Bool × Bool
+  | .analytic inverse data fill stroke,position =>
+    let env : Env := {data,position := inverse.apply position.1 position.2}
+    (fill.eval env,stroke.eval env)
+  | .reference p data base,position => p.coverageAt data base position
+
+private def Primitive.prepareCoverage (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedCoverage :=
+  match p.clips,p.dashParts,p.geometry with
+  | [],none,.rect .. | [],none,.circle .. | [],none,.ellipse .. | [],none,.line .. =>
+    .analytic p.transform.inverse data ((fillCondition p.geometry base).prepare data)
+      ((strokeCondition p.geometry base p.style.lineCap).prepare data)
+  | [],none,.polygon points =>
+    let count := points.length
+    .analytic p.transform.inverse data
+      (((boundsCondition base).prepare data).and
+        (.dynamic (fun env => windingHit env base count p.style.rule)))
+      ((strokeCondition p.geometry base p.style.lineCap).prepare data)
+  | [],none,.path contours =>
+    let count := (NativeSVGPath.edges contours).length
+    .analytic p.transform.inverse data
+      (.dynamic (fun env => pathHit env base count p.style.rule))
+      ((strokeCondition p.geometry base p.style.lineCap).prepare data)
+  | _,_,_ => .reference p data base
+
+private theorem Primitive.prepareCoverage_correct (p : BackendPrimitive) (data : Array Float)
+    (base : Nat) (position : Float × Float) :
+    (p.prepareCoverage data base).eval position = p.coverageAt data base position := by
+  cases clips : p.clips with
+  | cons clip rest => simp [Primitive.prepareCoverage,PreparedCoverage.eval,clips]
+  | nil =>
+    cases dash : p.dashParts with
+    | some pieces => simp [Primitive.prepareCoverage,PreparedCoverage.eval,clips,dash]
+    | none =>
+      cases geo : p.geometry <;>
+        simp [Primitive.prepareCoverage,PreparedCoverage.eval,Primitive.coverageAt,clips,dash,geo,
+          Prepared.eval_and,Test.prepare_correct] <;> simp [Prepared.eval]
+
 /-- Topmost geometric paint item at a viewport coordinate, in the same
     painter order and using the exact retained coverage predicates as sampling.
     The result is the zero-based index in `primitives`; it is a paint-item
@@ -1800,6 +1856,45 @@ theorem Scene.hitTestAt_none_outside_viewport (s : Scene) (screenX screenY : Flo
     s.hitTestAt screenX screenY = none := by
   simp [Scene.hitTestAt, outside]
 
+private def overColors (fill stroke : List Float) (opacity : Float)
+    (hits : Bool × Bool) (result : Color) : Color :=
+  let fa : Float := if hits.1 then fill[3]! else 0
+  let sa : Float := if hits.2 then stroke[3]! else 0
+  let premul : Color := ⟨stroke[0]!*sa+fill[0]!*fa*(1-sa),stroke[1]!*sa+fill[1]!*fa*(1-sa),stroke[2]!*sa+fill[2]!*fa*(1-sa)⟩
+  let layer : NativeGraphics.PremultipliedLayer :=
+    ⟨premul.r*opacity,premul.g*opacity,premul.b*opacity,(sa+fa*(1-sa))*opacity⟩
+  layer.overOpaque result
+
+private def Primitive.sampleStep (p : BackendPrimitive) (data : Array Float) (base : Nat)
+    (position : Float × Float) (result : Color) : Color :=
+  overColors (resolved p.style.fill p.style p.style.fillOpacity)
+    (resolved p.style.stroke p.style p.style.strokeOpacity) p.effectiveOpacity
+    (p.coverageAt data base position) result
+
+private structure PreparedSample where
+  coverage : PreparedCoverage
+  fill : List Float
+  stroke : List Float
+  opacity : Float
+
+private def PreparedSample.apply (p : PreparedSample) (position : Float × Float) (result : Color) : Color :=
+  overColors p.fill p.stroke p.opacity (p.coverage.eval position) result
+
+private def Primitive.prepareSample (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedSample :=
+  ⟨p.prepareCoverage data base,
+    resolved p.style.fill p.style p.style.fillOpacity,
+    resolved p.style.stroke p.style p.style.strokeOpacity,p.effectiveOpacity⟩
+
+private theorem Primitive.prepareSample_correct (p : BackendPrimitive) (data : Array Float)
+    (base : Nat) (position : Float × Float) (result : Color) :
+    (p.prepareSample data base).apply position result = p.sampleStep data base position result := by
+  simp only [Primitive.prepareSample,PreparedSample.apply,Primitive.sampleStep,Primitive.prepareCoverage_correct]
+
+private def sampleFold (items : List BackendPrimitive) (data : Array Float) (position : Float × Float)
+    (base : Nat) (initial : Color) : Color × Nat :=
+  items.foldl (fun state p =>
+    (p.sampleStep data state.2 position state.1,state.2+p.rowCount*4)) (initial,base)
+
 private def Scene.sampleAt (s : Scene) (data : Array Float)
     (screenX screenY : Float) : Color := Id.run do
   if screenX >= s.mapping.viewportWidth || screenY >= s.mapping.viewportHeight then return rgb 255 255 255
@@ -1823,6 +1918,68 @@ private def Scene.sampleAt (s : Scene) (data : Array Float)
     base := base+primitive.rowCount*4
   return result
 
+private def Scene.sampleAtFold (s : Scene) (data : Array Float)
+    (screenX screenY : Float) : Color :=
+  if screenX >= s.mapping.viewportWidth || screenY >= s.mapping.viewportHeight then rgb 255 255 255
+  else
+    let position := ((screenX-s.mapping.tx)/s.mapping.sx+s.mapping.minX,
+      (screenY-s.mapping.ty)/s.mapping.sy+s.mapping.minY)
+    (sampleFold s.compiled data position 8 (rgb 255 255 255)).1
+
+private theorem Scene.sampleAt_eq_fold (s : Scene) (data : Array Float) (x y : Float) :
+    s.sampleAt data x y = s.sampleAtFold data x y := by
+  simp [Scene.sampleAt,Scene.sampleAtFold,sampleFold,Primitive.sampleStep,overColors]
+  rfl
+
+-- Prepare each primitive once, preserving its packed-data cursor and paint order.
+private def prepareSamples (data : Array Float) : List BackendPrimitive → Nat → List PreparedSample
+  | [],_ => []
+  | p::ps,base => p.prepareSample data base :: prepareSamples data ps (base+p.rowCount*4)
+
+private def prepareSamplesLoop (data : Array Float) : List BackendPrimitive → Nat →
+    List PreparedSample → List PreparedSample
+  | [],_,acc => acc.reverse
+  | p::ps,base,acc => prepareSamplesLoop data ps (base+p.rowCount*4) (p.prepareSample data base::acc)
+
+private theorem prepareSamplesLoop_correct (data : Array Float) (items : List BackendPrimitive)
+    (base : Nat) (acc : List PreparedSample) :
+    prepareSamplesLoop data items base acc = acc.reverse ++ prepareSamples data items base := by
+  induction items generalizing base acc with
+  | nil => simp [prepareSamplesLoop,prepareSamples]
+  | cons p ps ih => simp [prepareSamplesLoop,prepareSamples,ih,List.reverse_cons,List.append_assoc]
+
+private def prepareSamplesFast (data : Array Float) (items : List BackendPrimitive) (base : Nat) :=
+  prepareSamplesLoop data items base []
+
+@[csimp] private theorem prepareSamples_eq_loop :
+    prepareSamples = prepareSamplesFast := by
+  funext data items base
+  simp [prepareSamplesFast,prepareSamplesLoop_correct]
+
+private theorem preparedSamples_fold (data : Array Float) (items : List BackendPrimitive)
+    (position : Float × Float) (base : Nat) (initial : Color) :
+    (prepareSamples data items base).foldl (fun color run => run.apply position color) initial =
+      (sampleFold items data position base initial).1 := by
+  induction items generalizing base initial with
+  | nil => rfl
+  | cons p ps ih =>
+    simp only [prepareSamples,List.foldl_cons,Primitive.prepareSample_correct]
+    rw [ih]
+    rfl
+
+private def Scene.sampleAtPrepared (s : Scene)
+    (prepared : List PreparedSample) (screenX screenY : Float) : Color :=
+  if screenX >= s.mapping.viewportWidth || screenY >= s.mapping.viewportHeight then rgb 255 255 255
+  else
+    let position := ((screenX-s.mapping.tx)/s.mapping.sx+s.mapping.minX,
+      (screenY-s.mapping.ty)/s.mapping.sy+s.mapping.minY)
+    prepared.foldl (fun color run => run.apply position color) (rgb 255 255 255)
+
+private theorem Scene.sampleAtPrepared_correct (s : Scene) (data : Array Float) (x y : Float) :
+    s.sampleAtPrepared (prepareSamples data s.compiled 8) x y = s.sampleAt data x y := by
+  rw [Scene.sampleAt_eq_fold]
+  simp only [Scene.sampleAtPrepared,Scene.sampleAtFold,preparedSamples_fold]
+
 private def Scene.sampleWithData (s : Scene) (data : Array Float) (x y : Nat) : Color := Id.run do
   let mut total : Color := ⟨0,0,0⟩
   for (dx,dy) in pixelSampleOffsets do
@@ -1830,6 +1987,35 @@ private def Scene.sampleWithData (s : Scene) (data : Array Float) (x y : Nat) : 
     total := ⟨total.r+c.r,total.g+c.g,total.b+c.b⟩
   let n := Float.ofNat pixelSampleOffsets.length
   return ⟨total.r/n,total.g/n,total.b/n⟩
+
+private def Scene.sampleWithPrepared (s : Scene)
+    (prepared : List PreparedSample) (x y : Nat) : Color := Id.run do
+  let mut total : Color := ⟨0,0,0⟩
+  for (dx,dy) in pixelSampleOffsets do
+    let c := s.sampleAtPrepared prepared (Float.ofNat x+dx) (Float.ofNat y+dy)
+    total := ⟨total.r+c.r,total.g+c.g,total.b+c.b⟩
+  let n := Float.ofNat pixelSampleOffsets.length
+  return ⟨total.r/n,total.g/n,total.b/n⟩
+
+private theorem Scene.sampleWithPrepared_correct (s : Scene) (data : Array Float) (x y : Nat) :
+    s.sampleWithPrepared (prepareSamples data s.compiled 8) x y = s.sampleWithData data x y := by
+  simp only [Scene.sampleWithPrepared,Scene.sampleWithData,Scene.sampleAtPrepared_correct]
+
+private def Scene.samplesWithData (s : Scene) (data : Array Float) (coordinates : List (Nat × Nat)) : List Color :=
+  coordinates.map (fun (x,y) => s.sampleWithData data x y)
+
+private def Scene.samplesWithDataFast (s : Scene) (data : Array Float) (coordinates : List (Nat × Nat)) : List Color :=
+  let prepared := prepareSamples data s.compiled 8
+  coordinates.map (fun (x,y) => s.sampleWithPrepared prepared x y)
+
+@[csimp] private theorem Scene.samplesWithData_eq_fast :
+    Scene.samplesWithData = Scene.samplesWithDataFast := by
+  funext s data coordinates
+  simp only [Scene.samplesWithData,Scene.samplesWithDataFast,Scene.sampleWithPrepared_correct]
+
+-- Audit the exact compiled replacements as well as their interpreter theorem.
+#print axioms Scene.samplesWithData_eq_fast
+#print axioms prepareSamples_eq_loop
 
 private def Scene.sample (s : Scene) (x y : Nat) : Color :=
   s.sampleWithData s.data x y
@@ -1893,7 +2079,7 @@ private def Scene.json (s : Scene) : Except String String := do
   let rawProbes := [(1,1),(s.width/4,s.height/4),(s.width/2,s.height/2),
     (s.width*3/4,s.height/2),(s.width/2,s.height*3/4),(s.width-2,s.height-2)]
   let probes := (rawProbes.map fun (x,y) => (min (s.width-1) x,min (s.height-1) y)).eraseDups
-  let checks := probes.map fun (x,y) => "{\"x\":" ++ toString x ++ ",\"y\":" ++ toString y ++ ",\"rgb\":" ++ (s.sampleWithData data x y).json ++ "}"
+  let checks := (probes.zip (s.samplesWithData data probes)).map fun ((x,y),color) => "{\"x\":" ++ toString x ++ ",\"y\":" ++ toString y ++ ",\"rgb\":" ++ color.json ++ "}"
   let tree := if DisplayNode.listNodeCount s.tree <= maxInspectorNodes
     then DisplayNode.listJSON s.tree else "null"
   return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
@@ -1912,7 +2098,7 @@ def Scene.samplePixel (s : Scene) (x y : Nat) : Color := s.sample x y
     array once. Coordinates and operation order within each sample are unchanged. -/
 def Scene.samplePixels (s : Scene) (coordinates : List (Nat × Nat)) : List Color :=
   let data := s.data
-  coordinates.map (fun (x,y) => s.sampleWithData data x y)
+  s.samplesWithData data coordinates
 
 theorem Scene.samplePixels_eq_samplePixel (s : Scene) (coordinates : List (Nat × Nat)) :
     s.samplePixels coordinates = coordinates.map (fun (x,y) => s.samplePixel x y) := rfl
