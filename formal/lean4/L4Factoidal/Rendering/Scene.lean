@@ -241,7 +241,10 @@ private theorem lowerListTR_eq (nodes : List Node) (parent : Transform)
     (groups : List (Option String)) :
     Node.lowerListTR parent groups nodes = Node.lowerList parent groups nodes := by
   rw [Node.lowerListTR, lowerStack_eq]
-  simp [LowerFrame.paints, applyClips]
+  have emptyClips : applyClips [] = (id : PaintItem → PaintItem) := by
+    funext item
+    rfl
+  simp [LowerFrame.paints, emptyClips]
 
 theorem Node.lowerTR_eq (node : Node) :
     ∀ parent groups, node.lowerTR parent groups = node.lower parent groups := by
