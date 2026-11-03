@@ -24,9 +24,11 @@ its cumulative row budget to the actual maximum 262144-float storage buffer.
 `Scene.make_existing` proves exact reconstruction of every admitted scene.
 These statements prove cache correspondence and bounds, not ideal geometry.
 
-The common HTML/SVG/font model must use these same canonical segment types.
-The web lane will factor them into `Rendering/Path.lean` after the SVG
-checkpoint. Its adapter must return structured compilation failures and keep
+The common HTML/SVG/font model uses the sole canonical types in core
+`Rendering/Path.lean`. `NativeSVG.Point` and the `NativeSVGPath` data names are
+exact aliases, with constructor compatibility names; no Float conversion or
+second record algebra remains. The shared linear-contour round-trip theorem
+is reused directly. The common scene adapter must return structured compilation failures and keep
 every Float field. Font Q/C outlines must use that model rather than a second
 linear path representation. The native Solving adapter already propagates
 the checked constructor result and retains its Option compatibility view.

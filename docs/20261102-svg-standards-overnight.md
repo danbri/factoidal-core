@@ -362,3 +362,18 @@ source-only closure, all named proof guards, analytic curve grids and storage
 capacity groups pass: `viewport-source-only.log`, exit0. No WASM/GPU result for
 this follow-up is claimed yet; the last linked engine is the frozen curve9aaa
 candidate. The common Path alias checkpoint and a fresh small-engine link follow.
+
+
+## Shared canonical path types (2026-11-03)
+
+The web lane's Path-only checkpoint `ebdcc513f` is imported as `d51f33047`.
+`L4Factoidal.Rendering.Path` now owns the sole Point/PathSegment/Contour/
+LinearContour algebra. Native SVG's public data names and constructors are
+exact aliases. Existing SVG source keeps its API, but HTML, SVG and font
+outlines use the same Float fields and typed segments without conversion or
+an opaque producer payload. `NativeSVGPath.linear_roundtrip` reuses the core
+proof directly. Targeted Path+alias compilation exits0 with only standard
+propext/Quot.sound dependencies (`path-alias-native.log`). The central root
+import, small closure/source inventory and explicit SVG link register the core
+Path module. A fresh standard engine build is in progress; this alias source
+checkpoint does not claim its link or GPU result before that build completes.
