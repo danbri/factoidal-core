@@ -1741,8 +1741,8 @@ async function main () {
         await first.close()
       }
       const names = readdirSync(dir).sort()
-      if (process.env.FACTOIDAL_LWS_STORAGE === 'files') {
-        // A storage kept in files (issue 918): metadata, journal, bodies.
+      if (process.env.FACTOIDAL_LWS_STORAGE !== 'snapshot') {
+        // A storage kept in files (issue 918; the default since 2026-11-03): metadata, journal, bodies.
         assert(names.join(',') === 'bodies,lws-files.json,lws-journal', `DIR holds ${names}`)
       } else {
         assert(existsSync(join(dir, 'lws-state.json')), 'no lws-state.json')
