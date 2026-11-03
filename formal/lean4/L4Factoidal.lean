@@ -1201,5 +1201,4 @@ import L4Factoidal.Rendering.FontFaceTests
 import L4Factoidal.Rendering.FontLayoutTests
 import L4Factoidal.Rendering.FontRequestsTests
 import L4Factoidal.Rendering.RdfViewTests
-import L4Factoidal.Rendering.RdfViewTests
 import L4Factoidal.Rendering.FloatFormat
