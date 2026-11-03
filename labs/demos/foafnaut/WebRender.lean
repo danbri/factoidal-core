@@ -104,15 +104,20 @@ private def runJSON (r : Rendering.GlyphRun) : String :=
   "{\"source\":" ++ toString r.source ++ ",\"font\":" ++ quote r.font ++ ",\"size\":" ++ toString r.fontSize ++
   ",\"text\":" ++ quote r.text ++ ",\"glyphs\":" ++ array (r.glyphs.toList.map fun g =>
     array [toString g.index,toString g.x,toString g.y,toString g.advance,toString g.clusterStart,toString g.clusterEnd]) ++ "}"
-private def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box) : String :=
-  "{\"profile\":\"lean-block-inline-ascii-bitmap-v1\",\"fontScope\":\"ASCII bitmap; no real font shaping\",\"boxes\":" ++
+private def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
+    (font : Option Rendering.FontProvider.Face) : String :=
+  let header := match font with
+    | none => "{\"profile\":\"lean-block-inline-ascii-bitmap-v1\",\"fontScope\":\"ASCII bitmap; no real font shaping\""
+    | some face => "{\"profile\":\"lean-block-inline-font-data-v1\",\"fontScope\":\"Supplied HarfBuzz/FreeType horizontal LTR words; linear font outlines; no bidi or fallback\",\"fontResource\":{\"family\":" ++ quote face.family ++ ",\"fontSha256\":" ++ quote face.fontSha256 ++ ",\"faceIndex\":" ++ toString face.faceIndex ++ ",\"style\":" ++ quote face.style ++ ",\"unitsPerEm\":" ++ toString face.unitsPerEm ++ "}"
+  header ++ ",\"boxes\":" ++
   array (boxes.toList.map fun b => array [toString b.source,toString b.x,toString b.y,toString b.width,toString b.height]) ++
   ",\"glyphRuns\":" ++ array (s.glyphRuns.toList.map runJSON) ++ ",\"links\":" ++ Rendering.Links.encode s.links ++ "}"
 
 /-- Shared checked scene serialization for HTML and structured-document frontends. -/
-def artifact (scene : Rendering.Scene) (boxes : Array Rendering.Layout.Box) : Except String String := do
+def artifact (scene : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
+    (font : Option Rendering.FontProvider.Face := none) : Except String String := do
   let value ← (WebRenderSVG.toScene scene).artifact
-  return (value.dropEnd 1).toString ++ ",\"webRender\":" ++ layoutJSON scene boxes ++ "}"
+  return (value.dropEnd 1).toString ++ ",\"webRender\":" ++ layoutJSON scene boxes font ++ "}"
 
 @[export web_render_compile]
 def compile (html : String) (width height : UInt32) : String :=

@@ -16,6 +16,22 @@ export async function compile(source,width,height,syntax='html'){
   return artifact;
 }
 
+// Font shaping data is supplied by the vetted native font adapter. This host
+// transfers bytes; the same Lean frontend chooses styles, wrapping and paint.
+export async function compileWithFontData(source,fontData,width,height){
+  if(typeof source!=='string'||source.includes('\0')||new TextEncoder().encode(source).length>1048576)throw Error('Input exceeds transport limit');
+  if(typeof fontData!=='string'||fontData.includes('\0')||new TextEncoder().encode(fontData).length>16777216)throw Error('Font data exceeds transport limit');
+  if(![width,height].every(n=>Number.isInteger(n)&&n>0&&n<=4096))throw Error('Viewport dimensions must be integers from 1 to 4096');
+  const module=await(pending??=createModule());
+  const pointer=module.ccall('web_render_font_call','number',['string','string','number','number'],[source,fontData,width,height]);
+  if(!pointer)throw Error('Lean engine initialization or allocation failed');
+  let artifact;try{artifact=JSON.parse(module.UTF8ToString(pointer));}
+  finally{module.ccall('web_render_free',null,['number'],[pointer]);}
+  if(artifact.error)throw Error(artifact.error);
+  if(artifact.abi!=='lean-svg-v1'||artifact.width!==width||artifact.height!==height||!Array.isArray(artifact.data)||!artifact.data.every(Number.isFinite)||artifact.webRender?.profile!=='lean-block-inline-font-data-v1'||!artifact.webRender.fontResource?.fontSha256)throw Error('Unexpected Lean supplied-font scene artifact');
+  return artifact;
+}
+
 const linkWires=new WeakMap();
 // The rectangles and DOM anchor targets were emitted by Lean layout. Lean also
 // performs containment/painter-order picking; host geometry is only coordinates.

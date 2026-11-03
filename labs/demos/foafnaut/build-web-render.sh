@@ -31,9 +31,9 @@ PY
 fi
 fi
 CORE=(L4Factoidal.Rendering.Layout L4Factoidal.Rendering.Links L4Factoidal.XML.NamespaceView L4Factoidal.Tdb2.Format L4Factoidal.Rendering.FloatFormat L4Factoidal.Syntax.IriResolve L4Factoidal.Rendering.RdfView)
-lake build "${CORE[@]}" L4Factoidal.Rendering.Tests L4Factoidal.Rendering.RdfViewTests
+lake build "${CORE[@]}" L4Factoidal.Rendering.Tests L4Factoidal.Rendering.RdfViewTests L4Factoidal.Rendering.FontLayoutTests L4Factoidal.Rendering.FontFaceTests L4Factoidal.Rendering.FontProviderTests L4Factoidal.Rendering.FontDataTests
 export LEAN_PATH="$BUILD/olean:$PROJECT/.lake/build/lib/lean"
-LAB_MODULES=(Graphics GraphicsPrepared Font SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke SVG WebRenderSVG WebRender WebRenderRDF RenderPlan)
+LAB_MODULES=(Graphics GraphicsPrepared Font SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke SVG WebRenderSVG WebRender WebRenderRDF WebRenderFont RenderPlan)
 for module in "${LAB_MODULES[@]}"; do
   printf 'LEAN %s %s\n' "$module" "$(date -u)"
   lean -R "$LAB" -o "$BUILD/olean/$module.olean" -c "$BUILD/ir/$module.c" "$LAB/$module.lean"
@@ -98,7 +98,7 @@ else
   done
   em++ -O2 -DNDEBUG -fwasm-exceptions --no-entry "${OBJECTS[@]}" "$RUNTIME/core-obj/"*.o "$RUNTIME/rt-obj/"*.o \
     -o "$BUILD/engines/web-render.mjs" -sMODULARIZE=1 -sEXPORT_ES6=1 -sINVOKE_RUN=0 \
-    -sEXPORTED_FUNCTIONS=_web_render_call,_web_render_rdf_call,_web_render_hit,_web_render_free -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString \
+    -sEXPORTED_FUNCTIONS=_web_render_call,_web_render_rdf_call,_web_render_font_call,_web_render_hit,_web_render_free -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString \
     -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4MB -sENVIRONMENT=node,web,worker -sASSERTIONS=1
   emcc "${FLAGS[@]}" -c "$LAB/render_plan_shim.c" -o "$BUILD/obj-wasm/render_plan_shim.o"
   em++ -O2 -DNDEBUG -fwasm-exceptions --no-entry "$BUILD/obj-wasm/RenderPlan.o" "$BUILD/obj-wasm/render_plan_shim.o" "$RUNTIME/core-obj/"*.o "$RUNTIME/rt-obj/"*.o \

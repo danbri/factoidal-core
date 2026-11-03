@@ -1,4 +1,5 @@
 import L4Factoidal.Rendering.Style
+import L4Factoidal.Rendering.FontFace
 
 /-! Block flow and inline word wrapping over the existing DOM arena. This
 profile excludes floats, positioning, bidi, flex/grid, margin collapse and
@@ -16,6 +17,44 @@ structure FontProfile where
   /-- Glyph geometry comes from a Lean font adapter, never from host layout. -/
   outline : Nat → List Geometry
   admits : Nat → Bool
+  cssFamilies : List String := ["monospace","ascii-bitmap"]
+  fontSha256 : Option String := none
+  faceIndex : Nat := 0
+  /-- A pure lookup of externally shaped, checked font data, never host layout. -/
+  shapedWord : Option (String → Nat → Except String FontProvider.Word) := none
+
+def FontProfile.ofFace (face : FontProvider.Face) : FontProfile :=
+  {family := face.family,unitsPerEm := face.unitsPerEm,advance := 0,
+   ascent := face.ascent,descent := face.descent,outline := fun _ => [],admits := fun _ => false,
+   cssFamilies := [face.family],fontSha256 := some face.fontSha256,faceIndex := face.faceIndex,
+   shapedWord := some face.lookup}
+
+private def FontProfile.checkFamily (font : FontProfile) (style : Computed) : Except String Unit := do
+  if !font.cssFamilies.any (fun family => family.toLower == style.fontFamily.toLower) then
+    throw s!"unsupported font family: {style.fontFamily} (matching font data required)"
+
+private def FontProfile.word (font : FontProfile) (style : Computed) (text : String) : Except String (Option FontProvider.Word) := do
+  font.checkFamily style
+  match font.shapedWord with
+  | none => return none
+  | some shape =>
+    let size := style.fontSize.toUInt32.toNat
+    if Float.ofNat size != style.fontSize || size == 0 || size > 512 then
+      throw "unsupported shaped font size: integer pixels 1 to 512 required"
+    let word ← shape text size
+    if word.text != text || word.pixelSize != size || font.fontSha256 != some word.fontSha256 ||
+        word.faceIndex != font.faceIndex || word.family != font.family ||
+        word.unitsPerEm != font.unitsPerEm || word.ascent != font.ascent || word.descent != font.descent then
+      throw "font profile: shaped word identity, size or metrics mismatch"
+    return some word
+
+private def spaceWidth (font : FontProfile) (style : Computed) : Except String Float := do
+  match ← font.word style " " with
+  | none => return font.advance*style.fontSize/font.unitsPerEm
+  | some word =>
+    if word.glyphs.any (fun glyph => !glyph.geometry.isEmpty) then
+      throw "unsupported painted whitespace glyph in collapsed space profile"
+    return word.advance*style.fontSize/font.unitsPerEm
 
 structure Box where
   source : Nat
@@ -42,7 +81,7 @@ private def checkSVGBox (s : Computed) : Except String Unit := do
 inductive Inline where
   | word (source : Nat) (style : Computed) (text : String) (start : Nat)
   | space (source : Nat) (style : Computed)
-  | lineBreak
+  | lineBreak (style : Computed)
   | replaced (source : Nat) (width height : Float) (nodes : List Node)
   deriving Repr
 
@@ -82,7 +121,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (a
       throw "unsupported foreign namespace in HTML layout"
     if ["img","input","textarea","select","video","audio","canvas","iframe","object","embed","table","ruby","ul","ol","li"].contains n.lname then
       throw s!"unsupported HTML layout element: {n.lname}"
-    if n.lname == "br" then return #[.lineBreak]
+    if n.lname == "br" then return #[.lineBreak s]
     if s.display == .block then throw "unsupported block descendant inside inline context"
     if n.ns != some DOM.svgNS && (s.background.isSome ||
       s.margin.top != 0 || s.margin.right != 0 || s.margin.bottom != 0 || s.margin.left != 0 ||
@@ -119,41 +158,71 @@ private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Ar
     out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
   return out
 
-private def itemWidth (font : FontProfile) : Inline → Float
-  | .word _ s text _ => font.advance*s.fontSize/font.unitsPerEm*Float.ofNat text.length
-  | .replaced _ w _ _ => w
-  | _ => 0
+private def itemWidth (font : FontProfile) : Inline → Except String Float
+  | .word _ s text _ => do
+    match ← font.word s text with
+    | none => return font.advance*s.fontSize/font.unitsPerEm*Float.ofNat text.length
+    | some word => return word.advance*s.fontSize/font.unitsPerEm
+  | .replaced _ w _ _ => pure w
+  | _ => pure 0
+
+private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Computed)
+    (left baseline width : Float) : Array Node := Id.run do
+  if !s.visible then return #[]
+  let scale := run.fontSize/word.unitsPerEm
+  let mut out := #[]
+  for (glyph,position) in word.glyphs.zip run.glyphs do
+    for geometry in glyph.geometry do
+      out := out.push (.paint ⟨some run.source,{geometry,style := {fill := .solid s.color}, transform := ⟨scale,0,0,scale,position.x,position.y⟩}⟩)
+  if s.underline && width > 0 then
+    let thickness := max 1 (run.fontSize/14)
+    out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness, style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
+  return out
 
 /-- All inline participants share the line baseline, computed before any glyph
 position or replaced-element position is emitted. -/
 private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
-    (x y : Float) : Except String Result := do
+    (x y : Float) (strut : Option Computed) : Except String Result := do
   let mut ascent : Float := 0
   let mut descent : Float := 0
+  if let some style := strut then
+    font.checkFamily style
+    let leading := (style.lineHeight-style.fontSize)/2
+    ascent := font.ascent*style.fontSize/font.unitsPerEm+leading
+    descent := font.descent*style.fontSize/font.unitsPerEm+leading
   for (_,item) in items do
     match item with
-    | .word _ s _ _ | .space _ s =>
+    | .word _ s _ _ | .space _ s | .lineBreak s =>
+      font.checkFamily s
       let leading := (s.lineHeight-s.fontSize)/2
       ascent := max ascent (font.ascent*s.fontSize/font.unitsPerEm+leading)
       descent := max descent (font.descent*s.fontSize/font.unitsPerEm+leading)
     | .replaced _ _ h _ => ascent := max ascent h
-    | _ => pure ()
   let mut out : Result := {height := ascent+descent}
   for (offset,item) in items do
     match item with
     | .word source s text start =>
-      let chars := text.toList
-      if !chars.all (fun c => font.admits c.toNat) then
-        throw "unsupported text: ASCII bitmap font admits U+0020 to U+007E only"
-      let advance := font.advance*s.fontSize/font.unitsPerEm
       let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm
-      let glyphs := chars.toArray.mapIdx fun i c =>
-        ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
-      let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
       let leading := (s.lineHeight-s.fontSize)/2
-      out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source,x+offset,y+ascent-font.ascent*s.fontSize/font.unitsPerEm-leading,advance*Float.ofNat chars.length,s.lineHeight⟩}
+      match ← font.word s text with
+      | none =>
+        let chars := text.toList
+        if !chars.all (fun c => font.admits c.toNat) then
+          throw "unsupported text: ASCII bitmap font admits U+0020 to U+007E only"
+        let advance := font.advance*s.fontSize/font.unitsPerEm
+        let glyphs := chars.toArray.mapIdx fun i c =>
+          ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
+        let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
+        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source,x+offset,top-leading,advance*Float.ofNat chars.length,s.lineHeight⟩}
+      | some word =>
+        let scale := s.fontSize/word.unitsPerEm
+        let width := word.advance*s.fontSize/font.unitsPerEm
+        let glyphs := word.glyphs.map fun glyph =>
+          ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
+        let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
+        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source,x+offset,top-leading,width,s.lineHeight⟩}
     | .space source s =>
-      let advance := font.advance*s.fontSize/font.unitsPerEm
+      let advance ← spaceWidth font s
       let leading := (s.lineHeight-s.fontSize)/2
       let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm-leading
       out := {out with boxes := out.boxes.push ⟨source,x+offset,top,advance,s.lineHeight⟩}
@@ -171,7 +240,8 @@ private def appendResult (a b : Result) : Result :=
 
 /-- Word wrapping constructs line participants first. The font profile and
 positioned glyph runs are consumed to paint the actual word geometry. -/
-def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Float) : Except String Result := do
+def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Float)
+    (strut : Option Computed := none) : Except String Result := do
   let mut out : Result := {}
   let mut cursorX : Float := 0
   let mut pendingSpace : Option (Nat × Computed) := none
@@ -179,17 +249,20 @@ def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Fl
   for item in items do
     match item with
     | .space source s => pendingSpace := some (source,s)
-    | .lineBreak =>
-      let row ← lineLayout font line x (y+out.height)
-      out := appendResult out {row with height := max row.height 19.2}
+    | .lineBreak _ =>
+      let row ← lineLayout font (line.push (cursorX,item)) x (y+out.height) strut
+      out := appendResult out {row with height := if row.height > 0 then row.height else 19.2}
       line := #[]
       cursorX := 0
       pendingSpace := none
     | _ =>
-      let width := itemWidth font item
-      let gap := if cursorX > 0 then pendingSpace.map (fun (_,s) => font.advance*s.fontSize/font.unitsPerEm) |>.getD 0 else 0
+      let width ← itemWidth font item
+      let gap ← if cursorX > 0 then match pendingSpace with
+        | some (_,s) => spaceWidth font s
+        | none => pure 0
+        else pure 0
       if cursorX > 0 && cursorX+gap+width > available then
-        out := appendResult out (← lineLayout font line x (y+out.height))
+        out := appendResult out (← lineLayout font line x (y+out.height) strut)
         line := #[]
         cursorX := 0
       else
@@ -199,7 +272,7 @@ def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Fl
       line := line.push (cursorX,item)
       cursorX := cursorX+width
       pendingSpace := none
-  if !line.isEmpty then out := appendResult out (← lineLayout font line x (y+out.height))
+  if !line.isEmpty then out := appendResult out (← lineLayout font line x (y+out.height) strut)
   return out
 
 private def append (a b : Result) : Result :=
@@ -248,13 +321,13 @@ def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding 
       let cs := styles[child]!
       if cs.display == .block then
         if !inline.isEmpty then
-          content := append content (← inlineLayout font inline innerX (innerY+content.height) width)
+          content := append content (← inlineLayout font inline innerX (innerY+content.height) width (some s))
           inline := #[]
         content := append content (← block dom styles font embedding fuel child innerX (innerY+content.height) width)
       else
         if cs.display == .inlineBlock then throw "unsupported CSS inline-block layout"
         inline := inline ++ (← inlineItems dom styles embedding width fuel child)
-    if !inline.isEmpty then content := append content (← inlineLayout font inline innerX (innerY+content.height) width)
+    if !inline.isEmpty then content := append content (← inlineLayout font inline innerX (innerY+content.height) width (some s))
     if let .percent _ := s.height then throw "unsupported percentage height without definite containing height"
     let height := max 0 ((CSS.resolve 0 s.height).getD content.height)
     let borderWidth := width+padding.left+padding.right

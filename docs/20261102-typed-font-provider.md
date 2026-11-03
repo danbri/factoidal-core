@@ -59,3 +59,41 @@ duplicate text/size, missing data and schema failures. The actual pinned Ahem
 probe also passes through the face decoder and exact `fi A`, 20px lookup.
 These modules remain outside the frozen HTML engine's import closure until
 the coordinated word-shaping callback integration.
+
+## Actual shaped-word HTML layout source checkpoint
+
+The supplied-data frontend is now `WebRenderFont`. Original HTML goes through
+the existing parser/DOM and CSS, with a typed `FontProfile` word callback.
+Actual shaped advances, including a separately supplied space advance, drive
+wrapping. Actual glyph IDs, offsets and cluster spans populate the emitted
+glyph runs and common path paint. Missing text, size or matching family data
+refuses output. The default HTML/RDF route still selects the labeled ASCII
+bitmap profile; an Ahem name alone cannot select bitmap glyphs.
+
+Line layout now includes the parent font strut and styled line breaks before
+positioning any participant. An inline SVG without adjacent text therefore
+aligns to the parent baseline. Fifteen shaped-layout guards check actual
+advances/space width, ligatures, source spans, positions, wrapped links,
+parent/SVG baseline, empty line breaks and profile refusals, alongside the
+62 existing renderer guards. The lab source closure and native CLI C source
+also compile with the separate supplied-data export.
+
+An actual pinned Ahem source probe consumed eight native HB/FT records for
+`AA`, `BB`, `AAA` and a space at 20px and 10px. Original HTML `AA BB` in a
+50px block wrapped into two 20px lines using the real 20px glyph advances.
+The following 10px SVG aligned at y=46 from the parent's 16px baseline strut.
+The generated scene has five actual paint items and Ahem glyph IDs 35/36;
+artifact metadata retains the exact font SHA and distinguishes supplied
+font data from the bitmap route. Evidence inputs/output are
+`/tmp/factoidal-web-ahem-layout{.html,-font-data.json,-artifact.json}`.
+This probe ran through `lean --run WebRenderCLI.lean`, not a newly linked
+standalone binary or the new WASM export yet.
+
+The native CLI syntax is `INPUT WIDTH HEIGHT --font-data FONT_JSON [--pixels]`.
+The WASM bridge adds `web_render_font_call` and the local byte-only host adds
+`compileWithFontData`. Those runtime paths need a fresh build and whole-image
+checks before being claimed verified. The profile still refuses Q/C outlines,
+RTL, fallback, painted collapsed-space glyphs, and missing exact integer
+sizes. General paragraph itemization, browser UA font/paragraph defaults and
+margin collapse remain open. The forthcoming canonical curve compiler must
+be the same model for SVG and font outlines.

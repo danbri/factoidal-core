@@ -28,6 +28,7 @@ structure Computed where
   color : Color := ⟨0,0,0⟩
   background : Option Color := none
   fontSize : Float := 16
+  fontFamily : String := "monospace"
   lineHeight : Float := 19.2
   lineHeightFactor : Option Float := some 1.2
   visible : Bool := true
@@ -270,8 +271,12 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     if d.value == "none" then return {s with underline := false}
     throw "unsupported CSS text decoration"
   | "font-family" =>
-    if ["monospace","ascii-bitmap"].contains d.value then return s
-    throw "unsupported font family: this build uses the explicit ASCII bitmap font profile"
+    let raw := trim d.value
+    let quoted := (raw.startsWith "'" && raw.endsWith "'") || (raw.startsWith "\"" && raw.endsWith "\"")
+    let family := if quoted then ((raw.drop 1).dropEnd 1).toString else raw
+    if family.isEmpty || family.contains ',' || family.contains '\\' ||
+        (!quoted && !ident family) then throw s!"unsupported font family syntax: {d.value}"
+    return {s with fontFamily := family}
   | _ => throw s!"unsupported CSS property: {d.property}"
 
 private def lexLE : List Nat → List Nat → Bool
@@ -292,7 +297,7 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
     throw "unsupported embedded SVG overflow attribute"
   let mut initial : Computed := {
     color := if hyperlink then ⟨0,0,1⟩ else parent.color, underline := hyperlink,
-    clipOverflow := svgViewport && svgOverflow != "visible", fontSize := parent.fontSize,
+    clipOverflow := svgViewport && svgOverflow != "visible", fontSize := parent.fontSize, fontFamily := parent.fontFamily,
     lineHeight := parent.lineHeight, lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
     display := if hidden then .none else if block then .block else .inline,
     margin := if n.lname == "body" then ⟨8,8,8,8⟩ else {}}
