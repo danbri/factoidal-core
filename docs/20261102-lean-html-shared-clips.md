@@ -76,3 +76,19 @@ metrics, line boxes and margin collapse form the next visible text milestone.
 The checked [HarfBuzz/FreeType data adapter](../labs/demos/foafnaut/tools/FONT_DATA.md)
 and `Rendering.FontData` decoder are available but are not yet consumed by
 this layout profile. Ahem is still refused rather than mislabeled bitmap text.
+
+## Box-edge cascade follow-up, 2026-11-03
+
+All eight margin/padding longhands now accept finite nonnegative px values.
+The margin/padding shorthand expands into its four longhands before cascade,
+so a later shorthand can override an earlier longhand and importance/specificity
+still win before source order. This fixes the real RDF view's unsupported
+`padding-bottom` declaration. Negative edges remain a named profile refusal;
+nonzero vertical block margins still require the unimplemented collapse rules.
+HTML style admission and embedded-root declaration filtering now share one
+property list, including the new longhands.
+
+The targeted core checks now pass 58 style/layout guards plus four picker
+guards. Twelve fresh lab CPU guards pass, including zero-valued SVG box
+longhands, actual text origin changes and following-block flow from bottom
+padding. These source checks precede the next fresh RDF/native/WASM image gate.

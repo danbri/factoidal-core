@@ -36,6 +36,27 @@ private def computedAt (html css id : String) : Except String Computed := do
 #guard ((computedAt "<div style='font-size:10px;line-height:2'><span id='x' style='font-size:20px'></span></div>"
   "" "x").toOption.map (·.lineHeight)) == some 40
 
+private def paddingAt (source : String) := (computedAt "<div id='x'></div>" source "x").toOption.map
+  (fun s => (s.padding.top,s.padding.right,s.padding.bottom,s.padding.left))
+#guard paddingAt "div{padding-top:1px;padding-right:2px;padding-bottom:3px;padding-left:4px}" == some (1,2,3,4)
+#guard paddingAt "div{padding-left:9px;padding:1px}" == some (1,1,1,1)
+#guard paddingAt "div{padding:1px;padding-left:9px}" == some (1,1,1,9)
+#guard paddingAt "div{padding-left:9px!important;padding:1px}" == some (1,1,1,9)
+#guard paddingAt "div{padding-left:9px;padding:1px!important}" == some (1,1,1,1)
+#guard paddingAt "#x{padding-left:9px}div{padding:1px}" == some (1,1,1,9)
+#guard paddingAt "div{padding:1px 2px 3px 4px}" == some (1,2,3,4)
+#guard ((computedAt "<div id='x'></div>" "div{margin-top:1px;margin-right:2px;margin-bottom:3px;margin-left:4px}" "x").toOption.map
+  (fun s => (s.margin.top,s.margin.right,s.margin.bottom,s.margin.left))) == some (1,2,3,4)
+#guard ((computedAt "<div id='x'></div>" "div{margin-left:9px;margin:1px 2px 3px}" "x").toOption.map
+  (fun s => (s.margin.top,s.margin.right,s.margin.bottom,s.margin.left))) == some (1,2,3,2)
+#guard ((run "<div style='padding-bottom:-1px'>A</div>" css).toOption.isNone)
+#guard ((run "<div style='margin-left:-1px'>A</div>" css).toOption.isNone)
+#guard ((run "<div style='padding:1px -2px'>A</div>" css).toOption.isNone)
+#guard ((run "<div style='padding-left:3px;padding-top:2px'>A</div>" css).toOption.bind
+  (fun r => r.1.glyphRuns[0]? >>= fun g => g.glyphs[0]? |>.map (fun p => (p.x,p.y)))) == some (3,2)
+#guard ((run "<div style='height:7px;padding-bottom:3px'>A</div><div>B</div>" css).toOption.bind
+  (fun r => r.1.glyphRuns[1]? >>= fun g => g.glyphs[0]? |>.map (·.y))) == some 10
+
 /-- Mutation reaches the real DOM arena: re-rendering recomputes style/layout. -/
 private def mutated : Except String (List Float × List Float) := do
   let dom := DOM.parseHtmlDocument "<body style='margin:0;font-size:7px;line-height:7px'><div id='x' style='width:24px'>AA BB</div>"

@@ -37,6 +37,15 @@ structure Computed where
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
+/-- Properties consumed by HTML style/layout, including an embedded SVG root.
+The DOM-to-SVG adapter uses this same list to avoid a second interpretation. -/
+def htmlProperties : List String :=
+  ["display","width","height","margin","padding",
+   "margin-top","margin-right","margin-bottom","margin-left",
+   "padding-top","padding-right","padding-bottom","padding-left",
+   "color","background","background-color","font-size","font-family",
+   "line-height","visibility","overflow","text-decoration","text-decoration-line"]
+
 structure Declaration where
   property : String
   value : String
@@ -91,6 +100,16 @@ private def selector (s : String) : Except String Selector := do
       n.2.2 + (if p.tag.isSome then 1 else 0))) (0,0,0)
   return ⟨parts.reverse,specificity⟩
 
+private def expandEdges (key value : String) (important : Bool) : Except String (List Declaration) := do
+  let values ← match words value with
+    | [a] => pure [a,a,a,a]
+    | [a,b] => pure [a,b,a,b]
+    | [a,b,c] => pure [a,b,c,b]
+    | [a,b,c,d] => pure [a,b,c,d]
+    | _ => throw "CSS edge shorthand requires one to four values"
+  return (["top","right","bottom","left"].zip values).map fun (side,v) =>
+    ⟨key ++ "-" ++ side,v,important⟩
+
 def declarations (s : String) : Except String (List Declaration) := do
   let mut out : List Declaration := []
   for item in s.splitOn ";" do
@@ -103,7 +122,9 @@ def declarations (s : String) : Except String (List Declaration) := do
       let value := if important then trim ((value.dropEnd 10).toString) else value
       let key := (trim key).toLower
       let key := if key == "background" then "background-color" else key
-      out := ⟨key,value,important⟩ :: out
+      let expanded ← if ["margin","padding"].contains key then expandEdges key value important
+        else pure [⟨key,value,important⟩]
+      for declaration in expanded do out := declaration :: out
   return out.reverse
 
 /-- CSS comments are removed before tokenizing this deliberately small grammar. -/
@@ -198,6 +219,10 @@ private def edgeValues (s : String) : Except String Edges := do
   | [a,b,c] => return ⟨a,b,c,b⟩
   | [a,b,c,d] => return ⟨a,b,c,d⟩
   | _ => throw "CSS edge shorthand requires one to four values"
+private def edgePixel (source : String) : Except String Float := do
+  let value ← pixels source
+  if value < 0 then throw "negative edges outside first CSS profile"
+  return value
 private def apply (s : Computed) (d : Declaration) : Except String Computed := do
   match d.property with
   | "display" => match d.value with
@@ -210,6 +235,14 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   | "height" => return {s with height := ← length d.value}
   | "margin" => return {s with margin := ← edgeValues d.value}
   | "padding" => return {s with padding := ← edgeValues d.value}
+  | "margin-top" => return {s with margin := {s.margin with top := ← edgePixel d.value}}
+  | "margin-right" => return {s with margin := {s.margin with right := ← edgePixel d.value}}
+  | "margin-bottom" => return {s with margin := {s.margin with bottom := ← edgePixel d.value}}
+  | "margin-left" => return {s with margin := {s.margin with left := ← edgePixel d.value}}
+  | "padding-top" => return {s with padding := {s.padding with top := ← edgePixel d.value}}
+  | "padding-right" => return {s with padding := {s.padding with right := ← edgePixel d.value}}
+  | "padding-bottom" => return {s with padding := {s.padding with bottom := ← edgePixel d.value}}
+  | "padding-left" => return {s with padding := {s.padding with left := ← edgePixel d.value}}
   | "color" => return {s with color := ← color d.value}
   | "background" | "background-color" =>
     let bg ← if d.value == "transparent" then pure none else some <$> color d.value
@@ -288,7 +321,6 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
   -- Font size precedes line-height and inheritance-sensitive dependent values.
   let mut result := initial
   if let some (_,d) := winners.get? "font-size" then result ← apply result d
-  let htmlProperties := ["display","width","height","margin","padding","color","background","background-color","font-size","font-family","line-height","visibility","overflow","text-decoration","text-decoration-line"]
   for (key,(priority,d)) in winners.toList do
     if key != "font-size" then
       -- Inline SVG paint declarations stay with the existing SVG producer.

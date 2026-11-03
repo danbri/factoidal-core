@@ -69,7 +69,7 @@ private def embeddedRoot (root : XML.NamespaceNode) : Except String XML.Namespac
     if attr.name.namespace_.isNone && attr.name.localPart == "style" then
       let declarations ← Rendering.CSS.declarations attr.value
       let declarations := declarations.filter (fun d =>
-        !["width","height","overflow","margin","padding","font-size","font-family","line-height","background","background-color","text-decoration","text-decoration-line","color","visibility","display"].contains d.property)
+        !Rendering.CSS.htmlProperties.contains d.property)
       if !declarations.isEmpty then
         let value := String.intercalate ";" (declarations.map fun d => d.property ++ ":" ++ d.value ++ if d.important then "!important" else "")
         out := {attr with value} :: out

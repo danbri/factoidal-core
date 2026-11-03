@@ -15,6 +15,7 @@ private def cascadeHTML := "<style>body{margin:0}svg{color:green!important}</sty
 #guard (pixel cascadeHTML 10 10).toOption == some (0,128/255,0)
 private def visibilityHTML := "<style>body{margin:0}svg{visibility:visible!important}</style><svg style='visibility:hidden'><rect width='20' height='20' fill='red'/></svg>"
 #guard (pixel visibilityHTML 10 10).toOption == some (1,0,0)
+#guard (pixel "<style>body{margin:0}</style><svg style='padding-bottom:0px;margin-left:0px'><rect width='20' height='20' fill='red'/></svg>" 10 10).toOption == some (1,0,0)
 private def blockHTML := "<style>body{margin:0}div{width:20px;height:12px;overflow:hidden;background:red}div div{width:40px;height:24px;background:blue}</style><div><div></div></div>"
 #guard (pixel blockHTML 10 10).toOption == some (0,0,1)
 #guard (pixel blockHTML 21 10).toOption == some (1,1,1)
