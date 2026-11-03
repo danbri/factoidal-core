@@ -39,3 +39,29 @@ Deno.test("offscreen session setup/readback failure closes owned resources and c
  const bad=mock(false,true);await withGPU(bad.gpu,async()=>{const s=await createOffscreenSession(frame,"svg-offscreen");await rejects(()=>s!.draw(),"readback mismatch");assert(s!.stats.frames===0&&s!.stats.failed,"failed frame counted");await rejects(()=>s!.draw(),"failed");s!.close();assert(bad.calls.includes("destroy-readback")&&bad.calls.includes("destroy-device"),"readback failure leaked");});
  await withGPU({requestAdapter:async()=>null},async()=>{assert(await render(frame,"svg-offscreen")===null,"null adapter is a render success");});
 });
+
+Deno.test("compatible scene updates retain resources and use new pixel expectations",async()=>{
+ const m=mock();await withGPU(m.gpu,async()=>{
+  const s=(await createOffscreenSession(frame,"svg-offscreen"))!;
+  const next={...frame,data:frame.data.map((v,i)=>i===0?1:v)};
+  assert(await s.update(next),"compatible payload refused");await s.draw();
+  for(const different of [{...next,width:2},{...next,height:2},{...next,wgsl:"different shader"},{...next,data:[...next.data,0,0,0,0]}]){
+   assert(!(await s.update(different)),"incompatible payload reused");
+  }
+  assert(s.stats.uploads===2&&s.stats.pipelines===1&&s.stats.buffers===2&&s.stats.frames===1,JSON.stringify(s.stats));
+  const drawing=s.draw();await rejects(()=>s.update(next),"Concurrent");await drawing;
+  const changed={...next,checks:[{x:0,y:0,rgb:[255,255,255]}]};
+  assert(await s.update(changed),"new expectations refused");
+  changed.checks[0].rgb[0]=18;changed.checks[0].rgb[1]=24;changed.checks[0].rgb[2]=39;
+  await rejects(()=>s.draw(),"readback mismatch");assert(s.stats.failed,"stale expectations used");
+  s.close();await rejects(()=>s.update(next),"closed");
+ });
+});
+
+Deno.test("scene updates retain Lean payload validation",async()=>{
+ const m=mock();await withGPU(m.gpu,async()=>{
+  const s=(await createOffscreenSession(frame,"svg-offscreen"))!;
+  await rejects(()=>s.update({...frame,data:frame.data.map((v,i)=>i===0?NaN:v)}),"Invalid render-plan ABI inputs");
+  assert(s.stats.uploads===1&&s.stats.failed,"invalid payload uploaded or session remained usable");s.close();
+ });
+});

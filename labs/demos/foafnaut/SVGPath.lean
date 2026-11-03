@@ -1,29 +1,18 @@
-import Init
+import SVGPathData
 
-/- Bounded retained linear SVG path syntax. Numeric conversion is injected from
-   the existing SVG reader, not duplicated here. Curves/arcs remain an
-   explicit unsupported feature; this is not the complete SVG path grammar. -/
-namespace NativeSVG
-structure Point where
-  x : Float
-  y : Float
-  deriving Repr
-end NativeSVG
-
+/- SVG path syntax with retained absolute line, quadratic, cubic and arc
+   segments. Numeric conversion stays in the document reader. Backend
+   tessellation is a separate checked operation in SVGCurves. -/
 namespace NativeSVGPath
 open NativeSVG
-structure Contour where
-  points : List Point
-  closed : Bool
-  deriving Repr
 private inductive Token where
-  | command (c : Char)
-  | number (value : Float)
+  | command (value : Char)
+  | number (lexical : String)
   deriving Repr
 private def space (c : Char) := [' ','\t','\n','\r'].contains c || c.toNat == 12
 private def numberStart (c : Char) := c.isDigit || ['+','-','.'].contains c
 private def numberToken (input : List Char) : String × List Char := Id.run do
-  let (sign,tail) := match input with | ('+'::xs) => (['+'],xs) | ('-'::xs) => (['-'],xs) | _ => ([],input)
+  let (sign,tail) := match input with | '+'::xs => (['+'],xs) | '-'::xs => (['-'],xs) | _ => ([],input)
   let (whole,tail) := tail.span Char.isDigit
   let (fraction,tail) := match tail with
     | '.'::xs => let (digits,rest) := xs.span Char.isDigit; ('.'::digits,rest)
@@ -35,7 +24,7 @@ private def numberToken (input : List Char) : String × List Char := Id.run do
       ('e'::sign++digits,rest)
     | _ => ([],tail)
   return (String.ofList (sign++whole++fraction++exponent),tail)
-private def tokens (number : String → Except String Float) (source : String) : Except String (Array Token) := do
+private def tokens (source : String) : Except String (Array Token) := do
   if source.length > 65536 then throw "path data exceeds 65536 characters"
   let mut remaining := source.toList
   let mut out : Array Token := #[]
@@ -55,87 +44,179 @@ private def tokens (number : String → Except String Float) (source : String) :
         previousNumber := false
         remaining := tail
       else if numberStart c then
-        -- Bound the longest-match scan before constructing a numeric token;
-        -- long attacker-controlled digit runs never reach List.span unbounded.
-        let (lexical,_) := numberToken (remaining.take 49)
-        if lexical.length > 48 then throw "path numeric token exceeds 48 characters"
-        let rest := remaining.drop lexical.length
-        if lexical.endsWith "." || (lexical.splitOn ".e").length > 1 then throw "invalid path fractional number"
-        let value ← number lexical
-        if !value.isFinite then throw "non-finite path coordinate"
-        out := out.push (.number value)
+        -- Two adjacent arc flags are not numeric parameters. Preserve their
+        -- lexeme until context can split them; every actual number still has
+        -- the unchanged 48-character numeric-token bound.
+        let (lexical,_) := numberToken (remaining.take 51)
+        if lexical.length > 50 then throw "path numeric/compact-flag token exceeds 50 characters"
+        remaining := remaining.drop lexical.length
+        out := out.push (.number lexical)
         previousNumber := true
-        remaining := rest
       else throw "invalid path token"
       if out.size > 4096 then throw "path token count exceeds 4096"
   throw "path lexer exceeded input bound"
+private structure Cursor where
+  index : Nat := 0
+  pending : Option String := none
+private def raw (input : Array Token) (cursor : Cursor) : Except String String :=
+  match cursor.pending with
+  | some value => pure value
+  | none => match input[cursor.index]? with
+    | some (.number value) => pure value
+    | _ => throw "path command has incomplete numeric arguments"
+private def takeNumber (number : String → Except String Float) (input : Array Token)
+    (cursor : Cursor) : Except String (Float × Cursor) := do
+  let lexical ← raw input cursor
+  if lexical.length > 48 then throw "path numeric token exceeds 48 characters"
+  if lexical.endsWith "." || (lexical.splitOn ".e").length > 1 then throw "invalid path fractional number"
+  let value ← number lexical
+  if !value.isFinite then throw "non-finite path coordinate"
+  return (value,⟨cursor.index+1,none⟩)
+private def takeNumbers (number : String → Except String Float) (input : Array Token)
+    (cursor : Cursor) (count : Nat) : Except String (Array Float × Cursor) := do
+  let mut cursor := cursor
+  let mut values : Array Float := #[]
+  for _ in [:count] do
+    let (value,next) ← takeNumber number input cursor
+    values := values.push value
+    cursor := next
+  return (values,cursor)
+private def takeFlag (input : Array Token) (cursor : Cursor) : Except String (Bool × Cursor) := do
+  let lexical ← raw input cursor
+  let (flag,rest) ← match lexical.toList with
+    | '0'::rest => pure (false,rest)
+    | '1'::rest => pure (true,rest)
+    | _ => throw "arc flag must be literal 0 or 1"
+  let next := if rest.isEmpty then ⟨cursor.index+1,none⟩
+    else ({cursor with pending:=some (String.ofList rest)} : Cursor)
+  return (flag,next)
 private def bounded (p : Point) : Except String Point :=
   if p.x.isFinite && p.y.isFinite && p.x.abs <= 1000000 && p.y.abs <= 1000000 then pure p
   else throw "resolved path coordinate exceeds profile bound"
-private def finish (out : Array Contour) (points : Array Point) (closed : Bool) : Except String (Array Contour) :=
-  if points.isEmpty then pure out
+private def finish (out : Array Contour) (start : Point) (segments : Array Segment)
+    (closed hasContour : Bool) : Except String (Array Contour) :=
+  if !hasContour then pure out
   else if out.size >= 128 then throw "path subpath count exceeds 128"
-  else pure (out.push ⟨points.toList,closed⟩)
+  else pure (out.push (.path start segments.toList closed))
 
+/-- Normalize valid SVG command groups into typed absolute geometry. Reflected
+    controls reset after every unrelated command, including move/close/arc.
+    Malformed data still follows this lab's explicit whole-input refusal policy. -/
 def parse (number : String → Except String Float) (source : String) : Except String (List Contour) := do
-  let input : Array Token ← tokens number source
-  let mut index : Nat := 0
+  let input ← tokens source
+  let mut cursor : Cursor := {}
   let mut command : Option Char := none
   let mut initialized := false
+  let mut hasContour := false
   let mut current : Point := ⟨0,0⟩
   let mut start : Point := ⟨0,0⟩
-  let mut points : Array Point := #[]
+  let mut cubicControl : Option Point := none
+  let mut quadraticControl : Option Point := none
+  let mut segments : Array Segment := #[]
   let mut out : Array Contour := #[]
-  let mut count : Nat := 0
+  let mut count := 0
   for _ in [:input.size+1] do
-    match input[index]? with
-    | none => return (← finish out points false).toList
-    | some (Token.command c) =>
-      if ['C','c','S','s','Q','q','T','t','A','a'].contains c then throw s!"unsupported path command: {c}"
-      if !['M','m','L','l','H','h','V','v','Z','z'].contains c then throw s!"invalid path command: {c}"
+    let token := match cursor.pending with
+      | some lexical => some (Token.number lexical)
+      | none => input[cursor.index]?
+    match token with
+    | none => return (← finish out start segments false hasContour).toList
+    | some (.command c) =>
+      if !['M','m','L','l','H','h','V','v','C','c','S','s','Q','q','T','t','A','a','Z','z'].contains c then
+        throw s!"invalid path command: {c}"
       if !initialized && !['M','m'].contains c then throw "path must begin with moveto"
       if ['Z','z'].contains c then
-        out ← finish out points true
-        points := #[]
+        out ← finish out start segments true hasContour
+        hasContour := false
+        segments := #[]
         current := start
         command := none
+        cubicControl := none
+        quadraticControl := none
       else
-        let some (Token.number _) := input[index+1]? | throw "path command requires numeric arguments"
+        let some (.number _) := input[cursor.index+1]? | throw "path command requires numeric arguments"
         command := some c
-      index := index+1
-    | some (Token.number x) =>
+      cursor := ⟨cursor.index+1,none⟩
+    | some (.number _) =>
       let some c := command | throw "path numeric data requires a command"
-      let relative := ['m','l','h','v'].contains c
-      let isMove := ['M','m'].contains c
-      let (next,consumed) ← if ['H','h'].contains c then
-          pure (Point.mk (if relative then current.x+x else x) current.y,1)
-        else if ['V','v'].contains c then
-          pure (Point.mk current.x (if relative then current.y+x else x),1)
-        else do
-          let some (Token.number y) := input[index+1]? | throw "path coordinate pair is incomplete"
-          pure (Point.mk (if relative then current.x+x else x) (if relative then current.y+y else y),2)
-      let next ← bounded next
-      if isMove then
-        out ← finish out points false
-        points := #[next]
-        start := next
+      let relative := c.isLower
+      let point := fun x y => bounded (if relative then ⟨current.x+x,current.y+y⟩ else ⟨x,y⟩)
+      if ['M','m'].contains c then
+        let (values,next) ← takeNumbers number input cursor 2
+        let p ← point values[0]! values[1]!
+        out ← finish out start segments false hasContour
+        start := p
+        current := p
+        segments := #[]
+        hasContour := true
         initialized := true
         command := some (if relative then 'l' else 'L')
+        cursor := next
+        cubicControl := none
+        quadraticControl := none
         count := count+1
       else
-        if points.isEmpty then
-          points := #[current]
+        if !hasContour then
+          start := current
+          segments := #[]
+          hasContour := true
           count := count+1
-        points := points.push next
+        let (segment,next) ← if ['H','h'].contains c then do
+            let (x,next) ← takeNumber number input cursor
+            let p ← bounded ⟨if relative then current.x+x else x,current.y⟩
+            pure (Segment.line p,next)
+          else if ['V','v'].contains c then do
+            let (y,next) ← takeNumber number input cursor
+            let p ← bounded ⟨current.x,if relative then current.y+y else y⟩
+            pure (Segment.line p,next)
+          else if ['L','l','T','t'].contains c then do
+            let (values,next) ← takeNumbers number input cursor 2
+            let p ← point values[0]! values[1]!
+            if ['T','t'].contains c then
+              let control ← match quadraticControl with
+                | none => pure current
+                | some old => bounded ⟨current.x-(old.x-current.x),current.y-(old.y-current.y)⟩
+              pure (Segment.quadratic control p,next)
+            else pure (Segment.line p,next)
+          else if ['Q','q','S','s'].contains c then do
+            let (values,next) ← takeNumbers number input cursor 4
+            let first ← point values[0]! values[1]!
+            let p ← point values[2]! values[3]!
+            if ['S','s'].contains c then
+              let control ← match cubicControl with
+                | none => pure current
+                | some old => bounded ⟨current.x-(old.x-current.x),current.y-(old.y-current.y)⟩
+              pure (Segment.cubic control first p,next)
+            else pure (Segment.quadratic first p,next)
+          else if ['C','c'].contains c then do
+            let (values,next) ← takeNumbers number input cursor 6
+            let first ← point values[0]! values[1]!
+            let second ← point values[2]! values[3]!
+            let p ← point values[4]! values[5]!
+            pure (Segment.cubic first second p,next)
+          else if ['A','a'].contains c then do
+            let (values,next) ← takeNumbers number input cursor 3
+            let (largeArc,next) ← takeFlag input next
+            let (sweep,next) ← takeFlag input next
+            let (endpoint,next) ← takeNumbers number input next 2
+            let p ← point endpoint[0]! endpoint[1]!
+            pure (Segment.arc values[0]! values[1]! values[2]! largeArc sweep p,next)
+          else throw "invalid path numeric command"
+        segments := segments.push segment
+        current := match segment with
+          | .line p | .quadratic _ p | .cubic _ _ p | .arc _ _ _ _ _ p => p
+        match segment with
+        | .cubic _ last _ => cubicControl := some last; quadraticControl := none
+        | .quadratic control _ => quadraticControl := some control; cubicControl := none
+        | _ => cubicControl := none; quadraticControl := none
+        cursor := next
         count := count+1
       if count > 512 then throw "path point/edge count exceeds 512"
-      current := next
-      index := index+consumed
   throw "path parser exceeded token bound"
 
-/-- Fill implicitly closes every open subpath. Closedness is retained separately
-    for the separate SVGStroke stroke-edge traversal. No edge connects distinct contours. -/
-def edges (contours : List Contour) : List (Point × Point) :=
+/-- Fill closes each compiled subpath independently; the separate stroke
+    traversal closes only explicitly closed contours. -/
+def edges (contours : List LinearContour) : List (Point × Point) :=
   contours.flatMap fun contour =>
     contour.points.zip (contour.points.drop 1 ++ contour.points.take 1)
 end NativeSVGPath

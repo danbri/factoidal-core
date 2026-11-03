@@ -13,7 +13,7 @@
   <nav class="hub-app-nav" aria-label="Factoidal navigation">
     <a href="{{ '/' | url }}">Factoidal</a>
     <a href="{{ '/web/hub/' | url }}">Documentation hub</a>
-    <a href="https://www.npmjs.com/package/@factoidal/core/v/0.29.0">core 0.29.0</a>
+    {% if appEngineLabel %}<a href="{{ appEngineUrl or '#evidence' }}">{{ appEngineLabel }}</a>{% else %}<a href="https://www.npmjs.com/package/@factoidal/core/v/0.29.0">core 0.29.0</a>{% endif %}
     <a href="{{ appSource or 'https://github.com/danbri/factoidal-core/tree/main/docs/web/hub/data-compositor' }}">Source</a>
   </nav>
   <main>{{ content | safe }}</main>

@@ -27,7 +27,9 @@ def run : IO Unit := do
     | _ => throw (IO.userError "expected one primitive")
   let hosted ← scene "width='100%' height='100%'" "<rect width='50%' height='50%'/>" 200 100
   check (hosted.width==200 && hosted.height==100) "host viewport dimensions"
-  for body in ["<rect width='-1%' height='50%'/>","<circle r='-1%'/>","<circle r='10%' stroke-width='-1%'/>","<rect width='1%%' height='1'/>"] do
+  let ignoredRadius ← scene "width='200' height='100'" "<circle r='-1%'/><rect width='10%' height='10%'/>"
+  check (ignoredRadius.primitives.length == 1) "invalid percentage radius must use initial zero without suppressing sibling"
+  for body in ["<rect width='-1%' height='50%'/>","<circle r='10%' stroke-width='-1%'/>","<rect width='1%%' height='1'/>"] do
     check (!(NativeSVG.parse (wrap "width='200' height='100'" body)).isOk) "invalid percentage admitted"
   check (!(NativeSVG.parse (wrap "width='100%' height='100%'" "")).isOk) "unresolved root percentage accepted"
   let negative ← scene "width='200' height='100'" "<rect x='-10%' y='120%' width='10px' height='10'/>"

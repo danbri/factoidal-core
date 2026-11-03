@@ -156,18 +156,25 @@ theorem RetainedScene.fromSVG_preserves_painter_order (scene : NativeSVG.Scene) 
 /-- Lower only a scene made entirely from SVG frontend items back to the
     existing typed SVG backend input. Mixed scenes are refused; filtering them
     would alter painter order and silently drop content. -/
-def RetainedScene.toSVGScene? (scene : RetainedScene) : Option NativeSVG.Scene := do
-  let mapping ← scene.svgMapping
-  let tree ← scene.items.mapM RetainedItem.svgNode?
-  let primitives := NativeSVG.DisplayNode.lowerFromRootList tree
-  pure ⟨scene.width,scene.height,mapping,tree,primitives,rfl⟩
+def RetainedScene.toSVGScene (scene : RetainedScene) : Except String NativeSVG.Scene :=
+  match scene.svgMapping with
+  | none => .error "SVG backend mapping is absent"
+  | some mapping =>
+    match scene.items.mapM RetainedItem.svgNode? with
+    | none => .error "mixed frontend scene cannot be compiled as SVG"
+    | some tree => NativeSVG.Scene.make scene.width scene.height mapping tree
+
+/-- Compatibility option view; callers needing the exact geometry/budget
+    failure use the structured toSVGScene result above. -/
+def RetainedScene.toSVGScene? (scene : RetainedScene) : Option NativeSVG.Scene :=
+  scene.toSVGScene.toOption
 
 theorem RetainedScene.toSVGScene?_refuses_programmatic_item
     (scene : RetainedScene) (item : RetainedItem) (node : Solving.Node)
     (member : item ∈ scene.items) (isProgrammatic : item.payload = .programmatic node) :
     scene.toSVGScene? = none := by
   cases hMapping : scene.svgMapping with
-  | none => simp [RetainedScene.toSVGScene?, hMapping]
+  | none => simp [RetainedScene.toSVGScene?, RetainedScene.toSVGScene, hMapping, Except.toOption]
   | some mapping =>
     have refused : RetainedItem.svgNode? item = none := by
       cases item with
@@ -177,15 +184,19 @@ theorem RetainedScene.toSVGScene?_refuses_programmatic_item
         | svgNode node => simp at isProgrammatic
     have hItems := mapM_none_of_refused_member RetainedItem.svgNode?
       scene.items item member refused
-    simp [RetainedScene.toSVGScene?, hMapping, hItems]
+    simp [RetainedScene.toSVGScene?, RetainedScene.toSVGScene, hMapping, hItems, Except.toOption]
+
+theorem RetainedScene.fromSVG_roundTrips_checked (scene : NativeSVG.Scene) :
+    (RetainedScene.fromSVG scene).toSVGScene = .ok scene := by
+  simp only [RetainedScene.fromSVG, RetainedScene.toSVGScene]
+  rw [List.mapM_map,svgItems_preserved]
+  exact NativeSVG.Scene.make_existing scene
 
 theorem RetainedScene.fromSVG_roundTrips (scene : NativeSVG.Scene) :
     (RetainedScene.fromSVG scene).toSVGScene? = some scene := by
-  simp only [RetainedScene.fromSVG, RetainedScene.toSVGScene?]
-  rw [List.mapM_map]
-  cases scene with
-  | mk width height mapping tree primitives loweringCorrect =>
-      simp [svgItems_preserved, loweringCorrect]
+  simp [RetainedScene.toSVGScene?,RetainedScene.fromSVG_roundTrips_checked,Except.toOption]
+
+#print axioms RetainedScene.fromSVG_roundTrips_checked
 
 def parseSVG (source : String) (width height : Nat := 0) : Except String SVGScene :=
   NativeSVG.parse source width height

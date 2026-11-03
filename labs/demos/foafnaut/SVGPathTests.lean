@@ -16,7 +16,8 @@ def run : IO Unit := do
   let some primitive := parsed.primitives.head? | throw (IO.userError "missing path")
   let .path contours := primitive.geometry | throw (IO.userError "path was not retained")
   check ((contours.head?.map (·.closed)) == some true) "close flag lost"
-  check ((contours.head?.map (·.points.length)) == some 4) "implicit coordinate pairs lost"
+  let some (.path _ segments _) := contours.head? | throw (IO.userError "canonical contour start lost")
+  check (segments.length == 3) "implicit coordinate pairs lost"
   let outer := "M2 2H26V26H2Z"
   let same := outer++"M8 8H20V20H8Z"
   check (sample (path same) 12 12 == black) "nonzero same-winding hole"
@@ -28,7 +29,7 @@ def run : IO Unit := do
   check (sample (path "none") 0 0 == white) "none path painted"
   check (sample (path "M0 0") 0 0 == white) "degenerate moveto painted"
   check (sample (path "M0 0L20 0L0 20" "transform='translate(5,5)'") 6 6 == black) "path CTM"
-  for d in ["L0 0","M0","M,0 0","M0,,0","M0 0,","M0 0LZ","M0 0Z1 2","M0 0Q1 2 3 4","M1000000 0l1 0","M0 0L1. 2","M0 0L1.e2 2","M0 0p1 2"] do
+  for d in ["L0 0","M0","M,0 0","M0,,0","M0 0,","M0 0LZ","M0 0Z1 2","M1000000 0l1 0","M0 0L1. 2","M0 0L1.e2 2","M0 0p1 2"] do
     check (!(NativeSVG.parse (path d)).isOk) ("invalid/unsupported path accepted: "++d)
   check ((NativeSVG.parse (path "M0 0L10 10" "stroke='black'")).isOk) "linear path stroke refused"
   check (!(NativeSVG.parse (path (String.join (List.replicate 129 "M0 0")))).isOk) "subpath budget ignored"

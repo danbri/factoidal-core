@@ -12,6 +12,9 @@ fi
 OUT=${1:-$LAB/.build/dist}
 mkdir -p "$OUT" "$LAB/.build/native"
 OUT=$(cd "$OUT" && pwd)
+# Rebuild the native proof/source closure on a clean checkout. Downloaded WASM
+# engines remain untouched; no Emscripten/runtime build occurs in this step.
+bash "$LAB/build-engines.sh" --source-only
 bash "$LAB/test.sh" --skip-build
 # The static browser SVG uses the checked Lean scene/policy backend. An
 # extracted native package does not contain Lean sources or a Lean toolchain.
@@ -29,7 +32,7 @@ cp "$OUT/libnative-window.dylib" "$LAB/.build/native/libnative-window.dylib"
 # Launchers still cd to OUT for relative read/write permissions and fixtures.
 cd "$OUT"
 deno compile --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
-  --allow-read=. --allow-write=. --allow-run=/usr/bin/open --allow-ffi \
+  --allow-read --allow-write --allow-run=/usr/bin/open --allow-ffi \
   --include "$LAB/.build/engines/ui-engine.wasm" --include "$LAB/.build/engines/demos-engine.wasm" \
   --include "$LAB/.build/engines/render-plan.wasm" \
   --include "$LAB/.build/engines/foafnaut-engine.wasm" --include "$LAB/foaf/fixtures/demo.ttl" \

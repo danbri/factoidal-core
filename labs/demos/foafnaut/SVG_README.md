@@ -21,10 +21,10 @@ adapter means exit 2 with no image, never a CPU image substituted for a GPU resu
 
 ## Dashed strokes
 
-Rectangles, lines, polygons, polylines and linear paths now support bounded dash
+Rectangles, lines, polygons, polylines and straight/curved paths support bounded dash
 arrays and signed offsets, including percentage lengths, odd-list repetition
 and zero-sum solid strokes. Dash pieces share one element opacity calculation.
-Curved path strokes and dashed ellipses remain unsupported. Source tests and
+Dashed ellipses remain unsupported. Source tests and
 unchanged WPT cases have targeted GPU comparisons; see the coverage report for
 which renderer/artifact each result covers.
 
@@ -40,22 +40,27 @@ CSS error recovery remains unimplemented. This is not full CSS conformance.
 
 ## Supported subset
 
-SVG-namespace `svg`/`g`, sharp `rect`, `circle`, filled `ellipse`, butt- or
+SVG-namespace root/nested `svg`, `g`, `defs`/`use`/`symbol`, sharp `rect`, `circle`, filled `ellipse`, butt- or
 round-cap stroked `line`, filled and stroked `polygon`/`polyline`, and filled
-and stroked linear/compound `path` are supported, plus text-only
+and stroked straight/curved/compound `path` are supported, plus text-only
 `title`/`desc` metadata. Stroked contours support bounded dash arrays and
 offsets, butt/round caps, and default miter joins with bevel fallback. SVG
 `metadata` subtrees are non-rendering; XHTML `link rel="match"` and
-`link rel="help"` are recognized as reftest metadata. Other HTML links
+`link rel="help"` and empty XHTML `meta` annotations are recognized as reftest metadata. Other HTML links
 (including stylesheets) remain explicit refusals.
 Namespace prefixes resolve by expanded name; lookalike namespaces, unbound
-prefixes, duplicate expanded attributes and foreign elements/qualified attributes
-are refused. Geometry accepts signed fractional decimal/exponent numbers and
+prefixes and duplicate expanded attributes are refused. Foreign metadata attributes
+are inert, while SVG-qualified paint lookalikes remain errors. xml:lang/xml:space
+are metadata; xml:base affects URL resolution. Foreign painting elements remain
+unsupported. Geometry accepts signed fractional decimal/exponent numbers and
 unitless/px lengths and viewport-relative percentages for shape coordinates,
 dimensions, radii and stroke width. Horizontal/vertical lengths use the respective
 viewport axis; circle radius and stroke width use the normalized diagonal.
-With a viewBox, its dimensions supply these bases. Rect/circle/ellipse zero size disables painting; negative
-sizes are errors. Ellipses require explicit numeric rx/ry and have no stroke.
+With a valid positive viewBox, its dimensions supply these bases. Rect/circle/ellipse
+zero size disables painting. An invalid negative circle radius uses its initial
+zero value; negative rectangle/ellipse dimensions remain explicit profile
+refusals. CSS circle-radius geometry is not yet implemented. Ellipses require
+explicit numeric rx/ry and have no stroke.
 
 Default paint is black fill and no stroke. Fill/stroke/color/width, fill/stroke
 opacity and fill-rule inherit through groups. `currentColor` stays symbolic
@@ -69,14 +74,16 @@ Lines default to butt caps and support inherited round caps. Round caps use a
 capsule, including a disk for zero-length lines; zero-length butt lines and
 zero stroke width paint nothing. Polygon fill implements nonzero and evenodd
 winding for 3–64 vertices. Shared stroke construction handles open/closed
-polygon, polyline and linear-path contours, including total `pathLength` dash
-calibration. Ellipse strokes and curved path commands remain unsupported.
+polygon, polyline and path contours, including total `pathLength` dash
+calibration. Ellipse strokes remain unsupported.
 Non-inherited leaf opacity is applied once after premultiplied fill/stroke
 composition, including overlap.
 Group/root opacity is refused rather than approximated per descendant.
 
 Root viewBox mapping follows default xMidYMid meet, all nine alignments, slice,
-and none. Positive unitless/px root width/height are required unless both output
+and none. A zero viewBox width/height suppresses the viewport subtree. A negative
+viewBox extent invalidates that attribute, so mapping and percentage bases use
+the viewport dimensions instead; this rule also applies to nested SVG/symbols. Positive unitless/px root width/height are required unless both output
 viewport dimensions are supplied; source dimensions are still validated. Root
 percentage dimensions require that explicit host viewport. The supplied output
 size overrides root dimensions; this is an embedding contract, not CSS sizing. A
@@ -97,25 +104,75 @@ These choices refer to W3C [painting](https://www.w3.org/TR/SVG11/painting.html)
 and [viewport transformation](https://www.w3.org/TR/SVG2/coords.html#ComputingAViewportsTransform),
 without claiming all their semantics or other SVG features are implemented.
 
+## Curved paths and checked lowering
+
+The Lean reader retains absolute/relative/repeated M/L/H/V/C/S/Q/T/A/Z commands
+as canonical typed segments, including smooth control reflection and compact arc
+flags. Quadratic/cubic controls and arc radii/rotation/flags remain in the scene.
+Zero-radius arcs draw a line; coincident-endpoint arcs are omitted. Moveto-only
+subpaths do not stroke, while actual zero-length drawing segments keep their caps.
+
+Checked de Casteljau/arc lowering produces separate linear backend contours for
+fill, stroke, dash, picking and GPU data. It uses the full screen transform,
+1/64-pixel flatness policy, depth limit20, and the existing512 generated-point
+budget. Over-budget/non-flat inputs fail explicitly. The scene carries a proof
+that its backend cache is exactly the successful compiler result, plus painter
+count and actual packed-storage bounds proofs. These are not universal ideal
+curve error or Float32 arithmetic proofs. Native analytic grids and four complete
+GPU fill controls pass; the annular-stroke GPU control still differs at four
+pixels. Native/WASM arc Double coordinates can differ even where the tested
+Float32 upload bytes match. See the [curve/cache design](../../../docs/designissues/2026-11-03-svg-curves-cache.md)
+and [measurement record](../../../docs/20261102-svg-standards-overnight.md).
+
+## Definitions, instances and viewport clips
+
+`defs` and uninstantiated `symbol` containers do not paint. `use` resolves the
+first original document element with the ID, inherits host paint then applies
+the target's own specified style, and appends its x/y translation after its
+transform. Source identity is independent from possibly duplicated IDs;
+missing/invalid/cyclic instances paint nothing while unrelated graphics remain.
+`href` takes precedence over deprecated `xlink:href`, including an empty href.
+Fragments percent-decode UTF-8 once and preserve literal plus signs.
+
+Symbols and nested SVG establish new viewports and percentage bases. Their
+viewport rectangle is clipped through its own affine frame, independently from
+the content viewBox transform. Nested clips intersect; singular/empty clips and
+zero nested viewBox dimensions paint nothing. Explicit `overflow="visible"`
+removes that viewport clip. Arbitrary clipPath resources remain unsupported.
+CSS width/height are ignored on use/symbol/nested-svg per the
+[2026 SVGWG resolution](https://github.com/w3c/svgwg/pull/1059); their XML
+attributes still determine dimensions and use overrides.
+
+The existing `compile(xml,width,height)` contract still forces an embedding
+viewport. `loadSVG().compileWithURL(xml,documentURL,width,height)` adds retrieval
+context without changing that sizing contract. Same-document relative/absolute
+URLs resolve in Lean through the repository's RFC3986 resolver; original source
+xml:base context survives cloning under a differently based use host. External
+use documents are unsupported and never fetched. Without retrieval context,
+only fragment-only references without a changed base are admitted. This is not
+a complete WHATWG URL canonicalization or browser event model.
+
 ## Explicit refusals and limits
 
 CSS class/id selectors and broader CSS cascade, root transforms, curved path
-commands and their strokes, text/fonts, nested viewports, images, use/links,
-scripting, animation, defs/gradients/patterns, filters, masks,
-clips, markers, rounded rects, conditional processing,
+commands and their strokes, text/fonts, images and outbound graphic links,
+scripting, animation, gradients/patterns, filters, masks,
+clipPath resources, markers, rounded rects, conditional processing,
 paint-order changes, group opacity, square caps, custom joins/miterlimits,
 ellipse strokes, font-relative/other non-px lengths, and unknown colors are
 errors.
-Unsupported features are not silently dropped, even on a zero-size primitive.
+Unsupported painted features are explicitly refused, including on zero-size
+primitives. Definition templates are interpreted for painting only when instanced;
+uninstantiated definitions and disabled viewports do not force their child geometry.
 IDs and version labels 1.1/2.0 are recognized metadata, not schema validation.
 Only unresolved simple local paint-fragment fallback is currently implemented. Full SVG remains open work.
 
 ### `display` and `visibility` subset
 
 The parser supports SVG 2 `display="none"` by omitting that element and its
-subtree from the retained paint scene. It still parses and validates the
-subtree before omitting it, so unsupported markup does not become silently
-accepted just because it is hidden. Other `display` values use the ordinary
+subtree from the retained paint scene. Ordinary shape/group subtrees still
+undergo strict geometry validation before omission. Hidden use instances do not
+expand their references; uninstantiated definition containers do not paint. Other `display` values use the ordinary
 paint path in this restricted profile; this is not full CSS `display`
 validation. `visibility="visible"`, `hidden`, and `collapse` are inherited.
 Hidden/collapsed paint records remain in the retained scene but lower with zero
@@ -148,7 +205,7 @@ tail. Both remain below the 262,144-float cap. Before compound glyph paths the
 scenes were 128,347/1,880/37,608 and 455,470/6,748/134,968 respectively. These
 measurements motivate the bounded profile, not a frame-rate guarantee.
 
-Geometry has hard boundaries without antialiasing. CPU reference Float and GPU
+Geometry uses the explicit four-quarter-point sampling approximation above. CPU reference Float and GPU
 f32 may differ at boundaries; readback comparisons allow one channel value of
 rounding tolerance. Typed expressions and shared predicates are useful checks,
 not proofs of WGSL validity, compiler correctness, CPU/GPU equivalence, or SVG
@@ -163,7 +220,7 @@ closure. It does not link old XML objects from an unrelated checkout. Cached
 pinned Init/Std/runtime objects are shared; source hashes/tool versions travel
 with the release. No binaries, generated C/WASM/glue/JSON or caches are committed.
 
-Seventeen local SVG regression groups cover namespace semantics, XML character
+Local SVG regression groups cover namespace semantics, XML character
 references, symbolic paint inheritance/defaults, fractional data, viewport
 mapping, butt/round/zero strokes, opacity overlap, polygon winding, zero/negative
 geometry, tiny viewports, explicit refusal paths and GPU transport encodings.
@@ -364,3 +421,15 @@ weakening application-level guarantees. Where the backend contract cannot yet be
 proved, the evidence must say so and the feature must not be presented as covered
 by the shared theorem. Backend-specific GPU execution and floating-point
 boundaries remain separate obligations.
+
+
+For HTML documents with multiple SVG roots, the Lean frontend builds one
+`ReferenceContext.create(wholeNamespaceDOM, documentURL, initialBaseURL)` and
+calls `parseRootInContext` with an absolute root source path. Text/comments
+count in child indices. IDs, original xml:base and SVG style rules remain
+shared across roots, including hidden definition roots. The optional Lean
+root-attribute normalizer changes only the selected root's attributes after
+HTML/CSS computation; referenced source nodes and their bases remain intact.
+Standalone `parseRoot` retains its local document default. This API's native
+regressions are separate from compiled HTML/browser integration; see the
+[document-reference design](../../../docs/designissues/2026-11-03-svg-document-references.md).

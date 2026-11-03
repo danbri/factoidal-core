@@ -1193,3 +1193,13 @@ import L4Factoidal.DOM.Arena
 import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.Theorems
 import L4Factoidal.DOM.Tests
+import L4Factoidal.Rendering.Tests
+import L4Factoidal.Rendering.Links
+import L4Factoidal.Rendering.FontDataTests
+import L4Factoidal.Rendering.FontProviderTests
+import L4Factoidal.Rendering.FontFaceTests
+import L4Factoidal.Rendering.FontLayoutTests
+import L4Factoidal.Rendering.FontRequestsTests
+import L4Factoidal.Rendering.LayoutStackAudit
+import L4Factoidal.Rendering.RdfViewTests
+import L4Factoidal.Rendering.FloatFormat

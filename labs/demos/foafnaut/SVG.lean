@@ -1,11 +1,15 @@
 import Graphics
+import GraphicsPrepared
 import SVGPath
+import SVGCurves
+import SVGReferences
 import SVGCSS
 import SVGDash
 import SVGDashUnits
 import SVGStroke
 import L4Factoidal.Math.Affine
 import L4Factoidal.Tdb2.Format
+import L4Factoidal.Rendering.FloatFormat
 import L4Factoidal.XML.NamespaceView
 
 /- Isolated strict SVG document reader, not SVG Tiny/full conformance.
@@ -224,8 +228,11 @@ private def common := ["id","fill","stroke","color","fill-opacity","stroke-opaci
   "display","visibility"]
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
-    if a.name.namespace_.isSome then throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
-    if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
+    if let some uri := a.name.namespace_ then
+      if uri == svgURI || (uri == "http://www.w3.org/1999/xlink" && !(tag == "use" && a.name.localPart == "href")) ||
+          (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base"].contains a.name.localPart) then
+        throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
+    else if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
 private def inheritedNumber (lengths : LengthContext) (attrs : List NamespaceAttribute) (key : String) (old : Float) : Except String Float :=
   match attr attrs key with
   | none => pure old
@@ -277,19 +284,27 @@ private def readStyle (lengths : LengthContext) (ids : List String) (attrs : Lis
     if let some value := attr attrs key then
       if !allowed.contains (trim value) then throw s!"unsupported {key}: {value}"
   return style
-private def cssProperties := (common.filter (· != "id")) ++ ["opacity"]
+private def cssProperties := (common.filter (· != "id")) ++ ["opacity","overflow"]
+private def sheetProperties := cssProperties ++ ["width","height"]
 private def displaySuppressed (attrs : List NamespaceAttribute) : Bool :=
   (attr attrs "display").any (fun value => (trim value).toLower == "none")
 private def cssAttribute (d : NativeSVGCSS.Declaration) : NamespaceAttribute :=
   {name:={namespace_:=none,localPart:=d.property},value:=d.value}
 private def applyCSS (lengths : LengthContext) (ids : List String) (rules : List NativeSVGCSS.Rule)
-    (tag : String) (attrs : List NamespaceAttribute) : Except String (List NamespaceAttribute) := do
+    (tag : String) (attrs : List NamespaceAttribute) (nested : Bool := false) : Except String (List NamespaceAttribute) := do
   let presentation := attrs.filterMap fun a =>
     if a.name.namespace_.isNone && cssProperties.contains a.name.localPart then
       some ({property:=a.name.localPart,value:=a.value} : NativeSVGCSS.Declaration) else none
-  let inlineStyle ← NativeSVGCSS.parseDeclarations cssProperties ((attr attrs "style").getD "")
+  let inlineStyle ← NativeSVGCSS.parseDeclarations sheetProperties ((attr attrs "style").getD "")
+  let ignoredDimension := fun (d : NativeSVGCSS.Declaration) =>
+    (["use","symbol"].contains tag || (tag == "svg" && nested)) && ["width","height"].contains d.property
+  let inlineStyle := inlineStyle.filter (!ignoredDimension ·)
+  let rules := rules.map fun rule => {rule with declarations:=rule.declarations.filter (!ignoredDimension ·)}
   let validate := fun (d : NativeSVGCSS.Declaration) => do
     if d.property == "opacity" then let _ ← number d.value; pure ()
+    else if d.property == "overflow" then
+      if !["hidden","visible","scroll","auto"].contains (trim d.value) then throw "unsupported overflow"
+    else if ["width","height"].contains d.property then throw "unsupported CSS geometry property"
     else let _ ← readStyle lengths ids [cssAttribute d] {}; pure ()
   let winning ← NativeSVGCSS.cascade validate tag presentation rules inlineStyle
   pure (attrs.filter (fun a => !(a.name.namespace_.isNone && (cssProperties.contains a.name.localPart || a.name.localPart=="style"))) ++ winning.map cssAttribute)
@@ -297,29 +312,61 @@ private def applyCSS (lengths : LengthContext) (ids : List String) (rules : List
 private def geometryNumber (lengths : LengthContext) (attrs : List NamespaceAttribute) (key : String) (fallback : Float := 0) : Except String Float :=
   match attr attrs key with | none => pure fallback | some s => relativeLength s (if ["x","x1","x2","cx","width","rx"].contains key then lengths.width
     else if ["y","y1","y2","cy","height","ry"].contains key then lengths.height else lengths.diagonal)
-inductive Geometry where
+inductive Geometry (contourType : Type := NativeSVGPath.Contour) where
   | rect (x y width height : Float)
   | circle (cx cy radius : Float)
   | ellipse (cx cy rx ry : Float)
   | line (x1 y1 x2 y2 : Float)
   | polygon (points : List Point)
-  | path (contours : List NativeSVGPath.Contour)
+  | path (contours : List contourType)
   deriving Repr
+abbrev BackendGeometry := Geometry NativeSVGPath.LinearContour
+
 def Geometry.rectRecordTag : Nat := 1
 def Geometry.circleRecordTag : Nat := 2
 def Geometry.ellipseRecordTag : Nat := 3
 def Geometry.lineRecordTag : Nat := 4
 def Geometry.polygonRecordTag : Nat := 5
 def Geometry.pathRecordTag : Nat := 6
-def Geometry.recordTagCount : Geometry → Nat × Nat
+def Geometry.recordTagCount : BackendGeometry → Nat × Nat
   | .rect .. => (rectRecordTag,0)
   | .circle .. => (circleRecordTag,0)
   | .ellipse .. => (ellipseRecordTag,0)
   | .line .. => (lineRecordTag,0)
   | .polygon points => (polygonRecordTag,points.length)
   | .path contours => (pathRecordTag,(NativeSVGPath.edges contours).length)
-structure Primitive where
-  geometry : Geometry
+/-- An exact rectangular clip in its own Float coordinate frame. SVG 2 §8
+    viewport clipping is tested through the inverse CTM, never a world AABB. -/
+structure ClipRect where
+  x : Float
+  y : Float
+  width : Float
+  height : Float
+  transform : Transform := identityTransform
+  deriving Repr
+
+def ClipRect.lowerUnder (parent : Transform) (clip : ClipRect) : ClipRect :=
+  {clip with transform:=parent.compose clip.transform}
+
+/-- Zero-area or singular clips have empty coverage. Invalid numeric values
+    also cannot produce coverage or a divide by zero. -/
+def ClipRect.valid (clip : ClipRect) : Bool :=
+  let inverse := clip.transform.inverse
+  [clip.x,clip.y,clip.width,clip.height,clip.transform.a,clip.transform.b,
+    clip.transform.c,clip.transform.d,clip.transform.e,clip.transform.f].all
+      (fun value => value.isFinite && value.abs <= 1000000000) &&
+    clip.width > 0 && clip.height > 0 && clip.transform.det != 0 &&
+    [inverse.a,inverse.b,inverse.c,inverse.d,inverse.e,inverse.f].all
+      (fun value => value.isFinite && value.abs <= 1000000000)
+
+def ClipRect.contains (clip : ClipRect) (x y : Float) : Bool :=
+  if !clip.valid then false else
+    let point := clip.transform.inverse.apply x y
+    clip.x <= point.1 && point.1 <= clip.x+clip.width &&
+      clip.y <= point.2 && point.2 <= clip.y+clip.height
+
+structure Primitive (contourType : Type := NativeSVGPath.Contour) where
+  geometry : Geometry contourType
   style : Style
   opacity : Float := 1
   transform : Transform := identityTransform
@@ -327,11 +374,17 @@ structure Primitive where
   /-- Ordered enclosing SVG group IDs; `none` records an anonymous group.
       Geometry and transforms are still lowered to painter-ordered leaves. -/
   groupPath : List (Option String) := []
+  clips : List ClipRect := []
+  pathLength : Option Float := none
   deriving Repr
+
+abbrev BackendPrimitive := Primitive NativeSVGPath.LinearContour
 
 def Primitive.lowerUnder (parent : Transform) (groups : List (Option String))
     (primitive : Primitive) : Primitive := Id.run do
-  let transformed := {primitive with transform := parent.compose primitive.transform}
+  let transformed := {primitive with
+    transform := parent.compose primitive.transform
+    clips := primitive.clips.map (ClipRect.lowerUnder parent)}
   return {transformed with groupPath := groups ++ primitive.groupPath}
 
 theorem Primitive.lowerUnder_preserves_rendering_data (parent : Transform)
@@ -347,17 +400,27 @@ theorem Primitive.lowerUnder_records_group_path (parent : Transform)
     (Primitive.lowerUnder parent groups primitive).groupPath = groups ++ primitive.groupPath := by
   simp [Primitive.lowerUnder]
 
+def Primitive.addClip (clip : ClipRect) (primitive : Primitive) : Primitive :=
+  {primitive with clips:=clip :: primitive.clips}
+
+theorem Primitive.lowerUnder_clip_frames (parent : Transform)
+    (groups : List (Option String)) (primitive : Primitive) :
+    (primitive.lowerUnder parent groups).clips =
+      primitive.clips.map (ClipRect.lowerUnder parent) := by
+  simp [Primitive.lowerUnder]
+
 /- Retained SVG tree. Transforms remain local here and are composed only in the
    compatibility lowering used by the current flat renderer. -/
 inductive DisplayNode where
   | paint (primitive : Primitive)
   | group (id : Option String) (transform : Transform) (children : List DisplayNode)
+  | clipped (id : Option String) (contentTransform : Transform) (clip : ClipRect) (children : List DisplayNode)
   deriving Repr
 
 mutual
   def DisplayNode.paintCount : DisplayNode → Nat
     | .paint _ => 1
-    | .group _ _ children => DisplayNode.paintCountList children
+    | .group _ _ children | .clipped _ _ _ children => DisplayNode.paintCountList children
   termination_by node => sizeOf node
 
   def DisplayNode.paintCountList : List DisplayNode → Nat
@@ -369,7 +432,7 @@ end
 mutual
   def DisplayNode.nodeCount : DisplayNode → Nat
     | .paint _ => 1
-    | .group _ _ children => 1 + DisplayNode.listNodeCount children
+    | .group _ _ children | .clipped _ _ _ children => 1 + DisplayNode.listNodeCount children
   termination_by node => sizeOf node
 
   def DisplayNode.listNodeCount : List DisplayNode → Nat
@@ -384,6 +447,9 @@ mutual
     | .paint primitive => [primitive.lowerUnder parent groups]
     | .group id transform children =>
         DisplayNode.lowerList (parent.compose transform) (groups ++ [id]) children
+    | .clipped id contentTransform clip children =>
+        (DisplayNode.lowerList (parent.compose contentTransform) (groups ++ [id]) children).map
+          (Primitive.addClip (clip.lowerUnder parent))
   termination_by node => sizeOf node
 
   def DisplayNode.lowerList (parent : Transform) (groups : List (Option String)) :
@@ -403,20 +469,24 @@ def DisplayNode.lowerTR (parent : Transform) (groups : List (Option String))
   | .group id transform children =>
       (children.foldl (fun acc child =>
         (child.lowerTR (parent.compose transform) (groups ++ [id])).reverse ++ acc) []).reverse
+  | .clipped id contentTransform clip children =>
+      ((children.foldl (fun acc child =>
+        (child.lowerTR (parent.compose contentTransform) (groups ++ [id])).reverse ++ acc) []).reverse).map
+          (Primitive.addClip (clip.lowerUnder parent))
 termination_by sizeOf node
 
 /-- Exact paint count with a sibling fold; `paintCountTR_eq` retains the reference meaning. -/
 def DisplayNode.paintCountTR (node : DisplayNode) : Nat :=
   match node with
   | .paint _ => 1
-  | .group _ _ children => children.foldl (fun acc child => acc + child.paintCountTR) 0
+  | .group _ _ children | .clipped _ _ _ children => children.foldl (fun acc child => acc + child.paintCountTR) 0
 termination_by sizeOf node
 
 /-- Exact inspector node count with sibling folds, including each group itself. -/
 def DisplayNode.nodeCountTR (node : DisplayNode) : Nat :=
   match node with
   | .paint _ => 1
-  | .group _ _ children => children.foldl (fun acc child => acc + child.nodeCountTR) 1
+  | .group _ _ children | .clipped _ _ _ children => children.foldl (fun acc child => acc + child.nodeCountTR) 1
 termination_by sizeOf node
 
 theorem DisplayNode.paintCountTR_eq (node : DisplayNode) :
@@ -426,10 +496,12 @@ theorem DisplayNode.paintCountTR_eq (node : DisplayNode) :
     (motive_2 := fun nodes => ∀ acc,
       nodes.foldl (fun acc child => acc + child.paintCountTR) acc =
         acc + DisplayNode.paintCountList nodes)
-    ?_ ?_ ?_ ?_ node
+    ?_ ?_ ?_ ?_ ?_ node
   · intro primitive
     simp [DisplayNode.paintCountTR, DisplayNode.paintCount]
   · intro id transform children ih
+    simpa [DisplayNode.paintCountTR, DisplayNode.paintCount] using ih 0
+  · intro id transform clip children ih
     simpa [DisplayNode.paintCountTR, DisplayNode.paintCount] using ih 0
   · intro acc
     simp [DisplayNode.paintCountList]
@@ -443,10 +515,12 @@ theorem DisplayNode.nodeCountTR_eq (node : DisplayNode) :
     (motive_2 := fun nodes => ∀ acc,
       nodes.foldl (fun acc child => acc + child.nodeCountTR) acc =
         acc + DisplayNode.listNodeCount nodes)
-    ?_ ?_ ?_ ?_ node
+    ?_ ?_ ?_ ?_ ?_ node
   · intro primitive
     simp [DisplayNode.nodeCountTR, DisplayNode.nodeCount]
   · intro id transform children ih
+    simpa [DisplayNode.nodeCountTR, DisplayNode.nodeCount] using ih 1
+  · intro id transform clip children ih
     simpa [DisplayNode.nodeCountTR, DisplayNode.nodeCount] using ih 1
   · intro acc
     simp [DisplayNode.listNodeCount]
@@ -461,12 +535,16 @@ theorem DisplayNode.lowerTR_eq (node : DisplayNode) :
     (motive_2 := fun (nodes : List DisplayNode) => ∀ (parent : Transform) (groups : List (Option String)) (acc : List Primitive),
       (nodes.foldl (fun acc child => (child.lowerTR parent groups).reverse ++ acc) acc).reverse =
         acc.reverse ++ DisplayNode.lowerList parent groups nodes)
-    ?_ ?_ ?_ ?_ node
+    ?_ ?_ ?_ ?_ ?_ node
   · intro primitive parent groups
     simp [DisplayNode.lowerTR, DisplayNode.lower]
   · intro id transform children ih parent groups
     simpa [DisplayNode.lowerTR, DisplayNode.lower] using
       ih (parent.compose transform) (groups ++ [id]) []
+  · intro id transform clip children ih parent groups
+    simpa only [DisplayNode.lowerTR, DisplayNode.lower, List.reverse_nil, List.nil_append] using
+      congrArg (List.map (Primitive.addClip (clip.lowerUnder parent)))
+        (ih (parent.compose transform) (groups ++ [id]) [])
   · intro parent groups acc
     simp [DisplayNode.lowerList]
   · intro head tail ihHead ihTail parent groups acc
@@ -561,10 +639,13 @@ theorem DisplayNode.paintCount_eq_lowerLength (node : DisplayNode)
       node.paintCount = (node.lower parent groups).length)
     (motive_2 := fun nodes => ∀ parent groups,
       DisplayNode.paintCountList nodes = (DisplayNode.lowerList parent groups nodes).length)
-    ?_ ?_ ?_ ?_ node parent groups
+    ?_ ?_ ?_ ?_ ?_ node parent groups
   · intro primitive parent groups
     simp [DisplayNode.paintCount, DisplayNode.lower]
   · intro id transform children childrenCount parent groups
+    simpa [DisplayNode.paintCount, DisplayNode.lower] using
+      childrenCount (parent.compose transform) (groups ++ [id])
+  · intro id transform clip children childrenCount parent groups
     simpa [DisplayNode.paintCount, DisplayNode.lower] using
       childrenCount (parent.compose transform) (groups ++ [id])
   · intro parent groups
@@ -610,6 +691,13 @@ theorem DisplayNode.lower_group (parent : Transform) (groups : List (Option Stri
       DisplayNode.lowerList (parent.compose transform) (groups ++ [id]) children := by
   simp [DisplayNode.lower]
 
+theorem DisplayNode.lower_clipped (parent : Transform) (groups : List (Option String))
+    (id : Option String) (content : Transform) (clip : ClipRect) (children : List DisplayNode) :
+    DisplayNode.lower parent groups (.clipped id content clip children) =
+      (DisplayNode.lowerList (parent.compose content) (groups ++ [id]) children).map
+        (Primitive.addClip (clip.lowerUnder parent)) := by
+  simp [DisplayNode.lower]
+
 private def strokeEnabled (style : Style) : Bool :=
   match style.stroke with | .none => false | _ => style.strokeWidth > 0
 
@@ -621,8 +709,9 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     return if w == 0 || h == 0 then none else some (.rect x y w h)
   else if tag == "circle" then
     let x ← geometryNumber lengths attrs "cx"; let y ← geometryNumber lengths attrs "cy"; let r ← geometryNumber lengths attrs "r"
-    if r < 0 then throw "negative circle radius"
-    return if r == 0 then none else some (.circle x y r)
+    -- SVG 2 §10.3: an invalid negative r presentation value is ignored;
+    -- the admitted attribute-only geometry cascade has initial r = 0.
+    return if r <= 0 then none else some (.circle x y r)
   else if tag == "ellipse" then
     if (attr attrs "rx").isNone || (attr attrs "ry").isNone then throw "ellipse requires explicit numeric rx and ry; auto radii unsupported"
     let x ← geometryNumber lengths attrs "cx"; let y ← geometryNumber lengths attrs "cy"
@@ -639,7 +728,7 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     let values ← numbers source
     if values.length < (if tag=="polygon" then 6 else 4) || values.length%2 != 0 || values.length > 128 then throw "polygon/polyline requires 2–64 pairs (polygon at least 3)"
     let pairs := (List.range (values.length/2)).map fun i => Point.mk values[i*2]! values[i*2+1]!
-    return if tag=="polygon" then some (.polygon pairs) else some (.path [⟨pairs,false⟩])
+    return if tag=="polygon" then some (.polygon pairs) else some (.path [NativeSVGPath.ofLinear ⟨pairs,false⟩])
   else if tag == "path" then
     let source := (attr attrs "d").getD ""
     if source.length > 65536 then throw "path data exceeds 65536 characters"
@@ -649,12 +738,20 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
   else throw s!"unsupported SVG element: {tag}"
 /-- One retained stroke union across all linear contours. Closedness and
     per-subpath dash phase are distinct from implicit fill closure. -/
-private def dashedParts (g : Geometry) (style : Style) (authorLength : Option Float) : Except String (Option (List NativeSVGStroke.Piece)) := do
+private def Geometry.compile (screen : Transform) : Geometry → Except String BackendGeometry
+  | .rect x y w h => pure (.rect x y w h)
+  | .circle x y r => pure (.circle x y r)
+  | .ellipse x y rx ry => pure (.ellipse x y rx ry)
+  | .line x y u v => pure (.line x y u v)
+  | .polygon points => pure (.polygon points)
+  | .path contours => (fun result => (Geometry.path result : BackendGeometry)) <$> NativeSVGCurves.flatten screen contours
+
+private def dashedParts (g : BackendGeometry) (style : Style) (authorLength : Option Float) : Except String (Option (List NativeSVGStroke.Piece)) := do
   if !strokeEnabled style then return none
   let contours ← match g with
-    | .line x y u v => pure [NativeSVGPath.Contour.mk [Point.mk x y,Point.mk u v] false]
-    | .rect x y w h => pure [NativeSVGPath.Contour.mk [Point.mk x y,Point.mk (x+w) y,Point.mk (x+w) (y+h),Point.mk x (y+h)] true]
-    | .polygon points => pure [NativeSVGPath.Contour.mk points true]
+    | .line x y u v => pure [NativeSVGPath.LinearContour.mk [Point.mk x y,Point.mk u v] false]
+    | .rect x y w h => pure [NativeSVGPath.LinearContour.mk [Point.mk x y,Point.mk (x+w) y,Point.mk (x+w) (y+h),Point.mk x (y+h)] true]
+    | .polygon points => pure [NativeSVGPath.LinearContour.mk points true]
     | .path contours => pure contours
     | _ => if style.dashArray.isEmpty then return none else throw "dashed curved strokes unsupported"
   let total : Float := contours.foldl (fun n c => n+NativeSVGStroke.length c) 0
@@ -685,79 +782,6 @@ private def extraAttrs (tag : String) : List String :=
   | "path" => ["d","opacity","transform","pathLength"]
   | _ => []
 private def whitespace (s : String) : Bool := s.toList.all isXmlSpace
-mutual
-private def metadata (node : NamespaceNode) : Except String Unit := do
-  match node with
-  | .other (.text _) | .other (.cdata _) | .other (.comment _) => pure ()
-  | _ => throw "descriptive metadata only supports text/comments"
-private def readNode (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (node : NamespaceNode) : Except String (List DisplayNode) := do
-  if depth > 32 then throw "SVG group nesting exceeds 32"
-  match node with
-  | .other (.comment _) => pure []
-  | .other (.text s) | .other (.cdata s) => if whitespace s then pure [] else throw "text painting unsupported"
-  | .other _ => throw "processing instructions/other XML nodes unsupported"
-  | .element name attrs children =>
-    if name.namespace_ == some "http://www.w3.org/1999/xhtml" && name.localPart == "link" then
-      -- Reftest match/help/author links are inert metadata, not graphics or stylesheets.
-      if ![some "match", some "help", some "author"].contains (attr attrs "rel") then throw "unsupported HTML link relation"
-      if !children.isEmpty then throw "HTML metadata link must be empty"
-      return []
-    if name.namespace_ != some svgURI then throw s!"foreign/non-SVG element: {name.localPart}"
-    let tag := name.localPart
-    if tag == "style" then return []
-    let attrs ← applyCSS lengths ids rules tag attrs
-    if tag == "metadata" then return []
-    if tag == "title" || tag == "desc" then
-      validateAttrs tag attrs ["id"]
-      for child in children do metadata child
-      return []
-    else if tag == "g" then
-      validateAttrs tag attrs ["transform"]
-      let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
-      let cumulative ← checkedTransform (parent.compose transform)
-      let inherited ← readStyle lengths ids attrs style
-      let retainedChildren ← readChildren rules lengths ids cumulative (depth+1) inherited children
-      if displaySuppressed attrs then return []
-      return [.group (attr attrs "id") transform retainedChildren]
-    else
-      validateAttrs tag attrs (extraAttrs tag)
-      let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
-      let cumulative ← checkedTransform (parent.compose transform)
-      let inherited ← readStyle lengths ids attrs style
-      let authorLength ← match attr attrs "pathLength" with
-        | none => pure none
-        | some source => do
-          let value ← number source
-          if value < 0 then throw "negative pathLength"
-          pure (some value)
-      let geometry ← readGeometry lengths tag attrs inherited
-      for child in children do
-        match child with
-        | .element n _ _ => if n.namespace_ == some svgURI && ["title","desc","metadata"].contains n.localPart then
-                              let _ ← readNode rules lengths ids cumulative (depth+1) inherited child
-                              pure ()
-                            else throw "graphics children unsupported"
-        | .other (.comment _) => pure ()
-        | .other (.text s) | .other (.cdata s) => if !whitespace s then throw "text painting unsupported"
-        | _ => throw "processing instruction unsupported"
-      let opacity ← match attr attrs "opacity" with | none => pure 1 | some s => number s
-      let painted ← geometry.toList.mapM fun g => do
-        let dashParts ← dashedParts g inherited authorLength
-        pure (.paint {geometry:=g,style:=inherited,opacity:=max 0 (min 1 opacity),transform,dashParts})
-      if displaySuppressed attrs then return []
-      return painted
-private def readChildren (rules : List NativeSVGCSS.Rule) (lengths : LengthContext) (ids : List String) (parent : Transform) (depth : Nat) (style : Style) (nodes : List NamespaceNode) : Except String (List DisplayNode) := do
-  let mut out : Array DisplayNode := #[]
-  let mut primitiveCount := 0
-  for node in nodes do
-    let chunk ← readNode rules lengths ids parent depth style node
-    let added := DisplayNode.paintCountList chunk
-    if primitiveCount+added > maxPrimitives then throw "painted primitive count exceeds 12288"
-    primitiveCount := primitiveCount+added
-    out := out ++ chunk.toArray
-  return out.toList
-end
-
 structure Mapping where
   sx : Float
   sy : Float
@@ -768,21 +792,18 @@ structure Mapping where
   viewportWidth : Float
   viewportHeight : Float
   deriving Repr
-structure Scene where
-  width : Nat
-  height : Nat
-  mapping : Mapping
-  tree : List DisplayNode
-  /-- Cached backend lowering. It is computed once after parsing, not once per
-      sample or hit query. The proof binds it to the retained tree. -/
-  primitives : List Primitive
-  loweringCorrect : primitives = DisplayNode.lowerFromRootList tree
-  deriving Repr
+
+/-- SVG 2 §8.6: a negative viewBox extent invalidates the attribute;
+    a zero extent is valid and disables rendering at its viewport boundary. -/
+private def viewBoxValues (attrs : List NamespaceAttribute) : Except String (Option (Float × Float × Float × Float)) := do
+  let some source := attr attrs "viewBox" | return none
+  let [x,y,w,h] ← numbers source | throw "viewBox requires four numbers"
+  return if w < 0 || h < 0 then none else some (x,y,w,h)
+
 private def viewportMapping (w h : Float) (attrs : List NamespaceAttribute) : Except String Mapping := do
-  let view ← match attr attrs "viewBox" with
-    | none => pure [0,0,w,h] | some value => numbers value
-  let [x,y,vw,vh] := view | throw "viewBox requires four numbers"
-  if vw <= 0 || vh <= 0 then throw "viewBox dimensions must be positive"
+  let view ← viewBoxValues attrs
+  let (x,y,vw,vh) := view.getD (0,0,w,h)
+  if vw == 0 || vh == 0 then throw "zero viewBox must suppress its viewport before mapping"
   let preserve := (attr attrs "preserveAspectRatio").getD "xMidYMid meet" |>.splitOn " " |>.filter (· != "")
   let (align,mode) ← match preserve with
     | [a] => pure (a,"meet") | [a,m] => pure (a,m) | _ => throw "unsupported preserveAspectRatio syntax"
@@ -794,6 +815,304 @@ private def viewportMapping (w h : Float) (attrs : List NamespaceAttribute) : Ex
   let some (_,ax,ay) := alignments.find? (fun item => item.1 == align) | throw "unsupported viewBox alignment"
   let scale := if mode == "meet" then min (w/vw) (h/vh) else max (w/vw) (h/vh)
   return ⟨scale,scale,(w-vw*scale)*Float.ofNat ax/2,(h-vh*scale)*Float.ofNat ay/2,x,y,w,h⟩
+
+
+private def metadata (node : NamespaceNode) : Except String Unit := do
+  match node with
+  | .other (.text _) | .other (.cdata _) | .other (.comment _) => pure ()
+  | _ => throw "descriptive metadata only supports text/comments"
+
+private structure ReadContext where
+  lengths : LengthContext
+  parent : Transform
+  style : Style
+  path : List Nat
+  ancestors : List (List Nat)
+  instanceRoot : Bool := false
+  baseURL : Option String := none
+
+private def readListWith (read : NamespaceNode → Nat → Except String (List DisplayNode))
+    (nodes : List NamespaceNode) : Except String (List DisplayNode) := do
+  let mut out : Array DisplayNode := #[]
+  let mut count := 0
+  for (node,index) in nodes.zipIdx do
+    let chunk ← read node index
+    count := count + DisplayNode.paintCountList chunk
+    if count > maxPrimitives then throw "painted primitive count exceeds 12288"
+    out := out ++ chunk.toArray
+  return out.toList
+
+private def replaceAttr (attrs : List NamespaceAttribute) (key value : String) : List NamespaceAttribute :=
+  attrs.filter (fun a => !(a.name.namespace_.isNone && a.name.localPart == key)) ++
+    [{name:={namespace_:=none,localPart:=key},value}]
+
+/-- Non-inherited container opacity requires an offscreen group surface for
+    values strictly between zero and one; do not approximate it per leaf. -/
+private def containerVisible (attrs : List NamespaceAttribute) : Except String Bool := do
+  let opacity ← match attr attrs "opacity" with | none => pure 1 | some value => number value
+  if opacity > 0 && opacity < 1 then throw "container opacity requires compositing surface"
+  return !displaySuppressed attrs && opacity > 0
+
+private def readNode (references : NativeSVGReferences.Index) (rules : List NativeSVGCSS.Rule)
+    (ids : List String) : Nat → ReadContext → NamespaceNode → Except String (List DisplayNode)
+  | 0,_,_ => throw "SVG group/instance nesting exceeds 32"
+  | fuel+1,context,node => do
+    let context := match node with
+      | .element _ attrs _ => {context with baseURL:=NativeSVGReferences.elementBase attrs context.baseURL}
+      | _ => context
+    let {lengths,parent,style,path,ancestors,instanceRoot,baseURL} := context
+    let active := path :: ancestors
+    let readChildren := fun (lengths : LengthContext) (parent : Transform) (style : Style)
+        (children : List NamespaceNode) =>
+      readListWith (fun child i => readNode references rules ids fuel
+        {lengths,parent,style,path:=path++[i],ancestors:=active,baseURL} child) children
+    match node with
+    | .other (.comment _) => pure []
+    | .other (.text text) | .other (.cdata text) =>
+      if whitespace text then pure [] else throw "text painting unsupported"
+    | .other _ => throw "processing instructions/other XML nodes unsupported"
+    | .element name rawAttrs children =>
+      if name.namespace_ == some "http://www.w3.org/1999/xhtml" && name.localPart == "link" then
+        if ![some "match",some "help",some "author"].contains (attr rawAttrs "rel") then
+          throw "unsupported HTML link relation"
+        if !children.isEmpty then throw "HTML metadata link must be empty"
+        return []
+      if name.namespace_ == some "http://www.w3.org/1999/xhtml" && name.localPart == "meta" then
+        if (attr rawAttrs "http-equiv").isSome then throw "active HTML metadata unsupported"
+        if !children.isEmpty then throw "HTML metadata must be empty"
+        return []
+      if name.namespace_ != some svgURI then throw s!"foreign/non-SVG element: {name.localPart}"
+      let tag := name.localPart
+      if ["style","metadata","defs"].contains tag || (tag == "symbol" && !instanceRoot) then return []
+      let attrs ← applyCSS lengths ids rules tag rawAttrs true
+      if tag == "title" || tag == "desc" then
+        validateAttrs tag attrs ["id"]
+        for child in children do metadata child
+        return []
+      else if tag == "use" then
+        validateAttrs tag attrs ["href","x","y","width","height","transform","opacity"]
+        if !(← containerVisible attrs) then return []
+        let inherited ← readStyle lengths ids attrs style
+        let x ← geometryNumber lengths attrs "x"
+        let y ← geometryNumber lengths attrs "y"
+        let transform ← checkedTransform ((← transformList ((attr attrs "transform").getD "")).compose ⟨1,0,0,1,x,y⟩)
+        let cumulative ← checkedTransform (parent.compose transform)
+        let some source := NativeSVGReferences.href attrs | return []
+        let some id ← NativeSVGReferences.fragment source references.documentURL baseURL | return []
+        let some target := references.get? id | return []
+        if active.contains target.path then return []
+        let .element targetName targetAttrs targetChildren := target.node | return []
+        if targetName.namespace_ != some svgURI then return []
+        let mut targetAttrs := targetAttrs
+        if ["svg","symbol"].contains targetName.localPart then
+          for key in ["width","height"] do
+            if let some value := attr attrs key then
+              if trim value != "auto" then
+                let size ← relativeLength value (if key == "width" then lengths.width else lengths.height)
+                if size < 0 then throw "negative use viewport dimensions unsupported"
+                targetAttrs := replaceAttr targetAttrs key value
+        let targetTree ← readNode references rules ids fuel
+          {lengths,parent:=cumulative,style:=inherited,path:=target.path,ancestors:=active,instanceRoot:=true,baseURL:=target.parentBase}
+          (.element targetName targetAttrs targetChildren)
+        return [.group (attr attrs "id") transform targetTree]
+      else if tag == "svg" || tag == "symbol" then
+        validateAttrs tag attrs ["x","y","width","height","viewBox","preserveAspectRatio","overflow","transform","opacity","version"]
+        if !(← containerVisible attrs) then return []
+        let x ← geometryNumber lengths attrs "x"
+        let y ← geometryNumber lengths attrs "y"
+        let dimension := fun key base => do
+          let value := (attr attrs key).getD "100%"
+          if trim value == "auto" then pure base else relativeLength value base
+        let w ← dimension "width" lengths.width
+        let h ← dimension "height" lengths.height
+        if w < 0 || h < 0 then throw "negative nested viewport dimensions"
+        if w == 0 || h == 0 then return []
+        let view ← viewBoxValues attrs
+        if let some (_,_,vw,vh) := view then
+          if vw == 0 || vh == 0 then return []
+        let mapping ← viewportMapping w h attrs
+        let viewportTransform ← checkedTransform ((← transformList ((attr attrs "transform").getD "")).compose ⟨1,0,0,1,x,y⟩)
+        let contentTransform ← checkedTransform (viewportTransform.compose
+          ⟨mapping.sx,0,0,mapping.sy,mapping.tx-mapping.minX*mapping.sx,mapping.ty-mapping.minY*mapping.sy⟩)
+        let cumulative ← checkedTransform (parent.compose contentTransform)
+        let childLengths : LengthContext := match view with
+          | none => {width:=w,height:=h}
+          | some (_,_,vw,vh) => {width:=vw,height:=vh}
+        let inherited ← readStyle childLengths ids attrs style
+        let retainedChildren ← readChildren childLengths cumulative inherited children
+        let overflow := trim ((attr attrs "overflow").getD "hidden")
+        if overflow == "visible" then
+          return [.group (attr attrs "id") contentTransform retainedChildren]
+        if !["hidden","scroll","auto"].contains overflow then throw "unsupported viewport overflow"
+        return [.clipped (attr attrs "id") contentTransform ⟨0,0,w,h,viewportTransform⟩ retainedChildren]
+      else if tag == "g" then
+        validateAttrs tag attrs ["transform"]
+        let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
+        let cumulative ← checkedTransform (parent.compose transform)
+        let inherited ← readStyle lengths ids attrs style
+        let retainedChildren ← readChildren lengths cumulative inherited children
+        if displaySuppressed attrs then return []
+        return [.group (attr attrs "id") transform retainedChildren]
+      else
+        validateAttrs tag attrs (extraAttrs tag)
+        let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
+        let cumulative ← checkedTransform (parent.compose transform)
+        let inherited ← readStyle lengths ids attrs style
+        let authorLength ← match attr attrs "pathLength" with
+          | none => pure none
+          | some source => do
+            let value ← number source
+            if value < 0 then throw "negative pathLength"
+            pure (some value)
+        let geometry ← readGeometry lengths tag attrs inherited
+        for child in children do
+          match child with
+          | .element n _ _ =>
+            if n.namespace_ == some svgURI && ["title","desc","metadata"].contains n.localPart then
+              let _ ← readNode references rules ids fuel
+                {lengths,parent:=cumulative,style:=inherited,path,ancestors:=active,baseURL} child
+              pure ()
+            else throw "graphics children unsupported"
+          | .other (.comment _) => pure ()
+          | .other (.text text) | .other (.cdata text) => if !whitespace text then throw "text painting unsupported"
+          | _ => throw "processing instruction unsupported"
+        let opacity ← match attr attrs "opacity" with | none => pure 1 | some value => number value
+        let painted ← geometry.toList.mapM fun g => do
+          let dashParts ← match g with
+            | .path _ => pure none
+            | _ => do dashedParts (← g.compile identityTransform) inherited authorLength
+          pure (.paint {geometry:=g,style:=inherited,opacity:=max 0 (min 1 opacity),transform,dashParts,pathLength:=authorLength})
+        if displaySuppressed attrs then return []
+        return painted
+
+/-- Rows admitted before allocating a scene buffer. It matches the packed
+    backend record size; each primitive is counted cumulatively during compile. -/
+def BackendPrimitive.storageRows (p : BackendPrimitive) : Nat :=
+  let shapeRows := match p.geometry with
+    | .polygon points => (points.length+1)/2
+    | .path contours => (NativeSVGPath.edges contours).length
+    | _ => 0
+  5+shapeRows+(p.dashParts.getD []).length*5+
+    (if p.transform.identity then 0 else 2)+p.clips.length*3
+
+private def compilePrimitive (mapping : Mapping) (p : Primitive) : Except String BackendPrimitive := do
+  let root : Transform := ⟨mapping.sx,0,0,mapping.sy,
+    mapping.tx-mapping.minX*mapping.sx,mapping.ty-mapping.minY*mapping.sy⟩
+  let geometry ← p.geometry.compile (root.compose p.transform)
+  let dashParts ← match p.dashParts,p.geometry with
+    | some parts,_ => pure (some parts)
+    | none,.path _ => dashedParts geometry p.style p.pathLength
+    | none,_ => pure none
+  return {geometry,style:=p.style,opacity:=p.opacity,transform:=p.transform,dashParts,groupPath:=p.groupPath,clips:=p.clips,pathLength:=p.pathLength}
+
+private def compilePrimitivesLoop (mapping : Mapping) : List Primitive →
+    List BackendPrimitive → Nat → Except String (List BackendPrimitive)
+  | [],acc,_ => pure acc.reverse
+  | primitive::rest,acc,rows => do
+    let compiled ← compilePrimitive mapping primitive
+    let rows := rows+compiled.storageRows
+    if rows*4 > maxDataFloats then throw "storage data exceeds 262144 floats"
+    compilePrimitivesLoop mapping rest (compiled::acc) rows
+
+/-- Canonical Float path geometry becomes checked linear backend geometry once,
+    using the full viewport/primitive CTM and the existing cumulative budget.
+    A non-flat or over-budget curve is an error, never a substituted chord. -/
+def compilePrimitives (mapping : Mapping) (primitives : List Primitive) : Except String (List BackendPrimitive) :=
+  compilePrimitivesLoop mapping primitives [] 2
+
+private theorem compilePrimitivesLoop_length (mapping : Mapping) (source : List Primitive) :
+    ∀ acc rows compiled, compilePrimitivesLoop mapping source acc rows = .ok compiled →
+      compiled.length = source.length+acc.length := by
+  induction source with
+  | nil =>
+    intro acc rows compiled found
+    have same : acc.reverse = compiled := Except.ok.inj found
+    rw [← same,List.length_reverse]
+    simp
+  | cons primitive rest ih =>
+    intro acc rows compiled found
+    cases one : compilePrimitive mapping primitive with
+    | error message => simp [compilePrimitivesLoop,one,bind,Except.bind] at found
+    | ok value =>
+      by_cases over : (rows+value.storageRows)*4 > maxDataFloats
+      · simp [compilePrimitivesLoop,one,over,bind,Except.bind] at found
+      · have tail : compilePrimitivesLoop mapping rest (value::acc) (rows+value.storageRows) = .ok compiled := by
+          simpa [compilePrimitivesLoop,one,over,bind,pure,Except.bind,Except.pure] using found
+        have count := ih (value::acc) (rows+value.storageRows) compiled tail
+        simpa [List.length_cons,Nat.add_assoc,Nat.add_comm,Nat.add_left_comm] using count
+
+theorem compilePrimitives_length (mapping : Mapping) (source : List Primitive)
+    (compiled : List BackendPrimitive) (found : compilePrimitives mapping source = .ok compiled) :
+    compiled.length = source.length := by
+  simpa [compilePrimitives] using compilePrimitivesLoop_length mapping source [] 2 compiled found
+
+private theorem compilePrimitivesLoop_budget (mapping : Mapping) (source : List Primitive) :
+    ∀ acc rows compiled, rows = 2+(acc.map BackendPrimitive.storageRows).sum →
+      rows*4 ≤ maxDataFloats → compilePrimitivesLoop mapping source acc rows = .ok compiled →
+      (2+(compiled.map BackendPrimitive.storageRows).sum)*4 ≤ maxDataFloats := by
+  induction source with
+  | nil =>
+    intro acc rows compiled invariant bounded found
+    have same : acc.reverse = compiled := Except.ok.inj found
+    subst compiled
+    rw [invariant] at bounded
+    simpa [List.map_reverse,List.sum_reverse] using bounded
+  | cons primitive rest ih =>
+    intro acc rows compiled invariant bounded found
+    cases one : compilePrimitive mapping primitive with
+    | error message => simp [compilePrimitivesLoop,one,bind,Except.bind] at found
+    | ok value =>
+      by_cases over : (rows+value.storageRows)*4 > maxDataFloats
+      · simp [compilePrimitivesLoop,one,over,bind,Except.bind] at found
+      · have tail : compilePrimitivesLoop mapping rest (value::acc) (rows+value.storageRows) = .ok compiled := by
+          simpa [compilePrimitivesLoop,one,over,bind,pure,Except.bind,Except.pure] using found
+        apply ih (value::acc) (rows+value.storageRows) compiled
+        · simp only [List.map_cons,List.sum_cons]
+          omega
+        · omega
+        · exact tail
+
+theorem compilePrimitives_budget (mapping : Mapping) (source : List Primitive)
+    (compiled : List BackendPrimitive) (found : compilePrimitives mapping source = .ok compiled) :
+    (2+(compiled.map BackendPrimitive.storageRows).sum)*4 ≤ maxDataFloats := by
+  exact compilePrimitivesLoop_budget mapping source [] 2 compiled rfl (by decide) found
+
+structure Scene where
+  width : Nat
+  height : Nat
+  mapping : Mapping
+  tree : List DisplayNode
+  /-- Painter-order lowering preserves the canonical geometry and all controls. -/
+  primitives : List Primitive
+  loweringCorrect : primitives = DisplayNode.lowerFromRootList tree
+  /-- Explicitly admitted backend cache, separate from retained curve geometry. -/
+  compiled : List BackendPrimitive
+  compilationCorrect : compilePrimitives mapping primitives = .ok compiled
+  deriving Repr
+
+/-- All public sampling runs on an admitted scene. Failed geometry compilation
+    propagates before an artifact, image, or successful scene can be returned. -/
+def Scene.make (width height : Nat) (mapping : Mapping) (tree : List DisplayNode) : Except String Scene :=
+  let primitives := DisplayNode.lowerFromRootList tree
+  match found : compilePrimitives mapping primitives with
+  | .error message => .error message
+  | .ok compiled => .ok {width,height,mapping,tree,primitives,loweringCorrect:=rfl,compiled,compilationCorrect:=found}
+
+theorem Scene.compiled_length (s : Scene) : s.compiled.length = s.primitives.length :=
+  compilePrimitives_length s.mapping s.primitives s.compiled s.compilationCorrect
+
+theorem Scene.make_existing (s : Scene) : Scene.make s.width s.height s.mapping s.tree = .ok s := by
+  rcases s with ⟨width,height,mapping,tree,primitives,lowering,compiled,compilation⟩
+  subst primitives
+  simp only [Scene.make]
+  split
+  · rename_i message found
+    rw [compilation] at found
+    cases found
+  · rename_i result found
+    have same : result = compiled := Except.ok.inj (found.symm.trans compilation)
+    subst result
+    rfl
 
 private def nodeIds (root : NamespaceNode) : Except String (List String) := do
   let mut pending := [(root,0)]
@@ -836,22 +1155,67 @@ private def styleRules (root : NamespaceNode) : Except String (List NativeSVGCSS
             | .other (.text value) | .other (.cdata value) => text := text.push value
             | .other (.comment _) => pure ()
             | _ => throw "style requires text/CDATA"
-          let parsed ← NativeSVGCSS.parseSheet cssProperties (String.join text.toList)
+          let parsed ← NativeSVGCSS.parseSheet sheetProperties (String.join text.toList)
           if out.size+parsed.length > 256 then throw "document CSS rule count exceeds 256"
           out := out ++ parsed.toArray
         else if !(name.namespace_ == some svgURI && ["metadata","title","desc"].contains name.localPart) then
           pending := children ++ pending
   throw "stylesheet traversal exceeds input bound"
 
-def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String Scene := do
-  if xml.length > maxInputChars then throw "SVG input exceeds 1048576 characters"
-  let document ← (parseXML xml).mapError (fun e => s!"XML: {e.message} at {e.position}")
-  if let some encoding := document.decl.bind (·.encoding) then
-    if encoding.toLower != "utf-8" then throw "SVG host accepts UTF-8 input only"
-  if document.doctype.isSome then throw "DOCTYPE/DTD unsupported in SVG profile"
-  for node in document.prolog ++ document.epilog do
-    match node with | .pi .. => throw "processing instruction unsupported" | _ => pure ()
-  let root ← parseNamespaceView xml
+/-- One source-bound, bounded document index shared by all SVG roots in an
+    HTML document. Cached errors remain errors when a painting root needs them;
+    a zero viewport can still suppress its subtree without style interpretation. -/
+structure ReferenceContext where
+  document : NamespaceNode
+  documentURL : Option String
+  initialBaseURL : Option String
+  references : NativeSVGReferences.Index
+  indexingCorrect : NativeSVGReferences.collect document (maxInputChars+1) documentURL initialBaseURL = .ok references
+  idsResult : Except String (List String)
+  idsCorrect : idsResult = nodeIds document
+  rulesResult : Except String (List NativeSVGCSS.Rule)
+  rulesCorrect : rulesResult = styleRules document
+
+/-- The initial document base may come from the Lean HTML frontend. Retrieval
+    URL identity remains separate for same-document IRI comparisons. -/
+def ReferenceContext.create (document : NamespaceNode) (documentURL : Option String := none)
+    (initialBaseURL : Option String := none) : Except String ReferenceContext :=
+  match indexed : NativeSVGReferences.collect document (maxInputChars+1) documentURL initialBaseURL with
+  | .error message => .error message
+  | .ok references => .ok {
+      document := document
+      documentURL := documentURL
+      initialBaseURL := initialBaseURL
+      references := references
+      indexingCorrect := indexed
+      idsResult := nodeIds document
+      idsCorrect := rfl
+      rulesResult := styleRules document
+      rulesCorrect := rfl }
+
+theorem ReferenceContext.create_existing (context : ReferenceContext) :
+    ReferenceContext.create context.document context.documentURL context.initialBaseURL = .ok context := by
+  rcases context with ⟨document,url,base,references,indexed,ids,idsCorrect,rules,rulesCorrect⟩
+  subst ids
+  subst rules
+  simp only [ReferenceContext.create]
+  split
+  · rename_i message found
+    rw [indexed] at found
+    cases found
+  · rename_i cached found
+    have same : cached = references := Except.ok.inj (found.symm.trans indexed)
+    subst cached
+    rfl
+
+#print axioms ReferenceContext.create_existing
+
+/-- SVG 2 §5.1: render an already namespace-expanded SVG fragment, including
+    one supplied by an HTML foreign-content parser. The caller owns DOM parsing;
+    root validation, SVG style, geometry and viewport semantics remain here. -/
+private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeight : Nat)
+    (inheritedStyle : Style)
+    (referenceSource : Unit → Except String (ReferenceContext × List Nat × Option String)) : Except String Scene := do
   let .element name attrs children := root | throw "SVG root must be an element"
   if name.namespace_ != some svgURI || name.localPart != "svg" then throw "root must be svg in the SVG namespace"
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version","style"]
@@ -871,21 +1235,64 @@ def parse (xml : String) (outputWidth outputHeight : Nat := 0) : Except String S
       let rh ← need (attr attrs "height") "root height required unless explicit output viewport is supplied"
       pure (← lengthNumber rw,← lengthNumber rh)
   if w <= 0 || h <= 0 || w > 4096 || h > 4096 then throw "output viewport must be positive and at most 4096 pixels"
+  let view ← viewBoxValues attrs
+  if let some (_,_,vw,vh) := view then
+    if vw == 0 || vh == 0 then
+      -- Keep a finite identity mapping and the actual backing viewport;
+      -- no zero-divisor or hidden subtree is sent to the backend compiler.
+      return ← Scene.make w.ceil.toUInt32.toNat h.ceil.toUInt32.toNat (← viewportMapping w h []) []
   let mapping ← viewportMapping w h attrs
-  let lengths ← match attr attrs "viewBox" with
-    | none => pure ({width:=w,height:=h} : LengthContext)
-    | some source => do
-      let [_,_,vw,vh] ← numbers source | throw "viewBox requires four numbers"
-      pure {width:=vw,height:=vh}
-  let ids ← nodeIds root
-  let rules ← styleRules root
+  let lengths : LengthContext := match view with
+    | none => {width:=w,height:=h}
+    | some (_,_,vw,vh) => {width:=vw,height:=vh}
+  let (context,sourcePath,rootBase) ← referenceSource ()
+  let ids ← context.idsResult
+  let rules ← context.rulesResult
   let attrs ← applyCSS lengths ids rules "svg" attrs
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version"]
-  let inherited ← readStyle lengths ids attrs {}
-  let parsedTree ← readChildren rules lengths ids identityTransform 0 inherited children
+  let inherited ← readStyle lengths ids attrs inheritedStyle
+  let ancestors := (List.range (sourcePath.length+1)).map (fun depth => sourcePath.take depth)
+  let parsedTree ← readListWith (fun child i => readNode context.references rules ids 33
+    {lengths,parent:=identityTransform,style:=inherited,path:=sourcePath ++ [i],ancestors,baseURL:=rootBase} child) children
   let tree := if displaySuppressed attrs then [] else parsedTree
-  let primitives := DisplayNode.lowerFromRootList tree
-  return ⟨w.ceil.toUInt32.toNat,h.ceil.toUInt32.toNat,mapping,tree,primitives,rfl⟩
+  Scene.make w.ceil.toUInt32.toNat h.ceil.toUInt32.toNat mapping tree
+
+/-- Standalone SVG keeps a local original document and the existing public API.
+    Context creation is delayed until after zero-viewport suppression. -/
+def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
+    (inheritedStyle : Style := {}) (documentURL : Option String := none) : Except String Scene :=
+  parseRootWithContext root outputWidth outputHeight inheritedStyle fun _ => do
+    let context ← ReferenceContext.create root documentURL
+    let base := match root with
+      | .element _ attrs _ => NativeSVGReferences.elementBase attrs documentURL
+      | _ => documentURL
+    pure (context,[],base)
+
+/-- Select an SVG root from the indexed original document in Lean. The caller
+    may normalize only root attributes after its own Lean HTML/CSS computation;
+    original children, reference targets, source identity and bases are retained. -/
+def parseRootInContext (context : ReferenceContext) (rootSourcePath : List Nat)
+    (outputWidth outputHeight : Nat := 0) (inheritedStyle : Style := {})
+    (rootAttributeNormalizer : List NamespaceAttribute → Except String (List NamespaceAttribute) := fun attrs => .ok attrs) : Except String Scene := do
+  let initialBase := context.initialBaseURL.orElse (fun _ => context.documentURL)
+  let entry ← NativeSVGReferences.locate context.document rootSourcePath initialBase
+  let .element name originalAttrs children := entry.node | throw "SVG root source path must select an element"
+  let base := NativeSVGReferences.elementBase originalAttrs entry.parentBase
+  let attrs ← rootAttributeNormalizer originalAttrs
+  parseRootWithContext (.element name attrs children) outputWidth outputHeight inheritedStyle
+    (fun _ => .ok (context,entry.path,base))
+
+def parse (xml : String) (outputWidth outputHeight : Nat := 0)
+    (documentURL : Option String := none) : Except String Scene := do
+  if xml.length > maxInputChars then throw "SVG input exceeds 1048576 characters"
+  let document ← (parseXML xml).mapError (fun e => s!"XML: {e.message} at {e.position}")
+  if let some encoding := document.decl.bind (·.encoding) then
+    if encoding.toLower != "utf-8" then throw "SVG host accepts UTF-8 input only"
+  if document.doctype.isSome then throw "DOCTYPE/DTD unsupported in SVG profile"
+  for node in document.prolog ++ document.epilog do
+    match node with | .pi .. => throw "processing instruction unsupported" | _ => pure ()
+  let root ← parseNamespaceView xml
+  parseRoot root outputWidth outputHeight {} documentURL
 
 /- Typed conditions reuse Graphics.Expr's CPU interpreter and WGSL lowering.
    The float scene is separate from the integer-only demo Shape representation. -/
@@ -897,6 +1304,17 @@ inductive Test where
 private def Test.eval (env : Env) : Test → Bool
   | .expr e => e.eval env | .not a => !(a.eval env)
   | .both a b => a.eval env && b.eval env | .either a b => a.eval env || b.eval env
+private def Test.prepare (data : Array Float) : Test → Prepared Bool
+  | .expr e => e.prepare data
+  | .not a => (a.prepare data).map Bool.not
+  | .both a b => (a.prepare data).and (b.prepare data)
+  | .either a b => (a.prepare data).or (b.prepare data)
+private theorem Test.prepare_correct (data : Array Float) (test : Test) (env : Env) :
+    (test.prepare data).eval env = test.eval {env with data := data} := by
+  induction test with
+  | expr e => exact Expr.prepare_correct data e env
+  | _ => simp_all only [Test.prepare,Test.eval,Prepared.eval_map,
+      Prepared.eval_and,Prepared.eval_or]
 private def Test.wgsl : Test → String
   | .expr e => e.wgsl | .not a => "!(" ++ a.wgsl ++ ")"
   | .both a b => "(" ++ a.wgsl ++ "&&" ++ b.wgsl ++ ")"
@@ -910,7 +1328,7 @@ private def le (a b : Expr .scalar) : Test := .expr (.le a b)
 private def box (x y w h : Expr .scalar) : Test :=
   .both (.both (le (.lit 0) w) (le (.lit 0) h))
     (.both (.both (le x px) (le px (.add x w))) (.both (le y py) (le py (.add y h))))
-private def fillCondition (g : Geometry) (base : Nat) : Test :=
+private def fillCondition (g : BackendGeometry) (base : Nat) : Test :=
   match g with
   | .rect .. => box (scalar base 0) (scalar base 1) (scalar base 2) (scalar base 3)
   | .circle .. => le (squared (.subV (.var .position) (point base 0))) (.mul (scalar base 2) (scalar base 2))
@@ -919,7 +1337,7 @@ private def fillCondition (g : Geometry) (base : Nat) : Test :=
     let dy := Expr.divide (.sub py (scalar base 1)) (scalar base 3)
     le (.add (.mul dx dx) (.mul dy dy)) (.lit 1)
   | _ => le (.lit 1) (.lit 0)
-private def strokeShapeCondition (g : Geometry) (base : Nat) (cap : LineCap) : Test :=
+private def strokeShapeCondition (g : BackendGeometry) (base : Nat) (cap : LineCap) : Test :=
   let half := Expr.divide (scalar base 16) (.lit 2)
   match g with
   | .rect .. =>
@@ -954,7 +1372,7 @@ private def strokeShapeCondition (g : Geometry) (base : Nat) (cap : LineCap) : T
         (le (squared delta) (.mul half half))
         (le (squared (.subV (.var .position) (point base 2))) (.mul half half)))
   | _ => le (.lit 1) (.lit 0)
-private def strokeCondition (g : Geometry) (base : Nat) (cap : LineCap) : Test :=
+private def strokeCondition (g : BackendGeometry) (base : Nat) (cap : LineCap) : Test :=
   .both (.not (le (scalar base 16) (.lit 0))) (strokeShapeCondition g base cap)
 private def triangleCondition (base : Nat) : Test :=
   let a := point base 0
@@ -1028,21 +1446,21 @@ private def pointBounds (points : List Point) : List Float :=
     [bounds.1,bounds.2.1,bounds.2.2.1,bounds.2.2.2]
 theorem pointBounds_length (points : List Point) : (pointBounds points).length = 4 := by
   cases points <;> simp [pointBounds]
-private def geometryRows : Geometry → List Float
+private def geometryRows : BackendGeometry → List Float
   | .rect x y w h | .ellipse x y w h => [x,y,w,h]
   | .circle x y r => [x,y,r,0]
   | .line x y u v => [x,y,u,v]
   | .polygon points => pointBounds points
   | .path contours => pointBounds (contours.flatMap (·.points))
-theorem geometryRows_length (geometry : Geometry) : (geometryRows geometry).length = 4 := by
+theorem geometryRows_length (geometry : BackendGeometry) : (geometryRows geometry).length = 4 := by
   cases geometry <;> simp [geometryRows, pointBounds_length]
 private theorem resolved_length (paint : Paint) (style : Style) (alpha : Float) :
     (resolved paint style alpha).length = 4 := by
   cases paint <;> simp [resolved]
-private def Primitive.effectiveOpacity (p : Primitive) : Float :=
+private def Primitive.effectiveOpacity (p : BackendPrimitive) : Float :=
   if p.transform.det == 0 || !p.style.visible then 0 else p.opacity
 
-theorem Primitive.effectiveOpacity_eq_zero_when_hidden (p : Primitive)
+theorem Primitive.effectiveOpacity_eq_zero_when_hidden (p : BackendPrimitive)
     (hidden : p.style.visible = false) : p.effectiveOpacity = 0 := by
   simp [Primitive.effectiveOpacity, hidden]
 private theorem flatMap_fixed_length {α β : Type} (f : α → List β) (width : Nat)
@@ -1054,25 +1472,25 @@ private theorem flatMap_fixed_length {α β : Type} (f : α → List β) (width 
     simp only [List.flatMap_cons, List.length_append, hf x, ih,
       List.length_cons, Nat.succ_mul]
     exact Nat.add_comm _ _
-def geometryTailRowCount : Geometry → Nat
+def geometryTailRowCount : BackendGeometry → Nat
   | .polygon points => (points.length+1)/2
   | .path contours => (NativeSVGPath.edges contours).length
   | _ => 0
-def geometryTailData : Geometry → List Float
+def geometryTailData : BackendGeometry → List Float
   | .polygon points => points.flatMap (fun p => [p.x,p.y]) ++
       (if points.length%2 == 1 then [0,0] else [])
   | .path contours => (NativeSVGPath.edges contours).flatMap fun (a,b) => [a.x,a.y,b.x,b.y]
   | _ => []
 def shaderTailRowsFromHeader (tag count : Nat) : Nat :=
   if tag == Geometry.pathRecordTag then count else (count+1)/2
-theorem Geometry.shaderTailRowsFromHeader_eq_tailRows (geometry : Geometry) :
+theorem Geometry.shaderTailRowsFromHeader_eq_tailRows (geometry : BackendGeometry) :
     shaderTailRowsFromHeader geometry.recordTagCount.1 geometry.recordTagCount.2 =
       geometryTailRowCount geometry := by
   cases geometry <;>
     simp [shaderTailRowsFromHeader, Geometry.recordTagCount, Geometry.pathRecordTag,
       Geometry.polygonRecordTag, geometryTailRowCount, Geometry.rectRecordTag,
       Geometry.circleRecordTag, Geometry.ellipseRecordTag, Geometry.lineRecordTag]
-theorem geometryTailData_length (geometry : Geometry) :
+theorem geometryTailData_length (geometry : BackendGeometry) :
     (geometryTailData geometry).length = geometryTailRowCount geometry * 4 := by
   cases geometry with
   | rect x y w h => rfl
@@ -1092,29 +1510,37 @@ theorem geometryTailData_length (geometry : Geometry) :
       (fun edge : Point × Point => [edge.1.x,edge.1.y,edge.2.x,edge.2.y])
       4 (by intro; rfl) (NativeSVGPath.edges contours)
     simp [geometryTailData, geometryTailRowCount, hflat]
-private def geometryTailSize (geometry : Geometry) : Nat := geometryTailRowCount geometry * 4
+private def geometryTailSize (geometry : BackendGeometry) : Nat := geometryTailRowCount geometry * 4
 def primitiveFixedRowCount : Nat := 5
 def dashPieceRowCount : Nat := 5
 def affineTransformRowCount : Nat := L4Factoidal.Math.AffineRows.vec4RowCount
-def Primitive.headerModeCode (p : Primitive) : Nat :=
+def clipRowCount : Nat := 3
+def Primitive.headerModeCode (p : BackendPrimitive) : Nat :=
   p.style.lineCap.headerModeBit +
-    (if p.transform.identity then 0 else 2)
-theorem Primitive.headerModeCode_roundCap (p : Primitive) :
+    (if p.transform.identity then 0 else 2) + 4*p.clips.length
+theorem Primitive.headerModeCode_roundCap (p : BackendPrimitive) :
     p.headerModeCode % 2 = p.style.lineCap.headerModeBit := by
   cases hcap : p.style.lineCap <;> cases h : p.transform.identity <;>
     simp [Primitive.headerModeCode, LineCap.headerModeBit, hcap, h]
-theorem Primitive.headerModeCode_hasTransform (p : Primitive) :
-    (p.headerModeCode >= 2) = (!p.transform.identity) := by
+    <;> omega
+theorem Primitive.headerModeCode_hasTransform (p : BackendPrimitive) :
+    (p.headerModeCode % 4 >= 2) = (!p.transform.identity) := by
   cases hcap : p.style.lineCap <;> cases h : p.transform.identity <;>
     simp [Primitive.headerModeCode, LineCap.headerModeBit, hcap, h]
-def Primitive.fixedRows (p : Primitive) : List Float :=
+    <;> omega
+theorem Primitive.headerModeCode_clipCount (p : BackendPrimitive) :
+    p.headerModeCode / 4 = p.clips.length := by
+  cases hcap : p.style.lineCap <;> cases h : p.transform.identity <;>
+    simp [Primitive.headerModeCode, LineCap.headerModeBit, hcap, h]
+    <;> omega
+def Primitive.fixedRows (p : BackendPrimitive) : List Float :=
   let (tag,count) := p.geometry.recordTagCount
   geometryRows p.geometry ++ [Float.ofNat tag,Float.ofNat count,
     if p.style.rule == .evenodd then 1 else 0,Float.ofNat p.headerModeCode] ++
     resolved p.style.fill p.style p.style.fillOpacity ++
     resolved p.style.stroke p.style p.style.strokeOpacity ++
     [p.style.strokeWidth,p.effectiveOpacity,Float.ofNat (p.dashParts.getD []).length,if p.dashParts.isSome then 1 else 0]
-theorem Primitive.fixedRows_length (p : Primitive) :
+theorem Primitive.fixedRows_length (p : BackendPrimitive) :
     p.fixedRows.length = primitiveFixedRowCount * 4 := by
   simp [Primitive.fixedRows, geometryRows_length, resolved_length, primitiveFixedRowCount]
 def dashPieceData (width : Float) (piece : NativeSVGStroke.Piece) : List Float :=
@@ -1137,72 +1563,136 @@ theorem dashPayloadData_length (width : Float) (pieces : List NativeSVGStroke.Pi
     rw [List.length_append, dashPieceData_length, ih]
     simp [Nat.add_mul, Nat.one_mul, Nat.add_comm]
 /-- Optional inverse CTM tail, represented by the shared two-vec4 affine rows. -/
-def Primitive.transformTailData (p : Primitive) : List Float :=
+def Primitive.transformTailData (p : BackendPrimitive) : List Float :=
   if p.transform.identity then [] else
     let t := p.transform.inverse
     (t.toPackedRows floatOps).toVec4Rows.flatten
-theorem Primitive.transformTailData_length (p : Primitive) :
+theorem Primitive.transformTailData_length (p : BackendPrimitive) :
     p.transformTailData.length = if p.transform.identity then 0 else affineTransformRowCount * 4 := by
   by_cases h : p.transform.identity
   · simp [Primitive.transformTailData, h]
   · simp only [Primitive.transformTailData, if_neg h]
     rw [L4Factoidal.Math.AffineRows.toVec4Rows_flatten_length]
     rfl
-def Primitive.rows (p : Primitive) : List Float :=
+/-- Clip wire record: inverse affine rows (first w is an active flag), then
+    local x/y/width/height. Empty/singular clips have a finite inactive record. -/
+def ClipRect.rows (clip : ClipRect) : List Float :=
+  let active := clip.valid
+  let t := if active then clip.transform.inverse else identityTransform
+  [t.a,t.c,t.e,if active then 1 else 0,t.b,t.d,t.f,0,
+    if active then clip.x else 0,if active then clip.y else 0,
+    if active then clip.width else 0,if active then clip.height else 0]
+
+theorem ClipRect.rows_length (clip : ClipRect) : clip.rows.length = clipRowCount*4 := by
+  simp [ClipRect.rows,clipRowCount]
+
+def clipPayloadData (clips : List ClipRect) : List Float := clips.flatMap ClipRect.rows
+
+theorem clipPayloadData_length (clips : List ClipRect) :
+    (clipPayloadData clips).length = clips.length*(clipRowCount*4) := by
+  induction clips with
+  | nil => rfl
+  | cons clip rest ih =>
+      change (clip.rows ++ clipPayloadData rest).length = _
+      rw [List.length_append,ClipRect.rows_length,ih]
+      simp [List.length_cons,Nat.add_mul,Nat.one_mul,Nat.add_comm]
+
+def Primitive.rows (p : BackendPrimitive) : List Float :=
   p.fixedRows ++
   geometryTailData p.geometry ++
   dashPayloadData p.style.strokeWidth (p.dashParts.getD []) ++
-  p.transformTailData
-def Primitive.rowCount (p : Primitive) : Nat :=
+  p.transformTailData ++ clipPayloadData p.clips
+def Primitive.rowCount (p : BackendPrimitive) : Nat :=
   primitiveFixedRowCount + geometryTailRowCount p.geometry +
   (p.dashParts.getD []).length * dashPieceRowCount +
-  (if p.transform.identity then 0 else affineTransformRowCount)
-def Primitive.shaderRowAdvance (p : Primitive) : Nat :=
+  (if p.transform.identity then 0 else affineTransformRowCount) + p.clips.length*clipRowCount
+theorem Primitive.rowCount_eq_storageRows (p : BackendPrimitive) : p.rowCount = p.storageRows := by
+  rfl
+
+def Primitive.shaderRowAdvance (p : BackendPrimitive) : Nat :=
   primitiveFixedRowCount +
   shaderTailRowsFromHeader p.geometry.recordTagCount.1 p.geometry.recordTagCount.2 +
   dashPieceRowCount * (p.dashParts.getD []).length +
-  (if p.headerModeCode >= 2 then affineTransformRowCount else 0)
-theorem Primitive.shaderRowAdvance_eq_rowCount (p : Primitive) :
+  (if p.headerModeCode % 4 >= 2 then affineTransformRowCount else 0) +
+  (p.headerModeCode / 4)*clipRowCount
+
+theorem Primitive.clipOffsetRows (p : BackendPrimitive) :
+    p.rowCount-p.clips.length*clipRowCount =
+      primitiveFixedRowCount + geometryTailRowCount p.geometry +
+        (p.dashParts.getD []).length*dashPieceRowCount +
+        (if p.transform.identity then 0 else affineTransformRowCount) := by
+  simp [Primitive.rowCount]
+
+theorem Primitive.clipRows_within_record (p : BackendPrimitive) (index : Nat)
+    (inside : index < p.clips.length) :
+    (p.rowCount-p.clips.length*clipRowCount)*4 + (index+1)*(clipRowCount*4) ≤
+      p.rowCount*4 := by
+  rw [Primitive.clipOffsetRows]
+  simp only [Primitive.rowCount,clipRowCount,Nat.add_mul]
+  omega
+theorem Primitive.shaderRowAdvance_eq_rowCount (p : BackendPrimitive) :
     p.shaderRowAdvance = p.rowCount := by
   cases h : p.transform.identity <;>
     simp [Primitive.shaderRowAdvance, Primitive.rowCount,
       Geometry.shaderTailRowsFromHeader_eq_tailRows,
-      Primitive.headerModeCode_hasTransform, h, Nat.mul_comm]
-theorem Primitive.rows_length (p : Primitive) :
+      Primitive.headerModeCode_hasTransform, Primitive.headerModeCode_clipCount, h, Nat.mul_comm]
+theorem Primitive.rows_length (p : BackendPrimitive) :
     p.rows.length = p.rowCount * 4 := by
   by_cases h : p.transform.identity
   · simp [Primitive.rows, Primitive.rowCount, h, Primitive.fixedRows_length,
-      geometryTailData_length, dashPayloadData_length, Primitive.transformTailData_length,
-      primitiveFixedRowCount, dashPieceRowCount, Nat.add_mul, Nat.mul_assoc, Nat.add_assoc]
+      geometryTailData_length, dashPayloadData_length, Primitive.transformTailData_length, clipPayloadData_length,
+      primitiveFixedRowCount, dashPieceRowCount, clipRowCount, Nat.add_mul, Nat.mul_assoc, Nat.add_assoc]
   · simp [Primitive.rows, Primitive.rowCount, h, Primitive.fixedRows_length,
-      geometryTailData_length, dashPayloadData_length, Primitive.transformTailData_length,
-      primitiveFixedRowCount, dashPieceRowCount, affineTransformRowCount,
+      geometryTailData_length, dashPayloadData_length, Primitive.transformTailData_length, clipPayloadData_length,
+      primitiveFixedRowCount, dashPieceRowCount, affineTransformRowCount, clipRowCount,
       L4Factoidal.Math.AffineRows.vec4RowCount,
       Nat.add_mul, Nat.mul_assoc, Nat.add_assoc]
-theorem Primitive.rows_length_matches_shaderRowAdvance (p : Primitive) :
+theorem Primitive.rows_length_matches_shaderRowAdvance (p : BackendPrimitive) :
     p.rows.length = p.shaderRowAdvance * 4 := by
   rw [Primitive.rows_length, Primitive.shaderRowAdvance_eq_rowCount]
 
-theorem Primitive.rows_offsets_eq_flattened_length (items : List Primitive) :
+theorem Primitive.rows_offsets_eq_flattened_length (items : List BackendPrimitive) :
     (items.map fun p => p.rowCount*4).sum = (items.flatMap Primitive.rows).length := by
   rw [List.length_flatMap]
   congr 1
   apply List.map_congr_left
   intro primitive _
   exact (Primitive.rows_length primitive).symm
+theorem BackendPrimitive.data_length (items : List BackendPrimitive) :
+    (items.flatMap Primitive.rows).length = (items.map BackendPrimitive.storageRows).sum*4 := by
+  induction items with
+  | nil => rfl
+  | cons item rest ih =>
+    simp only [List.flatMap_cons,List.length_append,List.map_cons,List.sum_cons]
+    rw [Primitive.rows_length,Primitive.rowCount_eq_storageRows,ih]
+    exact (Nat.add_mul _ _ _).symm
+
 private def Scene.data (s : Scene) : Array Float :=
   ([s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
     s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight] ++
-    s.primitives.flatMap Primitive.rows).toArray
+    s.compiled.flatMap Primitive.rows).toArray
 
 theorem Scene.data_size_eq_record_cursor (s : Scene) :
-    s.data.size = 8 + (s.primitives.map fun p => p.rowCount*4).sum := by
+    s.data.size = 8 + (s.compiled.map fun p => p.rowCount*4).sum := by
   change ([s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
     s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight] ++
-    s.primitives.flatMap Primitive.rows).length = _
+    s.compiled.flatMap Primitive.rows).length = _
   simp only [List.length_append, List.length_cons, List.length_nil]
   rw [Primitive.rows_offsets_eq_flattened_length]
-private def Primitive.wgsl (p : Primitive) (base : Nat) : String :=
+theorem Scene.data_within_storage_budget (s : Scene) : s.data.size ≤ maxDataFloats := by
+  change ([s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
+    s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight] ++
+    s.compiled.flatMap Primitive.rows).length ≤ maxDataFloats
+  simp only [List.length_append,List.length_cons,List.length_nil]
+  rw [BackendPrimitive.data_length]
+  simpa [Nat.add_mul] using compilePrimitives_budget s.mapping s.primitives s.compiled s.compilationCorrect
+
+#print axioms compilePrimitives_length
+#print axioms compilePrimitives_budget
+#print axioms Scene.make_existing
+#print axioms Scene.data_within_storage_budget
+
+private def Primitive.wgsl (p : BackendPrimitive) (base : Nat) : String :=
   "{\n" ++
   (match p.geometry with
    | .polygon points => polygonWGSL base points.length p.style.rule
@@ -1218,7 +1708,7 @@ private def Primitive.wgsl (p : Primitive) (base : Nat) : String :=
 -- base is relocated to a runtime record row. No per-primitive shader expansion.
 private def relativeCondition (test : Test) : String :=
   test.wgsl.replace "params.rows[" "params.rows[base+"
-private def shaderCase (tag : Nat) (g : Geometry) : String :=
+private def shaderCase (tag : Nat) (g : BackendGeometry) : String :=
   s!"case {tag}u: " ++ "{fillHit=" ++ relativeCondition (fillCondition g 0) ++
   ";strokeHit=" ++ relativeCondition (strokeCondition g 0 .butt) ++ ";}\n"
 private def Scene.wgsl (_s : Scene) : String :=
@@ -1237,13 +1727,15 @@ private def Scene.wgsl (_s : Scene) : String :=
   "@vertex fn vertex(@builtin(vertex_index) i:u32)->@builtin(position) vec4f {" ++
   "let vertices=array<vec2f,3>(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));return vec4f(vertices[i],0,1); }\n" ++
   "fn samplePixel(pixel:vec4f)->vec4f {" ++
-  "var rgb=vec3f(1.0);if any(pixel.xy>=params.rows[1].zw){return vec4f(rgb,1.0);}" ++
+  "var rgb=vec3f(1.0);let rowLimit=arrayLength(&params.rows);if(rowLimit<2u){return vec4f(rgb,1.0);}if any(pixel.xy>=params.rows[1].zw){return vec4f(rgb,1.0);}" ++
   "let worldP=vec4f((pixel.xy-params.rows[0].zw)/params.rows[0].xy+params.rows[1].xy,0,1);" ++
   "var base=2u;\n" ++
   s!"for(var primitive=0u;primitive<{maxPrimitives}u&&base<arrayLength(&params.rows);primitive++)" ++ "{" ++
-  "let header=vec4u(params.rows[base+1u]);let tag=header.x;let count=header.y;" ++
-  s!"let shapeRows=select((count+1u)/2u,count,tag=={Geometry.pathRecordTag}u);let dashCount=u32(params.rows[base+4u].z);let tailRows=shapeRows+{dashPieceRowCount}u*dashCount;var p=worldP;if(header.w>=2u)" ++ "{let tb=base+" ++ toString primitiveFixedRowCount ++ "u+tailRows;let x=params.rows[tb];let y=params.rows[tb+1u];" ++
+  "let remaining=rowLimit-base;if(remaining<5u){break;}let header=vec4u(params.rows[base+1u]);let tag=header.x;let count=header.y;" ++
+  "if(count>2u*remaining){break;}let shapeRows=select((count+1u)/2u,count,tag==" ++ toString Geometry.pathRecordTag ++ "u);let dashCount=u32(params.rows[base+4u].z);let clipCount=header.w/4u;" ++
+  "if(shapeRows>remaining||dashCount>remaining/" ++ toString dashPieceRowCount ++ "u||clipCount>remaining/" ++ toString clipRowCount ++ "u){break;}let tailRows=shapeRows+" ++ toString dashPieceRowCount ++ "u*dashCount;let affineRows=select(0u," ++ toString affineTransformRowCount ++ "u,(header.w%4u)>=2u);let recordRows=" ++ toString primitiveFixedRowCount ++ "u+tailRows+affineRows+" ++ toString clipRowCount ++ "u*clipCount;if(recordRows>remaining){break;}var p=worldP;if((header.w%4u)>=2u)" ++ "{let tb=base+" ++ toString primitiveFixedRowCount ++ "u+tailRows;let x=params.rows[tb];let y=params.rows[tb+1u];" ++
   "p=vec4f(dot(x.xy,worldP.xy)+x.z,dot(y.xy,worldP.xy)+y.z,0,1);}" ++
+  "var clipHit=true;let clipBase=base+" ++ toString primitiveFixedRowCount ++ "u+tailRows+affineRows;for(var ci=0u;ci<clipCount;ci++){let cb=clipBase+" ++ toString clipRowCount ++ "u*ci;let x=params.rows[cb];let y=params.rows[cb+1u];let bounds=params.rows[cb+2u];let q=vec2f(dot(x.xy,worldP.xy)+x.z,dot(y.xy,worldP.xy)+y.z);if(x.w!=1.0||any(q<bounds.xy)||any(q>bounds.xy+bounds.zw)){clipHit=false;break;}}" ++
   "var fillHit=false;var strokeHit=false;switch tag {\n" ++
   shaderCase Geometry.rectRecordTag (.rect 0 0 0 0) ++ shaderCase Geometry.circleRecordTag (.circle 0 0 0) ++ shaderCase Geometry.ellipseRecordTag (.ellipse 0 0 0 0) ++
   s!"case {Geometry.lineRecordTag}u: " ++ "{if((header.w%2u)==1u){strokeHit=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .round) ++
@@ -1254,18 +1746,28 @@ private def Scene.wgsl (_s : Scene) : String :=
   "if(dt==4u){piece=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}" ++
   "else if(dt==2u){piece=" ++ relativeCondition (fillCondition (.circle 0 0 0) 0) ++ ";}" ++
   "else if(dt==7u){piece=" ++ relativeCondition (triangleCondition 0) ++ ";}strokeHit=strokeHit||piece;}base=parentBase;}" ++
-  "let fill=params.rows[base+2u];let stroke=params.rows[base+3u];var element=vec4f(0.0);" ++
+  "fillHit=fillHit&&clipHit;strokeHit=strokeHit&&clipHit;let fill=params.rows[base+2u];let stroke=params.rows[base+3u];var element=vec4f(0.0);" ++
   "if fillHit {element=vec4f(fill.rgb*fill.a,fill.a);}" ++
   "if strokeHit {element=vec4f(stroke.rgb*stroke.a,stroke.a)+element*(1.0-stroke.a);}" ++
   "let opacity=params.rows[base+4u].y;rgb=element.rgb*opacity+rgb*(1.0-element.a*opacity);" ++
-  "base+=" ++ toString primitiveFixedRowCount ++ "u+tailRows+select(0u," ++ toString affineTransformRowCount ++ "u,header.w>=2u);}return vec4f(rgb,1.0); }\n" ++
+  "base+=recordRows;}return vec4f(rgb,1.0); }\n" ++
   "@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {var total=vec4f(0.0);" ++
   String.join (pixelSampleOffsets.map fun (x,y) =>
     "total+=samplePixel(vec4f(pixel.xy+vec2f(" ++ toString (x-0.5) ++ "," ++ toString (y-0.5) ++ "),0.0,1.0));") ++
   "return total/" ++ toString pixelSampleOffsets.length ++ ".0;}\n"
 
-private def Primitive.coverageAt (primitive : Primitive) (data : Array Float)
+private def Primitive.coverageAt (primitive : BackendPrimitive) (data : Array Float)
     (base : Nat) (position : Float × Float) : Bool × Bool := Id.run do
+  let clipCount := primitive.clips.length
+  let mut clipBase := base + (primitive.rowCount-clipCount*clipRowCount)*4
+  for _ in primitive.clips do
+    if data[clipBase+3]! != 1 then return (false,false)
+    let x := data[clipBase]! * position.1 + data[clipBase+1]! * position.2 + data[clipBase+2]!
+    let y := data[clipBase+4]! * position.1 + data[clipBase+5]! * position.2 + data[clipBase+6]!
+    if x < data[clipBase+8]! || y < data[clipBase+9]! ||
+        x > data[clipBase+8]!+data[clipBase+10]! || y > data[clipBase+9]!+data[clipBase+11]! then
+      return (false,false)
+    clipBase := clipBase+clipRowCount*4
   let localPoint := primitive.transform.inverse.apply position.1 position.2
   let env : Env := {data,position:=localPoint}
   let fillHit := match primitive.geometry with
@@ -1283,6 +1785,50 @@ private def Primitive.coverageAt (primitive : Primitive) (data : Array Float)
       return hit
   return (fillHit,strokeHit)
 
+/-- Prepare un-clipped, un-dashed geometry once. Winding paths retain the
+    reference edge traversal, with its edge count shared across all samples.
+    Clipped and dashed geometry keeps every existing coverage check. -/
+private inductive PreparedCoverage where
+  | analytic (inverse : Transform) (data : Array Float) (fill stroke : Prepared Bool)
+  | reference (primitive : BackendPrimitive) (data : Array Float) (base : Nat)
+
+private def PreparedCoverage.eval : PreparedCoverage → (Float × Float) → Bool × Bool
+  | .analytic inverse data fill stroke,position =>
+    let env : Env := {data,position := inverse.apply position.1 position.2}
+    (fill.eval env,stroke.eval env)
+  | .reference p data base,position => p.coverageAt data base position
+
+private def Primitive.prepareCoverage (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedCoverage :=
+  match p.clips,p.dashParts,p.geometry with
+  | [],none,.rect .. | [],none,.circle .. | [],none,.ellipse .. | [],none,.line .. =>
+    .analytic p.transform.inverse data ((fillCondition p.geometry base).prepare data)
+      ((strokeCondition p.geometry base p.style.lineCap).prepare data)
+  | [],none,.polygon points =>
+    let count := points.length
+    .analytic p.transform.inverse data
+      (((boundsCondition base).prepare data).and
+        (.dynamic (fun env => windingHit env base count p.style.rule)))
+      ((strokeCondition p.geometry base p.style.lineCap).prepare data)
+  | [],none,.path contours =>
+    let count := (NativeSVGPath.edges contours).length
+    .analytic p.transform.inverse data
+      (.dynamic (fun env => pathHit env base count p.style.rule))
+      ((strokeCondition p.geometry base p.style.lineCap).prepare data)
+  | _,_,_ => .reference p data base
+
+private theorem Primitive.prepareCoverage_correct (p : BackendPrimitive) (data : Array Float)
+    (base : Nat) (position : Float × Float) :
+    (p.prepareCoverage data base).eval position = p.coverageAt data base position := by
+  cases clips : p.clips with
+  | cons clip rest => simp [Primitive.prepareCoverage,PreparedCoverage.eval,clips]
+  | nil =>
+    cases dash : p.dashParts with
+    | some pieces => simp [Primitive.prepareCoverage,PreparedCoverage.eval,clips,dash]
+    | none =>
+      cases geo : p.geometry <;>
+        simp [Primitive.prepareCoverage,PreparedCoverage.eval,Primitive.coverageAt,clips,dash,geo,
+          Prepared.eval_and,Test.prepare_correct] <;> simp [Prepared.eval]
+
 /-- Topmost geometric paint item at a viewport coordinate, in the same
     painter order and using the exact retained coverage predicates as sampling.
     The result is the zero-based index in `primitives`; it is a paint-item
@@ -1293,14 +1839,15 @@ def Scene.hitTestAt (s : Scene) (screenX screenY : Float) : Option (Fin s.primit
   let position := ((screenX-s.mapping.tx)/s.mapping.sx+s.mapping.minX,
     (screenY-s.mapping.ty)/s.mapping.sy+s.mapping.minY)
   let data := s.data
-  let mut records : Array (Fin s.primitives.length × Primitive × Nat) := #[]
+  let mut records : Array (Fin s.compiled.length × BackendPrimitive × Nat) := #[]
   let mut base := 8
-  for (index,primitive) in (List.finRange s.primitives.length).zip s.primitives do
+  for (index,primitive) in (List.finRange s.compiled.length).zip s.compiled do
     records := records.push (index,primitive,base)
     base := base+primitive.rowCount*4
   for (index,primitive,recordBase) in records.toList.reverse do
     let (fillHit,strokeHit) := primitive.coverageAt data recordBase position
-    if fillHit || strokeHit then return some index
+    if fillHit || strokeHit then
+      return some ⟨index.val,by rw [← s.compiled_length]; exact index.isLt⟩
   return none
 
 theorem Scene.hitTestAt_none_outside_viewport (s : Scene) (screenX screenY : Float)
@@ -1309,6 +1856,45 @@ theorem Scene.hitTestAt_none_outside_viewport (s : Scene) (screenX screenY : Flo
     s.hitTestAt screenX screenY = none := by
   simp [Scene.hitTestAt, outside]
 
+private def overColors (fill stroke : List Float) (opacity : Float)
+    (hits : Bool × Bool) (result : Color) : Color :=
+  let fa : Float := if hits.1 then fill[3]! else 0
+  let sa : Float := if hits.2 then stroke[3]! else 0
+  let premul : Color := ⟨stroke[0]!*sa+fill[0]!*fa*(1-sa),stroke[1]!*sa+fill[1]!*fa*(1-sa),stroke[2]!*sa+fill[2]!*fa*(1-sa)⟩
+  let layer : NativeGraphics.PremultipliedLayer :=
+    ⟨premul.r*opacity,premul.g*opacity,premul.b*opacity,(sa+fa*(1-sa))*opacity⟩
+  layer.overOpaque result
+
+private def Primitive.sampleStep (p : BackendPrimitive) (data : Array Float) (base : Nat)
+    (position : Float × Float) (result : Color) : Color :=
+  overColors (resolved p.style.fill p.style p.style.fillOpacity)
+    (resolved p.style.stroke p.style p.style.strokeOpacity) p.effectiveOpacity
+    (p.coverageAt data base position) result
+
+private structure PreparedSample where
+  coverage : PreparedCoverage
+  fill : List Float
+  stroke : List Float
+  opacity : Float
+
+private def PreparedSample.apply (p : PreparedSample) (position : Float × Float) (result : Color) : Color :=
+  overColors p.fill p.stroke p.opacity (p.coverage.eval position) result
+
+private def Primitive.prepareSample (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedSample :=
+  ⟨p.prepareCoverage data base,
+    resolved p.style.fill p.style p.style.fillOpacity,
+    resolved p.style.stroke p.style p.style.strokeOpacity,p.effectiveOpacity⟩
+
+private theorem Primitive.prepareSample_correct (p : BackendPrimitive) (data : Array Float)
+    (base : Nat) (position : Float × Float) (result : Color) :
+    (p.prepareSample data base).apply position result = p.sampleStep data base position result := by
+  simp only [Primitive.prepareSample,PreparedSample.apply,Primitive.sampleStep,Primitive.prepareCoverage_correct]
+
+private def sampleFold (items : List BackendPrimitive) (data : Array Float) (position : Float × Float)
+    (base : Nat) (initial : Color) : Color × Nat :=
+  items.foldl (fun state p =>
+    (p.sampleStep data state.2 position state.1,state.2+p.rowCount*4)) (initial,base)
+
 private def Scene.sampleAt (s : Scene) (data : Array Float)
     (screenX screenY : Float) : Color := Id.run do
   if screenX >= s.mapping.viewportWidth || screenY >= s.mapping.viewportHeight then return rgb 255 255 255
@@ -1316,7 +1902,7 @@ private def Scene.sampleAt (s : Scene) (data : Array Float)
     (screenY-s.mapping.ty)/s.mapping.sy+s.mapping.minY)
   let mut result := rgb 255 255 255
   let mut base := 8
-  for primitive in s.primitives do
+  for primitive in s.compiled do
     let (fillHit,strokeHit) := primitive.coverageAt data base position
     let fill := resolved primitive.style.fill primitive.style primitive.style.fillOpacity
     let stroke := resolved primitive.style.stroke primitive.style primitive.style.strokeOpacity
@@ -1332,6 +1918,68 @@ private def Scene.sampleAt (s : Scene) (data : Array Float)
     base := base+primitive.rowCount*4
   return result
 
+private def Scene.sampleAtFold (s : Scene) (data : Array Float)
+    (screenX screenY : Float) : Color :=
+  if screenX >= s.mapping.viewportWidth || screenY >= s.mapping.viewportHeight then rgb 255 255 255
+  else
+    let position := ((screenX-s.mapping.tx)/s.mapping.sx+s.mapping.minX,
+      (screenY-s.mapping.ty)/s.mapping.sy+s.mapping.minY)
+    (sampleFold s.compiled data position 8 (rgb 255 255 255)).1
+
+private theorem Scene.sampleAt_eq_fold (s : Scene) (data : Array Float) (x y : Float) :
+    s.sampleAt data x y = s.sampleAtFold data x y := by
+  simp [Scene.sampleAt,Scene.sampleAtFold,sampleFold,Primitive.sampleStep,overColors]
+  rfl
+
+-- Prepare each primitive once, preserving its packed-data cursor and paint order.
+private def prepareSamples (data : Array Float) : List BackendPrimitive → Nat → List PreparedSample
+  | [],_ => []
+  | p::ps,base => p.prepareSample data base :: prepareSamples data ps (base+p.rowCount*4)
+
+private def prepareSamplesLoop (data : Array Float) : List BackendPrimitive → Nat →
+    List PreparedSample → List PreparedSample
+  | [],_,acc => acc.reverse
+  | p::ps,base,acc => prepareSamplesLoop data ps (base+p.rowCount*4) (p.prepareSample data base::acc)
+
+private theorem prepareSamplesLoop_correct (data : Array Float) (items : List BackendPrimitive)
+    (base : Nat) (acc : List PreparedSample) :
+    prepareSamplesLoop data items base acc = acc.reverse ++ prepareSamples data items base := by
+  induction items generalizing base acc with
+  | nil => simp [prepareSamplesLoop,prepareSamples]
+  | cons p ps ih => simp [prepareSamplesLoop,prepareSamples,ih,List.reverse_cons,List.append_assoc]
+
+private def prepareSamplesFast (data : Array Float) (items : List BackendPrimitive) (base : Nat) :=
+  prepareSamplesLoop data items base []
+
+@[csimp] private theorem prepareSamples_eq_loop :
+    prepareSamples = prepareSamplesFast := by
+  funext data items base
+  simp [prepareSamplesFast,prepareSamplesLoop_correct]
+
+private theorem preparedSamples_fold (data : Array Float) (items : List BackendPrimitive)
+    (position : Float × Float) (base : Nat) (initial : Color) :
+    (prepareSamples data items base).foldl (fun color run => run.apply position color) initial =
+      (sampleFold items data position base initial).1 := by
+  induction items generalizing base initial with
+  | nil => rfl
+  | cons p ps ih =>
+    simp only [prepareSamples,List.foldl_cons,Primitive.prepareSample_correct]
+    rw [ih]
+    rfl
+
+private def Scene.sampleAtPrepared (s : Scene)
+    (prepared : List PreparedSample) (screenX screenY : Float) : Color :=
+  if screenX >= s.mapping.viewportWidth || screenY >= s.mapping.viewportHeight then rgb 255 255 255
+  else
+    let position := ((screenX-s.mapping.tx)/s.mapping.sx+s.mapping.minX,
+      (screenY-s.mapping.ty)/s.mapping.sy+s.mapping.minY)
+    prepared.foldl (fun color run => run.apply position color) (rgb 255 255 255)
+
+private theorem Scene.sampleAtPrepared_correct (s : Scene) (data : Array Float) (x y : Float) :
+    s.sampleAtPrepared (prepareSamples data s.compiled 8) x y = s.sampleAt data x y := by
+  rw [Scene.sampleAt_eq_fold]
+  simp only [Scene.sampleAtPrepared,Scene.sampleAtFold,preparedSamples_fold]
+
 private def Scene.sampleWithData (s : Scene) (data : Array Float) (x y : Nat) : Color := Id.run do
   let mut total : Color := ⟨0,0,0⟩
   for (dx,dy) in pixelSampleOffsets do
@@ -1339,6 +1987,35 @@ private def Scene.sampleWithData (s : Scene) (data : Array Float) (x y : Nat) : 
     total := ⟨total.r+c.r,total.g+c.g,total.b+c.b⟩
   let n := Float.ofNat pixelSampleOffsets.length
   return ⟨total.r/n,total.g/n,total.b/n⟩
+
+private def Scene.sampleWithPrepared (s : Scene)
+    (prepared : List PreparedSample) (x y : Nat) : Color := Id.run do
+  let mut total : Color := ⟨0,0,0⟩
+  for (dx,dy) in pixelSampleOffsets do
+    let c := s.sampleAtPrepared prepared (Float.ofNat x+dx) (Float.ofNat y+dy)
+    total := ⟨total.r+c.r,total.g+c.g,total.b+c.b⟩
+  let n := Float.ofNat pixelSampleOffsets.length
+  return ⟨total.r/n,total.g/n,total.b/n⟩
+
+private theorem Scene.sampleWithPrepared_correct (s : Scene) (data : Array Float) (x y : Nat) :
+    s.sampleWithPrepared (prepareSamples data s.compiled 8) x y = s.sampleWithData data x y := by
+  simp only [Scene.sampleWithPrepared,Scene.sampleWithData,Scene.sampleAtPrepared_correct]
+
+private def Scene.samplesWithData (s : Scene) (data : Array Float) (coordinates : List (Nat × Nat)) : List Color :=
+  coordinates.map (fun (x,y) => s.sampleWithData data x y)
+
+private def Scene.samplesWithDataFast (s : Scene) (data : Array Float) (coordinates : List (Nat × Nat)) : List Color :=
+  let prepared := prepareSamples data s.compiled 8
+  coordinates.map (fun (x,y) => s.sampleWithPrepared prepared x y)
+
+@[csimp] private theorem Scene.samplesWithData_eq_fast :
+    Scene.samplesWithData = Scene.samplesWithDataFast := by
+  funext s data coordinates
+  simp only [Scene.samplesWithData,Scene.samplesWithDataFast,Scene.sampleWithPrepared_correct]
+
+-- Audit the exact compiled replacements as well as their interpreter theorem.
+#print axioms Scene.samplesWithData_eq_fast
+#print axioms prepareSamples_eq_loop
 
 private def Scene.sample (s : Scene) (x y : Nat) : Color :=
   s.sampleWithData s.data x y
@@ -1349,7 +2026,17 @@ private def floatJSON (x : Float) : String :=
   if Float.ofInt integer == x then toString integer
   else L4Factoidal.Tdb2.javaDoubleString x.toBits
 
-private def Geometry.name : Geometry → String
+/-- Reference list formatting stays visible; compilation selects the proved
+    memoized twin, preserving every decimal byte and the original order. -/
+private def floatJSONList (xs : List Float) : List String := xs.map floatJSON
+
+@[csimp] private theorem floatJSONList_eq_cached :
+    floatJSONList = L4Factoidal.Rendering.FloatFormat.formatList := by
+  funext xs
+  change xs.map L4Factoidal.Rendering.FloatFormat.format = _
+  exact (L4Factoidal.Rendering.FloatFormat.formatList_eq_map xs).symm
+
+private def Geometry.name {contourType : Type} : Geometry contourType → String
   | .rect .. => "rect"
   | .circle .. => "circle"
   | .ellipse .. => "ellipse"
@@ -1368,6 +2055,15 @@ mutual
         ",\"transform\":" ++ jsonArray
           ([transform.a,transform.b,transform.c,transform.d,transform.e,transform.f].map floatJSON) ++
         ",\"children\":" ++ DisplayNode.listJSON children ++ "}"
+    | .clipped id transform clip children =>
+        "{\"kind\":\"group\",\"id\":" ++
+        (match id with | none => "null" | some value => quote value) ++
+        ",\"transform\":" ++ jsonArray
+          ([transform.a,transform.b,transform.c,transform.d,transform.e,transform.f].map floatJSON) ++
+        ",\"clip\":{\"bounds\":" ++ jsonArray ([clip.x,clip.y,clip.width,clip.height].map floatJSON) ++
+        ",\"transform\":" ++ jsonArray
+          ([clip.transform.a,clip.transform.b,clip.transform.c,clip.transform.d,clip.transform.e,clip.transform.f].map floatJSON) ++
+        "},\"children\":" ++ DisplayNode.listJSON children ++ "}"
   termination_by node => sizeOf node
 
   private def DisplayNode.listJSON : List DisplayNode → String
@@ -1383,22 +2079,44 @@ private def Scene.json (s : Scene) : Except String String := do
   let rawProbes := [(1,1),(s.width/4,s.height/4),(s.width/2,s.height/2),
     (s.width*3/4,s.height/2),(s.width/2,s.height*3/4),(s.width-2,s.height-2)]
   let probes := (rawProbes.map fun (x,y) => (min (s.width-1) x,min (s.height-1) y)).eraseDups
-  let checks := probes.map fun (x,y) => "{\"x\":" ++ toString x ++ ",\"y\":" ++ toString y ++ ",\"rgb\":" ++ (s.sampleWithData data x y).json ++ "}"
+  let checks := (probes.zip (s.samplesWithData data probes)).map fun ((x,y),color) => "{\"x\":" ++ toString x ++ ",\"y\":" ++ toString y ++ ",\"rgb\":" ++ color.json ++ "}"
   let tree := if DisplayNode.listNodeCount s.tree <= maxInspectorNodes
     then DisplayNode.listJSON s.tree else "null"
   return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
-    ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.primitives.length ++
+    ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.compiled.length ++
     ",\"tree\":" ++ tree ++
-    ",\"data\":" ++ jsonArray (data.toList.map floatJSON) ++ ",\"wgsl\":" ++ quote s.wgsl ++ ",\"checks\":" ++ jsonArray checks ++ "}"
+    ",\"data\":" ++ jsonArray (floatJSONList data.toList) ++ ",\"wgsl\":" ++ quote s.wgsl ++ ",\"checks\":" ++ jsonArray checks ++ "}"
+/-- Serialize an existing checked SVG scene through the same packed-data/WGSL
+    producer as the string ABI; no XML serialization or reparsing is required. -/
+def Scene.artifact (s : Scene) : Except String String := s.json
+
+/-- Four-quarter-point CPU reference color for an existing scene. SVG 2 §3
+    rendering order and the lab's explicit sample grid match the string ABI. -/
+def Scene.samplePixel (s : Scene) (x y : Nat) : Color := s.sample x y
+
+/-- Batch the same CPU reference samples while constructing the packed scene
+    array once. Coordinates and operation order within each sample are unchanged. -/
+def Scene.samplePixels (s : Scene) (coordinates : List (Nat × Nat)) : List Color :=
+  let data := s.data
+  s.samplesWithData data coordinates
+
+theorem Scene.samplePixels_eq_samplePixel (s : Scene) (coordinates : List (Nat × Nat)) :
+    s.samplePixels coordinates = coordinates.map (fun (x,y) => s.samplePixel x y) := rfl
+
 @[export svg_compile]
 def compile (xml : String) (width height : UInt32) : String :=
-  match parse xml width.toNat height.toNat >>= Scene.json with
+  match parse xml width.toNat height.toNat >>= Scene.artifact with
+  | .ok artifact => artifact | .error message => "{\"error\":" ++ quote message ++ "}"
+/-- URL context is supplied by the host; reference resolution stays in Lean. -/
+@[export svg_compile_url]
+def compileWithURL (xml : String) (width height : UInt32) (documentURL : String) : String :=
+  match parse xml width.toNat height.toNat (some documentURL) >>= Scene.artifact with
   | .ok artifact => artifact | .error message => "{\"error\":" ++ quote message ++ "}"
 @[export svg_sample]
 def sample (xml : String) (width height x y : UInt32) : String :=
   match parse xml width.toNat height.toNat with
   | .error message => "{\"error\":" ++ quote message ++ "}"
-  | .ok s => "{\"rgb\":" ++ (s.sample x.toNat y.toNat).json ++ "}"
+  | .ok s => "{\"rgb\":" ++ (s.samplePixel x.toNat y.toNat).json ++ "}"
 @[export svg_hit]
 def hit (xml : String) (width height : UInt32) (x y : Float) : String :=
   match parse xml width.toNat height.toNat with

@@ -15,6 +15,29 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-03 | [Browser MVP checkpoint](20261103-browser-mvp-checkpoint.md) | this commit | current — frozen local browser, actual native/WASM/GPU checks and release boundary |
+| 2026-11-03 | [Layout recursion audit](20261103-layout-stack-audit.md) | this commit | current — generated C fuel bound, proof guards and 50,000-sibling native/WASM stress |
+| 2026-11-03 | [Linear path stack repair](20261103-rendering-path-stack-repair.md) | this commit | current — exact tail-loop compiler replacement and generated C gates |
+| 2026-11-03 | [Scene stack lowering](20261103-rendering-scene-stack-lowering.md) | this commit | current — exact traversal proof, compiled-C gates and native stack stress |
+| 2026-11-03 | [Dynamic font request architecture](designissues/2026-11-03-dynamic-font-requests.md) | this commit | current — Lean decides shaping requests; host supplies bounded glyph data |
+| 2026-11-03 | [Browser navigation and byte transport](20261103-lean-browser-navigation.md) | this commit | current — HTTP navigation controls, browser integration |
+| 2026-11-03 | [Dynamic font requests](20261103-web-render-dynamic-font-requests.md) | this commit | current — Lean requests, actual HarfBuzz/FreeType broker and arbitrary edited text |
+| 2026-11-03 | [QuickJS scripting boundary](20261103-web-render-script-engine.md) | this commit | current — actual isolated QuickJS WASM, typed Lean DOM commands |
+| 2026-11-03 | [Script engine architecture](designissues/2026-11-03-script-engine-architecture.md) | this commit | current — separate instances and heaps, message transactions, verified-JS research limits |
+
+| 2026-11-03 | [Original HTML document context for embedded SVG](20261103-html-svg-document-context.md) | this commit | current — original DOM paths and cross-root source guards; linked runtime and original browser comparison next |
+| 2026-11-03 | [Reuse WebGPU sessions for editor changes](20261103-gpu-edit-session-reuse.md) | 50f735802 | current — bounded full-buffer updates, exact whole-image and stale-request controls; published runtime qualification separate |
+| 2026-11-03 | [Prepared path sampling in the Lean renderer](20261103-lean-path-sampling-preparation.md) | this commit | current — exact prepared path/polygon source proofs and emitted-C hoisting; paired current-curve WASM speed measurements recorded |
+| 2026-11-03 | [One canonical path for HTML, SVG and real fonts](20261103-shared-path-fonts.md) | this commit | current — exact SVG/cache adapters and real Arial CPU text; combined runtime, document-wide refs and broader font conformance remain |
+| 2026-11-03 | [SVG references across HTML SVG roots](designissues/2026-11-03-svg-document-references.md) | this commit | current — source-bound document context, absolute paths, original bases and native cross-root regressions; compiled HTML integration pending |
+| 2026-11-03 | [SVG curves and checked backend cache](designissues/2026-11-03-svg-curves-cache.md) | this commit | current — canonical curve geometry, exact cache/count/storage proofs, four exact GPU fill controls and one retained stroke failure |
+| 2026-11-02 | [Typed shaped words into common font geometry](20261102-typed-font-provider.md) | this commit | current — 32 provider/face and 15 shaped-layout guards, actual pinned Ahem HTML geometry; supplied-data WASM image gate next |
+| 2026-11-02 | [Shared clipping for HTML and embedded SVG](20261102-lean-html-shared-clips.md) | this commit | current — exact Float adapters, CPU sampling guards and five whole CPU/GPU/original-Chrome diagnostic images |
+| 2026-11-02 | [HTML/CSS WebGPU hub page and runtime contract](20261102-html-webgpu-hub.md) | this commit | current — actual prefixed worker/GPU page checks; runtime installation and publication remain separate |
+| 2026-11-02 | [Proved formatting cache in the Lean renderer](20261102-lean-renderer-performance.md) | this commit | current — exact number strings and full artifacts; paired WASM compile speedup1.70–2.00; CPU sampling and GPU scaling remain |
+| 2026-11-02 | [Lean link painting, hit testing and stdout logging](20261102-lean-renderer-links.md) | this commit | current — 32 source guards and six browser groups; wrapped spaces, CSS overrides and embedded SVG anchors |
+| 2026-11-02 | [First Lean HTML/CSS WASM and WebGPU images](20261102-lean-web-renderer-first-images.md) | this commit | current — actual HTML input, five local browser checks, whole CPU/GPU/original-browser image equality; real-font shaping remains |
+| 2026-11-02 | [Lean HTML/CSS layout and common retained scene](designissues/2026-11-02-lean-web-rendering.md) | this commit | current — actual DOM/CSS/layout source checks; CPU/GPU/WASM and real shaping milestones remain |
 | 2026-11-02 | [Browser SVG/WebGPU harness, whole-image diagnostics and fault controls](20261102-svg-browser-harness.md) | this commit | current — unchanged 38-case WPT slice and separate sensitivity controls |
 | 2026-11-01 | [Solving retained scene slice](20261101-solving-scene-slice.md) | this commit | current — Lean scene, hit testing, clip and SVG export; a shared bounded layout certificate now guards the SVG backend; parsed-SVG/WebGPU scene unification remains |
 | 2026-11-01 | [Shared SVG linear strokes](20261101-svg-linear-strokes.md) | 957a060d4; b5f6a9150 | current — two exact same-renderer GPU pairs; six source admissions; independent antialiasing gap remains |
@@ -211,5 +234,9 @@ worknote, kept as the record of a decision or a measurement),
 
 | 2026-10-31 | [Compositor HTML failure conditions](20261031-compositor-html-failure-analysis.md) | — | three kernel-checked failure lemmas, pinned-engine counterexamples and browser boundary |
 | 2026-11-01 | [Compositor pipeline files and FOAF pod library](20261101-compositor-pipeline-library.md) | — | bounded versioned documents, explicit FOAF storage discovery, ETag guarded writes and honest local validation limits |
+| 2026-11-02 | [SVG standards implementation overnight](20261102-svg-standards-overnight.md) | uncommitted | isolated SVG lane; defs/use/symbol, affine clipping, typed C/S/Q/T/A geometry and checked backend cache; native/WASM/GPU evidence and numeric limits recorded |
 
 | 2026-11-02 | [Exact compiled UI overlap loop](20261102-ui-overlap-compiled-loop.md) | this commit | kernel-proved foldl compiler replacement, 106 UI guards and targeted emitted-C recursion/replacement audits; no allow-list exemption |
+
+| 2026-11-03 | [Linked RDF graphs in the Lean renderer](20261103-lean-rdf-renderer.md) | — | strict N-Triples to direct DOM and shared scene; complete native/WASM artifact equality and12,288 exact CPU/GPU image pixels |
+| 2026-11-03 | [Fresh web registry inventory](20261103-web-inventory-generation.md) | this commit | actual fresh remote Registry/Tests generation, witnessed UI/Rendering directory inventory and unchanged stage kinds; directory counts are not renderer passes |
