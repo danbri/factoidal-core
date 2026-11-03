@@ -12,7 +12,7 @@ Owner, 2026-10-28, verbatim: "Thanks for your care re open proxy. We will need
 careful documentation and theorems to ensure that subtle combinations of these
 features are not disasterous."
 
-EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.
+EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.
 
 ## 1. Scope and method
 
