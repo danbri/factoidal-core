@@ -177,6 +177,10 @@ handle or to the answer document. -/
 structure XmppCollected where
   send : List String := []
   route : List (String × String) := []
+  /-- `Out.routeFull`: (full JID, text, bounce). Deliver to that one bound
+  session now; if there is none, deliver the bounce (when present) to the
+  session this answer is for. Never held. -/
+  routeFull : List (String × String × Option String) := []
   presence : List (String × String × Bool) := []
   /-- Bare JIDs whose roster `Out.saveRoster` replaced during this feed, so
   a host that persists rosters knows which to fetch with `xmppRosterGet`. -/
@@ -189,6 +193,7 @@ structure XmppCollected where
 private def perform (srv : XmppOpenServer) (c : XmppCollected) : Out → XmppOpenServer × XmppCollected
   | .send text => (srv, { c with send := c.send ++ [text] })
   | .route bare text => (srv, { c with route := c.route ++ [(bare, text)] })
+  | .routeFull full text bounce => (srv, { c with routeFull := c.routeFull ++ [(full, text, bounce)] })
   | .saveRoster bare encoded =>
       ({ srv with rosters := srv.rosters.insert bare (rosterDecode encoded) },
        { c with rostersSaved := if c.rostersSaved.contains bare then c.rostersSaved
@@ -272,6 +277,8 @@ private def jsonOfCollected (os : XmppOpenSession) (c : XmppCollected) : List (S
   [ ("send", .array (c.send.map .string))
   , ("route", .array (c.route.map (fun (to, text) =>
       .object [("to", .string to), ("text", .string text)])))
+  , ("routeFull", .array (c.routeFull.map (fun (to, text, bounce) =>
+      .object [("to", .string to), ("text", .string text), ("bounce", jsonOfOptString bounce)])))
   , ("presence", .array (c.presence.map (fun (bare, full, available) =>
       .object [("bare", .string bare), ("full", .string full), ("available", .bool available)])))
   , ("rostersSaved", .array (c.rostersSaved.map .string))
