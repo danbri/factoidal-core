@@ -737,6 +737,7 @@ import L4Factoidal.HTTP.RunQuery
 import L4Factoidal.HTTP.RunQueryTests
 import L4Factoidal.HTTP.Ops
 import L4Factoidal.HTTP.Wire
+import L4Factoidal.HTTP.WebSocket
 import L4Factoidal.SPARQL.StoreEndpoint
 import L4Factoidal.HTTP.OpsTests
 import L4Factoidal.Math.Subst
