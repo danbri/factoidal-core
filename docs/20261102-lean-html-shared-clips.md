@@ -38,12 +38,26 @@ additionally uses `Classical.choice`. The common retained traversal's exact
 fast twins still compile. These theorems preserve binary64 fields and order;
 they do not prove binary32/WGSL/driver raster equivalence.
 
-`web-render/check-embedding.mjs` is the next image gate: it compares untouched
+`web-render/check-embedding.mjs` compares untouched
 pinned `svg/render/reftests/overflow-clip.html` and `rect-ref.html` separately
 against original-browser whole images, compares CPU and GPU output, and
-checks local CSS dimension/color and clipped-link controls. At this source
-checkpoint that gate awaits the combined fresh native/WASM engine build; no
-new official WPT pass is claimed here.
+checks local CSS dimension/color and clipped-link controls. The combined fresh
+native/WASM engine passed all five groups. Both unchanged upstream HTML files
+matched their independently rendered Chrome originals exactly over 16,384
+pixels, with maximum channel difference zero, and their candidate images
+matched each other. All five diagnostic images matched CPU/GPU and original
+Chrome pixels exactly. Clipped link picking and explicit descendant-CSS
+refusal also passed. These selected diagnostics do not update the full
+601-case corpus score or turn the reference file into another WPT test pass.
+
+The renderer WASM SHA-256 is
+`a32b0dd97c3d2902e28c2c9dae546637e232cfa676001e02ed948cd2713ceeed`;
+the fresh native executable SHA-256 is
+`3e8c87ac25eb7705cdc56a1180db34b2a61288a1d750909c8058beb2076679de`.
+The combined source checkpoint is `61e2522c4`, including the independent
+proved CPU sampling optimization. GPU-only evidence is
+`/tmp/factoidal-web-shared-clips-gpu/report.json`; the later full CPU/GPU
+comparison is `/tmp/factoidal-web-prepared-embedding/report.json`.
 
 ## Remaining boundaries
 
