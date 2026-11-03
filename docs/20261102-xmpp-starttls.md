@@ -114,3 +114,10 @@ Scope for the first landing ("done enough to be safely in main"):
   5. No delivery carries an occupant's real JID (true by the type: `Delivery` items have no
      real-JID field).
   6. Leaving removes the occupant, and an empty room is gone.
+
+## Step 3 result (2026-11-03)
+
+MUC as designed above: `L4Factoidal/XMPP/Muc.lean` (9 theorems, 9 `#guard`s), the hand-off in
+`Server.lean` (`Out.muc`, 3 `#guard`s), the rooms in the ops layer, `xmpp-serve --muc`. Tests:
+`npm/factoidal/test/xmpp-muc.test.mjs`. Record row: `xmpp-serve --muc` in
+`docs/designissues/2026-10-28-feature-combination-safety.md`.

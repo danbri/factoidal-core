@@ -31,6 +31,9 @@ Specifications implemented, by section:
   RFC 7677               SASL SCRAM-SHA-256 (via `XMPP.Scram`)
   XEP-0368               direct TLS: the carrier terminates it, and
                          STARTTLS is not offered — see `tlsCarrier`.
+  XEP-0045               multi-user chat, when `Config.mucDomain` is set: a
+                         stanza to that domain is handed to `XMPP/Muc.lean`
+                         as `Out.muc` (2026-11-03)
 
 NOT implemented, stated rather than silently skipped:
   * TLS itself. STARTTLS is decided here (offer it, require it, accept
@@ -78,6 +81,7 @@ def nsStreamErr : String := "urn:ietf:params:xml:ns:xmpp-streams"
 def nsRoster : String := "jabber:iq:roster"
 def nsDiscoInfo : String := "http://jabber.org/protocol/disco#info"
 def nsTls : String := "urn:ietf:params:xml:ns:xmpp-tls"
+def nsDiscoItems : String := "http://jabber.org/protocol/disco#items"
 
 /-! ## The roster (RFC 6121 section 2)
 
@@ -177,6 +181,10 @@ structure Config where
   a server make TLS mandatory-to-negotiate, and with a key in hand there
   is no reason to accept credentials in clear. -/
   startTls : Bool := false
+  /-- The XEP-0045 room service's domain (e.g. `conference.example.com`), or
+  none for no MUC. A bound session's stanza addressed there becomes
+  `Out.muc`; the room logic is `L4Factoidal.XMPP.Muc`. -/
+  mucDomain : Option String := none
   deriving Inhabited
 
 def Config.accountOf (c : Config) (user : String) : Option Account :=
@@ -200,6 +208,10 @@ inductive Out where
   answered `service-unavailable`. The bounce text is decided here; the host
   only knows which full JIDs are bound. -/
   | routeFull (fullJid : String) (text : String) (bounce : Option String)
+  /-- A stanza from this bound session to the MUC domain (`Config.mucDomain`):
+  hand it to the room service with the sender's full JID, taken from the
+  session, never from the stanza. The service answers with `routeFull`s. -/
+  | muc (fromFull : String) (text : String)
   /-- Replace that bare JID's roster file with this exact text. -/
   | saveRoster (bareJid : String) (encoded : String)
   /-- Record this full JID as available or not, so other connections can
@@ -518,6 +530,12 @@ def handleScramResponse (s : Session) (user nonce cfb sf : String) (n : Node) :
               ({ s with stage := .authenticated user },
                [.send (saslSuccess (Scram.b64Encode ("v=" ++ serverSig).toUTF8))])
 
+/-- Is this stanza addressed to the MUC service of this server? -/
+def Config.isMuc (c : Config) (st : Stanza) : Bool :=
+  match c.mucDomain, st.to with
+  | some d, some t => t.domainpart == d
+  | _, _ => false
+
 /-- Does this JID text carry a resourcepart? -/
 def hasResource (t : String) : Bool :=
   ((Jid.parse t).bind (·.resourcepart)).isSome
@@ -599,6 +617,14 @@ where
                 .element "feature" [⟨"var", nsRoster⟩] [],
                 .element "feature" [⟨"var", nsDiscoInfo⟩] [] ]])])
         | none =>
+          match childByNs st.payload nsDiscoItems (some "query") with
+          | some _ =>
+            -- XEP-0030 items on the server: the MUC service, when there is one,
+            -- so a client can find it (XEP-0045 section 6.1).
+            (env, [.send (iqResult st.id none
+              [.element "query" [⟨"xmlns", nsDiscoItems⟩]
+                (s.cfg.mucDomain.toList.map (fun d => .element "item" [⟨"jid", d⟩] []))])])
+          | none =>
           if ty == "result" || ty == "error" then (env, [])
           else
             -- RFC 6120 section 8.4: an unhandled IQ gets
@@ -737,6 +763,9 @@ def stepMain (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × Li
           ({ s with stage := .closed }, env,
            streamError "unsupported-stanza-type" s!"unsupported top-level element `{tag}`")
         | some st =>
+          if s.cfg.isMuc st then
+            (s, env, [.muc full (render (Core.Stanza.toXml { st with from_ := Jid.parse full }))])
+          else
           match st.kind with
           | .iq =>
             let (env', outs) := handleIq s env st text bare full
@@ -1279,6 +1308,31 @@ private def boundJuliet : Session := { Session.init testCfg with stage := .bound
   | [.send t] => has t "type=\"result\""
   | _ => false
 
+/-! ### MUC hand-off checks (2026-11-03) -/
+
+private def boundMuc : Session :=
+  { Session.init { testCfg with mucDomain := some "conference.example.com" } with stage := .bound "juliet" "balcony" }
+
+-- A stanza to the MUC domain goes to the room service, with the SESSION's
+-- full JID as sender, whatever `from` the client claimed.
+#guard
+  let (_, _, outs) := step boundMuc ⟨[]⟩ (.element "<presence to='tea@conference.example.com/jul' from='mallory@evil.example/x'/>")
+  match outs with
+  | [.muc "juliet@example.com/balcony" text] => has text "from=\"juliet@example.com/balcony\"" && !has text "mallory"
+  | _ => false
+
+-- No MUC configured: the same stanza is routed as before, not handed off.
+#guard
+  let (_, _, outs) := step boundJuliet ⟨[]⟩ (.element "<message to='tea@conference.example.com' type='groupchat'><body>x</body></message>")
+  outs.all (fun o => match o with | .muc .. => false | _ => true)
+
+-- disco#items on the server names the MUC service.
+#guard
+  let (_, _, outs) := step boundMuc ⟨[]⟩ (.element "<iq type='get' id='d1' to='example.com'><query xmlns='http://jabber.org/protocol/disco#items'/></iq>")
+  match outs with
+  | [.send t] => has t "jid=\"conference.example.com\""
+  | _ => false
+
 /-! ## IQ routing (2026-11-03): never held
 
 https://github.com/danbri/factoidal/issues/1234 and /1139. An IQ get or set
@@ -1292,7 +1346,8 @@ theorem handleIq_no_route (s : Session) (env : Env) (st : Stanza) (raw bare full
   generalize childByNs st.payload nsRoster (some "query") = r
   generalize childByNs st.payload nsSession (some "session") = se
   generalize childByNs st.payload nsDiscoInfo (some "query") = di
-  cases tgt <;> cases r <;> cases se <;> cases di <;> simp only [] <;>
+  generalize childByNs st.payload nsDiscoItems (some "query") = dit
+  cases tgt <;> cases r <;> cases se <;> cases di <;> cases dit <;> simp only [] <;>
     simp [apply_ite (f := Prod.snd), apply_ite (f := fun l : List Out => Out.route b t ∈ l)]
 
 end L4Factoidal.XMPP.Server

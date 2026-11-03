@@ -64,6 +64,7 @@ import Std.Data.HashMap
 import Wasm.Ops.Support
 import L4Factoidal.XMPP.Server
 import L4Factoidal.XMPP.WebSocket
+import L4Factoidal.XMPP.Muc
 import L4Factoidal.HTTP.WebSocket
 import L4Factoidal.HTTP.Wire
 
@@ -110,6 +111,8 @@ structure XmppServerConfig where
   iterationCount : Nat
   accounts : List Account
   tlsCarrier : Bool
+  /-- XEP-0045 room service domain, from `"mucDomain"`; none: no MUC. -/
+  mucDomain : Option String := none
   deriving Inhabited
 
 def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
@@ -128,10 +131,13 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
       -- here byte for byte.
       let saltB64 := (j.getString? "saltB64").getD "W22ZaJ0SNY7soEsUEjb6gQ=="
       let iterationCount := (natField? j "iterationCount").getD 4096
+      let mucDomain := j.getString? "mucDomain"
       if iterationCount < 1 then .error "config: \"iterationCount\" must be at least 1"
+      else if mucDomain == some "" || mucDomain == some domain then
+        .error "config: \"mucDomain\" must be a domain other than \"domain\""
       else
         .ok { domain, saltB64, iterationCount, accounts,
-              tlsCarrier := (j.getBool? "tlsCarrier").getD false }
+              tlsCarrier := (j.getBool? "tlsCarrier").getD false, mucDomain }
 
 /-! ## The handle tables -/
 
@@ -142,6 +148,8 @@ structure XmppOpenServer where
   cfg : XmppServerConfig
   rosters : Std.HashMap String Roster
   presence : Std.HashMap String (List String)
+  /-- The XEP-0045 rooms, when `cfg.mucDomain` is set. -/
+  muc : Option Muc.Service := none
 
 /-- One open client connection on a server. -/
 structure XmppOpenSession where
@@ -194,6 +202,15 @@ private def perform (srv : XmppOpenServer) (c : XmppCollected) : Out → XmppOpe
   | .send text => (srv, { c with send := c.send ++ [text] })
   | .route bare text => (srv, { c with route := c.route ++ [(bare, text)] })
   | .routeFull full text bounce => (srv, { c with routeFull := c.routeFull ++ [(full, text, bounce)] })
+  | .muc fromFull text =>
+    -- The room service: one step over the server's shared rooms; every
+    -- delivery goes to one occupant's own full JID and is never held.
+    match srv.muc, (Wire.parseElement text).bind Core.Stanza.ofXml with
+    | some svc, some st =>
+      let (svc', ds) := Muc.step svc fromFull st
+      ({ srv with muc := some svc' },
+       { c with routeFull := c.routeFull ++ ds.map (fun d => (d.to, d.render, none)) })
+    | _, _ => (srv, c)
   | .saveRoster bare encoded =>
       ({ srv with rosters := srv.rosters.insert bare (rosterDecode encoded) },
        { c with rostersSaved := if c.rostersSaved.contains bare then c.rostersSaved
@@ -299,7 +316,8 @@ def xmppOpen (configJson : String) : IO String := do
   | .ok cfg =>
       let n ← xmppServerCounter.modifyGet fun n => (n + 1, n + 1)
       let h := s!"xmpp{n}"
-      xmppServers.modify (·.insert h { cfg, rosters := ∅, presence := ∅ })
+      let muc : Option Muc.Service := cfg.mucDomain.map (fun d => { domain := d })
+      xmppServers.modify (·.insert h { cfg := cfg, rosters := ∅, presence := ∅, muc := muc })
       pure (okWith [ ("handle", .string h)
                    , ("domain", .string cfg.domain)
                    , ("accounts", .number (toString cfg.accounts.length)) ])
@@ -341,7 +359,8 @@ def xmppSessionOpen (server optionsJson : String) : IO String := do
               iterationCount := srv.cfg.iterationCount
               accounts := srv.cfg.accounts
               tlsCarrier := (j.getBool? "tlsCarrier").getD srv.cfg.tlsCarrier
-              startTls := (j.getBool? "startTls").getD false }
+              startTls := (j.getBool? "startTls").getD false
+              mucDomain := srv.cfg.mucDomain }
           let n ← xmppSessionCounter.modifyGet fun n => (n + 1, n + 1)
           let h := s!"xmpps{n}"
           xmppSessions.modify (·.insert h
@@ -380,6 +399,20 @@ def xmppSessionDeliver (h text : String) : IO String := do
         match o with | .send t => some t | _ => none)
       pure (okWith [("delivered", .bool true), ("send", .array (sends.map .string))])
 
+/-- A session went away: it leaves every room it was in (XEP-0045 section
+7.14), and the other occupants are told. The deliveries, as `routeFull`
+JSON, for the host to perform. -/
+def mucLeaveAll (server : String) (full : Option String) : IO Json := do
+  match full, (← xmppServers.get)[server]? with
+  | some f, some srv =>
+    match srv.muc with
+    | some svc =>
+      let (svc', ds) := Muc.leaveAll svc f
+      xmppServers.modify (·.insert server { srv with muc := some svc' })
+      pure (.array (ds.map (fun d => .object [("to", .string d.to), ("text", .string d.render), ("bounce", .null)])))
+    | none => pure (.array [])
+  | _, _ => pure (.array [])
+
 /-- `xmppSessionClose(sessionHandle)`: the socket reached end of input or
 is being closed by the host. A half-closed stream is answered the way
 RFC 6120 section 4.4 asks, then the handle is released. The presence
@@ -392,7 +425,8 @@ def xmppSessionClose (h : String) : IO String := do
     let closing : List String :=
       if os.closed || os.session.stage == .closed then [] else ["</stream:stream>"]
     xmppSessions.modify (·.erase h)
-    pure (okWith [("send", .array (closing.map .string))])
+    let left ← mucLeaveAll os.server os.session.fullJid
+    pure (okWith [("send", .array (closing.map .string)), ("routeFull", left)])
 
 /-- `xmppSessionTlsUp(sessionHandle)`: the TLS handshake that a feed asked
 for (`startTls: true`) finished. Refused unless the session is in
@@ -591,7 +625,8 @@ def xmppWsOpen (server optionsJson : String) : IO String := do
               saltB64 := srv.cfg.saltB64, iterationCount := srv.cfg.iterationCount
               accounts := srv.cfg.accounts
               tlsCarrier := (j.getBool? "tlsCarrier").getD false
-              startTls := false }
+              startTls := false
+              mucDomain := srv.cfg.mucDomain }
           let origins := ((j.getArray? "allowedOrigins").getD []).filterMap Json.asString?
           let policy : L4Factoidal.HTTP.WebSocket.Policy :=
             { allowedOrigins := origins.map (·.toLower), allowNoOrigin := (j.getBool? "allowNoOrigin").getD false
@@ -640,12 +675,13 @@ def xmppWsCloseWith (h : String) : IO (String × ByteArray) := do
   | none => pure (errJson s!"unknown XMPP WebSocket session handle: {h}", ByteArray.empty)
   | some ws =>
     xmppWsSessions.modify (·.erase h)
+    let left ← mucLeaveAll ws.inner.server ws.inner.session.fullJid
     match ws.phase with
     | .frames .. =>
-      if ws.inner.closed then pure (okWith [], ByteArray.empty)
-      else pure (okWith [], wsFramesOf ws.inner.session.cfg [Server.streamCloseText] ++
+      if ws.inner.closed then pure (okWith [("routeFull", left)], ByteArray.empty)
+      else pure (okWith [("routeFull", left)], wsFramesOf ws.inner.session.cfg [Server.streamCloseText] ++
                           L4Factoidal.HTTP.WebSocket.closeFrame 1000)
-    | _ => pure (okWith [], ByteArray.empty)
+    | _ => pure (okWith [("routeFull", left)], ByteArray.empty)
 
 def xmppWsBlobIoOpNames : List String := ["xmppWsFeed", "xmppWsDeliver", "xmppWsClose"]
 
