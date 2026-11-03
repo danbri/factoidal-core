@@ -11,6 +11,13 @@ Design decision (owner-approved 2026-08-22):
 
 ## What exists
 
+For foafnaut2525 capability or shipping questions, read the dated
+[JS/WASM maturity and XSLT integration record](../../docs/designissues/2026-11-03-foafnaut2525-runtime-maturity.md).
+Distinguish the Lean renderer, the external QuickJS WASM engine, the limited
+DOM/event binding and a future page-facing WASM API. Recheck its pinned
+checkpoint before reporting current support. Native CLI, web bundle and
+standalone macOS/iOS app evidence are separate.
+
 For stateful transport adapters, test the host's lifecycle independently of
 the protocol engine, then replay through the rebuilt Wasm artifact. An empty
 `send`/`route` answer says nothing about input consumption: export the actual

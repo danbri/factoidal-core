@@ -15,6 +15,9 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-03 | [foafnaut2525 main-thread handoff review](20261103-foafnaut2525-handoff-review.md) | this commit | current — rechecked artifacts and CI, actual guest-DOM defect, native GPU blocker and next application acceptance target |
+| 2026-11-03 | [foafnaut2525 side-conversation handoff](20261103-foafnaut2525-side-thread-handoff.md) | pending | current — owner requests, dated demo/test/native evidence, LWS and recovery proposals, issue and main-thread review checklist |
+| 2026-11-03 | [foafnaut2525 runtime maturity and XSLT](designissues/2026-11-03-foafnaut2525-runtime-maturity.md) | pending | current — JS/DOM/event-loop and WASM evidence boundaries, requested XSLT integration and Apple distribution constraints; documentation only |
 | 2026-11-03 | [Browser document transactions](20261103-browser-document-transactions.md) | this commit | current — navigation rollback, dynamic CSS identity, cancellable script links and actual Chrome controls; independent fast host CI |
 | 2026-11-03 | [Checked browser development bundle](20261103-browser-development-bundle.md) | this commit | current — deterministic package, relocated Chrome/GPU tests and explicit external dependencies |
 | 2026-11-03 | [Browser alpha packaging audit](20261103-browser-alpha-packaging-audit.md) | this commit | current — actual document ABI gates and package scope |
