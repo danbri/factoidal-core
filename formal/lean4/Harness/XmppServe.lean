@@ -207,6 +207,7 @@ def performOut (h : Host) (seq : Nat) : Out → IO Bool
   -- stanza to a room service; the rooms live in the wasm ops layer.
   | .muc _ _ => return false
   | .mix _ _ => return false
+  | .gc3 _ _ => return false
 
 /-- Drain this session's mailbox: read every file, unlink it, and hand
 its bytes to `Server.deliver`, which decides whether the session may

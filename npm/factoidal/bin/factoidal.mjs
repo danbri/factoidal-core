@@ -749,7 +749,7 @@ Specification: https://solidproject.org/TR/protocol`,
 usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
                             [--accounts FILE] [--cert FILE --key FILE [--starttls]]
                             [--ws-port N [--ws-path PATH] [--ws-origin ORIGIN]...]
-                            [--muc DOMAIN] [--mix DOMAIN]
+                            [--muc DOMAIN] [--mix DOMAIN] [--gc3 DOMAIN]
 
 Starts a Node TCP server that runs one engine session per connection and
 answers every byte through the engine's xmppSessionFeed operation.
@@ -788,6 +788,10 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
                    joined through this server (XEP-0405 MIX-PAM); channels are
                    made by an IQ <create/>, kept in memory only, JID-hidden; no
                    PubSub nodes, no archive (L4Factoidal/XMPP/Mix.lean)
+  --gc3 DOMAIN     also serve PROTOTYPE "Groupchat 3.0" groups at DOMAIN: persistent
+                   membership, stable participant ids, optional events. There is
+                   no published GC3 spec; every wire format is invented and listed
+                   in L4Factoidal/XMPP/Gc3.lean and danbri/factoidal issue 1236
 
 The server makes no protocol decision. Stream negotiation, SASL PLAIN and
 SCRAM-SHA-256, resource binding, the roster, presence subscription and
@@ -1200,7 +1204,7 @@ const VALUE_OPTIONS = {
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
-  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'mix']),
+  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'mix', 'gc3']),
   'webdav-serve': new Set(['port', 'host', 'users', 'guest', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
@@ -2875,6 +2879,13 @@ async function commandXmppServe (positional, options) {
     if (options.mix === options.muc) throw new UsageError('--mix and --muc need different domains')
     settings.mixDomain = options.mix
   }
+  if (options.gc3 !== undefined) {
+    if (typeof options.gc3 !== 'string' || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(options.gc3)) {
+      throw new UsageError('--gc3 needs a domain name, e.g. gc3.example.com')
+    }
+    if (options.gc3 === options.muc || options.gc3 === options.mix) throw new UsageError('--gc3 needs a domain of its own')
+    settings.gc3Domain = options.gc3
+  }
   if (options['ws-port'] !== undefined) {
     const wsPort = Number(options['ws-port'])
     if (!Number.isInteger(wsPort) || wsPort < 0 || wsPort > 65535) throw new UsageError('--ws-port needs a port number')
@@ -2909,6 +2920,7 @@ async function commandXmppServe (positional, options) {
         (startTls ? ', STARTTLS required)' : useTls ? ', direct TLS)' : ', PLAINTEXT: no TLS on this listener)'))
     if (settings.mucDomain) err(`xmpp-serve: multi-user chat (XEP-0045) at ${settings.mucDomain}`)
     if (settings.mixDomain) err(`xmpp-serve: MIX channels (XEP-0369, joined by XEP-0405) at ${settings.mixDomain}`)
+    if (settings.gc3Domain) err(`xmpp-serve: GC3 PROTOTYPE groups at ${settings.gc3Domain} (no published spec; invented wire format)`)
   }
   if (running.wsOrigin && !quiet) {
     err(`xmpp-serve: XMPP over WebSocket on ${running.wsOrigin}` +

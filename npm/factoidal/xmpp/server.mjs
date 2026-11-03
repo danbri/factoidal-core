@@ -136,6 +136,8 @@ export async function openXmppServer (options = {}) {
   if (typeof options.mucDomain === 'string') config.mucDomain = options.mucDomain
   // XEP-0369 channels (L4Factoidal/XMPP/Mix.lean), joined through MIX-PAM; off unless named.
   if (typeof options.mixDomain === 'string') config.mixDomain = options.mixDomain
+  // GC3 prototype groups (L4Factoidal/XMPP/Gc3.lean; no published spec); off unless named.
+  if (typeof options.gc3Domain === 'string') config.gc3Domain = options.gc3Domain
   let opened
   try {
     opened = engine.call('xmppOpen', [JSON.stringify(config)])

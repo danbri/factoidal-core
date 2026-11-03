@@ -612,3 +612,23 @@ Step 2 of `docs/20261102-xmpp-starttls.md`.
   3 in `Server.lean`. `handleIq_no_route` still holds with the MIX-PAM branch.
 - Not in this step (module header): PubSub nodes and subscriptions, channel presence, MAM, nick
   registration, private messages, destruction, administration, persistence.
+
+## 2026-11-03 (later): GC3 prototype (step 5)
+
+There is no published GC3 specification. `L4Factoidal/XMPP/Gc3.lean` (formerly a scope stub)
+implements what Matthew Wild's slides of 2025-01-30 fix
+(https://matthewwild.co.uk/uploads/xmpp-gc3-jan-2025.pdf): persistent joins (membership is the
+account's), stable participant JIDs (`group@service/<id>`, unchanged by a rename), optional
+presence (membership events only for members that ask), one affiliation scale. Every wire format
+is invented and listed in https://github.com/danbri/factoidal/issues/1236, with one xfail each in
+`npm/factoidal/test/xmpp-gc3.test.mjs`. XEP-0421 `<occupant-id/>` and XEP-0172 `<nick/>` use their
+real namespaces.
+
+- The membership transition relation is `apply : Group → Command → Option Group`; every command
+  carries its actor, the authenticated account from the session.
+- Theorems: `apply_no_ghost` (no transition adds a member except that member's own join; the
+  attestation design's "membership changes only by authenticated member commands"),
+  `apply_rename_ids`, `apply_remove_owner`, `apply_join_nicks_nodup`, `message_recipients`,
+  `message_nonmember`. 8 `#guard`s; 1 in `Server.lean`.
+- `Server.lean`: `Config.gc3Domain`, `Out.gc3`. CLI: `xmpp-serve --gc3 gc3.<domain>`.
+- Not covered: knocking, configuration, history, MLS or any encryption, spaces, persistence.
