@@ -276,6 +276,11 @@ export async function openLwsStorage (options = {}) {
   // issuer.
   if (options.auth !== undefined && options.auth !== null) config.auth = options.auth
   if (options.insecureNoAuth === true) config.insecureNoAuth = true
+  // A component principal (issue 1238): a storage a component opens
+  // in-process. No token is read; every request is this agent's, and WAC
+  // decides it (Authorization.decide_principal_agents). Never served over
+  // HTTP: createLwsServer refuses it.
+  if (typeof options.principal === 'string') config.principal = options.principal
   if (typeof options.rootAcl === 'string') config.rootAcl = options.rootAcl
   // Notifications are on unless the caller turns them off; the engine
   // decides everything else about them.
@@ -623,6 +628,11 @@ function headerPairs (raw) {
  *                    setBaseIri: Function}>}
  */
 export async function createLwsServer (options = {}) {
+  if (options.principal !== undefined) {
+    // Served over HTTP, a principal storage would let every client act as
+    // the component. It is for in-process use only (issue 1238).
+    throw new LwsHostError('a storage with a component principal is in-process only; it is not served over HTTP')
+  }
   const http = await import('node:http')
   const onError = typeof options.onError === 'function'
     ? options.onError
