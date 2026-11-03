@@ -22,7 +22,9 @@ open L4Factoidal.LWS (decimal? decimal_repr)
 
 /-! ## Field framing (from `OWL.CertNames`) -/
 
-def frame : List Char → List Char
+/-- The specification, for the proofs only: `noncomputable`, so compiled code
+has only the tail-recursive `frameTR` (the tail-recursion gate). -/
+noncomputable def frame : List Char → List Char
   | [] => [';']
   | c :: cs => '+' :: c :: frame cs
 
@@ -37,11 +39,11 @@ theorem frameAcc_eq (cs acc : List Char) : frameAcc cs acc = acc.reverse ++ fram
   | nil => rfl
   | cons c cs ih => simp [frameAcc, frame, ih, List.reverse_cons, List.append_assoc]
 
-@[csimp] theorem frame_eq_frameTR : @frame = @frameTR := by
+theorem frame_eq_frameTR : @frame = @frameTR := by
   funext cs
   simp [frameTR, frameAcc_eq]
 
-def fields (ss : List String) : List Char := ss.flatMap (fun s => frame s.toList)
+def fields (ss : List String) : List Char := ss.flatMap (fun s => frameTR s.toList)
 
 def readFields : List Char → List Char → List String → Option (List String)
   | [], [], acc => some acc.reverse
@@ -62,10 +64,12 @@ theorem readFields_fields (ss acc : List String) :
   induction ss generalizing acc with
   | nil => simp [fields, readFields]
   | cons s ss ih =>
-      simp only [fields, List.flatMap_cons]
+      simp only [fields, List.flatMap_cons, ← frame_eq_frameTR]
       rw [readFields_frame]
       simp only [List.reverse_nil, List.nil_append, String.ofList_toList]
-      change readFields (fields ss) [] (s :: acc) = some (acc.reverse ++ s :: ss)
+      have : (ss.flatMap fun s => frame s.toList) = fields ss := by
+        simp [fields, frame_eq_frameTR]
+      rw [this]
       rw [ih]
       simp [List.reverse_cons, List.append_assoc]
 
