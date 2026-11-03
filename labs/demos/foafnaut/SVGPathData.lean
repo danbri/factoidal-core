@@ -22,7 +22,7 @@ abbrev Contour := L4Factoidal.Rendering.Contour
 namespace Contour
 @[match_pattern] abbrev empty := L4Factoidal.Rendering.Contour.empty
 @[match_pattern] abbrev path := L4Factoidal.Rendering.Contour.path
-abbrev closed := L4Factoidal.Rendering.Contour.closed
+abbrev closed (contour : Contour) : Bool := L4Factoidal.Rendering.Contour.closed contour
 end Contour
 abbrev LinearContour := L4Factoidal.Rendering.LinearContour
 namespace LinearContour
