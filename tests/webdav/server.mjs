@@ -222,7 +222,7 @@ async function login (dir, lwsOrigin, ownerJwk) {
       // Standard error and standard output are two pipes: wait for the warning.
       for (let i = 0; i < 50 && !web.errText().includes('WARNING: --dangerously'); i++) await new Promise((resolve) => setTimeout(resolve, 100))
       assert(web.errText().includes('WARNING: --dangerously-disable-ratelimits: failed logins are NOT limited'), web.errText())
-      assert(web.errText().includes('EXPERIMENTAL UNREVIEWED CODE'), web.errText())
+      assert(web.errText().includes('EXPERIMENTAL UNDER-REVIEWED CODE'), web.errText())
       const statuses = []
       for (let i = 0; i < 9; i++) {
         const r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '0', authorization: basic('alice', `wrong-${i}`) } })

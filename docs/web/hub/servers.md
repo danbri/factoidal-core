@@ -7,7 +7,7 @@ tests: tests/hub/hub_servers_test.mjs
 
 # Servers
 
-<p class="warning"><strong>⚠️ EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.</strong> This covers the whole core
+<p class="warning"><strong>⚠️ EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.</strong> This covers the whole core
 library and every command line tool, and in particular all protocol,
 authentication and security code.</p>
 
@@ -249,11 +249,11 @@ To turn it on:
 
 ```
 $ export FACTOIDAL_LWS_KEY="$(factoidal lws-keygen)"
-factoidal lws-keygen: WARNING: EXPERIMENTAL UNREVIEWED CODE - ...
+factoidal lws-keygen: WARNING: EXPERIMENTAL UNDER-REVIEWED CODE - ...
 lws-keygen: key id fc5e47ded8ec8264. Keep a copy of the key in a safe place: without it the storage cannot be read.
 lws-keygen: start the server with FACTOIDAL_LWS_KEY set to it, on an empty storage directory.
 $ factoidal lws-serve ./lws-store --issuer https://issuer.example
-factoidal lws-serve: WARNING: EXPERIMENTAL UNREVIEWED CODE - ...
+factoidal lws-serve: WARNING: EXPERIMENTAL UNDER-REVIEWED CODE - ...
 lws-serve: encryption at rest is ON: the storage in /home/me/lws-store is sealed with ChaCha20-Poly1305
   under key id fc5e47ded8ec8264.
 ```

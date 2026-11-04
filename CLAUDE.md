@@ -795,12 +795,18 @@ protocol, auth/security code, CLIs etc (core library) “EXPERIMENTAL
 UNDEREEVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS
 WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.”"
 
-- The notice, spelled `EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.`, is at the top of `README.md`,
+- The notice, spelled `EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.`, is at the top of `README.md`,
   `npm/factoidal/README.md`, the hub index and the hub servers page, in the
   npm package description, in every `factoidal` help text, and on standard
   error when a server, client or key command starts (`REVIEW_WARNING` in
   `npm/factoidal/bin/factoidal.mjs`). A new server, protocol or security
   surface carries it too.
+- Spelling: "UNDER-REVIEWED". Owner, 2026-10-28, verbatim: "UNDER-REVIWED",
+  to the question "Should the notice say "UNREVIEWED" (what ships now and what
+  CLAUDE.md records) or "UNDER-REVIEWED"?"; then, 2026-11-03, "2 sure", to
+  the proposal to change only the notice to "UNDER-REVIEWED" everywhere.
+  Packages up to 0.29.0 carry "UNREVIEWED"; the change ships in the next
+  release.
 - AES (for XML Encryption and JWE, https://github.com/danbri/factoidal/issues/1081):
   WebCrypto on every JavaScript host, decisions in Lean, measured by vectors
   and a differential run. Owner, verbatim: "Why not just WebCrypto everywhere

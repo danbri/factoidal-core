@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The experimental code notice now says "EXPERIMENTAL UNDER-REVIEWED CODE" (was "UNREVIEWED"), in the README, the package description, every help text, the warning on standard error when a server, client or key command starts, and the hub pages. Owner decision of 2026-10-28, confirmed 2026-11-03.
+
 ## 0.29.0 (2026-11-02)
 
 - The Data Compositor can open and save versioned pipeline JSON files. Import validates the recipe and never runs it automatically.
