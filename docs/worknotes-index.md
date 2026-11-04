@@ -15,6 +15,8 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-04 | [Terminable renderer worker](20261104-renderer-worker.md) | pending | current — real WASM cancellation/recovery, bounded requests, retained hit metadata and host integration |
+| 2026-11-04 | [Renderer worker request and lifetime rules](designissues/2026-11-04-renderer-worker.md) | pending | current — foreground/Lean worker boundary, deadlines, generation checks and API controls |
 | 2026-11-03 | [Browser foundations progress](20261103-browser-foundations-progress.md) | pending | current — four surrogate cases executed, complete diagnostic audit, synchronous Lean DOM bridge, text-size reflow and original SVG Tiny admission baseline |
 | 2026-11-03 | [HTML parser diagnostic audit](20261103-html-parser-error-count-audit.md) | pending | current — complete 446-case diagnostic census, fixture-history categories and parser/DOM assurance limits |
 | 2026-11-03 | [Browser WPT baseline and native provenance](20261103-browser-wpt-baseline.md) | pending | current — fresh Lean parser/DOM, QuickJS assertions, native embedded-SVG images, pinned upstream bytes and cache cleanup |

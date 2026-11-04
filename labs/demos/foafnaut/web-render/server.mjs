@@ -9,7 +9,7 @@ import {createHash} from 'node:crypto';
 import {fetchResourceBytes,ResourceError} from './resource-broker.mjs';
 import {createFontBroker} from '../tools/font-broker.mjs';
 const here=dirname(fileURLToPath(import.meta.url)),lab=resolve(here,'..'),files=new Map();
-for(const name of ['index.html','app.mjs','engine.mjs','style.css','navigation.mjs','resource-client.mjs','resource-broker.mjs','document-client.mjs'])files.set('/'+name,resolve(here,name));
+for(const name of ['index.html','app.mjs','engine.mjs','engine-core.mjs','engine-worker.mjs','style.css','navigation.mjs','resource-client.mjs','resource-broker.mjs','document-client.mjs'])files.set('/'+name,resolve(here,name));
 for(const name of ['default.html','mvp.html','boxes.html','flow.html','links.html','graph.nt','scripted.html'])files.set('/fixtures/'+name,resolve(here,'fixtures',name));
 for(const name of ['gpu_transport.ts','render_plan.ts'])files.set('/lab/'+name,resolve(lab,name));
 for(const name of ['web-render.mjs','web-render.wasm'])files.set('/lab/.build/web-render/engines/'+name,resolve(lab,'.build/web-render/engines',name));

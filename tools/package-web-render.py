@@ -22,7 +22,7 @@ import tempfile
 
 LAB = 'labs/demos/foafnaut'
 BUILD = LAB + '/.build/web-render'
-HOST = ['index.html', 'app.mjs', 'engine.mjs', 'style.css', 'server.mjs',
+HOST = ['index.html', 'app.mjs', 'engine.mjs', 'engine-core.mjs', 'engine-worker.mjs', 'style.css', 'server.mjs',
         'navigation.mjs', 'resource-client.mjs', 'resource-broker.mjs', 'document-client.mjs']
 FIXTURES = ['default.html', 'mvp.html', 'boxes.html', 'flow.html', 'links.html', 'graph.nt', 'scripted.html']
 SCRIPT = ['session.mjs', 'worker.mjs', 'quickjs.mjs', 'guest.mjs', 'lean-dom.mjs', 'NOTICE']

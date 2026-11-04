@@ -75,8 +75,11 @@ try{
  assert.deepEqual(abort,{failed:true,compiles:1});report.checks.push('aborted refresh cannot fall through to stale-resource compilation');
  const budgets=await page.evaluate(async target=>{
   const engine=await import('/engine.mjs'),{prepareDocument}=await import('/document-client.mjs');
-  const links=Array.from({length:65},(_,i)=>'<link id="s'+i+'" rel="alternate" href="counted.css">').join('');
-  const activate="for(let i=0;i<65;i++)document.getElementById('s'+i).setAttribute('rel','stylesheet');";
+  // Exercise the resource-count boundary with one actual DOM mutation. A
+  // 65-mutation loop also measures synchronous DOM-history replay and can
+  // exhaust the independent 100ms script budget before resource discovery.
+  const links=Array.from({length:64},()=>'<link rel="stylesheet" href="/old/style.css">').join('')+'<link id="s64" rel="alternate" href="counted.css">';
+  const activate="document.getElementById('s64').setAttribute('rel','stylesheet');";
   let count,bytes;
   try{await prepareDocument(engine,links+'<script>'+activate+'</script>',{url:target+'/page'});}catch(error){count=error.message;}
   const oversized=Array.from({length:5},(_,i)=>'<link rel="stylesheet" href="/budget'+i+'.css">').join('');

@@ -36,7 +36,7 @@ export async function prepareDocument(engine,html,{url,signal,onLog=()=>{}}={}){
   signal=AbortSignal.any([operationSignal(signal),refreshAbort.signal]);check(signal);
   // Old records may now refer to disconnected nodes or links whose rel changed.
   // Discovery therefore inspects the commanded DOM with no supplied resources.
-  const snapshot=await engine.inspectDocument(html,{...options,resources:[]});check(signal);
+  const snapshot=await engine.inspectDocument(html,{...options,resources:[]},{signal});check(signal);
   const next=await load(snapshot.stylesheets??[],sheets,signal);check(signal);
   if(request!==refreshSequence)throw Error('Superseded resource refresh');
   sheets=next;options.resources=Array.from(next.values(),wire);baseURL=snapshot.baseURL??url;
@@ -45,7 +45,7 @@ export async function prepareDocument(engine,html,{url,signal,onLog=()=>{}}={}){
 
  try{
   const initialSignal=operationSignal(signal);check(initialSignal);
-  const snapshot=await engine.inspectDocument(html,options);check(initialSignal);
+  const snapshot=await engine.inspectDocument(html,options,{signal:initialSignal});check(initialSignal);
   if((snapshot.scripts??[]).some(script=>script.kind==='module'))throw Error('Module scripts are not supported by this browser profile');
   const classic=(snapshot.scripts??[]).filter(script=>script.kind==='classic');
   const descriptors=[...(snapshot.stylesheets??[]),...classic.filter(script=>script.src)];
@@ -83,7 +83,7 @@ export async function prepareDocument(engine,html,{url,signal,onLog=()=>{}}={}){
    signal=operationSignal(signal);check(signal);
    const request=await refresh(signal),version=mutationVersion;
    const prepared={...options,commands:options.commands.slice(),resources:options.resources.slice(),textScalePercent};
-   const requests=await engine.documentFontRequests(html,prepared);check(signal);
+   const requests=await engine.documentFontRequests(html,prepared,{signal});check(signal);
    if(requests.error)throw Error(requests.error);
    let fontData;
    if(requests.requests?.length){
@@ -92,7 +92,7 @@ export async function prepareDocument(engine,html,{url,signal,onLog=()=>{}}={}){
    }
    check(signal);
    if(request!==refreshSequence||version!==mutationVersion)throw Error('Superseded document compilation');
-   return engine.compileDocument(html,width,height,{...prepared,...(fontData?{fontData}:{})});
+   return engine.compileDocument(html,width,height,{...prepared,...(fontData?{fontData}:{})},{signal});
   }
  };
 }
