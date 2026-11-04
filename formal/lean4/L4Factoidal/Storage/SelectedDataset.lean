@@ -616,7 +616,8 @@ theorem evalPatternBackend_active (env : EvalEnv) {dsb dsb' : DatasetBackend}
   | .join l r, a, gs, hf, h, gb, gb', hg => by
       simp only [plannerFragment, Bool.and_eq_true] at hf
       obtain ⟨gl, gr, hl, hr, rfl⟩ := reads_bin h
-      simp only [evalPatternBackend,
+      simp only [evalPatternBackend, plannerFragment_serviceVarRoot hf.1,
+        plannerFragment_serviceVarRoot hf.2, Bool.false_or, Bool.false_eq_true, ↓reduceIte,
         evalPatternBackend_active env hn l a gl hf.1 hl gb gb'
           (fun hm => hg (List.mem_append_left _ hm)),
         evalPatternBackend_active env hn r a gr hf.2 hr gb gb'
