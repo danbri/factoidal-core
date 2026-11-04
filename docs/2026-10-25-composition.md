@@ -31,6 +31,7 @@ same den. Each source theorem states the den and the named assumptions.
 | (d) reasoner output | `reasonerSource`, `reasonerSource_spec`, `Sourced.reason` | default graph = `r.run g`, no named graph, `r.regime.Entails g (r.run g)` | none | ✅ proved |
 | (e) union of records, shards | `Sourced.union`, `Sourced.unionAll`, `unionBackend_exact` | `DatasetDen.union` of the dens | the members' | ✅ proved |
 | (f) any `LawfulStore` as the default graph (HDT, COTTAS, RML, overlays) | `Sourced.ofStore`, `Sourced.ofStore_spec` | `defaultDen st.graph` | the store's (`backendReadOpsExact`, `cottasReadOpsExact`, `rmlPushdownInvisible`, `rmlVirtualIsMaterialised`) | ✅ proved under the store's assumptions |
+| (g) an LWS storage snapshot (https://github.com/danbri/factoidal/issues/1011) | `lwsSource`, `lwsSource_spec`, `lwsSource_query_sound` (`Dataflow/LwsSource.lean`) | `view (st.at s)`: the dataset view (`LWS/DatasetView.lean`) of the storage at the snapshot instant, over the resources read | `lwsReadsAtSnapshot` | ✅ proved under the assumption |
 
 Limits:
 

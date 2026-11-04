@@ -1,0 +1,56 @@
+name: Browser host controls
+
+on:
+  pull_request:
+    paths:
+      - 'labs/demos/foafnaut/web-render/**'
+      - 'labs/demos/foafnaut/tools/font-broker.mjs'
+      - 'labs/demos/foafnaut/gpu_transport.ts'
+      - 'labs/demos/foafnaut/render_plan.ts'
+      - 'tools/package-web-render.py'
+      - 'tests/test_package_web_render.py'
+      - '.github/workflows/check-browser-host.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'labs/demos/foafnaut/web-render/**'
+      - 'labs/demos/foafnaut/tools/font-broker.mjs'
+      - 'labs/demos/foafnaut/gpu_transport.ts'
+      - 'labs/demos/foafnaut/render_plan.ts'
+      - 'tools/package-web-render.py'
+      - 'tests/test_package_web_render.py'
+      - '.github/workflows/check-browser-host.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-host-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host:
+    name: Packaging, actual QuickJS and HTTP navigation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Package integrity and source identity controls
+        run: python3 tests/test_package_web_render.py
+      - name: Fetch and verify the pinned QuickJS reactor
+        run: node labs/demos/foafnaut/web-render/script-engine/fetch-reactor.mjs
+      - name: Actual QuickJS execution, isolation and event cancellation
+        run: node --test labs/demos/foafnaut/web-render/script-engine/session.test.mjs
+      - name: Actual HTTP byte transport and navigation transitions
+        run: node labs/demos/foafnaut/web-render/check-navigation.mjs
+
+# These controls need no Lean compilation or GPU. Relocated Chrome/WebGPU,
+# native/WASM parity and standards comparisons have separate runtime evidence;
+# this job does not claim to run those checks.

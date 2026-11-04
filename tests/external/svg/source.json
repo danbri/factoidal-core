@@ -1,0 +1,1119 @@
+{
+  "repository": "https://github.com/web-platform-tests/wpt",
+  "revision": "70dae60789ef6220d9b4e60c92c5b2107b4e2b93",
+  "directories": [
+    "svg/shapes/reftests",
+    "svg/painting/reftests"
+  ],
+  "inventory": [
+    {
+      "path": "svg/shapes/reftests/WEB_FEATURES.yml",
+      "size": 71,
+      "gitBlob": "63b4fb3f9ae315b088dcb329a33a9c4b5917b17a",
+      "type": "file",
+      "script": null,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/disabled-shapes-01.svg",
+      "size": 2124,
+      "gitBlob": "1b9ff591aff09c9c049850c70a7e6d0f46408845",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/ellipse-auto-rx-clip-path-ref.html",
+      "size": 437,
+      "gitBlob": "9b760810fac3e427a64a7003df4ab91248b7fa82",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/ellipse-auto-rx-clip-path.html",
+      "size": 860,
+      "gitBlob": "fe247382f0cb086c0a98031605a7302b17ab434e",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/ellipse-auto-rx-css-clip-path-ref.html",
+      "size": 537,
+      "gitBlob": "c1c38043c8590fe0cb338db262d44c6c609fca7b",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/ellipse-auto-rx-css-clip-path.html",
+      "size": 1052,
+      "gitBlob": "01a3c26f1f6efe2fe1063e52c4e11648d4ddc136",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/ellipse-auto-rx-percent-clip-path-ref.html",
+      "size": 440,
+      "gitBlob": "2a4cf4b533153a27cbf7d3e8eb42a71009e820f3",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/ellipse-auto-rx-percent-clip-path.html",
+      "size": 1156,
+      "gitBlob": "3544422de29950826ea00c84e6728fdf33c9e952",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/ellipse-auto-rx-textpath-ref.html",
+      "size": 483,
+      "gitBlob": "7699895fc04497b4d6096d810f946105b2ae3478",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/ellipse-auto-rx-textpath.html",
+      "size": 1025,
+      "gitBlob": "22d5a5231f2981cb84daf9ce61cd49c4fba64976",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-001-ref.svg",
+      "size": 633,
+      "gitBlob": "0ec9e0353ae4bcdf12acbdfe0e3aa85c22565054",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-001.svg",
+      "size": 806,
+      "gitBlob": "cd60c052393800633a31e832f3e36af18f0aba3f",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-002-ref.svg",
+      "size": 686,
+      "gitBlob": "21ec28a244e0c2f0197380a3c28b4debf688c1ef",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-002.svg",
+      "size": 834,
+      "gitBlob": "3340c5d2edaa870137d5c2b0edbdcaf4f4ac96bb",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-003-ref.svg",
+      "size": 1312,
+      "gitBlob": "8d6f43f9d87438d078babf47430c774b0286f6b6",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-003.svg",
+      "size": 1463,
+      "gitBlob": "20cc34e67f382fbedea64bce070dce0d71bbd04c",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-004-ref.svg",
+      "size": 531,
+      "gitBlob": "4b166e0cae0729babc69732c33fa7d5baaf19b20",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-004a.svg",
+      "size": 716,
+      "gitBlob": "3213116c3b4892f08b29b8704e02dd69d9cc6450",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-004b.svg",
+      "size": 994,
+      "gitBlob": "7241b3be9f226bb68559fd02f9780a066e052dd2",
+      "type": "file",
+      "script": true,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-005-ref.html",
+      "size": 190,
+      "gitBlob": "b99474aa4667f94beace3d59465fa187a4f3a490",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/pathlength-005.html",
+      "size": 404,
+      "gitBlob": "59d4ae5fa6443bd971856c6c2e385026d9002c9f",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/polygon-with-filtered-marker.html",
+      "size": 354,
+      "gitBlob": "def8adc6852efd36e91060e120c4f127be10b7bc",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/reference",
+      "size": 0,
+      "gitBlob": "c34914a34f72fe0613c9c9a8f040cc6e27ba6ecc",
+      "type": "dir",
+      "script": null,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/WEB_FEATURES.yml",
+      "size": 133,
+      "gitBlob": "66ebaf2bad6aebb6d62a566005c2c4abbf617a0d",
+      "type": "file",
+      "script": null,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/display-none-mask-ref.html",
+      "size": 1653,
+      "gitBlob": "3739265b23d22e39f2e2acdc90d94c583b36f4f9",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/display-none-mask.html",
+      "size": 3613,
+      "gitBlob": "a6aa6007574ff6c3b2930fd15b6e51d65a633c7e",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/fallback-001.svg",
+      "size": 348,
+      "gitBlob": "e2788e5f93e4f13352a53a57e229f90d1b1011d4",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/fallback-002.svg",
+      "size": 285,
+      "gitBlob": "6180cb2a96fb0a80c0b08e3a9000935b9360a73a",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/gradient-external-reference.svg",
+      "size": 850,
+      "gitBlob": "cb4bdf236714268d58a3fb3fa3d038572f3353d7",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/green-100x100.svg",
+      "size": 96,
+      "gitBlob": "120941444a4898197d6b6001f9908a6cd48b62ba",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/large-transform-001.html",
+      "size": 450,
+      "gitBlob": "025accf8c488cac9b45cdfa34eef5db0fd773413",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/large-transform-ref.html",
+      "size": 234,
+      "gitBlob": "1e0d2668f064bf876fe5fede48ee5316e25012f7",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-context-fill-transform-ref.html",
+      "size": 404,
+      "gitBlob": "78117251a36ec26b26c74e40dc4bf822902bb38f",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-context-fill-transform.html",
+      "size": 725,
+      "gitBlob": "507e9a360cc9fc472e6324721a4f974e4ca6cd6d",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-external-reference.svg",
+      "size": 700,
+      "gitBlob": "d54012005723297962fd28fbe27057bbaa2b894a",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-implicit-subpaths.html",
+      "size": 653,
+      "gitBlob": "e69c1dc5a40a27c57ea67c7f40164e3afbc3e739",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-001-ref.svg",
+      "size": 3377,
+      "gitBlob": "202ac3420dc080f85c4a2cac5e13ccbea6d0235e",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-001.svg",
+      "size": 2181,
+      "gitBlob": "75ed6dbd294124ca7fe003a6164cf9fc38077a5d",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-002-ref.svg",
+      "size": 3079,
+      "gitBlob": "c9ee76915bf4156d56be4b6e6c4479c602da182d",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-002.svg",
+      "size": 2262,
+      "gitBlob": "9c677c045c9f6430e25646d1e8d77f3a59f7915f",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-003-ref.svg",
+      "size": 2492,
+      "gitBlob": "3ba459c7002ad3714e2216ed25d95bbff04bc441",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-003.svg",
+      "size": 1900,
+      "gitBlob": "a31bf84e52e0f1f36cb42142ff06dcb3ed47f18f",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-011-ref.svg",
+      "size": 2972,
+      "gitBlob": "4d6cc760548f2e05a9fa3f8dc2eb8c5f4b889d23",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-011.svg",
+      "size": 2094,
+      "gitBlob": "b8bace4b683a35de90424a05c8ae66101cdeeccf",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-012-ref.svg",
+      "size": 2438,
+      "gitBlob": "ad44874cdadc59204c5c724ea157a3b3da570b38",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-012.svg",
+      "size": 1880,
+      "gitBlob": "80bceceae3c383bf43cf4653f3edc1763ea6acb3",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-013-ref.svg",
+      "size": 2456,
+      "gitBlob": "e03fc4827ed92502506c01505979cdceb71aef5e",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-013.svg",
+      "size": 1864,
+      "gitBlob": "e7a44351faea715a5ff3c5f3e3a8b127249b0d60",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-021-ref.svg",
+      "size": 2919,
+      "gitBlob": "b452ca7325669a972cc913524ca5c27b5870564a",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-021.svg",
+      "size": 2050,
+      "gitBlob": "db4bc629e245f2a17e540be9bbc205f902ea7561",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-022-ref.svg",
+      "size": 3449,
+      "gitBlob": "8abf33f0880849010f7687452a48a0648aad40d2",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-022.svg",
+      "size": 2568,
+      "gitBlob": "6a2345ab47078a28fad5775518b341c84c726dae",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-023-ref.svg",
+      "size": 3516,
+      "gitBlob": "4bd1c67776206fb730abd16a8a69db4ad0922ff9",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-path-023.svg",
+      "size": 2639,
+      "gitBlob": "56fe216e2ff74c89ad4b93b1c811a67516dec724",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-units-strokewidth-non-scaling-stroke.svg",
+      "size": 687,
+      "gitBlob": "965d546d53d1412ca1305c253dba6e7983eb0b00",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/marker-units-userspaceonuse-non-scaling-stroke.svg",
+      "size": 693,
+      "gitBlob": "51f7f25f45ea9b3e7236b3c01e518db0011351e0",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/markers-orient-001-ref.svg",
+      "size": 1750,
+      "gitBlob": "871003f3a2303404696d467a7cfaad729b811206",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/markers-orient-001.svg",
+      "size": 2662,
+      "gitBlob": "190423f988c807c70a8e4e937b68f62e6f2f8ea6",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/markers-orient-002.svg",
+      "size": 657,
+      "gitBlob": "3af8235bf20af44da677d76337d57a84db6a83ba",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/mask-percentage-ref.html",
+      "size": 192,
+      "gitBlob": "00c26e85ccfa0345186d38171070ec37c95abc5d",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/mask-percentage.html",
+      "size": 568,
+      "gitBlob": "e9cd0977413b5b6043ac7f4b703c6d25bfed9fd0",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/mask-print-ref.svg",
+      "size": 361,
+      "gitBlob": "4717ac4a2750e236db2a7e003ac9acd6c40a9305",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/mask-print.svg",
+      "size": 624,
+      "gitBlob": "b63ec72054c224f5e14a54248ae0a514e37f0610",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-001.html",
+      "size": 615,
+      "gitBlob": "05bd5813b89484489b77fdb2f34734584022acaa",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-002.html",
+      "size": 905,
+      "gitBlob": "c6a40211d96a9ed86f595f71a9db0ca62fe54992",
+      "type": "file",
+      "script": true,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-003.html",
+      "size": 808,
+      "gitBlob": "fa9bc2901aa66421cb5396ca487f48f86fac8696",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-004.html",
+      "size": 680,
+      "gitBlob": "7fc0cc72305bc77572037c13b3493996455304d5",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-005-ref.html",
+      "size": 1065,
+      "gitBlob": "3adf8f2c8dd264d500bc342d232d61dd059c3871",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-005.html",
+      "size": 2161,
+      "gitBlob": "6f336990cd617e69a4e15c05fffa65edcbc7b1d1",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-006-ref.html",
+      "size": 1094,
+      "gitBlob": "d4cc4a6e4eacfdb2e53072f067adef117461ad64",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-006.html",
+      "size": 2158,
+      "gitBlob": "f492fcdaec5ab4a17c932bdc958329ece62f81a3",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-007-ref.html",
+      "size": 184,
+      "gitBlob": "d0f84d73fc046ee38bcadb098d7b9e135286d761",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-007.html",
+      "size": 727,
+      "gitBlob": "8c16112c4fca6c0f566fa9e3653357b70b03d02d",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-008.html",
+      "size": 521,
+      "gitBlob": "50770f82941f7ba81e85a0fe45d2a07300ca18ab",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-009.html",
+      "size": 674,
+      "gitBlob": "efa883836a0464dca4831685c0149387ead9b72c",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-010.html",
+      "size": 604,
+      "gitBlob": "ea0c709c57aac24a029f23c648d398e1a1c4a34d",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-non-uniform-scale-ref.html",
+      "size": 178,
+      "gitBlob": "c870f12b7872b8de1dd38dcb5edb960d416b5a08",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-non-uniform-scale.html",
+      "size": 665,
+      "gitBlob": "ecea89076ad60edf0ddf3df6481ab5e1fc3719b5",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-precision-loss.html",
+      "size": 622,
+      "gitBlob": "ecfec87efe51569fee22f33fa9179f8b193e51b8",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-with-none-preserve-aspect-ratio-ref.html",
+      "size": 178,
+      "gitBlob": "dea07bd47cd5308cfd8748b11c827625aa91e043",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/non-scaling-stroke-with-none-preserve-aspect-ratio.html",
+      "size": 677,
+      "gitBlob": "58fa58693780395590bc2f85c955e3a18bbf0022",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-001-ref.svg",
+      "size": 1266,
+      "gitBlob": "99bd8c44cb78a4b0340ad6456c7e58e4ca397257",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-001.svg",
+      "size": 1522,
+      "gitBlob": "7be33cb20fb257496cb1357a5481edecf364bc59",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-002-ref.svg",
+      "size": 1098,
+      "gitBlob": "446e8e3fca8ddc48707f8df678eec655e303086c",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-002.svg",
+      "size": 1337,
+      "gitBlob": "8a8a378488c818430f2cb21648c33b78655df33a",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-003-ref.svg",
+      "size": 620,
+      "gitBlob": "69ba36f44821e9f41fc739ffbd54369326e1e65b",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-003.svg",
+      "size": 941,
+      "gitBlob": "be1f378bf820b42770d3f8c89ccd2cbe250e6b4d",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-004-ref.svg",
+      "size": 963,
+      "gitBlob": "25acb75ba00ec48e95515f7c803f52e1aaf9418b",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-004.svg",
+      "size": 1099,
+      "gitBlob": "669d44de46bc0f06c979cf26e4db30657dad578e",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-005.svg",
+      "size": 1356,
+      "gitBlob": "a76c7af88ffa36894476981e78e9148e9c92d88a",
+      "type": "file",
+      "script": true,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-006-ref.svg",
+      "size": 705,
+      "gitBlob": "6aa42374c512b528868c55d0339eb4deedf09d69",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-006.svg",
+      "size": 1300,
+      "gitBlob": "95bd2740fae3f9fc3dc4a6043e32967403b05f6d",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-007-ref.svg",
+      "size": 905,
+      "gitBlob": "0328272c6aa0907e226cbbbc2008358bee43ef7b",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-007.svg",
+      "size": 1075,
+      "gitBlob": "50360a302e3a3d2ca74b465122d322a25abf743a",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-008-ref.svg",
+      "size": 807,
+      "gitBlob": "49d4f8947b003302a76888e6beea385a4019f404",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-context-008.svg",
+      "size": 1149,
+      "gitBlob": "83308f09b1fc95d538ee078ff9acbf7e7def307e",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-001-ref.svg",
+      "size": 2207,
+      "gitBlob": "7822a80b942fee54a87106d7def13429454cc26e",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-001.svg",
+      "size": 2183,
+      "gitBlob": "c8d60bd5bf68d0dc5f56fb360acdd2bac5aa1aa2",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-002-ref.svg",
+      "size": 3717,
+      "gitBlob": "372e53e463bb6c36307d649166e688023b8fb7e8",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-002.svg",
+      "size": 2318,
+      "gitBlob": "a9bf7d01fc7300b95b03529743c1f9b6ad655c19",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-003-ref.svg",
+      "size": 3987,
+      "gitBlob": "6abc0c76af85fe7c1d04623e021bae62326a3d9f",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-003.svg",
+      "size": 2336,
+      "gitBlob": "f1962600744bafb99f11e03e4c2bf67a1a7c0470",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-text-decorations-ref.svg",
+      "size": 4087,
+      "gitBlob": "c209d88a77c75417fa0f75e0332d0923abf9b4e3",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/paint-order-text-decorations.svg",
+      "size": 2378,
+      "gitBlob": "009e0c7ccb407e11f4fc7d1c581e66110c226e21",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/pattern-external-reference.svg",
+      "size": 846,
+      "gitBlob": "e2e9fb7deebed61512e9e1825742d44d63a9c68a",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/percentage-attribute.svg",
+      "size": 638,
+      "gitBlob": "8945279e405743b94c7737282ea936c71baac047",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/percentage-ref.svg",
+      "size": 467,
+      "gitBlob": "610a3ddb2d21da119fb4a53f5f351dff0190880c",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/percentage.svg",
+      "size": 652,
+      "gitBlob": "1fcd4dff73d0385f8868af11994aa7a1c6c7cd7d",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/small-nested-viewbox-ref.html",
+      "size": 257,
+      "gitBlob": "f737b09ff49ad1cbe252c7f7da707e37fb382c9d",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/small-nested-viewbox.html",
+      "size": 568,
+      "gitBlob": "308835ce5b45bf22920994d9b889e2a8d629c2fc",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/support",
+      "size": 0,
+      "gitBlob": "8bab99f4072cdc58b13c6eb86bf0964b2b4f4793",
+      "type": "dir",
+      "script": null,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/svg-percent-stroke-dasharray-line-viewbox-update.html",
+      "size": 940,
+      "gitBlob": "1cc354a0d22d07bb30dddde85412ed9055c75401",
+      "type": "file",
+      "script": true,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/svg-percent-stroke-dasharray-path-viewbox-update.html",
+      "size": 914,
+      "gitBlob": "8ed7ce383186895f8295df07256cbb5651796bb0",
+      "type": "file",
+      "script": true,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/svg-percent-stroke-dasharray-rect-viewbox-update.html",
+      "size": 982,
+      "gitBlob": "a2b5fb469feebc573bee64965feef6285b4bdf89",
+      "type": "file",
+      "script": true,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/svg-percent-stroke-dashoffset-line-viewbox-update.html",
+      "size": 997,
+      "gitBlob": "97ddeb57bbd09659247e6cf413726df989aa60ce",
+      "type": "file",
+      "script": true,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/svg-percent-stroke-dashoffset-path-viewbox-update.html",
+      "size": 971,
+      "gitBlob": "409a3594f8c3d606c6a214d077b79525764cb21e",
+      "type": "file",
+      "script": true,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/svg-percent-stroke-dashoffset-rect-viewbox-update.html",
+      "size": 1039,
+      "gitBlob": "a2006ba78d33f20e3f4c0e05aab3d5880431eb1b",
+      "type": "file",
+      "script": true,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/symbol-in-mask.html",
+      "size": 861,
+      "gitBlob": "da1e11f1704468c2ec77476ea1c566299737d9f9",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/text-shadow-01.html",
+      "size": 589,
+      "gitBlob": "55cec94e6d510b1f956c6ccd2ad1211065b9472e",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/text-shadow-02.html",
+      "size": 658,
+      "gitBlob": "6400e47b9bdf5aadd43757808514d2fd4f4906d5",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/text-shadow-03.html",
+      "size": 614,
+      "gitBlob": "c78deefa2d1d1e1828eac272c043f5ad0c0deec2",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/text-shadow-ref.html",
+      "size": 310,
+      "gitBlob": "974e117381ffa3937d1d032f5673b6c01f98fdc7",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/visibility-collapse-001-ref.html",
+      "size": 248,
+      "gitBlob": "d7329fef53dbcb78cdcc678d03762afbf693271d",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/visibility-collapse-001.html",
+      "size": 665,
+      "gitBlob": "c7d9b07720602a52afc3b3a672614fbbd14d05fe",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/zero-scale-svg-transform-inside-g-tag.html",
+      "size": 1080,
+      "gitBlob": "30511ee0a1741f26fff1810d69448a05afccdfdd",
+      "type": "file",
+      "script": true,
+      "manual": false
+    },
+    {
+      "path": "svg/shapes/reftests/reference/empty.svg",
+      "size": 42,
+      "gitBlob": "0c7be4e2da4480937124138e7dee3e26bd018abe",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/support/resources.svg",
+      "size": 519,
+      "gitBlob": "85b6833a6601a45d1847320efb7259080cba5359",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/support/svg-marker-context-paint.svg",
+      "size": 1105,
+      "gitBlob": "8c97058d71ee7a055f221f21e3fdc3f2adab3777",
+      "type": "file",
+      "script": false,
+      "manual": false
+    },
+    {
+      "path": "svg/painting/reftests/support/svg-marker-ref.svg",
+      "size": 612,
+      "gitBlob": "1e823431105069ea997566360358515fb29e1414",
+      "type": "file",
+      "script": false,
+      "manual": false
+    }
+  ],
+  "paths": [
+    "svg/shapes/reftests/disabled-shapes-01.svg",
+    "svg/shapes/reftests/pathlength-001-ref.svg",
+    "svg/shapes/reftests/pathlength-001.svg",
+    "svg/shapes/reftests/pathlength-002-ref.svg",
+    "svg/shapes/reftests/pathlength-002.svg",
+    "svg/shapes/reftests/pathlength-003-ref.svg",
+    "svg/shapes/reftests/pathlength-003.svg",
+    "svg/shapes/reftests/pathlength-004-ref.svg",
+    "svg/shapes/reftests/pathlength-004a.svg",
+    "svg/shapes/reftests/pathlength-004b.svg",
+    "svg/painting/reftests/fallback-001.svg",
+    "svg/painting/reftests/fallback-002.svg",
+    "svg/painting/reftests/gradient-external-reference.svg",
+    "svg/painting/reftests/green-100x100.svg",
+    "svg/painting/reftests/marker-external-reference.svg",
+    "svg/painting/reftests/marker-path-001-ref.svg",
+    "svg/painting/reftests/marker-path-001.svg",
+    "svg/painting/reftests/marker-path-002-ref.svg",
+    "svg/painting/reftests/marker-path-002.svg",
+    "svg/painting/reftests/marker-path-003-ref.svg",
+    "svg/painting/reftests/marker-path-003.svg",
+    "svg/painting/reftests/marker-path-011-ref.svg",
+    "svg/painting/reftests/marker-path-011.svg",
+    "svg/painting/reftests/marker-path-012-ref.svg",
+    "svg/painting/reftests/marker-path-012.svg",
+    "svg/painting/reftests/marker-path-013-ref.svg",
+    "svg/painting/reftests/marker-path-013.svg",
+    "svg/painting/reftests/marker-path-021-ref.svg",
+    "svg/painting/reftests/marker-path-021.svg",
+    "svg/painting/reftests/marker-path-022-ref.svg",
+    "svg/painting/reftests/marker-path-022.svg",
+    "svg/painting/reftests/marker-path-023-ref.svg",
+    "svg/painting/reftests/marker-path-023.svg",
+    "svg/painting/reftests/marker-units-strokewidth-non-scaling-stroke.svg",
+    "svg/painting/reftests/marker-units-userspaceonuse-non-scaling-stroke.svg",
+    "svg/painting/reftests/markers-orient-001-ref.svg",
+    "svg/painting/reftests/markers-orient-001.svg",
+    "svg/painting/reftests/markers-orient-002.svg",
+    "svg/painting/reftests/mask-print-ref.svg",
+    "svg/painting/reftests/mask-print.svg",
+    "svg/painting/reftests/paint-context-001-ref.svg",
+    "svg/painting/reftests/paint-context-001.svg",
+    "svg/painting/reftests/paint-context-002-ref.svg",
+    "svg/painting/reftests/paint-context-002.svg",
+    "svg/painting/reftests/paint-context-003-ref.svg",
+    "svg/painting/reftests/paint-context-003.svg",
+    "svg/painting/reftests/paint-context-004-ref.svg",
+    "svg/painting/reftests/paint-context-004.svg",
+    "svg/painting/reftests/paint-context-005.svg",
+    "svg/painting/reftests/paint-context-006-ref.svg",
+    "svg/painting/reftests/paint-context-006.svg",
+    "svg/painting/reftests/paint-context-007-ref.svg",
+    "svg/painting/reftests/paint-context-007.svg",
+    "svg/painting/reftests/paint-context-008-ref.svg",
+    "svg/painting/reftests/paint-context-008.svg",
+    "svg/painting/reftests/paint-order-001-ref.svg",
+    "svg/painting/reftests/paint-order-001.svg",
+    "svg/painting/reftests/paint-order-002-ref.svg",
+    "svg/painting/reftests/paint-order-002.svg",
+    "svg/painting/reftests/paint-order-003-ref.svg",
+    "svg/painting/reftests/paint-order-003.svg",
+    "svg/painting/reftests/paint-order-text-decorations-ref.svg",
+    "svg/painting/reftests/paint-order-text-decorations.svg",
+    "svg/painting/reftests/pattern-external-reference.svg",
+    "svg/painting/reftests/percentage-attribute.svg",
+    "svg/painting/reftests/percentage-ref.svg",
+    "svg/painting/reftests/percentage.svg",
+    "svg/shapes/reftests/reference/empty.svg",
+    "svg/pservers/reftests/reference/green-100x100.svg",
+    "svg/embedded/reference/green-rect-100x100.svg",
+    "LICENSE.md",
+    "svg/README.md",
+    "svg/painting/reftests/support/resources.svg",
+    "svg/painting/reftests/support/svg-marker-context-paint.svg",
+    "svg/painting/reftests/support/svg-marker-ref.svg"
+  ]
+}

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as core from '@factoidal/core';
 import { runPipeline } from '../../docs/web/hub/data-compositor/pipeline.mjs';
-import { nodeAssurance, wireAssurance } from '../../docs/web/hub/data-compositor/assurance.mjs';
+import { nodeAssurance, wireAssurance, explainEvidence } from '../../docs/web/hub/data-compositor/assurance.mjs';
 
 test('Evidence labels preserve component status and never promote manual wires to proofs', async () => {
   const result=await runPipeline(core);
@@ -12,6 +12,14 @@ test('Evidence labels preserve component status and never promote manual wires t
   assert.equal(rdfs.checked,stages.get('closure').evidence.checked);
   assert.equal(rdfs.contract,stages.get('closure').evidence.contract);
   assert.equal(rdfs.graphWideProof,false);
+  const explanation=explainEvidence(stages.get('closure'));
+  assert.match(explanation.claim,/soundness/);
+  assert.match(explanation.registry.note,/assumed_completeness/);
+  assert.ok(explanation.registry.theorems.includes('L4Factoidal.RDF.fullClosure_entails'));
+  assert.match(explanation.source,/a9bd50c3.*Reasoner.lean/);
+  assert.match(explainEvidence(stages.get('xslt')).claim,/not a fresh conformance/);
+  assert.ok(explainEvidence(stages.get('xslt')).registry.tests.some(t=>t.includes('qt4-public')));
+  assert.deepEqual(nodeAssurance().assumptions,[]);
   assert.equal(nodeAssurance(stages.get('csvw')).checked,false);
   assert.equal(nodeAssurance(stages.get('filter')).projection.stage,'xqueryEval');
   const merge=wireAssurance('turtle','merge',stages);

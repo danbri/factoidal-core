@@ -1821,6 +1821,138 @@ function buildApi(driver) {
     return { document: r.document, canonical: r.canonical };
   }
 
+  // -----------------------------------------------------------------
+  // XML Signature 1.1 (https://github.com/danbri/factoidal/issues/1165,
+  // track B, item 4). Every decision is in Lean (formal/lean4/Wasm/Ops/
+  // XmlDsig.lean over XML/DSig11.lean and XML/DSig11Sign.lean); RSA and
+  // P-256 run in the wasm (HACL*), HMAC in Lean. This code converts octets
+  // to base64 and draws the ECDSA nonce; it reads no document and chooses
+  // no algorithm or key.
+  // -----------------------------------------------------------------
+
+  // Octets given as a Uint8Array (or an ArrayBuffer view), as base64.
+  function octetsToBase64(fnName, name, value) {
+    if (value instanceof Uint8Array) return bytesToBase64(value);
+    if (ArrayBuffer.isView(value)) {
+      return bytesToBase64(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+    }
+    if (value instanceof ArrayBuffer) return bytesToBase64(new Uint8Array(value));
+    throw new TypeError(`${fnName}: ${name} must be a Uint8Array`);
+  }
+
+  // A document for `documents`: a string is written as UTF-8.
+  function documentOctetsToBase64(fnName, uri, value) {
+    if (typeof value === 'string') return bytesToBase64(new TextEncoder().encode(value));
+    return octetsToBase64(fnName, `documents[${JSON.stringify(uri)}]`, value);
+  }
+
+  // One XML Signature op: the engine's envelope, or a FactoidalError when
+  // the arguments are wrong (`{ok: false}`).
+  async function dsigOp(fnName, what, args) {
+    const e = await entry();
+    requireEntryFn(e, fnName, what);
+    return entryResult(e[fnName](JSON.stringify(args)), fnName);
+  }
+
+  /**
+   * XML Signature 1.1 core validation (§3.2) of the one ds:Signature of an
+   * XML document. A signature that does not validate is a result
+   * (`valid: false` with the engine's reason), not an exception; wrong
+   * arguments throw a FactoidalError.
+   *
+   * With no `key` and no `hmacKey`, the key of ds:KeyInfo is used (unless
+   * `keyFromKeyInfo` is false). Such a key only says that the signature
+   * verifies under it: the result gives the key (`key`, a JWK) and the
+   * certificate that ds:X509Data names (`certificate`, DER), and the caller
+   * decides whether to trust them. The engine fetches nothing: `documents`
+   * gives the octets of each URI that is not a same-document reference.
+   *
+   * @param {string} document the XML document
+   * @param {{key?: object, hmacKey?: Uint8Array, keyFromKeyInfo?: boolean,
+   *   certificates?: Uint8Array[], documents?: Object<string, Uint8Array|string>}} [options]
+   *   `key` is a public JWK (RSA, or EC on P-256, P-384, P-521); `hmacKey`
+   *   the HMAC key octets; `certificates` DER certificates to select from
+   * @returns {Promise<{valid: true, signedInfo: string,
+   *   references: {uri: string, octets: Uint8Array}[], key: object|null,
+   *   certificate: Uint8Array|null} | {valid: false, reason: string}>}
+   */
+  async function xmlVerify(document, options) {
+    if (typeof document !== 'string') throw new TypeError('xmlVerify: document must be a string');
+    const o = options || {};
+    const args = { document };
+    if (o.key !== undefined) {
+      if (o.key === null || typeof o.key !== 'object') {
+        throw new TypeError('xmlVerify: options.key must be a JWK object');
+      }
+      args.key = o.key;
+    }
+    if (o.hmacKey !== undefined) args.hmacKey = octetsToBase64('xmlVerify', 'options.hmacKey', o.hmacKey);
+    if (o.keyFromKeyInfo !== undefined) args.keyFromKeyInfo = o.keyFromKeyInfo === true;
+    if (o.certificates !== undefined) {
+      if (!Array.isArray(o.certificates)) {
+        throw new TypeError('xmlVerify: options.certificates must be an array of Uint8Array');
+      }
+      args.certificates = o.certificates.map((c, i) =>
+        octetsToBase64('xmlVerify', `options.certificates[${i}]`, c));
+    }
+    if (o.documents !== undefined) {
+      if (o.documents === null || typeof o.documents !== 'object' || Array.isArray(o.documents)) {
+        throw new TypeError('xmlVerify: options.documents must be an object from URI to octets');
+      }
+      args.documents = {};
+      for (const [uri, v] of Object.entries(o.documents)) {
+        args.documents[uri] = documentOctetsToBase64('xmlVerify', uri, v);
+      }
+    }
+    const r = await dsigOp('xmlVerify', 'XML Signature verification', args);
+    if (r.valid !== true) return { valid: false, reason: String(r.reason) };
+    return {
+      valid: true,
+      signedInfo: r.signedInfo,
+      references: (r.references || []).map((x) => ({ uri: x.uri, octets: base64ToBytes(x.octets) })),
+      key: r.key ?? null,
+      certificate: typeof r.certificate === 'string' ? base64ToBytes(r.certificate) : null
+    };
+  }
+
+  /**
+   * XML Signature 1.1 signature generation (§3.1). The returned document
+   * has passed core validation in the engine before it is returned.
+   *
+   * `key` is a private JWK: RSA (`n`, `e`, `d`; 2048, 3072 or 4096 bits),
+   * EC on P-256 (`d`), or `oct` (`k`) for HMAC. The engine chooses the
+   * default method by the key kind (rsa-sha256, ecdsa-sha256, hmac-sha256)
+   * and refuses a method of another key kind. The default reference is the
+   * whole document with the enveloped-signature transform; with
+   * `enveloping`, the signature is the document and holds `content` in a
+   * ds:Object. The ECDSA nonce is 32 octets of `crypto.getRandomValues`.
+   *
+   * @param {string} document the XML document
+   * @param {{key: object, signatureMethod?: string, canonicalizationMethod?: string,
+   *   inclusivePrefixes?: string[],
+   *   references?: {uri: string, transforms?: string[], digestMethod?: string}[],
+   *   enveloping?: {id: string, content: string}, keyValue?: boolean}} options
+   *   algorithm identifiers are the URIs of XML Signature 1.1 §6
+   * @returns {Promise<{document: string}>}
+   */
+  async function xmlSign(document, options) {
+    if (typeof document !== 'string') throw new TypeError('xmlSign: document must be a string');
+    const o = options || {};
+    if (o.key === null || typeof o.key !== 'object') {
+      throw new TypeError('xmlSign: options.key must be a private JWK object');
+    }
+    const args = { document, key: o.key };
+    for (const k of ['signatureMethod', 'canonicalizationMethod', 'inclusivePrefixes',
+      'references', 'enveloping']) {
+      if (o[k] !== undefined) args[k] = o[k];
+    }
+    if (o.keyValue !== undefined) args.keyValue = o.keyValue === true;
+    // The nonce is given for every key; the engine reads it only for ECDSA.
+    args.random = randomBase64(32);
+    const r = await dsigOp('xmlSign', 'XML Signature generation', args);
+    return { document: r.document };
+  }
+
   /**
    * Decrypt a JWE in the Compact Serialization (RFC 7516).
    * @param {string} token the compact JWE
@@ -2770,6 +2902,8 @@ function buildApi(driver) {
     vcEd25519Verify,
     xmlDecrypt,
     xmlEncrypt,
+    xmlVerify,
+    xmlSign,
     jweDecrypt,
     jweEncrypt,
     vcEddsaCreateFromCanonical,

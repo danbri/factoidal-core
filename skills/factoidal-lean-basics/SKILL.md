@@ -567,3 +567,102 @@ outer parser. On 2026-10-29, `XQuery4.runP` reset its parser context to
 default settings; the first corpus run then lost an explicit `as item()*`
 annotation and failed `stf-delete-001`. `Cfg.features` now reaches `runP`,
 and a direct public-API guard checks this handoff.
+
+## Solving retained graphics scenes (2026-11-01)
+
+Cold small-engine builds must emit `.olean` files for proof modules imported
+by subsequent proof/test modules. On 2026-11-02 the fresh SVG worktree caught
+`FoafPresentationProofs` importing a missing `FoafGeometryProofs` artifact:
+checking a source file without `-o` had passed only with an older cache present.
+The lab script now emits both in dependency order. See the
+[overnight SVG record](../../docs/20261102-svg-standards-overnight.md).
+
+The overnight SVG reader now supports defs/use/symbol and nested SVG viewport
+clips. IDs select the first original tree-order element; active original source
+paths detect cycles without conflating duplicate ID strings. A use host supplies
+inherited paint; the target's own specified style wins. Clip and content/viewBox
+CTMs are separate, including in sampling/picking/packed WGSL. URL-aware parsing
+retains the original source xml:base across cloning. Exact analytic GPU controls
+and ten selected original upstream rendering matches are separate evidence;
+neither establishes full SVG or GPU arithmetic equivalence. Typed C/S/Q/T/A
+curves now retain canonical segments separately from checked linear backend
+contours. `Scene.make` returns `Except` and binds its compiled cache by an exact
+equality proof; adapters must propagate failure and preserve canonical Float
+parameters. Cache correspondence and packed-buffer bounds do not prove the
+numeric flatness policy or GPU arithmetic equivalence. Keep independent image
+failures visible. See the [curve/cache design](../../docs/designissues/2026-11-03-svg-curves-cache.md)
+and [overnight record](../../docs/20261102-svg-standards-overnight.md).
+
+HTML SVG roots must share the original document ID index. Build one
+`NativeSVG.ReferenceContext` from the complete Lean namespace DOM and select
+roots with `parseRootInContext` and absolute child paths (text/comments count).
+Its root-only attribute normalizer must preserve original target styles and
+bases; never construct host DOM extracts or independent per-root ID maps.
+Retrieval URL and effective HTML base are separate. See the
+[document-reference design](../../docs/designissues/2026-11-03-svg-document-references.md).
+
+SVG artifact list formatting uses the proved bit-keyed
+`Rendering/FloatFormat.lean` cache through a csimp-selected wrapper. The
+all-Float-list theorem preserves every reference decimal string and list order;
+inspect the actual `Scene_json` C caller as well as testing full raw artifacts.
+Do not replace this with numeric-equality caching or change rounding as a speed
+fix. Exact output and actual timing are separate gates; the overnight record
+keeps both.
+
+The initial retained-scene source is the lab module
+`labs/demos/foafnaut/Solving.lean`, compiled by
+`labs/demos/foafnaut/build-engines.sh`. It reuses `NativeGraphics.Shape` and
+`NativeGeometry.hit`; its current scene transform is integer translation and
+its clip is an integer rectangle. Do not describe the current SVG parser or
+WebGPU path as consuming this scene yet. The evidence and open integration
+steps are recorded in
+[`docs/20261101-solving-scene-slice.md`](../../docs/20261101-solving-scene-slice.md).
+`SolvingSVG.lean` adds a `RetainedScene` envelope over complete native nodes
+and nested SVG display nodes. `SVG.lean` now retains `<g>` boundaries, IDs and
+local transforms in `NativeSVG.DisplayNode`. A cached painter list is tied to
+that tree by `Scene.loweringCorrect`; order and transform/path accumulation are
+proved. `paintCount_eq_lowerLength` and `paintCountList_eq_lowerLength` prove
+the structural count used for the parser limit agrees with lowered paint count,
+without allocating temporary primitive lists at each group. The SVG CPU
+reference probes share one packed array; `rows_offsets_eq_flattened_length` and
+`Scene.data_size_eq_record_cursor` prove the cursor advances match the buffer.
+`display="none"` removes subtrees after strict parsing, while inherited
+`visibility="hidden"`/`collapse` retains zero-opacity paint; a Lean theorem
+establishes that opacity result. The picker is geometric and does not model
+browser `pointer-events`.
+Exact SVG and programmatic round-trip theorems preserve the adapter's source scenes, and
+mixed producer lists are refused. The renderers still consume producer-specific
+representations; this is not yet a common geometry algebra, compositing surface
+model or WebGPU proof boundary. Evidence and open steps:
+[`docs/20261101-solving-scene-slice.md`](../../docs/20261101-solving-scene-slice.md)
+and the [scene design record](../../docs/designissues/2026-11-01-svg-scene-compositor.md).
+
+The fresh 2026-11-02 build caught a pathLength regression test that compared
+whole JSON artifacts for grouped and ungrouped SVG. Only their retained `tree`
+fields differed; every rendering field was equal. A rendering-equivalence test
+may remove that named inspection field only, must compare all remaining fields,
+and must separately assert the intended distinct tree structures. See the
+[build and package record](../../docs/20261102-foafnaut-macos-build.md).
+That link also exposed an existing unused `Std.Tactic` umbrella import in
+`SVG.lean`, which emitted `initialize_Std_Tactic` outside the small runtime
+cache closure. Source proof checks alone did not detect this link dependency.
+Remove unused broad tactic imports, recheck the unchanged proofs and real WASM
+link, and do not hide missing import closures with linker stubs.
+The same fresh WASM run reached a 10,000-element retained-list stack overflow
+that native guards had not caught. The parser's group-depth bound does not
+bound sibling width. Keep the declarative traversal/count definitions, prove
+paired node/list execution twins equal, check actual compiler reach across
+mutual blocks, and exercise admitted wide groups plus explicit budget refusals
+in WASM. The build record contains the named stack and six exact equalities.
+
+## Lean HTML/CSS rendering (2026-11-02)
+
+`L4Factoidal/Rendering/{Scene,Style,Layout,Tests}.lean` contains the common
+Float scene, CSS cascade and block/inline HTML layout. Run the targeted
+`LEAN_NUM_THREADS=2 lake build L4Factoidal.Rendering.Tests` from `formal/lean4`.
+The lab `WebRenderSVG.lean` adapter preserves complete SVG numeric records and
+retained trees with checked roundtrip theorems. No SVG string is the HTML
+layout intermediate. The initial ASCII bitmap profile is incomplete text
+support, not shaped real-font coverage. Scope, architecture reconciliation
+and evidence: [design record](../../docs/designissues/2026-11-02-lean-web-rendering.md),
+https://github.com/danbri/factoidal/issues/1230 (shared Lean web renderer).
