@@ -575,17 +575,18 @@ def datasetSparqlRlInfer (h rules : String) : IO String := do
 /-- `datasetQueryRaw(handle, sparql, optsJson)` — `queryRaw` over the stored
 dataset: `optsJson` members `entail` (none | RDFS | OWL-RL | x-rdfscore |
 x-rdfsplus) and `output` (json | xml | csv | tsv | table | ntriples). The
-clock and the extension registry are read once per call; a registered
+clock, extension registry and SERVICE registry are read once per call; a registered
 extension function (SPARQL 1.1 §17.6) answers here as in `datasetQuery`
 (https://github.com/danbri/factoidal/issues/1090). -/
 def datasetQueryRaw (h sparql optsJson : String) : IO String := do
   let now ← nowDateTime
   let extIris ← extSnapshot
+  let services ← serviceSnapshot
   let opts : Option Json := if optsJson == "" then none else parseJson? optsJson
   let field (k d : String) : String := ((opts.bind (fun j => j.getString? k))).getD d
   withHandleDataset h fun ds _ =>
     pure (queryRawParsed ds sparql (field "entail" "none") (field "output" "json") (some now)
-      (extFnsWith extIris))
+      (extFnsWith extIris) services)
 
 /-- `detectFormat(text)` — `{"ok":true,"format":TAG}`, the parse tag of
 `formatOfContent`; Turtle, TriG and N-Quads are read in RDF 1.2 mode

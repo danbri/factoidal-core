@@ -65,6 +65,7 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-30 | [Shared UI geometry, policy and renderer admission](designissues/2026-10-30-shared-ui-policy.md) | pending | current: kernel checks and native regressions; interactive enforcement unfinished |
 | 2026-11-02 | [0.29 release public version pins](20261102-release-029-public-pins.md) | this commit | current |
 | 2026-10-31 | [Readable compositor evidence](20261031-compositor-evidence-explanations.md) | this commit | current |
+| 2026-10-31 | [Variable SERVICE backend correlation](20261031-service-variable-correlation.md) | pending | current |
 | 2026-10-29 | [Selectable static typing](20261029-static-typing.md) | eddfd724 | current: implementation, proof boundary and measurements |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |
 | 2026-04-21 | [Large Turtle stack overflow fix sketch](2026-04-21-large-turtle-stack-overflow-fix-sketch.md) | c29698f98 | historical |
@@ -253,4 +254,5 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-03 | [Fresh web registry inventory](20261103-web-inventory-generation.md) | this commit | actual fresh remote Registry/Tests generation, witnessed UI/Rendering directory inventory and unchanged stage kinds; directory counts are not renderer passes |
 | 2026-11-03 | [LWS with large bodies](20261103-lws-large-bodies.md) | this commit | measured 1 MiB to 200 MiB PUT/GET in files mode, sealed; no size limits or quotas today (issue 1240); guidance: about 1 MiB per item, no media |
 | 2026-11-03 | [LWS ops: which reach resources without authorization?](20261103-lws-in-process-audit.md) | this commit | audit for issue 1238: only `lwsSnapshot` returns the whole storage with no authorization (host-only by design; clear text without a key); components get `{step, settled, close}`, not the engine |
+| 2026-10-31 | [Scoped query provider grants prototype](20261031-scoped-query-context-prototype.md) | same commit | experimental/unwired: actual resolver bounds, captured providers, 14 runtime passes plus one visible variable-SERVICE expected failure |
 | 2026-10-31 | [QT4 static typing integration](20261031-qt4-static-typing-integration.md) | same commit | current: PR263 recovery, 104-case inventory, iterative FLWOR traversal and bounded recursion audit |
