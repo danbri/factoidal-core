@@ -3628,7 +3628,6 @@ names, 0 missing, `lake env lean` in `formal/lean4`):
 | other | 107 | 0 of 107 | 0 of 107 | 0 of 107 | 0 of 107 | 107 of 107 |
 | total | 1383 | 142 of 1383 | 27 of 1383 | 483 of 1383 | 25 of 1383 | 706 of 1383 |
 
-<<<<<<< HEAD
 ## XPath and XQuery static typing (2026-10-29)
 
 `XPath4.StaticTyping.fragment_sound` in
@@ -3646,7 +3645,7 @@ default-settings agreement theorems remain checked. The proof modules are
 imported by `Harness/Qt4Run.lean`; `lake build l4qt4` checks them. The
 soundness axiom audit reports only `propext`, `Classical.choice`, `Quot.sound`.
 See the [design and proof boundary](designissues/2026-10-29-static-typing.md).
-=======
+
 
 ## Public dataset union adapter (2026-10-31)
 
@@ -3673,4 +3672,3 @@ substituting an empty subset for the existing algorithm. This is not an RDFS
 completeness or output-existence theorem. Accepted parser fallbacks remain
 outside this checked profile; empty named-graph declarations can be dropped.
 See the [normalization record](20261031-union-rdfs-normalization-preservation.md).
->>>>>>> origin/main
