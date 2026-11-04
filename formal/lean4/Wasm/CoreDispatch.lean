@@ -171,7 +171,7 @@ def fullOnlyOpNames : List String :=
   , "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzOwns", "authzClose"
   , "webdavOpen", "webdavLoad", "webdavStep", "webdavResume", "webdavClose", "webdavUser"
   , "solidClientRequest", "solidClientResponse"
-  , "lwsClientStart", "lwsClientStep", "lwsClientNewKey"
+  , "lwsClientStart", "lwsClientStep", "lwsClientNewKey", "lwsViewPlan", "lwsDatasetView"
   , "matrixDeterminant", "matrixScalarProduct", "matrixVectorProduct"
   , "matrixOuterProduct", "sigmoidPoints", "sigmoidFormulaMathml"
   , "vcSha256Hex", "vcEd25519SecretToPublic", "vcEd25519Sign", "vcEd25519Verify"

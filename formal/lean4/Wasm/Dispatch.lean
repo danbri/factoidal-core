@@ -67,6 +67,7 @@ import Wasm.Ops.Lws
 import Wasm.Ops.Solid
 import Wasm.Ops.LwsClient
 import Wasm.Ops.WebDAV
+import Wasm.Ops.LwsDataset
 import Wasm.Ops.Authz
 import Wasm.Ops.Toan
 import Wasm.Ops.Xmpp
@@ -381,7 +382,9 @@ def lwsSolidOpNames : List String :=
   , "solidClientResponse"
   , "lwsClientStart"
   , "lwsClientStep"
-  , "lwsClientNewKey" ]
+  , "lwsClientNewKey"
+  , "lwsViewPlan"
+  , "lwsDatasetView" ]
 
 /-- The XMPP server-handle op names (`Wasm/Ops/XmppSession.lean`), served
 ONLY by `callIO`: a server and its sessions live in handle tables the pure
@@ -798,6 +801,18 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
         match args with
         | [a, b] => pure (Ops.lwsClientNewKey a b)
         | args => pure (errJson s!"lwsClientNewKey expects 2 arguments, got {args.length}"))
+  -- The LWS dataset view (https://github.com/danbri/factoidal/issues/1011).
+  | "lwsViewPlan" =>
+      withArgs (fun args =>
+        match args with
+        | [a] => pure (Ops.lwsViewPlan a)
+        | [a, b] => pure (Ops.lwsViewPlan a (some b))
+        | args => pure (errJson s!"lwsViewPlan expects 1 or 2 arguments, got {args.length}"))
+  | "lwsDatasetView" =>
+      withArgs (fun args =>
+        match args with
+        | [a] => pure (Ops.lwsDatasetView a)
+        | args => pure (errJson s!"lwsDatasetView expects 1 argument, got {args.length}"))
   -- The XMPP server as handles (`Wasm/Ops/XmppSession.lean`).
   | "xmppOpen"           => withArgs (arityIO1 op Ops.xmppOpen)
   | "xmppClose"          => withArgs (arityIO1 op Ops.xmppClose)
