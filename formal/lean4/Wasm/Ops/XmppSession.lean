@@ -795,6 +795,108 @@ def xmppWsCloseWith (h : String) : IO (String × ByteArray) := do
 
 def xmppWsBlobIoOpNames : List String := ["xmppWsFeed", "xmppWsDeliver", "xmppWsClose"]
 
+/-! ## A message carrier: RFC 7395 without the socket
+
+A carrier that already delivers whole messages, in order and to one peer
+(a browser `MessagePort`, a `postMessage` channel between a page and a
+worker), needs neither the HTTP handshake nor the WebSocket frames. Each
+message is one RFC 7395 message, exactly as over a WebSocket: `<open/>`
+and `<close/>` in the framing namespace, then one complete element per
+message (section 3.3.3). Inbound, `WebSocket.unitOfMessage`; outbound,
+`WebSocket.messageOfSend`; between them the same `stepOneUnit`, so every
+decision is still `Server.step`'s. The carrier is not a network: it has no
+Origin to check, and it is up to the host which code may hold one. -/
+
+initialize xmppMsgCounter : IO.Ref Nat ← IO.mkRef 0
+initialize xmppMsgSessions : IO.Ref (Std.HashMap String XmppOpenSession) ← IO.mkRef ∅
+
+/-- One message through `Server.step`; the answer is whole messages. -/
+def msgFeedPure (srv : XmppOpenServer) (os : XmppOpenSession) (msg : String) :
+    XmppOpenServer × XmppOpenSession × XmppCollected × List String :=
+  if os.closed then (srv, os, {}, [])
+  else
+    let (srv', os', c) := stepOneUnit srv os {} (L4Factoidal.XMPP.WebSocket.unitOfMessage msg)
+    (srv', os', { c with close := c.close || os'.closed },
+     c.send.map (L4Factoidal.XMPP.WebSocket.messageOfSend os'.session.cfg))
+
+/-- A closed message session reads nothing more: the server and the session
+are unchanged, and nothing is sent or routed. -/
+theorem msgFeedPure_closed (srv : XmppOpenServer) (os : XmppOpenSession) (msg : String)
+    (h : os.closed = true) :
+    msgFeedPure srv os msg = (srv, os, {}, []) := by
+  simp [msgFeedPure, h]
+
+def xmppMsgJson (os : XmppOpenSession) (c : XmppCollected) (msgs : List String) : String :=
+  okWith ((jsonOfCollected os c).filter (fun (k, _) => k != "send" && k != "bufferedBytes") ++
+    [("send", .array (msgs.map .string))])
+
+/-- `xmppMsgOpen(serverHandle, {"streamId","nonce","maxUnits"?})`. -/
+def xmppMsgOpen (server optionsJson : String) : IO String := do
+  match (← xmppServers.get)[server]? with
+  | none => pure (unknownXmppServer server)
+  | some srv =>
+    match parseJson (if optionsJson.trim.isEmpty then "{}" else optionsJson) with
+    | .error e => pure (errJson s!"options: {toString e}")
+    | .ok j =>
+      match j.getString? "streamId", j.getString? "nonce" with
+      | some streamId, some nonce =>
+        if streamId.isEmpty || nonce.isEmpty then
+          pure (errJson "xmppMsgOpen: \"streamId\" and \"nonce\" must not be empty")
+        else
+          let cfg : Config :=
+            { domain := srv.cfg.domain, streamId, serverNonce := nonce
+              saltB64 := srv.cfg.saltB64, iterationCount := srv.cfg.iterationCount
+              accounts := srv.cfg.accounts, tlsCarrier := false, startTls := false
+              mucDomain := srv.cfg.mucDomain, mixDomain := srv.cfg.mixDomain
+              gc3Domain := srv.cfg.gc3Domain }
+          let n ← xmppMsgCounter.modifyGet fun n => (n + 1, n + 1)
+          let h := s!"xmppmsg{n}"
+          xmppMsgSessions.modify (·.insert h
+            { server, session := Session.init cfg, buffer := "", units := 0
+              maxUnits := (natField? j "maxUnits").getD 1000000, closed := false })
+          pure (okWith [("handle", .string h)])
+      | _, _ => pure (errJson "xmppMsgOpen: \"streamId\" and \"nonce\" are required (the host supplies unpredictable values)")
+
+/-- `xmppMsgFeed(handle, message)`: one whole message; `send` is the whole
+messages to give back, in order. -/
+def xmppMsgFeed (h msg : String) : IO String := do
+  match (← xmppMsgSessions.get)[h]? with
+  | none => pure (errJson s!"unknown XMPP message session handle: {h}")
+  | some os =>
+    match (← xmppServers.get)[os.server]? with
+    | none => pure (unknownXmppServer os.server)
+    | some srv =>
+      let (srv', os', c, msgs) := msgFeedPure srv os msg
+      xmppServers.modify (·.insert os.server srv')
+      xmppMsgSessions.modify (·.insert h os')
+      pure (xmppMsgJson os' c msgs)
+
+/-- `xmppMsgDeliver(handle, text)`: a stanza routed to this session, as one
+message; refused (`delivered:false`) unless the session is bound. -/
+def xmppMsgDeliver (h text : String) : IO String := do
+  match (← xmppMsgSessions.get)[h]? with
+  | none => pure (errJson s!"unknown XMPP message session handle: {h}")
+  | some os =>
+    if os.closed || !os.session.canDeliver then
+      pure (okWith [("delivered", .bool false), ("send", .array [])])
+    else
+      let sends := (Server.deliver os.session text).filterMap (fun o =>
+        match o with | .send t => some t | _ => none)
+      pure (okWith [("delivered", .bool true),
+        ("send", .array (sends.map (fun t => .string (L4Factoidal.XMPP.WebSocket.messageOfSend os.session.cfg t))))])
+
+/-- `xmppMsgClose(handle)`: release the handle; `<close/>` when the stream
+was open, and the deliveries of leaving every MUC room. -/
+def xmppMsgClose (h : String) : IO String := do
+  match (← xmppMsgSessions.get)[h]? with
+  | none => pure (errJson s!"unknown XMPP message session handle: {h}")
+  | some os =>
+    xmppMsgSessions.modify (·.erase h)
+    let left ← mucLeaveAll os.server os.session.fullJid
+    let closing : List String :=
+      if os.closed || os.session.stage == .closed then [] else [L4Factoidal.XMPP.WebSocket.closeText]
+    pure (okWith [("send", .array (closing.map .string)), ("routeFull", left)])
+
 /-- `xmppStateLoad(serverHandle, path, text)`: at start, install one item the
 host read from the server's LWS state storage (issue 1237): a roster, the
 stanzas held for an account, a MIX channel or a GC3 group, decoded by
@@ -836,7 +938,8 @@ def xmppStateLoad (server path text : String) : IO String := do
 def xmppSessionOpNames : List String :=
   [ "xmppOpen", "xmppClose"
   , "xmppSessionOpen", "xmppSessionFeed", "xmppSessionDeliver", "xmppSessionClose"
-  , "xmppSessionTlsUp", "xmppRosterGet", "xmppRosterSet", "xmppWsOpen", "xmppStateLoad" ]
+  , "xmppSessionTlsUp", "xmppRosterGet", "xmppRosterSet", "xmppWsOpen", "xmppStateLoad"
+  , "xmppMsgOpen", "xmppMsgFeed", "xmppMsgDeliver", "xmppMsgClose" ]
 
 
 end L4Wasm.Ops
