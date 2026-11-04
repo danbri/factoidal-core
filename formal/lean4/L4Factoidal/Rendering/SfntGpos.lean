@@ -208,8 +208,10 @@ def applyPosSubtable (c : PCtx) (flag : Nat) (keep : Array Bool) (t s : Nat) (ou
       let some j := nextOf keep i | return none
       let some r ← pairPos b s g.id out[j]!.id | return none
       let c := out[j]!
-      out := out.set! i { g with xOffset := g.xOffset + r.first.1, advance := g.advance + r.first.2 }
-      out := out.set! j { c with xOffset := c.xOffset + r.second.1, advance := c.advance + r.second.2 }
+      out := out.set! i { g with xOffset := g.xOffset + r.first.1, yOffset := g.yOffset + r.firstY,
+                                 advance := g.advance + r.first.2 }
+      out := out.set! j { c with xOffset := c.xOffset + r.second.1, yOffset := c.yOffset + r.secondY,
+                                 advance := c.advance + r.second.2 }
       return some (out, if r.skipSecond then j + 1 else j)
     else if t == 3 then
       -- Cursive attachment (HarfBuzz CursivePosFormat1::apply, left to right).

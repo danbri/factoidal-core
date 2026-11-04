@@ -51,7 +51,8 @@ for suite in ['in-house','aots','text-rendering-tests']:
       fopt=['--features='+feats] if feats else []
       rc,got,_=hb(font,o+fopt,cps)
       if rc!=0 or got!=exp: res['oracle mismatch']+=1; continue
-      rc,ids,_=hb(font,['--font-funcs=ot','--no-glyph-names']+fopt,cps)
+      # --single-par: without it hb-shape splits the input at U+000A.
+      rc,ids,_=hb(font,['--font-funcs=ot','--no-glyph-names','--single-par']+fopt,cps)
       text=''.join(map(chr,cps))
       l=subprocess.run([lean,font,text,'16','0']+([feats] if feats else []),capture_output=True,text=True,env=env,timeout=120)
       if l.returncode!=0:

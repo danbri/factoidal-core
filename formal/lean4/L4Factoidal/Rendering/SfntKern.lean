@@ -142,6 +142,13 @@ structure PairResult where
   second : Int × Int
   /-- The second glyph's value record is not empty, so the next pair starts after it. -/
   skipSecond : Bool
+  /-- y placements of the two value records. -/
+  firstY : Int := 0
+  secondY : Int := 0
+
+/-- y placement of a value record (0 when the format has none). -/
+def valueY (b : ByteArray) (fmt off : Nat) : Int :=
+  if fmt / 2 % 2 == 1 then i16 b (off + (if fmt % 2 == 1 then 2 else 0)) else 0
 
 /-- Apply one PairPos subtable to the pair (g1, g2). -/
 def pairPos (b : ByteArray) (sub g1 g2 : Nat) : Except String (Option PairResult) := do
@@ -154,7 +161,8 @@ def pairPos (b : ByteArray) (sub g1 g2 : Nat) : Except String (Option PairResult
   let s2 := valueSize vf2
   let result (rec_ : Nat) : Except String (Option PairResult) := do
     need b rec_ (s1 + s2) "pair value record"
-    return some ⟨valueX b vf1 rec_, valueX b vf2 (rec_ + s1), vf2 != 0⟩
+    return some ⟨valueX b vf1 rec_, valueX b vf2 (rec_ + s1), vf2 != 0,
+      valueY b vf1 rec_, valueY b vf2 (rec_ + s1)⟩
   if fmt == 1 then
     let n := u16 b (sub + 8)
     if ci ≥ n then throw "font.file.malformed: PairPos coverage index beyond pair sets"

@@ -350,3 +350,14 @@ traditional Arabic (only right-to-left tests use them; those are refused).
 
 Suite: 4,159 pass, 549 fail, 169 refused (out of 5,079 applicable); no
 regressions; `macos.tests` BigCaslon (subtable (0,1)) now passes.
+
+### 8.7 Pair adjustment y placement; runner `--single-par` (2026-11-04)
+
+- GPOS pair adjustment (type 2) now applies the y placement of both value
+  records (`PairResult.firstY`, `secondY`); before, only x was applied.
+- Runner fault: the HarfBuzz run that gives glyph ids had no `--single-par`,
+  so `hb-shape` split input at U+000A and 5 `lookupflag_ignore_attach` tests
+  counted as failures where Lean equals the test file. Fixed.
+
+Suite: 4,174 pass, 534 fail, 169 refused (out of 5,079 applicable); no
+regressions; 15 tests fixed.
