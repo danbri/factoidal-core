@@ -673,3 +673,19 @@ real namespaces.
   - a stanza sent to a session that is closing is delivered to it and lost (no XEP-0198 stream
     management), as in other servers without it;
   - the key across an unattended reboot, rollback, and swap: issue 1237.
+
+## 2026-11-03: the message carrier, and the server in a page
+
+A browser page has no socket, so the in-page server (`npm/factoidal/xmpp/inpage.mjs`) needs a carrier
+that takes whole messages. `xmppMsgOpen`, `xmppMsgFeed`, `xmppMsgDeliver` and `xmppMsgClose`
+(`Wasm/Ops/XmppSession.lean`) are RFC 7395 without the HTTP handshake and the WebSocket frames: each
+message is one RFC 7395 message (`<open/>`, `<close/>`, one element), through
+`WebSocket.unitOfMessage`, the same `stepOneUnit`, and `WebSocket.messageOfSend`. No protocol decision
+is new. Theorem `msgFeedPure_closed`: a closed message session changes nothing and sends nothing.
+
+`inPageWebSocket(server)` is a WebSocket-shaped class over it, so Strophe.js and other RFC 7395 clients
+run unchanged against a server in the same page. The routing table is now one module,
+`npm/factoidal/xmpp/router.mjs`, used by the Node host and the in-page host. Test:
+`npm/factoidal/test/xmpp-inpage.test.mjs` (two clients, one through the WebSocket shape, in a MUC
+room). First user: the FoafOS shell's bus room (danbri/glitchcan-minigam,
+`docs/foafos-chat-20261103.md`).

@@ -191,7 +191,7 @@ async function main () {
     let proxy = null
     await check('xmpp-http-proxy as alice: binds, listens on 127.0.0.1, prints its origin', async () => {
       proxy = await start(proxyArgs('alice', TARGET), /^(http:\/\/127\.0\.0\.1:(\d+)\/)$/m, dir)
-      assert(proxy.errText().includes('EXPERIMENTAL UNREVIEWED CODE'), 'no review notice on standard error')
+      assert(proxy.errText().includes('EXPERIMENTAL UNDER-REVIEWED CODE'), 'no review notice on standard error')
       assert(proxy.errText().includes(`go to ${TARGET} only`), proxy.errText())
     })
     if (proxy === null) return

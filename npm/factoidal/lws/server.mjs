@@ -250,8 +250,9 @@ function contentBytes (request) {
  * @param {boolean} [options.realClock] stamp each request with this host's clock
  * @param {string|null} [options.storageKey] the storage key text (64 hex digits or base64url);
  *   default the environment variable FACTOIDAL_LWS_KEY; `null` reads no key
- * @param {string} [options.storage] where DIR keeps the storage: "snapshot" (default, one
- *   file) or "files" (one file per body and a journal, issue 918); passed unread
+ * @param {string} [options.storage] where DIR keeps the storage: "files" (default, one
+ *   file per body and a journal, issue 918) or "snapshot" (one file written whole after
+ *   each change); passed unread
  * @param {boolean|string[]} [options.cors] CORS (issue 923): false for none, a list of
  *   origins to answer; default: echo any valid request Origin. Passed unread
  * @param {string} [options.lockCommand] the command named in the lock file of DIR
@@ -347,10 +348,13 @@ export async function openLwsStorage (options = {}) {
   // With "files" the engine names the files to read (`load`) and gives the
   // plan of every write (`lwsPersist`), and this host reads no snapshot.
   // With a DIR and no `storage` option, the environment variable
-  // FACTOIDAL_LWS_STORAGE is the value; without a DIR there is nothing to
+  // FACTOIDAL_LWS_STORAGE is the value, and without it "files" (2026-11-03):
+  // a write then costs what it changes, not the size of the storage. A DIR
+  // that holds a snapshot is migrated at the first start (lws-state.json is
+  // renamed lws-state.json.migrated). Without a DIR there is nothing to
   // keep, and only an explicit option is passed.
   const dir = typeof options.dir === 'string' ? options.dir : null
-  const storage = dir !== null ? storageModeText(options.storage) : options.storage
+  const storage = dir !== null ? (storageModeText(options.storage) ?? 'files') : options.storage
   if (typeof storage === 'string') config.storage = storage
   // One writing process per storage directory
   // (https://github.com/danbri/factoidal/issues/1135): the lock is taken
@@ -601,26 +605,33 @@ export async function openLwsStorage (options = {}) {
 export const DEFAULT_MAX_BODY = 16 * 1024 * 1024
 
 /**
- * Read a Node request body as its bytes, at most `limit` of them. Past the
- * limit (by Content-Length, or while reading a chunked body) it resolves
- * `null` and stops reading, so an oversized upload never reaches memory
- * whole (issue 1240); the caller answers 413, as the engine would.
+ * Read a Node request body as its bytes, at most `limit + 1` of them. Past
+ * the limit it keeps the first `limit + 1` bytes, stops reading and says so
+ * (`over`), so an oversized upload never reaches memory whole (issue 1240).
+ * The engine decides the answer: content over its `maxBody` is refused with
+ * 413 and changes nothing (`step_tooLarge`, L4Factoidal/LWS/Operations.lean).
  */
 function readBody (request, limit = DEFAULT_MAX_BODY) {
   return new Promise((resolve, reject) => {
-    const declared = Number(request.headers['content-length'])
-    if (Number.isFinite(declared) && declared > limit) { resolve(null); return }
     const chunks = []
     let size = 0
     let over = false
+    const done = () => resolve({ bytes: new Uint8Array(Buffer.concat(chunks)), over })
     request.on('data', (chunk) => {
       if (over) return
+      if (size + chunk.length > limit) {
+        chunks.push(chunk.subarray(0, limit + 1 - size))
+        size = limit + 1
+        over = true
+        done()
+        request.resume()
+        return
+      }
       size += chunk.length
-      if (size > limit) { over = true; chunks.length = 0; resolve(null); request.resume(); return }
       chunks.push(chunk)
     })
     request.on('error', reject)
-    request.on('end', () => { if (!over) resolve(new Uint8Array(Buffer.concat(chunks))) })
+    request.on('end', () => { if (!over) done() })
   })
 }
 
@@ -705,15 +716,13 @@ export async function createLwsServer (options = {}) {
         method: request.method,
         target: request.url,
         headers: headerPairs(request.rawHeaders),
-        body: await readBody(request, typeof settings.maxBody === 'number' ? settings.maxBody : DEFAULT_MAX_BODY)
+        body: new Uint8Array(0)
       }
-      if (record.body === null) {
-        const limit = typeof settings.maxBody === 'number' ? settings.maxBody : DEFAULT_MAX_BODY
-        response.writeHead(413, { 'content-type': 'application/problem+json', connection: 'close' })
-        response.end(JSON.stringify({ type: 'about:blank', title: 'Content Too Large', status: 413,
-          detail: `the content is over ${limit} bytes, the limit of this storage` }))
-        return
-      }
+      const read = await readBody(request, typeof settings.maxBody === 'number' ? settings.maxBody : DEFAULT_MAX_BODY)
+      record.body = read.bytes
+      // The rest of an oversized body is not read: the connection closes
+      // after the answer. The answer is the engine's.
+      if (read.over) response.shouldKeepAlive = false
     } catch (error) {
       onError(error)
       response.writeHead(500, { 'content-type': 'text/plain' })
