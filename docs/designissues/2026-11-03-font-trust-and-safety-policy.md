@@ -320,3 +320,19 @@ refused now pass (28 of them USE Marchen). 6 Javanese tests that passed before
 are now refused: with the `java` script Lean reaches a GPOS type 8 lookup
 (chained context positioning), which it does not have; before, they passed
 because Lean used `DFLT`.
+
+### 8.5 GPOS context positioning and mark to ligature (2026-11-04)
+
+- GPOS lookups now apply through `SfntGpos.posAt`, one lookup at one
+  position, as GSUB `applyAt` does. Context positioning (types 7 and 8) uses
+  the GSUB context matcher (`SfntSubst.matchContext`, types 5 and 6) and
+  applies the nested lookups at the matched positions; the nesting depth
+  starts at 8 (entry in `tools/lean-tail-recursion-allow.txt`, reason (c)).
+- Mark to ligature (type 5, `MarkLigPosFormat1::apply`): the ligature is the
+  previous glyph that is not a mark. Lean does not yet record the ligature
+  component of a mark (HarfBuzz `lig_comp`), so it always uses the last
+  component, which is what HarfBuzz does for a mark with no component number.
+
+Suite: 4,158 pass, 549 fail, 170 refused (out of 5,079 applicable); no
+regressions against 563b74ba2 or 7ef66d094. The 6 Javanese tests refused in
+section 8.4 pass again; 17 tests that failed or were refused now pass.

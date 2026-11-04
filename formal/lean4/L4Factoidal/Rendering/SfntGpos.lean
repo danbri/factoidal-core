@@ -22,8 +22,9 @@ follows HarfBuzz's default shaper for a left-to-right run:
 4. each attached mark gets the offsets of the glyph it is attached to, less
    the advances from that glyph up to the mark.
 
-Cursive attachment (type 3) follows HarfBuzz for left-to-right text. Refused, with a message naming the lookup: type 5
-(mark-to-ligature), types 7 and 8. Mark filtering sets apply as in HarfBuzz. Device tables in value
+Cursive attachment (type 3) follows HarfBuzz for left-to-right text; context
+positioning (types 7 and 8) matches as GSUB types 5 and 6. Mark to ligature
+(type 5) uses the last ligature component (no component numbers yet). Mark filtering sets apply as in HarfBuzz. Device tables in value
 records and anchors are not applied (unhinted, no variations). The OpenType
 GPOS chapter is the reference; HarfBuzz is the differential oracle.
 -/
@@ -142,6 +143,165 @@ def unicodeMarkRanges : Array (Nat × Nat) :=
 
 def isUnicodeMark (c : Nat) : Bool := unicodeMarkRanges.any fun (a, z) => a ≤ c && c ≤ z
 
+/-- What GPOS lookups need from the font and the run. Glyph ids and classes
+do not change during GPOS. -/
+structure PCtx where
+  b : ByteArray
+  lookupList : Nat
+  count : Nat
+  gdef? : Option Nat
+  classes : Array (Nat × Nat)
+
+/-- Flag, mark filtering set and subtables (type, offset; extensions
+resolved) of GPOS lookup `l`. -/
+def gposLookup (c : PCtx) (l : Nat) : Except String (Nat × Option Nat × Array (Nat × Nat)) := do
+  let b := c.b
+  if l ≥ c.count then throw "font.file.malformed: GPOS lookup index"
+  need b (c.lookupList + 2 + 2 * l) 2 "lookup offset"
+  let lk := c.lookupList + u16 b (c.lookupList + 2 + 2 * l)
+  need b lk 6 "lookup"
+  let ltype := u16 b lk
+  let flag := u16 b (lk + 2)
+  let nsub := u16 b (lk + 4)
+  need b (lk + 6) (2 * nsub) "subtable offsets"
+  let set? ← lookupMarkSet b lk nsub flag
+  let mut subs : Array (Nat × Nat) := #[]
+  for k in [0:nsub] do
+    let s := lk + u16 b (lk + 6 + 2 * k)
+    if ltype == 9 then
+      need b s 8 "extension"
+      subs := subs.push (u16 b (s + 2), s + u32 b (s + 4))
+    else subs := subs.push (ltype, s)
+  for (t, _) in subs do
+    unless t == 1 || t == 2 || t == 3 || t == 4 || t == 5 || t == 6 || t == 7 || t == 8 do
+      throw s!"font.layout.unsupported: GPOS lookup {l} has type {t} (https://github.com/danbri/factoidal/issues/1233)"
+  return (flag, set?, subs)
+
+/-- Positions that the lookup flag and mark filtering set do not skip. -/
+def gposKeep (c : PCtx) (flag : Nat) (set? : Option Nat) (out : Array Glyph) : Except String (Array Bool) :=
+  (Array.range out.size).mapM fun k => do
+    pure !(← skipsWithSet c.b c.gdef? flag set? c.classes[k]! out[k]!.id)
+
+/-- One subtable of type 1 to 6 at position i: the new run and the
+position to continue from, or none when the subtable does not apply. -/
+def applyPosSubtable (c : PCtx) (flag : Nat) (keep : Array Bool) (t s : Nat) (out0 : Array Glyph) (i : Nat) :
+    Except String (Option (Array Glyph × Nat)) := do
+  let b := c.b
+  let isMark (k : Nat) : Bool := c.classes[k]!.1 == 3
+  let mut out := out0
+  let g := out[i]!
+  need b s 6 "subtable header"
+    if t == 1 then
+      let some ci ← coverage b (s + u16 b (s + 2)) g.id | return none
+      let fmt := u16 b s
+      let vf := u16 b (s + 4)
+      let rec_ ← if fmt == 1 then pure (s + 6)
+        else if fmt == 2 then do
+          if ci ≥ u16 b (s + 6) then throw "font.file.malformed: single adjustment index"
+          pure (s + 8 + valueSize vf * ci)
+        else throw s!"font.file.malformed: single adjustment format {fmt}"
+      need b rec_ (valueSize vf) "single adjustment value"
+      let (xp, yp, xa) := valueXYA b vf rec_
+      out := out.set! i { g with xOffset := g.xOffset + xp, yOffset := g.yOffset + yp, advance := g.advance + xa }
+      return some (out, i + 1)
+    else if t == 2 then
+      let some j := nextOf keep i | return none
+      let some r ← pairPos b s g.id out[j]!.id | return none
+      let c := out[j]!
+      out := out.set! i { g with xOffset := g.xOffset + r.first.1, advance := g.advance + r.first.2 }
+      out := out.set! j { c with xOffset := c.xOffset + r.second.1, advance := c.advance + r.second.2 }
+      return some (out, if r.skipSecond then j + 1 else j)
+    else if t == 3 then
+      -- Cursive attachment (HarfBuzz CursivePosFormat1::apply, left to right).
+      let some ci ← coverage b (s + u16 b (s + 2)) g.id | return none
+      let (some entry, _) ← entryExit b s ci | return none
+      let some pi := prevOf keep i | return none
+      let some pci ← coverage b (s + u16 b (s + 2)) out[pi]!.id | return none
+      let (_, some exit) ← entryExit b s pci | return none
+      let gp := out[pi]!
+      out := out.set! pi { gp with advance := exit.1 + gp.xOffset }
+      let d := entry.1 + g.xOffset
+      out := out.set! i { g with advance := g.advance - d, xOffset := g.xOffset - d }
+      -- Without the RightToLeft flag the later glyph is the child.
+      let rtlFlag := flag &&& 1 != 0
+      let (child, parent) := if rtlFlag then (pi, i) else (i, pi)
+      let yOff : Int := if rtlFlag then entry.2 - exit.2 else exit.2 - entry.2
+      out := reverseCursive out child parent
+      let chain : Int := (parent : Int) - (child : Int)
+      out := out.set! child { out[child]! with cursiveChain := chain, attachedTo := none, yOffset := yOff }
+      if out[parent]!.cursiveChain == -chain then
+        out := out.set! parent { out[parent]! with cursiveChain := 0, yOffset := 0 }
+      return some (out, i + 1)
+    else if t == 5 then
+      -- Mark to ligature (HarfBuzz MarkLigPosFormat1::apply). The ligature is
+      -- the previous glyph that is not a mark. Lean does not record which
+      -- ligature component a mark came from, so it uses the last component,
+      -- as HarfBuzz does when the mark has no component number.
+      need b s 12 "mark-to-ligature header"
+      let some mci ← coverage b (s + u16 b (s + 2)) g.id | return none
+      let nClasses := u16 b (s + 6)
+      let (cls, ma) ← markRecord b (s + u16 b (s + 8)) mci
+      let some p := ((List.range i).reverse).find? (fun k => !isMark k) | return none
+      let some lci ← coverage b (s + u16 b (s + 4)) out[p]!.id | return none
+      let la := s + u16 b (s + 10)
+      need b la 2 "ligature array"
+      if lci ≥ u16 b la then throw "font.file.malformed: ligature coverage index beyond ligature array"
+      need b (la + 2 + 2 * lci) 2 "ligature attach offset"
+      let attach := la + u16 b (la + 2 + 2 * lci)
+      need b attach 2 "ligature attach"
+      let comps := u16 b attach
+      if comps == 0 then return none
+      let some ba ← baseAnchor b attach (comps - 1) nClasses cls | return none
+      out := out.set! i { g with xOffset := ba.1 - ma.1, yOffset := ba.2 - ma.2, attachedTo := some p, cursiveChain := 0 }
+      return some (out, i + 1)
+    else
+      -- Mark attachment: t == 4 (to base) or t == 6 (to mark).
+      need b s 12 "mark attachment header"
+      let some mci ← coverage b (s + u16 b (s + 2)) g.id | return none
+      let nClasses := u16 b (s + 6)
+      let (cls, ma) ← markRecord b (s + u16 b (s + 8)) mci
+      -- The glyph to attach to: for type 4 the previous glyph that is
+      -- not a mark; for type 6 the previous unskipped glyph, which must be a mark.
+      let parent? : Option Nat :=
+        if t == 4 then ((List.range i).reverse).find? (fun k => !isMark k)
+        else match prevOf keep i with
+          | some k => if isMark k then some k else none
+          | none => none
+      let some p := parent? | return none
+      let some bci ← coverage b (s + u16 b (s + 4)) out[p]!.id | return none
+      let some ba ← baseAnchor b (s + u16 b (s + 10)) bci nClasses cls | return none
+      out := out.set! i { g with xOffset := ba.1 - ma.1, yOffset := ba.2 - ma.2, attachedTo := some p, cursiveChain := 0 }
+      return some (out, i + 1)
+
+/-- Apply GPOS lookup `l` at position i once (HarfBuzz `apply_forward` step).
+Context subtables (types 7 and 8) match as GSUB types 5 and 6 and apply their
+nested lookups at the matched positions; the nesting depth starts at 8. -/
+def posAt (c : PCtx) : Nat → Nat → Array Glyph → Nat → Option (Array Bool) →
+    Except String (Option (Array Glyph × Nat))
+  | 0, _, _, _, _ => throw "font.layout.limit: nested GPOS context lookups deeper than 8"
+  | depth + 1, l, out, i, keep? => do
+    let (flag, set?, subs) ← gposLookup c l
+    let keep ← match keep? with
+      | some k => pure k
+      | none => gposKeep c flag set? out
+    if i ≥ out.size || !keep[i]! then return none
+    let ids := out.map (·.id)
+    for (t, s) in subs do
+      if t == 7 || t == 8 then
+        let some (inputs, recs) ← SfntSubst.matchContext c.b (t - 2) s ids keep i | continue
+        let mut cur := out
+        for (seq, nested) in recs do
+          let some p := inputs[seq]? | continue
+          match ← posAt c depth nested cur p none with
+          | none => pure ()
+          | some (next, _) => cur := next
+        return some (cur, inputs.foldl max i + 1)
+      else
+        match ← applyPosSubtable c flag keep t s out i with
+        | some r => return some r
+        | none => pure ()
+    return none
+
 /-- Apply the default GPOS features to a substituted run. A synthesized
 glyph class uses the glyph's source code point (`NominalGlyph.codepoint`). -/
 def position (b : ByteArray) (dir : Array TableRecord) (text : String)
@@ -165,30 +325,11 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String)
     let lookups ← featureLookups b gpos tags [features]
     let lookupList := gpos + u16 b (gpos + 8)
     need b lookupList 2 "lookup list"
-    let nl := u16 b lookupList
+    let c : PCtx := { b, lookupList, count := u16 b lookupList, gdef?, classes }
     let mut ops := 0
     for (_, l) in lookups do
-      if l ≥ nl then throw "font.file.malformed: GPOS lookup index"
-      need b (lookupList + 2 + 2 * l) 2 "lookup offset"
-      let lk := lookupList + u16 b (lookupList + 2 + 2 * l)
-      need b lk 6 "lookup"
-      let ltype := u16 b lk
-      let flag := u16 b (lk + 2)
-      let nsub := u16 b (lk + 4)
-      need b (lk + 6) (2 * nsub) "subtable offsets"
-      let set? ← lookupMarkSet b lk nsub flag
-      let mut subs : Array (Nat × Nat) := #[]
-      for k in [0:nsub] do
-        let s := lk + u16 b (lk + 6 + 2 * k)
-        if ltype == 9 then
-          need b s 8 "extension"
-          subs := subs.push (u16 b (s + 2), s + u32 b (s + 4))
-        else subs := subs.push (ltype, s)
-      for (t, _) in subs do
-        unless t == 1 || t == 2 || t == 3 || t == 4 || t == 6 do
-          throw s!"font.layout.unsupported: GPOS lookup {l} has type {t} (https://github.com/danbri/factoidal/issues/1233)"
-      let keep : Array Bool ← (Array.range out.size).mapM fun k => do
-        pure !(← skipsWithSet b gdef? flag set? classes[k]! out[k]!.id)
+      let (flag, set?, _) ← gposLookup c l
+      let keep ← gposKeep c flag set? out
       let mut i := 0
       for _ in [0:out.size] do
         if i ≥ out.size then break
@@ -198,71 +339,11 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String)
         if !keep[i]! then
           i := i + 1
           continue
-        let mut advanceTo := i + 1
-        for (t, s) in subs do
-          let g := out[i]!
-          need b s 6 "subtable header"
-          if t == 1 then
-            let some ci ← coverage b (s + u16 b (s + 2)) g.id | continue
-            let fmt := u16 b s
-            let vf := u16 b (s + 4)
-            let rec_ ← if fmt == 1 then pure (s + 6)
-              else if fmt == 2 then do
-                if ci ≥ u16 b (s + 6) then throw "font.file.malformed: single adjustment index"
-                pure (s + 8 + valueSize vf * ci)
-              else throw s!"font.file.malformed: single adjustment format {fmt}"
-            need b rec_ (valueSize vf) "single adjustment value"
-            let (xp, yp, xa) := valueXYA b vf rec_
-            out := out.set! i { g with xOffset := g.xOffset + xp, yOffset := g.yOffset + yp, advance := g.advance + xa }
-            break
-          else if t == 2 then
-            let some j := nextOf keep i | continue
-            let some r ← pairPos b s g.id out[j]!.id | continue
-            let c := out[j]!
-            out := out.set! i { g with xOffset := g.xOffset + r.first.1, advance := g.advance + r.first.2 }
-            out := out.set! j { c with xOffset := c.xOffset + r.second.1, advance := c.advance + r.second.2 }
-            advanceTo := if r.skipSecond then j + 1 else j
-            break
-          else if t == 3 then
-            -- Cursive attachment (HarfBuzz CursivePosFormat1::apply, left to right).
-            let some ci ← coverage b (s + u16 b (s + 2)) g.id | continue
-            let (some entry, _) ← entryExit b s ci | continue
-            let some pi := prevOf keep i | continue
-            let some pci ← coverage b (s + u16 b (s + 2)) out[pi]!.id | continue
-            let (_, some exit) ← entryExit b s pci | continue
-            let gp := out[pi]!
-            out := out.set! pi { gp with advance := exit.1 + gp.xOffset }
-            let d := entry.1 + g.xOffset
-            out := out.set! i { g with advance := g.advance - d, xOffset := g.xOffset - d }
-            -- Without the RightToLeft flag the later glyph is the child.
-            let rtlFlag := flag &&& 1 != 0
-            let (child, parent) := if rtlFlag then (pi, i) else (i, pi)
-            let yOff : Int := if rtlFlag then entry.2 - exit.2 else exit.2 - entry.2
-            out := reverseCursive out child parent
-            let chain : Int := (parent : Int) - (child : Int)
-            out := out.set! child { out[child]! with cursiveChain := chain, attachedTo := none, yOffset := yOff }
-            if out[parent]!.cursiveChain == -chain then
-              out := out.set! parent { out[parent]! with cursiveChain := 0, yOffset := 0 }
-            break
-          else
-            -- Mark attachment: t == 4 (to base) or t == 6 (to mark).
-            need b s 12 "mark attachment header"
-            let some mci ← coverage b (s + u16 b (s + 2)) g.id | continue
-            let nClasses := u16 b (s + 6)
-            let (cls, ma) ← markRecord b (s + u16 b (s + 8)) mci
-            -- The glyph to attach to: for type 4 the previous glyph that is
-            -- not a mark; for type 6 the previous unskipped glyph, which must be a mark.
-            let parent? : Option Nat :=
-              if t == 4 then ((List.range i).reverse).find? (fun k => !isMark k)
-              else match prevOf keep i with
-                | some k => if isMark k then some k else none
-                | none => none
-            let some p := parent? | continue
-            let some bci ← coverage b (s + u16 b (s + 4)) out[p]!.id | continue
-            let some ba ← baseAnchor b (s + u16 b (s + 10)) bci nClasses cls | continue
-            out := out.set! i { g with xOffset := ba.1 - ma.1, yOffset := ba.2 - ma.2, attachedTo := some p, cursiveChain := 0 }
-            break
-        i := advanceTo
+        match ← posAt c 8 l out i (some keep) with
+        | some (next, n) =>
+          out := next
+          i := max n (i + 1)
+        | none => i := i + 1
   -- Zero the width of marks; move them only when the font has no GPOS.
   let hasGpos := dir.any (·.tag == "GPOS")
   for k in [0:out.size] do

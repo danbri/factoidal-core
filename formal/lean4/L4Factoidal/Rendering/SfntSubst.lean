@@ -232,9 +232,8 @@ def matchBackward (keep : Array Bool) (k n : Nat) (test : Nat → Nat → Except
 /-- Match a context (type 5) or chained context (type 6) subtable at i.
 Result: the input positions (first is i) and the (sequence index, lookup)
 records. -/
-def matchContext (c : Ctx) (t s : Nat) (ids : Array Nat) (keep : Array Bool) (i : Nat) :
+def matchContext (b : ByteArray) (t s : Nat) (ids : Array Nat) (keep : Array Bool) (i : Nat) :
     Except String (Option (List Nat × List (Nat × Nat))) := do
-  let b := c.b
   need b s 2 "context header"
   let fmt := u16 b s
   let records (r n : Nat) : Except String (List (Nat × Nat)) := do
@@ -373,7 +372,7 @@ def applyAt (c : Ctx) : Nat → Nat → Array NominalGlyph → Nat → Except St
     let ids := run.map (·.id)
     for (t, s) in subs do
       if t == 5 || t == 6 then
-        let some (inputs, recs) ← matchContext c t s ids keep i | continue
+        let some (inputs, recs) ← matchContext c.b t s ids keep i | continue
         let mut cur := run
         let mut pos : List (Option Nat) := inputs.map some
         for (seq, nested) in recs do
