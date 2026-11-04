@@ -144,4 +144,15 @@ use instead of calling `sha256`/`sha384`/`sha512` directly. -/
   "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
 #guard hashBytes .sha256 "abc".toUTF8 == sha256 "abc".toUTF8
 
+/-! ### SHA-224 (FIPS 180-4 §6.3; the values of Python's hashlib) -/
+
+#guard bytesToHex (sha224 "".toUTF8) ==
+  "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f"
+#guard bytesToHex (sha224 "abc".toUTF8) ==
+  "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7"
+#guard bytesToHex (sha224 "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".toUTF8) ==
+  "75388b16512776cc5dba5da1fd890150b0c6455cb4f58b1952522525"
+#guard bytesToHex (sha224 (String.ofList (List.replicate 1000 'a')).toUTF8) ==
+  "4e8f0ce90b64661a2b5e84be6d93a7d9b76871062f1814433d04a03d"
+
 end L4Factoidal.Crypto.Tests

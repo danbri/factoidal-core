@@ -1,0 +1,10 @@
+# W3C XInclude test suite (2006-09-27): expected failures of `lake exe l4xinclude`.
+# case id <TAB> open issue. A listed case that passes is STALE and fails the run.
+Nist-include-48	https://github.com/danbri/factoidal/issues/1218
+Nist-include-49	https://github.com/danbri/factoidal/issues/1218
+Nist-include-56	https://github.com/danbri/factoidal/issues/1218
+harold-79	https://github.com/danbri/factoidal/issues/1219
+harold-87	https://github.com/danbri/factoidal/issues/1219
+harold-88	https://github.com/danbri/factoidal/issues/1219
+harold-89	https://github.com/danbri/factoidal/issues/1219
+harold-90	https://github.com/danbri/factoidal/issues/1219

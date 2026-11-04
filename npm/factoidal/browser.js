@@ -188,6 +188,8 @@ export const vcEd25519Verify = api.vcEd25519Verify;
 // XML Encryption 1.1 and JWE; AES through WebCrypto (lib/cipher-host.mjs)
 export const xmlDecrypt = api.xmlDecrypt;
 export const xmlEncrypt = api.xmlEncrypt;
+export const xmlVerify = api.xmlVerify;
+export const xmlSign = api.xmlSign;
 export const jweDecrypt = api.jweDecrypt;
 export const jweEncrypt = api.jweEncrypt;
 export const vcEddsaCreateFromCanonical = api.vcEddsaCreateFromCanonical;

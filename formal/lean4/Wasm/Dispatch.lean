@@ -67,6 +67,7 @@ import Wasm.Ops.Lws
 import Wasm.Ops.Solid
 import Wasm.Ops.LwsClient
 import Wasm.Ops.WebDAV
+import Wasm.Ops.LwsDataset
 import Wasm.Ops.Authz
 import Wasm.Ops.Toan
 import Wasm.Ops.Xmpp
@@ -75,6 +76,7 @@ import Wasm.Ops.XmppClient
 import Wasm.Ops.Crypto
 import Wasm.Ops.Jwe
 import Wasm.Ops.XmlEnc
+import Wasm.Ops.XmlDsig
 import Wasm.Ops.Formats
 import Wasm.Ops.Reasoning
 import Wasm.Ops.QueryExtras
@@ -153,6 +155,8 @@ def opNames : List String :=
   , "jweEncrypt"
   , "xmlDecrypt"
   , "xmlEncrypt"
+  , "xmlVerify"
+  , "xmlSign"
   , "xmppStanzaParse"
   , "ops" ]
 
@@ -193,7 +197,7 @@ def blobIoOpNames : List String :=
   [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit",
     "datasetQuadsBin", "sbm11Query", "sbm11PackFiles",
     "storeManifestInspectBytes", "storeQueryPlanBytes", "storeOpenBytes" ] ++
-  Ops.lwsBlobIoOpNames ++ Ops.webdavBlobIoOpNames
+  Ops.lwsBlobIoOpNames ++ Ops.webdavBlobIoOpNames ++ Ops.xmppWsBlobIoOpNames
 
 /-- Largest out region `blobEcho` builds: 67,108,864 bytes. A count above
 this is refused by name rather than made into an allocation the module
@@ -378,7 +382,9 @@ def lwsSolidOpNames : List String :=
   , "solidClientResponse"
   , "lwsClientStart"
   , "lwsClientStep"
-  , "lwsClientNewKey" ]
+  , "lwsClientNewKey"
+  , "lwsViewPlan"
+  , "lwsDatasetView" ]
 
 /-- The XMPP server-handle op names (`Wasm/Ops/XmppSession.lean`), served
 ONLY by `callIO`: a server and its sessions live in handle tables the pure
@@ -536,6 +542,8 @@ def callUncoded (op : String) (argsJson : String) : String :=
     | "jweEncrypt"           => arity1 op jweEncrypt args
     | "xmlDecrypt"           => arity1 op xmlDecrypt args
     | "xmlEncrypt"           => arity1 op xmlEncrypt args
+    | "xmlVerify"            => arity1 op xmlVerify args
+    | "xmlSign"              => arity1 op xmlSign args
     | "xmppStanzaParse"      => arity1 op xmppStanzaParse args
     -- Format, transform and reasoning ops (`formatOpNames`).
     | "jsonldToRdf"          => arity2 op jsonldToRdf args
@@ -793,6 +801,18 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
         match args with
         | [a, b] => pure (Ops.lwsClientNewKey a b)
         | args => pure (errJson s!"lwsClientNewKey expects 2 arguments, got {args.length}"))
+  -- The LWS dataset view (https://github.com/danbri/factoidal/issues/1011).
+  | "lwsViewPlan" =>
+      withArgs (fun args =>
+        match args with
+        | [a] => pure (Ops.lwsViewPlan a)
+        | [a, b] => pure (Ops.lwsViewPlan a (some b))
+        | args => pure (errJson s!"lwsViewPlan expects 1 or 2 arguments, got {args.length}"))
+  | "lwsDatasetView" =>
+      withArgs (fun args =>
+        match args with
+        | [a] => pure (Ops.lwsDatasetView a)
+        | args => pure (errJson s!"lwsDatasetView expects 1 argument, got {args.length}"))
   -- The XMPP server as handles (`Wasm/Ops/XmppSession.lean`).
   | "xmppOpen"           => withArgs (arityIO1 op Ops.xmppOpen)
   | "xmppClose"          => withArgs (arityIO1 op Ops.xmppClose)
@@ -800,8 +820,15 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "xmppSessionFeed"    => withArgs (arityIO2 op Ops.xmppSessionFeed)
   | "xmppSessionDeliver" => withArgs (arityIO2 op Ops.xmppSessionDeliver)
   | "xmppSessionClose"   => withArgs (arityIO1 op Ops.xmppSessionClose)
+  | "xmppSessionTlsUp"   => withArgs (arityIO1 op Ops.xmppSessionTlsUp)
+  | "xmppWsOpen"         => withArgs (arityIO2 op Ops.xmppWsOpen)
+  | "xmppMsgOpen"        => withArgs (arityIO2 op Ops.xmppMsgOpen)
+  | "xmppMsgFeed"        => withArgs (arityIO2 op Ops.xmppMsgFeed)
+  | "xmppMsgDeliver"     => withArgs (arityIO2 op Ops.xmppMsgDeliver)
+  | "xmppMsgClose"       => withArgs (arityIO1 op Ops.xmppMsgClose)
   | "xmppRosterGet"      => withArgs (arityIO2 op Ops.xmppRosterGet)
   | "xmppRosterSet"      => withArgs (arityIO3 op Ops.xmppRosterSet)
+  | "xmppStateLoad"      => withArgs (arityIO3 op Ops.xmppStateLoad)
   -- The outgoing XMPP client stream with HTTP over XMPP (`Wasm/Ops/XmppClient.lean`).
   | "xmppClientOpen"     => withArgs (arityIO1 op Ops.xmppClientOpen)
   | "xmppClientFeed"     => withArgs (arityIO2 op Ops.xmppClientFeed)
@@ -956,6 +983,23 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a, b] => Ops.webdavStepWith a b (some blob)
       | .ok args   => pure (errJson s!"webdavStep expects 2 arguments, got {args.length}",
                             ByteArray.empty)
+  -- XMPP over WebSocket (`Wasm/Ops/XmppSession.lean`): IN is what the
+  -- socket read, OUT what the host writes.
+  | "xmppWsFeed" =>
+      match decodeArgs argsJson with
+      | .error e => pure (errJson e, ByteArray.empty)
+      | .ok [a]  => Ops.xmppWsFeedWith a blob
+      | .ok args => pure (errJson s!"xmppWsFeed expects 1 argument, got {args.length}", ByteArray.empty)
+  | "xmppWsDeliver" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.xmppWsDeliverWith a b
+      | .ok args   => pure (errJson s!"xmppWsDeliver expects 2 arguments, got {args.length}", ByteArray.empty)
+  | "xmppWsClose" =>
+      match decodeArgs argsJson with
+      | .error e => pure (errJson e, ByteArray.empty)
+      | .ok [a]  => Ops.xmppWsCloseWith a
+      | .ok args => pure (errJson s!"xmppWsClose expects 1 argument, got {args.length}", ByteArray.empty)
   | "webdavResume" =>
       match decodeArgs argsJson with
       | .error e   => pure (errJson e, ByteArray.empty)

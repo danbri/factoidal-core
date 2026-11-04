@@ -18,6 +18,26 @@ in [the aggregate-order note](../../docs/designissues/2026-10-22-shared-aggregat
 
 ## Recursion and collection rules
 
+- **Calibrate the actual Lean execution thread before claiming a small-stack
+  pass.** `ulimit -s` alone does not limit the separate thread created by
+  `lean_run_main`. Set `LEAN_STACK_SIZE_KB`, unset `LEAN_MAIN_USE_THREAD`, and
+  run the existing non-tail StackControl at small and overflowing sizes, plus
+  the same large size with the default stack. On 2026-11-03 the first rendering
+  stress report used only RLIMIT_STACK; its 512 KiB claim was withdrawn and all
+  controls rerun with the runtime variable and a confirmed negative control.
+  See the [layout audit](../../docs/20261103-layout-stack-audit.md) and
+  [proved scene traversal](../../docs/20261103-rendering-scene-stack-lowering.md).
+
+- **Repeated exact Float decimal formatting can dominate scene output.**
+  Measure formatting separately from layout and CPU pixel checks. The renderer's
+  bit-keyed `Rendering.FloatFormat` cache stores only `javaDoubleString(bits)`;
+  `formatList_eq_map` proves exact strings and order without assuming Float-bit
+  injectivity. The SVG `@[csimp]` caller is checked in generated C. Native
+  formatting improved from599–1,348ms to8–30ms, while paired whole WASM
+  compilation improved1.70–2.00 times, not by the formatter's larger ratio.
+  Preserve full raw artifacts and use alternating paired measurements; see
+  [the renderer performance record](../../docs/20261102-lean-renderer-performance.md).
+
 - In a repeatedly invoked path, treat `xs.length`, `List.reverse`, `++`, and
   `String.toList` as costs to account for. `remaining.length` used to choose
   fuel inside every parser step is often an accidental quadratic scan.

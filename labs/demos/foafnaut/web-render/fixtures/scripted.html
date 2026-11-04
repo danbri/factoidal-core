@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><title>Lean DOM with QuickJS</title><style>
+body { background: #f7f4e9; color: #17243a; padding: 24px; }
+p { font-size: 20px; }
+a { display: block; padding: 12px; background: #d8e8f5; color: #17243a; }
+</style></head><body>
+<h1>Lean DOM with QuickJS</h1>
+<p id="message">Scripts are disabled.</p>
+<a id="change" href="#change">Click to update the Lean DOM</a>
+<script>
+let clicks = 0;
+document.getElementById('message').textContent = 'QuickJS loaded. Click the link.';
+document.getElementById('change').addEventListener('click', function () {
+  document.getElementById('message').textContent = 'Clicks: ' + (++clicks);
+});
+</script>
+</body></html>

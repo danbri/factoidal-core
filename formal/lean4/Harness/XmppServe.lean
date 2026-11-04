@@ -177,6 +177,16 @@ def performOut (h : Host) (seq : Nat) : Out → IO Bool
       h.lock.atomically (liftM (m := IO) (do h.out.putStr text; h.out.flush))
       return false
   | .route bare text => do routeTo h.opts bare text seq; return false
+  -- This harness knows a full JID is bound when its presence file exists.
+  -- Its mailbox is per ACCOUNT, so the stanza reaches every session of that
+  -- account that drains it (a stated limit of this carrier; the Node host
+  -- delivers to the one session). With no such session the bounce goes back
+  -- to this connection.
+  | .routeFull full text bounce => do
+      if ← (presencePath h.opts full).pathExists then routeTo h.opts (Server.bareOf full) text seq
+      else if let some b := bounce then
+        h.lock.atomically (liftM (m := IO) (do h.out.putStr b; h.out.flush))
+      return false
   | .saveRoster bare encoded => do
       let p := rosterPath h.opts bare
       IO.FS.createDirAll (p.parent.getD ".")
@@ -189,6 +199,15 @@ def performOut (h : Host) (seq : Nat) : Out → IO Bool
       else if ← p.pathExists then IO.FS.removeFile p
       return false
   | .close => return true
+  -- This harness never sets `Config.startTls` (socat holds TLS, XEP-0368),
+  -- so `step` never asks for the upgrade. If it did, closing is the only
+  -- safe answer: this process cannot do a TLS handshake.
+  | .startTls => return true
+  -- This harness never sets `Config.mucDomain`, so `step` never hands a
+  -- stanza to a room service; the rooms live in the wasm ops layer.
+  | .muc _ _ => return false
+  | .mix _ _ => return false
+  | .gc3 _ _ => return false
 
 /-- Drain this session's mailbox: read every file, unlink it, and hand
 its bytes to `Server.deliver`, which decides whether the session may

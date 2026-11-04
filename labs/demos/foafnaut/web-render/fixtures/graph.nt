@@ -1,0 +1,3 @@
+<https://e.test/alice> <https://e.test/name> "Alice"@en .
+<https://e.test/alice> <https://e.test/knows> _:bob .
+_:bob <https://e.test/name> "Bob & friends" .
