@@ -64,6 +64,8 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-01 | [Shared affine GPU row packing](20261101-affine-gpu-packing.md) | pending | current — representation proofs; GPU numeric refinement remains |
 | 2026-10-30 | [Shared UI geometry, policy and renderer admission](designissues/2026-10-30-shared-ui-policy.md) | pending | current: kernel checks and native regressions; interactive enforcement unfinished |
 | 2026-11-02 | [0.29 release public version pins](20261102-release-029-public-pins.md) | this commit | current |
+| 2026-10-31 | [Checked union-to-RDFS normalization preservation](20261031-union-rdfs-normalization-preservation.md) | 14f7a1f15 | current |
+| 2026-10-31 | [Concrete compositor union handoff](20261031-compositor-union-handoff.md) | cee2a223e | current |
 | 2026-10-31 | [Readable compositor evidence](20261031-compositor-evidence-explanations.md) | this commit | current |
 | 2026-10-31 | [Variable SERVICE backend correlation](20261031-service-variable-correlation.md) | pending | current |
 | 2026-10-29 | [Selectable static typing](20261029-static-typing.md) | eddfd724 | current: implementation, proof boundary and measurements |
