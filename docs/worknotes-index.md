@@ -67,6 +67,7 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-31 | [Checked union-to-RDFS normalization preservation](20261031-union-rdfs-normalization-preservation.md) | 14f7a1f15 | current |
 | 2026-10-31 | [Concrete compositor union handoff](20261031-compositor-union-handoff.md) | cee2a223e | current |
 | 2026-10-31 | [Readable compositor evidence](20261031-compositor-evidence-explanations.md) | this commit | current |
+| 2026-10-31 | [Variable SERVICE backend correlation](20261031-service-variable-correlation.md) | pending | current |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |
 | 2026-04-21 | [Large Turtle stack overflow fix sketch](2026-04-21-large-turtle-stack-overflow-fix-sketch.md) | c29698f98 | historical |
 | 2026-08 | [Factoidal verified RDF block engine](2026-08-blockengine.md) | 27f9308f4 | current: design, part 1 |
@@ -254,3 +255,4 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-03 | [Fresh web registry inventory](20261103-web-inventory-generation.md) | this commit | actual fresh remote Registry/Tests generation, witnessed UI/Rendering directory inventory and unchanged stage kinds; directory counts are not renderer passes |
 | 2026-11-03 | [LWS with large bodies](20261103-lws-large-bodies.md) | this commit | measured 1 MiB to 200 MiB PUT/GET in files mode, sealed; no size limits or quotas today (issue 1240); guidance: about 1 MiB per item, no media |
 | 2026-11-03 | [LWS ops: which reach resources without authorization?](20261103-lws-in-process-audit.md) | this commit | audit for issue 1238: only `lwsSnapshot` returns the whole storage with no authorization (host-only by design; clear text without a key); components get `{step, settled, close}`, not the engine |
+| 2026-10-31 | [Scoped query provider grants prototype](20261031-scoped-query-context-prototype.md) | same commit | experimental/unwired: actual resolver bounds, captured providers, 14 runtime passes plus one visible variable-SERVICE expected failure |
