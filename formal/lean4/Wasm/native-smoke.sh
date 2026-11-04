@@ -1843,6 +1843,53 @@ checkseq "lwsStep drives create, read, update and delete" "$TMP/lws-crud.json" \
    and rs[7]["ok"] is True
    and rs[8]["ok"] is False and "unknown LWS handle" in rs[8]["error"]'
 
+# --- LWS dataset view, version 2 (https://github.com/danbri/factoidal/issues/1011) ---
+# Wasm/Ops/LwsDataset.lean. The plan of a listing names the container and
+# every non-container member as the resources whose linkset to read; the view
+# has the table-of-contents graph (named by the storage description IRI of
+# the root's linkset), the document graph and one graph per linkset.
+python3 - "$TMP/lws-view-plan.json" <<'EOF'
+import json, sys
+listing = {"members": [{"id": "http://s/a/", "type": "Container"},
+                       {"id": "http://s/b.ttl", "type": "DataResource", "format": "text/turtle"},
+                       {"id": "http://s/c.png", "type": "DataResource", "format": "image/png"}]}
+json.dump([json.dumps(listing), "http://s/"], open(sys.argv[1], "w"))
+EOF
+check "lwsViewPlan: metadata is the container, then every member that is not a container" lwsViewPlan "$TMP/lws-view-plan.json" \
+  'r["ok"] is True and r["containers"] == ["http://s/a/"] and r["resources"] == ["http://s/b.ttl"]
+   and r["metadata"] == ["http://s/", "http://s/b.ttl", "http://s/c.png"]
+   and [s["resource"] for s in r["skipped"]] == ["http://s/c.png"]'
+
+python3 - "$TMP/lws-view.json" "$TMP/lws-view-nostorage.json" <<'EOF'
+import json, sys
+def ls(url, etag, ctx):
+    return {"url": url, "etag": etag, "linkset": {"linkset": [ctx]}}
+docs = {
+  "listings": [{"container": "http://s/", "done": {"members": [
+      {"id": "http://s/b.ttl", "type": "DataResource", "format": "text/turtle", "size": 19}]}}],
+  "reads": [{"resource": "http://s/b.ttl", "done": {"status": 200,
+      "headers": [["content-type", "text/turtle"], ["etag", "\"7\""]], "body": "<> <http://e/p> 1 ."}}],
+  "linksets": [
+    {"resource": "http://s/", "done": ls("http://s/?linkset", "\"r\"", {"anchor": "http://s/",
+        "type": [{"href": "https://www.w3.org/ns/lws#Container"}],
+        "https://www.w3.org/ns/lws#storage": [{"href": "http://s/.well-known/lws-storage"}]})},
+    {"resource": "http://s/b.ttl", "done": ls("http://s/b.ttl?linkset", "\"b\"",
+        {"up": [{"href": "./"}]})}]}
+json.dump([json.dumps(docs)], open(sys.argv[1], "w"))
+docs["linksets"] = docs["linksets"][1:]
+json.dump([json.dumps(docs)], open(sys.argv[2], "w"))
+EOF
+check "lwsDatasetView: the TOC graph is named by the storage IRI; one linkset graph triple" lwsDatasetView "$TMP/lws-view.json" \
+  'r["ok"] is True and r["toc"] == "http://s/.well-known/lws-storage" and r["graphs"] == 4
+   and "<http://s/b.ttl> <http://www.iana.org/assignments/relation/up> <http://s/> <http://s/b.ttl?linkset> ." in r["nquads"].splitlines()
+   and "<http://s/> <https://www.w3.org/ns/lws#items> <http://s/b.ttl> <http://s/.well-known/lws-storage> ." in r["nquads"].splitlines()
+   and "<http://s/> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/ns/lws#Container> <http://s/?linkset> ." in r["nquads"].splitlines()
+   and "<http://s/b.ttl> <http://schema.org/size> \"19\"^^<http://www.w3.org/2001/XMLSchema#long> <http://s/.well-known/lws-storage> ." in r["nquads"].splitlines()
+   and [e.get("linkset") for e in r["evidence"]] == [None, "http://s/?linkset", "http://s/b.ttl?linkset"]
+   and r["skipped"] == []'
+check "lwsDatasetView: no storage link in the root linkset -> error" lwsDatasetView "$TMP/lws-view-nostorage.json" \
+  'r["ok"] is False and "table-of-contents graph" in r["error"]'
+
 # --- WebDAV server (https://github.com/danbri/factoidal/issues/1066) ---
 # The handle reads mount files (webdavOpen, webdavLoad), then each request
 # is a program over storage operations: an lws mount's operation comes out
@@ -3460,7 +3507,8 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
                           "sbm11Query","sbm11PackFiles",
                           "storeManifestInspectBytes","storeQueryPlanBytes","storeOpenBytes",
                           "lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead",
-                          "webdavStep","webdavResume"]'
+                          "webdavStep","webdavResume",
+                          "xmppWsFeed","xmppWsDeliver","xmppWsClose"]'
 
 # SBM11 over host positioned reads (https://github.com/danbri/factoidal/issues/1009).
 # Natively the host is a pread of source/file (ffi/l4_hostread.c). A bad

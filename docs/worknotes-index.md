@@ -247,7 +247,10 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-01 | [Compositor pipeline files and FOAF pod library](20261101-compositor-pipeline-library.md) | — | bounded versioned documents, explicit FOAF storage discovery, ETag guarded writes and honest local validation limits |
 | 2026-11-02 | [SVG standards implementation overnight](20261102-svg-standards-overnight.md) | uncommitted | isolated SVG lane; defs/use/symbol, affine clipping, typed C/S/Q/T/A geometry and checked backend cache; native/WASM/GPU evidence and numeric limits recorded |
 
+| 2026-11-02 | [XMPP: STARTTLS, then WebSocket, MUC, MIX, GC3](20261102-xmpp-starttls.md) | same commit | current: step 1 (STARTTLS) landed; steps 2 to 5 in order |
 | 2026-11-02 | [Exact compiled UI overlap loop](20261102-ui-overlap-compiled-loop.md) | this commit | kernel-proved foldl compiler replacement, 106 UI guards and targeted emitted-C recursion/replacement audits; no allow-list exemption |
 
 | 2026-11-03 | [Linked RDF graphs in the Lean renderer](20261103-lean-rdf-renderer.md) | — | strict N-Triples to direct DOM and shared scene; complete native/WASM artifact equality and12,288 exact CPU/GPU image pixels |
 | 2026-11-03 | [Fresh web registry inventory](20261103-web-inventory-generation.md) | this commit | actual fresh remote Registry/Tests generation, witnessed UI/Rendering directory inventory and unchanged stage kinds; directory counts are not renderer passes |
+| 2026-11-03 | [LWS with large bodies](20261103-lws-large-bodies.md) | this commit | measured 1 MiB to 200 MiB PUT/GET in files mode, sealed; no size limits or quotas today (issue 1240); guidance: about 1 MiB per item, no media |
+| 2026-11-03 | [LWS ops: which reach resources without authorization?](20261103-lws-in-process-audit.md) | this commit | audit for issue 1238: only `lwsSnapshot` returns the whole storage with no authorization (host-only by design; clear text without a key); components get `{step, settled, close}`, not the engine |

@@ -129,7 +129,7 @@ def solidGuardContainment : Bool :=
   let (resp, _) := run cfg (req "GET" "/alice/") populated
   -- The response body is read back through the Turtle parser, so the check
   -- covers the serialisation as well as the containment relation.
-  let served := aclGraphOf (rtext resp)
+  let served := aclGraphOf "http://example.org/alice/" (rtext resp)
   let contains := served.filter (fun t => t.p == ldpContains)
   resp.status == 200 && hdr resp "content-type" == some "text/turtle" &&
   contains.length == 2 &&
@@ -491,7 +491,26 @@ def aclDoc : String :=
   acl:mode acl:Read.
 <http://example.org/groups#friends> vcard:hasMember <http://example.org/bob/card#me>."
 
-def aclGraph : List Triple := aclGraphOf aclDoc
+def aclGraph : List Triple := aclGraphOf "http://example.org/acl" aclDoc
+
+/-- Issue https://github.com/danbri/factoidal/issues/1241: an ACL document written with RELATIVE
+references, as Solid clients write them (`<#owner>`, `<./>`), grants what it says once it is
+parsed with its own IRI as the base; with no base it granted nothing. -/
+def relativeAclDoc : String := "@prefix acl: <http://www.w3.org/ns/auth/acl#> .
+<#owner> a acl:Authorization ;
+  acl:agent <http://example.org/alice/card#me> ;
+  acl:accessTo <./> ;
+  acl:default <./> ;
+  acl:mode acl:Read, acl:Write, acl:Control ."
+
+#guard
+  let g := aclGraphOf "http://example.org/alice/.acl" relativeAclDoc
+  let alice : Requester := { webId := some "http://example.org/alice/card#me" }
+  let bob : Requester := { webId := some "http://example.org/bob/card#me" }
+  g.length > 0 &&
+  decideAccess g "http://example.org/alice/" "http://example.org/alice/" false alice .write &&
+  decideAccess g "http://example.org/alice/notes/x" "http://example.org/alice/" true alice .read &&
+  !decideAccess g "http://example.org/alice/" "http://example.org/alice/" false bob .read
 
 def alice : Requester := { webId := some "http://example.org/alice/card#me" }
 def bob : Requester := { webId := some "http://example.org/bob/card#me" }

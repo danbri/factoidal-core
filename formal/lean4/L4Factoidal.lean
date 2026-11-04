@@ -59,6 +59,7 @@ import L4Factoidal.Dataflow.Compose
 import L4Factoidal.Dataflow.EndToEnd
 import L4Factoidal.Dataflow.Sources
 import L4Factoidal.Dataflow.SourcesTests
+import L4Factoidal.Dataflow.LwsSource
 import L4Factoidal.Dataflow.Registry
 import L4Factoidal.Dataflow.NodeSettings
 import L4Factoidal.Dataflow.Qt4NodeTests
@@ -737,6 +738,7 @@ import L4Factoidal.HTTP.RunQuery
 import L4Factoidal.HTTP.RunQueryTests
 import L4Factoidal.HTTP.Ops
 import L4Factoidal.HTTP.Wire
+import L4Factoidal.HTTP.WebSocket
 import L4Factoidal.SPARQL.StoreEndpoint
 import L4Factoidal.HTTP.OpsTests
 import L4Factoidal.Math.Subst
@@ -990,6 +992,9 @@ import L4Factoidal.Unified.RifEmbed
 -- carry one `#guard` per `guarded` row of each conformance registry, so
 -- importing them here makes every one of those checks a build gate.
 import L4Factoidal.LWS.Tests
+import L4Factoidal.LWS.DatasetView
+import L4Factoidal.LWS.DatasetViewRead
+import L4Factoidal.LWS.DatasetViewTests
 import L4Factoidal.LWS.PaginationLinksTests
 import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.AuthorizationTests
@@ -1081,7 +1086,12 @@ import L4Factoidal.XMPP.Sasl
 import L4Factoidal.XMPP.Scram
 import L4Factoidal.XMPP.Framing
 import L4Factoidal.XMPP.Server
+import L4Factoidal.XMPP.WebSocket
+import L4Factoidal.XMPP.Muc
+import L4Factoidal.XMPP.Mix
 import L4Factoidal.XMPP.Gc3
+import L4Factoidal.XMPP.Held
+import L4Factoidal.XMPP.StateCodec
 import L4Factoidal.XMPP.HttpOverXmpp
 import L4Factoidal.XMPP.HttpOverXmppTests
 import L4Factoidal.XMPP.ClientStream

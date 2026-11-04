@@ -201,6 +201,46 @@ id = "wasm:xmlSign"
 reason = "XML Signature 1.1 signature generation (XML/DSig11Sign.lean sign with the custodians of XML/DSig11Native.lean), reads no RDF data"
 
 [[nonstage]]
+id = "wasm:xmppWsOpen"
+reason = "opens an XMPP-over-WebSocket session with its Origin, path and subprotocol policy (Wasm/Ops/XmppSession.lean; RFC 6455 and RFC 7395 over Server.step); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppWsFeed"
+reason = "one socket read of an XMPP-over-WebSocket connection: handshake, frames, Server.step (Wasm/Ops/XmppSession.lean; RFC 6455 and RFC 7395 over Server.step); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppWsDeliver"
+reason = "a stanza routed to a bound XMPP-over-WebSocket session, as a text frame (Wasm/Ops/XmppSession.lean; RFC 6455 and RFC 7395 over Server.step); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppWsClose"
+reason = "ends an XMPP-over-WebSocket session with <close/> and a close frame (Wasm/Ops/XmppSession.lean; RFC 6455 and RFC 7395 over Server.step); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppMsgOpen"
+reason = "opens an XMPP session on a message carrier (RFC 7395 messages without HTTP or WebSocket frames: a MessagePort, postMessage), Wasm/Ops/XmppSession.lean over Server.step; reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppMsgFeed"
+reason = "one whole RFC 7395 message of a message-carrier XMPP session through Server.step (Wasm/Ops/XmppSession.lean msgFeedPure, theorem msgFeedPure_closed); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppMsgDeliver"
+reason = "a stanza routed to a bound message-carrier XMPP session, as one message (Wasm/Ops/XmppSession.lean over Server.deliver); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppMsgClose"
+reason = "ends a message-carrier XMPP session with <close/> and leaves its MUC rooms (Wasm/Ops/XmppSession.lean); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppStateLoad"
+reason = "the host installs one item of an XMPP server's state, read from its LWS state storage at start (Wasm/Ops/XmppSession.lean over XMPP/StateCodec.lean, round-trip theorems decodeHeld_encodeHeld, decodeChannel_encodeChannel, decodeGroup_encodeGroup); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppSessionTlsUp"
+reason = "the host reports a finished STARTTLS handshake to an XMPP session (Wasm/Ops/XmppSession.lean over Server.Session.tlsEstablished, theorem tlsEstablished_spec); reads no RDF data"
+
+[[nonstage]]
 id = "npm:.#xmlVerify"
 reason = "npm/factoidal/lib/api.mjs xmlVerify calls the wasm op xmlVerify (see wasm:xmlVerify)"
 
@@ -1166,6 +1206,18 @@ id = "npm:./xmpp/server#xmppServerOpsAvailable"
 reason = "reflection: whether the loaded engine has the ops (the op list (wasm op ops)); reads no RDF data"
 
 [[nonstage]]
+id = "npm:./lws/inpage#openInPageLwsStorage"
+reason = "runs one Lean LWS storage with no network (lwsOpen, lwsStep, lwsSnapshot, lwsClose; Wasm/Ops/Lws.lean) behind a fetch-shaped function; turns a fetch call into the ABI request record and the response record into a Response, every protocol decision is the engine's; reads no RDF data"
+
+[[nonstage]]
+id = "npm:./xmpp/inpage#openInPageXmppServer"
+reason = "runs the Lean XMPP server with no network, over the engine's message carrier (xmppMsg*, Wasm/Ops/XmppSession.lean); moves whole RFC 7395 messages and performs the engine's routes (xmpp/router.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./xmpp/inpage#inPageWebSocket"
+reason = "a WebSocket-shaped class over an in-page XMPP server, for RFC 7395 clients such as Strophe.js; moves messages only, every protocol decision is the engine's; reads no RDF data"
+
+[[nonstage]]
 id = "npm:./pack#packSupported"
 reason = "reflection: whether the loaded engine has the ops (the op list (wasm op ops)); reads no RDF data"
 
@@ -1527,6 +1579,26 @@ reason = "term-level: the XSD lexical-to-value mapping of one literal (RDF/Liter
 [[nonstage]]
 id = "wasm:literalFromValue"
 reason = "term-level: the literal of one JavaScript value (RDF/LiteralValue.lean jsValueLiteral), reads no graph"
+
+[[entry]]
+id = "wasm:lwsDatasetView"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader"]
+covers = "part"
+note = "Wasm/Ops/LwsDataset.lean: LWS.DatasetView.viewOfDocsJson reads each representation only through Dataflow.readers (readOfDone, the reader of formatOfMediaType of its Content-Type). Not covered: the blank-node scope per read (scopeDocument), the linkset documents (linksetOfDone reads JSON, RFC 9264 §4.2, with no RDF reader), the table-of-contents graph and the view (LWS.DatasetView.view; its source theorem lwsSource_query_sound has no registry stage yet, issue 1011), and the output text Dataset.toNQuads (no writer stage)."
+
+[[entry]]
+id = "npm:./lws/dataset#openLwsDataset"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader"]
+covers = "part"
+note = "npm/factoidal/lws/dataset.mjs: the LWS client's list, read and readLinkset, the ops lwsViewPlan and lwsDatasetView (see wasm:lwsDatasetView), then parse of the N-Quads view. Not covered: the HTTP crawl (assumption lwsReadsAtSnapshot) and the query, which is Dataset.query."
+
+[[nonstage]]
+id = "wasm:lwsViewPlan"
+reason = "the crawl plan of one container listing (LWS.DatasetView.planListing): which members to list, read or leave out, and whose linksets to read; reads no RDF data"
+
+[[nonstage]]
+id = "npm:./lws/dataset#lwsDatasetOpsAvailable"
+reason = "reflection: whether the loaded engine has the op lwsViewPlan; reads no RDF data"
 
 # Controlled Identifiers v1.0 (https://github.com/danbri/factoidal/issues/1100,
 # items 7 and 9): JSON documents and one host fetch; no RDF data, no stage.

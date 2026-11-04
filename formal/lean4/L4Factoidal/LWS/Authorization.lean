@@ -94,6 +94,13 @@ structure AuthzConfig where
   /-- The development mode with no authorization at all. Off unless a
   deployment opts in (`--insecure-no-auth`). -/
   insecureNoAuth : Bool := false
+  /-- A COMPONENT PRINCIPAL fixed by the host, for a storage that a component
+  (such as `xmpp-serve`) opens in-process and that no listener serves: no
+  token is read, every request is the request of this agent, and Web Access
+  Control still decides it (`decide_principal_agents`; issue
+  https://github.com/danbri/factoidal/issues/1238). Exclusive with
+  `insecureNoAuth` and with trusted issuers. -/
+  principal : Option String := none
   issuers : List TrustedIssuer := []
   /-- The storage IRI tokens must name in `aud`. `none`: the canonical URI
   of the storage, the storage description `<baseIri>.well-known/lws-storage`
@@ -459,6 +466,10 @@ def decide (V : Verifiers) (S : Store σ) (cfg : Config) (a : AuthzConfig) (now 
       else match who with
         | none => .respond (challenge cfg a path none)
         | some _ => .respond (forbidden cfg path)
+    match a.principal with
+    -- A component principal: the host names the agent; WAC decides.
+    | some p => gate (some p)
+    | none =>
     match authenticate V cfg a now r with
     | .needKeys i => .fetch i (issuerMetadataUrl i)
     | .refused rf => .respond (challenge cfg a path (some rf.errorCode))
@@ -593,6 +604,9 @@ theorem decide_insecure (V : Verifiers) (S : Store σ) (cfg : Config) (a : Authz
 /-- The default configuration is not the insecure mode. -/
 theorem default_not_insecure : (default : AuthzConfig).insecureNoAuth = false := rfl
 
+/-- The default configuration has no component principal. -/
+theorem default_no_principal : (default : AuthzConfig).principal = none := rfl
+
 /-- **With no trusted issuer, no token is valid.** -/
 theorem validateToken_no_issuers (V : Verifiers) (cfg : Config) (a : AuthzConfig) (now : Nat)
     (token : String) (h : a.issuers = []) (s i : String) :
@@ -659,5 +673,58 @@ theorem authenticate_anonymous (V : Verifiers) (cfg : Config) (a : AuthzConfig) 
     (r : Request) (h : r.header? "authorization" = none) :
     authenticate V cfg a now r = .anonymous := by
   simp [authenticate, h]
+
+/-! ## A component principal (2026-11-03, issue 1238)
+
+A storage that a component opens in-process (`xmpp-serve` keeping its state)
+has no client and no token: `AuthzConfig.principal` names the component's
+agent. `decide_principal_agents`: in that mode, the only agents a request can
+proceed as are the principal and the public (`none`, for the paths every
+client may read); no token, forged or real, makes it another agent. Web
+Access Control still decides each request for the principal (`gate`), so a
+principal granted one container reaches nothing else. -/
+
+/-- With no trusted issuer, no request is authenticated as anyone. -/
+theorem authenticate_no_issuers (V : Verifiers) (cfg : Config) (a : AuthzConfig) (now : Nat)
+    (r : Request) (h : a.issuers = []) (s : String) : authenticate V cfg a now r ≠ .authenticated s := by
+  unfold authenticate
+  split
+  · simp
+  · split
+    · split
+      · simp
+      · split
+        · simp
+        · rename_i token _ _ _
+          have hv := fun i => validateToken_no_issuers V cfg a now token h s i
+          split
+          · rename_i s' i' hval
+            intro heq
+            cases heq
+            exact hv i' hval
+          · simp
+          · simp
+    · simp
+
+/-- **A component principal acts as itself, or as the public, and never as
+anyone else.** -/
+theorem decide_principal_agents (V : Verifiers) (S : Store σ) (cfg : Config) (a : AuthzConfig)
+    (now : Nat) (r : Request) (st : σ) (p : String)
+    (hi : a.insecureNoAuth = false) (hp : a.principal = some p) (hn : a.issuers = [])
+    (who : Option String) (h : Authorization.decide V S cfg a now r st = .proceed who) :
+    who = none ∨ who = some p := by
+  have hA : ∀ s, authenticate V cfg a now r ≠ .authenticated s := authenticate_no_issuers V cfg a now r hn
+  unfold Authorization.decide at h
+  simp only [hi, hp, Bool.false_eq_true, ↓reduceIte] at h
+  generalize hau : authenticate V cfg a now r = au at h
+  cases au with
+  | authenticated s => exact absurd hau (hA s)
+  | _ =>
+    repeat' split at h
+    all_goals first
+      | contradiction
+      | (simp at h; done)
+      | (cases h; first | exact Or.inl rfl | exact Or.inr rfl)
+      | (rename_i heq; first | exact absurd heq (hA _) | skip)
 
 end L4Factoidal.LWS.Authorization

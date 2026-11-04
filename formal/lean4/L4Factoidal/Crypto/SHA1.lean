@@ -11,6 +11,12 @@ security boundary. SHA-1 is deprecated for collision resistance and
 is ported ONLY because the SPARQL 1.1 Recommendation lists it; nothing
 in this tree may use it for integrity or authentication.
 
+Second use, same tier (2026-11-02): RFC 6455 section 4.2.2's
+`Sec-WebSocket-Accept` (`HTTP/WebSocket.lean`), a hash of the client's
+public nonce and a fixed GUID. RFC 6455 sections 1.3 and 10.3: it shows
+only that the server read the handshake; it is not integrity or
+authentication.
+
 The F* tree assumes this function (`SPARQL11.Algebra.fst`
 `assume val hash_sha1 : string -> string`); the Lean purity doctrine
 replaces the assumption by this definition.

@@ -294,7 +294,7 @@ def effectiveAcl (S : Store σ) (st : σ) (p : String) : Option (String × Bool)
 No effective ACL resource means no Authorization can be matched, so access
 is denied — §5.3: "Access is granted when conforming Authorizations are
 matched, otherwise access is denied." -/
-def allowed (S : Store σ) (parseAcl : String → List Triple)
+def allowed (S : Store σ) (parseAcl : String → String → List Triple)
     (baseIri : String) (st : σ) (target : String) (who : Requester)
     (required : Mode) : Bool :=
   match effectiveAcl S st target with
@@ -303,7 +303,10 @@ def allowed (S : Store σ) (parseAcl : String → List Triple)
       match S.lookup st (aclPathOf owner) with
       | none => false
       | some e =>
-          decideAccess (parseAcl e.text) (iriOfPath baseIri target)
+          -- The ACL document is parsed with its own IRI as the base, so relative
+          -- references (`<#owner>`, `<./>`) mean what WAC documents mean by them
+          -- (issue https://github.com/danbri/factoidal/issues/1241).
+          decideAccess (parseAcl (iriOfPath baseIri (aclPathOf owner)) e.text) (iriOfPath baseIri target)
                  (iriOfPath baseIri owner) inherited who required
 
 end L4Factoidal.Solid.Server
