@@ -1,0 +1,12 @@
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix ex: <https://example.org/people/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+ex:alice a foaf:Person ; foaf:name "Alice" ; foaf:knows ex:bob, _:visitor .
+ex:bob foaf:name "Bob" ; foaf:knows ex:alice, ex:dan .
+_:visitor rdfs:label "Visitor" ; foaf:knows ex:carol .
+ex:carol a foaf:Person .
+ex:unconnected a foaf:Person ; foaf:name "Unconnected" .
+ex:dan a foaf:Person ; foaf:name "Dan \"D\"" ; foaf:knows ex:erin .
+ex:erin a foaf:Person ; foaf:name "Zo\u00EB" ; foaf:knows ex:farah .
+ex:farah a foaf:Person ; foaf:name "李" .

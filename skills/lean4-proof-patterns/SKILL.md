@@ -48,6 +48,14 @@ not proof rejection. The public integration's equality-chain failure also
 shows why model preservation does not establish reasoning completeness;
 see [the record](../../docs/20261021-owl-public-boundary.md).
 
+For shared visual operations and backend proofs, see the
+[Solving scene design](../../docs/designissues/2026-11-01-svg-scene-compositor.md)
+and the [ordered source-over batch theorem](../../docs/20261101-solving-source-over-batching.md).
+Keep CPU reference semantics, packed representations, GPU numeric behavior
+and host/driver behavior as separate proof obligations. In particular, Float
+operation order can be proved preserved without claiming associativity or
+GPU equivalence.
+
 - Core Lean 4 only (`formal/lean4/lakefile`, no Mathlib, no Batteries):
   `cases`, `induction`, `split`, `simp`, `simp only`, `dsimp only`,
   `decide`, `omega`, `rfl`, `exact`, `rw`, `generalize`, `rename_i`,

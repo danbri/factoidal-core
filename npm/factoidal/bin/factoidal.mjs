@@ -94,7 +94,7 @@ function err (line) { console.error(line) }
 // Owner, 2026-10-27: every protocol, authentication and security component,
 // the CLIs and the core library carry this notice. It is printed with every
 // help text and on standard error when a server, client or key command starts.
-const REVIEW_WARNING = 'EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.'
+const REVIEW_WARNING = 'EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.'
 
 /** The commands that serve, speak a protocol, or handle keys and tokens. */
 const WARNED_COMMANDS = new Set(['serve', 'lws-serve', 'solid-serve', 'solid-client', 'lws-client',
@@ -128,7 +128,7 @@ commands:
   authz-serve DIR             serve an OAuth 2.0 authorization server for LWS
                               (RFC 8414 metadata, JWK Set, RFC 8693 token exchange)
   authz-keys DIR              print the public JWK Set of an authorization server
-  xmpp-serve DIR              serve XMPP (RFC 6120/6121) over TCP or direct TLS
+  xmpp-serve DIR              serve XMPP (RFC 6120/6121): TCP, STARTTLS or direct TLS
   webdav-serve CONFIGDIR      serve local and remote LWS storages to file
                               browsers over WebDAV (RFC 4918)
   webdav-user FILE NAME       add or replace a user in a webdav-serve users
@@ -481,14 +481,8 @@ usage: factoidal lws-serve DIR (--authz DIR | --issuer IRI | --auth-config FILE 
 Starts a Node HTTP server that answers every request through the engine's
 lwsStep operation.
 
-DIR names the storage directory. The storage is kept in the engine
-handle and written to DIR/lws-state.json after every request that
-changed it (temporary file, fsync, rename), and read back on the next
-start. The engine decides the snapshot format and refuses a snapshot
-path with a dot segment or other traversal form
-(formal/lean4/L4Factoidal/LWS/Snapshot.lean).
-
-With --storage files (off by default) a write costs the same whatever the
+DIR names the storage directory. By default (--storage files, since
+2026-11-03) a write costs the same whatever the
 size of the storage: DIR holds one file per resource body (DIR/bodies/),
 a journal of metadata changes (DIR/lws-journal) and a metadata file
 (DIR/lws-files.json) that the journal is folded into from time to time.
@@ -499,6 +493,12 @@ lws-state.json.migrated. The engine decides every file name and every
 byte (formal/lean4/L4Factoidal/LWS/FileLayout.lean); the storage is still
 held in memory while the server runs
 (docs/designissues/2026-10-22-lws-storage-on-disk.md).
+
+With --storage snapshot the storage is written whole to DIR/lws-state.json
+after every request that changed it (temporary file, fsync, rename), and
+read back on the next start. The engine decides the snapshot format and
+refuses a snapshot path with a dot segment or other traversal form
+(formal/lean4/L4Factoidal/LWS/Snapshot.lean).
 
 Encryption at rest (off by default): when the environment variable
 FACTOIDAL_LWS_KEY holds a 32-byte key (64 hex digits, or 43 characters of
@@ -577,9 +577,9 @@ The engine decides the file, its contents and every refusal
   --storage snapshot|files
                   how DIR keeps the storage (config member storage;
                   default the environment variable FACTOIDAL_LWS_STORAGE,
-                  else snapshot): one snapshot file written whole after
-                  each change, or one file per body with a journal, so a
-                  write costs the same whatever the storage size
+                  else files): one file per body with a journal, so a
+                  write costs the same whatever the storage size, or one
+                  snapshot file written whole after each change
                   https://github.com/danbri/factoidal/issues/918
   --cors-origin ORIGIN
                   answer CORS (Fetch Standard) only for this origin, written
@@ -744,10 +744,13 @@ those operations landed makes this command exit 3 and say so.
 
 Specification: https://solidproject.org/TR/protocol`,
 
-  'xmpp-serve': `factoidal xmpp-serve - serve XMPP (RFC 6120 and RFC 6121) over TCP or direct TLS
+  'xmpp-serve': `factoidal xmpp-serve - serve XMPP (RFC 6120 and RFC 6121) over TCP, STARTTLS or direct TLS
 
 usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
-                            [--accounts FILE] [--cert FILE --key FILE]
+                            [--accounts FILE] [--cert FILE --key FILE [--starttls]]
+                            [--ws-port N [--ws-path PATH] [--ws-origin ORIGIN]...]
+                            [--muc DOMAIN] [--mix DOMAIN] [--gc3 DOMAIN]
+                            [--state-key FILE]
 
 Starts a Node TCP server that runs one engine session per connection and
 answers every byte through the engine's xmppSessionFeed operation.
@@ -761,11 +764,41 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
   --domain NAME    the domain the server is authoritative for (default localhost);
                    a stream for any other domain is answered host-unknown
   --port N         the port to bind; 0 takes an ephemeral one
-                   (default 5222, or 5223 with --cert and --key)
-  --host ADDRESS   the address to bind (default 127.0.0.1)
+                   (default 5222; 5223 with --cert and --key and no --starttls)
+  --host ADDRESS   the address to bind (default 127.0.0.1); without
+                   --cert and --key only a loopback address is accepted
   --accounts FILE  the accounts file (default DIR/accounts)
-  --cert FILE      PEM certificate chain: XEP-0368 direct TLS, no STARTTLS
+  --cert FILE      PEM certificate chain: XEP-0368 direct TLS, or STARTTLS with --starttls
   --key FILE       PEM private key for --cert
+  --starttls       listen in clear and REQUIRE STARTTLS (RFC 6120 section 5)
+                   before anything else; no SASL mechanism is offered and no
+                   credential is accepted until the TLS handshake finishes
+  --ws-port N      also serve XMPP over WebSocket (RFC 7395, the "xmpp"
+                   subprotocol of RFC 6455) for browser clients such as
+                   Strophe.js; wss: with --cert and --key, else loopback only
+  --ws-path PATH   the WebSocket endpoint path (default /xmpp-websocket)
+  --ws-origin ORIGIN  a browser Origin allowed to connect, e.g.
+                   http://localhost:5173 (repeatable); a request from any
+                   other Origin is refused 403, and one with no Origin
+                   (not a browser) is accepted only when no --ws-origin is given
+  --muc DOMAIN     also serve XEP-0045 multi-user chat rooms at DOMAIN, e.g.
+                   conference.example.com: temporary rooms, made by the first
+                   join and gone with the last occupant; no history, no
+                   configuration, no persistence (L4Factoidal/XMPP/Muc.lean)
+  --mix DOMAIN     also serve XEP-0369 MIX channels at DOMAIN, e.g. mix.example.com,
+                   joined through this server (XEP-0405 MIX-PAM); channels are
+                   made by an IQ <create/>, kept in memory only, JID-hidden; no
+                   PubSub nodes, no archive (L4Factoidal/XMPP/Mix.lean)
+  --state-key FILE keep the server's state across restarts: rosters, messages held
+                   for offline accounts, MIX channels and GC3 groups, in an LWS
+                   storage in DIR/state, sealed (ChaCha20-Poly1305) under the key
+                   in FILE (64 hex digits; keep FILE outside DIR). A wrong key
+                   stops the start. Plaintext roster files are migrated, then
+                   deleted. Without it, that state is lost at a restart.
+  --gc3 DOMAIN     also serve PROTOTYPE "Groupchat 3.0" groups at DOMAIN: persistent
+                   membership, stable participant ids, optional events. There is
+                   no published GC3 spec; every wire format is invented and listed
+                   in L4Factoidal/XMPP/Gc3.lean and danbri/factoidal issue 1236
 
 The server makes no protocol decision. Stream negotiation, SASL PLAIN and
 SCRAM-SHA-256, resource binding, the roster, presence subscription and
@@ -774,7 +807,7 @@ disco#info are answered by formal/lean4/L4Factoidal/XMPP/. A WebAssembly
 module built before the session operations landed makes this command
 exit 3 and say so.
 
-Not implemented: STARTTLS (use --cert/--key), server-to-server federation,
+Not implemented: SCRAM channel binding, server-to-server federation,
 MUC/MIX/GC3 rooms.
 
 Specifications: https://www.rfc-editor.org/rfc/rfc6120 and
@@ -1150,7 +1183,7 @@ function parseArguments (args, valueOptions) {
 class UsageError extends Error {}
 
 /** Options that may be given more than once; their value is the list. */
-const REPEATABLE_OPTIONS = new Set(['cors-origin', 'saml-idp', 'saml-decrypt-key', 'allow-host', 'allow-origin'])
+const REPEATABLE_OPTIONS = new Set(['cors-origin', 'saml-idp', 'saml-decrypt-key', 'allow-host', 'allow-origin', 'ws-origin'])
 
 const VALUE_OPTIONS = {
   xpath4: new Set(['expression', 'file', 'input', 'format']),
@@ -1178,7 +1211,7 @@ const VALUE_OPTIONS = {
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
-  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key']),
+  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'mix', 'gc3', 'state-key']),
   'webdav-serve': new Set(['port', 'host', 'users', 'guest', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
@@ -2825,9 +2858,11 @@ async function commandXmppServe (positional, options) {
   if (useTls && (typeof options.cert !== 'string' || typeof options.key !== 'string')) {
     throw new UsageError('--cert and --key go together')
   }
+  const startTls = options.starttls === true
+  if (startTls && !useTls) throw new UsageError('--starttls needs --cert and --key')
   const settings = {
     dir: positional[0],
-    port: servePort(options, useTls ? 5223 : 5222),
+    port: servePort(options, useTls && !startTls ? 5223 : 5222),
     host: serveHost(options),
     onError: (error) => { if (!quiet) err(`xmpp-serve: ${error.message}`) }
   }
@@ -2836,6 +2871,51 @@ async function commandXmppServe (positional, options) {
   if (useTls) {
     settings.cert = await fs.readFile(options.cert)
     settings.key = await fs.readFile(options.key)
+  }
+  if (startTls) settings.startTls = true
+  if (options['state-key'] !== undefined) {
+    if (typeof options['state-key'] !== 'string') throw new UsageError('--state-key needs a FILE')
+    // 64 hex digits or base64url of 32 bytes; the engine checks it.
+    settings.stateKey = (await fs.readFile(options['state-key'], 'utf8')).trim()
+  }
+  if (options.muc !== undefined) {
+    if (typeof options.muc !== 'string' || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(options.muc)) {
+      throw new UsageError('--muc needs a domain name, e.g. conference.example.com')
+    }
+    settings.mucDomain = options.muc
+  }
+  if (options.mix !== undefined) {
+    if (typeof options.mix !== 'string' || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(options.mix)) {
+      throw new UsageError('--mix needs a domain name, e.g. mix.example.com')
+    }
+    if (options.mix === options.muc) throw new UsageError('--mix and --muc need different domains')
+    settings.mixDomain = options.mix
+  }
+  if (options.gc3 !== undefined) {
+    if (typeof options.gc3 !== 'string' || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(options.gc3)) {
+      throw new UsageError('--gc3 needs a domain name, e.g. gc3.example.com')
+    }
+    if (options.gc3 === options.muc || options.gc3 === options.mix) throw new UsageError('--gc3 needs a domain of its own')
+    settings.gc3Domain = options.gc3
+  }
+  if (options['ws-port'] !== undefined) {
+    const wsPort = Number(options['ws-port'])
+    if (!Number.isInteger(wsPort) || wsPort < 0 || wsPort > 65535) throw new UsageError('--ws-port needs a port number')
+    const origins = options['ws-origin'] === undefined ? []
+      : Array.isArray(options['ws-origin']) ? options['ws-origin'] : [options['ws-origin']]
+    settings.websocket = {
+      port: wsPort,
+      path: typeof options['ws-path'] === 'string' ? options['ws-path'] : '/xmpp-websocket',
+      allowedOrigins: origins,
+      allowNoOrigin: origins.length === 0
+    }
+    if (useTls) { settings.websocket.cert = settings.cert; settings.websocket.key = settings.key }
+  }
+  // Invariant I4 (docs/designissues/2026-10-28-feature-combination-safety.md,
+  // C4): with no TLS this listener offers PLAIN, which sends the password in
+  // clear, so it binds to loopback only.
+  if (!useTls && !/^(127\.\d+\.\d+\.\d+|::1|localhost)$/.test(settings.host)) {
+    throw new UsageError(`xmpp-serve: no TLS on ${settings.host}: give --cert and --key (with --starttls for port 5222), or bind to loopback`)
   }
   let running
   try {
@@ -2849,9 +2929,19 @@ async function commandXmppServe (positional, options) {
   if (!quiet) {
     err(`xmpp-serve: listening on ${running.origin} for domain ${running.xmpp.domain}` +
         ` (${running.xmpp.accounts} accounts, state ${positional[0]}` +
-        (useTls ? ', direct TLS)' : ', PLAINTEXT: no TLS on this listener)'))
+        (startTls ? ', STARTTLS required)' : useTls ? ', direct TLS)' : ', PLAINTEXT: no TLS on this listener)'))
+    if (settings.mucDomain) err(`xmpp-serve: multi-user chat (XEP-0045) at ${settings.mucDomain}`)
+    if (settings.mixDomain) err(`xmpp-serve: MIX channels (XEP-0369, joined by XEP-0405) at ${settings.mixDomain}`)
+    if (settings.gc3Domain) err(`xmpp-serve: GC3 PROTOTYPE groups at ${settings.gc3Domain} (no published spec; invented wire format)`)
+    if (settings.stateKey) err(`xmpp-serve: state kept across restarts in ${positional[0]}/state, sealed under the state key`)
+    else err('xmpp-serve: WARNING: no --state-key: held messages, MIX channels and GC3 groups are lost at a restart, and rosters are written in clear')
+  }
+  if (running.wsOrigin && !quiet) {
+    err(`xmpp-serve: XMPP over WebSocket on ${running.wsOrigin}` +
+        (settings.websocket.allowedOrigins.length ? ` for Origin ${settings.websocket.allowedOrigins.join(', ')}` : ' (no browser Origin allowed)'))
   }
   out(running.origin)
+  if (running.wsOrigin) out(running.wsOrigin)
   return untilInterrupted(running, quiet)
 }
 

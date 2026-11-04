@@ -795,12 +795,18 @@ protocol, auth/security code, CLIs etc (core library) “EXPERIMENTAL
 UNDEREEVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS
 WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.”"
 
-- The notice, spelled `EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.`, is at the top of `README.md`,
+- The notice, spelled `EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.`, is at the top of `README.md`,
   `npm/factoidal/README.md`, the hub index and the hub servers page, in the
   npm package description, in every `factoidal` help text, and on standard
   error when a server, client or key command starts (`REVIEW_WARNING` in
   `npm/factoidal/bin/factoidal.mjs`). A new server, protocol or security
   surface carries it too.
+- Spelling: "UNDER-REVIEWED". Owner, 2026-10-28, verbatim: "UNDER-REVIWED",
+  to the question "Should the notice say "UNREVIEWED" (what ships now and what
+  CLAUDE.md records) or "UNDER-REVIEWED"?"; then, 2026-11-03, "2 sure", to
+  the proposal to change only the notice to "UNDER-REVIEWED" everywhere.
+  Packages up to 0.29.0 carry "UNREVIEWED"; the change ships in the next
+  release.
 - AES (for XML Encryption and JWE, https://github.com/danbri/factoidal/issues/1081):
   WebCrypto on every JavaScript host, decisions in Lean, measured by vectors
   and a differential run. Owner, verbatim: "Why not just WebCrypto everywhere
@@ -891,6 +897,30 @@ an issue: `docs/designissues/2026-10-29-mobile-native-library.md`,
 https://github.com/danbri/factoidal/issues/1198 (native library from Lean's C
 with the wasm's C ABI; graphics from Lean in its section 8). Its section 9
 decisions are still open.
+
+### Fonts: safety policy, Lean shaper, pinned OFL fonts (owner, 2026-11-03)
+
+Owner, verbatim: "fonts embed software". Answers to four questions:
+"1. Make refusals understandable, and configurable, with current safety
+settings easily accessed. We can also have a \"safe\" mode that uses only a
+baked in, no wasm etc. ascii font." "2 yes, if license good." "3. we should
+note dsig and exercise our factoidal/core signature checking but not read too
+much into it." "4. our npm already huge so pinned i guess".
+
+- One Lean `FontPolicy` value decides what font content is used; modes `safe`
+  (baked-in ASCII bitmap font only), `standard`, `custom`. CFF, GSUB/GPOS and
+  COLR are interpreted in Lean with fuel; hinting is not run; AAT, Graphite and
+  `Wasm` tables are refused. A refusal names the code, the font, the table,
+  the risk, the setting and its source, and what the renderer did instead.
+  Allowing a table refused by default needs a `--dangerously-allow-font-*`
+  option and a start warning.
+- The shaper is ported to Lean; HarfBuzz's tests are the target and native
+  HarfBuzz/FreeType is a differential oracle. No test data is vendored before
+  its licence is recorded.
+- `DSIG` is checked and the result recorded; it never changes trust or policy.
+- Fonts are a pinned OFL set fetched and checked by sha256; not in npm.
+- Record: `docs/designissues/2026-11-03-font-trust-and-safety-policy.md`;
+  tracking https://github.com/danbri/factoidal/issues/1233.
 
 ### One owner per release (owner, 2026-10-28)
 
@@ -1192,6 +1222,18 @@ commit-sized goal; ship code sketches, not "figure it out". When
 dispatching against the COTTAS backend or evaluator, the agent prompt
 MUST forbid additions to `experimental_ocaml_glue/` other than the
 rule-#11 acceptable forms.
+
+**Every agent pushes its work off the machine after each step that passes**
+(owner, 2026-11-01, verbatim: "I prefer main but any beanch is better than no
+effing backup"): commit and push to `wip/<issue>-<topic>`, land on `main` by
+PR when the gates pass. A brief never says "do not push"; it says "do not
+merge". **No Lean build artifacts on the owner's laptop** (owner, same day:
+"Don’t fill laptop with lean build artifacts!"): run Lean and wasm builds in
+cloud sessions or `danbri/factoidal-builds`, and remove a worktree's
+`formal/lean4/.lake` and `.wasm-work` once its commits are pushed. Cost: on
+2026-10-29 two agents briefed "not pushed" stopped at the usage limit with
+all work uncommitted and lost it; worktree build caches filled the laptop
+(more than 200 GB). Rule 3 of `skills/subagent-prompting/SKILL.md`.
 
 **Check `df -h /` before dispatching a worktree agent, cap concurrency at
 three, and remove each worktree in the same turn you land its commit.**

@@ -1,0 +1,22 @@
+rsa2048-sha1.xml	valid	-	enveloped, URI '', RSA-2048 PKCS#1 v1.5 sha1, exc-c14n
+rsa2048-sha224.xml	valid	-	enveloped, URI '', RSA-2048 PKCS#1 v1.5 sha224, exc-c14n
+rsa2048-sha256.xml	valid	-	enveloped, URI '', RSA-2048 PKCS#1 v1.5 sha256, exc-c14n
+rsa2048-sha384.xml	valid	-	enveloped, URI '', RSA-2048 PKCS#1 v1.5 sha384, exc-c14n
+rsa2048-sha512.xml	valid	-	enveloped, URI '', RSA-2048 PKCS#1 v1.5 sha512, exc-c14n
+hmac-sha1.xml	valid	secret	enveloped, HMAC-sha1, key 'secret'
+hmac-sha224.xml	valid	secret	enveloped, HMAC-sha224, key 'secret'
+hmac-sha256.xml	valid	secret	enveloped, HMAC-sha256, key 'secret'
+hmac-sha384.xml	valid	secret	enveloped, HMAC-sha384, key 'secret'
+hmac-sha512.xml	valid	secret	enveloped, HMAC-sha512, key 'secret'
+p256-sha256.xml	valid	-	enveloped, ECDSA P-256 SHA-256, ECKeyValue
+rsa2048-sha256-c14n10.xml	valid	-	enveloped, RSA-2048 SHA-256, c14n10
+rsa2048-sha256-c14n10c.xml	invalid	-	enveloped, URI '#d1', c14n10c: signxml digested the comment that §4.4.3.3 removes
+rsa2048-sha256-c14n11.xml	valid	-	enveloped, RSA-2048 SHA-256, c14n11
+rsa2048-sha256-c14n11c.xml	invalid	-	enveloped, URI '#d1', c14n11c: signxml digested the comment that §4.4.3.3 removes
+rsa2048-sha256-exc10c.xml	invalid	-	enveloped, URI '#d1', exc10c: signxml digested the comment that §4.4.3.3 removes
+rsa2048-sha256-id.xml	valid	-	enveloped, URI '#d1' (an ID attribute)
+rsa2048-sha256-enveloping.xml	valid	-	enveloping, ds:Object
+neg-content-changed.xml	invalid	-	content changed after signing: digest mismatch
+neg-wrapped-duplicate-id.xml	invalid	-	a second element with the referenced ID (signature wrapping)
+neg-signature-value.xml	invalid	-	first character of SignatureValue changed
+neg-hmac-wrong-key.xml	invalid	Secret	HMAC verified with the key 'Secret'

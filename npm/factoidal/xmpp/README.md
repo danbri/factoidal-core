@@ -65,7 +65,11 @@ against an older committed bundle instead of getting a confusing
 mkdir -p state && printf 'juliet:r0m30\nromeo:juli3t\n' > state/accounts
 npx factoidal xmpp-serve state --domain localhost            # plaintext on 5222
 npx factoidal xmpp-serve state --cert fullchain.pem --key privkey.pem   # XEP-0368 direct TLS on 5223
+npx factoidal xmpp-serve state --cert fullchain.pem --key privkey.pem --starttls   # STARTTLS required on 5222
 ```
+
+Without `--cert` and `--key` the listener has no TLS and offers PLAIN, so
+the command binds it to a loopback address only.
 
 ```js
 import { listen } from '@factoidal/core/xmpp/server'
@@ -90,6 +94,7 @@ process per connection behind socat) serves; the wasm session ops are
 | `xmppSessionFeed` | `[session, text]` | `{ ok, send: [...], route: [{to, text}], presence: [...], rostersSaved: [...], close, stage, bare, full, bufferedBytes }` |
 | `xmppSessionDeliver` | `[session, text]` | `{ ok, delivered, send }` — `delivered:false` for an unbound session; nothing is lost |
 | `xmppSessionClose` | `[session]` | `{ ok, send }` |
+| `xmppSessionTlsUp` | `[session]` | `{ ok, stage }` — after a feed answered `startTls: true` and the host finished the TLS handshake; refused otherwise |
 | `xmppRosterGet` / `xmppRosterSet` | `[server, bare]` / `[server, bare, encoded]` | the roster in the engine's own on-disk encoding |
 | `xmppClose` | `[server]` | `{ ok, sessions }` |
 
@@ -120,7 +125,10 @@ What it speaks: RFC 6120 stream negotiation, stream errors, SASL PLAIN
 and SCRAM-SHA-256, resource binding; RFC 6121 roster, presence
 subscription and broadcast, message delivery with the server-stamped
 `from`; XEP-0030 `disco#info`; XEP-0368 direct TLS with `--cert`/`--key`.
-Not: STARTTLS, server-to-server federation, MUC/MIX/GC3 rooms, PRECIS.
+RFC 6120 section 5 STARTTLS with `startTls: true` (op `xmppSessionTlsUp`;
+the engine decides, the host does the handshake; see the theorems in
+`formal/lean4/L4Factoidal/XMPP/Server.lean`).
+Not: server-to-server federation, MUC/MIX/GC3 rooms, PRECIS.
 Known limitation shared with the native harness: one SCRAM salt per
 server (`saltB64` in the config), not one per account.
 
