@@ -272,3 +272,16 @@ CFF fonts of the HarfBuzz suite.
 
 Suite: 4,042 pass, 573 fail, 170 refused (out of 4,785 applicable); no
 regressions. Of the 170 refusals, 140 are right-to-left text.
+
+### 8.3 Mark filtering sets (2026-11-04)
+
+A lookup with flag UseMarkFilteringSet (0x10) reads its set index after the
+subtable offsets, and GDEF 1.2 MarkGlyphSetsDef gives the coverage of each
+set. The skip rule is HarfBuzz `match_properties_mark`: the ignore flags are
+checked first; then a mark is kept only when the set covers it, and the mark
+attachment type is not checked. A GDEF before version 1.2 covers nothing.
+GSUB, GPOS and the `kern` path use the one function `skipsWithSet`.
+
+Suite: 4,043 pass, 574 fail, 168 refused (out of 4,785 applicable); no
+regressions. One test now passes (`positioning-features`); one changed from
+refused to fail (`context-matching`, Bengali), which needs the Indic shaper.

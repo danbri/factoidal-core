@@ -14,7 +14,8 @@ Profile limits, each a refusal or a stated difference, not a silent one:
   `DFLT`; the default language system of that script;
 * lookup flags IgnoreBaseGlyphs, IgnoreLigatures, IgnoreMarks and the mark
   attachment type use the GDEF glyph and mark attachment class definitions;
-  mark filtering sets are refused;
+  a mark filtering set (GDEF 1.2 MarkGlyphSetsDef) keeps only the marks it
+  covers, as in HarfBuzz;
 * lookups other than type 2 in the `kern` feature are refused.
 Every loop is bounded by a count read from the font and checked against the
 table bounds, and by `Limits.lookupOperationsPerRun`.
@@ -87,6 +88,42 @@ def skips (flag : Nat) (c : Nat × Nat) : Bool :=
   let attach := flag / 256
   (flag &&& 2 != 0 && c.1 == 1) || (flag &&& 4 != 0 && c.1 == 2) || (flag &&& 8 != 0 && c.1 == 3) ||
   (attach != 0 && c.1 == 3 && c.2 != attach)
+
+/-- Mark filtering set index of the lookup at `lk` with `nsub` subtables,
+when its flag has UseMarkFilteringSet (0x10). -/
+def lookupMarkSet (b : ByteArray) (lk nsub flag : Nat) : Except String (Option Nat) := do
+  if flag &&& 0x10 == 0 then return none
+  need b (lk + 6 + 2 * nsub) 2 "mark filtering set"
+  return some (u16 b (lk + 6 + 2 * nsub))
+
+/-- Whether mark glyph set `set` of GDEF covers glyph `g`. A GDEF before
+version 1.2, or with no MarkGlyphSetsDef, covers nothing, as in HarfBuzz. -/
+def markSetCovers (b : ByteArray) (gdef? : Option Nat) (set g : Nat) : Except String Bool := do
+  let some gd := gdef? | return false
+  need b gd 12 "GDEF header"
+  if u16 b (gd + 2) < 2 then return false
+  need b gd 14 "GDEF 1.2 header"
+  let ms := u16 b (gd + 12)
+  if ms == 0 then return false
+  let t := gd + ms
+  need b t 4 "mark glyph sets"
+  let n := u16 b (t + 2)
+  if set ≥ n then return false
+  need b (t + 4 + 4 * set) 4 "mark glyph set offset"
+  return (← coverage b (t + u32 b (t + 4 + 4 * set)) g).isSome
+
+/-- `skips` with the lookup's mark filtering set (HarfBuzz
+`match_properties_mark`): the ignore flags come first; then a mark is kept
+only when the set covers it, and the attachment type is not checked. -/
+def skipsWithSet (b : ByteArray) (gdef? : Option Nat) (flag : Nat) (set? : Option Nat)
+    (c : Nat × Nat) (g : Nat) : Except String Bool := do
+  match set? with
+  | some set =>
+    if (flag &&& 2 != 0 && c.1 == 1) || (flag &&& 4 != 0 && c.1 == 2) || (flag &&& 8 != 0 && c.1 == 3) then
+      return true
+    if c.1 == 3 then return !(← markSetCovers b gdef? set g)
+    return false
+  | none => return skips flag c
 
 /-- Size in bytes of a value record of this format. -/
 def valueSize (fmt : Nat) : Nat := 2 * ((List.range 8).filter fun k => fmt / 2 ^ k % 2 == 1).length
@@ -222,11 +259,11 @@ def kern (b : ByteArray) (dir : Array TableRecord) (text : String) (run : Array 
     need b lk 6 "lookup"
     let ltype := u16 b lk
     let flag := u16 b (lk + 2)
-    if flag &&& 0x10 != 0 then
-      throw s!"font.layout.unsupported: kern lookup {l} uses a mark filtering set (https://github.com/danbri/factoidal/issues/1233)"
-    let skipped (k : Nat) : Bool := skips flag classes[k]!
     let nsub := u16 b (lk + 4)
     need b (lk + 6) (2 * nsub) "subtable offsets"
+    let set? ← lookupMarkSet b lk nsub flag
+    let skipArr ← (Array.range run.size).mapM fun k => skipsWithSet b gdef? flag set? classes[k]! run[k]!.id
+    let skipped (k : Nat) : Bool := skipArr[k]!
     -- Resolve extension subtables to their type 2 targets.
     let mut subs : Array Nat := #[]
     for k in [0:nsub] do

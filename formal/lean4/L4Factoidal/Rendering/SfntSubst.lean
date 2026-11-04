@@ -15,7 +15,7 @@ Lookup types: 1 (single), 2 (multiple), 4 (ligature), 5 (context) and 6
 mark attachment type use the GDEF glyph and mark attachment classes of the
 current glyphs. Nested lookups of a context rule apply in record order at the
 matched positions, with recursion bounded at depth 8. Refused, with a message
-naming the lookup: types 3 and 8, and mark filtering sets.
+naming the lookup: types 3 and 8. Mark filtering sets apply as in HarfBuzz.
 Feature variations (`rvrn` substitutions chosen by axis values) are not read;
 the default feature table is used. OpenType GSUB chapter is the reference;
 HarfBuzz is the differential oracle.
@@ -155,7 +155,7 @@ structure Ctx where
   limits : Limits
 
 /-- Lookup type (extensions resolved), flag and subtables (type, offset). -/
-def lookupInfo (c : Ctx) (l : Nat) : Except String (Nat × Nat × Array (Nat × Nat)) := do
+def lookupInfo (c : Ctx) (l : Nat) : Except String (Nat × (Nat × Option Nat) × Array (Nat × Nat)) := do
   let b := c.b
   if l ≥ c.count then throw "font.file.malformed: GSUB lookup index"
   need b (c.lookupList + 2 + 2 * l) 2 "lookup offset"
@@ -163,10 +163,9 @@ def lookupInfo (c : Ctx) (l : Nat) : Except String (Nat × Nat × Array (Nat × 
   need b lk 6 "lookup"
   let ltype := u16 b lk
   let flag := u16 b (lk + 2)
-  if flag &&& 0x10 != 0 then
-    throw s!"font.layout.unsupported: GSUB lookup {l} uses a mark filtering set (https://github.com/danbri/factoidal/issues/1233)"
   let nsub := u16 b (lk + 4)
   need b (lk + 6) (2 * nsub) "subtable offsets"
+  let set? ← lookupMarkSet b lk nsub flag
   let mut subs : Array (Nat × Nat) := #[]
   for k in [0:nsub] do
     let s := lk + u16 b (lk + 6 + 2 * k)
@@ -177,11 +176,11 @@ def lookupInfo (c : Ctx) (l : Nat) : Except String (Nat × Nat × Array (Nat × 
   for (t, _) in subs do
     unless t == 1 || t == 2 || t == 4 || t == 5 || t == 6 do
       throw s!"font.layout.unsupported: GSUB lookup {l} has type {t} (https://github.com/danbri/factoidal/issues/1233)"
-  return (if ltype == 7 then (subs[0]?.map (·.1)).getD 7 else ltype, flag, subs)
+  return (if ltype == 7 then (subs[0]?.map (·.1)).getD 7 else ltype, (flag, set?), subs)
 
 /-- Positions that a lookup flag does not skip. -/
-def unskipped (c : Ctx) (flag : Nat) (run : Array NominalGlyph) : Except String (Array Bool) :=
-  run.mapM fun g => do pure !(skips flag (← gdefClasses c.b c.gdef? g.id))
+def unskipped (c : Ctx) (flag : Nat × Option Nat) (run : Array NominalGlyph) : Except String (Array Bool) :=
+  run.mapM fun g => do pure !(← skipsWithSet c.b c.gdef? flag.1 flag.2 (← gdefClasses c.b c.gdef? g.id) g.id)
 
 def nextOf (keep : Array Bool) (k : Nat) : Option Nat :=
   ((List.range (keep.size - k - 1)).map (k + 1 + ·)).find? (keep[·]!)

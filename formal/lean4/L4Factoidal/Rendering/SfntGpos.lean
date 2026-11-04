@@ -23,7 +23,7 @@ follows HarfBuzz's default shaper for a left-to-right run:
    the advances from that glyph up to the mark.
 
 Refused, with a message naming the lookup: type 3 (cursive), type 5
-(mark-to-ligature), types 7 and 8, mark filtering sets. Device tables in value
+(mark-to-ligature), types 7 and 8. Mark filtering sets apply as in HarfBuzz. Device tables in value
 records and anchors are not applied (unhinted, no variations). The OpenType
 GPOS chapter is the reference; HarfBuzz is the differential oracle.
 -/
@@ -131,10 +131,9 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String)
       need b lk 6 "lookup"
       let ltype := u16 b lk
       let flag := u16 b (lk + 2)
-      if flag &&& 0x10 != 0 then
-        throw s!"font.layout.unsupported: GPOS lookup {l} uses a mark filtering set (https://github.com/danbri/factoidal/issues/1233)"
       let nsub := u16 b (lk + 4)
       need b (lk + 6) (2 * nsub) "subtable offsets"
+      let set? ← lookupMarkSet b lk nsub flag
       let mut subs : Array (Nat × Nat) := #[]
       for k in [0:nsub] do
         let s := lk + u16 b (lk + 6 + 2 * k)
@@ -145,7 +144,8 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String)
       for (t, _) in subs do
         unless t == 1 || t == 2 || t == 4 || t == 6 do
           throw s!"font.layout.unsupported: GPOS lookup {l} has type {t} (https://github.com/danbri/factoidal/issues/1233)"
-      let keep : Array Bool := (Array.range out.size).map fun k => !(skips flag classes[k]!)
+      let keep : Array Bool ← (Array.range out.size).mapM fun k => do
+        pure !(← skipsWithSet b gdef? flag set? classes[k]! out[k]!.id)
       let mut i := 0
       for _ in [0:out.size] do
         if i ≥ out.size then break
