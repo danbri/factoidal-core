@@ -44,6 +44,12 @@ protocol_files=(
   "$root/npm/factoidal/solid/server/index.mjs"
   "$root/npm/factoidal/solid/client/index.mjs"
   "$root/npm/factoidal/lws/client.mjs"
+  # The LWS dataset view host (issue 1011): the engine plans the crawl and
+  # builds the view; this host loops over the client.
+  "$root/npm/factoidal/lws/dataset.mjs"
+  # The in-page LWS host: a fetch call into the ABI request record and the
+  # response record into a Response; no network, no files.
+  "$root/npm/factoidal/lws/inpage.mjs"
   # `factoidal serve`: the SPARQL Protocol / Graph Store host, which is
   # both a protocol host and a store host, so it is in both groups.
   "$root/npm/factoidal/bin/serve.mjs"

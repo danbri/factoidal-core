@@ -25,3 +25,37 @@ Read in `formal/lean4/Wasm/Ops/Lws.lean` and `npm/factoidal/lws/server.mjs`. Thi
 3. **An in-process principal for components.** For `xmpp-serve` to store its state through `lwsStep` under its own identity, it needs a credential that the storage's authorization accepts, without an external issuer: for example a local issuer key known only to the process, minting short-lived tokens for `/system/xmpp/`. Not built.
 4. **Entry-point gate.** Mark `lwsSnapshot`, `lwsLoad` and `lwsPersist` as HOST-ONLY in `foundation/entrypoints.toml` (with a reason), so that any new op that returns resource content without authorization is noticed.
 5. **Theorems** (unchanged from the issue): mediation for `lwsStep`; containment for a component principal; no ambient default when `auth` is absent; plus, for `lwsSnapshot`, `snapshotAnswer` with a key never returns the clear document (provable over `Seal.sealSnapshot`).
+
+## Correction, and the component principal (later, 2026-11-03)
+
+The table above missed work already in `main`. `L4Factoidal/LWS/AccessTheorems.lean` proves
+`lws_data_only_through_authorized_step`; `Wasm.Ops.lwsOpRole` classifies every LWS op, and
+`Wasm.Ops.lws_only_lwsStep_serves` proves that `lwsStep` is the only op that answers with resource
+content. Follow-up 4 (classify the ops) was therefore already done, by a theorem.
+
+Follow-up 3 is now built: **a component principal.**
+
+- `AuthzConfig.principal` (`L4Factoidal/LWS/Authorization.lean`): for a storage that a component
+  opens in-process and no listener serves. No token is read; every request is the principal's,
+  and Web Access Control still decides it (the existing `gate`).
+- Theorems: `authenticate_no_issuers` (with no trusted issuer, no request is authenticated as
+  anyone) and `decide_principal_agents` (in principal mode the only agents a request proceeds as
+  are the principal and the public); `default_no_principal`.
+- Configuration `"principal"`, exclusive with `"auth"` and `"insecureNoAuth"`; host option
+  `openLwsStorage({ principal })`; `createLwsServer` refuses a principal storage, because served
+  over HTTP every client would act as the component.
+- Tests: `npm/factoidal/test/lws-principal.test.mjs` (6): granted principal reads and writes; a
+  principal the ACL does not name gets 403; a bearer token changes nothing; the listener refuses;
+  exclusivity; a sealed files storage survives a reopen and a wrong key refuses to open.
+- Found: a provisioned `rootAcl` with a relative subject (`<#c>`) grants nothing:
+  https://github.com/danbri/factoidal/issues/1241.
+
+## Fixed: ACL documents with relative references (issue 1241)
+
+`Solid.Server.aclGraphOf` parsed an ACL document with NO base IRI. Under RDF 1.1 Turtle a
+relative reference (`<#owner>`, `<./>`) is then a parse error; the error gave an EMPTY graph, and
+an empty ACL grants nothing. So every ACL written with relative references, as Solid clients
+write them, denied everything (fail-closed, but a lock-out). Now `allowed` and the `WAC-Allow`
+field parse an ACL with the IRI of the ACL document as the base (RFC 3986 section 5.1.3). Guard in
+`L4Factoidal/Solid/Tests.lean`; `npm/factoidal/test/lws-principal.test.mjs` now uses the relative
+form.

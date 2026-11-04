@@ -94,7 +94,7 @@ function err (line) { console.error(line) }
 // Owner, 2026-10-27: every protocol, authentication and security component,
 // the CLIs and the core library carry this notice. It is printed with every
 // help text and on standard error when a server, client or key command starts.
-const REVIEW_WARNING = 'EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.'
+const REVIEW_WARNING = 'EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.'
 
 /** The commands that serve, speak a protocol, or handle keys and tokens. */
 const WARNED_COMMANDS = new Set(['serve', 'lws-serve', 'solid-serve', 'solid-client', 'lws-client',
@@ -481,14 +481,8 @@ usage: factoidal lws-serve DIR (--authz DIR | --issuer IRI | --auth-config FILE 
 Starts a Node HTTP server that answers every request through the engine's
 lwsStep operation.
 
-DIR names the storage directory. The storage is kept in the engine
-handle and written to DIR/lws-state.json after every request that
-changed it (temporary file, fsync, rename), and read back on the next
-start. The engine decides the snapshot format and refuses a snapshot
-path with a dot segment or other traversal form
-(formal/lean4/L4Factoidal/LWS/Snapshot.lean).
-
-With --storage files (off by default) a write costs the same whatever the
+DIR names the storage directory. By default (--storage files, since
+2026-11-03) a write costs the same whatever the
 size of the storage: DIR holds one file per resource body (DIR/bodies/),
 a journal of metadata changes (DIR/lws-journal) and a metadata file
 (DIR/lws-files.json) that the journal is folded into from time to time.
@@ -499,6 +493,12 @@ lws-state.json.migrated. The engine decides every file name and every
 byte (formal/lean4/L4Factoidal/LWS/FileLayout.lean); the storage is still
 held in memory while the server runs
 (docs/designissues/2026-10-22-lws-storage-on-disk.md).
+
+With --storage snapshot the storage is written whole to DIR/lws-state.json
+after every request that changed it (temporary file, fsync, rename), and
+read back on the next start. The engine decides the snapshot format and
+refuses a snapshot path with a dot segment or other traversal form
+(formal/lean4/L4Factoidal/LWS/Snapshot.lean).
 
 Encryption at rest (off by default): when the environment variable
 FACTOIDAL_LWS_KEY holds a 32-byte key (64 hex digits, or 43 characters of
@@ -577,9 +577,9 @@ The engine decides the file, its contents and every refusal
   --storage snapshot|files
                   how DIR keeps the storage (config member storage;
                   default the environment variable FACTOIDAL_LWS_STORAGE,
-                  else snapshot): one snapshot file written whole after
-                  each change, or one file per body with a journal, so a
-                  write costs the same whatever the storage size
+                  else files): one file per body with a journal, so a
+                  write costs the same whatever the storage size, or one
+                  snapshot file written whole after each change
                   https://github.com/danbri/factoidal/issues/918
   --cors-origin ORIGIN
                   answer CORS (Fetch Standard) only for this origin, written
@@ -750,6 +750,7 @@ usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
                             [--accounts FILE] [--cert FILE --key FILE [--starttls]]
                             [--ws-port N [--ws-path PATH] [--ws-origin ORIGIN]...]
                             [--muc DOMAIN] [--mix DOMAIN] [--gc3 DOMAIN]
+                            [--state-key FILE]
 
 Starts a Node TCP server that runs one engine session per connection and
 answers every byte through the engine's xmppSessionFeed operation.
@@ -788,6 +789,12 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
                    joined through this server (XEP-0405 MIX-PAM); channels are
                    made by an IQ <create/>, kept in memory only, JID-hidden; no
                    PubSub nodes, no archive (L4Factoidal/XMPP/Mix.lean)
+  --state-key FILE keep the server's state across restarts: rosters, messages held
+                   for offline accounts, MIX channels and GC3 groups, in an LWS
+                   storage in DIR/state, sealed (ChaCha20-Poly1305) under the key
+                   in FILE (64 hex digits; keep FILE outside DIR). A wrong key
+                   stops the start. Plaintext roster files are migrated, then
+                   deleted. Without it, that state is lost at a restart.
   --gc3 DOMAIN     also serve PROTOTYPE "Groupchat 3.0" groups at DOMAIN: persistent
                    membership, stable participant ids, optional events. There is
                    no published GC3 spec; every wire format is invented and listed
@@ -1204,7 +1211,7 @@ const VALUE_OPTIONS = {
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
-  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'mix', 'gc3']),
+  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'mix', 'gc3', 'state-key']),
   'webdav-serve': new Set(['port', 'host', 'users', 'guest', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
@@ -2866,6 +2873,11 @@ async function commandXmppServe (positional, options) {
     settings.key = await fs.readFile(options.key)
   }
   if (startTls) settings.startTls = true
+  if (options['state-key'] !== undefined) {
+    if (typeof options['state-key'] !== 'string') throw new UsageError('--state-key needs a FILE')
+    // 64 hex digits or base64url of 32 bytes; the engine checks it.
+    settings.stateKey = (await fs.readFile(options['state-key'], 'utf8')).trim()
+  }
   if (options.muc !== undefined) {
     if (typeof options.muc !== 'string' || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(options.muc)) {
       throw new UsageError('--muc needs a domain name, e.g. conference.example.com')
@@ -2921,6 +2933,8 @@ async function commandXmppServe (positional, options) {
     if (settings.mucDomain) err(`xmpp-serve: multi-user chat (XEP-0045) at ${settings.mucDomain}`)
     if (settings.mixDomain) err(`xmpp-serve: MIX channels (XEP-0369, joined by XEP-0405) at ${settings.mixDomain}`)
     if (settings.gc3Domain) err(`xmpp-serve: GC3 PROTOTYPE groups at ${settings.gc3Domain} (no published spec; invented wire format)`)
+    if (settings.stateKey) err(`xmpp-serve: state kept across restarts in ${positional[0]}/state, sealed under the state key`)
+    else err('xmpp-serve: WARNING: no --state-key: held messages, MIX channels and GC3 groups are lost at a restart, and rosters are written in clear')
   }
   if (running.wsOrigin && !quiet) {
     err(`xmpp-serve: XMPP over WebSocket on ${running.wsOrigin}` +

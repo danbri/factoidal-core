@@ -13,6 +13,8 @@ const MiB = 1024 * 1024
 const rss = () => (process.memoryUsage().rss / MiB).toFixed(0)
 const storage = await openLwsStorage({
   baseIri: 'https://pod.example/', dir, storage: 'files', insecureNoAuth: true, realClock: true,
+  // A measurement of large bodies: above the default 16 MiB limit on purpose (issue 1240).
+  maxBody: 1024 * 1024 * 1024,
   storageKey: randomBytes(32).toString('hex')
 })
 const step = (method, target, body, headers = []) =>

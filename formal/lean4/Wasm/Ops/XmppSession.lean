@@ -67,6 +67,8 @@ import L4Factoidal.XMPP.WebSocket
 import L4Factoidal.XMPP.Muc
 import L4Factoidal.XMPP.Mix
 import L4Factoidal.XMPP.Gc3
+import L4Factoidal.XMPP.Held
+import L4Factoidal.XMPP.StateCodec
 import L4Factoidal.HTTP.WebSocket
 import L4Factoidal.HTTP.Wire
 
@@ -119,6 +121,9 @@ structure XmppServerConfig where
   mixDomain : Option String := none
   /-- GC3 prototype service domain, from `"gc3Domain"`; none: no GC3. -/
   gc3Domain : Option String := none
+  /-- Does the host keep this server's state across restarts (`"persist": true`,
+  set with a state key)? Only then does a feed answer carry `store`/`unstore`. -/
+  persist : Bool := false
   deriving Inhabited
 
 def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
@@ -150,7 +155,8 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
         .error "config: \"gc3Domain\" must be a domain of its own"
       else
         .ok { domain, saltB64, iterationCount, accounts,
-              tlsCarrier := (j.getBool? "tlsCarrier").getD false, mucDomain, mixDomain, gc3Domain }
+              tlsCarrier := (j.getBool? "tlsCarrier").getD false, mucDomain, mixDomain, gc3Domain,
+              persist := (j.getBool? "persist").getD false }
 
 /-! ## The handle tables -/
 
@@ -167,6 +173,12 @@ structure XmppOpenServer where
   mix : Option Mix.Service := none
   /-- The GC3 prototype groups, when `cfg.gc3Domain` is set. -/
   gc3 : Option Gc3.Service := none
+  /-- The full JIDs of this server's bound sessions, kept by the ops layer
+  (`bindTransition`, `sessionGone`), so the hold-or-deliver decision is made
+  here, not in the host. -/
+  bound : List String := []
+  /-- Stanzas held for accounts with no bound session (`XMPP/Held.lean`). -/
+  held : Held.Held := {}
 
 /-- One open client connection on a server. -/
 structure XmppOpenSession where
@@ -211,13 +223,36 @@ structure XmppCollected where
   a host that persists rosters knows which to fetch with `xmppRosterGet`. -/
   rostersSaved : List String := []
   close : Bool := false
+  /-- State to keep across a restart (issue 1237): (path, text) pairs to write
+  to the server's LWS state storage, and paths to delete, in order. Paths and
+  texts are `XMPP/StateCodec.lean`'s; the host only performs them. -/
+  store : List (String × String) := []
+  unstore : List String := []
   /-- `Out.startTls`: flush `send`, then start the TLS handshake as the
   server and call `xmppSessionTlsUp` when it finishes. -/
   startTls : Bool := false
 
 private def perform (srv : XmppOpenServer) (c : XmppCollected) : Out → XmppOpenServer × XmppCollected
   | .send text => (srv, { c with send := c.send ++ [text] })
-  | .route bare text => (srv, { c with route := c.route ++ [(bare, text)] })
+  | .route bare text =>
+    if srv.bound.any (fun f => Server.bareOf f == bare) then
+      (srv, { c with route := c.route ++ [(bare, text)] })
+    else
+      -- RFC 6121 section 8.5.2.1.1: no bound session; hold it, within the bounds.
+      let (h', ok) := Held.hold srv.held bare text
+      if ok then ({ srv with held := h' },
+        { c with store := c.store ++ (if srv.cfg.persist then
+            [(StateCodec.pathOf "held" bare, StateCodec.encodeHeld (h'.of bare))] else []) })
+      else
+        -- RFC 6120 section 8.3.3.18: past a bound, a message is answered
+        -- `resource-constraint`; anything else is dropped.
+        match (Wire.parseElement text).bind Core.Stanza.ofXml with
+        | some st =>
+          if st.kind == .message && st.type != some "error" then
+            (srv, { c with send := c.send ++ [Server.stanzaError .message st.id
+              (st.from_.map Jid.render) (some bare) "wait" "resource-constraint"] })
+          else (srv, c)
+        | none => (srv, c)
   | .routeFull full text bounce => (srv, { c with routeFull := c.routeFull ++ [(full, text, bounce)] })
   | .muc fromFull text =>
     -- The room service: one step over the server's shared rooms; every
@@ -234,9 +269,13 @@ private def perform (srv : XmppOpenServer) (c : XmppCollected) : Out → XmppOpe
     match srv.mix, (Wire.parseElement text).bind Core.Stanza.ofXml with
     | some svc, some st =>
       let (svc', ds) := Mix.step svc fromFull st
+      let changed := svc'.channels.filter (fun ch => svc.channel? ch.name != some ch)
+      let gone := svc.channels.filter (fun ch => (svc'.channel? ch.name).isNone)
       ({ srv with mix := some svc' },
        { c with route := c.route ++ (ds.filter (·.held)).map (fun d => (d.to, d.render)),
-                routeFull := c.routeFull ++ (ds.filter (!·.held)).map (fun d => (d.to, d.render, none)) })
+                routeFull := c.routeFull ++ (ds.filter (!·.held)).map (fun d => (d.to, d.render, none)),
+                store := c.store ++ (if srv.cfg.persist then changed.map (fun ch => (StateCodec.pathOf "mix" ch.name, StateCodec.encodeChannel ch)) else []),
+                unstore := c.unstore ++ (if srv.cfg.persist then gone.map (fun ch => StateCodec.pathOf "mix" ch.name) else []) })
     | _, _ => (srv, c)
   | .gc3 fromFull text =>
     -- GC3 prototype: membership is the account's, so group traffic to a member
@@ -244,14 +283,19 @@ private def perform (srv : XmppOpenServer) (c : XmppCollected) : Out → XmppOpe
     match srv.gc3, (Wire.parseElement text).bind Core.Stanza.ofXml with
     | some svc, some st =>
       let (svc', ds) := Gc3.step svc fromFull st
+      let changed := svc'.groups.filter (fun g => svc.group? g.name != some g)
+      let gone := svc.groups.filter (fun g => (svc'.group? g.name).isNone)
       ({ srv with gc3 := some svc' },
        { c with route := c.route ++ (ds.filter (·.held)).map (fun d => (d.to, d.render)),
-                routeFull := c.routeFull ++ (ds.filter (!·.held)).map (fun d => (d.to, d.render, none)) })
+                routeFull := c.routeFull ++ (ds.filter (!·.held)).map (fun d => (d.to, d.render, none)),
+                store := c.store ++ (if srv.cfg.persist then changed.map (fun g => (StateCodec.pathOf "gc3" g.name, StateCodec.encodeGroup g)) else []),
+                unstore := c.unstore ++ (if srv.cfg.persist then gone.map (fun g => StateCodec.pathOf "gc3" g.name) else []) })
     | _, _ => (srv, c)
   | .saveRoster bare encoded =>
       ({ srv with rosters := srv.rosters.insert bare (rosterDecode encoded) },
        { c with rostersSaved := if c.rostersSaved.contains bare then c.rostersSaved
-                                else c.rostersSaved ++ [bare] })
+                                else c.rostersSaved ++ [bare]
+                store := c.store ++ (if srv.cfg.persist then [(StateCodec.pathOf "roster" bare, encoded)] else []) })
   | .presence bare full available =>
       let others := (srv.presence.getD bare []).filter (· != full)
       let now := if available then full :: others else others
@@ -265,6 +309,22 @@ private def performAll (srv : XmppOpenServer) (c : XmppCollected) : List Out →
   | o :: os =>
     let (srv', c') := perform srv c o
     performAll srv' c' os
+
+/-- A session's full JID changed by one step (it bound, or it closed): keep
+`bound`, and hand a newly bound account what was held for it, oldest first. -/
+def bindTransition (srv : XmppOpenServer) (c : XmppCollected) (before after : Option String) :
+    XmppOpenServer × XmppCollected :=
+  if before == after then (srv, c)
+  else
+    let kept := srv.bound.filter (fun f => some f != before)
+    match after with
+    | none => ({ srv with bound := kept }, c)
+    | some f =>
+      let bare := Server.bareOf f
+      let (out, h') := Held.release srv.held bare
+      ({ srv with bound := kept ++ [f], held := h' },
+       { c with route := c.route ++ out.map (fun t => (bare, t)),
+                unstore := if out.isEmpty || !srv.cfg.persist then c.unstore else c.unstore ++ [StateCodec.pathOf "held" bare] })
 
 /-- The buffer left after a unit's actions. When they ask for the TLS
 upgrade it is EMPTY: those bytes arrived in clear after `<starttls/>`,
@@ -303,10 +363,11 @@ def drain (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected) :
             | none => []
           let (s', _env', outs) := Server.step os.session ⟨roster⟩ unit
           let (srv', c') := performAll srv c outs
-          let closed := c'.close || s'.stage == .closed
-          drain srv'
+          let (srv'', c'') := bindTransition srv' c' os.session.fullJid s'.fullJid
+          let closed := c''.close || s'.stage == .closed
+          drain srv''
             { os with session := s', buffer := bufferAfter outs rest, units := os.units + 1, closed }
-            c' fuel
+            c'' fuel
 
 /-- While the handshake runs, a feed changes nothing and reports nothing.
 With `bufferAfter_startTls` (the buffer is empty when `tlsPending` is
@@ -336,6 +397,8 @@ private def jsonOfCollected (os : XmppOpenSession) (c : XmppCollected) : List (S
   , ("presence", .array (c.presence.map (fun (bare, full, available) =>
       .object [("bare", .string bare), ("full", .string full), ("available", .bool available)])))
   , ("rostersSaved", .array (c.rostersSaved.map .string))
+  , ("store", .array (c.store.map (fun (p, t) => .object [("path", .string p), ("text", .string t)])))
+  , ("unstore", .array (c.unstore.map .string))
   , ("close", .bool c.close)
   , ("startTls", .bool c.startTls)
   , ("stage", .string (stageName os.session.stage))
@@ -444,8 +507,11 @@ def xmppSessionDeliver (h text : String) : IO String := do
 7.14), and the other occupants are told. The deliveries, as `routeFull`
 JSON, for the host to perform. -/
 def mucLeaveAll (server : String) (full : Option String) : IO Json := do
+  -- The session is gone: it is no longer a delivery target.
   match full, (← xmppServers.get)[server]? with
-  | some f, some srv =>
+  | some f, some srv0 =>
+    let srv := { srv0 with bound := srv0.bound.filter (· != f) }
+    xmppServers.modify (·.insert server srv)
     match srv.muc with
     | some svc =>
       let (svc', ds) := Muc.leaveAll svc f
@@ -567,7 +633,8 @@ def stepOneUnit (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected
       | none => []
     let (s', _env', outs) := Server.step os.session ⟨roster⟩ unit
     let (srv', c') := performAll srv c outs
-    (srv', { os with session := s', units := os.units + 1, closed := c'.close || s'.stage == .closed }, c')
+    let (srv'', c'') := bindTransition srv' c' os.session.fullJid s'.fullJid
+    (srv'', { os with session := s', units := os.units + 1, closed := c''.close || s'.stage == .closed }, c'')
 
 /-- The frames for the `send` texts of one step, in order. -/
 def wsFramesOf (cfg : Config) (sends : List String) : ByteArray :=
@@ -728,10 +795,151 @@ def xmppWsCloseWith (h : String) : IO (String × ByteArray) := do
 
 def xmppWsBlobIoOpNames : List String := ["xmppWsFeed", "xmppWsDeliver", "xmppWsClose"]
 
+/-! ## A message carrier: RFC 7395 without the socket
+
+A carrier that already delivers whole messages, in order and to one peer
+(a browser `MessagePort`, a `postMessage` channel between a page and a
+worker), needs neither the HTTP handshake nor the WebSocket frames. Each
+message is one RFC 7395 message, exactly as over a WebSocket: `<open/>`
+and `<close/>` in the framing namespace, then one complete element per
+message (section 3.3.3). Inbound, `WebSocket.unitOfMessage`; outbound,
+`WebSocket.messageOfSend`; between them the same `stepOneUnit`, so every
+decision is still `Server.step`'s. The carrier is not a network: it has no
+Origin to check, and it is up to the host which code may hold one. -/
+
+initialize xmppMsgCounter : IO.Ref Nat ← IO.mkRef 0
+initialize xmppMsgSessions : IO.Ref (Std.HashMap String XmppOpenSession) ← IO.mkRef ∅
+
+/-- One message through `Server.step`; the answer is whole messages. -/
+def msgFeedPure (srv : XmppOpenServer) (os : XmppOpenSession) (msg : String) :
+    XmppOpenServer × XmppOpenSession × XmppCollected × List String :=
+  if os.closed then (srv, os, {}, [])
+  else
+    let (srv', os', c) := stepOneUnit srv os {} (L4Factoidal.XMPP.WebSocket.unitOfMessage msg)
+    (srv', os', { c with close := c.close || os'.closed },
+     c.send.map (L4Factoidal.XMPP.WebSocket.messageOfSend os'.session.cfg))
+
+/-- A closed message session reads nothing more: the server and the session
+are unchanged, and nothing is sent or routed. -/
+theorem msgFeedPure_closed (srv : XmppOpenServer) (os : XmppOpenSession) (msg : String)
+    (h : os.closed = true) :
+    msgFeedPure srv os msg = (srv, os, {}, []) := by
+  simp [msgFeedPure, h]
+
+def xmppMsgJson (os : XmppOpenSession) (c : XmppCollected) (msgs : List String) : String :=
+  okWith ((jsonOfCollected os c).filter (fun (k, _) => k != "send" && k != "bufferedBytes") ++
+    [("send", .array (msgs.map .string))])
+
+/-- `xmppMsgOpen(serverHandle, {"streamId","nonce","maxUnits"?})`. -/
+def xmppMsgOpen (server optionsJson : String) : IO String := do
+  match (← xmppServers.get)[server]? with
+  | none => pure (unknownXmppServer server)
+  | some srv =>
+    match parseJson (if optionsJson.trim.isEmpty then "{}" else optionsJson) with
+    | .error e => pure (errJson s!"options: {toString e}")
+    | .ok j =>
+      match j.getString? "streamId", j.getString? "nonce" with
+      | some streamId, some nonce =>
+        if streamId.isEmpty || nonce.isEmpty then
+          pure (errJson "xmppMsgOpen: \"streamId\" and \"nonce\" must not be empty")
+        else
+          let cfg : Config :=
+            { domain := srv.cfg.domain, streamId, serverNonce := nonce
+              saltB64 := srv.cfg.saltB64, iterationCount := srv.cfg.iterationCount
+              accounts := srv.cfg.accounts, tlsCarrier := false, startTls := false
+              mucDomain := srv.cfg.mucDomain, mixDomain := srv.cfg.mixDomain
+              gc3Domain := srv.cfg.gc3Domain }
+          let n ← xmppMsgCounter.modifyGet fun n => (n + 1, n + 1)
+          let h := s!"xmppmsg{n}"
+          xmppMsgSessions.modify (·.insert h
+            { server, session := Session.init cfg, buffer := "", units := 0
+              maxUnits := (natField? j "maxUnits").getD 1000000, closed := false })
+          pure (okWith [("handle", .string h)])
+      | _, _ => pure (errJson "xmppMsgOpen: \"streamId\" and \"nonce\" are required (the host supplies unpredictable values)")
+
+/-- `xmppMsgFeed(handle, message)`: one whole message; `send` is the whole
+messages to give back, in order. -/
+def xmppMsgFeed (h msg : String) : IO String := do
+  match (← xmppMsgSessions.get)[h]? with
+  | none => pure (errJson s!"unknown XMPP message session handle: {h}")
+  | some os =>
+    match (← xmppServers.get)[os.server]? with
+    | none => pure (unknownXmppServer os.server)
+    | some srv =>
+      let (srv', os', c, msgs) := msgFeedPure srv os msg
+      xmppServers.modify (·.insert os.server srv')
+      xmppMsgSessions.modify (·.insert h os')
+      pure (xmppMsgJson os' c msgs)
+
+/-- `xmppMsgDeliver(handle, text)`: a stanza routed to this session, as one
+message; refused (`delivered:false`) unless the session is bound. -/
+def xmppMsgDeliver (h text : String) : IO String := do
+  match (← xmppMsgSessions.get)[h]? with
+  | none => pure (errJson s!"unknown XMPP message session handle: {h}")
+  | some os =>
+    if os.closed || !os.session.canDeliver then
+      pure (okWith [("delivered", .bool false), ("send", .array [])])
+    else
+      let sends := (Server.deliver os.session text).filterMap (fun o =>
+        match o with | .send t => some t | _ => none)
+      pure (okWith [("delivered", .bool true),
+        ("send", .array (sends.map (fun t => .string (L4Factoidal.XMPP.WebSocket.messageOfSend os.session.cfg t))))])
+
+/-- `xmppMsgClose(handle)`: release the handle; `<close/>` when the stream
+was open, and the deliveries of leaving every MUC room. -/
+def xmppMsgClose (h : String) : IO String := do
+  match (← xmppMsgSessions.get)[h]? with
+  | none => pure (errJson s!"unknown XMPP message session handle: {h}")
+  | some os =>
+    xmppMsgSessions.modify (·.erase h)
+    let left ← mucLeaveAll os.server os.session.fullJid
+    let closing : List String :=
+      if os.closed || os.session.stage == .closed then [] else [L4Factoidal.XMPP.WebSocket.closeText]
+    pure (okWith [("send", .array (closing.map .string)), ("routeFull", left)])
+
+/-- `xmppStateLoad(serverHandle, path, text)`: at start, install one item the
+host read from the server's LWS state storage (issue 1237): a roster, the
+stanzas held for an account, a MIX channel or a GC3 group, decoded by
+`XMPP/StateCodec.lean` (round-trip theorems there). An item that does not
+decode, or names a service this server does not run, is REFUSED with a
+reason: the host stops the start rather than run on a partial state. -/
+def xmppStateLoad (server path text : String) : IO String := do
+  match (← xmppServers.get)[server]? with
+  | none => pure (unknownXmppServer server)
+  | some srv =>
+    match path.splitOn "/" with
+    | ["", "xmpp", kind, hex] =>
+      match StateCodec.nameOfHex hex with
+      | none => pure (errJson s!"xmppStateLoad: {path}: the name is not hex of UTF-8")
+      | some name =>
+        let install (srv' : XmppOpenServer) : IO String := do
+          xmppServers.modify (·.insert server srv')
+          pure (okWith [("loaded", .string kind)])
+        match kind with
+        | "roster" => install { srv with rosters := srv.rosters.insert name (rosterDecode text) }
+        | "held" =>
+          match StateCodec.decodeHeld text with
+          | some q => install { srv with held := srv.held.put name q }
+          | none => pure (errJson s!"xmppStateLoad: {path}: not a held queue")
+        | "mix" =>
+          match srv.mix, StateCodec.decodeChannel text with
+          | some svc, some ch => install { srv with mix := some (svc.put ch) }
+          | none, _ => pure (errJson s!"xmppStateLoad: {path}: this server runs no MIX service")
+          | _, none => pure (errJson s!"xmppStateLoad: {path}: not a MIX channel")
+        | "gc3" =>
+          match srv.gc3, StateCodec.decodeGroup text with
+          | some svc, some g => install { srv with gc3 := some (svc.put g) }
+          | none, _ => pure (errJson s!"xmppStateLoad: {path}: this server runs no GC3 service")
+          | _, none => pure (errJson s!"xmppStateLoad: {path}: not a GC3 group")
+        | _ => pure (errJson s!"xmppStateLoad: {path}: unknown kind {kind}")
+    | _ => pure (errJson s!"xmppStateLoad: {path}: not /xmpp/<kind>/<hex>")
+
 /-- The op names this module serves, through `callIO` only. -/
 def xmppSessionOpNames : List String :=
   [ "xmppOpen", "xmppClose"
   , "xmppSessionOpen", "xmppSessionFeed", "xmppSessionDeliver", "xmppSessionClose"
-  , "xmppSessionTlsUp", "xmppRosterGet", "xmppRosterSet", "xmppWsOpen" ]
+  , "xmppSessionTlsUp", "xmppRosterGet", "xmppRosterSet", "xmppWsOpen", "xmppStateLoad"
+  , "xmppMsgOpen", "xmppMsgFeed", "xmppMsgDeliver", "xmppMsgClose" ]
+
 
 end L4Wasm.Ops

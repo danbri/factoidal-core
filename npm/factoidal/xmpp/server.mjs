@@ -43,12 +43,13 @@ import { StringDecoder } from 'node:string_decoder'
 import { mkdir, readFile, writeFile, readdir, unlink, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { loadEngine } from '../bin/engine.mjs'
+import { createXmppRouter } from './router.mjs'
 
 /** The ops this host needs from the engine. */
 export const XMPP_SERVER_OPS = [
   'xmppOpen', 'xmppClose',
   'xmppSessionOpen', 'xmppSessionFeed', 'xmppSessionDeliver', 'xmppSessionClose',
-  'xmppSessionTlsUp', 'xmppRosterGet', 'xmppRosterSet', 'xmppWsOpen'
+  'xmppSessionTlsUp', 'xmppRosterGet', 'xmppRosterSet', 'xmppWsOpen', 'xmppStateLoad'
 ]
 
 /** An error raised by this host, as opposed to one the engine reported.
@@ -138,6 +139,9 @@ export async function openXmppServer (options = {}) {
   if (typeof options.mixDomain === 'string') config.mixDomain = options.mixDomain
   // GC3 prototype groups (L4Factoidal/XMPP/Gc3.lean; no published spec); off unless named.
   if (typeof options.gc3Domain === 'string') config.gc3Domain = options.gc3Domain
+  // The host keeps the state across restarts (a state key and a DIR): only
+  // then does the engine produce `store`/`unstore`.
+  if (options.persist === true) config.persist = true
   let opened
   try {
     opened = engine.call('xmppOpen', [JSON.stringify(config)])
@@ -274,6 +278,7 @@ export async function createXmppServer (options = {}) {
   const startTls = options.startTls === true
   const useTls = haveKey && !startTls
   if (typeof serverOptions.tlsCarrier !== 'boolean') serverOptions.tlsCarrier = useTls
+  if (dir !== null && options.stateKey !== undefined) serverOptions.persist = true
   const xmpp = await openXmppServer(serverOptions)
 
   // Rosters the previous run persisted.
@@ -296,71 +301,99 @@ export async function createXmppServer (options = {}) {
     throw error
   }
 
-  /** Every live connection: socket, engine session, and the last `bare`/`full` the engine reported. */
-  const connections = new Set()
+  // The server's state across a restart (issue 1237): rosters, stanzas held
+  // for offline accounts, MIX channels and GC3 groups, as resources under
+  // /xmpp/ of an LWS storage kept in DIR/state, sealed under the state key,
+  // opened IN-PROCESS as the component principal (issue 1238: no token, no
+  // listener, Web Access Control decides). The engine says what to write
+  // (`store`, `unstore`); this host only performs it. A wrong key or an item
+  // that does not decode stops the start: it never starts empty.
+  let state = null
+  let stateWrites = Promise.resolve()
+  let stateError = null
+  if (dir !== null && options.stateKey !== undefined) {
+    try {
+      const { openLwsStorage } = await import('../lws/server.mjs')
+      const base = 'https://xmpp-state.invalid/'
+      const principal = 'urn:factoidal:component:xmpp-serve'
+      state = await openLwsStorage({
+        engine: xmpp.engine, baseIri: base, dir: join(dir, 'state'), storage: 'files',
+        storageKey: options.stateKey, principal, realClock: true, lockCommand: 'xmpp-serve',
+        // Absolute IRIs, which never depended on the base (relative ones work
+        // since issue https://github.com/danbri/factoidal/issues/1241 was fixed).
+        rootAcl: `@prefix acl: <http://www.w3.org/ns/auth/acl#> .\n<${base}.acl#xmpp> a acl:Authorization ;\n` +
+          `  acl:agent <${principal}> ;\n  acl:accessTo <${base}> ;\n  acl:default <${base}> ;\n` +
+          '  acl:mode acl:Read, acl:Write, acl:Control .\n'
+      })
+      const get = (target, accept) => state.step({ method: 'GET', target, headers: accept ? [['Accept', accept]] : [], body: new Uint8Array(0) })
+      for (const kind of ['roster', 'held', 'mix', 'gc3']) {
+        const listing = await get(`/xmpp/${kind}/`, 'application/lws+json')
+        if (listing.status === 404) continue
+        if (listing.status !== 200) throw new XmppHostError(`state: listing /xmpp/${kind}/ answered ${listing.status}`)
+        const doc = JSON.parse(new TextDecoder().decode(listing.body))
+        for (const item of doc.items || []) {
+          const path = '/' + String(item.id).slice(base.length)
+          const got = await get(path)
+          if (got.status !== 200) throw new XmppHostError(`state: ${path} answered ${got.status}`)
+          const loaded = xmpp.engine.call('xmppStateLoad', [xmpp.handle, path, new TextDecoder().decode(got.body)])
+          if (loaded === null || typeof loaded !== 'object') throw new XmppHostError(`state: ${path} was refused`)
+        }
+      }
+    } catch (error) {
+      try { state?.close() } catch (_error) { /* already closed */ }
+      xmpp.close()
+      throw error instanceof XmppHostError ? error : new XmppHostError(`state: ${error.message}`)
+    }
+  }
+  const hexOf = (s) => Buffer.from(s, 'utf8').toString('hex')
+  /** Perform the engine's `store` / `unstore`, in order, one at a time. */
+  function persistState (answer) {
+    if (state === null) return
+    const stores = Array.isArray(answer.store) ? answer.store : []
+    const unstores = Array.isArray(answer.unstore) ? answer.unstore : []
+    if (stores.length === 0 && unstores.length === 0) return
+    stateWrites = stateWrites.then(async () => {
+      for (const { path, text } of stores) {
+        const r = await state.step({ method: 'PUT', target: path, headers: [['Content-Type', 'text/plain; charset=utf-8']], body: new TextEncoder().encode(text) })
+        if (r.status >= 300) throw new XmppHostError(`state: PUT ${path} answered ${r.status}`)
+      }
+      for (const path of unstores) {
+        const r = await state.step({ method: 'DELETE', target: path, headers: [], body: new Uint8Array(0) })
+        if (r.status >= 300 && r.status !== 404) throw new XmppHostError(`state: DELETE ${path} answered ${r.status}`)
+      }
+    }).catch((error) => { stateError = error; onError(error) })
+  }
+  // Migration: plaintext roster files of an earlier run go into the sealed
+  // state, then the plaintext files are deleted.
+  if (state !== null) {
+    for (const name of await readdir(join(dir, 'roster')).catch(() => [])) {
+      if (!name.endsWith('.tsv')) continue
+      const bare = decodeURIComponent(name.slice(0, -4))
+      const { encoded } = xmpp.roster(bare)
+      persistState({ store: [{ path: `/xmpp/roster/${hexOf(bare)}`, text: encoded }] })
+      await stateWrites
+      if (stateError === null) await unlink(join(dir, 'roster', name)).catch(() => {})
+    }
+  }
+
+  // The routing table (router.mjs, shared with the in-page host): every live
+  // connection, with the last `bare`/`full` the engine reported, and the
+  // bounded fallback queue for stanzas routed to a session that closed.
+  const router = createXmppRouter({ onError: (error) => onError(new XmppHostError(error.message)) })
+  const { connections, pending, boundTo, routeFull } = router
   // Raw transports also include TLS peers that have not reached the secure
   // connection callback and therefore have no engine session yet.
   const transports = new Set()
-  /** bare JID → stanzas routed to it while no session was bound. */
-  const pending = new Map()
-
-  function boundTo (bare) {
-    const found = []
-    for (const c of connections) if (c.full !== null && c.bare === bare) found.push(c)
-    return found
-  }
 
   function writeAll (c, lines) {
     for (const line of lines) if (!c.socket.destroyed) c.socket.write(line)
   }
 
-  /** Deliver one stanza to every session bound to `bare`, or hold it. */
-  function routeStanza (bare, text) {
-    const targets = boundTo(bare)
-    if (targets.length === 0) {
-      if (!pending.has(bare)) pending.set(bare, [])
-      pending.get(bare).push(text)
-      return
-    }
-    for (const t of targets) {
-      let answer
-      let delivered = false
-      try { delivered = t.deliver(text) } catch (error) { onError(error); continue }
-      if (!delivered) {
-        if (!pending.has(bare)) pending.set(bare, [])
-        pending.get(bare).push(text)
-      }
-    }
-  }
-
-  /**
-   * `Out.routeFull`: deliver to the ONE session bound to `full`, now. With no
-   * such session (or one that refuses), deliver the engine's bounce, if it
-   * gave one, back to the sending session. Never held (RFC 6120 section
-   * 10.5.3.2; https://github.com/danbri/factoidal/issues/1234).
-   */
-  function routeFull (sender, full, text, bounce) {
-    for (const t of connections) {
-      if (t.full !== full) continue
-      try { if (t.deliver(text)) return } catch (error) { onError(error) }
-    }
-    if (typeof bounce === 'string') {
-      try { sender.deliver(bounce) } catch (error) { onError(error) }
-    }
-  }
-
-  /** A session just bound: hand it what was waiting. */
-  function flushPending (c) {
-    const queue = pending.get(c.bare)
-    if (!queue || queue.length === 0) return
-    pending.delete(c.bare)
-    for (const text of queue) routeStanza(c.bare, text)
-  }
-
   let rosterWrites = Promise.resolve()
   let persistenceError = null
   function persistRosters (bares) {
-    if (dir === null) return
+    // With a state key the rosters are in the sealed state (`persistState`).
+    if (dir === null || state !== null) return
     for (const bare of bares) {
       try {
         // Capture the engine's bytes at this feed, before another feed can
@@ -388,16 +421,12 @@ export async function createXmppServer (options = {}) {
 
   /** Perform one feed answer. */
   function perform (c, answer) {
+    persistState(answer)
     writeAll(c, answer.send)
-    const wasBound = c.full !== null
-    c.bare = typeof answer.bare === 'string' ? answer.bare : null
-    c.full = typeof answer.full === 'string' ? answer.full : null
-    for (const r of answer.route) routeStanza(r.to, r.text)
-    for (const r of answer.routeFull || []) routeFull(c, r.to, r.text, r.bounce)
+    router.apply(c, answer)
     if (Array.isArray(answer.rostersSaved) && answer.rostersSaved.length > 0) {
       persistRosters(answer.rostersSaved)
     }
-    if (!wasBound && c.full !== null) flushPending(c)
     if (answer.startTls === true && answer.close !== true) upgrade(c)
     if (answer.close === true) {
       c.closing = true
@@ -687,8 +716,11 @@ export async function createXmppServer (options = {}) {
           if (wsServer !== null) await new Promise(resolve => wsServer.close(resolve))
           await pollTask
           await rosterWrites
+          await stateWrites
           if (persistenceError !== null) throw persistenceError
+          if (stateError !== null) throw stateError
         } finally {
+          try { state?.close() } catch (_error) { /* already closed */ }
           xmpp.close()
         }
       })()

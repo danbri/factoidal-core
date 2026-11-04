@@ -632,3 +632,60 @@ real namespaces.
   `message_nonmember`. 8 `#guard`s; 1 in `Server.lean`.
 - `Server.lean`: `Config.gc3Domain`, `Out.gc3`. CLI: `xmpp-serve --gc3 gc3.<domain>`.
 - Not covered: knocking, configuration, history, MLS or any encryption, spaces, persistence.
+
+## 2026-11-03 (later): held stanzas in Lean, bounded (issue 1235; step 6, part 1)
+
+- `L4Factoidal/XMPP/Held.lean`: `hold` (refuses past `perAccount` 1,000 or `total` 100,000) and
+  `release` (hands back everything held for an account and empties its queue). Theorems:
+  `hold_perAccount`, `hold_refused`, `hold_limits`, `release_empties`, `release_returns`. The total
+  bound is checked by a `#guard`; its proof needs the one-queue-per-account invariant (to do).
+- `Wasm/Ops/XmppSession.lean`: the ops layer keeps the bound full JIDs (`bound`) and the held
+  queue (`held`). `Out.route` to an account with a bound session is delivered; otherwise it is held,
+  or, past a bound, a message is answered `resource-constraint` (RFC 6120 section 8.3.3.18).
+  `bindTransition` hands a newly bound account what was held, oldest first.
+- The JS host no longer decides holding; its `pending` map is a fallback for a session that closed
+  between the engine's decision and the delivery, bounded at 100.
+- Tests: `npm/factoidal/test/xmpp-mix.test.mjs` (the former 1235 xfail, now a check),
+  `xmpp-serve.test.mjs` (held, then delivered once on bind).
+- Persisting the held queue across a restart: issues 1237 and 1238.
+
+## 2026-11-03 (evening): state across restarts, in LWS, sealed (issue 1237; step 6)
+
+- `xmpp-serve DIR --state-key FILE`: rosters, stanzas held for offline accounts, MIX channels and
+  GC3 groups are kept as resources under `/xmpp/<kind>/<name in hex>` of an LWS storage in
+  `DIR/state` (files mode, sealed with ChaCha20-Poly1305 under the key), opened IN-PROCESS as the
+  component principal `urn:factoidal:component:xmpp-serve` (no listener; Web Access Control
+  decides; `LWS/Authorization.lean`, `decide_principal_agents`).
+- `XMPP/StateCodec.lean`: encoders and decoders with round-trip theorems
+  (`decodeHeld_encodeHeld`, `decodeChannel_encodeChannel`, `decodeGroup_encodeGroup`); one resource
+  per item, so a change rewrites one small resource.
+- The ops layer decides what to write: a feed answer carries `store` and `unstore` (only with
+  `persist`, which the host sets with a state key). `xmppStateLoad` installs each item at start;
+  an item that does not decode stops the start. A wrong key stops the start.
+- Plaintext roster files of an earlier run are migrated into the sealed state, then deleted.
+  Without `--state-key` the server warns that state is lost at a restart and rosters are in clear.
+- Tests: `npm/factoidal/test/xmpp-state.test.mjs` (a channel, a held message and a roster survive
+  a restart, and no file holds a JID, nick or body in clear; a wrong key refuses; migration).
+- Stated, not done:
+  - the hex form of names (`hexOf`, `nameOfHex`) is checked by `#guard`s, not proved;
+  - with persistence on, each hold rewrites the whole queue of that account (bounded at 1,000
+    stanzas, but quadratic near the bound): one resource per held stanza would make it constant;
+  - a stanza sent to a session that is closing is delivered to it and lost (no XEP-0198 stream
+    management), as in other servers without it;
+  - the key across an unattended reboot, rollback, and swap: issue 1237.
+
+## 2026-11-03: the message carrier, and the server in a page
+
+A browser page has no socket, so the in-page server (`npm/factoidal/xmpp/inpage.mjs`) needs a carrier
+that takes whole messages. `xmppMsgOpen`, `xmppMsgFeed`, `xmppMsgDeliver` and `xmppMsgClose`
+(`Wasm/Ops/XmppSession.lean`) are RFC 7395 without the HTTP handshake and the WebSocket frames: each
+message is one RFC 7395 message (`<open/>`, `<close/>`, one element), through
+`WebSocket.unitOfMessage`, the same `stepOneUnit`, and `WebSocket.messageOfSend`. No protocol decision
+is new. Theorem `msgFeedPure_closed`: a closed message session changes nothing and sends nothing.
+
+`inPageWebSocket(server)` is a WebSocket-shaped class over it, so Strophe.js and other RFC 7395 clients
+run unchanged against a server in the same page. The routing table is now one module,
+`npm/factoidal/xmpp/router.mjs`, used by the Node host and the in-page host. Test:
+`npm/factoidal/test/xmpp-inpage.test.mjs` (two clients, one through the WebSocket shape, in a MUC
+room). First user: the FoafOS shell's bus room (danbri/glitchcan-minigam,
+`docs/foafos-chat-20261103.md`).
