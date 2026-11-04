@@ -375,3 +375,46 @@ attaches only to the first glyph of a multiple-substitution sequence.
 Suite: 4,175 pass, 533 fail, 169 refused (out of 5,079 applicable); no
 regressions; `aots/gpos5` now passes. The 38 `ligature-id.tests` failures are
 Bengali text, which needs the Indic shaper.
+
+## 9. The native HTML window (2026-11-04)
+
+The window of `foafnaut2525-html.app` (https://github.com/danbri/factoidal-core/pull/334)
+opened but drew nothing. Measured causes, in the order found:
+
+1. **An agent shell has no desktop session.** A WebGPU adapter request from
+   a shell gave null. Started by macOS (`open`), the same program gets the
+   Apple M1 adapter. Test windows with `open`.
+2. **The window must not be covered.** `ng_can_present` needs
+   `NSWindowOcclusionStateVisible`. A window fully behind another window waits
+   without output and without an error; this looks like a hang.
+3. **The surface format.** The Lean plan of mode `svg-offscreen` always answers
+   `rgba8unorm`. The surface supports `Bgra8Unorm, Bgra8UnormSrgb, Rgba16Float,
+   Rgb10a2Unorm`, so `configure` failed, and the failure appeared later as
+   `Surface is not configured for presentation`. The fix in
+   `native_html_session.ts` uses `navigator.gpu.getPreferredCanvasFormat()` for
+   the surface and pipeline, and swaps B and R in the readback before the Lean
+   pixel checks:
+
+```diff
+-  const plan=await requestRenderPlan("svg-offscreen","rgba8unorm",frame,device.limits);
++  const format=navigator.gpu.getPreferredCanvasFormat();
++  const plan={...await requestRenderPlan("svg-offscreen",format,frame,device.limits),format};
+...
+-          checkPixels(frame,unpad(bytes,plan.width,plan.height,plan.readback!.bytesPerRow));
++          const pixels=unpad(bytes,plan.width,plan.height,plan.readback!.bytesPerRow);
++          if(plan.format==="bgra8unorm")for(let i=0;i<pixels.length;i+=4){const b=pixels[i];pixels[i]=pixels[i+2];pixels[i+2]=b;}
++          checkPixels(frame,pixels);
+```
+
+The correct final fix is in `RenderPlan.lean`: mode `svg-offscreen` must answer
+the requested format, and the pixel check must know the byte order.
+
+Result with the fix, engine 98896de16 run from source by Deno 2.9.4 and started
+with `open`: the default page (1,405 primitives, 11 links) is presented, the
+Lean pixel checks on the GPU readback pass, a window resize reflows (1600x1000,
+then 1758x1154), and there is no resize loop. The screen itself was not seen:
+this shell has no screen-recording permission.
+
+Limits measured: `https://example.com/` is refused (the native milestone does
+not run scripts), and `http://info.cern.ch/hypertext/WWW/TheProject.html` is
+refused (`storage data exceeds 262144 floats`, the scene budget `svgBudget`).
