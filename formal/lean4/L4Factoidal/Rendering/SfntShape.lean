@@ -182,6 +182,7 @@ def shape (b : ByteArray) (dir : Array TableRecord) (face : Face) (text : String
   let tags := if kind == .dfltOnly then ["DFLT"] else tags0
   let mut run ← SfntSubst.substitute face b dir text nominal limits
     (stagesWithSettings (if kind == .use then SfntSubst.useStages else SfntSubst.defaultStages) settings) tags
+    isUnicodeMark
   -- Hide default ignorables before positioning (HarfBuzz
   -- `hb_ot_hide_default_ignorables`): the space glyph, or deleted when the
   -- font has no space glyph.

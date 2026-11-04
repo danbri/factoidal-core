@@ -173,6 +173,18 @@ structure Ctx where
   count : Nat
   gdef? : Option Nat
   limits : Limits
+  /-- Whether a code point is a Unicode mark; the glyph class of a mark
+  when GDEF has no glyph class definition (HarfBuzz synthesized classes). -/
+  isMarkCp : Nat → Bool := fun _ => false
+
+/-- GSUB with HarfBuzz's buffer serial, which numbers ligatures. -/
+abbrev SubM := StateT Nat (Except String)
+
+/-- HarfBuzz `_hb_allocate_lig_id`: the next serial, 3 bits, never 0. -/
+def allocLigId : SubM Nat := do
+  let s := (← get) + 1
+  if s % 8 != 0 then set s; return s % 8
+  set (s + 1); return (s + 1) % 8
 
 /-- Lookup type (extensions resolved), flag and subtables (type, offset). -/
 def lookupInfo (c : Ctx) (l : Nat) : Except String (Nat × (Nat × Option Nat) × Array (Nat × Nat)) := do
@@ -335,21 +347,66 @@ def matchContext (b : ByteArray) (t s : Nat) (ids : Array Nat) (keep : Array Boo
 /-- Replace position i by glyphs (multiple substitution) or by a ligature that
 absorbs later positions. Returns the new run and a map from old to new
 positions (none for absorbed ones). -/
+def isMarkGlyph (c : Ctx) (g : NominalGlyph) : Except String Bool := do
+  let hasClasses := match c.gdef? with
+    | some gd => gd + 6 ≤ c.b.size && u16 c.b (gd + 4) != 0
+    | none => false
+  if hasClasses then return (← gdefClasses c.b c.gdef? g.id).1 == 3
+  return c.isMarkCp g.codepoint
+
+/-- Number of components of a glyph (HarfBuzz `_hb_glyph_info_get_lig_num_comps`). -/
+def numComps (g : NominalGlyph) : Nat := if g.ligId != 0 && g.ligComp == 0 && g.ligNum > 0 then g.ligNum else 1
+
 def edit (c : Ctx) (run : Array NominalGlyph) (i : Nat) (step : Step) :
-    Except String (Array NominalGlyph × (Nat → Option Nat)) := do
+    SubM (Array NominalGlyph × (Nat → Option Nat)) := do
   match step with
   | .none => return (run, some)
   | .replace gs =>
     if gs.any (· ≥ c.f.numGlyphs) then throw "font.file.malformed: GSUB glyph id beyond numGlyphs"
     let src := run[i]!
-    let repl := gs.toArray.map fun g => { src with id := g, advance := c.f.advances[g]!, substituted := true }
+    -- HarfBuzz numbers the outputs as components unless the glyph belongs to a ligature.
+    let many := gs.length > 1
+    let repl := (gs.toArray.zip (Array.range gs.length)).map fun (g, k) =>
+      { src with id := g, advance := c.f.advances[g]!, substituted := true,
+                 multiplied := src.multiplied || many,
+                 ligComp := if many && src.ligId == 0 then k else src.ligComp }
     let shift := gs.length
     return (run.extract 0 i ++ repl ++ run.extract (i + 1) run.size,
             fun k => if k < i then some k else if k == i then (if shift == 0 then none else some i) else some (k + shift - 1))
   | .ligate lig remove =>
     if lig ≥ c.f.numGlyphs then throw "font.file.malformed: GSUB glyph id beyond numGlyphs"
     let src := run[i]!
-    let mut run := run.set! i { src with id := lig, advance := c.f.advances[lig]!, substituted := true, ligated := true }
+    -- Ligature ids (HarfBuzz `ligate_input`).
+    -- The matched components, in order (the forward match gives `remove` ascending).
+    let comps := (i :: remove).toArray
+    let mut markFlags : Array Bool := #[]
+    for k in comps do markFlags := markFlags.push (← isMarkGlyph c run[k]!)
+    let isMarkLig := markFlags.all id
+    let isBaseLig := !markFlags[0]! && (markFlags.extract 1 markFlags.size).all id
+    let isLigature := !isBaseLig && !isMarkLig
+    let ligId ← if isLigature then allocLigId else pure 0
+    let total := comps.foldl (fun acc k => acc + numComps run[k]!) 0
+    let mut run := run
+    let mut lastNum := numComps run[i]!
+    let mut lastLigId := run[i]!.ligId
+    let mut soFar := lastNum
+    for m in [1:comps.size] do
+      for p in [comps[m - 1]! + 1:comps[m]!] do
+        if isLigature then
+          let g := run[p]!
+          let thisComp := if g.ligComp == 0 then lastNum else g.ligComp
+          run := run.set! p { g with ligId, ligComp := soFar - lastNum + min thisComp lastNum, ligNum := 0 }
+      lastLigId := run[comps[m]!]!.ligId
+      lastNum := numComps run[comps[m]!]!
+      soFar := soFar + lastNum
+    if !isMarkLig && lastLigId != 0 then
+      for p in [comps[comps.size - 1]! + 1:run.size] do
+        let g := run[p]!
+        if g.ligId != lastLigId || g.ligComp == 0 then break
+        run := run.set! p { g with ligId, ligComp := soFar - lastNum + min g.ligComp lastNum, ligNum := 0 }
+    let props := if isMarkLig then { src with ligId := src.ligId }
+      else { src with ligId, ligComp := 0, ligNum := min total 15 }
+    run := run.set! i { props with id := lig, advance := c.f.advances[lig]!, substituted := true, ligated := true }
     -- HarfBuzz merges the clusters of the whole matched range into the first.
     let last := remove.foldl max i
     for k in [i:last + 1] do
@@ -363,7 +420,7 @@ def edit (c : Ctx) (run : Array NominalGlyph) (i : Nat) (step : Step) :
 /-- Apply lookup `l` at position i once. Returns the new run and the position
 after the matched input, or none when no subtable matched. Recursion through
 context lookups is bounded by `depth`. -/
-def applyAt (c : Ctx) : Nat → Nat → Array NominalGlyph → Nat → Except String (Option (Array NominalGlyph × Nat))
+def applyAt (c : Ctx) : Nat → Nat → Array NominalGlyph → Nat → SubM (Option (Array NominalGlyph × Nat))
   | 0, _, _, _ => throw "font.layout.limit: nested GSUB context lookups deeper than 8"
   | depth + 1, l, run, i => do
     let (_, flag, subs) ← lookupInfo c l
@@ -406,16 +463,18 @@ def applyAt (c : Ctx) : Nat → Nat → Array NominalGlyph → Nat → Except St
 from `hmtx` for every substituted glyph. -/
 def substitute (f : Face) (b : ByteArray) (dir : Array TableRecord) (text : String)
     (run : Array NominalGlyph) (limits : Limits := {}) (stages : List (List String) := defaultStages)
-    (tags : List String := scriptTags text) : Except String (Array NominalGlyph) := do
+    (tags : List String := scriptTags text) (isMarkCp : Nat → Bool := fun _ => false) :
+    Except String (Array NominalGlyph) := do
   let some gsubRec := dir.find? (·.tag == "GSUB") | return run
   let gsub := gsubRec.offset
   let lookups ← featureLookups b gsub tags stages
   let lookupList := gsub + u16 b (gsub + 8)
   need b lookupList 2 "lookup list"
   let c : Ctx := { f, b, lookupList, count := u16 b lookupList,
-                   gdef? := (dir.find? (·.tag == "GDEF")).map (·.offset), limits }
+                   gdef? := (dir.find? (·.tag == "GDEF")).map (·.offset), limits, isMarkCp }
   let mut out := run
   let mut ops := 0
+  let mut serial := 0
   for (_, l) in lookups do
     let mut i := 0
     -- Each step moves i forward by at least one position.
@@ -424,7 +483,9 @@ def substitute (f : Face) (b : ByteArray) (dir : Array TableRecord) (text : Stri
       ops := ops + 1
       if ops > limits.lookupOperationsPerRun then
         throw s!"font.layout.limit: more than {limits.lookupOperationsPerRun} lookup operations in one run"
-      match ← applyAt c 8 l out i with
+      let (r, s') ← (applyAt c 8 l out i).run serial
+      serial := s'
+      match r with
       | none => i := i + 1
       | some (next, after) =>
         out := next

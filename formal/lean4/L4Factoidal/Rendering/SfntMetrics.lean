@@ -188,6 +188,15 @@ structure NominalGlyph where
   /-- HarfBuzz space fallback type of a space mapped to the U+0020 glyph
   (`hb_unicode_funcs_t::space_t`; 0 = none). -/
   spaceFallback : Nat := 0
+  /-- HarfBuzz ligature properties (`lig_props`): the ligature id (1 to 7;
+  0 = none), the component of a mark or of a multiple-substitution output
+  (0 = the ligature glyph itself), and the number of components of a
+  ligature glyph. -/
+  ligId : Nat := 0
+  ligComp : Nat := 0
+  ligNum : Nat := 0
+  /-- Output of a multiple substitution (HarfBuzz `_hb_glyph_info_multiplied`). -/
+  multiplied : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- One glyph for each character, by `cmap` and `hmtx` only (no GSUB/GPOS). -/

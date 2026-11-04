@@ -361,3 +361,17 @@ regressions; `macos.tests` BigCaslon (subtable (0,1)) now passes.
 
 Suite: 4,174 pass, 534 fail, 169 refused (out of 5,079 applicable); no
 regressions; 15 tests fixed.
+
+### 8.8 Ligature ids and components (2026-11-04)
+
+GSUB gives each ligature an id from a buffer serial (`SubM`, a state over
+`Except`; HarfBuzz `_hb_allocate_lig_id`, 3 bits, never 0) and numbers the
+marks between and after its components (`ligate_input`); the outputs of a
+multiple substitution are numbered components and marked `multiplied`. GPOS
+uses them as HarfBuzz does: mark to ligature takes the mark's component; mark
+to mark attaches only on the same base or the same component; mark to base
+attaches only to the first glyph of a multiple-substitution sequence.
+
+Suite: 4,175 pass, 533 fail, 169 refused (out of 5,079 applicable); no
+regressions; `aots/gpos5` now passes. The 38 `ligature-id.tests` failures are
+Bengali text, which needs the Indic shaper.

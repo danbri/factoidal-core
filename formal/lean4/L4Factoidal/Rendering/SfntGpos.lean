@@ -24,7 +24,7 @@ follows HarfBuzz's default shaper for a left-to-right run:
 
 Cursive attachment (type 3) follows HarfBuzz for left-to-right text; context
 positioning (types 7 and 8) matches as GSUB types 5 and 6. Mark to ligature
-(type 5) uses the last ligature component (no component numbers yet). Mark filtering sets apply as in HarfBuzz. Device tables in value
+(type 5) uses the component of the mark (HarfBuzz lig_id, lig_comp). Mark filtering sets apply as in HarfBuzz. Device tables in value
 records and anchors are not applied (unhinted, no variations). The OpenType
 GPOS chapter is the reference; HarfBuzz is the differential oracle.
 -/
@@ -54,6 +54,15 @@ structure Glyph where
   substituted : Bool := false
   ligated : Bool := false
   spaceFallback : Nat := 0
+  /-- HarfBuzz ligature properties (`lig_props`): the ligature id (1 to 7;
+  0 = none), the component of a mark or of a multiple-substitution output
+  (0 = the ligature glyph itself), and the number of components of a
+  ligature glyph. -/
+  ligId : Nat := 0
+  ligComp : Nat := 0
+  ligNum : Nat := 0
+  /-- Output of a multiple substitution (HarfBuzz `_hb_glyph_info_multiplied`). -/
+  multiplied : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- HarfBuzz default GPOS features for horizontal text. -/
@@ -236,9 +245,7 @@ def applyPosSubtable (c : PCtx) (flag : Nat) (keep : Array Bool) (t s : Nat) (ou
       return some (out, i + 1)
     else if t == 5 then
       -- Mark to ligature (HarfBuzz MarkLigPosFormat1::apply). The ligature is
-      -- the previous glyph that is not a mark. Lean does not record which
-      -- ligature component a mark came from, so it uses the last component,
-      -- as HarfBuzz does when the mark has no component number.
+      -- the previous glyph that is not a mark.
       need b s 12 "mark-to-ligature header"
       let some mci ← coverage b (s + u16 b (s + 2)) g.id | return none
       let nClasses := u16 b (s + 6)
@@ -253,7 +260,10 @@ def applyPosSubtable (c : PCtx) (flag : Nat) (keep : Array Bool) (t s : Nat) (ou
       need b attach 2 "ligature attach"
       let comps := u16 b attach
       if comps == 0 then return none
-      let some ba ← baseAnchor b attach (comps - 1) nClasses cls | return none
+      -- The mark's component when it belongs to this ligature (HarfBuzz lig_id/lig_comp).
+      let lg := out[p]!
+      let comp := if lg.ligId != 0 && lg.ligId == g.ligId && g.ligComp > 0 then min comps g.ligComp - 1 else comps - 1
+      let some ba ← baseAnchor b attach comp nClasses cls | return none
       out := out.set! i { g with xOffset := ba.1 - ma.1, yOffset := ba.2 - ma.2, attachedTo := some p, cursiveChain := 0 }
       return some (out, i + 1)
     else
@@ -264,10 +274,25 @@ def applyPosSubtable (c : PCtx) (flag : Nat) (keep : Array Bool) (t s : Nat) (ou
       let (cls, ma) ← markRecord b (s + u16 b (s + 8)) mci
       -- The glyph to attach to: for type 4 the previous glyph that is
       -- not a mark; for type 6 the previous unskipped glyph, which must be a mark.
+      -- Type 4: the previous glyph that is not a mark, but only the first glyph
+      -- of a multiple-substitution sequence (HarfBuzz MarkBasePos `accept`).
+      let acceptBase (k : Nat) : Bool :=
+        let gk := out[k]!
+        !gk.multiplied || gk.ligComp == 0 || k == 0 || isMark (k - 1) || !out[k - 1]!.multiplied ||
+          gk.ligId != out[k - 1]!.ligId || gk.ligComp != out[k - 1]!.ligComp + 1
+      -- Type 6: the previous unskipped glyph, a mark on the same base or the
+      -- same ligature component (HarfBuzz MarkMarkPosFormat1::apply).
+      let sameBase (k : Nat) : Bool :=
+        let id1 := g.ligId
+        let id2 := out[k]!.ligId
+        let c1 := g.ligComp
+        let c2 := out[k]!.ligComp
+        if id1 == id2 then id1 == 0 || c1 == c2
+        else (id1 > 0 && c1 == 0) || (id2 > 0 && c2 == 0)
       let parent? : Option Nat :=
-        if t == 4 then ((List.range i).reverse).find? (fun k => !isMark k)
+        if t == 4 then ((List.range i).reverse).find? (fun k => !isMark k && acceptBase k)
         else match prevOf keep i with
-          | some k => if isMark k then some k else none
+          | some k => if isMark k && sameBase k then some k else none
           | none => none
       let some p := parent? | return none
       let some bci ← coverage b (s + u16 b (s + 4)) out[p]!.id | return none
@@ -311,7 +336,8 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String)
     (tags : List String := scriptTags text) : Except String (Array Glyph) := do
   let mut out : Array Glyph := run.map fun g =>
     { id := g.id, advance := g.advance, xOffset := 0, yOffset := 0, cluster := g.cluster,
-      codepoint := g.codepoint, substituted := g.substituted, ligated := g.ligated, spaceFallback := g.spaceFallback }
+      codepoint := g.codepoint, substituted := g.substituted, ligated := g.ligated, spaceFallback := g.spaceFallback,
+      ligId := g.ligId, ligComp := g.ligComp, ligNum := g.ligNum, multiplied := g.multiplied }
   let gdef? := (dir.find? (·.tag == "GDEF")).map (·.offset)
   let hasGlyphClasses : Bool := match gdef? with
     | some gd => gd + 6 ≤ b.size && u16 b (gd + 4) != 0
