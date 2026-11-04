@@ -336,3 +336,17 @@ because Lean used `DFLT`.
 Suite: 4,158 pass, 549 fail, 170 refused (out of 5,079 applicable); no
 regressions against 563b74ba2 or 7ef66d094. The 6 Javanese tests refused in
 section 8.4 pass again; 17 tests that failed or were refused now pass.
+
+### 8.6 cmap subtable choice (2026-11-04)
+
+`SfntMetrics.chooseCmap` follows HarfBuzz `find_best_subtable`: the first of
+(3,0) Symbol, (3,10), (0,6), (0,4), (3,1), (0,3), (0,2), (0,1), (0,0) that the
+font has. Formats 0, 4, 6, 12 and 13 are read; another format, or a font with
+only Mac subtables, is refused with `font.file.unsupported-cmap` naming the
+subtable. For a Symbol subtable, a code point up to U+00FF that the subtable
+lacks is looked up at U+F000 plus it (`_hb_symbol_pua_map`). Not done: the
+Arabic PUA maps that HarfBuzz uses for OS/2 font pages of simplified and
+traditional Arabic (only right-to-left tests use them; those are refused).
+
+Suite: 4,159 pass, 549 fail, 169 refused (out of 5,079 applicable); no
+regressions; `macos.tests` BigCaslon (subtable (0,1)) now passes.

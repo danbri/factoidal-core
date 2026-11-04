@@ -35,6 +35,10 @@ inductive CharMap where
   | format12 (offset groups : Nat)
   /-- Format 13 (many-to-one ranges) at this absolute offset, with its group count. -/
   | format13 (offset groups : Nat)
+  /-- Format 0 (byte array of 256 glyph ids) at this absolute offset. -/
+  | format0 (offset : Nat)
+  /-- Format 6 (trimmed table) at this absolute offset. -/
+  | format6 (offset firstCode count : Nat)
   deriving Repr, BEq
 
 structure Face where
@@ -46,6 +50,10 @@ structure Face where
   /-- One advance for each glyph id below `numGlyphs`. -/
   advances : Array Nat
   cmap : CharMap
+  /-- The chosen subtable is (3,0) Symbol: a code point up to U+00FF the
+  subtable lacks is looked up again at U+F000 plus it (HarfBuzz
+  `_hb_symbol_pua_map`). -/
+  cmapSymbol : Bool := false
   deriving Repr
 
 private def table (dir : Array TableRecord) (tag : String) : Except String TableRecord :=
@@ -53,43 +61,42 @@ private def table (dir : Array TableRecord) (tag : String) : Except String Table
   | some t => pure t
   | none => throw s!"font.file.malformed: no {tag.quote} table"
 
-/-- Choose the cmap subtable: (3,10) or (0,4) format 12 first, then (3,1) or
-(0,3) format 4, in the order of the OpenType `cmap` recommendations. -/
-private def chooseCmap (b : ByteArray) (t : TableRecord) : Except String CharMap := do
+/-- Choose the cmap subtable as HarfBuzz `find_best_subtable`: the first of
+(3,0) Symbol, (3,10), (0,6), (0,4), (3,1), (0,3), (0,2), (0,1), (0,0) that
+the font has. Formats 0, 4, 6, 12 and 13 are read; a Mac subtable only, or
+another format, is refused. -/
+private def chooseCmap (b : ByteArray) (t : TableRecord) : Except String (CharMap × Bool) := do
   need b t.offset 4 "cmap header"
   let n := u16 b (t.offset + 2)
   need b (t.offset + 4) (8 * n) "cmap encoding records"
-  let mut best : Option (Nat × CharMap) := none
-  for k in [0:n] do
+  let order : List (Nat × Nat) := [(3, 0), (3, 10), (0, 6), (0, 4), (3, 1), (0, 3), (0, 2), (0, 1), (0, 0)]
+  let find (pe : Nat × Nat) : Option Nat := (List.range n).findSome? fun k =>
     let r := t.offset + 4 + 8 * k
-    let platform := u16 b r
-    let encoding := u16 b (r + 2)
-    let sub := t.offset + u32 b (r + 4)
-    let rank? : Option Nat :=
-      if (platform == 3 && encoding == 10) || (platform == 0 && encoding == 4) then some 0
-      else if (platform == 3 && encoding == 1) || (platform == 0 && encoding == 3) then some 1
-      else none
-    let some rank := rank? | continue
-    need b sub 2 "cmap subtable"
-    let format := u16 b sub
-    let cand? ← if format == 12 || format == 13 then do
-        need b sub 16 "cmap format 12 header"
-        let groups := u32 b (sub + 12)
-        need b (sub + 16) (12 * groups) "cmap format 12 groups"
-        pure (some (if format == 12 then CharMap.format12 sub groups else CharMap.format13 sub groups))
-      else if format == 4 then do
-        need b sub 14 "cmap format 4 header"
-        let segCount := u16 b (sub + 6) / 2
-        need b (sub + 14) (8 * segCount + 2) "cmap format 4 arrays"
-        pure (some (CharMap.format4 sub segCount))
-      else pure none
-    match cand?, best with
-    | some c, none => best := some (rank, c)
-    | some c, some (r0, _) => if rank < r0 then best := some (rank, c)
-    | none, _ => pure ()
-  match best with
-  | some (_, c) => pure c
-  | none => throw "font.file.unsupported-cmap: no Unicode cmap subtable of format 4, 12 or 13"
+    if u16 b r == pe.1 && u16 b (r + 2) == pe.2 then some (t.offset + u32 b (r + 4)) else none
+  let some (pe, sub) := order.findSome? (fun pe => (find pe).map (pe, ·))
+    | throw "font.file.unsupported-cmap: no Unicode or Symbol cmap subtable"
+  need b sub 2 "cmap subtable"
+  let format := u16 b sub
+  let cm ← if format == 12 || format == 13 then do
+      need b sub 16 "cmap format 12 header"
+      let groups := u32 b (sub + 12)
+      need b (sub + 16) (12 * groups) "cmap format 12 groups"
+      pure (if format == 12 then CharMap.format12 sub groups else CharMap.format13 sub groups)
+    else if format == 4 then do
+      need b sub 14 "cmap format 4 header"
+      let segCount := u16 b (sub + 6) / 2
+      need b (sub + 14) (8 * segCount + 2) "cmap format 4 arrays"
+      pure (CharMap.format4 sub segCount)
+    else if format == 0 then do
+      need b sub (6 + 256) "cmap format 0"
+      pure (CharMap.format0 sub)
+    else if format == 6 then do
+      need b sub 10 "cmap format 6 header"
+      let count := u16 b (sub + 8)
+      need b (sub + 10) (2 * count) "cmap format 6 glyph ids"
+      pure (CharMap.format6 sub (u16 b (sub + 6)) count)
+    else throw s!"font.file.unsupported-cmap: cmap subtable ({pe.1},{pe.2}) has format {format}"
+  return (cm, pe == (3, 0))
 
 /-- Read the face from the bytes and its checked table directory. -/
 def Face.read (b : ByteArray) (dir : Array TableRecord) : Except String Face := do
@@ -110,14 +117,16 @@ def Face.read (b : ByteArray) (dir : Array TableRecord) : Except String Face := 
   let mut advances : Array Nat := Array.mkEmpty numGlyphs
   for g in [0:numGlyphs] do
     advances := advances.push (u16 b (hmtx.offset + 4 * (min g (numLong - 1))))
-  let cmap ← chooseCmap b (← table dir "cmap")
+  let (cmap, cmapSymbol) ← chooseCmap b (← table dir "cmap")
   return { unitsPerEm := upem, ascender := i16 b (hhea.offset + 4), descender := i16 b (hhea.offset + 6),
-           lineGap := i16 b (hhea.offset + 8), numGlyphs, advances, cmap }
+           lineGap := i16 b (hhea.offset + 8), numGlyphs, advances, cmap, cmapSymbol }
 
-/-- The nominal glyph of a code point; 0 (`.notdef`) when the font has none. -/
-def Face.glyph (f : Face) (b : ByteArray) (c : Char) : Except String Nat := do
-  let cp := c.toNat
+/-- The glyph of code point `cp` in the chosen subtable; 0 when it has none. -/
+def Face.glyphCp (f : Face) (b : ByteArray) (cp : Nat) : Except String Nat := do
   let g ← match f.cmap with
+    | .format0 sub => pure (if cp < 256 then (b.get! (sub + 6 + cp)).toNat else 0)
+    | .format6 sub first count =>
+      pure (if first ≤ cp && cp < first + count then u16 b (sub + 10 + 2 * (cp - first)) else 0)
     | .format12 sub groups => do
       let mut found := 0
       for k in [0:groups] do
@@ -159,6 +168,11 @@ def Face.glyph (f : Face) (b : ByteArray) (c : Char) : Except String Nat := do
       pure found
   -- A glyph id at or above numGlyphs is malformed data; map it to .notdef.
   return if g < f.numGlyphs then g else 0
+
+/-- The nominal glyph of a character; 0 (`.notdef`) when the font has none. -/
+def Face.glyph (f : Face) (b : ByteArray) (c : Char) : Except String Nat := do
+  let g ← f.glyphCp b c.toNat
+  if g == 0 && f.cmapSymbol && c.toNat ≤ 0xFF then f.glyphCp b (0xF000 + c.toNat) else pure g
 
 structure NominalGlyph where
   id : Nat
