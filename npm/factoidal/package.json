@@ -94,6 +94,9 @@
     "./webdav": {
       "default": "./webdav/server.mjs"
     },
+    "./lws/inpage": {
+      "default": "./lws/inpage.mjs"
+    },
     "./lws/client": {
       "default": "./lws/client.mjs"
     },

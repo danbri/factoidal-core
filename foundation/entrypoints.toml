@@ -1206,6 +1206,10 @@ id = "npm:./xmpp/server#xmppServerOpsAvailable"
 reason = "reflection: whether the loaded engine has the ops (the op list (wasm op ops)); reads no RDF data"
 
 [[nonstage]]
+id = "npm:./lws/inpage#openInPageLwsStorage"
+reason = "runs one Lean LWS storage with no network (lwsOpen, lwsStep, lwsSnapshot, lwsClose; Wasm/Ops/Lws.lean) behind a fetch-shaped function; turns a fetch call into the ABI request record and the response record into a Response, every protocol decision is the engine's; reads no RDF data"
+
+[[nonstage]]
 id = "npm:./xmpp/inpage#openInPageXmppServer"
 reason = "runs the Lean XMPP server with no network, over the engine's message carrier (xmppMsg*, Wasm/Ops/XmppSession.lean); moves whole RFC 7395 messages and performs the engine's routes (xmpp/router.mjs); reads no RDF data"
 
