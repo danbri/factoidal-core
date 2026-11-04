@@ -1,6 +1,6 @@
 # @factoidal/core
 
-> ⚠️ **EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.**
+> ⚠️ **EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.**
 >
 > This covers the whole core library and every command line tool, and in
 > particular all protocol, authentication and security code (the LWS, Solid,
@@ -58,9 +58,10 @@ and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
   Jena TDB2 read only), Linked Web Storage 1.0, Solid, an OAuth 2.0
   authorization server (token exchange for OpenID Connect ID tokens,
   self-issued CID credentials and SAML 2.0 assertions)
-- Security: JWS/JWT (ES256, RS256, EdDSA), XML Signature verification in the
-  SAML Core profile (Exclusive XML Canonicalization 1.0, rsa-sha256), with
-  HACL\* primitives. XML Encryption 1.1 and JWE (RFC 7516), decryption and
+- Security: JWS/JWT (ES256, RS256, EdDSA), XML Signature 1.1 verification
+  and signing (`xmlVerify`, `xmlSign`; RSA, ECDSA P-256, HMAC; not DSA,
+  https://github.com/danbri/factoidal/issues/1224, nor ECDSA P-384 and P-521,
+  https://github.com/danbri/factoidal/issues/1223), with HACL\* primitives. XML Encryption 1.1 and JWE (RFC 7516), decryption and
   encryption (`xmlDecrypt`, `xmlEncrypt`, `jweDecrypt`, `jweEncrypt`):
   RSA-OAEP, P-256 and X25519 run in the wasm (HACL\*), AES runs in the host's
   WebCrypto. The authorization server decrypts encrypted SAML assertions

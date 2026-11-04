@@ -117,6 +117,8 @@ export {
   vcEd25519Verify,
   xmlDecrypt,
   xmlEncrypt,
+  xmlVerify,
+  xmlSign,
   jweDecrypt,
   jweEncrypt,
   vcEddsaCreateFromCanonical,

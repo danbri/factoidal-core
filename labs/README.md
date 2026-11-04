@@ -7,6 +7,7 @@ imports a file from here.
 | path | what it is |
 | --- | --- |
 | [`filetrees/`](filetrees/) | file trees to serve over WebDAV to desktop file browsers (Finder, Windows Explorer, GNOME Files, KDE Dolphin), to find what each client shows and does |
+| [`demos/foafnaut/`](demos/foafnaut/) | Lean WASM with raw native WebGPU: spring network, responsive layout, vector interaction, still graphics and a restricted SVG reader/renderer; executable releases belong in factoidal-builds |
 
 The harness that serves the trees and records what each client does is
 [`tests/webdav-desktop/`](../tests/webdav-desktop/). Tracking:

@@ -523,6 +523,28 @@ def sha384 (m : ByteArray) : ByteArray :=
     |> (appendWord64BE · hFinal[4]!)
     |> (appendWord64BE · hFinal[5]!)
 
+/-- FIPS 180-4 §5.3.2 SHA-224 initial hash value H(0): the second 32
+bits of the fractional parts of the square roots of the 9th to 16th
+primes. -/
+def H224_0 : Array UInt32 := #[
+  0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939,
+  0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4 ]
+
+/-- FIPS 180-4 §6.3 SHA-224: the SHA-256 algorithm with `H224_0` in
+place of `H256_0`, truncated to the first 7 words (224 bits / 28 bytes)
+of output. Used by XML Signature 1.1 (§6.2.2, optional). -/
+def sha224 (m : ByteArray) : ByteArray :=
+  let padded := pad256 m
+  let hFinal := processBlocks256At H224_0 padded 0 (padded.size / 64)
+  ByteArray.empty
+    |> (appendWord32BE · hFinal[0]!)
+    |> (appendWord32BE · hFinal[1]!)
+    |> (appendWord32BE · hFinal[2]!)
+    |> (appendWord32BE · hFinal[3]!)
+    |> (appendWord32BE · hFinal[4]!)
+    |> (appendWord32BE · hFinal[5]!)
+    |> (appendWord32BE · hFinal[6]!)
+
 /-! ## Hex encoding — the string-in/hex-out forms the F* `assume val`s
 need (`hash_sha256 : string -> string`, RDFC-1.0 hashes UTF-8 strings
 and returns lowercase hex). Not cryptography, a plain codec. -/

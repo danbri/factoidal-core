@@ -1843,6 +1843,53 @@ checkseq "lwsStep drives create, read, update and delete" "$TMP/lws-crud.json" \
    and rs[7]["ok"] is True
    and rs[8]["ok"] is False and "unknown LWS handle" in rs[8]["error"]'
 
+# --- LWS dataset view, version 2 (https://github.com/danbri/factoidal/issues/1011) ---
+# Wasm/Ops/LwsDataset.lean. The plan of a listing names the container and
+# every non-container member as the resources whose linkset to read; the view
+# has the table-of-contents graph (named by the storage description IRI of
+# the root's linkset), the document graph and one graph per linkset.
+python3 - "$TMP/lws-view-plan.json" <<'EOF'
+import json, sys
+listing = {"members": [{"id": "http://s/a/", "type": "Container"},
+                       {"id": "http://s/b.ttl", "type": "DataResource", "format": "text/turtle"},
+                       {"id": "http://s/c.png", "type": "DataResource", "format": "image/png"}]}
+json.dump([json.dumps(listing), "http://s/"], open(sys.argv[1], "w"))
+EOF
+check "lwsViewPlan: metadata is the container, then every member that is not a container" lwsViewPlan "$TMP/lws-view-plan.json" \
+  'r["ok"] is True and r["containers"] == ["http://s/a/"] and r["resources"] == ["http://s/b.ttl"]
+   and r["metadata"] == ["http://s/", "http://s/b.ttl", "http://s/c.png"]
+   and [s["resource"] for s in r["skipped"]] == ["http://s/c.png"]'
+
+python3 - "$TMP/lws-view.json" "$TMP/lws-view-nostorage.json" <<'EOF'
+import json, sys
+def ls(url, etag, ctx):
+    return {"url": url, "etag": etag, "linkset": {"linkset": [ctx]}}
+docs = {
+  "listings": [{"container": "http://s/", "done": {"members": [
+      {"id": "http://s/b.ttl", "type": "DataResource", "format": "text/turtle", "size": 19}]}}],
+  "reads": [{"resource": "http://s/b.ttl", "done": {"status": 200,
+      "headers": [["content-type", "text/turtle"], ["etag", "\"7\""]], "body": "<> <http://e/p> 1 ."}}],
+  "linksets": [
+    {"resource": "http://s/", "done": ls("http://s/?linkset", "\"r\"", {"anchor": "http://s/",
+        "type": [{"href": "https://www.w3.org/ns/lws#Container"}],
+        "https://www.w3.org/ns/lws#storage": [{"href": "http://s/.well-known/lws-storage"}]})},
+    {"resource": "http://s/b.ttl", "done": ls("http://s/b.ttl?linkset", "\"b\"",
+        {"up": [{"href": "./"}]})}]}
+json.dump([json.dumps(docs)], open(sys.argv[1], "w"))
+docs["linksets"] = docs["linksets"][1:]
+json.dump([json.dumps(docs)], open(sys.argv[2], "w"))
+EOF
+check "lwsDatasetView: the TOC graph is named by the storage IRI; one linkset graph triple" lwsDatasetView "$TMP/lws-view.json" \
+  'r["ok"] is True and r["toc"] == "http://s/.well-known/lws-storage" and r["graphs"] == 4
+   and "<http://s/b.ttl> <http://www.iana.org/assignments/relation/up> <http://s/> <http://s/b.ttl?linkset> ." in r["nquads"].splitlines()
+   and "<http://s/> <https://www.w3.org/ns/lws#items> <http://s/b.ttl> <http://s/.well-known/lws-storage> ." in r["nquads"].splitlines()
+   and "<http://s/> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/ns/lws#Container> <http://s/?linkset> ." in r["nquads"].splitlines()
+   and "<http://s/b.ttl> <http://schema.org/size> \"19\"^^<http://www.w3.org/2001/XMLSchema#long> <http://s/.well-known/lws-storage> ." in r["nquads"].splitlines()
+   and [e.get("linkset") for e in r["evidence"]] == [None, "http://s/?linkset", "http://s/b.ttl?linkset"]
+   and r["skipped"] == []'
+check "lwsDatasetView: no storage link in the root linkset -> error" lwsDatasetView "$TMP/lws-view-nostorage.json" \
+  'r["ok"] is False and "table-of-contents graph" in r["error"]'
+
 # --- WebDAV server (https://github.com/danbri/factoidal/issues/1066) ---
 # The handle reads mount files (webdavOpen, webdavLoad), then each request
 # is a program over storage operations: an lws mount's operation comes out
@@ -3460,7 +3507,8 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
                           "sbm11Query","sbm11PackFiles",
                           "storeManifestInspectBytes","storeQueryPlanBytes","storeOpenBytes",
                           "lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead",
-                          "webdavStep","webdavResume"]'
+                          "webdavStep","webdavResume",
+                          "xmppWsFeed","xmppWsDeliver","xmppWsClose"]'
 
 # SBM11 over host positioned reads (https://github.com/danbri/factoidal/issues/1009).
 # Natively the host is a pread of source/file (ffi/l4_hostread.c). A bad
@@ -3841,6 +3889,92 @@ checkseq "lists and containers: add, container items, nil, refusal" "$TMP/coll-s
    and [m["ordinal"] for m in rs[2]["items"]] == [1, 2]
    and rs[3] == {"ok": True, "items": []}
    and rs[4]["ok"] is False and rs[4]["reason"] == "no-first"'
+
+# --- XML Signature 1.1: xmlSign and xmlVerify (Wasm/Ops/XmlDsig.lean) --------
+# Keys: tests/xmldsig/signing-keys.tsv (test keys only). Fixtures: tests/xmldsig/fixtures.
+DSIG="$LEAN_DIR/../../tests/xmldsig"
+python3 - "$DSIG" "$TMP" <<'EOF2'
+import base64, json, os, sys
+d, tmp = sys.argv[1], sys.argv[2]
+k = dict(l.rstrip("\n").split("\t") for l in open(os.path.join(d, "signing-keys.tsv")) if not l.startswith("#"))
+u = lambda h: base64.urlsafe_b64encode(bytes.fromhex(h)).decode().rstrip("=")
+DOC = '<doc xmlns="urn:example:doc" ID="d1"><item n="1">one</item></doc>'
+rsa = {"kty": "RSA", "n": u(k["rsa2048-n"]), "e": u(k["rsa2048-e"]), "d": u(k["rsa2048-d"])}
+ec = {"kty": "EC", "crv": "P-256", "d": u(k["p256-secret"])}
+mac = {"kty": "oct", "k": u(k["hmac"])}
+rnd = base64.b64encode(os.urandom(32)).decode()
+def w(name, obj): json.dump([json.dumps(obj)], open(os.path.join(tmp, name), "w"))
+w("dsig-sign-rsa.json", {"document": DOC, "key": rsa})
+w("dsig-sign-rsa512-c14n11.json", {"document": DOC, "key": rsa,
+  "signatureMethod": "http://www.w3.org/2001/04/xmldsig-more#rsa-sha512",
+  "canonicalizationMethod": "http://www.w3.org/2006/12/xml-c14n11",
+  "references": [{"uri": "#d1", "transforms": ["http://www.w3.org/2000/09/xmldsig#enveloped-signature",
+                  "http://www.w3.org/2006/12/xml-c14n11"], "digestMethod": "http://www.w3.org/2001/04/xmlenc#sha512"}]})
+w("dsig-sign-ec.json", {"document": DOC, "key": ec, "random": rnd,
+  "signatureMethod": "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha384"})
+w("dsig-sign-ec-norandom.json", {"document": DOC, "key": ec})
+w("dsig-sign-mac.json", {"document": DOC, "key": mac,
+  "enveloping": {"id": "obj", "content": '<item xmlns="urn:example:doc">one</item>'}})
+w("dsig-sign-kind.json", {"document": DOC, "key": rsa,
+  "signatureMethod": "http://www.w3.org/2001/04/xmldsig-more#hmac-sha256"})
+w("dsig-sign-dsa.json", {"document": DOC, "key": rsa,
+  "signatureMethod": "http://www.w3.org/2000/09/xmldsig#dsa-sha1"})
+fx = lambda f: open(os.path.join(d, "fixtures", f)).read()
+w("dsig-verify-fixture.json", {"document": fx("rsa2048-sha256.xml")})
+w("dsig-verify-fixture-nokeyinfo.json", {"document": fx("rsa2048-sha256.xml"), "keyFromKeyInfo": False})
+w("dsig-verify-hmac.json", {"document": fx("hmac-sha256.xml"), "hmacKey": base64.b64encode(b"secret").decode()})
+w("dsig-verify-hmac-wrong.json", {"document": fx("hmac-sha256.xml"), "hmacKey": base64.b64encode(b"wrong").decode()})
+w("dsig-verify-wrapped.json", {"document": fx("neg-wrapped-duplicate-id.xml")})
+w("dsig-verify-badkey.json", {"document": DOC, "key": {"kty": "EC", "crv": "P-192"}})
+open(os.path.join(tmp, "dsig-hmac-key"), "w").write(base64.b64encode(bytes.fromhex(k["hmac"])).decode())
+EOF2
+check "xmlSign rsa-sha256 enveloped, exc-c14n (defaults)" xmlSign "$TMP/dsig-sign-rsa.json" \
+  'r["ok"] is True and "SignatureValue" in r["document"] and "xml-exc-c14n#" in r["document"]'
+check "xmlSign rsa-sha512 over #d1, C14N 1.1" xmlSign "$TMP/dsig-sign-rsa512-c14n11.json" \
+  'r["ok"] is True and "rsa-sha512" in r["document"] and "URI=\"#d1\"" in r["document"]'
+check "xmlSign ecdsa-sha384 at P-256" xmlSign "$TMP/dsig-sign-ec.json" \
+  'r["ok"] is True and "ecdsa-sha384" in r["document"] and "ECKeyValue" in r["document"]'
+check "xmlSign refuses ECDSA with no random octets" xmlSign "$TMP/dsig-sign-ec-norandom.json" \
+  'r["ok"] is False and "random" in r["error"]'
+check "xmlSign hmac-sha256 enveloping" xmlSign "$TMP/dsig-sign-mac.json" \
+  'r["ok"] is True and r["document"].startswith("<ds:Signature") and "Id=\"obj\"" in r["document"]'
+check "xmlSign refuses a method of another key kind" xmlSign "$TMP/dsig-sign-kind.json" \
+  'r["ok"] is False and "kind of key" in r["error"]'
+check "xmlSign refuses DSA and names issue 1224" xmlSign "$TMP/dsig-sign-dsa.json" \
+  'r["ok"] is False and "1224" in r["error"]'
+# Round trips: each signed document goes back through xmlVerify, then a changed copy.
+if python3 - "$CLI" "$TMP" <<'EOF2'
+import json, os, subprocess, sys
+cli, tmp = sys.argv[1], sys.argv[2]
+mk = open(os.path.join(tmp, "dsig-hmac-key")).read()
+def call(op, obj):
+    f = os.path.join(tmp, "dsig-rt.json")
+    json.dump([json.dumps(obj)], open(f, "w"))
+    return json.loads(subprocess.run([cli, "call", op, f], capture_output=True, text=True, check=True).stdout)
+bad = 0
+for name, extra in [("rsa", {}), ("rsa512-c14n11", {}), ("ec", {}), ("mac", {"hmacKey": mk})]:
+    signed = call("xmlSign", json.loads(json.load(open(os.path.join(tmp, f"dsig-sign-{name}.json")))[0]))
+    v = call("xmlVerify", {"document": signed["document"], **extra})
+    t = call("xmlVerify", {"document": signed["document"].replace(">one<", ">One<"), **extra})
+    good = v.get("valid") is True and t.get("valid") is False and v["references"]
+    if name != "mac": good = good and v["key"] is not None
+    print(("ok  " if good else "FAIL") + f" round trip {name}: {v.get('valid')}, changed copy {t.get('valid')}")
+    bad += not good
+sys.exit(1 if bad else 0)
+EOF2
+then echo "ok   xmlSign then xmlVerify round trips (4), changed copies refused"; PASS=$((PASS + 1)); else echo "FAIL xmlSign then xmlVerify round trips"; FAIL=$((FAIL + 1)); fi
+check "xmlVerify signxml fixture rsa2048-sha256 (key of ds:KeyInfo, returned as JWK)" xmlVerify "$TMP/dsig-verify-fixture.json" \
+  'r["ok"] is True and r["valid"] is True and r["key"]["kty"] == "RSA" and len(r["references"]) == 1 and r["signedInfo"].startswith("<ds:SignedInfo")'
+check "xmlVerify with keyFromKeyInfo false and no key -> not valid" xmlVerify "$TMP/dsig-verify-fixture-nokeyinfo.json" \
+  'r["ok"] is True and r["valid"] is False and "no key" in r["reason"]'
+check "xmlVerify signxml fixture hmac-sha256" xmlVerify "$TMP/dsig-verify-hmac.json" \
+  'r["ok"] is True and r["valid"] is True and r["key"] is None'
+check "xmlVerify hmac-sha256 with the wrong key -> not valid" xmlVerify "$TMP/dsig-verify-hmac-wrong.json" \
+  'r["ok"] is True and r["valid"] is False'
+check "xmlVerify refuses a duplicate-ID wrapped reference" xmlVerify "$TMP/dsig-verify-wrapped.json" \
+  'r["ok"] is True and r["valid"] is False'
+check "xmlVerify argument error: unknown curve" xmlVerify "$TMP/dsig-verify-badkey.json" \
+  'r["ok"] is False and "P-256" in r["error"]'
 
 echo "=== native-smoke: $PASS pass, $FAIL fail, $XFAIL xfail (out of $((PASS + FAIL + XFAIL)))"
 [ "$FAIL" -eq 0 ]

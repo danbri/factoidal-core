@@ -250,8 +250,9 @@ function contentBytes (request) {
  * @param {boolean} [options.realClock] stamp each request with this host's clock
  * @param {string|null} [options.storageKey] the storage key text (64 hex digits or base64url);
  *   default the environment variable FACTOIDAL_LWS_KEY; `null` reads no key
- * @param {string} [options.storage] where DIR keeps the storage: "snapshot" (default, one
- *   file) or "files" (one file per body and a journal, issue 918); passed unread
+ * @param {string} [options.storage] where DIR keeps the storage: "files" (default, one
+ *   file per body and a journal, issue 918) or "snapshot" (one file written whole after
+ *   each change); passed unread
  * @param {boolean|string[]} [options.cors] CORS (issue 923): false for none, a list of
  *   origins to answer; default: echo any valid request Origin. Passed unread
  * @param {string} [options.lockCommand] the command named in the lock file of DIR
@@ -270,12 +271,20 @@ export async function openLwsStorage (options = {}) {
   // The pagination threshold and page size of container listings; the
   // engine decides what it means (L4Factoidal/LWS/Pagination.lean).
   if (typeof options.pageSize === 'number') config.pageSize = options.pageSize
+  // The largest content of one write; the engine answers 413 above it
+  // (L4Factoidal/LWS/Operations.lean, step_tooLarge; issue 1240).
+  if (typeof options.maxBody === 'number') config.maxBody = options.maxBody
   // Authorization (L4Factoidal/LWS/Authorization.lean). `auth` is passed
   // through unread; `insecureNoAuth` is the explicit development mode.
   // With neither, the engine enforces authorization with no trusted
   // issuer.
   if (options.auth !== undefined && options.auth !== null) config.auth = options.auth
   if (options.insecureNoAuth === true) config.insecureNoAuth = true
+  // A component principal (issue 1238): a storage a component opens
+  // in-process. No token is read; every request is this agent's, and WAC
+  // decides it (Authorization.decide_principal_agents). Never served over
+  // HTTP: createLwsServer refuses it.
+  if (typeof options.principal === 'string') config.principal = options.principal
   if (typeof options.rootAcl === 'string') config.rootAcl = options.rootAcl
   // Notifications are on unless the caller turns them off; the engine
   // decides everything else about them.
@@ -339,10 +348,13 @@ export async function openLwsStorage (options = {}) {
   // With "files" the engine names the files to read (`load`) and gives the
   // plan of every write (`lwsPersist`), and this host reads no snapshot.
   // With a DIR and no `storage` option, the environment variable
-  // FACTOIDAL_LWS_STORAGE is the value; without a DIR there is nothing to
+  // FACTOIDAL_LWS_STORAGE is the value, and without it "files" (2026-11-03):
+  // a write then costs what it changes, not the size of the storage. A DIR
+  // that holds a snapshot is migrated at the first start (lws-state.json is
+  // renamed lws-state.json.migrated). Without a DIR there is nothing to
   // keep, and only an explicit option is passed.
   const dir = typeof options.dir === 'string' ? options.dir : null
-  const storage = dir !== null ? storageModeText(options.storage) : options.storage
+  const storage = dir !== null ? (storageModeText(options.storage) ?? 'files') : options.storage
   if (typeof storage === 'string') config.storage = storage
   // One writing process per storage directory
   // (https://github.com/danbri/factoidal/issues/1135): the lock is taken
@@ -589,13 +601,37 @@ export async function openLwsStorage (options = {}) {
   }
 }
 
-/** Read a Node request body as its bytes. */
-function readBody (request) {
+/** The engine's default `maxBody` (L4Factoidal/LWS/Operations.lean). */
+export const DEFAULT_MAX_BODY = 16 * 1024 * 1024
+
+/**
+ * Read a Node request body as its bytes, at most `limit + 1` of them. Past
+ * the limit it keeps the first `limit + 1` bytes, stops reading and says so
+ * (`over`), so an oversized upload never reaches memory whole (issue 1240).
+ * The engine decides the answer: content over its `maxBody` is refused with
+ * 413 and changes nothing (`step_tooLarge`, L4Factoidal/LWS/Operations.lean).
+ */
+function readBody (request, limit = DEFAULT_MAX_BODY) {
   return new Promise((resolve, reject) => {
     const chunks = []
-    request.on('data', (chunk) => chunks.push(chunk))
+    let size = 0
+    let over = false
+    const done = () => resolve({ bytes: new Uint8Array(Buffer.concat(chunks)), over })
+    request.on('data', (chunk) => {
+      if (over) return
+      if (size + chunk.length > limit) {
+        chunks.push(chunk.subarray(0, limit + 1 - size))
+        size = limit + 1
+        over = true
+        done()
+        request.resume()
+        return
+      }
+      size += chunk.length
+      chunks.push(chunk)
+    })
     request.on('error', reject)
-    request.on('end', () => resolve(new Uint8Array(Buffer.concat(chunks))))
+    request.on('end', () => { if (!over) done() })
   })
 }
 
@@ -623,6 +659,11 @@ function headerPairs (raw) {
  *                    setBaseIri: Function}>}
  */
 export async function createLwsServer (options = {}) {
+  if (options.principal !== undefined) {
+    // Served over HTTP, a principal storage would let every client act as
+    // the component. It is for in-process use only (issue 1238).
+    throw new LwsHostError('a storage with a component principal is in-process only; it is not served over HTTP')
+  }
   const http = await import('node:http')
   const onError = typeof options.onError === 'function'
     ? options.onError
@@ -675,8 +716,13 @@ export async function createLwsServer (options = {}) {
         method: request.method,
         target: request.url,
         headers: headerPairs(request.rawHeaders),
-        body: await readBody(request)
+        body: new Uint8Array(0)
       }
+      const read = await readBody(request, typeof settings.maxBody === 'number' ? settings.maxBody : DEFAULT_MAX_BODY)
+      record.body = read.bytes
+      // The rest of an oversized body is not read: the connection closes
+      // after the answer. The answer is the engine's.
+      if (read.over) response.shouldKeepAlive = false
     } catch (error) {
       onError(error)
       response.writeHead(500, { 'content-type': 'text/plain' })

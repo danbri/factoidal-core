@@ -269,6 +269,89 @@ theorem rs256Verify_refusal_rejects (pubOp : PublicOp) (n e sig msg : ByteArray)
     (h : pubOp n e sig = none) : rs256Verify pubOp n e sig msg = false := by
   simp [rs256Verify, h]
 
+/-! ## EMSA-PKCS1-v1_5 for every hash of RFC 8017 §9.2 note 1
+
+XML Signature 1.1 §6.4.2 names RSASSA-PKCS1-v1_5 with SHA-1, SHA-224,
+SHA-256, SHA-384 and SHA-512. The DigestInfo of each is a constant of RFC
+8017 §9.2 note 1. `emsaEncodeGen di hLen` is `emsaEncodeList` with the
+DigestInfo `di` and the digest length `hLen` as parameters;
+`emsaEncodeGen_sha256` and `rsaPkcs1Verify_sha256` say that the SHA-256
+form above is its instance, so the theorems above are about this
+function at SHA-256. The verifier still GENERATES the whole block and
+compares it at full length. -/
+
+def sha1DigestInfo : List UInt8 :=
+  [0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14]
+def sha224DigestInfo : List UInt8 :=
+  [0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
+   0x04, 0x02, 0x04, 0x05, 0x00, 0x04, 0x1c]
+def sha384DigestInfo : List UInt8 :=
+  [0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
+   0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30]
+def sha512DigestInfo : List UInt8 :=
+  [0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
+   0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40]
+
+-- The last octet of each DigestInfo is the length of the digest that follows.
+#guard sha1DigestInfo.getLast? == some 20 && sha224DigestInfo.getLast? == some 28
+#guard sha384DigestInfo.getLast? == some 48 && sha512DigestInfo.getLast? == some 64
+
+/-- RFC 8017 §9.2 with the DigestInfo `di` and the digest length `hLen`:
+`EM = 0x00 || 0x01 || PS || 0x00 || di || h`, `PS` being
+`k - di.length - hLen - 3` octets of `0xFF`; `none` when `h` is not
+`hLen` octets or `PS` would be shorter than eight octets. -/
+def emsaEncodeGen (di : List UInt8) (hLen : Nat) (h : List UInt8) (k : Nat) :
+    Option (List UInt8) :=
+  if h.length = hLen ∧ di.length + hLen + 11 ≤ k then
+    some ((0x00 :: 0x01 :: List.replicate (k - di.length - hLen - 3) 0xFF) ++ ((0x00 :: di) ++ h))
+  else none
+
+theorem emsaEncodeGen_sha256 (h : List UInt8) (k : Nat) :
+    emsaEncodeGen sha256DigestInfo 32 h k = emsaEncodeList h k := by
+  unfold emsaEncodeGen emsaEncodeList
+  have hl : sha256DigestInfo.length = 19 := rfl
+  rw [hl]
+  have hm : minEmLen = 19 + 32 + 11 := rfl
+  rw [hm]
+  have hk : k - 19 - 32 - 3 = k - 54 := by omega
+  rw [hk]
+
+/-- RSASSA-PKCS1-v1_5 verification (RFC 8017 §8.2.2) of the digest `d`,
+by generating the block for DigestInfo `di` and comparing all `k` octets. -/
+def rsaPkcs1Verify (pubOp : PublicOp) (di : List UInt8) (hLen : Nat) (n e sig d : ByteArray) :
+    Bool :=
+  match pubOp n e sig with
+  | none => false
+  | some em =>
+      match emsaEncodeGen di hLen d.data.toList n.size with
+      | none => false
+      | some tmpl => em.data.toList == tmpl
+
+/-- JWS `RS256` is `rsaPkcs1Verify` at the SHA-256 DigestInfo. -/
+theorem rsaPkcs1Verify_sha256 (pubOp : PublicOp) (n e sig msg : ByteArray) :
+    rsaPkcs1Verify pubOp sha256DigestInfo 32 n e sig (sha256 msg) = rs256Verify pubOp n e sig msg := by
+  unfold rsaPkcs1Verify rs256Verify
+  rw [emsaEncodeGen_sha256]
+
+/-- The one accepting path of `rsaPkcs1Verify`. -/
+theorem rsaPkcs1Verify_iff_template (pubOp : PublicOp) (di : List UInt8) (hLen : Nat)
+    (n e sig d : ByteArray) :
+    rsaPkcs1Verify pubOp di hLen n e sig d = true ↔
+      ∃ em tmpl, pubOp n e sig = some em ∧
+        emsaEncodeGen di hLen d.data.toList n.size = some tmpl ∧ em.data.toList = tmpl := by
+  unfold rsaPkcs1Verify
+  cases hp : pubOp n e sig with
+  | none => simp
+  | some em =>
+      cases ht : emsaEncodeGen di hLen d.data.toList n.size with
+      | none => simp
+      | some tmpl =>
+          simp only [beq_iff_eq]
+          constructor
+          · intro h; exact ⟨em, tmpl, rfl, rfl, h⟩
+          · rintro ⟨em', tmpl', he, htt, heq⟩
+            cases he; cases htt; exact heq
+
 /-! ## Fixtures
 
 The encoded-message layout is checked here against a block written out by
