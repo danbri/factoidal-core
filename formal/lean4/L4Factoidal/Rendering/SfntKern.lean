@@ -1,4 +1,5 @@
 import L4Factoidal.Rendering.SfntMetrics
+import L4Factoidal.Unicode.ScriptData
 
 /-!
 # GPOS pair kerning in Lean
@@ -188,9 +189,40 @@ def scriptTag (text : String) : String :=
     else "DFLT"
   | none => "DFLT"
 
+/-- The script of a text as HarfBuzz guesses it: the Script property of the
+first character that is not Common, Inherited or Unknown (ISO 15924). -/
+def textScript (text : String) : Option String :=
+  (text.toList.map fun c => L4Factoidal.Unicode.ScriptData.scriptOf c.toNat).find?
+    fun s => s != "Zyyy" && s != "Zinh" && s != "Zzzz"
+
+/-- OpenType script tags to try, in order: HarfBuzz `hb_ot_all_tags_from_script`
+(the version 3 and 2 Indic tags first, then the old tag), then the
+`hb_ot_layout_table_choose_script` fallbacks `DFLT`, `dflt`, `latn`. -/
+def scriptTags (text : String) : List String :=
+  let fallback := ["DFLT", "dflt", "latn"]
+  match textScript text with
+  | none => fallback
+  | some iso =>
+    let newTag : Option String := match iso with
+      | "Beng" => some "bng2" | "Deva" => some "dev2" | "Gujr" => some "gjr2"
+      | "Guru" => some "gur2" | "Knda" => some "knd2" | "Mlym" => some "mlm2"
+      | "Orya" => some "ory2" | "Taml" => some "tml2" | "Telu" => some "tel2"
+      | "Mymr" => some "mym2" | _ => none
+    let old := match iso with
+      | "Hira" => "kana" | "Laoo" => "lao " | "Yiii" => "yi  " | "Nkoo" => "nko "
+      | "Vaii" => "vai " | s => s.toLower
+    let news := match newTag with
+      | some t => (if t == "mym2" then [] else [(t.take 3).toString ++ "3"]) ++ [t]
+      | none => []
+    news ++ [old] ++ fallback
+
+#guard scriptTags "a" == ["latn", "DFLT", "dflt", "latn"]
+#guard scriptTags "\u0915" == ["dev3", "dev2", "deva", "DFLT", "dflt", "latn"]
+#guard scriptTags "1" == ["DFLT", "dflt", "latn"]
+
 /-- The lookup list indices of the `kern` feature in the default language
-system of `script` (or `DFLT`), in lookup list order. -/
-def kernLookups (b : ByteArray) (gpos : Nat) (script : String) : Except String (List Nat) := do
+system of the first of `tags` that GPOS has, in lookup list order. -/
+def kernLookups (b : ByteArray) (gpos : Nat) (tags : List String) : Except String (List Nat) := do
   need b gpos 10 "header"
   let scripts := gpos + u16 b (gpos + 4)
   let features := gpos + u16 b (gpos + 6)
@@ -200,7 +232,7 @@ def kernLookups (b : ByteArray) (gpos : Nat) (script : String) : Except String (
   let find (tag : String) : Option Nat :=
     (List.range ns).findSome? fun k =>
       if tagAt b (scripts + 2 + 6 * k) == tag then some (scripts + u16 b (scripts + 2 + 6 * k + 4)) else none
-  let some s := (find script).orElse (fun _ => find "DFLT") | return []
+  let some s := tags.findSome? find | return []
   need b s 4 "script table"
   let ls := u16 b s
   if ls == 0 then return []
@@ -244,7 +276,7 @@ def kern (b : ByteArray) (dir : Array TableRecord) (text : String) (run : Array 
   let mut out : Array Positioned := run.map fun g => ⟨g.id, g.advance, 0, g.cluster⟩
   let some gposRec := dir.find? (·.tag == "GPOS") | return out
   let gpos := gposRec.offset
-  let lookups ← kernLookups b gpos (scriptTag text)
+  let lookups ← kernLookups b gpos (scriptTags text)
   let lookupList := gpos + u16 b (gpos + 8)
   need b lookupList 2 "lookup list"
   let nl := u16 b lookupList

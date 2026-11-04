@@ -285,3 +285,38 @@ GSUB, GPOS and the `kern` path use the one function `skipsWithSet`.
 Suite: 4,043 pass, 574 fail, 168 refused (out of 4,785 applicable); no
 regressions. One test now passes (`positioning-features`); one changed from
 refused to fail (`context-matching`, Bengali), which needs the Indic shaper.
+
+### 8.4 Script tags, shaper choice, feature settings, cursive attachment (2026-11-04)
+
+- **Script tags.** The OpenType script tag comes from the Unicode Script
+  property (`Unicode/ScriptData.lean`, generated from `Scripts.txt` 18.0.0 by
+  `tools/unicode/gen-script-data.py`): the first character that is not
+  Common, Inherited or Unknown; then the tags of `hb_ot_all_tags_from_script`
+  (Indic version 3 and 2 tags first); then `DFLT`, `dflt`, `latn`. Before, Lean
+  knew only Latin, Greek and Cyrillic and used `DFLT` for all other text.
+- **Shaper choice** (`SfntShape.shaperKind`, from `hb_ot_shaper_categorize`):
+  the default shaper for most scripts; USE stages for the USE scripts (and an
+  Indic version 3 tag) when the chosen GSUB script is not `DFLT` or `latn`.
+  The USE stages follow `collect_features_use` without syllables,
+  reordering, `rphf` or the topographical features. Indic, Khmer, Myanmar,
+  Thai, Lao, Hangul and Hebrew text is shaped on `DFLT` only, as HarfBuzz does
+  for a font with no table for the script, until those shapers exist.
+- **Features.** GSUB features are applied in stages (a feature's stage is the
+  first stage that names it, as HarfBuzz merges duplicates). The default
+  lists add `ltra`, `ltrm`, `rclt` (GSUB) and `curs` (GPOS). Whole-text
+  `--features` settings (`tag`, `+tag`, `-tag`, `tag=0`, `tag=1`) go to the
+  last stage; the suite runner now passes them, and a range or another value
+  stays not applicable.
+- **Cursive attachment** (GPOS type 3, `CursivePosFormat1::apply`): the exit
+  and entry anchors set the advances; the child is the later glyph unless the
+  lookup has the RightToLeft flag; an older chain from the child is reversed
+  (`reverse_cursive_minor_offset`, as a loop); y offsets propagate along the
+  chain, at most 64 links. Equal to `hb-shape` on the Duployan font of
+  `cursive-positioning.tests` for `ltr1`, `rtl1` and `ltr1,rtl1`.
+
+Suite: 4,141 pass, 504 fail, 232 refused (out of 5,079 applicable; 1,341 not
+applicable). Before: 4,043 pass (out of 4,785). 37 tests that failed or were
+refused now pass (28 of them USE Marchen). 6 Javanese tests that passed before
+are now refused: with the `java` script Lean reaches a GPOS type 8 lookup
+(chained context positioning), which it does not have; before, they passed
+because Lean used `DFLT`.

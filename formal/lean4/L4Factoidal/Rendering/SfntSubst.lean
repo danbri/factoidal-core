@@ -30,23 +30,41 @@ private def u32 (b : ByteArray) (i : Nat) : Nat := u16 b i * 65536 + u16 b (i + 
 private def tagAt (b : ByteArray) (i : Nat) : String :=
   String.ofList ((List.range 4).map fun k => Char.ofNat (b.get! (i + k)).toNat)
 
-def defaultFeatures : List String := ["rvrn", "ccmp", "locl", "rlig", "liga", "clig", "calt"]
+/-- HarfBuzz default GSUB features for left-to-right horizontal text. -/
+def defaultFeatures : List String :=
+  ["rvrn", "ltra", "ltrm", "ccmp", "locl", "rlig", "calt", "clig", "liga", "rclt"]
 
-/-- Lookup indices of the given features (and the required feature) in the
-default language system of `script` or `DFLT`, as (stage, index) with stage 0
-for `rvrn`, sorted. -/
-def featureLookups (b : ByteArray) (tbl : Nat) (script : String) (features : List String) :
-    Except String (List (Nat × Nat)) := do
+/-- HarfBuzz GSUB stages of the default shaper: `rvrn`, then the rest. -/
+def defaultStages : List (List String) := [["rvrn"], defaultFeatures.filter (· != "rvrn")]
+
+/-- GSUB stages of the HarfBuzz USE shaper (`collect_features_use`), without
+its syllable masks and reordering: `rphf` and the topographical features,
+which USE enables only on chosen glyphs, are left out. -/
+def useStages : List (List String) :=
+  [["rvrn"], ["ltra", "ltrm"], ["locl", "ccmp", "nukt", "akhn"], ["pref"],
+   ["rkrf", "abvf", "blwf", "half", "pstf", "vatu", "cjct"],
+   ["abvs", "blws", "haln", "pres", "psts", "rlig", "calt", "clig", "liga", "rclt"]]
+
+/-- The first of `tags` that the table's script list has, with the offset of
+its script table (HarfBuzz `hb_ot_layout_table_select_script`). -/
+def chooseScript (b : ByteArray) (tbl : Nat) (tags : List String) : Except String (Option (String × Nat)) := do
   need b tbl 10 "header"
   let scripts := tbl + u16 b (tbl + 4)
-  let featureList := tbl + u16 b (tbl + 6)
   need b scripts 2 "script list"
   let ns := u16 b scripts
   need b (scripts + 2) (6 * ns) "script records"
-  let find (tag : String) : Option Nat :=
+  let find (tag : String) : Option (String × Nat) :=
     (List.range ns).findSome? fun k =>
-      if tagAt b (scripts + 2 + 6 * k) == tag then some (scripts + u16 b (scripts + 2 + 6 * k + 4)) else none
-  let some s := (find script).orElse (fun _ => find "DFLT") | return []
+      if tagAt b (scripts + 2 + 6 * k) == tag then some (tag, scripts + u16 b (scripts + 2 + 6 * k + 4)) else none
+  return tags.findSome? find
+
+/-- Lookup indices of the features of `stages` (and the required feature) in
+the default language system of the first of `tags` that the table has, as
+(stage, index): a feature's stage is the first stage that names it; sorted. -/
+def featureLookups (b : ByteArray) (tbl : Nat) (tags : List String) (stages : List (List String)) :
+    Except String (List (Nat × Nat)) := do
+  let featureList := tbl + u16 b (tbl + 6)
+  let some (_, s) ← chooseScript b tbl tags | return []
   need b s 4 "script table"
   if u16 b s == 0 then return []
   let lang := s + u16 b s
@@ -60,21 +78,23 @@ def featureLookups (b : ByteArray) (tbl : Nat) (script : String) (features : Lis
   let indices := (List.range nf).map (fun k => u16 b (lang + 6 + 2 * k)) ++ (if required == 0xFFFF then [] else [required])
   -- One flag for each (stage, lookup index); reading them in order gives the
   -- sorted, distinct list with no recursion.
-  let mut used : Array Bool := Array.replicate (2 * 65536) false
+  let nStages := max stages.length 2
+  let stageOf (tag : String) : Option Nat := stages.findIdx? (·.contains tag)
+  let mut used : Array Bool := Array.replicate (nStages * 65536) false
   for fi in indices do
     if fi ≥ nfl then throw "font.file.malformed: GSUB feature index"
     let r := featureList + 2 + 6 * fi
     let tag := tagAt b r
-    if features.contains tag || fi == required then
+    if (stageOf tag).isSome || fi == required then
       let f := featureList + u16 b (r + 4)
       need b f 4 "feature table"
       let nl := u16 b (f + 2)
       need b (f + 4) (2 * nl) "feature lookups"
       for j in [0:nl] do
-        let stage := if tag == "rvrn" then 0 else 1
+        let stage := (stageOf tag).getD 1
         used := used.set! (stage * 65536 + u16 b (f + 4 + 2 * j)) true
   let mut out : Array (Nat × Nat) := #[]
-  for k in [0:2 * 65536] do
+  for k in [0:nStages * 65536] do
     if used[k]! then out := out.push (k / 65536, k % 65536)
   return out.toList
 
@@ -386,10 +406,11 @@ def applyAt (c : Ctx) : Nat → Nat → Array NominalGlyph → Nat → Except St
 /-- Apply the default GSUB features to a nominal run. Advances are re-read
 from `hmtx` for every substituted glyph. -/
 def substitute (f : Face) (b : ByteArray) (dir : Array TableRecord) (text : String)
-    (run : Array NominalGlyph) (limits : Limits := {}) : Except String (Array NominalGlyph) := do
+    (run : Array NominalGlyph) (limits : Limits := {}) (stages : List (List String) := defaultStages)
+    (tags : List String := scriptTags text) : Except String (Array NominalGlyph) := do
   let some gsubRec := dir.find? (·.tag == "GSUB") | return run
   let gsub := gsubRec.offset
-  let lookups ← featureLookups b gsub (scriptTag text) defaultFeatures
+  let lookups ← featureLookups b gsub tags stages
   let lookupList := gsub + u16 b (gsub + 8)
   need b lookupList 2 "lookup list"
   let c : Ctx := { f, b, lookupList, count := u16 b lookupList,

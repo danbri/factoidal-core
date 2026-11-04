@@ -22,7 +22,7 @@ follows HarfBuzz's default shaper for a left-to-right run:
 4. each attached mark gets the offsets of the glyph it is attached to, less
    the advances from that glyph up to the mark.
 
-Refused, with a message naming the lookup: type 3 (cursive), type 5
+Cursive attachment (type 3) follows HarfBuzz for left-to-right text. Refused, with a message naming the lookup: type 5
 (mark-to-ligature), types 7 and 8. Mark filtering sets apply as in HarfBuzz. Device tables in value
 records and anchors are not applied (unhinted, no variations). The OpenType
 GPOS chapter is the reference; HarfBuzz is the differential oracle.
@@ -46,13 +46,17 @@ structure Glyph where
   cluster : Nat
   /-- Position of the glyph this mark is attached to. -/
   attachedTo : Option Nat := none
+  /-- Cursive attachment: the parent is at this position plus `cursiveChain`;
+  0 when the glyph has no cursive parent (HarfBuzz `attach_chain`). -/
+  cursiveChain : Int := 0
   codepoint : Nat := 0
   substituted : Bool := false
   ligated : Bool := false
   spaceFallback : Nat := 0
   deriving Repr, BEq, Inhabited
 
-def defaultFeatures : List String := ["abvm", "blwm", "dist", "kern", "mark", "mkmk"]
+/-- HarfBuzz default GPOS features for horizontal text. -/
+def defaultFeatures : List String := ["abvm", "blwm", "curs", "dist", "kern", "mark", "mkmk"]
 
 /-- (x placement, y placement, x advance) of a value record. -/
 def valueXYA (b : ByteArray) (fmt off : Nat) : Int × Int × Int :=
@@ -89,6 +93,44 @@ def baseAnchor (b : ByteArray) (arr bi classes cls : Nat) : Except String (Optio
   if o == 0 then return none
   return some (← anchor b (arr + o))
 
+/-- Entry and exit anchors of the glyph at coverage index `ci` of a
+CursivePosFormat1 subtable at `s`. -/
+def entryExit (b : ByteArray) (s ci : Nat) : Except String (Option (Int × Int) × Option (Int × Int)) := do
+  need b s 6 "cursive header"
+  if u16 b s != 1 then throw s!"font.file.malformed: cursive format {u16 b s}"
+  if ci ≥ u16 b (s + 4) then throw "font.file.malformed: cursive coverage index beyond records"
+  let r := s + 6 + 4 * ci
+  need b r 4 "entry exit record"
+  let en := u16 b r
+  let ex := u16 b (r + 2)
+  let entry ← if en == 0 then pure none else some <$> anchor b (s + en)
+  let exit ← if ex == 0 then pure none else some <$> anchor b (s + ex)
+  return (entry, exit)
+
+/-- HarfBuzz `reverse_cursive_minor_offset`, as a loop: the old cursive chain
+from `child` is reversed so that it hangs from `child`, up to `newParent`. -/
+def reverseCursive (out : Array Glyph) (child newParent : Nat) : Array Glyph := Id.run do
+  -- The nodes of the chain, and whether the last edge reaches the new parent.
+  let mut nodes : Array Nat := #[child]
+  let mut k := child
+  for _ in [0:out.size] do
+    let c := out[k]!.cursiveChain
+    if c == 0 then break
+    let j : Int := (k : Int) + c
+    if j < 0 || j ≥ out.size then break
+    if j.toNat == newParent then break
+    nodes := nodes.push j.toNat
+    k := j.toNat
+  let old := out
+  let mut res := out
+  res := res.set! child { res[child]! with cursiveChain := 0 }
+  if nodes.size ≥ 2 then
+    for m in [0:nodes.size - 1] do
+      let a := nodes[m]!
+      let z := nodes[m + 1]!
+      res := res.set! z { res[z]! with yOffset := -old[a]!.yOffset, cursiveChain := -old[a]!.cursiveChain }
+  return res
+
 /-- Ranges of General_Category Mn, Mc and Me, from `IdnaData.markText`. -/
 def unicodeMarkRanges : Array (Nat × Nat) :=
   let hex (t : String) : Nat :=
@@ -103,7 +145,8 @@ def isUnicodeMark (c : Nat) : Bool := unicodeMarkRanges.any fun (a, z) => a ≤ 
 /-- Apply the default GPOS features to a substituted run. A synthesized
 glyph class uses the glyph's source code point (`NominalGlyph.codepoint`). -/
 def position (b : ByteArray) (dir : Array TableRecord) (text : String)
-    (run : Array NominalGlyph) (limits : Limits := {}) : Except String (Array Glyph) := do
+    (run : Array NominalGlyph) (limits : Limits := {}) (features : List String := defaultFeatures)
+    (tags : List String := scriptTags text) : Except String (Array Glyph) := do
   let mut out : Array Glyph := run.map fun g =>
     { id := g.id, advance := g.advance, xOffset := 0, yOffset := 0, cluster := g.cluster,
       codepoint := g.codepoint, substituted := g.substituted, ligated := g.ligated, spaceFallback := g.spaceFallback }
@@ -119,7 +162,7 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String)
   let isMark (k : Nat) : Bool := classes[k]!.1 == 3
   if let some gposRec := dir.find? (·.tag == "GPOS") then
     let gpos := gposRec.offset
-    let lookups ← featureLookups b gpos (scriptTag text) defaultFeatures
+    let lookups ← featureLookups b gpos tags [features]
     let lookupList := gpos + u16 b (gpos + 8)
     need b lookupList 2 "lookup list"
     let nl := u16 b lookupList
@@ -142,7 +185,7 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String)
           subs := subs.push (u16 b (s + 2), s + u32 b (s + 4))
         else subs := subs.push (ltype, s)
       for (t, _) in subs do
-        unless t == 1 || t == 2 || t == 4 || t == 6 do
+        unless t == 1 || t == 2 || t == 3 || t == 4 || t == 6 do
           throw s!"font.layout.unsupported: GPOS lookup {l} has type {t} (https://github.com/danbri/factoidal/issues/1233)"
       let keep : Array Bool ← (Array.range out.size).mapM fun k => do
         pure !(← skipsWithSet b gdef? flag set? classes[k]! out[k]!.id)
@@ -180,6 +223,27 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String)
             out := out.set! j { c with xOffset := c.xOffset + r.second.1, advance := c.advance + r.second.2 }
             advanceTo := if r.skipSecond then j + 1 else j
             break
+          else if t == 3 then
+            -- Cursive attachment (HarfBuzz CursivePosFormat1::apply, left to right).
+            let some ci ← coverage b (s + u16 b (s + 2)) g.id | continue
+            let (some entry, _) ← entryExit b s ci | continue
+            let some pi := prevOf keep i | continue
+            let some pci ← coverage b (s + u16 b (s + 2)) out[pi]!.id | continue
+            let (_, some exit) ← entryExit b s pci | continue
+            let gp := out[pi]!
+            out := out.set! pi { gp with advance := exit.1 + gp.xOffset }
+            let d := entry.1 + g.xOffset
+            out := out.set! i { g with advance := g.advance - d, xOffset := g.xOffset - d }
+            -- Without the RightToLeft flag the later glyph is the child.
+            let rtlFlag := flag &&& 1 != 0
+            let (child, parent) := if rtlFlag then (pi, i) else (i, pi)
+            let yOff : Int := if rtlFlag then entry.2 - exit.2 else exit.2 - entry.2
+            out := reverseCursive out child parent
+            let chain : Int := (parent : Int) - (child : Int)
+            out := out.set! child { out[child]! with cursiveChain := chain, attachedTo := none, yOffset := yOff }
+            if out[parent]!.cursiveChain == -chain then
+              out := out.set! parent { out[parent]! with cursiveChain := 0, yOffset := 0 }
+            break
           else
             -- Mark attachment: t == 4 (to base) or t == 6 (to mark).
             need b s 12 "mark attachment header"
@@ -196,7 +260,7 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String)
             let some p := parent? | continue
             let some bci ← coverage b (s + u16 b (s + 4)) out[p]!.id | continue
             let some ba ← baseAnchor b (s + u16 b (s + 10)) bci nClasses cls | continue
-            out := out.set! i { g with xOffset := ba.1 - ma.1, yOffset := ba.2 - ma.2, attachedTo := some p }
+            out := out.set! i { g with xOffset := ba.1 - ma.1, yOffset := ba.2 - ma.2, attachedTo := some p, cursiveChain := 0 }
             break
         i := advanceTo
   -- Zero the width of marks; move them only when the font has no GPOS.
@@ -205,6 +269,21 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String)
     if isMark k then
       let g := out[k]!
       out := out.set! k { g with xOffset := if hasGpos then g.xOffset else g.xOffset - g.advance, advance := 0 }
+  -- Propagate cursive offsets: a glyph's y offset adds its parent's final
+  -- one; at most 64 links, as HarfBuzz's nesting limit.
+  let before := out
+  for k in [0:out.size] do
+    if before[k]!.cursiveChain != 0 then
+      let mut sum : Int := 0
+      let mut n := k
+      for _ in [0:64] do
+        let c := before[n]!.cursiveChain
+        if c == 0 then break
+        let j : Int := (n : Int) + c
+        if j < 0 || j ≥ out.size then break
+        n := j.toNat
+        sum := sum + before[n]!.yOffset
+      out := out.set! k { out[k]! with yOffset := out[k]!.yOffset + sum }
   -- Propagate attachment offsets, parents first (a parent precedes its mark).
   for k in [0:out.size] do
     let g := out[k]!

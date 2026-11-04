@@ -4,7 +4,7 @@ import L4Factoidal.Rendering.SfntShape
 # `l4font-shape`: the font adapter with Lean shaping
 
 Same arguments as `labs/demos/foafnaut/tools/font-shape.c`: FONT TEXT PX
-[FACE]. Lean reads the font, applies the font policy, and shapes the text.
+[FACE [FEATURES]]. FEATURES is HarfBuzz whole-text feature syntax (`-liga,+test`). Lean reads the font, applies the font policy, and shapes the text.
 It then runs the FreeType-only mode of `font-shape` (path in
 `FACTOIDAL_FONT_SHAPE`) with the glyphs Lean chose, which adds outlines and
 rasters and writes the `factoidal-font-data-v1` record with
@@ -14,10 +14,11 @@ https://github.com/danbri/factoidal/issues/1233
 open L4Factoidal.Rendering
 
 def main (args : List String) : IO UInt32 := do
-  let (path, text, px, faceArg) ← match args with
-    | [p, t, s] => pure (p, t, s, "0")
-    | [p, t, s, f] => pure (p, t, s, f)
-    | _ => do IO.eprintln "usage: l4font-shape FONT_FILE UTF8_TEXT PIXEL_SIZE [FACE_INDEX]"; return 2
+  let (path, text, px, faceArg, featureArg) ← match args with
+    | [p, t, s] => pure (p, t, s, "0", "")
+    | [p, t, s, f] => pure (p, t, s, f, "")
+    | [p, t, s, f, fs] => pure (p, t, s, f, fs)
+    | _ => do IO.eprintln "usage: l4font-shape FONT_FILE UTF8_TEXT PIXEL_SIZE [FACE_INDEX [FEATURES]]"; return 2
   let some faceIndex := faceArg.toNat? | do IO.eprintln "l4font-shape: invalid face index"; return 2
   let some helper ← IO.getEnv "FACTOIDAL_FONT_SHAPE" | do IO.eprintln "l4font-shape: set FACTOIDAL_FONT_SHAPE to the font-shape executable"; return 2
   let b ← IO.FS.readBinFile path
@@ -27,7 +28,8 @@ def main (args : List String) : IO UInt32 := do
     let decision := FontPolicy.decide FontPolicy.Policy.standard font dir
     -- Refused tables are not read by the Lean shaper; say so on standard error below.
     let face ← SfntMetrics.Face.read b dir
-    let shaped ← SfntShape.shape b dir face text
+    let settings ← SfntShape.parseFeatures featureArg
+    let shaped ← SfntShape.shape b dir face text {} settings
     if !decision.fontUsed then throw "font.file.refused"
     pure shaped
   match result with

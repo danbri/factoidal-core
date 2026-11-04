@@ -26,3 +26,14 @@
 - Use: the generators in `tools/unicode/` write the data modules under
   `formal/lean4/L4Factoidal/Unicode/` from these files; `--check` (run by
   `tests/unicode/run.sh`) fails when a module is stale.
+
+## Added 2026-11-04 (font shaping, https://github.com/danbri/factoidal/issues/1233)
+
+- Source: https://www.unicode.org/Public/18.0.0/ucd/ — `Scripts.txt`
+  (sha256 `0071fd81b6aeae25f6e8bce8efec3066a6476a91b49bdb2f52dc76e817862a6a`),
+  `PropertyValueAliases.txt`
+  (sha256 `06c4c8eaf7b0bf34abe73b113da1215bd784ac254d4c223600b90267caa4bbbd`).
+- Copied unchanged on 2026-11-04.
+- Use: `tools/unicode/gen-script-data.py` writes
+  `formal/lean4/L4Factoidal/Unicode/ScriptData.lean` (the Script property,
+  with ISO 15924 codes); the Lean shaper chooses OpenType script tags from it.

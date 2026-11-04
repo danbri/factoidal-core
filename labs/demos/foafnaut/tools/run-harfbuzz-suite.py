@@ -12,7 +12,7 @@ HarfBuzz itself does not pass are "oracle mismatch". The suite is not
 vendored: see docs/designissues/2026-11-03-font-trust-and-safety-policy.md
 section 8 for the licence record.
 """
-import json,os,subprocess,sys,collections,glob
+import json,os,re,subprocess,sys,collections,glob
 lean,glyphmode,root,out=sys.argv[1:5]
 DISPLAY={'--no-glyph-names','--no-positions','--no-clusters','--ned','--font-funcs=ot','--shaper=ot','--single-par'}
 env=dict(os.environ,FACTOIDAL_FONT_SHAPE=glyphmode)
@@ -32,6 +32,15 @@ for suite in ['in-house','aots','text-rendering-tests']:
       font=os.path.normpath(os.path.join(os.path.dirname(tf),fontrel))
       key=f"{suite}/{os.path.basename(tf)}"
       o=opts.split()
+      # Whole-text --features settings are passed to Lean; a range or a value
+      # other than 0 or 1 stays not applicable.
+      feats=''
+      fo=[x for x in o if x.startswith('--features=')]
+      if len(fo)==1:
+        feats=fo[0][len('--features='):].strip('"\'')
+        okf=all(re.fullmatch(r'[+-]?[A-Za-z0-9 ]{1,4}(=[01])?',it.strip()) for it in feats.split(',') if it.strip())
+        if okf: o=[x for x in o if x!=fo[0]]
+        else: feats=''
       bad=[x for x in o if x not in DISPLAY and not x.startswith('--font-funcs=ot')]
       if bad: na[bad[0].split('=')[0]]+=1; res['not applicable']+=1; continue
       if exp=='*': res['not applicable']+=1; na['expected *']+=1; continue
@@ -39,11 +48,12 @@ for suite in ['in-house','aots','text-rendering-tests']:
       except ValueError: res['not applicable']+=1; na['unicodes form']+=1; continue
       if any(c==0 or 0xD800<=c<=0xDFFF or c>0x10FFFF for c in cps) or '@' in fontrel or not os.path.exists(font):
         res['not applicable']+=1; na['input not passable']+=1; continue
-      rc,got,_=hb(font,o,cps)
+      fopt=['--features='+feats] if feats else []
+      rc,got,_=hb(font,o+fopt,cps)
       if rc!=0 or got!=exp: res['oracle mismatch']+=1; continue
-      rc,ids,_=hb(font,['--font-funcs=ot','--no-glyph-names'],cps)
+      rc,ids,_=hb(font,['--font-funcs=ot','--no-glyph-names']+fopt,cps)
       text=''.join(map(chr,cps))
-      l=subprocess.run([lean,font,text,'16','0'],capture_output=True,text=True,env=env,timeout=120)
+      l=subprocess.run([lean,font,text,'16','0']+([feats] if feats else []),capture_output=True,text=True,env=env,timeout=120)
       if l.returncode!=0:
         res['lean refused']+=1; rows.append((key,'REFUSED',l.stderr.strip().splitlines()[-1][:160] if l.stderr.strip() else '?',line)); continue
       rec=json.loads(l.stdout)
