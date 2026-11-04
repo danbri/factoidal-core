@@ -3627,3 +3627,30 @@ names, 0 missing, `lake env lean` in `formal/lean4`):
 | parsers | 273 | 0 of 273 | 0 of 273 | 0 of 273 | 0 of 273 | 273 of 273 |
 | other | 107 | 0 of 107 | 0 of 107 | 0 of 107 | 0 of 107 | 107 of 107 |
 | total | 1383 | 142 of 1383 | 27 of 1383 | 483 of 1383 | 25 of 1383 | 706 of 1383 |
+
+
+## Public dataset union adapter (2026-10-31)
+
+`Dataflow/GraphProjection.lean`: `unionGraph_original` preserves the previous
+public fold definitionally; `unionGraph_mem`, `unionDefault_graph` and
+`unionDefault_certified_graph` prove exact input/output membership, including
+existing blank-node identity. The actual `Wasm/Ops/Handles.lean` union branch
+is bound by `datasetGraphAsDefault_union_producer`. Its producer-drop mutation
+fails that theorem. `unionDefault_reasoner_handoff` combines exact certified
+input membership with a `SoundReasoner`'s regime soundness, not completeness.
+The public closure normalizer's wider agreement remains open. See the
+[producer and execution-boundary record](20261031-compositor-union-handoff.md)
+and https://github.com/danbri/factoidal/issues/1214 (compositor links).
+
+
+### Checked normalization follow-up (2026-10-31)
+
+`RDF/DatasetNormalizePreservation.lean` proves exact default-graph list and
+membership preservation for set inputs passing roundTripSafe. The actual
+`Wasm/Ops/Reason.lean` producer is connected by
+`closureStreamOf_rdfs_safe_output`, `closureStreamOf_rdfs_safe_sound` and
+`closureStreamOf_union_rdfs_handoff`. The success-output equality excludes
+substituting an empty subset for the existing algorithm. This is not an RDFS
+completeness or output-existence theorem. Accepted parser fallbacks remain
+outside this checked profile; empty named-graph declarations can be dropped.
+See the [normalization record](20261031-union-rdfs-normalization-preservation.md).
