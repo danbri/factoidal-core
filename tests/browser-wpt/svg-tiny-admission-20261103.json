@@ -1,0 +1,4491 @@
+{
+  "format": "factoidal-svg-tiny-admission-v1",
+  "scope": "Lean interpreter admission; visual conformance NOT_RUN",
+  "archiveURL": "https://www.w3.org/Graphics/SVG/Test/20080912/W3C_SVG_12_TinyTestSuite.tar.gz",
+  "archiveSha256": "2203d6f44178cbb3853bdc7abe865f4e7e42506727ecc9e34b408b6f33e2e718",
+  "runnerSha256": "0350bd4401918b686c574be7225e94478807d097ee3ead50687e8f06866a6d99",
+  "driverSha256": "ed88bb1f2a25b44ff300ceeb23387530aaac69a916c7e6e92eac6e23597a5aaa",
+  "cases": [
+    {
+      "file": "animate-elem-02-t.svg",
+      "archivePath": "svg/animate-elem-02-t.svg",
+      "sha256": "3e4bfc0efc0c5284324f6f3a0727908ff5ed7cc4387a13277e84d6105a6aca9a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-03-t.svg",
+      "archivePath": "svg/animate-elem-03-t.svg",
+      "sha256": "1280008d902b2ec8e0347f377f42bf0989aa0b4c6732140653d8548a329238ae",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-04-t.svg",
+      "archivePath": "svg/animate-elem-04-t.svg",
+      "sha256": "3c7e9cdcf1abc2823361e7f3635e436a6b1676341b63ccf451047a2726ae097d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-05-t.svg",
+      "archivePath": "svg/animate-elem-05-t.svg",
+      "sha256": "6716afaad5e9ca83f653e57b5a71abd927d19182b5a89911a678fc0ee603f067",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-06-t.svg",
+      "archivePath": "svg/animate-elem-06-t.svg",
+      "sha256": "61c740b3520960f7376ae0156759f7cc115c9c8c7224d0422bf4015219385522",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-07-t.svg",
+      "archivePath": "svg/animate-elem-07-t.svg",
+      "sha256": "ce5084caf0e64cb1eaa8c14ea54a13d79480898a916d6aa45e7dd571eb9ad90a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-08-t.svg",
+      "archivePath": "svg/animate-elem-08-t.svg",
+      "sha256": "9490a352dd95756a732aca5e96cd0cb42af482789227fae8082cea1e8e56df6c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-09-t.svg",
+      "archivePath": "svg/animate-elem-09-t.svg",
+      "sha256": "35d312eb2915490b400a92221441dc4247fe70b177c0c2106bff3f3636bb57c4",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-10-t.svg",
+      "archivePath": "svg/animate-elem-10-t.svg",
+      "sha256": "829f2cef76498111a12bd59cd8c80d38751b996c11f8d667ce5db11c74eaf2d6",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-11-t.svg",
+      "archivePath": "svg/animate-elem-11-t.svg",
+      "sha256": "b5b7f93ff65a985bba7946f8a19e46b10ba5f5a97b6ec728619bdabc48e7f080",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-12-t.svg",
+      "archivePath": "svg/animate-elem-12-t.svg",
+      "sha256": "d061c992f18817daf58fb9ce879efd8bc8774de7870d437e431ef7076a1a0639",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-13-t.svg",
+      "archivePath": "svg/animate-elem-13-t.svg",
+      "sha256": "b812d085d0f266df894786c349936223f43b6dd75d40c05e40e02071cd2ce63a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-14-t.svg",
+      "archivePath": "svg/animate-elem-14-t.svg",
+      "sha256": "6352e4306e2c9986594e3451d18c8a2ab209e6b68f29da4601297727687f9501",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-15-t.svg",
+      "archivePath": "svg/animate-elem-15-t.svg",
+      "sha256": "1e8987157808c87b0541b31db3ba57f363fac9067f2c0293effaf926ebe4b837",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-17-t.svg",
+      "archivePath": "svg/animate-elem-17-t.svg",
+      "sha256": "c5e669b66d3227670cde763eeadfd29ad89440e75b35e13f9f3a7d919792c2a0",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-19-t.svg",
+      "archivePath": "svg/animate-elem-19-t.svg",
+      "sha256": "1662134b0747214fd53f4e54327d63080082e63337d65e5012f9a930f4ea6099",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-20-t.svg",
+      "archivePath": "svg/animate-elem-20-t.svg",
+      "sha256": "17fc516bd8feaf5ea8b5f083a2a64bcd54c99b73ec039c8d13fda46568aaa7ab",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-201-t.svg",
+      "archivePath": "svg/animate-elem-201-t.svg",
+      "sha256": "14a092a6a0ed4311ae4a3ac40704a3e00ee0dc6e7b76fe03ee8c2419d72f779b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-202-t.svg",
+      "archivePath": "svg/animate-elem-202-t.svg",
+      "sha256": "d4faf89a335f44fcedaf81327d3e8e462a1354665c442d1e2763f241a744cdd8",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-203-t.svg",
+      "archivePath": "svg/animate-elem-203-t.svg",
+      "sha256": "fcc10003f939b6181fec5dbc9babd44bcf7718095f09936755ecb13965fb9b96",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-205-t.svg",
+      "archivePath": "svg/animate-elem-205-t.svg",
+      "sha256": "9eab4d987520bf25a2fdce3a5b6849890678b2aa958860dab9e5f54b54712db6",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-206-t.svg",
+      "archivePath": "svg/animate-elem-206-t.svg",
+      "sha256": "7ec8128891dd8c40575f034638d6e9d20b6c10e5641da929c13b103af23abaff",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-207-t.svg",
+      "archivePath": "svg/animate-elem-207-t.svg",
+      "sha256": "c8352e399c512163bc5835fc821612340319bd9479ce31c2fcaa5537938a8f2a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-209-t.svg",
+      "archivePath": "svg/animate-elem-209-t.svg",
+      "sha256": "23031908f1dd761b5d387e00d526faeda408f45828eacd52d4776dd3036ad60a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-21-t.svg",
+      "archivePath": "svg/animate-elem-21-t.svg",
+      "sha256": "1c8f420fc2d552a44eb448386e97ecd4bde869f75a3f8a192d66a9b67806c6a4",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-210-t.svg",
+      "archivePath": "svg/animate-elem-210-t.svg",
+      "sha256": "28dd8463a797a7b04b9017aba86996a172a71430a603a1524b579a5cb1ab6a72",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-211-t.svg",
+      "archivePath": "svg/animate-elem-211-t.svg",
+      "sha256": "0b36875c058787ed838e79b69b01013a4314b7821ab2f04585d20f3aa440722c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-212-t.svg",
+      "archivePath": "svg/animate-elem-212-t.svg",
+      "sha256": "ca3be85c9a315d5ae5b5a215fce92345cdb482aca978f4fec9dcd9e7da1eee08",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-213-t.svg",
+      "archivePath": "svg/animate-elem-213-t.svg",
+      "sha256": "8052768ee87752b2cbd51693ad7f8c55a5b60f88bc7e4bd18e2588bb6af3628a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-214-t.svg",
+      "archivePath": "svg/animate-elem-214-t.svg",
+      "sha256": "0ff4faba0d94839b2c086b432daaf3e02fe38771d04205a8e01f6acd637e0d5c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-215-t.svg",
+      "archivePath": "svg/animate-elem-215-t.svg",
+      "sha256": "03602ce3f53b3adfb53a304045c44a79a0de85ed4361f95e4c5d1595ce1eb564",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-216-t.svg",
+      "archivePath": "svg/animate-elem-216-t.svg",
+      "sha256": "7e4e21813ab60b248b38a6ba5890d2b1035f61f654bf9f91c6f1de54ae9507a9",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-217-t.svg",
+      "archivePath": "svg/animate-elem-217-t.svg",
+      "sha256": "c2a9992c7e5be579c43d1e75e6d93bba8d0992e1ddc0f48bf433420aada9d99b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-218-t.svg",
+      "archivePath": "svg/animate-elem-218-t.svg",
+      "sha256": "32eec2fba4dd6d839e60f2a7c2c9da12d09ff81d252635723f48fd1a04cf0076",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-219-t.svg",
+      "archivePath": "svg/animate-elem-219-t.svg",
+      "sha256": "6755b5f62d28c4008f054aabf875e1ce770b0ab3b6ce14956a015353d4fafaea",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-22-t.svg",
+      "archivePath": "svg/animate-elem-22-t.svg",
+      "sha256": "b07751a5b73b30e2f9091dd06bb9dd72eb55858489640fb66cd11e5b09b7e95e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-221-t.svg",
+      "archivePath": "svg/animate-elem-221-t.svg",
+      "sha256": "e70b26b7680ab992e7ce96c5d347f27b99223b099478ab12d6bc3f543b3393de",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-222-t.svg",
+      "archivePath": "svg/animate-elem-222-t.svg",
+      "sha256": "d89d22ea370b35bcba4c0d3b301972b143250d69857ab624c0e5040c7904237e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-225-t.svg",
+      "archivePath": "svg/animate-elem-225-t.svg",
+      "sha256": "e9291017fe796951124c5aed0fd647c7bd3584f7b1ef05b0e666d0296173024a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-226-t.svg",
+      "archivePath": "svg/animate-elem-226-t.svg",
+      "sha256": "f2dd4e9331b631b6890e5aadbb21ac0b631478e2a7bd3331f10abf84ff42398b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-227-t.svg",
+      "archivePath": "svg/animate-elem-227-t.svg",
+      "sha256": "55f4d0938e0935e78052fb29d4340a0a6bc3e58c9fafd89d4a2b3a4439814dfa",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-23-t.svg",
+      "archivePath": "svg/animate-elem-23-t.svg",
+      "sha256": "a279d32737a304dacb226f30a3f68d18144ad07a655bd8d134f1090692f15526",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-24-t.svg",
+      "archivePath": "svg/animate-elem-24-t.svg",
+      "sha256": "8316f7a19e3307a231de7ddce2c7c6d9936db7927875c0428f5af82a9d846afb",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-25-t.svg",
+      "archivePath": "svg/animate-elem-25-t.svg",
+      "sha256": "9a3af280d095772b6e1fede4ab83267d1686464ab5f7525fc49475f08d235fe9",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-26-t.svg",
+      "archivePath": "svg/animate-elem-26-t.svg",
+      "sha256": "78451fd8c6445adfca6a683a155c98a499aac22e852ec6c3cb43d1d6f98ed991",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-27-t.svg",
+      "archivePath": "svg/animate-elem-27-t.svg",
+      "sha256": "bca1f4d2252a485f6e0251fa14e41e3e3f19efd6958e5ded9c8e8fffd6621b2b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-28-t.svg",
+      "archivePath": "svg/animate-elem-28-t.svg",
+      "sha256": "73bc69f077f7ee15749567fe93fed6c559c9592328edda6fc6f5ca0c53a4abdf",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-29-t.svg",
+      "archivePath": "svg/animate-elem-29-t.svg",
+      "sha256": "76979e1fcb4cf44a753ad6fd020e0d21ed0c2ba4868b36b78075f0cb1677fea8",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-30-t.svg",
+      "archivePath": "svg/animate-elem-30-t.svg",
+      "sha256": "87f384ae19c70fc12efd756362b75c3ca9e2f4ed3d9ba28de84c4a26fde71554",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-31-t.svg",
+      "archivePath": "svg/animate-elem-31-t.svg",
+      "sha256": "bf944edf9086c746409d4c006a6eb9817d8cb97fd764a19439bfe0c7d6d9587b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-32-t.svg",
+      "archivePath": "svg/animate-elem-32-t.svg",
+      "sha256": "5b3ee71ead3dc1e74bd927c6abc2aeaa702d5a72a1a8bb904cf100e9650dbe3f",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-33-t.svg",
+      "archivePath": "svg/animate-elem-33-t.svg",
+      "sha256": "20499f7a80bb5e99bd3ab3c4daa4d6b2f340f7eac9ffc4f5cf9a43d81730bbd2",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-34-t.svg",
+      "archivePath": "svg/animate-elem-34-t.svg",
+      "sha256": "77600b8dd7d68a34f8ef6a69b6e5589257ae8275775e77aecc06bc018a71a0ee",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-35-t.svg",
+      "archivePath": "svg/animate-elem-35-t.svg",
+      "sha256": "48d1c72afc25590fe502e1323038ac5c768e3a894cc8ebdfbf0249f129e4dcd4",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-36-t.svg",
+      "archivePath": "svg/animate-elem-36-t.svg",
+      "sha256": "05d9c12496b28c9d90e1ab155ce43cb9ce83fac71e0c700a5c96443050196eee",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-37-t.svg",
+      "archivePath": "svg/animate-elem-37-t.svg",
+      "sha256": "5364c0fd05c28c2466b5930bf6d96480fb3d52f7268a68bff440b5dc3374372e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-38-t.svg",
+      "archivePath": "svg/animate-elem-38-t.svg",
+      "sha256": "4a83c2570615910cd32d389433e74c06090671c0384720f21b8477fb92816505",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-39-t.svg",
+      "archivePath": "svg/animate-elem-39-t.svg",
+      "sha256": "3dd2871670b840f01bf2af6599fccdb4169984dee82ec5c2651f3cbfec1aac77",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-40-t.svg",
+      "archivePath": "svg/animate-elem-40-t.svg",
+      "sha256": "02274b13ec352b64b44581bc6f719fffa0b8beeb770e161322c504380895f84e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-41-t.svg",
+      "archivePath": "svg/animate-elem-41-t.svg",
+      "sha256": "66471ec672266550803a24f677ca7976d10bd70d91c155bfb61499e2c154dfea",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-44-t.svg",
+      "archivePath": "svg/animate-elem-44-t.svg",
+      "sha256": "8d2713f6370b44f1b341caaeef2347a05674f3a34121e6c3403c5083eb2cd811",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-46-t.svg",
+      "archivePath": "svg/animate-elem-46-t.svg",
+      "sha256": "0f134269ea0b50a774718bf35e15c5d087f84a1d2ce568186575d31b8b27c154",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-52-t.svg",
+      "archivePath": "svg/animate-elem-52-t.svg",
+      "sha256": "a4c81a49114f072bcb8b73d4cedc5245b194553ed9130c8241e1e7d6dd39cc60",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-53-t.svg",
+      "archivePath": "svg/animate-elem-53-t.svg",
+      "sha256": "0c93561dce40e9e94f6302096b92f67274267a9f920caca04ec1e0c62effe960",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-61-t.svg",
+      "archivePath": "svg/animate-elem-61-t.svg",
+      "sha256": "9cc4fa45da9d3a356243f22f9db21766e47141bd2b57b9c8287628e1335cb63d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-64-t.svg",
+      "archivePath": "svg/animate-elem-64-t.svg",
+      "sha256": "6bc475bfe5210362e61fd5218a0c750f4537032ef8ee275551142bc8b5989836",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-65-t.svg",
+      "archivePath": "svg/animate-elem-65-t.svg",
+      "sha256": "cf6c5f1178655cdd5f1f9e20733e1896ccfee412e26b74d4ccd478fa3181e8ff",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-66-t.svg",
+      "archivePath": "svg/animate-elem-66-t.svg",
+      "sha256": "43a43364eac73c2b4b7104a48b0310948d8b8dbfed23eea94b48d053f07c8d71",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-67-t.svg",
+      "archivePath": "svg/animate-elem-67-t.svg",
+      "sha256": "fdf351fcdfaf8cdd4cbac9b2393e705bd31c8767c5347f88435455d5f70509b9",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-68-t.svg",
+      "archivePath": "svg/animate-elem-68-t.svg",
+      "sha256": "5baaddd0e183ac419937646b7787fe4e9f72bf05588be8b93f2c1ea053e3c20d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-69-t.svg",
+      "archivePath": "svg/animate-elem-69-t.svg",
+      "sha256": "89732d1be0861d0d6aeb5c7962e1a51446dee7c316ca9f85666ec8993dd98140",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-70-t.svg",
+      "archivePath": "svg/animate-elem-70-t.svg",
+      "sha256": "8bc54ec8da405e0163db5c36d1d10012ad2238da587a0d52a2f4231c90dfa734",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-77-t.svg",
+      "archivePath": "svg/animate-elem-77-t.svg",
+      "sha256": "63bd02429c4b0c1db6caaa8431d6623c3f1ffe0b964d7139cb45b5e14708f63f",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-78-t.svg",
+      "archivePath": "svg/animate-elem-78-t.svg",
+      "sha256": "6dabc6aa5b5953b94e25fb5ce56fa1faad96610a35510f580402b76cc830f853",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-80-t.svg",
+      "archivePath": "svg/animate-elem-80-t.svg",
+      "sha256": "3fe51752d4ea53dbf4003c178216407865ccf9c776cc475d503725222e477b51",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-81-t.svg",
+      "archivePath": "svg/animate-elem-81-t.svg",
+      "sha256": "a7485208b31f62795b736a419d67a5b66f66ff3589ca942c3ee060a83e41d512",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-82-t.svg",
+      "archivePath": "svg/animate-elem-82-t.svg",
+      "sha256": "b037b7e2b207fc883375069d6ef37f5ba3096d8ea936b27a3a29cc660ad72af8",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-83-t.svg",
+      "archivePath": "svg/animate-elem-83-t.svg",
+      "sha256": "628134eda56e66f3116d27d0f824d11fee295ce492d3b9df0525d2e4e40962cd",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-84-t.svg",
+      "archivePath": "svg/animate-elem-84-t.svg",
+      "sha256": "2223d62e7f658be5069001dd35d5461c1a8bac48570aee1f5711de6b6d4a3f3c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-85-t.svg",
+      "archivePath": "svg/animate-elem-85-t.svg",
+      "sha256": "bf2531b3613f75a1d7021eb97ce7323c3487ab71e7f7039f9b0c7d3988435243",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "animate-elem-86-t.svg",
+      "archivePath": "svg/animate-elem-86-t.svg",
+      "sha256": "d5d846eb444bcc4592a2159e13fa5c4858450bb2a235064c3632bbdcdb6bbb70",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "conf-reader-201-t.svg",
+      "archivePath": "svg/conf-reader-201-t.svg",
+      "sha256": "eb5b2b56916eaebc97efad275ea3c921a21b35aa346a0f2e7a088caabc586af2",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-constr-201-t.svg",
+      "archivePath": "svg/coords-constr-201-t.svg",
+      "sha256": "52f2885935e8e4fb0d17b99228d4d8ca70c4d09152a49db1427a1d36a879ce34",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-constr-202-t.svg",
+      "archivePath": "svg/coords-constr-202-t.svg",
+      "sha256": "a81e762b98fdae8c6cf16e7443aa8688374f3ac4f4a11a01f8df99f1741c9b9e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-constr-203-t.svg",
+      "archivePath": "svg/coords-constr-203-t.svg",
+      "sha256": "d89503c991b1bae10b8be00756504ec9dbc645992c6a5d75792da642834e0e91",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-constr-204-t.svg",
+      "archivePath": "svg/coords-constr-204-t.svg",
+      "sha256": "be830a49207682a17e985489941b919c0238bbb49c56ae89c521620f032b2070",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-coord-01-t.svg",
+      "archivePath": "svg/coords-coord-01-t.svg",
+      "sha256": "f29f377081ffd322d2d70dcda2988f01274c1cdc2b79c359de36db2f39240535",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-pAR-201-t.svg",
+      "archivePath": "svg/coords-pAR-201-t.svg",
+      "sha256": "6b0dc4fc5f35b17bd8243d9fba347cfcd48ade6bb4bf8c943eb405fc2ae9831b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "DOCTYPE/DTD unsupported in SVG profile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-trans-01-t.svg",
+      "archivePath": "svg/coords-trans-01-t.svg",
+      "sha256": "20e683ceb87a5a0bb77c0513626f1451ef568cd133ff32bdc92abbbaba89c6d2",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-trans-02-t.svg",
+      "archivePath": "svg/coords-trans-02-t.svg",
+      "sha256": "e303a29dd2135d1d627f91e7e0a3df453cf0e0bf2be5342b87b3e609442b9814",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-trans-03-t.svg",
+      "archivePath": "svg/coords-trans-03-t.svg",
+      "sha256": "063a086190ec4587d0c9525fe2ee9c2ce11306d76f552833b034f0aa17af5035",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-trans-04-t.svg",
+      "archivePath": "svg/coords-trans-04-t.svg",
+      "sha256": "04afdf3ce26497d4a6e7e6eb74e26bb27338798cc894889a679aaaebacb5d655",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-trans-05-t.svg",
+      "archivePath": "svg/coords-trans-05-t.svg",
+      "sha256": "cf1eb6c3d94075c20c50e2e732624bd5cffc24e040d22748fc11d7f5f699a3a0",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-trans-06-t.svg",
+      "archivePath": "svg/coords-trans-06-t.svg",
+      "sha256": "d65293697e8cb78f3060e394e374aeb0159874446b985668ec4a5466f7a699eb",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-trans-07-t.svg",
+      "archivePath": "svg/coords-trans-07-t.svg",
+      "sha256": "850a39bd37e51a802a6d4cc5342a7e641a082e80e29edfd8c0849e65ae586537",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-trans-08-t.svg",
+      "archivePath": "svg/coords-trans-08-t.svg",
+      "sha256": "e57636e5b6034349d709c00f24643d190114f94b49f197dc1b910b6c8f568bea",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-trans-09-t.svg",
+      "archivePath": "svg/coords-trans-09-t.svg",
+      "sha256": "f2c7ddb576a2c0c4d806833cd42223403d566619ab67a8c44fa688869ecd1ceb",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-units-01-t.svg",
+      "archivePath": "svg/coords-units-01-t.svg",
+      "sha256": "3a3300558630b0b5c7a8e426581e0419c71bb6e441ad5708b147250d3b9db78c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "coords-viewattr-05-t.svg",
+      "archivePath": "svg/coords-viewattr-05-t.svg",
+      "sha256": "ad9e7dd3b912104bc17a6a7e632bba661c002eff90040e045aebfbfacb21f6a4",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "DOCTYPE/DTD unsupported in SVG profile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "extend-namespace-02-t.svg",
+      "archivePath": "svg/extend-namespace-02-t.svg",
+      "sha256": "f0a9b25191b0d59f878f51a99f5a911f619d3b7a0747fb0ccbbce4203d3e2f8c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "fonts-desc-02-t.svg",
+      "archivePath": "svg/fonts-desc-02-t.svg",
+      "sha256": "f8f6f6b707d01b8bd7801af90bb586d733d085d080a520b8109e671802332b0f",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "fonts-elem-01-t.svg",
+      "archivePath": "svg/fonts-elem-01-t.svg",
+      "sha256": "edcd9b7054b8e5996e3d853c5fab1e60548433fc1b6dc9d6d161d53dc93344a5",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "fonts-elem-02-t.svg",
+      "archivePath": "svg/fonts-elem-02-t.svg",
+      "sha256": "1993c0c9ddb979d2e49a93de96023391550f27dedb1c1ea247b28fdaaf2aaf8d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "fonts-elem-03-t.svg",
+      "archivePath": "svg/fonts-elem-03-t.svg",
+      "sha256": "280e9149754ec356db5fc1c69e47518befddacabdbf7de7e39de46f1f6ca6887",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "fonts-elem-06-t.svg",
+      "archivePath": "svg/fonts-elem-06-t.svg",
+      "sha256": "52debc39a2cdad05c41e3dfac6ce7ba0f36bdf719789cdd5dabc97dc8aff5012",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "fonts-glyph-02-t.svg",
+      "archivePath": "svg/fonts-glyph-02-t.svg",
+      "sha256": "6e62e0f979b138238c62507487206f2a1eb7d50eb1e483c8376b52b7f370ee9e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "fonts-glyph-03-t.svg",
+      "archivePath": "svg/fonts-glyph-03-t.svg",
+      "sha256": "87404815fa304764e72db6ee6cc39a461fa8a8e7d88f3225969df691a300d4ac",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "fonts-glyph-04-t.svg",
+      "archivePath": "svg/fonts-glyph-04-t.svg",
+      "sha256": "c3f281a2b8fee46c9af2986c9ea39c5b76e6f6a1172d65fe535592d04e328160",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "fonts-glyph-201-t.svg",
+      "archivePath": "svg/fonts-glyph-201-t.svg",
+      "sha256": "fb81cbaf3680554b23abf44fa40acd2b8bebf01bfc81fe1d6b8db72c5fdbcbde",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "fonts-glyph-202-t.svg",
+      "archivePath": "svg/fonts-glyph-202-t.svg",
+      "sha256": "a3ef8b2f5616848a278f0be7a28fdb0033401bc1de670dae475b1f888f181394",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "fonts-glyph-203-t.svg",
+      "archivePath": "svg/fonts-glyph-203-t.svg",
+      "sha256": "db9f4236f8d3a6a38c3929805b558a4f53938509a24940b030caa7c5baaa01be",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "fonts-kern-01-t.svg",
+      "archivePath": "svg/fonts-kern-01-t.svg",
+      "sha256": "adb160d812b9ce5f14f5a8e05bb1c767c16ebd16bcf00506b7603de6fc0a3b07",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "fonts-overview-201-t.svg",
+      "archivePath": "svg/fonts-overview-201-t.svg",
+      "sha256": "3a859b47964ef3f4d7c31aae7daf9efedae53a73fb7fa5065d24871fffa71bc7",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-dom-02-t.svg",
+      "archivePath": "svg/interact-dom-02-t.svg",
+      "sha256": "ed69b36ab16d24bd15439fc759680cddd5422d251265f22591350ec9d0f684a8",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-event-201-t.svg",
+      "archivePath": "svg/interact-event-201-t.svg",
+      "sha256": "05df650cdf5ba01c3a7576d8f5b2d6cd488b80add918a2af9148ecc57a21089e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-event-202-t.svg",
+      "archivePath": "svg/interact-event-202-t.svg",
+      "sha256": "e76e4b5907ecd2d18f3bb158074f4e50e7ac5181dac89b01aec0bcdfa30b9fe9",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-event-203-t.svg",
+      "archivePath": "svg/interact-event-203-t.svg",
+      "sha256": "1252118349ee7b369bc0fb47590a058f5353f8e3924765db3d9fecf00e863f5b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-focus-201-t.svg",
+      "archivePath": "svg/interact-focus-201-t.svg",
+      "sha256": "d4b1e16b46eade40209f4e1f6279a098fa75e90cd6b81e14ad5728116ec5dd7d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: nav-next",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-focus-202-t.svg",
+      "archivePath": "svg/interact-focus-202-t.svg",
+      "sha256": "4ff3b9a906ced2298a3cdef33dd2526ca9fdff69cd037646a85a4a1498bb94e1",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-focus-203-t.svg",
+      "archivePath": "svg/interact-focus-203-t.svg",
+      "sha256": "a24d7f4ddf0b30da3c2f1d1b855dee6f881fc0daf77bbdf93f3eccc48d6c701c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-focus-204-t.svg",
+      "archivePath": "svg/interact-focus-204-t.svg",
+      "sha256": "aa41a00b80b3e485f0976a31cae716ef8ef00a53fb3e5fa900b6abe4b49fe639",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: nav-next",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-focus-205-t.svg",
+      "archivePath": "svg/interact-focus-205-t.svg",
+      "sha256": "439e110da02fcf6e7a33e40e0962afb9a5b3cd37a290d3bc9c276a4af07f8069",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-focus-206-t.svg",
+      "archivePath": "svg/interact-focus-206-t.svg",
+      "sha256": "658baf0a0ebc481e2322b9abd72b1bcbdc5898733beca9e9f18c572e7c5270b5",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-focus-207-t.svg",
+      "archivePath": "svg/interact-focus-207-t.svg",
+      "sha256": "d90324e48cc795a3b9ef4ea90088b59792bbc5c3fb79e69f93e17f36147394ea",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: focusable",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-focus-208-t.svg",
+      "archivePath": "svg/interact-focus-208-t.svg",
+      "sha256": "80d334ff5e53b199c87940f24ed9aa6950d00137726794f647c0f59de674b942",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-focus-209-t.svg",
+      "archivePath": "svg/interact-focus-209-t.svg",
+      "sha256": "d6a82d1ddcdc0e254fb51f8ea4c3b56a796ed5633ce7d89bb876da038aba88d1",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-focus-210-t.svg",
+      "archivePath": "svg/interact-focus-210-t.svg",
+      "sha256": "bd444bfb555a85186a8e2e023e7e424a8dc576b69d6e88b977a07a93044bf351",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-focus-211-t.svg",
+      "archivePath": "svg/interact-focus-211-t.svg",
+      "sha256": "409521d49da31f6c1dda69890c3806f11bdec7b617d01d5f279d35e70b136a4a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: nav-next",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-focus-212-t.svg",
+      "archivePath": "svg/interact-focus-212-t.svg",
+      "sha256": "4a2f4f4fdc8d67103fca9910e616094e865158a8b70a5b4e91e74c9f38677c96",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-order-04-t.svg",
+      "archivePath": "svg/interact-order-04-t.svg",
+      "sha256": "d35784c3f9ccef97f0707e6f07e98f36f91d2a86231a876d8ace37835f46927f",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-order-05-t.svg",
+      "archivePath": "svg/interact-order-05-t.svg",
+      "sha256": "9d4acf162ddb0788f0df8bacf177045b8728f39c09c5e8508789f7186737240a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-order-06-t.svg",
+      "archivePath": "svg/interact-order-06-t.svg",
+      "sha256": "6754e896f5591a0f3edf6602e437f9b2588a6e3db9f5a0eb83d5a893c04c855b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-pevents-02-t.svg",
+      "archivePath": "svg/interact-pevents-02-t.svg",
+      "sha256": "bebb87bbd2b6c946433757cfd7a48cedeb32750ea79377b49ba5de2db4e0de51",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-pevents-05-t.svg",
+      "archivePath": "svg/interact-pevents-05-t.svg",
+      "sha256": "9a1ed07b7c4f763afea66e3b9f2926186096b541f06f673edfe8fc7189e6b0c7",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-pevents-06-t.svg",
+      "archivePath": "svg/interact-pevents-06-t.svg",
+      "sha256": "ae0f501ff7cfcf693f156c9e910a62164e049d3473a50102686c28b835394d31",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-pevents-07-t.svg",
+      "archivePath": "svg/interact-pevents-07-t.svg",
+      "sha256": "4d4c7d84cefc458ad57fcc370bdc38e8ac926c4a26a8b002365b4b367cad2e0d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-pevents-08-t.svg",
+      "archivePath": "svg/interact-pevents-08-t.svg",
+      "sha256": "80674477b380814a562854456274a8f050c988641b4b8ac40ebbdd7270822e66",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-zoom-01-t.svg",
+      "archivePath": "svg/interact-zoom-01-t.svg",
+      "sha256": "be1e24998598fd88ef036e26565a77eac1087665bc65b6103009b5889327bc71",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-zoom-02-t.svg",
+      "archivePath": "svg/interact-zoom-02-t.svg",
+      "sha256": "6ed445490e5cd2c6cea9c3d0c24716b8f1b778865fda29406ed7c1315bb1e1e9",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "interact-zoom-03-t.svg",
+      "archivePath": "svg/interact-zoom-03-t.svg",
+      "sha256": "41abd4da591b1cf59327af78164be1cdd039b2a88009beb510d068e91adc185c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "intro-compat-201-t.svg",
+      "archivePath": "svg/intro-compat-201-t.svg",
+      "sha256": "55d460d1457e7bf011143f9e2cd871e4760dd9a76b76b5383124fdfe1737623c",
+      "approved": true,
+      "admission": "UNAVAILABLE",
+      "error": "Input cannot enter the UTF-8 String API; XML byte decoding is not wired",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "jpeg-required-201-t.svg",
+      "archivePath": "svg/jpeg-required-201-t.svg",
+      "sha256": "728a83ce7504ba88f20ccb9d4c4240caed6b10c6fd88b28c84960ca2661ea300",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "jpeg-required-202-t.svg",
+      "archivePath": "svg/jpeg-required-202-t.svg",
+      "sha256": "70aba6eef6d8106d0270df9f3bc0950d1cb0a1450958c5ead143a3270dde53fa",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "jpeg-required-203-t.svg",
+      "archivePath": "svg/jpeg-required-203-t.svg",
+      "sha256": "35d07005dbc1503008b47941e8766e2cd8d81112f9b0b9ed4bd452d64b1f8123",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "jpeg-required-204-t.svg",
+      "archivePath": "svg/jpeg-required-204-t.svg",
+      "sha256": "6da9989da9013e9d5ca91ee61ae413cc68515fb64c8b4f68117849080b1570f6",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "jpeg-required-205-t.svg",
+      "archivePath": "svg/jpeg-required-205-t.svg",
+      "sha256": "a801f439ab3987ef56d4b7e7a8cc48f881094944ccef9ecadcc30f8c7aabadcf",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "jpeg-required-206-t.svg",
+      "archivePath": "svg/jpeg-required-206-t.svg",
+      "sha256": "ab2d9999b0fc611925298ca9ad57af2307b71ef9a6e477b7ddcdf0c3ebd16f26",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "jpeg-required-207-t.svg",
+      "archivePath": "svg/jpeg-required-207-t.svg",
+      "sha256": "8acac8e479ccf7b36b54d906c9f17ba343fb77e461f26cfade35ccd426eee064",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "jpeg-required-208-t.svg",
+      "archivePath": "svg/jpeg-required-208-t.svg",
+      "sha256": "528b56e7c27061ccbc2a5a5ce7961b6c7d32a90be5ca81db8a9a16dfe4d90614",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "jpeg-required-209-t.svg",
+      "archivePath": "svg/jpeg-required-209-t.svg",
+      "sha256": "2851ef4bacb43022d6ff86a8bec74f6a6f71db7f003d68b275158c5ea7167847",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "linking-a-03-t.svg",
+      "archivePath": "svg/linking-a-03-t.svg",
+      "sha256": "eb674fccb2a3ecf56c19973b394685b395268d88864d7972182f1afd59f7e2e6",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "linking-a-08-t.svg",
+      "archivePath": "svg/linking-a-08-t.svg",
+      "sha256": "dea8baf3b7cfc964fce545ff7766a98da15a22f8edfb3485da0d964d5698a532",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "linking-a-201-t.svg",
+      "archivePath": "svg/linking-a-201-t.svg",
+      "sha256": "774167edd3e4b7d431b5098ed6f7567f1b2e2f84b11ae9e841506d378af28c5f",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "linking-frag-201-t.svg",
+      "archivePath": "svg/linking-frag-201-t.svg",
+      "sha256": "b5106fb32cd78fdb22f82096572272c8b4350d7904b1e271cd5d72efdc8e1f24",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "linking-frag-202-t.svg",
+      "archivePath": "svg/linking-frag-202-t.svg",
+      "sha256": "9e5cb451eeb08394e35454f3627bb94a730e66cad68076aa8332355d6fe60d12",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "linking-frag-203-t.svg",
+      "archivePath": "svg/linking-frag-203-t.svg",
+      "sha256": "475e416afdad313d67db328f757e47b4dd80f25103e5e10ad443362f1a05ba43",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "linking-frag-204-t.svg",
+      "archivePath": "svg/linking-frag-204-t.svg",
+      "sha256": "8b1c4c1ed66843517e6f30fd7d2dbed3458a99a9a9c513f97fef863ff524f486",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "linking-refs-201-t.svg",
+      "archivePath": "svg/linking-refs-201-t.svg",
+      "sha256": "c302527a5ab3f88fa064a95be97341db89a7a68e5ca5921a826bed161d68abd9",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "linking-refs-202-t.svg",
+      "archivePath": "svg/linking-refs-202-t.svg",
+      "sha256": "aeb6db9a8d891a2bf1b58f00d164cf78c2bf31fd03e2e92af9e268c416e5a8c4",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "linking-refs-203-t.svg",
+      "archivePath": "svg/linking-refs-203-t.svg",
+      "sha256": "f61307874194c0166d18b2ced3b12cfdbc352f6f98960b83bdb5a1c67ca1207b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "linking-refs-204-t.svg",
+      "archivePath": "svg/linking-refs-204-t.svg",
+      "sha256": "69d23d3ef3c7de219f2afcee8660072a32138ca20fcc2e71f30659278771704a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "linking-refs-205-t.svg",
+      "archivePath": "svg/linking-refs-205-t.svg",
+      "sha256": "858169b80da59c30050780813cdf9ed738487640dda1baf2cdb0a08cbd301091",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "linking-refs-206-t.svg",
+      "archivePath": "svg/linking-refs-206-t.svg",
+      "sha256": "ad8219f4a5f32b3415bffa4cf96fc359e70ef8c2f5f0f17bda2d0d157cfba368",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "linking-uri-03-t.svg",
+      "archivePath": "svg/linking-uri-03-t.svg",
+      "sha256": "9490970d1bd2dc625fe809418237d646801adced86033615a17a4773f9ad54be",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-alevel-201-t.svg",
+      "archivePath": "svg/media-alevel-201-t.svg",
+      "sha256": "1d7d9b1c4658189ef96e8aafb205399c0cc142a10456d167e74e7781c0baea50",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-alevel-202-t.svg",
+      "archivePath": "svg/media-alevel-202-t.svg",
+      "sha256": "7802c7fbbe8d8ee332dabccf2fdd1a5343520125ef930abb8a8ef92c6b9e17f1",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-alevel-203-t.svg",
+      "archivePath": "svg/media-alevel-203-t.svg",
+      "sha256": "a1e48bac60bae417fe869c57a4e8bb68e17bda044ebbf3196bd9ddd6841c2bc8",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-alevel-204-t.svg",
+      "archivePath": "svg/media-alevel-204-t.svg",
+      "sha256": "f87cea7866c123570fbf5c0bddb509a369063c8843533140a00321c963d5ec9e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-alevel-205-t.svg",
+      "archivePath": "svg/media-alevel-205-t.svg",
+      "sha256": "087be3dabe0ceaa044b55fb3e3d3923fb5cbbcb8bb5607bf6ad1f7f5a70f192c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-alevel-206-t.svg",
+      "archivePath": "svg/media-alevel-206-t.svg",
+      "sha256": "1701a91624795ec211aeb021f4c067514f002d1822f07909defc627b9d065479",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-alevel-207-t.svg",
+      "archivePath": "svg/media-alevel-207-t.svg",
+      "sha256": "bf7bdca7b74d3ede4c9162a4686d25c94fe94a063366e7f6cd11c7825f8081d8",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-alevel-208-t.svg",
+      "archivePath": "svg/media-alevel-208-t.svg",
+      "sha256": "58e3070639cb904e6a61a5070f237b33cf8d49857101fc41dd162ad0ca357349",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-anim-201-t.svg",
+      "archivePath": "svg/media-anim-201-t.svg",
+      "sha256": "2d71a3fb8623c3f2fe38b22cf6f1d6fba7c5b6fd8a538c653ed892ecea980a36",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-anim-202-t.svg",
+      "archivePath": "svg/media-anim-202-t.svg",
+      "sha256": "f53d744e2147857308d869503de9afe4ed1d45ad28e03c3ea46ed132d5232387",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-anim-203-t.svg",
+      "archivePath": "svg/media-anim-203-t.svg",
+      "sha256": "c49f22a1de99c9dcc73d62f62b8fb328030da4e459e2f4c0e6cef51861ddc1a4",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-anim-204-t.svg",
+      "archivePath": "svg/media-anim-204-t.svg",
+      "sha256": "6cf345bb82f139f940df104be78f8f8801e9a8609ab6d2eeeda94f42b40ebb76",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-anim-205-t.svg",
+      "archivePath": "svg/media-anim-205-t.svg",
+      "sha256": "2aa97e8b8a477aac4b2af733a6b3959be60b293c55895efee62f555bfa016adc",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-anim-206-t.svg",
+      "archivePath": "svg/media-anim-206-t.svg",
+      "sha256": "d13e4ca10a40c88cc88c4632ccef95fa34d290778db5fe518a066ed3e80175b5",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-anim-207-t.svg",
+      "archivePath": "svg/media-anim-207-t.svg",
+      "sha256": "9ace37e887f99c234a27eca4f189ca0a160686cb9a2f9dd088dd3eea6bca6eaa",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-anim-208-t.svg",
+      "archivePath": "svg/media-anim-208-t.svg",
+      "sha256": "bf85114ed292879806ef7c24cfc83913c53eaa271a36721a49c64a2b832aeecf",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-anim-209-t.svg",
+      "archivePath": "svg/media-anim-209-t.svg",
+      "sha256": "063daba9d27bdc9d6b218f9af44ae95cb8bbe0167530fcc550b6c8d5e1afce77",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-anim-210-t.svg",
+      "archivePath": "svg/media-anim-210-t.svg",
+      "sha256": "bf91de45a45171a80cdd53f799b8748c33f0b93c9df4223a0630bc7ef8def7a3",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-anim-211-t.svg",
+      "archivePath": "svg/media-anim-211-t.svg",
+      "sha256": "c982964e40d62f4b651715f40cebec645f753cb021c5197771ac200942f00379",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-anim-212-t.svg",
+      "archivePath": "svg/media-anim-212-t.svg",
+      "sha256": "64848308f0451be56bdced052090a5971a30b45afd9ea4a60daaa22d04c0e78e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-anim-213-t.svg",
+      "archivePath": "svg/media-anim-213-t.svg",
+      "sha256": "f8ed5f817692d3f41fb1c2678c2d639e704c0a0d9098c317f1ecec294196037d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-201-t.svg",
+      "archivePath": "svg/media-audio-201-t.svg",
+      "sha256": "f79c3be529b08a889921c6a800547ef394cb850e7d6460ad510614fe37497f4a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-202-t.svg",
+      "archivePath": "svg/media-audio-202-t.svg",
+      "sha256": "150b50ae3386e22561d99f3adc7a493e2ab39a14cbbf217ef921b45cf7181aa9",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-203-t.svg",
+      "archivePath": "svg/media-audio-203-t.svg",
+      "sha256": "e18198023742f5edae8a601da94ee79ffb08fc1b69930c7ef1fdfb5f8a69aff8",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-204-t.svg",
+      "archivePath": "svg/media-audio-204-t.svg",
+      "sha256": "d54d8d7adb2809f53aab074a8664ec4872c31a5b32b34869880c09a87c2a1543",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-205-t.svg",
+      "archivePath": "svg/media-audio-205-t.svg",
+      "sha256": "6dc18a86498e4c125759461d71cefff77b1014954f2dfaf22ef715441c7b5814",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-206-t.svg",
+      "archivePath": "svg/media-audio-206-t.svg",
+      "sha256": "d5079a0121be819c760e898619a730a86ec3beca0bbc344d4af00bbdeeef95ba",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-207-t.svg",
+      "archivePath": "svg/media-audio-207-t.svg",
+      "sha256": "ed6faba3e51da49db3150afc1f39eefc8a5bbc05783f67b8dea584edc266c416",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-208-t.svg",
+      "archivePath": "svg/media-audio-208-t.svg",
+      "sha256": "e0cc6c71c1e3bf3e2e35f127d9c0234dbe0c7debfe4572cf8be92a9ca9e5f0f6",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-209-t.svg",
+      "archivePath": "svg/media-audio-209-t.svg",
+      "sha256": "d2c04c94cb5cc0432165c574ab792042651ca69ff1321ce197dd37a1a9e87c26",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-210-t.svg",
+      "archivePath": "svg/media-audio-210-t.svg",
+      "sha256": "e1a9c62061f39b9d4c2546d1690c08eb5a615e742e6b916e7db59d11813aab46",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-211-t.svg",
+      "archivePath": "svg/media-audio-211-t.svg",
+      "sha256": "851d4105a58e4e57419c078185eeaebf68f49386188829d36ccd91167fcf714e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-212-t.svg",
+      "archivePath": "svg/media-audio-212-t.svg",
+      "sha256": "b34fb9b7d705cdad43303604548ad65b235e57eadce52975cfb67d5dbbca5565",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-213-t.svg",
+      "archivePath": "svg/media-audio-213-t.svg",
+      "sha256": "53003fbe8eb26287bc0ab5c040c3cd447374b8860dbceaa22ac3d6a112634023",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-214-t.svg",
+      "archivePath": "svg/media-audio-214-t.svg",
+      "sha256": "6a993f2f3ab7db2b1a9156c4078c3624eade97aa3395c10db9ce14ba6940dc4f",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-audio-215-t.svg",
+      "archivePath": "svg/media-audio-215-t.svg",
+      "sha256": "def3b0933aca42749859cd65dc81289beb0cf3b89419a55737ae2dd18eb1c2e0",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-201-t.svg",
+      "archivePath": "svg/media-video-201-t.svg",
+      "sha256": "2a65316802bce14d3b73d9f64b882998183e0bb5d5b9e6f3446b98d29d6eedff",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-202-t.svg",
+      "archivePath": "svg/media-video-202-t.svg",
+      "sha256": "57330eb11d34289aaff1fa0fde80be377a319dd78cd2cd64ae37bd907d1912c4",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-203-t.svg",
+      "archivePath": "svg/media-video-203-t.svg",
+      "sha256": "a91bd1d01cf15b78490e91870c82e906974c6d3b1f124fec6e3397934dfdf52e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-204-t.svg",
+      "archivePath": "svg/media-video-204-t.svg",
+      "sha256": "24b00fcf8660799562435ff75a9aa6f04ebd5ec2368ecfcc93387fe65f23228c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-205-t.svg",
+      "archivePath": "svg/media-video-205-t.svg",
+      "sha256": "9a6f15aeba8de41ebaf1481bdc99c2ea86afd296d18c4151758f3562230530e0",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-206-t.svg",
+      "archivePath": "svg/media-video-206-t.svg",
+      "sha256": "6933724e1fe370502aa3eab8bd0e80e63ffae9519ea35d235f55d852b4f60d2a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-207-t.svg",
+      "archivePath": "svg/media-video-207-t.svg",
+      "sha256": "df55e6c22b77eb5a7763f827278b01a7fca39bda1c73d26c8f1303c33bb401c7",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-208-t.svg",
+      "archivePath": "svg/media-video-208-t.svg",
+      "sha256": "0469cd596aab71c0321dd8c5c98c6121934abdefb89cb32412b6feb5217b280a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-209-t.svg",
+      "archivePath": "svg/media-video-209-t.svg",
+      "sha256": "819c8bb8573fd7935f9e2312c38ccabeefad24edf12a2a8aa83c45f50728db89",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-210-t.svg",
+      "archivePath": "svg/media-video-210-t.svg",
+      "sha256": "8f1c0b774ee059628fa1a8b085322a930d21cf6c6ac6252234beae76bc0f7e03",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-211-t.svg",
+      "archivePath": "svg/media-video-211-t.svg",
+      "sha256": "62c11ea4bafb628356d152d13860242aa354738bd133a891536dc6de05de56fb",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-212-t.svg",
+      "archivePath": "svg/media-video-212-t.svg",
+      "sha256": "f57c8286109aabb8f85f715caeab9b4f63bc07cc920db7b658b38c8205f2f49c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-213-t.svg",
+      "archivePath": "svg/media-video-213-t.svg",
+      "sha256": "054506f6871257d43047f0b5aa0ebdcfefecb64fb01fdab3e7b4e5eacd3c5c18",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-214-t.svg",
+      "archivePath": "svg/media-video-214-t.svg",
+      "sha256": "47192dced4f9085df4b8f0405bc762333ef82ee01ec3721ca8c73b4607a6d495",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-215-t.svg",
+      "archivePath": "svg/media-video-215-t.svg",
+      "sha256": "d77dee0693d70977e061d9802a7a7eeff26b3e5ef872144ae8debc6b0811c88d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-216-t.svg",
+      "archivePath": "svg/media-video-216-t.svg",
+      "sha256": "a28b933ef694a23b9bd36f9ed4b3ad7b7ca1eb80056d2af2009017561d3646ab",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-218-t.svg",
+      "archivePath": "svg/media-video-218-t.svg",
+      "sha256": "d372465988c7c0bdd834965dacffa25039714a318011ee8a1510e50a6fc5a929",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-219-t.svg",
+      "archivePath": "svg/media-video-219-t.svg",
+      "sha256": "cd23c0675ab2535d561cfc133776bf1b82ba6c274a71c0451700cff590e37999",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-220-t.svg",
+      "archivePath": "svg/media-video-220-t.svg",
+      "sha256": "f78926b7328363854c5e1edd7fa15697ae08f3e893ad55f90d89a234b0973abd",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-221-t.svg",
+      "archivePath": "svg/media-video-221-t.svg",
+      "sha256": "b6b97214ddb20f71ff648396fe637cdb0a9d9e544a501b5359d2b6dc25e078b6",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "media-video-222-t.svg",
+      "archivePath": "svg/media-video-222-t.svg",
+      "sha256": "656a9b14a3e45f645a683683764bceda82325e7bd6d793ef12175e8482f893d9",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "metadata-example-01-t.svg",
+      "archivePath": "svg/metadata-example-01-t.svg",
+      "sha256": "93efc1a2a99dbe2eaf19161399d9280d5f7282b784f41c2e86456ce1e33c9efe",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-color-01-t.svg",
+      "archivePath": "svg/paint-color-01-t.svg",
+      "sha256": "31a0c394b728ed71ae3f128819fd0692af451cc610f6ab1deef5e671feacf44d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-color-03-t.svg",
+      "archivePath": "svg/paint-color-03-t.svg",
+      "sha256": "9f4f26da75700401bb5ed573f5e522e882373f5b854e0cd5fc521c4e147c460f",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-color-04-t.svg",
+      "archivePath": "svg/paint-color-04-t.svg",
+      "sha256": "12ca1be3e3f7f76e79db5030091b22f80725c0351f564aaa53360bc109c357f6",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-color-05-t.svg",
+      "archivePath": "svg/paint-color-05-t.svg",
+      "sha256": "23215cc58a06def7aa0aaab3b08f9a93a01587f0a6e1998b3f6501a4b16036b2",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-color-201-t.svg",
+      "archivePath": "svg/paint-color-201-t.svg",
+      "sha256": "aa9f4f01ff72b9bb9143314984feed45bc80580bed00a1d2ec653aad27133d5b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-fill-01-t.svg",
+      "archivePath": "svg/paint-fill-01-t.svg",
+      "sha256": "dc92d5f38f8b3561c20f0b12848e59419808a3fb13c2daf0fe30478429ba8290",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-fill-02-t.svg",
+      "archivePath": "svg/paint-fill-02-t.svg",
+      "sha256": "fe0ad22aa5188a892a256e0dfee61e1cff2aaf3d48ab03b3d91b708c9900f9d5",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-fill-03-t.svg",
+      "archivePath": "svg/paint-fill-03-t.svg",
+      "sha256": "55290fdfd90935a48813710250713d099da598dd75c21eeeb3fe4bf5d1e74c08",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-fill-04-t.svg",
+      "archivePath": "svg/paint-fill-04-t.svg",
+      "sha256": "a1bcdb0b70858e346a9a0cf07c5a40fe43ccfd9930ea545cc3ead8fd57fd6ba1",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-fill-05-t.svg",
+      "archivePath": "svg/paint-fill-05-t.svg",
+      "sha256": "9dcf3ad7c1bfa395951179d611421dd1b2d390c5ec76e49fd7ef45b4e2c09015",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-04-t.svg",
+      "archivePath": "svg/paint-grad-04-t.svg",
+      "sha256": "7b392304a146965d2ca77256adab8a64eb3d2c2379b558393648f236f60503b1",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-05-t.svg",
+      "archivePath": "svg/paint-grad-05-t.svg",
+      "sha256": "89e75fae826b87112c26016635f11dc7227371f1e1f31e43e0ec91fd4a0f1471",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-07-t.svg",
+      "archivePath": "svg/paint-grad-07-t.svg",
+      "sha256": "405ff0f8dd4f3f706415d6f2d6204162ce17de4d493ca6c5f6d8ba8b0bc369bc",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-08-t.svg",
+      "archivePath": "svg/paint-grad-08-t.svg",
+      "sha256": "293d0dcdc963c3d0e4baeb2700f5032cf96d139d7bc74e302e7bf5c73bdf1465",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-09-t.svg",
+      "archivePath": "svg/paint-grad-09-t.svg",
+      "sha256": "500af83c85ce6f665b87cf8c3fbdae5215251de0fd3ba61a30c5d7418923ce1c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-11-t.svg",
+      "archivePath": "svg/paint-grad-11-t.svg",
+      "sha256": "42ff6fe9765df03d30e0c19e37406541be0952a468d98f390d178be711b70994",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-12-t.svg",
+      "archivePath": "svg/paint-grad-12-t.svg",
+      "sha256": "0506c326b5ad6147aad01d0755f67b96176707399b3122628eb4607bac224ead",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-15-t.svg",
+      "archivePath": "svg/paint-grad-15-t.svg",
+      "sha256": "bcdf56df76333b07bf16d27404e5834e7671fae6e624ffbe3ecd3fa29bf9f198",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-16-t.svg",
+      "archivePath": "svg/paint-grad-16-t.svg",
+      "sha256": "40706735ff930e9ff6cd0926ca3127b2340c818a51821bd3465e3369ab127f6c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-17-t.svg",
+      "archivePath": "svg/paint-grad-17-t.svg",
+      "sha256": "68da8b447c245275756ada7ff3529442381ade690d1d53b06ae11a13f933b6b2",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-18-t.svg",
+      "archivePath": "svg/paint-grad-18-t.svg",
+      "sha256": "b40c769a196730327e09e931051b40a025f2bdbef69e4052d82419f42299f681",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-19-t.svg",
+      "archivePath": "svg/paint-grad-19-t.svg",
+      "sha256": "6f7ab556ad0883394cf9670fc74a9bfc446f06e07d19bc41193a4fa196410ab3",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-201-t.svg",
+      "archivePath": "svg/paint-grad-201-t.svg",
+      "sha256": "6c6d64524091d8b96eb65736dde419c72f1117428d7ba4a475dad45a71401088",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-202-t.svg",
+      "archivePath": "svg/paint-grad-202-t.svg",
+      "sha256": "1b3f5b22c9e09dbfc5869fc7e4e75375ff9838c2789f969570c34d96ff647029",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-203-t.svg",
+      "archivePath": "svg/paint-grad-203-t.svg",
+      "sha256": "2c360c9d2bb9879863e5deaf08bc6c9e2667a01bb5803dffb4d131a79e4e3b43",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-204-t.svg",
+      "archivePath": "svg/paint-grad-204-t.svg",
+      "sha256": "5d110230c478dea84d876896c33dd76103766d933064bce75d19ec95baa1fab6",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-grad-205-t.svg",
+      "archivePath": "svg/paint-grad-205-t.svg",
+      "sha256": "4b5f78c95e19ee5fa9b2ab02f143a2c91e49dedc07d434b241e4485e124ff227",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-nsstroke-201-t.svg",
+      "archivePath": "svg/paint-nsstroke-201-t.svg",
+      "sha256": "cac4a54beab2e1e52073e888b3c63538d8c3cce9a342879f5be49ee40b9ee8b3",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-nsstroke-203-t.svg",
+      "archivePath": "svg/paint-nsstroke-203-t.svg",
+      "sha256": "8f3e13b03eee7aebb2bc3acfc92095fd3df08a90dad0df055cce5427de6f17cc",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-other-201-t.svg",
+      "archivePath": "svg/paint-other-201-t.svg",
+      "sha256": "0e90ac43ed25f7bfcde857e8a0c92ca8dbcc5381823bde0b0315a2e416aa6c20",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-other-203-t.svg",
+      "archivePath": "svg/paint-other-203-t.svg",
+      "sha256": "f5d3c20aaa2507308c3ffcc9ddeb62194314902a1df53cf8cceacd46e973714a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-stroke-01-t.svg",
+      "archivePath": "svg/paint-stroke-01-t.svg",
+      "sha256": "cc521af51424cbcfe2394253a968f27c4899f18f3427e304659bc7524d1b4d4b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-stroke-02-t.svg",
+      "archivePath": "svg/paint-stroke-02-t.svg",
+      "sha256": "0b39eb82801ebcdece36eb804ee28d4a0c3f84cc6c4a890329e75302a359a96e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-stroke-03-t.svg",
+      "archivePath": "svg/paint-stroke-03-t.svg",
+      "sha256": "d27554f0c2c2f1c6e95d5b52624a4ea49112a27ba48a820a604c4f752223655c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-stroke-04-t.svg",
+      "archivePath": "svg/paint-stroke-04-t.svg",
+      "sha256": "6a5790e91ce7d1fb9796978fb018ec94941a7c687abc9110f79134ba27548485",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-stroke-05-t.svg",
+      "archivePath": "svg/paint-stroke-05-t.svg",
+      "sha256": "d3814990f1354bb8bc5fe9c6df70eff4328c4de30f276ccfe151cbf28b256cc3",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-stroke-06-t.svg",
+      "archivePath": "svg/paint-stroke-06-t.svg",
+      "sha256": "3fe54c928369b6d77066f61dcd590230150feaaf9126c8dde31ed5aab786ab53",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-stroke-07-t.svg",
+      "archivePath": "svg/paint-stroke-07-t.svg",
+      "sha256": "dff4b1f47169f0e61bcc13440deb2a12fb8a5ccbb591fe2c3142c0073eeb8196",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-stroke-08-t.svg",
+      "archivePath": "svg/paint-stroke-08-t.svg",
+      "sha256": "b51eb8954c26e8bf2940b287e2c2c945a1e943f66908eaf6c2ef6568463fc97b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-stroke-201-t.svg",
+      "archivePath": "svg/paint-stroke-201-t.svg",
+      "sha256": "3071749e8dd01845f190a0da9f6faf333e8edecb3085b0cc142c6b4510b318d4",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-stroke-202-t.svg",
+      "archivePath": "svg/paint-stroke-202-t.svg",
+      "sha256": "157db583211569731dc02923b1ae200dd03e257dabddab41e69b486b0f6e2324",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-stroke-204-t.svg",
+      "archivePath": "svg/paint-stroke-204-t.svg",
+      "sha256": "fa474eb71cf6d66a37c753e3d180ba6cf2d1bb68ac258e01bcd0e4c92f783847",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-stroke-205-t.svg",
+      "archivePath": "svg/paint-stroke-205-t.svg",
+      "sha256": "c2f3ea9e91413788ce16a30361ebc42f895d51b2151f85b5d2382ee770839e74",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-stroke-207-t.svg",
+      "archivePath": "svg/paint-stroke-207-t.svg",
+      "sha256": "f61bf1ae36a9e8c6503c34e76dedab6a4733ba8f3a72c2fbde1f8cd6bae4d8a7",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-vfill-201-t.svg",
+      "archivePath": "svg/paint-vfill-201-t.svg",
+      "sha256": "118889ac1500663002be2e4f15b1a7ce4f83e7608e3b9802a0cf4b0619d9b102",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-vfill-202-t.svg",
+      "archivePath": "svg/paint-vfill-202-t.svg",
+      "sha256": "870da3afcc02c93fc81a7aeeecd9166999d7b4745bf5b6ac49c8d77468bb3e36",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-vfill-203-t.svg",
+      "archivePath": "svg/paint-vfill-203-t.svg",
+      "sha256": "8acdf828204db5165229d205002047f84a9aee642355ed48dfce7473ba11952b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-vfill-204-t.svg",
+      "archivePath": "svg/paint-vfill-204-t.svg",
+      "sha256": "128494172e2b8b69700f3b6f3b68dbb801c5f57c2160c3f4ebed037c76443559",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-vfill-205-t.svg",
+      "archivePath": "svg/paint-vfill-205-t.svg",
+      "sha256": "c350353892f65759d902ccd3276e606b82c80682d77c40d882190ee8a2f7959e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paint-vfill-206-t.svg",
+      "archivePath": "svg/paint-vfill-206-t.svg",
+      "sha256": "ded916e6dfd4d8515f0a053d334d14779f4d193896b65825be1c635db9863e92",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paths-data-01-t.svg",
+      "archivePath": "svg/paths-data-01-t.svg",
+      "sha256": "b7e18ad05fe1324b938586bae5fb2aabeadcec8813cf8cd61af83d6b3cc879c7",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paths-data-02-t.svg",
+      "archivePath": "svg/paths-data-02-t.svg",
+      "sha256": "eb8487cce616c3e157280e0000d5baac435c775abc7efc71bed31059deb3a738",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paths-data-04-t.svg",
+      "archivePath": "svg/paths-data-04-t.svg",
+      "sha256": "77fc2c5ad09bebd33bf7068018a243ad08584c27a5a20c5200fb25f28cd3b298",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paths-data-05-t.svg",
+      "archivePath": "svg/paths-data-05-t.svg",
+      "sha256": "a72d3b4a0f986183ed772891889677dfeafa78e0c1a35cfdefc6e6eed8b1d483",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paths-data-06-t.svg",
+      "archivePath": "svg/paths-data-06-t.svg",
+      "sha256": "698f72d929479a427adf820d6d664107ee12c0fd23a2b19708af985735b88c85",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paths-data-07-t.svg",
+      "archivePath": "svg/paths-data-07-t.svg",
+      "sha256": "f9320948e9d632532e4c54a4956368d6c128b301dba92293b957277befec4a0d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paths-data-08-t.svg",
+      "archivePath": "svg/paths-data-08-t.svg",
+      "sha256": "7872b61c1a7991958ece536768e6eb44667d9aa678986c62c4a3809c354f58df",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paths-data-09-t.svg",
+      "archivePath": "svg/paths-data-09-t.svg",
+      "sha256": "de0f3d1d95cd0d3f78888f992a6d645de7b270de6fb22a81d6352d32db82fc9f",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paths-data-10-t.svg",
+      "archivePath": "svg/paths-data-10-t.svg",
+      "sha256": "4332187cf212efe204c199118314da7337ce529b99126e93f780a61a27e26a26",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paths-data-12-t.svg",
+      "archivePath": "svg/paths-data-12-t.svg",
+      "sha256": "5bc3386e521214dae31297fb05b170a4700101c670ffcb298aaec4a9e0ec0536",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paths-data-13-t.svg",
+      "archivePath": "svg/paths-data-13-t.svg",
+      "sha256": "dc0a39e8f2662e1afd90aed0db51b41b0e45558cb193e3afebc774460bcdb39b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paths-data-14-t.svg",
+      "archivePath": "svg/paths-data-14-t.svg",
+      "sha256": "8bbcc8f45cbca159297916a27883be7adbe65912522f42d759abb765cdb962b0",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "paths-data-15-t.svg",
+      "archivePath": "svg/paths-data-15-t.svg",
+      "sha256": "b303651dda693722b35c1ed6f9d557493127977d9cb9d470a5af3590848437c8",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "render-elems-01-t.svg",
+      "archivePath": "svg/render-elems-01-t.svg",
+      "sha256": "9c3612ba08ab98ec4e6f54725898fdca23c03a62c8268f5924de9b2fe5fa300f",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "render-elems-02-t.svg",
+      "archivePath": "svg/render-elems-02-t.svg",
+      "sha256": "c366460d936bfcd78291ce3a1cb4e4c1ff52ffa6c287c5ac377e7af5e73b032c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "DOCTYPE/DTD unsupported in SVG profile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "render-elems-03-t.svg",
+      "archivePath": "svg/render-elems-03-t.svg",
+      "sha256": "629ea8ff069cb6221e7a0ae803158548364794b6dc372ab6830ca67a0b792ad9",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "DOCTYPE/DTD unsupported in SVG profile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "render-elems-06-t.svg",
+      "archivePath": "svg/render-elems-06-t.svg",
+      "sha256": "30892e774a6f29feddc950be9ba6531fc64b4cc8c2e612829bd33bc12a6ace1d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "render-elems-07-t.svg",
+      "archivePath": "svg/render-elems-07-t.svg",
+      "sha256": "4067ea92d01b98d887c339ae0d3d0a25870ee7249a88cb9d8b2ff63190d35558",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "render-elems-08-t.svg",
+      "archivePath": "svg/render-elems-08-t.svg",
+      "sha256": "fca7bfc1a29aaa68171576ec2d3de67249d48fbbf71a4f8843ef2f02fe5b1c5d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "render-groups-01-t.svg",
+      "archivePath": "svg/render-groups-01-t.svg",
+      "sha256": "263bf374871f2760c5f0ee094a647ed60cf319ea619e06847133e0029a0e237c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "render-groups-03-t.svg",
+      "archivePath": "svg/render-groups-03-t.svg",
+      "sha256": "fbab4ec098b0ca573764e1e7e7d7587687627ccb1ae70a5a63e9510d45da34a4",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "script-element-201-t.svg",
+      "archivePath": "svg/script-element-201-t.svg",
+      "sha256": "cce360f570b9e12e6be45ce658fc3e2649cf4d5d3c8284512c9c5667617f6dec",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "script-element-202-t.svg",
+      "archivePath": "svg/script-element-202-t.svg",
+      "sha256": "0096a350fe376a136741d7f9ba0f021b0695da1f661796c7fb9ae49cfe741d05",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "script-element-203-t.svg",
+      "archivePath": "svg/script-element-203-t.svg",
+      "sha256": "cd5d1be5cb4d0cf1a5e939fa36a2fcff08913266fad5d0ef33afecb1d0be9dda",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "script-handle-05-t.svg",
+      "archivePath": "svg/script-handle-05-t.svg",
+      "sha256": "71f55a48d8a7484091c7bc3e1237660cc2b66acd6dd7698186a7daca0b557b39",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "script-handle-06-t.svg",
+      "archivePath": "svg/script-handle-06-t.svg",
+      "sha256": "8a744a592a05de469f0d6584f590acd44b66733580714334c1b797b38cfd4637",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "script-handle-07-t.svg",
+      "archivePath": "svg/script-handle-07-t.svg",
+      "sha256": "d3f22d683e9bb1725ddfd02d1b3fda6a799556fb7dc380b2e815b5996b4f78c0",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "script-handle-08-t.svg",
+      "archivePath": "svg/script-handle-08-t.svg",
+      "sha256": "4542f3a351e7c062e8e53011c9833e9ad6406cc9a47c7e7a4feb5c426596a93b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "script-handle-201-t.svg",
+      "archivePath": "svg/script-handle-201-t.svg",
+      "sha256": "452ca28eba1d83816be5e8504c4746cb90449931c8a1c7a35102077358e9b8a3",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "script-handle-202-t.svg",
+      "archivePath": "svg/script-handle-202-t.svg",
+      "sha256": "3f6af83c0a3bdae9d197551f34e07e8cb2554ca1394399ab543deafd0ab9c4d5",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "script-listener-201-t.svg",
+      "archivePath": "svg/script-listener-201-t.svg",
+      "sha256": "c028ef51ab829dac61eee77479db7189c046b52c6e2ec6b23c53e9e3a68f265b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "XML namespace well-formedness violation",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "script-listener-202-t.svg",
+      "archivePath": "svg/script-listener-202-t.svg",
+      "sha256": "4271f3d85dcfc22d96a4f444442ef4add4fd883a543bfe0dfc73afa0ae14c5d8",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "script-listener-203-t.svg",
+      "archivePath": "svg/script-listener-203-t.svg",
+      "sha256": "3564fe4781a1592394ff9a21dd449faa0d7d39376e9f0f9838fa96e10c606aab",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "script-listener-204-t.svg",
+      "archivePath": "svg/script-listener-204-t.svg",
+      "sha256": "78e6c8333dd2b8f627c6c3e4cbee7e320774ab9a20446ae62b0b40a75273bd4a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-circle-01-t.svg",
+      "archivePath": "svg/shapes-circle-01-t.svg",
+      "sha256": "423586ec68e95da99f0173d9a949e6e5a72f76685c9a68c6f751a3a2a6b1aa9a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-circle-02-t.svg",
+      "archivePath": "svg/shapes-circle-02-t.svg",
+      "sha256": "6e8308b067f39994cde6d79fed6515727ab3ada9b28a5de0b8794c79d3a9eba2",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-circle-03-t.svg",
+      "archivePath": "svg/shapes-circle-03-t.svg",
+      "sha256": "2d034f26e957b72e79577294252a8bcdb63a969f7c965df077797ea14293a233",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-ellipse-01-t.svg",
+      "archivePath": "svg/shapes-ellipse-01-t.svg",
+      "sha256": "4a3f767038807bbcbb0201c0448ffc4f9524696d2cc5ad4f968664901e943c9d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-ellipse-02-t.svg",
+      "archivePath": "svg/shapes-ellipse-02-t.svg",
+      "sha256": "d9491d6597a3619e41c961d617ef89d1873a81f4037e461dcb1f11d8c5140801",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-ellipse-03-t.svg",
+      "archivePath": "svg/shapes-ellipse-03-t.svg",
+      "sha256": "117de6d7d7d25208d75d1b30a92f4e8bcb4b070e049e2f18f8a4c98c1996f9b2",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-intro-01-t.svg",
+      "archivePath": "svg/shapes-intro-01-t.svg",
+      "sha256": "f9765743e07bf2fbf87542a393850d274ac019594c5ca5a1262fb8eecb6a277b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-line-01-t.svg",
+      "archivePath": "svg/shapes-line-01-t.svg",
+      "sha256": "a46436e511e53a060e7fa7a136dc554acff05ca33a2786ba30668a266a1b3192",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-line-02-t.svg",
+      "archivePath": "svg/shapes-line-02-t.svg",
+      "sha256": "a53d91b2a88ecbdfaadf7e603e5d794bf039a359756f1f689a3ebefebb6ae0c0",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-polygon-01-t.svg",
+      "archivePath": "svg/shapes-polygon-01-t.svg",
+      "sha256": "7fbfa3bf9e1d6ca92b50313060bea7584a0c41f8b6a2c772cdeafb4408634803",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-polygon-02-t.svg",
+      "archivePath": "svg/shapes-polygon-02-t.svg",
+      "sha256": "75df686501200c1b68783c9e979c6de791a5ee538190d9847ad1f2f5ed39a43b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-polyline-01-t.svg",
+      "archivePath": "svg/shapes-polyline-01-t.svg",
+      "sha256": "5a9fdc0d00d077ab489521c5b038400a4222a0f6bbf647b08e75b8dcd3a83b74",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-polyline-02-t.svg",
+      "archivePath": "svg/shapes-polyline-02-t.svg",
+      "sha256": "238abdfc94900d77342f6ea4450de50dbe39340d594442c7bfd2b79d6696ed4a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-rect-01-t.svg",
+      "archivePath": "svg/shapes-rect-01-t.svg",
+      "sha256": "d4c57ec97bf311c05923566ef4e92e9d9049bf9add16c92499a56d3e11c78fe7",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-rect-02-t.svg",
+      "archivePath": "svg/shapes-rect-02-t.svg",
+      "sha256": "80ee9c3a654d15c707eab451b6325a7afe1964b9d7d124d1acf57a0089cafdd7",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "shapes-rect-03-t.svg",
+      "archivePath": "svg/shapes-rect-03-t.svg",
+      "sha256": "5fdc3262c6ca5372f1a40539bf9408b4080ec20b6b0da9770256188f625d238c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-class-201-t.svg",
+      "archivePath": "svg/struct-class-201-t.svg",
+      "sha256": "0ab31c712604c90df515237bf0091706f15b6ce9504117048dfb81fd82fd6a81",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-common-201-t.svg",
+      "archivePath": "svg/struct-common-201-t.svg",
+      "sha256": "ef9e668aaeaa59bf1984e57a093eaa93ee0d3b0fbecb97abbd9ecd6a30ca64b2",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-cond-01-t.svg",
+      "archivePath": "svg/struct-cond-01-t.svg",
+      "sha256": "4375973dfc71b312a8119c27e8461645ccbbf94b19274e7d4dee4147e25f4b73",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-cond-02-t.svg",
+      "archivePath": "svg/struct-cond-02-t.svg",
+      "sha256": "1ee26dd5494be59a82a58887230bf442592640f92aca647e9f19143d6cae5c78",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-cond-03-t.svg",
+      "archivePath": "svg/struct-cond-03-t.svg",
+      "sha256": "e329eecee09095913bda3ff80da80a41b0cadc1567b19fc0ff1847a177ff6416",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-cond-204-t.svg",
+      "archivePath": "svg/struct-cond-204-t.svg",
+      "sha256": "23002bcf66e3ecc1c6e9b7ec108e1b5953e46d3e2886ec98711a51311a752440",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-cond-205-t.svg",
+      "archivePath": "svg/struct-cond-205-t.svg",
+      "sha256": "e09f54648ce62759bccbab5ed27e0deaf36ceb9f9a1f86688cc11254947290aa",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-cond-209-t.svg",
+      "archivePath": "svg/struct-cond-209-t.svg",
+      "sha256": "08e04b808a96ab974a5720a9a69a6d75b27e589e73b436f4d423a327f36d78e5",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-cond-210-t.svg",
+      "archivePath": "svg/struct-cond-210-t.svg",
+      "sha256": "b909d7448fd3d389eb840f8e1a5a111335d05515bbe5d4ffaf0dc6ad5f597295",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-defs-01-t.svg",
+      "archivePath": "svg/struct-defs-01-t.svg",
+      "sha256": "943cd374e87cde86628797bed0e9d0c0b3a57a3ca7bef9da3bf3c069a98e91de",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-defs-201-t.svg",
+      "archivePath": "svg/struct-defs-201-t.svg",
+      "sha256": "15eca7fd25dd649532dbfba8d601e93c892d2b4723eaac8b72bfd1f4f3848a2e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-discard-201-t.svg",
+      "archivePath": "svg/struct-discard-201-t.svg",
+      "sha256": "609949cb4e1697cde68f48ae6b5622579ba0561269599ab402dbed0d1e23cc87",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-discard-204-t.svg",
+      "archivePath": "svg/struct-discard-204-t.svg",
+      "sha256": "5f0776b7ee789fe33b969006aeb6598188d7f14b8e7180c01e3a1f9220e9086c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-discard-205-t.svg",
+      "archivePath": "svg/struct-discard-205-t.svg",
+      "sha256": "06dd53db9251a3493bc8995cb7b459a903ccb71ee870fc91a026cb797d058cbe",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-discard-206-t.svg",
+      "archivePath": "svg/struct-discard-206-t.svg",
+      "sha256": "48e87cffae9509a3698ce0e05b50c1d2d31892e13b53b74d77531b424cab73f5",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-discard-207-t.svg",
+      "archivePath": "svg/struct-discard-207-t.svg",
+      "sha256": "ad5d7b98f209d878eb18982d134db6622a82633eb6962bb06205eff3e80b1060",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-frag-02-t.svg",
+      "archivePath": "svg/struct-frag-02-t.svg",
+      "sha256": "b41385b44088f138b9e2a52e215922bc7f18ed1fed741c97861ea4be5701d4ee",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-frag-03-t.svg",
+      "archivePath": "svg/struct-frag-03-t.svg",
+      "sha256": "d847598a9f6df30ddeac5b78178b71a2d95db7e733d90b336a8f7a0ae5292fa0",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-frag-04-t.svg",
+      "archivePath": "svg/struct-frag-04-t.svg",
+      "sha256": "771999dd940e700945803fc26477f65900a4a843a0490d5bb8d3fc52dfe17444",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-frag-05-t.svg",
+      "archivePath": "svg/struct-frag-05-t.svg",
+      "sha256": "8e0103ac5d3e543cdc2e62e696674b83e0c18d5bf0e96061ea2e621c543d604e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-frag-06-t.svg",
+      "archivePath": "svg/struct-frag-06-t.svg",
+      "sha256": "6354babd58aaf2f6331fecad6114273de99057b51e6d8a5e75b128c83592b291",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-group-01-t.svg",
+      "archivePath": "svg/struct-group-01-t.svg",
+      "sha256": "76047600319b392f3c1ef956a874f86ddc90e926f474be08c78f1003fcf1cbf9",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-group-03-t.svg",
+      "archivePath": "svg/struct-group-03-t.svg",
+      "sha256": "6be55cb1875f3a79cfb4d44ce30e3d5b6e6919b58feebf8cc862ab921d74cbf4",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-image-01-t.svg",
+      "archivePath": "svg/struct-image-01-t.svg",
+      "sha256": "83233a5ef413766a1a7bc563d849488067c924f5cdaff9494f483879222e8a51",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-image-03-t.svg",
+      "archivePath": "svg/struct-image-03-t.svg",
+      "sha256": "09e2364e2ac9b90724c102a8b08817b11cfec86b1d535ff4e56e08c45be6fdd6",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-image-04-t.svg",
+      "archivePath": "svg/struct-image-04-t.svg",
+      "sha256": "95889699c53ce06b9543740000fa39dde2490174abd82c8b4d0f1a7267f3c96e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-image-06-t.svg",
+      "archivePath": "svg/struct-image-06-t.svg",
+      "sha256": "0235492a417489733a1f2f8255be1db24d2f0d5016037a664a3166848cd3de37",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-image-07-t.svg",
+      "archivePath": "svg/struct-image-07-t.svg",
+      "sha256": "30ab12644f19e06a9e9e6b990668ee9b22ff146e264079f81eb51c5ed85cc734",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-image-08-t.svg",
+      "archivePath": "svg/struct-image-08-t.svg",
+      "sha256": "7906b09fffb71e84971c8616e789e40906889f39f738851b732541995292aaea",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-image-09-t.svg",
+      "archivePath": "svg/struct-image-09-t.svg",
+      "sha256": "c13b24545b4de0448f41b4f2ab1d5b0b6b505b22a366171a71a573393914956a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-image-10-t.svg",
+      "archivePath": "svg/struct-image-10-t.svg",
+      "sha256": "f4c94d77c47bf5afbcc1c223bba440b47aecffec0fbd14f12eb23843563f925f",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-progressive-201-t.svg",
+      "archivePath": "svg/struct-progressive-201-t.svg",
+      "sha256": "58e0e9e6690a8762fb2579d492f7f107951713f736459fcfec3820ad2486d44e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-progressive-202-t.svg",
+      "archivePath": "svg/struct-progressive-202-t.svg",
+      "sha256": "61b26f358a54ff9c8904738bb149e8ff55d5e80b6c50185df69ea36a1ca6c637",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-progressive-203-t.svg",
+      "archivePath": "svg/struct-progressive-203-t.svg",
+      "sha256": "92d7fb29c10f084a4941b0ca55034d7e4f5dc1b6ba4b6aa0d1a396d875ba4e52",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-progressive-204-t.svg",
+      "archivePath": "svg/struct-progressive-204-t.svg",
+      "sha256": "ffe2f49cc46cf627b0f7495cb94f84bbcb9fc558f6a611120c16a81058a6b4b0",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-svg-201-t.svg",
+      "archivePath": "svg/struct-svg-201-t.svg",
+      "sha256": "44f8eba23ad43afdcc285f3d7f420439ff3fdad578c5e167c0f67e24edb8228f",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-svg-202-t.svg",
+      "archivePath": "svg/struct-svg-202-t.svg",
+      "sha256": "fe1b3344ac906bfd9ec3427cd69e066756476cc2feb977d1f46a2e272b9c7fde",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-svg-203-t.svg",
+      "archivePath": "svg/struct-svg-203-t.svg",
+      "sha256": "d65539004f5838e7f96ddac8be1ffdede2eb916735ec8ff9f412e4238366079e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-svg-204-t.svg",
+      "archivePath": "svg/struct-svg-204-t.svg",
+      "sha256": "a5831c957fb0337ca777f71caf171d2be965de62cffbac21946b0d4c84fb706e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-01-t.svg",
+      "archivePath": "svg/struct-use-01-t.svg",
+      "sha256": "6af20d759e6434f2c8f2416ae91eb4792977b2e1d750a4a60d38188c3aa68305",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-03-t.svg",
+      "archivePath": "svg/struct-use-03-t.svg",
+      "sha256": "dfe6a1fd5883746075eaf8954e7a0178b76fcb7839c9ab3ef0733bf443bb2f10",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-09-t.svg",
+      "archivePath": "svg/struct-use-09-t.svg",
+      "sha256": "43e43521543541848241ead20719ab4a683a7d8c10d350488a7e54cc9101b6d0",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-201-t.svg",
+      "archivePath": "svg/struct-use-201-t.svg",
+      "sha256": "f10f08b5b2e04468f3d9e70307a330910586626a00de0c4817f6cb86e11a3ad8",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-202-t.svg",
+      "archivePath": "svg/struct-use-202-t.svg",
+      "sha256": "03cb47b53631f2b43c3385b846051f89ee3ec759af075ac9acd30c82f5362688",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-203-t.svg",
+      "archivePath": "svg/struct-use-203-t.svg",
+      "sha256": "5834ec2bc173e4022575753cb3358017c878236af17f89b6c4a1a262d953f957",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-204-t.svg",
+      "archivePath": "svg/struct-use-204-t.svg",
+      "sha256": "48660fba14622492851312189d93c74709cfc862434ab09cd66abd1ad961f910",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-205-t.svg",
+      "archivePath": "svg/struct-use-205-t.svg",
+      "sha256": "fc76d3e5fd3909e6ea690c0b14fa39daaa11d14996a816cabfa35bba2a4810d2",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-206-t.svg",
+      "archivePath": "svg/struct-use-206-t.svg",
+      "sha256": "164ba5c1b06681945427300ae4cfe04b3e3d19b041bd6242aa0c8460758e091c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-207-t.svg",
+      "archivePath": "svg/struct-use-207-t.svg",
+      "sha256": "28a2001e07167760edb3f95ccd867c546e672ab540fdc1c6e6eb8190d8894be1",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-208-t.svg",
+      "archivePath": "svg/struct-use-208-t.svg",
+      "sha256": "9c7cc2df6904e0fffcfb7273cffa3d884100b40ef359d467ff6bdb7a6bfad522",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-209-t.svg",
+      "archivePath": "svg/struct-use-209-t.svg",
+      "sha256": "dcefede71bd5522c0f06fd89e40d222f274ab2274734765a12112e06f300cb35",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-recursion-01-t.svg",
+      "archivePath": "svg/struct-use-recursion-01-t.svg",
+      "sha256": "da59faebe81b09b527c983c5e70eb5abab25e037a7fde9f1f5b25fb3d1a34fc1",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-recursion-02-t.svg",
+      "archivePath": "svg/struct-use-recursion-02-t.svg",
+      "sha256": "de5cf3c237f882fb50cb2a9f644dab7c12df606ac5fbe186497fbb9bac0424c3",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "struct-use-recursion-03-t.svg",
+      "archivePath": "svg/struct-use-recursion-03-t.svg",
+      "sha256": "a266cc981e37332817b9994583622d7b43c305b33a0c7ec7e79c6bb2041c7960",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "styling-inherit-01-t.svg",
+      "archivePath": "svg/styling-inherit-01-t.svg",
+      "sha256": "12dbc915d7bcbd59076020b5fe255c32403cc28eb5bfc24c53ac0e106d6cf843",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "styling-inherit-02-t.svg",
+      "archivePath": "svg/styling-inherit-02-t.svg",
+      "sha256": "99b7f453f19279a62b72508603a1fb474799d0a40096b8d2285f5d730d12fb5a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "styling-inherit-03-t.svg",
+      "archivePath": "svg/styling-inherit-03-t.svg",
+      "sha256": "7d5ec5b66a1243e84e2733b947443bca17fa0a5c1d232350512a3e315f26f685",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "styling-pres-01-t.svg",
+      "archivePath": "svg/styling-pres-01-t.svg",
+      "sha256": "be6fae5d399559d85b18360ff356a253eb62a79fd9401e1d68b35016cdd73508",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-align-01-t.svg",
+      "archivePath": "svg/text-align-01-t.svg",
+      "sha256": "ff091e31eac39d8757389104d586f469339676cec648b3ce7e16f7942e77d97a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-align-07-t.svg",
+      "archivePath": "svg/text-align-07-t.svg",
+      "sha256": "423c040a1d637c86bab0989bcc038fadb361809525d6707ad140507633676c6f",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-align-08-t.svg",
+      "archivePath": "svg/text-align-08-t.svg",
+      "sha256": "4d8772a262c9ec3f958c7c2cf47091c3c0359cab1b349114c2590eae8d973d28",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-align-201-t.svg",
+      "archivePath": "svg/text-align-201-t.svg",
+      "sha256": "648568ee998feb051e0fd7079bcdfadb2eabbab3a6e972578f70a70ce0f8cb99",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-align-202-t.svg",
+      "archivePath": "svg/text-align-202-t.svg",
+      "sha256": "72d2e642f38757072732410c39b66d7a966c853c11a00a55083245abfa824bbd",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-201-t.svg",
+      "archivePath": "svg/text-area-201-t.svg",
+      "sha256": "28c2457c5f422ad9801b0f17ee56239dabcb240e3b75535190153299a109b08e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-202-t.svg",
+      "archivePath": "svg/text-area-202-t.svg",
+      "sha256": "9a57dc6851baec8c27163710354e209d3acee8ea76840fb97d30b247a699a717",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-203-t.svg",
+      "archivePath": "svg/text-area-203-t.svg",
+      "sha256": "4eb0760a51c93d0985c5c164df480e7b69ae90642ab4fba273f80feb8ba52d0c",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-204-t.svg",
+      "archivePath": "svg/text-area-204-t.svg",
+      "sha256": "6e75bb2480bfcd962bb1c71aa3610349379980f70711ea0136e464417ba4ff8d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-205-t.svg",
+      "archivePath": "svg/text-area-205-t.svg",
+      "sha256": "2420ad5a69a535c72a3135df0f635a685aac4bb192ccfa125a6deed0589bb7fb",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-206-t.svg",
+      "archivePath": "svg/text-area-206-t.svg",
+      "sha256": "9c5603bb308b7eaa1c90de097502e42d5294f2fb90702365282565254d40d4be",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-207-t.svg",
+      "archivePath": "svg/text-area-207-t.svg",
+      "sha256": "20122d3aba9d91a7936711db8239fe425fa6552ebe3c5fa99a76da892180dd7e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-208-t.svg",
+      "archivePath": "svg/text-area-208-t.svg",
+      "sha256": "2aed48177c43b47fa5bbccd4598b2222038b9d9aa2ace99db4924f25c879f44e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-209-t.svg",
+      "archivePath": "svg/text-area-209-t.svg",
+      "sha256": "f82ffc0180c96c73bf3e1211c1d4ab954e622a93a62d8c0a312da48b4fd310d0",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-210-t.svg",
+      "archivePath": "svg/text-area-210-t.svg",
+      "sha256": "7d1a4e743d3eb1def2af9f11aea7d08a4d95663f2f48fb360f68a37dcb9066e1",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-211-t.svg",
+      "archivePath": "svg/text-area-211-t.svg",
+      "sha256": "d05ac028229a91c9350cb5fb4853a9ea8390d7dc7b9c664d38970696c489278f",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-213-t.svg",
+      "archivePath": "svg/text-area-213-t.svg",
+      "sha256": "91d22db247747567a6a7235bbee4f107d37e9758893e3114c37443207002c397",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-220-t.svg",
+      "archivePath": "svg/text-area-220-t.svg",
+      "sha256": "137ec369f820543a66776ae5b37f557fcb1ddc2ac09143ab35e7b9d609696fe1",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-221-t.svg",
+      "archivePath": "svg/text-area-221-t.svg",
+      "sha256": "b53d352633698f18d8f8165b070e17e84cafb3efe74708ddb802c99329fcbb21",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-area-222-t.svg",
+      "archivePath": "svg/text-area-222-t.svg",
+      "sha256": "1422693e9b63d6bf53360a3dc32962f720f0b5a38f2164afc84bc2a2cd53aad7",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-edit-201-t.svg",
+      "archivePath": "svg/text-edit-201-t.svg",
+      "sha256": "0de01b7e3ae5cb92dbd9baf68307134645f2d38e6da615d09e2ab261e33444de",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-fonts-01-t.svg",
+      "archivePath": "svg/text-fonts-01-t.svg",
+      "sha256": "e8c6d11df7b963eb436a9bf672e57336301c9fdb701970aae3f6f306a0bfdead",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-fonts-02-t.svg",
+      "archivePath": "svg/text-fonts-02-t.svg",
+      "sha256": "c96722e6c7003aed60aa3b2019f95cc4909440ec7c606bb5a29dc7d268d56180",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-fonts-03-t.svg",
+      "archivePath": "svg/text-fonts-03-t.svg",
+      "sha256": "76d73ef72e6321ee83979ea6cb6c45bacca7a2e5e2eb8e0ffef9cf893be623cd",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-fonts-04-t.svg",
+      "archivePath": "svg/text-fonts-04-t.svg",
+      "sha256": "9a3cff3d63383a942cf4cde3fbc46e9e9bc6b768236f872121825fc1e2f0f150",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-fonts-202-t.svg",
+      "archivePath": "svg/text-fonts-202-t.svg",
+      "sha256": "aa733fd27d975669eb0435565b9f197d2af2827fc424ba4120030c5becc833bb",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-intro-01-t.svg",
+      "archivePath": "svg/text-intro-01-t.svg",
+      "sha256": "d0e28b4ad758d766606b01c3fd7322244f8f50d3f8b98764943cfeb7c5de9849",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-intro-04-t.svg",
+      "archivePath": "svg/text-intro-04-t.svg",
+      "sha256": "3f2e95d49483e49568dddf06cae50f80441f4b65dccc2f4b43acb0a40128b8f5",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-intro-05-t.svg",
+      "archivePath": "svg/text-intro-05-t.svg",
+      "sha256": "7cc6e5a051c898151a2cfe0316072eea791cb1ada897a5c6ed4e58943abfec9b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-intro-06-t.svg",
+      "archivePath": "svg/text-intro-06-t.svg",
+      "sha256": "362272197b0d41a1add4e6db236515e796e67fa6058a1d7a05ece89dab210b74",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-intro-201-t.svg",
+      "archivePath": "svg/text-intro-201-t.svg",
+      "sha256": "c7b7f302805e8e6f3bb8fbfd98d35ab78a05112e370c249a13f0e033153b1a26",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-text-04-t.svg",
+      "archivePath": "svg/text-text-04-t.svg",
+      "sha256": "7222f33b975ef222f596863ae49e47f78d0beb00832c044351e8b41d13a34cba",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-text-06-t.svg",
+      "archivePath": "svg/text-text-06-t.svg",
+      "sha256": "57d9e50ad461e1b57e367ef1d82710ae9fe1037f855579e0febba0e3e847347d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-text-07-t.svg",
+      "archivePath": "svg/text-text-07-t.svg",
+      "sha256": "64ab6496b5904eb665079de6640107d630873476c4c24c797a9a32ed6eff1249",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-text-08-t.svg",
+      "archivePath": "svg/text-text-08-t.svg",
+      "sha256": "7d6db6cae00747286b58237358cc5c053cb2bf9ee7d4102d9f2e591d3ab8343d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-text-09-t.svg",
+      "archivePath": "svg/text-text-09-t.svg",
+      "sha256": "6c50fa37eeecb6602c0e6632e4d9dde114a902e17c89e8cedbcf09af09de0283",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-tselect-03-t.svg",
+      "archivePath": "svg/text-tselect-03-t.svg",
+      "sha256": "44fc9456997261d2912057f994b278d1257411a26a3c30d1c08e1756e36d8768",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-ws-01-t.svg",
+      "archivePath": "svg/text-ws-01-t.svg",
+      "sha256": "5323c19926c076ca9537a22ca8abd22030eef2e01b252520189a77f0011983e4",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "text-ws-02-t.svg",
+      "archivePath": "svg/text-ws-02-t.svg",
+      "sha256": "26bfeeee0b652e43300eb88cf3c148f4c323654f76adbd3d19c117f000981571",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-conform-201-t.svg",
+      "archivePath": "svg/udom-conform-201-t.svg",
+      "sha256": "9e77720de395c766aa992ad926b6bfdfa59b50a906eafccfdcac8eeaf862e4ac",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-dom-201-t.svg",
+      "archivePath": "svg/udom-dom-201-t.svg",
+      "sha256": "6828f6e3eca6044e4a40eeff0ba1f67d188f032c721783f51693863b6077c528",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-dom-202-t.svg",
+      "archivePath": "svg/udom-dom-202-t.svg",
+      "sha256": "b0a90f7e614e3ecaf751604b30262534e71e4ab8a1cc8939c215bb6398557ec7",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-dom-203-t.svg",
+      "archivePath": "svg/udom-dom-203-t.svg",
+      "sha256": "99d1ec86d381833c892f09aede3d172321cdbaf883141578f970b26b252b54a3",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-dom-204-t.svg",
+      "archivePath": "svg/udom-dom-204-t.svg",
+      "sha256": "ec6e444e0aa13d5f65090fcd0580349c7e3d13129f245125990e05433a168ecb",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-dom-206-t.svg",
+      "archivePath": "svg/udom-dom-206-t.svg",
+      "sha256": "23719d59d5431e5e73fc318d52efcd83a9efa64992048b9f510e719c745358eb",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-dom-207-t.svg",
+      "archivePath": "svg/udom-dom-207-t.svg",
+      "sha256": "7f6269a651e5b178693d7c59ac155e4d0dcd55dcc4015c33d94fcb7053cdda99",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-dom-209-t.svg",
+      "archivePath": "svg/udom-dom-209-t.svg",
+      "sha256": "252aba7b697535ed9a2ec7aae89c399cc8756e0131deada7534afd9117ef1ccb",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-dom-210-t.svg",
+      "archivePath": "svg/udom-dom-210-t.svg",
+      "sha256": "d3b351a03b7041a05cd377266b2d55606f8221235a642295edad4ef88b49264e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-dom-211-t.svg",
+      "archivePath": "svg/udom-dom-211-t.svg",
+      "sha256": "365946cee0a7892ca320c5df20dc5d0f328890e520d11efeffd64db9e817e8a3",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-dom-213-t.svg",
+      "archivePath": "svg/udom-dom-213-t.svg",
+      "sha256": "a116601539515c689c7ab582212981a52e3a0eea40b2efb7cdb8288b1e33a5b1",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-event-201-t.svg",
+      "archivePath": "svg/udom-event-201-t.svg",
+      "sha256": "ae62d3660f0605e00f1bf4f646420362d1ab78d089cfdffa6ae01b9b132eb822",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-event-202-t.svg",
+      "archivePath": "svg/udom-event-202-t.svg",
+      "sha256": "54b9ba91b91e9b4422707e549b3a9d58eb55821797ef29998bab180a98335287",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-event-203-t.svg",
+      "archivePath": "svg/udom-event-203-t.svg",
+      "sha256": "1ed37b051dfcc011ab7055075f2628eabbd13b1876c409304c7f65d5fd62d8fc",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-event-204-t.svg",
+      "archivePath": "svg/udom-event-204-t.svg",
+      "sha256": "a052dbf9603a524e074f058347bcb5d59b875743c153edd33a3eedada7e81fef",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-event-205-t.svg",
+      "archivePath": "svg/udom-event-205-t.svg",
+      "sha256": "b2e30e2d8fef4f29b41a2ff929a2127aec1e83680bc99842d325148cfb2bdd2e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-event-207-t.svg",
+      "archivePath": "svg/udom-event-207-t.svg",
+      "sha256": "dd61343e814f1c771ba2ebd20957d11f5072beb98961ec5b5c745b24f9de0f02",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-event-208-t.svg",
+      "archivePath": "svg/udom-event-208-t.svg",
+      "sha256": "f9ce99ad0c1644365f58208d3c00d0a15eb5b6a91519c8de4b1b4af8c82c05b6",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-event-209-t.svg",
+      "archivePath": "svg/udom-event-209-t.svg",
+      "sha256": "e378cadaf811f1a425648998a0a5e33c9526ea7efa74b9e7225c780d4f4bae47",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-event-210-t.svg",
+      "archivePath": "svg/udom-event-210-t.svg",
+      "sha256": "b32fe2f53c8517ae7df077253580976f22e3ec293e6f1c85b164759abae28678",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-glob-201-t.svg",
+      "archivePath": "svg/udom-glob-201-t.svg",
+      "sha256": "26e89ca147ebc76babf25dc5daac5a2bcf66911c06cfe29331c5bf4289c4796e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-glob-202-t.svg",
+      "archivePath": "svg/udom-glob-202-t.svg",
+      "sha256": "46c606a940623a6f15d6cbead0ba448ae873f5f0730266dbd396715e74f606b1",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-glob-203-t.svg",
+      "archivePath": "svg/udom-glob-203-t.svg",
+      "sha256": "fd57a32c949092b31aece570350e2443cb9697fd1308ae646408f700c4920415",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-glob-204-t.svg",
+      "archivePath": "svg/udom-glob-204-t.svg",
+      "sha256": "d042bb904102b731c8017d28ebbd007e50ae0d7045ada0318588b3a9b0233e92",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-node-201-t.svg",
+      "archivePath": "svg/udom-node-201-t.svg",
+      "sha256": "7162b00cc683e3335bd59987454b8868ef186bd112b42029ad1b10397ec9fa1a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-node-202-t.svg",
+      "archivePath": "svg/udom-node-202-t.svg",
+      "sha256": "911a4da79c059c5de19ab94c9a66070b2c69aada8ea8ec5f989c0ada061b1481",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-node-204-t.svg",
+      "archivePath": "svg/udom-node-204-t.svg",
+      "sha256": "4570a5d41df7db5473f812046693d70e37b291e6669176d8c2d3f95e52fb74e3",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-over-01-t.svg",
+      "archivePath": "svg/udom-over-01-t.svg",
+      "sha256": "9b8554255881d00f0903579235c9f6a3aa8f1289542ddea7e28e94760ca70866",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-smil-201-t.svg",
+      "archivePath": "svg/udom-smil-201-t.svg",
+      "sha256": "4996e7d051ad1f5ae4eeb3c35a58920671f47c1a008817b3b10c26f218ce7d19",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-smil-202-t.svg",
+      "archivePath": "svg/udom-smil-202-t.svg",
+      "sha256": "7444c25bd3071f70dfc5dbbb2c4e2f799855cf46f045a8e58701ea716b3e3d9a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-smil-203-t.svg",
+      "archivePath": "svg/udom-smil-203-t.svg",
+      "sha256": "c124c3a11cf0ef3d395962e21456119a0b2a604cba81436b5b61f14cb67a7ec6",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-201-t.svg",
+      "archivePath": "svg/udom-svg-201-t.svg",
+      "sha256": "dc9cb2ff3e44887c6eceaf6e5aec387bbc159e6a3fa84b5f3cc5cb526ef2cb96",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-202-t.svg",
+      "archivePath": "svg/udom-svg-202-t.svg",
+      "sha256": "0263417d0cff38c074543d1b3f24f15c183da09fc8146706a9272ceab860feba",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-204-t.svg",
+      "archivePath": "svg/udom-svg-204-t.svg",
+      "sha256": "8581cba90ccb55e2bf17e16563677aa297a98d1170ace6eaa5636ca4242f73d0",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-205-t.svg",
+      "archivePath": "svg/udom-svg-205-t.svg",
+      "sha256": "978f92f05abe89337b7daa8e00c5e9899beb0a74995424fed72dc9f389d66e32",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-206-t.svg",
+      "archivePath": "svg/udom-svg-206-t.svg",
+      "sha256": "ec54acd0ac43d96c72fd93bd67b4ed8a75df18d76f83e63af9bed7dc9a3e9a09",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-208-t.svg",
+      "archivePath": "svg/udom-svg-208-t.svg",
+      "sha256": "67525d01c14eb8fb449de270016f3dea54a3761db4718a0545b5553e08347f0b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-209-t.svg",
+      "archivePath": "svg/udom-svg-209-t.svg",
+      "sha256": "98d044e0b3af7433d98aea9e34618da3bec99004e39d6a53dc0156eec3b2e88e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-210-t.svg",
+      "archivePath": "svg/udom-svg-210-t.svg",
+      "sha256": "47edea278565c2636f6bc822eb3d3bf4fd7983c9f1f43193ccdac4f850e0ba0a",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-211-t.svg",
+      "archivePath": "svg/udom-svg-211-t.svg",
+      "sha256": "73cb468e101ad8c9de50dc67dd097cee3c1c8dcff4b008059f96b18af3c45dfe",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-213-t.svg",
+      "archivePath": "svg/udom-svg-213-t.svg",
+      "sha256": "cbbc36898266b36fab78204ef7ca90f3d504abf2194bcd3ec0c16a7dd2010214",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-216-t.svg",
+      "archivePath": "svg/udom-svg-216-t.svg",
+      "sha256": "729b764deed2f9c412a3a8d601db0804d0518e6b9d1cf98229bb635fb1876236",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-218-t.svg",
+      "archivePath": "svg/udom-svg-218-t.svg",
+      "sha256": "8c10e670a3a023267ab6c2e837f3e56a96151a1d6adf0e405f029efc3a5219a6",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-220-t.svg",
+      "archivePath": "svg/udom-svg-220-t.svg",
+      "sha256": "7e3f2e273404f6f7526ed82ebcc3256871a4027dc9cbe42b93e122a1e0376827",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-224-t.svg",
+      "archivePath": "svg/udom-svg-224-t.svg",
+      "sha256": "c9ebccecbaf012e14aeaa788bfa535016bc48be3795badb03057433e885890e8",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-225-t.svg",
+      "archivePath": "svg/udom-svg-225-t.svg",
+      "sha256": "64fa7988972414e663118ec14077bbf4287f78462b399897c259a7c42e61ec40",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-226-t.svg",
+      "archivePath": "svg/udom-svg-226-t.svg",
+      "sha256": "29b6e17e84fd0c397274a7aa58b51e2901489ab1457167904e10a8f6fd4925c3",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-227-t.svg",
+      "archivePath": "svg/udom-svg-227-t.svg",
+      "sha256": "6ea08dcba5b417eea195957f3e444e9b00ac788d48a38828b66e77c61da1a5e1",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-228-t.svg",
+      "archivePath": "svg/udom-svg-228-t.svg",
+      "sha256": "19f562e5d3cec5ce0a9522992113779561edfbe46c14092828898697e7a6f1d2",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-231-t.svg",
+      "archivePath": "svg/udom-svg-231-t.svg",
+      "sha256": "a8618c4ceeb7b45127b4f8b270439f609e9c058cfc4ae39ca1812a80a4b5b96b",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-232-t.svg",
+      "archivePath": "svg/udom-svg-232-t.svg",
+      "sha256": "fcb03d8fcbc0409853d73f92058e25cede9568caef196ec74c42e8b081b28d63",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-233-t.svg",
+      "archivePath": "svg/udom-svg-233-t.svg",
+      "sha256": "be04fc36a00ada552b5dd1827ec26179a3fcaf588c8221c7e636e7d5b7926405",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-236-t.svg",
+      "archivePath": "svg/udom-svg-236-t.svg",
+      "sha256": "42b424813debe1808498eb7753953fd6ec2aef2a313da6d64381a218c2cbc0b9",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svg-237-t.svg",
+      "archivePath": "svg/udom-svg-237-t.svg",
+      "sha256": "75ad23a1adab259f97823317394ea114c853d966166c57c2b991199a02b3d06e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svgcolor-201-t.svg",
+      "archivePath": "svg/udom-svgcolor-201-t.svg",
+      "sha256": "bf08881b71e7737c549eca21c5bdb3747c3f0ef3d3400d205669e9743a369bb0",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svglocatable-201-t.svg",
+      "archivePath": "svg/udom-svglocatable-201-t.svg",
+      "sha256": "4dc0c0c8b2e0fcad2b8a2a80c5daa402a1c3a91c7fdc33bd6ca3f92648f4d440",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svglocatable-202-t.svg",
+      "archivePath": "svg/udom-svglocatable-202-t.svg",
+      "sha256": "56ad89411a57d52f061ddb1a9714d36757ec854983a63f9ca2cf2d8e155394ff",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svglocatable-203-t.svg",
+      "archivePath": "svg/udom-svglocatable-203-t.svg",
+      "sha256": "599aadb7d7b96c970ae2048ea033a06dd5bae8cc3014d07f10b3c2cc730168ac",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svgmatrix-201-t.svg",
+      "archivePath": "svg/udom-svgmatrix-201-t.svg",
+      "sha256": "135a0e8e90544bf67797cd0070db0f8dac50dac0b5f8377bd6c88d0fd6a49cc2",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svgmatrix-202-t.svg",
+      "archivePath": "svg/udom-svgmatrix-202-t.svg",
+      "sha256": "ff9d31147a28676cab89af496732ee4d5dfc4040befd76ed7851540b81952461",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svgmatrix-203-t.svg",
+      "archivePath": "svg/udom-svgmatrix-203-t.svg",
+      "sha256": "c77bb7a9a9ad10be18bc19ed4ac4e352187b88afaf27695bed6c56003f945f31",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svgmatrix-204-t.svg",
+      "archivePath": "svg/udom-svgmatrix-204-t.svg",
+      "sha256": "d45d313e6a3ffbb28587d4526f20c29c76d7039e56d1056d14f7545a5c5d8d8d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svgmatrix-205-t.svg",
+      "archivePath": "svg/udom-svgmatrix-205-t.svg",
+      "sha256": "8b84d122c5b095518b9e935e43ed6481bfdd9641e5fe25d1e33d6c393fe60e33",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svgmatrix-206-t.svg",
+      "archivePath": "svg/udom-svgmatrix-206-t.svg",
+      "sha256": "655fb661cc24ea27f09a4f3f72e195450baa6cc6d51d56526d808289a781d812",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svgpath-201-t.svg",
+      "archivePath": "svg/udom-svgpath-201-t.svg",
+      "sha256": "136e34f4042be1a26aab8183fc60f328e8022c8f9cf6a8ccd20523a18eb73f7d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svgpath-202-t.svg",
+      "archivePath": "svg/udom-svgpath-202-t.svg",
+      "sha256": "dfeb3badad1b59ebe2ce8154fd39b8e8eed259a57634732a5673d608de0e952d",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svgpoint-201-t.svg",
+      "archivePath": "svg/udom-svgpoint-201-t.svg",
+      "sha256": "978775d85edd8a6d555b57efdf3a749318fabfaa28e6f7d7ff51e5c4474d6791",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-svgrect-201-t.svg",
+      "archivePath": "svg/udom-svgrect-201-t.svg",
+      "sha256": "a6fd1a0a25aea167ebbf1e50622070232c7ccdeead153eba79c1cc896de9f000",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-textcontent-201-t.svg",
+      "archivePath": "svg/udom-textcontent-201-t.svg",
+      "sha256": "0f46f170e52a5a7813c0cd187c9e5c37e4cb9d7396790bd28fd6596ad314460e",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-textcontent-202-t.svg",
+      "archivePath": "svg/udom-textcontent-202-t.svg",
+      "sha256": "5f808384cef85c44273be6ef3a4474cdb1828e22fdbe91069b5deface5818945",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-traitaccess-201-t.svg",
+      "archivePath": "svg/udom-traitaccess-201-t.svg",
+      "sha256": "baa3d972703b26379479c58e9eeb9ad522cc352cd42534fcfc9e31d7cff092f8",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-traitaccess-202-t.svg",
+      "archivePath": "svg/udom-traitaccess-202-t.svg",
+      "sha256": "a3033d73476ad0e3c1c6cc6e8e71ccebe5dbac384a9dff8979ecf618ddbbf683",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-traitaccess-203-t.svg",
+      "archivePath": "svg/udom-traitaccess-203-t.svg",
+      "sha256": "0edd3a8f4b08baf6bffa1e8e9cc0a6f057dfe51f62ca443c81d60daabfc5dbba",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-traitaccess-204-t.svg",
+      "archivePath": "svg/udom-traitaccess-204-t.svg",
+      "sha256": "c3a377c0f386e62e32ae74f3014e489a929c5aff32f5b5915c71b1dfa1267977",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-traitaccess-205-t.svg",
+      "archivePath": "svg/udom-traitaccess-205-t.svg",
+      "sha256": "04965b27732f2b85fa4455ccc7a58c1d68cb0b98f41e4d0869a57b61ac805bd0",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-traitaccess-206-t.svg",
+      "archivePath": "svg/udom-traitaccess-206-t.svg",
+      "sha256": "1ff34c3b1714739e3e84c7ba8f24964ab0469e91e5f5eacbbf9656b60830d9e8",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    },
+    {
+      "file": "udom-traitaccess-207-t.svg",
+      "archivePath": "svg/udom-traitaccess-207-t.svg",
+      "sha256": "3b2da14e140fb0d722831d7e95909ec22103e7eb204fd47ef2d6279d055ed460",
+      "approved": true,
+      "admission": "UNSUPPORTED",
+      "error": "unsupported attribute on svg: baseProfile",
+      "visualConformance": "NOT_RUN"
+    }
+  ],
+  "approvedCounts": {
+    "UNSUPPORTED": 495,
+    "UNAVAILABLE": 1
+  },
+  "allCounts": {
+    "UNSUPPORTED": 495,
+    "UNAVAILABLE": 1
+  },
+  "errors": {
+    "unsupported attribute on svg: baseProfile": 486,
+    "DOCTYPE/DTD unsupported in SVG profile": 4,
+    "unsupported attribute on svg: nav-next": 3,
+    "unsupported attribute on svg: focusable": 1,
+    "Input cannot enter the UTF-8 String API; XML byte decoding is not wired": 1,
+    "XML namespace well-formedness violation": 1
+  },
+  "cacheManifestSha256": "19eca78e77d3844bf878de10c6c53fe30c5456af7947f898dc6530e9c0e183be"
+}

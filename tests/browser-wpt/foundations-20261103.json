@@ -1,0 +1,238 @@
+{
+  "format": "factoidal-browser-foundations-v1",
+  "measuredAt": "2026-11-03T13:58:38.420018+00:00",
+  "sourceStatus": "Measured from local implementation before the 4 November source checkpoint; no release",
+  "diagnostics": {
+    "documents": 1767,
+    "equal": 1321,
+    "different": 446,
+    "differentWithCorrectTree": 436,
+    "differentWithIncorrectTree": 10,
+    "undercounts": 300,
+    "overcounts": 146,
+    "deltaRange": [
+      -12,
+      4
+    ],
+    "buckets": {
+      "algorithm_review": 25,
+      "legacy_and_new_error_sections": 280,
+      "other_empty_expectations": 17,
+      "processing_instructions_empty_expectations": 124
+    },
+    "files": {
+      "adoption02.dat": 2,
+      "comments01.dat": 8,
+      "doctype01.dat": 22,
+      "domjs-unsafe.dat": 11,
+      "entities01.dat": 60,
+      "entities02.dat": 8,
+      "html5test-com.dat": 10,
+      "namespace-sensitivity.dat": 1,
+      "pending-spec-changes-plain-text-unsafe.dat": 1,
+      "plain-text-unsafe.dat": 32,
+      "processing-instructions.dat": 124,
+      "scriptdata01.dat": 10,
+      "scripted_adoption01.dat": 1,
+      "scripted_ark.dat": 1,
+      "scripted_foster01.dat": 2,
+      "scripted_webkit01.dat": 2,
+      "search-element.dat": 1,
+      "tables01.dat": 1,
+      "template.dat": 5,
+      "tests1.dat": 12,
+      "tests10.dat": 1,
+      "tests15.dat": 4,
+      "tests16.dat": 72,
+      "tests18.dat": 2,
+      "tests19.dat": 2,
+      "tests2.dat": 19,
+      "tests21.dat": 9,
+      "tests26.dat": 2,
+      "tests6.dat": 3,
+      "tests7.dat": 3,
+      "webkit01.dat": 9,
+      "webkit02.dat": 6
+    }
+  },
+  "parser": {
+    "tree": {
+      "pass": 1963,
+      "fail": 10,
+      "total": 1973
+    },
+    "dom": {
+      "pass": 1963,
+      "fail": 10,
+      "total": 1973
+    },
+    "tokenizer": {
+      "pass": 7047,
+      "fail": 6,
+      "notRun": 0,
+      "total": 7053
+    },
+    "sourceAttribution": "Historical parser-verified run before subsequent reachable test-module import; no parser rerun after review."
+  },
+  "quickjs": {
+    "documents": 784,
+    "completePass": 0,
+    "counts": {
+      "ERROR": 367,
+      "INCOMPLETE": 27,
+      "UNAVAILABLE": 229,
+      "FAIL": 136,
+      "HARNESS_ERROR": 23,
+      "UNSUPPORTED": 2
+    },
+    "assertions": {
+      "pass": 103,
+      "fail": 1342
+    },
+    "measurementStage": "historical pre-review binding; retained unchanged",
+    "guestSha256": "01d7d1f13c3e9acf82de152ea213be36bc7a3faba7360eeaf96a54e90fc739b2",
+    "runnerSha256": "5a7d6f52e15911a11c16472c85804282a0e64838966a81908c71c1f5e28914aa"
+  },
+  "svgTiny": {
+    "total": 496,
+    "counts": {
+      "UNSUPPORTED": 495,
+      "UNAVAILABLE": 1
+    },
+    "visualConformance": "NOT_RUN"
+  },
+  "focusedTests": {
+    "scripting": {
+      "pass": 15,
+      "fail": 0,
+      "report": "js-dom-tests-reviewed.log",
+      "bindingSha256": {
+        "guest.mjs": "929a12d479668f234c25b8c00f8f4c7ff0cda2ebbde9594e1ec86e93811c00e8",
+        "quickjs.mjs": "9f6a84fc922bdc64518c2c1ecc9f1aaa9475735059563d68361cc68a322af197",
+        "lean-dom.mjs": "a97e322e1999a782040da04e7cce1e52fe5c7456d4ceb49b11bdcab4b8251152",
+        "lean-dom.test.mjs": "afc8f42313a023f674c710861ee5f8552ae896dc3e8f848e29b109ecb906952c",
+        "worker.mjs": "ce451cb3ec63c5a76a0870a33237a5e4f08e3793a15fbcd34f6393adaa491228",
+        "session.mjs": "145e2b4221d8789044fac4f781fe23776625c9718da35bfce39cd7ae8ac6d8ab"
+      },
+      "scope": "Actual QuickJS/Lean tests; includes own attributes, JSON __proto__ preservation, named Error and precommit response-budget rejection. No DOMException class or full WebIDL claim."
+    },
+    "nativeWasmTextScale": {
+      "pass": 2,
+      "fail": 0
+    },
+    "packageControls": {
+      "pass": 10,
+      "fail": 0
+    }
+  },
+  "artifacts": {
+    "nativeSha256": "c44feffaeb17ce4519226784c906f78850d33a952dddb9fe982e11bc23604da3",
+    "leanWasm": {
+      "path": "/Users/danbri/working/sandbox/october/tpac/depmap/source/factoidal-web-render-overnight/labs/demos/foafnaut/.build/web-render/engines/web-render.wasm",
+      "sha256": "5ae9a7d362ed7e19f0a298ac1be08d0b9f51d27aaa0a67031919da3718e516ea",
+      "moduleSha256": "1e0c9c83461750fc2011b977bc01e61f04dffe825772f62e6f673bec922b9e8a"
+    },
+    "quickjs": {
+      "version": "0.18.0",
+      "sha256": "8afa5d73287af5573613e15d5e633e91d8e096b40676f424f104087bc1416678"
+    }
+  },
+  "nativeProvenance": {
+    "checkedSourceAndCFiles": 125,
+    "freshPixelCount": 480000,
+    "browserLibraryMarkers": [],
+    "limits": "Source/C/binary hash witness and dyld observations; no independent reproducible native rebuild or formal binary proof. Cached browser expectations are separate from native image production."
+  },
+  "reports": {
+    "parser-verified/parser-probe.json": {
+      "path": "/private/tmp/factoidal-browser-foundations-20261103/parser-verified/parser-probe.json",
+      "sha256": "4f7a5886219369116a7e97bfbf671f4da525e08e9377a9d5d855786e78b53c22"
+    },
+    "parser-verified/error-counts-audit.json": {
+      "path": "/private/tmp/factoidal-browser-foundations-20261103/parser-verified/error-counts-audit.json",
+      "sha256": "5b935bf83f2b706b060fc283cd906313d166bec87b206799daa9e4ca82fc7a92"
+    },
+    "quickjs-final/quickjs-wpt.json": {
+      "path": "/private/tmp/factoidal-browser-foundations-20261103/quickjs-final/quickjs-wpt.json",
+      "sha256": "46038281ea39121671d34acb158b58de84e55d0177688f2d3e01b51e5062dd82"
+    },
+    "tiny-admission-final/svg-tiny-admission.json": {
+      "path": "/private/tmp/factoidal-browser-foundations-20261103/tiny-admission-final/svg-tiny-admission.json",
+      "sha256": "ea2012140f18b7a53561d52a80449ef39d481ce97136f1b8a32aa09fda34b58b"
+    },
+    "native-provenance/native-provenance.json": {
+      "path": "/private/tmp/factoidal-browser-foundations-20261103/native-provenance/native-provenance.json",
+      "sha256": "aecf05bd8078eb7e7ffb82962a6821f617ca9c507c13c652c1ad12b844aa409d"
+    },
+    "js-dom-tests-fresh.log": {
+      "path": "/private/tmp/factoidal-browser-foundations-20261103/js-dom-tests-fresh.log",
+      "sha256": "e701c4a6d3636931887a7110410943e317260fe3d73dd1c6d03b0dfd40d1dada"
+    },
+    "text-scale-tests.log": {
+      "path": "/private/tmp/factoidal-browser-foundations-20261103/text-scale-tests.log",
+      "sha256": "a581bb467eabcf7ec19072a6afa3f4ba74cc908daf25651d21d311fc2bae0199"
+    },
+    "package-tests-final.log": {
+      "path": "/private/tmp/factoidal-browser-foundations-20261103/package-tests-final.log",
+      "sha256": "b7f54e0e78c488786b6b4859eb466c4860beb356dfef61592a0434c4db9ad911"
+    },
+    "build-native-final.log": {
+      "path": "/private/tmp/factoidal-browser-foundations-20261103/build-native-final.log",
+      "sha256": "5da57194a4e8fd74ca6b0d846fa8557367c5e7315819705618a89e91b3f117ba"
+    },
+    "build-wasm.log": {
+      "path": "/private/tmp/factoidal-browser-foundations-20261103/build-wasm.log",
+      "sha256": "41f2610d8cdbaa61869b9477d1675fe0237099843d749959d8c119c34ca26af4"
+    },
+    "reviewed/quickjs-wpt.json": {
+      "path": "/private/tmp/factoidal-browser-foundations-reviewed-20261103/quickjs/quickjs-wpt.json",
+      "sha256": "335f81aa1b7e72920cdf9b7b5197f381b55662d0d5ce58c3f338f9feaf728020"
+    },
+    "js-dom-tests-reviewed.log": {
+      "path": "/private/tmp/factoidal-browser-foundations-20261103/js-dom-tests-reviewed.log",
+      "sha256": "1ad43988621b14c10614841a08daf23e60625b74ed9e61c93a8e4d5e26b20e6b"
+    }
+  },
+  "reviewedQuickjs": {
+    "measurementStage": "fresh reviewed binding, unchanged previously built Lean engines",
+    "finishedAt": "2026-11-03T16:34:48.802Z",
+    "documents": 784,
+    "completePass": 0,
+    "counts": {
+      "ERROR": 367,
+      "INCOMPLETE": 27,
+      "UNAVAILABLE": 229,
+      "FAIL": 136,
+      "HARNESS_ERROR": 23,
+      "UNSUPPORTED": 2
+    },
+    "assertions": {
+      "pass": 103,
+      "fail": 1342
+    },
+    "guestSha256": "929a12d479668f234c25b8c00f8f4c7ff0cda2ebbde9594e1ec86e93811c00e8",
+    "runnerSha256": "5a7d6f52e15911a11c16472c85804282a0e64838966a81908c71c1f5e28914aa",
+    "bindingSha256": {
+      "guest.mjs": "929a12d479668f234c25b8c00f8f4c7ff0cda2ebbde9594e1ec86e93811c00e8",
+      "quickjs.mjs": "9f6a84fc922bdc64518c2c1ecc9f1aaa9475735059563d68361cc68a322af197",
+      "lean-dom.mjs": "a97e322e1999a782040da04e7cce1e52fe5c7456d4ceb49b11bdcab4b8251152",
+      "lean-dom.test.mjs": "afc8f42313a023f674c710861ee5f8552ae896dc3e8f848e29b109ecb906952c",
+      "worker.mjs": "ce451cb3ec63c5a76a0870a33237a5e4f08e3793a15fbcd34f6393adaa491228",
+      "session.mjs": "145e2b4221d8789044fac4f781fe23776625c9718da35bfce39cd7ae8ac6d8ab"
+    },
+    "native": {
+      "path": "/Users/danbri/working/sandbox/october/tpac/depmap/source/factoidal-web-render-overnight/labs/demos/foafnaut/.build/web-render/web-render-native",
+      "sha256": "c44feffaeb17ce4519226784c906f78850d33a952dddb9fe982e11bc23604da3"
+    },
+    "leanWasm": {
+      "path": "/Users/danbri/working/sandbox/october/tpac/depmap/source/factoidal-web-render-overnight/labs/demos/foafnaut/.build/web-render/engines/web-render.wasm",
+      "sha256": "5ae9a7d362ed7e19f0a298ac1be08d0b9f51d27aaa0a67031919da3718e516ea",
+      "moduleSha256": "1e0c9c83461750fc2011b977bc01e61f04dffe825772f62e6f673bec922b9e8a"
+    },
+    "quickjs": {
+      "version": "0.18.0",
+      "sha256": "8afa5d73287af5573613e15d5e633e91d8e096b40676f424f104087bc1416678"
+    },
+    "report": "reviewed/quickjs-wpt.json"
+  }
+}

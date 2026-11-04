@@ -1,5 +1,6 @@
 const workerURL = new URL('./worker.mjs', import.meta.url);
 const defaultWasmURL = new URL('/lab/.build/script-engine/qjs-wasi-reactor.wasm', import.meta.url);
+const defaultLeanURL = new URL('/lab/.build/web-render/engines/web-render.mjs', import.meta.url);
 const encoder = new TextEncoder();
 const validId = id => Number.isSafeInteger(id) && id >= 0 && id <= 1048576;
 const boundedString = (value, maximum = 65536) => typeof value === 'string' && encoder.encode(value).length <= maximum;
@@ -22,7 +23,7 @@ export function validateBatch(batch, allowedIds) {
   return batch;
 }
 
-export function createScriptSession({ workerFactory = () => new Worker(workerURL, { type: 'module' }), wasmURL = defaultWasmURL.href, wasmBytes, watchdogMs } = {}) {
+export function createScriptSession({ workerFactory = () => new Worker(workerURL, { type: 'module' }), wasmURL = defaultWasmURL.href, wasmBytes, watchdogMs, leanModuleURL = defaultLeanURL.href } = {}) {
   let worker, pending, nextId = 0, started = false, ids = new Set(), listenerIds = new Set();
   const reset = () => {
     const old = worker; worker = undefined; started = false; ids = new Set(); listenerIds = new Set();
@@ -60,7 +61,7 @@ export function createScriptSession({ workerFactory = () => new Worker(workerURL
     } catch (error) { reset(); throw error; }
   };
   return {
-    async start({ nodes, source, sources = source === undefined ? [] : [source], budgetMs } = {}) {
+    async start({ nodes, source, sources = source === undefined ? [] : [source], budgetMs, document } = {}) {
       reset();
       if (!Array.isArray(nodes) || nodes.length > 16384 || !boundedString(JSON.stringify(nodes), 2097152)) throw Error('Script DOM snapshot exceeds budget');
       ids = new Set();
@@ -80,7 +81,7 @@ export function createScriptSession({ workerFactory = () => new Worker(workerURL
         worker.on('error', error => { if (worker === activeWorker) fail(error); });
       }
       try {
-        await call('initialize', { wasmURL, wasmBytes }, 5000);
+        await call('initialize', { wasmURL, wasmBytes, document, leanModuleURL }, 5000);
         const batch = accept(await call('start', { nodes, sources, budgetMs }, watchdogMs ?? budgetMs + 500));
         started = true;
         return batch;

@@ -76,6 +76,44 @@ export async function createQuickJS(bytes, { shouldInterrupt = () => false, memo
     } finally { if (pointer) api.JS_FreeCString(context, pointer); api.free(lengthPointer); }
   };
   return {
+    // A named, synchronous string-in/string-out capability. Page code remains
+    // in QuickJS; this callback can invoke the separate Lean WASM instance.
+    async bind(name, callback) {
+      if (closed) throw Error('QuickJS instance disposed');
+      if (!/^__[A-Za-z0-9_]+$/.test(name) || typeof callback !== 'function') throw Error('Invalid host capability');
+      const type = [1, 0x60, 4, 0x7f, 0x7e, 0x7f, 0x7f, 1, 0x7e];
+      const imports = [1, 1, 104, 1, 99, 0, 0];
+      const exports = [1, 1, 99, 0, 0];
+      const bytes = new Uint8Array([0,97,115,109,1,0,0,0,1,type.length,...type,2,imports.length,...imports,7,exports.length,...exports]);
+      const makeString = text => {
+        const value = allocate(text);
+        try { return api.JS_NewStringLen(context, value.pointer, value.length); }
+        finally { api.free(value.pointer); }
+      };
+      const { instance: bridge } = await WebAssembly.instantiate(bytes, { h: { c: (ctx, self, argc, argv) => {
+        try {
+          if (closed || ctx !== context || argc !== 1) throw Error('Invalid host capability call');
+          const result = callback(asString(view().getBigInt64(argv, true)));
+          if (typeof result !== 'string' || encoder.encode(result).length > 2097152) throw Error('Host capability result exceeds budget');
+          return makeString(result);
+        } catch (error) {
+          const exception = api.JS_NewError(context);
+          for (const [name, text] of [['name', String(error?.name ?? 'Error').slice(0,256)],
+                                     ['message', String(error?.message ?? error).slice(0,4096)]]) {
+            const key = allocate(name);
+            try { api.JS_SetPropertyStr(context, exception, key.pointer, makeString(text)); }
+            finally { api.free(key.pointer); }
+          }
+          return api.JS_Throw(context, exception);
+        }
+      } } });
+      const index = table.grow(1); table.set(index, bridge.exports.c);
+      const key = allocate(name), global = api.JS_GetGlobalObject(context);
+      try {
+        const fn = api.JS_NewCFunction2(context, index, key.pointer, 1, 0, 0);
+        if (api.JS_SetPropertyStr(context, global, key.pointer, fn) < 0) throw Error('Cannot install host capability');
+      } finally { api.JS_FreeValue(context, global); api.free(key.pointer); }
+    },
     evaluate(source, { stringResult = false } = {}) {
       if (closed) throw Error('QuickJS instance disposed');
       if (typeof source !== 'string' || encoder.encode(source).length > 1048576) throw Error('Script exceeds 1MiB limit');

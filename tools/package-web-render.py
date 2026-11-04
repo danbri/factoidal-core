@@ -25,7 +25,7 @@ BUILD = LAB + '/.build/web-render'
 HOST = ['index.html', 'app.mjs', 'engine.mjs', 'style.css', 'server.mjs',
         'navigation.mjs', 'resource-client.mjs', 'resource-broker.mjs', 'document-client.mjs']
 FIXTURES = ['default.html', 'mvp.html', 'boxes.html', 'flow.html', 'links.html', 'graph.nt', 'scripted.html']
-SCRIPT = ['session.mjs', 'worker.mjs', 'quickjs.mjs', 'guest.mjs', 'NOTICE']
+SCRIPT = ['session.mjs', 'worker.mjs', 'quickjs.mjs', 'guest.mjs', 'lean-dom.mjs', 'NOTICE']
 ENGINES = ['web-render.mjs', 'web-render.wasm', 'render-plan.mjs', 'render-plan.wasm']
 
 LAUNCHER = r'''// Generated local-development launcher. Does not parse page markup.

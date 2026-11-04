@@ -12,9 +12,9 @@ open L4Factoidal
 RTL/Arabic numbers and directional formatting even if the font library guesses
 LTR from the first Latin letter of a mixed run. The existing generated Unicode
 property table supplies the classes; the host makes no Unicode/layout choice. -/
-def collectDOMWithRules (dom : DOM.Dom) (rules : List Rendering.CSS.Rule) :
+def collectDOMWithRules (dom : DOM.Dom) (rules : List Rendering.CSS.Rule) (textScale : Float := 1) :
     Except String (Array Rendering.FontRequests.Request) := do
-  let requests ← Rendering.FontRequests.forDOM dom rules
+  let requests ← Rendering.FontRequests.forDOM dom rules textScale
   for request in requests do
     for c in request.text.toList do
       let bidi := Unicode.BidiData.bidiClassTable.getChar c |>.toNat

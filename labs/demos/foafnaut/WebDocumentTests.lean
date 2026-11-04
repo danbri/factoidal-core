@@ -77,6 +77,16 @@ private def requested : Option (List (String × Nat × String)) := do
 #guard (WebDocument.run dynamicHTML (json [("op",.string "fontRequests"),("resources",.array [resource 1048576 "p{}"])]) 420 100).toOption.isNone
 #guard (WebDocument.run "<p>A</p>" (json [("resources",.string "bad")]) 420 100).toOption.isNone
 
+-- Both shaping requests and rendering must accept the same bounded text scale.
+private def textScaleOptions (percent : JSON.Json) (op : String := "render") :=
+  json [("op",.string op),("textScalePercent",percent)]
+#guard (WebDocument.run "<p>A</p>" (textScaleOptions (.number "150")) 200 100).toOption.isSome
+#guard (WebDocument.run "<p>A</p>" (textScaleOptions (.number "49")) 200 100).toOption.isNone
+#guard (WebDocument.run "<p>A</p>" (textScaleOptions (.number "251")) 200 100).toOption.isNone
+#guard (WebDocument.run "<p>A</p>" (textScaleOptions (.number "150.5")) 200 100).toOption.isNone
+#guard (WebDocument.run "<p>A</p>" (textScaleOptions (.string "150")) 200 100).toOption.isNone
+#guard (WebDocument.run "<p>A</p>" (textScaleOptions (.number "49") "fontRequests") 200 100).toOption.isNone
+
 
 /-- Optional runtime evidence uses actual HarfBuzz/FreeType records generated
 from the requests above. It does not replace the pure cascade/request guards. -/

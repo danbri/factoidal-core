@@ -43,8 +43,8 @@ private def noEmbedding : Embedding := fun _ _ _ _ => throw "font requests: unex
 /-- Shaping requests include potential retained spaces and parent strut metrics.
 Whitespace-only contexts produce no request. SVG descendants belong to the SVG
 producer; display:none subtrees are skipped before visiting their contents. -/
-def forDOM (dom : Dom) (rules : List CSS.Rule) : Except String (Array Request) := do
-  let styles ← CSS.computeAll dom rules
+def forDOM (dom : Dom) (rules : List CSS.Rule) (textScale : Float := 1) : Except String (Array Request) := do
+  let styles ← CSS.computeAll dom rules textScale
   let mut requests : Requests := {}
   let mut active : Std.TreeMap Nat Unit := {}
   let mut spaces : Array (Nat × Computed) := #[]

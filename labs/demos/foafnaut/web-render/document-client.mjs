@@ -57,7 +57,8 @@ export async function prepareDocument(engine,html,{url,signal,onLog=()=>{}}={}){
   if(sources.length){
    scripts=createScriptSession();const abort=()=>scripts.reset();initialSignal.addEventListener('abort',abort,{once:true});
    try{
-    const batch=await scripts.start({nodes:snapshot.nodes,sources,budgetMs:100});check(initialSignal);
+    const batch=await scripts.start({nodes:snapshot.nodes,sources,budgetMs:100,
+     document:{source:html,url,commands:options.commands.slice()}});check(initialSignal);
     options.commands.push(...batch.commands);mutationVersion++;listeners=batch.listeners;logs(batch);
    }finally{initialSignal.removeEventListener('abort',abort);}
   }
@@ -78,10 +79,10 @@ export async function prepareDocument(engine,html,{url,signal,onLog=()=>{}}={}){
    await refresh(signal);
    return {defaultPrevented:batch.defaultPrevented===true};
   },
-  async compile(width,height,{signal}={}){
+  async compile(width,height,{signal,textScalePercent=100}={}){
    signal=operationSignal(signal);check(signal);
    const request=await refresh(signal),version=mutationVersion;
-   const prepared={...options,commands:options.commands.slice(),resources:options.resources.slice()};
+   const prepared={...options,commands:options.commands.slice(),resources:options.resources.slice(),textScalePercent};
    const requests=await engine.documentFontRequests(html,prepared);check(signal);
    if(requests.error)throw Error(requests.error);
    let fontData;

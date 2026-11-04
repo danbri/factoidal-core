@@ -14,7 +14,7 @@ for(const name of ['default.html','mvp.html','boxes.html','flow.html','links.htm
 for(const name of ['gpu_transport.ts','render_plan.ts'])files.set('/lab/'+name,resolve(lab,name));
 for(const name of ['web-render.mjs','web-render.wasm'])files.set('/lab/.build/web-render/engines/'+name,resolve(lab,'.build/web-render/engines',name));
 for(const name of ['render-plan.mjs','render-plan.wasm'])files.set('/lab/.build/engines/'+name,resolve(lab,'.build/web-render/engines',name));
-for(const name of ['session.mjs','worker.mjs','quickjs.mjs','guest.mjs'])files.set('/script-engine/'+name,resolve(here,'script-engine',name));
+for(const name of ['session.mjs','worker.mjs','quickjs.mjs','guest.mjs','lean-dom.mjs'])files.set('/script-engine/'+name,resolve(here,'script-engine',name));
 files.set('/lab/.build/script-engine/qjs-wasi-reactor.wasm',resolve(lab,'.build/script-engine/qjs-wasi-reactor.wasm'));
 files.set('/source-witness.json',resolve(lab,'.build/web-render/source-witness.json'));
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"};

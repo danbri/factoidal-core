@@ -30,7 +30,7 @@ async function compileSource(html,width,height,syntax,signal,url,isCurrent){
   if(candidate?.html!==html||candidate?.url!==url){candidate=await prepareDocument(engine,html,{url,signal,onLog:log});owned=true;}
   try{
    if(signal?.aborted||!isCurrent())throw Error('Superseded document preparation');
-   return {artifact:await candidate.compile(width,height,{signal}),document:candidate,owned};
+   return {artifact:await candidate.compile(width,height,{signal,textScalePercent}),document:candidate,owned};
   }catch(error){if(owned)candidate.close();throw error;}
  }
  if(syntax==='html'&&engine.fontRequests&&engine.compileFont){
@@ -93,7 +93,17 @@ const navigation=new NavigationController({load:fetchResource,render:async(resou
  if(state.error){navigationPending=false;abortRender();restoreCommitted(state.error);log({type:'navigation-error',url:state.requestedURL,error:state.error});}
  if(state.cancelled){const pending=navigationPending;navigationPending=false;abortRender();if(pending)restoreCommitted('Navigation stopped');}
 }});
-window.webBrowser={navigation,render:()=>render().catch(()=>{}),get currentURL(){return documentURL;}};
+let textScalePercent=100;
+function showTextScale(){
+ $('#text-scale').textContent=textScalePercent+'%';
+ $('#text-smaller').disabled=textScalePercent<=50;
+ $('#text-larger').disabled=textScalePercent>=250;
+}
+function changeTextScale(value){textScalePercent=value;showTextScale();return render().catch(()=>{});}
+$('#text-smaller').addEventListener('click',()=>changeTextScale(Math.max(50,textScalePercent-25)));
+$('#text-larger').addEventListener('click',()=>changeTextScale(Math.min(250,textScalePercent+25)));
+$('#text-reset').addEventListener('click',()=>changeTextScale(100));
+window.webBrowser={navigation,render:()=>render().catch(()=>{}),get currentURL(){return documentURL;},get textScalePercent(){return textScalePercent;}};
 $('#navigation').addEventListener('submit',event=>{event.preventDefault();navigation.go($('#address').value,{base:documentURL});});
 $('#back').addEventListener('click',()=>navigation.back());$('#forward').addEventListener('click',()=>navigation.forward());$('#reload').addEventListener('click',()=>navigation.reload());$('#stop').addEventListener('click',()=>navigation.cancel());
 function cancelForEditing(){
