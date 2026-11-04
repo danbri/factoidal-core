@@ -266,10 +266,10 @@ async function main () {
 
     // RFC 6120 section 10.5.4: an IQ to a full JID of a local account goes to
     // that resource, also when the sender is another resource of the same
-    // account. Today xmpp-serve answers service-unavailable itself, so a proxy
-    // (xmpp-http-proxy) and its target cannot share one account.
-    await xfail('xmpp-serve routes an IQ from alice/u to alice/t (two resources of one account)',
-      'https://github.com/danbri/factoidal/issues/1139', async () => {
+    // account (https://github.com/danbri/factoidal/issues/1139, fixed
+    // 2026-11-03 by `Out.routeFull`; Server.lean `handleIq_no_route`).
+    await check('xmpp-serve routes an IQ from alice/u to alice/t (two resources of one account)',
+      async () => {
         const t = new TestClient(Number(xport), DOMAIN, ca)
         const u = new TestClient(Number(xport), DOMAIN, ca)
         try {

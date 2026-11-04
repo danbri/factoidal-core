@@ -40,9 +40,25 @@ module.exports = function(eleventyConfig) {
   for (const name of ["code-output.mjs", "code-output.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/assets/${name}`);
   }
-  for (const name of ["app.mjs", "worker.mjs", "pipeline.mjs", "fixtures.mjs", "assurance.mjs", "style.css"]) {
+  for (const name of ["app.mjs", "worker.mjs", "pipeline.mjs", "fixtures.mjs", "assurance.mjs", "style.css", "pipeline-document.mjs", "pipeline-files.mjs", "pod-storage.mjs", "storage-worker.mjs", "bounded-fetch.mjs"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/data-compositor/${name}`);
   }
+  // HTML/CSS renderer source and original HTML fixtures. Runtime binaries and
+  // generated JS transports are installed from Builds, never committed here.
+  for (const name of ["app.mjs", "engine.mjs", "worker.mjs", "style.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/html-webgpu/${name}`);
+  }
+  eleventyConfig.addPassthroughCopy({
+    "../labs/demos/foafnaut/web-render/fixtures": "web/hub/html-webgpu/fixtures"
+  });
+  if (fs.existsSync(path.join(__dirname, "web/hub/html-webgpu/runtime"))) {
+    eleventyConfig.addPassthroughCopy("web/hub/html-webgpu/runtime");
+  }
+
+  // Browser-host facade. Lean's LWS client still makes every protocol decision;
+  // the compositor injects its already loaded engine and fetch transport.
+  eleventyConfig.addPassthroughCopy({ "../npm/factoidal/lws/client.mjs": "web/hub/runtime/lws/client.mjs" });
+  eleventyConfig.addPassthroughCopy({ "../npm/factoidal/lib/errors.mjs": "web/hub/runtime/lib/errors.mjs" });
 
   // Pass-through copy: F*-extracted browser artifacts (js_of_ocaml + wasm_of_ocaml).
   // fstar-extracted/ holds w3c-runner.js (pure JS) and the wasm_of_ocaml loader

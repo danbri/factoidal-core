@@ -231,3 +231,9 @@ mutation of the actual producer. The [checked normalization follow-up](../../doc
 connects the actual successful RDFS producer on certified inputs passing
 roundTripSafe. Accepted fallbacks outside that check remain an open agreement
 obligation. Do not infer failure from a false profile check.
+
+## Rendering transformations
+
+See [SVG scene/compositor proof boundaries](../../docs/designissues/2026-11-01-svg-scene-compositor.md)
+for pixel versus interaction equivalence, group opacity and floating-point
+refinement obligations when optimizing shared HTML/SVG rendering.

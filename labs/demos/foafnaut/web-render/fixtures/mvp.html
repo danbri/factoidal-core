@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Factoidal browser MVP</title><style>
+body{margin:16px;font-family:Arial;font-size:16px;line-height:24px;color:#203040;background:white}
+main{width:620px;padding:16px;background:#f2f6fb}
+h1{margin:0;font-size:24px;line-height:32px;color:#184078}
+p{margin:0;padding:8px}
+a{display:block;padding:10px;background:#dbeafe;color:#184078}
+svg{display:block}
+</style></head><body><main>
+<h1>A browser built on Lean</h1>
+<p>Real Arial text is shaped with HarfBuzz and FreeType. Lean computes the layout and SVG curves. WebGPU paints the result.</p>
+<svg width="180" height="80" viewBox="0 0 180 80" xmlns="http://www.w3.org/2000/svg"><path d="M 12 60 C 48 0 112 0 148 60 L 148 70 L 12 70 Z" fill="#2563eb"/><circle cx="132" cy="26" r="14" fill="#f5b942"/></svg>
+<p id="counter">Waiting for QuickJS.</p>
+<a id="change" href="#counter">Click to change the rendered text</a>
+<p>Enter a URL above, follow a link, or edit this original HTML.</p>
+<a href="/fixtures/default.html">Open the original bitmap font example</a>
+</main><script>
+let clicks=0;
+document.getElementById('counter').textContent='QuickJS is ready. Clicks: 0';
+document.getElementById('change').addEventListener('click',function(event){
+  event.preventDefault();
+  document.getElementById('counter').textContent='QuickJS changed the Lean DOM. Clicks: '+(++clicks);
+});
+</script></body></html>

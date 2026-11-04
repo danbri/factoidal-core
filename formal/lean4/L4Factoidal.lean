@@ -59,6 +59,7 @@ import L4Factoidal.Dataflow.Compose
 import L4Factoidal.Dataflow.EndToEnd
 import L4Factoidal.Dataflow.Sources
 import L4Factoidal.Dataflow.SourcesTests
+import L4Factoidal.Dataflow.LwsSource
 import L4Factoidal.Dataflow.Registry
 import L4Factoidal.Dataflow.NodeSettings
 import L4Factoidal.Dataflow.Qt4NodeTests
@@ -638,9 +639,21 @@ import L4Factoidal.DataCube.Queries
 import L4Factoidal.DataCube.Normalize
 import L4Factoidal.DataCube.NormalizeTheorems
 import L4Factoidal.DataCube.Constraints
+import L4Factoidal.SQL.Syntax
+import L4Factoidal.SQL.Database
+import L4Factoidal.RDB2RDF.NaturalLiteral
+import L4Factoidal.RDB2RDF.DirectMapping
+import L4Factoidal.RDB2RDF.DirectMappingTheorems
+import L4Factoidal.RDB2RDF.R2RML
+import L4Factoidal.RDB2RDF.R2RMLTheorems
 import L4Factoidal.YAML.Loader
 import L4Factoidal.YAMLLD.Api
 import L4Factoidal.YAMLLD.Theorems
+import L4Factoidal.WebAnnotation.JsonTest
+import L4Factoidal.WebAnnotation.Vocab
+import L4Factoidal.WebAnnotation.Theorems
+import L4Factoidal.WebAnnotation.Protocol
+import L4Factoidal.WebAnnotation.ProtocolSuite
 import L4Factoidal.RIF.Syntax
 import L4Factoidal.RIF.Ps
 import L4Factoidal.RIF.Builtins
@@ -725,6 +738,7 @@ import L4Factoidal.HTTP.RunQuery
 import L4Factoidal.HTTP.RunQueryTests
 import L4Factoidal.HTTP.Ops
 import L4Factoidal.HTTP.Wire
+import L4Factoidal.HTTP.WebSocket
 import L4Factoidal.SPARQL.StoreEndpoint
 import L4Factoidal.HTTP.OpsTests
 import L4Factoidal.Math.Subst
@@ -978,6 +992,9 @@ import L4Factoidal.Unified.RifEmbed
 -- carry one `#guard` per `guarded` row of each conformance registry, so
 -- importing them here makes every one of those checks a build gate.
 import L4Factoidal.LWS.Tests
+import L4Factoidal.LWS.DatasetView
+import L4Factoidal.LWS.DatasetViewRead
+import L4Factoidal.LWS.DatasetViewTests
 import L4Factoidal.LWS.PaginationLinksTests
 import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.AuthorizationTests
@@ -1044,6 +1061,9 @@ import L4Factoidal.Authz.Tests
 import L4Factoidal.XML.ExcC14n
 import L4Factoidal.XML.C14n
 import L4Factoidal.XML.C14nXPath
+import L4Factoidal.XML.DSig11
+import L4Factoidal.XML.DSig11Native
+import L4Factoidal.XML.DSig11Sign
 import L4Factoidal.XML.XPointer
 import L4Factoidal.XML.XPointerXPath
 import L4Factoidal.XML.XPointerTheorems
@@ -1066,7 +1086,12 @@ import L4Factoidal.XMPP.Sasl
 import L4Factoidal.XMPP.Scram
 import L4Factoidal.XMPP.Framing
 import L4Factoidal.XMPP.Server
+import L4Factoidal.XMPP.WebSocket
+import L4Factoidal.XMPP.Muc
+import L4Factoidal.XMPP.Mix
 import L4Factoidal.XMPP.Gc3
+import L4Factoidal.XMPP.Held
+import L4Factoidal.XMPP.StateCodec
 import L4Factoidal.XMPP.HttpOverXmpp
 import L4Factoidal.XMPP.HttpOverXmppTests
 import L4Factoidal.XMPP.ClientStream
@@ -1171,3 +1196,20 @@ import L4Factoidal.Unicode.LineBreakData
 import L4Factoidal.Unicode.LineBreak
 import L4Factoidal.Unicode.LineBreakTheorems
 import L4Factoidal.XSD11.ElementMapTests
+import L4Factoidal.UI.LayoutPolicyTests
+import L4Factoidal.UI.PolicyProtocolTests
+import L4Factoidal.UI.PresentationTests
+import L4Factoidal.DOM.Arena
+import L4Factoidal.DOM.OfHtml
+import L4Factoidal.DOM.Theorems
+import L4Factoidal.DOM.Tests
+import L4Factoidal.Rendering.Tests
+import L4Factoidal.Rendering.Links
+import L4Factoidal.Rendering.FontDataTests
+import L4Factoidal.Rendering.FontProviderTests
+import L4Factoidal.Rendering.FontFaceTests
+import L4Factoidal.Rendering.FontLayoutTests
+import L4Factoidal.Rendering.FontRequestsTests
+import L4Factoidal.Rendering.LayoutStackAudit
+import L4Factoidal.Rendering.RdfViewTests
+import L4Factoidal.Rendering.FloatFormat

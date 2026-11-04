@@ -11,6 +11,13 @@ Design decision (owner-approved 2026-08-22):
 
 ## What exists
 
+For foafnaut2525 capability or shipping questions, read the dated
+[JS/WASM maturity and XSLT integration record](../../docs/designissues/2026-11-03-foafnaut2525-runtime-maturity.md).
+Distinguish the Lean renderer, the external QuickJS WASM engine, the limited
+DOM/event binding and a future page-facing WASM API. Recheck its pinned
+checkpoint before reporting current support. Native CLI, web bundle and
+standalone macOS/iOS app evidence are separate.
+
 For stateful transport adapters, test the host's lifecycle independently of
 the protocol engine, then replay through the rebuilt Wasm artifact. An empty
 `send`/`route` answer says nothing about input consumption: export the actual
@@ -851,6 +858,18 @@ against the old core library.
    `object.o`). If the patch anchor ever vanishes on a toolchain bump,
    the build fails loudly — re-audit `string_to_list_core` upstream
    before deleting the step.
+   **A matching cache checksum/version does not establish this patch.** On
+   2026-11-02 the official runtime archive still held unpatched August 24
+   `object.cpp`/`object.o`. The lab skipped step 1b because the three expected
+   object files existed; fresh FOAF and browser tests then failed with 3.263 GB
+   allocation requests. The runtime builder now writes
+   `rt-obj/object.wasm32-string-list.sha256` only after compiling the patched
+   source. It binds both source and object hashes; absent/mismatched witnesses
+   rebuild only `object.o`. The lab checks the marker and witness, invoking the
+   standard runtime-only repair for unverified caches, including missing cached
+   sources. Preserve this witness when exporting/restoring runtime caches.
+   [Measured repair and cache pin](../../docs/20261102-foafnaut-macos-build.md).
+
 9. **Editing a Lean source WHILE `lake build` runs produces link
    errors that name modules which are, in fact, present.** Lake plans
    the link from the dependency graph it read at startup; an import
@@ -978,3 +997,7 @@ The Lean side keeps its proof policy across this boundary: no `sorry`,
 no `axiom`, no `partial`, no `native_decide`. The JSON reader recurses
 on an explicit `Nat` fuel precisely so it is structurally recursive and
 total without well-founded-recursion obligations.
+
+The independent native graphics lab uses small pure ABI modules, including a
+typed render-plan module. Its proof and host boundary is recorded in
+[Lean render plans](../../docs/designissues/2026-10-30-lean-render-plan.md).

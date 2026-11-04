@@ -1322,6 +1322,84 @@ Details: `lws/README.md`, `solid/server/README.md`,
 [`docs/lws-solid-conformance.md`](https://github.com/danbri/factoidal/blob/main/docs/lws-solid-conformance.md).
 
 
+### An LWS storage as a dataset: `openLwsDataset`
+
+`openLwsDataset(storageRootUrl, { fetch, auth, engine })` from
+`@factoidal/core/lws/dataset` crawls one LWS storage with the LWS client and
+answers it as an RDF dataset (https://github.com/danbri/factoidal/issues/1011,
+version 2 of the view):
+
+- the default graph is empty;
+- the first named graph is the table of contents. Its name is the storage
+  description IRI: the target of the `https://www.w3.org/ns/lws#storage` link
+  in the linkset of the storage root (the result member `toc`). It holds
+  `<container> lws:items <member>` for each member of each listing read, each
+  member's `rdf:type` (`lws:Container` or `lws:DataResource`), for a data
+  resource its `dcterms:format`, `schema:size` (`xsd:long`) and
+  `dcterms:modified` (`xsd:dateTime`) from the listing, and
+  `<resource> <http://www.iana.org/assignments/relation/linkset> <linkset>`
+  for each linkset read;
+- each RDF resource is one named graph, named by the resource IRI;
+- each linkset read is one named graph, named by the linkset IRI, with one
+  triple `<context> <relation> <target>` per link (RFC 9264 §4.2). A
+  relation type that is an absolute IRI stays as it is; `items` is
+  `lws:items`; `type` is `rdf:type`; every other registered name, in lower
+  case, is `http://www.iana.org/assignments/relation/<name>` (RFC 8288
+  Appendix A.2). Target attributes (`title`, `type`, `hreflang`) are not in
+  the view;
+- a resource whose media type has no RDF reader has no document graph (it is
+  in the table of contents and has a linkset graph) and is listed in
+  `skipped` with the reason. A link that has no relation IRI or no `href`,
+  and a document or linkset whose IRI is already the name of another graph,
+  are listed in `skipped` too.
+
+When no linkset read of the storage root gives the storage description IRI,
+`openLwsDataset` throws: the view needs that IRI as the name of its table of
+contents.
+
+LWS 1.0 does not define this view; it is Factoidal's definition
+(`formal/lean4/L4Factoidal/LWS/DatasetView.lean`; design record
+`docs/designissues/2026-10-25-lws-dataset-view.md`). The result has `dataset`
+(a `Dataset`), `toc` (the name of the table-of-contents graph), `evidence`
+(`[{ resource, etag, lastModified }]` for every RDF resource read, then
+`[{ resource, linkset, etag }]` for every linkset read), `skipped`, `graphs`
+(the number of named graphs: the table of contents, the documents and the
+linksets), `query(sparql, options)`, which answers `{ result, evidence }`
+(`result` as `Dataset.query` answers it), and `dispose()`. `auth` is passed
+to `createLwsClient` (`{ subjectToken, subjectTokenType }`, `{ selfIssued }`
+or `{ session }`).
+
+```js
+import { listen } from '@factoidal/core/lws'
+import { createLwsClient } from '@factoidal/core/lws/client'
+import { openLwsDataset, lwsDatasetOpsAvailable } from '@factoidal/core/lws/dataset'
+import { loadEngine } from '@factoidal/core/engine'
+
+const engine = await loadEngine()
+if ((await lwsDatasetOpsAvailable(engine)).available) {
+  const running = await listen({ engine, port: 0, insecureNoAuth: true })
+  const root = `${running.origin}/`
+  const client = await createLwsClient({ engine })
+  await client.create(root, { slug: 'a.ttl', mediaType: 'text/turtle', body: '<> <http://e/p> 1 .' })
+  const lws = await openLwsDataset(root, { engine })
+  const { result } = await lws.query(
+    `SELECT ?m WHERE { GRAPH <${lws.toc}> { <${root}> <https://www.w3.org/ns/lws#items> ?m } }`)
+  console.log(result.length, lws.graphs)   // 1 and 4: the table of contents, a.ttl, two linksets
+  lws.dispose()
+  await running.close()
+}
+```
+
+Limits of this version: a full crawl on every open (one `list` per
+container, one `GET` per RDF resource, and one `HEAD` and one `GET` per
+resource for its linkset); no use of a search index; no caching; the crawl
+is a sequence of GETs, so a write during the crawl can give a dataset that
+the storage never held at one instant. The Lean source theorem
+`lwsSource_query_sound` (`Dataflow/LwsSource.lean`) rests on the named
+assumption `lwsReadsAtSnapshot`: each GET returned the representation (or
+the linkset) its ETag identifies at the snapshot instant. A TriG or N-Quads
+resource gives its default graph only.
+
 ## XPath 4.0, XQuery 4.0 and XSLT 4.0
 
 Three functions, in Node, Deno and the browser, over the Lean engines
@@ -1974,6 +2052,7 @@ section "Stage 1" of
 | `toanSummation`, `toanProduct`, `toanSimplify`, `toanDiff`, `toanSubst` | | symbolic algebra over Content MathML |
 | `vcSha256Hex`, `vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`, `vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical` | | VC Data Integrity `eddsa-rdfc-2022`; Ed25519 is HACL\*'s C code in the wasm module; no initialisation step |
 | `xmlDecrypt`, `xmlEncrypt` | `(document, {keys, allowCbc?})`, `(document, {recipient, algorithm?, keyTransport?, keyWrap?, content?, saml?}) => {document, canonical}` | XML Encryption 1.1. Allowlist: `aes128-gcm`, `aes256-gcm` (CBC only with `allowCbc`), `rsa-oaep-mgf1p`, `xmlenc11#rsa-oaep`, `kw-aes128`, `kw-aes256`, ECDH-ES (P-256, X25519); `rsa-1_5` and remote references refused. Keys are JWKs, `kid` is the `ds:KeyName`. Every failure after the structure check is one error, `XML decryption failed` |
+| `xmlVerify`, `xmlSign` | `(document, {key?, hmacKey?, keyFromKeyInfo?, certificates?, documents?}) => {valid: true, signedInfo, references: [{uri, octets}], key, certificate} \| {valid: false, reason}`, `(document, {key, signatureMethod?, canonicalizationMethod?, inclusivePrefixes?, references?, enveloping?, keyValue?}) => {document}` | XML Signature 1.1: core validation (§3.2) and generation (§3.1). Methods: RSASSA-PKCS1-v1_5 (2048 to 4096 bits), ECDSA P-256 with SHA-1 to SHA-512, HMAC; digests SHA-1 to SHA-512; the six canonicalization methods, enveloped-signature, XPath, XPath Filter 2.0, XSLT and base64 transforms; `ds:KeyValue`, `dsig11:DEREncodedKeyValue`, `ds:X509Data`, `ds:RetrievalMethod`. Keys are JWKs; octets are `Uint8Array`. A key read from `ds:KeyInfo` is returned (`key`, `certificate`), not trusted: certificate path validation is the caller's. The engine fetches nothing (`documents`). A signature that does not validate is `valid: false`, not an exception. Not yet: DSA (https://github.com/danbri/factoidal/issues/1224), ECDSA P-384 and P-521 (https://github.com/danbri/factoidal/issues/1223) |
 | `jweDecrypt`, `jweEncrypt` | `(token, {jwk}) => {header, plaintext: Uint8Array}`, `(plaintext, {alg, enc, jwk, header?}) => token` | JWE Compact Serialization (RFC 7516). `alg` RSA-OAEP, RSA-OAEP-256, ECDH-ES, ECDH-ES+A128KW, ECDH-ES+A256KW, A128KW, A256KW, dir; `enc` A128GCM, A256GCM, A128CBC-HS256, A256CBC-HS512. RSA, P-256 and X25519 run in the wasm (HACL\*); AES runs in the host's WebCrypto (`globalThis.crypto.subtle`), so these four functions are asynchronous on every host |
 | `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | | VCDM 2.0 checks; `did:key` (Ed25519) resolution |
 | `cidValidate`, `cidRetrieveVerificationMethod` | `(doc) => {valid, errors}`, `(url, relationship, {fetch?, resolve?, now?, allowHttp?, allowPrivateFetch?}) => {ok, …}` | Controlled Identifiers v1.0 §2 and §3.3; see "Controlled identifier documents" |
