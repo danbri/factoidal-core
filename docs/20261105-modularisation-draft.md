@@ -2,6 +2,15 @@
 
 Status: draft for discussion, 5 November 2026. Nothing here is decided.
 
+**Owner's correction, 5 November 2026, verbatim:** "I think it is call / dpeendency graph not files,
+functional analysis. But really the bigger issue is what mechanisms exist as we generate out to
+WASM or whatever, which will be deployable via JS and other extraction workflows. Whether OWL and
+RDFS are in one or two modules is secondary to getting the architecture for making such decisions
+deployable effectively in js/wasm."
+
+So this draft is secondary. Its file-level numbers are only a first upper bound, and its profile
+table is an example. The primary work is the deployment mechanism, on the function call graph.
+
 Owner, 2026-11-05, verbatim: "keep everything in a common framework for now rather than
 splitting into TWO and just TWO. We will need all kinds of modularizations [...] I don't want
 them all in the Factoidal core NPM module, but most of the pure standards bits can be. Then we
