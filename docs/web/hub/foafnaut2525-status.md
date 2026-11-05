@@ -31,7 +31,7 @@ foafnaut2525 is a web rendering engine written in Lean. It aims to become a brow
 - HTML tokenizer: 7,047 pass, 6 fail (out of 7,053).
 - WPT SVG and HTML images: 29 match, 21 mismatch, 264 unsupported, 30 rejected, 257 unavailable (out of 601).
 - WPT scripted documents: 0 complete passes (out of 784); 103 assertions pass, 1,342 fail.
-- W3C SVG Tiny 1.2, WebGPU pixels against the W3C images: 0 match, 18 close, 475 mismatch, 2 refused, 1 not read (out of 496). No test passes yet. Text is missing in 493 files. A blank image scores 1 match, 495 mismatch.
+- W3C SVG Tiny 1.2, WebGPU pixels against the W3C images: 0 match, 72 close, 421 mismatch, 2 refused, 1 not read (out of 496). No test passes yet. Our 1-pixel lines are anti-aliased, and the 2008 reference snaps them, so a strict match needs more than correct drawing. A blank image scores 1 match, 495 mismatch.
 - HarfBuzz 15.0.0 shaping suite: 4,175 pass, 533 fail, 169 refused (out of 4,877 applicable).
 
 The match and close bands are ours, not a W3C verdict. The WPT image score still comes from the old CPU test tool. These suites are separate. Their numbers do not add up to one browser score. Most were measured on 3 or 4 November.

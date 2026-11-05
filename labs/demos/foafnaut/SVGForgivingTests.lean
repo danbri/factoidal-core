@@ -29,3 +29,16 @@ private def strict (body : String) : Option NativeSVG.Scene :=
 -- clip-path takes one rect; other shapes stay a named refusal.
 #guard (strict "<defs><clipPath id='c'><rect width='9' height='9'/></clipPath></defs><g clip-path='url(#c)'><rect width='20' height='20'/></g>").isSome
 #guard (strict "<defs><clipPath id='c'><circle r='9'/></clipPath></defs><g clip-path='url(#c)'><rect width='20' height='20'/></g>").isNone
+
+-- Text lowers to glyph paths; x lists, anchors and missing fonts behave.
+private def font : SVGFont := match SVGFont.parse "<svg xmlns='http://www.w3.org/2000/svg'><font horiz-adv-x='500'><font-face font-family='T' units-per-em='1000'/><glyph unicode='a' glyph-name='a' d='M0 0H100V100Z'/><glyph unicode=' ' glyph-name='space'/></font></svg>" with
+  | .ok f => f | .error _ => {}
+private def withFont (body : String) : Nat := match parse (svg body) 40 40 (some font) with
+  | .ok (scene,_) => scene.compiled.length | .error _ => 999
+#guard withFont "<text x='1' y='9' font-size='9'>aa a</text>" == 3
+#guard withFont "<text x='1 5 9' y='9' font-size='9'><tspan fill='red'>aa</tspan>a</text>" == 3
+#guard withFont "<text font-size='0'>aa</text>" == 0
+#guard withFont "<switch><rect systemLanguage='fr' width='9' height='9'/><rect width='5' height='5'/><rect width='3' height='3'/></switch>" == 1
+#guard withFont "<a><rect width='9' height='9'/></a>" == 1
+#guard primitives "<rect stroke='black' stroke-linejoin='round' width='9' height='9'/>" == 1
+#guard (log "<rect stroke='black' stroke-linejoin='round' width='9' height='9'/>").contains "approximated: stroke-linejoin"
