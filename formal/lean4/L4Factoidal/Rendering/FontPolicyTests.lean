@@ -77,6 +77,6 @@ private def wasmFont := (readDirectory (sfnt tt ["cmap", "glyf", "GSUB", "Wasm",
   ("font.table.wasm: \"Example Sans\" (example.ttf, sha256 aaaaaaaaaaaa...) has Wasm.\n" ++
    "A Wasm table is a program that the font asks the text shaper to run.\n" ++
    "Risk: the program can do any computation and can change every glyph.\n" ++
-   "Setting: font.wasm = refuse (default). There is no option to allow it.\n" ++
+   "Setting: font.wasm = refuse (default). A WebAssembly engine in Lean is planned (https://github.com/danbri/factoidal/issues/1244); until then it can not be allowed.\n" ++
    "Action: the font was used without this table.")
 end L4Factoidal.Rendering.FontPolicyTests
