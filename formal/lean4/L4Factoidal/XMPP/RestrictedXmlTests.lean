@@ -55,4 +55,14 @@ private def nestedEntities : String :=
 #guard !(L4Factoidal.XMPP.Wire.prologHasDoctype 100 "".toList)
 #guard !(L4Factoidal.XMPP.Wire.prologHasDoctype 0 "<!DOCTYPE a>".toList)
 
+-- Running out of fuel refuses.
+#guard L4Factoidal.XMPP.Wire.holdsRestricted 0 []
+#guard L4Factoidal.XMPP.Wire.holdsRestricted 1 [.text "a"]
+#guard !(L4Factoidal.XMPP.Wire.holdsRestricted 2 [.text "a"])
+
+-- Many siblings and deep nesting both fit the fuel that `parseElement` gives.
+#guard accepted s!"<a>{String.join (List.replicate 2000 "<b/>")}</a>"
+#guard accepted s!"{String.join (List.replicate 200 "<a>")}{String.join (List.replicate 200 "</a>")}"
+#guard refused s!"{String.join (List.replicate 200 "<a>")}<!-- x -->{String.join (List.replicate 200 "</a>")}"
+
 end L4Factoidal.XMPP.RestrictedXmlTests

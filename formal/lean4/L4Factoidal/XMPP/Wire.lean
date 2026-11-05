@@ -95,20 +95,17 @@ def prologHasDoctype : Nat → List Char → Bool
     else if "<?".toList.isPrefixOf l then prologHasDoctype n (dropPast "?>".toList rest)
     else false
 
-mutual
-
-/-- Is there a comment or a processing instruction anywhere in this node? -/
-def holdsRestricted : Node → Bool
-  | .comment _ => true
-  | .pi _ _ => true
-  | .element _ _ children => listHoldsRestricted children
-  | _ => false
-
-def listHoldsRestricted : List Node → Bool
-  | [] => false
-  | n :: ns => holdsRestricted n || listHoldsRestricted ns
-
-end
+/-- Is there a comment or a processing instruction in these nodes, at any
+depth? A worklist, because stanzas come from the network: stack use must not
+grow with their depth. `fuel` must exceed the number of nodes; running out
+counts as yes, so a mistake refuses a stanza rather than passes one. -/
+def holdsRestricted : Nat → List Node → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | _ + 1, .comment _ :: _ => true
+  | _ + 1, .pi _ _ :: _ => true
+  | n + 1, .element _ _ children :: rest => holdsRestricted n (children ++ rest)
+  | n + 1, _ :: rest => holdsRestricted n rest
 
 /-- Parse a complete element (a stanza, `<stream:features>`, ...) via the
 real XML parser. `L4Factoidal.XML.parseXML` accepts a document with no
@@ -118,7 +115,7 @@ refused, as if it did not parse. -/
 def parseElement (s : String) : Option Node :=
   if prologHasDoctype s.length s.toList then none
   else match L4Factoidal.XML.parseXML s with
-    | .ok doc => if holdsRestricted doc.root then none else some doc.root
+    | .ok doc => if holdsRestricted (s.length + 1) [doc.root] then none else some doc.root
     | .error _ => none
 
 -- ## The one thing `L4Factoidal.XML` doesn't cover: an unclosed root.
