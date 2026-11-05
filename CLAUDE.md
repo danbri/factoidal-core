@@ -925,6 +925,23 @@ much into it." "4. our npm already huge so pinned i guess".
 - Record: `docs/designissues/2026-11-03-font-trust-and-safety-policy.md`;
   tracking https://github.com/danbri/factoidal/issues/1233.
 
+### foafnaut2525 is the Lean browser; a Claude session leads it (owner, 2026-11-05)
+
+Owner, verbatim: "Is this the session leading the \"make a browser rendering
+engine in Lean\" work? (aka foafnaut2525, a browser not the pure foaf social net
+thing it is named after)." and, to the proposal to record it: "Yes, record it in
+Claude." Earlier the same day: "yes any codex work can pull into claude".
+
+- foafnaut2525 is the browser rendering engine in Lean. It is not the FOAF social
+  network application that it is named after.
+- A Claude session leads this work, from 2026-11-05. It took over from the Codex
+  root session, which had no credit. The work is on `main`.
+- A session that returns to this work, Codex included, reads this entry, the open
+  PRs and https://github.com/danbri/factoidal/issues/1230 (shared renderer) before
+  it changes the renderer. Coordination goes in GitHub: a file under `/private/tmp`
+  is deleted by a restart, as the overnight coordinator file was on 2026-11-05.
+- Release management is separate: "One owner per release" still applies.
+
 ### Observability from the start (owner, 2026-11-05)
 
 Owner, verbatim: "we must eng for observability, perf, debugging and automatic
