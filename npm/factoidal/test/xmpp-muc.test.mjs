@@ -102,6 +102,40 @@ test('muc: disco finds the service; join, groupchat, private message, leave', as
   } finally { await server.close() }
 })
 
+test('muc: a members-only room refuses anyone else and stays hidden from them', async (t) => {
+  let server
+  try {
+    server = await serverModule.listen({ domain: DOMAIN, accounts: ACCOUNTS, pollMs: 0, onError: () => {}, mucDomain: MUC,
+      mucMembers: [{ room: 'bus', members: [`juliet@${DOMAIN}`, `romeo@${DOMAIN}`] }],
+      websocket: { port: 0, path: '/xmpp-websocket', allowNoOrigin: true } })
+  } catch (error) {
+    if (/does not carry members-only/.test(error.message)) return t.skip('an older engine: the host refused to start, as it should')
+    throw error
+  }
+  try {
+    const juliet = await bound(server.wsOrigin, 'juliet', 'r0m30', 'balcony')
+    join(juliet, 'bus', 'jul')
+    await juliet.next((m) => /code="110"/.test(m))
+    const mallory = await bound(server.wsOrigin, 'mallory', 'evil', 'x')
+    join(mallory, 'bus', 'mal')
+    const refused = await mallory.next((m) => m.startsWith('<presence') && /type="error"/.test(m))
+    assert.match(refused, /type="auth"/)
+    assert.match(refused, /registration-required/)
+    mallory.send(`<message to='bus@${MUC}' type='groupchat' id='spam'><body>buy now</body></message>`)
+    assert.match(await mallory.next((m) => /id="spam"/.test(m)), /not-acceptable/)
+    mallory.send(`<iq type='get' id='i1' to='${MUC}'><query xmlns='http://jabber.org/protocol/disco#items'/></iq>`)
+    assert.ok(!(await mallory.next((m) => /id="i1"/.test(m))).includes('bus@'), 'the room is listed to a non-member')
+    juliet.send(`<iq type='get' id='i2' to='bus@${MUC}'><query xmlns='http://jabber.org/protocol/disco#info'/></iq>`)
+    assert.match(await juliet.next((m) => /id="i2"/.test(m)), /muc_membersonly/)
+    await settle()
+    assert.ok(!juliet.got.some((m) => /buy now|mal/.test(m)), 'a non-member reached the room')
+    // A room with no list stays open.
+    join(mallory, 'tea', 'mal')
+    await mallory.next((m) => /code="110"/.test(m))
+    juliet.ws.close(); mallory.ws.close()
+  } finally { await server.close() }
+})
+
 test('muc: a nick conflict is refused, and an outsider cannot post', async () => {
   const server = await start()
   try {

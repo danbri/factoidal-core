@@ -22,10 +22,15 @@ Covered (XEP-0045 section numbers):
   7.14  leaving: unavailable presence to every occupant, status 110 to the leaver;
         an empty room is destroyed (temporary rooms)
   6.2-6.4 disco#info and disco#items on the service and on a room
+  7.2.6 members-only rooms, from a fixed list per room in the server's
+        configuration (`Service.memberLists`): anyone else gets presence error
+        `registration-required`, and the room is hidden from them. There is no
+        XMPP way to change the list (no 9.5 admin use case); a room with no list
+        is open to every account of the server
 
 Not covered, answered `feature-not-implemented` or ignored, never silently
 accepted: nick change, kick, ban, voice, room configuration forms, passwords,
-members-only rooms, history, subject change, persistent rooms. Real JIDs are
+history, subject change, persistent rooms. Real JIDs are
 never sent to anyone, moderators included (`Body` has no field for one).
 Limits `maxRooms` and `maxOccupants` bound the state a client can create
 (`service-unavailable`, XEP-0045 7.2.10).
@@ -66,10 +71,19 @@ structure Room where
   occupants : List Occupant
   deriving Repr, DecidableEq, Inhabited
 
+/-- A members-only room (XEP-0045 section 7.2.6) and who may join it. -/
+structure MemberList where
+  /-- The room JID's localpart. -/
+  room : String
+  /-- Bare JIDs. -/
+  members : List String
+  deriving Repr, DecidableEq, Inhabited
+
 structure Service where
   /-- The MUC domain, e.g. `conference.example.com`. -/
   domain : String
   rooms : List Room := []
+  memberLists : List MemberList := []
   maxRooms : Nat := 64
   maxOccupants : Nat := 64
   deriving Repr, Inhabited
@@ -78,6 +92,16 @@ def Room.byReal (r : Room) (real : String) : Option Occupant := r.occupants.find
 def Room.byNick (r : Room) (nick : String) : Option Occupant := r.occupants.find? (·.nick == nick)
 def Service.room? (svc : Service) (name : String) : Option Room := svc.rooms.find? (·.name == name)
 def Service.roomJid (svc : Service) (name : String) : String := name ++ "@" ++ svc.domain
+
+/-- The bare JID of a full JID. -/
+def bareOf (full : String) : String := (full.splitOn "/").headD full
+
+/-- May `from_` (a full JID) enter this room? Every account may, unless the
+room has a member list. -/
+def Service.mayJoin (svc : Service) (name from_ : String) : Bool :=
+  match svc.memberLists.find? (·.room == name) with
+  | none => true
+  | some m => m.members.contains (bareOf from_)
 
 /-- Store a room; an empty room is removed (temporary rooms, XEP-0045 section 10.1.2). -/
 def Service.put (svc : Service) (r : Room) : Service :=
@@ -157,7 +181,9 @@ def join (svc : Service) (name nick from_ : String) : Service × List Delivery :
   let fail (cond : String) : Service × List Delivery :=
     (svc, [⟨from_, rj, .error .presence none (rj ++ "/" ++ nick) "cancel" cond⟩])
   let room := (svc.room? name).getD ⟨name, []⟩
-  if room.occupants.isEmpty && svc.rooms.length ≥ svc.maxRooms then fail "service-unavailable"
+  if !svc.mayJoin name from_ then
+    (svc, [⟨from_, rj, .error .presence none (rj ++ "/" ++ nick) "auth" "registration-required"⟩])
+  else if room.occupants.isEmpty && svc.rooms.length ≥ svc.maxRooms then fail "service-unavailable"
   else if room.occupants.length ≥ svc.maxOccupants then fail "service-unavailable"
   else
     match joinRoom room nick from_ with
@@ -214,7 +240,7 @@ def serviceIq (svc : Service) (from_ : String) (st : Stanza) : List Delivery :=
        feature nsMuc, feature nsDiscoInfo, feature nsDiscoItems]]⟩]
   else if ty == "get" && (q nsDiscoItems).isSome then
     [⟨from_, svc.domain, .iqResult st.id svc.domain [.element "query" [⟨"xmlns", nsDiscoItems⟩]
-      (svc.rooms.map (fun r => .element "item" [⟨"jid", svc.roomJid r.name⟩, ⟨"name", r.name⟩] []))]⟩]
+      ((svc.rooms.filter (fun r => svc.mayJoin r.name from_)).map (fun r => .element "item" [⟨"jid", svc.roomJid r.name⟩, ⟨"name", r.name⟩] []))]⟩]
   else [⟨from_, svc.domain, .error .iq st.id svc.domain "cancel" "feature-not-implemented"⟩]
 
 def roomIq (svc : Service) (name from_ : String) (st : Stanza) : List Delivery :=
@@ -224,12 +250,13 @@ def roomIq (svc : Service) (name from_ : String) (st : Stanza) : List Delivery :
     | .element "query" attrs _ => findAttr attrs "xmlns" == some nsDiscoInfo | _ => false)
   if ty == "result" || ty == "error" then []
   else if ty == "get" && isInfo then
-    match svc.room? name with
+    match (svc.room? name).filter (fun _ => svc.mayJoin name from_) with
     | none => [⟨from_, rj, .error .iq st.id rj "cancel" "item-not-found"⟩]
     | some _ =>
       [⟨from_, rj, .iqResult st.id rj [.element "query" [⟨"xmlns", nsDiscoInfo⟩]
         [.element "identity" [⟨"category", "conference"⟩, ⟨"type", "text"⟩, ⟨"name", name⟩] [],
-         feature nsMuc, feature "muc_temporary", feature "muc_open", feature "muc_unmoderated",
+         feature nsMuc, feature "muc_temporary",
+         feature (if svc.memberLists.any (·.room == name) then "muc_membersonly" else "muc_open"), feature "muc_unmoderated",
          feature "muc_semianonymous", feature "muc_unsecured"]]⟩]
   else [⟨from_, rj, .error .iq st.id rj "cancel" "feature-not-implemented"⟩]
 
@@ -394,6 +421,78 @@ theorem leaveRoom_nodup (room : Room) (real : String)
     ((leaveRoom room real).occupants.map (·.nick)).Nodup :=
   (List.Sublist.map _ List.filter_sublist).nodup hnd
 
+/-- 7. Members only: a join by someone who may not enter changes nothing, and
+only the joiner hears of it. -/
+theorem join_refused (svc : Service) (name nick from_ : String)
+    (h : svc.mayJoin name from_ = false) :
+    (join svc name nick from_).1 = svc ∧ ∀ d ∈ (join svc name nick from_).2, d.to = from_ := by
+  simp [join, h]
+
+/-- Everyone in every room may be there. -/
+def Service.sound (svc : Service) : Prop :=
+  ∀ r ∈ svc.rooms, ∀ o ∈ r.occupants, svc.mayJoin r.name o.real = true
+
+/-- `put` keeps the member lists, so it keeps `mayJoin`. -/
+theorem put_mayJoin (svc : Service) (r : Room) (name from_ : String) :
+    (svc.put r).mayJoin name from_ = svc.mayJoin name from_ := rfl
+
+/-- Storing a room whose occupants may be there keeps the service sound. -/
+theorem put_sound (svc : Service) (r : Room) (hs : svc.sound)
+    (hr : ∀ o ∈ r.occupants, svc.mayJoin r.name o.real = true) : (svc.put r).sound := by
+  intro x hx o ho
+  rw [put_mayJoin]
+  simp only [Service.put] at hx
+  split at hx
+  · exact hs x ((List.mem_filter.mp hx).1) o ho
+  · rcases List.mem_append.mp hx with hx | hx
+    · exact hs x ((List.mem_filter.mp hx).1) o ho
+    · simp only [List.mem_singleton] at hx
+      subst hx
+      exact hr o ho
+
+/-- 8. Members only, as an invariant: joining never puts anyone in a room who
+may not be there. Leaving only removes occupants. -/
+theorem join_sound (svc : Service) (name nick from_ : String) (hs : svc.sound)
+    (hroom : ∀ r, svc.room? name = some r → r.name = name) :
+    (join svc name nick from_).1.sound := by
+  have hget : ∀ o ∈ ((svc.room? name).getD ⟨name, []⟩).occupants, svc.mayJoin name o.real = true := by
+    intro o ho
+    cases hr : svc.room? name with
+    | none => simp [hr] at ho
+    | some r =>
+      simp only [hr, Option.getD_some] at ho
+      have hmem : r ∈ svc.rooms := List.mem_of_find?_eq_some hr
+      have := hs r hmem o ho
+      rwa [hroom r hr] at this
+  have hname : ((svc.room? name).getD ⟨name, []⟩).name = name := by
+    cases hr : svc.room? name with
+    | none => rfl
+    | some r => simpa [hr] using hroom r hr
+  unfold join
+  dsimp only
+  split
+  · exact hs
+  split
+  · exact hs
+  split
+  · exact hs
+  rename_i hmay _ _
+  split
+  · exact hs
+  rename_i room' hj
+  refine put_sound svc room' hs ?_
+  unfold joinRoom at hj
+  split at hj
+  · cases hj
+  · cases hj
+    intro o ho
+    rcases List.mem_append.mp ho with ho | ho
+    · rw [hname]; exact hget o ho
+    · simp only [List.mem_singleton] at ho
+      subst ho
+      rw [hname]
+      simpa using hmay
+
 /-! ## Checks -/
 
 private def svc0 : Service := { domain := "conference.example.com" }
@@ -462,6 +561,29 @@ private def body (t : String) : Node := .element "body" [] [.text t]
   let (_, info) := step s1 "romeo@example.com/orchard" (st .iq "conference.example.com" (some "get") [.element "query" [⟨"xmlns", nsDiscoItems⟩] []])
   let (_, nc) := step s1 "juliet@example.com/balcony" (st .presence "tea@conference.example.com/julie" none)
   has (info[0]!.render) "jid=\"tea@conference.example.com\"" && has (nc[0]!.render) "not-acceptable"
+
+-- Members only: Mallory is refused, sees nothing, and cannot make the room;
+-- Juliet gets in on any resource.
+#guard
+  let locked : Service := { svc0 with memberLists := [⟨"bus", ["juliet@example.com"]⟩] }
+  let (s1, ds1) := step locked "mallory@example.com/x" (st .presence "bus@conference.example.com/m" none)
+  let (s2, _) := step s1 "juliet@example.com/any" (st .presence "bus@conference.example.com/j" none)
+  let (s3, ds3) := step s2 "mallory@example.com/x" (st .presence "bus@conference.example.com/m" none)
+  let (_, ds4) := step s3 "mallory@example.com/x" (st .message "bus@conference.example.com" (some "groupchat") [body "hi"])
+  let (_, items) := step s3 "mallory@example.com/x" (st .iq "conference.example.com" (some "get") [.element "query" [⟨"xmlns", nsDiscoItems⟩] []])
+  let (_, info) := step s3 "mallory@example.com/x" (st .iq "bus@conference.example.com" (some "get") [.element "query" [⟨"xmlns", nsDiscoInfo⟩] []])
+  let (_, jinfo) := step s3 "juliet@example.com/any" (st .iq "bus@conference.example.com" (some "get") [.element "query" [⟨"xmlns", nsDiscoInfo⟩] []])
+  s1.rooms.isEmpty && has (ds1[0]!.render) "registration-required" && has (ds1[0]!.render) "type=\"auth\"" &&
+  (s3.room? "bus").map (·.occupants.length) == some 1 && has (ds3[0]!.render) "registration-required" &&
+  ds4.map (·.to) == ["mallory@example.com/x"] && has (ds4[0]!.render) "not-acceptable" &&
+  !has (items[0]!.render) "bus@" && has (info[0]!.render) "item-not-found" &&
+  has (jinfo[0]!.render) "muc_membersonly" && !has (jinfo[0]!.render) "muc_open"
+
+-- A room with no list stays open beside a locked one.
+#guard
+  let locked : Service := { svc0 with memberLists := [⟨"bus", ["juliet@example.com"]⟩] }
+  let (s1, _) := step locked "mallory@example.com/x" (st .presence "tea@conference.example.com/m" none)
+  s1.rooms.length == 1
 
 -- The room limit holds.
 #guard

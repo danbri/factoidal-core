@@ -489,6 +489,14 @@ private def iqResult (id : Option String) (to : Option String) (children : List 
       (id.map (Attribute.mk "id")).toList)
     children)
 
+/-- The result of a disco query, `from` the address it was sent to (RFC 6120
+section 8.1.2.1). Profanity 0.19.0 stops with a segmentation fault without it. -/
+private def iqResultFrom (st : Stanza) (children : List Node) : String :=
+  render (.element "iq"
+    ((st.to.map (fun j => Attribute.mk "from" (Jid.render j))).toList ++ [Attribute.mk "type" "result"] ++
+      (st.id.map (Attribute.mk "id")).toList)
+    children)
+
 /-- The bare form of a JID string. -/
 def bareOf (s : String) : String :=
   match (Jid.parse s) with
@@ -652,7 +660,7 @@ where
       | none =>
         match disco with
         | some _ =>
-          (env, [.send (iqResult st.id none
+          (env, [.send (iqResultFrom st
             [.element "query" [⟨"xmlns", nsDiscoInfo⟩]
               ([ .element "identity"
                   [⟨"category", "server"⟩, ⟨"type", "im"⟩, ⟨"name", "Factoidal XMPP"⟩] [],
@@ -664,7 +672,7 @@ where
           | some _ =>
             -- XEP-0030 items on the server: the MUC service, when there is one,
             -- so a client can find it (XEP-0045 section 6.1).
-            (env, [.send (iqResult st.id none
+            (env, [.send (iqResultFrom st
               [.element "query" [⟨"xmlns", nsDiscoItems⟩]
                 ((s.cfg.mucDomain.toList ++ s.cfg.mixDomain.toList ++ s.cfg.gc3Domain.toList).map (fun d => .element "item" [⟨"jid", d⟩] []))])])
           | none =>
@@ -1377,7 +1385,14 @@ private def boundMuc : Session :=
 #guard
   let (_, _, outs) := step boundMuc ⟨[]⟩ (.element "<iq type='get' id='d1' to='example.com'><query xmlns='http://jabber.org/protocol/disco#items'/></iq>")
   match outs with
-  | [.send t] => has t "jid=\"conference.example.com\""
+  | [.send t] => has t "jid=\"conference.example.com\"" && has t "from=\"example.com\""
+  | _ => false
+
+-- disco#info on the server says who answers.
+#guard
+  let (_, _, outs) := step boundMuc ⟨[]⟩ (.element "<iq type='get' id='d2' to='example.com'><query xmlns='http://jabber.org/protocol/disco#info'/></iq>")
+  match outs with
+  | [.send t] => has t "from=\"example.com\"" && has t "Factoidal XMPP"
   | _ => false
 
 /-! ### MIX hand-off checks (2026-11-03) -/
