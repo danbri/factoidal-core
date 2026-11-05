@@ -17,6 +17,18 @@ mkdir -p "$LAB/.build"
 "${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Werror "$LAB/native_coordinates_test.c" \
   -lm -o "$LAB/.build/native-coordinates-test"
 "$LAB/.build/native-coordinates-test"
+# The native HTML tests need the web-render engine, which Builds makes after this
+# step in its engines job and before it in its macOS job, and more permissions.
+TESTS=()
+for test in "$LAB/"*_test.ts; do [ "$test" = "$LAB/native_html_test.ts" ] || TESTS+=("$test"); done
 deno check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
-  "$LAB/run_ui.ts" "$LAB/run_lean.ts" "$LAB/run_svg.ts" "$LAB/run_foaf_svg.ts" "$LAB/"*_test.ts
-deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --allow-read "$LAB/"*_test.ts
+  "$LAB/run_ui.ts" "$LAB/run_lean.ts" "$LAB/run_svg.ts" "$LAB/run_foaf_svg.ts" "${TESTS[@]}"
+deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --allow-read "${TESTS[@]}"
+if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
+  mkdir -p "$LAB/.build/native-html/runtime"
+  cp "$LAB/.build/web-render/engines/web-render."{mjs,wasm} "$LAB/.build/native-html/runtime/"
+  deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-write --allow-net "$LAB/native_html_test.ts"
+else
+  echo 'NOT RUN: native_html_test.ts needs the web-render engine, which this build does not have yet'
+fi
