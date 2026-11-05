@@ -235,3 +235,10 @@ the fragment shader of `SVG.lean` loops over all primitives for every pixel.
 Edge drags now reach Lean during the drag (8 resize events, 7 frames, no pump
 stall in one human drag), but at this frame time few frames appear. Next: a
 primitive list for each screen tile.
+
+GPU step timing, same day and machine, `--resize-sweep`: at 1600 x 1000 the frame
+took 2,974 ms, of which `mapRead` (the wait for the GPU) took 2,745 ms and copying
+the readback out took 4 ms. The readback is not the cost; the shader is. A frame
+is 1,600,000 pixels x 4 samples x 1,405 primitives, about 9.0 billion primitive
+visits, or about 3.3 billion each second. Only polygons and paths have a bounds
+check, and the walk over the variable-length records is serial for each sample.
