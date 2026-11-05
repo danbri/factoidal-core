@@ -89,7 +89,18 @@ jobs:
           # declared in Harness.Qlvr outside both import closures. Build its
           # Lean/C artifacts; the native l4qlvr executable is not needed.
           # The source-wide csimp inventory also includes CryptoProbe.
-          lake build L4Factoidal l4wasm +Harness.Qlvr +Harness.CryptoProbe +L4Factoidal.Dataflow.FailureConditions 2>&1 | tee "$RUNNER_TEMP/lake-build.log"
+          lake build L4Factoidal l4wasm +Harness.Qlvr +Harness.CryptoProbe +L4Factoidal.Dataflow.FailureConditions +L4Factoidal.Dataflow.GraphProjectionTests +L4Factoidal.Dataflow.NormalizationHandoffTests ServiceVariableRegression 2>&1 | tee "$RUNNER_TEMP/lake-build.log"
+
+      # This prototype is intentionally absent from public dispatch/import roots.
+      # Name its proof/guard module explicitly so it cannot remain untested.
+      # Runtime output separates the known variable-SERVICE expected failure;
+      # a security regression or unexpected pass fails Lean elaboration.
+      - name: Check experimental scoped query provider grants
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -o pipefail
+          lake build ScopedQueryPrototype 2>&1 | tee -a "$RUNNER_TEMP/lake-build.log"
 
       # `lake build` alone is NOT the soundness gate, and it was the whole
       # gate until 2026-09-03. A `sorry` fails the build, because Lean emits

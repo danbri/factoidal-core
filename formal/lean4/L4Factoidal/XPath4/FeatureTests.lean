@@ -8,6 +8,7 @@ import L4Factoidal.XQueryUpdate.Query
 import L4Factoidal.XSLT4.QtFnTransform
 import L4Factoidal.XPath4.UnicodeBridgeTests
 import L4Factoidal.XPath4.GenerateTests
+import L4Factoidal.XPath4.QNameContextTests
 
 namespace L4Factoidal.XPath4.FeatureTests
 
