@@ -1,5 +1,6 @@
 import L4Factoidal.XML.Encoding
 import L4Factoidal.XProc31.Properties
+import L4Factoidal.XProc31.Loading
 import L4Factoidal.XProc31.Core
 import L4Factoidal.XML.Theorems
 import L4Factoidal.XSLT4.Package
@@ -176,8 +177,8 @@ def xsltOutputs (step : Node) (ports : List (String × List Document)) (env : XP
   let sheet ← oneSource ((ports.lookup "stylesheet").getD [])
   let version ← option step "version" env (attr (documentElement sheet) "version" "3.0")
   if !["1.0", "2.0", "3.0", "4.0"].contains version then error "XC0038" "unsupported XSLT version" else
-  if version == "1.0" && (source.length != 1 || source.any (fun d => d.value.isSome || d.contentType == "text/plain")) then error "XC0039" "XSLT 1.0 requires one XML source document" else
-  if version == "2.0" && source.any (fun d => d.contentType == "application/json") then error "XC0094" "XSLT 2.0 source must be a document" else
+  if version == "1.0" && (source.length != 1 || source.any (fun d => (classifyMediaType d.contentType).toOption == some .json || (classifyMediaType d.contentType).toOption == some .binary || d.contentType == "text/plain")) then error "XC0039" "XSLT 1.0 requires one XML source document" else
+  if version == "2.0" && source.any (fun d => (classifyMediaType d.contentType).toOption == some .json || (classifyMediaType d.contentType).toOption == some .binary) then error "XC0094" "XSLT 2.0 source must be a document" else
   let params ← mapParameters step env
   if version != "3.0" && version != "4.0" && params.any (fun (_,v) => v.any (fun i => match i with | .map _ | .arr _ => true | _ => false)) then
     error (if version == "1.0" then "XC0105" else "XC0007") "XSLT version does not accept maps or arrays" else
@@ -309,9 +310,10 @@ def wrapDescendants (env : XPath4.Env) (selectedIndices : List Nat) (name : Stri
 loaded separately so include/import namespace rules remain the XSD reader's. -/
 private def xsdDocuments (schemas : List Document) : List XSD11.LoadedDoc :=
   schemas.zipIdx |>.map fun (s,i) =>
-    { loc := if s.baseUri == "" then "schema" ++ toString i ++ ".xsd"
+    let base := (documentFilePath s.baseUri).toOption.getD s.baseUri
+    { loc := if base == "" then "schema" ++ toString i ++ ".xsd"
         else if (schemas.filter (fun other => other.baseUri == s.baseUri)).length > 1 then
-          s.baseUri ++ "#schema-" ++ toString i else s.baseUri
+          base ++ "#schema-" ++ toString i else base
       doc := { root := documentElement s, decl := none, doctype := none, prolog := [], epilog := [] } }
 
 private def validateXsd (step : Node) (ports : List (String × List Document))
@@ -320,14 +322,19 @@ private def validateXsd (step : Node) (ports : List (String × List Document))
   if !["1.0", "1.1"].contains version then error "XC0011" "Unsupported XML Schema version" else
   let d ← oneSource ((ports.lookup "source").getD [])
   let loaded := xsdDocuments ((ports.lookup "schema").getD [])
-  if (loaded ++ extra).any (fun s => !XSD11.isXs s.doc.root "schema") then
+  if (loaded ++ extra).any (fun s =>
+      let (p,l) := XPath4.splitName (s.doc.root.elementTag.getD "")
+      l != "schema" || ((ns s.doc.root).lookup p).getD "" != "http://www.w3.org/2001/XMLSchema") then
     error "XC0152" "Schema input is not an XML Schema document" else
   let schema := XSD11.buildSchema none XSD11.xpathHooks (loaded ++ extra) (loaded.map (·.loc) ++ extraRoots)
   if !schema.unsupported.isEmpty then unsupported ("XML Schema component: " ++ String.intercalate ", " schema.unsupported) else
   if !schema.errors.isEmpty then error "XC0152" (String.intercalate "; " (schema.errors.take 3)) else
   let mode ← option step "mode" env "strict"
   match XSD11.validateFor schema mode (documentElement d) d.baseUri with
-  | .ok _ => pure [d]
+  | .ok validated =>
+    let ref : XPath4.NodeRef := ⟨0,0,some validated⟩
+    let node ← nodeFromRef {env with docs := #[validated]} 4096 ref
+    pure [{d with node, value := some [.node ref]}]
   | .error e =>
     if (← option step "assert-valid" env "true") == "false" then pure [d]
     else error (if e.code == "XQDY0084" then "XC0156" else "XC0053") e.msg
@@ -347,6 +354,9 @@ private def xsdRegressionCode (schema : String) (attrs : List XML.Attribute := [
 #guard xsdRegressionCode "<invalid/>" == "XC0152"
 #guard xsdRegressionCode "<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema'/>" [⟨"version", "999999"⟩] == "XC0011"
 #guard (xsdRegression "<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema'/>" [⟨"mode", "lax"⟩]).toBool
+
+#guard (xsdDocuments [{node := .element "schema" [] [], baseUri := "file:///tmp/schema%20one.xsd"}]).map (·.loc) == ["/tmp/schema one.xsd"]
+#guard xsdRegressionCode "<e:schema xmlns:e='urn:not-xsd'/>" == "XC0152"
 
 private def validateXsdIO (step : Node) (ports : List (String × List Document))
     (env : XPath4.Env) : IO (Result (List Document)) := do
@@ -375,11 +385,12 @@ private def validateXsdIO (step : Node) (ports : List (String × List Document))
     else []
   let roots := (locations ++ namespaceLocations).map (Syntax.resolveIri (if d.baseUri == "" then env.baseUri else d.baseUri))
   let supplied := xsdDocuments ((ports.lookup "schema").getD [])
-  let roots := roots.map (fun uri => if uri.startsWith "file://" then (uri.drop 7).toString else uri)
+  let roots := roots.map (fun uri => (documentFilePath uri).toOption.getD uri)
   let paths := (roots ++ supplied.flatMap (fun s => XSD11.refsOf s.loc s.doc)).eraseDups
   if paths.any (fun uri => uri.startsWith "http:" || uri.startsWith "https:") then
     return unsupported "network schema resolution"
-  let paths := paths.map (fun uri => if uri.startsWith "file://" then (uri.drop 7).toString else uri)
+  let paths ← match paths.mapM documentFilePath with
+    | .error e => return .error e | .ok paths => pure paths
   let (extra, allRead) ← XSD11.loadClosure paths
   if !allRead then return error "XC0152" "Schema dependency could not be parsed"
   if (extra.flatMap (fun s => XSD11.refsOf s.loc s.doc)).any (fun uri => uri.startsWith "http:" || uri.startsWith "https:") then
@@ -419,13 +430,13 @@ def atomicPure (step : Node) (ports : List (String × List Document)) (env : XPa
       let key ← if group == "" then pure [] else eval ("data((" ++ group ++ "))") e
       pure (true, retainItems e 4096 key, documentNodes d)
     let nodes ← if source.isEmpty then pure [.element name (decls ++ attributes) []] else wrapSiblingGroups env name (decls ++ attributes) items
-    let base := (XML.findAttr "xml:base" attributes).getD env.baseUri
+    let base := (XML.findAttr "xml:base" attributes).getD ""
     pure (nodes.map (fun node => ({node, baseUri := base} : Document)))
   | "pack" =>
     let (name, decls) ← qualifyOption step "wrapper" env (← opt "wrapper-prefix" "") (← opt "wrapper-namespace" "")
     let alt := (ports.lookup "alternate").getD []
     let attributes ← wrapperAttributes step env
-    let base := (XML.findAttr "xml:base" attributes).getD env.baseUri
+    let base := (XML.findAttr "xml:base" attributes).getD ""
     pure ((List.range (max source.length alt.length)).map fun i =>
       ⟨.element name (decls ++ attributes) ((source[i]?.toList ++ alt[i]?.toList).flatMap documentNodes), "application/xml", base, [], none⟩)
   | "compare" =>
@@ -492,6 +503,15 @@ def atomicPure (step : Node) (ports : List (String × List Document)) (env : XPa
     let sameKind := target == origin
     let d := if sameKind then original else {original with properties := original.properties.filter (fun (k,_) => propertyName k != some ⟨"", "serialization", ""⟩)}
     let isData := tag d.node == "data" && ((ns d.node).lookup (XPath4.splitName (d.node.elementTag.getD "")).1).getD "" == "http://www.w3.org/ns/xproc-step"
+    let root := documentElement d
+    let isData := isData || (tag root == "data" && ((ns root).lookup (XPath4.splitName (root.elementTag.getD "")).1).getD "" == "http://www.w3.org/ns/xproc-step")
+    if isData && target == .binary then
+      if attr root "content-type" == "" then return ← error "XC0073" "c:data requires content-type"
+      if attr root "content-type" != ct then return ← error "XC0074" "c:data content-type differs from requested type"
+      if attr root "encoding" "base64" != "base64" then return ← error "XC0052" "unsupported c:data encoding"
+      let some bytes := XSD.parseBase64Lex root.textContent | error "XC0072" "invalid base64 data"
+      return [binaryDocument ⟨(bytes.map UInt8.ofNat).toArray⟩ ct d.baseUri d.properties]
+    let d := if isData then {d with node := root} else d
     let d ← if isData then do
       let declared := attr d.node "content-type"
       if declared == "" then error "XC0073" "c:data requires content-type" else
@@ -508,6 +528,17 @@ def atomicPure (step : Node) (ports : List (String × List Document)) (env : XPa
     let origin ← classifyMediaType d.contentType
     if !isData && (sameKind || ((origin == .xml || origin == .html) && (target == .xml || target == .html))) then
       pure [{d with contentType := ct}]
+    else if target == .binary then
+      pure [binaryDocument (← documentBytes d (← typedOption step "serialization" env "map{}") env) ct d.baseUri d.properties]
+    else if origin == .binary && target == .xml then
+      let value := seqString (xpathEnv (some d)) (d.value.getD [])
+      let node := .element "c:data" [⟨"xmlns:c", "http://www.w3.org/ns/xproc-step"⟩, ⟨"content-type", d.contentType⟩, ⟨"encoding", "base64"⟩] [.text value]
+      pure [{d with value := none, contentType := ct, node}]
+    else if origin == .binary && target == .text then
+      let some bytes := binaryBytes d | error "XD0038" "binary payload missing"
+      let media ← parseMediaType ct
+      let text ← decodeDocumentText bytes (media.parameters.lookup "charset")
+      pure [{d with node := .text text, value := none, contentType := ct}]
     else if target == .text then
       let text ← if origin == .xml || origin == .html then pure (String.join ((documentNodes d).map (·.serialize))) else
         match d.value with
@@ -523,13 +554,14 @@ def atomicPure (step : Node) (ports : List (String × List Document)) (env : XPa
       pure (docs.map (fun result => {result with contentType := ct, properties := d.properties}))
     else if target == .json && origin == .xml then
       let e := xpathEnv (some d) env.vars env.ns
-      if tag d.node == "param-set" && ((ns d.node).lookup (XPath4.splitName (d.node.elementTag.getD "")).1).getD "" == "http://www.w3.org/ns/xproc-step" then
-        let entries ← (kids d.node).mapM fun parameter => do
-          let key ← propertyQName {env with ns := ns parameter ++ ns d.node} (XPath4.Atomic.ofStr (attr parameter "name"))
+      let root := documentElement d
+      if tag root == "param-set" && ((ns root).lookup (XPath4.splitName (root.elementTag.getD "")).1).getD "" == "http://www.w3.org/ns/xproc-step" then
+        let entries ← (kids root).mapM fun parameter => do
+          let key ← propertyQName {env with ns := ns parameter ++ ns root} (XPath4.Atomic.ofStr (attr parameter "name"))
           pure (XPath4.Atomic.ofQN key, XPath4.sStr (attr parameter "value"))
         pure [{d with node := .text "", contentType := ct, value := some [.map entries]}]
       else
-        let json ← eval "xml-to-json(.)" e
+        let json ← eval "xml-to-json(/*)" e
         pure [{d with value := none, node := .text (seqString e json), contentType := ct}]
     else if target == .json then
       let e := {env with vars := (⟨"", "json", ""⟩, XPath4.sStr d.node.textContent) :: env.vars}
@@ -554,7 +586,7 @@ def atomicPure (step : Node) (ports : List (String × List Document)) (env : XPa
     let ct ← opt "override-content-type" "text/plain"
     if !(ct.contains "/") then error "XD0079" "invalid media type" else
     if !ct.startsWith "text/" || ["text/xml", "text/html"].contains ct then error "XC0001" "text-join requires a text media type" else
-    pure [⟨.text (pfx ++ String.intercalate sep (source.map (·.node.textContent)) ++ suffix), ct, env.baseUri, [], none⟩]
+    pure [⟨.text (pfx ++ String.intercalate sep (source.map (·.node.textContent)) ++ suffix), ct, "", [], none⟩]
   | "text-head" | "text-tail" =>
     let d ← oneSource source
     let count ← opt "count" "10"
@@ -655,7 +687,7 @@ def atomicPure (step : Node) (ports : List (String × List Document)) (env : XPa
       let group ← opt "group-adjacent" ""
       let transformed ← wrapDescendants context matching name (decls ++ attributes) group 4096 ⟨0,0,none⟩
       let node := if matching.contains 0 then .element name (decls ++ attributes) (documentNodes {node := transformed}) else transformed
-      return [{d with node, value := none}]
+      return [{d with node, value := none, contentType := "application/xml"}]
     let body ← match tag step with
       | "make-absolute-uris" =>
         if matching.any (fun i => ![XPath4.NKind.element, .attribute].contains (context.nrec ⟨0,i,none⟩).kind) then error "XC0023" "URI match must select elements or attributes" else

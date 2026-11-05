@@ -29,6 +29,9 @@ def updateProperties (env : XPath4.Env) (d : Document) (values : XPath4.Seq)
   for (key,value) in entries do
     let q := (propertyName key).getD ⟨"", "", ""⟩
     if q == ⟨"", "base-uri", ""⟩ then
+      if value.isEmpty then
+        result := {result with baseUri := ""}
+        continue
       let [.atom a] := value | error "XD0064" "base-uri must be one absolute URI"
       if !RDF.isAbsoluteIri a.str then return ← error "XD0064" "base-uri must be an absolute URI"
       result := {result with baseUri := a.str}
