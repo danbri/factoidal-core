@@ -4,7 +4,7 @@
 import createModule from "./.build/native-html/runtime/web-render.mjs";
 
 export type HTMLArtifact = {
-  abi:string; width:number; height:number; data:number[]; wgsl:string;
+  abi:string; width:number; height:number; data:number[]; wgsl:string; tiles:number[];
   primitiveCount:number; checks:{x:number;y:number;rgb:number[]}[];
   webRender:{links:unknown[][];[name:string]:unknown};
 };

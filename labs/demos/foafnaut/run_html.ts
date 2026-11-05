@@ -100,7 +100,7 @@ async function main() {
         const drawn=await session.draw();const finished=performance.now();
         trace("native-html-frame",{frame:++frameNumber,width,height,primitives:next.primitiveCount,wgslBytes:next.wgsl.length,dataFloats:next.data.length,
           layoutMs:ms(frameStart,compiled),sessionMs:ms(compiled,prepared),drawMs:ms(prepared,finished),totalMs:ms(frameStart,finished),
-          resizeToFrameMs:resizeAt===undefined?null:ms(resizeAt,finished),presented:drawn,steps:session.steps});
+          resizeToFrameMs:resizeAt===undefined?null:ms(resizeAt,finished),presented:drawn,steps:session.steps,pixelHash:session.pixelHash});
         resizeAt=undefined;
         if(drawn){
           frame=next;document=nextDocument;candidate=undefined;dirty=false;

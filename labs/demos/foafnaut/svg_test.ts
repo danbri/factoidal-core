@@ -169,7 +169,7 @@ Deno.test("SVG storage artifact stays bounded and uses compact data-driven geome
  equal(large.wgsl,e.compile(wrap('<circle r="1"/>')).wgsl);
  equal(large.binding,"read-only-storage");equal(large.primitiveCount,2000);equal(large.data.length,40008);
  assert(large.wgsl.includes("var<storage,read>"),"SVG is not storage backed");
- assert(large.wgsl.includes("for(var primitive=")&&large.wgsl.length<32768,"shader expands per primitive");
+ assert(large.wgsl.includes("for(var item=")&&large.wgsl.length<32768,"shader expands per primitive");
  rejects(()=>validateSVG({...large,binding:"uniform"}),"Invalid Lean SVG artifact");
  rejects(()=>validateSVG({...large,data:Array(262148).fill(0)}),"Invalid Lean SVG artifact");
  const points=Array.from({length:64},(_,i)=>`${i%8},${Math.floor(i/8)}`).join(' ');
