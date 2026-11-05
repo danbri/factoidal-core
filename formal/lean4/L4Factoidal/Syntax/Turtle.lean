@@ -2535,6 +2535,19 @@ def parseTurtle (text : String) (base : Option String := none) (mode : Mode := .
   | .error e     => .error e
   | .ok (ts, _) => .ok ts
 
+/-- `parseTurtle` with the fuel from `String.length`, which the runtime stores:
+no walk of the character list. -/
+def parseTurtleFast (text : String) (base : Option String := none) (mode : Mode := .rdf11) :
+    Except ParseError Graph :=
+  let cs := text.toList
+  match parseStatements (text.length + 2) (TurtleState.initChars cs base mode) 0 cs [] with
+  | .error e     => .error e
+  | .ok (ts, _) => .ok ts
+
+@[csimp] theorem parseTurtle_eq_fast : @parseTurtle = @parseTurtleFast := by
+  funext text base mode
+  simp only [parseTurtle, parseTurtleFast, String.length_toList]
+
 /-- `parseTurtle`, also returning the prefix map in force at the end of the
 document: every `@prefix` and `PREFIX` binding, MOST RECENT FIRST, a re-binding
 of a label shadowing the older one in front of it. A caller that wants each

@@ -245,6 +245,41 @@ def pstring (lit : String) (s : Chars) (pos : Nat) : PResult Unit :=
 def peekLit (lit : String) (s : Chars) (pos : Nat) : Bool :=
   matchLit lit.toList s pos
 
+/-- One character of `matchLitStr`: the offset into the literal, and the result so far. -/
+def peekLitStep (s : Chars) (pos : Nat) (st : Nat × Bool) (c : Char) : Nat × Bool :=
+  (st.1 + 1, st.2 && (pos + st.1 < s.size && charAt s (pos + st.1) == c))
+
+/-- `matchLit` on a literal given as a string: one pass over its UTF-8 bytes.
+`String.toList` on a short literal costs a heap vector and a list on each call. -/
+def matchLitStr (lit : String) (s : Chars) (pos : Nat) : Bool :=
+  (lit.foldl (peekLitStep s pos) (0, true)).2
+
+theorem peekLitStep_foldl (s : Chars) (pos : Nat) (l : List Char) : ∀ (i : Nat) (ok : Bool),
+    (l.foldl (peekLitStep s pos) (i, ok)).2 = (ok && matchLit l s (pos + i)) := by
+  induction l with
+  | nil => intro i ok; simp [matchLit]
+  | cons c rest ih =>
+    intro i ok
+    simp only [List.foldl_cons, peekLitStep, ih, matchLit]
+    have : pos + (i + 1) = pos + i + 1 := by omega
+    rw [this]
+    cases ok <;> simp [Bool.and_assoc]
+
+theorem matchLitStr_eq (lit : String) (s : Chars) (pos : Nat) :
+    matchLitStr lit s pos = matchLit lit.toList s pos := by
+  have h := peekLitStep_foldl s pos lit.toList 0 true
+  simpa [matchLitStr, String.foldl_eq_foldl_toList] using h
+
+def peekLitFast (lit : String) (s : Chars) (pos : Nat) : Bool := matchLitStr lit s pos
+@[csimp] theorem peekLit_eq_fast : @peekLit = @peekLitFast := by
+  funext lit s pos; simp [peekLit, peekLitFast, matchLitStr_eq]
+
+def pstringFast (lit : String) (s : Chars) (pos : Nat) : PResult Unit :=
+  if matchLitStr lit s pos then .ok () (pos + lit.length)
+  else .err s!"expected '{lit}'" pos
+@[csimp] theorem pstring_eq_fast : @pstring = @pstringFast := by
+  funext lit s pos; simp [pstring, pstringFast, matchLitStr_eq]
+
 /-- Require the single character `c` at `pos`. Port of F* `pchar`. -/
 def pchar (c : Char) (s : Chars) (pos : Nat) : PResult Unit :=
   if pos < s.size && charAt s pos == c then .ok () (pos + 1)
@@ -1031,6 +1066,116 @@ def parseAttributes (ents : EntityTable) (s : Chars) (pos : Nat) :
               else .ok (attr :: attrs) pos3
         else .ok [] pos1
 
+/-- **WFC: Unique Att Spec** over the attributes of a start tag, last first, each
+with the position after it: the order of the checks of `parseAttributes` when
+its recursion returns, so the error is the same one. -/
+def finishAttrsList : List (Attribute × Nat) → List Attribute → Nat → PResult (List Attribute)
+  | [], attrs, pos3 => .ok attrs pos3
+  | (a, p) :: acc, attrs, pos3 =>
+    if hasAttr a.name attrs then
+      .err s!"duplicate attribute name '{a.name}' (WFC: Unique Att Spec)" p
+    else finishAttrsList acc (a :: attrs) pos3
+
+/-- `finishAttrsList` with the names of `attrs` also in `seen`. -/
+def finishAttrsHash : List (Attribute × Nat) → List Attribute → Std.HashMap String Unit → Nat →
+    PResult (List Attribute)
+  | [], attrs, _, pos3 => .ok attrs pos3
+  | (a, p) :: acc, attrs, seen, pos3 =>
+    if seen.contains a.name then
+      .err s!"duplicate attribute name '{a.name}' (WFC: Unique Att Spec)" p
+    else finishAttrsHash acc (a :: attrs) (seen.insert a.name ()) pos3
+
+theorem finishAttrsHash_eq (acc : List (Attribute × Nat)) : ∀ (attrs : List Attribute)
+    (seen : Std.HashMap String Unit) (pos3 : Nat),
+    (∀ n, seen.contains n = hasAttr n attrs) →
+    finishAttrsHash acc attrs seen pos3 = finishAttrsList acc attrs pos3 := by
+  induction acc with
+  | nil => intro attrs seen pos3 _; rfl
+  | cons x acc ih =>
+    intro attrs seen pos3 h
+    obtain ⟨a, p⟩ := x
+    simp only [finishAttrsHash, finishAttrsList, h]
+    split
+    · rfl
+    · apply ih
+      intro n
+      rw [Std.HashMap.contains_insert, h]
+      simp [hasAttr]
+
+/-- `finishAttrsList`: by hash from 16 attributes, where a walk of the list per
+attribute starts to cost more than the table. -/
+def finishAttrs (acc : List (Attribute × Nat)) (pos3 : Nat) : PResult (List Attribute) :=
+  if acc.length < 16 then finishAttrsList acc [] pos3
+  else finishAttrsHash acc [] {} pos3
+
+theorem finishAttrs_eq (acc : List (Attribute × Nat)) (pos3 : Nat) :
+    finishAttrs acc pos3 = finishAttrsList acc [] pos3 := by
+  unfold finishAttrs
+  split
+  · rfl
+  · exact finishAttrsHash_eq acc [] {} pos3 (by intro n; simp [hasAttr])
+
+/-- `parseAttributes` as a loop: `acc` holds the attributes read so far, newest
+first. One attribute uses no stack, and the check is linear in the attributes. -/
+def parseAttributesLoop (ents : EntityTable) (s : Chars) (pos : Nat) (acc : List (Attribute × Nat)) :
+    Nat → PResult (List Attribute)
+  | 0 => finishAttrs acc pos
+  | fuel + 1 =>
+    if pos ≥ s.size then finishAttrs acc pos
+    else
+      match skipSpace1 s pos with
+      | .err _ _ => finishAttrs acc pos
+      | .ok _ pos1 =>
+        if pos1 < s.size && isNameStartChar (charAt s pos1) then
+          match parseAttribute ents s pos1 with
+          | .err m p => .err m p
+          | .ok attr pos2 => parseAttributesLoop ents s pos2 ((attr, pos2) :: acc) fuel
+        else finishAttrs acc pos1
+
+/-- What `parseAttributes` does with the result for the rest of the tag, for the
+attributes in `acc`. -/
+def resumeAttrs (acc : List (Attribute × Nat)) : PResult (List Attribute) → PResult (List Attribute)
+  | .err m p => .err m p
+  | .ok attrs pos3 => finishAttrsList acc attrs pos3
+
+theorem parseAttributesLoop_eq (ents : EntityTable) (s : Chars) (fuel : Nat) :
+    ∀ (pos : Nat) (acc : List (Attribute × Nat)),
+    parseAttributesLoop ents s pos acc fuel = resumeAttrs acc (parseAttributes ents s pos fuel) := by
+  induction fuel with
+  | zero => intro pos acc; simp [parseAttributesLoop, parseAttributes, resumeAttrs, finishAttrs_eq]
+  | succ f ih =>
+    intro pos acc
+    simp only [parseAttributesLoop, parseAttributes]
+    by_cases h0 : pos ≥ s.size
+    · simp [h0, resumeAttrs, finishAttrs_eq]
+    · simp only [if_neg h0]
+      cases hs : skipSpace1 s pos with
+      | err m p => simp [resumeAttrs, finishAttrs_eq]
+      | ok u pos1 =>
+        simp only []
+        by_cases h1 : (pos1 < s.size && isNameStartChar (charAt s pos1)) = true
+        · simp only [if_pos h1]
+          cases ha : parseAttribute ents s pos1 with
+          | err m p => simp [resumeAttrs]
+          | ok attr pos2 =>
+            simp only [ih]
+            cases parseAttributes ents s pos2 f with
+            | err m p => simp [resumeAttrs]
+            | ok attrs pos3 =>
+              simp only [resumeAttrs, finishAttrsList]
+              split <;> rfl
+        · simp only [if_neg h1]
+          simp [resumeAttrs, finishAttrs_eq]
+
+def parseAttributesFast (ents : EntityTable) (s : Chars) (pos : Nat) (fuel : Nat) :
+    PResult (List Attribute) :=
+  parseAttributesLoop ents s pos [] fuel
+
+@[csimp] theorem parseAttributes_eq_fast : @parseAttributes = @parseAttributesFast := by
+  funext ents s pos fuel
+  simp only [parseAttributesFast, parseAttributesLoop_eq]
+  cases parseAttributes ents s pos fuel <;> rfl
+
 /-! ## `[14] CharData` -/
 
 /-- True when the literal `]]>` occurs anywhere in `[start, stop)`.
@@ -1749,6 +1894,33 @@ that is not a `goto _start` (checked 2026-10-10 in
 and the form after §3.3.3's type-dependent step. -/
 def changedAttrs (before after : List Attribute) : List String :=
   (before.zip after).filterMap fun (b, a) => if b.value == a.value then none else some b.name
+
+/-- `changedAttrs` as a loop: `List.zip` uses one stack frame per attribute. -/
+def changedAttrsLoop : List Attribute → List Attribute → List String → List String
+  | b :: bs, a :: as, acc => changedAttrsLoop bs as (if b.value == a.value then acc else b.name :: acc)
+  | _, _, acc => acc.reverse
+
+theorem changedAttrsLoop_eq (before : List Attribute) : ∀ (after : List Attribute) (acc : List String),
+    changedAttrsLoop before after acc = acc.reverse ++ changedAttrs before after := by
+  induction before with
+  | nil => intro after acc; simp [changedAttrsLoop, changedAttrs]
+  | cons b bs ih =>
+    intro after acc
+    cases after with
+    | nil => simp [changedAttrsLoop, changedAttrs]
+    | cons a as =>
+      simp only [changedAttrsLoop, ih]
+      by_cases h : (b.value == a.value) = true
+      · have h' : b.value = a.value := by simpa using h
+        simp [changedAttrs, h']
+      · have h' : ¬ b.value = a.value := by simpa using h
+        simp [changedAttrs, h']
+
+def changedAttrsFast (before after : List Attribute) : List String := changedAttrsLoop before after []
+
+@[csimp] theorem changedAttrs_eq_fast : @changedAttrs = @changedAttrsFast := by
+  funext before after
+  simp [changedAttrsFast, changedAttrsLoop_eq]
 
 /-! ## `[39] element` -/
 

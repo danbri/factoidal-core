@@ -68,6 +68,8 @@ structure Tok where
   isEnd : Bool := false
   tagName : String := ""
   attrs : Array (String × String) := #[]
+  /-- The names in `attrs`, once `attrs` has `attrSeenFrom` entries. -/
+  attrSeen : Std.HashMap String Unit := {}
   hasCur : Bool := false
   curName : String := ""
   curVal : String := ""
@@ -121,6 +123,62 @@ def normalizeNewlinesImpl (cs : List Char) : List Char := normalizeNewlinesTR cs
 /-- The preprocessed input stream as an array. -/
 def normalizeNewlines (s : String) : Array Char := (normalizeNewlinesList s.toList).toArray
 
+/-- One character of `normalizeNewlinesFast`. The flag says that the last
+character was CR, so an LF now is the second half of a CR LF pair. -/
+def normalizeStep (st : Array Char × Bool) (c : Char) : Array Char × Bool :=
+  if c == '\r' then (st.1.push '\n', true)
+  else if c == '\n' && st.2 then (st.1, false)
+  else (st.1.push c, false)
+
+/-- `normalizeNewlines` in one pass over the string into an array of its final
+size: no list of characters, which costs three words per character. -/
+def normalizeNewlinesFast (s : String) : Array Char :=
+  (s.foldl normalizeStep (Array.emptyWithCapacity s.utf8ByteSize, false)).1
+
+/-- The list without a first LF. -/
+def dropLF : List Char → List Char
+  | '\n' :: r => r
+  | cs => cs
+
+theorem normalizeStep_foldl (cs : List Char) : ∀ (acc : Array Char) (cr : Bool),
+    (cs.foldl normalizeStep (acc, cr)).1 =
+      acc ++ (normalizeNewlinesList (if cr then dropLF cs else cs)).toArray := by
+  induction cs with
+  | nil => intro acc cr; cases cr <;> simp [dropLF, normalizeNewlinesList]
+  | cons c rest ih =>
+    intro acc cr
+    by_cases hr : c = '\r'
+    · subst hr
+      have hstep : normalizeStep (acc, cr) '\r' = (acc.push '\n', true) := by simp [normalizeStep]
+      have hne : ('\r' : Char) ≠ '\n' := by decide
+      have hnorm : normalizeNewlinesList ('\r' :: rest) = '\n' :: normalizeNewlinesList (dropLF rest) := by
+        cases rest with
+        | nil => simp [normalizeNewlinesList, dropLF]
+        | cons d r =>
+          by_cases hd : d = '\n'
+          · subst hd; simp [normalizeNewlinesList, dropLF]
+          · have : dropLF (d :: r) = d :: r := by simp [dropLF, hd]
+            rw [this]; simp [normalizeNewlinesList, hd]
+      cases cr <;> simp [List.foldl_cons, hstep, ih, dropLF, hnorm, hne]
+    · by_cases hn : c = '\n'
+      · subst hn
+        cases cr
+        · have hstep : normalizeStep (acc, false) '\n' = (acc.push '\n', false) := by simp [normalizeStep]
+          simp [List.foldl_cons, hstep, ih, normalizeNewlinesList]
+        · have hstep : normalizeStep (acc, true) '\n' = (acc, false) := by simp [normalizeStep]
+          simp [List.foldl_cons, hstep, ih, dropLF]
+      · have hstep : normalizeStep (acc, cr) c = (acc.push c, false) := by simp [normalizeStep, hr, hn]
+        have hd : dropLF (c :: rest) = c :: rest := by simp [dropLF, hn]
+        have hl : normalizeNewlinesList (c :: rest) = c :: normalizeNewlinesList rest := by
+          simp [normalizeNewlinesList, hr]
+        cases cr <;> simp [List.foldl_cons, hstep, ih, hd, hl]
+
+@[csimp] theorem normalizeNewlines_eq_fast : @normalizeNewlines = @normalizeNewlinesFast := by
+  funext s
+  have h := normalizeStep_foldl s.toList #[] false
+  simp only [Bool.false_eq_true, if_false, Array.empty_append] at h
+  simp [normalizeNewlines, normalizeNewlinesFast, String.foldl_eq_foldl_toList, h]
+
 /-- Parse errors of the input stream: control characters and noncharacters. -/
 def inputErrors (inp : Array Char) : Array String := Id.run do
   let mut errs : Array String := #[]
@@ -147,14 +205,27 @@ def Tok.adv (t : Tok) : Tok := { t with pos := t.pos + 1 }
 def Tok.to (t : Tok) (s : TS) : Tok := { t with st := s }
 
 def Tok.newTag (t : Tok) (isEnd : Bool) : Tok :=
-  { t with isEnd, tagName := "", attrs := #[], hasCur := false, curName := "", curVal := "", selfClose := false }
+  { t with isEnd, tagName := "", attrs := #[], attrSeen := {}, hasCur := false, curName := "", curVal := "",
+           selfClose := false }
+
+/-- From this many attributes, a tag finds a duplicate name by hash: a linear
+search per attribute makes a tag with n attributes cost n² comparisons. -/
+def attrSeenFrom : Nat := 16
 
 def Tok.finishAttr (t : Tok) : Tok :=
   if !t.hasCur then t
-  else if t.attrs.any (fun a => a.1 == t.curName) then
+  else if (if t.attrs.size < attrSeenFrom then t.attrs.any (fun a => a.1 == t.curName)
+           else t.attrSeen.contains t.curName) then
     { t with hasCur := false, curName := "", curVal := "", errs := t.errs.push "duplicate-attribute" }
   else
-    { t with hasCur := false, curName := "", curVal := "", attrs := t.attrs.push (t.curName, t.curVal) }
+    let attrs := t.attrs.push (t.curName, t.curVal)
+    let seen := t.attrSeen
+    let t := { t with attrSeen := {} }
+    let seen :=
+      if attrs.size < attrSeenFrom then seen
+      else if attrs.size == attrSeenFrom then attrs.foldl (fun m a => m.insert a.1 ()) seen
+      else seen.insert t.curName ()
+    { t with hasCur := false, curName := "", curVal := "", attrs, attrSeen := seen }
 
 def Tok.newAttr (t : Tok) : Tok :=
   let t := t.finishAttr

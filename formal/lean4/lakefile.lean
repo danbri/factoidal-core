@@ -833,6 +833,11 @@ lean_exe l4xproc where root := `L4Factoidal.XProc31.Runner
 -- construction tests (Harness/Html5lib.lean, tests/html5lib/run.sh).
 @[default_target] lean_exe «l4html5lib» where root := `Harness.Html5lib
 
+-- Single-stage runs and fixed inputs for the parse stack measures
+-- (tools/parse-bench.py, docs/20261105-parse-stack-perf.md).
+@[default_target] lean_exe «l4parse-bench» where root := `Harness.ParseBench
+@[default_target] lean_exe «l4parse-bench-query» where root := `Harness.ParseBenchQuery
+
 -- The DOM node tree as an arena in Lean (https://github.com/danbri/factoidal/issues/1167,
 -- milestone 6): DOM operation scripts compared with jsdom (Harness/Dom.lean,
 -- tests/dom/run.sh).

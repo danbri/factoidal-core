@@ -59,6 +59,28 @@ def isValidNCName (str : String) : Bool :=
   | [] => false
   | c :: rest => isNCNameStartChar c && rest.all isNCNameChar
 
+/-- One character of `isValidNCNameFast`: at the first character, and valid so far. -/
+def ncNameStep (st : Bool × Bool) (c : Char) : Bool × Bool :=
+  (false, st.2 && (if st.1 then isNCNameStartChar c else isNCNameChar c))
+
+/-- `isValidNCName` in one pass over the UTF-8 bytes, with no `List Char`. -/
+def isValidNCNameFast (str : String) : Bool :=
+  let r := str.foldl ncNameStep (true, true)
+  !r.1 && r.2
+
+theorem ncNameStep_rest (l : List Char) : ∀ (ok : Bool),
+    l.foldl ncNameStep (false, ok) = (false, ok && l.all isNCNameChar) := by
+  induction l with
+  | nil => intro ok; simp
+  | cons c rest ih => intro ok; simp [ncNameStep, ih, Bool.and_assoc]
+
+@[csimp] theorem isValidNCName_eq_fast : @isValidNCName = @isValidNCNameFast := by
+  funext str
+  simp only [isValidNCName, isValidNCNameFast, String.foldl_eq_foldl_toList]
+  cases str.toList with
+  | nil => simp
+  | cons c rest => simp [ncNameStep, ncNameStep_rest]
+
 /-! ## RDF/XML name and attribute constraints
 
 Everything below is RDF/XML's, not XML's. It is ported because the F*
