@@ -50,6 +50,50 @@ deno compile --no-check --no-config --no-npm --node-modules-dir=none --unstable-
   --include "$LAB/.build/engines/render-plan.wasm" \
   --output "$OUT/native-webgpu-svg-darwin-arm64.tmp" "$LAB/run_svg.ts"
 mv "$OUT/native-webgpu-svg-darwin-arm64.tmp" "$OUT/native-webgpu-svg-darwin-arm64"
+# The native HTML window. Builds supplies the checked web-render engine; a local
+# package with no engine has no window program, and says so.
+if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
+  mkdir -p "$LAB/.build/native-html/runtime"
+  cp "$LAB/.build/web-render/engines/web-render."{mjs,wasm} "$LAB/.build/native-html/runtime/"
+  deno compile --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-net --allow-ffi \
+    --include "$LAB/.build/native-html/runtime/web-render.wasm" \
+    --include "$LAB/.build/engines/render-plan.wasm" \
+    --include "$LAB/native-html/default.html" --include "$LAB/native-html/next.html" \
+    --output "$OUT/native-webgpu-html-darwin-arm64.tmp" "$LAB/run_html.ts"
+  mv "$OUT/native-webgpu-html-darwin-arm64.tmp" "$OUT/native-webgpu-html-darwin-arm64"
+else
+  echo 'No web-render engine: this package has no native HTML window' >&2
+fi
+# A double-click wrapper. macOS starts it in the desktop session, which WebGPU
+# needs. It stays beside the package files; it does not copy them.
+make_app() {
+  local name=$1 id=$2 command=$3 app="$OUT/$1.app"
+  rm -rf "$app"
+  mkdir -p "$app/Contents/MacOS"
+  cat > "$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>run</string>
+<key>CFBundleIdentifier</key><string>org.factoidal.$id.development</string>
+<key>CFBundleName</key><string>$name</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>NSHighResolutionCapable</key><true/>
+</dict></plist>
+PLIST
+  cat > "$app/Contents/MacOS/run" <<LAUNCHER
+#!/bin/sh
+set -eu
+cd "\$(dirname "\$0")/../../.."
+exec $command "\$@"
+LAUNCHER
+  chmod +x "$app/Contents/MacOS/run"
+}
+make_app FOAFNaut foafnaut './native-webgpu-ui-darwin-arm64 --demo foafnaut'
+if [ -x "$OUT/native-webgpu-html-darwin-arm64" ]; then
+  make_app 'Lean Browser' lean-browser './native-webgpu-html-darwin-arm64 --follow-links'
+fi
 cp "$LAB/"*.command "$LAB/run-demo.sh" "$LAB/summarize-input.py" "$OUT/"
 cp -R "$LAB/svg-fixtures" "$OUT/"
 mkdir -p "$OUT/foaf-fixtures"
@@ -93,4 +137,5 @@ trap - EXIT
 shasum -a 256 native-webgpu-ui-darwin-arm64 native-webgpu-lean-darwin-arm64 \
   native-webgpu-svg-darwin-arm64 libnative-window.dylib 'Solving Showcase.svg' \
   source-SHA256SUMS tool-versions.txt runtime-object-witness.txt > "$OUT/SHA256SUMS"
+if [ -x native-webgpu-html-darwin-arm64 ]; then shasum -a 256 native-webgpu-html-darwin-arm64 >> "$OUT/SHA256SUMS"; fi
 echo "Foafnaut native release directory: $OUT"
