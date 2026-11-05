@@ -922,6 +922,22 @@ much into it." "4. our npm already huge so pinned i guess".
 - Record: `docs/designissues/2026-11-03-font-trust-and-safety-policy.md`;
   tracking https://github.com/danbri/factoidal/issues/1233.
 
+### Observability from the start (owner, 2026-11-05)
+
+Owner, verbatim: "we must eng for observability, perf, debugging and automatic
+ai optimization from beginning."
+
+- Every stage of a browser host writes one JSON line for each unit of work, with
+  its time, its sizes and enough fields to name the slow stage. First instance:
+  `native-html-frame` and `native-html-pump-stall` in
+  `labs/demos/foafnaut/run_html.ts`.
+- A performance question gets a repeatable command that needs no person, so an
+  agent can change code, run it and compare. First instance: `--resize-sweep`,
+  read by `tools/native-frame-report.py`.
+- Cost of not having this: on 2026-11-05 an agent reported live reflow as a fix
+  from reading the code. The owner saw it still lag. The first trace showed 1.3 to
+  2.9 seconds per frame, nearly all in the GPU draw.
+
 ### One owner per release (owner, 2026-10-28)
 
 Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" and

@@ -21,6 +21,7 @@ export function loadNativeWindow() {
     ng_can_present: { parameters: [], result: "i32" },
     ng_show_after_surface: { parameters: [], result: "void" },
     ng_set_input_trace: { parameters: ["i32"], result: "void" },
+    ng_set_content_size: { parameters: ["u32","u32"], result: "void" },
     ng_clipboard_copy: { parameters: [], result: "pointer" },
     ng_free: { parameters: ["pointer"], result: "void" },
     ng_clipboard_write: { parameters: ["buffer"], result: "i32" },
@@ -47,6 +48,7 @@ export function loadNativeWindow() {
         throw new Error("Native clipboard write failed");
     },
     setInputTrace:(enabled:boolean)=>symbols.ng_set_input_trace(enabled?1:0),
+    setContentSize:(width:number,height:number)=>symbols.ng_set_content_size(width,height),
     create(width: number, height: number, title?:string) {
       const pointer = symbols.ng_create(width,height);
       if (!pointer) throw new Error("Native NSView creation failed or was called off the main thread");
