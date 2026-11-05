@@ -14,9 +14,12 @@ private def pixels (scene : Rendering.Scene) (w h : Nat) : Except String String 
   return "{\"width\":" ++ toString w ++ ",\"height\":" ++ toString h ++ ",\"pixels\":[" ++ String.intercalate "," values ++ "]}"
 
 /-- WebGPU artifact of one SVG file, with the log of what the forgiving pass removed. -/
-private def svgArtifact (source : String) (w h : Nat) : String :=
+private def svgArtifact (source : String) (w h : Nat) (font : Option String) : String :=
   let quoted := fun (line : String) => "\"" ++ (line.replace "\\" "\\\\" |>.replace "\"" "\\\"") ++ "\""
-  match NativeSVGForgiving.parse source w h >>= fun (scene,dropped) =>
+  let parsed := do
+    let font ← font.mapM NativeSVGForgiving.SVGFont.parse
+    NativeSVGForgiving.parse source w h font
+  match parsed >>= fun (scene,dropped) =>
       (scene.artifact).map (fun artifact => (artifact,scene.compiled.length,dropped)) with
   | .error message => WebRender.errorJSON message
   | .ok (artifact,count,dropped) =>
@@ -26,11 +29,13 @@ private def svgArtifact (source : String) (w h : Nat) : String :=
 def main (args : List String) : IO UInt32 := do
   match args with
   | path::width::height::flags =>
-    if flags == ["--svg"] then
+    let svgFont := match flags with | ["--svg","--svg-font",font] => some font | _ => none
+    if flags == ["--svg"] || svgFont.isSome then
       let some w := width.toNat? | throw (IO.userError "invalid width")
       let some h := height.toNat? | throw (IO.userError "invalid height")
       if w > 4096 || h > 4096 then throw (IO.userError "viewport exceeds 4096")
-      IO.println (svgArtifact (← IO.FS.readFile path) w h)
+      let font ← svgFont.mapM IO.FS.readFile
+      IO.println (svgArtifact (← IO.FS.readFile path) w h font)
       return 0
     if flags == ["--font-requests"] then
       IO.println (WebRenderFontRequests.compile (← IO.FS.readFile path))
@@ -45,7 +50,7 @@ def main (args : List String) : IO UInt32 := do
       | ["--font-data",path] | ["--font-data",path,"--pixels"] | ["--pixels","--font-data",path] => some path
       | _ => none
     if fontPath.isNone && (flags.any (fun flag => flag != "--pixels" && flag != "--rdf") || flags.eraseDups.length != flags.length) then
-      IO.eprintln "usage: web-render INPUT WIDTH HEIGHT [--svg | [--rdf | --font-data FONT_JSON] [--pixels]]"
+      IO.eprintln "usage: web-render INPUT WIDTH HEIGHT [--svg [--svg-font SVG_FONT] | [--rdf | --font-data FONT_JSON] [--pixels]]"
       return 2
     let some w := width.toNat? | throw (IO.userError "invalid width")
     let some h := height.toNat? | throw (IO.userError "invalid height")
@@ -78,5 +83,5 @@ def main (args : List String) : IO UInt32 := do
           else WebRender.compile source w.toUInt32 h.toUInt32)
     return 0
   | _ =>
-    IO.eprintln "usage: web-render INPUT WIDTH HEIGHT [--svg | [--rdf | --font-data FONT_JSON] [--pixels]]"
+    IO.eprintln "usage: web-render INPUT WIDTH HEIGHT [--svg [--svg-font SVG_FONT] | [--rdf | --font-data FONT_JSON] [--pixels]]"
     return 2
