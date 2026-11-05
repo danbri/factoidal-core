@@ -87,6 +87,34 @@ Deno.test("actual HTTP redirect, CSS and link retain final document base",async(
   }finally{await server.shutdown();}
 });
 
+Deno.test("XML pages run their XSLT stylesheet in Lean, and refusals are visible",async()=>{
+  for(const [name,title] of [["books-xslt1","Web standards reading (XSLT 1.0)"],["books-xslt4","Web standards reading (XSLT 4.0)"],["books-svg","Web standards reading as a chart"]]){
+    const document=await prepareHTML(engine,new URL(`./pages/${name}.xml`,import.meta.url).href);
+    assert.equal(document.title,title);
+    const artifact=document.compile(640,480);
+    assert(artifact.primitiveCount>0);
+    assert(artifact.webRender.links.some(row=>row[1]==="index.html"));
+  }
+  const dir=await Deno.makeTempDir({prefix:"factoidal-native-xslt-"});
+  const page=dir+"/p.xml",sheet=dir+"/s.xsl",url=pathToFileURL(page).href;
+  const xsl=(body:string,version="1.0")=>`<xsl:stylesheet version="${version}" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">${body}</xsl:stylesheet>`;
+  try{
+    await Deno.writeTextFile(page,'<?xml version="1.0"?><?xml-stylesheet type="text/xsl" href="s.xsl"?><r/>');
+    await assert.rejects(()=>prepareHTML(engine,url),/NotFound|No such file/);
+    await Deno.writeTextFile(sheet,xsl('<xsl:template match="/"><p>x</p></xsl:template>',"9.0"));
+    await assert.rejects(()=>prepareHTML(engine,url),/unsupported XSLT version/);
+    await Deno.writeTextFile(sheet,xsl('<xsl:template name="f"><xsl:call-template name="f"/></xsl:template><xsl:template match="/"><xsl:call-template name="f"/></xsl:template>'));
+    await assert.rejects(()=>prepareHTML(engine,url));
+    await Deno.writeTextFile(sheet,xsl('<xsl:template name="f"><xsl:call-template name="f"/></xsl:template><xsl:template match="/"><xsl:call-template name="f"/></xsl:template>',"3.0"));
+    await assert.rejects(()=>prepareHTML(engine,url));
+    // The engine must still work after a refused stylesheet.
+    assert((await prepareHTML(engine,new URL("./pages/books-xslt1.xml",import.meta.url).href)).compile(640,480).primitiveCount>0);
+    await Deno.writeTextFile(page,'<?xml version="1.0"?><?xml-stylesheet type="text/xsl" href="file:///etc/hosts"?><r/>');
+    await assert.rejects(()=>prepareHTML(engine,url));
+    assert.throws(()=>navigationURL("file:///etc/hosts","https://example.test/p.xml","https://example.test/p.xml"),/Remote HTML cannot/);
+  }finally{await Deno.remove(dir,{recursive:true});}
+});
+
 Deno.test("unsupported scripts, fonts and layout fail explicitly",async()=>{
   const dir=await Deno.makeTempDir({prefix:"factoidal-native-html-refusal-"});
   const path=dir+"/page.html",url=pathToFileURL(path).href;

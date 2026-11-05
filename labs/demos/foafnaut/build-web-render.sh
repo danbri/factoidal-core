@@ -30,10 +30,10 @@ PY
   cp -R "$TOOL_CACHE/." "$EM_CACHE/"
 fi
 fi
-CORE=(L4Factoidal.Rendering.Layout L4Factoidal.Rendering.Links L4Factoidal.XML.NamespaceView L4Factoidal.Tdb2.Format L4Factoidal.Rendering.FloatFormat L4Factoidal.Syntax.IriResolve L4Factoidal.Rendering.RdfView L4Factoidal.Rendering.FontRequests L4Factoidal.Unicode.BidiData)
+CORE=(L4Factoidal.Rendering.Layout L4Factoidal.Rendering.Links L4Factoidal.XML.NamespaceView L4Factoidal.Tdb2.Format L4Factoidal.Rendering.FloatFormat L4Factoidal.Syntax.IriResolve L4Factoidal.Rendering.RdfView L4Factoidal.Rendering.FontRequests L4Factoidal.Unicode.BidiData L4Factoidal.XSLT.Transform L4Factoidal.XSLT4.Transform)
 lake build "${CORE[@]}" L4Factoidal.Rendering.Tests L4Factoidal.Rendering.RdfViewTests L4Factoidal.Rendering.FontLayoutTests L4Factoidal.Rendering.FontFaceTests L4Factoidal.Rendering.FontProviderTests L4Factoidal.Rendering.FontDataTests
 export LEAN_PATH="$BUILD/olean:$PROJECT/.lake/build/lib/lean"
-LAB_MODULES=(Graphics GraphicsPrepared Font SVGPathData SVGCurves SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke SVG WebRenderSVG WebRender WebRenderRDF WebRenderFont WebRenderFontRequests WebRenderScript WebSelection WebDocument RenderPlan)
+LAB_MODULES=(Graphics GraphicsPrepared Font SVGPathData SVGCurves SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke SVG WebRenderSVG WebRender WebRenderRDF WebRenderFont WebRenderFontRequests WebRenderScript WebSelection WebXslt WebDocument RenderPlan)
 for module in "${LAB_MODULES[@]}"; do
   printf 'LEAN %s %s\n' "$module" "$(date -u)"
   lean -R "$LAB" -o "$BUILD/olean/$module.olean" -c "$BUILD/ir/$module.c" "$LAB/$module.lean"
@@ -53,7 +53,7 @@ def visit(module):
     seen.add(module); source=project/Path(*module.split('.')).with_suffix('.lean')
     for imported in re.findall(r'^import\s+(\S+)',source.read_text(),re.M): visit(imported)
     order.append(str(project/'.lake/build/ir'/Path(*module.split('.')).with_suffix('.c')))
-for module in ['L4Factoidal.Rendering.Layout','L4Factoidal.Rendering.Links','L4Factoidal.XML.NamespaceView','L4Factoidal.Tdb2.Format','L4Factoidal.Rendering.FloatFormat','L4Factoidal.Syntax.IriResolve','L4Factoidal.Rendering.RdfView','L4Factoidal.Rendering.FontRequests','L4Factoidal.Unicode.BidiData']: visit(module)
+for module in ['L4Factoidal.Rendering.Layout','L4Factoidal.Rendering.Links','L4Factoidal.XML.NamespaceView','L4Factoidal.Tdb2.Format','L4Factoidal.Rendering.FloatFormat','L4Factoidal.Syntax.IriResolve','L4Factoidal.Rendering.RdfView','L4Factoidal.Rendering.FontRequests','L4Factoidal.Unicode.BidiData','L4Factoidal.XSLT.Transform','L4Factoidal.XSLT4.Transform']: visit(module)
 Path(sys.argv[2]).write_text('\n'.join(order)+'\n')
 PY
 SOURCES=()

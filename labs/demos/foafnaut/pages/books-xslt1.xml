@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="books-xslt1.xsl"?>
+<library name="Web standards reading">
+ <book year="1999"><title>XSL Transformations 1.0</title><by>James Clark</by><pages>90</pages></book>
+ <book year="2017"><title>XSL Transformations 3.0</title><by>Michael Kay</by><pages>1000</pages></book>
+ <book year="2026"><title>XSL Transformations 4.0 draft</title><by>QT4 Community Group</by><pages>1100</pages></book>
+ <book year="2008"><title>SVG Tiny 1.2</title><by>Ola Andersson and others</by><pages>450</pages></book>
+</library>

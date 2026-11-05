@@ -47,6 +47,13 @@ export async function readSource(url:string,signal?:AbortSignal):Promise<{url:st
 }
 export async function prepareHTML(engine:HTMLEngine,url:string,signal?:AbortSignal) {
   const document=await readSource(url,signal),resources:HTMLResource[]=[];
+  // Lean finds the stylesheet and runs it. The host only fetches the bytes.
+  const xml=engine.xmlStylesheet(document.source,{url:document.url});
+  if(xml.url) {
+    navigationURL(xml.url,document.url,document.url);
+    const sheet=await readSource(xml.url,signal);
+    document.source=engine.xslt(document.source,{url:document.url,stylesheet:sheet.source,stylesheetURL:sheet.url}).source;
+  }
   const inspection=engine.inspect(document.source,{url:document.url});
   if(inspection.scripts.some(script=>script.kind!=="data"))
     throw new Error("Native HTML milestone does not execute scripts; classic/module script input is refused");
