@@ -27,11 +27,11 @@ def osInfoStep : IO (Result (List Document)) := do
       | [] | [_] => none
       | name::value => some (XML.Node.element "c:environment"
           [⟨"name",name⟩,⟨"value",String.intercalate "=" value⟩] [])
-    return .ok [{node := .element "c:result"
+    return .ok [{node := (.element "c:result"
       [⟨"xmlns:c","http://www.w3.org/ns/xproc-step"⟩,
        ⟨"file-separator","/"⟩,⟨"path-separator",":"⟩,
        ⟨"os-architecture",architecture⟩,⟨"os-name",osName⟩,⟨"os-version",osVersion⟩,
-       ⟨"cwd",cwd.toString⟩,⟨"user-name",user.stdout.trimAscii.toString⟩,⟨"user-home",home⟩] variables}]
+       ⟨"cwd",cwd.toString⟩,⟨"user-name",user.stdout.trimAscii.toString⟩,⟨"user-home",home⟩] variables)}]
   catch _ => return unsupported "os-info host metadata commands unavailable"
 
 def invisibleXmlStep (step : XML.Node) (ports : List (String × List Document))

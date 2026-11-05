@@ -41,14 +41,14 @@ def processOutputDocument (bytes : ByteArray) (contentType : String) : IO (Resul
     return .error e
 
 def processStep (step : XML.Node) (ports : List (String × List Document)) (env : XPath4.Env) : IO (Result (List (String × List Document))) := do
-  let options := do
+  let options : Result _ := do
     let sources := (ports.lookup "source").getD []
     if sources.length > 1 then error "XC0032" "os-exec accepts at most one input document" else pure ()
     let separator ← option step "path-separator" env "/"
     if separator.length != 1 then error "XC0063" "path-separator must contain one character" else pure ()
     let native := if System.Platform.isWindows then "\\" else "/"
     let command := (← option step "command" env).replace separator native
-    let args := (← processArguments step env).map (fun arg => arg.replace separator native)
+    let args := (← processArguments step env).map (fun (arg : String) => arg.replace separator native)
     let cwd := (← option step "cwd" env).replace separator native
     let threshold ← option step "failure-threshold" env
     let threshold ← if threshold == "" then pure none else match threshold.toInt? with
@@ -72,8 +72,8 @@ def processStep (step : XML.Node) (ports : List (String × List Document)) (env 
     | .ok docs => pure docs | .error e => return .error e
   let errors ← match ← processOutputDocument output.stderr errorType with
     | .ok docs => pure docs | .error e => return .error e
-  let status : Document := {node := .element "c:result"
-    [⟨"xmlns:c","http://www.w3.org/ns/xproc-step"⟩] [.text (toString output.exitCode)]}
+  let status : Document := {node := (.element "c:result"
+    [⟨"xmlns:c","http://www.w3.org/ns/xproc-step"⟩] [.text (toString output.exitCode)])}
   return .ok [("result",result),("error",errors),("exit-status",[status])]
 
 def processStepsRegression : IO Bool := do
