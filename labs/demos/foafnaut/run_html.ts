@@ -23,7 +23,7 @@ async function main() {
     else if(arg==="--resize-sweep")sweep=[[800,500],[700,500],[600,500],[500,500],[400,500],[800,300],[800,500]];
     else throw new Error(`Unknown native HTML argument: ${arg}`);
   }
-  url??=new URL("./native-html/default.html",import.meta.url).href;
+  url??=new URL("./pages/index.html",import.meta.url).href;
   const engine=await loadHTML();
   let document=await prepareHTML(engine,url),width=1280,height=800;
   let frame:HTMLArtifact=document.compile(width,height);
