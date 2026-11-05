@@ -120,6 +120,10 @@ static void resizeEvent(void) {
 @end
 
 int ng_is_main_thread(void) { return pthread_main_np(); }
+void ng_set_content_size(uint32_t width, uint32_t height) {
+  if (!pthread_main_np() || !window) return;
+  @autoreleasepool { [window setContentSize:NSMakeSize(width,height)]; }
+}
 void ng_set_input_trace(int enabled) { traceInput=enabled;rawMoveTraced=0;viewMoveTraced=0; }
 int ng_can_present(void) { return canPresent(); }
 void ng_show_after_surface(void) {
@@ -240,14 +244,18 @@ static int resizeEdges; // 1 left, 2 right, 4 bottom
 static NSPoint resizeMouse;
 static NSRect resizeFrame;
 static int beginEdgeResize(NSEvent *event) {
-  if (event.type!=NSEventTypeLeftMouseDown || event.window!=window) return 0;
+  if (event.type!=NSEventTypeLeftMouseDown) return 0;
   NSPoint p=[NSEvent mouseLocation];
   NSRect f=window.frame;
+  if (traceInput) fprintf(stderr,"native mouse down at %.1f,%.1f; window %.1f,%.1f %.1fx%.1f; event window %s\n",
+    p.x,p.y,f.origin.x,f.origin.y,f.size.width,f.size.height,event.window==window?"ours":"other");
+  if (event.window!=window) return 0;
   CGFloat m=5;
   if (p.y>NSMaxY(f)-m || p.x<NSMinX(f)-m || p.x>NSMaxX(f)+m || p.y<NSMinY(f)-m) return 0;
   int edges=(p.x<NSMinX(f)+m?1:0)|(p.x>NSMaxX(f)-m?2:0)|(p.y<NSMinY(f)+m?4:0);
   if (!edges) return 0;
   resizeEdges=edges; resizeMouse=p; resizeFrame=f;
+  if (traceInput) fprintf(stderr,"native edge resize begins, edges %d\n",edges);
   return 1;
 }
 static int continueEdgeResize(NSEvent *event) {

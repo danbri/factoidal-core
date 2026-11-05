@@ -221,3 +221,24 @@ release files; and all 11 installed released runtime/library hashes, sizes,
 and modes. Disk space was 3.6 GiB. No rebuild or repeat of the blocked direct
 Deno networking context was attempted. The November 3 five-group CPU/HTTP
 result remains historical evidence with its saved command, status and log.
+
+## Frame timing, 2026-11-05
+
+`run_html.ts` writes `native-html-frame` and `native-html-pump-stall` JSON lines.
+`--resize-sweep` steps the window through fixed sizes and exits, with no person;
+start it through `open`, then read it with `tools/native-frame-report.py`.
+
+Baseline, Apple M1 with other work running, default page (1,405 primitives), 7
+frames: median layout 157 ms, session 23 ms, draw and readback 2,035 ms, total
+2,222 ms; 1,696 ns of draw for each pixel. Draw time follows the pixel count:
+the fragment shader of `SVG.lean` loops over all primitives for every pixel.
+Edge drags now reach Lean during the drag (8 resize events, 7 frames, no pump
+stall in one human drag), but at this frame time few frames appear. Next: a
+primitive list for each screen tile.
+
+GPU step timing, same day and machine, `--resize-sweep`: at 1600 x 1000 the frame
+took 2,974 ms, of which `mapRead` (the wait for the GPU) took 2,745 ms and copying
+the readback out took 4 ms. The readback is not the cost; the shader is. A frame
+is 1,600,000 pixels x 4 samples x 1,405 primitives, about 9.0 billion primitive
+visits, or about 3.3 billion each second. Only polygons and paths have a bounds
+check, and the walk over the variable-length records is serial for each sample.

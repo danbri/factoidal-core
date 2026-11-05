@@ -13,7 +13,7 @@ export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.Unsa
   const plan={...await requestRenderPlan("svg-offscreen",format,frame,device.limits),format};
   const context=surface.getContext("webgpu") as GPUCanvasContext;
   const resources=await createPlanResources(device,plan,frame.wgsl);
-  let readback:GPUBuffer|undefined,disposed=false;
+  let readback:GPUBuffer|undefined,disposed=false,lastSteps:Record<string,number>={};
   try {
     readback=device.createBuffer({size:plan.readback!.bytes,usage:bufferUsage(plan.readback!.usage)});
     const lifecycle=new SurfaceLifecycle({
@@ -33,7 +33,10 @@ export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.Unsa
         try {
           device.queue.writeBuffer(resources.uniform,plan.uniform.offset,new Float32Array(frame.data));
           const interpreter=commandInterpreter(device,plan,resources,texture.createView(),{texture,readback});
-          for(const command of plan.commands)await interpreter.step(command);
+          // Time each Lean plan command: mapRead waits for the GPU to finish the frame.
+          const steps:Record<string,number>={};
+          for(const command of plan.commands){const start=performance.now();await interpreter.step(command);steps[command]=Math.round((performance.now()-start)*10)/10;}
+          lastSteps=steps;
           const bytes=interpreter.mapped();if(!bytes)throw new Error("Lean plan produced no native HTML readback");
           const pixels=unpad(bytes,plan.width,plan.height,plan.readback!.bytesPerRow);
           if(plan.format==="bgra8unorm")for(let i=0;i<pixels.length;i+=4){const b=pixels[i];pixels[i]=pixels[i+2];pixels[i+2]=b;}
@@ -48,6 +51,7 @@ export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.Unsa
         return true;
       },
       get frames(){return lifecycle.framesPresented;},
+      get steps(){return lastSteps;},
       dispose(){if(!disposed){disposed=true;context.unconfigure();readback!.destroy();resources.uniform.destroy();}},
     };
   } catch(error){readback?.destroy();resources.uniform.destroy();throw error;}
