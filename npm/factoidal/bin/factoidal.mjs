@@ -747,7 +747,7 @@ Specification: https://solidproject.org/TR/protocol`,
   'xmpp-serve': `factoidal xmpp-serve - serve XMPP (RFC 6120 and RFC 6121) over TCP, STARTTLS or direct TLS
 
 usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
-                            [--accounts FILE] [--cert FILE --key FILE [--starttls]]
+                            [--accounts FILE] [--cert FILE --key FILE [--starttls [--tls-port N]]]
                             [--ws-port N [--ws-path PATH] [--ws-origin ORIGIN]...]
                             [--muc DOMAIN] [--mix DOMAIN] [--gc3 DOMAIN]
                             [--state-key FILE] [--max-connections N]
@@ -774,6 +774,8 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
   --starttls       listen in clear and REQUIRE STARTTLS (RFC 6120 section 5)
                    before anything else; no SASL mechanism is offered and no
                    credential is accepted until the TLS handshake finishes
+  --tls-port N     with --starttls, also serve XEP-0368 direct TLS on port N,
+                   in the same server (the same rooms and sessions)
   --ws-port N      also serve XMPP over WebSocket (RFC 7395, the "xmpp"
                    subprotocol of RFC 6455) for browser clients such as
                    Strophe.js; wss: with --cert and --key, else loopback only
@@ -1217,7 +1219,7 @@ const VALUE_OPTIONS = {
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
-  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'mix', 'gc3', 'state-key', 'max-connections', 'login-timeout']),
+  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'tls-port', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'mix', 'gc3', 'state-key', 'max-connections', 'login-timeout']),
   'webdav-serve': new Set(['port', 'host', 'users', 'guest', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
@@ -2879,6 +2881,12 @@ async function commandXmppServe (positional, options) {
     settings.key = await fs.readFile(options.key)
   }
   if (startTls) settings.startTls = true
+  if (options['tls-port'] !== undefined) {
+    if (!startTls) throw new UsageError('--tls-port needs --starttls')
+    const tlsPort = Number(options['tls-port'])
+    if (!Number.isInteger(tlsPort) || tlsPort < 0 || tlsPort > 65535) throw new UsageError('--tls-port needs a port number')
+    settings.directTlsPort = tlsPort
+  }
   if (options['state-key'] !== undefined) {
     if (typeof options['state-key'] !== 'string') throw new UsageError('--state-key needs a FILE')
     // 64 hex digits or base64url of 32 bytes; the engine checks it.
@@ -2952,11 +2960,13 @@ async function commandXmppServe (positional, options) {
     if (settings.stateKey) err(`xmpp-serve: state kept across restarts in ${positional[0]}/state, sealed under the state key`)
     else err('xmpp-serve: WARNING: no --state-key: held messages, MIX channels and GC3 groups are lost at a restart, and rosters are written in clear')
   }
+  if (running.directOrigin && !quiet) err(`xmpp-serve: direct TLS (XEP-0368) on ${running.directOrigin}`)
   if (running.wsOrigin && !quiet) {
     err(`xmpp-serve: XMPP over WebSocket on ${running.wsOrigin}` +
         (settings.websocket.allowedOrigins.length ? ` for Origin ${settings.websocket.allowedOrigins.join(', ')}` : ' (no browser Origin allowed)'))
   }
   out(running.origin)
+  if (running.directOrigin) out(running.directOrigin)
   if (running.wsOrigin) out(running.wsOrigin)
   return untilInterrupted(running, quiet)
 }

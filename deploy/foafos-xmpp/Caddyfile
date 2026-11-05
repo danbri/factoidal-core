@@ -1,0 +1,23 @@
+# Caddy only gets and renews the certificate (ACME HTTP-01 through port 80).
+# The Node server does all TLS for XMPP. Port 8443 is not published.
+{
+	admin off
+	http_port 8080
+	https_port 8443
+	auto_https disable_redirects
+}
+
+https://{$XMPP_DOMAIN} {
+	bind 127.0.0.1
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+			disable_tlsalpn_challenge
+		}
+	}
+	respond "test XMPP service" 200
+}
+
+http:// {
+	respond "test XMPP service" 200
+}

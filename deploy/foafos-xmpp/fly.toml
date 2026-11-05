@@ -1,0 +1,57 @@
+# fly deploy --remote-only --ha=false   (from this directory)
+app = "foafos-xmpp"
+primary_region = "lhr"
+kill_signal = "SIGTERM"
+kill_timeout = "10s"
+
+[build.args]
+  FACTOIDAL_VERSION = "0.31.1"
+
+[env]
+  XMPP_DOMAIN = "foafos-xmpp.fly.dev"
+  XMPP_EXTRA_ARGS = ""
+
+[mounts]
+  source = "foafos_xmpp_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# Every service is raw TCP: Fly does not terminate TLS, the machine does.
+[[services]]
+  internal_port = 5223
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  min_machines_running = 1
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 256
+    soft_limit = 200
+  [[services.ports]]
+    port = 5223
+  [[services.tcp_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "120s"
+
+[[services]]
+  internal_port = 5281
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  min_machines_running = 1
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 256
+    soft_limit = 200
+  [[services.ports]]
+    port = 443
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  min_machines_running = 1
+  [[services.ports]]
+    port = 80
