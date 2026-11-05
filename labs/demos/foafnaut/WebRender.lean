@@ -11,15 +11,52 @@ open L4Factoidal
 private def quote (s : String) : String := "\"" ++ JSON.escapeString s ++ "\""
 def errorJSON (message : String) : String := "{\"error\":" ++ quote message ++ "}"
 
+/-- Lit runs of one bitmap row, left to right, as (x,width). -/
+def bitmapRuns (bits : Nat) : List (Nat × Nat) := Id.run do
+  let mut runs : Array (Nat × Nat) := #[]
+  let mut start : Option Nat := none
+  for x in [:6] do
+    let lit := x < 5 && bits / (2^(4-x)) % 2 == 1
+    match start,lit with
+    | none,true => start := some x
+    | some from_,false => runs := runs.push (from_,x-from_); start := none
+    | _,_ => pure ()
+  return runs.toList
+
+/-- Equal runs in touching rows become one rectangle. The lit area is unchanged;
+    every primitive costs the same at each later stage, so the count is the cost. -/
 def bitmapOutline (index : Nat) : List Rendering.Geometry := Id.run do
   let rows := NativeFont.bitmap (Char.ofNat index)
   let values := [rows.row0,rows.row1,rows.row2,rows.row3,rows.row4,rows.row5,rows.row6]
-  let mut out := []
+  let mut boxes : Array (Nat × Nat × Nat × Nat) := #[]
   for (bits,y) in values.zipIdx do
-    for x in [:5] do
-      if bits / (2^(4-x)) % 2 == 1 then
-        out := .rect (Float.ofNat x) (Float.ofNat y) 1 1 :: out
-  return out.reverse
+    for (x,w) in bitmapRuns bits do
+      match boxes.findIdx? (fun b => b.1 == x && b.2.1 == w && b.2.2.1+b.2.2.2 == y) with
+      | some i => boxes := boxes.modify i fun b => (b.1,b.2.1,b.2.2.1,b.2.2.2+1)
+      | none => boxes := boxes.push (x,w,y,1)
+  return boxes.toList.map fun (x,w,y,h) =>
+    .rect (Float.ofNat x) (Float.ofNat y) (Float.ofNat w) (Float.ofNat h)
+
+private def bitmapCovers (x y : Nat) : Rendering.Geometry → Bool
+  | .rect left top w h =>
+    left <= Float.ofNat x && Float.ofNat x+1 <= left+w && top <= Float.ofNat y && Float.ofNat y+1 <= top+h
+  | _ => false
+
+private def bitmapArea : Rendering.Geometry → Float
+  | .rect _ _ w h => w*h
+  | _ => 0
+
+/-- Each lit cell is covered, no unlit cell is, and the boxes do not overlap. -/
+private def bitmapOutlineExact (index : Nat) : Bool :=
+  let rows := NativeFont.bitmap (Char.ofNat index)
+  let values := [rows.row0,rows.row1,rows.row2,rows.row3,rows.row4,rows.row5,rows.row6]
+  let boxes := bitmapOutline index
+  let cells := values.zipIdx.flatMap fun (bits,y) =>
+    (List.range 5).map fun x => (x,y,bits / (2^(4-x)) % 2 == 1)
+  cells.all (fun (x,y,lit) => boxes.any (bitmapCovers x y) == lit) &&
+    boxes.foldl (fun a g => a+bitmapArea g) 0 == Float.ofNat (cells.filter (·.2.2)).length
+
+#guard (List.range 95).all fun n => bitmapOutlineExact (n+32)
 
 def asciiFont : Rendering.Layout.FontProfile :=
   {family := "factoidal-ascii-bitmap-v1",unitsPerEm := 7,advance := 6, ascent := 7,descent := 0,outline := bitmapOutline, admits := fun n => 32 <= n && n <= 126}

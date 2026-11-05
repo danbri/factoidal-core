@@ -1307,14 +1307,14 @@ private def Test.eval (env : Env) : Test → Bool
 private def Test.prepare (data : Array Float) : Test → Prepared Bool
   | .expr e => e.prepare data
   | .not a => (a.prepare data).map Bool.not
-  | .both a b => (a.prepare data).and (b.prepare data)
+  | .both a b => (a.prepare data).andThen (fun _ => b.prepare data)
   | .either a b => (a.prepare data).or (b.prepare data)
 private theorem Test.prepare_correct (data : Array Float) (test : Test) (env : Env) :
     (test.prepare data).eval env = test.eval {env with data := data} := by
   induction test with
   | expr e => exact Expr.prepare_correct data e env
   | _ => simp_all only [Test.prepare,Test.eval,Prepared.eval_map,
-      Prepared.eval_and,Prepared.eval_or]
+      Prepared.eval_and,Prepared.eval_or,Prepared.eval_andThen]
 private def Test.wgsl : Test → String
   | .expr e => e.wgsl | .not a => "!(" ++ a.wgsl ++ ")"
   | .both a b => "(" ++ a.wgsl ++ "&&" ++ b.wgsl ++ ")"
@@ -1864,14 +1864,30 @@ private def Primitive.coverageAt (primitive : BackendPrimitive) (data : Array Fl
       return hit
   return (fillHit,strokeHit)
 
+/-- `fillCondition` of a rectangle as plain code: the same Float operations in the same
+    order, with no closures or boxed values. `rectHit_eq_fillCondition` ties the two. -/
+private def rectHit (x y w h : Float) (q : Float × Float) : Bool :=
+  let px := q.1*Float.ofNat 1+q.2*Float.ofNat 0
+  let py := q.1*Float.ofNat 0+q.2*Float.ofNat 1
+  (decide (Float.ofNat 0 <= w) && decide (Float.ofNat 0 <= h)) &&
+    ((decide (x <= px) && decide (px <= x+w)) && (decide (y <= py) && decide (py <= y+h)))
+
+private theorem rectHit_eq_fillCondition (data : Array Float) (base : Nat) (a b c d : Float)
+    (q : Float × Float) :
+    rectHit data[base+0]! data[base+1]! data[base+2]! data[base+3]! q =
+      (fillCondition (.rect a b c d) base).eval {data,position := q} := rfl
+
 /-- Prepare un-clipped, un-dashed geometry once. Winding paths retain the
     reference edge traversal, with its edge count shared across all samples.
     Clipped and dashed geometry keeps every existing coverage check. -/
 private inductive PreparedCoverage where
+  | rectFill (inverse : Transform) (x y w h : Float)
   | analytic (inverse : Transform) (data : Array Float) (fill stroke : Prepared Bool)
   | reference (primitive : BackendPrimitive) (data : Array Float) (base : Nat)
 
 private def PreparedCoverage.eval : PreparedCoverage → (Float × Float) → Bool × Bool
+  | .rectFill inverse x y w h,position =>
+    (rectHit x y w h (inverse.apply position.1 position.2),false)
   | .analytic inverse data fill stroke,position =>
     let env : Env := {data,position := inverse.apply position.1 position.2}
     (fill.eval env,stroke.eval env)
@@ -1959,15 +1975,39 @@ private structure PreparedSample where
 private def PreparedSample.apply (p : PreparedSample) (position : Float × Float) (result : Color) : Color :=
   overColors p.fill p.stroke p.opacity (p.coverage.eval position) result
 
+/-- With no stroke paint the stroke's alpha is the literal 0 on both branches, so the
+    stroke test cannot change a sample. Text rectangles are this case. -/
+private theorem overColors_no_stroke (fill : List Float) (style : Style) (alpha opacity : Float)
+    (hits : Bool × Bool) (result : Color) :
+    overColors fill (resolved .none style alpha) opacity hits result =
+      overColors fill (resolved .none style alpha) opacity (hits.1,false) result := by
+  cases hits with
+  | mk a b => cases b <;> rfl
+
 private def Primitive.prepareSample (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedSample :=
-  ⟨p.prepareCoverage data base,
-    resolved p.style.fill p.style p.style.fillOpacity,
-    resolved p.style.stroke p.style p.style.strokeOpacity,p.effectiveOpacity⟩
+  let fill := resolved p.style.fill p.style p.style.fillOpacity
+  let stroke := resolved p.style.stroke p.style p.style.strokeOpacity
+  match p.clips,p.dashParts,p.geometry,p.style.stroke with
+  | [],none,.rect ..,.none =>
+    ⟨.rectFill p.transform.inverse data[base+0]! data[base+1]! data[base+2]! data[base+3]!,
+      fill,stroke,p.effectiveOpacity⟩
+  | _,_,_,_ => ⟨p.prepareCoverage data base,fill,stroke,p.effectiveOpacity⟩
 
 private theorem Primitive.prepareSample_correct (p : BackendPrimitive) (data : Array Float)
     (base : Nat) (position : Float × Float) (result : Color) :
     (p.prepareSample data base).apply position result = p.sampleStep data base position result := by
-  simp only [Primitive.prepareSample,PreparedSample.apply,Primitive.sampleStep,Primitive.prepareCoverage_correct]
+  simp only [Primitive.prepareSample]
+  split
+  next a b c d clips dash geo noStroke =>
+    have fillHit := rectHit_eq_fillCondition data base a b c d
+      (p.transform.inverse.apply position.1 position.2)
+    have covered : (p.coverageAt data base position).1 =
+        (fillCondition (.rect a b c d) base).eval
+          {data,position := p.transform.inverse.apply position.1 position.2} := by
+      simp [Primitive.coverageAt,clips,dash,geo]
+    simp only [PreparedSample.apply,PreparedCoverage.eval,Primitive.sampleStep,noStroke]
+    rw [overColors_no_stroke _ _ _ _ (p.coverageAt data base position),covered,fillHit]
+  next => simp only [PreparedSample.apply,Primitive.sampleStep,Primitive.prepareCoverage_correct]
 
 private def sampleFold (items : List BackendPrimitive) (data : Array Float) (position : Float × Float)
     (base : Nat) (initial : Color) : Color × Nat :=

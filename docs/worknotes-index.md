@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-05 | [Render performance pass and ESP32-P4 target](20261105-render-embedded-perf.md) | | |
 | 2026-11-04 | [Terminable renderer worker](20261104-renderer-worker.md) | pending | current — real WASM cancellation/recovery, bounded requests, retained hit metadata and host integration |
 | 2026-11-04 | [Renderer worker request and lifetime rules](designissues/2026-11-04-renderer-worker.md) | pending | current — foreground/Lean worker boundary, deadlines, generation checks and API controls |
 | 2026-11-03 | [Browser foundations progress](20261103-browser-foundations-progress.md) | pending | current — four surrogate cases executed, complete diagnostic audit, synchronous Lean DOM bridge, text-size reflow and original SVG Tiny admission baseline |
