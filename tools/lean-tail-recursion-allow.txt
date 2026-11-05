@@ -625,10 +625,7 @@ schemeBlind
 JsonLdApiProbe_unorderedNorm  # (b) harness comparison; nesting of a json-ld-star fromRdf result or fixture; fuel-bounded by Json.size; arrays via List.map
 OwlProbe_showCe  # (b) harness printer; class-expression nesting; operand lists via List.map
 sortStrings  # (c) Array.qsort left-partition recursion in the xmlconf harness; input: test ids of one manifest (at most 2,184); median-of-three pivot, expected depth O(log n), worst case n
-L4Factoidal_Codec_ofHex_go  # (c) private fixture decoder; only the three hex literals of Codec/Archive.lean; longest 1,024 bytes
 L4Factoidal_Crypto_hkdfBytesOfHex_go  # (c) private fixture decoder; only the RFC 5869 A.1 literals of Crypto/Hkdf.lean; longest 22 bytes
-L4Factoidal_Storage_LiteralGramIndexWire_bytesOfHexLiteral_go  # (c) private fixture decoder; only the two legacy LGI1/LGI2 literals; longest 806 bytes
-L4Factoidal_Storage_ShardManifest_swapLabelGo  # (c) private fixture helper; only the encodings of the fixed sample manifests of Storage/ShardManifest.lean (size not measured)
 L4Factoidal_XMPP_Server_run  # (c) private test driver of XMPP/Server.lean; its #guards pass at most 4 framing units
 L4Factoidal_OWL_SyntaxDL_listTriples  # (c) private test helper; its #guards pass lists of at most 3 terms
 L4Factoidal_OWL_Comp_interleave  # (c) called only by permutations
