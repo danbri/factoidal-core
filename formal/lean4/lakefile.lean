@@ -837,3 +837,6 @@ lean_exe l4xproc where root := `L4Factoidal.XProc31.Runner
 -- milestone 6): DOM operation scripts compared with jsdom (Harness/Dom.lean,
 -- tests/dom/run.sh).
 @[default_target] lean_exe «l4dom» where root := `Harness.Dom
+
+-- Lean shaping font adapter (https://github.com/danbri/factoidal/issues/1233). Not a default target.
+lean_exe «l4font-shape» where root := `L4Factoidal.Rendering.LeanFontShape

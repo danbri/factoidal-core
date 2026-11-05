@@ -20,6 +20,12 @@ also use OpenSSL for SHA-256. macOS uses CommonCrypto. No package downloads
 or global configuration changes occur in the build script.
 
 The CLI takes `FONT_FILE UTF8_TEXT INTEGER_PIXEL_SIZE [FACE_INDEX]`.
+With `FACE_INDEX --glyphs SCRIPT SPEC` it does not run HarfBuzz: SPEC is
+`id,cluster,xAdvance,yAdvance,xOffset,yOffset;...` from the Lean shaper
+(`l4font-shape`, https://github.com/danbri/factoidal/issues/1233), and the
+record says `"harfbuzzVersion": "none (Lean shaper)"`. FreeType still supplies
+outlines and coverage. See
+`docs/designissues/2026-11-03-font-trust-and-safety-policy.md` section 7.
 Success is exit0 with one `factoidal-font-data-v1` JSON object. A caller
 must check the exit status and discard stdout on any error. Diagnostics
 go to stderr; consumers must not treat partial output as valid font data.

@@ -80,8 +80,39 @@ static int positive_size(const char *s,unsigned *out) {
   if(errno || *end || n<1 || n>512 || *s=='-') return 0;
   *out=(unsigned)n; return 1;
 }
+/* One shaped glyph, from HarfBuzz or from the Lean shaper (--glyphs). */
+typedef struct { unsigned id,cluster; int xa,ya,xo,yo; } Shaped;
+/* Parse "id,cluster,xAdvance,yAdvance,xOffset,yOffset;..." with bounds. */
+static int parse_spec(const char *spec,Shaped **out,unsigned *count) {
+  size_t len=strlen(spec); if(len>4194304) return 0;
+  unsigned n=1; for(const char *q=spec;*q;++q) if(*q==';') ++n;
+  if(!*spec) n=0;
+  if(n>65536) return 0;
+  Shaped *g=calloc(n?n:1,sizeof(Shaped)); if(!g) return 0;
+  const char *q=spec;
+  for(unsigned i=0;i<n;++i) {
+    long v[6];
+    for(int k=0;k<6;++k) {
+      errno=0; char *end; v[k]=strtol(q,&end,10);
+      if(errno || end==q || v[k]<-1000000 || v[k]>1000000) { free(g); return 0; }
+      if(k<5) { if(*end!=',') { free(g); return 0; } q=end+1; }
+      else { if(*end!=';' && *end!=0) { free(g); return 0; } q=*end?end+1:end; }
+    }
+    if(v[0]<0 || v[1]<0) { free(g); return 0; }
+    g[i]=(Shaped){(unsigned)v[0],(unsigned)v[1],(int)v[2],(int)v[3],(int)v[4],(int)v[5]};
+  }
+  if(*q) { free(g); return 0; }
+  *out=g; *count=n; return 1;
+}
 int main(int argc,char **argv) {
-  if(argc!=4 && argc!=5) return fail("usage: font-shape FONT_FILE UTF8_TEXT PIXEL_SIZE [FACE_INDEX]");
+  /* --glyphs SCRIPT SPEC: FreeType only. The glyphs, clusters and positions
+   * come from the Lean shaper; HarfBuzz does not run. */
+  int lean_mode=argc==8 && strcmp(argv[5],"--glyphs")==0;
+  if(lean_mode) {
+    if(strlen(argv[6])!=4) return fail("script must be a 4-letter ISO 15924 code");
+    argc=5;
+  }
+  if(argc!=4 && argc!=5) return fail("usage: font-shape FONT_FILE UTF8_TEXT PIXEL_SIZE [FACE_INDEX] [--glyphs SCRIPT SPEC]");
   unsigned px;
   if(!positive_size(argv[3],&px)) return fail("pixel size must be an integer from1 through512");
   if(strlen(argv[2])>65536 || !valid_utf8((const unsigned char *)argv[2]))
@@ -102,27 +133,41 @@ int main(int argc,char **argv) {
   if(FT_New_Memory_Face(library,(const FT_Byte *)font_data,font_bytes,face_index,&face))
     return fail("FreeType rejected font or face index");
   if(!FT_IS_SCALABLE(face) || face->units_per_EM==0) return fail("scalable font required");
-  hb_face_t *hface=hb_face_create(blob,face_index);
-  hb_font_t *font=hb_font_create(hface);
-  hb_ot_font_set_funcs(font);
-  unsigned upem=hb_face_get_upem(hface);
-  if(upem!=face->units_per_EM) return fail("HarfBuzz and FreeType units-per-em disagree");
-  hb_font_set_scale(font,(int)upem,(int)upem);
-  hb_buffer_t *buffer=hb_buffer_create();
-  hb_buffer_set_cluster_level(buffer,HB_BUFFER_CLUSTER_LEVEL_MONOTONE_GRAPHEMES);
-  hb_buffer_add_utf8(buffer,argv[2],-1,0,-1);
-  hb_buffer_guess_segment_properties(buffer);
-  hb_shape(font,buffer,NULL,0);
-  if(!hb_buffer_allocation_successful(buffer)) return fail("HarfBuzz allocation failed");
-  unsigned count; hb_glyph_info_t *infos=hb_buffer_get_glyph_infos(buffer,&count);
-  hb_glyph_position_t *positions=hb_buffer_get_glyph_positions(buffer,NULL);
-  if(count>65536) return fail("shaped run exceeds65536 glyphs");
+  unsigned upem=face->units_per_EM;
+  hb_face_t *hface=NULL; hb_font_t *font=NULL; hb_buffer_t *buffer=NULL;
+  Shaped *shaped=NULL; unsigned count=0;
+  if(lean_mode) {
+    if(!parse_spec(argv[7],&shaped,&count)) return fail("invalid --glyphs specification");
+    if(count==0 && argv[2][0]) return fail("nonempty text has no glyphs");
+    for(unsigned i=0;i<count;++i) {
+      if(shaped[i].cluster>strlen(argv[2])) return fail("glyph cluster beyond text");
+      if(i && shaped[i].cluster<shaped[i-1].cluster) return fail("glyph clusters not monotone");
+    }
+  } else {
+    hface=hb_face_create(blob,face_index);
+    font=hb_font_create(hface);
+    hb_ot_font_set_funcs(font);
+    if(hb_face_get_upem(hface)!=face->units_per_EM) return fail("HarfBuzz and FreeType units-per-em disagree");
+    hb_font_set_scale(font,(int)upem,(int)upem);
+    buffer=hb_buffer_create();
+    hb_buffer_set_cluster_level(buffer,HB_BUFFER_CLUSTER_LEVEL_MONOTONE_GRAPHEMES);
+    hb_buffer_add_utf8(buffer,argv[2],-1,0,-1);
+    hb_buffer_guess_segment_properties(buffer);
+    hb_shape(font,buffer,NULL,0);
+    if(!hb_buffer_allocation_successful(buffer)) return fail("HarfBuzz allocation failed");
+    hb_glyph_info_t *infos=hb_buffer_get_glyph_infos(buffer,&count);
+    hb_glyph_position_t *positions=hb_buffer_get_glyph_positions(buffer,NULL);
+    if(count>65536) return fail("shaped run exceeds65536 glyphs");
+    shaped=calloc(count?count:1,sizeof(Shaped)); if(!shaped) return fail("glyph allocation failed");
+    for(unsigned i=0;i<count;++i) shaped[i]=(Shaped){infos[i].codepoint,infos[i].cluster,
+      positions[i].x_advance,positions[i].y_advance,positions[i].x_offset,positions[i].y_offset};
+  }
   /* Validate all unique glyph loads before writing any JSON. */
   unsigned char *seen=calloc((size_t)face->num_glyphs,1);
   if(!seen) return fail("glyph index allocation failed");
   uint64_t total_points=0;
   for(unsigned i=0;i<count;++i) {
-    unsigned id=infos[i].codepoint;
+    unsigned id=shaped[i].id;
     if(id>=(unsigned)face->num_glyphs) return fail("shaper returned out-of-range glyph");
     if(!seen[id]) {
       if(FT_Load_Glyph(face,id,FT_LOAD_NO_SCALE|FT_LOAD_NO_HINTING|FT_LOAD_NO_BITMAP))
@@ -155,16 +200,22 @@ int main(int argc,char **argv) {
   quoted(face->family_name); fputs(",\"style\":",stdout); quoted(face->style_name);
   printf(",\"unitsPerEm\":%u,\"ascender\":%d,\"descender\":%d,\"lineGap\":%d",upem,face->ascender,face->descender,face->height-face->ascender+face->descender);
   fputs(",\"coordinateSystem\":\"font units, positive y up\",\"clusterUnits\":\"UTF-8 byte offsets\",\"text\":",stdout); quoted(argv[2]);
-  fputs(",\"direction\":",stdout); quoted(hb_direction_to_string(hb_buffer_get_direction(buffer)));
-  char script[5]={0}; hb_tag_to_string(hb_script_to_iso15924_tag(hb_buffer_get_script(buffer)),script);
-  fputs(",\"script\":",stdout); quoted(script);
-  fputs(",\"language\":",stdout); quoted(hb_language_to_string(hb_buffer_get_language(buffer)));
-  printf(",\"harfbuzzVersion\":\"%s\",\"freeTypeVersion\":\"%d.%d.%d\",\"bitmapPixelSize\":%u",hb_version_string(),major,minor,patch,px);
+  if(lean_mode) {
+    fputs(",\"direction\":\"ltr\",\"script\":",stdout); quoted(argv[6]);
+    fputs(",\"language\":\"und\"",stdout);
+    printf(",\"harfbuzzVersion\":\"none (Lean shaper)\",\"freeTypeVersion\":\"%d.%d.%d\",\"bitmapPixelSize\":%u",major,minor,patch,px);
+  } else {
+    fputs(",\"direction\":",stdout); quoted(hb_direction_to_string(hb_buffer_get_direction(buffer)));
+    char script[5]={0}; hb_tag_to_string(hb_script_to_iso15924_tag(hb_buffer_get_script(buffer)),script);
+    fputs(",\"script\":",stdout); quoted(script);
+    fputs(",\"language\":",stdout); quoted(hb_language_to_string(hb_buffer_get_language(buffer)));
+    printf(",\"harfbuzzVersion\":\"%s\",\"freeTypeVersion\":\"%d.%d.%d\",\"bitmapPixelSize\":%u",hb_version_string(),major,minor,patch,px);
+  }
   fputs(",\"rasterMode\":\"FreeType normal grayscale, no hinting, no embedded bitmap\",\"glyphs\":[",stdout);
   for(unsigned i=0;i<count;++i) {
     if(i) putchar(',');
     printf("{\"id\":%u,\"cluster\":%u,\"xAdvance\":%d,\"yAdvance\":%d,\"xOffset\":%d,\"yOffset\":%d}",
-      infos[i].codepoint,infos[i].cluster,positions[i].x_advance,positions[i].y_advance,positions[i].x_offset,positions[i].y_offset);
+      shaped[i].id,shaped[i].cluster,shaped[i].xa,shaped[i].ya,shaped[i].xo,shaped[i].yo);
   }
   fputs("],\"outlines\":[",stdout); int first=1;
   FT_Outline_Funcs funcs={move_to,line_to,conic_to,cubic_to,0,0};
@@ -197,7 +248,10 @@ int main(int argc,char **argv) {
     fputs("]}",stdout);
   }
   fputs("]}\n",stdout);
-  free(seen); hb_buffer_destroy(buffer); hb_font_destroy(font); hb_face_destroy(hface);
+  free(seen); free(shaped);
+  if(buffer) hb_buffer_destroy(buffer);
+  if(font) hb_font_destroy(font);
+  if(hface) hb_face_destroy(hface);
   FT_Done_Face(face); FT_Done_FreeType(library); hb_blob_destroy(blob);
   return ferror(stdout)?1:0;
 }
