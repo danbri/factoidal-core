@@ -206,7 +206,7 @@ int ng_clipboard_write(const char *text) {
 // The standard menu. Quit reaches applicationShouldTerminate, which sends the host
 // a close event, and Close goes through windowShouldClose. Page keys stay with Lean.
 static void installMenu(void) {
-  NSString *name=NSProcessInfo.processInfo.processName;
+  NSString *name=[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleName"] ?: NSProcessInfo.processInfo.processName;
   NSMenu *bar=[[NSMenu alloc] init];
   NSMenuItem *appItem=[bar addItemWithTitle:name action:nil keyEquivalent:@""];
   NSMenu *appMenu=[[NSMenu alloc] initWithTitle:name];
