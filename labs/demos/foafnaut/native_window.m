@@ -218,6 +218,9 @@ void *ng_create(uint32_t width, uint32_t height) {
     content = [[NGView alloc] initWithFrame:NSMakeRect(0,0,width,height)];
     content.wantsLayer = YES;
     content.layer = [CAMetalLayer layer];
+    // Keep the drawn frame at its size during a resize; the default gravity
+    // scales the old image until the next frame.
+    content.layer.contentsGravity = kCAGravityTopLeft;
     window.contentView = content;
     [window makeFirstResponder:content];
     [window center];
@@ -229,6 +232,44 @@ void *ng_create(uint32_t width, uint32_t height) {
     [CATransaction flush];
     return (__bridge void *)content;
   }
+}
+// Window edge drag, done here so JS keeps running. In [NSApp sendEvent:] AppKit
+// tracks a resize in its own loop until the mouse is up, and this host only runs
+// JS between pumps, so Lean could not lay out the page during the drag.
+static int resizeEdges; // 1 left, 2 right, 4 bottom
+static NSPoint resizeMouse;
+static NSRect resizeFrame;
+static int beginEdgeResize(NSEvent *event) {
+  if (event.type!=NSEventTypeLeftMouseDown || event.window!=window) return 0;
+  NSPoint p=[NSEvent mouseLocation];
+  NSRect f=window.frame;
+  CGFloat m=5;
+  if (p.y>NSMaxY(f)-m || p.x<NSMinX(f)-m || p.x>NSMaxX(f)+m || p.y<NSMinY(f)-m) return 0;
+  int edges=(p.x<NSMinX(f)+m?1:0)|(p.x>NSMaxX(f)-m?2:0)|(p.y<NSMinY(f)+m?4:0);
+  if (!edges) return 0;
+  resizeEdges=edges; resizeMouse=p; resizeFrame=f;
+  return 1;
+}
+static int continueEdgeResize(NSEvent *event) {
+  if (!resizeEdges) return 0;
+  if (event.type==NSEventTypeLeftMouseUp) { resizeEdges=0; return 1; }
+  if (event.type!=NSEventTypeLeftMouseDragged) return 0;
+  NSPoint p=[NSEvent mouseLocation];
+  CGFloat dx=p.x-resizeMouse.x, dy=p.y-resizeMouse.y;
+  NSRect f=resizeFrame;
+  NSSize least=[window frameRectForContentRect:NSMakeRect(0,0,window.contentMinSize.width,window.contentMinSize.height)].size;
+  NSSize most=[window frameRectForContentRect:NSMakeRect(0,0,window.contentMaxSize.width,window.contentMaxSize.height)].size;
+  if (resizeEdges&2) f.size.width=MIN(MAX(resizeFrame.size.width+dx,least.width),most.width);
+  if (resizeEdges&1) {
+    f.size.width=MIN(MAX(resizeFrame.size.width-dx,least.width),most.width);
+    f.origin.x=NSMaxX(resizeFrame)-f.size.width;
+  }
+  if (resizeEdges&4) {
+    f.size.height=MIN(MAX(resizeFrame.size.height-dy,least.height),most.height);
+    f.origin.y=NSMaxY(resizeFrame)-f.size.height;
+  }
+  [window setFrame:f display:NO];
+  return 1;
 }
 void ng_pump(void) {
   if (!pthread_main_np()) return;
@@ -244,6 +285,7 @@ void ng_pump(void) {
         else if(event.type==NSEventTypeLeftMouseUp)tracePointer("raw",event,4,&rawMoveTraced);
         else if(event.type==NSEventTypeLeftMouseDragged)tracePointer("raw",event,3,&rawMoveTraced);
       }
+      if (continueEdgeResize(event) || beginEdgeResize(event)) continue;
       [NSApp sendEvent:event];
     }
     [NSApp updateWindows];
