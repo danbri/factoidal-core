@@ -29,7 +29,8 @@ lowering or delegates.
 
 This module delegates: BGP, JOIN, UNION, MINUS, `GRAPH <constant>`, the
 empty pattern, and FILTER / OPTIONAL whose condition is `backendLocal`
-are backend-native; every other arm materialises the dataset and runs
+are backend-native except JOIN directly involving SERVICE variables; that join
+and every other arm materialise the dataset and run
 the algebra evaluator. That is the SAME device the F* source uses for
 its own hard arms, applied to more of them.
 
@@ -151,6 +152,12 @@ def indexedDatasetBackend (ds : Dataset) : DatasetBackend :=
 Native arms recurse; every other arm materialises and delegates. See
 the module header for why, and for what that costs. -/
 
+/-- A SERVICE variable at a join boundary depends on the other operand's
+bindings. Evaluating the two operands independently loses that correlation. -/
+def serviceVarRoot : QueryPattern → Bool
+  | .serviceVar .. => true
+  | _ => false
+
 def evalPatternBackend (env : EvalEnv) (dsb : DatasetBackend) :
     QueryPattern → GraphBackend → SolutionSeq
   | .bgp b, gb => evalBgpBackend b gb
@@ -171,7 +178,16 @@ def evalPatternBackend (env : EvalEnv) (dsb : DatasetBackend) :
   -- The hash join, equal to `SPARQL.join` as a list (`hashJoin_eq_join`,
   -- `IndexedEvalRefinement.lean`), as `GraphPattern.evalIn` already uses.
   | .join p1 p2, gb =>
-      SPARQL.hashJoin (evalPatternBackend env dsb p1 gb) (evalPatternBackend env dsb p2 gb)
+      if serviceVarRoot p1 || serviceVarRoot p2 then
+        -- Delegate the whole join so the reference's per-binding endpoint
+        -- lookup runs before the SERVICE body. Delegating only the SERVICE
+        -- operand lowers with an empty seed and loses its endpoint binding.
+        let ds0 := materialiseDatasetBackend dsb
+        let gCurrent := backendSearch gb patternBoundAll
+        let ds := { ds0 with default := gCurrent }
+        (QueryPattern.join p1 p2).lowerWith env Binding.empty |>.evalIn ds gCurrent
+      else
+        SPARQL.hashJoin (evalPatternBackend env dsb p1 gb) (evalPatternBackend env dsb p2 gb)
   -- OPTIONAL stays on the backend path under the same condition the
   -- `.filter` arm uses: a `backendLocal` condition needs only the row,
   -- so existential substitution is a no-op and the condition the
