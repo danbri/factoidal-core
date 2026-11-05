@@ -72,6 +72,8 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-02 | [0.29 release public version pins](20261102-release-029-public-pins.md) | this commit | current |
 | 2026-10-31 | [Checked union-to-RDFS normalization preservation](20261031-union-rdfs-normalization-preservation.md) | 14f7a1f15 | current |
 | 2026-10-31 | [Concrete compositor union handoff](20261031-compositor-union-handoff.md) | cee2a223e | current |
+| 2026-11-01 | [GeoSPARQL FILTER planning: resumed verification](20261101-geosparql-planning-resume.md) | this commit | current: 341-module serial check passed; full gates and review pending |
+| 2026-11-01 | [GeoSPARQL FILTER planning: narrow source repair](designissues/2026-11-01-geosparql-filter-planning.md) | this commit | current: source repair; [resumed serial proof and result checks passed](20261101-geosparql-planning-resume.md); full gates and review pending |
 | 2026-10-31 | [Readable compositor evidence](20261031-compositor-evidence-explanations.md) | this commit | current |
 | 2026-10-31 | [Variable SERVICE backend correlation](20261031-service-variable-correlation.md) | pending | current |
 | 2026-10-29 | [Selectable static typing](20261029-static-typing.md) | eddfd724 | current: implementation, proof boundary and measurements |
