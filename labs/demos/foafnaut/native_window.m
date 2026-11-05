@@ -203,6 +203,23 @@ int ng_clipboard_write(const char *text) {
     return [board setString:value forType:NSPasteboardTypeString] ? 1 : 0;
   }
 }
+// Menu commands reach Lean as numbers. AppKit resolves the keyboard layout.
+@interface NGMenuTarget : NSObject
+@end
+@implementation NGMenuTarget
+- (void)command:(NSMenuItem *)item { enqueue(10,(int32_t)item.tag,0); }
+@end
+static NGMenuTarget *menuTarget;
+static NSMenuItem *commandItem(NSMenu *menu,NSString *title,NSString *key,NSInteger command) {
+  NSMenuItem *item=[menu addItemWithTitle:title action:@selector(command:) keyEquivalent:key];
+  item.target=menuTarget;item.tag=command;
+  return item;
+}
+// The same command under its shifted key: Command-+ and Command-_.
+static void hiddenCommand(NSMenu *menu,NSString *title,NSString *key,NSInteger command) {
+  NSMenuItem *item=commandItem(menu,title,key,command);
+  item.hidden=YES;item.allowsKeyEquivalentWhenHidden=YES;
+}
 // The standard menu. Quit reaches applicationShouldTerminate, which sends the host
 // a close event, and Close goes through windowShouldClose. Page keys stay with Lean.
 static void installMenu(void) {
@@ -214,6 +231,20 @@ static void installMenu(void) {
   [appMenu addItem:[NSMenuItem separatorItem]];
   [appMenu addItemWithTitle:[@"Quit " stringByAppendingString:name] action:@selector(terminate:) keyEquivalent:@"q"];
   appItem.submenu=appMenu;
+  menuTarget=[[NGMenuTarget alloc] init];
+  NSMenuItem *editItem=[bar addItemWithTitle:@"Edit" action:nil keyEquivalent:@""];
+  NSMenu *editMenu=[[NSMenu alloc] initWithTitle:@"Edit"];
+  commandItem(editMenu,@"Copy",@"c",4);
+  commandItem(editMenu,@"Select All",@"a",5);
+  editItem.submenu=editMenu;
+  NSMenuItem *viewItem=[bar addItemWithTitle:@"View" action:nil keyEquivalent:@""];
+  NSMenu *viewMenu=[[NSMenu alloc] initWithTitle:@"View"];
+  commandItem(viewMenu,@"Actual Size",@"0",3);
+  commandItem(viewMenu,@"Zoom In",@"=",1);
+  hiddenCommand(viewMenu,@"Zoom In",@"+",1);
+  commandItem(viewMenu,@"Zoom Out",@"-",2);
+  hiddenCommand(viewMenu,@"Zoom Out",@"_",2);
+  viewItem.submenu=viewMenu;
   NSMenuItem *windowItem=[bar addItemWithTitle:@"Window" action:nil keyEquivalent:@""];
   NSMenu *windowMenu=[[NSMenu alloc] initWithTitle:@"Window"];
   [windowMenu addItemWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
@@ -221,6 +252,17 @@ static void installMenu(void) {
   windowItem.submenu=windowMenu;
   NSApp.mainMenu=bar;
 }
+// Repeatable checks with no OS focus: real menu key matching, and input events.
+int ng_test_key(const char *key,int shift) {
+  if (!pthread_main_np() || !window || !key) return 0;
+  NSString *text=[NSString stringWithUTF8String:key];
+  NSEvent *event=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+    modifierFlags:NSEventModifierFlagCommand|(shift?NSEventModifierFlagShift:0) timestamp:0
+    windowNumber:window.windowNumber context:nil characters:text charactersIgnoringModifiers:text
+    isARepeat:NO keyCode:0];
+  return [NSApp.mainMenu performKeyEquivalent:event] ? 1 : 0;
+}
+void ng_test_event(uint32_t kind,int32_t a,int32_t b) { enqueue(kind,a,b); }
 void *ng_create(uint32_t width, uint32_t height) {
   if (!pthread_main_np() || window) return NULL;
   @autoreleasepool {

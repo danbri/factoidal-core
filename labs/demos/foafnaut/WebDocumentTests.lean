@@ -89,6 +89,33 @@ private def textScaleOptions (percent : JSON.Json) (op : String := "render") :=
 #guard (WebDocument.run "<p>A</p>" (textScaleOptions (.string "150")) 200 100).toOption.isNone
 #guard (WebDocument.run "<p>A</p>" (textScaleOptions (.number "49") "fontRequests") 200 100).toOption.isNone
 
+-- Selection and window commands: the host sends only numbers and positions.
+private def textOf (selection : JSON.Json) (html : String := "<p>Hello big world</p><p>Next</p>") : Option String := do
+  let output ← (WebDocument.run html (json [("op",.string "selectedText"),("selection",selection)]) 400 200).toOption
+  let (value,_) ← (JSON.parseJsonText output).toOption
+  match value.field? "text" with | some (.string text) => some text | _ => none
+#guard textOf (.string "all") == some "Hello big world\nNext"
+#guard textOf (.string "all") (html := "<p>one <b>two</b> three</p>") == some "one two three"
+#guard textOf (.array [.number "0",.number "0",.number "0",.number "0"]) == some ""
+#guard (textOf (.array [.number "0",.number "0"])).isNone
+#guard (WebDocument.run "<p>A</p>" (json [("selection",.string "all")]) 200 100).toOption.isSome
+private def primitives (request : JSON.Json) : Option JSON.Json := do
+  let output ← (WebDocument.run "<p>A</p>" request 200 100).toOption
+  let (value,_) ← (JSON.parseJsonText output).toOption
+  value.field? "primitiveCount"
+#guard primitives (json []) != primitives (json [("selection",.string "all")])
+private def menu (number : Nat) (percent : Nat := 100) : Option String :=
+  (WebDocument.run "" (json [("op",.string "command"),("command",.number (toString number)),("textScalePercent",.number (toString percent))]) 1 1).toOption
+#guard menu 1 == some "{\"action\":\"zoomIn\",\"textScalePercent\":110}"
+#guard menu 2 == some "{\"action\":\"zoomOut\",\"textScalePercent\":90}"
+#guard menu 3 200 == some "{\"action\":\"zoomReset\",\"textScalePercent\":100}"
+#guard menu 4 == some "{\"action\":\"copy\",\"textScalePercent\":100}"
+#guard menu 1 250 == some "{\"action\":\"zoomIn\",\"textScalePercent\":250}"
+#guard menu 9 == some "{\"action\":\"none\",\"textScalePercent\":100}"
+private def up (fx : String) : Option String :=
+  (WebDocument.run "" (json [("op",.string "pointerUp"),("selection",.array [.number "10",.number "10",.number fx,.number "10"])]) 1 1).toOption
+#guard up "11" == some "{\"action\":\"click\"}"
+#guard up "40" == some "{\"action\":\"select\"}"
 
 /-- Optional runtime evidence uses actual HarfBuzz/FreeType records generated
 from the requests above. It does not replace the pure cascade/request guards. -/

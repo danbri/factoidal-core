@@ -22,6 +22,8 @@ export function loadNativeWindow() {
     ng_show_after_surface: { parameters: [], result: "void" },
     ng_set_input_trace: { parameters: ["i32"], result: "void" },
     ng_set_content_size: { parameters: ["u32","u32"], result: "void" },
+    ng_test_key: { parameters: ["buffer","i32"], result: "i32" },
+    ng_test_event: { parameters: ["u32","i32","i32"], result: "void" },
     ng_clipboard_copy: { parameters: [], result: "pointer" },
     ng_free: { parameters: ["pointer"], result: "void" },
     ng_clipboard_write: { parameters: ["buffer"], result: "i32" },
@@ -47,6 +49,8 @@ export function loadNativeWindow() {
       if(!symbols.ng_clipboard_write(new TextEncoder().encode(text+"\0")))
         throw new Error("Native clipboard write failed");
     },
+    testKey:(key:string,shift=false)=>symbols.ng_test_key(new TextEncoder().encode(key+"\0"),shift?1:0)===1,
+    testEvent:(kind:number,a:number,b:number)=>symbols.ng_test_event(kind,a,b),
     setInputTrace:(enabled:boolean)=>symbols.ng_set_input_trace(enabled?1:0),
     setContentSize:(width:number,height:number)=>symbols.ng_set_content_size(width,height),
     create(width: number, height: number, title?:string) {
