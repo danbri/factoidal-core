@@ -105,8 +105,13 @@ private def jl : String := "{\"@id\":\"http://e/a\",\"http://e/p\":\"v\"}"
 -- every op of the dispatch table whose name says LWS storage is an op of
 -- `Wasm/Ops/Lws.lean` (the only file that can name the private handle table)
 -- with a role (`Ops.lwsOpRole`), and `lwsStep` is the only one that serves.
-#guard (fullNames.filter (fun n => n.startsWith "lws" && !n.startsWith "lwsClient")).all
+-- The LWS client ops (`lwsClient*`) and the dataset-view ops
+-- (`Ops.lwsDatasetOpNames`, `Wasm/Ops/LwsDataset.lean`, issue 1011) take no
+-- handle: they read the documents the client gives them, and have no role.
+#guard (fullNames.filter (fun n => n.startsWith "lws" && !n.startsWith "lwsClient" &&
+    !Ops.lwsDatasetOpNames.contains n)).all
   (fun n => Ops.lwsOpNames.contains n && (Ops.lwsOpRole n).isSome)
+#guard Ops.lwsDatasetOpNames.all (fun n => fullNames.contains n && (Ops.lwsOpRole n).isNone)
 #guard Ops.lwsOpNames.all (fun n => fullNames.contains n)
 #guard (fullNames.filter (fun n => Ops.lwsOpRole n == some .serve)).eraseDups == ["lwsStep"]
 

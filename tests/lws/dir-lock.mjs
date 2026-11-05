@@ -220,7 +220,7 @@ async function runCli (root) {
       assert(s.child !== undefined, `no start: ${s.stderr()}`)
       await stop(s.child)
       const text = s.stderr()
-      const warn = text.indexOf('EXPERIMENTAL UNREVIEWED CODE')
+      const warn = text.indexOf('EXPERIMENTAL UNDER-REVIEWED CODE')
       const notice = text.indexOf('encryption at rest is OFF')
       assert(warn >= 0 && notice > warn, `order or text: ${text}`)
       assert(text.includes('clear text') && text.includes('factoidal lws-keygen') &&

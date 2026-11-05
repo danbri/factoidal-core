@@ -795,12 +795,18 @@ protocol, auth/security code, CLIs etc (core library) “EXPERIMENTAL
 UNDEREEVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS
 WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.”"
 
-- The notice, spelled `EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.`, is at the top of `README.md`,
+- The notice, spelled `EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.`, is at the top of `README.md`,
   `npm/factoidal/README.md`, the hub index and the hub servers page, in the
   npm package description, in every `factoidal` help text, and on standard
   error when a server, client or key command starts (`REVIEW_WARNING` in
   `npm/factoidal/bin/factoidal.mjs`). A new server, protocol or security
   surface carries it too.
+- Spelling: "UNDER-REVIEWED". Owner, 2026-10-28, verbatim: "UNDER-REVIWED",
+  to the question "Should the notice say "UNREVIEWED" (what ships now and what
+  CLAUDE.md records) or "UNDER-REVIEWED"?"; then, 2026-11-03, "2 sure", to
+  the proposal to change only the notice to "UNDER-REVIEWED" everywhere.
+  Packages up to 0.29.0 carry "UNREVIEWED"; the change ships in the next
+  release.
 - AES (for XML Encryption and JWE, https://github.com/danbri/factoidal/issues/1081):
   WebCrypto on every JavaScript host, decisions in Lean, measured by vectors
   and a differential run. Owner, verbatim: "Why not just WebCrypto everywhere
@@ -1216,6 +1222,18 @@ commit-sized goal; ship code sketches, not "figure it out". When
 dispatching against the COTTAS backend or evaluator, the agent prompt
 MUST forbid additions to `experimental_ocaml_glue/` other than the
 rule-#11 acceptable forms.
+
+**Every agent pushes its work off the machine after each step that passes**
+(owner, 2026-11-01, verbatim: "I prefer main but any beanch is better than no
+effing backup"): commit and push to `wip/<issue>-<topic>`, land on `main` by
+PR when the gates pass. A brief never says "do not push"; it says "do not
+merge". **No Lean build artifacts on the owner's laptop** (owner, same day:
+"Don’t fill laptop with lean build artifacts!"): run Lean and wasm builds in
+cloud sessions or `danbri/factoidal-builds`, and remove a worktree's
+`formal/lean4/.lake` and `.wasm-work` once its commits are pushed. Cost: on
+2026-10-29 two agents briefed "not pushed" stopped at the usage limit with
+all work uncommitted and lost it; worktree build caches filled the laptop
+(more than 200 GB). Rule 3 of `skills/subagent-prompting/SKILL.md`.
 
 **Check `df -h /` before dispatching a worktree agent, cap concurrency at
 three, and remove each worktree in the same turn you land its commit.**

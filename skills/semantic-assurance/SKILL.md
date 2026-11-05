@@ -224,6 +224,14 @@ worknote index when new evidence changes a claim. Preserve contrary evidence
 and unresolved interpretation questions. Link them rather than hiding them
 behind an aggregate conformance percentage.
 
+
+Concrete graph-link example: [the public union adapter record](../../docs/20261031-compositor-union-handoff.md)
+connects `datasetGraphAsDefault` to `unionDefault_certified_graph`, including a
+mutation of the actual producer. The [checked normalization follow-up](../../docs/20261031-union-rdfs-normalization-preservation.md)
+connects the actual successful RDFS producer on certified inputs passing
+roundTripSafe. Accepted fallbacks outside that check remain an open agreement
+obligation. Do not infer failure from a false profile check.
+
 ## Rendering transformations
 
 See [SVG scene/compositor proof boundaries](../../docs/designissues/2026-11-01-svg-scene-compositor.md)

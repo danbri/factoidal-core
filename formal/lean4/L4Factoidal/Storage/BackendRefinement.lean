@@ -1462,6 +1462,12 @@ def NativeFrag : QueryPattern → Prop
   | .values _ _ => True
   | _ => False
 
+/-- SERVICE variable correlation is outside the existing native fragment.
+The fragment/theorem scope is unchanged by the whole-join delegation repair. -/
+theorem NativeFrag.serviceVarRoot_false {pattern : QueryPattern} (h : NativeFrag pattern) :
+    serviceVarRoot pattern = false := by
+  cases pattern <;> simp_all [NativeFrag, serviceVarRoot]
+
 /-- **The backend evaluator's WHERE answer is an answer SPARQL 1.1 allows**,
     for every pattern of `NativeFrag`: over a graph backend that reads the
     active graph `a`, and named backends that read the named graphs of `ds`
@@ -1486,7 +1492,7 @@ theorem evalPatternBackend_allowed (env : EvalEnv) (dsb : DatasetBackend) (ds : 
   | .join l r, hp, gb, a, hr => by
     have e : evalPatternBackend env dsb (.join l r) gb =
         SPARQL.hashJoin (evalPatternBackend env dsb l gb) (evalPatternBackend env dsb r gb) := by
-      simp [evalPatternBackend]
+      simp [evalPatternBackend, hp.1.serviceVarRoot_false, hp.2.serviceVarRoot_false]
     rw [e, SPARQL.hashJoin_eq_join]
     exact .join (evalPatternBackend_allowed env dsb ds hn hnd l hp.1 gb a hr)
       (evalPatternBackend_allowed env dsb ds hn hnd r hp.2 gb a hr)
