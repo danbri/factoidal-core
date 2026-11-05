@@ -67,14 +67,56 @@ def renderList : List Node → String
 
 end
 
+/-! ## Restricted XML (RFC 6120 section 11.1)
+
+XMPP is a restricted subset of XML: a stanza must not hold a DTD, a comment
+or a processing instruction. `L4Factoidal.XML` rightly accepts all three, as a
+conformant parser must, so the restriction is here, where XMPP uses it. A DTD
+is refused before the parser sees the text, because declaring entities is what
+gives a short input a long parse; comments and processing instructions are
+refused after, and so never reach a recipient. -/
+
+/-- What follows the first `pat` in the characters, or nothing. -/
+private def dropPast (pat : List Char) : List Char → List Char
+  | [] => []
+  | l@(_ :: rest) => if pat.isPrefixOf l then l.drop pat.length else dropPast pat rest
+
+/-- Does this prolog hold a `<!DOCTYPE`? A `[28] doctypedecl` can stand only
+before the root element, so reading stops at the first thing that is not
+whitespace, a comment or a processing instruction. `fuel` is the length: each
+step consumes at least one character. -/
+def prologHasDoctype : Nat → List Char → Bool
+  | 0, _ => false
+  | _ + 1, [] => false
+  | n + 1, l@(c :: rest) =>
+    if c == ' ' || c == '\t' || c == '\n' || c == '\r' then prologHasDoctype n rest
+    else if "<!DOCTYPE".toList.isPrefixOf l then true
+    else if "<!--".toList.isPrefixOf l then prologHasDoctype n (dropPast "-->".toList rest)
+    else if "<?".toList.isPrefixOf l then prologHasDoctype n (dropPast "?>".toList rest)
+    else false
+
+/-- Is there a comment or a processing instruction in these nodes, at any
+depth? A worklist, because stanzas come from the network: stack use must not
+grow with their depth. `fuel` must exceed the number of nodes; running out
+counts as yes, so a mistake refuses a stanza rather than passes one. -/
+def holdsRestricted : Nat → List Node → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | _ + 1, .comment _ :: _ => true
+  | _ + 1, .pi _ _ :: _ => true
+  | n + 1, .element _ _ children :: rest => holdsRestricted n (children ++ rest)
+  | n + 1, _ :: rest => holdsRestricted n rest
+
 /-- Parse a complete element (a stanza, `<stream:features>`, ...) via the
 real XML parser. `L4Factoidal.XML.parseXML` accepts a document with no
 XML declaration, so a bare `<message>...</message>` string parses fine —
-its `.root` is exactly the element. -/
+its `.root` is exactly the element. What RFC 6120 section 11.1 forbids is
+refused, as if it did not parse. -/
 def parseElement (s : String) : Option Node :=
-  match L4Factoidal.XML.parseXML s with
-  | .ok doc => some doc.root
-  | .error _ => none
+  if prologHasDoctype s.length s.toList then none
+  else match L4Factoidal.XML.parseXML s with
+    | .ok doc => if holdsRestricted (s.length + 1) [doc.root] then none else some doc.root
+    | .error _ => none
 
 -- ## The one thing `L4Factoidal.XML` doesn't cover: an unclosed root.
 -- Minimal fuel-bounded helpers, narrowly scoped to "one opening tag,"

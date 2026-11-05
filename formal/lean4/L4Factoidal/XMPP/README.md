@@ -446,6 +446,7 @@ reached through an XMPP account). Plan and choices:
   roster logic yet); and `step`, one stanza in, stanzas out, as a
   `WebDAV.Prog`. Methods: the XEP's eight plus the RFC 4918 methods
   (implementer choice; the target is `webdav-serve`); CONNECT refused.
+- `RestrictedXmlTests.lean` — `#guard`s for RFC 6120 section 11.1: what `Wire.parseElement` refuses, and what it must still accept.
 - `HttpOverXmppTests.lean` — end-to-end `#guard`s: XEP-0332 stanza text
   through `step` and `WebDAV.handle` against the reference LWS server over a
   model storage (PROPFIND gives 207, chunked bodies both ways, `forbidden`
