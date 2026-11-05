@@ -20,6 +20,13 @@ mkdir -p "$LAB/.build"
 # The status note is rendered by this engine; its HTML must match its Markdown.
 python3 "$LAB/../../../tools/status-to-html.py" "$LAB/../../../docs/web/hub/foafnaut2525-status.md" \
   "$LAB/web-render/fixtures/status.html" --check
+# The demo pages match their sources, and each one does what its manifest says.
+python3 "$LAB/../../../tools/build-demo-pages.py" --check
+if [ -x "$LAB/.build/web-render/web-render-native" ]; then
+  python3 "$LAB/../../../tools/check-demo-pages.py" "$LAB/.build/web-render/web-render-native"
+else
+  echo 'NOT RUN: check-demo-pages.py needs web-render-native, which this build does not have yet'
+fi
 # The native HTML tests need the web-render engine, which Builds makes after this
 # step in its engines job and before it in its macOS job, and more permissions.
 TESTS=()

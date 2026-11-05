@@ -1,0 +1,53 @@
+{
+ "pages": [
+  {
+   "page": "index.html",
+   "title": "Demo index"
+  },
+  {
+   "page": "status.html",
+   "title": "Project status",
+   "source": "../../../../docs/web/hub/foafnaut2525-status.md",
+   "size": [
+    680,
+    1500
+   ]
+  },
+  {
+   "page": "markdown-sample.html",
+   "title": "Markdown sample",
+   "source": "source/markdown-sample.md"
+  },
+  {
+   "page": "foaf-graph.html",
+   "title": "FOAF graph (static)",
+   "source": "source/foaf-graph.svg",
+   "size": [
+    1040,
+    800
+   ]
+  },
+  {
+   "page": "svg-gallery.html",
+   "title": "SVG gallery",
+   "source": "../svg-fixtures/gallery.svg"
+  },
+  {
+   "page": "svg-affine.html",
+   "title": "SVG transforms",
+   "source": "../svg-fixtures/affine.svg"
+  },
+  {
+   "page": "svg-linear-paths.html",
+   "title": "SVG paths",
+   "source": "../svg-fixtures/linear-paths.svg"
+  },
+  {
+   "page": "solving-showcase.html",
+   "title": "Solving showcase",
+   "source": "source/solving-showcase.svg",
+   "refused": "invalid CSS number",
+   "issue": "https://github.com/danbri/factoidal/issues/1247"
+  }
+ ]
+}

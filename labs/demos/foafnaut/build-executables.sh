@@ -59,7 +59,7 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
     --allow-read --allow-net --allow-ffi \
     --include "$LAB/.build/native-html/runtime/web-render.wasm" \
     --include "$LAB/.build/engines/render-plan.wasm" \
-    --include "$LAB/native-html/default.html" --include "$LAB/native-html/next.html" \
+    --include "$LAB/native-html/default.html" --include "$LAB/native-html/next.html" --include "$LAB/pages" \
     --output "$OUT/native-webgpu-html-darwin-arm64.tmp" "$LAB/run_html.ts"
   mv "$OUT/native-webgpu-html-darwin-arm64.tmp" "$OUT/native-webgpu-html-darwin-arm64"
 else
