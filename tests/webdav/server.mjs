@@ -1,6 +1,6 @@
 // Host tests of `factoidal webdav-serve` (https://github.com/danbri/factoidal/issues/1066).
 //
-//   node tests/webdav/server.mjs
+//   node tests/webdav/server.mjs [--cli PATH]
 //
 // Emergency mode (https://github.com/danbri/factoidal/issues/1147): the
 // server is read only, every request acts as one named user (the --guest
@@ -24,7 +24,7 @@
 import { spawn } from 'node:child_process'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { keyPair, didKeyOf } from '../authz/fixtures.mjs'
 
@@ -66,10 +66,20 @@ function assert (condition, message) {
   if (!condition) throw new Error(message)
 }
 
-const CLI = fileURLToPath(new URL('../../npm/factoidal/bin/factoidal.mjs', import.meta.url))
+const cliArgs = process.argv.slice(2)
+if (cliArgs.length !== 0 && (cliArgs.length !== 2 || cliArgs[0] !== '--cli' || !cliArgs[1])) {
+  throw new Error('usage: node tests/webdav/server.mjs [--cli PATH]')
+}
+const explicitCli = cliArgs.length !== 0
+const CLI = explicitCli ? resolvePath(cliArgs[1]) : fileURLToPath(new URL('../../npm/factoidal/bin/factoidal.mjs', import.meta.url))
+const [CLI_EXE, ...CLI_LEAD] = /\.(mjs|cjs|js)$/.test(CLI) ? [process.execPath, CLI] : [CLI]
+console.log(`webdav server: CLI checks use ${CLI}`)
+// The seed client and the login-cache API check still use the repository host
+// and its engine assets (FACTOIDAL_L4_ASSETS can select external assets).
+console.log('webdav server: seed client and login-cache API check use repository host/engine assets')
 
 function start (args) {
-  const child = spawn(process.execPath, [CLI, ...args], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, FACTOIDAL_LWS_KEY: '' } })
+  const child = spawn(CLI_EXE, [...CLI_LEAD, ...args], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, FACTOIDAL_LWS_KEY: '' } })
   return new Promise((resolve, reject) => {
     let out = ''
     let errText = ''
@@ -80,13 +90,15 @@ function start (args) {
       if (m) { clearTimeout(timer); resolve({ child, origin: m[1], errText: () => errText }) }
     })
     child.stderr.on('data', (c) => { errText += c })
+    child.on('error', (error) => { clearTimeout(timer); reject(error) })
     child.on('exit', (code) => { clearTimeout(timer); reject(Object.assign(new Error(`exited ${code}: ${out} ${errText}`), { code, out, errText })) })
   })
 }
 
 function run (args) {
-  const child = spawn(process.execPath, [CLI, ...args], { stdio: ['ignore', 'pipe', 'pipe'] })
-  return new Promise((resolve) => {
+  const child = spawn(CLI_EXE, [...CLI_LEAD, ...args], { stdio: ['ignore', 'pipe', 'pipe'] })
+  return new Promise((resolve, reject) => {
+    child.on('error', reject)
     let out = ''
     let errText = ''
     child.stdout.on('data', (c) => { out += c })
@@ -97,9 +109,10 @@ function run (args) {
 
 /** Run the CLI with `input` on standard input (not a terminal). */
 function runWithInput (args, input) {
-  const child = spawn(process.execPath, [CLI, ...args], { stdio: ['pipe', 'pipe', 'pipe'] })
+  const child = spawn(CLI_EXE, [...CLI_LEAD, ...args], { stdio: ['pipe', 'pipe', 'pipe'] })
   child.stdin.end(input)
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    child.on('error', reject)
     let out = ''
     let errText = ''
     child.stdout.on('data', (c) => { out += c })
@@ -338,6 +351,11 @@ async function main () {
     try {
       lws = await start(['lws-serve', join(dir, 'lws'), '--port', '0', '--authz', join(dir, 'lws-as'), '--owner', did, '--quiet'])
     } catch (error) {
+      if (explicitCli) {
+        failed += 1
+        failures.push(`packaged CLI lws-serve did not start: ${error.message}`)
+        return
+      }
       console.log(`  skip  every check - lws-serve did not start: ${error.message}`)
       skipped += 1
       return

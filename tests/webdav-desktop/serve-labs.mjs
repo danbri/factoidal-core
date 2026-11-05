@@ -8,10 +8,10 @@
 //
 // What it does:
 //   1. makes a temporary CONFIGDIR with one mount file per tree of
-//      labs/filetrees/trees.mjs (`kind: local`, `storage: files`);
-//   2. starts `factoidal webdav-serve CONFIGDIR --port 0`;
-//   3. puts each tree into its mount with MKCOL and PUT, straight to the
-//      server (not through the proxy), and writes seed.json;
+//      labs/filetrees/trees.mjs (kind: lws, users: labs);
+//   2. starts the same CLI as an authenticated loopback LWS files server;
+//   3. seeds each subtree through LWS HTTP PUT, starts read-only WebDAV
+//      with --guest labs, and writes seed.json;
 //   4. starts the recording proxy on 127.0.0.1:PORT, and prints how to
 //      connect each file browser to it;
 //   5. on Ctrl-C (or after --duration): lists every mount again, writes
@@ -35,8 +35,9 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { TREES, treeByName, materialise, foldersOf } from '../../labs/filetrees/trees.mjs'
 import { startRecordingProxy } from './record-proxy.mjs'
-import { seedTree, walkMount } from './seed.mjs'
+import { seedTree, walkMount, davRequest } from './seed.mjs'
 import { summarise, readLog } from './summarise.mjs'
+import { keyPair, didKeyOf, selfIssued, exchangeForm, TOKEN_EXCHANGE, JWT_TYPE } from '../authz/fixtures.mjs'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const REPO = resolve(HERE, '..', '..')
@@ -78,32 +79,44 @@ export function engineVersion (cmd) {
   try { return JSON.parse(readFileSync(join(cli, '..', '..', 'package.json'), 'utf8')).version } catch (_e) { return null }
 }
 
-/** Start webdav-serve on CONFIGDIR; resolves { child, origin, stderr() }. */
-export function startServer (configDir, cmd) {
+/** Start either server with the SAME CLI/engine; retain its complete diagnostics. */
+export function startProcess (args, cmd, { timeout = 120000 } = {}) {
   const [exe, ...lead] = cmd
-  // Its own process group on POSIX, so stopServer reaches the node process
-  // that npx starts as well as npx itself.
   const win = platform() === 'win32'
-  const child = spawn(exe, [...lead, 'webdav-serve', configDir, '--port', '0'], { stdio: ['ignore', 'pipe', 'pipe'], shell: win && exe.endsWith('.cmd'), detached: !win })
+  const child = spawn(exe, [...lead, ...args], { stdio: ['ignore', 'pipe', 'pipe'], shell: win && exe.endsWith('.cmd'), detached: !win, env: { ...process.env, FACTOIDAL_LWS_KEY: '' } })
   let out = ''
   let err = ''
   return new Promise((resolveStart, reject) => {
-    const timer = setTimeout(() => reject(new Error(`webdav-serve printed no origin in 120 s:\n${out}\n${err}`)), 120000)
+    let settled = false
+    const fail = async (reason) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      await stopServer(child)
+      reject(new Error(`${args[0]} ${reason}:\nstdout:\n${out}\nstderr:\n${err}`))
+    }
+    const timer = setTimeout(() => { void fail(`printed no origin in ${timeout} ms`) }, timeout)
     child.stdout.on('data', (c) => {
       out += c
       const m = /^(http:\/\/127\.0\.0\.1:\d+)\s*$/m.exec(out)
-      if (m) { clearTimeout(timer); resolveStart({ child, origin: m[1], stderr: () => err }) }
+      if (m && !settled) { settled = true; clearTimeout(timer); resolveStart({ child, origin: m[1], stdout: () => out, stderr: () => err }) }
     })
     child.stderr.on('data', (c) => { err += c })
-    child.on('exit', (code) => { clearTimeout(timer); reject(new Error(`webdav-serve exited ${code}:\n${err}`)) })
+    child.on('error', (e) => { void fail(`spawn failed: ${e.message}`) })
+    child.on('close', (code, signal) => { void fail(`exited ${code ?? signal}`) })
   })
+}
+
+export function startServer (configDir, cmd, args = ['--guest', 'labs']) {
+  return startProcess(['webdav-serve', configDir, '--port', '0', ...args], cmd)
 }
 
 /** Stop the server and every process it started; resolves when it has exited. */
 export function stopServer (child) {
   return new Promise((resolveStop) => {
-    if (child.exitCode !== null || child.signalCode !== null) { resolveStop(); return }
-    child.once('exit', () => resolveStop())
+    if (!child.pid || child.exitCode !== null || child.signalCode !== null) { resolveStop(); return }
+    let killTimer
+    child.once('exit', () => { clearTimeout(killTimer); resolveStop() })
     const signal = (sig) => {
       try {
         if (platform() === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
@@ -111,7 +124,8 @@ export function stopServer (child) {
       } catch (_e) { try { child.kill(sig) } catch (_e2) { /* already gone */ } }
     }
     signal('SIGTERM')
-    setTimeout(() => signal('SIGKILL'), 5000).unref()
+    killTimer = setTimeout(() => signal('SIGKILL'), 5000)
+    killTimer.unref()
   })
 }
 
@@ -162,69 +176,105 @@ export async function run (opts) {
   const out = opts.out || defaultOut()
   mkdirSync(out, { recursive: true })
   const config = mkdtempSync(join(tmpdir(), 'factoidal-labs-dav-'))
-  for (const t of trees) {
-    mkdirSync(join(config, t.name))
-    writeFileSync(join(config, `${t.name}.md`), `# ${t.title}\n- kind: local\n- path: ./${t.name}\n- storage: files\n\n${t.about}\n`)
-  }
   const cmd = factoidalCommand(opts.cli)
   const log = (s) => { if (!opts.quiet) console.log(s) }
-  log(`serve-labs: CONFIGDIR ${config}`)
-  log(`serve-labs: engine command: ${cmd.join(' ')}`)
-  const server = await startServer(config, cmd)
-  // The server runs in its own process group: stop it if this process ends early.
-  process.once('exit', () => { if (server.child.exitCode === null) { try { if (platform() === 'win32') server.child.kill(); else process.kill(-server.child.pid, 'SIGKILL') } catch (_e) { /* gone */ } } })
-  log(`serve-labs: webdav-serve at ${server.origin} (not for clients; use the proxy)`)
-
-  // The link files name the proxy's origin, so its port is fixed before the
-  // trees are made; --port 0 picks a free port first.
-  const port = opts.port === 0 ? await freePort() : opts.port
-  const proxyOrigin = `http://127.0.0.1:${port}`
-  const seed = []
-  const seeded = new Map()
-  for (const t of trees) {
-    const entries = materialise(t, { origin: proxyOrigin })
-    const folders = foldersOf(entries)
-    const results = await seedTree(server.origin, t.name, entries, folders)
-    seed.push({ tree: t.name, results })
-    seeded.set(t.name, new Set(results.filter((r) => r.ok).map((r) => r.path)))
-    const refused = results.filter((r) => !r.ok)
-    log(`serve-labs: ${t.name}: ${results.length - refused.length} of ${results.length} put${refused.length ? `; refused: ${refused.map((r) => `${JSON.stringify(r.path)} ${r.status}`).join(', ')}` : ''}`)
-  }
-  writeFileSync(join(out, 'seed.json'), JSON.stringify({ server: server.origin, proxy: proxyOrigin, trees: seed }, null, 1) + '\n')
-
-  const logFile = join(out, 'requests.jsonl')
-  writeFileSync(logFile, '')
-  const proxy = await startRecordingProxy({ target: server.origin, port, logFile })
-  writeFileSync(join(out, 'environment.json'), JSON.stringify({ platform: platform(), arch: arch(), release: release(), node: process.version, started: new Date().toISOString(), origin: proxy.origin, trees: trees.map((t) => t.name), engine: cmd.join(' '), engineVersion: engineVersion(cmd) }, null, 1) + '\n')
-  log('')
-  log(connectText(proxy.origin))
-  log(`\nserve-labs: results in ${out}`)
-
-  let stopping = null
-  const stop = async () => {
-    if (stopping) return stopping
-    stopping = (async () => {
-      const finalLines = ['# Mounts after the session', '', 'Paths relative to each mount. "added" were not in the seeded tree (a client made them); "removed" were seeded and are gone.', '']
-      for (const t of trees) {
-        try {
-          const items = await walkMount(server.origin, t.name)
-          const { added, removed } = treeDiff(seeded.get(t.name), items)
-          finalLines.push(`## ${t.name}`, '', `${items.length} members; ${added.length} added; ${removed.length} removed.`, '')
-          for (const p of added.slice(0, 100)) finalLines.push(`- added \`${JSON.stringify(p)}\``)
-          for (const p of removed.slice(0, 100)) finalLines.push(`- removed \`${JSON.stringify(p)}\``)
-          finalLines.push('')
-        } catch (e) { finalLines.push(`## ${t.name}`, '', `listing failed: ${e.message}`, '') }
+  let server, lws, proxy
+  const killAtExit = () => {
+    for (const proc of [server, lws]) {
+      if (proc?.child.exitCode === null) {
+        try { if (platform() === 'win32') proc.child.kill(); else process.kill(-proc.child.pid, 'SIGKILL') } catch (_) { /* gone */ }
       }
-      writeFileSync(join(out, 'final-tree.md'), finalLines.join('\n'))
-      await proxy.close()
-      writeFileSync(join(out, 'summary.md'), summarise(readLog(readFileSync(logFile, 'utf8'))))
-      await stopServer(server.child)
-      if (!opts.keep) rmSync(config, { recursive: true, force: true })
-      log(`serve-labs: wrote summary.md and final-tree.md in ${out}`)
-    })()
-    return stopping
+    }
   }
-  return { out, config, server, proxy, seed, stop }
+  process.once('exit', killAtExit)
+  const cleanup = async () => {
+    try { await proxy?.close() } finally {
+      try { if (server) await stopServer(server.child) } finally {
+        try {
+          if (lws) await stopServer(lws.child)
+          if (server) writeFileSync(join(out, 'webdav.stderr'), server.stderr())
+          if (lws) writeFileSync(join(out, 'lws.stderr'), lws.stderr())
+        } finally {
+          process.removeListener('exit', killAtExit)
+          if (!opts.keep) rmSync(config, { recursive: true, force: true })
+        }
+      }
+    }
+  }
+  try {
+    const owner = keyPair('ES256')
+    const did = didKeyOf(owner)
+    writeFileSync(join(config, 'owner.jwk'), JSON.stringify(owner.privateKey.export({ format: 'jwk' })), { mode: 0o600 })
+    log(`serve-labs: CONFIGDIR ${config}`)
+    log(`serve-labs: engine command: ${cmd.join(' ')}`)
+    lws = await startProcess(['lws-serve', join(config, 'storage'), '--host', '127.0.0.1', '--port', '0', '--storage', 'files', '--page-size', '0', '--authz', join(config, 'authz'), '--owner', did], cmd)
+    const token = await davRequest(lws.origin, 'POST', '/.well-known/lws-token', { headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: Buffer.from(exchangeForm({
+      grant_type: TOKEN_EXCHANGE, resource: `${lws.origin}/.well-known/lws-storage`, subject_token_type: JWT_TYPE,
+      subject_token: selfIssued(did, owner, { kid: did.slice(8), audience: lws.origin })
+    })) })
+    if (token.status !== 200) throw new Error(`seed token exchange: ${token.status} ${token.body}`)
+    const accessToken = JSON.parse(token.body.toString('utf8')).access_token
+    if (!accessToken) throw new Error('seed token exchange returned no access_token')
+    const seedHeaders = { authorization: `Bearer ${accessToken}` }
+    for (const t of trees) {
+      writeFileSync(join(config, `${t.name}.md`), `# ${t.title}\n- kind: lws\n- url: ${lws.origin}/${t.name}/\n- auth: did-key\n- key-file: owner.jwk\n- users: labs\n\n${t.about}\n`)
+    }
+    // The link files name the proxy's origin, so its port is fixed before the
+    // trees are made; --port 0 picks a free port first.
+    const port = opts.port === 0 ? await freePort() : opts.port
+    const proxyOrigin = `http://127.0.0.1:${port}`
+    const seed = []
+    const seeded = new Map()
+    for (const t of trees) {
+      const entries = materialise(t, { origin: proxyOrigin })
+      const folders = foldersOf(entries)
+      const results = await seedTree(lws.origin, t.name, entries, folders, seedHeaders)
+      seed.push({ tree: t.name, results })
+      seeded.set(t.name, new Set(results.filter((r) => r.ok).map((r) => r.path)))
+      const refused = results.filter((r) => !r.ok)
+      log(`serve-labs: ${t.name}: ${results.length - refused.length} of ${results.length} put${refused.length ? `; refused: ${refused.map((r) => `${JSON.stringify(r.path)} ${r.status}`).join(', ')}` : ''}`)
+    }
+    server = await startServer(config, cmd)
+    log(`serve-labs: read-only webdav-serve at ${server.origin} (use the proxy)`)
+    writeFileSync(join(out, 'seed.json'), JSON.stringify({ server: server.origin, proxy: proxyOrigin, trees: seed }, null, 1) + '\n')
+
+    const logFile = join(out, 'requests.jsonl')
+    writeFileSync(logFile, '')
+    proxy = await startRecordingProxy({ target: server.origin, port, logFile })
+    writeFileSync(join(out, 'environment.json'), JSON.stringify({ platform: platform(), arch: arch(), release: release(), node: process.version, started: new Date().toISOString(), origin: proxy.origin, trees: trees.map((t) => t.name), engine: cmd.join(' '), engineVersion: engineVersion(cmd) }, null, 1) + '\n')
+    log('')
+    log(connectText(proxy.origin))
+    log(`\nserve-labs: results in ${out}`)
+
+    let stopping = null
+    const stop = async () => {
+      if (stopping) return stopping
+      stopping = (async () => {
+        const finalLines = ['# Mounts after the session', '', 'Paths relative to each mount. "added" were not in the seeded tree (a client made them); "removed" were seeded and are gone.', '']
+        for (const t of trees) {
+          try {
+            const items = await walkMount(server.origin, t.name)
+            const { added, removed } = treeDiff(seeded.get(t.name), items)
+            finalLines.push(`## ${t.name}`, '', `${items.length} members; ${added.length} added; ${removed.length} removed.`, '')
+            for (const p of added.slice(0, 100)) finalLines.push(`- added \`${JSON.stringify(p)}\``)
+            for (const p of removed.slice(0, 100)) finalLines.push(`- removed \`${JSON.stringify(p)}\``)
+            finalLines.push('')
+          } catch (e) { finalLines.push(`## ${t.name}`, '', `listing failed: ${e.message}`, '') }
+        }
+        writeFileSync(join(out, 'final-tree.md'), finalLines.join('\n'))
+        const recording = proxy
+        proxy = null
+        await recording.close()
+        writeFileSync(join(out, 'summary.md'), summarise(readLog(readFileSync(logFile, 'utf8'))))
+        log(`serve-labs: wrote summary.md and final-tree.md in ${out}`)
+      })().finally(cleanup)
+      return stopping
+    }
+    return { out, config, server, lws, proxy, seed, stop }
+  } catch (error) {
+    await cleanup()
+    throw error
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

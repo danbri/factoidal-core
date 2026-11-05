@@ -1219,3 +1219,4 @@ import L4Factoidal.Rendering.FontRequestsTests
 import L4Factoidal.Rendering.LayoutStackAudit
 import L4Factoidal.Rendering.RdfViewTests
 import L4Factoidal.Rendering.FloatFormat
+import L4Factoidal.LWS.Base64FastTests
