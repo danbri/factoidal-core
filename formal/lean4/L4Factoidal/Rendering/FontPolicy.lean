@@ -93,10 +93,11 @@ def refusedByStandard : Capability → Bool
   | .hinting | .aat | .graphite | .wasm => true
   | _ => false
 
-/-- The `Wasm` table can never be allowed (design record section 3.4). -/
-def neverAllowed : Capability → Bool
-  | .wasm => true
-  | _ => false
+/-- The issue that tracks a capability with no implementation. The `Wasm` table
+waits for a WebAssembly engine in Lean (owner, 2026-11-05). -/
+def gapIssue : Capability → String
+  | .wasm => "https://github.com/danbri/factoidal/issues/1244"
+  | _ => "https://github.com/danbri/factoidal/issues/1233"
 
 def dangerousOption (c : Capability) : String := "--dangerously-allow-font-" ++ c.name
 
@@ -180,10 +181,8 @@ capability needs an implementation; allowing one that `standard` refuses needs
 the exact `--dangerously-allow-font-<name>` option. -/
 def Policy.set (p : Policy) (c : Capability) (allow : Bool) (src : Source) : Except String Policy := do
   if allow then
-    if c.neverAllowed then
-      throw s!"font.{c.name}: this table can not be allowed. {c.what} {c.risk}"
     if c.engine == .none then
-      throw s!"font.{c.name}: can not be allowed: no implementation (https://github.com/danbri/factoidal/issues/1233)."
+      throw s!"font.{c.name}: can not be allowed: no implementation ({c.gapIssue})."
     if p.base == .safe && c != .fontFiles && !(p.settings .fontFiles).allowed then
       throw s!"font.{c.name}: safe mode reads no font file; allow font files first."
     if c.refusedByStandard && src != .option c.dangerousOption then
@@ -294,7 +293,7 @@ def Refusal.render (r : Refusal) : String :=
   let short := if r.font.sha256.length > 12 then (r.font.sha256.take 12).toString ++ "..." else r.font.sha256
   let tagText := if r.tags.isEmpty then "" else s!" has {", ".intercalate r.tags}"
   let howToAllow :=
-    if c.neverAllowed then "There is no option to allow it."
+    if c == .wasm then s!"A WebAssembly engine in Lean is planned ({c.gapIssue}); until then it can not be allowed."
     else if c.engine == .none then "It has no implementation, so it can not be allowed."
     else if c.refusedByStandard then s!"To allow it: {c.dangerousOption}."
     else s!"To allow it: set font.{c.name} = allow."

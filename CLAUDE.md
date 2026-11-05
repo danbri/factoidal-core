@@ -910,7 +910,10 @@ much into it." "4. our npm already huge so pinned i guess".
 - One Lean `FontPolicy` value decides what font content is used; modes `safe`
   (baked-in ASCII bitmap font only), `standard`, `custom`. CFF, GSUB/GPOS and
   COLR are interpreted in Lean with fuel; hinting is not run; AAT, Graphite and
-  `Wasm` tables are refused. A refusal names the code, the font, the table,
+  `Wasm` tables are refused. Owner, 2026-11-05, verbatim, on the `Wasm` table:
+  "update policy: we aspire to support this and build a fresh wasm engine from
+  the official wasm formal defs, converted to lean." It stays refused until that
+  engine exists: https://github.com/danbri/factoidal/issues/1244. A refusal names the code, the font, the table,
   the risk, the setting and its source, and what the renderer did instead.
   Allowing a table refused by default needs a `--dangerously-allow-font-*`
   option and a start warning.
