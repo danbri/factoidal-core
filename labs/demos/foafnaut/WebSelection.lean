@@ -115,6 +115,9 @@ def commandName : Nat → String
   | 3 => "zoomReset"
   | 4 => "copy"
   | 5 => "selectAll"
+  | 6 => "back"
+  | 7 => "forward"
+  | 8 => "reload"
   | _ => "none"
 
 def commandPercent (command percent : Nat) : Nat :=
