@@ -1208,17 +1208,41 @@ an `openssl req -x509` certificate).
 ```
 factoidal webdav-serve CONFIGDIR --xmpp bob@example.org --xmpp-password-file bob.password \
   --xmpp-allow alice@example.org --xmpp-tls [--xmpp-ca FILE] [--xmpp-host H] [--xmpp-port P] \
+  [--guest NAME] [--users FILE] [--login-limit N] [--login-window S] [--dangerously-disable-ratelimits] \
   [--dangerously-allow-writable-without-login]
 ```
 
-The allow list is the only access control on this path (local mounts act as
-the owner). Lean refuses the start (`xcStartRefusal`) with an empty list, a
-JID with a resource, plain TCP to a host that is not loopback, or a writable
-local mount without the `--dangerously-` opt-in
-(https://github.com/danbri/factoidal/issues/1125). No login and no per-JID
-login limit yet (https://github.com/danbri/factoidal/issues/1125,
-https://github.com/danbri/factoidal/issues/1128): expected failures in the
-test.
+Two checks apply to every request (invariant I1 of
+`docs/designissues/2026-10-28-feature-combination-safety.md`,
+https://github.com/danbri/factoidal/issues/1125): the allow list
+(`HttpOverXmpp.plan`, in the XMPP client handle), then the WebDAV handle's
+`Login.admit`, the same function the HTTP listener calls. The XMPP client
+handle names each request's requester (`requester: {"xmpp": BAREJID}`,
+`xcRequesterJ`); a handle opened with `login.transport: "xmpp"` reads only
+that (`davRequesterOf`), so a request with no requester gets 401 and counts
+nothing (`Login.admit_invalid_requester`). The failed-login limit keys are
+`name:` and `jid:` plus the bare JID (`L4Factoidal/Net/LoginLimit.lean`,
+`requesterKey`, theorems `requesterKey_injective_kind`,
+`loginKeys_nonempty`; https://github.com/danbri/factoidal/issues/1128). Lean
+refuses the start (`xcStartRefusal`) with an empty list, a JID with a
+resource, plain TCP to a host that is not loopback, a writable local mount
+without `--users` and without the `--dangerously-` opt-in; `webdavOpen`
+refuses `--users` on an XMPP stream that is neither TLS nor loopback
+(`davXmppTransportRefusal`). Chunked request bodies wait at most 4 per sender
+and 16 in total, and at most 60 s of the host's clock (`xmppClientTick`,
+`HttpOverXmpp.tick`; theorems `plan_pending_per_sender`,
+`tick_pending_per_sender`, `tick_no_late`).
+
+`xmpp-serve` limits failed SASL logins per account name and per client
+address, across the sessions of one server (`Server.AuthGuard`,
+`handleAuth_blocked`; the counters are in the server handle,
+`Wasm/Ops/XmppSession.lean`; the host gives `remoteAddress` and `now` at
+`xmppSessionOpen`). `--dangerously-disable-ratelimits` turns it off with a
+start warning (`saslLimitWarnings`). Run the SASL tests against their own
+`xmpp-serve`: the address counter of 127.0.0.1 blocks every later login of
+the test for 60 s. Still open under
+https://github.com/danbri/factoidal/issues/1125: `xmpp-serve` offers PLAIN on
+a listener that is neither TLS nor loopback (expected failure in the test).
 
 No port opens: the process connects out to an XMPP server, logs in with
 SCRAM-SHA-256, binds `bob@example.org/dav` (printed as `xmpp:JID`) and serves

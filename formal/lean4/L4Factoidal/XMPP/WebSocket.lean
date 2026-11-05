@@ -121,7 +121,7 @@ private def has (hay needle : String) : Bool := (hay.splitOn needle).length > 1
   let u := unitOfMessage s!"<open xmlns=\"{nsFraming}\" to=\"example.com\" version=\"1.0\"/>"
   match u with
   | .streamOpen _ =>
-    let (s, _, outs) := Server.step (Server.Session.init cfg) ⟨[]⟩ u
+    let (s, _, outs) := Server.step (Server.Session.init cfg) { roster := [] } u
     let msgs := outs.filterMap (fun o => match o with | .send t => some (messageOfSend cfg t) | _ => none)
     s.stage == .awaitingAuth && msgs.length == 2 &&
     msgs[0]! == openText cfg &&
@@ -137,13 +137,13 @@ private def has (hay needle : String) : Bool := (hay.splitOn needle).length > 1
 -- A `<stream:stream>` over a WebSocket is not a header; the server refuses it.
 #guard
   let u := unitOfMessage "<stream:stream to='example.com' version='1.0'>"
-  let (s, _, _) := Server.step (Server.Session.init cfg) ⟨[]⟩ u
+  let (s, _, _) := Server.step (Server.Session.init cfg) { roster := [] } u
   s.stage == .closed
 
 -- A stream error carries the `xmlns:stream` declaration, and the stream
 -- close becomes `<close/>`.
 #guard
-  let (_, _, outs) := Server.step (Server.Session.init cfg) ⟨[]⟩ (.element "<message/>")
+  let (_, _, outs) := Server.step (Server.Session.init cfg) { roster := [] } (.element "<message/>")
   let msgs := outs.filterMap (fun o => match o with | .send t => some (messageOfSend cfg t) | _ => none)
   has (String.join msgs) s!"<stream:error xmlns:stream='{Server.nsStreams}'" &&
   msgs.getLast? == some closeText

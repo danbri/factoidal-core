@@ -113,6 +113,27 @@ Enforced today. The allow list: yes (`HttpOverXmpp.lean:552`, `#guard`s
 login on the XMPP path: only by the host's routing in step 1, which is
 uncommitted. No Lean function composes the two. Not enforced in Lean.
 
+Update, 2026-11-01 (https://github.com/danbri/factoidal/issues/1125). Both
+checks are Lean and both apply. The XMPP client handle passes a request to
+the host only after `HttpOverXmpp.plan` found the sender in the allow list,
+and names its requester (`requester: {"xmpp": BAREJID}`, `xcRequesterJ`,
+`Wasm/Ops/XmppClient.lean`). The host carries it to the WebDAV handle, whose
+`webdavStep` calls `Login.admit`, the function the HTTP listener calls, with
+that requester (`davRequesterOf`, `Wasm/Ops/WebDAV.lean`). `--users` now
+works with `--xmpp`; HTTP Basic in the XEP-0332 headers is checked as on TCP,
+and `webdavOpen` refuses `--users` when the XMPP stream is neither TLS nor
+loopback (`davXmppTransportRefusal`). Since emergency mode
+(https://github.com/danbri/factoidal/issues/1147) every request acts as a
+named user (the guest or a user of the users file) and no local mount opens,
+so "every allowed JID owns every writable local mount" no longer holds;
+`xcStartRefusal` keeps the opt-in rule for a writable local mount with no
+`--users`. Theorems: `Login.admit_some_allow` (with credentials only a user
+of the users file is allowed), `Login.admit_invalid_requester`. Tests in
+`tests/webdav/xmpp.mjs`: 401 with no credentials and no guest, 200 with
+Basic credentials, 401 with a wrong password. The pure `HttpOverXmpp.step`
+(test composition, `HttpOverXmppTests.lean`) still takes the user from its
+`Ctx`; no host calls it.
+
 Proposed check. Move the login gate into one Lean entry that every transport
 calls, and state `HttpOverXmpp.step` over it:
 
@@ -159,6 +180,28 @@ the bare JID from the server-stamped `from` on XMPP. The key is never empty.
 Keys of different transports never collide.
 
 Enforced today. Not enforced (the limit is uncommitted, and has no JID key).
+
+Update, 2026-11-01 (https://github.com/danbri/factoidal/issues/1128).
+Enforced. `L4Factoidal/Net/LoginLimit.lean` holds the counters (moved from
+`WebDAV/Login.lean`) and the requester: `Requester.tcp address |
+Requester.xmpp bareJid`, `requesterKey` (`address:` + `clientPrefix`, `jid:`
++ the bare JID). Theorems: `requesterKey_injective_kind` (a TCP key never
+equals an XMPP key), `requesterKey_xmpp_injective`, `requesterKey_length`
+and `loginKeys_nonempty` (for a valid requester no key is a bare prefix),
+`Login.admit_invalid_requester` (a request with credentials and an empty
+address or JID gets 401 with no derivation and no count),
+`Login.gate_derive_keys` (a failure counts under the name and the
+requester). `#guard`s and tests: (a) JID A's failures do not block JID B; (b)
+one JID that tries a new name each time is refused at the sixth attempt. The
+`xmpp-serve` SASL limit: `Server.AuthGuard`, keys `account:` + name and
+`address:` + `clientPrefix`, counters shared by the sessions of one server
+(`Wasm/Ops/XmppSession.lean`), `temporary-auth-failure` with no password
+check when blocked (`handleAuth_blocked`); on by default,
+`--dangerously-disable-ratelimits` with a start warning. Test (c): 5 failures
+on one stream, then the sixth attempt with the right password is refused; a
+new stream from that address is refused; with the option off, 8 failures and
+then a login. The native carrier (`Harness/XmppServe.lean`, one connection
+per process) keeps the counters of its one stream only.
 
 Proposed check.
 
@@ -297,6 +340,16 @@ that is not loopback — with `--starttls` by `Server.steps_requiresStartTls`
 (no credential is checked before the TLS handshake), with `--cert`/`--key`
 by the carrier, and without either the CLI refuses a non-loopback `--host`.
 `from` stamping: `#guard` only.
+
+Update, 2026-11-01. The XMPP client stream: enforced since step 1
+(`ClientStream.Config.secureTransport`, `xcStartRefusal`: TLS or plain TCP to
+a literal loopback address; SCRAM-SHA-256 only). HTTP Basic over XMPP: the
+same rule on the XMPP stream (`davXmppTransportRefusal`). Still not enforced,
+under https://github.com/danbri/factoidal/issues/1125: `xmpp-serve` offers
+PLAIN on a listener that is neither TLS nor loopback (expected failure
+"xmpp-serve on a non-loopback address without --cert does not offer SASL
+PLAIN" in `tests/webdav/xmpp.mjs`), and `route_from_stamped` is a `#guard`,
+not a theorem.
 
 Proposed check.
 
@@ -693,6 +746,19 @@ limit.
 
 Enforced today. Not enforced per requester.
 
+Update, 2026-11-01 (https://github.com/danbri/factoidal/issues/1128).
+Enforced for HTTP over XMPP. `HttpOverXmpp.Config.maxPendingPerSender` (4)
+per bare JID and `maxPending` (16) in total; a second request with the same
+streamId from the same sender is `bad-request`; `tick` (the host's clock,
+`xmppClientTick`, once a second) refuses a request that waited
+`pendingTimeoutMs` (60 s). Theorems: `plan_pending_per_sender`,
+`tick_pending_per_sender` (the bound holds after every step),
+`tick_no_late` (no request left has waited the time limit). `#guard`s in
+`HttpOverXmppTests.lean`; test: JID A opens 16 chunked requests, 4 wait and
+12 get `resource-constraint`, and JID B's chunked request is served. The
+failed-login table still refuses a new key when it is full of blocked
+counters (`Failures.check`), as row C2 states.
+
 Proposed check.
 
 ```lean
@@ -784,7 +850,9 @@ opened when their surface gets code. Each one gets an expected-failure test
 that names it.
 
 - I1, C1: one Lean listener entry with the login gate; `--xmpp` start rule.
+  Landed 2026-11-01 (https://github.com/danbri/factoidal/issues/1125; row C1).
 - I2, C2: the requester key per transport; the `xmpp-serve` SASL failure limit.
+  Landed 2026-11-01 (https://github.com/danbri/factoidal/issues/1128; row C2).
 - I3, C3: the authorization-server trust list for caller-given subject tokens;
   the path-segment rule for token scope; `requireHttps` for WebDAV mounts.
 - I4, C4: TLS for the XMPP client stream; PLAIN only on TLS or loopback;
@@ -806,6 +874,7 @@ that names it.
   check for local mounts.
 - I12, C12: principals per mount.
 - I13, C13: per-sender limits and a time limit for waiting chunked requests.
+  Landed 2026-11-01 (https://github.com/danbri/factoidal/issues/1128; row C13).
 
 ## 7. Surfaces added after this record
 
@@ -818,3 +887,12 @@ that names it.
   `docs/designissues/2026-10-28-http-over-xmpp.md`, "Step 2: invariants and
   their checks". Not met: the `Host`/`Origin` check of I7 on this listener,
   an expected failure that names https://github.com/danbri/factoidal/issues/1124.
+- 2026-11-01, `webdav-serve --xmpp --users` and `xmpp-serve`'s failed SASL
+  login limit (https://github.com/danbri/factoidal/issues/1125,
+  https://github.com/danbri/factoidal/issues/1128). Rows C1, C2, C4, C13
+  (updates in each row). Invariants: I1 (allow list, then `Login.admit` with
+  the JID as requester), I2 (`requesterKey`, `loginKeys_nonempty`,
+  `admit_invalid_requester`, `handleAuth_blocked`), I4 (`--users` over XMPP
+  only on a TLS or loopback stream; PLAIN in `xmpp-serve` still open), I13
+  (`plan_pending_per_sender`, `tick_no_late`). Defaults: each limit is on;
+  `--dangerously-disable-ratelimits` prints a start warning.
