@@ -277,6 +277,14 @@ The cause of those stalls is unproven. `--resize-sweep` needs a visible window.
 - Each drag step runs a full layout, about 300 ms on the home page. This makes selection feel slow.
 - `--command-sweep` checks the menu keys, a drag and a link click in a real window. A covered window waits until it can present.
 
+## Back and forward (5 November 2026)
+
+- Command-Left or Command-[ goes back. Command-Right or Command-] goes forward. The History menu has both, and it disables an item at the end of the list.
+- `WebHistory.lean` holds session history: at most 100 entries, a new page removes the forward entries, and reload keeps the index. The host keeps the value and loads the URL that Lean returns.
+- A refused page is an entry. Zoom stays as it is on back and forward, because zoom belongs to the window and not to an entry.
+- The key table in `WebHistory.lean` also maps Alt-Left and Alt-Right for other platforms. No host reads it yet: only macOS has a native window, and there AppKit matches keys through the menu.
+- `--history-sweep` checks the keys and link clicks in a real window.
+
 ## XML pages with XSLT (5 November)
 
 An XML page with `<?xml-stylesheet type="text/xsl" href="..."?>` in its prolog now renders. `labs/demos/foafnaut/WebXslt.lean` finds the instruction and reads the stylesheet's `version`: 1.x uses `L4Factoidal/XSLT`, and 2.0, 3.0 and 4.0 use `L4Factoidal/XSLT4`. The result goes to the normal HTML path. The host only fetches the page and the stylesheet.

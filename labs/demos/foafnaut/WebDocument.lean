@@ -3,6 +3,7 @@ import WebRenderScript
 import WebXslt
 import L4Factoidal.Syntax.IriResolve
 import WebSelection
+import WebHistory
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
 orders supplied CSS, collects font requests and renders the resulting arena.
@@ -152,14 +153,39 @@ private def scalePercent (request : JSON.Json) : Except String Nat := do
   if percent < 50 || percent > 250 then throw "textScalePercent must be 50 to 250"
   return percent
 
+private def history (request : JSON.Json) : Except String WebHistory.History := do
+  let some value := request.field? "history" | throw "history required"
+  let some (.array rawEntries) := value.field? "entries" | throw "history entries required"
+  let some (.number rawIndex) := value.field? "index" | throw "history index required"
+  let some index := rawIndex.toNat? | throw "history index must be natural"
+  let entries ← rawEntries.mapM fun | .string url => pure url | _ => throw "history entry must be a URL"
+  if entries.length > WebHistory.maxEntries || (index >= entries.length && index != 0) then throw "history out of range"
+  return {entries:=entries.toArray,index}
+
+private def historyFields (h : WebHistory.History) (url : Option String) : List (String × JSON.Json) :=
+  [("history",.object [("entries",.array (h.entries.toList.map .string)),("index",.number (toString h.index))]),
+   ("url",match url with | some value => .string value | none => .null),
+   ("canBack",.bool h.canBack),("canForward",.bool h.canForward)]
+
 /-- Input decisions need no document, so they do not parse one. -/
 private def inputOp (op : String) (request : JSON.Json) : Except String (Option String) := do
   if op == "command" then
     let some (.number raw) := request.field? "command" | throw "command number required"
     let some command := raw.toNat? | throw "command must be natural"
     let percent ← scalePercent request
-    return some (JSON.Json.object [("action",.string (WebSelection.commandName command)),
-      ("textScalePercent",.number (toString (WebSelection.commandPercent command percent)))]).toString
+    let fields := [("action",JSON.Json.string (WebSelection.commandName command)),
+      ("textScalePercent",.number (toString (WebSelection.commandPercent command percent)))]
+    if (request.field? "history").isNone then return some (JSON.Json.object fields).toString
+    let (next,url) := WebHistory.apply command (← history request)
+    return some (JSON.Json.object (fields ++ historyFields next url)).toString
+  if op == "historyPush" then
+    let some (.string url) := request.field? "url" | throw "history URL required"
+    let next := (← history request).push url
+    return some (JSON.Json.object (historyFields next next.current)).toString
+  if op == "keyCommand" then
+    let answer := WebHistory.keyCommand (str request "platform" "") (str request "modifier" "") (str request "key" "")
+    return some (JSON.Json.object [("command",match answer with
+      | some value => .number (toString value) | none => .null)]).toString
   if op == "pointerUp" then
     let (ax,ay,fx,fy) ← points ((request.field? "selection").getD .null)
     return some (JSON.Json.object [("action",.string (if WebSelection.isClick ax ay fx fy then "click" else "select"))]).toString

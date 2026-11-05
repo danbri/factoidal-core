@@ -14,6 +14,8 @@ export type Inspection = {
   scripts:{kind:string;type:string;src:string}[];
   stylesheets:{nodeId:number;url:string}[];
 };
+export type History = {entries:string[];index:number};
+export type HistoryAnswer = {history:History;url:string|null;canBack:boolean;canForward:boolean};
 export type HTMLResource = {nodeId:number;url:string;source:string};
 type Module = {ccall(name:string,result:string|null,types:string[],values:unknown[]):number;
   UTF8ToString(pointer:number):string};
@@ -56,7 +58,10 @@ export async function loadHTML() {
       return result;
     },
     // Lean decides what a menu command and a pointer release mean.
-    command:(command:number,textScalePercent:number)=>documentCall("",{op:"command",command,textScalePercent}) as {action:string;textScalePercent:number},
+    command:(command:number,textScalePercent:number,history?:History)=>documentCall("",{op:"command",command,textScalePercent,...(history?{history}:{})}) as
+      {action:string;textScalePercent:number}&Partial<HistoryAnswer>,
+    historyPush:(history:History,url:string)=>documentCall("",{op:"historyPush",history,url}) as HistoryAnswer,
+    keyCommand:(platform:string,modifier:string,key:string)=>(documentCall("",{op:"keyCommand",platform,modifier,key}) as {command:number|null}).command,
     pointerUp:(selection:number[])=>(documentCall("",{op:"pointerUp",selection}) as {action:string}).action,
     selectedText:(source:string,width:number,height:number,options:Record<string,unknown>)=>
       (documentCall(source,{...options,op:"selectedText"},width,height) as {text:string}).text,
