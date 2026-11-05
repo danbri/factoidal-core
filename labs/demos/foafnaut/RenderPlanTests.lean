@@ -37,7 +37,7 @@ private def refused {α : Type} : Except String α → Bool
 #guard refused (plan "window" "rgba8unorm" 16 16 134968 65536 4096 1048576 268435456)
 #guard refused (plan "svg-offscreen" "rgba8unorm" 16 16 134968 65536 4096 500000 268435456)
 #guard refused (plan "svg-offscreen" "rgba8unorm" 16 16 134968 65536 4096 1048576 500000)
-#guard refused (plan "svg-offscreen" "rgba8unorm" 16 16 262148 65536 4096 16777216 268435456)
+#guard refused (plan "svg-offscreen" "rgba8unorm" 16 16 1048580 65536 4096 16777216 268435456)
 #guard refused (plan "svg-offscreen" "rgba8unorm" 4096 4096 16 65536 4096 1048576 1048576)
 example : Command.present ∉ commands .svgOffscreen := by simp [commands]
 

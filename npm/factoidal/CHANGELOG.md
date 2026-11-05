@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.31.1 (2026-11-05)
+
+- Engine start uses less stack. Two more test fixtures ran with one stack frame for each byte when the engine started: `swapLabelGo` (`Storage/ShardManifest.lean`) and `bytesOfHexLiteral` (`Storage/LiteralGramIndexWire.lean`). Both are now loops. In 0.31.0, WebKit needed between 640 KB and 768 KB of stack to start the engine.
+
 ## 0.31.0 (2026-11-05)
 
 - Stack use on phones. The engine failed on iPhone Safari with "Maximum call stack size exceeded". Two faults are fixed:

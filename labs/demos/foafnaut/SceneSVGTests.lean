@@ -101,7 +101,7 @@ def run : IO Unit := do
     width:=32
     height:=24
     background:=white
-    shapes:=List.replicate 12288 (.circle ⟨4,4⟩ 1 black)}
+    shapes:=List.replicate 49152 (.circle ⟨4,4⟩ 1 black)}
   check ((NativeSVG.parse (← xmlOf large)).isOk == false) "consumer primitive capacity silently raised"
   IO.println "PASS explicit curve, degenerate-input and consumer-capacity boundaries"
   IO.println "4 SceneSVG native test groups passed; no GPU/browser result"

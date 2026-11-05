@@ -942,6 +942,22 @@ Claude." Earlier the same day: "yes any codex work can pull into claude".
   is deleted by a restart, as the overnight coordinator file was on 2026-11-05.
 - Release management is separate: "One owner per release" still applies.
 
+### foafnaut2525 releases (owner, 2026-11-05)
+
+Owner, verbatim: "Daily releases progressing foafnaut2525 a lean web rendering
+engine aspiring to be a browser. Releases improve perf, observability, standards
+compatibility, ux, test passing and richness of demos." "I will declare end. One
+release a day is ok, 3 is great. 4 is too many." "Put details into OKRs and be
+prcise about test suites."
+
+- One to three releases a day, never four. The owner declares the end of the goal.
+- Key results, suites, baselines and commands:
+  https://github.com/danbri/factoidal/issues/1245 (proposed batch 1).
+- The status note `docs/web/hub/foafnaut2525-status.md` is rendered by the engine
+  itself (owner, same day: "This is a good \"eat yr own dogfood\" discipline."):
+  `tools/status-to-html.py` writes `web-render/fixtures/status.html`, and `test.sh`
+  fails when the two differ. Update it with each release.
+
 ### Observability from the start (owner, 2026-11-05)
 
 Owner, verbatim: "we must eng for observability, perf, debugging and automatic

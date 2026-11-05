@@ -2585,16 +2585,17 @@ private def retiredBytes (m : Manifest) (retired : String) : ByteArray :=
 -- The refusal note: a retired label gets the cause and the remedy, built from
 -- the bytes of an otherwise valid manifest whose label was swapped (same
 -- length, so the framing is unchanged).
-private def swapLabelGo (f t : List UInt8) : Nat → List UInt8 → List UInt8
-  | 0, xs => xs
-  | _ + 1, [] => []
-  | fuel + 1, b :: rest =>
-      if (b :: rest).take f.length == f then t ++ swapLabelGo f t fuel (rest.drop (f.length - 1))
-      else b :: swapLabelGo f t fuel rest
+private def swapLabelGo (f t : List UInt8) : Nat → List UInt8 → List UInt8 → List UInt8
+  | 0, xs, acc => acc.reverseAux xs
+  | _ + 1, [], acc => acc.reverse
+  | fuel + 1, b :: rest, acc =>
+      if (b :: rest).take f.length == f then
+        swapLabelGo f t fuel (rest.drop (f.length - 1)) (t.reverseAux acc)
+      else swapLabelGo f t fuel rest (b :: acc)
 
 private def swapLabel (bytes : ByteArray) (from_ to_ : String) : ByteArray :=
   let xs := bytes.data.toList
-  ByteArray.mk (swapLabelGo from_.toUTF8.data.toList to_.toUTF8.data.toList xs.length xs).toArray
+  ByteArray.mk (swapLabelGo from_.toUTF8.data.toList to_.toUTF8.data.toList xs.length xs []).toArray
 
 private def sampleV9Bytes : ByteArray := (encode? sampleManifestV9).getD ByteArray.empty
 private def sampleV8Bytes : ByteArray := (encode? sampleManifestV8).getD ByteArray.empty
