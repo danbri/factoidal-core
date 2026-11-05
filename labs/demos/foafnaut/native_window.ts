@@ -57,6 +57,7 @@ export function loadNativeWindow() {
       if (title) symbols.ng_set_title(new TextEncoder().encode(title+"\0"));
       return {windowHandle,displayHandle:pointer};
     },
+    setTitle:(title:string)=>symbols.ng_set_title(new TextEncoder().encode(title+"\0")),
     pump() {
       if (!isMainThread()) throw new Error("Native event pump moved off main thread");
       symbols.ng_pump();

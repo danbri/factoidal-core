@@ -58,6 +58,8 @@ private def ecmaInspection := WebDocument.inspect
   | .error _ => false
 #guard (WebDocument.inspect (DOM.parseHtmlDocument "<script type=' module '>export{}</script>") "https://example.test/").toOption.isNone
 #guard (WebDocument.run "<script type=' module '>export{}</script>" (json [("op",.string "inspect")]) 1 1).toOption.isNone
+#guard WebDocument.documentTitle (L4Factoidal.DOM.parseHtmlDocument "<title>  Two\n  words </title>") == "Two words"
+#guard WebDocument.documentTitle (L4Factoidal.DOM.parseHtmlDocument "<p>none</p>") == ""
 
 private def dynamicHTML := "<link rel=stylesheet href=font.css><p id=target>stale</p><span>office</span>"
 private def dynamicDOM := DOM.parseHtmlDocument dynamicHTML

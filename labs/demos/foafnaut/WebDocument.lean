@@ -53,6 +53,18 @@ def baseURL (dom : DOM.Dom) (url : String) : String := Id.run do
       return Syntax.resolveIri url (attr n "href")
   return url
 
+/-- The text of the first HTML `title` element, with white space collapsed. -/
+def documentTitle (dom : DOM.Dom) : String := Id.run do
+  for id in dom.treeOrder 0 do
+    let n := dom.get id
+    if DOM.Dom.isHtmlElement n "title" then
+      let text := n.kids.foldl (fun acc kid =>
+        let child := dom.get kid
+        if child.type == .text then acc ++ child.data else acc) ""
+      let spaced := text.replace "\t" " " |>.replace "\n" " " |>.replace "\r" " "
+      return " ".intercalate ((spaced.splitOn " ").filter (· != ""))
+  return ""
+
 private def supplied (request : JSON.Json) (id : Nat) : Except String String := do
   let .array resources := (request.field? "resources").getD (.array [])
     | throw "document resources must be an array"
@@ -109,7 +121,7 @@ def inspect (dom : DOM.Dom) (url : String) : Except String JSON.Json := do
     | .object fields => .object (fields ++ [("url",.string (Syntax.resolveIri base (str script "src")))])
     | other => other
   return .object [("nodes",(snapshot.field? "nodes").getD (.array [])),
-    ("scripts",.array scripts),("stylesheets",.array sheets.reverse),("baseURL",.string base)]
+    ("scripts",.array scripts),("stylesheets",.array sheets.reverse),("baseURL",.string base),("title",.string (documentTitle dom))]
 
 def run (html : String) (request : JSON.Json) (width height : Nat) : Except String String := do
   let .object fields := request | throw "document request must be an object"

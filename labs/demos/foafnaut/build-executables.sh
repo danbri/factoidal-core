@@ -85,14 +85,16 @@ PLIST
   cat > "$app/Contents/MacOS/run" <<LAUNCHER
 #!/bin/sh
 set -eu
+LOG="\$HOME/Library/Logs/$name"
+mkdir -p "\$LOG"
 cd "\$(dirname "\$0")/../../.."
-exec $command "\$@"
+exec $command "\$@" >>"\$LOG/trace.jsonl" 2>&1
 LAUNCHER
   chmod +x "$app/Contents/MacOS/run"
 }
-make_app FOAFNaut foafnaut './native-webgpu-ui-darwin-arm64 --demo foafnaut'
+make_app 'FOAF Graph' foaf-graph './native-webgpu-ui-darwin-arm64 --demo foafnaut'
 if [ -x "$OUT/native-webgpu-html-darwin-arm64" ]; then
-  make_app 'Lean Browser' lean-browser './native-webgpu-html-darwin-arm64 --follow-links'
+  make_app foafnaut foafnaut './native-webgpu-html-darwin-arm64 --follow-links'
 fi
 cp "$LAB/"*.command "$LAB/run-demo.sh" "$LAB/summarize-input.py" "$OUT/"
 cp -R "$LAB/svg-fixtures" "$OUT/"

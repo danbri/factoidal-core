@@ -203,6 +203,24 @@ int ng_clipboard_write(const char *text) {
     return [board setString:value forType:NSPasteboardTypeString] ? 1 : 0;
   }
 }
+// The standard menu. Quit reaches applicationShouldTerminate, which sends the host
+// a close event, and Close goes through windowShouldClose. Page keys stay with Lean.
+static void installMenu(void) {
+  NSString *name=[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleName"] ?: NSProcessInfo.processInfo.processName;
+  NSMenu *bar=[[NSMenu alloc] init];
+  NSMenuItem *appItem=[bar addItemWithTitle:name action:nil keyEquivalent:@""];
+  NSMenu *appMenu=[[NSMenu alloc] initWithTitle:name];
+  [appMenu addItemWithTitle:[@"Hide " stringByAppendingString:name] action:@selector(hide:) keyEquivalent:@"h"];
+  [appMenu addItem:[NSMenuItem separatorItem]];
+  [appMenu addItemWithTitle:[@"Quit " stringByAppendingString:name] action:@selector(terminate:) keyEquivalent:@"q"];
+  appItem.submenu=appMenu;
+  NSMenuItem *windowItem=[bar addItemWithTitle:@"Window" action:nil keyEquivalent:@""];
+  NSMenu *windowMenu=[[NSMenu alloc] initWithTitle:@"Window"];
+  [windowMenu addItemWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
+  [windowMenu addItemWithTitle:@"Close" action:@selector(performClose:) keyEquivalent:@"w"];
+  windowItem.submenu=windowMenu;
+  NSApp.mainMenu=bar;
+}
 void *ng_create(uint32_t width, uint32_t height) {
   if (!pthread_main_np() || window) return NULL;
   @autoreleasepool {
@@ -230,6 +248,7 @@ void *ng_create(uint32_t width, uint32_t height) {
     [window center];
     [window makeKeyAndOrderFront:nil];
     [NSApp finishLaunching];
+    installMenu();
     [NSApp activateIgnoringOtherApps:YES];
     resizeEvent();
     [NSApp updateWindows];
