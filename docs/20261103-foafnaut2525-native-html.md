@@ -258,3 +258,12 @@ Same machine, `--resize-sweep`, default page, same seven sizes: median draw 2,07
 to 33 ms, median frame 2,278 ms to 209 ms. All seven frames have the same
 `pixelHash` as the untiled engine. Lean layout, about 150 ms, is now the largest
 stage. The hashes cover the default page only.
+
+## Correction: why frames stopped, 2026-11-05
+
+The commit that moved `installMenu` after `finishLaunching` says that the earlier
+order stopped the window presenting. A 0-against-7 A/B supported that, but a later
+run showed the same stall with the menu in its new place, and
+`native-html-waiting` then recorded `occlusionVisible:false`: macOS reported the
+window as covered. So the A/B was probably confounded by what was on the screen.
+The cause of those stalls is unproven. `--resize-sweep` needs a visible window.
