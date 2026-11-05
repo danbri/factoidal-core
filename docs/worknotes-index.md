@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-05 | [Render performance pass and ESP32-P4 target](20261105-render-embedded-perf.md) | | |
 | 2026-11-04 | [Terminable renderer worker](20261104-renderer-worker.md) | pending | current — real WASM cancellation/recovery, bounded requests, retained hit metadata and host integration |
 | 2026-11-04 | [Renderer worker request and lifetime rules](designissues/2026-11-04-renderer-worker.md) | pending | current — foreground/Lean worker boundary, deadlines, generation checks and API controls |
 | 2026-11-03 | [Browser foundations progress](20261103-browser-foundations-progress.md) | pending | current — four surrogate cases executed, complete diagnostic audit, synchronous Lean DOM bridge, text-size reflow and original SVG Tiny admission baseline |
@@ -260,4 +261,3 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-03 | [LWS with large bodies](20261103-lws-large-bodies.md) | this commit | measured 1 MiB to 200 MiB PUT/GET in files mode, sealed; no size limits or quotas today (issue 1240); guidance: about 1 MiB per item, no media |
 | 2026-11-03 | [LWS ops: which reach resources without authorization?](20261103-lws-in-process-audit.md) | this commit | audit for issue 1238: only `lwsSnapshot` returns the whole storage with no authorization (host-only by design; clear text without a key); components get `{step, settled, close}`, not the engine |
 | 2026-10-31 | [Scoped query provider grants prototype](20261031-scoped-query-context-prototype.md) | same commit | experimental/unwired: actual resolver bounds, captured providers, 14 runtime passes plus one visible variable-SERVICE expected failure |
-- `20261105-render-embedded-perf.md`: render performance pass, corrected cost split, ESP32-P4 target.
