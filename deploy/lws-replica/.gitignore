@@ -1,0 +1,7 @@
+public/
+writer.jwks.json
+.env
+*.pem
+*.key
+node_modules/
+fly.toml
