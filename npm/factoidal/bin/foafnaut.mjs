@@ -53,7 +53,10 @@ function currentApp() {
 async function installLatest() {
   const response = await fetch(RELEASES, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'foafnaut' } });
   if (!response.ok) fail(`release list: HTTP ${response.status}`);
-  const release = (await response.json()).find((r) => /^build-[0-9a-f]{12}-foafnaut-darwin-arm64$/.test(r.tag_name));
+  // The release list is not in publication order.
+  const release = (await response.json())
+    .filter((r) => /^build-[0-9a-f]{12}-foafnaut-darwin-arm64$/.test(r.tag_name) && r.published_at)
+    .sort((a, b) => b.published_at.localeCompare(a.published_at))[0];
   if (!release) fail('no published macOS build');
   const commit = release.tag_name.split('-')[1];
   const dir = join(home(), 'versions', commit);
