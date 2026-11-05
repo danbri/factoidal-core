@@ -50,8 +50,8 @@ Deno.test("SVG storage plan uses actual storage capability and preserves small u
   await rejects(()=>requestRenderPlan("window","rgba8unorm",dense,limits),"uniform bytes");
   await rejects(()=>requestRenderPlan("svg-offscreen","rgba8unorm",dense,{...limits,maxStorageBufferBindingSize:500000}),"storage bytes");
   await rejects(()=>requestRenderPlan("svg-offscreen","rgba8unorm",dense,{...limits,maxBufferSize:500000}),"buffer capacity");
-  await rejects(()=>requestRenderPlan("svg-offscreen","rgba8unorm",{...dense,data:Array(262148).fill(0)},
-    {...limits,maxStorageBufferBindingSize:16777216}),"262144-float budget");
+  await rejects(()=>requestRenderPlan("svg-offscreen","rgba8unorm",{...dense,data:Array(1048580).fill(0)},
+    {...limits,maxStorageBufferBindingSize:16777216}),"1048576-float budget");
   const {maxStorageBufferBindingSize:_,...missing}=limits;
   await rejects(()=>requestRenderPlan("svg-offscreen","rgba8unorm",frame,missing),"device capability");
 });

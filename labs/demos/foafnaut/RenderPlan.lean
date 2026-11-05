@@ -147,7 +147,7 @@ structure Plan (width height floatCount maxUniformBytes maxDimension maxStorageB
   bindingBound : 4 * floatCount ≤ (if mode = .svgOffscreen then maxStorageBytes else maxUniformBytes)
   bufferBound : 4 * floatCount ≤ maxBufferBytes
   copyBound : mode = .window ∨ readbackBytes width height ≤ maxBufferBytes
-  svgBudget : mode = .svgOffscreen → floatCount ≤ 262144
+  svgBudget : mode = .svgOffscreen → floatCount ≤ 1048576
   offscreenFormat : mode = .window ∨ format = .rgba8unorm
 
 def plan (mode format : String)
@@ -163,7 +163,7 @@ def plan (mode format : String)
     | _ => throw "format must be rgba8unorm or bgra8unorm"
   let capacity := if selectedMode = .svgOffscreen then maxStorageBytes else maxUniformBytes
   if copyBound : selectedMode = .window ∨ readbackBytes width height ≤ maxBufferBytes then
-    if budget : selectedMode = .svgOffscreen → floatCount ≤ 262144 then
+    if budget : selectedMode = .svgOffscreen → floatCount ≤ 1048576 then
       if hw : 0 < width then
         if hh : 0 < height then
           if hwb : width ≤ maxDimension then
@@ -188,7 +188,7 @@ def plan (mode format : String)
           else throw "width exceeds device limit"
         else throw "height must be positive"
       else throw "width must be positive"
-    else throw "SVG parameter data exceeds 262144-float budget"
+    else throw "SVG parameter data exceeds 1048576-float budget"
   else throw "readback bytes exceed device buffer capacity"
 
 theorem accepted_bounds {width height floatCount maxUniformBytes maxDimension maxStorageBytes maxBufferBytes : Nat}

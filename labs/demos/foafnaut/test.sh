@@ -17,6 +17,9 @@ mkdir -p "$LAB/.build"
 "${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Werror "$LAB/native_coordinates_test.c" \
   -lm -o "$LAB/.build/native-coordinates-test"
 "$LAB/.build/native-coordinates-test"
+# The status note is rendered by this engine; its HTML must match its Markdown.
+python3 "$LAB/../../../tools/status-to-html.py" "$LAB/../../../docs/web/hub/foafnaut2525-status.md" \
+  "$LAB/web-render/fixtures/status.html" --check
 # The native HTML tests need the web-render engine, which Builds makes after this
 # step in its engines job and before it in its macOS job, and more permissions.
 TESTS=()

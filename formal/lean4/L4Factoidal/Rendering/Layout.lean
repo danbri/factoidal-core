@@ -433,9 +433,9 @@ def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding :
   if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported viewport: require dimensions 1 to 4096"
   let styles ← CSS.computeAll dom rules textScale
   let result ← block dom styles font embedding 64 0 0 0 (Float.ofNat width)
-  if result.nodes.size > 12288 then throw "HTML paint count exceeds 12288"
+  if result.nodes.size > 49152 then throw "HTML paint count exceeds 49152"
   let links := linkRegions dom styles result.boxes (Float.ofNat width) (Float.ofNat height)
-  if links.size > 12288 || links.any (fun link => link.href.utf8ByteSize > 2048) then
+  if links.size > 49152 || links.any (fun link => link.href.utf8ByteSize > 2048) then
     throw "unsupported link region count or href exceeding 2048 UTF-8 bytes"
   return (⟨width,height,⟨1,1,0,0,0,0,Float.ofNat width,Float.ofNat height⟩, result.nodes.toList,result.runs,links⟩,result.boxes)
 

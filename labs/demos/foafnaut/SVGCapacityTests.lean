@@ -32,16 +32,16 @@ def run : IO Unit := do
   let links := (List.range 48).map fun i => s!"<https://example.org/p{i/3}> f:knows <https://example.org/p{(i/3+i%3+1)%16}> ."
   measure "dense16" ("@prefix f: <http://xmlns.com/foaf/0.1/> . " ++ String.join (people++links)) 716 133208
   let root (children : String) := "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'>" ++ children ++ "</svg>"
-  check ((NativeSVG.parse (root (String.join (List.replicate 12289 "<circle r='1'/>")))).isOk == false) "primitive budget ignored"
+  check ((NativeSVG.parse (root (String.join (List.replicate 49153 "<circle r='1'/>")))).isOk == false) "primitive budget ignored"
   check ((NativeSVG.parse (String.ofList (List.replicate 1048577 'x'))).isOk == false) "character budget ignored"
   let glyphs : Scene := {
     width:=32
     height:=24
     background:=⟨255,255,255⟩
-    shapes:=List.replicate 500 (.glyph ⟨0,0⟩ 1 ⟨31,31,31,31,31,31,31⟩ ⟨0,0,0⟩)}
+    shapes:=List.replicate 2050 (.glyph ⟨0,0⟩ 1 ⟨31,31,31,31,31,31,31⟩ ⟨0,0,0⟩)}
   let .ok glyphXML := NativeSceneSVG.serialize glyphs | throw (IO.userError "glyph serialization")
   let .ok overBudget := parseJson (NativeSVG.compile glyphXML 0 0) | throw (IO.userError "error artifact JSON")
-  check ((overBudget.getString? "error").getD "" |>.startsWith "storage data") "batched path storage budget ignored"
+  check ((overBudget.getString? "error").getD "" |>.startsWith "storage data") s!"batched path storage budget ignored: {(overBudget.getString? "error").getD "no error"} ({glyphXML.length} characters)"
   IO.println "3 SVG storage-capacity native groups passed; no GPU result"
 
 #eval run

@@ -20,8 +20,8 @@ namespace NativeSVG
 
 -- Bounded storage-backed profile, sized from generated 8/16-person scenes.
 def maxInputChars : Nat := 1048576
-def maxPrimitives : Nat := 12288
-def maxDataFloats : Nat := 262144
+def maxPrimitives : Nat := 49152
+def maxDataFloats : Nat := 1048576
 def maxInspectorNodes : Nat := 16384
 open NativeGraphics
 open L4Factoidal.XML
@@ -838,7 +838,7 @@ private def readListWith (read : NamespaceNode → Nat → Except String (List D
   for (node,index) in nodes.zipIdx do
     let chunk ← read node index
     count := count + DisplayNode.paintCountList chunk
-    if count > maxPrimitives then throw "painted primitive count exceeds 12288"
+    if count > maxPrimitives then throw "painted primitive count exceeds 49152"
     out := out ++ chunk.toArray
   return out.toList
 
@@ -1011,7 +1011,7 @@ private def compilePrimitivesLoop (mapping : Mapping) : List Primitive →
   | primitive::rest,acc,rows => do
     let compiled ← compilePrimitive mapping primitive
     let rows := rows+compiled.storageRows
-    if rows*4 > maxDataFloats then throw "storage data exceeds 262144 floats"
+    if rows*4 > maxDataFloats then throw "storage data exceeds 1048576 floats"
     compilePrimitivesLoop mapping rest (compiled::acc) rows
 
 /-- Canonical Float path geometry becomes checked linear backend geometry once,
@@ -2154,7 +2154,7 @@ end
 
 private def Scene.json (s : Scene) : Except String String := do
   let data := s.data
-  if data.size > maxDataFloats then throw "storage data exceeds 262144 floats"
+  if data.size > maxDataFloats then throw "storage data exceeds 1048576 floats"
   let rawProbes := [(1,1),(s.width/4,s.height/4),(s.width/2,s.height/2),
     (s.width*3/4,s.height/2),(s.width/2,s.height*3/4),(s.width-2,s.height-2)]
   let probes := (rawProbes.map fun (x,y) => (min (s.width-1) x,min (s.height-1) y)).eraseDups
