@@ -1,5 +1,6 @@
 import { createQuickJS } from './quickjs.mjs';
 import { bootstrap } from './guest.mjs';
+import { createLeanDOM } from './lean-dom.mjs';
 
 let send, listen;
 if (typeof globalThis.postMessage === 'function') {
@@ -24,6 +25,10 @@ listen(async message => {
         bytes = await response.arrayBuffer();
       }
       vm = await createQuickJS(bytes, { shouldInterrupt: () => performance.now() >= deadline });
+      if (payload.document) {
+        const mutate = await createLeanDOM({ ...payload.document, moduleURL: payload.leanModuleURL });
+        await vm.bind('__factoidalDOM', mutate);
+      }
       send({ id, ok: true, result: { engine: 'quickjs-ng-v0.18.0-wasi-reactor' } });
       return;
     }

@@ -8,6 +8,8 @@ milestone 5).
   l4html5lib tokenizer FILE.test ... tokenizer tests (html5lib-tests tokenizer/)
   l4html5lib dom-tree FILE.dat ...   the tree construction tests, the tree read
                                      from the DOM arena (L4Factoidal/DOM, milestone 6)
+  l4html5lib error-counts FILE.dat ... document diagnostics as JSONL, retaining
+                                     raw expectations and independent tree equality
   l4html5lib dump [--fragment CTX] [--script-on] FILE
                                      print the tree of one input in the test format
 
@@ -16,8 +18,11 @@ total line, and exit 0 only when no case fails. `--verbose` prints each failing
 case. The test files are read and parsed here, in Lean.
 -/
 import L4Factoidal.HTML.TreeBuilder
+import L4Factoidal.HTML.CodePointTokenizer
+import L4Factoidal.HTML.CodePointTokenizerTests
 import L4Factoidal.HTML.XmlAgreement
 import L4Factoidal.JSON.Parser
+import L4Factoidal.JSON.Serialize
 import L4Factoidal.DOM.OfHtml
 import Harness.DomDump
 
@@ -86,6 +91,8 @@ def dumpChildren (dom : Array DNode) (root : Nat) (d0 : Nat) : Array String := I
 structure DatTest where
   data : String
   errors : Nat
+  errorDescriptions : Array String := #[]
+  hasNewErrors : Bool := false
   fragment : Option String
   scripting : Option Bool
   document : String
@@ -110,6 +117,8 @@ def parseDat (txt : String) : Array DatTest := Id.run do
       i := i + 1
     i := i + 1
     let mut errs := 0
+    let mut errorDescriptions : Array String := #[]
+    let mut hasNewErrors := false
     let mut frag : Option String := none
     let mut scr : Option Bool := none
     let mut docLines : Array String := #[]
@@ -123,16 +132,20 @@ def parseDat (txt : String) : Array DatTest := Id.run do
         else if l == "#script-off" then scr := some false
         else if l == "#script-on" then scr := some true
         else if l == "#document" then sect := "document"
-        else if l == "#new-errors" then sect := "errors"
+        else if l == "#new-errors" then
+          sect := "errors"
+          hasNewErrors := true
         else sect := "other"
-      else if sect == "errors" && l != "" then errs := errs + 1
+      else if sect == "errors" && l != "" then
+        errs := errs + 1
+        errorDescriptions := errorDescriptions.push l
       else if sect == "fragment" && l != "" then frag := some l
       else if sect == "document" then docLines := docLines.push l
       i := i + 1
     -- the blank line that separates tests, and the final newline of the file
     for _ in [0:docLines.size] do
       if docLines.back? == some "" then docLines := docLines.pop
-    out := out.push { data := "\n".intercalate dataLines.toList, errors := errs, fragment := frag,
+    out := out.push { data := "\n".intercalate dataLines.toList, errors := errs, errorDescriptions, hasNewErrors, fragment := frag,
                       scripting := scr, document := "\n".intercalate docLines.toList, line := start }
   return out
 
@@ -225,6 +238,29 @@ def treeFile (path : System.FilePath) (verbose : Bool) (viaDom : Bool := false) 
       if n == t.errors then errCountSame.modify (· + 1) else errCountDiff.modify (· + 1)
   return (p, f)
 
+open L4Factoidal.JSON in
+/-- One JSON row per document fixture, using the same scripting mode and error
+denominator as `treeFile`. Expected diagnostic text is evidence, not a required
+code-name vocabulary: upstream specifies the number, not the text of errors. -/
+def errorCountsFile (path : System.FilePath) : IO Unit := do
+  let tests := parseDat (← IO.FS.readFile path)
+  for t in tests do
+    if t.fragment.isSome then continue
+    let scripting := t.scripting.getD false
+    let tb := parseDocumentState t.data scripting
+    let actual := tb.errs.size + tb.tk.errs.size
+    let strings := fun (xs : Array String) => Json.array (xs.toList.map Json.string)
+    IO.println (Json.object [
+      ("file", .string (path.fileName.getD path.toString)),
+      ("line", .number (toString t.line)), ("input", .string t.data),
+      ("scripting", .bool scripting),
+      ("expectedCount", .number (toString t.errors)),
+      ("actualCount", .number (toString actual)),
+      ("expectedDescriptions", strings t.errorDescriptions),
+      ("hasNewErrors", .bool t.hasNewErrors),
+      ("treeBuilderErrors", strings tb.errs), ("tokenizerErrors", strings tb.tk.errs),
+      ("treeMatches", .bool (runTree t scripting == t.document))]).toString
+
 
 /-! ## The tokenizer test format (html5lib-tests `tokenizer/README.md`) -/
 
@@ -253,6 +289,44 @@ def unescapeU (s : String) : Option String := Id.run do
       out := out.push cs[i]!
       i := i + 1
   return some out
+
+/-- Lossless decoding of the fixture's double-escaped UTF-16 spelling. -/
+def unescapeCodePoints (s : String) : Option (Array Nat) := Id.run do
+  let cs := s.toList.toArray
+  let mut units : List UInt16 := []
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if i ≥ cs.size then break
+    if cs[i]! == '\\' && i + 5 < cs.size && cs[i + 1]! == 'u' then
+      let hex := #[cs[i + 2]!, cs[i + 3]!, cs[i + 4]!, cs[i + 5]!]
+      let mut value := 0
+      for c in hex do
+        let digit := if '0' ≤ c && c ≤ '9' then some (c.toNat - 48)
+          else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 87)
+          else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55) else none
+        let some d := digit | return none
+        value := value * 16 + d
+      units := UInt16.ofNat value :: units
+      i := i + 6
+    else
+      let cp := cs[i]!.toNat
+      if cp ≤ 0xFFFF then units := UInt16.ofNat cp :: units
+      else
+        let hi := 0xD800 + (cp - 0x10000) / 0x400
+        let lo := 0xDC00 + (cp - 0x10000) % 0x400
+        units := UInt16.ofNat lo :: UInt16.ofNat hi :: units
+      i := i + 1
+  return some (decodeUtf16Units units.reverse).toArray
+
+open L4Factoidal.JSON in
+/-- Character output remains code points, so a surrogate cannot compare equal
+to U+FFFD or to the six literal characters in a backslash-u spelling. -/
+def expectedCharacterCodePoints (out : List Json) : Option (Array Nat) := do
+  let mut result := #[]
+  for token in out do
+    let .array [.string "Character", .string text] := token | none
+    result := result ++ (← unescapeCodePoints text)
+  return result
 
 def optRepr : Option String → String
   | some s => "\"" ++ s ++ "\""
@@ -326,16 +400,17 @@ def initialState : String → Option TS
 
 /-- Run the tokenizer alone to the end-of-file token. -/
 def tokenize (input : String) (st : TS) (lastStart : String) : List String × List String := Id.run do
-  let inp := normalizeNewlines input
-  let mut t : Tok := { inp, st, lastStart, foreign := st == .cdata }
+  let .ok result := tokenizeCodePoints (input.toList.map Char.toNat).toArray st lastStart
+    | return (["code-point tokenizer refused scalar input"], ["code-point-tokenizer-error"])
   let mut toks : Array String := #[]
-  for _ in [0:inp.size * 4 + 16] do
-    let (x, t') := t.pull
-    t := t'
-    match tokenRepr x with
+  for token in result.tokens do
+    let scalar := match token with
+      | .character cp => Token.char (Char.ofNat cp)
+      | .other value => value
+    match tokenRepr scalar with
     | some r => toks := toks.push r
-    | none => break
-  return (coalesce toks.toList, (inputErrors inp).toList ++ t.errs.toList)
+    | none => pure ()
+  return (coalesce toks.toList, result.errors.toList)
 
 /-- Counts of a tokenizer file: (output pass, output fail, error codes pass,
 error codes fail, not run because an input names a surrogate). -/
@@ -401,7 +476,31 @@ def tokenizerFile (path : System.FilePath) (verbose : Bool) : IO TokCounts := do
         let base := path.fileName.getD path.toString
         if ← classify s!"tokenizer:{base}:{desc}:{sname}" (outOk && errOk) then
           if outOk && errOk then c := { c with pass := c.pass + 1 } else c := { c with fail := c.fail + 1 }
-    | _, _ => c := { c with surrogate := c.surrogate + states.length }
+    | _, _ =>
+      let raw := ((field o "input").bind jStr).bind unescapeCodePoints
+      match raw, expectedCharacterCodePoints out with
+      | some input, some expected =>
+        for sname in states do
+          let some st := initialState sname | continue
+          match tokenizeCodePoints input st last with
+          | .error error =>
+            c := { c with surrogate := c.surrogate + 1 }
+            if verbose then IO.println s!"--- NOT RUN {path}: {desc} [{sname}] {error}"
+          | .ok result =>
+            let chars := result.tokens.filterMap fun token => match token with
+              | .character cp => some cp
+              | .other _ => none
+            let outOk := chars.size == result.tokens.size && chars == expected
+            let srt := fun (xs : List String) => (xs.toArray.qsort (· < ·)).toList
+            let errOk := srt result.errors.toList == srt errCodes
+            if outOk && errOk then c := { c with pass := c.pass + 1 }
+            else c := { c with fail := c.fail + 1 }
+            if outOk then c := { c with outPass := c.outPass + 1 }
+            else c := { c with outFail := c.outFail + 1 }
+            if errOk then c := { c with errPass := c.errPass + 1 }
+            else c := { c with errFail := c.errFail + 1 }
+            if verbose then IO.println s!"--- CODEPOINTS {path}: {desc} [{sname}] tokens={outOk} errors={errOk}; expected={expected.toList} actual={chars.toList}"
+      | _, _ => c := { c with surrogate := c.surrogate + states.length }
   return c
 
 /-! ## XHTML and HTML agreement (`agree`) -/
@@ -579,6 +678,9 @@ def main (args : List String) : IO UInt32 := do
   let apart : IO String := do
     pure s!"{← xfailCount.get} expected failures (open issues), {← defectCount.get} excluded (defective test data), {← staleCount.get} stale"
   match args with
+  | "error-counts" :: files =>
+    for fl in files do errorCountsFile fl
+    pure (if files.isEmpty then 1 else 0)
   | "tree" :: files =>
     let mut tp := 0
     let mut tf := 0
@@ -641,5 +743,5 @@ def main (args : List String) : IO UInt32 := do
     for l in dumpChildren tb.dom 0 0 do IO.println l
     pure 0
   | _ =>
-    IO.eprintln "usage: l4html5lib tree FILE.dat ... | tokenizer FILE.test ... | dump FILE"
+    IO.eprintln "usage: l4html5lib tree FILE.dat ... | dom-tree FILE.dat ... | error-counts FILE.dat ... | tokenizer FILE.test ... | dump FILE"
     pure 2

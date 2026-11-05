@@ -198,6 +198,26 @@ when 1.1 exists (Iron Rule #5).
 
 ## First-party harnesses under `tests/`
 
+The [HTML diagnostic audit](../../docs/20261103-html-parser-error-count-audit.md)
+explains the 446 raw count differences. `l4html5lib error-counts FILE.dat ...`
+emits the actual error lists and independent tree equality. Upstream's browser
+wrapper ignores error fields; do not present count differences as additional
+tree failures or silently deduplicate old/new fixture diagnostics.
+The follow-up [foundation progress](../../docs/20261103-browser-foundations-progress.md)
+records the four newly executable surrogate cases and the original SVG Tiny
+inventory. Tiny admission is not visual conformance; the complete baseline
+currently has no admitted scenes. Use the latest saved per-backend report,
+not a focused integration-test count, when describing browser maturity.
+
+- [Browser WPT probes](../../tests/browser-wpt/README.md) run pinned original
+  HTML parser/tokenizer fixtures, the actual QuickJS guest and native
+  HTML/embedded-SVG image comparisons. Read the
+  [dated baseline and provenance](../../docs/20261103-browser-wpt-baseline.md)
+  before reporting scores: synchronous shell assertions, cached browser
+  expectations and fresh native pixels are distinct evidence. Missing APIs,
+  unsupported cases and timeouts remain visible; this is not full WPT
+  Window conformance or a Lean-verified JavaScript-engine claim.
+
 - `tests/unit/` — OCaml unit tests + `run-all.sh` (includes
   companion-file writer round-trips, UTF-8/codepoint semantics,
   RDF/XML perf repros).

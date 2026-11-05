@@ -3,10 +3,21 @@
 export function installGuest(snapshot) {
   const stringify = JSON.stringify.bind(JSON), parse = JSON.parse.bind(JSON);
   const freeze = Object.freeze.bind(Object);
+  const own = Object.hasOwn;
   const nodes = new Map(), callbacks = new Map();
+  const records = new Map(snapshot.map(item => [item.id, { ...item, attributes: { ...item.attributes } }]));
+  let connected = new Set(records.keys());
+  const mutate = typeof globalThis.__factoidalDOM === 'function' ? globalThis.__factoidalDOM : null;
+  if (mutate) delete globalThis.__factoidalDOM;
   let commands = [], logs = [], lastDefaultPrevented = false;
   const emit = command => {
     if (commands.length >= 256) throw new RangeError('DOM command budget exceeded');
+    if (mutate) {
+      const updated = parse(mutate(stringify(command)));
+      if (!Array.isArray(updated.nodes)) throw new TypeError('Invalid Lean DOM response');
+      connected = new Set(updated.nodes.map(item => item.id));
+      for (const item of updated.nodes) records.set(item.id, item);
+    }
     commands.push(command);
   };
   const text = value => {
@@ -15,22 +26,26 @@ export function installGuest(snapshot) {
     return value;
   };
   for (const item of snapshot) {
-    let content = item.textContent;
-    const attributes = Object.assign(Object.create(null), item.attributes);
+    const record = () => records.get(item.id);
     const listeners = [];
     const node = Object.freeze({
       nodeId: item.id, tagName: item.tagName,
-      get textContent() { return content; },
+      get isConnected() { return connected.has(item.id); },
+      get textContent() { return record().textContent; },
       set textContent(value) {
         value = text(value);
         emit({ op: 'setTextContent', nodeId: item.id, value });
-        content = value;
+        // A detached handle remains usable; Lean's connected snapshot omits it.
+        record().textContent = value;
       },
-      getAttribute(name) { return attributes[String(name)] ?? null; },
+      getAttribute(name) {
+        const attributes = record().attributes, key = String(name);
+        return own(attributes, key) ? attributes[key] : null;
+      },
       setAttribute(name, value) {
         name = text(name); value = text(value);
         emit({ op: 'setAttribute', nodeId: item.id, name, value });
-        attributes[name] = value;
+        record().attributes[name] = value;
       },
       addEventListener(type, callback) {
         if (type !== 'click' || typeof callback !== 'function') throw new TypeError('Only click listeners are supported');
@@ -46,7 +61,7 @@ export function installGuest(snapshot) {
     callbacks.set(item.id, { node, listeners, onclick: null });
     nodes.set(item.id, node);
   }
-  const getElementById = id => [...nodes.values()].find(node => node.getAttribute('id') === String(id)) ?? null;
+  const getElementById = id => [...connected].map(key => nodes.get(key)).find(node => node && node.getAttribute('id') === String(id)) ?? null;
   Object.defineProperty(globalThis, 'document', { value: Object.freeze({
     getElementById,
     querySelector(selector) {
@@ -73,11 +88,13 @@ export function installGuest(snapshot) {
   } });
   Object.defineProperty(globalThis, '__factoidalDrain', { value: () => {
     const listeners = [];
-    for (const [nodeId, state] of callbacks) if (state.onclick || state.listeners.length) listeners.push({ nodeId, type: 'click' });
+    for (const [nodeId, state] of callbacks) if (connected.has(nodeId) && (state.onclick || state.listeners.length)) listeners.push({ nodeId, type: 'click' });
     const wire = stringify({ commands, listeners, logs, defaultPrevented: lastDefaultPrevented });
     commands = []; logs = []; lastDefaultPrevented = false;
     return wire;
   } });
 }
 
-export const bootstrap = nodes => `(${installGuest.toString()})(${JSON.stringify(nodes)});`;
+// Parse data as JSON: embedding it as an object literal changes the meaning
+// of a real "__proto__" attribute before the binding can inspect it.
+export const bootstrap = nodes => `(${installGuest.toString()})(JSON.parse(${JSON.stringify(JSON.stringify(nodes))}));`;

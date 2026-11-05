@@ -327,3 +327,5 @@ Both files are gitignored (`formal/fstar/.gitignore`).
 - `ocaml-boundary` skill — what may be hand-written OCaml at all.
 
 Browser scripting architecture and checks: [separate QuickJS WASM and Lean document transactions](../../docs/designissues/2026-11-03-script-engine-architecture.md).
+
+Browser renderer cancellation and tests: [terminable Lean renderer worker](../../docs/designissues/2026-11-04-renderer-worker.md). Run the actual-WASM worker controls and the browser heartbeat/application checks; a worker source inventory alone does not establish cancellation or presentation.

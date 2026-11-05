@@ -5,7 +5,7 @@ import {prepareDocument} from './document-client.mjs';
 import {createOffscreenSession} from '/lab/gpu_transport.ts';
 const $=selector=>document.querySelector(selector),source=$('#source'),button=$('#render'),status=$('#status'),canvas=$('#output');
 let timer,current,sequence=0,gpuSession,gpuQueue=Promise.resolve(),documentURL,sourceURL,activeDocument,renderAbort,committed,navigationPending=false,scriptPending=false;
-function abortRender(){sequence++;renderAbort?.abort();clearTimeout(timer);button.disabled=false;canvas.style.cursor='default';}
+function abortRender(){sequence++;renderAbort?.abort();engine.abortPending('Render superseded');clearTimeout(timer);button.disabled=false;canvas.style.cursor='default';}
 function log(message){console.log('Lean browser',JSON.stringify(message));$('#events').textContent=JSON.stringify(message,null,2)+'\n'+$('#events').textContent.slice(0,8000);}
 function rememberCommitted(){
  if(!current)return;
@@ -30,18 +30,18 @@ async function compileSource(html,width,height,syntax,signal,url,isCurrent){
   if(candidate?.html!==html||candidate?.url!==url){candidate=await prepareDocument(engine,html,{url,signal,onLog:log});owned=true;}
   try{
    if(signal?.aborted||!isCurrent())throw Error('Superseded document preparation');
-   return {artifact:await candidate.compile(width,height,{signal}),document:candidate,owned};
+   return {artifact:await candidate.compile(width,height,{signal,textScalePercent}),document:candidate,owned};
   }catch(error){if(owned)candidate.close();throw error;}
  }
  if(syntax==='html'&&engine.fontRequests&&engine.compileFont){
-  const request=await engine.fontRequests(html);if(request.error)throw Error(request.error);
+  const request=await engine.fontRequests(html,{signal});if(request.error)throw Error(request.error);
   if(request.requests?.length){
    const response=await fetch('/font-data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request),signal});
    if(!response.ok)throw Error(await response.text());
-   return {artifact:await engine.compileFont(html,JSON.stringify(await response.json()),width,height)};
+   return {artifact:await engine.compileFont(html,JSON.stringify(await response.json()),width,height,{signal})};
   }
  }
- return {artifact:await engine.compile(html,width,height,syntax)};
+ return {artifact:await engine.compile(html,width,height,syntax,{signal})};
 }
 async function render({text=source.value,syntax=$('#syntax').value,isCurrent=()=>true,signal,url=sourceURL??documentURL,navigationCommit=false}={}){
  const request=++sequence;renderAbort?.abort();renderAbort=new AbortController();
@@ -93,7 +93,17 @@ const navigation=new NavigationController({load:fetchResource,render:async(resou
  if(state.error){navigationPending=false;abortRender();restoreCommitted(state.error);log({type:'navigation-error',url:state.requestedURL,error:state.error});}
  if(state.cancelled){const pending=navigationPending;navigationPending=false;abortRender();if(pending)restoreCommitted('Navigation stopped');}
 }});
-window.webBrowser={navigation,render:()=>render().catch(()=>{}),get currentURL(){return documentURL;}};
+let textScalePercent=100;
+function showTextScale(){
+ $('#text-scale').textContent=textScalePercent+'%';
+ $('#text-smaller').disabled=textScalePercent<=50;
+ $('#text-larger').disabled=textScalePercent>=250;
+}
+function changeTextScale(value){textScalePercent=value;showTextScale();return render().catch(()=>{});}
+$('#text-smaller').addEventListener('click',()=>changeTextScale(Math.max(50,textScalePercent-25)));
+$('#text-larger').addEventListener('click',()=>changeTextScale(Math.min(250,textScalePercent+25)));
+$('#text-reset').addEventListener('click',()=>changeTextScale(100));
+window.webBrowser={navigation,render:()=>render().catch(()=>{}),get currentURL(){return documentURL;},get textScalePercent(){return textScalePercent;}};
 $('#navigation').addEventListener('submit',event=>{event.preventDefault();navigation.go($('#address').value,{base:documentURL});});
 $('#back').addEventListener('click',()=>navigation.back());$('#forward').addEventListener('click',()=>navigation.forward());$('#reload').addEventListener('click',()=>navigation.reload());$('#stop').addEventListener('click',()=>navigation.cancel());
 function cancelForEditing(){
@@ -107,7 +117,7 @@ $('#example').addEventListener('click',async()=>{
  navigation.cancel();const response=await fetch('/fixtures/graph.nt');if(!response.ok){status.textContent='Example unavailable';return;}source.value=await response.text();sourceURL=new URL('/fixtures/graph.nt',location.href).href;$('#current-url').textContent=sourceURL+' · RDF editor';await render().catch(()=>{});
 });
 for(const input of [source,$('#width'),$('#height')])input.addEventListener('input',()=>{cancelForEditing();clearTimeout(timer);timer=setTimeout(renderEdited,350);});
-window.addEventListener('pagehide',()=>{navigation.cancel();activeDocument?.close();gpuQueue.then(()=>{gpuSession?.close();gpuSession=undefined;}).catch(console.error);});
+window.addEventListener('pagehide',()=>{navigation.cancel();engine.dispose();activeDocument?.close();gpuQueue.then(()=>{gpuSession?.close();gpuSession=undefined;}).catch(console.error);});
 function scenePoint(event){const rect=canvas.getBoundingClientRect();return {x:(event.clientX-rect.left-canvas.clientLeft)*canvas.width/canvas.clientWidth,y:(event.clientY-rect.top-canvas.clientTop)*canvas.height/canvas.clientHeight};}
 async function pickScript(artifact,point,link){
  const ids=activeDocument?.listeners.map(listener=>listener.nodeId)??[];

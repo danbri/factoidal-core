@@ -107,3 +107,45 @@ These checks create real local HTTP fixture servers. The browser checks use
 actual Lean WASM, WebGPU and the Lean link picker. Their reports are local
 profile evidence. The [navigation worknote](../../../../docs/20261103-lean-browser-navigation.md)
 records execution status and remaining limits.
+
+## Terminable renderer worker
+
+`engine.mjs` is the foreground transport. `engine-worker.mjs` executes the Lean
+ABI in `engine-core.mjs`. Stop and input cancellation terminate active renderer
+work; the next call starts a fresh worker. Requests have bounded queue bytes,
+count and deadlines. Link/node picks retain only scene metadata, with recovery
+when a worker or cache entry is replaced. Details and evidence:
+[worker design](../../../../docs/designissues/2026-11-04-renderer-worker.md) and
+[worknote](../../../../docs/20261104-renderer-worker.md).
+
+The async API is unchanged. Optional transport controls are a final argument,
+separate from Lean document options:
+
+```js
+await engine.compileDocument(html, width, height, options, {signal});
+engine.abortPending('Stop');
+```
+
+Run the actual-WASM tests with Node22 and actual font records:
+
+```sh
+FACTOIDAL_RENDER_MODULE=/absolute/path/to/web-render.mjs \
+FACTOIDAL_FONT_DATA=/absolute/path/to/font-data.json \
+node --test labs/demos/foafnaut/web-render/tests/engine-worker.test.mjs
+```
+
+The font records must contain space, `November2026`, `café` and `edited` at20px,
+and `office` at28px, from one actual family. These are test inputs only. No
+font bytes are committed. The tests fail if their required inputs are absent.
+
+`tests/browser-server.mjs` starts a small harness on an ephemeral loopback port
+when `FACTOIDAL_RENDER_MODULE` names the built renderer. Run its actual Chrome
+check with:
+
+```sh
+node labs/demos/foafnaut/web-render/tests/check-browser-worker.mjs \
+  HARNESS_URL PLAYWRIGHT_CORE_MJS CHROME OUTPUT_DIRECTORY
+```
+
+This harness checks the real worker and foreground heartbeat. The application
+browser checks separately cover WebGPU and document/navigation integration.

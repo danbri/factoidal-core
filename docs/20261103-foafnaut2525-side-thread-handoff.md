@@ -6,10 +6,16 @@ transcript. The main agent should read it before reporting current status.
 
 ## Scope and evidence date
 
-The side conversation inspected existing work, created the explicitly
-requested issue below, and updated documentation. It did not start a native
-app implementation, build or publish a release, contact Apple, or submit a
-DMA complaint. The main thread owns implementation and release coordination.
+The side conversation initially inspected existing work, created the explicitly
+requested issue below, and updated documentation. A subsequent explicit
+request authorized the [timed WPT baseline and cache cleanup](20261103-browser-wpt-baseline.md):
+new local test runners and measurements are recorded there. The owner's
+subsequent foundation-work request authorized local implementation:
+[parser diagnostics, tokenizer, JS/DOM and text-size progress](20261103-browser-foundations-progress.md).
+That work includes local native CLI/WASM rebuilds and an original SVG Tiny
+admission baseline. It did not start a native app implementation, publish a
+release, contact Apple, or submit a DMA complaint. The main thread owns
+integration and release coordination.
 
 Most browser observations were at host source `b578816b0`, with renderer
 artifacts from `63a73ff4a`. Live ports, process state, free disk, CI and

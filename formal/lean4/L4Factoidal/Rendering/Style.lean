@@ -344,13 +344,23 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
   let decoration := parent.decorationColor.orElse (fun _ => if result.underline then some result.color else none)
   return {result with underline := decoration.isSome, decorationColor := decoration}
 
+/-- Reader text scaling is applied once after inheritance/cascade. Pixel sizes
+are rounded to match the supplied-font raster contract; explicit line heights
+scale too. Geometry, SVG viewports and DOM source are unchanged. -/
+def Computed.scaleText (s : Computed) (scale : Float) : Computed :=
+  if scale == 1 then s else
+  let size := max 1 (s.fontSize*scale).round
+  let height := (s.lineHeightFactor.map (size*·)).getD (s.lineHeight*scale)
+  {s with fontSize := size, lineHeight := height}
+
 /-- Visit parents before children, using a work list and bounded arena size. -/
-def computeAll (dom : Dom) (rules : List Rule) : Except String (Array Computed) := do
+def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1) : Except String (Array Computed) := do
+  if !textScale.isFinite || textScale < 0.5 || textScale > 2.5 then throw "text scale must be 50% to 250%"
   let mut pending := [0]
   let mut styles := Array.replicate dom.size ({} : Computed)
   for _ in [:dom.size+1] do
     match pending with
-    | [] => return styles
+    | [] => return styles.map (·.scaleText textScale)
     | id::rest =>
       let n := dom.get id
       let parent := (n.parent.bind (styles[·]?)).getD {}

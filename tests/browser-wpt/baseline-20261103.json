@@ -1,0 +1,168 @@
+{
+  "format": "factoidal-browser-wpt-baseline-v1",
+  "date": "2026-11-03",
+  "hostCommit": "5f790f654fc95e1995f0d5b4f07d153f8ea3a0ff",
+  "rendererSourceCommit": "63a73ff4af77abb41ca9d423171da1ecd635be33",
+  "nativeSha256": "ee90a9317456104a6104f9219cfe536774fad9aa6888f94cfa18e6a1e7e3c7de",
+  "quickjsSha256": "8afa5d73287af5573613e15d5e633e91d8e096b40676f424f104087bc1416678",
+  "reportDirectory": "/private/tmp/factoidal-wpt-20261103-1217",
+  "scope": "Fresh native CPU rendering and synchronous QuickJS probe; cached independent image expectations; Lean parser harness over pinned original fixtures. Not a complete browser WPT or GPU run.",
+  "parser": {
+    "tree": {
+      "pass": 1963,
+      "fail": 10,
+      "total": 1973
+    },
+    "domTree": {
+      "pass": 1963,
+      "fail": 10,
+      "total": 1973
+    },
+    "parseErrorCounts": {
+      "same": 1321,
+      "different": 446
+    },
+    "tokenizer": {
+      "pass": 7043,
+      "fail": 6,
+      "executed": 7049,
+      "notRunSurrogateInput": 4
+    },
+    "expectedFailuresMasked": 0,
+    "excluded": 0
+  },
+  "javascript": {
+    "documents": 784,
+    "counts": {
+      "ERROR": 367,
+      "INCOMPLETE": 27,
+      "UNAVAILABLE": 229,
+      "FAIL": 136,
+      "HARNESS_ERROR": 23,
+      "UNSUPPORTED": 2
+    },
+    "assertions": {
+      "pass": 103,
+      "fail": 1342
+    },
+    "completePassDocuments": 0
+  },
+  "nativeRendering": {
+    "relations": 279,
+    "counts": {
+      "UNAVAILABLE": 97,
+      "UNSUPPORTED": 175,
+      "FAIL": 1,
+      "PASS": 2,
+      "TIMEOUT": 4
+    },
+    "evaluated": [
+      {
+        "test": "svg/coordinate-systems/viewBox-fractional-valid.html",
+        "status": "FAIL",
+        "againstReference": {
+          "maxChannelDifference": 56,
+          "differentPixels": 628
+        }
+      },
+      {
+        "test": "svg/linking/reftests/href-use-element.html",
+        "status": "PASS",
+        "againstReference": {
+          "maxChannelDifference": 0,
+          "differentPixels": 0
+        }
+      },
+      {
+        "test": "svg/render/reftests/overflow-clip.html",
+        "status": "PASS",
+        "againstReference": {
+          "maxChannelDifference": 0,
+          "differentPixels": 0
+        }
+      }
+    ]
+  },
+  "extraDomAndLayout": {
+    "documents": 5,
+    "counts": {
+      "ERROR": 4,
+      "FAIL": 1
+    },
+    "assertions": {
+      "pass": 0,
+      "fail": 1
+    }
+  },
+  "provenance": {
+    "checkedSourceAndGeneratedCFiles": 125,
+    "browserLibraryMarkers": [],
+    "freshPixels": 480000,
+    "limit": "Source/C/binary hash witness and dyld observations; no independent reproducible native rebuild or formal binary proof. Cached browser expectations are separate from native image production."
+  },
+  "controls": [
+    {
+      "name": "wrong-native-digest",
+      "exit": 1,
+      "expectedDiagnostic": "Binary does not match witness",
+      "status": "PASS"
+    },
+    {
+      "name": "wrong-upstream-digest",
+      "exit": 1,
+      "expectedDiagnostic": "Fixture integrity failure: resources/testharness.js",
+      "status": "PASS"
+    },
+    {
+      "name": "truncated-oracle",
+      "exit": 1,
+      "expectedDiagnostic": "Truncated oracle inventory",
+      "status": "PASS"
+    }
+  ],
+  "reports": {
+    "parser-final/parser-probe.json": {
+      "sha256": "c7786df726af60c80749618122d03d0008f3869a31ad37ae372aae9156421189"
+    },
+    "quickjs-final/quickjs-wpt.json": {
+      "sha256": "0bd7bce3a2d60ba366c17d6c5919c12cbd7be739947bb8462317cd1955f736de"
+    },
+    "native-final/native-reftests.json": {
+      "sha256": "245701aeea80cfe1e0a883c146d12027341555db13e4fc3c89e09f956868f8a4"
+    },
+    "extra-quickjs-final/quickjs-wpt.json": {
+      "sha256": "ea20d17b74489fac5ed8c1d8ebbfa9acb31f31bbd97f1abbbbb51e36cd3fdc56"
+    },
+    "provenance/native-provenance.json": {
+      "sha256": "9e6e295a92d9bb76834f7e353b39f477a130e13830134557858f0fac6e6167fd"
+    },
+    "upstream-integrity.json": {
+      "sha256": "bba1af513c56c1ad56dddd6362019d0d3d4d0b9e26d2e02d5650c6b42b2ba686"
+    },
+    "negative-controls/controls.json": {
+      "sha256": "63232c5b6bbd0f316f04847ac6239a91ffc3373e0a892c9cfb949ce7409b2208"
+    },
+    "cache-cleanup.json": {
+      "sha256": "af217c1ff296b9a1f7f02f27e4ed5213a65aec88099ce94a83d64fff92895172"
+    },
+    "cache-cleanup-foaf.json": {
+      "sha256": "309aa7b34ca99dcfc7e71360f5379ed7a5af16895c11313985c7d39fb26e8dda"
+    }
+  },
+  "runners": {
+    "quickjs-probe.mjs": "3789a7f6b6bfd1a2677a1878648490509c57f03bbd4467a3b453b36d1e9280d3",
+    "native-reftests.py": "54f185ae57f2f59b7e2a37fd90d80a25b626d897d6377ec10946d2628cd50cb6",
+    "native-provenance.py": "be4b599786df134f85afcbe38f635473e76b77af4449d40ba7138d6f8c55ad15",
+    "parser-probe.py": "65e8350e0d763e8497ad6806b1c61f6cdf8ba959003b65f8fd27988e7e00df8b"
+  },
+  "upstreamPins": {
+    "svgAndScriptWpt": "70dae60789ef6220d9b4e60c92c5b2107b4e2b93",
+    "parserWpt": "ce5ca39646886a9349fc42913f843ec6e1c8a36f",
+    "html5libTokenizer": "c777c408b61078ea2eb4acefc2535f54dbc8b28a"
+  },
+  "cleanup": {
+    "removedFiles": 171,
+    "logicalBytes": 91678378,
+    "scope": "Only old untracked Lean/object caches in the Foafnaut checkout confirmed merged into origin/main; active caches preserved"
+  }
+}

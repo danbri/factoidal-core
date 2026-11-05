@@ -1,0 +1,399 @@
+{
+  "format": "factoidal-parser-upstream-pins-v1",
+  "sets": [
+    {
+      "kind": "tree",
+      "revision": "ce5ca39646886a9349fc42913f843ec6e1c8a36f",
+      "directory": "wpt-html-parsing/html/syntax/parsing/resources",
+      "files": [
+        {
+          "name": "adoption01.dat",
+          "gitBlob": "38f98efded0ae8a4f096f4c1cebba64a914241ea",
+          "bytes": 6084
+        },
+        {
+          "name": "adoption02.dat",
+          "gitBlob": "880cb505a660efdcacd287d50702d6b68a1c94d7",
+          "bytes": 1343
+        },
+        {
+          "name": "blocks.dat",
+          "gitBlob": "a1a9c75218865eaad103a1cbb77263e566868ad2",
+          "bytes": 9688
+        },
+        {
+          "name": "comments01.dat",
+          "gitBlob": "f9a4ece8b5b3b6d1fa1dcfd77a75fb541797e8ef",
+          "bytes": 3349
+        },
+        {
+          "name": "doctype01.dat",
+          "gitBlob": "9efdaf704bc3c55a36db4cad06e1b323d51486bf",
+          "bytes": 9076
+        },
+        {
+          "name": "domjs-unsafe.dat",
+          "gitBlob": "0a1b10f96d9d62a67d631c640cf0bd68637da63d",
+          "bytes": 10356
+        },
+        {
+          "name": "entities01.dat",
+          "gitBlob": "9bacebea050d93acf8ddea2bac5d9e4dbd3efbdf",
+          "bytes": 17640
+        },
+        {
+          "name": "entities02.dat",
+          "gitBlob": "74965a35f76509d1cd5306112e8d51851d1d6fef",
+          "bytes": 4952
+        },
+        {
+          "name": "foreign-fragment.dat",
+          "gitBlob": "e562c6b8ff62c32ccefcf4c4666a1c9dfb45dd85",
+          "bytes": 9082
+        },
+        {
+          "name": "html5test-com.dat",
+          "gitBlob": "d5462575426533d7830c23eee0457451f4b3c4bf",
+          "bytes": 5550
+        },
+        {
+          "name": "inbody01.dat",
+          "gitBlob": "10f6520f6fe0c64ac57ebee89bdbbbeac1a3849c",
+          "bytes": 836
+        },
+        {
+          "name": "isindex.dat",
+          "gitBlob": "733f82ea8eef7314b41711d938e056f75a440ca1",
+          "bytes": 774
+        },
+        {
+          "name": "main-element.dat",
+          "gitBlob": "4b103bb0fa34ce745afe2a995c8020a90018bfa0",
+          "bytes": 727
+        },
+        {
+          "name": "math.dat",
+          "gitBlob": "d6a8ae56f24f4608c57bbb497c08e19831746ac6",
+          "bytes": 1862
+        },
+        {
+          "name": "menuitem-element.dat",
+          "gitBlob": "f7c8e2c3ca74eb1468ce76170d536cbceb70819c",
+          "bytes": 4015
+        },
+        {
+          "name": "namespace-sensitivity.dat",
+          "gitBlob": "050dca752284fbbee72942aa156cc260f784e5c2",
+          "bytes": 518
+        },
+        {
+          "name": "noscript01.dat",
+          "gitBlob": "ec3496ce92fee5878f3455025978c09624cf693a",
+          "bytes": 4619
+        },
+        {
+          "name": "pending-spec-changes-plain-text-unsafe.dat",
+          "gitBlob": "2c546d40b8b1d8a918878a64d19d36dc7fe29204",
+          "bytes": 927
+        },
+        {
+          "name": "pending-spec-changes.dat",
+          "gitBlob": "1647d7f23a96e03d085c03e6a7c87ddd439c0d2d",
+          "bytes": 851
+        },
+        {
+          "name": "plain-text-unsafe.dat",
+          "gitBlob": "87a909f0bb7dd5088cb0bb3929bf142e0204be85",
+          "bytes": 14406
+        },
+        {
+          "name": "processing-instructions.dat",
+          "gitBlob": "c516eab0943042edb5cca8562c4087329843814b",
+          "bytes": 12487
+        },
+        {
+          "name": "quirks01.dat",
+          "gitBlob": "bc58de5ca0b6f77461708fff88b06c2f5a4d3780",
+          "bytes": 1170
+        },
+        {
+          "name": "ruby.dat",
+          "gitBlob": "f4e5e4e48d72f3cd67a56766d898ea5b9f4ce338",
+          "bytes": 4471
+        },
+        {
+          "name": "scriptdata01.dat",
+          "gitBlob": "6abcb6571cf59aa10984e3dced97932f35f74065",
+          "bytes": 6624
+        },
+        {
+          "name": "scripted_adoption01.dat",
+          "gitBlob": "5cc0f07496a658ef7a91dbcdb652f88e212e93d1",
+          "bytes": 296
+        },
+        {
+          "name": "scripted_ark.dat",
+          "gitBlob": "feebeadba1d8a08a136be74ccfe9352587026989",
+          "bytes": 631
+        },
+        {
+          "name": "scripted_foster01.dat",
+          "gitBlob": "a99760a39b7603628b56684111ebd84b784668cf",
+          "bytes": 648
+        },
+        {
+          "name": "scripted_webkit01.dat",
+          "gitBlob": "3e71c1baccc9bc26200de9d17698f10f01224a6e",
+          "bytes": 603
+        },
+        {
+          "name": "search-element.dat",
+          "gitBlob": "052ee598f5c0a350bcf94c6c9017b49bf2562a92",
+          "bytes": 2220
+        },
+        {
+          "name": "svg.dat",
+          "gitBlob": "a452e7afa00d3bc62cf0af746a6375d4eec6c39e",
+          "bytes": 1606
+        },
+        {
+          "name": "tables01.dat",
+          "gitBlob": "40798881618870966bce094d37b5ebd158911952",
+          "bytes": 7041
+        },
+        {
+          "name": "template.dat",
+          "gitBlob": "11888f306c6ac5a1d560cef797ed813f9b04db21",
+          "bytes": 28004
+        },
+        {
+          "name": "tests1.dat",
+          "gitBlob": "c4837b472376b1f95814f4dd58a2cb2f8718065d",
+          "bytes": 39460
+        },
+        {
+          "name": "tests10.dat",
+          "gitBlob": "3b311e4e03cd861cfd13391682ef0cb7d39962d0",
+          "bytes": 16458
+        },
+        {
+          "name": "tests11.dat",
+          "gitBlob": "b9901e79ec4054762a2bdf134b991dea8829b009",
+          "bytes": 17679
+        },
+        {
+          "name": "tests12.dat",
+          "gitBlob": "63107d277b6a7f1597155ad2527868bbc2c323de",
+          "bytes": 1612
+        },
+        {
+          "name": "tests14.dat",
+          "gitBlob": "a08b7649ebab76276be3c38d19e75bb9598e5731",
+          "bytes": 1067
+        },
+        {
+          "name": "tests15.dat",
+          "gitBlob": "93d06a871708a2929e900c331adec80d3697709e",
+          "bytes": 3649
+        },
+        {
+          "name": "tests16.dat",
+          "gitBlob": "05f34c13e33d3329ee9a4acdbc29d14c84d7d7c5",
+          "bytes": 46454
+        },
+        {
+          "name": "tests17.dat",
+          "gitBlob": "1c472d1dc1eb8901912449ac00937650f0e69465",
+          "bytes": 2819
+        },
+        {
+          "name": "tests18.dat",
+          "gitBlob": "a3bb69a16ef57fef47ced9bc3593a68e89e7d0f1",
+          "bytes": 12119
+        },
+        {
+          "name": "tests19.dat",
+          "gitBlob": "8b133d39a6f75c9c033fe317ac7a06a8eb995f92",
+          "bytes": 24102
+        },
+        {
+          "name": "tests2.dat",
+          "gitBlob": "9232edde3091880495754475f98377a25c682639",
+          "bytes": 13193
+        },
+        {
+          "name": "tests20.dat",
+          "gitBlob": "80c57d1aaa7219c70f5eb63e0625525492a1a828",
+          "bytes": 13524
+        },
+        {
+          "name": "tests21.dat",
+          "gitBlob": "a926b1384e9798fd7ba7e1620b3a2de541ed9bc0",
+          "bytes": 5092
+        },
+        {
+          "name": "tests22.dat",
+          "gitBlob": "31e6d9e331042da8dc42c1d46776691ff30f1fb3",
+          "bytes": 4243
+        },
+        {
+          "name": "tests23.dat",
+          "gitBlob": "49e4a4ace58be40162fbeb8c900a4c0053fa8b58",
+          "bytes": 3478
+        },
+        {
+          "name": "tests24.dat",
+          "gitBlob": "f6dc7eb48a53d7417418f8827c9a24031b5edcd7",
+          "bytes": 929
+        },
+        {
+          "name": "tests25.dat",
+          "gitBlob": "5bb369b262660dd58d1ae606717cab6359b3c421",
+          "bytes": 3586
+        },
+        {
+          "name": "tests26.dat",
+          "gitBlob": "1ba2be2dc86699794285b2481b87c54efeb89004",
+          "bytes": 8865
+        },
+        {
+          "name": "tests3.dat",
+          "gitBlob": "c7583d99e8b698287e1a45042126485c42d3c174",
+          "bytes": 4601
+        },
+        {
+          "name": "tests4.dat",
+          "gitBlob": "53770de9e6b5edaff0749b04c00640d555ba46bb",
+          "bytes": 1308
+        },
+        {
+          "name": "tests5.dat",
+          "gitBlob": "1ef8cae421386e5d1faaae4a2be85c267aa8f9b8",
+          "bytes": 3160
+        },
+        {
+          "name": "tests6.dat",
+          "gitBlob": "8c36dd3d56c0573112e770f0dc7239fa957d1654",
+          "bytes": 11065
+        },
+        {
+          "name": "tests7.dat",
+          "gitBlob": "aa7e16b408e2e68e0c94c998505980d7aa7b99e1",
+          "bytes": 7339
+        },
+        {
+          "name": "tests8.dat",
+          "gitBlob": "d532801e497da812cc7eb2ac89bdc9299829a33e",
+          "bytes": 2664
+        },
+        {
+          "name": "tests9.dat",
+          "gitBlob": "1456324ffc21f3c2c10c2e8aa7ada6b3a5edd62d",
+          "bytes": 10391
+        },
+        {
+          "name": "tests_innerHTML_1.dat",
+          "gitBlob": "09e0456f0f12d4564fed2f89e349549d990c163d",
+          "bytes": 11205
+        },
+        {
+          "name": "tricky01.dat",
+          "gitBlob": "753502a2619e0ba75fcb93957c6d2e544183f561",
+          "bytes": 6690
+        },
+        {
+          "name": "void-in-phrasing.dat",
+          "gitBlob": "b7dbd1e7cec2a8420cd50006edfc9790414034b5",
+          "bytes": 1890
+        },
+        {
+          "name": "webkit01.dat",
+          "gitBlob": "fc7f5c80e07e4b1f4833dcbda5fef2df1b2291b2",
+          "bytes": 14034
+        },
+        {
+          "name": "webkit02.dat",
+          "gitBlob": "47a3c5713ea8646ca4c825846969b150cdf28154",
+          "bytes": 14921
+        }
+      ]
+    },
+    {
+      "kind": "tokenizer",
+      "revision": "c777c408b61078ea2eb4acefc2535f54dbc8b28a",
+      "directory": "html5lib-tests/tokenizer",
+      "files": [
+        {
+          "name": "contentModelFlags.test",
+          "gitBlob": "9cf7c8bd9e70dfbd0037726d6a840e67d3aa5e12",
+          "bytes": 3055
+        },
+        {
+          "name": "domjs.test",
+          "gitBlob": "1a0824d789b767792286c98e92843d388eb6b5ce",
+          "bytes": 13430
+        },
+        {
+          "name": "entities.test",
+          "gitBlob": "a6469cd0dc533d0c3b60d0ec8e8b3726524a98d7",
+          "bytes": 19147
+        },
+        {
+          "name": "escapeFlag.test",
+          "gitBlob": "d7d2c490bfd161681df4a846a454d588b94e3d19",
+          "bytes": 1378
+        },
+        {
+          "name": "namedEntities.test",
+          "gitBlob": "f74f5bff6d6513ca832da5dd12437d3f5d5861a5",
+          "bytes": 1128317
+        },
+        {
+          "name": "numericEntities.test",
+          "gitBlob": "085109b797acc6657dea2ccf7c29d31942cc7214",
+          "bytes": 49842
+        },
+        {
+          "name": "pendingSpecChanges.test",
+          "gitBlob": "191434f1b13532b03c1bc8519d6c4a1247ac2582",
+          "bytes": 162
+        },
+        {
+          "name": "test1.test",
+          "gitBlob": "5323fbbeae2c6116aab14a716c8df1174e7870fb",
+          "bytes": 10006
+        },
+        {
+          "name": "test2.test",
+          "gitBlob": "edbec4b5c3f5f1142758026effa1edf861f3ae36",
+          "bytes": 8675
+        },
+        {
+          "name": "test3.test",
+          "gitBlob": "7a6a1b901ac87196d4458a2347f05f98ca4a0866",
+          "bytes": 352205
+        },
+        {
+          "name": "test4.test",
+          "gitBlob": "8963c7471184e53446afaa31e9cc7a74624a3812",
+          "bytes": 16339
+        },
+        {
+          "name": "unicodeChars.test",
+          "gitBlob": "49a8098528ea9771f42c619cb6a63d7bb4b6be86",
+          "bytes": 43771
+        },
+        {
+          "name": "unicodeCharsProblematic.test",
+          "gitBlob": "3ddb96c011b77706b80ff98f54bc4b1288bc8cf2",
+          "bytes": 1107
+        },
+        {
+          "name": "xmlViolation.test",
+          "gitBlob": "da6159e2ea7418684db258cd9fd7aad48f24af25",
+          "bytes": 442
+        }
+      ]
+    }
+  ]
+}

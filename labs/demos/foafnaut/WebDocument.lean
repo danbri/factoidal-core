@@ -119,20 +119,28 @@ def run (html : String) (request : JSON.Json) (width height : Nat) : Except Stri
   let _ ← classicScripts (WebRenderScript.snapshot dom)
   let op := str request "op" "render"
   if op == "inspect" then return (← inspect dom (str request "url")).toString
+  let percent ← match request.field? "textScalePercent" with
+    | none => pure 100
+    | some (.number n) => match n.toNat? with
+      | some value => pure value
+      | none => throw "textScalePercent must be an integer"
+    | _ => throw "textScalePercent must be an integer"
+  if percent < 50 || percent > 250 then throw "textScalePercent must be 50 to 250"
+  let textScale := Float.ofNat percent / 100
   let rules ← rules dom request
   if op == "fontRequests" then
-    return WebRenderFontRequests.requestsJSON (← WebRenderFontRequests.collectDOMWithRules dom rules)
+    return WebRenderFontRequests.requestsJSON (← WebRenderFontRequests.collectDOMWithRules dom rules textScale)
   if op != "render" then throw "unknown document operation"
   if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported document viewport"
   let fontData := str request "fontData"
   if !fontData.isEmpty then
-    let _ ← WebRenderFontRequests.collectDOMWithRules dom rules
+    let _ ← WebRenderFontRequests.collectDOMWithRules dom rules textScale
   let face ← if fontData.isEmpty then pure none else
     some <$> Rendering.FontProvider.Face.decode fontData
   let font := match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont
   let url := baseURL dom (str request "url")
   let embedding ← WebRender.makeEmbedding dom (if url.isEmpty then none else some url)
-  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding width height
+  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding width height textScale
   WebRender.artifact scene boxes face
 
 @[export web_document_compile]

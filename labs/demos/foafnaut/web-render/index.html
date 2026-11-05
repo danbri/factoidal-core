@@ -6,6 +6,7 @@
 <section class="browser" aria-label="Browser">
  <form id="navigation" class="navigation"><button id="back" type="button" disabled aria-label="Back">←</button><button id="forward" type="button" disabled aria-label="Forward">→</button><button id="reload" type="button" disabled>Reload</button><input id="address" aria-label="Page URL" type="url" placeholder="https://example.org/" required><button id="go" type="submit">Go</button><button id="stop" type="button" disabled>Stop</button></form>
  <p id="current-url" class="current-url">Local example</p>
+ <div class="controls" aria-label="Text size"><button id="text-smaller" type="button" aria-label="Smaller text">A−</button><output id="text-scale" aria-live="polite">100%</output><button id="text-larger" type="button" aria-label="Larger text">A+</button><button id="text-reset" type="button">Reset text size</button></div>
  <div class="viewport"><canvas id="output" aria-label="Lean rendered page"></canvas></div>
  <pre id="status" role="status">Loading Lean engine...</pre>
  <p class="scope">Native network access through this loopback server. UTF-8 HTML, external CSS, bounded classic scripts and an exact Arial font binding. Lean rejects unsupported HTML or CSS. Fragments retain their URL but do not scroll. <label class="inline"><input id="follow-links" type="checkbox" checked> Follow rendered links</label></p>

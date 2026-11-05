@@ -6,9 +6,9 @@ open DOM CSS Layout
 private def font : FontProfile :=
   {family := "layout-test-monospace",unitsPerEm := 7,advance := 6, ascent := 7,descent := 0,outline := fun _ => [.rect 0 0 5 7],admits := fun n => n >= 32 && n <= 126}
 private def noSVG : Embedding := fun _ _ _ _ => throw "unsupported SVG test embedding"
-private def run (html css : String) : Except String (Scene × Array Box) := do
+private def run (html css : String) (textScale : Float := 1) : Except String (Scene × Array Box) := do
   let dom := DOM.parseHtmlDocument html
-  Layout.render dom (← CSS.parse css) font noSVG 120 100
+  Layout.render dom (← CSS.parse css) font noSVG 120 100 textScale
 private def css := "body {margin:0;font-size:7px;line-height:7px} div {width:24px;background:red}"
 private def wrapped := run "<div id='box'>AA BB</div>" css
 #guard wrapped matches .ok _
@@ -22,10 +22,10 @@ private def wrapped := run "<div id='box'>AA BB</div>" css
 #guard ((run "<div style='font-family:Ahem'>A</div>" css).toOption.isNone)
 #guard ((run "<div>λ</div>" css).toOption.isNone)
 
-private def computedAt (html css id : String) : Except String Computed := do
+private def computedAt (html css id : String) (textScale : Float := 1) : Except String Computed := do
   let dom := DOM.parseHtmlDocument html
   let some idx := dom.getElementById 0 id | throw "test id missing"
-  let styles ← CSS.computeAll dom (← CSS.parse css)
+  let styles ← CSS.computeAll dom (← CSS.parse css) textScale
   return styles[idx]!
 #guard ((computedAt "<div id='x' class='a b c d e f g h i j k'></div>"
   "#x{color:red}.a.b.c.d.e.f.g.h.i.j.k{color:blue}" "x").toOption.map fun s => s.color.r) == some 1
@@ -35,6 +35,19 @@ private def computedAt (html css id : String) : Except String Computed := do
   "#x{color:red!important}" "x").toOption.map fun s => s.color.r) == some 1
 #guard ((computedAt "<div style='font-size:10px;line-height:2'><span id='x' style='font-size:20px'></span></div>"
   "" "x").toOption.map (·.lineHeight)) == some 40
+
+-- Reader scaling must reflow text at the unchanged CSS width, and must not
+-- compound once per ancestor. These assertions inspect the actual Lean scene.
+#guard ((run "<div>AA BB</div>" (css ++ "div{width:48px}") 1).toOption.map
+  fun r => r.1.glyphRuns.toList.map (fun g => g.glyphs.toList.map (·.y))) == some [[0,0],[0,0]]
+#guard ((run "<div>AA BB</div>" (css ++ "div{width:48px}") 2).toOption.map
+  fun r => r.1.glyphRuns.toList.map (fun g => g.glyphs.toList.map (·.y))) == some [[0,0],[14,14]]
+#guard ((computedAt "<div style='font-size:10px;line-height:2'><span><b id='x'>A</b></span></div>"
+  "" "x" 1.5).toOption.map fun s => (s.fontSize,s.lineHeight)) == some (15,30)
+#guard ((computedAt "<div style='font-size:10px;line-height:18px'><span id='x'>A</span></div>"
+  "" "x" 1.5).toOption.map fun s => (s.fontSize,s.lineHeight)) == some (15,27)
+#guard ((run "<div>A</div>" css 0.49).toOption.isNone)
+#guard ((run "<div>A</div>" css 2.51).toOption.isNone)
 
 private def paddingAt (source : String) := (computedAt "<div id='x'></div>" source "x").toOption.map
   (fun s => (s.padding.top,s.padding.right,s.padding.bottom,s.padding.left))
