@@ -389,6 +389,54 @@ def applyDeclarations (version : String) (scope : NsScope) :
         (applyDeclarations version scope rest).map (entry :: ·)
     | _ => applyDeclarations version scope rest
 
+/-- `applyDeclarations` as a loop: `acc` holds the new bindings, newest first, so
+one attribute uses no stack. The comments of `applyDeclarations` apply here. -/
+def applyDeclarationsLoop (version : String) (scope : NsScope) (acc : NsScope) :
+    List Attribute → Option NsScope
+  | [] => some (acc.reverseAux scope)
+  | a :: rest =>
+    match splitQName a.name with
+    | .simple "xmlns" =>
+      let v := a.value
+      if v == xmlNsUri || v == xmlnsNsUri then none
+      else
+        let entry := if v == "" then ("", none) else ("", some v)
+        applyDeclarationsLoop version scope (entry :: acc) rest
+    | .prefixed "xmlns" localPart =>
+      let v := a.value
+      if localPart == "xmlns" then none
+      else if localPart == "xml" && v != xmlNsUri then none
+      else if localPart != "xml" && v == xmlNsUri then none
+      else if v == xmlnsNsUri then none
+      else if v == "" && version != "1.1" then none
+      else
+        let entry := if v == "" then (localPart, none) else (localPart, some v)
+        applyDeclarationsLoop version scope (entry :: acc) rest
+    | _ => applyDeclarationsLoop version scope acc rest
+
+theorem applyDeclarationsLoop_eq (version : String) (scope : NsScope) (attrs : List Attribute) :
+    ∀ (acc : NsScope), applyDeclarationsLoop version scope acc attrs =
+      (applyDeclarations version scope attrs).map (acc.reverseAux ·) := by
+  induction attrs with
+  | nil => intro acc; simp [applyDeclarationsLoop, applyDeclarations]
+  | cons a rest ih =>
+    intro acc
+    simp only [applyDeclarationsLoop, applyDeclarations, ih]
+    have hrest : ∀ e : String × Option String,
+        Option.map (fun x => List.reverseAux (e :: acc) x) (applyDeclarations version scope rest) =
+          Option.map (fun x => List.reverseAux acc x)
+            (Option.map (fun x => e :: x) (applyDeclarations version scope rest)) := by
+      intro e; cases applyDeclarations version scope rest <;> simp [List.reverseAux]
+    split <;> simp_all <;> (repeat' split) <;> simp_all
+
+def applyDeclarationsFast (version : String) (scope : NsScope) (attrs : List Attribute) : Option NsScope :=
+  applyDeclarationsLoop version scope [] attrs
+
+@[csimp] theorem applyDeclarations_eq_fast : @applyDeclarations = @applyDeclarationsFast := by
+  funext version scope attrs
+  simp only [applyDeclarationsFast, applyDeclarationsLoop_eq]
+  cases applyDeclarations version scope attrs <;> simp
+
 /-- Every attribute name on this element must be a `[7] QName`.
 Port of F* `all_attr_names_wellformed`. -/
 def allAttrNamesWellFormed (attrs : List Attribute) : Bool :=
@@ -436,6 +484,69 @@ prefixes are bound to the same namespace name. Port of F*
 def attrsUniqueExpanded (scope : NsScope) (attrs : List Attribute) : Bool :=
   let keys := attrs.filterMap (expandAttrKey scope)
   keys.length == keys.eraseDups.length
+
+instance : Hashable ExpandedName where
+  hash n := mixHash (hash n.namespace_) (hash n.localPart)
+
+/-- No key of the list is in `seen` or twice in the list. -/
+def keysDistinctFrom (seen : Std.HashMap ExpandedName Unit) : List ExpandedName → Bool
+  | [] => true
+  | k :: rest => !seen.contains k && keysDistinctFrom (seen.insert k ()) rest
+
+theorem eraseDupsBy_loop_length_le (l bs : List ExpandedName) :
+    (List.eraseDupsBy.loop (· == ·) l bs).length ≤ bs.length + l.length := by
+  induction l generalizing bs with
+  | nil => simp [List.eraseDupsBy.loop]
+  | cons a as ih =>
+    simp only [List.eraseDupsBy.loop]
+    split
+    · have := ih bs; simp only [List.length_cons]; omega
+    · have := ih (a :: bs); simp only [List.length_cons] at *; omega
+
+theorem keysDistinctFrom_eq (l : List ExpandedName) : ∀ (bs : List ExpandedName)
+    (seen : Std.HashMap ExpandedName Unit),
+    (∀ k, seen.contains k = bs.any (k == ·)) →
+    keysDistinctFrom seen l =
+      ((bs.length + l.length) == (List.eraseDupsBy.loop (· == ·) l bs).length) := by
+  induction l with
+  | nil => intro bs seen _; simp [keysDistinctFrom, List.eraseDupsBy.loop]
+  | cons a as ih =>
+    intro bs seen h
+    simp only [keysDistinctFrom, List.eraseDupsBy.loop, h]
+    cases hb : bs.any (a == ·) with
+    | true =>
+      have := eraseDupsBy_loop_length_le as bs
+      simp only [Bool.not_true, Bool.false_and, List.length_cons]
+      symm
+      simp only [beq_eq_false_iff_ne, ne_eq]
+      omega
+    | false =>
+      simp only [Bool.not_false, Bool.true_and]
+      rw [ih (a :: bs) (seen.insert a ())]
+      · simp only [List.length_cons]
+        congr 1
+        omega
+      · intro k
+        rw [Std.HashMap.contains_insert, h]
+        have hc : (a == k) = (k == a) := BEq.comm
+        simp [hc]
+
+/-- `keys.length == keys.eraseDups.length`, by hash from 16 keys: `eraseDups` is
+quadratic. -/
+def keysDistinct (keys : List ExpandedName) : Bool :=
+  if keys.length < 16 then keys.length == keys.eraseDups.length
+  else keysDistinctFrom {} keys
+
+def attrsUniqueExpandedFast (scope : NsScope) (attrs : List Attribute) : Bool :=
+  keysDistinct (attrs.filterMap (expandAttrKey scope))
+
+@[csimp] theorem attrsUniqueExpanded_eq_fast : @attrsUniqueExpanded = @attrsUniqueExpandedFast := by
+  funext scope attrs
+  simp only [attrsUniqueExpanded, attrsUniqueExpandedFast, keysDistinct]
+  split
+  · rfl
+  · rw [keysDistinctFrom_eq _ [] {} (by intro k; simp)]
+    simp [List.eraseDups, List.eraseDupsBy]
 
 /-- Namespaces in XML 1.0 §6 (erratum NE08): an entity name, a
 processing instruction target and a notation name contain no colon,

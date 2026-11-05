@@ -209,24 +209,43 @@ def newNode (n : DNode) : P Nat :=
   modifyGet fun tb => (tb.dom.size, { tb with dom := tb.dom.push n })
 
 /-- Insert `child` into `parent` before `before` (or at the end). `Array.modify`
-takes the parent out of the arena while its child list changes, so neither
-array is copied. -/
+takes the parent out of the arena, and `add` takes the child list out of the
+parent before it changes, so neither array is copied. -/
 def insertAt (parent : Nat) (before : Option Nat) (child : Nat) : P Unit := modify fun tb =>
   let add (p : DNode) : DNode :=
+    let old := p.kids
+    let p := { p with kids := #[] }
     let kids := match before with
-      | none => p.kids.push child
-      | some b => match p.kids.findIdx? (· == b) with
-        | some k => arrInsert p.kids k child
-        | none => p.kids.push child
+      | none => old.push child
+      | some b => match old.findIdx? (· == b) with
+        | some k => arrInsert old k child
+        | none => old.push child
     { p with kids }
   { tb with dom := (tb.dom.modify parent add).modify child (fun c => { c with parent := some parent }) }
 
+/-- Remove `child` from its parent. A node is in one child list at most, once:
+`insertAt` takes a new node or a detached node. So when it is the last child,
+which is the usual case, `pop` removes it with no walk of the list. -/
 def detach (child : Nat) : P Unit := modify fun tb =>
   match tb.dom[child]!.parent with
   | none => tb
   | some p =>
-    let d1 := tb.dom.modify p (fun pn => { pn with kids := pn.kids.filter (· != child) })
+    let d1 := tb.dom.modify p (fun pn =>
+      let old := pn.kids
+      let pn := { pn with kids := #[] }
+      { pn with kids := if old.back? == some child then old.pop else old.filter (· != child) })
     { tb with dom := d1.modify child (fun c => { c with parent := none }) }
+
+/-- Move every child of `src` to the end of the child list of `dst`, in order:
+`detach` and `insertAt` for each child, with one pass over the list. -/
+def moveKids (src dst : Nat) : P Unit := modify fun tb =>
+  let moved := tb.dom[src]!.kids
+  let d1 := tb.dom.modify src (fun n => { n with kids := #[] })
+  let d2 := d1.modify dst (fun n =>
+    let old := n.kids
+    let n := { n with kids := #[] }
+    { n with kids := old ++ moved })
+  { tb with dom := moved.foldl (fun d k => d.modify k (fun c => { c with parent := some dst })) d2 }
 
 def lastIdx (tb : TB) (pred : DNode → Bool) : Option Nat := Id.run do
   let mut r : Option Nat := none
@@ -318,8 +337,9 @@ def popUntil (pred : DNode → Bool) : P Unit := do
     match tb.stack.back? with
     | none => return
     | some i =>
+      let hit := pred tb.dom[i]!
       set { tb with stack := tb.stack.pop }
-      if pred tb.dom[i]! then return
+      if hit then return
 
 def popUntilId (id : Nat) : P Unit := do
   for _ in [0:(← get).stack.size] do
@@ -462,23 +482,26 @@ def adoption (subject : String) : P Unit := do
     for j in [feS + 1:tb.stack.size] do
       if defaultBoundary tb.dom[tb.stack[j]!]! then inScope := false
     if !inScope then perr "adoption-formatting-element-not-in-scope"; return
-    if tb.stack.back? != some fe then perr "adoption-formatting-element-not-current"
+    let notCurrent := tb.stack.back? != some fe
     let mut fbS : Option Nat := none
     for j in [feS + 1:tb.stack.size] do
       if fbS.isNone && isSpecial tb.dom[tb.stack[j]!]! then fbS := some j
-    match fbS with
+    -- All reads of `tb` come first: a state still in use here would make
+    -- `perr` copy the error list.
+    let stackSize := tb.stack.size
+    let fbCommon := fbS.map fun fbi => (fbi, tb.stack[fbi]!, tb.stack[feS - 1]!)
+    if notCurrent then perr "adoption-formatting-element-not-current"
+    match fbCommon with
     | none =>
       popUntilId fe
       modify fun tb => { tb with afe := tb.afe.filter (· != some fe) }
       return
-    | some fbi =>
-    let fb := tb.stack[fbi]!
-    let common := tb.stack[feS - 1]!
+    | some (fbi, fb, common) =>
     let mut bookmark := feA
     let mut nodeIdx := fbi
     let mut last := fb
     let mut counter := 0
-    for _ in [0:tb.stack.size + 1] do
+    for _ in [0:stackSize + 1] do
       counter := counter + 1
       if nodeIdx == 0 then break
       nodeIdx := nodeIdx - 1
@@ -506,10 +529,7 @@ def adoption (subject : String) : P Unit := do
     let (par, before) ← appropriatePlace (some common)
     insertAt par before last
     let nw ← cloneEl fe
-    let fbn ← getN fb
-    for k in fbn.kids do
-      detach k
-      insertAt nw none k
+    moveKids fb nw
     insertAt fb none nw
     -- list of active formatting elements
     let st ← get
@@ -1780,15 +1800,73 @@ def buildTree (dom : Array DNode) : Nat → Nat → List HNode
       | .elem => some (HNode.element c.ns c.name c.attrs.toList (buildTree dom f k))
       | .doc | .doctype => none
 
+/-- From `i`, the end of the characters that the tokenizer emits one by one
+with no other effect (no NUL; no `<` when `lt`, no `&` when `amp`), and whether
+all of them are ASCII white space, given `ws` so far. -/
+def plainRunEnd (inp : Array Char) (amp lt : Bool) : Nat → Nat → Bool → Nat × Bool
+  | 0, i, ws => (i, ws)
+  | f + 1, i, ws =>
+    if h : i < inp.size then
+      let c := inp[i]
+      if c == '\x00' || (lt && c == '<') || (amp && c == '&') then (i, ws)
+      else plainRunEnd inp amp lt f (i + 1) (ws && isTreeWs c)
+    else (i, ws)
+
+/-- `s` with the characters of `inp` from `i` to `e` appended. -/
+def pushRange (inp : Array Char) (s : String) : Nat → Nat → String
+  | 0, _ => s
+  | f + 1, i => pushRange inp (s.push inp[i]!) f (i + 1)
+
+/-- A run of plain characters in one step, when the last child of the current
+node is a text node. The result is the state after the same characters one
+token at a time through `Tok.pull` and `process`: the tokenizer only moves `pos`
+for these characters (§13.2.5.1 to §13.2.5.5), and in "in body" and "text" each
+one only appends to that text node (§13.2.6.4.7, §13.2.6.4.8), when the active
+formatting elements need no reconstruction and foster parenting is off. In any
+other case the state is unchanged, and the loop takes the token path. -/
+def textRun (tb : TB) : TB :=
+  let stops : Option (Bool × Bool) := match tb.tk.st with
+    | .data | .rcdata => some (true, true)
+    | .rawtext | .scriptData => some (false, true)
+    | .plaintext => some (false, false)
+    | _ => none
+  let modeOk := match tb.mode with
+    | .text => true
+    | .inBody => match tb.afe.back? with
+      | none | some none => true
+      | some (some e) => tb.stack.contains e
+    | _ => false
+  match stops, tb.stack.back?, modeOk && !tb.skipLF && !tb.foster && tb.tk.out.isEmpty with
+  | some (amp, lt), some par, true =>
+    match tb.dom[par]!.kids.back? with
+    | none => tb
+    | some pv =>
+      if par == 0 || tb.dom[pv]!.kind != .text || !useHtmlRules tb (.char 'x') then tb else
+      let pos := tb.tk.pos
+      let inp := tb.tk.inp
+      let (e, ws) := plainRunEnd inp amp lt (inp.size - pos) pos true
+      if e == pos then tb else
+      { tb with
+        dom := tb.dom.modify pv (fun n => { n with data := pushRange inp n.data (e - pos) pos })
+        tk := { tb.tk with pos := e }
+        ack := false
+        framesetOk := tb.framesetOk && (ws || tb.mode != .inBody) }
+  | _, _, _ => tb
+
 def runAll : P Unit := do
   let n := (← get).tk.inp.size
   for _ in [0:3 * n + 100] do
     if (← get).done then break
+    modify textRun
     let tb ← get
     let foreign := match adjustedIdx tb with
       | some i => tb.dom[i]!.ns != .html
       | none => false
-    let (tok, tk) := ({ tb.tk with foreign }).pull
+    -- The tokenizer leaves the state while it runs: it is then unshared, so a
+    -- token does not copy its fields, its buffers or its error list.
+    let tk := tb.tk
+    let tb := { tb with tk := default }
+    let (tok, tk) := ({ tk with foreign }).pull
     set { tb with tk }
     process tok
 

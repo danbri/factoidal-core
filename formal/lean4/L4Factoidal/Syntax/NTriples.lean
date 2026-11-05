@@ -601,6 +601,15 @@ def parseNTriples (s : String) (mode : Mode := .rdf11) : Except ParseError Graph
   let cs := s.toList
   parseLinesAcc mode (cs.length + 1) 0 cs []
 
+/-- `parseNTriples` with the fuel from `String.length`, which the runtime stores:
+no walk of the character list. -/
+def parseNTriplesFast (s : String) (mode : Mode := .rdf11) : Except ParseError Graph :=
+  parseLinesAcc mode (s.length + 1) 0 s.toList []
+
+@[csimp] theorem parseNTriples_eq_fast : @parseNTriples = @parseNTriplesFast := by
+  funext s mode
+  simp only [parseNTriples, parseNTriplesFast, String.length_toList]
+
 /-! ## RDF 1.2 version directive — [3] directive, [4] versionDirective
 
 RDF 1.2 N-Triples section 5.3 (N-Quads 1.2 has the same productions):

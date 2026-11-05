@@ -1267,6 +1267,30 @@ of the same term: `Term.toNTriples` copied the text of the levels below at each 
 for 25,000, 50,000 and 100,000 levels (a factor 4.4 and 7.0 for each doubling), 0.048 s, 0.091 s and 0.208 s as a
 loop (`ntriples-nest-time` in `tests/stack/lean_scaling.py`).
 
+## A field or a state that stays alive makes the next write a copy (paid for 2026-11-05)
+
+Three shapes in the HTML tree builder made a write on a shared object, so each
+copied a whole array. Each looked like an in-place update. Measures:
+`docs/20261105-parse-stack-perf.md`.
+
+- `let kids := match before with | none => p.kids.push x ...; { p with kids }`:
+  the update is after a join point, so `p` still holds its field at the `push`.
+  Take the field out first: `let old := p.kids; let p := { p with kids := #[] }`.
+- `let tb ← get`, then `perr ...`, then a read of `tb`: `tb` shares the error
+  list, so `push` copies it. Read everything from the snapshot before the write.
+- `{ tb.tk with foreign }` while `tb` holds `tb.tk`: every buffer of the
+  tokenizer is shared for the whole of `pull`. Put a `default` in the state while
+  the field is out.
+
+`lean_copy_expand_array` under a function that only pushes is this defect. So is
+a cost exponent near 2 on a shape that has one parent and many children. Check
+with `tools/parse-bench.py stress`.
+
+`IO.getNumHeartbeats` around a stage gives the count of small-object allocations
+of the thread, with no patched runtime. `LEAN_STACK_SIZE_KB` sets the stack of
+`main`, and the smallest value that passes is a measure of the stack depth: the
+floor on macOS is about 16 KB. `ulimit -s` has no effect.
+
 ## Verification and measurement
 
 After a semantic hot-path change, run the closest Lean guards and targeted
