@@ -25,6 +25,22 @@ Deno.test("published Lean default file reflows and picks its own link",async()=>
   assert(plan.commands.includes("copyTextureToBuffer"));assert(plan.commands.includes("unmap"));
 });
 
+Deno.test("published Lean owns session history and the key table",()=>{
+  let h=engine.historyPush({entries:[],index:0},"a");
+  assert.equal(h.canBack,false);
+  h=engine.historyPush(h.history,"b");h=engine.historyPush(h.history,"c");
+  assert.deepEqual(h.history,{entries:["a","b","c"],index:2});
+  const back=engine.command(6,100,h.history);
+  assert.equal(back.action,"back");assert.equal(back.url,"b");assert.equal(back.canForward,true);
+  assert.equal(engine.command(7,100,h.history).url,null,"forward at the end loads nothing");
+  const reload=engine.command(8,100,back.history);
+  assert.equal(reload.url,"b");assert.deepEqual(reload.history,back.history);
+  assert.deepEqual(engine.historyPush(back.history!,"d").history,{entries:["a","b","d"],index:2},"push keeps no forward entry");
+  assert.equal(engine.keyCommand("mac","command","ArrowLeft"),6);
+  assert.equal(engine.keyCommand("mac","command","]"),7);
+  assert.equal(engine.keyCommand("other","alt","ArrowRight"),7);
+  assert.equal(engine.keyCommand("other","command","ArrowRight"),null);
+});
 Deno.test("published Lean owns zoom, selection and copied text",async()=>{
   const dir=await Deno.makeTempDir({prefix:"factoidal-native-select-"});
   try{

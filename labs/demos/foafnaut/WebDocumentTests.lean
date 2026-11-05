@@ -143,6 +143,22 @@ private def menu (number : Nat) (percent : Nat := 100) : Option String :=
 #guard menu 2 == some "{\"action\":\"zoomOut\",\"textScalePercent\":90}"
 #guard menu 3 200 == some "{\"action\":\"zoomReset\",\"textScalePercent\":100}"
 #guard menu 4 == some "{\"action\":\"copy\",\"textScalePercent\":100}"
+#guard menu 6 == some "{\"action\":\"back\",\"textScalePercent\":100}"
+private def pages : JSON.Json := json [("entries",.array [.string "a",.string "b"]),("index",.number "1")]
+private def historyField (request : List (String × JSON.Json)) (key : String) : Option JSON.Json := do
+  let output ← (WebDocument.run "" (json request) 1 1).toOption
+  let (value,_) ← (JSON.parseJsonText output).toOption
+  value.field? key
+private def historyCommand (number : Nat) : List (String × JSON.Json) :=
+  [("op",.string "command"),("command",.number (toString number)),("history",pages)]
+#guard historyField (historyCommand 6) "url" == some (.string "a")
+#guard historyField (historyCommand 7) "url" == some .null
+#guard historyField (historyCommand 8) "url" == some (.string "b")
+#guard historyField (historyCommand 6) "canForward" == some (.bool true)
+#guard historyField [("op",.string "historyPush"),("history",pages),("url",.string "c")] "canBack" == some (.bool true)
+#guard (WebDocument.run "" (json [("op",.string "historyPush"),("url",.string "c"),
+  ("history",json [("entries",.array []),("index",.number "3")])]) 1 1).toOption.isNone
+#guard historyField [("op",.string "keyCommand"),("platform",.string "other"),("modifier",.string "alt"),("key",.string "ArrowLeft")] "command" == some (.number "6")
 #guard menu 1 250 == some "{\"action\":\"zoomIn\",\"textScalePercent\":250}"
 #guard menu 9 == some "{\"action\":\"none\",\"textScalePercent\":100}"
 private def up (fx : String) : Option String :=

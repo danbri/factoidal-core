@@ -1,4 +1,4 @@
-import {loadHTML,type HTMLArtifact} from "./native_html_engine.ts";
+import {loadHTML,type HTMLArtifact,type HistoryAnswer} from "./native_html_engine.ts";
 import {inputURL,navigationURL,prepareHTML,refusalHTML,type PageView} from "./native_html_document.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {nativePreflight} from "./native_preflight.ts";
@@ -10,7 +10,7 @@ import {requestRenderPlan} from "./render_plan.ts";
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep]\nCommand-Q quits; R reloads; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
   }
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined;
   while(args.length){const arg=args.shift();
@@ -22,6 +22,7 @@ async function main() {
     else if(arg==="--trace-input")traceInput=true;
     else if(arg==="--resize-sweep")sweep=[[800,500],[700,500],[600,500],[500,500],[400,500],[800,300],[800,500]];
     else if(arg==="--command-sweep")commands=["=","+","-","_","0","a","c",[2,60,60],[3,300,60],[4,300,60],"c",[2,60,60],[4,60,60],"link"];
+    else if(arg==="--history-sweep")commands=["left","link","left","right","[","]","]","[","link1","]","[","]"];
     else throw new Error(`Unknown native HTML argument: ${arg}`);
   }
   url??=new URL("./pages/index.html",import.meta.url).href;
@@ -59,9 +60,19 @@ async function main() {
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.
   const view:PageView={textScalePercent:100};
-  let press:number[]|undefined,lastCopied:string|undefined;
+  let press:number[]|undefined,lastCopied:string|undefined,loading=false;
+  // Session history is a Lean value. The host keeps it and loads the URLs Lean returns.
+  let history=engine.historyPush({entries:[],index:0},document.url);
+  const remember=(answer:HistoryAnswer,action:string)=>{
+    history=answer;native?.setHistory(answer.canBack,answer.canForward);
+    trace("native-html-history",{action,index:answer.history.index,size:answer.history.entries.length,url:answer.url});
+  };
   const windowCommand=(id:number)=>{
-    const answer=engine.command(id,view.textScalePercent??100);
+    const answer=engine.command(id,view.textScalePercent??100,history.history);
+    if(["back","forward","reload"].includes(answer.action)){
+      if(answer.url)navigate(answer.url,false);
+      remember(answer as HistoryAnswer,answer.action);
+    }
     if(answer.textScalePercent!==view.textScalePercent){
       view.textScalePercent=answer.textScalePercent;view.selection=undefined;dirty=true;
       trace("native-html-zoom",{textScalePercent:answer.textScalePercent});
@@ -72,16 +83,24 @@ async function main() {
       if(text){native!.writeClipboard(text);lastCopied=text;trace("native-html-copy",{characters:text.length});}
     }
   };
-  const navigate=(target:string)=>{
-    controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;
+  // A new page goes into history when its load ends, and a refused page does too.
+  const navigate=(target:string,push=true)=>{
+    controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
     prepareHTML(engine,target,current.signal).then(next=>{
-      if(current===controller&&!current.signal.aborted&&running){candidate=next;dirty=true;}
-    }).catch(error=>{if(!current.signal.aborted)refuse(target,error);});
+      if(current===controller&&!current.signal.aborted&&running){
+        candidate=next;dirty=true;loading=false;
+        if(push)remember(engine.historyPush(history.history,next.url),"push");
+      }
+    }).catch(error=>{
+      if(current.signal.aborted)return;
+      loading=false;if(push)remember(engine.historyPush(history.history,target),"push");
+      refuse(target,error);
+    });
   };
   try {
     device=await adapter.requestDevice();native=await nativePreflight(()=>loadNativeWindow());
-    native.setInputTrace(traceInput);
+    native.setInputTrace(traceInput);native.setHistory(history.canBack,history.canForward);
     // The command sweep copies text. It gives the clipboard back unless the person
     // copied something else meanwhile.
     const savedClipboard=commands?native.readClipboard():"";
@@ -89,6 +108,7 @@ async function main() {
     const handles=native.create(800,500,windowTitle(document));
     const surface=new Deno.UnsafeWindowSurface(cocoaSurfaceOptions(handles,width,height));
     native.showAfterSurface();
+    if(commands)native.testRaise();
     device.addEventListener("uncapturederror",event=>{console.error("Native HTML GPU error:",(event as GPUUncapturedErrorEvent).error.message);running=false;Deno.exitCode=1;});
     device.lost.then(info=>{if(running){console.error("Native HTML GPU lost:",info.message);running=false;Deno.exitCode=1;}});
     while(running){
@@ -102,7 +122,7 @@ async function main() {
           if(event.a!==width||event.b!==height){width=event.a;height=event.b;dirty=true;resizeAt??=performance.now();trace("native-html-resize",{width,height});}
         }
         if(event.kind===8&&event.a)dirty=true;
-        if(event.kind===5&&event.a===15)navigate(document.url);
+        if(event.kind===5&&event.a===15)windowCommand(8);
         if(event.kind===10)windowCommand(event.a);
         if(event.kind===2){
           // Hit coordinates and boxes belong to the successfully presented frame.
@@ -153,11 +173,11 @@ async function main() {
         if(size)native.setContentSize(size[0],size[1]);else running=false;
       }
       // Each step runs on a settled page: a key through real menu matching, or an input event.
-      if(commands&&!dirty&&session?.frames){
+      if(commands&&!dirty&&!loading&&session?.frames){
         const step=commands.shift();
-        if(step==="link"){
-          // A press and release on the first link of the page.
-          const link=frame.webRender.links[0] as number[],x=Math.round(link[2]+link[4]/2),y=Math.round(link[3]+link[5]/2);
+        if(typeof step==="string"&&step.startsWith("link")){
+          // A press and release on a link of the page: link is the first, link1 the second.
+          const link=frame.webRender.links[Number(step.slice(4))] as number[],x=Math.round(link[2]+link[4]/2),y=Math.round(link[3]+link[5]/2);
           native.testEvent(2,x,y);native.testEvent(4,x,y);
         }
         else if(typeof step==="string")trace("native-html-test-key",{key:step,handled:native.testKey(step,"+_".includes(step))});

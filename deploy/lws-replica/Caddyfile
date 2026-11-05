@@ -1,0 +1,48 @@
+{
+ admin off
+ http_port 8080
+ https_port 8443
+}
+{$SITE_ADDRESS} {
+ header X-Content-Type-Options nosniff
+ request_body {
+  max_size 16MB
+ }
+ route {
+  @hidden path_regexp hidden (^|/)\.
+  # Protect dotfiles in the exported website; well-known LWS metadata is routed below.
+  handle /.well-known/oauth-protected-resource* {
+   @unsafeMetadata not method GET HEAD OPTIONS
+   respond @unsafeMetadata 405
+   reverse_proxy 127.0.0.1:3000
+  }
+  redir /lws /lws/ 308
+  redir /dav /dav/ 308
+  handle /dav/* {
+   @davWrite not method GET HEAD OPTIONS PROPFIND
+   respond @davWrite 405
+   # Preserve /dav in requests and DAV response hrefs.
+   reverse_proxy 127.0.0.1:3001
+  }
+  handle_path /lws/* {
+   @unsafe not method GET HEAD OPTIONS
+   respond @unsafe 405
+   reverse_proxy 127.0.0.1:3000
+  }
+  handle_path /_replicate/* {
+   @unsupported not method PUT DELETE
+   respond @unsupported 405
+   @noToken not header Authorization "Bearer *"
+   respond @noToken 401
+   # Signature, issuer, audience, expiry and WAC are checked by Lean LWS.
+   reverse_proxy 127.0.0.1:3000
+  }
+  handle {
+   @write not method GET HEAD
+   respond @write 405
+   respond @hidden 404
+   root * /srv/site
+   file_server browse
+  }
+ }
+}
