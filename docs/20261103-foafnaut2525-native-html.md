@@ -276,3 +276,19 @@ The cause of those stalls is unproven. `--resize-sweep` needs a visible window.
 - Paste is not implemented: there are no form fields. Layout refuses `input` and `textarea`.
 - Each drag step runs a full layout, about 300 ms on the home page. This makes selection feel slow.
 - `--command-sweep` checks the menu keys, a drag and a link click in a real window. A covered window waits until it can present.
+
+## XML pages with XSLT (5 November)
+
+An XML page with `<?xml-stylesheet type="text/xsl" href="..."?>` in its prolog now renders. `labs/demos/foafnaut/WebXslt.lean` finds the instruction and reads the stylesheet's `version`: 1.x uses `L4Factoidal/XSLT`, and 2.0, 3.0 and 4.0 use `L4Factoidal/XSLT4`. The result goes to the normal HTML path. The host only fetches the page and the stylesheet.
+
+A stylesheet receives no other document. So `xsl:import`, `xsl:include`, `document()` and `unparsed-text()` stop with a refusal. A remote page can not name a local stylesheet.
+
+Cost of `web-render.wasm`, measured on 5 November with Deno on one laptop. The first row is an engine built before this change from nearly the same source.
+
+| Engine | Bytes | Gzip | First start |
+|---|---|---|---|
+| no XSLT | 3,547,792 | 688,757 | about 220 ms |
+| XSLT 1.0 only | 4,332,323 | 853,737 | about 300 ms |
+| XSLT 1.0 and 4 | 14,501,181 | 2,928,175 | about 405 ms |
+
+XSLT 4 is 10.2 MB of this. If that cost is too high, XSLT 4 can move to a second Wasm module that loads only for a page that needs it.

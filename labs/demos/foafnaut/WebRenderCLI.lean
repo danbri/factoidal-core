@@ -36,6 +36,21 @@ def main (args : List String) : IO UInt32 := do
       IO.println (WebRender.errorJSON "unsupported viewport dimensions exceeding 4096")
       return 0
     let source ← IO.FS.readFile path
+    -- An XML page names its stylesheet; a local file resolves next to the page.
+    let source ← match WebXslt.stylesheetHref source with
+      | .error message =>
+        IO.println (WebRender.errorJSON message)
+        return 0
+      | .ok none => pure source
+      | .ok (some href) =>
+        let stylePath := match (System.FilePath.mk path).parent with
+          | some parent => parent / href
+          | none => System.FilePath.mk href
+        match WebXslt.transform source (← IO.FS.readFile stylePath) path stylePath.toString with
+        | .error message =>
+          IO.println (WebRender.errorJSON message)
+          return 0
+        | .ok (html,_) => pure html
     let fontData ← match fontPath with
       | none => pure none
       | some fontPath => some <$> IO.FS.readFile fontPath
