@@ -45,7 +45,7 @@ async function main() {
   let running=true,dirty=true,controller:AbortController|undefined;
   // Frame trace, one JSON line for each event: every number a tool needs to find
   // where the time goes. A pump stall means AppKit held the thread in its own loop.
-  let resizeAt:number|undefined,frameNumber=0;
+  let resizeAt:number|undefined,frameNumber=0,waiting=false;
   const trace=(type:string,fields:Record<string,unknown>)=>console.log(JSON.stringify({type,t:Math.round(performance.now()),...fields}));
   const ms=(start:number,end:number)=>Math.round((end-start)*10)/10;
   let candidate:Awaited<ReturnType<typeof prepareHTML>>|undefined;
@@ -86,7 +86,10 @@ async function main() {
         }
       }
       if(!running)break;
+      // A covered, hidden or minimized window can not present. Say so, once.
+      if(dirty&&!native.canPresent()&&!waiting){waiting=true;trace("native-html-waiting",{reason:"window can not present",surface:native.surfaceState()});}
       if(dirty&&native.canPresent()){
+        waiting=false;
         const nextDocument=candidate??document;
         const frameStart=performance.now();
         let next:HTMLArtifact;
