@@ -1163,6 +1163,7 @@ import L4Factoidal.SPARQL.RegexBoundaryTests
 import L4Factoidal.Regex.ReplacementTheorems
 import L4Factoidal.SPARQL.ReplacementSelectionTests
 import L4Factoidal.Regex.ReplacementOracleTests
+import L4Factoidal.Regex.ClassStarTests
 import L4Factoidal.Regex.SelectionTheorems
 import L4Factoidal.RIF.NumericTests
 import L4Factoidal.RIF.NumericTheorems

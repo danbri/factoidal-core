@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.31.0 (2026-11-05)
+
+- Stack use on phones. The engine failed on iPhone Safari with "Maximum call stack size exceeded". Two faults are fixed:
+  - The ordered regex matcher (`cmatchE`) nested stack frames for each character of a star. `REPLACE`, `fn:replace` and other capture-aware operations overflowed on long text: in 0.30.0, `REPLACE` with a star failed at 40,000 characters under Node's default stack. A star over one character class is now a loop, with the same order of outcomes. A star over a group still recurses.
+  - Engine start decoded a test fixture (`Codec/Archive.lean`, `realTar`) with one stack frame for each byte. In WebKit, start needed about 1 MB of stack. The decoder is now a loop.
+  - `test/stack-use.test.mjs` gates both faults in the package suite. All of its tests fail against 0.30.0.
+- SPARQL `SERVICE`: variable correlation, and scoped query provider grants (https://github.com/danbri/factoidal-core/pull/283).
+- XPath: `parse-QName` function values capture static namespaces (https://github.com/danbri/factoidal-core/pull/278).
+- VC-JOSE-COSE: draft plan and checklist (https://github.com/danbri/factoidal-core/pull/232).
+- Proof that checked normalization is preserved into the actual RDFS closure (https://github.com/danbri/factoidal-core/pull/288).
+
 ## 0.30.0 (2026-11-04)
 
 - The Lean XMPP server now has an in-page host (`@factoidal/core/xmpp/inpage`): `openInPageXmppServer` exposes ordered message connections and `inPageWebSocket` adapts them for RFC 7395 clients. Protocol decisions remain in Lean, with shared routing for direct messages, MUC rooms, MIX channels and experimental GC3 groups. This provides an app-to-app transport; it does not include a chat UI or WebMCP bridge.
