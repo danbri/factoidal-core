@@ -85,8 +85,10 @@ PLIST
   cat > "$app/Contents/MacOS/run" <<LAUNCHER
 #!/bin/sh
 set -eu
+LOG="\$HOME/Library/Logs/$name"
+mkdir -p "\$LOG"
 cd "\$(dirname "\$0")/../../.."
-exec $command "\$@"
+exec $command "\$@" >>"\$LOG/trace.jsonl" 2>&1
 LAUNCHER
   chmod +x "$app/Contents/MacOS/run"
 }
