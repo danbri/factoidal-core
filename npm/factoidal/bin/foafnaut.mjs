@@ -3,7 +3,7 @@
 // This launcher only chooses and starts an installed macOS app. All page work is
 // in that app. Layout: $FOAFNAUT_HOME (default ~/.foafnaut), versions/<commit>/,
 // current -> versions/<commit>, config.json {"bleedingEdge":"/path/to/App.app"}.
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -15,7 +15,9 @@ const HELP = `foafnaut [--latest|--bleeding-edge] [PAGE] [-- APP_ARGS]
   PAGE              an http(s) URL or an HTML file; none opens the default page
   --latest          install the newest published macOS build, then use it
   --bleeding-edge   use the local build (config.json "bleedingEdge", or
-                    ~/Applications/Lean Browser.app)
+                    ~/Applications/foafnaut.app)
+  --verbose         print the choice of app, follow the trace, and log input
+  --detach          do not wait for the window to close
   --install-latest  install the newest published build and stop
   --list            list installed versions
   --which           print the app that would run
@@ -23,12 +25,13 @@ const HELP = `foafnaut [--latest|--bleeding-edge] [PAGE] [-- APP_ARGS]
 
 Also: foafnaut-latest, foafnaut-bleedingedge. Environment: FOAFNAUT_HOME, and
 FOAFNAUT_APP, which chooses the app outright. Page data goes to the app. Its trace
-is in ~/Library/Logs/Lean Browser/trace.jsonl.
+is in ~/Library/Logs/foafnaut/trace.jsonl. The command stays open until the window
+closes; --detach returns at once.
 
 EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.
 `;
 const RELEASES = 'https://api.github.com/repos/danbri/factoidal-builds/releases?per_page=60';
-const APP = 'Lean Browser.app';
+const APP = 'foafnaut.app';
 const home = () => process.env.FOAFNAUT_HOME || join(homedir(), '.foafnaut');
 const fail = (message) => { console.error(`foafnaut: ${message}`); process.exit(1); };
 
@@ -102,12 +105,14 @@ export async function main(argv, channel = 'current') {
   const split = argv.indexOf('--');
   const options = split < 0 ? argv : argv.slice(0, split);
   const extra = split < 0 ? [] : argv.slice(split + 1);
-  let page, which = false;
+  let page, which = false, verbose = false, detach = false;
   for (const arg of options) {
     if (arg === '--help' || arg === '-h') { process.stdout.write(HELP); return; }
     else if (arg === '--latest') channel = 'latest';
     else if (arg === '--bleeding-edge') channel = 'bleeding-edge';
     else if (arg === '--which') which = true;
+    else if (arg === '--verbose' || arg === '-v') verbose = true;
+    else if (arg === '--detach') detach = true;
     else if (arg === '--install-latest') { await installLatest(); return; }
     else if (arg === '--list') {
       const versions = join(home(), 'versions');
@@ -127,7 +132,13 @@ export async function main(argv, channel = 'current') {
   if (!app) app = currentApp() ?? bleedingEdgeApp();
   if (!existsSync(app)) fail(`no app at ${app}. Run foafnaut --install-latest.`);
   if (which) { console.log(app); return; }
-  const run = spawnSync('open', ['-n', app, '--args', ...pageArgs(page), ...extra], { stdio: 'inherit' });
+  const args = ['-n', ...(detach ? [] : ['-W']), app, '--args', ...pageArgs(page), ...(verbose ? ['--trace-input'] : []), ...extra];
+  const log = join(homedir(), 'Library', 'Logs', 'foafnaut', 'trace.jsonl');
+  if (verbose) console.error(`foafnaut: app ${app}\nfoafnaut: open ${args.join(' ')}\nfoafnaut: trace ${log}`);
+  // Follow only what this run appends.
+  const follow = verbose ? spawn('tail', ['-n', '0', '-F', log], { stdio: ['ignore', 'inherit', 'ignore'] }) : undefined;
+  const run = spawnSync('open', args, { stdio: 'inherit' });
+  follow?.kill();
   process.exit(run.status ?? 1);
 }
 
