@@ -3685,3 +3685,12 @@ or its actual refusal. The namespace, schema, RDF round-trip, XSLT, host JSON
 transport and complete compositor obligations remain separate. Explicit
 query rendering remains outside the registry evaluator's proved domain.
 See [the implementation and tests](20261031-checked-conditional-routing.md).
+## SPARQL Results XML admission counterexample (2026-10-31)
+`SPARQL/ResultsXmlAdmission.lean` proves `soh_not_xml10`,
+`containing_soh_not_admitted`, `srxEscape_not_universally_admitted` and
+`rdf_term_counterexample` over the actual XML predicate/SRX producer. These
+exhibit a missing representability premise; they do not certify the serializer
+or a complete XML admission algorithm. Four parser guards and the separate
+public expected-failure record are described in the
+[boundary report](20261031-compositor-xml-representability.md).
+Tracking: https://github.com/danbri/factoidal/issues/1215.

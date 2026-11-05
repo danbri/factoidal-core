@@ -77,6 +77,7 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-31 | [Conditional routing design](designissues/2026-10-31-checked-conditional-routing.md) | this commit | current |
 | 2026-10-31 | [Checked conditional routing](20261031-checked-conditional-routing.md) | this commit | current |
 | 2026-10-31 | [SRX context admission](20261031-srx-context-admission.md) | f70fc074a | current |
+| 2026-10-31 | [Compositor XML representability counterexample](20261031-compositor-xml-representability.md) | 1b1f81a10 | current: two controls, one serializer-admission expected defect |
 | 2026-10-31 | [Readable compositor evidence](20261031-compositor-evidence-explanations.md) | this commit | current |
 | 2026-10-31 | [Variable SERVICE backend correlation](20261031-service-variable-correlation.md) | pending | current |
 | 2026-10-29 | [Selectable static typing](20261029-static-typing.md) | eddfd724 | current: implementation, proof boundary and measurements |

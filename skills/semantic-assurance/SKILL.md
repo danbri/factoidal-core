@@ -244,3 +244,8 @@ context uses `XPath4.Doc.ofString`, not the different `fn:parse-xml` adapter.
 The former currently does not validate namespace well-formedness. Never
 promote its parser acceptance certificate to that stronger claim. Record:
 [checked routing](../../docs/designissues/2026-10-31-checked-conditional-routing.md).
+[RDF-to-XML representability](../../docs/20261031-compositor-xml-representability.md)
+is distinct from RDF literal well-formedness and generic String-wire compatibility.
+A necessary XML character admission predicate is not a complete document proof;
+markup escaping cannot represent XML 1.0-forbidden code points. Keep producer
+refusal, lossless format negotiation and an explicit lossy display policy distinct.
