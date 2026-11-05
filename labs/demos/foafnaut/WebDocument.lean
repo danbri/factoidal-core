@@ -58,9 +58,9 @@ def documentTitle (dom : DOM.Dom) : String := Id.run do
   for id in dom.treeOrder 0 do
     let n := dom.get id
     if DOM.Dom.isHtmlElement n "title" then
-      let text := String.join (n.kids.map fun kid =>
+      let text := n.kids.foldl (fun acc kid =>
         let child := dom.get kid
-        if child.type == .text then child.data else "")
+        if child.type == .text then acc ++ child.data else acc) ""
       let spaced := text.replace "\t" " " |>.replace "\n" " " |>.replace "\r" " "
       return " ".intercalate ((spaced.splitOn " ").filter (· != ""))
   return ""
