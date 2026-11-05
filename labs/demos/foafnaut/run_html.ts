@@ -10,7 +10,7 @@ import {requestRenderPlan} from "./render_plan.ts";
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--follow-links] [--check-engine] [--trace-input] [--resize-sweep]\nEsc closes; R reloads. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--follow-links] [--check-engine] [--trace-input] [--resize-sweep]\nCommand-Q quits; R reloads. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
   }
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined;
   while(args.length){const arg=args.shift();
@@ -59,7 +59,8 @@ async function main() {
   try {
     device=await adapter.requestDevice();native=await nativePreflight(()=>loadNativeWindow());
     native.setInputTrace(traceInput);
-    const handles=native.create(800,500,`foafnaut2525 HTML — ${document.url}`);
+    const windowTitle=(page:typeof document)=>`${page.title||page.url} — Lean Browser`;
+    const handles=native.create(800,500,windowTitle(document));
     const surface=new Deno.UnsafeWindowSurface(cocoaSurfaceOptions(handles,width,height));
     native.showAfterSurface();
     device.addEventListener("uncapturederror",event=>{console.error("Native HTML GPU error:",(event as GPUUncapturedErrorEvent).error.message);running=false;Deno.exitCode=1;});
@@ -68,7 +69,7 @@ async function main() {
       const pumpStart=performance.now();native.pump();const pumpEnd=performance.now();let event;
       if(pumpEnd-pumpStart>30)trace("native-html-pump-stall",{ms:ms(pumpStart,pumpEnd)});
       while((event=native.next())){
-        if(event.kind===6||(event.kind===5&&event.a===53)){running=false;break;}
+        if(event.kind===6){running=false;break;}
         if(event.kind===1){
           if(event.a<1||event.b<1)continue;
           if(event.a>4096||event.b>4096)throw new Error("Native HTML window exceeds 4096 backing pixels; close or use a smaller window");
@@ -103,7 +104,7 @@ async function main() {
           resizeToFrameMs:resizeAt===undefined?null:ms(resizeAt,finished),presented:drawn,steps:session.steps,pixelHash:session.pixelHash});
         resizeAt=undefined;
         if(drawn){
-          frame=next;document=nextDocument;candidate=undefined;dirty=false;
+          frame=next;document=nextDocument;candidate=undefined;dirty=false;native.setTitle(windowTitle(document));
           console.log(JSON.stringify({type:"native-html-presented",url:document.url,width,height,primitives:frame.primitiveCount,links:frame.webRender.links.length,frames:session.frames}));
         }
       }
