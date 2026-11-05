@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.32.0 (2026-11-05)
+
+- XMPP: stanzas are held to RFC 6120 section 11.1. A DTD, a comment or a processing instruction is refused (https://github.com/danbri/factoidal-core/pull/355). Upgrade if you run `xmpp-serve`.
+- XMPP: `xmpp-serve` limits connections (`--max-connections`, default 1024), the time to log in (`--login-timeout`, default 30 seconds) and the bytes queued for a client that is not reading (https://github.com/danbri/factoidal-core/pull/358).
+- `foafnaut` command to start the Lean browser on macOS (https://github.com/danbri/factoidal-core/pull/349). The document renderer itself ships through the foafnaut build sets, not through this package.
+
 ## 0.31.1 (2026-11-05)
 
 - Engine start uses less stack. Two more test fixtures ran with one stack frame for each byte when the engine started: `swapLabelGo` (`Storage/ShardManifest.lean`) and `bytesOfHexLiteral` (`Storage/LiteralGramIndexWire.lean`). Both are now loops. In 0.31.0, WebKit needed between 640 KB and 768 KB of stack to start the engine.
