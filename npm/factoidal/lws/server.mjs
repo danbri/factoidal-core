@@ -24,6 +24,16 @@
 //   lwsFetched [handle, documentJson] -> { ok, fetch? | installed? | refused? }
 //   lwsDelivered [handle, reportJson] -> { ok, changed, retry? }
 //   lwsFlush [handle, { now? }]       -> { ok, changed, deliveries?, wake? }
+//   lwsEgress [handle, { url, addresses }] -> { ok, host, address } | { ok, refused }
+//
+// REQUESTS TO PRIVATE ADDRESSES (https://github.com/danbri/factoidal/issues/1126)
+// Just before each delivery this host resolves the name the delivery names
+// (`resolve`, every address), passes the addresses to `lwsEgress`, and
+// connects to the address the answer names, with no second resolution
+// (`postTo`). A refused delivery is not made; it is reported to
+// `lwsDelivered` with `refused: true`. Which addresses are refused (the
+// IANA special-purpose ranges) and the opt-in `allowPrivateFetch` are
+// decided by `L4Factoidal/Net/Egress.lean` and `Notifications.egressOf`.
 //
 // RATE LIMIT AND INBOX CHECK (https://github.com/danbri/factoidal/issues/915)
 // An answer may carry `wake: SECONDS`: deliveries wait for a rate-limit
@@ -87,7 +97,7 @@ import { loadEngine } from '../bin/engine.mjs'
 import { readSnapshot, persistIfChanged, storageKeyText, storageModeText, loadFiles, persistFilesIfChanged, readStepBodies, acquireDirLock, atRestNotice } from './persist.mjs'
 
 /** The ops this host needs from the engine. */
-export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot', 'lwsFetched', 'lwsDelivered',
+export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot', 'lwsFetched', 'lwsDelivered', 'lwsEgress',
   'lwsLoad', 'lwsPersist', 'lwsRead', 'lwsDirLock', 'lwsAtRestNotice']
 
 /** How long this host waits for the answer to one delivery request before
@@ -126,6 +136,59 @@ async function resolveHost (host) {
   } catch (_error) {
     return []
   }
+}
+
+/** The most response bytes this host reads from an inbox; the rest is
+ *  dropped (the engine reads only the status). */
+const MAX_DELIVERY_ANSWER_BYTES = 65536
+
+/**
+ * POST one delivery to the address the engine chose (`lwsEgress`). Pure
+ * I/O: the connection goes to `address` only (the lookup answers it, so the
+ * name is not resolved again), TLS still checks the certificate against the
+ * URL's host name, redirects are not followed. The status, or 0 when no
+ * answer came in time.
+ */
+async function postTo (url, address, headers, body) {
+  let target
+  try {
+    target = new URL(url)
+  } catch (_error) {
+    return 0
+  }
+  const module = target.protocol === 'https:' ? await import('node:https') : await import('node:http')
+  const family = address.indexOf(':') >= 0 ? 6 : 4
+  const fields = {}
+  for (const pair of Array.isArray(headers) ? headers : []) {
+    if (Array.isArray(pair) && pair.length === 2) fields[String(pair[0])] = String(pair[1])
+  }
+  const bytes = Buffer.from(typeof body === 'string' ? body : '', 'utf8')
+  fields['content-length'] = String(bytes.length)
+  return new Promise((done) => {
+    let finished = false
+    const finish = (status) => { if (!finished) { finished = true; done(status) } }
+    const request = module.request(target, {
+      method: 'POST',
+      headers: fields,
+      lookup: (_host, options, callback) => {
+        if (options && options.all) callback(null, [{ address, family }])
+        else callback(null, address, family)
+      },
+      timeout: DELIVERY_TIMEOUT_MS
+    }, (response) => {
+      let size = 0
+      response.on('data', (chunk) => {
+        size += chunk.length
+        if (size > MAX_DELIVERY_ANSWER_BYTES) response.destroy()
+      })
+      response.on('end', () => finish(response.statusCode))
+      response.on('close', () => finish(response.statusCode))
+      response.on('error', () => finish(response.statusCode))
+    })
+    request.on('timeout', () => request.destroy(new Error('timeout')))
+    request.on('error', () => finish(0))
+    request.end(bytes)
+  })
 }
 
 /** The addresses of this machine's network interfaces. Pure I/O. */
@@ -323,6 +386,11 @@ export async function openLwsStorage (options = {}) {
   // engine checks and decides.
   if (typeof options.deliveryLimit === 'number') config.deliveryLimit = options.deliveryLimit
   if (typeof options.deliveryWindow === 'number') config.deliveryWindow = options.deliveryWindow
+  // The limit per destination and the opt-in for private and other
+  // special-purpose delivery targets (issue 1126): passed unread; the
+  // engine decides (L4Factoidal/Net/Egress.lean, Notifications.admitDest).
+  if (typeof options.deliveryDestLimit === 'number') config.deliveryDestLimit = options.deliveryDestLimit
+  if (options.allowPrivateFetch === true) config.allowPrivateFetch = true
   if (typeof options.redirectsMax === 'number') config.redirectsMax = options.redirectsMax
   if (typeof options.controllerInbox === 'string') config.controllerInbox = options.controllerInbox
   // CORS (https://github.com/danbri/factoidal/issues/923): `cors` is false or
@@ -440,22 +508,22 @@ export async function openLwsStorage (options = {}) {
   function deliver (delivery) {
     const job = (async () => {
       let status = 0
-      try {
-        const answer = await fetch(delivery.url, {
-          method: 'POST',
-          headers: Array.isArray(delivery.headers) ? delivery.headers : [],
-          body: delivery.body,
-          redirect: 'manual',
-          signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS)
-        })
-        status = answer.status
-        await answer.arrayBuffer()
-      } catch (_error) {
-        status = 0
+      // Resolve now, let the engine choose the address (issue 1126), and
+      // connect to that address only.
+      const addresses = typeof delivery.resolve === 'string' ? await resolveHost(delivery.resolve) : []
+      if (closed) return
+      const decided = engine.call('lwsEgress', [handle, JSON.stringify({ url: delivery.url, addresses })])
+      const refused = decided !== null && typeof decided === 'object' && typeof decided.refused === 'string'
+        ? decided.refused
+        : null
+      if (refused !== null) {
+        console.error(`lws-serve: delivery to ${delivery.url} not made: ${refused}`)
+      } else {
+        status = await postTo(delivery.url, String(decided.address), delivery.headers, delivery.body)
       }
       if (closed) return
       const told = engine.call('lwsDelivered', [handle, JSON.stringify({
-        id: delivery.id, status, ...clockNow()
+        id: delivery.id, status, ...(refused !== null ? { refused: true } : {}), ...clockNow()
       })])
       persist(told)
       const retry = told !== null && typeof told === 'object' ? told.retry : null

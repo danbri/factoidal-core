@@ -165,6 +165,10 @@ id = "wasm:datasetAddList"
 reason = "term-level: builds the rdf:first/rdf:rest triples of given terms on fresh blank nodes (RDF/Collections.lean listTriples) and inserts them (CertifiedDataset.insertQuads); reads no document"
 
 [[nonstage]]
+id = "wasm:lwsEgress"
+reason = "the delivery-time address decision of an LWS storage handle (LWS/Notifications.lean egressOf over Net/Egress.lean choose, issue 1126): an address or a refusal for one URL and the addresses the host resolved; reads no resource and no RDF data"
+
+[[nonstage]]
 id = "wasm:sameValue"
 reason = "SPARQL 1.1 = on two terms (SPARQL/SameValue.lean sameValue), reads no graph"
 

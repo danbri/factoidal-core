@@ -362,33 +362,50 @@ the operator opts in, and the host connects to the address the decision
 chose. Deliveries to one destination are limited per destination, not only
 per subscription.
 
-Enforced today. Authorization server fetch: yes, with the gaps in path 1.
-Webhooks, access-request inboxes, the sync reader: not enforced. Forwarding:
-no code.
+Enforced (2026-11-01, https://github.com/danbri/factoidal/issues/1126).
 
-Proposed check. One module `L4Factoidal/Net/Egress.lean` (moved out of
-`Authz/Fetch.lean`), used by `Authz.Fetch`, `Notifications`, `AccessGrants`
-and every later fetching surface:
+- `L4Factoidal/Net/Egress.lean` is the one decision. `specialPurpose` covers
+  the IANA IPv4 Special-Purpose Address Registry (every block, also those
+  marked globally reachable), 224.0.0.0/4, every IPv6 address outside
+  2000::/3, and inside it 2001::/23, 2001:db8::/32, 2620:4f:8000::/48 and
+  3fff::/20; 64:ff9b::/96 and 2002::/16 are judged by their embedded IPv4
+  address. `choose` refuses a host with any such address, or a localhost
+  name, unless `allowPrivate`. Theorems `egress_refuses_special`,
+  `egress_refuses_localhost`, `choose_mem`, `target_refuses_special`.
+- Path 1: `Authz.chooseAddress` is `Net.choose`; `privateAddr` is
+  `specialPurpose`. `chooseAddress_refuses_private` is restated from
+  `egress_refuses_special`. CID retrieval uses the same function.
+- Paths 3 and 4: at subscription, `subscriptionEgress` refuses (400) an
+  inbox whose known addresses are special. Every delivery (webhook,
+  access-request, access-grant and controller inboxes) passes
+  `Notifications.egressOf` just before the host makes it, over the addresses
+  the host resolves then (wasm op `lwsEgress`); the host connects to the
+  chosen address with no second resolution (`lws/server.mjs`, `postTo`).
+  Theorems `deliveries_pinned`, `egressOf_refuses_special`. A refused
+  delivery is a failure with no retry.
+- Per destination: `admitDest` keys a window by host and port of the inbox
+  URL, `deliveryDestLimit` (default 10) per window. Theorem
+  `admit_per_destination`. Limit: two names of one address are two
+  destinations.
+- Opt-in: `lws-serve --allow-private-fetch` (configuration
+  `allowPrivateFetch`) turns the address check off for the storage and the
+  mounted authorization server; a warning is printed at start, also with
+  `--quiet`. Path 2 is unchanged: with that option, a token requester can
+  make the server fetch internal URLs, by the operator's choice.
+- Tests: Lean `#guard`s in `Net/Egress.lean`, `Authz/Tests.lean` (100.64.0.1
+  and the other new ranges), `LWS/NotificationsTests.lean` (inbox
+  `http://10.0.0.1/` gets 400; a name public at subscription and private at
+  delivery is refused by `egressOf`; 20 subscriptions to one inbox give 10
+  deliveries); host checks in `tests/lws/draft-binding.mjs` (the same three,
+  the second with a resolver that answers a public then a loopback address)
+  and `tests/authz/server.mjs` (a subject on 100.64.0.1). Host tests that
+  deliver to 127.0.0.1 opt in (`LOCAL_TARGETS`).
 
-```lean
-def specialPurpose : Addr → Bool   -- IANA IPv4 and IPv6 special-purpose registries
-
-theorem egress_refuses_special (p : EgressPolicy) (host : String) (texts : List String)
-    (a : Addr) (hp : p.allowPrivate = false) (ha : a ∈ texts.filterMap addr?)
-    (hs : specialPurpose a = true) (x : String) : Egress.choose p host texts ≠ .ok x
-
-theorem deliveries_pinned (cfg : Config) (st : State) (r : Request) :
-    ∀ d ∈ (serverStep cfg st r).deliveries,
-      ∃ texts, Egress.choose cfg.egress (hostOf d.url) texts = .ok d.address
-
-theorem admit_per_destination (rate : Rate) (ns : NotifState) (now : Nat) (u : String) :
-    (sentTo ns u now rate.window).length ≤ rate.destLimit
-```
-
-Tests (expected failures now): a webhook subscription with inbox
-`http://10.0.0.1/` gets 400; an authorization server fetch of `100.64.0.1` is
-refused; 20 subscriptions to one inbox give at most the per-destination limit
-in one window.
+Not enforced. Path 5 (extension-function callbacks), path 6
+(`lib/sync-http-node.mjs` has no address check; it refuses redirects since
+0.28.0) and path 7 (forwarding, no code) stay open under
+https://github.com/danbri/factoidal/issues/1126. Expected failure for path 6:
+`npm/factoidal/test/egress-1126.test.mjs`.
 
 ### C6. Token audience with several transports
 
@@ -772,8 +789,10 @@ that names it.
   the path-segment rule for token scope; `requireHttps` for WebDAV mounts.
 - I4, C4: TLS for the XMPP client stream; PLAIN only on TLS or loopback;
   `route_from_stamped` as a theorem.
-- I5, C5: `Net/Egress.lean` (IANA special-purpose ranges, address pinning
-  for deliveries, a per-destination limit); checks for access-request inboxes.
+- I5, C5: landed 2026-11-01 under https://github.com/danbri/factoidal/issues/1126
+  (`Net/Egress.lean`, `egress_refuses_special`, `deliveries_pinned`,
+  `admit_per_destination`); the sync reader and extension-function callbacks
+  remain under the same issue.
 - I6, C6: one storage IRI across transports; `peerOf?` for `httpx`.
 - I7, C7: landed 2026-10-28 under https://github.com/danbri/factoidal/issues/1124
   (`HTTP/LocalGuard.lean`, `LWS.Cors.policyFor`, `decorate_no_credentials`);

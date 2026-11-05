@@ -79,7 +79,8 @@ factoidal lws-serve   DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecu
                           [--paginate-always] [--moves all|data|off]
                           [--no-linkset-put] [--unstable-search-results] [--merkle]
                           [--controller-inbox URL] [--delivery-limit N]
-                          [--delivery-window SECONDS] [--redirects-max N]
+                          [--delivery-window SECONDS] [--delivery-dest-limit N]
+                          [--allow-private-fetch] [--redirects-max N]
                           [--storage snapshot|files]
                           [--cors-origin ORIGIN]... [--no-cors]
 factoidal solid-serve DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
@@ -303,6 +304,26 @@ header quotes each section it decides.
   `admits_le` (at most `limit` deliveries in one window) and `admit_count_le`.
   With the test clock (`now` set, one second per mutation) a `wake` flush
   finds nothing due; use `realClock: true` to see a flush.
+* Requests to private addresses (https://github.com/danbri/factoidal/issues/1126,
+  `L4Factoidal/Net/Egress.lean`): an inbox whose known address is in the IANA
+  IPv4 or IPv6 special-purpose registries (loopback, RFC 1918, link-local,
+  100.64.0.0/10, multicast, reserved, documentation, NAT64 or 6to4 with such
+  an IPv4 address) or a localhost name answers 400
+  (`Notifications.subscriptionEgress`). Every delivery (webhook,
+  access-request, access-grant, controller inbox) carries `resolve: H` when
+  its host is a name; the host resolves `H` just before the POST, calls
+  `lwsEgress {url, addresses}`, and connects to the `address` it answers
+  (`postTo`, no second resolution), or reports `{id, status: 0, refused:
+  true}` to `lwsDelivered` (no retry). Theorems `egress_refuses_special`,
+  `deliveries_pinned`, `egressOf_refuses_special`. Per destination (host and
+  port): at most `deliveryDestLimit` (default 10, `--delivery-dest-limit N`,
+  0 off) per window for all subscriptions together (`admitDest`,
+  `admit_per_destination`). `--allow-private-fetch` (config
+  `allowPrivateFetch`) turns the address check off. A host test that delivers
+  to a receiver on 127.0.0.1 must pass `allowPrivateFetch: true`, and
+  `deliveryDestLimit: 0` when many hooks share one receiver (`LOCAL_TARGETS`
+  in `tests/lws/draft-binding.mjs`); without them the subscription answers
+  400 and nothing is delivered.
 * Endpoint verification: the webhook draft only says "Rate limiting and
   endpoint verification are suggested to prevent abuse of the subscription
   mechanism" and defines no procedure, so there is no behaviour to implement.
