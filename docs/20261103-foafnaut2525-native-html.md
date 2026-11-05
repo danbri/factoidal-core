@@ -242,3 +242,17 @@ the readback out took 4 ms. The readback is not the cost; the shader is. A frame
 is 1,600,000 pixels x 4 samples x 1,405 primitives, about 9.0 billion primitive
 visits, or about 3.3 billion each second. Only polygons and paths have a bounds
 check, and the walk over the variable-length records is serial for each sample.
+
+## Primitive lists for each screen tile, 2026-11-05
+
+`SVG.lean` writes a `tiles` table beside `data`: for each 32-pixel tile, the
+primitives whose conservative box touches it, in paint order. The fragment shader
+walks that list and not every primitive. A primitive with no known box joins every
+tile, and a page over 1,000,000 list entries uses one tile. `data` and its proved
+layout do not change. The table is a second storage binding, added by
+`createPlanResources`; it is not yet in the Lean `RenderPlan`.
+
+Same machine, `--resize-sweep`, default page, same seven sizes: median draw 2,074 ms
+to 33 ms, median frame 2,278 ms to 209 ms. All seven frames have the same
+`pixelHash` as the untiled engine. Lean layout, about 150 ms, is now the largest
+stage. The hashes cover the default page only.

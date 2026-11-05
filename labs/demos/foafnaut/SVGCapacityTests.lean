@@ -21,7 +21,7 @@ private def measure (name text : String) (expected expectedFloats : Nat) : IO Un
   let some shader := artifact.getString? "wgsl" | throw (IO.userError "missing WGSL")
   check (data.length == expectedFloats && data.length <= NativeSVG.maxDataFloats)
     s!"storage record count: expected {expectedFloats}, got {data.length}"
-  check (shader.length < 32768 && (shader.splitOn "for(var primitive=").length == 2) "shader still expands per primitive"
+  check (shader.length < 32768 && (shader.splitOn "for(var item=").length == 2) "shader still expands per primitive"
   for (x,y) in [(0,100),(500,335),(494,311),(500,316),(427,358),(500,350),(100,100),(800,100)] do
     check (NativeSVG.sample xml 0 0 x y == rgbJSON (scene.sample x.toNat y.toNat)) "full-scene CPU sample disagreement"
   IO.println s!"PASS {name}: chars={xml.length} primitives={expected} floats={data.length} shaderChars={shader.length}"

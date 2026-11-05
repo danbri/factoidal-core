@@ -58,7 +58,7 @@ export function textureUsage(names:string[]):number {
   return names.reduce((n,k)=>{if(!(k in flags))throw new Error(`Unknown texture usage ${k}`);return n|flags[k];},0);
 }
 export type ShaderSubmission = {code:string;vertexEntry:string;fragmentEntry:string;diagnostics?:{type:string;lineNum:number;linePos:number;message:string}[]};
-export async function createPlanResources(device:GPUDevice,p:RenderPlan,code:string,observe?:(event:ShaderSubmission)=>void) {
+export async function createPlanResources(device:GPUDevice,p:RenderPlan,code:string,observe?:(event:ShaderSubmission)=>void,tiles?:number[]) {
   const shader=device.createShaderModule({code});
   const submission={code,vertexEntry:p.pipeline.vertexEntry,fragmentEntry:p.pipeline.fragmentEntry};
   observe?.(submission);
@@ -71,9 +71,16 @@ export async function createPlanResources(device:GPUDevice,p:RenderPlan,code:str
     fragment:{module:shader,entryPoint:p.pipeline.fragmentEntry,targets:[{format:p.format}]},
     primitive:{topology:p.pipeline.topology}});
   const uniform=device.createBuffer({size:p.uniform.bytes,usage:bufferUsage(p.uniform.usage)});
-  const bindGroup=device.createBindGroup({layout:pipeline.getBindGroupLayout(p.bindGroup.layoutIndex),
-    entries:[{binding:p.bindGroup.binding,resource:{buffer:uniform}}]});
-  return {pipeline,uniform,bindGroup};
+  // The Lean primitive lists for each screen tile, read-only for the shader.
+  const entries:GPUBindGroupEntry[]=[{binding:p.bindGroup.binding,resource:{buffer:uniform}}];
+  let tileBuffer:GPUBuffer|undefined;
+  if(tiles){
+    tileBuffer=device.createBuffer({size:Math.max(16,tiles.length*4),usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});
+    device.queue.writeBuffer(tileBuffer,0,new Uint32Array(tiles));
+    entries.push({binding:p.bindGroup.binding+1,resource:{buffer:tileBuffer}});
+  }
+  const bindGroup=device.createBindGroup({layout:pipeline.getBindGroupLayout(p.bindGroup.layoutIndex),entries});
+  return {pipeline,uniform,bindGroup,tiles:tileBuffer};
 }
 
 // This interpreter is a trusted FFI boundary. The order and arguments come

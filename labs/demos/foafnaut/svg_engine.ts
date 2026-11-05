@@ -2,7 +2,7 @@
 import createModule from "./.build/engines/svg-engine.mjs";
 export type SVGArtifact={
   abi:"lean-svg-v1";profile:"painted-primitives-experiment";width:number;height:number;
-  binding:"read-only-storage";primitiveCount:number;data:number[];wgsl:string;tree?:RetainedNode[]|null;checks:{x:number;y:number;rgb:number[]}[];
+  binding:"read-only-storage";primitiveCount:number;data:number[];tiles?:number[];wgsl:string;tree?:RetainedNode[]|null;checks:{x:number;y:number;rgb:number[]}[];
 };
 export type RetainedNode=
   |{kind:"group";id:string|null;transform:number[];clip?:{bounds:number[];transform:number[]};children:RetainedNode[]}
@@ -54,6 +54,7 @@ export function validateSVG(value:unknown):SVGArtifact {
     ![a.width,a.height].every(n=>Number.isInteger(n)&&n>=1&&n<=4096)||
     !Number.isInteger(a.primitiveCount)||a.primitiveCount<0||a.primitiveCount>12288||
     !Array.isArray(a.data)||a.data.length<8||a.data.length>262144||a.data.length%4!==0||!a.data.every(n=>Number.isFinite(n)&&Number.isFinite(Math.fround(n)))||
+    (a.tiles!==undefined&&(!Array.isArray(a.tiles)||a.tiles.length<5||!a.tiles.every(n=>Number.isSafeInteger(n)&&n>=0)))||
     typeof a.wgsl!=="string"||a.wgsl.length>1048576||(a.tree!==undefined&&a.tree!==null&&!validTree(a.tree))||!Array.isArray(a.checks)||!a.checks.length||
     !a.checks.every(p=>Number.isInteger(p.x)&&Number.isInteger(p.y)&&p.x>=0&&p.x<a.width&&p.y>=0&&p.y<a.height&&Array.isArray(p.rgb)&&p.rgb.length===3&&p.rgb.every(c=>Number.isInteger(c)&&c>=0&&c<=255)))throw new Error("Invalid Lean SVG artifact");
   validateStorage(a);return a;

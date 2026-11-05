@@ -12,8 +12,8 @@ export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.Unsa
   const format=navigator.gpu.getPreferredCanvasFormat();
   const plan={...await requestRenderPlan("svg-offscreen",format,frame,device.limits),format};
   const context=surface.getContext("webgpu") as GPUCanvasContext;
-  const resources=await createPlanResources(device,plan,frame.wgsl);
-  let readback:GPUBuffer|undefined,disposed=false,lastSteps:Record<string,number>={};
+  const resources=await createPlanResources(device,plan,frame.wgsl,undefined,frame.tiles);
+  let readback:GPUBuffer|undefined,disposed=false,lastSteps:Record<string,number>={},lastHash="";
   try {
     readback=device.createBuffer({size:plan.readback!.bytes,usage:bufferUsage(plan.readback!.usage)});
     const lifecycle=new SurfaceLifecycle({
@@ -41,6 +41,10 @@ export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.Unsa
           const pixels=unpad(bytes,plan.width,plan.height,plan.readback!.bytesPerRow);
           if(plan.format==="bgra8unorm")for(let i=0;i<pixels.length;i+=4){const b=pixels[i];pixels[i]=pixels[i+2];pixels[i+2]=b;}
           checkPixels(frame,pixels);
+          // FNV-1a over the frame: two renderers agree only if every byte agrees.
+          let hash=0x811c9dc5;const words=new Uint32Array(pixels.buffer,pixels.byteOffset,pixels.byteLength>>>2);
+          for(let i=0;i<words.length;i++){hash=Math.imul(hash^words[i],0x01000193);}
+          lastHash=(hash>>>0).toString(16).padStart(8,"0");
           const error=await device.popErrorScope();scoped=false;if(error)throw new Error(error.message);
         } catch(error) {
           // popErrorScope itself can fail after a device loss; preserve the cause.
@@ -52,7 +56,8 @@ export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.Unsa
       },
       get frames(){return lifecycle.framesPresented;},
       get steps(){return lastSteps;},
-      dispose(){if(!disposed){disposed=true;context.unconfigure();readback!.destroy();resources.uniform.destroy();}},
+      get pixelHash(){return lastHash;},
+      dispose(){if(!disposed){disposed=true;context.unconfigure();readback!.destroy();resources.uniform.destroy();resources.tiles?.destroy();}},
     };
-  } catch(error){readback?.destroy();resources.uniform.destroy();throw error;}
+  } catch(error){readback?.destroy();resources.uniform.destroy();resources.tiles?.destroy();throw error;}
 }

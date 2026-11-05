@@ -2,7 +2,7 @@
 import type { ShaderSubmission } from "./render_plan.ts";
 import type { Artifact } from "./lean_generator.ts";
 import { requestRenderPlan, createPlanResources, textureUsage, bufferUsage, commandInterpreter } from "./render_plan.ts";
-type Renderable=Pick<Artifact,"width"|"height"|"data"|"wgsl"|"checks">;
+type Renderable=Pick<Artifact,"width"|"height"|"data"|"wgsl"|"checks">&{tiles?:number[]};
 
 export function unpad(padded: Uint8Array, width: number, height: number, stride: number) {
   const rgba = new Uint8Array(width * height * 4);
@@ -33,7 +33,7 @@ export function checkPixels(a: Renderable, rgba: Uint8Array) {
 export async function createOffscreenSession(a:Renderable,mode:"offscreen"|"svg-offscreen"="offscreen",observeShader?:(event:ShaderSubmission)=>void) {
   if(!navigator.gpu)throw new Error("WebGPU API absent; add --unstable-webgpu");
   let verification={...a,checks:a.checks.map(p=>({...p,rgb:[...p.rgb]}))};
-  const shape={width:a.width,height:a.height,wgsl:a.wgsl,floatCount:a.data.length};
+  const shape={width:a.width,height:a.height,wgsl:a.wgsl,floatCount:a.data.length,tiles:a.tiles?.join()};
   const adapter=await navigator.gpu.requestAdapter();
   if(!adapter)return null;
   console.log("GPU adapter:",adapter.info);
@@ -47,13 +47,13 @@ export async function createOffscreenSession(a:Renderable,mode:"offscreen"|"svg-
     if(busy)throw new Error("Cannot close GPU session during a frame");
     closed=true;
     const errors:unknown[]=[];
-    for(const resource of [readback,texture,resources?.uniform,device])try{resource?.destroy();}catch(error){errors.push(error);}
+    for(const resource of [readback,texture,resources?.uniform,resources?.tiles,device])try{resource?.destroy();}catch(error){errors.push(error);}
     if(errors.length)console.warn("GPU session cleanup:",errors.map(String).join("; "));
   };
   try {
     device.pushErrorScope("validation");scope=true;
     const plan=await requestRenderPlan(mode,"rgba8unorm",a,device.limits);
-    resources=await createPlanResources(device,plan,a.wgsl,observeShader);
+    resources=await createPlanResources(device,plan,a.wgsl,observeShader,a.tiles);
     counters.shaderModules=1;counters.pipelines=1;counters.buffers=1;
     device.queue.writeBuffer(resources.uniform,plan.uniform.offset,new Float32Array(a.data));counters.uploads++;
     texture=device.createTexture({size:[plan.width,plan.height,plan.texture!.depth],format:plan.format,usage:textureUsage(plan.texture!.usage)});counters.textures++;
@@ -66,7 +66,7 @@ export async function createOffscreenSession(a:Renderable,mode:"offscreen"|"svg-
       async update(next:Renderable):Promise<boolean> {
         if(closed||failed)throw new Error("GPU session is closed or failed");
         if(busy)throw new Error("Concurrent GPU updates/readbacks are unsupported");
-        if(next.width!==shape.width||next.height!==shape.height||next.wgsl!==shape.wgsl||next.data.length!==shape.floatCount)return false;
+        if(next.width!==shape.width||next.height!==shape.height||next.wgsl!==shape.wgsl||next.data.length!==shape.floatCount||next.tiles?.join()!==shape.tiles)return false;
         busy=true;
         try {
           // Lean revalidates the new payload and supplies the complete plan.

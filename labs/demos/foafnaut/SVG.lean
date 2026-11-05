@@ -1711,9 +1711,87 @@ private def relativeCondition (test : Test) : String :=
 private def shaderCase (tag : Nat) (g : BackendGeometry) : String :=
   s!"case {tag}u: " ++ "{fillHit=" ++ relativeCondition (fillCondition g 0) ++
   ";strokeHit=" ++ relativeCondition (strokeCondition g 0 .butt) ++ ";}\n"
+/-- Screen tile side in pixels for the primitive lists. -/
+def tileSize : Nat := 32
+
+/-- Limit on the list entries of all tiles; it bounds the artifact size. -/
+def maxTileEntries : Nat := 1000000
+
+/-- A conservative box of a compiled primitive in pixels: the local bounds,
+widened for a stroke, through the transform and the page mapping, with a
+margin. `none` means the box is not known, and the primitive joins every tile.
+Clips can only shrink what is painted, so they are not used. -/
+private def Primitive.screenBox (m : Mapping) (p : BackendPrimitive) :
+    Option (Float × Float × Float × Float) :=
+  let bounds : List Float := match p.geometry with
+    | .rect x y w h => [min x (x+w),min y (y+h),max x (x+w),max y (y+h)]
+    | .circle cx cy r => [cx-r,cy-r,cx+r,cy+r]
+    | .ellipse cx cy rx ry => [cx-rx,cy-ry,cx+rx,cy+ry]
+    | .line x1 y1 x2 y2 => [min x1 x2,min y1 y2,max x1 x2,max y1 y2]
+    | .polygon points => pointBounds points
+    | .path contours => pointBounds (contours.flatMap (·.points))
+  match bounds with
+  | [x0,y0,x1,y1] =>
+    let pad : Float := match p.style.stroke with
+      | .none => 0
+      | _ => 2*p.style.strokeWidth+1
+    let corners := [(x0-pad,y0-pad),(x1+pad,y0-pad),(x0-pad,y1+pad),(x1+pad,y1+pad)]
+    let pixels := corners.map fun (x,y) =>
+      let w := p.transform.apply x y
+      ((w.1-m.minX)*m.sx+m.tx,(w.2-m.minY)*m.sy+m.ty)
+    let xs := pixels.map (·.1)
+    let ys := pixels.map (·.2)
+    if m.sx <= 0 || m.sy <= 0 || (xs++ys).any (fun v => v.isNaN || v.isInf) then none
+    else some (xs.foldl min (xs.headD 0)-2,ys.foldl min (ys.headD 0)-2,
+               xs.foldl max (xs.headD 0)+2,ys.foldl max (ys.headD 0)+2)
+  | _ => none
+
+/-- The tile of a pixel coordinate, kept in `0..count-1`. -/
+private def tileIndex (value : Float) (count : Nat) : Nat :=
+  if value <= 0 then 0
+  else min (count-1) (value/tileSize.toFloat).floor.toUInt64.toNat
+
+/-- Primitive lists for each screen tile, in paint order: tile size, tiles
+across, tiles down, one start offset for each tile and a final end offset, then
+the record row of each listed primitive. A primitive is left out of a tile only
+when its conservative box does not touch the tile; there it can not change a
+pixel, so the image does not change. -/
+private def Scene.tiles (s : Scene) : Array Nat := Id.run do
+  let across := (s.width+tileSize-1)/tileSize
+  let down := (s.height+tileSize-1)/tileSize
+  let mut lists : Array (Array Nat) := Array.replicate (across*down) #[]
+  let mut base := 2
+  for p in s.compiled do
+    let (left,top,right,bottom) := match p.screenBox s.mapping with
+      | some (x0,y0,x1,y1) => (tileIndex x0 across,tileIndex y0 down,tileIndex x1 across,tileIndex y1 down)
+      | none => (0,0,across-1,down-1)
+    for y in [top:bottom+1] do
+      for x in [left:right+1] do
+        lists := lists.modify (y*across+x) (·.push base)
+    base := base+p.rowCount
+  let mut offsets : Array Nat := #[]
+  let mut total := 0
+  for list in lists do
+    offsets := offsets.push total
+    total := total+list.size
+  offsets := offsets.push total
+  -- A very dense page: one tile that lists every primitive once, as before tiles.
+  if total > maxTileEntries then
+    let mut rows : Array Nat := #[]
+    let mut row := 2
+    for p in s.compiled do
+      rows := rows.push row
+      row := row+p.rowCount
+    return #[max s.width s.height+1,1,1,0,rows.size] ++ rows
+  let mut out : Array Nat := #[tileSize,across,down] ++ offsets
+  for list in lists do
+    out := out ++ list
+  return out
+
 private def Scene.wgsl (_s : Scene) : String :=
   "struct Params {rows:array<vec4f>};\n" ++
   "@group(0) @binding(0) var<storage,read> params:Params;\n" ++
+  "@group(0) @binding(1) var<storage,read> tiles:array<u32>;\n" ++
   "fn parameter(base:u32,offset:u32)->f32{return params.rows[base+offset/4u][offset%4u];}\n" ++
   "fn windingContains(base:u32,count:u32,rule:u32,p:vec2f,stride:u32)->bool {var winding:i32=0;" ++
   "for(var i=0u;i<count;i++){let ai=select(2u*i,4u*i,stride==4u);let bi=select(2u*((i+1u)%count),4u*i+2u,stride==4u);" ++
@@ -1729,8 +1807,9 @@ private def Scene.wgsl (_s : Scene) : String :=
   "fn samplePixel(pixel:vec4f)->vec4f {" ++
   "var rgb=vec3f(1.0);let rowLimit=arrayLength(&params.rows);if(rowLimit<2u){return vec4f(rgb,1.0);}if any(pixel.xy>=params.rows[1].zw){return vec4f(rgb,1.0);}" ++
   "let worldP=vec4f((pixel.xy-params.rows[0].zw)/params.rows[0].xy+params.rows[1].xy,0,1);" ++
-  "var base=2u;\n" ++
-  s!"for(var primitive=0u;primitive<{maxPrimitives}u&&base<arrayLength(&params.rows);primitive++)" ++ "{" ++
+  "let across=tiles[1];let down=tiles[2];let tile=min(u32(pixel.y)/tiles[0],down-1u)*across+min(u32(pixel.x)/tiles[0],across-1u);" ++
+  "let listBase=4u+across*down;let listEnd=tiles[4u+tile];\n" ++
+  "for(var item=tiles[3u+tile];item<listEnd;item++)" ++ "{var base=tiles[listBase+item];" ++
   "let remaining=rowLimit-base;if(remaining<5u){break;}let header=vec4u(params.rows[base+1u]);let tag=header.x;let count=header.y;" ++
   "if(count>2u*remaining){break;}let shapeRows=select((count+1u)/2u,count,tag==" ++ toString Geometry.pathRecordTag ++ "u);let dashCount=u32(params.rows[base+4u].z);let clipCount=header.w/4u;" ++
   "if(shapeRows>remaining||dashCount>remaining/" ++ toString dashPieceRowCount ++ "u||clipCount>remaining/" ++ toString clipRowCount ++ "u){break;}let tailRows=shapeRows+" ++ toString dashPieceRowCount ++ "u*dashCount;let affineRows=select(0u," ++ toString affineTransformRowCount ++ "u,(header.w%4u)>=2u);let recordRows=" ++ toString primitiveFixedRowCount ++ "u+tailRows+affineRows+" ++ toString clipRowCount ++ "u*clipCount;if(recordRows>remaining){break;}var p=worldP;if((header.w%4u)>=2u)" ++ "{let tb=base+" ++ toString primitiveFixedRowCount ++ "u+tailRows;let x=params.rows[tb];let y=params.rows[tb+1u];" ++
@@ -1750,7 +1829,7 @@ private def Scene.wgsl (_s : Scene) : String :=
   "if fillHit {element=vec4f(fill.rgb*fill.a,fill.a);}" ++
   "if strokeHit {element=vec4f(stroke.rgb*stroke.a,stroke.a)+element*(1.0-stroke.a);}" ++
   "let opacity=params.rows[base+4u].y;rgb=element.rgb*opacity+rgb*(1.0-element.a*opacity);" ++
-  "base+=recordRows;}return vec4f(rgb,1.0); }\n" ++
+  "}return vec4f(rgb,1.0); }\n" ++
   "@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {var total=vec4f(0.0);" ++
   String.join (pixelSampleOffsets.map fun (x,y) =>
     "total+=samplePixel(vec4f(pixel.xy+vec2f(" ++ toString (x-0.5) ++ "," ++ toString (y-0.5) ++ "),0.0,1.0));") ++
@@ -2085,7 +2164,7 @@ private def Scene.json (s : Scene) : Except String String := do
   return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
     ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.compiled.length ++
     ",\"tree\":" ++ tree ++
-    ",\"data\":" ++ jsonArray (floatJSONList data.toList) ++ ",\"wgsl\":" ++ quote s.wgsl ++ ",\"checks\":" ++ jsonArray checks ++ "}"
+    ",\"data\":" ++ jsonArray (floatJSONList data.toList) ++ ",\"tiles\":" ++ jsonArray (s.tiles.toList.map toString) ++ ",\"wgsl\":" ++ quote s.wgsl ++ ",\"checks\":" ++ jsonArray checks ++ "}"
 /-- Serialize an existing checked SVG scene through the same packed-data/WGSL
     producer as the string ABI; no XML serialization or reparsing is required. -/
 def Scene.artifact (s : Scene) : Except String String := s.json

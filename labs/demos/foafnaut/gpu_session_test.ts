@@ -45,7 +45,7 @@ Deno.test("compatible scene updates retain resources and use new pixel expectati
   const s=(await createOffscreenSession(frame,"svg-offscreen"))!;
   const next={...frame,data:frame.data.map((v,i)=>i===0?1:v)};
   assert(await s.update(next),"compatible payload refused");await s.draw();
-  for(const different of [{...next,width:2},{...next,height:2},{...next,wgsl:"different shader"},{...next,data:[...next.data,0,0,0,0]}]){
+  for(const different of [{...next,width:2},{...next,height:2},{...next,wgsl:"different shader"},{...next,data:[...next.data,0,0,0,0]},{...next,tiles:[32,1,1,0,0]}]){
    assert(!(await s.update(different)),"incompatible payload reused");
   }
   assert(s.stats.uploads===2&&s.stats.pipelines===1&&s.stats.buffers===2&&s.stats.frames===1,JSON.stringify(s.stats));
