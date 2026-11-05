@@ -40,6 +40,8 @@ anything but XPath expressions in this evaluator.
 -/
 import L4Factoidal.XPath4.Eval
 import L4Factoidal.XPath4.FeatureTests
+import L4Factoidal.XPath4.StaticTypingTests
+import L4Factoidal.XPath4.StaticTypingTheorems
 import L4Factoidal.XSD11.Load
 import L4Factoidal.XSD11.XPathBridge
 import L4Factoidal.XPath4.Theorems
@@ -197,6 +199,8 @@ def featureSupported (f : String) : Bool :=
   || f == "fullText" || f == "fullText-ignore" || f == "fullText-units" || f == "fullText-defaults"
   -- XQuery Update Facility 3.0 (`L4Factoidal.XQueryUpdate`)
   || f == "XQUpdate"
+  -- XPath/XQuery static type analysis is a selectable engine configuration.
+  || f == "staticTyping"
 
 /-- The features this processor has in one mode: `featureSupported`,
     plus the namespace axis (XPath 4.0 §4.7.2.1; XQuery 4.0 does not
@@ -230,12 +234,15 @@ def configureFor (deps : List Node) (env : Env) : Env :=
         if sat && ((attrD d "value").splitOn " ").all (· == "1.1") then { env with xml11 := true } else env
     | _ => env) env
 
-/-- Select a processor configuration for negative feature dependencies.
+/-- Select a processor configuration from positive and negative feature dependencies.
     The query and its assertions use this same configuration. -/
 def featureSettings (deps : List Node) : FeatureSettings :=
   deps.foldl (fun settings d =>
-    if attrD d "type" == "feature" && attrD d "satisfied" "true" == "false" then
-      (attrD d "value").splitOn " " |>.foldl FeatureSettings.disable settings
+    if attrD d "type" != "feature" then settings else
+    let names := (attrD d "value").splitOn " "
+    if attrD d "satisfied" "true" == "false" then
+      names.foldl FeatureSettings.disable settings
+    else if names.contains "staticTyping" then { settings with staticTyping := true }
     else settings) {}
 
 def depOk (xq : Bool) (d : Node) : Bool :=
@@ -475,7 +482,7 @@ def evalIn (env : Env) (src : String) : M Seq := do
   match env.fileSys with
   -- EXPath File 4.0: an assertion may also call a writing `file:` function
   | some fs => (·.1) <$> L4Factoidal.EXPath.File.evalMem env fs e
-  | none => eval 20000 env e
+  | none => evalConfigured 20000 env e
 
 def xmlEq1 (env : Env) (got : Seq) (expected : String) : Bool :=
   let gs := serSeq env got
@@ -969,9 +976,13 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool
       let idx := env.docs.size
       env := { env with docs := env.docs.push d,
                         docUris := if uri == "" then env.docUris else (uri, idx) :: env.docUris }
-      if role == "." then env := { env with ctx := some [.node (NodeRef.mk' idx 0)], pos := 1, size := 1 }
+      if role == "." then
+        env := { env with ctx := some [.node (NodeRef.mk' idx 0)], pos := 1, size := 1,
+                          staticFocus := .doc none }
       else if role.startsWith "$" then
-        env := env.bind { uri := "", loc := (role.drop 1).toString } [.node (NodeRef.mk' idx 0)]
+        let q : QN := { uri := "", loc := (role.drop 1).toString }
+        env := env.bind q [.node (NodeRef.mk' idx 0)]
+        env := { env with staticVars := (q, .doc none) :: env.staticVars }
   -- collections (F&O 4.0 §1.7.2): documents are loaded like sources
   for (curi, srcs, qs) in spec.collections do
     let mut items : Seq := []
