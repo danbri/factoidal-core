@@ -64,7 +64,7 @@ export async function prepareHTML(engine:HTMLEngine,url:string,signal?:AbortSign
   if(requests.requests.length)throw new Error("Native HTML milestone requires the Lean ASCII bitmap font profile; supplied-font requests are unsupported");
   signal?.throwIfAborted();
   return {
-    url:document.url,baseURL:inspection.baseURL,source:document.source,
+    url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,
     compile:(width:number,height:number)=>engine.compile(document.source,width,height,options),
   };
 }

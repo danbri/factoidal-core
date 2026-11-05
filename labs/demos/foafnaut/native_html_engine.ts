@@ -10,6 +10,7 @@ export type HTMLArtifact = {
 };
 export type Inspection = {
   baseURL:string;
+  title:string;
   scripts:{kind:string;type:string;src:string}[];
   stylesheets:{nodeId:number;url:string}[];
 };
