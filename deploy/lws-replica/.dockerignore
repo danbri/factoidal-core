@@ -1,0 +1,14 @@
+*
+!Dockerfile
+!server.mjs
+!config.mjs
+!Caddyfile
+!entrypoint.sh
+!xmpp-alpha.mjs
+!webdav-readonly.mjs
+!public/
+!public/**
+public/**/.git
+public/**/.env*
+public/**/*.pem
+public/**/*.key
