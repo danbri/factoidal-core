@@ -53,6 +53,11 @@ export async function loadHTML() {
         throw new Error("Unexpected published Lean HTML scene ABI");
       return result;
     },
+    // Lean decides what a menu command and a pointer release mean.
+    command:(command:number,textScalePercent:number)=>documentCall("",{op:"command",command,textScalePercent}) as {action:string;textScalePercent:number},
+    pointerUp:(selection:number[])=>(documentCall("",{op:"pointerUp",selection}) as {action:string}).action,
+    selectedText:(source:string,width:number,height:number,options:Record<string,unknown>)=>
+      (documentCall(source,{...options,op:"selectedText"},width,height) as {text:string}).text,
     hit(artifact:HTMLArtifact,x:number,y:number):{href:string;sourceNode:number}|null {
       if(!Number.isFinite(x)||!Number.isFinite(y))return null;
       return call("web_render_hit",["string","number","number","number","number"],

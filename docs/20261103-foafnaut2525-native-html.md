@@ -267,3 +267,12 @@ run showed the same stall with the menu in its new place, and
 `native-html-waiting` then recorded `occlusionVisible:false`: macOS reported the
 window as covered. So the A/B was probably confounded by what was on the screen.
 The cause of those stalls is unproven. `--resize-sweep` needs a visible window.
+
+## Zoom, selection and copy (5 November 2026)
+
+- Command-= or Command-+ makes text larger. Command-- or Command-_ makes it smaller. Command-0 resets it. The steps are in `WebSelection.lean`, and Lean layout applies them through `textScalePercent`. The scale stays when you go to a new page.
+- A drag selects text, Command-A selects all and Command-C copies. Lean finds the glyphs, paints the highlight and makes the text. The host writes the clipboard only.
+- A link now activates on mouse release, because a press can start a drag.
+- Paste is not implemented: there are no form fields. Layout refuses `input` and `textarea`.
+- Each drag step runs a full layout, about 300 ms on the home page. This makes selection feel slow.
+- `--command-sweep` checks the menu keys, a drag and a link click in a real window. A covered window waits until it can present.
