@@ -19,9 +19,11 @@ private def tails : List CRe :=
   [.eps, .leaf (.ranges [(98, 98)]), .leaf (.ranges [(99, 99)]), .anchorEnd,
    .cat (viaGeneral true [(98, 99)]) (.leaf (.ranges [(99, 99)]))]
 
-private def words : Nat → List (List Nat)
-  | 0 => [[]]
-  | n + 1 => [] :: ((words n).flatMap fun w => [97 :: w, 98 :: w, 99 :: w])
+private def grow (ws : List (List Nat)) : List (List Nat) :=
+  [] :: ws.flatMap fun w => [97 :: w, 98 :: w, 99 :: w]
+
+/-- Words over a, b and c, up to five letters. -/
+private def words : List (List Nat) := grow (grow (grow (grow (grow [[]]))))
 
 /-- `some`, and an accept that takes odd end positions only, which forces backtracking. -/
 private def accepts : List (COut → Option COut) :=
@@ -36,7 +38,7 @@ private def agree (greedy : Bool) (rs : List (Nat × Nat)) (tail : CRe) (w : Lis
   run (viaLoop greedy rs) == run (viaGeneral greedy rs)
 
 #guard [true, false].all fun greedy => classes.all fun rs => tails.all fun tail =>
-  (words 5).all fun w => accepts.all fun accept => agree greedy rs tail w accept
+  words.all fun w => accepts.all fun accept => agree greedy rs tail w accept
 
 private def longRule : String :=
   String.ofList (List.replicate 20000 'a') ++ " $this ex:field ?value " ++ String.ofList (List.replicate 20000 'b')
