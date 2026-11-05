@@ -205,10 +205,10 @@ private def hexVal (c : Char) : Nat :=
   if '0' ≤ c && c ≤ '9' then c.toNat - 48 else c.toNat - 87
 
 private def ofHex (s : String) : ByteArray :=
-  let rec go : List Char → List UInt8
-    | a :: b :: rest => UInt8.ofNat (hexVal a * 16 + hexVal b) :: go rest
-    | _ => []
-  ByteArray.mk (go s.toList).toArray
+  let rec go : List Char → ByteArray → ByteArray
+    | a :: b :: rest, acc => go rest (acc.push (UInt8.ofNat (hexVal a * 16 + hexVal b)))
+    | _, acc => acc
+  go s.toList ByteArray.empty
 
 -- Archives written by the real `gzip -9 -n`, `zip -X` and `tar --format=ustar`.
 private def realGz : ByteArray := ofHex "1f8b0800000000000203cb48cdc9c95748afca2ce00200397c63560b000000"

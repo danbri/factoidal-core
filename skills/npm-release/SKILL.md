@@ -436,6 +436,15 @@ cheapest command that proves the shipped wasm loads and answers.
     `tests/store-host/cli.mjs` gates the explanation rather than the
     success, because the outcome depends on the runtime. Do not read a
     green run under Deno as evidence that the Node path is clear.
+12. **A pass on a laptop says little about stack use on a phone.** Native Lean has a
+    large stack, so a Lean `#guard` does not gate this: the old regex matcher passed a
+    40,000-character test natively and overflowed in wasm. WebKit on macOS with
+    `JSC_maxPerThreadStackUsage` and `__XPC_JSC_maxPerThreadStackUsage` set to a small
+    value emulates a phone (the real iOS limit is not measured). Failures can stop after
+    the first calls, because warm code uses less stack: run many checks, in both orders.
+    `test/stack-use.test.mjs` is the package gate. A module constant is computed at
+    engine start, so a fixture used only by `#guard` costs stack and time for every user
+    (0.31.0, https://github.com/danbri/factoidal/issues/1242).
 
 ## Where the pieces are
 

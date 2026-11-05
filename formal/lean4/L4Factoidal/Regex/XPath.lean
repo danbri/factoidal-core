@@ -526,6 +526,25 @@ def wordBoundaryAt (ws : List (Nat × Nat)) (input : List Nat) (pos : Nat) : Boo
     | none => false
   before != after
 
+/-- The positions a greedy repetition of one character class can stop at,
+    longest first, with the text left at each. Tail recursive: the stack does
+    not grow with the text. -/
+def classStops (rs : List (Nat × Nat)) :
+    List Nat → Nat → List (List Nat × Nat) → List (List Nat × Nat)
+  | [], _, acc => acc
+  | c :: t, pos, acc =>
+    if inRanges c rs then classStops rs t (pos + 1) ((t, pos + 1) :: acc) else acc
+
+/-- A reluctant repetition of one character class: try to stop here, then take
+    one more character. Tail recursive, as `classStops`. -/
+def classLazy (rs : List (Nat × Nat)) (accept : COut → Option COut) :
+    List Nat → Nat → Option COut
+  | [], pos => accept ⟨[], pos, []⟩
+  | c :: t, pos =>
+    match accept ⟨c :: t, pos, []⟩ with
+    | some result => some result
+    | none => if inRanges c rs then classLazy rs accept t (pos + 1) else none
+
 /-- First successful outcome in backtracking preference order. The continuation
     tests the rest of a concatenation before committing to an alternative. This
     avoids materializing every possible match. Greedy repetition tries another
@@ -554,6 +573,12 @@ def cmatchE (input : List Nat) (multiline : Bool) :
     | .group n inner =>
       cmatchE input multiline fuel inner w pos env fun o =>
         accept ⟨o.rest, o.endPos, ⟨n, pos, o.endPos⟩ :: o.caps⟩
+    -- One character class: the same order of outcomes as the general case
+    -- below, as a loop. The general case nests frames for each character, and
+    -- a long text then overflows the small stack of a phone browser.
+    | .star true (.leaf (.ranges rs)) =>
+      (classStops rs w pos [(w, pos)]).findSome? fun s => accept ⟨s.1, s.2, []⟩
+    | .star false (.leaf (.ranges rs)) => classLazy rs accept w pos
     | .star greedy inner =>
       let more := fun (_ : Unit) => cmatchE input multiline fuel inner w pos env fun oi =>
         if oi.rest.length < w.length then
