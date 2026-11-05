@@ -45,9 +45,6 @@
   {
    "page": "solving-showcase.html",
    "title": "Solving showcase",
-   "source": "source/solving-showcase.svg",
-   "refused": "invalid CSS number",
-   "issue": "https://github.com/danbri/factoidal/issues/1247"
-  }
+   "source": "source/solving-showcase.svg"}
  ]
 }

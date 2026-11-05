@@ -431,7 +431,9 @@ def linkRegions (dom : Dom) (styles : Array Computed) (boxes : Array Box)
 def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding : Embedding)
     (width height : Nat) (textScale : Float := 1) : Except String (Scene × Array Box) := do
   if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported viewport: require dimensions 1 to 4096"
-  let styles ← CSS.computeAll dom rules textScale
+  let styles := (← CSS.computeAll dom rules textScale).map fun s =>
+    {s with width := s.width.atViewport (Float.ofNat width) (Float.ofNat height),
+            height := s.height.atViewport (Float.ofNat width) (Float.ofNat height)}
   let result ← block dom styles font embedding 64 0 0 0 (Float.ofNat width)
   if result.nodes.size > 49152 then throw "HTML paint count exceeds 49152"
   let links := linkRegions dom styles result.boxes (Float.ofNat width) (Float.ofNat height)

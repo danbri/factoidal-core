@@ -10,6 +10,7 @@ open DOM
 private def trim (s : String) := s.trimAscii.toString
 inductive Length where
   | auto | px (value : Float) | percent (value : Float)
+  | vw (value : Float) | vh (value : Float)
   deriving Repr
 structure Edges where
   top : Float := 0
@@ -192,10 +193,17 @@ def length (s : String) : Except String Length := do
   if s == "auto" then return .auto
   if s.endsWith "px" then return .px (← number ((s.dropEnd 2).toString))
   if s.endsWith "%" then return .percent ((← number ((s.dropEnd 1).toString))/100)
+  if s.endsWith "vw" then return .vw ((← number ((s.dropEnd 2).toString))/100)
+  if s.endsWith "vh" then return .vh ((← number ((s.dropEnd 2).toString))/100)
   if s == "0" then return .px 0
   throw s!"unsupported CSS length unit: {s}"
 def resolve (basis : Float) : Length → Option Float
-  | .auto => none | .px n => some n | .percent n => some (basis*n)
+  | .auto | .vw _ | .vh _ => none | .px n => some n | .percent n => some (basis*n)
+/-- CSS Values 4 §6.2: viewport units, computed once the viewport is known. -/
+def Length.atViewport (width height : Float) : Length → Length
+  | .vw n => .px (n*width).floor
+  | .vh n => .px (n*height).floor
+  | other => other
 private def pixels (s : String) : Except String Float := do
   match ← length s with | .px n => return n | _ => throw "box edges require px in this CSS profile"
 private def color (source : String) : Except String Color := do
@@ -210,6 +218,17 @@ private def color (source : String) : Except String Color := do
     | [a,b,c] => return rgb (a*17) (b*17) (c*17)
     | [a,b,c,d,e,f] => return rgb (a*16+b) (c*16+d) (e*16+f)
     | _ => throw "unsupported CSS hex color length"
+  -- CSS Color 4 §4.1: rgb() with commas or spaces, numbers or percentages.
+  if s.startsWith "rgb(" && s.endsWith ")" then
+    let inner := ((s.drop 4).toString.dropEnd 1).toString
+    let channels := (inner.splitOn ",").flatMap (·.splitOn " ") |>.filter (· != "")
+    let channel := fun (c : String) => do
+      let value ← if c.endsWith "%" then (fun n => n/100) <$> number (c.dropEnd 1).toString
+        else (fun n => n/255) <$> number c
+      pure (max 0 (min 1 value))
+    match channels with
+    | [r,g,b] => return ⟨← channel r,← channel g,← channel b⟩
+    | _ => throw s!"unsupported CSS color: {source}"
   throw s!"unsupported CSS color: {source}"
 private def edgeValues (s : String) : Except String Edges := do
   let vals ← (words s).mapM pixels
@@ -310,7 +329,7 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
     for property in ["width","height"] do
       let value := trim (attrValue n property)
       if !value.isEmpty then
-        let dimension ← if value == "auto" || value.endsWith "px" || value.endsWith "%" then length value
+        let dimension ← if value == "auto" || value.endsWith "px" || value.endsWith "%" || value.endsWith "vw" || value.endsWith "vh" then length value
           else pure (.px (← number value))
         initial := if property == "width" then {initial with width := dimension}
           else {initial with height := dimension}

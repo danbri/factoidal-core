@@ -1,5 +1,5 @@
 import {loadHTML,type HTMLArtifact} from "./native_html_engine.ts";
-import {inputURL,navigationURL,prepareHTML} from "./native_html_document.ts";
+import {inputURL,navigationURL,prepareHTML,refusalHTML} from "./native_html_document.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {nativePreflight} from "./native_preflight.ts";
 import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
@@ -49,12 +49,18 @@ async function main() {
   const trace=(type:string,fields:Record<string,unknown>)=>console.log(JSON.stringify({type,t:Math.round(performance.now()),...fields}));
   const ms=(start:number,end:number)=>Math.round((end-start)*10)/10;
   let candidate:Awaited<ReturnType<typeof prepareHTML>>|undefined;
+  const refuse=(target:string,error:unknown)=>{
+    console.error("Native HTML refused:",target,String(error));
+    trace("native-html-refused",{url:target,reason:String(error)});
+    prepareHTML(engine,target,undefined,refusalHTML(target,String(error))).then(next=>{if(running){candidate=next;dirty=true;}})
+      .catch(failure=>console.error("Native HTML refusal page failed:",String(failure)));
+  };
   const navigate=(target:string)=>{
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
     prepareHTML(engine,target,current.signal).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){candidate=next;dirty=true;}
-    }).catch(error=>{if(!current.signal.aborted)console.error("Native HTML navigation refused; retaining committed page:",String(error));});
+    }).catch(error=>{if(!current.signal.aborted)refuse(target,error);});
   };
   try {
     device=await adapter.requestDevice();native=await nativePreflight(()=>loadNativeWindow());
@@ -94,7 +100,7 @@ async function main() {
         const frameStart=performance.now();
         let next:HTMLArtifact;
         try{next=nextDocument.compile(width,height);}
-        catch(error){candidate=undefined;dirty=false;console.error("Native HTML layout refused:",String(error));continue;}
+        catch(error){candidate=undefined;dirty=false;refuse(nextDocument.url,error);continue;}
         const compiled=performance.now();
         // Layout can change the storage buffer/shader shape on resize. Retain the
         // GPU device; construct a new checked session for the new Lean artifact.

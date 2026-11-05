@@ -706,7 +706,21 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     let x ← geometryNumber lengths attrs "x"; let y ← geometryNumber lengths attrs "y"
     let w ← geometryNumber lengths attrs "width"; let h ← geometryNumber lengths attrs "height"
     if w < 0 || h < 0 then throw "negative rectangle dimensions"
-    return if w == 0 || h == 0 then none else some (.rect x y w h)
+    if w == 0 || h == 0 then return none
+    -- SVG 2 §10.2: one missing radius takes the other; both clamp to half the box.
+    let rx := match attr attrs "rx",attr attrs "ry" with
+      | none,none => pure 0 | none,some _ => geometryNumber lengths attrs "ry"
+      | _,_ => geometryNumber lengths attrs "rx"
+    let ry := match attr attrs "ry",attr attrs "rx" with
+      | none,none => pure 0 | none,some _ => geometryNumber lengths attrs "rx"
+      | _,_ => geometryNumber lengths attrs "ry"
+    let rx := min (max 0 (← rx)) (w/2); let ry := min (max 0 (← ry)) (h/2)
+    if rx == 0 || ry == 0 then return some (.rect x y w h)
+    let n := fun (v : Float) => toString v
+    let arc := fun (ex ey : Float) => s!"A{n rx} {n ry} 0 0 1 {n ex} {n ey}"
+    let source := s!"M{n (x+rx)} {n y}H{n (x+w-rx)}" ++ arc (x+w) (y+ry) ++ s!"V{n (y+h-ry)}" ++
+      arc (x+w-rx) (y+h) ++ s!"H{n (x+rx)}" ++ arc x (y+h-ry) ++ s!"V{n (y+ry)}" ++ arc (x+rx) y ++ "Z"
+    return some (.path (← NativeSVGPath.parse number source))
   else if tag == "circle" then
     let x ← geometryNumber lengths attrs "cx"; let y ← geometryNumber lengths attrs "cy"; let r ← geometryNumber lengths attrs "r"
     -- SVG 2 §10.3: an invalid negative r presentation value is ignored;
@@ -774,7 +788,7 @@ private def dashedParts (g : BackendGeometry) (style : Style) (authorLength : Op
 
 private def extraAttrs (tag : String) : List String :=
   match tag with
-  | "rect" => ["x","y","width","height","opacity","transform","pathLength"]
+  | "rect" => ["x","y","width","height","rx","ry","opacity","transform","pathLength"]
   | "circle" => ["cx","cy","r","opacity","transform"]
   | "ellipse" => ["cx","cy","rx","ry","opacity","transform"]
   | "line" => ["x1","y1","x2","y2","opacity","transform","pathLength"]
@@ -852,6 +866,23 @@ private def containerVisible (attrs : List NamespaceAttribute) : Except String B
   let opacity ← match attr attrs "opacity" with | none => pure 1 | some value => number value
   if opacity > 0 && opacity < 1 then throw "container opacity requires compositing surface"
   return !displaySuppressed attrs && opacity > 0
+
+/-- CSS Masking 1 §6: `clip-path` naming a `clipPath` of one untransformed
+    `rect`. Any other clip shape stays a named refusal. -/
+private def rectClip (lengths : LengthContext) (references : NativeSVGReferences.Index) (source : String) :
+    Except String (Float × Float × Float × Float) := do
+  if !(source.startsWith "url(#" && source.endsWith ")") then throw "unsupported clip-path syntax"
+  let id := ((source.drop 5).toString.dropEnd 1).toString
+  let some target := references.get? id | throw "clip-path target not found"
+  let .element name attrs children := target.node | throw "clip-path target is not an element"
+  if name.namespace_ != some svgURI || name.localPart != "clipPath" then throw "clip-path target is not clipPath"
+  if (attr attrs "clipPathUnits").getD "userSpaceOnUse" != "userSpaceOnUse" || (attr attrs "transform").isSome then
+    throw "unsupported clipPath attributes"
+  let shapes := children.filter fun | .element .. => true | _ => false
+  let [.element shapeName shape _] := shapes | throw "unsupported clipPath: one rect required"
+  if shapeName.localPart != "rect" || (attr shape "transform").isSome then throw "unsupported clipPath: one rect required"
+  return (← geometryNumber lengths shape "x",← geometryNumber lengths shape "y",
+    ← geometryNumber lengths shape "width",← geometryNumber lengths shape "height")
 
 private def readNode (references : NativeSVGReferences.Index) (rules : List NativeSVGCSS.Rule)
     (ids : List String) : Nat → ReadContext → NamespaceNode → Except String (List DisplayNode)
@@ -946,13 +977,17 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         if !["hidden","scroll","auto"].contains overflow then throw "unsupported viewport overflow"
         return [.clipped (attr attrs "id") contentTransform ⟨0,0,w,h,viewportTransform⟩ retainedChildren]
       else if tag == "g" then
-        validateAttrs tag attrs ["transform"]
+        validateAttrs tag attrs ["transform","clip-path"]
         let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
         let cumulative ← checkedTransform (parent.compose transform)
         let inherited ← readStyle lengths ids attrs style
         let retainedChildren ← readChildren lengths cumulative inherited children
         if displaySuppressed attrs then return []
-        return [.group (attr attrs "id") transform retainedChildren]
+        match attr attrs "clip-path" with
+        | none => return [.group (attr attrs "id") transform retainedChildren]
+        | some source =>
+          let (x,y,w,h) ← rectClip lengths references (trim source)
+          return [.clipped (attr attrs "id") transform ⟨x,y,w,h,transform⟩ retainedChildren]
       else
         validateAttrs tag attrs (extraAttrs tag)
         let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
@@ -1223,8 +1258,11 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
     if !["1.1","2.0"].contains version then throw "unsupported SVG version label"
   for key in ["width","height"] do
     if let some source := attr attrs key then
-      let size ← if (trim source).endsWith "%" then
+      let viewportUnit := (trim source).endsWith "vw" || (trim source).endsWith "vh"
+      let size ← if (trim source).endsWith "%" || viewportUnit then
         if outputWidth == 0 || outputHeight == 0 then throw "percentage root dimensions require explicit host output viewport"
+        -- The host output size already holds the viewport unit's computed value.
+        else if viewportUnit then pure 0
         else relativeLength source (Float.ofNat (if key == "width" then outputWidth else outputHeight))
       else lengthNumber source
       if size < 0 then throw "negative root dimensions"

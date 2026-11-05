@@ -43,8 +43,13 @@ export async function readSource(url:string,signal?:AbortSignal):Promise<{url:st
   const source=new TextDecoder("utf-8",{fatal:true}).decode(bytes);sourceBound(source);
   return {url:finalURL,source,bytes:bytes.length};
 }
-export async function prepareHTML(engine:HTMLEngine,url:string,signal?:AbortSignal) {
-  const document=await readSource(url,signal),resources:HTMLResource[]=[];
+/** A refused page must say so in the window, not only in a log. */
+export function refusalHTML(url:string,message:string) {
+  const text=(s:string)=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`;
+}
+export async function prepareHTML(engine:HTMLEngine,url:string,signal?:AbortSignal,inline?:string) {
+  const document=inline===undefined?await readSource(url,signal):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
   const inspection=engine.inspect(document.source,{url:document.url});
   if(inspection.scripts.some(script=>script.kind!=="data"))
     throw new Error("Native HTML milestone does not execute scripts; classic/module script input is refused");

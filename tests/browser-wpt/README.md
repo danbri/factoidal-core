@@ -87,6 +87,31 @@ NOT_RUN**, never inferred from admission. The
 scenes. Most stop at the unsupported `baseProfile` attribute. This is a
 baseline for SVG work, not a passing Tiny implementation.
 
+## SVG Tiny 1.2 pixel comparison
+
+`svg-tiny-pixels.py` sends each original `svg/` file to `web-render-native
+--svg`, draws the Lean WebGPU artifact on a real GPU with `svg_tiny_gpu.ts`, and
+compares the pixels with the `png/` file from the same archive. All 496 take
+about 40 seconds. It needs Python with Pillow and NumPy, and Deno.
+
+```sh
+python3 tests/browser-wpt/svg-tiny-pixels.py \
+  --archive /path/to/W3C_SVG_12_TinyTestSuite.tar.gz \
+  --native labs/demos/foafnaut/.build/web-render/web-render-native \
+  --output /tmp/factoidal-tiny-pixels
+```
+
+A pixel differs when a channel differs by more than 32. MATCH means at most 0.5%
+of pixels differ, and at least 95% of the reference's non-white pixels agree.
+CLOSE means at most 5% and 70%. These bands were fixed before the first run.
+They are ours, not a W3C verdict. A blank white image goes through the same
+bands as a control.
+
+`SVGForgiving.lean` removes what the strict reader can not draw and logs each
+removal. `filesAffectedByDrop` in the report is the ranked to-do list. Only the
+first frame is drawn, so animated tests can not match yet. Results are in
+[the dated report](svg-tiny-pixels-20261105.json).
+
 ## What is evaluated
 
 `parser-probe.py` runs all original tree fixtures directly and through
