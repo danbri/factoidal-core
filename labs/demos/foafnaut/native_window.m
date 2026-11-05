@@ -206,7 +206,7 @@ int ng_clipboard_write(const char *text) {
 // The standard menu. Quit reaches applicationShouldTerminate, which sends the host
 // a close event, and Close goes through windowShouldClose. Page keys stay with Lean.
 static void installMenu(void) {
-  NSString *name=[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleName"] ?: NSProcessInfo.processInfo.processName;
+  NSString *name=NSProcessInfo.processInfo.processName;
   NSMenu *bar=[[NSMenu alloc] init];
   NSMenuItem *appItem=[bar addItemWithTitle:name action:nil keyEquivalent:@""];
   NSMenu *appMenu=[[NSMenu alloc] initWithTitle:name];
@@ -224,6 +224,10 @@ static void installMenu(void) {
 void *ng_create(uint32_t width, uint32_t height) {
   if (!pthread_main_np() || window) return NULL;
   @autoreleasepool {
+    // A wrapper app runs a program outside its bundle, so macOS would show the file
+    // name in the menu bar. The wrapper names the app; this must precede NSApp.
+    const char *appName=getenv("FACTOIDAL_APP_NAME");
+    if (appName && *appName) NSProcessInfo.processInfo.processName=[NSString stringWithUTF8String:appName];
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     delegate = [[NGDelegate alloc] init];
