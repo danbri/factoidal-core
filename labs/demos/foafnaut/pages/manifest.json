@@ -5,6 +5,18 @@
    "title": "Demo index"
   },
   {
+   "page": "books-xslt1.xml",
+   "title": "XML with XSLT 1.0"
+  },
+  {
+   "page": "books-xslt4.xml",
+   "title": "XML with XSLT 4.0"
+  },
+  {
+   "page": "books-svg.xml",
+   "title": "XML to SVG with XSLT 3.0"
+  },
+  {
    "page": "status.html",
    "title": "Project status",
    "source": "../../../../docs/web/hub/foafnaut2525-status.md",

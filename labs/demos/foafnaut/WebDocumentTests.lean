@@ -23,6 +23,39 @@ private def sheetSource := "<style>p{font-size:10px}</style><link rel=stylesheet
 #guard size "<link rel=stylesheet href=one.css><p id=target style='font-size:40px!important'>A</p>" ["p{font-size:20px!important}"] == some 40
 #guard size "<link rel=stylesheet href=one.css><link rel=stylesheet href=two.css><p id=target>A</p>" ["p{font-size:20px}","p{font-size:24px}"] == some 24
 
+-- XML pages with an XSLT stylesheet: discovery, engine choice, HTML output.
+private def xmlPage := "<?xml version=\"1.0\"?><?xml-stylesheet type=\"text/xsl\" href=\"a.xsl\"?><r><t>Hi</t></r>"
+private def xslt (version body : String) : String :=
+  s!"<xsl:stylesheet version=\"{version}\" xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\"><xsl:template match=\"/\">{body}</xsl:template></xsl:stylesheet>"
+private def page (version : String) : Option (String × String) :=
+  (WebXslt.transform xmlPage (xslt version "<html><head><title/></head><body><div/><br/><p><xsl:value-of select=\"r/t\"/></p></body></html>") "file:///p.xml" "file:///a.xsl").toOption
+#guard (WebXslt.stylesheetHref xmlPage).toOption == some (some "a.xsl")
+#guard (WebXslt.stylesheetHref "<!doctype html><p>&lt;?xml-stylesheet?&gt; <?xml-stylesheet href=a?></p>").toOption == some none
+#guard (WebXslt.stylesheetHref "<p>plain</p>").toOption == some none
+#guard (WebXslt.stylesheetHref "<?xml version=\"1.0\"?><r/>").toOption == some none
+#guard (WebXslt.stylesheetHref "<?xml version=\"1.0\"?><?xml-stylesheet type=\"text/css\" href=\"a.css\"?><r/>").toOption.isNone
+#guard (WebXslt.stylesheetHref "<?xml version=\"1.0\"?><?xml-stylesheet type=\"text/xsl\" href=\"#s\"?><r/>").toOption.isNone
+#guard (WebXslt.stylesheetHref "<?xml version=\"1.0\"?><?xml-stylesheet type='text/xsl' href='a.xsl'?><r>").toOption.isNone
+#guard WebXslt.pseudoAttrs "type='text/xsl' href=\"a b.xsl\"" == [("type","text/xsl"),("href","a b.xsl")]
+#guard WebXslt.expandEmptyTags "<title/><br/><a b=\"/>\"/><!-- <i/> --><p>x</p>" == "<title></title><br/><a b=\"/>\"></a><!-- <i/> --><p>x</p>"
+#guard (page "1.0").map (·.2) == some "xslt-1.0"
+#guard (page "3.0").map (·.2) == some "xslt-4 (version 3.0)"
+#guard (page "4.0").map (·.2) == some "xslt-4 (version 4.0)"
+#guard ["1.0","3.0","4.0"].all fun version => match page version with
+  | some (text,_) => (text.splitOn "<p>Hi</p>").length == 2
+  | none => false
+#guard (page "1.0").map (fun p => (p.1.splitOn "<title></title>").length) == some 2
+#guard (page "9.0").isNone
+#guard (WebXslt.transform xmlPage "<notxslt version=\"1.0\"/>" "u" "s").toOption.isNone
+#guard (WebXslt.transform xmlPage "<broken" "u" "s").toOption.isNone
+#guard match WebXslt.transform xmlPage "<xsl:stylesheet version=\"1.0\" xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\"><xsl:output method=\"text\"/><xsl:template match=\"/\">a&lt;b</xsl:template></xsl:stylesheet>" "u" "s" with
+  | .ok (text,_) => text == "<!doctype html><pre>a&lt;b</pre>"
+  | _ => false
+-- A stylesheet can reach no other document: both engines stop with a refusal
+-- or an empty result, never with file content.
+#guard (WebXslt.transform xmlPage (xslt "1.0" "<xsl:copy-of select=\"document('/etc/passwd')\"/>") "u" "s").toOption.all (fun r => (r.1.splitOn "root:").length == 1)
+#guard (WebXslt.transform xmlPage (xslt "3.0" "<xsl:copy-of select=\"unparsed-text('/etc/passwd')\"/>") "u" "s").toOption.isNone
+
 private def externalDOM := DOM.parseHtmlDocument "<link rel=stylesheet href=one.css><p>A</p>"
 private def linkId := ((externalDOM.treeOrder 0).find? fun id => DOM.Dom.isHtmlElement (externalDOM.get id) "link").getD 0
 #guard (WebDocument.rules externalDOM (json [])).toOption.isNone

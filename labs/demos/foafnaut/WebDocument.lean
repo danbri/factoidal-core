@@ -1,5 +1,6 @@
 import WebRenderFontRequests
 import WebRenderScript
+import WebXslt
 import L4Factoidal.Syntax.IriResolve
 import WebSelection
 import WebHistory
@@ -193,6 +194,14 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
 def run (html : String) (request : JSON.Json) (width height : Nat) : Except String String := do
   let .object fields := request | throw "document request must be an object"
   if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
+  if str request "op" == "xmlStylesheet" then
+    let url := match ← WebXslt.stylesheetHref html with
+      | some href => JSON.Json.string (Syntax.resolveIri (str request "url") href)
+      | none => .null
+    return (JSON.Json.object [("url",url)]).toString
+  if str request "op" == "xslt" then
+    let (source,engine) ← WebXslt.transform html (str request "stylesheet") (str request "url") (str request "stylesheetURL")
+    return (JSON.Json.object [("source",.string source),("engine",.string engine)]).toString
   if let some answer ← inputOp (str request "op" "render") request then return answer
   let dom ← prepareDOM html request
   validateResources dom request

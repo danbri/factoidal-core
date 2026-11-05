@@ -45,6 +45,8 @@ export async function loadHTML() {
     return call("web_document_call",["string","string","number","number"],[source,request,width,height]);
   };
   return {
+    xmlStylesheet:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"xmlStylesheet"}) as {url:string|null},
+    xslt:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"xslt"}) as {source:string;engine:string},
     inspect:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"inspect"}) as Inspection,
     fontRequests:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"fontRequests"}),
     compile(source:string,width:number,height:number,options:Record<string,unknown>):HTMLArtifact {
