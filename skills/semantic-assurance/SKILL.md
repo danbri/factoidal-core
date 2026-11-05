@@ -237,3 +237,10 @@ obligation. Do not infer failure from a false profile check.
 See [SVG scene/compositor proof boundaries](../../docs/designissues/2026-11-01-svg-scene-compositor.md)
 for pixel versus interaction equivalence, group opacity and floating-point
 refinement obligations when optimizing shared HTML/SVG rendering.
+For structured routing, use the input-indexed admission/refutation in
+`Dataflow/Conditional.lean` and the actual SRX producer in
+`SPARQL/ResultsXmlRouting.lean`. Check the exact consumer: public XQuery's
+context uses `XPath4.Doc.ofString`, not the different `fn:parse-xml` adapter.
+The former currently does not validate namespace well-formedness. Never
+promote its parser acceptance certificate to that stronger claim. Record:
+[checked routing](../../docs/designissues/2026-10-31-checked-conditional-routing.md).

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as core from '@factoidal/core';
+const core = await import(process.env.FACTOIDAL_COMPOSITOR_TEST_ENGINE || '@factoidal/core');
 import { runPipeline } from '../../docs/web/hub/data-compositor/pipeline.mjs';
 import { nodeAssurance, wireAssurance, explainEvidence } from '../../docs/web/hub/data-compositor/assurance.mjs';
 
