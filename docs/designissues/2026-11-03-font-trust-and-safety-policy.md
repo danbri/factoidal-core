@@ -71,8 +71,8 @@ reads font data only through this value. No host decides a font policy.
   limits.
 - A setting can allow only a table that has an implementation. For a table
   with no implementation, the refusal says so, and the gap has an open issue
-  and an expected-failure test (rule of 2026-09-07). The `Wasm` table has no
-  planned implementation. Its refusal gives the reason, not an issue.
+  and an expected-failure test (rule of 2026-09-07). The `Wasm` table waits for
+  a WebAssembly engine in Lean (section 3.6).
 
 ### 3.4 What a refusal contains
 
@@ -95,7 +95,8 @@ Example text:
 font.table.wasm: "Example Sans" (example.ttf, sha256 3f9a...) has a Wasm table.
 A Wasm table is a program that the font asks the text shaper to run.
 Risk: the program can do any computation and can change every glyph.
-Setting: font.wasm = refuse (default). There is no option to run it.
+Setting: font.wasm = refuse (default). A WebAssembly engine in Lean is planned
+(https://github.com/danbri/factoidal/issues/1244); until then it can not be allowed.
 Action: the text was shaped from GSUB/GPOS only.
 More: <link to the documentation section for font.table.wasm>
 ```
@@ -108,6 +109,20 @@ More: <link to the documentation section for font.table.wasm>
   the current page. A small indicator shows the mode at all times.
 - Evidence record: each render records the policy value and every refusal, so
   a result always states what font code was allowed.
+
+### 3.6 The `Wasm` table: a planned engine (owner, 2026-11-05)
+
+Owner, verbatim: "update policy: we aspire to support this and build a fresh
+wasm engine from the official wasm formal defs, converted to lean."
+
+This replaces the first rule, that the `Wasm` table has no option to allow it.
+The engine is derived from the SpecTec sources of the WebAssembly specification;
+the upstream SpecTec has no Lean backend, so that conversion is part of the work.
+Until the engine exists, a font's `Wasm` table is refused because it has no
+implementation. After that, allowing it needs `--dangerously-allow-font-wasm`
+and a start warning; the default setting is then an owner decision. Safe mode
+stays the baked-in ASCII font with no Wasm. Tracking:
+https://github.com/danbri/factoidal/issues/1244.
 
 ## 4. Decision 2: shaper in Lean, HarfBuzz as oracle (approved, with a licence condition)
 
