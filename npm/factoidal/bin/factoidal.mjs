@@ -750,7 +750,8 @@ usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
                             [--accounts FILE] [--cert FILE --key FILE [--starttls]]
                             [--ws-port N [--ws-path PATH] [--ws-origin ORIGIN]...]
                             [--muc DOMAIN] [--mix DOMAIN] [--gc3 DOMAIN]
-                            [--state-key FILE]
+                            [--state-key FILE] [--max-connections N]
+                            [--login-timeout SECONDS]
 
 Starts a Node TCP server that runs one engine session per connection and
 answers every byte through the engine's xmppSessionFeed operation.
@@ -789,6 +790,11 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
                    joined through this server (XEP-0405 MIX-PAM); channels are
                    made by an IQ <create/>, kept in memory only, JID-hidden; no
                    PubSub nodes, no archive (L4Factoidal/XMPP/Mix.lean)
+  --max-connections N  open connections of all kinds before a new one is closed
+                   at once (default 1024). There is no limit per address:
+                   behind a proxy, every client has the same one
+  --login-timeout SECONDS  how long a connection may stay without a bound
+                   resource before it is closed (default 30; 0 disables)
   --state-key FILE keep the server's state across restarts: rosters, messages held
                    for offline accounts, MIX channels and GC3 groups, in an LWS
                    storage in DIR/state, sealed (ChaCha20-Poly1305) under the key
@@ -1211,7 +1217,7 @@ const VALUE_OPTIONS = {
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
-  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'mix', 'gc3', 'state-key']),
+  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'mix', 'gc3', 'state-key', 'max-connections', 'login-timeout']),
   'webdav-serve': new Set(['port', 'host', 'users', 'guest', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
@@ -2897,6 +2903,16 @@ async function commandXmppServe (positional, options) {
     }
     if (options.gc3 === options.muc || options.gc3 === options.mix) throw new UsageError('--gc3 needs a domain of its own')
     settings.gc3Domain = options.gc3
+  }
+  if (options['max-connections'] !== undefined) {
+    const n = Number(options['max-connections'])
+    if (!Number.isSafeInteger(n) || n < 1) throw new UsageError('--max-connections needs a positive integer')
+    settings.maxConnections = n
+  }
+  if (options['login-timeout'] !== undefined) {
+    const n = Number(options['login-timeout'])
+    if (!Number.isSafeInteger(n) || n < 0) throw new UsageError('--login-timeout needs a number of seconds')
+    settings.loginTimeoutMs = n * 1000
   }
   if (options['ws-port'] !== undefined) {
     const wsPort = Number(options['ws-port'])

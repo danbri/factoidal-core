@@ -191,3 +191,16 @@ node --test test/xmpp.test.mjs
 Skips wholesale when the Lean wasm assets aren't resolvable, and skips
 per-op when the resolved bundle predates a given op (see
 `xmppOpsAvailable`) — the same pattern `test/l4-core.test.js` uses.
+
+## Transport limits
+
+The host closes a socket when a limit is reached. These are limits on bytes and time; every protocol decision stays in Lean.
+
+| Option | CLI | Default | Limit |
+|---|---|---|---|
+| `maxConnections` | `--max-connections N` | 1024 | Open connections of all kinds |
+| `loginTimeoutMs` | `--login-timeout SECONDS` | 30 s | Time to bind a resource |
+| `maxQueuedBytes` | | 8 MiB | Bytes waiting for a client that is not reading |
+| `maxBuffered` | | 1 MiB | Bytes of an unfinished unit |
+
+There is no limit per address: behind a proxy, every client has the same one.

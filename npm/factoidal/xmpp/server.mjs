@@ -37,6 +37,9 @@
 // server-to-server federation, and any limit on how many bytes
 // a client may send without completing a unit beyond `maxBuffered`,
 // which is a transport limit this host applies by closing the socket.
+// The other transport limits are `maxConnections`, `loginTimeoutMs` and
+// `maxQueuedBytes`. There is no limit per address: behind a proxy, every
+// client has the same one.
 
 import { randomBytes } from 'node:crypto'
 import { StringDecoder } from 'node:string_decoder'
@@ -247,6 +250,12 @@ async function readAccountsFile (path) {
  * @param {number} [options.maxBuffered] residual UTF-8 bytes held by the engine
  *   after a feed before the socket is closed (default 1 MiB); the decoder
  *   may separately hold up to three bytes of an incomplete UTF-8 sequence
+ * @param {number} [options.maxConnections] open connections, of all kinds, before
+ *   a new one is closed at once (default 1024)
+ * @param {number} [options.loginTimeoutMs] how long a connection may stay
+ *   without a bound resource before it is closed (default 30000; 0 disables)
+ * @param {number} [options.maxQueuedBytes] bytes waiting to be written to a
+ *   client that is not reading, before the socket is closed (default 8 MiB)
  * @param {Function} [options.onError]
  * @param {Function} [options.onLog]
  * @returns {Promise<{server: object, xmpp: object, close: Function, sessions: Function}>}
@@ -259,6 +268,14 @@ export async function createXmppServer (options = {}) {
   const dir = typeof options.dir === 'string' ? options.dir : null
   const pollMs = typeof options.pollMs === 'number' ? options.pollMs : 250
   const maxBuffered = typeof options.maxBuffered === 'number' ? options.maxBuffered : 1024 * 1024
+  const limit = (name, fallback) => {
+    const value = typeof options[name] === 'number' ? options[name] : fallback
+    if (!Number.isSafeInteger(value) || value < 0) throw new XmppHostError(`${name} must be a nonnegative safe integer`)
+    return value
+  }
+  const maxConnections = limit('maxConnections', 1024)
+  const loginTimeoutMs = limit('loginTimeoutMs', 30000)
+  const maxQueuedBytes = limit('maxQueuedBytes', 8 * 1024 * 1024)
   if (!Number.isSafeInteger(maxBuffered) || maxBuffered < 0) {
     throw new XmppHostError('maxBuffered must be a nonnegative safe integer')
   }
@@ -385,8 +402,39 @@ export async function createXmppServer (options = {}) {
   // connection callback and therefore have no engine session yet.
   const transports = new Set()
 
+  // Transport limits, like `maxBuffered`: bytes and time, not protocol.
+  function closeIfBacklogged (c) {
+    if (c.socket.destroyed || !(c.socket.writableLength > maxQueuedBytes)) return
+    onError(new XmppHostError(`connection exceeded ${maxQueuedBytes} queued bytes`))
+    c.socket.destroy()
+  }
+
   function writeAll (c, lines) {
     for (const line of lines) if (!c.socket.destroyed) c.socket.write(line)
+    closeIfBacklogged(c)
+  }
+
+  /** A connection gets `loginTimeoutMs` to bind a resource. */
+  function startLoginTimer (c) {
+    if (loginTimeoutMs === 0) return
+    c.loginTimer = setTimeout(() => {
+      if (c.full === null && connections.has(c)) {
+        onLog('closing a connection that did not log in in time')
+        c.socket.destroy()
+      }
+    }, loginTimeoutMs)
+    c.loginTimer.unref()
+  }
+
+  /** Count a new socket, or close it at once if the server is full. */
+  function admit (socket) {
+    if (transports.size >= maxConnections) {
+      onError(new XmppHostError(`refused a connection: ${maxConnections} are open`))
+      socket.destroy()
+      return
+    }
+    transports.add(socket)
+    socket.once('close', () => transports.delete(socket))
   }
 
   let rosterWrites = Promise.resolve()
@@ -471,6 +519,7 @@ export async function createXmppServer (options = {}) {
   function endSession (c) {
     if (!connections.has(c)) return
     connections.delete(c)
+    clearTimeout(c.loginTimer)
     let answer
     try { answer = c.session.close() } catch (error) { onError(error); answer = { send: [] } }
     // The session left its MUC rooms (Muc.leaveAll): tell the other occupants.
@@ -505,6 +554,7 @@ export async function createXmppServer (options = {}) {
       }
     }
     connections.add(c)
+    startLoginTimer(c)
     onLog(`connection from ${socket.remoteAddress}:${socket.remotePort}`)
     c.onData = (chunk) => {
       if (!connections.has(c) || c.closing || c.upgrading) return
@@ -579,11 +629,12 @@ export async function createXmppServer (options = {}) {
       },
       deliver (text) {
         const got = wsCall('xmppWsDeliver', [handle, text], new Uint8Array(0))
-        if (got.envelope.delivered === true) { if (!socket.destroyed) socket.write(got.bytes); return true }
+        if (got.envelope.delivered === true) { if (!socket.destroyed) socket.write(got.bytes); closeIfBacklogged(c); return true }
         return false
       }
     }
     connections.add(c)
+    startLoginTimer(c)
     socket.on('data', (chunk) => {
       if (!connections.has(c) || c.closing) return
       let got
@@ -623,10 +674,7 @@ export async function createXmppServer (options = {}) {
       const net = await import('node:net')
       wsServer = net.createServer(onWsConnection)
     }
-    wsServer.on('connection', socket => {
-      transports.add(socket)
-      socket.once('close', () => transports.delete(socket))
-    })
+    wsServer.on('connection', admit)
   }
 
   let server
@@ -642,10 +690,7 @@ export async function createXmppServer (options = {}) {
     xmpp.close()
     throw error
   }
-  server.on('connection', socket => {
-    transports.add(socket)
-    socket.once('close', () => transports.delete(socket))
-  })
+  server.on('connection', admit)
 
   // The harness's mailbox: `<dir>/spool/<bare jid>/<name>` holds one
   // stanza's bytes for that account. Polled for every bound session,
