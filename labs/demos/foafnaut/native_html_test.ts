@@ -25,6 +25,29 @@ Deno.test("published Lean default file reflows and picks its own link",async()=>
   assert(plan.commands.includes("copyTextureToBuffer"));assert(plan.commands.includes("unmap"));
 });
 
+Deno.test("published Lean owns zoom, selection and copied text",async()=>{
+  const dir=await Deno.makeTempDir({prefix:"factoidal-native-select-"});
+  try{
+    await Deno.writeTextFile(dir+"/page.html",html('<p>Hello big world</p><p>Second <b>para</b></p>'));
+    const document=await prepareHTML(engine,inputURL(dir+"/page.html",true));
+    assert.deepEqual(engine.command(1,100),{action:"zoomIn",textScalePercent:110});
+    assert.deepEqual(engine.command(2,100),{action:"zoomOut",textScalePercent:90});
+    assert.deepEqual(engine.command(3,200),{action:"zoomReset",textScalePercent:100});
+    assert.equal(engine.command(5,100).action,"selectAll");
+    assert.equal(engine.pointerUp([10,10,11,10]),"click");
+    assert.equal(engine.pointerUp([10,10,60,10]),"select");
+    const plain=document.compile(400,200),big=document.compile(400,200,{textScalePercent:200});
+    assert.notDeepEqual(plain.data,big.data,"zoom did not change the Lean scene");
+    assert.equal(document.selectedText(400,200,{selection:"all"}),"Hello big world\nSecond para");
+    assert.equal(document.selectedText(400,200),"");
+    const run=(plain.webRender.glyphRuns as {text:string;glyphs:number[][]}[]).find(r=>r.text==="big")!;
+    const [x,y]=[run.glyphs[0][1],run.glyphs[0][2]],end=run.glyphs.at(-1)!;
+    assert.equal(document.selectedText(400,200,{selection:[x,y+2,end[1]+end[3],y+2]}),"big");
+    const marked=document.compile(400,200,{selection:"all"});
+    assert.equal(marked.primitiveCount,plain.primitiveCount+2,"one highlight for each selected line");
+  }finally{await Deno.remove(dir,{recursive:true});}
+});
+
 Deno.test("actual files use Lean base and external stylesheet resolution",async()=>{
   const dir=await Deno.makeTempDir({prefix:"factoidal-native-html-"});
   try{

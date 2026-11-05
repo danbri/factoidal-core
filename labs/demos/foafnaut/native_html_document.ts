@@ -2,6 +2,8 @@ import {pathToFileURL} from "node:url";
 import {resolve} from "node:path";
 import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource} from "./native_html_engine.ts";
 
+/** The view state of a page. Lean applies it; the host only keeps the values. */
+export type PageView={textScalePercent?:number;selection?:"all"|number[]};
 const MAX_RESOURCES=16, MAX_RESOURCE_BYTES=4*MAX_SOURCE_BYTES;
 export function inputURL(input:string,file=false) {
   const url=file?pathToFileURL(resolve(input)):new URL(input);
@@ -65,6 +67,7 @@ export async function prepareHTML(engine:HTMLEngine,url:string,signal?:AbortSign
   signal?.throwIfAborted();
   return {
     url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,
-    compile:(width:number,height:number)=>engine.compile(document.source,width,height,options),
+    compile:(width:number,height:number,view:PageView={})=>engine.compile(document.source,width,height,{...options,...view}),
+    selectedText:(width:number,height:number,view:PageView={})=>engine.selectedText(document.source,width,height,{...options,...view}),
   };
 }

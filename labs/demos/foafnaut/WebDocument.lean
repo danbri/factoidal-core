@@ -1,6 +1,7 @@
 import WebRenderFontRequests
 import WebRenderScript
 import L4Factoidal.Syntax.IriResolve
+import WebSelection
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
 orders supplied CSS, collects font requests and renders the resulting arena.
@@ -123,14 +124,24 @@ def inspect (dom : DOM.Dom) (url : String) : Except String JSON.Json := do
   return .object [("nodes",(snapshot.field? "nodes").getD (.array [])),
     ("scripts",.array scripts),("stylesheets",.array sheets.reverse),("baseURL",.string base),("title",.string (documentTitle dom))]
 
-def run (html : String) (request : JSON.Json) (width height : Nat) : Except String String := do
-  let .object fields := request | throw "document request must be an object"
-  if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
-  let dom ← prepareDOM html request
-  validateResources dom request
-  let _ ← classicScripts (WebRenderScript.snapshot dom)
-  let op := str request "op" "render"
-  if op == "inspect" then return (← inspect dom (str request "url")).toString
+private def float (j : JSON.Json) : Except String Float :=
+  match j with
+  | .number lexical => Rendering.CSS.number lexical
+  | _ => throw "selection point must be a number"
+
+private def points (j : JSON.Json) : Except String (Float × Float × Float × Float) := do
+  let .array [ax,ay,fx,fy] := j | throw "selection must be all or four numbers"
+  return (← float ax,← float ay,← float fx,← float fy)
+
+private def selection (request : JSON.Json) : Except String (Option WebSelection.Selection) :=
+  match request.field? "selection" with
+  | none => pure none
+  | some (.string "all") => pure (some .all)
+  | some value => do
+    let (ax,ay,fx,fy) ← points value
+    pure (some (.span ax ay fx fy))
+
+private def scalePercent (request : JSON.Json) : Except String Nat := do
   let percent ← match request.field? "textScalePercent" with
     | none => pure 100
     | some (.number n) => match n.toNat? with
@@ -138,11 +149,35 @@ def run (html : String) (request : JSON.Json) (width height : Nat) : Except Stri
       | none => throw "textScalePercent must be an integer"
     | _ => throw "textScalePercent must be an integer"
   if percent < 50 || percent > 250 then throw "textScalePercent must be 50 to 250"
-  let textScale := Float.ofNat percent / 100
+  return percent
+
+/-- Input decisions need no document, so they do not parse one. -/
+private def inputOp (op : String) (request : JSON.Json) : Except String (Option String) := do
+  if op == "command" then
+    let some (.number raw) := request.field? "command" | throw "command number required"
+    let some command := raw.toNat? | throw "command must be natural"
+    let percent ← scalePercent request
+    return some (JSON.Json.object [("action",.string (WebSelection.commandName command)),
+      ("textScalePercent",.number (toString (WebSelection.commandPercent command percent)))]).toString
+  if op == "pointerUp" then
+    let (ax,ay,fx,fy) ← points ((request.field? "selection").getD .null)
+    return some (JSON.Json.object [("action",.string (if WebSelection.isClick ax ay fx fy then "click" else "select"))]).toString
+  return none
+
+def run (html : String) (request : JSON.Json) (width height : Nat) : Except String String := do
+  let .object fields := request | throw "document request must be an object"
+  if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
+  if let some answer ← inputOp (str request "op" "render") request then return answer
+  let dom ← prepareDOM html request
+  validateResources dom request
+  let _ ← classicScripts (WebRenderScript.snapshot dom)
+  let op := str request "op" "render"
+  if op == "inspect" then return (← inspect dom (str request "url")).toString
+  let textScale := Float.ofNat (← scalePercent request) / 100
   let rules ← rules dom request
   if op == "fontRequests" then
     return WebRenderFontRequests.requestsJSON (← WebRenderFontRequests.collectDOMWithRules dom rules textScale)
-  if op != "render" then throw "unknown document operation"
+  if op != "render" && op != "selectedText" then throw "unknown document operation"
   if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported document viewport"
   let fontData := str request "fontData"
   if !fontData.isEmpty then
@@ -153,7 +188,16 @@ def run (html : String) (request : JSON.Json) (width height : Nat) : Except Stri
   let url := baseURL dom (str request "url")
   let embedding ← WebRender.makeEmbedding dom (if url.isEmpty then none else some url)
   let (scene,boxes) ← Rendering.Layout.render dom rules font embedding width height textScale
-  WebRender.artifact scene boxes face
+  let chosen ← selection request
+  let items := WebSelection.cells scene.glyphRuns
+  if op == "selectedText" then
+    return (JSON.Json.object [("text",.string (match chosen with
+      | some value => WebSelection.text items value
+      | none => ""))]).toString
+  let marks := match chosen with
+    | some value => WebSelection.highlight items value
+    | none => []
+  WebRender.artifact {scene with tree := scene.tree ++ marks} boxes face
 
 @[export web_document_compile]
 def compile (html request : String) (width height : UInt32) : String :=
