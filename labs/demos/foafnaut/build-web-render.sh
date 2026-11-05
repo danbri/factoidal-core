@@ -111,5 +111,6 @@ else
     -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4MB -sENVIRONMENT=node,web,worker -sASSERTIONS=1
   echo "WEB_RENDER_WASM=$BUILD/engines/web-render.mjs"
 fi
+[ "$MODE" = --native ] && node "$LAB/web-render/check-budget.mjs" "$BUILD/web-render-native"
 python3 "$LAB/web-render/write-witness.py"
 printf 'WEB_RENDER_BUILD_RC=0 %s\n' "$(date -u)"

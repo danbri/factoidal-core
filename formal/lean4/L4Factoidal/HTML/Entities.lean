@@ -82,7 +82,7 @@ def namedTable : List (String × Nat) :=
       ("vert", 0x7C), ("rcub", 0x7D), ("rbrace", 0x7D)]
 
 /-- Names that the standard recognises without the closing semicolon. -/
-def entityMap : Std.HashMap String String :=
+def entityMap : Thunk (Std.HashMap String String) := Thunk.mk fun _ =>
   (EntityData.entityText.splitOn ";").foldl (fun m e =>
     match e.splitOn ":" with
     | [n, cps] =>
@@ -92,7 +92,7 @@ def entityMap : Std.HashMap String String :=
     | _ => m) {}
 
 /-- The characters of a named reference written with a semicolon. -/
-def namedRef? (name : String) : Option String := entityMap.get? name
+def namedRef? (name : String) : Option String := entityMap.get.get? name
 
 #guard namedRef? "AElig" == some "\u00C6"
 #guard namedRef? "NotEqualTilde" == some "\u2242\u0338"

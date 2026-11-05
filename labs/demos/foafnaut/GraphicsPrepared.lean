@@ -23,13 +23,25 @@ def Prepared.combine (f : α → β → γ) : Prepared α → Prepared β → Pr
   | .constant a,.constant b => .constant (f a b)
   | a,b => .dynamic (fun env => f (a.eval env) (b.eval env))
 
+/-- A known left operand decides or removes the test, as `&&` itself does. An unstroked
+    primitive has a constant-false stroke test, which then costs nothing per sample. -/
 def Prepared.and : Prepared Bool → Prepared Bool → Prepared Bool
-  | .constant a,.constant b => .constant (a && b)
+  | .constant false,_ => .constant false
+  | .constant true,b => b
+  | a,.constant true => a
   | a,b => .dynamic (fun env => a.eval env && b.eval env)
 
 def Prepared.or : Prepared Bool → Prepared Bool → Prepared Bool
-  | .constant a,.constant b => .constant (a || b)
+  | .constant true,_ => .constant true
+  | .constant false,b => b
+  | a,.constant false => a
   | a,b => .dynamic (fun env => a.eval env || b.eval env)
+
+/-- Same value as `and`; the right side is not prepared when the left side decides. -/
+def Prepared.andThen (a : Prepared Bool) (b : Unit → Prepared Bool) : Prepared Bool :=
+  match a with
+  | .constant false => .constant false
+  | _ => a.and (b ())
 
 @[simp] theorem Prepared.eval_map (env : Env) (f : α → β) (a : Prepared α) :
     (a.map f).eval env = f (a.eval env) := by cases a <;> rfl
@@ -38,15 +50,42 @@ def Prepared.or : Prepared Bool → Prepared Bool → Prepared Bool
     (Prepared.combine f a b).eval env = f (a.eval env) (b.eval env) := by
   cases a <;> cases b <;> rfl
 @[simp] theorem Prepared.eval_and (env : Env) (a b : Prepared Bool) :
-    (a.and b).eval env = (a.eval env && b.eval env) := by cases a <;> cases b <;> rfl
+    (a.and b).eval env = (a.eval env && b.eval env) := by
+  unfold Prepared.and
+  split <;> simp [Prepared.eval]
 @[simp] theorem Prepared.eval_or (env : Env) (a b : Prepared Bool) :
-    (a.or b).eval env = (a.eval env || b.eval env) := by cases a <;> cases b <;> rfl
+    (a.or b).eval env = (a.eval env || b.eval env) := by
+  unfold Prepared.or
+  split <;> simp [Prepared.eval]
+@[simp] theorem Prepared.eval_andThen (env : Env) (a : Prepared Bool) (b : Unit → Prepared Bool) :
+    (a.andThen b).eval env = (a.eval env && (b ()).eval env) := by
+  cases a with
+  | constant v =>
+    cases v
+    · rfl
+    · simp only [Prepared.andThen]
+      exact Prepared.eval_and env _ _
+  | dynamic f =>
+    simp only [Prepared.andThen]
+    exact Prepared.eval_and env _ _
 
 theorem Var.eval_with_data (v : Var ty) (env : Env) (data : Array Float) :
     v.eval {env with data := data} = v.eval env := by cases v <;> rfl
 
+/-- Every scene condition uses these literals, and `Float.ofNat` goes through bignum
+    scientific conversion at each call. The closed values are computed once. -/
+def literalFloat : Nat → Float
+  | 0 => 0
+  | 1 => 1
+  | 2 => 2
+  | n => Float.ofNat n
+
+theorem literalFloat_eq (n : Nat) : literalFloat n = Float.ofNat n := by
+  unfold literalFloat
+  split <;> rfl
+
 def Expr.prepare (data : Array Float) {ty : Ty} : Expr ty → Prepared ty.Value
-  | .lit n => .constant (Float.ofNat n)
+  | .lit n => .constant (literalFloat n)
   | .param i => match data[i]? with
     | some value => .constant value
     | none => .dynamic (fun _ => data[i]!)
@@ -68,7 +107,7 @@ def Expr.prepare (data : Array Float) {ty : Ty} : Expr ty → Prepared ty.Value
 theorem Expr.prepare_correct (data : Array Float) {ty : Ty} (expr : Expr ty) (env : Env) :
     (expr.prepare data).eval env = expr.eval {env with data := data} := by
   induction expr with
-  | lit n => rfl
+  | lit n => simp [Expr.prepare,Prepared.eval,Expr.eval,literalFloat_eq]
   | param i =>
     cases found : data[i]? with
     | none => simp [Expr.prepare,Prepared.eval,found,Expr.eval]
