@@ -1094,6 +1094,7 @@ import L4Factoidal.XMPP.Held
 import L4Factoidal.XMPP.StateCodec
 import L4Factoidal.XMPP.HttpOverXmpp
 import L4Factoidal.XMPP.HttpOverXmppTests
+import L4Factoidal.XMPP.RestrictedXmlTests
 import L4Factoidal.XMPP.ClientStream
 import L4Factoidal.XMPP.HttpRequester
 import L4Factoidal.Fn.Theorems
