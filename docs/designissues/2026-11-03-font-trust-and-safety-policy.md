@@ -314,7 +314,7 @@ refused to fail (`context-matching`, Bengali), which needs the Indic shaper.
   chain, at most 64 links. Equal to `hb-shape` on the Duployan font of
   `cursive-positioning.tests` for `ltr1`, `rtl1` and `ltr1,rtl1`.
 
-Suite: 4,141 pass, 504 fail, 232 refused (out of 5,079 applicable; 1,341 not
+Suite: 4,141 pass, 504 fail, 232 refused (out of 4,877 applicable; 1,341 not
 applicable). Before: 4,043 pass (out of 4,785). 37 tests that failed or were
 refused now pass (28 of them USE Marchen). 6 Javanese tests that passed before
 are now refused: with the `java` script Lean reaches a GPOS type 8 lookup
@@ -333,7 +333,7 @@ because Lean used `DFLT`.
   component of a mark (HarfBuzz `lig_comp`), so it always uses the last
   component, which is what HarfBuzz does for a mark with no component number.
 
-Suite: 4,158 pass, 549 fail, 170 refused (out of 5,079 applicable); no
+Suite: 4,158 pass, 549 fail, 170 refused (out of 4,877 applicable); no
 regressions against 563b74ba2 or 7ef66d094. The 6 Javanese tests refused in
 section 8.4 pass again; 17 tests that failed or were refused now pass.
 
@@ -348,7 +348,7 @@ lacks is looked up at U+F000 plus it (`_hb_symbol_pua_map`). Not done: the
 Arabic PUA maps that HarfBuzz uses for OS/2 font pages of simplified and
 traditional Arabic (only right-to-left tests use them; those are refused).
 
-Suite: 4,159 pass, 549 fail, 169 refused (out of 5,079 applicable); no
+Suite: 4,159 pass, 549 fail, 169 refused (out of 4,877 applicable); no
 regressions; `macos.tests` BigCaslon (subtable (0,1)) now passes.
 
 ### 8.7 Pair adjustment y placement; runner `--single-par` (2026-11-04)
@@ -359,7 +359,7 @@ regressions; `macos.tests` BigCaslon (subtable (0,1)) now passes.
   so `hb-shape` split input at U+000A and 5 `lookupflag_ignore_attach` tests
   counted as failures where Lean equals the test file. Fixed.
 
-Suite: 4,174 pass, 534 fail, 169 refused (out of 5,079 applicable); no
+Suite: 4,174 pass, 534 fail, 169 refused (out of 4,877 applicable); no
 regressions; 15 tests fixed.
 
 ### 8.8 Ligature ids and components (2026-11-04)
@@ -372,7 +372,7 @@ uses them as HarfBuzz does: mark to ligature takes the mark's component; mark
 to mark attaches only on the same base or the same component; mark to base
 attaches only to the first glyph of a multiple-substitution sequence.
 
-Suite: 4,175 pass, 533 fail, 169 refused (out of 5,079 applicable); no
+Suite: 4,175 pass, 533 fail, 169 refused (out of 4,877 applicable); no
 regressions; `aots/gpos5` now passes. The 38 `ligature-id.tests` failures are
 Bengali text, which needs the Indic shaper.
 
@@ -418,3 +418,10 @@ this shell has no screen-recording permission.
 Limits measured: `https://example.com/` is refused (the native milestone does
 not run scripts), and `http://info.cern.ch/hypertext/WWW/TheProject.html` is
 refused (`storage data exceeds 262144 floats`, the scene budget `svgBudget`).
+
+Correction, 2026-11-05: sections 8.4 to 8.8 first said "out of 5,079
+applicable", an addition error; pass, fail and refused add up to 4,877, and
+the commit messages of 7ef66d094, edddd1dec, b46581d33, 99c157334 and d452c675a
+keep the wrong number. `--features` support made 92 more tests applicable (4,785 to
+4,877; not applicable 1,433 to 1,341): most of the 293 tests that stopped counting under
+`--features` still have another option that the runner does not pass.
