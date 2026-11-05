@@ -592,8 +592,10 @@ Step 2 of `docs/20261102-xmpp-starttls.md`.
   `groupchat_nonoccupant`, `privateMsg_one`, `joinRoom_nodup`, `leaveRoom_gone`, `put_empty`,
   `leaveRoom_nodup`. 9 `#guard`s in `Muc.lean`, 3 in `Server.lean`.
 - Not in this step, stated in the module header: nick change, kick, ban, voice, configuration,
-  passwords, members-only rooms, history, subject change, persistent rooms. Real JIDs are sent to
+  passwords, history, subject change, persistent rooms. Real JIDs are sent to
   nobody, moderators included.
+- Members-only rooms (XEP-0045 section 7.2.6) came on 2026-11-05: a fixed list per room
+  (`Service.memberLists`, `xmpp-serve --muc-members FILE`). Theorems `join_refused`, `join_sound`.
 - MIX (XEP-0369, step 4) and GC3 (step 5) are next.
 
 ## 2026-11-03 (later): MIX, XEP-0369 with XEP-0405 MIX-PAM (step 4)

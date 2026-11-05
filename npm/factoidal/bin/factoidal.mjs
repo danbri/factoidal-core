@@ -749,7 +749,7 @@ Specification: https://solidproject.org/TR/protocol`,
 usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
                             [--accounts FILE] [--cert FILE --key FILE [--starttls [--tls-port N]]]
                             [--ws-port N [--ws-path PATH] [--ws-origin ORIGIN]...]
-                            [--muc DOMAIN] [--mix DOMAIN] [--gc3 DOMAIN]
+                            [--muc DOMAIN [--muc-members FILE]] [--mix DOMAIN] [--gc3 DOMAIN]
                             [--state-key FILE] [--max-connections N]
                             [--login-timeout SECONDS]
 
@@ -788,6 +788,10 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
                    conference.example.com: temporary rooms, made by the first
                    join and gone with the last occupant; no history, no
                    configuration, no persistence (L4Factoidal/XMPP/Muc.lean)
+  --muc-members FILE  members-only rooms: one room per line, as
+                   "room: alice@example.com bob@example.com". Only those accounts
+                   may join or see that room; a room not in the file is open to
+                   every account (L4Factoidal/XMPP/Muc.lean)
   --mix DOMAIN     also serve XEP-0369 MIX channels at DOMAIN, e.g. mix.example.com,
                    joined through this server (XEP-0405 MIX-PAM); channels are
                    made by an IQ <create/>, kept in memory only, JID-hidden; no
@@ -1219,7 +1223,7 @@ const VALUE_OPTIONS = {
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
-  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'tls-port', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'mix', 'gc3', 'state-key', 'max-connections', 'login-timeout']),
+  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'tls-port', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'muc-members', 'mix', 'gc3', 'state-key', 'max-connections', 'login-timeout']),
   'webdav-serve': new Set(['port', 'host', 'users', 'guest', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
@@ -2897,6 +2901,20 @@ async function commandXmppServe (positional, options) {
       throw new UsageError('--muc needs a domain name, e.g. conference.example.com')
     }
     settings.mucDomain = options.muc
+  }
+  if (options['muc-members'] !== undefined) {
+    if (typeof options['muc-members'] !== 'string') throw new UsageError('--muc-members needs a FILE')
+    if (settings.mucDomain === undefined) throw new UsageError('--muc-members needs --muc')
+    settings.mucMembers = []
+    for (const line of (await fs.readFile(options['muc-members'], 'utf8')).split('\n')) {
+      if (line.trim() === '') continue
+      const [, room, list] = /^([^:\s@/]+):(.*)$/.exec(line.trim()) ?? []
+      const members = (list ?? '').split(/\s+/).filter(Boolean)
+      if (room === undefined || members.some((m) => !/^[^\s@/]+@[^\s@/]+$/.test(m))) {
+        throw new UsageError(`--muc-members: not "room: bare@jid ...": ${line}`)
+      }
+      settings.mucMembers.push({ room, members })
+    }
   }
   if (options.mix !== undefined) {
     if (typeof options.mix !== 'string' || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(options.mix)) {

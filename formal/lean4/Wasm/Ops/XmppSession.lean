@@ -107,6 +107,16 @@ private def accountsOfArray (items : List Json) : List Account :=
     | some u, some p => if u.isEmpty then none else some ⟨u, p⟩
     | _, _ => none)
 
+/-- `mucMembers`: an array of `{"room","members":[bare JID]}` objects. `none` when
+an entry is malformed: a room whose list was lost would be open to everyone. -/
+private def mucMembersOfArray (items : List Json) : Option (List Muc.MemberList) :=
+  items.mapM (fun it =>
+    match it.getString? "room", it.getArray? "members" with
+    | some room, some members =>
+      if room.isEmpty then none
+      else (members.mapM (fun m => match m with | Json.string s => some s | _ => none)).map (Muc.MemberList.mk room)
+    | _, _ => none)
+
 /-- The server configuration: every per-session value (`streamId`,
 `serverNonce`) is left empty here and filled by `xmppSessionOpen`. -/
 structure XmppServerConfig where
@@ -117,6 +127,8 @@ structure XmppServerConfig where
   tlsCarrier : Bool
   /-- XEP-0045 room service domain, from `"mucDomain"`; none: no MUC. -/
   mucDomain : Option String := none
+  /-- Members-only rooms, from `"mucMembers"`. -/
+  mucMembers : List Muc.MemberList := []
   /-- XEP-0369 MIX service domain, from `"mixDomain"`; none: no MIX. -/
   mixDomain : Option String := none
   /-- GC3 prototype service domain, from `"gc3Domain"`; none: no GC3. -/
@@ -145,7 +157,9 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
       let mucDomain := j.getString? "mucDomain"
       let mixDomain := j.getString? "mixDomain"
       let gc3Domain := j.getString? "gc3Domain"
-      if iterationCount < 1 then .error "config: \"iterationCount\" must be at least 1"
+      let mucMembers := (j.getArray? "mucMembers").map mucMembersOfArray
+      if mucMembers == some none then .error "config: \"mucMembers\" needs {\"room\",\"members\"} objects"
+      else if iterationCount < 1 then .error "config: \"iterationCount\" must be at least 1"
       else if mucDomain == some "" || mucDomain == some domain then
         .error "config: \"mucDomain\" must be a domain other than \"domain\""
       else if mixDomain == some "" || mixDomain == some domain || (mixDomain.isSome && mixDomain == mucDomain) then
@@ -156,7 +170,18 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
       else
         .ok { domain, saltB64, iterationCount, accounts,
               tlsCarrier := (j.getBool? "tlsCarrier").getD false, mucDomain, mixDomain, gc3Domain,
+              mucMembers := (mucMembers.bind id).getD [],
               persist := (j.getBool? "persist").getD false }
+
+-- A member list reaches the config; a malformed one stops the start.
+#guard
+  match xmppServerConfigOfJson "{\"mucDomain\":\"c.example.com\",\"mucMembers\":[{\"room\":\"bus\",\"members\":[\"a@example.com\"]}]}" with
+  | .ok c => c.mucMembers == [⟨"bus", ["a@example.com"]⟩]
+  | .error _ => false
+#guard
+  match xmppServerConfigOfJson "{\"mucDomain\":\"c.example.com\",\"mucMembers\":[{\"room\":\"bus\"}]}" with
+  | .ok _ => false
+  | .error _ => true
 
 /-! ## The handle tables -/
 
@@ -416,13 +441,14 @@ def xmppOpen (configJson : String) : IO String := do
   | .ok cfg =>
       let n ← xmppServerCounter.modifyGet fun n => (n + 1, n + 1)
       let h := s!"xmpp{n}"
-      let muc : Option Muc.Service := cfg.mucDomain.map (fun d => { domain := d })
+      let muc : Option Muc.Service := cfg.mucDomain.map (fun d => { domain := d, memberLists := cfg.mucMembers })
       let mix : Option Mix.Service := cfg.mixDomain.map (fun d => { domain := d })
       let gc3 : Option Gc3.Service := cfg.gc3Domain.map (fun d => { domain := d })
       xmppServers.modify (·.insert h { cfg := cfg, rosters := ∅, presence := ∅, muc := muc, mix := mix, gc3 := gc3 })
       pure (okWith [ ("handle", .string h)
                    , ("domain", .string cfg.domain)
-                   , ("accounts", .number (toString cfg.accounts.length)) ])
+                   , ("accounts", .number (toString cfg.accounts.length))
+                   , ("mucMembers", .number (toString cfg.mucMembers.length)) ])
 
 def xmppClose (h : String) : IO String := do
   let servers ← xmppServers.get

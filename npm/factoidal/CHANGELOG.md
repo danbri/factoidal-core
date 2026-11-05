@@ -3,6 +3,8 @@
 ## Unreleased
 
 - XMPP: `xmpp-serve --starttls --tls-port N` serves STARTTLS and XEP-0368 direct TLS from one server.
+- XMPP: members-only rooms (XEP-0045 section 7.2.6). `xmpp-serve --muc-members FILE` lists who may join each room; anyone else gets `registration-required` and cannot see the room.
+- XMPP: disco#info and disco#items results carry `from`. Without it, Profanity 0.19.0 stopped with a segmentation fault after login.
 
 ## 0.32.0 (2026-11-05)
 
