@@ -209,6 +209,10 @@ structure XmppOpenServer where
 structure XmppOpenSession where
   server : String
   session : Session
+  /-- The last full JID this connection had bound. A closed stream has no
+  `fullJid`, and without this a client that ended its stream cleanly would
+  stay in its MUC rooms for good. -/
+  boundFull : Option String := none
   /-- Bytes received and not yet cut into a complete unit. -/
   buffer : String
   /-- Top-level units processed, against `maxUnits`. -/
@@ -391,7 +395,7 @@ def drain (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected) :
           let (srv'', c'') := bindTransition srv' c' os.session.fullJid s'.fullJid
           let closed := c''.close || s'.stage == .closed
           drain srv''
-            { os with session := s', buffer := bufferAfter outs rest, units := os.units + 1, closed }
+            { os with session := s', boundFull := s'.fullJid <|> os.boundFull, buffer := bufferAfter outs rest, units := os.units + 1, closed }
             c'' fuel
 
 /-- While the handshake runs, a feed changes nothing and reports nothing.
@@ -558,7 +562,7 @@ def xmppSessionClose (h : String) : IO String := do
     let closing : List String :=
       if os.closed || os.session.stage == .closed then [] else ["</stream:stream>"]
     xmppSessions.modify (·.erase h)
-    let left ← mucLeaveAll os.server os.session.fullJid
+    let left ← mucLeaveAll os.server (os.session.fullJid <|> os.boundFull)
     pure (okWith [("send", .array (closing.map .string)), ("routeFull", left)])
 
 /-- `xmppSessionTlsUp(sessionHandle)`: the TLS handshake that a feed asked
@@ -660,7 +664,7 @@ def stepOneUnit (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected
     let (s', _env', outs) := Server.step os.session ⟨roster⟩ unit
     let (srv', c') := performAll srv c outs
     let (srv'', c'') := bindTransition srv' c' os.session.fullJid s'.fullJid
-    (srv'', { os with session := s', units := os.units + 1, closed := c''.close || s'.stage == .closed }, c'')
+    (srv'', { os with session := s', boundFull := s'.fullJid <|> os.boundFull, units := os.units + 1, closed := c''.close || s'.stage == .closed }, c'')
 
 /-- The frames for the `send` texts of one step, in order. -/
 def wsFramesOf (cfg : Config) (sends : List String) : ByteArray :=
@@ -811,7 +815,7 @@ def xmppWsCloseWith (h : String) : IO (String × ByteArray) := do
   | none => pure (errJson s!"unknown XMPP WebSocket session handle: {h}", ByteArray.empty)
   | some ws =>
     xmppWsSessions.modify (·.erase h)
-    let left ← mucLeaveAll ws.inner.server ws.inner.session.fullJid
+    let left ← mucLeaveAll ws.inner.server (ws.inner.session.fullJid <|> ws.inner.boundFull)
     match ws.phase with
     | .frames .. =>
       if ws.inner.closed then pure (okWith [("routeFull", left)], ByteArray.empty)
@@ -918,7 +922,7 @@ def xmppMsgClose (h : String) : IO String := do
   | none => pure (errJson s!"unknown XMPP message session handle: {h}")
   | some os =>
     xmppMsgSessions.modify (·.erase h)
-    let left ← mucLeaveAll os.server os.session.fullJid
+    let left ← mucLeaveAll os.server (os.session.fullJid <|> os.boundFull)
     let closing : List String :=
       if os.closed || os.session.stage == .closed then [] else [L4Factoidal.XMPP.WebSocket.closeText]
     pure (okWith [("send", .array (closing.map .string)), ("routeFull", left)])
