@@ -1,5 +1,5 @@
 import {loadHTML,type HTMLArtifact,type HistoryAnswer} from "./native_html_engine.ts";
-import {inputURL,navigationURL,prepareHTML,type PageView} from "./native_html_document.ts";
+import {inputURL,navigationURL,prepareHTML,refusalHTML,type PageView} from "./native_html_document.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {nativePreflight} from "./native_preflight.ts";
 import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
@@ -51,14 +51,78 @@ async function main() {
   const trace=(type:string,fields:Record<string,unknown>)=>console.log(JSON.stringify({type,t:Math.round(performance.now()),...fields}));
   const ms=(start:number,end:number)=>Math.round((end-start)*10)/10;
   let candidate:Awaited<ReturnType<typeof prepareHTML>>|undefined;
+  const refuse=(target:string,error:unknown)=>{
+    console.error("Native HTML refused:",target,String(error));
+    trace("native-html-refused",{url:target,reason:String(error)});
+    prepareHTML(engine,target,undefined,refusalHTML(target,String(error))).then(next=>{if(running){candidate=next;dirty=true;}})
+      .catch(failure=>console.error("Native HTML refusal page failed:",String(failure)));
+  };
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.
-  const view:PageView={textScalePercent:100};
+  const view:PageView={textScalePercent:125};
   let press:number[]|undefined,lastCopied:string|undefined,loading=false;
   // Session history is a Lean value. The host keeps it and loads the URLs Lean returns.
   let history=engine.historyPush({entries:[],index:0},document.url);
+  // The chrome is a Lean value too. The host stores it and shows what Lean draws.
+  const home=document;
+  let address=document.url,cursor=0,focused=false,fresh=false,theme="next",pages=1,scale=1,active=0,scroll=0;
+  const tabs:{document:typeof document;history:typeof history;scroll:number}[]=[{document,history,scroll:0}];
+  const shell=()=>({tabs:tabs.map((tab,index)=>({title:(index===active?document:tab.document).title??""})),active,address,cursor,focused,
+    canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll});
+  const shown=()=>({...view,shell:shell()});
+  const showTab=(index:number)=>{
+    controller?.abort();candidate=undefined;loading=false;focused=false;active=index;
+    ({document,history,scroll}=tabs[index]);address=document.url;dirty=true;
+    native?.setHistory(history.canBack,history.canForward);
+  };
+  const keepTab=()=>{tabs[active]={document,history,scroll};};
+  const newTab=()=>{keepTab();tabs.push({document:home,history:engine.historyPush({entries:[],index:0},home.url),scroll:0});showTab(tabs.length-1);};
+  const closeTab=(index:number)=>{
+    if(tabs.length===1){running=false;return;}
+    keepTab();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));
+  };
+  const focusAddress=()=>{focused=true;fresh=true;address=document.url;cursor=address.length;dirty=true;};
+  const leaveAddress=()=>{focused=false;address=document.url;dirty=true;};
+  const scrollBy=(amount:number)=>{
+    const boxes=frame.webRender.boxes as number[][]|undefined;
+    const bottom=Math.max(0,...(boxes??[]).map(box=>box[2]+box[4]));
+    const limit=Math.max(0,bottom-height+Math.round(60*scale));
+    const next=Math.max(0,Math.min(limit,scroll+Math.round(amount)));
+    if(next!==scroll){scroll=next;dirty=true;}
+  };
+  const settingsURL=new URL("./pages/settings.html",import.meta.url).href;
+  const shellCommand=(name:string,argument:string)=>{
+    if(name==="back")windowCommand(6);
+    else if(name==="forward")windowCommand(7);
+    else if(name==="reload")windowCommand(8);
+    else if(name==="new")newTab();
+    else if(name==="close")closeTab(active);
+    else if(name==="theme"){theme=argument||(theme==="next"?"arcade":"next");dirty=true;}
+    else if(name==="zoom"&&/^[0-9]+$/.test(argument)){view.textScalePercent=Math.max(50,Math.min(250,Number(argument)));dirty=true;}
+    else navigate(settingsURL);
+  };
+  const go=(answer:ReturnType<typeof engine.shellSubmit>)=>{
+    trace("native-html-go",answer);
+    if(answer.go==="system")try{native!.openURL(answer.url);}catch(error){refuse(answer.url,error);}
+    else if(answer.go==="page")navigate(answer.url);
+    else shellCommand(answer.name,answer.argument);
+  };
+  const chrome=(control:string)=>{
+    const [name,index]=control.split(":");
+    if(name==="back")windowCommand(6);
+    else if(name==="forward")windowCommand(7);
+    else if(name==="reload")windowCommand(8);
+    else if(name==="settings")navigate(settingsURL);
+    else if(name==="address")focusAddress();
+    else if(name==="newTab")newTab();
+    else if(name==="tab"&&Number(index)!==active){keepTab();showTab(Number(index));}
+    else if(name==="close")closeTab(Number(index));
+    else if(name==="tabs"){keepTab();showTab((active+1)%tabs.length);}
+  };
+  const edit=(answer:{address:string;cursor:number})=>{({address,cursor}=answer);fresh=false;dirty=true;};
   const remember=(answer:HistoryAnswer,action:string)=>{
     history=answer;native?.setHistory(answer.canBack,answer.canForward);
+    if(action==="push")pages++;
     trace("native-html-history",{action,index:answer.history.index,size:answer.history.entries.length,url:answer.url});
   };
   const windowCommand=(id:number)=>{
@@ -71,9 +135,13 @@ async function main() {
       view.textScalePercent=answer.textScalePercent;view.selection=undefined;dirty=true;
       trace("native-html-zoom",{textScalePercent:answer.textScalePercent});
     }
+    if(answer.action==="focusAddress")focusAddress();
+    if(answer.action==="newTab")newTab();
+    if(answer.action==="closeTab")closeTab(active);
+    if(answer.action==="settings")navigate(settingsURL);
     if(answer.action==="selectAll"){view.selection="all";dirty=true;}
     if(answer.action==="copy"&&view.selection){
-      const text=document.selectedText(width,height,view);
+      const text=document.selectedText(width,height,shown());
       if(text){native!.writeClipboard(text);lastCopied=text;trace("native-html-copy",{characters:text.length});}
     }
   };
@@ -89,7 +157,7 @@ async function main() {
     }).catch(error=>{
       if(current.signal.aborted)return;
       loading=false;if(push)remember(engine.historyPush(history.history,target),"push");
-      console.error("Native HTML navigation refused; retaining committed page:",String(error));
+      refuse(target,error);
     });
   };
   try {
@@ -102,6 +170,7 @@ async function main() {
     const handles=native.create(800,500,windowTitle(document));
     const surface=new Deno.UnsafeWindowSurface(cocoaSurfaceOptions(handles,width,height));
     native.showAfterSurface();
+    scale=Math.max(1,Math.round(native.surfaceState().contentsScale||1));
     if(commands)native.testRaise();
     device.addEventListener("uncapturederror",event=>{console.error("Native HTML GPU error:",(event as GPUUncapturedErrorEvent).error.message);running=false;Deno.exitCode=1;});
     device.lost.then(info=>{if(running){console.error("Native HTML GPU lost:",info.message);running=false;Deno.exitCode=1;}});
@@ -116,11 +185,36 @@ async function main() {
           if(event.a!==width||event.b!==height){width=event.a;height=event.b;dirty=true;resizeAt??=performance.now();trace("native-html-resize",{width,height});}
         }
         if(event.kind===8&&event.a)dirty=true;
+        if(event.kind===5&&focused&&!(event.b&2)){
+          if(event.a===36){const target=address;leaveAddress();go(engine.shellSubmit(target));}
+          else if(event.a===53)leaveAddress();
+          else if(event.a===51&&fresh)edit({address:"",cursor:0});
+          else edit(engine.shellKey(shell(),event.a));
+          continue;
+        }
+        if(event.kind===9&&focused){
+          if(fresh){address="";cursor=0;}
+          edit(engine.shellText(shell(),String.fromCodePoint(event.a)));
+          continue;
+        }
+        if(event.kind===9)continue;
+        // Page keys: arrows, page up and down, space.
+        if(event.kind===5&&!(event.b&2)){
+          const page=height*0.8;
+          if(event.a===125)scrollBy(80*scale);
+          if(event.a===126)scrollBy(-80*scale);
+          if(event.a===121||event.a===49)scrollBy(page);
+          if(event.a===116)scrollBy(-page);
+        }
+        if(event.kind===11)scrollBy(-event.a);
         if(event.kind===5&&event.a===15)windowCommand(8);
         if(event.kind===10)windowCommand(event.a);
         if(event.kind===2){
           // Hit coordinates and boxes belong to the successfully presented frame.
           if(!session?.frames)continue;
+          const control=engine.shellHit(shell(),event.a,event.b,width);
+          if(control){chrome(control);continue;}
+          if(focused)leaveAddress();
           press=[event.a,event.b,event.a,event.b];
           if(view.selection){view.selection=undefined;dirty=true;}
         }
@@ -131,7 +225,9 @@ async function main() {
           if(view.selection){view.selection=undefined;dirty=true;}
           const target=engine.hit(frame,released[0],released[1]);
           if(target){console.log(JSON.stringify({type:"native-html-link",...target,url:document.url}));
-            if(follow)try{navigate(navigationURL(target.href,document.baseURL,document.url));}catch(error){console.error("Native HTML link refused:",String(error));}}
+            const answer=engine.shellLink(target.href);
+            if(answer.go!=="page")go(answer);
+            else if(follow)try{navigate(navigationURL(target.href,document.baseURL,document.url));}catch(error){console.error("Native HTML link refused:",String(error));}}
         }
       }
       if(!running)break;
@@ -142,8 +238,8 @@ async function main() {
         const nextDocument=candidate??document;
         const frameStart=performance.now();
         let next:HTMLArtifact;
-        try{next=nextDocument.compile(width,height,view);}
-        catch(error){candidate=undefined;dirty=false;console.error("Native HTML layout refused:",String(error));continue;}
+        try{next=nextDocument.compile(width,height,shown());}
+        catch(error){candidate=undefined;dirty=false;refuse(nextDocument.url,error);continue;}
         const compiled=performance.now();
         // Layout can change the storage buffer/shader shape on resize. Retain the
         // GPU device; construct a new checked session for the new Lean artifact.
@@ -157,7 +253,7 @@ async function main() {
         resizeAt=undefined;
         if(drawn){
           if(nextDocument!==document)view.selection=undefined;
-          frame=next;document=nextDocument;candidate=undefined;dirty=false;native.setTitle(windowTitle(document));
+          if(nextDocument!==document){scroll=0;if(!focused)address=nextDocument.url;}frame=next;document=nextDocument;candidate=undefined;dirty=false;native.setTitle(windowTitle(document));
           console.log(JSON.stringify({type:"native-html-presented",url:document.url,width,height,primitives:frame.primitiveCount,links:frame.webRender.links.length,frames:session.frames}));
         }
       }

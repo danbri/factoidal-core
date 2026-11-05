@@ -5,6 +5,20 @@
    "title": "Demo index"
   },
   {
+   "page": "architecture.html",
+   "title": "How foafnaut is built",
+   "source": "source/architecture.md",
+   "size": [
+    680,
+    1500
+   ]
+  },
+  {
+   "page": "settings.html",
+   "title": "Settings",
+   "source": "source/settings.md"
+  },
+  {
    "page": "books-xslt1.xml",
    "title": "XML with XSLT 1.0"
   },
@@ -57,9 +71,6 @@
   {
    "page": "solving-showcase.html",
    "title": "Solving showcase",
-   "source": "source/solving-showcase.svg",
-   "refused": "invalid CSS number",
-   "issue": "https://github.com/danbri/factoidal/issues/1247"
-  }
+   "source": "source/solving-showcase.svg"}
  ]
 }

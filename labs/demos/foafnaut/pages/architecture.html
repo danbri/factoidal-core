@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>How foafnaut is built</title><style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:white}main{width:640px}h1{margin:0;font-size:21px;line-height:28px;color:#184078}h2{margin:0;padding-top:14px;font-size:16px;line-height:24px;color:#184078}p{margin:0;padding-top:6px}</style></head><body><main>
+<h1>How foafnaut is built</h1>
+<p>Every part below is one file or a few. Links to GitHub open in your system browser, because this engine can not draw GitHub yet.</p>
+<h2>Parsing</h2>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/HTML/Tokenizer.lean">Tokenizer.lean</a>: HTML tokenizer</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/HTML/TreeBuilder.lean">TreeBuilder.lean</a>: HTML tree construction</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/XML/Parser.lean">Parser.lean</a>: XML parser</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/XML/NamespaceView.lean">NamespaceView.lean</a>: XML namespaces</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/DOM/Arena.lean">Arena.lean</a>: the DOM</p>
+<h2>Style and layout</h2>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/Rendering/Style.lean">Style.lean</a>: CSS selectors and computed style</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/Rendering/Layout.lean">Layout.lean</a>: block and inline layout</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/Rendering/Links.lean">Links.lean</a>: link regions</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/Rendering/Scene.lean">Scene.lean</a>: the common scene</p>
+<h2>Fonts and text</h2>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/Font.lean">Font.lean</a>: the bitmap font</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/Rendering/LeanFontShape.lean">LeanFontShape.lean</a>: the Lean text shaper</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/Rendering/SfntShape.lean">SfntShape.lean</a>: OpenType shaping</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/Rendering/SfntGpos.lean">SfntGpos.lean</a>: OpenType positioning</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/Rendering/FontPolicy.lean">FontPolicy.lean</a>: font trust and safety</p>
+<h2>SVG</h2>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/SVG.lean">SVG.lean</a>: the strict reader, and the WGSL shader</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/SVGForgiving.lean">SVGForgiving.lean</a>: draw what can be drawn, and SVG fonts</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/SVGPath.lean">SVGPath.lean</a>: paths</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/SVGCurves.lean">SVGCurves.lean</a>: curves</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/SVGStroke.lean">SVGStroke.lean</a>: strokes</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/SVGDash.lean">SVGDash.lean</a>: dashes</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/SVGCSS.lean">SVGCSS.lean</a>: SVG style sheets</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/SVGReferences.lean">SVGReferences.lean</a>: references and use</p>
+<h2>Transforming documents</h2>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/WebXslt.lean">WebXslt.lean</a>: XML pages with xml-stylesheet</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/XSLT/Transform.lean">Transform.lean</a>: XSLT 1.0</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/XSLT4/Interp.lean">Interp.lean</a>: XSLT 3.0 and 4.0</p>
+<h2>The browser</h2>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/WebDocument.lean">WebDocument.lean</a>: one page, from source to frame</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/WebRender.lean">WebRender.lean</a>: HTML and embedded SVG to a scene</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/WebShell.lean">WebShell.lean</a>: tabs, address bar and buttons</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/WebHistory.lean">WebHistory.lean</a>: session history and keys</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/WebSelection.lean">WebSelection.lean</a>: selection, copy and zoom</p>
+<h2>GPU</h2>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/RenderPlan.lean">RenderPlan.lean</a>: WebGPU commands, chosen in Lean</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/render_plan.ts">render_plan.ts</a>: runs those commands</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/gpu_transport.ts">gpu_transport.ts</a>: offscreen sessions</p>
+<h2>Host, not Lean</h2>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/run_html.ts">run_html.ts</a>: the event loop</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/native_window.m">native_window.m</a>: the Cocoa window</p>
+<p>- <a href="https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/native_html_document.ts">native_html_document.ts</a>: fetches bytes</p>
+</main></body></html>

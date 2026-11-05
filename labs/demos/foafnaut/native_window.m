@@ -83,6 +83,12 @@ static void resizeEvent(void) {
 - (void)mouseMoved:(NSEvent *)event { [self sendPointer:event type:3]; }
 - (void)mouseDragged:(NSEvent *)event { [self sendPointer:event type:3]; }
 - (void)mouseUp:(NSEvent *)event { [self sendPointer:event type:4]; }
+- (void)scrollWheel:(NSEvent *)event {
+  // Backing pixels. Up is positive in Cocoa; the page moves the same way.
+  CGFloat scale=self.window.backingScaleFactor;
+  CGFloat step=event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY*16;
+  enqueue(11,(int32_t)(step*scale),0);
+}
 - (void)keyDown:(NSEvent *)event {
   NSEventModifierFlags flags=event.modifierFlags;
   int32_t modifiers=((flags&NSEventModifierFlagShift)?1:0) |
@@ -203,6 +209,15 @@ int ng_clipboard_write(const char *text) {
     return [board setString:value forType:NSPasteboardTypeString] ? 1 : 0;
   }
 }
+// Hand a URL to the user's default browser. Lean decides when.
+int ng_open_url(const char *text) {
+  @autoreleasepool {
+    NSString *value=[NSString stringWithUTF8String:text];
+    NSURL *url=value ? [NSURL URLWithString:value] : nil;
+    if (!url || !([url.scheme isEqualToString:@"https"] || [url.scheme isEqualToString:@"http"])) return 0;
+    return [[NSWorkspace sharedWorkspace] openURL:url] ? 1 : 0;
+  }
+}
 // Lean says which history moves exist. The menu only shows the answer.
 static BOOL canGoBack=NO,canGoForward=NO;
 void ng_set_history(int back,int forward) { canGoBack=back!=0;canGoForward=forward!=0; }
@@ -238,6 +253,13 @@ static void installMenu(void) {
   [appMenu addItemWithTitle:[@"Quit " stringByAppendingString:name] action:@selector(terminate:) keyEquivalent:@"q"];
   appItem.submenu=appMenu;
   menuTarget=[[NGMenuTarget alloc] init];
+  NSMenuItem *fileItem=[bar addItemWithTitle:@"File" action:nil keyEquivalent:@""];
+  NSMenu *fileMenu=[[NSMenu alloc] initWithTitle:@"File"];
+  commandItem(fileMenu,@"New Tab",@"t",10);
+  commandItem(fileMenu,@"Open Location",@"l",9);
+  commandItem(fileMenu,@"Close Tab",@"w",11);
+  commandItem(fileMenu,@"Settings",@",",12);
+  fileItem.submenu=fileMenu;
   NSMenuItem *editItem=[bar addItemWithTitle:@"Edit" action:nil keyEquivalent:@""];
   NSMenu *editMenu=[[NSMenu alloc] initWithTitle:@"Edit"];
   commandItem(editMenu,@"Copy",@"c",4);
@@ -261,7 +283,7 @@ static void installMenu(void) {
   NSMenuItem *windowItem=[bar addItemWithTitle:@"Window" action:nil keyEquivalent:@""];
   NSMenu *windowMenu=[[NSMenu alloc] initWithTitle:@"Window"];
   [windowMenu addItemWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
-  [windowMenu addItemWithTitle:@"Close" action:@selector(performClose:) keyEquivalent:@"w"];
+  [windowMenu addItemWithTitle:@"Close Window" action:@selector(performClose:) keyEquivalent:@"W"];
   windowItem.submenu=windowMenu;
   NSApp.mainMenu=bar;
 }

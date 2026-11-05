@@ -16,6 +16,8 @@ export type Inspection = {
 };
 export type History = {entries:string[];index:number};
 export type HistoryAnswer = {history:History;url:string|null;canBack:boolean;canForward:boolean};
+export type ShellEdit = {address:string;cursor:number};
+export type ShellGo = {go:"page";url:string}|{go:"system";url:string}|{go:"command";name:string;argument:string};
 export type HTMLResource = {nodeId:number;url:string;source:string};
 type Module = {ccall(name:string,result:string|null,types:string[],values:unknown[]):number;
   UTF8ToString(pointer:number):string};
@@ -57,6 +59,12 @@ export async function loadHTML() {
         throw new Error("Unexpected published Lean HTML scene ABI");
       return result;
     },
+    // Lean decides what a chrome click, a key, an address and a link mean.
+    shellHit:(shell:unknown,x:number,y:number,width:number)=>(documentCall("",{op:"shellHit",shell,x,y,width}) as {control:string|null}).control,
+    shellText:(shell:unknown,text:string)=>documentCall("",{op:"shellText",shell,text}) as ShellEdit,
+    shellKey:(shell:unknown,key:number)=>documentCall("",{op:"shellKey",shell,key}) as ShellEdit,
+    shellSubmit:(address:string)=>documentCall("",{op:"shellSubmit",address}) as ShellGo,
+    shellLink:(href:string)=>documentCall("",{op:"shellLink",href}) as ShellGo,
     // Lean decides what a menu command and a pointer release mean.
     command:(command:number,textScalePercent:number,history?:History)=>documentCall("",{op:"command",command,textScalePercent,...(history?{history}:{})}) as
       {action:string;textScalePercent:number}&Partial<HistoryAnswer>,

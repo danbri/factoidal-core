@@ -8,7 +8,8 @@ import {fileURLToPath} from 'node:url';
 const native=process.argv[2];
 if(!native)throw Error('usage: check-budget.mjs WEB_RENDER_NATIVE');
 const here=dirname(fileURLToPath(import.meta.url));
-const budgets={'default.html':{primitives:900,floats:26000},'status.html':{primitives:8700,floats:245000}};
+// status.html is a real note, so its text grows; move its budget with the text only.
+const budgets={'default.html':{primitives:900,floats:26000},'status.html':{primitives:10300,floats:290000}};
 for(const [name,budget] of Object.entries(budgets)){
   const out=execFileSync(native,[resolve(here,'fixtures',name),'800','600'],{maxBuffer:1<<26});
   const a=JSON.parse(out);

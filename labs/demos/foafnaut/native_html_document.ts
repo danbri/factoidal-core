@@ -3,7 +3,7 @@ import {resolve} from "node:path";
 import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource} from "./native_html_engine.ts";
 
 /** The view state of a page. Lean applies it; the host only keeps the values. */
-export type PageView={textScalePercent?:number;selection?:"all"|number[]};
+export type PageView={textScalePercent?:number;selection?:"all"|number[];shell?:unknown};
 const MAX_RESOURCES=16, MAX_RESOURCE_BYTES=4*MAX_SOURCE_BYTES;
 export function inputURL(input:string,file=false) {
   const url=file?pathToFileURL(resolve(input)):new URL(input);
@@ -45,8 +45,13 @@ export async function readSource(url:string,signal?:AbortSignal):Promise<{url:st
   const source=new TextDecoder("utf-8",{fatal:true}).decode(bytes);sourceBound(source);
   return {url:finalURL,source,bytes:bytes.length};
 }
-export async function prepareHTML(engine:HTMLEngine,url:string,signal?:AbortSignal) {
-  const document=await readSource(url,signal),resources:HTMLResource[]=[];
+/** A refused page must say so in the window, not only in a log. */
+export function refusalHTML(url:string,message:string) {
+  const text=(s:string)=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`;
+}
+export async function prepareHTML(engine:HTMLEngine,url:string,signal?:AbortSignal,inline?:string) {
+  const document=inline===undefined?await readSource(url,signal):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
   // Lean finds the stylesheet and runs it. The host only fetches the bytes.
   const xml=engine.xmlStylesheet(document.source,{url:document.url});
   if(xml.url) {

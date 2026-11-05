@@ -109,6 +109,9 @@ export async function main(argv, channel = 'current') {
   const options = split < 0 ? argv : argv.slice(0, split);
   const extra = split < 0 ? [] : argv.slice(split + 1);
   let page, which = false, verbose = false, detach = false;
+  // Each of these picks the app or the action. Two of them have no one meaning.
+  const exclusive = options.filter((arg) => ['--latest', '--bleeding-edge', '--install-latest', '--list'].includes(arg));
+  if (new Set(exclusive).size > 1) fail(`${exclusive.join(' and ')} can not be used together; see --help`);
   for (const arg of options) {
     if (arg === '--help' || arg === '-h') { process.stdout.write(HELP); return; }
     else if (arg === '--latest') channel = 'latest';

@@ -300,3 +300,10 @@ Cost of `web-render.wasm`, measured on 5 November with Deno on one laptop. The f
 | XSLT 1.0 and 4 | 14,501,181 | 2,928,175 | about 405 ms |
 
 XSLT 4 is 10.2 MB of this. If that cost is too high, XSLT 4 can move to a second Wasm module that loads only for a page that needs it.
+
+## Decision: the browser stays in Factoidal (5 November 2026)
+
+The owner decided that browser work continues in this repository. The size of
+the single Wasm file is a known cost: XSLT 4 took `web-render.wasm` from 3.5 MB
+to 14.5 MB. The planned answer is Wasm modules, later. Until then, record each
+size change, and do not remove a feature only to save size.

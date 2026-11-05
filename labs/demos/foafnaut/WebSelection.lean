@@ -21,6 +21,12 @@ inductive Selection where
   | span (anchorX anchorY focusX focusY : Float)
   deriving Repr
 
+/-- Move a selection up, from window coordinates into page coordinates. -/
+def shift (s : Selection) (top : Float) : Selection :=
+  match s with
+  | .all => .all
+  | .span ax ay fx fy => .span ax (ay-top) fx (fy-top)
+
 /-- Layout emits runs in document order, one for each word. The clusters of a
 run count characters from the start of its text node, so the first cluster is
 the base of the run text. -/
@@ -118,18 +124,25 @@ def commandName : Nat → String
   | 6 => "back"
   | 7 => "forward"
   | 8 => "reload"
+  | 9 => "focusAddress"
+  | 10 => "newTab"
+  | 11 => "closeTab"
+  | 12 => "settings"
   | _ => "none"
+
+/-- Text size of a new window: two steps above 100 on a desktop screen. -/
+def defaultPercent : Nat := 125
 
 def commandPercent (command percent : Nat) : Nat :=
   match command with
   | 1 => zoomIn percent
   | 2 => zoomOut percent
-  | 3 => 100
+  | 3 => defaultPercent
   | _ => percent
 
 #guard zoomIn 100 == 110 && zoomIn 250 == 250 && zoomIn 105 == 110
 #guard zoomOut 100 == 90 && zoomOut 50 == 50 && zoomOut 105 == 100
-#guard commandPercent 3 175 == 100 && commandPercent 4 175 == 175
+#guard commandPercent 3 175 == 125 && commandPercent 4 175 == 175
 #guard zoomSteps.all (fun p => 50 <= p && p <= 250)
 #guard isClick 10 10 12 8 && !isClick 10 10 14 10
 

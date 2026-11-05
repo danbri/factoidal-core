@@ -141,7 +141,7 @@ private def menu (number : Nat) (percent : Nat := 100) : Option String :=
   (WebDocument.run "" (json [("op",.string "command"),("command",.number (toString number)),("textScalePercent",.number (toString percent))]) 1 1).toOption
 #guard menu 1 == some "{\"action\":\"zoomIn\",\"textScalePercent\":110}"
 #guard menu 2 == some "{\"action\":\"zoomOut\",\"textScalePercent\":90}"
-#guard menu 3 200 == some "{\"action\":\"zoomReset\",\"textScalePercent\":100}"
+#guard menu 3 200 == some "{\"action\":\"zoomReset\",\"textScalePercent\":125}"
 #guard menu 4 == some "{\"action\":\"copy\",\"textScalePercent\":100}"
 #guard menu 6 == some "{\"action\":\"back\",\"textScalePercent\":100}"
 private def pages : JSON.Json := json [("entries",.array [.string "a",.string "b"]),("index",.number "1")]
@@ -160,7 +160,7 @@ private def historyCommand (number : Nat) : List (String × JSON.Json) :=
   ("history",json [("entries",.array []),("index",.number "3")])]) 1 1).toOption.isNone
 #guard historyField [("op",.string "keyCommand"),("platform",.string "other"),("modifier",.string "alt"),("key",.string "ArrowLeft")] "command" == some (.number "6")
 #guard menu 1 250 == some "{\"action\":\"zoomIn\",\"textScalePercent\":250}"
-#guard menu 9 == some "{\"action\":\"none\",\"textScalePercent\":100}"
+#guard menu 99 == some "{\"action\":\"none\",\"textScalePercent\":100}"
 private def up (fx : String) : Option String :=
   (WebDocument.run "" (json [("op",.string "pointerUp"),("selection",.array [.number "10",.number "10",.number fx,.number "10"])]) 1 1).toOption
 #guard up "11" == some "{\"action\":\"click\"}"

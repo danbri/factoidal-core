@@ -4,6 +4,7 @@ import WebXslt
 import L4Factoidal.Syntax.IriResolve
 import WebSelection
 import WebHistory
+import WebShell
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
 orders supplied CSS, collects font requests and renders the resulting arena.
@@ -186,6 +187,20 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     let answer := WebHistory.keyCommand (str request "platform" "") (str request "modifier" "") (str request "key" "")
     return some (JSON.Json.object [("command",match answer with
       | some value => .number (toString value) | none => .null)]).toString
+  if op == "shellHit" then
+    let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
+    let some (.number x) := request.field? "x" | throw "x required"
+    let some (.number y) := request.field? "y" | throw "y required"
+    let some (.number width) := request.field? "width" | throw "width required"
+    return some (JSON.Json.object [("control",match WebShell.hit shell (width.toNat?.getD 1) (x.toNat?.getD 0) (y.toNat?.getD 0) with
+      | some name => .string name | none => .null)]).toString
+  if op == "shellText" then
+    return some (WebShell.Shell.ofJson ((request.field? "shell").getD .null) |>.typed (str request "text")).editJson.toString
+  if op == "shellKey" then
+    let some (.number code) := request.field? "key" | throw "key required"
+    return some (WebShell.Shell.ofJson ((request.field? "shell").getD .null) |>.key (code.toNat?.getD 0)).editJson.toString
+  if op == "shellSubmit" then return some (WebShell.submit (str request "address")).json.toString
+  if op == "shellLink" then return some (WebShell.link (str request "href")).json.toString
   if op == "pointerUp" then
     let (ax,ay,fx,fy) ← points ((request.field? "selection").getD .null)
     return some (JSON.Json.object [("action",.string (if WebSelection.isClick ax ay fx fy then "click" else "select"))]).toString
@@ -222,8 +237,13 @@ def run (html : String) (request : JSON.Json) (width height : Nat) : Except Stri
   let font := match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont
   let url := baseURL dom (str request "url")
   let embedding ← WebRender.makeEmbedding dom (if url.isEmpty then none else some url)
-  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding width height textScale
-  let chosen ← selection request
+  let shell := (request.field? "shell").map WebShell.Shell.ofJson
+  let top := (shell.map (fun value => WebShell.height value width)).getD 0
+  -- A window shorter than the chrome still lays out, on one row.
+  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding width (max 1 (height-top)) textScale
+  -- Pointer positions are in window coordinates; the page starts below the chrome.
+  let moved := Float.ofNat top-Float.ofNat ((shell.map (·.scroll)).getD 0)
+  let chosen := (← selection request).map (fun value => WebSelection.shift value moved)
   let items := WebSelection.cells scene.glyphRuns
   if op == "selectedText" then
     return (JSON.Json.object [("text",.string (match chosen with
@@ -232,7 +252,10 @@ def run (html : String) (request : JSON.Json) (width height : Nat) : Except Stri
   let marks := match chosen with
     | some value => WebSelection.highlight items value
     | none => []
-  WebRender.artifact {scene with tree := scene.tree ++ marks} boxes face
+  let page := {scene with tree := scene.tree ++ marks}
+  WebRender.artifact (match shell with
+    | some value => WebShell.compose value page width height
+    | none => page) boxes face
 
 @[export web_document_compile]
 def compile (html request : String) (width height : UInt32) : String :=

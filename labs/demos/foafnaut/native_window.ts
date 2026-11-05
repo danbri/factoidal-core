@@ -29,6 +29,7 @@ export function loadNativeWindow() {
     ng_clipboard_copy: { parameters: [], result: "pointer" },
     ng_free: { parameters: ["pointer"], result: "void" },
     ng_clipboard_write: { parameters: ["buffer"], result: "i32" },
+    ng_open_url: { parameters: ["buffer"], result: "i32" },
   } as const);
   const symbols = library.symbols;
   const isMainThread = () => symbols.ng_is_main_thread() === 1;
@@ -45,6 +46,10 @@ export function loadNativeWindow() {
       if(!pointer)throw new Error("Clipboard text unavailable or exceeds the 1 MiB transport limit");
       try { return new Deno.UnsafePointerView(pointer).getCString(); }
       finally { symbols.ng_free(pointer); }
+    },
+    // Lean chose this URL. The operating system's default browser opens it.
+    openURL(url:string) {
+      if(url.includes("\0")||!symbols.ng_open_url(new TextEncoder().encode(url+"\0")))throw new Error("The system browser did not open the URL");
     },
     writeClipboard(text:string) {
       if(text.includes("\0"))throw new Error("Clipboard text contains NUL");

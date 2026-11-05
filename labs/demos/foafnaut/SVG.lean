@@ -139,7 +139,40 @@ private def named : List (String × (Nat × Nat × Nat)) := [
   ("black",(0,0,0)),("silver",(192,192,192)),("gray",(128,128,128)),("white",(255,255,255)),
   ("maroon",(128,0,0)),("red",(255,0,0)),("purple",(128,0,128)),("fuchsia",(255,0,255)),
   ("green",(0,128,0)),("lime",(0,255,0)),("olive",(128,128,0)),("yellow",(255,255,0)),
-  ("navy",(0,0,128)),("blue",(0,0,255)),("teal",(0,128,128)),("aqua",(0,255,255)),("orange",(255,165,0))]
+  ("navy",(0,0,128)),("blue",(0,0,255)),("teal",(0,128,128)),("aqua",(0,255,255)),("orange",(255,165,0)),
+  ("aliceblue",(240,248,255)),("antiquewhite",(250,235,215)),("aquamarine",(127,255,212)),("azure",(240,255,255)),
+  ("beige",(245,245,220)),("bisque",(255,228,196)),("blanchedalmond",(255,235,205)),("blueviolet",(138,43,226)),
+  ("brown",(165,42,42)),("burlywood",(222,184,135)),("cadetblue",(95,158,160)),("chartreuse",(127,255,0)),
+  ("chocolate",(210,105,30)),("coral",(255,127,80)),("cornflowerblue",(100,149,237)),("cornsilk",(255,248,220)),
+  ("crimson",(220,20,60)),("cyan",(0,255,255)),("darkblue",(0,0,139)),("darkcyan",(0,139,139)),
+  ("darkgoldenrod",(184,134,11)),("darkgray",(169,169,169)),("darkgreen",(0,100,0)),("darkgrey",(169,169,169)),
+  ("darkkhaki",(189,183,107)),("darkmagenta",(139,0,139)),("darkolivegreen",(85,107,47)),("darkorange",(255,140,0)),
+  ("darkorchid",(153,50,204)),("darkred",(139,0,0)),("darksalmon",(233,150,122)),("darkseagreen",(143,188,143)),
+  ("darkslateblue",(72,61,139)),("darkslategray",(47,79,79)),("darkslategrey",(47,79,79)),("darkturquoise",(0,206,209)),
+  ("darkviolet",(148,0,211)),("deeppink",(255,20,147)),("deepskyblue",(0,191,255)),("dimgray",(105,105,105)),
+  ("dimgrey",(105,105,105)),("dodgerblue",(30,144,255)),("firebrick",(178,34,34)),("floralwhite",(255,250,240)),
+  ("forestgreen",(34,139,34)),("gainsboro",(220,220,220)),("ghostwhite",(248,248,255)),("gold",(255,215,0)),
+  ("goldenrod",(218,165,32)),("greenyellow",(173,255,47)),("grey",(128,128,128)),("honeydew",(240,255,240)),
+  ("hotpink",(255,105,180)),("indianred",(205,92,92)),("indigo",(75,0,130)),("ivory",(255,255,240)),
+  ("khaki",(240,230,140)),("lavender",(230,230,250)),("lavenderblush",(255,240,245)),("lawngreen",(124,252,0)),
+  ("lemonchiffon",(255,250,205)),("lightblue",(173,216,230)),("lightcoral",(240,128,128)),("lightcyan",(224,255,255)),
+  ("lightgoldenrodyellow",(250,250,210)),("lightgray",(211,211,211)),("lightgreen",(144,238,144)),("lightgrey",(211,211,211)),
+  ("lightpink",(255,182,193)),("lightsalmon",(255,160,122)),("lightseagreen",(32,178,170)),("lightskyblue",(135,206,250)),
+  ("lightslategray",(119,136,153)),("lightslategrey",(119,136,153)),("lightsteelblue",(176,196,222)),("lightyellow",(255,255,224)),
+  ("limegreen",(50,205,50)),("linen",(250,240,230)),("magenta",(255,0,255)),("mediumaquamarine",(102,205,170)),
+  ("mediumblue",(0,0,205)),("mediumorchid",(186,85,211)),("mediumpurple",(147,112,219)),("mediumseagreen",(60,179,113)),
+  ("mediumslateblue",(123,104,238)),("mediumspringgreen",(0,250,154)),("mediumturquoise",(72,209,204)),("mediumvioletred",(199,21,133)),
+  ("midnightblue",(25,25,112)),("mintcream",(245,255,250)),("mistyrose",(255,228,225)),("moccasin",(255,228,181)),
+  ("navajowhite",(255,222,173)),("oldlace",(253,245,230)),("olivedrab",(107,142,35)),("orangered",(255,69,0)),
+  ("orchid",(218,112,214)),("palegoldenrod",(238,232,170)),("palegreen",(152,251,152)),("paleturquoise",(175,238,238)),
+  ("palevioletred",(219,112,147)),("papayawhip",(255,239,213)),("peachpuff",(255,218,185)),("peru",(205,133,63)),
+  ("pink",(255,192,203)),("plum",(221,160,221)),("powderblue",(176,224,230)),("rosybrown",(188,143,143)),
+  ("royalblue",(65,105,225)),("saddlebrown",(139,69,19)),("salmon",(250,128,114)),("sandybrown",(244,164,96)),
+  ("seagreen",(46,139,87)),("seashell",(255,245,238)),("sienna",(160,82,45)),("skyblue",(135,206,235)),
+  ("slateblue",(106,90,205)),("slategray",(112,128,144)),("slategrey",(112,128,144)),("snow",(255,250,250)),
+  ("springgreen",(0,255,127)),("steelblue",(70,130,180)),("tan",(210,180,140)),("thistle",(216,191,216)),
+  ("tomato",(255,99,71)),("turquoise",(64,224,208)),("violet",(238,130,238)),("wheat",(245,222,179)),
+  ("whitesmoke",(245,245,245)),("yellowgreen",(154,205,50))]
 private def color (input : String) : Except String Color := do
   let s := (trim input).toLower
   if s.startsWith "#" then
@@ -706,7 +739,21 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     let x ← geometryNumber lengths attrs "x"; let y ← geometryNumber lengths attrs "y"
     let w ← geometryNumber lengths attrs "width"; let h ← geometryNumber lengths attrs "height"
     if w < 0 || h < 0 then throw "negative rectangle dimensions"
-    return if w == 0 || h == 0 then none else some (.rect x y w h)
+    if w == 0 || h == 0 then return none
+    -- SVG 2 §10.2: one missing radius takes the other; both clamp to half the box.
+    let rx := match attr attrs "rx",attr attrs "ry" with
+      | none,none => pure 0 | none,some _ => geometryNumber lengths attrs "ry"
+      | _,_ => geometryNumber lengths attrs "rx"
+    let ry := match attr attrs "ry",attr attrs "rx" with
+      | none,none => pure 0 | none,some _ => geometryNumber lengths attrs "rx"
+      | _,_ => geometryNumber lengths attrs "ry"
+    let rx := min (max 0 (← rx)) (w/2); let ry := min (max 0 (← ry)) (h/2)
+    if rx == 0 || ry == 0 then return some (.rect x y w h)
+    let n := fun (v : Float) => toString v
+    let arc := fun (ex ey : Float) => s!"A{n rx} {n ry} 0 0 1 {n ex} {n ey}"
+    let source := s!"M{n (x+rx)} {n y}H{n (x+w-rx)}" ++ arc (x+w) (y+ry) ++ s!"V{n (y+h-ry)}" ++
+      arc (x+w-rx) (y+h) ++ s!"H{n (x+rx)}" ++ arc x (y+h-ry) ++ s!"V{n (y+ry)}" ++ arc (x+rx) y ++ "Z"
+    return some (.path (← NativeSVGPath.parse number source))
   else if tag == "circle" then
     let x ← geometryNumber lengths attrs "cx"; let y ← geometryNumber lengths attrs "cy"; let r ← geometryNumber lengths attrs "r"
     -- SVG 2 §10.3: an invalid negative r presentation value is ignored;
@@ -717,8 +764,13 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     let x ← geometryNumber lengths attrs "cx"; let y ← geometryNumber lengths attrs "cy"
     let rx ← geometryNumber lengths attrs "rx"; let ry ← geometryNumber lengths attrs "ry"
     if rx < 0 || ry < 0 then throw "negative ellipse radius"
-    if strokeEnabled style then throw "ellipse stroke unsupported"
-    return if rx == 0 || ry == 0 then none else some (.ellipse x y rx ry)
+    if rx == 0 || ry == 0 then return none
+    if strokeEnabled style then
+      -- The ellipse primitive has no stroke; a path of two arcs does.
+      let n := fun (v : Float) => toString v
+      let arc := fun (ex : Float) => s!"A{n rx} {n ry} 0 1 1 {n ex} {n y}"
+      return some (.path (← NativeSVGPath.parse number (s!"M{n (x-rx)} {n y}" ++ arc (x+rx) ++ arc (x-rx) ++ "Z")))
+    return some (.ellipse x y rx ry)
   else if tag == "line" then
     let x1 ← geometryNumber lengths attrs "x1"; let y1 ← geometryNumber lengths attrs "y1"
     let x2 ← geometryNumber lengths attrs "x2"; let y2 ← geometryNumber lengths attrs "y2"
@@ -774,7 +826,7 @@ private def dashedParts (g : BackendGeometry) (style : Style) (authorLength : Op
 
 private def extraAttrs (tag : String) : List String :=
   match tag with
-  | "rect" => ["x","y","width","height","opacity","transform","pathLength"]
+  | "rect" => ["x","y","width","height","rx","ry","opacity","transform","pathLength"]
   | "circle" => ["cx","cy","r","opacity","transform"]
   | "ellipse" => ["cx","cy","rx","ry","opacity","transform"]
   | "line" => ["x1","y1","x2","y2","opacity","transform","pathLength"]
@@ -852,6 +904,23 @@ private def containerVisible (attrs : List NamespaceAttribute) : Except String B
   let opacity ← match attr attrs "opacity" with | none => pure 1 | some value => number value
   if opacity > 0 && opacity < 1 then throw "container opacity requires compositing surface"
   return !displaySuppressed attrs && opacity > 0
+
+/-- CSS Masking 1 §6: `clip-path` naming a `clipPath` of one untransformed
+    `rect`. Any other clip shape stays a named refusal. -/
+private def rectClip (lengths : LengthContext) (references : NativeSVGReferences.Index) (source : String) :
+    Except String (Float × Float × Float × Float) := do
+  if !(source.startsWith "url(#" && source.endsWith ")") then throw "unsupported clip-path syntax"
+  let id := ((source.drop 5).toString.dropEnd 1).toString
+  let some target := references.get? id | throw "clip-path target not found"
+  let .element name attrs children := target.node | throw "clip-path target is not an element"
+  if name.namespace_ != some svgURI || name.localPart != "clipPath" then throw "clip-path target is not clipPath"
+  if (attr attrs "clipPathUnits").getD "userSpaceOnUse" != "userSpaceOnUse" || (attr attrs "transform").isSome then
+    throw "unsupported clipPath attributes"
+  let shapes := children.filter fun | .element .. => true | _ => false
+  let [.element shapeName shape _] := shapes | throw "unsupported clipPath: one rect required"
+  if shapeName.localPart != "rect" || (attr shape "transform").isSome then throw "unsupported clipPath: one rect required"
+  return (← geometryNumber lengths shape "x",← geometryNumber lengths shape "y",
+    ← geometryNumber lengths shape "width",← geometryNumber lengths shape "height")
 
 private def readNode (references : NativeSVGReferences.Index) (rules : List NativeSVGCSS.Rule)
     (ids : List String) : Nat → ReadContext → NamespaceNode → Except String (List DisplayNode)
@@ -946,13 +1015,17 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         if !["hidden","scroll","auto"].contains overflow then throw "unsupported viewport overflow"
         return [.clipped (attr attrs "id") contentTransform ⟨0,0,w,h,viewportTransform⟩ retainedChildren]
       else if tag == "g" then
-        validateAttrs tag attrs ["transform"]
+        validateAttrs tag attrs ["transform","clip-path"]
         let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
         let cumulative ← checkedTransform (parent.compose transform)
         let inherited ← readStyle lengths ids attrs style
         let retainedChildren ← readChildren lengths cumulative inherited children
         if displaySuppressed attrs then return []
-        return [.group (attr attrs "id") transform retainedChildren]
+        match attr attrs "clip-path" with
+        | none => return [.group (attr attrs "id") transform retainedChildren]
+        | some source =>
+          let (x,y,w,h) ← rectClip lengths references (trim source)
+          return [.clipped (attr attrs "id") transform ⟨x,y,w,h,transform⟩ retainedChildren]
       else
         validateAttrs tag attrs (extraAttrs tag)
         let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
@@ -1223,8 +1296,11 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
     if !["1.1","2.0"].contains version then throw "unsupported SVG version label"
   for key in ["width","height"] do
     if let some source := attr attrs key then
-      let size ← if (trim source).endsWith "%" then
+      let viewportUnit := (trim source).endsWith "vw" || (trim source).endsWith "vh"
+      let size ← if (trim source).endsWith "%" || viewportUnit then
         if outputWidth == 0 || outputHeight == 0 then throw "percentage root dimensions require explicit host output viewport"
+        -- The host output size already holds the viewport unit's computed value.
+        else if viewportUnit then pure 0
         else relativeLength source (Float.ofNat (if key == "width" then outputWidth else outputHeight))
       else lengthNumber source
       if size < 0 then throw "negative root dimensions"
