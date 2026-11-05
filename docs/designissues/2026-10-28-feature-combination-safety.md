@@ -207,10 +207,14 @@ Paths.
 4. WebDAV remote mounts. `sessionOf` (`WebDAV/Remote.lean:129-147`) never sets
    `requireHttps`, and the mount `url` may be `http` (`Config.lean:177`,
    `:226`). A `bearer` mount sends the token file to `http` URLs.
-5. Token scope. `TokenEntry.covers` is a string prefix (`Machine.lean:556-557`).
-   A root without a final `/`, for example `https://s.example/alice`, covers
-   `https://s.example/alice-other/`. Check 3 requires the same origin only.
-   No path-segment boundary rule was found.
+5. Token scope. Until 2026-11-01 `TokenEntry.covers` was a string prefix: a
+   root without a final `/`, for example `https://s.example/alice`, covered
+   `https://s.example/alice-other/`. It is now
+   `LWS.ContainerPath.coversAtSegment` (a prefix that ends with `/`, or that
+   the URL continues with `/`, `?` or `#`, or the whole URL); theorems
+   `coversAtSegment_sibling` and `covers_sibling_refused`. Check 3 still
+   requires the same origin only, and the `legacyValidated` realm check of
+   path 2 is still a string prefix.
 6. `anyToken` (a token with no realm) goes with every request, including a
    `next` page URL on another origin that the server chose (`Machine.lean:567`,
    `onPage` `:1054`).

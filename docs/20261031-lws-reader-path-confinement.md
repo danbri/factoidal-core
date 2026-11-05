@@ -1,8 +1,36 @@
 # LWS reader host-authority boundary
 
-The public `lwsSbm11Reader` host adapter now confines resource names to one
-configured HTTP(S) container. The patch is JavaScript transport/path validation;
-it makes no new Lean proof or end-to-end pipeline security claim.
+The public `lwsSbm11Reader` host adapter confines resource names to one
+configured HTTP(S) container.
+
+Update, 2026-11-01: the path and URL decisions are now in Lean, not in
+JavaScript. Module `formal/lean4/L4Factoidal/LWS/ContainerPath.lean`
+(`containerOf`, `resourceIn`, `segmentIn`, `within`, `target`, `parentIn`,
+over the URL Standard parser `L4Factoidal.WHATWG.URL.parseUrl`), pure wasm op
+`containerPath` (`formal/lean4/Wasm/Ops/ContainerPath.lean`). `npm/factoidal/lib/sbm11-lws.mjs`
+and `docs/web/hub/data-compositor/pod-storage.mjs` call the op and only turn a
+refusal into a `TypeError`; they parse and compare no URL. Theorems:
+
+- `resourceIn_under`: an answer of `resourceIn` has the container's origin
+  and the container URL (which ends with `/`) is a prefix of it.
+- `segmentIn_under`, `within_under`, `within_canonical_under`,
+  `parentIn_under`: the same boundary for one name, for a URL inside a pod
+  root, and for the folder above.
+- `within_sibling_refused`: `https://s.example/alice-other/` is not within
+  `https://s.example/alice/`.
+- `coversAtSegment_sibling` and `covers_sibling_refused`
+  (`LWS/Client/Theorems.lean`): the LWS client's token scope
+  (`TokenEntry.covers`) has the same path-segment boundary
+  (https://github.com/danbri/factoidal/issues/1127, row C3 of
+  `docs/designissues/2026-10-28-feature-combination-safety.md`).
+
+The rules are the rules of the 0.28.0 JavaScript below, with two changes: an
+empty query or fragment (`https://s.example/c/?`) is refused in every mode,
+and the inputs of the 0.28.0 tests are `#guard` cases of the Lean module. As
+the engine is needed, `lwsSbm11Reader` is now asynchronous. The theorems do
+not cover the transport: the redirect rules below are still host behaviour.
+
+The section below is the 0.28.0 record.
 
 ## Reproduction and repair
 
