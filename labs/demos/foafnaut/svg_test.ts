@@ -156,7 +156,7 @@ Deno.test("SVG artifact/input limits and GPU row/readback encoding are checked w
  const e=await loadSVG();const a=e.compile(wrap('<circle r="1"/>'));
  rejects(()=>e.compile(wrap('')+'\0'),"Invalid SVG input ABI");
  rejects(()=>e.compile('x'.repeat(1048577)),"Invalid SVG input ABI");
- rejects(()=>e.compile(wrap('<rect width="1" height="1"/>'.repeat(12289))),"primitive count");
+ rejects(()=>e.compile(wrap('<circle r="1"/>'.repeat(49153))),"primitive count");
  rejects(()=>validateSVG({...a,data:[NaN]}),"Invalid Lean SVG artifact");
  const rgba=new Uint8Array(a.width*a.height*4);for(const p of a.checks)rgba.set([...p.rgb,255],(p.y*a.width+p.x)*4);checkPixels(a,rgba);
  const p=a.checks[0];rgba[(p.y*a.width+p.x)*4]=255-p.rgb[0];rejects(()=>checkPixels(a,rgba),"readback mismatch");
@@ -171,9 +171,9 @@ Deno.test("SVG storage artifact stays bounded and uses compact data-driven geome
  assert(large.wgsl.includes("var<storage,read>"),"SVG is not storage backed");
  assert(large.wgsl.includes("for(var item=")&&large.wgsl.length<32768,"shader expands per primitive");
  rejects(()=>validateSVG({...large,binding:"uniform"}),"Invalid Lean SVG artifact");
- rejects(()=>validateSVG({...large,data:Array(262148).fill(0)}),"Invalid Lean SVG artifact");
- const points=Array.from({length:64},(_,i)=>`${i%8},${Math.floor(i/8)}`).join(' ');
- rejects(()=>e.compile(wrap(`<polygon points="${points}"/>`.repeat(1800))),"storage data");
+ rejects(()=>validateSVG({...large,data:Array(1048580).fill(0)}),"Invalid Lean SVG artifact");
+ // Compact paths reach the storage budget inside the input character budget.
+ rejects(()=>e.compile(wrap(`<path d="M0 0${'h1v1'.repeat(120)}z"/>`.repeat(1200))),"storage data");
 });
 
 Deno.test("SVG gallery is an actual parsed document with Float data and generated WGSL",async()=>{
@@ -232,7 +232,7 @@ Deno.test("SVG affine transforms compose in SVG order and preserve local stroke 
  assert(e.compile(mixed).wgsl.includes('var p=worldP')&&e.compile(mixed).wgsl.includes('(header.w%4u)>=2u'),"Missing dynamic inverse CTM lowering");
  equal(e.sample(doc('matrix(1,2,2,4,0,0)','<rect width="64" height="64"/>'),5,5),[255,255,255]);
  for(const t of ['matrix(1,2)','translate(1),','scale(1e-12)','skewX(90)','translate(1)'.repeat(33)])rejects(()=>e.compile(doc(t)),"SVG profile:");
- rejects(()=>e.compile(wrap('<circle r="1" transform="translate(1)"/>'.repeat(10000))),"storage data");
+ rejects(()=>e.compile(wrap(`<path transform="translate(1)" d="M0 0${'h1v1'.repeat(120)}z"/>`.repeat(1200))),"storage data");
  rejects(()=>e.compile('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" transform="translate(1)"/>'),"unsupported attribute");
 });
 

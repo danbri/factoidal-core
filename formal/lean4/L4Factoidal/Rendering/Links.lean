@@ -26,7 +26,7 @@ def decode (source : String) : Except String (List LinkRegion) := do
   if source.utf8ByteSize > 1048576 then throw "link regions: input exceeds 1MiB"
   let json ← (JSON.parseJson source).mapError (fun _ => "link regions: invalid JSON")
   let .array regions := json | throw "link regions: expected array"
-  if regions.length > 12288 then throw "link regions: too many regions"
+  if regions.length > 49152 then throw "link regions: too many regions"
   regions.mapM decodeRegion
 
 def targetJSON : Option LinkRegion → String
