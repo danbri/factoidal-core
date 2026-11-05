@@ -1,8 +1,16 @@
 # foafnaut2525 native HTML development app
 
-Native HTML desktop GPU qualification is still pending as of 2026-11-04.
-The app and its CPU/runtime checks exist; no successful HTML native-window
-presentation has been recorded.
+2026-11-05: the HTML native window presents. Started by macOS (a small `.app`
+wrapper around `run_html.ts`), the default page logged
+`native-html-presented` (1600 x 1000, 1,405 primitives, 11 links, 1 frame) on
+the Apple M1 adapter, and the Lean pixel checks on the GPU readback passed.
+The cause of the earlier blank window was the surface format: the Lean
+`svg-offscreen` plan answers `rgba8unorm`, which a macOS window surface does
+not support. `native_html_session.ts` now uses the preferred surface format
+and swaps blue and red in the readback before the Lean pixel checks. The final
+fix belongs in `RenderPlan.lean`. An agent shell has no desktop session, so
+test windows through `open`. A window fully behind another window waits with
+no output. This log is not a human view of the screen.
 
 The first host accepts an HTML file or an HTTP(S) URL, sends its original UTF-8
 source to the published Lean WebDocument engine, and implements a Cocoa-window
