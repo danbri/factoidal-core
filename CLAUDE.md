@@ -119,6 +119,16 @@ measurement, never by assertion.
 Standing priorities: `docs/claude-rules/current-state.md` § Standing
 priorities.
 
+## Work goes on main (owner, 2026-11-05)
+
+Owner, verbatim: **"THE MAIN BRANCH IS OK FOR WORK IN PROGRESS! This whole project is in
+a rapid experimental growth phase and can't be sandboxed 1000 ways from itself."**
+Commit to `main`: `git pull --rebase`, then push. Do not hold work on a side branch,
+behind a PR, or in uncommitted files until it is finished. Commit early and often. A worktree
+is acceptable only to avoid a clash with another session's files; push it to `main` the
+same day and remove it. This overrides "start every work branch" below. The npm release
+rules are unchanged: a release is still one owner, through `npm-publish.yml`.
+
 ## Repository and branch (owner, 2026-10-10 and 2026-10-11)
 
 Owner, 2026-10-10, verbatim: **"Factoidal-core should be the new home for

@@ -60,8 +60,12 @@ file's owner. A shaped-word cache will not fix frame time on this evidence.
 - `check-wasm.mjs` passes on the new engine. `check-budget.mjs` passes.
 - The artifact itself changes (fewer primitives). `tree` is no longer `null` on the status
   page, because it now fits the inspector limit.
-- Not tested: a GPU draw of the new artifact, full-size images (the CPU image path needs
-  over 9 minutes for one 380×340 image), real-font pages, any real ESP32.
+- WebGPU in Chrome on Metal, old against new artifact: 9 of 9 full images byte-identical,
+  including `status.html` at 800×600 and 500×700. `check-browser.mjs` passes 5 of 5.
+  That check needs `.build/font-shape`, `.build/script-engine/qjs-wasi-reactor.wasm` and
+  Python Pillow.
+- Not tested: full-size CPU images (over 9 minutes for one 380×340 image), a comparison of
+  real-font pages, any real ESP32.
 
 ## Suggested target
 
