@@ -246,6 +246,8 @@ async function readAccountsFile (path) {
  * @param {boolean} [options.startTls] listen in clear and use `cert` and
  *   `key` for STARTTLS (RFC 6120 section 5), which the engine then requires
  *   before anything else; without it, `cert` and `key` mean direct TLS
+ * @param {number} [options.directTlsPort] with `startTls`, `listen` also serves
+ *   XEP-0368 direct TLS on this port, in the same server: one set of rooms
  * @param {number} [options.pollMs] spool poll interval (default 250; 0 disables)
  * @param {number} [options.maxBuffered] residual UTF-8 bytes held by the engine
  *   after a feed before the socket is closed (default 1 MiB); the decoder
@@ -531,10 +533,10 @@ export async function createXmppServer (options = {}) {
     }
   }
 
-  function onConnection (socket) {
+  function onConnection (socket, direct = false) {
     let session
     try {
-      session = xmpp.openSession({ tlsCarrier: useTls, startTls })
+      session = xmpp.openSession({ tlsCarrier: useTls || direct, startTls: startTls && !direct })
     } catch (error) {
       onError(error)
       socket.destroy()
@@ -681,16 +683,25 @@ export async function createXmppServer (options = {}) {
   try {
     if (useTls) {
       const tls = await import('node:tls')
-      server = tls.createServer({ cert: options.cert, key: options.key }, onConnection)
+      server = tls.createServer({ cert: options.cert, key: options.key }, (socket) => onConnection(socket))
     } else {
       const net = await import('node:net')
-      server = net.createServer(onConnection)
+      server = net.createServer((socket) => onConnection(socket))
     }
   } catch (error) {
     xmpp.close()
     throw error
   }
   server.on('connection', admit)
+
+  // XEP-0368 direct TLS beside a STARTTLS listener: the engine takes its
+  // answer per session, so this differs only in what `onConnection` passes.
+  let directServer = null
+  if (startTls && options.directTlsPort !== undefined) {
+    const tls = await import('node:tls')
+    directServer = tls.createServer({ cert: options.cert, key: options.key }, (socket) => onConnection(socket, true))
+    directServer.on('connection', admit)
+  }
 
   // The harness's mailbox: `<dir>/spool/<bare jid>/<name>` holds one
   // stanza's bytes for that account. Polled for every bound session,
@@ -738,6 +749,7 @@ export async function createXmppServer (options = {}) {
   return {
     server,
     wsServer,
+    directServer,
     xmpp,
     /** The live connections' `{bare, full}` pairs, for a host's own view. */
     sessions () {
@@ -759,6 +771,7 @@ export async function createXmppServer (options = {}) {
         try {
           await new Promise(resolve => server.close(resolve))
           if (wsServer !== null) await new Promise(resolve => wsServer.close(resolve))
+          if (directServer !== null) await new Promise(resolve => directServer.close(resolve))
           await pollTask
           await rosterWrites
           await stateWrites
@@ -810,7 +823,20 @@ export async function listen (options = {}) {
     const path = typeof options.websocket.path === 'string' ? options.websocket.path : '/xmpp-websocket'
     wsOrigin = `${wsScheme}://${host}:${created.wsServer.address().port}${path}`
   }
+  let directOrigin = null
+  if (created.directServer !== null) {
+    try {
+      await new Promise((resolve, reject) => {
+        created.directServer.once('error', reject)
+        created.directServer.listen(options.directTlsPort, host, resolve)
+      })
+    } catch (error) {
+      await created.close()
+      throw error
+    }
+    directOrigin = `xmpps://${host}:${created.directServer.address().port}`
+  }
   const bound = created.server.address()
   const scheme = options.cert !== undefined && options.key !== undefined ? 'xmpps' : 'xmpp'
-  return { ...created, port: bound.port, host, origin: `${scheme}://${host}:${bound.port}`, wsOrigin }
+  return { ...created, port: bound.port, host, origin: `${scheme}://${host}:${bound.port}`, wsOrigin, directOrigin }
 }

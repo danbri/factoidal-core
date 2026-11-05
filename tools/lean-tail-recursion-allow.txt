@@ -565,7 +565,6 @@ L4Factoidal_XML_Node_decEqList
 L4Factoidal_XML_Node_serializeList
 L4Factoidal_XML_Node_textContentList
 L4Factoidal_XML_findColons
-L4Factoidal_XML_parseAttributes
 L4Factoidal_XML_parseSubset
 L4Factoidal_XML_peScan
 L4Factoidal_XML_textDeclAttrs_go
@@ -797,7 +796,6 @@ L4Factoidal_Syntax_readPredicateObjectList  # (b) the readObject cycle recurses 
 L4Factoidal_Syntax_readObjectListRev  # (b) the readObject cycle recurses once per NESTING level of [ ] and ( ) (1,501 levels of [ ] ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the objects of one object list are a loop (goto _start), issue 754
 L4Factoidal_Syntax_assignLabelsAvoiding  # (c) at most 9 levels: idx starts at 1 and the function returns [] when idx reaches 9 (labels ns1: to ns8:); the one caller, turtleOfGraphOpts, also passes fuel 10 (TurtleSerialize.lean). Checked 2026-10-13 for https://github.com/danbri/factoidal/issues/752
 L4Factoidal_Unified_patternTermBnodeFree  # (b) nesting depth of RDF 1.2 triple terms in one pattern term
-L4Factoidal_XML_applyDeclarations  # (b) attributes of one XML element
 L4Factoidal_XML_parseChildrenW  # (b) one frame of parseElementW per ELEMENT nesting level of the document; the nesting of markup entities is on the worklist, issue 755
 L4Factoidal_XML_parseElementW  # (b) element nesting of the document, as parseChildrenW
 L4Factoidal_XSD_pow2i  # (c) called with the constants 150 and 23 only (float facet checks)

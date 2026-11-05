@@ -276,6 +276,75 @@ theorem readIriRefBodyGo_eq (pos : Nat) (acc : String) (cs : List Char) :
       rw [← String.append_assoc]; rfl
 termination_by cs.length
 
+/-- A character of an IRIREF body that the step only emits: not `>`, not a
+backslash, not forbidden. -/
+@[inline] def iriPlainChar (c : Char) : Bool :=
+  !(c == '>' || c == '\\' || decide (c.toNat ≤ 0x20) || isIriForbiddenCodepoint c.toNat)
+
+/-- `readIriRefBodyGo` with a direct path for the plain characters: no `IriStep`
+is allocated for them. Every other character takes the step. -/
+def readIriRefBodyFast (pos : Nat) (acc : String) (cs : List Char) :
+    Except ParseError (String × Nat × List Char) :=
+  match cs with
+  | [] => .error ⟨"unterminated IRIREF (expected '>')", pos⟩
+  | c :: rest =>
+    if iriPlainChar c then readIriRefBodyFast (pos + 1) (acc.push c) rest
+    else
+      match h : iriNextStep pos (c :: rest) with
+      | .close r => .ok (acc, pos + 1, r)
+      | .fail e => .error e
+      | .emit d w r =>
+        have : r.length < (c :: rest).length := iriNextStep_emit_shorter h
+        readIriRefBodyFast (pos + w) (acc.push d) r
+termination_by cs.length
+decreasing_by all_goals simp_wf <;> omega
+
+theorem iriNextStep_plain_emit {pos : Nat} {c : Char} {rest : List Char} (hp : iriPlainChar c = true) :
+    iriNextStep pos (c :: rest) = .emit c 1 rest := by
+  simp only [iriPlainChar, Bool.not_eq_true', Bool.or_eq_false_iff, beq_eq_false_iff_ne, ne_eq,
+    decide_eq_false_iff_not] at hp
+  obtain ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩ := hp
+  unfold iriNextStep; split <;> simp_all
+
+theorem readIriRefBodyGo_step_close {pos : Nat} {acc : String} {cs rest : List Char}
+    (h : iriNextStep pos cs = .close rest) : readIriRefBodyGo pos acc cs = .ok (acc, pos + 1, rest) := by
+  rw [readIriRefBodyGo]; split <;> simp_all
+
+theorem readIriRefBodyGo_step_fail {pos : Nat} {acc : String} {cs : List Char} {e : ParseError}
+    (h : iriNextStep pos cs = .fail e) : readIriRefBodyGo pos acc cs = .error e := by
+  rw [readIriRefBodyGo]; split <;> simp_all
+
+theorem readIriRefBodyGo_step_emit {pos w : Nat} {acc : String} {cs rest : List Char} {c : Char}
+    (h : iriNextStep pos cs = .emit c w rest) :
+    readIriRefBodyGo pos acc cs = readIriRefBodyGo (pos + w) (acc.push c) rest := by
+  rw [readIriRefBodyGo]; split <;> simp_all
+
+theorem readIriRefBodyFast_eq (n : Nat) : ∀ (cs : List Char), cs.length = n → ∀ (pos : Nat) (acc : String),
+    readIriRefBodyFast pos acc cs = readIriRefBodyGo pos acc cs := by
+  induction n using Nat.strongRecOn with
+  | ind n ih =>
+    intro cs hn pos acc
+    cases cs with
+    | nil =>
+      rw [readIriRefBodyFast, readIriRefBodyGo_step_fail (e := ⟨"unterminated IRIREF (expected '>')", pos⟩) (by simp [iriNextStep])]
+    | cons c rest =>
+      rw [readIriRefBodyFast]
+      split
+      · next hp =>
+        have hl : rest.length < n := by simp at hn; omega
+        rw [ih _ hl rest rfl, readIriRefBodyGo_step_emit (iriNextStep_plain_emit hp)]
+      · split
+        · next r h => exact (readIriRefBodyGo_step_close h).symm
+        · next e h => exact (readIriRefBodyGo_step_fail h).symm
+        · next d w r h =>
+          have hl : r.length < n := by have := iriNextStep_emit_shorter h; omega
+          rw [readIriRefBodyGo_step_emit h]
+          exact ih _ hl r rfl _ _
+
+@[csimp] theorem readIriRefBodyGo_eq_fast : @readIriRefBodyGo = @readIriRefBodyFast := by
+  funext pos acc cs
+  exact (readIriRefBodyFast_eq _ cs rfl pos acc).symm
+
 /-- The executable form of `readIriRefBody`. -/
 def readIriRefBodyTR (pos : Nat) (cs : List Char) :
     Except ParseError (String × Nat × List Char) :=
@@ -544,6 +613,73 @@ theorem readStringLiteralBodyGo_eq (pos : Nat) (acc : String) (cs : List Char) :
       simp only [Except.map]
       rw [← String.append_assoc]; rfl
 termination_by cs.length
+
+/-- A character of a string literal body that the step only emits. -/
+@[inline] def strLitPlainChar (c : Char) : Bool :=
+  !(c == '"' || c == '\\' || c == '\n' || c == '\r')
+
+/-- `readStringLiteralBodyGo` with a direct path for the plain characters: no
+`StrLitStep` is allocated for them. Every other character takes the step. -/
+def readStringLiteralBodyFast (pos : Nat) (acc : String) (cs : List Char) :
+    Except ParseError (String × Nat × List Char) :=
+  match cs with
+  | [] => .error ⟨"unterminated string literal (expected '\"')", pos⟩
+  | c :: rest =>
+    if strLitPlainChar c then readStringLiteralBodyFast (pos + 1) (acc.push c) rest
+    else
+      match h : strLitNextStep pos (c :: rest) with
+      | .close r => .ok (acc, pos + 1, r)
+      | .fail e => .error e
+      | .emit d w r =>
+        have : r.length < (c :: rest).length := strLitNextStep_emit_shorter h
+        readStringLiteralBodyFast (pos + w) (acc.push d) r
+termination_by cs.length
+decreasing_by all_goals simp_wf <;> omega
+
+theorem strLitNextStep_plain_emit {pos : Nat} {c : Char} {rest : List Char} (hp : strLitPlainChar c = true) :
+    strLitNextStep pos (c :: rest) = .emit c 1 rest := by
+  simp only [strLitPlainChar, Bool.not_eq_true', Bool.or_eq_false_iff, beq_eq_false_iff_ne, ne_eq] at hp
+  obtain ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩ := hp
+  unfold strLitNextStep; split <;> simp_all
+
+theorem readStringLiteralBodyGo_step_close {pos : Nat} {acc : String} {cs rest : List Char}
+    (h : strLitNextStep pos cs = .close rest) : readStringLiteralBodyGo pos acc cs = .ok (acc, pos + 1, rest) := by
+  rw [readStringLiteralBodyGo]; split <;> simp_all
+
+theorem readStringLiteralBodyGo_step_fail {pos : Nat} {acc : String} {cs : List Char} {e : ParseError}
+    (h : strLitNextStep pos cs = .fail e) : readStringLiteralBodyGo pos acc cs = .error e := by
+  rw [readStringLiteralBodyGo]; split <;> simp_all
+
+theorem readStringLiteralBodyGo_step_emit {pos w : Nat} {acc : String} {cs rest : List Char} {c : Char}
+    (h : strLitNextStep pos cs = .emit c w rest) :
+    readStringLiteralBodyGo pos acc cs = readStringLiteralBodyGo (pos + w) (acc.push c) rest := by
+  rw [readStringLiteralBodyGo]; split <;> simp_all
+
+theorem readStringLiteralBodyFast_eq (n : Nat) : ∀ (cs : List Char), cs.length = n → ∀ (pos : Nat) (acc : String),
+    readStringLiteralBodyFast pos acc cs = readStringLiteralBodyGo pos acc cs := by
+  induction n using Nat.strongRecOn with
+  | ind n ih =>
+    intro cs hn pos acc
+    cases cs with
+    | nil =>
+      rw [readStringLiteralBodyFast, readStringLiteralBodyGo_step_fail (e := ⟨"unterminated string literal (expected '\"')", pos⟩) (by simp [strLitNextStep])]
+    | cons c rest =>
+      rw [readStringLiteralBodyFast]
+      split
+      · next hp =>
+        have hl : rest.length < n := by simp at hn; omega
+        rw [ih _ hl rest rfl, readStringLiteralBodyGo_step_emit (strLitNextStep_plain_emit hp)]
+      · split
+        · next r h => exact (readStringLiteralBodyGo_step_close h).symm
+        · next e h => exact (readStringLiteralBodyGo_step_fail h).symm
+        · next d w r h =>
+          have hl : r.length < n := by have := strLitNextStep_emit_shorter h; omega
+          rw [readStringLiteralBodyGo_step_emit h]
+          exact ih _ hl r rfl _ _
+
+@[csimp] theorem readStringLiteralBodyGo_eq_fast : @readStringLiteralBodyGo = @readStringLiteralBodyFast := by
+  funext pos acc cs
+  exact (readStringLiteralBodyFast_eq _ cs rfl pos acc).symm
 
 /-- The executable form of `readStringLiteralBody`. -/
 def readStringLiteralBodyTR (pos : Nat) (cs : List Char) :

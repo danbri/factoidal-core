@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- XMPP: `xmpp-serve --starttls --tls-port N` serves STARTTLS and XEP-0368 direct TLS from one server.
+
 ## 0.32.0 (2026-11-05)
 
 - XMPP: stanzas are held to RFC 6120 section 11.1. A DTD, a comment or a processing instruction is refused (https://github.com/danbri/factoidal-core/pull/355). Upgrade if you run `xmpp-serve`.

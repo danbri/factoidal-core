@@ -175,6 +175,42 @@ test('starttls: handshake, injected plaintext discarded, then SASL and bind over
   }
 })
 
+test('starttls: directTlsPort serves direct TLS in the same server', async () => {
+  const cert = await makeCert()
+  const server = await serverModule.listen({
+    domain: DOMAIN, accounts: ACCOUNTS, startTls: true, directTlsPort: 0, cert: cert.cert, key: cert.key,
+    pollMs: 0, onError: () => {}
+  })
+  try {
+    const port = server.directServer.address().port
+    assert.equal(server.directOrigin, `xmpps://127.0.0.1:${port}`)
+    // In clear the first port still offers only STARTTLS.
+    const clear = client(net.connect(server.port, '127.0.0.1'))
+    clear.write(streamOpen())
+    const first = await clear.waitFor('</stream:features>')
+    assert.ok(!first.includes('mechanism'), 'no SASL mechanism before TLS')
+    clear.socket.destroy()
+    // The direct port offers SASL at once, with no STARTTLS, and logs in.
+    const c = client(tls.connect({ port, host: '127.0.0.1', rejectUnauthorized: false }))
+    c.write(streamOpen())
+    const features = await c.waitFor('</stream:features>')
+    assert.ok(!features.includes('starttls'), 'STARTTLS is not offered on direct TLS')
+    assert.match(features, /PLAIN/)
+    c.reset()
+    c.write(plainAuth('juliet', 'r0m30'))
+    await c.waitFor('<success')
+    c.socket.destroy()
+    // A raw client on the direct port never gets a stream.
+    const raw = client(net.connect(port, '127.0.0.1'))
+    raw.write(streamOpen())
+    await raw.closed()
+    assert.ok(!raw.received.includes('stream:features'))
+  } finally {
+    await server.close()
+    await rm(cert.dir, { recursive: true, force: true })
+  }
+})
+
 test('starttls: requires cert and key', async () => {
   await assert.rejects(serverModule.createXmppServer({ domain: DOMAIN, startTls: true }),
     /STARTTLS requires both cert and key/)

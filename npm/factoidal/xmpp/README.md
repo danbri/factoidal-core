@@ -66,6 +66,7 @@ mkdir -p state && printf 'juliet:r0m30\nromeo:juli3t\n' > state/accounts
 npx factoidal xmpp-serve state --domain localhost            # plaintext on 5222
 npx factoidal xmpp-serve state --cert fullchain.pem --key privkey.pem   # XEP-0368 direct TLS on 5223
 npx factoidal xmpp-serve state --cert fullchain.pem --key privkey.pem --starttls   # STARTTLS required on 5222
+npx factoidal xmpp-serve state --cert fullchain.pem --key privkey.pem --starttls --tls-port 5223   # both, one server
 ```
 
 Without `--cert` and `--key` the listener has no TLS and offers PLAIN, so
