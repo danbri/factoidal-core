@@ -1,5 +1,7 @@
 # foafnaut2525 native HTML development app
 
+The app is `foafnaut.app`, and its window title is `foafnaut - PAGE TITLE`.
+
 2026-11-05: the HTML native window presents. Started by macOS (a small `.app`
 wrapper around `run_html.ts`), the default page logged
 `native-html-presented` (1600 x 1000, 1,405 primitives, 11 links, 1 frame) on

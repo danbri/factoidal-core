@@ -206,7 +206,7 @@ int ng_clipboard_write(const char *text) {
 // The standard menu. Quit reaches applicationShouldTerminate, which sends the host
 // a close event, and Close goes through windowShouldClose. Page keys stay with Lean.
 static void installMenu(void) {
-  NSString *name=NSProcessInfo.processInfo.processName;
+  NSString *name=[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleName"] ?: NSProcessInfo.processInfo.processName;
   NSMenu *bar=[[NSMenu alloc] init];
   NSMenuItem *appItem=[bar addItemWithTitle:name action:nil keyEquivalent:@""];
   NSMenu *appMenu=[[NSMenu alloc] initWithTitle:name];
@@ -220,7 +220,6 @@ static void installMenu(void) {
   [windowMenu addItemWithTitle:@"Close" action:@selector(performClose:) keyEquivalent:@"w"];
   windowItem.submenu=windowMenu;
   NSApp.mainMenu=bar;
-  NSApp.windowsMenu=windowMenu;
 }
 void *ng_create(uint32_t width, uint32_t height) {
   if (!pthread_main_np() || window) return NULL;
@@ -229,7 +228,6 @@ void *ng_create(uint32_t width, uint32_t height) {
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     delegate = [[NGDelegate alloc] init];
     NSApp.delegate = delegate;
-    installMenu();
     window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,width,height)
       styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable
       backing:NSBackingStoreBuffered defer:NO];
@@ -250,6 +248,7 @@ void *ng_create(uint32_t width, uint32_t height) {
     [window center];
     [window makeKeyAndOrderFront:nil];
     [NSApp finishLaunching];
+    installMenu();
     [NSApp activateIgnoringOtherApps:YES];
     resizeEvent();
     [NSApp updateWindows];

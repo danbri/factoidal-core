@@ -59,7 +59,7 @@ async function main() {
   try {
     device=await adapter.requestDevice();native=await nativePreflight(()=>loadNativeWindow());
     native.setInputTrace(traceInput);
-    const windowTitle=(page:typeof document)=>`${page.title||page.url} — Lean Browser`;
+    const windowTitle=(page:typeof document)=>page.title?`foafnaut - ${page.title}`:"foafnaut";
     const handles=native.create(800,500,windowTitle(document));
     const surface=new Deno.UnsafeWindowSurface(cocoaSurfaceOptions(handles,width,height));
     native.showAfterSurface();
