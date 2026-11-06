@@ -1,11 +1,12 @@
 import L4Factoidal.Rendering.FontData
 import L4Factoidal.Rendering.FontPolicy
+import L4Factoidal.Rendering.SfntCff
 
 /-!
 # Glyph outlines from `glyf`, in Lean
 
-Reads simple and composite TrueType glyphs and writes the line and quadratic
-commands of `FontData`, in font units, unhinted. It gives the same contours as
+Reads simple and composite TrueType glyphs, and CFF glyphs through `SfntCff`, and
+writes the line, quadratic and cubic commands of `FontData`, in font units, unhinted. It gives the same contours as
 FreeType `FT_Outline_Decompose` with `FT_LOAD_NO_SCALE`, including the shift by
 left side bearing minus `xMin`. `labs/demos/foafnaut/tools/probes/outline-compare.sh`
 compares the two.
@@ -218,8 +219,14 @@ private def contourCommands (pts : Array Pt) : Array OutlineCommand := Id.run do
     | none => out.push (.line sx sy)
   return out.push .close
 
-/-- The outline of a glyph in font units; empty for a glyph with no contours. -/
-def outline (b : ByteArray) (dir : Array TableRecord) (g : Nat) : Except String (Array OutlineCommand) := do
+/-- The parsed `CFF ` table of a font, read once for all its glyphs. -/
+def cffFont (b : ByteArray) (dir : Array TableRecord) : Except String (Option SfntCff.Font) := do
+  match dir.find? (·.tag == "CFF ") with
+  | some t => return some (← SfntCff.readFont b t.offset t.length)
+  | none => return none
+
+/-- The outline of a `glyf` glyph in font units; empty for a glyph with no contours. -/
+private def glyfOutline (b : ByteArray) (dir : Array TableRecord) (g : Nat) : Except String (Array OutlineCommand) := do
   let mut pending : List (Nat × Xform × Nat) := [(g,{},0)]
   let mut metric := g
   let mut contours : Array (Array Pt) := #[]
@@ -244,5 +251,13 @@ def outline (b : ByteArray) (dir : Array TableRecord) (g : Nat) : Except String 
   for c in contours do
     out := out ++ contourCommands (c.map fun p => {p with x := p.x+dx})
   return out
+
+/-- The outline of a glyph in font units, from `glyf` or from `cff`. -/
+def outline (b : ByteArray) (dir : Array TableRecord) (g : Nat) (cff : Option SfntCff.Font := none) :
+    Except String (Array OutlineCommand) := do
+  if dir.any (·.tag == "glyf") then return ← glyfOutline b dir g
+  let some f := cff | throw "font.file.malformed: no glyf or CFF outlines"
+  let some path ← SfntCff.outline b f g | throw "font.file.malformed: CFF charstring"
+  return path
 
 end L4Factoidal.Rendering.SfntOutline

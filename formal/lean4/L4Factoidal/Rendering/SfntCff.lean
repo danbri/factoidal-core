@@ -1,4 +1,5 @@
 import L4Factoidal.Rendering.FontPolicy
+import L4Factoidal.Rendering.FontData
 
 /-!
 # CFF (version 1) glyph extents, in Lean
@@ -192,14 +193,35 @@ structure Pen where
   y : Int := 0
   open_ : Bool := false
   bounds : Bounds := { minX := 0, minY := 0, maxX := 0, maxY := 0 }
+  /-- The path in font units, and where its open contour started, in 16.16. -/
+  path : Array FontData.OutlineCommand := #[]
+  startX : Int := 0
+  startY : Int := 0
 
-def Pen.moveTo (p : Pen) (dx dy : Int) : Pen := { p with x := p.x + dx, y := p.y + dy, open_ := false }
-def Pen.start (p : Pen) : Pen := if p.open_ then p else { p with open_ := true, bounds := p.bounds.add p.x p.y }
+/-- A 16.16 value in whole font units. -/
+private def unit (v : Int) : Int :=
+  if v ≥ 0 then (v + 32768) / 65536 else -((-v + 32768) / 65536)
+
+/-- An open contour returns to its start, as `FT_Outline_Decompose` closes it. -/
+def Pen.close (p : Pen) : Pen :=
+  if !p.open_ then p else
+  let back := if unit p.x != unit p.startX || unit p.y != unit p.startY
+    then p.path.push (.line (unit p.startX) (unit p.startY)) else p.path
+  { p with path := back.push .close, open_ := false }
+def Pen.moveTo (p : Pen) (dx dy : Int) : Pen :=
+  let p := p.close
+  { p with x := p.x + dx, y := p.y + dy }
+def Pen.start (p : Pen) : Pen :=
+  if p.open_ then p else
+  { p with open_ := true, bounds := p.bounds.add p.x p.y, startX := p.x, startY := p.y,
+           path := p.path.push (.move (unit p.x) (unit p.y)) }
 def Pen.lineTo (p : Pen) (dx dy : Int) : Pen :=
   let p := p.start
   let x := p.x + dx
   let y := p.y + dy
-  { p with x, y, bounds := p.bounds.add x y }
+  -- FreeType drops a line of zero length; the bounds are HarfBuzz's and keep it.
+  { p with x, y, bounds := p.bounds.add x y,
+           path := if dx == 0 && dy == 0 then p.path else p.path.push (.line (unit x) (unit y)) }
 def Pen.curveTo (p : Pen) (a b c d e f : Int) : Pen :=
   let p := p.start
   let x1 := p.x + a
@@ -208,7 +230,8 @@ def Pen.curveTo (p : Pen) (a b c d e f : Int) : Pen :=
   let y2 := y1 + d
   let x3 := x2 + e
   let y3 := y2 + f
-  { p with x := x3, y := y3, bounds := ((p.bounds.add x1 y1).add x2 y2).add x3 y3 }
+  { p with x := x3, y := y3, bounds := ((p.bounds.add x1 y1).add x2 y2).add x3 y3,
+           path := p.path.push (.cubic (unit x1) (unit y1) (unit x2) (unit y2) (unit x3) (unit y3)) }
 
 /-- Apply the stack-clearing path operator `op` to the arguments. -/
 def pathOp (p : Pen) (op : Nat) (a : Array Int) : Except String Pen := do
@@ -282,7 +305,7 @@ def pathOp (p : Pen) (op : Nat) (a : Array Int) : Except String Pen := do
   return p
 
 /-- Run the charstring of glyph `g`. `none`: HarfBuzz gets no extents. -/
-def bounds (b : ByteArray) (f : Font) (g : Nat) : Except String (Option Bounds) := do
+def trace (b : ByteArray) (f : Font) (g : Nat) : Except String (Option Pen) := do
   let some (cs, cl) := f.charStrings[g]? | return none
   let locals := f.localSubrs[f.fdOf g]?.getD #[]
   -- Frames: (position, end). The top frame is the last element.
@@ -369,12 +392,19 @@ def bounds (b : ByteArray) (f : Font) (g : Nat) : Except String (Option Bounds) 
       let args := if !widthDone && (stack.size == 1 || stack.size == 5) then stack.extract 1 stack.size else stack
       if args.size == 4 then
         throw "font.layout.unsupported: CFF seac accent composition (https://github.com/danbri/factoidal/issues/1233)"
-      return some pen.bounds
+      return some pen
     | _ =>
       if op ≥ 1200 then
         throw s!"font.layout.unsupported: CFF charstring operator 12 {op - 1200} (https://github.com/danbri/factoidal/issues/1233)"
       return none
   return none
+
+def bounds (b : ByteArray) (f : Font) (g : Nat) : Except String (Option Bounds) :=
+  return (← trace b f g).map (·.bounds)
+
+/-- The outline of a glyph in font units; none when the charstring is malformed. -/
+def outline (b : ByteArray) (f : Font) (g : Nat) : Except String (Option (Array FontData.OutlineCommand)) :=
+  return (← trace b f g).map (·.close.path)
 
 /-- HarfBuzz `roundf` of a 16.16 value: half away from zero. -/
 def roundFixed (v : Int) : Int :=
