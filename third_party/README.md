@@ -37,6 +37,8 @@ third_party/
 │   └── rml/        submodule: https://github.com/kg-construct/rml-test-cases
 │                   (RML mapping tests; upstream repo archived but the
 │                   test corpus is stable)
+├── fonts/          open-licence fonts for the browser engine; see
+│                   fonts/README.md for source and licence notes
 ├── apache/         reserved for Apache-family test assets
 │                   (e.g. Jena ARQ test corpus, when vendored)
 ├── eleventy/       vendored npm cache: @11ty/eleventy + full dep tree

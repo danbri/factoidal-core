@@ -69,8 +69,9 @@ def outlineGeometry (ascent : Float) (outline : FontData.Outline) : Except Strin
 
 /-- Consume one already-shaped horizontal LTR word. Glyph IDs, advances,
 ligature/mark source spans and offsets come from the typed font adapter; this
-function neither substitutes characters nor computes shaping. -/
-def prepare (input : FontData.ShapedWord) : Except String Word := do
+function neither substitutes characters nor computes shaping. With `notdef`,
+a character the font lacks shows as the font's own .notdef glyph. -/
+def prepare (input : FontData.ShapedWord) (notdef : Bool := false) : Except String Word := do
   if input.direction != "ltr" then throw "unsupported font direction: horizontal LTR required"
   if input.pixelSize == 0 || input.pixelSize > 512 then throw "unsupported shaped font size: require 1 to 512 pixels"
   let m := input.metrics
@@ -89,7 +90,7 @@ def prepare (input : FontData.ShapedWord) : Except String Word := do
   let mut glyphs := #[]
   let mut pen : Float := 0
   for glyph in input.glyphs do
-    if glyph.id == 0 then throw "font provider: missing glyph0 requires fallback policy"
+    if glyph.id == 0 && !notdef then throw "font provider: missing glyph0 requires fallback policy"
     if ![glyph.xAdvance,glyph.yAdvance,glyph.xOffset,glyph.yOffset].all Float.isFinite ||
         glyph.yAdvance != 0 || glyph.xAdvance < 0 then
       throw "unsupported font glyph advance: finite horizontal nonnegative advance required"

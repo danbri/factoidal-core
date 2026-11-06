@@ -81,11 +81,20 @@ export async function prepareHTML(engine:HTMLEngine,url:string,signal?:AbortSign
     resources.push({nodeId:descriptor.nodeId,url:resource.url,source:resource.source});
   }
   const options={url:document.url,resources};
-  // No font data is supplied yet, so every page shows in the Lean bitmap face.
+  // Pages show in the font of loadFontFile, or else in the Lean bitmap face.
   signal?.throwIfAborted();
   return {
     url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,
     compile:(width:number,height:number,view:PageView={})=>engine.compile(document.source,width,height,{...options,...view}),
     selectedText:(width:number,height:number,view:PageView={})=>engine.selectedText(document.source,width,height,{...options,...view}),
   };
+}
+
+/** Give the engine a font file. Lean reads it, shapes words and takes outlines; this only moves bytes. */
+export async function loadFontFile(engine:HTMLEngine,path:string,family="font") {
+  const bytes=await Deno.readFile(path);
+  const sha=[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("");
+  let text="";
+  for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+  return engine.fontLoad(btoa(text),family,sha);
 }

@@ -97,3 +97,17 @@ refuses `FT_OUTLINE_EVEN_ODD_FILL` before writing JSON. An instrumented test bui
 loads an actual font through FreeType and sets that flag to exercise the refusal;
 it is not evidence that the tested font requires even-odd filling. A future
 schema may transport the rule for direct admission into the shared scene.
+
+## Fonts read by Lean alone
+
+The browser can draw with a font file without HarfBuzz or FreeType:
+`run_html.ts` takes `--font FONT_FILE`, and any host calls
+`loadFontFile` from `native_html_document.ts`. The `fontLoad` document operation
+gives the engine the bytes once. `L4Factoidal/Rendering/SfntProfile.lean` reads the
+file, shapes each word and takes the outlines, and the engine holds the font and the
+shaped words between renders. `third_party/fonts/noto-sans/` has an open font to use.
+
+It is not the default, because a page takes 3 to 4.5 times as long to render as with the
+bitmap face. Text the shaper refuses, such as right-to-left text, shows one
+glyph for each character without joining or bidi order. Characters the font lacks show as
+its .notdef glyph; there is no fallback to a second font yet.

@@ -1214,6 +1214,8 @@ import L4Factoidal.Rendering.FontProviderTests
 import L4Factoidal.Rendering.FontPolicy
 import L4Factoidal.Rendering.FontPolicyTests
 import L4Factoidal.Rendering.SfntOutline
+import L4Factoidal.Rendering.SfntProfile
+import L4Factoidal.Rendering.SfntProfileTests
 import L4Factoidal.Rendering.SfntOutlineTests
 import L4Factoidal.Rendering.SfntShape
 import L4Factoidal.Rendering.FontFaceTests

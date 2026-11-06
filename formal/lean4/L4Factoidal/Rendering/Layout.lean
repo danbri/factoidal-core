@@ -22,6 +22,8 @@ structure FontProfile where
   faceIndex : Nat := 0
   /-- A pure lookup of externally shaped, checked font data, never host layout. -/
   shapedWord : Option (String → Nat → Except String FontProvider.Word) := none
+  /-- Outlines scale to any size, so a fractional size is not refused. -/
+  scalable : Bool := false
 
 def FontProfile.ofFace (face : FontProvider.Face) : FontProfile :=
   {family := face.family,unitsPerEm := face.unitsPerEm,advance := 0,
@@ -33,8 +35,8 @@ private def FontProfile.word (font : FontProfile) (style : Computed) (text : Str
   match font.shapedWord with
   | none => return none
   | some shape =>
-    let size := style.fontSize.toUInt32.toNat
-    if Float.ofNat size != style.fontSize || size == 0 || size > 512 then
+    let size := if font.scalable then max 1 (min 512 style.fontSize.round.toUInt32.toNat) else style.fontSize.toUInt32.toNat
+    if !font.scalable && (Float.ofNat size != style.fontSize || size == 0 || size > 512) then
       throw "unsupported shaped font size: integer pixels 1 to 512 required"
     let word ← shape text size
     if word.text != text || word.pixelSize != size || font.fontSha256 != some word.fontSha256 ||

@@ -3,7 +3,7 @@
 import {strict as assert} from "node:assert";
 import {pathToFileURL} from "node:url";
 import {loadHTML} from "./native_html_engine.ts";
-import {inputURL,navigationURL,prepareHTML,readSource} from "./native_html_document.ts";
+import {inputURL,loadFontFile,navigationURL,prepareHTML,readSource} from "./native_html_document.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 
 let engine=await loadHTML();
@@ -173,6 +173,21 @@ Deno.test("the first website renders from its mirror, with its links",async()=>{
     const frame=(await prepareHTML(engine,new URL(path,root).href)).compile(1000,800);
     assert(frame.data.length>0,path);
   }
+});
+
+Deno.test("a font file draws the page through Lean alone, and no text stops it",async()=>{
+  const fonts=await loadHTML();
+  const page=html("<h1>World Wide Web</h1><p>office AVATAR</p><p style='font-size:13.5px'>fractional size</p><p>שלום سلام ∑ 你好</p>");
+  const options={url:"https://example.test/",resources:[]};
+  const bitmap=fonts.compile(page,800,500,options);
+  const font=new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url);
+  assert.deepEqual(await loadFontFile(fonts,font.pathname,"Noto Sans"),{family:"Noto Sans",glyphs:3884});
+  const first=fonts.compile(page,800,500,options);
+  assert.notDeepEqual(first.data,bitmap.data);
+  assert.ok(first.primitiveCount<bitmap.primitiveCount,"one primitive for each glyph, not for each bitmap cell");
+  assert.deepEqual(fonts.compile(page,800,500,options).data,first.data,"the held words draw the same page");
+  assert.throws(()=>fonts.fontLoad("not base64!","x","y"),/invalid base64/);
+  assert.throws(()=>fonts.fontLoad(btoa("not a font at all"),"x","y"),/font\.file/);
 });
 
 Deno.test("resource size, resource count, cancellation and URL schemes are bounded",async()=>{

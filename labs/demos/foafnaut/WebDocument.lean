@@ -6,6 +6,7 @@ import WebSelection
 import WebHistory
 import WebShell
 import WebGraph
+import L4Factoidal.Rendering.SfntProfile
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
 orders supplied CSS, collects font requests and renders the resulting arena.
@@ -216,9 +217,37 @@ private def inWindow (top bottom : Float) : Rendering.Node → Bool
     (t.a == 1 && t.f == 0) || (top <= t.f && t.f <= bottom)
   | _ => true
 
+/-- The font the engine holds between calls, so that a scroll does not read it again. -/
+structure HeldFont where
+  font : Rendering.SfntProfile.Font
+  memo : Rendering.SfntProfile.Memo
+
+initialize heldFontRef : IO.Ref (Option HeldFont) ← IO.mkRef none
+
+-- Without this the read does not depend on its argument, so it would run once and be kept.
+set_option compiler.extract_closed false in
+private unsafe def heldFontImpl (_ : JSON.Json) : Option HeldFont := unsafeBaseIO heldFontRef.get
+private unsafe def keepFontImpl (held : HeldFont) (_ : JSON.Json) : HeldFont :=
+  unsafeBaseIO (do heldFontRef.set (some held); return held)
+private unsafe def keepWordsImpl (words : Rendering.SfntProfile.Memo) (_ : JSON.Json) : Rendering.SfntProfile.Memo :=
+  unsafeBaseIO (do heldFontRef.modify (·.map ({· with memo := words})); return words)
+/-- These read and change the held font. The request argument keeps each call in place,
+and each returns what it kept so that the caller uses the result and the call stays. -/
+@[implemented_by heldFontImpl, noinline] private opaque heldFont (request : JSON.Json) : Option HeldFont
+@[implemented_by keepFontImpl, noinline] private opaque keepFont (held : HeldFont) (_ : JSON.Json) : HeldFont := held
+@[implemented_by keepWordsImpl, noinline] private opaque keepWords (words : Rendering.SfntProfile.Memo) (request : JSON.Json) : Rendering.SfntProfile.Memo
+
+/-- Read a font file once. Later renders use it until another replaces it. -/
+private def loadFont (request : JSON.Json) : Except String String := do
+  let some bytes := Rendering.SfntProfile.decodeBase64 (str request "fontBase64") | throw "font file: invalid base64"
+  let font ← Rendering.SfntProfile.Font.read bytes (str request "fontFamily" "font") (str request "fontSha256" "unnamed")
+  let held := keepFont ⟨font,{}⟩ request
+  return (JSON.Json.object [("family",.string held.font.family),("glyphs",.number (toString held.font.face.numGlyphs))]).toString
+
 def run (html : String) (request : JSON.Json) (width height : Nat) : Except String String := do
   let .object fields := request | throw "document request must be an object"
   if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
+  if str request "op" == "fontLoad" then return ← loadFont request
   if str request "op" == "xmlStylesheet" then
     let url := match ← WebXslt.stylesheetHref html with
       | some href => JSON.Json.string (Syntax.resolveIri (str request "url") href)
@@ -244,7 +273,13 @@ def run (html : String) (request : JSON.Json) (width height : Nat) : Except Stri
     let _ ← WebRenderFontRequests.collectDOMWithRules dom rules textScale
   let face ← if fontData.isEmpty then pure none else
     some <$> Rendering.FontProvider.Face.decode fontData
-  let font := match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont
+  -- A font loaded by the fontLoad op: Lean shapes the words and takes the outlines.
+  let loaded := heldFont request
+  let memo := loaded.map fun held => Rendering.SfntProfile.remember held.font held.memo (Rendering.SfntProfile.wordsOf dom)
+  let font ← match loaded,memo with
+    | some held,some words =>
+      Rendering.SfntProfile.profile held.font (keepWords words request)
+    | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   let url := baseURL dom (str request "url")
   let embedding ← WebRender.makeEmbedding dom (if url.isEmpty then none else some url)
   let shell := (request.field? "shell").map WebShell.Shell.ofJson
