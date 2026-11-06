@@ -259,9 +259,9 @@ def digestOne (stage path : String) : IO Unit := do
     | none => throw (IO.userError s!"unknown stage {stage}")
 
 def digestLines (stage : String) (h : IO.FS.Stream) : IO Unit := do
-  repeat
+  for _ in [:1000000000] do
     let line ← h.getLine
-    if line.isEmpty then break
+    if line.isEmpty then return
     digestOne stage (line.trimAscii.toString)
 
 def main : List String → IO UInt32

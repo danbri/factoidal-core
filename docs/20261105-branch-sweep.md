@@ -14,7 +14,7 @@ Each batch was verified on a temporary branch `sweep/batch-N` with a `workflow_d
 another ref does not cancel the check on `main`, and no local Lean build of the whole library was needed.
 `L4Factoidal/XProc31` is outside those targets, so it was built locally with `lake build l4xproc`.
 
-Status: batch 1 is in verification. Rows marked LANDED join main with the batch-1 push. The file is updated with each batch.
+Status, 2026-11-06 12:15 UTC: rows marked "LANDED (batch 1)" are NOT on main yet. They wait for one CI gate on `sweep/batch-2` (compiled recursion). The other gates are green. A reboot stopped the sweep for 12 hours. 37 branches are archived and deleted. The file is updated with each batch.
 
 | Branch | Outcome | Commit on main, or tag | Reason |
 | --- | --- | --- | --- |
