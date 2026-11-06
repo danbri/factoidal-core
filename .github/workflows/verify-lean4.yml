@@ -59,7 +59,9 @@ permissions:
 
 concurrency:
   group: verify-lean4-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # On main a run finishes and only the newest push waits: pushes are frequent, and
+  # cancelling left 26 of 30 runs with no result. Other branches still cancel.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build:

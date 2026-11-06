@@ -1,15 +1,18 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>foafnaut2525 project status</title><style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:white}main{width:640px}h1{margin:0;font-size:21px;line-height:28px;color:#184078}h2{margin:0;padding-top:14px;font-size:16px;line-height:24px;color:#184078}p{margin:0;padding-top:6px}</style></head><body><main>
 <h1>foafnaut2525 project status</h1>
-<p>5 November 2026. The engine that this note describes renders it too: choose Project status in the Lean HTML page below. The rendering is plain ASCII text with no script.</p>
+<p>6 November 2026. The engine that this note describes renders it too: choose Project status in the Lean HTML page below. The rendering is plain ASCII text with no script.</p>
 <p>foafnaut2525 is a web rendering engine written in Lean. It aims to become a browser. It is not the FOAF social network application that it is named after.</p>
 <h2>Where it is</h2>
 <p>- The engine parses HTML, computes CSS, lays out text and boxes, and draws with WebGPU.</p>
-<p>- It runs in a web page, and in its own macOS window.</p>
+<p>- It runs in a web page, in its own macOS window, and as a sandboxed guest.</p>
 <p>- Page scripts run in a local development bundle. Real sites mostly do not load yet.</p>
 <p>- The rendered note uses an ASCII bitmap font. Real fonts are the next large step.</p>
-<p>- The engine has no scrolling yet. A long page needs a tall canvas.</p>
 <h2>This week</h2>
+<p>- The browser has a face: tabs, an address bar for URLs, searches and commands, settings, scrolling, back and forward, zoom, copy and view source. All of it is drawn by Lean.</p>
+<p>- XML pages run their XSLT stylesheet, version 1.0 or 3.0 and 4.0, then render the result.</p>
+<p>- SVG text draws from SVG fonts, and all 496 W3C SVG Tiny tests are scored with WebGPU pixels.</p>
+<p>- The macOS app is built by CI from current code: run foafnaut --install-latest.</p>
 <p>- Frame time fell from 2,278 ms to 209 ms, for the same image. Each screen tile now has its own list of primitives.</p>
 <p>- The native window draws. It lays pages out again during a window drag.</p>
 <p>- The Lean text shaper and the font safety policy are on main.</p>
@@ -26,7 +29,8 @@
 <p>- A named release every day: one to three, never four.</p>
 <p>- Real fonts, with outlines and shaping in Lean.</p>
 <p>- Faster layout. It is now the largest part of a frame. This note takes about 2 seconds to lay out in the browser, and 63 ms to draw.</p>
-<p>- An address bar, and pages from the real web.</p>
+<p>- Pages from the real web.</p>
+<p>- The interactive FOAF graph inside the browser.</p>
 <h2>Read more</h2>
 <p>- <a href="https://github.com/danbri/factoidal/issues/1245">Objectives and key results</a></p>
 <p>- <a href="https://github.com/danbri/factoidal-core">Source code</a></p>
