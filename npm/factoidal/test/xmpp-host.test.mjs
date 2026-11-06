@@ -33,6 +33,7 @@ function engine (feed = () => ({})) {
         close: false, bare: null, full: null, bufferedBytes: 0, ...feed(args[1]) }
       case 'xmppRosterGet': return { encoded: state.roster }
       case 'xmppRosterSet': return {}
+      case 'xmppClock': return {}
       default: throw new Error(`unexpected mock operation: ${op}`)
     }
   } }

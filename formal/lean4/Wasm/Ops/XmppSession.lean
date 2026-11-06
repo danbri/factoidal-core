@@ -20,6 +20,8 @@ socket read, perform what it answers.
     -> {"ok":true,"encoded":"…","items":[{"jid","name","subscription","ask"},…]}
   xmppRosterSet(serverHandle, bareJid, encoded)
     -> {"ok":true}
+  xmppClock(serverHandle, seconds)
+    -> {"ok":true}
   xmppClose(serverHandle)
     -> {"ok":true,"sessions":N}
 
@@ -139,7 +141,27 @@ structure XmppServerConfig where
   persist : Bool := false
   /-- The failed SASL login limit (on unless `disableRateLimits`). -/
   limits : L4Factoidal.Net.LoginLimit.Limits := {}
+  /-- The caps of the stanzas held for offline accounts, from `"heldLimits"`. -/
+  heldCaps : Held.Caps := {}
+  /-- How many stanzas one account may have held in one window (on unless
+  `disableRateLimits`), from `"heldLimits"`. -/
+  senderLimits : L4Factoidal.Net.LoginLimit.Limits := { maxFailures := 60, window := 60 }
   deriving Inhabited
+
+/-- `heldLimits`: any of `perAccount`, `perAccountBytes`, `total`, `totalBytes`, `senderPerWindow`
+and `senderWindow`, each a number; what is absent keeps its default. -/
+private def heldLimitsOf (j : Json) (disabled : Bool) :
+    Held.Caps × L4Factoidal.Net.LoginLimit.Limits :=
+  let l := (j.field? "heldLimits").getD (.object [])
+  let d : Held.Caps := {}
+  let r : L4Factoidal.Net.LoginLimit.Limits := { maxFailures := 60, window := 60 }
+  ({ perAccount := (natField? l "perAccount").getD d.perAccount
+     perAccountBytes := (natField? l "perAccountBytes").getD d.perAccountBytes
+     total := (natField? l "total").getD d.total
+     totalBytes := (natField? l "totalBytes").getD d.totalBytes },
+   { r with enabled := !disabled
+            maxFailures := (natField? l "senderPerWindow").getD r.maxFailures
+            window := (natField? l "senderWindow").getD r.window })
 
 def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
   match parseJson text with
@@ -171,11 +193,13 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
           (gc3Domain.isSome && (gc3Domain == mucDomain || gc3Domain == mixDomain)) then
         .error "config: \"gc3Domain\" must be a domain of its own"
       else
-        .ok { domain, saltB64, iterationCount, accounts,
+        let disabled := (j.getBool? "disableRateLimits").getD false
+        let (heldCaps, senderLimits) := heldLimitsOf j disabled
+        .ok { domain, saltB64, iterationCount, accounts, heldCaps, senderLimits,
               tlsCarrier := (j.getBool? "tlsCarrier").getD false, mucDomain, mixDomain, gc3Domain,
               mucMembers := (mucMembers.bind id).getD [],
               persist := (j.getBool? "persist").getD false,
-              limits := if (j.getBool? "disableRateLimits").getD false then { enabled := false } else {} }
+              limits := if disabled then { enabled := false } else {} }
 
 -- A member list reaches the config; a malformed one stops the start.
 #guard
@@ -211,7 +235,10 @@ structure XmppOpenServer where
   /-- The counters of the failed SASL login limit, shared by every session
   of this server (https://github.com/danbri/factoidal/issues/1128). -/
   failures : L4Factoidal.Net.LoginLimit.Failures := {}
-  /-- The host's clock, in seconds: the latest `now` of `xmppSessionOpen`. -/
+  /-- The counters of the sender rate on held stanzas (`Held.admit`). -/
+  senders : L4Factoidal.Net.LoginLimit.Failures := {}
+  /-- The host's clock, in seconds: the latest `now` of `xmppSessionOpen` or
+  `xmppClock`. -/
   now : Nat := 0
 
 /-- One open client connection on a server. -/
@@ -268,27 +295,45 @@ structure XmppCollected where
   server and call `xmppSessionTlsUp` when it finishes. -/
   startTls : Bool := false
 
-private def perform (srv : XmppOpenServer) (c : XmppCollected) : Out → XmppOpenServer × XmppCollected
+/-- Hold a stanza for an account with no bound session (RFC 6121 section 8.5.2.1.1), within the
+caps and, for a stanza a session sent, the sender's rate. Held, it is one new item of the kept
+state. Past a limit, a message is answered `resource-constraint` (RFC 6120 section 8.3.3.18);
+anything else is dropped, as a stanza of a service (no `sender`) is. -/
+private def holdStanza (srv : XmppOpenServer) (c : XmppCollected) (sender : Option String)
+    (bare text : String) : XmppOpenServer × XmppCollected :=
+  let (h', senders', v) := Held.admit srv.held srv.cfg.senderLimits srv.senders srv.now sender bare text
+  let srv' := { srv with held := h', senders := senders' }
+  match v with
+  | .held seq =>
+    (srv', { c with store := c.store ++ (if srv.cfg.persist then
+      [(StateCodec.heldItemPath bare seq, StateCodec.encodeHeld [text])] else []) })
+  | _ =>
+    if sender.isNone then (srv', c)
+    else match (Wire.parseElement text).bind Core.Stanza.ofXml with
+      | some st =>
+        if st.kind == .message && st.type != some "error" then
+          (srv', { c with send := c.send ++ [Server.stanzaError .message st.id
+            (st.from_.map Jid.render) (some bare) "wait" "resource-constraint"] })
+        else (srv', c)
+      | none => (srv', c)
+
+/-- Hand a stanza to the host for a bound account, or hold it. -/
+private def routeOrHold (srv : XmppOpenServer) (c : XmppCollected) (sender : Option String)
+    (bare text : String) : XmppOpenServer × XmppCollected :=
+  if srv.bound.any (fun f => Server.bareOf f == bare) then
+    (srv, { c with route := c.route ++ [(bare, text)] })
+  else holdStanza srv c sender bare text
+
+/-- A service's stanzas to accounts: delivered or held, with no sender rate. -/
+private def routeHeldAll (srv : XmppOpenServer) (c : XmppCollected) (ds : List (String × String)) :
+    XmppOpenServer × XmppCollected :=
+  ds.foldl (fun acc d => routeOrHold acc.1 acc.2 none d.1 d.2) (srv, c)
+
+/-- `sender`: the bare JID of the session the actions are for. -/
+private def perform (sender : Option String) (srv : XmppOpenServer) (c : XmppCollected) :
+    Out → XmppOpenServer × XmppCollected
   | .send text => (srv, { c with send := c.send ++ [text] })
-  | .route bare text =>
-    if srv.bound.any (fun f => Server.bareOf f == bare) then
-      (srv, { c with route := c.route ++ [(bare, text)] })
-    else
-      -- RFC 6121 section 8.5.2.1.1: no bound session; hold it, within the bounds.
-      let (h', ok) := Held.hold srv.held bare text
-      if ok then ({ srv with held := h' },
-        { c with store := c.store ++ (if srv.cfg.persist then
-            [(StateCodec.pathOf "held" bare, StateCodec.encodeHeld (h'.of bare))] else []) })
-      else
-        -- RFC 6120 section 8.3.3.18: past a bound, a message is answered
-        -- `resource-constraint`; anything else is dropped.
-        match (Wire.parseElement text).bind Core.Stanza.ofXml with
-        | some st =>
-          if st.kind == .message && st.type != some "error" then
-            (srv, { c with send := c.send ++ [Server.stanzaError .message st.id
-              (st.from_.map Jid.render) (some bare) "wait" "resource-constraint"] })
-          else (srv, c)
-        | none => (srv, c)
+  | .route bare text => routeOrHold srv c sender bare text
   | .routeFull full text bounce => (srv, { c with routeFull := c.routeFull ++ [(full, text, bounce)] })
   | .muc fromFull text =>
     -- The room service: one step over the server's shared rooms; every
@@ -307,11 +352,11 @@ private def perform (srv : XmppOpenServer) (c : XmppCollected) : Out → XmppOpe
       let (svc', ds) := Mix.step svc fromFull st
       let changed := svc'.channels.filter (fun ch => svc.channel? ch.name != some ch)
       let gone := svc.channels.filter (fun ch => (svc'.channel? ch.name).isNone)
-      ({ srv with mix := some svc' },
-       { c with route := c.route ++ (ds.filter (·.held)).map (fun d => (d.to, d.render)),
-                routeFull := c.routeFull ++ (ds.filter (!·.held)).map (fun d => (d.to, d.render, none)),
-                store := c.store ++ (if srv.cfg.persist then changed.map (fun ch => (StateCodec.pathOf "mix" ch.name, StateCodec.encodeChannel ch)) else []),
-                unstore := c.unstore ++ (if srv.cfg.persist then gone.map (fun ch => StateCodec.pathOf "mix" ch.name) else []) })
+      routeHeldAll { srv with mix := some svc' }
+        { c with routeFull := c.routeFull ++ (ds.filter (!·.held)).map (fun d => (d.to, d.render, none)),
+                 store := c.store ++ (if srv.cfg.persist then changed.map (fun ch => (StateCodec.pathOf "mix" ch.name, StateCodec.encodeChannel ch)) else []),
+                 unstore := c.unstore ++ (if srv.cfg.persist then gone.map (fun ch => StateCodec.pathOf "mix" ch.name) else []) }
+        ((ds.filter (·.held)).map (fun d => (d.to, d.render)))
     | _, _ => (srv, c)
   | .gc3 fromFull text =>
     -- GC3 prototype: membership is the account's, so group traffic to a member
@@ -321,11 +366,11 @@ private def perform (srv : XmppOpenServer) (c : XmppCollected) : Out → XmppOpe
       let (svc', ds) := Gc3.step svc fromFull st
       let changed := svc'.groups.filter (fun g => svc.group? g.name != some g)
       let gone := svc.groups.filter (fun g => (svc'.group? g.name).isNone)
-      ({ srv with gc3 := some svc' },
-       { c with route := c.route ++ (ds.filter (·.held)).map (fun d => (d.to, d.render)),
-                routeFull := c.routeFull ++ (ds.filter (!·.held)).map (fun d => (d.to, d.render, none)),
-                store := c.store ++ (if srv.cfg.persist then changed.map (fun g => (StateCodec.pathOf "gc3" g.name, StateCodec.encodeGroup g)) else []),
-                unstore := c.unstore ++ (if srv.cfg.persist then gone.map (fun g => StateCodec.pathOf "gc3" g.name) else []) })
+      routeHeldAll { srv with gc3 := some svc' }
+        { c with routeFull := c.routeFull ++ (ds.filter (!·.held)).map (fun d => (d.to, d.render, none)),
+                 store := c.store ++ (if srv.cfg.persist then changed.map (fun g => (StateCodec.pathOf "gc3" g.name, StateCodec.encodeGroup g)) else []),
+                 unstore := c.unstore ++ (if srv.cfg.persist then gone.map (fun g => StateCodec.pathOf "gc3" g.name) else []) }
+        ((ds.filter (·.held)).map (fun d => (d.to, d.render)))
     | _, _ => (srv, c)
   | .saveRoster bare encoded =>
       ({ srv with rosters := srv.rosters.insert bare (rosterDecode encoded) },
@@ -340,11 +385,12 @@ private def perform (srv : XmppOpenServer) (c : XmppCollected) : Out → XmppOpe
   | .close => (srv, { c with close := true })
   | .startTls => (srv, { c with startTls := true })
 
-private def performAll (srv : XmppOpenServer) (c : XmppCollected) : List Out → XmppOpenServer × XmppCollected
+private def performAll (sender : Option String) (srv : XmppOpenServer) (c : XmppCollected) :
+    List Out → XmppOpenServer × XmppCollected
   | [] => (srv, c)
   | o :: os =>
-    let (srv', c') := perform srv c o
-    performAll srv' c' os
+    let (srv', c') := perform sender srv c o
+    performAll sender srv' c' os
 
 /-- A session's full JID changed by one step (it bound, or it closed): keep
 `bound`, and hand a newly bound account what was held for it, oldest first. -/
@@ -359,8 +405,10 @@ def bindTransition (srv : XmppOpenServer) (c : XmppCollected) (before after : Op
       let bare := Server.bareOf f
       let (out, h') := Held.release srv.held bare
       ({ srv with bound := kept ++ [f], held := h' },
-       { c with route := c.route ++ out.map (fun t => (bare, t)),
-                unstore := if out.isEmpty || !srv.cfg.persist then c.unstore else c.unstore ++ [StateCodec.pathOf "held" bare] })
+       { c with route := c.route ++ out.map (fun i => (bare, i.text)),
+                -- The older one-resource form too: it may be there, and a delete of nothing is nothing.
+                unstore := if out.isEmpty || !srv.cfg.persist then c.unstore
+                  else c.unstore ++ [StateCodec.pathOf "held" bare] ++ out.map (fun i => StateCodec.heldItemPath bare i.seq) })
 
 /-- The buffer left after a unit's actions. When they ask for the TLS
 upgrade it is EMPTY: those bytes arrived in clear after `<starttls/>`,
@@ -390,7 +438,7 @@ def drain (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected) :
       | none => (srv, os, c)
       | some (unit, rest) =>
         if os.units ≥ os.maxUnits then
-          let (srv', c') := performAll srv c
+          let (srv', c') := performAll os.session.bareJid srv c
             (Server.streamError "policy-violation" "too many stream units")
           (srv', { os with buffer := rest, closed := true }, { c' with close := true })
         else
@@ -400,7 +448,7 @@ def drain (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected) :
           let guard : Server.AuthGuard :=
             { limits := srv.cfg.limits, failures := srv.failures, now := srv.now, address := os.address }
           let (s', env', outs) := Server.step os.session { roster, guard } unit
-          let (srv', c') := performAll { srv with failures := env'.guard.failures } c outs
+          let (srv', c') := performAll os.session.bareJid { srv with failures := env'.guard.failures } c outs
           let (srv'', c'') := bindTransition srv' c' os.session.fullJid s'.fullJid
           let closed := c''.close || s'.stage == .closed
           drain srv''
@@ -457,7 +505,8 @@ def xmppOpen (configJson : String) : IO String := do
       let muc : Option Muc.Service := cfg.mucDomain.map (fun d => { domain := d, memberLists := cfg.mucMembers })
       let mix : Option Mix.Service := cfg.mixDomain.map (fun d => { domain := d })
       let gc3 : Option Gc3.Service := cfg.gc3Domain.map (fun d => { domain := d })
-      xmppServers.modify (·.insert h { cfg := cfg, rosters := ∅, presence := ∅, muc := muc, mix := mix, gc3 := gc3 })
+      xmppServers.modify (·.insert h { cfg := cfg, rosters := ∅, presence := ∅, muc := muc, mix := mix, gc3 := gc3,
+                                       held := { caps := cfg.heldCaps } })
       pure (okWith [ ("handle", .string h)
                    , ("domain", .string cfg.domain)
                    , ("accounts", .number (toString cfg.accounts.length))
@@ -475,6 +524,16 @@ def xmppClose (h : String) : IO String := do
     pure (okWith [("sessions", .number (toString mine.length))])
   else
     pure (unknownXmppServer h)
+
+/-- `xmppClock(serverHandle, seconds)`: the host's clock, which only moves forward. The rate
+limits read it, so a host calls this when the second changes, not only when a connection opens. -/
+def xmppClock (server seconds : String) : IO String := do
+  match (← xmppServers.get)[server]?, seconds.toNat? with
+  | none, _ => pure (unknownXmppServer server)
+  | _, none => pure (errJson "xmppClock: seconds must be a number")
+  | some srv, some now =>
+    xmppServers.modify (·.insert server { srv with now := max srv.now now })
+    pure (okWith [])
 
 /-- `xmppSessionOpen(serverHandle, {"streamId","nonce","tlsCarrier"?,"maxUnits"?,
 "remoteAddress"?,"now"?})`. `remoteAddress` (the socket's) and `now` (the
@@ -673,7 +732,7 @@ def stepOneUnit (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected
     (unit : Framing.Unit) : XmppOpenServer × XmppOpenSession × XmppCollected :=
   if os.closed then (srv, os, c)
   else if os.units ≥ os.maxUnits then
-    let (srv', c') := performAll srv c (Server.streamError "policy-violation" "too many stream units")
+    let (srv', c') := performAll os.session.bareJid srv c (Server.streamError "policy-violation" "too many stream units")
     (srv', { os with closed := true }, { c' with close := true })
   else
     let roster := match os.session.bareJid with
@@ -682,7 +741,7 @@ def stepOneUnit (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected
     let guard : Server.AuthGuard :=
       { limits := srv.cfg.limits, failures := srv.failures, now := srv.now, address := os.address }
     let (s', env', outs) := Server.step os.session { roster, guard } unit
-    let (srv', c') := performAll { srv with failures := env'.guard.failures } c outs
+    let (srv', c') := performAll os.session.bareJid { srv with failures := env'.guard.failures } c outs
     let (srv'', c'') := bindTransition srv' c' os.session.fullJid s'.fullJid
     (srv'', { os with session := s', units := os.units + 1, closed := c''.close || s'.stage == .closed }, c'')
 
@@ -958,10 +1017,10 @@ def xmppStateLoad (server path text : String) : IO String := do
   | none => pure (unknownXmppServer server)
   | some srv =>
     match path.splitOn "/" with
-    | ["", "xmpp", kind, hex] =>
-      match StateCodec.nameOfHex hex with
+    | ["", "xmpp", kind, segment] =>
+      match (StateCodec.segmentOf segment).bind (fun (hex, seq) => (StateCodec.nameOfHex hex).map (·, seq)) with
       | none => pure (errJson s!"xmppStateLoad: {path}: the name is not hex of UTF-8")
-      | some name =>
+      | some (name, seq) =>
         let install (srv' : XmppOpenServer) : IO String := do
           xmppServers.modify (·.insert server srv')
           pure (okWith [("loaded", .string kind)])
@@ -969,7 +1028,9 @@ def xmppStateLoad (server path text : String) : IO String := do
         | "roster" => install { srv with rosters := srv.rosters.insert name (rosterDecode text) }
         | "held" =>
           match StateCodec.decodeHeld text with
-          | some q => install { srv with held := srv.held.put name q }
+          | some q =>
+            -- A numbered item is one stanza; an unnumbered resource is a queue of an older run.
+            install { srv with held := q.foldl (fun h t => Held.restore h ⟨name, seq.getD 0, t⟩) srv.held }
           | none => pure (errJson s!"xmppStateLoad: {path}: not a held queue")
         | "mix" =>
           match srv.mix, StateCodec.decodeChannel text with
@@ -988,7 +1049,7 @@ def xmppStateLoad (server path text : String) : IO String := do
 def xmppSessionOpNames : List String :=
   [ "xmppOpen", "xmppClose"
   , "xmppSessionOpen", "xmppSessionFeed", "xmppSessionDeliver", "xmppSessionClose"
-  , "xmppSessionTlsUp", "xmppRosterGet", "xmppRosterSet", "xmppWsOpen", "xmppStateLoad"
+  , "xmppSessionTlsUp", "xmppRosterGet", "xmppRosterSet", "xmppWsOpen", "xmppStateLoad", "xmppClock"
   , "xmppMsgOpen", "xmppMsgFeed", "xmppMsgDeliver", "xmppMsgClose" ]
 
 

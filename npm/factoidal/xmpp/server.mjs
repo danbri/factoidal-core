@@ -52,7 +52,7 @@ import { createXmppRouter } from './router.mjs'
 export const XMPP_SERVER_OPS = [
   'xmppOpen', 'xmppClose',
   'xmppSessionOpen', 'xmppSessionFeed', 'xmppSessionDeliver', 'xmppSessionClose',
-  'xmppSessionTlsUp', 'xmppRosterGet', 'xmppRosterSet', 'xmppWsOpen', 'xmppStateLoad'
+  'xmppSessionTlsUp', 'xmppRosterGet', 'xmppRosterSet', 'xmppWsOpen', 'xmppStateLoad', 'xmppClock'
 ]
 
 /** An error raised by this host, as opposed to one the engine reported.
@@ -123,7 +123,11 @@ function randomToken (bytes = 18) {
  * @param {string} [options.saltB64] the SCRAM salt, base64
  * @param {number} [options.iterationCount] the SCRAM iteration count
  * @param {boolean} [options.tlsCarrier] whether the carrier terminates TLS
- * @param {boolean} [options.disableRateLimits] no failed SASL login limit (`--dangerously-disable-ratelimits`)
+ * @param {boolean} [options.disableRateLimits] no failed SASL login limit and no sender rate on
+ *   held stanzas (`--dangerously-disable-ratelimits`)
+ * @param {object} [options.heldLimits] caps of the stanzas held for offline accounts, each a
+ *   number: `perAccount`, `perAccountBytes`, `total`, `totalBytes`, `senderPerWindow`,
+ *   `senderWindow` (seconds); what is absent keeps the engine's default
  * @param {object} [options.engine] an engine handle to reuse
  * @returns {Promise<{engine: object, handle: string, domain: string,
  *   openSession: Function, roster: Function, setRoster: Function, close: Function}>}
@@ -151,6 +155,7 @@ export async function openXmppServer (options = {}) {
   // The failed SASL login limit is on unless the operator turns it off
   // (https://github.com/danbri/factoidal/issues/1128); the engine decides.
   if (options.disableRateLimits === true) config.disableRateLimits = true
+  if (options.heldLimits && typeof options.heldLimits === 'object') config.heldLimits = options.heldLimits
   let opened
   try {
     opened = engine.call('xmppOpen', [JSON.stringify(config)])
@@ -166,6 +171,19 @@ export async function openXmppServer (options = {}) {
     throw new XmppHostError('xmppOpen answered with no handle')
   }
   const handle = opened.handle
+  // The rate limits read the host's clock: tell the engine when the second changes.
+  let lastSecond = 0
+  const tick = () => {
+    const now = Math.floor(Date.now() / 1000)
+    if (now === lastSecond) return
+    lastSecond = now
+    try {
+      engine.call('xmppClock', [handle, String(now)])
+    } catch (error) {
+      // An older engine has no such op, and no limit that reads it.
+      if (!isUnknownOp(error)) throw error
+    }
+  }
   // An older engine ignores the list, and the rooms would be open: do not start.
   if (Array.isArray(options.mucMembers) && opened.mucMembers !== options.mucMembers.length) {
     engine.call('xmppClose', [handle])
@@ -178,6 +196,7 @@ export async function openXmppServer (options = {}) {
     accounts: typeof opened.accounts === 'number' ? opened.accounts : undefined,
     /** The engine's start warnings (--dangerously-disable-ratelimits). */
     warnings: Array.isArray(opened.warnings) ? opened.warnings : [],
+    tick,
     /**
      * One client connection.
      * `remoteAddress` (the socket's) and the clock go to the engine for the
@@ -202,6 +221,7 @@ export async function openXmppServer (options = {}) {
         handle: session,
         /** Feed received text; returns the engine's answer document. */
         feed (text) {
+          tick()
           return engine.call('xmppSessionFeed', [session, text])
         },
         /** The TLS handshake a feed asked for (`startTls: true`) finished. */
@@ -658,6 +678,7 @@ export async function createXmppServer (options = {}) {
       if (!connections.has(c) || c.closing) return
       let got
       try {
+        xmpp.tick()
         got = wsCall('xmppWsFeed', [handle], new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength))
       } catch (error) {
         onError(error)

@@ -836,8 +836,9 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
                    no published GC3 spec; every wire format is invented and listed
                    in L4Factoidal/XMPP/Gc3.lean and danbri/factoidal issue 1236
   --dangerously-disable-ratelimits
-                   no failed SASL login limit (a warning is printed at
-                   start); any client can then try passwords without end
+                   no failed SASL login limit and no sender rate on held
+                   messages (a warning is printed at start); any client can
+                   then try passwords without end
 
 Failed SASL logins are limited by default
 (https://github.com/danbri/factoidal/issues/1128): after 5 failed logins in

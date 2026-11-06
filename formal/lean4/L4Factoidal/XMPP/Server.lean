@@ -296,7 +296,8 @@ def AuthGuard.fail (g : AuthGuard) (user : String) : AuthGuard :=
 def saslLimitWarnings (l : L4Factoidal.Net.LoginLimit.Limits) : List String :=
   if l.enabled then []
   else ["--dangerously-disable-ratelimits: failed SASL logins are NOT limited; any client that can reach this port " ++
-        "can try passwords without end (https://github.com/danbri/factoidal/issues/1128)"]
+        "can try passwords without end (https://github.com/danbri/factoidal/issues/1128). " ++
+        "Held stanzas have no sender rate; their caps stay on"]
 
 /-! ## Session state -/
 

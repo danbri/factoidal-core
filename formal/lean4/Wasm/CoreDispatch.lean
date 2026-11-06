@@ -148,7 +148,7 @@ def fullOnlyOpNames : List String :=
   , "xmppJidParse", "xmppJidRender", "xmppStreamHeaderParse"
   , "xmppStreamHeaderRender", "xmppFeaturesFor", "xmppStanzaParse"
   , "xmppOpen", "xmppClose", "xmppSessionOpen", "xmppSessionFeed"
-  , "xmppSessionDeliver", "xmppSessionClose", "xmppSessionTlsUp", "xmppRosterGet", "xmppRosterSet", "xmppStateLoad"
+  , "xmppSessionDeliver", "xmppSessionClose", "xmppSessionTlsUp", "xmppRosterGet", "xmppRosterSet", "xmppStateLoad", "xmppClock"
   , "xmppWsOpen", "xmppWsFeed", "xmppWsDeliver", "xmppWsClose"
   , "xmppMsgOpen", "xmppMsgFeed", "xmppMsgDeliver", "xmppMsgClose"
   , "xmppClientOpen", "xmppClientFeed", "xmppClientAnswer", "xmppClientClose"

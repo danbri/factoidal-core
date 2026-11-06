@@ -214,6 +214,19 @@ def nameOfHex (h : String) : Option String :=
 
 def pathOf (kind name : String) : String := "/xmpp/" ++ kind ++ "/" ++ hexOf name
 
+/-- Where one held stanza is kept: `/xmpp/held/<account in hex>.<seq>`, so holding a stanza writes
+that stanza and no other. `pathOf "held"` is the older form, one resource for a whole queue, which
+a start still reads and a release still deletes. -/
+def heldItemPath (bare : String) (seq : Nat) : String :=
+  pathOf "held" bare ++ "." ++ seq.repr
+
+/-- The last segment of a state path: the name in hex, and the `seq` of a held item. -/
+def segmentOf (s : String) : Option (String × Option Nat) :=
+  match s.splitOn "." with
+  | [hex] => some (hex, none)
+  | [hex, n] => (decimal? n).map (fun k => (hex, some k))
+  | _ => none
+
 /-! ## Checks -/
 
 #guard decodeHeld (encodeHeld ["<message/>", "a;b+c", ""]) == some ["<message/>", "a;b+c", ""]
@@ -223,5 +236,10 @@ def pathOf (kind name : String) : String := "/xmpp/" ++ kind ++ "/" ++ hexOf nam
 #guard nameOfHex (hexOf "Grüße/../x") == some "Grüße/../x"
 #guard pathOf "held" "r@x" == "/xmpp/held/72407"   ++ "8"
 #guard decodeChannel "garbage" == none
+#guard heldItemPath "r@x" 12 == pathOf "held" "r@x" ++ ".12"
+#guard segmentOf "7240.12" == some ("7240", some 12)
+#guard segmentOf "7240" == some ("7240", none)
+#guard segmentOf "7240.x" == none
+#guard segmentOf "7240.1.2" == none
 
 end L4Factoidal.XMPP.StateCodec

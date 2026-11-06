@@ -106,7 +106,11 @@ export async function openInPageXmppServer (options = {}) {
       send (message) {
         if (!open) throw new Error('the in-page XMPP connection is closed')
         let answer
-        try { answer = engine.call('xmppMsgFeed', [session, String(message)]) } catch (error) { onError(error); end(); return }
+        try {
+          // The rate limits read the host's clock.
+          engine.call('xmppClock', [handle, String(Math.floor(Date.now() / 1000))])
+          answer = engine.call('xmppMsgFeed', [session, String(message)])
+        } catch (error) { onError(error); end(); return }
         emit(answer.send || [])
         router.apply(c, answer)
         if (answer.close === true) end()

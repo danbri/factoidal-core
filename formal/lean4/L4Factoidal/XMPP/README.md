@@ -692,3 +692,21 @@ run unchanged against a server in the same page. The routing table is now one mo
 `npm/factoidal/test/xmpp-inpage.test.mjs` (two clients, one through the WebSocket shape, in a MUC
 room). First user: the FoafOS shell's bus room (danbri/glitchcan-minigam,
 `docs/foafos-chat-20261103.md`).
+
+## 2026-11-06: held stanzas: one write each, caps, a sender rate (finding H1)
+
+- `XMPP/Held.lean`: a flat list of `Item`s (account, `seq`, text). `Caps`: `perAccount` 256,
+  `perAccountBytes` 4 MiB, `total` 10,000, `totalBytes` 64 MiB. `admit` adds a rate per sending
+  account (60 stanzas in 60 seconds), with the counters of `Net.LoginLimit`. Theorems:
+  `hold_perAccount`, `hold_perAccountBytes`, `hold_total`, `hold_totalBytes`, `hold_appends`,
+  `release_others`, `admit_tooFast`, `admit_held`.
+- `XMPP/StateCodec.lean`: `heldItemPath`, one resource per held stanza, so holding a stanza writes
+  that stanza only (the item under "quadratic near the bound" above is closed). A start still reads
+  the older one-resource queue, and a release deletes it.
+- Stanzas of a MIX or GC3 service to an offline account are held through the same caps; they were
+  in the host's fallback queue before, and a restart lost them.
+- `xmppClock(server, seconds)`: the host tells the engine the time when the second changes, so a
+  rate window ends also on a connection that stays open.
+- Options: `heldLimits` of `xmppOpen` and of `npm/factoidal/xmpp/server.mjs`.
+  `--dangerously-disable-ratelimits` turns the sender rate off; the caps stay on.
+- Tests: `#guard`s in `Held.lean`; `npm/factoidal/test/xmpp-held.test.mjs`.
