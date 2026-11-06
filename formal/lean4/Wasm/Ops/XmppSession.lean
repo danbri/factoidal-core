@@ -131,6 +131,8 @@ structure XmppServerConfig where
   mucDomain : Option String := none
   /-- Members-only rooms, from `"mucMembers"`. -/
   mucMembers : List Muc.MemberList := []
+  /-- From the host's random source: the key of the XEP-0421 occupant ids, from `"occupantSeed"`. -/
+  occupantSeed : String := ""
   /-- Reserved room nicks, from `"mucReservedNicks"`: (`Muc.nickKey` of the nick, bare JID). -/
   mucReserved : List (String × String) := []
   /-- XEP-0369 MIX service domain, from `"mixDomain"`; none: no MIX. -/
@@ -212,6 +214,7 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
         let (heldCaps, senderLimits) := heldLimitsOf j disabled
         .ok { domain, saltB64, iterationCount, accounts, heldCaps, senderLimits, verifiers,
               saltSeed := (j.getString? "saltSeed").getD "",
+              occupantSeed := (j.getString? "occupantSeed").getD "",
               tlsCarrier := (j.getBool? "tlsCarrier").getD false, mucDomain, mixDomain, gc3Domain,
               mucMembers := (mucMembers.bind id).getD [],
               mucReserved := (mucReserved.bind id).getD [],
@@ -451,13 +454,28 @@ private def performAll (sender : Option String) (srv : XmppOpenServer) (c : Xmpp
     let (srv', c') := perform sender srv c o
     performAll sender srv' c' os
 
+/-- One session of a full JID is gone. Two sessions can bind one full JID (RFC 6120 section 7.7.2.2
+leaves the choice to the server; this one allows it), so one entry goes and the other stays. -/
+def unbind (bound : List String) (before : Option String) : List String :=
+  match before with
+  | some f => bound.erase f
+  | none => bound
+
+/-- With two sessions on one full JID, the other is still bound after one goes. -/
+theorem unbind_survivor (f : String) (l : List String) :
+    (unbind (f :: f :: l) (some f)).contains f = true := by
+  simp [unbind]
+
+#guard unbind ["a", "b", "a"] (some "a") == ["b", "a"]
+#guard unbind ["a"] (some "a") == [] && unbind ["a"] none == ["a"]
+
 /-- A session's full JID changed by one step (it bound, or it closed): keep
 `bound`, and hand a newly bound account what was held for it, oldest first. -/
 def bindTransition (srv : XmppOpenServer) (c : XmppCollected) (before after : Option String) :
     XmppOpenServer × XmppCollected :=
   if before == after then (srv, c)
   else
-    let kept := srv.bound.filter (fun f => some f != before)
+    let kept := unbind srv.bound before
     match after with
     | none => ({ srv with bound := kept }, c)
     | some f =>
@@ -570,7 +588,7 @@ def xmppOpen (configJson : String) : IO String := do
       let cfg := { cfg with credentials := cfg.verifiers ++ derived }
       -- Each account's name is its own nick, beside the nicks the host reserves.
       let reserved := cfg.mucReserved ++ cfg.accounts.map (fun a => (Muc.nickKey a.username, a.username ++ "@" ++ cfg.domain))
-      let muc : Option Muc.Service := cfg.mucDomain.map (fun d => { domain := d, memberLists := cfg.mucMembers, reserved })
+      let muc : Option Muc.Service := cfg.mucDomain.map (fun d => { domain := d, memberLists := cfg.mucMembers, reserved, idSeed := cfg.occupantSeed })
       let mix : Option Mix.Service := cfg.mixDomain.map (fun d => { domain := d })
       let gc3 : Option Gc3.Service := cfg.gc3Domain.map (fun d => { domain := d })
       xmppServers.modify (·.insert h { cfg := cfg, rosters := ∅, presence := ∅, muc := muc, mix := mix, gc3 := gc3,
@@ -679,17 +697,20 @@ def xmppSessionDeliver (h text : String) : IO String := do
         match o with | .send t => some t | _ => none)
       pure (okWith [("delivered", .bool true), ("send", .array (sends.map .string))])
 
-/-- A session went away: it leaves every room it was in (XEP-0045 section
-7.14), and the other occupants are told. The deliveries, as `routeFull`
-JSON, for the host to perform. -/
-def mucLeaveAll (server : String) (full : Option String) : IO Json := do
-  -- The session is gone: it is no longer a delivery target.
+/-- A session went away. `counted`: it is still in `bound`, as a session that closed its stream
+is not (`bindTransition`). A room seat belongs to the full JID, and two sessions can share one, so
+the seat goes with the last of them (`unbind`): only then does it leave every room (XEP-0045
+section 7.14), and the other occupants are told. The deliveries, as `routeFull` JSON, for the host
+to perform. -/
+def mucLeaveAll (server : String) (full : Option String) (counted : Bool) : IO Json := do
   match full, (← xmppServers.get)[server]? with
   | some f, some srv0 =>
-    let srv := { srv0 with bound := srv0.bound.filter (· != f) }
+    let srv := if counted then { srv0 with bound := unbind srv0.bound (some f) } else srv0
     xmppServers.modify (·.insert server srv)
     match srv.muc with
     | some svc =>
+      if srv.bound.contains f then pure (.array [])
+      else
       let (svc', ds) := Muc.leaveAll svc f
       xmppServers.modify (·.insert server { srv with muc := some svc' })
       pure (.array (ds.map (fun d => .object [("to", .string d.to), ("text", .string d.render), ("bounce", .null)])))
@@ -708,7 +729,7 @@ def xmppSessionClose (h : String) : IO String := do
     let closing : List String :=
       if os.closed || os.session.stage == .closed then [] else ["</stream:stream>"]
     xmppSessions.modify (·.erase h)
-    let left ← mucLeaveAll os.server (os.session.fullJid <|> os.boundFull)
+    let left ← mucLeaveAll os.server (os.session.fullJid <|> os.boundFull) os.session.fullJid.isSome
     pure (okWith [("send", .array (closing.map .string)), ("routeFull", left)])
 
 /-- `xmppSessionTlsUp(sessionHandle)`: the TLS handshake that a feed asked
@@ -956,7 +977,7 @@ def xmppWsCloseWith (h : String) : IO (String × ByteArray) := do
   | none => pure (errJson s!"unknown XMPP WebSocket session handle: {h}", ByteArray.empty)
   | some ws =>
     xmppWsSessions.modify (·.erase h)
-    let left ← mucLeaveAll ws.inner.server (ws.inner.session.fullJid <|> ws.inner.boundFull)
+    let left ← mucLeaveAll ws.inner.server (ws.inner.session.fullJid <|> ws.inner.boundFull) ws.inner.session.fullJid.isSome
     match ws.phase with
     | .frames .. =>
       if ws.inner.closed then pure (okWith [("routeFull", left)], ByteArray.empty)
@@ -1058,7 +1079,7 @@ def xmppMsgClose (h : String) : IO String := do
   | none => pure (errJson s!"unknown XMPP message session handle: {h}")
   | some os =>
     xmppMsgSessions.modify (·.erase h)
-    let left ← mucLeaveAll os.server (os.session.fullJid <|> os.boundFull)
+    let left ← mucLeaveAll os.server (os.session.fullJid <|> os.boundFull) os.session.fullJid.isSome
     let closing : List String :=
       if os.closed || os.session.stage == .closed then [] else [L4Factoidal.XMPP.WebSocket.closeText]
     pure (okWith [("send", .array (closing.map .string)), ("routeFull", left)])

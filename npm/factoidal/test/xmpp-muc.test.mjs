@@ -210,6 +210,57 @@ test('muc: an account name is reserved for that account; a nick differing only i
   } finally { await s.close() }
 })
 
+test('muc: XEP-0421: one occupant id for an account in a room, also under a new nick; none for another account', async () => {
+  const s = await start()
+  const idOf = (m) => /<occupant-id[^>]*\bid="([^"]+)"/.exec(m)?.[1]
+  const self = (m) => m.includes(`status code='110'`) || m.includes('status code="110"')
+  try {
+    const a = await bound(s.wsOrigin, 'juliet', 'r0m30', 'one')
+    a.send(`<presence to='ids@${MUC}/first'><x xmlns='${NS_MUC}'/></presence>`)
+    const id1 = idOf(await a.next(self))
+    assert.ok(id1)
+    assert.ok(!id1.includes('juliet'))
+    const r = await bound(s.wsOrigin, 'romeo', 'juli3t', 'one')
+    r.send(`<presence to='ids@${MUC}/rom'><x xmlns='${NS_MUC}'/></presence>`)
+    const idR = idOf(await r.next(self))
+    assert.notEqual(idR, id1)
+    a.send(`<presence to='ids@${MUC}/first' type='unavailable'/>`)
+    await r.next((m) => m.includes('unavailable'))
+    a.send(`<presence to='ids@${MUC}/second'><x xmlns='${NS_MUC}'/></presence>`)
+    assert.equal(idOf(await a.next(self)), id1)
+    a.send(`<message to='ids@${MUC}' type='groupchat' id='g'><body>hi</body><occupant-id xmlns='urn:xmpp:occupant-id:0' id='forged'/></message>`)
+    const m = await r.next((x) => x.includes('<body>hi</body>'))
+    assert.equal(idOf(m), id1)
+    assert.doesNotMatch(m, /forged/)
+    a.ws.close(); r.ws.close()
+  } finally { await s.close() }
+})
+
+test('muc: two sessions on one full JID: the seat and delivery stay with the survivor; the last to go leaves', async () => {
+  const s = await start()
+  const self = (m) => m.includes(`status code='110'`) || m.includes('status code="110"')
+  try {
+    const one = await bound(s.wsOrigin, 'juliet', 'r0m30', 'same')
+    const two = await bound(s.wsOrigin, 'juliet', 'r0m30', 'same')
+    one.send(`<presence to='seat@${MUC}/jul'><x xmlns='${NS_MUC}'/></presence>`)
+    await one.next(self)
+    const r = await bound(s.wsOrigin, 'romeo', 'juli3t', 'one')
+    r.send(`<presence to='seat@${MUC}/rom'><x xmlns='${NS_MUC}'/></presence>`)
+    await r.next(self)
+    one.send(`<close xmlns='${NS_FRAMING}'/>`)
+    one.ws.close()
+    for (let i = 0; i < 100 && s.sessions().filter((x) => x.full === `juliet@${DOMAIN}/same`).length > 1; i++) await new Promise((res) => setTimeout(res, 20))
+    await new Promise((res) => setTimeout(res, 200))
+    r.send(`<message to='seat@${MUC}' type='groupchat' id='g1'><body>still there</body></message>`)
+    await two.next((m) => m.includes('still there'))
+    r.send(`<message to='juliet@${DOMAIN}' type='chat' id='d1'><body>direct</body></message>`)
+    await two.next((m) => m.includes('direct'))
+    two.ws.close()
+    await r.next((m) => m.includes(`seat@${MUC}/jul`) && m.includes('unavailable'))
+    r.ws.close()
+  } finally { await s.close() }
+})
+
 test('muc: off unless configured', async () => {
   const server = await start(null)
   try {
