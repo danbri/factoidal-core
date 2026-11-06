@@ -40,9 +40,19 @@ module.exports = function(eleventyConfig) {
   for (const name of ["code-output.mjs", "code-output.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/assets/${name}`);
   }
-  for (const name of ["app.mjs", "worker.mjs", "pipeline.mjs", "fixtures.mjs", "assurance.mjs", "style.css"]) {
+  for (const name of ["app.mjs", "worker.mjs", "pipeline.mjs", "fixtures.mjs", "assurance.mjs", "style.css", "pipeline-document.mjs", "pipeline-files.mjs", "pod-storage.mjs", "storage-worker.mjs", "bounded-fetch.mjs"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/data-compositor/${name}`);
   }
+
+  for (const name of ["app.mjs", "worker.mjs", "pipeline.mjs", "fixtures.mjs", "style.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/xml-signature/${name}`);
+  }
+  for (const name of ['app.mjs','worker.mjs','style.css','runtime-contract.mjs','shader-editor.mjs','shader-scalars.mjs']) {
+    eleventyConfig.addPassthroughCopy(`web/hub/svg-webgpu/${name}`);
+  }
+  // Source-only browser bridge. The injected engine avoids the Node loader.
+  eleventyConfig.addPassthroughCopy({ "../npm/factoidal/lws/client.mjs": "web/hub/runtime/lws/client.mjs" });
+  eleventyConfig.addPassthroughCopy({ "../npm/factoidal/lib/errors.mjs": "web/hub/runtime/lib/errors.mjs" });
 
   // Pass-through copy: F*-extracted browser artifacts (js_of_ocaml + wasm_of_ocaml).
   // fstar-extracted/ holds w3c-runner.js (pure JS) and the wasm_of_ocaml loader

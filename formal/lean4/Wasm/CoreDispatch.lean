@@ -150,7 +150,7 @@ def fullOnlyOpNames : List String :=
   , "xmppSessionDeliver", "xmppSessionClose", "xmppRosterGet", "xmppRosterSet"
   , "xmppClientOpen", "xmppClientFeed", "xmppClientAnswer", "xmppClientClose"
   , "xmppClientRequest", "xmppClientTick"
-  , "aeadSeal", "aeadOpen", "hpkeSeal", "hpkeOpen", "jweDecrypt", "jweEncrypt", "xmlDecrypt", "xmlEncrypt"
+  , "aeadSeal", "aeadOpen", "hpkeSeal", "hpkeOpen", "jweDecrypt", "jweEncrypt", "xmlDecrypt", "xmlEncrypt", "xmlSignatureVerify"
   , "jsonldToRdf", "jsonldFromRdf", "rmlMap", "csvwToRdf", "xmlWellformed"
   , "xpathEval", "xsltTransform", "schematronValidate", "jsonSchemaValidate"
   , "mathmlEval", "xformsRecalc", "rifEval"

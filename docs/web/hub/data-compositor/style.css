@@ -37,3 +37,10 @@
 .wire.skipped { opacity: .25; stroke-dasharray: 5 7; }
 .diagnostic-report { padding: 1.5rem; }
 .diagnostic-report pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.pipeline-library{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 28px;background:#17212b;border-bottom:1px solid var(--line)}
+.pipeline-library label{display:flex;gap:8px;align-items:center;font-size:12px}.pipeline-library input{max-width:230px}
+pipeline-library input,pipeline-library select{font:inherit;color:var(--text,#e7edf4);background:#101820;border:1px solid #68798b;border-radius:5px;padding:8px;min-width:0}
+.file-status{font-size:12px;color:#c6d9e6;flex:1;min-width:160px}
+.pod-dialog{width:min(680px,calc(100vw - 32px));max-height:90vh;overflow:auto;color:#e7edf4;background:#17212b;border:1px solid #7190a4;border-radius:12px;padding:24px;font:14px/1.6 system-ui,sans-serif}
+.pod-dialog::backdrop{background:#000a}.pod-dialog label{display:block;margin:14px 0 8px}.pod-dialog input,.pod-dialog select{display:block;width:100%;margin-top:5px}.pod-dialog h2{margin:0 30px 10px 0}.pod-dialog .close-dialog{float:right}.pod-dialog button{margin:4px 5px 4px 0}.pod-message,.pod-location{overflow-wrap:anywhere;color:#bdeaf6}.pod-dialog hr{border:0;border-top:1px solid #506170;margin-top:20px}.pod-dialog details{margin:12px 0}.pod-dialog summary{cursor:pointer}

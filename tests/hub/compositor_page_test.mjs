@@ -21,6 +21,16 @@ test('real Eleventy app shell preserves Pages prefix, module sources and pinned 
     for(const file of ['pipeline.mjs','fixtures.mjs','worker.mjs','app.mjs','assurance.mjs']){
       assert.equal(readFileSync(join(out,'web/hub/data-compositor',file),'utf8'),readFileSync(join(root,'docs/web/hub/data-compositor',file),'utf8'));
     }
+    const svgPage=readFileSync(join(out,'web/hub/svg-webgpu/index.html'),'utf8');
+    assert.match(svgPage,/class="hub-app"/);
+    assert.match(svgPage,/<svg-gpu-lab><\/svg-gpu-lab>/);
+    assert.match(svgPage,/\/factoidal\/web\/hub\/svg-webgpu\/app\.mjs/);
+    assert.match(svgPage,/Graphics builds/);
+    assert.doesNotMatch(svgPage,/>core 0\.27\.0</);
+    for(const file of ['app.mjs','worker.mjs','style.css','runtime-contract.mjs','shader-editor.mjs','shader-scalars.mjs']){
+      assert.equal(readFileSync(join(out,'web/hub/svg-webgpu',file),'utf8'),
+        readFileSync(join(root,'docs/web/hub/svg-webgpu',file),'utf8'));
+    }
     const worker=readFileSync(join(out,'web/hub/data-compositor/worker.mjs'),'utf8');
     assert.doesNotMatch(worker,/\/node_modules\//);
     assert.match(worker,/core\.version!=='0\.27\.0'/);

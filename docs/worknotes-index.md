@@ -21,8 +21,12 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-01 | [LWS browser import boundary](20261101-lws-browser-import.md) | 23c95cb3c | current — injected-engine browser import tests pass; live socket test blocked by sandbox |
 | 2026-11-01 | [Periodic independent Lean checking](20261101-periodic-kernel-checks.md) | pending | current — nightly advice; commands unavailable on pinned toolchain |
 | 2026-11-01 | [XML parsing retain-location option](20261101-qt4-retain-location.md) | pending | current — strict boolean admission and regression checks |
+| 2026-11-01 | [XML signature flow checks](20261101-signature-flow-checks.md) | pending | current — Lean/native/JDK checked; not published |
 | 2026-11-01 | [Foafpod private history](designissues/2026-11-01-foafpod-private-history.md) | pending | current — design, not activated |
+| 2026-11-01 | [Compositor browse atomicity](20261101-compositor-browse-atomicity.md) | pending | current — failed browse cannot retarget save |
 | 2026-11-01 | [Pipeline failure composition](20261101-pipeline-failure-composition.md) | pending | current — Lean checked; compositor storage tests rerun |
+| 2026-10-31 | [LWS HTTPS replica receiver container](20261031-lws-replica-container.md) | pending | current — source and local tests, not deployed |
+| 2026-10-31 | [LWS replication through XMPP accounts](designissues/2026-10-31-lws-xmpp-replica.md) | pending | current — proposed, not implemented |
 | 2026-10-31 | [Conditional routing design](designissues/2026-10-31-checked-conditional-routing.md) | this commit | current |
 | 2026-10-31 | [Checked conditional routing](20261031-checked-conditional-routing.md) | this commit | current |
 | 2026-10-31 | [SRX context admission](20261031-srx-context-admission.md) | f70fc074a | current |

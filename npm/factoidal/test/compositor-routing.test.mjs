@@ -6,9 +6,12 @@ import {fileURLToPath} from 'node:url';
 test('compositor routes with the built package and preserves existing recipe/error controls',()=>{
   const root=fileURLToPath(new URL('../../../',import.meta.url));
   const childEnv={...process.env,FACTOIDAL_COMPOSITOR_TEST_ENGINE:new URL('../index.mjs',import.meta.url).href};
-  delete childEnv.NODE_TEST_CONTEXT;
+  delete childEnv.NODE_TEST_CONTEXT; // A nested runner must not inherit the parent's IPC reporter mode.
   const result=spawnSync(process.execPath,['--test','--test-reporter=tap',
     'tests/hub/compositor_routing_test.mjs',
+    'tests/hub/compositor_worker_failure_test.mjs',
+    'tests/hub/compositor_transport_budget_test.mjs',
+    'tests/hub/compositor_browse_atomicity_test.mjs',
     'tests/hub/compositor_failure_test.mjs',
     'tests/hub/compositor_pipeline_test.mjs',
     'tests/hub/compositor_assurance_test.mjs'],{
@@ -17,6 +20,6 @@ test('compositor routes with the built package and preserves existing recipe/err
   });
   assert.ifError(result.error);
   assert.equal(result.status,0,result.stdout+'\n'+result.stderr);
-  assert.match(result.stdout,/# tests 28\b/);
+  assert.match(result.stdout,/# tests 36\b/);
   assert.match(result.stdout,/# fail 0\b/);
 });

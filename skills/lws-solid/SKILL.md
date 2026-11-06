@@ -5,6 +5,10 @@ description: Run, test and extend Factoidal's Linked Web Storage 1.0 and Solid P
 
 # Linked Web Storage 1.0 and the Solid Protocol
 
+Proposed single-writer replication over XMPP or SSH-forwarded HTTP:
+[account, trust, durability and offline-policy design](../../docs/designissues/2026-10-31-lws-xmpp-replica.md).
+This is a design, not shipped replication support.
+
 Private revision history and RDF-configured commit grouping (design only):
 [foafpod history](../../docs/designissues/2026-11-01-foafpod-private-history.md).
 

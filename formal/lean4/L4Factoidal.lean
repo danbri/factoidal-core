@@ -1050,6 +1050,8 @@ import L4Factoidal.XML.XPointer
 import L4Factoidal.XML.XPointerXPath
 import L4Factoidal.XML.XPointerTheorems
 import L4Factoidal.XML.DSig
+import L4Factoidal.XML.SignatureFlow
+import L4Factoidal.XML.SignatureFlowTests
 import L4Factoidal.XML.Enc
 import L4Factoidal.XML.EncTests
 import L4Factoidal.SAML.Assertion

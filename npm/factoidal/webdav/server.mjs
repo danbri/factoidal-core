@@ -194,6 +194,10 @@ export async function openWebdav (options = {}) {
   let envelope = callEngine(engine, 'webdavOpen', [JSON.stringify(config)])
   if (envelope.ok === false) throw new WebdavHostError(envelope.error, { envelope })
   const handle = envelope.handle
+  // The production listener uses the platform fetch. Tests and embedding
+  // hosts may supply a transport boundary without changing Lean's URL,
+  // method, header, status or body decisions.
+  const fetchImpl = typeof options.fetchImpl === 'function' ? options.fetchImpl : fetch
   let loads = 0
   while (envelope.need !== undefined) {
     loads += 1
@@ -235,7 +239,7 @@ export async function openWebdav (options = {}) {
     if (bytes.length > 0) init.body = bytes
     let reply
     try {
-      reply = await fetch(request.url, init)
+      reply = await fetchImpl(request.url, init)
     } catch (error) {
       return { answer: { error: error && error.message ? String(error.message) : String(error) }, bytes: new Uint8Array(0) }
     }

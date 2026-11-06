@@ -1,3 +1,5 @@
+import './pipeline-files.mjs';
+import { pipelineSnapshot } from './pipeline-document.mjs';
 import { DEFAULTS } from './fixtures.mjs';
 import '../assets/code-output.mjs';
 import { nodeAssurance, wireAssurance, explainEvidence, PROOF_SOURCE } from './assurance.mjs';
@@ -49,6 +51,7 @@ class DataflowStudio extends HTMLElement {
     this.inputs={...DEFAULTS};this.stages=new Map();this.selected='turtle';this.inspectTab='turtle';this.outputTab='preview';this.scale=1;this.pan={x:0,y:0};this.result=null;this.busy=false;this.logs=[];this.showEvidence=false;this.selectedWire=null;
     this.innerHTML=`
       <header class="topbar"><div class="identity"><span class="mark">◇</span><div><div class="eyebrow">Factoidal laboratory</div><h1>Data Compositor</h1></div></div><div class="actions"><span class="engine"><b>●</b> Lean → WASM · core 0.27.0</span><button id="reset">Reset inputs</button><button id="run" class="primary">▶ Run flow</button></div></header>
+      <pipeline-library></pipeline-library>
       <section class="intro"><p><strong>Think compositor nodes, with data in the sockets.</strong><br>Parse two sources, infer what follows, join named graphs, filter a table, then turn it into HTML.</p><div class="run-status" data-state="idle" role="status" aria-live="polite"><i class="status-dot"></i><span id="status-text">Ready to compose</span></div></section>
       <div class="toolbar"><label class="threshold">Keep score ≥ <output id="score-value">${escapeHTML(this.inputs.minScore)}</output><input id="score" aria-label="Minimum score" type="range" min="0" max="100" step="1" value="${escapeHTML(this.inputs.minScore)}"><span class="muted">Release to recompute</span></label><div class="view-controls"><label class="evidence-toggle"><input id="evidence-toggle" type="checkbox" aria-describedby="evidence-help"> Evidence <span class="evidence-state">off</span></label><span>NODE EDITOR</span><button class="icon" id="zoom-out" aria-label="Zoom out">−</button><button class="icon" id="zoom-in" aria-label="Zoom in">+</button><button class="icon" id="fit">Fit nodes</button></div></div>
       <section class="canvas" aria-label="Interactive dataflow graph"><div class="world"><svg class="wires" aria-hidden="true"></svg><div class="canvas-note">Two source branches. One reproducible flow.<br>Click a node to inspect its data and operation.</div></div><div class="legend"><span><i style="--c:var(--green)"></i>RDF</span><span><i style="--c:var(--blue)"></i>Dataset</span><span><i style="--c:var(--yellow)"></i>Table</span><span><i style="--c:var(--purple)"></i>XML</span><span><i style="--c:var(--orange)"></i>HTML</span></div><span class="canvas-hint">Drag headers to arrange · drag background to pan · Ctrl/⌘ + wheel to zoom</span></section>
@@ -61,6 +64,11 @@ class DataflowStudio extends HTMLElement {
       const node=document.createElement('flow-node');node.configure({...spec},i,(id,evidence)=>{this.select(id);if(evidence){this.inspectTab='evidence';this.inspect();this.$('#inspect-title').focus();}},(spec,start,event)=>{spec.x=Math.max(0,start.nx+(event.clientX-start.x)/this.scale);spec.y=Math.max(0,start.ny+(event.clientY-start.y)/this.scale);node.style.left=`${spec.x}px`;node.style.top=`${spec.y}px`;this.drawWires();});
       this.world.append(node);
     }
+    this.storagePending=new Map();this.storageSerial=0;
+    this.$('pipeline-library').configure({recipe:'rdf-to-html',
+      capture:title=>pipelineSnapshot('rdf-to-html',title,this.inputs,[...this.querySelectorAll('flow-node')].map(n=>({id:n.spec.id,x:n.spec.x,y:n.spec.y})),{evidence:this.showEvidence}),
+      restore:doc=>this.restorePipeline(doc),request:(operation,args)=>this.storageRequest(operation,args)});
+    this.$('pipeline-library').title='Studio roster';
     this.$('#run').onclick=()=>this.run();
     this.$('#evidence-toggle').onchange=e=>{this.showEvidence=e.target.checked;this.$('.evidence-state').textContent=this.showEvidence?'on':'off';this.canvas.classList.toggle('evidence-mode',this.showEvidence);this.$('.assurance-legend').hidden=!this.showEvidence;if(!this.showEvidence)this.selectedWire=null;this.updateNodes();this.fit();this.inspect();};
     this.$('#reset').onclick=()=>{this.inputs={...DEFAULTS};this.$('#score').value=this.inputs.minScore;this.$('#score-value').textContent=this.inputs.minScore;this.inspect();this.run();};
@@ -85,6 +93,10 @@ class DataflowStudio extends HTMLElement {
     workerURL.searchParams.set('engine',new URL(this.getAttribute('data-engine-url')??'https://cdn.jsdelivr.net/npm/@factoidal/core@0.27.0/browser.js',document.baseURI).href);
     this.worker=new Worker(workerURL,{type:'module'});
     this.worker.onmessage=({data})=>{
+      if(data.type==='storage-result'){
+        const pending=this.storagePending.get(data.id);if(!pending)return;this.storagePending.delete(data.id);
+        data.error?pending.reject(new Error(data.error)):pending.resolve(data.result);return;
+      }
       if(data.type==='stage'){
         const stage=data.stage;this.stages.set(stage.id,{...this.stages.get(stage.id),...stage});
         if(stage.status==='done'||stage.status==='skipped')this.logs.push(stage);
@@ -98,10 +110,31 @@ class DataflowStudio extends HTMLElement {
         this.output();if(!this.isEditing())this.inspect();if(this.rerun){this.rerun=false;this.run();}
       }else if(data.type==='error')this.fail(data.message);
     };
-    this.worker.onerror=event=>{event.preventDefault();this.fail(event.message||'The data worker could not start. See the local server log.');};
+    this.worker.onerror=event=>{event.preventDefault();this.workerFailed(event.message||'The data worker could not start. See the local server log.');};
   }
   isEditing(){return this.$('.inspect-body').contains(document.activeElement)&&['TEXTAREA','INPUT'].includes(document.activeElement.tagName);}
+  workerFailed(message){
+    this.workerError=new Error(message);
+    for(const pending of this.storagePending.values())pending.reject(this.workerError);
+    this.storagePending.clear();
+    this.fail(message);
+  }
+  storageRequest(operation,args){
+    if(this.workerError)return Promise.reject(this.workerError);
+    if(this.busy||this.storagePending.size)return Promise.reject(new Error('Wait for the current operation to finish.'));
+    return new Promise((resolve,reject)=>{const id=++this.storageSerial;this.storagePending.set(id,{resolve,reject});try{this.worker.postMessage({type:'storage',id,operation,args});}catch(error){this.storagePending.delete(id);reject(error);}});
+  }
+  restorePipeline(doc){
+    if(this.busy||this.storagePending.size>1)throw Error('Wait for the current operation to finish before loading.');
+    this.inputs={...doc.inputs};this.result=null;this.stages.clear();this.logs=[];this.selectedWire=null;
+    for(const saved of doc.layout){const node=[...this.querySelectorAll('flow-node')].find(n=>n.spec.id===saved.id);Object.assign(node.spec,{x:saved.x,y:saved.y});node.style.left=`${saved.x}px`;node.style.top=`${saved.y}px`;}
+    this.showEvidence=doc.view.evidence;this.$('#evidence-toggle').checked=this.showEvidence;this.$('.evidence-state').textContent=this.showEvidence?'on':'off';this.canvas.classList.toggle('evidence-mode',this.showEvidence);this.$('.assurance-legend').hidden=!this.showEvidence;
+    this.$('#score').value=this.inputs.minScore;this.$('#score-value').textContent=this.inputs.minScore;
+    this.$('#download').disabled=true;this.$('#done-count').textContent='0';this.$('#row-count').textContent='—';this.$('#run-time').textContent='—';this.$('.error-banner').textContent='';
+    this.updateNodes();this.inspect();this.output();this.fit();this.status('Pipeline loaded · review inputs, then Run flow','idle');
+  }
   run(){
+    if(this.storagePending.size){this.status('Wait for the pod operation to finish','idle');return;}
     if(this.busy){this.rerun=true;return;}
     this.busy=true;this.result=null;this.stages.clear();this.logs=[];this.started=performance.now();this.$('.error-banner').textContent='';this.$('#run').disabled=true;this.$('#reset').disabled=true;this.$('#download').disabled=true;this.$('#done-count').textContent='0';this.$('#row-count').textContent='—';this.$('#run-time').textContent='—';this.status('Loading engine…','running');this.updateNodes();this.output();
     this.worker.postMessage({type:'run',inputs:{...this.inputs}});
@@ -201,6 +234,6 @@ class DataflowStudio extends HTMLElement {
   transform(){this.world.style.transform=`translate(${this.pan.x}px,${this.pan.y}px) scale(${this.scale})`;}
   fit(){const w=this.canvas.clientWidth,h=this.canvas.clientHeight,nodes=[...this.querySelectorAll('flow-node')];const width=Math.max(1490,...nodes.map(n=>n.spec.x+n.offsetWidth+30)),height=Math.max(410,...nodes.map(n=>n.spec.y+n.offsetHeight+20));this.scale=Math.min(1,(w-32)/width,(h-64)/height);this.pan={x:(w-width*this.scale)/2,y:8};this.transform();}
   zoom(multiplier){const next=Math.max(.35,Math.min(1.8,this.scale*multiplier));const cx=this.canvas.clientWidth/2,cy=this.canvas.clientHeight/2;this.pan={x:cx-(cx-this.pan.x)*next/this.scale,y:cy-(cy-this.pan.y)*next/this.scale};this.scale=next;this.transform();}
-  disconnectedCallback(){this.worker?.terminate();this.resizeObserver?.disconnect();}
+  disconnectedCallback(){for(const p of this.storagePending?.values()??[])p.reject(new Error('Compositor closed.'));this.storagePending?.clear();this.worker?.terminate();this.resizeObserver?.disconnect();}
 }
 customElements.define('dataflow-studio',DataflowStudio);

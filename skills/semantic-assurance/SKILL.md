@@ -231,3 +231,9 @@ context uses `XPath4.Doc.ofString`, not the different `fn:parse-xml` adapter.
 The former currently does not validate namespace well-formedness. Never
 promote its parser acceptance certificate to that stronger claim. Record:
 [checked routing](../../docs/designissues/2026-10-31-checked-conditional-routing.md).
+
+When a Node test launches a separate `node --test` suite, remove inherited
+`NODE_TEST_CONTEXT` and select `--test-reporter=tap` explicitly. On 2026-10-31
+the compositor wrapper inherited the parent's reporter mode and emitted no TAP
+under package CI; its nonzero-discovery assertion correctly refused the empty
+result. Check the wrapper under the outer runner, not only the leaf tests.

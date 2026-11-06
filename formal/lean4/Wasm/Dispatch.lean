@@ -73,6 +73,7 @@ import Wasm.Ops.Xmpp
 import Wasm.Ops.XmppSession
 import Wasm.Ops.XmppClient
 import Wasm.Ops.Crypto
+import Wasm.Ops.XmlSignature
 import Wasm.Ops.Jwe
 import Wasm.Ops.XmlEnc
 import Wasm.Ops.Formats
@@ -152,6 +153,7 @@ def opNames : List String :=
   , "jweDecrypt"
   , "jweEncrypt"
   , "xmlDecrypt"
+  , "xmlSignatureVerify"
   , "xmlEncrypt"
   , "xmppStanzaParse"
   , "ops" ]
@@ -535,6 +537,7 @@ def callUncoded (op : String) (argsJson : String) : String :=
     | "jweDecrypt"           => arity1 op jweDecrypt args
     | "jweEncrypt"           => arity1 op jweEncrypt args
     | "xmlDecrypt"           => arity1 op xmlDecrypt args
+    | "xmlSignatureVerify"   => arity1 op xmlSignatureVerify args
     | "xmlEncrypt"           => arity1 op xmlEncrypt args
     | "xmppStanzaParse"      => arity1 op xmppStanzaParse args
     -- Format, transform and reasoning ops (`formatOpNames`).
