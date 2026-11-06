@@ -9,7 +9,7 @@ wasm-opt for each part -> strip. --build holds core-c-files.txt and ir/ from
 labs/demos/foafnaut/build-web-render.sh --source-only. Run the corpus with check-units.mjs.
 Design and measurements: docs/20261106-deployable-modules.md
 """
-import argparse, concurrent.futures as cf, glob, gzip, json, os, shlex, shutil, subprocess, sys, time
+import argparse, concurrent.futures as cf, glob, gzip, hashlib, json, os, shlex, shutil, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(os.path.dirname(HERE))
 FEATURES = '--enable-exception-handling --enable-bulk-memory --enable-bulk-memory-opt --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue --enable-call-indirect-overlong'.split()
 def run(cmd, **k):
@@ -82,9 +82,13 @@ sizes = {}
 for f in sorted(glob.glob(dist + '/*.wasm')):
     if a.opt != 'none': run(['wasm-opt'] + FEATURES + [a.opt, f, '-o', f])
     run(['node', HERE + '/wasm-strip-custom.mjs', f, f])
-    sizes[os.path.basename(f)[:-5]] = {'raw': os.path.getsize(f), 'gzip': len(gzip.compress(open(f, 'rb').read(), 9))}
+    data = open(f, 'rb').read()
+    sizes[os.path.basename(f)[:-5]] = {'raw': len(data), 'gzip': len(gzip.compress(data, 9)), 'sha256': hashlib.sha256(data).hexdigest()}
 shutil.copy(f'{link}/{m["engine"]}.mjs', dist)
 lap('split')
+# The file a JS loader reads: which unit serves which call, and the bytes it may accept.
+json.dump({'schema': m['schema'], 'engine': m['engine'], 'glue': m['engine'] + '.mjs', 'units': sizes,
+           'neededBy': {u: d.get('needed-by', []) for u, d in m['units'].items()}}, open(dist + '/units.json', 'w'), indent=1)
 report = {'engine': m['engine'], 'units': sizes, 'plan': json.loads(plan), 'steps': steps}
 json.dump(report, open(out + '/report.json', 'w'), indent=1)
 b = m.get('budgets', {}).get('primaryWasmBytes')

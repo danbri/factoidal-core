@@ -2,7 +2,8 @@
 // plan-units.mjs: from a manifest and a --emit-relocs link, assign each function to a unit.
 // A unit is the closure of its gate functions, less what the entries reach without passing
 // a gate. A function that two units need moves to the primary. Writes the wasm-split
-// manifest and prints a report. Fails when a gate is missing or the primary reaches past one.
+// manifest and prints a report. Fails when a gate is missing or is also an export. Use a link
+// that Binaryen has not optimised: it inlines gates and merges identical functions.
 //   node tools/deploy/plan-units.mjs deploy/units/web-render.json base.wasm --names post.wasm --out dir
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { parseWasm, buildGraph, reach, summarise } from './wasm-refgraph.mjs';
@@ -17,6 +18,7 @@ const gates = new Map(); for (const [u, d] of Object.entries(m.units)) for (cons
 // The primary also holds what C and the Emscripten glue call: every wasm export.
 const exp = w.exports.filter(e => e.kind === 0 && e.index >= w.nImportedFuncs).map(e => e.index - w.nImportedFuncs);
 const primary = reach(g, [...m.entries.map(need), ...exp], (n, i) => gates.has(i));
+for (const i of gates.keys()) if (exp.includes(i)) throw Error('gate is a wasm export: ' + g.nodes[i].name);
 const closures = {};
 for (const [u, d] of Object.entries(m.units)) closures[u] = reach(g, d.gate.map(need), (n, i) => primary[i] === 1);
 const owner = new Map(), hoisted = [];
@@ -27,29 +29,6 @@ for (const u of Object.keys(m.units)) { const s = new Uint8Array(g.nodes.length)
 // Names that survive in the final module.
 let names = null;
 if (opt('--names')) { const p = parseWasm(readFileSync(opt('--names'))); names = new Set(p.nameFn.values()); }
-// wasm-opt merges identical functions, so a primary function can now call a name the graph put
-// in a unit. Hoist such names until no primary function calls into a unit, directly or by a
-// table slot that a primary function takes the address of.
-if (opt('--final')) {
-  const fw = parseWasm(readFileSync(opt('--final'))); const nameOf = i => fw.nameFn.get(i);
-  const finalOwner = new Map(); owner.forEach((u, i) => { if (g.nodes[i].k === 'f') finalOwner.set(g.nodes[i].name, u); });
-  const calls = new Map(); const dot = readFileSync(opt('--calls'), 'utf8');
-  for (const m2 of dot.matchAll(/"([^"]+)" -> "([^"]+)"/g)) { if (!calls.has(m2[1])) calls.set(m2[1], []); calls.get(m2[1]).push(m2[2]); }
-  // Base slot of each function, then the function now in that slot.
-  const baseSlot = new Map(); w.elemFuncs.forEach((f, s) => baseSlot.set(f - w.nImportedFuncs, s));
-  const taken = new Set(); // final names whose address a primary function takes
-  g.nodes.forEach((n, i) => { if (primary[i] || !owner.has(i)) for (const t of g.edges[i]) if (g.nodes[t].k === 'f' && baseSlot.has(t)) { const f = fw.elemFuncs[baseSlot.get(t)]; if (f !== undefined) taken.add(nameOf(f)); } });
-  let moved = 0; const stack = [...fw.nameFn.values()].filter(n => !finalOwner.has(n)).concat([...taken]);
-  const seen = new Set();
-  while (stack.length) {
-    const n = stack.pop(); if (seen.has(n)) continue; seen.add(n);
-    if (finalOwner.has(n)) { finalOwner.delete(n); moved++; }
-    for (const t of calls.get(n) ?? []) if (!seen.has(t)) stack.push(t);
-  }
-  report.hoistedAfterMerge = moved;
-  owner.forEach((u, i) => { if (g.nodes[i].k === 'f' && !finalOwner.has(g.nodes[i].name)) owner.delete(i); });
-  for (const u of Object.keys(m.units)) { const s = new Uint8Array(g.nodes.length); owner.forEach((o, i) => { if (o === u) s[i] = 1; }); report.units[u] = summarise(g, s); }
-}
 const out = opt('--out');
 // Static inline runtime helpers have one name in many objects. A name is not an address, so a
 // function whose name is not unique stays in the primary.

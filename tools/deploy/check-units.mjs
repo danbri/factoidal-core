@@ -9,11 +9,14 @@ const [dir, glue, ...rest] = process.argv.slice(2);
 const t0 = performance.now();
 const factory = (await import(pathToFileURL(resolve(glue)))).default;
 const read = u => readFileSync(resolve(dir, u + '.wasm'));
-const e = await createEngine({ factory, readUnit: async u => read(u), readUnitSync: rest.includes('--no-sync') ? null : read, units: ['xslt'] });
+const plan = JSON.parse(readFileSync(resolve(dir, 'units.json'), 'utf8'));
+const e = await createEngine({ factory, readUnit: async u => read(u), readUnitSync: rest.includes('--no-sync') ? null : read, units: Object.keys(plan.neededBy) });
 const t1 = performance.now();
 const m = e.module;
 const call0 = (name, types, args) => { const p = m.ccall(name, 'number', types, args); if (!p) return null; try { return m.UTF8ToString(p); } finally { m.ccall('web_render_free', null, ['number'], [p]); } };
-const call = async (name, types, args) => { if (name === 'web_document_call' && JSON.parse(args[1]).op === 'xslt') await e.ensure('xslt'); return call0(name, types, args); };
+// The manifest says which call needs which unit; the loader needs no other knowledge.
+const unitsFor = (name, args) => Object.entries(plan.neededBy).filter(([, rules]) => rules.some(r => r.export === name && (!r.op || JSON.parse(args[1]).op === r.op))).map(([u]) => u);
+const call = async (name, types, args) => { for (const u of unitsFor(name, args)) await e.ensure(u); return call0(name, types, args); };
 const r = call0('web_render_call', ['string', 'number', 'number'], ['<div style="display:grid">x</div>', 120, 160]);
 const t2 = performance.now();
 if (rest.includes('--timing')) {

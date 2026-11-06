@@ -99,7 +99,6 @@ def main():
                     if m: eager.append((f, it[0], m.group(1), m.group(2)))
                     m = IOINIT.match(s)
                     if m:
-                        g = body[k + 2 + 0] if False else None
                         ioinit.append((f, it[0], m.group(1)))
                     m = CHAIN.match(s)
                     if m: chain[it[0]].append(m.group(1))
@@ -163,13 +162,6 @@ def main():
                 print('eager left, type', ty, g, file=sys.stderr); keep_stmt.add((id(f), fn, g)); has_work.add(fn); continue
             lazy[k] = (f, fn, g, ini, ty)
         rep['lazy'] = len(lazy)
-    changed = {fn: True for fn in has_work}
-    live_init = set()
-    def needs(fn, stack=()):
-        if fn in live_init: return True
-        if fn not in chain and fn not in has_work: return False
-        r = fn in has_work
-        return r
     # fixed point over the chain
     memo = {}
     def need(fn):
@@ -207,7 +199,7 @@ def main():
                 if r and not need(r.group(1)):
                     new.append('return lean_io_result_mk_ok(lean_box(0));'); i += 1; continue
                 new.append(s); i += 1
-            lines[a0 + 1:b0] = body + [] if False else new + [''] * (len(body) - len(new))
+            lines[a0 + 1:b0] = new + [''] * (len(body) - len(new))
         # Lazy rewrite of uses inside function bodies.
         if lazy:
             used = set(); protos = []; defs = []
@@ -225,7 +217,7 @@ def main():
                 protos.append(f'{ty} {g}__once(void);')
             mine = [v for v in lazy.values() if v[0] is f]
             for (_, _, g, ini, ty) in mine:
-                protos.append(f'{"LEAN_EXPORT " if True else ""}{ty} {g}__once(void);')
+                protos.append(f'LEAN_EXPORT {ty} {g}__once(void);')
                 defs.append(f'static lean_once_cell_t {g}__cell = LEAN_ONCE_CELL_INITIALIZER;')
                 defs.append(f'LEAN_EXPORT {ty} {g}__once(void) {{ return lean_{ONCE[ty]}_once(&{g}, &{g}__cell, {ini}); }}')
             if protos:

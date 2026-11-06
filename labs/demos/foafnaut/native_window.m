@@ -263,11 +263,12 @@ static void installMenu(void) {
   NSMenuItem *editItem=[bar addItemWithTitle:@"Edit" action:nil keyEquivalent:@""];
   NSMenu *editMenu=[[NSMenu alloc] initWithTitle:@"Edit"];
   commandItem(editMenu,@"Copy",@"c",4);
-  commandItem(editMenu,@"Paste",@"v",13);
+  commandItem(editMenu,@"Paste",@"v",14);
   commandItem(editMenu,@"Select All",@"a",5);
   editItem.submenu=editMenu;
   NSMenuItem *viewItem=[bar addItemWithTitle:@"View" action:nil keyEquivalent:@""];
   NSMenu *viewMenu=[[NSMenu alloc] initWithTitle:@"View"];
+  commandItem(viewMenu,@"View Source",@"u",13);
   commandItem(viewMenu,@"Actual Size",@"0",3);
   commandItem(viewMenu,@"Zoom In",@"=",1);
   hiddenCommand(viewMenu,@"Zoom In",@"+",1);

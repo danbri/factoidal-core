@@ -18,6 +18,8 @@ Type a URL, or words to search, or a command.
 
 - :back and :forward
 - :reload
+- :home
+- :source shows this page's source
 - :new and :close
 - :zoom 150
 - :theme arcade

@@ -56,12 +56,16 @@ export function refusalHTML(url:string,message:string) {
 }
 export async function prepareHTML(engine:HTMLEngine,url:string,signal?:AbortSignal,inline?:string) {
   const document=inline===undefined?await readSource(url,signal):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
+  // View source shows each input and the result. Lean makes the page.
+  const sources=[{kind:"Source",url:document.url,source:document.source}];
   // Lean finds the stylesheet and runs it. The host only fetches the bytes.
   const xml=engine.xmlStylesheet(document.source,{url:document.url});
   if(xml.url) {
     navigationURL(xml.url,document.url,document.url);
     const sheet=await readSource(xml.url,signal);
     document.source=engine.xslt(document.source,{url:document.url,stylesheet:sheet.source,stylesheetURL:sheet.url}).source;
+    sources[0].kind="XML source";
+    sources.push({kind:"XSLT source",url:sheet.url,source:sheet.source},{kind:"Generated page",url:document.url,source:document.source});
   }
   const inspection=engine.inspect(document.source,{url:document.url});
   if(inspection.scripts.some(script=>script.kind!=="data"))
@@ -82,7 +86,7 @@ export async function prepareHTML(engine:HTMLEngine,url:string,signal?:AbortSign
   // No font data is supplied yet, so a named font shows in the Lean bitmap face.
   signal?.throwIfAborted();
   return {
-    url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,
+    url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,
     compile:(width:number,height:number,view:PageView={})=>engine.compile(document.source,width,height,{...options,...view}),
     selectedText:(width:number,height:number,view:PageView={})=>engine.selectedText(document.source,width,height,{...options,...view}),
   };

@@ -93,11 +93,14 @@ private def boxes (s : Shell) (width : Nat) : List Box := Id.run do
     out := out ++ [⟨"forward",x,by_,button,button⟩]
     x := x+button+2*u
   out := out ++ [⟨"reload",x,by_,button,button⟩]
-  x := x+button+6*u
-  let tail := if narrow s width then 2*button+8*u+pad else button+6*u+pad
+  x := x+button+2*u
+  if !narrow s width then
+    out := out ++ [⟨"home",x,by_,button,button⟩]
+    x := x+button+2*u
+  x := x+4*u
+  let tail := if narrow s width then 2*button+8*u+pad else 2*button+8*u+pad
   out := out ++ [⟨"address",x,by_,width-x-tail,button⟩]
-  if narrow s width then
-    out := out ++ [⟨"tabs",width-pad-2*button-2*u,by_,button,button⟩]
+  out := out ++ [⟨if narrow s width then "tabs" else "source",width-pad-2*button-2*u,by_,button,button⟩]
   out := out ++ [⟨"settings",width-pad-button,by_,button,button⟩]
   return out
 
@@ -162,6 +165,8 @@ private def icon : String → List Nat
   | "forward" => [0b0001000,0b0001100,0b1111110,0b1111111,0b1111110,0b0001100,0b0001000]
   | "reload" => [0b0111101,0b1000011,0b1000111,0b1000000,0b1000001,0b1000001,0b0111110]
   | "stop" => [0b1000001,0b0100010,0b0010100,0b0001000,0b0010100,0b0100010,0b1000001]
+  | "home" => [0b0001000,0b0011100,0b0111110,0b1111111,0b0100010,0b0101010,0b0101010]
+  | "source" => [0b0000100,0b0100100,0b0101000,0b1001001,0b0101010,0b0110010,0b0010000]
   | "settings" => [0b0010100,0b1011101,0b0100010,0b1101011,0b0100010,0b1011101,0b0010100]
   | "newTab" => [0b0001000,0b0001000,0b0001000,0b1111111,0b0001000,0b0001000,0b0001000]
   | "close" => [0,0b0100010,0b0010100,0b0001000,0b0010100,0b0100010,0]
@@ -325,6 +330,36 @@ def Go.json : Go → JSON.Json
   | .system url => .object [("go",.string "system"),("url",.string url)]
   | .command name argument => .object [("go",.string "command"),("name",.string name),("argument",.string argument)]
 
+/-! ### View source -/
+
+/-- Characters shown of one source: the page limit is 49152 paint items. -/
+def sourceLimit : Nat := 12000
+
+private def escapeText (value : String) : String :=
+  String.join (value.toList.map fun c =>
+    if c == '&' then "&amp;" else if c == '<' then "&lt;" else if c == '>' then "&gt;"
+    else if c.toNat < 32 || c.toNat > 126 then "?" else c.toString)
+
+/-- Spaces at the start of a line become padding, so indentation survives. -/
+private def sourceLine (line : String) : String :=
+  let chars := line.toList.map (fun c => if c == '\t' then ' ' else c)
+  let indent := (chars.takeWhile (· == ' ')).length
+  let body := String.ofList (chars.drop indent)
+  if body.isEmpty then "<p>&#32;</p>" else
+  s!"<p style=\"padding-left:{indent*6}px\">{escapeText body}</p>"
+
+/-- A page that shows a source as text. The kind says what the source is. -/
+def sourcePage (kind url source : String) : String :=
+  let shown := String.ofList (source.toList.take sourceLimit)
+  let cut := if source.length > sourceLimit
+    then s!"<h2>Shown: the first {sourceLimit} of {source.length} characters</h2>" else ""
+  let name := ((url.splitOn "/").getLast?).getD url
+  "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>" ++ escapeText (kind ++ ": " ++ name) ++
+  "</title><style>body{margin:12px;font-size:12px;line-height:16px;color:#203040;background:#f4f4ee}" ++
+  "h1{margin:0 0 8px 0;font-size:14px;line-height:20px;color:#a0186a}h2{margin:0 0 8px 0;font-size:12px;color:#a0186a}p{margin:0}</style></head><body><h1>" ++
+  escapeText (kind ++ " of " ++ url) ++ "</h1>" ++ cut ++
+  String.join ((shown.splitOn "\n").map sourceLine) ++ "</body></html>"
+
 /-! ### The value the host keeps -/
 
 private def str (j : JSON.Json) (key : String) (fallback := "") : String :=
@@ -353,6 +388,9 @@ def Shell.editJson (s : Shell) : JSON.Json :=
 #guard submit "github.com/danbri" == .system "https://github.com/danbri"
 #guard submit "lean browser" == .system "https://duckduckgo.com/?q=lean+browser"
 #guard submit ":zoom 150" == .command "zoom" "150"
+#guard submit ":source" == .command "source" ""
+#guard (sourcePage "Source" "file:///a.html" "<p>\n  x</p>").contains '&'
+#guard ((sourcePage "Source" "a" (String.ofList (List.replicate 12001 'x'))).splitOn "first 12000").length == 2
 #guard submit ":open https://x.org" == .system "https://x.org"
 #guard link "https://github.com/danbri/factoidal-core" == .system "https://github.com/danbri/factoidal-core"
 #guard link "foafnaut:theme/arcade" == .command "theme" "arcade"
