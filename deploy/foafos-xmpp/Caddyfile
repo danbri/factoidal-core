@@ -1,5 +1,6 @@
-# Caddy only gets and renews the certificate (ACME HTTP-01 through port 80).
-# The Node server does all TLS for XMPP. Port 8443 is not published.
+# Caddy gets and renews the certificate (ACME HTTP-01 through port 80) and holds
+# the pod's bearer token on :8090. The Node server does all TLS for XMPP. Caddy's
+# own https port 8443 is not published: public 8443 is Fly, going to :8090.
 {
 	admin off
 	http_port 8080
@@ -20,4 +21,25 @@ https://{$XMPP_DOMAIN} {
 
 http:// {
 	respond "test XMPP service" 200
+}
+
+# The LWS pod, behind a bearer token. Fly terminates TLS in front of this.
+http://:8090 {
+	handle /healthz {
+		respond "ok" 200
+	}
+	@open not header Authorization "Bearer {$POD_TOKEN}"
+	@preflight method OPTIONS
+	handle @preflight {
+		reverse_proxy 127.0.0.1:3000
+	}
+	handle @open {
+		header Access-Control-Allow-Origin "{header.Origin}"
+		respond "token required" 401
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3000 {
+			header_up -Authorization
+		}
+	}
 }

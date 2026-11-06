@@ -7,6 +7,7 @@ kill_timeout = "10s"
 [build.args]
   FACTOIDAL_VERSION = "0.32.0"
   FACTOIDAL_HOST_COMMIT = "a9caa45d874772b86660a87ac97eb5ec3eb6ca96"
+  FOAFOS_POD_COMMIT = "1bd3dbf612ed5b12a16e31f33d68eee272e8f17b"
 
 [env]
   XMPP_DOMAIN = "foafos-xmpp.fly.dev"
@@ -18,7 +19,7 @@ kill_timeout = "10s"
 
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "1gb"
+  memory = "2gb"
 
 # Every service is raw TCP: Fly does not terminate TLS, the machine does.
 [[services]]
@@ -68,3 +69,20 @@ kill_timeout = "10s"
   min_machines_running = 1
   [[services.ports]]
     port = 80
+
+# The LWS pod over HTTPS. Unlike the services above, Fly terminates TLS here;
+# Caddy holds the bearer token behind it.
+[[services]]
+  internal_port = 8090
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  min_machines_running = 1
+  [[services.ports]]
+    port = 8443
+    handlers = ["tls", "http"]
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "120s"
+    method = "get"
+    path = "/healthz"
