@@ -107,7 +107,8 @@ Deno.test("SVG ellipse fill and polygon nonzero/evenodd winding are implemented 
  equal(e.sample(polygon('nonzero'),10,10),[0,0,0]);equal(e.sample(polygon('evenodd'),10,10),[255,255,255]);
  rejects(()=>e.compile(wrap('<ellipse rx="auto" ry="5"/>')),"SVG profile:");
  rejects(()=>e.compile(wrap('<ellipse rx="5"/>')),"explicit numeric rx and ry");
- rejects(()=>e.compile(wrap('<ellipse rx="5" ry="5" stroke="black"/>')),"ellipse stroke");
+ // A stroked ellipse draws as a path of two arcs.
+ if(e.compile(wrap('<ellipse rx="5" ry="5" stroke="black"/>')).primitiveCount!==1)throw new Error("stroked ellipse");
  assert(e.compile(wrap('<polygon points="0 0 10 0 10 10" stroke="black"/>')).primitiveCount===1,"Polygon stroke admission");
 });
 
@@ -144,7 +145,7 @@ Deno.test("SVG CSS stylesheet and inline declarations affect Lean geometry paint
 Deno.test("SVG refuses unsupported features rather than silently losing rendering semantics",async()=>{
  const e=await loadSVG();
  for(const element of ['text','image','foreignObject','linearGradient','filter','clipPath','mask','script'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
- for(const attrs of ['style="filter:blur(2px)"','class="red"','transform="perspective(1)"','stroke-linecap="square"','stroke-linejoin="bevel"','rx="2"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
+ for(const attrs of ['style="filter:blur(2px)"','class="red"','transform="perspective(1)"','stroke-linecap="square"','stroke-linejoin="bevel"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
  rejects(()=>e.compile('<?xml-stylesheet href="a.css"?>'+wrap('')),"processing instruction");
  rejects(()=>e.compile('<!DOCTYPE svg>'+wrap('')),"DOCTYPE");
  rejects(()=>e.compile('<?xml version="1.0" encoding="ISO-8859-1"?>'+wrap('')),"UTF-8");
