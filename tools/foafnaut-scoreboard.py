@@ -94,6 +94,9 @@ for key, suite, command, text, date in BASELINES:
         continue
     suites.append({**earlier[key], 'status': 'not re-measured'} if key in earlier else
                   {'key': key, 'suite': suite, 'command': command, 'score': text, 'measuredOn': date, 'status': 'not re-measured'})
+# A suite outside the baselines stays too, with the commit that measured it.
+baseline = {row[0] for row in BASELINES}
+suites += [{**row, 'status': 'not re-measured'} for key, row in earlier.items() if key not in known | baseline]
 board = {'format': 'foafnaut2525-scoreboard-v1', 'release': a.release, 'commit': a.commit, 'suites': suites}
 a.out_dir.mkdir(parents=True, exist_ok=True)
 (a.out_dir / f'{a.release}.json').write_text(json.dumps(board, indent=1) + '\n')
