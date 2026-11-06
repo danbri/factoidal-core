@@ -10,7 +10,7 @@ import {requestRenderPlan} from "./render_plan.ts";
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--graph-sweep]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
   }
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined;
   while(args.length){const arg=args.shift();
@@ -23,6 +23,7 @@ async function main() {
     else if(arg==="--resize-sweep")sweep=[[800,500],[700,500],[600,500],[500,500],[400,500],[800,300],[800,500]];
     else if(arg==="--paste-sweep")pasted=args.shift();
     else if(arg==="--command-sweep")commands=["=","+","-","_","0","a","c",[2,60,60],[3,300,60],[4,300,60],"c",[2,60,60],[4,60,60],"link"];
+    else if(arg==="--graph-sweep")commands=["graph",[2,800,565],[3,900,640],[3,1000,720],[4,1000,720]];
     else if(arg==="--history-sweep")commands=["left","link","left","right","[","]","]","[","link1","]","[","]"];
     else throw new Error(`Unknown native HTML argument: ${arg}`);
   }
@@ -317,7 +318,8 @@ async function main() {
       // Each step runs on a settled page: a key through real menu matching, or an input event.
       if(commands&&!dirty&&!loading&&session?.frames){
         const step=commands.shift();
-        if(typeof step==="string"&&step.startsWith("link")){
+        if(step==="graph"){shellCommand("graph","");loading=true;setTimeout(()=>{loading=false;},600);}
+        else if(typeof step==="string"&&step.startsWith("link")){
           // A press and release on a link of the page: link is the first, link1 the second.
           const link=frame.webRender.links[Number(step.slice(4))] as number[],x=Math.round(link[2]+link[4]/2),y=Math.round(link[3]+link[5]/2);
           native.testEvent(2,x,y);native.testEvent(4,x,y);
