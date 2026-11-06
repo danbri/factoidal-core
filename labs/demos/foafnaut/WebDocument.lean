@@ -103,10 +103,7 @@ def rules (dom : DOM.Dom) (request : JSON.Json) : Except String (List Rendering.
 /-- Script MIME classification has one owner: the Lean scripting snapshot.
 All callers use its normalized kind, including whitespace/case and legacy
 classic JavaScript MIME types. Modules stay an explicit profile refusal. -/
-private def classicScripts (snapshot : JSON.Json) : Except String (List JSON.Json) := do
-  let scripts := match snapshot.field? "scripts" with
-    | some (.array scripts) => scripts
-    | _ => []
+private def classicScripts (scripts : List JSON.Json) : Except String (List JSON.Json) := do
   if scripts.any (fun script => str script "kind" == "module") then
     throw "unsupported JavaScript module script"
   return scripts.filter (fun script => str script "kind" == "classic")
@@ -120,7 +117,7 @@ def inspect (dom : DOM.Dom) (url : String) : Except String JSON.Json := do
     if stylesheet n && Rendering.CSS.hasAttribute n "href" && (← activeSheet n) then
       sheets := .object [("nodeId",.number (toString id)),("href",.string (attr n "href")),
         ("url",.string (Syntax.resolveIri base (attr n "href")))]::sheets
-  let scripts ← classicScripts snapshot
+  let scripts ← classicScripts (WebRenderScript.scriptRecords dom)
   let scripts := scripts.map fun script =>
     match script with
     | .object fields => .object (fields ++ [("url",.string (Syntax.resolveIri base (str script "src")))])
@@ -233,7 +230,7 @@ def run (html : String) (request : JSON.Json) (width height : Nat) : Except Stri
   if let some answer ← inputOp (str request "op" "render") request then return answer
   let dom ← prepareDOM html request
   validateResources dom request
-  let _ ← classicScripts (WebRenderScript.snapshot dom)
+  let _ ← classicScripts (WebRenderScript.scriptRecords dom)
   let op := str request "op" "render"
   if op == "inspect" then return (← inspect dom (str request "url")).toString
   let textScale := Float.ofNat (← scalePercent request) / 100
@@ -270,7 +267,7 @@ def run (html : String) (request : JSON.Json) (width height : Nat) : Except Stri
   let page := {scene with tree := near ++ marks}
   WebRender.artifact (match shell with
     | some value => WebShell.compose value page width height
-    | none => page) boxes face
+    | none => page) boxes face (request.field? "live" == some (.bool true))
 
 @[export web_document_compile]
 def compile (html request : String) (width height : UInt32) : String :=

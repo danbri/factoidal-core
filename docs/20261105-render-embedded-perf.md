@@ -99,3 +99,18 @@ Limits that shape the design:
    GMP in that build is a guess, not a measurement.
 4. Measure on rv32: a Lean hello build under ESP-IDF, then instruction counts.
 5. An integer strip rasteriser in Lean, checked against the existing CPU sampler.
+
+## Graph frame cost (2026-11-06)
+
+`foafnaut:graph`, 1600 by 1200, 649 primitives, Wasm, median of 8 frames. Measured
+by calling the document operations in turn. The model transition is 1.4 ms and the
+SVG text is 1.8 ms; the rest is `compile`: HTML parse about 69 ms, layout and SVG
+about 39 ms, artifact about 145 ms before the cuts.
+
+`web-render-native FILE W H --svg-profile` times each artifact part. Native, 292
+primitives: CPU probes 11.8 ms, float text 6.5 ms, shader text 4.4 ms, tiles 3 ms.
+
+Three cuts took `compile` from 257 ms to 190 ms: a render lists only script elements,
+not the whole DOM snapshot; the shader text is made once; a frame of a page already
+on screen has one CPU probe, not six. Paint data of such a frame is unchanged
+(`native_html_test.ts`). The next costs are the 49 KB HTML parse and the float text.

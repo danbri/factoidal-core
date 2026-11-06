@@ -1864,7 +1864,8 @@ private def Scene.tiles (s : Scene) : Array Nat := Id.run do
     out := out ++ list
   return out
 
-private def Scene.wgsl (_s : Scene) : String :=
+/-- The shader does not depend on the scene: all scene values are storage data. -/
+private def sceneShader : String :=
   "struct Params {rows:array<vec4f>};\n" ++
   "@group(0) @binding(0) var<storage,read> params:Params;\n" ++
   "@group(0) @binding(1) var<storage,read> tiles:array<u32>;\n" ++
@@ -1910,6 +1911,11 @@ private def Scene.wgsl (_s : Scene) : String :=
   String.join (pixelSampleOffsets.map fun (x,y) =>
     "total+=samplePixel(vec4f(pixel.xy+vec2f(" ++ toString (x-0.5) ++ "," ++ toString (y-0.5) ++ "),0.0,1.0));") ++
   "return total/" ++ toString pixelSampleOffsets.length ++ ".0;}\n"
+
+private def Scene.wgsl (_s : Scene) : String := sceneShader
+/-- JSON text of the shader, made once for the process. -/
+private def sceneShaderJSON : String := quote sceneShader
+
 
 private def Primitive.coverageAt (primitive : BackendPrimitive) (data : Array Float)
     (base : Nat) (position : Float × Float) : Bool × Bool := Id.run do
@@ -2268,22 +2274,41 @@ mutual
   termination_by nodes => sizeOf nodes
 end
 
-private def Scene.json (s : Scene) : Except String String := do
+/-- Lean's expected colors for the GPU readback check. A frame of a page that is
+already on screen (`live`) has one probe; each probe costs a pass over the scene. -/
+private def Scene.checks (s : Scene) (data : Array Float) (live : Bool := false) : List String :=
+  let rawProbes := if live then [(s.width/2,s.height/2)] else
+    [(1,1),(s.width/4,s.height/4),(s.width/2,s.height/2),
+     (s.width*3/4,s.height/2),(s.width/2,s.height*3/4),(s.width-2,s.height-2)]
+  let probes := (rawProbes.map fun (x,y) => (min (s.width-1) x,min (s.height-1) y)).eraseDups
+  (probes.zip (s.samplesWithData data probes)).map fun ((x,y),color) => "{\"x\":" ++ toString x ++ ",\"y\":" ++ toString y ++ ",\"rgb\":" ++ color.json ++ "}"
+
+private def Scene.json (s : Scene) (live : Bool := false) : Except String String := do
   let data := s.data
   if data.size > maxDataFloats then throw "storage data exceeds 1048576 floats"
-  let rawProbes := [(1,1),(s.width/4,s.height/4),(s.width/2,s.height/2),
-    (s.width*3/4,s.height/2),(s.width/2,s.height*3/4),(s.width-2,s.height-2)]
-  let probes := (rawProbes.map fun (x,y) => (min (s.width-1) x,min (s.height-1) y)).eraseDups
-  let checks := (probes.zip (s.samplesWithData data probes)).map fun ((x,y),color) => "{\"x\":" ++ toString x ++ ",\"y\":" ++ toString y ++ ",\"rgb\":" ++ color.json ++ "}"
+  let checks := s.checks data live
   let tree := if DisplayNode.listNodeCount s.tree <= maxInspectorNodes
     then DisplayNode.listJSON s.tree else "null"
   return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
     ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.compiled.length ++
     ",\"tree\":" ++ tree ++
-    ",\"data\":" ++ jsonArray (floatJSONList data.toList) ++ ",\"tiles\":" ++ jsonArray (s.tiles.toList.map toString) ++ ",\"wgsl\":" ++ quote s.wgsl ++ ",\"checks\":" ++ jsonArray checks ++ "}"
+    ",\"data\":" ++ jsonArray (floatJSONList data.toList) ++ ",\"tiles\":" ++ jsonArray (s.tiles.toList.map toString) ++ ",\"wgsl\":" ++ sceneShaderJSON ++ ",\"checks\":" ++ jsonArray checks ++ "}"
 /-- Serialize an existing checked SVG scene through the same packed-data/WGSL
     producer as the string ABI; no XML serialization or reparsing is required. -/
-def Scene.artifact (s : Scene) : Except String String := s.json
+def Scene.artifact (s : Scene) (live : Bool := false) : Except String String := s.json live
+
+/-- Each part of the artifact as separate work, so that a tool can time it. A part
+returns a size, so that the work is done. -/
+def Scene.artifactParts (s : Scene) : List (String × (Unit → Nat)) :=
+  let data := s.data
+  [("compiled",fun _ => s.compiled.length),
+   ("data",fun _ => s.data.size),
+   ("checks",fun _ => (s.checks data).length),
+   ("tree",fun _ => (DisplayNode.listJSON s.tree).utf8ByteSize),
+   ("dataText",fun _ => (jsonArray (floatJSONList data.toList)).utf8ByteSize),
+   ("tiles",fun _ => s.tiles.size),
+   ("tilesText",fun _ => (jsonArray (s.tiles.toList.map toString)).utf8ByteSize),
+   ("wgsl",fun _ => sceneShaderJSON.utf8ByteSize)]
 
 /-- Four-quarter-point CPU reference color for an existing scene. SVG 2 §3
     rendering order and the lab's explicit sample grid match the string ABI. -/

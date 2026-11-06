@@ -3,7 +3,7 @@ import {resolve} from "node:path";
 import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource} from "./native_html_engine.ts";
 
 /** The view state of a page. Lean applies it; the host only keeps the values. */
-export type PageView={textScalePercent?:number;selection?:"all"|number[];shell?:unknown};
+export type PageView={textScalePercent?:number;selection?:"all"|number[];shell?:unknown;live?:boolean};
 const MAX_RESOURCES=16, MAX_RESOURCE_BYTES=4*MAX_SOURCE_BYTES;
 export function inputURL(input:string,file=false) {
   const url=file?pathToFileURL(resolve(input)):new URL(input);

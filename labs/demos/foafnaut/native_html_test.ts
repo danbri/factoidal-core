@@ -147,6 +147,17 @@ Deno.test("scripts are refused, and unsupported CSS and layout are not",async()=
   }finally{await Deno.remove(dir,{recursive:true});}
 });
 
+Deno.test("a live frame paints the same data as a full frame, with one probe",()=>{
+  const source=html("<h1>Live</h1><p>frame</p>");
+  const full=engine.compile(source,400,300,{}),live=engine.compile(source,400,300,{live:true});
+  assert.equal(full.checks.length,6);
+  assert.equal(live.checks.length,1);
+  assert.deepEqual(live.data,full.data);
+  assert.deepEqual(live.tiles,full.tiles);
+  assert.equal(live.wgsl,full.wgsl);
+  assert.deepEqual(live.checks[0],full.checks.find(p=>p.x===200&&p.y===150));
+});
+
 Deno.test("the first website renders from its mirror, with its links",async()=>{
   const root=new URL("../../../third_party/testing/old-web/info.cern.ch/",import.meta.url);
   const pages:string[]=[];

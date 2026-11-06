@@ -10,7 +10,7 @@ const homeURL=pagesBase+'index.html',settingsURL=pagesBase+'settings.html';
 let module,createSession,session;
 let width=800,height=600,scale=1,theme='next',percent=125,pages=1;
 let address='',cursor=0,focused=false,fresh=false,loading=false,scroll=0,active=0;
-let doc,history,frame,home,dirty=false,drawing=false,serial=0,ticking=false;
+let doc,history,frame,home,checked,dirty=false,drawing=false,serial=0,ticking=false;
 const tabs=[];
 function call(source,options,w=1,h=1){
   const pointer=module.ccall('web_document_call','number',['string','string','number','number'],[source,JSON.stringify(options),w,h]);
@@ -142,7 +142,9 @@ async function draw(){
     dirty=false;
     const start=performance.now();
     try{
-      const next=call(doc.source,{op:'render',url:doc.url,textScalePercent:percent,shell:shell()},width,height);
+      // A page already on screen had Lean's full probe set on its first frame.
+      const next=call(doc.source,{op:'render',url:doc.url,textScalePercent:percent,shell:shell(),live:doc===checked},width,height);
+      checked=doc;
       const laid=performance.now();
       if(session&&(typeof session.update!=='function'||!(await session.update(next)))){session.close();session=undefined;}
       session??=await createSession(next,'svg-offscreen');

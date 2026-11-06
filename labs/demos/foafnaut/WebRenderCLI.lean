@@ -37,6 +37,22 @@ def main (args : List String) : IO UInt32 := do
       let font ← svgFont.mapM IO.FS.readFile
       IO.println (svgArtifact (← IO.FS.readFile path) w h font)
       return 0
+    if flags == ["--svg-profile"] then
+      let some w := width.toNat? | throw (IO.userError "invalid width")
+      let some h := height.toNat? | throw (IO.userError "invalid height")
+      let xml ← IO.FS.readFile path
+      let start ← IO.monoNanosNow
+      match NativeSVG.parse xml w h with
+      | .error message => IO.eprintln message; return 1
+      | .ok scene =>
+        IO.println s!"parse {((← IO.monoNanosNow)-start)/1000} us"
+        for (name,part) in scene.artifactParts do
+          let begin_ ← IO.monoNanosNow
+          let size := part ()
+          -- The test uses the size, so the work happens before the second clock read.
+          if size == 0 then IO.println s!"{name} is empty"
+          IO.println s!"{name} {((← IO.monoNanosNow)-begin_)/1000} us, size {size}"
+        return 0
     if flags == ["--font-requests"] then
       IO.println (WebRenderFontRequests.compile (← IO.FS.readFile path))
       return 0

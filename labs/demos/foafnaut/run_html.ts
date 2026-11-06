@@ -67,6 +67,7 @@ async function main() {
   let history=engine.historyPush({entries:[],index:0},document.url);
   // The chrome is a Lean value too. The host stores it and shows what Lean draws.
   const home=document;
+  let checked:typeof document|undefined;
   let address=document.url,cursor=0,focused=false,fresh=false,theme="next",pages=1,scale=1,active=0,scroll=0;
   const tabs:{document:typeof document;history:typeof history;scroll:number}[]=[{document,history,scroll:0}];
   const shell=()=>({tabs:tabs.map((tab,index)=>({title:(index===active?document:tab.document).title??""})),active,address,cursor,focused,
@@ -291,7 +292,8 @@ async function main() {
         const nextDocument=candidate??document;
         const frameStart=performance.now();
         let next:HTMLArtifact;
-        try{next=nextDocument.compile(width,height,shown());}
+        // A page already on screen had Lean's full probe set on its first frame.
+        try{next=nextDocument.compile(width,height,{...shown(),live:nextDocument===checked});}
         catch(error){candidate=undefined;dirty=false;refuse(nextDocument.url,error);continue;}
         const compiled=performance.now();
         // Layout can change the storage buffer/shader shape on resize. Retain the
@@ -305,6 +307,7 @@ async function main() {
           resizeToFrameMs:resizeAt===undefined?null:ms(resizeAt,finished),presented:drawn,steps:session.steps,pixelHash:session.pixelHash});
         resizeAt=undefined;
         if(drawn){
+          checked=nextDocument;
           if(nextDocument!==document)view.selection=undefined;
           if(nextDocument!==document){scroll=0;if(!focused)address=nextDocument.url;}frame=next;document=nextDocument;candidate=undefined;dirty=false;native.setTitle(windowTitle(document));
           console.log(JSON.stringify({type:"native-html-presented",url:document.url,width,height,primitives:frame.primitiveCount,links:frame.webRender.links.length,frames:session.frames}));

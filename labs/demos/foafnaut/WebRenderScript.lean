@@ -68,12 +68,25 @@ private def scriptKind (node : DOM.Node) : String :=
   else if ["","text/javascript","application/javascript","text/ecmascript","application/ecmascript"].contains kind then "classic"
   else "data"
 
+/-- The script elements in tree order. A render needs these, not the whole snapshot. -/
+def scriptRecords (dom : DOM.Dom) : List JSON.Json := Id.run do
+  let mut scripts : List JSON.Json := []
+  for id in dom.treeOrder 0 do
+    let node := dom.get id
+    if node.type == .element && DOM.Dom.isHtmlElement node "script" then
+      scripts := .object [
+        ("nodeId",.number (toString id)),
+        ("source",.string ((dom.textContent id).getD "")),
+        ("src",.string (attrValue node "src")),
+        ("kind",.string (scriptKind node)),
+        ("type",.string (attrValue node "type"))] :: scripts
+  return scripts.reverse
+
 /-- Only connected element handles are projected. Text is computed by Lean's
 DOM textContent operation. Scripts remain inert until a host explicitly opts
 in and submits their source to a separate engine. -/
 def snapshot (dom : DOM.Dom) : JSON.Json := Id.run do
   let mut nodes : List JSON.Json := []
-  let mut scripts : List JSON.Json := []
   for id in dom.treeOrder 0 do
     let node := dom.get id
     if node.type == .element then
@@ -82,15 +95,8 @@ def snapshot (dom : DOM.Dom) : JSON.Json := Id.run do
         ("id",.number (toString id)), ("tagName",.string node.lname),
         ("attributes",.object (attrs.map fun attr => (attr.qname,.string attr.value))),
         ("textContent",.string ((dom.textContent id).getD ""))] :: nodes
-      if DOM.Dom.isHtmlElement node "script" then
-        scripts := .object [
-          ("nodeId",.number (toString id)),
-          ("source",.string ((dom.textContent id).getD "")),
-          ("src",.string (attrValue node "src")),
-          ("kind",.string (scriptKind node)),
-          ("type",.string (attrValue node "type"))] :: scripts
   return .object [("schema",.string "factoidal-script-dom-v1"),
-    ("nodes",.array nodes.reverse),("scripts",.array scripts.reverse)]
+    ("nodes",.array nodes.reverse),("scripts",.array (scriptRecords dom))]
 
 def snapshotJSON (dom : DOM.Dom) : String := (snapshot dom).toString
 end WebRenderScript
