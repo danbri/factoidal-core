@@ -114,3 +114,9 @@ Three cuts took `compile` from 257 ms to 190 ms: a render lists only script elem
 not the whole DOM snapshot; the shader text is made once; a frame of a page already
 on screen has one CPU probe, not six. Paint data of such a frame is unchanged
 (`native_html_test.ts`). The next costs are the 49 KB HTML parse and the float text.
+
+A stack sample of the frame (`web-render-native FILE W H --document-repeat OPTIONS N`
+under `/usr/bin/sample`) showed `HTML.adjustName` at 1,253 of 3,432 samples: it lowered
+the whole SVG name table for each name. The tables are now lowered once
+(`adjustLowered_eq` proves the same result). `compile` went from 190 ms to 133 ms in
+Wasm and from 83 ms to 50 ms native. Next in that sample: SVG parse, then float text.

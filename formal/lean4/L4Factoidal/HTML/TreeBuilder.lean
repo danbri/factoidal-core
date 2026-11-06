@@ -604,6 +604,26 @@ def svgAttrNames : List String :=
 
 def adjustName (tbl : List String) (n : String) : String := (tbl.find? (fun s => lowerStr s == n)).getD n
 
+/-- A name table with each key lowered once. `adjustName` lowers the whole table for
+each name, which was 36% of the frame of a page with a large SVG. -/
+def loweredNames (tbl : List String) : List (String × String) := tbl.map (fun s => (lowerStr s,s))
+def adjustLowered (tbl : List (String × String)) (n : String) : String :=
+  ((tbl.find? (fun entry => entry.1 == n)).map Prod.snd).getD n
+
+theorem adjustLowered_eq (tbl : List String) (n : String) :
+    adjustLowered (loweredNames tbl) n = adjustName tbl n := by
+  induction tbl with
+  | nil => rfl
+  | cons head rest ih =>
+    unfold adjustLowered adjustName loweredNames at *
+    simp only [List.map_cons,List.find?_cons]
+    cases h : lowerStr head == n with
+    | true => simp
+    | false => simpa using ih
+
+def svgTagLowered : List (String × String) := loweredNames svgTagNames
+def svgAttrLowered : List (String × String) := loweredNames svgAttrNames
+
 def fontBreakoutAttr (attrs : List (String × String)) : Bool :=
   attrs.any (fun a => a.1 == "color" || a.1 == "face" || a.1 == "size")
 
@@ -1129,7 +1149,7 @@ def inBodyH (tok : Token) : P Act := do
       reconstructAfe
       let ns := if n == "math" then NS.math else NS.svg
       let ats := if n == "math" then attrs.map (fun a => (if a.1 == "definitionurl" then "definitionURL" else a.1, a.2))
-        else attrs.map (fun a => (adjustName svgAttrNames a.1, a.2))
+        else attrs.map (fun a => (adjustLowered svgAttrLowered a.1, a.2))
       let _ ← insertElement ns n ats.toArray
       if sc then
         popCur
@@ -1273,8 +1293,8 @@ def foreignH (tok : Token) : P Act := do
     else
       let cn ← adjustedCur
       let ns := cn.ns
-      let name := if ns == .svg then adjustName svgTagNames n else n
-      let ats := if ns == .svg then attrs.map (fun a => (adjustName svgAttrNames a.1, a.2))
+      let name := if ns == .svg then adjustLowered svgTagLowered n else n
+      let ats := if ns == .svg then attrs.map (fun a => (adjustLowered svgAttrLowered a.1, a.2))
         else attrs.map (fun a => (if a.1 == "definitionurl" then "definitionURL" else a.1, a.2))
       let _ ← insertElement ns name ats.toArray
       if sc then

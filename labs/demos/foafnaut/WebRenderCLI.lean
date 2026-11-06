@@ -56,6 +56,20 @@ def main (args : List String) : IO UInt32 := do
     if flags == ["--font-requests"] then
       IO.println (WebRenderFontRequests.compile (← IO.FS.readFile path))
       return 0
+    -- Repeats one frame, so that a stack sampler has time to see where it goes.
+    if let ["--document-repeat",options,count] := flags then
+      let some w := width.toNat? | throw (IO.userError "invalid width")
+      let some h := height.toNat? | throw (IO.userError "invalid height")
+      let some n := count.toNat? | throw (IO.userError "invalid count")
+      let html ← IO.FS.readFile path
+      let request ← IO.FS.readFile options
+      let start ← IO.monoNanosNow
+      let mut bytes := 0
+      for i in [0:n] do
+        -- The space differs on each pass, so a pass can not be shared with another.
+        bytes := bytes+(WebDocument.compile (html ++ String.ofList (List.replicate (i%2) ' ')) request w.toUInt32 h.toUInt32).utf8ByteSize
+      IO.println s!"{n} frames, {((← IO.monoNanosNow)-start)/1000000/(max n 1)} ms each, {bytes} bytes"
+      return 0
     if let ["--document",options] := flags then
       let some w := width.toNat? | throw (IO.userError "invalid width")
       let some h := height.toNat? | throw (IO.userError "invalid height")
