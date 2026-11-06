@@ -710,3 +710,21 @@ room). First user: the FoafOS shell's bus room (danbri/glitchcan-minigam,
 - Options: `heldLimits` of `xmppOpen` and of `npm/factoidal/xmpp/server.mjs`.
   `--dangerously-disable-ratelimits` turns the sender rate off; the caps stay on.
 - Tests: `#guard`s in `Held.lean`; `npm/factoidal/test/xmpp-held.test.mjs`.
+
+## 2026-11-06: SASL: stream close, address backoff, one exchange for every name, keys once (finding H3)
+
+Already on `main` from https://github.com/danbri/factoidal/issues/1128: `AuthGuard`, 5 failures in
+60 seconds per account name and per client address, on TCP. This entry adds:
+
+- `Session.afterSasl`: RFC 6120 section 6.4.5. The third failed SASL attempt on a stream closes it
+  with `policy-violation` (`Config.maxAuthFailures`). Theorems `afterSasl_closes`, `afterSasl_other`.
+  A failed SCRAM response now ends the exchange: the next attempt is a new `<auth/>`.
+- `AuthGuard.backoff`: a slower limit on a client address, 20 failures in an hour.
+- The WebSocket listener now gives the client address too (`xmppWsOpen`, `remoteAddress`).
+- `--no-address-limit` (`addressLimit: false`): count per account name only. A listener behind a
+  proxy needs it: there every client has the proxy's address, so a limit on it stops all of them.
+- `Config.decoyCredential`: SCRAM runs the same steps for a name with no account, with a salt of the
+  same form (`Config.saltFor`), and ends in `not-authorized` at the same step. Theorem
+  `handleScramResponse_account`: only an account can succeed. A failure now counts at that step.
+- `Config.credentials`: `xmppOpen` derives each account's SCRAM keys once, so a login runs no PBKDF2.
+- Tests: `#guard`s in `Server.lean`; `npm/factoidal/test/xmpp-sasl-limits.test.mjs`.

@@ -774,7 +774,7 @@ usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
                             [--ws-port N [--ws-path PATH] [--ws-origin ORIGIN]...]
                             [--muc DOMAIN [--muc-members FILE]] [--mix DOMAIN] [--gc3 DOMAIN]
                             [--state-key FILE] [--max-connections N]
-                            [--login-timeout SECONDS]
+                            [--login-timeout SECONDS] [--no-address-limit]
                             [--dangerously-disable-ratelimits]
 
 Starts a Node TCP server that runs one engine session per connection and
@@ -835,6 +835,10 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
                    membership, stable participant ids, optional events. There is
                    no published GC3 spec; every wire format is invented and listed
                    in L4Factoidal/XMPP/Gc3.lean and danbri/factoidal issue 1236
+  --no-address-limit
+                   count failed logins per account name only. For a listener
+                   behind a proxy, where every client has the proxy's address
+                   and a limit on it would stop them all
   --dangerously-disable-ratelimits
                    no failed SASL login limit and no sender rate on held
                    messages (a warning is printed at start); any client can
@@ -845,8 +849,9 @@ Failed SASL logins are limited by default
 60 seconds for one account name (known or not) or from one client address
 (an IPv6 client by its /64), on one stream or on new ones, an attempt gets
 the SASL failure temporary-auth-failure, and no password is checked, also
-the right one, until that window ends. A malformed SASL payload checks no
-password and does not count.
+the right one, until that window ends. A client address also has a slower
+limit of 20 failed logins in an hour. A malformed SASL payload checks no
+password and does not count. A stream closes after 3 failed attempts.
 
 The server makes no protocol decision. Stream negotiation, SASL PLAIN and
 SCRAM-SHA-256, resource binding, the roster, presence subscription and
@@ -2957,6 +2962,7 @@ async function commandXmppServe (positional, options) {
   if (options['dangerously-disable-ratelimits'] !== undefined) {
     settings.disableRateLimits = options['dangerously-disable-ratelimits'] === true
   }
+  if (options['no-address-limit'] === true) settings.addressLimit = false
   if (useTls) {
     settings.cert = await fs.readFile(options.cert)
     settings.key = await fs.readFile(options.key)

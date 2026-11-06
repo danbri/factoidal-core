@@ -51,9 +51,9 @@ server handle or handed back to the host:
 What the host supplies and this module never invents: the stream id and
 the SCRAM server nonce of each session (RFC 6120 section 4.7.3 and
 RFC 5802 section 5.1 want them unpredictable; the module has no random
-source), the account list, and the bytes. The one-salt-per-deployment
-limitation of the harness is kept and stated: `saltB64` is a server
-configuration value, defaulting to the harness's.
+source), the account list, `saltSeed` (`Config.saltFor`: one salt per name),
+and the bytes. With no `saltSeed`, every name has `saltB64`, the harness's
+one-salt limitation, kept for a transcript that must replay.
 
 State lives HERE, in `Wasm/*`, in `IO.Ref`s, exactly as `Wasm/Ops/Lws.lean`
 holds a storage; `L4Factoidal/XMPP/` stays pure. Reachable only through
@@ -141,6 +141,10 @@ structure XmppServerConfig where
   persist : Bool := false
   /-- The failed SASL login limit (on unless `disableRateLimits`). -/
   limits : L4Factoidal.Net.LoginLimit.Limits := {}
+  /-- From the host's random source (`Config.saltSeed`), from `"saltSeed"`. -/
+  saltSeed : String := ""
+  /-- The accounts' SCRAM keys, derived by `xmppOpen` (`Config.credentials`). -/
+  credentials : List (String × Scram.StoredCredentials) := []
   /-- The caps of the stanzas held for offline accounts, from `"heldLimits"`. -/
   heldCaps : Held.Caps := {}
   /-- How many stanzas one account may have held in one window (on unless
@@ -196,6 +200,7 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
         let disabled := (j.getBool? "disableRateLimits").getD false
         let (heldCaps, senderLimits) := heldLimitsOf j disabled
         .ok { domain, saltB64, iterationCount, accounts, heldCaps, senderLimits,
+              saltSeed := (j.getString? "saltSeed").getD "",
               tlsCarrier := (j.getBool? "tlsCarrier").getD false, mucDomain, mixDomain, gc3Domain,
               mucMembers := (mucMembers.bind id).getD [],
               persist := (j.getBool? "persist").getD false,
@@ -235,6 +240,8 @@ structure XmppOpenServer where
   /-- The counters of the failed SASL login limit, shared by every session
   of this server (https://github.com/danbri/factoidal/issues/1128). -/
   failures : L4Factoidal.Net.LoginLimit.Failures := {}
+  /-- The counters of the slower limit of a client address. -/
+  backoff : L4Factoidal.Net.LoginLimit.Failures := {}
   /-- The counters of the sender rate on held stanzas (`Held.admit`). -/
   senders : L4Factoidal.Net.LoginLimit.Failures := {}
   /-- The host's clock, in seconds: the latest `now` of `xmppSessionOpen` or
@@ -261,6 +268,21 @@ initialize xmppServerCounter : IO.Ref Nat ← IO.mkRef 0
 initialize xmppSessionCounter : IO.Ref Nat ← IO.mkRef 0
 initialize xmppServers : IO.Ref (Std.HashMap String XmppOpenServer) ← IO.mkRef ∅
 initialize xmppSessions : IO.Ref (Std.HashMap String XmppOpenSession) ← IO.mkRef ∅
+
+/-- The configuration of one session of a server. -/
+def XmppOpenServer.sessionConfig (srv : XmppOpenServer) (streamId nonce : String)
+    (tlsCarrier startTls : Bool) : Config :=
+  { domain := srv.cfg.domain, streamId, serverNonce := nonce
+    saltB64 := srv.cfg.saltB64, iterationCount := srv.cfg.iterationCount
+    accounts := srv.cfg.accounts, tlsCarrier, startTls
+    mucDomain := srv.cfg.mucDomain, mixDomain := srv.cfg.mixDomain, gc3Domain := srv.cfg.gc3Domain
+    saltSeed := srv.cfg.saltSeed, credentials := srv.cfg.credentials }
+
+/-- The login limit as a session sees it: the server's counters and clock, the
+session's address. -/
+def XmppOpenServer.guardFor (srv : XmppOpenServer) (os : XmppOpenSession) : Server.AuthGuard :=
+  { limits := srv.cfg.limits, failures := srv.failures, backoff := srv.backoff
+    now := srv.now, address := os.address }
 
 def unknownXmppServer (h : String) : String :=
   errJson s!"unknown XMPP server handle: {h}"
@@ -445,10 +467,9 @@ def drain (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected) :
           let roster := match os.session.bareJid with
             | some b => srv.rosters.getD b []
             | none => []
-          let guard : Server.AuthGuard :=
-            { limits := srv.cfg.limits, failures := srv.failures, now := srv.now, address := os.address }
-          let (s', env', outs) := Server.step os.session { roster, guard } unit
-          let (srv', c') := performAll os.session.bareJid { srv with failures := env'.guard.failures } c outs
+          let (s', env', outs) := Server.step os.session { roster, guard := srv.guardFor os } unit
+          let (srv', c') := performAll os.session.bareJid
+            { srv with failures := env'.guard.failures, backoff := env'.guard.backoff } c outs
           let (srv'', c'') := bindTransition srv' c' os.session.fullJid s'.fullJid
           let closed := c''.close || s'.stage == .closed
           drain srv''
@@ -502,6 +523,13 @@ def xmppOpen (configJson : String) : IO String := do
   | .ok cfg =>
       let n ← xmppServerCounter.modifyGet fun n => (n + 1, n + 1)
       let h := s!"xmpp{n}"
+      -- PBKDF2 runs here, once for each account, and never at a login.
+      let probe : Config := { domain := cfg.domain, streamId := "", serverNonce := "", saltB64 := cfg.saltB64
+                              iterationCount := cfg.iterationCount, accounts := [], tlsCarrier := false
+                              saltSeed := cfg.saltSeed }
+      let credentials := cfg.accounts.filterMap (fun a =>
+        (Scram.credentialsOfPassword a.password (probe.saltFor a.username) cfg.iterationCount).map (a.username, ·))
+      let cfg := { cfg with credentials }
       let muc : Option Muc.Service := cfg.mucDomain.map (fun d => { domain := d, memberLists := cfg.mucMembers })
       let mix : Option Mix.Service := cfg.mixDomain.map (fun d => { domain := d })
       let gc3 : Option Gc3.Service := cfg.gc3Domain.map (fun d => { domain := d })
@@ -556,18 +584,8 @@ def xmppSessionOpen (server optionsJson : String) : IO String := do
         if streamId.isEmpty || nonce.isEmpty then
           pure (errJson "xmppSessionOpen: \"streamId\" and \"nonce\" must not be empty")
         else
-          let cfg : Config :=
-            { domain := srv.cfg.domain
-              streamId
-              serverNonce := nonce
-              saltB64 := srv.cfg.saltB64
-              iterationCount := srv.cfg.iterationCount
-              accounts := srv.cfg.accounts
-              tlsCarrier := (j.getBool? "tlsCarrier").getD srv.cfg.tlsCarrier
-              startTls := (j.getBool? "startTls").getD false
-              mucDomain := srv.cfg.mucDomain
-              mixDomain := srv.cfg.mixDomain
-              gc3Domain := srv.cfg.gc3Domain }
+          let cfg := srv.sessionConfig streamId nonce ((j.getBool? "tlsCarrier").getD srv.cfg.tlsCarrier)
+            ((j.getBool? "startTls").getD false)
           let n ← xmppSessionCounter.modifyGet fun n => (n + 1, n + 1)
           let h := s!"xmpps{n}"
           -- The host's clock (seconds) moves the server's clock forward.
@@ -738,10 +756,9 @@ def stepOneUnit (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected
     let roster := match os.session.bareJid with
       | some b => srv.rosters.getD b []
       | none => []
-    let guard : Server.AuthGuard :=
-      { limits := srv.cfg.limits, failures := srv.failures, now := srv.now, address := os.address }
-    let (s', env', outs) := Server.step os.session { roster, guard } unit
-    let (srv', c') := performAll os.session.bareJid { srv with failures := env'.guard.failures } c outs
+    let (s', env', outs) := Server.step os.session { roster, guard := srv.guardFor os } unit
+    let (srv', c') := performAll os.session.bareJid
+      { srv with failures := env'.guard.failures, backoff := env'.guard.backoff } c outs
     let (srv'', c'') := bindTransition srv' c' os.session.fullJid s'.fullJid
     (srv'', { os with session := s', units := os.units + 1, closed := c''.close || s'.stage == .closed }, c'')
 
@@ -824,7 +841,7 @@ def xmppWsJson (ws : XmppWsSession) (c : XmppCollected) : String :=
         | .handshake b => b.size | .frames _ b => b.size | .done => 0)))])
 
 /-- `xmppWsOpen(serverHandle, {"streamId","nonce","path","allowedOrigins"?,
-"allowNoOrigin"?,"tlsCarrier"?,"maxUnits"?,"maxFrame"?,"maxMessage"?})`. -/
+"allowNoOrigin"?,"tlsCarrier"?,"maxUnits"?,"maxFrame"?,"maxMessage"?,"remoteAddress"?})`. -/
 def xmppWsOpen (server optionsJson : String) : IO String := do
   match (← xmppServers.get)[server]? with
   | none => pure (unknownXmppServer server)
@@ -837,15 +854,7 @@ def xmppWsOpen (server optionsJson : String) : IO String := do
         if streamId.isEmpty || nonce.isEmpty || !path.startsWith "/" then
           pure (errJson "xmppWsOpen: \"streamId\" and \"nonce\" must not be empty, and \"path\" must start with /")
         else
-          let cfg : Config :=
-            { domain := srv.cfg.domain, streamId, serverNonce := nonce
-              saltB64 := srv.cfg.saltB64, iterationCount := srv.cfg.iterationCount
-              accounts := srv.cfg.accounts
-              tlsCarrier := (j.getBool? "tlsCarrier").getD false
-              startTls := false
-              mucDomain := srv.cfg.mucDomain
-              mixDomain := srv.cfg.mixDomain
-              gc3Domain := srv.cfg.gc3Domain }
+          let cfg := srv.sessionConfig streamId nonce ((j.getBool? "tlsCarrier").getD false) false
           let origins := ((j.getArray? "allowedOrigins").getD []).filterMap Json.asString?
           let policy : L4Factoidal.HTTP.WebSocket.Policy :=
             { allowedOrigins := origins.map (·.toLower), allowNoOrigin := (j.getBool? "allowNoOrigin").getD false
@@ -854,7 +863,8 @@ def xmppWsOpen (server optionsJson : String) : IO String := do
           let h := s!"xmppws{n}"
           xmppWsSessions.modify (·.insert h
             { inner := { server, session := Session.init cfg, buffer := "", units := 0
-                         maxUnits := (natField? j "maxUnits").getD 1000000, closed := false }
+                         maxUnits := (natField? j "maxUnits").getD 1000000, closed := false
+                         address := (j.getString? "remoteAddress").getD "" }
               policy, path, phase := .handshake ByteArray.empty })
           pure (okWith [("handle", .string h)])
       | _, _, _ => pure (errJson "xmppWsOpen: \"streamId\", \"nonce\" and \"path\" are required")
@@ -952,12 +962,7 @@ def xmppMsgOpen (server optionsJson : String) : IO String := do
         if streamId.isEmpty || nonce.isEmpty then
           pure (errJson "xmppMsgOpen: \"streamId\" and \"nonce\" must not be empty")
         else
-          let cfg : Config :=
-            { domain := srv.cfg.domain, streamId, serverNonce := nonce
-              saltB64 := srv.cfg.saltB64, iterationCount := srv.cfg.iterationCount
-              accounts := srv.cfg.accounts, tlsCarrier := false, startTls := false
-              mucDomain := srv.cfg.mucDomain, mixDomain := srv.cfg.mixDomain
-              gc3Domain := srv.cfg.gc3Domain }
+          let cfg := srv.sessionConfig streamId nonce false false
           let n ← xmppMsgCounter.modifyGet fun n => (n + 1, n + 1)
           let h := s!"xmppmsg{n}"
           xmppMsgSessions.modify (·.insert h

@@ -202,10 +202,42 @@ structure Config where
   /-- The GC3 prototype service's domain (`L4Factoidal.XMPP.Gc3`; there is no
   published GC3 specification), or none. -/
   gc3Domain : Option String := none
+  /-- Supplied by the host from a random source, the same for every session of
+  a server. It gives each name its salt (`saltFor`). Empty: every name has
+  `saltB64`. -/
+  saltSeed : String := ""
+  /-- The SCRAM keys of each account, derived once when the server opens, so a
+  login runs no PBKDF2. An account that is not here is derived at login. -/
+  credentials : List (String × Scram.StoredCredentials) := []
+  /-- RFC 6120 section 6.4.5: failed SASL attempts on one stream before it is
+  closed (`Session.afterSasl`). -/
+  maxAuthFailures : Nat := 3
   deriving Inhabited
 
 def Config.accountOf (c : Config) (user : String) : Option Account :=
   c.accounts.find? (fun a => a.username == user)
+
+/-- The salt of a name, known to this server or not: an HMAC of the name under
+`saltSeed`, so two accounts have different salts and a name with no account has
+one of the same form. -/
+def Config.saltFor (c : Config) (user : String) : String :=
+  if c.saltSeed.isEmpty then c.saltB64
+  else Scram.b64Encode ((L4Factoidal.Crypto.hmacSha256 c.saltSeed.toUTF8 ("salt:" ++ user).toUTF8).extract 0 16)
+
+/-- The SCRAM keys of an account. -/
+def Config.credentialOf (c : Config) (user : String) : Option Scram.StoredCredentials :=
+  match c.credentials.find? (·.1 == user) with
+  | some (_, cred) => some cred
+  | none => (c.accountOf user).bind (fun a =>
+      Scram.credentialsOfPassword a.password (c.saltFor user) c.iterationCount)
+
+/-- Keys for a name with no account: a SASL exchange for such a name runs like
+any other, and ends in `not-authorized` at the same step (`handleScramResponse`
+gives success only to an account). -/
+def Config.decoyCredential (c : Config) (user : String) : Scram.StoredCredentials :=
+  { saltB64 := c.saltFor user, iterationCount := c.iterationCount
+    storedKey := L4Factoidal.Crypto.hmacSha256 c.saltSeed.toUTF8 ("stored:" ++ user).toUTF8
+    serverKey := L4Factoidal.Crypto.hmacSha256 c.saltSeed.toUTF8 ("server:" ++ user).toUTF8 }
 
 /-! ## What the host must do -/
 
@@ -262,12 +294,13 @@ with a warning at start). The counters are `L4Factoidal.Net.LoginLimit`, the
 same as the WebDAV login's. The numbers are the implementer's: at most 5
 failures in 60 seconds for one account name (`account:` and the name as
 sent; a name with no account counts the same way) and for one client address
-(`address:` and `clientPrefix`; IPv6 by its /64). An attempt whose name or
-address is blocked gets `temporary-auth-failure` (RFC 6120 §6.5.12) before
-any password check: the right password too, until the window ends. A
-failure is a PLAIN payload whose password does not match, a SCRAM
-client-first for a name with no account, and a SCRAM proof or nonce that
-does not verify. A malformed payload (`incorrect-encoding`,
+(`address:` and `clientPrefix`; IPv6 by its /64). An address also has a slower
+limit, which backs it off for longer: at most 20 failures in an hour
+(`backoffLimits`). An attempt whose name or address is blocked gets
+`temporary-auth-failure` (RFC 6120 §6.5.12) before any password check: the
+right password too, until the window ends. A failure is a PLAIN payload whose
+password does not match, and a SCRAM proof or nonce that does not verify, for a
+name with an account or without one. A malformed payload (`incorrect-encoding`,
 `malformed-request`, `invalid-mechanism`) checks no password and is not
 counted. A key with an empty part (no name, no address) is not used. -/
 
@@ -278,19 +311,31 @@ structure AuthGuard where
   now : Nat := 0
   /-- The client's address as the socket gives it (`""`: unknown). -/
   address : String := ""
+  /-- The slower limit of one client address, and its counters. -/
+  backoffLimits : L4Factoidal.Net.LoginLimit.Limits := { maxFailures := 20, window := 3600 }
+  backoff : L4Factoidal.Net.LoginLimit.Failures := {}
   deriving Inhabited
+
+/-- The key of the client's address, when it is known. -/
+def AuthGuard.addressKeys (g : AuthGuard) : List String :=
+  let q : L4Factoidal.Net.LoginLimit.Requester := .tcp g.address
+  if q.valid then [L4Factoidal.Net.LoginLimit.requesterKey q] else []
 
 /-- The keys of a SASL attempt for the account name `user`. -/
 def AuthGuard.keys (g : AuthGuard) (user : String) : List String :=
-  let q : L4Factoidal.Net.LoginLimit.Requester := .tcp g.address
-  (if user.isEmpty then [] else ["account:" ++ user]) ++
-  (if q.valid then [L4Factoidal.Net.LoginLimit.requesterKey q] else [])
+  (if user.isEmpty then [] else ["account:" ++ user]) ++ g.addressKeys
+
+/-- `backoffLimits`, turned off with `limits`. -/
+def AuthGuard.slowLimits (g : AuthGuard) : L4Factoidal.Net.LoginLimit.Limits :=
+  { g.backoffLimits with enabled := g.limits.enabled }
 
 def AuthGuard.blocked (g : AuthGuard) (user : String) : Bool :=
-  (g.failures.check g.limits g.now (g.keys user)).isSome
+  (g.failures.check g.limits g.now (g.keys user)).isSome ||
+  (g.backoff.check g.slowLimits g.now g.addressKeys).isSome
 
 def AuthGuard.fail (g : AuthGuard) (user : String) : AuthGuard :=
-  { g with failures := g.failures.record g.limits g.now (g.keys user) }
+  { g with failures := g.failures.record g.limits g.now (g.keys user)
+           backoff := g.backoff.record g.slowLimits g.now g.addressKeys }
 
 /-- The start warning of `xmpp-serve --dangerously-disable-ratelimits`. -/
 def saslLimitWarnings (l : L4Factoidal.Net.LoginLimit.Limits) : List String :=
@@ -337,6 +382,8 @@ structure Session where
   by a completed STARTTLS? Only `Session.init` and
   `Session.tlsEstablished` set it. -/
   tls : Bool := false
+  /-- SASL attempts on this stream that failed. -/
+  authFailures : Nat := 0
   deriving Inhabited
 
 /-- STARTTLS must happen before anything else on this connection. -/
@@ -588,17 +635,17 @@ def handleAuthChecked (s : Session) (g : AuthGuard) (n : Node) : Session × Auth
       match Sasl.ClientFirstMessage.parse text with
       | none => (s, g, [.send (saslFailure "malformed-request")])
       | some cf =>
-        match s.cfg.accountOf cf.username with
-        | none => (s, g.fail cf.username, [.send (saslFailure "not-authorized")])
-        | some acct =>
-          match Scram.credentialsOfPassword acct.password s.cfg.saltB64 s.cfg.iterationCount with
-          | none => (s, g, [.send (saslFailure "temporary-auth-failure")])
-          | some cred =>
-            let nonce := cf.clientNonce ++ s.cfg.serverNonce
-            let serverFirst := Scram.serverFirstOf cred nonce
-            ({ s with stage := .awaitingScramResponse cf.username nonce
-                        (Scram.clientFirstBare cf) serverFirst }, g,
-             [.send (saslChallenge (Scram.b64Encode serverFirst.toUTF8))])
+        match s.cfg.accountOf cf.username, s.cfg.credentialOf cf.username with
+        | some _, none => (s, g, [.send (saslFailure "temporary-auth-failure")])
+        | _, known =>
+          -- A name with no account gets a challenge of the same form, so this
+          -- step does not say which names exist.
+          let cred := known.getD (s.cfg.decoyCredential cf.username)
+          let nonce := cf.clientNonce ++ s.cfg.serverNonce
+          let serverFirst := Scram.serverFirstOf cred nonce
+          ({ s with stage := .awaitingScramResponse cf.username nonce
+                      (Scram.clientFirstBare cf) serverFirst }, g,
+           [.send (saslChallenge (Scram.b64Encode serverFirst.toUTF8))])
   else (s, g, [.send (saslFailure "invalid-mechanism")])
 
 /-- Handle `<auth/>` — the SASL first step (RFC 6120 section 6.4.2). An
@@ -618,31 +665,64 @@ theorem handleAuth_blocked (s : Session) (g : AuthGuard) (n : Node) (u : String)
   simp [handleAuth, hu, hb]
 
 /-- Handle `<response/>` — the SCRAM second step (RFC 5802 section 3). A
-proof or nonce that does not verify is a failure of `user`. -/
+proof or nonce that does not verify is a failure of `user`. Every failure ends
+the exchange: the next attempt is a new `<auth/>`, with a new nonce. The proof
+is checked for a name with no account too, against its decoy keys, and only an
+account can succeed. -/
 def handleScramResponse (s : Session) (g : AuthGuard) (user nonce cfb sf : String) (n : Node) :
     Session × AuthGuard × List Out :=
+  let over := { s with stage := .awaitingAuth }
   match Scram.b64Decode (textOf n) with
-  | none => (s, g, [.send (saslFailure "incorrect-encoding")])
+  | none => (over, g, [.send (saslFailure "incorrect-encoding")])
   | some bytes =>
     match Sasl.ClientFinalMessage.parse (String.fromUTF8! bytes) with
-    | none => (s, g, [.send (saslFailure "malformed-request")])
+    | none => (over, g, [.send (saslFailure "malformed-request")])
     | some cfin =>
       -- RFC 5802 section 5.1: the client MUST echo the combined nonce. A
       -- server that skips this check accepts a replayed client-first.
-      if cfin.nonce != nonce then (s, g.fail user, [.send (saslFailure "not-authorized")])
+      if cfin.nonce != nonce then (over, g.fail user, [.send (saslFailure "not-authorized")])
       else
-        match s.cfg.accountOf user with
-        | none => (s, g.fail user, [.send (saslFailure "not-authorized")])
-        | some acct =>
-          match Scram.credentialsOfPassword acct.password s.cfg.saltB64 s.cfg.iterationCount with
-          | none => (s, g, [.send (saslFailure "temporary-auth-failure")])
-          | some cred =>
-            let auth := Scram.authMessage cfb sf (Scram.clientFinalNoProof cfin)
-            match Scram.verifyClientProof cred auth cfin.proof with
-            | none => (s, g.fail user, [.send (saslFailure "not-authorized")])
-            | some serverSig =>
-              ({ s with stage := .authenticated user }, g,
-               [.send (saslSuccess (Scram.b64Encode ("v=" ++ serverSig).toUTF8))])
+        let cred := (s.cfg.credentialOf user).getD (s.cfg.decoyCredential user)
+        let auth := Scram.authMessage cfb sf (Scram.clientFinalNoProof cfin)
+        match Scram.verifyClientProof cred auth cfin.proof, s.cfg.accountOf user with
+        | some serverSig, some _ =>
+          ({ s with stage := .authenticated user }, g,
+           [.send (saslSuccess (Scram.b64Encode ("v=" ++ serverSig).toUTF8))])
+        | _, _ => (over, g.fail user, [.send (saslFailure "not-authorized")])
+
+/-- A success needs an account: decoy keys can never authenticate a name. -/
+theorem handleScramResponse_account (s : Session) (g : AuthGuard) (user nonce cfb sf : String) (n : Node)
+    (h : s.cfg.accountOf user = none) :
+    ∀ u, (handleScramResponse s g user nonce cfb sf n).1.stage ≠ .authenticated u := by
+  intro u
+  unfold handleScramResponse
+  simp only [h]
+  repeat' split
+  all_goals simp_all
+
+/-- One step of SASL ended back at `<auth/>`: a failed attempt. RFC 6120 section
+6.4.5 lets the receiving entity limit retries and close the stream, so the
+attempt that reaches `maxAuthFailures` ends with `policy-violation`, whatever
+else waits in the buffer. -/
+def Session.afterSasl (s : Session) (env : Env) (outs : List Out) : Session × Env × List Out :=
+  if s.stage != .awaitingAuth then (s, env, outs)
+  else
+    let n := s.authFailures + 1
+    if n ≥ s.cfg.maxAuthFailures then
+      ({ s with stage := .closed, authFailures := n }, env,
+       outs ++ streamError "policy-violation" "too many failed logins")
+    else ({ s with authFailures := n }, env, outs)
+
+/-- The attempt that reaches the limit closes the stream. -/
+theorem afterSasl_closes (s : Session) (env : Env) (outs : List Out)
+    (hs : s.stage = .awaitingAuth) (hn : s.authFailures + 1 ≥ s.cfg.maxAuthFailures) :
+    (s.afterSasl env outs).1.stage = .closed := by
+  simp [Session.afterSasl, hs, hn]
+
+/-- A step that succeeded or that goes on is not counted. -/
+theorem afterSasl_other (s : Session) (env : Env) (outs : List Out)
+    (hs : s.stage ≠ .awaitingAuth) : s.afterSasl env outs = (s, env, outs) := by
+  simp [Session.afterSasl, hs]
 
 /-- Is this stanza addressed to the MUC service of this server? -/
 def Config.isMuc (c : Config) (st : Stanza) : Bool :=
@@ -856,15 +936,15 @@ def stepMain (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × Li
       | .awaitingAuth =>
         if tag == "auth" then
           let (s', g', outs) := handleAuth s env.guard node
-          (s', { env with guard := g' }, outs)
-        else (s, env, [.send (saslFailure "malformed-request")])
+          s'.afterSasl { env with guard := g' } outs
+        else s.afterSasl env [.send (saslFailure "malformed-request")]
       | .awaitingScramResponse user nonce cfb sf =>
         if tag == "response" then
           let (s', g', outs) := handleScramResponse s env.guard user nonce cfb sf node
-          (s', { env with guard := g' }, outs)
+          s'.afterSasl { env with guard := g' } outs
         else if tag == "abort" then
-          ({ s with stage := .awaitingAuth }, env, [.send (saslFailure "aborted")])
-        else (s, env, [.send (saslFailure "malformed-request")])
+          Session.afterSasl { s with stage := .awaitingAuth } env [.send (saslFailure "aborted")]
+        else Session.afterSasl { s with stage := .awaitingAuth } env [.send (saslFailure "malformed-request")]
       | .authenticated _ =>
         ({ s with stage := .closed }, env,
          streamError "not-authorized" "a stanza before the stream restart")
@@ -1088,6 +1168,48 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
       .element s!"<auth xmlns='{nsSasl}' mechanism='ANONYMOUS'/>" ]
   s.stage == .awaitingAuth &&
   has (String.join (sends outs)) "invalid-mechanism"
+
+-- Salts: one per name, the same each time, and a name with no account gets one
+-- of the same form.
+#guard
+  let c := { testCfg with saltSeed := "seed" }
+  c.saltFor "juliet" != c.saltFor "romeo" && c.saltFor "juliet" == c.saltFor "juliet" &&
+  (c.saltFor "nobody").length == (c.saltFor "juliet").length &&
+  ((Scram.b64Decode (c.saltFor "juliet")).map (·.size)) == some 16
+
+-- SCRAM for a name with no account: a challenge, then `not-authorized` at the
+-- step where a wrong password gets it. The keys are in `credentials`, so no
+-- PBKDF2 runs in this check.
+#guard
+  let cred : Scram.StoredCredentials := { (testCfg.decoyCredential "juliet") with iterationCount := 4096 }
+  let c := { testCfg with saltSeed := "seed", credentials := [("juliet", cred)] }
+  let first (u : String) := Scram.b64Encode s!"n,,n={u},r=abc".toUTF8
+  let final := Scram.b64Encode "c=biws,r=abcSRVNONCE,p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=".toUTF8
+  let flow (u : String) := run (Session.init c) { roster := [] }
+    [ .streamOpen "<stream:stream to='example.com' version='1.0'>",
+      .element s!"<auth xmlns='{nsSasl}' mechanism='SCRAM-SHA-256'>{first u}</auth>",
+      .element s!"<response xmlns='{nsSasl}'>{final}</response>" ]
+  let (s1, _, o1) := flow "juliet"
+  let (s2, _, o2) := flow "nobody"
+  s1.stage == .awaitingAuth && s2.stage == .awaitingAuth &&
+  has (String.join (sends o1)) "<challenge" && has (String.join (sends o2)) "<challenge" &&
+  has (String.join (sends o2)) "not-authorized" && (sends o1).length == (sends o2).length
+
+-- The address backs off for longer than its short window, and the right
+-- password does not pass it: 20 failures over 400 seconds, then still blocked
+-- when the short window is over.
+#guard
+  let g0 : AuthGuard := { address := "10.0.0.1", now := 0 }
+  let g1 := (List.range 20).foldl (fun (g : AuthGuard) i =>
+    { (AuthGuard.fail { g with now := i * 20 } s!"n{i}") with now := i * 20 }) g0
+  { g1 with now := 1000 }.blocked "juliet" && !{ g1 with now := 3700 }.blocked "juliet" &&
+  !{ g1 with now := 1000, address := "10.0.0.2" }.blocked "juliet"
+
+-- With the limits off nothing is blocked.
+#guard
+  let g0 : AuthGuard := { address := "10.0.0.1", limits := { enabled := false } }
+  let g1 := (List.range 30).foldl (fun (g : AuthGuard) i => g.fail s!"n{i}") g0
+  !g1.blocked "juliet"
 
 -- RFC 6120 section 6.4.6 and section 7: restart, bind, then the full JID
 -- comes back in the bind result.
@@ -1540,10 +1662,27 @@ private def openUnit : Framing.Unit := .streamOpen "<stream:stream to='example.c
 
 private def guard0 : AuthGuard := { now := 100, address := "192.0.2.7" }
 
+/-- For the checks of the limit, which make more attempts on one stream than a
+stream allows. -/
+private def manyTries : Config := { testCfg with maxAuthFailures := 100 }
+
+-- RFC 6120 section 6.4.5: the third failed attempt on a stream closes it, and
+-- a fourth in the same read is not looked at.
+#guard
+  let (s, _, outs) := run (Session.init testCfg) { roster := [] }
+    (openUnit :: (List.replicate 4 (plainAuth "juliet" "wrong")))
+  s.stage == .closed && (sends outs).length == 7 && has (String.join (sends outs)) "policy-violation"
+
+-- Two failed attempts, then the right password: the stream stays open.
+#guard
+  let (s, _, _) := run (Session.init testCfg) { roster := [] }
+    [openUnit, plainAuth "juliet" "wrong", plainAuth "juliet" "wrong", plainAuth "juliet" "r0m30"]
+  s.stage == .authenticated "juliet"
+
 -- Five wrong passwords on one stream are `not-authorized`; the sixth attempt
 -- is `temporary-auth-failure`, also with the right password.
 #guard
-  let (s, env, outs) := run (Session.init testCfg) { roster := [], guard := guard0 }
+  let (s, env, outs) := run (Session.init manyTries) { roster := [], guard := guard0 }
     (openUnit :: (List.replicate 5 (plainAuth "juliet" "wrong")))
   let (s2, _, outs2) := step s env (plainAuth "juliet" "r0m30")
   s.stage == .awaitingAuth && ((sends outs).filter (has · "not-authorized")).length == 5 &&
@@ -1553,21 +1692,21 @@ private def guard0 : AuthGuard := { now := 100, address := "192.0.2.7" }
 -- stream's attempt is refused, for another account name too.
 #guard
   let g := (List.range 5).foldl (fun g _ =>
-    (run (Session.init testCfg) { roster := [], guard := g } [openUnit, plainAuth "juliet" "wrong"]).2.1.guard) guard0
-  let (s2, _, outs2) := run (Session.init testCfg) { roster := [], guard := g } [openUnit, plainAuth "romeo" "juli3t"]
+    (run (Session.init manyTries) { roster := [], guard := g } [openUnit, plainAuth "juliet" "wrong"]).2.1.guard) guard0
+  let (s2, _, outs2) := run (Session.init manyTries) { roster := [], guard := g } [openUnit, plainAuth "romeo" "juli3t"]
   s2.stage == .awaitingAuth && has (String.join (sends outs2)) "temporary-auth-failure"
 
 -- ... but from another address, another account logs in.
 #guard
   let g := (List.range 5).foldl (fun g _ =>
-    (run (Session.init testCfg) { roster := [], guard := g } [openUnit, plainAuth "juliet" "wrong"]).2.1.guard) guard0
-  let (s2, _, _) := run (Session.init testCfg) { roster := [], guard := { g with address := "198.51.100.9" } }
+    (run (Session.init manyTries) { roster := [], guard := g } [openUnit, plainAuth "juliet" "wrong"]).2.1.guard) guard0
+  let (s2, _, _) := run (Session.init manyTries) { roster := [], guard := { g with address := "198.51.100.9" } }
     [openUnit, plainAuth "romeo" "juli3t"]
   s2.stage == .authenticated "romeo"
 
 -- After the window (60 s of the host's clock) the account logs in again.
 #guard
-  let (_, env, _) := run (Session.init testCfg) { roster := [], guard := guard0 }
+  let (_, env, _) := run (Session.init manyTries) { roster := [], guard := guard0 }
     (openUnit :: (List.replicate 5 (plainAuth "juliet" "wrong")))
   let (s2, _, _) := run (Session.init testCfg) { env with guard := { env.guard with now := 160 } }
     [openUnit, plainAuth "juliet" "r0m30"]
@@ -1575,24 +1714,24 @@ private def guard0 : AuthGuard := { now := 100, address := "192.0.2.7" }
 
 -- A name with no account counts the same way; a malformed payload does not.
 #guard
-  let (_, env, _) := run (Session.init testCfg) { roster := [], guard := guard0 }
+  let (_, env, _) := run (Session.init manyTries) { roster := [], guard := guard0 }
     (openUnit :: (List.replicate 5 (plainAuth "nobody" "x")))
   (env.guard.failures.counters.map (·.key)) == #["account:nobody", "address:192.0.2.7"]
 #guard
-  let (_, env, _) := run (Session.init testCfg) { roster := [], guard := guard0 }
+  let (_, env, _) := run (Session.init manyTries) { roster := [], guard := guard0 }
     [openUnit, .element s!"<auth xmlns='{nsSasl}' mechanism='PLAIN'>***</auth>"]
   env.guard.failures.counters.isEmpty
 
 -- No address: only the account key; never an empty key.
 #guard
-  let (_, env, _) := run (Session.init testCfg) { roster := [], guard := { guard0 with address := "" } }
+  let (_, env, _) := run (Session.init manyTries) { roster := [], guard := { guard0 with address := "" } }
     [openUnit, plainAuth "juliet" "wrong"]
   (env.guard.failures.counters.map (·.key)) == #["account:juliet"]
 
 -- Disabled: eight failures, then the right password logs in; the warning.
 #guard
   let gOff : AuthGuard := { guard0 with limits := { enabled := false } }
-  let (s, env, _) := run (Session.init testCfg) { roster := [], guard := gOff }
+  let (s, env, _) := run (Session.init manyTries) { roster := [], guard := gOff }
     (openUnit :: (List.replicate 8 (plainAuth "juliet" "wrong")))
   let (s2, _, _) := step s env (plainAuth "juliet" "r0m30")
   s.stage == .awaitingAuth && s2.stage == .authenticated "juliet"

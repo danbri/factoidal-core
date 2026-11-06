@@ -38,8 +38,8 @@
 // a client may send without completing a unit beyond `maxBuffered`,
 // which is a transport limit this host applies by closing the socket.
 // The other transport limits are `maxConnections`, `loginTimeoutMs` and
-// `maxQueuedBytes`. There is no limit per address: behind a proxy, every
-// client has the same one.
+// `maxQueuedBytes`. There is no connection limit per address: behind a
+// proxy, every client has the same one.
 
 import { randomBytes } from 'node:crypto'
 import { StringDecoder } from 'node:string_decoder'
@@ -120,7 +120,8 @@ function randomToken (bytes = 18) {
  * @param {string} [options.domain] the domain the server is authoritative for (default `localhost`)
  * @param {Array<{username: string, password: string}>} [options.accounts]
  * @param {string} [options.accountsText] `user:password` lines, the harness's accounts-file format
- * @param {string} [options.saltB64] the SCRAM salt, base64
+ * @param {string} [options.saltB64] one SCRAM salt for every name, base64; absent, each name has its own
+ * @param {string} [options.saltSeed] the seed of the salts; absent, a random one for this process
  * @param {number} [options.iterationCount] the SCRAM iteration count
  * @param {boolean} [options.tlsCarrier] whether the carrier terminates TLS
  * @param {boolean} [options.disableRateLimits] no failed SASL login limit and no sender rate on
@@ -138,7 +139,10 @@ export async function openXmppServer (options = {}) {
   if (typeof options.domain === 'string') config.domain = options.domain
   if (Array.isArray(options.accounts)) config.accounts = options.accounts
   if (typeof options.accountsText === 'string') config.accountsText = options.accountsText
+  // One salt per name, from a seed the engine cannot make; a fixed `saltB64`
+  // (a transcript that must replay) is one salt for all.
   if (typeof options.saltB64 === 'string') config.saltB64 = options.saltB64
+  else config.saltSeed = typeof options.saltSeed === 'string' ? options.saltSeed : randomToken(32)
   if (typeof options.iterationCount === 'number') config.iterationCount = options.iterationCount
   if (typeof options.tlsCarrier === 'boolean') config.tlsCarrier = options.tlsCarrier
   // XEP-0045 room service (L4Factoidal/XMPP/Muc.lean); off unless named.
@@ -295,6 +299,8 @@ async function readAccountsFile (path) {
  *   without a bound resource before it is closed (default 30000; 0 disables)
  * @param {number} [options.maxQueuedBytes] bytes waiting to be written to a
  *   client that is not reading, before the socket is closed (default 8 MiB)
+ * @param {boolean} [options.addressLimit] false: count failed logins per account name only, for a
+ *   listener behind a proxy, where every client has one address (default true)
  * @param {Function} [options.onError]
  * @param {Function} [options.onLog]
  * @returns {Promise<{server: object, xmpp: object, close: Function, sessions: Function}>}
@@ -441,6 +447,11 @@ export async function createXmppServer (options = {}) {
   // connection callback and therefore have no engine session yet.
   const transports = new Set()
 
+  // The client's address for the login limit. Behind a proxy every client has
+  // the proxy's address, and a limit on it would stop them all: `addressLimit: false`.
+  const addressOf = (socket) =>
+    options.addressLimit !== false && typeof socket.remoteAddress === 'string' ? socket.remoteAddress : ''
+
   // Transport limits, like `maxBuffered`: bytes and time, not protocol.
   function closeIfBacklogged (c) {
     if (c.socket.destroyed || !(c.socket.writableLength > maxQueuedBytes)) return
@@ -573,7 +584,7 @@ export async function createXmppServer (options = {}) {
   function onConnection (socket, direct = false) {
     let session
     try {
-      session = xmpp.openSession({ tlsCarrier: useTls || direct, startTls: startTls && !direct, remoteAddress: typeof socket.remoteAddress === 'string' ? socket.remoteAddress : '' })
+      session = xmpp.openSession({ tlsCarrier: useTls || direct, startTls: startTls && !direct, remoteAddress: addressOf(socket) })
     } catch (error) {
       onError(error)
       socket.destroy()
@@ -641,7 +652,7 @@ export async function createXmppServer (options = {}) {
     let handle
     try {
       const opened = xmpp.engine.call('xmppWsOpen', [xmpp.handle, JSON.stringify({
-        streamId: randomToken(), nonce: randomToken(),
+        streamId: randomToken(), nonce: randomToken(), remoteAddress: addressOf(socket),
         path: typeof ws.path === 'string' ? ws.path : '/xmpp-websocket',
         allowedOrigins: Array.isArray(ws.allowedOrigins) ? ws.allowedOrigins : [],
         allowNoOrigin: ws.allowNoOrigin === true,
