@@ -241,6 +241,14 @@ id = "wasm:xmppStateLoad"
 reason = "the host installs one item of an XMPP server's state, read from its LWS state storage at start (Wasm/Ops/XmppSession.lean over XMPP/StateCodec.lean, round-trip theorems decodeHeld_encodeHeld, decodeChannel_encodeChannel, decodeGroup_encodeGroup); reads no RDF data"
 
 [[nonstage]]
+id = "wasm:xmppClock"
+reason = "the host gives an XMPP server its clock, which the rate limits read (Wasm/Ops/XmppSession.lean; the limits are Held.admit and Net.LoginLimit); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppVerifier"
+reason = "one accounts-file line holding SCRAM keys in place of a password (Wasm/Ops/XmppSession.lean over Server.verifierText and Scram.credentialsOfPassword); reads no RDF data"
+
+[[nonstage]]
 id = "wasm:xmppSessionTlsUp"
 reason = "the host reports a finished STARTTLS handshake to an XMPP session (Wasm/Ops/XmppSession.lean over Server.Session.tlsEstablished, theorem tlsEstablished_spec); reads no RDF data"
 
