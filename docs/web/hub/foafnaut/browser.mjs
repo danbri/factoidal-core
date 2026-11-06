@@ -33,6 +33,8 @@ worker.onmessage=({data})=>{
 worker.onerror=event=>{note.hidden=false;note.textContent='The browser worker failed: '+event.message;};
 send({type:'start',...size(),page:new URLSearchParams(location.search).get('page')});
 addEventListener('resize',()=>send({type:'resize',...size()}));
+// Keep focus where the loop puts it: the press must not move it back to the page.
+canvas.addEventListener('mousedown',event=>event.preventDefault());
 canvas.addEventListener('pointerdown',event=>{moved={y:event.clientY,scrolled:false};send({type:'press',...point(event)});});
 canvas.addEventListener('pointermove',event=>{
   if(!moved||event.pointerType!=='touch')return;
