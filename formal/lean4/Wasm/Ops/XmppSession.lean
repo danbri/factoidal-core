@@ -269,6 +269,10 @@ initialize xmppSessionCounter : IO.Ref Nat ← IO.mkRef 0
 initialize xmppServers : IO.Ref (Std.HashMap String XmppOpenServer) ← IO.mkRef ∅
 initialize xmppSessions : IO.Ref (Std.HashMap String XmppOpenSession) ← IO.mkRef ∅
 
+/-- Is this bare JID an account of this server? -/
+def XmppServerConfig.isAccountBare (c : XmppServerConfig) (bare : String) : Bool :=
+  c.accounts.any (fun a => a.username ++ "@" ++ c.domain == bare)
+
 /-- The configuration of one session of a server. -/
 def XmppOpenServer.sessionConfig (srv : XmppOpenServer) (streamId nonce : String)
     (tlsCarrier startTls : Bool) : Config :=
@@ -319,25 +323,32 @@ structure XmppCollected where
 
 /-- Hold a stanza for an account with no bound session (RFC 6121 section 8.5.2.1.1), within the
 caps and, for a stanza a session sent, the sender's rate. Held, it is one new item of the kept
-state. Past a limit, a message is answered `resource-constraint` (RFC 6120 section 8.3.3.18);
-anything else is dropped, as a stanza of a service (no `sender`) is. -/
+state. A stanza that may not wait (`Server.holdable`) is dropped. A message to a name with no
+account is answered `service-unavailable` (RFC 6121 section 8.5.2.2.1), and one past a limit
+`resource-constraint` (RFC 6120 section 8.3.3.18); anything else is dropped, as a stanza of a
+service (no `sender`) is. -/
 private def holdStanza (srv : XmppOpenServer) (c : XmppCollected) (sender : Option String)
     (bare text : String) : XmppOpenServer × XmppCollected :=
-  let (h', senders', v) := Held.admit srv.held srv.cfg.senderLimits srv.senders srv.now sender bare text
+  let st? := (Wire.parseElement text).bind Core.Stanza.ofXml
+  if sender.isSome && !(st?.map Server.holdable).getD false && srv.cfg.isAccountBare bare then (srv, c)
+  else
+  let (h', senders', v) := Held.admit srv.held srv.cfg.senderLimits srv.senders srv.now
+    (srv.cfg.isAccountBare bare) sender bare text
   let srv' := { srv with held := h', senders := senders' }
+  let refuse (errType cond : String) : XmppOpenServer × XmppCollected :=
+    match sender, st? with
+    | some _, some st =>
+      if st.kind == .message && st.type != some "error" then
+        (srv', { c with send := c.send ++ [Server.stanzaError .message st.id
+          (st.from_.map Jid.render) (some bare) errType cond] })
+      else (srv', c)
+    | _, _ => (srv', c)
   match v with
   | .held seq =>
     (srv', { c with store := c.store ++ (if srv.cfg.persist then
       [(StateCodec.heldItemPath bare seq, StateCodec.encodeHeld [text])] else []) })
-  | _ =>
-    if sender.isNone then (srv', c)
-    else match (Wire.parseElement text).bind Core.Stanza.ofXml with
-      | some st =>
-        if st.kind == .message && st.type != some "error" then
-          (srv', { c with send := c.send ++ [Server.stanzaError .message st.id
-            (st.from_.map Jid.render) (some bare) "wait" "resource-constraint"] })
-        else (srv', c)
-      | none => (srv', c)
+  | .noAccount => refuse "cancel" "service-unavailable"
+  | .tooFast | .full => refuse "wait" "resource-constraint"
 
 /-- Hand a stanza to the host for a bound account, or hold it. -/
 private def routeOrHold (srv : XmppOpenServer) (c : XmppCollected) (sender : Option String)
@@ -1034,8 +1045,10 @@ def xmppStateLoad (server path text : String) : IO String := do
         | "held" =>
           match StateCodec.decodeHeld text with
           | some q =>
+            -- An item for a name that is no account is not loaded, and the host deletes it.
+            if !srv.cfg.isAccountBare name then pure (okWith [("loaded", .string kind), ("stale", .bool true)])
             -- A numbered item is one stanza; an unnumbered resource is a queue of an older run.
-            install { srv with held := q.foldl (fun h t => Held.restore h ⟨name, seq.getD 0, t⟩) srv.held }
+            else install { srv with held := q.foldl (fun h t => Held.restore h ⟨name, seq.getD 0, t⟩) srv.held }
           | none => pure (errJson s!"xmppStateLoad: {path}: not a held queue")
         | "mix" =>
           match srv.mix, StateCodec.decodeChannel text with

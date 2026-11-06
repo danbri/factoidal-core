@@ -99,14 +99,18 @@ inductive Verdict where
   | tooFast
   /-- Refused: a cap would be passed. -/
   | full
+  /-- Refused: `bare` is not an account of this server. -/
+  | noAccount
   deriving Repr, DecidableEq, Inhabited
 
 /-- Hold a stanza for `bare`, sent by `sender` (`none`: the server's own, from a MIX or GC3
-service, with no rate). `rate` allows `maxFailures` stanzas per sender in `window` seconds. -/
-def admit (h : Held) (rate : Limits) (senders : Failures) (now : Nat)
+service, with no rate). Only an account has a queue (`isAccount`). `rate` allows `maxFailures`
+stanzas per sender in `window` seconds. -/
+def admit (h : Held) (rate : Limits) (senders : Failures) (now : Nat) (isAccount : Bool)
     (sender : Option String) (bare text : String) : Held × Failures × Verdict :=
   let keys := senderKeys sender
-  if (senders.check rate now keys).isSome then (h, senders, .tooFast)
+  if !isAccount then (h, senders, .noAccount)
+  else if (senders.check rate now keys).isSome then (h, senders, .tooFast)
   else if h.fits bare text then
     ((hold h bare text).1, senders.record rate now keys, .held h.nextSeq)
   else (h, senders, .full)
@@ -204,25 +208,28 @@ theorem release_others (h : Held) (bare other : String) (hne : other ≠ bare) :
   · simp [hb, hne]
   · simp [hb]
 
+/-- Nothing is held for a name that is not an account. -/
+theorem admit_noAccount (h : Held) (rate : Limits) (senders : Failures) (now : Nat)
+    (sender : Option String) (bare text : String) :
+    admit h rate senders now false sender bare text = (h, senders, .noAccount) := by
+  simp [admit]
+
 /-- A sender past its rate changes nothing, and is told so. -/
 theorem admit_tooFast (h : Held) (rate : Limits) (senders : Failures) (now : Nat)
     (sender : Option String) (bare text : String)
     (hb : (senders.check rate now (senderKeys sender)).isSome = true) :
-    admit h rate senders now sender bare text = (h, senders, .tooFast) := by
+    admit h rate senders now true sender bare text = (h, senders, .tooFast) := by
   simp [admit, hb]
 
 /-- `admit` holds a stanza only as `hold` does, so every cap theorem above covers it. -/
-theorem admit_held (h : Held) (rate : Limits) (senders : Failures) (now : Nat)
+theorem admit_held (h : Held) (rate : Limits) (senders : Failures) (now : Nat) (isAccount : Bool)
     (sender : Option String) (bare text : String) :
-    (admit h rate senders now sender bare text).1 = h ∨
-    (admit h rate senders now sender bare text).1 = (hold h bare text).1 := by
+    (admit h rate senders now isAccount sender bare text).1 = h ∨
+    (admit h rate senders now isAccount sender bare text).1 = (hold h bare text).1 := by
   unfold admit
   dsimp only
-  split
-  · exact Or.inl rfl
-  · split
-    · exact Or.inr rfl
-    · exact Or.inl rfl
+  repeat' split
+  all_goals first | exact Or.inl rfl | exact Or.inr rfl
 
 /-! ## Checks -/
 
@@ -283,12 +290,12 @@ theorem admit_held (h : Held) (rate : Limits) (senders : Failures) (now : Nat)
 -- sender and the server's own stanzas are not affected.
 #guard
   let rate : Limits := { maxFailures := 2, window := 10 }
-  let (h1, f1, a) := admit {} rate {} 100 (some "m@x") "r@x" "1"
-  let (h2, f2, b) := admit h1 rate f1 101 (some "m@x") "r@x" "2"
-  let (h3, f3, c) := admit h2 rate f2 102 (some "m@x") "r@x" "3"
-  let (h4, f4, d) := admit h3 rate f3 102 (some "n@x") "r@x" "4"
-  let (h5, f5, e) := admit h4 rate f4 102 none "r@x" "5"
-  let (h6, _, f) := admit h5 rate f5 110 (some "m@x") "r@x" "6"
+  let (h1, f1, a) := admit {} rate {} 100 true (some "m@x") "r@x" "1"
+  let (h2, f2, b) := admit h1 rate f1 101 true (some "m@x") "r@x" "2"
+  let (h3, f3, c) := admit h2 rate f2 102 true (some "m@x") "r@x" "3"
+  let (h4, f4, d) := admit h3 rate f3 102 true (some "n@x") "r@x" "4"
+  let (h5, f5, e) := admit h4 rate f4 102 true none "r@x" "5"
+  let (h6, _, f) := admit h5 rate f5 110 true (some "m@x") "r@x" "6"
   a == .held 1 && b == .held 2 && c == .tooFast && d == .held 3 && e == .held 4 && f == .held 5 &&
   h6.texts "r@x" == ["1", "2", "4", "5", "6"]
 
@@ -296,7 +303,13 @@ theorem admit_held (h : Held) (rate : Limits) (senders : Failures) (now : Nat)
 #guard
   let rate : Limits := { maxFailures := 2, window := 10 }
   let h0 : Held := { caps := { perAccount := 0 } }
-  let (_, f1, a) := admit h0 rate {} 100 (some "m@x") "r@x" "1"
+  let (_, f1, a) := admit h0 rate {} 100 true (some "m@x") "r@x" "1"
   a == .full && f1.counters.isEmpty
+
+-- A name with no account: no queue, and the sender's rate is not used.
+#guard
+  let rate : Limits := { maxFailures := 2, window := 10 }
+  let (h1, f1, a) := admit {} rate {} 100 false (some "m@x") "ghost@x" "1"
+  a == .noAccount && h1.size == 0 && f1.counters.isEmpty
 
 end L4Factoidal.XMPP.Held

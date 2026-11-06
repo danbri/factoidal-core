@@ -122,3 +122,40 @@ test('a held stanza is one write of that stanza: a restart gives every stanza ba
     assert.ok(readdirSync(dir).length > 0)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
+
+test('only an account has a queue: another name gets service-unavailable, and nothing is held', { skip }, async () => {
+  const { host, port } = await start({})
+  try {
+    const a = await bound(port, 'alice')
+    say(a, 'nobody', 'x', 'g1')
+    await a.until('service-unavailable')
+    assert.match(a.text, /id="g1"/)
+    a.text = ''
+    a.socket.write("<message to='someone@other.example' type='chat' id='g2'><body>x</body></message>")
+    await a.until('service-unavailable')
+    a.text = ''
+    a.socket.write("<presence to='nobody@localhost' type='subscribe'/>")
+    say(a, 'bob', 'real', 'g3')
+    await sleep(100)
+    assert.doesNotMatch(a.text, /service-unavailable|resource-constraint/)
+    a.socket.destroy()
+    const b = await bound(port, 'bob')
+    await b.until('real')
+    b.socket.destroy()
+  } finally { await host.close() }
+})
+
+test('presence that says who is online does not wait for an offline contact', { skip }, async () => {
+  const { host, port } = await start({})
+  try {
+    const a = await bound(port, 'alice')
+    a.socket.write("<presence to='bob@localhost'/>")
+    say(a, 'bob', 'real', 'g1')
+    await sleep(100)
+    a.socket.destroy()
+    const b = await bound(port, 'bob')
+    await b.until('real')
+    assert.doesNotMatch(b.text, /<presence/)
+    b.socket.destroy()
+  } finally { await host.close() }
+})

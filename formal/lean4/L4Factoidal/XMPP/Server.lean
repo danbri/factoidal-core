@@ -724,6 +724,16 @@ theorem afterSasl_other (s : Session) (env : Env) (outs : List Out)
     (hs : s.stage ≠ .awaitingAuth) : s.afterSasl env outs = (s, env, outs) := by
   simp [Session.afterSasl, hs]
 
+/-- May this stanza wait for an account with no bound session? A message (RFC
+6121 section 8.5.2.1.1), and a subscription request or answer (section 3.1.3).
+Presence that says who is online has no use later, and an error is for a sender
+that may be gone. -/
+def holdable (st : Stanza) : Bool :=
+  match st.kind with
+  | .message => st.type != some "error"
+  | .presence => ["subscribe", "subscribed", "unsubscribe", "unsubscribed"].contains (st.type.getD "")
+  | .iq => false
+
 /-- Is this stanza addressed to the MUC service of this server? -/
 def Config.isMuc (c : Config) (st : Stanza) : Bool :=
   match c.mucDomain, st.to with

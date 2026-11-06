@@ -399,6 +399,10 @@ export async function createXmppServer (options = {}) {
           if (got.status !== 200) throw new XmppHostError(`state: ${path} answered ${got.status}`)
           const loaded = xmpp.engine.call('xmppStateLoad', [xmpp.handle, path, new TextDecoder().decode(got.body)])
           if (loaded === null || typeof loaded !== 'object') throw new XmppHostError(`state: ${path} was refused`)
+          if (loaded.stale === true) {
+            const gone = await state.step({ method: 'DELETE', target: path, headers: [], body: new Uint8Array(0) })
+            if (gone.status >= 300 && gone.status !== 404) throw new XmppHostError(`state: DELETE ${path} answered ${gone.status}`)
+          }
         }
       }
     } catch (error) {

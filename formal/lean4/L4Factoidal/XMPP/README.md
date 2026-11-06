@@ -728,3 +728,14 @@ Already on `main` from https://github.com/danbri/factoidal/issues/1128: `AuthGua
   `handleScramResponse_account`: only an account can succeed. A failure now counts at that step.
 - `Config.credentials`: `xmppOpen` derives each account's SCRAM keys once, so a login runs no PBKDF2.
 - Tests: `#guard`s in `Server.lean`; `npm/factoidal/test/xmpp-sasl-limits.test.mjs`.
+
+## 2026-11-06: held stanzas: accounts only (finding M7)
+
+- A stanza routed to a name with no account of this server is not held: a message gets
+  `service-unavailable` (RFC 6121 section 8.5.2.2.1), anything else is dropped. `Held.admit` takes
+  `isAccount`; theorem `admit_noAccount`. That covers other domains too: there is no federation.
+- `Server.holdable`: only a message, or a subscription request or answer, waits for an offline
+  account. Presence that says who is online no longer goes into the queue.
+- A start does not load a kept item for a name that is no longer an account, and deletes it
+  (`xmppStateLoad` answers `stale`).
+- Tests: `#guard`s in `Held.lean`; `npm/factoidal/test/xmpp-held.test.mjs`.
