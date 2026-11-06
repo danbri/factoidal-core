@@ -7,7 +7,7 @@ kill_timeout = "10s"
 [build.args]
   FACTOIDAL_VERSION = "0.32.0"
   FACTOIDAL_HOST_COMMIT = "a9caa45d874772b86660a87ac97eb5ec3eb6ca96"
-  FOAFOS_POD_COMMIT = "1bd3dbf612ed5b12a16e31f33d68eee272e8f17b"
+  FOAFOS_POD_COMMIT = "6462105c92f8d7088118e293e3020da9a52daba7"
 
 [env]
   XMPP_DOMAIN = "foafos-xmpp.fly.dev"

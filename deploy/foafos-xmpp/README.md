@@ -1,6 +1,6 @@
 # foafos-xmpp: a public test XMPP server on Fly
 
-**This is the one Foafos box on Fly.** Since 2026-11-06 it also runs the pods that were on `foafos-proto`: LWS behind a bearer token on `https://foafos-xmpp.fly.dev:8443/`, and `pod@foafos-xmpp.fly.dev/lws` over XMPP. Keep it to test data until the private review findings are closed.
+**This is the one Foafos box on Fly.** Since 2026-11-06 it also runs the pod that was on `foafos-proto`: one store, `https://foafos-xmpp.fly.dev:8443/`, reached over HTTPS with a bearer token or as `pod@foafos-xmpp.fly.dev/lws` over XMPP. Keep it to test data until the private review findings are closed.
 
 A public service that nobody announces, for test data only. Owner, 2026-11-05: "public service we do not announce,
 containing only test data on ephemeral machines we don't use for anything else". The Foafos side:

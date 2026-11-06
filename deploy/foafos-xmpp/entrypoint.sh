@@ -1,10 +1,9 @@
 #!/bin/sh
-# Starts Caddy, waits for the certificate, then runs the XMPP server and the two
-# pods. It restarts the XMPP server when the certificate is renewed, and a pod
-# that stops, alone.
+# Starts Caddy, waits for the certificate, then runs the XMPP server and the pod. It restarts the XMPP server when the certificate is renewed, and the pod
+# if it stops, alone.
 set -eu
 if [ "$(id -u)" = 0 ]; then
-  mkdir -p /data/xmpp /data/caddy /data/config /data/pod-https /data/pod-xmpp
+  mkdir -p /data/xmpp /data/caddy /data/config /data/pod-https
   chown -R node:node /data
   exec gosu node /opt/xmpp/entrypoint.sh
 fi
@@ -12,7 +11,7 @@ fi
 : "${POD_TOKEN:?the https pod has no other lock, so it must not start without its token}"
 # A lock from before a reboot names a process id that may now belong to something
 # else, and the storage then refuses to open. Nothing of ours is running yet.
-rm -f /data/pod-https/lws.lock /data/pod-xmpp/lws.lock
+rm -f /data/pod-https/lws.lock
 umask 077
 secrets=$(mktemp -d)
 echo "$XMPP_ACCOUNTS_B64" | base64 -d > "$secrets/accounts"
@@ -35,7 +34,6 @@ crt=$(find_cert)
 key="${crt%.crt}.key"
 
 xmpp_pid=""
-lws_pid=""
 pod_pid=""
 start_xmpp() {
   # shellcheck disable=SC2086
@@ -48,34 +46,26 @@ start_xmpp() {
     ${XMPP_EXTRA_ARGS:-} &
   xmpp_pid=$!
 }
-# Reached only through Caddy, which holds the token.
-start_lws() {
-  node /opt/xmpp/node_modules/@factoidal/core/bin/factoidal.mjs lws-serve /data/pod-https --insecure-no-auth \
-    --host 127.0.0.1 --port 3000 --storage files --base "https://$XMPP_DOMAIN:8443/" \
-    --cors-origin http://localhost:8080 --cors-origin https://danbri.github.io &
-  lws_pid=$!
-}
-# Only foafos may use this pod, which is the deny-by-default rule for HTTP over XMPP.
+# One store, two carriages. HTTP is on loopback, reached only through Caddy, which
+# holds the token. Over XMPP only foafos may ask, and only for what the route names.
 start_pod() {
-  POD_PASSWORD=$(sed -n 's/^pod://p' "$secrets/accounts") node /opt/xmpp/pod.mjs --base "https://pod.$XMPP_DOMAIN/" \
-    --dir /data/pod-xmpp --xmpp "xmpps://$XMPP_DOMAIN:5223" --domain "$XMPP_DOMAIN" --jid pod \
-    --allow "foafos@$XMPP_DOMAIN" --insecure-no-auth &
+  POD_PASSWORD=$(sed -n 's/^pod://p' "$secrets/accounts") node /opt/xmpp/pod.mjs --base "https://$XMPP_DOMAIN:8443/" \
+    --dir /data/pod-https --http 3000 --cors-origin http://localhost:8080 --cors-origin https://danbri.github.io \
+    --xmpp "xmpps://$XMPP_DOMAIN:5223" --domain "$XMPP_DOMAIN" --jid pod --allow "foafos@$XMPP_DOMAIN" \
+    --route 'GET,HEAD,PUT,POST,PATCH,DELETE /' --insecure-no-auth &
   pod_pid=$!
 }
-stop_all() { kill "$xmpp_pid" "$caddy_pid" "$lws_pid" "$pod_pid" 2>/dev/null || true; wait 2>/dev/null || true; }
+stop_all() { kill "$xmpp_pid" "$caddy_pid" "$pod_pid" 2>/dev/null || true; wait 2>/dev/null || true; }
 trap stop_all EXIT
 trap 'exit 0' INT TERM
 
 start_xmpp
-start_lws
-sleep 3
 start_pod
 stamp=$(cksum "$crt")
 while kill -0 "$caddy_pid" 2>/dev/null; do
   if ! kill -0 "$xmpp_pid" 2>/dev/null; then echo 'xmpp-serve stopped' >&2; exit 1; fi
-  # A pod must never take XMPP down with it, so it restarts alone. The lock is its own.
-  if ! kill -0 "$lws_pid" 2>/dev/null; then echo 'lws-serve stopped: restarting it' >&2; rm -f /data/pod-https/lws.lock; start_lws; fi
-  if ! kill -0 "$pod_pid" 2>/dev/null; then echo 'pod stopped: restarting it' >&2; rm -f /data/pod-xmpp/lws.lock; start_pod; fi
+  # The pod must never take XMPP down with it, so it restarts alone. The lock is its own.
+  if ! kill -0 "$pod_pid" 2>/dev/null; then echo 'pod stopped: restarting it' >&2; rm -f /data/pod-https/lws.lock; start_pod; fi
   if [ "$(cksum "$crt")" != "$stamp" ]; then
     echo 'certificate renewed: restarting xmpp-serve' >&2
     kill "$xmpp_pid"; wait "$xmpp_pid" 2>/dev/null || true
