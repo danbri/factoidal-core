@@ -5,7 +5,7 @@ const homeURL=pagesBase+'index.html',settingsURL=pagesBase+'settings.html';
 let module,createSession,session;
 let width=800,height=600,scale=1,theme='next',percent=125,pages=1;
 let address='',cursor=0,focused=false,fresh=false,loading=false,scroll=0,active=0;
-let doc,history,frame,dirty=false,drawing=false,serial=0;
+let doc,history,frame,home,dirty=false,drawing=false,serial=0;
 const tabs=[];
 function call(source,options,w=1,h=1){
   const pointer=module.ccall('web_document_call','number',['string','string','number','number'],[source,JSON.stringify(options),w,h]);
@@ -62,12 +62,12 @@ function viewSource(){
     const source=call('',{op:'sourcePage',kind:item.kind,url:item.url,source:item.source}).source;
     const facts=call(source,{op:'inspect',url:item.url+'#source'});
     const page={url:item.url+'#source',title:facts.title,source,sources:[]};
-    keep();tabs.push({doc:page,history:push({entries:[],index:0},page.url),scroll:0,home:tabs[0].home});showTab(tabs.length-1);
+    keep();tabs.push({doc:page,history:push({entries:[],index:0},page.url),scroll:0});showTab(tabs.length-1);
   }
 }
 function keep(){tabs[active]={doc,history,scroll};}
 function showTab(index){serial++;loading=false;setFocus(false);active=index;({doc,history,scroll}=tabs[index]);address=doc.url;request();}
-function newTab(){keep();tabs.push({doc:tabs[0].home,history:push({entries:[],index:0},homeURL),scroll:0,home:tabs[0].home});showTab(tabs.length-1);}
+function newTab(){keep();tabs.push({doc:home,history:push({entries:[],index:0},homeURL),scroll:0});showTab(tabs.length-1);}
 function closeTab(index){if(tabs.length===1)return;keep();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));}
 function setFocus(value){if(focused!==value){focused=value;self.postMessage({type:'focus',focused});}}
 function focusAddress(){setFocus(true);fresh=true;address=doc.url;cursor=address.length;request();}
@@ -132,8 +132,8 @@ async function start(data){
   const [{default:createModule},{createOffscreenSession}]=await Promise.all([
     import('../html-webgpu/runtime/web-render.mjs'),import('../html-webgpu/runtime/gpu-transport.mjs')]);
   module=await createModule();createSession=createOffscreenSession;
-  const home=await prepare(homeURL);
-  history=push({entries:[],index:0},homeURL);doc=home;address=home.url;tabs.push({doc,history,scroll:0,home});
+  home=await prepare(homeURL);
+  history=push({entries:[],index:0},homeURL);doc=home;address=home.url;tabs.push({doc,history,scroll:0});
   if(data.page&&/^[a-z0-9-]+\.(html|xml)$/.test(data.page))navigate(pagesBase+data.page);else request();
 }
 self.onmessage=({data})=>{
