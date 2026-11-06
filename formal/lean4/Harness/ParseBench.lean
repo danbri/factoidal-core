@@ -258,11 +258,11 @@ def digestOne (stage path : String) : IO Unit := do
     | some h => IO.println s!"{path} {h}"
     | none => throw (IO.userError s!"unknown stage {stage}")
 
-partial def digestLines (stage : String) (h : IO.FS.Stream) : IO Unit := do
-  let line ← h.getLine
-  if line.isEmpty then return
-  digestOne stage (line.trimAscii.toString)
-  digestLines stage h
+def digestLines (stage : String) (h : IO.FS.Stream) : IO Unit := do
+  for _ in [:1000000000] do
+    let line ← h.getLine
+    if line.isEmpty then return
+    digestOne stage (line.trimAscii.toString)
 
 def main : List String → IO UInt32
   | ["gen", shape, bytes, file] =>
