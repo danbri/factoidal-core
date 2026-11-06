@@ -267,6 +267,7 @@ static void installMenu(void) {
   editItem.submenu=editMenu;
   NSMenuItem *viewItem=[bar addItemWithTitle:@"View" action:nil keyEquivalent:@""];
   NSMenu *viewMenu=[[NSMenu alloc] initWithTitle:@"View"];
+  commandItem(viewMenu,@"View Source",@"u",13);
   commandItem(viewMenu,@"Actual Size",@"0",3);
   commandItem(viewMenu,@"Zoom In",@"=",1);
   hiddenCommand(viewMenu,@"Zoom In",@"+",1);

@@ -81,6 +81,13 @@ async function main() {
     if(tabs.length===1){running=false;return;}
     keepTab();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));
   };
+  // One tab for each source: an XML page opens its XML, its XSLT and the result.
+  const viewSource=async()=>{
+    for(const item of document.sources){
+      const page=await prepareHTML(engine,item.url+"#source",undefined,engine.sourcePage(item.kind,item.url,item.source));
+      keepTab();tabs.push({document:page,history:engine.historyPush({entries:[],index:0},page.url),scroll:0});showTab(tabs.length-1);
+    }
+  };
   const focusAddress=()=>{focused=true;fresh=true;address=document.url;cursor=address.length;dirty=true;};
   const leaveAddress=()=>{focused=false;address=document.url;dirty=true;};
   const scrollBy=(amount:number)=>{
@@ -97,6 +104,8 @@ async function main() {
     else if(name==="reload")windowCommand(8);
     else if(name==="new")newTab();
     else if(name==="close")closeTab(active);
+    else if(name==="home")navigate(home.url);
+    else if(name==="source")viewSource().catch(error=>refuse(document.url,error));
     else if(name==="theme"){theme=argument||(theme==="next"?"arcade":"next");dirty=true;}
     else if(name==="zoom"&&/^[0-9]+$/.test(argument)){view.textScalePercent=Math.max(50,Math.min(250,Number(argument)));dirty=true;}
     else navigate(settingsURL);
@@ -113,6 +122,8 @@ async function main() {
     else if(name==="forward")windowCommand(7);
     else if(name==="reload")windowCommand(8);
     else if(name==="settings")navigate(settingsURL);
+    else if(name==="home")navigate(home.url);
+    else if(name==="source")viewSource().catch(error=>refuse(document.url,error));
     else if(name==="address")focusAddress();
     else if(name==="newTab")newTab();
     else if(name==="tab"&&Number(index)!==active){keepTab();showTab(Number(index));}
@@ -139,6 +150,7 @@ async function main() {
     if(answer.action==="newTab")newTab();
     if(answer.action==="closeTab")closeTab(active);
     if(answer.action==="settings")navigate(settingsURL);
+    if(answer.action==="viewSource")viewSource().catch(error=>refuse(document.url,error));
     if(answer.action==="selectAll"){view.selection="all";dirty=true;}
     if(answer.action==="copy"&&view.selection){
       const text=document.selectedText(width,height,shown());

@@ -48,6 +48,10 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "engine.mjs", "worker.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/html-webgpu/${name}`);
   }
+  for (const name of ["browser.mjs", "browser-worker.mjs"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/foafnaut/${name}`);
+  }
+  eleventyConfig.addPassthroughCopy({ "../labs/demos/foafnaut/pages": "web/hub/foafnaut/pages" });
   eleventyConfig.addPassthroughCopy({
     "../labs/demos/foafnaut/web-render/fixtures": "web/hub/html-webgpu/fixtures"
   });
