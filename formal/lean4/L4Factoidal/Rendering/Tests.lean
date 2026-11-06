@@ -17,10 +17,10 @@ private def wrapped := run "<div id='box'>AA BB</div>" css
 #guard (wrapped.toOption.map fun r => r.1.glyphRuns.toList.map (fun g => g.glyphs.toList.map (·.clusterStart))) == some [[0,1],[3,4]]
 #guard ((run "<div>AA BB</div>" (css ++ "div{width:60px}")).toOption.map fun r => r.1.glyphRuns.toList.map (fun g => g.glyphs.toList.map (·.y))) == some [[0,0],[0,0]]
 #guard ((run "<div>A</div>" (css ++ "div{display:none}")).toOption.map fun r => r.1.tree.length) == some 0
-#guard ((run "<div>A</div>" (css ++ "div{margin:5px}")).toOption.isNone)
-#guard ((run "<span style='background:red'>A</span>" css).toOption.isNone)
-#guard ((run "<div style='font-family:Ahem'>A</div>" css).toOption.isNone)
-#guard ((run "<div>λ</div>" css).toOption.isNone)
+#guard ((run "<div>A</div>" (css ++ "div{margin:5px}")).toOption.isSome)
+#guard ((run "<span style='background:red'>A</span>" css).toOption.isSome)
+#guard ((run "<div style='font-family:Ahem'>A</div>" css).toOption.isSome)
+#guard ((run "<div>λ</div>" css).toOption.isSome)
 
 private def computedAt (html css id : String) (textScale : Float := 1) : Except String Computed := do
   let dom := DOM.parseHtmlDocument html
@@ -62,9 +62,9 @@ private def paddingAt (source : String) := (computedAt "<div id='x'></div>" sour
   (fun s => (s.margin.top,s.margin.right,s.margin.bottom,s.margin.left))) == some (1,2,3,4)
 #guard ((computedAt "<div id='x'></div>" "div{margin-left:9px;margin:1px 2px 3px}" "x").toOption.map
   (fun s => (s.margin.top,s.margin.right,s.margin.bottom,s.margin.left))) == some (1,2,3,2)
-#guard ((run "<div style='padding-bottom:-1px'>A</div>" css).toOption.isNone)
-#guard ((run "<div style='margin-left:-1px'>A</div>" css).toOption.isNone)
-#guard ((run "<div style='padding:1px -2px'>A</div>" css).toOption.isNone)
+#guard ((run "<div style='padding-bottom:-1px'>A</div>" css).toOption.isSome)
+#guard ((run "<div style='margin-left:-1px'>A</div>" css).toOption.isSome)
+#guard ((run "<div style='padding:1px -2px'>A</div>" css).toOption.isSome)
 #guard ((run "<div style='padding-left:3px;padding-top:2px'>A</div>" css).toOption.bind
   (fun r => r.1.glyphRuns[0]? >>= fun g => g.glyphs[0]? |>.map (fun p => (p.x,p.y)))) == some (3,2)
 #guard ((run "<div style='height:7px;padding-bottom:3px'>A</div><div>B</div>" css).toOption.bind
@@ -108,12 +108,12 @@ private def clippedLink := run "<div style='height:7px;overflow:clip'><a href='u
 #guard (clippedLink.toOption.map fun r => (Node.lowerList identity [] r.1.tree).all
   (fun p => p.primitive.clips.any (fun c => c.width == 24 && c.height == 7))) == some true
 #guard ((run "<div style='height:7px;overflow:visible'><a href='url'>AA BB</a></div>" css).toOption.map fun r => r.1.links.size) == some 2
-#guard ((run "<body style='overflow:clip'>A</body>" css).toOption.isNone)
-#guard ((run "<span style='overflow:clip'>A</span>" css).toOption.isNone)
+#guard ((run "<body style='overflow:clip'>A</body>" css).toOption.isSome)
+#guard ((run "<span style='overflow:clip'>A</span>" css).toOption.isSome)
 #guard ((run "<svg style='padding:1px'></svg>" css).toOption.isNone)
 #guard ((run "<svg style='height:50%'></svg>" css).toOption.isNone)
 #guard ((computedAt "<svg id='x' style='fill:red;stroke:blue'></svg>" "" "x").toOption.isSome)
-#guard ((computedAt "<svg id='x'><rect style='fill:red'/></svg>" "rect{fill:blue}" "x").toOption.isNone)
+#guard ((computedAt "<svg id='x'><rect style='fill:red'/></svg>" "rect{fill:blue}" "x").toOption.isSome)
 #guard ((computedAt "<svg id='x' color='red'></svg>" "" "x").toOption.map (·.color.r)) == some 1
 #guard ((computedAt "<svg id='x' color='red' style='color:blue'></svg>" "svg{color:green!important}" "x").toOption.map (·.color.g)) == some (128/255)
 
@@ -156,4 +156,23 @@ private def framedPaint := (framedClip.lower identity []).head?
 #print axioms Node.lower_eq_lowerTR
 #print axioms Node.lowerList_eq_lowerListTR
 #print axioms Node.lowerList_append
+
+-- CSS error handling: what is not understood is dropped, the rest still applies.
+private def rules (source : String) : Nat := ((CSS.parse source).toOption.map List.length).getD 999
+#guard rules ".a > b{color:red} p{color:blue}" == 1
+#guard rules "@media (max-width: 800px) { .a { color: red } } p{color:blue}" == 1
+#guard rules "@import 'x.css'; @charset \"utf-8\"; p{color:blue}" == 1
+#guard rules "a:hover, p{color:red} p{color:blue}" == 1
+#guard rules "p{color:blue" == 1
+#guard rules "p{color:blue} /* never closed" == 1
+#guard rules "} p{content:'}'}" == 1
+#guard ((CSS.declarations "background:url(http://x.org/a.png);color:;nonsense;width:1px").toOption.map List.length) == some 3
+-- Old pages: lists, definition lists, images, blocks inside links, and CSS we do not lay out.
+#guard (run "<ul><li>A<li>B</ul><ol><li>C</ol>" css) matches .ok _
+#guard (run "<dl><dt>A<dd><p>B</dl><a href=x><h3>C</h3></a>" css) matches .ok _
+#guard (run "<img src=a.png alt=A><img src=b.png>" css) matches .ok _
+#guard (run "<table><tr><td>A<td>B</table><hr><pre>A\nB</pre>" css) matches .ok _
+#guard (run "<div style='display:grid;gap:1px'>A</div>" (css ++ ".a > div{color:red} div{font-family:Arial,serif}")) matches .ok _
+#guard ((run "<pre>A\nB</pre>" css).toOption.map fun r => r.1.glyphRuns.toList.map (fun g => g.glyphs.toList.map (·.y)) |>.eraseDups |>.length) == some 2
+
 end L4Factoidal.Rendering.Tests

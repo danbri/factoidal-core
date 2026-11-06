@@ -1213,6 +1213,8 @@ import L4Factoidal.Rendering.FontDataTests
 import L4Factoidal.Rendering.FontProviderTests
 import L4Factoidal.Rendering.FontPolicy
 import L4Factoidal.Rendering.FontPolicyTests
+import L4Factoidal.Rendering.SfntOutline
+import L4Factoidal.Rendering.SfntOutlineTests
 import L4Factoidal.Rendering.SfntShape
 import L4Factoidal.Rendering.FontFaceTests
 import L4Factoidal.Rendering.FontLayoutTests

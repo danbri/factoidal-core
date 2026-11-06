@@ -208,6 +208,15 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     return some (JSON.Json.object [("action",.string (if WebSelection.isClick ax ay fx fy then "click" else "select"))]).toString
   return none
 
+/-- A long page must not fill the GPU buffer with text nobody can see. Glyphs carry
+their place in a transform; those far above or below the window are left out.
+Every other paint stays, since a rectangle can be as tall as the page. -/
+private def inWindow (top bottom : Float) : Rendering.Node → Bool
+  | .paint p =>
+    let t := p.primitive.transform
+    (t.a == 1 && t.f == 0) || (top <= t.f && t.f <= bottom)
+  | _ => true
+
 def run (html : String) (request : JSON.Json) (width height : Nat) : Except String String := do
   let .object fields := request | throw "document request must be an object"
   if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
@@ -254,7 +263,9 @@ def run (html : String) (request : JSON.Json) (width height : Nat) : Except Stri
   let marks := match chosen with
     | some value => WebSelection.highlight items value
     | none => []
-  let page := {scene with tree := scene.tree ++ marks}
+  let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
+  let near := scene.tree.filter (inWindow (scrolled-512) (scrolled+Float.ofNat height+512))
+  let page := {scene with tree := near ++ marks}
   WebRender.artifact (match shell with
     | some value => WebShell.compose value page width height
     | none => page) boxes face

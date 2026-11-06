@@ -12,7 +12,7 @@ async function main() {
   if(args.includes("--help")){
     console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
   }
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined;
+  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -21,6 +21,7 @@ async function main() {
     else if(arg==="--check-engine")check=true;
     else if(arg==="--trace-input")traceInput=true;
     else if(arg==="--resize-sweep")sweep=[[800,500],[700,500],[600,500],[500,500],[400,500],[800,300],[800,500]];
+    else if(arg==="--paste-sweep")pasted=args.shift();
     else if(arg==="--command-sweep")commands=["=","+","-","_","0","a","c",[2,60,60],[3,300,60],[4,300,60],"c",[2,60,60],[4,60,60],"link"];
     else if(arg==="--history-sweep")commands=["left","link","left","right","[","]","]","[","link1","]","[","]"];
     else throw new Error(`Unknown native HTML argument: ${arg}`);
@@ -150,6 +151,12 @@ async function main() {
     if(answer.action==="newTab")newTab();
     if(answer.action==="closeTab")closeTab(active);
     if(answer.action==="settings")navigate(settingsURL);
+    // Paste always lands in the address bar: it is the only text field there is.
+    if(answer.action==="paste"){
+      if(!focused)focusAddress();
+      if(fresh){address="";cursor=0;}
+      edit(engine.shellText(shell(),native!.readClipboard().replace(/\s*[\r\n]+\s*/g,"").trim()));
+    }
     if(answer.action==="viewSource")viewSource().catch(error=>refuse(document.url,error));
     if(answer.action==="selectAll"){view.selection="all";dirty=true;}
     if(answer.action==="copy"&&view.selection){
@@ -177,7 +184,9 @@ async function main() {
     native.setInputTrace(traceInput);native.setHistory(history.canBack,history.canForward);
     // The command sweep copies text. It gives the clipboard back unless the person
     // copied something else meanwhile.
-    const savedClipboard=commands?native.readClipboard():"";
+    const savedClipboard=commands||pasted?native.readClipboard():"";
+    // Paste a URL into the address bar through the real menu key, then press Return.
+    if(pasted){native.writeClipboard(pasted);lastCopied=pasted;commands=["v",[5,36,0],"settle"];}
     const windowTitle=(page:typeof document)=>page.title?`foafnaut - ${page.title}`:"foafnaut";
     const handles=native.create(800,500,windowTitle(document));
     const surface=new Deno.UnsafeWindowSurface(cocoaSurfaceOptions(handles,width,height));
@@ -282,6 +291,7 @@ async function main() {
           const link=frame.webRender.links[Number(step.slice(4))] as number[],x=Math.round(link[2]+link[4]/2),y=Math.round(link[3]+link[5]/2);
           native.testEvent(2,x,y);native.testEvent(4,x,y);
         }
+        else if(step==="settle")trace("native-html-paste",{url:document.url,title:document.title});
         else if(typeof step==="string")trace("native-html-test-key",{key:step,handled:native.testKey(step,"+_".includes(step))});
         else if(step)native.testEvent(step[0],step[1],step[2]);else{if(native.readClipboard()===lastCopied)native.writeClipboard(savedClipboard);running=false;}
       }

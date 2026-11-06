@@ -333,7 +333,7 @@ def Go.json : Go → JSON.Json
 /-! ### View source -/
 
 /-- Characters shown of one source: the page limit is 49152 paint items. -/
-def sourceLimit : Nat := 12000
+def sourceLimit : Nat := 8000
 
 private def escapeText (value : String) : String :=
   String.join (value.toList.map fun c =>
@@ -345,7 +345,7 @@ private def sourceLine (line : String) : String :=
   let chars := line.toList.map (fun c => if c == '\t' then ' ' else c)
   let indent := (chars.takeWhile (· == ' ')).length
   let body := String.ofList (chars.drop indent)
-  if body.isEmpty then "<p>&#32;</p>" else
+  if body.isEmpty then "<p style=\"height:16px\"></p>" else
   s!"<p style=\"padding-left:{indent*6}px\">{escapeText body}</p>"
 
 /-- A page that shows a source as text. The kind says what the source is. -/
@@ -356,7 +356,7 @@ def sourcePage (kind url source : String) : String :=
   let name := ((url.splitOn "/").getLast?).getD url
   "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>" ++ escapeText (kind ++ ": " ++ name) ++
   "</title><style>body{margin:12px;font-size:12px;line-height:16px;color:#203040;background:#f4f4ee}" ++
-  "h1{margin:0 0 8px 0;font-size:14px;line-height:20px;color:#a0186a}h2{margin:0 0 8px 0;font-size:12px;color:#a0186a}p{margin:0}</style></head><body><h1>" ++
+  "h1{margin:0;padding-bottom:8px;font-size:14px;line-height:20px;color:#a0186a}h2{margin:0;padding-bottom:8px;font-size:12px;color:#a0186a}p{margin:0}</style></head><body><h1>" ++
   escapeText (kind ++ " of " ++ url) ++ "</h1>" ++ cut ++
   String.join ((shown.splitOn "\n").map sourceLine) ++ "</body></html>"
 
@@ -390,7 +390,7 @@ def Shell.editJson (s : Shell) : JSON.Json :=
 #guard submit ":zoom 150" == .command "zoom" "150"
 #guard submit ":source" == .command "source" ""
 #guard (sourcePage "Source" "file:///a.html" "<p>\n  x</p>").contains '&'
-#guard ((sourcePage "Source" "a" (String.ofList (List.replicate 12001 'x'))).splitOn "first 12000").length == 2
+#guard ((sourcePage "Source" "a" (String.ofList (List.replicate 8001 'x'))).splitOn "first 8000").length == 2
 #guard submit ":open https://x.org" == .system "https://x.org"
 #guard link "https://github.com/danbri/factoidal-core" == .system "https://github.com/danbri/factoidal-core"
 #guard link "foafnaut:theme/arcade" == .command "theme" "arcade"

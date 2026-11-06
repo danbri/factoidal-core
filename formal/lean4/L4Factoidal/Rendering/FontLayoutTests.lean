@@ -27,7 +27,8 @@ private def run (text : String := "fi AA") (extra : String := "") : Except Strin
 #guard ((run).toOption.bind fun r => hitLink r.1.links.toList 2 21 |>.map (·.href)) == some "target"
 #guard ((run "fi AA" "div{width:40px}").toOption.map fun r => r.1.links.size) == some 3
 #guard ((run "ZZ").toOption.isNone)
-#guard ((run "fi" "body{font-family:OtherFace}").toOption.isNone)
+-- A family with no font data falls back to the face we have, as a browser does.
+#guard ((run "fi" "body{font-family:OtherFace}").toOption.isSome)
 #guard ((run "fi" "body{font-size:21px}").toOption.isNone)
 #guard ((run "fi" "body{font-size:20.5px}").toOption.isNone)
 private def strutScene (html : String) : Except String (DOM.Dom × Scene × Array Box) := do

@@ -6,20 +6,23 @@ layout: hub.njk
 
 # foafnaut2525 project status
 
-5 November 2026. The engine that this note describes renders it too: choose Project status in the Lean HTML page below. The rendering is plain ASCII text with no script.
+6 November 2026. The engine that this note describes renders it too: choose Project status in the Lean HTML page below. The rendering is plain ASCII text with no script.
 
 foafnaut2525 is a web rendering engine written in Lean. It aims to become a browser. It is not the FOAF social network application that it is named after.
 
 ## Where it is
 
 - The engine parses HTML, computes CSS, lays out text and boxes, and draws with WebGPU.
-- It runs in a web page, and in its own macOS window.
+- It runs in a web page, in its own macOS window, and as a sandboxed guest.
 - Page scripts run in a local development bundle. Real sites mostly do not load yet.
 - The rendered note uses an ASCII bitmap font. Real fonts are the next large step.
-- The engine has no scrolling yet. A long page needs a tall canvas.
 
 ## This week
 
+- The browser has a face: tabs, an address bar for URLs, searches and commands, settings, scrolling, back and forward, zoom, copy and view source. All of it is drawn by Lean.
+- XML pages run their XSLT stylesheet, version 1.0 or 3.0 and 4.0, then render the result.
+- SVG text draws from SVG fonts, and all 496 W3C SVG Tiny tests are scored with WebGPU pixels.
+- The macOS app is built by CI from current code: run foafnaut --install-latest.
 - Frame time fell from 2,278 ms to 209 ms, for the same image. Each screen tile now has its own list of primitives.
 - The native window draws. It lays pages out again during a window drag.
 - The Lean text shaper and the font safety policy are on main.
@@ -41,7 +44,8 @@ The match and close bands are ours, not a W3C verdict. The WPT image score still
 - A named release every day: one to three, never four.
 - Real fonts, with outlines and shaping in Lean.
 - Faster layout. It is now the largest part of a frame. This note takes about 2 seconds to lay out in the browser, and 63 ms to draw.
-- An address bar, and pages from the real web.
+- Pages from the real web.
+- The interactive FOAF graph inside the browser.
 
 ## Read more
 

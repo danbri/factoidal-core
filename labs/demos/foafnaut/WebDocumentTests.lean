@@ -108,7 +108,7 @@ private def requested : Option (List (String × Nat × String)) := do
   return requests.toList.map fun request => (request.family,request.pixelSize,request.text)
 #guard requested == some [("Arial",20," "),("Arial",20,"November2026"),("Arial",20,"café"),("Arial",20,"edited"),("Arial",28,"office")]
 #guard (WebDocument.run dynamicHTML (dynamicOptions "fontRequests") 420 100).toOption.isSome
-#guard (WebDocument.run dynamicHTML (dynamicOptions "render") 420 100).toOption.isNone
+#guard (WebDocument.run dynamicHTML (dynamicOptions "render") 420 100).toOption.isSome
 #guard (WebDocument.run dynamicHTML (json [("op",.string "fontRequests"),("resources",.array [resource 1048576 "p{}"])]) 420 100).toOption.isNone
 #guard (WebDocument.run "<p>A</p>" (json [("resources",.string "bad")]) 420 100).toOption.isNone
 
