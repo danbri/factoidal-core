@@ -372,7 +372,8 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
   let hyperlink := n.lname == "a" && hasAttribute n "href"
   let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg"
   let svgOverflow := attrValue n "overflow"
-  let fontSize := (parent.fontSize*headingScale n.lname).round
+  let scale := headingScale n.lname
+  let fontSize := if scale == 1 then parent.fontSize else (parent.fontSize*scale).round
   let mut initial : Computed := {
     color := if hyperlink then ⟨0,0,1⟩ else parent.color, underline := hyperlink,
     clipOverflow := svgViewport && svgOverflow != "visible", fontSize, fontFamily := parent.fontFamily,
