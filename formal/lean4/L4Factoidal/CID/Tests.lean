@@ -879,13 +879,13 @@ def codeOf (q : Fetch.Request) : String :=
 
 -- The engine names each step: resolve, then fetch at the address it chose.
 #guard codeOf q20 == "resolve controller.example"
-#guard codeOf { q20 with resolved := [("controller.example", ["203.0.113.7"])] }
-  == "fetch https://controller.example/123 203.0.113.7"
-#guard (Fetch.step { q20 with resolved := [("controller.example", ["203.0.113.7"])] }) ==
-  .fetch "https://controller.example/123" acceptHeader (some "203.0.113.7")
+#guard codeOf { q20 with resolved := [("controller.example", ["93.184.216.34"])] }
+  == "fetch https://controller.example/123 93.184.216.34"
+#guard (Fetch.step { q20 with resolved := [("controller.example", ["93.184.216.34"])] }) ==
+  .fetch "https://controller.example/123" acceptHeader (some "93.184.216.34")
 -- The guard: a private, loopback or link-local address of the name, a
 -- private literal, a localhost name; http.
-#guard codeOf { q20 with resolved := [("controller.example", ["203.0.113.7", "10.1.2.3"])] } == "FETCH_REFUSED"
+#guard codeOf { q20 with resolved := [("controller.example", ["93.184.216.34", "10.1.2.3"])] } == "FETCH_REFUSED"
 #guard codeOf { q20 with resolved := [("controller.example", ["::1"])] } == "FETCH_REFUSED"
 #guard codeOf { q20 with resolved := [("controller.example", ["169.254.169.254"])] } == "FETCH_REFUSED"
 #guard codeOf { q20 with resolved := [("controller.example", [])] } == "FETCH_REFUSED"
@@ -912,7 +912,7 @@ def codeOf (q : Fetch.Request) : String :=
 #guard codeOf { q20 with resolved := [("controller.example", ["10.1.2.3"])], fetched := [okDoc "application/cid"] }
   == "FETCH_REFUSED"
 -- The answer: status, then Content-Type (item 7), then §3.3.
-def pub : List (String × List String) := [("controller.example", ["203.0.113.7"])]
+def pub : List (String × List String) := [("controller.example", ["93.184.216.34"])]
 #guard codeOf { q20 with resolved := pub, fetched := [okDoc "application/cid"] } == "method"
 #guard ["application/cid", "application/cid+json", "application/ld+json", "application/json",
         "application/json; charset=utf-8", "APPLICATION/CID"].all fun ct =>

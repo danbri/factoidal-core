@@ -1,0 +1,12 @@
+[
+  "svg/struct/reftests/use-symbol-display-none.svg",
+  "svg/struct/reftests/use-symbol-inline-css-001.svg",
+  "svg/struct/reftests/use-symbol-inline-css-002.svg",
+  "svg/struct/reftests/use-symbol-inline-css-003.svg",
+  "svg/struct/reftests/use-symbol-dimensions-override-001.svg",
+  "svg/struct/reftests/use-symbol-dimensions-override-002.svg",
+  "svg/struct/reftests/use-svg-inline-css.svg",
+  "svg/struct/reftests/use-svg-dimensions-override-001.svg",
+  "svg/struct/reftests/use-svg-dimensions-override-002.svg",
+  "svg/coordinate-systems/viewBox-zero-disables-rendering-symbol.svg"
+]

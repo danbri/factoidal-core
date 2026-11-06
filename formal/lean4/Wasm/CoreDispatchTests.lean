@@ -86,6 +86,11 @@ def samePure (op : String) (args : List String) : Bool :=
 #guard samePure "vocabularies" []
 #guard samePure "memberIri" ["0"]
 #guard samePure "memberOrdinal" ["http://e/x"]
+-- Which URL a host may request under one container (Wasm/Ops/ContainerPath.lean; issue 1127).
+#guard samePure "containerPath" ["{\"kind\":\"resource\",\"container\":\"https://s.example/c/\",\"path\":\"a b\"}"]
+#guard samePure "containerPath" ["{\"kind\":\"within\",\"root\":\"https://s.example/alice/\",\"url\":\"https://s.example/alice-other/\",\"canonical\":true}"]
+#guard samePure "containerPath" ["{}"]
+#guard samePure "containerPath" []
 #guard samePure "deltaLogDecode" [""]
 #guard samePure "deltaLogDecode" ["zz"]
 #guard samePure "deltaLogMerge" [nt, ""]

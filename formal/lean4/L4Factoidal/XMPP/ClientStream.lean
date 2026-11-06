@@ -345,7 +345,7 @@ private def srvDrain : Nat → Server.Session → String → List String → Ser
     match Framing.nextUnit (!s.awaitingStreamOpen) b with
     | none => (s, b, acc)
     | some (u, rest) =>
-      let (s', _, outs) := Server.step s ⟨[]⟩ u
+      let (s', _, outs) := Server.step s { roster := [] } u
       let sent := outs.filterMap (fun o => match o with | .send t => some t | _ => none)
       srvDrain f s' rest (acc ++ sent)
 

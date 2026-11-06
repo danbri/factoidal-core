@@ -3120,12 +3120,26 @@ let () =
   in
 
   (* Parse SPARQL query (Mode_12 when --sparql12, else 1.1 byte-identical) *)
+  (* SPARQL 1.1 section 4.1.1.2: a relative IRI in the query resolves
+     against the base IRI (RFC 3986 5.1). The base of --query FILE is the
+     file's IRI (RFC 3986 5.1.3); -e TEXT uses --base. A BASE in the text
+     comes first (5.1.1). With no base a relative IRI is an error. Same rule
+     as the Lean CLI (commit 5a8b5add); issue
+     https://github.com/danbri/factoidal/issues/739. *)
+  let query_base =
+    match cfg.query_string, cfg.query_file with
+    | None, Some f ->
+      let abs = if Filename.is_relative f then Filename.concat (Sys.getcwd ()) f else f in
+      FStar_Pervasives_Native.Some ("file://" ^ abs)
+    | _ ->
+      (match cfg.base_iri with
+       | Some b -> FStar_Pervasives_Native.Some b
+       | None -> FStar_Pervasives_Native.None) in
   let query = try
     let parsed =
       if !sparql12_mode then
-        SPARQL11_Parser.parse_sparql_12_with_base
-          FStar_Pervasives_Native.None query_text
-      else SPARQL11_Parser.parse_sparql query_text
+        SPARQL11_Parser.parse_sparql_12_with_base query_base query_text
+      else SPARQL11_Parser.parse_sparql_with_base query_base query_text
     in
     match parsed with
     | SPARQL11_Parser.ParseOk (q, _) -> q

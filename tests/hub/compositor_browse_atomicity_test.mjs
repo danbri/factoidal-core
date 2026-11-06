@@ -1,6 +1,8 @@
 import test, {after} from 'node:test';
 import assert from 'node:assert/strict';
-import {rootedPath} from '../../docs/web/hub/data-compositor/pod-storage.mjs';
+import {rootedPath,podPaths} from '../../docs/web/hub/data-compositor/pod-storage.mjs';
+const core=await import(process.env.FACTOIDAL_COMPOSITOR_TEST_ENGINE || '@factoidal/core');
+const paths=await podPaths(core);
 
 // Import the real custom element. These minimal browser interfaces only hold
 // option values; navigation and destination selection execute production code.
@@ -36,7 +38,7 @@ test('failed browse preserves displayed folder, entries and subsequent save dest
   assert.equal(state.library.folder,original);
   assert.equal(state.location.textContent,original);
   assert.deepEqual(state.files.children,[state.oldOption]);
-  assert.equal(rootedPath(state.library.folder,'pipeline.json'),original+'pipeline.json');
+  assert.equal(rootedPath(paths,state.library.folder,'pipeline.json'),original+'pipeline.json');
 });
 
 test('pending browse preserves destination; success commits new folder and entries',async()=>{
@@ -51,7 +53,7 @@ test('pending browse preserves destination; success commits new folder and entri
   assert.equal(state.library.folder,target);
   assert.equal(state.location.textContent,target);
   assert.deepEqual(state.files.children.map(option=>option.value),[target+'new.json']);
-  assert.equal(rootedPath(state.library.folder,'pipeline.json'),target+'pipeline.json');
+  assert.equal(rootedPath(paths,state.library.folder,'pipeline.json'),target+'pipeline.json');
 });
 
 test('invalid listing cannot partially change the folder or discard the old entries',async()=>{

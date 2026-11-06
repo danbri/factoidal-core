@@ -367,12 +367,14 @@ theorem onPage_onePage_no_fetch (s : ClientState) (r : Resp) (items : List Json)
   split at h <;> simp [finish, failWith] at h
 
 /-- A bearer token the caller gave with a realm (an entry of `tokens`) is
-attached only to a request whose URL is under that realm; with no
-any-token, a request is sent as it is or with the token of such an entry. -/
+attached only to a request whose URL is under that realm at a path-segment
+boundary (`ContainerPath.coversAtSegment`, which implies a non-empty prefix:
+`ContainerPath.coversAtSegment_prefix`); with no any-token, a request is sent
+as it is or with the token of such an entry. -/
 theorem attachToken_realm (ses : Session) (r : Req) (hany : ses.anyToken = "") :
     attachToken ses r = r ∨ ∃ t ∈ ses.tokens,
-      (t.root ≠ "" ∧ r.url.startsWith t.root = true) ∨
-      (∃ e ∈ t.endpoints, e ≠ "" ∧ r.url.startsWith e = true) := by
+      ContainerPath.coversAtSegment t.root r.url = true ∨
+      (∃ e ∈ t.endpoints, ContainerPath.coversAtSegment e r.url = true) := by
   unfold attachToken
   split
   · left; rfl
@@ -384,6 +386,19 @@ theorem attachToken_realm (ses : Session) (r : Req) (hany : ses.anyToken = "") :
       simpa [TokenEntry.covers] using this
     · left; simp [hany]
 
+
+/-- **A token for a root without its final `/` is not sent to a sibling
+storage whose name continues the root** (https://github.com/danbri/factoidal/issues/1127,
+row C3 of `docs/designissues/2026-10-28-feature-combination-safety.md`). -/
+theorem covers_sibling_refused :
+    ({ storage := "https://s.example/alice", root := "https://s.example/alice",
+       token := "t" } : TokenEntry).covers "https://s.example/alice-other/x" = false := by
+  decide
+
+#guard ({ storage := "https://s.example/alice", root := "https://s.example/alice",
+          token := "t" } : TokenEntry).covers "https://s.example/alice/x"
+#guard ({ storage := "s", root := "https://s.example/alice/", token := "t",
+          endpoints := ["https://as.example/token"] } : TokenEntry).covers "https://as.example/token?x=1"
 
 end Driver
 

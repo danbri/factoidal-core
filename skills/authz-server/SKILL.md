@@ -14,7 +14,8 @@ verbatim: "Do auth server (as a component other servers might use too)."
 | path | what it is |
 | --- | --- |
 | `formal/lean4/L4Factoidal/Authz/Keys.lean` | `Crypto` record (HACL\* instance `hacl`), keys, RFC 7638 `kid`, JWK Set, rotation, key file |
-| `formal/lean4/L4Factoidal/Authz/Fetch.lean` | https/http rule, private-address guard, document and name cache |
+| `formal/lean4/L4Factoidal/Authz/Fetch.lean` | https/http rule, private-address guard (`Net.Egress.choose`), document and name cache |
+| `formal/lean4/L4Factoidal/Net/Egress.lean` | the one outbound decision: IANA special-purpose ranges, address pinning (issue 1126) |
 | `formal/lean4/L4Factoidal/Authz/SubjectToken.lean` | the credential suites |
 | `formal/lean4/L4Factoidal/SAML/Assertion.lean` | the SAML 2.0 assertion checks (issue 926) |
 | `formal/lean4/L4Factoidal/XML/DSig.lean`, `XML/ExcC14n.lean` | the XML Signature profile of SAML Core §5, exclusive canonicalization |
@@ -137,8 +138,11 @@ testing: `deploy/lws-target/`.
   run with real AES-GCM and RSA-OAEP: `lake exe l4xmlenc-probe` (SAML
   section, Santuario fixtures from `tests/xmlenc/MakeFixtures.java`).
 * Fetches: `https` only unless `--allow-http`; every address of the host
-  (literal, `localhost` name, or the host's resolution) must be outside
-  loopback, unspecified, link-local, RFC 1918 and RFC 4193 unless
+  (literal, `localhost` name, or the host's resolution) must be outside the
+  IANA IPv4 and IPv6 special-purpose registries (`L4Factoidal/Net/Egress.lean`,
+  `specialPurpose`: loopback, RFC 1918, RFC 4193, link-local, 100.64.0.0/10,
+  multicast, reserved, documentation, NAT64 and 6to4 with such an IPv4
+  address; https://github.com/danbri/factoidal/issues/1126) unless
   `--allow-private-fetch`; the host connects to the address the engine names
   and follows no redirect. Both flags are for tests (Touchstone fixtures are
   `http://localhost`).

@@ -286,11 +286,24 @@ def validateQt4Settings (stage : String) (given : List (String × Json)) : Excep
     | some (.string _) => pure ()
     | _ => throw s!"{stage}: setting {key} must be a string"
 
+/-- Explicit results rendering has its transport wire, outside EvalContract.
+Graph answers support only the existing N-Triples/table text renderings. -/
+def evaluatorOutputWire (given : List (String × Json)) (formOut : Wire) : Except String Wire :=
+  match lookupKey given "output" with
+  | none => .ok formOut
+  | some (.string output) =>
+    if !["json", "xml-report", "xml", "csv", "tsv", "table", "ntriples"].contains output then
+      .error s!"unknown query output format '{output}'"
+    else if formOut == .dataset && output != "ntriples" && output != "table" then
+      .error s!"a CONSTRUCT or DESCRIBE answer is a graph and has no '{output}' results format; use output 'ntriples'"
+    else .ok (if output == "json" || output == "xml-report" then .json else .text)
+  | some _ => .error "the setting output must be a string"
+
 /-- The output wire and derived values of an evaluator node: the form of the
 parsed query, when the settings carry one. -/
 def evaluatorWire (given : List (String × Json)) : Except String (Wire × List (String × Json)) :=
   match lookupKey given "query" with
-  | none => .ok (.answer, [])
+  | none => do pure (← evaluatorOutputWire given .answer, [])
   | some (.string q) =>
     let v : SparqlVersion :=
       match lookupKey given "sparql12", lookupKey given "version" with
@@ -302,7 +315,9 @@ def evaluatorWire (given : List (String × Json)) : Except String (Wire × List 
       | some (.string b) => if b.isEmpty then none else some b
       | _ => none
     match parseSparql q base v with
-    | .ok query => .ok (formWire query.form, [("form", .string (formName query.form))])
+    | .ok query => do
+      pure (← evaluatorOutputWire given (formWire query.form),
+        [("form", .string (formName query.form))])
     | .error err => .error s!"the query does not parse: {err.msg} (offset {err.pos})"
   | some _ => .error "the setting query must be a string"
 
@@ -379,6 +394,19 @@ private def selectQ : String := "SELECT ?s WHERE { ?s ?p ?o }"
 #guard (evaluatorSigOf "DESCRIBE <urn:x>").map (·.outW) == some Wire.dataset
 #guard (evaluatorSigOf selectQ).map (·.outW) == some Wire.table
 #guard (evaluatorSigOf "ASK { ?s ?p ?o }").map (·.outW) == some Wire.answer
+-- Explicit rendering selects its actual transport shape, not the query-form wire.
+#guard (evaluatorWire [("query", .string selectQ), ("output", .string "xml-report")]).toOption.map (·.1) == some Wire.json
+#guard (evaluatorWire [("query", .string "ASK {}"), ("output", .string "xml-report")]).toOption.map (·.1) == some Wire.json
+#guard (evaluatorWire [("query", .string selectQ), ("output", .string "json")]).toOption.map (·.1) == some Wire.json
+#guard (evaluatorWire [("query", .string "ASK {}"), ("output", .string "json")]).toOption.map (·.1) == some Wire.json
+#guard (evaluatorWire [("query", .string selectQ), ("output", .string "xml")]).toOption.map (·.1) == some Wire.text
+#guard (evaluatorWire [("query", .string selectQ), ("output", .string "csv")]).toOption.map (·.1) == some Wire.text
+#guard (evaluatorWire [("query", .string constructQ), ("output", .string "ntriples")]).toOption.map (·.1) == some Wire.text
+#guard (evaluatorWire [("query", .string constructQ), ("output", .string "table")]).toOption.map (·.1) == some Wire.text
+#guard (evaluatorWire [("query", .string constructQ), ("output", .string "xml-report")]).toOption.isNone
+#guard (evaluatorWire [("query", .string constructQ), ("output", .string "json")]).toOption.isNone
+#guard (evaluatorWire [("query", .string selectQ), ("output", .string "bogus")]).toOption.isNone
+#guard (evaluatorWire [("query", .string selectQ), ("output", .bool true)]).toOption.isNone
 -- reader -> CONSTRUCT -> CONSTRUCT is well typed
 #guard checkPath [sigOf "turtleDocumentReader", evaluatorSigOf constructQ, evaluatorSigOf constructQ]
 -- reader -> SELECT -> CONSTRUCT is not
@@ -416,6 +444,9 @@ private def settingsOf (n : String) (given : List (String × Json)) : Option Nod
   fun r => (r.status, r.outW, r.derived.map (·.1))) == some ("proved", Wire.table, ["form"])
 #guard ((settingsOf "shippedEvaluator" [("query", .string selectQ), ("bogus", .null)]).map
   (·.status)) == some "unproved"
+-- Rendering is still outside the proved evaluator domain, despite its correct wire.
+#guard ((settingsOf "shippedEvaluator" [("query", .string selectQ), ("output", .string "xml-report")]).map
+  fun r => (r.status, r.checked, r.outW)) == some ("unproved", false, Wire.json)
 -- a stage that is not proved keeps its status; its settings are recorded
 #guard ((settingsOf "turtleDocumentWriter" [("bogus", .null)]).map
   fun r => (r.status, r.outside.length)) == some ("assumed", 0)

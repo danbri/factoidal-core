@@ -240,7 +240,7 @@ export type WriteFormat =
   | 'rdfxml' | 'rdf-xml' | 'rdf' | 'jsonld' | 'json-ld' | 'rdfc' | 'canonical';
 
 /** Results formats of query() with `output`. */
-export type ResultsFormat = 'json' | 'xml' | 'csv' | 'tsv' | 'table' | 'ntriples';
+export type ResultsFormat = 'json' | 'xml' | 'xml-report' | 'csv' | 'tsv' | 'table' | 'ntriples';
 
 /** One row of formats(). */
 export interface FormatCapability {
@@ -1570,10 +1570,14 @@ export type Sbm11Transport = (url: string, headers: Record<string, string>) =>
  * null before transport and appear in errors().
  * Browser worker default XHR accepts no caller auth/headers; provide an explicit
  * trusted transport for those. Its final-URL check cannot prevent an already
- * sent anonymous request or ambient same-origin browser cookies. */
+ * sent anonymous request or ambient same-origin browser cookies.
+ * Asynchronous: the engine's op containerPath (Lean, L4Factoidal.LWS.ContainerPath)
+ * decides the container URL and every resource URL. */
 export function lwsSbm11Reader(url: string, opts?: {
-  auth?: string; headers?: Record<string, string>; transport?: Sbm11Transport; timeoutMs?: number
-}): Sbm11Reader & { evidence(): Sbm11ReadEvidence[]; errors(): string[]; close(): void };
+  auth?: string; headers?: Record<string, string>; transport?: Sbm11Transport; timeoutMs?: number;
+  /** a loaded engine handle (default: loadEngine()); its op containerPath decides every URL */
+  engine?: object
+}): Promise<Sbm11Reader & { evidence(): Sbm11ReadEvidence[]; errors(): string[]; close(): void }>;
 
 /** One query against a store: open with the query's plan, query, close. */
 export function queryStore(
@@ -2260,13 +2264,22 @@ export interface SparqlResultsJson {
   boolean?: boolean;
 }
 
+/** The exact serialized result is checked by the Lean XML parser. This is
+ * parser admission, not a proof of SPARQL serialization fidelity or XSLT success.
+ * Invalid RDF/XML characters are refused, never removed or replaced.
+ */
+export type SparqlXmlReport =
+  | { kind: 'xml'; xml: string }
+  | { kind: 'diagnostic'; code: 'XML_ADMISSION_REFUSED'; message: string };
+
 export type OutputFormat =
-  | 'json' | 'csv' | 'tsv' | 'xml' | 'table' | 'ntriples';
+  | 'json' | 'csv' | 'tsv' | 'xml' | 'xml-report' | 'table' | 'ntriples';
 
 /**
  * One call, serialised answer: parse `dataString`, close the default
  * graph under `entail`, run the query. Resolves to parsed SPARQL Results
- * JSON when output is 'json' (default), the text otherwise. 'csv', 'tsv'
+ * JSON when output is 'json' (default), an XML/diagnostic object for
+ * 'xml-report', and text otherwise. 'csv', 'tsv'
  * and 'xml' are the W3C SPARQL results formats (CSV and TSV have no ASK
  * encoding, so an ASK with those rejects); 'table' and 'ntriples' are
  * display formats. A CONSTRUCT or DESCRIBE answer is a graph and takes
@@ -2280,7 +2293,7 @@ export function queryRaw(
     entail?: EntailRegime;
     output?: OutputFormat;
   }
-): Promise<SparqlResultsJson | string>;
+): Promise<SparqlResultsJson | SparqlXmlReport | string>;
 
 /** Package version string, e.g. '0.9.0'. */
 export const version: string;

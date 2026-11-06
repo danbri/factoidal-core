@@ -12,6 +12,15 @@ it, close it.
     -> {"ok":true,"changed":B,"retry"?:{"delivery":{…},"after":SECONDS}}
   lwsFlush(handle, {now?})
     -> {"ok":true,"changed":B,"deliveries"?:[…],"wake"?:SECONDS}
+  lwsEgress(handle, {url, addresses})
+    -> {"ok":true,"host":H,"address":A} | {"ok":true,"refused":"…"}
+
+Every delivery (webhook inbox, access-request and grant inbox, controller
+inbox) passes `lwsEgress` just before the host makes it (issue 1126). A
+delivery document carries `resolve: H` when its URL host is a name: the host
+resolves `H` then, passes every address, and connects to the address the
+answer names, or reports `{id, status: 0, refused: true}` to `lwsDelivered`
+(`Notifications.egressOf`, `Notifications.deliveries_pinned`).
 
 `lwsStep` may answer `{"ok":true,"resolve":{"host":H}}`: the engine needs
 the addresses of a webhook inbox host (`Notifications.resolveNeeded?`,
@@ -403,6 +412,10 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
         -- The webhook delivery rate (issue 915); 0 turns the limit off.
         let deliveryLimit := natOr "deliveryLimit" 10
         let deliveryWindow := natOr "deliveryWindow" 60
+        -- The limit per destination and the private-address opt-in
+        -- (issue 1126, `Notifications.admitDest`, `Net.Egress`).
+        let deliveryDestLimit := natOr "deliveryDestLimit" 10
+        let allowPrivateFetch := j.field? "allowPrivateFetch" == some (.bool true)
         -- CORS (issue 923): absent or true echoes the request Origin, false
         -- turns it off, a list names the origins (`Cors.policyOfJson`).
         -- With `insecureNoAuth`, absent is off and echo is refused
@@ -445,7 +458,8 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
         let authz := { authz with access := side.access }
         let (moved, results, notif, signingKey) := (side.moved, side.results, side.notif, side.signingKey)
         .ok { cfg := { baseIri, owner, agent, maxBody, pageSize, moveContainers, linksetPut, paginateAlways,
-                       redirectsMax, deliveryLimit, deliveryWindow, listenAddress, listenPort,
+                       redirectsMax, deliveryLimit, deliveryWindow, deliveryDestLimit,
+                       allowPrivateFetch, listenAddress, listenPort,
                        localAddresses, controllerInbox, cors },
               moved,
               now, rootAcl, snapshot, authz,
@@ -764,11 +778,15 @@ def lwsPersist (h optsJson : String) : IO (String × ByteArray) := do
               pure (planAnswer [] pl)
 
 /-- A delivery request as the host receives it: POST `body` to `url` with
-exactly `headers`. -/
+exactly `headers`, after `lwsEgress` named the address. `resolve` is the
+name to resolve first, when the URL host is not an IP literal. -/
 def deliveryJson (d : Notifications.Delivery) : Json :=
-  .object [ ("id", .string d.id), ("url", .string d.url)
-          , ("headers", .array (d.headers.map (fun (n, v) => Json.array [.string n, .string v])))
-          , ("body", .string d.body) ]
+  .object ([ ("id", .string d.id), ("url", .string d.url)
+           , ("headers", .array (d.headers.map (fun (n, v) => Json.array [.string n, .string v])))
+           , ("body", .string d.body) ] ++
+           (match L4Factoidal.Net.toResolve? d.url with
+            | some h => [("resolve", .string h)]
+            | none => []))
 
 /-- The request member `resolved`: `[{host, addresses: [...]}]`, the host's
 answer to a `resolve`. Members of another shape are dropped. -/
@@ -872,7 +890,9 @@ def lwsDelivered (h docJson : String) : IO String := do
                 | _ => d
               let status := num "status" 0
               let now := num "now" open_.mem.mem.clock
-              let (ns', retry) := Notifications.deliveryResult open_.signer now id status open_.notif
+              let refused := j.field? "refused" == some (.bool true)
+              let (ns', retry) :=
+                Notifications.deliveryResult open_.signer now id status open_.notif refused
               lwsTable.modify (·.insert h { open_ with notif := ns' })
               pure (okWith ([("changed", .bool (ns'.revision != open_.notif.revision))] ++
                 (match retry with
@@ -898,6 +918,28 @@ def lwsFlush (h docJson : String) : IO String := do
       pure (okWith ([("changed", .bool (ns'.revision != open_.notif.revision))] ++
         (if ds.isEmpty then [] else [("deliveries", .array (ds.map deliveryJson))]) ++
         wakeMember now open_.cfg ns'))
+
+/-- `lwsEgress(handle, {url, addresses})`: the decision for one delivery,
+just before the host makes it (issue 1126). `addresses` is what the host's
+resolver gave for the URL's name now (not read for an IP literal). The
+answer names the address to connect to, or the refusal
+(`Notifications.egressOf`). Reads no resource. -/
+def lwsEgress (h docJson : String) : IO String := do
+  match (← lwsTable.get)[h]? with
+  | none => pure (unknownLwsHandle h)
+  | some open_ =>
+      match parseJson docJson with
+      | .error e => pure (errJson s!"egress: {toString e}")
+      | .ok j =>
+          match j.getString? "url" with
+          | none => pure (errJson "egress: member \"url\" is required")
+          | some url =>
+              let addresses := ((j.getArray? "addresses").getD []).filterMap (fun x => match x with
+                | .string t => some t
+                | _ => none)
+              match Notifications.egressOf open_.cfg url addresses with
+              | .ok (host, a) => pure (okWith [("host", .string host), ("address", .string a)])
+              | .error w => pure (okWith [("refused", .string w)])
 
 /-- `lwsStep(handle, requestJson)` through the string entry: the content
 travels in the document (`body` or `bodyBase64`). -/
@@ -1082,7 +1124,7 @@ def lwsStorageKeyNew (requestJson : String) : String :=
 /-- The op names this module serves. -/
 def lwsOpNames : List String :=
   ["lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush",
-   "lwsLoad", "lwsPersist", "lwsRead", "lwsDirLock", "lwsAtRestNotice", "lwsStorageKeyNew"]
+   "lwsEgress", "lwsLoad", "lwsPersist", "lwsRead", "lwsDirLock", "lwsAtRestNotice", "lwsStorageKeyNew"]
 
 /-- What an op of this file does with a storage handle (owner requirement
 for 0.21.0: only LWS code reads or changes the data of an LWS storage;
@@ -1111,7 +1153,7 @@ deriving DecidableEq, Repr
 def lwsOpRole : String → Option LwsOpRole
   | "lwsStep" => some .serve
   | "lwsOpen" | "lwsLoad" | "lwsRead" | "lwsPersist" | "lwsSnapshot" => some .persist
-  | "lwsDelivered" | "lwsFlush" => some .deliver
+  | "lwsDelivered" | "lwsFlush" | "lwsEgress" => some .deliver
   | "lwsFetched" => some .issuerKeys
   | "lwsClose" => some .close
   | "lwsDirLock" | "lwsAtRestNotice" | "lwsStorageKeyNew" => some .noStorage

@@ -60,5 +60,5 @@ test('absent domain/subclass rules empty the roster but do not block HTML', asyn
 test('successful HTML-method transform can emit an empty string', async()=>{
   const result=await runPipeline(core,{stylesheet:stylesheet('')});
   assert.equal(result.html,'');
-  assert.equal(result.stages.at(-1).id,'html');
+  assert.equal(result.stages.at(-1).id,'report');
 });

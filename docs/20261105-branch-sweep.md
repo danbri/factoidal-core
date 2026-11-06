@@ -14,22 +14,29 @@ Each batch was verified on a temporary branch `sweep/batch-N` with a `workflow_d
 another ref does not cancel the check on `main`, and no local Lean build of the whole library was needed.
 `L4Factoidal/XProc31` is outside those targets, so it was built locally with `lake build l4xproc`.
 
-Status, 2026-11-06 12:15 UTC: rows marked "LANDED (batch 1)" are NOT on main yet. They wait for one CI gate on `sweep/batch-2` (compiled recursion). The other gates are green. A reboot stopped the sweep for 12 hours. 37 branches are archived and deleted. The file is updated with each batch.
+Status, 2026-11-06: counts of the 56 branches: 37 archived before the first landing (25 ALREADY-ON-MAIN, 12 DEAD),
+see the table for the final count.
+Verification of the landing: run https://github.com/danbri/factoidal-core/actions/runs/42214173863 (Verify Lean 4 corpus,
+success), https://github.com/danbri/factoidal-core/actions/runs/42214177640 (npm suite and dataflow gate, success),
+https://github.com/danbri/factoidal-core/actions/runs/42131194969 (Verify F* Proof Corpus, success, before the last merge of main).
+Gate repairs in the landing: `admitsDest` is noncomputable (proof-only count; the allow list is unchanged);
+three parse or type repairs let `l4xproc` build. Tags `archive/sweep/batch-1` and `archive/sweep/batch-2` keep the
+temporary branches. A reboot of 2026-11-06 stopped the sweep for 12 hours.
 
 | Branch | Outcome | Commit on main, or tag | Reason |
 | --- | --- | --- | --- |
-| `wip/lws-reader-paths-lean` | LANDED (batch 1) | merge on main | PR 338. Container path decisions in Lean, wasm op containerPath. Conflict only in the changelog. |
-| `claude/qt4-static-typing-integration` | LANDED (batch 1) | merge on main | PR 281. Optional static typing. Allow-list conflict: both sides kept; the new lines carry reasons. |
-| `codex/spatial-filter-planning` | LANDED (batch 1) | merge on main | GeoSPARQL filter planning. StoreDataset conflict: kept the SERVICE join arm of main and the OPTIONAL comment of the branch. |
-| `claude/checked-conditional-routing` | LANDED (batch 1) | merge on main | PR 290. Stage.choose, xml-report output. Compositor conflicts: kept 0.29.0 pins of main; added the new Lean targets to the CI build. |
-| `claude/compositor-xml-representability` | LANDED (batch 1), part | merge on main | PR 289. Theorems and record landed. Its expected-defect test and CI step were not landed: checked routing fixed the defect, so that test would fail. |
-| `wip/1126-egress` | LANDED (batch 1) | merge on main | PR 300. One egress decision for outbound requests (issue 1126). The earlier CI failure did not repeat on the merge. |
-| `claude/webdav-executable-gate` | LANDED (batch 1) | merge on main | PR 265. Read-only WebDAV executable tests and compact Base64 for LWS snapshots. Its executable gate was red at 0.26.0; that is not a CI gate. |
-| `claude/xproc31-2` | LANDED (batch 1) | merge on main, then eb7404ae3 repair | PR 340. It never built: three small repairs let l4xproc build locally. Not measured against the XProc test suite. CI does not build XProc31. |
-| `claude/qt4-cfg-static-typing` | NEEDS-WORK | pending | Superseded by PR 281 when batch 1 is on main. Then archive. |
-| `wip/1125-1128-xmpp-login` | NEEDS-WORK | pending | PR 337. Next batch. Server.Env gains a guard, so the STARTTLS checks of main need the new form. |
-| `codex/svg-corpus-overnight` | NEEDS-WORK | pending | PR 310. Next batch. 21 MB of pinned WPT SVG files, which tests/browser-wpt on main already reads from a side checkout. |
-| `claude/wt-fstar-catchup` | NEEDS-WORK | pending | Next batch: merge and run the F* verification by dispatch. |
+| `wip/lws-reader-paths-lean` | LANDED | merge on main | PR 338. Container path decisions in Lean, wasm op containerPath. Conflict only in the changelog. |
+| `claude/qt4-static-typing-integration` | LANDED | merge on main | PR 281. Optional static typing. Allow-list conflict: both sides kept; the new lines carry reasons. |
+| `codex/spatial-filter-planning` | LANDED | merge on main | GeoSPARQL filter planning. StoreDataset conflict: kept the SERVICE join arm of main and the OPTIONAL comment of the branch. |
+| `claude/checked-conditional-routing` | LANDED | merge on main | PR 290. Stage.choose, xml-report output. Compositor conflicts: kept 0.29.0 pins of main; added the new Lean targets to the CI build. |
+| `claude/compositor-xml-representability` | LANDED, part | merge on main | PR 289. Theorems and record landed. Its expected-defect test and CI step were not landed: checked routing fixed the defect, so that test would fail. |
+| `wip/1126-egress` | LANDED | merge on main | PR 300. One egress decision for outbound requests (issue 1126). The earlier CI failure did not repeat on the merge. |
+| `claude/webdav-executable-gate` | LANDED | merge on main | PR 265. Read-only WebDAV executable tests and compact Base64 for LWS snapshots. Its executable gate was red at 0.26.0; that is not a CI gate. |
+| `claude/xproc31-2` | LANDED | merge on main, then eb7404ae3 repair | PR 340. It never built: three small repairs let l4xproc build locally. Not measured against the XProc test suite. CI does not build XProc31. |
+| `claude/qt4-cfg-static-typing` | ALREADY-ON-MAIN | PR 281; tag `archive/claude/qt4-cfg-static-typing` | Superseded by PR 281, now on main. |
+| `wip/1125-1128-xmpp-login` | LANDED | merge on main | PR 337. Login limits (issues 1125, 1128). Server.Env gains a guard; the STARTTLS checks moved to the new form; the guard also covers the WebSocket path, which the branch did not have. The npm tests ran against the last released engine, so the new limit has not run in wasm yet. |
+| `codex/svg-corpus-overnight` | LANDED | merge on main | PR 310. 21 MB of pinned WPT SVG files with notices. `tests/browser-wpt` on main needed them from a side checkout. |
+| `claude/wt-fstar-catchup` | LANDED | merge on main | F* ports of Lean fixes. F* proof corpus and extraction checks pass. `.agent-notes.md` of main kept. |
 | `claude/qt4-cfg-xsd10` | NEEDS-WORK | pending | PR 264. 33 conflict blocks, mostly Qt4Run and Core. |
 | `claude/qt4-cfg-version-modes` | NEEDS-WORK | pending | PR 262. 18 conflict blocks; its build failed before; it commits .log files (issue 1101). |
 | `claude/qt4-cfg-xml-layer` | NEEDS-WORK | pending | 12 conflict blocks; stopped at a usage limit; not measured. |

@@ -29,12 +29,7 @@ def FontProfile.ofFace (face : FontProvider.Face) : FontProfile :=
    cssFamilies := [face.family],fontSha256 := some face.fontSha256,faceIndex := face.faceIndex,
    shapedWord := some face.lookup}
 
-private def FontProfile.checkFamily (font : FontProfile) (style : Computed) : Except String Unit := do
-  if !font.cssFamilies.any (fun family => family.toLower == style.fontFamily.toLower) then
-    throw s!"unsupported font family: {style.fontFamily} (matching font data required)"
-
 private def FontProfile.word (font : FontProfile) (style : Computed) (text : String) : Except String (Option FontProvider.Word) := do
-  font.checkFamily style
   match font.shapedWord with
   | none => return none
   | some shape =>
@@ -124,8 +119,12 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
       if !word.isEmpty then
         result := .word id style word start :: result
         word := ""
-      if !spaced then result := .space id style :: result
-      spaced := true
+      if style.preformatted && c == '\n' then
+        result := .lineBreak style :: result
+        spaced := true
+      else
+        if !spaced then result := .space id style :: result
+        spaced := true
     else
       if word.isEmpty then start := index
       word := word.push c
@@ -150,23 +149,19 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (a
     if s.display == .none then return #[]
     if n.type == .text then return (textItems id s n.data).toArray
     if n.type != .element then return #[]
-    if n.ns != some DOM.htmlNS && n.ns != some DOM.svgNS then
-      throw "unsupported foreign namespace in HTML layout"
-    if ["img","input","textarea","select","video","audio","canvas","iframe","object","embed","table","ruby","ul","ol","li"].contains n.lname then
-      throw s!"unsupported HTML layout element: {n.lname}"
+    -- No image decoder yet: an image stands as its description, and stays a link.
+    if n.lname == "img" then
+      let alt := CSS.attrValue n "alt"
+      return (textItems id s (if alt.isEmpty then "[image]" else s!"[{alt}]")).toArray
     if n.lname == "br" then return #[.lineBreak s]
-    if s.display == .block then throw "unsupported block descendant inside inline context"
-    if n.ns != some DOM.svgNS && (s.background.isSome ||
-      s.margin.top != 0 || s.margin.right != 0 || s.margin.bottom != 0 || s.margin.left != 0 ||
-      s.padding.top != 0 || s.padding.right != 0 || s.padding.bottom != 0 || s.padding.left != 0 || s.clipOverflow) then
-      throw "unsupported inline box decoration or spacing"
     if n.ns == some DOM.svgNS then
       let (width,height) ← svgSize n s available
       if width <= 0 || height <= 0 then return #[]
       return #[.replaced id width height (← embedding id s width height)]
-    let mut out := #[]
+    -- A block inside an inline (old pages often have one) breaks the line around it.
+    let mut out : Array Inline := if s.display == .block then #[.lineBreak s] else #[]
     for child in n.kids do out := out ++ (← inlineItems dom styles embedding available fuel child)
-    return out
+    return if s.display == .block then out.push (.lineBreak s) else out
 
 private def translate (x y : Float) : Transform := ⟨1,0,0,1,x,y⟩
 private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Array Node := Id.run do
@@ -214,14 +209,12 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   let mut ascent : Float := 0
   let mut descent : Float := 0
   if let some style := strut then
-    font.checkFamily style
     let leading := lineLeading font style
     ascent := font.ascent*style.fontSize/font.unitsPerEm+leading
     descent := font.descent*style.fontSize/font.unitsPerEm+leading
   for (_,item) in items do
     match item with
     | .word _ s _ _ | .space _ s | .lineBreak s =>
-      font.checkFamily s
       let leading := lineLeading font s
       ascent := max ascent (font.ascent*s.fontSize/font.unitsPerEm+leading)
       descent := max descent (font.descent*s.fontSize/font.unitsPerEm+leading)
@@ -234,9 +227,8 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let leading := lineLeading font s
       match ← font.word s text with
       | none =>
-        let chars := text.toList
-        if !chars.all (fun c => font.admits c.toNat) then
-          throw "unsupported text: ASCII bitmap font admits U+0020 to U+007E only"
+        -- A character this font has no glyph for shows as a question mark.
+        let chars := text.toList.map fun c => if font.admits c.toNat then c else '?'
         let advance := font.advance*s.fontSize/font.unitsPerEm
         let glyphs := chars.toArray.mapIdx fun i c =>
           ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
@@ -311,6 +303,16 @@ private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node 
   | some c => if !s.visible || w <= 0 || h <= 0 then #[] else
     #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
 
+/-- What goes before a list item: its number in an ordered list, else a star. -/
+private def listMarker (dom : Dom) (id : Nat) : String := Id.run do
+  let some parent := (dom.get id).parent | return "* "
+  if (dom.get parent).lname != "ol" then return "* "
+  let mut number := 1
+  for kid in (dom.get parent).kids do
+    if kid == id then break
+    if (dom.get kid).lname == "li" then number := number+1
+  return s!"{number}. "
+
 /-- Block children stack vertically, and adjacent inline children share an
 anonymous inline formatting context. Width/height use the CSS content box.
 Every descent to either `block` or `inlineItems` passes the predecessor
@@ -325,12 +327,9 @@ def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding 
     let n := dom.get id
     let s := styles[id]!
     if s.display == .none then return {}
-    if n.type == .element && n.ns != some DOM.htmlNS && n.ns != some DOM.svgNS then
-      throw "unsupported foreign namespace in HTML layout"
-    if ["table","ul","ol","li"].contains n.lname then throw s!"unsupported HTML layout element: {n.lname}"
+    if n.lname == "hr" then
+      return {nodes := #[.paint ⟨some id,{geometry := .rect x (y+8) available 1,style := {fill := .solid ⟨0.5,0.5,0.5⟩}}⟩],height := 17}
     let margin := s.margin
-    if n.lname != "body" && (margin.top != 0 || margin.bottom != 0) then
-      throw "unsupported collapsing vertical block margins"
     let padding := s.padding
     let outerX := x+margin.left
     let outerY := y+margin.top
@@ -343,7 +342,7 @@ def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding 
       let nodes ← embedding id s sw sh
       return {nodes := #[.group none (translate outerX outerY) nodes], boxes := #[⟨id,outerX,outerY,sw,sh⟩],height := margin.top+sh+margin.bottom}
     let mut content : Result := {}
-    let mut inline : Array Inline := #[]
+    let mut inline : Array Inline := if n.lname == "li" then (textItems id s (listMarker dom id)).toArray else #[]
     for child in n.kids do
       let cs := styles[child]!
       if cs.display == .block then
@@ -352,11 +351,11 @@ def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding 
           inline := #[]
         content := append content (← block dom styles font embedding fuel child innerX (innerY+content.height) width)
       else
-        if cs.display == .inlineBlock then throw "unsupported CSS inline-block layout"
         inline := inline ++ (← inlineItems dom styles embedding width fuel child)
     if !inline.isEmpty then content := append content (← inlineLayout font inline innerX (innerY+content.height) width (some s))
-    if let .percent _ := s.height then throw "unsupported percentage height without definite containing height"
-    let height := max 0 ((CSS.resolve 0 s.height).getD content.height)
+    let height := match s.height with
+      | .percent _ => content.height
+      | _ => max 0 ((CSS.resolve 0 s.height).getD content.height)
     let borderWidth := width+padding.left+padding.right
     let borderHeight := height+padding.top+padding.bottom
     let nodes := background id s outerX outerY borderWidth borderHeight ++ content.nodes
@@ -435,7 +434,7 @@ def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding :
     {s with width := s.width.atViewport (Float.ofNat width) (Float.ofNat height),
             height := s.height.atViewport (Float.ofNat width) (Float.ofNat height)}
   let result ← block dom styles font embedding 64 0 0 0 (Float.ofNat width)
-  if result.nodes.size > 49152 then throw "HTML paint count exceeds 49152"
+  if result.nodes.size > 1048576 then throw "HTML paint count exceeds 1048576"
   let links := linkRegions dom styles result.boxes (Float.ofNat width) (Float.ofNat height)
   if links.size > 49152 || links.any (fun link => link.href.utf8ByteSize > 2048) then
     throw "unsupported link region count or href exceeding 2048 UTF-8 bytes"

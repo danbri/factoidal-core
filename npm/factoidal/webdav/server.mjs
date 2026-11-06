@@ -186,6 +186,13 @@ export async function openWebdav (options = {}) {
   }
   // The guest user (issue 1147), passed unread; the engine checks it.
   if (typeof options.guest === 'string') login.guest = options.guest
+  // HTTP over XMPP (issue 1125): the transport, the account and, when the
+  // operator gave one, the XMPP server's address; the engine decides.
+  if (options.transport === 'xmpp') {
+    login.transport = 'xmpp'
+    if (typeof options.jid === 'string') login.jid = options.jid
+    if (typeof options.host !== 'string') delete login.host
+  }
   const config = { listing, entropy: randomBase64(32), now: nowSeconds(), login }
   // The Host and Origin guard of the HTTP listener (issue 1124): the bound
   // address and the operator's names and origins, passed unread
@@ -257,6 +264,9 @@ export async function openWebdav (options = {}) {
       randomBase64: randomBase64(16),
       remoteAddress: typeof request.remoteAddress === 'string' ? request.remoteAddress : ''
     }
+    // Over XMPP: the requester the XMPP client handle named (the sender's
+    // bare JID), passed unread (https://github.com/danbri/factoidal/issues/1128).
+    if (request.requester !== undefined && request.requester !== null) record.requester = request.requester
     let got = blobCall(engine, 'webdavStep', [handle, JSON.stringify(record)], request.body || new Uint8Array(0))
     for (let hop = 0; hop < MAX_HOPS; hop += 1) {
       const env = got.envelope
@@ -294,6 +304,8 @@ export async function openWebdav (options = {}) {
     engine,
     mounts: ready.mounts || [],
     warnings: ready.warnings || [],
+    /** The engine's `ready.login`: a users file is loaded. */
+    login: ready.login === true,
     /** The start notices of the local mounts (a stale lock taken over,
      *  encryption at rest on or off), for standard error. */
     storageNotices,

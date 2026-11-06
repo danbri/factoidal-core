@@ -4,6 +4,7 @@ export { DEFAULTS };
 const GRAPH = Object.freeze({ turtle: 'urn:studio:turtle', csv: 'urn:studio:csv', derived: 'urn:studio:derived' });
 const json = value => JSON.stringify(value, null, 2);
 const rowsOf = bindings => bindings.map(row => Object.fromEntries([...row].map(([key, term]) => [key, term.value])));
+const admissionEvidence = accepted => ({ accepted, predicate: 'XPath4.Doc.ofString accepts the exact serialized query result', theorem: accepted ? 'QueryResult.toSrxReport_accepted' : 'QueryResult.toSrxReport_refused', source: 'https://github.com/danbri/factoidal-core/blob/claude/checked-conditional-routing/formal/lean4/L4Factoidal/SPARQL/ResultsXmlRouting.lean' });
 const adapterEvidence = (operation, note) => ({ source: 'public API adapter', operation, status: 'unproved-adapter', checked: false, proved: false, assumptions: [], note });
 
 // Lean owns XML selection and JSON serialization. URI encoding keeps the
@@ -33,6 +34,13 @@ const decodeRows = result => {
 export async function runPipeline(core, inputs = {}, onStage = () => {}) {
   const config = { ...DEFAULTS, ...inputs };
   const stages = [], owned = new Set();
+  // The published pin may predate checked XML routing. Never fabricate
+  // admission evidence when using that engine.
+  const checkedXML = (await core.engineTables()).queryOutputs.includes('xml-report');
+  const skip = (id, summary) => {
+    const record = { id, status: 'skipped', summary, durationMs: 0 };
+    stages.push(record); onStage(record);
+  };
   const registry = new Map((await core.stages()).map(entry => [entry.name, entry]));
   const keep = dataset => (owned.add(dataset), dataset);
   let inferredPeople = [], actualGraphNames = [];
@@ -125,13 +133,25 @@ export async function runPipeline(core, inputs = {}, onStage = () => {}) {
       return { value: rows, input: query, text: json(rows), rows, count: rows.length, evidence: r.evidence,
         summary: `${rows.length} artists joined across the three named graphs; score socket = 0` };
     });
-    let selectedQuery, filteredXML;
+    let selectedQuery, filteredXML, xmlReport;
     const rows = await stage('filter', 'SPARQL / score filter', 'public query adapter + registered XQuery node', async () => {
       const minimum = Number(config.minScore);
       if (String(config.minScore).trim() === '' || !Number.isFinite(minimum) || minimum < 0 || minimum > 100) throw new TypeError('Minimum score must be a number from 0 to 100.');
       selectedQuery = bindScore(minimum);
       const trig = await dataset.serialize({ format: 'trig' });
-      filteredXML = await core.queryRaw(trig, selectedQuery, { dataFormat: 'trig', output: 'xml', entail: 'none' });
+      if (checkedXML) {
+        xmlReport = await core.queryRaw(trig, selectedQuery, { dataFormat: 'trig', output: 'xml-report', entail: 'none' });
+        if (xmlReport?.kind === 'diagnostic' && xmlReport.code === 'XML_ADMISSION_REFUSED' && typeof xmlReport.message === 'string') {
+          return { value: [], input: selectedQuery, text: json(xmlReport), count: null,
+            summary: 'Query completed; its XML was refused by the Lean parser',
+            evidence: adapterEvidence('queryRaw output:xml-report', 'A structured XML admission refusal from Lean; no XQuery projection or XSLT ran.') };
+        }
+        if (xmlReport?.kind !== 'xml' || typeof xmlReport.xml !== 'string')
+          throw new TypeError('Unexpected Lean XML admission report.');
+        filteredXML = xmlReport.xml;
+      } else {
+        filteredXML = await core.queryRaw(trig, selectedQuery, { dataFormat: 'trig', output: 'xml', entail: 'none' });
+      }
       const projection = await runNode('xqueryEval', { query: XML_ROWS }, filteredXML);
       const rows = decodeRows(projection.value);
       return { value: rows, input: selectedQuery, text: json(rows), rows, count: rows.length,
@@ -139,10 +159,29 @@ export async function runPipeline(core, inputs = {}, onStage = () => {}) {
         summary: `${rows.length} eligible contributors with score ≥ ${minimum}; comparison runs in SPARQL`,
         adapter: adapterEvidence('numeric query socket', 'Finite numeric value substituted into an explicit template socket; rows are not filtered in JavaScript.') };
     });
+    if (xmlReport?.kind === 'diagnostic') {
+      await stage('xml', 'XML admission / refused', 'Lean checked decision', async () => ({
+        value: xmlReport, text: json(xmlReport), summary: 'Diagnostic branch selected; XML consumers do not run',
+        evidence: { ...adapterEvidence('XML admission', 'The actual Lean context loader refused this exact serialized result; the producer theorem ties the diagnostic to that refusal. RDF text was not sanitized. Host transport and the full workflow are not proved.'), admission: admissionEvidence(false) } }));
+      skip('xslt', 'Not selected: XML admission was refused');
+      skip('html', 'Not selected: no XSLT output');
+      await stage('diagnostic', 'XML diagnostic', 'diagnostic transport', async () => ({
+        value: xmlReport, text: json(xmlReport), summary: xmlReport.message,
+        evidence: adapterEvidence('diagnostic transport', 'Shows the engine refusal as text; no HTML or script interpretation.') }));
+      const report = await stage('report', 'Pipeline report', 'report transport', async () => ({
+        value: { kind: 'diagnostic', diagnostic: xmlReport, html: null }, text: json(xmlReport),
+        summary: 'Completed with a diagnostic; no HTML produced',
+        evidence: adapterEvidence('report', 'A completed refusal report is distinct from an HTML result and from a query/runtime error.') }));
+      return { ...report, rows: [], stages, inferredPeople, graphNames: actualGraphNames,
+        designatedGraphNames: Object.values(GRAPH), coreVersion: core.version, proved: false,
+        counts: { turtle: turtle.size, csvw: csv.size, merged: merged.size, closure: closed.size, derived: delta.size, selected: null },
+        note: 'Only XML admission is checked here. Query, adapters, XSLT and the full compositor are not jointly proved.' };
+    }
+    skip('diagnostic', checkedXML ? 'Not selected: XML admission accepted' : 'Unavailable: this engine predates checked XML routing');
     const xml = await stage('xml', 'SPARQL Results XML', 'public API adapter', async () => {
       return { value: filteredXML, input: 'Exact XML produced by the filter stage', text: filteredXML, count: rows.length,
-        summary: 'Shared Lean SPARQL Results XML; no second filtered query execution',
-        evidence: adapterEvidence('shared XML transport', 'The table projection and XSLT consume this identical XML string. No SPARQL re-execution or JavaScript XML generation.') };
+        summary: checkedXML ? 'Lean parser accepted the exact shared XML; HTML branch selected' : 'Shared XML; this engine predates checked admission',
+        evidence: { ...adapterEvidence('shared XML transport', 'The table projection and XSLT consume this identical XML string. When admission is checked, its theorem establishes acceptance by the context loader, not namespace conformance, stylesheet success or full-pipeline correctness.'), ...(checkedXML ? { admission: admissionEvidence(true) } : {}) } };
     });
     const transformed = await stage('xslt', 'XSLT / compose the output', 'registered node', async () => {
       const r = await runNode('xslt4Transform', { stylesheet: config.stylesheet }, xml);
@@ -154,7 +193,10 @@ export async function runPipeline(core, inputs = {}, onStage = () => {}) {
       value: transformed.output, text: transformed.output, count: rows.length,
       summary: `${rows.length} artist cards/rows ready for the browser preview`,
       evidence: adapterEvidence('HTML preview', 'Displays engine-generated HTML; no proof of browser rendering, styling or end-to-end semantics.') }));
-    return { html, rows, stages, inferredPeople, graphNames: actualGraphNames, designatedGraphNames: Object.values(GRAPH),
+    await stage('report', 'Pipeline report', 'report transport', async () => ({
+      value: null, text: html, summary: 'Completed with HTML',
+      evidence: adapterEvidence('report', 'HTML output; successful execution does not establish a full-pipeline proof.') }));
+    return { kind: 'html', html, rows, stages, inferredPeople, graphNames: actualGraphNames, designatedGraphNames: Object.values(GRAPH),
       counts: { turtle: turtle.size, csvw: csv.size, merged: merged.size, closure: closed.size, derived: delta.size, selected: rows.length },
       coreVersion: core.version, proved: false,
       note: 'Component registry evidence is shown per stage. CSVW/XSLT are tested; adapters and the complete compositor are not proved.' };

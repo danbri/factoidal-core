@@ -129,6 +129,7 @@ def commandName : Nat → String
   | 11 => "closeTab"
   | 12 => "settings"
   | 13 => "viewSource"
+  | 14 => "paste"
   | _ => "none"
 
 /-- Text size of a new window: two steps above 100 on a desktop screen. -/

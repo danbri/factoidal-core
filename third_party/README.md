@@ -32,6 +32,8 @@ third_party/
 │   │               (Verifiable Credentials 2.0 test suite)
 │   ├── did/        submodule: https://github.com/w3c/did-test-suite
 │   │               (Decentralized Identifiers test suite)
+│   ├── old-web/    copies of historic pages for browser tests; see
+│   │               old-web/README.md for source and licence notes
 │   └── rml/        submodule: https://github.com/kg-construct/rml-test-cases
 │                   (RML mapping tests; upstream repo archived but the
 │                   test corpus is stable)

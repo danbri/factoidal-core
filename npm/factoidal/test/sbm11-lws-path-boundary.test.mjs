@@ -1,10 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { lwsSbm11Reader } from '../index.mjs'
+import { lwsSbm11Reader, loadEngine } from '../index.mjs'
 
-function fixture (base = 'https://storage.invalid/container/', options = {}) {
+async function fixture (base = 'https://storage.invalid/container/', options = {}) {
   const calls = []
-  const reader = lwsSbm11Reader(base, {
+  const reader = await lwsSbm11Reader(base, {
     auth: 'Bearer LOCAL_TEST_SENTINEL',
     transport (url, headers) {
       calls.push({ url, headers })
@@ -15,7 +15,7 @@ function fixture (base = 'https://storage.invalid/container/', options = {}) {
   return { reader, calls }
 }
 
-test('resource names cannot move authority or escape the container before transport', () => {
+test('resource names cannot move authority or escape the container before transport', async () => {
   for (const file of [
     '//attacker.invalid/steal', '/private', 'https://attacker.invalid/steal',
     '../private', 'gen/../../private', '.', '..', 'gen/./CURRENT',
@@ -25,7 +25,7 @@ test('resource names cannot move authority or escape the container before transp
     'gen%5cprivate', 'file?token=x', 'file#fragment', 'file%3ftoken=x', 'file%23fragment',
     'nul\0file', 'line\nfile', 'file%00', null, 1,
   ]) {
-    const { reader, calls } = fixture()
+    const { reader, calls } = await fixture()
     try {
       assert.equal(reader.size(file), null, `size ${JSON.stringify(file)}`)
       assert.equal(reader.readAt(file, 0, 1), null, `read ${JSON.stringify(file)}`)
@@ -36,8 +36,8 @@ test('resource names cannot move authority or escape the container before transp
   }
 })
 
-test('ordinary nested names and encoded filename bytes retain scoped authorization', () => {
-  const { reader, calls } = fixture('https://storage.invalid/container')
+test('ordinary nested names and encoded filename bytes retain scoped authorization', async () => {
+  const { reader, calls } = await fixture('https://storage.invalid/container')
   try {
     for (const file of ['CURRENT', 'gen/manifest.sbm11', 'a b/é.nt', '100%.bin', 'literal%20name.nt']) {
       assert.equal(reader.size(file), 1)
@@ -51,14 +51,14 @@ test('ordinary nested names and encoded filename bytes retain scoped authorizati
   } finally { reader.close() }
 })
 
-test('ambiguous container credentials, query, fragment and non-HTTP schemes fail at construction', () => {
+test('ambiguous container credentials, query, fragment and non-HTTP schemes fail at construction', async () => {
   for (const base of [
     'https://storage.invalid/container?token=secret',
     'https://storage.invalid/container/#fragment',
     'https://storage.invalid/container/?', 'https://storage.invalid/container/#',
     'https://user:secret@storage.invalid/container/',
     'file:///private/', 'data:text/plain,x', 'not an absolute URL',
-  ]) assert.throws(() => fixture(base), TypeError, base)
+  ]) await assert.rejects(fixture(base), TypeError, base)
 })
 
 test('default Node transport refuses same-origin and cross-origin redirects before following', async () => {
@@ -80,7 +80,7 @@ test('default Node transport refuses same-origin and cross-origin redirects befo
   try {
     const port = await new Promise((resolve, reject) => { server.once('message', resolve); server.once('error', reject) })
     for (const route of ['same', 'cross']) {
-      const reader = lwsSbm11Reader(`http://127.0.0.1:${port}/${route}/`, { auth: 'Bearer LOCAL_TEST_SENTINEL', headers: { 'X-Private-Test': 'LOCAL_TEST_SENTINEL' }, timeoutMs: 5000 })
+      const reader = await lwsSbm11Reader(`http://127.0.0.1:${port}/${route}/`, { auth: 'Bearer LOCAL_TEST_SENTINEL', headers: { 'X-Private-Test': 'LOCAL_TEST_SENTINEL' }, timeoutMs: 5000 })
       try { assert.equal(reader.size('CURRENT'), null); assert.ok(reader.errors().length > 0) } finally { reader.close() }
     }
     assert.equal(Atomics.load(hits, 0), 2)
@@ -90,7 +90,9 @@ test('default Node transport refuses same-origin and cross-origin redirects befo
 })
 
 test('browser default refuses caller headers before XHR; redirect checking alone is post-request', async () => {
-  const { lwsSbm11Reader: browserReader } = await import('../lib/sbm11-lws.mjs')
+  const { lwsSbm11Reader: browserReaderWith } = await import('../lib/sbm11-lws.mjs')
+  const engine = await loadEngine()
+  const browserReader = (url, options = {}) => browserReaderWith(url, { ...options, engine })
   const original = globalThis.XMLHttpRequest
   let created = 0, sent = 0
   globalThis.XMLHttpRequest = class {

@@ -84,7 +84,8 @@ A response is a JSON object with the same shape minus the method:
 | `lwsClose` | `[handle]` | `{"ok":true}` |
 | `lwsSnapshot` | `[handle, optionsJson?]` | `{"ok":true,"snapshot":{"format":"lws-snapshot-2","clock":N,"entries":[…]}}`; each entry's body is `bodyBase64`. A `lws-snapshot-1` document (body as the string `body`) is still read. With a `storageKey` the snapshot is the sealed document `{"format":"lws-snapshot-sealed-1","cipher":"chacha20-poly1305","keyId","nonce","ciphertext"}`, and `optionsJson` must be `{"nonce":"<base64 of 12 random bytes>"}` (https://github.com/danbri/factoidal/issues/921). |
 | `lwsFetched` | `[handle, documentJson]` | `{"ok":true,"fetch":{"issuer":…,"url":…}}`, `{"ok":true,"installed":N}` or `{"ok":true,"refused":"…"}` |
-| `lwsDelivered` | `[handle, {"id","status","now"?}]` | `{"ok":true,"changed":B}`, with `"retry":{"delivery":{…},"after":SECONDS}` when the engine wants the delivery made again |
+| `lwsDelivered` | `[handle, {"id","status","refused"?,"now"?}]` | `{"ok":true,"changed":B}`, with `"retry":{"delivery":{…},"after":SECONDS}` when the engine wants the delivery made again; `"refused":true` (the delivery was not made because `lwsEgress` refused it) is a failure with no retry |
+| `lwsEgress` | `[handle, {"url","addresses":[IP,…]}]` | `{"ok":true,"host":H,"address":A}` (connect to `A` only) or `{"ok":true,"refused":"…"}` (make no request), https://github.com/danbri/factoidal/issues/1126 |
 | `lwsFlush` | `[handle, {"now"?}]` | `{"ok":true,"changed":B}`, with `"deliveries":[…]` for the waiting activities whose window has ended (one batched envelope per subscription) and `"wake":SECONDS` when more wait (https://github.com/danbri/factoidal/issues/915) |
 | `lwsLoad` | `[handle, {"files":[{"path","present","length"?}],"seed"}]` + the bytes of the present files, one after the other, as the IN region (`l4_call_blob_io` only) | `{"ok":true,"load":{"read":[PATH,…]}}` (read these files next) or `{"ok":true,"ready":true,"handle","root","plan":[…],"bytes":N}` with the plan's bytes as the OUT region; the handle serves steps after `ready`. An error ends the start. Only for `"storage": "files"` (https://github.com/danbri/factoidal/issues/918). |
 | `lwsPersist` | `[handle, {"seed"}]` (`l4_call_blob_io` only) | `{"ok":true,"plan":[…],"bytes":N}`, the plan's bytes as the OUT region: the writes of the changes since the last persist. Only for `"storage": "files"`. |
@@ -167,8 +168,15 @@ signing key), which `lwsOpen` reads back; a subscription change answers
 
 When an LWS step causes notifications (https://github.com/danbri/factoidal/issues/890),
 `lwsStep` answers `deliveries`: each one is an HTTP request the engine
-decided to make. The host POSTs `body` to `url` with exactly the header
-pairs given, and reports the answer's status (0 when none came) with
+decided to make. A delivery whose URL host is a name also carries
+`"resolve":H`. Just before the request the host resolves `H` (every address)
+and calls `lwsEgress(handle, {"url","addresses"})`; the engine refuses a
+special-purpose address (IANA IPv4 and IPv6 special-purpose registries,
+`L4Factoidal/Net/Egress.lean`) unless the configuration has
+`"allowPrivateFetch": true`, and otherwise names the address. The host
+connects to that address only, with no second resolution
+(https://github.com/danbri/factoidal/issues/1126). The host POSTs `body` to
+`url` with exactly the header pairs given, and reports the answer's status (0 when none came) with
 `lwsDelivered(handle, {"id","status","now"?})`. When that answers `retry`,
 the host waits `after` seconds and makes the request in `delivery`, which
 carries a new signature. The engine decides which changes are announced,
@@ -181,7 +189,10 @@ seconds. The activities over the limit wait in the notification state (and in
 the snapshot member `notifications.held`); an answer then carries `"wake":
 SECONDS`, and the host calls `lwsFlush(handle, {"now"?})` after that many
 seconds and makes the deliveries it names. A later change of the same
-subscription after the window also carries them.
+subscription after the window also carries them. Each delivery also passes a
+window of its destination (host and port of the inbox URL): at most
+`deliveryDestLimit` (default 10, 0 off) per window for all subscriptions
+together (issue 1126).
 
 Inbox check (issue 915): before stepping a subscription request whose `inbox`
 host is a name, `lwsStep` answers `{"ok":true,"resolve":{"host":H}}`. The

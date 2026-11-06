@@ -196,6 +196,40 @@ link: <http://www.w3.org/ns/ldp#RDFSource>; rel="type", <http://www.w3.org/ns/ld
 <#it> <http://purl.org/dc/terms/title> "A" .
 ```
 
+### Requests to private addresses
+
+A storage that offers notifications sends POST requests to URLs that its
+clients choose: webhook inboxes, the inboxes of access requests and access
+grants, and the controller inbox. The authorization server (`--authz`)
+fetches subject documents and key sets that a requester names. Without a
+check, any client could make the server send requests into its own network
+(https://github.com/danbri/factoidal/issues/1126).
+
+One Lean decision covers all of them (`L4Factoidal/Net/Egress.lean`). It
+refuses a host when any of its addresses is in the IANA IPv4 or IPv6
+special-purpose registries: loopback, private (RFC 1918, fc00::/7),
+link-local, shared address space 100.64.0.0/10 (Tailscale and carrier-grade
+NAT), benchmarking, documentation, multicast, reserved, site-local, and NAT64
+or 6to4 addresses that carry such an IPv4 address. It also refuses
+`localhost` names.
+
+- A subscription whose inbox is such an address answers 400.
+- Every delivery is checked again just before it is made. The server
+  resolves the name then and connects to the address that the engine chose.
+  It does not resolve the name a second time, so a name that resolves to a
+  public address at subscription and to a private address later is refused.
+  A refused delivery is not retried; three in a row deactivate the
+  subscription.
+- One destination (host and port) gets at most `--delivery-dest-limit`
+  deliveries (default 10) in one window of `--delivery-window` seconds, for
+  all subscriptions together.
+
+`--allow-private-fetch` turns the address check off for this server, for
+tests and closed networks. The server prints a warning at start when it is
+set. Theorems: `egress_refuses_special`, `deliveries_pinned`,
+`admit_per_destination`. Record: row C5 of
+[2026-10-28-feature-combination-safety.md](https://github.com/danbri/factoidal-core/blob/main/docs/designissues/2026-10-28-feature-combination-safety.md).
+
 ### One process per storage directory
 
 One process writes a storage directory

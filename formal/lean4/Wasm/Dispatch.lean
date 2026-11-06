@@ -367,6 +367,7 @@ def lwsSolidOpNames : List String :=
   , "lwsFetched"
   , "lwsDelivered"
   , "lwsFlush"
+  , "lwsEgress"
   , "lwsLoad"
   , "lwsPersist"
   , "lwsRead"
@@ -438,7 +439,7 @@ They are stateless, so `call` serves them and `callIO` reaches them through its
 fall-through to `call`. The names are appended to every `ops` reflection by
 `opsReflectionFor`; the arms are in the fall-through case of `call`. -/
 def stage2OpNames : List String :=
-  mathsOpNames ++ vcOpNames ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames ++ termsOpNames
+  mathsOpNames ++ vcOpNames ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames ++ termsOpNames ++ containerPathOpNames
     ++ literalOpNames ++ cidOpNames ++ qt4OpNames
 
 /-- Serve a stage 2 op of the full table, or answer the unknown-op error.
@@ -746,6 +747,7 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "lwsFetched"       => withArgs (arityIO2 op Ops.lwsFetched)
   | "lwsDelivered"     => withArgs (arityIO2 op Ops.lwsDelivered)
   | "lwsFlush"         => withArgs (arityIO2 op Ops.lwsFlush)
+  | "lwsEgress"        => withArgs (arityIO2 op Ops.lwsEgress)
   -- One writing process per storage directory and the encryption-at-rest
   -- notice (https://github.com/danbri/factoidal/issues/1135): pure.
   | "lwsDirLock"       => withArgs (fun args =>

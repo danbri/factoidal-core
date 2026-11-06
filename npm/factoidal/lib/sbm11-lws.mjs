@@ -40,40 +40,23 @@
 // thread has neither: pass `transport` or run the engine in a worker.
 
 // This reader grants its transport authority only within one HTTP container.
-// A file is a raw relative filename/path, never a URL reference. Reject both
-// literal traversal and encoded structural characters before attaching headers.
-function containerUrl (url) {
-  let base
-  try { base = new URL(String(url)) } catch { throw new TypeError('lwsSbm11Reader: expected an absolute HTTP(S) container URL') }
-  if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || /[?#]/.test(base.href)) {
-    throw new TypeError('lwsSbm11Reader: container must be HTTP(S), without userinfo, query or fragment; use opts.auth/headers')
+// A file is a raw relative filename/path, never a URL reference. The engine
+// decides the container URL and every resource URL (op containerPath,
+// formal/lean4/L4Factoidal/LWS/ContainerPath.lean: containerOf, resourceIn,
+// theorem resourceIn_under) before any header is attached; this file only
+// turns a refusal into a TypeError.
+function containerUrl (engine, url) {
+  const r = engine.call('containerPath', [JSON.stringify({ kind: 'container', url: String(url) })])
+  if (!r.allowed) {
+    throw new TypeError(`lwsSbm11Reader: ${r.reason}; the container must be an absolute HTTP(S) URL without userinfo, query or fragment (use opts.auth/headers)`)
   }
-  if (!base.pathname.endsWith('/')) base.pathname += '/'
-  return base
+  return r.url
 }
 
-function resourceUrl (base, file) {
-  if (typeof file !== 'string' || file.length === 0 || file.length > 4096) {
-    throw new TypeError('invalid relative resource path')
-  }
-  let probe = file
-  for (;;) {
-    if (/^[a-z][a-z0-9+.-]*:/i.test(probe) || /[\\?#\x00-\x1f\x7f]/.test(probe) ||
-        probe.split('/').some(part => part === '' || part === '.' || part === '..') ||
-        /%(?:2f|5c|3f|23)/i.test(probe)) {
-      throw new TypeError('resource path must remain inside the configured container')
-    }
-    // Decode only for rejection, never for the requested filename. Each changed
-    // pass shortens the string, so nested percent encodings are also bounded.
-    const next = probe.replace(/%([a-f0-9]{2})/gi, (_match, hex) => String.fromCharCode(parseInt(hex, 16)))
-    if (next === probe) break
-    probe = next
-  }
-  const resource = new URL(file.split('/').map(encodeURIComponent).join('/'), base)
-  if (resource.origin !== base.origin || !resource.pathname.startsWith(base.pathname)) {
-    throw new TypeError('resource URL escaped the configured container')
-  }
-  return resource.href
+function resourceUrl (engine, base, file) {
+  const r = engine.call('containerPath', [JSON.stringify({ kind: 'resource', container: base, path: file })])
+  if (!r.allowed) throw new TypeError(`resource path must remain inside the configured container: ${r.reason}`)
+  return r.url
 }
 
 /** A synchronous GET with XMLHttpRequest (a browser worker). */
@@ -85,7 +68,8 @@ export function xhrSyncTransport (url, headers) {
   x.send()
   // XHR follows redirects internally. This rejects returned bytes, not the
   // already-sent request. Caller headers require an explicit trusted transport.
-  if (x.responseURL !== new URL(url).href) throw new Error('LWS reader: redirected XHR resource refused')
+  // `url` is the engine's serialization, so any other response URL is a redirect.
+  if (x.responseURL !== url) throw new Error('LWS reader: redirected XHR resource refused')
   return {
     status: x.status,
     header: (name) => x.getResponseHeader(name),
@@ -110,14 +94,20 @@ function unsatisfiedTotal (value) {
  *
  * @param {string} url absolute HTTP(S), no userinfo/query/fragment; container that holds CURRENT and the generation
  *   (or the generation container itself)
- * @param {object} [opts]
+ * @param {object} opts
+ * @param {object} opts.engine a loaded engine handle (`call(op, args)`); its op
+ *   containerPath decides the container URL and every resource URL
  * @param {Function} [opts.transport] trusted synchronous GET; must constrain redirect/header forwarding
  * @param {string} [opts.auth] a value for the Authorization header, such as
  *   `Bearer <access token>` (an LWS access token)
  * @param {object} [opts.headers] further request headers; browser use requires explicit trusted transport
  */
 export function lwsSbm11Reader (url, opts = {}) {
-  const base = containerUrl(url)
+  const engine = opts.engine
+  if (!engine || typeof engine.call !== 'function') {
+    throw new TypeError('lwsSbm11Reader: opts.engine (a loaded engine handle) decides the resource URLs')
+  }
+  const base = containerUrl(engine, url)
   const extra = { ...(opts.headers || {}) }
   if (opts.auth) extra.authorization = String(opts.auth)
   let transport = opts.transport
@@ -137,7 +127,7 @@ export function lwsSbm11Reader (url, opts = {}) {
     let e = files.get(file)
     if (!e) {
       let url
-      try { url = resourceUrl(base, file) } catch (error) {
+      try { url = resourceUrl(engine, base, file) } catch (error) {
         fail(file, error.message)
         return null
       }

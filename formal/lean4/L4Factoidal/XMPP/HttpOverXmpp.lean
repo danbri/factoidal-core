@@ -49,7 +49,13 @@ record):
 6. Chunked request bodies wait in `State.pending` until the chunk marked
    `last` and every chunk before it have arrived; a request whose chunks
    pass `Config.maxBodyBytes`, or more than `Config.maxPending` waiting
-   requests, is refused with `resource-constraint`.
+   requests in total, or more than `Config.maxPendingPerSender` (4) from one
+   bare JID, is refused with `resource-constraint`; a second request with the
+   same streamId from the same sender with `bad-request`. A request that
+   waited `Config.pendingTimeoutMs` (60 s of the host's clock, `tick`) is
+   refused with `resource-constraint` and dropped
+   (https://github.com/danbri/factoidal/issues/1128; theorems
+   `plan_pending_per_sender`, `tick_pending_per_sender`, `tick_no_late`).
 7. JID comparison: domain part case-insensitive (RFC 7622 §3.2), local part
    exact. PRECIS (RFC 8265) is not applied
    (https://github.com/danbri/factoidal/issues/676).
@@ -441,8 +447,15 @@ structure Config where
   chunkSize : Nat := 65536
   /-- The largest chunked request body accepted. -/
   maxBodyBytes : Nat := 16 * 1024 * 1024
-  /-- Requests waiting for chunks at once. -/
+  /-- Requests waiting for chunks at once, from all senders together. -/
   maxPending : Nat := 16
+  /-- Requests waiting for chunks at once from one sender (its bare JID,
+  `bareKey`), so one sender cannot use the share of the others
+  (https://github.com/danbri/factoidal/issues/1128, invariant I13). -/
+  maxPendingPerSender : Nat := 4
+  /-- How long a request waits for its chunks, in milliseconds of the host's
+  clock (`tick`), before it is refused. -/
+  pendingTimeoutMs : Nat := 60000
 deriving Inhabited
 
 def mediaType (ct : Option String) : String :=
@@ -517,13 +530,26 @@ structure Pending where
   streamId : String
   chunks : List Chunk := []
   bytes : Nat := 0
+  /-- The host's clock (`State.clock`) when the request arrived. -/
+  since : Nat := 0
 deriving Inhabited
+
+/-- The sender a waiting request counts against: its bare JID. -/
+def Pending.sender (p : Pending) : Option String := p.env.from_.bind bareKey
 
 structure State where
   pending : List Pending := []
   /-- Serial for the stream ids of chunked responses. -/
   serial : Nat := 0
+  /-- The host's clock, in milliseconds, as the last `tick` gave it. -/
+  clock : Nat := 0
 deriving Inhabited
+
+/-- How many requests of sender `k` wait for chunks. -/
+def pendingOf (ps : List Pending) (k : Option String) : Nat := (ps.filter (·.sender == k)).length
+
+/-- The per-sender limit holds for every sender. -/
+def PerSender (cfg : Config) (st : State) : Prop := ∀ k, pendingOf st.pending k ≤ cfg.maxPendingPerSender
 
 structure StepOut where
   /-- Stanzas to send, in order. -/
@@ -566,7 +592,11 @@ def plan (cfg : Config) (st : State) (stanza : String) : Plan :=
       | .chunked sid =>
         if st.pending.length ≥ cfg.maxPending then
           .answer [renderRefusal env (.resourceConstraint "too many requests wait for chunks")] st
-        else .answer [] { st with pending := st.pending ++ [{ env, req := r, streamId := sid }] }
+        else if pendingOf st.pending (env.from_.bind bareKey) ≥ cfg.maxPendingPerSender then
+          .answer [renderRefusal env (.resourceConstraint "too many requests from this sender wait for chunks")] st
+        else if st.pending.any (fun p => p.streamId == sid && p.env.from_ == env.from_) then
+          .answer [renderRefusal env (.badRequest "a request with this streamId already waits for chunks")] st
+        else .answer [] { st with pending := st.pending ++ [{ env, req := r, streamId := sid, since := st.clock }] }
       | b => .serve st env r (b.bytes?.getD ByteArray.empty)
   | none =>
   if elemName n != some "message" then .skip
@@ -584,7 +614,7 @@ def plan (cfg : Config) (st : State) (stanza : String) : Plan :=
         .answer [renderRefusal p.env (.resourceConstraint "the chunked body is too large")] { st with pending := rest }
       else
       match assembleChunks p.chunks with
-      | none => .answer [] { st with pending := rest ++ [p] }
+      | none => .answer [] { st with pending := st.pending.map (fun q => if same q c.streamId then p else q) }
       | some body => .serve { st with pending := rest } p.env p.req body
   | none, some sid => .answer [] { st with pending := st.pending.filter (fun q => !same q sid) }
   | none, none => .skip
@@ -597,6 +627,124 @@ def finish (cfg : Config) (st : State) (env : Envelope) (r : Req) (d : DavRespon
   let (resp, chunks) := respOfDav cfg r d sid
   let st' := if chunks.isEmpty then st else { st with serial := st.serial + 1 }
   (renderRespIq env resp :: renderChunkMessages env.to env.from_ chunks, st')
+
+/-- The host's clock, in milliseconds (`xmppClientTick`): a request that
+waited for its chunks `cfg.pendingTimeoutMs` or longer is refused with
+`resource-constraint` and dropped (https://github.com/danbri/factoidal/issues/1128,
+invariant I13: waiting state has a time limit). The clock does not go back. -/
+def tick (cfg : Config) (st : State) (now : Nat) : List String × State :=
+  let clock := max st.clock now
+  let late (p : Pending) : Bool := decide (p.since + cfg.pendingTimeoutMs ≤ clock)
+  ((st.pending.filter late).map (fun p => renderRefusal p.env
+      (.resourceConstraint s!"the chunks of this request did not arrive within {cfg.pendingTimeoutMs / 1000} s")),
+   { st with pending := st.pending.filter (fun p => !late p), clock })
+
+/-- The state after a plan (`skip` keeps it). -/
+def Plan.stateD (st : State) : Plan → State
+  | .answer _ st' => st'
+  | .serve st' _ _ _ => st'
+  | .skip => st
+
+/-! ## The per-sender limit (invariant I13) -/
+
+theorem pendingOf_filter_le (ps : List Pending) (f : Pending → Bool) (k : Option String) :
+    pendingOf (ps.filter f) k ≤ pendingOf ps k := by
+  unfold pendingOf
+  exact ((List.filter_sublist (p := f) (l := ps)).filter _).length_le
+
+theorem pendingOf_append_single (ps : List Pending) (p : Pending) (k : Option String) :
+    pendingOf (ps ++ [p]) k = pendingOf ps k + (if p.sender == k then 1 else 0) := by
+  unfold pendingOf
+  simp only [List.filter_append, List.length_append, List.filter_cons, List.filter_nil]
+  split <;> simp_all
+
+theorem add_ite_le {a m : Nat} {b : Bool} (h1 : a ≤ m) (h2 : b = true → a < m) :
+    a + (if b = true then 1 else 0) ≤ m := by
+  cases b
+  · simpa using h1
+  · have := h2 rfl; simp; omega
+
+theorem pendingOf_map_same (ps : List Pending) (g : Pending → Pending)
+    (hg : ∀ q ∈ ps, (g q).sender = q.sender) (k : Option String) :
+    pendingOf (ps.map g) k = pendingOf ps k := by
+  unfold pendingOf
+  induction ps with
+  | nil => rfl
+  | cons q qs ih =>
+    have hq := hg q (List.mem_cons_self ..)
+    have ih' := ih (fun x hx => hg x (List.mem_cons_of_mem _ hx))
+    simp only [List.map_cons, List.filter_cons, hq]
+    split <;> simp_all
+
+/-- No sender ever has more than `cfg.maxPendingPerSender` requests waiting
+for chunks: `plan` keeps the bound (theorem `plan_pending_per_sender`), and
+so does `tick` (`tick_pending_per_sender`). -/
+theorem plan_pending_per_sender (cfg : Config) (st : State) (s : String) (h : PerSender cfg st) :
+    PerSender cfg ((plan cfg st s).stateD st) := by
+  intro k
+  unfold plan
+  split
+  · exact h k
+  · split
+    · split
+      · exact h k
+      · split
+        · exact h k
+        · rename_i env _ _ r _
+          split
+          · split
+            · exact h k
+            · split
+              · exact h k
+              · split
+                · exact h k
+                · rename_i hlt _
+                  simp only [Plan.stateD]
+                  rw [pendingOf_append_single]
+                  simp only [Pending.sender]
+                  refine add_ite_le (h k) ?_
+                  intro he
+                  rw [← beq_iff_eq.mp he]
+                  exact Nat.lt_of_not_le hlt
+          · exact h k
+    · split
+      · exact h k
+      · split
+        · dsimp only
+          split
+          · exact h k
+          · rename_i p hp
+            have hmem := List.mem_of_find?_eq_some hp
+            have hsame := List.find?_some hp
+            split
+            · exact Nat.le_trans (pendingOf_filter_le _ _ k) (h k)
+            · split
+              · simp only [Plan.stateD]
+                rw [pendingOf_map_same]
+                · exact h k
+                · intro q _
+                  split
+                  · rename_i hq
+                    simp only [Pending.sender]
+                    simp only [Bool.and_eq_true, beq_iff_eq] at hq hsame
+                    rw [hq.2, hsame.2]
+                  · rfl
+              · exact Nat.le_trans (pendingOf_filter_le _ _ k) (h k)
+        · exact Nat.le_trans (pendingOf_filter_le _ _ k) (h k)
+        · exact h k
+
+theorem tick_pending_per_sender (cfg : Config) (st : State) (now : Nat) (h : PerSender cfg st) :
+    PerSender cfg (tick cfg st now).2 := by
+  intro k
+  exact Nat.le_trans (pendingOf_filter_le _ _ k) (h k)
+
+/-- After `tick`, no request that waits has waited `cfg.pendingTimeoutMs`
+or longer. -/
+theorem tick_no_late (cfg : Config) (st : State) (now : Nat) :
+    ∀ p ∈ (tick cfg st now).2.pending, p.since + cfg.pendingTimeoutMs > max st.clock now := by
+  intro p hp
+  simp only [tick, List.mem_filter, Bool.not_eq_true', decide_eq_false_iff_not] at hp
+  omega
 
 /-- Serve one complete request against `webdav-serve`. -/
 def serve (cfg : Config) (cx : Ctx) (dav : DavState) (st : State) (env : Envelope) (r : Req) (body : ByteArray) :

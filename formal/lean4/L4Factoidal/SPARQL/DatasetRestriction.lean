@@ -402,10 +402,12 @@ beyond "the induction does not reach it":
   `graphFree`.
 * **An empty BGP**, for the same reason one level down: it answers one
   solution without reading the active graph.
-* **A `FILTER`, `OPTIONAL` or `BIND` expression that is not
-  `Expr.backendLocal`.** `evalPatternBackend` materialises the whole
-  dataset for those and runs the algebra evaluator, which is a second
-  evaluator this induction does not cover.
+* **A FILTER expression outside `Expr.backendFilterLocal`, or an OPTIONAL
+  or BIND expression outside `Expr.backendLocal`.** `evalPatternBackend`
+  materialises the whole dataset for those and runs the algebra evaluator,
+  which is a second evaluator this induction does not cover. The FILTER
+  allowlist includes GeoSPARQL built-ins with local arguments; both sides of
+  this restriction theorem pass the SAME `EvalEnv`, including its registry.
 
 Refusing a shape only makes the planner read more entries. -/
 
@@ -431,7 +433,7 @@ def plannerFragment : QueryPattern → Bool
   | .empty => true
   | .join a b | .union a b | .minus a b => plannerFragment a && plannerFragment b
   | .leftJoin a b c => c.backendLocal && plannerFragment a && plannerFragment b
-  | .filter c p => c.backendLocal && plannerFragment p
+  | .filter c p => c.backendFilterLocal && plannerFragment p
   | .bind e _ p => e.backendLocal && plannerFragment p
   | .graph (.iri _) p | .graph (.var _) p => graphFree p && plannerFragment p
   | _ => false
