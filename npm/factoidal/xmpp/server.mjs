@@ -151,6 +151,8 @@ export async function openXmppServer (options = {}) {
   if (typeof options.mucDomain === 'string') config.mucDomain = options.mucDomain
   // Members-only rooms: [{room, members: [bare JID]}]; no list, an open room.
   if (Array.isArray(options.mucMembers)) config.mucMembers = options.mucMembers
+  // Nicks reserved for a JID: [{nick, jid}]. Each account's name is reserved for it anyway.
+  if (Array.isArray(options.mucReservedNicks)) config.mucReservedNicks = options.mucReservedNicks
   // XEP-0369 channels (L4Factoidal/XMPP/Mix.lean), joined through MIX-PAM; off unless named.
   if (typeof options.mixDomain === 'string') config.mixDomain = options.mixDomain
   // GC3 prototype groups (L4Factoidal/XMPP/Gc3.lean; no published spec); off unless named.

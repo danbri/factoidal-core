@@ -43,7 +43,9 @@ async function bound (port, user) {
   socket.write(HEADER)
   await c.until('</stream:features>'); c.text = ''
   socket.write("<iq type='set' id='b'><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'><resource>r</resource></bind></iq>")
-  await c.until('</iq>'); c.text = ''
+  await c.until('</iq>')
+  // What was held comes with the bind result: keep what follows it.
+  c.text = c.text.slice(c.text.indexOf('</iq>') + 5)
   return c
 }
 const say = (c, to, body, id = 'm') => c.socket.write(`<message to='${to}@${DOMAIN}' type='chat' id='${id}'><body>${body}</body></message>`)

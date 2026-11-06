@@ -191,6 +191,25 @@ test('muc: a session that ends its stream cleanly leaves its rooms, and frees it
   } finally { await s.close() }
 })
 
+test('muc: an account name is reserved for that account; a nick differing only in case is taken; a nick with a space at the end is refused', async () => {
+  const s = await start()
+  try {
+    const r = await bound(s.wsOrigin, 'romeo', 'juli3t', 'one')
+    r.send(`<presence to='nicks@${MUC}/juliet'><x xmlns='${NS_MUC}'/></presence>`)
+    assert.match(await r.next((m) => m.includes('type="error"')), /conflict/)
+    r.send(`<presence to='nicks@${MUC}/rom '><x xmlns='${NS_MUC}'/></presence>`)
+    assert.match(await r.next((m) => m.includes('not-acceptable') || m.includes('status code')), /not-acceptable/)
+    r.send(`<presence to='nicks@${MUC}/rom'><x xmlns='${NS_MUC}'/></presence>`)
+    await r.next((m) => m.includes(`status code='110'`) || m.includes('status code="110"'))
+    const j = await bound(s.wsOrigin, 'juliet', 'r0m30', 'one')
+    j.send(`<presence to='nicks@${MUC}/ROM'><x xmlns='${NS_MUC}'/></presence>`)
+    assert.match(await j.next((m) => m.includes('type="error"')), /conflict/)
+    j.send(`<presence to='nicks@${MUC}/juliet'><x xmlns='${NS_MUC}'/></presence>`)
+    await j.next((m) => m.includes(`status code='110'`) || m.includes('status code="110"'))
+    r.ws.close(); j.ws.close()
+  } finally { await s.close() }
+})
+
 test('muc: off unless configured', async () => {
   const server = await start(null)
   try {

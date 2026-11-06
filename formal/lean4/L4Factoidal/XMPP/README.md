@@ -752,3 +752,21 @@ Already on `main` from https://github.com/danbri/factoidal/issues/1128: `AuthGua
   `accounts` in the JSON config is as strict. `checkPlain` refuses an empty stored password. The
   host warns when the accounts file can be read by others.
 - Tests: `#guard`s in `Server.lean`; `npm/factoidal/test/xmpp-accounts.test.mjs`.
+
+## 2026-11-06: rooms: leaving at a clean stream end, reserved nicks, nick checks (finding M4)
+
+- `XmppOpenSession.boundFull` keeps the bound JID through the close of a stream, so a session that
+  ends its stream cleanly leaves its rooms.
+- `Service.reserved`: each account's name is reserved for that account, and `mucReservedNicks` adds
+  others (XEP-0045 section 7.2.9, `conflict`). Theorems `join_nickRefused`, `nickRefusal_reserved`.
+- `nickKey`: nicks are compared without ASCII case and without width. `nickOk`: no space at either end, no two spaces
+  together, no unseen character, at most 64 bytes. There is no PRECIS yet (issue 676).
+- `sanitize` drops a client's `<subject/>`, which the header already said this service does not do.
+- Tests: `#guard`s in `Muc.lean`; `npm/factoidal/test/xmpp-muc.test.mjs`.
+
+## 2026-11-06: the shape of a stanza (finding M6)
+
+- `Wire.shapeOk`, in `parseElement`: at most `maxDepth` 64 levels and `maxElements` 8192 elements,
+  read in one tail-recursive pass before the XML parser. Over a limit a stanza is refused as if it
+  did not parse. Theorem `parseElement_shape`.
+- Tests: `#guard`s in `Wire.lean`; `npm/factoidal/test/xmpp-shape.test.mjs`.

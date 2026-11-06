@@ -15,7 +15,10 @@ Covered (XEP-0045 section numbers):
         the joiner gets every occupant's presence, then its own with status 110
         (and 201 when it created the room), then the subject (7.2.15); every
         other occupant gets the joiner's presence
-  7.2.9 nick conflict: presence error `conflict`
+  7.2.9 nick conflict: presence error `conflict`, for a nick in use (a nick that
+        differs only in case counts as in use) and for a nick reserved for another
+        account (`Service.reserved`). A nick that cannot be told from another by eye
+        (`nickOk`) is refused with `not-acceptable`
   7.4   a groupchat message from an occupant goes to every occupant, from
         `room@service/<the sender's nick>`; from anyone else, `not-acceptable`
   7.5   a private message to `room@service/nick` goes to that occupant only
@@ -30,7 +33,7 @@ Covered (XEP-0045 section numbers):
 
 Not covered, answered `feature-not-implemented` or ignored, never silently
 accepted: nick change, kick, ban, voice, room configuration forms, passwords,
-history, subject change, persistent rooms. Real JIDs are
+history, subject change (a client's `<subject/>` is dropped, `sanitize`), persistent rooms. Real JIDs are
 never sent to anyone, moderators included (`Body` has no field for one).
 Limits `maxRooms` and `maxOccupants` bound the state a client can create
 (`service-unavailable`, XEP-0045 7.2.10).
@@ -84,6 +87,9 @@ structure Service where
   domain : String
   rooms : List Room := []
   memberLists : List MemberList := []
+  /-- Reserved nicks (XEP-0045 section 7.2.9): `nickKey` of the nick, and the bare
+  JID it is for. The server reserves each account's name for that account. -/
+  reserved : List (String × String) := []
   maxRooms : Nat := 64
   maxOccupants : Nat := 64
   deriving Repr, Inhabited
@@ -95,6 +101,35 @@ def Service.roomJid (svc : Service) (name : String) : String := name ++ "@" ++ s
 
 /-- The bare JID of a full JID. -/
 def bareOf (full : String) : String := (full.splitOn "/").headD full
+
+/-- A full-width form of an ASCII character (U+FF01 to U+FF5E), as that character. -/
+def narrow (c : Char) : Char :=
+  let n := c.toNat
+  if 0xff01 ≤ n && n ≤ 0xff5e then Char.ofNat (n - 0xfee0) else c
+
+/-- A nick as it is compared: two nicks that differ only in ASCII case or in width are one nick.
+There is no PRECIS here (https://github.com/danbri/factoidal/issues/676), so look-alike letters of
+other scripts stay apart. -/
+def nickKey (n : String) : String := (n.map narrow).toLower
+
+/-- A character that prints as nothing, or as a space: controls, the Unicode spaces, soft hyphen,
+zero-width and direction marks. -/
+def unseen (c : Char) : Bool :=
+  let n := c.toNat
+  n < 0x20 || (0x7f ≤ n && n ≤ 0xa0) || n == 0xad || n == 0x1680 || (0x2000 ≤ n && n ≤ 0x200f) ||
+  (0x2028 ≤ n && n ≤ 0x202f) || (0x205f ≤ n && n ≤ 0x206f) || n == 0x3000 || n == 0xfeff
+
+/-- Can this nick be read and told from another? Not empty, at most 64 bytes, no space at either
+end, no two spaces together, no unseen character. -/
+def nickOk (n : String) : Bool :=
+  !n.isEmpty && decide (n.utf8ByteSize ≤ 64) && n.trim == n && (n.splitOn "  ").length == 1 && !n.any unseen
+
+/-- Why `from_` (a full JID) may not have this nick: the error type and condition. -/
+def Service.nickRefusal (svc : Service) (nick from_ : String) : Option (String × String) :=
+  if !nickOk nick then some ("modify", "not-acceptable")
+  else match svc.reserved.find? (·.1 == nickKey nick) with
+    | some (_, owner) => if owner != bareOf from_ then some ("cancel", "conflict") else none
+    | none => none
 
 /-- May `from_` (a full JID) enter this room? Every account may, unless the
 room has a member list. -/
@@ -132,10 +167,11 @@ structure Delivery where
   deriving Inhabited
 
 /-- A client's payload, minus any `muc#user` element: only the room states
-roles, affiliations and status codes, so a sender cannot forge them. -/
+roles, affiliations and status codes, so a sender cannot forge them. Minus any
+`<subject/>` too: this service has no subject change. -/
 def sanitize (payload : List Node) : List Node :=
   payload.filter (fun n => match n with
-    | .element _ attrs _ => findAttr attrs "xmlns" != some nsMucUser
+    | .element tag attrs _ => tag != "subject" && findAttr attrs "xmlns" != some nsMucUser
     | _ => true)
 
 def presenceOf (o : Occupant) (available : Bool) (codes : List Nat) : Body :=
@@ -146,7 +182,7 @@ def presenceOf (o : Occupant) (available : Bool) (codes : List Nat) : Body :=
 /-- Join `room` as `nick`, unless the nick is taken. The joiner is owner when
 the room was empty. `none`: the nick is in use. -/
 def joinRoom (room : Room) (nick real : String) : Option Room :=
-  if room.occupants.any (·.nick == nick) then none
+  if room.occupants.any (fun o => nickKey o.nick == nickKey nick) then none
   else some { room with occupants := room.occupants ++ [⟨nick, real, room.occupants.isEmpty⟩] }
 
 def leaveRoom (room : Room) (real : String) : Room :=
@@ -183,6 +219,8 @@ def join (svc : Service) (name nick from_ : String) : Service × List Delivery :
   let room := (svc.room? name).getD ⟨name, []⟩
   if !svc.mayJoin name from_ then
     (svc, [⟨from_, rj, .error .presence none (rj ++ "/" ++ nick) "auth" "registration-required"⟩])
+  else if let some (t, c) := svc.nickRefusal nick from_ then
+    (svc, [⟨from_, rj, .error .presence none (rj ++ "/" ++ nick) t c⟩])
   else if room.occupants.isEmpty && svc.rooms.length ≥ svc.maxRooms then fail "service-unavailable"
   else if room.occupants.length ≥ svc.maxOccupants then fail "service-unavailable"
   else
@@ -428,6 +466,19 @@ theorem join_refused (svc : Service) (name nick from_ : String)
     (join svc name nick from_).1 = svc ∧ ∀ d ∈ (join svc name nick from_).2, d.to = from_ := by
   simp [join, h]
 
+/-- 7b. A nick refused for `from_`: nothing changes, and only `from_` hears of it. -/
+theorem join_nickRefused (svc : Service) (name nick from_ : String) (r : String × String)
+    (hm : svc.mayJoin name from_ = true) (h : svc.nickRefusal nick from_ = some r) :
+    (join svc name nick from_).1 = svc ∧ ∀ d ∈ (join svc name nick from_).2, d.to = from_ := by
+  obtain ⟨t, c⟩ := r
+  simp [join, hm, h]
+
+/-- A nick reserved for another account is refused. -/
+theorem nickRefusal_reserved (svc : Service) (nick from_ owner k : String)
+    (hn : nickOk nick = true) (hf : svc.reserved.find? (·.1 == nickKey nick) = some (k, owner))
+    (ho : owner ≠ bareOf from_) : svc.nickRefusal nick from_ = some ("cancel", "conflict") := by
+  simp [Service.nickRefusal, hn, hf, ho]
+
 /-- Everyone in every room may be there. -/
 def Service.sound (svc : Service) : Prop :=
   ∀ r ∈ svc.rooms, ∀ o ∈ r.occupants, svc.mayJoin r.name o.real = true
@@ -472,11 +523,13 @@ theorem join_sound (svc : Service) (name nick from_ : String) (hs : svc.sound)
   dsimp only
   split
   · exact hs
+  rename_i hmay
   split
   · exact hs
   split
   · exact hs
-  rename_i hmay _ _
+  split
+  · exact hs
   split
   · exact hs
   rename_i room' hj
@@ -584,6 +637,45 @@ private def body (t : String) : Node := .element "body" [] [.text t]
   let locked : Service := { svc0 with memberLists := [⟨"bus", ["juliet@example.com"]⟩] }
   let (s1, _) := step locked "mallory@example.com/x" (st .presence "tea@conference.example.com/m" none)
   s1.rooms.length == 1
+
+-- A nick that differs only in case is taken.
+#guard
+  let (s1, _) := step svc0 "juliet@example.com/balcony" (st .presence "tea@conference.example.com/jul" none)
+  let (s2, ds) := step s1 "romeo@example.com/orchard" (st .presence "tea@conference.example.com/JUL" none)
+  (s2.room? "tea").map (·.occupants.length) == some 1 && has (ds[0]!.render) "conflict"
+
+-- So is one that differs only in width.
+#guard nickKey "\uFF41lice" == nickKey "Alice"
+#guard
+  let locked : Service := { svc0 with reserved := [(nickKey "alice", "alice@example.com")] }
+  let (s1, ds) := step locked "mallory@example.com/x" (st .presence "tea@conference.example.com/\uFF41lice" none)
+  s1.rooms.isEmpty && has (ds[0]!.render) "conflict"
+
+-- Nicks that cannot be told from another are refused, and the room is unchanged.
+#guard
+  ["jul ", " jul", "ju  l", "ju\u200Bl", "ju\u00ADl", "jul\u00A0", "ju\u202El", String.ofList (List.replicate 65 'x')].all
+    (fun n => !nickOk n)
+#guard ["jul", "third witch", "Grüße", "朱丽叶"].all nickOk
+#guard
+  let (s1, ds) := step svc0 "juliet@example.com/balcony" (st .presence "tea@conference.example.com/jul " none)
+  s1.rooms.isEmpty && has (ds[0]!.render) "not-acceptable"
+
+-- A nick reserved for an account: another account gets `conflict`, in any case;
+-- the account itself gets in, on any resource.
+#guard
+  let locked : Service := { svc0 with reserved := [("foafos", "foafos@example.com")] }
+  let (s1, ds1) := step locked "mallory@example.com/x" (st .presence "tea@conference.example.com/foafos" none)
+  let (s2, ds2) := step locked "mallory@example.com/x" (st .presence "tea@conference.example.com/Foafos" none)
+  let (s3, _) := step locked "foafos@example.com/any" (st .presence "tea@conference.example.com/foafos" none)
+  s1.rooms.isEmpty && s2.rooms.isEmpty && has (ds1[0]!.render) "conflict" && has (ds2[0]!.render) "conflict" &&
+  (s3.room? "tea").map (·.occupants.length) == some 1
+
+-- A client's subject does not reach the room.
+#guard
+  let (s1, _) := step svc0 "juliet@example.com/balcony" (st .presence "tea@conference.example.com/jul" none)
+  let subj : Node := .element "subject" [] [.text "new"]
+  let (_, ds) := step s1 "juliet@example.com/balcony" (st .message "tea@conference.example.com" (some "groupchat") [body "hi", subj])
+  ds.all (fun d => has d.render "<body>hi</body>" && !has d.render "subject")
 
 -- The room limit holds.
 #guard

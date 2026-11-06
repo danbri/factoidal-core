@@ -112,6 +112,13 @@ private def mucMembersOfArray (items : List Json) : Option (List Muc.MemberList)
       else (members.mapM (fun m => match m with | Json.string s => some s | _ => none)).map (Muc.MemberList.mk room)
     | _, _ => none)
 
+/-- `mucReservedNicks`: an array of `{"nick","jid"}` objects. `none` when an entry is malformed. -/
+private def mucReservedOfArray (items : List Json) : Option (List (String × String)) :=
+  items.mapM (fun it =>
+    match it.getString? "nick", it.getString? "jid" with
+    | some n, some b => if n.isEmpty || b.isEmpty then none else some (Muc.nickKey n, b)
+    | _, _ => none)
+
 /-- The server configuration: every per-session value (`streamId`,
 `serverNonce`) is left empty here and filled by `xmppSessionOpen`. -/
 structure XmppServerConfig where
@@ -124,6 +131,8 @@ structure XmppServerConfig where
   mucDomain : Option String := none
   /-- Members-only rooms, from `"mucMembers"`. -/
   mucMembers : List Muc.MemberList := []
+  /-- Reserved room nicks, from `"mucReservedNicks"`: (`Muc.nickKey` of the nick, bare JID). -/
+  mucReserved : List (String × String) := []
   /-- XEP-0369 MIX service domain, from `"mixDomain"`; none: no MIX. -/
   mixDomain : Option String := none
   /-- GC3 prototype service domain, from `"gc3Domain"`; none: no GC3. -/
@@ -187,7 +196,9 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
       let mixDomain := j.getString? "mixDomain"
       let gc3Domain := j.getString? "gc3Domain"
       let mucMembers := (j.getArray? "mucMembers").map mucMembersOfArray
+      let mucReserved := (j.getArray? "mucReservedNicks").map mucReservedOfArray
       if mucMembers == some none then .error "config: \"mucMembers\" needs {\"room\",\"members\"} objects"
+      else if mucReserved == some none then .error "config: \"mucReservedNicks\" needs {\"nick\",\"jid\"} objects"
       else if iterationCount < 1 then .error "config: \"iterationCount\" must be at least 1"
       else if mucDomain == some "" || mucDomain == some domain then
         .error "config: \"mucDomain\" must be a domain other than \"domain\""
@@ -203,6 +214,7 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
               saltSeed := (j.getString? "saltSeed").getD "",
               tlsCarrier := (j.getBool? "tlsCarrier").getD false, mucDomain, mixDomain, gc3Domain,
               mucMembers := (mucMembers.bind id).getD [],
+              mucReserved := (mucReserved.bind id).getD [],
               persist := (j.getBool? "persist").getD false,
               limits := if disabled then { enabled := false } else {} }
 
@@ -545,7 +557,9 @@ def xmppOpen (configJson : String) : IO String := do
       let derived := (cfg.accounts.filter (fun a => !a.password.isEmpty)).filterMap (fun a =>
         (Scram.credentialsOfPassword a.password (probe.saltFor a.username) cfg.iterationCount).map (a.username, ·))
       let cfg := { cfg with credentials := cfg.verifiers ++ derived }
-      let muc : Option Muc.Service := cfg.mucDomain.map (fun d => { domain := d, memberLists := cfg.mucMembers })
+      -- Each account's name is its own nick, beside the nicks the host reserves.
+      let reserved := cfg.mucReserved ++ cfg.accounts.map (fun a => (Muc.nickKey a.username, a.username ++ "@" ++ cfg.domain))
+      let muc : Option Muc.Service := cfg.mucDomain.map (fun d => { domain := d, memberLists := cfg.mucMembers, reserved })
       let mix : Option Mix.Service := cfg.mixDomain.map (fun d => { domain := d })
       let gc3 : Option Gc3.Service := cfg.gc3Domain.map (fun d => { domain := d })
       xmppServers.modify (·.insert h { cfg := cfg, rosters := ∅, presence := ∅, muc := muc, mix := mix, gc3 := gc3,
