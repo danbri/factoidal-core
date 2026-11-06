@@ -59,6 +59,13 @@ Emscripten 6.0.8, Lean v4.33.1):
 Gate on that build: `node --test tests/hub/post36_test.mjs
 tests/hub/fn_surface_parity_test.mjs` — 10 pass, 0 fail (out of 10).
 
+## Splitting an engine into units
+
+Read `docs/20261106-deployable-modules.md` before you add an engine or a second wasm. A manifest
+(`deploy/units/*.json`) and `tools/deploy/build-units.py` give a primary wasm and units that share
+one Lean heap (experiment, not the shipped build). Split before `wasm-opt`. Lean 4.33 closed terms
+are already lazy; the start cost is top-level constants.
+
 ## The problem, stated exactly
 
 Lean's compiler emits C. Linking that C needs two things the elan
