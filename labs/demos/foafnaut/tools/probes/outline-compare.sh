@@ -9,9 +9,10 @@ cd "$lean"
 status=0
 for font in "$@"; do
   "$work/ft" "$font" 0 1000000 > "$work/ft.txt"
-  lake env lean --run "$here/OutlineDump.lean" "$font" 0 "$(wc -l < "$work/ft.txt")" > "$work/lean.txt"
+  glyphs=$(($(wc -l < "$work/ft.txt")))   # macOS wc pads with spaces
+  lake env lean --run "$here/OutlineDump.lean" "$font" 0 "$glyphs" > "$work/lean.txt"
   different="$(diff "$work/ft.txt" "$work/lean.txt" | grep -c '^<' || true)"
-  echo "$(basename "$font"): $(wc -l < "$work/ft.txt") glyphs, $different different"
+  echo "$(basename "$font"): $glyphs glyphs, $different different"
   [ "$different" = 0 ] || status=1
 done
 exit $status
