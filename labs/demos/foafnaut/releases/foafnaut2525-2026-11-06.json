@@ -1,0 +1,92 @@
+{
+ "format": "foafnaut2525-scoreboard-v1",
+ "release": "foafnaut2525-2026-11-06",
+ "commit": "54551baca31ae999900422c62ac59622ebf4d20a",
+ "suites": [
+  {
+   "key": "svg-tiny-pixels",
+   "suite": "W3C SVG Tiny 1.2, WebGPU pixels against W3C images (our bands, not a W3C verdict)",
+   "command": "tests/browser-wpt/svg-tiny-pixels.py",
+   "score": "0 match, 72 close, 421 mismatch, 2 refused, 1 not read (out of 496)",
+   "measuredCommit": "0ade5fdf133a50583dce74f780fa4916ef561b87",
+   "status": "measured",
+   "numbers": {
+    "counts": {
+     "MISMATCH": 421,
+     "CLOSE": 72,
+     "UNAVAILABLE": 1,
+     "REFUSED": 2
+    },
+    "blankControl": {
+     "MISMATCH": 495,
+     "MATCH": 1
+    },
+    "archiveSha256": "2203d6f44178cbb3853bdc7abe865f4e7e42506727ecc9e34b408b6f33e2e718"
+   }
+  },
+  {
+   "key": "lab-suite",
+   "suite": "Lab suite",
+   "command": "labs/demos/foafnaut/test.sh --skip-build",
+   "score": "85 and 8 Deno tests pass, 0 fail; 12 coordinate checks pass",
+   "measuredCommit": "0ade5fdf133a50583dce74f780fa4916ef561b87",
+   "status": "measured"
+  },
+  {
+   "key": "demo-pages",
+   "suite": "Demo pages",
+   "command": "tools/check-demo-pages.py",
+   "score": "13 rendered, 0 expected refusals, 0 failed (out of 13)",
+   "measuredCommit": "0ade5fdf133a50583dce74f780fa4916ef561b87",
+   "status": "measured"
+  },
+  {
+   "key": "html-tree",
+   "suite": "html5lib tree construction",
+   "command": "tests/browser-wpt/parser-probe.py",
+   "score": "1,963 pass, 10 fail (out of 1,973)",
+   "measuredOn": "2026-11-03",
+   "status": "not re-measured"
+  },
+  {
+   "key": "html-tokenizer",
+   "suite": "html5lib tokenizer",
+   "command": "tests/browser-wpt/parser-probe.py",
+   "score": "7,047 pass, 6 fail (out of 7,053)",
+   "measuredOn": "2026-11-03",
+   "status": "not re-measured"
+  },
+  {
+   "key": "wpt-images",
+   "suite": "WPT SVG and HTML image relations, CPU sampler",
+   "command": "tests/browser-wpt/native-reftests.py",
+   "score": "29 match, 21 mismatch, 264 unsupported, 30 rejected, 257 unavailable (out of 601)",
+   "measuredOn": "2026-11-03",
+   "status": "not re-measured"
+  },
+  {
+   "key": "wpt-scripts",
+   "suite": "WPT scripted documents",
+   "command": "tests/browser-wpt/quickjs-probe.mjs",
+   "score": "0 complete passes (out of 784)",
+   "measuredOn": "2026-11-03",
+   "status": "not re-measured"
+  },
+  {
+   "key": "harfbuzz",
+   "suite": "HarfBuzz 15.0.0 shaping suite",
+   "command": "labs/demos/foafnaut/tools/run-harfbuzz-suite.py",
+   "score": "4,175 pass, 533 fail, 169 refused (out of 4,877 applicable)",
+   "measuredOn": "2026-11-04",
+   "status": "not re-measured"
+  },
+  {
+   "key": "font-records",
+   "suite": "Font records against native HarfBuzz",
+   "command": "check-lean-shaper.py",
+   "score": "56 same, 0 different (out of 56)",
+   "measuredOn": "2026-11-04",
+   "status": "not re-measured"
+  }
+ ]
+}
