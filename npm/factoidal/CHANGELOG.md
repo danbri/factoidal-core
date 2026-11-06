@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.33.0 (2026-11-06)
+
+- XMPP: held stanzas have caps per recipient and per server and a rate per sending account. A stanza for a name with no account is not held. Rosters have a cap on items and a rate on writes.
+- XMPP: SASL closes a stream after three failed attempts, adds a slower limit per client address, and uses one SCRAM exchange for every name. `--no-address-limit` is for a listener behind a proxy.
+- XMPP: accounts have a salt per name and more SCRAM iterations by default. An accounts line can hold keys in place of a password (`xmpp-serve --verifier NAME`). A malformed accounts file stops the start.
+- XMPP: a stanza has at most 64 levels and 8192 elements. Rooms have reserved nicks and nick checks, and a session leaves its rooms at a clean stream end.
+- XMPP: XEP-0421 occupant ids in rooms. A room seat stays until the last session of a full JID goes.
 - XMPP: `xmpp-serve --starttls --tls-port N` serves STARTTLS and XEP-0368 direct TLS from one server.
 - XMPP: members-only rooms (XEP-0045 section 7.2.6). `xmpp-serve --muc-members FILE` lists who may join each room; anyone else gets `registration-required` and cannot see the room.
 - XMPP: disco#info and disco#items results carry `from`. Without it, Profanity 0.19.0 stopped with a segmentation fault after login.
