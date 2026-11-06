@@ -1,7 +1,7 @@
 {
  "format": "foafnaut2525-scoreboard-v1",
  "release": "foafnaut2525-2026-11-06-2",
- "commit": "22d735cbf3b57fea2f2a2360b31ed072f77ef019",
+ "commit": "588a9c56873121bc934325c881fae1e81ab3ef35",
  "suites": [
   {
    "key": "lab-suite",
