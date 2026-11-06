@@ -6,7 +6,7 @@ import {loadHTML} from "./native_html_engine.ts";
 import {inputURL,navigationURL,prepareHTML,readSource} from "./native_html_document.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 
-const engine=await loadHTML();
+let engine=await loadHTML();
 const html=(body:string,css="")=>`<!doctype html><style>body{margin:0;font-family:monospace;font-size:14px;line-height:20px}${css}</style>${body}`;
 const facts={maxUniformBufferBindingSize:65536,maxStorageBufferBindingSize:134217728,maxTextureDimension2D:4096,maxBufferSize:268435456};
 
@@ -145,6 +145,23 @@ Deno.test("scripts are refused, and unsupported CSS and layout are not",async()=
     await Deno.writeTextFile(path,html('<div style="display:grid">Unsupported grid</div>'));
     assert((await prepareHTML(engine,url)).compile(240,160).data.length>0);
   }finally{await Deno.remove(dir,{recursive:true});}
+});
+
+Deno.test("the first website renders from its mirror, with its links",async()=>{
+  const root=new URL("../../../third_party/testing/old-web/info.cern.ch/",import.meta.url);
+  const pages:string[]=[];
+  const walk=async(dir:URL,path:string)=>{for await(const entry of Deno.readDir(dir)){
+    if(entry.isDirectory)await walk(new URL(entry.name+"/",dir),path+entry.name+"/");else pages.push(path+entry.name);
+  }};
+  await walk(root,"");
+  assert(pages.length>=23);
+  for(let index=0;index<pages.length;index++){
+    const path=pages[index];
+    // One engine would run out of memory on the whole set: a known render leak.
+    if(index%10===9)engine=await loadHTML();
+    const frame=(await prepareHTML(engine,new URL(path,root).href)).compile(1000,800);
+    assert(frame.data.length>0,path);
+  }
 });
 
 Deno.test("resource size, resource count, cancellation and URL schemes are bounded",async()=>{
