@@ -234,8 +234,8 @@ fi
 # ---------------------------------------------------------------------
 
 # ---------------------------------------------------------------------
-# F* OWL tableau and Turtle serializer defects found by the Lean tree
-# (issues 719, 720, 725; opened 2026-10-10 from the Lean repairs).
+# F* OWL tableau defects found by the Lean tree
+# (issues 719, 720; opened 2026-10-10 from the Lean repairs).
 #
 # Each case states the CORRECT answer by running the Lean engine on the same
 # input, so a case documents what the answer should be as well as what the
@@ -378,366 +378,30 @@ owl_case OWL-720-DATA 720 "F* <=-rule offers no merge with asserted data values"
 owl_case OWL-720-NAMED 720 "F* <=-rule offers no merge with named individuals" \
   owl-720-named-leq2.rdf
 
-# 725: RDF_Turtle_Serialize.count_runs recurses once per IRI occurrence and is
-# not tail recursive, so Turtle output of a large graph overflows the stack.
-# Input: the header and 40000 paragraphs of the Wikidata life-science gene.ttl,
-# every fifth paragraph from the start (deterministic; no blank nodes, so the
-# N-Triples of the input and of a correct re-serialisation are the same set).
-# The stack limit of the F* run is pinned at 8192 KB so the result does not depend
-# on the caller's shell. Correct answer: Lean serialises the same input to Turtle
-# that parses back to the same triples. The Lean run is pinned at 512 KB
-# (LEAN_STACK_SIZE_KB=512), 16 times less than the F* run, because the Lean writer
-# had the same defect until 2026-10-15 (TurtleSerialize.countRuns, issue 863: 2,711
-# triples overflowed 512 KB), and without the pin the oracle ran on the 1 GB default
-# thread stack of a Lean program, which compares two different stack sizes.
-GENE_SRC="${ROOT}/examples/wikidata/subsets/lifesci-kgx/data/gene.ttl"
-TS_ID=TTL-SER-725; TS_ISSUE=725; TS_TITLE="F* Turtle serializer overflows the stack at 40k paragraphs"
-if [ ! -r "$GENE_SRC" ]; then
-  record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" ERROR "no input file ${GENE_SRC#"$ROOT"/}"
-elif [ ! -x "$L4_BIN" ]; then
-  record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" ERROR "no l4factoidal at ${L4_BIN} (tools/fetch-builds.sh --set native)"
-else
-  TS_IN="${WORKDIR}/gene-40000.ttl"
-  awk -v want=40000 'BEGIN { RS = ""; ORS = "\n\n" }
-       NR == 1 { print; next }
-       { if ((NR - 2) % 5 == 0 && picked < want) { picked++; print } }' \
-      "$GENE_SRC" > "$TS_IN"
-  TS_PARAS=$(awk 'BEGIN { RS = "" } END { print NR - 1 }' "$TS_IN")
-  ( ulimit -s 8192 && timeout 300 "$BIN" dump-turtle "$TS_IN" > "${WORKDIR}/ts-fstar.ttl" 2> "${WORKDIR}/ts-fstar.err" )
-  TS_RC=$?
-  TS_LEAN_RC=0
-  env -u LEAN_MAIN_USE_THREAD LEAN_STACK_SIZE_KB=512 timeout 300 "$L4_BIN" parse "$TS_IN" --format turtle --out turtle \
-      > "${WORKDIR}/ts-lean.ttl" 2> "${WORKDIR}/ts-lean.err" || TS_LEAN_RC=$?
-  TS_SAME=no
-  if [ "$TS_LEAN_RC" -eq 0 ]; then
-    LC_ALL=C "$BIN" dump "$TS_IN" 2>/dev/null | LC_ALL=C sort -u > "${WORKDIR}/ts-in.nt"
-    LC_ALL=C "$BIN" dump "${WORKDIR}/ts-lean.ttl" 2>/dev/null | LC_ALL=C sort -u > "${WORKDIR}/ts-lean.nt"
-    if [ -s "${WORKDIR}/ts-in.nt" ] && cmp -s "${WORKDIR}/ts-in.nt" "${WORKDIR}/ts-lean.nt"; then TS_SAME=yes; fi
-  fi
-  if [ "$TS_PARAS" != "40000" ]; then
-    record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" ERROR \
-      "input slice has ${TS_PARAS} paragraphs, expected 40000; gene.ttl changed"
-  elif [ "$TS_LEAN_RC" -ne 0 ] || [ "$TS_SAME" != "yes" ]; then
-    record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" ERROR \
-      "Lean oracle failed (exit ${TS_LEAN_RC}, same triples: ${TS_SAME}); the expectation is unconfirmed"
-  elif [ "$TS_RC" -ne 0 ] && grep -q 'Stack overflow' "${WORKDIR}/ts-fstar.err"; then
-    record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" XFAIL \
-      "F* exit ${TS_RC} with Stack overflow in count_runs at 8192 KB; Lean serialises the same input correctly at 512 KB"
-  elif [ "$TS_RC" -eq 0 ] && [ -s "${WORKDIR}/ts-fstar.ttl" ]; then
-    record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" XPASS \
-      "F* now serialises 40000 paragraphs -- defect appears FIXED"
-  else
-    record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" ERROR \
-      "F* exit ${TS_RC} without Stack overflow (or empty output): $(tr "\n" " " < "${WORKDIR}/ts-fstar.err" | cut -c1-120)"
-  fi
-fi
-
 # ---------------------------------------------------------------------
-# F* command-line SPARQL defects found by the Lean vs F* differential
-# (issues 736, 738, 739, 740, 747; opened 2026-10-10; record:
-# docs/designissues/2026-10-10-lean-vs-fstar-differential.md). Every query
-# and expected-result file is a real W3C test file from
-# third_party/testing/w3c.
-#
-# SELECT cases (736, 738) compare three result sets, as canonical rows from
-# tests/known-defects/sparql_rows.py: the W3C expected result (.srx), the Lean
-# CLI answer (`l4factoidal query`), and the F* answer (`factoidal query -o
+# F* command-line SPARQL defect found by the Lean vs F* differential
+# (issue 747; opened 2026-10-10; record:
+# docs/designissues/2026-10-10-lean-vs-fstar-differential.md). The query is a
+# real W3C test file from third_party/testing/w3c. The case compares canonical
+# rows from tests/known-defects/sparql_rows.py: the Lean CLI answer
+# (`l4factoidal query`, the oracle) and the F* answer (`factoidal query -o
 # json`). Equal domains are required, so a row that carries an extra binding
 # is a different row (SPARQL 1.1 18.1.8).
-#   ERROR  the Lean answer is not the expected result (the case would record
-#          a wrong expectation), the F* run failed, or the F* answer is
-#          neither the expected result nor the wrong row recorded here
-#   XPASS  the F* answer is the expected result
-#   XFAIL  the F* answer contains the recorded wrong row, and the expected
-#          result does not
-#
-# The cases 739 and 740 also use the Lean CLI as the oracle. Until 2026-10-10
-# they used `l4w3c` and the Lean N-Triples parser instead, because the Lean CLI
-# had the same two defects (https://github.com/danbri/factoidal/issues/741 and
-# https://github.com/danbri/factoidal/issues/742, fixed in the Lean tree on
-# 2026-10-10). A Lean CLI built before those fixes makes these two cases ERROR,
-# which is the ERROR-on-wrong-Lean rule; run with L4FACTOIDAL_BIN set to a
-# newer build (formal/lean4/.lake/build/bin/l4factoidal) until a release built
-# from the fix is fetched.
 # ---------------------------------------------------------------------
-W3C_SPARQL="${ROOT}/third_party/testing/w3c/sparql/sparql11"
-W3C_NT="${ROOT}/third_party/testing/w3c/rdf/rdf11/rdf-n-triples"
+W3C_SPARQL10_SYNTAX="${ROOT}/third_party/testing/w3c/sparql/sparql10/syntax-sparql1"
 ROWS_PY="${ROOT}/tests/known-defects/sparql_rows.py"
-XSD_INT="http://www.w3.org/2001/XMLSchema#integer"
-XSD_BOOL="http://www.w3.org/2001/XMLSchema#boolean"
 
 SPARQL_PROBE_ERR=""
 if [ ! -x "$L4_BIN" ]; then
   SPARQL_PROBE_ERR="no l4factoidal at ${L4_BIN} (tools/fetch-builds.sh --set native)"
 elif ! command -v python3 > /dev/null 2>&1; then
   SPARQL_PROBE_ERR="no python3 (sparql_rows.py reads the result sets)"
-elif [ ! -r "${W3C_SPARQL}/manifest-all.ttl" ] || [ ! -r "${W3C_NT}/manifest.ttl" ]; then
+elif [ ! -r "${W3C_SPARQL10_SYNTAX}/syntax-forms-01.rq" ]; then
   SPARQL_PROBE_ERR="no W3C test files under third_party/testing/w3c (git submodule update --init --depth 1 third_party/testing/w3c)"
 fi
 
-# sparql_select_check TAG DATA QUERY EXPECTED_SRX WRONG_ROW WRONG_WHAT
-# Sets SEL_STATE (XFAIL, XPASS or ERROR) and SEL_DETAIL. WRONG_ROW is the exact
-# canonical row the F* answer contains while the defect is present.
-sparql_select_check () {
-  local tag="$1" data="$2" query="$3" expected="$4" wrong_row="$5" wrong_what="$6"
-  local d="${WORKDIR}/sel-${tag}" fmt=turtle frc=0 lrc=0
-  mkdir -p "$d"
-  case "$data" in *.trig) fmt=trig ;; esac
-  SEL_STATE=ERROR
-  timeout 120 "$BIN" query --data "$data" --query "$query" -o json \
-      < /dev/null > "$d/fstar.json" 2> "$d/fstar.err"; frc=$?
-  timeout 120 "$L4_BIN" query "$data" --format "$fmt" --query "$query" \
-      < /dev/null > "$d/lean.json" 2> "$d/lean.err"; lrc=$?
-  if ! python3 -I "$ROWS_PY" < "$expected" > "$d/expected.rows" 2> "$d/expected.err" \
-     || [ ! -s "$d/expected.rows" ]; then
-    SEL_DETAIL="cannot read the expected result ${expected#"$ROOT"/}"
-  elif [ "$lrc" -ne 0 ] \
-     || ! python3 -I "$ROWS_PY" < "$d/lean.json" > "$d/lean.rows" 2> "$d/lean.perr"; then
-    SEL_DETAIL="Lean oracle failed (exit ${lrc}): $(tr "\n" " " < "$d/lean.err" | cut -c1-100)"
-  elif ! cmp -s "$d/lean.rows" "$d/expected.rows"; then
-    SEL_DETAIL="Lean oracle answered rows that differ from the W3C expected result; the expectation is unconfirmed"
-  elif [ "$frc" -ne 0 ] \
-     || ! python3 -I "$ROWS_PY" < "$d/fstar.json" > "$d/fstar.rows" 2> "$d/fstar.perr"; then
-    SEL_DETAIL="F* run failed (exit ${frc}): $(tr "\n" " " < "$d/fstar.err" | cut -c1-100)"
-  elif cmp -s "$d/fstar.rows" "$d/expected.rows"; then
-    SEL_STATE=XPASS
-    SEL_DETAIL="F* now gives the W3C expected result"
-  elif grep -Fxq -- "$wrong_row" "$d/fstar.rows" && ! grep -Fxq -- "$wrong_row" "$d/expected.rows"; then
-    SEL_STATE=XFAIL
-    SEL_DETAIL="F* ${wrong_what}"
-  else
-    SEL_DETAIL="F* answer is neither the expected result nor the recorded wrong row (answer drifted)"
-  fi
-}
-
-# Aggregation for a case that runs several queries: any ERROR makes the case an
-# ERROR (the detail gives each error); all XPASS makes it an XPASS; otherwise it
-# is an XFAIL (at least one query still wrong). The XFAIL detail names the
-# queries that are still wrong and the ones that are already right.
-agg_reset () { AGG_N=0; AGG_XL=""; AGG_PL=""; AGG_EL=""; }
-agg_add () {
-  local label="$1"
-  AGG_N=$((AGG_N+1))
-  case "$SEL_STATE" in
-    XFAIL) AGG_XL="${AGG_XL}${AGG_XL:+, }${label}" ;;
-    XPASS) AGG_PL="${AGG_PL}${AGG_PL:+, }${label}" ;;
-    *)     AGG_EL="${AGG_EL}${AGG_EL:+; }${label}: ${SEL_DETAIL}" ;;
-  esac
-}
-agg_record () {
-  local id="$1" issue="$2" title="$3" what="$4"
-  if [ -n "$AGG_EL" ]; then
-    record "$id" "$issue" "$title" ERROR "$AGG_EL"
-  elif [ -z "$AGG_XL" ]; then
-    record "$id" "$issue" "$title" XPASS "all ${AGG_N} queries now right -- defect appears FIXED"
-  else
-    record "$id" "$issue" "$title" XFAIL \
-      "${what}: still wrong ${AGG_XL}${AGG_PL:+; already right ${AGG_PL}}"
-  fi
-}
-
-# 736: the F* evaluator gives a value where SPARQL 1.1 section 17 raises an
-# error. Two of the twelve tests in the issue. IF: functions/if02, expected
-# result one solution with ?error unbound. Cast: cast/cast-int, six strings
-# outside the lexical space of xsd:integer ("1.5" among them) must leave
-# ?integer unbound; F* binds it (xsd:integer("1.5") gives 1).
-S736_TITLE_IF="F* IF() with an error condition returns its third argument"
-S736_TITLE_CAST="F* xsd:integer cast accepts strings outside the lexical space"
-if [ -n "$SPARQL_PROBE_ERR" ]; then
-  record SPARQL-736-IF 736 "$S736_TITLE_IF" ERROR "$SPARQL_PROBE_ERR"
-  record SPARQL-736-CAST 736 "$S736_TITLE_CAST" ERROR "$SPARQL_PROBE_ERR"
-else
-  sparql_select_check 736if "${W3C_SPARQL}/functions/data2.ttl" \
-    "${W3C_SPARQL}/functions/if02.rq" "${W3C_SPARQL}/functions/if02.srx" \
-    "?error=\"true\"^^<${XSD_BOOL}>" "binds ?error to true for IF(1/0, false, true); expected unbound"
-  record SPARQL-736-IF 736 "$S736_TITLE_IF" "$SEL_STATE" "$SEL_DETAIL"
-  sparql_select_check 736cast "${W3C_SPARQL}/cast/data.ttl" \
-    "${W3C_SPARQL}/cast/cast-int.rq" "${W3C_SPARQL}/cast/cast-int.srx" \
-    "?a=<http://example.org/s08> ?integer=\"1\"^^<${XSD_INT}> ?v=\"1.5\"" \
-    "binds xsd:integer(\"1.5\") to 1; expected unbound"
-  record SPARQL-736-CAST 736 "$S736_TITLE_CAST" "$SEL_STATE" "$SEL_DETAIL"
-fi
-
-# 738: the F* command line evaluates SELECT through the store backend, which
-# ignores FROM NAMED. The three bindings/graph-from-named tests; the data has
-# the named graphs ex:g1 and ex:g2 and every query names only ex:g1. SPARQL 1.1
-# 13.2.2 and 18.6: GRAPH ranges over the named graphs of the dataset, so rows
-# for ex:g2 are wrong. (The issue also lists UUID, SERVICE SILENT and a
-# sub-SELECT inside GRAPH; those items have no case yet.)
-S738_TITLE="F* ignores FROM NAMED (store backend)"
-if [ -n "$SPARQL_PROBE_ERR" ]; then
-  record SPARQL-738-FROM-NAMED 738 "$S738_TITLE" ERROR "$SPARQL_PROBE_ERR"
-else
-  GFN="${W3C_SPARQL}/bindings"
-  agg_reset
-  sparql_select_check gfn1 "${GFN}/graph-from-named.trig" "${GFN}/graph-from-named-1.rq" \
-    "${GFN}/graph-from-named-1.srx" \
-    "?g=<http://example.org/g2> ?x=\"1\"^^<${XSD_INT}>" "gives rows for graph ex:g2"
-  agg_add "graph-from-named-1"
-  sparql_select_check gfn2 "${GFN}/graph-from-named.trig" "${GFN}/graph-from-named-2.rq" \
-    "${GFN}/graph-from-named-2.srx" \
-    "?g=<http://example.org/g2> ?x=\"1\"^^<${XSD_INT}>" "gives a row for graph ex:g2"
-  agg_add "graph-from-named-2"
-  sparql_select_check gfn3 "${GFN}/graph-from-named.trig" "${GFN}/graph-from-named-3.rq" \
-    "${GFN}/graph-from-named-3.srx" \
-    "?x=\"2\"^^<${XSD_INT}>" "gives the row from GRAPH ex:g2"
-  agg_add "graph-from-named-3"
-  agg_record SPARQL-738-FROM-NAMED 738 "$S738_TITLE" "F* rows for graphs outside FROM NAMED (W3C bindings tests)"
-fi
-
-# 739: the F* command line parses the query with no base IRI, so a relative IRI
-# in a query is a parse error. SPARQL 1.1 4.1.1.2 resolves it against the base
-# IRI (RFC 3986 5.1.3: the retrieval IRI of the query document). The five W3C
-# tests of the issue, one entry per test:
-#   DIR | QUERY | qt:data (or -) | qt:graphData files | F* -d FILE | F* -o | EXPECTED
-# Oracle: the Lean CLI (`l4factoidal query --query FILE`, which takes the base
-# of the query from the file's IRI) on the test's dataset must give the W3C
-# expected result; otherwise the case is an ERROR. The CLI reads one dataset,
-# so the qt:data and qt:graphData files are written as one N-Quads file, each
-# qt:graphData graph named by its file's IRI, as the manifest names it. The
-# expected result is compared by kind: an .srx by its rows (sparql_rows.py), a
-# Turtle result set (rs:ResultSet) by the rows the Lean CLI reads out of it, a
-# graph by its RDFC-1.0 canonical N-Quads. The case is XFAIL while at least one
-# F* query still gives "invalid IRI", and the detail names each query.
-fileiri () { printf 'file://%s' "$(realpath "$1")"; }
-# nq_of FILE [GRAPH]: FILE (Turtle, base = its IRI) as N-Quads lines.
-nq_of () {
-  timeout 60 "$L4_BIN" parse "$1" --format turtle --base "$(fileiri "$1")" --out nquads < /dev/null |
-    if [ -n "${2:-}" ]; then sed -e '/^$/d' -e "s| \.\$| <$2> .|"; else sed '/^$/d'; fi
-}
-# rs_rows TTL VARS...: the rows of a Turtle rs:ResultSet whose solutions bind
-# every variable in VARS, as SPARQL Results JSON, read by the Lean CLI.
-rs_rows () {
-  local ttl="$1" sel="" pat="" i=0; shift
-  for v in "$@"; do
-    i=$((i+1)); sel="${sel} ?${v}"
-    pat="${pat} ?sol rs:binding ?b${i} . ?b${i} rs:variable \"${v}\" ; rs:value ?${v} ."
-  done
-  timeout 60 "$L4_BIN" query "$ttl" --format turtle --base "$(fileiri "$ttl")" \
-    --query-string "PREFIX rs: <http://www.w3.org/2001/sw/DataAccess/tests/result-set#> SELECT${sel} WHERE { ?set rs:solution ?sol .${pat} }" < /dev/null
-}
-S739_TITLE="F* parses a query with no base IRI (relative IRI is an error)"
-if [ -n "$SPARQL_PROBE_ERR" ]; then
-  record SPARQL-739-QUERY-BASE 739 "$S739_TITLE" ERROR "$SPARQL_PROBE_ERR"
-else
-  agg_reset
-  for entry in \
-    "bindings|graph.rq|empty.ttl|data01.ttl data02.ttl|data01.ttl|json|graph.ttl" \
-    "construct|constructwhere04.rq|-|data.ttl|data.ttl|ntriples|constructwhere04result.ttl" \
-    "exists|exists03.rq|exists01.ttl|exists02.ttl|exists01.ttl|json|exists03.srx" \
-    "property-path|path-ng-01.rq|-|ng-01.ttl ng-02.ttl ng-03.ttl|ng-01.ttl|json|path-ng-01.srx" \
-    "property-path|path-ng-02.rq|-|ng-01.ttl ng-02.ttl ng-03.ttl|ng-01.ttl|json|path-ng-01.srx"
-  do
-    IFS='|' read -r qdir qfile qdefault qnamed qdata qout qexpected <<< "$entry"
-    dir="${W3C_SPARQL}/${qdir}"; d="${WORKDIR}/q739-${qfile%.rq}"; mkdir -p "$d"
-    : > "$d/dataset.nq"
-    [ "$qdefault" = "-" ] || nq_of "${dir}/${qdefault}" >> "$d/dataset.nq"
-    for g in $qnamed; do nq_of "${dir}/${g}" "$(fileiri "${dir}/${g}")" >> "$d/dataset.nq"; done
-    timeout 120 "$L4_BIN" query "$d/dataset.nq" --format nquads --query "${dir}/${qfile}" \
-        < /dev/null > "$d/lean.out" 2> "$d/lean.err"; lrc=$?
-    lean_ok=0
-    if [ "$lrc" -eq 0 ]; then
-      case "$qexpected" in
-        *.srx)
-          python3 -I "$ROWS_PY" < "${dir}/${qexpected}" > "$d/want.rows" 2> /dev/null \
-            && python3 -I "$ROWS_PY" < "$d/lean.out" > "$d/got.rows" 2> /dev/null \
-            && [ -s "$d/want.rows" ] && cmp -s "$d/got.rows" "$d/want.rows" && lean_ok=1 ;;
-        graph.ttl)
-          rs_rows "${dir}/${qexpected}" g t > "$d/want.json" 2> /dev/null \
-            && python3 -I "$ROWS_PY" < "$d/want.json" > "$d/want.rows" 2> /dev/null \
-            && python3 -I "$ROWS_PY" < "$d/lean.out" > "$d/got.rows" 2> /dev/null \
-            && [ -s "$d/want.rows" ] && cmp -s "$d/got.rows" "$d/want.rows" && lean_ok=1 ;;
-        *)
-          timeout 60 "$L4_BIN" canonicalize "${dir}/${qexpected}" --format turtle \
-              --base "$(fileiri "${dir}/${qexpected}")" < /dev/null > "$d/want.nq" 2> /dev/null \
-            && timeout 60 "$L4_BIN" canonicalize "$d/lean.out" --format ntriples \
-              < /dev/null > "$d/got.nq" 2> /dev/null \
-            && [ -s "$d/want.nq" ] && cmp -s "$d/got.nq" "$d/want.nq" && lean_ok=1 ;;
-      esac
-    fi
-    fout=$(timeout 60 "$BIN" query --data "${dir}/${qdata}" \
-             --query "${dir}/${qfile}" -o "$qout" < /dev/null 2>&1); frc=$?
-    if [ "$lean_ok" -ne 1 ]; then
-      SEL_STATE=ERROR
-      SEL_DETAIL="the Lean CLI (exit ${lrc}) did not give the W3C expected result ${qexpected}; the expectation is unconfirmed: $(tr "\n" " " < "$d/lean.err" | cut -c1-80)"
-    elif printf '%s\n' "$fout" | grep -q '^SPARQL parse error: invalid IRI'; then
-      SEL_STATE=XFAIL
-      SEL_DETAIL="F* says invalid IRI; the Lean CLI gives the expected result"
-    elif [ "$frc" -eq 0 ] && [ -n "$fout" ] && ! printf '%s\n' "$fout" | grep -qi 'parse error'; then
-      SEL_STATE=XPASS
-      SEL_DETAIL="F* now parses it"
-    else
-      SEL_STATE=ERROR
-      SEL_DETAIL="F* exit ${frc}, unexpected output: $(printf '%s' "$fout" | tr "\n" " " | cut -c1-80)"
-    fi
-    agg_add "$qfile"
-  done
-  agg_record SPARQL-739-QUERY-BASE 739 "$S739_TITLE" "F* says invalid IRI, the Lean CLI gives the W3C result"
-fi
-
-# 740: the F* SPARQL parser names a blank node made for collection syntax
-# `_:bnode_<n>` with the `_:` inside the identifier, and CONSTRUCT freshens it
-# to `tpl_<k>__:bnode_<n>`. The N-Triples writer prints `_:` before it, so the
-# label contains a colon. RDF 1.1 N-Triples does not allow that; the W3C test
-# rdf-n-triples nt-syntax-bad-bnode-02 is "Colon in bnode label not allowed".
-# Query: construct/constructlist.rq (CONSTRUCT { (?s ?o) :prop ?p }).
-# The checker is the Lean N-Triples parser (`l4factoidal parse --format
-# ntriples`, which passes nt-syntax-bad-bnode-01 and -02 in l4w3c). The oracle
-# is the Lean CLI: `l4factoidal query` on the same files must print N-Triples
-# that the checker reads, with the RDFC-1.0 canonical form of the W3C expected
-# graph constructlistresult.ttl (so the graphs are isomorphic). Three controls;
-# failing any makes the case an ERROR:
-#   1. the F* output with the colon in each label replaced by an underscore
-#      parses, with the same number of triples as the F* output has lines;
-#   2. the W3C file nt-syntax-bad-bnode-02.nt is rejected;
-#   3. the Lean CLI output is the expected graph (the oracle).
-S740_TITLE="F* CONSTRUCT prints blank node labels that are not N-Triples"
-if [ -n "$SPARQL_PROBE_ERR" ]; then
-  record SPARQL-740-CONSTRUCT-BNODE 740 "$S740_TITLE" ERROR "$SPARQL_PROBE_ERR"
-else
-  d="${WORKDIR}/construct740"; mkdir -p "$d"
-  CL="${W3C_SPARQL}/construct"
-  timeout 60 "$BIN" query --data "${CL}/data.ttl" --query "${CL}/constructlist.rq" -o ntriples \
-      < /dev/null > "$d/fstar.nt" 2> "$d/fstar.err"; frc=$?
-  timeout 60 "$L4_BIN" query "${CL}/data.ttl" --format turtle --query "${CL}/constructlist.rq" \
-      < /dev/null > "$d/lean.nt" 2> "$d/lean.err"; lrc=$?
-  timeout 60 "$L4_BIN" canonicalize "$d/lean.nt" --format ntriples < /dev/null > "$d/lean.c14n" 2> /dev/null; lcrc=$?
-  timeout 60 "$L4_BIN" canonicalize "${CL}/constructlistresult.ttl" --format turtle \
-      --base "$(fileiri "${CL}/constructlistresult.ttl")" < /dev/null > "$d/want.c14n" 2> /dev/null; wcrc=$?
-  sed 's/__:bnode_/__bnode_/g' "$d/fstar.nt" > "$d/control-ok.nt"
-  nlines=$(grep -c . "$d/fstar.nt")
-  ok_count=$(timeout 60 "$L4_BIN" parse "$d/control-ok.nt" --format ntriples < /dev/null 2> /dev/null)
-  ok_rc=$?
-  timeout 60 "$L4_BIN" parse "${W3C_NT}/nt-syntax-bad-bnode-02.nt" --format ntriples \
-      < /dev/null > /dev/null 2> /dev/null; bad_rc=$?
-  timeout 60 "$L4_BIN" parse "$d/fstar.nt" --format ntriples < /dev/null > /dev/null 2> "$d/lean-parse.err"; out_rc=$?
-  if [ "$lrc" -ne 0 ] || [ "$lcrc" -ne 0 ] || [ "$wcrc" -ne 0 ] || [ ! -s "$d/want.c14n" ] \
-     || ! cmp -s "$d/lean.c14n" "$d/want.c14n"; then
-    record SPARQL-740-CONSTRUCT-BNODE 740 "$S740_TITLE" ERROR \
-      "control 3 failed: the Lean CLI output (exit ${lrc}, canonicalize exit ${lcrc}) is not the W3C expected graph constructlistresult.ttl; the expectation is unconfirmed: $(head -n 1 "$d/lean.err")"
-  elif [ "$frc" -ne 0 ] || [ "$nlines" -eq 0 ]; then
-    record SPARQL-740-CONSTRUCT-BNODE 740 "$S740_TITLE" ERROR \
-      "F* run gave exit ${frc} and ${nlines} lines: $(tr "\n" " " < "$d/fstar.err" | cut -c1-100)"
-  elif [ "$ok_rc" -ne 0 ] || [ "$ok_count" != "$nlines" ]; then
-    record SPARQL-740-CONSTRUCT-BNODE 740 "$S740_TITLE" ERROR \
-      "control 1 failed: the Lean parser read ${ok_count:-nothing} triples (exit ${ok_rc}) from the colon-free copy of ${nlines} lines"
-  elif [ "$bad_rc" -eq 0 ]; then
-    record SPARQL-740-CONSTRUCT-BNODE 740 "$S740_TITLE" ERROR \
-      "control 2 failed: the Lean parser accepts nt-syntax-bad-bnode-02.nt"
-  elif [ "$out_rc" -eq 0 ]; then
-    record SPARQL-740-CONSTRUCT-BNODE 740 "$S740_TITLE" XPASS \
-      "F* output now parses as N-Triples (${nlines} lines) -- defect appears FIXED"
-  elif grep -q '_:[A-Za-z0-9_]*:' "$d/fstar.nt"; then
-    record SPARQL-740-CONSTRUCT-BNODE 740 "$S740_TITLE" XFAIL \
-      "F* output has a colon in a blank node label and is rejected: $(head -n 1 "$d/lean-parse.err"); the Lean CLI output is the expected graph"
-  else
-    record SPARQL-740-CONSTRUCT-BNODE 740 "$S740_TITLE" ERROR \
-      "F* output is rejected but has no colon in a label (answer drifted): $(head -n 1 "$d/lean-parse.err")"
-  fi
-fi
-
-# 747: the F* SPARQL parser gives a [ ] node that is an item of a collection
-# the same blank node as the collection cell that holds it, so the cell is its
+# 747: the F* SPARQL parser gave a [ ] node that is an item of a collection
+# the same blank node as the collection cell that holds it, so the cell was its
 # own rdf:first (SPARQL 1.1 4.1.4). Query: the W3C file
 # sparql10/syntax-sparql1/syntax-forms-01.rq,
 #   SELECT * WHERE { ( [ ?x ?y ] ) :p ( [ ?pa ?b ] 57 ) }
@@ -748,15 +412,21 @@ fi
 #      query, not the data);
 #   2. the Lean CLI answers exactly the expected row (the oracle; the Lean
 #      parser had the same defect until 2026-10-10, issue 742).
-# XFAIL: F* answers no row. XPASS: F* answers the expected row.
-S747_TITLE="F* gives [ ] in a collection the cell's blank node"
+# The original defect (F* answers no row) is fixed: merge f074febcd (F* ports
+# of Lean fixes, 2026-11-05) gives the expected row. The F* answer still has
+# extra bindings: SELECT * projects the internal variables `?_bnode__:bnode_<n>`
+# that the parser makes for the [ ] nodes, which 18.1.8 and 18.2.1 do not allow
+# (a SELECT * row binds the variables in scope of the query pattern only).
+#   XFAIL: the F* row is the expected row plus bindings of `?_bnode__:` variables.
+#   XPASS: the F* row is exactly the expected row.
+S747_TITLE="F* SELECT * projects internal variables for [ ] in a collection"
 EXPECT747="?b=<http://example.org/ns#b1> ?pa=<http://example.org/ns#pa1> ?x=<http://example.org/ns#x1> ?y=<http://example.org/ns#y1>"
 if [ -n "$SPARQL_PROBE_ERR" ]; then
   record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR "$SPARQL_PROBE_ERR"
 else
   d="${WORKDIR}/q747"; mkdir -p "$d"
   data747="${ROOT}/tests/known-defects/fixtures/sparql-747-collection-bnode.ttl"
-  q747="${ROOT}/third_party/testing/w3c/sparql/sparql10/syntax-sparql1/syntax-forms-01.rq"
+  q747="${W3C_SPARQL10_SYNTAX}/syntax-forms-01.rq"
   printf '%s\n' "$EXPECT747" > "$d/expected.rows"
   fcount=$(timeout 60 "$BIN" count "$data747" < /dev/null 2> /dev/null | sed -n 's/.*: \([0-9]*\) triples$/\1/p')
   lcount=$(timeout 60 "$L4_BIN" parse "$data747" --format turtle < /dev/null 2> /dev/null | tail -n 1)
@@ -782,194 +452,18 @@ else
   elif cmp -s "$d/fstar.rows" "$d/expected.rows"; then
     record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" XPASS \
       "F* now answers the expected row -- defect appears FIXED"
-  elif [ ! -s "$d/fstar.rows" ]; then
-    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" XFAIL \
-      "F* answers no row for syntax-forms-01.rq on a graph of its shape; the Lean CLI answers the expected row"
   else
-    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR \
-      "F* answers rows that are neither none nor the expected row (answer drifted): $(head -n 1 "$d/fstar.rows" | cut -c1-100)"
-  fi
-fi
-
-# ---------------------------------------------------------------------
-# SPARQL-OPT-FILTER-SCOPE (https://github.com/danbri/factoidal/issues/815)
-# -- a FILTER in an OPTIONAL group is evaluated on the group's row only, so a
-# variable of the left side reads as unbound. SPARQL 1.1 section 18.2.2.5
-# makes `OPTIONAL { P FILTER(F) }` LeftJoin(G, P, F), with F evaluated on the
-# merged solution (section 18.5). Data and query:
-# fixtures/sparql-815-optional-filter-scope.{ttl,rq}; ex:a has age 72, so its
-# name is the OPTIONAL extension; ex:c has age 71, so it has none.
-# The Lean engine is FIXED (2026-10-13: the parser makes the group's FILTERs
-# the LeftJoin condition, `optionalGroup`; theorems and guards in
-# formal/lean4/L4Factoidal/SPARQL/OptionalFilterScope.lean). Its answer is a
-# plain assertion: the Lean CLI must answer exactly the rows of section
-# 18.2.2.5, or the case is an ERROR. The F* engine (`factoidal query`) still
-# has the defect; this case is the F* defect:
-#   XFAIL  F* answers the rows without ?n for ex:a (the defect)
-#   XPASS  F* answers the rows of section 18.2.2.5: fixed in F*; retire this
-#          case and close the issue
-#   ERROR  the Lean CLI is wrong (a Lean regression), or any other answer
-# ---------------------------------------------------------------------
-S815_TITLE="F*: FILTER in OPTIONAL does not see left-side variables"
-XSD_I="<http://www.w3.org/2001/XMLSchema#integer>"
-EXPECT815="?a=\"71\"^^${XSD_I} ?s=<http://ex.org/c>
-?a=\"72\"^^${XSD_I} ?n=\"Alice\" ?s=<http://ex.org/a>"
-WRONG815="?a=\"71\"^^${XSD_I} ?s=<http://ex.org/c>
-?a=\"72\"^^${XSD_I} ?s=<http://ex.org/a>"
-if [ -n "$SPARQL_PROBE_ERR" ]; then
-  record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR "$SPARQL_PROBE_ERR"
-else
-  d="${WORKDIR}/q815"; mkdir -p "$d"
-  printf '%s\n' "$EXPECT815" > "$d/expected.rows"
-  printf '%s\n' "$WRONG815" > "$d/wrong.rows"
-  lrc=0; frc=0
-  timeout 120 "$L4_BIN" query "${FIXTURES}/sparql-815-optional-filter-scope.ttl" --format turtle \
-      --query "${FIXTURES}/sparql-815-optional-filter-scope.rq" \
-      < /dev/null > "$d/lean.json" 2> "$d/lean.err" || lrc=$?
-  timeout 120 "$BIN" query --data "${FIXTURES}/sparql-815-optional-filter-scope.ttl" \
-      --query "${FIXTURES}/sparql-815-optional-filter-scope.rq" -o json \
-      < /dev/null > "$d/fstar.json" 2> "$d/fstar.err" || frc=$?
-  if [ "$lrc" -ne 0 ] \
-     || ! python3 -I "$ROWS_PY" < "$d/lean.json" > "$d/lean.rows" 2> "$d/lean.perr"; then
-    record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR \
-      "Lean run failed (exit ${lrc}): $(tr "\n" " " < "$d/lean.err" | cut -c1-100)"
-  elif ! cmp -s "$d/lean.rows" "$d/expected.rows"; then
-    record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR \
-      "the Lean CLI does not answer the rows of section 18.2.2.5 (Lean regression): $(head -n 1 "$d/lean.rows" | cut -c1-100)"
-  elif [ "$frc" -ne 0 ] \
-     || ! python3 -I "$ROWS_PY" < "$d/fstar.json" > "$d/fstar.rows" 2> "$d/fstar.perr"; then
-    record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR \
-      "F* run failed (exit ${frc}): $(tr "\n" " " < "$d/fstar.err" | cut -c1-100)"
-  elif cmp -s "$d/fstar.rows" "$d/expected.rows"; then
-    record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" XPASS \
-      "F* now binds ?n for ex:a -- defect appears FIXED in F*"
-  elif cmp -s "$d/fstar.rows" "$d/wrong.rows"; then
-    record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" XFAIL \
-      "F*: OPTIONAL { ?s ex:name ?n FILTER(?a = 72) } binds ?n for no row; section 18.2.2.5 binds it for ex:a (the Lean CLI does)"
-  else
-    record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR \
-      "F* answers neither the expected nor the recorded rows: $(head -n 1 "$d/fstar.rows" | cut -c1-100)"
-  fi
-fi
-
-# ---------------------------------------------------------------------
-# RDFXML-LANG-SCOPE (https://github.com/danbri/factoidal/issues/329, the open F*
-# issue; the Lean repair was https://github.com/danbri/factoidal/issues/841) -- the F*
-# RDF/XML parser applies the xml:lang of a property element to the property
-# elements that follow it in the same node element. XML 1.0 section 2.12 limits
-# the language to the element that specifies it and its content, so
-#   <ex:p xml:lang="fr">a</ex:p><ex:q>b</ex:q>
-# makes "a"@fr and a plain "b". Parser.RDFXML.fst returns the state of the
-# property element (restore_scope st2 ...), where the node element's scope is
-# the one to return. Fixture: fixtures/rdfxml-841-lang-scope.rdf (the same file
-# as tests/sbm11/syntax/lang_scope.rdf). The Lean parser is FIXED (2026-10-14:
-# Syntax/RdfXml.lean closePropertyScope; theorems propertyElt_scope and
-# propertyEltList_scope). Its answer is a plain assertion: the Lean CLI must
-# print exactly the two expected N-Quads lines, or the case is an ERROR (run
-# with L4FACTOIDAL_BIN set to formal/lean4/.lake/build/bin/l4factoidal until a
-# release built from the fix is fetched). F* is NOT repaired (no F* toolchain
-# in the session that fixed Lean); this case records its behaviour:
-#   XFAIL  F* reads <q> "b" as "b"@fr (the defect)
-#   XPASS  F* prints the two expected lines: fixed in F*; retire this case and
-#          close issue 329
-#   ERROR  the Lean CLI is wrong, F* does not read <p> "a"@fr (the probe
-#          measured nothing), or F* prints anything else
-# ---------------------------------------------------------------------
-R841_TITLE="F* RDF/XML applies the xml:lang of a property element to the next ones"
-R841_FIXTURE="${FIXTURES}/rdfxml-841-lang-scope.rdf"
-R841_P='<http://example.org/s> <http://example.org/p> "a"@fr .'
-R841_Q_PLAIN='<http://example.org/s> <http://example.org/q> "b" .'
-R841_Q_FR='<http://example.org/s> <http://example.org/q> "b"@fr .'
-if [ ! -x "$L4_BIN" ]; then
-  record RDFXML-LANG-SCOPE 329 "$R841_TITLE" ERROR "no l4factoidal at ${L4_BIN} (tools/fetch-builds.sh --set native)"
-else
-  d="${WORKDIR}/rdfxml841"; mkdir -p "$d"
-  printf '%s\n%s\n' "$R841_P" "$R841_Q_PLAIN" | LC_ALL=C sort > "$d/expected.nq"
-  lrc=0; frc=0
-  timeout 60 "$L4_BIN" parse "$R841_FIXTURE" --format rdfxml --out nquads \
-      < /dev/null > "$d/lean.raw" 2> "$d/lean.err" || lrc=$?
-  timeout 60 "$BIN" dump-nq "$R841_FIXTURE" \
-      < /dev/null > "$d/fstar.raw" 2> "$d/fstar.err" || frc=$?
-  sed '/^$/d' "$d/lean.raw" | LC_ALL=C sort > "$d/lean.nq"
-  sed '/^$/d' "$d/fstar.raw" | LC_ALL=C sort > "$d/fstar.nq"
-  if [ "$lrc" -ne 0 ] || ! cmp -s "$d/lean.nq" "$d/expected.nq"; then
-    record RDFXML-LANG-SCOPE 329 "$R841_TITLE" ERROR \
-      "the Lean CLI (exit ${lrc}) does not print the two expected N-Quads lines (Lean regression, or a build from before the fix): $(head -n 2 "$d/lean.nq" | tr "\n" " " | cut -c1-120)"
-  elif [ "$frc" -ne 0 ]; then
-    record RDFXML-LANG-SCOPE 329 "$R841_TITLE" ERROR \
-      "F* run failed (exit ${frc}): $(tr "\n" " " < "$d/fstar.err" | cut -c1-100)"
-  elif ! grep -Fxq -- "$R841_P" "$d/fstar.nq"; then
-    record RDFXML-LANG-SCOPE 329 "$R841_TITLE" ERROR \
-      "F* does not read <p> \"a\"@fr (the probe measured nothing): $(head -n 2 "$d/fstar.nq" | tr "\n" " " | cut -c1-120)"
-  elif cmp -s "$d/fstar.nq" "$d/expected.nq"; then
-    record RDFXML-LANG-SCOPE 329 "$R841_TITLE" XPASS \
-      "F* now prints the two expected lines -- defect appears FIXED in F*"
-  elif grep -Fxq -- "$R841_Q_FR" "$d/fstar.nq" && [ "$(grep -c . "$d/fstar.nq")" -eq 2 ]; then
-    record RDFXML-LANG-SCOPE 329 "$R841_TITLE" XFAIL \
-      "F* reads <q> \"b\" as \"b\"@fr (XML 1.0 section 2.12: plain); the Lean CLI prints the plain literal"
-  else
-    record RDFXML-LANG-SCOPE 329 "$R841_TITLE" ERROR \
-      "F* prints neither the expected lines nor the recorded wrong line: $(head -n 3 "$d/fstar.nq" | tr "\n" " " | cut -c1-120)"
-  fi
-fi
-
-# ---------------------------------------------------------------------
-# JSONLD-BNODE-COLLIDE (https://github.com/danbri/factoidal/issues/840) -- the F*
-# JSON-LD to RDF conversion names the blank nodes it generates _jld_anon<N>
-# (Parser.JSONLD.fst, jld_fresh_bnode) and passes the blank node identifiers that the
-# document writes through unchanged, so a document that writes _:_jld_anon0 and
-# also holds a node object with no @id gets ONE node where it has two. The
-# fixture (fixtures/jsonld-840-bnode-collide.jsonld, the same file as
-# tests/sbm11/syntax/bnode_collide.jsonld) holds five nodes: three with a written
-# label (_:_jld_anon0, _:_jld_anon1, _:genid1) and two with none. The Lean
-# parser is FIXED (2026-10-14: JSONLD/ToRdf.lean generatedPrefix chooses the
-# prefix of the generated labels from the document; theorem generated_ne_written
-# in JSONLD/Theorems.lean). Its answer is a plain assertion: the Lean CLI must
-# print five quads with five distinct blank node subjects, or the case is an
-# ERROR (run with L4FACTOIDAL_BIN set to formal/lean4/.lake/build/bin/l4factoidal
-# until a release built from the fix is fetched). F* is NOT repaired (no F*
-# toolchain in the session that fixed Lean); this case records its behaviour:
-#   XFAIL  F* prints three distinct blank node subjects for the five nodes
-#   XPASS  F* prints five: fixed in F*; retire this case and close the issue
-#   ERROR  the Lean CLI is wrong, or F* prints any other number of subjects
-# ---------------------------------------------------------------------
-J840_TITLE="F* JSON-LD gives a generated blank node the label of a written one"
-J840_FIXTURE="${FIXTURES}/jsonld-840-bnode-collide.jsonld"
-# j840_subjects FILE: the number of distinct blank node subjects among the lines.
-j840_subjects () { grep -o '^_:[^ ]*' "$1" | LC_ALL=C sort -u | grep -c .; }
-if [ ! -x "$L4_BIN" ]; then
-  record JSONLD-BNODE-COLLIDE 840 "$J840_TITLE" ERROR "no l4factoidal at ${L4_BIN} (tools/fetch-builds.sh --set native)"
-else
-  d="${WORKDIR}/jsonld840"; mkdir -p "$d"
-  lrc=0; frc=0
-  timeout 60 "$L4_BIN" parse "$J840_FIXTURE" --format jsonld --out nquads \
-      < /dev/null > "$d/lean.raw" 2> "$d/lean.err" || lrc=$?
-  timeout 60 "$BIN" dump-nq "$J840_FIXTURE" \
-      < /dev/null > "$d/fstar.raw" 2> "$d/fstar.err" || frc=$?
-  sed '/^$/d' "$d/lean.raw" > "$d/lean.nq"
-  sed '/^$/d' "$d/fstar.raw" > "$d/fstar.nq"
-  lean_quads="$(grep -c . "$d/lean.nq")"
-  lean_subjects="$(j840_subjects "$d/lean.nq")"
-  fstar_quads="$(grep -c . "$d/fstar.nq")"
-  fstar_subjects="$(j840_subjects "$d/fstar.nq")"
-  if [ "$lrc" -ne 0 ] || [ "$lean_quads" != 5 ] || [ "$lean_subjects" != 5 ]; then
-    record JSONLD-BNODE-COLLIDE 840 "$J840_TITLE" ERROR \
-      "the Lean CLI (exit ${lrc}) prints ${lean_quads} quads with ${lean_subjects} distinct blank node subjects, expected 5 and 5 (Lean regression, or a build from before the fix)"
-  elif [ "$frc" -ne 0 ]; then
-    record JSONLD-BNODE-COLLIDE 840 "$J840_TITLE" ERROR \
-      "F* run failed (exit ${frc}): $(tr "\n" " " < "$d/fstar.err" | cut -c1-100)"
-  elif [ "$fstar_quads" != 5 ]; then
-    record JSONLD-BNODE-COLLIDE 840 "$J840_TITLE" ERROR \
-      "F* prints ${fstar_quads} quads, expected 5 (the probe measured nothing): $(head -n 2 "$d/fstar.nq" | tr "\n" " " | cut -c1-120)"
-  elif [ "$fstar_subjects" = 5 ]; then
-    record JSONLD-BNODE-COLLIDE 840 "$J840_TITLE" XPASS \
-      "F* now prints five distinct blank node subjects -- defect appears FIXED in F*"
-  elif [ "$fstar_subjects" = 3 ]; then
-    record JSONLD-BNODE-COLLIDE 840 "$J840_TITLE" XFAIL \
-      "F* prints 3 distinct blank node subjects for 5 nodes: _:_jld_anon0 and _:_jld_anon1 each carry a written node and a generated one (the Lean CLI prints 5)"
-  else
-    record JSONLD-BNODE-COLLIDE 840 "$J840_TITLE" ERROR \
-      "F* prints ${fstar_subjects} distinct blank node subjects, neither the expected 5 nor the recorded 3"
+    # Remove the bindings of internal variables; the rest must be exactly the
+    # expected row, and at least one binding must have been removed.
+    sed -E 's/(^| )\?_bnode__:[^ =]+=[^ ]*//g; s/^ //' "$d/fstar.rows" > "$d/fstar.stripped"
+    leaked=$(grep -o '?_bnode__:[^ =]*=' "$d/fstar.rows" | sort -u | wc -l | tr -d ' ')
+    if [ "$leaked" -gt 0 ] && cmp -s "$d/fstar.stripped" "$d/expected.rows"; then
+      record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" XFAIL \
+        "F* answers the expected row plus ${leaked} internal variables (?_bnode__:...); the Lean CLI answers the expected row only"
+    else
+      record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR \
+        "F* answer is neither the expected row nor the expected row plus ?_bnode__: bindings (answer drifted): $(head -n 1 "$d/fstar.rows" | cut -c1-100)"
+    fi
   fi
 fi
 
