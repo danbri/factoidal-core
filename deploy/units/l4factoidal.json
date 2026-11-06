@@ -1,0 +1,203 @@
+{
+ "schema": "factoidal-deploy-units-v1",
+ "engine": "l4factoidal",
+ "shim": "formal/lean4/Wasm/l4_shim.c",
+ "stack": "8MB",
+ "extra-c": [
+  {
+   "src": "third_party/hacl/src/Hacl_Ed25519.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_Curve25519_51.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_Hash_SHA2.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_P256.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_Bignum64.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_Bignum.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_AEAD_Chacha20Poly1305.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_Chacha20.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_MAC_Poly1305.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_HKDF.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_HMAC.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_Hash_SHA1.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_Hash_Blake2s.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_Hash_Blake2b.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Lib_Memzero0.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_HPKE_Curve51_CP32_SHA256.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "formal/lean4/ffi/hacl_ed25519.c",
+   "name": "l4_hacl_shim",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "formal/lean4/ffi/hacl_p256.c",
+   "name": "l4_hacl_p256_shim",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "formal/lean4/ffi/hacl_rsa.c",
+   "name": "l4_hacl_rsa_shim",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "formal/lean4/ffi/hacl_chachapoly.c",
+   "name": "l4_hacl_chachapoly_shim",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "formal/lean4/ffi/hacl_kdf.c",
+   "name": "l4_hacl_kdf_shim",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "formal/lean4/ffi/hacl_hpke.c",
+   "name": "l4_hacl_hpke_shim",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "formal/lean4/ffi/hacl_aesgcm.c",
+   "name": "l4_hacl_aesgcm_shim",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "formal/lean4/ffi/l4_ext.c"
+  },
+  {
+   "src": "formal/lean4/ffi/l4_hostread.c"
+  },
+  {
+   "src": "formal/lean4/Wasm/l4_stubs.c"
+  }
+ ],
+ "entries": [
+  "l4_init",
+  "l4_version_c",
+  "l4_bgp_query_c",
+  "l4_call_c",
+  "l4_call_blob_c",
+  "l4_call_blob_io_c",
+  "l4_free_result",
+  "l4_free_blob",
+  "l4_collect",
+  "l4_mem_report_c",
+  "l4_mem_stats_c",
+  "l4_heap_tags_c",
+  "l4_mi_option_set",
+  "malloc",
+  "free"
+ ],
+ "units": {}
+}
