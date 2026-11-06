@@ -337,6 +337,15 @@ structure XmppCollected where
   server and call `xmppSessionTlsUp` when it finishes. -/
   startTls : Bool := false
 
+/-- The rate key of an account's roster writes; `senderLimits` is their rate. -/
+private def rosterKeys (bare : String) : List String := ["roster:" ++ bare]
+
+/-- May this account's roster be written now? -/
+private def rosterOpen (srv : XmppOpenServer) (bare : Option String) : Bool :=
+  match bare with
+  | some b => (srv.senders.check srv.cfg.senderLimits srv.now (rosterKeys b)).isNone
+  | none => true
+
 /-- Hold a stanza for an account with no bound session (RFC 6121 section 8.5.2.1.1), within the
 caps and, for a stanza a session sent, the sender's rate. Held, it is one new item of the kept
 state. A stanza that may not wait (`Server.holdable`) is dropped. A message to a name with no
@@ -422,7 +431,8 @@ private def perform (sender : Option String) (srv : XmppOpenServer) (c : XmppCol
         ((ds.filter (·.held)).map (fun d => (d.to, d.render)))
     | _, _ => (srv, c)
   | .saveRoster bare encoded =>
-      ({ srv with rosters := srv.rosters.insert bare (rosterDecode encoded) },
+      ({ srv with rosters := srv.rosters.insert bare (rosterDecode encoded)
+                  senders := srv.senders.record srv.cfg.senderLimits srv.now (rosterKeys bare) },
        { c with rostersSaved := if c.rostersSaved.contains bare then c.rostersSaved
                                 else c.rostersSaved ++ [bare]
                 store := c.store ++ (if srv.cfg.persist then [(StateCodec.pathOf "roster" bare, encoded)] else []) })
@@ -494,7 +504,8 @@ def drain (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected) :
           let roster := match os.session.bareJid with
             | some b => srv.rosters.getD b []
             | none => []
-          let (s', env', outs) := Server.step os.session { roster, guard := srv.guardFor os } unit
+          let (s', env', outs) := Server.step os.session
+            { roster, guard := srv.guardFor os, rosterOpen := rosterOpen srv os.session.bareJid } unit
           let (srv', c') := performAll os.session.bareJid
             { srv with failures := env'.guard.failures, backoff := env'.guard.backoff } c outs
           let (srv'', c'') := bindTransition srv' c' os.session.fullJid s'.fullJid
@@ -796,7 +807,8 @@ def stepOneUnit (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected
     let roster := match os.session.bareJid with
       | some b => srv.rosters.getD b []
       | none => []
-    let (s', env', outs) := Server.step os.session { roster, guard := srv.guardFor os } unit
+    let (s', env', outs) := Server.step os.session
+      { roster, guard := srv.guardFor os, rosterOpen := rosterOpen srv os.session.bareJid } unit
     let (srv', c') := performAll os.session.bareJid
       { srv with failures := env'.guard.failures, backoff := env'.guard.backoff } c outs
     let (srv'', c'') := bindTransition srv' c' os.session.fullJid s'.fullJid

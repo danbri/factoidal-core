@@ -770,3 +770,11 @@ Already on `main` from https://github.com/danbri/factoidal/issues/1128: `AuthGua
   read in one tail-recursive pass before the XML parser. Over a limit a stanza is refused as if it
   did not parse. Theorem `parseElement_shape`.
 - Tests: `#guard`s in `Wire.lean`; `npm/factoidal/test/xmpp-shape.test.mjs`.
+
+## 2026-11-06: rosters: a cap and a write rate (finding H1, the same cost by another route)
+
+- A roster write is a write of the whole roster to the kept state. `Config.maxRosterItems` (1000) and
+  `Env.rosterOpen` (the sender rate of `heldLimits`, per account) bound it: past either, a roster set
+  is answered `resource-constraint`, and a subscription stanza that would change the roster is dropped.
+- Not bound yet: a MIX or GC3 service writes its channel or group at each message. Neither runs on
+  `deploy/foafos-xmpp`.
