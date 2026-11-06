@@ -14,7 +14,7 @@ export function parseWasm(buf) {
   const str = () => { const n = leb(); const s = buf.toString('utf8', p, p + n); p += n; return s; };
   p = 8;
   const sections = [];
-  let imports = [], exports_ = [], funcBodies = [], dataSegs = [], linking = null, relocs = [], nameFn = new Map(), elemFuncs = [], nImportedFuncs = 0, startFn = null;
+  let imports = [], exports_ = [], funcBodies = [], dataSegs = [], linking = null, relocs = [], nameFn = new Map(), nImportedFuncs = 0, startFn = null;
   while (p < buf.length) {
     const id = u8(), size = leb(), start = p, end = p + size;
     let name = null;
@@ -35,15 +35,6 @@ export function parseWasm(buf) {
       const n = leb();
       for (let i = 0; i < n; i++) { const nm = str(), k = u8(), idx = leb(); exports_.push({ name: nm, kind: k, index: idx }); }
     } else if (id === 8) { startFn = leb(); }
-    else if (id === 9) {
-      const n = leb();
-      for (let i = 0; i < n; i++) {
-        const fl = leb();
-        if (fl !== 0) throw new Error('elem flags ' + fl);
-        if (u8() !== 0x41) throw new Error('elem offset'); const off = sleb(); u8();
-        const c = leb(); for (let j = 0; j < c; j++) elemFuncs[off + j] = leb();
-      }
-    }
     else if (id === 10) {
       const n = leb();
       for (let i = 0; i < n; i++) { const sz = leb(); funcBodies.push({ start: p, size: sz, secOff: p - start }); p += sz; }
@@ -89,7 +80,7 @@ export function parseWasm(buf) {
     }
     p = end;
   }
-  return { sections, imports, exports: exports_, funcBodies, dataSegs, linking, relocs, nameFn, nImportedFuncs, startFn, elemFuncs };
+  return { sections, imports, exports: exports_, funcBodies, dataSegs, linking, relocs, nameFn, nImportedFuncs, startFn };
 }
 
 export function buildGraph(w) {

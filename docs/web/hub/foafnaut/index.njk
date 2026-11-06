@@ -1,0 +1,29 @@
+---
+layout: false
+title: foafnaut
+permalink: /web/hub/foafnaut/
+eleventyExcludeFromCollections: true
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; connect-src 'self' https://cdn.jsdelivr.net{% if podConnections %} https: http://127.0.0.1:* http://localhost:*{% endif %}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <meta name="theme-color" content="#aaaaaa">
+  <title>foafnaut</title>
+  <style>
+    html,body{margin:0;height:100%;background:#aaa;overscroll-behavior:none}
+    canvas{position:fixed;inset:0;width:100vw;height:100dvh;display:block;touch-action:none}
+    #keys{position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:0;padding:0;font-size:16px}
+    #note{position:fixed;left:16px;right:16px;top:45%;font:16px monospace;text-align:center;color:#000}
+  </style>
+</head>
+<body>
+  <canvas id="page" aria-label="foafnaut browser, drawn by the Lean engine with WebGPU"></canvas>
+  <input id="keys" aria-label="Address" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+  <p id="note" role="status">Starting the Lean engine...</p>
+  <noscript>foafnaut needs JavaScript, WebAssembly and WebGPU.</noscript>
+  <script type="module" src="{{ '/web/hub/foafnaut/browser.mjs' | url }}"></script>
+</body>
+</html>
