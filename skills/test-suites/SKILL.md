@@ -997,3 +997,12 @@ same helper as a direct file command worked. Headless readiness uses fonts
 completion and screenshot paint flushing; an animation-frame wait has stalled.
 The measured failures, controls and reproduction are recorded in
 [`docs/20261102-svg-whole-wpt-corpus.md`](../../docs/20261102-svg-whole-wpt-corpus.md).
+
+## A test that starts `node --test`
+
+Node skips the files of a `node --test` child that inherits `NODE_TEST_CONTEXT`
+and exits 0 with empty standard output. A test that starts one removes that
+variable from the child's environment and checks the child's test count. On
+2026-11-06 `compositor-routing.test.mjs` passed alone and failed in `npm test`,
+which made the `web` set of https://github.com/danbri/factoidal-builds/actions/runs/42243523379
+(Builds run for 91e56fad8) go unpublished.
