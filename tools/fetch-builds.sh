@@ -21,6 +21,10 @@
 #
 # Usage: tools/fetch-builds.sh [--set native|web|foafnaut-web|all] [--commit <sha>]
 #                              [--allow-unrelated] [--check] [--strict]
+#                              [--release-dir DIRECTORY]
+#   --release-dir      offline input: build-info.json and SET.tar.gz in DIRECTORY;
+#                      requires one explicit set and a full 40-hex --commit.
+#                      No network request is made; --check verifies without installing.
 #   --set              which artifact sets (default: all = native + web;
 #                      foafnaut-web is opt-in)
 #   --commit           use the release built from exactly this commit
@@ -48,11 +52,14 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILDS_REPO="${FACTOIDAL_BUILDS_REPO:-danbri/factoidal-builds}"
 API="https://api.github.com/repos/$BUILDS_REPO/releases?per_page=100"
 
-SET=all; WANT_COMMIT=""; ALLOW_UNRELATED=0; CHECK=0; STRICT=0
+SET=all; WANT_COMMIT=""; ALLOW_UNRELATED=0; CHECK=0; STRICT=0; RELEASE_DIR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --set) SET="$2"; shift 2 ;;
     --commit) WANT_COMMIT="$2"; shift 2 ;;
+    --release-dir)
+      [ -n "${2:-}" ] || { echo "fetch-builds: --release-dir requires a directory" >&2; exit 2; }
+      RELEASE_DIR="$2"; shift 2 ;;
     --allow-unrelated) ALLOW_UNRELATED=1; shift ;;
     --check) CHECK=1; shift ;;
     --strict) STRICT=1; shift ;;
@@ -81,6 +88,25 @@ log() { echo "fetch-builds: $*" >&2; }
 fetch() { curl -fsSL --retry 4 --retry-delay 2 "$@"; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+if [ -n "$RELEASE_DIR" ]; then
+  [ "$SET" != all ] && [ ${#SETS[@]} -eq 1 ] && [ "$ALLOW_UNRELATED" = 0 ] \
+    || { log "--release-dir requires one explicit set and refuses --allow-unrelated"; exit 2; }
+  [[ "$WANT_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+    || { log "--release-dir requires a full 40-hex --commit"; exit 2; }
+  git -C "$REPO_ROOT" merge-base --is-ancestor "$WANT_COMMIT" HEAD \
+    || { log "offline source commit is not in this checkout's history"; exit 1; }
+  python3 - "$RELEASE_DIR" "${SETS[0]}" "$WANT_COMMIT" > "$TMP/cands-${SETS[0]}" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1]); s, source = sys.argv[2:]
+if root.is_symlink() or not root.is_dir(): raise ValueError('offline release directory must be regular')
+p = root / 'build-info.json'
+if p.is_symlink() or not p.is_file(): raise ValueError('offline manifest must be a regular file')
+info = json.loads(p.read_bytes())
+if info.get('source_repo') != 'danbri/factoidal-core' or info.get('source_commit') != source or info.get('set') != s:
+    raise ValueError('offline release source/repository/set mismatch')
+print(f'build-{source[:12]}-{s}', source)
+PY
+else
 # A token (GH_TOKEN or GITHUB_TOKEN, as in a GitHub Actions job) raises the
 # API rate limit; the unauthenticated limit is 60 requests an hour per IP.
 AUTH=()
@@ -88,10 +114,12 @@ TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 [ -n "$TOKEN" ] && AUTH=(-H "Authorization: Bearer $TOKEN")
 fetch -H 'Accept: application/vnd.github+json' ${AUTH[@]+"${AUTH[@]}"} "$API" -o "$TMP/releases.json" \
   || { log "cannot list releases of $BUILDS_REPO"; exit 1; }
+fi
 
 RC=0
 for S in "${SETS[@]}"; do
   # Candidate releases for this set, newest first: "<tag> <short sha>".
+  if [ -z "$RELEASE_DIR" ]; then
   python3 - "$TMP/releases.json" "$S" > "$TMP/cands-$S" <<'PY'
 import json, re, sys
 rel = json.load(open(sys.argv[1])); want = sys.argv[2]
@@ -103,6 +131,7 @@ for r in rel:
 for _, tag, sha in sorted(rows, reverse=True):
     print(tag, sha)
 PY
+  fi
   TAG=""; SHA=""
   while read -r t s; do
     if [ -n "$WANT_COMMIT" ]; then
@@ -131,7 +160,7 @@ PY
   RFULL=$(git -C "$REPO_ROOT" rev-parse -q --verify "$SHA^{commit}" 2>/dev/null || true)
   if [ -z "$RFULL" ]; then
     log "WARNING: $S: release commit $SHA is not in this clone; cannot compare it with HEAD"
-    [ "$STRICT" = 1 ] && { log "$S: --strict: drift not checked, failing"; RC=1; }
+    [ "$STRICT" = 1 ] && { log "$S: --strict: drift not checked, failing"; exit 1; }
   else
     CHANGED=$(git -C "$REPO_ROOT" diff --name-only "$RFULL" HEAD -- "${DRIFT_PATHS[@]}")
     if [ -n "$CHANGED" ]; then
@@ -140,45 +169,31 @@ PY
       printf '%s\n' "$CHANGED" | head -n 10 | sed 's/^/fetch-builds:   /' >&2
       [ "$N" -gt 10 ] && log "  ... and $((N - 10)) more"
       log "  the installed $S products may not match HEAD; build locally, or wait for a release of a later commit"
-      [ "$STRICT" = 1 ] && { log "$S: --strict: drift, failing"; RC=1; }
+      [ "$STRICT" = 1 ] && { log "$S: --strict: drift, failing"; exit 1; }
     fi
   fi
   STAMP="$REPO_ROOT/.factoidal-builds/$S.tag"
-  if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$TAG" ]; then
+  if [ -z "$RELEASE_DIR" ] && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$TAG" ]; then
     log "$S: $TAG already installed"; continue
   fi
-  if [ "$CHECK" = 1 ]; then log "$S: would install $TAG"; continue; fi
+  if [ "$CHECK" = 1 ] && [ -z "$RELEASE_DIR" ]; then log "$S: would install $TAG"; continue; fi
 
+  if [ -n "$RELEASE_DIR" ]; then
+    INFO="$RELEASE_DIR/build-info.json"; ARCHIVE="$RELEASE_DIR/$S.tar.gz"
+    log "$S: verifying offline $TAG"
+  else
   BASE="https://github.com/$BUILDS_REPO/releases/download/$TAG"
   log "$S: downloading $TAG"
   fetch "$BASE/build-info.json" -o "$TMP/build-info-$S.json" || { log "download failed"; exit 1; }
   fetch "$BASE/$S.tar.gz" -o "$TMP/$S.tar.gz" || { log "download failed"; exit 1; }
+  INFO="$TMP/build-info-$S.json"; ARCHIVE="$TMP/$S.tar.gz"
+  fi
   mkdir -p "$TMP/x-$S"
-  tar -xzf "$TMP/$S.tar.gz" -C "$TMP/x-$S"
-  # Verify: tarball digest, then every listed file, and no unlisted files.
-  python3 - "$TMP/build-info-$S.json" "$TMP/$S.tar.gz" "$TMP/x-$S" "$S" <<'PY' || { log "$S: VERIFICATION FAILED, nothing installed"; exit 1; }
-import hashlib, json, os, sys
-info = json.load(open(sys.argv[1])); tarball, root, s = sys.argv[2], sys.argv[3], sys.argv[4]
-def sha(p):
-    h = hashlib.sha256()
-    with open(p, 'rb') as f:
-        for b in iter(lambda: f.read(1 << 20), b''): h.update(b)
-    return h.hexdigest()
-art = info['artifacts'][s + '.tar.gz']
-assert sha(tarball) == art['sha256'], 'tarball sha256 mismatch'
-listed = art['files']
-seen = set()
-for dp, _, fs in os.walk(root):
-    for f in fs:
-        p = os.path.join(dp, f); rel = os.path.relpath(p, root)
-        if os.path.islink(p): continue
-        seen.add(rel)
-        assert rel in listed, 'unlisted file ' + rel
-        assert sha(p) == listed[rel]['sha256'], 'sha256 mismatch ' + rel
-missing = set(listed) - seen
-assert not missing, 'missing files ' + ', '.join(sorted(missing)[:5])
-print(f"verified {len(seen)} files from {info['source_commit'][:12]}", file=sys.stderr)
-PY
+  # Validate paths and all bytes in private staging before touching the checkout.
+  python3 "$REPO_ROOT/tools/verify-builds-release.py" "$INFO" "$ARCHIVE" "$TMP/x-$S" \
+    "$S" "${RFULL:-$SHA}" "$REPO_ROOT" "$TMP/build-info-$S.json" \
+    || { log "$S: VERIFICATION FAILED, nothing installed"; exit 1; }
+  if [ "$CHECK" = 1 ]; then log "$S: verified; would install $TAG"; continue; fi
   # Install: copy over the checkout. Paths are relative to the repo root and
   # are all listed in .gitignore, so git status stays clean.
   ( cd "$TMP/x-$S" && tar -cf - . ) | ( cd "$REPO_ROOT" && tar -xpf - )
@@ -231,7 +246,7 @@ if [ "$CHECK" = 0 ] && [ -f "$REPO_ROOT/.factoidal-builds/web.tag" ] \
 fi
 
 # ocaml-output/ symlinks into bin/<platform>/ (tests/local scripts use them).
-if [ -n "$PLAT" ] && [ -d "$REPO_ROOT/bin/$PLAT" ]; then
+if [ "$CHECK" = 0 ] && [ -n "$PLAT" ] && [ -d "$REPO_ROOT/bin/$PLAT" ]; then
   for b in w3c_runner factoidal factoidal-http owl_runner rdfc10_runner; do
     if [ ! -e "$REPO_ROOT/formal/fstar/ocaml-output/$b" ] && [ -x "$REPO_ROOT/bin/$PLAT/$b" ]; then
       ln -sf "../../../bin/$PLAT/$b" "$REPO_ROOT/formal/fstar/ocaml-output/$b"
