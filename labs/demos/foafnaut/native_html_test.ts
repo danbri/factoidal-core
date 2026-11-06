@@ -169,3 +169,23 @@ Deno.test("resource size, resource count, cancellation and URL schemes are bound
     assert.throws(()=>navigationURL("local.css","file:///etc/","https://example.test/"),/Remote HTML cannot/);
   }finally{await Deno.remove(dir,{recursive:true});}
 });
+Deno.test("the interactive FOAF graph runs as a browser page through Lean",async()=>{
+  const engine=await loadHTML(),shell={scale:1,tabs:[{title:"FOAF graph"}]};
+  const rdf=await Deno.readTextFile(new URL("./pages/foaf-demo.ttl",import.meta.url));
+  const start=engine.graphStart(rdf,1000,680,shell);
+  assert.ok(start.commands.includes("render")&&start.commands.includes("startClock"));
+  const position=(model:string)=>JSON.parse(model).positions as number[][];
+  const [x,y]=position(start.model)[3];
+  // Window coordinates: the chrome height is added here and removed by Lean.
+  const top=65,press=engine.graphEvent(start.model,2,x,y+top,1000,shell);
+  assert.equal(JSON.parse(press.model).selection,4);
+  const moved=engine.graphEvent(press.model,3,x-80,y+top+60,1000,shell);
+  assert.notDeepEqual(position(moved.model)[3],[x,y]);
+  // Nodes may overlap while dragging: the live view must still draw.
+  let crowded=moved.model;
+  for(let i=0;i<5;i++)crowded=engine.graphEvent(crowded,3,position(crowded)[0][0],position(crowded)[0][1]+top,1000,shell).model;
+  const page=engine.graphPage(crowded);
+  assert.match(page,/<svg/);
+  assert.ok(engine.compile(page,1000,680,{url:"foafnaut:graph",resources:[],shell}).primitiveCount>100);
+  assert.deepEqual(engine.shellLink("foafnaut:graph"),{go:"command",name:"graph",argument:""});
+});
