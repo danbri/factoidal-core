@@ -25,8 +25,9 @@ again. At most one resolution and one fetch.
 * The address decision is `Authz.chooseAddress` on every address of the
   host: an IP literal is its own address, a `localhost` name (RFC 6761 §6.3)
   is loopback, a name has the addresses the host resolved. Unless
-  `allowPrivateFetch`, a loopback, unspecified, link-local or private
-  address refuses the fetch (`Authz.privateAddr`). The fetch answer names
+  `allowPrivateFetch`, a special-purpose address (IANA IPv4 and IPv6
+  special-purpose registries, `L4Factoidal.Net.specialPurpose`, issue 1126)
+  refuses the fetch (`Authz.privateAddr`). The fetch answer names
   the address to connect to, so the host does not resolve the name again.
 * A host that cannot resolve names (`resolver := false`: a browser page)
   gets `fetch url accept none` for a name. The guard then covers IP

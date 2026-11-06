@@ -1013,6 +1013,7 @@ import L4Factoidal.LWS.SearchResultsTests
 import L4Factoidal.LWS.SnapshotSeal
 import L4Factoidal.LWS.SnapshotSealTests
 import L4Factoidal.LWS.DirLock
+import L4Factoidal.LWS.ContainerPath
 import L4Factoidal.LWS.AccessPolicy
 import L4Factoidal.LWS.AccessGrants
 import L4Factoidal.LWS.AccessGrantsTests
@@ -1042,6 +1043,7 @@ import L4Factoidal.WebDAV.MediaType
 import L4Factoidal.WebDAV.Backend
 import L4Factoidal.WebDAV.Server
 import L4Factoidal.WebDAV.State
+import L4Factoidal.Net.LoginLimit
 import L4Factoidal.WebDAV.Login
 import L4Factoidal.WebDAV.Local
 import L4Factoidal.WebDAV.Route
@@ -1220,3 +1222,4 @@ import L4Factoidal.Rendering.FontRequestsTests
 import L4Factoidal.Rendering.LayoutStackAudit
 import L4Factoidal.Rendering.RdfViewTests
 import L4Factoidal.Rendering.FloatFormat
+import L4Factoidal.LWS.Base64FastTests

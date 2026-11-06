@@ -466,6 +466,34 @@ def Expr.backendLocalList : List Expr → Bool
   | e :: es => Expr.backendLocal e && Expr.backendLocalList es
 end
 
+/-- Whether a FILTER can evaluate its condition directly against each backend
+row while keeping the SAME `EvalEnv`.
+
+This is intentionally wider than `backendLocal`, which also promises that
+changing `env.ext` cannot change the answer and is used by the SBM11 locality
+proofs. GeoSPARQL calls do read `env.ext`, but the registered built-ins consume
+only their arguments, and FILTER dispatch threads that environment unchanged.
+Only the eight IRIs and arities implemented by `Geo.extFns` are admitted here;
+unknown extension functions, nested non-local calls and EXISTS remain outside.
+BIND and OPTIONAL retain their existing `backendLocal` guard. -/
+def Expr.backendFilterLocal (condition : Expr) : Bool :=
+  condition.backendLocal ||
+    match condition with
+    | .functionCall fnIri args =>
+        let ns := "http://www.opengis.net/def/function/geosparql/"
+        let binary := ["sfEquals", "sfWithin", "sfContains", "sfIntersects",
+          "sfDisjoint", "sfTouches"].any (fun name => fnIri.val == ns ++ name)
+        let arity := (binary && args.length == 2) ||
+          (fnIri.val == ns ++ "distance" && (args.length == 2 || args.length == 3)) ||
+          (fnIri.val == ns ++ "envelope" && args.length == 1)
+        arity && Expr.backendLocalList args
+    | _ => false
+
+/-- Existing backend-local FILTER expressions keep their native path. -/
+theorem Expr.backendFilterLocal_of_backendLocal (condition : Expr)
+    (h : condition.backendLocal = true) : condition.backendFilterLocal = true := by
+  simp only [Expr.backendFilterLocal, h, Bool.true_or]
+
 /-! ## Expressions with no EXISTS inside them
 
 `Expr.existsPat` and `Expr.notExistsPat` are the only two `Expr`

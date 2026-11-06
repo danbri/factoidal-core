@@ -1570,7 +1570,7 @@ import { openSbm11, lwsSbm11Reader } from '@factoidal/core'
 
 const storeUrl = 'https://storage.example/stores/tiny/'   // holds CURRENT and gen/...
 const accessToken = 'an LWS access token'
-const reader = lwsSbm11Reader(storeUrl, { auth: `Bearer ${accessToken}` })
+const reader = await lwsSbm11Reader(storeUrl, { auth: `Bearer ${accessToken}` })   // the engine decides every URL
 const store = await openSbm11(storeUrl, { reader })
 const answer = store.query('SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }')
 console.log(JSON.stringify(answer.json), store.evidence)   // evidence: [{ resource, etag, lastModified, requests, partial, bytes }]
@@ -1581,7 +1581,11 @@ reader.close()
 Authority boundary. The container must be an absolute HTTP(S) URL without
 userinfo, query or fragment; use `opts.auth`/`opts.headers` for caller headers.
 Resource names are raw relative paths, not URL references. Invalid paths return
-null and appear in `reader.errors()` before any transport call.
+null and appear in `reader.errors()` before any transport call. The engine
+decides both (op `containerPath`, `formal/lean4/L4Factoidal/LWS/ContainerPath.lean`,
+theorem `resourceIn_under`: every resource URL has the container's origin and
+starts with the container URL, which ends with `/`). So `lwsSbm11Reader` is
+asynchronous: it loads the engine first.
 
 Browser compatibility: the default dedicated-worker XHR transport now refuses
 all caller-supplied `auth` and `headers`. Browser authentication requires an

@@ -105,11 +105,43 @@ function run (args, cwd) {
   })
 }
 
+/** Run a CLI command with `input` on standard input. */
+function runWithInput (args, input, cwd) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [CLI, ...args], { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+    let out = ''
+    let errText = ''
+    const timer = setTimeout(() => child.kill(), 120000)
+    child.stdout.on('data', (b) => { out += b })
+    child.stderr.on('data', (b) => { errText += b })
+    child.on('close', (code) => { clearTimeout(timer); resolve({ code, out, errText }) })
+    child.stdin.end(input)
+  })
+}
+
+/** SASL PLAIN attempts on one stream: the outcome of each ('success' or the
+ *  failure condition). Test code: the stanza text is written by hand. */
+async function saslAttempts (c, user, passwords) {
+  c.header()
+  await c.wait(/<\/stream:features>/)
+  const got = []
+  for (const pw of passwords) {
+    c.send(`<auth xmlns='urn:ietf:params:xml:ns:xmpp-sasl' mechanism='PLAIN'>${Buffer.from(`\u0000${user}\u0000${pw}`).toString('base64')}</auth>`)
+    const m = await c.wait(/<success[^>]*\/>|<success[\s\S]*?<\/success>|<failure[\s\S]*?<\/failure>/)
+    if (m[0].startsWith('<success')) { got.push('success'); break }
+    got.push((/<failure[^>]*><([a-z-]+)/.exec(m[0]) || [null, '?'])[1])
+  }
+  return got
+}
+
 async function main () {
   const dir = mkdtempSync(join(tmpdir(), 'webdav-xmpp-'))
   try {
     mkdirSync(join(dir, 'dav'), { recursive: true })
     mkdirSync(join(dir, 'xmpp'))
+    mkdirSync(join(dir, 'xmpp2'))
+    mkdirSync(join(dir, 'xmpp3'))
+    mkdirSync(join(dir, 'xmpp4'))
     // The storage: lws-serve --authz, owned by the did:key of owner.jwk,
     // filled through the LWS client (webdav-serve is read only, issue 1147).
     const owner = keyPair('ES256')
@@ -124,7 +156,7 @@ async function main () {
     await ownerClient.update(`${lwsOrigin}/hello.txt`, { body: 'hello over xmpp', mediaType: 'text/plain', precondition: 'none' })
     writeFileSync(join(dir, 'dav', 'notes.md'),
       `# Notes\n- kind: lws\n- url: ${lwsOrigin}/\n- auth: did-key\n- key-file: owner.jwk\n- users: guest\n`)
-    writeFileSync(join(dir, 'accounts'), 'alice:alice-pw\nbob:bob-pw\ncarol:carol-pw\n')
+    writeFileSync(join(dir, 'accounts'), 'alice:alice-pw\nbob:bob-pw\ncarol:carol-pw\ndave:dave-pw\n')
     writeFileSync(join(dir, 'bob.password'), 'bob-pw\n')
     writeFileSync(join(dir, 'wrong.password'), 'not-bob-pw\n')
 
@@ -284,19 +316,157 @@ async function main () {
         }
       })
 
-    // Not met by step 1; each names its issue and turns the run red when it
-    // starts to pass.
-    await xfail('webdav-serve --xmpp --users: allowed JIDs must still log in (login gate on the XMPP path)',
+    // https://github.com/danbri/factoidal/issues/1125 and
+    // https://github.com/danbri/factoidal/issues/1128: --users over XMPP.
+    // A second webdav-serve (resource dav2) with a users file, no --guest, and
+    // three allowed JIDs. Every decision is Lean: the allow list
+    // (HttpOverXmpp.plan), then Login.admit with the sender's bare JID as the
+    // requester (Wasm/Ops/WebDAV.lean, davRequesterOf).
+    mkdirSync(join(dir, 'davlogin'))
+    writeFileSync(join(dir, 'davlogin', 'owner.jwk'), JSON.stringify(ownerJwk), { mode: 0o600 })
+    writeFileSync(join(dir, 'davlogin', 'notes.md'),
+      `# Notes\n- kind: lws\n- url: ${lwsOrigin}/\n- auth: did-key\n- key-file: owner.jwk\n- users: anna, ben\n`)
+    const users = join(dir, 'users.txt')
+    for (const [name, pw] of [['anna', 'anna-dav-pw'], ['ben', 'ben-dav-pw']]) {
+      const r = await runWithInput(['webdav-user', users, name, '--iterations', '100000'], `${pw}\n`, dir)
+      assert(r.code === 0, `webdav-user ${name}: exit ${r.code}: ${r.errText}`)
+    }
+    const TARGET2 = `bob@${DOMAIN}/dav2`
+    const basic = (u, p) => ['Authorization', 'Basic ' + Buffer.from(`${u}:${p}`).toString('base64')]
+    const request2 = (c, ...rest) => xreq(c, TARGET2, ...rest)
+
+    await check('start refused: --users over XMPP on plain TCP to a host that is not loopback (exit 1)', async () => {
+      const r = await run(['webdav-serve', 'davlogin', '--xmpp', `bob@${DOMAIN}`, '--xmpp-password-file', 'bob.password',
+        '--xmpp-allow', `alice@${DOMAIN}`, '--xmpp-host', '192.0.2.1', '--xmpp-port', '5222', '--users', 'users.txt'], dir)
+      assert(r.code === 1 && /plain TCP to 192\.0\.2\.1 is refused|over XMPP sends each password/.test(r.errText), `exit ${r.code}: ${r.errText}`)
+    })
+    await check('start refused: --cert with --xmpp (no port is open; usage)', async () => {
+      const r = await run(['webdav-serve', 'davlogin', '--xmpp', `bob@${DOMAIN}`, '--xmpp-password-file', 'bob.password',
+        '--xmpp-allow', `alice@${DOMAIN}`, ...tlsArgs, '--users', 'users.txt', '--cert', 'cert.pem', '--key', 'key.pem'], dir)
+      assert(r.code !== 0 && r.errText.includes('--cert and --key do not apply with --xmpp'), `exit ${r.code}: ${r.errText}`)
+    })
+
+    let web2 = null
+    await check('webdav-serve --xmpp --users: starts, and says the login is limited per bare JID', async () => {
+      web2 = await start(['webdav-serve', 'davlogin', '--xmpp', `bob@${DOMAIN}`, '--xmpp-password-file', 'bob.password',
+        '--xmpp-allow', `alice@${DOMAIN},carol@${DOMAIN},dave@${DOMAIN}`, '--xmpp-resource', 'dav2', ...tlsArgs,
+        '--users', 'users.txt'], /^xmpp:(\S+)$/m, dir)
+      assert(web2.match[1] === TARGET2, web2.match[1])
+      for (let i = 0; i < 50 && !web2.errText().includes('per bare JID'); i++) await new Promise((resolve) => setTimeout(resolve, 100))
+      assert(web2.errText().includes('login from users.txt (failed logins limited per user name and per bare JID)'), web2.errText())
+    })
+    if (web2 !== null) {
+      const a = new TestClient(Number(xport), DOMAIN, ca)
+      const cl = new TestClient(Number(xport), DOMAIN, ca)
+      const d = new TestClient(Number(xport), DOMAIN, ca)
+      try {
+        await a.login('alice', 'alice-pw', 'l1')
+        await cl.login('carol', 'carol-pw', 'l2')
+        await d.login('dave', 'dave-pw', 'l3')
+
+        await check('--users over XMPP: an allowed JID with no credentials gets 401 (no --guest)', async () => {
+          const r = await request2(a, 'GET', '/notes/hello.txt')
+          assert(r.status === 401 && /www-authenticate/i.test(r.iq), `status ${r.status}: ${r.iq.slice(0, 300)}`)
+        })
+        await check('--users over XMPP: Basic credentials in the request headers log in (GET 200)', async () => {
+          const r = await request2(a, 'GET', '/notes/hello.txt', { headers: [basic('anna', 'anna-dav-pw')] })
+          assert(r.status === 200 && r.iq.includes('<text>hello over xmpp</text>'), `status ${r.status}: ${r.iq.slice(0, 300)}`)
+        })
+        await check('--users over XMPP: a wrong password gets 401', async () => {
+          const r = await request2(a, 'GET', '/notes/hello.txt', { headers: [basic('anna', 'wrong')] })
+          assert(r.status === 401, `status ${r.status}`)
+        })
+        await check('JID A: 6 wrong passwords (for another name); then JID B logs in with the right password (not blocked)', async () => {
+          const got = []
+          for (let i = 0; i < 6; i += 1) got.push((await request2(cl, 'GET', '/notes/hello.txt', { headers: [basic('mallory', `x${i}`)] })).status)
+          assert(got.slice(0, 5).every((x) => x === 401) && got[5] === 429, `statuses ${got.join(',')}`)
+          const r = await request2(a, 'GET', '/notes/hello.txt', { headers: [basic('ben', 'ben-dav-pw')] })
+          assert(r.status === 200, `JID B: status ${r.status}`)
+        })
+        await check('JID A is blocked for every name (the jid: key), also with the right password: 429 with Retry-After', async () => {
+          const r = await request2(cl, 'GET', '/notes/hello.txt', { headers: [basic('ben', 'ben-dav-pw')] })
+          assert(r.status === 429 && /retry-after/i.test(r.iq), `status ${r.status}: ${r.iq.slice(0, 300)}`)
+        })
+        await check('one JID that tries many names is refused at the sixth (one failure per name)', async () => {
+          const got = []
+          for (let i = 0; i < 6; i += 1) got.push((await request2(d, 'GET', '/notes/hello.txt', { headers: [basic(`u${i}`, 'x')] })).status)
+          assert(got.slice(0, 5).every((x) => x === 401) && got[5] === 429, `statuses ${got.join(',')}`)
+        })
+        await check("JID A's 16 open chunked requests: 4 wait, 12 get resource-constraint; JID B's chunked request is served", async () => {
+          let refused = 0
+          for (let i = 0; i < 16; i += 1) {
+            a.send(`<iq type='set' id='ck${i}' to='${TARGET2}'><req xmlns='urn:xmpp:http' method='PROPFIND' resource='/notes/' version='1.1'>` +
+              `<headers xmlns='http://jabber.org/protocol/shim'><header name='Depth'>0</header></headers>` +
+              `<data><chunkedBase64 streamId='a${i}'/></data></req></iq>`)
+          }
+          for (let i = 4; i < 16; i += 1) {
+            const m = await a.wait(new RegExp(`<iq[^>]*id="ck${i}"[\\s\\S]*?</iq>`))
+            if (m[0].includes('resource-constraint')) refused += 1
+          }
+          assert(refused === 12, `refused ${refused}`)
+          const [hn, hv] = basic('ben', 'ben-dav-pw')
+          d.send(`<iq type='set' id='bk1' to='${TARGET2}'><req xmlns='urn:xmpp:http' method='PROPFIND' resource='/notes/' version='1.1'>` +
+            `<headers xmlns='http://jabber.org/protocol/shim'><header name='Depth'>0</header><header name='${hn}'>${hv}</header></headers>` +
+            `<data><chunkedBase64 streamId='b1'/></data></req></iq>`)
+          d.send(`<message to='${TARGET2}'><chunk xmlns='urn:xmpp:http' streamId='b1' nr='0' last='true'></chunk></message>`)
+          const m = await d.wait(/<iq[^>]*id="bk1"[\s\S]*?<\/iq>/)
+          assert(!m[0].includes('resource-constraint') && /statusCode="(207|429)"/.test(m[0]), m[0].slice(0, 300))
+        })
+      } finally {
+        a.close()
+        cl.close()
+        d.close()
+      }
+    }
+
+    await check('webdav-serve --help: the login limit over XMPP is keyed per bare JID', async () => {
+      const r = await run(['webdav-serve', '--help'], dir)
+      assert(/login limit[^\n]*bare JID/i.test(r.out + r.errText), 'no login limit keyed by JID in --help')
+    })
+
+    // xmpp-serve: the failed SASL login limit (issue 1128), on its own server so
+    // that its address counter (127.0.0.1) does not block the logins above.
+    const xs2 = await start(['xmpp-serve', 'xmpp2', '--port', '0', '--domain', DOMAIN, '--accounts', 'accounts',
+      '--cert', 'cert.pem', '--key', 'key.pem'], /^xmpps:\/\/127\.0\.0\.1:(\d+)$/m, dir)
+    const port2 = Number(xs2.match[1])
+    await check('xmpp-serve: 5 failed SASL logins on one stream are not-authorized; the 6th (right password) is temporary-auth-failure', async () => {
+      const c = new TestClient(port2, DOMAIN, ca)
+      try {
+        const got = await saslAttempts(c, 'alice', ['w1', 'w2', 'w3', 'w4', 'w5', 'alice-pw'])
+        assert(got.slice(0, 5).every((x) => x === 'not-authorized') && got[5] === 'temporary-auth-failure', got.join(','))
+      } finally { c.close() }
+    })
+    await check('xmpp-serve: a new stream from the same address is refused too, for another account', async () => {
+      const c = new TestClient(port2, DOMAIN, ca)
+      try {
+        const got = await saslAttempts(c, 'carol', ['carol-pw'])
+        assert(got[0] === 'temporary-auth-failure', got.join(','))
+      } finally { c.close() }
+    })
+    await check('xmpp-serve --dangerously-disable-ratelimits: a start warning; 8 failures, then the right password logs in', async () => {
+      const xs3 = await start(['xmpp-serve', 'xmpp3', '--port', '0', '--domain', DOMAIN, '--accounts', 'accounts',
+        '--cert', 'cert.pem', '--key', 'key.pem', '--dangerously-disable-ratelimits'], /^xmpps:\/\/127\.0\.0\.1:(\d+)$/m, dir)
+      assert(xs3.errText().includes('WARNING: --dangerously-disable-ratelimits: failed SASL logins are NOT limited'), xs3.errText())
+      const c = new TestClient(Number(xs3.match[1]), DOMAIN, ca)
+      try {
+        const got = await saslAttempts(c, 'alice', ['w1', 'w2', 'w3', 'w4', 'w5', 'w6', 'w7', 'w8', 'alice-pw'])
+        assert(got.slice(0, 8).every((x) => x === 'not-authorized') && got[8] === 'success', got.join(','))
+      } finally { c.close() }
+    })
+
+    // Row C4 of docs/designissues/2026-10-28-feature-combination-safety.md:
+    // a server offers PLAIN (the password in clear text) only on TLS or on a
+    // loopback listener. Not met yet; it stays under issue 1125.
+    await xfail('xmpp-serve on a non-loopback address without --cert does not offer SASL PLAIN',
       'https://github.com/danbri/factoidal/issues/1125', async () => {
-        writeFileSync(join(dir, 'users.txt'), 'alice:placeholder\n')
-        const r = await run(['webdav-serve', 'dav', '--xmpp', `bob@${DOMAIN}`, '--xmpp-password-file', 'bob.password',
-          '--xmpp-allow', `alice@${DOMAIN}`, ...tlsArgs, '--users', 'users.txt', '--port', '0'], dir)
-        assert(r.code === 0, `exit ${r.code}: ${r.errText.trim().split('\n').slice(-1)[0]}`)
-      })
-    await xfail('the login-limit key on the XMPP path is the bare JID of the sender, never empty',
-      'https://github.com/danbri/factoidal/issues/1128', async () => {
-        const r = await run(['webdav-serve', '--help'], dir)
-        assert(/login limit[^\n]*bare JID/i.test(r.out + r.errText), 'no login limit keyed by JID on the XMPP path')
+        const xs4 = await start(['xmpp-serve', 'xmpp4', '--port', '0', '--host', '0.0.0.0', '--domain', DOMAIN,
+          '--accounts', 'accounts'], /^xmpps?:\/\/0\.0\.0\.0:(\d+)$/m, dir)
+        const c = new TestClient(Number(xs4.match[1]), DOMAIN)
+        try {
+          c.header()
+          const m = await c.wait(/<stream:features>[\s\S]*?<\/stream:features>/)
+          assert(!m[0].includes('>PLAIN<'), 'PLAIN is offered on a plain-TCP listener bound to 0.0.0.0')
+        } finally { c.close() }
       })
   } finally {
     for (const c of children) {

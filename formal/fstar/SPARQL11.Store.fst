@@ -1447,12 +1447,27 @@ and eval_ask_query_backend_dataset (q : query) (dsb : dataset_backend)
 // route. The rewrite cannot live inside the mutually recursive group
 // above — replacing q_pattern breaks its termination metric — so these
 // top-level entries do it once and delegate. Consumers call these.
+//
+// A query with FROM or FROM NAMED replaces the dataset (SPARQL 1.1 section
+// 13.2): GRAPH ranges over the named graphs it names only (sections 13.2.2,
+// 18.6; W3C bindings/graph-from-named-1 to -3). The backend runners do not
+// read q_dataset, so such a query runs on the materialized dataset through
+// the reference evaluator, whose apply_query_dataset implements section
+// 13.2. Issue https://github.com/danbri/factoidal/issues/738.
 let run_select_query_backend_dataset (q : query) (dsb : dataset_backend)
   : option solution_sequence =
+  if Cons? q.q_dataset then
+    let ds = materialize_dataset_backend dsb in
+    Some (eval_select_query q ds.ds_default ds)
+  else
   eval_select_query_backend_dataset
     ({ q with q_pattern = rewrite_query_bnodes_pattern q.q_pattern }) dsb
 
 let run_ask_query_backend_dataset (q : query) (dsb : dataset_backend)
   : option bool =
+  if Cons? q.q_dataset then
+    let ds = materialize_dataset_backend dsb in
+    Some (eval_ask_query q ds.ds_default ds)
+  else
   eval_ask_query_backend_dataset
     ({ q with q_pattern = rewrite_query_bnodes_pattern q.q_pattern }) dsb

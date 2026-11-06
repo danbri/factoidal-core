@@ -1482,7 +1482,7 @@ theorem evalPatternBackend_allowed (env : EvalEnv) (dsb : DatasetBackend) (ds : 
   | .filter c q, hp, gb, a, hr => by
     have e : evalPatternBackend env dsb (.filter c q) gb =
         (evalPatternBackend env dsb q gb).filter (fun row => ebvOrFalse (Expr.evalIn env row c)) := by
-      simp [evalPatternBackend, hp.1]
+      simp [evalPatternBackend, hp.1, Expr.backendFilterLocal_of_backendLocal c hp.1]
     rw [e, ← filterFn_local env hp.1 a]
     exact .filter (evalPatternBackend_allowed env dsb ds hn hnd q hp.2 gb a hr)
   | .leftJoin l r c, hp, gb, a, hr => by

@@ -196,7 +196,9 @@ async function openStream (engine, config, options, onFeed, onClosed) {
  * @param {string} [options.resource]
  * @param {object[]} [options.mounts] the WebDAV handle's mounts, passed unread (the engine refuses writable local mounts without the opt-in)
  * @param {boolean} [options.dangerouslyAllowWritableWithoutLogin]
- * @param {Function} options.step `async ({method, target, headers, body}) => ({status, headers, body})`
+ * @param {boolean} [options.login] the WebDAV handle has a users file (its `ready.login`, passed unread)
+ * @param {number} [options.tickMs] how often the clock is given to the engine (default 1000)
+ * @param {Function} options.step `async ({method, target, headers, body, requester}) => ({status, headers, body})`
  * @param {object} [options.engine]
  * @param {Function} [options.onError]
  * @param {number} [options.maxBuffered] residual bytes the engine may hold before the socket is closed (default 16 MiB)
@@ -211,6 +213,7 @@ export async function connectHttpTarget (options = {}) {
   config.allow = Array.isArray(options.allow) ? options.allow : []
   if (Array.isArray(options.mounts)) config.mounts = options.mounts
   if (options.dangerouslyAllowWritableWithoutLogin === true) config.dangerouslyAllowWritableWithoutLogin = true
+  if (options.login === true) config.login = true
 
   let stream = null
   /** One request the engine named: carried to `step`, answered. */
@@ -221,7 +224,10 @@ export async function connectHttpTarget (options = {}) {
         method: request.method,
         target: request.target,
         headers: request.headers || [],
-        body: new Uint8Array(Buffer.from(request.bodyBase64 || '', 'base64'))
+        body: new Uint8Array(Buffer.from(request.bodyBase64 || '', 'base64')),
+        // The sender's bare JID as the engine named it (issue 1128),
+        // passed unread to the WebDAV handle's login.
+        requester: request.requester
       })
       answer = {
         status: response.status,
@@ -243,11 +249,20 @@ export async function connectHttpTarget (options = {}) {
     for (const r of answer.requests || []) carry(r)
   })
   const jid = await stream.bound
+  // The clock for the time limit of requests that wait for chunks
+  // (https://github.com/danbri/factoidal/issues/1128); the engine decides.
+  const timer = setInterval(() => {
+    if (!stream.isOpen()) return
+    try {
+      stream.write(call(engine, 'xmppClientTick', [stream.handle, String(Date.now())]).send)
+    } catch (_error) { /* handle gone */ }
+  }, typeof options.tickMs === 'number' ? options.tickMs : 1000)
+  stream.closed.then(() => clearInterval(timer))
   return {
     jid,
     writableWithoutLogin: stream.opened.writableWithoutLogin || [],
     closed: stream.closed,
-    close: () => stream.close()
+    close: () => { clearInterval(timer); return stream.close() }
   }
 }
 

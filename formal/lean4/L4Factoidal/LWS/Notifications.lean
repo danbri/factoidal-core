@@ -135,6 +135,22 @@ subscription is deactivated are all decided here.
   a POST there creates nothing (405 for a data resource, 404 for a missing
   path), and Touchstone's notification tests subscribe with the storage
   description as the inbox (`inbox: "${storage}"`).
+* Requests to private addresses (https://github.com/danbri/factoidal/issues/1126,
+  invariant I5 of `docs/designissues/2026-10-28-feature-combination-safety.md`).
+  An inbox is refused with 400 when an address known at subscription is
+  special-purpose or the host is a localhost name (`subscriptionEgress`,
+  `L4Factoidal.Net.specialPurpose`: the IANA IPv4 and IPv6 special-purpose
+  registries). Every delivery, also to an access-request, access-grant or
+  controller inbox, passes `egressOf` just before the host makes it: the host
+  resolves the name then, the engine chooses the address, and the host
+  connects to that address (`deliveries_pinned`, `egressOf_refuses_special`),
+  so a name that resolves to a public address at subscription and to a
+  private one at delivery is refused at delivery. A refused delivery counts
+  as a failure with no retry. `Config.allowPrivateFetch` (the operator's
+  `--allow-private-fetch`) turns both checks off. Deliveries to one
+  destination (host and port) are limited for all subscriptions together:
+  `Config.deliveryDestLimit` (default 10) per window (`admitDest`, theorem
+  `admit_per_destination`).
 * The webhook suite, "Security Considerations": "Subscription Abuse: Rate
   limiting and endpoint verification are suggested to prevent abuse of the
   subscription mechanism." Rate limiting (issue 915): at most
@@ -155,6 +171,7 @@ subscription is deactivated are all decided here.
 import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.Snapshot
 import L4Factoidal.LWS.InboxGuard
+import L4Factoidal.Net.Egress
 import L4Factoidal.Crypto.SHA2
 
 namespace L4Factoidal.LWS.Notifications
@@ -562,6 +579,14 @@ structure Pending where
   attempt : Nat
 deriving Repr, Inhabited, DecidableEq
 
+/-- The delivery window of one destination: the key (`destKey`), when the
+window began, and how many deliveries went in it. -/
+structure DestWindow where
+  key : String
+  start : Nat := 0
+  count : Nat := 0
+deriving Repr, Inhabited, DecidableEq
+
 /-- The notification state of one storage. `seq` numbers subscriptions,
 activities and deliveries; `revision` advances when a subscription is
 made, cancelled or deactivated, so the host knows to persist. -/
@@ -575,6 +600,8 @@ structure NotifState where
   /-- Activities over the delivery limit, waiting for the end of their
   subscription's window: (subscription id, activity), oldest first. -/
   held : List (String × Json) := []
+  /-- The delivery window of each destination (`admitDest`). Not persisted. -/
+  dests : List DestWindow := []
 deriving Repr, Inhabited
 
 /-- The most deliveries kept waiting for an answer; the oldest are dropped. -/
@@ -595,10 +622,14 @@ window of `window` seconds; `limit` 0 turns the limit off. -/
 structure Rate where
   limit : Nat := 10
   window : Nat := 60
+  /-- At most `destLimit` deliveries per destination in a window, for all
+  subscriptions together (issue 1126); 0 turns it off. -/
+  destLimit : Nat := 10
 deriving Repr, Inhabited
 
 /-- The rate of a configuration. -/
-def _root_.L4Factoidal.LWS.Config.rate (cfg : Config) : Rate := ⟨cfg.deliveryLimit, cfg.deliveryWindow⟩
+def _root_.L4Factoidal.LWS.Config.rate (cfg : Config) : Rate :=
+  ⟨cfg.deliveryLimit, cfg.deliveryWindow, cfg.deliveryDestLimit⟩
 
 /-- **One delivery decision** for subscription `s` at time `now`: a window
 that has ended starts again at `now`; then a delivery is admitted when the
@@ -659,6 +690,129 @@ theorem admit_count_le (rate : Rate) (now : Nat) (s : Subscription) (hl : 0 < ra
     split <;> simp_all <;> omega
   · simp only [hw, ↓reduceIte, hl0, Bool.false_eq_true]
     split <;> simp_all <;> omega
+
+/-- The state `admit` leaves when it refuses: the window, started again
+when it has ended, with nothing counted. -/
+def windowed (rate : Rate) (now : Nat) (s : Subscription) : Subscription :=
+  if s.windowStart + rate.window ≤ now then { s with windowStart := now, windowCount := 0 } else s
+
+/-! ## The limit per destination (https://github.com/danbri/factoidal/issues/1126)
+
+Many subscriptions to one inbox would multiply the deliveries to it: the
+rate above is per subscription. Each delivery also passes `admitDest`, keyed
+by the host and port of the inbox URL (`destKey`), with the window length of
+the rate and at most `Rate.destLimit` deliveries per window. A delivery that
+the destination refuses waits in `held`, as one over its subscription's
+limit does. Limit: two names of one address are two destinations; the
+address is known only at delivery time (`egressOf`). -/
+
+/-- The destination of an inbox URL: its host (lower case) and port. -/
+def destKey (u : String) : String :=
+  match L4Factoidal.Net.authority? u with
+  | some (h, p) => h ++ ":" ++ toString p
+  | none => u
+
+/-- The window of a destination; an empty one when it has none. -/
+def destWindowOf (ds : List DestWindow) (key : String) : DestWindow :=
+  (ds.find? (·.key == key)).getD { key }
+
+/-- One decision on one destination window. -/
+def admitDestWindow (rate : Rate) (now : Nat) (w : DestWindow) : Bool × DestWindow :=
+  let w0 := if w.start + rate.window ≤ now then { w with start := now, count := 0 } else w
+  if rate.destLimit == 0 then (true, w0)
+  else if w0.count < rate.destLimit then (true, { w0 with count := w0.count + 1 })
+  else (false, w0)
+
+/-- **One per-destination decision** at time `now` for destination `key`:
+its window decides; windows of other destinations that have ended are
+forgotten. -/
+def admitDest (rate : Rate) (now : Nat) (key : String) (ds : List DestWindow) :
+    Bool × List DestWindow :=
+  let r := admitDestWindow rate now (destWindowOf ds key)
+  (r.1, r.2 :: ds.filter (fun w => w.key != key && now < w.start + rate.window))
+
+/-- The number of deliveries to `key` that `admitDest` lets through for
+decisions at the times `ts`, in order. -/
+noncomputable def admitsDest (rate : Rate) (key : String) : List Nat → List DestWindow → Nat
+  | [], _ => 0
+  | t :: ts, ds => (if (admitDest rate t key ds).1 then 1 else 0) +
+      admitsDest rate key ts (admitDest rate t key ds).2
+
+theorem destWindowOf_key (ds : List DestWindow) (key : String) :
+    (destWindowOf ds key).key = key := by
+  unfold destWindowOf
+  cases h : ds.find? (·.key == key) with
+  | none => rfl
+  | some w =>
+      have := List.find?_some h
+      simpa using this
+
+theorem admitDestWindow_key (rate : Rate) (now : Nat) (w : DestWindow) :
+    (admitDestWindow rate now w).2.key = w.key := by
+  unfold admitDestWindow
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+theorem destWindowOf_cons_self (w : DestWindow) (ds : List DestWindow) (key : String)
+    (h : w.key = key) : destWindowOf (w :: ds) key = w := by
+  simp [destWindowOf, List.find?_cons, h]
+
+/-- After a decision on `key`, the window of `key` is the one the decision
+left. -/
+theorem destWindowOf_admitDest (rate : Rate) (now : Nat) (key : String) (ds : List DestWindow) :
+    destWindowOf (admitDest rate now key ds).2 key =
+      (admitDestWindow rate now (destWindowOf ds key)).2 := by
+  have hk : (admitDestWindow rate now (destWindowOf ds key)).2.key = key := by
+    rw [admitDestWindow_key, destWindowOf_key]
+  exact destWindowOf_cons_self _ _ _ hk
+
+/-- **At most `destLimit` deliveries to one destination in one window**
+(issue 1126). For decisions at times before the end of the destination's
+window, `admitDest` lets through at most the number of deliveries left in
+that window, however many subscriptions or access records name the
+destination. -/
+theorem admit_per_destination (rate : Rate) (key : String) (hl : 0 < rate.destLimit) :
+    ∀ (ts : List Nat) (ds : List DestWindow),
+      (∀ t ∈ ts, t < (destWindowOf ds key).start + rate.window) →
+      (destWindowOf ds key).count ≤ rate.destLimit →
+      admitsDest rate key ts ds ≤ rate.destLimit - (destWindowOf ds key).count := by
+  intro ts
+  induction ts with
+  | nil => intro ds _ _; simp [admitsDest]
+  | cons t ts ih =>
+      intro ds hts hc
+      have ht : ¬ ((destWindowOf ds key).start + rate.window ≤ t) := by
+        have := hts t (List.mem_cons_self ..); omega
+      have hl0 : (rate.destLimit == 0) = false := by
+        cases h : rate.destLimit with
+        | zero => omega
+        | succ _ => rfl
+      have hw := destWindowOf_admitDest rate t key ds
+      have hfst : (admitDest rate t key ds).1 = (admitDestWindow rate t (destWindowOf ds key)).1 := rfl
+      by_cases hlt : (destWindowOf ds key).count < rate.destLimit
+      · have hadm : admitDestWindow rate t (destWindowOf ds key) =
+            (true, { destWindowOf ds key with count := (destWindowOf ds key).count + 1 }) := by
+          simp [admitDestWindow, ht, hl0, hlt]
+        rw [hadm] at hw hfst
+        simp only at hw
+        have hrest : ∀ x ∈ ts, x < (destWindowOf (admitDest rate t key ds).2 key).start + rate.window := by
+          intro x hx; rw [hw]; exact hts x (List.mem_cons_of_mem _ hx)
+        have := ih (admitDest rate t key ds).2 hrest (by rw [hw]; simp only; omega)
+        rw [hw] at this
+        simp only at this
+        simp only [admitsDest, hfst, ↓reduceIte]
+        omega
+      · have hadm : admitDestWindow rate t (destWindowOf ds key) = (false, destWindowOf ds key) := by
+          simp [admitDestWindow, ht, hl0, hlt]
+        rw [hadm] at hw hfst
+        simp only at hw
+        have hrest : ∀ x ∈ ts, x < (destWindowOf (admitDest rate t key ds).2 key).start + rate.window := by
+          intro x hx; rw [hw]; exact hts x (List.mem_cons_of_mem _ hx)
+        have := ih (admitDest rate t key ds).2 hrest (by rw [hw]; exact hc)
+        rw [hw] at this
+        simp only [admitsDest, hfst, Bool.false_eq_true, ↓reduceIte, Nat.zero_add]
+        exact this
 
 /-- What signs deliveries: the verification method identifier and the
 signing function (Ed25519 in the wasm layer). -/
@@ -807,9 +961,20 @@ def emit (canRead : Option String → σ → String → Bool) (baseIri : String)
     (c, activityJson baseIri (activityId ns.run (ns.seq + i)) published c))
   let seq1 := ns.seq + changes.length
   let groups := routed canRead pre post now ns.subs acts
-  let decided : List (Subscription × Bool × List Json) := groups.map (fun (s, mine) =>
-    let (send, s') := admit rate now s
-    (s', send, mine.map (fun (x : Change × Json) => x.2)))
+  -- Each delivery passes the subscription's window (`admit`) and then the
+  -- destination's (`admitDest`, issue 1126).
+  let (decided, dests1) := groups.foldl
+    (fun (acc : List (Subscription × Bool × List Json) × List DestWindow)
+         (g : Subscription × List (Change × Json)) =>
+      let s := g.1
+      let as_ := g.2.map (fun (x : Change × Json) => x.2)
+      match admit rate now s with
+      | (true, s1) =>
+          match admitDest rate now (destKey s.inbox) acc.2 with
+          | (true, ds1) => (acc.1 ++ [(s1, true, as_)], ds1)
+          | (false, ds1) => (acc.1 ++ [(windowed rate now s, false, as_)], ds1)
+      | (false, s1) => (acc.1 ++ [(s1, false, as_)], acc.2))
+    ([], ns.dests)
   let sends := (decided.filter (·.2.1)).map (fun (s', _, as_) => (s', heldOf ns s'.id ++ as_))
   let waits := decided.filter (fun x => !x.2.1)
   let held1 := (ns.held.filter (fun h => !sends.any (·.1.id == h.1))) ++
@@ -822,7 +987,7 @@ def emit (canRead : Option String → σ → String → Bool) (baseIri : String)
   let pend : List Pending := sends.zipIdx.map (fun ((s, as_), k) =>
     { id := "d" ++ toString (seq1 + k), subId := s.id, inbox := s.inbox
       body := toStringCompact (envelopeJson baseIri as_), attempt := 1 })
-  ({ ns with seq := seq1 + sends.length, subs := subs', held := held2
+  ({ ns with seq := seq1 + sends.length, subs := subs', held := held2, dests := dests1
              revision := if heldChanged then ns.revision + 1 else ns.revision
              pending := (pend.reverse ++ ns.pending).take pendingLimit },
    pend.map (deliveryOf signer now))
@@ -834,10 +999,15 @@ def flush (baseIri : String) (signer : Option Signer) (now : Nat) (rate : Rate)
     (ns : NotifState) : NotifState × List Delivery :=
   let waiting := ns.subs.filter (fun s => !(heldOf ns s.id).isEmpty)
   let dead := waiting.filter (fun s => !live now s)
-  let ready := (waiting.filter (live now)).filterMap (fun s =>
-    match admit rate now s with
-    | (true, s') => some s'
-    | (false, _) => none)
+  let (ready, dests1) := (waiting.filter (live now)).foldl
+    (fun (acc : List Subscription × List DestWindow) s =>
+      match admit rate now s with
+      | (true, s') =>
+          match admitDest rate now (destKey s.inbox) acc.2 with
+          | (true, ds') => (acc.1 ++ [s'], ds')
+          | (false, ds') => (acc.1, ds')
+      | (false, _) => acc)
+    ([], ns.dests)
   let gone := (ready ++ dead).map (·.id)
   let orphans := ns.held.filter (fun h => !ns.subs.any (·.id == h.1))
   if gone.isEmpty && orphans.isEmpty then (ns, []) else
@@ -846,7 +1016,7 @@ def flush (baseIri : String) (signer : Option Signer) (now : Nat) (rate : Rate)
       body := toStringCompact (envelopeJson baseIri (heldOf ns s.id)), attempt := 1 })
   ({ ns with subs := ns.subs.map (fun s => (ready.find? (·.id == s.id)).getD s)
              held := ns.held.filter (fun h => !gone.contains h.1 && ns.subs.any (·.id == h.1))
-             seq := ns.seq + ready.length, revision := ns.revision + 1
+             seq := ns.seq + ready.length, revision := ns.revision + 1, dests := dests1
              pending := (pend.reverse ++ ns.pending).take pendingLimit },
    pend.map (deliveryOf signer now))
 
@@ -854,7 +1024,10 @@ def flush (baseIri : String) (signer : Option Signer) (now : Nat) (rate : Rate)
 least 1), or `none` when nothing waits. The host calls `lwsFlush` then. -/
 def nextWake (now : Nat) (rate : Rate) (ns : NotifState) : Option Nat :=
   let ends := (ns.subs.filter (fun s => live now s && !(heldOf ns s.id).isEmpty)).map
-    (fun s => Nat.max 1 (s.windowStart + rate.window - now))
+    (fun s =>
+      let w := destWindowOf ns.dests (destKey s.inbox)
+      let destEnd := if rate.destLimit != 0 && rate.destLimit ≤ w.count then w.start + rate.window else 0
+      Nat.max 1 (Nat.max (s.windowStart + rate.window) destEnd - now))
   ends.foldl (fun acc e => some (match acc with | some a => Nat.min a e | none => e)) none
 
 /-! ## Delivery outcomes (webhook suite §Notification Delivery) -/
@@ -873,20 +1046,22 @@ successful receipt") and clears the failure count. A retryable status
 before the last attempt gives the next attempt and the seconds to wait
 (1, then 2). 410 Gone deactivates the subscription at once; any other
 failure counts, and `failureLimit` failures in a row deactivate it. An
-unknown delivery id changes nothing. -/
+unknown delivery id changes nothing. `refused` is set when the host made no
+request because `egressOf` refused the destination (issue 1126): a failure
+with no retry. -/
 def deliveryResult (signer : Option Signer) (now : Nat) (id : String) (status : Nat)
-    (ns : NotifState) : NotifState × Option (Delivery × Nat) :=
+    (ns : NotifState) (refused : Bool := false) : NotifState × Option (Delivery × Nat) :=
   match ns.pending.find? (fun p => p.id == id) with
   | none => (ns, none)
   | some p =>
       let rest := ns.pending.filter (fun q => q.id != id)
       let ns1 := { ns with pending := rest }
-      if 200 ≤ status && status < 300 then
+      if !refused && 200 ≤ status && status < 300 then
         (updSub ns1 p.subId (fun s => { s with failures := 0 }), none)
-      else if status == 410 then
+      else if !refused && status == 410 then
         ({ updSub ns1 p.subId (fun s => { s with active := false }) with
            revision := ns.revision + 1 }, none)
-      else if retryable status && p.attempt < maxAttempts then
+      else if !refused && retryable status && p.attempt < maxAttempts then
         let p' := { p with attempt := p.attempt + 1 }
         ({ ns1 with pending := p' :: rest }, some (deliveryOf signer now p', 2 ^ (p.attempt - 1)))
       else
@@ -933,7 +1108,8 @@ structure SubRequest where
 suite §Creating a Webhook Subscription). The error is the status and the
 detail of the refusal. -/
 def readSubRequest (baseIri : String) (now : Nat) (body : ByteArray)
-    (loops : String → Bool := fun _ => false) :
+    (loops : String → Bool := fun _ => false)
+    (egressRefusal : String → Option String := fun _ => none) :
     Except (Nat × String) SubRequest := do
   let text ← (String.fromUTF8? body).elim (.error (400, "the request is not UTF-8")) .ok
   let j ← match parseJson text with
@@ -968,6 +1144,11 @@ def readSubRequest (baseIri : String) (now : Nat) (body : ByteArray)
       | some (_, _, ip) => pathIsContainer ip && !isSubscriptionPath ip
       | none => false) then
     .error (400, "inbox is a container of this storage under another name of this server (a host name, an address or localhost at its port): a delivery would create a resource and so another notification")
+  -- A special-purpose address or a localhost name (issue 1126). Delivery
+  -- checks again (`egressOf`).
+  match egressRefusal inbox with
+  | some w => .error (400, "inbox refused: " ++ w)
+  | none => pure ()
   let (expires, expiresAt) ← match j.field? "expires" with
     | none | some .null => .ok (none, none)
     | some (.string e) =>
@@ -978,6 +1159,63 @@ def readSubRequest (baseIri : String) (now : Nat) (body : ByteArray)
             else .ok (some e, some t)
     | some _ => .error (400, "expires is not an RFC 3339 date-time")
   .ok { topics := topics.eraseDups, inbox, expires, expiresAt }
+
+/-! ## Outbound requests (https://github.com/danbri/factoidal/issues/1126) -/
+
+/-- The egress policy of a configuration (`--allow-private-fetch`). -/
+def _root_.L4Factoidal.LWS.Config.egress (cfg : Config) : L4Factoidal.Net.EgressPolicy :=
+  { allowPrivate := cfg.allowPrivateFetch }
+
+/-- The refusal of an inbox at subscription time, when the addresses known
+then refuse it: an IP literal, a localhost name, or a name the host
+resolved for this request (`resolveNeeded?`). A name with no known address
+is not refused here; `egressOf` decides at each delivery. -/
+def subscriptionEgress (cfg : Config) (inbox : String) : Option String :=
+  if cfg.allowPrivateFetch then none else
+  match L4Factoidal.Net.authority? inbox with
+  | none => none
+  | some (h, _) =>
+      let texts : List String :=
+        match L4Factoidal.Net.addr? h with
+        | some _ => L4Factoidal.Net.candidates h []
+        | none => (cfg.resolved.lookup h).getD []
+      if !L4Factoidal.Net.localhostName h && texts.isEmpty then none else
+      match L4Factoidal.Net.choose cfg.egress h texts with
+      | .error w => some w
+      | .ok _ => none
+
+/-- **The delivery-time decision** for a delivery to `url`: the host
+resolves the URL's name (`L4Factoidal.Net.toResolve?`) just before the
+request and passes every address; the answer is the address the host
+connects to, or the refusal. Wasm op `lwsEgress`. It is
+`L4Factoidal.Net.target` under the configuration's egress policy. -/
+def egressOf (cfg : Config) (url : String) (resolved : List String) :
+    Except String (String × String) :=
+  L4Factoidal.Net.target cfg.egress url resolved
+
+/-- **Deliveries are pinned (I5).** An address `egressOf` names is the one
+`L4Factoidal.Net.choose` chose for the URL's host from the addresses passed
+at delivery time, and it is one of those addresses. The host connects to
+that address only (`lws/server.mjs`, `postTo`), so a name server answer
+after the decision cannot move the request. -/
+theorem deliveries_pinned {cfg : Config} {url : String} {resolved : List String}
+    {host a : String} (h : egressOf cfg url resolved = .ok (host, a)) :
+    ∃ port texts, L4Factoidal.Net.authority? url = some (host, port) ∧
+      texts = L4Factoidal.Net.candidates host resolved ∧
+      L4Factoidal.Net.choose cfg.egress host texts = .ok a ∧ a ∈ texts := by
+  obtain ⟨port, hu, hc⟩ := L4Factoidal.Net.target_choose h
+  exact ⟨port, _, hu, rfl, hc, (L4Factoidal.Net.choose_mem hc).1⟩
+
+/-- **No delivery to a special-purpose address** without
+`allowPrivateFetch`. -/
+theorem egressOf_refuses_special {cfg : Config} {url : String} {resolved : List String}
+    {host : String} {port : Nat} {a : L4Factoidal.Net.Addr}
+    (hp : cfg.allowPrivateFetch = false)
+    (hu : L4Factoidal.Net.authority? url = some (host, port))
+    (ha : a ∈ (L4Factoidal.Net.candidates host resolved).filterMap L4Factoidal.Net.addr?)
+    (hs : L4Factoidal.Net.specialPurpose a = true) (x : String × String) :
+    egressOf cfg url resolved ≠ .ok x :=
+  L4Factoidal.Net.target_refuses_special (p := cfg.egress) (by simp [Config.egress, hp]) hu ha hs x
 
 /-- The subscriptions an agent sees: its own. -/
 def ownedBy (agent : Option String) (ns : NotifState) : List Subscription :=
@@ -1045,7 +1283,7 @@ def subscriptionsStep (canRead : Option String → String → Bool) (cfg : Confi
         if ct != some mediaLwsJson && ct != some "application/json" then
           (problem 415 "a subscription request is application/lws+json" path
             [("accept-post", mediaLwsJson)], ns)
-        else match readSubRequest base now r.content (InboxGuard.loops cfg) with
+        else match readSubRequest base now r.content (InboxGuard.loops cfg) (subscriptionEgress cfg) with
           | .error (status, msg) => (problem status msg path, ns)
           | .ok q =>
               -- LWS §Subscription Authorization: read access to EVERY topic.

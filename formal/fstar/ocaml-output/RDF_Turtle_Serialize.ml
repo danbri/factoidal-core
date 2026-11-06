@@ -424,18 +424,19 @@ let rec candidate_namespaces_acc (iris : Prims.string Prims.list)
                (Parser_Turtle.validate_pn_local local)
            then candidate_namespaces_acc rest (ns :: acc)
            else candidate_namespaces_acc rest acc)
-let rec count_runs (sorted : Prims.string Prims.list) :
+let rec count_runs_loop (cur : Prims.string) (n : Prims.nat)
+  (rest : Prims.string Prims.list)
+  (acc : (Prims.string * Prims.nat) Prims.list) :
   (Prims.string * Prims.nat) Prims.list=
-  match sorted with
-  | [] -> []
-  | x::[] -> [(x, Prims.int_one)]
-  | x::y::rest ->
-      if x = y
-      then
-        (match count_runs (y :: rest) with
-         | (y', n)::more -> (y', (n + Prims.int_one)) :: more
-         | [] -> [(x, Prims.int_one)])
-      else (x, Prims.int_one) :: (count_runs (y :: rest))
+  match rest with
+  | [] -> FStar_List_Tot_Base.rev_acc acc [(cur, n)]
+  | y::r ->
+      if y = cur
+      then count_runs_loop cur (n + Prims.int_one) r acc
+      else count_runs_loop y Prims.int_one r ((cur, n) :: acc)
+let count_runs (sorted : Prims.string Prims.list) :
+  (Prims.string * Prims.nat) Prims.list=
+  match sorted with | [] -> [] | x::r -> count_runs_loop x Prims.int_one r []
 let count_desc_compare (a : (Prims.string * Prims.nat))
   (b : (Prims.string * Prims.nat)) : Prims.int=
   if (FStar_Pervasives_Native.snd a) = (FStar_Pervasives_Native.snd b)

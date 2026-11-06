@@ -198,6 +198,17 @@ structure Config where
   (`Notifications.admit`). 0 turns the limit off. -/
   deliveryLimit : Nat := 10
   deliveryWindow : Nat := 60
+  /-- The most webhook and inbox deliveries one destination (the host and
+  port of the inbox URL) gets in one window of `deliveryWindow` seconds, for
+  all subscriptions and access records together
+  (`Notifications.admitDest`, https://github.com/danbri/factoidal/issues/1126).
+  0 turns the limit off. -/
+  deliveryDestLimit : Nat := 10
+  /-- May an inbox be a special-purpose address (loopback, private,
+  link-local and the other IANA special-purpose ranges,
+  `L4Factoidal.Net.specialPurpose`)? Off by default; the operator's opt-in
+  is `--allow-private-fetch` (configuration `allowPrivateFetch`, issue 1126). -/
+  allowPrivateFetch : Bool := false
   /-- The inbox of the storage controller: when set, each new access
   request is announced there with a `Create` notification
   (`L4Factoidal.LWS.AccessGrants`, issue 920). -/

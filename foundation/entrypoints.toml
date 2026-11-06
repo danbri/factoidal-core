@@ -165,6 +165,10 @@ id = "wasm:datasetAddList"
 reason = "term-level: builds the rdf:first/rdf:rest triples of given terms on fresh blank nodes (RDF/Collections.lean listTriples) and inserts them (CertifiedDataset.insertQuads); reads no document"
 
 [[nonstage]]
+id = "wasm:lwsEgress"
+reason = "the delivery-time address decision of an LWS storage handle (LWS/Notifications.lean egressOf over Net/Egress.lean choose, issue 1126): an address or a refusal for one URL and the addresses the host resolved; reads no resource and no RDF data"
+
+[[nonstage]]
 id = "wasm:sameValue"
 reason = "SPARQL 1.1 = on two terms (SPARQL/SameValue.lean sameValue), reads no graph"
 
@@ -311,6 +315,10 @@ reason = "term-level: the IRI rdf:_n of one number (RDF/VocabularyTable.lean mem
 [[nonstage]]
 id = "wasm:memberOrdinal"
 reason = "term-level: the n of one rdf:_n IRI (RDF/VocabularyTable.lean memberOrdinal?), reads no graph"
+
+[[nonstage]]
+id = "wasm:containerPath"
+reason = "decides which URL a host may request under one HTTP(S) container (LWS/ContainerPath.lean: containerOf, resourceIn, segmentIn, within, parentIn); reads no RDF data (https://github.com/danbri/factoidal/issues/1127)"
 
 [[nonstage]]
 id = "npm:.#sameValue"
@@ -893,7 +901,7 @@ note = "npm/factoidal/bin/factoidal.mjs commandServe: serve.mjs listen or listen
 id = "wasm:queryRaw"
 stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader", "rdfsReasoner", "owlRlReasoner", "rhoDfReasoner", "shippedEvaluator"]
 covers = "part"
-note = "Wasm/Ops/QueryExtras.lean queryRawBy: parseTextToDatasetBy (readerOf, the RdfReader table), closeDefaultGraph (RDFS: rdfsReasoner.run; OWL-RL: owlRlReasoner.run; x-rdfscore: rhoDfReasoner.run), then evalRaw: shippedEvaluator.run with no backend (shippedRaw_reference: the reference answer). Not covered: the x-rdfsplus closure (RDFS.rdfsPlusClosureFix, no stage), the SPARQL grammar, the results formats and the table text (renderRaw)."
+note = "Wasm/Ops/QueryExtras.lean queryRawBy: parseTextToDatasetBy (readerOf, the RdfReader table), closeDefaultGraph (RDFS: rdfsReasoner.run; OWL-RL: owlRlReasoner.run; x-rdfscore: rhoDfReasoner.run), then evalRaw: shippedEvaluator.run with no backend (shippedRaw_reference: the reference answer). Not covered: the x-rdfsplus closure (RDFS.rdfsPlusClosureFix, no stage), the SPARQL grammar, full results-format fidelity and the table text (renderRaw). XML and xml-report now use QueryResult.toSrxReport: exact original serialization accepted by the actual XQuery context loader or its actual refusal; this is not namespace/schema validity or RDF round-trip preservation."
 
 [[entry]]
 id = "wasm:datasetQueryRaw"

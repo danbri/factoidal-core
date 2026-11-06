@@ -1,5 +1,5 @@
 import {decodePipelineDocument,encodePipelineDocument,MAX_PIPELINE_BYTES} from './pipeline-document.mjs';
-import {loadKnownPods,rememberPods,rootedPath} from './pod-storage.mjs';
+import {loadKnownPods,rememberPods} from './pod-storage.mjs';
 
 // Shared presentation/host IO for compositor recipes. Loading never executes a
 // pipeline. The caller supplies snapshot/restore and the worker's LWS transport.
@@ -33,7 +33,8 @@ export class PipelineLibrary extends HTMLElement {
     });
     this.$('.pod-choice').onchange=()=>{if(this.$('.pod-choice').value!=='')this.selectPod();};
     this.$('.list-pod').onclick=()=>this.podAction(()=>this.browse());
-    this.$('.parent-folder').onclick=()=>this.podAction(async()=>{const pod=this.selectedPod();const parent=new URL('../',this.folder??pod.url).href;return this.browse(parent.length>=pod.url.length?parent:pod.url);});
+    // The engine (storage worker, op containerPath) gives the folder above, never above the root.
+    this.$('.parent-folder').onclick=()=>this.podAction(async()=>{const pod=this.selectedPod();const {url}=await this.transport('parent',{pod,url:this.folder??pod.url});return this.browse(url);});
     this.$('.load-pod').onclick=()=>this.podAction(async()=>{
       const url=this.$('.pod-files').value;if(!url)throw Error('Select a file or folder first.');
       if(url.endsWith('/'))return this.browse(url);
@@ -42,8 +43,9 @@ export class PipelineLibrary extends HTMLElement {
       return loaded.etag?'Pipeline loaded. Edit it, then Run flow or Update loaded file.':'Pipeline loaded without an ETag. Save as a new file; an unguarded overwrite is not offered.';
     });
     this.$('.create-pod').onclick=()=>this.podAction(async()=>{
-      const pod=this.selectedPod(),url=rootedPath(this.folder??pod.url,this.$('.pod-filename').value);
-      const saved=await this.transport('save',{pod,url,text:this.snapshotText(),create:true});
+      // The storage worker forms the URL from the folder and the name (op containerPath).
+      const pod=this.selectedPod(),folder=this.folder??pod.url,name=this.$('.pod-filename').value;
+      const saved=await this.transport('save',{pod,folder,name,text:this.snapshotText(),create:true});
       // A subsequent overwrite requires an explicit load of the saved resource.
       return `Saved new pipeline: ${saved.url}. Open it before using Update loaded file.`;
     });

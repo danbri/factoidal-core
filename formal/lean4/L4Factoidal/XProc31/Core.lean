@@ -86,8 +86,11 @@ def xpathEnv (context : Option Document) (bindings : List (XPath4.QN × XPath4.S
   match context with
   | none => { ns := namespaces, vars := bindings }
   | some d =>
-    { docs := #[XPath4.Doc.ofNodes (documentNodes d) d.baseUri]
-      ctx := if d.value.isSome then d.value else if d.contentType == "application/json" || d.contentType.endsWith "+json" then
+    let binary := match d.value with
+      | some [.atom a] => match a.v with | .x (.bin ..) => true | _ => false
+      | _ => false
+    { docs := #[XPath4.Doc.ofNodes (if binary then [] else documentNodes d) d.baseUri]
+      ctx := if binary then some [.node ⟨0,0,none⟩] else if d.value.isSome then d.value else if d.contentType == "application/json" || d.contentType.endsWith "+json" then
         match XPath4.evalString "parse-json($raw)" { vars := [(⟨"", "raw", ""⟩, XPath4.sStr d.node.textContent)] } with
         | .ok value => some value
         | .error _ => none
@@ -216,7 +219,9 @@ def seqDocuments (env : XPath4.Env) (s : XPath4.Seq) (baseUri : String := "") : 
       let node ← nodeFromRef env 4096 n
       let textOnly := match node with | .text _ | .cdata _ => true | _ => false
       pure {node, baseUri := if textOnly then "" else baseUri, contentType := if textOnly then "text/plain" else "application/xml"}
-    | .atom a => pure {node := .text a.str, contentType := "application/json", value := some [.atom a]}
+    | .atom a =>
+      let binary := match a.v with | .x (.bin ..) => true | _ => false
+      pure {node := .text a.str, contentType := if binary then "application/octet-stream" else "application/json", value := some [.atom a]}
     | .map _ | .arr _ => pure {node := .text "", contentType := "application/json", baseUri, value := some (retainItems env 4096 [i])}
     | _ => unsupported "function item cannot be a document"
 

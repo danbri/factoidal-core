@@ -445,8 +445,11 @@ DIR holds the signing keys (DIR/authz-keys.json, mode 0600), sealed with
 FACTOIDAL_LWS_KEY when it is set. --rotate-after makes a new key when the
 current one is that old; the old key stays published until its tokens expire.
 --allow-http accepts http subject identifiers; --allow-private-fetch lets the
-server fetch documents from loopback, link-local and private addresses. Both
-are off by default and are for tests.
+server fetch documents from special-purpose addresses: loopback, private,
+link-local, shared (100.64.0.0/10), multicast, reserved and the other ranges
+of the IANA special-purpose registries, and localhost names
+(https://github.com/danbri/factoidal/issues/1126). Both are off by default
+and are for tests.
 CORS (https://github.com/danbri/factoidal/issues/923): by default every answer
 echoes a valid request Origin in Access-Control-Allow-Origin, so a page on
 another origin can read the metadata and keys and exchange a token; a
@@ -474,7 +477,8 @@ usage: factoidal lws-serve DIR (--authz DIR | --issuer IRI | --auth-config FILE 
                          [--paginate-always] [--moves all|data|off]
                          [--no-linkset-put] [--unstable-search-results] [--merkle]
                          [--controller-inbox URL] [--delivery-limit N]
-                         [--delivery-window SECONDS] [--redirects-max N]
+                         [--delivery-window SECONDS] [--delivery-dest-limit N]
+                         [--redirects-max N]
                          [--storage snapshot|files]
                          [--cors-origin ORIGIN]... [--no-cors]
 
@@ -569,6 +573,25 @@ The engine decides the file, its contents and every refusal
   --delivery-window SECONDS
                   the length of that window (config member deliveryWindow;
                   default 60)
+  --delivery-dest-limit N
+                  the most deliveries one destination (host and port of the
+                  inbox URL) gets in one window, for all subscriptions and
+                  access records together (config member deliveryDestLimit;
+                  default 10, 0 turns the limit off)
+                  https://github.com/danbri/factoidal/issues/1126
+  --allow-private-fetch
+                  let webhook, access-request, access-grant and controller
+                  inboxes be special-purpose addresses (loopback, private,
+                  link-local, shared 100.64.0.0/10, multicast, reserved and
+                  the other IANA special-purpose ranges) or localhost names,
+                  and let the --authz server fetch from them (config member
+                  allowPrivateFetch; default off). Without it such an inbox
+                  is refused with 400 when its address is known at
+                  subscription, and every delivery is checked again just
+                  before it is made, against the addresses resolved then;
+                  the server connects to the address it checked. For tests
+                  and closed networks only.
+                  https://github.com/danbri/factoidal/issues/1126
   --redirects-max N
                   the most previous identifiers of moved resources kept to
                   answer 301 Moved Permanently (config member redirectsMax;
@@ -752,6 +775,7 @@ usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
                             [--muc DOMAIN [--muc-members FILE]] [--mix DOMAIN] [--gc3 DOMAIN]
                             [--state-key FILE] [--max-connections N]
                             [--login-timeout SECONDS]
+                            [--dangerously-disable-ratelimits]
 
 Starts a Node TCP server that runs one engine session per connection and
 answers every byte through the engine's xmppSessionFeed operation.
@@ -811,6 +835,17 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
                    membership, stable participant ids, optional events. There is
                    no published GC3 spec; every wire format is invented and listed
                    in L4Factoidal/XMPP/Gc3.lean and danbri/factoidal issue 1236
+  --dangerously-disable-ratelimits
+                   no failed SASL login limit (a warning is printed at
+                   start); any client can then try passwords without end
+
+Failed SASL logins are limited by default
+(https://github.com/danbri/factoidal/issues/1128): after 5 failed logins in
+60 seconds for one account name (known or not) or from one client address
+(an IPv6 client by its /64), on one stream or on new ones, an attempt gets
+the SASL failure temporary-auth-failure, and no password is checked, also
+the right one, until that window ends. A malformed SASL payload checks no
+password and does not count.
 
 The server makes no protocol decision. Stream negotiation, SASL PLAIN and
 SCRAM-SHA-256, resource binding, the roster, presence subscription and
@@ -885,7 +920,9 @@ usage: factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]
                               [--login-limit N] [--login-window SECONDS]
                               [--dangerously-disable-ratelimits]
        factoidal webdav-serve CONFIGDIR --xmpp JID --xmpp-password-file FILE
-                 --xmpp-allow JID[,JID...] [--guest NAME] [--xmpp-host H] [--xmpp-port P] [--xmpp-tls]
+                 --xmpp-allow JID[,JID...] [--guest NAME] [--users FILE]
+                 [--login-limit N] [--login-window SECONDS] [--dangerously-disable-ratelimits]
+                 [--xmpp-host H] [--xmpp-port P] [--xmpp-tls]
 
 EMERGENCY MODE (https://github.com/danbri/factoidal/issues/1147): the server
 is READ ONLY. Every write method (PUT, DELETE, MKCOL, COPY, MOVE, PROPPATCH,
@@ -994,12 +1031,23 @@ NAT is reached this way with no inbound port.
                              --xmpp-host (127.0.0.0/8, ::1) is accepted.
   --xmpp-ca FILE             PEM certificates to trust for --xmpp-tls
   --dangerously-allow-writable-without-login
-                             start although a local mount is writable:
-                             there is no login on the XMPP path yet
-                             (https://github.com/danbri/factoidal/issues/1125),
-                             so every allowed JID writes as the owner.
-                             Without it such a start is refused.
+                             with no --users: start although a local mount
+                             is writable, so every allowed JID writes as the
+                             owner. Without it such a start is refused.
+                             With --users it is not needed.
   --xmpp-resource R          the resource to bind (default dav)
+
+Both checks apply to every request over XMPP
+(https://github.com/danbri/factoidal/issues/1125): the sender's bare JID must
+be in --xmpp-allow, and then the request acts as a user exactly as on TCP:
+the --guest user with no credentials, a user of --users with HTTP Basic
+credentials in the request's headers (xmpp-http-proxy passes Authorization
+unchanged). --users over XMPP needs --xmpp-tls or a loopback --xmpp-host.
+The failed-login limit over XMPP counts per user name and per bare JID of
+the sender (https://github.com/danbri/factoidal/issues/1128): one JID's
+failures do not block another JID. A request whose chunked body is not
+complete waits at most 60 seconds, and at most 4 such requests per sender
+(16 in total) wait at once; others get resource-constraint.
 
 It prints the bound JID (xmpp:user@domain/resource) on standard output.
 XEP-0332 is Deferred, and no WebDAV client speaks it: a reader runs
@@ -1211,7 +1259,7 @@ const VALUE_OPTIONS = {
   compact: new Set([]),
   serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2', 'allow-host', 'allow-origin']),
   'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
-    'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window',
+    'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window', 'delivery-dest-limit',
     'redirects-max', 'storage', 'cors-origin', 'authz', 'alg', 'token-lifetime', 'rotate-after',
     'saml-idp', 'saml-decrypt-key', 'allow-host', 'allow-origin']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config', 'allow-host', 'allow-origin']),
@@ -2339,6 +2387,10 @@ async function commandLwsServe (positional, options) {
       ...(typeof options['controller-inbox'] === 'string' ? { controllerInbox: options['controller-inbox'] } : {}),
       ...(options['delivery-limit'] !== undefined ? { deliveryLimit: natOption('delivery-limit', options['delivery-limit']) } : {}),
       ...(options['delivery-window'] !== undefined ? { deliveryWindow: natOption('delivery-window', options['delivery-window']) } : {}),
+      ...(options['delivery-dest-limit'] !== undefined ? { deliveryDestLimit: natOption('delivery-dest-limit', options['delivery-dest-limit']) } : {}),
+      // Inboxes at special-purpose addresses (issue 1126): passed unread;
+      // L4Factoidal/Net/Egress.lean decides.
+      ...(options['allow-private-fetch'] === true ? { allowPrivateFetch: true } : {}),
       ...(options['redirects-max'] !== undefined ? { redirectsMax: natOption('redirects-max', options['redirects-max']) } : {}),
       ...(typeof options.storage === 'string' ? { storage: options.storage } : {}),
       ...corsConfig(options),
@@ -2368,11 +2420,16 @@ async function commandLwsServe (positional, options) {
   // The engine's start notices (a stale lock taken over; encryption at rest
   // on or off), printed also with --quiet.
   for (const n of (await running.storage()).notices || []) err(`lws-serve: ${n}`)
+  // Printed also with --quiet: this option opens the local network to
+  // requests that remote parties choose (issue 1126).
+  if (options['allow-private-fetch'] === true) {
+    err('lws-serve: WARNING: --allow-private-fetch: webhook and inbox deliveries and authorization ' +
+      'server fetches may go to loopback, private, link-local and other special-purpose addresses')
+  }
   if (!quiet) {
     err(`lws-serve: listening on ${running.origin} for ${positional[0]}`)
     if (running.authz() !== null) err(`lws-serve: authorization server ${running.authz().issuer} (keys in ${authzDir})`)
     if (options['allow-http'] === true) err('lws-serve: WARNING: --allow-http: http subject identifiers are accepted')
-    if (options['allow-private-fetch'] === true) err('lws-serve: WARNING: --allow-private-fetch: private addresses may be fetched')
     if (insecure) {
       err('lws-serve: WARNING: --insecure-no-auth: every request is served without authorization')
       err('lws-serve: --insecure-no-auth: only the Host names of this listener are answered, and a ' +
@@ -2641,20 +2698,32 @@ async function webdavOverXmpp (configDir, options, quiet) {
   if (typeof options.xmpp !== 'string') throw new UsageError('--xmpp needs a JID')
   if (typeof options['xmpp-password-file'] !== 'string') throw new UsageError('--xmpp needs --xmpp-password-file FILE')
   if (typeof options['xmpp-allow'] !== 'string') throw new UsageError('--xmpp needs --xmpp-allow JID[,JID...]')
-  // No login on the XMPP path yet: refuse --users rather than ignore it
-  // (https://github.com/danbri/factoidal/issues/1125).
-  if (['users', 'cert', 'key', 'login-limit', 'login-window', 'dangerously-disable-ratelimits'].some((k) => options[k] !== undefined)) {
-    throw new UsageError('--users, --cert, --key and the login-limit options do not apply with --xmpp yet (https://github.com/danbri/factoidal/issues/1125)')
+  // No port is open with --xmpp, so the HTTPS options do not apply. --users
+  // and the login-limit options do (https://github.com/danbri/factoidal/issues/1125).
+  if (['cert', 'key'].some((k) => options[k] !== undefined)) {
+    throw new UsageError('--cert and --key do not apply with --xmpp: no port is open; give --xmpp-tls for the XMPP stream')
   }
   const fs = await import('node:fs/promises')
+  const { resolve: resolvePath } = await import('node:path')
   const password = (await fs.readFile(options['xmpp-password-file'], 'utf8')).split(/\r?\n/)[0]
   const allow = options['xmpp-allow'].split(',').map((x) => x.trim()).filter((x) => x.length > 0)
   const { openWebdav, WebdavHostError } = await import('../webdav/server.mjs')
   const { connectHttpTarget, XmppClientError } = await import('../xmpp/client.mjs')
   if (options.guest !== undefined && typeof options.guest !== 'string') throw new UsageError('--guest needs a user name')
+  // The login (issue 1125): the same users file and limit options as on
+  // TCP, and the XMPP stream as the transport; the engine checks them all.
+  const davOptions = { configDir, transport: 'xmpp', jid: options.xmpp, tls: options['xmpp-tls'] === true }
+  if (typeof options['xmpp-host'] === 'string') davOptions.host = options['xmpp-host']
+  if (typeof options.guest === 'string') davOptions.guest = options.guest
+  if (typeof options.users === 'string') davOptions.users = resolvePath(options.users)
+  if (options['login-limit'] !== undefined) davOptions.loginLimit = String(options['login-limit'])
+  if (options['login-window'] !== undefined) davOptions.loginWindow = String(options['login-window'])
+  if (options['dangerously-disable-ratelimits'] !== undefined) {
+    davOptions.disableRateLimits = options['dangerously-disable-ratelimits'] === true
+  }
   let dav
   try {
-    dav = await openWebdav({ configDir, ...(typeof options.guest === 'string' ? { guest: options.guest } : {}) })
+    dav = await openWebdav(davOptions)
   } catch (error) {
     if (error instanceof WebdavHostError && error.unknownOp) return notWired('webdav-serve', error.message)
     if (error instanceof WebdavHostError || (error !== null && typeof error === 'object' && error.code === 'ENOENT')) {
@@ -2674,6 +2743,7 @@ async function webdavOverXmpp (configDir, options, quiet) {
     tls: options['xmpp-tls'] === true,
     mounts: dav.mounts,
     dangerouslyAllowWritableWithoutLogin: options['dangerously-allow-writable-without-login'] === true,
+    login: dav.login,
     step: (request) => dav.step(request),
     onError: (error) => { if (!quiet) err(`webdav-serve: xmpp: ${error.message}`) }
   }
@@ -2697,7 +2767,8 @@ async function webdavOverXmpp (configDir, options, quiet) {
     throw error
   }
   if (!quiet) {
-    err(`webdav-serve: connected to XMPP as ${conn.jid}; no port is open; requests from ${allow.join(', ')}`)
+    err(`webdav-serve: connected to XMPP as ${conn.jid}; no port is open; requests from ${allow.join(', ')}` +
+        (dav.login ? `, login from ${options.users} (failed logins limited per user name and per bare JID)` : ', no --users: credentials get 401'))
     if (conn.writableWithoutLogin.length > 0) {
       err(`webdav-serve: WARNING: --dangerously-allow-writable-without-login: every allowed JID can write ${conn.writableWithoutLogin.join(', ')} as the storage owner, with no login`)
     }
@@ -2880,6 +2951,11 @@ async function commandXmppServe (positional, options) {
   }
   if (typeof options.domain === 'string') settings.domain = options.domain
   if (typeof options.accounts === 'string') settings.accountsText = await fs.readFile(options.accounts, 'utf8')
+  // The failed SASL login limit (https://github.com/danbri/factoidal/issues/1128):
+  // on by default; the engine decides and words the warning.
+  if (options['dangerously-disable-ratelimits'] !== undefined) {
+    settings.disableRateLimits = options['dangerously-disable-ratelimits'] === true
+  }
   if (useTls) {
     settings.cert = await fs.readFile(options.cert)
     settings.key = await fs.readFile(options.key)
@@ -2968,6 +3044,9 @@ async function commandXmppServe (positional, options) {
     }
     throw error
   }
+  // The engine's start warnings (--dangerously-disable-ratelimits), printed
+  // also with --quiet.
+  for (const w of running.xmpp.warnings || []) err(`factoidal xmpp-serve: WARNING: ${w}`)
   if (!quiet) {
     err(`xmpp-serve: listening on ${running.origin} for domain ${running.xmpp.domain}` +
         ` (${running.xmpp.accounts} accounts, state ${positional[0]}` +

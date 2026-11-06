@@ -1,7 +1,7 @@
-// Put a lab tree into a WebDAV mount, and list a mount, with plain HTTP.
+// Seed a lab subtree through LWS HTTP, and list its read-only WebDAV mount.
 // https://github.com/danbri/factoidal/issues/1079
 //
-// A client of the WebDAV server only: MKCOL, PUT, PROPFIND. It records the
+// A test client of LWS (PUT) and WebDAV (PROPFIND). It records the
 // status of every request, so a name the server refuses is a result.
 
 import { request as httpRequest } from 'node:http'
@@ -21,6 +21,7 @@ export function davRequest (origin, method, path, { headers = {}, body = null } 
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }))
       res.on('error', reject)
     })
+    req.setTimeout(30000, () => req.destroy(new Error(`${method} ${path}: timed out after 30 s`)))
     req.on('error', reject)
     if (body !== null) req.end(body)
     else req.end()
@@ -45,22 +46,24 @@ export function contentTypeFor (path) {
 }
 
 /**
- * Create the folders and files of `entries` under `/<mount>/`.
+ * Create the folders and files through LWS PUT under `/<mount>/`.
  * @param {string} origin the server origin (not the recording proxy)
  * @param {string} mount the mount name
  * @param {Array<{path: string, data?: Buffer, dir?: boolean}>} entries
  * @param {string[]} folders folders, parents first, each ending in '/'
  * @returns {Promise<Array<{ path: string, kind: string, status: number, ok: boolean }>>}
  */
-export async function seedTree (origin, mount, entries, folders) {
+export async function seedTree (origin, mount, entries, folders, headers = {}) {
   const out = []
-  for (const f of folders) {
-    const r = await davRequest(origin, 'MKCOL', `/${encodePath(mount)}/${encodePath(f.slice(0, -1))}/`)
-    out.push({ path: f, kind: 'folder', status: r.status, ok: r.status === 201 || r.status === 405 })
+  // LWS creates a collection with PUT to its trailing-slash path.
+  for (const f of ['', ...folders]) {
+    const r = await davRequest(origin, 'PUT', `/${encodePath(mount)}/${encodePath(f)}`, { headers, body: Buffer.alloc(0) })
+    if (f !== '') out.push({ path: f, kind: 'folder', status: r.status, ok: r.status === 201 || r.status === 204 })
+    else if (r.status !== 201 && r.status !== 204) throw new Error(`seed root ${mount}: ${r.status} ${r.body}`)
   }
   for (const e of entries) {
     if (e.dir) continue
-    const r = await davRequest(origin, 'PUT', `/${encodePath(mount)}/${encodePath(e.path)}`, { headers: { 'content-type': contentTypeFor(e.path) }, body: e.data })
+    const r = await davRequest(origin, 'PUT', `/${encodePath(mount)}/${encodePath(e.path)}`, { headers: { ...headers, 'content-type': contentTypeFor(e.path) }, body: e.data })
     out.push({ path: e.path, kind: 'file', status: r.status, ok: r.status >= 200 && r.status < 300 })
   }
   return out

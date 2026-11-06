@@ -79,7 +79,8 @@ factoidal lws-serve   DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecu
                           [--paginate-always] [--moves all|data|off]
                           [--no-linkset-put] [--unstable-search-results] [--merkle]
                           [--controller-inbox URL] [--delivery-limit N]
-                          [--delivery-window SECONDS] [--redirects-max N]
+                          [--delivery-window SECONDS] [--delivery-dest-limit N]
+                          [--allow-private-fetch] [--redirects-max N]
                           [--storage snapshot|files]
                           [--cors-origin ORIGIN]... [--no-cors]
 factoidal solid-serve DIR (--issuer IRI[,IRI…] | --auth-config FILE | --insecure-no-auth)
@@ -303,6 +304,26 @@ header quotes each section it decides.
   `admits_le` (at most `limit` deliveries in one window) and `admit_count_le`.
   With the test clock (`now` set, one second per mutation) a `wake` flush
   finds nothing due; use `realClock: true` to see a flush.
+* Requests to private addresses (https://github.com/danbri/factoidal/issues/1126,
+  `L4Factoidal/Net/Egress.lean`): an inbox whose known address is in the IANA
+  IPv4 or IPv6 special-purpose registries (loopback, RFC 1918, link-local,
+  100.64.0.0/10, multicast, reserved, documentation, NAT64 or 6to4 with such
+  an IPv4 address) or a localhost name answers 400
+  (`Notifications.subscriptionEgress`). Every delivery (webhook,
+  access-request, access-grant, controller inbox) carries `resolve: H` when
+  its host is a name; the host resolves `H` just before the POST, calls
+  `lwsEgress {url, addresses}`, and connects to the `address` it answers
+  (`postTo`, no second resolution), or reports `{id, status: 0, refused:
+  true}` to `lwsDelivered` (no retry). Theorems `egress_refuses_special`,
+  `deliveries_pinned`, `egressOf_refuses_special`. Per destination (host and
+  port): at most `deliveryDestLimit` (default 10, `--delivery-dest-limit N`,
+  0 off) per window for all subscriptions together (`admitDest`,
+  `admit_per_destination`). `--allow-private-fetch` (config
+  `allowPrivateFetch`) turns the address check off. A host test that delivers
+  to a receiver on 127.0.0.1 must pass `allowPrivateFetch: true`, and
+  `deliveryDestLimit: 0` when many hooks share one receiver (`LOCAL_TARGETS`
+  in `tests/lws/draft-binding.mjs`); without them the subscription answers
+  400 and nothing is delivered.
 * Endpoint verification: the webhook draft only says "Rate limiting and
   endpoint verification are suggested to prevent abuse of the subscription
   mechanism" and defines no procedure, so there is no behaviour to implement.
@@ -942,7 +963,11 @@ request (`fetch`) and ends with `done` or `fail`. In Lean: the 401 flow
 (the three checks of §Discovery Validation by a Client, RFC 8414 metadata
 at `/.well-known/lws-configuration`, RFC 8693 token exchange, `Bearer`
 only to URLs under the StorageRoot of the token's storage or under a
-`serviceEndpoint` of its storage description on the requested URI's origin),
+`serviceEndpoint` of its storage description on the requested URI's origin,
+at a path-segment boundary: `TokenEntry.covers` is
+`LWS.ContainerPath.coversAtSegment`, so a root `https://s.example/alice`
+does not cover `https://s.example/alice-other/x`; theorem
+`covers_sibling_refused`, https://github.com/danbri/factoidal/issues/1127),
 preconditions
 (`update`, `patch`, `updateLinkset`, `move` default to the current ETag),
 the 412, 405/415 and 5xx retry rules, paging by `rel="next"` only, linkset
@@ -1041,7 +1066,43 @@ algorithm })` (wasm op `lwsClientNewKey`, `Client/Keys.lean`) makes a
 endpoint (`endpoint`) or storage description (`storage`) directly. Rule:
 the adapter reads no response; `tools/host-purity-lint.sh` group 4 checks it.
 
+## URLs under one container: op `containerPath` (https://github.com/danbri/factoidal/issues/1127)
+
+A host whose authority is one HTTP(S) container (a credential, a selected
+pod) asks the engine which URL it may request. Lean:
+`formal/lean4/L4Factoidal/LWS/ContainerPath.lean` over the URL Standard
+parser; op `containerPath` (`formal/lean4/Wasm/Ops/ContainerPath.lean`, core and full
+engines). Request kinds: `target`, `container` (`canonical` or not),
+`resource` (a raw relative path, the SBM11 LWS reader), `segment` (one new
+file name), `within`, `parent`. Answer `{ok, allowed, url}` or
+`{ok, allowed: false, reason}`. Theorems `resourceIn_under`,
+`segmentIn_under`, `within_under`, `within_canonical_under`,
+`parentIn_under`, `within_sibling_refused`.
+
+Hosts: `npm/factoidal/lib/sbm11-lws.mjs` (`lwsSbm11Reader`, now
+asynchronous because it loads the engine) and
+`docs/web/hub/data-compositor/pod-storage.mjs` (`podPaths(core)`; the
+compositor's storage worker forms every pod URL, the page forms none). Neither
+file parses or compares a URL; anti-pattern 36. Record:
+`docs/20261031-lws-reader-path-confinement.md`.
+
 ## WebDAV for file browsers (https://github.com/danbri/factoidal/issues/1066)
+
+**Current mode since 0.21.0:** read only; every mount requires `users:`;
+requests without credentials require a named `--guest`; `kind: local` is
+refused (https://github.com/danbri/factoidal/issues/1147). The original local
+mount examples and writable client scores below are historical. Current
+CLI help and `tests/webdav/server.mjs` describe the supported behavior.
+`tests/webdav/server.mjs --cli PATH` tests an executable's CLI; its seed
+client and login-cache API check still need repository engine assets.
+
+The desktop harness now seeds authenticated LWS through HTTP and checks
+WebDAV read-only behavior through remote mounts. Run its lifecycle checks
+with `node --test tests/webdav-desktop/harness.test.mjs` and executable log
+checks with `bash tests/check-exe/run.sh`. Do not drop its large-file gate
+to publish an executable. Investigation and assurance boundary:
+[`docs/20261029-webdav-executable-gate.md`](../../docs/20261029-webdav-executable-gate.md),
+[`docs/designissues/2026-10-29-webdav-executable-assurance.md`](../../docs/designissues/2026-10-29-webdav-executable-assurance.md).
 
 Design record: `docs/designissues/2026-10-27-webdav.md` (mount file format,
 the WebDAV and LWS mapping, statuses, limits, what each client needs).
@@ -1147,17 +1208,41 @@ an `openssl req -x509` certificate).
 ```
 factoidal webdav-serve CONFIGDIR --xmpp bob@example.org --xmpp-password-file bob.password \
   --xmpp-allow alice@example.org --xmpp-tls [--xmpp-ca FILE] [--xmpp-host H] [--xmpp-port P] \
+  [--guest NAME] [--users FILE] [--login-limit N] [--login-window S] [--dangerously-disable-ratelimits] \
   [--dangerously-allow-writable-without-login]
 ```
 
-The allow list is the only access control on this path (local mounts act as
-the owner). Lean refuses the start (`xcStartRefusal`) with an empty list, a
-JID with a resource, plain TCP to a host that is not loopback, or a writable
-local mount without the `--dangerously-` opt-in
-(https://github.com/danbri/factoidal/issues/1125). No login and no per-JID
-login limit yet (https://github.com/danbri/factoidal/issues/1125,
-https://github.com/danbri/factoidal/issues/1128): expected failures in the
-test.
+Two checks apply to every request (invariant I1 of
+`docs/designissues/2026-10-28-feature-combination-safety.md`,
+https://github.com/danbri/factoidal/issues/1125): the allow list
+(`HttpOverXmpp.plan`, in the XMPP client handle), then the WebDAV handle's
+`Login.admit`, the same function the HTTP listener calls. The XMPP client
+handle names each request's requester (`requester: {"xmpp": BAREJID}`,
+`xcRequesterJ`); a handle opened with `login.transport: "xmpp"` reads only
+that (`davRequesterOf`), so a request with no requester gets 401 and counts
+nothing (`Login.admit_invalid_requester`). The failed-login limit keys are
+`name:` and `jid:` plus the bare JID (`L4Factoidal/Net/LoginLimit.lean`,
+`requesterKey`, theorems `requesterKey_injective_kind`,
+`loginKeys_nonempty`; https://github.com/danbri/factoidal/issues/1128). Lean
+refuses the start (`xcStartRefusal`) with an empty list, a JID with a
+resource, plain TCP to a host that is not loopback, a writable local mount
+without `--users` and without the `--dangerously-` opt-in; `webdavOpen`
+refuses `--users` on an XMPP stream that is neither TLS nor loopback
+(`davXmppTransportRefusal`). Chunked request bodies wait at most 4 per sender
+and 16 in total, and at most 60 s of the host's clock (`xmppClientTick`,
+`HttpOverXmpp.tick`; theorems `plan_pending_per_sender`,
+`tick_pending_per_sender`, `tick_no_late`).
+
+`xmpp-serve` limits failed SASL logins per account name and per client
+address, across the sessions of one server (`Server.AuthGuard`,
+`handleAuth_blocked`; the counters are in the server handle,
+`Wasm/Ops/XmppSession.lean`; the host gives `remoteAddress` and `now` at
+`xmppSessionOpen`). `--dangerously-disable-ratelimits` turns it off with a
+start warning (`saslLimitWarnings`). Run the SASL tests against their own
+`xmpp-serve`: the address counter of 127.0.0.1 blocks every later login of
+the test for 60 s. Still open under
+https://github.com/danbri/factoidal/issues/1125: `xmpp-serve` offers PLAIN on
+a listener that is neither TLS nor loopback (expected failure in the test).
 
 No port opens: the process connects out to an XMPP server, logs in with
 SCRAM-SHA-256, binds `bob@example.org/dav` (printed as `xmpp:JID`) and serves

@@ -54,6 +54,8 @@ structure Module where
   /-- The static namespace bindings after the prolog. -/
   ns : List (String × String) := []
   decls : List Decl := []
+  /-- Variables without an `as` clause infer their type from a source or host declaration. -/
+  unannotatedVars : List QN := []
   /-- `import module`: prefix, target namespace, location hints. -/
   imports : List (String × String × List String) := []
   /-- The query body; `none` in a library module. -/
@@ -243,7 +245,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
     (loader : String → Except Err (List (QN × IType)) := fun _ => .ok []) : P Module := do
   let mut m : Module := {}
   let c0 ← read
-  let mut cfg : Cfg := { types := types0, lenient, xml11 := c0.xml11 }
+  let mut cfg : Cfg := { types := types0, lenient, xml11 := c0.xml11, features := c0.features }
   let mut ns : List (String × String) := c0.ns
   -- the version declaration
   if ← kwThenKw "xquery" "version" then
@@ -539,7 +541,9 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
       varNames := v :: varNames
       if let some (_, u) := m.libNs then
         if v.uri != u && !isPrivateAnn annots then qerr "XQST0048" "a library module variable outside the module namespace"
-      let ty ← if ← eatKw "as" then withXq cfg ns (pSeqType 1000) else pure (.seq .item .star)
+      let annotated ← eatKw "as"
+      let ty ← if annotated then withXq cfg ns (pSeqType 1000) else pure (.seq .item .star)
+      if !annotated then m := { m with unannotatedVars := v :: m.unannotatedVars }
       if ← eatS ":=" then
         let e ← withXq cfg ns (pExprSingle 100000)
         expectS ";"
@@ -894,6 +898,41 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
       if let some e := r then throw e
     if let some b := m.body then
       if let some e := staticErr 100000 base b then throw e
+  if env.features.staticTyping then
+    let decls := ms.flatMap (·.decls)
+    let supplied := ms.flatMap (·.unannotatedVars)
+    let vars := decls.filterMap (fun d => match d with
+      | .var q ty _ external =>
+        let ty := if external && supplied.any (· == q) then
+          ((env.staticVars.find? (·.1 == q)).map (·.2)).getD ty else ty
+        some (q, ty)
+      | _ => none)
+    let funcs (q : QN) (arity : Nat) : Option IType := decls.findSome? (fun d => match d with
+      | .fn fd => if fd.name == q && arity ≤ fd.params.length then
+          some (.fnT ((fd.params.take arity).map (·.2.1)) fd.ret) else none
+      | _ => none)
+    let mut c : StaticTyping.Ctx := { vars := vars ++ env.staticVars, focus := env.staticFocus, funcs }
+    for d in decls do
+      match d with
+      | .var q ty (some e) _ =>
+        let inferred ← StaticTyping.infer 1000 env c e
+        let t ← StaticTyping.bindType inferred ty
+        let t := if supplied.any (· == q) then t else ty
+        c := { c with vars := (q, t) :: c.vars }
+      | .ctx ty init _ =>
+        let inferred ← match init with
+          | some e => StaticTyping.infer 1000 env c e
+          | none => pure c.focus
+        c := { c with focus := ← StaticTyping.bindType inferred ty }
+      | .fn fd =>
+        if let some body := fd.body then
+          let fc := { c with vars := fd.params.map (fun (q, t, _) => (q, t)) ++ c.vars }
+          let t ← StaticTyping.infer 1000 env fc body
+          let _ ← StaticTyping.bindType t fd.ret
+      | _ => pure ()
+    for m in ms do
+      if let some b := m.body then
+        let _ ← StaticTyping.infer 1000 env c b
 
 /-- Bind the functions of the modules, then their global variables and
     context value. A variable whose initializer reads a global that is

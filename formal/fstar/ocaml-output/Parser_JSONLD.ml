@@ -511,9 +511,60 @@ let uu___is_RDM_I18nDatatype (projectee : rdf_direction_mode) : Prims.bool=
 let uu___is_RDM_CompoundLiteral (projectee : rdf_direction_mode) :
   Prims.bool=
   match projectee with | RDM_CompoundLiteral -> true | uu___ -> false
-let jld_fresh_bnode (ctr : Prims.nat) : (RDF_Term.bnode_id * Prims.nat)=
-  ((FStar_String.concat "" ["_jld_anon"; Prims.string_of_int ctr]),
+let jld_fresh_bnode (pfx : Prims.string) (ctr : Prims.nat) :
+  (RDF_Term.bnode_id * Prims.nat)=
+  ((FStar_String.concat "" [pfx; Prims.string_of_int ctr]),
     (ctr + Prims.int_one))
+let rec jld_underscore_run (s : Prims.string) (pos : Prims.nat)
+  (n : Prims.nat) (fuel : Prims.nat) : Prims.nat=
+  if fuel = Prims.int_zero
+  then n
+  else
+    if
+      (pos < (Parser_FastString.fs_byte_length s)) &&
+        ((Parser_JSON.jbyte_at s pos) = (Prims.of_int (0x5F)))
+    then
+      jld_underscore_run s (pos + Prims.int_one) (n + Prims.int_one)
+        (fuel - Prims.int_one)
+    else n
+let jld_anon_need (s : Prims.string) : Prims.nat=
+  let n = Parser_FastString.fs_byte_length s in
+  if
+    (n >= (Prims.of_int (11))) &&
+      ((Parser_FastString.fs_byte_sub s Prims.int_zero (Prims.of_int (11))) =
+         "_:_jld_anon")
+  then
+    (jld_underscore_run s (Prims.of_int (11)) Prims.int_zero n) +
+      Prims.int_one
+  else Prims.int_zero
+let rec jld_max_need (v : Parser_JSON.json_val) (m : Prims.nat) : Prims.nat=
+  match v with
+  | Parser_JSON.JString s ->
+      let k = jld_anon_need s in if k > m then k else m
+  | Parser_JSON.JArray xs -> jld_max_need_items xs m
+  | Parser_JSON.JObject fs -> jld_max_need_fields fs m
+  | uu___ -> m
+and jld_max_need_items (xs : Parser_JSON.json_val Prims.list) (m : Prims.nat)
+  : Prims.nat=
+  match xs with
+  | [] -> m
+  | x::rest -> jld_max_need_items rest (jld_max_need x m)
+and jld_max_need_fields
+  (fs : (Prims.string * Parser_JSON.json_val) Prims.list) (m : Prims.nat) :
+  Prims.nat=
+  match fs with
+  | [] -> m
+  | (k, v)::rest ->
+      let kn = jld_anon_need k in
+      let m1 = if kn > m then kn else m in
+      jld_max_need_fields rest (jld_max_need v m1)
+let rec jld_underscores (k : Prims.nat) : Prims.string=
+  if k = Prims.int_zero
+  then ""
+  else FStar_String.concat "" ["_"; jld_underscores (k - Prims.int_one)]
+let jld_generated_prefix (root : Parser_JSON.json_val) : Prims.string=
+  FStar_String.concat ""
+    ["_jld_anon"; jld_underscores (jld_max_need root Prims.int_zero)]
 let jld_is_bnode_label (s : Prims.string) : Prims.bool=
   ((Parser_JSON.jbyte_at s Prims.int_zero) = (Prims.of_int (0x5F))) &&
     ((Parser_JSON.jbyte_at s Prims.int_one) = (Prims.of_int (0x3A)))
@@ -727,11 +778,11 @@ let jld_graph_name_of_subject (s : RDF_Term.subject) : RDF_Term.iri=
   match s with
   | RDF_Term.S_IRI i -> i
   | RDF_Term.S_BNode b -> FStar_String.concat "" ["_:"; b]
-let jld_compound_literal_term (lex : Prims.string)
+let jld_compound_literal_term (pfx : Prims.string) (lex : Prims.string)
   (lang : Prims.string FStar_Pervasives_Native.option) (dir : Prims.string)
   (ctr : Prims.nat) (acc : RDF_Triple.triple Prims.list) :
   (RDF_Term.rdf_term * RDF_Triple.triple Prims.list * Prims.nat)=
-  let uu___ = jld_fresh_bnode ctr in
+  let uu___ = jld_fresh_bnode pfx ctr in
   match uu___ with
   | (b, ctr1) ->
       let bsubj = RDF_Term.S_BNode b in
@@ -778,7 +829,7 @@ let jld_compound_literal_term (lex : Prims.string)
             } :: acc2
         | FStar_Pervasives_Native.None -> acc2 in
       ((RDF_Term.T_BNode b), acc3, ctr1)
-let jld_value_object_step (rdir : rdf_direction_mode)
+let jld_value_object_step (rdir : rdf_direction_mode) (pfx : Prims.string)
   (obj : Parser_JSON.json_val) (ctr : Prims.nat)
   (acc : RDF_Triple.triple Prims.list) :
   (RDF_Term.rdf_term FStar_Pervasives_Native.option * RDF_Triple.triple
@@ -791,11 +842,11 @@ let jld_value_object_step (rdir : rdf_direction_mode)
      FStar_Pervasives_Native.None, FStar_Pervasives_Native.Some
      (Parser_JSON.JString lex)) ->
       let lang = Parser_JSON.json_get_string "@language" obj in
-      let uu___ = jld_compound_literal_term lex lang dir ctr acc in
+      let uu___ = jld_compound_literal_term pfx lex lang dir ctr acc in
       (match uu___ with
        | (t, acc1, ctr1) -> ((FStar_Pervasives_Native.Some t), acc1, ctr1))
   | uu___ -> ((jld_value_object_to_term rdir obj), acc, ctr)
-let rec jld_expand_value (rdir : rdf_direction_mode)
+let rec jld_expand_value (rdir : rdf_direction_mode) (pfx : Prims.string)
   (v : Parser_JSON.json_val) (ctr : Prims.nat)
   (acc : RDF_Triple.triple Prims.list)
   (named : RDF_Graph.named_graph Prims.list) (fuel : Prims.nat) :
@@ -808,21 +859,21 @@ let rec jld_expand_value (rdir : rdf_direction_mode)
      | Parser_JSON.JObject uu___1 ->
          (match Parser_JSON.json_get_field "@value" v with
           | FStar_Pervasives_Native.Some uu___2 ->
-              let uu___3 = jld_value_object_step rdir v ctr acc in
+              let uu___3 = jld_value_object_step rdir pfx v ctr acc in
               (match uu___3 with | (t, acc1, ctr1) -> (t, acc1, named, ctr1))
           | FStar_Pervasives_Native.None ->
               (match Parser_JSON.json_get_field "@list" v with
                | FStar_Pervasives_Native.Some lst ->
                    let uu___2 =
-                     jld_expand_list rdir (jld_as_array lst) ctr acc named
-                       (fuel - Prims.int_one) in
+                     jld_expand_list rdir pfx (jld_as_array lst) ctr acc
+                       named (fuel - Prims.int_one) in
                    (match uu___2 with
                     | (t, acc1, named1, ctr1) ->
                         ((FStar_Pervasives_Native.Some t), acc1, named1,
                           ctr1))
                | FStar_Pervasives_Native.None ->
                    let uu___2 =
-                     jld_expand_node rdir v ctr acc named
+                     jld_expand_node rdir pfx v ctr acc named
                        (fuel - Prims.int_one) in
                    (match uu___2 with
                     | (osubj, acc1, named1, ctr1) ->
@@ -835,7 +886,7 @@ let rec jld_expand_value (rdir : rdf_direction_mode)
                              (FStar_Pervasives_Native.None, acc1, named1,
                                ctr1)))))
      | uu___1 -> ((jld_scalar_to_term v), acc, named, ctr))
-and jld_expand_list (rdir : rdf_direction_mode)
+and jld_expand_list (rdir : rdf_direction_mode) (pfx : Prims.string)
   (items : Parser_JSON.json_val Prims.list) (ctr : Prims.nat)
   (acc : RDF_Triple.triple Prims.list)
   (named : RDF_Graph.named_graph Prims.list) (fuel : Prims.nat) :
@@ -848,14 +899,15 @@ and jld_expand_list (rdir : rdf_direction_mode)
      | [] -> ((RDF_Term.T_IRI rdf_nil_iri), acc, named, ctr)
      | item::rest ->
          let uu___1 =
-           jld_expand_value rdir item ctr acc named (fuel - Prims.int_one) in
+           jld_expand_value rdir pfx item ctr acc named
+             (fuel - Prims.int_one) in
          (match uu___1 with
           | (oterm, acc1, named1, ctr1) ->
-              let uu___2 = jld_fresh_bnode ctr1 in
+              let uu___2 = jld_fresh_bnode pfx ctr1 in
               (match uu___2 with
                | (cell, ctr2) ->
                    let uu___3 =
-                     jld_expand_list rdir rest ctr2 acc1 named1
+                     jld_expand_list rdir pfx rest ctr2 acc1 named1
                        (fuel - Prims.int_one) in
                    (match uu___3 with
                     | (rest_term, acc2, named2, ctr3) ->
@@ -876,8 +928,9 @@ and jld_expand_list (rdir : rdf_direction_mode)
                               } :: acc3
                           | FStar_Pervasives_Native.None -> acc3 in
                         ((RDF_Term.T_BNode cell), acc4, named2, ctr3)))))
-and jld_expand_node (rdir : rdf_direction_mode) (v : Parser_JSON.json_val)
-  (ctr : Prims.nat) (acc : RDF_Triple.triple Prims.list)
+and jld_expand_node (rdir : rdf_direction_mode) (pfx : Prims.string)
+  (v : Parser_JSON.json_val) (ctr : Prims.nat)
+  (acc : RDF_Triple.triple Prims.list)
   (named : RDF_Graph.named_graph Prims.list) (fuel : Prims.nat) :
   (RDF_Term.subject FStar_Pervasives_Native.option * RDF_Triple.triple
     Prims.list * RDF_Graph.named_graph Prims.list * Prims.nat)=
@@ -893,7 +946,7 @@ and jld_expand_node (rdir : rdf_direction_mode) (v : Parser_JSON.json_val)
            | FStar_Pervasives_Native.Some uu___2 ->
                (FStar_Pervasives_Native.None, ctr)
            | FStar_Pervasives_Native.None ->
-               let uu___2 = jld_fresh_bnode ctr in
+               let uu___2 = jld_fresh_bnode pfx ctr in
                (match uu___2 with
                 | (b, ctr') ->
                     ((FStar_Pervasives_Native.Some (RDF_Term.S_BNode b)),
@@ -907,8 +960,8 @@ and jld_expand_node (rdir : rdf_direction_mode) (v : Parser_JSON.json_val)
                    (match Parser_JSON.json_get_field "@graph" v with
                     | FStar_Pervasives_Native.Some g ->
                         let uu___2 =
-                          jld_expand_graph_nodes rdir (jld_as_array g) ctr1
-                            [] named (fuel - Prims.int_one) in
+                          jld_expand_graph_nodes rdir pfx (jld_as_array g)
+                            ctr1 [] named (fuel - Prims.int_one) in
                         (match uu___2 with
                          | (gtris, named1, ctr2) ->
                              let ng =
@@ -918,22 +971,23 @@ and jld_expand_node (rdir : rdf_direction_mode) (v : Parser_JSON.json_val)
                                  RDF_Graph.ng_graph = gtris
                                } in
                              let uu___3 =
-                               jld_expand_fields rdir subj fields ctr2 acc
-                                 (ng :: named1) (fuel - Prims.int_one) in
+                               jld_expand_fields rdir pfx subj fields ctr2
+                                 acc (ng :: named1) (fuel - Prims.int_one) in
                              (match uu___3 with
                               | (acc1, named2, ctr3) ->
                                   ((FStar_Pervasives_Native.Some subj), acc1,
                                     named2, ctr3)))
                     | FStar_Pervasives_Native.None ->
                         let uu___2 =
-                          jld_expand_fields rdir subj fields ctr1 acc named
-                            (fuel - Prims.int_one) in
+                          jld_expand_fields rdir pfx subj fields ctr1 acc
+                            named (fuel - Prims.int_one) in
                         (match uu___2 with
                          | (acc1, named1, ctr2) ->
                              ((FStar_Pervasives_Native.Some subj), acc1,
                                named1, ctr2)))))
      | uu___1 -> (FStar_Pervasives_Native.None, acc, named, ctr))
-and jld_expand_fields (rdir : rdf_direction_mode) (subj : RDF_Term.subject)
+and jld_expand_fields (rdir : rdf_direction_mode) (pfx : Prims.string)
+  (subj : RDF_Term.subject)
   (fields : (Prims.string * Parser_JSON.json_val) Prims.list)
   (ctr : Prims.nat) (acc : RDF_Triple.triple Prims.list)
   (named : RDF_Graph.named_graph Prims.list) (fuel : Prims.nat) :
@@ -951,12 +1005,12 @@ and jld_expand_fields (rdir : rdf_direction_mode) (subj : RDF_Term.subject)
            else
              if key = "@reverse"
              then
-               jld_expand_reverse_map rdir subj value ctr acc named
+               jld_expand_reverse_map rdir pfx subj value ctr acc named
                  (fuel - Prims.int_one)
              else
                if key = "@included"
                then
-                 jld_expand_graph_nodes rdir (jld_as_array value) ctr acc
+                 jld_expand_graph_nodes rdir pfx (jld_as_array value) ctr acc
                    named (fuel - Prims.int_one)
                else
                  if jld_is_keyword key
@@ -964,14 +1018,15 @@ and jld_expand_fields (rdir : rdf_direction_mode) (subj : RDF_Term.subject)
                  else
                    if jld_predicate_iri_wf key
                    then
-                     jld_expand_property rdir subj key (jld_as_array value)
-                       ctr acc named (fuel - Prims.int_one)
+                     jld_expand_property rdir pfx subj key
+                       (jld_as_array value) ctr acc named
+                       (fuel - Prims.int_one)
                    else (acc, named, ctr) in
          (match uu___1 with
           | (acc1, named1, ctr1) ->
-              jld_expand_fields rdir subj rest ctr1 acc1 named1
+              jld_expand_fields rdir pfx subj rest ctr1 acc1 named1
                 (fuel - Prims.int_one)))
-and jld_expand_reverse_map (rdir : rdf_direction_mode)
+and jld_expand_reverse_map (rdir : rdf_direction_mode) (pfx : Prims.string)
   (subj : RDF_Term.subject) (v : Parser_JSON.json_val) (ctr : Prims.nat)
   (acc : RDF_Triple.triple Prims.list)
   (named : RDF_Graph.named_graph Prims.list) (fuel : Prims.nat) :
@@ -982,11 +1037,11 @@ and jld_expand_reverse_map (rdir : rdf_direction_mode)
   else
     (match v with
      | Parser_JSON.JObject entries ->
-         jld_expand_reverse_entries rdir subj entries ctr acc named
+         jld_expand_reverse_entries rdir pfx subj entries ctr acc named
            (fuel - Prims.int_one)
      | uu___1 -> (acc, named, ctr))
 and jld_expand_reverse_entries (rdir : rdf_direction_mode)
-  (subj : RDF_Term.subject)
+  (pfx : Prims.string) (subj : RDF_Term.subject)
   (entries : (Prims.string * Parser_JSON.json_val) Prims.list)
   (ctr : Prims.nat) (acc : RDF_Triple.triple Prims.list)
   (named : RDF_Graph.named_graph Prims.list) (fuel : Prims.nat) :
@@ -1001,14 +1056,14 @@ and jld_expand_reverse_entries (rdir : rdf_direction_mode)
          let uu___1 =
            if jld_predicate_iri_wf prop
            then
-             jld_expand_reverse_prop rdir subj prop (jld_as_array value) ctr
-               acc named (fuel - Prims.int_one)
+             jld_expand_reverse_prop rdir pfx subj prop (jld_as_array value)
+               ctr acc named (fuel - Prims.int_one)
            else (acc, named, ctr) in
          (match uu___1 with
           | (acc1, named1, ctr1) ->
-              jld_expand_reverse_entries rdir subj rest ctr1 acc1 named1
+              jld_expand_reverse_entries rdir pfx subj rest ctr1 acc1 named1
                 (fuel - Prims.int_one)))
-and jld_expand_reverse_prop (rdir : rdf_direction_mode)
+and jld_expand_reverse_prop (rdir : rdf_direction_mode) (pfx : Prims.string)
   (subj : RDF_Term.subject) (prop : RDF_Term.wf_iri)
   (vals : Parser_JSON.json_val Prims.list) (ctr : Prims.nat)
   (acc : RDF_Triple.triple Prims.list)
@@ -1022,7 +1077,7 @@ and jld_expand_reverse_prop (rdir : rdf_direction_mode)
      | [] -> (acc, named, ctr)
      | v::rest ->
          let uu___1 =
-           jld_expand_node rdir v ctr acc named (fuel - Prims.int_one) in
+           jld_expand_node rdir pfx v ctr acc named (fuel - Prims.int_one) in
          (match uu___1 with
           | (osubj, acc1, named1, ctr1) ->
               let acc2 =
@@ -1034,11 +1089,12 @@ and jld_expand_reverse_prop (rdir : rdf_direction_mode)
                       RDF_Triple.o = (RDF_Graph.subject_to_term subj)
                     } :: acc1
                 | FStar_Pervasives_Native.None -> acc1 in
-              jld_expand_reverse_prop rdir subj prop rest ctr1 acc2 named1
-                (fuel - Prims.int_one)))
-and jld_expand_property (rdir : rdf_direction_mode) (subj : RDF_Term.subject)
-  (prop : RDF_Term.wf_iri) (vals : Parser_JSON.json_val Prims.list)
-  (ctr : Prims.nat) (acc : RDF_Triple.triple Prims.list)
+              jld_expand_reverse_prop rdir pfx subj prop rest ctr1 acc2
+                named1 (fuel - Prims.int_one)))
+and jld_expand_property (rdir : rdf_direction_mode) (pfx : Prims.string)
+  (subj : RDF_Term.subject) (prop : RDF_Term.wf_iri)
+  (vals : Parser_JSON.json_val Prims.list) (ctr : Prims.nat)
+  (acc : RDF_Triple.triple Prims.list)
   (named : RDF_Graph.named_graph Prims.list) (fuel : Prims.nat) :
   (RDF_Triple.triple Prims.list * RDF_Graph.named_graph Prims.list *
     Prims.nat)=
@@ -1049,7 +1105,7 @@ and jld_expand_property (rdir : rdf_direction_mode) (subj : RDF_Term.subject)
      | [] -> (acc, named, ctr)
      | v::rest ->
          let uu___1 =
-           jld_expand_value rdir v ctr acc named (fuel - Prims.int_one) in
+           jld_expand_value rdir pfx v ctr acc named (fuel - Prims.int_one) in
          (match uu___1 with
           | (oterm, acc1, named1, ctr1) ->
               let acc2 =
@@ -1061,9 +1117,9 @@ and jld_expand_property (rdir : rdf_direction_mode) (subj : RDF_Term.subject)
                       RDF_Triple.o = t
                     } :: acc1
                 | FStar_Pervasives_Native.None -> acc1 in
-              jld_expand_property rdir subj prop rest ctr1 acc2 named1
+              jld_expand_property rdir pfx subj prop rest ctr1 acc2 named1
                 (fuel - Prims.int_one)))
-and jld_expand_graph_nodes (rdir : rdf_direction_mode)
+and jld_expand_graph_nodes (rdir : rdf_direction_mode) (pfx : Prims.string)
   (nodes : Parser_JSON.json_val Prims.list) (ctr : Prims.nat)
   (acc : RDF_Triple.triple Prims.list)
   (named : RDF_Graph.named_graph Prims.list) (fuel : Prims.nat) :
@@ -1076,13 +1132,13 @@ and jld_expand_graph_nodes (rdir : rdf_direction_mode)
      | [] -> (acc, named, ctr)
      | n::rest ->
          let uu___1 =
-           jld_expand_node rdir n ctr acc named (fuel - Prims.int_one) in
+           jld_expand_node rdir pfx n ctr acc named (fuel - Prims.int_one) in
          (match uu___1 with
           | (uu___2, acc1, named1, ctr1) ->
-              jld_expand_graph_nodes rdir rest ctr1 acc1 named1
+              jld_expand_graph_nodes rdir pfx rest ctr1 acc1 named1
                 (fuel - Prims.int_one)))
-let jld_expand_top (rdir : rdf_direction_mode) (v : Parser_JSON.json_val)
-  (dflt : RDF_Triple.triple Prims.list)
+let jld_expand_top (rdir : rdf_direction_mode) (pfx : Prims.string)
+  (v : Parser_JSON.json_val) (dflt : RDF_Triple.triple Prims.list)
   (named : RDF_Graph.named_graph Prims.list) (ctr : Prims.nat)
   (fuel : Prims.nat) :
   (RDF_Triple.triple Prims.list * RDF_Graph.named_graph Prims.list *
@@ -1098,7 +1154,7 @@ let jld_expand_top (rdir : rdf_direction_mode) (v : Parser_JSON.json_val)
              | FStar_Pervasives_Native.Some uu___1 ->
                  (FStar_Pervasives_Native.None, ctr)
              | FStar_Pervasives_Native.None ->
-                 let uu___1 = jld_fresh_bnode ctr in
+                 let uu___1 = jld_fresh_bnode pfx ctr in
                  (match uu___1 with
                   | (b, ctr') ->
                       ((FStar_Pervasives_Native.Some (RDF_Term.S_BNode b)),
@@ -1109,12 +1165,12 @@ let jld_expand_top (rdir : rdf_direction_mode) (v : Parser_JSON.json_val)
                  | FStar_Pervasives_Native.None -> (dflt, named, ctr1)
                  | FStar_Pervasives_Native.Some gsubj ->
                      let uu___1 =
-                       jld_expand_graph_nodes rdir (jld_as_array g) ctr1 []
-                         named fuel in
+                       jld_expand_graph_nodes rdir pfx (jld_as_array g) ctr1
+                         [] named fuel in
                      (match uu___1 with
                       | (gtris, named1, ctr2) ->
                           let uu___2 =
-                            jld_expand_fields rdir gsubj fields ctr2 dflt
+                            jld_expand_fields rdir pfx gsubj fields ctr2 dflt
                               named1 fuel in
                           (match uu___2 with
                            | (dflt1, named2, ctr3) ->
@@ -1126,11 +1182,11 @@ let jld_expand_top (rdir : rdf_direction_mode) (v : Parser_JSON.json_val)
                                  } in
                                (dflt1, (ng :: named2), ctr3)))))
        | FStar_Pervasives_Native.None ->
-           let uu___ = jld_expand_node rdir v ctr dflt named fuel in
+           let uu___ = jld_expand_node rdir pfx v ctr dflt named fuel in
            (match uu___ with
             | (uu___1, dflt1, named1, ctr1) -> (dflt1, named1, ctr1)))
   | uu___ -> (dflt, named, ctr)
-let rec jld_expand_tops (rdir : rdf_direction_mode)
+let rec jld_expand_tops (rdir : rdf_direction_mode) (pfx : Prims.string)
   (vs : Parser_JSON.json_val Prims.list)
   (dflt : RDF_Triple.triple Prims.list)
   (named : RDF_Graph.named_graph Prims.list) (ctr : Prims.nat)
@@ -1143,10 +1199,10 @@ let rec jld_expand_tops (rdir : rdf_direction_mode)
     (match vs with
      | [] -> (dflt, named, ctr)
      | v::rest ->
-         let uu___1 = jld_expand_top rdir v dflt named ctr fuel in
+         let uu___1 = jld_expand_top rdir pfx v dflt named ctr fuel in
          (match uu___1 with
           | (d1, n1, c1) ->
-              jld_expand_tops rdir rest d1 n1 c1 (fuel - Prims.int_one)))
+              jld_expand_tops rdir pfx rest d1 n1 c1 (fuel - Prims.int_one)))
 let rec jld_only_graph_keys
   (fields : (Prims.string * Parser_JSON.json_val) Prims.list) : Prims.bool=
   match fields with
@@ -1156,9 +1212,10 @@ let jld_dataset_of_json (rdir : rdf_direction_mode)
   (root : Parser_JSON.json_val) :
   RDF_Graph.rdf_dataset FStar_Pervasives_Native.option=
   let fuel = (Parser_JSON.json_size root) + Prims.int_one in
+  let pfx = jld_generated_prefix root in
   match root with
   | Parser_JSON.JArray tops ->
-      let uu___ = jld_expand_tops rdir tops [] [] Prims.int_zero fuel in
+      let uu___ = jld_expand_tops rdir pfx tops [] [] Prims.int_zero fuel in
       (match uu___ with
        | (d, n, uu___1) ->
            FStar_Pervasives_Native.Some
@@ -1175,7 +1232,7 @@ let jld_dataset_of_json (rdir : rdf_direction_mode)
           | FStar_Pervasives_Native.Some g -> jld_as_array g
           | FStar_Pervasives_Native.None -> [root]
         else [root] in
-      let uu___ = jld_expand_tops rdir tops [] [] Prims.int_zero fuel in
+      let uu___ = jld_expand_tops rdir pfx tops [] [] Prims.int_zero fuel in
       (match uu___ with
        | (d, n, uu___1) ->
            FStar_Pervasives_Native.Some

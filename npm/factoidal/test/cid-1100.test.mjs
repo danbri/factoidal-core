@@ -29,7 +29,7 @@ function examples() {
 const EX = examples();
 
 const ACCEPT = 'application/cid, application/cid+json, application/ld+json, application/json';
-const PUBLIC = '203.0.113.7';
+const PUBLIC = '93.184.216.34';
 
 // A mock host: documents by URL, addresses by host name, and a log of calls.
 function mockHost(docs, addresses = {}) {

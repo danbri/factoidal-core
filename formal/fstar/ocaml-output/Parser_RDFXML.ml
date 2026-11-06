@@ -189,6 +189,20 @@ let restore_scope (parent : rdfxml_state) (child : rdfxml_state) :
     seen_ids = (child.seen_ids);
     has_error = (child.has_error)
   }
+let close_property_scope (parent : rdfxml_state) (child : rdfxml_state) :
+  rdfxml_state=
+  let uu___ = restore_scope parent child in
+  {
+    base_iri = (uu___.base_iri);
+    namespaces = (uu___.namespaces);
+    lang = (uu___.lang);
+    direction = (uu___.direction);
+    saw_version_12 = (uu___.saw_version_12);
+    bnode_counter = (uu___.bnode_counter);
+    li_counter = (child.li_counter);
+    seen_ids = (uu___.seen_ids);
+    has_error = (uu___.has_error)
+  }
 let rec find_colon_pos_in_list (cs : FStar_Char.char Prims.list)
   (idx : Prims.nat) : Prims.nat FStar_Pervasives_Native.option=
   match cs with
@@ -1064,7 +1078,8 @@ and process_property_children (st : rdfxml_state) (subj : RDF_Term.subject)
               let result1 =
                 process_property_element st subj child (fuel - Prims.int_one) in
               let acc' = FStar_List_Tot_Base.rev_acc result1.pr_triples acc in
-              process_property_children result1.pr_state subj rest
+              process_property_children
+                (close_property_scope st result1.pr_state) subj rest
                 (fuel - Prims.int_one) acc'
           | uu___1 ->
               process_property_children st subj rest (fuel - Prims.int_one)

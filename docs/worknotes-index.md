@@ -74,8 +74,18 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-02 | [0.29 release public version pins](20261102-release-029-public-pins.md) | this commit | current |
 | 2026-10-31 | [Checked union-to-RDFS normalization preservation](20261031-union-rdfs-normalization-preservation.md) | 14f7a1f15 | current |
 | 2026-10-31 | [Concrete compositor union handoff](20261031-compositor-union-handoff.md) | cee2a223e | current |
+| 2026-11-01 | [GeoSPARQL FILTER planning: resumed verification](20261101-geosparql-planning-resume.md) | this commit | current: 341-module serial check passed; full gates and review pending |
+| 2026-11-01 | [GeoSPARQL FILTER planning: narrow source repair](designissues/2026-11-01-geosparql-filter-planning.md) | this commit | current: source repair; [resumed serial proof and result checks passed](20261101-geosparql-planning-resume.md); full gates and review pending |
+| 2026-10-31 | [Conditional routing design](designissues/2026-10-31-checked-conditional-routing.md) | this commit | current |
+| 2026-10-31 | [Checked conditional routing](20261031-checked-conditional-routing.md) | this commit | current |
+| 2026-10-31 | [SRX context admission](20261031-srx-context-admission.md) | f70fc074a | current |
+| 2026-10-31 | [Compositor XML representability counterexample](20261031-compositor-xml-representability.md) | 1b1f81a10 | current: two controls, one serializer-admission expected defect |
 | 2026-10-31 | [Readable compositor evidence](20261031-compositor-evidence-explanations.md) | this commit | current |
 | 2026-10-31 | [Variable SERVICE backend correlation](20261031-service-variable-correlation.md) | pending | current |
+| 2026-10-29 | [Selectable static typing](20261029-static-typing.md) | eddfd724 | current: implementation, proof boundary and measurements |
+| 2026-10-30 | [Compact WebDAV/LWS Base64 codecs](20261030-webdav-compact-base64.md) | pending | current: equivalent codec; native 49/51 MB probes pass; full WebDAV gate remains open |
+| 2026-10-29 | [WebDAV executable gate investigation](20261029-webdav-executable-gate.md) and [assurance boundary](designissues/2026-10-29-webdav-executable-assurance.md) | this change | current: startup fixed; large remote reads still fail |
+| 2026-10-29 | [Executables for each release](designissues/2026-10-29-executables-per-release.md) | this change | proposed: exact tarball, reusable executable jobs, visible distribution status |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |
 | 2026-04-21 | [Large Turtle stack overflow fix sketch](2026-04-21-large-turtle-stack-overflow-fix-sketch.md) | c29698f98 | historical |
 | 2026-08 | [Factoidal verified RDF block engine](2026-08-blockengine.md) | 27f9308f4 | current: design, part 1 |
@@ -264,3 +274,6 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-03 | [LWS with large bodies](20261103-lws-large-bodies.md) | this commit | measured 1 MiB to 200 MiB PUT/GET in files mode, sealed; no size limits or quotas today (issue 1240); guidance: about 1 MiB per item, no media |
 | 2026-11-03 | [LWS ops: which reach resources without authorization?](20261103-lws-in-process-audit.md) | this commit | audit for issue 1238: only `lwsSnapshot` returns the whole storage with no authorization (host-only by design; clear text without a key); components get `{step, settled, close}`, not the engine |
 | 2026-10-31 | [Scoped query provider grants prototype](20261031-scoped-query-context-prototype.md) | same commit | experimental/unwired: actual resolver bounds, captured providers, 14 runtime passes plus one visible variable-SERVICE expected failure |
+| 2026-10-31 | [QT4 static typing integration](20261031-qt4-static-typing-integration.md) | same commit | current: PR263 recovery, 104-case inventory, iterative FLWOR traversal and bounded recursion audit |
+| 2026-11-02 | [Whole WPT SVG corpus and browser measurements](20261102-svg-whole-wpt-corpus.md) | this commit | complete pinned SVG subtree, original HTML transport, all601 relation states, full-image oracle and fault controls; stable baseline15matches and separate10use/symbol exact diagnostics |
+| 2026-11-03 | [SVG/HTML browser-WASM corpus profile](20261103-svg-html-wasm-corpus.md) | this commit | full601 image states split by SVG/HTML producer, exact frozen witnesses, paired native/WASM originals and separate zero-viewport/curve diagnostics; numeric and sizing failures retained |

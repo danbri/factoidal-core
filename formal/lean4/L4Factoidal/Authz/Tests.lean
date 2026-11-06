@@ -340,7 +340,18 @@ def docOk : String := cidDoc [("id", .string alice), ("authentication", .array [
 #guard privateAddr (.v4 [172, 16, 0, 1]) && privateAddr (.v4 [192, 168, 1, 1]) &&
   privateAddr (.v4 [127, 0, 0, 2]) && privateAddr (.v4 [0, 0, 0, 0]) && !privateAddr (.v4 [172, 32, 0, 1]) &&
   !privateAddr (.v4 [8, 8, 8, 8]) && privateAddr (.v6 [0xfc00, 0, 0, 0, 0, 0, 0, 1]) &&
-  !privateAddr (.v6 [0x2001, 0xdb8, 0, 0, 0, 0, 0, 1])
+  !privateAddr (.v6 [0x2606, 0x4700, 0, 0, 0, 0, 0, 1]) &&
+  privateAddr (.v6 [0x2001, 0xdb8, 0, 0, 0, 0, 0, 1])
+-- Issue 1126: the IANA special-purpose ranges that the RFC 1918 list missed.
+-- Shared address space (100.64.0.0/10, used by Tailscale), benchmarking,
+-- multicast, reserved, site-local, NAT64 and 6to4 with a private IPv4.
+#guard errorOf (run (baseForm aliceToken) (recordResolved cfg st0 "id.example" ["100.64.0.1"] now)) == some "invalid_request"
+#guard errorOf (run (baseForm aliceToken) (recordResolved cfg st0 "id.example" ["198.18.0.1"] now)) == some "invalid_request"
+#guard errorOf (run (baseForm aliceToken) (recordResolved cfg st0 "id.example" ["224.0.0.251"] now)) == some "invalid_request"
+#guard errorOf (run (baseForm aliceToken) (recordResolved cfg st0 "id.example" ["255.255.255.255"] now)) == some "invalid_request"
+#guard errorOf (run (baseForm aliceToken) (recordResolved cfg st0 "id.example" ["fec0::1"] now)) == some "invalid_request"
+#guard errorOf (run (baseForm aliceToken) (recordResolved cfg st0 "id.example" ["64:ff9b::a00:1"] now)) == some "invalid_request"
+#guard errorOf (run (baseForm aliceToken) (recordResolved cfg st0 "id.example" ["2002:a00:1::1"] now)) == some "invalid_request"
 -- http subjects: refused unless --allow-http; a localhost name is loopback.
 def httpAlice : String := "http://localhost:8080/agents/alice"
 #guard errorOf (run (baseForm (jwt (es256Header "k1") (selfClaims httpAlice) aliceKey))) == some "invalid_request"

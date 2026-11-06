@@ -3628,6 +3628,24 @@ names, 0 missing, `lake env lean` in `formal/lean4`):
 | other | 107 | 0 of 107 | 0 of 107 | 0 of 107 | 0 of 107 | 107 of 107 |
 | total | 1383 | 142 of 1383 | 27 of 1383 | 483 of 1383 | 25 of 1383 | 706 of 1383 |
 
+## XPath and XQuery static typing (2026-10-29)
+
+`XPath4.StaticTyping.fragment_sound` in
+[`StaticTypingTheorems.lean`](../formal/lean4/L4Factoidal/XPath4/StaticTypingTheorems.lean)
+relates actual static inference to actual evaluation and `Env.seqMatches`.
+For its syntactic fragment and sufficient inference fuel, a successful
+evaluation matches the inferred type. The fragment contains atomic literals,
+literal pairs, empty expressions, nested singleton sequences and conditionals
+with an empty branch. This does not prove the remaining inference rules or
+completeness of static error detection.
+
+`XPath4.evalConfigured_staticTypingOff` is a definitional equality (`rfl`)
+with the existing evaluator when static typing is disabled. The existing
+default-settings agreement theorems remain checked. The proof modules are
+imported by `Harness/Qt4Run.lean`; `lake build l4qt4` checks them. The
+soundness axiom audit reports only `propext`, `Classical.choice`, `Quot.sound`.
+See the [design and proof boundary](designissues/2026-10-29-static-typing.md).
+
 
 ## Public dataset union adapter (2026-10-31)
 
@@ -3654,3 +3672,25 @@ substituting an empty subset for the existing algorithm. This is not an RDFS
 completeness or output-existence theorem. Accepted parser fallbacks remain
 outside this checked profile; empty named-graph declarations can be dropped.
 See the [normalization record](20261031-union-rdfs-normalization-preservation.md).
+## Checked conditional stages and SRX admission (2026-10-31)
+`L4Factoidal.Dataflow.Stage.runRouted_sound` and `Stage.choose` in
+`Dataflow/Conditional.lean` compose the selected branch's contract. The branch
+receives evidence or refutation of the application predicate on the exact
+input. This does not change the flat DAG scheduler or certify host effects.
+`SPARQL.QueryResult.toSrxReport_exact`, `toSrxReport_accepted`, and
+`toSrxReport_refused` in `SPARQL/ResultsXmlRouting.lean` cover the production
+SRX admission producer used by `queryRaw`/`datasetQueryRaw` XML modes. They
+establish original serialization identity, acceptance by `XPath4.Doc.ofString`,
+or its actual refusal. The namespace, schema, RDF round-trip, XSLT, host JSON
+transport and complete compositor obligations remain separate. Explicit
+query rendering remains outside the registry evaluator's proved domain.
+See [the implementation and tests](20261031-checked-conditional-routing.md).
+## SPARQL Results XML admission counterexample (2026-10-31)
+`SPARQL/ResultsXmlAdmission.lean` proves `soh_not_xml10`,
+`containing_soh_not_admitted`, `srxEscape_not_universally_admitted` and
+`rdf_term_counterexample` over the actual XML predicate/SRX producer. These
+exhibit a missing representability premise; they do not certify the serializer
+or a complete XML admission algorithm. Four parser guards and the separate
+public expected-failure record are described in the
+[boundary report](20261031-compositor-xml-representability.md).
+Tracking: https://github.com/danbri/factoidal/issues/1215.

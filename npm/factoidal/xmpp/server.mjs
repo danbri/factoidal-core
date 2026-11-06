@@ -123,6 +123,7 @@ function randomToken (bytes = 18) {
  * @param {string} [options.saltB64] the SCRAM salt, base64
  * @param {number} [options.iterationCount] the SCRAM iteration count
  * @param {boolean} [options.tlsCarrier] whether the carrier terminates TLS
+ * @param {boolean} [options.disableRateLimits] no failed SASL login limit (`--dangerously-disable-ratelimits`)
  * @param {object} [options.engine] an engine handle to reuse
  * @returns {Promise<{engine: object, handle: string, domain: string,
  *   openSession: Function, roster: Function, setRoster: Function, close: Function}>}
@@ -147,6 +148,9 @@ export async function openXmppServer (options = {}) {
   // The host keeps the state across restarts (a state key and a DIR): only
   // then does the engine produce `store`/`unstore`.
   if (options.persist === true) config.persist = true
+  // The failed SASL login limit is on unless the operator turns it off
+  // (https://github.com/danbri/factoidal/issues/1128); the engine decides.
+  if (options.disableRateLimits === true) config.disableRateLimits = true
   let opened
   try {
     opened = engine.call('xmppOpen', [JSON.stringify(config)])
@@ -172,15 +176,21 @@ export async function openXmppServer (options = {}) {
     handle,
     domain: typeof opened.domain === 'string' ? opened.domain : (config.domain || 'localhost'),
     accounts: typeof opened.accounts === 'number' ? opened.accounts : undefined,
+    /** The engine's start warnings (--dangerously-disable-ratelimits). */
+    warnings: Array.isArray(opened.warnings) ? opened.warnings : [],
     /**
      * One client connection.
-     * @param {{streamId?: string, nonce?: string, tlsCarrier?: boolean, startTls?: boolean, maxUnits?: number}} [sessionOptions]
+     * `remoteAddress` (the socket's) and the clock go to the engine for the
+     * failed SASL login limit (https://github.com/danbri/factoidal/issues/1128).
+     * @param {{streamId?: string, nonce?: string, tlsCarrier?: boolean, startTls?: boolean, maxUnits?: number, remoteAddress?: string}} [sessionOptions]
      */
     openSession (sessionOptions = {}) {
       const record = {
         streamId: typeof sessionOptions.streamId === 'string' ? sessionOptions.streamId : randomToken(),
-        nonce: typeof sessionOptions.nonce === 'string' ? sessionOptions.nonce : randomToken()
+        nonce: typeof sessionOptions.nonce === 'string' ? sessionOptions.nonce : randomToken(),
+        now: Math.floor(Date.now() / 1000)
       }
+      if (typeof sessionOptions.remoteAddress === 'string') record.remoteAddress = sessionOptions.remoteAddress
       if (typeof sessionOptions.tlsCarrier === 'boolean') record.tlsCarrier = sessionOptions.tlsCarrier
       if (typeof sessionOptions.startTls === 'boolean') record.startTls = sessionOptions.startTls
       if (typeof sessionOptions.maxUnits === 'number') record.maxUnits = sessionOptions.maxUnits
@@ -543,7 +553,7 @@ export async function createXmppServer (options = {}) {
   function onConnection (socket, direct = false) {
     let session
     try {
-      session = xmpp.openSession({ tlsCarrier: useTls || direct, startTls: startTls && !direct })
+      session = xmpp.openSession({ tlsCarrier: useTls || direct, startTls: startTls && !direct, remoteAddress: typeof socket.remoteAddress === 'string' ? socket.remoteAddress : '' })
     } catch (error) {
       onError(error)
       socket.destroy()

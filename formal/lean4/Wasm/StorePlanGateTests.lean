@@ -83,15 +83,17 @@ private def gatePredicates : List WfIri :=
 
 private def gateChunkBytes : Nat := 65536
 
-private def blockBytesFor (predicate : WfIri) : ByteArray :=
+private def blockBytesFor (predicate : WfIri)
+    (quads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow := sourceQuads) : ByteArray :=
   (L4Factoidal.Storage.IndexedBlockWireV4.encode?
     (L4Factoidal.Storage.IndexedBlockWireV4.fromQuads
-      (sourceQuads.filter fun row => row.2.p == predicate))).getD ByteArray.empty
+      (quads.filter fun row => row.2.p == predicate))).getD ByteArray.empty
 
 private def blockKey (ordinal : Nat) : String := s!"predicate-{ordinal}.ibk4"
 
-private def entryFor (ordinal : Nat) (predicate : WfIri) : Entry :=
-  let bytes := blockBytesFor predicate
+private def entryFor (ordinal : Nat) (predicate : WfIri)
+    (quads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow := sourceQuads) : Entry :=
+  let bytes := blockBytesFor predicate quads
   { predicate
   , artifact :=
       { key := ⟨blockKey ordinal⟩
@@ -99,7 +101,7 @@ private def entryFor (ordinal : Nat) (predicate : WfIri) : Entry :=
       , sha256 := L4Factoidal.Storage.BlockArtifact.digest bytes
       , chunked := L4Factoidal.Storage.ChunkedArtifact.fromChunks? gateChunkBytes
           (L4Factoidal.Storage.ChunkedArtifact.chunksOf gateChunkBytes bytes) }
-  , rows := (sourceQuads.filter fun row => row.2.p == predicate).length
+  , rows := (quads.filter fun row => row.2.p == predicate).length
   , ordinal
   , blockLayout := some BlockLayout.ibk4
   , blankNodeScope := "0000000000000000000000000000000000000000000000000000000000000000"
@@ -174,8 +176,8 @@ def planMode (sparql : String) : Option Json := do
 /-- The solution rows of a `storeQuery` SELECT envelope (`srj.results.bindings`,
 the SPARQL 1.1 Query Results JSON Format), each row printed as JSON text, or
 `none` when the query was refused. -/
-def answerRows (sparql : String) : Option (List String) := do
-  let envelope ← parseJson? (storeQuery gateManifestHex sparql gateArtifactsJson ByteArray.empty)
+private def selectRows (text : String) : Option (List String) := do
+  let envelope ← parseJson? text
   match member? "ok" envelope with
   | some (.bool true) => pure ()
   | _ => none
@@ -185,6 +187,9 @@ def answerRows (sparql : String) : Option (List String) := do
   match rows with
   | .array items => pure (items.map Json.toString)
   | _ => none
+
+def answerRows (sparql : String) : Option (List String) :=
+  selectRows (storeQuery gateManifestHex sparql gateArtifactsJson ByteArray.empty)
 
 /-- Two lists hold the same members, each as often: one `count` per member. -/
 def sameMultiset (xs ys : List String) : Bool :=
@@ -233,5 +238,98 @@ def answersAgree (pair : ProvedPair) : Bool :=
                       right := (provedPairs[0]!.left) })
 #guard !(answersAgree { theoremName := "none", left := (provedPairs[3]!.left),
                         right := (provedPairs[0]!.left) })
+
+/-! ## Mixed-predicate GeoSPARQL regression
+
+These are differential guards, not new reference-equivalence theorems.
+The same point occurs in two named graphs. Projecting away ?g must preserve
+both copies; the complete binding multiset is checked against the full source.
+-/
+
+private def spatialSource : String :=
+  "<http://ex.org/a> <http://ex.org/geometry> \"POINT (1 1)\"^^<http://www.opengis.net/ont/geosparql#wktLiteral> <http://ex.org/g> .\n" ++
+  "<http://ex.org/a> <http://ex.org/geometry> \"POINT (1 1)\"^^<http://www.opengis.net/ont/geosparql#wktLiteral> <http://ex.org/h> .\n" ++
+  "<http://ex.org/b> <http://ex.org/geometry> \"POINT (9 9)\"^^<http://www.opengis.net/ont/geosparql#wktLiteral> <http://ex.org/h> .\n" ++
+  "<http://ex.org/a> <http://ex.org/name> \"alpha\" <http://ex.org/g> .\n"
+
+private def spatialDataset : Dataset :=
+  match L4Factoidal.Syntax.parseNQuads spatialSource with
+  | .ok ds => ds
+  | .error _ => { default := [], named := [] }
+
+private def spatialQuads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow :=
+  spatialDataset.named.flatMap fun ng => ng.graph.map fun t => (some ng.name, t)
+
+private def spatialPredicates : List WfIri :=
+  spatialQuads.foldl (fun acc row => if acc.contains row.2.p then acc else acc ++ [row.2.p]) []
+
+private def spatialManifest : Manifest :=
+  { gateManifest with entries := spatialPredicates.zipIdx.map fun (p, i) =>
+      { entryFor i p spatialQuads with
+        graphSet := (spatialQuads.filter fun row => row.2.p == p).foldl
+          (fun names row =>
+            let name := GraphName.ofGraphRef row.1
+            if names.contains name then names else names ++ [name]) [] } }
+
+private def spatialManifestHex : String :=
+  hexOfBytes ((encode? spatialManifest).getD ByteArray.empty)
+
+private def spatialArtifacts : String :=
+  (Json.array (spatialPredicates.zipIdx.map fun (p, i) =>
+    .object [("key", .string (blockKey i)),
+             ("bytes", .string (hexOfBytes (blockBytesFor p spatialQuads)))])).toString
+
+private def spatialPlanKeys (sparql : String) : Option (List String) := do
+  let envelope ← parseJson? (storeQueryPlan spatialManifestHex sparql)
+  let keys ← member? "keys" envelope
+  pure (stringsOf keys)
+
+private def spatialAnswerRows (sparql : String) : Option (List String) :=
+  selectRows (storeQuery spatialManifestHex sparql spatialArtifacts ByteArray.empty)
+
+private def spatialReferenceRows (sparql : String) : Option (List String) :=
+  selectRows (queryParsedDatasetWith spatialDataset none sparql)
+
+private def spatialPrefixes : String :=
+  "PREFIX geof: <http://www.opengis.net/def/function/geosparql/> " ++
+  "PREFIX geo: <http://www.opengis.net/ont/geosparql#> "
+
+private def spatialWindow : String :=
+  "\"POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))\"^^geo:wktLiteral"
+
+private def spatialQuery (relation : String) : String :=
+  spatialPrefixes ++ "SELECT ?s ?w WHERE { GRAPH ?g { ?s <http://ex.org/geometry> ?w . " ++
+  "FILTER(geof:" ++ relation ++ "(?w, " ++ spatialWindow ++ ")) } }"
+
+private def spatialAnswersAgree (relation : String) (count : Nat) : Bool :=
+  let q := spatialQuery relation
+  match spatialAnswerRows q, spatialReferenceRows q with
+  | some actual, some reference => actual.length == count && sameMultiset actual reference
+  | _, _ => false
+
+#guard valid spatialManifest
+#guard spatialQuads.length == 4
+#guard spatialPredicates.length == 2
+-- One geometry block, in a store that also has a name block.
+#guard ["sfWithin", "sfIntersects", "sfDisjoint"].all fun relation =>
+  spatialPlanKeys (spatialQuery relation) == some [blockKey 0]
+#guard spatialAnswersAgree "sfWithin" 2
+#guard spatialAnswersAgree "sfIntersects" 2
+#guard spatialAnswersAgree "sfDisjoint" 1
+-- The two graphs produce identical projected rows, with multiplicity two.
+#guard match spatialAnswerRows (spatialQuery "sfWithin") with
+  | some [a, b] => a == b
+  | _ => false
+
+private def spatialFallbackQueries : List String :=
+  [ spatialPrefixes ++ "SELECT * WHERE { GRAPH ?g { ?s <http://ex.org/geometry> ?w . FILTER(geof:unknown(?w)) } }"
+  , spatialPrefixes ++ "SELECT * WHERE { GRAPH ?g { ?s <http://ex.org/geometry> ?w . BIND(geof:sfWithin(?w, " ++ spatialWindow ++ ") AS ?inside) } }"
+  , spatialQuery "sfWithin" ++ " ORDER BY EXISTS { GRAPH ?g { ?s <http://ex.org/name> ?name } }"
+  , spatialPrefixes ++ "DESCRIBE ?s WHERE { GRAPH ?g { ?s <http://ex.org/geometry> ?w . FILTER(geof:sfWithin(?w, " ++ spatialWindow ++ ")) } }" ]
+
+#guard spatialFallbackQueries.all fun q =>
+  match spatialPlanKeys q with
+  | some keys => sameSet keys [blockKey 0, blockKey 1]
+  | none => false
 
 end L4Wasm.StorePlanGateTests

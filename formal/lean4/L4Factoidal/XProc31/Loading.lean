@@ -1,3 +1,4 @@
+import L4Factoidal.XProc31.BinaryDocument
 import L4Factoidal.XML.Validity
 import L4Factoidal.RDF.IriSyntax
 import L4Factoidal.XProc31.Core
@@ -135,18 +136,16 @@ def inferredDocumentType (uri : String) : String :=
   else if path.endsWith ".html" || path.endsWith ".htm" then "text/html"
   else if path.endsWith ".xhtml" then "application/xhtml+xml"
   else if path.endsWith ".svg" then "image/svg+xml"
-  else if [".zip", ".gz", ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".bin"].any (fun ext => path.endsWith ext) then "application/octet-stream"
+  else if path.endsWith ".gz" || path.endsWith ".gzip" then "application/gzip"
+  else if path.endsWith ".zip" then "application/zip"
+  else if [".png", ".jpg", ".jpeg", ".gif", ".pdf", ".bin"].any (fun ext => path.endsWith ext) then "application/octet-stream"
   else "application/xml"
 
 /-- Shared local loader for p:document and p:load. It retains parsed JSON as
 XDM, uses the HTML parser for text/html, and keeps XML document fragments. -/
-def loadDocument (uri contentType : String) (validateDtd : Bool := false)
+def decodedDocument (bytes : ByteArray) (contentType uri : String) (validateDtd : Bool := false)
     (parameters : XPath4.Seq := [.map []]) : IO (Result Document) := do
-  if !RDF.isAbsoluteIri uri then return error "XD0064" "invalid document URI"
-  let contentType := if contentType == "" then inferredDocumentType uri else contentType
   let media ← match parseMediaType contentType with | .error e => return .error e | .ok m => pure m
-  if media.kind == .binary then return unsupported "binary document representation"
-  let bytes ← match ← loadDocumentBytes uri with | .error e => return .error e | .ok b => pure b
   let charset := media.parameters.lookup "charset"
   match media.kind with
   | .text =>
@@ -155,6 +154,10 @@ def loadDocument (uri contentType : String) (validateDtd : Bool := false)
     | .ok text => return .ok {node := .text text, contentType, baseUri := uri}
   | .json =>
     let text ← match decodeDocumentText bytes charset with | .error e => return .error e | .ok t => pure t
+    let parameters := match parameters with
+      | [.map entries] => [.map (entries.filter (fun (key,_) =>
+          ["liberal", "duplicates", "escape", "fallback"].contains key.str))]
+      | other => other
     match XPath4.evalString "parse-json($raw,$params)" { vars := [(⟨"","raw",""⟩, XPath4.sStr text), (⟨"","params",""⟩,parameters)] } with
     | .error e => return error (if e.code == "FOJS0003" then "XD0058" else if e.code == "FOJS0005" then "XD0059" else "XD0057") e.msg
     | .ok value => return .ok {node := .text text, contentType, baseUri := uri, value := some value}
@@ -180,7 +183,19 @@ def loadDocument (uri contentType : String) (validateDtd : Bool := false)
       | some _ => match decodeDocumentText bytes charset with | .error e => return .error e | .ok t => pure t
       | none => match XML.decodeXmlBytes bytes with | .error e => return error "XD0011" e | .ok t => pure t
     parsedXmlDocument uri contentType text validateDtd
-  | .binary => return unsupported "binary document representation"
+  | .binary => return .ok (binaryDocument bytes contentType uri)
+
+
+def documentFromBytes (uri contentType : String) (bytes : ByteArray) : IO (Result Document) :=
+  decodedDocument bytes contentType uri
+
+def loadDocument (uri contentType : String) (validateDtd : Bool := false)
+    (parameters : XPath4.Seq := [.map []]) : IO (Result Document) := do
+  if !RDF.isAbsoluteIri uri then return error "XD0064" "invalid document URI"
+  let contentType := if contentType == "" then inferredDocumentType uri else contentType
+  let _ ← match parseMediaType contentType with | .error e => return .error e | .ok m => pure m
+  let bytes ← match ← loadDocumentBytes uri with | .error e => return .error e | .ok b => pure b
+  decodedDocument bytes contentType uri validateDtd parameters
 
 #guard (decodeDocumentText ⟨#[0xef,0xbb,0xbf,0x41]⟩ none).toOption == some "A"
 #guard (decodeDocumentText ⟨#[0xff,0xfe,0x41,0]⟩ none).toOption == some "A"

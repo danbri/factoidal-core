@@ -63,6 +63,11 @@ private def tt : String :=
 -- call.arity, call.arguments, op.unknown
 #guard codeOfCall "queryDataset" [] == some "call.arity"
 #guard codeOf? (L4Wasm.call "queryDataset" "{}") == some "call.arguments"
+-- containerPath: a request that is not a JSON object with a known kind (Wasm/Ops/ContainerPath.lean).
+#guard codeOfCall "containerPath" ["{}"] == some "call.arguments"
+#guard codeOfCall "containerPath" ["["] == some "call.arguments"
+#guard codeOfCall "containerPath" [] == some "call.arity"
+#guard codeOfCall "containerPath" ["{\"kind\":\"resource\",\"container\":\"https://s.example/c/\",\"path\":\"../x\"}"] == none
 #guard codeOfCall "noSuchOp" [] == some "op.unknown"
 -- every error answer of the table carries a declared code
 #guard ((L4Wasm.call "xpathEval" (args ["<a/>", "///"])) |> codeOf?).all errorCodes.contains

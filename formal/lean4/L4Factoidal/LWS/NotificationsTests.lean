@@ -117,9 +117,14 @@ private def w2 : W := run1 w1 (subReq subBody)
 #guard w2.ns.subs.length == 1 && w2.ns.subs.head?.map (·.topics) == some ["/docs/"]
 
 -- Negative requests: each is refused and makes no subscription.
-private def refused (body : String) (ct : String := "application/lws+json") : Nat × Nat :=
-  let w := run1 w1 (subReq body ct)
+private def refused (body : String) (ct : String := "application/lws+json")
+    (c : Config := cfg) : Nat × Nat :=
+  let w := run1 w1 (subReq body ct) (c := c)
   (w.resp.status, w.ns.subs.length)
+
+/-- The configuration with the operator's opt-in for private targets
+(`--allow-private-fetch`, issue 1126). -/
+private def cPriv : Config := { cfg with allowPrivateFetch := true }
 
 #guard refused "{\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://h.example/\"}" == (400, 0)
 #guard refused "{\"type\":\"TouchstoneUnadvertisedSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://h.example/\"}" == (400, 0)
@@ -137,7 +142,9 @@ private def refused (body : String) (ct : String := "application/lws+json") : Na
 #guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://localhost/\"}" == (400, 0)
 -- The storage description is not a container: accepted (a delivery to it is
 -- refused with 405 and creates nothing).
-#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://localhost/.well-known/lws-storage\"}" == (201, 1)
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://localhost/.well-known/lws-storage\"}" (c := cPriv) == (201, 1)
+-- Without the opt-in, a localhost name is refused (issue 1126).
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://localhost/.well-known/lws-storage\"}" == (400, 0)
 -- A container of this storage under another name of this server (issue 915,
 -- `InboxGuard.loops`): `localhost` in another spelling, a loopback address,
 -- IPv6 loopback, all at port 80 (the base IRI's).
@@ -146,8 +153,10 @@ private def refused (body : String) (ct : String := "application/lws+json") : Na
 #guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://[::1]/\"}" == (400, 0)
 -- Negative: another port of this machine is another server; a data resource
 -- path of this server under another name creates nothing.
-#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://127.0.0.1:8080/in/\"}" == (201, 1)
-#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://127.0.0.1/.well-known/lws-storage\"}" == (201, 1)
+-- These need the opt-in for private targets (issue 1126).
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://127.0.0.1:8080/in/\"}" (c := cPriv) == (201, 1)
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://127.0.0.1/.well-known/lws-storage\"}" (c := cPriv) == (201, 1)
+#guard refused "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"http://127.0.0.1:8080/in/\"}" == (400, 0)
 -- What a POST to a data resource or to a missing path of this server does:
 -- 405 and 404, nothing created.
 #guard (run1 w1 (req "POST" "/docs/a.txt" [("content-type", "application/lws+json")] "{}")).resp.status == 405
@@ -425,7 +434,7 @@ private def flushed : Option (NotifState × List Delivery) :=
 -- the next window is admitted.
 #guard
   let s : Subscription := { id := "s", owner := none, topics := ["/"], inbox := "http://h.example/", created := 0 }
-  let r : Rate := ⟨2, 60⟩
+  let r : Rate := { limit := 2, window := 60 }
   let (a1, s1) := admit r 100 s
   let (a2, s2) := admit r 101 s1
   let (a3, s3) := admit r 102 s2
@@ -455,8 +464,87 @@ private def cListen (addrs : List String) : Config :=
 #guard (run1 w1 (subReq subBody) (c := cListen ["127.0.0.1"])).resp.status == 400
 #guard (run1 w1 (subReq subBody) (c := cListen ["192.0.2.1", "::1"])).resp.status == 400
 -- Negative: it resolves elsewhere, or not at all.
-#guard (run1 w1 (subReq subBody) (c := cListen ["192.0.2.1"])).resp.status == 201
+#guard (run1 w1 (subReq subBody) (c := cListen ["93.184.216.34"])).resp.status == 201
 #guard (run1 w1 (subReq subBody) (c := cListen [])).resp.status == 201
+
+/-! ## Requests to private addresses (https://github.com/danbri/factoidal/issues/1126)
+
+Row C5 and invariant I5 of
+`docs/designissues/2026-10-28-feature-combination-safety.md`. -/
+
+private def subTo (inbox : String) : String :=
+  "{\"type\":\"WebhookSubscription\",\"topic\":[\"http://localhost/docs/\"],\"inbox\":\"" ++ inbox ++ "\"}"
+
+-- An RFC 1918 literal: 400; with the opt-in: 201.
+#guard refused (subTo "http://10.0.0.1/") == (400, 0)
+#guard refused (subTo "http://10.0.0.1/") (c := cPriv) == (201, 1)
+-- The other IANA special-purpose ranges.
+#guard refused (subTo "http://100.64.0.1/in") == (400, 0)
+#guard refused (subTo "http://169.254.169.254/latest") == (400, 0)
+#guard refused (subTo "http://198.18.0.1/") == (400, 0)
+#guard refused (subTo "http://224.0.0.1/") == (400, 0)
+#guard refused (subTo "http://255.255.255.255/") == (400, 0)
+#guard refused (subTo "http://[fd00::1]/") == (400, 0)
+#guard refused (subTo "http://[fec0::1]/") == (400, 0)
+#guard refused (subTo "http://[64:ff9b::a00:1]/") == (400, 0)
+#guard refused (subTo "http://[2002:a00:1::1]/") == (400, 0)
+#guard refused (subTo "http://[::ffff:192.168.0.1]/") == (400, 0)
+-- A public literal is accepted.
+#guard refused (subTo "http://93.184.216.34/in") == (201, 1)
+-- A name the host resolved, at subscription time, to a private address.
+#guard (run1 w1 (subReq subBody) (c := { cfg with resolved := [("hook.example", ["10.1.2.3"])] })).resp.status == 400
+#guard (run1 w1 (subReq subBody) (c := { cfg with resolved := [("hook.example", ["93.184.216.34", "100.64.0.1"])] })).resp.status == 400
+#guard (run1 w1 (subReq subBody) (c := { cfg with resolved := [("hook.example", ["93.184.216.34"])] })).resp.status == 201
+
+-- A name public at subscription and private at delivery: the subscription
+-- is made; the delivery-time decision refuses it (DNS rebinding).
+#guard (egressOf cfg "http://hook.example:8080/in/1/" ["93.184.216.34"]).toOption ==
+  some ("hook.example", "93.184.216.34")
+#guard (egressOf cfg "http://hook.example:8080/in/1/" ["10.0.0.1"]).toOption == none
+#guard (egressOf cfg "http://hook.example:8080/in/1/" ["127.0.0.1"]).toOption == none
+#guard (egressOf cfg "http://hook.example:8080/in/1/" []).toOption == none
+#guard (egressOf cPriv "http://hook.example:8080/in/1/" ["10.0.0.1"]).toOption == some ("hook.example", "10.0.0.1")
+-- A literal is its own address: what the resolver says is not read.
+#guard (egressOf cfg "http://10.0.0.1/" ["93.184.216.34"]).toOption == none
+#guard (egressOf cfg "http://93.184.216.34/" ["10.0.0.1"]).toOption == some ("93.184.216.34", "93.184.216.34")
+-- A refused delivery is a failure with no retry.
+#guard
+  let ns : NotifState := { subs := [{ id := "sub0", owner := none, topics := ["/"], inbox := "http://h.example/", created := 0 }]
+                           pending := [{ id := "d1", subId := "sub0", inbox := "http://h.example/", body := "{}", attempt := 1 }] }
+  let (ns', retry) := deliveryResult none 10 "d1" 0 ns (refused := true)
+  retry.isNone && ns'.pending.isEmpty && ns'.subs.head?.map (·.failures) == some 1 &&
+  (deliveryResult none 10 "d1" 0 ns).2.isSome
+
+-- The limit per destination: 20 subscriptions to one inbox, one change,
+-- at most `deliveryDestLimit` deliveries in the window (default 10); the
+-- others wait in `held` and go when the window ends.
+private def w20 : W :=
+  (List.range 20).foldl (fun w _ => run1 w (subReq subBody) (c := cPriv)) w1
+#guard w20.ns.subs.length == 20
+private def w20a : W := run1 w20 (putText "/docs/b.txt" "two") (c := cPriv)
+#guard w20a.ds.length == 10
+#guard w20a.ds.all (·.url == "http://hook.example:8080/in/1/")
+#guard (w20a.ns.held.map (·.1)).eraseDups.length == 10
+-- Another change in the same window: nothing more to that destination.
+private def w20b : W := run1 w20a (putText "/docs/c.txt" "three") (c := cPriv)
+#guard w20b.ds.isEmpty
+-- `nextWake` waits for the end of the destination's window.
+#guard nextWake w20b.st.clock cPriv.rate w20b.ns == some (w20.st.clock + 60 - w20b.st.clock)
+-- At the end of the window, the next 10 go.
+#guard (flush "http://localhost/" none (w20a.st.clock + 60) cPriv.rate w20b.ns).2.length == 10
+-- With the limit off (0), all 20 go at once.
+#guard (run1 w20 (putText "/docs/b.txt" "two") (c := { cPriv with deliveryDestLimit := 0 })).ds.length == 20
+-- Two destinations do not share a window.
+#guard destKey "http://Hook.example:8080/in/1/" == "hook.example:8080"
+#guard destKey "https://hook.example/x" == "hook.example:443"
+#guard
+  let r : Rate := { destLimit := 2 }
+  let (a1, d1) := admitDest r 100 "a:80" []
+  let (a2, d2) := admitDest r 101 "a:80" d1
+  let (a3, d3) := admitDest r 102 "a:80" d2
+  let (b1, d4) := admitDest r 103 "b:80" d3
+  let (a4, _) := admitDest r 160 "a:80" d4
+  a1 && a2 && !a3 && b1 && a4
 
 /-! ## The registry check (`lws-core-16`) -/
 

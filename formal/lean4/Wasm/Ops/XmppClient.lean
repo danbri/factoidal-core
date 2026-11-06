@@ -10,13 +10,14 @@ webdav-serve CONFIGDIR --xmpp JID`).
                  "host":"xmpp.example.org","tls":true,
                  "mounts":[…the ready.mounts of webdavLoad…],
                  "dangerouslyAllowWritableWithoutLogin"?:bool,
+                 "login"?:bool (the ready.login of webdavLoad),
                  "inlineLimit"?:N,"chunkSize"?:N,"minIterations"?:N}
     -> {"ok":true,"handle":"xmppc1","domain":"example.org","host":"…","tls":bool,
         "writableWithoutLogin":[NAME,…],"send":[streamHeader]}
      | {"ok":false,"error":"xmppClientOpen: …"}   (`xcStartRefusal`)
   xmppClientFeed(handle, text)
     -> {"ok":true,"send":[…],"requests":[{"id","method","target","headers",
-        "bodyBase64"},…],"bound":jid|null,"close":bool,"reason":s|null,
+        "bodyBase64","requester":{"xmpp":BAREJID}},…],"bound":jid|null,"close":bool,"reason":s|null,
         "stage":"…","bufferedBytes":N}
   xmppClientAnswer(handle, requestId, responseJson)
     responseJson: {"status":N,"headers":[[name,value],…],"bodyBase64":"…"}
@@ -33,6 +34,10 @@ request (an IQ get or set gets `service-unavailable`) and sends requests:
     requestJson: {"method","target","headers":[[name,value],…],"bodyBase64"}
     -> {"ok":true,"id":"fxp1","send":[…],"responses":[…]}
   xmppClientTick(handle, nowMs) -> {"ok":true,"send":[…],"responses":[…]}
+
+`xmppClientTick` also serves the serving mode: the host gives its clock
+about once a second, and a request that waits for its chunks longer than
+60 s is refused (`HttpOverXmpp.tick`, https://github.com/danbri/factoidal/issues/1128).
 
 `responses` (also in `xmppClientFeed` and `xmppClientClose`) are
 `{"id","status","headers":[[name,value],…],"bodyBase64"}`: the host writes
@@ -110,17 +115,18 @@ private def xcSends (outs : List ClientStream.Out) : List String :=
 
 /-- Why the WebDAV target may not start over XMPP, or `none`
 (https://github.com/danbri/factoidal/issues/1120 and
-https://github.com/danbri/factoidal/issues/1125). The JID allow list is the
-only access control on this path (`HttpOverXmpp.step` runs `WebDAV.handle`,
-and a local mount acts as the storage owner), so:
+https://github.com/danbri/factoidal/issues/1125). Two checks apply to every
+request (invariant I1): the JID allow list here (`HttpOverXmpp.plan`), then
+the WebDAV handle's login (`Login.admit` in `webdavStep`, with the sender's
+bare JID as the requester) when the handle has a users file (`login`). So:
 
 * the allow list is not empty, and each entry is a bare JID (no resource);
 * the transport is TLS, or plain TCP to a literal loopback address;
-* no mount is a writable local mount, unless the operator opted in with
-  `--dangerously-allow-writable-without-login` (no login exists on this
-  path yet: https://github.com/danbri/factoidal/issues/1125). -/
+* with no login, no mount is a writable local mount, unless the operator
+  opted in with `--dangerously-allow-writable-without-login`. With a login
+  (`--users`) the opt-in is not needed: every request logs in. -/
 def xcStartRefusal (allow : List String) (tls : Bool) (host : String)
-    (writableLocal : List String) (optIn : Bool) : Option String :=
+    (writableLocal : List String) (optIn : Bool) (login : Bool := false) : Option String :=
   if allow.isEmpty then some "the allow list is empty: give --xmpp-allow JID[,JID]"
   else match allow.find? (fun a => match Jid.parse a with
       | some j => j.resourcepart.isSome
@@ -129,7 +135,7 @@ def xcStartRefusal (allow : List String) (tls : Bool) (host : String)
   | none =>
   if !tls && !ClientStream.isLoopbackHost host then
     some s!"plain TCP to {host} is refused: use --xmpp-tls (direct TLS), or a loopback address"
-  else if !writableLocal.isEmpty && !optIn then
+  else if !writableLocal.isEmpty && !optIn && !login then
     some s!"writable local mounts ({", ".intercalate writableLocal}) would be open to every allowed JID with no login; make them read-only, or start with --dangerously-allow-writable-without-login"
   else none
 
@@ -139,6 +145,17 @@ def xcStartRefusal (allow : List String) (tls : Bool) (host : String)
 #guard (xcStartRefusal ["alice@example.org"] false "127.0.0.1" [] false).isNone
 #guard (xcStartRefusal ["alice@example.org"] true "xmpp.example.org" ["notes"] false).isSome
 #guard (xcStartRefusal ["alice@example.org"] true "xmpp.example.org" ["notes"] true).isNone
+#guard (xcStartRefusal ["alice@example.org"] true "xmpp.example.org" ["notes"] false (login := true)).isNone
+#guard (xcStartRefusal ["alice@example.org"] false "xmpp.example.org" [] false (login := true)).isSome
+
+/-- The requester member of a request record (issue 1128): the sender's
+bare JID (`HttpOverXmpp.bareKey`, domain part in lower case) from the `from`
+the server stamped; the WebDAV handle's login keys its limit on it. -/
+def xcRequesterJ (env : HttpOverXmpp.Envelope) : Json :=
+  .object [("xmpp", .string ((env.from_.bind HttpOverXmpp.bareKey).getD ""))]
+
+#guard xcRequesterJ { from_ := some "alice@EXAMPLE.org/phone", id := "1" } ==
+  .object [("xmpp", .string "alice@example.org")]
 
 /-- Why the requester (`xmpp-http-proxy`) may not start, or `none`
 (https://github.com/danbri/factoidal/issues/1107 step 2;
@@ -238,7 +255,9 @@ def xmppClientOpen (configJson : String) : IO String := do
       if m.getString? "kind" == some "local" && m.field? "writable" == some (.bool true)
       then m.getString? "name" else none)
     let optIn := (j.getBool? "dangerouslyAllowWritableWithoutLogin").getD false
-    if let some why := xcStartRefusal allow tls host writableLocal optIn then
+    -- `login`: the `ready.login` of `webdavLoad` (a users file), passed unread.
+    let login := (j.getBool? "login").getD false
+    if let some why := xcStartRefusal allow tls host writableLocal optIn login then
       return errJson s!"xmppClientOpen: {why}"
     let base : ClientStream.Config :=
       { user, domain := jid.domainpart, resource, password, clientNonce := nonce
@@ -255,7 +274,7 @@ def xmppClientOpen (configJson : String) : IO String := do
     let h := s!"xmppc{n}"
     xcTable.modify (·.insert h { cfg, http, st })
     pure (okWith [("handle", .string h), ("domain", .string jid.domainpart), ("host", .string host),
-                  ("tls", .bool tls), ("writableWithoutLogin", xcStrs (if optIn then writableLocal else [])),
+                  ("tls", .bool tls), ("writableWithoutLogin", xcStrs (if optIn && !login then writableLocal else [])),
                   ("send", xcStrs (xcSends outs))])
 
 /-- One incoming stanza after binding, in requester mode: responses for the
@@ -279,7 +298,8 @@ private def xcStanza (hd : XcHandle) (text : String) (sends : List String) (reqs
     let d := r.toDavWith body
     let q : Json := .object [ ("id", .number (toString id)), ("method", .string d.method)
       , ("target", .string d.target), ("headers", xcHeadersJ d.headers)
-      , ("bodyBase64", .string (L4Factoidal.XML.Enc.base64 d.body)) ]
+      , ("bodyBase64", .string (L4Factoidal.XML.Enc.base64 d.body))
+      , ("requester", xcRequesterJ env) ]
     ({ hd with hst, serial := id, pending := hd.pending ++ [(id, { env, req := r })] }, sends, reqs ++ [q])
 
 private def xcStageName : ClientStream.Stage → String
@@ -392,15 +412,23 @@ def xmppClientRequest (h nowText requestJson : String) : IO String := do
       let sends := step.send.flatMap (fun a => xcSends (ClientStream.outgoing hd.st a.render))
       pure (okWith [("id", .string id), ("send", xcStrs sends), ("responses", .array (step.done.map xcResponseJ))])
 
-/-- `xmppClientTick(handle, nowMs)`: requester mode; requests past their
-deadline get 504. -/
+/-- `xmppClientTick(handle, nowMs)`: the host's clock. Requester mode:
+requests past their deadline get 504. Serving mode
+(https://github.com/danbri/factoidal/issues/1128): a request that waited for
+its chunks `HttpOverXmpp.Config.pendingTimeoutMs` gets `resource-constraint`
+and is dropped (`HttpOverXmpp.tick`). -/
 def xmppClientTick (h nowText : String) : IO String := do
   match (← xcTable.get)[h]? with
   | none => pure (unknownXc h)
   | some hd =>
     match hd.proxy, nowText.toNat? with
-    | none, _ => pure (okWith [("send", xcStrs []), ("responses", .array [])])
     | _, none => pure (errJson s!"xmppClientTick: the time is not a number: {nowText}")
+    | none, some now =>
+      let (out, hst) := HttpOverXmpp.tick hd.http hd.hst now
+      let hd := { hd with hst }
+      xcTable.modify (·.insert h hd)
+      pure (okWith [("send", xcStrs (out.flatMap (fun t => xcSends (ClientStream.outgoing hd.st t)))),
+                    ("responses", .array [])])
     | some (rq, rs), some now =>
       let step := HttpRequester.tick rq rs now
       let hd := { hd with proxy := some (rq, step.st) }

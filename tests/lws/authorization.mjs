@@ -20,6 +20,14 @@ import { generateKeyPairSync, sign, randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
+// Deliveries in this suite go to receivers on 127.0.0.1, a special-purpose
+// address: each storage opts in (`allowPrivateFetch`, lws-serve
+// --allow-private-fetch, https://github.com/danbri/factoidal/issues/1126),
+// and the limit per destination is off because every hook of the suite
+// shares one receiver. The checks of issue 1126 open their own storages
+// without these members.
+const LOCAL_TARGETS = { allowPrivateFetch: true, deliveryDestLimit: 0 }
+
 let passed = 0
 let failed = 0
 let skipped = 0
@@ -190,7 +198,7 @@ async function main () {
 
   const issuer = await startIssuer()
   const other = await startIssuer()
-  const running = await listen({
+  const running = await listen({ ...LOCAL_TARGETS,
     engine,
     port: 0,
     owner: ALICE,
@@ -593,7 +601,7 @@ async function main () {
   }
 
   await check(CHECKS[12], async () => {
-    const s = await listen({ engine, port: 0 })
+    const s = await listen({ ...LOCAL_TARGETS, engine, port: 0 })
     try {
       const r = await fetch(`${s.origin}/x`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'x' })
       await r.text()
@@ -604,7 +612,7 @@ async function main () {
   })
 
   await check(CHECKS[13], async () => {
-    const s = await listen({ engine, port: 0, insecureNoAuth: true })
+    const s = await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true })
     try {
       const r = await fetch(`${s.origin}/x`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'x' })
       await r.text()
@@ -614,7 +622,7 @@ async function main () {
     }
     let refused = false
     try {
-      await listen({ engine, port: 0, insecureNoAuth: true, auth: { issuers: [] } })
+      await listen({ ...LOCAL_TARGETS, engine, port: 0, insecureNoAuth: true, auth: { issuers: [] } })
     } catch (_error) {
       refused = true
     }
@@ -635,7 +643,7 @@ async function main () {
   // it to the same authorization filtering on every access and MUST prevent
   // its reuse across clients."
   await check(CHECKS[CHECKS.length - 2], async () => {
-    const rs = await listen({
+    const rs = await listen({ ...LOCAL_TARGETS,
       engine,
       port: 0,
       owner: ALICE,

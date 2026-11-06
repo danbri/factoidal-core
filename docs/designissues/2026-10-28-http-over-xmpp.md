@@ -284,6 +284,19 @@ owner, so on this path the JID allow list is the access control.
    `tests/webdav/xmpp.mjs` that name their issue and turn the run red when
    they pass.
 
+   Met, 2026-11-01. `webdav-serve --xmpp` takes `--users` and the limit
+   options. The XMPP client handle names each served request's requester,
+   the sender's bare JID (`xcRequesterJ`); the WebDAV handle, opened with
+   `login.transport: "xmpp"`, runs `Login.admit` with `.xmpp BAREJID`
+   (`davRequesterOf`). The limit keys are `name:` + user and `jid:` + bare
+   JID (`L4Factoidal/Net/LoginLimit.lean`, `requesterKey`). `--users` needs
+   `--xmpp-tls` or a loopback `--xmpp-host` (`davXmppTransportRefusal`);
+   `--cert`/`--key` are refused (no port). The two expected failures are
+   plain tests now, with the tests the issues asked for: JID A's failures do
+   not block JID B; one JID that tries many names is refused; 401, 200, 429.
+   Theorems and rows: `docs/designissues/2026-10-28-feature-combination-safety.md`
+   rows C1, C2, C13.
+
 ## SPARQL over XMPP: the plan
 
 `factoidal serve` is not a target yet. Its HTTP handling is in Lean
@@ -398,8 +411,11 @@ this step touches: C1, C3, C4, C6, C13, and C7 (a new listener).
 5. **Limits** (C13, I13). Body, response and pending limits and the
    timeout, choice 6; `#guard`s for 413, 503, 504 and 502; tests for 504 and
    for 100,000-byte bodies both ways. The limits are per proxy process, which
-   has one requester (its own JID); the per-sender limits of the serving side
-   stay https://github.com/danbri/factoidal/issues/1128.
+   has one requester (its own JID). The serving side (2026-11-01,
+   https://github.com/danbri/factoidal/issues/1128): at most 4 waiting
+   chunked requests per sender and 16 in total, each at most 60 s of the
+   host's clock (`HttpOverXmpp.tick` through `xmppClientTick`; theorems
+   `plan_pending_per_sender`, `tick_pending_per_sender`, `tick_no_late`).
 6. **Access at the target** (C1, I1). Unchanged by this step: the serving
    side's allow list decides; a proxy whose JID is not on it gets 403 for
    every request (test "carol's proxy ... 403, the file does not change"). The
