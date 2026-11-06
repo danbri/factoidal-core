@@ -74,7 +74,8 @@ const invalidCommand=JSON.parse(documentCall({...options,op:'render',commands:[{
 assert.match(invalidCommand.error,/unsupported operation/,'unsupported DOM command accepted');
 const documentChecks={sourceSha256:hash(documentSource),rawArtifactSha256:hash(documentRaw),
  operations:['inspect/base/resource URL','typed command and supplied stylesheet render','source-linked rendered anchor','bitmap profile selection','computed actual-font requests','missing/duplicate resource refusal','unsupported command refusal']};
-const refused=JSON.parse(compile('<html><body><div style="display:grid">unsupported</div></body></html>'));
-assert.equal(typeof refused.error,'string','unsupported layout did not fail closed');
+// Old and unknown layouts render as flow text; a browser shows the page (commit 0711ccec0).
+const forgiven=JSON.parse(compile('<html><body><div style="display:grid">old page</div></body></html>'));
+assert.equal(forgiven.error,undefined,'unsupported layout refused a page');
 const report={status:'PASS',scope:'Fresh Lean/WASM frontend ABI, deterministic artifacts, reference-probe structure, actual link picking, strict N-Triples linked graph rendering, document transaction export/commands/supplied CSS/computed font requests and explicit unsupported-input refusal. No GPU or browser conformance claim.',node:process.version,engineSha256:hash(await readFile(engine)),wasmSha256:hash(await readFile(engine.replace(/\.mjs$/,'.wasm'))),fixtures,documentChecks};
 await writeFile(outPath,JSON.stringify(report,null,2)+'\n',{flag:'wx'});console.log(JSON.stringify(report,null,2));
