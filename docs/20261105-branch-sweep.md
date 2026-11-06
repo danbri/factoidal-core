@@ -14,14 +14,21 @@ Each batch was verified on a temporary branch `sweep/batch-N` with a `workflow_d
 another ref does not cancel the check on `main`, and no local Lean build of the whole library was needed.
 `L4Factoidal/XProc31` is outside those targets, so it was built locally with `lake build l4xproc`.
 
-Status, 2026-11-06: counts of the 56 branches: 37 archived before the first landing (25 ALREADY-ON-MAIN, 12 DEAD),
-see the table for the final count.
-Verification of the landing: run https://github.com/danbri/factoidal-core/actions/runs/42214173863 (Verify Lean 4 corpus,
-success), https://github.com/danbri/factoidal-core/actions/runs/42214177640 (npm suite and dataflow gate, success),
-https://github.com/danbri/factoidal-core/actions/runs/42131194969 (Verify F* Proof Corpus, success, before the last merge of main).
-Gate repairs in the landing: `admitsDest` is noncomputable (proof-only count; the allow list is unchanged);
-three parse or type repairs let `l4xproc` build. Tags `archive/sweep/batch-1` and `archive/sweep/batch-2` keep the
-temporary branches. A reboot of 2026-11-06 stopped the sweep for 12 hours.
+Status, 2026-11-06, final: of the 56 branches, 26 ALREADY-ON-MAIN, 12 DEAD, 11 LANDED (1 in part), 4 NEEDS-WORK, 3 SKIPPED.
+The landing is merge `5605193b5`. The first finished check on main that contains it passed:
+https://github.com/danbri/factoidal-core/actions/runs/42229183415 (Verify Lean 4 corpus at `fc1757665`).
+Before the landing: https://github.com/danbri/factoidal-core/actions/runs/42214177640 (npm suite and dataflow gate, success),
+https://github.com/danbri/factoidal-core/actions/runs/42131194969 (Verify F* Proof Corpus, success, one merge of main earlier).
+Not run: the new XMPP login limit and the other new ops in a freshly built wasm (the npm suite uses the last released engine);
+the XProc test suite (the `l4xproc` build passes; CI does not build it).
+
+Repairs in the landing: `admitsDest` is noncomputable (proof-only count; the allow list is unchanged);
+three parse or type repairs let `l4xproc` build; the login guard was added to the WebSocket path.
+Tags `archive/sweep/batch-1` and `archive/sweep/batch-2` keep the temporary branches.
+
+Open PRs after the sweep: 262 and 264 (see their rows; a comment on each states what is needed), 339 (owner decision; it
+lowers the partial-def baseline to 162). PR 360 merged in its own session. danbri/glitchcan-minigam has no open PRs.
+Out of scope: `wip/rescue*` branches that another session pushed after the reboot, on 2026-11-06.
 
 | Branch | Outcome | Commit on main, or tag | Reason |
 | --- | --- | --- | --- |
