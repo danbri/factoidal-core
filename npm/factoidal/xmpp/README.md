@@ -206,4 +206,15 @@ The host closes a socket when a limit is reached. These are limits on bytes and 
 | `maxQueuedBytes` | | 8 MiB | Bytes waiting for a client that is not reading |
 | `maxBuffered` | | 1 MiB | Bytes of an unfinished unit |
 
-There is no limit per address: behind a proxy, every client has the same one.
+There is no connection limit per address: behind a proxy, every client has the same one.
+
+## Limits the engine applies
+
+| Option | CLI | Default | Limit |
+|---|---|---|---|
+| `heldLimits.perAccount`, `.perAccountBytes` | | 256 stanzas, 4 MiB | Held for one offline account |
+| `heldLimits.total`, `.totalBytes` | | 10,000 stanzas, 64 MiB | Held on the server |
+| `heldLimits.senderPerWindow`, `.senderWindow` | | 60 in 60 s | Stanzas one account may have held; roster writes of one account |
+| `addressLimit: false` | `--no-address-limit` | on | Failed logins per client address (5 in 60 s, 20 in an hour). Turn it off behind a proxy, where every client has one address |
+
+Fixed in the engine: 5 failed logins in 60 s per account name, 3 failed attempts on a stream, 1,000 items in a roster, 64 levels and 8,192 elements in a stanza, and room nicks of at most 64 bytes.

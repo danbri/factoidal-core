@@ -161,3 +161,19 @@ test('presence that says who is online does not wait for an offline contact', { 
     b.socket.destroy()
   } finally { await host.close() }
 })
+
+test('roster writes have a rate; a read still works', { skip }, async () => {
+  const { host, port } = await start({ heldLimits: { senderPerWindow: 3, senderWindow: 60 } })
+  try {
+    const a = await bound(port, 'alice')
+    for (let i = 0; i < 5; i++) a.socket.write(`<iq type='set' id='r${i}'><query xmlns='jabber:iq:roster'><item jid='u${i}@localhost'/></query></iq>`)
+    await a.until('resource-constraint')
+    await sleep(100)
+    assert.equal(count(a.text, 'resource-constraint'), 2)
+    a.text = ''
+    a.socket.write("<iq type='get' id='g'><query xmlns='jabber:iq:roster'/></iq>")
+    await a.until('u2@localhost')
+    assert.doesNotMatch(a.text, /u3@localhost/)
+    a.socket.destroy()
+  } finally { await host.close() }
+})

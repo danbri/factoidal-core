@@ -212,6 +212,8 @@ structure Config where
   /-- RFC 6120 section 6.4.5: failed SASL attempts on one stream before it is
   closed (`Session.afterSasl`). -/
   maxAuthFailures : Nat := 3
+  /-- The most items in one roster (`Env.rosterFits`). -/
+  maxRosterItems : Nat := 1000
   deriving Inhabited
 
 def Config.accountOf (c : Config) (user : String) : Option Account :=
@@ -484,7 +486,15 @@ structure Env where
   keeps `guard.failures` between connections of one server and gives the
   clock and the client's address. -/
   guard : AuthGuard := {}
+  /-- May this account's roster be written now? The host keeps a rate on the
+  writes, each of which may be a write of the whole roster to its state. -/
+  rosterOpen : Bool := true
   deriving Inhabited
+
+/-- May the roster become `r'`? Not past the rate; and not past `max` unless it
+does not grow. -/
+def Env.rosterFits (env : Env) (max : Nat) (r' : Roster) : Bool :=
+  env.rosterOpen && (decide (r'.length ≤ max) || decide (r'.length ≤ env.roster.length))
 
 def Session.init (cfg : Config) : Session :=
   { cfg := cfg, stage := .initial, tls := cfg.tlsCarrier }
@@ -898,6 +908,10 @@ where
                     ask := (existing.map (·.ask)).getD false }
                 (rosterPut r item, pushes ++ [RosterItem.toXml item])
         let (r', pushes) := items.foldl applyOne (env.roster, [])
+        -- RFC 6120 section 8.3.3.18.
+        if !env.rosterFits s.cfg.maxRosterItems r' then
+          (env, [.send (stanzaError .iq st.id none (some s.cfg.domain) "wait" "resource-constraint")])
+        else
         ({ env with roster := r' },
          [ .send (iqResult st.id none []),
            .saveRoster bare (rosterEncode r'),
@@ -958,6 +972,8 @@ def handlePresence (s : Session) (env : Env) (st : Stanza) (bare full : String) 
         { jid := t, name := (existing.map (·.name)).getD ""
           subscription := (existing.map (·.subscription)).getD "none", ask := true }
       let r' := rosterPut env.roster item
+      if !env.rosterFits s.cfg.maxRosterItems r' then (env, [])
+      else
       ({ env with roster := r' },
        [.saveRoster bare (rosterEncode r'), .route t out])
     else if ty == "subscribed" then
@@ -971,6 +987,8 @@ def handlePresence (s : Session) (env : Env) (st : Stanza) (bare full : String) 
         { jid := t, name := (existing.map (·.name)).getD ""
           subscription := sub, ask := (existing.map (·.ask)).getD false }
       let r' := rosterPut env.roster item
+      if !env.rosterFits s.cfg.maxRosterItems r' then (env, [])
+      else
       ({ env with roster := r' },
        [.saveRoster bare (rosterEncode r'), .route t out])
     else (env, [.route t out])
@@ -1255,6 +1273,24 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
       .element s!"<auth xmlns='{nsSasl}' mechanism='ANONYMOUS'/>" ]
   s.stage == .awaitingAuth &&
   has (String.join (sends outs)) "invalid-mechanism"
+
+-- A roster stops at its cap, and an edit of an item already there still goes through.
+#guard
+  let s : Session := { cfg := { testCfg with maxRosterItems := 1 }, stage := .bound "juliet" "balcony" }
+  let set (j : String) := Framing.Unit.element s!"<iq type='set' id='r'><query xmlns='{nsRoster}'><item jid='{j}'/></query></iq>"
+  let (_, e1, _) := step s { roster := [] } (set "a@example.com")
+  let (_, e2, o2) := step s e1 (set "b@example.com")
+  let (_, e3, o3) := step s e1 (set "a@example.com")
+  e1.roster.length == 1 && e2.roster.length == 1 && has (String.join (sends o2)) "resource-constraint" &&
+  e3.roster.length == 1 && !has (String.join (sends o3)) "resource-constraint"
+
+-- A roster closed by the rate refuses a write and does not save.
+#guard
+  let s : Session := { cfg := testCfg, stage := .bound "juliet" "balcony" }
+  let (_, e, o) := step s { roster := [], rosterOpen := false }
+    (.element s!"<iq type='set' id='r'><query xmlns='{nsRoster}'><item jid='a@example.com'/></query></iq>")
+  e.roster.isEmpty && has (String.join (sends o)) "resource-constraint" &&
+  !o.any (fun x => match x with | .saveRoster .. => true | _ => false)
 
 -- The accounts file: a good file, and what stops the start.
 #guard (accountsOfText "# who\n\nalice:a:b\n bob:pw \n").toOption.map (·.1.map (·.password)) == some ["a:b", "pw"]
