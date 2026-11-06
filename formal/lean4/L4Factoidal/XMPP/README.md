@@ -566,6 +566,10 @@ Step 2 of `docs/20261102-xmpp-starttls.md`.
   (RFC 6120 section 10.5.3.2); a result or error has no bounce (section 8.3.1); a get or set to
   the bare JID of another account is answered by the server (RFC 6121 section 8.5.2.1.3).
 - Theorem `handleIq_no_route`: no IQ produces `Out.route`, the action that may hold a stanza.
+- Theorem `handleIq_send_has_from`: every stanza `handleIq` sends on the connection has a `from`.
+  `handleIq_domain_from`: a reply to a request for the server's domain comes from that domain
+  (RFC 6120 section 8.1.2.1). Without it, Profanity 0.19 segfaulted on login. Bind results are
+  outside `handleIq` and have no `from`, which the same section allows.
 - Hosts: `Wasm/Ops/XmppSession.lean` collects `routeFull`; `npm/factoidal/xmpp/server.mjs`
   delivers to the session whose full JID matches, or the bounce to the sender;
   `Harness/XmppServe.lean` uses its presence files and its per-account mailbox (a stated limit).

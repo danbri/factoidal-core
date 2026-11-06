@@ -233,7 +233,7 @@ test('xmpp-serve: a full session over a TCP socket, through wasm', async (t) => 
     const juliet = await bound(running.port, 'juliet', 'r0m30', 'balcony')
     juliet.client.write(`<iq type='set' id='r1'><query xmlns='${NS_ROSTER}'><item jid='romeo@${DOMAIN}' name='Romeo'/></query></iq>`)
     const got = await juliet.client.waitFor('push-r1')
-    assert.ok(got.includes(`<iq type="result" id="r1"/>`), got)
+    assert.ok(got.includes(`<iq from="juliet@${DOMAIN}" type="result" id="r1"/>`), got)
     assert.ok(got.includes(`jid="romeo@${DOMAIN}" name="Romeo" subscription="none"`), got)
     await new Promise((resolve) => setTimeout(resolve, 150))
     const files = await readdir(join(dir, 'roster'))

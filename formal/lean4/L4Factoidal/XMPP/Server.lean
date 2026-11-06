@@ -483,10 +483,15 @@ private def bindResult (id : Option String) (fullJid : String) : String :=
     ([Attribute.mk "type" "result"] ++ (id.map (Attribute.mk "id")).toList)
     [.element "bind" [⟨"xmlns", nsBind⟩] [.element "jid" [] [.text fullJid]]])
 
-private def iqResult (id : Option String) (to : Option String) (children : List Node) : String :=
+/-- An IQ result. `from_` is required, not optional: RFC 6120 section
+8.1.2.1 says a stanza the server generates for itself MUST carry the
+server's address, and a client may index its replies by that address.
+Profanity 0.19 segfaulted on a disco#info result with no `from`. -/
+private def iqResult (id : Option String) (to : Option String) (from_ : String)
+    (children : List Node) : String :=
   render (.element "iq"
-    ((to.map (Attribute.mk "to")).toList ++ [Attribute.mk "type" "result"] ++
-      (id.map (Attribute.mk "id")).toList)
+    ((to.map (Attribute.mk "to")).toList ++ [Attribute.mk "from" from_] ++
+      [Attribute.mk "type" "result"] ++ (id.map (Attribute.mk "id")).toList)
     children)
 
 /-- The bare form of a JID string. -/
@@ -580,6 +585,13 @@ from the address it was sent to, back to its sender. -/
 def iqBounce (st : Stanza) (sender target : String) : String :=
   stanzaError .iq st.id (some sender) (some target) "cancel" "service-unavailable"
 
+/-- The `from` of a reply the server makes itself: the address the request
+was sent to, so a client that asked `example.com` hears from `example.com`
+(RFC 6120 section 8.1.2.1). A request with no `to` is answered for the
+account, from its bare JID, which the same section allows. -/
+def replyFrom (st : Stanza) (bare : String) : String :=
+  (st.to.map Jid.render).getD bare
+
 /-- Handle an IQ once bound. -/
 def handleIq (s : Session) (env : Env) (st : Stanza) (raw : String) (bare full : String) :
     Env × List Out :=
@@ -617,7 +629,7 @@ where
     | some q =>
       if ty == "get" then
         -- RFC 6121 section 2.1.3: the roster result.
-        (env, [.send (iqResult st.id none
+        (env, [.send (iqResult st.id none (replyFrom st bare)
           [.element "query" [⟨"xmlns", nsRoster⟩] (env.roster.map RosterItem.toXml)])])
       else
         -- RFC 6121 section 2.3 / 2.5: set and remove, then push.
@@ -641,18 +653,18 @@ where
                 (rosterPut r item, pushes ++ [RosterItem.toXml item])
         let (r', pushes) := items.foldl applyOne (env.roster, [])
         ({ env with roster := r' },
-         [ .send (iqResult st.id none []),
+         [ .send (iqResult st.id none (replyFrom st bare) []),
            .saveRoster bare (rosterEncode r'),
            .send (render (.element "iq"
-             [⟨"to", (s.fullJid).getD bare⟩, ⟨"type", "set"⟩, ⟨"id", "push-" ++ st.id.getD "0"⟩]
+             [⟨"to", (s.fullJid).getD bare⟩, ⟨"from", bare⟩, ⟨"type", "set"⟩, ⟨"id", "push-" ++ st.id.getD "0"⟩]
              [.element "query" [⟨"xmlns", nsRoster⟩] pushes])) ])
     | none =>
       match session with
-      | some _ => (env, [.send (iqResult st.id none [])])
+      | some _ => (env, [.send (iqResult st.id none (replyFrom st bare) [])])
       | none =>
         match disco with
         | some _ =>
-          (env, [.send (iqResult st.id none
+          (env, [.send (iqResult st.id none (replyFrom st bare)
             [.element "query" [⟨"xmlns", nsDiscoInfo⟩]
               ([ .element "identity"
                   [⟨"category", "server"⟩, ⟨"type", "im"⟩, ⟨"name", "Factoidal XMPP"⟩] [],
@@ -664,7 +676,7 @@ where
           | some _ =>
             -- XEP-0030 items on the server: the MUC service, when there is one,
             -- so a client can find it (XEP-0045 section 6.1).
-            (env, [.send (iqResult st.id none
+            (env, [.send (iqResult st.id none (replyFrom st bare)
               [.element "query" [⟨"xmlns", nsDiscoItems⟩]
                 ((s.cfg.mucDomain.toList ++ s.cfg.mixDomain.toList ++ s.cfg.gc3Domain.toList).map (fun d => .element "item" [⟨"jid", d⟩] []))])])
           | none =>
@@ -1380,6 +1392,20 @@ private def boundMuc : Session :=
   | [.send t] => has t "jid=\"conference.example.com\""
   | _ => false
 
+-- A disco#info result says who it is from, for the domain and for the
+-- account's own bare JID. Profanity 0.19 segfaulted without this.
+#guard
+  let (_, _, outs) := step boundJuliet ⟨[]⟩ (.element "<iq type='get' id='d4' to='example.com'><query xmlns='http://jabber.org/protocol/disco#info'/></iq>")
+  match outs with
+  | [.send t] => has t "from=\"example.com\""
+  | _ => false
+
+#guard
+  let (_, _, outs) := step boundJuliet ⟨[]⟩ (.element "<iq type='get' id='d5' to='juliet@example.com'><query xmlns='http://jabber.org/protocol/disco#info'/></iq>")
+  match outs with
+  | [.send t] => has t "from=\"juliet@example.com\""
+  | _ => false
+
 /-! ### MIX hand-off checks (2026-11-03) -/
 
 private def boundMix : Session :=
@@ -1432,5 +1458,96 @@ theorem handleIq_no_route (s : Session) (env : Env) (st : Stanza) (raw bare full
   generalize childByNs st.payload nsMixPam (some "client-leave") = pl
   cases tgt <;> cases r <;> cases se <;> cases di <;> cases dit <;> cases pj <;> cases pl <;> simp only [] <;>
     simp [apply_ite (f := Prod.snd), apply_ite (f := fun l : List Out => Out.route b t ∈ l)]
+
+/-! ## Every reply says who it is from (2026-11-04)
+
+RFC 6120 section 8.1.2.1. Profanity 0.19 crashed on login: our disco#info
+result had no `from`, and it looked the reply up by that address. These
+theorems cover every stanza `handleIq` sends back on the connection, so a
+new branch that drops `from` no longer compiles. -/
+
+/-- `x` is a rendered `<iq/>` whose `from` attribute is `f`. -/
+def IqFrom (f x : String) : Prop :=
+  ∃ attrs children, x = render (.element "iq" attrs children) ∧ findAttr attrs "from" = some f
+
+theorem iqResult_iqFrom (id to : Option String) (f : String) (children : List Node) :
+    IqFrom f (iqResult id to f children) := by
+  refine ⟨_, _, rfl, ?_⟩
+  cases to <;> simp [findAttr, List.find?]
+
+theorem stanzaError_iqFrom (id to : Option String) (f errType condition : String) :
+    IqFrom f (stanzaError .iq id to (some f) errType condition) := by
+  refine ⟨_, _, rfl, ?_⟩
+  cases to <;> simp [findAttr, List.find?]
+
+theorem iqPush_iqFrom (to f id : String) (children : List Node) :
+    IqFrom f (render (.element "iq"
+      [⟨"to", to⟩, ⟨"from", f⟩, ⟨"type", "set"⟩, ⟨"id", id⟩] children)) :=
+  ⟨_, _, rfl, by simp [findAttr, List.find?]⟩
+
+/-- What the server answers itself is from the address asked, or from the
+domain (an unhandled request), or, for a roster push, from the account. -/
+theorem handleLocal_send_from (s : Session) (env : Env) (st : Stanza) (bare full ty : String)
+    (x : String) (h : Out.send x ∈ (handleIq.handleLocal s env st bare full ty).2) :
+    IqFrom (replyFrom st bare) x ∨ IqFrom s.cfg.domain x ∨
+      ((childByNs st.payload nsRoster (some "query")).isSome ∧ IqFrom bare x) := by
+  unfold handleIq.handleLocal at h
+  generalize hroster : childByNs st.payload nsRoster (some "query") = r at h ⊢
+  generalize childByNs st.payload nsSession (some "session") = se at h
+  generalize childByNs st.payload nsDiscoInfo (some "query") = di at h
+  generalize childByNs st.payload nsDiscoItems (some "query") = dit at h
+  simp only [] at h
+  repeat' split at h
+  all_goals (try simp at h)
+  all_goals (repeat' rcases h with h | h)
+  all_goals (try subst h)
+  all_goals first
+    | with_reducible exact Or.inl (iqResult_iqFrom _ _ _ _)
+    | with_reducible exact Or.inr (Or.inr ⟨rfl, iqPush_iqFrom _ _ _ _⟩)
+    | exact Or.inr (Or.inl (stanzaError_iqFrom st.id none s.cfg.domain "cancel" "service-unavailable"))
+
+/-- Every stanza `handleIq` sends on this connection has a `from`. -/
+theorem handleIq_send_has_from (s : Session) (env : Env) (st : Stanza) (raw bare full : String)
+    (x : String) (h : Out.send x ∈ (handleIq s env st raw bare full).2) : ∃ f, IqFrom f x := by
+  have local_ : ∀ ty, Out.send x ∈ (handleIq.handleLocal s env st bare full ty).2 →
+      ∃ f, IqFrom f x := fun ty hl =>
+    match handleLocal_send_from s env st bare full ty x hl with
+    | .inl a => ⟨_, a⟩
+    | .inr (.inl a) => ⟨_, a⟩
+    | .inr (.inr a) => ⟨_, a.2⟩
+  unfold handleIq at h
+  generalize Option.map Jid.render st.to = tgt at h
+  cases tgt with
+  | none => exact local_ _ h
+  | some t =>
+    simp only [] at h
+    split at h
+    · exact local_ _ h
+    · split at h
+      · simp at h
+      · split at h
+        · exact local_ _ h
+        · split at h
+          · simp at h
+            subst h
+            exact ⟨_, stanzaError_iqFrom _ _ _ _ _⟩
+          · simp at h
+
+/-- A reply to a request sent to the server's own domain comes from that
+domain: the exact rule the disco#info result broke. A roster set is left
+out because its push is for the account, so it comes from the bare JID. -/
+theorem handleIq_domain_from (s : Session) (env : Env) (st : Stanza) (raw bare full : String)
+    (x : String) (hto : st.to.map Jid.render = some s.cfg.domain)
+    (hdom : bareOf s.cfg.domain = s.cfg.domain)
+    (hr : childByNs st.payload nsRoster (some "query") = none)
+    (h : Out.send x ∈ (handleIq s env st raw bare full).2) : IqFrom s.cfg.domain x := by
+  have hf : replyFrom st bare = s.cfg.domain := by simp [replyFrom, hto]
+  unfold handleIq at h
+  rw [hto] at h
+  simp [hdom] at h
+  rcases handleLocal_send_from s env st bare full _ x h with a | a | a
+  · exact hf ▸ a
+  · exact a
+  · simp [hr] at a
 
 end L4Factoidal.XMPP.Server
