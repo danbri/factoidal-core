@@ -456,7 +456,13 @@ SUITES = {'html-parser': Run.html_parser, 'svg-tiny-admission': Run.svg_tiny_adm
 # Suites of the OKRs this command does not run, and why. They appear as not run.
 NOT_HERE = {'frame-time': 'Needs the macOS app opened in a window session; tools/native-frame-report.py reads its trace',
             'tile-equivalence': 'KR 2.2 has no runner yet',
-            'real-pages': 'KR 5.3 has no pinned list of 20 pages yet'}
+            'real-pages': 'KR 5.3 has no pinned list of 20 pages yet',
+            'browser-checks': 'KR 4.2 checks in web-render/ are not in this command yet; they need Chrome with WebGPU'}
+
+
+def not_run_record(suite, commit, reason):
+    return {'format': 'factoidal-render-score-v1', 'suite': suite, 'origin': 'not-run', 'commit': commit,
+            'date': time.strftime('%Y-%m-%d', time.gmtime()), 'reason': reason}
 
 
 def main():
@@ -502,13 +508,16 @@ def main():
                 SUITES[name](run)
             except NotRun as reason:
                 print(f'NOT RUN {name}: {reason}', flush=True)
-                run.records.append({'format': 'factoidal-render-score-v1', 'suite': name, 'origin': 'not-run', 'commit': run.commit,
-                                    'date': time.strftime('%Y-%m-%d', time.gmtime()), 'reason': str(reason)})
+                run.records.append(not_run_record(name, run.commit, str(reason)))
             with HISTORY.open('a') as out:
                 for record in run.records[before:]:
                     out.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + '\n')
                     if record['origin'] == 'measured':
                         print(f"  {record['suite']}: {record['counts']} (out of {record['denominator']})", flush=True)
+        if not a.only:
+            with HISTORY.open('a') as out:
+                for name, reason in NOT_HERE.items():
+                    out.write(json.dumps(not_run_record(name, run.commit, reason), sort_keys=True) + '\n')
     subprocess.run([sys.executable, Path(__file__).with_name('page.py')], check=True)
     return 0
 
