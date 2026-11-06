@@ -5,6 +5,7 @@ import L4Factoidal.Syntax.IriResolve
 import WebSelection
 import WebHistory
 import WebShell
+import WebGraph
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
 orders supplied CSS, collects font requests and renders the resulting arena.
@@ -200,6 +201,7 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     let some (.number code) := request.field? "key" | throw "key required"
     return some (WebShell.Shell.ofJson ((request.field? "shell").getD .null) |>.key (code.toNat?.getD 0)).editJson.toString
   if op == "shellSubmit" then return some (WebShell.submit (str request "address")).json.toString
+  if let some answer ← WebGraph.op op request then return some answer
   if op == "sourcePage" then
     return some (JSON.Json.object [("source",.string (WebShell.sourcePage (str request "kind") (str request "url") (str request "source")))]).toString
   if op == "shellLink" then return some (WebShell.link (str request "href")).json.toString

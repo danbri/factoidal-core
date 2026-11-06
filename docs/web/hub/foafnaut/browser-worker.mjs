@@ -10,7 +10,7 @@ const homeURL=pagesBase+'index.html',settingsURL=pagesBase+'settings.html';
 let module,createSession,session;
 let width=800,height=600,scale=1,theme='next',percent=125,pages=1;
 let address='',cursor=0,focused=false,fresh=false,loading=false,scroll=0,active=0;
-let doc,history,frame,home,dirty=false,drawing=false,serial=0;
+let doc,history,frame,home,dirty=false,drawing=false,serial=0,ticking=false;
 const tabs=[];
 function call(source,options,w=1,h=1){
   const pointer=module.ccall('web_document_call','number',['string','string','number','number'],[source,JSON.stringify(options),w,h]);
@@ -70,6 +70,32 @@ function viewSource(){
     keep();tabs.push({doc:page,history:push({entries:[],index:0},page.url),scroll:0});showTab(tabs.length-1);
   }
 }
+// The FOAF graph is a page whose model and frames come from Lean's graph app.
+function graphFrame(page,frame){
+  page.graph.model=frame.model;
+  if(frame.commands.includes('startClock')){page.graph.clock=true;page.graph.last=performance.now();tick();}
+  if(frame.commands.includes('stopClock'))page.graph.clock=false;
+  if(frame.commands.includes('render')){page.source=call('',{op:'graphPage',model:frame.model}).source;request();}
+}
+function graphInput(kind,a,b){
+  try{graphFrame(doc,call('',{op:'graphEvent',model:doc.graph.model,kind,a,b,width,shell:shell()}));}
+  catch(error){doc=refusal(doc.url,String(error.message??error));request();}
+}
+function tick(){
+  if(ticking)return;ticking=true;
+  setTimeout(()=>{ticking=false;
+    const graph=doc?.graph;if(!graph?.clock)return;
+    if(!drawing){const now=performance.now();graphInput(7,Math.min(1000,Math.floor(now-graph.last)),0);graph.last=now;}
+    tick();
+  },33);
+}
+async function openGraph(){
+  const {source:rdf}=await fetchText(pagesBase+'foaf-demo.ttl');
+  const frame=call('',{op:'graphStart',rdf,width,height,shell:shell()});
+  const page={url:'foafnaut:graph',title:'FOAF graph',source:'',sources:[],graph:{model:frame.model,clock:false,last:0}};
+  page.source=call('',{op:'graphPage',model:frame.model}).source;
+  keep();tabs.push({doc:page,history:push({entries:[],index:0},page.url),scroll:0});showTab(tabs.length-1);graphFrame(page,frame);
+}
 function keep(){tabs[active]={doc,history,scroll};}
 function showTab(index){serial++;loading=false;setFocus(false);active=index;({doc,history,scroll}=tabs[index]);address=doc.url;request();}
 function newTab(){keep();tabs.push({doc:home,history:push({entries:[],index:0},homeURL),scroll:0});showTab(tabs.length-1);}
@@ -86,6 +112,7 @@ function shellCommand(name,argument){
   if(name==='back')command(6);else if(name==='forward')command(7);else if(name==='reload')command(8);
   else if(name==='new')newTab();else if(name==='close')closeTab(active);
   else if(name==='home')navigate(homeURL);else if(name==='source')viewSource();
+  else if(name==='graph')openGraph().catch(error=>{doc=refusal('foafnaut:graph',String(error.message??error));request();});
   else if(name==='theme'){theme=argument||(theme==='next'?'arcade':'next');request();}
   else if(name==='zoom'&&/^[0-9]+$/.test(argument)){percent=Math.max(50,Math.min(250,Number(argument)));request();}
   else navigate(settingsURL);
@@ -144,14 +171,16 @@ async function start(data){
 function receive(data){
   if(data.type==='start'){start(data).catch(error=>post({type:'error',error:String(error.message??error)}));return;}
   if(!doc)return;
-  if(data.type==='resize'){({width,height,scale}=data);request();}
+  if(data.type==='resize'){({width,height,scale}=data);if(doc.graph)graphInput(1,width,height);request();}
   if(data.type==='scroll')scrollBy(data.amount);
   if(data.type==='command')command(data.command);
   if(data.type==='press'){
     const control=call('',{op:'shellHit',shell:shell(),x:data.x,y:data.y,width}).control;
-    if(control)chrome(control);else if(focused)leaveAddress();
+    if(control)chrome(control);else{if(focused)leaveAddress();if(doc.graph)graphInput(2,data.x,data.y);}
   }
-  if(data.type==='release'&&frame&&data.y>=0){
+  if(data.type==='move'&&doc.graph&&!focused)graphInput(3,data.x,data.y);
+  if(data.type==='release'&&doc.graph){graphInput(4,data.x,data.y);return;}
+  if(data.type==='release'&&frame&&!data.scrolled){
     if(call('',{op:'shellHit',shell:shell(),x:data.x,y:data.y,width}).control)return;
     const target=hit(data.x,data.y);
     if(target?.href){

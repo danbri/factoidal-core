@@ -88,6 +88,29 @@ async function main() {
       keepTab();tabs.push({document:page,history:engine.historyPush({entries:[],index:0},page.url),scroll:0});showTab(tabs.length-1);
     }
   };
+  // The FOAF graph is a page whose model and frames come from Lean's graph app.
+  type Page=typeof document&{graph?:{model:string;clock:boolean;last:number}};
+  const graphFrame=(page:Page,frame:{model:string;commands:string[]})=>{
+    page.graph!.model=frame.model;
+    if(frame.commands.includes("startClock")){page.graph!.clock=true;page.graph!.last=performance.now();}
+    if(frame.commands.includes("stopClock"))page.graph!.clock=false;
+    if(frame.commands.includes("render")){page.source=engine.graphPage(frame.model);dirty=true;}
+  };
+  const graphInput=(kind:number,a:number,b:number)=>{
+    const page=document as Page;
+    try{graphFrame(page,engine.graphEvent(page.graph!.model,kind,a,b,width,shell()));}
+    catch(error){refuse(page.url,error);}
+  };
+  const openGraph=async()=>{
+    const rdf=await Deno.readTextFile(new URL("./pages/foaf-demo.ttl",import.meta.url));
+    const frame=engine.graphStart(rdf,width,height,shell());
+    const page={url:"foafnaut:graph",baseURL:"foafnaut:graph",title:"FOAF graph",source:engine.graphPage(frame.model),sources:[] as typeof document.sources,
+      graph:{model:frame.model,clock:false,last:0},
+      compile(w:number,h:number,view:PageView={}){return engine.compile(page.source,w,h,{url:page.url,resources:[],...view});},
+      selectedText:()=>""} as unknown as Page;
+    graphFrame(page,frame);
+    keepTab();tabs.push({document:page,history:engine.historyPush({entries:[],index:0},page.url),scroll:0});showTab(tabs.length-1);
+  };
   const focusAddress=()=>{focused=true;fresh=true;address=document.url;cursor=address.length;dirty=true;};
   const leaveAddress=()=>{focused=false;address=document.url;dirty=true;};
   const scrollBy=(amount:number)=>{
@@ -105,6 +128,7 @@ async function main() {
     else if(name==="new")newTab();
     else if(name==="close")closeTab(active);
     else if(name==="home")navigate(home.url);
+    else if(name==="graph")openGraph().catch(error=>refuse("foafnaut:graph",error));
     else if(name==="source")viewSource().catch(error=>refuse(document.url,error));
     else if(name==="theme"){theme=argument||(theme==="next"?"arcade":"next");dirty=true;}
     else if(name==="zoom"&&/^[0-9]+$/.test(argument)){view.textScalePercent=Math.max(50,Math.min(250,Number(argument)));dirty=true;}
@@ -194,9 +218,11 @@ async function main() {
         if(event.kind===1){
           if(event.a<1||event.b<1)continue;
           if(event.a>4096||event.b>4096)throw new Error("Native HTML window exceeds 4096 backing pixels; close or use a smaller window");
-          if(event.a!==width||event.b!==height){width=event.a;height=event.b;dirty=true;resizeAt??=performance.now();trace("native-html-resize",{width,height});}
+          if(event.a!==width||event.b!==height){width=event.a;height=event.b;dirty=true;if((document as Page).graph)graphInput(1,width,height);resizeAt??=performance.now();trace("native-html-resize",{width,height});}
         }
         if(event.kind===8&&event.a)dirty=true;
+        const graph=(document as Page).graph;
+        if(graph&&!focused&&(event.kind===3||event.kind===4||event.kind===9||(event.kind===5&&!(event.b&2)))){graphInput(event.kind,event.a,event.b);continue;}
         if(event.kind===5&&focused&&!(event.b&2)){
           if(event.a===36){const target=address;leaveAddress();go(engine.shellSubmit(target));}
           else if(event.a===53)leaveAddress();
@@ -227,6 +253,7 @@ async function main() {
           const control=engine.shellHit(shell(),event.a,event.b,width);
           if(control){chrome(control);continue;}
           if(focused)leaveAddress();
+          if((document as Page).graph){graphInput(2,event.a,event.b);continue;}
           press=[event.a,event.b,event.a,event.b];
           if(view.selection){view.selection=undefined;dirty=true;}
         }
@@ -243,6 +270,10 @@ async function main() {
         }
       }
       if(!running)break;
+      const clock=(document as Page).graph;
+      if(clock?.clock&&!dirty&&performance.now()-clock.last>=33){
+        const now=performance.now();graphInput(7,Math.min(1000,Math.floor(now-clock.last)),0);clock.last=now;
+      }
       // A covered, hidden or minimized window can not present. Say so, once.
       if(dirty&&!native.canPresent()&&!waiting){waiting=true;trace("native-html-waiting",{reason:"window can not present",surface:native.surfaceState()});}
       if(dirty&&native.canPresent()){

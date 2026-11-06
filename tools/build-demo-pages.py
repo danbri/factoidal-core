@@ -33,7 +33,8 @@ def svg(path, title):
 
 
 def index():
-    links = '\n'.join(f'<p><a href="{p["page"]}">{html.escape(p["title"])}</a></p>' for p in manifest['pages'] if p['page'] != 'index.html')
+    # foafnaut:graph is a built-in page: the interactive graph, run by the Lean app.
+    links = '<p><a href="foafnaut:graph">Interactive FOAF graph</a></p>\n' + '\n'.join(f'<p><a href="{p["page"]}">{html.escape(p["title"])}</a></p>' for p in manifest['pages'] if p['page'] != 'index.html')
     return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Demo pages</title>'
             f'<style>{STYLE}</style></head><body><main>\n<h1>foafnaut2525 demo pages</h1>\n'
             f'<p>Every page here is rendered by the Lean engine with WebGPU.</p>\n{links}\n</main></body></html>\n')

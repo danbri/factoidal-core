@@ -37,11 +37,12 @@ addEventListener('resize',()=>send({type:'resize',...size()}));
 canvas.addEventListener('mousedown',event=>event.preventDefault());
 canvas.addEventListener('pointerdown',event=>{moved={y:event.clientY,scrolled:false};send({type:'press',...point(event)});});
 canvas.addEventListener('pointermove',event=>{
+  if(moved&&event.buttons)send({type:'move',...point(event)});
   if(!moved||event.pointerType!=='touch')return;
   const step=moved.y-event.clientY;if(Math.abs(step)<2)return;
   moved={y:event.clientY,scrolled:true};send({type:'scroll',amount:step*scale()});
 });
-canvas.addEventListener('pointerup',event=>{if(moved&&!moved.scrolled)send({type:'release',...point(event)});moved=undefined;});
+canvas.addEventListener('pointerup',event=>{if(moved)send({type:'release',scrolled:moved.scrolled,...point(event)});moved=undefined;});
 addEventListener('wheel',event=>{event.preventDefault();send({type:'scroll',amount:event.deltaY*scale()});},{passive:false});
 keys.addEventListener('input',()=>{for(const text of keys.value)send({type:'text',text});keys.value='';});
 addEventListener('keydown',event=>{

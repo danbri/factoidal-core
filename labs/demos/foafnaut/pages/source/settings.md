@@ -19,6 +19,7 @@ Type a URL, or words to search, or a command.
 - :back and :forward
 - :reload
 - :home
+- :graph opens the interactive FOAF graph
 - :source shows this page's source
 - :new and :close
 - :zoom 150

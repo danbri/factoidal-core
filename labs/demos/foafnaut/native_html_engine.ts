@@ -16,6 +16,7 @@ export type Inspection = {
 };
 export type History = {entries:string[];index:number};
 export type HistoryAnswer = {history:History;url:string|null;canBack:boolean;canForward:boolean};
+export type GraphFrame = {model:string;commands:string[]};
 export type ShellEdit = {address:string;cursor:number};
 export type ShellGo = {go:"page";url:string}|{go:"system";url:string}|{go:"command";name:string;argument:string};
 export type HTMLResource = {nodeId:number;url:string;source:string};
@@ -64,6 +65,10 @@ export async function loadHTML() {
     shellText:(shell:unknown,text:string)=>documentCall("",{op:"shellText",shell,text}) as ShellEdit,
     shellKey:(shell:unknown,key:number)=>documentCall("",{op:"shellKey",shell,key}) as ShellEdit,
     shellSubmit:(address:string)=>documentCall("",{op:"shellSubmit",address}) as ShellGo,
+    // The FOAF graph page: the model is Lean's; the host keeps it as text.
+    graphStart:(rdf:string,width:number,height:number,shell:unknown)=>documentCall("",{op:"graphStart",rdf,width,height,shell}) as GraphFrame,
+    graphEvent:(model:string,kind:number,a:number,b:number,width:number,shell:unknown)=>documentCall("",{op:"graphEvent",model,kind,a,b,width,shell}) as GraphFrame,
+    graphPage:(model:string)=>(documentCall("",{op:"graphPage",model}) as {source:string}).source,
     sourcePage:(kind:string,url:string,source:string)=>(documentCall("",{op:"sourcePage",kind,url,source}) as {source:string}).source,
     shellLink:(href:string)=>documentCall("",{op:"shellLink",href}) as ShellGo,
     // Lean decides what a menu command and a pointer release mean.

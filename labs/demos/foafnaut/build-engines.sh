@@ -91,8 +91,8 @@ for module in MathML/Rat Math/Matrix; do
   "$TOOLCHAIN/bin/lean" -R "$PROJECT" -o "$BUILD/olean/L4Factoidal/$module.olean" "$PROJECT/L4Factoidal/$module.lean"
 done
 "$TOOLCHAIN/bin/lean" -R "$PROJECT" --run "$PROJECT/L4Factoidal/Math/AffineTests.lean"
-"$TOOLCHAIN/bin/lean" -R "$LAB/foaf" -o "$BUILD/olean/FoafGraph.olean" \
-  -c "$BUILD/ir/FoafGraph.c" "$LAB/foaf/FoafGraph.lean"
+"$TOOLCHAIN/bin/lean" -R "$LAB" -o "$BUILD/olean/FoafGraph.olean" \
+  -c "$BUILD/ir/FoafGraph.c" "$LAB/FoafGraph.lean"
 for name in Graphics GraphicsPrepared Font Geometry UI Demos SVGPathData SVGCurves SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke SVG SceneSVG Solving SolvingPolicy SolvingSVG FoafNaut FoafPresentation FoafLiveBridge RenderPlan PolicyBridge; do
   "$TOOLCHAIN/bin/lean" -R "$LAB" -o "$BUILD/olean/$name.olean" -c "$BUILD/ir/$name.c" "$LAB/$name.lean"
 done
@@ -175,7 +175,7 @@ if command -v sha256sum >/dev/null; then HASH_COMMAND=(sha256sum); else HASH_COM
 "${HASH_COMMAND[@]}" formal/lean4/L4Factoidal/XML/{Document,Parser,Wellformedness,Namespaces,NamespaceView}.lean \
   formal/lean4/Wasm/build-wasm.sh labs/demos/foafnaut/build-engines.sh \
   labs/demos/foafnaut/{Graphics,GraphicsPrepared,GraphicsArtifact,Font,Geometry,UI,Demos,SVGPathData,SVGCurves,SVGPath,SVGReferences,SVGCSS,SVGDash,SVGDashUnits,SVGStroke,SVG,SceneSVG,Solving,SolvingArtifact,SolvingPolicy,SolvingSVG,FoafNaut,FoafPresentation,FoafLiveBridge,RenderPlan,PolicyBridge}.lean \
-  labs/demos/foafnaut/foaf/FoafGraph.lean > "$BUILD/source-SHA256SUMS"
+  labs/demos/foafnaut/FoafGraph.lean > "$BUILD/source-SHA256SUMS"
 for module in "${CORE_MODULES[@]}"; do
   "${HASH_COMMAND[@]}" "formal/lean4/L4Factoidal/$module.lean" >> "$BUILD/source-SHA256SUMS"
 done
