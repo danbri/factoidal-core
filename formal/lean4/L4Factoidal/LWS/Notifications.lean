@@ -733,7 +733,7 @@ def admitDest (rate : Rate) (now : Nat) (key : String) (ds : List DestWindow) :
 
 /-- The number of deliveries to `key` that `admitDest` lets through for
 decisions at the times `ts`, in order. -/
-def admitsDest (rate : Rate) (key : String) : List Nat → List DestWindow → Nat
+noncomputable def admitsDest (rate : Rate) (key : String) : List Nat → List DestWindow → Nat
   | [], _ => 0
   | t :: ts, ds => (if (admitDest rate t key ds).1 then 1 else 0) +
       admitsDest rate key ts (admitDest rate t key ds).2
