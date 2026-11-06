@@ -19,7 +19,7 @@ def run(cmd, **k):
 ap = argparse.ArgumentParser()
 ap.add_argument('manifest'); ap.add_argument('--build', required=True); ap.add_argument('--runtime', required=True)
 ap.add_argument('--out', required=True); ap.add_argument('--jobs', type=int, default=3); ap.add_argument('--opt', default='-O2')
-ap.add_argument('--relink', action='store_true', help='reuse compiled objects')
+ap.add_argument('--stop-after-link', action='store_true')
 a = ap.parse_args()
 m = json.load(open(a.manifest)); out = os.path.abspath(a.out); build = os.path.abspath(a.build); rt = os.path.abspath(a.runtime)
 os.makedirs(out, exist_ok=True); t0 = time.time(); steps = {}
@@ -46,6 +46,9 @@ objs = out + '/obj'; shutil.rmtree(objs, ignore_errors=True); os.makedirs(objs)
 cache = os.environ.get('UNIT_OBJ_CACHE', out + '/objcache')
 base = ['-DNDEBUG', '-DLEAN_EMSCRIPTEN', '-fwasm-exceptions', '-I', rt + '/wasm-include', '-I', toolchain + '/include']
 jobs = []
+for x in m.get('extra-c', []):
+    src = os.path.join(ROOT, x['src'])
+    jobs.append([HERE + '/cc-cache.sh', cache, f'{objs}/{x.get("name", os.path.basename(src)[:-2])}.o', src, 'emcc', '-O3'] + base + [f.replace('$ROOT', ROOT) for f in x.get('flags', [])])
 for src, cfile in json.load(open(out + '/c/files.json')) + [[shim, shim]]:
     name = os.path.basename(src)[:-2]
     if '/.lake/' in src: name = 'Core_' + src.split('/ir/')[1][:-2].replace('/', '_')
@@ -64,9 +67,10 @@ env = dict(os.environ, EMCC_DEBUG='1', TMPDIR=link + '/tmp')
 exports = ','.join('_' + e for e in m['entries'])
 run(['em++', '-O1', '-DNDEBUG', '-fwasm-exceptions', '--no-entry', '-Wl,--emit-relocs', '--profiling-funcs'] + sorted(glob.glob(objs + '/*.o')) + sorted(glob.glob(rt + '/rt-obj/*.o')) +
     ['-o', link + '/' + m['engine'] + '.mjs', '-sMODULARIZE=1', '-sEXPORT_ES6=1', '-sINVOKE_RUN=0', '-sEXPORTED_FUNCTIONS=' + exports,
-     '-sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString', '-sALLOW_MEMORY_GROWTH=1', '-sSTACK_SIZE=4MB', '-sENVIRONMENT=node,web,worker', '-sASSERTIONS=1'], env=env)
+     '-sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString', '-sALLOW_MEMORY_GROWTH=1', '-sSTACK_SIZE=' + m.get('stack', '4MB'), '-sENVIRONMENT=node,web,worker', '-sASSERTIONS=1', '-Wl,-Map=' + link + '/link.map'], env=env)
 shutil.copy(link + '/tmp/emscripten_temp/emcc-01-base.wasm', link + '/base.wasm'); shutil.rmtree(link + '/tmp')
 lap('link')
+if a.stop_after_link: sys.exit(0)
 # 5. plan
 plan = run(['node', HERE + '/plan-units.mjs', a.manifest, link + '/base.wasm', '--names', f'{link}/{m["engine"]}.wasm', '--out', out + '/plan'])
 print(' '.join(plan.split()))
