@@ -154,6 +154,9 @@ export async function openXmppServer (options = {}) {
   if (typeof options.mucDomain === 'string') config.mucDomain = options.mucDomain
   // Members-only rooms: [{room, members: [bare JID]}]; no list, an open room.
   if (Array.isArray(options.mucMembers)) config.mucMembers = options.mucMembers
+  // Owners: [{room, owners: [bare JID]}], room '*' for every room. Present, also empty: nobody
+  // becomes an owner by being first in a room. Absent: the first occupant is the owner.
+  if (Array.isArray(options.mucOwners)) config.mucOwners = options.mucOwners
   // Nicks reserved for a JID: [{nick, jid}]. Each account's name is reserved for it anyway.
   if (Array.isArray(options.mucReservedNicks)) config.mucReservedNicks = options.mucReservedNicks
   // XEP-0369 channels (L4Factoidal/XMPP/Mix.lean), joined through MIX-PAM; off unless named.
@@ -199,6 +202,11 @@ export async function openXmppServer (options = {}) {
   if (Array.isArray(options.mucMembers) && opened.mucMembers !== options.mucMembers.length) {
     engine.call('xmppClose', [handle])
     throw new XmppHostError('this engine does not carry members-only rooms; rebuild the engine')
+  }
+  // The same for owners: an older engine would make the first occupant the owner.
+  if (Array.isArray(options.mucOwners) && opened.mucOwners !== options.mucOwners.length) {
+    engine.call('xmppClose', [handle])
+    throw new XmppHostError('this engine does not carry configured room owners; rebuild the engine')
   }
   return {
     engine,
@@ -415,7 +423,7 @@ export async function createXmppServer (options = {}) {
           '  acl:mode acl:Read, acl:Write, acl:Control .\n'
       })
       const get = (target, accept) => state.step({ method: 'GET', target, headers: accept ? [['Accept', accept]] : [], body: new Uint8Array(0) })
-      for (const kind of ['roster', 'held', 'mix', 'gc3']) {
+      for (const kind of ['roster', 'held', 'mix', 'gc3', 'muc']) {
         const listing = await get(`/xmpp/${kind}/`, 'application/lws+json')
         if (listing.status === 404) continue
         if (listing.status !== 200) throw new XmppHostError(`state: listing /xmpp/${kind}/ answered ${listing.status}`)

@@ -1,7 +1,7 @@
 /-
 L4Factoidal.XMPP.StateCodec — the text forms in which `xmpp-serve` keeps its state in an LWS
 storage (issue https://github.com/danbri/factoidal/issues/1237): the stanzas held for one
-account, one MIX channel, one GC3 group. Each has a decoder and a ROUND-TRIP theorem, so a
+account, one MIX channel, one GC3 group, the affiliations of one MUC room. Each has a decoder and a ROUND-TRIP theorem, so a
 restart restores exactly what was written, and what the live state no longer holds is not in
 what is written.
 
@@ -15,6 +15,7 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 import L4Factoidal.LWS.Snapshot
 import L4Factoidal.XMPP.Mix
 import L4Factoidal.XMPP.Gc3
+import L4Factoidal.XMPP.Muc
 
 namespace L4Factoidal.XMPP.StateCodec
 
@@ -185,6 +186,44 @@ theorem decodeGroup_encodeGroup (g : Gc3.Group) : decodeGroup (encodeGroup g) = 
   simp only [decodeGroup, encodeGroup, fieldsOf_textOf, List.cons_append, List.nil_append,
     decimal_repr, readMembers_memberFields, List.reverse_nil, List.nil_append]
 
+/-! ## The affiliations of a MUC room
+
+An `Acl` is the only MUC state that is kept: occupants and their roles end with their sessions, and
+the owners of the configuration are read from the configuration at each start. -/
+
+def aclFields (es : List Muc.AclEntry) : List String :=
+  es.flatMap (fun e => [e.jid, e.aff.text, boolText e.muted])
+
+/-- Tail-recursive (the tail-recursion gate). -/
+def readAclEntries : List String → List Muc.AclEntry → Option (List Muc.AclEntry)
+  | [], acc => some acc.reverse
+  | a :: b :: c :: rest, acc =>
+    match Muc.Affiliation.ofText? b, boolOf c with
+    | some aff, some m => readAclEntries rest (⟨a, aff, m⟩ :: acc)
+    | _, _ => none
+  | _, _ => none
+
+theorem readAclEntries_aclFields (es acc : List Muc.AclEntry) :
+    readAclEntries (aclFields es) acc = some (acc.reverse ++ es) := by
+  induction es generalizing acc with
+  | nil => simp [aclFields, readAclEntries]
+  | cons e es ih =>
+    simp only [aclFields, List.flatMap_cons, List.cons_append, List.nil_append] at ih ⊢
+    rw [readAclEntries, Muc.Affiliation.ofText_text, boolOf_boolText]
+    simp only []
+    rw [ih]
+    simp
+
+def encodeAcl (a : Muc.Acl) : String := textOf (a.room :: aclFields a.entries)
+
+def decodeAcl (s : String) : Option Muc.Acl :=
+  match fieldsOf s with
+  | some (room :: rest) => (readAclEntries rest []).map (Muc.Acl.mk room)
+  | _ => none
+
+theorem decodeAcl_encodeAcl (a : Muc.Acl) : decodeAcl (encodeAcl a) = some a := by
+  simp [decodeAcl, encodeAcl, fieldsOf_textOf, readAclEntries_aclFields]
+
 /-! ## Where each item is kept
 
 One resource per item, under `/xmpp/<kind>/<name in hex>`, so a change rewrites one small
@@ -232,6 +271,9 @@ def segmentOf (s : String) : Option (String × Option Nat) :=
 #guard decodeHeld (encodeHeld ["<message/>", "a;b+c", ""]) == some ["<message/>", "a;b+c", ""]
 #guard (decodeChannel (encodeChannel ⟨"coven", "hag66@example.com", [⟨"hag66@example.com", "third; witch", "p1"⟩], 2⟩)).map (·.participants.map (·.nick)) == some ["third; witch"]
 #guard (decodeGroup (encodeGroup ⟨"tea", [⟨"j@x", "jul", "p1", .owner, true⟩, ⟨"r@x", "rom", "p2", .member, false⟩], 3⟩)).map (fun g => (g.nextId, g.members.map (·.presence))) == some (3, [true, false])
+#guard (decodeAcl (encodeAcl ⟨"tea; room", [⟨"j@x", .outcast, false⟩, ⟨"r@x", .unaffiliated, true⟩]⟩)).map (fun a => (a.room, a.entries.map (·.aff))) == some ("tea; room", [.outcast, .unaffiliated])
+#guard decodeAcl "garbage" == none
+#guard decodeAcl (textOf ["tea", "j@x", "king", "0"]) == none
 #guard nameOfHex (hexOf "juliet@example.com") == some "juliet@example.com"
 #guard nameOfHex (hexOf "Grüße/../x") == some "Grüße/../x"
 #guard pathOf "held" "r@x" == "/xmpp/held/72407"   ++ "8"

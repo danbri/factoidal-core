@@ -772,7 +772,7 @@ Specification: https://solidproject.org/TR/protocol`,
 usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
                             [--accounts FILE] [--cert FILE --key FILE [--starttls [--tls-port N]]]
                             [--ws-port N [--ws-path PATH] [--ws-origin ORIGIN]...]
-                            [--muc DOMAIN [--muc-members FILE]] [--mix DOMAIN] [--gc3 DOMAIN]
+                            [--muc DOMAIN [--muc-members FILE] [--muc-owners FILE]] [--mix DOMAIN] [--gc3 DOMAIN]
                             [--state-key FILE] [--max-connections N]
                             [--login-timeout SECONDS] [--no-address-limit]
                             [--dangerously-disable-ratelimits]
@@ -817,11 +817,19 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
   --muc DOMAIN     also serve XEP-0045 multi-user chat rooms at DOMAIN, e.g.
                    conference.example.com: temporary rooms, made by the first
                    join and gone with the last occupant; no history, no
-                   configuration, no persistence (L4Factoidal/XMPP/Muc.lean)
+                   configuration form (L4Factoidal/XMPP/Muc.lean). Kick, ban, voice
+                   and the admin and owner lists follow XEP-0045 sections 8 to 10
   --muc-members FILE  members-only rooms: one room per line, as
                    "room: alice@example.com bob@example.com". Only those accounts
                    may join or see that room; a room not in the file is open to
                    every account (L4Factoidal/XMPP/Muc.lean)
+  --muc-owners FILE  room owners: one room per line, as "room: alice@example.com",
+                   and "*: alice@example.com" for every room. XMPP cannot change
+                   these names. With this flag, also with an empty file, nobody
+                   becomes an owner by being first in a room, and with --state-key
+                   bans and affiliations survive a restart. Without this flag, the
+                   first occupant of a room with no owner is its owner, and a room's
+                   bans and affiliations go with the room
   --mix DOMAIN     also serve XEP-0369 MIX channels at DOMAIN, e.g. mix.example.com,
                    joined through this server (XEP-0405 MIX-PAM); channels are
                    made by an IQ <create/>, kept in memory only, JID-hidden; no
@@ -1283,7 +1291,7 @@ const VALUE_OPTIONS = {
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
-  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'tls-port', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'muc-members', 'mix', 'gc3', 'state-key', 'max-connections', 'login-timeout', 'verifier', 'iterations']),
+  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'tls-port', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'muc-members', 'muc-owners', 'mix', 'gc3', 'state-key', 'max-connections', 'login-timeout', 'verifier', 'iterations']),
   'webdav-serve': new Set(['port', 'host', 'users', 'guest', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
@@ -3017,6 +3025,20 @@ async function commandXmppServe (positional, options) {
         throw new UsageError(`--muc-members: not "room: bare@jid ...": ${line}`)
       }
       settings.mucMembers.push({ room, members })
+    }
+  }
+  if (options['muc-owners'] !== undefined) {
+    if (typeof options['muc-owners'] !== 'string') throw new UsageError('--muc-owners needs a FILE')
+    if (settings.mucDomain === undefined) throw new UsageError('--muc-owners needs --muc')
+    settings.mucOwners = []
+    for (const line of (await fs.readFile(options['muc-owners'], 'utf8')).split('\n')) {
+      if (line.trim() === '') continue
+      const [, room, list] = /^([^:\s@/]+):(.*)$/.exec(line.trim()) ?? []
+      const owners = (list ?? '').split(/\s+/).filter(Boolean)
+      if (room === undefined || owners.length === 0 || owners.some((m) => !/^[^\s@/]+@[^\s@/]+$/.test(m))) {
+        throw new UsageError(`--muc-owners: not "room: bare@jid ...": ${line}`)
+      }
+      settings.mucOwners.push({ room, owners })
     }
   }
   if (options.mix !== undefined) {

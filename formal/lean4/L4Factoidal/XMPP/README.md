@@ -791,3 +791,55 @@ Already on `main` from https://github.com/danbri/factoidal/issues/1128: `AuthGua
   this server allows it. A room seat belongs to the full JID, so it stays until the last of the
   sessions goes, and `bound` loses one entry at a time (`unbind`), so delivery to the survivor goes on.
   While both are open, a room stanza reaches the first of them only, as `routeFull` delivers once.
+
+## 2026-11-06: rooms: moderation, XEP-0045 sections 8 to 10
+
+Owner, relayed: "whatever is conventional in XMPP, otherwise follow IRC/Discord/Slack conventions".
+
+- `Muc.lean`: kick (`role='none'`, status 307), ban (`affiliation='outcast'`, status 301), grant and
+  revoke voice (`visitor`, `participant`), grant and revoke moderator, member, admin and owner, status
+  321 for a member who may no longer stay, the lists (`Service.withAff`, role lists), and the empty
+  form of an instant room. `roleRefusal` and `Service.affRefusal` are the privilege tables of sections
+  5.1.2 and 5.2.1. A request with several items is done in full or not at all (`applyItems`).
+- Affiliations belong to a room name and an account (`Service.acls`), not to a session, and stay when
+  the room is empty. `Service.affOfKey` is the one place that states an affiliation: a configured
+  owner, then the `Acl`, then the configured member list. Accounts compare in lower case (`keyOf`).
+- First owner. `xmpp-serve --muc-owners FILE`, as `room: a@x b@x`, and `*: a@x` for every room
+  (`"mucOwners"` in the config). With the flag, also with an empty file (`Service.firstOwner` is false),
+  nobody becomes an owner by being first, and XMPP cannot change a configured owner. Without the flag,
+  the first occupant of a room with no owner is its owner, as before: existing tests and rooms use that.
+  No account name is in the code; a deployment names its owners in the file. A room that the file does
+  not name and that has no `*` line has no owner at all.
+- Persistence. With `--muc-owners` and `--state-key`, each room's `Acl` is one sealed resource under
+  `/xmpp/muc/<room in hex>` (`StateCodec.encodeAcl`, round-trip theorem `decodeAcl_encodeAcl`), written
+  through the `store` and `unstore` path that MIX and GC3 use. The reasons: a ban that ends at a restart
+  or when the room empties is no ban, and it costs no new mechanism. Occupants and roles are not kept
+  (they end with the session), the rooms stay temporary, and the configured owners are read from the
+  configuration at each start, so an operator removes an owner by editing the file. Without
+  `--muc-owners` an `Acl` goes with its room and is never written: an ordinary account can then add
+  nothing that lasts, and `maxAclRooms` and `maxAclEntries` bound what an owner can add. Without
+  `--state-key` an `Acl` ends at a restart, as all state does. Items loaded by a server with no owner
+  configuration are not used and not deleted, so a start without the flag does not lose the bans.
+- Choices where XEP-0045 leaves room or differs from this service:
+  - A revoked voice stays with the account (`AclEntry.muted`), across a new join and a restart. XEP-0045
+    makes a role end with the session; then a person gets the voice back by rejoining.
+  - Section 8.4 says "at or above"; here a moderator can revoke the voice of an occupant of the same
+    affiliation if that occupant is not a moderator, or a moderator with no affiliation could do nothing.
+  - Nobody kicks an owner, and only an owner kicks an admin.
+  - An admin or an owner who is not in the room can act: the affiliation is the power.
+  - Moderators get nicks, not real JIDs (section 5.1.2 allows them); admins and owners can ban by nick,
+    and the affiliation lists, which only they read, name bare JIDs. Owner and admin lists: owners only.
+  - A visitor can still send private messages (the default of section 5.1.2).
+  - An affiliation change sets the role that the affiliation brings, so a granted moderator role ends.
+  - An admin cannot take away their own affiliation; an owner has to do it.
+- Theorems: `outcast_cannot_join`, `mayJoin_outcast`, `groupchat_visitor`, `roleRefusal_below_admin`,
+  `roleRefusal_owner`, `roleRefusal_admin`, `setRole_kick_refused`, `admin_cannot_raise`,
+  `admin_cannot_touch`, `configured_owner_is_owner`, `configured_owner_fixed`, `no_self_ban`,
+  `setAff_keeps_owner` (the last owner, with an owner configuration), `join_no_first_owner`,
+  `join_affOfKey`, `list_jids_admin_only`, `join_sound`, `setAff_sound`, `ban_gone`. `#guard`s in
+  `Muc.lean`, `StateCodec.lean` and `Wasm/Ops/XmppSession.lean`; test
+  `npm/factoidal/test/xmpp-muc-moderation.test.mjs`.
+- Not covered: room destruction by an owner (section 10.9), configuration forms, nick change, a ban of a
+  whole domain, a message to an account that gets an affiliation while away. `Service.sound` is proved for
+  `join` and `setAff`, not for `setRole` (a role change does not change who may be in a room, but the
+  proof is not written).

@@ -112,6 +112,22 @@ private def mucMembersOfArray (items : List Json) : Option (List Muc.MemberList)
       else (members.mapM (fun m => match m with | Json.string s => some s | _ => none)).map (Muc.MemberList.mk room)
     | _, _ => none)
 
+/-- `mucOwners`: an array of `{"room","owners":[bare JID]}` objects; the room `*` means every room.
+`none` when an entry is malformed, or a name is not a bare JID: an owner list that lost a name would
+leave a room with no owner, and the server would say nothing. -/
+private def mucOwnersOfArray (items : List Json) : Option (List Muc.MemberList) :=
+  items.mapM (fun it =>
+    match it.getString? "room", it.getArray? "owners" with
+    | some room, some owners =>
+      if room.isEmpty then none
+      else (owners.mapM (fun m => match m with
+        | Json.string s =>
+          match Jid.parse s with
+          | some ⟨some _, _, none⟩ => some (Muc.keyOf s)
+          | _ => none
+        | _ => none)).map (Muc.MemberList.mk room)
+    | _, _ => none)
+
 /-- `mucReservedNicks`: an array of `{"nick","jid"}` objects. `none` when an entry is malformed. -/
 private def mucReservedOfArray (items : List Json) : Option (List (String × String)) :=
   items.mapM (fun it =>
@@ -131,6 +147,9 @@ structure XmppServerConfig where
   mucDomain : Option String := none
   /-- Members-only rooms, from `"mucMembers"`. -/
   mucMembers : List Muc.MemberList := []
+  /-- Owners, from `"mucOwners"`. `none`: no owner configuration, so the first occupant of a room
+  is its owner. `some`, also an empty list: nobody becomes an owner by being first. -/
+  mucOwners : Option (List Muc.MemberList) := none
   /-- From the host's random source: the key of the XEP-0421 occupant ids, from `"occupantSeed"`. -/
   occupantSeed : String := ""
   /-- Reserved room nicks, from `"mucReservedNicks"`: (`Muc.nickKey` of the nick, bare JID). -/
@@ -199,7 +218,9 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
       let gc3Domain := j.getString? "gc3Domain"
       let mucMembers := (j.getArray? "mucMembers").map mucMembersOfArray
       let mucReserved := (j.getArray? "mucReservedNicks").map mucReservedOfArray
+      let mucOwners := (j.getArray? "mucOwners").map mucOwnersOfArray
       if mucMembers == some none then .error "config: \"mucMembers\" needs {\"room\",\"members\"} objects"
+      else if mucOwners == some none then .error "config: \"mucOwners\" needs {\"room\",\"owners\"} objects, and each owner a bare JID"
       else if mucReserved == some none then .error "config: \"mucReservedNicks\" needs {\"nick\",\"jid\"} objects"
       else if iterationCount < 1 then .error "config: \"iterationCount\" must be at least 1"
       else if mucDomain == some "" || mucDomain == some domain then
@@ -217,6 +238,7 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
               occupantSeed := (j.getString? "occupantSeed").getD "",
               tlsCarrier := (j.getBool? "tlsCarrier").getD false, mucDomain, mixDomain, gc3Domain,
               mucMembers := (mucMembers.bind id).getD [],
+              mucOwners := mucOwners.bind id,
               mucReserved := (mucReserved.bind id).getD [],
               persist := (j.getBool? "persist").getD false,
               limits := if disabled then { enabled := false } else {} }
@@ -230,6 +252,20 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
   match xmppServerConfigOfJson "{\"mucDomain\":\"c.example.com\",\"mucMembers\":[{\"room\":\"bus\"}]}" with
   | .ok _ => false
   | .error _ => true
+
+-- An owner list reaches the config; a name that is not a bare JID stops the start.
+#guard
+  match xmppServerConfigOfJson "{\"mucOwners\":[{\"room\":\"*\",\"owners\":[\"Me@example.com\"]}]}" with
+  | .ok c => c.mucOwners == some [⟨"*", ["me@example.com"]⟩]
+  | .error _ => false
+#guard
+  match xmppServerConfigOfJson "{\"mucOwners\":[{\"room\":\"*\",\"owners\":[\"me\"]}]}" with
+  | .ok _ => false
+  | .error _ => true
+#guard
+  match xmppServerConfigOfJson "{\"mucOwners\":[]}", xmppServerConfigOfJson "{}" with
+  | .ok a, .ok b => a.mucOwners == some [] && b.mucOwners == none
+  | _, _ => false
 
 /-! ## The handle tables -/
 
@@ -402,8 +438,15 @@ private def perform (sender : Option String) (srv : XmppOpenServer) (c : XmppCol
     match srv.muc, (Wire.parseElement text).bind Core.Stanza.ofXml with
     | some svc, some st =>
       let (svc', ds) := Muc.step svc fromFull st
+      -- Only a server with an owner configuration keeps affiliations: without one they go
+      -- with the room, so they do not outlive a restart either.
+      let keep := srv.cfg.persist && !svc.firstOwner
+      let changed := svc'.acls.filter (fun a => svc.acl? a.room != some a)
+      let gone := svc.acls.filter (fun a => (svc'.acl? a.room).isNone)
       ({ srv with muc := some svc' },
-       { c with routeFull := c.routeFull ++ ds.map (fun d => (d.to, d.render, none)) })
+       { c with routeFull := c.routeFull ++ ds.map (fun d => (d.to, d.render, none)),
+                store := c.store ++ (if keep then changed.map (fun a => (StateCodec.pathOf "muc" a.room, StateCodec.encodeAcl a)) else []),
+                unstore := c.unstore ++ (if keep then gone.map (fun a => StateCodec.pathOf "muc" a.room) else []) })
     | _, _ => (srv, c)
   | .mix fromFull text =>
     -- MIX: a channel message to an account may be held (`route`); an IQ
@@ -588,7 +631,12 @@ def xmppOpen (configJson : String) : IO String := do
       let cfg := { cfg with credentials := cfg.verifiers ++ derived }
       -- Each account's name is its own nick, beside the nicks the host reserves.
       let reserved := cfg.mucReserved ++ cfg.accounts.map (fun a => (Muc.nickKey a.username, a.username ++ "@" ++ cfg.domain))
-      let muc : Option Muc.Service := cfg.mucDomain.map (fun d => { domain := d, memberLists := cfg.mucMembers, reserved, idSeed := cfg.occupantSeed })
+      let owners := cfg.mucOwners.getD []
+      let muc : Option Muc.Service := cfg.mucDomain.map (fun d =>
+        { domain := d, memberLists := cfg.mucMembers, reserved, idSeed := cfg.occupantSeed
+          firstOwner := cfg.mucOwners.isNone
+          serviceOwners := (owners.filter (·.room == "*")).flatMap (·.members)
+          roomOwners := owners.filter (·.room != "*") })
       let mix : Option Mix.Service := cfg.mixDomain.map (fun d => { domain := d })
       let gc3 : Option Gc3.Service := cfg.gc3Domain.map (fun d => { domain := d })
       xmppServers.modify (·.insert h { cfg := cfg, rosters := ∅, presence := ∅, muc := muc, mix := mix, gc3 := gc3,
@@ -597,6 +645,7 @@ def xmppOpen (configJson : String) : IO String := do
                    , ("domain", .string cfg.domain)
                    , ("accounts", .number (toString cfg.accounts.length))
                    , ("mucMembers", .number (toString cfg.mucMembers.length))
+                   , ("mucOwners", .number (toString owners.length))
                    , ("warnings", .array ((Server.saslLimitWarnings cfg.limits).map Json.string)) ])
 
 def xmppClose (h : String) : IO String := do
@@ -1122,6 +1171,15 @@ def xmppStateLoad (server path text : String) : IO String := do
           | some svc, some g => install { srv with gc3 := some (svc.put g) }
           | none, _ => pure (errJson s!"xmppStateLoad: {path}: this server runs no GC3 service")
           | _, none => pure (errJson s!"xmppStateLoad: {path}: not a GC3 group")
+        | "muc" =>
+          match StateCodec.decodeAcl text, srv.muc with
+          | none, _ => pure (errJson s!"xmppStateLoad: {path}: not a MUC room's affiliations")
+          -- Without an owner configuration nothing of a room is kept, so this item is not used. It
+          -- is not deleted either: an operator who takes the flag away for one start keeps the bans.
+          | some _, none => pure (okWith [("loaded", .string kind)])
+          | some a, some svc =>
+            if svc.firstOwner then pure (okWith [("loaded", .string kind)])
+            else install { srv with muc := some { svc with acls := svc.acls.filter (·.room != a.room) ++ [a] } }
         | _ => pure (errJson s!"xmppStateLoad: {path}: unknown kind {kind}")
     | _ => pure (errJson s!"xmppStateLoad: {path}: not /xmpp/<kind>/<hex>")
 

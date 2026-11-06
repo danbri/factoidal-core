@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- XMPP: room moderation (XEP-0045 sections 8 to 10): kick (status 307), ban (status 301), grant and revoke voice, moderator, member, admin and owner, the admin and owner lists, and status 321. `xmpp-serve --muc-owners FILE` names the owners, as `room: a@x` or `*: a@x` for every room. With that flag, also with an empty file, the first occupant of a room gets no rights, XMPP cannot change a configured owner, and with `--state-key` bans, grants and revoked voices survive a restart. Without the flag the first occupant is the owner as before, and a room's bans go with the room.
+
 ## 0.33.0 (2026-11-06)
 
 - XMPP: held stanzas have caps per recipient and per server and a rate per sending account. A stanza for a name with no account is not held. Rosters have a cap on items and a rate on writes.

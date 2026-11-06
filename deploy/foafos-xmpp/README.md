@@ -53,5 +53,10 @@ node smoke.mjs ~/.config/foafos-xmpp-fly/accounts --idle 240
 - No limit per address and no login throttle (https://github.com/danbri/factoidal-core/pull/337 is a draft). The passwords
   are 192 random bits, which is the defence against guessing.
 - The server keeps passwords in clear in machine memory and in a Fly secret. One SCRAM salt serves all accounts.
-- Any account can join any room unless the room is on a `--muc-members` list. Rooms have no history.
+- Any account can join any room unless the room is on a `--muc-members` list, or it is banned there. Rooms have no history.
+- Room owners: with no `--muc-owners`, the first occupant of a room is its owner, and can kick and ban there. With
+  `--muc-owners FILE` only the accounts in the file are owners, and bans and grants survive a restart (the state key seals
+  them). The file has one line for each room, `room: a@foafos-xmpp.fly.dev`, or `*: a@foafos-xmpp.fly.dev` for every room.
+  Keep it on the volume and add the flag to `XMPP_EXTRA_ARGS`. The flag needs an engine with `muc-owners`: an older engine
+  stops at the flag.
 - There is no independent review of this server.
