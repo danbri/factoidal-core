@@ -100,7 +100,8 @@ process per connection behind socat) serves; the wasm session ops are
 | `xmppClose` | `[server]` | `{ ok, sessions }` |
 
 The state directory is laid out as the native carrier's, so the two
-hosts can share one: `DIR/accounts` (one `user:password` per line),
+hosts can share one: `DIR/accounts` (one `user:password` per line, or a line with no
+password from `factoidal xmpp-serve --verifier NAME`, for SCRAM only),
 `DIR/roster/<bare jid>.tsv` (persisted on every `rostersSaved`, loaded
 on start), and `DIR/spool/<bare jid>/<file>` — a stanza written there
 by any process is delivered to that account's bound session and
@@ -130,8 +131,9 @@ RFC 6120 section 5 STARTTLS with `startTls: true` (op `xmppSessionTlsUp`;
 the engine decides, the host does the handshake; see the theorems in
 `formal/lean4/L4Factoidal/XMPP/Server.lean`).
 Not: server-to-server federation, MUC/MIX/GC3 rooms, PRECIS.
-Known limitation shared with the native harness: one SCRAM salt per
-server (`saltB64` in the config), not one per account.
+Each name has its own SCRAM salt, from a seed the host gives the engine
+(`saltSeed`; derived from the state key when there is one). The native
+harness and a fixed `saltB64` keep one salt for all.
 
 The shared engine currently reduces routed destinations to bare JIDs and
 the Node host delivers to every bound resource. It does not implement full

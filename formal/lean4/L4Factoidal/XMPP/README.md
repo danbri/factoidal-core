@@ -739,3 +739,16 @@ Already on `main` from https://github.com/danbri/factoidal/issues/1128: `AuthGua
 - A start does not load a kept item for a name that is no longer an account, and deletes it
   (`xmppStateLoad` answers `stale`).
 - Tests: `#guard`s in `Held.lean`; `npm/factoidal/test/xmpp-held.test.mjs`.
+
+## 2026-11-06: accounts: salts, keys in place of passwords, a strict file (findings M3 and M2)
+
+- M3: `Config.saltFor`, one salt per name from a host seed (`saltSeed`; from the state key when
+  there is one, so salts survive a restart with the state). Default iterations 10,000
+  (`defaultIterations`), paid once per account when the server opens. An accounts line can hold
+  keys in place of a password (`verifierText`, `verifierOf`; `factoidal xmpp-serve --verifier NAME`
+  writes one). Such an account logs in by SCRAM only (`checkPlain_empty`).
+- M2: `Server.accountsOfText`: a line with no colon, no name or no password, or a name that comes
+  twice, stops the start, on both hosts; the error gives the line number and never the text.
+  `accounts` in the JSON config is as strict. `checkPlain` refuses an empty stored password. The
+  host warns when the accounts file can be read by others.
+- Tests: `#guard`s in `Server.lean`; `npm/factoidal/test/xmpp-accounts.test.mjs`.

@@ -22,6 +22,8 @@ socket read, perform what it answers.
     -> {"ok":true}
   xmppClock(serverHandle, seconds)
     -> {"ok":true}
+  xmppVerifier(username, password, saltB64, iterations)
+    -> {"ok":true,"line":"…"}
   xmppClose(serverHandle)
     -> {"ok":true,"sessions":N}
 
@@ -92,23 +94,13 @@ private def natField? (j : Json) (key : String) : Option Nat :=
   | some (.number s) => s.toNat?
   | _ => none
 
-/-- `user:password` lines, the accounts-file format of the harness
-(`Harness.XmppServe.parseAccounts`), accepted here as `accountsText` so one
-file serves both hosts. -/
-private def accountsOfText (text : String) : List Account :=
-  (text.splitOn "\n").filterMap (fun line =>
-    let l := line.trim
-    if l.isEmpty || l.startsWith "#" then none
-    else match l.splitOn ":" with
-      | u :: rest => if u.isEmpty then none else some ⟨u, String.intercalate ":" rest⟩
-      | [] => none)
-
-/-- `accounts`: an array of `{"username","password"}` objects. -/
-private def accountsOfArray (items : List Json) : List Account :=
-  items.filterMap (fun it =>
+/-- `accounts`: an array of `{"username","password"}` objects. An entry with no
+name or no password is an error: it must not become an account. -/
+private def accountsOfArray (items : List Json) : Except String (List Account) :=
+  items.mapM (fun it =>
     match it.getString? "username", it.getString? "password" with
-    | some u, some p => if u.isEmpty then none else some ⟨u, p⟩
-    | _, _ => none)
+    | some u, some p => if u.isEmpty || p.isEmpty then .error "accounts: an entry has no name or no password" else .ok ⟨u, p⟩
+    | _, _ => .error "accounts: an entry has no name or no password")
 
 /-- `mucMembers`: an array of `{"room","members":[bare JID]}` objects. `none` when
 an entry is malformed: a room whose list was lost would be open to everyone. -/
@@ -141,6 +133,8 @@ structure XmppServerConfig where
   persist : Bool := false
   /-- The failed SASL login limit (on unless `disableRateLimits`). -/
   limits : L4Factoidal.Net.LoginLimit.Limits := {}
+  /-- The keys of the accounts file's verifier lines. -/
+  verifiers : List (String × Scram.StoredCredentials) := []
   /-- From the host's random source (`Config.saltSeed`), from `"saltSeed"`. -/
   saltSeed : String := ""
   /-- The accounts' SCRAM keys, derived by `xmppOpen` (`Config.credentials`). -/
@@ -151,6 +145,10 @@ structure XmppServerConfig where
   `disableRateLimits`), from `"heldLimits"`. -/
   senderLimits : L4Factoidal.Net.LoginLimit.Limits := { maxFailures := 60, window := 60 }
   deriving Inhabited
+
+/-- The SCRAM iteration count of a server that names none. RFC 7677 section 4 says at least 4096;
+each account pays it once, when the server opens. -/
+def defaultIterations : Nat := 10000
 
 /-- `heldLimits`: any of `perAccount`, `perAccountBytes`, `total`, `totalBytes`, `senderPerWindow`
 and `senderWindow`, each a number; what is absent keeps its default. -/
@@ -174,15 +172,17 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
     let domain := (j.getString? "domain").getD "localhost"
     if domain.isEmpty then .error "config: \"domain\" must not be empty"
     else
-      let fromArray := (j.getArray? "accounts").map accountsOfArray
-      let fromText := (j.getString? "accountsText").map accountsOfText
-      let accounts := (fromArray.getD []) ++ (fromText.getD [])
+      match accountsOfArray ((j.getArray? "accounts").getD []),
+            Server.accountsOfText ((j.getString? "accountsText").getD "") with
+      | .error e, _ | _, .error e => .error e
+      | .ok fromArray, .ok (fromText, verifiers) =>
+      let accounts := fromArray ++ fromText
       -- RFC 5802 section 5.1 salt and RFC 7677 section 3 iteration count.
       -- The default salt is the one `Harness/XmppServe.lean` fixes per
       -- deployment, so a transcript recorded against the harness replays
       -- here byte for byte.
       let saltB64 := (j.getString? "saltB64").getD "W22ZaJ0SNY7soEsUEjb6gQ=="
-      let iterationCount := (natField? j "iterationCount").getD 4096
+      let iterationCount := (natField? j "iterationCount").getD defaultIterations
       let mucDomain := j.getString? "mucDomain"
       let mixDomain := j.getString? "mixDomain"
       let gc3Domain := j.getString? "gc3Domain"
@@ -199,7 +199,7 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
       else
         let disabled := (j.getBool? "disableRateLimits").getD false
         let (heldCaps, senderLimits) := heldLimitsOf j disabled
-        .ok { domain, saltB64, iterationCount, accounts, heldCaps, senderLimits,
+        .ok { domain, saltB64, iterationCount, accounts, heldCaps, senderLimits, verifiers,
               saltSeed := (j.getString? "saltSeed").getD "",
               tlsCarrier := (j.getBool? "tlsCarrier").getD false, mucDomain, mixDomain, gc3Domain,
               mucMembers := (mucMembers.bind id).getD [],
@@ -538,9 +538,9 @@ def xmppOpen (configJson : String) : IO String := do
       let probe : Config := { domain := cfg.domain, streamId := "", serverNonce := "", saltB64 := cfg.saltB64
                               iterationCount := cfg.iterationCount, accounts := [], tlsCarrier := false
                               saltSeed := cfg.saltSeed }
-      let credentials := cfg.accounts.filterMap (fun a =>
+      let derived := (cfg.accounts.filter (fun a => !a.password.isEmpty)).filterMap (fun a =>
         (Scram.credentialsOfPassword a.password (probe.saltFor a.username) cfg.iterationCount).map (a.username, ·))
-      let cfg := { cfg with credentials }
+      let cfg := { cfg with credentials := cfg.verifiers ++ derived }
       let muc : Option Muc.Service := cfg.mucDomain.map (fun d => { domain := d, memberLists := cfg.mucMembers })
       let mix : Option Mix.Service := cfg.mixDomain.map (fun d => { domain := d })
       let gc3 : Option Gc3.Service := cfg.gc3Domain.map (fun d => { domain := d })
@@ -563,6 +563,17 @@ def xmppClose (h : String) : IO String := do
     pure (okWith [("sessions", .number (toString mine.length))])
   else
     pure (unknownXmppServer h)
+
+/-- `xmppVerifier(username, password, saltB64, iterations)`: one line of an accounts file that
+holds no password. The host supplies the salt: this module has no random source. -/
+def xmppVerifier (username password saltB64 iterations : String) : IO String := do
+  match iterations.toNat? with
+  | none => pure (errJson "xmppVerifier: iterations must be a number")
+  | some n =>
+    if username.isEmpty || password.isEmpty then pure (errJson "xmppVerifier: a name and a password are required")
+    else match Scram.credentialsOfPassword password saltB64 n with
+      | none => pure (errJson "xmppVerifier: the salt is not base64, or the count is 0")
+      | some c => pure (okWith [("line", .string (username ++ ":" ++ Server.verifierText c))])
 
 /-- `xmppClock(serverHandle, seconds)`: the host's clock, which only moves forward. The rate
 limits read it, so a host calls this when the second changes, not only when a connection opens. -/
@@ -1067,7 +1078,7 @@ def xmppStateLoad (server path text : String) : IO String := do
 def xmppSessionOpNames : List String :=
   [ "xmppOpen", "xmppClose"
   , "xmppSessionOpen", "xmppSessionFeed", "xmppSessionDeliver", "xmppSessionClose"
-  , "xmppSessionTlsUp", "xmppRosterGet", "xmppRosterSet", "xmppWsOpen", "xmppStateLoad", "xmppClock"
+  , "xmppSessionTlsUp", "xmppRosterGet", "xmppRosterSet", "xmppWsOpen", "xmppStateLoad", "xmppClock", "xmppVerifier"
   , "xmppMsgOpen", "xmppMsgFeed", "xmppMsgDeliver", "xmppMsgClose" ]
 
 

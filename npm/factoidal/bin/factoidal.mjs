@@ -792,7 +792,13 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
                    (default 5222; 5223 with --cert and --key and no --starttls)
   --host ADDRESS   the address to bind (default 127.0.0.1); without
                    --cert and --key only a loopback address is accepted
-  --accounts FILE  the accounts file (default DIR/accounts)
+  --accounts FILE  the accounts file (default DIR/accounts). One account per
+                   line: name:password, or a line from --verifier, which holds
+                   no password (SCRAM only). Any other line stops the start. A
+                   file others can read gives a warning
+  --verifier NAME  read a password from standard input, print the accounts line
+                   for NAME that holds no password, and exit; --iterations N
+                   sets the SCRAM count (default 10000)
   --cert FILE      PEM certificate chain: XEP-0368 direct TLS, or STARTTLS with --starttls
   --key FILE       PEM private key for --cert
   --starttls       listen in clear and REQUIRE STARTTLS (RFC 6120 section 5)
@@ -1277,7 +1283,7 @@ const VALUE_OPTIONS = {
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
-  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'tls-port', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'muc-members', 'mix', 'gc3', 'state-key', 'max-connections', 'login-timeout']),
+  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'tls-port', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'muc-members', 'mix', 'gc3', 'state-key', 'max-connections', 'login-timeout', 'verifier', 'iterations']),
   'webdav-serve': new Set(['port', 'host', 'users', 'guest', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
@@ -2939,6 +2945,17 @@ async function commandWebdavUser (positional, options) {
 }
 
 async function commandXmppServe (positional, options) {
+  // One accounts line with no password in it: the password comes from stdin.
+  if (typeof options.verifier === 'string') {
+    const { randomBytes } = await import('node:crypto')
+    const { readFileSync } = await import('node:fs')
+    const { loadEngine } = await import('./engine.mjs')
+    const password = readFileSync(0, 'utf8').replace(/\r?\n$/, '')
+    const engine = await loadEngine()
+    const made = engine.call('xmppVerifier', [options.verifier, password, randomBytes(16).toString('base64'), String(options.iterations ?? 10000)])
+    out(made.line)
+    return 0
+  }
   if (positional.length !== 1) throw new UsageError('xmpp-serve needs one DIR')
   const quiet = options.quiet === true
   const { listen, XmppHostError } = await import('../xmpp/server.mjs')
@@ -2956,7 +2973,10 @@ async function commandXmppServe (positional, options) {
     onError: (error) => { if (!quiet) err(`xmpp-serve: ${error.message}`) }
   }
   if (typeof options.domain === 'string') settings.domain = options.domain
-  if (typeof options.accounts === 'string') settings.accountsText = await fs.readFile(options.accounts, 'utf8')
+  if (typeof options.accounts === 'string') {
+    settings.accountsText = await fs.readFile(options.accounts, 'utf8')
+    settings.accountsFile = options.accounts
+  }
   // The failed SASL login limit (https://github.com/danbri/factoidal/issues/1128):
   // on by default; the engine decides and words the warning.
   if (options['dangerously-disable-ratelimits'] !== undefined) {

@@ -41,9 +41,9 @@
 // `maxQueuedBytes`. There is no connection limit per address: behind a
 // proxy, every client has the same one.
 
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { StringDecoder } from 'node:string_decoder'
-import { mkdir, readFile, writeFile, readdir, unlink, rename } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, readdir, unlink, rename, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { loadEngine } from '../bin/engine.mjs'
 import { createXmppRouter } from './router.mjs'
@@ -119,7 +119,9 @@ function randomToken (bytes = 18) {
  * @param {object} options
  * @param {string} [options.domain] the domain the server is authoritative for (default `localhost`)
  * @param {Array<{username: string, password: string}>} [options.accounts]
- * @param {string} [options.accountsText] `user:password` lines, the harness's accounts-file format
+ * @param {string} [options.accountsText] the accounts file's text, one account per line:
+ *   `name:password`, or the keys `factoidal xmpp-serve --verifier NAME` writes. A line that is
+ *   neither stops the start (`Server.accountsOfText`)
  * @param {string} [options.saltB64] one SCRAM salt for every name, base64; absent, each name has its own
  * @param {string} [options.saltSeed] the seed of the salts; absent, a random one for this process
  * @param {number} [options.iterationCount] the SCRAM iteration count
@@ -272,6 +274,14 @@ async function readAccountsFile (path) {
   }
 }
 
+/** A warning when the accounts file can be read by anyone but its owner. */
+async function accountsFileWarnings (path) {
+  if (process.platform === 'win32') return []
+  const { mode } = await stat(path)
+  if ((mode & 0o077) === 0) return []
+  return [`${path} can be read by other users of this machine: chmod 600 it`]
+}
+
 /**
  * A `net.Server` (or `tls.Server`, when `cert` and `key` are given —
  * XEP-0368 direct TLS) that runs one engine session per connection.
@@ -279,6 +289,7 @@ async function readAccountsFile (path) {
  * The server is returned unlistened: the caller chooses the port.
  *
  * @param {object} options as `openXmppServer`, plus:
+ * @param {string} [options.accountsFile] the path `accountsText` came from, to check its mode
  * @param {string} [options.dir] state directory: `accounts` is read from it when
  *   no accounts are given; rosters are persisted under `roster/`; `spool/` is
  *   polled for stanzas written by other processes
@@ -329,9 +340,15 @@ export async function createXmppServer (options = {}) {
   }
 
   const serverOptions = { ...options }
+  let accountsFile = typeof options.accountsFile === 'string' ? options.accountsFile : null
   if (dir !== null && !Array.isArray(options.accounts) && typeof options.accountsText !== 'string') {
     const text = await readAccountsFile(join(dir, 'accounts'))
-    if (text !== null) serverOptions.accountsText = text
+    if (text !== null) { serverOptions.accountsText = text; accountsFile = join(dir, 'accounts') }
+  }
+  // Salts that survive a restart when the state does: a client that keeps a
+  // salted password goes on working, and a name's salt does not change.
+  if (typeof options.saltSeed !== 'string' && typeof options.stateKey === 'string') {
+    serverOptions.saltSeed = createHash('sha256').update('xmpp salt seed\0' + options.stateKey).digest('base64url')
   }
   const haveKey = options.cert !== undefined && options.key !== undefined
   if (options.startTls === true && !haveKey) {
@@ -342,6 +359,7 @@ export async function createXmppServer (options = {}) {
   if (typeof serverOptions.tlsCarrier !== 'boolean') serverOptions.tlsCarrier = useTls
   if (dir !== null && options.stateKey !== undefined) serverOptions.persist = true
   const xmpp = await openXmppServer(serverOptions)
+  if (accountsFile !== null) xmpp.warnings.push(...await accountsFileWarnings(accountsFile))
 
   // Rosters the previous run persisted.
   try {

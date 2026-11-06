@@ -108,13 +108,13 @@ def parseArgs (o : Options) (args : List String) : Except String Options :=
 
 /-! ## Accounts -/
 
-def parseAccounts (text : String) : List Account :=
-  (text.splitOn "\n").filterMap (fun line =>
-    let l := line.trim
-    if l.isEmpty || l.startsWith "#" then none
-    else match l.splitOn ":" with
-      | u :: rest => if u.isEmpty then none else some ⟨u, String.intercalate ":" rest⟩
-      | [] => none)
+/-- The accounts file, as `Server.accountsOfText` reads it. A verifier line is for a server that
+keeps keys (`xmpp-serve`): this harness refuses it, so an account never loses its login silently. -/
+def parseAccounts (text : String) : Except String (List Account) :=
+  match L4Factoidal.XMPP.Server.accountsOfText text with
+  | .error e => .error e
+  | .ok (as, []) => .ok as
+  | .ok _ => .error "accounts: this harness reads name:password lines only"
 
 /-! ## Paths. The host owns the file names; the bytes are the server's. -/
 
@@ -373,7 +373,11 @@ def main (args : List String) : IO UInt32 := do
       | none =>
         let p := System.FilePath.mk o.stateDir / "accounts"
         if ← p.pathExists then IO.FS.readFile p else pure ""
-    let accounts := parseAccounts accountsText
+    match parseAccounts accountsText with
+    | .error e =>
+      (← IO.getStderr).putStrLn s!"l4xmpp-serve: {e}"
+      return 2
+    | .ok accounts =>
     let stamp := (← IO.monoNanosNow)
     let cfg : Config :=
       { domain := o.domain

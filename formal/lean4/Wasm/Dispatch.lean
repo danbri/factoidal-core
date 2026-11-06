@@ -832,6 +832,10 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "xmppRosterSet"      => withArgs (arityIO3 op Ops.xmppRosterSet)
   | "xmppStateLoad"      => withArgs (arityIO3 op Ops.xmppStateLoad)
   | "xmppClock"          => withArgs (arityIO2 op Ops.xmppClock)
+  | "xmppVerifier"       => withArgs (fun args =>
+      match args with
+      | [a, b, c, d] => Ops.xmppVerifier a b c d
+      | args => pure (errJson s!"xmppVerifier expects 4 arguments, got {args.length}"))
   -- The outgoing XMPP client stream with HTTP over XMPP (`Wasm/Ops/XmppClient.lean`).
   | "xmppClientOpen"     => withArgs (arityIO1 op Ops.xmppClientOpen)
   | "xmppClientFeed"     => withArgs (arityIO2 op Ops.xmppClientFeed)

@@ -217,6 +217,76 @@ structure Config where
 def Config.accountOf (c : Config) (user : String) : Option Account :=
   c.accounts.find? (fun a => a.username == user)
 
+/-! ## The accounts file
+
+One account per line; a blank line and a `#` line are skipped.
+
+  name:password
+  name:SCRAM-SHA-256$<iterations>:<salt>$<StoredKey>:<ServerKey>
+
+The second form holds no password: the three values are base64, and SCRAM is the
+one mechanism that can use it (`checkPlain` refuses an empty stored password).
+`verifierLine` writes it. A line that is neither form stops the start
+(`accountsOfText`), so a mistake in the file never makes an account. The error
+names the line by its number and never quotes it: it may hold a password. -/
+
+def verifierPrefix : String := "SCRAM-SHA-256$"
+
+/-- The text after `name:` of a verifier line. -/
+def verifierText (c : Scram.StoredCredentials) : String :=
+  verifierPrefix ++ toString c.iterationCount ++ ":" ++ c.saltB64 ++ "$" ++
+    Scram.b64Encode c.storedKey ++ ":" ++ Scram.b64Encode c.serverKey
+
+/-- Read the text after `name:` of a verifier line. -/
+def verifierOf (t : String) : Option Scram.StoredCredentials :=
+  if !t.startsWith verifierPrefix then none
+  else match (t.drop verifierPrefix.length).toString.splitOn "$" with
+    | [a, b] =>
+      match a.splitOn ":", b.splitOn ":" with
+      | [i, salt], [stored, server] =>
+        match i.toNat?, Scram.b64Decode salt, Scram.b64Decode stored, Scram.b64Decode server with
+        | some n, some _, some k, some v =>
+          if n == 0 || k.size != 32 || v.size != 32 then none
+          else some { saltB64 := salt, iterationCount := n, storedKey := k, serverKey := v }
+        | _, _, _, _ => none
+      | _, _ => none
+    | _ => none
+
+/-- One line of the accounts file, read: the account, and its keys when the line
+is a verifier. -/
+def accountOfLine (line : String) : Except String (Account × Option Scram.StoredCredentials) :=
+  match line.splitOn ":" with
+  | [_] => .error "no colon"
+  | u :: rest =>
+    let secret := String.intercalate ":" rest
+    if u.isEmpty then .error "no name"
+    else if secret.isEmpty then .error "no password"
+    else if secret.startsWith verifierPrefix then
+      match verifierOf secret with
+      | some c => .ok (⟨u, ""⟩, some c)
+      | none => .error "a verifier that does not read"
+    else .ok (⟨u, secret⟩, none)
+  | [] => .error "no colon"
+
+/-- The accounts of a file, with the keys of its verifier lines. A left fold over
+the lines, tail-recursive in compiled code. The first bad line, or a name that
+comes twice, is an error. -/
+def accountsOfText (text : String) :
+    Except String (List Account × List (String × Scram.StoredCredentials)) :=
+  let step (acc : Nat × Except String (List Account × List (String × Scram.StoredCredentials))) (raw : String) :=
+    let n := acc.1 + 1
+    let l := raw.trim
+    match acc.2 with
+    | .error e => (n, .error e)
+    | .ok (as, cs) =>
+      if l.isEmpty || l.startsWith "#" then (n, .ok (as, cs))
+      else match accountOfLine l with
+        | .error e => (n, .error s!"accounts: line {n}: {e}")
+        | .ok (a, c) =>
+          if as.any (·.username == a.username) then (n, .error s!"accounts: line {n}: a name that came before")
+          else (n, .ok (as ++ [a], cs ++ (c.map (a.username, ·)).toList))
+  ((text.splitOn "\n").foldl step (0, .ok ([], []))).2
+
 /-- The salt of a name, known to this server or not: an HMAC of the name under
 `saltSeed`, so two accounts have different salts and a name with no account has
 one of the same form. -/
@@ -570,9 +640,16 @@ def checkPlain (cfg : Config) (decoded : List String) : Option String :=
   | [authzid, authcid, password] =>
     if !authzid.isEmpty && authzid != authcid && authzid != authcid ++ "@" ++ cfg.domain then none
     else match cfg.accountOf authcid with
-      | some a => if a.password == password then some authcid else none
+      | some a => if !a.password.isEmpty && a.password == password then some authcid else none
       | none => none
   | _ => none
+
+/-- An account with no stored password (a verifier) has no PLAIN login, and
+an empty password from a client matches nothing. -/
+theorem checkPlain_empty (cfg : Config) (z u p : String) (a : Account)
+    (ha : cfg.accountOf u = some a) (he : a.password = "") :
+    checkPlain cfg [z, u, p] = none := by
+  simp [checkPlain, ha, he]
 
 /-! ## The step function -/
 
@@ -1178,6 +1255,25 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
       .element s!"<auth xmlns='{nsSasl}' mechanism='ANONYMOUS'/>" ]
   s.stage == .awaitingAuth &&
   has (String.join (sends outs)) "invalid-mechanism"
+
+-- The accounts file: a good file, and what stops the start.
+#guard (accountsOfText "# who\n\nalice:a:b\n bob:pw \n").toOption.map (·.1.map (·.password)) == some ["a:b", "pw"]
+#guard (accountsOfText "alice").toOption.isNone
+#guard (accountsOfText "alice:").toOption.isNone
+#guard (accountsOfText ":pw").toOption.isNone
+#guard (accountsOfText "alice:a\nalice:b").toOption.isNone
+#guard (match accountsOfText "alice:a\nbob" with | .error e => e == "accounts: line 2: no colon" | _ => false)
+-- A verifier reads back to the same keys, and has no password.
+#guard
+  let c := testCfg.decoyCredential "x"
+  match accountsOfText ("alice:" ++ verifierText c) with
+  | .ok ([a], [(u, k)]) => a.password == "" && u == "alice" && k.storedKey == c.storedKey &&
+      k.serverKey == c.serverKey && k.saltB64 == c.saltB64 && k.iterationCount == 4096
+  | _ => false
+#guard (accountsOfText "alice:SCRAM-SHA-256$0:AA==$AA==:AA==").toOption.isNone
+#guard (accountsOfText "alice:SCRAM-SHA-256$oops").toOption.isNone
+-- A verifier account has no PLAIN login.
+#guard checkPlain { testCfg with accounts := [⟨"alice", ""⟩] } ["", "alice", ""] == none
 
 -- Salts: one per name, the same each time, and a name with no account gets one
 -- of the same form.
