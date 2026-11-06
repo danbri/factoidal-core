@@ -112,6 +112,14 @@ removal. `filesAffectedByDrop` in the report is the ranked to-do list. Only the
 first frame is drawn, so animated tests can not match yet. Results are in
 [the dated report](svg-tiny-pixels-20261105.json).
 
+## History and dashboard
+
+`tools/render-dashboard/run.py` runs these probes and the font suites, adds one
+record per suite to `tools/render-dashboard/history.jsonl`, and writes the Hub
+page `docs/web/hub/render-scores/index.njk`. See its `--help`. A record is
+`measured` (this tool ran it), `copied` (a number from a named report) or
+`not-run` (with the reason and no counts). Do not edit the page.
+
 ## What is evaluated
 
 `parser-probe.py` runs all original tree fixtures directly and through

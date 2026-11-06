@@ -3,11 +3,12 @@
 
     tools/foafnaut-scoreboard.py --release NAME --commit SHA --out-dir DIR
         [--tiny REPORT.json] [--lab-log LOG] [--pages-log LOG] [--trace TRACE.jsonl]
-        [--earlier FILE.json]
+        [--earlier FILE.json] [--history tools/render-dashboard/history.jsonl]
 
 Each score names its suite, input, denominator and measured commit. A suite with
-no input here is copied from --earlier, or from the OKR baseline, and is marked
-"not re-measured". Scores from different suites are never added. Rule:
+no input here takes its last measured record from --history. If it has none, it
+is copied from --earlier, or from the OKR baseline, and is marked "not
+re-measured". Scores from different suites are never added. Rule:
 https://github.com/danbri/factoidal/issues/1245
 """
 import argparse, json, re, statistics
@@ -16,7 +17,7 @@ from pathlib import Path
 BASELINES = [
     ('html-tree', 'html5lib tree construction', 'tests/browser-wpt/parser-probe.py', '1,963 pass, 10 fail (out of 1,973)', '2026-11-03'),
     ('html-tokenizer', 'html5lib tokenizer', 'tests/browser-wpt/parser-probe.py', '7,047 pass, 6 fail (out of 7,053)', '2026-11-03'),
-    ('wpt-images', 'WPT SVG and HTML image relations, CPU sampler', 'tests/browser-wpt/native-reftests.py',
+    ('wpt-images', 'WPT SVG and HTML image relations, browser WASM and WebGPU', 'run.mjs of the corpus in tests/external/svg-wpt',
      '29 match, 21 mismatch, 264 unsupported, 30 rejected, 257 unavailable (out of 601)', '2026-11-03'),
     ('wpt-scripts', 'WPT scripted documents', 'tests/browser-wpt/quickjs-probe.mjs', '0 complete passes (out of 784)', '2026-11-03'),
     ('harfbuzz', 'HarfBuzz 15.0.0 shaping suite', 'labs/demos/foafnaut/tools/run-harfbuzz-suite.py',
@@ -33,6 +34,7 @@ p.add_argument('--lab-log', type=Path)
 p.add_argument('--pages-log', type=Path)
 p.add_argument('--trace', type=Path)
 p.add_argument('--earlier', type=Path)
+p.add_argument('--history', type=Path)
 a = p.parse_args()
 measured = a.measured_commit or a.commit
 clean = lambda text: re.sub(r'\x1b\[[0-9;]*m', '', text)
@@ -74,6 +76,17 @@ if a.trace:
     median = lambda key: round(statistics.median(frame[key] for frame in frames), 1)
     score('frame-time', 'Native frame trace', 'foafnaut app trace', f"median frame {median('totalMs')} ms, layout "
           f"{median('layoutMs')} ms, draw {median('drawMs')} ms ({len(frames)} frames)")
+# The history names one suite by a longer key.
+HISTORY_KEYS = {'wpt-images': 'wpt-images-wasm'}
+if a.history:
+    records = [json.loads(line) for line in a.history.read_text().splitlines() if line.strip()]
+    for key, suite, command, _, _ in BASELINES:
+        found = [row for row in records if row['suite'] == HISTORY_KEYS.get(key, key) and row['origin'] == 'measured']
+        if found and key not in {row['key'] for row in suites}:
+            row = found[-1]
+            text = ', '.join(f'{value:,} {name}' for name, value in row['counts'].items())
+            suites.append({'key': key, 'suite': suite, 'command': command, 'score': f"{text} (out of {row['denominator']:,})",
+                           'measuredCommit': row['commit'], 'status': 'measured', 'numbers': {'counts': row['counts']}})
 known = {row['key'] for row in suites}
 earlier = {row['key']: row for row in json.loads(a.earlier.read_text())['suites']} if a.earlier else {}
 for key, suite, command, text, date in BASELINES:

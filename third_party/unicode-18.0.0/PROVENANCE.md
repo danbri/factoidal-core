@@ -37,3 +37,13 @@
 - Use: `tools/unicode/gen-script-data.py` writes
   `formal/lean4/L4Factoidal/Unicode/ScriptData.lean` (the Script property,
   with ISO 15924 codes); the Lean shaper chooses OpenType script tags from it.
+
+## Added 2026-11-06 (font coverage metric, https://github.com/danbri/factoidal/issues/1245)
+
+- Source: https://www.unicode.org/Public/18.0.0/emoji/ — `emoji-sequences.txt`
+  (sha256 `1823dce71f3dd9cb0ad1976797baee4ffbdc1909756f43af8ce4c57f732843a4`),
+  `emoji-zwj-sequences.txt`
+  (sha256 `f61b5213bdf85a57741a9f903cb38d0f39a3d13be6ff4aca3b39857e859a9191`).
+- Copied unchanged on 2026-11-06.
+- Use: `tools/render-dashboard/font_coverage.py` reads the sequence totals
+  from these files.
