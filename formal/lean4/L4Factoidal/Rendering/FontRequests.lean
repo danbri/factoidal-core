@@ -69,14 +69,10 @@ def forDOM (dom : Dom) (rules : List CSS.Rule) (textScale : Float := 1) : Except
       if node.type == .element && ["head","script","style","title","meta","link","template"].contains node.lname then
         throw "font requests: visible metadata/script element outside profile"
       if node.type == .element && node.ns == some DOM.svgNS then
-        if style.display == .inlineBlock then throw "unsupported CSS inline-block layout"
         if style.display == .inline then
           let block ← context dom styles (dom.size+1) (node.parent.getD 0)
           active := active.insert block ()
         continue
-      if node.type == .element && node.ns != some DOM.htmlNS then
-        throw "unsupported foreign namespace in font requests"
-      if style.display == .inlineBlock then throw "unsupported CSS inline-block layout"
       if node.type == .text then
         let block ← context dom styles (dom.size+1) id
         let items ← Layout.inlineItems dom styles noEmbedding 0 1 id
@@ -86,6 +82,7 @@ def forDOM (dom : Dom) (rules : List CSS.Rule) (textScale : Float := 1) : Except
             requests ← add requests s text
             active := active.insert block ()
           | .space _ s => spaces := spaces.push (block,s)
+          | .lineBreak _ => active := active.insert block ()
           | _ => throw "font requests: unexpected nontext result from shared scanner"
       else if DOM.Dom.isHtmlElement node "br" && style.display == .inline then
         let block ← context dom styles (dom.size+1) (node.parent.getD 0)

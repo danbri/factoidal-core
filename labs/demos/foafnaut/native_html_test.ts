@@ -131,7 +131,7 @@ Deno.test("XML pages run their XSLT stylesheet in Lean, and refusals are visible
   }finally{await Deno.remove(dir,{recursive:true});}
 });
 
-Deno.test("unsupported scripts, fonts and layout fail explicitly",async()=>{
+Deno.test("scripts are refused, and unsupported CSS and layout are not",async()=>{
   const dir=await Deno.makeTempDir({prefix:"factoidal-native-html-refusal-"});
   const path=dir+"/page.html",url=pathToFileURL(path).href;
   try{
@@ -139,10 +139,11 @@ Deno.test("unsupported scripts, fonts and layout fail explicitly",async()=>{
     await assert.rejects(()=>prepareHTML(engine,url),/does not execute scripts/);
     await Deno.writeTextFile(path,html('<script type="application/ld+json">{"name":"inert"}</script><p>Text</p>'));
     assert((await prepareHTML(engine,url)).compile(240,160).data.length>0);
-    await Deno.writeTextFile(path,html("<p>Text</p>","p{font-family:Arial}"));
-    await assert.rejects(()=>prepareHTML(engine,url),/ASCII bitmap font profile/);
+    // CSS we can not use is dropped, as in any browser: the page still shows.
+    await Deno.writeTextFile(path,html("<p>Text</p>","p{font-family:Arial}.a > b{color:red}@media (max-width:1px){p{color:red}}"));
+    assert((await prepareHTML(engine,url)).compile(240,160).data.length>0);
     await Deno.writeTextFile(path,html('<div style="display:grid">Unsupported grid</div>'));
-    await assert.rejects(async()=>{(await prepareHTML(engine,url)).compile(240,160);},/Lean HTML/);
+    assert((await prepareHTML(engine,url)).compile(240,160).data.length>0);
   }finally{await Deno.remove(dir,{recursive:true});}
 });
 
@@ -156,8 +157,8 @@ Deno.test("resource size, resource count, cancellation and URL schemes are bound
     await assert.rejects(()=>prepareHTML(engine,url),/16 external stylesheets/);
     const controller=new AbortController();controller.abort();
     await assert.rejects(()=>prepareHTML(engine,url,controller.signal),/abort/i);
-    await Deno.writeFile(path,new Uint8Array([255]));
-    await assert.rejects(()=>readSource(url),/UTF|decode|valid/i);
+    await Deno.writeFile(path,new Uint8Array([0x63,0x61,0x66,0xe9]));
+    assert.equal((await readSource(url)).source,"café");
     const css="/*"+"x".repeat(1048572)+"*/";
     await Deno.writeTextFile(path,html(Array.from({length:5},(_,n)=>`<link rel="stylesheet" href="${n}.css">`).join("")));
     for(let n=0;n<5;n++)await Deno.writeTextFile(dir+`/${n}.css`,css);

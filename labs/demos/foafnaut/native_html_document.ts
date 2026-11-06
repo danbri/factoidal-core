@@ -42,7 +42,11 @@ export async function readSource(url:string,signal?:AbortSignal):Promise<{url:st
     for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   }
   abort();if(bytes.length>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 1 MiB");
-  const source=new TextDecoder("utf-8",{fatal:true}).decode(bytes);sourceBound(source);
+  // Older pages are often Latin-1 and say nothing about it. Browsers read those as windows-1252.
+  let source:string;
+  try{source=new TextDecoder("utf-8",{fatal:true}).decode(bytes);}
+  catch{source=new TextDecoder("windows-1252").decode(bytes);}
+  sourceBound(source);
   return {url:finalURL,source,bytes:bytes.length};
 }
 /** A refused page must say so in the window, not only in a log. */
@@ -75,7 +79,7 @@ export async function prepareHTML(engine:HTMLEngine,url:string,signal?:AbortSign
   const options={url:document.url,resources};
   const requests=engine.fontRequests(document.source,options);
   if(!Array.isArray(requests.requests))throw new Error("Unexpected Lean font request ABI");
-  if(requests.requests.length)throw new Error("Native HTML milestone requires the Lean ASCII bitmap font profile; supplied-font requests are unsupported");
+  // No font data is supplied yet, so a named font shows in the Lean bitmap face.
   signal?.throwIfAborted();
   return {
     url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,

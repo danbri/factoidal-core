@@ -4,7 +4,9 @@ import Std.Data.TreeMap
 
 /-! Computed styles for an explicitly bounded CSS block/inline profile.
 Selectors: universal, type, id and class compound selectors, selector lists and
-descendants. Unsupported syntax/properties produce a named refusal. -/
+descendants. CSS error handling applies: what this profile does not understand
+is dropped, and the rest of the sheet still applies. A page is never refused
+for its style sheet. -/
 namespace L4Factoidal.Rendering.CSS
 open DOM
 private def trim (s : String) := s.trimAscii.toString
@@ -36,6 +38,8 @@ structure Computed where
   clipOverflow : Bool := false
   underline : Bool := false
   decorationColor : Option Color := none
+  /-- Line breaks in the source are kept (pre and its older relatives). -/
+  preformatted : Bool := false
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -112,43 +116,78 @@ private def expandEdges (key value : String) (important : Bool) : Except String 
   return (["top","right","bottom","left"].zip values).map fun (side,v) =>
     ⟨key ++ "-" ++ side,v,important⟩
 
+/-- A declaration this profile can not read is dropped; the others stand. -/
 def declarations (s : String) : Except String (List Declaration) := do
   let mut out : List Declaration := []
   for item in s.splitOn ";" do
     let item := trim item
-    if !item.isEmpty then
-      let parts := item.splitOn ":"
-      let [key,value] := parts | throw "unsupported CSS declaration syntax"
-      let value := trim value
+    if let key::first::more := item.splitOn ":" then
+      let value := trim (":".intercalate (first::more))
       let important := value.endsWith "!important"
       let value := if important then trim ((value.dropEnd 10).toString) else value
       let key := (trim key).toLower
       let key := if key == "background" then "background-color" else key
-      let expanded ← if ["margin","padding"].contains key then expandEdges key value important
-        else pure [⟨key,value,important⟩]
+      let expanded := if ["margin","padding"].contains key then
+          (expandEdges key value important).toOption.getD []
+        else [⟨key,value,important⟩]
       for declaration in expanded do out := declaration :: out
   return out.reverse
 
-/-- CSS comments are removed before tokenizing this deliberately small grammar. -/
-private def comments (s : String) : Except String String := do
+/-- CSS comments are removed before tokenizing this deliberately small grammar.
+A comment that never closes runs to the end of the input. -/
+private def comments (s : String) : String := Id.run do
   let pieces := s.splitOn "/*"
   let mut out := pieces.headD ""
   for p in pieces.drop 1 do
-    let cut := p.splitOn "*/"
-    if cut.length != 2 then throw "unsupported nested or unterminated CSS comment"
-    out := out ++ cut[1]!
+    if let _::first::more := p.splitOn "*/" then out := out ++ "*/".intercalate (first::more)
   return out
 
+/-- The top level of a sheet, as (prelude, block) pairs. Blocks nest inside
+at-rules and strings hide braces, so this counts them. A sheet that stops early
+closes itself, as CSS says. One pass over the characters: no recursion. -/
+private def topLevel (source : String) : List (String × String) := Id.run do
+  let mut out : List (String × String) := []
+  let mut prelude := ""
+  let mut body := ""
+  let mut depth := 0
+  let mut quote : Option Char := none
+  let mut escaped := false
+  for c in source.toList do
+    let structural := quote.isNone && (c == '{' || c == '}' || (c == ';' && depth == 0))
+    if let some q := quote then
+      if escaped then escaped := false
+      else if c == '\\' then escaped := true
+      else if c == q then quote := none
+    else if c == '"' || c == '\'' then quote := some c
+    if !structural then
+      if depth == 0 then prelude := prelude.push c else body := body.push c
+    else if c == '{' then
+      if depth > 0 then body := body.push c
+      depth := depth+1
+    else if c == '}' then
+      if depth == 0 then prelude := ""
+      else if depth == 1 then
+        out := (prelude,body) :: out
+        prelude := ""
+        body := ""
+        depth := 0
+      else
+        body := body.push c
+        depth := depth-1
+    else if (trim prelude).startsWith "@" then prelude := ""
+    else prelude := prelude.push c
+  if depth > 0 then out := (prelude,body) :: out
+  return out.reverse
+
+/-- At-rules are skipped whole, and a rule with a selector this profile can not
+read is dropped whole, as CSS drops an invalid selector list. Only the first
+131072 characters of a sheet are read. -/
 def parse (source : String) : Except String (List Rule) := do
-  if source.length > 131072 then throw "CSS input exceeds 131072 characters"
-  let source ← comments source
-  let pieces := source.splitOn "}"
-  if !(trim (pieces.getLast!)).isEmpty then throw "unterminated CSS rule"
   let mut out : List Rule := []
-  for piece in pieces.dropLast do
-    let [head,body] := piece.splitOn "{" | throw "unsupported CSS rule syntax"
-    let selectors ← (head.splitOn ",").mapM selector
-    out := ⟨selectors,← declarations body⟩ :: out
+  for (head,body) in topLevel (comments (source.take 131072).toString) do
+    if !(trim head).startsWith "@" then
+      if let .ok selectors := (head.splitOn ",").mapM selector then
+        out := ⟨selectors,← declarations body⟩ :: out
   return out.reverse
 private def selectorMatchesCompound (n : DOM.Node) (s : Compound) : Bool :=
   n.type == .element && (s.tag.map (· == n.lname)).getD true &&
@@ -298,6 +337,24 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     return {s with fontFamily := family}
   | _ => throw s!"unsupported CSS property: {d.property}"
 
+/-- A value or property this profile can not use leaves the style as it was. -/
+private def applyOrKeep (s : Computed) (d : Declaration) : Computed :=
+  (apply s d).toOption.getD s
+
+/-- Spacing an unstyled page starts with. Margins here do not collapse, so each
+side has half of what a browser's single collapsed margin would be. -/
+private def startMargin (tag : String) (size : Float) : Edges :=
+  let gap := size/2
+  if tag == "body" then ⟨8,8,8,8⟩
+  else if ["p","pre","dl","listing","xmp","plaintext","address","h1","h2","h3","h4","h5","h6"].contains tag then ⟨gap,0,gap,0⟩
+  else if ["ul","ol","dir","menu"].contains tag then ⟨gap,0,gap,40⟩
+  else if tag == "blockquote" then ⟨gap,40,gap,40⟩
+  else if tag == "dd" then ⟨0,0,0,40⟩
+  else {}
+
+private def headingScale : String → Float
+  | "h1" => 2 | "h2" => 1.5 | "h3" => 1.17 | "h5" => 0.83 | "h6" => 0.67 | _ => 1
+
 private def lexLE : List Nat → List Nat → Bool
   | [], _ => true
   | _::_, [] => false
@@ -307,25 +364,29 @@ private def lexLE : List Nat → List Nat → Bool
 and source order compared lexicographically. Inheritance is applied first. -/
 def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Except String Computed := do
   let n := dom.get id
-  let block := ["html","body","div","p","section","main","article","header","footer","h1","h2","ul","li"].contains n.lname
-  let hidden := ["head","style","script","title","meta","link","template"].contains n.lname
+  let block := ["html","body","div","p","section","main","article","header","footer","nav","aside",
+    "h1","h2","h3","h4","h5","h6","ul","ol","li","dir","menu","dl","dt","dd","pre","listing","xmp","plaintext",
+    "blockquote","address","center","hr","form","fieldset","figure","figcaption",
+    "table","caption","thead","tbody","tfoot","tr","td","th"].contains n.lname
+  let hidden := ["head","style","script","title","meta","link","template","base","area","param"].contains n.lname
   let hyperlink := n.lname == "a" && hasAttribute n "href"
   let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg"
   let svgOverflow := attrValue n "overflow"
-  if svgViewport && !["","hidden","clip","visible"].contains svgOverflow then
-    throw "unsupported embedded SVG overflow attribute"
+  let fontSize := (parent.fontSize*headingScale n.lname).round
   let mut initial : Computed := {
     color := if hyperlink then ⟨0,0,1⟩ else parent.color, underline := hyperlink,
-    clipOverflow := svgViewport && svgOverflow != "visible", fontSize := parent.fontSize, fontFamily := parent.fontFamily,
-    lineHeight := parent.lineHeight, lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
+    clipOverflow := svgViewport && svgOverflow != "visible", fontSize, fontFamily := parent.fontFamily,
+    lineHeight := parent.lineHeightFactor.map (fontSize*·) |>.getD parent.lineHeight,
+    lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
+    preformatted := parent.preformatted || ["pre","listing","xmp","plaintext"].contains n.lname,
     display := if hidden then .none else if block then .block else .inline,
-    margin := if n.lname == "body" then ⟨8,8,8,8⟩ else {}}
+    margin := startMargin n.lname fontSize}
   -- SVG presentation attributes have lower priority than author CSS.
   -- These properties affect HTML layout/inheritance, so compute them here.
   if svgViewport then
     for property in ["color","visibility","display"] do
       let value := attrValue n property
-      if !value.isEmpty then initial ← apply initial ⟨property,value,false⟩
+      if !value.isEmpty then initial := applyOrKeep initial ⟨property,value,false⟩
     for property in ["width","height"] do
       let value := trim (attrValue n property)
       if !value.isEmpty then
@@ -338,8 +399,6 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
   for rule in rules do
     let specificity := (rule.selectors.filter (selectorMatches dom id)).foldl (fun m s => if lexLE [m.1,m.2.1,m.2.2] [s.specificity.1,s.specificity.2.1,s.specificity.2.2] then s.specificity else m) (0,0,0)
     if rule.selectors.any (selectorMatches dom id) then
-      if n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false && !rule.declarations.isEmpty then
-        throw "unsupported HTML stylesheet rule targeting embedded SVG descendants"
       for d in rule.declarations do
         let key := [if d.important then 1 else 0,0,specificity.1,specificity.2.1,specificity.2.2,order]
         if (winners.get? d.property).all (fun old => lexLE old.1 key) then
@@ -351,15 +410,15 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
     order := order+1
   -- Font size precedes line-height and inheritance-sensitive dependent values.
   let mut result := initial
-  if let some (_,d) := winners.get? "font-size" then result ← apply result d
+  if let some (_,d) := winners.get? "font-size" then result := applyOrKeep result d
   for (key,(priority,d)) in winners.toList do
     if key != "font-size" then
       -- Inline SVG paint declarations stay with the existing SVG producer.
       -- External HTML paint rules are refused until that cascade is unified.
       if n.ns == some DOM.svgNS && priority[1]? == some 1 && !htmlProperties.contains key then pure ()
-      else result ← apply result d
-  if ["html","body"].contains n.lname && result.clipOverflow then
-    throw "unsupported HTML root/body overflow propagation"
+      else result := applyOrKeep result d
+  -- A root or body never clips here: the window scrolls instead.
+  if ["html","body"].contains n.lname then result := {result with clipOverflow := false}
   let decoration := parent.decorationColor.orElse (fun _ => if result.underline then some result.color else none)
   return {result with underline := decoration.isSome, decorationColor := decoration}
 
@@ -384,8 +443,6 @@ def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1) : Except
       let n := dom.get id
       let parent := (n.parent.bind (styles[·]?)).getD {}
       let svgDescendant := n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
-      if svgDescendant && rules.any (fun rule => rule.selectors.any (selectorMatches dom id) && !rule.declarations.isEmpty) then
-        throw "unsupported HTML stylesheet rule targeting embedded SVG descendants"
       let style ← if n.type == .element && !svgDescendant then computed dom id rules parent else pure {parent with
         display := .inline, width := .auto, height := .auto,
         margin := {}, padding := {}, background := none, clipOverflow := false}
