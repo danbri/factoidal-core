@@ -54,6 +54,7 @@ export async function openInPageXmppServer (options = {}) {
     if (typeof options[k] === 'string') config[k] = options[k]
   }
   if (typeof config.saltB64 !== 'string') config.saltSeed = randomToken()
+  config.occupantSeed = randomToken()
   if (Array.isArray(options.accounts)) config.accounts = options.accounts
   if (typeof options.iterationCount === 'number') config.iterationCount = options.iterationCount
   const opened = engine.call('xmppOpen', [JSON.stringify(config)])

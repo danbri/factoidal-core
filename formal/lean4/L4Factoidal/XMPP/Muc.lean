@@ -25,6 +25,10 @@ Covered (XEP-0045 section numbers):
   7.14  leaving: unavailable presence to every occupant, status 110 to the leaver;
         an empty room is destroyed (temporary rooms)
   6.2-6.4 disco#info and disco#items on the service and on a room
+XEP-0421 occupant ids, when `Service.idSeed` is set: every presence and groupchat message of a room
+carries `<occupant-id/>`, a keyed digest of the room and the account, so an account has one id in a
+room on every resource and at every join, and a new nick cannot pass for the old one. It gives no
+JID away, and another room shows another id. A client's own `<occupant-id/>` is dropped.
   7.2.6 members-only rooms, from a fixed list per room in the server's
         configuration (`Service.memberLists`): anyone else gets presence error
         `registration-required`, and the room is hidden from them. There is no
@@ -42,6 +46,8 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.XMPP.Core
 import L4Factoidal.XMPP.Wire
+import L4Factoidal.XMPP.Gc3
+import L4Factoidal.XMPP.Scram
 
 namespace L4Factoidal.XMPP.Muc
 
@@ -63,6 +69,8 @@ structure Occupant where
   real : String
   /-- The occupant that created the room is its owner and a moderator. -/
   owner : Bool
+  /-- The XEP-0421 occupant id; empty: none. -/
+  occId : String := ""
   deriving Repr, DecidableEq, Inhabited
 
 def Occupant.affiliation (o : Occupant) : String := if o.owner then "owner" else "none"
@@ -90,6 +98,8 @@ structure Service where
   /-- Reserved nicks (XEP-0045 section 7.2.9): `nickKey` of the nick, and the bare
   JID it is for. The server reserves each account's name for that account. -/
   reserved : List (String × String) := []
+  /-- The key of the occupant ids, from the host's random source. Empty: no ids. -/
+  idSeed : String := ""
   maxRooms : Nat := 64
   maxOccupants : Nat := 64
   deriving Repr, Inhabited
@@ -138,6 +148,13 @@ def Service.mayJoin (svc : Service) (name from_ : String) : Bool :=
   | none => true
   | some m => m.members.contains (bareOf from_)
 
+/-- The XEP-0421 id of an account in a room: 16 bytes of an HMAC under `idSeed`, so it is the same
+for each resource and each join, and cannot be turned back into the JID. -/
+def Service.occupantId (svc : Service) (name from_ : String) : String :=
+  if svc.idSeed.isEmpty then ""
+  else Scram.b64Encode ((L4Factoidal.Crypto.hmacSha256 svc.idSeed.toUTF8
+    ("occupant:" ++ name ++ ":" ++ bareOf from_).toUTF8).extract 0 16)
+
 /-- Store a room; an empty room is removed (temporary rooms, XEP-0045 section 10.1.2). -/
 def Service.put (svc : Service) (r : Room) : Service :=
   let others := svc.rooms.filter (·.name != r.name)
@@ -149,8 +166,8 @@ No constructor carries an occupant's real JID: a delivery's only real JID is
 its `to`, the address it is delivered to. -/
 
 inductive Body where
-  | presence (nick : String) (available : Bool) (affiliation role : String) (codes : List Nat)
-  | groupchat (nick : String) (id : Option String) (payload : List Node)
+  | presence (nick : String) (available : Bool) (affiliation role : String) (codes : List Nat) (occId : String)
+  | groupchat (nick : String) (id : Option String) (payload : List Node) (occId : String)
   /-- The (empty) room subject, sent after join (XEP-0045 section 7.2.15). -/
   | subject
   | chat (nick : String) (id : Option String) (type : String) (payload : List Node)
@@ -168,22 +185,24 @@ structure Delivery where
 
 /-- A client's payload, minus any `muc#user` element: only the room states
 roles, affiliations and status codes, so a sender cannot forge them. Minus any
-`<subject/>` too: this service has no subject change. -/
+`<subject/>` too: this service has no subject change. Minus any `<occupant-id/>`
+(XEP-0421 section 4: the service removes a client's). -/
 def sanitize (payload : List Node) : List Node :=
   payload.filter (fun n => match n with
-    | .element tag attrs _ => tag != "subject" && findAttr attrs "xmlns" != some nsMucUser
+    | .element tag attrs _ =>
+      tag != "subject" && findAttr attrs "xmlns" != some nsMucUser && findAttr attrs "xmlns" != some Gc3.nsOccupantId
     | _ => true)
 
 def presenceOf (o : Occupant) (available : Bool) (codes : List Nat) : Body :=
-  .presence o.nick available o.affiliation o.role codes
+  .presence o.nick available o.affiliation o.role codes o.occId
 
 /-! ## Rooms: the pure operations the theorems are about -/
 
 /-- Join `room` as `nick`, unless the nick is taken. The joiner is owner when
 the room was empty. `none`: the nick is in use. -/
-def joinRoom (room : Room) (nick real : String) : Option Room :=
+def joinRoom (room : Room) (nick real : String) (occId : String := "") : Option Room :=
   if room.occupants.any (fun o => nickKey o.nick == nickKey nick) then none
-  else some { room with occupants := room.occupants ++ [⟨nick, real, room.occupants.isEmpty⟩] }
+  else some { room with occupants := room.occupants ++ [⟨nick, real, room.occupants.isEmpty, occId⟩] }
 
 def leaveRoom (room : Room) (real : String) : Room :=
   { room with occupants := room.occupants.filter (·.real != real) }
@@ -197,7 +216,7 @@ def groupchat (svc : Service) (name from_ : String) (id : Option String) (payloa
   | some room =>
     match room.byReal from_ with
     | none => [⟨from_, rj, .error .message id rj "modify" "not-acceptable"⟩]
-    | some me => room.occupants.map (fun o => ⟨o.real, rj, .groupchat me.nick id (sanitize payload)⟩)
+    | some me => room.occupants.map (fun o => ⟨o.real, rj, .groupchat me.nick id (sanitize payload) me.occId⟩)
 
 /-- XEP-0045 section 7.5: a private message to one occupant. -/
 def privateMsg (svc : Service) (name nick from_ : String) (id : Option String) (type : String)
@@ -224,11 +243,11 @@ def join (svc : Service) (name nick from_ : String) : Service × List Delivery :
   else if room.occupants.isEmpty && svc.rooms.length ≥ svc.maxRooms then fail "service-unavailable"
   else if room.occupants.length ≥ svc.maxOccupants then fail "service-unavailable"
   else
-    match joinRoom room nick from_ with
+    match joinRoom room nick from_ (svc.occupantId name from_) with
     | none => fail "conflict"
     | some room' =>
       let created := room.occupants.isEmpty
-      let me : Occupant := ⟨nick, from_, created⟩
+      let me : Occupant := ⟨nick, from_, created, svc.occupantId name from_⟩
       (svc.put room',
        room.occupants.map (fun o => Delivery.mk from_ rj (presenceOf o true [])) ++
        [⟨from_, rj, presenceOf me true (if created then [110, 201] else [110])⟩, ⟨from_, rj, .subject⟩] ++
@@ -293,7 +312,7 @@ def roomIq (svc : Service) (name from_ : String) (st : Stanza) : List Delivery :
     | some _ =>
       [⟨from_, rj, .iqResult st.id rj [.element "query" [⟨"xmlns", nsDiscoInfo⟩]
         [.element "identity" [⟨"category", "conference"⟩, ⟨"type", "text"⟩, ⟨"name", name⟩] [],
-         feature nsMuc, feature "muc_temporary",
+         feature nsMuc, feature "muc_temporary", feature Gc3.nsOccupantId,
          feature (if svc.memberLists.any (·.room == name) then "muc_membersonly" else "muc_open"), feature "muc_unmoderated",
          feature "muc_semianonymous", feature "muc_unsecured"]]⟩]
   else [⟨from_, rj, .error .iq st.id rj "cancel" "feature-not-implemented"⟩]
@@ -343,14 +362,16 @@ def step (svc : Service) (from_ : String) (st : Stanza) : Service × List Delive
 def Delivery.render (d : Delivery) : String :=
   let attrs (fromAddr : String) (rest : List Attribute) : List Attribute := [⟨"from", fromAddr⟩, ⟨"to", d.to⟩] ++ rest
   let idAttr (id : Option String) : List Attribute := (id.map (Attribute.mk "id")).toList
+  let occ (o : String) : List Node :=
+    if o.isEmpty then [] else [.element "occupant-id" [⟨"xmlns", Gc3.nsOccupantId⟩, ⟨"id", o⟩] []]
   Wire.render <| match d.body with
-  | .presence nick available aff role codes =>
+  | .presence nick available aff role codes o =>
     .element "presence" (attrs (d.room ++ "/" ++ nick) (if available then [] else [⟨"type", "unavailable"⟩]))
-      [.element "x" [⟨"xmlns", nsMucUser⟩]
+      ([.element "x" [⟨"xmlns", nsMucUser⟩]
         ([.element "item" [⟨"affiliation", aff⟩, ⟨"role", if available then role else "none"⟩] []] ++
-         codes.map (fun c => .element "status" [⟨"code", toString c⟩] []))]
-  | .groupchat nick id payload =>
-    .element "message" (attrs (d.room ++ "/" ++ nick) ([⟨"type", "groupchat"⟩] ++ idAttr id)) payload
+         codes.map (fun c => .element "status" [⟨"code", toString c⟩] []))] ++ occ o)
+  | .groupchat nick id payload o =>
+    .element "message" (attrs (d.room ++ "/" ++ nick) ([⟨"type", "groupchat"⟩] ++ idAttr id)) (payload ++ occ o)
   | .subject =>
     .element "message" (attrs d.room [⟨"type", "groupchat"⟩]) [.element "subject" [] []]
   | .chat nick id ty payload =>
@@ -378,7 +399,7 @@ sender's making. -/
 theorem groupchat_from_sender (svc : Service) (name from_ : String) (id : Option String)
     (p : List Node) (room : Room) (me : Occupant)
     (hr : svc.room? name = some room) (hm : room.byReal from_ = some me) :
-    ∀ d ∈ groupchat svc name from_ id p, d.room = svc.roomJid name ∧ d.body = .groupchat me.nick id (sanitize p) := by
+    ∀ d ∈ groupchat svc name from_ id p, d.room = svc.roomJid name ∧ d.body = .groupchat me.nick id (sanitize p) me.occId := by
   intro d hd
   simp [groupchat, hr, hm] at hd
   obtain ⟨o, _, rfl⟩ := hd
@@ -676,6 +697,27 @@ private def body (t : String) : Node := .element "body" [] [.text t]
   let subj : Node := .element "subject" [] [.text "new"]
   let (_, ds) := step s1 "juliet@example.com/balcony" (st .message "tea@conference.example.com" (some "groupchat") [body "hi", subj])
   ds.all (fun d => has d.render "<body>hi</body>" && !has d.render "subject")
+
+-- XEP-0421: one id for an account in a room, on any resource and at any join; another account
+-- and another room differ; no JID in it; a client's own id does not pass.
+#guard
+  let svc : Service := { svc0 with idSeed := "seed" }
+  let a := svc.occupantId "tea" "juliet@example.com/one"
+  a == svc.occupantId "tea" "juliet@example.com/two" && a != svc.occupantId "tea" "romeo@example.com/one" &&
+  a != svc.occupantId "cake" "juliet@example.com/one" && !has a "juliet" && !a.isEmpty
+#guard
+  let svc : Service := { svc0 with idSeed := "seed" }
+  let a := svc.occupantId "tea" "juliet@example.com/balcony"
+  let (s1, ds) := step svc "juliet@example.com/balcony" (st .presence "tea@conference.example.com/jul" none)
+  let forged : Node := .element "occupant-id" [⟨"xmlns", Gc3.nsOccupantId⟩, ⟨"id", "forged"⟩] []
+  let (_, ms) := step s1 "juliet@example.com/balcony" (st .message "tea@conference.example.com" (some "groupchat") [body "hi", forged])
+  let (_, info) := step s1 "romeo@example.com/x" (st .iq "tea@conference.example.com" (some "get") [.element "query" [⟨"xmlns", nsDiscoInfo⟩] []])
+  has (ds[0]!.render) s!"id=\"{a}\"" && has (ms[0]!.render) s!"id=\"{a}\"" && !has (ms[0]!.render) "forged" &&
+  has (info[0]!.render) Gc3.nsOccupantId
+-- With no key there is no id.
+#guard
+  let (_, ds) := step svc0 "juliet@example.com/balcony" (st .presence "tea@conference.example.com/jul" none)
+  !has (ds[0]!.render) "occupant-id"
 
 -- The room limit holds.
 #guard

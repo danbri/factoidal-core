@@ -124,6 +124,7 @@ function randomToken (bytes = 18) {
  *   neither stops the start (`Server.accountsOfText`)
  * @param {string} [options.saltB64] one SCRAM salt for every name, base64; absent, each name has its own
  * @param {string} [options.saltSeed] the seed of the salts; absent, a random one for this process
+ * @param {string} [options.occupantSeed] the key of the rooms' occupant ids; absent, a random one
  * @param {number} [options.iterationCount] the SCRAM iteration count
  * @param {boolean} [options.tlsCarrier] whether the carrier terminates TLS
  * @param {boolean} [options.disableRateLimits] no failed SASL login limit and no sender rate on
@@ -145,6 +146,8 @@ export async function openXmppServer (options = {}) {
   // (a transcript that must replay) is one salt for all.
   if (typeof options.saltB64 === 'string') config.saltB64 = options.saltB64
   else config.saltSeed = typeof options.saltSeed === 'string' ? options.saltSeed : randomToken(32)
+  // The key of the XEP-0421 occupant ids of the rooms.
+  config.occupantSeed = typeof options.occupantSeed === 'string' ? options.occupantSeed : randomToken(32)
   if (typeof options.iterationCount === 'number') config.iterationCount = options.iterationCount
   if (typeof options.tlsCarrier === 'boolean') config.tlsCarrier = options.tlsCarrier
   // XEP-0045 room service (L4Factoidal/XMPP/Muc.lean); off unless named.
@@ -351,6 +354,10 @@ export async function createXmppServer (options = {}) {
   // salted password goes on working, and a name's salt does not change.
   if (typeof options.saltSeed !== 'string' && typeof options.stateKey === 'string') {
     serverOptions.saltSeed = createHash('sha256').update('xmpp salt seed\0' + options.stateKey).digest('base64url')
+  }
+  // Occupant ids that survive a restart, for the same reason.
+  if (typeof options.occupantSeed !== 'string' && typeof options.stateKey === 'string') {
+    serverOptions.occupantSeed = createHash('sha256').update('xmpp occupant seed\0' + options.stateKey).digest('base64url')
   }
   const haveKey = options.cert !== undefined && options.key !== undefined
   if (options.startTls === true && !haveKey) {

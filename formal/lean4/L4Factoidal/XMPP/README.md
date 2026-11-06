@@ -778,3 +778,16 @@ Already on `main` from https://github.com/danbri/factoidal/issues/1128: `AuthGua
   is answered `resource-constraint`, and a subscription stanza that would change the roster is dropped.
 - Not bound yet: a MIX or GC3 service writes its channel or group at each message. Neither runs on
   `deploy/foafos-xmpp`.
+
+## 2026-11-06: rooms: XEP-0421 occupant ids; two sessions on one full JID
+
+- `Service.occupantId`: 16 bytes of an HMAC of the room and the bare JID under `Service.idSeed`
+  (`occupantSeed` from the host; from the state key when there is one, so an id survives a restart).
+  One id per account per room, on any resource, at any join and under any nick. It is on every
+  presence and groupchat message, and disco on a room shows the feature. `sanitize` removes a
+  client's. The name of the namespace is `Gc3.nsOccupantId`. GC3's ids are counters in its kept
+  member lists; MUC rooms keep no state, so here the id is computed.
+- Two sessions can bind one full JID: RFC 6120 section 7.7.2.2 leaves the choice to the server, and
+  this server allows it. A room seat belongs to the full JID, so it stays until the last of the
+  sessions goes, and `bound` loses one entry at a time (`unbind`), so delivery to the survivor goes on.
+  While both are open, a room stanza reaches the first of them only, as `routeFull` delivers once.
