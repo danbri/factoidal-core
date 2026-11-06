@@ -107,6 +107,49 @@ def holdsRestricted : Nat → List Node → Bool
   | n + 1, .element _ _ children :: rest => holdsRestricted n (children ++ rest)
   | n + 1, _ :: rest => holdsRestricted n rest
 
+/-! ## The shape of a stanza
+
+The XML parser and `render` use stack with the depth of a document, and memory
+with its number of elements, and a stanza comes from the network. So its shape is
+read first, in one tail-recursive pass over the characters, and a stanza over a
+limit is refused, as if it did not parse. -/
+
+/-- How deep elements may nest in a stanza. -/
+def maxDepth : Nat := 64
+
+/-- How many elements a stanza may hold, at all depths. -/
+def maxElements : Nat := 8192
+
+/-- What follows a tag whose name has begun, and whether it ended `/>`. A `>` or a
+`/` in a quoted value does not count. `fuel` is at least the length. -/
+def tagEnd : Nat → Option Char → Bool → List Char → List Char × Bool
+  | 0, _, _, _ => ([], false)
+  | _ + 1, _, _, [] => ([], false)
+  | n + 1, some q, _, c :: rest =>
+    if c == q then tagEnd n none false rest else tagEnd n (some q) false rest
+  | n + 1, none, slash, c :: rest =>
+    if c == '"' || c == '\'' then tagEnd n (some c) false rest
+    else if c == '>' then (rest, slash)
+    else tagEnd n none (c == '/') rest
+
+/-- Do these characters stay inside `maxDepth` and `maxElements`? `fuel` is at
+least the length, as each step consumes a character; running out counts as no, so
+a mistake refuses a stanza rather than passes one. A `<` in a comment, a CDATA
+section or a processing instruction opens nothing. -/
+def shapeOk : Nat → Nat → Nat → List Char → Bool
+  | 0, _, _, _ => false
+  | _ + 1, _, _, [] => true
+  | n + 1, depth, count, l@(c :: rest) =>
+    if c != '<' then shapeOk n depth count rest
+    else if "<!--".toList.isPrefixOf l then shapeOk n depth count (dropPast "-->".toList rest)
+    else if "<![CDATA[".toList.isPrefixOf l then shapeOk n depth count (dropPast "]]>".toList rest)
+    else if "<?".toList.isPrefixOf l then shapeOk n depth count (dropPast "?>".toList rest)
+    else if "</".toList.isPrefixOf l then shapeOk n (depth - 1) count (dropPast ">".toList rest)
+    else if depth ≥ maxDepth || count ≥ maxElements then false
+    else
+      let (after, selfClosing) := tagEnd n none false rest
+      shapeOk n (if selfClosing then depth else depth + 1) (count + 1) after
+
 /-- Parse a complete element (a stanza, `<stream:features>`, ...) via the
 real XML parser. `L4Factoidal.XML.parseXML` accepts a document with no
 XML declaration, so a bare `<message>...</message>` string parses fine —
@@ -114,9 +157,33 @@ its `.root` is exactly the element. What RFC 6120 section 11.1 forbids is
 refused, as if it did not parse. -/
 def parseElement (s : String) : Option Node :=
   if prologHasDoctype s.length s.toList then none
+  else if !shapeOk (s.length + 1) 0 0 s.toList then none
   else match L4Factoidal.XML.parseXML s with
     | .ok doc => if holdsRestricted (s.length + 1) [doc.root] then none else some doc.root
     | .error _ => none
+
+/-- A stanza over the shape limits is refused before the parser sees it. -/
+theorem parseElement_shape (s : String) (h : shapeOk (s.length + 1) 0 0 s.toList = false) :
+    parseElement s = none := by
+  simp [parseElement, h]
+
+private def nested (n : Nat) : String :=
+  String.join (List.replicate n "<a>") ++ String.join (List.replicate n "</a>")
+
+-- At the limit a stanza passes; one deeper does not, closed or not, and a
+-- self-closing element at the bottom counts as a level.
+#guard (parseElement (nested maxDepth)).isSome
+#guard (parseElement (nested (maxDepth + 1))).isNone
+#guard (parseElement (String.join (List.replicate 5000 "<a>"))).isNone
+#guard (parseElement (String.join (List.replicate maxDepth "<a>") ++ "<b/>" ++ String.join (List.replicate maxDepth "</a>"))).isNone
+-- Siblings do not add depth; their number is limited.
+#guard (parseElement ("<m>" ++ String.join (List.replicate 100 "<a/><b></b>") ++ "</m>")).isSome
+#guard (parseElement ("<m>" ++ String.join (List.replicate maxElements "<a/>") ++ "</m>")).isNone
+#guard (parseElement ("<m>" ++ String.join (List.replicate (maxElements - 1) "<a/>") ++ "</m>")).isSome
+-- A `<` that opens nothing does not count, and a `>` or `/>` in a value ends no tag.
+#guard (parseElement ("<m><![CDATA[" ++ String.join (List.replicate 100 "<a>") ++ "]]></m>")).isSome
+#guard (parseElement ("<m a=\"x>y\" b='/>'><c/></m>")).isSome
+#guard shapeOk 100 0 0 "<m a='>'><c/></m>".toList
 
 -- ## The one thing `L4Factoidal.XML` doesn't cover: an unclosed root.
 -- Minimal fuel-bounded helpers, narrowly scoped to "one opening tag,"

@@ -172,6 +172,25 @@ test('muc: a session that disconnects leaves its rooms', async () => {
   } finally { await server.close() }
 })
 
+test('muc: a session that ends its stream cleanly leaves its rooms, and frees its nick', async () => {
+  const s = await start()
+  try {
+    const a = await bound(s.wsOrigin, 'juliet', 'r0m30', 'one')
+    a.send(`<presence to='clean@${MUC}/jul'><x xmlns='${NS_MUC}'/></presence>`)
+    await a.next((m) => m.includes(`status code='110'`) || m.includes('status code="110"'))
+    const b = await bound(s.wsOrigin, 'romeo', 'juli3t', 'one')
+    b.send(`<presence to='clean@${MUC}/rom'><x xmlns='${NS_MUC}'/></presence>`)
+    await b.next((m) => m.includes(`status code='110'`) || m.includes('status code="110"'))
+    a.send(`<close xmlns='${NS_FRAMING}'/>`)
+    await b.next((m) => m.includes(`clean@${MUC}/jul`) && m.includes('unavailable'))
+    const c = await bound(s.wsOrigin, 'juliet', 'r0m30', 'two')
+    c.send(`<presence to='clean@${MUC}/jul'><x xmlns='${NS_MUC}'/></presence>`)
+    const joined = await c.next((m) => m.includes(`status code='110'`) || m.includes('status code="110"') || m.includes('conflict'))
+    assert.doesNotMatch(joined, /conflict/)
+    b.ws.close(); c.ws.close()
+  } finally { await s.close() }
+})
+
 test('muc: off unless configured', async () => {
   const server = await start(null)
   try {
