@@ -13,7 +13,7 @@ A refused request returns the state it was given (theorem
 
 The root collection `/` holds one collection per mount; it is the server's
 own and no storage is asked about it. `/<mount>/...` is a path in the
-mount's storage (`Path.storagePath`).
+mount's storage (`Path.storageURIPath`).
 
 Methods (RFC 4918 §9): OPTIONS, GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE,
 PROPFIND (Depth 0 and 1; Depth infinity refused with 403 and
@@ -142,11 +142,11 @@ def storageRefusal (a : BAns) : DavResponse :=
 def hrefOf (p : DavPath) (coll : Bool) : String := (if coll then p.asColl else p.asFile).href
 
 /-- The segments of a path inside its mount. -/
-def inner (p : DavPath) : List String := p.segs.drop 1
+def inner (p : DavPath) : List String := p.innerURI
 
 /-- Does `l` cover the resource `p` (RFC 4918 §6.1, §7.5)? -/
 def Lock.covers (l : Lock) (p : DavPath) : Bool :=
-  l.root.segs == p.segs || (l.infinite && p.asFile.within l.root.asFile)
+  l.root.key == p.key || (l.infinite && p.asFile.within l.root.asFile)
 
 /-- Is the lock's root inside `p` (a lock that a change of `p` and all it
 contains reaches)? -/
@@ -159,7 +159,7 @@ removes `p` as a member of its parent), those whose root is the parent
 def neededLocks (st : DavState) (p : DavPath) (subtree member : Bool) : List Lock :=
   st.locks.filter (fun l =>
     l.covers p || (subtree && l.within p) ||
-    (member && (p.parent?.map (fun q => l.root.segs == q.segs)).getD false))
+    (member && (p.parent?.map (fun q => l.root.key == q.key)).getD false))
 
 /-- The first needed lock whose token the request did not submit. -/
 def missingToken (needed : List Lock) (submitted : List String) : Option Lock :=
@@ -294,13 +294,13 @@ def Look.toOption : Look → Option Meta
 def rootMeta : Meta := { path := "/", isColl := true }
 
 /-- The parent collection's storage path of a path inside a mount. -/
-def parentStorage (segs : List String) : String := storagePath segs.dropLast true
+def parentStorage (segs : List String) : String := storageURIPath segs.dropLast true
 
 /-- The metadata of the resource at `segs` in the mount, as a collection
 (`coll`) or as a data resource. `withLength`: a data resource's length,
 from its parent's listing (an LWS `HEAD` carries no length). -/
 def statAs (segs : List String) (coll : Bool) (withLength : Bool) : Prog Look := do
-  let path := storagePath segs coll
+  let path := storageURIPath segs coll
   let a ← ask (.head path)
   if a.status == 404 || a.status == 410 then return .absent
   if !a.ok then return .failed a
@@ -387,22 +387,25 @@ def ifHolds (st : DavState) (target : DavPath) (host : Option String) (ls : List
 the members of a collection when `deep`. At most 64 levels. The result is
 `none`, or the first refusal (the storage path and the answer). -/
 def copyTree : Nat → List String → List String → Bool → Bool → Prog (Option (String × BAns))
-  | 0, src, _, _, _ => return some (storagePath src true, { status := 507, detail := "the tree is deeper than 64 levels" })
+  | 0, src, _, _, _ => return some (storageURIPath src true, { status := 507, detail := "the tree is deeper than 64 levels" })
   | n + 1, src, dst, isColl, deep => do
     if !isColl then
-      let g ← ask (.get (storagePath src false))
-      if !g.ok then return some (storagePath src false, g)
+      let g ← ask (.get (storageURIPath src false))
+      if !g.ok then return some (storageURIPath src false, g)
       let ct := ((g.info.bind (·.contentType)).getD "application/octet-stream")
-      let w ← ask (.put (storagePath dst false) ct g.body false)
-      if !w.ok then return some (storagePath dst false, w)
+      let w ← ask (.put (storageURIPath dst false) ct g.body false)
+      if !w.ok then return some (storageURIPath dst false, w)
       return none
-    let w ← ask (.put (storagePath dst true) "" ByteArray.empty false)
-    if !w.ok then return some (storagePath dst true, w)
+    let w ← ask (.put (storageURIPath dst true) "" ByteArray.empty false)
+    if !w.ok then return some (storageURIPath dst true, w)
     if !deep then return none
-    let l ← ask (.list (storagePath src true))
-    if !l.ok then return some (storagePath src true, l)
+    let l ← ask (.list (storageURIPath src true))
+    if !l.ok then return some (storageURIPath src true, l)
     for m in l.members do
-      let name := lastName m.path
+      let some member := storageURISegments m.path | return some (m.path, {status:=502,detail:="malformed storage listing URI"})
+      if member.isEmpty || member.dropLast != src then
+        return some (m.path, {status:=502,detail:="storage listing member is not a direct child"})
+      let name := lastURIName m.path
       match ← copyTree n (src ++ [name]) (dst ++ [name]) m.isColl true with
       | some f => return some f
       | none => pure ()
@@ -414,7 +417,7 @@ def copyProps (st : DavState) (src dst : DavPath) : DavState :=
   let moved := st.props.filterMap (fun (k, ps) =>
     match parseTarget k with
     | some kp =>
-      if kp.within src.asFile then some ((DavPath.key { segs := dst.segs ++ kp.segs.drop src.segs.length }), ps)
+      if kp.within src.asFile then some ((DavPath.key { segs := dst.segs ++ kp.segs.drop src.segs.length, encodedInner := some (dst.innerURI ++ kp.innerURI.drop src.innerURI.length) }), ps)
       else none
     | none => none)
   let keys := moved.map (·.1)
@@ -475,7 +478,8 @@ def propfind (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPath) : Prog Da
     let kids := if depth1 then cx.visible.map (fun mv =>
         propfindResponse st cx.now req { segs := [mv.name], slash := true } (some mv.title) rootMeta) else []
     return xmlResp 207 (multistatus (self :: kids))
-  | mount :: rest =>
+  | mount :: _ =>
+    let rest := inner p
     let title := if rest.isEmpty then (cx.visible.find? (·.name == mount)).map (·.title) else none
     match ← resolve rest p.slash true with
     | .failed a => return storageRefusal a
@@ -483,7 +487,7 @@ def propfind (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPath) : Prog Da
     | .found m =>
       let self := propfindResponse st cx.now req p title m
       if !(depth1 && m.isColl) then return xmlResp 207 (multistatus [self])
-      let l ← ask (.list (storagePath rest true))
+      let l ← ask (.list (storageURIPath rest true))
       if !l.ok then return storageRefusal l
       -- A listing carries no entity tags. DAV:getetag "MUST be defined on all
       -- DAV-compliant resources that return the Etag header" (RFC 4918
@@ -503,8 +507,10 @@ def propfind (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPath) : Prog Da
             acc := acc.push { e with etag := if h.ok then h.info.bind (·.etag) else none }
           pure acc.toList
         else pure l.members
-      let kids := members.map (fun e =>
-        propfindResponse st cx.now req { segs := p.segs ++ [lastName e.path], slash := e.isColl } none e)
+      let some children := members.mapM (fun e => p.listedChild e.path e.isColl) |
+        return textResp 502 "the storage listing member is not a valid direct child URI"
+      let kids := (children.zip members).map (fun (child,e) =>
+        propfindResponse st cx.now req child none e)
       return xmlResp 207 (multistatus (self :: kids))
 
 /-- PROPPATCH (RFC 4918 §9.2): every instruction or none. -/
@@ -576,7 +582,7 @@ def lock (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPath) (submitted : 
       | .failed a => return (storageRefusal a, st)
       | .absent => return (textResp 409 "the parent collection does not exist", st)
       | .found _ => pure ()
-      let w ← ask (.put (storagePath rest false) (mediaTypeForSegs rest) ByteArray.empty true)
+      let w ← ask (.put (storageURIPath rest false) (mediaTypeForSegs (rest.map fun s => (pctDecode s).getD s)) ByteArray.empty true)
       if !w.ok then return (storageRefusal w, st)
       pure true
   let token := lockToken cx.random st.serial
@@ -641,7 +647,7 @@ def copyMove (st : DavState) (r : DavRequest) (p : DavPath) (isMove : Bool)
   | some l => return (lockedResp l, st)
   | none =>
   if let some e := existing then
-    let d ← ask (.delete (storagePath dstIn e.isColl))
+    let d ← ask (.delete (storageURIPath dstIn e.isColl))
     if !d.ok then return (storageRefusal d, st)
   match ← copyTree 64 src dstIn m.isColl deep with
   | some (_, a) => return (storageRefusal a, st)
@@ -649,7 +655,7 @@ def copyMove (st : DavState) (r : DavRequest) (p : DavPath) (isMove : Bool)
   let st1 := (forget st dst false)
   let st2 := copyProps st1 p dst
   let st3 ← if isMove then do
-      let d ← ask (.delete (storagePath src m.isColl))
+      let d ← ask (.delete (storageURIPath src m.isColl))
       if !d.ok then return (storageRefusal d, st2)
       pure (forget st2 p true)
     else pure st2
@@ -708,12 +714,14 @@ def getHead (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPath) : Prog (Da
   | .absent => return (textResp 404 "no resource at this path", st)
   | .found m =>
     if m.isColl then
-      let l ← ask (.list (storagePath rest true))
+      let l ← ask (.list (storageURIPath rest true))
       if !l.ok then return (storageRefusal l, st)
-      let resp := htmlIndex (lastName (storagePath rest true)) (l.members.map (fun e =>
-        (hrefOf { segs := p.segs ++ [lastName e.path] } e.isColl, lastName e.path)))
+      let some children := l.members.mapM (fun e => p.listedChild e.path e.isColl) |
+        return (textResp 502 "the storage listing member is not a valid direct child URI", st)
+      let resp := htmlIndex (lastName (storageURIPath rest true)) ((children.zip l.members).map (fun (child,e) =>
+        (hrefOf child e.isColl, lastName e.path)))
       return ({ resp with body := if r.method == "HEAD" then ByteArray.empty else resp.body }, st)
-    let g ← ask (.get (storagePath rest false))
+    let g ← ask (.get (storageURIPath rest false))
     if !g.ok then return (storageRefusal g, st)
     let hs := [("content-type", ((g.info.bind (·.contentType)).getD "application/octet-stream"))] ++
       ((g.info.bind (·.etag)).map (fun e => [("etag", e)])).getD [] ++
@@ -759,8 +767,8 @@ def handleRW (cx : Ctx) (st0 : DavState) (r : DavRequest) : Prog (DavResponse ×
     | none =>
     -- No Content-Type (gvfs sends none): the type of the name
     -- (`MediaType.lean`, https://github.com/danbri/factoidal/issues/1122).
-    let ct := ((r.header? "content-type").filter (· != "")).getD (mediaTypeForSegs rest)
-    let w ← ask (.put (storagePath rest false) ct r.body false)
+    let ct := ((r.header? "content-type").filter (· != "")).getD (mediaTypeForSegs (rest.map fun s => (pctDecode s).getD s))
+    let w ← ask (.put (storageURIPath rest false) ct r.body false)
     if !w.ok then return (storageRefusal w, st)
     let hs := ((w.info.bind (·.etag)).map (fun e => [("etag", e)])).getD []
     return ({ status := if exists_ then 204 else 201, headers := hs }, st)
@@ -775,7 +783,7 @@ def handleRW (cx : Ctx) (st0 : DavState) (r : DavRequest) : Prog (DavResponse ×
       match missingToken (neededLocks st p true true) submitted with
       | some l => return (lockedResp l, st)
       | none =>
-      let d ← ask (.delete (storagePath rest m.isColl))
+      let d ← ask (.delete (storageURIPath rest m.isColl))
       if !d.ok then return (storageRefusal d, st)
       return ({ status := 204 }, forget st p true)
   | "MKCOL" =>
@@ -792,7 +800,7 @@ def handleRW (cx : Ctx) (st0 : DavState) (r : DavRequest) : Prog (DavResponse ×
     match missingToken (neededLocks st p false true) submitted with
     | some l => return (lockedResp l, st)
     | none =>
-    let w ← ask (.put (storagePath rest true) "" ByteArray.empty true)
+    let w ← ask (.put (storageURIPath rest true) "" ByteArray.empty true)
     if !w.ok then return (storageRefusal w, st)
     return ({ status := 201 }, st)
   | "COPY" => copyMove st r p false submitted writable

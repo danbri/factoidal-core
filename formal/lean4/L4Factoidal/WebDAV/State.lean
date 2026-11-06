@@ -9,7 +9,7 @@ after each request that changes the state. The host only reads and writes
 the file. Design record: docs/designissues/2026-10-27-webdav.md
 § "State across a restart".
 
-The form (version 1):
+The legacy form (version 1; version 2 also records opaque inner URI segments):
 
     {"format":"factoidal-webdav-state","version":1,"serial":N,
      "props":[{"key":"/m/a.txt","props":[{"ns":"urn:x"|null,"local":"colour",
@@ -51,8 +51,8 @@ def stateFileName : String := ".webdav-state.json"
 
 def stateFormat : String := "factoidal-webdav-state"
 
-/-- The version this engine writes and the only one it reads. -/
-def stateVersion : Nat := 1
+/-- Version 2 preserves opaque URI identity. Version 1 is migrated using its original canonical encoder. -/
+def stateVersion : Nat := 2
 
 /-! ## XML nodes as events -/
 
@@ -169,7 +169,8 @@ def deadPropOf (j : Json) : Except String DeadProp := do
 
 def lockJson (l : Lock) : Json :=
   .object [ ("token", .string l.token)
-          , ("root", .object [("segs", .array (l.root.segs.map Json.string)), ("slash", .bool l.root.slash)])
+          , ("root", .object [("segs", .array (l.root.segs.map Json.string)), ("slash", .bool l.root.slash),
+            ("encodedInner", l.root.encodedInner.map (fun xs => .array (xs.map Json.string)) |>.getD .null)])
           , ("infinite", .bool l.infinite), ("exclusive", .bool l.exclusive)
           , ("owner", match l.owner with | some o => deadValueJson o | none => .null)
           , ("timeout", .number (toString l.timeout)), ("expires", .number (toString l.expires)) ]
@@ -180,12 +181,26 @@ def natField (j : Json) (key what : String) : Except String Nat :=
 def boolField (j : Json) (key what : String) : Except String Bool :=
   (j.getBool? key).elim (.error s!"{what} has no boolean \"{key}\"") .ok
 
-def lockOf (j : Json) : Except String Lock := do
+def lockOf (j : Json) (version : Nat := stateVersion) : Except String Lock := do
   let token ← (j.getString? "token").elim (throw "a lock has no \"token\"") pure
   let r := (j.field? "root").getD .null
   let segs ← ((r.getArray? "segs").bind (·.mapM Json.asString?)).elim
     (throw s!"the lock {token} has no well-formed \"root\"") pure
   let slash ← boolField r "slash" s!"the root of lock {token}"
+  -- Old roots held decoded names and always used encodeSegment at lookup.
+  -- Keeping none invokes exactly that encoder, including literal percent signs.
+  let encodedInner ← if version == 1 then pure none else
+    match r.field? "encodedInner" with
+    | some .null => pure none
+    | some (.array xs) => match xs.mapM Json.asString? with
+      | some xs => pure (some xs)
+      | none => throw "lock encodedInner must contain strings"
+    | _ => throw "version 2 lock root has no encodedInner field"
+  let root : DavPath := {segs,slash,encodedInner}
+  let some reparsed := parseTarget root.href | throw "invalid lock root URI"
+  if reparsed.segs != segs || reparsed.innerURI != root.innerURI ||
+      root.innerURI.length != (segs.drop 1).length then
+    throw "lock root decoded and opaque segments disagree"
   let infinite ← boolField j "infinite" s!"the lock {token}"
   let exclusive ← boolField j "exclusive" s!"the lock {token}"
   let owner ← match j.field? "owner" with
@@ -194,7 +209,7 @@ def lockOf (j : Json) : Except String Lock := do
     | none => throw s!"the lock {token} has no \"owner\""
   let timeout ← natField j "timeout" s!"the lock {token}"
   let expires ← natField j "expires" s!"the lock {token}"
-  pure { token, root := { segs, slash }, infinite, exclusive, owner, timeout, expires }
+  pure { token, root, infinite, exclusive, owner, timeout, expires }
 
 def stateJson (st : DavState) : Json :=
   .object [ ("format", .string stateFormat), ("version", .number (toString stateVersion))
@@ -216,11 +231,15 @@ def stateOfJson (j : Json) : Except String DavState := do
   if j.getString? "format" != some stateFormat then
     throw s!"\"format\" is not \"{stateFormat}\""
   let v ← natField j "version" "the state"
-  if v != stateVersion then
+  if v != 1 && v != stateVersion then
     throw s!"format version {v} is not known (this engine reads version {stateVersion})"
   let serial ← natField j "serial" "the state"
   let props ← ((j.getArray? "props").elim (throw "the state has no \"props\" array") pure) >>= (·.mapM propsEntryOf)
-  let locks ← ((j.getArray? "locks").elim (throw "the state has no \"locks\" array") pure) >>= (·.mapM lockOf)
+  for (key,_) in props do
+    let some parsed := parseTarget key | throw "invalid property URI key"
+    if parsed.key != key || (v == 1 && storagePath parsed.segs false != key) then
+      throw "property key is not canonical for its state version"
+  let locks ← ((j.getArray? "locks").elim (throw "the state has no \"locks\" array") pure) >>= (·.mapM (fun j => lockOf j v))
   pure { props, locks, serial }
 
 /-- Read a state file's text. -/
@@ -266,8 +285,8 @@ private def sampleState : DavState :=
 -- Refusals: not JSON, another format, another version, a malformed member.
 #guard (stateOfText "{").toOption.isNone
 #guard (stateOfText "{\"format\":\"x\",\"version\":1,\"serial\":0,\"props\":[],\"locks\":[]}").toOption.isNone
-#guard (match stateOfText "{\"format\":\"factoidal-webdav-state\",\"version\":2,\"serial\":0,\"props\":[],\"locks\":[]}" with
-        | .error m => m == "format version 2 is not known (this engine reads version 1)" | .ok _ => false)
+#guard (match stateOfText "{\"format\":\"factoidal-webdav-state\",\"version\":3,\"serial\":0,\"props\":[],\"locks\":[]}" with
+        | .error m => m == "format version 3 is not known (this engine reads version 2)" | .ok _ => false)
 #guard (stateOfText "{\"format\":\"factoidal-webdav-state\",\"version\":1,\"serial\":0,\"props\":[],\"locks\":[{}]}").toOption.isNone
 #guard (stateOfText "{\"format\":\"factoidal-webdav-state\",\"version\":1,\"serial\":0,\"props\":[],\"locks\":[]}").toOption.isSome
 -- Events: a child count larger than the children, and events after the node.

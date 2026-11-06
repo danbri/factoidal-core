@@ -124,10 +124,10 @@ theorem propfind_readsOnly (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavP
         · refine ReadsOnly.bind (ReadsOnly.ask_list _) (fun _ => ?_)
           split
           · exact .pure _
-          · refine ReadsOnly.ite ?_ (ReadsOnly.bind (.pure _) (fun _ => .pure _))
+          · refine ReadsOnly.ite ?_ (ReadsOnly.bind (.pure _) (fun _ => by split <;> exact .pure _))
             exact ReadsOnly.bind (forIn_readsOnly _ _ _ (fun _ _ =>
               ReadsOnly.bind (ReadsOnly.ask_head _) (fun _ => .pure _)))
-              (fun _ => ReadsOnly.bind (.pure _) (fun _ => .pure _))
+              (fun _ => ReadsOnly.bind (.pure _) (fun _ => by split <;> exact .pure _))
 
 theorem getHead_readsOnly (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPath) :
     ReadsOnly (getHead cx st r p) := by
@@ -140,7 +140,9 @@ theorem getHead_readsOnly (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPa
     · exact .pure _
     · split
       · refine ReadsOnly.bind (ReadsOnly.ask_list _) (fun l => ?_)
-        split <;> exact .pure _
+        split
+        · exact .pure _
+        · split <;> exact .pure _
       · refine ReadsOnly.bind (ReadsOnly.ask_get _) (fun g => ?_)
         split <;> exact .pure _
 
