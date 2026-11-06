@@ -81,9 +81,7 @@ export async function prepareHTML(engine:HTMLEngine,url:string,signal?:AbortSign
     resources.push({nodeId:descriptor.nodeId,url:resource.url,source:resource.source});
   }
   const options={url:document.url,resources};
-  const requests=engine.fontRequests(document.source,options);
-  if(!Array.isArray(requests.requests))throw new Error("Unexpected Lean font request ABI");
-  // No font data is supplied yet, so a named font shows in the Lean bitmap face.
+  // No font data is supplied yet, so every page shows in the Lean bitmap face.
   signal?.throwIfAborted();
   return {
     url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,
