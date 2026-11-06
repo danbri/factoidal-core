@@ -1,12 +1,24 @@
 // The page only forwards input and shows frames. The worker runs the browser loop;
 // Lean decides what every click, key and address means.
 const canvas=document.querySelector('#page'),keys=document.querySelector('#keys'),note=document.querySelector('#note');
-const worker=new Worker(new URL('./browser-worker.mjs',import.meta.url),{type:'module'});
+// A sandboxed guest has an opaque origin and can not start a worker. The loop then
+// runs here; it needs no extra capability.
+let worker;
+try{worker=new Worker(new URL('./browser-worker.mjs',import.meta.url),{type:'module'});}
+catch{worker=await inPageLoop();}
+async function inPageLoop(){
+  const {onThisThread}=await import('./browser-worker.mjs');
+  const loop={onmessage:null,onerror:null};
+  const receive=onThisThread(message=>loop.onmessage?.(message));
+  loop.postMessage=receive;
+  return loop;
+}
 const scale=()=>Math.max(1,Math.round(window.devicePixelRatio||1));
 const size=()=>({width:Math.min(4096,Math.round(innerWidth*scale())),height:Math.min(4096,Math.round(innerHeight*scale())),scale:scale()});
 const point=event=>({x:Math.round(event.clientX*scale()),y:Math.round(event.clientY*scale())});
 const edits={Backspace:51,Delete:117,ArrowLeft:123,ArrowRight:124,Home:115,End:119,Enter:36,Escape:53};
 const send=message=>worker.postMessage(message);
+window.foafnautThread=worker instanceof Worker?'worker':'page';
 let focused=false,moved=undefined;
 worker.onmessage=({data})=>{
   if(data.type==='frame'){
@@ -15,7 +27,7 @@ worker.onmessage=({data})=>{
     document.title=data.title?`foafnaut - ${data.title}`:'foafnaut';window.foafnautFrame=data.stats;
   }
   if(data.type==='focus'){focused=data.focused;if(focused)keys.focus({preventScroll:true});else keys.blur();}
-  if(data.type==='open')window.open(data.url,'_blank','noopener');
+  if(data.type==='open'&&!window.open(data.url,'_blank','noopener')){note.hidden=false;note.textContent=`Open this address in your browser: ${data.url}`;}
   if(data.type==='error'){note.hidden=false;note.textContent=data.error;}
 };
 worker.onerror=event=>{note.hidden=false;note.textContent='The browser worker failed: '+event.message;};

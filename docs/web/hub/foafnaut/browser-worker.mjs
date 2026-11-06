@@ -1,6 +1,11 @@
 // The browser loop for a web page. It matches run_html.ts, the native loop: the
 // shell, history and every decision are Lean values and Lean calls.
-const pagesBase=new URL('./pages/',import.meta.url).href;
+// It runs in a worker, or on the page's own thread where a worker can not start:
+// an iframe sandbox without allow-same-origin has an opaque origin, and the worker
+// constructor refuses that (Foafos guests). `post` is the only way out of the loop.
+let post=(message,transfer)=>self.postMessage(message,transfer);
+const inWorker=typeof WorkerGlobalScope!=='undefined'&&self instanceof WorkerGlobalScope;
+const pagesBase=new URL('./pages/',import.meta.url).href,siteOrigin=new URL(import.meta.url).origin;
 const homeURL=pagesBase+'index.html',settingsURL=pagesBase+'settings.html';
 let module,createSession,session;
 let width=800,height=600,scale=1,theme='next',percent=125,pages=1;
@@ -69,7 +74,7 @@ function keep(){tabs[active]={doc,history,scroll};}
 function showTab(index){serial++;loading=false;setFocus(false);active=index;({doc,history,scroll}=tabs[index]);address=doc.url;request();}
 function newTab(){keep();tabs.push({doc:home,history:push({entries:[],index:0},homeURL),scroll:0});showTab(tabs.length-1);}
 function closeTab(index){if(tabs.length===1)return;keep();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));}
-function setFocus(value){if(focused!==value){focused=value;self.postMessage({type:'focus',focused});}}
+function setFocus(value){if(focused!==value){focused=value;post({type:'focus',focused});}}
 function focusAddress(){setFocus(true);fresh=true;address=doc.url;cursor=address.length;request();}
 function leaveAddress(){setFocus(false);address=doc.url;request();}
 function scrollBy(amount){
@@ -87,7 +92,7 @@ function shellCommand(name,argument){
 }
 function go(answer){
   if(answer.go==='command')shellCommand(answer.name,answer.argument);
-  else if(answer.go==='system'||!answer.url.startsWith(self.location.origin))self.postMessage({type:'open',url:answer.url});
+  else if(answer.go==='system'||!answer.url.startsWith(siteOrigin))post({type:'open',url:answer.url});
   else navigate(answer.url);
 }
 function chrome(control){
@@ -116,11 +121,11 @@ async function draw(){
       session??=await createSession(next,'svg-offscreen');
       if(!session)throw Error('A WebGPU adapter is unavailable in this browser.');
       const rgba=await session.draw();frame=next;
-      self.postMessage({type:'frame',width:next.width,height:next.height,title:doc.title,rgba:rgba.buffer,
+      post({type:'frame',width:next.width,height:next.height,title:doc.title,rgba:rgba.buffer,
         stats:{layoutMs:Math.round(laid-start),totalMs:Math.round(performance.now()-start),primitives:next.primitiveCount,url:doc.url,address,scroll,tabs:tabs.length,theme,percent}},[rgba.buffer]);
     }catch(error){
       session?.close();session=undefined;
-      if(doc.title==='Page refused'){self.postMessage({type:'error',error:String(error.message??error)});break;}
+      if(doc.title==='Page refused'){post({type:'error',error:String(error.message??error)});break;}
       doc=refusal(doc.url,String(error.message??error));dirty=true;
     }
   }
@@ -136,8 +141,8 @@ async function start(data){
   history=push({entries:[],index:0},homeURL);doc=home;address=home.url;tabs.push({doc,history,scroll:0});
   if(data.page&&/^[a-z0-9-]+\.(html|xml)$/.test(data.page))navigate(pagesBase+data.page);else request();
 }
-self.onmessage=({data})=>{
-  if(data.type==='start'){start(data).catch(error=>self.postMessage({type:'error',error:String(error.message??error)}));return;}
+function receive(data){
+  if(data.type==='start'){start(data).catch(error=>post({type:'error',error:String(error.message??error)}));return;}
   if(!doc)return;
   if(data.type==='resize'){({width,height,scale}=data);request();}
   if(data.type==='scroll')scrollBy(data.amount);
@@ -162,4 +167,7 @@ self.onmessage=({data})=>{
     else if(data.key===51&&fresh){address='';cursor=0;fresh=false;request();}
     else{({address,cursor}=call('',{op:'shellKey',shell:shell(),key:data.key}));fresh=false;request();}
   }
-};
+}
+if(inWorker)self.onmessage=({data})=>receive(data);
+/** Start the loop on this thread. Returns the function that takes input messages. */
+export function onThisThread(deliver){post=message=>deliver({data:message});return receive;}
