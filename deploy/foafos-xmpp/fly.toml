@@ -6,6 +6,7 @@ kill_timeout = "10s"
 
 [build.args]
   FACTOIDAL_VERSION = "0.31.1"
+  FACTOIDAL_HOST_COMMIT = "a9caa45d874772b86660a87ac97eb5ec3eb6ca96"
 
 [env]
   XMPP_DOMAIN = "foafos-xmpp.fly.dev"
@@ -17,7 +18,7 @@ kill_timeout = "10s"
 
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "512mb"
+  memory = "1gb"
 
 # Every service is raw TCP: Fly does not terminate TLS, the machine does.
 [[services]]
@@ -35,6 +36,18 @@ kill_timeout = "10s"
     interval = "30s"
     timeout = "5s"
     grace_period = "120s"
+
+[[services]]
+  internal_port = 5222
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  min_machines_running = 1
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 256
+    soft_limit = 200
+  [[services.ports]]
+    port = 5222
 
 [[services]]
   internal_port = 5281

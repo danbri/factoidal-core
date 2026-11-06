@@ -34,7 +34,8 @@ start_xmpp() {
   node /opt/xmpp/node_modules/@factoidal/core/bin/factoidal.mjs xmpp-serve /data/xmpp \
     --domain "$XMPP_DOMAIN" --muc "rooms.$XMPP_DOMAIN" --host 0.0.0.0 \
     --accounts "$secrets/accounts" --state-key "$secrets/state-key" \
-    --cert "$crt" --key "$key" \
+    --cert "$crt" --key "$key" --starttls --port 5222 --tls-port 5223 \
+    --max-connections 200 --login-timeout 30 \
     --ws-port 5281 --ws-origin https://danbri.github.io --ws-origin http://localhost:8080 \
     ${XMPP_EXTRA_ARGS:-} &
   xmpp_pid=$!

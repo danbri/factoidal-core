@@ -1,0 +1,34 @@
+{
+  "schema": "factoidal-deploy-units-v1",
+  "engine": "web-render",
+  "shim": "labs/demos/foafnaut/web_render_shim.c",
+  "exclude-ir": [
+    "WebRenderCLI",
+    "RenderPlan"
+  ],
+  "entries": [
+    "web_render_call",
+    "web_render_rdf_call",
+    "web_render_font_call",
+    "web_render_font_requests_call",
+    "web_document_call",
+    "web_render_hit",
+    "web_render_free"
+  ],
+  "units": {
+    "xslt": {
+      "gate": [
+        "l_WebXslt_transform"
+      ],
+      "needed-by": [
+        {
+          "export": "web_document_call",
+          "op": "xslt"
+        }
+      ]
+    }
+  },
+  "budgets": {
+    "primaryWasmBytes": 6000000
+  }
+}

@@ -138,6 +138,8 @@ export async function openXmppServer (options = {}) {
   if (typeof options.tlsCarrier === 'boolean') config.tlsCarrier = options.tlsCarrier
   // XEP-0045 room service (L4Factoidal/XMPP/Muc.lean); off unless named.
   if (typeof options.mucDomain === 'string') config.mucDomain = options.mucDomain
+  // Members-only rooms: [{room, members: [bare JID]}]; no list, an open room.
+  if (Array.isArray(options.mucMembers)) config.mucMembers = options.mucMembers
   // XEP-0369 channels (L4Factoidal/XMPP/Mix.lean), joined through MIX-PAM; off unless named.
   if (typeof options.mixDomain === 'string') config.mixDomain = options.mixDomain
   // GC3 prototype groups (L4Factoidal/XMPP/Gc3.lean; no published spec); off unless named.
@@ -160,6 +162,11 @@ export async function openXmppServer (options = {}) {
     throw new XmppHostError('xmppOpen answered with no handle')
   }
   const handle = opened.handle
+  // An older engine ignores the list, and the rooms would be open: do not start.
+  if (Array.isArray(options.mucMembers) && opened.mucMembers !== options.mucMembers.length) {
+    engine.call('xmppClose', [handle])
+    throw new XmppHostError('this engine does not carry members-only rooms; rebuild the engine')
+  }
   return {
     engine,
     handle,
