@@ -13,7 +13,7 @@ let module,createSession,session,createSurface,hashPixels,surface,surfaceCanvas,
 // order it arrived; only moves and scrolls are merged.
 let ready=false,currentStamp,pendingStamp,pendingMove,pendingScroll,flushPort;
 const early=[];
-let width=800,height=600,scale=1,theme='next',percent=150,pages=1;
+let width=800,height=600,scale=1,theme='next',percent=150,pages=1,pinchBase;
 // The address bar's text, cursor, selection and undo step: a Lean value (WebShell.editJson).
 const showURL=url=>({address:url,cursor:url.length,anchor:url.length,undo:null,redo:null,typing:false});
 let field=showURL(''),focused=false,loading=false,scroll=0,active=0;
@@ -335,6 +335,15 @@ function apply(data){
   if(data.type==='resize'){({width,height,scale}=data);if(doc.graph)graphInput(1,width,height);request();}
   if(data.type==='scroll')scrollBy(data.amount);
   if(data.type==='command')command(data.command);
+  // A touch pinch: the zoom at its start times the finger ratio, in steps of 5 percent,
+  // from Lean's smallest (50) to 1000. Lean lays the page out again at each new step.
+  if(data.type==='pinch'){
+    if(data.phase==='start')pinchBase=percent;
+    else if(data.phase==='move'&&pinchBase&&Number.isFinite(data.ratio)){
+      const next=Math.max(50,Math.min(1000,Math.round(pinchBase*data.ratio/5)*5));
+      if(next!==percent){percent=next;request();}
+    }else if(data.phase==='end')pinchBase=undefined;
+  }
   if(data.type==='paste')command(14,data.text);
   if(data.type==='press'){
     const control=call('',{op:'shellHit',shell:shell(),x:data.x,y:data.y,width}).control;

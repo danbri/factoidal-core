@@ -72,14 +72,38 @@ if(canTransfer)send({type:'hello'});else begin(false);
 addEventListener('resize',()=>send({type:'resize',...size()}));
 // Keep focus where the loop puts it: the press must not move it back to the page.
 canvas.addEventListener('mousedown',event=>event.preventDefault());
-canvas.addEventListener('pointerdown',event=>{moved={y:event.clientY,scrolled:false};send({type:'press',...point(event)});});
+// Two fingers on a touch screen are a pinch: Lean's text zoom, as Ctrl+wheel is on a
+// trackpad. The page sends the ratio of finger distances since the pinch began, and the
+// worker sets the zoom from it. A pinch ends any press, without a click.
+const touches=new Map();let pinch;
+const fingerGap=()=>{const [a,b]=[...touches.values()];return Math.hypot(a.x-b.x,a.y-b.y);};
+canvas.addEventListener('pointerdown',event=>{
+  if(event.pointerType==='touch')touches.set(event.pointerId,{x:event.clientX,y:event.clientY});
+  if(touches.size===2&&!pinch){
+    if(moved)send({type:'release',scrolled:true,...point(event)});
+    moved=undefined;pinch={gap:Math.max(1,fingerGap())};send({type:'pinch',phase:'start'});return;
+  }
+  if(pinch)return;
+  moved={y:event.clientY,scrolled:false};send({type:'press',...point(event)});
+});
 canvas.addEventListener('pointermove',event=>{
+  if(touches.has(event.pointerId))touches.set(event.pointerId,{x:event.clientX,y:event.clientY});
+  if(pinch){if(touches.size===2)send({type:'pinch',phase:'move',ratio:fingerGap()/pinch.gap});return;}
   if(moved&&event.buttons)send({type:'move',...point(event)});
   if(!moved||event.pointerType!=='touch')return;
   const step=moved.y-event.clientY;if(Math.abs(step)<2)return;
   moved={y:event.clientY,scrolled:true};send({type:'scroll',amount:step*scale()});
 });
-canvas.addEventListener('pointerup',event=>{if(moved)send({type:'release',scrolled:moved.scrolled,...point(event)});moved=undefined;});
+const lift=event=>{
+  touches.delete(event.pointerId);
+  if(pinch){if(touches.size<2){send({type:'pinch',phase:'end'});pinch=undefined;}return;}
+  if(moved&&event.type==='pointerup')send({type:'release',scrolled:moved.scrolled,...point(event)});
+  moved=undefined;
+};
+canvas.addEventListener('pointerup',lift);
+canvas.addEventListener('pointercancel',lift);
+// Safari's own pinch would zoom the whole page, address bar included.
+for(const name of ['gesturestart','gesturechange'])addEventListener(name,event=>event.preventDefault(),{passive:false});
 // Ctrl+wheel is a trackpad pinch: Lean's text zoom, not the host browser's page zoom.
 addEventListener('wheel',event=>{event.preventDefault();
   if(event.ctrlKey){if(event.deltaY)send({type:'command',command:event.deltaY<0?1:2});return;}
