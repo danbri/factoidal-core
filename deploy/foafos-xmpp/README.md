@@ -2,6 +2,8 @@
 
 **This is the one Foafos box on Fly.** Since 2026-11-06 it also runs the pod that was on `foafos-proto`: one store, `https://foafos-xmpp.fly.dev:8443/`, reached over HTTPS with a bearer token or as `pod@foafos-xmpp.fly.dev/lws` over XMPP. Keep it to test data until the private review findings are closed.
 
+The pod's bearer token is the Fly secret `POD_TOKEN`, with a local copy in `~/.config/foafos-xmpp-fly/token`. It is not a Fly login, and `fly-secrets.env` does not hold it. Accounts are in `accounts` in the same folder.
+
 A public service that nobody announces, for test data only. Owner, 2026-11-05: "public service we do not announce,
 containing only test data on ephemeral machines we don't use for anything else". The Foafos side:
 https://github.com/danbri/glitchcan-minigam/blob/master/docs/foafos-shared-xmpp-20261105.md
