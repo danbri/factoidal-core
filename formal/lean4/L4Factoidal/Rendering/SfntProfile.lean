@@ -106,6 +106,97 @@ def Font.word (f : Font) (text : String) (pixelSize : Nat) : Except String FontP
     pixelSize,glyphs,outlines := outlines.toList.toArray.map Prod.snd,bitmaps := #[],
     advance := glyphs.foldl (fun total g => total+g.xAdvance) 0} (notdef := true)
 
+/-! ### Fallback fonts
+
+A page names one font, but its text can need several: Noto Sans has no Armenian,
+for example. The engine holds an ordered list of fonts, the first one being the
+primary font. `runsOf` gives each character to a font, and `wordIn` shapes each run
+with its font and joins the runs into one word in the units and metrics of the
+primary font, so layout sees one font, as before. -/
+
+/-- The font's cmap has a glyph other than .notdef for the character. -/
+def Font.has (f : Font) (c : Char) : Bool :=
+  match f.face.glyphCp f.bytes c.toNat with
+  | .ok g => g != 0
+  | .error _ => false
+
+/-- Characters that stay in the run before them when that font has them: the
+combining marks that many scripts share, joiners and variation selectors. Script
+fonts carry the marks of their own script, so this list is short. -/
+def staysWithBase (c : Nat) : Bool :=
+  (0x300 ≤ c && c ≤ 0x36F) || (0x1AB0 ≤ c && c ≤ 0x1AFF) || (0x1DC0 ≤ c && c ≤ 0x1DFF) ||
+  (0x20D0 ≤ c && c ≤ 0x20FF) || (0xFE20 ≤ c && c ≤ 0xFE2F) || c == 0x200C || c == 0x200D ||
+  (0xFE00 ≤ c && c ≤ 0xFE0F) || (0xE0100 ≤ c && c ≤ 0xE01EF)
+
+/-- A word in runs: the index of a font in `fonts`, and the characters it draws.
+Each character goes to the first font that has it. A character in `staysWithBase`
+keeps the font of the run before it when that font has it. A character that no
+font has stays in the run before it (the first font at the start), and shows as
+that font's .notdef glyph. -/
+def runsOf (fonts : Array Font) (text : String) : Array (Nat × String) := Id.run do
+  let mut runs : Array (Nat × String) := #[]
+  for c in text.toList do
+    let last := runs.back?.map (·.1)
+    let keep := match last with
+      | some i => staysWithBase c.toNat && (fonts[i]?.map fun (f : Font) => f.has c).getD false
+      | none => false
+    let pick := if keep then last.getD 0 else (fonts.findIdx? fun (f : Font) => f.has c).getD (last.getD 0)
+    runs := match runs.back? with
+      | some (i,s) => if i == pick then runs.pop.push (i,s.push c) else runs.push (pick,c.toString)
+      | none => runs.push (pick,c.toString)
+  return runs
+
+private def scalePoint (k : Float) (p : Point) : Point := ⟨k*p.x,k*p.y⟩
+
+private def scaleSegment (k : Float) : PathSegment → PathSegment
+  | .line p => .line (scalePoint k p)
+  | .quadratic c p => .quadratic (scalePoint k c) (scalePoint k p)
+  | .cubic a b p => .cubic (scalePoint k a) (scalePoint k b) (scalePoint k p)
+  | .arc rx ry rotation large sweep p => .arc (k*rx) (k*ry) rotation large sweep (scalePoint k p)
+
+/-- Glyph geometry `k` times as large, about the glyph's own origin. -/
+def scaleGeometry (k : Float) : Geometry → Geometry
+  | .rect x y w h => .rect (k*x) (k*y) (k*w) (k*h)
+  | .circle cx cy r => .circle (k*cx) (k*cy) (k*r)
+  | .ellipse cx cy rx ry => .ellipse (k*cx) (k*cy) (k*rx) (k*ry)
+  | .line x1 y1 x2 y2 => .line (k*x1) (k*y1) (k*x2) (k*y2)
+  | .polygon points => .polygon (points.map (scalePoint k))
+  | .path contours => .path (contours.map fun
+    | .path start segments closed => .path (scalePoint k start) (segments.map (scaleSegment k)) closed
+    | other => other)
+
+/-- The word drawn with `fonts`, the first being the primary font. A word that the
+primary font draws alone is `Font.word` of that font, unchanged. Otherwise each run
+is shaped by its own font, and its glyphs are put in the primary font's units: the
+outlines and advances are scaled by the ratio of the units per em, and each glyph
+moves down by the difference of the ascents, so that the baselines are one line.
+The word keeps the primary font's name, units and metrics, which layout checks. -/
+def wordIn (fonts : Array Font) (text : String) (pixelSize : Nat) : Except String FontProvider.Word := do
+  let some primary := fonts[0]? | throw "font profile: no font"
+  let runs := runsOf fonts text
+  if runs.all (·.1 == 0) then return ← primary.word text pixelSize
+  let face := primary.face
+  let units := Float.ofNat face.unitsPerEm
+  let ascent := ofInt face.ascender
+  let mut glyphs : Array FontProvider.Glyph := #[]
+  let mut pen : Float := 0
+  let mut start := 0
+  for (i,part) in runs do
+    let some f := fonts[i]? | throw "font profile: run names no font"
+    let w ← f.word part pixelSize
+    let k := units/w.unitsPerEm
+    let down := ascent-k*w.ascent
+    for g in w.glyphs do
+      let placed : FontProvider.Glyph := ⟨g.index,pen+k*g.x,k*g.y+down,k*g.advance,
+        start+g.clusterStart,start+g.clusterEnd,g.geometry.map (scaleGeometry k)⟩
+      glyphs := glyphs.push placed
+    pen := pen+k*w.advance
+    start := start+part.length
+  -- FontProvider.Word in field order: text, font, face, family, style, size, units,
+  -- ascent, descent, line gap, glyphs, advance.
+  return ⟨text,primary.sha256,primary.faceIndex,primary.family,"",pixelSize,units,
+    ascent,-ofInt face.descender,ofInt face.lineGap,glyphs,pen⟩
+
 /-- The words of a document's text nodes, each once, for the memo of `profile`. -/
 def wordsOf (dom : DOM.Dom) (limit : Nat := 8192) : Array String := Id.run do
   let mut seen : Std.TreeMap String Unit := {}
@@ -171,21 +262,24 @@ structure Shaped where
 
 abbrev Memo := Std.TreeMap String Shaped
 
-/-- Add `texts` to the memo. Outlines are in font units, so one record serves every size.
-The space is always added: `wordsOf` splits on it, and layout asks for it at every gap,
-which was 42% of a frame of the status page. -/
-def remember (f : Font) (memo : Memo) (texts : Array String) (limit : Nat := 65536) : Memo := Id.run do
+/-- Add `texts` to the memo of the font list `fonts` (see `wordIn`). Outlines are in
+font units, so one record serves every size. The space is always added: `wordsOf`
+splits on it, and layout asks for it at every gap, which was 42% of a frame of the
+status page. -/
+def remember (fonts : Array Font) (memo : Memo) (texts : Array String) (limit : Nat := 65536) : Memo := Id.run do
   let mut out := if memo.size > limit then {} else memo
   for text in #[" "] ++ texts do
     unless out.contains text do
-      if let .ok word := f.word text 16 then out := out.insert text ⟨word,flatWord word⟩
+      if let .ok word := wordIn fonts text 16 then out := out.insert text ⟨word,flatWord word⟩
   return out
 
-/-- The memo is only a shortcut: a word that is not in it is shaped when asked for. -/
-def profile (f : Font) (memo : Memo) : Except String Layout.FontProfile := do
+/-- The memo is only a shortcut: a word that is not in it is shaped when asked for.
+The profile is named by the first font of `fonts`; the others draw what it lacks. -/
+def profile (fonts : Array Font) (memo : Memo) : Except String Layout.FontProfile := do
+  let some f := fonts[0]? | throw "font profile: no font"
   let space ← match memo.get? " " with
     | some shaped => pure shaped.curves
-    | none => f.word " " 16
+    | none => wordIn fonts " " 16
   return {
     family := f.family,unitsPerEm := space.unitsPerEm,advance := 0,ascent := space.ascent,
     descent := space.descent,outline := fun _ => [],admits := fun _ => false,cssFamilies := [f.family],
@@ -194,7 +288,7 @@ def profile (f : Font) (memo : Memo) : Except String Layout.FontProfile := do
       let word ← match memo.get? text with
         | some shaped => pure (if px < flatBelow then shaped.flat else shaped.curves)
         | none => do
-          let word ← f.word text px
+          let word ← wordIn fonts text px
           pure (if px < flatBelow then flatWord word else word)
       return {word with pixelSize := px}}
 

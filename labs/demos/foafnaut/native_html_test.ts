@@ -194,7 +194,7 @@ Deno.test("a font file draws the page through Lean alone, and no text stops it",
   const options={url:"https://example.test/",resources:[]};
   const bitmap=fonts.compile(page,800,500,options);
   const font=new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url);
-  assert.deepEqual(await loadFontFile(fonts,font.pathname,"Noto Sans"),{family:"Noto Sans",glyphs:3884});
+  assert.deepEqual(await loadFontFile(fonts,font.pathname,"Noto Sans"),{family:"Noto Sans",glyphs:3884,fonts:1});
   const first=fonts.compile(page,800,500,options);
   assert.notDeepEqual(first.data,bitmap.data);
   assert.ok(first.primitiveCount<bitmap.primitiveCount,"one primitive for each glyph, not for each bitmap cell");
