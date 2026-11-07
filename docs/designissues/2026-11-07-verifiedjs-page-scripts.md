@@ -29,6 +29,8 @@ branch `wip/verifiedjs-page-scripts` only. A run uploads text reports only.
   upstream end-to-end suite, Test262, full build)
 - https://github.com/danbri/factoidal-core/actions/runs/42319450564 (probe with
   raw output comparison, axioms of each pass theorem)
+- https://github.com/danbri/factoidal-core/actions/runs/42320494877 (final probe:
+  the expected-fail gate is green; unit tests)
 
 ## 2. Stage 1: build
 
@@ -38,6 +40,7 @@ branch `wip/verifiedjs-page-scripts` only. A run uploads text reports only.
 | `lake build verifiedjs` (cold, with dependency clones) | Passes: 101.5 s, peak RSS 1.36 GB, `.lake` 902 MB, binary 149.9 MB |
 | `lake build` (default target, all proofs) | **Fails** after 428 s, peak RSS 2.29 GB |
 | Upstream end-to-end suite (`scripts/run_e2e.sh`) | 175 pass, 28 fail (out of 203) |
+| Upstream unit tests (`lake build Tests`) | **Fails**: 4 checks in `tests/unit/Tests/ParserTests.lean` (lines 339, 361, 385, 397) |
 
 The full build fails in `VerifiedJS.Proofs.ClosureConvertCorrect` at line 6227:
 `unexpected token '('; expected '}'`. `VerifiedJS.Proofs.EndToEnd` imports that
@@ -72,16 +75,16 @@ The number therefore says little about language conformance in either direction.
 
 `verifiedjs/fixtures.mjs` holds the 9 script sources of `session.test.mjs`,
 `lean-dom.test.mjs` and `fixtures/scripted.html`, with `document` given by a small
-ES5 stand-in written in the script itself. It also holds 41 single-feature cases
+ES5 stand-in written in the script itself. It also holds 42 single-feature cases
 and the 9 sources with no stand-in. `verifiedjs/probe.mjs` runs each one at each
 level and compares standard output with Node.
 
-| Level | 9 fixtures | 41 feature cases |
+| Level | 9 fixtures | 42 feature cases |
 | --- | --- | --- |
-| Compiled Wasm under wasmtime | 0 same, 9 not | 10 same, 31 not |
-| Core interpreter | 1 same, 8 not | 27 same, 14 not |
-| Flat interpreter | 0 same, 9 not | 19 same, 22 not |
-| ANF interpreter | 0 same, 9 not | 0 same, 41 not |
+| Compiled Wasm under wasmtime | 0 same, 9 not | 10 same, 32 not |
+| Core interpreter | 1 same, 8 not | 28 same, 14 not |
+| Flat interpreter | 0 same, 9 not | 20 same, 22 not |
+| ANF interpreter | 0 same, 9 not | 0 same, 42 not |
 
 All sources parse and compile. The one Core pass, `lean-dom-named-error`, is an
 accident: `Object` and `Error` are unbound, each use logs a ReferenceError, and
