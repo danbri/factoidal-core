@@ -7,13 +7,13 @@ open SfntProfile
 
 private def bytes (s : String) : Option (List UInt8) := (decodeBase64 s).map (·.toList)
 
-example : bytes "" = some [] := by native_decide
-example : bytes "TWFu" = some [77,97,110] := by native_decide
-example : bytes "TWE=" = some [77,97] := by native_decide
-example : bytes "TQ==" = some [77] := by native_decide
-example : bytes "/+8A" = some [255,239,0] := by native_decide
-example : bytes "TWF" = none := by native_decide
-example : bytes "TW!u" = none := by native_decide
-example : bytes "T=Fu" = none := by native_decide
+#guard bytes "" == some []
+#guard bytes "TWFu" == some [77,97,110]
+#guard bytes "TWE=" == some [77,97]
+#guard bytes "TQ==" == some [77]
+#guard bytes "/+8A" == some [255,239,0]
+#guard bytes "TWF" == none
+#guard bytes "TW!u" == none
+#guard bytes "T=Fu" == none
 
 end L4Factoidal.Rendering.SfntProfileTests
