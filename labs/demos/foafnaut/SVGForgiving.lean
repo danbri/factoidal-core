@@ -1,4 +1,5 @@
 import SVG
+import L4Factoidal.Unicode.Bidi
 import Std.Data.HashMap
 
 /- Forgiving front door for the strict SVG reader.
@@ -53,7 +54,26 @@ private structure Glyph where
   name : String
   advance : Float
   data : String
+  /-- The characters of `unicode`: more than one is a ligature. -/
+  text : List Char := []
+  /-- `arabic-form`: none matches every form. -/
+  form : Option String := none
+  /-- `lang`: empty matches every language. -/
+  lang : List String := []
   deriving Inhabited
+
+/-- One side of an `hkern` by characters: a string, or a range of code points. -/
+private inductive KernItem where
+  | literal (text : List Char)
+  | range (low high : Nat)
+
+/-- An `hkern` that names a side by `u1` or `u2`. -/
+private structure KernRule where
+  left : List KernItem
+  leftNames : List String
+  right : List KernItem
+  rightNames : List String
+  k : Float
 
 structure SVGFont where
   family : String := ""
@@ -62,9 +82,13 @@ structure SVGFont where
   /-- `font-face` ascent and descent, in font units, both as positive depths. -/
   ascent : Float := 800
   descent : Float := 200
-  glyphs : Std.HashMap Char Glyph := {}
+  /-- `font-variant` of the `font-face`. -/
+  variant : String := "normal"
+  /-- Glyphs by their first character, in document order. -/
+  glyphs : Std.HashMap Char (Array Glyph) := {}
   kerning : Std.HashMap (String × String) Float := {}
-  missing : Glyph := ⟨"",500,""⟩
+  kernRules : Array KernRule := #[]
+  missing : Glyph := ⟨"",500,"",[],none,[]⟩
 instance : Inhabited SVGFont := ⟨{}⟩
 
 private def float (source : Option String) (fallback : Float) : Float :=
@@ -81,9 +105,37 @@ private def fontElements : Nat → NamespaceNode → List NamespaceNode
   | fuel+1,node@(.element name _ children) =>
     if name.localPart == "font" then [node] else children.flatMap (fontElements fuel)
 
+private def hexValue (s : String) : Option Nat :=
+  s.foldl (fun acc c => acc.bind fun n =>
+    if '0' ≤ c && c ≤ '9' then some (n*16+c.toNat-48)
+    else if 'a' ≤ c.toLower && c.toLower ≤ 'f' then some (n*16+c.toLower.toNat-87)
+    else none) (some 0)
+
+/-- `U+0031-0034`, `U+003?`, `U+0031`, or a string of characters. -/
+private def kernItem (source : String) : KernItem :=
+  let source := source.trimAscii.toString
+  if !source.startsWith "U+" then .literal source.toList else
+  let body := (source.drop 2).toString
+  match body.splitOn "-" with
+  | [low,high] => match hexValue low,hexValue high with
+    | some a,some b => .range a b
+    | _,_ => .literal source.toList
+  | _ => match hexValue (body.replace "?" "0"),hexValue (body.replace "?" "F") with
+    | some a,some b => .range a b
+    | _,_ => .literal source.toList
+
+private def KernItem.matches (glyph : Glyph) : KernItem → Bool
+  | .literal text => text == glyph.text
+  | .range low high => match glyph.text with
+    | [c] => low ≤ c.toNat && c.toNat ≤ high
+    | _ => false
+
+private def words (source : Option String) : List String :=
+  ((source.getD "").splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
+
 private def SVGFont.ofElement (attrs : List NamespaceAttribute) (children : List NamespaceNode) : SVGFont := Id.run do
   let fallback := float (plainAttr attrs "horiz-adv-x") 500
-  let mut font : SVGFont := {defaultAdvance:=fallback,missing:=⟨"",fallback,""⟩}
+  let mut font : SVGFont := {defaultAdvance:=fallback,missing:={name:="",advance:=fallback,data:=""}}
   for child in children do
     let .element name a _ := child | continue
     let advance := float (plainAttr a "horiz-adv-x") fallback
@@ -91,19 +143,23 @@ private def SVGFont.ofElement (attrs : List NamespaceAttribute) (children : List
     match name.localPart with
     | "font-face" => 
       let units := float (plainAttr a "units-per-em") 1000
-      font := {font with unitsPerEm:=units,family:=(plainAttr a "font-family").getD "",ascent:=(float (plainAttr a "ascent") (units*0.8)).abs,descent:=(float (plainAttr a "descent") (units*0.2)).abs}
-    | "missing-glyph" => font := {font with missing:=⟨"",advance,data⟩}
+      font := {font with unitsPerEm:=units,family:=(plainAttr a "font-family").getD "",variant:=((plainAttr a "font-variant").getD "normal").trimAscii.toString,ascent:=(float (plainAttr a "ascent") (units*0.8)).abs,descent:=(float (plainAttr a "descent") (units*0.2)).abs}
+    | "missing-glyph" => font := {font with missing:={name:="",advance,data}}
     | "glyph" =>
       if let some text := plainAttr a "unicode" then
-        if let [c] := text.toList then
-          font := {font with glyphs:=font.glyphs.insert c ⟨(plainAttr a "glyph-name").getD text,advance,data⟩}
+        if let c::_ := text.toList then
+          let glyph : Glyph := {name:=(plainAttr a "glyph-name").getD text,advance:=advance,data:=data,text:=text.toList,form:=plainAttr a "arabic-form",lang:=words (plainAttr a "lang")}
+          font := {font with glyphs:=font.glyphs.insert c ((font.glyphs.getD c #[]).push glyph)}
     | "hkern" =>
-      let left := (plainAttr a "g1").getD ""
-      let right := (plainAttr a "g2").getD ""
+      let left := words (plainAttr a "g1")
+      let right := words (plainAttr a "g2")
       let k := float (plainAttr a "k") 0
-      for l in left.splitOn "," do
-        for r in right.splitOn "," do
-          font := {font with kerning:=font.kerning.insert (l.trimAscii.toString,r.trimAscii.toString) k}
+      if (plainAttr a "u1").isNone && (plainAttr a "u2").isNone then
+        for l in left do
+          for r in right do
+            font := {font with kerning:=font.kerning.insert (l,r) k}
+      else
+        font := {font with kernRules:=font.kernRules.push {left:=(words (plainAttr a "u1")).map kernItem,leftNames:=left,right:=(words (plainAttr a "u2")).map kernItem,rightNames:=right,k:=k}}
     | _ => pure ()
   return font
 
@@ -119,11 +175,66 @@ def SVGFont.parse (xml : String) : Except String SVGFont := do
   | font::_ => pure font
   | [] => throw "no font element"
 
+/-- The language of a text suits a glyph when it equals a language of the glyph or
+    is a more specific form of one (`fr-ca` for `fr`). -/
+private def langSuits (lang : String) (glyph : Glyph) : Bool :=
+  glyph.lang.isEmpty || glyph.lang.any fun l =>
+    lang.toLower == l.toLower || lang.toLower.startsWith (l.toLower ++ "-")
+
+/-- SVG Tiny 1.2 §11.6: the first glyph in document order that matches the characters
+    at `i`, so a ligature wins only when it stands before its parts. -/
+private def SVGFont.pick (font : SVGFont) (chars : Array Char) (i : Nat) (lang : String)
+    (form : Option String) : Option Glyph :=
+  (font.glyphs.getD chars[i]! #[]).find? fun g =>
+    (g.text.zipIdx.all fun (c,k) => chars[i+k]? == some c) && langSuits lang g &&
+      (g.form.isNone || g.form == form)
+
 /-- A font with no glyph for a no-break space draws its space. -/
 private def SVGFont.glyph (font : SVGFont) (c : Char) : Glyph :=
-  match font.glyphs.get? c with
+  match font.pick #[c] 0 "" none with
   | some g => g
-  | none => if c == '\u00A0' then font.glyphs.getD ' ' font.missing else font.missing
+  | none => if c == '\u00A0' then (font.pick #[' '] 0 "" none).getD font.missing else font.missing
+
+private def SVGFont.kern (font : SVGFont) (a b : Glyph) : Float :=
+  match font.kerning.get? (a.name,b.name) with
+  | some k => k
+  | none => ((font.kernRules.find? fun rule =>
+      (rule.left.any (·.matches a) || rule.leftNames.contains a.name) &&
+      (rule.right.any (·.matches b) || rule.rightNames.contains b.name)).map (·.k)).getD 0
+
+/-- Unicode joining types of the Arabic block: letters that join only to the one
+    before them, and marks that do not break a join. -/
+private def arabicRightJoining (c : Nat) : Bool :=
+  (0x622 ≤ c && c ≤ 0x625) || c == 0x627 || c == 0x629 || (0x62F ≤ c && c ≤ 0x632) || c == 0x648 ||
+  (0x671 ≤ c && c ≤ 0x673) || (0x675 ≤ c && c ≤ 0x677) || (0x688 ≤ c && c ≤ 0x699) ||
+  (0x6C0 ≤ c && c ≤ 0x6CB) || c == 0x6CD || c == 0x6CF || c == 0x6D2 || c == 0x6D3 || c == 0x6D5
+private def arabicMark (c : Nat) : Bool := (0x64B ≤ c && c ≤ 0x65F) || c == 0x670
+private def arabicLetter (c : Nat) : Bool :=
+  ((0x620 ≤ c && c ≤ 0x64A) || (0x66E ≤ c && c ≤ 0x6D5)) && c != 0x621 && c != 0x640 && c != 0x674 && !arabicMark c
+private def arabicDual (c : Nat) : Bool := arabicLetter c && !arabicRightJoining c
+
+/-- The `arabic-form` of each character: from the joins on its two sides. -/
+private def arabicForms (chars : Array Char) : Array (Option String) := Id.run do
+  let mut forms : Array (Option String) := Array.replicate chars.size none
+  let mut before := false
+  for i in [:chars.size] do
+    let c := chars[i]!.toNat
+    if arabicMark c then continue
+    if !arabicLetter c then
+      before := false
+      continue
+    let mut after := false
+    if arabicDual c then
+      for j in [i+1:chars.size] do
+        let n := chars[j]!.toNat
+        if arabicMark n then continue
+        after := arabicLetter n
+        break
+    forms := forms.set! i (some (match before,after with
+      | false,false => "isolated" | false,true => "initial"
+      | true,true => "medial" | true,false => "terminal"))
+    before := arabicDual c
+  return forms
 
 /-- Attributes of a text element that the strict reader paints with. -/
 private def paintKeys := ["fill","stroke","fill-opacity","stroke-opacity","color","display","visibility","opacity",
@@ -133,6 +244,8 @@ private structure TextState where
   size : Float := 16
   anchor : String := "start"
   family : String := ""
+  variant : String := "normal"
+  lang : String := ""
   strokeWidth : Float := 1
   /-- `line-increment`, SVG Tiny 1.2 §10.11.4; `none` is `auto`. -/
   lineIncrement : Option Float := none
@@ -165,6 +278,10 @@ private def TextState.read (s : TextState) (attrs : List NamespaceAttribute) : T
   { size := float (plainAttr attrs "font-size") s.size,
     anchor := (plainAttr attrs "text-anchor").getD s.anchor,
     family := (plainAttr attrs "font-family").getD s.family,
+    variant := keyword attrs "font-variant" ["normal","small-caps"] s.variant,
+    lang := match attrs.find? (fun a => a.name.namespace_ == some xmlURI && a.name.localPart == "lang") with
+      | some a => a.value
+      | none => s.lang,
     strokeWidth := float (plainAttr attrs "stroke-width") s.strokeWidth,
     lineIncrement := lineIncrementOf attrs s.lineIncrement,
     textAlign := keyword attrs "text-align" ["start","center","end"] s.textAlign,
@@ -175,10 +292,11 @@ private def TextState.read (s : TextState) (attrs : List NamespaceAttribute) : T
       | none => s.displayAlign,
     preserveSpace := spaceOf attrs s.preserveSpace }
 
-/-- CSS Fonts: the first named family that is known, else the default font. -/
-private def chooseFont (fonts : List SVGFont) (family : String) : Option SVGFont :=
+/-- CSS Fonts: the first named family with a font of the wanted variant, else the
+    default font. -/
+private def chooseFont (fonts : List SVGFont) (family variant : String) : Option SVGFont :=
   let names := (family.splitOn ",").map (fun n => (n.trimAscii.toString.replace "'" "").replace "\"" "")
-  (names.findSome? (fun name => fonts.find? (·.family == name))).orElse (fun _ => fonts.getLast?)
+  (names.findSome? (fun name => fonts.find? (fun f => f.family == name && f.variant == variant))).orElse (fun _ => fonts.getLast?)
 
 private structure Run where
   text : String
@@ -194,6 +312,7 @@ private structure Run where
   increment : Option Float := none
   preserveSpace : Bool := false
   anchor : String := "start"
+  lang : String := ""
 
 private def paintOf (attrs : List NamespaceAttribute) : List NamespaceAttribute :=
   attrs.filter fun a => a.name.namespace_.isNone && paintKeys.contains a.name.localPart
@@ -207,7 +326,7 @@ private def numberList (attrs : List NamespaceAttribute) (key : String) : List F
 private def textRuns (area : Bool) : Nat → TextState → List NamespaceAttribute → NamespaceNode → List Run × List String
   | 0,_,_,_ => ([],[])
   | _,state,paint,.other raw => match raw with
-    | .text t | .cdata t => ([{text := t, size := state.size, strokeWidth := state.strokeWidth, paint := paint, increment := state.lineIncrement, preserveSpace := state.preserveSpace, anchor := state.anchor}],[])
+    | .text t | .cdata t => ([{text := t, size := state.size, strokeWidth := state.strokeWidth, paint := paint, increment := state.lineIncrement, preserveSpace := state.preserveSpace, anchor := state.anchor, lang := state.lang}],[])
     | _ => ([],[])
   | fuel+1,state,paint,.element name attrs children =>
     if area && name.localPart == "tbreak" then
@@ -250,20 +369,33 @@ private def markGlyphs (box : Float × Float × Float × Float) : NamespaceNode 
       | node => node)
   | node => node
 
-/-- One character of a text, placed before anchoring. -/
+private def rightToLeftLanguage (lang : String) : Bool :=
+  ["ar","he","fa","ur","yi"].contains ((lang.toLower.splitOn "-").headD "")
+
+/-- One glyph of a text, in logical order. -/
 private structure Placed where
   glyph : Glyph
+  /-- The font of the glyph: the fallback font when the first font has none. -/
+  font : SVGFont
   run : Nat
-  x : Float
-  y : Float
+  /-- The first character of the glyph in the text. -/
+  source : Nat
+  x : Option Float := none
+  y : Option Float := none
+  dx : Float := 0
+  dy : Float := 0
   rotate : Float
   scale : Float
-  /-- An absolute position starts a text chunk (SVG Tiny 1.2 §10.5). -/
-  chunk : Bool
+  deriving Inhabited
+
+/-- Where a glyph ended up. -/
+private structure Position where
+  x : Float := 0
+  y : Float := 0
   deriving Inhabited
 
 /-- Lower one `text` element to a group of glyph paths. -/
-private def lowerText (font : SVGFont) (state : TextState) (attrs : List NamespaceAttribute)
+private def lowerText (font : SVGFont) (fallback : Option SVGFont) (state : TextState) (attrs : List NamespaceAttribute)
     (children : List NamespaceNode) : NamespaceNode × List String := Id.run do
   let state := state.read attrs
   let results := children.map (textRuns false maxDepth state [])
@@ -277,49 +409,79 @@ private def lowerText (font : SVGFont) (state : TextState) (attrs : List Namespa
   let xs := numberList attrs "x"
   let ys := numberList attrs "y"
   let rotations := numberList attrs "rotate"
-  let mut x := xs.headD 0 + (numberList attrs "dx").headD 0
-  let mut y := ys.headD 0 + (numberList attrs "dy").headD 0
+  -- All characters first: forms and direction depend on their neighbours.
+  let chars := (runs.flatMap (·.text.toList)).toArray
+  let forms := arabicForms chars
   let mut index := 0
   let mut placed : Array Placed := #[]
   for (run,runIndex) in runs.zipIdx do
-    x := x+run.dx
-    y := y+run.dy
-    if run.size <= 0 then continue
-    let scale := run.size/font.unitsPerEm
-    let mut previous : Option Glyph := none
-    for (c,position) in run.text.toList.zipIdx do
+    if run.size <= 0 then
+      index := index+run.text.length
+      continue
+    let text := run.text.toList.toArray
+    let start := index
+    let mut position := 0
+    let mut first := true
+    for _ in [:text.size] do
+      if position >= text.size then break
+      let at_ := start+position
       -- A coordinate list places the characters it covers (SVG Tiny 1.2 §10.5).
-      let mut absolute := index == 0
-      if let some value := run.xs[position]? then x := value; absolute := true
-      if let some value := run.ys[position]? then y := value; absolute := true
-      if position > 0 || index > 0 then
-        if let some value := xs[index]? then x := value; absolute := true
-        if let some value := ys[index]? then y := value; absolute := true
-      let g := font.glyph c
-      if !absolute then
-        x := x-((previous.bind (fun p => font.kerning.get? (p.name,g.name))).getD 0)*scale
+      let x := (run.xs[position]?).orElse (fun _ => xs[at_]?)
+      let y := (run.ys[position]?).orElse (fun _ => ys[at_]?)
+      -- A list on the text element or on a tspan ends a ligature here; none is near.
+      let found := ((font.pick chars at_ run.lang forms[at_]!).map (·,font)).orElse fun _ =>
+        (fallback.bind fun f => (f.pick chars at_ run.lang forms[at_]!).map (·,f))
+      let (g,owner) := found.getD (font.glyph text[position]!,font)
+      let scale := run.size/owner.unitsPerEm
       -- A rotation list: the last value holds for the characters after it.
-      let rotate := match rotations[index]? with
+      let rotate := match rotations[at_]? with
         | some value => value
         | none => rotations.getLast?.getD 0
-      placed := placed.push {glyph:=g,run:=runIndex,x,y,rotate,scale,chunk:=absolute}
-      index := index+1
-      x := x+g.advance*scale
-      previous := some g
-  -- Each chunk moves by its own anchor and width.
-  let mut shifts : Array Float := Array.replicate placed.size 0
+      placed := placed.push {glyph:=g,font:=owner,run:=runIndex,source:=at_,x:=x,y:=y,rotate:=rotate,scale:=scale,dx:=if first then run.dx else 0,dy:=if first then run.dy else 0}
+      first := false
+      position := position+max 1 g.text.length
+    index := start+text.size
+  -- An absolute position starts a text chunk (SVG Tiny 1.2 §10.5). Each chunk is laid
+  -- out in visual order (UAX 9), and moves by its anchor and width.
+  let mut positions : Array Position := Array.replicate placed.size {}
+  let mut x := (numberList attrs "dx").headD 0
+  let mut y := (numberList attrs "dy").headD 0
   let mut start := 0
   for i in [:placed.size] do
     let next := i+1
-    if next == placed.size || placed[next]!.chunk then
-      let first := placed[start]!
-      let last := placed[i]!
-      let width := last.x+last.glyph.advance*last.scale-first.x
-      let shift := match (runs[first.run]?.map (·.anchor)).getD "start" with
-        | "middle" => -width/2 | "end" => -width | _ => 0
-      for j in [start:next] do
-        shifts := shifts.set! j shift
-      start := next
+    let last := next == placed.size || placed[next]!.x.isSome || placed[next]!.y.isSome
+    if !last then continue
+    let cells := placed.extract start next
+    let head := cells[0]!
+    if let some value := head.x then x := value+(numberList attrs "dx").headD 0
+    if let some value := head.y then y := value+(numberList attrs "dy").headD 0
+    let chunkChars := cells.map fun c => chars[c.source]!
+    -- The initial `direction` is ltr (W3C fonts-glyph-02-t). W3C text-align-202-t puts the
+    -- start of text in `xml:lang="ar"` or `"he"` at the right, and no file sets `direction`.
+    let rightToLeft := rightToLeftLanguage ((runs[head.run]?.map (·.lang)).getD "")
+    let (levels,_) := L4Factoidal.Unicode.levelsOfChars chunkChars (if rightToLeft then .rtl else .ltr)
+    let order := L4Factoidal.Unicode.visualOrder levels
+    let origin := x
+    let mut previous : Option Placed := none
+    for k in order do
+      let cell := cells[k]!
+      x := x+cell.dx
+      y := y+cell.dy
+      if let some p := previous then
+        x := x-(cell.font.kern p.glyph cell.glyph)*cell.scale
+      positions := positions.set! (start+k) {x,y}
+      x := x+cell.glyph.advance*cell.scale
+      previous := some cell
+    let width := x-origin
+    let anchor := (runs[head.run]?.map (·.anchor)).getD "start"
+    let shift := match anchor,rightToLeft with
+      | "middle",_ => -width/2
+      | "end",false | "start",true => -width
+      | _,_ => 0
+    for j in [start:next] do
+      positions := positions.modify j fun p => {p with x:=p.x+shift}
+    x := x+shift
+    start := next
   let mut groups : Array NamespaceNode := #[]
   -- SVG Tiny 1.2 §7.11: the bounding box of a text is that of its character cells.
   let mut box : Option (Float × Float × Float × Float) := none
@@ -329,15 +491,16 @@ private def lowerText (font : SVGFont) (state : TextState) (attrs : List Namespa
     for i in [cursor:placed.size] do
       let cell := placed[i]!
       if cell.run != runIndex then break
-      let left := cell.x+shifts[i]!
+      let left := positions[i]!.x
+      let top := positions[i]!.y
       let g := cell.glyph
       let scale := cell.scale
       if !g.data.isEmpty then
         let turn := if cell.rotate == 0 then "" else s!" rotate({cell.rotate})"
         paths := paths.push (svgElement "path" [mkAttr "d" g.data,mkAttr "stroke-width" (toString (run.strokeWidth/scale)),
-          mkAttr "transform" s!"translate({left},{cell.y}){turn} scale({scale},{-scale})"] [])
-      let cellTop := cell.y-font.ascent*scale
-      let cellBottom := cell.y+font.descent*scale
+          mkAttr "transform" s!"translate({left},{top}){turn} scale({scale},{-scale})"] [])
+      let cellTop := top-cell.font.ascent*scale
+      let cellBottom := top+cell.font.descent*scale
       let cellRight := left+g.advance*scale
       box := some (match box with
         | none => (left,cellTop,cellRight,cellBottom)
@@ -366,7 +529,7 @@ private structure Cell where
   kern : Float
   space : Bool
   lineBreak : Bool := false
-instance : Inhabited Cell := ⟨⟨⟨"",0,""⟩,0,0,0,false,false⟩⟩
+instance : Inhabited Cell := ⟨⟨default,0,0,0,false,false⟩⟩
 
 /-- Cells `first` to `stop-1`. `run` is the run that gives the size of an empty line. -/
 private structure AreaLine where
@@ -398,7 +561,7 @@ private def areaCells (font : SVGFont) (runs : Array Run) : Array Cell := Id.run
       if space && !run.preserveSpace && afterGap then continue
       let g := font.glyph c
       let kern := match previous with
-        | some (r,p) => if r == current then ((font.kerning.get? (p.name,g.name)).getD 0)*scale else 0
+        | some (r,p) => if r == current then (font.kern p g)*scale else 0
         | none => 0
       cells := cells.push {glyph:=g,run:=current,advance:=g.advance*scale,kern,space}
       previous := some (current,g)
@@ -553,15 +716,44 @@ private def lowerArea (font : SVGFont) (state : TextState) (attrs : List Namespa
     | some box => groups.toList.map (markGlyphs box)
   return (svgElement "g" (ids ++ outer) marked,results.flatMap (·.2))
 
-/-- SVG Tiny 1.2 §5.8.2: this agent's language is en, and it has no extensions. -/
-private def conditionsPass (attrs : List NamespaceAttribute) : Bool :=
+/-- SVG Tiny 1.2 feature strings of what this pass and the reader draw. Animation, media,
+    scripting, handlers and the DOM are outside it, and an SVG 1.1 string is unknown,
+    so `requiredFeatures` with them is false (W3C struct-cond-03-t, struct-cond-205-t). -/
+private def supportedFeatures : List String :=
+  ["SVG-static","CoreAttribute","Structure","ConditionalProcessing","ConditionalProcessingAttribute",
+   "Image","Prefetch","Shape","Text","PaintAttribute","OpacityAttribute","GraphicsAttribute",
+   "Gradient","SolidColor","Hyperlinking","XlinkAttribute","ExternalResourcesRequired","Font",
+   "Extensibility","TextFlow"].map ("http://www.w3.org/Graphics/SVG/feature/1.2/#" ++ ·)
+
+private def supportedFormats : List String := ["image/svg+xml","image/png","image/jpeg"]
+
+private def spaceList (value : String) : List String :=
+  ((value.replace "\n" " " |>.replace "\t" " " |>.replace "\r" " ").splitOn " ").filter (· != "")
+
+/-- A list attribute that is present must be non-empty, and every item must hold. -/
+private def listPasses (attrs : List NamespaceAttribute) (key : String) (holds : String → Bool) : Bool :=
+  match plainAttr attrs key with
+  | none => true
+  | some value => let items := spaceList value; !items.isEmpty && items.all holds
+
+/-- `requiredFonts` is a list of family names, separated by commas. -/
+private def fontsPass (fonts : List SVGFont) (attrs : List NamespaceAttribute) : Bool :=
+  match plainAttr attrs "requiredFonts" with
+  | none => true
+  | some value =>
+    let names := (value.splitOn ",").map (fun n => (n.trimAscii.toString.replace "'" "").replace "\"" "")
+    names.any fun name => fonts.any (·.family == name)
+
+/-- SVG Tiny 1.2 §5.8: this agent's language is en, and it has no extensions. -/
+private def conditionsPass (fonts : List SVGFont) (attrs : List NamespaceAttribute) : Bool :=
   let language := match plainAttr attrs "systemLanguage" with
     | none => true
     | some value => (value.splitOn ",").any fun tag =>
       let tag := tag.trimAscii.toString.toLower
       tag == "en" || tag.startsWith "en-"
   let extensions := match plainAttr attrs "requiredExtensions" with | none => true | some _ => false
-  language && extensions
+  language && extensions && listPasses attrs "requiredFeatures" supportedFeatures.contains &&
+    listPasses attrs "requiredFormats" supportedFormats.contains && fontsPass fonts attrs
 
 /-- Elements of the tree that have an id, by id; the first one with an id wins. -/
 private def idTargets : Nat → NamespaceNode → List (String × NamespaceNode)
@@ -600,20 +792,20 @@ private def normalise (fonts : List SVGFont) (targets : Std.HashMap String Names
     | _ => (none,["processing instruction"])
   | fuel+1,state,_,.element name attrs children =>
     if name.namespace_ != some svgURI then (none,["foreign element: " ++ name.localPart])
-    else if !conditionsPass attrs then (none,[])
+    else if !conditionsPass fonts attrs then (none,[])
     else if name.localPart == "text" && !fonts.isEmpty then
       let inner := state.read attrs
-      match chooseFont fonts inner.family with
-      | some font => let (node,log) := lowerText font state attrs children; (some node,log)
+      match chooseFont fonts inner.family inner.variant with
+      | some font => let (node,log) := lowerText font fonts.getLast? state attrs children; (some node,log)
       | none => (none,["element: text"])
     else if name.localPart == "textArea" && !fonts.isEmpty then
-      match chooseFont fonts (state.read attrs).family with
+      match chooseFont fonts (state.read attrs).family (state.read attrs).variant with
       | some font => let (node,log) := lowerArea font state attrs children; (some node,log)
       | none => (none,["element: textArea"])
     else if name.localPart == "switch" then
       -- SVG Tiny 1.2 §5.8: draw only the first child whose conditions pass.
       let selected : NamespaceNode → Bool := fun
-        | .element n a _ => n.namespace_ == some svgURI && conditionsPass a | _ => false
+        | .element n a _ => n.namespace_ == some svgURI && conditionsPass fonts a | _ => false
       let chosen := children.find? selected
       let inner := state.read attrs
       let result := (chosen.toList).map (normalise fonts targets fuel inner false)

@@ -22,6 +22,45 @@ private def log (body : String) : List String := ((result body).map (·.2)).getD
 #guard primitives "<rect fill='nocolour' width='9' height='9'/><rect width='9' height='9'/>" == 2
 #guard (log "<rect fill='nocolour' width='9' height='9'/>").contains "approximated: colour nocolour"
 
+-- Text. `font` has the glyph shapes that these guards tell apart by position.
+private def tfont : SVGFont :=
+  match SVGFont.parse "<svg xmlns='http://www.w3.org/2000/svg'><font horiz-adv-x='1000'><font-face font-family='T' units-per-em='1000' ascent='1000' descent='0'/><glyph unicode=' ' horiz-adv-x='500'/><glyph unicode='a' glyph-name='a' d='M0 0H1000V1000H0Z'/><glyph unicode='ab' glyph-name='ab' horiz-adv-x='2000' d='M0 0H2000V500H0Z'/><glyph unicode='b' glyph-name='b' d='M0 0H1000V500H0Z'/><glyph unicode='c' lang='fr' d='M0 0H1000V1000H0Z'/><glyph unicode='&#x69A;' arabic-form='isolated' d='M0 0H1000V1000H0Z'/><glyph unicode='&#x69A;' arabic-form='initial' d='M0 0H1000V500H0Z'/><glyph unicode='&#x69A;' arabic-form='terminal' d='M0 500H1000V1000H0Z'/><hkern u1='U+0061' u2='a' k='500'/></font></svg>" with
+  | .ok f => f | .error _ => {}
+private def tpixel (body : String) (x y : Nat) : Float :=
+  match parse (svg body) 40 40 (some tfont) with
+  | .error _ => -1
+  | .ok (s,_) => (s.samplePixel x y).r
+private def inked (body : String) (x y : Nat) : Bool := tpixel body x y == 0
+private def clear (body : String) (x y : Nat) : Bool := tpixel body x y == 1
+-- xml:space: a newline goes by default, and is a space under preserve.
+#guard inked "<text x='0' y='10' font-size='10'>a\na</text>" 12 5 && clear "<text x='0' y='10' font-size='10' xml:space='preserve'>a\n a</text>" 12 5
+#guard inked "<text x='0' y='10' font-size='10' xml:space='preserve'> a</text>" 8 5 && clear "<text x='0' y='10' font-size='10' xml:space='preserve'> a</text>" 2 5
+-- A no-break space with no glyph draws as a space, not as the missing glyph.
+#guard inked "<text x='0' y='10' font-size='10'>&#160;a</text>" 8 5
+-- rotate turns a glyph about its origin, and the last value holds.
+#guard inked "<text x='20' y='20' font-size='10' rotate='90'>a</text>" 25 25 && clear "<text x='20' y='20' font-size='10' rotate='90'>a</text>" 25 15
+-- A tspan with x starts a chunk, with its own anchor.
+#guard inked "<text x='0' y='10' font-size='10'>a<tspan x='30' text-anchor='end'>a</tspan></text>" 25 5
+-- A ligature wins where it stands first; `lang` selects, and a fragment suits a language.
+#guard inked "<text x='0' y='10' font-size='10'>ab</text>" 15 8 && clear "<text x='0' y='10' font-size='10'>ab</text>" 15 2
+#guard inked "<text x='0' y='10' font-size='10' xml:lang='fr-ca'>c</text>" 5 2
+#guard clear "<text x='0' y='10' font-size='10' xml:lang='de'>c</text>" 5 2
+-- hkern with u1 and u2, by a range and by a character.
+#guard clear "<text x='0' y='10' font-size='10'>aa</text>" 16 5
+-- arabic-form follows joins, and the order is right to left.
+#guard inked "<text x='0' y='10' font-size='10'>&#x69A;&#x69A;</text>" 15 8 && clear "<text x='0' y='10' font-size='10'>&#x69A;&#x69A;</text>" 15 2
+
+-- Conditions. Each list must hold in full; an SVG 1.1 feature string is unknown.
+private def feature (name : String) := "http://www.w3.org/Graphics/SVG/feature/1.2/#" ++ name
+#guard primitives s!"<rect width='9' height='9' requiredFeatures='{feature "Shape"} {feature "Text"}'/>" == 1
+#guard primitives s!"<rect width='9' height='9' requiredFeatures='{feature "Shape"} {feature "Animation"}'/>" == 0
+#guard primitives "<rect width='9' height='9' requiredFeatures='http://www.w3.org/TR/SVG11/feature#BasicText'/>" == 0
+#guard primitives "<rect width='9' height='9' requiredFeatures=''/>" == 0
+#guard primitives "<rect width='9' height='9' requiredFormats='image/png image/svg+xml'/>" == 1
+#guard primitives "<rect width='9' height='9' requiredFormats='image/png foo/foo'/>" == 0
+#guard ((parse (svg "<rect width='9' height='9' requiredFonts='T'/>") 40 40 (some tfont)).toOption.map (·.1.compiled.length)) == some 1
+#guard primitives "<rect width='9' height='9' requiredFonts='T'/>" == 0
+
 -- `use` of another document. Only bytes that the host supplies are read.
 private def linked (body : String) : String :=
   "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' width='40' height='40'>" ++ body ++ "</svg>"
