@@ -169,6 +169,25 @@ private def up (fx : String) : Option String :=
 #guard up "11" == some "{\"action\":\"click\"}"
 #guard up "40" == some "{\"action\":\"select\"}"
 
+-- The kept layout: a render that takes it answers as one that lays out again.
+#guard WebDocument.layoutRequest (json [("shell",json [("scroll",.number "40")]),("url",.string "u"),
+  ("selection",.string "all"),("textScalePercent",.number "150"),("live",.bool true)]) ==
+  json [("url",.string "u"),("textScalePercent",.number "150")]
+private def keptPage : String := "<style>p{margin:0}</style>" ++ String.join ((List.range 40).map fun i => s!"<p>Line {i} of the page</p>")
+private def frame (scroll : Nat) (extra : List (String × JSON.Json) := []) (percent := "150") : JSON.Json :=
+  json ([("shell",json [("tabs",.array [json [("title",.string "t")]]),("active",.number "0"),("address",.string "a"),
+    ("cursor",.number "0"),("scroll",.number (toString scroll))]),("textScalePercent",.number percent),("binary",.bool true)] ++ extra)
+private def frames : List (String × JSON.Json × Nat) :=
+  [(keptPage,frame 0,300),(keptPage,frame 40,300),(keptPage,frame 80 [("selection",.string "all")],300),
+   (keptPage,frame 80 [("op",.string "selectedText"),("selection",.array [.number "0",.number "0",.number "300",.number "90"])],300),
+   (keptPage,frame 80,280),(keptPage,frame 80 [] "165",280),
+   (keptPage ++ "<p>more</p>",frame 80,280),(keptPage,frame 0 [("checks",.bool false)],280),(keptPage,frame 0,280)]
+#guard frames.all fun (html,request,width) =>
+  let kept := WebDocument.run html request width 200
+  let fresh := WebDocument.runUncached html request width 200
+  kept.toOption.isSome && kept.toOption == fresh.toOption
+#guard (WebDocument.run keptPage (frame 0 [("checks",.bool false)]) 280 200).toOption.any (·.contains "\"checks\":[]")
+
 /-- Optional runtime evidence uses actual HarfBuzz/FreeType records generated
 from the requests above. It does not replace the pure cascade/request guards. -/
 def main (args : List String) : IO UInt32 := do

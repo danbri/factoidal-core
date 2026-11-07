@@ -37,9 +37,21 @@ private def quote (s : String) : String :=
 private def jsonArray (xs : List String) : String := "[" ++ String.intercalate "," xs ++ "]"
 private def pow10 (n : Nat) : Float := (List.range n).foldl (fun x _ => x*10) 1
 
+/-- The same products with no list: `pow10` ran twice for each number read. -/
+private def pow10Fast (n : Nat) : Float := Nat.repeat (· * 10) n 1
+
+private theorem pow10_foldl (n : Nat) (x : Float) :
+    (List.range n).foldl (fun x _ => x*10) x = Nat.repeat (· * 10) n x := by
+  induction n generalizing x with
+  | zero => rfl
+  | succ n ih => rw [List.range_succ, List.foldl_append, ih]; rfl
+
+@[csimp] private theorem pow10_eq_fast : @pow10 = @pow10Fast := by
+  funext n; exact pow10_foldl n 1
+
 /-- Strict signed decimal/exponent lexer. Relative units and non-finite values
 are errors; bounded magnitudes keep this profile within useful f32 precision. -/
-def number (input : String) : Except String Float := do
+def numberReference (input : String) : Except String Float := do
   let s := trim input
   if s.length > 48 then error "numeric token exceeds 48 characters" else do
     let chars := s.toList
@@ -67,6 +79,59 @@ def number (input : String) : Except String Float := do
     let value := if negative then -unsigned else unsigned
     if !value.isFinite || value.abs > 1000000 then throw "numeric magnitude exceeds profile bound"
     return value
+
+/-- `numberReference` for the form `[+-]?digits[.digits]` with at most 24 digits and a
+    result in the profile bound, read from the bytes with no list of characters. Any
+    other text, including every text that `numberReference` refuses, gives `none`.
+    The value is the same expression of the same digit values. Checked against the
+    reference by the differential guards below, not by a proof. -/
+private def numberSimple? (s : String) : Option Float := Id.run do
+  let bytes := s.toUTF8
+  if bytes.size == 0 || bytes.size > 26 then return none
+  let mut i := 0
+  let negative := bytes[0]! == 45
+  if bytes[0]! == 45 || bytes[0]! == 43 then i := 1
+  let mut whole := 0
+  let mut wholeDigits := 0
+  for _ in [:bytes.size] do
+    unless i < bytes.size && 48 <= bytes[i]! && bytes[i]! <= 57 do break
+    whole := whole*10+(bytes[i]!-48).toNat
+    wholeDigits := wholeDigits+1
+    i := i+1
+  let mut fraction := 0
+  let mut fractionDigits := 0
+  if i < bytes.size && bytes[i]! == 46 then
+    i := i+1
+    for _ in [:bytes.size] do
+      unless i < bytes.size && 48 <= bytes[i]! && bytes[i]! <= 57 do break
+      fraction := fraction*10+(bytes[i]!-48).toNat
+      fractionDigits := fractionDigits+1
+      i := i+1
+  if i != bytes.size || wholeDigits+fractionDigits == 0 || wholeDigits+fractionDigits > 24 then return none
+  let integer := Float.ofNat whole
+  let decimal := Float.ofNat fraction / pow10 fractionDigits
+  let unsigned := (integer+decimal) * pow10 0
+  let value := if negative then -unsigned else unsigned
+  if !value.isFinite || value.abs > 1000000 then return none
+  return some value
+
+def number (input : String) : Except String Float :=
+  match numberSimple? input with
+  | some value => .ok value
+  | none => numberReference input
+
+private def sameNumber (text : String) : Bool :=
+  match number text,numberReference text with
+  | .ok a,.ok b => a.toBits == b.toBits
+  | .error a,.error b => a == b
+  | _,_ => false
+#guard ["0","1","-1","+1","1.","-.5",".5","12.25","-0","+0.0","007","123456789012","0.1","3.14159265358979",
+  "999999.9999","1000000","1000000.0001","-1000000","1e3","1E-2","1.5px"," 1","1 ","","-","+",".","-.",
+  "1.2.3","12345678901234567890123.4","123456789012345678901234","1234567890123456789012345","--1","1-",
+  "0.000000000000000000000001","5.5e","٣"].all sameNumber
+#guard (List.range 4000).all fun n =>
+  let t := toString n
+  sameNumber t && sameNumber ("-" ++ t) && sameNumber ("0." ++ t) && sameNumber (t ++ "." ++ toString (n*7919 % 100000))
 private def lengthNumber (input : String) : Except String Float :=
   let s := trim input
   number (if s.endsWith "px" then String.ofList (s.toList.take (s.length-2)) else s)
@@ -1436,6 +1501,42 @@ private def pointBox (points : List Point) : Float × Float × Float × Float :=
       (min b.1 p.x,min b.2.1 p.y,max b.2.2.1 p.x,max b.2.2.2 p.y)) (p.x,p.y,p.x,p.y)
     (x0,y0,x1-x0,y1-y0)
 
+/-- The running box of a fold over points. Its fields are stored as unboxed floats,
+    and a fold updates it in place: the tuple form above makes four boxed floats and
+    three pairs for each point, which was 13% of a frame of the status page. -/
+private structure BoxFold where
+  x0 : Float
+  y0 : Float
+  x1 : Float
+  y1 : Float
+
+private def BoxFold.add (b : BoxFold) (p : Point) : BoxFold :=
+  ⟨min b.x0 p.x,min b.y0 p.y,max b.x1 p.x,max b.y1 p.y⟩
+
+private theorem boxFold_eq (points : List Point) (b : BoxFold) :
+    points.foldl (fun (t : Float × Float × Float × Float) p =>
+      (min t.1 p.x,min t.2.1 p.y,max t.2.2.1 p.x,max t.2.2.2 p.y)) (b.x0,b.y0,b.x1,b.y1) =
+    let r := points.foldl BoxFold.add b
+    (r.x0,r.y0,r.x1,r.y1) := by
+  induction points generalizing b with
+  | nil => rfl
+  | cons p ps ih => exact ih (b.add p)
+
+private def pointBoxFast (points : List Point) : Float × Float × Float × Float :=
+  match points with
+  | [] => (0,0,0,0)
+  | p::rest =>
+    let r := rest.foldl BoxFold.add ⟨p.x,p.y,p.x,p.y⟩
+    (r.x0,r.y0,r.x1-r.x0,r.y1-r.y0)
+
+@[csimp] private theorem pointBox_eq_fast : @pointBox = @pointBoxFast := by
+  funext points
+  cases points with
+  | nil => rfl
+  | cons p rest =>
+    simp only [pointBox,pointBoxFast]
+    rw [boxFold_eq rest ⟨p.x,p.y,p.x,p.y⟩]
+
 /-- Object bounding box of the geometry, in its local frame: x, y, width, height.
     Stroke width takes no part in it (SVG Tiny 1.2 §7.11). -/
 private def Geometry.box : BackendGeometry → Float × Float × Float × Float
@@ -1453,10 +1554,10 @@ private def fallbackPaint : L4Factoidal.Rendering.FallbackPaint → Paint
 
 /-- Lower a server for one primitive. No stops paint as `none` (§11.16); a server
     that paints nothing for this geometry gives its fallback paint. -/
-private def lowerPaint (box : Float × Float × Float × Float) (cursor : Nat) : Paint → Except String Paint
+private def lowerPaint (box : Unit → Float × Float × Float × Float) (cursor : Nat) : Paint → Except String Paint
   | .gradient g =>
     if g.stops.isEmpty then pure .none else
-    match g.lower box with
+    match g.lower (box ()) with
     | none => pure (fallbackPaint g.fallback)
     | some record =>
       if !record.words.all (fun word => word.isFinite && word.toFloat32.isFinite) then
@@ -1507,7 +1608,8 @@ private def compilePrimitive (mapping : Mapping) (cursor : Nat) (p : Primitive) 
     mapping.tx-mapping.minX*mapping.sx,mapping.ty-mapping.minY*mapping.sy⟩
   let screen := root.compose p.transform
   let geometry ← p.geometry.compile screen
-  let box := geometry.box
+  -- Only a gradient reads the box, so it is not made for other paint.
+  let box := fun (_ : Unit) => geometry.box
   let fill ← lowerPaint box cursor p.style.fill
   let stroke ← lowerPaint box (cursor+fill.tableWords.length) p.style.stroke
   let widened := widenThinStroke screen {p.style with fill,stroke}
@@ -1976,6 +2078,20 @@ private def pointBounds (points : List Point) : List Float :=
     let bounds := rest.foldl (fun (b : Float × Float × Float × Float) p =>
       (min b.1 p.x,min b.2.1 p.y,max b.2.2.1 p.x,max b.2.2.2 p.y)) (p.x,p.y,p.x,p.y)
     [bounds.1,bounds.2.1,bounds.2.2.1,bounds.2.2.2]
+private def pointBoundsFast (points : List Point) : List Float :=
+  match points with
+  | [] => [0,0,0,0]
+  | p::rest =>
+    let r := rest.foldl BoxFold.add ⟨p.x,p.y,p.x,p.y⟩
+    [r.x0,r.y0,r.x1,r.y1]
+
+@[csimp] private theorem pointBounds_eq_fast : @pointBounds = @pointBoundsFast := by
+  funext points
+  cases points with
+  | nil => rfl
+  | cons p rest =>
+    simp only [pointBounds,pointBoundsFast]
+    rw [boxFold_eq rest ⟨p.x,p.y,p.x,p.y⟩]
 theorem pointBounds_length (points : List Point) : (pointBounds points).length = 4 := by
   cases points <;> simp [pointBounds]
 private def geometryRows : BackendGeometry → List Float
@@ -2207,6 +2323,24 @@ private def Scene.data (s : Scene) : Array Float :=
   ([s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
     s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight] ++
     s.compiled.flatMap Primitive.rows).toArray
+
+private theorem foldl_appendList {α β} (f : β → List α) (items : List β) (acc : Array α) :
+    items.foldl (fun acc p => acc.appendList (f p)) acc = (acc.toList ++ items.flatMap f).toArray := by
+  induction items generalizing acc with
+  | nil => simp
+  | cons p ps ih =>
+    rw [List.foldl_cons, ih]; simp [List.flatMap_cons]
+
+/-- The same floats, pushed onto one array: no list of every float of the scene. -/
+private def Scene.dataFast (s : Scene) : Array Float :=
+  s.compiled.foldl (fun acc p => acc.appendList p.rows)
+    #[s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
+      s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight]
+
+@[csimp] private theorem Scene.data_eq_fast : @Scene.data = @Scene.dataFast := by
+  funext s
+  simp only [Scene.data,Scene.dataFast]
+  rw [foldl_appendList]
 
 theorem Scene.data_size_eq_record_cursor (s : Scene) :
     s.data.size = 8 + (s.compiled.map fun p => p.rowCount*4).sum := by
@@ -2894,13 +3028,15 @@ private def Scene.checks (s : Scene) (data : Array Float) (live : Bool := false)
   let probes := (rawProbes.map fun (x,y) => (min (s.width-1) x,min (s.height-1) y)).eraseDups
   (probes.zip (s.samplesWithData data probes)).map fun ((x,y),color) => "{\"x\":" ++ toString x ++ ",\"y\":" ++ toString y ++ ",\"rgb\":" ++ color.json ++ "}"
 
-private def Scene.json (s : Scene) (live binary : Bool := false) : Except String String := do
+/-- `checks` false leaves out the CPU probes: they are for the GPU readback check, and
+    one probe was 19% of a frame of the status page and of the FOAF graph page. -/
+private def Scene.json (s : Scene) (live binary : Bool := false) (checks : Bool := true) : Except String String := do
   let data := s.data
   if data.size > maxDataFloats then throw "storage data exceeds 1048576 floats"
   let tiles := s.tiles
   -- The last word of `tiles` is the size of the paint table.
   if tiles.back! > maxPaintTableWords then throw s!"paint table exceeds {maxPaintTableWords} words"
-  let checks := s.checks data live
+  let checks := if checks then s.checks data live else []
   let tree := if DisplayNode.listNodeCount s.tree <= maxInspectorNodes
     then DisplayNode.listJSON s.tree else "null"
   return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
@@ -2910,7 +3046,8 @@ private def Scene.json (s : Scene) (live binary : Bool := false) : Except String
      else ",\"data\":" ++ jsonArray (floatJSONList data.toList)) ++ ",\"tiles\":" ++ jsonArray (tiles.toList.map toString) ++ ",\"wgsl\":" ++ sceneShaderJSON ++ ",\"checks\":" ++ jsonArray checks ++ "}"
 /-- Serialize an existing checked SVG scene through the same packed-data/WGSL
     producer as the string ABI; no XML serialization or reparsing is required. -/
-def Scene.artifact (s : Scene) (live binary : Bool := false) : Except String String := s.json live binary
+def Scene.artifact (s : Scene) (live binary : Bool := false) (checks : Bool := true) : Except String String :=
+  s.json live binary checks
 
 /-- Each part of the artifact as separate work, so that a tool can time it. A part
 returns a size, so that the work is done. -/

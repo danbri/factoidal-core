@@ -237,9 +237,10 @@ private def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box
 
 /-- Shared checked scene serialization for HTML and structured-document frontends. -/
 def artifact (scene : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
-    (font : Option Rendering.FontProvider.Face := none) (live binary : Bool := false) : Except String String := do
+    (font : Option Rendering.FontProvider.Face := none) (live binary : Bool := false) (checks : Bool := true) :
+    Except String String := do
   let native ← WebRenderSVG.toScene scene
-  let value ← native.artifact live binary
+  let value ← native.artifact live binary checks
   return (value.dropEnd 1).toString ++ ",\"webRender\":" ++ layoutJSON scene boxes font ++ "}"
 
 @[export web_render_compile]

@@ -272,30 +272,44 @@ private def loadFont (request : JSON.Json) : Except String String := do
   let held := keepFont ⟨font,{}⟩ request
   return (JSON.Json.object [("family",.string held.font.family),("glyphs",.number (toString held.font.face.numGlyphs))]).toString
 
-def run (html : String) (request : JSON.Json) (width height : Nat) : Except String String := do
-  let .object fields := request | throw "document request must be an object"
-  if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
-  if str request "op" == "fontLoad" then return ← loadFont request
-  if str request "op" == "xmlStylesheet" then
-    let url := match ← WebXslt.stylesheetHref html with
-      | some href => JSON.Json.string (Syntax.resolveIri (str request "url") href)
-      | none => .null
-    return (JSON.Json.object [("url",url)]).toString
-  if str request "op" == "xslt" then
-    let (source,engine) ← WebXslt.transform html (str request "stylesheet") (str request "url") (str request "stylesheetURL")
-    return (JSON.Json.object [("source",.string source),("engine",.string engine)]).toString
-  if let some answer ← inputOp (str request "op" "render") request then return answer
-  let dom ← prepareDOM html request
+/-- The request fields that a render reads before its layout ends. `shell` gives only
+the height of the chrome, which the key holds as `top`; `selection`, `live`, `binary`,
+`checks`, `op` and the scroll act after layout. -/
+def layoutFields : List String := ["commands","resources","images","url","fontData","textScalePercent"]
+
+/-- The request with only `layoutFields`, in that order. -/
+def layoutRequest (request : JSON.Json) : JSON.Json :=
+  .object (layoutFields.filterMap fun key => (request.field? key).map (key,·))
+
+/-- Everything that a render reads before its layout ends. The held font is named by
+its family and SHA-256: `layOut` reads the font that `fontLoad` holds, and only
+`fontLoad` replaces it. -/
+structure LayoutKey where
+  html : String
+  request : JSON.Json
+  width : Nat
+  height : Nat
+  /-- Height of the browser chrome above the page. -/
+  top : Nat
+  font : Option (String × String)
+  deriving DecidableEq
+
+/-- A laid-out document: the scene before the window, the selection and the chrome. -/
+structure Laid where
+  scene : Rendering.Scene
+  boxes : Array Rendering.Layout.Box
+  face : Option Rendering.FontProvider.Face
+
+/-- Parse, script check, cascade and layout of a render. It reads only the key: the
+request it reads is `key.request`, which has only `layoutFields`. -/
+def layOut (key : LayoutKey) : Except String Laid := do
+  let request := key.request
+  let dom ← prepareDOM key.html request
   validateResources dom request
   let _ ← classicScripts (WebRenderScript.scriptRecords dom)
-  let op := str request "op" "render"
-  if op == "inspect" then return (← inspect dom (str request "url")).toString
   let textScale := Float.ofNat (← scalePercent request) / 100
   let rules ← rules dom request
-  if op == "fontRequests" then
-    return WebRenderFontRequests.requestsJSON (← WebRenderFontRequests.collectDOMWithRules dom rules textScale)
-  if op != "render" && op != "selectedText" then throw "unknown document operation"
-  if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported document viewport"
+  if key.width == 0 || key.height == 0 || key.width > 4096 || key.height > 4096 then throw "unsupported document viewport"
   let fontData := str request "fontData"
   if !fontData.isEmpty then
     let _ ← WebRenderFontRequests.collectDOMWithRules dom rules textScale
@@ -310,10 +324,101 @@ def run (html : String) (request : JSON.Json) (width height : Nat) : Except Stri
     | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   let url := baseURL dom (str request "url")
   let embedding ← WebRender.makeEmbedding dom (if url.isEmpty then none else some url) (← suppliedImages request)
+  -- A window shorter than the chrome still lays out, on one row.
+  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding key.width (max 1 (key.height-key.top)) textScale
+  return {scene := scene,boxes := boxes,face := face}
+
+/-! ### The layout of the last render, kept
+
+A scroll, a selection or a pointer move sends the same document, width, height,
+chrome height, text scale and font again. `run` then takes the kept layout and does
+not parse, cascade or lay out again. The cache holds one entry, `(key, layOut key)`
+when that was a success. `lookupLayout` states what `run` does with it, and
+`lookupLayout_eq` shows the answer is `layOut key` for any entry so made. -/
+
+/-- An entry is valid when its value is the layout of its key. `keepLayout` makes
+only such entries. -/
+def ValidEntry (entry : Option (LayoutKey × Laid)) : Prop :=
+  ∀ key laid, entry = some (key,laid) → layOut key = .ok laid
+
+def lookupLayout (entry : Option (LayoutKey × Laid)) (key : LayoutKey) : Except String Laid :=
+  match entry with
+  | some (kept,laid) => if kept = key then .ok laid else layOut key
+  | none => layOut key
+
+theorem lookupLayout_eq (entry : Option (LayoutKey × Laid)) (valid : ValidEntry entry) (key : LayoutKey) :
+    lookupLayout entry key = layOut key := by
+  unfold lookupLayout
+  match entry, valid with
+  | none, _ => rfl
+  | some (kept,laid), valid =>
+    simp only
+    split
+    · next same => subst same; exact (valid kept laid rfl).symm
+    · rfl
+
+/-- The entry that a render leaves is valid. -/
+theorem stored_valid (key : LayoutKey) (laid : Laid) (made : layOut key = .ok laid) :
+    ValidEntry (some (key,laid)) := by
+  intro k l same
+  cases same
+  exact made
+
+initialize layoutRef : IO.Ref (Option (LayoutKey × Laid)) ← IO.mkRef none
+
+set_option compiler.extract_closed false in
+private unsafe def keptLayoutImpl (key : LayoutKey) : Option Laid :=
+  unsafeBaseIO do
+    match ← layoutRef.get with
+    | some (kept,laid) => return if kept == key then some laid else none
+    | none => return none
+private unsafe def keepLayoutImpl (key : LayoutKey) (laid : Laid) : Laid :=
+  unsafeBaseIO (do layoutRef.set (some (key,laid)); return laid)
+/-- These read and set the kept layout, as `heldFont` and `keepFont` do for the font. -/
+@[implemented_by keptLayoutImpl, noinline] private opaque keptLayout (key : LayoutKey) : Option Laid
+@[implemented_by keepLayoutImpl, noinline] private opaque keepLayout (key : LayoutKey) (laid : Laid) : Laid := laid
+
+/-- `lookupLayout` over the kept entry. -/
+private def cachedLayOut (key : LayoutKey) : Except String Laid :=
+  match keptLayout key with
+  | some laid => .ok laid
+  | none => keepLayout key <$> layOut key
+
+/-- A document request, with `laidOut` as the layout of a render. `run` passes the
+kept layout; `runUncached` passes `layOut`, so that tests compare the two. -/
+def runWith (laidOut : LayoutKey → Except String Laid) (html : String) (request : JSON.Json) (width height : Nat) :
+    Except String String := do
+  let .object fields := request | throw "document request must be an object"
+  if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
+  if str request "op" == "fontLoad" then return ← loadFont request
+  if str request "op" == "xmlStylesheet" then
+    let url := match ← WebXslt.stylesheetHref html with
+      | some href => JSON.Json.string (Syntax.resolveIri (str request "url") href)
+      | none => .null
+    return (JSON.Json.object [("url",url)]).toString
+  if str request "op" == "xslt" then
+    let (source,engine) ← WebXslt.transform html (str request "stylesheet") (str request "url") (str request "stylesheetURL")
+    return (JSON.Json.object [("source",.string source),("engine",.string engine)]).toString
+  if let some answer ← inputOp (str request "op" "render") request then return answer
+  let op := str request "op" "render"
+  if op != "render" && op != "selectedText" then
+    let dom ← prepareDOM html request
+    validateResources dom request
+    let _ ← classicScripts (WebRenderScript.scriptRecords dom)
+    if op == "inspect" then return (← inspect dom (str request "url")).toString
+    let textScale := Float.ofNat (← scalePercent request) / 100
+    let rules ← rules dom request
+    if op == "fontRequests" then
+      return WebRenderFontRequests.requestsJSON (← WebRenderFontRequests.collectDOMWithRules dom rules textScale)
+    throw "unknown document operation"
   let shell := (request.field? "shell").map WebShell.Shell.ofJson
   let top := (shell.map (fun value => WebShell.height value width)).getD 0
-  -- A window shorter than the chrome still lays out, on one row.
-  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding width (max 1 (height-top)) textScale
+  let font := (heldFont request).map fun held => (held.font.family,held.font.sha256)
+  let key : LayoutKey := ⟨html,layoutRequest request,width,height,top,font⟩
+  let laid ← laidOut key
+  let scene := laid.scene
+  let boxes := laid.boxes
+  let face := laid.face
   -- Pointer positions are in window coordinates; the page starts below the chrome.
   let moved := Float.ofNat top-Float.ofNat ((shell.map (·.scroll)).getD 0)
   let chosen := (← selection request).map (fun value => WebSelection.shift value moved)
@@ -331,6 +436,10 @@ def run (html : String) (request : JSON.Json) (width height : Nat) : Except Stri
   WebRender.artifact (match shell with
     | some value => WebShell.compose value page width height
     | none => page) boxes face (request.field? "live" == some (.bool true)) (request.field? "binary" == some (.bool true))
+    (request.field? "checks" != some (.bool false))
+
+def run := runWith cachedLayOut
+def runUncached := runWith layOut
 
 @[export web_document_compile]
 def compile (html request : String) (width height : UInt32) : String :=

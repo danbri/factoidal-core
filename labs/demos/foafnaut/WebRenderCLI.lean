@@ -125,6 +125,28 @@ def main (args : List String) : IO UInt32 := do
         bytes := bytes+(WebDocument.compile (html ++ String.ofList (List.replicate (i%2) ' ')) request w.toUInt32 h.toUInt32).utf8ByteSize
       IO.println s!"{n} frames, {((← IO.monoNanosNow)-start)/1000000/(max n 1)} ms each, {bytes} bytes"
       return 0
+    -- Scroll frames: the same document each time, with `shell.scroll` 40 pixels further.
+    if let ["--document-scroll",options,count,font] := flags then
+      let some w := width.toNat? | throw (IO.userError "invalid width")
+      let some h := height.toNat? | throw (IO.userError "invalid height")
+      let some n := count.toNat? | throw (IO.userError "invalid count")
+      let html ← IO.FS.readFile path
+      let .ok (request,_) := JSON.parseJsonText (← IO.FS.readFile options) | throw (IO.userError "invalid options JSON")
+      let at_ := fun (scroll : Nat) => match request with
+        | .object fields => (JSON.Json.object (fields.map fun (key,value) =>
+            if key != "shell" then (key,value) else match value with
+              | .object shell => (key,.object (shell.map fun (k,v) => if k == "scroll" then (k,.number (toString scroll)) else (k,v)))
+              | other => (key,other))).toString
+        | other => other.toString
+      IO.println (WebDocument.compile "" (← IO.FS.readFile font) 1 1)
+      let first := WebDocument.compile html (at_ 0) w.toUInt32 h.toUInt32
+      if first.startsWith "{\"error\"" then IO.println first; return 1
+      let start ← IO.monoNanosNow
+      let mut bytes := 0
+      for i in [0:n] do
+        bytes := bytes+(WebDocument.compile html (at_ (40*(i+1))) w.toUInt32 h.toUInt32).utf8ByteSize
+      IO.println s!"{n} scroll frames, {((← IO.monoNanosNow)-start)/1000/(max n 1)} us each, {bytes} bytes"
+      return 0
     if let ["--document",options] := flags then
       let some w := width.toNat? | throw (IO.userError "invalid width")
       let some h := height.toNat? | throw (IO.userError "invalid height")

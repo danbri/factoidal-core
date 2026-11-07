@@ -8,7 +8,7 @@ open NativeSVG
 private inductive Token where
   | command (value : Char)
   | number (lexical : String)
-  deriving Repr
+  deriving Repr, BEq
 private def space (c : Char) := [' ','\t','\n','\r'].contains c || c.toNat == 12
 private def numberStart (c : Char) := c.isDigit || ['+','-','.'].contains c
 private def numberToken (input : List Char) : String × List Char := Id.run do
@@ -24,7 +24,7 @@ private def numberToken (input : List Char) : String × List Char := Id.run do
       ('e'::sign++digits,rest)
     | _ => ([],tail)
   return (String.ofList (sign++whole++fraction++exponent),tail)
-private def tokens (source : String) : Except String (Array Token) := do
+private def tokensReference (source : String) : Except String (Array Token) := do
   if source.length > 65536 then throw "path data exceeds 65536 characters"
   let mut remaining := source.toList
   let mut out : Array Token := #[]
@@ -55,6 +55,89 @@ private def tokens (source : String) : Except String (Array Token) := do
       else throw "invalid path token"
       if out.size > 8*maxPathPoints then throw s!"path token count exceeds {8*maxPathPoints}"
   throw "path lexer exceeded input bound"
+
+private def spaceByte (b : UInt8) : Bool := b == 32 || b == 9 || b == 10 || b == 13 || b == 12
+private def digitByte (b : UInt8) : Bool := 48 <= b && b <= 57
+private def numberStartByte (b : UInt8) : Bool := digitByte b || b == 43 || b == 45 || b == 46
+private def alphaByte (b : UInt8) : Bool := (65 <= b && b <= 90) || (97 <= b && b <= 122)
+
+/-- The end of a run of digits from `i`, at most `limit`. -/
+private def digitsEnd (bytes : ByteArray) (i limit : Nat) : Nat := Id.run do
+  let mut j := i
+  for _ in [:limit-i] do
+    unless j < limit && digitByte bytes[j]! do break
+    j := j+1
+  return j
+
+/-- The lexeme of `numberToken` from byte `i`, read from at most 51 bytes as
+    `numberToken (remaining.take 51)` does: its end, and the text with `E` as `e`. -/
+private def numberTokenAt (bytes : ByteArray) (i : Nat) : Nat × String := Id.run do
+  let limit := min bytes.size (i+51)
+  let mut j := i
+  if j < limit && (bytes[j]! == 43 || bytes[j]! == 45) then j := j+1
+  j := digitsEnd bytes j limit
+  if j < limit && bytes[j]! == 46 then j := digitsEnd bytes (j+1) limit
+  if j < limit && (bytes[j]! == 101 || bytes[j]! == 69) then
+    j := j+1
+    if j < limit && (bytes[j]! == 43 || bytes[j]! == 45) then j := j+1
+    j := digitsEnd bytes j limit
+  let mut text := ""
+  for k in [i:j] do
+    let b := bytes[k]!
+    text := text.push (Char.ofNat (if b == 69 then 101 else b.toNat))
+  return (j,text)
+
+/-- `tokensReference` for text of ASCII bytes, by byte index with no list of
+    characters: 14% of a frame of the FOAF graph page went to the list form. Text
+    with any other byte goes to the reference. Checked against the reference by the
+    differential guards below, not by a proof. -/
+private def tokensAscii (source : String) : Except String (Array Token) := do
+  let bytes := source.toUTF8
+  if bytes.size > 65536 then throw "path data exceeds 65536 characters"
+  let mut i := 0
+  let mut out : Array Token := #[]
+  let mut previousNumber := false
+  for _ in [:bytes.size+1] do
+    if i >= bytes.size then return out
+    let c := bytes[i]!
+    if spaceByte c then i := i+1
+    else if c == 44 then
+      let mut j := i+1
+      for _ in [:bytes.size-j] do
+        unless j < bytes.size && spaceByte bytes[j]! do break
+        j := j+1
+      if !previousNumber || !(j < bytes.size && numberStartByte bytes[j]!) then throw "invalid path comma separator"
+      previousNumber := false
+      i := j
+    else if alphaByte c then
+      out := out.push (.command (Char.ofNat c.toNat))
+      previousNumber := false
+      i := i+1
+    else if numberStartByte c then
+      let (j,lexical) := numberTokenAt bytes i
+      if j-i > 50 then throw "path numeric/compact-flag token exceeds 50 characters"
+      i := j
+      out := out.push (.number lexical)
+      previousNumber := true
+    else throw "invalid path token"
+    if out.size > 8*maxPathPoints then throw s!"path token count exceeds {8*maxPathPoints}"
+  throw "path lexer exceeded input bound"
+
+private def tokens (source : String) : Except String (Array Token) :=
+  if source.utf8ByteSize == source.length then tokensAscii source else tokensReference source
+
+private def sameTokens (source : String) : Bool :=
+  match tokens source,tokensReference source with
+  | .ok a,.ok b => a == b
+  | .error a,.error b => a == b
+  | _,_ => false
+#guard ["","M0 0L10 10","M 1,2 L 3 4 z","m1.5-2.5e1l.5.5","M1E2,3e-2 4e+1 5","a10 10 0 1110 10","M1,,2","M1,",
+  ",1","M 1, 2","M1 ,2","M1 2,L3 4","M1 2 #","M-.5-.5","M1e","M1e+","M+.e1","M12345678901234567890123456789012345678901234567890 0",
+  "M1234567890123456789012345678901234567890123456789012345 0","M0 0\tL1\n1\r2\x0C3","M0 0 é","M1.2.3.4",
+  "C1 2 3 4 5 6s7 8 9 10Q1 2 3 4T5 6H7V8h9v10Z"].all sameTokens
+#guard (List.range 300).all fun n =>
+  let t := toString n
+  sameTokens ("M" ++ t ++ "," ++ toString (n*31 % 977) ++ "l-" ++ t ++ ".5e" ++ toString (n % 7) ++ ",." ++ t ++ "z")
 private structure Cursor where
   index : Nat := 0
   pending : Option String := none
