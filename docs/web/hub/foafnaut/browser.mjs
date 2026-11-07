@@ -54,6 +54,7 @@ worker.onmessage=({data})=>{
   if(data.type==='focus'){focused=data.focused;if(focused)keys.focus({preventScroll:true});else keys.blur();}
   if(data.type==='open'&&!window.open(data.url,'_blank','noopener')){note.hidden=false;note.textContent=`Open this address in your browser: ${data.url}`;}
   if(data.type==='error'){note.hidden=false;note.textContent=data.error;}
+  if(data.type==='note'){note.hidden=false;note.textContent=data.text;setTimeout(()=>{note.hidden=true;},6000);}
 };
 worker.onerror=event=>{note.hidden=false;note.textContent='The browser worker failed: '+event.message;};
 // A canvas can be handed to the worker once, so the worker says first whether it can draw
@@ -100,6 +101,8 @@ addEventListener('keydown',event=>{
   if(focused&&edits[event.key]){event.preventDefault();send({type:'key',key:edits[event.key],modifiers:modifiers(event)});return;}
   if((event.metaKey||event.ctrlKey)&&event.key==='u'){event.preventDefault();send({type:'command',command:13});return;}
   if(!focused&&event.key==='/'){event.preventDefault();send({type:'command',command:9});return;}
+  // A key for the page's scripts (issue 1271): a character, or a key name of UI Events.
+  if(!focused&&!event.metaKey&&!event.ctrlKey&&(event.key.length===1||/^(Enter|Escape|Backspace|Tab|Delete|Arrow(Up|Down|Left|Right)|Home|End|Page(Up|Down))$/.test(event.key)))send({type:'pagekey',key:event.key});
   if(!focused&&event.key==='ArrowDown')send({type:'scroll',amount:80*scale()});
   if(!focused&&event.key==='ArrowUp')send({type:'scroll',amount:-80*scale()});
   if(!focused&&(event.key===' '||event.key==='PageDown'))send({type:'scroll',amount:innerHeight*0.8*scale()});

@@ -4,6 +4,13 @@
 // an iframe sandbox without allow-same-origin has an opaque origin, and the worker
 // constructor refuses that (Foafos guests). `post` is the only way out of the loop.
 let post=(message,transfer)=>self.postMessage(message,transfer);
+// Page scripts (issue 1271): the same session and runtime as the desktop window, with the
+// QuickJS-NG reactor and the Lean module of this site's runtime directory.
+import {createScriptSession} from './script-engine/session.mjs';
+import {createPageScripts} from './script-engine/page-scripts.mjs';
+import {verifiedJSAvailable} from './script-engine/verifiedjs/adapter.mjs';
+const runtimeBase=new URL('../html-webgpu/runtime/',import.meta.url);
+let scriptSetting='quickjs',scriptNote='';
 const inWorker=typeof WorkerGlobalScope!=='undefined'&&self instanceof WorkerGlobalScope;
 const pagesBase=new URL('./pages/',import.meta.url).href,siteOrigin=new URL(import.meta.url).origin;
 const homeURL=pagesBase+'index.html',settingsURL=pagesBase+'settings.html';
@@ -26,7 +33,7 @@ function call(source,options,w=1,h=1){
   finally{module.ccall('web_render_free',null,['number'],[pointer]);}
 }
 const shell=()=>({tabs:tabs.map((tab,i)=>({title:(i===active?doc:tab.doc)?.title??''})),active,...field,focused,
-  canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll});
+  canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,script:doc?.script?.marker||scriptNote});
 const push=(state,url)=>call('',{op:'historyPush',history:state,url});
 const refusal=(url,message)=>{
   const text=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;');
@@ -107,10 +114,73 @@ async function prepare(url){
     sources.push({kind:'XSLT source',url:xsl.url,source:xsl.source},{kind:'Generated page',url:page.url,source:page.source});
   }
   const facts=call(page.source,{op:'inspect',url:page.url});
-  return {url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources};
+  const prepared={url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources};
+  // Lean lists the classic scripts; this host fetches the bytes of an external one.
+  const classic=(facts.scripts??[]).filter(script=>script.kind==='classic');
+  if(classic.length){
+    const texts=[];
+    for(const script of classic){
+      if(!script.src){texts.push(script.source);continue;}
+      const fetched=await fetchText(script.url);texts.push(fetched.source);sources.push({kind:'Script',url:fetched.url,source:fetched.source});
+    }
+    prepared.script={sources:texts,nodes:facts.nodes??[],next:facts.next??0,commands:[],notice:'',marker:''};
+    await startScripts(prepared);
+  }
+  return prepared;
 }
+// Lean says what the setting means for the page; an engine that can not start refuses the
+// page, and one that fails later has stopped. Either way the page and the chrome say why.
+let scriptWaiters=[];
+async function startScripts(page){
+  const script=page.script;
+  let plan;
+  try{plan=call('',{op:'scriptPlan',setting:scriptSetting,scripts:script.sources.length});}
+  catch{post({type:'note',text:'This engine build has no page scripts; the scripts of this page did not run.'});return;}
+  const unavailable=plan.run&&plan.engine==='verifiedjs'?verifiedJSAvailable():'';
+  if(unavailable)plan=call('',{op:'scriptPlan',setting:scriptSetting,scripts:script.sources.length,unavailable});
+  script.marker=plan.marker;script.notice=plan.notice;
+  if(!plan.run)return;
+  let starting=true;
+  const session=createScriptSession({wasmURL:new URL('qjs-wasi-reactor.wasm',runtimeBase).href,leanModuleURL:new URL('web-render.mjs',runtimeBase).href});
+  const runtime=createPageScripts({session,
+    compact:async commands=>call(page.source,{op:'compactCommands',url:page.url,commands}).commands,
+    onBatch:(batch,kind)=>{
+      script.commands=runtime.commands;
+      for(const value of batch.errors)console.warn('foafnaut page script:',value);
+      if(kind==='start'||!batch.commands.length)return Promise.resolve();
+      if(page!==doc)return new Promise(resolve=>setTimeout(resolve,1000));
+      return new Promise(resolve=>{scriptWaiters.push(resolve);request();});
+    },
+    onStop:reason=>{
+      const stop=call('',{op:'scriptPlan',setting:scriptSetting,scripts:script.sources.length,...(starting?{unavailable:reason}:{failure:reason})});
+      script.marker=stop.marker;script.notice=stop.notice;if(page===doc)request();
+    }});
+  script.runtime=runtime;
+  try{await runtime.start({nodes:script.nodes,next:script.next,sources:script.sources,budgetMs:200,document:{source:page.source,url:page.url,commands:[]}});}
+  catch{/* onStop put the reason on the page */}
+  finally{starting=false;}
+}
+const scripted=page=>({...(page?.script?.commands.length?{commands:page.script.commands}:{}),...(page?.script?.notice?{scriptNotice:page.script.notice}:{})});
+const runtimeOf=page=>page?.script?.runtime&&!page.script.runtime.stopped?page.script.runtime:undefined;
+// The element a click goes to: Lean's hit test over the boxes of the elements with a click
+// listener, in document rows (the frame is composed under the chrome).
+function scriptTarget(runtime,x,y){
+  const ids=new Set(runtime.listeners.filter(l=>l.type==='click').map(l=>l.nodeId));
+  const boxes=(frame?.webRender.boxes??[]).filter(box=>ids.has(box[0]));
+  if(boxes.length){
+    const top=call('',{op:'shellHeight',shell:shell(),width}).height;
+    const rows=boxes.map(([id,bx,by,bw,bh])=>[id,'',bx,by,bw,bh]);
+    const bottom=Math.max(1,...boxes.map(b=>Math.ceil(b[2]+b[4])+1));
+    const pointer=module.ccall('web_render_hit','number',['string','number','number','number','number'],[JSON.stringify(rows),frame.width,bottom,x,y-top+scroll]);
+    try{const hit=JSON.parse(module.UTF8ToString(pointer));if(hit?.sourceNode!==undefined)return hit.sourceNode;}
+    finally{module.ccall('web_render_free',null,['number'],[pointer]);}
+  }
+  return runtime.documentListeners.includes('click')?null:undefined;
+}
+function retire(page){if(page&&page!==doc&&!tabs.some(tab=>tab.doc===page))runtimeOf(page)?.stop('the page was closed');}
 function show(next,remember=true){
-  doc=next;if(!focused)field=showURL(next.url);scroll=0;loading=false;
+  const previous=doc;scriptNote='';
+  doc=next;retire(previous);if(!focused)field=showURL(next.url);scroll=0;loading=false;
   if(remember){history=push(history.history,next.url);pages++;}
   request();
 }
@@ -196,6 +266,11 @@ function shellCommand(name,argument){
   else if(name==='graph')openGraph().catch(error=>{doc=refusal('foafnaut:graph',String(error.message??error));request();});
   else if(name==='theme'){theme=argument||(theme==='next'?'arcade':'next');request();}
   else if(name==='zoom'&&/^[0-9]+$/.test(argument)){percent=Math.max(50,Number(argument));request();}
+  // The page script setting (issue 1271): pages opened from now on use it.
+  else if(name==='scripts'){
+    try{scriptSetting=call('',{op:'scriptSetting',setting:argument}).setting;scriptNote=call('',{op:'scriptPlan',setting:scriptSetting,scripts:1}).marker;request();}
+    catch(error){post({type:'error',error:String(error.message??error)});}
+  }
   else navigate(settingsURL);
 }
 function go(answer){
@@ -224,7 +299,8 @@ async function draw(){
     const start=performance.now(),inputAt=pendingStamp;pendingStamp=undefined;
     try{
       // A page already on screen had Lean's full probe set on its first frame.
-      const next=render(doc.source,{op:'render',url:doc.url,textScalePercent:percent,shell:shell(),live:doc===checked,binary:true},width,height);
+      const next=render(doc.source,{op:'render',url:doc.url,...scripted(doc),textScalePercent:percent,shell:shell(),live:doc===checked,binary:true},width,height);
+      const shown=scriptWaiters;scriptWaiters=[];
       checked=doc;
       const laid=performance.now();
       let rgba,pixelHash,gpuMs;
@@ -243,6 +319,7 @@ async function draw(){
       }
       frame=next;
       const done=performance.now();
+      for(const resolve of shown)resolve();
       post({type:'frame',width:next.width,height:next.height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,inputAt,
         stats:{path:surfaceCanvas?'surface':'readback',layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
           pixelHash,primitives:next.primitiveCount,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent}},rgba?[rgba.buffer]:[]);
@@ -321,11 +398,23 @@ function apply(data){
   if(data.type==='release'&&frame&&!data.scrolled){
     if(call('',{op:'shellHit',shell:shell(),x:data.x,y:data.y,width}).control)return;
     const target=hit(data.x,data.y);
+    // A click on an element with a script listener is a script turn first (issue 1271).
+    const runtime=runtimeOf(doc),node=runtime?scriptTarget(runtime,data.x,data.y):undefined;
+    if(runtime&&node!==undefined){
+      const page=doc;
+      runtime.dispatch({type:'click',nodeId:node??undefined}).then(batch=>{
+        if(!batch.defaultPrevented&&target?.href&&page===doc){const answer=call('',{op:'shellLink',href:target.href});
+          if(answer.go==='page')go({go:'page',url:new URL(target.href,doc.baseURL||doc.url).href});else go(answer);}
+      }).catch(()=>{});
+      return;
+    }
     if(target?.href){
       const answer=call('',{op:'shellLink',href:target.href});
       if(answer.go==='page')go({go:'page',url:new URL(target.href,doc.baseURL||doc.url).href});else go(answer);
     }
   }
+  // Keys to the page's scripts when the address bar does not have the focus.
+  if(data.type==='pagekey'&&!focused){const runtime=runtimeOf(doc);if(runtime?.documentListeners.includes('keydown'))runtime.dispatch({type:'keydown',key:String(data.key)}).catch(()=>{});}
   if(data.type==='text'&&focused){const {clipboard:_,...next}=call('',{op:'shellText',shell:shell(),text:data.text});field=next;request();}
   if(data.type==='key'&&focused){
     if(data.key===36){const target=field.address;leaveAddress();go(call('',{op:'shellSubmit',address:target}));}

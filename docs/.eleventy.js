@@ -52,6 +52,11 @@ module.exports = function(eleventyConfig) {
     eleventyConfig.addPassthroughCopy(`web/hub/foafnaut/${name}`);
   }
   eleventyConfig.addPassthroughCopy({ "../labs/demos/foafnaut/pages": "web/hub/foafnaut/pages" });
+  // Page scripts (issue 1271): the script session and runtime the browser worker imports.
+  // The QuickJS-NG reactor is a fetched binary in the runtime directory, never committed.
+  for (const name of ["guest.mjs", "lean-dom.mjs", "page-scripts.mjs", "quickjs.mjs", "session.mjs", "worker.mjs", "NOTICE", "verifiedjs/adapter.mjs", "verifiedjs/pin.mjs"]) {
+    eleventyConfig.addPassthroughCopy({ [`../labs/demos/foafnaut/web-render/script-engine/${name}`]: `web/hub/foafnaut/script-engine/${name}` });
+  }
   eleventyConfig.addPassthroughCopy({ "../third_party/fonts/noto-sans": "web/hub/foafnaut/fonts/noto-sans" });
   eleventyConfig.addPassthroughCopy({
     "../labs/demos/foafnaut/web-render/fixtures": "web/hub/html-webgpu/fixtures"

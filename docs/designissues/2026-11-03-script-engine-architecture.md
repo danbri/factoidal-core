@@ -6,6 +6,11 @@ the QuickJS heap in separate WebAssembly memories. Exchange bounded node
 projections, typed mutation commands and event messages. A timeout destroys
 the worker and its script state.
 
+Extended 7 November by [Page scripts in every host](2026-11-07-page-scripts-in-every-host.md):
+the engine setting, element creation, queries, timers, animation frames and the desktop
+window. Its guest API replaces the MVP list below; the budgets below still hold, except
+that a turn may make 1,024 commands.
+
 ## Modules and ownership
 
 ```text
