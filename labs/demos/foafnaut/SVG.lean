@@ -211,11 +211,10 @@ inductive Paint where
   deriving Repr
 inductive FillRule where | nonzero | evenodd
   deriving Repr, BEq
-inductive LineCap where | butt | round
-  deriving Repr, BEq
+/-- A line has pieces whenever it has a stroke, so only a round cap needs a mark. -/
 def LineCap.headerModeBit : LineCap → Nat
-  | .butt => 0
   | .round => 1
+  | _ => 0
 structure Style where
   fill : Paint := .solid (rgb 0 0 0)
   stroke : Paint := .none
@@ -228,6 +227,8 @@ structure Style where
   visible : Bool := true
   rule : FillRule := .nonzero
   lineCap : LineCap := .butt
+  lineJoin : LineJoin := .miter
+  miterLimit : Float := 4
   deriving Repr
 private def attr (attrs : List NamespaceAttribute) (key : String) : Option String :=
   (attrs.find? (fun a => a.name.namespace_.isNone && a.name.localPart == key)).map (·.value)
@@ -518,10 +519,21 @@ private def readStyle (lengths : LengthContext) (paints : PaintContext) (attrs :
     match trim value with
     | "inherit" => pure () | "butt" => style := {style with lineCap:=.butt}
     | "round" => style := {style with lineCap:=.round}
+    | "square" => style := {style with lineCap:=.square}
     | _ => throw s!"unsupported stroke-linecap: {value}"
-  for (key,allowed) in [("stroke-linejoin",["miter","inherit"]),("stroke-miterlimit",["4","inherit"])] do
-    if let some value := attr attrs key then
-      if !allowed.contains (trim value) then throw s!"unsupported {key}: {value}"
+  if let some value := attr attrs "stroke-linejoin" then
+    match trim value with
+    | "inherit" => pure () | "miter" => style := {style with lineJoin:=.miter}
+    | "round" => style := {style with lineJoin:=.round}
+    | "bevel" => style := {style with lineJoin:=.bevel}
+    | _ => throw s!"unsupported stroke-linejoin: {value}"
+  if let some value := attr attrs "stroke-miterlimit" then
+    if trim value != "inherit" then
+      -- SVG Tiny 1.2 §11.4: the value is a number of at least 1.
+      match number value with
+      | .ok limit => if limit >= 1 then style := {style with miterLimit:=limit}
+                     else throw s!"unsupported stroke-miterlimit: {value}"
+      | .error _ => throw s!"unsupported stroke-miterlimit: {value}"
   return style
 private def applyCSS (lengths : LengthContext) (paints : PaintContext) (rules : List NativeSVGCSS.Rule)
     (tag : String) (attrs : List NamespaceAttribute) (nested : Bool := false) : Except String (List NamespaceAttribute) :=
@@ -1013,7 +1025,7 @@ private def dashedParts (g : BackendGeometry) (style : Style) (authorLength : Op
         if !scale.isFinite then throw "pathLength calibration exceeds finite range"
         let pattern := style.dashArray.map (·.calibrated scale)
         pure (pattern,style.dashOffset.calibrated scale)
-  return some (← NativeSVGStroke.retain contours pattern offset style.strokeWidth (style.lineCap == .round))
+  return some (← NativeSVGStroke.retain contours pattern offset style.strokeWidth style.lineCap style.miterLimit style.lineJoin)
 
 private def extraAttrs (tag : String) : List String :=
   match tag with
@@ -1699,7 +1711,7 @@ private def strokeShapeCondition (g : BackendGeometry) (base : Nat) (cap : LineC
     let butt := .both (.not (le len (.lit 0)))
       (.both (.both (le (.lit 0) h) (le h (.lit 1)))
         (le (squared (.subV delta (.scale h d))) (.mul half half)))
-    if cap == .butt then butt else
+    if cap != .round then butt else
       -- Capsule = finite strip plus its endpoint disks. Cross multiplication
       -- avoids division, including the zero-length round-cap disk case.
       let projection := Expr.dot delta d
@@ -2078,7 +2090,9 @@ private def Primitive.screenBox (m : Mapping) (p : BackendPrimitive) :
   | [x0,y0,x1,y1] =>
     let pad : Float := match p.style.stroke with
       | .none => 0
-      | _ => 2*p.style.strokeWidth+1
+      -- A miter tip is at most miterLimit*width/2 from its vertex, and a square
+      -- cap's corner is less than width from its end.
+      | _ => (max 2 (p.style.miterLimit/2))*p.style.strokeWidth+1
     let corners := [(x0-pad,y0-pad),(x1+pad,y0-pad),(x0-pad,y1+pad),(x1+pad,y1+pad)]
     let pixels := corners.map fun (x,y) =>
       let w := p.transform.apply x y

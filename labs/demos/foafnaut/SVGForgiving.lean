@@ -122,7 +122,8 @@ private def SVGFont.glyph (font : SVGFont) (c : Char) : Glyph :=
   font.glyphs.getD c font.missing
 
 /-- Attributes of a text element that the strict reader paints with. -/
-private def paintKeys := ["fill","stroke","fill-opacity","stroke-opacity","color","display","visibility","opacity"]
+private def paintKeys := ["fill","stroke","fill-opacity","stroke-opacity","color","display","visibility","opacity",
+  "stroke-linejoin","stroke-linecap","stroke-miterlimit"]
 
 private structure TextState where
   size : Float := 16
