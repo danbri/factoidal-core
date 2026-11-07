@@ -195,6 +195,53 @@ private def historyFields (h : WebHistory.History) (url : Option String) : List 
    ("url",match url with | some value => .string value | none => .null),
    ("canBack",.bool h.canBack),("canForward",.bool h.canForward)]
 
+/-! ### Press acknowledgement (issue 1268)
+
+On a pointer press the host asks `press` (a small call on the main thread). Lean
+answers what is pressed (a chrome control, or the link under the pointer) and the
+rectangles that the composite darkens (`compositePress`) until a Lean frame that
+includes the press is presented. Rectangles are in source rows: chrome rows
+`0 .. top`, then page-layer rows moved down by `top`, so a scroll in the band moves
+them with the page. -/
+
+/-- The most rectangles one press darkens: `compositeShader` has room for this many. -/
+def maxPressRects : Nat := 8
+
+private def natField (j : JSON.Json) (key : String) : Nat :=
+  match j.field? key with | some (.number n) => n.toNat?.getD 0 | _ => 0
+
+/-- The answer to `press`: `control` for a chrome control; `sourceNode` and `href` for a
+link of the page layer (`links`, in band rows, as the frame answered them, picked at
+`(x,row)`); `rects` for the composite. -/
+def press (request : JSON.Json) : Except String String := do
+  let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
+  let width := natField request "width"
+  let x := natField request "x"
+  let y := natField request "y"
+  let top := WebShell.height shell width
+  let rect := fun (r : Nat × Nat × Nat × Nat) =>
+    JSON.Json.array [.number (toString r.1),.number (toString r.2.1),.number (toString r.2.2.1),.number (toString r.2.2.2)]
+  match WebShell.hit shell width x y with
+  | some control =>
+    let rects := (WebShell.pressBox shell width control).toList
+    return (JSON.Json.object [("control",.string control),("rects",.array (rects.map rect))]).toString
+  | none =>
+    let regions ← match request.field? "links" with
+      | some (.array items) => Rendering.Links.decode (JSON.Json.array items).toString
+      | _ => pure []
+    -- `row`: the page-layer row under the pointer, as the host converts it for `hit`.
+    let row := Float.ofNat (natField request "row")
+    match Rendering.hitLink regions (Float.ofNat x) row with
+    | none => return (JSON.Json.object [("control",.null),("sourceNode",.null),("rects",.array [])]).toString
+    | some target =>
+      let same := (regions.filter (·.sourceNode == target.sourceNode)).take maxPressRects
+      let rects := same.map fun r =>
+        let left := r.x.floor.toUInt32.toNat
+        let upper := (max r.y.floor 0).toUInt32.toNat
+        (left,upper+top,(r.x+r.width).ceil.toUInt32.toNat-left,(r.y+r.height).ceil.toUInt32.toNat-upper)
+      return (JSON.Json.object [("control",.null),("sourceNode",.number (toString target.sourceNode)),
+        ("href",.string target.href),("rects",.array (rects.map rect))]).toString
+
 /-- Input decisions need no document, so they do not parse one. -/
 private def inputOp (op : String) (request : JSON.Json) : Except String (Option String) := do
   if op == "command" then
@@ -221,6 +268,7 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     let some (.number width) := request.field? "width" | throw "width required"
     return some (JSON.Json.object [("control",match WebShell.hit shell (width.toNat?.getD 1) (x.toNat?.getD 0) (y.toNat?.getD 0) with
       | some name => .string name | none => .null)]).toString
+  if op == "press" then return some (← press request)
   if op == "shellText" then
     return some (WebShell.Shell.ofJson ((request.field? "shell").getD .null) |>.typed (str request "text")).editJson.toString
   if op == "shellKey" then
@@ -324,20 +372,56 @@ theorem composite_row_lt (b : Band) (top view scroll y : Nat) (fits : b.fits vie
   simp only [Band.fits,Bool.and_eq_true,decide_eq_true_eq] at fits
   omega
 
-/-- The WGSL of `composite`: binding 0 the chrome texture, 1 the page texture,
-2 the words `top`, `offset` and the page layer height. A row past the page layer
-is white, as the scene shader paints outside its viewport. -/
+/-- The source row of window row `y`: the chrome row, or the page-layer row moved down
+by `top`. Press rectangles (`press`) are in these rows. -/
+def sourceRow (top offset y : Nat) : Nat := if y < top then y else y-top+offset+top
+
+/-- `(x,row)` is in one of the rectangles `(x,y,w,h)`. -/
+def inRects (rects : List (Nat × Nat × Nat × Nat)) (x row : Nat) : Bool :=
+  rects.any fun (rx,ry,rw,rh) => rx ≤ x && x < rx+rw && ry ≤ row && row < ry+rh
+
+/-- The composite with a press acknowledgement: `tint` applied where a press rectangle
+covers the source pixel. -/
+def compositePress {α : Type} (tint : α → α) (chrome page : Nat → Nat → α) (top offset : Nat)
+    (rects : List (Nat × Nat × Nat × Nat)) (x y : Nat) : α :=
+  let c := composite chrome page top offset x y
+  if inRects rects x (sourceRow top offset y) then tint c else c
+
+/-- With no press rectangle the composite is unchanged: `composite_eq_frame` still holds. -/
+theorem compositePress_nil {α : Type} (tint : α → α) (chrome page : Nat → Nat → α) (top offset x y : Nat) :
+    compositePress tint chrome page top offset [] x y = composite chrome page top offset x y := by
+  simp [compositePress,inRects]
+
+/-- A page rectangle moves with the page: at any offset, the window pixel that shows
+page-layer row `r` is darkened exactly when `(x, r+top)` is in a rectangle. -/
+theorem sourceRow_page (top offset y : Nat) (below : top ≤ y) :
+    sourceRow top offset y = (y-top+offset)+top := by
+  unfold sourceRow; split <;> omega
+
+/-- The press darkening: three quarters of each colour channel, alpha kept. -/
+def pressShade : Float := 0.75
+
+/-- The WGSL of `compositePress`: binding 0 the chrome texture, 1 the page texture,
+2 ten words-of-four: `place[0]` is `top`, `offset`, the page layer height and the
+rectangle count (at most `maxPressRects`); `place[1..8]` the rectangles `(x,y,w,h)`
+in source rows. A row past the page layer is white, as the scene shader paints
+outside its viewport. -/
 def compositeShader : String :=
   "@group(0) @binding(0) var chrome:texture_2d<f32>;\n" ++
   "@group(0) @binding(1) var page:texture_2d<f32>;\n" ++
-  "@group(0) @binding(2) var<uniform> place:vec4u;\n" ++
+  s!"@group(0) @binding(2) var<uniform> place:array<vec4u,{maxPressRects+2}>;\n" ++
   "@vertex fn vertex(@builtin(vertex_index) i:u32)->@builtin(position) vec4f {" ++
   "let vertices=array<vec2f,3>(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));return vec4f(vertices[i],0,1);}\n" ++
+  "fn pressed(x:u32,row:u32)->bool {" ++
+  s!"for(var i=1u;i<=min(place[0].w,{maxPressRects}u);i++)\{let r=place[i];" ++
+  "if(x>=r.x&&x<r.x+r.z&&row>=r.y&&row<r.y+r.w){return true;}}return false;}\n" ++
   "@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {" ++
-  "let x=u32(pixel.x);let y=u32(pixel.y);" ++
-  "if(y<place.x){return textureLoad(chrome,vec2u(x,y),0);}" ++
-  "let row=y-place.x+place.y;if(row>=place.z){return vec4f(1.0);}" ++
-  "return textureLoad(page,vec2u(x,row),0);}\n"
+  "let x=u32(pixel.x);let y=u32(pixel.y);let top=place[0].x;var c:vec4f;var source=y;" ++
+  "if(y<top){c=textureLoad(chrome,vec2u(x,y),0);}" ++
+  "else{let row=y-top+place[0].y;source=row+top;" ++
+  "if(row>=place[0].z){c=vec4f(1.0);}else{c=textureLoad(page,vec2u(x,row),0);}}" ++
+  s!"if(pressed(x,source))\{c=vec4f(c.rgb*{pressShade},c.a);}" ++
+  "return c;}\n"
 
 /-- The page layer of a band: the page moved up by `b.top`, with the glyphs within
 `bandMargin` of the band. `extra` (the selection) is not filtered. -/
@@ -363,7 +447,7 @@ def chromeLayer (shell : WebShell.Shell) (page : Rendering.Scene) (width : Nat) 
 /-- The answer to a render with `layers:true`. -/
 def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
-    (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) :
+    (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false) :
     Except String (String × Array ByteArray) := do
   let top := WebShell.height shell width
   let view := max 1 (height-top)
@@ -374,7 +458,7 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
   let number := fun (n : Nat) => JSON.Json.number (toString n)
   let place := JSON.Json.object [("top",number top),("view",number view),("bandTop",number b.top),
     ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
-    ("composite",.string compositeShader)]
+    ("composite",.string compositeShader),("hoverRules",.bool hoverRules)]
   return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
     pageSections ++ chromeSections)
 
@@ -408,7 +492,8 @@ private def loadFont (request : JSON.Json) : Except String String := do
 /-- The request fields that a render reads before its layout ends. `shell` gives only
 the height of the chrome, which the key holds as `top`; `selection`, `live`, `binary`,
 `checks`, `tree`, `op` and the scroll act after layout. -/
-def layoutFields : List String := ["commands","resources","images","url","fontData","textScalePercent","graphModel"]
+def layoutFields : List String := ["commands","resources","images","url","fontData","textScalePercent","graphModel",
+  "hover","active","visited"]
 
 /-- The request with only `layoutFields`, in that order. -/
 def layoutRequest (request : JSON.Json) : JSON.Json :=
@@ -432,6 +517,26 @@ structure Laid where
   scene : Rendering.Scene
   boxes : Array Rendering.Layout.Box
   face : Option Rendering.FontProvider.Face
+  /-- An author rule names `:hover`: a pointer move over the page can change the frame. -/
+  hoverRules : Bool := false
+
+/-- The element state of a request (Selectors 4 §9): `hover` and `active` are node ids
+of the page (a link's `sourceNode`); `visited` lists URLs of the session history. A
+hyperlink is visited when its `href`, resolved against the document base URL, is one
+of them. An id outside the document is no element. -/
+def elementState (dom : DOM.Dom) (base : String) (request : JSON.Json) : Except String Rendering.CSS.ElementState := do
+  let node := fun (key : String) => match request.field? key with
+    | some (.number n) => n.toNat?.bind fun id => if id < dom.size then some id else none
+    | _ => none
+  let urls ← match request.field? "visited" with
+    | none => pure []
+    | some (.array items) => items.mapM fun | .string u => pure u | _ => throw "visited entries must be URLs"
+    | some _ => throw "visited must be an array"
+  if urls.length > WebHistory.maxEntries then throw "visited exceeds the history bound"
+  let visited := if urls.isEmpty then [] else (dom.treeOrder 0).toList.filter fun id =>
+    let n := dom.get id
+    Rendering.CSS.isHyperlink n && urls.contains (Syntax.resolveIri base (attr n "href"))
+  return {hover := node "hover", active := node "active", visited}
 
 /-- Parse, script check, cascade and layout of a render. It reads only the key: the
 request it reads is `key.request`, which has only `layoutFields`. With `graphModel`
@@ -468,8 +573,10 @@ def layOut (key : LayoutKey) : Except String Laid := do
     | some m => pure (WebGraph.embedding m)
     | none => WebRender.makeEmbedding dom (if url.isEmpty then none else some url) (← suppliedImages request)
   -- A window shorter than the chrome still lays out, on one row.
-  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding key.width (max 1 (key.height-key.top)) textScale
-  return {scene := scene,boxes := boxes,face := face}
+  let state ← elementState dom url request
+  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding key.width (max 1 (key.height-key.top)) textScale state
+  let hoverRules := rules.any fun rule => rule.selectors.any fun sel => sel.parts.any (·.pseudo.contains .hover)
+  return {scene := scene,boxes := boxes,face := face,hoverRules}
 
 /-! ### The layout of the last render, kept
 
@@ -583,7 +690,7 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   let tree := request.field? "tree" == some (.bool true)
   if let some value := shell then
     if request.field? "layers" == some (.bool true) then
-      return ← layersJSON value scene marks boxes face width height live form checks tree
+      return ← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := scene.tree.filter (inWindow (scrolled-512) (scrolled+Float.ofNat height+512))
   let page := {scene with tree := near ++ marks}

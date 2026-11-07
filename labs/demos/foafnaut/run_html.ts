@@ -41,6 +41,9 @@ async function main() {
     // Twenty scroll steps of 120 backing pixels down the page: per-step frame time and input latency.
     else if(arg==="--scroll-sweep")commands=Array.from({length:20},()=>[11,-120,0]);
     else if(arg==="--history-sweep")commands=["left","link","left","right","[","]","]","[","link1","]","[","]"];
+    // Press and hold a link, then the reload button, then release each (issue 1268): the
+    // press acknowledgement, the Lean frame of a held press, and the release.
+    else if(arg==="--press-sweep")commands=["press-link","hold","release","hold","press-reload","hold","release","hold"];
     else throw new Error(`Unknown native HTML argument: ${arg}`);
   }
   // Lean engine for compile: --native-engine PATH, else libweb-render.dylib beside the program, else Wasm.
@@ -139,6 +142,15 @@ async function main() {
   // coordinates of the presented frame, as link picking is.
   const view:PageView={textScalePercent:150};
   let press:number[]|undefined,lastCopied:string|undefined,loading=false;
+  // The press on screen (issue 1268): Lean's `press` answer (a chrome control, or the link's
+  // node for `:active`, and the rectangles that the composite darkens), the time its event was
+  // queued, and whether a Lean frame that includes it was asked for and presented.
+  // `hoverNode` is the link under the pointer, sent only when an author rule names `:hover`.
+  type Pressed={control?:string;active?:number;rects:number[][];at:number;framed:boolean;asked:boolean};
+  let pressed:Pressed|undefined,pressPresent=false,hoverNode:number|undefined,eventAt=0;
+  const pressOverlayMs:number[]=[],pressFrameMs:number[]=[];
+  // A press held this long gets a Lean frame with `:active` (and the sunken chrome button).
+  const PRESS_FRAME_MS=150;
   // Session history is a Lean value. The host keeps it and loads the URLs Lean returns.
   let history=engine.historyPush({entries:[],index:0},document.url);
   // The chrome is a Lean value too. The host stores it and shows what Lean draws.
@@ -146,14 +158,28 @@ async function main() {
   let address=document.url,cursor=0,focused=false,fresh=false,theme="next",pages=1,scale=1,active=0,scroll=0;
   const tabs:{document:typeof document;history:typeof history;scroll:number}[]=[{document,history,scroll:0}];
   const shell=()=>({tabs:tabs.map((tab,index)=>({title:(index===active?document:tab.document).title??""})),active,address,cursor,focused,
-    canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll});
-  const shown=()=>({...view,shell:shell()});
+    canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,pressed:pressed?.control??""});
+  // The URLs of the session history of every tab: Lean matches `:visited` against them.
+  const visited=()=>[...new Set([...tabs.flatMap((tab,index)=>(index===active?history:tab.history).history.entries)])].slice(-100);
+  const shown=()=>({...view,shell:shell(),visited:visited(),
+    ...(pressed?.active!==undefined?{active:pressed.active}:{}),...(hoverNode!==undefined?{hover:hoverNode}:{})});
   const showTab=(index:number)=>{
     controller?.abort();candidate=undefined;loading=false;focused=false;active=index;
     ({document,history,scroll}=tabs[index]);address=document.url;dirty=true;
     native?.setHistory(history.canBack,history.canForward);
   };
   const keepTab=()=>{tabs[active]={document,history,scroll};};
+  // The composite darkens Lean's rectangles at once (no Lean call); a Lean frame that
+  // includes the press replaces the darkening (renderFrame).
+  const startPress=(answer:{control?:string;active?:number;rects:number[][]})=>{
+    pressed={...answer,at:eventAt,framed:false,asked:false};
+    if(layered&&current&&session){session.setPress(answer.rects);pressPresent=true;}
+  };
+  const endPress=()=>{
+    const was=pressed;if(!was)return;pressed=undefined;
+    session?.setPress(undefined);
+    if(was.framed||was.asked)dirty=true;else if(layered&&current)pressPresent=true;
+  };
   const newTab=()=>{keepTab();tabs.push({document:home,history:engine.historyPush({entries:[],index:0},home.url),scroll:0});showTab(tabs.length-1);};
   const closeTab=(index:number)=>{
     if(tabs.length===1){running=false;return;}
@@ -340,7 +366,7 @@ async function main() {
       refuse(target,error);
     });
   };
-  let lastStep=0;
+  let lastStep=0,stepAt=0,pressAt=[0,0];
   let lastActivity=performance.now(),queueMax=0,fatal:unknown,rendering:Promise<void>|undefined;
   let awaiting:{kind:number;at:number}[]=[],awaitingShift:{kind:number;at:number}[]=[],awaitingBand:{kind:number;at:number}[]=[],checkedFrames=0,workerFrames=0,mainFrames=0;
   let shifting:Promise<void>|undefined;const shifts:number[]=[];
@@ -359,9 +385,12 @@ async function main() {
       pumpGapAfterFirstFrameMs:{count:pumpGapsLate.length,p50:percentile(pumpGapsLate,0.5),p95:percentile(pumpGapsLate,0.95),max:pumpGapsLate.length?Math.round(Math.max(...pumpGapsLate)*10)/10:null},
       slowCalls,
       pumpGapMs:{p50:percentile(pumpGaps,0.5),p95:percentile(pumpGaps,0.95),max:pumpGaps.length?Math.round(Math.max(...pumpGaps)*10)/10:null},
-      prefetch:prefetchStats,queueMax,sessionStats:session?.stats};
+      prefetch:prefetchStats,queueMax,sessionStats:session?.stats,
+      // Pointer press to the present that shows it: the composite darkening, and the Lean frame of a held press.
+      press:{overlay:{count:pressOverlayMs.length,p50Ms:percentile(pressOverlayMs,0.5),maxMs:pressOverlayMs.length?Math.round(Math.max(...pressOverlayMs)*10)/10:null},
+        frame:{count:pressFrameMs.length,p50Ms:percentile(pressFrameMs,0.5),maxMs:pressFrameMs.length?Math.round(Math.max(...pressFrameMs)*10)/10:null}}};
     trace(line.type,line);
-    if(perfSummary)console.log(`engine: ${engineRan}\ninput latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
+    if(perfSummary)console.log(`engine: ${engineRan}\ninput latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
   };
   try {
     device=await adapter.requestDevice();native=await nativePreflight(()=>loadNativeWindow());
@@ -405,6 +434,8 @@ async function main() {
       // A new page starts at the top, so its band does too.
       const request=requestAt(nextDocument,nextDocument!==document?0:scroll);
       const sentWidth=width,sentHeight=height;
+      // The press this frame includes (`active`, `shell.pressed`), if any.
+      const carried=pressed;if(carried)carried.asked=true;
       // A prefetch for another state would only hold the worker: drop it if it has not started.
       if(prefetching&&!sameState(prefetching.key,stateKey(nextDocument,request.options,sentWidth,sentHeight)))worker?.dropLow();
       // Events from here on mark the page dirty again: latest state wins, in the next frame.
@@ -432,7 +463,16 @@ async function main() {
       // With layers, the composite shows the scroll of now, kept in the new band.
       const scrollNow=nextDocument!==document?0:scroll;
       const place=nextLayers?clampOffset(nextLayers.layers,scrollNow):undefined;
+      // Lean draws the press in this frame: the composite does not darken it again.
+      if(carried&&carried===pressed)session!.setPress(undefined);
       const result=nextLayers?await session!.drawLayers(nextLayers,sentWidth,sentHeight,place!.offset,everyFrame):await session!.draw(next,everyFrame);
+      if(carried&&carried===pressed){
+        if(result.presented){carried.framed=true;pressFrameMs.push(result.presentedAt-carried.at);
+          trace("native-html-press",{state:"frame",control:carried.control??null,active:carried.active??null,fromQueuedMs:ms(carried.at,result.presentedAt)});}
+        else session!.setPress(carried.rects);
+      }
+      // Released while Lean made this frame with the press: draw it again without.
+      if(carried&&carried!==pressed)dirty=true;
       if(result.presented)lastRequest={request,width:sentWidth,height:sentHeight,document:nextDocument};
       const finished=performance.now();
       const stats=session!.stats;
@@ -486,6 +526,8 @@ async function main() {
     };
     const handle=(event:UIEvent)=>{
         if(event.kind===6){running=false;return;}
+        // A release ends the press look, on the graph page too.
+        if(event.kind===4&&pressed)endPress();
         if(event.kind===1){
           if(event.a<1||event.b<1)return;
           if(event.a>4096||event.b>4096)throw new Error("Native HTML window exceeds 4096 backing pixels; close or use a smaller window");
@@ -521,12 +563,21 @@ async function main() {
         if(event.kind===2){
           // Hit coordinates and boxes belong to the successfully presented frame.
           if(!session?.frames)return;
-          const control=engine.shellHit(shell(),event.a,event.b,width);
-          if(control){chrome(control);return;}
+          // One small Lean call: the control or the link pressed, and what the composite darkens.
+          const answer=engine.press(shell(),event.a,event.b,width,pageRow(event.b),layered&&current?frame.webRender.links as unknown[]:[]);
+          const control=answer.control;
+          if(control){if(answer.rects.length)startPress({control,rects:answer.rects});chrome(control);return;}
           if(focused)leaveAddress();
           if((document as Page).graph){graphInput(2,event.a,event.b);return;}
           press=[event.a,event.b,event.a,event.b];
+          if(typeof answer.sourceNode==="number")startPress({active:answer.sourceNode,rects:answer.rects});
           if(view.selection){view.selection=undefined;dirty=true;}
+        }
+        // `:hover` (links only): a new frame when the link under the pointer changes, and only
+        // when an author rule names `:hover`.
+        if(event.kind===3&&!press&&layered&&current?.layers.layers.hoverRules){
+          const node=engine.hit(frame,event.a,pageRow(event.b))?.sourceNode;
+          if(node!==hoverNode){hoverNode=node;dirty=true;}
         }
         if(event.kind===3&&press){press=[press[0],press[1],event.a,event.b];view.selection=press;dirty=true;}
         if(event.kind===4&&press){
@@ -552,7 +603,7 @@ async function main() {
         if(batch.length>QUEUE_WARN)trace("native-html-queue-high",{queued:batch.length});}
       for(const {event,at} of batch){
         if(!running)break;
-        shiftedByEvent=false;
+        shiftedByEvent=false;eventAt=at;
         handle(event);
         // An event with a visible effect waits until a frame that includes it is presented.
         // A scroll in the band waits only for the composite at its offset.
@@ -574,6 +625,20 @@ async function main() {
         Deno.exitCode=3;running=false;continue;
       }
       if(fatal)throw fatal;
+      // A press or a release: present the composite with Lean's press rectangles, or with none.
+      // No Lean call; it waits only for GPU work already asked for.
+      if(pressPresent&&!shifting&&current&&native.canPresent()){
+        pressPresent=false;
+        const start=performance.now(),p=pressed;
+        shifting=session!.shift(shownOffset,false).then(result=>{
+          trace("native-html-press",{state:p?"down":"up",control:p?.control??null,active:p?.active??null,rects:p?.rects.length??0,
+            presented:result.presented,totalMs:ms(start,performance.now()),...(p?{fromQueuedMs:ms(p.at,result.presentedAt)}:{})});
+          if(!result.presented){pressPresent=true;return;}
+          if(p&&p===pressed)pressOverlayMs.push(result.presentedAt-p.at);
+          lastActivity=Math.max(lastActivity,performance.now());
+        }).catch(error=>{fatal=error;}).finally(()=>{shifting=undefined;});
+      }
+      if(pressed&&!pressed.asked&&!dirty&&!rendering&&performance.now()-pressed.at>=PRESS_FRAME_MS){pressed.asked=true;dirty=true;}
       // A scroll in the band: present the composite at the new offset. A Lean frame in the
       // worker does not wait for this, and this does not wait for it.
       if(shiftPending&&!shifting&&current&&native.canPresent()){
@@ -582,6 +647,8 @@ async function main() {
         // Past the band on screen, a prefetched band of the same state that keeps the scroll is drawn
         // and shown: no Lean wait. Without one, the view stays at the band edge until a band comes.
         const swap=!keeps(current.layers.layers,scroll)&&swapReady()?prefetched!:undefined;
+        // Press rectangles are in the rows of the band on screen; another band needs a Lean frame.
+        if(swap&&pressed&&session!.pressed){session!.setPress(undefined);dirty=true;}
         if(!swap&&!keeps(current.layers.layers,scroll)&&!bandComing())dirty=true;
         const shownLayers=swap?swap.layers:current.layers;
         const start=performance.now(),{offset,exact}=clampOffset(shownLayers.layers,scroll),at=scroll;
@@ -634,7 +701,7 @@ async function main() {
       if(dirty&&native.canPresent()&&!rendering){
         waiting=false;
         rendering=renderFrame().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
-      } else if(!everyFrame&&!dirty&&!rendering&&!shifting&&!shiftPending&&session?.frames&&!session.lastChecked&&native.canPresent()&&performance.now()-lastActivity>=IDLE_CHECK_MS){
+      } else if(!everyFrame&&!dirty&&!rendering&&!shifting&&!shiftPending&&!pressed&&!pressPresent&&session?.frames&&!session.lastChecked&&native.canPresent()&&performance.now()-lastActivity>=IDLE_CHECK_MS){
         // Interactive frames are not read back. When input has been idle, the last frame is drawn again with the checks.
         rendering=idleCheck().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
       }
@@ -648,7 +715,7 @@ async function main() {
       // a Lean frame for a new band runs meanwhile, as when a person scrolls.
       const scrollStep=layered&&Array.isArray(commands?.[0])&&(commands![0] as number[])[0]===11;
       const settled=!dirty&&!rendering&&!graphBusy()&&!loading&&!shiftPending&&!shifting;
-      if(commands&&session?.frames&&(settled||(scrollStep&&!loading&&!shiftPending&&!shifting&&performance.now()-lastStep>=16))){
+      if(commands&&session?.frames&&performance.now()>=stepAt&&(settled||(scrollStep&&!loading&&!shiftPending&&!shifting&&performance.now()-lastStep>=16))){
         lastStep=performance.now();
         const step=commands.shift();
         if(step==="graph"){shellCommand("graph","");loading=true;setTimeout(()=>{loading=false;},600);}
@@ -658,6 +725,18 @@ async function main() {
           native.testEvent(2,x,y);native.testEvent(4,x,y);
         }
         else if(step==="settle")trace("native-html-paste",{url:document.url,title:document.title});
+        else if(step==="hold")stepAt=performance.now()+300;
+        else if(step==="press-link"){
+          const link=frame.webRender.links[0] as number[];pressAt=[Math.round(link[2]+link[4]/2),Math.round(windowRow(link[3]+link[5]/2))];
+          native.testEvent(2,pressAt[0],pressAt[1]);
+        }
+        else if(step==="press-reload"){
+          // The reload button's centre: WebShell.boxes at this scale, checked with Lean's hit.
+          pressAt=[78*scale,44*scale];
+          if(engine.shellHit(shell(),pressAt[0],pressAt[1],width)!=="reload")trace("native-html-press",{state:"sweep-miss",at:pressAt});
+          native.testEvent(2,pressAt[0],pressAt[1]);
+        }
+        else if(step==="release")native.testEvent(4,pressAt[0],pressAt[1]);
         else if(typeof step==="string")trace("native-html-test-key",{key:step,handled:native.testKey(step,"+_".includes(step))});
         else if(step)native.testEvent(step[0],step[1],step[2]);else{if(native.readClipboard()===lastCopied)native.writeClipboard(savedClipboard);running=false;}
       }

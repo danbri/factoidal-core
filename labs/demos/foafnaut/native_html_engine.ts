@@ -11,7 +11,9 @@ export type HTMLArtifact = {
 /** A render with `layers:true` (WebDocument.layersJSON): the chrome layer in window
 rows, the page layer in band rows from page row `bandTop`, and the WGSL that puts them
 in the window. `keepFrom`..`keepTo` are the scrolls that this band shows with no new render. */
-export type HTMLLayerPlace = {top:number;view:number;bandTop:number;bandHeight:number;keepFrom:number;keepTo:number;composite:string};
+export type HTMLLayerPlace = {top:number;view:number;bandTop:number;bandHeight:number;keepFrom:number;keepTo:number;composite:string;hoverRules?:boolean};
+/** Lean's answer to a pointer press: the chrome control or the link pressed, and the rectangles the composite darkens. */
+export type PressAnswer = {control:string|null;sourceNode?:number|null;href?:string;rects:number[][]};
 export type HTMLLayers = {layers:HTMLLayerPlace;page:HTMLArtifact;chrome:HTMLArtifact};
 export type Inspection = {
   baseURL:string;
@@ -189,6 +191,8 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     },
     // Lean decides what a chrome click, a key, an address and a link mean.
     shellHit:(shell:unknown,x:number,y:number,width:number)=>(documentCall("",{op:"shellHit",shell,x,y,width}) as {control:string|null}).control,
+    // A press: the control or the link under the pointer (`row` is the page-layer row) and what to darken.
+    press:(shell:unknown,x:number,y:number,width:number,row:number,links:unknown[])=>documentCall("",{op:"press",shell,x,y,width,row:Math.max(0,Math.floor(row)),links}) as PressAnswer,
     shellText:(shell:unknown,text:string)=>documentCall("",{op:"shellText",shell,text}) as ShellEdit,
     shellKey:(shell:unknown,key:number)=>documentCall("",{op:"shellKey",shell,key}) as ShellEdit,
     shellSubmit:(address:string)=>documentCall("",{op:"shellSubmit",address}) as ShellGo,
