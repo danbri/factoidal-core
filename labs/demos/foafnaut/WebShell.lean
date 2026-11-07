@@ -45,6 +45,9 @@ structure Shell where
   scroll : Nat := 0
   /-- The control the pointer is pressed on (`:active`), or "". -/
   pressed : String := ""
+  /-- The page script marker, `WebRenderScript.Plan.marker`: which engine runs the
+  page's scripts, or that they are off, refused or stopped. "" for a page with none. -/
+  script : String := ""
   deriving Repr, BEq
 
 private structure Theme where
@@ -255,7 +258,10 @@ private def addressNodes (s : Shell) (t : Theme) (box : Box) : List Rendering.No
   let size := dot s
   let textX := box.x+22*u
   let textY := box.y+(box.h-7*size)/2
-  let room := box.w-28*u
+  -- The page script marker sits at the right end of the field (issue 1271).
+  let marker := fit s s.script (box.w/3)
+  let markerWidth := if marker.isEmpty then 0 else marker.length*charWidth s+10*u
+  let room := box.w-28*u-markerWidth
   let prompt := text t.accent ">" (box.x+8*u) textY size
   let shown := if s.focused then fitEnd s s.address room else fitEnd s s.address room
   let body := if s.address.isEmpty && !s.focused
@@ -270,7 +276,10 @@ private def addressNodes (s : Shell) (t : Theme) (box : Box) : List Rendering.No
     then [paint t.selected (textX+lo*charWidth s-u) (textY-u) ((hi-lo)*charWidth s) (7*size+2*u)] else []
   -- As in a macOS text field, a selection hides the caret.
   let cursor := if s.focused && hi == lo then [paint t.accent (textX+column s.cursor*charWidth s) (textY-u) (5*size) (7*size+2*u)] else []
-  bevel s t t.well false box.x box.y box.w box.h ++ prompt ++ marked ++ cursor ++ body
+  let markerNodes := if marker.isEmpty then [] else
+    let x := box.x+box.w-markerWidth
+    [paint t.selected x (box.y+3*u) (markerWidth-4*u) (box.h-6*u)] ++ text t.wellInk marker (x+3*u) textY size
+  bevel s t t.well false box.x box.y box.w box.h ++ prompt ++ marked ++ cursor ++ body ++ markerNodes
 
 /-- The bar under the chrome: a thin accent line, or a level bar while loading. -/
 private def edgeNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.Node := Id.run do
@@ -555,7 +564,7 @@ def Shell.ofJson (j : JSON.Json) : Shell :=
     anchor := min (nat j "anchor" cursor) address.length,undo := step "undo",redo := step "redo",typing := flag j "typing",
     focused := flag j "focused",canBack := flag j "canBack",canForward := flag j "canForward",
     loading := flag j "loading",scale := max 1 (nat j "scale" 1),theme := str j "theme" "next",pages := nat j "pages",
-    scroll := nat j "scroll", pressed := str j "pressed" }
+    scroll := nat j "scroll", pressed := str j "pressed", script := String.ofList ((str j "script").toList.take 32) }
 
 private def Snapshot.json (v : Snapshot) : JSON.Json :=
   .object [("address",.string v.address),("cursor",.number (toString v.cursor)),("anchor",.number (toString v.anchor))]
@@ -631,5 +640,9 @@ private def deep : Shell := (({} : Shell).edit "focus" "http://x.org/one/two").1
 #guard reprStr (nodes {pressed := "address"} 1000) == reprStr (nodes {} 1000)
 #guard reprStr (nodes {pressed := "back"} 1000) == reprStr (nodes {} 1000)
 #guard (Shell.ofJson (.object [("pressed",.string "home")])).pressed == "home"
+-- The page script marker (issue 1271) is drawn in the address field, and the setting is a link.
+#guard reprStr (nodes {script := "JS QUICKJS-NG"} 1000) != reprStr (nodes {} 1000)
+#guard (Shell.ofJson (.object [("script",.string "JS OFF")])).script == "JS OFF"
+#guard link "foafnaut:scripts/verifiedjs" == .command "scripts" "verifiedjs"
 
 end WebShell

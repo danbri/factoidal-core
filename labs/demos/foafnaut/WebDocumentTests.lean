@@ -443,3 +443,16 @@ private def xhtmlWidth (url : String) : Option String := do
 #guard xhtmlWidth "https://example.test/a.html" == some (reprStr Rendering.CSS.Length.auto)
 -- Not well-formed XML is refused, as an XML user agent shows a parse error.
 #guard (WebDocument.prepareDOM "<html xmlns=\"http://www.w3.org/1999/xhtml\"><p></html>" (json [("url",.string "a.xht")])).toOption.isNone
+-- Page script operations of the document call (issue 1271).
+private def scriptPage := "<!doctype html><body><p id=a class=x>A</p><p id=b>B</p><script>1</script></body>"
+private def answer (fields : List (String × JSON.Json)) : String :=
+  match WebDocument.run scriptPage (json fields) 200 100 with | .ok s => s | .error e => "error " ++ e
+#guard (answer [("op",.string "scriptQuery"),("selector",.string "p.x")]).startsWith "{\"ids\":["
+#guard (answer [("op",.string "scriptQuery"),("selector",.string "p > b")]).startsWith "error"
+#guard (answer [("op",.string "scriptPlan"),("setting",.string "none"),("scripts",.number "1")]).startsWith "{\"engine\":\"none\""
+#guard (answer [("op",.string "scriptSetting"),("setting",.string "VerifiedJS")]).startsWith "{\"setting\":\"verifiedjs\""
+#guard (answer [("op",.string "scriptSetting"),("setting",.string "rhino")]).startsWith "error"
+#guard ((answer [("op",.string "inspect")]).splitOn "\"next\":").length == 2
+#guard (answer [("op",.string "compactCommands"),("commands",.array [])]) == "{\"commands\":[]}"
+-- The notice is laid out: the render with it differs from the render without it.
+#guard answer [("op",.string "render"),("scriptNotice",.string "Page scripts refused (VerifiedJS): not built")] != answer [("op",.string "render")]

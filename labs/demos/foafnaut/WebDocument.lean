@@ -86,8 +86,9 @@ def prepareDOM (html : String) (request : JSON.Json) : Except String DOM.Dom := 
   if html.utf8ByteSize > 1048576 then throw "document HTML exceeds 1MiB"
   let dom ← if DOM.isXhtmlPath (str request "url") then DOM.parseXmlDocument html
     else pure (DOM.parseHtmlDocument html)
-  WebRenderScript.applyCommands dom
-    ((request.field? "commands").getD (.array []))
+  let dom ← WebRenderScript.applyCommands dom ((request.field? "commands").getD (.array []))
+  -- A refused or stopped page script is said on the page (issue 1271).
+  return WebRenderScript.withNotice dom (str request "scriptNotice")
 
 def baseURL (dom : DOM.Dom) (url : String) : String := Id.run do
   for id in dom.treeOrder 0 do
@@ -161,7 +162,7 @@ def inspect (dom : DOM.Dom) (url : String) : Except String JSON.Json := do
     match script with
     | .object fields => .object (fields ++ [("url",.string (Syntax.resolveIri base (str script "src")))])
     | other => other
-  return .object [("nodes",(snapshot.field? "nodes").getD (.array [])),
+  return .object [("nodes",(snapshot.field? "nodes").getD (.array [])),("next",(snapshot.field? "next").getD (.number "0")),
     ("scripts",.array scripts),("stylesheets",.array sheets.reverse),("images",.array (← imageRequests dom base)),
     ("baseURL",.string base),("title",.string (documentTitle dom))]
 
@@ -274,6 +275,13 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     let some (.string url) := request.field? "url" | throw "history URL required"
     let next := (← history request).push url
     return some (JSON.Json.object (historyFields next next.current)).toString
+  -- The page script setting (issue 1271): what a setting means for a page.
+  if op == "scriptSetting" then
+    let some value := WebRenderScript.setting? (str request "setting") | throw "unknown page script engine"
+    return some (JSON.Json.object [("setting",.string value),("name",.string (WebRenderScript.engineName value))]).toString
+  if op == "scriptPlan" then
+    let scripts := match request.field? "scripts" with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    return some (WebRenderScript.plan (str request "setting") scripts (str request "unavailable") (str request "failure")).json.toString
   if op == "keyCommand" then
     let answer := WebHistory.keyCommand (str request "platform" "") (str request "modifier" "") (str request "key" "")
     return some (JSON.Json.object [("command",match answer with
@@ -558,7 +566,7 @@ def fontLoadBin (bytes : ByteArray) (family sha256 : String) : String :=
 the height of the chrome, which the key holds as `top`; `selection`, `live`, `binary`,
 `checks`, `tree`, `op` and the scroll act after layout. -/
 def layoutFields : List String := ["commands","resources","images","url","fontData","textScalePercent","graphModel",
-  "hover","active","visited","media"]
+  "hover","active","visited","media","scriptNotice"]
 
 /-- The request with only `layoutFields`, in that order. -/
 def layoutRequest (request : JSON.Json) : JSON.Json :=
@@ -718,11 +726,21 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     return ((JSON.Json.object [("source",.string source),("engine",.string engine)]).toString,#[])
   if let some answer ← inputOp (str request "op" "render") request then return (answer,#[])
   let op := str request "op" "render"
+  -- A shorter script command history with the same arena (WebRenderScript.compact).
+  if op == "compactCommands" then
+    let base ← prepareDOM html (.object [("url",.string (str request "url"))])
+    let commands ← WebRenderScript.compact base ((request.field? "commands").getD (.array []))
+    return ((JSON.Json.object [("commands",commands)]).toString,#[])
   if op != "render" && op != "selectedText" && op != "printLayout" then
     let dom ← prepareDOM html request
     validateResources dom request
     let _ ← classicScripts (WebRenderScript.scriptRecords dom)
     if op == "inspect" then return ((← inspect dom (str request "url")).toString,#[])
+    -- querySelector and querySelectorAll of a page script, over the commanded DOM.
+    if op == "scriptQuery" then
+      let scope := match request.field? "scope" with | some (.number n) => n.toNat?.getD 0 | _ => 0
+      let ids ← WebRenderScript.query dom scope (str request "selector")
+      return ((JSON.Json.object [("ids",.array (ids.map fun id => .number (toString id)))]).toString,#[])
     let textScale := Float.ofNat (← scalePercent request) / 100
     let rules ← rules dom request
     if op == "droppedCSS" then
