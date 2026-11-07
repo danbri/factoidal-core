@@ -1,4 +1,5 @@
 import WebRender
+import WebSelection
 
 /-! The browser's own face: tabs, the address bar and its buttons, drawn into the
 same scene as the page, so one WebGPU pass draws the window. All of it is pixel
@@ -60,12 +61,17 @@ private structure Theme where
   coin : Rendering.Color
   /-- Behind selected address text. -/
   selected : Rendering.Color
+  /-- Selected address text: the `::selection` colours of the theme (CSS Pseudo-Elements 4 §3.1). -/
+  selectedInk : Rendering.Color
 
 private def hex (r g b : Nat) : Rendering.Color := ⟨Float.ofNat r/255,Float.ofNat g/255,Float.ofNat b/255⟩
+/-- The selection colours of the NeXT theme: those of the page (`WebSelection.highlight`). -/
+def selectionBackground : Rendering.Color := WebSelection.selectionBackground
+def selectionText : Rendering.Color := WebSelection.selectionText
 private def next : Theme :=
-  ⟨hex 170 170 170,hex 255 255 255,hex 85 85 85,hex 0 0 0,hex 255 255 255,hex 0 0 0,hex 128 128 128,hex 32 32 32,hex 224 32 138,hex 255 196 0,hex 176 200 255⟩
+  ⟨hex 170 170 170,hex 255 255 255,hex 85 85 85,hex 0 0 0,hex 255 255 255,hex 0 0 0,hex 128 128 128,hex 32 32 32,hex 224 32 138,hex 255 196 0,selectionBackground,selectionText⟩
 private def arcade : Theme :=
-  ⟨hex 34 38 54,hex 84 92 128,hex 10 12 20,hex 216 240 255,hex 10 12 20,hex 120 255 170,hex 20 23 34,hex 150 160 200,hex 57 255 136,hex 255 196 0,hex 40 70 130⟩
+  ⟨hex 34 38 54,hex 84 92 128,hex 10 12 20,hex 216 240 255,hex 10 12 20,hex 120 255 170,hex 20 23 34,hex 150 160 200,hex 57 255 136,hex 255 196 0,hex 57 255 136,hex 10 12 20⟩
 private def themeOf (s : Shell) : Theme := if s.theme == "arcade" then arcade else next
 
 /-! ### Measures, in backing pixels -/
@@ -258,15 +264,21 @@ private def addressNodes (s : Shell) (t : Theme) (box : Box) : List Rendering.No
   let room := box.w-28*u
   let prompt := text t.accent ">" (box.x+8*u) textY size
   let shown := if s.focused then fitEnd s s.address room else fitEnd s s.address room
-  let body := if s.address.isEmpty && !s.focused
-    then text t.dark (fit s "url, search or :command" room) textX textY size
-    else text t.wellInk shown textX textY size
   -- The column of address position `i` in the shown text: the start of a long
   -- address is cut off, so the columns count from its end.
   let column := fun (i : Nat) => min shown.length (i+shown.length-s.address.length)
   let lo := column (min s.anchor s.cursor)
   let hi := column (max s.anchor s.cursor)
-  let marked := if s.focused && hi > lo
+  let selecting := s.focused && hi > lo
+  -- Selected text has its own colour on the selection colour; the text before and after it
+  -- keeps the well's ink. Every letter stays in its column.
+  let piece := fun (c : Rendering.Color) (a b : Nat) =>
+    text c (String.ofList ((shown.toList.drop a).take (b-a))) (textX+a*charWidth s) textY size
+  let body := if s.address.isEmpty && !s.focused
+    then text t.dark (fit s "url, search or :command" room) textX textY size
+    else if selecting then piece t.wellInk 0 lo ++ piece t.selectedInk lo hi ++ piece t.wellInk hi shown.length
+    else text t.wellInk shown textX textY size
+  let marked := if selecting
     then [paint t.selected (textX+lo*charWidth s-u) (textY-u) ((hi-lo)*charWidth s) (7*size+2*u)] else []
   -- As in a macOS text field, a selection hides the caret.
   let cursor := if s.focused && hi == lo then [paint t.accent (textX+column s.cursor*charWidth s) (textY-u) (5*size) (7*size+2*u)] else []
@@ -593,6 +605,21 @@ private def opened : Shell := (({} : Shell).edit "focus" "https://example.org/a"
 #guard opened.selected == "https://example.org/a" && opened.focused
 #guard (opened.typed "w").address == "w" && (opened.typed "w").cursor == 1
 #guard (opened.key 51).address == "" && ((opened.key 51).edit "undo").1.address == "https://example.org/a"
+-- Selected address text (issue 1268): white letters on the selection blue, and no caret.
+-- With the caret only, no paint has the selection colour.
+private def sameColor (a b : Rendering.Color) : Bool := a.r == b.r && a.g == b.g && a.b == b.b
+private def paintsOf (c : Rendering.Color) (nodes : List Rendering.Node) : Nat :=
+  nodes.foldl (fun n node => match node with
+    | .paint p => match p.primitive.style.fill with
+      | .solid k => if sameColor k c then n+1 else n
+      | _ => n
+    | _ => n) 0
+private def caretOnly : Shell := {opened with anchor := opened.cursor}
+#guard paintsOf selectionBackground (nodes opened 1000) == 1 && paintsOf selectionBackground (nodes caretOnly 1000) == 0
+-- The letters of the selected address are drawn in the selection text colour: more white
+-- paints than with the same address unselected, and the same number of paints of text in all.
+#guard paintsOf selectionText (nodes opened 1000) > paintsOf selectionText (nodes caretOnly 1000)
+#guard paintsOf selectionBackground (nodes {opened with theme := "arcade"} 1000) == 0
 -- Command-A, Command-C, Command-X, Command-V, Command-Z and Shift-Command-Z.
 private def typedAb : Shell := ((({} : Shell).edit "focus" "").1.typed "a").typed "b"
 #guard typedAb.address == "ab" && (typedAb.edit "copy").2 == none

@@ -74,6 +74,9 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # frame at each scroll tried, on this machine's GPU. With no GPU adapter it says NOT RUN.
   deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/scroll_layers_check.ts"
+  # Chrome pixels (issue 1268): a selected address changes only the address box, in the selection colour.
+  deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-ffi "$LAB/chrome_pixels_check.ts"
 else
   echo 'NOT RUN: native_html_test.ts needs the web-render engine, which this build does not have yet'
 fi
