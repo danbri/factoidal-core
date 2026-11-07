@@ -3,10 +3,10 @@
 // fixture at each VerifiedJS level and compare with Node. Usage:
 //   probe.mjs <verifiedjs binary> <report.json>
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FIXTURES, FEATURES, STUB } from './fixtures.mjs';
+import { FIXTURES, FEATURES, ISSUE, PASSING, STUB } from './fixtures.mjs';
 
 const [binary, report] = process.argv.slice(2);
 const work = mkdtempSync(join(tmpdir(), 'vjs-probe-'));
@@ -14,9 +14,6 @@ const run = (command, args, timeout = 20000) => {
   const r = spawnSync(command, args, { timeout, encoding: 'utf8', maxBuffer: 1 << 24 });
   return { rc: r.status, timedOut: r.error?.code === 'ETIMEDOUT', out: (r.stdout ?? '').trim(), err: (r.stderr ?? '').trim().slice(0, 400) };
 };
-// The interpreters print a trace; only log events are program output.
-const logLines = text => text.split('\n').filter(line => /^\s*(log|console\.log)\b/i.test(line))
-  .map(line => line.replace(/^\s*(log|console\.log)\s*[:(]?\s*/i, '').replace(/\)?\s*$/, '')).join('\n');
 const results = [];
 const cases = [
   ...FEATURES.map(([n, s]) => ['feature', n, s]),
@@ -32,7 +29,7 @@ for (const [kind, name, source] of cases) {
   entry.levels.parse = parse.rc === 0 ? 'ok' : `error: ${parse.err}`;
   for (const level of ['core', 'flat', 'anf']) {
     const r = run(binary, [file, `--run=${level}`]);
-    entry.levels[level] = { same: !r.timedOut && logLines(r.out) === node.out, rc: r.rc, timedOut: r.timedOut, out: r.out.slice(0, 400), err: r.err };
+    entry.levels[level] = { same: !r.timedOut && r.out === node.out, rc: r.rc, timedOut: r.timedOut, out: r.out.slice(0, 400), err: r.err };
   }
   const compile = run(binary, [file, '-o', wasm]);
   entry.levels.compile = compile.rc === 0 ? 'ok' : `error: ${compile.err}`;
@@ -52,9 +49,23 @@ for (const [kind, name, source] of cases) {
   }
   for (const l of ['parse', 'compile']) if (typeof entry.levels[l] === 'string' && entry.levels[l] !== 'ok') console.log(`    ${l}: ${entry.levels[l].slice(0, 200)}`);
 }
+// The whole host interface of a compiled module.
+const shape = join(work, 'shape.js');
+writeFileSync(shape, 'console.log(1 + 2);');
+run(binary, [shape, '-o', `${shape}.wasm`]);
+const module = new WebAssembly.Module(readFileSync(`${shape}.wasm`));
+console.log(`MODULE imports ${JSON.stringify(WebAssembly.Module.imports(module))} exports ${JSON.stringify(WebAssembly.Module.exports(module))}`);
 if (report) writeFileSync(report, JSON.stringify(results, null, 1));
 const count = (kind, level) => {
   const set = results.filter(r => r.kind === kind);
   return `${set.filter(r => r.levels[level]?.same).length} same as Node, ${set.filter(r => !r.levels[level]?.same).length} not (out of ${set.length})`;
 };
 for (const kind of ['feature', 'fixture']) for (const level of ['core', 'flat', 'anf', 'wasm']) console.log(`SUMMARY ${kind} ${level}: ${count(kind, level)}`);
+let unexpected = 0;
+for (const level of ['core', 'wasm']) for (const entry of results.filter(r => r.kind === 'fixture')) {
+  const same = Boolean(entry.levels[level]?.same), listed = PASSING[level].includes(entry.name);
+  if (same && !listed) { unexpected++; console.log(`XPASS ${level} ${entry.name}: flip the case and close ${ISSUE}`); }
+  else if (!same && listed) { unexpected++; console.log(`FAIL ${level} ${entry.name}`); }
+  else console.log(`${same ? 'pass' : 'xfail'} ${level} ${entry.name}${same ? '' : ` (${ISSUE})`}`);
+}
+process.exitCode = unexpected ? 1 : 0;

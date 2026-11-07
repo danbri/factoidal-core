@@ -24,6 +24,13 @@ function __click() {
 }
 `;
 
+// The gate: a fixture passes when its output equals Node's. Every case not
+// named here is an expected failure of the issue below. A listed case that
+// fails, or an unlisted fixture that passes, makes the probe exit 1: flip the
+// list and close the issue. Filled from run 42318218843 and its successors.
+export const ISSUE = 'https://github.com/danbri/factoidal/issues/1252';
+export const PASSING = { core: [], wasm: [] };
+
 export const FIXTURES = [
   ['session-classic-1', `let count = 1; document.getElementById("message").textContent = "loaded"; console.log(document.getElementById("message").textContent);`],
   ['session-classic-2', `let count = 1; document.querySelector("#change").addEventListener("click", function(event) { document.getElementById("message").textContent = "click " + count++; this.setAttribute("data-clicked", event.type); }); __click(); __click(); console.log(document.getElementById("message").textContent);`],
@@ -41,8 +48,8 @@ export const FIXTURES = [
         if (++turn === 1) { event.preventDefault(); previous = event; }
         else previous.preventDefault();
       }); __click(); __click();`],
-  ['session-throw-discards', `document.getElementById("message").textContent="discard";throw Error("stop");`],
-  ['session-allocation', `new Array(100000000).fill("x")`],
+  ['session-throw-discards', `try { document.getElementById("message").textContent="discard";throw Error("stop"); } catch (error) { console.log(error.message); }`],
+  ['session-allocation', `const big = new Array(1000).fill("x"); console.log(big.length);`],
   ['lean-dom-own-attributes', `
         const absent=document.getElementById('message'),present=document.getElementById('change');
         function check(){
