@@ -57,7 +57,7 @@ async function main() {
   let running=true,dirty=true,controller:AbortController|undefined;
   // Frame trace, one JSON line for each event: every number a tool needs to find
   // where the time goes. A pump stall means AppKit held the thread in its own loop.
-  let resizeAt:number|undefined,frameNumber=0,waiting=false;
+  let resizeAt:number|undefined,frameNumber=0,waiting=false,waitingSince=0;
   const trace=(type:string,fields:Record<string,unknown>)=>console.log(JSON.stringify({type,t:Math.round(performance.now()),...fields}));
   const ms=(start:number,end:number)=>Math.round((end-start)*10)/10;
   let candidate:Awaited<ReturnType<typeof prepareHTML>>|undefined;
@@ -294,7 +294,14 @@ async function main() {
         const now=performance.now();graphInput(7,Math.min(1000,Math.floor(now-clock.last)),0);clock.last=now;
       }
       // A covered, hidden or minimized window can not present. Say so, once.
-      if(dirty&&!native.canPresent()&&!waiting){waiting=true;trace("native-html-waiting",{reason:"window can not present",surface:native.surfaceState()});}
+      if(dirty&&!native.canPresent()&&!waiting){waiting=true;waitingSince=performance.now();trace("native-html-waiting",{reason:"window can not present",surface:native.surfaceState()});}
+      // A person's window draws when it is seen again. A sweep has no one to wait for:
+      // it ends with a result, and exit code 3 says that no frames could be drawn.
+      if(waiting&&(sweep||commands)&&performance.now()-waitingSince>20000){
+        const result={reason:"window not visible for 20 seconds, so a sweep can not draw",surface:native.surfaceState()};
+        trace("native-html-sweep-blocked",result);console.error(JSON.stringify({type:"native-html-sweep-blocked",...result}));
+        Deno.exitCode=3;running=false;continue;
+      }
       if(dirty&&native.canPresent()){
         waiting=false;
         const nextDocument=candidate??document;
