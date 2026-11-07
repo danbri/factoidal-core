@@ -255,7 +255,16 @@ Deno.test("the interactive FOAF graph runs as a browser page through Lean",async
   assert.notDeepEqual(position(freed.model)[3],stopped);
   const page=engine.graphPage(crowded);
   assert.match(page,/<svg/);
-  assert.ok(engine.compile(page,1000,680,{url:"foafnaut:graph",resources:[],shell}).primitiveCount>100);
+  const fromText=engine.compile(page,1000,680,{url:"foafnaut:graph",resources:[],shell});
+  assert.ok(fromText.primitiveCount>100);
+  // The frame from the model with no SVG text (`graphModel`) is the frame of the page text.
+  for(const model of [crowded,held.model,freed.model]){
+    for(const options of [{shell},{shell,checks:false,binary:true},{shell:{...shell,scroll:200},checks:false,binary:true}]){
+      const text=engine.compile(engine.graphPage(model),1000,680,{url:"foafnaut:graph",resources:[],...options});
+      const direct=engine.compile("",1000,680,{url:"foafnaut:graph",resources:[],graphModel:model,...options});
+      assert.equal(JSON.stringify(direct),JSON.stringify(text));
+    }
+  }
   assert.deepEqual(engine.shellLink("foafnaut:graph"),{go:"command",name:"graph",argument:""});
 });
 

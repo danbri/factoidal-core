@@ -261,3 +261,36 @@ private def contains (text part : String) : Bool := (text.splitOn part).length >
 #guard contains (WebDocument.compile imagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"aGk=\"}]}" 40 40)
   "image is not PNG or JPEG"
 #guard contains (WebDocument.compile imagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":3}" 40 40) "document images must be an array"
+
+/-! The FOAF graph page with no SVG text (issue 1268). `WebGraph.directScene` builds the
+scene from the model; these differential guards (not a proof) check that it is the scene
+of the SVG text of `NativeSceneSVG.serialize`: the same artifact (every primitive, in the
+same order, its storage floats, its tiles and the tree), and the same document render
+through `graphModel` as through the page text. -/
+private def foafTurtle := "@prefix foaf: <http://xmlns.com/foaf/0.1/> .\n@prefix ex: <https://example.org/friends/> .\nex:alice a foaf:Person ; foaf:name \"Alice\" ; foaf:knows ex:bob, ex:carol .\nex:bob a foaf:Person ; foaf:name \"Bob\" ; foaf:knows ex:carol .\nex:carol a foaf:Person ; foaf:name \"Carol\" .\n"
+private def foafModels : List NativeFoafNaut.Model :=
+  match FoafGraph.fromTurtle foafTurtle none NativeFoafNaut.graphLimits with
+  | .ok graph =>
+    let m := NativeFoafNaut.initial graph 400 300
+    [m, (NativeFoafNaut.update m 2 120 90).1, (NativeFoafNaut.update m 7 500 0).1]
+  | .error _ => []
+private def sameSceneAsText (m : NativeFoafNaut.Model) : Bool :=
+  match NativeSceneSVG.serialize m.scene with
+  | .error _ => false
+  | .ok svg =>
+    match NativeSVG.parse svg 400 300, WebGraph.directScene m.scene 400 300 with
+    | .ok parsed, .ok direct =>
+      parsed.artifact false false false == direct.artifact false false false &&
+        parsed.compiled.length == direct.compiled.length
+    | _, _ => false
+#guard foafModels.length == 3
+#guard foafModels.all sameSceneAsText
+private def graphRequest (m : Option NativeFoafNaut.Model) : JSON.Json :=
+  .object ([("op",.string "render"),("url",.string "foafnaut:graph"),("checks",.bool false)] ++
+    (match m with | some m => [("graphModel",.string m.encode)] | none => []))
+#guard foafModels.all fun m =>
+  match WebGraph.page m.encode with
+  | .ok html => WebDocument.runUncached html (graphRequest none) 400 300 ==
+      WebDocument.runUncached "" (graphRequest (some m)) 400 300 &&
+      (WebDocument.runUncached "" (graphRequest (some m)) 400 300).isOk
+  | .error _ => false

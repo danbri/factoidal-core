@@ -177,7 +177,7 @@ private def embeddedRoot (root : XML.NamespaceNode) : Except String XML.Namespac
   let .element name attrs children := root | throw "embedded SVG root must be an element"
   return .element name (← embeddedAttributes attrs) children
 
-private def placeSVG (scene : NativeSVG.Scene) (id : Nat) (style : Rendering.CSS.Computed) (width height : Float) : List Rendering.Node :=
+def placeSVG (scene : NativeSVG.Scene) (id : Nat) (style : Rendering.CSS.Computed) (width height : Float) : List Rendering.Node :=
   let m := scene.mapping
   let transform : Rendering.Transform := ⟨m.sx,0,0,m.sy,m.tx-m.minX*m.sx,m.ty-m.minY*m.sy⟩
   let background := match style.background with

@@ -163,7 +163,8 @@ async function main() {
     page.graph!.model=frame.model;
     if(frame.commands.includes("startClock")){page.graph!.clock=true;page.graph!.last=performance.now();}
     if(frame.commands.includes("stopClock"))page.graph!.clock=false;
-    if(frame.commands.includes("render")){page.source=await lean.graphPage(frame.model);dirty=true;}
+    // The frame is built from the model (`graphModel`), with no SVG text; `graphPage` stays for export.
+    if(frame.commands.includes("render"))dirty=true;
   };
   // Graph input runs in the worker, in the order it arrived. Each call takes the model the call before it
   // returned. A queued move, resize or clock tick that has not started is replaced by a later one of the same
@@ -192,10 +193,10 @@ async function main() {
   const openGraph=async()=>{
     const rdf=await Deno.readTextFile(new URL("./pages/foaf-demo.ttl",import.meta.url));
     const frame=await lean.graphStart(rdf,width,height,shell());
-    const page={url:"foafnaut:graph",baseURL:"foafnaut:graph",title:"FOAF graph",source:await lean.graphPage(frame.model),sources:[] as typeof document.sources,
+    const page={url:"foafnaut:graph",baseURL:"foafnaut:graph",title:"FOAF graph",source:"",sources:[] as typeof document.sources,
       graph:{model:frame.model,clock:false,last:0},
-      request(_w:number,_h:number,view:PageView={}){return {source:page.source,options:{url:page.url,resources:[],...view} as Record<string,unknown>};},
-      compile(w:number,h:number,view:PageView={}){return lean.compile(page.source,w,h,{url:page.url,resources:[],...view});},
+      request(_w:number,_h:number,view:PageView={}){return {source:"",options:{url:page.url,resources:[],graphModel:page.graph!.model,...view} as Record<string,unknown>};},
+      compile(w:number,h:number,view:PageView={}){return lean.compile("",w,h,{url:page.url,resources:[],graphModel:page.graph!.model,...view});},
       selectedText:()=>""} as unknown as Page;
     await graphFrame(page,frame);
     keepTab();tabs.push({document:page,history:engine.historyPush({entries:[],index:0},page.url),scroll:0});showTab(tabs.length-1);

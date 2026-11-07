@@ -10,14 +10,14 @@ theorem or browser antialiasing equivalence is claimed. -/
 namespace NativeSceneSVG
 open NativeGraphics
 
-private def colorOK (c : RGB) := c.r <= 255 && c.g <= 255 && c.b <= 255
+def colorOK (c : RGB) := c.r <= 255 && c.g <= 255 && c.b <= 255
 private def color (c : RGB) : String := s!"rgb({c.r},{c.g},{c.b})"
 private def xy (p : Point) : String := s!"{p.x} {p.y}"
 private def rect (p size : Point) (c : RGB) : String :=
   s!"<rect x=\"{p.x}\" y=\"{p.y}\" width=\"{size.x}\" height=\"{size.y}\" fill=\"{color c}\"/>"
 private def stroke (width : Nat) (c : RGB) : String :=
   s!"fill=\"none\" stroke=\"{color c}\" stroke-width=\"{width}\" stroke-linecap=\"round\""
-private def rows (bits : GlyphRows) : List Nat :=
+def rows (bits : GlyphRows) : List Nat :=
   [bits.row0,bits.row1,bits.row2,bits.row3,bits.row4,bits.row5,bits.row6]
 
 /-- Glyphs become one compound filled linear path per glyph, preserving the
@@ -56,6 +56,10 @@ def shapeElements (s : Shape) : Except String (List String) := do
     return [s!"<path d=\"{String.join cells.toList}\" fill=\"{color paint}\"/>"]
 
 
+/-- The `svg` start tag of `serialize`. -/
+def openTag (s : Scene) : String :=
+  s!"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{s.width}\" height=\"{s.height}\" viewBox=\"0 0 {s.width} {s.height}\">"
+
 /-- Standalone self-contained static SVG. Consumer limits remain independent:
 the current SVG compiler accepts 12,288 painted primitives, 1,048,576 input
 chars, 262,144 read-only-storage floats and a <=4096 raster viewport. Curves serialize as real
@@ -65,7 +69,6 @@ def serialize (s : Scene) : Except String String := do
   if s.width == 0 || s.height == 0 then throw "SceneSVG viewport must be positive"
   if !colorOK s.background then throw "SceneSVG background component exceeds 255"
   let elements ← s.shapes.mapM shapeElements
-  return s!"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{s.width}\" height=\"{s.height}\" viewBox=\"0 0 {s.width} {s.height}\">" ++
-    rect ⟨0,0⟩ ⟨s.width,s.height⟩ s.background ++ String.join elements.flatten ++ "</svg>"
+  return openTag s ++ rect ⟨0,0⟩ ⟨s.width,s.height⟩ s.background ++ String.join elements.flatten ++ "</svg>"
 
 end NativeSceneSVG

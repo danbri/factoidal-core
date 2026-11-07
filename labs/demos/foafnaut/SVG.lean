@@ -1972,6 +1972,47 @@ def parse (xml : String) (outputWidth outputHeight : Nat := 0)
   let root ← parseNamespaceView xml
   parseRoot root outputWidth outputHeight {} documentURL
 
+/-! ### A scene given as values, with no SVG text
+
+An app that holds its picture as values (the FOAF graph) can give the elements here
+and skip the SVG text, the XML parse and the attribute parse. `directScene` makes what
+`parseRootInContext` makes of a root `svg` with `viewBox="0 0 viewWidth viewHeight"`
+and these elements. That is not proved: `WebGraph` checks it with differential guards
+against the SVG text, and the host test compares the frames. -/
+
+/-- One painted element as values: what `readNode` makes of a `rect`, `circle`,
+`line` or `path` element with no `transform`, `opacity`, `pathLength`, `id` or `style`,
+whose paint attributes are only `fill`, `stroke`, `stroke-width` and `stroke-linecap`. -/
+structure DirectPaint where
+  geometry : Geometry
+  fill : Paint
+  stroke : Paint := .none
+  strokeWidth : Float := 1
+  lineCap : LineCap := .butt
+
+/-- The colour of `rgb(r,g,b)` with whole components, as the attribute parser reads it. -/
+def rgbColor (r g b : Nat) : Color := rgb r g b
+
+def directScene (width height viewWidth viewHeight : Nat) (inherited : Style) (items : List DirectPaint) :
+    Except String Scene := do
+  let w := Float.ofNat width
+  let h := Float.ofNat height
+  if w <= 0 || h <= 0 || w > 4096 || h > 4096 then throw "output viewport must be positive and at most 4096 pixels"
+  if viewWidth == 0 || viewHeight == 0 then
+    return ← Scene.make width height (← viewportMapping w h []) []
+  let viewBox : NamespaceAttribute := ⟨⟨none,"viewBox"⟩,s!"0 0 {viewWidth} {viewHeight}"⟩
+  let mapping ← viewportMapping w h [viewBox]
+  let mut tree : Array DisplayNode := Array.emptyWithCapacity items.length
+  for item in items do
+    let style : Style :=
+      {inherited with fill := item.fill, stroke := item.stroke, strokeWidth := item.strokeWidth, lineCap := item.lineCap}
+    let dashParts ← match item.geometry with
+      | .path _ => pure none
+      | g => do dashedParts (← g.compile identityTransform) style none
+    let primitive : Primitive := {geometry := item.geometry, style, opacity := max 0 (min 1 1), transform := identityTransform, dashParts}
+    tree := tree.push (.paint primitive)
+  Scene.make width height mapping tree.toList
+
 /- Typed conditions reuse Graphics.Expr's CPU interpreter and WGSL lowering.
    The float scene is separate from the integer-only demo Shape representation. -/
 inductive Test where

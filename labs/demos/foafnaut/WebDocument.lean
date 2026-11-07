@@ -405,7 +405,7 @@ private def loadFont (request : JSON.Json) : Except String String := do
 /-- The request fields that a render reads before its layout ends. `shell` gives only
 the height of the chrome, which the key holds as `top`; `selection`, `live`, `binary`,
 `checks`, `op` and the scroll act after layout. -/
-def layoutFields : List String := ["commands","resources","images","url","fontData","textScalePercent"]
+def layoutFields : List String := ["commands","resources","images","url","fontData","textScalePercent","graphModel"]
 
 /-- The request with only `layoutFields`, in that order. -/
 def layoutRequest (request : JSON.Json) : JSON.Json :=
@@ -431,10 +431,18 @@ structure Laid where
   face : Option Rendering.FontProvider.Face
 
 /-- Parse, script check, cascade and layout of a render. It reads only the key: the
-request it reads is `key.request`, which has only `layoutFields`. -/
+request it reads is `key.request`, which has only `layoutFields`. With `graphModel`
+(the FOAF graph page) the document is `WebGraph.skeleton` of the model, not `key.html`,
+and the picture comes from the model with no SVG text (`WebGraph.embedding`). -/
 def layOut (key : LayoutKey) : Except String Laid := do
   let request := key.request
-  let dom ← prepareDOM key.html request
+  let graph ← match request.field? "graphModel" with
+    | none => pure none
+    | some (.string wire) => match NativeFoafNaut.Model.decode wire with
+      | some m => pure (some m)
+      | none => throw "invalid FOAF graph model"
+    | some _ => throw "graphModel must be a string"
+  let dom ← prepareDOM (match graph with | some m => WebGraph.skeleton m | none => key.html) request
   validateResources dom request
   let _ ← classicScripts (WebRenderScript.scriptRecords dom)
   let textScale := Float.ofNat (← scalePercent request) / 100
@@ -453,7 +461,9 @@ def layOut (key : LayoutKey) : Except String Laid := do
       Rendering.SfntProfile.profile held.font (keepWords words request)
     | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   let url := baseURL dom (str request "url")
-  let embedding ← WebRender.makeEmbedding dom (if url.isEmpty then none else some url) (← suppliedImages request)
+  let embedding ← match graph with
+    | some m => pure (WebGraph.embedding m)
+    | none => WebRender.makeEmbedding dom (if url.isEmpty then none else some url) (← suppliedImages request)
   -- A window shorter than the chrome still lays out, on one row.
   let (scene,boxes) ← Rendering.Layout.render dom rules font embedding key.width (max 1 (key.height-key.top)) textScale
   return {scene := scene,boxes := boxes,face := face}
