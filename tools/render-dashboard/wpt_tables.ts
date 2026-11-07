@@ -46,11 +46,11 @@ import {encodePPM} from "../../labs/demos/foafnaut/gpu_transport.ts";
 type Reference={relation:"match"|"mismatch";href:string;path:string|null;missing?:boolean};
 type Row={test:string;kind:string;tentative:boolean;references?:Reference[];
   fuzzy?:{reference:string|null;value:[[number,number],[number,number]]}|null;features?:string[];tier?:string};
-type Side={status:"rendered"|"refused"|"error";source?:"lean"|"host";reason?:string;ms:number;pixels?:Uint8Array;primitives?:number};
+type Side={status:"rendered"|"refused"|"error";source?:"lean"|"host";reason?:string;ms:number;pixels?:Uint8Array;primitives?:number;dropped?:string[]};
 type Case={test:string;kind:string;tentative:boolean;tier?:string;status:string;reason?:string;source?:"lean"|"host";
   refusedSide?:"test"|"reference";reference?:string;relation?:string;font?:string;
   differentPixels?:number;maxDifference?:number;referenceControl?:"ok"|"broken";fuzzy?:[[number,number],[number,number]];uniformPass?:boolean;
-  primitives?:{test?:number;reference?:number};ms?:number};
+  primitives?:{test?:number;reference?:number};ms?:number;dropped?:{test?:string[];reference?:string[]}};
 
 const here=new URL(".",import.meta.url);
 const args=[...Deno.args];
@@ -125,13 +125,24 @@ const device=adapter?await adapter.requestDevice():undefined;
 const renderer=device?createLayerRenderer(device,"rgba8unorm"):undefined;
 const target=device?.createTexture({size:[width,height],format:"rgba8unorm",usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC});
 
-async function side(slot:Slot,path:string):Promise<Side> {
+// The CSS declarations Lean's profile drops ("property: value (reason)"), to group
+// failures by cause. An engine built before the droppedCSS call gives none.
+function droppedCSS(slot:Slot,page:{request:(w:number,h:number)=>{source:string;options:Record<string,unknown>}}):string[]|undefined {
+  const call=(slot.engine as unknown as {droppedCSS?:(s:string,o:Record<string,unknown>)=>string[]}).droppedCSS;
+  if(!call)return undefined;
+  try{const r=page.request(width,height);return call(r.source,r.options);}catch{return undefined;}
+}
+
+async function side(slot:Slot,path:string,draw=true):Promise<Side> {
   const start=performance.now();
   let frame:HTMLArtifact;
+  let dropped:string[]|undefined;
   try{
     slot.uses++;
+    const page=await prepareHTML(slot.engine,origin+path);
+    dropped=droppedCSS(slot,page);
     // compile is synchronous on the engine; await also takes a worker engine.
-    frame=await (await prepareHTML(slot.engine,origin+path)).compile(width,height);
+    frame=await page.compile(width,height);
   }catch(error){
     const text=String((error as Error)?.message??error),ms=Math.round(performance.now()-start);
     // Lean's errors name a missing feature. The host refuses some pages before Lean
@@ -140,9 +151,10 @@ async function side(slot:Slot,path:string):Promise<Side> {
     if(/^Native HTML (milestone|exceeds|stylesheets|resource exceeds)/.test(text))return {status:"refused",source:"host",reason:text.slice(0,400),ms};
     return {status:"error",reason:text.slice(0,400),ms};
   }
+  if(!draw)return {status:"rendered",ms:Math.round(performance.now()-start),primitives:frame.primitiveCount,dropped};
   // Lean's own probes are checked on the read back pixels (checkPixels in drawSingle).
   const drawn=await renderer!.drawSingle(frame,target!,true);
-  return {status:"rendered",ms:Math.round(performance.now()-start),pixels:drawn.pixels!.slice(),primitives:frame.primitiveCount};
+  return {status:"rendered",ms:Math.round(performance.now()-start),pixels:drawn.pixels!.slice(),primitives:frame.primitiveCount,dropped};
 }
 
 function compare(a:Uint8Array,b:Uint8Array) {
@@ -172,6 +184,16 @@ let rendered=0;
 for(const row of rows){
   const item:Case={test:row.test,kind:row.kind,tentative:row.tentative,...(row.tier?{tier:row.tier}:{}),status:"not-run"};
   cases.push(item);
+  // A crash test passes when Lean lays it out without an error; a refusal is counted apart.
+  if(row.kind==="crashtest"&&rendered<limit){
+    rendered++;
+    try{
+      const s=await side(await engineFor(row.features?.includes("ahem")?"ahem":font),row.test,false);
+      Object.assign(item,{status:s.status==="rendered"?"pass":s.status==="refused"?"refused":"fail",ms:s.ms,
+        ...(s.source?{source:s.source}:{}),...(s.reason?{reason:s.reason}:{})});
+    }catch(error){Object.assign(item,{status:"fail",reason:String((error as Error)?.message??error).slice(0,400)});}
+    continue;
+  }
   if(row.kind!=="reftest"){item.reason=NOT_RUN[row.kind]??"not a reftest";continue;}
   if(rendered>=limit){item.reason="over --limit";continue;}
   if(!renderer){item.reason="no WebGPU adapter";continue;}
@@ -189,12 +211,14 @@ for(const row of rows){
     }
     const test=await side(slot,row.test);
     item.primitives={test:test.primitives};
+    if(test.dropped)item.dropped={test:test.dropped};
     if(test.status!=="rendered"){Object.assign(item,{status:test.status,source:test.source,reason:test.reason,refusedSide:"test",ms:test.ms});continue;}
     // More than one reference: WPT passes the test if it holds against any of them.
     let best:Case|undefined;
     for(const ref of refs){
       const other=await side(slot,ref.path!);
-      const result:Case={...item,reference:ref.path!,relation:ref.relation,ms:test.ms+other.ms,primitives:{test:test.primitives,reference:other.primitives}};
+      const result:Case={...item,reference:ref.path!,relation:ref.relation,ms:test.ms+other.ms,primitives:{test:test.primitives,reference:other.primitives},
+        ...(test.dropped||other.dropped?{dropped:{test:test.dropped,reference:other.dropped}}:{})};
       if(other.status!=="rendered"){Object.assign(result,{status:other.status,source:other.source,reason:other.reason,refusedSide:"reference"});}
       else{
         const fuzzy=row.fuzzy&&(!row.fuzzy.reference||ref.path!.endsWith(row.fuzzy.reference.replace(/^.*\//,"")))?row.fuzzy.value:undefined;
@@ -235,6 +259,20 @@ const groups=new Map<string,string[]>();
 for(const c of reftests.filter(c=>c.status==="refused"||c.status==="error")){
   const key=`${c.status}${c.source?" ("+c.source+")":""}: ${c.reason}`;groups.set(key,[...(groups.get(key)??[]),c.test]);
 }
+// Reachable: the reftests the host does not refuse before Lean lays out (scripts).
+const reachable=reftests.filter(c=>!(c.status==="refused"&&c.source==="host"));
+const reachableCounts:Record<string,number>={pass:0,fail:0,refused:0,error:0,"not-run":0};
+for(const c of reachable)reachableCounts[c.status]=(reachableCounts[c.status]??0)+1;
+const crashtests=cases.filter(c=>c.kind==="crashtest");
+const crashCounts:Record<string,number>={pass:0,fail:0,refused:0,"not-run":0};
+for(const c of crashtests)crashCounts[c.status]=(crashCounts[c.status]??0)+1;
+// Failing reftests by dropped CSS property (test or reference side), most first.
+const byDropped=new Map<string,number>();
+for(const c of reftests.filter(c=>c.status==="fail")){
+  const props=new Set([...(c.dropped?.test??[]),...(c.dropped?.reference??[])].map(d=>d.split(":")[0]));
+  for(const p of props)byDropped.set(p,(byDropped.get(p)??0)+1);
+}
+const failingByDroppedProperty=Object.fromEntries([...byDropped].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])));
 const refusals=[...groups].sort((a,b)=>b[1].length-a[1].length||a[0].localeCompare(b[0]))
   .map(([reason,tests])=>({reason,count:tests.length,examples:tests.slice(0,3)}));
 const engineFile=nativeEngine??new URL("../../labs/demos/foafnaut/.build/native-html/runtime/web-render.wasm",here).pathname;
@@ -244,9 +282,15 @@ const report={format:"factoidal-wpt-tables-v1",runner:"tools/render-dashboard/wp
   input:{name:"WPT css/css-tables",root:"third_party/testing/wpt-css-tables",commit:"28c152b74f8679534e558745fe83312c8dcca8c8"},
   engine:{kind:nativeEngine?"native":"wasm",answers,path:engineFile,sha256:engineSha,fontCall:[...new Set([...slots.values()].map(s=>s.via))]},
   gpu:adapter?{vendor:adapter.info.vendor,architecture:adapter.info.architecture,device:adapter.info.device,description:adapter.info.description}:null,width,height,font,
-  total:cases.length,counts,reftests:{total:reftests.length,counts:reftestCounts,uniformPasses,brokenReferencePasses,brokenReferences},refusals,cases};
+  total:cases.length,counts,reftests:{total:reftests.length,counts:reftestCounts,uniformPasses,brokenReferencePasses,brokenReferences,
+    reachable:{total:reachable.length,counts:reachableCounts}},
+  crashtests:{total:crashtests.length,counts:crashCounts},failingByDroppedProperty,refusals,cases};
 const text=JSON.stringify(report);
 if(output)await Deno.writeTextFile(output,text+"\n");else console.log(text);
 console.log(`wpt css-tables reftests: ${reftestCounts.pass} pass (${uniformPasses} flat images, ${brokenReferencePasses} against a reference drawn wrong), ${reftestCounts.fail} fail, `+
   `${reftestCounts.refused} refused, ${reftestCounts.error} error, ${reftestCounts["not-run"]} not run (out of ${reftests.length}; ${cases.length} tests in all)`);
+console.log(`wpt css-tables reachable reftests (not refused by the host): ${reachableCounts.pass} pass, ${reachableCounts.fail} fail, `+
+  `${reachableCounts.refused} refused, ${reachableCounts.error} error (out of ${reachable.length})`);
+console.log(`wpt css-tables crash tests (renders without error): ${crashCounts.pass} pass, ${crashCounts.fail} fail, `+
+  `${crashCounts.refused} refused, ${crashCounts["not-run"]} not run (out of ${crashtests.length})`);
 device?.destroy();

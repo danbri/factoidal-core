@@ -34,9 +34,18 @@ Deno.test("expected failure, issue 1271: the window refuses the showcase script 
     /does not execute scripts/,stillGap("1271"));
 });
 
-Deno.test("expected failure, issue 1272: table cells stack as blocks",()=>{
+Deno.test("issue 1272: table cells are side by side, and colspan widens a cell",()=>{
   const body="<table><tr><td>alpha</td><td>beta</td></tr></table>";
-  assert.ok(left(run(body,"beta"))<=left(run(body,"alpha")),stillGap("1272"));
+  assert.ok(left(run(body,"beta"))>left(run(body,"alpha")),"cells of one row are in one line");
+  assert.equal(run(body,"beta").glyphs[0][2],run(body,"alpha").glyphs[0][2],"cells of one row share a top");
+  const span="<table><tr><td>one</td><td>two</td></tr><tr><td colspan=2>wide</td></tr></table>";
+  assert.equal(left(run(span,"wide")),left(run(span,"one")),"a spanning cell starts in its first column");
+  assert.ok(run(span,"wide").glyphs[0][2]>run(span,"two").glyphs[0][2],"the second row is below the first");
+});
+
+Deno.test("expected failure, issue 1272: inline-table is laid out as a block-level table",()=>{
+  const body="<p>before <span style='display:inline-table'><span style='display:table-cell'>cell</span></span> after</p>";
+  assert.ok(run(body,"after").glyphs[0][2]>run(body,"before").glyphs[0][2],stillGap("1272"));
 });
 
 Deno.test("expected failure, issue 1272: an inline-block width is ignored",()=>{

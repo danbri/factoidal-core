@@ -429,8 +429,11 @@ class Run:
                            lambda r: r['test'], top=20),
                  uniformPasses=report['reftests']['uniformPasses'], brokenReferencePasses=report['reftests']['brokenReferencePasses'],
                  passes=sorted(row['test'] for row in rows if row['status'] == 'pass'),
-                 notes='A pass is equal pixels with the reference. Tables are laid out as blocks today, so many passes are '
-                       'coincidences; uniformPasses and brokenReferencePasses count the weakest.')
+                 reachable=report['reftests'].get('reachable'), crashtests=report.get('crashtests'),
+                 failingByDroppedProperty=report.get('failingByDroppedProperty'),
+                 notes='A pass is equal pixels with the reference. Some passes are coincidences; uniformPasses and '
+                       'brokenReferencePasses count the weakest. Reachable reftests are those the host does not refuse '
+                       '(scripts). Crash tests pass when Lean lays them out without an error.')
 
     def demo_pages(self):
         native = self.native()

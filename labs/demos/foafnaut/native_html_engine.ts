@@ -176,6 +176,8 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // Lean reads the font once and holds it; later renders draw with it.
     fontLoad:(fontBase64:string,fontFamily:string,fontSha256:string)=>documentCall("",{op:"fontLoad",fontBase64,fontFamily,fontSha256}) as {family:string;glyphs:number},
     fontRequests:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"fontRequests"}),
+    // The CSS declarations that Lean's profile can not read and drops, "property: value (reason)".
+    droppedCSS:(source:string,options:Record<string,unknown>)=>(documentCall(source,{...options,op:"droppedCSS"}) as {dropped:string[]}).dropped,
     compile(source:string,width:number,height:number,options:Record<string,unknown>):HTMLArtifact {
       return sceneOf(renderCall(source,{binary:true,...options,op:"render"},width,height),width,height);
     },
