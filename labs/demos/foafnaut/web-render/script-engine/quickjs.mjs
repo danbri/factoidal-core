@@ -128,6 +128,23 @@ export async function createQuickJS(bytes, { shouldInterrupt = () => false, memo
         return stringResult ? asString(value) : undefined;
       } finally { if (value !== undefined) api.JS_FreeValue(context, value); api.free(input.pointer); }
     },
+    // Run pending Promise jobs, at most `limit`. Returns the errors of failed jobs.
+    runJobs(limit = 1000) {
+      if (closed) throw Error('QuickJS instance disposed');
+      const errors = [], holder = api.malloc(4);
+      if (!holder) throw Error('QuickJS job allocation failed');
+      try {
+        for (let i = 0; i < limit; i++) {
+          const status = api.JS_ExecutePendingJob(runtime, holder);
+          if (status === 0) break;
+          if (status < 0) {
+            const exception = api.JS_GetException(context);
+            try { errors.push(asString(exception)); } finally { api.JS_FreeValue(context, exception); }
+          }
+        }
+      } finally { api.free(holder); }
+      return errors;
+    },
     dispose() {
       if (closed) return;
       closed = true; api.free(filename.pointer); api.JS_FreeContext(context); api.JS_FreeRuntime(runtime);

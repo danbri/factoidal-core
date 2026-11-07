@@ -736,6 +736,11 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     validateResources dom request
     let _ ← classicScripts (WebRenderScript.scriptRecords dom)
     if op == "inspect" then return ((← inspect dom (str request "url")).toString,#[])
+    -- The element projection that a page script reads after its commands (no resources).
+    if op == "scriptSnapshot" then
+      let snap := WebRenderScript.snapshot dom
+      return ((JSON.Json.object [("nodes",(snap.field? "nodes").getD (.array [])),
+        ("next",(snap.field? "next").getD (.number "0"))]).toString,#[])
     -- querySelector and querySelectorAll of a page script, over the commanded DOM.
     if op == "scriptQuery" then
       let scope := match request.field? "scope" with | some (.number n) => n.toNat?.getD 0 | _ => 0

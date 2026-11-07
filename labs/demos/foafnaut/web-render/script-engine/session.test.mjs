@@ -105,12 +105,84 @@ test('host watchdog terminates a busy actual worker before cooperative deadline'
   } finally { session.reset(); }
 });
 
-test('allocation exhaustion and guest exception do not commit pending commands', async () => {
+test('a script error is reported and ends only that script; allocation exhaustion ends the turn', async () => {
   const session = create();
   try {
-    await assert.rejects(session.start({ nodes, source: 'document.getElementById("message").textContent="discard";throw Error("stop");' }), /stop/);
+    // HTML §8.1.4.3: the exception is reported; the next classic script still runs.
+    const batch = await session.start({ nodes, sources: ['document.getElementById("message").textContent="kept";throw Error("stop");', 'console.log("second ran")'] });
+    assert.deepEqual(batch.commands, [{ op: 'setTextContent', nodeId: 4, value: 'kept' }]);
+    assert.deepEqual(batch.logs, ['second ran']);
+    assert.match(batch.errors[0], /stop/);
     await assert.rejects(session.start({ nodes, source: 'new Array(100000000).fill("x")' }), /memory|allocation|out of bounds|timeout/i);
     assert.deepEqual((await session.start({ nodes, source: '' })).commands, []);
+  } finally { session.reset(); }
+});
+
+test('timers run when due, in order, and an interval repeats until cleared', async () => {
+  let clock = 1000;
+  const session = create({ now: () => clock });
+  try {
+    const first = await session.start({ nodes, source: `const out = document.getElementById('message'); let n = 0;
+      setTimeout(() => console.log('late'), 50); setTimeout(() => console.log('early'), 10);
+      const every = setInterval(() => { n++; out.textContent = 'tick ' + n; if (n === 2) clearInterval(every); }, 20);` });
+    assert.equal(first.timer, 10);
+    clock = 1015; let batch = await session.timers();
+    assert.deepEqual(batch.logs, ['early']); assert.equal(batch.timer, 5);
+    clock = 1060; batch = await session.timers();
+    assert.deepEqual(batch.logs, ['late']);
+    // A late interval runs once, not once for each period it missed.
+    assert.deepEqual(batch.commands.map(c => c.value), ['tick 1']);
+    clock = 1090; batch = await session.timers();
+    assert.deepEqual(batch.commands.map(c => c.value), ['tick 2']);
+    assert.equal(batch.timer, null);
+  } finally { session.reset(); }
+});
+
+test('animation frames run once per frame turn with the frame time', async () => {
+  let clock = 0;
+  const session = create({ now: () => clock });
+  try {
+    const first = await session.start({ nodes, source: `let frames = 0;
+      function step(t) { frames++; document.getElementById('message').textContent = 'frame ' + frames + ' at ' + t; if (frames < 3) requestAnimationFrame(step); }
+      requestAnimationFrame(step);` });
+    assert.equal(first.frame, true);
+    const values = [];
+    for (let i = 1; i <= 3; i++) { clock = i * 16; const batch = await session.frame(); values.push(batch.commands[0].value); if (i < 3) assert.equal(batch.frame, true); else assert.equal(batch.frame, false); }
+    assert.deepEqual(values, ['frame 1 at 16', 'frame 2 at 32', 'frame 3 at 48']);
+  } finally { session.reset(); }
+});
+
+test('keydown goes to document listeners in order; turns keep the order they were asked in', async () => {
+  const session = create();
+  try {
+    const first = await session.start({ nodes, source: `let typed = '';
+      document.addEventListener('keydown', e => { typed += e.key; document.getElementById('message').textContent = typed; });` });
+    assert.deepEqual(first.documentListeners, ['keydown']);
+    const turns = ['a', 'b', 'c'].map(key => session.dispatch({ type: 'keydown', key }));
+    const batches = await Promise.all(turns);
+    assert.deepEqual(batches.map(b => b.commands[0].value), ['a', 'ab', 'abc']);
+  } finally { session.reset(); }
+});
+
+test('an error in a listener is reported and later listeners still run', async () => {
+  const session = create();
+  try {
+    await session.start({ nodes, source: `const a = document.getElementById('change');
+      a.addEventListener('click', () => { throw TypeError('first fails'); });
+      a.addEventListener('click', () => console.log('second runs'));` });
+    const batch = await session.dispatch({ type: 'click', nodeId: 5 });
+    assert.deepEqual(batch.logs, ['second runs']);
+    assert.match(batch.errors[0], /TypeError: first fails/);
+  } finally { session.reset(); }
+});
+
+test('without the Lean DOM, element creation and general selectors refuse with a reason', async () => {
+  const session = create();
+  try {
+    const batch = await session.start({ nodes, sources: ['document.createElement("li")', 'document.querySelector("p.x")', 'document.body.innerHTML = "x"'] });
+    assert.match(batch.errors[0], /createElement needs the Lean DOM/);
+    assert.match(batch.errors[1], /Selector queries need the Lean DOM/);
+    assert.equal(batch.errors.length, 3);
   } finally { session.reset(); }
 });
 
