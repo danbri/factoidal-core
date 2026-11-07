@@ -682,6 +682,42 @@ def Geometry.recordTagCount : BackendGeometry → Nat × Nat
   | .line .. => (lineRecordTag,0)
   | .polygon points => (polygonRecordTag,points.length)
   | .path contours => (pathRecordTag,(NativeSVGPath.edges contours).length)
+
+/-- Count of fill edges, with no list of edges: each contour closes, so it has one
+edge for each point. -/
+def edgeCount (contours : List NativeSVGPath.LinearContour) : Nat :=
+  contours.foldl (fun n c => n + c.points.length) 0
+
+private theorem edgeCount_go (contours : List NativeSVGPath.LinearContour) (k : Nat) :
+    contours.foldl (fun n c => n + c.points.length) k = k + (NativeSVGPath.edges contours).length := by
+  induction contours generalizing k with
+  | nil => simp [NativeSVGPath.edges]
+  | cons c cs ih =>
+    simp only [List.foldl_cons]
+    rw [ih]
+    simp only [NativeSVGPath.edges, List.flatMap_cons, List.length_append, List.length_zip,
+      List.length_drop, List.length_take]
+    simp only [NativeSVGPath.edges] at ih
+    have : min c.points.length (c.points.length - 1 + min 1 c.points.length) = c.points.length := by
+      cases c.points.length <;> omega
+    omega
+
+theorem edges_length (contours : List NativeSVGPath.LinearContour) :
+    (NativeSVGPath.edges contours).length = edgeCount contours := by
+  simp only [edgeCount]; rw [edgeCount_go]; omega
+
+private def Geometry.recordTagCountFast : BackendGeometry → Nat × Nat
+  | .rect .. => (Geometry.rectRecordTag,0)
+  | .circle .. => (Geometry.circleRecordTag,0)
+  | .ellipse .. => (Geometry.ellipseRecordTag,0)
+  | .line .. => (Geometry.lineRecordTag,0)
+  | .polygon points => (Geometry.polygonRecordTag,points.length)
+  | .path contours => (Geometry.pathRecordTag,edgeCount contours)
+
+@[csimp] private theorem Geometry.recordTagCount_eq_fast :
+    @Geometry.recordTagCount = @Geometry.recordTagCountFast := by
+  funext g; cases g <;> simp [Geometry.recordTagCount, Geometry.recordTagCountFast, edges_length]
+
 /-- An exact rectangular clip in its own Float coordinate frame. SVG 2 §8
     viewport clipping is tested through the inverse CTM, never a world AABB. -/
 structure ClipRect where
@@ -1490,6 +1526,20 @@ def BackendPrimitive.storageRows (p : BackendPrimitive) : Nat :=
   5+shapeRows+(p.dashParts.getD []).length*5+
     (if p.transform.identity then 0 else 2)+p.clips.length*3
 
+private def BackendPrimitive.storageRowsFast (p : BackendPrimitive) : Nat :=
+  let shapeRows := match p.geometry with
+    | .polygon points => (points.length+1)/2
+    | .path contours => edgeCount contours
+    | _ => 0
+  5+shapeRows+(p.dashParts.getD []).length*5+
+    (if p.transform.identity then 0 else 2)+p.clips.length*3
+
+@[csimp] private theorem BackendPrimitive.storageRows_eq_fast :
+    @BackendPrimitive.storageRows = @BackendPrimitive.storageRowsFast := by
+  funext p
+  simp only [BackendPrimitive.storageRows, BackendPrimitive.storageRowsFast]
+  cases p.geometry <;> simp [edges_length]
+
 /-- Largest paint table of a scene, in 32-bit words. -/
 def maxPaintTableWords : Nat := 1048576
 
@@ -2124,6 +2174,16 @@ def geometryTailRowCount : BackendGeometry → Nat
   | .polygon points => (points.length+1)/2
   | .path contours => (NativeSVGPath.edges contours).length
   | _ => 0
+
+private def geometryTailRowCountFast : BackendGeometry → Nat
+  | .polygon points => (points.length+1)/2
+  | .path contours => edgeCount contours
+  | _ => 0
+
+@[csimp] private theorem geometryTailRowCount_eq_fast :
+    @geometryTailRowCount = @geometryTailRowCountFast := by
+  funext g; cases g <;> simp [geometryTailRowCount, geometryTailRowCountFast, edges_length]
+
 def geometryTailData : BackendGeometry → List Float
   | .polygon points => points.flatMap (fun p => [p.x,p.y]) ++
       (if points.length%2 == 1 then [0,0] else [])
@@ -2361,6 +2421,248 @@ theorem Scene.data_within_storage_budget (s : Scene) : s.data.size ≤ maxDataFl
 #print axioms compilePrimitives_budget
 #print axioms Scene.make_existing
 #print axioms Scene.data_within_storage_budget
+
+/-! ### Storage bytes with no list of floats
+
+`Scene.data` is the reference: the floats of each record, in a list. The host reads
+them as IEEE 754 binary32, little-endian. The writers below push the bytes of each
+record onto one `ByteArray`, with no list cell and no boxed float. Each writer has a
+theorem that it pushes the bytes of its reference list, so `Scene.float32Bytes` has
+a `csimp` proof (`Scene.float32Bytes_eq_fast`). -/
+
+/-- One storage float as the GPU reads it: IEEE 754 binary32, little-endian. -/
+@[inline] def pushF32 (bytes : ByteArray) (value : Float) : ByteArray :=
+  let bits := value.toFloat32.toBits
+  bytes.push bits.toUInt8 |>.push (bits >>> 8).toUInt8
+    |>.push (bits >>> 16).toUInt8 |>.push (bits >>> 24).toUInt8
+
+/-- Storage floats as binary32 little-endian bytes. -/
+def float32Bytes (data : Array Float) : ByteArray :=
+  data.foldl pushF32 (ByteArray.emptyWithCapacity (data.size*4))
+
+@[inline] private def push4 (acc : ByteArray) (a b c d : Float) : ByteArray :=
+  pushF32 (pushF32 (pushF32 (pushF32 acc a) b) c) d
+
+/-- Point bounds as a fold with no first-point case: `none` before the first point. -/
+private def boundsStep : Option BoxFold → Point → Option BoxFold
+  | none, p => some ⟨p.x,p.y,p.x,p.y⟩
+  | some b, p => some (b.add p)
+
+private theorem boundsStep_some (points : List Point) (b : BoxFold) :
+    points.foldl boundsStep (some b) = some (points.foldl BoxFold.add b) := by
+  induction points generalizing b with
+  | nil => rfl
+  | cons p ps ih => exact ih (b.add p)
+
+private def boundsRows : Option BoxFold → List Float
+  | none => [0,0,0,0]
+  | some r => [r.x0,r.y0,r.x1,r.y1]
+
+private theorem pointBounds_eq_step (points : List Point) :
+    pointBounds points = boundsRows (points.foldl boundsStep none) := by
+  rw [pointBounds_eq_fast]
+  cases points with
+  | nil => rfl
+  | cons p rest =>
+    simp only [pointBoundsFast, List.foldl_cons, boundsStep]
+    rw [boundsStep_some]; rfl
+
+/-- Bounds of all points of all contours, with no list of all points. -/
+private def contourBounds (contours : List NativeSVGPath.LinearContour) : Option BoxFold :=
+  contours.foldl (fun acc c => c.points.foldl boundsStep acc) none
+
+private theorem contourBounds_eq (contours : List NativeSVGPath.LinearContour) :
+    (contours.flatMap (·.points)).foldl boundsStep none = contourBounds contours := by
+  rw [List.foldl_flatMap]; rfl
+
+private def writeBounds (acc : ByteArray) : Option BoxFold → ByteArray
+  | none => push4 acc 0 0 0 0
+  | some r => push4 acc r.x0 r.y0 r.x1 r.y1
+
+private theorem writeBounds_eq (acc : ByteArray) (b : Option BoxFold) :
+    writeBounds acc b = (boundsRows b).foldl pushF32 acc := by
+  cases b <;> rfl
+
+private def writeGeometryRows (acc : ByteArray) : BackendGeometry → ByteArray
+  | .rect x y w h | .ellipse x y w h => push4 acc x y w h
+  | .circle x y r => push4 acc x y r 0
+  | .line x y u v => push4 acc x y u v
+  | .polygon points => writeBounds acc (points.foldl boundsStep none)
+  | .path contours => writeBounds acc (contourBounds contours)
+
+private theorem writeGeometryRows_eq (acc : ByteArray) (g : BackendGeometry) :
+    writeGeometryRows acc g = (geometryRows g).foldl pushF32 acc := by
+  cases g with
+  | polygon points => simp only [writeGeometryRows, geometryRows, pointBounds_eq_step, writeBounds_eq]
+  | path contours =>
+    simp only [writeGeometryRows, geometryRows, pointBounds_eq_step, contourBounds_eq, writeBounds_eq]
+  | _ => rfl
+
+/-- The fill edges of one closed contour, `prev` to each next point, then the last
+point back to `first`: the pairs of `NativeSVGPath.edges`, with no list of pairs. -/
+private def writeEdgesFrom (first : Point) : Point → List Point → ByteArray → ByteArray
+  | prev, [], acc => push4 acc prev.x prev.y first.x first.y
+  | prev, q::qs, acc => writeEdgesFrom first q qs (push4 acc prev.x prev.y q.x q.y)
+
+private def edgeWords (acc : ByteArray) (e : Point × Point) : ByteArray :=
+  [e.1.x,e.1.y,e.2.x,e.2.y].foldl pushF32 acc
+
+private theorem writeEdgesFrom_eq (first prev : Point) (qs : List Point) (acc : ByteArray) :
+    ((prev::qs).zip (qs ++ [first])).foldl edgeWords acc = writeEdgesFrom first prev qs acc := by
+  induction qs generalizing prev acc with
+  | nil => rfl
+  | cons q qs ih =>
+    simp only [List.cons_append, List.zip_cons_cons, List.foldl_cons]
+    rw [ih]; rfl
+
+private def writeContourEdges (acc : ByteArray) (c : NativeSVGPath.LinearContour) : ByteArray :=
+  match c.points with
+  | [] => acc
+  | p::rest => writeEdgesFrom p p rest acc
+
+private theorem writeContourEdges_eq (acc : ByteArray) (c : NativeSVGPath.LinearContour) :
+    (c.points.zip (c.points.drop 1 ++ c.points.take 1)).foldl edgeWords acc =
+      writeContourEdges acc c := by
+  unfold writeContourEdges
+  split
+  · rename_i h; simp [h]
+  · rename_i p rest h
+    rw [h]
+    exact writeEdgesFrom_eq p p rest acc
+
+private def writeGeometryTail (acc : ByteArray) : BackendGeometry → ByteArray
+  | .polygon points =>
+    let acc := points.foldl (fun acc p => pushF32 (pushF32 acc p.x) p.y) acc
+    if points.length%2 == 1 then pushF32 (pushF32 acc 0) 0 else acc
+  | .path contours => contours.foldl writeContourEdges acc
+  | _ => acc
+
+private theorem writeGeometryTail_eq (acc : ByteArray) (g : BackendGeometry) :
+    writeGeometryTail acc g = (geometryTailData g).foldl pushF32 acc := by
+  cases g with
+  | polygon points =>
+    simp only [writeGeometryTail, geometryTailData, List.foldl_append, List.foldl_flatMap]
+    split <;> rfl
+  | path contours =>
+    simp only [writeGeometryTail, geometryTailData, NativeSVGPath.edges, List.foldl_flatMap]
+    congr 1
+    funext acc c
+    rw [← writeContourEdges_eq]
+    rfl
+  | _ => rfl
+
+private def writeResolved (acc : ByteArray) (paint : Paint) (style : Style) (alpha : Float) : ByteArray :=
+  match paint with
+  | .none => push4 acc 0 0 0 0
+  | .solid c => push4 acc c.r c.g c.b alpha
+  | .current => push4 acc style.currentColor.r style.currentColor.g style.currentColor.b alpha
+  | .gradient _ => push4 acc 0 0 0 0
+  | .gradientRecord cursor _ => push4 acc (Float.ofNat cursor) alpha 0 (-1)
+  | .image _ => push4 acc 0 0 0 0
+  | .imageRecord cursor _ => push4 acc (Float.ofNat cursor) alpha 0 (-2)
+
+private theorem writeResolved_eq (acc : ByteArray) (paint : Paint) (style : Style) (alpha : Float) :
+    writeResolved acc paint style alpha = (resolved paint style alpha).foldl pushF32 acc := by
+  cases paint <;> rfl
+
+private def Primitive.writeFixed (p : BackendPrimitive) (acc : ByteArray) : ByteArray :=
+  let (tag,count) := p.geometry.recordTagCount
+  let acc := writeGeometryRows acc p.geometry
+  let acc := push4 acc (Float.ofNat tag) (Float.ofNat count)
+    (if p.style.rule == .evenodd then 1 else 0) (Float.ofNat p.headerModeCode)
+  let acc := writeResolved acc p.style.fill p.style p.style.fillOpacity
+  let acc := writeResolved acc p.style.stroke p.style p.style.strokeOpacity
+  push4 acc p.style.strokeWidth p.effectiveOpacity (Float.ofNat (p.dashParts.getD []).length)
+    (if p.dashParts.isSome then 1 else 0)
+
+private theorem Primitive.writeFixed_eq (p : BackendPrimitive) (acc : ByteArray) :
+    p.writeFixed acc = p.fixedRows.foldl pushF32 acc := by
+  simp only [Primitive.writeFixed, Primitive.fixedRows, List.foldl_append,
+    writeGeometryRows_eq, writeResolved_eq]
+  rfl
+
+private def writeDashPiece (width : Float) (acc : ByteArray) : NativeSVGStroke.Piece → ByteArray
+  | .strip a b => push4 (push4 (push4 (push4 (push4 acc a.x a.y b.x b.y) 4 0 0 0) 0 0 0 0) 0 0 0 0) width 0 0 0
+  | .disk c r => push4 (push4 (push4 (push4 (push4 acc c.x c.y r 0) 2 0 0 0) 0 0 0 0) 0 0 0 0) width 0 0 0
+  | .triangle a b c => push4 (push4 (push4 (push4 (push4 acc a.x a.y b.x b.y) 7 0 0 0) c.x c.y 0 0) 0 0 0 0) width 0 0 0
+
+private theorem writeDashPiece_eq (width : Float) (acc : ByteArray) (piece : NativeSVGStroke.Piece) :
+    writeDashPiece width acc piece = (dashPieceData width piece).foldl pushF32 acc := by
+  cases piece <;> rfl
+
+private def Primitive.writeTransformTail (p : BackendPrimitive) (acc : ByteArray) : ByteArray :=
+  if p.transform.identity then acc else
+    let r := p.transform.inverse.toPackedRows floatOps
+    push4 (push4 acc r.xx r.xy r.tx r.pad0) r.yx r.yy r.ty r.pad1
+
+private theorem Primitive.writeTransformTail_eq (p : BackendPrimitive) (acc : ByteArray) :
+    p.writeTransformTail acc = p.transformTailData.foldl pushF32 acc := by
+  simp only [Primitive.writeTransformTail, Primitive.transformTailData]
+  split <;> rfl
+
+private def writeClip (acc : ByteArray) (clip : ClipRect) : ByteArray :=
+  let active := clip.valid
+  let t := if active then clip.transform.inverse else identityTransform
+  push4 (push4 (push4 acc t.a t.c t.e (if active then 1 else 0)) t.b t.d t.f 0)
+    (if active then clip.x else 0) (if active then clip.y else 0)
+    (if active then clip.width else 0) (if active then clip.height else 0)
+
+private theorem writeClip_eq (acc : ByteArray) (clip : ClipRect) :
+    writeClip acc clip = clip.rows.foldl pushF32 acc := rfl
+
+/-- The bytes of one record, pushed with no list: the same bytes as `Primitive.rows`. -/
+def Primitive.writeRows (acc : ByteArray) (p : BackendPrimitive) : ByteArray :=
+  let acc := p.writeFixed acc
+  let acc := writeGeometryTail acc p.geometry
+  let acc := (p.dashParts.getD []).foldl (writeDashPiece p.style.strokeWidth) acc
+  let acc := p.writeTransformTail acc
+  p.clips.foldl writeClip acc
+
+theorem Primitive.writeRows_eq (acc : ByteArray) (p : BackendPrimitive) :
+    Primitive.writeRows acc p = p.rows.foldl pushF32 acc := by
+  have dash : writeDashPiece p.style.strokeWidth =
+      fun acc piece => (dashPieceData p.style.strokeWidth piece).foldl pushF32 acc := by
+    funext acc piece; exact writeDashPiece_eq _ acc piece
+  have clip : writeClip = fun acc clip => clip.rows.foldl pushF32 acc := by
+    funext acc clip; exact writeClip_eq acc clip
+  simp only [Primitive.writeRows, Primitive.rows, List.foldl_append, Primitive.writeFixed_eq,
+    writeGeometryTail_eq, Primitive.writeTransformTail_eq, dashPayloadData, clipPayloadData,
+    List.foldl_flatMap, dash, clip]
+
+/-- Count of storage floats, with no list. Equal to `s.data.size` (`Scene.dataSize_eq`). -/
+def Scene.dataSize (s : Scene) : Nat :=
+  s.compiled.foldl (fun n p => n + p.rowCount*4) 8
+
+private theorem foldl_add_sum (items : List BackendPrimitive) (k : Nat) :
+    items.foldl (fun n p => n + p.rowCount*4) k = k + (items.map fun p => p.rowCount*4).sum := by
+  induction items generalizing k with
+  | nil => simp
+  | cons p ps ih => simp only [List.foldl_cons, List.map_cons, List.sum_cons]; rw [ih]; omega
+
+theorem Scene.dataSize_eq (s : Scene) : s.dataSize = s.data.size := by
+  rw [Scene.data_size_eq_record_cursor]; exact foldl_add_sum s.compiled 8
+
+/-- The storage bytes of a scene. Reference: `float32Bytes s.data`. -/
+def Scene.float32Bytes (s : Scene) : ByteArray := NativeSVG.float32Bytes s.data
+
+private def Scene.float32BytesFast (s : Scene) : ByteArray :=
+  let m := s.mapping
+  s.compiled.foldl Primitive.writeRows
+    (push4 (push4 (ByteArray.emptyWithCapacity (s.dataSize*4)) m.sx m.sy m.tx m.ty)
+      m.minX m.minY m.viewportWidth m.viewportHeight)
+
+@[csimp] private theorem Scene.float32Bytes_eq_fast :
+    @Scene.float32Bytes = @Scene.float32BytesFast := by
+  funext s
+  simp only [Scene.float32Bytes, Scene.float32BytesFast, NativeSVG.float32Bytes, Scene.data,
+    List.foldl_toArray, List.foldl_append, List.foldl_flatMap]
+  congr 1
+  funext acc p
+  exact (Primitive.writeRows_eq acc p).symm
+
+#print axioms Primitive.writeRows_eq
+#print axioms Scene.dataSize_eq
+#print axioms Scene.float32Bytes_eq_fast
 
 private def Primitive.wgsl (p : BackendPrimitive) (base : Nat) : String :=
   "{\n" ++
@@ -2986,10 +3288,11 @@ end
 private def base64Table : ByteArray :=
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toUTF8
 
-/-- Storage floats as the GPU reads them: IEEE 754 binary32, little-endian, in Base64.
+/-- Reference for `float32Base64` (the differential guards below compare them).
+Storage floats as the GPU reads them: IEEE 754 binary32, little-endian, in Base64.
 Decimal text for these floats was 57% of a frame of the status page. The host stores
 them as binary32 either way, so the text form carried nothing more. -/
-def float32Base64 (data : Array Float) : String := Id.run do
+def float32Base64Ref (data : Array Float) : String := Id.run do
   let mut bytes := ByteArray.emptyWithCapacity (data.size*4)
   for value in data do
     let bits := value.toFloat32.toBits
@@ -3017,6 +3320,75 @@ def float32Base64 (data : Array Float) : String := Id.run do
       |>.push base64Table[((b &&& 15) <<< 2).toNat]! |>.push 61
   return String.fromUTF8! text
 
+/-- A byte below 128 is one ASCII character: pushing it keeps the bytes valid UTF-8. -/
+private theorem ascii_push_valid {b : ByteArray} (h : b.IsValidUTF8) (x : UInt8) :
+    (b.push (x &&& 127)).IsValidUTF8 := by
+  have hn : x.toNat &&& 127 < 128 := Nat.lt_of_le_of_lt Nat.and_le_right (by decide)
+  have hx : (x &&& 127).toNat < 128 := by rw [UInt8.toNat_and]; exact hn
+  have hc : (Char.ofNat (x &&& 127).toNat).utf8Size = 1 := by
+    unfold Char.ofNat
+    split
+    · simp only [Char.utf8Size, Char.ofNatAux]
+      split
+      · rfl
+      · rename_i no; exfalso; apply no; simp [UInt32.le_iff_toNat_le]; omega
+    · rfl
+  have e : (Char.ofNat (x &&& 127).toNat).toUInt8 = x &&& 127 := by
+    unfold Char.ofNat
+    split
+    · simp only [Char.toUInt8, Char.ofNatAux]
+      apply UInt8.toNat_inj.mp
+      simp
+    · rename_i no; exfalso; apply no; simp [Nat.isValidChar]; omega
+  have := h.push hc
+  rwa [e] at this
+
+/-- Bytes that are valid UTF-8 by construction: the `String` needs no check. -/
+private structure Utf8Bytes where
+  bytes : ByteArray
+  valid : bytes.IsValidUTF8
+
+/-- Pushes `x` with its top bit cleared; the Base64 alphabet is ASCII, so `x` itself. -/
+@[inline] private def Utf8Bytes.pushAscii (t : Utf8Bytes) (x : UInt8) : Utf8Bytes :=
+  ⟨t.bytes.push (x &&& 127), ascii_push_valid t.valid x⟩
+
+/-- Base64 of bytes. The text is valid UTF-8 by construction, so no pass checks it.
+The differential guards below compare it with `float32Base64Ref`. -/
+def base64Bytes (bytes : ByteArray) : String := Id.run do
+  let whole := bytes.size/3*3
+  let mut text : Utf8Bytes := ⟨ByteArray.emptyWithCapacity ((bytes.size+2)/3*4), ByteArray.isValidUTF8_empty⟩
+  for index in [0:whole:3] do
+    let a := bytes[index]!
+    let b := bytes[index+1]!
+    let c := bytes[index+2]!
+    text := text.pushAscii base64Table[(a >>> 2).toNat]!
+      |>.pushAscii base64Table[(((a &&& 3) <<< 4) ||| (b >>> 4)).toNat]!
+      |>.pushAscii base64Table[(((b &&& 15) <<< 2) ||| (c >>> 6)).toNat]!
+      |>.pushAscii base64Table[(c &&& 63).toNat]!
+  if whole+1 == bytes.size then
+    let a := bytes[whole]!
+    text := text.pushAscii base64Table[(a >>> 2).toNat]!
+      |>.pushAscii base64Table[((a &&& 3) <<< 4).toNat]! |>.pushAscii 61 |>.pushAscii 61
+  else if whole+2 == bytes.size then
+    let a := bytes[whole]!
+    let b := bytes[whole+1]!
+    text := text.pushAscii base64Table[(a >>> 2).toNat]!
+      |>.pushAscii base64Table[(((a &&& 3) <<< 4) ||| (b >>> 4)).toNat]!
+      |>.pushAscii base64Table[((b &&& 15) <<< 2).toNat]! |>.pushAscii 61
+  return String.fromUTF8 text.bytes text.valid
+
+/-- Storage floats as the GPU reads them: IEEE 754 binary32, little-endian, in Base64. -/
+def float32Base64 (data : Array Float) : String := base64Bytes (float32Bytes data)
+
+-- Differential guards, not a proof: `float32Base64` against its reference, for each
+-- length modulo 3 of the bytes, and values over the whole Base64 alphabet.
+private def base64Probe : Array Float :=
+  (List.range 67).toArray.map fun i => (Float.ofNat i*1.37-40.0)*(if i%3==0 then 1.0e-3 else 1.0e5)
+#guard (List.range 8).all fun n =>
+  float32Base64 (base64Probe.extract 0 n) == float32Base64Ref (base64Probe.extract 0 n)
+#guard float32Base64 base64Probe == float32Base64Ref base64Probe
+#guard float32Base64 #[0.0/0.0,1.0/0.0,-1.0/0.0,-0.0,3.4e38,1.0e-45] ==
+  float32Base64Ref #[0.0/0.0,1.0/0.0,-1.0/0.0,-0.0,3.4e38,1.0e-45]
 #guard float32Base64 #[1.5,-2.0,0.1] == "AADAPwAAAMDNzMw9"
 
 /-- Lean's expected colors for the GPU readback check. A frame of a page that is
@@ -3031,19 +3403,21 @@ private def Scene.checks (s : Scene) (data : Array Float) (live : Bool := false)
 /-- `checks` false leaves out the CPU probes: they are for the GPU readback check, and
     one probe was 19% of a frame of the status page and of the FOAF graph page. -/
 private def Scene.json (s : Scene) (live binary : Bool := false) (checks : Bool := true) : Except String String := do
-  let data := s.data
-  if data.size > maxDataFloats then throw "storage data exceeds 1048576 floats"
+  -- `s.data` is built only for the probes and the decimal text; the size and the
+  -- binary text come from the scene with no array of floats (`Scene.dataSize_eq`,
+  -- `Scene.float32Bytes_eq_fast`).
+  if s.dataSize > maxDataFloats then throw "storage data exceeds 1048576 floats"
   let tiles := s.tiles
   -- The last word of `tiles` is the size of the paint table.
   if tiles.back! > maxPaintTableWords then throw s!"paint table exceeds {maxPaintTableWords} words"
-  let checks := if checks then s.checks data live else []
+  let checks := if checks then s.checks s.data live else []
   let tree := if DisplayNode.listNodeCount s.tree <= maxInspectorNodes
     then DisplayNode.listJSON s.tree else "null"
   return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
     ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.compiled.length ++
     ",\"tree\":" ++ tree ++
-    (if binary then ",\"dataBase64\":\"" ++ float32Base64 data ++ "\""
-     else ",\"data\":" ++ jsonArray (floatJSONList data.toList)) ++ ",\"tiles\":" ++ jsonArray (tiles.toList.map toString) ++ ",\"wgsl\":" ++ sceneShaderJSON ++ ",\"checks\":" ++ jsonArray checks ++ "}"
+    (if binary then ",\"dataBase64\":\"" ++ base64Bytes s.float32Bytes ++ "\""
+     else ",\"data\":" ++ jsonArray (floatJSONList s.data.toList)) ++ ",\"tiles\":" ++ jsonArray (tiles.toList.map toString) ++ ",\"wgsl\":" ++ sceneShaderJSON ++ ",\"checks\":" ++ jsonArray checks ++ "}"
 /-- Serialize an existing checked SVG scene through the same packed-data/WGSL
     producer as the string ABI; no XML serialization or reparsing is required. -/
 def Scene.artifact (s : Scene) (live binary : Bool := false) (checks : Bool := true) : Except String String :=

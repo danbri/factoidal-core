@@ -147,6 +147,14 @@ def main (args : List String) : IO UInt32 := do
         bytes := bytes+(WebDocument.compile html (at_ (40*(i+1))) w.toUInt32 h.toUInt32).utf8ByteSize
       IO.println s!"{n} scroll frames, {((← IO.monoNanosNow)-start)/1000/(max n 1)} us each, {bytes} bytes"
       return 0
+    -- One frame with a font loaded first: the output bytes, for a before/after check.
+    if let ["--document",options,font] := flags then
+      let some w := width.toNat? | throw (IO.userError "invalid width")
+      let some h := height.toNat? | throw (IO.userError "invalid height")
+      let loaded := WebDocument.compile "" (← IO.FS.readFile font) 1 1
+      if loaded.startsWith "{\"error\"" then IO.println loaded; return 1
+      IO.println (WebDocument.compile (← IO.FS.readFile path) (← IO.FS.readFile options) w.toUInt32 h.toUInt32)
+      return 0
     if let ["--document",options] := flags then
       let some w := width.toNat? | throw (IO.userError "invalid width")
       let some h := height.toNat? | throw (IO.userError "invalid height")
