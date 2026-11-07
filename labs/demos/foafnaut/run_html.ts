@@ -14,7 +14,7 @@ import type {UIEvent} from "./ui_engine.ts";
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--graph-sweep] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
   }
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true;
   while(args.length){const arg=args.shift();
@@ -46,6 +46,10 @@ async function main() {
     // Press and hold a link, then the reload button, then release each (issue 1268): the
     // press acknowledgement, the Lean frame of a held press, and the release.
     else if(arg==="--press-sweep")commands=["press-link","hold","release","hold","press-reload","hold","release","hold"];
+    // Back and forward to and from the FOAF graph page (issue 1268): the index's first link opens it;
+    // "url:X" fails the run unless the page shown ends with X; "back" presses the chrome's back button.
+    else if(arg==="--back-sweep")commands=["overLink","pointer:hand",[3,640,780],"pointer:arrow","link","url:foafnaut:graph",[2,640,500],[4,640,500],"[","url:index.html","]","url:foafnaut:graph",
+      [2,700,450],[3,720,470],[4,720,470],"back","url:index.html","right","url:foafnaut:graph","left","url:index.html"];
     else throw new Error(`Unknown native HTML argument: ${arg}`);
   }
   // Lean engine for compile: --native-engine PATH, else libweb-render.dylib beside the program, else Wasm.
@@ -228,16 +232,37 @@ async function main() {
     } else graphQueue.push({kind,a,b,page});
     if(!graphRunning)runGraph();
   };
-  const openGraph=async()=>{
+  // Lean's link and address rules make the graph a page (`WebShell.graphURL`): it opens in the
+  // tab and goes into its history like any page, so back leaves it (issue 1268).
+  const graphURL="foafnaut:graph";
+  const graphPage=async()=>{
     const rdf=await Deno.readTextFile(new URL("./pages/foaf-demo.ttl",import.meta.url));
     const frame=await lean.graphStart(rdf,width,height,shell());
-    const page={url:"foafnaut:graph",baseURL:"foafnaut:graph",title:"FOAF graph",source:"",sources:[] as typeof document.sources,
+    const page={url:graphURL,baseURL:graphURL,title:"FOAF graph",source:"",sources:[] as typeof document.sources,
       graph:{model:frame.model,clock:false,last:0},
       request(_w:number,_h:number,view:PageView={}){return {source:"",options:{url:page.url,resources:[],graphModel:page.graph!.model,...view} as Record<string,unknown>};},
       compile(w:number,h:number,view:PageView={}){return lean.compile("",w,h,{url:page.url,resources:[],graphModel:page.graph!.model,...view});},
       selectedText:()=>""} as unknown as Page;
     await graphFrame(page,frame);
-    keepTab();tabs.push({document:page,history:engine.historyPush({entries:[],index:0},page.url),scroll:0});showTab(tabs.length-1);
+    return page as typeof document;
+  };
+  // The system pointer for a window point: Lean answers from the chrome, the graph model or the
+  // link regions of the frame on screen. One small main-thread call for each coalesced move; the
+  // window library is told only when the answer changes (issue 1268).
+  let pointerShown="arrow",lastPointer:number[]|undefined;
+  const linkText=new WeakMap<object,string>();
+  const pointAt=(x:number,y:number)=>{
+    lastPointer=[x,y];
+    if(!session?.frames||!native)return;
+    const page=document as Page,request:{shell:unknown;x:number;y:number;width:number;model?:string;links?:string;pageY?:number}={shell:shell(),x,y,width};
+    if(page.graph)request.model=page.graph.model;
+    else if(!candidate&&frame.webRender.links.length){
+      let links=linkText.get(frame);
+      if(links===undefined){links=JSON.stringify(frame.webRender.links);linkText.set(frame,links);}
+      request.links=links;request.pageY=Math.round(pageRow(y));
+    }
+    const kind=engine.pointerCursor(request);
+    if(kind!==pointerShown){pointerShown=kind;native.setCursor(kind);}
   };
   const focusAddress=()=>{focused=true;fresh=true;address=document.url;cursor=address.length;dirty=true;};
   const leaveAddress=()=>{focused=false;address=document.url;dirty=true;};
@@ -293,7 +318,7 @@ async function main() {
     else if(name==="new")newTab();
     else if(name==="close")closeTab(active);
     else if(name==="home")navigate(home.url);
-    else if(name==="graph")openGraph().catch(error=>refuse("foafnaut:graph",error));
+    else if(name==="graph")navigate(graphURL);
     else if(name==="source")viewSource().catch(error=>refuse(document.url,error));
     else if(name==="theme"){theme=argument||(theme==="next"?"arcade":"next");dirty=true;}
     else if(name==="zoom"&&/^[0-9]+$/.test(argument)){view.textScalePercent=Math.max(50,Number(argument));dirty=true;}
@@ -358,7 +383,7 @@ async function main() {
   const navigate=(target:string,push=true)=>{
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    prepareHTML(lean,target,current.signal).then(next=>{
+    (target===graphURL?graphPage():prepareHTML(lean,target,current.signal)).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
@@ -501,6 +526,8 @@ async function main() {
       checked=nextDocument;
       if(nextDocument!==document)view.selection=undefined;
       if(nextDocument!==document){scroll=0;if(!focused)address=nextDocument.url;}frame=next;document=nextDocument;candidate=undefined;native!.setTitle(windowTitle(document));
+      // A new page under a pointer that has not moved.
+      if(lastPointer)pointAt(lastPointer[0],lastPointer[1]);
       console.log(JSON.stringify({type:"native-html-presented",url:document.url,width:sentWidth,height:sentHeight,primitives:frame.primitiveCount,links:frame.webRender.links.length,frames:session!.frames}));
     };
     let lastRequest:RequestRecord|undefined;
@@ -537,6 +564,7 @@ async function main() {
           if(event.a!==width||event.b!==height){width=event.a;height=event.b;dirty=true;if((document as Page).graph)graphInput(1,width,height);resizeAt??=performance.now();trace("native-html-resize",{width,height});}
         }
         if(event.kind===8&&event.a)dirty=true;
+        if(event.kind===3)pointAt(event.a,event.b);
         const graph=(document as Page).graph;
         if(graph&&!focused&&(event.kind===3||event.kind===4||event.kind===9||(event.kind===5&&!(event.b&2)))){graphInput(event.kind,event.a,event.b);return;}
         if(event.kind===5&&focused&&!(event.b&2)){
@@ -590,7 +618,7 @@ async function main() {
           const target=engine.hit(frame,released[0],pageRow(released[1]));
           if(target){console.log(JSON.stringify({type:"native-html-link",...target,url:document.url}));
             const answer=engine.shellLink(target.href);
-            if(answer.go!=="page")go(answer);
+            if(answer.go!=="page"||answer.url===graphURL)go(answer);
             else if(follow)try{navigate(navigationURL(target.href,document.baseURL,document.url));}catch(error){console.error("Native HTML link refused:",String(error));}}
         }
     };
@@ -721,7 +749,7 @@ async function main() {
       if(commands&&session?.frames&&performance.now()>=stepAt&&(settled||(scrollStep&&!loading&&!shiftPending&&!shifting&&performance.now()-lastStep>=16))){
         lastStep=performance.now();
         const step=commands.shift();
-        if(step==="graph"){shellCommand("graph","");loading=true;setTimeout(()=>{loading=false;},600);}
+        if(step==="graph")shellCommand("graph","");
         else if(typeof step==="string"&&step.startsWith("link")){
           // A press and release on a link of the page: link is the first, link1 the second.
           const link=frame.webRender.links[Number(step.slice(4))] as number[],x=Math.round(link[2]+link[4]/2),y=Math.round(windowRow(link[3]+link[5]/2));
@@ -740,6 +768,25 @@ async function main() {
           native.testEvent(2,pressAt[0],pressAt[1]);
         }
         else if(step==="release")native.testEvent(4,pressAt[0],pressAt[1]);
+        else if(typeof step==="string"&&step.startsWith("url:")){
+          const ok=document.url.endsWith(step.slice(4));trace("native-html-test-url",{expected:step.slice(4),url:document.url,ok});
+          if(!ok){console.error(`Native HTML sweep: expected a page ending ${step.slice(4)}, shown ${document.url}`);Deno.exitCode=1;}
+        }
+        else if(typeof step==="string"&&step.startsWith("pointer:")){
+          const ok=pointerShown===step.slice(8);trace("native-html-test-pointer",{expected:step.slice(8),pointer:pointerShown,ok});
+          if(!ok){console.error(`Native HTML sweep: expected the ${step.slice(8)} pointer, shown ${pointerShown}`);Deno.exitCode=1;}
+        }
+        else if(step==="overLink"){
+          const link=frame.webRender.links[0] as number[];
+          native.testEvent(3,Math.round(link[2]+link[4]/2),Math.round(windowRow(link[3]+link[5]/2)));
+        }
+        else if(step==="back"){
+          // The chrome's back button, found through Lean's own hit test of the chrome.
+          let at:number[]|undefined;
+          for(let y=0;y<200&&!at;y+=2)for(let x=0;x<200&&!at;x+=2)if(engine.shellHit(shell(),x,y,width)==="back")at=[x+4,y+4];
+          if(!at)throw new Error("back sweep: no back button in the chrome");
+          native.testEvent(2,at[0],at[1]);native.testEvent(4,at[0],at[1]);
+        }
         else if(typeof step==="string")trace("native-html-test-key",{key:step,handled:native.testKey(step,"+_".includes(step))});
         else if(step)native.testEvent(step[0],step[1],step[2]);else{if(native.readClipboard()===lastCopied)native.writeClipboard(savedClipboard);running=false;}
       }

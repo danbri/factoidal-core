@@ -112,6 +112,15 @@ the chrome. Kind 1 is a resize, 2 to 4 are pointer events. -/
 private def appY (request : JSON.Json) (kind : Nat) (b : Int) : Int :=
   if kind >= 1 && kind <= 4 then b - chrome request else b
 
+/-- A press at window point (`x`,`y`) acts on a person: a node, or its reveal or hide
+control. The pointer is then the pointing hand (issue 1268). -/
+def acts (request : JSON.Json) (x y : Int) : Bool :=
+  match Model.decode (str request "model") with
+  | none => false
+  | some m => match (m.pick x (appY request 2 y)).map (fun (part : PaintedPart) => part.target) with
+    | some (.person _ _) => true
+    | _ => false
+
 /-- `graphStart`, `graphEvent` and `graphPage`. A frame says what the host must do. -/
 def op (name : String) (request : JSON.Json) : Except String (Option String) := do
   if name == "graphStart" then

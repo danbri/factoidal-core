@@ -5,6 +5,15 @@
    "title": "Demo index"
   },
   {
+   "page": "showcase.html",
+   "title": "Showcase: what the engine can and can not draw",
+   "handwritten": true,
+   "size": [
+    900,
+    1400
+   ]
+  },
+  {
    "page": "architecture.html",
    "title": "How foafnaut is built",
    "source": "source/architecture.md",
@@ -71,6 +80,79 @@
   {
    "page": "solving-showcase.html",
    "title": "Solving showcase",
-   "source": "source/solving-showcase.svg"}
+   "source": "source/solving-showcase.svg"
+  },
+  {
+   "page": "showcase-dataviz.html",
+   "title": "Data visualisation",
+   "showcase": true,
+   "generator": "../tools/showcase-pages.py",
+   "size": [
+    900,
+    2700
+   ]
+  },
+  {
+   "page": "showcase-dataviz-script.html",
+   "title": "Data visualisation with a script",
+   "showcase": true,
+   "handwritten": true,
+   "appRefused": "does not execute scripts",
+   "issue": "https://github.com/danbri/factoidal/issues/1271"
+  },
+  {
+   "page": "showcase-tables.html",
+   "title": "Tables",
+   "showcase": true,
+   "handwritten": true,
+   "size": [
+    900,
+    1800
+   ]
+  },
+  {
+   "page": "showcase-tables-svg.html",
+   "title": "Tables drawn as SVG",
+   "showcase": true,
+   "generator": "../tools/showcase-pages.py"
+  },
+  {
+   "page": "showcase-lettering.html",
+   "title": "Lettering on curves",
+   "showcase": true,
+   "generator": "../tools/showcase-pages.py",
+   "size": [
+    900,
+    2000
+   ]
+  },
+  {
+   "page": "showcase-textpath.html",
+   "title": "SVG text and textPath",
+   "showcase": true,
+   "handwritten": true,
+   "refused": "unsupported attribute on text",
+   "issue": "https://github.com/danbri/factoidal/issues/1270"
+  },
+  {
+   "page": "showcase-scripts.html",
+   "title": "Writing systems and direction",
+   "showcase": true,
+   "handwritten": true,
+   "size": [
+    900,
+    2000
+   ]
+  },
+  {
+   "page": "showcase-emoji.html",
+   "title": "Emoji",
+   "showcase": true,
+   "handwritten": true,
+   "size": [
+    900,
+    1000
+   ]
+  }
  ]
 }

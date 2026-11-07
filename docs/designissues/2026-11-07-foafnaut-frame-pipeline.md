@@ -176,6 +176,34 @@ Window sweep, status page, 1600 by 1000, layers, Apple M1, engines from `724f5bf
 native PATH` or `engine: wasm`. When the worker can not start, Lean runs on the main
 thread, which has only the Wasm engine; the summary said `native` then.
 
+## Graph page history and the pointer (done 2026-11-07)
+
+Owner report, 2026-11-07, verbatim: "back arrow nav fails on foaf viz interactive." and
+"having mouse pointer change to a hand when over a link".
+
+Cause of the back failure: the link `foafnaut:graph` was a browser command, and the host
+opened the graph in a NEW tab whose session history had one entry. Back had no entry to
+go to, by the history rule (`WebHistory.History.back`); the chrome's back button, Command-[
+and Command-Left all did nothing.
+
+Fix: `WebShell.link` and `WebShell.submit` answer `.page "foafnaut:graph"` for the graph
+(`WebShell.command`). The host loads that URL with the graph app in the same tab, and
+pushes it on the tab's history like any page. Back from the graph loads the page before
+it; forward loads a new graph (the graph state is not kept). Guards: `WebShell` (the link
+answers) and `WebHistory` (back and forward over the graph entry). Window check:
+`run_html.ts --back-sweep` (each `url:X` step fails the run unless the page shown ends
+with X; the steps press the chrome's back button, Command-[, Command-Left and
+Command-Right, before and after graph clicks and a drag).
+
+Pointer: Lean answers `pointerCursor` on the main-thread engine for each coalesced
+pointer move: `WebShell.pointer` gives the I-beam over the address bar, the pointing hand
+over a chrome control that acts (back and forward only when they have an entry), and on
+the page the hand over a link of the frame on screen (`Rendering.hitLink`) or over a
+person of the graph (`WebGraph.acts`), else the arrow. The host keeps the link list as
+text for each frame, and calls `ng_set_cursor` only when the answer changes. The window
+library sets the NSCursor again when a move comes back into the view after AppKit's
+window-edge pointer. `--back-sweep` checks the hand over a link and the arrow off it.
+
 ## Press acknowledgement, `:active`, `:hover`, `:visited` (2026-11-07)
 
 Branch `wip/1268-press-feedback`. Owner, 2026-11-07, verbatim: "Still something off in

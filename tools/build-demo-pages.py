@@ -32,12 +32,30 @@ def svg(path, title):
             f'<h1>{html.escape(title)}</h1>\n{text}\n</main></body></html>\n')
 
 
+# The SVG pages that draw well, linked first from the start page (owner, 2026-11-07:
+# "please get the cool svg enriched demo pages linked into our start page").
+FEATURED = ['showcase-dataviz.html', 'showcase-lettering.html', 'showcase-tables-svg.html',
+            'showcase-emoji.html', 'svg-gallery.html', 'solving-showcase.html', 'books-svg.xml']
+SVG_TINY_SCORES = 'https://danbri.github.io/factoidal/web/hub/render-scores/#svg-tiny-pixels'
+
+
 def index():
     # foafnaut:graph is a built-in page: the interactive graph, run by the Lean app.
-    links = '<p><a href="foafnaut:graph">Interactive FOAF graph</a></p>\n' + '\n'.join(f'<p><a href="{p["page"]}">{html.escape(p["title"])}</a></p>' for p in manifest['pages'] if p['page'] != 'index.html')
+    titles = {p['page']: p['title'] for p in manifest['pages']}
+    missing = [page for page in FEATURED if page not in titles]
+    if missing:
+        raise SystemExit(f'featured pages not in manifest.json: {missing}')
+    link = lambda page: f'<p><a href="{page}">{html.escape(titles[page])}</a></p>'
+    featured = '\n'.join(link(page) for page in FEATURED)
+    rest = '\n'.join(link(p['page']) for p in manifest['pages']
+                     if p['page'] != 'index.html' and not p.get('showcase') and p['page'] not in FEATURED)
     return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Demo pages</title>'
-            f'<style>{STYLE}</style></head><body><main>\n<h1>foafnaut2525 demo pages</h1>\n'
-            f'<p>Every page here is rendered by the Lean engine with WebGPU.</p>\n{links}\n</main></body></html>\n')
+            f'<style>{STYLE}h2{{margin:0;padding-top:14px;font-size:17px;line-height:24px;color:#184078}}</style></head><body><main>\n<h1>foafnaut2525 demo pages</h1>\n'
+            f'<p>Every page here is rendered by the Lean engine with WebGPU.</p>\n'
+            f'<p><a href="foafnaut:graph">Interactive FOAF graph</a></p>\n'
+            f'<h2>Drawn with SVG</h2>\n{featured}\n'
+            f'<p><a href="{SVG_TINY_SCORES}">SVG Tiny 1.2 test suite results (web)</a></p>\n'
+            f'<h2>More pages</h2>\n{rest}\n</main></body></html>\n')
 
 
 pages = {}
@@ -45,6 +63,8 @@ for page in manifest['pages']:
     source = page.get('source')
     if page['page'].endswith('.xml'):
         continue  # An XML page is its own source; the engine runs its stylesheet.
+    if page.get('handwritten') or page.get('generator'):
+        continue  # Written by hand, or by its generator (which needs fontTools): not rebuilt here.
     if source is None:
         pages[page['page']] = index()
     else:

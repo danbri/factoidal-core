@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>SVG text and textPath</title>
+<style>
+body{margin:16px;font-size:14px;line-height:20px;color:#22303c;background:white}
+h1{margin:0;font-size:24px;line-height:32px;color:#184078}
+h2{margin:0;padding-top:18px;font-size:18px;line-height:26px;color:#184078}
+p{margin:0;padding-top:6px}
+.note{color:#5b6876;font-size:13px}
+svg{display:block}
+</style></head><body><main>
+<p><a href="showcase.html">Showcase</a> · <a href="index.html">Demo index</a></p>
+<h1>SVG text and textPath</h1>
+<p class="note">Expected failure. The engine refuses this whole page with "unsupported attribute on text: font-family" (a text element with no attributes gives "unsupported SVG element:
+text") (<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>). The page
+<a href="showcase-lettering.html">showcase-lettering.html</a> draws the same lettering as glyph outlines.
+A browser draws this page as the specification says.</p>
+
+<h2>Text round a circle</h2>
+<svg width="380" height="380" viewBox="0 0 380 380">
+<defs>
+<path id="top-arc" d="M40 190 A150 150 0 0 1 340 190"/>
+<path id="bottom-arc" d="M68 190 A122 122 0 0 0 312 190"/>
+</defs>
+<circle cx="190" cy="190" r="172" fill="#184078"/>
+<circle cx="190" cy="190" r="100" fill="#f7f3e8"/>
+<text font-family="Noto Sans" font-size="26" fill="#f7f3e8" letter-spacing="1.5">
+<textPath href="#top-arc" startOffset="50%" text-anchor="middle">FOAFNAUT · A BROWSER IN LEAN</textPath>
+</text>
+<text font-family="Noto Sans" font-size="17" fill="#f0c75e" letter-spacing="2">
+<textPath href="#bottom-arc" startOffset="50%" text-anchor="middle">HTML · CSS · SVG · WEBGPU</textPath>
+</text>
+<text x="190" y="212" font-family="Noto Sans" font-size="64" fill="#184078" text-anchor="middle">2525</text>
+</svg>
+
+<h2>A wave</h2>
+<svg width="740" height="220" viewBox="0 0 740 220">
+<path id="wave" d="M20 110 C 120 -20 200 -20 253 110 S 386 240 487 110 S 620 -20 720 110" fill="none" stroke="#c9d6e8" stroke-width="22" stroke-linecap="round"/>
+<text font-family="Noto Sans" font-size="17" fill="#22303c">
+<textPath href="#wave" startOffset="40">Each glyph sits on the curve and turns with its tangent.</textPath>
+</text>
+</svg>
+
+<h2>Rotated glyphs, tspan and anchors</h2>
+<svg width="740" height="160" viewBox="0 0 740 160">
+<text x="20" y="60" font-family="Noto Sans" font-size="28" fill="#3f9d6b" rotate="0 10 20 30 40 50 60 70 80">ROTATE ME</text>
+<text x="370" y="60" font-family="Noto Sans" font-size="22" text-anchor="middle" fill="#7a5cb8">middle <tspan fill="#c4455a" dy="-8">raised</tspan><tspan dy="8"> anchor</tspan></text>
+<text x="720" y="60" font-family="Noto Sans" font-size="22" text-anchor="end" fill="#3b6fb6">end</text>
+<text x="60" y="140" font-family="Noto Sans" font-size="20" fill="#8a6d3b" transform="rotate(-12 60 140)">rotated −12° by a transform</text>
+<text x="500" y="140" font-family="Noto Sans" font-size="20" fill="#cc6aa8" writing-mode="vertical-rl">縦書き</text>
+</svg>
+</main></body></html>

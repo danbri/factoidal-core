@@ -72,9 +72,16 @@ canvas.addEventListener('pointermove',event=>{
   moved={y:event.clientY,scrolled:true};send({type:'scroll',amount:step*scale()});
 });
 canvas.addEventListener('pointerup',event=>{if(moved)send({type:'release',scrolled:moved.scrolled,...point(event)});moved=undefined;});
-addEventListener('wheel',event=>{event.preventDefault();send({type:'scroll',amount:event.deltaY*scale()});},{passive:false});
+// Ctrl+wheel is a trackpad pinch: Lean's text zoom, not the host browser's page zoom.
+addEventListener('wheel',event=>{event.preventDefault();
+  if(event.ctrlKey){if(event.deltaY)send({type:'command',command:event.deltaY<0?1:2});return;}
+  send({type:'scroll',amount:event.deltaY*scale()});},{passive:false});
+// Cmd/Ctrl with = + - _ 0 are the same zoom commands as the desktop View menu (1 in, 2 out,
+// 3 actual size). Without this the host browser zooms the whole page, chrome included.
+const zoomKeys={'=':1,'+':1,'-':2,'_':2,'0':3};
 keys.addEventListener('input',()=>{for(const text of keys.value)send({type:'text',text});keys.value='';});
 addEventListener('keydown',event=>{
+  if((event.metaKey||event.ctrlKey)&&!event.altKey&&zoomKeys[event.key]){event.preventDefault();send({type:'command',command:zoomKeys[event.key]});return;}
   if(event.altKey&&event.key==='ArrowLeft'){event.preventDefault();send({type:'command',command:6});return;}
   if(event.altKey&&event.key==='ArrowRight'){event.preventDefault();send({type:'command',command:7});return;}
   if(focused&&edits[event.key]){event.preventDefault();send({type:'key',key:edits[event.key]});return;}

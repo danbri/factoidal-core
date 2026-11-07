@@ -193,6 +193,9 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     shellHit:(shell:unknown,x:number,y:number,width:number)=>(documentCall("",{op:"shellHit",shell,x,y,width}) as {control:string|null}).control,
     // A press: the control or the link under the pointer (`row` is the page-layer row) and what to darken.
     press:(shell:unknown,x:number,y:number,width:number,row:number,links:unknown[])=>documentCall("",{op:"press",shell,x,y,width,row:Math.max(0,Math.floor(row)),links}) as PressAnswer,
+    // The system pointer for a window point: "arrow", "hand" or "text" (issue 1268).
+    pointerCursor:(request:{shell:unknown;x:number;y:number;width:number;model?:string;links?:string;pageY?:number})=>
+      (documentCall("",{...request,op:"pointerCursor"}) as {cursor:string}).cursor,
     shellText:(shell:unknown,text:string)=>documentCall("",{op:"shellText",shell,text}) as ShellEdit,
     shellKey:(shell:unknown,key:number)=>documentCall("",{op:"shellKey",shell,key}) as ShellEdit,
     shellSubmit:(address:string)=>documentCall("",{op:"shellSubmit",address}) as ShellGo,

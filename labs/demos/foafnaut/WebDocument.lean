@@ -269,6 +269,26 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     return some (JSON.Json.object [("control",match WebShell.hit shell (width.toNat?.getD 1) (x.toNat?.getD 0) (y.toNat?.getD 0) with
       | some name => .string name | none => .null)]).toString
   if op == "press" then return some (← press request)
+  -- The pointer for a point of the window (issue 1268): the chrome's control, else the page.
+  -- On the page a click acts over a person of the graph `model`, or over a link of
+  -- `links` (the regions of the frame on screen, as for picking) at page row `pageY`.
+  if op == "pointerCursor" then
+    let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
+    let some (.number x) := request.field? "x" | throw "x required"
+    let some (.number y) := request.field? "y" | throw "y required"
+    let some (.number width) := request.field? "width" | throw "width required"
+    let x := x.toInt?.getD (-1)
+    let y := y.toInt?.getD (-1)
+    let control := if x < 0 || y < 0 then none else WebShell.hit shell (width.toNat?.getD 1) x.toNat y.toNat
+    let onPage := control.isNone && x >= 0 && y >= 0 &&
+      match request.field? "model", request.field? "links", request.field? "pageY" with
+      | some (.string _), _, _ => WebGraph.acts request x y
+      | _, some (.string links), some (.number pageY) =>
+        match L4Factoidal.Rendering.Links.decode links, pageY.toInt? with
+        | .ok regions, some row => row >= 0 && (Rendering.hitLink regions (Float.ofInt x) (Float.ofInt row)).isSome
+        | _, _ => false
+      | _, _, _ => false
+    return some (JSON.Json.object [("cursor",.string (WebShell.pointer shell control onPage).name)]).toString
   if op == "shellText" then
     return some (WebShell.Shell.ofJson ((request.field? "shell").getD .null) |>.typed (str request "text")).editJson.toString
   if op == "shellKey" then
