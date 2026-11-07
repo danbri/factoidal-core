@@ -6,7 +6,8 @@ export type UIFrame = {
   data: number[]; commands: UICommand[]; animating: boolean; closed: boolean;
   selection: number; revision: number; dragging:boolean; wgsl?: string;
 };
-export type UIEvent = { kind: number; a: number; b: number };
+// time: milliseconds on the window library clock when the event was queued (0 if unknown).
+export type UIEvent = { kind: number; a: number; b: number; time?: number };
 
 export function validateFrame(value: unknown): UIFrame {
   const f = value as UIFrame;

@@ -30,10 +30,17 @@ fi
 # The native HTML tests need the web-render engine, which Builds makes after this
 # step in its engines job and before it in its macOS job, and more permissions.
 TESTS=()
-for test in "$LAB/"*_test.ts; do [ "$test" = "$LAB/native_html_test.ts" ] || TESTS+=("$test"); done
+for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/native_window_queue_test.ts") ;; *) TESTS+=("$test");; esac; done
 deno check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
   "$LAB/run_ui.ts" "$LAB/run_lean.ts" "$LAB/run_svg.ts" "$LAB/run_foaf_svg.ts" "${TESTS[@]}"
 deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --allow-read "${TESTS[@]}"
+# The input queue test needs the macOS window library from build-executables.sh.
+if [ "$(uname -s)" = Darwin ] && [ -f "$LAB/.build/native/libnative-window.dylib" ]; then
+  deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
+    --allow-read --allow-ffi --allow-run "$LAB/native_window_queue_test.ts"
+else
+  echo 'NOT RUN: native_window_queue_test.ts needs the macOS window library'
+fi
 if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   mkdir -p "$LAB/.build/native-html/runtime"
   cp "$LAB/.build/web-render/engines/web-render."{mjs,wasm} "$LAB/.build/native-html/runtime/"

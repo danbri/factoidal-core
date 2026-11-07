@@ -12,8 +12,10 @@
 #include "native_coordinates.h"
 
 struct NGEvent { uint32_t type; int32_t a; int32_t b; uint32_t reserved; };
-static struct NGEvent events[256];
-static uint32_t eventCount;
+// A growing FIFO. Clicks, keys and other discrete events are never dropped.
+static struct NGEvent *events;
+static uint32_t eventHead, eventCount, eventCapacity, eventsDropped;
+static double eventEpoch;
 static NSWindow *window;
 static NSView *content;
 static id delegate;
@@ -49,17 +51,36 @@ static int canPresent(void) {
     (window.occlusionState&NSWindowOcclusionStateVisible)!=0;
 }
 
-static void enqueue(uint32_t type, int32_t a, int32_t b) {
-  // Adjacent move/resize events are coalesced; discrete events remain ordered.
-  if (eventCount && (type == 1 || type == 3) && events[eventCount-1].type == type) {
-    events[eventCount-1] = (struct NGEvent){type,a,b,0}; return;
-  }
-  if (eventCount == 256) {
-    // Bounded transport queue. A pathological flood drops the oldest event.
-    memmove(events, events+1, 255*sizeof(struct NGEvent)); eventCount--;
-  }
-  events[eventCount++] = (struct NGEvent){type,a,b,0};
+static uint32_t eventTime(void) {
+  // Milliseconds since the first event, so the host can measure input latency.
+  double now = CACurrentMediaTime();
+  if (eventEpoch == 0) eventEpoch = now;
+  return (uint32_t)llround((now - eventEpoch) * 1000.0);
 }
+static void enqueue(uint32_t type, int32_t a, int32_t b) {
+  uint32_t time = eventTime();
+  if (eventCount) {
+    struct NGEvent *last = &events[eventHead + eventCount - 1];
+    // Adjacent moves and resizes keep only the newest position; adjacent scrolls add up.
+    // The time stays that of the first event, so latency counts from it.
+    if ((type == 1 || type == 3) && last->type == type) { last->a = a; last->b = b; return; }
+    if (type == 11 && last->type == 11) { last->a += a; return; }
+  }
+  if (eventHead + eventCount == eventCapacity) {
+    if (eventHead) { memmove(events, events + eventHead, eventCount * sizeof(struct NGEvent)); eventHead = 0; }
+    if (eventCount == eventCapacity) {
+      // 1 MiB of events is far above any person's input; past it, count and refuse.
+      if (eventCapacity >= 65536) { eventsDropped++; return; }
+      uint32_t capacity = eventCapacity ? eventCapacity * 2 : 256;
+      struct NGEvent *grown = realloc(events, capacity * sizeof(struct NGEvent));
+      if (!grown) { eventsDropped++; return; }
+      events = grown; eventCapacity = capacity;
+    }
+  }
+  events[eventHead + eventCount++] = (struct NGEvent){type, a, b, time};
+}
+uint32_t ng_events_dropped(void) { return eventsDropped; }
+uint32_t ng_event_clock(void) { return eventTime(); }
 static void resizeEvent(void) {
   if (!content) return;
   NSRect rect = [content convertRectToBacking:content.bounds];
@@ -413,8 +434,8 @@ void ng_pump(void) {
 }
 int ng_next_event(void *out) {
   if (!pthread_main_np() || !eventCount) return 0;
-  memcpy(out, events, sizeof(struct NGEvent));
-  memmove(events, events+1, (--eventCount)*sizeof(struct NGEvent));
+  memcpy(out, events + eventHead, sizeof(struct NGEvent));
+  eventCount--; eventHead = eventCount ? eventHead + 1 : 0;
   return 1;
 }
 void ng_hide(void) {

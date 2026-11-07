@@ -14,6 +14,9 @@ export function loadNativeWindow() {
     ng_window_handle: { parameters: [], result: "pointer" },
     ng_pump: { parameters: [], result: "void" },
     ng_next_event: { parameters: ["buffer"], result: "i32" },
+    // Optional, so an older window library still opens.
+    ng_events_dropped: { parameters: [], result: "u32", optional: true },
+    ng_event_clock: { parameters: [], result: "u32", optional: true },
     ng_hide: { parameters: [], result: "void" },
     ng_set_title: { parameters: ["buffer"], result: "void" },
     ng_prepare_surface: { parameters: [], result: "void" },
@@ -76,7 +79,11 @@ export function loadNativeWindow() {
       symbols.ng_pump();
     },
     next(): UIEvent | null {
-      return symbols.ng_next_event(buffer) ? { kind:view.getUint32(0,true), a:view.getInt32(4,true), b:view.getInt32(8,true) } : null;
+      return symbols.ng_next_event(buffer) ? { kind:view.getUint32(0,true), a:view.getInt32(4,true), b:view.getInt32(8,true), time:view.getUint32(12,true) } : null;
+    },
+    // Milliseconds on the clock of event.time; null with an older window library.
+    eventClock(): number | null { return symbols.ng_event_clock ? symbols.ng_event_clock() : null; },
+    eventsDropped(): number { return symbols.ng_events_dropped ? symbols.ng_events_dropped() : 0;
     },
     hide: () => symbols.ng_hide(),
     prepareSurface: () => symbols.ng_prepare_surface(),

@@ -62,6 +62,7 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
     --include "$LAB/../../../third_party/fonts/noto-sans/OFL.txt" \
     --include "$LAB/.build/engines/render-plan.wasm" \
     --include "$LAB/native-html/default.html" --include "$LAB/native-html/next.html" --include "$LAB/pages" \
+    --include "$LAB/native_html_worker.ts" \
     --output "$OUT/native-webgpu-html-darwin-arm64.tmp" "$LAB/run_html.ts"
   mv "$OUT/native-webgpu-html-darwin-arm64.tmp" "$OUT/native-webgpu-html-darwin-arm64"
   # The native engine library sits beside the window program, which opens it
