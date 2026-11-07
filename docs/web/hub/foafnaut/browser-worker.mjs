@@ -7,7 +7,12 @@ let post=(message,transfer)=>self.postMessage(message,transfer);
 const inWorker=typeof WorkerGlobalScope!=='undefined'&&self instanceof WorkerGlobalScope;
 const pagesBase=new URL('./pages/',import.meta.url).href,siteOrigin=new URL(import.meta.url).origin;
 const homeURL=pagesBase+'index.html',settingsURL=pagesBase+'settings.html';
-let module,createSession,session;
+let module,createSession,session,createSurface,hashPixels,surface,surfaceCanvas,checkMode=false,statsMode=false;
+// Input that arrives before the engine is ready, and moves and scrolls that arrive while a
+// frame builds, wait here. Every press, release, key, text and command is applied in the
+// order it arrived; only moves and scrolls are merged.
+let ready=false,currentStamp,pendingStamp,pendingMove,pendingScroll,flushPort;
+const early=[];
 let width=800,height=600,scale=1,theme='next',percent=125,pages=1;
 let address='',cursor=0,focused=false,fresh=false,loading=false,scroll=0,active=0;
 let doc,history,frame,home,checked,dirty=false,drawing=false,serial=0,ticking=false;
@@ -70,8 +75,9 @@ function show(next,remember=true){
 }
 async function navigate(url,remember=true){
   const mine=++serial;loading=true;request();
+  const stamp=currentStamp;
   let next;try{next=await prepare(url);}catch(error){next=refusal(url,String(error.message??error));}
-  if(mine===serial)show(next,remember);
+  if(mine===serial){const before=currentStamp;currentStamp=stamp;try{show(next,remember);}finally{currentStamp=before;}}
 }
 function command(id){
   const answer=call('',{op:'command',command:id,textScalePercent:percent,history:history.history});
@@ -156,45 +162,94 @@ function hit(x,y){
   const pointer=module.ccall('web_render_hit','number',['string','number','number','number','number'],[JSON.stringify(frame.webRender.links??[]),frame.width,frame.height,x,y]);
   try{return JSON.parse(module.UTF8ToString(pointer));}finally{module.ccall('web_render_free',null,['number'],[pointer]);}
 }
-function request(){dirty=true;if(!drawing)draw();}
+function request(){dirty=true;if(currentStamp!==undefined&&(pendingStamp===undefined||currentStamp<pendingStamp))pendingStamp=currentStamp;if(!drawing)draw();}
 async function draw(){
   drawing=true;
   while(dirty){
     dirty=false;
-    const start=performance.now();
+    const start=performance.now(),inputAt=pendingStamp;pendingStamp=undefined;
     try{
       // A page already on screen had Lean's full probe set on its first frame.
       const next=frameFloats(call(doc.source,{op:'render',url:doc.url,textScalePercent:percent,shell:shell(),live:doc===checked,binary:true},width,height));
       checked=doc;
       const laid=performance.now();
-      if(session&&(typeof session.update!=='function'||!(await session.update(next)))){session.close();session=undefined;}
-      session??=await createSession(next,'svg-offscreen');
-      if(!session)throw Error('A WebGPU adapter is unavailable in this browser.');
-      const rgba=await session.draw();frame=next;
-      post({type:'frame',width:next.width,height:next.height,title:doc.title,rgba:rgba.buffer,
-        stats:{layoutMs:Math.round(laid-start),totalMs:Math.round(performance.now()-start),primitives:next.primitiveCount,url:doc.url,address,scroll,tabs:tabs.length,theme,percent}},[rgba.buffer]);
+      let rgba,pixelHash,gpuMs;
+      if(surfaceCanvas){
+        // Straight to the canvas: no readback unless ?check=surface asked for it.
+        surface??=await createSurface(surfaceCanvas,{check:checkMode,waitForGpu:statsMode});
+        if(!surface)throw Error('A WebGPU adapter is unavailable in this browser.');
+        const result=await surface.draw(next);
+        pixelHash=result.pixelHash||undefined;gpuMs=Math.round(result.gpuMs);
+      }else{
+        if(session&&(typeof session.update!=='function'||!(await session.update(next)))){session.close();session=undefined;}
+        session??=await createSession(next,'svg-offscreen');
+        if(!session)throw Error('A WebGPU adapter is unavailable in this browser.');
+        rgba=await session.draw();
+        if(hashPixels)pixelHash=hashPixels(rgba);
+      }
+      frame=next;
+      const done=performance.now();
+      post({type:'frame',width:next.width,height:next.height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,inputAt,
+        stats:{path:surfaceCanvas?'surface':'readback',layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
+          pixelHash,primitives:next.primitiveCount,url:doc.url,address,scroll,tabs:tabs.length,theme,percent}},rgba?[rgba.buffer]:[]);
     }catch(error){
       session?.close();session=undefined;
+      try{surface?.close();}catch{/* the frame is over */}surface=undefined;
       if(doc.title==='Page refused'){post({type:'error',error:String(error.message??error)});break;}
       doc=refusal(doc.url,String(error.message??error));dirty=true;
     }
   }
   drawing=false;
 }
+// The page asks first whether this worker can draw to an OffscreenCanvas with WebGPU,
+// because a canvas can be handed over once.
+async function hello(){
+  let surfaceOk=false;
+  try{
+    const transport=await import('../html-webgpu/runtime/gpu-transport.mjs');
+    surfaceOk=inWorker&&typeof transport.createSurfaceSession==='function'&&typeof OffscreenCanvas==='function'
+      &&!!navigator.gpu&&!!new OffscreenCanvas(1,1).getContext('webgpu');
+  }catch{surfaceOk=false;}
+  post({type:'caps',surface:surfaceOk});
+}
 async function start(data){
   ({width,height,scale}=data);
+  checkMode=data.check===true;statsMode=data.stats===true;
   if(!navigator.gpu)throw Error('This browser does not provide WebGPU.');
-  const [{default:createModule},{createOffscreenSession}]=await Promise.all([
+  const [{default:createModule},transport]=await Promise.all([
     import('../html-webgpu/runtime/web-render.mjs'),import('../html-webgpu/runtime/gpu-transport.mjs')]);
-  module=await createModule();createSession=createOffscreenSession;
+  module=await createModule();createSession=transport.createOffscreenSession;hashPixels=transport.hashPixels;
+  if(data.canvas&&typeof transport.createSurfaceSession==='function'){surfaceCanvas=data.canvas;createSurface=transport.createSurfaceSession;}
   await loadFont();
   home=await prepare(homeURL);
   history=push({entries:[],index:0},homeURL);doc=home;address=home.url;tabs.push({doc,history,scroll:0});
+  ready=true;
   if(data.page&&/^[a-z0-9-]+\.(html|xml)$/.test(data.page))navigate(pagesBase+data.page);else request();
+  for(const message of early.splice(0))receive(message);
+}
+function flush(){
+  const move=pendingMove,scrolled=pendingScroll;pendingMove=pendingScroll=undefined;
+  if(move)handle(move);
+  if(scrolled)handle(scrolled);
 }
 function receive(data){
+  if(data.type==='hello'){hello();return;}
   if(data.type==='start'){start(data).catch(error=>post({type:'error',error:String(error.message??error)}));return;}
-  if(!doc)return;
+  if(!ready){early.push(data);return;}
+  if(data.type==='move'||data.type==='scroll'){
+    if(data.type==='move')pendingMove=data;
+    else pendingScroll=pendingScroll?{...data,amount:pendingScroll.amount+data.amount,t:pendingScroll.t}:data;
+    if(!flushPort){flushPort=new MessageChannel();flushPort.port1.onmessage=flush;}
+    flushPort.port2.postMessage(0);
+    return;
+  }
+  flush();handle(data);
+}
+function handle(data){
+  currentStamp=data.t;
+  try{apply(data);}finally{currentStamp=undefined;}
+}
+function apply(data){
   if(data.type==='resize'){({width,height,scale}=data);if(doc.graph)graphInput(1,width,height);request();}
   if(data.type==='scroll')scrollBy(data.amount);
   if(data.type==='command')command(data.command);

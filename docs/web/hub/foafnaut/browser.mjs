@@ -1,6 +1,9 @@
 // The page only forwards input and shows frames. The worker runs the browser loop;
 // Lean decides what every click, key and address means.
-const canvas=document.querySelector('#page'),keys=document.querySelector('#keys'),note=document.querySelector('#note');
+const canvas=document.querySelector('#page'),keys=document.querySelector('#keys'),note=document.querySelector('#note'),statsLine=document.querySelector('#stats');
+// ?check=1 keeps the readback path with Lean's pixel checks; ?check=surface draws to the
+// canvas and reads each frame back to check it; ?stats=1 shows the frame timings.
+const query=new URLSearchParams(location.search),checkParam=query.get('check'),showStats=query.get('stats')==='1'||checkParam!==null;
 // A sandboxed guest has an opaque origin and can not start a worker. The loop then
 // runs here; it needs no extra capability.
 let worker;
@@ -17,21 +20,47 @@ const scale=()=>Math.max(1,Math.round(window.devicePixelRatio||1));
 const size=()=>({width:Math.min(4096,Math.round(innerWidth*scale())),height:Math.min(4096,Math.round(innerHeight*scale())),scale:scale()});
 const point=event=>({x:Math.round(event.clientX*scale()),y:Math.round(event.clientY*scale())});
 const edits={Backspace:51,Delete:117,ArrowLeft:123,ArrowRight:124,Home:115,End:119,Enter:36,Escape:53};
-const send=message=>worker.postMessage(message);
+// Input carries the time it happened, in epoch milliseconds, which both threads can read.
+const now=()=>performance.timeOrigin+performance.now();
+const send=message=>worker.postMessage(message.type==='start'||message.type==='hello'?message:{...message,t:now()});
 window.foafnautThread=worker instanceof Worker?'worker':'page';
 let focused=false,moved=undefined;
 worker.onmessage=({data})=>{
+  if(data.type==='caps')return begin(data.surface);
   if(data.type==='frame'){
-    note.hidden=true;canvas.width=data.width;canvas.height=data.height;
-    canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data.rgba),data.width,data.height),0,0);
-    document.title=data.title?`foafnaut - ${data.title}`:'foafnaut';window.foafnautFrame=data.stats;
+    note.hidden=true;
+    if(data.rgba){
+      canvas.width=data.width;canvas.height=data.height;
+      canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data.rgba),data.width,data.height),0,0);
+    }
+    document.title=data.title?`foafnaut - ${data.title}`:'foafnaut';
+    const latency=data.inputAt===undefined?undefined:Math.round(now()-data.inputAt);
+    window.foafnautFrame={...data.stats,inputToFrameMs:latency};
+    if(statsLine&&showStats){
+      const s=window.foafnautFrame;
+      statsLine.hidden=false;
+      statsLine.textContent=`${s.path} layout ${s.layoutMs} ms, draw ${s.drawMs} ms, total ${s.totalMs} ms`+
+        (latency===undefined?'':`, input to frame ${latency} ms`)+(s.pixelHash?`, pixels ${s.pixelHash}`:'');
+    }
   }
   if(data.type==='focus'){focused=data.focused;if(focused)keys.focus({preventScroll:true});else keys.blur();}
   if(data.type==='open'&&!window.open(data.url,'_blank','noopener')){note.hidden=false;note.textContent=`Open this address in your browser: ${data.url}`;}
   if(data.type==='error'){note.hidden=false;note.textContent=data.error;}
 };
 worker.onerror=event=>{note.hidden=false;note.textContent='The browser worker failed: '+event.message;};
-send({type:'start',...size(),page:new URLSearchParams(location.search).get('page')});
+// A canvas can be handed to the worker once, so the worker says first whether it can draw
+// to an OffscreenCanvas with WebGPU. If not, or with ?check=1, the worker reads each frame
+// back and the page paints it with putImageData.
+function begin(surface){
+  const options={...size(),page:query.get('page'),check:checkParam==='1'||checkParam==='surface',stats:showStats};
+  if(surface&&checkParam!=='1'){
+    const offscreen=canvas.transferControlToOffscreen();
+    window.foafnautSurface=true;
+    worker.postMessage({type:'start',...options,canvas:offscreen},[offscreen]);
+  }else{window.foafnautSurface=false;send({type:'start',...options});}
+}
+const canTransfer=worker instanceof Worker&&typeof canvas.transferControlToOffscreen==='function'&&typeof OffscreenCanvas==='function';
+if(canTransfer)send({type:'hello'});else begin(false);
 addEventListener('resize',()=>send({type:'resize',...size()}));
 // Keep focus where the loop puts it: the press must not move it back to the page.
 canvas.addEventListener('mousedown',event=>event.preventDefault());
