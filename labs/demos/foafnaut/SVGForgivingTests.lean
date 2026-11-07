@@ -199,3 +199,5 @@ private def baselineFont : SVGFont :=
 #guard match parse (svg "<text y='30' font-size='10'>a</text>") 40 40 (some baselineFont) with
   | .ok (s,_) => (s.samplePixel 5 28).r == 1
   | .error _ => false
+-- https://github.com/danbri/factoidal/issues/1267: the sheet of the other document must not reach this rectangle.
+#guard green (linked "<use xlink:href='b.svg#r'/><rect width='40' height='40'/>") [(otherKey,(linked "<style>rect{fill:lime}</style><rect id='r' width='1' height='1'/>").toUTF8)]
