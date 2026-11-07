@@ -131,6 +131,28 @@ private def transformList (source : String) : Except String Transform := do
     result ← checkedTransform (result.compose nextTransform)
   return result
 
+/-- The transform of an element under `parent`, its CTM below the root mapping.
+    SVG Tiny 1.2 §7.7.5: `ref(svg)` and `ref(svg, x, y)` are the whole value. The
+    CTM of the element is then the root `viewBox` mapping and the translation by
+    x and y, so the local transform is the inverse of `parent` and that
+    translation. No user agent transform exists here, so the only effect is to
+    leave the transforms of the ancestors out. -/
+private def elementTransform (parent : Transform) (source : String) : Except String Transform := do
+  let s := trim source
+  if !s.startsWith "ref" then return ← transformList s
+  let open_ := trim (s.drop 3).toString
+  if !open_.startsWith "(" || !open_.endsWith ")" then throw "invalid ref transform syntax"
+  let inner := trim ((open_.drop 1).toString.dropEnd 1).toString
+  if !inner.startsWith "svg" then throw s!"unsupported ref transform: {source}"
+  let rest := trim (inner.drop 3).toString
+  let rest := if rest.startsWith "," then (rest.drop 1).toString else rest
+  let offset : Transform ← match ← (if (trim rest).isEmpty then pure [] else numbers rest) with
+    | [] => pure identityTransform
+    | [x,y] => pure ⟨1,0,0,1,x,y⟩
+    | _ => throw "ref(svg) takes no number or two numbers"
+  if parent.det == 0 then throw "ref(svg) needs an invertible parent transform"
+  checkedTransform (parent.inverse.compose offset)
+
 abbrev Color := NativeGraphics.FloatRGB
 private def rgb (r g b : Nat) : Color := ⟨Float.ofNat r/255,Float.ofNat g/255,Float.ofNat b/255⟩
 private def hex (c : Char) : Option Nat :=
@@ -211,11 +233,10 @@ inductive Paint where
   deriving Repr
 inductive FillRule where | nonzero | evenodd
   deriving Repr, BEq
-inductive LineCap where | butt | round
-  deriving Repr, BEq
+/-- A line has pieces whenever it has a stroke, so only a round cap needs a mark. -/
 def LineCap.headerModeBit : LineCap → Nat
-  | .butt => 0
   | .round => 1
+  | _ => 0
 structure Style where
   fill : Paint := .solid (rgb 0 0 0)
   stroke : Paint := .none
@@ -228,6 +249,8 @@ structure Style where
   visible : Bool := true
   rule : FillRule := .nonzero
   lineCap : LineCap := .butt
+  lineJoin : LineJoin := .miter
+  miterLimit : Float := 4
   deriving Repr
 private def attr (attrs : List NamespaceAttribute) (key : String) : Option String :=
   (attrs.find? (fun a => a.name.namespace_.isNone && a.name.localPart == key)).map (·.value)
@@ -498,7 +521,10 @@ private def readStyle (lengths : LengthContext) (paints : PaintContext) (attrs :
     if trim value != "inherit" then
       style := {style with dashArray:= ← dashArray lengths value}
   if let some value := attr attrs "stroke-dashoffset" then
-    if trim value != "inherit" then style := {style with dashOffset:={value:= ← relativeLength value lengths.diagonal,percentage:=(trim value).endsWith "%"}}
+    if trim value != "inherit" then
+      match relativeLength value lengths.diagonal with
+      | .ok offset => style := {style with dashOffset:={value:=offset,percentage:=(trim value).endsWith "%"}}
+      | .error _ => throw s!"unsupported stroke-dashoffset: {value}"
   if let some value := attr attrs "visibility" then
     match (trim value).toLower with
     | "inherit" => pure ()
@@ -518,10 +544,21 @@ private def readStyle (lengths : LengthContext) (paints : PaintContext) (attrs :
     match trim value with
     | "inherit" => pure () | "butt" => style := {style with lineCap:=.butt}
     | "round" => style := {style with lineCap:=.round}
+    | "square" => style := {style with lineCap:=.square}
     | _ => throw s!"unsupported stroke-linecap: {value}"
-  for (key,allowed) in [("stroke-linejoin",["miter","inherit"]),("stroke-miterlimit",["4","inherit"])] do
-    if let some value := attr attrs key then
-      if !allowed.contains (trim value) then throw s!"unsupported {key}: {value}"
+  if let some value := attr attrs "stroke-linejoin" then
+    match trim value with
+    | "inherit" => pure () | "miter" => style := {style with lineJoin:=.miter}
+    | "round" => style := {style with lineJoin:=.round}
+    | "bevel" => style := {style with lineJoin:=.bevel}
+    | _ => throw s!"unsupported stroke-linejoin: {value}"
+  if let some value := attr attrs "stroke-miterlimit" then
+    if trim value != "inherit" then
+      -- SVG Tiny 1.2 §11.4: the value is a number of at least 1.
+      match number value with
+      | .ok limit => if limit >= 1 then style := {style with miterLimit:=limit}
+                     else throw s!"unsupported stroke-miterlimit: {value}"
+      | .error _ => throw s!"unsupported stroke-miterlimit: {value}"
   return style
 private def applyCSS (lengths : LengthContext) (paints : PaintContext) (rules : List NativeSVGCSS.Rule)
     (tag : String) (attrs : List NamespaceAttribute) (nested : Bool := false) : Except String (List NamespaceAttribute) :=
@@ -925,6 +962,14 @@ theorem DisplayNode.lower_clipped (parent : Transform) (groups : List (Option St
 private def strokeEnabled (style : Style) : Bool :=
   match style.stroke with | .none => false | _ => style.strokeWidth > 0
 
+/-- SVG Tiny 1.2 §9.3 and §9.4: the outline of a circle or an ellipse starts at
+    the 3 o'clock point and goes towards the 9 o'clock point through 6 o'clock.
+    Dashes start there. -/
+private def arcOutline (x y rx ry : Float) : String :=
+  let n := fun (v : Float) => toString v
+  let arc := fun (ex : Float) => s!"A{n rx} {n ry} 0 1 1 {n ex} {n y}"
+  s!"M{n (x+rx)} {n y}" ++ arc (x-rx) ++ arc (x+rx) ++ "Z"
+
 private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List NamespaceAttribute) (style : Style) : Except String (Option Geometry) := do
   if tag == "rect" then
     let x ← geometryNumber lengths attrs "x"; let y ← geometryNumber lengths attrs "y"
@@ -949,7 +994,11 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     let x ← geometryNumber lengths attrs "cx"; let y ← geometryNumber lengths attrs "cy"; let r ← geometryNumber lengths attrs "r"
     -- SVG 2 §10.3: an invalid negative r presentation value is ignored;
     -- the admitted attribute-only geometry cascade has initial r = 0.
-    return if r <= 0 then none else some (.circle x y r)
+    if r <= 0 then return none
+    if strokeEnabled style && !style.dashArray.isEmpty then
+      -- The circle primitive has no dashes; a path of two arcs does.
+      return some (.path (← NativeSVGPath.parse number (arcOutline x y r r)))
+    return some (.circle x y r)
   else if tag == "ellipse" then
     if (attr attrs "rx").isNone || (attr attrs "ry").isNone then throw "ellipse requires explicit numeric rx and ry; auto radii unsupported"
     let x ← geometryNumber lengths attrs "cx"; let y ← geometryNumber lengths attrs "cy"
@@ -958,9 +1007,7 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     if rx == 0 || ry == 0 then return none
     if strokeEnabled style then
       -- The ellipse primitive has no stroke; a path of two arcs does.
-      let n := fun (v : Float) => toString v
-      let arc := fun (ex : Float) => s!"A{n rx} {n ry} 0 1 1 {n ex} {n y}"
-      return some (.path (← NativeSVGPath.parse number (s!"M{n (x-rx)} {n y}" ++ arc (x+rx) ++ arc (x-rx) ++ "Z")))
+      return some (.path (← NativeSVGPath.parse number (arcOutline x y rx ry)))
     return some (.ellipse x y rx ry)
   else if tag == "line" then
     let x1 ← geometryNumber lengths attrs "x1"; let y1 ← geometryNumber lengths attrs "y1"
@@ -1013,7 +1060,7 @@ private def dashedParts (g : BackendGeometry) (style : Style) (authorLength : Op
         if !scale.isFinite then throw "pathLength calibration exceeds finite range"
         let pattern := style.dashArray.map (·.calibrated scale)
         pure (pattern,style.dashOffset.calibrated scale)
-  return some (← NativeSVGStroke.retain contours pattern offset style.strokeWidth (style.lineCap == .round))
+  return some (← NativeSVGStroke.retain contours pattern offset style.strokeWidth style.lineCap style.miterLimit style.lineJoin)
 
 private def extraAttrs (tag : String) : List String :=
   match tag with
@@ -1173,7 +1220,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         let inherited ← readStyle lengths paints attrs style
         let x ← geometryNumber lengths attrs "x"
         let y ← geometryNumber lengths attrs "y"
-        let transform ← checkedTransform ((← transformList ((attr attrs "transform").getD "")).compose ⟨1,0,0,1,x,y⟩)
+        let transform ← checkedTransform ((← elementTransform parent ((attr attrs "transform").getD "")).compose ⟨1,0,0,1,x,y⟩)
         let cumulative ← checkedTransform (parent.compose transform)
         let some source := NativeSVGReferences.href attrs | return []
         let some id ← NativeSVGReferences.fragment source references.documentURL baseURL | return []
@@ -1209,7 +1256,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         if let some (_,_,vw,vh) := view then
           if vw == 0 || vh == 0 then return []
         let mapping ← viewportMapping w h attrs
-        let viewportTransform ← checkedTransform ((← transformList ((attr attrs "transform").getD "")).compose ⟨1,0,0,1,x,y⟩)
+        let viewportTransform ← checkedTransform ((← elementTransform parent ((attr attrs "transform").getD "")).compose ⟨1,0,0,1,x,y⟩)
         let contentTransform ← checkedTransform (viewportTransform.compose
           ⟨mapping.sx,0,0,mapping.sy,mapping.tx-mapping.minX*mapping.sx,mapping.ty-mapping.minY*mapping.sy⟩)
         let cumulative ← checkedTransform (parent.compose contentTransform)
@@ -1225,7 +1272,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         return [.clipped (attr attrs "id") contentTransform ⟨0,0,w,h,viewportTransform⟩ retainedChildren]
       else if tag == "g" then
         validateAttrs tag attrs ["transform","clip-path"]
-        let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
+        let transform ← checkedTransform (← elementTransform parent ((attr attrs "transform").getD ""))
         let cumulative ← checkedTransform (parent.compose transform)
         let inherited ← readStyle lengths paints attrs style
         let retainedChildren ← readChildren lengths cumulative inherited children
@@ -1237,7 +1284,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
           return [.clipped (attr attrs "id") transform ⟨x,y,w,h,transform⟩ retainedChildren]
       else
         validateAttrs tag attrs (extraAttrs tag)
-        let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
+        let transform ← checkedTransform (← elementTransform parent ((attr attrs "transform").getD ""))
         let cumulative ← checkedTransform (parent.compose transform)
         let inherited ← textFrame attrs transform (← readStyle lengths paints attrs style)
         let authorLength ← match attr attrs "pathLength" with
@@ -1699,7 +1746,7 @@ private def strokeShapeCondition (g : BackendGeometry) (base : Nat) (cap : LineC
     let butt := .both (.not (le len (.lit 0)))
       (.both (.both (le (.lit 0) h) (le h (.lit 1)))
         (le (squared (.subV delta (.scale h d))) (.mul half half)))
-    if cap == .butt then butt else
+    if cap != .round then butt else
       -- Capsule = finite strip plus its endpoint disks. Cross multiplication
       -- avoids division, including the zero-length round-cap disk case.
       let projection := Expr.dot delta d
@@ -1857,6 +1904,10 @@ theorem geometryTailData_length (geometry : BackendGeometry) :
 private def geometryTailSize (geometry : BackendGeometry) : Nat := geometryTailRowCount geometry * 4
 def primitiveFixedRowCount : Nat := 5
 def dashPieceRowCount : Nat := 5
+/-- One path of the largest size, with its largest stroke, fits in a scene. -/
+theorem maxStrokePath_within_storage :
+    (primitiveFixedRowCount + NativeSVGPath.maxPathPoints +
+      NativeSVGStroke.maxStrokePieces*dashPieceRowCount)*4 ≤ maxDataFloats := by decide
 def affineTransformRowCount : Nat := L4Factoidal.Math.AffineRows.vec4RowCount
 def clipRowCount : Nat := 3
 def Primitive.headerModeCode (p : BackendPrimitive) : Nat :=
@@ -2078,7 +2129,9 @@ private def Primitive.screenBox (m : Mapping) (p : BackendPrimitive) :
   | [x0,y0,x1,y1] =>
     let pad : Float := match p.style.stroke with
       | .none => 0
-      | _ => 2*p.style.strokeWidth+1
+      -- A miter tip is at most miterLimit*width/2 from its vertex, and a square
+      -- cap's corner is less than width from its end.
+      | _ => (max 2 (p.style.miterLimit/2))*p.style.strokeWidth+1
     let corners := [(x0-pad,y0-pad),(x1+pad,y0-pad),(x0-pad,y1+pad),(x1+pad,y1+pad)]
     let pixels := corners.map fun (x,y) =>
       let w := p.transform.apply x y

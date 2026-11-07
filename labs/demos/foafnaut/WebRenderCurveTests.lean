@@ -21,7 +21,7 @@ private def retained : Except String (Float × Float) := do
 #guard retained.toOption == some (16,0)
 private def overBudget : Rendering.Scene := {
   width := 32,height := 32,mapping := {viewportWidth := 32,viewportHeight := 32},
-  tree := [.paint ⟨none,{geometry := .path [.path ⟨0,0⟩ (List.replicate 513 (.line ⟨0,0⟩)) true]}⟩]}
+  tree := [.paint ⟨none,{geometry := .path [.path ⟨0,0⟩ (List.replicate (NativeSVGPath.maxPathPoints+1) (.line ⟨0,0⟩)) true]}⟩]}
 #guard (WebRenderSVG.toScene overBudget).toOption.isNone
 
 -- Original child indices include text/comments, and hidden SVG roots still

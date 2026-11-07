@@ -6,6 +6,7 @@ function equal(a:unknown,b:unknown){if(JSON.stringify(a)!==JSON.stringify(b))thr
 function assert(b:boolean,message:string){if(!b)throw new Error(message);}
 function rejects(action:()=>unknown,contains:string){let message="";try{action();}catch(error){message=String(error);}assert(message.includes(contains),`Expected ${contains}; got ${message||"success"}`);}
 const wrap=(body:string,attrs="")=>`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" ${attrs}>${body}</svg>`;
+const wrap100=(body:string)=>`<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">${body}</svg>`;
 // Independent analytic membership, sampled at the specified four quarter
 // positions. These black-on-white cases need no renderer-derived expectation.
 function quarterBlackRGB(x:number,y:number,contains:(x:number,y:number)=>boolean){
@@ -97,7 +98,7 @@ Deno.test("SVG round line caps use capsule geometry with inherited overrides",as
  const inherited=wrap('<g stroke="black" stroke-width="4" stroke-linecap="round"><line x1="10" y1="10.5" x2="20" y2="10.5"/><line x1="10" y1="30.5" x2="20" y2="30.5" stroke-linecap="butt"/></g>');
  equal(e.sample(inherited,8,10),[0,0,0]);equal(e.sample(inherited,8,30),[255,255,255]);
  equal(e.sample(wrap('<line x1="10" y1="10" x2="10" y2="10" stroke="black" stroke-width="0" stroke-linecap="round"/>'),10,10),[255,255,255]);
- rejects(()=>e.compile(wrap('<line stroke="black" stroke-linecap="square"/>')),"unsupported stroke-linecap");
+ rejects(()=>e.compile(wrap('<line stroke="black" stroke-linecap="pointed"/>')),"unsupported stroke-linecap");
 });
 
 Deno.test("SVG ellipse fill and polygon nonzero/evenodd winding are implemented in Lean",async()=>{
@@ -145,7 +146,7 @@ Deno.test("SVG CSS stylesheet and inline declarations affect Lean geometry paint
 Deno.test("SVG refuses unsupported features rather than silently losing rendering semantics",async()=>{
  const e=await loadSVG();
  for(const element of ['text','image','foreignObject','filter','clipPath','mask','script'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
- for(const attrs of ['style="filter:blur(2px)"','class="red"','transform="perspective(1)"','stroke-linecap="square"','stroke-linejoin="bevel"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
+ for(const attrs of ['style="filter:blur(2px)"','class="red"','transform="perspective(1)"','stroke-linecap="pointed"','stroke-linejoin="arcs"','stroke-miterlimit=".5"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
  rejects(()=>e.compile('<?xml-stylesheet href="a.css"?>'+wrap('')),"processing instruction");
  rejects(()=>e.compile('<!DOCTYPE svg>'+wrap('')),"DOCTYPE");
  rejects(()=>e.compile('<?xml version="1.0" encoding="ISO-8859-1"?>'+wrap('')),"UTF-8");
@@ -293,11 +294,25 @@ Deno.test("SVG retained compound linear paths implement moveto, closure, winding
  for(const d of ['L0 0','M0','M,0 0','M0,,0','M0 0,','M0 0LZ','M0 0Z1 2','M1000000 0l1 0','M0 0L1. 2','M0 0L1.e2 2','M0 0p1 2'])rejects(()=>e.compile(path(d)),"SVG profile:");
  assert(e.compile(path('M0 0L10 10','stroke="black"')).primitiveCount===1,"Linear path stroke admission");
  rejects(()=>e.compile(path('M0 0'.repeat(129))),"subpath count");
- rejects(()=>e.compile(path('M0 0'+'L1 1'.repeat(512))),"point/edge count");
+ rejects(()=>e.compile(path('M0 0'+'L1 1'.repeat(8192))),"point/edge count exceeds 8192");
  rejects(()=>e.compile(path(' '.repeat(65537))),"path data exceeds");
  rejects(()=>e.compile(path('M'+'0'.repeat(40000)+' 0')),"path numeric/compact-flag token exceeds 50 characters");
  rejects(()=>e.compile(path('M'+'0'.repeat(49)+' 0')),"path numeric token exceeds 48 characters");
  assert(e.compile(path('M0 0H1V1Z','pathLength="5"')).primitiveCount===1,"Path calibration admission");
+});
+
+Deno.test("SVG stroke joins, miter limit and caps change sampled pixels",async()=>{
+ const e=await loadSVG(),black=[0,0,0],white=[255,255,255];
+ const corner=(x:string)=>wrap(`<path d="M10 40H40V10" fill="none" stroke="black" stroke-width="10" ${x}/>`);
+ equal(e.sample(corner(''),43,43),black);
+ equal(e.sample(corner('stroke-linejoin="bevel"'),43,43),white);
+ equal(e.sample(corner('stroke-linejoin="round"'),43,42),black);equal(e.sample(corner('stroke-linejoin="round"'),44,44),white);
+ const acute=(x:string)=>wrap100(`<path d="M10 50L60 50L10 44" fill="none" stroke="black" stroke-width="4" ${x}/>`);
+ equal(e.sample(acute(''),75,51),white);equal(e.sample(acute('stroke-miterlimit="20"'),75,51),black);
+ const ends=(x:string)=>wrap(`<line x1="20" y1="20" x2="40" y2="20" stroke="black" stroke-width="10" ${x}/>`);
+ equal(e.sample(ends(''),17,20),white);
+ equal(e.sample(ends('stroke-linecap="square"'),15,15),black);
+ equal(e.sample(ends('stroke-linecap="round"'),15,15),white);
 });
 
 Deno.test("SVG dash union retains pattern phase and single opacity",async()=>{
@@ -307,7 +322,12 @@ Deno.test("SVG dash union retains pattern phase and single opacity",async()=>{
  equal(e.sample(doc,15,20),[0,0,0]);equal(e.sample(doc,25,20),[255,255,255]);
  const alpha=wrap('<line x1="20" y1="20" x2="60" y2="20" stroke="red" stroke-width="10" stroke-linecap="round" stroke-dasharray="2 2" stroke-opacity=".5" opacity=".5"/>');
  equal(e.sample(alpha,23,20),[255,191,191]);
- rejects(()=>e.compile(wrap('<circle r="10" stroke="black" stroke-dasharray="2 2"/>')),"dashed curved strokes unsupported");
+ const ring=(shape:string,x:string)=>wrap100(`<${shape} fill="none" stroke="black" stroke-width="6" stroke-dasharray="20 1000" ${x}/>`);
+ for(const shape of ['circle cx="50" cy="50" r="30"','ellipse cx="50" cy="50" rx="30" ry="30"']){
+  equal(e.sample(ring(shape,''),79,53),[0,0,0]);   // the first dash leaves the 3 o'clock point
+  equal(e.sample(ring(shape,''),79,46),[255,255,255]); // and goes towards 6 o'clock
+  equal(e.sample(ring(shape,''),20,50),[255,255,255]);
+ }
  rejects(()=>e.compile(wrap('<line stroke="black" stroke-dasharray="-1 2"/>')),"negative");
 });
 

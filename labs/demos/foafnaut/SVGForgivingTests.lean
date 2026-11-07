@@ -41,4 +41,13 @@ private def withFont (body : String) : Nat := match parse (svg body) 40 40 (some
 #guard withFont "<switch><rect systemLanguage='fr' width='9' height='9'/><rect width='5' height='5'/><rect width='3' height='3'/></switch>" == 1
 #guard withFont "<a><rect width='9' height='9'/></a>" == 1
 #guard primitives "<rect stroke='black' stroke-linejoin='round' width='9' height='9'/>" == 1
-#guard (log "<rect stroke='black' stroke-linejoin='round' width='9' height='9'/>").contains "approximated: stroke-linejoin"
+-- The reader draws each join, cap and miter limit; only a value it refuses is logged.
+#guard (log "<rect stroke='black' stroke-linejoin='round' stroke-linecap='square' stroke-miterlimit='9' width='9' height='9'/>").all (!·.startsWith "approximated")
+#guard (log "<rect stroke='black' stroke-linejoin='arcs' width='9' height='9'/>").contains "approximated: stroke-linejoin"
+#guard (log "<rect stroke='black' stroke-miterlimit='.5' width='9' height='9'/>").contains "approximated: stroke-miterlimit"
+-- A value the reader refuses goes; the same property with a valid value stays.
+private def offsetKept : Bool := match parse (svg "<g stroke-dashoffset='none'><line x2='30' stroke='black' stroke-dasharray='5' stroke-dashoffset='5'/></g>") 40 40 with
+  | .ok (scene,log) => log.contains "approximated: stroke-dashoffset" &&
+      scene.primitives.any (fun p => p.style.dashOffset.value == 5)
+  | .error _ => false
+#guard offsetKept

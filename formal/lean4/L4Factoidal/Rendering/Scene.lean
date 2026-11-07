@@ -160,7 +160,9 @@ def Gradient.lower (g : Gradient) (bounds : Float × Float × Float × Float) : 
   | none => pure ⟨identity,false,g.stops.getLast?.toList⟩
 inductive FillRule where | nonzero | evenodd
   deriving Repr, BEq
-inductive LineCap where | butt | round
+inductive LineCap where | butt | round | square
+  deriving Repr, BEq
+inductive LineJoin where | miter | round | bevel
   deriving Repr, BEq
 structure Length where
   value : Float
@@ -183,6 +185,8 @@ structure Style where
   visible : Bool := true
   rule : FillRule := .nonzero
   lineCap : LineCap := .butt
+  lineJoin : LineJoin := .miter
+  miterLimit : Float := 4
   deriving Repr
 /-- Rectangular clip in an independent local frame. Content and clip frames
 remain distinct so a viewport can clip before a viewBox mapping. -/

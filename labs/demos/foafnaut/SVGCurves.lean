@@ -59,7 +59,7 @@ private def flattenBezier (screen : Transform) (tolerance : Float) (curve : Bezi
       if piece.flat screen tolerance then
         let point := piece.endPoint
         if !finitePoint point then throw "non-finite curve subdivision point"
-        if out.size >= remainingPoints then throw "path point/edge count exceeds 512"
+        if out.size >= remainingPoints then throw s!"path point/edge count exceeds {maxPathPoints}"
         out := out.push point
         pending := rest
       else
@@ -67,7 +67,7 @@ private def flattenBezier (screen : Transform) (tolerance : Float) (curve : Bezi
         let (first,last) := piece.split
         pending := (first,depth+1)::(last,depth+1)::rest
   if pending.isEmpty then return out.toList
-  throw "path point/edge count exceeds 512"
+  throw s!"path point/edge count exceeds {maxPathPoints}"
 
 private def pi : Float := 3.141592653589793
 private def flattenArc (screen : Transform) (tolerance : Float) (start endPoint : Point)
@@ -76,7 +76,7 @@ private def flattenArc (screen : Transform) (tolerance : Float) (start endPoint 
   let mut rx := rx0.abs
   let mut ry := ry0.abs
   if rx == 0 || ry == 0 then
-    if remainingPoints == 0 then throw "path point/edge count exceeds 512"
+    if remainingPoints == 0 then throw s!"path point/edge count exceeds {maxPathPoints}"
     return [endPoint]
   let angle := (rotation-(rotation/360).floor*360)*pi/180
   let cos := angle.cos; let sin := angle.sin
@@ -117,7 +117,7 @@ private def flattenArc (screen : Transform) (tolerance : Float) (start endPoint 
       if radiusBound*step*step/8+padding <= tolerance then admitted := true
       else pieces := pieces*2
   if !admitted then throw "arc flatness subdivision depth exceeds 20"
-  if pieces > remainingPoints then throw "path point/edge count exceeds 512"
+  if pieces > remainingPoints then throw s!"path point/edge count exceeds {maxPathPoints}"
   let mut out : Array Point := #[]
   for index in [:pieces] do
     if index+1 == pieces then out := out.push endPoint
@@ -141,20 +141,20 @@ def flatten (screen : Transform) (contours : List Contour) (tolerance : Float :=
     | .empty closed => result := result.push ⟨[],closed⟩
     | .path start segments closed =>
       if !finitePoint start then throw "non-finite curve start"
-      if segments.length > 512 then throw "path segment count exceeds 512"
-      if count >= 512 then throw "path point/edge count exceeds 512"
+      if segments.length > maxPathPoints then throw s!"path segment count exceeds {maxPathPoints}"
+      if count >= maxPathPoints then throw s!"path point/edge count exceeds {maxPathPoints}"
       count := count+1
       let mut points : Array Point := #[start]
       let mut current := start
       for segment in segments do
         let tail ← match segment with
           | .line endPoint =>
-            if count >= 512 then throw "path point/edge count exceeds 512"
+            if count >= maxPathPoints then throw s!"path point/edge count exceeds {maxPathPoints}"
             if !finitePoint endPoint then throw "non-finite curve endpoint"
             pure [endPoint]
-          | .quadratic control endPoint => flattenBezier screen tolerance (.quadratic current control endPoint) (512-count)
-          | .cubic first second endPoint => flattenBezier screen tolerance (.cubic current first second endPoint) (512-count)
-          | .arc rx ry rotation largeArc sweep endPoint => flattenArc screen tolerance current endPoint rx ry rotation largeArc sweep (512-count)
+          | .quadratic control endPoint => flattenBezier screen tolerance (.quadratic current control endPoint) (maxPathPoints-count)
+          | .cubic first second endPoint => flattenBezier screen tolerance (.cubic current first second endPoint) (maxPathPoints-count)
+          | .arc rx ry rotation largeArc sweep endPoint => flattenArc screen tolerance current endPoint rx ry rotation largeArc sweep (maxPathPoints-count)
         points := points ++ tail.toArray
         count := count+tail.length
         current := match segment with

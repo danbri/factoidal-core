@@ -11,6 +11,12 @@ end NativeSVG
 
 namespace NativeSVGPath
 open NativeSVG
+/-- Largest count of points of one path, after its curves are flattened. It bounds
+    the work for one element; the scene limit `maxDataFloats` bounds the storage.
+    Flatness is 1/64 pixel, so a detailed outline at a large scale passes 512
+    points. `NativeSVG.maxStrokePath_within_storage` states that one path of this
+    size fits in the scene storage. -/
+def maxPathPoints : Nat := 8192
 abbrev Segment := L4Factoidal.Rendering.PathSegment
 namespace Segment
 @[match_pattern] abbrev line := L4Factoidal.Rendering.PathSegment.line

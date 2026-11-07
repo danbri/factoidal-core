@@ -53,7 +53,7 @@ private def tokens (source : String) : Except String (Array Token) := do
         out := out.push (.number lexical)
         previousNumber := true
       else throw "invalid path token"
-      if out.size > 4096 then throw "path token count exceeds 4096"
+      if out.size > 8*maxPathPoints then throw s!"path token count exceeds {8*maxPathPoints}"
   throw "path lexer exceeded input bound"
 private structure Cursor where
   index : Nat := 0
@@ -211,7 +211,7 @@ def parse (number : String → Except String Float) (source : String) : Except S
         | _ => cubicControl := none; quadraticControl := none
         cursor := next
         count := count+1
-      if count > 512 then throw "path point/edge count exceeds 512"
+      if count > maxPathPoints then throw s!"path point/edge count exceeds {maxPathPoints}"
   throw "path parser exceeded token bound"
 
 /-- Fill closes each compiled subpath independently; the separate stroke

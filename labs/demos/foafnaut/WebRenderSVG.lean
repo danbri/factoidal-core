@@ -61,13 +61,17 @@ def fromStyle (s : NativeSVG.Style) : Rendering.Style :=
    strokeWidth := s.strokeWidth,dashArray := s.dashArray.map fromLength,dashOffset := fromLength s.dashOffset,
    fillOpacity := s.fillOpacity,strokeOpacity := s.strokeOpacity,visible := s.visible,
    rule := match s.rule with | .nonzero => .nonzero | .evenodd => .evenodd,
-   lineCap := match s.lineCap with | .butt => .butt | .round => .round}
+   lineCap := match s.lineCap with | .butt => .butt | .round => .round | .square => .square,
+   lineJoin := match s.lineJoin with | .miter => .miter | .round => .round | .bevel => .bevel,
+   miterLimit := s.miterLimit}
 def toStyle (s : Rendering.Style) : NativeSVG.Style :=
   {fill := toPaint s.fill,stroke := toPaint s.stroke,currentColor := toColor s.currentColor,
    strokeWidth := s.strokeWidth,dashArray := s.dashArray.map toLength,dashOffset := toLength s.dashOffset,
    fillOpacity := s.fillOpacity,strokeOpacity := s.strokeOpacity,visible := s.visible,
    rule := match s.rule with | .nonzero => .nonzero | .evenodd => .evenodd,
-   lineCap := match s.lineCap with | .butt => .butt | .round => .round}
+   lineCap := match s.lineCap with | .butt => .butt | .round => .round | .square => .square,
+   lineJoin := match s.lineJoin with | .miter => .miter | .round => .round | .bevel => .bevel,
+   miterLimit := s.miterLimit}
 def fromClip (clip : NativeSVG.ClipRect) : Rendering.ClipRect :=
   ⟨clip.x,clip.y,clip.width,clip.height,clip.transform⟩
 def toClip (clip : Rendering.ClipRect) : NativeSVG.ClipRect :=
@@ -115,8 +119,8 @@ def toScene (s : Rendering.Scene) : Except String NativeSVG.Scene :=
   cases p <;> simp [toPiece,fromPiece]
 @[simp] theorem style_roundtrip (s : NativeSVG.Style) : toStyle (fromStyle s) = s := by
   cases s with
-  | mk fill stroke color width dash offset fillOpacity strokeOpacity visible rule cap =>
-    cases rule <;> cases cap <;>
+  | mk fill stroke color width dash offset fillOpacity strokeOpacity visible rule cap join limit =>
+    cases rule <;> cases cap <;> cases join <;>
       simp [toStyle,fromStyle,List.map_map,Function.comp_def]
 @[simp] theorem clip_roundtrip (clip : NativeSVG.ClipRect) : toClip (fromClip clip) = clip := by
   cases clip
