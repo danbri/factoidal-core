@@ -34,7 +34,8 @@ def run : IO Unit := do
   check ((NativeSVG.parse (path "M0 0L10 10" "stroke='black'")).isOk) "linear path stroke refused"
   check (!(NativeSVG.parse (path (String.join (List.replicate 129 "M0 0")))).isOk) "subpath budget ignored"
   check (!(NativeSVG.parse (path ("M"++String.ofList (List.replicate 40000 '0')++" 0"))).isOk) "numeric scan budget ignored"
-  let excessiveData := "M0 0" ++ String.join (List.replicate 512 "L1 1")
+  let excessiveData := "M0 0" ++ String.join (List.replicate NativeSVGPath.maxPathPoints "L1 1")
+  check ((NativeSVG.parse (path ("M0 0" ++ String.join (List.replicate 2000 "L1 1")))).isOk) "path of 2000 points refused"
   let excessive := NativeSVG.parse (path excessiveData)
   check (!excessive.isOk) "point budget ignored"
   IO.println "PASS retained MLHVZ, compact numbers, implicit closure, compound winding, CTM and strict limits"

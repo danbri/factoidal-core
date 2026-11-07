@@ -499,7 +499,10 @@ private def readStyle (lengths : LengthContext) (paints : PaintContext) (attrs :
     if trim value != "inherit" then
       style := {style with dashArray:= ← dashArray lengths value}
   if let some value := attr attrs "stroke-dashoffset" then
-    if trim value != "inherit" then style := {style with dashOffset:={value:= ← relativeLength value lengths.diagonal,percentage:=(trim value).endsWith "%"}}
+    if trim value != "inherit" then
+      match relativeLength value lengths.diagonal with
+      | .ok offset => style := {style with dashOffset:={value:=offset,percentage:=(trim value).endsWith "%"}}
+      | .error _ => throw s!"unsupported stroke-dashoffset: {value}"
   if let some value := attr attrs "visibility" then
     match (trim value).toLower with
     | "inherit" => pure ()
@@ -1879,6 +1882,10 @@ theorem geometryTailData_length (geometry : BackendGeometry) :
 private def geometryTailSize (geometry : BackendGeometry) : Nat := geometryTailRowCount geometry * 4
 def primitiveFixedRowCount : Nat := 5
 def dashPieceRowCount : Nat := 5
+/-- One path of the largest size, with its largest stroke, fits in a scene. -/
+theorem maxStrokePath_within_storage :
+    (primitiveFixedRowCount + NativeSVGPath.maxPathPoints +
+      NativeSVGStroke.maxStrokePieces*dashPieceRowCount)*4 ≤ maxDataFloats := by decide
 def affineTransformRowCount : Nat := L4Factoidal.Math.AffineRows.vec4RowCount
 def clipRowCount : Nat := 3
 def Primitive.headerModeCode (p : BackendPrimitive) : Nat :=

@@ -15,6 +15,9 @@ inductive Piece where
   | disk (center : Point) (radius : Float)
   | triangle (a b c : Point)
   deriving Repr
+/-- Largest count of pieces of one stroke: at each point a strip and the two
+    triangles of a miter, and space for caps. -/
+def maxStrokePieces : Nat := 4*maxPathPoints
 private def delta (a b : Point) : Point := ⟨b.x-a.x,b.y-a.y⟩
 private def cross (a b : Point) := a.x*b.y-a.y*b.x
 private def magnitude (a : Point) := Float.sqrt (a.x*a.x+a.y*a.y)
@@ -65,7 +68,7 @@ def retain (contours : List LinearContour) (pattern : List Float) (offset width 
     (lineCap : LineCap) (miterLimit : Float := 4) (lineJoin : LineJoin := .miter) : Except String (List Piece) := do
   if !width.isFinite || width < 0 || !miterLimit.isFinite || miterLimit < 1 then throw "invalid stroke dimensions"
   if width==0 then return []
-  if contours.length > 128 || (contours.foldl (fun n c => n+c.points.length) 0) > 512 then throw "stroke contour/point count exceeds profile bound"
+  if contours.length > 128 || (contours.foldl (fun n c => n+c.points.length) 0) > maxPathPoints then throw s!"stroke contour/point count exceeds 128 contours or {maxPathPoints} points"
   let half := width/2
   let mut pieces : Array Piece := #[]
   for contour in contours do
@@ -106,7 +109,7 @@ def retain (contours : List LinearContour) (pattern : List Float) (offset width 
           pieces := pieces ++ (cap lineCap (pointAt span.first) ⟨-forward.x,-forward.y⟩ half).toArray
         if !(seam && span.last==total) then
           pieces := pieces ++ (cap lineCap (pointAt span.last) (directionAt span.last false) half).toArray
-      if pieces.size > 4096 then throw "stroke union exceeds 4096 pieces"
+      if pieces.size > maxStrokePieces then throw s!"stroke union exceeds {maxStrokePieces} pieces"
     let mut distance : Float := 0
     let incoming := if contour.closed then segments else segments.dropLast
     let outgoing := segments.drop 1 ++ if contour.closed then segments.take 1 else []
@@ -114,6 +117,6 @@ def retain (contours : List LinearContour) (pattern : List Float) (offset width 
       distance := distance+size
       if (contour.closed && distance==total && seam) || spans.any (fun s => s.first < distance && s.last > distance) then
         pieces := pieces ++ (join a vertex b half miterLimit lineJoin).toArray
-    if pieces.size > 4096 then throw "stroke union exceeds 4096 pieces"
+    if pieces.size > maxStrokePieces then throw s!"stroke union exceeds {maxStrokePieces} pieces"
   return pieces.toList
 end NativeSVGStroke

@@ -45,3 +45,9 @@ private def withFont (body : String) : Nat := match parse (svg body) 40 40 (some
 #guard (log "<rect stroke='black' stroke-linejoin='round' stroke-linecap='square' stroke-miterlimit='9' width='9' height='9'/>").all (!·.startsWith "approximated")
 #guard (log "<rect stroke='black' stroke-linejoin='arcs' width='9' height='9'/>").contains "approximated: stroke-linejoin"
 #guard (log "<rect stroke='black' stroke-miterlimit='.5' width='9' height='9'/>").contains "approximated: stroke-miterlimit"
+-- A value the reader refuses goes; the same property with a valid value stays.
+private def offsetKept : Bool := match parse (svg "<g stroke-dashoffset='none'><line x2='30' stroke='black' stroke-dasharray='5' stroke-dashoffset='5'/></g>") 40 40 with
+  | .ok (scene,log) => log.contains "approximated: stroke-dashoffset" &&
+      scene.primitives.any (fun p => p.style.dashOffset.value == 5)
+  | .error _ => false
+#guard offsetKept

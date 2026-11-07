@@ -294,7 +294,7 @@ Deno.test("SVG retained compound linear paths implement moveto, closure, winding
  for(const d of ['L0 0','M0','M,0 0','M0,,0','M0 0,','M0 0LZ','M0 0Z1 2','M1000000 0l1 0','M0 0L1. 2','M0 0L1.e2 2','M0 0p1 2'])rejects(()=>e.compile(path(d)),"SVG profile:");
  assert(e.compile(path('M0 0L10 10','stroke="black"')).primitiveCount===1,"Linear path stroke admission");
  rejects(()=>e.compile(path('M0 0'.repeat(129))),"subpath count");
- rejects(()=>e.compile(path('M0 0'+'L1 1'.repeat(512))),"point/edge count");
+ rejects(()=>e.compile(path('M0 0'+'L1 1'.repeat(8192))),"point/edge count exceeds 8192");
  rejects(()=>e.compile(path(' '.repeat(65537))),"path data exceeds");
  rejects(()=>e.compile(path('M'+'0'.repeat(40000)+' 0')),"path numeric/compact-flag token exceeds 50 characters");
  rejects(()=>e.compile(path('M'+'0'.repeat(49)+' 0')),"path numeric token exceeds 48 characters");

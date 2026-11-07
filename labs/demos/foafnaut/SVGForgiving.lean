@@ -351,12 +351,14 @@ private def normalise (fonts : List SVGFont) (targets : Std.HashMap String Names
       let results := children.map (normalise fonts targets fuel inner keepText)
       (some (.element name (renameId attrs) (results.filterMap (·.1))),results.flatMap (·.2))
 
-private def stripAttr (tag : String) (key : String) : Nat → NamespaceNode → NamespaceNode × Nat
+/-- Remove `key` from the elements named `tag`, or from all elements when `tag` is
+    empty. With `value`, an attribute that has another value stays. -/
+private def stripAttr (tag : String) (key : String) (value : Option String := none) : Nat → NamespaceNode → NamespaceNode × Nat
   | 0,node => (node,0)
   | _,.other raw => (.other raw,0)
   | fuel+1,.element name attrs children =>
-    let kept := if tag.isEmpty || name.localPart == tag then attrs.filter (fun a => a.name.localPart != key) else attrs
-    let results := children.map (stripAttr tag key fuel)
+    let kept := if tag.isEmpty || name.localPart == tag then attrs.filter (fun a => a.name.localPart != key || value.any (· != a.value)) else attrs
+    let results := children.map (stripAttr tag key value fuel)
     (.element name kept (results.map (·.1)),
       attrs.length-kept.length + (results.map (·.2)).foldl (·+·) 0)
 
@@ -391,7 +393,7 @@ private def tagName : NamespaceNode → String
 
 /-- A stroke style the reader refuses: draw with the default style, and log it. -/
 private def styleError (message : String) : Option String :=
-  ["stroke-linejoin","stroke-miterlimit","stroke-linecap"].find? fun key =>
+  ["stroke-linejoin","stroke-miterlimit","stroke-linecap","stroke-dashoffset"].find? fun key =>
     message.startsWith ("unsupported " ++ key ++ ":")
 
 /-- `unsupported attribute on TAG: KEY`, with or without "qualified". -/
@@ -435,11 +437,13 @@ private def repair (width height : Nat) : Nat → Attempt → Except String (Nat
     | .ok scene => pure (scene,a.dropped)
     | .error message =>
       let stripped := (attributeError message).bind fun (tag,key) =>
-        let (root,count) := stripAttr tag key maxDepth a.root
+        let (root,count) := stripAttr tag key none maxDepth a.root
         if count == 0 then none
         else some {a with root,parses:=a.parses+1,dropped:=a.dropped ++ List.replicate count s!"attribute: {tag} {key}"}
       let restyled := (styleError message).bind fun key =>
-        let (root,count) := stripAttr "" key maxDepth a.root
+        -- Only the refused value goes: other elements may have a valid one.
+        let refused := (message.drop ("unsupported ".length+key.length+2)).toString
+        let (root,count) := stripAttr "" key (some refused) maxDepth a.root
         if count == 0 then none
         else some {a with root,parses:=a.parses+1,dropped:=a.dropped ++ [s!"approximated: {key}"]}
       match (stripped.orElse fun _ => restyled).orElse (fun _ => removeOffender width height message a) with
