@@ -16,7 +16,7 @@ async function main() {
   if(args.includes("--help")){
     console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--graph-sweep] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
   }
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true;
+  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -31,6 +31,8 @@ async function main() {
     else if(arg==="--wasm-engine")wasmEngine=true;
     // One Lean frame for each scroll step, as before the two layers (for comparison).
     else if(arg==="--single-frame")layered=false;
+    // No press look (no darkening, no :active frame): the behaviour before issue 1268, for comparison.
+    else if(arg==="--no-press-look")pressLook=false;
     else if(arg==="--native-engine"){nativeEngine=args.shift();if(!nativeEngine)throw new Error("--native-engine needs a dylib path");}
     else if(arg==="--font")fontFile=args.shift();
     else if(arg==="--bitmap-font")bitmapFont=true;
@@ -172,6 +174,7 @@ async function main() {
   // The composite darkens Lean's rectangles at once (no Lean call); a Lean frame that
   // includes the press replaces the darkening (renderFrame).
   const startPress=(answer:{control?:string;active?:number;rects:number[][]})=>{
+    if(!pressLook)return;
     pressed={...answer,at:eventAt,framed:false,asked:false};
     if(layered&&current&&session){session.setPress(answer.rects);pressPresent=true;}
   };

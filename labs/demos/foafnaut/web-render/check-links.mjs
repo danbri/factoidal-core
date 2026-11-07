@@ -28,9 +28,9 @@ try{
  const run=word=>frame.artifact.webRender.glyphRuns.find(r=>r.text===word);
  const pixel=(x,y)=>frame.rgba.slice((y*frame.artifact.width+x)*4,(y*frame.artifact.width+x)*4+3);
  const aa=run('AA'),red=run('Red'),plain=run('Plain');assert(aa&&red&&plain);
- assert.deepEqual(pixel(Math.floor(aa.glyphs[0][1]+5),Math.floor(aa.glyphs[0][2]+15)),[0,0,255]);
+ assert.deepEqual(pixel(Math.floor(aa.glyphs[0][1]+5),Math.floor(aa.glyphs[0][2]+15)),[0,0,238]);
  assert.deepEqual(pixel(Math.floor(red.glyphs[0][1]+5),Math.floor(red.glyphs[0][2]+15)),[255,0,0]);
- assert.deepEqual(pixel(Math.floor(plain.glyphs[0][1]+5),Math.floor(plain.glyphs[0][2]+15)),[255,255,255]);report.checks.push('actual blue underline, author red override, non-href anchor has no underline');
+ assert.deepEqual(pixel(Math.floor(plain.glyphs[0][1]+5),Math.floor(plain.glyphs[0][2]+15)),[255,255,255]);report.checks.push('link colour #0000EE underline (HTML 15.3.4), author red override, non-href anchor has no underline');
  const point=await canvasPoint(plain.glyphs[0][1]+5,plain.glyphs[0][2]+5),before=posts.length;await page.mouse.move(point.x,point.y);await page.waitForFunction(()=>document.querySelector('#output').style.cursor==='default');await page.mouse.click(point.x,point.y);assert.equal(posts.length,before);report.checks.push('non-href anchor has default cursor and emits no click');
  const icon=links.find(r=>r[1]==='https://example.test/icon');assert(icon);assert.deepEqual(pixel(Math.floor(icon[2]+icon[4]/2),Math.floor(icon[3]+icon[5]/2)),[255,0,0]);await clickAt(icon[2]+icon[4]/2,icon[3]+icon[5]/2,icon[1]);report.checks.push('HTML anchor CSS currentColor reaches affine-mapped embedded SVG and picks source anchor');
  assert.equal(consoleLogs.length,4);assert.equal(posts.length,4);assert(errors.length===0,errors.join('\n'));assert.equal(page.url(),origin);report.checks.push('link diagnostics mode logs bounded URLs/source nodes in browser console and server endpoint');
