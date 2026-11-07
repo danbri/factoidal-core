@@ -9,10 +9,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const VERIFIEDJS_REPOSITORY = 'https://github.com/BasisResearch/VerifiedJS.git';
-export const VERIFIEDJS_COMMIT = 'b6eabd76a1eab6573c0d422db8142869133eabb4';
-// SHA-256 of the sorted "<sha256>  <path>" lines of CHECKED_PATHS.
-export const VERIFIEDJS_SHA256 = '63be0be6c30c22cddd2acd35c0c7d04d14b8f2f382c11810b081d4f93b8965fe';
+import { VERIFIEDJS_REPOSITORY, VERIFIEDJS_COMMIT, VERIFIEDJS_SHA256 } from './pin.mjs';
+export { VERIFIEDJS_REPOSITORY, VERIFIEDJS_COMMIT, VERIFIEDJS_SHA256 };
 const CHECKED_PATHS = ['VerifiedJS', 'VerifiedJS.lean', 'lakefile.lean', 'lake-manifest.json', 'lean-toolchain', 'scripts', 'tests/e2e', 'tests/unit', 'tools'];
 
 const walk = path => statSync(path).isDirectory()
