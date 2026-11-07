@@ -288,3 +288,37 @@ Deno.test("compile in a worker answers what the main-thread engine answers, and 
   assert(kept.includes("draw")&&kept.includes("submit"));
   assert(plan.commands.filter(command=>READBACK_COMMANDS.has(command)).length>=3);
 });
+
+Deno.test("a low-priority layers call runs after ordinary calls, a newer one replaces it, and dropLow drops it",async()=>{
+  const document=await prepareHTML(engine,new URL("./native-html/default.html",import.meta.url).href);
+  const at=(scroll:number)=>document.request(640,400,{textScalePercent:125,shell:{tabs:[{title:""}],active:0,address:document.url,cursor:0,focused:false,
+    canBack:false,canForward:false,loading:false,scale:1,theme:"next",pages:1,scroll}} as Record<string,unknown>);
+  const client=await startCompileWorker();
+  try{
+    const order:string[]=[];
+    const first=at(0),second=at(500),third=at(900);
+    // The ordinary call is sent first and runs first. While it runs, two low calls are sent:
+    // the second replaces the first, which is answered undefined (dropped).
+    const ordinary=client.compileLayers(first.source,640,400,first.options).then(()=>order.push("ordinary"));
+    const old=client.prefetchLayers(second.source,640,400,second.options).then(answer=>{order.push(answer?"old":"old-dropped");return answer;});
+    const newer=client.prefetchLayers(third.source,640,400,third.options).then(answer=>{order.push(answer?"newer":"newer-dropped");return answer;});
+    const after=client.compileLayers(first.source,640,400,first.options).then(()=>order.push("ordinary2"));
+    const [,oldAnswer,newerAnswer]=await Promise.all([ordinary,old,newer,after]);
+    assert.equal(oldAnswer,undefined);
+    assert(newerAnswer);
+    // The worker takes the low calls in after the first call ends. The second ordinary call
+    // was sent after the low call and still ran before it.
+    assert.deepEqual(order,["ordinary","old-dropped","ordinary2","newer"]);
+    assert.equal(client.pending,0);
+    // The prefetched band is Lean's answer for that request, the same as an ordinary call.
+    const direct=await client.compileLayers(third.source,640,400,third.options);
+    assert.deepEqual(newerAnswer.layers.layers,direct.layers.layers);
+    assert.deepEqual([...newerAnswer.layers.page.data],[...direct.layers.page.data]);
+    // dropLow drops a low call that has not started.
+    const busy=client.compileLayers(first.source,640,400,first.options);
+    const dropped=client.prefetchLayers(second.source,640,400,second.options);
+    client.dropLow();
+    await busy;
+    assert.equal(await dropped,undefined);
+  }finally{client.terminate();}
+});

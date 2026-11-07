@@ -1,5 +1,6 @@
 import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer} from "./native_html_engine.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
+import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
 import {inputURL,navigationURL,loadFontFile,prepareHTML,refusalHTML,type PageView} from "./native_html_document.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {nativePreflight} from "./native_preflight.ts";
@@ -101,7 +102,7 @@ async function main() {
   if(check){
     // Synthetic limits exercise only the published planner ABI. Window rendering
     // always passes the real device limits in createHTMLWindowSession.
-    const plan=await requestRenderPlan("svg-offscreen","rgba8unorm",frame,{
+    const plan=await requestRenderPlan("svg-offscreen","rgba8unorm",frame as unknown as {width:number;height:number;data:number[]},{
       maxUniformBufferBindingSize:65536,maxStorageBufferBindingSize:134217728,
       maxTextureDimension2D:4096,maxBufferSize:268435456});
     console.log(`Native HTML CPU plan: ${plan.abi}; ${plan.uniform.bindingType}; ${plan.uniform.bytes} bytes`);
@@ -133,7 +134,6 @@ async function main() {
   let history=engine.historyPush({entries:[],index:0},document.url);
   // The chrome is a Lean value too. The host stores it and shows what Lean draws.
   const home=document;
-  let checked:typeof document|undefined;
   let address=document.url,cursor=0,focused=false,fresh=false,theme="next",pages=1,scale=1,active=0,scroll=0;
   const tabs:{document:typeof document;history:typeof history;scroll:number}[]=[{document,history,scroll:0}];
   const shell=()=>({tabs:tabs.map((tab,index)=>({title:(index===active?document:tab.document).title??""})),active,address,cursor,focused,
@@ -203,21 +203,45 @@ async function main() {
   };
   const focusAddress=()=>{focused=true;fresh=true;address=document.url;cursor=address.length;dirty=true;};
   const leaveAddress=()=>{focused=false;address=document.url;dirty=true;};
-  const scrollBy=(amount:number)=>{
+  const scrollLimit=()=>{
     const boxes=frame.webRender.boxes as number[][]|undefined;
     const bottom=Math.max(0,...(boxes??[]).map(box=>box[2]+box[4]));
-    const limit=Math.max(0,bottom-height+Math.round(60*scale));
-    const next=Math.max(0,Math.min(limit,scroll+Math.round(amount)));
+    return Math.max(0,bottom-height+Math.round(60*scale));
+  };
+  const scrollBy=(amount:number)=>{
+    const next=Math.max(0,Math.min(scrollLimit(),scroll+Math.round(amount)));
     if(next===scroll)return;
-    scroll=next;
+    scroll=next;motion=trackMotion(motion,scroll,performance.now());
     // Inside the band of the layers on screen, a scroll only moves the composite: no Lean call.
     // Lean's keep range says when to ask for a new band; until it comes, the view stays in the old one.
-    if(canShift()){shiftPending=true;shiftedByEvent=true;if(!keeps(current!.layers.layers,scroll))dirty=true;}
+    // A prefetched band of the same state that keeps the scroll, ready or coming, takes the place of a new render.
+    if(canShift()){shiftPending=true;shiftedByEvent=true;if(!keeps(current!.layers.layers,scroll)&&!bandComing())dirty=true;}
     else dirty=true;
+  };
+  // Scroll prefetch (scroll_prefetch.ts). `everyFrame` is set when the window opens.
+  let everyFrame=false,motion:Motion|undefined,bandMs=100;
+  type RequestRecord={request:ReturnType<typeof document.request>;width:number;height:number;document:typeof document};
+  let prefetched:{key:StateKey;layers:HTMLLayers;target:number;record:RequestRecord}|undefined;
+  let prefetching:{key:StateKey;target:number;reach:number}|undefined;
+  const prefetchStats={sent:0,ready:0,swaps:0,dropped:0,stale:0,missed:0};
+  // The request that a frame of `page` at this scroll sends to Lean, and its state with no scroll.
+  const requestAt=(page:typeof document,at:number)=>{
+    const view0=shown();view0.shell={...view0.shell,scroll:at};
+    return page.request(width,height,{...view0,live:page===checked,...(everyFrame?{}:{checks:false})});
+  };
+  const stateNow=()=>stateKey(document,requestAt(document,scroll).options,width,height);
+  // The prefetched band can be shown now in place of a Lean frame.
+  const swapReady=()=>!!current&&!!prefetched&&canSwap(current.layers.layers,{key:prefetched.key,band:prefetched.layers.layers},stateNow(),scroll);
+  // A band that keeps this scroll is ready, or is being made for the same state: wait for it.
+  const bandComing=()=>{
+    if(swapReady())return true;
+    if(!prefetching||Math.abs(scroll-prefetching.target)>prefetching.reach)return false;
+    return sameState(prefetching.key,stateNow());
   };
   // The layers on screen, and the page row of the band shown at the top of the view.
   let current:{layers:HTMLLayers;document:typeof document;width:number;height:number}|undefined,shownOffset=0;
   let shiftPending=false,shiftedByEvent=false;
+  let checked:typeof document|undefined;
   // A selection is in window coordinates, so with one a scroll needs a Lean frame.
   const canShift=()=>layered&&!!current&&current.document===document&&!candidate&&current.width===width&&current.height===height&&!Array.isArray(view.selection);
   // Window and page-layer rows, for link picking: the composite maps one to the other.
@@ -309,7 +333,7 @@ async function main() {
   };
   let lastStep=0;
   let lastActivity=performance.now(),queueMax=0,fatal:unknown,rendering:Promise<void>|undefined;
-  let awaiting:{kind:number;at:number}[]=[],awaitingShift:{kind:number;at:number}[]=[],checkedFrames=0,workerFrames=0,mainFrames=0;
+  let awaiting:{kind:number;at:number}[]=[],awaitingShift:{kind:number;at:number}[]=[],awaitingBand:{kind:number;at:number}[]=[],checkedFrames=0,workerFrames=0,mainFrames=0;
   let shifting:Promise<void>|undefined;const shifts:number[]=[];
   const latencies:number[]=[],totals:number[]=[],pumpGaps:number[]=[],pumpGapsLate:number[]=[];let lastPump:number|undefined,firstFrameAt:number|undefined;
   const percentile=(values:number[],q:number)=>{if(!values.length)return null;const sorted=[...values].sort((a,b)=>a-b);return Math.round(sorted[Math.min(sorted.length-1,Math.ceil(q*sorted.length)-1)]*10)/10;};
@@ -326,9 +350,9 @@ async function main() {
       pumpGapAfterFirstFrameMs:{count:pumpGapsLate.length,p50:percentile(pumpGapsLate,0.5),p95:percentile(pumpGapsLate,0.95),max:pumpGapsLate.length?Math.round(Math.max(...pumpGapsLate)*10)/10:null},
       slowCalls,
       pumpGapMs:{p50:percentile(pumpGaps,0.5),p95:percentile(pumpGaps,0.95),max:pumpGaps.length?Math.round(Math.max(...pumpGaps)*10)/10:null},
-      queueMax,sessionStats:session?.stats};
+      prefetch:prefetchStats,queueMax,sessionStats:session?.stats};
     trace(line.type,line);
-    if(perfSummary)console.log(`input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
+    if(perfSummary)console.log(`input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
   };
   try {
     device=await adapter.requestDevice();native=await nativePreflight(()=>loadNativeWindow());
@@ -352,7 +376,7 @@ async function main() {
     // can not start or dies, compile runs here instead, and the trace says so.
     // Readback, pixel checks and the frame hash are test work. They run on every frame
     // in sweeps and with --check-pixels; interactively, once after input has been idle.
-    const everyFrame=checkAll||(!idleChecksOnly&&(!!sweep||!!commands));
+    everyFrame=checkAll||(!idleChecksOnly&&(!!sweep||!!commands));
     const IDLE_CHECK_MS=500,QUEUE_WARN=1024;
     const STAMPED=new Set([2,4,5,11]);
     const KIND_NAMES:Record<number,string>={2:"pointer-down",4:"pointer-up",5:"key",11:"scroll"};
@@ -370,15 +394,16 @@ async function main() {
       // An interactive frame asks Lean for no CPU probe (checks:false, about a fifth of a
       // frame); the idle check below asks for the same frame with its probe and checks it.
       // A new page starts at the top, so its band does too.
-      const view0=shown();if(nextDocument!==document)view0.shell={...view0.shell,scroll:0};
-      const request=nextDocument.request(width,height,{...view0,live:nextDocument===checked,...(everyFrame?{}:{checks:false})});
+      const request=requestAt(nextDocument,nextDocument!==document?0:scroll);
       const sentWidth=width,sentHeight=height;
+      // A prefetch for another state would only hold the worker: drop it if it has not started.
+      if(prefetching&&!sameState(prefetching.key,stateKey(nextDocument,request.options,sentWidth,sentHeight)))worker?.dropLow();
       // Events from here on mark the page dirty again: latest state wins, in the next frame.
       dirty=false;
       let next:HTMLArtifact,nextLayers:HTMLLayers|undefined,where="worker",workerMs:number|undefined;
       try{
         if(layered){
-          if(worker?.alive){({layers:nextLayers,workerMs}=await worker.compileLayers(request.source,sentWidth,sentHeight,request.options));}
+          if(worker?.alive){({layers:nextLayers,workerMs}=await worker.compileLayers(request.source,sentWidth,sentHeight,request.options));bandMs=workerMs;}
           else{where="main";nextLayers=engine.compileLayers(request.source,sentWidth,sentHeight,request.options);}
           next=nextLayers.page;
         }
@@ -417,15 +442,16 @@ async function main() {
       if(nextLayers){
         current={layers:nextLayers,document:nextDocument,width:sentWidth,height:sentHeight};shownOffset=place!.offset;
         // Scrolls taken while Lean worked: shown now if the band holds them, else after the next band.
-        if(place!.exact){settle(awaitingShift,result.presentedAt);awaitingShift=[];}
-        if(nextDocument===document&&!keeps(nextLayers.layers,scroll))dirty=true;
-      } else current=undefined;
+        if(place!.exact){settle(awaitingShift,result.presentedAt);settle(awaitingBand,result.presentedAt);awaitingShift=[];awaitingBand=[];}
+        if(nextDocument===document&&!keeps(nextLayers.layers,scroll)&&!bandComing())dirty=true;
+      } else {current=undefined;settle(awaitingBand,result.presentedAt);awaitingBand=[];}
+      if(nextDocument!==document)prefetched=undefined;
       checked=nextDocument;
       if(nextDocument!==document)view.selection=undefined;
       if(nextDocument!==document){scroll=0;if(!focused)address=nextDocument.url;}frame=next;document=nextDocument;candidate=undefined;native!.setTitle(windowTitle(document));
       console.log(JSON.stringify({type:"native-html-presented",url:document.url,width:sentWidth,height:sentHeight,primitives:frame.primitiveCount,links:frame.webRender.links.length,frames:session!.frames}));
     };
-    let lastRequest:{request:ReturnType<typeof document.request>;width:number;height:number;document:typeof document}|undefined;
+    let lastRequest:RequestRecord|undefined;
     const idleCheck=async()=>{
       const idleStart=performance.now();
       let result;
@@ -544,16 +570,57 @@ async function main() {
       if(shiftPending&&!shifting&&current&&native.canPresent()){
         shiftPending=false;
         const stamps=awaitingShift;awaitingShift=[];
-        const start=performance.now(),{offset,exact}=clampOffset(current.layers.layers,scroll),at=scroll;
-        shifting=session!.shift(offset,everyFrame).then(result=>{
+        // Past the band on screen, a prefetched band of the same state that keeps the scroll is drawn
+        // and shown: no Lean wait. Without one, the view stays at the band edge until a band comes.
+        const swap=!keeps(current.layers.layers,scroll)&&swapReady()?prefetched!:undefined;
+        if(!swap&&!keeps(current.layers.layers,scroll)&&!bandComing())dirty=true;
+        const shownLayers=swap?swap.layers:current.layers;
+        const start=performance.now(),{offset,exact}=clampOffset(shownLayers.layers,scroll),at=scroll;
+        shifting=(swap?session!.drawLayers(swap.layers,swap.record.width,swap.record.height,offset,everyFrame):session!.shift(offset,everyFrame)).then(result=>{
           const finished=performance.now();
-          trace("native-html-scroll",{frame:frameNumber,scroll:at,offset,exact,totalMs:ms(start,finished),drawMs:Math.round(result.drawMs*10)/10,
-            presented:result.presented,checked:result.checked,pixelHash:result.checked?result.pixelHash:null});
+          trace("native-html-scroll",{frame:frameNumber,scroll:at,offset,exact,swap:!!swap,totalMs:ms(start,finished),drawMs:Math.round(result.drawMs*10)/10,
+            presented:result.presented,checked:result.checked,pixelHash:result.checked?result.pixelHash:null,...(swap?{bandTop:swap.layers.layers.bandTop,target:swap.target}:{})});
+          if(swap){
+            // The textures hold the prefetched layers now, presented or not.
+            current={layers:swap.layers,document:swap.record.document,width:swap.record.width,height:swap.record.height};
+            frame=swap.layers.page;lastRequest=swap.record;if(prefetched===swap)prefetched=undefined;
+          }
           if(!result.presented){awaitingShift=[...stamps,...awaitingShift];shiftPending=true;return;}
+          if(swap)prefetchStats.swaps++;
           shownOffset=offset;shifts.push(finished-start);lastActivity=Math.max(lastActivity,finished);if(result.checked)checkedFrames++;
-          // A scroll past the band is not fully shown: it waits for the next Lean frame.
-          if(exact)settle(stamps,result.presentedAt);else awaiting=[...stamps,...awaiting];
+          // A scroll past the band is not fully shown: it waits for the next band.
+          if(exact){settle(stamps,result.presentedAt);settle(awaitingBand,result.presentedAt);awaitingBand=[];}
+          else awaitingBand=[...awaitingBand,...stamps];
         }).catch(error=>{fatal=error;}).finally(()=>{shifting=undefined;});
+      }
+      // Scroll prefetch: when the scroll nears the edge of the keep range, or its speed says it
+      // will pass the edge within two frames and the time of a band, the worker makes the next
+      // band at low priority. Only when the worker has nothing else to do and no frame is due.
+      if(layered&&worker?.alive&&!prefetching&&motion&&current&&canShift()&&!dirty&&!rendering&&!loading&&!graphBusy()&&worker.pending===0){
+        const band=current.layers.layers;
+        const target=prefetchTarget(band,scroll,motion,{marginRows:PREFETCH_MARGIN_ROWS,horizonMs:2*FRAME_MS+bandMs,limit:scrollLimit()});
+        const request=target===undefined?undefined:requestAt(document,target);
+        const key=request?stateKey(document,request.options,width,height):undefined;
+        if(target!==undefined&&request&&key&&!(prefetched&&prefetched.target===target&&sameState(prefetched.key,key))){
+          const record:RequestRecord={request,width,height,document},sent=performance.now(),from=scroll,client=worker;
+          const job={key,target,reach:keepReach(band)};prefetching=job;prefetchStats.sent++;
+          trace("native-html-prefetch",{state:"sent",scroll:from,target,keepFrom:band.keepFrom,keepTo:band.keepTo,rowsPerMs:Math.round(motion.rowsPerMs*100)/100});
+          client.prefetchLayers(request.source,width,height,request.options).then(answer=>{
+            const took=ms(sent,performance.now());
+            if(!answer){prefetchStats.dropped++;trace("native-html-prefetch",{state:"dropped",target,ms:took});return;}
+            bandMs=answer.workerMs;
+            if(!running||!sameState(key,stateNow())){prefetchStats.stale++;trace("native-html-prefetch",{state:"stale",target,ms:took});return;}
+            prefetched={key,layers:answer.layers,target,record};prefetchStats.ready++;
+            trace("native-html-prefetch",{state:"ready",target,bandTop:answer.layers.layers.bandTop,keepFrom:answer.layers.layers.keepFrom,keepTo:answer.layers.layers.keepTo,
+              ms:took,workerMs:Math.round(answer.workerMs*10)/10,scroll});
+          }).catch(error=>{prefetchStats.dropped++;trace("native-html-prefetch",{state:"failed",target,reason:String(error)});}).finally(()=>{
+            if(prefetching===job)prefetching=undefined;
+            // A scroll that waited for this band: show it now, or ask Lean for a frame.
+            if(!running||!current||current.document!==document||keeps(current.layers.layers,scroll))return;
+            if(swapReady())shiftPending=true;
+            else if(!bandComing()){prefetchStats.missed++;dirty=true;}
+          });
+        }
       }
       if(dirty&&native.canPresent()&&!rendering){
         waiting=false;
