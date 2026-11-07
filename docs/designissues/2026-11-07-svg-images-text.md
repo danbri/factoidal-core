@@ -42,9 +42,6 @@ does not copy these values. A trial with spacing 1.0 and the baseline at the bot
 of the line moved no text-area file out of the MISMATCH band (15 of 15 stayed; the
 mean different share went from 0.193 to 0.143), so the choice costs no band.
 
-Rectangles of `stroke-width="0.25"` around the areas of these tests draw nothing here:
-https://github.com/danbri/factoidal/issues/1253.
-
 Breaks are at spaces, which §10.11.7 allows as a simple implementation. UAX 14, soft
 hyphens and bidirectional text: https://github.com/danbri/factoidal/issues/1259.
 
@@ -165,5 +162,3 @@ The forgiving pass removes that `image` alone and logs it.
   refused)
 - https://github.com/danbri/factoidal/issues/1259 (UAX 14, soft hyphens and
   bidirectional text in `textArea`)
-- https://github.com/danbri/factoidal/issues/1253 (a stroke narrower than the sample
-  grid draws nothing; the frames in the text-area tests)

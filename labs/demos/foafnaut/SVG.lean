@@ -1462,18 +1462,47 @@ def Paint.tableWords : Paint → List Float
 def Primitive.paintWords (p : BackendPrimitive) : List Float :=
   p.style.fill.tableWords ++ p.style.stroke.tableWords
 
+/-- A stroke narrower than `minDeviceWidth` device pixels gets that width, and its
+    opacity falls in the same ratio: the area of the stroke times its opacity stays
+    the same, so the samples see the coverage that the geometry has. The scale of a
+    non-uniform transform is its geometric mean. -/
+private def widenThinStroke (screen : Transform) (style : Style) : Style :=
+  let scale := Float.sqrt (screen.a*screen.d-screen.b*screen.c).abs
+  let width := style.strokeWidth*scale
+  if strokeEnabled style && scale > 0 && scale.isFinite && width < minDeviceWidth then
+    {style with strokeWidth:=minDeviceWidth/scale,strokeOpacity:=style.strokeOpacity*width/minDeviceWidth}
+  else style
+
+/-- The same for a filled rectangle with no stroke, along each of its axes. A
+    rectangle with image paint keeps its size: its geometry places the image. -/
+private def widenThinRect (screen : Transform) (style : Style) : BackendGeometry → BackendGeometry × Style
+  | .rect x y w h =>
+    let sx := Float.sqrt (screen.a*screen.a+screen.b*screen.b)
+    let sy := Float.sqrt (screen.c*screen.c+screen.d*screen.d)
+    let thin := fun (size scale : Float) => scale > 0 && scale.isFinite && size*scale < minDeviceWidth
+    let image := match style.fill with | .imageRecord .. => true | _ => false
+    if strokeEnabled style || image || !(thin w sx || thin h sy) then (.rect x y w h,style) else
+    let w' := if thin w sx then minDeviceWidth/sx else w
+    let h' := if thin h sy then minDeviceWidth/sy else h
+    (.rect (x-(w'-w)/2) (y-(h'-h)/2) w' h',{style with fillOpacity:=style.fillOpacity*(w/w')*(h/h')})
+  | geometry => (geometry,style)
+
 private def compilePrimitive (mapping : Mapping) (cursor : Nat) (p : Primitive) : Except String BackendPrimitive := do
   let root : Transform := ⟨mapping.sx,0,0,mapping.sy,
     mapping.tx-mapping.minX*mapping.sx,mapping.ty-mapping.minY*mapping.sy⟩
-  let geometry ← p.geometry.compile (root.compose p.transform)
+  let screen := root.compose p.transform
+  let geometry ← p.geometry.compile screen
   let box := geometry.box
   let fill ← lowerPaint box cursor p.style.fill
   let stroke ← lowerPaint box (cursor+fill.tableWords.length) p.style.stroke
-  let style := {p.style with fill,stroke}
+  let widened := widenThinStroke screen {p.style with fill,stroke}
+  let (geometry,style) := widenThinRect screen widened geometry
   if cursor+fill.tableWords.length+stroke.tableWords.length > maxPaintTableWords then
     throw s!"paint table exceeds {maxPaintTableWords} words"
   let dashParts ← match p.dashParts,p.geometry with
-    | some parts,_ => pure (some parts)
+    | some parts,_ =>
+      if style.strokeWidth != p.style.strokeWidth then dashedParts geometry style p.pathLength
+      else pure (some parts)
     | none,.path _ => dashedParts geometry style p.pathLength
     | none,_ => pure none
   return {geometry,style,opacity:=p.opacity,transform:=p.transform,dashParts,groupPath:=p.groupPath,clips:=p.clips,pathLength:=p.pathLength}
@@ -2312,6 +2341,9 @@ private def Scene.tiles (s : Scene) : Array Nat := Id.run do
     out := out ++ list
   return out ++ tail
 
+private def sampleCall (x y : Float) : String :=
+  "samplePixel(vec4f(pixel.xy+vec2f(" ++ toString (x-0.5) ++ "," ++ toString (y-0.5) ++ "),0.0,1.0))"
+
 /-- The shader does not depend on the scene: all scene values are storage data. -/
 private def sceneShader : String :=
   "struct Params {rows:array<vec4f>};\n" ++
@@ -2376,10 +2408,14 @@ private def sceneShader : String :=
   "if strokeHit {let stroke=paintSample(params.rows[base+3u],p.xy);element=vec4f(stroke.rgb*stroke.a,stroke.a)+element*(1.0-stroke.a);}" ++
   "let opacity=params.rows[base+4u].y;rgb=element.rgb*opacity+rgb*(1.0-element.a*opacity);" ++
   "}return vec4f(rgb,1.0); }\n" ++
-  "@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {var total=vec4f(0.0);" ++
-  String.join (pixelSampleOffsets.map fun (x,y) =>
-    "total+=samplePixel(vec4f(pixel.xy+vec2f(" ++ toString (x-0.5) ++ "," ++ toString (y-0.5) ++ "),0.0,1.0));") ++
-  "return total/" ++ toString pixelSampleOffsets.length ++ ".0;}\n"
+  "@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {" ++
+  String.join (pixelSampleFirstOffsets.zipIdx.map fun ((x,y),i) =>
+    s!"let s{i}=" ++ sampleCall x y ++ ";") ++
+  "var total=s0+s1+s2+s3;let spread=max(max(s0,s1),max(s2,s3))-min(min(s0,s1),min(s2,s3));" ++
+  "if(any(spread>vec4f(" ++ toString pixelSampleEdgeThreshold ++ "))&&arrayLength(&params.rows)<=" ++ toString pixelSampleRefineRowLimit ++ "u){" ++
+  String.join (pixelSampleRestOffsets.map fun (x,y) => "total+=" ++ sampleCall x y ++ ";") ++
+  "return total/" ++ toString (pixelSampleFirstOffsets.length+pixelSampleRestOffsets.length) ++ ".0;}" ++
+  "return total/" ++ toString pixelSampleFirstOffsets.length ++ ".0;}\n"
 
 private def Scene.wgsl (_s : Scene) : String := sceneShader
 /-- JSON text of the shader, made once for the process. -/
@@ -2691,33 +2727,47 @@ private theorem Scene.sampleAtPrepared_correct (s : Scene) (data : Array Float) 
   rw [Scene.sampleAt_eq_fold]
   simp only [Scene.sampleAtPrepared,Scene.sampleAtFold,preparedSamples_fold]
 
-private def Scene.sampleWithData (s : Scene) (data : Array Float) (x y : Nat) : Color := Id.run do
+/-- The CPU statement of the fragment shader: four samples, and the other twelve
+    when two of the four differ by more than the threshold in a channel. -/
+private def adaptiveSample (at_ : Float → Float → Color) (rows x y : Nat) : Color := Id.run do
+  let sample := fun ((dx,dy) : Float × Float) => at_ (Float.ofNat x+dx) (Float.ofNat y+dy)
   let mut total : Color := ⟨0,0,0⟩
-  for (dx,dy) in pixelSampleOffsets do
-    let c := s.sampleAt data (Float.ofNat x+dx) (Float.ofNat y+dy)
+  let mut low : Color := ⟨1e9,1e9,1e9⟩
+  let mut high : Color := ⟨-1e9,-1e9,-1e9⟩
+  for offset in pixelSampleFirstOffsets do
+    let c := sample offset
     total := ⟨total.r+c.r,total.g+c.g,total.b+c.b⟩
-  let n := Float.ofNat pixelSampleOffsets.length
+    low := ⟨min low.r c.r,min low.g c.g,min low.b c.b⟩
+    high := ⟨max high.r c.r,max high.g c.g,max high.b c.b⟩
+  let mut n := Float.ofNat pixelSampleFirstOffsets.length
+  if rows <= pixelSampleRefineRowLimit && (high.r-low.r > pixelSampleEdgeThreshold ||
+      high.g-low.g > pixelSampleEdgeThreshold || high.b-low.b > pixelSampleEdgeThreshold) then
+    for offset in pixelSampleRestOffsets do
+      let c := sample offset
+      total := ⟨total.r+c.r,total.g+c.g,total.b+c.b⟩
+    n := n+Float.ofNat pixelSampleRestOffsets.length
   return ⟨total.r/n,total.g/n,total.b/n⟩
+
+private def Scene.sampleWithData (s : Scene) (data : Array Float) (x y : Nat) : Color :=
+  adaptiveSample (s.sampleAt data) (data.size/4) x y
 
 private def Scene.sampleWithPrepared (s : Scene)
-    (prepared : List PreparedSample) (x y : Nat) : Color := Id.run do
-  let mut total : Color := ⟨0,0,0⟩
-  for (dx,dy) in pixelSampleOffsets do
-    let c := s.sampleAtPrepared prepared (Float.ofNat x+dx) (Float.ofNat y+dy)
-    total := ⟨total.r+c.r,total.g+c.g,total.b+c.b⟩
-  let n := Float.ofNat pixelSampleOffsets.length
-  return ⟨total.r/n,total.g/n,total.b/n⟩
+    (prepared : List PreparedSample) (rows x y : Nat) : Color :=
+  adaptiveSample (s.sampleAtPrepared prepared) rows x y
 
 private theorem Scene.sampleWithPrepared_correct (s : Scene) (data : Array Float) (x y : Nat) :
-    s.sampleWithPrepared (prepareSamples data s.compiled 8) x y = s.sampleWithData data x y := by
-  simp only [Scene.sampleWithPrepared,Scene.sampleWithData,Scene.sampleAtPrepared_correct]
+    s.sampleWithPrepared (prepareSamples data s.compiled 8) (data.size/4) x y = s.sampleWithData data x y := by
+  have same : s.sampleAtPrepared (prepareSamples data s.compiled 8) = s.sampleAt data := by
+    funext a b
+    exact Scene.sampleAtPrepared_correct s data a b
+  simp only [Scene.sampleWithPrepared,Scene.sampleWithData,same]
 
 private def Scene.samplesWithData (s : Scene) (data : Array Float) (coordinates : List (Nat × Nat)) : List Color :=
   coordinates.map (fun (x,y) => s.sampleWithData data x y)
 
 private def Scene.samplesWithDataFast (s : Scene) (data : Array Float) (coordinates : List (Nat × Nat)) : List Color :=
   let prepared := prepareSamples data s.compiled 8
-  coordinates.map (fun (x,y) => s.sampleWithPrepared prepared x y)
+  coordinates.map (fun (x,y) => s.sampleWithPrepared prepared (data.size/4) x y)
 
 @[csimp] private theorem Scene.samplesWithData_eq_fast :
     Scene.samplesWithData = Scene.samplesWithDataFast := by

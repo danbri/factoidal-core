@@ -89,6 +89,45 @@ A value that the reader refuses for `stroke-linejoin`, `stroke-linecap`,
 another value. `paint-stroke-202-t.svg` has `stroke-dashoffset="none"` on a group
 and valid offsets on its children.
 
+## Coverage and thin strokes
+
+`pixelSampleCells` in `Graphics.lean` is 16 samples on a 16 by 16 grid, one in each
+row and each column. The fragment shader and the CPU reference `adaptiveSample` state
+the same rule: take the first four; if two of them differ by more than 1/64 in a
+channel, take the other twelve. A pixel with no edge costs four samples. The first
+four are one in each row and column of quarter cells, so an axis-aligned bar of 1/4
+pixel always contains one, and the pixel then refines.
+
+A stroke narrower than 0.6 device pixels (`minDeviceWidth`) gets that width, and its
+opacity falls in the same ratio (`widenThinStroke`), so width times opacity is the
+geometric value. The four samples form a lattice with lines 0.56 pixels apart, so a
+diagonal stroke of this width can not pass between them. A filled rectangle with no
+stroke gets the same treatment on each axis (`widenThinRect`). No shader code and no
+record field changed for this. A non-uniform transform uses the geometric mean of its
+scale. A general filled path has no such repair:
+https://github.com/danbri/factoidal/issues/1260.
+
+A scene of more than 65,536 rows (`pixelSampleRefineRowLimit`) stays at four samples.
+A fill costs one pass over its edges for each sample, and with sixteen the GPU drew
+nothing for `metadata-example-01-t.svg` (153,354 rows). The shader reads the limit
+from `arrayLength`, so the data format did not change.
+
+Measured on the Apple GPU of this laptop through Deno, 40 draws with readback, 1024
+by 768 for `status.html`, 480 by 360 for the W3C files (a draw here costs at least
+about 22 ms):
+
+| Pattern | status.html | paths-data-01-t | W3C close (out of 496) |
+|---|---|---|---|
+| 2 by 2 grid, the old rule | 40 ms | 60 ms | 118 |
+| 4 rooks | 39 ms | 58 ms | 132 |
+| 8 rooks, always | 59 ms | 98 ms | 146 |
+| 16 rooks, always | 106 ms | 180 ms | 149 |
+| 4, then 16 at an edge (chosen) | 42 ms | 102 ms | 144 |
+
+Analytic coverage for strokes alone was not chosen. The files that moved have text
+and fill edges, which need the sample rule anyway. Compositing is sample by sample,
+so coverage for each primitive would need a new compositor.
+
 ## Open
 
 - https://github.com/danbri/factoidal/issues/1256 (`ref(svg)` under a singular
