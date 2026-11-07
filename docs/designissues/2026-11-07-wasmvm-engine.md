@@ -74,6 +74,23 @@ resume      : Store → Suspended → Array Value → Limits → Store × Outcom
   Values use the spec-test JSON form (`{"type":"i32","value":"42"}`), so the runner
   and the hosts share one codec.
 
+## WASI (later; no code now)
+
+WASI is a layer of Lean host functions over the import API, not part of the engine.
+Order: a Preview 1 subset first (`fd_write` to a debug sink, `proc_exit`,
+`clock_time_get`, `random_get`, `args_*`, `environ_*`), deny by default; files and
+sockets only by an explicit grant through the engine's network policy; then the
+Component Model and WASI 0.2. The API carries this as follows:
+
+- Imports are resolved by (module name, field name) against a host-function set that
+  is a Lean value (`HostSet`), chosen by the embedder. An import that the set does not
+  name fails at link time. So "no capability given, no access" is a statement about
+  `instantiate` and the set, which can be proved.
+- A host function runs between steps, on the suspended store: it reads and writes the
+  instance's memory through `Store.readMem`/`Store.writeMem`, bounds-checked.
+- A host function answers `resume` with `HostResult.values`, `.trap msg` or
+  `.exit status`; `.exit` ends the run with `Outcome.exit status` (for `proc_exit`).
+
 ## Run-time representation
 
 - **Flat code.** Each function body becomes an `Array Op`. Blocks, loops and `if` are
@@ -81,11 +98,11 @@ resume      : Store → Suspended → Array Value → Limits → Store × Outcom
   operand-stack height (relative to the frame base) to cut back to. These are computed
   by the validator, which knows the static stack height at every instruction. This is
   the side table of Wizard (Titzer, 2022) folded into the op, as wasm3 does.
-- **Operand stack**: one `FloatArray` for the whole run, slots read and written as bits
-  (`Float.ofBits`/`Float.toBits`, a `memcpy` in C). A `FloatArray` is an unboxed array
-  of 64-bit cells; `Array UInt64` boxes each slot. Measured below. i32 and f32 are
-  zero-extended, f64 and i64 use the whole slot, a reference is an address with
-  all-ones for null. v128 (SIMD, later) takes two slots.
+- **Operand stack**: one `ByteArray` for the whole run, 8 little-endian bytes per
+  slot (`Slots` in `Exec/Code.lean`). i32 and f32 are zero-extended, f64 and i64 use
+  the whole slot, a reference is an address with all-ones for null. v128 (SIMD,
+  later) takes two slots. A `FloatArray` read through `Float.ofBits` measured faster
+  but is wrong: see "Measurements".
 - **Locals** are slots of the operand stack at the frame base (`fp + i`).
 - **Frames**: an `Array Frame` (return pc, return code, frame base, instance). Wasm calls
   never become Lean calls, so the C stack does not grow with Wasm call depth.
@@ -195,5 +212,12 @@ one write, 20 million times.
 | `Array UInt64` (boxed slots) | 24 |
 | `ByteArray`, 8 bytes per slot | 25 |
 
-So the stack is a `FloatArray`, and a machine structure costs nothing over separate
-arguments: Lean reuses the unique structure in place.
+A machine structure costs nothing over separate arguments: Lean reuses the unique
+structure in place. The `FloatArray` form is NOT used. Lean 4.33 models `Float` with all
+NaNs equal, and the compiled `Float.ofBits` turns every NaN bit pattern into the
+canonical NaN. An i64 such as -1 (all ones) is a NaN pattern, so it did not survive a
+round trip through the stack: the spec test `fac` (`fac-opt`) failed with
+0x7f38000000000000. The stack is the `ByteArray` form (25 ns). The same fact means a
+float operation sees a NaN operand as the canonical NaN; the result is still an
+arithmetic NaN, which the spec allows, and `abs`, `neg`, `copysign`, loads, stores and
+reinterpretations work on bits and never call `Float.ofBits`.

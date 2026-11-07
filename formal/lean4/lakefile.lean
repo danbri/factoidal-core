@@ -280,6 +280,8 @@ extern_lib libl4hostread pkg := do
 
 -- WasmVM measurements (issue 1244): `lake exe wasmvm-bench`.
 lean_exe «wasmvm-bench» where root := `L4Factoidal.WasmVM.Bench
+-- The official core test suite (third_party/wasm-spec/test/core-json): `lake exe wasmvm-spectest`.
+lean_exe «wasmvm-spectest» where root := `L4Factoidal.WasmVM.SpecTest
 
 -- Explicit non-default roots: prototype tests stay outside production imports.
 lean_lib ScopedQueryPrototype where

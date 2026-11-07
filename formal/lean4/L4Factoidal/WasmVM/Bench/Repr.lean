@@ -58,6 +58,39 @@ def loopBA (n : Nat) (i acc sp : Nat) (st : ByteArray) : UInt64 :=
     let st := wr st sp (a + b)
     loopBA n (i + 1) (rd st sp).toNat sp st
 
+/-- Variant E: variant C with one bounds check per access; the 8 byte reads use
+proved indices (`b[o+k]'h`), so the C compiler sees plain loads. -/
+@[inline] def rdP (b : ByteArray) (i : Nat) : UInt64 :=
+  let o := i * 8
+  if h : o + 8 ≤ b.size then
+    b[o].toUInt64 ||| (b[o+1].toUInt64 <<< 8) ||| (b[o+2].toUInt64 <<< 16)
+    ||| (b[o+3].toUInt64 <<< 24) ||| (b[o+4].toUInt64 <<< 32)
+    ||| (b[o+5].toUInt64 <<< 40) ||| (b[o+6].toUInt64 <<< 48)
+    ||| (b[o+7].toUInt64 <<< 56)
+  else 0
+@[inline] def wrP (b : ByteArray) (i : Nat) (v : UInt64) : ByteArray :=
+  let o := i * 8
+  if o + 8 ≤ b.size then
+    let b := b.set! (o) v.toUInt8
+    let b := b.set! (o+1) (v >>> 8).toUInt8
+    let b := b.set! (o+2) (v >>> 16).toUInt8
+    let b := b.set! (o+3) (v >>> 24).toUInt8
+    let b := b.set! (o+4) (v >>> 32).toUInt8
+    let b := b.set! (o+5) (v >>> 40).toUInt8
+    let b := b.set! (o+6) (v >>> 48).toUInt8
+    b.set! (o+7) (v >>> 56).toUInt8
+  else b
+def loopBP (n : Nat) (i acc sp : Nat) (st : ByteArray) : UInt64 :=
+  match n with
+  | 0 => rdP st 0 + acc.toUInt64
+  | n + 1 =>
+    let st := wrP st sp i.toUInt64
+    let st := wrP st (sp + 1) acc.toUInt64
+    let a := rdP st sp
+    let b := rdP st (sp + 1)
+    let st := wrP st sp (a + b)
+    loopBP n (i + 1) (rdP st sp).toNat sp st
+
 /-- Variant D: variant A, with the stack inside a machine structure updated by
 `{ m with .. }` (tests whether field updates stay in place). -/
 structure M where
@@ -89,6 +122,7 @@ def run (n : Nat) : IO Unit := do
   time "A FloatArray bits, loop args" n fun _ => loopFA n 0 0 16 fa
   time "B Array UInt64, loop args" n fun _ => loopAU n 0 0 16 (Array.replicate 1024 0)
   time "C ByteArray 8 bytes/slot" n fun _ => loopBA n 0 0 16 (ByteArray.mk (Array.replicate 8192 0))
+  time "E ByteArray, proved byte indices" n fun _ => loopBP n 0 0 16 (ByteArray.mk (Array.replicate 8192 0))
   time "D FloatArray in structure" n fun _ => loopM n 0 { st := fa, sp := 16, acc := 0, pc := 0 }
 
 end L4Factoidal.WasmVM.Bench.Repr
