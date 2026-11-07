@@ -176,6 +176,88 @@ Window sweep, status page, 1600 by 1000, layers, Apple M1, engines from `724f5bf
 native PATH` or `engine: wasm`. When the worker can not start, Lean runs on the main
 thread, which has only the Wasm engine; the summary said `native` then.
 
+## Press acknowledgement, `:active`, `:hover`, `:visited` (2026-11-07)
+
+Branch `wip/1268-press-feedback`. Owner, 2026-11-07, verbatim: "Still something off in
+the ux, maybe things like having mouse pointer change to a hand when over a link, mayb
+other css-esque conventions like underlines on links or some visual acknwoeldgement when a
+link is pressed. Definitely need that when a button is pressed." (The cursor is a separate
+task.)
+
+Lean (`formal/lean4/L4Factoidal/Rendering/Style.lean`, `Layout.lean`):
+
+- Selectors: `:link`, `:visited`, `:any-link`, `:hover`, `:active` (Selectors Level 4 §8,
+  §9). They match over an `ElementState` from the request: `hover` and `active` are node
+  ids (the element and its ancestors match), `visited` the hyperlinks whose resolved
+  `href` is in the session history. A pseudo-class counts as a class in specificity. Other
+  pseudo-classes still drop their rule.
+- The user agent sheet (`userAgentSheet`) is a cascade origin below the author (CSS
+  Cascade 4 §6.1): `:link` #0000EE, `:visited` #551A8B, `:link:active`/`:visited:active`
+  #FF0000, `:any-link` underlined (HTML §15.3.4); `button` an inline-block, `padding:1px
+  6px`, `border:2px outset #767676`, background #EFEFEF, #E5E5E5 on `:hover`, and on
+  `:active` `border-style:inset` with #C8C8C8 (HTML §15.5.4 leaves the look to the user
+  agent; these values are this profile's choice). Before, a link was #0000FF from a
+  built-in initial value, and an author rule could not tell `:visited` from `:link`.
+- A rule that matches only through `:visited` sets colours only (`visitedProperties`).
+- Borders (`border`, `border-width`, `border-style`, `border-color`; none, solid, inset,
+  outset) on blocks and inline-blocks. An inline-block is one atomic box (CSS 2.2 §10.3.9
+  shrink-to-fit); its glyph runs and boxes are kept, so selection and links inside work.
+  Its bottom margin edge sits on the baseline, as a replaced element does here.
+- `hover`, `active` and `visited` are layout fields (`WebDocument.layoutFields`): a
+  change lays out again. `WebShell.Shell.pressed` is not: a sunken chrome button reuses
+  the kept layout and changes only the chrome layer.
+
+Press acknowledgement (no Lean frame):
+
+- On a pointer press the host makes one small main-thread call, `press`. Lean answers the
+  chrome control or the link (`sourceNode`) under the pointer, and up to 8 rectangles in
+  source rows (chrome rows, then page-layer rows plus `top`): the control's box, or every
+  link region of that anchor.
+- The composite shader (`WebDocument.compositeShader`, model `compositePress`) multiplies
+  the colour by 0.75 inside the rectangles. The host presents the composite at once.
+  `compositePress_nil`: with no rectangle it is `composite`, so `composite_eq_frame` holds.
+  Page rectangles move with the page in the band (`sourceRow_page`).
+- A press held 150 ms gets a Lean frame with the press (`active`, `shell.pressed`). When a
+  Lean frame that includes the press is presented, the darkening is cleared for it. A
+  release clears the darkening at once (one more composite), and asks for a Lean frame
+  only if one with the press was asked for.
+- A present with the darkening is not checked against Lean's probes (it is not Lean's
+  frame); no idle check runs during a press. A prefetched band swap during a press
+  clears the darkening and asks for a Lean frame (the rectangles are in band rows).
+- Order: the press present only adds a GPU present; it does not wait for Lean and it
+  takes no event out of order. The chrome action still runs on the press, as before.
+- `:hover`: the layers answer has `hoverRules` (an author rule names `:hover`). Only
+  then does a pointer move send the link under it (`hit`), and only a change makes a frame.
+- `--no-press-look` gives the behaviour before, for comparison.
+
+Tests: `L4Factoidal/Rendering/Tests.lean` (UA colours, `:active` on a descendant, author
+over UA, `:visited` colour-only rule, specificity, button box 28 by 13, pressed and idle
+buttons paint different colours); `WebShell.lean` and `WebDocumentTests.lean` (`press`
+answers, `compositePress`, layout cache with state, `hoverRules`);
+`native_html_test.ts` (engine `press`, `:active` and sunken chrome frames);
+`scroll_layers_check.ts` (on the GPU: the composite darkens exactly the press rectangles;
+a frame with reload pressed differs from the idle frame only in the button's box).
+Expected failures: https://github.com/danbri/factoidal/issues/1277 (`:hover`/`:active` on
+elements that are not links: the host has no element hit test).
+
+Window sweep, `--press-sweep` (press and hold link 0 for 300 ms, release; press and hold
+reload, release), index page, Apple M1, `--idle-checks-only`, two runs each, engines from
+this branch. Times are from the queue time of the press to the present.
+
+- Before (`--no-press-look`): a link press presents nothing until the release (no frame,
+  no latency entry). A reload press shows first in the reload frame: native 67.9 and
+  63.5 ms, Wasm 96.4 and 93.0 ms.
+- After: the darkening is presented in 12.4 to 16.6 ms (native) and 12.3 to 14.8 ms
+  (Wasm), for both the link and reload. The present itself takes 0.8 to 1.3 ms; the rest
+  is the wait for the next event pump (8 ms) and the window's queue.
+- The Lean frame of a held link press (`:active`, laid out again): 169 to 215 ms after the
+  press (150 ms hold rule plus about 20 to 65 ms of frame). The reload frame, which now
+  includes the sunken button: 74 to 161 ms native, 105 to 136 ms Wasm.
+
+The approach with the lower measured latency is the composite darkening: it needs no Lean
+call, so it takes one present (about 1 ms) where a Lean frame with the kept layout would
+take the frame build and both layer draws (the reload frame above, 64 ms and more).
+
 ## Open
 
 - The scroll sweep moves down only. Scroll up is tested by the rule tests, not in a window.
@@ -188,4 +270,7 @@ thread, which has only the Wasm engine; the summary said `native` then.
 - A graph frame is built from the model with no SVG text (`graphModel`, 2026-11-07,
   branch `wip/1268-packed`): one worker call for the event, then the frame build, with no
   `graphPage` call. Checked by differential guards, not proved.
-- No press state is drawn before Lean answers.
+- `:hover` and `:active` match only links and chrome controls in the window:
+  https://github.com/danbri/factoidal/issues/1277 (no element hit test).
+- An `:active` link frame lays out again (the state is a layout field); a paint-only
+  restyle with the kept layout is not done.
