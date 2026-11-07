@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Images</title>
+<link rel="icon" type="image/svg+xml" href="foafnaut-icon.svg">
+<style>
+body{margin:16px;font-size:14px;line-height:21px;color:#22303c;background:white}
+h1{margin:0;font-size:26px;line-height:34px;color:#184078}
+h2{margin:0;padding-top:20px;font-size:18px;line-height:26px;color:#184078}
+p{margin:0;padding-top:6px}
+.card{margin:10px 0 0 0;padding:10px 14px;background:#f3f6fa}
+.good{color:#2d7d4f}
+.gap{color:#a8432f}
+.note{color:#5b6876;font-size:13px}
+</style></head><body><main>
+<p><a href="showcase.html">Showcase</a></p>
+<h1>Images</h1>
+<p>Each picture here is decoded by Lean (PNG, JPEG and GIF decoders in this browser's Lean
+source) and drawn by the GPU as an image paint. The host only fetches the bytes.</p>
+
+<h2>PNG</h2>
+<div class="card"><p><img src="images/mandelbrot.png" alt="Mandelbrot set, PNG"></p>
+<p class="good">Works: PNG, all colour types and bit depths, interlaced, with transparency.</p></div>
+
+<h2>JPEG</h2>
+<div class="card"><p><img src="images/testcard.jpg" alt="Test card, JPEG"></p>
+<p class="good">Works: baseline and progressive JPEG, greyscale and colour.</p></div>
+
+<h2>GIF</h2>
+<div class="card"><p><img src="images/bars.gif" alt="Colour bars, GIF"></p>
+<p class="good">Works: GIF87a and GIF89a, LZW, interlaced rows, transparency.</p></div>
+
+<h2>Animated GIF</h2>
+<div class="card"><p><img src="images/life.gif" alt="Game of life, animated GIF"></p>
+<p>Lean decodes every frame and its delay.</p>
+<p class="gap">Gap: the window shows the first frame only
+(<a href="https://github.com/danbri/factoidal/issues/1284">issue 1284</a>).</p></div>
+
+<h2>Sizes</h2>
+<div class="card"><p><img src="images/mandelbrot.png" alt="Mandelbrot set, half size" width="100">
+<img src="images/testcard.jpg" alt="Test card, wide" width="200" height="60"></p>
+<p>The width attribute alone keeps the ratio; both attributes set the box.</p></div>
+
+<h2>Not yet</h2>
+<div class="card"><p class="gap">WebP and AVIF are refused
+(<a href="https://github.com/danbri/factoidal/issues/1283">issue 1283</a>); an image with a
+size then draws nothing in its box, and one with no size shows its description.</p></div>
+
+<h2>Tab icon</h2>
+<div class="card"><p>This page names an SVG icon with <code>link rel="icon"</code>. The tab shows it at
+16 points, drawn by the Lean SVG engine. A PNG, JPEG or GIF icon is decoded and fitted to the tab.</p>
+<p class="gap">Gap: ICO icons are skipped
+(<a href="https://github.com/danbri/factoidal/issues/1282">issue 1282</a>), and
+<code>/favicon.ico</code> is not tried.</p></div>
+</main></body></html>

@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Showcase</title>
+<link rel="icon" type="image/svg+xml" href="foafnaut-icon.svg">
 <style>
 body{margin:16px;font-size:14px;line-height:21px;color:#22303c;background:white}
 h1{margin:0;font-size:26px;line-height:34px;color:#184078}
@@ -29,6 +30,13 @@ host only moves bytes to the GPU.</p>
 </svg>
 
 <h2>Pages</h2>
+<div class="card"><p class="title"><a href="showcase-images.html">Images</a></p>
+<p>PNG, JPEG, GIF and animated GIF pictures in <code>img</code> elements, and the SVG tab icon.</p>
+<p class="good">Works: PNG, JPEG and GIF decoded in Lean, sized from the image or its attributes.</p>
+<p class="gap">Gap: animated GIFs show their first frame
+(<a href="https://github.com/danbri/factoidal/issues/1284">issue 1284</a>); WebP and AVIF are refused
+(<a href="https://github.com/danbri/factoidal/issues/1283">issue 1283</a>).</p></div>
+
 <div class="card"><p class="title"><a href="showcase-dataviz.html">Data visualisation</a></p>
 <p>Bar chart, line and area chart, tidy tree, circle packing and a force-directed graph, computed in the
 manner of D3 with no library, from real data (this browser's own Lean files).</p>

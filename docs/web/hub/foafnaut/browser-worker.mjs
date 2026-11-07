@@ -146,7 +146,7 @@ function edit(action,text=''){
 }
 function command(id,text=''){
   const answer=call('',{op:'command',command:id,textScalePercent:percent,history:history.history,focused,
-    tabs:tabs.length,active,scroll,view:height,scrollLimit:scrollLimit(),scale});
+    tabs:tabs.length,active,scroll:Math.round(scroll),view:height,scrollLimit:Math.floor(scrollLimit()),scale});
   if(answer.target==='address'){if(!focused)focusAddress();edit(answer.action,text);return;}
   if(['back','forward','reload'].includes(answer.action)){if(answer.url)navigate(answer.url,false);history=answer;request();}
   if(answer.textScalePercent!==percent){percent=answer.textScalePercent;request();}

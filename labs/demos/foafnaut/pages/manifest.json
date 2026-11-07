@@ -155,6 +155,16 @@
    ]
   },
   {
+   "page": "showcase-images.html",
+   "title": "Images",
+   "showcase": true,
+   "handwritten": true,
+   "size": [
+    900,
+    1400
+   ]
+  },
+  {
    "page": "print-showcase.html",
    "title": "Print showcase",
    "handwritten": true,

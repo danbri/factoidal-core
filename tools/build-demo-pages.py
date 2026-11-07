@@ -12,6 +12,8 @@ import html, json, os, subprocess, sys, tempfile
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 PAGES = os.path.join(ROOT, 'labs/demos/foafnaut/pages')
 manifest = json.load(open(os.path.join(PAGES, 'manifest.json'), encoding='utf-8'))
+# The tab icon of the built-in pages (HTML §4.6.7.8): the FOAF graph of the app icon.
+ICON = '<link rel="icon" type="image/svg+xml" href="foafnaut-icon.svg">'
 STYLE = ('body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:white}'
          'h1{margin:0;font-size:21px;line-height:28px;color:#184078}p{margin:0;padding-top:6px}svg{display:block}')
 
@@ -27,7 +29,7 @@ def svg(path, title):
     text = open(path, encoding='utf-8').read()
     if text.startswith('<?xml'):
         text = text[text.index('?>') + 2:].lstrip()
-    return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>{html.escape(title)}</title>'
+    return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>{html.escape(title)}</title>{ICON}'
             f'<style>{STYLE}</style></head><body><main>\n<p><a href="index.html">Demo index</a></p>\n'
             f'<h1>{html.escape(title)}</h1>\n{text}\n</main></body></html>\n')
 
@@ -49,7 +51,7 @@ def index():
     featured = '\n'.join(link(page) for page in FEATURED)
     rest = '\n'.join(link(p['page']) for p in manifest['pages']
                      if p['page'] != 'index.html' and not p.get('showcase') and p['page'] not in FEATURED)
-    return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Demo pages</title>'
+    return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Demo pages</title>{ICON}'
             f'<style>{STYLE}h2{{margin:0;padding-top:14px;font-size:17px;line-height:24px;color:#184078}}</style></head><body><main>\n<h1>foafnaut2525 demo pages</h1>\n'
             f'<p>Every page here is rendered by the Lean engine with WebGPU.</p>\n'
             f'<p><a href="foafnaut:graph">Interactive FOAF graph</a></p>\n'

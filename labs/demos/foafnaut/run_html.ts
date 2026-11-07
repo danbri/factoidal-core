@@ -383,7 +383,7 @@ async function main() {
   };
   const windowCommand=(id:number)=>{
     const answer=engine.command(id,view.textScalePercent??100,history.history,focused,
-      {tabs:tabs.length,active,scroll,view:height,scrollLimit:scrollLimit(),scale});
+      {tabs:tabs.length,active,scroll:Math.round(scroll),view:height,scrollLimit:Math.floor(scrollLimit()),scale});
     // Lean says when an edit command acts on the address bar: when it has the focus, and paste
     // always. The host only reads and writes the clipboard (issue 1268).
     if(answer.target==="address"){
@@ -866,7 +866,7 @@ async function main() {
           if(!ok){console.error(`Native HTML edit sweep: ${step} failed; address ${JSON.stringify(field.address)}, selection ${JSON.stringify(selected)}, focused ${focused}`);Deno.exitCode=1;}
         }
         else if(typeof step==="string"&&/^(tabs|scroll)=/.test(step)){
-          const ok=step.startsWith("tabs=")?step===`tabs=${tabs.length}:${active}`:scroll===(step==="scroll=0"?0:scrollLimit());
+          const ok=step.startsWith("tabs=")?step===`tabs=${tabs.length}:${active}`:scroll===(step==="scroll=0"?0:Math.floor(scrollLimit()));
           trace("native-html-test-shortcut",{step,ok,tabs:tabs.length,active,scroll,limit:scrollLimit()});
           if(!ok){console.error(`Native HTML shortcut sweep: ${step} failed; ${tabs.length} tabs, tab ${active} shown, scroll ${scroll} of ${scrollLimit()}`);Deno.exitCode=1;}
         }
