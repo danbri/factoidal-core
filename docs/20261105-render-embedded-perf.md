@@ -332,3 +332,85 @@ pages above 65,536 rows take 16 samples in place of 4. On the status page that i
 cost the band already pays; the GPU time of a full frame is not measured yet (the
 screen was locked). A band and a frame still have different tile grids, so a tile near
 the bound can differ between them; anchoring page tiles to page rows removes that.
+
+## No inspector tree, bytes answers, curve points pushed in place (2026-11-07, late)
+
+Tracking: https://github.com/danbri/factoidal/issues/1268 (responsiveness and frame time).
+Branch `wip/1268-bytes`, from `wip/1268-packed`.
+
+Changes, in order:
+
+1. The inspector tree only on request. A document render answers `"tree":null` unless
+   the request has `tree:true`. No frame host reads the tree (`svg_engine.ts` and the
+   browser-webgpu lab read it from the SVG export `svg_compile`, which is not changed).
+   It was about 84 KB of each status frame. Evidence: with `tree:true`, the answers of
+   13 demo pages and the graph frame, 5 requests each, are the bytes of before (native
+   library and Wasm); `#guard`s in `WebDocumentTests.lean` compare the answers with and
+   without the tree apart from that field, for one frame and for layers.
+2. Bytes answers. The export `web_document_call_bin(html, request, width, height,
+   out_len)` (`WebDocument.compileBin`) answers bytes (`WebDocument.packAnswer`): uint32
+   little-endian total length, head length, section count and section lengths; the JSON
+   head (spaces to a multiple of 4 bytes); then the sections, each from a multiple of 4
+   bytes. The head is the `web_document_call` answer with `"dataSection":k` in place of
+   `"dataBase64"` and `"tilesSection":k+1` in place of `"tiles"` (layers: page 0 and 1,
+   chrome 2 and 3). Section `k` is the binary32 storage bytes, `k+1` the uint32 tile
+   words. Other answers have no section. `native_html_engine.ts` reads it from Wasm
+   (one `HEAPU8` copy) and from the native library (`Deno.UnsafePointerView.getArrayBuffer`,
+   one copy) and gives `data` and `tiles` as `Float32Array` and `Uint32Array` views of
+   the one buffer; the worker transfers that buffer once. `loadHTML(engine,"text")`
+   keeps the JSON and Base64 path; it is the reference. The Hub worker uses the export
+   when its runtime has it, else the text path. Evidence: `native_html_bytes_test.ts`
+   (in `test.sh`): 10 HTML demo pages, 4 requests (frame, scroll 400, CPU probes,
+   layers), 50 scenes with the same storage bytes, tile words and other fields, Wasm and
+   native library; Lean `#guard`s put the sections back as Base64 and decimal tiles and
+   compare with the text answer; the GPU layer check passes as before (6 pass, 2
+   expected failures, https://github.com/danbri/factoidal/issues/1269).
+3. Curve points pushed in place. `NativeSVGCurves.flatten` pushes each line end, curve
+   point and arc point onto the contour array (`flattenBezierInto`, `flattenArcInto`),
+   with no list and array for each segment. `flattenRef` is the old function. Not proved:
+   differential `#guard`s in `SVGCurves.lean` compare the two (point bits and error text)
+   on lines, quadratics, cubics, arcs, five transforms, three tolerances and the point
+   budget errors. A second change, the padding of the flatness test with no list, was
+   measured and left out: it made the Wasm status frame 2.5 to 4 ms slower (native
+   faster).
+
+Output bytes: the text answers of the 13 demo pages and the graph frame, 5 requests
+each, are equal after steps 2 and 3 to the answers after step 1 (native library, CLI
+and Wasm).
+
+Measurements, 1600 by 1200, Noto Sans, scale 150%, `checks:false`. "CLI": mean of 40
+(`web-render-native --document-repeat`, `--document-scroll`, text answer). "Library" and
+"Wasm": median of 9, the Lean call alone (`decode-bench.ts`, the same request as the
+CLI); "host decode" is the time from the answer pointer to the scene with typed arrays
+(text: `UTF8ToString` or `getCString`, `JSON.parse`, Base64; bytes: copy, head parse,
+views). Before is `wip/1268-packed`.
+
+| Page, frame | Before | Step 1 | Step 2 (bytes) | Step 3 |
+| --- | --- | --- | --- | --- |
+| Status, full, CLI | 44 ms | 41 ms | 41 ms | 40 ms |
+| Status, scroll, CLI | 29.1 ms | 25.9 ms | 25.9 ms | 24.8 ms |
+| Architecture, full, CLI | 29 ms | 27 ms | 27 ms | 26 ms |
+| Architecture, scroll, CLI | 17.1 ms | 14.9 ms | 14.9 ms | 14.4 ms |
+| Graph, full, CLI (page text) | 21 ms | 20 ms | 20 ms | 20 ms |
+| Graph, scroll, CLI | 5.7 ms | 4.8 ms | 4.8 ms | 4.7 ms |
+| Status, full, Wasm | 49.1 ms | 44.5 ms | 34.7 ms | 33.4 ms |
+| Status, scroll, Wasm | 48.7 ms | 43.7 ms | 34.7 ms | 33.1 ms |
+| Architecture, full, Wasm | 34.2 ms | 30.7 ms | 25.1 ms | 23.7 ms |
+| Architecture, scroll, Wasm | 32.5 ms | 28.9 ms | 23.0 ms | 22.1 ms |
+| Graph, full, Wasm (page text) | 43.7 ms | 42.4 ms | 40.7 ms | 40.4 ms |
+| Graph, scroll, Wasm | 10.7 ms | 9.5 ms | 7.5 ms | 7.3 ms |
+| Status, full, library | | 29.5 ms (text) | 22.9 ms | 21.9 ms |
+| Architecture, full, library | | 20.0 ms (text) | 15.3 ms | 14.5 ms |
+| Graph, scroll, library | | 5.3 ms (text) | 3.7 ms | 3.6 ms |
+
+Host decode of one frame, text against bytes: status 4.4 against 0.9 ms (Wasm), 3.0
+against 0.9 ms (native); architecture 2.7 against 0.5 ms and 2.1 against 0.4 ms; graph
+0.8 against 0.05 ms and 0.5 against 0.04 ms. The bytes host decode left is mostly
+`JSON.parse` of the head (the `webRender` glyph runs and links).
+
+The CLI writes the text answer, so its step 2 column does not change. A status frame is
+about 8 ms (Wasm 11 ms) faster in the Lean call with bytes than with text, as the
+library and Wasm columns show. Status frame, native samples after step 3:
+`NativeSVGCurves.flatten` 12.6% (16% before step 3).
+
+Not measured: the window host end to end (the screen was locked).
