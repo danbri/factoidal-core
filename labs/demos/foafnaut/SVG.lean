@@ -3506,8 +3506,11 @@ private def Scene.checks (s : Scene) (data : Array Float) (live : Bool := false)
   (probes.zip (s.samplesWithData data probes)).map fun ((x,y),color) => "{\"x\":" ++ toString x ++ ",\"y\":" ++ toString y ++ ",\"rgb\":" ++ color.json ++ "}"
 
 /-- `checks` false leaves out the CPU probes: they are for the GPU readback check, and
-    one probe was 19% of a frame of the status page and of the FOAF graph page. -/
-private def Scene.json (s : Scene) (live binary : Bool := false) (checks : Bool := true) : Except String String := do
+    one probe was 19% of a frame of the status page and of the FOAF graph page.
+    `tree` false gives `"tree":null`: the inspector tree is for an inspector only, and
+    it was 10% of a frame of the status page (issue 1268). -/
+private def Scene.json (s : Scene) (live binary : Bool := false) (checks : Bool := true)
+    (tree : Bool := true) : Except String String := do
   -- `s.data` is built only for the probes and the decimal text; the size and the
   -- binary text come from the scene with no array of floats (`Scene.dataSize_eq`,
   -- `Scene.float32Bytes_eq_fast`).
@@ -3516,7 +3519,7 @@ private def Scene.json (s : Scene) (live binary : Bool := false) (checks : Bool 
   -- The last word of `tiles` is the size of the paint table.
   if tiles.back! > maxPaintTableWords then throw s!"paint table exceeds {maxPaintTableWords} words"
   let checks := if checks then s.checks s.data live else []
-  let tree := if DisplayNode.listNodeCount s.tree <= maxInspectorNodes
+  let tree := if tree && DisplayNode.listNodeCount s.tree <= maxInspectorNodes
     then DisplayNode.listJSON s.tree else "null"
   return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
     ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.compiled.length ++
@@ -3525,8 +3528,9 @@ private def Scene.json (s : Scene) (live binary : Bool := false) (checks : Bool 
      else ",\"data\":" ++ jsonArray (floatJSONList s.data.toList)) ++ ",\"tiles\":" ++ jsonArray (tiles.toList.map toString) ++ ",\"wgsl\":" ++ sceneShaderJSON ++ ",\"checks\":" ++ jsonArray checks ++ "}"
 /-- Serialize an existing checked SVG scene through the same packed-data/WGSL
     producer as the string ABI; no XML serialization or reparsing is required. -/
-def Scene.artifact (s : Scene) (live binary : Bool := false) (checks : Bool := true) : Except String String :=
-  s.json live binary checks
+def Scene.artifact (s : Scene) (live binary : Bool := false) (checks : Bool := true)
+    (tree : Bool := true) : Except String String :=
+  s.json live binary checks tree
 
 /-- Each part of the artifact as separate work, so that a tool can time it. A part
 returns a size, so that the work is done. -/

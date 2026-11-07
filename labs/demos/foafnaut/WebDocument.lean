@@ -363,12 +363,12 @@ def chromeLayer (shell : WebShell.Shell) (page : Rendering.Scene) (width : Nat) 
 /-- The answer to a render with `layers:true`. -/
 def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
-    (width height : Nat) (live binary checks : Bool) : Except String String := do
+    (width height : Nat) (live binary checks tree : Bool) : Except String String := do
   let top := WebShell.height shell width
   let view := max 1 (height-top)
   let b := band shell.scroll view
-  let pageText ← WebRender.artifact (pageLayer page extra b) boxes face live binary checks
-  let chromeText ← WebRender.artifact (chromeLayer shell page width) #[] face live binary checks
+  let pageText ← WebRender.artifact (pageLayer page extra b) boxes face live binary checks tree
+  let chromeText ← WebRender.artifact (chromeLayer shell page width) #[] face live binary checks tree
   let number := fun (n : Nat) => JSON.Json.number (toString n)
   let place := JSON.Json.object [("top",number top),("view",number view),("bandTop",number b.top),
     ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
@@ -404,7 +404,7 @@ private def loadFont (request : JSON.Json) : Except String String := do
 
 /-- The request fields that a render reads before its layout ends. `shell` gives only
 the height of the chrome, which the key holds as `top`; `selection`, `live`, `binary`,
-`checks`, `op` and the scroll act after layout. -/
+`checks`, `tree`, `op` and the scroll act after layout. -/
 def layoutFields : List String := ["commands","resources","images","url","fontData","textScalePercent","graphModel"]
 
 /-- The request with only `layoutFields`, in that order. -/
@@ -573,15 +573,17 @@ def runWith (laidOut : LayoutKey → Except String Laid) (html : String) (reques
   let live := request.field? "live" == some (.bool true)
   let binary := request.field? "binary" == some (.bool true)
   let checks := request.field? "checks" != some (.bool false)
+  -- The inspector tree only when the request asks (`tree:true`); no frame host reads it.
+  let tree := request.field? "tree" == some (.bool true)
   if let some value := shell then
     if request.field? "layers" == some (.bool true) then
-      return ← layersJSON value scene marks boxes face width height live binary checks
+      return ← layersJSON value scene marks boxes face width height live binary checks tree
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := scene.tree.filter (inWindow (scrolled-512) (scrolled+Float.ofNat height+512))
   let page := {scene with tree := near ++ marks}
   WebRender.artifact (match shell with
     | some value => WebShell.compose value page width height
-    | none => page) boxes face live binary checks
+    | none => page) boxes face live binary checks tree
 
 def run := runWith cachedLayOut
 def runUncached := runWith layOut

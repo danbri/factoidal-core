@@ -294,3 +294,32 @@ private def graphRequest (m : Option NativeFoafNaut.Model) : JSON.Json :=
       WebDocument.runUncached "" (graphRequest (some m)) 400 300 &&
       (WebDocument.runUncached "" (graphRequest (some m)) 400 300).isOk
   | .error _ => false
+
+/-! The inspector tree is in a render answer only when the request asks for it
+(`tree:true`, issue 1268). Without it the answer has `"tree":null` and is otherwise the
+same, for one frame and for layers. -/
+private def treeRequest (tree : Option Bool) (layers : Bool) : JSON.Json :=
+  .object ([("op",.string "render"),("url",.string "https://e.test/"),("checks",.bool false)] ++
+    (if layers then [("layers",.bool true),("shell",.object [("scroll",.number "0")])] else []) ++
+    ((tree.map fun t => [("tree",.bool t)]).getD []))
+private def treeAnswer (tree : Option Bool) (layers : Bool) : String :=
+  (WebDocument.runUncached "<p>A <b>B</b></p><svg width='20' height='20'><g><rect width='9' height='9'/></g></svg>"
+    (treeRequest tree layers) 200 100).toOption.getD ""
+private def dropField (key : String) : JSON.Json → JSON.Json
+  | .object fields => .object (fields.filter (·.1 != key))
+  | other => other
+/-- The answer with no `tree` field, at the top and in each layer. -/
+private def dropTree (j : JSON.Json) : JSON.Json :=
+  match dropField "tree" j with
+  | .object fields => .object (fields.map fun (k,v) => (k,dropField "tree" v))
+  | other => other
+private def sameButTree (a b : String) : Bool :=
+  match JSON.parseJsonText a, JSON.parseJsonText b with
+  | .ok (x,_), .ok (y,_) => dropTree x == dropTree y
+  | _, _ => false
+#guard [false,true].all fun layers =>
+  contains (treeAnswer none layers) "\"tree\":null" &&
+  treeAnswer none layers == treeAnswer (some false) layers &&
+  !contains (treeAnswer (some true) layers) "\"tree\":null" &&
+  contains (treeAnswer (some true) layers) "\"tree\":[" &&
+  sameButTree (treeAnswer none layers) (treeAnswer (some true) layers)
