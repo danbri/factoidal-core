@@ -1,0 +1,162 @@
+name: VerifiedJS page scripts probe
+
+# Builds VerifiedJS at its pin and runs the page-script fixtures through it.
+# Only text reports leave a run: upstream has no licence, so no VerifiedJS
+# source, generated code or binary is committed or uploaded. Lean builds run
+# here because the owner's laptop takes no Lean build artifacts.
+on:
+  push:
+    branches:
+      - wip/verifiedjs-page-scripts
+    paths:
+      - '.github/workflows/verifiedjs-probe.yml'
+      - 'labs/demos/foafnaut/web-render/script-engine/verifiedjs/**'
+
+env:
+  VJS: labs/demos/foafnaut/.build/verifiedjs
+  PROBE: labs/demos/foafnaut/web-render/script-engine/verifiedjs
+
+jobs:
+  compiler:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Fetch VerifiedJS at the pin
+        run: node $PROBE/fetch-verifiedjs.mjs
+      - name: Install elan, the pinned toolchain and wasmtime
+        run: |
+          mkdir -p report
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.elan/bin:$PATH"
+          cd "$VJS"
+          /usr/bin/time -f 'toolchain install: %e s, peak RSS %M KiB' -a -o "$GITHUB_WORKSPACE/report/stage1.txt" elan toolchain install "$(cat lean-toolchain)"
+          curl -sSfL https://wasmtime.dev/install.sh | bash
+          echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
+      - id: lakecache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VJS }}/.lake
+          key: vjs-lake-b6eabd76-compiler-v1
+      - name: Build the compiler at the pin
+        run: |
+          cd "$VJS"
+          echo "lake cache hit: ${{ steps.lakecache.outputs.cache-hit }}" >> "$GITHUB_WORKSPACE/report/stage1.txt"
+          lean --version >> "$GITHUB_WORKSPACE/report/stage1.txt"
+          nproc >> "$GITHUB_WORKSPACE/report/stage1.txt"
+          /usr/bin/time -f 'lake build verifiedjs: %e s, peak RSS %M KiB' -a -o "$GITHUB_WORKSPACE/report/stage1.txt" lake build verifiedjs 2>&1 | tee "$GITHUB_WORKSPACE/report/build-compiler.log" | tail -30
+          du -sh .lake .lake/packages .lake/build ~/.elan >> "$GITHUB_WORKSPACE/report/stage1.txt"
+          ls -la .lake/build/bin >> "$GITHUB_WORKSPACE/report/stage1.txt"
+      - name: Probe the fixtures
+        run: |
+          set -o pipefail
+          node $PROBE/probe.mjs "$PWD/$VJS/.lake/build/bin/verifiedjs" report/stage2.json 2>&1 | tee report/stage2.txt
+      - name: Upstream unit tests
+        continue-on-error: true
+        run: |
+          cd "$VJS"
+          /usr/bin/time -f 'lake build Tests: %e s, exit %x' -a -o "$GITHUB_WORKSPACE/report/stage1.txt" lake build Tests 2>&1 | tee "$GITHUB_WORKSPACE/report/unit.log" | grep -E '^(✖|error|Build completed|Some required)' | head -20
+      - name: Upstream end-to-end suite
+        continue-on-error: true
+        run: |
+          cd "$VJS"
+          timeout 1500 bash scripts/run_e2e.sh 2>&1 | tee "$GITHUB_WORKSPACE/report/e2e.txt" | tail -5
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compiler-report
+          path: report/
+
+  test262:
+    needs: compiler
+    if: contains(github.event.head_commit.message, '[test262]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Fetch VerifiedJS and Test262 at the pins
+        run: |
+          node $PROBE/fetch-verifiedjs.mjs
+          curl -sSfL https://wasmtime.dev/install.sh | bash
+          echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
+          mkdir -p "$VJS/tests/test262" report
+          cd "$VJS/tests/test262"
+          git init -q .
+          git remote add origin https://github.com/nicolo-ribaudo/test262.git
+          git fetch -q --depth 1 origin 93d63969bccbf8b4471b7c7fadc875099b7668d3
+          git -c advice.detachedHead=false checkout -q FETCH_HEAD
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.VJS }}/.lake
+          key: vjs-lake-b6eabd76-compiler-v1
+          fail-on-cache-miss: true
+      - name: Run the shard
+        continue-on-error: true
+        run: |
+          bash $PROBE/test262-shard.sh "$PWD/$VJS" ${{ matrix.shard }} 12 > report/test262-${{ matrix.shard }}.txt 2>&1
+          tail -3 report/test262-${{ matrix.shard }}.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test262-${{ matrix.shard }}
+          path: report/
+
+  proofs:
+    if: contains(github.event.head_commit.message, '[proofs]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Fetch VerifiedJS at the pin
+        run: node $PROBE/fetch-verifiedjs.mjs
+      - name: Install elan and the pinned toolchain
+        run: |
+          mkdir -p report
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.elan/bin:$PATH"
+          cd "$VJS"
+          elan toolchain install "$(cat lean-toolchain)"
+      - name: Full build (default target, all proofs)
+        continue-on-error: true
+        run: |
+          cd "$VJS"
+          df -h / > "$GITHUB_WORKSPACE/report/stage1-proofs.txt"
+          /usr/bin/time -f 'lake build (default target): %e s, peak RSS %M KiB, exit %x' -a -o "$GITHUB_WORKSPACE/report/stage1-proofs.txt" timeout 19800 lake build 2>&1 | tee "$GITHUB_WORKSPACE/report/build-full.log" | grep -v '^warning\|^⚠' | tail -20
+          du -sh .lake .lake/packages .lake/build >> "$GITHUB_WORKSPACE/report/stage1-proofs.txt"
+      - name: Print the axioms of each pass theorem that builds
+        continue-on-error: true
+        run: |
+          cd "$VJS"
+          lake build VerifiedJS.Proofs.ElaborateCorrect VerifiedJS.Proofs.ANFConvertCorrect VerifiedJS.Proofs.OptimizeCorrect VerifiedJS.Proofs.LowerCorrect VerifiedJS.Proofs.EmitCorrect 2>&1 | grep -E '^(✖|error|Build completed|Some required)' | tee "$GITHUB_WORKSPACE/report/axioms-build.txt"
+          cat > /tmp/axioms.lean <<'LEAN'
+          import VerifiedJS.Proofs.ElaborateCorrect
+          import VerifiedJS.Proofs.ANFConvertCorrect
+          import VerifiedJS.Proofs.OptimizeCorrect
+          import VerifiedJS.Proofs.LowerCorrect
+          import VerifiedJS.Proofs.EmitCorrect
+          #print axioms VerifiedJS.Proofs.anfConvert_correct
+          #print axioms VerifiedJS.Proofs.optimize_correct
+          #print axioms VerifiedJS.Proofs.lower_behavioral_correct
+          #print axioms VerifiedJS.Proofs.emit_behavioral_correct
+          LEAN
+          lake env lean /tmp/axioms.lean 2>&1 | tee "$GITHUB_WORKSPACE/report/axioms.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: proofs-report
+          path: report/
