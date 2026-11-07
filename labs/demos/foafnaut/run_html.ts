@@ -75,13 +75,22 @@ async function main() {
   let worker:CompileClient|undefined,mainFont=false;
   type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage">;
   let lean:Lean=engine;
+  // The engine that runs Lean's renders: the native library in the worker, or Wasm (in the
+  // worker, or on the main thread, which has only the Wasm engine). Said at start and in the summary.
+  let engineRan="wasm";
+  const sayEngine=(where:string)=>{
+    engineRan=worker&&nativeEngine?`native ${nativeEngine}`:"wasm";
+    console.log(`engine: ${engineRan}`);
+    console.log(JSON.stringify({type:"native-html-engine",t:Math.round(performance.now()),engine:engineRan,where}));
+  };
   const useMainEngine=async(reason:string)=>{
     console.error("Native HTML: ENGINE WORKER UNAVAILABLE, so Lean runs on the main thread and the window can miss input:",reason);
     console.log(JSON.stringify({type:"native-html-worker",state:"main-thread-fallback",reason}));
-    worker=undefined;lean=engine;
+    worker=undefined;lean=engine;sayEngine("main-thread");
     if(workerFont&&!mainFont){mainFont=true;try{await loadFontFile(engine,workerFont.path,workerFont.family);}catch(error){if(fontFile)throw error;workerFont=undefined;}}
   };
   if(check){
+    sayEngine("main-thread");
     if(workerFont)try{await loadFontFile(engine,workerFont.path,workerFont.family);}catch(error){if(fontFile)throw error;console.error("Native HTML: bitmap font, because Noto Sans did not load:",String(error));}
   } else {
     try{worker=await startCompileWorker(workerFont,nativeEngine);}
@@ -93,7 +102,7 @@ async function main() {
       } else if(fontFile)throw error;
       else await useMainEngine(String(error));
     }
-    if(worker)lean=worker.engine as unknown as Lean;
+    if(worker){lean=worker.engine as unknown as Lean;sayEngine("worker");}
   }
   let document=await prepareHTML(lean,url),width=1280,height=800;
   // The first compile runs in the worker too: it warms the worker, and no frame is compiled on the main thread.
@@ -342,7 +351,7 @@ async function main() {
   // Exit summary: input to present latency, and frame totals. Always traced; --perf-summary also prints it.
   const summary=()=>{
     const line={type:"native-html-perf-summary",inputEventsDropped:native?.eventsDropped()??0,inputLatency:{from:latencyFrom(),count:latencies.length,p50Ms:percentile(latencies,0.5),p95Ms:percentile(latencies,0.95),maxMs:latencies.length?Math.max(...latencies):null},
-      compileBackend:nativeEngine?"native":"wasm",layered,
+      engine:engineRan,compileBackend:engineRan.startsWith("native")?"native":"wasm",layered,
       scrollPresents:{count:shifts.length,totalMsP50:percentile(shifts,0.5),totalMsP95:percentile(shifts,0.95),maxMs:shifts.length?Math.round(Math.max(...shifts)*10)/10:null},
       frames:{presented:totals.length,checked:checkedFrames,compiledInWorker:workerFrames,compiledOnMain:mainFrames,totalMsP50:percentile(totals,0.5),totalMsP95:percentile(totals,0.95)},
       // Time between two native event pumps: the longest time the window takes no input.
@@ -352,7 +361,7 @@ async function main() {
       pumpGapMs:{p50:percentile(pumpGaps,0.5),p95:percentile(pumpGaps,0.95),max:pumpGaps.length?Math.round(Math.max(...pumpGaps)*10)/10:null},
       prefetch:prefetchStats,queueMax,sessionStats:session?.stats};
     trace(line.type,line);
-    if(perfSummary)console.log(`input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
+    if(perfSummary)console.log(`engine: ${engineRan}\ninput latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
   };
   try {
     device=await adapter.requestDevice();native=await nativePreflight(()=>loadNativeWindow());
