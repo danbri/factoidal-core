@@ -64,6 +64,11 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
     --include "$LAB/native-html/default.html" --include "$LAB/native-html/next.html" --include "$LAB/pages" \
     --output "$OUT/native-webgpu-html-darwin-arm64.tmp" "$LAB/run_html.ts"
   mv "$OUT/native-webgpu-html-darwin-arm64.tmp" "$OUT/native-webgpu-html-darwin-arm64"
+  # The native engine library sits beside the window program, which opens it
+  # through FFI; with no library the program uses the Wasm engine.
+  if [ -f "$LAB/.build/web-render/engines/libweb-render.dylib" ]; then
+    cp "$LAB/.build/web-render/engines/libweb-render.dylib" "$OUT/libweb-render.dylib"
+  fi
 else
   echo 'No web-render engine: this package has no native HTML window' >&2
 fi
@@ -142,4 +147,5 @@ shasum -a 256 native-webgpu-ui-darwin-arm64 native-webgpu-lean-darwin-arm64 \
   native-webgpu-svg-darwin-arm64 libnative-window.dylib 'Solving Showcase.svg' \
   source-SHA256SUMS tool-versions.txt runtime-object-witness.txt > "$OUT/SHA256SUMS"
 if [ -x native-webgpu-html-darwin-arm64 ]; then shasum -a 256 native-webgpu-html-darwin-arm64 >> "$OUT/SHA256SUMS"; fi
+if [ -f libweb-render.dylib ]; then shasum -a 256 libweb-render.dylib >> "$OUT/SHA256SUMS"; fi
 echo "Foafnaut native release directory: $OUT"
