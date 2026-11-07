@@ -843,3 +843,24 @@ Owner, relayed: "whatever is conventional in XMPP, otherwise follow IRC/Discord/
   whole domain, a message to an account that gets an affiliation while away. `Service.sound` is proved for
   `join` and `setAff`, not for `setRole` (a role change does not change who may be in a room, but the
   proof is not written).
+
+## 2026-11-07: a live session keeps its full JID (RFC 6120 section 7.7.2.2)
+
+- Owner: "new resource if old is active, I guess." A client that asks for a resource a live session
+  holds gets a server-generated one (`Session.resourceFor`), and the bind result names it. A client
+  must use the JID in the bind result. The old session sees nothing.
+- Live means a stream that is open. A session whose stream ended holds nothing, even while the host
+  has not yet closed its handle (`XmppOpenSession.liveFull`). A connection lost with no notice to the
+  host stays live until the host sees it; a client that reconnects before that gets a new resource.
+- `Env.bound` gives `Server.step` the full JIDs of the live sessions. The host for one process per
+  connection (`Harness/XmppServe.lean`) has no shared table, so it gives none and does not make this check.
+- This replaces the entry of 2026-11-06 on two sessions of one full JID. `unbind`, its survivor
+  theorem, the `counted` flag, `boundFull` and the check for a survivor in the room code are gone:
+  no two live sessions share a full JID now, so no path needs them. A room seat now goes when the
+  stream ends (`sessionGone`), not at the close of the handle. Otherwise a new session on that
+  resource would lose its seat at the old handle's close.
+- Proved in `Server.lean`: `resourceFor_free`, `resourceFor_proposed`, `step_fullStep`. Proved in
+  `Wasm/Ops/XmppSession.lean`: `Unique.nodup` (no two live sessions hold one full JID), kept by
+  `drain_unique` (TCP, direct TLS, STARTTLS), `wsFeedPure_unique` (WebSocket), `msgFeedPure_unique`
+  (in-page), `Unique.opened`, `sessionGone_unique`, `Unique.closed`. The `IO` ops around these pure
+  functions are not in the proofs.

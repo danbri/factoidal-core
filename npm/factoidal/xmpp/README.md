@@ -135,6 +135,12 @@ Each name has its own SCRAM salt, from a seed the host gives the engine
 (`saltSeed`; derived from the state key when there is one). The native
 harness and a fixed `saltB64` keep one salt for all.
 
+A live session keeps its full JID. A client that binds a resource a live session holds gets a
+server-generated one (RFC 6120 section 7.7.2.2), so a client must use the JID in the bind result.
+A resource is free as soon as the stream that held it ends. A connection lost with no notice to the
+host stays live until the host sees that. The native harness has no shared session table and does
+not make this check.
+
 The shared engine currently reduces routed destinations to bare JIDs and
 the Node host delivers to every bound resource. It does not implement full
 resource-selection/priority semantics. Binding alone permits delivery; this

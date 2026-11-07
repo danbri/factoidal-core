@@ -282,9 +282,9 @@ structure XmppOpenServer where
   mix : Option Mix.Service := none
   /-- The GC3 prototype groups, when `cfg.gc3Domain` is set. -/
   gc3 : Option Gc3.Service := none
-  /-- The full JIDs of this server's bound sessions, kept by the ops layer
-  (`bindTransition`, `sessionGone`), so the hold-or-deliver decision is made
-  here, not in the host. -/
+  /-- The full JIDs of this server's live sessions, each once (`Unique`), kept by the ops layer
+  (`bindTransition`, `sessionGone`), so a bind can choose a free resource and the hold-or-deliver
+  decision is made here, not in the host. -/
   bound : List String := []
   /-- Stanzas held for accounts with no bound session (`XMPP/Held.lean`). -/
   held : Held.Held := {}
@@ -303,10 +303,6 @@ structure XmppOpenServer where
 structure XmppOpenSession where
   server : String
   session : Session
-  /-- The last full JID this connection had bound. A closed stream has no
-  `fullJid`, and without this a client that ended its stream cleanly would
-  stay in its MUC rooms for good. -/
-  boundFull : Option String := none
   /-- Bytes received and not yet cut into a complete unit. -/
   buffer : String
   /-- Top-level units processed, against `maxUnits`. -/
@@ -318,6 +314,11 @@ structure XmppOpenSession where
   closed : Bool
   /-- The client's address as the socket gives it (`remoteAddress`). -/
   address : String := ""
+
+/-- The full JID this session holds: its bound one, while its stream is open. A session whose stream
+has ended holds nothing, even before the host closes its handle. -/
+def XmppOpenSession.liveFull (os : XmppOpenSession) : Option String :=
+  if os.closed then none else os.session.fullJid
 
 initialize xmppServerCounter : IO.Ref Nat ← IO.mkRef 0
 initialize xmppSessionCounter : IO.Ref Nat ← IO.mkRef 0
@@ -497,38 +498,70 @@ private def performAll (sender : Option String) (srv : XmppOpenServer) (c : Xmpp
     let (srv', c') := perform sender srv c o
     performAll sender srv' c' os
 
-/-- One session of a full JID is gone. Two sessions can bind one full JID (RFC 6120 section 7.7.2.2
-leaves the choice to the server; this one allows it), so one entry goes and the other stays. -/
-def unbind (bound : List String) (before : Option String) : List String :=
-  match before with
-  | some f => bound.erase f
-  | none => bound
+/-- The session holding `f` is gone: `f` is free, and it leaves every room it was in (XEP-0045
+section 7.14). The other occupants' deliveries go in `routeFull`. It runs when the stream ends, not
+when the host closes the handle, as a new session can bind `f` between the two. -/
+def sessionGone (srv : XmppOpenServer) (c : XmppCollected) (f : String) :
+    XmppOpenServer × XmppCollected :=
+  let kept := { srv with bound := srv.bound.erase f }
+  match srv.muc with
+  | some svc =>
+    let (svc', ds) := Muc.leaveAll svc f
+    ({ kept with muc := some svc' },
+     { c with routeFull := c.routeFull ++ ds.map (fun d => (d.to, d.render, none)) })
+  | none => (kept, c)
 
-/-- With two sessions on one full JID, the other is still bound after one goes. -/
-theorem unbind_survivor (f : String) (l : List String) :
-    (unbind (f :: f :: l) (some f)).contains f = true := by
-  simp [unbind]
-
-#guard unbind ["a", "b", "a"] (some "a") == ["b", "a"]
-#guard unbind ["a"] (some "a") == [] && unbind ["a"] none == ["a"]
-
-/-- A session's full JID changed by one step (it bound, or it closed): keep
-`bound`, and hand a newly bound account what was held for it, oldest first. -/
+/-- The full JID a session holds changed by one step (it bound, or its stream ended): keep `bound`,
+and hand a newly bound account what was held for it, oldest first. -/
 def bindTransition (srv : XmppOpenServer) (c : XmppCollected) (before after : Option String) :
     XmppOpenServer × XmppCollected :=
   if before == after then (srv, c)
   else
-    let kept := unbind srv.bound before
+    let (srv1, c1) := match before with
+      | some f => sessionGone srv c f
+      | none => (srv, c)
     match after with
-    | none => ({ srv with bound := kept }, c)
+    | none => (srv1, c1)
     | some f =>
       let bare := Server.bareOf f
-      let (out, h') := Held.release srv.held bare
-      ({ srv with bound := kept ++ [f], held := h' },
-       { c with route := c.route ++ out.map (fun i => (bare, i.text)),
-                -- The older one-resource form too: it may be there, and a delete of nothing is nothing.
-                unstore := if out.isEmpty || !srv.cfg.persist then c.unstore
-                  else c.unstore ++ [StateCodec.pathOf "held" bare] ++ out.map (fun i => StateCodec.heldItemPath bare i.seq) })
+      let (out, h') := Held.release srv1.held bare
+      ({ srv1 with bound := srv1.bound ++ [f], held := h' },
+       { c1 with route := c1.route ++ out.map (fun i => (bare, i.text)),
+                 -- The older one-resource form too: it may be there, and a delete of nothing is nothing.
+                 unstore := if out.isEmpty || !srv1.cfg.persist then c1.unstore
+                   else c1.unstore ++ [StateCodec.pathOf "held" bare] ++ out.map (fun i => StateCodec.heldItemPath bare i.seq) })
+
+/-- What `Server.step` reads from the server for a unit of this session. -/
+private def XmppOpenServer.envFor (srv : XmppOpenServer) (os : XmppOpenSession) : Env :=
+  { roster := match os.session.bareJid with
+      | some b => srv.rosters.getD b []
+      | none => []
+    guard := srv.guardFor os, rosterOpen := rosterOpen srv os.session.bareJid, bound := srv.bound }
+
+/-- One unit on an open session, for the byte stream and the framed transports alike: `Server.step`
+with the server's live full JIDs, its actions, and the change to `bound`. Also the actions, for
+`bufferAfter`. -/
+def stepSession (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected)
+    (unit : Framing.Unit) : XmppOpenServer × XmppOpenSession × XmppCollected × List Out :=
+  let (s', env', outs) := Server.step os.session (srv.envFor os) unit
+  let (srv', c') := performAll os.session.bareJid
+    { srv with failures := env'.guard.failures, backoff := env'.guard.backoff } c outs
+  let closed := c'.close || s'.stage == .closed
+  let (srv'', c'') := bindTransition srv' c' os.liveFull (if closed then none else s'.fullJid)
+  (srv'', { os with session := s', units := os.units + 1, closed }, c'', outs)
+
+/-- The stream of a session ended outside `Server.step`: its full JID is free from now on. -/
+def endStream (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected) :
+    XmppOpenServer × XmppOpenSession × XmppCollected :=
+  let (srv', c') := bindTransition srv c os.liveFull none
+  (srv', { os with closed := true }, { c' with close := true })
+
+/-- A session past `maxUnits`: RFC 6120 section 4.9.3.14 `policy-violation`, and its stream ends. -/
+def refuseSession (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected) :
+    XmppOpenServer × XmppOpenSession × XmppCollected :=
+  let (srv', c') := performAll os.session.bareJid srv c
+    (Server.streamError "policy-violation" "too many stream units")
+  endStream srv' os c'
 
 /-- The buffer left after a unit's actions. When they ask for the TLS
 upgrade it is EMPTY: those bytes arrived in clear after `<starttls/>`,
@@ -558,22 +591,11 @@ def drain (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected) :
       | none => (srv, os, c)
       | some (unit, rest) =>
         if os.units ≥ os.maxUnits then
-          let (srv', c') := performAll os.session.bareJid srv c
-            (Server.streamError "policy-violation" "too many stream units")
-          (srv', { os with buffer := rest, closed := true }, { c' with close := true })
+          let (srv', os', c') := refuseSession srv os c
+          (srv', { os' with buffer := rest }, c')
         else
-          let roster := match os.session.bareJid with
-            | some b => srv.rosters.getD b []
-            | none => []
-          let (s', env', outs) := Server.step os.session
-            { roster, guard := srv.guardFor os, rosterOpen := rosterOpen srv os.session.bareJid } unit
-          let (srv', c') := performAll os.session.bareJid
-            { srv with failures := env'.guard.failures, backoff := env'.guard.backoff } c outs
-          let (srv'', c'') := bindTransition srv' c' os.session.fullJid s'.fullJid
-          let closed := c''.close || s'.stage == .closed
-          drain srv''
-            { os with session := s', boundFull := s'.fullJid <|> os.boundFull, buffer := bufferAfter outs rest, units := os.units + 1, closed }
-            c'' fuel
+          let (srv', os', c', outs) := stepSession srv os c unit
+          drain srv' { os' with buffer := bufferAfter outs rest } c' fuel
 
 /-- While the handshake runs, a feed changes nothing and reports nothing.
 With `bufferAfter_startTls` (the buffer is empty when `tlsPending` is
@@ -612,7 +634,7 @@ private def jsonOfCollected (os : XmppOpenSession) (c : XmppCollected) : List (S
   -- independently of whether a complete unit happened to produce output.
   , ("bufferedBytes", .number (toString os.buffer.utf8ByteSize))
   , ("bare", jsonOfOptString os.session.bareJid)
-  , ("full", jsonOfOptString os.session.fullJid) ]
+  , ("full", jsonOfOptString os.liveFull) ]
 
 /-! ## The ops -/
 
@@ -746,24 +768,16 @@ def xmppSessionDeliver (h text : String) : IO String := do
         match o with | .send t => some t | _ => none)
       pure (okWith [("delivered", .bool true), ("send", .array (sends.map .string))])
 
-/-- A session went away. `counted`: it is still in `bound`, as a session that closed its stream
-is not (`bindTransition`). A room seat belongs to the full JID, and two sessions can share one, so
-the seat goes with the last of them (`unbind`): only then does it leave every room (XEP-0045
-section 7.14), and the other occupants are told. The deliveries, as `routeFull` JSON, for the host
-to perform. -/
-def mucLeaveAll (server : String) (full : Option String) (counted : Bool) : IO Json := do
-  match full, (← xmppServers.get)[server]? with
-  | some f, some srv0 =>
-    let srv := if counted then { srv0 with bound := unbind srv0.bound (some f) } else srv0
-    xmppServers.modify (·.insert server srv)
-    match srv.muc with
-    | some svc =>
-      if srv.bound.contains f then pure (.array [])
-      else
-      let (svc', ds) := Muc.leaveAll svc f
-      xmppServers.modify (·.insert server { srv with muc := some svc' })
-      pure (.array (ds.map (fun d => .object [("to", .string d.to), ("text", .string d.render), ("bounce", .null)])))
-    | none => pure (.array [])
+/-- The host is closing a session's handle. A session with a live full JID lost its transport, and
+`sessionGone` runs now; one whose stream ended has already been through it. The deliveries, as
+`routeFull` JSON, for the host to perform. -/
+def sessionClosed (os : XmppOpenSession) : IO Json := do
+  match os.liveFull, (← xmppServers.get)[os.server]? with
+  | some f, some srv =>
+    let (srv', c) := sessionGone srv {} f
+    xmppServers.modify (·.insert os.server srv')
+    pure (.array (c.routeFull.map (fun (to, text, bounce) =>
+      .object [("to", .string to), ("text", .string text), ("bounce", jsonOfOptString bounce)])))
   | _, _ => pure (.array [])
 
 /-- `xmppSessionClose(sessionHandle)`: the socket reached end of input or
@@ -778,7 +792,7 @@ def xmppSessionClose (h : String) : IO String := do
     let closing : List String :=
       if os.closed || os.session.stage == .closed then [] else ["</stream:stream>"]
     xmppSessions.modify (·.erase h)
-    let left ← mucLeaveAll os.server (os.session.fullJid <|> os.boundFull) os.session.fullJid.isSome
+    let left ← sessionClosed os
     pure (okWith [("send", .array (closing.map .string)), ("routeFull", left)])
 
 /-- `xmppSessionTlsUp(sessionHandle)`: the TLS handshake that a feed asked
@@ -870,19 +884,10 @@ roster read fresh, `maxUnits` enforced, actions performed. -/
 def stepOneUnit (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected)
     (unit : Framing.Unit) : XmppOpenServer × XmppOpenSession × XmppCollected :=
   if os.closed then (srv, os, c)
-  else if os.units ≥ os.maxUnits then
-    let (srv', c') := performAll os.session.bareJid srv c (Server.streamError "policy-violation" "too many stream units")
-    (srv', { os with closed := true }, { c' with close := true })
+  else if os.units ≥ os.maxUnits then refuseSession srv os c
   else
-    let roster := match os.session.bareJid with
-      | some b => srv.rosters.getD b []
-      | none => []
-    let (s', env', outs) := Server.step os.session
-      { roster, guard := srv.guardFor os, rosterOpen := rosterOpen srv os.session.bareJid } unit
-    let (srv', c') := performAll os.session.bareJid
-      { srv with failures := env'.guard.failures, backoff := env'.guard.backoff } c outs
-    let (srv'', c'') := bindTransition srv' c' os.session.fullJid s'.fullJid
-    (srv'', { os with session := s', boundFull := s'.fullJid <|> os.boundFull, units := os.units + 1, closed := c''.close || s'.stage == .closed }, c'')
+    let (srv', os', c', _) := stepSession srv os c unit
+    (srv', os', c')
 
 /-- The frames for the `send` texts of one step, in order. -/
 def wsFramesOf (cfg : Config) (sends : List String) : ByteArray :=
@@ -907,11 +912,11 @@ def wsApplyEvents (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollect
     | .close _ =>
       -- RFC 6455 section 5.5.1: answer a close with a close. The XMPP
       -- stream ends with it (RFC 7395 section 3.6).
-      (srv, { os with closed := true }, { c with close := true },
-       out ++ L4Factoidal.HTTP.WebSocket.closeFrame 1000, true)
+      let (srv', os', c') := endStream srv os c
+      (srv', os', c', out ++ L4Factoidal.HTTP.WebSocket.closeFrame 1000, true)
     | .fail code _ =>
-      (srv, { os with closed := true }, { c with close := true },
-       out ++ L4Factoidal.HTTP.WebSocket.closeFrame code, true)
+      let (srv', os', c') := endStream srv os c
+      (srv', os', c', out ++ L4Factoidal.HTTP.WebSocket.closeFrame code, true)
 
 /-- One read from the socket. -/
 def wsFeedPure (srv : XmppOpenServer) (ws : XmppWsSession) (bytes : ByteArray) :
@@ -1026,7 +1031,7 @@ def xmppWsCloseWith (h : String) : IO (String × ByteArray) := do
   | none => pure (errJson s!"unknown XMPP WebSocket session handle: {h}", ByteArray.empty)
   | some ws =>
     xmppWsSessions.modify (·.erase h)
-    let left ← mucLeaveAll ws.inner.server (ws.inner.session.fullJid <|> ws.inner.boundFull) ws.inner.session.fullJid.isSome
+    let left ← sessionClosed ws.inner
     match ws.phase with
     | .frames .. =>
       if ws.inner.closed then pure (okWith [("routeFull", left)], ByteArray.empty)
@@ -1066,6 +1071,323 @@ theorem msgFeedPure_closed (srv : XmppOpenServer) (os : XmppOpenSession) (msg : 
     (h : os.closed = true) :
     msgFeedPure srv os msg = (srv, os, {}, []) := by
   simp [msgFeedPure, h]
+
+/-! ## One full JID, one live session
+
+`Unique srv oss`: `oss` are the sessions of `srv`, and `srv.bound` lists each live full JID of them
+once. No two live sessions then hold one full JID (`Unique.nodup`). An open keeps it, every unit on
+any transport keeps it, and so does a close. -/
+
+/-- The full JIDs held by these sessions. -/
+def liveFulls (oss : List XmppOpenSession) : List String := oss.filterMap (·.liveFull)
+
+def Unique (srv : XmppOpenServer) (oss : List XmppOpenSession) : Prop :=
+  srv.bound.Nodup ∧ (liveFulls oss).Perm srv.bound
+
+/-- 1. No two live sessions hold one full JID. -/
+theorem Unique.nodup {srv : XmppOpenServer} {oss : List XmppOpenSession} (h : Unique srv oss) :
+    (liveFulls oss).Nodup :=
+  h.2.nodup_iff.mpr h.1
+
+/-- 2. So a session's full JID is no other live session's. -/
+theorem Unique.distinct {srv : XmppOpenServer} {a : XmppOpenSession} {rest : List XmppOpenSession}
+    {f : String} (h : Unique srv (a :: rest)) (ha : a.liveFull = some f) : f ∉ liveFulls rest := by
+  have hn := h.nodup
+  simp only [liveFulls, List.filterMap_cons, ha] at hn
+  exact (List.nodup_cons.mp hn).1
+
+private theorem holdStanza_bound (srv : XmppOpenServer) (c : XmppCollected) (sender : Option String)
+    (bare text : String) : (holdStanza srv c sender bare text).1.bound = srv.bound := by
+  unfold holdStanza
+  repeat' first | split | dsimp only
+  all_goals rfl
+
+private theorem routeOrHold_bound (srv : XmppOpenServer) (c : XmppCollected) (sender : Option String)
+    (bare text : String) : (routeOrHold srv c sender bare text).1.bound = srv.bound := by
+  unfold routeOrHold
+  split
+  · rfl
+  · exact holdStanza_bound ..
+
+private theorem routeHeldAll_bound (srv : XmppOpenServer) (c : XmppCollected)
+    (ds : List (String × String)) : (routeHeldAll srv c ds).1.bound = srv.bound := by
+  unfold routeHeldAll
+  induction ds generalizing srv c with
+  | nil => rfl
+  | cons d ds ih =>
+    simp only [List.foldl_cons]
+    rw [ih]
+    exact routeOrHold_bound ..
+
+private theorem perform_bound (sender : Option String) (srv : XmppOpenServer) (c : XmppCollected)
+    (o : Out) : (perform sender srv c o).1.bound = srv.bound := by
+  unfold perform
+  repeat' first | split | dsimp only
+  all_goals first
+    | rfl
+    | exact routeOrHold_bound ..
+    | exact routeHeldAll_bound ..
+
+private theorem performAll_bound (sender : Option String) (srv : XmppOpenServer) (c : XmppCollected)
+    (outs : List Out) : (performAll sender srv c outs).1.bound = srv.bound := by
+  induction outs generalizing srv c with
+  | nil => rfl
+  | cons o os ih =>
+    simp only [performAll]
+    rw [ih, perform_bound]
+
+theorem sessionGone_bound (srv : XmppOpenServer) (c : XmppCollected) (f : String) :
+    (sessionGone srv c f).1.bound = srv.bound.erase f := by
+  unfold sessionGone
+  split <;> rfl
+
+/-- What a step may do to the full JID a session holds, seen from `srv`. -/
+def Transition (srv : XmppOpenServer) (before after : Option String) : Prop :=
+  after = before ∨ after = none ∨ (before = none ∧ ∃ f, after = some f ∧ f ∉ srv.bound)
+
+theorem bindTransition_unique (srv : XmppOpenServer) (c : XmppCollected) (os os' : XmppOpenSession)
+    (rest : List XmppOpenSession) (h : Unique srv (os :: rest))
+    (ht : Transition srv os.liveFull os'.liveFull) :
+    Unique (bindTransition srv c os.liveFull os'.liveFull).1 (os' :: rest) := by
+  obtain ⟨hn, hp⟩ := h
+  simp only [liveFulls, List.filterMap_cons] at hp
+  rcases ht with ht | ht | ⟨hb, f, ha, hf⟩
+  · have : bindTransition srv c os.liveFull os'.liveFull = (srv, c) := by
+      simp [bindTransition, ht]
+    rw [this]
+    refine ⟨hn, ?_⟩
+    simp only [liveFulls, List.filterMap_cons, ht]
+    exact hp
+  · rw [ht]
+    cases hb : os.liveFull with
+    | none =>
+      rw [hb] at hp
+      have : bindTransition srv c none none = (srv, c) := by simp [bindTransition]
+      rw [this]
+      exact ⟨hn, by simpa [liveFulls, ht] using hp⟩
+    | some f =>
+      rw [hb] at hp
+      have : (bindTransition srv c (some f) none).1.bound = srv.bound.erase f := by
+        simp [bindTransition, sessionGone_bound]
+      refine ⟨by rw [this]; exact hn.erase f, ?_⟩
+      rw [this]
+      simpa [liveFulls, ht] using hp.erase f
+  · rw [hb] at hp ⊢
+    rw [ha]
+    simp only at hp
+    have : (bindTransition srv c none (some f)).1.bound = srv.bound ++ [f] := by
+      simp [bindTransition]
+    refine ⟨?_, ?_⟩
+    · rw [this]
+      exact List.nodup_append.mpr ⟨hn, by simp, by simp; intro x hx hxf; exact hf (hxf ▸ hx)⟩
+    · rw [this]
+      simp only [liveFulls, List.filterMap_cons, ha]
+      exact (hp.cons f).trans (List.perm_append_comm (l₁ := [f]) (l₂ := srv.bound))
+
+theorem Unique.congr {a b : XmppOpenServer} {x y : List XmppOpenSession} (h : Unique a x)
+    (hb : b.bound = a.bound) (hl : liveFulls y = liveFulls x) : Unique b y := by
+  obtain ⟨hn, hp⟩ := h
+  exact ⟨hb ▸ hn, by rw [hl, hb]; exact hp⟩
+
+private theorem liveFulls_head {a b : XmppOpenSession} (rest : List XmppOpenSession)
+    (h : b.liveFull = a.liveFull) : liveFulls (b :: rest) = liveFulls (a :: rest) := by
+  simp [liveFulls, List.filterMap_cons, h]
+
+/-- 3. One unit on an open session keeps `Unique`: the session keeps its full JID, loses it, or gets
+one that no live session holds. -/
+theorem stepSession_unique (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected)
+    (unit : Framing.Unit) (rest : List XmppOpenSession) (hopen : os.closed = false)
+    (h : Unique srv (os :: rest)) :
+    Unique (stepSession srv os c unit).1 ((stepSession srv os c unit).2.1 :: rest) := by
+  have hfs := Server.step_fullStep os.session (srv.envFor os) unit
+  unfold stepSession
+  cases hs : Server.step os.session (srv.envFor os) unit with
+  | mk s' r =>
+    obtain ⟨env', outs⟩ := r
+    rw [hs] at hfs
+    simp only at hfs ⊢
+    have hb := performAll_bound os.session.bareJid
+      { srv with failures := env'.guard.failures, backoff := env'.guard.backoff } c outs
+    cases hp : performAll os.session.bareJid
+        { srv with failures := env'.guard.failures, backoff := env'.guard.backoff } c outs with
+    | mk srv' c' =>
+      rw [hp] at hb
+      simp only at hb ⊢
+      have hbefore : os.liveFull = os.session.fullJid := by simp [XmppOpenSession.liveFull, hopen]
+      let os' : XmppOpenSession :=
+        { os with session := s', units := os.units + 1, closed := c'.close || s'.stage == .closed }
+      have hu : Unique srv' (os :: rest) := h.congr hb rfl
+      have ht : Transition srv' os.liveFull os'.liveFull := by
+        by_cases hc : (c'.close || s'.stage == .closed) = true
+        · exact Or.inr (Or.inl (by simp [os', XmppOpenSession.liveFull, hc]))
+        · have hl : os'.liveFull = s'.fullJid := by simp only [os', XmppOpenSession.liveFull, if_neg hc]
+          rw [hl, hbefore]
+          rcases hfs with e | e | ⟨e1, f, e2, e3⟩
+          · exact Or.inl e
+          · exact Or.inr (Or.inl e)
+          · exact Or.inr (Or.inr ⟨e1, f, e2, by rw [hb]; exact e3⟩)
+      have hk := bindTransition_unique srv' c' os os' rest hu ht
+      have hl2 : (if (c'.close || s'.stage == .closed) = true then none else s'.fullJid) = os'.liveFull := rfl
+      rw [hl2]
+      cases hbt : bindTransition srv' c' os.liveFull os'.liveFull with
+      | mk a b =>
+        rw [hbt] at hk
+        exact hk
+
+theorem endStream_unique (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected)
+    (rest : List XmppOpenSession) (h : Unique srv (os :: rest)) :
+    Unique (endStream srv os c).1 ((endStream srv os c).2.1 :: rest) := by
+  have e : ({ os with closed := true } : XmppOpenSession).liveFull = none := by
+    simp [XmppOpenSession.liveFull]
+  have hk := bindTransition_unique srv c os { os with closed := true } rest h (Or.inr (Or.inl e))
+  rw [e] at hk
+  unfold endStream
+  cases hbt : bindTransition srv c os.liveFull none with
+  | mk a b =>
+    rw [hbt] at hk
+    exact hk
+
+theorem refuseSession_unique (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected)
+    (rest : List XmppOpenSession) (h : Unique srv (os :: rest)) :
+    Unique (refuseSession srv os c).1 ((refuseSession srv os c).2.1 :: rest) := by
+  have hb := performAll_bound os.session.bareJid srv c
+    (Server.streamError "policy-violation" "too many stream units")
+  unfold refuseSession
+  cases hp : performAll os.session.bareJid srv c
+      (Server.streamError "policy-violation" "too many stream units") with
+  | mk srv' c' =>
+    rw [hp] at hb
+    exact endStream_unique srv' os c' rest (h.congr hb rfl)
+
+/-- 4. The byte stream transports (TCP and direct TLS, and STARTTLS after the upgrade). -/
+theorem drain_unique (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected)
+    (rest : List XmppOpenSession) (fuel : Nat) (h : Unique srv (os :: rest)) :
+    Unique (drain srv os c fuel).1 ((drain srv os c fuel).2.1 :: rest) := by
+  induction fuel generalizing srv os c with
+  | zero => exact h
+  | succ n ih =>
+    unfold drain
+    split
+    · exact h
+    · rename_i hc
+      have hopen : os.closed = false := by
+        simp only [Bool.or_eq_true, not_or] at hc
+        simpa using hc.1
+      split
+      · exact h
+      · rename_i unit restBuf _
+        split
+        · have hk := refuseSession_unique srv os c rest h
+          cases hr : refuseSession srv os c with
+          | mk a b =>
+            obtain ⟨b1, b2⟩ := b
+            rw [hr] at hk
+            exact hk.congr rfl (liveFulls_head rest rfl)
+        · have hk := stepSession_unique srv os c unit rest hopen h
+          cases hr : stepSession srv os c unit with
+          | mk a b =>
+            obtain ⟨b1, b2, b3⟩ := b
+            rw [hr] at hk
+            exact ih a { b1 with buffer := bufferAfter b3 restBuf } b2
+              (hk.congr rfl (liveFulls_head rest rfl))
+
+theorem stepOneUnit_unique (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected)
+    (unit : Framing.Unit) (rest : List XmppOpenSession) (h : Unique srv (os :: rest)) :
+    Unique (stepOneUnit srv os c unit).1 ((stepOneUnit srv os c unit).2.1 :: rest) := by
+  unfold stepOneUnit
+  split
+  · exact h
+  · rename_i hc
+    split
+    · exact refuseSession_unique srv os c rest h
+    · have hk := stepSession_unique srv os c unit rest (by simpa using hc) h
+      cases hr : stepSession srv os c unit with
+      | mk a b =>
+        obtain ⟨b1, b2, b3⟩ := b
+        rw [hr] at hk
+        exact hk
+
+/-- 5. A WebSocket read's events. -/
+theorem wsApplyEvents_unique (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected)
+    (out : ByteArray) (evs : List L4Factoidal.HTTP.WebSocket.Event)
+    (rest : List XmppOpenSession) (h : Unique srv (os :: rest)) :
+    Unique (wsApplyEvents srv os c out evs).1 ((wsApplyEvents srv os c out evs).2.1 :: rest) := by
+  induction evs generalizing srv os c out with
+  | nil => exact h
+  | cons e es ih =>
+    cases e with
+    | text msg =>
+      have hk := stepOneUnit_unique srv os c (L4Factoidal.XMPP.WebSocket.unitOfMessage msg) rest h
+      simp only [wsApplyEvents]
+      cases hr : stepOneUnit srv os c (L4Factoidal.XMPP.WebSocket.unitOfMessage msg) with
+      | mk a b =>
+        obtain ⟨b1, b2⟩ := b
+        rw [hr] at hk
+        simp only
+        split
+        · exact hk
+        · exact ih a b1 b2 _ hk
+    | ping p => exact ih srv os c _ h
+    | close _ =>
+      have hk := endStream_unique srv os c rest h
+      simp only [wsApplyEvents]
+      cases hr : endStream srv os c with
+      | mk a b =>
+        obtain ⟨b1, b2⟩ := b
+        rw [hr] at hk
+        exact hk
+    | fail code _ =>
+      have hk := endStream_unique srv os c rest h
+      simp only [wsApplyEvents]
+      cases hr : endStream srv os c with
+      | mk a b =>
+        obtain ⟨b1, b2⟩ := b
+        rw [hr] at hk
+        exact hk
+
+/-- 6. One WebSocket read: the handshake, then the events. -/
+theorem wsFeedPure_unique (srv : XmppOpenServer) (ws : XmppWsSession) (bytes : ByteArray)
+    (rest : List XmppOpenSession) (h : Unique srv (ws.inner :: rest)) :
+    Unique (wsFeedPure srv ws bytes).1 ((wsFeedPure srv ws bytes).2.1.inner :: rest) := by
+  unfold wsFeedPure
+  repeat' first | split | dsimp only
+  all_goals first
+    | exact h
+    | exact wsApplyEvents_unique _ _ _ _ _ rest h
+
+/-- 7. The whole-message transport of the in-page server. -/
+theorem msgFeedPure_unique (srv : XmppOpenServer) (os : XmppOpenSession) (msg : String)
+    (rest : List XmppOpenSession) (h : Unique srv (os :: rest)) :
+    Unique (msgFeedPure srv os msg).1 ((msgFeedPure srv os msg).2.1 :: rest) := by
+  unfold msgFeedPure
+  split
+  · exact h
+  · have hk := stepOneUnit_unique srv os {} (L4Factoidal.XMPP.WebSocket.unitOfMessage msg) rest h
+    cases hr : stepOneUnit srv os {} (L4Factoidal.XMPP.WebSocket.unitOfMessage msg) with
+    | mk a b =>
+      obtain ⟨b1, b2⟩ := b
+      rw [hr] at hk
+      exact hk
+
+/-- 8. A new session holds nothing. -/
+theorem Unique.opened {srv : XmppOpenServer} {oss : List XmppOpenSession} (h : Unique srv oss)
+    (os : XmppOpenSession) (hn : os.liveFull = none) : Unique srv (os :: oss) :=
+  h.congr rfl (by simp [liveFulls, hn])
+
+/-- 9. A closed handle: a live session goes through `sessionGone` (`sessionClosed`), and its full
+JID is free. -/
+theorem sessionGone_unique (srv : XmppOpenServer) (os : XmppOpenSession) (c : XmppCollected)
+    (rest : List XmppOpenSession) (f : String) (ha : os.liveFull = some f)
+    (h : Unique srv (os :: rest)) : Unique (sessionGone srv c f).1 rest := by
+  obtain ⟨hn, hp⟩ := h
+  simp only [liveFulls, List.filterMap_cons, ha] at hp
+  rw [Unique, sessionGone_bound]
+  exact ⟨hn.erase f, by simpa [liveFulls] using hp.erase f⟩
+
+/-- 10. A session that holds nothing closes, and nothing changes. -/
+theorem Unique.closed {srv : XmppOpenServer} {os : XmppOpenSession} {rest : List XmppOpenSession}
+    (h : Unique srv (os :: rest)) (hn : os.liveFull = none) : Unique srv rest :=
+  h.congr rfl (by simp [liveFulls, hn])
 
 def xmppMsgJson (os : XmppOpenSession) (c : XmppCollected) (msgs : List String) : String :=
   okWith ((jsonOfCollected os c).filter (fun (k, _) => k != "send" && k != "bufferedBytes") ++
@@ -1128,7 +1450,7 @@ def xmppMsgClose (h : String) : IO String := do
   | none => pure (errJson s!"unknown XMPP message session handle: {h}")
   | some os =>
     xmppMsgSessions.modify (·.erase h)
-    let left ← mucLeaveAll os.server (os.session.fullJid <|> os.boundFull) os.session.fullJid.isSome
+    let left ← sessionClosed os
     let closing : List String :=
       if os.closed || os.session.stage == .closed then [] else [L4Factoidal.XMPP.WebSocket.closeText]
     pure (okWith [("send", .array (closing.map .string)), ("routeFull", left)])

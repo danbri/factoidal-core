@@ -236,7 +236,7 @@ test('muc: XEP-0421: one occupant id for an account in a room, also under a new 
   } finally { await s.close() }
 })
 
-test('muc: two sessions on one full JID: the seat and delivery stay with the survivor; the last to go leaves', async () => {
+test('muc: two clients that ask for one resource each hold a seat of their own', async () => {
   const s = await start()
   const self = (m) => m.includes(`status code='110'`) || m.includes('status code="110"')
   try {
@@ -244,19 +244,21 @@ test('muc: two sessions on one full JID: the seat and delivery stay with the sur
     const two = await bound(s.wsOrigin, 'juliet', 'r0m30', 'same')
     one.send(`<presence to='seat@${MUC}/jul'><x xmlns='${NS_MUC}'/></presence>`)
     await one.next(self)
+    two.send(`<presence to='seat@${MUC}/jul2'><x xmlns='${NS_MUC}'/></presence>`)
+    await two.next(self)
     const r = await bound(s.wsOrigin, 'romeo', 'juli3t', 'one')
     r.send(`<presence to='seat@${MUC}/rom'><x xmlns='${NS_MUC}'/></presence>`)
     await r.next(self)
+    r.send(`<message to='seat@${MUC}' type='groupchat' id='g0'><body>to both</body></message>`)
+    await one.next((m) => m.includes('to both'))
+    await two.next((m) => m.includes('to both'))
     one.send(`<close xmlns='${NS_FRAMING}'/>`)
     one.ws.close()
-    for (let i = 0; i < 100 && s.sessions().filter((x) => x.full === `juliet@${DOMAIN}/same`).length > 1; i++) await new Promise((res) => setTimeout(res, 20))
-    await new Promise((res) => setTimeout(res, 200))
+    await r.next((m) => m.includes(`seat@${MUC}/jul`) && m.includes('unavailable'))
     r.send(`<message to='seat@${MUC}' type='groupchat' id='g1'><body>still there</body></message>`)
     await two.next((m) => m.includes('still there'))
-    r.send(`<message to='juliet@${DOMAIN}' type='chat' id='d1'><body>direct</body></message>`)
-    await two.next((m) => m.includes('direct'))
     two.ws.close()
-    await r.next((m) => m.includes(`seat@${MUC}/jul`) && m.includes('unavailable'))
+    await r.next((m) => m.includes(`seat@${MUC}/jul2`) && m.includes('unavailable'))
     r.ws.close()
   } finally { await s.close() }
 })

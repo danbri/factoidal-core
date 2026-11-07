@@ -489,6 +489,9 @@ structure Env where
   /-- May this account's roster be written now? The host keeps a rate on the
   writes, each of which may be a write of the whole roster to its state. -/
   rosterOpen : Bool := true
+  /-- The full JIDs of the server's live sessions, for a bind to choose a free one. A host with no
+  shared session table gives none. -/
+  bound : List String := []
   deriving Inhabited
 
 /-- May the roster become `r'`? Not past the rate; and not past `max` unless it
@@ -993,6 +996,74 @@ def handlePresence (s : Session) (env : Env) (st : Stanza) (bare full : String) 
        [.saveRoster bare (rosterEncode r'), .route t out])
     else (env, [.route t out])
 
+/-! ## Which resource a bind gets (RFC 6120 section 7.7.2.2)
+
+A live session keeps its full JID. A client that asks for a resource a live session holds gets a
+server-generated one, and the bind result names it: of the options of section 7.7.2.2, the one that
+overrides the client's resource. A resource with no live session is free, whatever session held it
+before. -/
+
+/-- The full JID of a resource of this session's account, as `Session.fullJid` gives it once bound. -/
+def Session.fullOf (s : Session) (user resource : String) : String :=
+  user ++ "@" ++ s.cfg.domain ++ "/" ++ resource
+
+/-- The length of the longest text. -/
+def longest (l : List String) : Nat :=
+  l.foldr (fun t m => max t.length m) 0
+
+theorem length_le_longest {l : List String} {t : String} (h : t ∈ l) : t.length ≤ longest l := by
+  induction l with
+  | nil => simp at h
+  | cons x xs ih =>
+    simp only [longest, List.foldr_cons]
+    rcases List.mem_cons.mp h with rfl | h'
+    · exact Nat.le_max_left _ _
+    · exact Nat.le_trans (ih h') (Nat.le_max_right _ _)
+
+/-- A server-generated resource: the stream id. A client can see the stream id of its own second
+stream and bind it first, so the id can be held; then it is padded past every full JID in `bound`,
+which no held full JID can equal. -/
+def Session.generated (s : Session) (bound : List String) (user : String) : String :=
+  if bound.contains (s.fullOf user s.cfg.streamId) then
+    s.cfg.streamId ++ String.ofList (List.replicate (longest bound + 1) '-')
+  else s.cfg.streamId
+
+/-- The resource of a bind: the one the client proposed if it is free, or else a generated one. -/
+def Session.resourceFor (s : Session) (bound : List String) (user : String)
+    (proposed : Option String) : String :=
+  match proposed with
+  | some r => if r.isEmpty || bound.contains (s.fullOf user r) then s.generated bound user else r
+  | none => s.generated bound user
+
+theorem generated_free (s : Session) (bound : List String) (user : String) :
+    s.fullOf user (s.generated bound user) ∉ bound := by
+  unfold Session.generated
+  split
+  · intro hm
+    have hl := length_le_longest hm
+    simp [Session.fullOf, String.length_append] at hl
+    omega
+  · rename_i h
+    simpa using h
+
+/-- 1. The full JID a bind gets is held by no live session. -/
+theorem resourceFor_free (s : Session) (bound : List String) (user : String)
+    (proposed : Option String) : s.fullOf user (s.resourceFor bound user proposed) ∉ bound := by
+  unfold Session.resourceFor
+  split
+  · split
+    · exact generated_free s bound user
+    · rename_i h
+      simp only [Bool.or_eq_true, not_or] at h
+      simpa using h.2
+  · exact generated_free s bound user
+
+/-- 2. A proposed resource that no live session holds is the one the client gets. -/
+theorem resourceFor_proposed (s : Session) (bound : List String) (user r : String)
+    (hr : r.isEmpty = false) (h : s.fullOf user r ∉ bound) :
+    s.resourceFor bound user (some r) = r := by
+  simp [Session.resourceFor, hr, h]
+
 /-- Handle one framed unit on a connection that is secure, or on which
 STARTTLS is not required. See `step`. -/
 def stepMain (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × List Out :=
@@ -1040,13 +1111,13 @@ def stepMain (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × Li
          streamError "not-well-formed" "a stanza before the stream header")
       | .awaitingAuth =>
         if tag == "auth" then
-          let (s', g', outs) := handleAuth s env.guard node
-          s'.afterSasl { env with guard := g' } outs
+          let r := handleAuth s env.guard node
+          r.1.afterSasl { env with guard := r.2.1 } r.2.2
         else s.afterSasl env [.send (saslFailure "malformed-request")]
       | .awaitingScramResponse user nonce cfb sf =>
         if tag == "response" then
-          let (s', g', outs) := handleScramResponse s env.guard user nonce cfb sf node
-          s'.afterSasl { env with guard := g' } outs
+          let r := handleScramResponse s env.guard user nonce cfb sf node
+          r.1.afterSasl { env with guard := r.2.1 } r.2.2
         else if tag == "abort" then
           Session.afterSasl { s with stage := .awaitingAuth } env [.send (saslFailure "aborted")]
         else Session.afterSasl { s with stage := .awaitingAuth } env [.send (saslFailure "malformed-request")]
@@ -1067,12 +1138,9 @@ def stepMain (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × Li
               "cancel" "not-allowed")])
           | some b =>
             let proposed := (elemChildren b).find? (fun c => elemName c == some "resource")
-            let resource := match proposed.map textOf with
-              | some r => if r.isEmpty then s.cfg.streamId else r
-              | none => s.cfg.streamId
-            let full := user ++ "@" ++ s.cfg.domain ++ "/" ++ resource
+            let resource := s.resourceFor env.bound user (proposed.map textOf)
             ({ s with stage := .bound user resource }, env,
-             [.send (bindResult (elemAttr node "id") full)])
+             [.send (bindResult (elemAttr node "id") (s.fullOf user resource))])
         else (s, env, [.send (saslFailure "malformed-request")])
       | .bound user resource =>
         let bare := user ++ "@" ++ s.cfg.domain
@@ -1179,6 +1247,83 @@ def stepPreTls (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × 
 environment and a list of actions, and no input can fail to be answered. -/
 def step (s : Session) (env : Env) (u : Framing.Unit) : Session × Env × List Out :=
   if s.requiresStartTls then stepPreTls s env u else stepMain s env u
+
+/-! ## A step and the full JID of a session -/
+
+theorem fullJid_none (s : Session) (h : ∀ u r, s.stage ≠ .bound u r) : s.fullJid = none := by
+  unfold Session.fullJid
+  split
+  · rename_i hs _
+    exact absurd hs (h _ _)
+  · rfl
+
+/-- What one step may do to the full JID of a session: nothing, end it, or give a session with none
+one that no live session holds. -/
+def FullStep (s : Session) (env : Env) (s' : Session) : Prop :=
+  s'.fullJid = s.fullJid ∨ s'.fullJid = none ∨
+    (s.fullJid = none ∧ ∃ f, s'.fullJid = some f ∧ f ∉ env.bound)
+
+theorem fullStep_same (s : Session) (env : Env) : FullStep s env s := Or.inl rfl
+
+theorem fullStep_none (s s' : Session) (env : Env) (h : ∀ u r, s'.stage ≠ .bound u r) :
+    FullStep s env s' := Or.inr (Or.inl (fullJid_none s' h))
+
+theorem handleAuth_notBound (s : Session) (g : AuthGuard) (n : Node)
+    (h : s.stage = .awaitingAuth) : ∀ u r, (handleAuth s g n).1.stage ≠ .bound u r := by
+  intro u r
+  simp only [handleAuth, handleAuthChecked]
+  repeat' split
+  all_goals simp [h]
+
+theorem handleScramResponse_notBound (s : Session) (g : AuthGuard) (user nonce cfb sf : String)
+    (n : Node) : ∀ u r, (handleScramResponse s g user nonce cfb sf n).1.stage ≠ .bound u r := by
+  intro u r
+  simp only [handleScramResponse]
+  repeat' split
+  all_goals simp
+
+theorem afterSasl_notBound (s : Session) (env : Env) (outs : List Out)
+    (h : ∀ u r, s.stage ≠ .bound u r) : ∀ u r, (s.afterSasl env outs).1.stage ≠ .bound u r := by
+  intro u r
+  simp only [Session.afterSasl]
+  repeat' split
+  all_goals simp [h]
+
+theorem stepPreTls_fullStep (s : Session) (env : Env) (u : Framing.Unit) :
+    FullStep s env (stepPreTls s env u).1 := by
+  unfold stepPreTls
+  repeat' split
+  all_goals first
+    | exact fullStep_same s env
+    | (apply fullStep_none; simp)
+
+theorem fullStep_bind (s : Session) (env : Env) (user : String) (p : Option String)
+    (h : s.stage = .awaitingBind user) :
+    FullStep s env { s with stage := .bound user (s.resourceFor env.bound user p) } := by
+  refine Or.inr (Or.inr ⟨fullJid_none s (by simp [h]), s.fullOf user (s.resourceFor env.bound user p), ?_,
+    resourceFor_free s env.bound user p⟩)
+  simp [Session.fullJid, Session.bareJid, Session.user, Session.fullOf]
+
+/-- 3. One step of `stepMain` keeps to `FullStep`. -/
+theorem stepMain_fullStep (s : Session) (env : Env) (u : Framing.Unit) :
+    FullStep s env (stepMain s env u).1 := by
+  unfold stepMain
+  repeat' first | split | dsimp only
+  all_goals first
+    | exact fullStep_same s env
+    | (apply fullStep_none; simp; done)
+    | (apply fullStep_none; apply afterSasl_notBound; apply handleAuth_notBound; assumption; done)
+    | (apply fullStep_none; apply afterSasl_notBound; apply handleScramResponse_notBound; done)
+    | (apply fullStep_none; apply afterSasl_notBound; intro u r; simp [*]; done)
+    | (exact fullStep_bind s env _ _ ‹_›)
+
+/-- 4. So does one step of `step`. -/
+theorem step_fullStep (s : Session) (env : Env) (u : Framing.Unit) :
+    FullStep s env (step s env u).1 := by
+  unfold step
+  split
+  · exact stepPreTls_fullStep s env u
+  · exact stepMain_fullStep s env u
 
 /-- May this session receive a stanza that arrived for it from another
 connection? Only a BOUND session may (RFC 6121 section 8.5.3: an
@@ -1376,6 +1521,35 @@ private def run (s : Session) (env : Env) : List Framing.Unit →
       .streamOpen "<stream:stream to='example.com' version='1.0'>",
       .element s!"<iq type='set' id='b1'><bind xmlns='{nsBind}'/></iq>" ]
   s.stage == .bound "juliet" "SID-1"
+
+-- RFC 6120 section 7.7.2.2: a proposed resource that a live session holds is replaced by a generated
+-- one, and the result names it. The same name on another account is free.
+#guard
+  let payload := Scram.b64Encode (ByteArray.mk
+    ((("\x00juliet\x00r0m30").toUTF8).toList.toArray))
+  let (s, _, outs) := run (Session.init testCfg) { roster := [], bound := ["juliet@example.com/balcony"] }
+    [ .streamOpen "<stream:stream to='example.com' version='1.0'>",
+      .element s!"<auth xmlns='{nsSasl}' mechanism='PLAIN'>{payload}</auth>",
+      .streamOpen "<stream:stream to='example.com' version='1.0'>",
+      .element s!"<iq type='set' id='b1'><bind xmlns='{nsBind}'><resource>balcony</resource></bind></iq>" ]
+  s.stage == .bound "juliet" "SID-1" && has (String.join (sends outs)) "juliet@example.com/SID-1"
+
+#guard
+  let payload := Scram.b64Encode (ByteArray.mk
+    ((("\x00juliet\x00r0m30").toUTF8).toList.toArray))
+  let (s, _, _) := run (Session.init testCfg) { roster := [], bound := ["romeo@example.com/balcony"] }
+    [ .streamOpen "<stream:stream to='example.com' version='1.0'>",
+      .element s!"<auth xmlns='{nsSasl}' mechanism='PLAIN'>{payload}</auth>",
+      .streamOpen "<stream:stream to='example.com' version='1.0'>",
+      .element s!"<iq type='set' id='b1'><bind xmlns='{nsBind}'><resource>balcony</resource></bind></iq>" ]
+  s.stage == .bound "juliet" "balcony"
+
+-- A stream id that a live session holds is not given out again.
+#guard
+  let s := Session.init testCfg
+  let held := ["juliet@example.com/SID-1"]
+  let r := s.resourceFor held "juliet" none
+  r != "SID-1" && !held.contains (s.fullOf "juliet" r)
 
 -- RFC 6120 section 6: a stanza sent before authentication is a stream
 -- error, not a silently dropped stanza.

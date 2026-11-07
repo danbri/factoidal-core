@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- XMPP: a client that binds a resource a live session holds gets a server-generated one (RFC 6120 section 7.7.2.2), in the bind result. The live session stays. A client must use the JID in the bind result. A resource with no live session is free, and a room seat goes when its stream ends.
 - XMPP: room moderation (XEP-0045 sections 8 to 10): kick (status 307), ban (status 301), grant and revoke voice, moderator, member, admin and owner, the admin and owner lists, and status 321. `xmpp-serve --muc-owners FILE` names the owners, as `room: a@x` or `*: a@x` for every room. With that flag, also with an empty file, the first occupant of a room gets no rights, XMPP cannot change a configured owner, and with `--state-key` bans, grants and revoked voices survive a restart. Without the flag the first occupant is the owner as before, and a room's bans go with the room.
 
 ## 0.33.0 (2026-11-06)
