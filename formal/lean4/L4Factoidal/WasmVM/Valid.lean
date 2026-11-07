@@ -45,6 +45,8 @@ structure Ctx where
   dataCount : Option Nat
   /-- Functions that `ref.func` may name. -/
   refs : Std.HashSet Nat
+  /-- For each type index, the least index of an equivalent type. -/
+  reps : Array Nat := #[]
   deriving Inhabited
 
 namespace Ctx
@@ -53,7 +55,7 @@ def heapSub (c : Ctx) : HeapType → HeapType → Bool
   | a, b =>
     if a == b then true else
     match a, b with
-    | .idx i, .idx j => c.types[i]? == c.types[j]? && (c.types[i]?).isSome
+    | .idx i, .idx j => c.reps[i]? == c.reps[j]? && (c.reps[i]?).isSome
     | .idx _, .func => true
     | .nofunc, .func | .nofunc, .idx _ => true
     | .noextern, .extern => true
@@ -97,6 +99,8 @@ structure Ctrl where
   unreachable : Bool := false
   label : Nat
   elseLabel : Nat := 0
+  /-- Which locals were set at entry (only tracked when a local has no default). -/
+  inits : Array Bool := #[]
   deriving Inhabited
 
 def Ctrl.labelTypes (f : Ctrl) : Array ValType :=
@@ -109,6 +113,8 @@ structure VState where
   ops : Array Op := #[]
   labels : Array Nat := #[]
   maxH : Nat := 0
+  /-- Which locals are set; empty when every local has a default value. -/
+  inits : Array Bool := #[]
   deriving Inhabited
 
 abbrev V := Except String
@@ -155,7 +161,7 @@ def emit (s : VState) (o : Op) : VState := { s with ops := s.ops.push o }
 def pushCtrl (s : VState) (nLocals : Nat) (k : CtrlKind) (ps rs : Array ValType)
     (label elseLabel : Nat) : VState :=
   let fr : Ctrl := { kind := k, params := ps, results := rs, height := s.vals.size,
-                     label := label, elseLabel := elseLabel }
+                     label := label, elseLabel := elseLabel, inits := s.inits }
   let s := { s with ctrls := s.ctrls.push fr }
   s.pushAll nLocals ps
 
@@ -165,7 +171,7 @@ def popCtrl (c : Ctx) (s : VState) : V (VState × Ctrl) := do
   let f := s.top
   let s ← s.popAll c f.results
   if s.vals.size != f.height then .error "type mismatch: values left on the stack at end of block"
-  .ok ({ s with ctrls := s.ctrls.pop }, f)
+  .ok ({ s with ctrls := s.ctrls.pop, inits := f.inits }, f)
 
 def setUnreachable (s : VState) : VState :=
   let f := s.top
@@ -295,14 +301,17 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     .ok ((s.push nL (some t)).emit .select)
   | .localGet x =>
     let some t := fc.locals[x]? | .error "unknown local"
+    if s.inits.size > 0 && !s.inits[x]! then .error "uninitialized local"
     .ok ((s.push nL (some t)).emit (.localGet x))
   | .localSet x =>
     let some t := fc.locals[x]? | .error "unknown local"
     let s ← s.pop c t
+    let s := if s.inits.size > 0 then { s with inits := s.inits.set! x true } else s
     .ok (s.emit (.localSet x))
   | .localTee x =>
     let some t := fc.locals[x]? | .error "unknown local"
     let s ← s.pop c t
+    let s := if s.inits.size > 0 then { s with inits := s.inits.set! x true } else s
     .ok ((s.push nL (some t)).emit (.localTee x))
   | .globalGet x =>
     let some g := c.globals[x]? | .error "unknown global"
@@ -352,12 +361,14 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     .ok (s.emit (.elemDrop e))
   | .load op m =>
     if m.mem ≥ c.mems.size then .error "unknown memory"
+    if m.offset ≥ 4294967296 then .error "offset out of range"
     let (w, _, _) := op.shape
     if 2 ^ m.align > w then .error "alignment must not be larger than natural"
     let s ← s.pop c .i32
     .ok ((s.push nL (some op.type)).emit (.load op m.mem m.offset))
   | .store op m =>
     if m.mem ≥ c.mems.size then .error "unknown memory"
+    if m.offset ≥ 4294967296 then .error "offset out of range"
     if 2 ^ m.align > op.width then .error "alignment must not be larger than natural"
     let s ← s.pop c op.type
     let s ← s.pop c .i32
@@ -435,12 +446,12 @@ def compileFunc (c : Ctx) (fIdx : Nat) (f : Func) : Except ValidationError Compi
   let some ft := c.types[f.type]? | .error { msg := "unknown type", func := some fIdx }
   for t in f.locals do
     if !c.valOk t then .error { msg := "unknown type", func := some fIdx }
-    match t with
-    | .ref r => if !r.nullable then .error { msg := "uninitialized local (non-nullable)", func := some fIdx }
-    | _ => pure ()
   let locals := ft.params ++ f.locals
   let fc : FnCtx := { locals, results := ft.results }
-  let s0 : VState := { maxH := locals.size }
+  let defaultable := fun (t : ValType) => match t with | .ref r => r.nullable | _ => true
+  let inits := if f.locals.all defaultable then #[] else
+    ft.params.map (fun _ => true) ++ f.locals.map defaultable
+  let s0 : VState := { maxH := locals.size, inits }
   let (s0, l) := s0.newLabel
   let s0 := { s0 with ctrls := #[{ kind := .func, params := #[], results := ft.results,
                                      height := 0, label := l }] }
@@ -517,6 +528,34 @@ def funcRefs (m : Module) : Std.HashSet Nat := Id.run do
     if let .func f := x.desc then r := r.insert f
   return r
 
+/-- The index that stands for "this type" inside a type's own definition. -/
+def selfIdx : Nat := 0xFFFFFFFFFFFF
+
+/-- Replace each type index by its representative; the type being defined (index
+`self`, a one-type recursion group) by `selfIdx`. -/
+def repHeap (reps : Array Nat) (self : Nat) : HeapType → HeapType
+  | .idx i => .idx (if i == self then selfIdx else reps[i]?.getD i)
+  | h => h
+
+def repVal (reps : Array Nat) (self : Nat) : ValType → ValType
+  | .ref r => .ref { r with heap := repHeap reps self r.heap }
+  | t => t
+
+/-- Type equivalence without recursion groups: a type may name only earlier types, so
+two types are equivalent when they are equal after earlier indices are replaced by
+their representatives and a reference to the type itself by `selfIdx`. -/
+def typeReps (types : Array FuncType) : Array Nat := Id.run do
+  let mut reps : Array Nat := #[]
+  let mut seen : Array FuncType := #[]
+  for ft in types do
+    let self := reps.size
+    let k : FuncType := ⟨ft.params.map (repVal reps self), ft.results.map (repVal reps self)⟩
+    match seen.findIdx? (· == k) with
+    | some j => reps := reps.push j
+    | none => reps := reps.push seen.size
+    seen := seen.push k
+  return reps
+
 def mkCtx (m : Module) : Ctx :=
   { types := m.types
     funcs := m.importedFuncTypes ++ m.funcs.map (·.type)
@@ -525,7 +564,8 @@ def mkCtx (m : Module) : Ctx :=
     globals := m.importedGlobals ++ m.globals.map (·.type)
     elems := m.elems.map (·.type)
     dataCount := m.dataCount
-    refs := funcRefs m }
+    refs := funcRefs m
+    reps := typeReps m.types }
 
 def validate (m : Module) : Except ValidationError ValidModule := do
   let c := mkCtx m
@@ -533,8 +573,13 @@ def validate (m : Module) : Except ValidationError ValidModule := do
   let lift := fun (x : V Unit) => match x with
     | .ok () => (Except.ok () : Except ValidationError Unit)
     | .error e => .error { msg := e }
+  let mut tyIx := 0
   for ft in m.types do
-    if !(ft.params.all c.valOk && ft.results.all c.valOk) then err "unknown type"
+    let earlier := fun (t : ValType) => match t with
+      | .ref ⟨_, .idx i⟩ => i ≤ tyIx
+      | _ => true
+    if !(ft.params.all earlier && ft.results.all earlier) then err "unknown type"
+    tyIx := tyIx + 1
   for i in m.imports do
     match i.desc with
     | .func t => if t ≥ m.types.size then err "unknown type"
@@ -547,7 +592,7 @@ def validate (m : Module) : Except ValidationError ValidModule := do
     if !limitsOk t.type.limits 4294967295 then err "size minimum must not be greater than maximum"
     if !c.heapOk t.type.elem.heap then err "unknown type"
     match t.init with
-    | some e => lift (checkConst c c.globals.size e (.ref t.type.elem))
+    | some e => lift (checkConst c nImpGlobals e (.ref t.type.elem))
     | none => if !t.type.elem.nullable then err "type mismatch"
   for mt in m.mems do
     if !limitsOk mt.limits 65536 then err "memory size must be at most 65536 pages (4GiB)"

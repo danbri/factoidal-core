@@ -136,8 +136,8 @@ def blockType (b : ByteArray) (p : Nat) : Except DecodeError (BlockType × Nat) 
 def limits (b : ByteArray) (p : Nat) : Except DecodeError (Limits × Nat) := do
   let (f, p1) ← byte b p
   match f with
-  | 0x00 => let (n, q) ← u32 b p1; .ok (⟨n, none⟩, q)
-  | 0x01 => let (n, q) ← u32 b p1; let (m, q) ← u32 b q; .ok (⟨n, some m⟩, q)
+  | 0x00 => let (n, q) ← u64 b p1; .ok (⟨n, none⟩, q)
+  | 0x01 => let (n, q) ← u64 b p1; let (m, q) ← u64 b q; .ok (⟨n, some m⟩, q)
   | 0x02 | 0x03 => unsup "shared memory (threads)" p
   | 0x04 | 0x05 | 0x06 | 0x07 => unsup "64-bit address type (memory64)" p
   | _ => bad "integer too large" p
@@ -161,7 +161,7 @@ def memArg (b : ByteArray) (p : Nat) : Except DecodeError (MemArg × Nat) := do
   let (mem, a, p) ← if a ≥ 64 then do
       let (m, p) ← u32 b p; pure (m, a - 64, p)
     else pure (0, a, p)
-  let (o, p) ← u32 b p
+  let (o, p) ← u64 b p
   .ok (⟨a, mem, o⟩, p)
 
 @[inline] def ofIntU32 (i : Int) : UInt32 := UInt32.ofNat (i % 4294967296).toNat
@@ -337,7 +337,7 @@ def elem (b : ByteArray) (p : Nat) : Except DecodeError (Elem × Nat) := do
   let (flags, p) ← u32 b p
   let elemKind := fun (p : Nat) => (do
     let (k, q) ← byte b p
-    if k == 0 then .ok (RefType.funcref, q) else bad "malformed element kind" p : Except DecodeError (RefType × Nat))
+    if k == 0 then .ok (⟨false, .func⟩, q) else bad "malformed element kind" p : Except DecodeError (RefType × Nat))
   let funcs := fun (p : Nat) => (do
     let (fs, q) ← vec u32 b p
     .ok (fs.map funcRefExpr, q) : Except DecodeError ((Array Expr) × Nat))
@@ -345,7 +345,7 @@ def elem (b : ByteArray) (p : Nat) : Except DecodeError (Elem × Nat) := do
   | 0 =>
     let (off, p) ← constExpr b p
     let (es, p) ← funcs p
-    .ok (⟨.funcref, es, .active 0 off⟩, p)
+    .ok (⟨⟨false, .func⟩, es, .active 0 off⟩, p)
   | 1 =>
     let (t, p) ← elemKind p
     let (es, p) ← funcs p

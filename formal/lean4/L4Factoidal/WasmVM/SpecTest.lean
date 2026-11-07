@@ -96,7 +96,8 @@ def isNaN64 (b : UInt64) : Bool :=
 /-- Does `got` match the expected JSON value? `none`: the engine cannot tell (v128). -/
 def matches1 (e : Json) (got : Value) : Option Bool := do
   let ty ← str e "type"
-  let v := (str e "value").getD "null"
+  -- A reference with no value means any non-null reference of the type.
+  let v := (str e "value").getD "nonnull"
   match ty with
   | "i32" => some (got == .i32 (UInt32.ofNat (wrap 32 (← parseInt v))))
   | "i64" => some (got == .i64 (UInt64.ofNat (wrap 64 (← parseInt v))))
@@ -116,7 +117,7 @@ def matches1 (e : Json) (got : Value) : Option Bool := do
     | _ => some false
   | "externref" =>
     match got with
-    | .externRef a => some (if v == "null" then a.isNone else a == v.toNat?)
+    | .externRef a => some (if v == "null" then a.isNone else if v == "nonnull" then a.isSome else a == v.toNat?)
     | _ => some false
   | "funcref" =>
     match got with
@@ -145,6 +146,8 @@ structure St where
   currentSkipped : Option String := none
   named : Std.HashMap String Nat := {}
   registry : Std.HashMap String Nat := {}
+  /-- Names registered for a module that was not run. -/
+  skippedRegs : Std.HashSet String := {}
 
 def budget : Budget := { fuel := 200000000 }
 
@@ -162,7 +165,9 @@ def resolveImports (s : St) (m : Module) : Except String (Array ExternVal) :=
     let inst ← if imp.module == "spectest" then pure s.spectest else
       match s.registry[imp.module]? with
       | some i => pure i
-      | none => throw s!"unknown import module {imp.module}"
+      | none =>
+        if s.skippedRegs.contains imp.module then throw s!"SKIP imports from module not run: {imp.module}"
+        throw s!"unknown import module {imp.module}"
     match s.store.export? inst imp.name with
     | some v => pure v
     | none => throw s!"unknown import {imp.module}.{imp.name}"
@@ -177,7 +182,9 @@ def loadModule (s : St) (dir : System.FilePath) (cmd : Json) :
     | .error e => return (s, .error (.fail e.toString))
     | .ok vm =>
       match resolveImports s m with
-      | .error e => return (s, .ok (.error (.link e)))
+      | .error e =>
+        if e.startsWith "SKIP " then return (s, .error (.notRun (e.drop 5).toString))
+        return (s, .ok (.error (.link e)))
       | .ok imps =>
         let (store, r) := instantiateRun specHost s.store vm imps budget
         return ({ s with store }, .ok r)
@@ -240,7 +247,10 @@ def step (dir : System.FilePath) (s : St) (cmd : Json) : IO (St × Res) := do
       | none => s.current
     match inst, str cmd "as" with
     | some i, some a => return ({ s with registry := s.registry.insert a i }, .pass)
-    | none, _ => return (s, if s.currentSkipped.isSome then .notRun "module not run" else .fail "register: no module")
+    | none, some a =>
+      if s.currentSkipped.isSome || (str cmd "name").isSome then
+        return ({ s with skippedRegs := s.skippedRegs.insert a }, .notRun "module not run")
+      return (s, .fail "register: no module")
     | _, none => return (s, .fail "register: no name")
   | "action" =>
     match doAction s act with

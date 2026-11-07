@@ -40,6 +40,40 @@ def evalConst (st : Store) (inst : ModuleInst) (e : Expr) : UInt64 :=
     | _ => s
   stack.back!
 
+/-! ### Types across modules
+
+A type index means a different type in each module. The store keeps every type with
+its indices replaced by canonical ids (`Store.typeTable` indices), so types of two
+modules can be compared. -/
+
+def canonHeap (ids : Array Nat) : HeapType → HeapType
+  | .idx i => .idx (ids[i]?.getD selfIdx)
+  | h => h
+
+def canonVal (ids : Array Nat) : ValType → ValType
+  | .ref r => .ref { r with heap := canonHeap ids r.heap }
+  | t => t
+
+/-- A function type with its indices made canonical. While type `i` is being defined
+`ids` has `i` entries, so a reference to itself becomes `selfIdx`. -/
+def canonFunc (ids : Array Nat) (ft : FuncType) : FuncType :=
+  ⟨ft.params.map (canonVal ids), ft.results.map (canonVal ids)⟩
+
+/-- Subtyping of canonical heap types (ids are equal exactly when the types are). -/
+def heapSubC (a b : HeapType) : Bool :=
+  a == b ||
+  match a, b with
+  | .idx _, .func | .nofunc, .func | .nofunc, .idx _ => true
+  | .noextern, .extern | .noexn, .exn => true
+  | .none, .any | .none, .eq | .none, .i31 | .none, .struct | .none, .array => true
+  | .eq, .any | .i31, .any | .struct, .any | .array, .any => true
+  | .i31, .eq | .struct, .eq | .array, .eq => true
+  | _, _ => false
+
+def valSubC : ValType → ValType → Bool
+  | .ref a, .ref b => (b.nullable || !a.nullable) && heapSubC a.heap b.heap
+  | a, b => a == b
+
 def limitsMatch (actualMin : Nat) (actualMax : Option Nat) (decl : Limits) : Bool :=
   actualMin ≥ decl.min &&
   match decl.max with
@@ -48,17 +82,18 @@ def limitsMatch (actualMin : Nat) (actualMax : Option Nat) (decl : Limits) : Boo
     | some am => am ≤ dm
     | none => false
 
-def checkImport (st : Store) (types : Array FuncType) (d : ImportDesc) (v : ExternVal) :
-    Except String Unit :=
+def checkImport (st : Store) (types : Array FuncType) (ids : Array Nat) (d : ImportDesc)
+    (v : ExternVal) : Except String Unit :=
   match d, v with
   | .func t, .func a =>
     match st.funcs[a]?, types[t]? with
-    | some fi, some ft => if fi.type == ft then .ok () else .error "incompatible import type"
+    | some fi, some ft => if fi.type == canonFunc ids ft then .ok () else .error "incompatible import type"
     | _, _ => .error "unknown import"
   | .table tt, .table a =>
     match st.tables[a]? with
     | some ti =>
-      if ti.elem == tt.elem && limitsMatch ti.elems.size ti.max tt.limits then .ok ()
+      if ti.elem == (canonVal ids (.ref tt.elem) |> fun | .ref r => r | _ => tt.elem) &&
+        limitsMatch ti.elems.size ti.max tt.limits then .ok ()
       else .error "incompatible import type"
     | none => .error "unknown import"
   | .mem mt, .mem a =>
@@ -69,7 +104,10 @@ def checkImport (st : Store) (types : Array FuncType) (d : ImportDesc) (v : Exte
     | none => .error "unknown import"
   | .global gt, .global a =>
     match st.globalTypes[a]? with
-    | some t => if t == gt then .ok () else .error "incompatible import type"
+    | some t =>
+      let want := canonVal ids gt.type
+      let ok := if gt.mutable then t.mutable && t.type == want else !t.mutable && valSubC t.type want
+      if ok then .ok () else .error "incompatible import type"
     | none => .error "unknown import"
   | _, _ => .error "incompatible import type"
 
@@ -90,9 +128,15 @@ def instantiate (st : Store) (vm : ValidModule) (imports : Array ExternVal) :
     Store × Except InstError (Nat × Option Nat) := Id.run do
   let m := vm.module
   if imports.size != m.imports.size then return (st, .error (.link "wrong number of imports"))
-  let mut inst : ModuleInst := { types := m.types }
+  let mut st := st
+  let mut typeIds := #[]
+  for ft in m.types do
+    let (st', i) := st.typeId (canonFunc typeIds ft)
+    st := st'
+    typeIds := typeIds.push i
+  let mut inst : ModuleInst := { types := m.types, typeIds }
   for (imp, v) in m.imports.zip imports do
-    match checkImport st m.types imp.desc v with
+    match checkImport st m.types typeIds imp.desc v with
     | .error e => return (st, .error (.link e))
     | .ok () => pure ()
     match v with
@@ -100,25 +144,19 @@ def instantiate (st : Store) (vm : ValidModule) (imports : Array ExternVal) :
     | .table a => inst := { inst with tables := inst.tables.push a }
     | .mem a => inst := { inst with mems := inst.mems.push a }
     | .global a => inst := { inst with globals := inst.globals.push a }
-  let mut st := st
-  let mut typeIds := #[]
-  for ft in m.types do
-    let (st', i) := st.typeId ft
-    st := st'
-    typeIds := typeIds.push i
-  inst := { inst with typeIds }
   let instAddr := st.insts.size
   for (f, cf) in m.funcs.zip vm.code do
-    let ft := m.types[f.type]!
+    let ft := canonFunc typeIds m.types[f.type]!
     inst := { inst with funcs := inst.funcs.push st.funcs.size }
     st := { st with funcs := st.funcs.push { type := ft, typeId := typeIds[f.type]!, kind := .wasm instAddr cf } }
   for g in m.globals do
-    let (st', a) := st.addGlobal g.type (evalConst st inst g.init)
+    let (st', a) := st.addGlobal { g.type with type := canonVal typeIds g.type.type } (evalConst st inst g.init)
     st := st'
     inst := { inst with globals := inst.globals.push a }
   for t in m.tables do
     let init := match t.init with | some e => evalConst st inst e | none => nullRef
-    let (st', a) := st.addTable t.type init
+    let elem := match canonVal typeIds (.ref t.type.elem) with | .ref r => r | _ => t.type.elem
+    let (st', a) := st.addTable { t.type with elem } init
     st := st'
     inst := { inst with tables := inst.tables.push a }
   for mt in m.mems do
