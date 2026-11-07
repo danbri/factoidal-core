@@ -293,7 +293,14 @@ def r_classical_beq(text):
     return text, n
 
 
-PIPELINE = [r_preamble, r_classical_beq, r_field_prefix, r_record_update, r_missing_wf, r_partial_defs, r_mod, r_relaxed, r_wrap]
+@rule("strip-trailing-whitespace",
+      "The backend leaves spaces at line ends (after `forall ...,` and in the preamble); "
+      "`git diff --check` reports them. Removing them changes no token.")
+def r_strip_ws(text):
+    return subn_exact(r"[ \t]+$", "", text, 1042, "strip-trailing-whitespace", flags=re.M)
+
+
+PIPELINE = [r_preamble, r_classical_beq, r_field_prefix, r_record_update, r_missing_wf, r_partial_defs, r_mod, r_relaxed, r_strip_ws, r_wrap]
 
 
 def port(src):
