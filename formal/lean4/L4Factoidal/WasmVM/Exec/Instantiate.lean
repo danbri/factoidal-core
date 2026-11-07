@@ -23,8 +23,11 @@ def InstError.toString : InstError → String
   | .link m => s!"unlinkable: {m}"
   | .trap t => s!"trap: {t.message}"
 
+section
+variable {M : Type} [LinearMemory M]
+
 /-- Value of a constant expression (validated, so the stack has one value). -/
-def evalConst (st : Store) (inst : ModuleInst) (e : Expr) : UInt64 :=
+def evalConst (st : StoreOf M) (inst : ModuleInst) (e : Expr) : UInt64 :=
   let stack := e.foldl (init := (#[] : Array UInt64)) fun s i =>
     match i with
     | .i32Const v => s.push v.toUInt64
@@ -82,7 +85,7 @@ def limitsMatch (actualMin : Nat) (actualMax : Option Nat) (decl : Limits) : Boo
     | some am => am ≤ dm
     | none => false
 
-def checkImport (st : Store) (types : Array FuncType) (ids : Array Nat) (d : ImportDesc)
+def checkImport (st : StoreOf M) (types : Array FuncType) (ids : Array Nat) (d : ImportDesc)
     (v : ExternVal) : Except String Unit :=
   match d, v with
   | .func t, .func a =>
@@ -99,7 +102,7 @@ def checkImport (st : Store) (types : Array FuncType) (ids : Array Nat) (d : Imp
   | .mem mt, .mem a =>
     match st.mems[a]? with
     | some mi =>
-      if limitsMatch (mi.data.size / pageSize) mi.max mt.limits then .ok ()
+      if limitsMatch (LinearMemory.size mi.data / pageSize) mi.max mt.limits then .ok ()
       else .error "incompatible import type"
     | none => .error "unknown import"
   | .global gt, .global a =>
@@ -112,20 +115,20 @@ def checkImport (st : Store) (types : Array FuncType) (ids : Array Nat) (d : Imp
   | _, _ => .error "incompatible import type"
 
 /-- Write `vals` into table `ta` at `d`. -/
-def initTable (st : Store) (ta d : Nat) (vals : Array UInt64) : Except Trap Store :=
+def initTable (st : StoreOf M) (ta d : Nat) (vals : Array UInt64) : Except Trap (StoreOf M) :=
   let t := st.tables[ta]!
   if d + vals.size > t.elems.size then .error .tableOOB
   else .ok { st with tables := st.tables.modify ta fun t => { t with elems := vals.foldl (init := (t.elems, d)) (fun (a, i) v => (a.set! i v, i + 1)) |>.1 } }
 
-def initMem (st : Store) (ma d : Nat) (bytes : ByteArray) : Except Trap Store :=
+def initMem (st : StoreOf M) (ma d : Nat) (bytes : ByteArray) : Except Trap (StoreOf M) :=
   let m := st.mems[ma]!
-  if d + bytes.size > m.data.size then .error .memOOB
-  else .ok { st with mems := st.mems.modify ma fun mi => { mi with data := bytes.copySlice 0 mi.data d bytes.size } }
+  if d + bytes.size > LinearMemory.size m.data then .error .memOOB
+  else .ok { st with mems := st.mems.modify ma fun mi => { mi with data := LinearMemory.writeBytes mi.data d bytes 0 bytes.size } }
 
 /-- Instantiate. Returns the store (changed even on a trap) and either the instance
 address with the start function's address, or the error. -/
-def instantiate (st : Store) (vm : ValidModule) (imports : Array ExternVal) :
-    Store × Except InstError (Nat × Option Nat) := Id.run do
+def instantiate (st : StoreOf M) (vm : ValidModule) (imports : Array ExternVal) :
+    StoreOf M × Except InstError (Nat × Option Nat) := Id.run do
   let m := vm.module
   if imports.size != m.imports.size then return (st, .error (.link "wrong number of imports"))
   let mut st := st
@@ -203,4 +206,5 @@ def instantiate (st : Store) (vm : ValidModule) (imports : Array ExternVal) :
   let start := m.start.map fun s => inst.funcs[s]!
   return (st, .ok (instAddr, start))
 
+end
 end L4Factoidal.WasmVM

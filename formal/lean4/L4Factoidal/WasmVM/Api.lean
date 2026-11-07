@@ -24,6 +24,9 @@ namespace L4Factoidal.WasmVM
 
 export Binary (decode DecodeError)
 
+section
+variable {M : Type} [LinearMemory M]
+
 /-- How much a run may use. -/
 structure Budget where
   /-- Instructions to run before `Outcome.outOfFuel`. -/
@@ -62,14 +65,14 @@ def Outcome.describe : Outcome → String
   | .hostCall id _ _ => s!"host call {id}"
   | .exit s => s!"exit {s}"
 
-private def finish (st : Store) (results : Array ValType) (r : Store × Machine × Nat × Event) :
-    Store × Outcome :=
+private def finish (st : StoreOf M) (results : Array ValType) (r : StoreOf M × Machine × Nat × Event) :
+    StoreOf M × Outcome :=
   let (st', m, _, ev) := r
   let _ := st
   match ev with
   | .done =>
-    let base := m.sp - results.size
-    (st', .values ((results.zipIdx).map fun (t, i) => Value.ofBits t (Run.rd m.stack (base + i))))
+    let base := m.sp - results.size.toUSize
+    (st', .values ((results.zipIdx).map fun (t, i) => Value.ofBits t (Run.rd m.stack (base + i.toUSize))))
   | .trap t => (st', .trap t)
   | .outOfFuel => (st', .outOfFuel { machine := m, results, hostResults := none })
   | .hostCall id fa args =>
@@ -77,34 +80,32 @@ private def finish (st : Store) (results : Array ValType) (r : Store × Machine 
     let vs := (ft.params.zip args).map fun (t, b) => Value.ofBits t b
     (st', .hostCall id vs { machine := m, results, hostResults := some ft.results })
 
-def invoke (st : Store) (fa : Nat) (args : Array Value) (lim : Budget := {}) : Store × Outcome :=
+@[specialize] def invoke (st : StoreOf M) (fa : Nat) (args : Array Value) (lim : Budget := {}) : StoreOf M × Outcome :=
   match st.funcs[fa]? with
   | none => (st, .trap (.host "unknown function"))
   | some fi =>
     if args.size != fi.type.params.size then (st, .trap (.host "wrong number of arguments")) else
     let n := args.size
     let stack := args.foldl (init := (Slots.zeros (max 1024 (2 * n)), 0))
-      (fun (s, i) v => (Run.wr s i v.toBits, i + 1)) |>.1
+      (fun (s, i) v => (Run.wr s i.toUSize v.toBits, i + 1)) |>.1
     let code : Array Op := #[.call 0, .return_ fi.type.results.size]
     let inst : ModuleInst := { funcs := #[fa] }
-    let m : Machine := ⟨stack, n, 0, 0, code, inst, #[]⟩
-    finish st fi.type.results (Run.run lim.run st m lim.fuel)
+    finish st fi.type.results (Run.run lim.run st stack n.toUSize 0 0 code inst #[] lim.fuel)
 
 /-- `invoke`, also giving the number of instructions run (for measurements). -/
-def invokeSteps (st : Store) (fa : Nat) (args : Array Value) (lim : Budget := {}) : Store × Outcome × Nat :=
+@[specialize] def invokeSteps (st : StoreOf M) (fa : Nat) (args : Array Value) (lim : Budget := {}) : StoreOf M × Outcome × Nat :=
   match st.funcs[fa]? with
   | none => (st, .trap (.host "unknown function"), 0)
   | some fi =>
     let stack := args.foldl (init := (Slots.zeros (max 1024 (2 * args.size)), 0))
-      (fun (s, i) v => (Run.wr s i v.toBits, i + 1)) |>.1
+      (fun (s, i) v => (Run.wr s i.toUSize v.toBits, i + 1)) |>.1
     let code : Array Op := #[.call 0, .return_ fi.type.results.size]
     let inst : ModuleInst := { funcs := #[fa] }
-    let m : Machine := ⟨stack, args.size, 0, 0, code, inst, #[]⟩
-    let r := Run.run lim.run st m lim.fuel
+    let r := Run.run lim.run st stack args.size.toUSize 0 0 code inst #[] lim.fuel
     let (st', o) := finish st fi.type.results r
     (st', o, lim.fuel - r.2.2.1)
 
-def resume (st : Store) (k : Suspended) (r : HostResult) (lim : Budget := {}) : Store × Outcome :=
+@[specialize] def resume (st : StoreOf M) (k : Suspended) (r : HostResult) (lim : Budget := {}) : StoreOf M × Outcome :=
   match r with
   | .trap msg => (st, .trap (.host msg))
   | .exit s => (st, .exit s)
@@ -113,16 +114,17 @@ def resume (st : Store) (k : Suspended) (r : HostResult) (lim : Budget := {}) : 
     let m := match k.hostResults with
       | none => m
       | some _ =>
-        let (stack, sp) := vs.foldl (init := (m.stack, m.sp)) fun (s, i) v =>
-          ((if i < s.count then Run.wr s i v.toBits else Slots.wr (Slots.grow s (i + 1 - s.count)) i v.toBits), i + 1)
-        { m with stack, sp }
-    finish st k.results (Run.run lim.run st m lim.fuel)
+        let (stack, sp) := vs.foldl (init := (m.stack, m.sp.toNat)) fun (s, i) v =>
+          ((if i < s.count then Run.wr s i.toUSize v.toBits
+            else Slots.wr (Slots.grow s (i + 1 - s.count)) i.toUSize v.toBits), i + 1)
+        { m with stack, sp := sp.toUSize }
+    finish st k.results (Run.runM lim.run st m lim.fuel)
 
 /-- A pure host: host function id, arguments, store → store and result. -/
-abbrev PureHost := Nat → Array Value → Store → Store × HostResult
+abbrev PureHost (M : Type) := Nat → Array Value → StoreOf M → StoreOf M × HostResult
 
 /-- Serve host calls with a pure host, at most `n` of them. -/
-def drive (host : PureHost) (lim : Budget) : Nat → Store × Outcome → Store × Outcome
+@[specialize] def drive (host : PureHost M) (lim : Budget) : Nat → StoreOf M × Outcome → StoreOf M × Outcome
   | 0, r => r
   | n + 1, (st, o) =>
     match o with
@@ -131,13 +133,13 @@ def drive (host : PureHost) (lim : Budget) : Nat → Store × Outcome → Store 
       drive host lim n (resume st k r lim)
     | _ => (st, o)
 
-def invokePure (host : PureHost) (st : Store) (fa : Nat) (args : Array Value)
-    (lim : Budget := {}) (maxHostCalls : Nat := 1000000) : Store × Outcome :=
+@[specialize] def invokePure (host : PureHost M) (st : StoreOf M) (fa : Nat) (args : Array Value)
+    (lim : Budget := {}) (maxHostCalls : Nat := 1000000) : StoreOf M × Outcome :=
   drive host lim maxHostCalls (invoke st fa args lim)
 
 /-- Instantiate, then run the start function with a pure host. -/
-def instantiateRun (host : PureHost) (st : Store) (vm : ValidModule) (imports : Array ExternVal)
-    (lim : Budget := {}) : Store × Except InstError Nat :=
+@[specialize] def instantiateRun (host : PureHost M) (st : StoreOf M) (vm : ValidModule) (imports : Array ExternVal)
+    (lim : Budget := {}) : StoreOf M × Except InstError Nat :=
   match instantiate st vm imports with
   | (st, .error e) => (st, .error e)
   | (st, .ok (i, none)) => (st, .ok i)
@@ -149,9 +151,9 @@ def instantiateRun (host : PureHost) (st : Store) (vm : ValidModule) (imports : 
 
 /-- A driver for `IO` embedders: runs host calls through `host` until the run ends
 or `maxHostCalls` host calls have been served. -/
-def runIO (st : Store) (fa : Nat) (args : Array Value) (lim : Budget)
-    (host : Nat → Array Value → Store → IO (Store × HostResult)) (maxHostCalls : Nat := 1000000) :
-    IO (Store × Outcome) := do
+@[specialize] def runIO (st : StoreOf M) (fa : Nat) (args : Array Value) (lim : Budget)
+    (host : Nat → Array Value → StoreOf M → IO (StoreOf M × HostResult)) (maxHostCalls : Nat := 1000000) :
+    IO (StoreOf M × Outcome) := do
   let mut (st, o) := invoke st fa args lim
   for _ in [0:maxHostCalls] do
     match o with
@@ -161,4 +163,5 @@ def runIO (st : Store) (fa : Nat) (args : Array Value) (lim : Budget)
     | _ => break
   return (st, o)
 
+end
 end L4Factoidal.WasmVM

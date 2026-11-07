@@ -99,15 +99,20 @@ Component Model and WASI 0.2. The API carries this as follows:
   by the validator, which knows the static stack height at every instruction. This is
   the side table of Wizard (Titzer, 2022) folded into the op, as wasm3 does.
 - **Operand stack**: one `ByteArray` for the whole run, 8 little-endian bytes per
-  slot (`Slots` in `Exec/Code.lean`). i32 and f32 are zero-extended, f64 and i64 use
+  slot (`Slots` in `Exec/Code.lean`), read and written as one 8-byte access at a
+  `USize` slot index (see "Speed pass"). i32 and f32 are zero-extended, f64 and i64 use
   the whole slot, a reference is an address with all-ones for null. v128 (SIMD,
   later) takes two slots. A `FloatArray` read through `Float.ofBits` measured faster
   but is wrong: see "Measurements".
 - **Locals** are slots of the operand stack at the frame base (`fp + i`).
+- **Registers**: `run` takes the stack, `sp`, `fp`, `pc` (`USize`), the code, the
+  instance and the frames as separate arguments. `Machine` is built only when a run
+  stops.
 - **Frames**: an `Array Frame` (return pc, return code, frame base, instance). Wasm calls
   never become Lean calls, so the C stack does not grow with Wasm call depth.
-- **Memory**: `ByteArray`, little-endian loads and stores assembled from bytes, one
-  bounds check per access (`ea + width ≤ size`).
+- **Memory**: the `LinearMemory` interface (see "Linear memory"); backend A is a
+  `ByteArray`. One bounds check per access (`ea + width ≤ size`), in the loop; the
+  backend gets the proof.
 - **Tables**: `Array UInt64` of references. **Globals**: one store-wide `FloatArray`.
 - **Uniqueness.** In-place update needs reference count 1. The loop holds the operand
   stack, the frames and the store as separate arguments, never inside a value that is
@@ -268,6 +273,88 @@ round trip through the stack: the spec test `fac` (`fac-opt`) failed with
 float operation sees a NaN operand as the canonical NaN; the result is still an
 arithmetic NaN, which the spec allows, and `abs`, `neg`, `copysign`, loads, stores and
 reinterpretations work on bits and never call `Float.ofBits`.
+
+## Linear memory
+
+Issue https://github.com/danbri/factoidal/issues/1289 (memory backends), section 1.
+Code: `Exec/Memory.lean`.
+
+- **Interface.** `class LinearMemory (M)`: `size`, `create n max`, `grow`, `load8/16/32/64`,
+  `store8/16/32/64` (little-endian), `copyWithin`, `copyInto`, `fill`, `writeBytes`
+  (data segments, `memory.init`, host writes), `readBytes` (host reads). Each load and
+  store takes a proof `ea + w ≤ size m`; the loop makes the one check.
+- **No dispatch per access.** The store is `StoreOf M`; `run`, `invoke`, `resume`,
+  `instantiateRun` and the drivers take `[LinearMemory M]` and are `@[specialize]`.
+  In the emitted C for the benchmark (`Bench/Engine.c`) the loop is the copy
+  `Run.run_at_..._spec`, and a store is the inline 4-byte `memcpy` of backend A, with
+  no closure call. Measured: `memsum` 162 million instructions per second with the
+  interface, against 29 before the speed pass (the slot change is in the same step;
+  the interface itself showed no cost: `memsum` and `sum` moved by the same factor).
+- **Backend A** `ByteMem` (a `ByteArray`) is the reference model. `size` is
+  `data.usize.toNat`, so the proof from the loop's check gives the `USize` offsets.
+- **Backend B** (page-aligned host memory in a C shim, for Metal): not built. The
+  interface allows it: nothing outside `ByteMem` assumes a `ByteArray`; `create` gets
+  the most bytes the memory may have, so B can reserve that range and commit pages at
+  `grow`; `Tests/Memory.lean` has `differential M N`, which runs one export on stores
+  over two backends and compares results and memory bytes (today `ByteMem` against
+  `ByteMem`).
+- **Ownership rule.** A memory value is held by exactly one `MemInst` in one store.
+  The loop holds the store with reference count 1, so a store changes the memory in
+  place. A host function gets the store (in `resume`'s caller), not the memory; it
+  reads and writes through `Store.readMem`/`Store.writeMem` and gives the store back
+  through `resume`. A caller that keeps an old store pays one copy of each memory it
+  then writes. In engine code, change a memory only inside `st.mems.modify` with the
+  `MemInst` taken apart first (`fun ⟨data, max⟩ => ..`): with `{ mi with data := .. }`
+  under a dependent `if`, the compiler kept a second reference to the memory and every
+  store copied it (found by the benchmark: `memsum` 11 million instructions per second
+  with 64 KiB of memory).
+- **Test.** `Tests/Memory.lean`, run at the end of `lake exe wasmvm-spectest` and by
+  `lake exe wasmvm-bench memtest`: 10^3, then 10^6 stores into 64 KiB and into 64 MiB
+  of memory; the 64 MiB run must take at most 4 times the 64 KiB run plus 200 ms.
+  Result: 10^6 stores, 145 ms and 145 ms, pass. Red check with the copying form of
+  `storeMem`: 10^3 stores, 1 ms against 2337 ms, FAIL.
+
+## Speed pass
+
+All on the Apple M1 above, `lake exe wasmvm-bench engine` (10^7 iterations; `fib(30)`),
+million Wasm instructions per second. Spec tests after each row: pass 35085, fail 0.
+
+| Change | sum | memsum | fib | Justifying theorem |
+|---|---|---|---|---|
+| before (stage 1) | 39 | 30 | 37 | |
+| slots: one `USize` check per access, 8-byte load in Lean, 8-byte store in inline C; registers as `run` arguments; memory interface | 191 | 164 | 156 | `Slots.slot_ok`, `Bytes.byte_ok`, `Bytes.nat_ok`, `Run.pc_ok` |
+
+**Slot form, measured first** (`lake exe wasmvm-bench repr`, ns per iteration of
+2 pushes, 2 reads, 1 add, 1 write):
+
+| Representation | ns |
+|---|---|
+| `ByteArray`, eight checked byte reads and writes (stage 1) | 25 |
+| `Array UInt64` (Lean boxes each `UInt64`: an allocation per write) | 25 |
+| `FloatArray` (WRONG for NaN patterns) | 17 |
+| F: `ByteArray`, `USize` slot index, one check, `uget`/`uset` with proved indices | 8.5 |
+| X: as F, the store as one inline-C `memcpy` | 3.3 |
+
+- Lean core 4.33 has no 8-byte load or store on `ByteArray` (`ByteArray.toUInt64LE!`
+  needs an array of size 8). In form F the eight `uget`s after one check compile to ONE
+  64-bit load (`ldr x`, checked in the ARM64 code), so loads stay in Lean. Eight
+  `uset`s stay eight byte stores, each after its own uniqueness check (a byte store
+  may alias the reference count), and a following 8-byte load of the same slot cannot
+  take its value from them. So stores are `Bytes.st16/st32/st64`: a Lean reference
+  body (the `uset` chain, which proofs use) with an `@[extern c inline]` body, one
+  `memcpy` after the same uniqueness check as `lean_byte_array_uset`. This C is
+  trusted to equal the Lean body (byte order: `__builtin_bswap` on a big-endian host).
+  The Lean interpreter cannot run it, so no `#eval`/`#guard` may call a store.
+- Split typed stacks: not measured. Lean has no unboxed array of `UInt32` or
+  `UInt64`; a `FloatArray` for floats has the NaN defect above.
+- **Checks removed, and the theorem for each.** Per slot access, 8 bounds checks
+  became 1: `Slots.slot_ok` (from `i < s.usize / 8`, the 8 bytes at `8i` are under
+  `s.usize`) and `Bytes.byte_ok` (each `o + k`, `k < w`, does not wrap and is under
+  `s.size`). Per memory access, `w` checks became 1, the loop's `ea + w ≤ size`:
+  `Bytes.nat_ok` (the `Nat` address is the `USize` offset). The code fetch is
+  `code.uget pc` after `pc < code.usize`: `Run.pc_ok`. Remaining: one compare per
+  slot access. Removing it needs `maxHeight_sound` and a typing invariant carried by
+  `run` (next steps).
 
 ## Theorems proved (stage 1)
 

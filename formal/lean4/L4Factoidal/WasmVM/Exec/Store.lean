@@ -10,6 +10,7 @@ read and written as bits.
 import L4Factoidal.WasmVM.Syntax
 import L4Factoidal.WasmVM.Numerics
 import L4Factoidal.WasmVM.Exec.Code
+import L4Factoidal.WasmVM.Exec.Memory
 
 namespace L4Factoidal.WasmVM
 
@@ -78,17 +79,20 @@ structure TableInst where
   elem : RefType
   deriving Inhabited
 
-structure MemInst where
-  data : ByteArray
+/-- A memory instance; `M` is the backend (`Exec/Memory.lean`). -/
+structure MemInst (M : Type) where
+  data : M
   max : Option Nat
-  deriving Inhabited
+
+instance [LinearMemory M] : Inhabited (MemInst M) := ⟨⟨LinearMemory.empty, none⟩⟩
 
 def pageSize : Nat := 65536
 
-structure Store where
+/-- The store, over memory backend `M`. `Store` is the store over backend A. -/
+structure StoreOf (M : Type) where
   funcs : Array FuncInst := #[]
   tables : Array TableInst := #[]
-  mems : Array MemInst := #[]
+  mems : Array (MemInst M) := #[]
   globals : Slots := ByteArray.empty
   globalTypes : Array GlobalType := #[]
   elems : Array (Array UInt64) := #[]
@@ -98,58 +102,57 @@ structure Store where
   typeTable : Array FuncType := #[]
   /-- Most pages one memory may have here (an engine limit under the module's own). -/
   pageLimit : Nat := 16384
-  deriving Inhabited
 
-namespace Store
+instance : Inhabited (StoreOf M) := ⟨{}⟩
+
+abbrev Store := StoreOf ByteMem
+
+namespace StoreOf
+variable {M : Type} [LinearMemory M]
 
 /-- The canonical id of a function type, adding it when new. -/
-def typeId (st : Store) (ft : FuncType) : Store × Nat :=
+def typeId (st : StoreOf M) (ft : FuncType) : StoreOf M × Nat :=
   match st.typeTable.findIdx? (· == ft) with
   | some i => (st, i)
   | none => ({ st with typeTable := st.typeTable.push ft }, st.typeTable.size)
 
-def addHostFunc (st : Store) (ft : FuncType) (id : Nat) : Store × Nat :=
+def addHostFunc (st : StoreOf M) (ft : FuncType) (id : Nat) : StoreOf M × Nat :=
   let (st, tid) := st.typeId ft
   ({ st with funcs := st.funcs.push { type := ft, typeId := tid, kind := .host id } }, st.funcs.size)
 
-def addGlobal (st : Store) (t : GlobalType) (v : UInt64) : Store × Nat :=
+def addGlobal (st : StoreOf M) (t : GlobalType) (v : UInt64) : StoreOf M × Nat :=
   ({ st with globals := st.globals.push v, globalTypes := st.globalTypes.push t },
    st.globalTypes.size)
 
-def zeros (n : Nat) : ByteArray := go n (ByteArray.emptyWithCapacity n)
-where
-  go : Nat → ByteArray → ByteArray
-    | 0, b => b
-    | k + 1, b => go k (b.push 0)
+def addMem (st : StoreOf M) (t : MemType) : StoreOf M × Nat :=
+  let maxBytes := (min (t.limits.max.getD 65536) st.pageLimit) * pageSize
+  let data := LinearMemory.create (t.limits.min * pageSize) maxBytes
+  ({ st with mems := st.mems.push { data, max := t.limits.max } }, st.mems.size)
 
-def addMem (st : Store) (t : MemType) : Store × Nat :=
-  ({ st with mems := st.mems.push { data := zeros (t.limits.min * pageSize), max := t.limits.max } },
-   st.mems.size)
-
-def addTable (st : Store) (t : TableType) (init : UInt64) : Store × Nat :=
+def addTable (st : StoreOf M) (t : TableType) (init : UInt64) : StoreOf M × Nat :=
   ({ st with tables := st.tables.push { elems := Array.replicate t.limits.min init, max := t.limits.max, elem := t.elem } },
    st.tables.size)
 
-def globalBits (st : Store) (a : Nat) : UInt64 := Slots.rd st.globals a
+def globalBits (st : StoreOf M) (a : Nat) : UInt64 := Slots.rd st.globals a.toUSize
 
 /-- Bounds-checked read of `n` bytes of memory `a` (for host functions). -/
-def readMem (st : Store) (a off n : Nat) : Except String ByteArray :=
+def readMem (st : StoreOf M) (a off n : Nat) : Except String ByteArray :=
   match st.mems[a]? with
   | none => .error "unknown memory"
-  | some m => if off + n ≤ m.data.size then .ok (m.data.extract off (off + n))
+  | some m => if off + n ≤ LinearMemory.size m.data then .ok (LinearMemory.readBytes m.data off n)
     else .error "out of bounds memory access"
 
 /-- Bounds-checked write into memory `a` (for host functions). -/
-def writeMem (st : Store) (a off : Nat) (bytes : ByteArray) : Except String Store :=
+def writeMem (st : StoreOf M) (a off : Nat) (bytes : ByteArray) : Except String (StoreOf M) :=
   match st.mems[a]? with
   | none => .error "unknown memory"
   | some m =>
-    if off + bytes.size ≤ m.data.size then
-      .ok { st with mems := st.mems.modify a fun mi => { mi with data := bytes.copySlice 0 mi.data off bytes.size } }
+    if off + bytes.size ≤ LinearMemory.size m.data then
+      .ok { st with mems := st.mems.modify a fun mi => { mi with data := LinearMemory.writeBytes mi.data off bytes 0 bytes.size } }
     else .error "out of bounds memory access"
 
-def export? (st : Store) (inst : Nat) (name : String) : Option ExternVal :=
+def export? (st : StoreOf M) (inst : Nat) (name : String) : Option ExternVal :=
   st.insts[inst]? >>= fun i => (i.exports.find? (·.1 == name)).map (·.2)
 
-end Store
+end StoreOf
 end L4Factoidal.WasmVM

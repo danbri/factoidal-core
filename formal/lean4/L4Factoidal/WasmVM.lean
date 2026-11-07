@@ -4,12 +4,15 @@ import L4Factoidal.WasmVM.Binary.Leb
 import L4Factoidal.WasmVM.Binary.Decode
 import L4Factoidal.WasmVM.Numerics
 import L4Factoidal.WasmVM.Valid
+import L4Factoidal.WasmVM.Exec.Bytes
+import L4Factoidal.WasmVM.Exec.Memory
 import L4Factoidal.WasmVM.Exec.Code
 import L4Factoidal.WasmVM.Exec.Store
 import L4Factoidal.WasmVM.Exec.Run
 import L4Factoidal.WasmVM.Exec.Instantiate
 import L4Factoidal.WasmVM.Api
 import L4Factoidal.WasmVM.Proofs.Numerics
+import L4Factoidal.WasmVM.Tests.Memory
 
 /-
 L4Factoidal.WasmVM: a WebAssembly engine in Lean 4 (https://github.com/danbri/factoidal/issues/1244).

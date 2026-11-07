@@ -34,7 +34,7 @@ def runExport (st : Store) (ia : Nat) (name : String) (arg : Nat) : IO Unit := d
 def engine (n : Nat) : IO Unit := do
   let .ok m := decode benchModule | IO.println "decode failed"
   let .ok vm := validate m | IO.println "invalid"
-  let (st, r) := instantiateRun (fun _ _ st => (st, .values #[])) {} vm #[]
+  let (st, r) := instantiateRun (M := ByteMem) (fun _ _ st => (st, .values #[])) {} vm #[]
   let .ok ia := r | IO.println "instantiation failed"
   runExport st ia "sum" n
   runExport st ia "memsum" n

@@ -15,6 +15,7 @@ was not run. Files run in parallel (one task each, each with its own store) unle
 
 Not part of the verified library: it does file I/O and prints scores.
 -/
+import L4Factoidal.WasmVM.Tests.Memory
 import Lean.Data.Json
 import L4Factoidal.WasmVM.Api
 
@@ -65,7 +66,7 @@ def specStore : Store × Nat := Id.run do
   st := { st with insts := st.insts.push { exports } }
   return (st, ia)
 
-def specHost : PureHost := fun _ _ st => (st, .values #[])
+def specHost : PureHost ByteMem := fun _ _ st => (st, .values #[])
 
 /-! ### JSON values -/
 
@@ -343,7 +344,8 @@ def main (args : List String) : IO UInt32 := do
       for (w, n) in whys.toList.take 5 do IO.println s!"  not run ×{n}: {w}"
     tot := { tot with pass := tot.pass + t.pass, fail := tot.fail + t.fail, notRun := tot.notRun + t.notRun }
   IO.println s!"TOTAL files {files.size}: pass {tot.pass} fail {tot.fail} not-run {tot.notRun} ({t1 - t0} ms, {if serial then "serial" else "parallel"})"
-  return 0
+  let memOk ← if names.isEmpty then Tests.Memory.run else pure true
+  return if tot.fail == 0 && memOk then 0 else 1
 
 end L4Factoidal.WasmVM.SpecTest
 

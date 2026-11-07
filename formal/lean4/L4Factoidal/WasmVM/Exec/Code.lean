@@ -13,6 +13,7 @@ Heights are relative to the frame base `fp`: slot `fp + i` is local `i`, and the
 operand stack of the function starts at `fp + nLocals`.
 -/
 import L4Factoidal.WasmVM.Syntax
+import L4Factoidal.WasmVM.Exec.Bytes
 
 namespace L4Factoidal.WasmVM
 
@@ -54,37 +55,39 @@ inductive Op where
   deriving Repr, Inhabited
 
 /-- 64-bit slots, 8 little-endian bytes each, in a `ByteArray`: the operand stack and
-the globals.
+the globals. Slot `i` is bytes `8i .. 8i+8`.
 
 Not a `FloatArray` read through `Float.ofBits`/`Float.toBits`, although that measured
-faster (17 against 25 ns in `Bench/Repr.lean`): Lean 4.33 models `Float` with all NaNs
-equal, and the compiled `Float.ofBits` makes every NaN bit pattern the canonical NaN.
-An i64 such as -1 (all ones) is such a pattern, so it did not survive a round trip.
-Found 2026-11-07 by the spec test `fac` (`fac-opt` gave 0x7f38000000000000). -/
+faster than the first byte form (17 against 25 ns in `Bench/Repr.lean`): Lean 4.33
+models `Float` with all NaNs equal, and the compiled `Float.ofBits` makes every NaN
+bit pattern the canonical NaN. An i64 such as -1 (all ones) is such a pattern, so it
+did not survive a round trip. Found 2026-11-07 by the spec test `fac` (`fac-opt` gave
+0x7f38000000000000).
+
+Access is by a `USize` slot index with ONE check, `i < s.usize / 8`; the byte offsets
+are proved in range from it (`slot_ok`, then `Bytes.byte_ok`). Measured in
+`Bench/Repr.lean`: 3.3 ns per iteration against 25 ns for eight checked byte accesses
+(variant X against C). -/
 abbrev Slots := ByteArray
 
 namespace Slots
 
-/-- Eight checked byte reads. A form with one check and proved indices
-(`s[o+k]'h`) measured slower (29 against 39 million instructions per second on
-`wasmvm-bench engine`, 2026-11-07), because each `o + k` is a `Nat` addition. -/
-@[inline] def rd (s : Slots) (i : Nat) : UInt64 :=
-  let o := i * 8
-  (s.get! o).toUInt64 ||| ((s.get! (o+1)).toUInt64 <<< 8) ||| ((s.get! (o+2)).toUInt64 <<< 16)
-  ||| ((s.get! (o+3)).toUInt64 <<< 24) ||| ((s.get! (o+4)).toUInt64 <<< 32)
-  ||| ((s.get! (o+5)).toUInt64 <<< 40) ||| ((s.get! (o+6)).toUInt64 <<< 48)
-  ||| ((s.get! (o+7)).toUInt64 <<< 56)
+theorem slot_ok {s : Slots} {i : USize} (h : i < s.usize / 8) : (i * 8).toNat + 8 ≤ s.usize.toNat := by
+  rw [USize.lt_iff_toNat_lt, USize.toNat_div] at h
+  have h8 : (8 : USize).toNat = 8 := by simp
+  rw [h8] at h
+  have h2 := USize.toNat_lt_size s.usize
+  have hs : USize.size = 2 ^ System.Platform.numBits := rfl
+  rw [USize.toNat_mul, h8, Nat.mod_eq_of_lt (by omega)]
+  omega
 
-@[inline] def wr (s : Slots) (i : Nat) (v : UInt64) : Slots :=
-  let o := i * 8
-  let s := s.set! o v.toUInt8
-  let s := s.set! (o+1) (v >>> 8).toUInt8
-  let s := s.set! (o+2) (v >>> 16).toUInt8
-  let s := s.set! (o+3) (v >>> 24).toUInt8
-  let s := s.set! (o+4) (v >>> 32).toUInt8
-  let s := s.set! (o+5) (v >>> 40).toUInt8
-  let s := s.set! (o+6) (v >>> 48).toUInt8
-  s.set! (o+7) (v >>> 56).toUInt8
+/-- Read slot `i` (0 when out of range; validation keeps every access in range). -/
+@[inline] def rd (s : Slots) (i : USize) : UInt64 :=
+  if h : i < s.usize / 8 then Bytes.ld64 s (i * 8) (slot_ok h) else 0
+
+/-- Write slot `i` (no change when out of range). -/
+@[inline] def wr (s : Slots) (i : USize) (v : UInt64) : Slots :=
+  if h : i < s.usize / 8 then Bytes.st64 s (i * 8) v (slot_ok h) else s
 
 /-- Number of slots. -/
 @[inline] def count (s : Slots) : Nat := s.size / 8
@@ -94,7 +97,7 @@ def grow (s : Slots) : Nat → Slots
   | 0 => s
   | k + 1 => grow (s.push 0 |>.push 0 |>.push 0 |>.push 0 |>.push 0 |>.push 0 |>.push 0 |>.push 0) k
 
-def push (s : Slots) (v : UInt64) : Slots := wr (grow s 1) s.count v
+def push (s : Slots) (v : UInt64) : Slots := wr (grow s 1) s.count.toUSize v
 
 def zeros (n : Nat) : Slots := grow (ByteArray.emptyWithCapacity (8 * n)) n
 
