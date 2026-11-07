@@ -864,3 +864,20 @@ Owner, relayed: "whatever is conventional in XMPP, otherwise follow IRC/Discord/
   `drain_unique` (TCP, direct TLS, STARTTLS), `wsFeedPure_unique` (WebSocket), `msgFeedPure_unique`
   (in-page), `Unique.opened`, `sessionGone_unique`, `Unique.closed`. The `IO` ops around these pure
   functions are not in the proofs.
+
+## 2026-11-07: the server pings a silent session
+
+- A dead TCP connection sends no FIN, so its session stays live and holds its resource, and a client
+  that comes back gets a generated one. The Node host now pings a bound session after
+  `pingIntervalMs` of silence (default 30 s) and closes it `pingTimeoutMs` later (default 20 s) if no
+  byte came. The timers are transport limits in the host; the bytes come from the engine:
+  `Session.ping` (XEP-0199 section 4.2, op `xmppSessionPing`), and a ping frame on a WebSocket
+  (RFC 6455 section 5.5.2, op `xmppWsPing`).
+- Any byte is the answer. A client without XEP-0199 answers `service-unavailable`
+  (RFC 6120 section 8.4), and `handleIq` drops a result or an error sent to the server. A browser
+  answers a ping frame in its WebSocket layer, with no script.
+- Proved: `Session.ping_isSome`, a ping goes to exactly the sessions that `canDeliver` allows.
+- Not covered: a client that returns inside the timeout still gets a generated resource, because the
+  old session is live at that moment. The native harness (`Harness/XmppServe.lean`) does not ping.
+  The server does not answer a client's own XEP-0199 ping with a result: it answers
+  `service-unavailable`, which also shows the link is up.

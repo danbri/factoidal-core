@@ -37,8 +37,11 @@
 // server-to-server federation, and any limit on how many bytes
 // a client may send without completing a unit beyond `maxBuffered`,
 // which is a transport limit this host applies by closing the socket.
-// The other transport limits are `maxConnections`, `loginTimeoutMs` and
-// `maxQueuedBytes`. There is no connection limit per address: behind a
+// The other transport limits are `maxConnections`, `loginTimeoutMs`,
+// `maxQueuedBytes`, and `pingIntervalMs` with `pingTimeoutMs`: a bound session
+// silent for the interval gets a ping from the engine (`xmppSessionPing`, or
+// `xmppWsPing` on a WebSocket), and one that sends no byte in the timeout after
+// that is closed. There is no connection limit per address: behind a
 // proxy, every client has the same one.
 
 import { createHash, randomBytes } from 'node:crypto'
@@ -51,7 +54,7 @@ import { createXmppRouter } from './router.mjs'
 /** The ops this host needs from the engine. */
 export const XMPP_SERVER_OPS = [
   'xmppOpen', 'xmppClose',
-  'xmppSessionOpen', 'xmppSessionFeed', 'xmppSessionDeliver', 'xmppSessionClose',
+  'xmppSessionOpen', 'xmppSessionFeed', 'xmppSessionDeliver', 'xmppSessionPing', 'xmppSessionClose',
   'xmppSessionTlsUp', 'xmppRosterGet', 'xmppRosterSet', 'xmppWsOpen', 'xmppStateLoad', 'xmppClock'
 ]
 
@@ -251,6 +254,10 @@ export async function openXmppServer (options = {}) {
         deliver (text) {
           return engine.call('xmppSessionDeliver', [session, text])
         },
+        /** This session has been silent: `{sent, send}`, an XEP-0199 ping when it is bound. */
+        ping (id) {
+          return engine.call('xmppSessionPing', [session, id])
+        },
         /** End of input: returns `{send: string[]}` and releases the handle. */
         close () {
           if (!open) return { send: [], routeFull: [] }
@@ -323,6 +330,10 @@ async function accountsFileWarnings (path) {
  *   without a bound resource before it is closed (default 30000; 0 disables)
  * @param {number} [options.maxQueuedBytes] bytes waiting to be written to a
  *   client that is not reading, before the socket is closed (default 8 MiB)
+ * @param {number} [options.pingIntervalMs] how long a bound session may be silent before it
+ *   gets a ping (default 30000; 0 disables pings and the timeout)
+ * @param {number} [options.pingTimeoutMs] how long after a ping a session that sends
+ *   no byte is closed, so that its resource is free again (default 20000)
  * @param {boolean} [options.addressLimit] false: count failed logins per account name only, for a
  *   listener behind a proxy, where every client has one address (default true)
  * @param {Function} [options.onError]
@@ -345,6 +356,9 @@ export async function createXmppServer (options = {}) {
   const maxConnections = limit('maxConnections', 1024)
   const loginTimeoutMs = limit('loginTimeoutMs', 30000)
   const maxQueuedBytes = limit('maxQueuedBytes', 8 * 1024 * 1024)
+  const pingIntervalMs = limit('pingIntervalMs', 30000)
+  const pingTimeoutMs = limit('pingTimeoutMs', 20000)
+  if (pingIntervalMs > 0 && pingTimeoutMs === 0) throw new XmppHostError('pingTimeoutMs must be positive when pings are on')
   if (!Number.isSafeInteger(maxBuffered) || maxBuffered < 0) {
     throw new XmppHostError('maxBuffered must be a nonnegative safe integer')
   }
@@ -515,6 +529,35 @@ export async function createXmppServer (options = {}) {
     c.loginTimer.unref()
   }
 
+  /** Any byte from a peer shows it is alive, whatever the byte says. */
+  function heard (c) {
+    c.lastHeard = Date.now()
+    c.pingedAt = 0
+  }
+
+  /** Ping the bound sessions that have been silent, and close the ones that stayed silent.
+   *  A dead TCP connection sends no FIN, so without this it holds its resource for as long as
+   *  the operating system keeps retrying. */
+  function checkSilence () {
+    const now = Date.now()
+    for (const c of connections) {
+      if (c.full === null || c.closing || c.upgrading) continue
+      if (c.pingedAt !== 0) {
+        if (now - c.pingedAt >= pingTimeoutMs) {
+          onLog(`closing ${c.full}: no answer to a ping`)
+          c.socket.destroy()
+        }
+      } else if (now - c.lastHeard >= pingIntervalMs) {
+        c.pingedAt = now
+        try { c.ping() } catch (error) { onError(error) }
+      }
+    }
+  }
+  const pinger = pingIntervalMs > 0
+    ? setInterval(checkSilence, Math.ceil(Math.min(pingIntervalMs, pingTimeoutMs, 10000) / 2))
+    : null
+  if (pinger !== null) pinger.unref()
+
   /** Count a new socket, or close it at once if the server is full. */
   function admit (socket) {
     if (transports.size >= maxConnections) {
@@ -636,16 +679,24 @@ export async function createXmppServer (options = {}) {
       full: null,
       closing: false,
       decoder: new StringDecoder('utf8'),
+      lastHeard: Date.now(),
+      pingedAt: 0,
+      pings: 0,
       deliver (text) {
         const answer = c.session.deliver(text)
         if (answer.delivered === true) { writeAll(c, answer.send); return true }
         return false
+      },
+      ping () {
+        const answer = c.session.ping(`ping-${++c.pings}`)
+        if (answer.sent === true) writeAll(c, answer.send)
       }
     }
     connections.add(c)
     startLoginTimer(c)
     onLog(`connection from ${socket.remoteAddress}:${socket.remotePort}`)
     c.onData = (chunk) => {
+      heard(c)
       if (!connections.has(c) || c.closing || c.upgrading) return
       const text = c.decoder.write(chunk)
       if (text.length === 0) return
@@ -708,6 +759,8 @@ export async function createXmppServer (options = {}) {
       bare: null,
       full: null,
       closing: false,
+      lastHeard: Date.now(),
+      pingedAt: 0,
       session: {
         close () {
           try {
@@ -720,11 +773,16 @@ export async function createXmppServer (options = {}) {
         const got = wsCall('xmppWsDeliver', [handle, text], new Uint8Array(0))
         if (got.envelope.delivered === true) { if (!socket.destroyed) socket.write(got.bytes); closeIfBacklogged(c); return true }
         return false
+      },
+      ping () {
+        const got = wsCall('xmppWsPing', [handle], new Uint8Array(0))
+        if (got.envelope.sent === true && !socket.destroyed) { socket.write(got.bytes); closeIfBacklogged(c) }
       }
     }
     connections.add(c)
     startLoginTimer(c)
     socket.on('data', (chunk) => {
+      heard(c)
       if (!connections.has(c) || c.closing) return
       let got
       try {
@@ -851,6 +909,7 @@ export async function createXmppServer (options = {}) {
       if (closePromise !== null) return closePromise
       closePromise = (async () => {
         if (poller !== null) clearInterval(poller)
+        if (pinger !== null) clearInterval(pinger)
         for (const c of Array.from(connections)) {
           endSession(c)
           c.socket.destroy()

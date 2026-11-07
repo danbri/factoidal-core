@@ -95,6 +95,7 @@ process per connection behind socat) serves; the wasm session ops are
 | `xmppSessionFeed` | `[session, text]` | `{ ok, send: [...], route: [{to, text}], presence: [...], rostersSaved: [...], close, stage, bare, full, bufferedBytes }` |
 | `xmppSessionDeliver` | `[session, text]` | `{ ok, delivered, send }` — `delivered:false` for an unbound session; nothing is lost |
 | `xmppSessionClose` | `[session]` | `{ ok, send }` |
+| `xmppSessionPing` | `[session, id]` | `{ ok, sent, send }` — an XEP-0199 ping for a bound session; `sent:false` otherwise. On a WebSocket, `xmppWsPing` writes a ping frame instead |
 | `xmppSessionTlsUp` | `[session]` | `{ ok, stage }` — after a feed answered `startTls: true` and the host finished the TLS handshake; refused otherwise |
 | `xmppRosterGet` / `xmppRosterSet` | `[server, bare]` / `[server, bare, encoded]` | the roster in the engine's own on-disk encoding |
 | `xmppClose` | `[server]` | `{ ok, sessions }` |

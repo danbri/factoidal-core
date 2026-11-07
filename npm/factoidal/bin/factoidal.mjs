@@ -774,7 +774,8 @@ usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
                             [--ws-port N [--ws-path PATH] [--ws-origin ORIGIN]...]
                             [--muc DOMAIN [--muc-members FILE] [--muc-owners FILE]] [--mix DOMAIN] [--gc3 DOMAIN]
                             [--state-key FILE] [--max-connections N]
-                            [--login-timeout SECONDS] [--no-address-limit]
+                            [--login-timeout SECONDS] [--ping-interval SECONDS]
+                            [--ping-timeout SECONDS] [--no-address-limit]
                             [--dangerously-disable-ratelimits]
 
 Starts a Node TCP server that runs one engine session per connection and
@@ -839,6 +840,11 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
                    behind a proxy, every client has the same one
   --login-timeout SECONDS  how long a connection may stay without a bound
                    resource before it is closed (default 30; 0 disables)
+  --ping-interval SECONDS  how long a bound session may be silent before the
+                   server pings it: XEP-0199 on TCP, a ping frame on a WebSocket
+                   (default 30; 0 disables pings)
+  --ping-timeout SECONDS  how long after a ping a session that sends no byte is
+                   closed, which frees its resource (default 20)
   --state-key FILE keep the server's state across restarts: rosters, messages held
                    for offline accounts, MIX channels and GC3 groups, in an LWS
                    storage in DIR/state, sealed (ChaCha20-Poly1305) under the key
@@ -1291,7 +1297,7 @@ const VALUE_OPTIONS = {
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
-  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'tls-port', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'muc-members', 'muc-owners', 'mix', 'gc3', 'state-key', 'max-connections', 'login-timeout', 'verifier', 'iterations']),
+  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key', 'tls-port', 'ws-port', 'ws-path', 'ws-origin', 'muc', 'muc-members', 'muc-owners', 'mix', 'gc3', 'state-key', 'max-connections', 'login-timeout', 'ping-interval', 'ping-timeout', 'verifier', 'iterations']),
   'webdav-serve': new Set(['port', 'host', 'users', 'guest', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
@@ -3064,6 +3070,16 @@ async function commandXmppServe (positional, options) {
     const n = Number(options['login-timeout'])
     if (!Number.isSafeInteger(n) || n < 0) throw new UsageError('--login-timeout needs a number of seconds')
     settings.loginTimeoutMs = n * 1000
+  }
+  if (options['ping-interval'] !== undefined) {
+    const n = Number(options['ping-interval'])
+    if (!Number.isSafeInteger(n) || n < 0) throw new UsageError('--ping-interval needs a number of seconds')
+    settings.pingIntervalMs = n * 1000
+  }
+  if (options['ping-timeout'] !== undefined) {
+    const n = Number(options['ping-timeout'])
+    if (!Number.isSafeInteger(n) || n < 1) throw new UsageError('--ping-timeout needs a positive number of seconds')
+    settings.pingTimeoutMs = n * 1000
   }
   if (options['ws-port'] !== undefined) {
     const wsPort = Number(options['ws-port'])

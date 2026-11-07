@@ -217,6 +217,14 @@ id = "wasm:xmppWsDeliver"
 reason = "a stanza routed to a bound XMPP-over-WebSocket session, as a text frame (Wasm/Ops/XmppSession.lean; RFC 6455 and RFC 7395 over Server.step); reads no RDF data"
 
 [[nonstage]]
+id = "wasm:xmppWsPing"
+reason = "a ping frame for a bound XMPP-over-WebSocket session that has been silent (Wasm/Ops/XmppSession.lean; RFC 6455 section 5.5.2); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppSessionPing"
+reason = "an XEP-0199 ping for a bound XMPP session that has been silent (Wasm/Ops/XmppSession.lean, Server.lean Session.ping); reads no RDF data"
+
+[[nonstage]]
 id = "wasm:xmppWsClose"
 reason = "ends an XMPP-over-WebSocket session with <close/> and a close frame (Wasm/Ops/XmppSession.lean; RFC 6455 and RFC 7395 over Server.step); reads no RDF data"
 

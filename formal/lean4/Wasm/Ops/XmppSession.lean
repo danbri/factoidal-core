@@ -768,6 +768,16 @@ def xmppSessionDeliver (h text : String) : IO String := do
         match o with | .send t => some t | _ => none)
       pure (okWith [("delivered", .bool true), ("send", .array (sends.map .string))])
 
+/-- `xmppSessionPing(sessionHandle, id)`: the host heard nothing from this session for a while.
+`sent:false` and nothing to write unless the session is bound (`Session.ping`). -/
+def xmppSessionPing (h id : String) : IO String := do
+  match (← xmppSessions.get)[h]? with
+  | none => pure (unknownXmppSession h)
+  | some os =>
+    match if os.closed then none else os.session.ping id with
+    | none => pure (okWith [("sent", .bool false), ("send", .array [])])
+    | some t => pure (okWith [("sent", .bool true), ("send", .array [.string t])])
+
 /-- The host is closing a session's handle. A session with a live full JID lost its transport, and
 `sessionGone` runs now; one whose stream ended has already been through it. The deliveries, as
 `routeFull` JSON, for the host to perform. -/
@@ -1024,6 +1034,20 @@ def xmppWsDeliverWith (h text : String) : IO (String × ByteArray) := do
         match o with | .send t => some t | _ => none)
       pure (okWith [("delivered", .bool true)], wsFramesOf ws.inner.session.cfg sends)
 
+/-- `xmppWsPing(handle)`: the host heard nothing from this session for a while. OUT region: a ping
+frame (RFC 6455 section 5.5.2), when the session is bound. The peer's WebSocket layer answers
+it, so a browser needs no XMPP code and no page script to stay connected; the pong is dropped by
+the reader, and the bytes are the proof of life. -/
+def xmppWsPingWith (h : String) : IO (String × ByteArray) := do
+  match (← xmppWsSessions.get)[h]? with
+  | none => pure (errJson s!"unknown XMPP WebSocket session handle: {h}", ByteArray.empty)
+  | some ws =>
+    let live := match ws.phase with | .frames .. => true | _ => false
+    if !live || ws.inner.closed || !ws.inner.session.canDeliver then
+      pure (okWith [("sent", .bool false)], ByteArray.empty)
+    else
+      pure (okWith [("sent", .bool true)], L4Factoidal.HTTP.WebSocket.encode .ping ByteArray.empty)
+
 /-- `xmppWsClose(handle)`: release the handle. OUT region: `<close/>` and
 a close frame when the stream was open (RFC 7395 section 3.6). -/
 def xmppWsCloseWith (h : String) : IO (String × ByteArray) := do
@@ -1039,7 +1063,7 @@ def xmppWsCloseWith (h : String) : IO (String × ByteArray) := do
                           L4Factoidal.HTTP.WebSocket.closeFrame 1000)
     | _ => pure (okWith [("routeFull", left)], ByteArray.empty)
 
-def xmppWsBlobIoOpNames : List String := ["xmppWsFeed", "xmppWsDeliver", "xmppWsClose"]
+def xmppWsBlobIoOpNames : List String := ["xmppWsFeed", "xmppWsDeliver", "xmppWsPing", "xmppWsClose"]
 
 /-! ## A message carrier: RFC 7395 without the socket
 
@@ -1508,7 +1532,7 @@ def xmppStateLoad (server path text : String) : IO String := do
 /-- The op names this module serves, through `callIO` only. -/
 def xmppSessionOpNames : List String :=
   [ "xmppOpen", "xmppClose"
-  , "xmppSessionOpen", "xmppSessionFeed", "xmppSessionDeliver", "xmppSessionClose"
+  , "xmppSessionOpen", "xmppSessionFeed", "xmppSessionDeliver", "xmppSessionPing", "xmppSessionClose"
   , "xmppSessionTlsUp", "xmppRosterGet", "xmppRosterSet", "xmppWsOpen", "xmppStateLoad", "xmppClock", "xmppVerifier"
   , "xmppMsgOpen", "xmppMsgFeed", "xmppMsgDeliver", "xmppMsgClose" ]
 

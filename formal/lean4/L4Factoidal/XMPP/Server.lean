@@ -87,6 +87,7 @@ def nsSession : String := "urn:ietf:params:xml:ns:xmpp-session"
 def nsStanzas : String := "urn:ietf:params:xml:ns:xmpp-stanzas"
 def nsStreamErr : String := "urn:ietf:params:xml:ns:xmpp-streams"
 def nsRoster : String := "jabber:iq:roster"
+def nsPing : String := "urn:xmpp:ping"
 def nsDiscoInfo : String := "http://jabber.org/protocol/disco#info"
 def nsTls : String := "urn:ietf:params:xml:ns:xmpp-tls"
 def nsDiscoItems : String := "http://jabber.org/protocol/disco#items"
@@ -1337,6 +1338,27 @@ def Session.canDeliver (s : Session) : Bool :=
   | .bound _ _ => true
   | _ => false
 
+/-- XEP-0199 section 4.2: the server pings a client. Only a bound session has an address to
+ping, so any other stage gets none. The host calls this when a session has been silent, and
+closes a session that then stays silent: a dead TCP connection can otherwise hold its resource
+for a long time, and a client that reconnects gets a new one (`Session.resourceFor`). The answer
+needs no code here: a result or an error from the client is dropped by `handleIq`, and the bytes
+are the proof of life, so a client without XEP-0199 proves it with `service-unavailable`
+(RFC 6120 section 8.4). -/
+def Session.ping (s : Session) (id : String) : Option String :=
+  match s.stage with
+  | .bound user resource =>
+    some (render (.element "iq"
+      [⟨"type", "get"⟩, ⟨"id", id⟩, ⟨"from", s.cfg.domain⟩, ⟨"to", s.fullOf user resource⟩]
+      [.element "ping" [⟨"xmlns", nsPing⟩] []]))
+  | _ => none
+
+/-- A ping goes to exactly the sessions that can receive a stanza. -/
+theorem Session.ping_isSome (s : Session) (id : String) :
+    (s.ping id).isSome = s.canDeliver := by
+  unfold Session.ping Session.canDeliver
+  split <;> simp
+
 /-- A stanza that arrived from another connection through the host's
 mailbox. It reaches the client only once the session is bound — RFC 6121
 section 8.5.3 says an unavailable resource is not a delivery target — so
@@ -1869,6 +1891,22 @@ private def boundJuliet : Session := { Session.init testCfg with stage := .bound
   match outs with
   | [.routeFull "romeo@example.com/orchard" _ none] => true
   | _ => false
+
+-- XEP-0199: a bound session is pinged at its full JID, and no other session is.
+#guard ((boundJuliet.ping "p1").getD "").contains "to=\"juliet@example.com/"
+#guard ((boundJuliet.ping "p1").getD "").contains "urn:xmpp:ping"
+#guard ({ boundJuliet with stage := .closed }.ping "p1").isNone
+
+-- The answer to a ping is dropped, whether a result or an error, and with or without `to`.
+#guard
+  let (_, _, outs) := step boundJuliet { roster := [] } (.element "<iq type='result' id='p1' to='example.com'/>")
+  outs.isEmpty
+#guard
+  let (_, _, outs) := step boundJuliet { roster := [] } (.element "<iq type='result' id='p1'/>")
+  outs.isEmpty
+#guard
+  let (_, _, outs) := step boundJuliet { roster := [] } (.element "<iq type='error' id='p1' to='example.com'><error type='cancel'><service-unavailable xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></error></iq>")
+  outs.isEmpty
 
 -- To the bare JID of another account: the server answers for it.
 #guard

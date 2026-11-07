@@ -821,6 +821,7 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "xmppSessionOpen"    => withArgs (arityIO2 op Ops.xmppSessionOpen)
   | "xmppSessionFeed"    => withArgs (arityIO2 op Ops.xmppSessionFeed)
   | "xmppSessionDeliver" => withArgs (arityIO2 op Ops.xmppSessionDeliver)
+  | "xmppSessionPing"    => withArgs (arityIO2 op Ops.xmppSessionPing)
   | "xmppSessionClose"   => withArgs (arityIO1 op Ops.xmppSessionClose)
   | "xmppSessionTlsUp"   => withArgs (arityIO1 op Ops.xmppSessionTlsUp)
   | "xmppWsOpen"         => withArgs (arityIO2 op Ops.xmppWsOpen)
@@ -1002,6 +1003,11 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .error e   => pure (errJson e, ByteArray.empty)
       | .ok [a, b] => Ops.xmppWsDeliverWith a b
       | .ok args   => pure (errJson s!"xmppWsDeliver expects 2 arguments, got {args.length}", ByteArray.empty)
+  | "xmppWsPing" =>
+      match decodeArgs argsJson with
+      | .error e => pure (errJson e, ByteArray.empty)
+      | .ok [a]  => Ops.xmppWsPingWith a
+      | .ok args => pure (errJson s!"xmppWsPing expects 1 argument, got {args.length}", ByteArray.empty)
   | "xmppWsClose" =>
       match decodeArgs argsJson with
       | .error e => pure (errJson e, ByteArray.empty)
