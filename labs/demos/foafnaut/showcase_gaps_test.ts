@@ -39,14 +39,20 @@ Deno.test("expected failure, issue 1272: table cells stack as blocks",()=>{
   assert.ok(left(run(body,"beta"))<=left(run(body,"alpha")),stillGap("1272"));
 });
 
-Deno.test("expected failure, issue 1272: an inline-block width is ignored",()=>{
+// Closed by branch wip/1268-press-feedback: an inline-block is one atomic box (its width
+// holds), and borders are drawn. The rest of issue 1272 (table layout, above) and of
+// issue 1273 (text-align and the other properties) stays an expected failure.
+Deno.test("an inline-block keeps its width (CSS 2.2 10.3.9)",()=>{
   const body="<p><span style='display:inline-block;width:200px'>one</span><span>two</span></p>";
-  assert.ok(left(run(body,"two"))<100,stillGap("1272"));
+  assert.ok(left(run(body,"two"))>=200);
 });
 
-Deno.test("expected failure, issue 1273: border and text-align are dropped",()=>{
+Deno.test("a border is drawn (CSS Backgrounds 3)",()=>{
   const plain=frame("<div>boxed</div>").primitiveCount;
-  assert.equal(frame("<div style='border:4px solid #c00'>boxed</div>").primitiveCount,plain,stillGap("1273"));
+  assert.equal(frame("<div style='border:4px solid #c00'>boxed</div>").primitiveCount,plain+4);
+});
+
+Deno.test("expected failure, issue 1273: text-align is dropped",()=>{
   assert.ok(left(run("<p style='text-align:right'>right</p>","right"))<100,stillGap("1273"));
 });
 
