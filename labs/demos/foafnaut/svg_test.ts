@@ -1,7 +1,7 @@
 // Local regression tests for a deliberately restricted SVG experiment.
 // These are not official W3C test-suite results or a conformance claim.
 import {loadSVG,validateSVG} from "./svg_engine.ts";
-import {encodePPM,unpad,checkPixels} from "./svg_gpu.ts";
+import {encodePPM,unpad,checkPixels,renderSVG} from "./svg_gpu.ts";
 function equal(a:unknown,b:unknown){if(JSON.stringify(a)!==JSON.stringify(b))throw new Error(`${JSON.stringify(a)} != ${JSON.stringify(b)}`);}
 function assert(b:boolean,message:string){if(!b)throw new Error(message);}
 function rejects(action:()=>unknown,contains:string){let message="";try{action();}catch(error){message=String(error);}assert(message.includes(contains),`Expected ${contains}; got ${message||"success"}`);}
@@ -144,13 +144,13 @@ Deno.test("SVG CSS stylesheet and inline declarations affect Lean geometry paint
 
 Deno.test("SVG refuses unsupported features rather than silently losing rendering semantics",async()=>{
  const e=await loadSVG();
- for(const element of ['text','image','foreignObject','linearGradient','filter','clipPath','mask','script'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
+ for(const element of ['text','image','foreignObject','filter','clipPath','mask','script'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
  for(const attrs of ['style="filter:blur(2px)"','class="red"','transform="perspective(1)"','stroke-linecap="square"','stroke-linejoin="bevel"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
  rejects(()=>e.compile('<?xml-stylesheet href="a.css"?>'+wrap('')),"processing instruction");
  rejects(()=>e.compile('<!DOCTYPE svg>'+wrap('')),"DOCTYPE");
  rejects(()=>e.compile('<?xml version="1.0" encoding="ISO-8859-1"?>'+wrap('')),"UTF-8");
  equal(e.sample(wrap('<rect width="20" height="20" fill="url(#missing)"/>'),5,5),[255,255,255]);
- rejects(()=>e.compile(wrap('<rect id="gradient" width="20" height="20" fill="url(#gradient)"/>')),"referenced paint server unsupported");
+ equal(e.sample(wrap('<rect id="gradient" width="20" height="20" fill="url(#gradient)"/>'),5,5),[255,255,255]);
 });
 
 Deno.test("SVG artifact/input limits and GPU row/readback encoding are checked without a GPU",async()=>{
@@ -162,6 +162,30 @@ Deno.test("SVG artifact/input limits and GPU row/readback encoding are checked w
  const rgba=new Uint8Array(a.width*a.height*4);for(const p of a.checks)rgba.set([...p.rgb,255],(p.y*a.width+p.x)*4);checkPixels(a,rgba);
  const p=a.checks[0];rgba[(p.y*a.width+p.x)*4]=255-p.rgb[0];rejects(()=>checkPixels(a,rgba),"readback mismatch");
  const rows=new Uint8Array(512);rows.set([1,2,3,255]);rows.set([4,5,6,255],256);equal([...encodePPM(unpad(rows,1,2,256),1,2).slice(11)],[1,2,3,4,5,6]);
+});
+
+Deno.test("SVG gradients draw from the paint table, and the GPU agrees with Lean's CPU reference",async()=>{
+ const e=await loadSVG();
+ const doc=wrap('<linearGradient id="base"><stop stop-color="red"/><stop offset=".5" stop-color="lime" stop-opacity=".5"/><stop offset="1" stop-color="blue"/></linearGradient>'+
+  '<linearGradient id="l" xlink:href="#base" gradientTransform="rotate(20)"/>'+
+  '<radialGradient id="r" xlink:href="#base" gradientUnits="userSpaceOnUse" cx="32" cy="32" r="20"/>'+
+  '<rect width="64" height="64" fill="url(#l)"/>'+
+  '<circle cx="32" cy="32" r="16" fill="none" stroke="url(#r)" stroke-width="10" transform="translate(2 1)"/>','xmlns:xlink="http://www.w3.org/1999/xlink"');
+ const a=e.compile(doc);
+ // The first record's fill row: table offset 0, fill-opacity 1, gradient mark.
+ equal([a.data[16],a.data[17],a.data[19]],[0,1,-1]);
+ equal(a.tiles!.at(-1),2*(8+3*5));
+ equal(e.compile(wrap('<rect width="9" height="9"/>')).tiles!.at(-1),0);
+ equal(e.sample(wrap('<linearGradient id="g"><stop stop-color="lime"/></linearGradient><rect width="9" height="9" fill="url(#g)"/>'),2,2),[0,255,0]);
+ equal(e.sample(wrap('<linearGradient id="g"/><rect width="9" height="9" fill="url(#g) red"/>'),2,2),[255,255,255]);
+ rejects(()=>e.compile(wrap('<linearGradient id="g" href="#g"/><rect width="9" height="9" fill="url(#g)"/>')),"gradient xlink:href cycle");
+ rejects(()=>e.compile(wrap(`<linearGradient id="g">${'<stop/>'.repeat(65)}</linearGradient><rect width="9" height="9" fill="url(#g)"/>`)),"gradient stop count exceeds 64");
+ const pixels=await renderSVG(a);
+ if(!pixels){console.log("NOT RUN: no WebGPU adapter, so the GPU comparison did not run");return;}
+ for(let y=3;y<64;y+=8)for(let x=3;x<64;x+=8){
+  const expected=e.sample(doc,x,y),offset=(y*64+x)*4;
+  assert(expected.every((v,i)=>Math.abs(pixels[offset+i]-v)<=1),`GPU ${[...pixels.slice(offset,offset+3)]}, Lean ${expected} at ${x},${y}`);
+ }
 });
 
 Deno.test("SVG storage artifact stays bounded and uses compact data-driven geometry",async()=>{

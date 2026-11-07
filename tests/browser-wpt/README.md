@@ -110,7 +110,7 @@ bands as a control.
 `SVGForgiving.lean` removes what the strict reader can not draw and logs each
 removal. `filesAffectedByDrop` in the report is the ranked to-do list. Only the
 first frame is drawn, so animated tests can not match yet. Results are in
-[the dated report](svg-tiny-pixels-20261105.json).
+[the dated report](svg-tiny-pixels-20261107.json).
 
 ## History and dashboard
 

@@ -11,8 +11,8 @@ def run : IO Unit := do
   check (NativeSVG.sample (wrap "<rect width='20' height='20' fill='green'/><rect width='20' height='20' fill='url(#missing)'/>") 0 0 5 5 == green) "missing server without fallback paints"
   check (NativeSVG.sample (wrap "<rect width='20' height='20' fill='url(#missing) green'/>") 0 0 5 5 == green) "missing server fallback"
   check (NativeSVG.sample (wrap "<g fill='url(#missing) currentColor' color='red'><rect width='20' height='20' color='green'/></g>") 0 0 5 5 == green) "fallback currentColor resolved too early"
-  for body in ["<rect id='present' width='2' height='2'/><rect width='20' height='20' fill='url(#present) green'/>",
-      "<rect width='20' height='20' fill='url(other.svg#missing) green'/>",
+  check (NativeSVG.sample (wrap "<rect id='present' width='2' height='2'/><rect width='20' height='20' fill='url(#present) green'/>") 0 0 5 5 == green) "target that is no paint server gives the fallback"
+  for body in ["<rect width='20' height='20' fill='url(other.svg#missing) green'/>",
       "<rect width='20' height='20' fill='url(#missing) green red'/>"] do
     check (!(NativeSVG.parse (wrap body)).isOk) "unsupported reference silently treated as missing"
   for name in ["fallback-001.svg","fallback-002.svg"] do

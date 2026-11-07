@@ -22,9 +22,142 @@ inductive Geometry where
   | polygon (points : List Point)
   | path (contours : List Contour)
   deriving Repr
+/-- Limit on the stops of one gradient. The shader walks them for each sample. -/
+def maxGradientStops : Nat := 64
+/-- SVG Tiny 1.2 §11.16: colour and opacity at an offset along the gradient. -/
+structure GradientStop where
+  offset : Float
+  color : Color
+  opacity : Float
+  deriving Repr
+/-- The gradient vector or circle, in the gradient's own coordinate system. -/
+inductive GradientShape where
+  | linear (x1 y1 x2 y2 : Float)
+  | radial (cx cy r : Float)
+  deriving Repr
+/-- SVG Tiny 1.2 §11.3: the paint after an IRI, used when the server paints nothing. -/
+inductive FallbackPaint where
+  | none | current | solid (color : Color)
+  deriving Repr
+/-- A paint server as the document states it, for any element that uses it. -/
+structure Gradient where
+  shape : GradientShape
+  boundingBoxUnits : Bool
+  transform : Transform := identity
+  stops : List GradientStop
+  fallback : FallbackPaint := .none
+  /-- From the primitive's local frame to the user space of the painted element.
+      It differs from the identity for a glyph, which is one primitive of a text. -/
+  frame : Transform := identity
+  /-- Bounding box x, y, width, height in `frame`, when the primitive's own bounds
+      are not the element's. -/
+  box : Option (Float × Float × Float × Float) := none
+  deriving Repr
+/-- A gradient lowered for one primitive: `map` goes from the primitive's local
+frame to a space where the parameter is the x coordinate (linear) or the
+distance from the origin (radial). -/
+structure GradientRecord where
+  map : Transform
+  radial : Bool
+  stops : List GradientStop
+  deriving Repr
 inductive Paint where
   | none | solid (color : Color) | current
+  | gradient (source : Gradient)
+  /-- A lowered gradient and its word offset in the paint table of the scene. -/
+  | gradientRecord (cursor : Nat) (record : GradientRecord)
   deriving Repr
+
+def gradientRecordHeaderWords : Nat := 8
+def gradientStopWords : Nat := 5
+def GradientStop.words (s : GradientStop) : List Float :=
+  [s.offset,s.color.r,s.color.g,s.color.b,s.opacity]
+/-- Wire form: the map's x row and the radial flag, its y row and the stop count,
+then the stops. The shader reads this layout. -/
+def GradientRecord.words (g : GradientRecord) : List Float :=
+  [g.map.a,g.map.c,g.map.e,if g.radial then 1 else 0,
+   g.map.b,g.map.d,g.map.f,Float.ofNat g.stops.length] ++ g.stops.flatMap GradientStop.words
+def GradientRecord.wordCount (g : GradientRecord) : Nat :=
+  gradientRecordHeaderWords+g.stops.length*gradientStopWords
+theorem GradientRecord.words_length (g : GradientRecord) : g.words.length = g.wordCount := by
+  have stops : (g.stops.flatMap GradientStop.words).length = g.stops.length*gradientStopWords := by
+    induction g.stops with
+    | nil => rfl
+    | cons head tail ih =>
+      simp only [List.flatMap_cons,List.length_append,ih,List.length_cons,Nat.add_mul]
+      simp [GradientStop.words,gradientStopWords,Nat.add_comm]
+  simp [GradientRecord.words,GradientRecord.wordCount,stops,gradientRecordHeaderWords]
+  omega
+
+/-- SVG Tiny 1.2 §11.16: each offset clamps to 0..1, and to no less than any
+earlier offset. -/
+def normalizeStops (stops : List GradientStop) : List GradientStop :=
+  (stops.foldl (fun (state : List GradientStop × Float) stop =>
+    let offset := max state.2 (max 0 (min 1 stop.offset))
+    ({stop with offset}::state.1,offset)) ([],0)).1.reverse
+private theorem normalizeStops_fold_length (stops : List GradientStop)
+    (state : List GradientStop × Float) :
+    (stops.foldl (fun (state : List GradientStop × Float) stop =>
+      let offset := max state.2 (max 0 (min 1 stop.offset))
+      ({stop with offset}::state.1,offset)) state).1.length = state.1.length+stops.length := by
+  induction stops generalizing state with
+  | nil => rfl
+  | cons head tail ih => simp [List.foldl_cons,ih]; omega
+theorem normalizeStops_length (stops : List GradientStop) :
+    (normalizeStops stops).length = stops.length := by
+  simpa [normalizeStops] using normalizeStops_fold_length stops ([],0)
+
+private def GradientStop.rgba (s : GradientStop) : List Float :=
+  [s.color.r,s.color.g,s.color.b,s.opacity]
+private def mixStops (a b : GradientStop) (f : Float) : List Float :=
+  [a.color.r*(1-f)+b.color.r*f,a.color.g*(1-f)+b.color.g*f,
+   a.color.b*(1-f)+b.color.b*f,a.opacity*(1-f)+b.opacity*f]
+/-- Pad spread. Colour and opacity interpolate as stated, not premultiplied. Of
+stops at one offset, the last one controls that offset. -/
+private def stopValue (t : Float) (current : GradientStop) : List GradientStop → List Float
+  | [] => current.rgba
+  | next::rest =>
+    if t >= next.offset then stopValue t next rest
+    else if t > current.offset then mixStops current next ((t-current.offset)/(next.offset-current.offset))
+    else current.rgba
+/-- Colour and opacity at a point of the primitive's local frame, as `[r,g,b,a]`.
+No stops give zero; lowering does not make such a record. -/
+def GradientRecord.colorAt (g : GradientRecord) (x y : Float) : List Float :=
+  let (u,v) := Math.Affine2.applyPoint .float g.map x y
+  let t := if g.radial then Float.sqrt (u*u+v*v) else u
+  match g.stops with
+  | [] => [0,0,0,0]
+  | first::rest => stopValue t first rest
+/-- SVG Tiny 1.2 §11.16: one stop paints one colour at every point. -/
+theorem GradientRecord.colorAt_single_stop (map : Transform) (radial : Bool) (stop : GradientStop)
+    (x y : Float) :
+    GradientRecord.colorAt ⟨map,radial,[stop]⟩ x y =
+      [stop.color.r,stop.color.g,stop.color.b,stop.opacity] := rfl
+
+/-- Linear parameter, or unit circle, from gradient coordinates. `none` means a
+degenerate vector or circle: SVG Tiny 1.2 §11.15 paints the last stop's colour. -/
+private def GradientShape.unitMap : GradientShape → Option (Transform × Bool)
+  | .linear x1 y1 x2 y2 =>
+    let dx := x2-x1; let dy := y2-y1; let squared := dx*dx+dy*dy
+    if squared == 0 then none
+    else some (⟨dx/squared,0,dy/squared,0,-(x1*dx+y1*dy)/squared,0⟩,false)
+  | .radial cx cy r =>
+    if r == 0 then none else some (⟨1/r,0,0,1/r,-cx/r,-cy/r⟩,true)
+/-- Lower a gradient for a primitive with these local bounds. `none` means that
+the server paints nothing: the box of a bounding-box gradient has no width or no
+height, or its transform is singular. Stops must not be empty. -/
+def Gradient.lower (g : Gradient) (bounds : Float × Float × Float × Float) : Option GradientRecord := do
+  let (x,y,w,h) := g.box.getD bounds
+  let toUser : Transform ← if g.boundingBoxUnits then
+      if w <= 0 || h <= 0 then none
+      else pure ⟨1/w,0,0,1/h,-x/w,-y/h⟩
+    else pure identity
+  let inverse ← Math.Affine2.inverse? .float g.transform
+  let toGradient := Math.Affine2.compose .float inverse (Math.Affine2.compose .float toUser g.frame)
+  match g.shape.unitMap with
+  | some (unit,radial) =>
+    pure ⟨Math.Affine2.compose .float unit toGradient,radial,g.stops⟩
+  | none => pure ⟨identity,false,g.stops.getLast?.toList⟩
 inductive FillRule where | nonzero | evenodd
   deriving Repr, BEq
 inductive LineCap where | butt | round

@@ -23,7 +23,8 @@ private def maxParses : Nat := 4000
 
 /-- Elements the strict reader reads. Any other element is removed and logged. -/
 private def readable := ["svg","g","use","symbol","defs","style","metadata","title","desc",
-  "rect","circle","ellipse","line","polygon","polyline","path"]
+  "rect","circle","ellipse","line","polygon","polyline","path",
+  "linearGradient","radialGradient","stop","solidColor"]
 /-- Elements that paint nothing: their content needs no reader support. -/
 private def silent := ["title","desc","metadata"]
 
@@ -57,6 +58,9 @@ structure SVGFont where
   family : String := ""
   unitsPerEm : Float := 1000
   defaultAdvance : Float := 500
+  /-- `font-face` ascent and descent, in font units, both as positive depths. -/
+  ascent : Float := 800
+  descent : Float := 200
   glyphs : Std.HashMap Char Glyph := {}
   kerning : Std.HashMap (String × String) Float := {}
   missing : Glyph := ⟨"",500,""⟩
@@ -84,7 +88,9 @@ private def SVGFont.ofElement (attrs : List NamespaceAttribute) (children : List
     let advance := float (plainAttr a "horiz-adv-x") fallback
     let data := (plainAttr a "d").getD ""
     match name.localPart with
-    | "font-face" => font := {font with unitsPerEm:=float (plainAttr a "units-per-em") 1000,family:=(plainAttr a "font-family").getD ""}
+    | "font-face" => 
+      let units := float (plainAttr a "units-per-em") 1000
+      font := {font with unitsPerEm:=units,family:=(plainAttr a "font-family").getD "",ascent:=(float (plainAttr a "ascent") (units*0.8)).abs,descent:=(float (plainAttr a "descent") (units*0.2)).abs}
     | "missing-glyph" => font := {font with missing:=⟨"",advance,data⟩}
     | "glyph" =>
       if let some text := plainAttr a "unicode" then
@@ -189,6 +195,16 @@ private def runAdvance (font : SVGFont) (run : Run) : Float :=
     (total+(g.advance-kern)*scale,some g)) ((0 : Float),(none : Option Glyph))
   total
 
+/-- Tell each glyph path of a run the bounding box of the whole text, x0 y0 x1 y1. -/
+private def markGlyphs (box : Float × Float × Float × Float) : NamespaceNode → NamespaceNode
+  | .element name attrs paths =>
+    let (x0,y0,x1,y1) := box
+    let mark : NamespaceAttribute := {name:={namespace_:=some NativeSVG.internalURI,localPart:=NativeSVG.textBoxAttribute},value:=s!"{x0} {y0} {x1-x0} {y1-y0}"}
+    .element name attrs (paths.map fun
+      | .element n a c => .element n (a ++ [mark]) c
+      | node => node)
+  | node => node
+
 /-- Lower one `text` element to a group of glyph paths. -/
 private def lowerText (font : SVGFont) (state : TextState) (attrs : List NamespaceAttribute)
     (children : List NamespaceNode) : NamespaceNode × List String := Id.run do
@@ -208,6 +224,8 @@ private def lowerText (font : SVGFont) (state : TextState) (attrs : List Namespa
   let mut y := ys.headD 0 + (numberList attrs "dy").headD 0
   let mut index := 0
   let mut groups : Array NamespaceNode := #[]
+  -- SVG Tiny 1.2 §7.11: the bounding box of a text is that of its character cells.
+  let mut box : Option (Float × Float × Float × Float) := none
   for run in runs do
     x := x+run.dx
     y := y+run.dy
@@ -229,12 +247,21 @@ private def lowerText (font : SVGFont) (state : TextState) (attrs : List Namespa
       if !g.data.isEmpty then
         paths := paths.push (svgElement "path" [mkAttr "d" g.data,mkAttr "stroke-width" (toString (run.strokeWidth/scale)),
           mkAttr "transform" s!"translate({x},{y}) scale({scale},{-scale})"] [])
+      let cellTop := y-font.ascent*scale
+      let cellBottom := y+font.descent*scale
+      let cellRight := x+g.advance*scale
+      box := some (match box with
+        | none => (x,cellTop,cellRight,cellBottom)
+        | some (x0,y0,x1,y1) => (min x0 x,min y0 cellTop,max x1 cellRight,max y1 cellBottom))
       x := x+g.advance*scale
       previous := some g
     groups := groups.push (svgElement "g" run.paint paths.toList)
   let outer := paintOf attrs ++ (attrs.filter (fun a => a.name.namespace_.isNone && a.name.localPart == "transform"))
   let ids := renameId attrs |>.filter (fun a => a.name.namespace_.isNone && a.name.localPart == "id")
-  return (svgElement "g" (ids ++ outer) groups.toList,results.flatMap (·.2))
+  let marked := match box with
+    | none => groups.toList
+    | some box => groups.toList.map (markGlyphs box)
+  return (svgElement "g" (ids ++ outer) marked,results.flatMap (·.2))
 
 /-- SVG Tiny 1.2 §5.8.2: this agent's language is en, and it has no extensions. -/
 private def conditionsPass (attrs : List NamespaceAttribute) : Bool :=
@@ -246,10 +273,34 @@ private def conditionsPass (attrs : List NamespaceAttribute) : Bool :=
   let extensions := match plainAttr attrs "requiredExtensions" with | none => true | some _ => false
   language && extensions
 
+/-- Elements of the tree that have an id, by id; the first one with an id wins. -/
+private def idTargets : Nat → NamespaceNode → List (String × NamespaceNode)
+  | 0,_ => []
+  | _,.other _ => []
+  | fuel+1,node@(.element _ attrs children) =>
+    ((plainAttr (renameId attrs) "id").toList.map (·,node)) ++ children.flatMap (idTargets fuel)
+
+private def hasElement (tag : String) : Nat → NamespaceNode → Bool
+  | 0,_ => false
+  | _,.other _ => false
+  | fuel+1,.element name _ children => name.localPart == tag || children.any (hasElement tag fuel)
+
+/-- SVG Tiny 1.2 §5.6: an instance inherits from its `use` element. Text lowers
+    here, with the font values in force, so a `use` of text must lower its own
+    copy. A target with a `use` inside stays with the strict reader, which has
+    the cycle check. -/
+private def textInstance (targets : Std.HashMap String NamespaceNode) (attrs : List NamespaceAttribute) : Option NamespaceNode := do
+  let source ← NativeSVGReferences.href attrs
+  if !source.startsWith "#" then none
+  let target ← targets.get? (source.drop 1).toString
+  let .element name _ _ := target | none
+  if !["g","text"].contains name.localPart || !hasElement "text" maxDepth target || hasElement "use" maxDepth target then none
+  pure target
+
 /-- Remove foreign and unread elements, stray text and the content of silent
     elements, and lower `text` when a font is known. Returns the new tree and
     one log line for each removal. -/
-private def normalise (fonts : List SVGFont) : Nat → TextState → Bool → NamespaceNode → Option NamespaceNode × List String
+private def normalise (fonts : List SVGFont) (targets : Std.HashMap String NamespaceNode) : Nat → TextState → Bool → NamespaceNode → Option NamespaceNode × List String
   | 0,_,_,_ => (none,["element: nesting exceeds 64"])
   | _,_,_,.other (.comment c) => (some (.other (.comment c)),[])
   | _,_,keepText,.other raw => match raw with
@@ -266,21 +317,37 @@ private def normalise (fonts : List SVGFont) : Nat → TextState → Bool → Na
       | none => (none,["element: text"])
     else if name.localPart == "switch" then
       -- SVG Tiny 1.2 §5.8: draw only the first child whose conditions pass.
-      let chosen := children.find? fun | .element n a _ => n.namespace_ == some svgURI && conditionsPass a | _ => false
+      let selected : NamespaceNode → Bool := fun
+        | .element n a _ => n.namespace_ == some svgURI && conditionsPass a | _ => false
+      let chosen := children.find? selected
       let inner := state.read attrs
-      let result := (chosen.toList).map (normalise fonts fuel inner false)
-      (some (svgElement "g" (renameId attrs) (result.filterMap (·.1))),result.flatMap (·.2))
+      let result := (chosen.toList).map (normalise fonts targets fuel inner false)
+      -- A child that is not drawn can still be referenced, so it stays as a definition.
+      let unused := children.eraseIdx (children.findIdx selected)
+      let kept := unused.map (normalise fonts targets fuel inner false)
+      (some (svgElement "g" (renameId attrs) (result.filterMap (·.1) ++ [svgElement "defs" [] (kept.filterMap (·.1))])),
+        result.flatMap (·.2) ++ kept.flatMap (·.2))
     else if name.localPart == "a" then
       -- A link draws its content. Link regions are not part of this pass.
       let inner := state.read attrs
-      let results := children.map (normalise fonts fuel inner false)
+      let results := children.map (normalise fonts targets fuel inner false)
       (some (svgElement "g" (renameId attrs) (results.filterMap (·.1))),results.flatMap (·.2))
+    else if name.localPart == "use" && !fonts.isEmpty && (textInstance targets attrs).isSome then
+      let inner := state.read attrs
+      let target := (textInstance targets attrs).getD (.other (.comment ""))
+      let (node,log) := normalise fonts targets fuel inner false target
+      let x := float (plainAttr attrs "x") 0
+      let y := float (plainAttr attrs "y") 0
+      let frame := ((plainAttr attrs "transform").getD "") ++ s!" translate({x},{y})"
+      let kept := (renameId attrs).filter fun a => a.name.namespace_.isNone &&
+        !["x","y","width","height","transform","href","font-size","font-family","text-anchor"].contains a.name.localPart
+      (some (svgElement "g" (kept ++ [mkAttr "transform" frame]) node.toList),log)
     else if !readable.contains name.localPart then (none,["element: " ++ name.localPart])
     else if silent.contains name.localPart then (some (.element name (renameId attrs) []),[])
     else
       let keepText := name.localPart == "style"
       let inner := state.read attrs
-      let results := children.map (normalise fonts fuel inner keepText)
+      let results := children.map (normalise fonts targets fuel inner keepText)
       (some (.element name (renameId attrs) (results.filterMap (·.1))),results.flatMap (·.2))
 
 private def stripAttr (tag : String) (key : String) : Nat → NamespaceNode → NamespaceNode × Nat
@@ -402,7 +469,9 @@ def parse (xml : String) (width height : Nat) (font : Option SVGFont := none) :
   let root ← parseNamespaceView xml
   let (root,rootLog) := rootAttrs root
   -- Fonts in the document come first; the host's font is the default.
-  let (some root,log) := normalise (fontsIn root ++ font.toList) maxDepth {} false root | throw "root element is not read"
+  let targets := (idTargets maxDepth root).foldl (fun map (id,node) =>
+    if map.contains id then map else map.insert id node) ({} : Std.HashMap String NamespaceNode)
+  let (some root,log) := normalise (fontsIn root ++ font.toList) targets maxDepth {} false root | throw "root element is not read"
   repair width height 1024 {root,dropped:=rootLog ++ log,parses:=0}
 
 end NativeSVGForgiving
