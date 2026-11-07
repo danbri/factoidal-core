@@ -139,6 +139,18 @@ def commandName : Nat → String
   | 17 => "redo"
   | 18 => "print"
   | 19 => "pageSetup"
+  | 20 => "reopenTab"
+  | 21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29 => "selectTab"
+  | 30 => "nextTab"
+  | 31 => "previousTab"
+  | 32 => "find"
+  | 33 => "pageDown"
+  | 34 => "pageUp"
+  | 35 => "top"
+  | 36 => "bottom"
+  | 37 => "lineDown"
+  | 38 => "lineUp"
+  | 39 => "stop"
   | _ => "none"
 
 /-- Text size of a new window on a desktop screen. -/

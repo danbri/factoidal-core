@@ -264,9 +264,19 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     -- since the bar is the only text field. Else it acts on the page (issue 1268).
     let focused := request.field? "focused" == some (.bool true)
     let target := if WebShell.addressCommands.contains action && (focused || action == "paste") then "address" else "page"
+    let nat := fun (name : String) => match request.field? name with
+      | some (.number n) => n.toNat?.getD 0 | _ => 0
+    -- A tab command answers the tab to show, from `tabs` and `active`; a scroll command the
+    -- scroll, from `scroll`, `view`, `scrollLimit` and `scale` (issue 1268).
+    let tab := match WebHistory.tabTarget command (nat "active") (nat "tabs") with
+      | some i => [("tab",JSON.Json.number (toString i))] | none => []
+    let scrollTo := match WebHistory.scrollTarget command (nat "scroll") (nat "view") (nat "scrollLimit") (80*max 1 (nat "scale")) with
+      | some n => [("scrollTo",JSON.Json.number (toString n))] | none => []
+    let refused := if command == WebHistory.findCommand
+      then [("refused",JSON.Json.string "find in page is not implemented: https://github.com/danbri/factoidal/issues/1280")] else []
     let fields := [("action",JSON.Json.string action)] ++
       (if WebShell.addressCommands.contains action then [("target",JSON.Json.string target)] else []) ++
-      [("textScalePercent",.number (toString (WebSelection.commandPercent command percent)))]
+      [("textScalePercent",.number (toString (WebSelection.commandPercent command percent)))] ++ tab ++ scrollTo ++ refused
     if (request.field? "history").isNone then return some (JSON.Json.object fields).toString
     let (next,url) := WebHistory.apply command (← history request)
     return some (JSON.Json.object (fields ++ historyFields next url)).toString
@@ -274,6 +284,18 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     let some (.string url) := request.field? "url" | throw "history URL required"
     let next := (← history request).push url
     return some (JSON.Json.object (historyFields next next.current)).toString
+  -- The tab icon from the bytes of an icon resource (`iconPrepare`).
+  if op == "iconPrepare" then
+    let some (.string data) := request.field? "base64" | throw "icon base64 required"
+    if data.utf8ByteSize > 4*maxIconBytes/3+4 then throw s!"icon exceeds {maxIconBytes} bytes"
+    let scale := match request.field? "scale" with | some (.number n) => n.toNat?.getD 1 | _ => 1
+    return some (← iconPrepare (← NativeImage.base64 data.toUTF8 0) scale).toString
+  -- A key that the macOS menu did not take, as the window library sends it.
+  if op == "pageKey" then
+    let some (.number code) := request.field? "key" | throw "key required"
+    let bits := match request.field? "modifiers" with | some (.number m) => m.toNat?.getD 0 | _ => 0
+    return some (JSON.Json.object [("command",match WebHistory.pageKey (code.toNat?.getD 0) bits with
+      | some value => .number (toString value) | none => .null)]).toString
   if op == "keyCommand" then
     let answer := WebHistory.keyCommand (str request "platform" "") (str request "modifier" "") (str request "key" "")
     return some (JSON.Json.object [("command",match answer with

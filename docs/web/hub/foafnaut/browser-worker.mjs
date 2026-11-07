@@ -128,13 +128,20 @@ function edit(action,text=''){
   if(clipboard)post({type:'clipboard',text:clipboard});
 }
 function command(id,text=''){
-  const answer=call('',{op:'command',command:id,textScalePercent:percent,history:history.history,focused});
+  const answer=call('',{op:'command',command:id,textScalePercent:percent,history:history.history,focused,
+    tabs:tabs.length,active,scroll,view:height,scrollLimit:scrollLimit(),scale});
   if(answer.target==='address'){if(!focused)focusAddress();edit(answer.action,text);return;}
   if(['back','forward','reload'].includes(answer.action)){if(answer.url)navigate(answer.url,false);history=answer;request();}
   if(answer.textScalePercent!==percent){percent=answer.textScalePercent;request();}
   if(answer.action==='focusAddress')focusAddress();
   if(answer.action==='newTab')newTab();
   if(answer.action==='closeTab')closeTab(active);
+  // Lean answers the tab to show and the scroll (issue 1268); this only shows them.
+  if(answer.tab!==undefined&&answer.tab!==active){keep();showTab(answer.tab);}
+  if(answer.scrollTo!==undefined&&answer.scrollTo!==scroll){scroll=answer.scrollTo;request();}
+  if(answer.action==='stop'&&loading){serial++;loading=false;request();}
+  if(answer.action==='reopenTab'){const tab=closed.pop();if(tab){keep();tabs.push(tab);showTab(tabs.length-1);}}
+  if(answer.refused)post({type:'error',error:answer.refused});
   if(answer.action==='settings')navigate(settingsURL);
   if(answer.action==='viewSource')viewSource();
 }
@@ -175,7 +182,9 @@ async function openGraph(){
 function keep(){tabs[active]={doc,history,scroll};}
 function showTab(index){serial++;loading=false;setFocus(false);active=index;({doc,history,scroll}=tabs[index]);field=showURL(doc.url);request();}
 function newTab(){keep();tabs.push({doc:home,history:push({entries:[],index:0},homeURL),scroll:0});showTab(tabs.length-1);focusAddress();}
-function closeTab(index){if(tabs.length===1)return;keep();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));}
+// Closed tabs, the last one last, for Shift-Command-T.
+const closed=[];
+function closeTab(index){if(tabs.length===1)return;keep();closed.push(tabs[index]);if(closed.length>25)closed.shift();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));}
 function setFocus(value){if(focused!==value){focused=value;post({type:'focus',focused});}}
 // Lean selects the whole address when the bar takes the focus; typing then replaces it.
 function focusAddress(){
@@ -184,9 +193,12 @@ function focusAddress(){
   setFocus(true);request();
 }
 function leaveAddress(){setFocus(false);field=showURL(doc.url);request();}
-function scrollBy(amount){
+function scrollLimit(){
   const bottom=Math.max(0,...(frame?.webRender.boxes??[]).map(box=>box[2]+box[4]));
-  const next=Math.max(0,Math.min(Math.max(0,bottom-height+60*scale),scroll+Math.round(amount)));
+  return Math.max(0,bottom-height+60*scale);
+}
+function scrollBy(amount){
+  const next=Math.max(0,Math.min(scrollLimit(),scroll+Math.round(amount)));
   if(next!==scroll){scroll=next;request();}
 }
 function shellCommand(name,argument){

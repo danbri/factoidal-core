@@ -170,6 +170,17 @@ private def historyCommand (number : Nat) : List (String × JSON.Json) :=
 #guard (WebDocument.run "" (json [("op",.string "historyPush"),("url",.string "c"),
   ("history",json [("entries",.array []),("index",.number "3")])]) 1 1).toOption.isNone
 #guard historyField [("op",.string "keyCommand"),("platform",.string "other"),("modifier",.string "alt"),("key",.string "ArrowLeft")] "command" == some (.number "6")
+-- Tab, scroll, stop and find commands (issue 1268): Lean answers the tab and the scroll.
+private def counted (command : Nat) (more : List (String × JSON.Json)) : List (String × JSON.Json) :=
+  [("op",.string "command"),("command",.number (toString command)),("textScalePercent",.number "100")] ++ more
+#guard historyField (counted 29 [("tabs",.number "4"),("active",.number "1")]) "tab" == some (.number "3")
+#guard historyField (counted 31 [("tabs",.number "4"),("active",.number "0")]) "tab" == some (.number "3")
+#guard historyField (counted 33 [("scroll",.number "100"),("view",.number "500"),("scrollLimit",.number "2000"),("scale",.number "2")]) "scrollTo" == some (.number "500")
+#guard historyField (counted 38 [("scroll",.number "100"),("view",.number "500"),("scrollLimit",.number "2000"),("scale",.number "2")]) "scrollTo" == some (.number "0")
+#guard historyField (counted 39 []) "action" == some (.string "stop") && historyField (counted 20 []) "action" == some (.string "reopenTab")
+#guard (historyField (counted 32 []) "refused").isSome && (historyField (counted 33 []) "refused").isNone
+#guard historyField [("op",.string "pageKey"),("key",.number "49"),("modifiers",.number "1")] "command" == some (.number "34")
+#guard historyField [("op",.string "pageKey"),("key",.number "0"),("modifiers",.number "0")] "command" == some .null
 #guard menu 1 250 == some "{\"action\":\"zoomIn\",\"textScalePercent\":275}"
 #guard menu 1 2000 == some "{\"action\":\"zoomIn\",\"textScalePercent\":2200}"
 #guard menu 99 == some "{\"action\":\"none\",\"textScalePercent\":100}"
