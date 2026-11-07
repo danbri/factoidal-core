@@ -23,12 +23,12 @@ theorem wf_absI32 (a : UInt64) : Spec.wf_num_ .I32 (absI32 a) := by
   refine Spec.wf_num_.num__case_0 _ _ _ ?_ (by rfl)
   refine Spec.wf_uN.uN_case_0 _ _ ?_
   have := a.toUInt32.toNat_lt
-  simp [Spec.size, Spec.numtype_addrtype]
+  simp [Spec.size, Spec.numtype_Inn]
   omega
 
 theorem num_beq_self (n : Nat) :
     (Spec.num_.mk_num__0 .I32 (.mk_uN n) == Spec.num_.mk_num__0 .I32 (.mk_uN n)) = true := by
-  simp [BEq.beq, Spec.instBEqNum_.beq, Spec.instBEqUN.beq, Spec.instBEqAddrtype.beq]
+  simp [BEq.beq, Spec.instBEqNum_.beq, Spec.instBEqUN.beq, Spec.instBEqInn.beq]
 
 /-- The pattern of every i32 binary operation without a trap: when the spec function
 `f` on the two read constants gives the read result, the engine step is a spec step. -/
@@ -56,19 +56,19 @@ theorem i32_add_refines (a b : UInt64) :
     Spec.Step_pure
       [.CONST .I32 (absI32 a), .CONST .I32 (absI32 b), .BINOP .I32 (.mk_binop__0 .I32 .ADD)]
       [.CONST .I32 (absI32 (NumOp.evalBin .i32_add a b))] :=
-  i32_bin_refines .ADD (Spec.iadd_ (Spec.sizenn (Spec.numtype_addrtype .I32))) .i32_add a b
+  i32_bin_refines .ADD (Spec.iadd_ (Spec.sizenn (Spec.numtype_Inn .I32))) .i32_add a b
     (fun _ _ h => .fun_binop__case_0 _ _ h)
-    (by simp [Spec.iadd_, Spec.sizenn, Spec.size, Spec.numtype_addrtype, Spec.proj_uN_0,
+    (by simp [Spec.iadd_, Spec.sizenn, Spec.size, Spec.numtype_Inn, Spec.proj_uN_0,
               NumOp.evalBin, Num.ofI32, Num.lo])
 
 theorem i32_sub_refines (a b : UInt64) :
     Spec.Step_pure
       [.CONST .I32 (absI32 a), .CONST .I32 (absI32 b), .BINOP .I32 (.mk_binop__0 .I32 .SUB)]
       [.CONST .I32 (absI32 (NumOp.evalBin .i32_sub a b))] :=
-  i32_bin_refines .SUB (Spec.isub_ (Spec.sizenn (Spec.numtype_addrtype .I32))) .i32_sub a b
+  i32_bin_refines .SUB (Spec.isub_ (Spec.sizenn (Spec.numtype_Inn .I32))) .i32_sub a b
     (fun _ _ h => .fun_binop__case_2 _ _ h)
     (by
-      simp [Spec.isub_, Spec.sizenn, Spec.size, Spec.numtype_addrtype, Spec.proj_uN_0,
+      simp [Spec.isub_, Spec.sizenn, Spec.size, Spec.numtype_Inn, Spec.proj_uN_0,
             NumOp.evalBin, Num.ofI32, Num.lo, UInt64.toNat_sub, UInt64.toNat_mod]
       omega)
 
@@ -76,9 +76,9 @@ theorem i32_mul_refines (a b : UInt64) :
     Spec.Step_pure
       [.CONST .I32 (absI32 a), .CONST .I32 (absI32 b), .BINOP .I32 (.mk_binop__0 .I32 .MUL)]
       [.CONST .I32 (absI32 (NumOp.evalBin .i32_mul a b))] :=
-  i32_bin_refines .MUL (Spec.imul_ (Spec.sizenn (Spec.numtype_addrtype .I32))) .i32_mul a b
+  i32_bin_refines .MUL (Spec.imul_ (Spec.sizenn (Spec.numtype_Inn .I32))) .i32_mul a b
     (fun _ _ h => .fun_binop__case_4 _ _ h)
-    (by simp [Spec.imul_, Spec.sizenn, Spec.size, Spec.numtype_addrtype, Spec.proj_uN_0,
+    (by simp [Spec.imul_, Spec.sizenn, Spec.size, Spec.numtype_Inn, Spec.proj_uN_0,
               NumOp.evalBin, Num.ofI32, Num.lo])
 
 end L4Factoidal.WasmVM.Proofs
