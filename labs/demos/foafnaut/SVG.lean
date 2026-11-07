@@ -3505,12 +3505,37 @@ private def Scene.checks (s : Scene) (data : Array Float) (live : Bool := false)
   let probes := (rawProbes.map fun (x,y) => (min (s.width-1) x,min (s.height-1) y)).eraseDups
   (probes.zip (s.samplesWithData data probes)).map fun ((x,y),color) => "{\"x\":" ++ toString x ++ ",\"y\":" ++ toString y ++ ",\"rgb\":" ++ color.json ++ "}"
 
+/-- How a scene answer carries its storage floats and its tile words (issue 1268). -/
+inductive DataForm where
+  /-- `"data"` and `"tiles"` as decimal numbers. -/
+  | decimal
+  /-- `"dataBase64"`: the binary32 little-endian bytes in Base64; `"tiles"` as decimal. -/
+  | base64
+  /-- `"dataSection":k,"tilesSection":k+1`: the bytes go beside the JSON text, as
+  section `k` (binary32 little-endian) and section `k+1` (uint32 little-endian). -/
+  | sections (first : Nat)
+
+/-- The form of the next scene of the same answer: its sections follow these two. -/
+def DataForm.next : DataForm → DataForm
+  | .sections k => .sections (k+2)
+  | other => other
+
+/-- Tile words as uint32 little-endian bytes, the bytes that the host writes to the GPU
+from the decimal `"tiles"`. Every tile word is below 2^32: offsets and rows are bounded
+by `maxTileEntries` and `maxDataFloats`, paint words are binary32 bit patterns and
+pixels. -/
+@[inline] private def pushWord (bytes : ByteArray) (word : Nat) : ByteArray :=
+  let w := word.toUInt32
+  ((bytes.push w.toUInt8).push (w >>> 8).toUInt8).push (w >>> 16).toUInt8 |>.push (w >>> 24).toUInt8
+def wordBytes (words : Array Nat) : ByteArray :=
+  words.foldl pushWord (ByteArray.emptyWithCapacity (words.size*4))
+
 /-- `checks` false leaves out the CPU probes: they are for the GPU readback check, and
     one probe was 19% of a frame of the status page and of the FOAF graph page.
     `tree` false gives `"tree":null`: the inspector tree is for an inspector only, and
     it was 10% of a frame of the status page (issue 1268). -/
-private def Scene.json (s : Scene) (live binary : Bool := false) (checks : Bool := true)
-    (tree : Bool := true) : Except String String := do
+private def Scene.jsonWith (s : Scene) (live : Bool) (form : DataForm) (checks tree : Bool) :
+    Except String (String × Array ByteArray) := do
   -- `s.data` is built only for the probes and the decimal text; the size and the
   -- binary text come from the scene with no array of floats (`Scene.dataSize_eq`,
   -- `Scene.float32Bytes_eq_fast`).
@@ -3521,11 +3546,25 @@ private def Scene.json (s : Scene) (live binary : Bool := false) (checks : Bool 
   let checks := if checks then s.checks s.data live else []
   let tree := if tree && DisplayNode.listNodeCount s.tree <= maxInspectorNodes
     then DisplayNode.listJSON s.tree else "null"
-  return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
+  let (dataText,tilesText,sections) := match form with
+    | .decimal => (",\"data\":" ++ jsonArray (floatJSONList s.data.toList),
+        ",\"tiles\":" ++ jsonArray (tiles.toList.map toString),#[])
+    | .base64 => (",\"dataBase64\":\"" ++ base64Bytes s.float32Bytes ++ "\"",
+        ",\"tiles\":" ++ jsonArray (tiles.toList.map toString),#[])
+    | .sections k => (",\"dataSection\":" ++ toString k,",\"tilesSection\":" ++ toString (k+1),
+        #[s.float32Bytes,wordBytes tiles])
+  return ("{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
     ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.compiled.length ++
-    ",\"tree\":" ++ tree ++
-    (if binary then ",\"dataBase64\":\"" ++ base64Bytes s.float32Bytes ++ "\""
-     else ",\"data\":" ++ jsonArray (floatJSONList s.data.toList)) ++ ",\"tiles\":" ++ jsonArray (tiles.toList.map toString) ++ ",\"wgsl\":" ++ sceneShaderJSON ++ ",\"checks\":" ++ jsonArray checks ++ "}"
+    ",\"tree\":" ++ tree ++ dataText ++ tilesText ++ ",\"wgsl\":" ++ sceneShaderJSON ++ ",\"checks\":" ++ jsonArray checks ++ "}",
+    sections)
+private def Scene.json (s : Scene) (live binary : Bool := false) (checks : Bool := true)
+    (tree : Bool := true) : Except String String :=
+  Prod.fst <$> s.jsonWith live (if binary then .base64 else .decimal) checks tree
+/-- The answer of `Scene.artifact` with the storage floats and tile words in the form
+`form`, and the sections that it names. -/
+def Scene.artifactWith (s : Scene) (live : Bool) (form : DataForm) (checks tree : Bool) :
+    Except String (String × Array ByteArray) :=
+  s.jsonWith live form checks tree
 /-- Serialize an existing checked SVG scene through the same packed-data/WGSL
     producer as the string ABI; no XML serialization or reparsing is required. -/
 def Scene.artifact (s : Scene) (live binary : Bool := false) (checks : Bool := true)

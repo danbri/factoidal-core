@@ -38,6 +38,28 @@ function frameFloats(frame){
   frame.data=new Float32Array(bytes.buffer);delete frame.dataBase64;
   return frame;
 }
+// A render as bytes (issue 1268): a JSON head and the storage floats and tile words as
+// raw sections (WebDocument.packAnswer), with no Base64. A runtime with no such export
+// answers JSON text with Base64.
+const textDecoder=new TextDecoder();
+function render(source,options,w,h){
+  if(typeof module._web_document_call_bin!=='function')return frameFloats(call(source,options,w,h));
+  const pointer=module.ccall('web_document_call_bin','number',['string','string','number','number','number'],[source,JSON.stringify(options),w,h,0]);
+  if(!pointer)throw Error('Lean engine allocation failed');
+  let buffer;
+  try{const heap=module.HEAPU8;buffer=heap.slice(pointer,pointer+new DataView(heap.buffer,pointer,4).getUint32(0,true)).buffer;}
+  finally{module.ccall('web_render_free',null,['number'],[pointer]);}
+  const view=new DataView(buffer),headSize=view.getUint32(4,true),count=view.getUint32(8,true);
+  let offset=12+4*count;
+  const frame=JSON.parse(textDecoder.decode(new Uint8Array(buffer,offset,headSize)));
+  if(frame?.error)throw Error(frame.error);
+  offset+=headSize;
+  const sections=[];
+  for(let i=0;i<count;i++){const length=view.getUint32(12+4*i,true);sections.push([offset,length]);offset+=(length+3)&~3;}
+  if(typeof frame.dataSection==='number'){const [o,l]=sections[frame.dataSection];frame.data=new Float32Array(buffer,o,l/4);delete frame.dataSection;}
+  if(typeof frame.tilesSection==='number'){const [o,l]=sections[frame.tilesSection];frame.tiles=new Uint32Array(buffer,o,l/4);delete frame.tilesSection;}
+  return frame;
+}
 // Noto Sans is the default face. Lean reads and shapes it; if it does not load, the
 // page stays in the bitmap face.
 async function loadFont(){
@@ -170,7 +192,7 @@ async function draw(){
     const start=performance.now(),inputAt=pendingStamp;pendingStamp=undefined;
     try{
       // A page already on screen had Lean's full probe set on its first frame.
-      const next=frameFloats(call(doc.source,{op:'render',url:doc.url,textScalePercent:percent,shell:shell(),live:doc===checked,binary:true},width,height));
+      const next=render(doc.source,{op:'render',url:doc.url,textScalePercent:percent,shell:shell(),live:doc===checked,binary:true},width,height);
       checked=doc;
       const laid=performance.now();
       let rgba,pixelHash,gpuMs;

@@ -235,13 +235,20 @@ private def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box
   array (boxes.toList.map fun b => array [toString b.source,toString b.x,toString b.y,toString b.width,toString b.height]) ++
   ",\"glyphRuns\":" ++ array (s.glyphRuns.toList.map runJSON) ++ ",\"links\":" ++ Rendering.Links.encode s.links ++ "}"
 
-/-- Shared checked scene serialization for HTML and structured-document frontends. -/
+/-- Shared checked scene serialization for HTML and structured-document frontends:
+the artifact with the storage floats and tile words in the form `form`, and the
+sections that it names. -/
+def artifactWith (scene : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
+    (font : Option Rendering.FontProvider.Face) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) :
+    Except String (String × Array ByteArray) := do
+  let native ← WebRenderSVG.toScene scene
+  let (value,sections) ← native.artifactWith live form checks tree
+  return ((value.dropEnd 1).toString ++ ",\"webRender\":" ++ layoutJSON scene boxes font ++ "}",sections)
+
 def artifact (scene : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
     (font : Option Rendering.FontProvider.Face := none) (live binary : Bool := false) (checks : Bool := true)
-    (tree : Bool := true) : Except String String := do
-  let native ← WebRenderSVG.toScene scene
-  let value ← native.artifact live binary checks tree
-  return (value.dropEnd 1).toString ++ ",\"webRender\":" ++ layoutJSON scene boxes font ++ "}"
+    (tree : Bool := true) : Except String String :=
+  Prod.fst <$> artifactWith scene boxes font live (if binary then .base64 else .decimal) checks tree
 
 @[export web_render_compile]
 def compile (html : String) (width height : UInt32) : String :=

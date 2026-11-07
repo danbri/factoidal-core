@@ -323,3 +323,40 @@ private def sameButTree (a b : String) : Bool :=
   !contains (treeAnswer (some true) layers) "\"tree\":null" &&
   contains (treeAnswer (some true) layers) "\"tree\":[" &&
   sameButTree (treeAnswer none layers) (treeAnswer (some true) layers)
+
+/-! Answers with sections (issue 1268). Differential guards, not a proof: the head with
+each section put back as the Base64 text and the decimal tiles is the text answer of
+the same request with `binary:true`, for one frame and for layers. -/
+private def wordsOf (b : ByteArray) : List JSON.Json :=
+  (List.range (b.size/4)).map fun i =>
+    .number (toString (b[4*i]!.toNat + 256*b[4*i+1]!.toNat + 65536*b[4*i+2]!.toNat + 16777216*b[4*i+3]!.toNat))
+private def fillOne (sections : Array ByteArray) : JSON.Json → JSON.Json
+  | .object fields => .object (fields.map fun (k,v) => match k, v with
+      | "dataSection", .number n => ("dataBase64",.string (NativeSVG.base64Bytes (sections.getD n.toNat! .empty)))
+      | "tilesSection", .number n => ("tiles",.array (wordsOf (sections.getD n.toNat! .empty)))
+      | _, _ => (k,v))
+  | other => other
+private def fillSections (sections : Array ByteArray) (j : JSON.Json) : JSON.Json :=
+  match fillOne sections j with
+  | .object fields => .object (fields.map fun (k,v) => (k,fillOne sections v))
+  | other => other
+private def sectionPage := "<p>A <b>B</b> and more text to wrap</p><svg width='120' height='60'><g><rect width='90' height='9'/><circle cx='30' cy='30' r='20' fill='red'/></g></svg>"
+private def sectionRequest (layers : Bool) : JSON.Json :=
+  .object ([("op",.string "render"),("url",.string "https://e.test/"),("binary",.bool true),("checks",.bool false)] ++
+    (if layers then [("layers",.bool true),("shell",.object [("scroll",.number "0")])] else []))
+private def sameAsText (layers : Bool) : Bool :=
+  match WebDocument.answerWith WebDocument.layOut true sectionPage (sectionRequest layers) 200 100,
+      WebDocument.runUncached sectionPage (sectionRequest layers) 200 100 with
+  | .ok (head,sections), .ok text =>
+    match JSON.parseJsonText head, JSON.parseJsonText text with
+    | .ok (h,_), .ok (t,_) => sections.size == (if layers then 4 else 2) && fillSections sections h == t &&
+        !contains head "dataBase64"
+    | _, _ => false
+  | _, _ => false
+#guard sameAsText false
+#guard sameAsText true
+-- Other answers have no section.
+#guard (WebDocument.answerWith WebDocument.layOut true "" (json [("op",.string "shellSubmit"),("address",.string "a")]) 1 1).toOption.map (·.2.size) == some 0
+-- The layout of `packAnswer`.
+#guard (WebDocument.packAnswer "{}" #[⟨#[1,2,3,4,5]⟩]).data.toList ==
+  [28,0,0,0, 4,0,0,0, 1,0,0,0, 5,0,0,0, 123,125,32,32, 1,2,3,4,5,0,0,0]

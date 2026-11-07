@@ -30,10 +30,13 @@ const handle=async(request:WorkerRequest)=>{
     if(!(REMOTE_CALLS as readonly string[]).includes(request.name))throw new Error(`Engine call ${request.name} is not available in the worker`);
     const e=await engine as unknown as Record<string,(...args:unknown[])=>unknown>;
     const value=e[request.name](...request.args);
-    // The storage floats move to the main thread, not copied: one scene, or the two layers.
+    // The storage floats and tile words move to the main thread, not copied: one scene,
+    // or the two layers. With a bytes answer they are views of one buffer, sent once.
     const scenes=[value,(value as {page?:unknown})?.page,(value as {chrome?:unknown})?.chrome] as (Partial<HTMLArtifact>|null|undefined)[];
-    const transfer:Transferable[]=scenes.flatMap(scene=>scene?.data instanceof Float32Array?[scene.data.buffer as ArrayBuffer]:[]);
-    scope.postMessage({id:request.id,ok:true,value,ms:performance.now()-start} satisfies WorkerReply,transfer);
+    const buffers=new Set<ArrayBuffer>();
+    for(const scene of scenes)for(const part of [scene?.data,scene?.tiles])
+      if(part instanceof Float32Array||part instanceof Uint32Array)buffers.add(part.buffer as ArrayBuffer);
+    scope.postMessage({id:request.id,ok:true,value,ms:performance.now()-start} satisfies WorkerReply,[...buffers]);
   }catch(error){
     scope.postMessage({id:request.id,ok:false,error:String(error instanceof Error?error.message:error)} satisfies WorkerReply);
   }

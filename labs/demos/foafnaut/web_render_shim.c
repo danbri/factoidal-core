@@ -50,6 +50,20 @@ char *web_document_call(const char *html,const char *request,uint32_t width,uint
   lean_object *value=web_document_compile(lean_mk_string(html),lean_mk_string(request),width,height);
   char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
 }
+extern lean_object *web_document_compile_bin(lean_object *,lean_object *,uint32_t,uint32_t);
+/* The same request as web_document_call; the answer is bytes (WebDocument.packAnswer):
+   a JSON head and the storage floats and tile words as raw sections, with no Base64.
+   The first uint32 is the total length; out_len, if not NULL, gets it too. */
+uint8_t *web_document_call_bin(const char *html,const char *request,uint32_t width,uint32_t height,uint32_t *out_len) {
+  if (!ready()) return NULL;
+  lean_object *value=web_document_compile_bin(lean_mk_string(html),lean_mk_string(request),width,height);
+  size_t size=lean_sarray_size(value);
+  uint8_t *copy=malloc(size ? size : 1);
+  if (copy) memcpy(copy,lean_sarray_cptr(value),size);
+  lean_dec(value);
+  if (out_len) *out_len=(uint32_t)size;
+  return copy;
+}
 extern lean_object *web_render_font_requests(lean_object *);
 char *web_render_font_requests_call(const char *html) {
   if (!ready()) return NULL;

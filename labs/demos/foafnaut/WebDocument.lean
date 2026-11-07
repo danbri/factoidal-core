@@ -363,17 +363,20 @@ def chromeLayer (shell : WebShell.Shell) (page : Rendering.Scene) (width : Nat) 
 /-- The answer to a render with `layers:true`. -/
 def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
-    (width height : Nat) (live binary checks tree : Bool) : Except String String := do
+    (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) :
+    Except String (String × Array ByteArray) := do
   let top := WebShell.height shell width
   let view := max 1 (height-top)
   let b := band shell.scroll view
-  let pageText ← WebRender.artifact (pageLayer page extra b) boxes face live binary checks tree
-  let chromeText ← WebRender.artifact (chromeLayer shell page width) #[] face live binary checks tree
+  let (pageText,pageSections) ← WebRender.artifactWith (pageLayer page extra b) boxes face live form checks tree
+  let (chromeText,chromeSections) ←
+    WebRender.artifactWith (chromeLayer shell page width) #[] face live form.next checks tree
   let number := fun (n : Nat) => JSON.Json.number (toString n)
   let place := JSON.Json.object [("top",number top),("view",number view),("bandTop",number b.top),
     ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
     ("composite",.string compositeShader)]
-  return "{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}"
+  return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
+    pageSections ++ chromeSections)
 
 /-- The font the engine holds between calls, so that a scroll does not read it again. -/
 structure HeldFont where
@@ -525,31 +528,33 @@ private def cachedLayOut (key : LayoutKey) : Except String Laid :=
   | none => keepLayout key <$> layOut key
 
 /-- A document request, with `laidOut` as the layout of a render. `run` passes the
-kept layout; `runUncached` passes `layOut`, so that tests compare the two. -/
-def runWith (laidOut : LayoutKey → Except String Laid) (html : String) (request : JSON.Json) (width height : Nat) :
-    Except String String := do
+kept layout; `runUncached` passes `layOut`, so that tests compare the two. With
+`bytes`, a render answer names its storage floats and tile words as sections
+(`DataForm.sections`) and gives their bytes; other answers have no section. -/
+def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html : String) (request : JSON.Json)
+    (width height : Nat) : Except String (String × Array ByteArray) := do
   let .object fields := request | throw "document request must be an object"
   if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
-  if str request "op" == "fontLoad" then return ← loadFont request
+  if str request "op" == "fontLoad" then return (← loadFont request,#[])
   if str request "op" == "xmlStylesheet" then
     let url := match ← WebXslt.stylesheetHref html with
       | some href => JSON.Json.string (Syntax.resolveIri (str request "url") href)
       | none => .null
-    return (JSON.Json.object [("url",url)]).toString
+    return ((JSON.Json.object [("url",url)]).toString,#[])
   if str request "op" == "xslt" then
     let (source,engine) ← WebXslt.transform html (str request "stylesheet") (str request "url") (str request "stylesheetURL")
-    return (JSON.Json.object [("source",.string source),("engine",.string engine)]).toString
-  if let some answer ← inputOp (str request "op" "render") request then return answer
+    return ((JSON.Json.object [("source",.string source),("engine",.string engine)]).toString,#[])
+  if let some answer ← inputOp (str request "op" "render") request then return (answer,#[])
   let op := str request "op" "render"
   if op != "render" && op != "selectedText" then
     let dom ← prepareDOM html request
     validateResources dom request
     let _ ← classicScripts (WebRenderScript.scriptRecords dom)
-    if op == "inspect" then return (← inspect dom (str request "url")).toString
+    if op == "inspect" then return ((← inspect dom (str request "url")).toString,#[])
     let textScale := Float.ofNat (← scalePercent request) / 100
     let rules ← rules dom request
     if op == "fontRequests" then
-      return WebRenderFontRequests.requestsJSON (← WebRenderFontRequests.collectDOMWithRules dom rules textScale)
+      return (WebRenderFontRequests.requestsJSON (← WebRenderFontRequests.collectDOMWithRules dom rules textScale),#[])
     throw "unknown document operation"
   let shell := (request.field? "shell").map WebShell.Shell.ofJson
   let top := (shell.map (fun value => WebShell.height value width)).getD 0
@@ -564,37 +569,81 @@ def runWith (laidOut : LayoutKey → Except String Laid) (html : String) (reques
   let chosen := (← selection request).map (fun value => WebSelection.shift value moved)
   let items := WebSelection.cells scene.glyphRuns
   if op == "selectedText" then
-    return (JSON.Json.object [("text",.string (match chosen with
+    return ((JSON.Json.object [("text",.string (match chosen with
       | some value => WebSelection.text items value
-      | none => ""))]).toString
+      | none => ""))]).toString,#[])
   let marks := match chosen with
     | some value => WebSelection.highlight items value
     | none => []
   let live := request.field? "live" == some (.bool true)
   let binary := request.field? "binary" == some (.bool true)
+  let form : NativeSVG.DataForm := if bytes then .sections 0 else if binary then .base64 else .decimal
   let checks := request.field? "checks" != some (.bool false)
   -- The inspector tree only when the request asks (`tree:true`); no frame host reads it.
   let tree := request.field? "tree" == some (.bool true)
   if let some value := shell then
     if request.field? "layers" == some (.bool true) then
-      return ← layersJSON value scene marks boxes face width height live binary checks tree
+      return ← layersJSON value scene marks boxes face width height live form checks tree
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := scene.tree.filter (inWindow (scrolled-512) (scrolled+Float.ofNat height+512))
   let page := {scene with tree := near ++ marks}
-  WebRender.artifact (match shell with
+  WebRender.artifactWith (match shell with
     | some value => WebShell.compose value page width height
-    | none => page) boxes face live binary checks tree
+    | none => page) boxes face live form checks tree
+
+/-- The JSON text answer: storage floats in Base64 (`binary:true`) or decimal. -/
+def runWith (laidOut : LayoutKey → Except String Laid) (html : String) (request : JSON.Json) (width height : Nat) :
+    Except String String :=
+  Prod.fst <$> answerWith laidOut false html request width height
 
 def run := runWith cachedLayOut
 def runUncached := runWith layOut
 
+/-- The request text as JSON, with the bounds of `compile`. -/
+private def parseRequest (request : String) : Except String JSON.Json :=
+  if request.utf8ByteSize > 20971520 then .error "document request exceeds20MiB"
+  else match JSON.parseJsonText request with
+  | .error _ => .error "invalid document request JSON"
+  | .ok (j,pos) =>
+    if !(request.toList.drop pos).all Char.isWhitespace then .error "trailing document request data"
+    else .ok j
+
+@[inline] private def pushU32 (bytes : ByteArray) (n : Nat) : ByteArray :=
+  let w := n.toUInt32
+  bytes.push w.toUInt8 |>.push (w >>> 8).toUInt8 |>.push (w >>> 16).toUInt8 |>.push (w >>> 24).toUInt8
+
+/-- The bytes of an answer with sections. Each count is uint32 little-endian: the
+total length, the head length `h`, the section count `n`, the length of each section;
+then the head (UTF-8 JSON, with spaces to a multiple of 4 bytes, so `h` is that
+multiple); then each section, with zero bytes to a multiple of 4. Every section
+starts at a multiple of 4 bytes, so the host can view it as 32-bit words. -/
+def packAnswer (head : String) (sections : Array ByteArray) : ByteArray := Id.run do
+  let pad := fun (n : Nat) => (4 - n % 4) % 4
+  let headBytes := head.toUTF8
+  let headSize := headBytes.size + pad headBytes.size
+  let total := 12 + 4*sections.size + headSize + sections.foldl (fun t s => t + s.size + pad s.size) 0
+  let mut out := ByteArray.emptyWithCapacity total
+  out := pushU32 (pushU32 (pushU32 out total) headSize) sections.size
+  for s in sections do out := pushU32 out s.size
+  out := out ++ headBytes
+  for _ in [0:pad headBytes.size] do out := out.push 32
+  for s in sections do
+    out := out ++ s
+    for _ in [0:pad s.size] do out := out.push 0
+  return out
+
+/-- A render answer with no Base64 (issue 1268): the JSON head, and the storage floats
+and tile words as raw sections (`packAnswer`). The head is the `compile` answer with
+`"dataSection":k` in place of `"dataBase64"` and `"tilesSection":k+1` in place of
+`"tiles"`; other answers have no section. -/
+@[export web_document_compile_bin]
+def compileBin (html request : String) (width height : UInt32) : ByteArray :=
+  match parseRequest request >>= fun j => answerWith cachedLayOut true html j width.toNat height.toNat with
+  | .ok (head,sections) => packAnswer head sections
+  | .error message => packAnswer (WebRender.errorJSON message) #[]
+
 @[export web_document_compile]
 def compile (html request : String) (width height : UInt32) : String :=
-  if request.utf8ByteSize > 20971520 then WebRender.errorJSON "document request exceeds20MiB"
-  else match JSON.parseJsonText request with
-  | .error _ => WebRender.errorJSON "invalid document request JSON"
-  | .ok (j,pos) =>
-    if !(request.toList.drop pos).all Char.isWhitespace then WebRender.errorJSON "trailing document request data"
-    else match run html j width.toNat height.toNat with
-      | .ok value => value | .error message => WebRender.errorJSON message
+  match parseRequest request >>= fun j => run html j width.toNat height.toNat with
+  | .ok value => value | .error message => WebRender.errorJSON message
 end WebDocument
