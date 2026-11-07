@@ -47,6 +47,33 @@ private def validateResources (dom : DOM.Dom) (request : JSON.Json) : Except Str
     if bytes > 4194304 then throw "resources exceed4MiB"
     ids := id::ids
 
+/-- Limit on the images of one request, and on their base64 text. -/
+private def maxDocumentImages : Nat := 64
+private def maxImageText : Nat := 8388608
+
+/-- Bytes the host fetched for `image` elements: `{key,base64}` records, where `key`
+    is a key that `inspect` gave. The bytes stay opaque until `NativeImage.decode`. -/
+def suppliedImages (request : JSON.Json) : Except String (List (String × ByteArray)) := do
+  let .array images := (request.field? "images").getD (.array []) | throw "document images must be an array"
+  if images.length > maxDocumentImages then throw s!"document images exceed {maxDocumentImages}"
+  let mut text := 0
+  let mut found : List (String × ByteArray) := []
+  for image in images do
+    let some (.string key) := image.field? "key" | throw "image key must be a string"
+    let some (.string data) := image.field? "base64" | throw "image base64 must be a string"
+    text := text+data.utf8ByteSize
+    if text > maxImageText then throw s!"document images exceed {maxImageText} characters of base64"
+    found := (key,← NativeImage.base64 data.toUTF8 0)::found
+  return found
+
+/-- `image` references that the host must fetch, by key and URL. -/
+private def imageRequests (dom : DOM.Dom) (base : String) : Except String (List JSON.Json) := do
+  if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then return []
+  let (_,tree) ← WebRender.documentNamespaceTree dom
+  let keys := (NativeSVG.imageKeys tree (some base)).filter (!·.toLower.startsWith "data:")
+  if keys.length > maxDocumentImages then throw s!"document images exceed {maxDocumentImages}"
+  return keys.map fun key => .object [("key",.string key),("url",.string key)]
+
 def prepareDOM (html : String) (request : JSON.Json) : Except String DOM.Dom := do
   if html.utf8ByteSize > 1048576 then throw "document HTML exceeds 1MiB"
   WebRenderScript.applyCommands (DOM.parseHtmlDocument html)
@@ -124,7 +151,8 @@ def inspect (dom : DOM.Dom) (url : String) : Except String JSON.Json := do
     | .object fields => .object (fields ++ [("url",.string (Syntax.resolveIri base (str script "src")))])
     | other => other
   return .object [("nodes",(snapshot.field? "nodes").getD (.array [])),
-    ("scripts",.array scripts),("stylesheets",.array sheets.reverse),("baseURL",.string base),("title",.string (documentTitle dom))]
+    ("scripts",.array scripts),("stylesheets",.array sheets.reverse),("images",.array (← imageRequests dom base)),
+    ("baseURL",.string base),("title",.string (documentTitle dom))]
 
 private def float (j : JSON.Json) : Except String Float :=
   match j with
@@ -281,7 +309,7 @@ def run (html : String) (request : JSON.Json) (width height : Nat) : Except Stri
       Rendering.SfntProfile.profile held.font (keepWords words request)
     | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   let url := baseURL dom (str request "url")
-  let embedding ← WebRender.makeEmbedding dom (if url.isEmpty then none else some url)
+  let embedding ← WebRender.makeEmbedding dom (if url.isEmpty then none else some url) (← suppliedImages request)
   let shell := (request.field? "shell").map WebShell.Shell.ofJson
   let top := (shell.map (fun value => WebShell.height value width)).getD 0
   -- A window shorter than the chrome still lays out, on one row.

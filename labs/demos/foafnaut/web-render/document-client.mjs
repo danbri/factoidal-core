@@ -5,6 +5,8 @@ import {createScriptSession} from './script-engine/session.mjs';
 
 const identity=descriptor=>JSON.stringify([descriptor.nodeId,descriptor.url]);
 const wire=record=>({nodeId:record.nodeId,source:record.source,url:record.url,requestedURL:record.requestedURL});
+// Bytes pass through as text. Decoding, and all that follows from it, is in Lean.
+const base64=bytes=>{let text='';for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(text);};
 
 export async function prepareDocument(engine,html,{url,signal,onLog=()=>{}}={}){
  const options={url,resources:[],commands:[]},lifetime=new AbortController();
@@ -31,6 +33,21 @@ export async function prepareDocument(engine,html,{url,signal,onLog=()=>{}}={}){
   return result;
  }
 
+ // The same broker and limits as a stylesheet: HTTP and HTTPS only, no credentials.
+ const images=new Map();
+ async function loadImages(descriptors,signal){
+  if(descriptors.length>64)throw Error('Document image count exceeds 64');
+  const result=[];let totalBytes=0;
+  for(const {key,url}of descriptors){
+   check(signal);
+   let record=images.get(url);
+   if(!record){const resource=await fetchResource(url,{signal});check(signal);record={key,base64:base64(resource.bytes),bytes:resource.bytes.length};images.set(url,record);}
+   totalBytes+=record.bytes;if(totalBytes>4194304)throw Error('Document images exceed 4 MiB');
+   result.push({key,base64:record.base64});
+  }
+  return result;
+ }
+
  async function refresh(signal){
   const request=++refreshSequence;refreshAbort?.abort();refreshAbort=new AbortController();
   signal=AbortSignal.any([operationSignal(signal),refreshAbort.signal]);check(signal);
@@ -38,7 +55,9 @@ export async function prepareDocument(engine,html,{url,signal,onLog=()=>{}}={}){
   // Discovery therefore inspects the commanded DOM with no supplied resources.
   const snapshot=await engine.inspectDocument(html,{...options,resources:[]},{signal});check(signal);
   const next=await load(snapshot.stylesheets??[],sheets,signal);check(signal);
+  const nextImages=await loadImages(snapshot.images??[],signal);check(signal);
   if(request!==refreshSequence)throw Error('Superseded resource refresh');
+  options.images=nextImages;
   sheets=next;options.resources=Array.from(next.values(),wire);baseURL=snapshot.baseURL??url;
   return request;
  }
@@ -52,6 +71,7 @@ export async function prepareDocument(engine,html,{url,signal,onLog=()=>{}}={}){
   const initial=await load(descriptors,new Map(),initialSignal);
   sheets=new Map((snapshot.stylesheets??[]).map(descriptor=>[identity(descriptor),initial.get(identity(descriptor))]));
   options.resources=Array.from(sheets.values(),wire);baseURL=snapshot.baseURL??url;
+  options.images=await loadImages(snapshot.images??[],initialSignal);
   const sources=classic.map(script=>script.src?initial.get(identity(script))?.source:script.source);
   if(sources.some(source=>typeof source!=='string'))throw Error('Missing Lean-requested script resource');
   if(sources.length){

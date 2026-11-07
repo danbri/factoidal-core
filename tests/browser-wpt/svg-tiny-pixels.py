@@ -46,6 +46,10 @@ with tarfile.open(a.archive) as archive:
         if member.name == 'images/SVGFreeSans.svg':
             # The tests name this font by font-face-uri. It is the font in the PNGs.
             (out / 'SVGFreeSans.svg').write_bytes(archive.extractfile(member).read())
+        if member.isfile() and len(parts) == 2 and parts[0] == 'images':
+            # Raster images that the tests name by ../images/; --svg-resources keeps reads under out.
+            (out / 'images').mkdir(exist_ok=True)
+            (out / 'images' / parts[1]).write_bytes(archive.extractfile(member).read())
         if member.isfile() and len(parts) == 2 and parts[0] in ('svg', 'png'):
             stem = parts[1].rsplit('.', 1)[0]
             pairs.setdefault(stem, {})[parts[0]] = archive.extractfile(member).read()
@@ -84,7 +88,7 @@ def prepare(stem):
            'blankControl': score(np.full_like(expected, 255), expected)}
     started = time.time()
     try:
-        result = subprocess.run([str(a.native), str(source), str(width), str(height), '--svg', '--svg-font', str(out / 'SVGFreeSans.svg')],
+        result = subprocess.run([str(a.native), str(source), str(width), str(height), '--svg', '--svg-font', str(out / 'SVGFreeSans.svg'), '--svg-resources', str(out)],
                                 capture_output=True, timeout=a.timeout, env={'PATH': '/nonexistent'})
     except subprocess.TimeoutExpired:
         return {**row, 'status': 'TIMEOUT', 'reason': f'exceeded {a.timeout}s'}

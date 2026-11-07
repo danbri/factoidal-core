@@ -97,3 +97,6 @@ private def line2 : Float := 19.8
 #guard withFont ("<defs>" ++ area "id='t' width='30' height='30'" "a" ++ "</defs><use xlink:href='#t' xmlns:xlink='http://www.w3.org/1999/xlink'/>") == 1
 -- With no font the element goes and is logged, as `text` is.
 #guard (log "<textArea width='9' height='9'>a</textArea>").contains "element: textArea"
+-- Expected failure, https://github.com/danbri/factoidal/issues/1259: a soft hyphen is
+-- not yet a break opportunity. When it is one, "a a-" fits on line 1 and this guard fails.
+#guard originsAre (area "width='22' height='30'" "a a\u00ADaa") [(0,line1),(0,line2),(10,line2),(15,line2)]

@@ -103,11 +103,12 @@ private def distExtra : Array Nat :=
 def maxInflated : Nat := 256 * 1024 * 1024
 
 /-- Decode the symbols of one compressed block into `out`. -/
-def inflateCodes (lit dist : Huff) (out : ByteArray) : BitM ByteArray := do
+def inflateCodes (lit dist : Huff) (out : ByteArray) (limit : Nat := maxInflated) : BitM ByteArray := do
   let mut out := out
-  for _ in [0:maxInflated] do
+  for _ in [0:limit+1] do
     let sym ← decodeSym lit
     if sym < 256 then
+      if out.size ≥ limit then throw "output too large"
       out := out.push sym.toUInt8
     else if sym == 256 then
       return out
@@ -119,7 +120,7 @@ def inflateCodes (lit dist : Huff) (out : ByteArray) : BitM ByteArray := do
       if ds ≥ 30 then throw "invalid distance symbol"
       let d := distBase[ds]! + (← readBits distExtra[ds]!)
       if d > out.size then throw "distance reaches before the start of the output"
-      if out.size + len > maxInflated then throw "output too large"
+      if out.size + len > limit then throw "output too large"
       for _ in [0:len] do
         out := out.push (out.get! (out.size - d))
   throw "output too large"
@@ -162,7 +163,7 @@ def readDynamic : BitM (Huff × Huff) := do
   pure (buildHuff (lens.extract 0 nlen), buildHuff (lens.extract nlen (nlen + ndist)))
 
 /-- A stored block: LEN, its complement, then the bytes. -/
-def inflateStored (out : ByteArray) : BitM ByteArray := do
+def inflateStored (out : ByteArray) (limit : Nat := maxInflated) : BitM ByteArray := do
   alignByte
   let len := (← readBits 16)
   let nlen := (← readBits 16)
@@ -170,24 +171,26 @@ def inflateStored (out : ByteArray) : BitM ByteArray := do
   let s ← get
   let start := s.pos / 8
   if start + len > s.data.size then throw "stored block runs past the end of the data"
+  if out.size + len > limit then throw "output too large"
   set { s with pos := s.pos + 8 * len }
   pure (out ++ s.data.extract start (start + len))
 
 /-- Decode a whole DEFLATE stream starting at byte `start` of `b`. The
     result is the output and the offset of the first byte after the
-    stream. -/
-def inflateAt (b : ByteArray) (start : Nat) : Except String (ByteArray × Nat) := do
+    stream. A stream that gives more than `limit` bytes is refused, and the
+    decoder stops there. -/
+def inflateAt (b : ByteArray) (start : Nat) (limit : Nat := maxInflated) : Except String (ByteArray × Nat) := do
   let act : BitM ByteArray := do
     let mut out := ByteArray.empty
     for _ in [0:b.size * 8 + 1] do
       let final ← readBit
       let typ ← readBits 2
       out ← match typ with
-        | 0 => inflateStored out
-        | 1 => inflateCodes fixedLit fixedDist out
+        | 0 => inflateStored out limit
+        | 1 => inflateCodes fixedLit fixedDist out limit
         | 2 => do
             let (lit, dist) ← readDynamic
-            inflateCodes lit dist out
+            inflateCodes lit dist out limit
         | _ => throw "invalid block type"
       if final == 1 then break
     pure out

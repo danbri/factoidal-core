@@ -14,11 +14,12 @@ private def pixels (scene : Rendering.Scene) (w h : Nat) : Except String String 
   return "{\"width\":" ++ toString w ++ ",\"height\":" ++ toString h ++ ",\"pixels\":[" ++ String.intercalate "," values ++ "]}"
 
 /-- WebGPU artifact of one SVG file, with the log of what the forgiving pass removed. -/
-private def svgArtifact (source : String) (w h : Nat) (font : Option String) : String :=
+private def svgArtifact (source : String) (w h : Nat) (font : Option String)
+    (images : List (String × ByteArray)) (documentURL : Option String) : String :=
   let quoted := fun (line : String) => "\"" ++ (line.replace "\\" "\\\\" |>.replace "\"" "\\\"") ++ "\""
   let parsed := do
     let font ← font.mapM NativeSVGForgiving.SVGFont.parse
-    NativeSVGForgiving.parse source w h font
+    NativeSVGForgiving.parse source w h font images documentURL
   match parsed >>= fun (scene,dropped) =>
       (scene.artifact).map (fun artifact => (artifact,scene.compiled.length,dropped)) with
   | .error message => WebRender.errorJSON message
@@ -26,16 +27,58 @@ private def svgArtifact (source : String) (w h : Nat) (font : Option String) : S
     "{\"primitiveCount\":" ++ toString count ++ ",\"dropped\":[" ++
       String.intercalate "," (dropped.map quoted) ++ "],\"artifact\":" ++ artifact ++ "}"
 
+/-- A file under the resource root has this URL, so that relative references and
+    `xml:base` resolve in Lean as they do for an HTTP document. It names no host. -/
+private def resourceOrigin := "http://svg-resources.invalid/"
+
+/-- The bytes of a local image reference. The policy is that of the browser's
+    resource broker for this host: a reference that resolves outside the resource
+    origin is not read, so `file:` and the network stay refused, and the real path
+    must be under `root`, so a link can not leave it. -/
+private def localImage (root : System.FilePath) (key : String) : IO (Option ByteArray) := do
+  if !key.startsWith resourceOrigin then return none
+  let path := ((((key.drop resourceOrigin.length).toString).splitOn "#").head!.splitOn "?").head!
+  let candidate := root / path
+  if !(← candidate.pathExists) then return none
+  let real ← IO.FS.realPath candidate
+  let base ← IO.FS.realPath root
+  if !real.toString.startsWith (base.toString ++ "/") then return none
+  if (← real.metadata).byteSize.toNat > NativeImage.maxImageBytes then return none
+  return some (← IO.FS.readBinFile real)
+
+/-- URL of the document, and the bytes of each image that policy allows. -/
+private def localImages (document root : System.FilePath) (source : String) :
+    IO (List (String × ByteArray) × Option String) := do
+  let real ← IO.FS.realPath document
+  let base ← IO.FS.realPath root
+  let prefix_ := base.toString ++ "/"
+  if !real.toString.startsWith prefix_ then return ([],none)
+  let url := resourceOrigin ++ (real.toString.drop prefix_.length).toString
+  let keys := (NativeSVGForgiving.imageRequests source (some url)).toOption.getD []
+  let mut found : List (String × ByteArray) := []
+  for key in keys do
+    if let some bytes ← localImage root key then found := (key,bytes)::found
+  return (found,some url)
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | path::width::height::flags =>
-    let svgFont := match flags with | ["--svg","--svg-font",font] => some font | _ => none
-    if flags == ["--svg"] || svgFont.isSome then
+    let (svgFont,resources,svgRun) := match flags with
+      | ["--svg"] => (none,none,true)
+      | ["--svg","--svg-font",font] => (some font,none,true)
+      | ["--svg","--svg-resources",root] => (none,some root,true)
+      | ["--svg","--svg-font",font,"--svg-resources",root] => (some font,some root,true)
+      | _ => (none,none,false)
+    if svgRun then
       let some w := width.toNat? | throw (IO.userError "invalid width")
       let some h := height.toNat? | throw (IO.userError "invalid height")
       if w > 4096 || h > 4096 then throw (IO.userError "viewport exceeds 4096")
       let font ← svgFont.mapM IO.FS.readFile
-      IO.println (svgArtifact (← IO.FS.readFile path) w h font)
+      let source ← IO.FS.readFile path
+      let (images,documentURL) ← match resources with
+        | some root => localImages path root source
+        | none => pure ([],none)
+      IO.println (svgArtifact source w h font images documentURL)
       return 0
     if flags == ["--svg-profile"] then
       let some w := width.toNat? | throw (IO.userError "invalid width")
@@ -86,7 +129,7 @@ def main (args : List String) : IO UInt32 := do
       | ["--font-data",path] | ["--font-data",path,"--pixels"] | ["--pixels","--font-data",path] => some path
       | _ => none
     if fontPath.isNone && (flags.any (fun flag => flag != "--pixels" && flag != "--rdf") || flags.eraseDups.length != flags.length) then
-      IO.eprintln "usage: web-render INPUT WIDTH HEIGHT [--svg [--svg-font SVG_FONT] | [--rdf | --font-data FONT_JSON] [--pixels]]"
+      IO.eprintln "usage: web-render INPUT WIDTH HEIGHT [--svg [--svg-font SVG_FONT] [--svg-resources ROOT] | [--rdf | --font-data FONT_JSON] [--pixels]]"
       return 2
     let some w := width.toNat? | throw (IO.userError "invalid width")
     let some h := height.toNat? | throw (IO.userError "invalid height")
@@ -134,5 +177,5 @@ def main (args : List String) : IO UInt32 := do
           else WebRender.compile source w.toUInt32 h.toUInt32)
     return 0
   | _ =>
-    IO.eprintln "usage: web-render INPUT WIDTH HEIGHT [--svg [--svg-font SVG_FONT] | [--rdf | --font-data FONT_JSON] [--pixels]]"
+    IO.eprintln "usage: web-render INPUT WIDTH HEIGHT [--svg [--svg-font SVG_FONT] [--svg-resources ROOT] | [--rdf | --font-data FONT_JSON] [--pixels]]"
     return 2

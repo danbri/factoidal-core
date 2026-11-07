@@ -43,9 +43,11 @@ def toGeometry : Rendering.Geometry → NativeSVG.Geometry
 def fromPaint : NativeSVG.Paint → Rendering.Paint
   | .none => .none | .current => .current | .solid c => .solid (fromColor c)
   | .gradient g => .gradient g | .gradientRecord cursor record => .gradientRecord cursor record
+  | .image record => .image record | .imageRecord cursor record => .imageRecord cursor record
 def toPaint : Rendering.Paint → NativeSVG.Paint
   | .none => .none | .current => .current | .solid c => .solid (toColor c)
   | .gradient g => .gradient g | .gradientRecord cursor record => .gradientRecord cursor record
+  | .image record => .image record | .imageRecord cursor record => .imageRecord cursor record
 def fromLength (v : NativeSVGDash.Length) : Rendering.Length := ⟨v.value,v.percentage⟩
 def toLength (v : Rendering.Length) : NativeSVGDash.Length := ⟨v.value,v.percentage⟩
 def fromPiece : NativeSVGStroke.Piece → Rendering.StrokePiece

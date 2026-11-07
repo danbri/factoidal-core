@@ -7,6 +7,7 @@ import SVGCSS
 import SVGDash
 import SVGDashUnits
 import SVGStroke
+import ImageData
 import L4Factoidal.Math.Affine
 import L4Factoidal.Tdb2.Format
 import L4Factoidal.Rendering.FloatFormat
@@ -230,6 +231,10 @@ inductive Paint where
   | gradient (source : Gradient)
   /-- The server lowered for this primitive, at a word offset of the paint table. -/
   | gradientRecord (cursor : Nat) (record : GradientRecord)
+  /-- A raster image, as the `image` element gives it. -/
+  | image (record : L4Factoidal.Rendering.ImageRecord)
+  /-- The image with the word offset of its header in the paint table. -/
+  | imageRecord (cursor : Nat) (record : L4Factoidal.Rendering.ImageRecord)
   deriving Repr
 inductive FillRule where | nonzero | evenodd
   deriving Repr, BEq
@@ -274,7 +279,7 @@ private def paintServers := ["linearGradient","radialGradient","solidColor"]
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
     if let some uri := a.name.namespace_ then
-      if uri == svgURI || (uri == "http://www.w3.org/1999/xlink" && !(["use","linearGradient","radialGradient"].contains tag && a.name.localPart == "href")) ||
+      if uri == svgURI || (uri == "http://www.w3.org/1999/xlink" && !(["use","linearGradient","radialGradient","image"].contains tag && a.name.localPart == "href")) ||
           (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base"].contains a.name.localPart) then
         throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
     else if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
@@ -302,6 +307,7 @@ private structure PaintContext where
   references : NativeSVGReferences.Index
   rules : List NativeSVGCSS.Rule
   document : NamespaceNode
+  images : NativeImage.Store := {}
 
 /-- Attributes of an element that a paint server depends on, after the cascade.
     Values are checked where they are read, so that an unrelated property of an
@@ -1177,6 +1183,65 @@ private def textFrame (attrs : List NamespaceAttribute) (transform : Transform) 
   let [x,y,w,h] ← numbers mark.value | throw "text box requires four numbers"
   return {style with fill:=style.fill.ofText transform (x,y,w,h),stroke:=style.stroke.ofText transform (x,y,w,h)}
 
+/-- The key of an image reference in the store: a `data:` URI as it stands, and
+    another reference resolved against the base in force. -/
+def imageKey (base : Option String) (href : String) : String :=
+  let href := trim href
+  if href.toLower.startsWith "data:" then href
+  else L4Factoidal.Syntax.resolveAgainst? base href
+
+/-- The `image` references of a document, with the base in force at each one. -/
+private def imageKeysAt : Nat → Option String → NamespaceNode → List String
+  | 0,_,_ => []
+  | _,_,.other _ => []
+  | fuel+1,base,.element name attrs children =>
+    let base := NativeSVGReferences.elementBase attrs base
+    let own := if name.namespace_ == some svgURI && name.localPart == "image"
+      then ((NativeSVGReferences.href attrs).map (imageKey base)).toList else []
+    own ++ children.flatMap (imageKeysAt fuel base)
+
+/-- Keys of all images in a tree, each one once. -/
+def imageKeys (root : NamespaceNode) (base : Option String := none) : List String :=
+  (imageKeysAt 64 base root).eraseDups
+
+/-- Decode each image of a tree once. `supplied` holds the bytes that the host
+    fetched, by key; a `data:` URI needs no host. A reference with no bytes, and an
+    image past the budget of the document, stay in the store as a refusal. -/
+def imageStore (root : NamespaceNode) (base : Option String := none)
+    (supplied : List (String × ByteArray) := []) : NativeImage.Store :=
+  ((imageKeys root base).foldl (fun (state : NativeImage.Store × Nat) key =>
+    if key.toLower.startsWith "data:" then state.1.addData state.2 key
+    else match supplied.find? (·.1 == key) with
+      | some (_,bytes) => state.1.addBytes state.2 key bytes
+      | none => (state.1.insert key (.error s!"image resource not supplied: {key}"),state.2))
+    (({} : NativeImage.Store),0)).1
+
+/-- SVG Tiny 1.2 §5.7 and §7.8: where the pixels go in the viewport x, y, w, h. The
+    result is the rectangle to fill and the map from the user space to pixels. With
+    `slice` the rectangle is the viewport, which clips the image. -/
+private def imagePlacement (x y w h : Float) (bitmap : L4Factoidal.Rendering.Bitmap) (source : Option String) :
+    Except String ((Float × Float × Float × Float) × L4Factoidal.Rendering.Transform) := do
+  let iw := Float.ofNat bitmap.width
+  let ih := Float.ofNat bitmap.height
+  let words := ((source.getD "xMidYMid meet").splitOn " ").filter (· != "")
+  let words := if words.head? == some "defer" then words.drop 1 else words
+  let (align,mode) ← match words with
+    | [a] => pure (a,"meet") | [a,m] => pure (a,m)
+    | _ => throw "unsupported attribute on image: preserveAspectRatio"
+  let alignments := [("xMinYMin",(0,0)),("xMidYMin",(1,0)),("xMaxYMin",(2,0)),
+    ("xMinYMid",(0,1)),("xMidYMid",(1,1)),("xMaxYMid",(2,1)),
+    ("xMinYMax",(0,2)),("xMidYMax",(1,2)),("xMaxYMax",(2,2))]
+  if !["meet","slice"].contains mode then throw "unsupported attribute on image: preserveAspectRatio"
+  if align == "none" then
+    return ((x,y,w,h),⟨iw/w,0,0,ih/h,-x*iw/w,-y*ih/h⟩)
+  let some (_,ax,ay) := alignments.find? (fun (item : String × Nat × Nat) => item.1 == align)
+    | throw "unsupported attribute on image: preserveAspectRatio"
+  let scale := if mode == "meet" then min (w/iw) (h/ih) else max (w/iw) (h/ih)
+  let dx := x+(w-iw*scale)*Float.ofNat ax/2
+  let dy := y+(h-ih*scale)*Float.ofNat ay/2
+  let area := if mode == "meet" then (dx,dy,iw*scale,ih*scale) else (x,y,w,h)
+  return (area,⟨1/scale,0,0,1/scale,-dx/scale,-dy/scale⟩)
+
 private def readNode (references : NativeSVGReferences.Index) (rules : List NativeSVGCSS.Rule)
     (paints : PaintContext) : Nat → ReadContext → NamespaceNode → Except String (List DisplayNode)
   | 0,_,_ => throw "SVG group/instance nesting exceeds 32"
@@ -1270,6 +1335,27 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
           return [.group (attr attrs "id") contentTransform retainedChildren]
         if !["hidden","scroll","auto"].contains overflow then throw "unsupported viewport overflow"
         return [.clipped (attr attrs "id") contentTransform ⟨0,0,w,h,viewportTransform⟩ retainedChildren]
+      else if tag == "image" then
+        validateAttrs tag attrs ["href","x","y","width","height","preserveAspectRatio","opacity","transform","type"]
+        let transform ← checkedTransform (← elementTransform parent ((attr attrs "transform").getD ""))
+        let inherited ← readStyle lengths paints attrs style
+        let x ← geometryNumber lengths attrs "x"
+        let y ← geometryNumber lengths attrs "y"
+        let w ← geometryNumber lengths attrs "width"
+        let h ← geometryNumber lengths attrs "height"
+        if w < 0 || h < 0 then throw "negative image size"
+        let opacity ← match attr attrs "opacity" with | none => pure 1 | some value => number value
+        -- §5.7: a width or a height of zero disables rendering of the element.
+        if displaySuppressed attrs || w == 0 || h == 0 then return []
+        let some source := NativeSVGReferences.href attrs | return []
+        let key := imageKey baseURL source
+        let (id,bitmap) ← match paints.images.get? key with
+          | some entry => entry
+          | none => .error s!"image resource not supplied: {key}"
+        let ((ax,ay,aw,ah),map) ← imagePlacement x y w h bitmap (attr attrs "preserveAspectRatio")
+        -- fill-opacity is not a property of an image; `opacity` is.
+        let painted := {inherited with fill:=.image ⟨map,id,bitmap⟩,stroke:=.none,fillOpacity:=1}
+        return [.paint {geometry:=.rect ax ay aw ah,style:=painted,opacity:=max 0 (min 1 opacity),transform}]
       else if tag == "g" then
         validateAttrs tag attrs ["transform","clip-path"]
         let transform ← checkedTransform (← elementTransform parent ((attr attrs "transform").getD ""))
@@ -1361,10 +1447,15 @@ private def lowerPaint (box : Float × Float × Float × Float) (cursor : Nat) :
       if !record.words.all (fun word => word.isFinite && word.toFloat32.isFinite) then
         throw "gradient map exceeds finite binary32 range"
       else pure (.gradientRecord cursor record)
+  | .image record =>
+    if !(record.words 0).all (fun word => word.isFinite && word.toFloat32.isFinite) then
+      throw "image map exceeds finite binary32 range"
+    else pure (.imageRecord cursor record)
   | paint => pure paint
 
 def Paint.tableWords : Paint → List Float
   | .gradientRecord _ record => record.words
+  | .imageRecord _ record => record.words 0
   | _ => []
 
 /-- Words of this primitive in the scene's paint table: fill, then stroke. -/
@@ -1598,7 +1689,7 @@ theorem ReferenceContext.create_existing (context : ReferenceContext) :
     one supplied by an HTML foreign-content parser. The caller owns DOM parsing;
     root validation, SVG style, geometry and viewport semantics remain here. -/
 private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeight : Nat)
-    (inheritedStyle : Style)
+    (inheritedStyle : Style) (images : Option NativeImage.Store)
     (referenceSource : Unit → Except String (ReferenceContext × List Nat × Option String)) : Except String Scene := do
   let .element name attrs children := root | throw "SVG root must be an element"
   if name.namespace_ != some svgURI || name.localPart != "svg" then throw "root must be svg in the SVG namespace"
@@ -1635,7 +1726,8 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
   let (context,sourcePath,rootBase) ← referenceSource ()
   let _ ← context.idsResult
   let rules ← context.rulesResult
-  let paints : PaintContext := {references:=context.references,rules,document:=context.document}
+  let store := images.getD (imageStore context.document (context.initialBaseURL.orElse fun _ => context.documentURL))
+  let paints : PaintContext := {references:=context.references,rules,document:=context.document,images:=store}
   let attrs ← applyCSS lengths paints rules "svg" attrs
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version"]
   let inherited ← readStyle lengths paints attrs inheritedStyle
@@ -1648,8 +1740,9 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
 /-- Standalone SVG keeps a local original document and the existing public API.
     Context creation is delayed until after zero-viewport suppression. -/
 def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
-    (inheritedStyle : Style := {}) (documentURL : Option String := none) : Except String Scene :=
-  parseRootWithContext root outputWidth outputHeight inheritedStyle fun _ => do
+    (inheritedStyle : Style := {}) (documentURL : Option String := none)
+    (images : Option NativeImage.Store := none) : Except String Scene :=
+  parseRootWithContext root outputWidth outputHeight inheritedStyle images fun _ => do
     let context ← ReferenceContext.create root documentURL
     let base := match root with
       | .element _ attrs _ => NativeSVGReferences.elementBase attrs documentURL
@@ -1661,13 +1754,14 @@ def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
     original children, reference targets, source identity and bases are retained. -/
 def parseRootInContext (context : ReferenceContext) (rootSourcePath : List Nat)
     (outputWidth outputHeight : Nat := 0) (inheritedStyle : Style := {})
-    (rootAttributeNormalizer : List NamespaceAttribute → Except String (List NamespaceAttribute) := fun attrs => .ok attrs) : Except String Scene := do
+    (rootAttributeNormalizer : List NamespaceAttribute → Except String (List NamespaceAttribute) := fun attrs => .ok attrs)
+    (images : Option NativeImage.Store := none) : Except String Scene := do
   let initialBase := context.initialBaseURL.orElse (fun _ => context.documentURL)
   let entry ← NativeSVGReferences.locate context.document rootSourcePath initialBase
   let .element name originalAttrs children := entry.node | throw "SVG root source path must select an element"
   let base := NativeSVGReferences.elementBase originalAttrs entry.parentBase
   let attrs ← rootAttributeNormalizer originalAttrs
-  parseRootWithContext (.element name attrs children) outputWidth outputHeight inheritedStyle
+  parseRootWithContext (.element name attrs children) outputWidth outputHeight inheritedStyle images
     (fun _ => .ok (context,entry.path,base))
 
 def parse (xml : String) (outputWidth outputHeight : Nat := 0)
@@ -1828,6 +1922,9 @@ private def resolved (paint : Paint) (style : Style) (alpha : Float) : List Floa
   | .gradient _ => [0,0,0,0]
   -- A negative alpha marks a gradient: the shader finds its record in the table.
   | .gradientRecord cursor _ => [Float.ofNat cursor,alpha,0,-1]
+  | .image _ => [0,0,0,0]
+  -- A fourth float below -1 marks an image.
+  | .imageRecord cursor _ => [Float.ofNat cursor,alpha,0,-2]
 private def pointBounds (points : List Point) : List Float :=
   match points with
   | [] => [0,0,0,0]
@@ -2148,11 +2245,34 @@ private def tileIndex (value : Float) (count : Nat) : Nat :=
   if value <= 0 then 0
   else min (count-1) (value/tileSize.toFloat).floor.toUInt64.toNat
 
-/-- The words of all gradient records as binary32 bit patterns, in the order that
-`compilePrimitives` gave their cursors, then the count of those words. -/
-private def Scene.paintTableTail (s : Scene) : Array Nat :=
-  let words := s.compiled.flatMap Primitive.paintWords
-  (words.map (·.toFloat32.toBits.toNat)).toArray.push words.length
+/-- Header words of one paint, with `pixels` as the table offset of an image. -/
+private def Paint.tableWordsAt (paint : Paint) (start : Nat) (offsets : Std.HashMap Nat Nat) : List Float :=
+  match paint with
+  | .imageRecord _ record => record.words (start+offsets.getD record.id 0)
+  | other => other.tableWords
+
+/-- The words of all records as binary32 bit patterns, in the order that
+`compilePrimitives` gave their cursors; then the pixels of each image once, one
+word for each pixel; then the count of those words. -/
+private def Scene.paintTableTail (s : Scene) : Array Nat := Id.run do
+  let mut offsets : Std.HashMap Nat Nat := {}
+  let mut bitmaps : Array L4Factoidal.Rendering.Bitmap := #[]
+  let mut used := 0
+  for p in s.compiled do
+    for paint in [p.style.fill,p.style.stroke] do
+      if let .imageRecord _ record := paint then
+        if !offsets.contains record.id then
+          offsets := offsets.insert record.id used
+          bitmaps := bitmaps.push record.bitmap
+          used := used+record.bitmap.width*record.bitmap.height
+  let start := (s.compiled.flatMap Primitive.paintWords).length
+  let words := s.compiled.flatMap fun p =>
+    p.style.fill.tableWordsAt start offsets ++ p.style.stroke.tableWordsAt start offsets
+  let mut out := (words.map (·.toFloat32.toBits.toNat)).toArray
+  for bitmap in bitmaps do
+    for i in [0:bitmap.width*bitmap.height] do
+      out := out.push (bitmap.word i)
+  return out.push (start+used)
 
 /-- Primitive lists for each screen tile, in paint order: tile size, tiles
 across, tiles down, one start offset for each tile and a final end offset, then
@@ -2209,9 +2329,19 @@ private def sceneShader : String :=
   "fn withinBounds(base:u32,p:vec2f)->bool{let b=params.rows[base];return all(p>=b.xy)&&all(p<=b.zw);}" ++
   "fn word(i:u32)->f32{return bitcast<f32>(tiles[i]);}" ++
   "fn stopColor(s:u32)->vec4f{return vec4f(word(s+1u),word(s+2u),word(s+3u),word(s+4u));}" ++
+  -- `ImageRecord.colorAt`: map, bilinear on premultiplied pixels, edge pixels beyond the edge.
+  "fn texel(base:u32,w:u32,h:u32,x:f32,y:f32)->vec4f{let i=u32(clamp(x,0.0,f32(w-1u)));let j=u32(clamp(y,0.0,f32(h-1u)));" ++
+  "let c=unpack4x8unorm(tiles[base+j*w+i]);return vec4f(c.rgb*c.a,c.a);}" ++
+  "fn imageSample(r:u32,start:u32,p:vec2f,alpha:f32)->vec4f{" ++
+  "let fx=word(r)*p.x+word(r+1u)*p.y+word(r+2u)-0.5;let fy=word(r+4u)*p.x+word(r+5u)*p.y+word(r+6u)-0.5;" ++
+  "let w=u32(word(r+3u));let h=u32(word(r+7u));let base=start+u32(word(r+8u));let x0=floor(fx);let y0=floor(fy);" ++
+  "let top=mix(texel(base,w,h,x0,y0),texel(base,w,h,x0+1.0,y0),fx-x0);" ++
+  "let bottom=mix(texel(base,w,h,x0,y0+1.0),texel(base,w,h,x0+1.0,y0+1.0),fx-x0);" ++
+  "let c=mix(top,bottom,fy-y0);if(c.a<=0.0){return vec4f(0.0);}return vec4f(c.rgb/c.a,c.a*alpha);}\n" ++
   -- `GradientRecord.colorAt`: map, stop search, mix before premultiplying.
   "fn paintSample(row:vec4f,p:vec2f)->vec4f{if(row.w>=0.0){return row;}" ++
   "let last=arrayLength(&tiles)-1u;let r=last-tiles[last]+u32(row.x);" ++
+  "if(row.w<-1.5){return imageSample(r,last-tiles[last],p,row.y);}" ++
   "let u=word(r)*p.x+word(r+1u)*p.y+word(r+2u);let v=word(r+4u)*p.x+word(r+5u)*p.y+word(r+6u);" ++
   "let t=select(u,sqrt(u*u+v*v),word(r+3u)==1.0);let n=u32(word(r+7u));" ++
   "var s=r+" ++ toString L4Factoidal.Rendering.gradientRecordHeaderWords ++ "u;var c=stopColor(s);" ++
@@ -2390,6 +2520,10 @@ private def Primitive.paintAt (p : BackendPrimitive) (paint : Paint) (alpha : Fl
     let q := p.transform.inverse.apply position.1 position.2
     let c := record.colorAt q.1 q.2
     [c[0]!,c[1]!,c[2]!,c[3]!*alpha]
+  | .imageRecord _ record =>
+    let q := p.transform.inverse.apply position.1 position.2
+    let c := record.colorAt q.1 q.2
+    [c[0]!,c[1]!,c[2]!,c[3]!*alpha]
   | _ => resolved paint p.style alpha
 
 /-- `paintAt` with the work that does not depend on the position done once. -/
@@ -2397,6 +2531,12 @@ private def Primitive.preparePaint (p : BackendPrimitive) (paint : Paint) (alpha
     Float × Float → List Float :=
   match paint with
   | .gradientRecord _ record =>
+    let inverse := p.transform.inverse
+    fun position =>
+      let q := inverse.apply position.1 position.2
+      let c := record.colorAt q.1 q.2
+      [c[0]!,c[1]!,c[2]!,c[3]!*alpha]
+  | .imageRecord _ record =>
     let inverse := p.transform.inverse
     fun position =>
       let q := inverse.apply position.1 position.2
@@ -2692,6 +2832,9 @@ private def Scene.checks (s : Scene) (data : Array Float) (live : Bool := false)
 private def Scene.json (s : Scene) (live binary : Bool := false) : Except String String := do
   let data := s.data
   if data.size > maxDataFloats then throw "storage data exceeds 1048576 floats"
+  let tiles := s.tiles
+  -- The last word of `tiles` is the size of the paint table.
+  if tiles.back! > maxPaintTableWords then throw s!"paint table exceeds {maxPaintTableWords} words"
   let checks := s.checks data live
   let tree := if DisplayNode.listNodeCount s.tree <= maxInspectorNodes
     then DisplayNode.listJSON s.tree else "null"
@@ -2699,7 +2842,7 @@ private def Scene.json (s : Scene) (live binary : Bool := false) : Except String
     ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.compiled.length ++
     ",\"tree\":" ++ tree ++
     (if binary then ",\"dataBase64\":\"" ++ float32Base64 data ++ "\""
-     else ",\"data\":" ++ jsonArray (floatJSONList data.toList)) ++ ",\"tiles\":" ++ jsonArray (s.tiles.toList.map toString) ++ ",\"wgsl\":" ++ sceneShaderJSON ++ ",\"checks\":" ++ jsonArray checks ++ "}"
+     else ",\"data\":" ++ jsonArray (floatJSONList data.toList)) ++ ",\"tiles\":" ++ jsonArray (tiles.toList.map toString) ++ ",\"wgsl\":" ++ sceneShaderJSON ++ ",\"checks\":" ++ jsonArray checks ++ "}"
 /-- Serialize an existing checked SVG scene through the same packed-data/WGSL
     producer as the string ABI; no XML serialization or reparsing is required. -/
 def Scene.artifact (s : Scene) (live binary : Bool := false) : Except String String := s.json live binary

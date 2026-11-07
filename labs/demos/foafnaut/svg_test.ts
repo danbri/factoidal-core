@@ -437,3 +437,22 @@ Deno.test("SVG omitted arcs and moveto-only paths differ from zero drawing segme
  for(const d of ['M10 10','M10 10A8 8 0 0 1 10 10'])equal(e.sample(doc(d),10,10),[255,255,255]);
  for(const d of ['M10 10L10 10','M10 10Z'])equal(e.sample(doc(d),10,10),[255,0,0]);
 });
+
+Deno.test("SVG images are one paint in the table, and the GPU agrees with Lean's CPU reference",async()=>{
+ const e=await loadSVG();
+ const png="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGP4z8DwHwwZGP6DCAYAP9IF+9wCo9QAAAAASUVORK5CYII=";
+ const image=(attrs:string,href=png)=>`<image xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="${href}" ${attrs}/>`;
+ const svg=wrap(image('width="64" height="64"'));
+ const a=e.compile(svg);
+ // The first record's fill row: table offset 0, opacity 1, image mark.
+ equal(a.data.slice(8+8,8+12),[0,1,0,-2]);
+ // Nine header words and four pixels, then the count. Red is the low byte of a word.
+ equal(a.tiles!.at(-1),13);equal(a.tiles!.at(-5),0xff0000ff);
+ equal(e.sample(svg,16,16),[255,0,0]);equal(e.sample(svg,48,16),[0,255,0]);equal(e.sample(svg,48,48),[255,255,255]);
+ await renderSVG(a);
+ const b=e.compile(wrap(image('x="8" y="8" width="40" height="20" opacity=".5" transform="rotate(10)" preserveAspectRatio="xMaxYMid slice"')));
+ await renderSVG(b);
+ rejects(()=>e.compile(wrap(image('width="9" height="9"',"x.png"))),"image resource not supplied: x.png");
+ rejects(()=>e.compile(wrap(image('width="9" height="9"',"file:///etc/passwd"))),"image resource not supplied");
+ rejects(()=>e.compile(wrap(image('width="9" height="9"',"data:image/png;base64,aGk="))),"image is not PNG or JPEG");
+});

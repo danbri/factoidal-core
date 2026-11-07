@@ -30,10 +30,10 @@ PY
   cp -R "$TOOL_CACHE/." "$EM_CACHE/"
 fi
 fi
-CORE=(L4Factoidal.Rendering.Layout L4Factoidal.Rendering.SfntProfile L4Factoidal.Rendering.Links L4Factoidal.XML.NamespaceView L4Factoidal.Tdb2.Format L4Factoidal.Rendering.FloatFormat L4Factoidal.Syntax.IriResolve L4Factoidal.Rendering.RdfView L4Factoidal.Rendering.FontRequests L4Factoidal.Unicode.BidiData L4Factoidal.XSLT.Transform L4Factoidal.XSLT4.Transform L4Factoidal.UI.PolicyProtocol L4Factoidal.UI.Presentation L4Factoidal.UI.Geometry L4Factoidal.UI.LayoutPolicy L4Factoidal.Syntax.Turtle L4Factoidal.JSON.Parser L4Factoidal.JSON.Serialize)
+CORE=(L4Factoidal.Codec.Inflate L4Factoidal.Rendering.Layout L4Factoidal.Rendering.SfntProfile L4Factoidal.Rendering.Links L4Factoidal.XML.NamespaceView L4Factoidal.Tdb2.Format L4Factoidal.Rendering.FloatFormat L4Factoidal.Syntax.IriResolve L4Factoidal.Rendering.RdfView L4Factoidal.Rendering.FontRequests L4Factoidal.Unicode.BidiData L4Factoidal.XSLT.Transform L4Factoidal.XSLT4.Transform L4Factoidal.UI.PolicyProtocol L4Factoidal.UI.Presentation L4Factoidal.UI.Geometry L4Factoidal.UI.LayoutPolicy L4Factoidal.Syntax.Turtle L4Factoidal.JSON.Parser L4Factoidal.JSON.Serialize)
 lake build "${CORE[@]}" L4Factoidal.Rendering.Tests L4Factoidal.Rendering.RdfViewTests L4Factoidal.Rendering.FontLayoutTests L4Factoidal.Rendering.FontFaceTests L4Factoidal.Rendering.FontProviderTests L4Factoidal.Rendering.FontDataTests
 export LEAN_PATH="$BUILD/olean:$PROJECT/.lake/build/lib/lean"
-LAB_MODULES=(Graphics GraphicsPrepared Font SVGPathData SVGCurves SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke SVG SVGForgiving WebRenderSVG WebRender WebRenderRDF WebRenderFont WebRenderFontRequests WebRenderScript WebSelection WebHistory WebShell Geometry SceneSVG FoafGraph FoafNaut WebGraph WebXslt WebDocument RenderPlan)
+LAB_MODULES=(Graphics GraphicsPrepared Font SVGPathData SVGCurves SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke ImagePNG ImageJPEG ImageData SVG SVGForgiving WebRenderSVG WebRender WebRenderRDF WebRenderFont WebRenderFontRequests WebRenderScript WebSelection WebHistory WebShell Geometry SceneSVG FoafGraph FoafNaut WebGraph WebXslt WebDocument RenderPlan)
 for module in "${LAB_MODULES[@]}"; do
   printf 'LEAN %s %s\n' "$module" "$(date -u)"
   lean -R "$LAB" -o "$BUILD/olean/$module.olean" -c "$BUILD/ir/$module.c" "$LAB/$module.lean"
@@ -44,6 +44,8 @@ done
 lean -R "$LAB" "$LAB/WebRenderCurveTests.lean"
 lean -R "$LAB" "$LAB/SVGForgivingTests.lean"
 lean -R "$LAB" "$LAB/SVGGradientTests.lean"
+lean -R "$LAB" "$LAB/ImageTests.lean"
+lean -R "$LAB" "$LAB/SVGImageTests.lean"
 lean -R "$LAB" -c "$BUILD/ir/WebRenderCLI.c" "$LAB/WebRenderCLI.lean"
 # Enumerate exactly the project import closure, excluding the unrelated library.
 python3 - "$PROJECT" "$BUILD/core-c-files.txt" <<'PY'
@@ -55,7 +57,7 @@ def visit(module):
     seen.add(module); source=project/Path(*module.split('.')).with_suffix('.lean')
     for imported in re.findall(r'^import\s+(\S+)',source.read_text(),re.M): visit(imported)
     order.append(str(project/'.lake/build/ir'/Path(*module.split('.')).with_suffix('.c')))
-for module in ['L4Factoidal.Rendering.Layout','L4Factoidal.Rendering.SfntProfile','L4Factoidal.Rendering.Links','L4Factoidal.XML.NamespaceView','L4Factoidal.Tdb2.Format','L4Factoidal.Rendering.FloatFormat','L4Factoidal.Syntax.IriResolve','L4Factoidal.Rendering.RdfView','L4Factoidal.Rendering.FontRequests','L4Factoidal.Unicode.BidiData','L4Factoidal.XSLT.Transform','L4Factoidal.XSLT4.Transform','L4Factoidal.UI.PolicyProtocol','L4Factoidal.UI.Presentation','L4Factoidal.UI.Geometry','L4Factoidal.UI.LayoutPolicy','L4Factoidal.Syntax.Turtle','L4Factoidal.JSON.Parser','L4Factoidal.JSON.Serialize']: visit(module)
+for module in ['L4Factoidal.Codec.Inflate','L4Factoidal.Rendering.Layout','L4Factoidal.Rendering.SfntProfile','L4Factoidal.Rendering.Links','L4Factoidal.XML.NamespaceView','L4Factoidal.Tdb2.Format','L4Factoidal.Rendering.FloatFormat','L4Factoidal.Syntax.IriResolve','L4Factoidal.Rendering.RdfView','L4Factoidal.Rendering.FontRequests','L4Factoidal.Unicode.BidiData','L4Factoidal.XSLT.Transform','L4Factoidal.XSLT4.Transform','L4Factoidal.UI.PolicyProtocol','L4Factoidal.UI.Presentation','L4Factoidal.UI.Geometry','L4Factoidal.UI.LayoutPolicy','L4Factoidal.Syntax.Turtle','L4Factoidal.JSON.Parser','L4Factoidal.JSON.Serialize']: visit(module)
 Path(sys.argv[2]).write_text('\n'.join(order)+'\n')
 PY
 SOURCES=()

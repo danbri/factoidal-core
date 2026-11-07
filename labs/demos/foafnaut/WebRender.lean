@@ -198,19 +198,22 @@ def embedding (dom : DOM.Dom) (id : Nat) (style : Rendering.CSS.Computed) (width
   return placeSVG scene id style width height
 
 /-- One source-bound index per render, shared by all embedded SVG roots. -/
-def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none) : Except String Rendering.Layout.Embedding := do
+def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none)
+    (images : List (String × ByteArray) := []) : Except String Rendering.Layout.Embedding := do
   if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
     return embedding dom
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
   let (root,tree) ← documentNamespaceTree dom
   let context ← NativeSVG.ReferenceContext.create tree documentURL
+  -- Each image decodes once for the document, not once for each SVG root.
+  let store := NativeSVG.imageStore tree documentURL images
   return fun id style width height => do
     if Float.ofNat width.toUInt32.toNat != width || Float.ofNat height.toUInt32.toNat != height then
       throw "unsupported fractional embedded SVG viewport"
     let path ← sourcePath dom root (dom.size+1) id []
     let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
-    let scene ← NativeSVG.parseRootInContext context path width.toUInt32.toNat height.toUInt32.toNat inherited embeddedAttributes
+    let scene ← NativeSVG.parseRootInContext context path width.toUInt32.toNat height.toUInt32.toNat inherited embeddedAttributes (some store)
     return placeSVG scene id style width height
 
 def render (html : String) (width height : Nat) : Except String (Rendering.Scene × Array Rendering.Layout.Box) := do

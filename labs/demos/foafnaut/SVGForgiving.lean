@@ -24,7 +24,7 @@ private def maxParses : Nat := 4000
 /-- Elements the strict reader reads. Any other element is removed and logged. -/
 private def readable := ["svg","g","use","symbol","defs","style","metadata","title","desc",
   "rect","circle","ellipse","line","polygon","polyline","path",
-  "linearGradient","radialGradient","stop","solidColor"]
+  "linearGradient","radialGradient","stop","solidColor","image"]
 /-- Elements that paint nothing: their content needs no reader support. -/
 private def silent := ["title","desc","metadata"]
 
@@ -657,6 +657,9 @@ private structure Attempt where
   root : NamespaceNode
   dropped : List String
   parses : Nat
+  /-- Decoded once: this pass runs the strict reader many times. -/
+  images : NativeImage.Store
+  documentURL : Option String
 
 /-- Remove the deepest element whose removal changes the reader's first error.
     The reader stops at its first error, so an element that does not cause it
@@ -669,18 +672,18 @@ private def removeOffender (width height : Nat) (message : String) (a : Attempt)
     if parses >= maxParses then return none
     parses := parses + 1
     let next := removeAt maxDepth path a.root
-    let changed := match NativeSVG.parseRoot next width height with
+    let changed := match NativeSVG.parseRoot next width height {} a.documentURL (some a.images) with
       | .ok _ => true
       | .error other => other != message
     if changed then
       let tag := ((nodeAt maxDepth path a.root).map tagName).getD "node"
-      return some {root:=next,parses,dropped:=a.dropped ++ [s!"removed {tag}: {message}"]}
+      return some {a with root:=next,parses,dropped:=a.dropped ++ [s!"removed {tag}: {message}"]}
   return none
 
 private def repair (width height : Nat) : Nat → Attempt → Except String (NativeSVG.Scene × List String)
   | 0,_ => throw "forgiving pass exceeded its repair limit"
   | fuel+1,a =>
-    match NativeSVG.parseRoot a.root width height with
+    match NativeSVG.parseRoot a.root width height {} a.documentURL (some a.images) with
     | .ok scene => pure (scene,a.dropped)
     | .error message =>
       let stripped := (attributeError message).bind fun (tag,key) =>
@@ -713,9 +716,30 @@ private def rootAttrs (root : NamespaceNode) : NamespaceNode × List String :=
       (fun a => "attribute: svg " ++ a.name.localPart))
   | node => (node,[])
 
+/-- Remove each `image` that has no pixels: its reference failed, or its bytes were
+    refused. SVG Tiny 1.2 §5.7 draws nothing for it, and the rest of the document
+    stays. One log line for each element, with the reason of the store. -/
+private def dropBrokenImages (store : NativeImage.Store) : Nat → Option String → NamespaceNode → Option NamespaceNode × List String
+  | 0,_,node => (some node,[])
+  | _,_,.other raw => (some (.other raw),[])
+  | fuel+1,base,.element name attrs children =>
+    let base := NativeSVGReferences.elementBase attrs base
+    let broken := if name.namespace_ == some svgURI && name.localPart == "image" then
+        (NativeSVGReferences.href attrs).bind fun href =>
+          match store.get? (NativeSVG.imageKey base href) with
+          | some (.error message) => some message
+          | _ => none
+      else none
+    match broken with
+    | some message => (none,["removed image: " ++ message])
+    | none =>
+      let results := children.map (dropBrokenImages store fuel base)
+      (some (.element name attrs (results.filterMap (·.1))),results.flatMap (·.2))
+
 /-- Parse as a browser would: draw what the strict reader can draw. A document
     that is not well-formed XML stays an error. -/
-def parse (xml : String) (width height : Nat) (font : Option SVGFont := none) :
+def parse (xml : String) (width height : Nat) (font : Option SVGFont := none)
+    (images : List (String × ByteArray) := []) (documentURL : Option String := none) :
     Except String (NativeSVG.Scene × List String) := do
   if xml.length > NativeSVG.maxInputChars then throw "SVG input exceeds 1048576 characters"
   let root ← parseNamespaceView xml
@@ -724,6 +748,14 @@ def parse (xml : String) (width height : Nat) (font : Option SVGFont := none) :
   let targets := (idTargets maxDepth root).foldl (fun map (id,node) =>
     if map.contains id then map else map.insert id node) ({} : Std.HashMap String NamespaceNode)
   let (some root,log) := normalise (fontsIn root ++ font.toList) targets maxDepth {} false root | throw "root element is not read"
-  repair width height 1024 {root,dropped:=rootLog ++ log,parses:=0}
+  let store := NativeSVG.imageStore root documentURL images
+  let (some root,imageLog) := dropBrokenImages store maxDepth documentURL root | throw "root element is not read"
+  repair width height 1024 {root,dropped:=rootLog ++ log ++ imageLog,parses:=0,documentURL,images:=store}
+
+/-- The image references of a document that a host must fetch: not the `data:` ones. -/
+def imageRequests (xml : String) (documentURL : Option String := none) : Except String (List String) := do
+  if xml.length > NativeSVG.maxInputChars then throw "SVG input exceeds 1048576 characters"
+  let root ← parseNamespaceView xml
+  return (NativeSVG.imageKeys root documentURL).filter (!·.toLower.startsWith "data:")
 
 end NativeSVGForgiving

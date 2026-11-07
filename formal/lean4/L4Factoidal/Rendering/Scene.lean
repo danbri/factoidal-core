@@ -61,11 +61,30 @@ structure GradientRecord where
   radial : Bool
   stops : List GradientStop
   deriving Repr
+/-- A decoded raster image: rows from the top, four bytes for each pixel: red,
+green, blue, opacity, not premultiplied. -/
+structure Bitmap where
+  width : Nat
+  height : Nat
+  rgba : ByteArray
+instance : Repr Bitmap where
+  reprPrec b _ := .text s!"Bitmap {b.width}x{b.height}"
+/-- A raster image as paint. `map` goes from the primitive's local frame to pixel
+coordinates of the bitmap: pixel (i,j) covers i..i+1 and j..j+1. Two records with
+one `id` have one bitmap, so the paint table holds its pixels once. -/
+structure ImageRecord where
+  map : Transform
+  id : Nat
+  bitmap : Bitmap
+  deriving Repr
 inductive Paint where
   | none | solid (color : Color) | current
   | gradient (source : Gradient)
   /-- A lowered gradient and its word offset in the paint table of the scene. -/
   | gradientRecord (cursor : Nat) (record : GradientRecord)
+  | image (record : ImageRecord)
+  /-- An image and the word offset of its header in the paint table of the scene. -/
+  | imageRecord (cursor : Nat) (record : ImageRecord)
   deriving Repr
 
 def gradientRecordHeaderWords : Nat := 8
@@ -158,6 +177,52 @@ def Gradient.lower (g : Gradient) (bounds : Float × Float × Float × Float) : 
   | some (unit,radial) =>
     pure ⟨Math.Affine2.compose .float unit toGradient,radial,g.stops⟩
   | none => pure ⟨identity,false,g.stops.getLast?.toList⟩
+
+def imageRecordHeaderWords : Nat := 9
+/-- Wire form: the map's x row and the width, its y row and the height, then the
+word offset of the pixels from the start of the paint table. Each pixel is one
+word, red in the low byte. The shader reads this layout. -/
+def ImageRecord.words (g : ImageRecord) (pixels : Nat) : List Float :=
+  [g.map.a,g.map.c,g.map.e,Float.ofNat g.bitmap.width,
+   g.map.b,g.map.d,g.map.f,Float.ofNat g.bitmap.height,Float.ofNat pixels]
+theorem ImageRecord.words_length (g : ImageRecord) (pixels : Nat) :
+    (g.words pixels).length = imageRecordHeaderWords := rfl
+
+/-- The pixel as four words, in one word for the table. -/
+def Bitmap.word (b : Bitmap) (index : Nat) : Nat :=
+  let at_ := fun (k : Nat) => (b.rgba.get! (index*4+k)).toNat
+  at_ 0+at_ 1*256+at_ 2*65536+at_ 3*16777216
+
+/-- Index of a sample on one axis: the nearest pixel beyond the edge. -/
+private def edgeIndex (v : Float) (size : Nat) : Nat :=
+  if v <= 0 then 0 else min (size-1) v.toUInt64.toNat
+/-- Premultiplied colour of one pixel, in 0..1. -/
+private def Bitmap.texel (b : Bitmap) (x y : Nat) : Float × Float × Float × Float :=
+  let i := (y*b.width+x)*4
+  let a := Float.ofNat (b.rgba.get! (i+3)).toNat/255
+  (Float.ofNat (b.rgba.get! i).toNat/255*a,Float.ofNat (b.rgba.get! (i+1)).toNat/255*a,
+   Float.ofNat (b.rgba.get! (i+2)).toNat/255*a,a)
+private def mixTexel (p q : Float × Float × Float × Float) (f : Float) : Float × Float × Float × Float :=
+  (p.1*(1-f)+q.1*f,p.2.1*(1-f)+q.2.1*f,p.2.2.1*(1-f)+q.2.2.1*f,p.2.2.2*(1-f)+q.2.2.2*f)
+/-- Colour and opacity at a point of the primitive's local frame, as `[r,g,b,a]`:
+bilinear on premultiplied pixels, and beyond the edge the edge pixels. The shader
+states the same steps in `imageSample`. -/
+def ImageRecord.colorAt (g : ImageRecord) (x y : Float) : List Float :=
+  let (u,v) := Math.Affine2.applyPoint .float g.map x y
+  let fx := u-0.5
+  let fy := v-0.5
+  let x0 := fx.floor
+  let y0 := fy.floor
+  let b := g.bitmap
+  let left := edgeIndex x0 b.width
+  let right := edgeIndex (x0+1) b.width
+  let top := edgeIndex y0 b.height
+  let bottom := edgeIndex (y0+1) b.height
+  let upper := mixTexel (b.texel left top) (b.texel right top) (fx-x0)
+  let lower := mixTexel (b.texel left bottom) (b.texel right bottom) (fx-x0)
+  let (r,gr,bl,a) := mixTexel upper lower (fy-y0)
+  if a <= 0 then [0,0,0,0] else [r/a,gr/a,bl/a,a]
+
 inductive FillRule where | nonzero | evenodd
   deriving Repr, BEq
 inductive LineCap where | butt | round | square
