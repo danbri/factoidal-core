@@ -141,3 +141,69 @@ Wasm, 1600 by 1200, repeat frames, with other builds running on the machine:
 
 The real font is now faster than the bitmap font, because it has about a third of the
 primitives. Graph frame `compile`: 133 ms to 106 ms.
+
+## Zoom, frame compile cuts and a kept layout (2026-11-07, afternoon)
+
+Tracking: https://github.com/danbri/factoidal/issues/1268 (responsiveness and frame time).
+
+Zoom. There is no largest text scale; the smallest is 50%. A zoom step multiplies by
+about 1.1, rounded to a multiple of 5 (`WebSelection.zoomIn`, `zoomOut`). A new window
+starts at 150%. The cost does not grow with scale: outlines are kept in font units, one
+shaped word serves every size, and `inWindow` leaves out glyphs far from the window.
+Native, status page, 1600 by 1200: 150% 112 ms, 2000% 75 ms per frame (repeat of 10);
+one frame at 100000% renders. The external-shaper path (`fontData`, HarfBuzz) still
+refuses pixel sizes above 512 (`FontRequests.add`); the default Noto Sans path does not.
+
+Where the frame went (stack samples, native, `--document-repeat`, Noto Sans). The HTML
+parse is not the main cost now: `prepareDOM` is 9% of the graph frame (about 4 ms
+native). The earlier "HTML parse about 69 ms" in Wasm was measured before the
+`adjustName` cut and counted the inline SVG with it. The costs were:
+
+- Status page: artifact 97%. `Scene.data` 25%, CPU probe (`Scene.checks`, one probe)
+  16%, `Scene.make` 17%, `Scene.tiles` 12%, `float32Base64` 11%. The point-box fold (tuple
+  of boxed floats) was 13%, from `compilePrimitive`, `screenBox` and `fixedRows`.
+- Graph page: inline SVG parse 44% (path tokens from a list of characters 14%,
+  `NativeSVG.number` 18%), artifact 40%, CPU probe 19%.
+- Top self time, status: `_tlv_get_addr` (allocator thread-local), `mi_free`,
+  `lean_dec_ref_cold`, the `float32Base64` loop, `List.reverseAux`, the point-box fold,
+  `mi_malloc_small`, `Array.appendList`, `lean_byte_array_push`, `List.zipWith`. That is,
+  allocation of boxed floats and list cells.
+
+Cuts:
+
+- Point-box fold over an unboxed record, `pow10` with no list, `Scene.data` pushed onto
+  one array: `@[csimp]` with proofs (`pointBox_eq_fast`, `pointBounds_eq_fast`,
+  `pow10_eq_fast`, `Scene.data_eq_fast`).
+- A gradient box is made only for gradient paint (definitional).
+- Path data of ASCII bytes is tokenised by byte index (`tokensAscii`), and
+  `[+-]digits[.digits]` numbers are read from bytes (`numberSimple?`). Other text goes
+  to the reference. These two are checked by differential `#guard`s against the
+  reference (`sameTokens`, `sameNumber`), not by a proof.
+- A request with `checks:false` has no CPU probe. Hosts send it for interactive frames.
+- The layout of the last render is kept (`WebDocument.layOut`, `LayoutKey`). The key is
+  the HTML, the request fields that layout reads (`layoutFields`), width, height, chrome
+  height and the held font (family, SHA-256). `layOut` gets only the key, so it can
+  read nothing else. `lookupLayout_eq` proves a lookup over a valid entry equals
+  `layOut key`; `stored_valid` proves the stored entry is valid. Guards compare `run`
+  with `runUncached` over scroll, selection, width, scale and document changes. The
+  font memo is a shortcut only: for one DOM, `remember` adds all its words before
+  layout, so the memo state does not change a layout.
+
+Output bytes are equal before and after on the 10 demo pages and the graph frame.
+
+Measurements, 1600 by 1200, Noto Sans, scale 150%, median of 9 (Wasm, `web_document_call`
+time only) or mean of 40 (native, the first frame with the cold font memo included in
+"full"). "Scroll" is the same document with `shell.scroll` 40 pixels further each frame.
+
+| Page, frame | Wasm before | Wasm after | Wasm after, checks:false | Native before | Native after | Native after, checks:false |
+| --- | --- | --- | --- | --- | --- | --- |
+| Status, full | 136 ms | 118 ms | 80 ms | 100 ms | 85 ms | 71 ms |
+| Status, scroll | 149 ms | 129 ms | 84 ms | 100 ms | 69 ms | 55 ms |
+| Graph, full | 78 ms | 64 ms | 49 ms | 43 ms | 32 ms | 25 ms |
+| Graph, scroll | 78 ms | 30 ms | 15 ms | 43 ms | 13 ms | 9.6 ms |
+
+A status scroll frame is still mostly the artifact: every frame packs all floats of the
+visible glyphs again, because a scroll moves every primitive. The next cut is the
+pre-rendered band with a GPU offset (issue item 2), or keeping the packed data of the
+page and changing only the page transform. After that: `Primitive.rows` makes lists of
+boxed floats (a `FloatArray` data path), and `float32Base64`.
