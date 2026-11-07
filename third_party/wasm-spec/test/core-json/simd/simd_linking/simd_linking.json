@@ -1,0 +1,1 @@
+{"source_filename":"/Users/danbri/working/factoidal-wasmvm-vendor/third_party/wasm-spec/test/core/simd/simd_linking.wast","commands":[{"type":"module","line":1,"filename":"simd_linking.0.wasm","module_type":"binary"},{"type":"register","line":5,"as":"Mv128"},{"type":"module","line":7,"filename":"simd_linking.1.wasm","module_type":"binary"}]}

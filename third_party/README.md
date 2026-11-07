@@ -39,6 +39,14 @@ third_party/
 │                   test corpus is stable)
 ├── fonts/          open-licence fonts for the browser engine; see
 │                   fonts/README.md for source and licence notes
+├── wasm-spec/      WebAssembly/spec at f3268fa9dc: Wasm 3.0 SpecTec
+│                   sources and prose core spec (W3C Software and
+│                   Document Licence), core test suite (Apache-2.0) and
+│                   its JSON + .wasm conversion (tools/wasmvm/
+│                   convert-spec-tests.sh). See wasm-spec/README.md
+├── spectec-lean4/  SpecTec-to-Lean 4 backend and generated Wasm.lean,
+│                   Wasm-DSL/spectec branch lean4-wip at 16b70bde87
+│                   (Apache-2.0; spec-version notes in its README.md)
 ├── apache/         reserved for Apache-family test assets
 │                   (e.g. Jena ARQ test corpus, when vendored)
 ├── eleventy/       vendored npm cache: @11ty/eleventy + full dep tree
