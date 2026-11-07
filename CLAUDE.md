@@ -984,6 +984,27 @@ ai optimization from beginning."
   from reading the code. The owner saw it still lag. The first trace showed 1.3 to
   2.9 seconds per frame, nearly all in the GPU draw.
 
+### foafnaut2525: SVG basics, fonts, then page JavaScript (owner, 2026-11-07)
+
+Owner, verbatim: "I suggest progressing the work on DRAWING SVG GOOD by passing
+tons of tess."; "do gradients and so on. There is so much complex stuff to do,
+let's get svg drawing basics nailed down, and also fonts."; "We should move to
+VerifiedJS for JS. And get it wired up via DOM. Behaviour in pages needs to be
+JS."; "VerifiedJS: implement now, I will talk to them, we can always back out.";
+"don't delete the old js, we might flip back."
+
+- Order of work: SVG drawing basics and fonts first, measured by the W3C SVG Tiny
+  1.2 pixel suite (`tests/browser-wpt/svg-tiny-pixels.py`).
+- Page JavaScript moves to https://github.com/BasisResearch/VerifiedJS, with DOM
+  effects through typed Lean commands. Work: branch `wip/verifiedjs-page-scripts`.
+- QuickJS stays in the tree and selectable. Do not delete it.
+- VerifiedJS has no licence file. The owner is asking its authors. Until they answer
+  it is fetched at a pinned commit and none of its source is committed here.
+- A node of the FOAF graph may not cover another: `WebGraph.keepApart` holds the
+  layout policy on each step. Owner, verbatim: "this version of the foafy svg
+  doesn't come with the inability for a node to occlude another". Cost of the
+  earlier choice: on 2026-11-06 a refused drag was fixed by removing the check.
+
 ### One owner per release (owner, 2026-10-28)
 
 Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" and

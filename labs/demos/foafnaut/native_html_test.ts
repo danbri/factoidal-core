@@ -220,14 +220,26 @@ Deno.test("the interactive FOAF graph runs as a browser page through Lean",async
   assert.ok(start.commands.includes("render")&&start.commands.includes("startClock"));
   const position=(model:string)=>JSON.parse(model).positions as number[][];
   const [x,y]=position(start.model)[3];
-  // Window coordinates: the chrome height is added here and removed by Lean.
-  const top=65,press=engine.graphEvent(start.model,2,x,y+top,1000,shell);
+  // Window pixels of an app point: the chrome is above, and the app is 1000 by 700 inside.
+  const top=65,screenY=(v:number)=>Math.round(v*(680-top)/700+top);
+  const press=engine.graphEvent(start.model,2,x,screenY(y),1000,shell);
   assert.equal(JSON.parse(press.model).selection,4);
-  const moved=engine.graphEvent(press.model,3,x-80,y+top+60,1000,shell);
+  const moved=engine.graphEvent(press.model,3,x-30,screenY(y),1000,shell);
   assert.notDeepEqual(position(moved.model)[3],[x,y]);
-  // Nodes may overlap while dragging: the live view must still draw.
+  // A node may not cover another: a drag stops at the last legal position.
   let crowded=moved.model;
-  for(let i=0;i<5;i++)crowded=engine.graphEvent(crowded,3,position(crowded)[0][0],position(crowded)[0][1]+top,1000,shell).model;
+  const target=position(crowded)[0];
+  for(let i=1;i<=40;i++){
+    const [px,py]=position(crowded)[3];
+    crowded=engine.graphEvent(crowded,3,Math.round(px+(target[0]-px)/4),screenY(py+(target[1]-py)/4),1000,shell).model;
+  }
+  const stopped=position(crowded)[3];
+  assert.ok(Math.abs(stopped[0]-target[0])>100||Math.abs(stopped[1]-target[1])>60,`node 3 covers node 0: ${stopped} ${target}`);
+  const held=engine.graphEvent(crowded,3,target[0],screenY(target[1]),1000,shell);
+  assert.deepEqual(position(held.model)[3],stopped);
+  // It can still move away.
+  const freed=engine.graphEvent(held.model,3,x,screenY(y),1000,shell);
+  assert.notDeepEqual(position(freed.model)[3],stopped);
   const page=engine.graphPage(crowded);
   assert.match(page,/<svg/);
   assert.ok(engine.compile(page,1000,680,{url:"foafnaut:graph",resources:[],shell}).primitiveCount>100);
