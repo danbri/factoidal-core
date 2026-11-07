@@ -10,9 +10,11 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const HELP = `foafnaut [--latest|--bleeding-edge] [PAGE] [-- APP_ARGS]
+const HELP = `foafnaut [--latest|--bleeding-edge] [PAGE | --url URL | --html FILE] [APP_OPTIONS] [-- APP_ARGS]
 
-  PAGE              an http(s) URL or an HTML file; none opens the default page
+  PAGE              an http(s) or file: URL, or an HTML file; none opens the default page
+  --url URL         the page as a URL (http, https or file)
+  --html FILE       the page as a local HTML file
   --latest          install the newest published macOS build, then use it
   --bleeding-edge   use the local build (config.json "bleedingEdge", or
                     ~/Applications/foafnaut.app)
@@ -22,6 +24,15 @@ const HELP = `foafnaut [--latest|--bleeding-edge] [PAGE] [-- APP_ARGS]
   --list            list installed versions
   --which           print the app that would run
   --help            this text
+
+App options, passed to the app as they are:
+  --perf-summary    print frame and input latency figures when the window closes
+  --check-pixels    read back and check every frame (slow)
+  --wasm-engine     use the Wasm engine, not the native library
+  --native-engine PATH  use this native engine library
+  --font FILE       load this font file
+  --bitmap-font     use the baked-in ASCII font only
+  --follow-links    open links that a page asks for at load
 
 Also: foafnaut-latest, foafnaut-bleedingedge. Environment: FOAFNAUT_HOME, and
 FOAFNAUT_APP, which chooses the app outright. Page data goes to the app. Its trace
@@ -96,9 +107,14 @@ async function installLatest() {
   return versionApp(dir);
 }
 
+// App options that take no value, and those that take one.
+const APP_FLAGS = ['--perf-summary', '--check-pixels', '--wasm-engine', '--bitmap-font', '--follow-links', '--idle-checks-only', '--trace-input'];
+const APP_VALUES = ['--native-engine', '--font'];
+
 function pageArgs(page) {
   if (page === undefined) return [];
   if (/^https?:\/\//i.test(page)) return ['--url', page];
+  if (/^file:/i.test(page)) page = new URL(page).pathname;
   const path = resolve(page);
   if (!existsSync(path)) fail(`no such file: ${page}`);
   return ['--html', path];
@@ -109,10 +125,13 @@ export async function main(argv, channel = 'current') {
   const options = split < 0 ? argv : argv.slice(0, split);
   const extra = split < 0 ? [] : argv.slice(split + 1);
   let page, which = false, verbose = false, detach = false;
+  const app_ = [];
+  const setPage = (value) => { if (page !== undefined) fail('give one page'); if (value === undefined) fail('a page option needs a value'); page = value; };
   // Each of these picks the app or the action. Two of them have no one meaning.
   const exclusive = options.filter((arg) => ['--latest', '--bleeding-edge', '--install-latest', '--list'].includes(arg));
   if (new Set(exclusive).size > 1) fail(`${exclusive.join(' and ')} can not be used together; see --help`);
-  for (const arg of options) {
+  for (let i = 0; i < options.length; i++) {
+    const arg = options[i];
     if (arg === '--help' || arg === '-h') { process.stdout.write(HELP); return; }
     else if (arg === '--latest') channel = 'latest';
     else if (arg === '--bleeding-edge') channel = 'bleeding-edge';
@@ -127,9 +146,12 @@ export async function main(argv, channel = 'current') {
         console.log(`${name === current ? '*' : ' '} ${name}`);
       console.log(`  bleeding edge: ${bleedingEdgeApp()}${existsSync(bleedingEdgeApp()) ? '' : ' (not found)'}`);
       return;
-    } else if (arg.startsWith('-')) fail(`unknown option ${arg}; see --help`);
-    else if (page !== undefined) fail('give one page');
-    else page = arg;
+    } else if (arg === '--url' || arg === '--html') setPage(options[++i]);
+    else if (arg.startsWith('--url=') || arg.startsWith('--html=')) setPage(arg.slice(arg.indexOf('=') + 1));
+    else if (APP_FLAGS.includes(arg)) app_.push(arg);
+    else if (APP_VALUES.includes(arg)) { if (options[i + 1] === undefined) fail(`${arg} needs a value`); app_.push(arg, options[++i]); }
+    else if (arg.startsWith('-')) fail(`unknown option ${arg}; see --help`);
+    else setPage(arg);
   }
   if (process.platform !== 'darwin') fail('the native window is macOS only; use the Hub page in a WebGPU browser');
   let app = process.env.FOAFNAUT_APP;
@@ -138,7 +160,7 @@ export async function main(argv, channel = 'current') {
   if (!app) app = currentApp() ?? bleedingEdgeApp();
   if (!existsSync(app)) fail(`no app at ${app}. Run foafnaut --install-latest.`);
   if (which) { console.log(app); return; }
-  const args = ['-n', ...(detach ? [] : ['-W']), app, '--args', ...pageArgs(page), ...(verbose ? ['--trace-input'] : []), ...extra];
+  const args = ['-n', ...(detach ? [] : ['-W']), app, '--args', ...pageArgs(page), ...(verbose ? ['--trace-input'] : []), ...app_, ...extra];
   const log = join(homedir(), 'Library', 'Logs', 'foafnaut', 'trace.jsonl');
   if (verbose) console.error(`foafnaut: app ${app}\nfoafnaut: open ${args.join(' ')}\nfoafnaut: trace ${log}`);
   // Follow only what this run appends.
