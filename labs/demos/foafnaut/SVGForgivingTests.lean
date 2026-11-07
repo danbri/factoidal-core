@@ -85,6 +85,11 @@ private def green (xml : String) (supplied : List (String × ByteArray)) : Bool 
 private def nested := linked "<use id='r' xlink:href='c.svg#s'/>"
 #guard (NativeSVGForgiving.imageRequests useOther (some main_) [(otherKey,nested.toUTF8)]).toOption == some ["http://h.invalid/a/c.svg"]
 #guard green useOther [(otherKey,nested.toUTF8),("http://h.invalid/a/c.svg",(linked "<rect id='s' width='40' height='40' fill='lime'/>").toUTF8)]
+-- `font-face-uri` names a font in another document; the referring face gives the family.
+private def fontDoc := "<svg xmlns='http://www.w3.org/2000/svg'><font id='f' horiz-adv-x='1000'><font-face font-family='Other' units-per-em='1000' ascent='1000' descent='0'/><glyph unicode='a' d='M0 0H1000V1000H0Z'/></font></svg>"
+private def fontUse := linked "<font-face font-family='L'><font-face-src><font-face-uri xlink:href='b.svg#f'/></font-face-src></font-face><text font-family='L' font-size='40' y='40' fill='lime'>a</text>"
+#guard green fontUse [(otherKey,fontDoc.toUTF8)]
+#guard (NativeSVGForgiving.imageRequests fontUse (some main_)).toOption == some [otherKey]
 -- A cycle of documents ends: each document is imported once.
 #guard (NativeSVGForgiving.parse useOther 40 40 none [(otherKey,(linked "<use id='r' xlink:href='main.svg#x'/>").toUTF8)] (some main_)).toOption.isSome
 #guard (NativeSVGForgiving.parse useOther 40 40 none [(otherKey,(linked "<use id='r' xlink:href='b.svg#r'/>").toUTF8)] (some main_)).toOption.isSome

@@ -1101,6 +1101,47 @@ private def importDocuments (root : NamespaceNode) (documentURL : Option String)
   | .element name attrs children => return (.element name attrs (children ++ defs.toList),state)
   | node => return (node,state)
 
+/-- Each `font-face-uri` that names a font in another document: the family that its
+    `font-face` gives, and the reference, resolved. -/
+private def fontFaceUris : Nat → Option String → Option String → NamespaceNode → List (String × String)
+  | 0,_,_,_ => []
+  | _,_,_,.other _ => []
+  | fuel+1,family,base,.element name attrs children =>
+    let base := NativeSVGReferences.elementBase attrs base
+    let family := if name.localPart == "font-face" then plainAttr attrs "font-family" else family
+    let own := if name.localPart != "font-face-uri" then [] else
+      match family,NativeSVGReferences.href attrs with
+      | some f,some h => if h.trimAscii.toString.startsWith "#" then [] else [(f,NativeSVG.imageKey base h)]
+      | _,_ => []
+    own ++ children.flatMap (fontFaceUris fuel family base)
+
+/-- The font with this id in a document, or its first font. The family is the one that
+    the referring `font-face` gives. -/
+private def externalFont (family fragment : String) (root : NamespaceNode) : Option SVGFont :=
+  let elements := fontElements maxDepth root
+  let hasId : NamespaceNode → Bool := fun
+    | .element _ attrs _ => attrs.any (fun a => a.name.localPart == "id" && a.value == fragment)
+    | _ => false
+  match (elements.find? hasId).orElse (fun _ => elements.head?) with
+  | some (.element _ attrs children) => some {SVGFont.ofElement attrs children with family}
+  | _ => none
+
+/-- Fonts that a document names in other documents, and the keys the host has not
+    supplied. Two faces of one reference read it once each; a document has few. -/
+private def externalFonts (root : NamespaceNode) (documentURL : Option String)
+    (supplied : List (String × ByteArray)) : List SVGFont × List String := Id.run do
+  let mut fonts : List SVGFont := []
+  let mut missing : List String := []
+  for (family,reference) in fontFaceUris maxDepth none documentURL root do
+    let (key,fragment) := splitFragment reference
+    if key.toLower.startsWith "data:" then continue
+    match supplied.find? (·.1 == key) with
+    | none => missing := missing ++ [key]
+    | some (_,bytes) =>
+      let tree := (String.fromUTF8? bytes).bind fun text => (parseNamespaceView text).toOption
+      if let some font := tree.bind (externalFont family fragment) then fonts := fonts ++ [font]
+  return (fonts,missing)
+
 /-- Parse as a browser would: draw what the strict reader can draw. A document
     that is not well-formed XML stays an error. -/
 def parse (xml : String) (width height : Nat) (font : Option SVGFont := none)
@@ -1113,7 +1154,8 @@ def parse (xml : String) (width height : Nat) (font : Option SVGFont := none)
   -- Fonts in the document come first; the host's font is the default.
   let targets := (idTargets maxDepth root).foldl (fun map (id,node) =>
     if map.contains id then map else map.insert id node) ({} : Std.HashMap String NamespaceNode)
-  let (some root,log) := normalise (fontsIn root ++ font.toList) targets maxDepth {} false root | throw "root element is not read"
+  let (linkedFonts,_) := externalFonts root documentURL images
+  let (some root,log) := normalise (fontsIn root ++ linkedFonts ++ font.toList) targets maxDepth {} false root | throw "root element is not read"
   let store := NativeSVG.imageStore root documentURL images
   let (some root,imageLog) := dropBrokenImages store maxDepth documentURL root | throw "root element is not read"
   repair width height 1024 {root,dropped:=rootLog ++ imports.log ++ log ++ imageLog,parses:=0,documentURL,images:=store}
@@ -1127,7 +1169,7 @@ def imageRequests (xml : String) (documentURL : Option String := none)
   if xml.length > NativeSVG.maxInputChars then throw "SVG input exceeds 1048576 characters"
   let root ← parseNamespaceView xml
   let (root,imports) := importDocuments root documentURL supplied
-  let external := imports.missing.filter (!·.toLower.startsWith "data:")
+  let external := (imports.missing ++ (externalFonts root documentURL supplied).2).filter (!·.toLower.startsWith "data:")
   return (external ++ (NativeSVG.imageKeys root documentURL).filter (!·.toLower.startsWith "data:")).eraseDups
 
 end NativeSVGForgiving
