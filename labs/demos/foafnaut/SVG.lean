@@ -534,17 +534,10 @@ private def readStyle (lengths : LengthContext) (paints : PaintContext) (attrs :
   let mut style := parent
   if let some value := attr attrs "color" then
     if !["inherit","currentcolor"].contains (trim value).toLower then style := {style with currentColor:= ← color value}
-  -- W3C paint-color-05-t: a plain `currentColor` computes on the element that states it,
-  -- so a child with its own `color` inherits the colour of this element. CSS Color 4
-  -- keeps the keyword instead; the upstream fallback tests need that for
-  -- `url(#missing) currentColor`, so a fallback stays a keyword.
-  let computed := fun (value : String) (paint : Paint) => match paint with
-    | .current => if (trim value).toLower == "currentcolor" then Paint.solid style.currentColor else paint
-    | other => other
   if let some value := attr attrs "fill" then
-    if trim value != "inherit" then style := {style with fill:=computed value (← readPaint lengths paints value)}
+    if trim value != "inherit" then style := {style with fill:= ← readPaint lengths paints value}
   if let some value := attr attrs "stroke" then
-    if trim value != "inherit" then style := {style with stroke:=computed value (← readPaint lengths paints value)}
+    if trim value != "inherit" then style := {style with stroke:= ← readPaint lengths paints value}
   if let some value := attr attrs "stroke-dasharray" then
     if trim value != "inherit" then
       style := {style with dashArray:= ← dashArray lengths value}
