@@ -66,8 +66,14 @@ function render(source,options,w,h){
 // 3 MB does not fit as a Base64 string, which Wasm copies onto its 4 MB stack. A runtime
 // with no such export takes Base64 in the JSON request. fallback adds the font after the
 // fonts the engine holds, for the characters they lack; otherwise it replaces them.
+//
+// The bytes call gained its fallback argument after it was first published, and a Wasm
+// engine built with assertions aborts when a call has the wrong number of arguments. The
+// page cannot read the count from the export, so it uses bytes only once an answer has shown
+// that the engine holds several fonts (fonts in the answer): such an engine takes five.
+let fontBytesTakeFallback=false;
 function fontLoad(bytes,family,sha,fallback=false){
-  if(typeof module._web_document_font_call_bin!=='function'||typeof module._malloc!=='function'){
+  if(!fontBytesTakeFallback||typeof module._web_document_font_call_bin!=='function'||typeof module._malloc!=='function'){
     let text='';
     for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
     return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha,...(fallback?{fallback:true}:{})});
@@ -100,10 +106,11 @@ async function loadFont(){
     const {bytes,sha}=await fontFile('./fonts/noto-sans/NotoSans-Regular.ttf');
     primary=fontLoad(bytes,'Noto Sans',sha);
   }catch(error){console.warn('foafnaut: bitmap font, because Noto Sans did not load:',String(error));return;}
-  // Only an engine that holds several fonts answers with `fonts` (the count held). An engine
-  // with the bytes call but no fallback argument would replace Noto Sans with the fallback
-  // font: on 2026-11-07 the published engine did, and Latin text on the Hub page broke.
+  // Only an engine that holds several fonts answers with `fonts` (the count held). An older
+  // engine would take a fallback font as a replacement for Noto Sans, or abort on the
+  // fallback argument: on 2026-11-07 the published engine did both (issue 1274).
   if(typeof primary?.fonts!=='number')return;
+  fontBytesTakeFallback=true;
   for(const [path,family] of fallbackFonts){
     try{const {bytes,sha}=await fontFile(path);fontLoad(bytes,family,sha,true);}
     catch(error){console.warn(`foafnaut: no ${family}:`,String(error));}
