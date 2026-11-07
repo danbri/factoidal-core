@@ -89,13 +89,16 @@ if(!bench){
   // is unchanged. (2) A Lean frame with the reload button pressed differs from one with it raised,
   // and only inside the button's box.
   let pressFailed=0;
-  const layers=engine.compileLayers(doc.source,W,H,options(0,true));
+  // The status page has no link: the press checks use the index page.
+  const pressDoc=await prepareHTML(engine,inputURL(new URL("./pages/index.html",import.meta.url).pathname,true));
+  const pressOptions=(checks:boolean,extra:Record<string,unknown>={})=>({...pressDoc.request(W,H).options,textScalePercent:150,shell:{...shell(0),address:pressDoc.url},...(checks?{}:{checks:false}),...extra});
+  const layers=engine.compileLayers(pressDoc.source,W,H,pressOptions(true));
   await renderer.drawLayers(layers,true);
   renderer.setPress(undefined);
   const idle=await renderer.composite(composed,W,H,0,true);
   const top=layers.layers.top,links=layers.page.webRender.links as unknown[][];
   const link=links[0] as number[];
-  const answer=engine.press(shell(0),Math.round(link[2]+link[4]/2),Math.round(link[3]+link[5]/2+top),W,Math.round(link[3]+link[5]/2),links);
+  const answer=engine.press({...shell(0),address:pressDoc.url},Math.round(link[2]+link[4]/2),Math.round(link[3]+link[5]/2+top),W,Math.round(link[3]+link[5]/2),links);
   renderer.setPress(answer.rects);
   const down=await renderer.composite(composed,W,H,0,true);
   renderer.setPress(undefined);
@@ -112,7 +115,7 @@ if(!bench){
   if(!answer.rects.length||!darkened||wrong)pressFailed++;
   console.log(JSON.stringify({type:"press-composite",href:answer.href,rects:answer.rects,darkenedPixels:darkened,wrongChannels:wrong,verdict:answer.rects.length&&darkened&&!wrong?"pass":"fail"}));
   const box=[64*scale,30*scale,28*scale,28*scale];
-  const raised=engine.compileLayers(doc.source,W,H,{...options(0,true),shell:{...shell(0),pressed:"reload"}});
+  const raised=engine.compileLayers(pressDoc.source,W,H,pressOptions(true,{shell:{...shell(0),address:pressDoc.url,pressed:"reload"}}));
   await renderer.drawLayers(raised,true);
   const pressedFrame=await renderer.composite(composed,W,H,0,true);
   let changed=0,outside=0;
