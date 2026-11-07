@@ -95,4 +95,46 @@ theorem inv_ibytes_ibytes_32 (a : UInt32) :
     List.map_id, Builtins.inv_ibytes_ibytes_32]
   rfl
 
+/-! Signed arithmetic. These need SpecTec `int` to be Lean `Int` (defect D1, fixed by the
+regeneration from WebAssembly/spec f3268fa9). With every number a `Nat`, `$signed_`
+mapped 0xFFFFFFFA to 0, not -6, and none of the following held. -/
+
+/-- `signed_32(0xFFFFFFFA) = -6` (spec 4.3.1, two's complement). -/
+theorem signed_32_neg6 : fun_signed_ 32 0xFFFFFFFA (-6) :=
+  fun_signed_.fun_signed__case_1 32 0xFFFFFFFA (by decide)
+
+/-- `truncz(-6 / 2) = -3`. Rational division does not reduce in the kernel (`Nat.gcd`),
+so this goes through `(-3) * 2 / 2 = -3`. -/
+theorem truncz_neg6_div_2 : truncz (Rat.ofInt (-6) / Rat.ofInt 2) = -3 := by
+  have h2 : Rat.ofInt 2 ≠ 0 := by decide
+  have e := Rat.intCast_mul (-3) 2
+  rw [show ((-3 : Int) * 2) = -6 by decide] at e
+  have e' : Rat.ofInt (-6) = Rat.ofInt (-3) * Rat.ofInt 2 := e
+  rw [e', Rat.mul_div_cancel h2]
+  decide
+
+/-- `idiv_32_s(-6, 2) = -3`, i.e. `0xFFFFFFFD` (spec 4.3.2, `op-idiv-s`). -/
+theorem idiv_s_32_neg6_2 :
+    fun_idiv_ 32 .S (.mk_uN 0xFFFFFFFA) (.mk_uN 2) (some (.mk_uN 0xFFFFFFFD)) := by
+  refine fun_idiv_.fun_idiv__case_4 32 _ _ 2 (-6) _ ?_ ?_ ?_
+  · exact fun_signed_.fun_signed__case_0 32 2 (by decide)
+  · exact signed_32_neg6
+  · rw [truncz_neg6_div_2]
+    exact fun_inv_signed_.fun_inv_signed__case_1 32 (-3) (by decide)
+
+/-- The `i32` instruction `div_s`. -/
+abbrev i32div_s : instr := .BINOP .I32 (.mk_binop__0 .I32 (.DIV .S))
+
+/-- `(i32.const -6) (i32.const 2) i32.div_s` reduces to `(i32.const -3)`. -/
+theorem i32_div_s_neg6_2 :
+    Step_pure [i32c 0xFFFFFFFA, i32c 2, i32div_s] [i32c 0xFFFFFFFD] := by
+  refine Step_pure.binop_val .I32 _ _ _ _ [.mk_num__0 .I32 (.mk_uN 0xFFFFFFFD)] ?_ ?_ ?_ ?_ ?_ ?_ ?_
+  · exact fun_binop_.fun_binop__case_6 .S _ _ (some (.mk_uN 0xFFFFFFFD)) idiv_s_32_neg6_2
+      (by intro x hx; simp at hx; subst hx
+          exact .num__case_0 _ .I32 _ (.uN_case_0 _ _ (by decide)) (by decide))
+  all_goals first
+    | exact .num__case_0 _ .I32 _ (.uN_case_0 _ _ (by decide)) (by decide)
+    | exact .binop__case_0 _ .I32 _ (by decide)
+    | decide
+
 end L4Factoidal.WasmVM.Spec.Sanity

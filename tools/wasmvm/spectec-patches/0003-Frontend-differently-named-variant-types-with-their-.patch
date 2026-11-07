@@ -1,0 +1,33 @@
+From 4a534909be5e9738dbf335e82e2b6ee37adb4c5d Mon Sep 17 00:00:00 2001
+From: Dan Brickley <danbri@danbri.org>
+Date: Sat, 7 Nov 2026 23:20:45 +0000
+Subject: [PATCH 3/4] Frontend: differently named variant types with their own
+ case lists are not equivalent (Lnn vs lanetype)
+
+---
+ spectec/src/frontend/eval.ml | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/spectec/src/frontend/eval.ml b/spectec/src/frontend/eval.ml
+index ae3f6ea..53dd1dd 100644
+--- a/spectec/src/frontend/eval.ml
++++ b/spectec/src/frontend/eval.ml
+@@ -674,6 +674,18 @@ and equiv_typ env t1 t2 =
+     equiv_list equiv_arg env args1 args2 || (* optimization *)
+     let t1' = reduce_typ env t1 in
+     let t2' = reduce_typ env t2 in
++    (* factoidal patch: two differently named variant types, each defined by its own
++       case list, are not equivalent. Structural equivalence made `Lnn = Inn | Fnn | Pnn`
++       equal to `lanetype = numtype | packtype` (WebAssembly/spec f3268fa9), so no
++       injection was elaborated, but backends that emit one inductive type per variant
++       (Lean 4) need the injection. Aliases (`syntax Lnn = lanetype`) still reduce. *)
++    let own_cases id args =
++      args = [] &&
++      (match Map.find_opt (El.Convert.strip_var_suffix id).it env.typs with
++      | Some [([], {it = CaseT _; _})] -> true
++      | _ -> false)
++    in
++    if own_cases id1 args1 && own_cases id2 args2 then false else
+     (t1' <> t1 || t2' <> t2) && equiv_typ env t1' t2'
+   | VarT _, _ ->
+     let t1' = reduce_typ env t1 in

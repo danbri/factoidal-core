@@ -1,0 +1,100 @@
+From 829e012f54e9c48e23077c9c5f5b375b454d423f Mon Sep 17 00:00:00 2001
+From: Dan Brickley <danbri@danbri.org>
+Date: Sat, 7 Nov 2026 23:16:02 +0000
+Subject: [PATCH 2/4] print.ml: int/rat as Int/Rat with explicit conversions
+ (D1); keep wf_ relations of mutual groups (G1)
+
+---
+ spectec/backend-lean4/print.ml | 53 +++++++++++++++++++++++++---------
+ 1 file changed, 40 insertions(+), 13 deletions(-)
+
+diff --git a/spectec/backend-lean4/print.ml b/spectec/backend-lean4/print.ml
+index 448452c..b7edaad 100644
+--- a/spectec/backend-lean4/print.ml
++++ b/spectec/backend-lean4/print.ml
+@@ -172,10 +172,29 @@ let get_param_id b =
+ 
+ let render_numtyp nt = 
+   match nt with
++  (* factoidal patch D1: SpecTec int, rat and real are not Nat. Lean core has Int and
++     Rat. It has no Real; `Real` is printed so that a use fails to elaborate. *)
+   | `NatT -> "Nat"
+-  | `IntT -> "Nat"
+-  | `RatT -> "Nat"
+-  | `RealT -> "Nat"
++  | `IntT -> "Int"
++  | `RatT -> "Rat"
++  | `RealT -> "Real"
++
++(* factoidal patch D1: number conversions. Upward conversions are the exact injections.
++   Each operand is converted as a whole (`Int.ofNat (a - b)`, not `↑a - ↑b`), so the
++   arithmetic happens in the type that the IL gives it. Downward conversions (SpecTec
++   lax numerics) are partial in SpecTec; here `Int.toNat` (0 for negative) and
++   `Rat.floor`, which agree with SpecTec on every value in the target type. *)
++let render_cvt s nt1 nt2 =
++  let p = parens in
++  match nt1, nt2 with
++  | n1, n2 when n1 = n2 -> p (s ^ " : " ^ render_numtyp n2)
++  | `NatT, `IntT -> p ("Int.ofNat " ^ s)
++  | `NatT, `RatT -> p ("Rat.ofInt (Int.ofNat " ^ s ^ ")")
++  | `IntT, `RatT -> p ("Rat.ofInt " ^ s)
++  | `IntT, `NatT -> p ("Int.toNat " ^ s)
++  | `RatT, `IntT -> p ("Rat.floor " ^ s)
++  | `RatT, `NatT -> p ("Int.toNat (Rat.floor " ^ s ^ ")")
++  | _, n2 -> p (s ^ " : " ^ render_numtyp n2)
+ 
+ let transform_case_tup e = 
+   match e.it with
+@@ -224,9 +243,10 @@ and render_exp exp_type exp =
+   | VarE id -> render_id id.it
+   | BoolE b -> string_of_bool b
+   | NumE (`Nat n) -> Z.to_string n (* TODO fix nums *)
+-  | NumE (`Int n) -> Z.to_string n (* TODO fix nums *)
+-  | NumE (`Rat n) -> Q.to_string n (* TODO fix nums *)
+-  | NumE (`Real n) -> string_of_float n (* TODO fix nums *)
++  | NumE (`Int n) when Z.sign n < 0 -> parens (Z.to_string n)
++  | NumE (`Int n) -> Z.to_string n
++  | NumE (`Rat n) -> parens (parens (Z.to_string (Q.num n)) ^ " / " ^ parens (Z.to_string (Q.den n)) ^ " : Rat")
++  | NumE (`Real n) -> parens (string_of_float n ^ " : Real")
+   | TextE s -> "\"" ^ String.escaped s ^ "\""
+   | UnE (unop, _, e1) -> parens (render_unop unop ^ r_func e1)
+   | BinE (binop, _, e1, e2) -> parens (r_func e1 ^ render_binop binop ^ r_func e2)
+@@ -292,7 +312,7 @@ and render_exp exp_type exp =
+     in 
+     parens (pred_name ^ " " ^ render_lambda binds (r_func e) ^ " " ^ 
+     String.concat " " (List.map (render_exp exp_type) iter_exps))
+-  | CvtE (e1, _nt1, nt2) -> parens (r_func e1 ^ " : " ^ render_numtyp nt2)
++  | CvtE (e1, nt1, nt2) -> render_cvt (r_func e1) nt1 nt2
+   | SubE _ -> error exp.at "Encountered subtype expression. Please run sub pass"
+   | IfE (cond, then_exp, else_exp) -> 
+     parens ("if " ^ r_func cond ^ " then " ^ r_func then_exp ^ " else " ^ r_func else_exp)
+@@ -751,14 +771,21 @@ def setminus_ (X : Type) [BEq X] (l1 l2 : List X) : List X :=
+ |}
+ 
+ 
+-let rec is_valid_def def = 
++(* factoidal patch G1: the undep pass puts each well-formedness relation of a mutual
++   type group and its `wf-relation` hint into one RecD. The old filter dropped every
++   RecD that held a hint, so the six wf_ relations of the mutual groups were lost.
++   Now hints and grammars are removed from inside a RecD, and the rest is printed. *)
++let rec prune_def def =
+   match def.it with
+-  | GramD _ | HintD _ -> false
+-  | RecD defs -> List.for_all is_valid_def defs
+-  | _ -> true
+-  
++  | GramD _ | HintD _ -> None
++  | RecD defs ->
++    (match List.filter_map prune_def defs with
++    | [] -> None
++    | defs' -> Some { def with it = RecD defs' })
++  | _ -> Some def
++
+ let string_of_script (il : script) =
+   env_ref := Il.Env.env_of_script il;
+   exported_string ^ 
+   "/- Generated Code -/\n\n" ^
+-  String.concat "\n\n" (List.filter is_valid_def il |> List.map string_of_def)
+\ No newline at end of file
++  String.concat "\n\n" (List.filter_map prune_def il |> List.map string_of_def)
+\ No newline at end of file

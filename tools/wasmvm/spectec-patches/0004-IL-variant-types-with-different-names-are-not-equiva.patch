@@ -1,0 +1,32 @@
+From f43946ed73d7af06ee6465301ced8304c93fe9ba Mon Sep 17 00:00:00 2001
+From: Dan Brickley <danbri@danbri.org>
+Date: Sat, 7 Nov 2026 23:26:57 +0000
+Subject: [PATCH 4/4] IL: variant types with different names are not equivalent
+ (addrtype vs Inn)
+
+---
+ spectec/src/il/eval.ml | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/spectec/src/il/eval.ml b/spectec/src/il/eval.ml
+index b4d7ae8..c57eef4 100644
+--- a/spectec/src/il/eval.ml
++++ b/spectec/src/il/eval.ml
+@@ -930,7 +930,16 @@ and equiv_typ env t1 t2 =
+     let t1' = reduce_typ env t1 in
+     let t2' = reduce_typ env t2 in
+     (t1 <> t1' || t2 <> t2') && equiv_typ env t1' t2' ||
+-    Eq.eq_deftyp (reduce_typdef env t1') (reduce_typdef env t2')  (* TODO(3, rossberg): be more expressive *)
++    (* factoidal patch: variant types with different names are distinct (nominal), as in
++       the frontend patch; `addrtype` and `Inn` (both I32 | I64 in WebAssembly/spec
++       f3268fa9) need an injection in the Lean 4 output. *)
++    (match t1'.it, t2'.it with
++    | VarT (id1', _), VarT (id2', _) when id1'.it <> id2'.it ->
++      (match (reduce_typdef env t1').it, (reduce_typdef env t2').it with
++      | VariantT _, VariantT _ -> false
++      | dt1, dt2 -> Eq.eq_deftyp (dt1 $ t1'.at) (dt2 $ t2'.at))
++    | _, _ ->
++    Eq.eq_deftyp (reduce_typdef env t1') (reduce_typdef env t2'))  (* TODO(3, rossberg): be more expressive *)
+   | VarT _, _ ->
+     let t1' = reduce_typ env t1 in
+     t1 <> t1' && equiv_typ env t1' t2

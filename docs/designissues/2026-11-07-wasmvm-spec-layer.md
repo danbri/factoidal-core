@@ -15,11 +15,16 @@ imports it.
 
 The file is GENERATED (Iron Rule 2). The chain is:
 
-1. SpecTec sources of the WebAssembly 3.0 spec, as copied into Wasm-DSL/spectec.
+1. SpecTec sources of the WebAssembly 3.0 spec, pinned at WebAssembly/spec
+   `f3268fa9` in `third_party/wasm-spec/specification/wasm-3.0/`.
 2. Joachim Breitner's SpecTec-to-Lean 4 backend (`print.ml`), on Wasm-DSL/spectec
-   branch `lean4-wip`, commit `16b70bde`. Its output, `Wasm.lean` (10,790 lines),
-   is vendored unchanged at `third_party/spectec-lean4/spectec/test-lean4/Wasm.lean`
-   (SHA-256 `8d61a960...`).
+   branch `lean4-wip`, commit `16b70bde`, with four patches of ours
+   (`tools/wasmvm/spectec-patches/`, section 9a). Its output for our pinned
+   spec, `Wasm-f3268fa9.lean` (12,820 lines), is vendored at
+   `third_party/spectec-lean4/generated/` with its exact command (SHA-256
+   `dc63e139...`). Until the regeneration of 2026-11-07 the input was the
+   branch's own output for its February copy of the spec,
+   `third_party/spectec-lean4/spectec/test-lean4/Wasm.lean`, which is kept.
 3. `tools/wasmvm/port-spec.py` rewrites that file for Lean v4.33.1 and our
    namespace. `tools/wasmvm/test_port_spec.py` (run in
    `.github/workflows/verify-lean4.yml`) fails if the committed file is not the
@@ -27,7 +32,7 @@ The file is GENERATED (Iron Rule 2). The chain is:
 
 Upstream never compiled `Wasm.lean`: its dune rule only compares the text with
 the last output. On v4.33.1 the unmodified file stops with more than 100 errors.
-The port needs eleven rules (section 3).
+The port needs ten rules (section 3).
 
 `Spec/Sanity.lean` holds kernel-checked examples (section 6).
 
@@ -36,9 +41,11 @@ theorems lists `propext` and `Quot.sound` only.
 
 ## 2. What is in the layer
 
-Counts in `Wasm30.lean`: 515 `inductive` (types and relations), 17 `structure`,
-316 `def`, 60 `abbrev`, 75 `opaque` (section 4). Before the rule
-`builtin-definitions` (2026-11-07): 275 `def`, 116 `opaque`.
+Counts in `Wasm30.lean` since the regeneration from `f3268fa9`: 532 `inductive`
+(types and relations), 17 `structure`, 314 `def`, 57 `abbrev`, 77 `opaque`
+(section 4). As generated, before the rule `builtin-definitions`: 270 `def`,
+118 `opaque`. From the old February input: 515 `inductive`, 316 `def` and
+75 `opaque` with the rule, 116 `opaque` without.
 
 | Spec chapter (SpecTec file) | In the layer | Notes |
 |---|---|---|
@@ -60,7 +67,10 @@ How SpecTec constructs appear in Lean:
   helper relation, e.g. `Step_read_before_table_fill_zero`.
 - Each syntax type T has a well-formedness relation `wf_T` that carries the
   side conditions (value ranges such as `i < 2^N`, type agreement).
-- Sequences are `List`. Numbers of every kind are `Nat` (section 5, defect D1).
+- Sequences are `List`. SpecTec `nat` is `Nat`, `int` is `Int`, `rat` is Lean
+  core `Rat` (defect D1, fixed 2026-11-07). Conversions are explicit:
+  `Int.ofNat`, `Rat.ofInt`, and `Int.toNat`, `Rat.floor` for SpecTec's lax
+  downward conversions.
 
 ## 3. Port rules
 
@@ -73,12 +83,11 @@ number of places, the port stops.
 | `preamble-primitives` | 1 | The backend calls `list_update_func`, `list_slice_update` and `list_map3` (SpecTec sequence update, slice update, three-way map) but its preamble does not define them. They are added to the preamble. They are the meaning of SpecTec notation, not spec content. |
 | `classical-beq-for-recursive-types` | 10 | `deriving BEq` on the recursive types (`typeuse`, `heaptype`, `valtype`, `storagetype`, `fieldtype`, `comptype`, `subtype`, `rectype`, `list`, `instr`) compiled to 122 recursive C functions, which the tail-recursion gate rejects. They become `a == b := decide (a = b)` (classical, noncomputable). SpecTec `==` means equality, so the relation is the same, and proofs get `a == b = true <-> a = b` free. |
 | `field-prefix-application` | 4 | `(STRUCTS s)` is not Lean 4 field syntax; becomes `(s.STRUCTS)`. |
-| `record-update` | 24 | The backend prints Rocq record update `(r <\| F := v \|>)`, and `F, G` for a path. Lean 4: `{ r with F := v }`, `F.G`. |
-| `missing-wf-placeholders` | 6 | No `wf_T` is generated for types defined in a `mutual` block (`typeuse`, `heaptype`, `valtype`, `subtype`, `addrref`, `instr`), but other relations use them. Each is defined as `True`. GAP G1. |
+| `record-update` | 24 | The backend prints Rocq record update `(r <\| F := v \|>)`, and `F, G` for a path; `r` can be a variable or an application such as `(sof z)`. Lean 4: `{ r with F := v }`, `F.G`. |
 | `partial-def-default-arm` | 17 | SpecTec functions can be partial; Lean needs exhaustive matches. Seventeen `def`s get a last arm `\| _ => default`, reached only outside the official domain (e.g. `signif 16`, `free_addrtype .F32`). |
-| `mod-operator` | 6 | `a mod b` is `a % b` in Lean 4. |
+| `mod-operator` | 14 | `a mod b` is `a % b` in Lean 4. |
 | `relaxed-choice-getD` | 4 | `fun_relaxed2/4` index a list of a type variable with `l[i]!`, which needs `Inhabited`. `l.getD i X_1` is equal for the in-range indices used. |
-| `strip-trailing-whitespace` | 1042 | `git diff --check`. No token changes. |
+| `strip-trailing-whitespace` | 1255 | `git diff --check`. No token changes. |
 | `wrap-namespace` | 409 | Namespace, `noncomputable section`, `noncomputable` on every `def`, `opaque` and `instance`; the preamble's `Append (Option a)` instance becomes `scoped`. |
 | `builtin-definitions` | 42 | 41 opaque built-ins become `def`s that call the hand-written `Spec/Builtins.lean`, plus its import (section 4a). The list, with each exact signature, is in `tools/wasmvm/port_builtins.py`, apart from the generator rules. |
 
@@ -90,8 +99,11 @@ the module.
 
 ## 4. What is opaque
 
-As generated, 116 constants were `opaque ... := opaqueDef`; 41 of them are now
-defined (section 4a) and 75 remain. The macro is
+As generated from `f3268fa9`, 118 constants are `opaque ... := opaqueDef`
+(116 from the old February input); 41 of them are defined by the port (section 4a)
+and 77 remain. Against the old input: `hostcall`, `ivrelaxed_dot_` and the
+choice constant `R_idot_add` are new; `ivdot_sat_` is now the relation
+`fun_ivdot_sat_`. The macro is
 `by first | exact Inhabited.default | intros; assumption`: it picks some value
 of the type, and nothing can be proved about which. It is not `sorry` and adds
 no axiom. Grouped by why, against our pinned spec (WebAssembly/spec `f3268fa9`,
@@ -109,9 +121,14 @@ the meaning to the prose. No generator can define them from SpecTec.
 **29 have clauses in the pinned spec but are opaque in the generated file**:
 `iabs_ imin_ imax_ iadd_sat_ isub_sat_ ilt_ igt_ ile_ ige_` and the vector
 lifting functions `ivunop_ ivbinop_ ivbinopsx_ ivbinopsxnd_ ivternopnd_ ivrelop_ ivrelopsx_ ivshiftop_ ivshiftopsx_ ivswizzlop_ ivadd_pairwise_ ivextunop__ ivextbinop__ ivdot_ ivdot_sat_ fvunop_ fvbinop_ fvternop_ fvrelop_ irelaxed_swizzle_lane_`.
-Either the spec copy at `16b70bde` was older, or the backend does not translate
-them (the vector ones take a function argument). A newer generation may define
-them (section 7).
+The regeneration from `f3268fa9` (section 9a) did not change this: the same 29
+(with `ivrelaxed_dot_` for `ivdot_sat_`) are still opaque. The cause is in the
+backend. Its `deftorel` pass makes every SpecTec function with a premise into a
+relation (`$signed_` becomes `fun_signed_`), but it may not do so for a function
+that is passed as an argument (`$ilt_` is passed to `$ivrelopsx_`) or that takes
+one (`$ivunop_`). Those stay functions, their clauses now call a relation, and
+`print.ml` can print a function only when every premise is a Boolean test. So it
+prints them `opaque`. Section 4a defines the nine scalar ones by hand.
 
 **11 are declared without clauses**: the relaxed-SIMD choice constants
 `R_fmadd R_fmin R_fmax R_idot R_iq15mulr R_trunc_u R_trunc_s R_swizzle R_laneselect`,
@@ -167,30 +184,32 @@ Defined now (41 of the 116):
   inv_vbytes_ zbytes_ inv_zbytes_ cbytes_ inv_cbytes_`. Little endian. `nbytes_`
   and `inv_nbytes_` call `fbytes_`/`inv_fbytes_` for `f32`/`f64`, which stay opaque;
   integer loads and stores are fully defined.
-- `truncz`, as the identity: in this generated layer a SpecTec `rat` is a `Nat`
-  (D1) and its only uses, `$idiv_` and `$irem_` for `U`, divide two `Nat`s, which is
-  already the floor. Unsigned `div` and `rem` are now defined. Recheck after
-  regeneration (D1 fixed).
+- `truncz`: since the regeneration (D1 fixed) a SpecTec `rat` is Lean `Rat`, and
+  `truncz q = Int.tdiv q.num q.den`, rounding toward zero. (Before it, `rat` was
+  `Nat` and `truncz` was the identity.) Signed and unsigned `div` and `rem` are
+  defined.
 
 Also in the module, for the engine and for later rules: `ieqz_`, `iextend_`
 (`i32.extend8_s` and friends), `signed_`, `inv_signed_`.
 
-Remaining opaque (75):
+Remaining opaque (77 since the regeneration; 75 before it):
 
 - Floats (27): `fabs_ fneg_ fsqrt_ fceil_ ffloor_ ftrunc_ fnearest_ fadd_ fsub_
   fmul_ fdiv_ fmin_ fmax_ fpmin_ fpmax_ fcopysign_ feq_ fne_ flt_ fgt_ fle_ fge_`,
   the encodings `fbits_ inv_fbits_ fbytes_ inv_fbytes_`, and `ceilz`.
 - Float conversions (6): `trunc__ trunc_sat__ demote__ promote__ convert__
   reinterpret__`.
-- Vector and relaxed SIMD (38): `lanes_ inv_lanes_`, the lifting functions `ivunop_
-  fvunop_ ivbinop_ ivbinopsx_ ivbinopsxnd_ fvbinop_ ivternopnd_ fvternop_ ivrelop_
-  ivrelopsx_ fvrelop_ ivshiftop_ ivshiftopsx_ ivswizzlop_ ivadd_pairwise_ ivextunop__
-  ivdot_ ivdot_sat_ ivextbinop__`, the relaxed `irelaxed_q15mulr_
+- Vector and relaxed SIMD (39 since the regeneration; 38 before): `lanes_ inv_lanes_`, the
+  lifting functions `ivunop_ fvunop_ ivbinop_ ivbinopsx_ ivbinopsxnd_ fvbinop_
+  ivternopnd_ fvternop_ ivrelop_ ivrelopsx_ fvrelop_ ivshiftop_ ivshiftopsx_
+  ivswizzlop_ ivadd_pairwise_ ivextunop__ ivdot_ ivrelaxed_dot_ ivextbinop__`, the relaxed `irelaxed_q15mulr_
   irelaxed_laneselect_ irelaxed_swizzle_lane_ frelaxed_min_ frelaxed_max_
   frelaxed_madd_ frelaxed_nmadd_ relaxed_trunc__`, and the choice constants `R_fmadd
-  R_fmin R_fmax R_idot R_iq15mulr R_trunc_u R_trunc_s R_swizzle R_laneselect`.
-- Other (4): `inv_concat_ inv_concatn_` (sequence inverses), `ND` (the
-  nondeterminism profile flag), `s33_to_u32`.
+  R_fmin R_fmax R_idot R_iq15mulr R_trunc_u R_trunc_s R_swizzle R_laneselect`
+  (and `R_idot_add` since the regeneration; `ivdot_sat_` is then a relation).
+- Other (4; 5 since the regeneration): `inv_concat_ inv_concatn_` (sequence
+  inverses), `ND` (the nondeterminism profile flag), `s33_to_u32`, and `hostcall`
+  (host functions, new in `f3268fa9`).
 
 `Spec/BuiltinsTheorems.lean` proves, for 32 and 64 bits, that each built-in equals the
 matching `UInt32`/`UInt64` (or `Int32`/`Int64`) operation through `toBitVec`:
@@ -257,7 +276,7 @@ avoids that dependency.
 
 ## 5. Defects and gaps of the generated layer
 
-- **D1. Every number type is `Nat`.** `print.ml` lines 175-178 map SpecTec
+- **D1, FIXED 2026-11-07 (section 9a). Every number type was `Nat`.** `print.ml` lines 175-178 mapped SpecTec
   `nat`, `int`, `rat` and `real` all to `Nat`. Subtraction then truncates at 0.
   Results: `wf_sN` is wrong, `fun_signed_` maps every negative value to 0
   (`i - 2^N` in `Nat`), and so `fun_idiv_`, `fun_irem_` and `fun_iextend_`
@@ -265,16 +284,25 @@ avoids that dependency.
   proved to refine these rules. Unsigned arithmetic is correct. This is a
   generator defect; the fix is to map `int` to `Int` in `print.ml` and
   regenerate (section 7). A port rule cannot recover which `Nat` was an `int`.
-- **G1. Six well-formedness relations are `True`** (rule
+- **G1, CLOSED 2026-11-07 (section 9a). Six well-formedness relations were `True`** (rule
   `missing-wf-placeholders`). The spec layer then accepts values the official
   spec rejects, e.g. a type index of 2^32 inside a `valtype`. For a refinement
   theorem (every fast step is a spec step) a weaker premise is harmless; for a
-  completeness or progress theorem it is not.
+  completeness or progress theorem it is not. Cause: the printer dropped every
+  mutual group of `wf_` relations because the group also held their hints. Now
+  all six (`wf_typeuse wf_heaptype wf_valtype wf_subtype wf_instr`, and `wf_ref`,
+  which replaces `wf_addrref` in `f3268fa9`) are generated, and the port rule is gone.
 - **G2. Seventeen partial functions return `default` outside their domain**
   (rule `partial-def-default-arm`). No spec rule applies them there, so this
   adds no reachable step.
 - **G3. No binary or text format.** The binary decoder of the fast engine has no
-  spec relation to refine yet.
+  spec relation to refine yet. `print.ml` drops every grammar (`GramD`): it has
+  no printer for productions. A printer is possible (a grammar `G : t` becomes a
+  relation `G : List byte -> t -> Prop`, a sequence of symbols becomes a split of
+  the byte list, a production's attribute is the result), but it is new backend
+  code, not a fix, and the binary grammars also use features the relational
+  passes do not see today (ranges of bytes, `^n` repetition, `$`-calls in
+  attributes). Not done.
 
 ## 6. Sanity theorems (`Spec/Sanity.lean`)
 
@@ -290,6 +318,12 @@ All checked by the kernel; constructors, `decide` and `simp` only.
   for all `a b : UInt32`. This is the first bridge lemma (section 8).
 - `iand_32_eq_uint32`, `ishl_32_eq_uint32`, `ilt_s_32_eq_int32`,
   `inv_ibytes_ibytes_32`: the same for built-ins that were opaque before section 4a.
+- Signed arithmetic in the generated relations, false under D1:
+  `signed_32_neg6` (`fun_signed_ 32 0xFFFFFFFA (-6)`), `truncz_neg6_div_2`,
+  `idiv_s_32_neg6_2` (`fun_idiv_ 32 .S` of -6 and 2 is -3), and
+  `i32_div_s_neg6_2`: `Step_pure [i32.const -6, i32.const 2, i32.div_s]
+  [i32.const -3]`. `Rat` division does not reduce in the kernel (`Nat.gcd`), so
+  `truncz_neg6_div_2` rewrites with `Rat.intCast_mul` and `Rat.mul_div_cancel`.
 
 One lesson: `cases` on a `Step_pure` hypothesis fails on rules whose left side
 is `instr_val v` (a function of the value), because Lean cannot invert a `match`.
@@ -324,7 +358,7 @@ abstraction `abs s : config`:
 | store fields as lists of instances (`FUNCS`, `MEMS`, ...) | arrays of records | element-wise abstraction |
 | `==` is `BEq` (derived or classical) | `DecidableEq` | `beq_iff_eq` / `decide_eq_true_iff` |
 
-## 9. Regeneration from our pinned spec (study only, nothing installed)
+## 9. Regeneration from our pinned spec (study, before 9a)
 
 Question: what would it take to make `Wasm.lean` from WebAssembly/spec
 `f3268fa9` (2026-11-06, vendored in `third_party/wasm-spec/`) and not from the
@@ -375,9 +409,41 @@ against the IL relations. No AL-to-Lean backend exists today. Recommendation:
 keep the IL relations as the reference, and regenerate them by the cheapest route
 above when the opaque numerics or D1 block a proof.
 
+## 9a. Regeneration, done (2026-11-07)
+
+By the cheapest route of section 9. One opam switch `spectec` (OCaml 5.2.1;
+5.0 or later is enough for `lean4-wip`) in a separate opam root
+`~/working/opam-spectec`, with dune, menhir, mdx and zarith: 559 MB. The
+`lean4-wip` clone with its `_build`: `~/working/spectec-lean4wip`.
+
+1. The unpatched build reproduces the vendored `Wasm.lean` byte for byte when run
+   from the same relative directory as its dune rule (the source paths in the
+   comments depend on it).
+2. On our pinned `[012345]*.spectec` the frontend needed two backports and the
+   middle end three small changes; the backend needed the D1 and G1 fixes. Four
+   patches, each with its reason: `tools/wasmvm/spectec-patches/README.md`. The
+   three non-printer patches leave the old output unchanged.
+3. The output is `third_party/spectec-lean4/generated/Wasm-f3268fa9.lean`, with
+   its command in the README next to it. `port-spec.py` now ports it; the rule
+   `missing-wf-placeholders` is gone, three counts changed, and `record-update`
+   accepts `(sof z)` as the record. `port_builtins.py`: `ishl_`/`ishr_` take an
+   `iN` shift count, `wrap__`/`extend__`/`narrow__` name their widths `N N'`, and
+   `truncz` is `Rat -> Int` (section 4a).
+4. `lake build L4Factoidal.WasmVM.Spec` passes; the existing sanity theorems
+   needed no change. Names that changed for importers: `addrref` and `wf_addrref`
+   are gone (`ref` has `REF.NULL_ADDR`); `Inn`, `Lnn` are now their own types with
+   injections (`Inn_addrtype`, `lanetype_Lnn`, ...); `fun_signed_` and other
+   `int`-valued relations and functions take or return `Int`.
+
+Still open: the 29 functions of section 4 (a backend limit, worth raising with
+Joachim Breitner), and the binary format (G3).
+
 ## 10. Open items
 
-- D1 (signed numbers as `Nat`): blocks every proof about signed integer operators.
+- D1 (signed numbers as `Nat`): fixed by the regeneration (section 9a).
+- G1: closed by the regeneration. The 29 opaque functions with clauses: the nine
+  scalar ones are defined by hand (section 4a); the 20 vector ones wait for
+  backend support of relations as function arguments.
 - The 76 builtin numerics: the integer ones are defined (section 4a, owner decision
   2026-11-07); floats follow the plan in section 4a; vector and relaxed remain.
 - Binary format relations: none; the decoder has nothing to refine yet.

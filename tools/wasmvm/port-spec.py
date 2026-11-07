@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Port the SpecTec-generated WebAssembly 3.0 Lean file to this repository's Lean.
 
-Input:  third_party/spectec-lean4/spectec/test-lean4/Wasm.lean, the output of the SpecTec Lean 4 backend
-        (https://github.com/Wasm-DSL/spectec, branch lean4-wip, commit 16b70bde,
-        spectec/test-lean4/Wasm.lean). It was made for Lean v4.25.0-rc1 and was only
-        compared as text in upstream CI, never compiled there.
+Input:  third_party/spectec-lean4/generated/Wasm-f3268fa9.lean, the output of the SpecTec Lean 4
+        backend (https://github.com/Wasm-DSL/spectec, branch lean4-wip, commit 16b70bde, with
+        the patches in tools/wasmvm/spectec-patches/) for our pinned WebAssembly spec
+        (third_party/wasm-spec, WebAssembly/spec f3268fa9). The command is in
+        third_party/spectec-lean4/generated/README.md. Until 2026-11-07 the input was the
+        branch's own output, third_party/spectec-lean4/spectec/test-lean4/Wasm.lean, which is
+        kept for reference.
 Output: formal/lean4/L4Factoidal/WasmVM/Spec/Wasm30.lean (namespace L4Factoidal.WasmVM.Spec).
 
 The output is GENERATED (Iron Rule 2). Do not edit it by hand: change a rule here and
@@ -27,9 +30,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import port_builtins  # noqa: E402  (rule builtin-definitions, kept in its own file)
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-DEFAULT_INPUT = ROOT / "third_party/spectec-lean4/spectec/test-lean4/Wasm.lean"
+DEFAULT_INPUT = ROOT / "third_party/spectec-lean4/generated/Wasm-f3268fa9.lean"
 OUTPUT = ROOT / "formal/lean4/L4Factoidal/WasmVM/Spec/Wasm30.lean"
-INPUT_SHA256 = "8d61a9603a3c1f1aa3946dccbb49720fa520865cb35157f4bd646995742042be"
+INPUT_SHA256 = "dc63e1395605cefcdb94c8a471c92d24f806149d61948de39428f64d4596dada"
 NAMESPACE = "L4Factoidal.WasmVM.Spec"
 
 RULES = []  # (name, reason, count) in the order applied; filled by `rule`
@@ -65,7 +68,7 @@ def subn_exact(pattern, repl, text, want, name, flags=0):
 # Rules
 
 def record_update(text):
-    pat = re.compile(r"\((\w+) <\| ([A-Z_, ]+?) := ")
+    pat = re.compile(r"\((\w+|\(\w+ \w+\)) <\| ([A-Z_, ]+?) := ")
     out, i, n = [], 0, 0
     while True:
         m = pat.search(text, i)
@@ -97,44 +100,6 @@ def record_update(text):
 def r_record_update(text):
     text, n = record_update(text)
     expect("record-update", n, 24)
-    return text, n
-
-
-# The backend emits no well-formedness relation for types that are defined in a
-# `mutual` block of inductive types, yet other relations call them. Upstream CI only
-# diffs the text, so it never saw this. Until a newer backend emits them, each is
-# defined as `True`: the spec then accepts some values that the official spec would
-# reject as ill-formed (for example an index of 2^32 or more inside these types).
-MISSING_WF = ["typeuse", "heaptype", "valtype", "subtype", "addrref", "instr"]
-
-
-@rule("missing-wf-placeholders",
-      "No `wf_T` is generated for the types T defined in a mutual block "
-      "(typeuse, heaptype, valtype, subtype, addrref, instr), but other relations use "
-      "them. Each is defined as `True` right after the block that defines T. GAP: this "
-      "accepts more values than the official spec.")
-def r_missing_wf(text):
-    n = 0
-    for ty in MISSING_WF:
-        if re.search(r"^inductive wf_%s\b" % ty, text, re.M):
-            raise PortError(f"wf_{ty} is now generated; remove it from MISSING_WF")
-        m = re.search(r"^inductive %s : Type where" % ty, text, re.M)
-        if not m:
-            raise PortError(f"type {ty} not found")
-        # the end of the enclosing block: the next `end` line if inside `mutual`
-        before = text[:m.start()]
-        in_mutual = before.rfind("\nmutual\n") > before.rfind("\nend\n")
-        if in_mutual:
-            e = re.compile(r"^end\n", re.M).search(text, m.end())
-            at = e.end()
-        else:
-            e = re.compile(r"^deriving .*\n", re.M).search(text, m.end())
-            at = e.end()
-        stub = ("\n/- PORT GAP (rule missing-wf-placeholders): the backend emitted no "
-                "well-formedness relation for `%s`. -/\n"
-                "def wf_%s (_ : %s) : Prop := True\n" % (ty, ty, ty))
-        text = text[:at] + stub + text[at:]
-        n += 1
     return text, n
 
 
@@ -191,7 +156,7 @@ def r_wrap(text):
     header = (
         "/-\n"
         "GENERATED FILE. Do not edit. Made by tools/wasmvm/port-spec.py from\n"
-        "third_party/spectec-lean4/spectec/test-lean4/Wasm.lean\n(sha256 %s),\n"
+        "third_party/spectec-lean4/generated/Wasm-f3268fa9.lean\n(sha256 %s),\n"
         "the SpecTec Lean 4 backend's output for the WebAssembly 3.0 specification.\n"
         "Rules applied: see the script and docs/designissues/2026-11-07-wasmvm-spec-layer.md.\n"
         "-/\n\n"
@@ -203,7 +168,7 @@ def r_wrap(text):
 @rule("mod-operator",
       "The backend prints natural-number remainder as `a mod b`; Lean 4 writes `a % b`.")
 def r_mod(text):
-    return subn_exact(r" mod ", " % ", text, 6, "mod-operator")
+    return subn_exact(r" mod ", " % ", text, 14, "mod-operator")
 
 
 @rule("relaxed-choice-getD",
@@ -300,7 +265,7 @@ def r_classical_beq(text):
       "The backend leaves spaces at line ends (after `forall ...,` and in the preamble); "
       "`git diff --check` reports them. Removing them changes no token.")
 def r_strip_ws(text):
-    return subn_exact(r"[ \t]+$", "", text, 1042, "strip-trailing-whitespace", flags=re.M)
+    return subn_exact(r"[ \t]+$", "", text, 1255, "strip-trailing-whitespace", flags=re.M)
 
 
 @rule("builtin-definitions", port_builtins.REASON)
@@ -311,7 +276,7 @@ def r_builtins(text):
     return text, n
 
 
-PIPELINE = [r_preamble, r_classical_beq, r_field_prefix, r_record_update, r_missing_wf, r_partial_defs, r_mod, r_relaxed, r_strip_ws, r_wrap, r_builtins]
+PIPELINE = [r_preamble, r_classical_beq, r_field_prefix, r_record_update, r_partial_defs, r_mod, r_relaxed, r_strip_ws, r_wrap, r_builtins]
 
 
 def port(src):

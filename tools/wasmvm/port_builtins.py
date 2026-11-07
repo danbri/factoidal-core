@@ -43,7 +43,8 @@ SIG_U = "forall (v_N : N) (v_iN : iN), iN"
 SIG_B = "forall (v_N : N) (v_iN : iN) (v_iN_0 : iN), iN"
 SIG_BSX = "forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), iN"
 SIG_REL = "forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), u32"
-SIG_CVT = "forall (v_M : M) (v_N : N) (v_sx : sx) (v_iN : iN), iN"
+# WebAssembly/spec f3268fa9 names the widths N and N' (was M and N); same order.
+SIG_CVT = "forall (v_N : N) (N' : N) (v_sx : sx) (v_iN : iN), iN"
 
 DEFS = [
     # 4.3.2 bitwise
@@ -57,11 +58,9 @@ DEFS = [
      "fun v_N v_iN v_iN_0 v_iN_1 => .mk_uN (Builtins.OnNat.ibitselect_ v_N "
      "(proj_uN_0 v_iN) (proj_uN_0 v_iN_0) (proj_uN_0 v_iN_1))"),
     # 4.3.2 shifts and rotates
-    ("ishl_", "forall (v_N : N) (v_iN : iN) (v_u32 : u32), iN",
-     "fun v_N v_iN v_u32 => .mk_uN (Builtins.OnNat.ishl_ v_N (proj_uN_0 v_iN) (proj_uN_0 v_u32))"),
-    ("ishr_", "forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_u32 : u32), iN",
-     "fun v_N v_sx v_iN v_u32 => .mk_uN (Builtins.OnNat.ishr_ v_N " + SX +
-     " (proj_uN_0 v_iN) (proj_uN_0 v_u32))"),
+    # WebAssembly/spec f3268fa9: the shift count is an iN(N), no longer a u32.
+    ("ishl_", SIG_B, B.format(f="ishl_")),
+    ("ishr_", SIG_BSX, BSX.format(f="ishr_")),
     ("irotl_", SIG_B, B.format(f="irotl_")),
     ("irotr_", SIG_B, B.format(f="irotr_")),
     # 4.3.2 bit counts
@@ -82,18 +81,19 @@ DEFS = [
     ("iavgr_", SIG_BSX, BNOSX.format(f="iavgr_")),
     ("iq15mulr_sat_", SIG_BSX, BNOSX.format(f="iq15mulr_sat_")),
     # 4.3.4 conversions
-    ("wrap__", "forall (v_M : M) (v_N : N) (v_iN : iN), iN",
-     "fun v_M v_N v_iN => .mk_uN (Builtins.OnNat.wrap_ v_M v_N (proj_uN_0 v_iN))"),
+    ("wrap__", "forall (v_N : N) (N' : N) (v_iN : iN), iN",
+     "fun v_N N' v_iN => .mk_uN (Builtins.OnNat.wrap_ v_N N' (proj_uN_0 v_iN))"),
     ("extend__", SIG_CVT,
-     "fun v_M v_N v_sx v_iN => .mk_uN (Builtins.OnNat.extend_ v_M v_N " + SX +
+     "fun v_N N' v_sx v_iN => .mk_uN (Builtins.OnNat.extend_ v_N N' " + SX +
      " (proj_uN_0 v_iN))"),
     ("narrow__", SIG_CVT,
-     "fun v_M v_N v_sx v_iN => .mk_uN (Builtins.OnNat.narrow_ v_M v_N " + SX +
+     "fun v_N N' v_sx v_iN => .mk_uN (Builtins.OnNat.narrow_ v_N N' " + SX +
      " (proj_uN_0 v_iN))"),
-    # 4.3 conventions: truncz. In this generated layer every SpecTec `rat` is a `Nat`
-    # (defect D1) and its only uses (`$idiv_`/`$irem_` U) divide two `Nat`s, which is
-    # already the floor; truncation toward zero of a non-negative number is the number.
-    ("truncz", "forall (rat : Nat), Nat", "fun rat => rat"),
+    # 4.3 conventions: truncz, "the integer part of q, rounding toward zero" (the
+    # commented-out SpecTec clause: truncz(+-q) = +-n if q - 1 < n <= q). Since the
+    # regeneration with D1 fixed, `rat` is Lean's `Rat` and `int` is `Int`; `Int.tdiv`
+    # of numerator and (positive) denominator rounds toward zero.
+    ("truncz", "forall (rat : Rat), Int", "fun rat => Int.tdiv rat.num (Int.ofNat rat.den)"),
     # 4.3.1 representations and storage
     ("ibits_", "forall (v_N : N) (v_iN : iN), (List bit)",
      "fun v_N v_iN => (Builtins.OnNat.ibits_ v_N (proj_uN_0 v_iN)).map bit.mk_bit"),

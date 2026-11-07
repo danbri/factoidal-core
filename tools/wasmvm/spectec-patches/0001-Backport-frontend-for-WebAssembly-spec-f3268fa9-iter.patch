@@ -1,0 +1,106 @@
+From 0e38bc5a54657b70c6a3c799eb2f3b427cc8fd04 Mon Sep 17 00:00:00 2001
+From: Dan Brickley <danbri@danbri.org>
+Date: Sat, 7 Nov 2026 23:14:27 +0000
+Subject: [PATCH 1/4] Backport frontend for WebAssembly/spec f3268fa9:
+ iteration subtyping, two-pass elaboration; SubE equivalence; sub pass for
+ iterations
+
+---
+ spectec/src/frontend/elab.ml |  8 +++++++-
+ spectec/src/frontend/eval.ml |  3 +++
+ spectec/src/il/eval.ml       | 13 ++++++++++++-
+ spectec/src/middlend/sub.ml  | 10 ++++++++++
+ 4 files changed, 32 insertions(+), 2 deletions(-)
+
+diff --git a/spectec/src/frontend/elab.ml b/spectec/src/frontend/elab.ml
+index a9de6a4..915307d 100644
+--- a/spectec/src/frontend/elab.ml
++++ b/spectec/src/frontend/elab.ml
+@@ -2772,7 +2772,13 @@ let elab ds : Il.script * env =
+   let ds = List.map (infer_typdef env) ds in
+   let ds = Map.fold implicit_typdef env.atoms ds in
+   List.iter (infer_gramdef env) ds;
+-  let ds' = List.concat_map (elab_def env) ds in
++  (* Backport from WebAssembly/spec f3268fa9 (elab_def_pass1/pass2): declare everything
++     first, then elaborate clauses, rules and grammar productions, so that these may use
++     definitions declared further down. *)
++  let is_pass2 d = match d.it with DefD _ | RuleD _ | GramD _ -> true | _ -> false in
++  let ds1' = List.concat_map (elab_def env) (List.filter (fun d -> not (is_pass2 d)) ds) in
++  let ds2' = List.concat_map (elab_def env) (List.filter is_pass2 ds) in
++  let ds' = ds1' @ ds2' in
+   check_dots env;
+   let ds' = List.map (populate_def env) ds' in
+   recursify_defs ds', env
+diff --git a/spectec/src/frontend/eval.ml b/spectec/src/frontend/eval.ml
+index d8be4a3..ae3f6ea 100644
+--- a/spectec/src/frontend/eval.ml
++++ b/spectec/src/frontend/eval.ml
+@@ -812,6 +812,9 @@ and sub_typ env t1 t2 =
+   | TupT ts1, TupT ts2
+   | SeqT ts1, SeqT ts2 ->
+     List.length ts1 = List.length ts2 && List.for_all2 (sub_typ env) ts1 ts2
++  (* Backport from WebAssembly/spec f3268fa9 (il/eval.ml sub_typ'): iteration is covariant *)
++  | IterT (t11, (Opt | List | List1 as it1)), IterT (t21, (Opt | List | List1 as it2)) when it1 = it2 ->
++    sub_typ env t11 t21
+   | _, _ -> equiv_typ env t1 t2
+ 
+ and find_field tfs atom =
+diff --git a/spectec/src/il/eval.ml b/spectec/src/il/eval.ml
+index 30537de..b4d7ae8 100644
+--- a/spectec/src/il/eval.ml
++++ b/spectec/src/il/eval.ml
+@@ -978,7 +978,15 @@ and equiv_exp env e1 e2 =
+     (fun _ -> fmt "%s == %s" (il_exp e1) (il_exp e2)) Bool.to_string
+   ) @@ fun _ ->
+   (* TODO(3, rossberg): this does not reduce inner type arguments *)
+-  Eq.eq_exp (reduce_exp env e1) (reduce_exp env e2)
++  let e1' = reduce_exp env e1 in
++  let e2' = reduce_exp env e2 in
++  Eq.eq_exp e1' e2' ||
++  (* factoidal patch: an injection of the same expression into the same supertype is the
++     same value, whatever subtype it was injected from (e.g. `at : addrtype <: numtype`
++     and `at : Inn <: numtype`, now that Inn is no longer an alias of addrtype). *)
++  (match e1'.it, e2'.it with
++  | SubE (e11, _, t12), SubE (e21, _, t22) -> Eq.eq_exp e11 e21 && Eq.eq_typ t12 t22
++  | _, _ -> false)
+ 
+ and equiv_sym _env g1 g2 =
+   Debug.(log "il.equiv_sym"
+@@ -1055,6 +1063,9 @@ and sub_typ env t1 t2 =
+       ) tcs1
+     | _, _ -> false
+     )
++  (* Backport from WebAssembly/spec f3268fa9 (il/eval.ml sub_typ'): iteration is covariant *)
++  | IterT (t11, it1), IterT (t21, it2) when Eq.eq_iter it1 it2 ->
++    sub_typ env t11 t21
+   | _, _ ->
+     false
+ 
+diff --git a/spectec/src/middlend/sub.ml b/spectec/src/middlend/sub.ml
+index b9a49bd..a09adfb 100644
+--- a/spectec/src/middlend/sub.ml
++++ b/spectec/src/middlend/sub.ml
+@@ -98,6 +98,8 @@ let injection_name (sub : id) (sup : id) = sup.it ^ "_" ^ sub.it $ no_region
+ (* Step 1 and 4: Collect SubE occurrences, and replace with function *)
+ 
+ (* The main transformation case *)
++let sub_iter_counter = ref 0
++
+ let rec t_exp env exp =
+   match exp.it with
+   | SubE (e, sub_ty, sup_ty) ->
+@@ -115,6 +117,14 @@ let rec t_exp env exp =
+         if Il.Eq.eq_typ t t' then proj_exp else
+         t_exp env (SubE (proj_exp, t, t') $$ exp.at % t')
+       ) (List.combine ts ts')) $$ exp.at % sup_ty
++    (* factoidal patch: `e : t* <: t'*` (iteration subtyping, new in WebAssembly/spec
++       f3268fa9) becomes the element-wise injection `(x : t <: t')*` over x in e. *)
++    | IterT (t, it), IterT (t', it') when Il.Eq.eq_iter it it' ->
++      sub_iter_counter := !sub_iter_counter + 1;
++      let x = ("sub_x" ^ string_of_int !sub_iter_counter) $ e.at in
++      let ex = VarE x $$ e.at % t in
++      let body = t_exp env (SubE (ex, t, t') $$ exp.at % t') in
++      IterE (body, (it, [(x, e)])) $$ exp.at % sup_ty
+     | _, _ ->
+ (* Printf.eprintf "[sub @ %s REMAINS] %s  <:  %s\n%!" (string_of_region exp'.at) (Il.Print.string_of_typ sub_ty) (Il.Print.string_of_typ sup_ty); *)
+       error sub_ty.at ("Non-variable or number type expression not supported `" ^ Il.Print.string_of_typ sub_ty ^ "`")

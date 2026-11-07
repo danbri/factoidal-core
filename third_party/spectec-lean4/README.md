@@ -12,7 +12,7 @@ built by our Lean build.
 | Commit | `16b70bde873d7ded498f9b81fd13ddcee95281fa` (Joachim Breitner, 2026-02-19, "Rebase the lean4 wip code onto rocq-backend") |
 | Browse | https://github.com/Wasm-DSL/spectec/tree/16b70bde873d7ded498f9b81fd13ddcee95281fa/spectec |
 | Fetched | 2026-11-07, `git fetch --depth 1` of that commit |
-| Changes | None. Files are copied unmodified. |
+| Changes | None. Files are copied unmodified. `generated/` is ours (see below). |
 
 ## Files
 
@@ -25,6 +25,7 @@ built by our Lean build.
 | `spectec/test-lean4/lean-toolchain` | 29 | `leanprover/lean4:v4.25.0-rc1` |
 | `LICENSE-Wasm-DSL-toplevel` | | Wasm-DSL/spectec top-level `LICENSE` at this commit |
 | `LICENSE-WebAssembly-spec-toplevel` | | WebAssembly/spec top-level `LICENSE` at `f3268fa9dc` |
+| `generated/Wasm-f3268fa9.lean` | 965,354 | Output of this backend, with our patches (`tools/wasmvm/spectec-patches/`), for our pinned spec `f3268fa9`. This is what `tools/wasmvm/port-spec.py` ports since 2026-11-07. Command: `generated/README.md` |
 | `LICENSE-Apache-2.0` | | Apache License 2.0 text, from WebAssembly/spec `interpreter/LICENSE` (identical to Wasm-DSL's `interpreter/LICENSE`) |
 
 ## Licence
@@ -133,5 +134,9 @@ The kinds of change:
    annotations and line breaks changed.
 
 Kinds 1 to 6 change definitions that `Wasm.lean` contains, so `Wasm.lean`
-does not match the pinned spec. To get a Lean file for `f3268fa9dc`, the
-backend has to be rebased onto current WebAssembly/spec and rerun.
+does not match the pinned spec. On 2026-11-07 the backend was rebuilt and rerun
+on the pinned spec, with four small patches instead of a rebase:
+`generated/Wasm-f3268fa9.lean`. The rebuilt, unpatched backend reproduces
+`Wasm.lean` byte for byte (run from `spectec/_build/default/test-lean4`, as the
+dune rule does), so the statement above that it is the branch's own output is
+now checked.
