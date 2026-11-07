@@ -192,3 +192,10 @@ private def line2 : Float := 19.8
 #guard clear "<text font-size='10' y='10'>&#x416;</text>" 5 5
 -- https://github.com/danbri/factoidal/issues/1264: `direction` must put the start at the right.
 #guard inked "<text x='20' y='10' font-size='10' direction='rtl'>a</text>" 25 5
+-- https://github.com/danbri/factoidal/issues/1266: the shape must stand on the baseline.
+private def baselineFont : SVGFont :=
+  match SVGFont.parse "<svg xmlns='http://www.w3.org/2000/svg'><font horiz-adv-x='1000'><font-face font-family='B' units-per-em='1000' ascent='800' descent='200' alphabetic='200'/><glyph unicode='a' d='M0 200H1000V900H0Z'/></font></svg>" with
+  | .ok f => f | .error _ => {}
+#guard match parse (svg "<text y='30' font-size='10'>a</text>") 40 40 (some baselineFont) with
+  | .ok (s,_) => (s.samplePixel 5 28).r == 1
+  | .error _ => false
