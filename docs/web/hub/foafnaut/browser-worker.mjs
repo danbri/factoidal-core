@@ -95,11 +95,15 @@ const fallbackFonts=[['./fonts/noto-sans-armenian/NotoSansArmenian-Regular.ttf',
 // page stays in the bitmap face. Fallback fonts need an engine that takes fonts as
 // bytes: an older one would read a fallback font as a replacement.
 async function loadFont(){
+  let primary;
   try{
     const {bytes,sha}=await fontFile('./fonts/noto-sans/NotoSans-Regular.ttf');
-    fontLoad(bytes,'Noto Sans',sha);
+    primary=fontLoad(bytes,'Noto Sans',sha);
   }catch(error){console.warn('foafnaut: bitmap font, because Noto Sans did not load:',String(error));return;}
-  if(typeof module._web_document_font_call_bin!=='function')return;
+  // Only an engine that holds several fonts answers with `fonts` (the count held). An engine
+  // with the bytes call but no fallback argument would replace Noto Sans with the fallback
+  // font: on 2026-11-07 the published engine did, and Latin text on the Hub page broke.
+  if(typeof primary?.fonts!=='number')return;
   for(const [path,family] of fallbackFonts){
     try{const {bytes,sha}=await fontFile(path);fontLoad(bytes,family,sha,true);}
     catch(error){console.warn(`foafnaut: no ${family}:`,String(error));}
