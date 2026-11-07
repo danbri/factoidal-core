@@ -51,8 +51,12 @@ Every DOM change is a typed command that Lean checks and applies
 
 Reads (`textContent`, `getAttribute`, `children`, `parentNode`, `isConnected`) see Lean's
 arena: the guest sends its queued commands as one batch to the worker's own Lean instance
-(`lean-dom.mjs`, op `scriptSnapshot`) before it reads. `setAttribute`, `appendChild` and
-`removeChild` send at once, so a DOM error is thrown at the call. `innerHTML`, `dataset`,
+(`lean-dom.mjs`, op `scriptSnapshot`) before it reads. `createElement`, `appendChild`,
+`removeChild`, `classList` and `style` writes, and the first `setAttribute` with each name,
+go to Lean at once, so a DOM error is thrown at the call. Name validity depends on the
+name only, so later `setAttribute` calls with that name wait for the batch at the next
+read or at the end of the turn: an animation makes one Lean call per frame. A batch that
+Lean refuses at the end of a turn is reported in `errors`, and none of it is kept. `innerHTML`, `dataset`,
 `getBoundingClientRect`, `createTextNode`, `fetch` and `alert` throw a TypeError that names
 this issue; nothing is silently ignored.
 

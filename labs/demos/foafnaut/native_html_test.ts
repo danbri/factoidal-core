@@ -133,12 +133,16 @@ Deno.test("XML pages run their XSLT stylesheet in Lean, and refusals are visible
   }finally{await Deno.remove(dir,{recursive:true});}
 });
 
-Deno.test("scripts are refused, and unsupported CSS and layout are not",async()=>{
+Deno.test("a page script never runs silently: with no engine the page says so; unsupported CSS and layout still show",async()=>{
   const dir=await Deno.makeTempDir({prefix:"factoidal-native-html-refusal-"});
   const path=dir+"/page.html",url=pathToFileURL(path).href;
   try{
     await Deno.writeTextFile(path,html('<script>throw Error("must not execute")</script><p>Text</p>'));
-    await assert.rejects(()=>prepareHTML(engine,url),/does not execute scripts/);
+    // With no script hook the script does not run, and Lean puts a notice on the page (issue 1271).
+    const plain=await prepareHTML(engine,url);
+    assert.match(plain.script.notice,/this host has no script engine/);
+    assert.equal(plain.script.commands.length,0);
+    assert(plain.compile(240,160).data.length>0);
     await Deno.writeTextFile(path,html('<script type="application/ld+json">{"name":"inert"}</script><p>Text</p>'));
     assert((await prepareHTML(engine,url)).compile(240,160).data.length>0);
     // CSS we can not use is dropped, as in any browser: the page still shows.

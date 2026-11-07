@@ -144,7 +144,7 @@ async function main() {
   type Waiter={after:number;resolve:()=>void;from?:number};
   const presentWaiters:Waiter[]=[],scriptInputAt:number[]=[],scriptLatencies:number[]=[],scriptFrameMs:number[]=[],scriptPeriods:number[]=[];
   let lastAnimationPresent:number|undefined,scriptsDirty=()=>{};
-  const scriptOf=(page:unknown)=>(page as {script?:ScriptState}).script;
+  const scriptOf=(page:unknown)=>(page as {script?:ScriptState}|undefined)?.script;
   const runtimeOf=(page:unknown)=>{const r=scriptOf(page)?.runtime as unknown as PageScripts|undefined;return r&&!r.stopped?r:undefined;};
   const hook=scriptHook(()=>scriptSetting,{
     plan:request=>engine.scriptPlan(request),
