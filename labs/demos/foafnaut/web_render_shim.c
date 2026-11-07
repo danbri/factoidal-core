@@ -64,6 +64,18 @@ uint8_t *web_document_call_bin(const char *html,const char *request,uint32_t wid
   if (out_len) *out_len=(uint32_t)size;
   return copy;
 }
+extern lean_object *web_document_font_load_bin(lean_object *,lean_object *,lean_object *);
+/* The fontLoad op with the font file as bytes (WebDocument.fontLoadBin): no Base64 and no
+   JSON, so the file is not copied onto the call stack. The engine copies the bytes into
+   a Lean ByteArray; the caller keeps and frees its own buffer. The answer is the
+   fontLoad JSON answer, freed with web_render_free. */
+char *web_document_font_call_bin(const uint8_t *bytes,uint32_t length,const char *family,const char *sha256) {
+  if (!ready()) return NULL;
+  lean_object *array=lean_alloc_sarray(1,length,length);
+  if (length) memcpy(lean_sarray_cptr(array),bytes,length);
+  lean_object *value=web_document_font_load_bin(array,lean_mk_string(family),lean_mk_string(sha256));
+  char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
+}
 extern lean_object *web_render_font_requests(lean_object *);
 char *web_render_font_requests_call(const char *html) {
   if (!ready()) return NULL;

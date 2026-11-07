@@ -3,10 +3,12 @@
 // Base64 stays the reference. For every demo page and four requests (one frame, one
 // frame scrolled, layers, the CPU probes), the two give the same storage bytes, the same
 // tile words and the same other fields, from the Wasm engine and, when it is built, the
-// native library. Run with --allow-read --allow-ffi.
+// native library. The bytes engine also takes its font as bytes (`web_document_font_call_bin`)
+// and the text engine as Base64, so the same frames also show the same held font.
+// Run with --allow-read --allow-ffi.
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLArtifact,type HTMLEngine} from "./native_html_engine.ts";
-import {inputURL,loadFontFile,prepareHTML} from "./native_html_document.ts";
+import {inputURL,loadFontData,loadFontFile,prepareHTML} from "./native_html_document.ts";
 
 const font=new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url).pathname;
 const library=new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;
@@ -27,7 +29,9 @@ function sameScene(bytes:Partial<HTMLArtifact>,text:Partial<HTMLArtifact>,label:
 }
 async function pair(nativeEngine?:string):Promise<[HTMLEngine,HTMLEngine]> {
   const bytes=await loadHTML(nativeEngine,"bytes"),text=await loadHTML(nativeEngine,"text");
-  for(const e of [bytes,text])await loadFontFile(e,font,"Noto Sans");
+  const held=[await loadFontFile(bytes,font,"Noto Sans","bytes"),await loadFontFile(text,font,"Noto Sans","text")];
+  assert.deepEqual(held[0],held[1],"font answers differ");
+  assert.deepEqual(held[0],{family:"Noto Sans",glyphs:3884});
   return [bytes,text];
 }
 async function compare(nativeEngine?:string){
@@ -61,3 +65,22 @@ Deno.test("bytes answers give the bytes of the Base64 answers on every demo page
 Deno.test({name:"bytes answers give the bytes of the Base64 answers on every demo page (native library)",
   ignore:(()=>{try{Deno.statSync(library);return false;}catch{return true;}})(),
   fn:async()=>{const scenes=await compare(library);console.log(`native: ${scenes} scenes equal (${pages.length} pages)`);}});
+
+// A font above about 3 MB can not go as Base64 in a JSON string: Wasm copies string
+// arguments onto its 4 MB stack. As bytes it goes into the heap. The file here is Noto Sans
+// with zero bytes after it, to 6 MiB; the tables are where the directory says.
+async function largeFont(nativeEngine?:string){
+  const engine=await loadHTML(nativeEngine,"bytes");
+  const file=await Deno.readFile(font),big=new Uint8Array(6*1048576);
+  big.set(file);
+  assert.deepEqual(await loadFontData(engine,big,"Noto Sans 6 MiB"),{family:"Noto Sans 6 MiB",glyphs:3884});
+  const scene=engine.compile("<p>A large font file</p>",200,80,{checks:false});
+  assert(scene.data.length>0);
+  // Not a font: a Lean refusal, and the engine still answers after it.
+  assert.throws(()=>engine.fontLoadBytes(new Uint8Array([1,2,3]),"x","y"),/font\.file|font file/);
+  assert.throws(()=>engine.fontLoadBytes(new Uint8Array(0),"x","y"),/font\.file|font file/);
+  assert(engine.compile("<p>still here</p>",200,80,{checks:false}).data.length>0);
+}
+Deno.test("a 6 MiB font file loads as bytes (Wasm)",()=>largeFont());
+Deno.test({name:"a 6 MiB font file loads as bytes (native library)",
+  ignore:(()=>{try{Deno.statSync(library);return false;}catch{return true;}})(),fn:()=>largeFont(library)});

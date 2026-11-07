@@ -60,6 +60,25 @@ function render(source,options,w,h){
   if(typeof frame.tilesSection==='number'){const [o,l]=sections[frame.tilesSection];frame.tiles=new Uint32Array(buffer,o,l/4);delete frame.tilesSection;}
   return frame;
 }
+// A font file into the engine. As bytes it goes into the engine's heap: a font above about
+// 3 MB does not fit as a Base64 string, which Wasm copies onto its 4 MB stack. A runtime
+// with no such export takes Base64 in the JSON request.
+function fontLoad(bytes,family,sha){
+  if(typeof module._web_document_font_call_bin!=='function'||typeof module._malloc!=='function'){
+    let text='';
+    for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha});
+  }
+  const input=module._malloc(Math.max(1,bytes.length));
+  if(!input)throw Error('Lean engine allocation failed');
+  try{
+    module.HEAPU8.set(bytes,input);
+    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string'],[input,bytes.length,family,sha]);
+    if(!pointer)throw Error('Lean engine allocation failed');
+    try{const result=JSON.parse(module.UTF8ToString(pointer));if(result?.error)throw Error(result.error);return result;}
+    finally{module.ccall('web_render_free',null,['number'],[pointer]);}
+  }finally{module._free(input);}
+}
 // Noto Sans is the default face. Lean reads and shapes it; if it does not load, the
 // page stays in the bitmap face.
 async function loadFont(){
@@ -68,9 +87,7 @@ async function loadFont(){
     if(!response.ok)throw Error(`HTTP ${response.status}`);
     const bytes=new Uint8Array(await response.arrayBuffer());
     const sha=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
-    let text='';
-    for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
-    call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:'Noto Sans',fontSha256:sha});
+    fontLoad(bytes,'Noto Sans',sha);
   }catch(error){console.warn('foafnaut: bitmap font, because Noto Sans did not load:',String(error));}
 }
 async function fetchText(url){

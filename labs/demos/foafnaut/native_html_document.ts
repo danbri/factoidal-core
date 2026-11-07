@@ -100,10 +100,16 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   };
 }
 
-/** Give the engine a font file. Lean reads it, shapes words and takes outlines; this only moves bytes. */
-export async function loadFontFile(engine:HTMLEngine,path:string,family="font") {
-  const bytes=await Deno.readFile(path);
+/** Give the engine a font file. Lean reads it, shapes words and takes outlines; this only moves bytes.
+`via:"bytes"` (the default) copies the file into engine memory; `"text"` sends it as Base64
+in the JSON request, the reference path that tests compare with. */
+export async function loadFontFile(engine:HTMLEngine,path:string,family="font",via:"bytes"|"text"="bytes") {
+  return loadFontData(engine,await Deno.readFile(path),family,via);
+}
+/** As loadFontFile, for a file already in memory. */
+export async function loadFontData(engine:HTMLEngine,bytes:Uint8Array<ArrayBuffer>,family="font",via:"bytes"|"text"="bytes") {
   const sha=[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("");
+  if(via==="bytes")return engine.fontLoadBytes(bytes,family,sha);
   let text="";
   for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
   return engine.fontLoad(btoa(text),family,sha);

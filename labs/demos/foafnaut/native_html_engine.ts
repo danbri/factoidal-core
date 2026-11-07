@@ -26,7 +26,7 @@ export type ShellEdit = {address:string;cursor:number};
 export type ShellGo = {go:"page";url:string}|{go:"system";url:string}|{go:"command";name:string;argument:string};
 export type HTMLResource = {nodeId:number;url:string;source:string};
 type Module = {ccall(name:string,result:string|null,types:string[],values:unknown[]):number;
-  UTF8ToString(pointer:number):string;HEAPU8:Uint8Array};
+  UTF8ToString(pointer:number):string;HEAPU8:Uint8Array;_malloc?(size:number):number;_free?(pointer:number):void};
 const encoder = new TextEncoder();
 export const MAX_SOURCE_BYTES = 1048576;
 export function sourceBound(source:string) {
@@ -38,12 +38,16 @@ export type DocumentBackend=(html:string,requestJSON:string,width:number,height:
 /** The same call with a bytes answer (`web_document_call_bin`, WebDocument.packAnswer):
 a JSON head and raw sections, with no Base64. The buffer is the host's own copy. */
 export type BytesBackend=(html:string,requestJSON:string,width:number,height:number)=>ArrayBuffer;
-type Backends={text:DocumentBackend;bytes:BytesBackend};
+/** A font file as bytes (`web_document_font_call_bin`, WebDocument.fontLoadBin): no Base64
+and no JSON, so the file is not copied onto the call stack. The answer is the fontLoad JSON. */
+export type FontBackend=(bytes:Uint8Array,family:string,sha256:string)=>string;
+type Backends={text:DocumentBackend;bytes:BytesBackend;font:FontBackend};
 /** Backend 2: a native dylib of the same Lean objects. Every call must come from one thread; no nonblocking FFI. */
 export function nativeBackends(path:string):Backends {
   const library=Deno.dlopen(path,{
     web_document_call:{parameters:["buffer","buffer","u32","u32"],result:"pointer"},
     web_document_call_bin:{parameters:["buffer","buffer","u32","u32","buffer"],result:"pointer"},
+    web_document_font_call_bin:{parameters:["buffer","u32","buffer","buffer"],result:"pointer"},
     web_render_free:{parameters:["pointer"],result:"void"},
   } as const);
   const cstring=(text:string)=>{if(text.includes("\0"))throw new Error("Native engine input contains NUL");return encoder.encode(text+"\0");};
@@ -60,6 +64,12 @@ export function nativeBackends(path:string):Backends {
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       // One copy out of the engine's memory; the engine frees its buffer.
       try{return Deno.UnsafePointerView.getArrayBuffer(pointer,size[0]).slice(0);}
+      finally{library.symbols.web_render_free(pointer);}
+    },
+    font:(bytes,family,sha256)=>{
+      const pointer=library.symbols.web_document_font_call_bin(bytes,bytes.length,cstring(family),cstring(sha256));
+      if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
+      try{return new Deno.UnsafePointerView(pointer).getCString();}
       finally{library.symbols.web_render_free(pointer);}
     },
   };
@@ -81,6 +91,19 @@ function wasmBackends(module:Module):Backends {
       try{const heap=module.HEAPU8,total=new DataView(heap.buffer,heap.byteOffset+pointer,4).getUint32(0,true);
         return heap.slice(pointer,pointer+total).buffer;}
       finally{module.ccall("web_render_free",null,["number"],[pointer]);}
+    },
+    font:(bytes,family,sha256)=>{
+      if(!module._malloc||!module._free)throw new Error("Published Lean HTML engine has no font bytes call");
+      // The file goes into the engine's heap, not onto its 4 MB stack.
+      const input=module._malloc(Math.max(1,bytes.length));
+      if(!input)throw new Error("Published Lean HTML engine allocation failed");
+      try{
+        module.HEAPU8.set(bytes,input);
+        const pointer=module.ccall("web_document_font_call_bin","number",["number","number","string","string"],[input,bytes.length,family,sha256]);
+        if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
+        try{return module.UTF8ToString(pointer);}
+        finally{module.ccall("web_render_free",null,["number"],[pointer]);}
+      }finally{module._free(input);}
     },
   };
 }
@@ -175,6 +198,12 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     inspect:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"inspect"}) as Inspection,
     // Lean reads the font once and holds it; later renders draw with it.
     fontLoad:(fontBase64:string,fontFamily:string,fontSha256:string)=>documentCall("",{op:"fontLoad",fontBase64,fontFamily,fontSha256}) as {family:string;glyphs:number},
+    // The same, with the file as bytes: no Base64, and no size limit from the call stack.
+    fontLoadBytes:(bytes:Uint8Array,fontFamily:string,fontSha256:string)=>{
+      const result=JSON.parse(backends.font(bytes,fontFamily,fontSha256));
+      if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
+      return result as {family:string;glyphs:number};
+    },
     fontRequests:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"fontRequests"}),
     compile(source:string,width:number,height:number,options:Record<string,unknown>):HTMLArtifact {
       return sceneOf(renderCall(source,{binary:true,...options,op:"render"},width,height),width,height);
