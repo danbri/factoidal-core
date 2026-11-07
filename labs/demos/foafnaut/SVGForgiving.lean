@@ -130,12 +130,46 @@ private structure TextState where
   anchor : String := "start"
   family : String := ""
   strokeWidth : Float := 1
+  /-- `line-increment`, SVG Tiny 1.2 §10.11.4; `none` is `auto`. -/
+  lineIncrement : Option Float := none
+  textAlign : String := "start"
+  displayAlign : String := "before"
+  preserveSpace : Bool := false
+
+/-- A value of a keyword property: only a listed keyword changes it. -/
+private def keyword (attrs : List NamespaceAttribute) (key : String) (allowed : List String) (old : String) : String :=
+  match plainAttr attrs key with
+  | some value => let value := value.trimAscii.toString; if allowed.contains value then value else old
+  | none => old
+
+private def lineIncrementOf (attrs : List NamespaceAttribute) (old : Option Float) : Option Float :=
+  match plainAttr attrs "line-increment" with
+  | none => old
+  | some value =>
+    let value := value.trimAscii.toString
+    if value == "inherit" then old else if value == "auto" then none else
+    match NativeSVG.number value with
+    | .ok n => if n >= 0 then some n else old
+    | .error _ => old
+
+private def spaceOf (attrs : List NamespaceAttribute) (old : Bool) : Bool :=
+  match attrs.find? (fun a => a.name.namespace_ == some xmlURI && a.name.localPart == "space") with
+  | some a => a.value == "preserve"
+  | none => old
 
 private def TextState.read (s : TextState) (attrs : List NamespaceAttribute) : TextState :=
   { size := float (plainAttr attrs "font-size") s.size,
     anchor := (plainAttr attrs "text-anchor").getD s.anchor,
     family := (plainAttr attrs "font-family").getD s.family,
-    strokeWidth := float (plainAttr attrs "stroke-width") s.strokeWidth }
+    strokeWidth := float (plainAttr attrs "stroke-width") s.strokeWidth,
+    lineIncrement := lineIncrementOf attrs s.lineIncrement,
+    textAlign := keyword attrs "text-align" ["start","center","end"] s.textAlign,
+    -- §10.11.6: for SVG, `auto` is `before`.
+    displayAlign := match plainAttr attrs "display-align" with
+      | some value => if value.trimAscii.toString == "auto" then "before"
+        else keyword attrs "display-align" ["before","center","after"] s.displayAlign
+      | none => s.displayAlign,
+    preserveSpace := spaceOf attrs s.preserveSpace }
 
 /-- CSS Fonts: the first named family that is known, else the default font. -/
 private def chooseFont (fonts : List SVGFont) (family : String) : Option SVGFont :=
@@ -151,6 +185,10 @@ private structure Run where
   ys : List Float := []
   dx : Float := 0
   dy : Float := 0
+  /-- A `tbreak`: the text is empty, and the line ends here. -/
+  lineBreak : Bool := false
+  increment : Option Float := none
+  preserveSpace : Bool := false
 
 private def paintOf (attrs : List NamespaceAttribute) : List NamespaceAttribute :=
   attrs.filter fun a => a.name.namespace_.isNone && paintKeys.contains a.name.localPart
@@ -161,15 +199,17 @@ private def numberList (attrs : List NamespaceAttribute) (key : String) : List F
   | some s => ((s.splitOn " ").flatMap (·.splitOn ",") |>.filter (· != "")).map (fun n => float (some n) 0)
 
 /-- Text runs in order. A later unsupported child is logged and skipped. -/
-private def textRuns : Nat → TextState → List NamespaceAttribute → NamespaceNode → List Run × List String
+private def textRuns (area : Bool) : Nat → TextState → List NamespaceAttribute → NamespaceNode → List Run × List String
   | 0,_,_,_ => ([],[])
   | _,state,paint,.other raw => match raw with
-    | .text t | .cdata t => ([{text := t, size := state.size, strokeWidth := state.strokeWidth, paint := paint}],[])
+    | .text t | .cdata t => ([{text := t, size := state.size, strokeWidth := state.strokeWidth, paint := paint, increment := state.lineIncrement, preserveSpace := state.preserveSpace}],[])
     | _ => ([],[])
   | fuel+1,state,paint,.element name attrs children =>
-    if name.localPart != "tspan" then ([],["element in text: " ++ name.localPart]) else
+    if area && name.localPart == "tbreak" then
+      ([{text := "", size := state.size, strokeWidth := state.strokeWidth, paint := paint, lineBreak := true, increment := lineIncrementOf attrs state.lineIncrement}],[])
+    else if name.localPart != "tspan" then ([],["element in text: " ++ name.localPart]) else
     let inner := state.read attrs
-    let results := children.map (textRuns fuel inner (paint ++ paintOf attrs))
+    let results := children.map (textRuns area fuel inner (paint ++ paintOf attrs))
     let runs := results.flatMap (·.1)
     let runs := match runs with
       | run::rest =>
@@ -210,7 +250,7 @@ private def markGlyphs (box : Float × Float × Float × Float) : NamespaceNode 
 private def lowerText (font : SVGFont) (state : TextState) (attrs : List NamespaceAttribute)
     (children : List NamespaceNode) : NamespaceNode × List String := Id.run do
   let state := state.read attrs
-  let results := children.map (textRuns maxDepth state [])
+  let results := children.map (textRuns false maxDepth state [])
   let raw := (results.flatMap (·.1)).map (fun r => {r with text:=collapse r.text})
   -- Default xml:space: no leading or trailing space on the whole text.
   let lastIndex := raw.length-1
@@ -264,6 +304,208 @@ private def lowerText (font : SVGFont) (state : TextState) (attrs : List Namespa
     | some box => groups.toList.map (markGlyphs box)
   return (svgElement "g" (ids ++ outer) marked,results.flatMap (·.2))
 
+/-! ### Text in an area (SVG Tiny 1.2 §10.11)
+
+   `textArea` lowers to the same glyph paths as `text`. Lines come first, as
+   ranges of an array of cells; then each line is placed. Every loop is over
+   the cells of the element, so the work is linear in its text. -/
+
+/-- One character, or one `tbreak` (`lineBreak`), after white space handling. -/
+private structure Cell where
+  glyph : Glyph
+  run : Nat
+  /-- Advance of the glyph and kerning before it, both in user units. -/
+  advance : Float
+  kern : Float
+  space : Bool
+  lineBreak : Bool := false
+instance : Inhabited Cell := ⟨⟨⟨"",0,""⟩,0,0,0,false,false⟩⟩
+
+/-- Cells `first` to `stop-1`. `run` is the run that gives the size of an empty line. -/
+private structure AreaLine where
+  first : Nat
+  stop : Nat
+  run : Nat
+  width : Float
+
+/-- §10.11.7, white space and kerning. `default`: tabs and newlines are spaces, and
+    only the first space of a sequence stays, also over a change of run. -/
+private def areaCells (font : SVGFont) (runs : Array Run) : Array Cell := Id.run do
+  let mut cells : Array Cell := #[]
+  let mut previous : Option (Nat × Glyph) := none
+  let mut index := 0
+  for run in runs do
+    let current := index
+    index := index+1
+    if run.lineBreak then
+      cells := cells.push {glyph:=font.missing,run:=current,advance:=0,kern:=0,space:=false,lineBreak:=true}
+      previous := none
+      continue
+    let scale := run.size/font.unitsPerEm
+    for raw in run.text.toList do
+      let c := if raw == '\n' || raw == '\t' || raw == '\r' then ' ' else raw
+      let space := c == ' '
+      let afterGap := match cells.back? with
+        | none => true
+        | some last => last.space || last.lineBreak
+      if space && !run.preserveSpace && afterGap then continue
+      let g := font.glyph c
+      let kern := match previous with
+        | some (r,p) => if r == current then ((font.kerning.get? (p.name,g.name)).getD 0)*scale else 0
+        | none => 0
+      cells := cells.push {glyph:=g,run:=current,advance:=g.advance*scale,kern,space}
+      previous := some (current,g)
+  return cells
+
+private def cellWidth (cell : Cell) : Float := cell.advance-cell.kern
+
+/-- First cell at or after `start` that ends a word. -/
+private def wordEnd (cells : Array Cell) (start : Nat) : Nat := Id.run do
+  for i in [start:cells.size] do
+    if let some cell := cells[i]? then
+      if cell.space || cell.lineBreak then return i
+  return cells.size
+
+private def rangeWidth (cells : Array Cell) (start stop : Nat) : Float := Id.run do
+  let mut total := 0
+  for i in [start:stop] do
+    if let some cell := cells[i]? then total := total+cellWidth cell
+  return total
+
+private structure Breaker where
+  lines : Array AreaLine := #[]
+  start : Nat := 0
+  /-- End of the last word on the line; spaces after it are not part of it yet. -/
+  stop : Nat := 0
+  width : Float := 0
+
+/-- End the current line. The next line starts at `next`. -/
+private def Breaker.finish (b : Breaker) (run next : Nat) (width : Float := 0) : Breaker :=
+  {lines:=b.lines.push ⟨b.start,b.stop,run,b.width⟩,start:=next,stop:=next,width}
+
+/-- §10.11.7: a `tbreak` ends a line, and a word goes to the next line when it does
+    not fit. A word wider than the area breaks between characters; each line has at
+    least one character, so the loop always makes progress. `limit` is the width of
+    the area, and `none` is `auto`: there only a `tbreak` ends a line. -/
+private def breakLines (cells : Array Cell) (limit : Option Float) (preserve : Bool) : Array AreaLine := Id.run do
+  let mut b : Breaker := {}
+  let mut i := 0
+  let width := limit.getD 0
+  for _ in [0:cells.size+1] do
+    let some cell := cells[i]? | break
+    if cell.lineBreak then
+      b := b.finish cell.run (i+1)
+      i := i+1
+    else if cell.space then
+      i := i+1
+    else
+      let stop := wordEnd cells i
+      let word := rangeWidth cells i stop
+      let gap := rangeWidth cells b.stop i
+      if limit.isSome && b.stop > b.start && b.width+gap+word > width then
+        -- A preserved space goes to the next line; another one ends with the line.
+        let next := if preserve then b.stop else i
+        b := b.finish cell.run next (if preserve then gap else 0)
+        b := {b with stop:=i}
+      else
+        b := {b with stop:=i,width:=b.width+gap}
+      if limit.isNone || word <= width then
+        b := {b with stop,width:=b.width+word}
+      else
+        for k in [i:stop] do
+          if let some part := cells[k]? then
+            if b.stop > b.start && b.width+cellWidth part > width then b := b.finish part.run k
+            b := {b with stop:=k+1,width:=b.width+cellWidth part}
+      i := stop
+  if b.stop > b.start then b := b.finish ((cells[b.start]?).map (·.run) |>.getD 0) b.stop
+  return b.lines
+
+/-- §10.11.4 and §10.11.7: the largest line increment of the runs on the line, where
+    `auto` is 1.1 times the font size. An empty line has the size of its `tbreak`. -/
+private def lineSize (runs : Array Run) (cells : Array Cell) (line : AreaLine) : Float := Id.run do
+  let increment := fun (r : Run) => r.increment.getD (1.1*r.size)
+  let mut size := 0
+  for i in [line.first:line.stop] do
+    if let some cell := cells[i]? then
+      if let some run := runs[cell.run]? then size := max size (increment run)
+  if line.first == line.stop then
+    if let some run := runs[line.run]? then return increment run
+  return size
+
+/-- Lower one `textArea` element to a group of glyph paths. -/
+private def lowerArea (font : SVGFont) (state : TextState) (attrs : List NamespaceAttribute)
+    (children : List NamespaceNode) : NamespaceNode × List String := Id.run do
+  let state := state.read attrs
+  let results := children.map (textRuns true maxDepth state [])
+  let runs := (results.flatMap (·.1)).toArray
+  let dimension := fun (key : String) => match plainAttr attrs key with
+    | none => none
+    | some value => if value.trimAscii.toString == "auto" then none else some (float (some value) 0)
+  let left := float (plainAttr attrs "x") 0
+  let top := float (plainAttr attrs "y") 0
+  let width := dimension "width"
+  let height := dimension "height"
+  let outer := paintOf attrs ++ (attrs.filter (fun a => a.name.namespace_.isNone && a.name.localPart == "transform"))
+  let ids := renameId attrs |>.filter (fun a => a.name.namespace_.isNone && a.name.localPart == "id")
+  -- §10.11.2: a value of zero disables rendering of the element.
+  if width.any (· <= 0) || height.any (· <= 0) then return (svgElement "g" (ids ++ outer) [],results.flatMap (·.2))
+  let cells := areaCells font runs
+  let lines := breakLines cells width state.preserveSpace
+  -- §10.11.7: a line that does not fit completely in the area is not rendered.
+  let mut kept : Array (AreaLine × Float) := #[]
+  let mut used := 0
+  for line in lines do
+    let size := lineSize runs cells line
+    if height.any (used+size > ·) then break
+    kept := kept.push (line,size)
+    used := used+size
+  let shift := match height,state.displayAlign with
+    | some h,"center" => (h-used)/2
+    | some h,"after" => h-used
+    | _,_ => 0
+  let mut groups : Array NamespaceNode := #[]
+  let mut box : Option (Float × Float × Float × Float) := none
+  let mut lineTop := top+shift
+  for (line,size) in kept do
+    -- §10.11.7 rule 9: the baseline as for a font size equal to the line increment.
+    let baseline := lineTop+size*font.ascent/font.unitsPerEm
+    let free := width.map (·-line.width)
+    let mut x := left + match free,state.textAlign with
+      | some free,"center" => free/2
+      | some free,"end" => free
+      | _,_ => 0
+    let mut paths : Array NamespaceNode := #[]
+    let mut current : Option Nat := none
+    let flush := fun (groups : Array NamespaceNode) (paths : Array NamespaceNode) (current : Option Nat) =>
+      match current.bind (runs[·]?) with
+      | some run => groups.push (svgElement "g" run.paint paths.toList)
+      | none => groups
+    for i in [line.first:line.stop] do
+      let some cell := cells[i]? | continue
+      let some run := runs[cell.run]? | continue
+      if current != some cell.run then
+        groups := flush groups paths current
+        paths := #[]
+        current := some cell.run
+      if i > line.first then x := x-cell.kern
+      let scale := run.size/font.unitsPerEm
+      if !cell.glyph.data.isEmpty then
+        paths := paths.push (svgElement "path" [mkAttr "d" cell.glyph.data,mkAttr "stroke-width" (toString (run.strokeWidth/scale)),
+          mkAttr "transform" s!"translate({x},{baseline}) scale({scale},{-scale})"] [])
+      let cellTop := baseline-font.ascent*scale
+      let cellBottom := baseline+font.descent*scale
+      let cellRight := x+cell.advance
+      box := some (match box with
+        | none => (x,cellTop,cellRight,cellBottom)
+        | some (x0,y0,x1,y1) => (min x0 x,min y0 cellTop,max x1 cellRight,max y1 cellBottom))
+      x := cellRight
+    groups := flush groups paths current
+    lineTop := lineTop+size
+  let marked := match box with
+    | none => groups.toList
+    | some box => groups.toList.map (markGlyphs box)
+  return (svgElement "g" (ids ++ outer) marked,results.flatMap (·.2))
+
 /-- SVG Tiny 1.2 §5.8.2: this agent's language is en, and it has no extensions. -/
 private def conditionsPass (attrs : List NamespaceAttribute) : Bool :=
   let language := match plainAttr attrs "systemLanguage" with
@@ -295,7 +537,8 @@ private def textInstance (targets : Std.HashMap String NamespaceNode) (attrs : L
   if !source.startsWith "#" then none
   let target ← targets.get? (source.drop 1).toString
   let .element name _ _ := target | none
-  if !["g","text"].contains name.localPart || !hasElement "text" maxDepth target || hasElement "use" maxDepth target then none
+  if !["g","text","textArea"].contains name.localPart ||
+    !(hasElement "text" maxDepth target || hasElement "textArea" maxDepth target) || hasElement "use" maxDepth target then none
   pure target
 
 /-- Remove foreign and unread elements, stray text and the content of silent
@@ -316,6 +559,10 @@ private def normalise (fonts : List SVGFont) (targets : Std.HashMap String Names
       match chooseFont fonts inner.family with
       | some font => let (node,log) := lowerText font state attrs children; (some node,log)
       | none => (none,["element: text"])
+    else if name.localPart == "textArea" && !fonts.isEmpty then
+      match chooseFont fonts (state.read attrs).family with
+      | some font => let (node,log) := lowerArea font state attrs children; (some node,log)
+      | none => (none,["element: textArea"])
     else if name.localPart == "switch" then
       -- SVG Tiny 1.2 §5.8: draw only the first child whose conditions pass.
       let selected : NamespaceNode → Bool := fun

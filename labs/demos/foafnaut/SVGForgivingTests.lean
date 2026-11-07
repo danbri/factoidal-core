@@ -51,3 +51,49 @@ private def offsetKept : Bool := match parse (svg "<g stroke-dashoffset='none'><
       scene.primitives.any (fun p => p.style.dashOffset.value == 5)
   | .error _ => false
 #guard offsetKept
+
+-- textArea (SVG Tiny 1.2 §10.11). The glyph `a` advances 5 at font size 10.
+private def areaOrigins (body : String) : List (Float × Float) := match parse (svg body) 40 40 (some font) with
+  | .ok (scene,_) => scene.primitives.map (fun p => (p.transform.e,p.transform.f))
+  | .error _ => []
+private def near (a b : Float) : Bool := (a-b).abs < 0.001
+private def originsAre (body : String) (expected : List (Float × Float)) : Bool :=
+  let found := areaOrigins body
+  found.length == expected.length && (found.zip expected).all fun (a,b) => near a.1 b.1 && near a.2 b.2
+private def area (attrs text : String) : String := "<textArea font-size='10' " ++ attrs ++ ">" ++ text ++ "</textArea>"
+-- A word goes to the next line, and the space at the break is consumed. The size of
+-- a line is 1.1 times the font size; the baseline is at 0.8 of it for this font's ascent.
+private def line1 : Float := 8.8
+private def line2 : Float := 19.8
+#guard originsAre (area "x='1' y='0' width='12' height='30'" "aa aa") [(1,line1),(6,line1),(1,line2),(6,line2)]
+-- No tbreak and no room: a word wider than the area breaks between characters.
+#guard originsAre (area "width='10' height='30'" "aaa") [(0,line1),(5,line1),(0,line2)]
+-- An area narrower than one character still moves forward: one character on each line.
+#guard withFont (area "width='1' height='40'" "aaa") == 3
+-- A line that does not fit completely is not rendered.
+#guard withFont (area "width='30' height='10'" "aa") == 0
+#guard withFont (area "width='30' height='11'" "aa") == 2
+#guard withFont (area "width='12' height='12'" "aa aa") == 2
+-- `auto` is infinite: only a tbreak ends a line.
+#guard withFont (area "width='auto' height='auto'" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<tbreak/>a") == 45
+-- A tbreak ends a line even when it is empty, so two of them leave one empty line.
+#guard originsAre (area "width='30' height='40'" "a<tbreak/><tbreak/>a") [(0,line1),(0,19.8+11)]
+-- line-increment is in user units, and the largest value on the line wins.
+#guard originsAre (area "width='30' height='40' line-increment='20'" "a<tbreak/>a") [(0,16),(0,36)]
+#guard originsAre (area "width='30' height='40'" "<tspan line-increment='20'>a</tspan><tspan line-increment='5'>a</tspan>") [(0,16),(5,16)]
+-- text-align and display-align; `auto` is `before`.
+#guard originsAre (area "width='20' height='40' text-align='end'" "a") [(15,line1)]
+#guard originsAre (area "width='20' height='40' text-align='center'" "a") [(7.5,line1)]
+#guard originsAre (area "width='20' height='41' display-align='after'" "a") [(0,30+line1)]
+#guard originsAre (area "width='20' height='41' display-align='center'" "a") [(0,15+line1)]
+#guard originsAre (area "width='20' height='41' display-align='auto'" "a") [(0,line1)]
+-- Zero disables rendering, and the rest of the document stays.
+#guard withFont (area "width='0' height='30'" "a" ++ "<rect width='9' height='9'/>") == 1
+#guard withFont (area "width='30' height='0'" "a") == 0
+-- White space: runs of spaces collapse over a change of run; xml:space='preserve' keeps them.
+#guard originsAre (area "width='40' height='40'" " a <tspan> a</tspan>") [(0,line1),(10,line1)]
+#guard originsAre (area "width='40' height='40' xml:space='preserve'" "a  a") [(0,line1),(15,line1)]
+-- An instance of a textArea lowers as text does, with the font values of its `use`.
+#guard withFont ("<defs>" ++ area "id='t' width='30' height='30'" "a" ++ "</defs><use xlink:href='#t' xmlns:xlink='http://www.w3.org/1999/xlink'/>") == 1
+-- With no font the element goes and is logged, as `text` is.
+#guard (log "<textArea width='9' height='9'>a</textArea>").contains "element: textArea"
