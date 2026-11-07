@@ -649,7 +649,7 @@ def layOut (key : LayoutKey) : Except String Laid := do
   let url := baseURL dom (str request "url")
   let embedding ← match graph with
     | some m => pure (WebGraph.embedding m)
-    | none => WebRender.makeEmbedding dom (if url.isEmpty then none else some url) (← suppliedImages request)
+    | none => WebRender.makeEmbedding dom (if url.isEmpty then none else some url) (← suppliedImages request) font
   -- A window shorter than the chrome still lays out, on one row.
   let state ← elementState dom url request
   let (scene,boxes) ← Rendering.Layout.render dom rules font embedding key.width (max 1 (key.height-key.top)) textScale state

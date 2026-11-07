@@ -14,7 +14,8 @@ private def log (body : String) : List String := ((result body).map (·.2)).getD
 #guard primitives "<text>label</text><rect width='9' height='9'/>" == 1
 #guard (log "<text>label</text>").contains "element: text"
 #guard (log "<foo xmlns='urn:x'/>").contains "foreign element: foo"
-#guard (log "<g font-size='9'/>").contains "attribute: g font-size"
+-- font-size is a text property any element may carry (issue 1270); baseline-shift is not read.
+#guard (log "<g baseline-shift='9'/>").contains "attribute: g baseline-shift"
 -- A value the reader refuses removes that element only, and is logged.
 #guard primitives "<rect width='-1' height='9'/><rect width='9' height='9'/>" == 1
 #guard (log "<rect width='-1' height='9'/>").any (·.startsWith "removed rect")

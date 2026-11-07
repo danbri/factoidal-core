@@ -7,6 +7,7 @@ import SVGCSS
 import SVGDash
 import SVGDashUnits
 import SVGStroke
+import SVGText
 import ImageData
 import L4Factoidal.Math.Affine
 import L4Factoidal.Tdb2.Format
@@ -353,13 +354,17 @@ private def relativeLength (source : String) (base : Float) : Except String Floa
 
 private def common := ["id","fill","stroke","color","fill-opacity","stroke-opacity","stroke-width",
   "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule","stroke-dasharray","stroke-dashoffset",
-  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity"]
+  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity",
+  -- Text properties (issue 1270). They inherit, so any element may carry them.
+  "font-family","font-size","font-weight","font-style","font-variant","font-stretch","text-anchor",
+  "letter-spacing","word-spacing","dominant-baseline","writing-mode","direction","unicode-bidi",
+  "text-decoration","text-rendering"]
 /-- SVG Tiny 1.2 §11.13 and §11.16: elements that define a paint and draw nothing. -/
 private def paintServers := ["linearGradient","radialGradient","solidColor"]
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
     if let some uri := a.name.namespace_ then
-      if uri == svgURI || (uri == "http://www.w3.org/1999/xlink" && !(["use","linearGradient","radialGradient","image"].contains tag && a.name.localPart == "href")) ||
+      if uri == svgURI || (uri == "http://www.w3.org/1999/xlink" && !(["use","linearGradient","radialGradient","image","textPath"].contains tag && a.name.localPart == "href")) ||
           (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base"].contains a.name.localPart) then
         throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
     else if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
@@ -388,6 +393,8 @@ private structure PaintContext where
   rules : List NativeSVGCSS.Rule
   document : NamespaceNode
   images : NativeImage.Store := {}
+  /-- Glyphs for `text` (issue 1270): the caller's font profile. With none, text is refused. -/
+  shaper : Option NativeSVGText.Shaper := none
 
 /-- Attributes of an element that a paint server depends on, after the cascade.
     Values are checked where they are read, so that an unrelated property of an
@@ -1242,6 +1249,8 @@ private structure ReadContext where
   ancestors : List (List Nat)
   instanceRoot : Bool := false
   baseURL : Option String := none
+  /-- Inherited text properties. -/
+  text : NativeSVGText.Props := {}
 
 private def readListWith (read : NamespaceNode → Nat → Except String (List DisplayNode))
     (nodes : List NamespaceNode) : Except String (List DisplayNode) := do
@@ -1358,6 +1367,222 @@ private def imagePlacement (x y w h : Float) (bitmap : L4Factoidal.Rendering.Bit
   let area := if mode == "meet" then (dx,dy,iw*scale,ih*scale) else (x,y,w,h)
   return (area,⟨1/scale,0,0,1/scale,-dx/scale,-dy/scale⟩)
 
+/-! ### Text (issue 1270)
+
+`text`, `tspan` and `textPath` become glyph outlines: `NativeSVGText` places the
+glyphs that the caller's shaper gives, and each run paints as `path` primitives
+with the style of its element. -/
+
+private def dropSuffix (s : String) (n : Nat) : String := String.ofList (s.toList.take (s.length-n))
+
+/-- CSS Fonts §2.5: `font-size`, relative to the inherited size. -/
+private def fontSize (parent : Float) (source : String) : Except String Float := do
+  let v := (trim source).toLower
+  match v with
+  | "xx-small" => pure 9 | "x-small" => pure 10 | "small" => pure 13 | "medium" => pure 16
+  | "large" => pure 18 | "x-large" => pure 24 | "xx-large" => pure 32
+  | "smaller" => pure (parent/1.2) | "larger" => pure (parent*1.2)
+  | _ =>
+    if v.endsWith "rem" then pure ((← number (dropSuffix v 3))*16)
+    else if v.endsWith "em" then pure ((← number (dropSuffix v 2))*parent)
+    else if v.endsWith "%" then relativeLength v parent
+    else if v.endsWith "pt" then pure ((← number (dropSuffix v 2))*4/3)
+    else lengthNumber v
+
+/-- `letter-spacing` and `word-spacing`: `normal` is 0. -/
+private def spacing (size : Float) (source : String) : Except String Float := do
+  let v := (trim source).toLower
+  if v == "normal" then pure 0
+  else if v.endsWith "em" then pure ((← number (dropSuffix v 2))*size)
+  else lengthNumber v
+
+/-- The inherited text properties after this element's attributes (and CSS). The
+font family, weight, style and stretch are read by no one yet: every text uses the
+held fonts. `writing-mode` other than horizontal is not done
+(https://github.com/danbri/factoidal/issues/1285): the text is laid out horizontally. -/
+private def textProps (attrs : List NamespaceAttribute) (parent : NativeSVGText.Props) :
+    Except String NativeSVGText.Props := do
+  let mut p := parent
+  if let some v := attr attrs "font-size" then
+    if trim v != "inherit" then
+      let size ← fontSize parent.size v
+      if size < 0 then throw s!"negative font-size: {v}"
+      p := {p with size}
+  if let some v := attr attrs "text-anchor" then
+    match trim v with
+    | "start" => p := {p with anchor := .start}
+    | "middle" => p := {p with anchor := .middle}
+    | "end" => p := {p with anchor := .finish}
+    | "inherit" => pure ()
+    | _ => throw s!"unsupported text-anchor: {v}"
+  if let some v := attr attrs "letter-spacing" then
+    if trim v != "inherit" then p := {p with letterSpacing := ← spacing p.size v}
+  if let some v := attr attrs "word-spacing" then
+    if trim v != "inherit" then p := {p with wordSpacing := ← spacing p.size v}
+  for key in ["dominant-baseline","alignment-baseline"] do
+    if let some v := attr attrs key then
+      if trim v != "inherit" then p := {p with baseline := trim v}
+  return p
+
+/-- A list of lengths (`x`, `y`, `dx`, `dy`) against a percentage base. -/
+private def lengthList (base : Float) (source : String) : Except String (List Float) := do
+  let parts := ((source.replace "," " " |>.replace "\t" " " |>.replace "\n" " " |>.replace "\r" " ").splitOn " ").filter (· != "")
+  parts.mapM (relativeLength · base)
+
+/-- An element's per-character lists, for its addressable characters `start .. finish`. -/
+private structure TextLists where
+  start : Nat
+  finish : Nat := 0
+  x : List Float := []
+  y : List Float := []
+  dx : List Float := []
+  dy : List Float := []
+  rotate : List Float := []
+
+private structure TextCollect where
+  pieces : Array NativeSVGText.Piece := #[]
+  styles : Array Style := #[]
+  lists : Array TextLists := #[]
+  paths : Array NativeSVGText.PathInfo := #[]
+  count : Nat := 0
+  /-- The last kept character is a space, or there is none yet: white space collapses. -/
+  space : Bool := true
+
+private def textLists (lengths : LengthContext) (attrs : List NamespaceAttribute) (start : Nat) : Except String TextLists := do
+  let list := fun key (base : Float) => match attr attrs key with
+    | none => pure []
+    | some v => lengthList base v
+  return {start,x := ← list "x" lengths.width,y := ← list "y" lengths.height,
+          dx := ← list "dx" lengths.width,dy := ← list "dy" lengths.height,
+          rotate := ← match attr attrs "rotate" with | none => pure [] | some v => numbers v}
+
+/-- SVG 2 §11.6 with `white-space: normal`: line breaks and tabs are spaces, and a
+run of spaces is one space, across element boundaries. `xml:space="preserve"`
+keeps each space. -/
+private def addText (c : TextCollect) (source : String) (props : NativeSVGText.Props) (style : Nat)
+    (path : Option Nat) (preserve : Bool) : TextCollect := Id.run do
+  let mut chars : Array Char := #[]
+  let mut space := c.space
+  for ch in source.toList do
+    if isXmlSpace ch then
+      if preserve || !space then chars := chars.push ' '
+      space := true
+    else
+      chars := chars.push ch
+      space := false
+  if chars.isEmpty then return {c with space}
+  return {c with pieces := c.pieces.push {chars,props,style,start := c.count,path},count := c.count+chars.size,space}
+
+private def textPathLine (references : NativeSVGReferences.Index) (baseURL : Option String)
+    (attrs : List NamespaceAttribute) : Except String NativeSVGText.PathInfo := do
+  let source ← match attr attrs "path" with
+    | some d => pure d
+    | none => do
+      let some href := NativeSVGReferences.href attrs | throw "textPath requires href or path"
+      let some id ← NativeSVGReferences.fragment href references.documentURL baseURL | throw "textPath requires a path reference"
+      let some target := references.get? id | throw s!"textPath reference not found: {id}"
+      let .element name targetAttrs _ := target.node | throw "textPath reference must be a path"
+      if name.namespace_ != some svgURI || name.localPart != "path" then throw "unsupported textPath target: path element required"
+      if (attr targetAttrs "transform").isSome then throw "unsupported textPath target with transform"
+      pure ((attr targetAttrs "d").getD "")
+  let contours ← NativeSVGPath.parse number source
+  let line := NativeSVGText.Polyline.ofContours (← NativeSVGCurves.flatten identityTransform contours 0.05)
+  let startOffset ← match attr attrs "startOffset" with
+    | none => pure 0
+    | some v =>
+      if (trim v).endsWith "%" then relativeLength v line.length else lengthNumber v
+  match attr attrs "method" with
+  | none | some "align" => pure ()
+  | some v => throw s!"unsupported textPath method: {v}"
+  match attr attrs "side" with
+  | none | some "left" => pure ()
+  | some v => throw s!"unsupported textPath side: {v}"
+  match attr attrs "spacing" with
+  | none | some "exact" | some "auto" => pure ()
+  | some v => throw s!"unsupported textPath spacing: {v}"
+  return {line,startOffset}
+
+private def preserves (attrs : List NamespaceAttribute) (parent : Bool) : Bool :=
+  match attrs.find? (fun a => a.name.namespace_ == some "http://www.w3.org/XML/1998/namespace" && a.name.localPart == "space") with
+  | some a => trim a.value == "preserve"
+  | none => parent
+
+/-- The addressable characters of a text element's content, in order, with the
+style and properties of the element that holds each. Nesting is at most `fuel`. -/
+private def collectText (lengths : LengthContext) (references : NativeSVGReferences.Index)
+    (rules : List NativeSVGCSS.Rule) (paints : PaintContext) (baseURL : Option String) :
+    Nat → TextCollect → Style → NativeSVGText.Props → Option Nat → Bool → List NamespaceNode → Except String TextCollect
+  | 0,_,_,_,_,_,_ => throw "SVG text nesting exceeds 16"
+  | fuel+1,c,style,props,path,preserve,children => do
+    let mut c := c
+    for child in children do
+      match child with
+      | .other (.text t) | .other (.cdata t) =>
+        let index := c.styles.size
+        c := addText {c with styles := c.styles.push style} t props index path preserve
+      | .other (.comment _) => pure ()
+      | .other _ => throw "processing instruction in text unsupported"
+      | .element name rawAttrs grand =>
+        if name.namespace_ != some svgURI then throw s!"foreign element in text: {name.localPart}"
+        let tag := name.localPart
+        if ["title","desc","metadata"].contains tag then continue
+        if tag != "tspan" && tag != "textPath" then throw s!"unsupported element in text: {tag}"
+        let attrs ← applyCSS lengths paints rules tag rawAttrs true
+        let inner ← readStyle lengths paints attrs style
+        let innerProps ← textProps attrs props
+        if displaySuppressed attrs then continue
+        let mut innerPath := path
+        if tag == "tspan" then
+          validateAttrs tag attrs ["x","y","dx","dy","rotate"]
+        else
+          validateAttrs tag attrs ["href","startOffset","method","side","spacing","path"]
+          if path.isSome then throw "unsupported textPath inside textPath"
+          c := {c with paths := c.paths.push (← textPathLine references baseURL attrs)}
+          innerPath := some (c.paths.size-1)
+        let at_ := c.lists.size
+        c := {c with lists := c.lists.push (← textLists lengths attrs c.count)}
+        c ← collectText lengths references rules paints baseURL fuel c inner innerProps innerPath (preserves attrs preserve) grand
+        c := {c with lists := c.lists.modify at_ fun l => {l with finish := c.count}}
+    return c
+
+/-- Per-character positions: each element's lists in document order, so a `tspan`
+overrides its ancestors. The last `rotate` value holds for the rest of its element. -/
+private def resolvePositions (count : Nat) (lists : Array TextLists) : NativeSVGText.Positions := Id.run do
+  let mut p := NativeSVGText.Positions.empty count
+  for l in lists do
+    let span := min l.finish count - l.start
+    for (v,j) in l.x.zipIdx do if j < span then p := {p with x := p.x.set! (l.start+j) (some v)}
+    for (v,j) in l.y.zipIdx do if j < span then p := {p with y := p.y.set! (l.start+j) (some v)}
+    for (v,j) in l.dx.zipIdx do if j < span then p := {p with dx := p.dx.set! (l.start+j) v}
+    for (v,j) in l.dy.zipIdx do if j < span then p := {p with dy := p.dy.set! (l.start+j) v}
+    if let some last := l.rotate.getLast? then
+      let rs := l.rotate.toArray
+      for j in [0:span] do p := {p with rotate := p.rotate.set! (l.start+j) (rs[j]?.getD last)}
+  return p
+
+/-- The glyphs of one text as paths: one primitive for each run of glyphs of one
+style, with at most 120 subpaths (the path limit is 128). -/
+private def textPaint (placed : Array NativeSVGText.Placed) (pieces : Array NativeSVGText.Piece)
+    (styles : Array Style) (opacity : Float) : List DisplayNode := Id.run do
+  let mut out : Array DisplayNode := #[]
+  let mut current : Array NativeSVGPath.Contour := #[]
+  let mut style : Option Nat := none
+  for g in placed do
+    if g.contours.isEmpty then continue
+    let s := (pieces[g.piece]?.map (·.style)).getD 0
+    let outline := g.outline
+    if style != some s || current.size+outline.length > 120 then
+      if let some k := style then
+        if !current.isEmpty then
+          out := out.push (.paint {geometry := .path current.toList,style := styles[k]?.getD {},opacity})
+      current := #[]
+      style := some s
+    current := current ++ outline.toArray
+  if let some k := style then
+    if !current.isEmpty then
+      out := out.push (.paint {geometry := .path current.toList,style := styles[k]?.getD {},opacity})
+  return out.toList
+
 private def readNode (references : NativeSVGReferences.Index) (rules : List NativeSVGCSS.Rule)
     (paints : PaintContext) : Nat → ReadContext → NamespaceNode → Except String (List DisplayNode)
   | 0,_,_ => throw "SVG group/instance nesting exceeds 32"
@@ -1365,12 +1590,12 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
     let context := match node with
       | .element _ attrs _ => {context with baseURL:=NativeSVGReferences.elementBase attrs context.baseURL}
       | _ => context
-    let {lengths,parent,style,path,ancestors,instanceRoot,baseURL} := context
+    let {lengths,parent,style,path,ancestors,instanceRoot,baseURL,text} := context
     let active := path :: ancestors
     let readChildren := fun (lengths : LengthContext) (parent : Transform) (style : Style)
-        (children : List NamespaceNode) =>
+        (text : NativeSVGText.Props) (children : List NamespaceNode) =>
       readListWith (fun child i => readNode references rules paints fuel
-        {lengths,parent,style,path:=path++[i],ancestors:=active,baseURL} child) children
+        {lengths,parent,style,path:=path++[i],ancestors:=active,baseURL,text} child) children
     match node with
     | .other (.comment _) => pure []
     | .other (.text text) | .other (.cdata text) =>
@@ -1391,6 +1616,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
       if ["style","metadata","defs","stop"].contains tag || paintServers.contains tag ||
           (tag == "symbol" && !instanceRoot) then return []
       let attrs ← applyCSS lengths paints rules tag rawAttrs true
+      let text ← textProps attrs text
       if tag == "title" || tag == "desc" then
         validateAttrs tag attrs ["id"]
         for child in children do metadata child
@@ -1418,7 +1644,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
                 if size < 0 then throw "negative use viewport dimensions unsupported"
                 targetAttrs := replaceAttr targetAttrs key value
         let targetTree ← readNode references rules paints fuel
-          {lengths,parent:=cumulative,style:=inherited,path:=target.path,ancestors:=active,instanceRoot:=true,baseURL:=target.parentBase}
+          {lengths,parent:=cumulative,style:=inherited,path:=target.path,ancestors:=active,instanceRoot:=true,baseURL:=target.parentBase,text}
           (.element targetName targetAttrs targetChildren)
         return [.group (attr attrs "id") transform targetTree]
       else if tag == "svg" || tag == "symbol" then
@@ -1445,7 +1671,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
           | none => {width:=w,height:=h}
           | some (_,_,vw,vh) => {width:=vw,height:=vh}
         let inherited ← readStyle childLengths paints attrs style
-        let retainedChildren ← readChildren childLengths cumulative inherited children
+        let retainedChildren ← readChildren childLengths cumulative inherited text children
         let overflow := trim ((attr attrs "overflow").getD "hidden")
         if overflow == "visible" then
           return [.group (attr attrs "id") contentTransform retainedChildren]
@@ -1472,12 +1698,37 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         -- fill-opacity is not a property of an image; `opacity` is.
         let painted := {inherited with fill:=.image ⟨map,id,bitmap⟩,stroke:=.none,fillOpacity:=1}
         return [.paint {geometry:=.rect ax ay aw ah,style:=painted,opacity:=max 0 (min 1 opacity),transform}]
+      else if tag == "text" then
+        -- SVG 1.1 §10 (issue 1270): glyph outlines from the caller's font profile.
+        validateAttrs tag attrs ["x","y","dx","dy","rotate","opacity","transform"]
+        let some shaper := paints.shaper | throw "unsupported SVG element: text"
+        let transform ← checkedTransform (← elementTransform parent ((attr attrs "transform").getD ""))
+        let inherited ← readStyle lengths paints attrs style
+        let opacity ← match attr attrs "opacity" with | none => pure 1 | some value => number value
+        if displaySuppressed attrs then return []
+        let start : TextCollect := {lists := #[← textLists lengths attrs 0]}
+        let collected ← collectText lengths references rules paints baseURL 16 start inherited text none
+          (preserves attrs false) children
+        -- The last space of the text is not addressable (white space at the end is removed).
+        let collected := match collected.pieces.back? with
+          | some last =>
+            if collected.space && last.chars.back? == some ' ' && !preserves attrs false then
+              let chars := last.chars.pop
+              {collected with pieces := if chars.isEmpty then collected.pieces.pop else collected.pieces.set! (collected.pieces.size-1) {last with chars},
+                              count := collected.count-1}
+            else collected
+          | none => collected
+        let collected := {collected with lists := collected.lists.modify 0 fun l => {l with finish := collected.count}}
+        let positions := resolvePositions collected.count collected.lists
+        let units ← NativeSVGText.units shaper collected.pieces
+        let placed := NativeSVGText.place collected.pieces positions collected.paths units
+        return [.group (attr attrs "id") transform (textPaint placed collected.pieces collected.styles (max 0 (min 1 opacity)))]
       else if tag == "g" then
         validateAttrs tag attrs ["transform","clip-path"]
         let transform ← checkedTransform (← elementTransform parent ((attr attrs "transform").getD ""))
         let cumulative ← checkedTransform (parent.compose transform)
         let inherited ← readStyle lengths paints attrs style
-        let retainedChildren ← readChildren lengths cumulative inherited children
+        let retainedChildren ← readChildren lengths cumulative inherited text children
         if displaySuppressed attrs then return []
         match attr attrs "clip-path" with
         | none => return [.group (attr attrs "id") transform retainedChildren]
@@ -1886,7 +2137,8 @@ theorem ReferenceContext.create_existing (context : ReferenceContext) :
     root validation, SVG style, geometry and viewport semantics remain here. -/
 private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeight : Nat)
     (inheritedStyle : Style) (images : Option NativeImage.Store)
-    (referenceSource : Unit → Except String (ReferenceContext × List Nat × Option String)) : Except String Scene := do
+    (referenceSource : Unit → Except String (ReferenceContext × List Nat × Option String))
+    (shaper : Option NativeSVGText.Shaper := none) (textInit : NativeSVGText.Props := {}) : Except String Scene := do
   let .element name attrs children := root | throw "SVG root must be an element"
   if name.namespace_ != some svgURI || name.localPart != "svg" then throw "root must be svg in the SVG namespace"
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version","style"]
@@ -1923,13 +2175,14 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
   let _ ← context.idsResult
   let rules ← context.rulesResult
   let store := images.getD (imageStore context.document (context.initialBaseURL.orElse fun _ => context.documentURL))
-  let paints : PaintContext := {references:=context.references,rules,document:=context.document,images:=store}
+  let paints : PaintContext := {references:=context.references,rules,document:=context.document,images:=store,shaper}
   let attrs ← applyCSS lengths paints rules "svg" attrs
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version"]
   let inherited ← readStyle lengths paints attrs inheritedStyle
+  let text ← textProps attrs textInit
   let ancestors := (List.range (sourcePath.length+1)).map (fun depth => sourcePath.take depth)
   let parsedTree ← readListWith (fun child i => readNode context.references rules paints 33
-    {lengths,parent:=identityTransform,style:=inherited,path:=sourcePath ++ [i],ancestors,baseURL:=rootBase} child) children
+    {lengths,parent:=identityTransform,style:=inherited,path:=sourcePath ++ [i],ancestors,baseURL:=rootBase,text} child) children
   let tree := if displaySuppressed attrs then [] else parsedTree
   Scene.make w.ceil.toUInt32.toNat h.ceil.toUInt32.toNat mapping tree
 
@@ -1951,14 +2204,15 @@ def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
 def parseRootInContext (context : ReferenceContext) (rootSourcePath : List Nat)
     (outputWidth outputHeight : Nat := 0) (inheritedStyle : Style := {})
     (rootAttributeNormalizer : List NamespaceAttribute → Except String (List NamespaceAttribute) := fun attrs => .ok attrs)
-    (images : Option NativeImage.Store := none) : Except String Scene := do
+    (images : Option NativeImage.Store := none) (shaper : Option NativeSVGText.Shaper := none)
+    (textInit : NativeSVGText.Props := {}) : Except String Scene := do
   let initialBase := context.initialBaseURL.orElse (fun _ => context.documentURL)
   let entry ← NativeSVGReferences.locate context.document rootSourcePath initialBase
   let .element name originalAttrs children := entry.node | throw "SVG root source path must select an element"
   let base := NativeSVGReferences.elementBase originalAttrs entry.parentBase
   let attrs ← rootAttributeNormalizer originalAttrs
   parseRootWithContext (.element name attrs children) outputWidth outputHeight inheritedStyle images
-    (fun _ => .ok (context,entry.path,base))
+    (fun _ => .ok (context,entry.path,base)) shaper textInit
 
 def parse (xml : String) (outputWidth outputHeight : Nat := 0)
     (documentURL : Option String := none) : Except String Scene := do

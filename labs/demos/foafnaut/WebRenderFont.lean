@@ -13,7 +13,7 @@ def render (html fontData : String) (width height : Nat) :
   let face ← Rendering.FontProvider.Face.decode fontData
   let dom := DOM.parseHtmlDocument html
   let rules ← WebRender.styleRules dom
-  let (scene,boxes) ← Rendering.Layout.render dom rules (.ofFace face) (← WebRender.makeEmbedding dom) width height
+  let (scene,boxes) ← Rendering.Layout.render dom rules (.ofFace face) (← WebRender.makeEmbedding dom (font := .ofFace face)) width height
   return (scene,boxes,face)
 
 @[export web_render_font_compile]

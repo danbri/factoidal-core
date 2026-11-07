@@ -197,9 +197,36 @@ def embedding (dom : DOM.Dom) (id : Nat) (style : Rendering.CSS.Computed) (width
   let scene ← NativeSVG.parseRoot root width.toUInt32.toNat height.toUInt32.toNat inherited
   return placeSVG scene id style width height
 
-/-- One source-bound index per render, shared by all embedded SVG roots. -/
+/-- The outline of a glyph geometry as path contours. -/
+def geometryContours : Rendering.Geometry → List NativeSVGPath.Contour
+  | .path contours => contours
+  | .rect x y w h => [.path ⟨x,y⟩ [.line ⟨x+w,y⟩,.line ⟨x+w,y+h⟩,.line ⟨x,y+h⟩] true]
+  | .polygon (first::rest) => [.path first (rest.map .line) true]
+  | _ => []
+
+/-- Words for SVG text (issue 1270), from the font profile of the HTML text: the same
+shaper, the same memo and the same fallback fonts. A bitmap profile gives one glyph
+for each character. -/
+def svgShaper (font : Rendering.Layout.FontProfile) : NativeSVGText.Shaper := fun text size => do
+  let px := max 1 (min 512 size.round.toUInt32.toNat)
+  match font.shapedWord with
+  | some shape =>
+    let w ← shape text px
+    return {unitsPerEm := w.unitsPerEm,ascent := w.ascent,descent := w.descent,advance := w.advance,
+            glyphs := w.glyphs.map fun g =>
+              {x := g.x,y := g.y,advance := g.advance,cluster := g.clusterStart,contours := g.geometry.flatMap geometryContours}}
+  | none =>
+    let glyphs := text.toList.toArray.zipIdx.map fun (c,i) =>
+      ({x := font.advance*Float.ofNat i,y := 0,advance := font.advance,cluster := i,
+        contours := if font.admits c.toNat then (font.outline c.toNat).flatMap geometryContours else []} : NativeSVGText.Glyph)
+    return {unitsPerEm := font.unitsPerEm,ascent := font.ascent,descent := font.descent,
+            advance := font.advance*Float.ofNat glyphs.size,glyphs}
+
+/-- One source-bound index per render, shared by all embedded SVG roots. `font` is the
+profile of the HTML text; SVG text is shaped with it. -/
 def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none)
-    (images : List (String × ByteArray) := []) : Except String Rendering.Layout.Embedding := do
+    (images : List (String × ByteArray) := []) (font : Rendering.Layout.FontProfile := asciiFont) :
+    Except String Rendering.Layout.Embedding := do
   if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
     return embedding dom
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
@@ -214,6 +241,7 @@ def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none)
     let path ← sourcePath dom root (dom.size+1) id []
     let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
     let scene ← NativeSVG.parseRootInContext context path width.toUInt32.toNat height.toUInt32.toNat inherited embeddedAttributes (some store)
+      (some (svgShaper font)) {size := style.fontSize}
     return placeSVG scene id style width height
 
 def render (html : String) (width height : Nat) : Except String (Rendering.Scene × Array Rendering.Layout.Box) := do
