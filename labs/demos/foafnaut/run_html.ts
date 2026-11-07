@@ -344,7 +344,9 @@ async function main() {
       const nextDocument=candidate??document;
       const frameStart=performance.now();
       const stamps=awaiting;awaiting=[];
-      const request=nextDocument.request(width,height,{...shown(),live:nextDocument===checked});
+      // An interactive frame asks Lean for no CPU probe (checks:false, about a fifth of a
+      // frame); the idle check below asks for the same frame with its probe and checks it.
+      const request=nextDocument.request(width,height,{...shown(),live:nextDocument===checked,...(everyFrame?{}:{checks:false})});
       const sentWidth=width,sentHeight=height;
       // Events from here on mark the page dirty again: latest state wins, in the next frame.
       dirty=false;
@@ -364,6 +366,7 @@ async function main() {
       // A newer page was chosen while this one compiled: drop this scene.
       if((candidate??document)!==nextDocument){awaiting=[...stamps,...awaiting];dirty=true;return;}
       const result=await session!.draw(next,everyFrame);
+      if(result.presented)lastRequest={request,width:sentWidth,height:sentHeight,document:nextDocument};
       const finished=performance.now();
       const stats=session!.stats;
       const engineFact=frameNumber===0?{engine:await engineInfo}:{};
@@ -382,8 +385,18 @@ async function main() {
       if(nextDocument!==document){scroll=0;if(!focused)address=nextDocument.url;}frame=next;document=nextDocument;candidate=undefined;native!.setTitle(windowTitle(document));
       console.log(JSON.stringify({type:"native-html-presented",url:document.url,width:sentWidth,height:sentHeight,primitives:frame.primitiveCount,links:frame.webRender.links.length,frames:session!.frames}));
     };
+    let lastRequest:{request:ReturnType<typeof document.request>;width:number;height:number;document:typeof document}|undefined;
     const idleCheck=async()=>{
-      const idleStart=performance.now(),result=await session!.checkLast();
+      const idleStart=performance.now();
+      let result;
+      if(lastRequest&&lastRequest.request.options.checks===false&&worker?.alive){
+        // The frame on screen was made with no probe: Lean makes it again with its probe.
+        // The page must not have changed meanwhile; if it has, the next idle time checks.
+        const shownRequest=lastRequest,options={...shownRequest.request.options};delete options.checks;
+        const {artifact}=await worker.compile(shownRequest.request.source,shownRequest.width,shownRequest.height,options);
+        if(dirty||lastRequest!==shownRequest||document!==shownRequest.document)return;
+        result=await session!.draw(artifact,true);
+      } else result=await session!.checkLast();
       if(!result?.presented)return;
       checkedFrames++;
       trace("native-html-checked",{frame:frameNumber,why:"idle",idleMs:ms(lastActivity,idleStart),drawMs:Math.round(result.drawMs*10)/10,pixelHash:result.pixelHash});
