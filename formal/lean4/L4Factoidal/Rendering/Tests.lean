@@ -164,6 +164,14 @@ private def framedPaint := (framedClip.lower identity []).head?
 private def rules (source : String) : Nat := ((CSS.parse source).toOption.map List.length).getD 999
 #guard rules ".a > b{color:red} p{color:blue}" == 1
 #guard rules "@media (max-width: 800px) { .a { color: red } } p{color:blue}" == 1
+-- `@media` blocks of a media type apply for that type only (issue 1268, printing).
+private def rulesFor (medium source : String) : Nat := ((CSS.parseFor medium source).toOption.map List.length).getD 999
+#guard rulesFor "print" "@media print { .a { color: red } h2 { break-before: page } } p{color:blue}" == 3
+#guard rules "@media print { .a { color: red } } p{color:blue}" == 1
+#guard rules "@media screen, projection { .a { color: red } } p{color:blue}" == 2
+#guard rulesFor "print" "@media only print, (max-width:1px) { p{color:red} }" == 1
+#guard rulesFor "print" "@media not print { p{color:red} } @media all { p{color:blue} }" == 1
+#guard CSS.mediaMatches "print" "all" && !CSS.mediaMatches "screen" "print" && !CSS.mediaMatches "print" "print and (color)"
 #guard rules "@import 'x.css'; @charset \"utf-8\"; p{color:blue}" == 1
 #guard rules "a:hover, p{color:red} p{color:blue}" == 1
 #guard rules "p{color:blue" == 1

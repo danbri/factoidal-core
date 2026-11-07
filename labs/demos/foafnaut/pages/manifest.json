@@ -71,6 +71,15 @@
   {
    "page": "solving-showcase.html",
    "title": "Solving showcase",
-   "source": "source/solving-showcase.svg"}
+   "source": "source/solving-showcase.svg"},
+  {
+   "page": "print-showcase.html",
+   "title": "Print showcase",
+   "handwritten": true,
+   "size": [
+    1046,
+    1540
+   ]
+  }
  ]
 }

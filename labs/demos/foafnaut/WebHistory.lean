@@ -44,9 +44,22 @@ def keyTable : List (String × String × String × Nat) :=
    ("mac","command","[",backCommand),("mac","command","]",forwardCommand),
    ("mac","command","=",1),("mac","command","+",1),("mac","command","-",2),("mac","command","_",2),
    ("mac","command","0",3),("mac","command","c",4),("mac","command","a",5),("mac","command","r",reloadCommand),
+   ("mac","command","x",15),("mac","command","v",14),("mac","command","z",16),("mac","shift+command","z",17),
+   ("mac","command","p",18),("mac","command","l",9),
    ("other","alt","ArrowLeft",backCommand),("other","alt","ArrowRight",forwardCommand),
    ("other","control","=",1),("other","control","+",1),("other","control","-",2),("other","control","_",2),
-   ("other","control","0",3),("other","control","c",4),("other","control","a",5),("other","control","r",reloadCommand)]
+   ("other","control","0",3),("other","control","c",4),("other","control","a",5),("other","control","r",reloadCommand),
+   ("other","control","x",15),("other","control","v",14),("other","control","z",16),("other","shift+control","z",17),
+   ("other","control","y",17),("other","control","p",18),("other","control","l",9)]
+
+/-- Command numbers of the edit and print commands (issue 1268). -/
+def copyCommand : Nat := 4
+def selectAllCommand : Nat := 5
+def pasteCommand : Nat := 14
+def cutCommand : Nat := 15
+def undoCommand : Nat := 16
+def redoCommand : Nat := 17
+def printCommand : Nat := 18
 
 def keyCommand (platform modifier key : String) : Option Nat :=
   (keyTable.find? (fun (p,m,k,_) => p == platform && m == modifier && k == key)).map (·.2.2.2)
@@ -72,6 +85,8 @@ private def toGraph : History := (({} : History).push "file:///pages/index.html"
 #guard toGraph.canBack && (apply backCommand toGraph).2 == some "file:///pages/index.html"
 #guard (apply forwardCommand (apply backCommand toGraph).1).2 == some "foafnaut:graph"
 #guard keyCommand "mac" "command" "ArrowLeft" == some 6 && keyCommand "mac" "command" "]" == some 7
+#guard keyCommand "mac" "command" "x" == some cutCommand && keyCommand "mac" "shift+command" "z" == some redoCommand
+#guard keyCommand "other" "control" "p" == some printCommand && keyCommand "other" "control" "y" == some redoCommand
 #guard keyCommand "other" "alt" "ArrowRight" == some 7 && keyCommand "other" "command" "ArrowLeft" == none
 
 end WebHistory

@@ -13,7 +13,7 @@ import {loadHTML,type HTMLArtifact,type HTMLEngine} from "./native_html_engine.t
 import {loadFontFile} from "./native_html_document.ts";
 
 /** The engine methods a caller may run in the worker. */
-export const REMOTE_CALLS=["xmlStylesheet","xslt","inspect","fontRequests","graphStart","graphEvent","graphPage","sourcePage","selectedText","compile","compileLayers"] as const;
+export const REMOTE_CALLS=["xmlStylesheet","xslt","inspect","fontRequests","graphStart","graphEvent","graphPage","sourcePage","selectedText","compile","compileLayers","printLayout"] as const;
 export type RemoteCall=typeof REMOTE_CALLS[number];
 export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string};nativeEngine?:string}
   |{id:number;op:"call";name:RemoteCall;args:unknown[];low?:boolean}

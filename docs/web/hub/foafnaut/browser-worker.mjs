@@ -14,7 +14,9 @@ let module,createSession,session,createSurface,hashPixels,surface,surfaceCanvas,
 let ready=false,currentStamp,pendingStamp,pendingMove,pendingScroll,flushPort;
 const early=[];
 let width=800,height=600,scale=1,theme='next',percent=150,pages=1;
-let address='',cursor=0,focused=false,fresh=false,loading=false,scroll=0,active=0;
+// The address bar's text, cursor, selection and undo step: a Lean value (WebShell.editJson).
+const showURL=url=>({address:url,cursor:url.length,anchor:url.length,undo:null,redo:null,typing:false});
+let field=showURL(''),focused=false,loading=false,scroll=0,active=0;
 let doc,history,frame,home,checked,dirty=false,drawing=false,serial=0,ticking=false;
 const tabs=[];
 function call(source,options,w=1,h=1){
@@ -23,7 +25,7 @@ function call(source,options,w=1,h=1){
   try{const result=JSON.parse(module.UTF8ToString(pointer));if(result?.error)throw Error(result.error);return result;}
   finally{module.ccall('web_render_free',null,['number'],[pointer]);}
 }
-const shell=()=>({tabs:tabs.map((tab,i)=>({title:(i===active?doc:tab.doc)?.title??''})),active,address,cursor,focused,
+const shell=()=>({tabs:tabs.map((tab,i)=>({title:(i===active?doc:tab.doc)?.title??''})),active,...field,focused,
   canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll});
 const push=(state,url)=>call('',{op:'historyPush',history:state,url});
 const refusal=(url,message)=>{
@@ -91,7 +93,7 @@ async function prepare(url){
   return {url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources};
 }
 function show(next,remember=true){
-  doc=next;address=focused?address:next.url;scroll=0;loading=false;
+  doc=next;if(!focused)field=showURL(next.url);scroll=0;loading=false;
   if(remember){history=push(history.history,next.url);pages++;}
   request();
 }
@@ -101,8 +103,16 @@ async function navigate(url,remember=true){
   let next;try{next=await prepare(url);}catch(error){next=refusal(url,String(error.message??error));}
   if(mine===serial){const before=currentStamp;currentStamp=stamp;try{show(next,remember);}finally{currentStamp=before;}}
 }
-function command(id){
-  const answer=call('',{op:'command',command:id,textScalePercent:percent,history:history.history});
+// An edit in the address bar. Lean gives the new state and the text for the clipboard,
+// which the page writes (issue 1268).
+function edit(action,text=''){
+  const {clipboard,...next}=call('',{op:'shellEdit',shell:shell(),action,text});
+  field=next;request();
+  if(clipboard)post({type:'clipboard',text:clipboard});
+}
+function command(id,text=''){
+  const answer=call('',{op:'command',command:id,textScalePercent:percent,history:history.history,focused});
+  if(answer.target==='address'){if(!focused)focusAddress();edit(answer.action,text);return;}
   if(['back','forward','reload'].includes(answer.action)){if(answer.url)navigate(answer.url,false);history=answer;request();}
   if(answer.textScalePercent!==percent){percent=answer.textScalePercent;request();}
   if(answer.action==='focusAddress')focusAddress();
@@ -146,12 +156,13 @@ async function openGraph(){
   keep();tabs.push({doc:page,history:push({entries:[],index:0},page.url),scroll:0});showTab(tabs.length-1);graphFrame(page,frame);
 }
 function keep(){tabs[active]={doc,history,scroll};}
-function showTab(index){serial++;loading=false;setFocus(false);active=index;({doc,history,scroll}=tabs[index]);address=doc.url;request();}
-function newTab(){keep();tabs.push({doc:home,history:push({entries:[],index:0},homeURL),scroll:0});showTab(tabs.length-1);}
+function showTab(index){serial++;loading=false;setFocus(false);active=index;({doc,history,scroll}=tabs[index]);field=showURL(doc.url);request();}
+function newTab(){keep();tabs.push({doc:home,history:push({entries:[],index:0},homeURL),scroll:0});showTab(tabs.length-1);focusAddress();}
 function closeTab(index){if(tabs.length===1)return;keep();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));}
 function setFocus(value){if(focused!==value){focused=value;post({type:'focus',focused});}}
-function focusAddress(){setFocus(true);fresh=true;address=doc.url;cursor=address.length;request();}
-function leaveAddress(){setFocus(false);address=doc.url;request();}
+// Lean selects the whole address when the bar takes the focus; typing then replaces it.
+function focusAddress(){const {clipboard:_,...next}=call('',{op:'shellEdit',shell:shell(),action:'focus',text:doc.url});field=next;setFocus(true);request();}
+function leaveAddress(){setFocus(false);field=showURL(doc.url);request();}
 function scrollBy(amount){
   const bottom=Math.max(0,...(frame?.webRender.boxes??[]).map(box=>box[2]+box[4]));
   const next=Math.max(0,Math.min(Math.max(0,bottom-height+60*scale),scroll+Math.round(amount)));
@@ -213,7 +224,7 @@ async function draw(){
       const done=performance.now();
       post({type:'frame',width:next.width,height:next.height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,inputAt,
         stats:{path:surfaceCanvas?'surface':'readback',layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
-          pixelHash,primitives:next.primitiveCount,url:doc.url,address,scroll,tabs:tabs.length,theme,percent}},rgba?[rgba.buffer]:[]);
+          pixelHash,primitives:next.primitiveCount,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent}},rgba?[rgba.buffer]:[]);
     }catch(error){
       session?.close();session=undefined;
       try{surface?.close();}catch{/* the frame is over */}surface=undefined;
@@ -244,9 +255,12 @@ async function start(data){
   if(data.canvas&&typeof transport.createSurfaceSession==='function'){surfaceCanvas=data.canvas;createSurface=transport.createSurfaceSession;}
   await loadFont();
   home=await prepare(homeURL);
-  history=push({entries:[],index:0},homeURL);doc=home;address=home.url;tabs.push({doc,history,scroll:0});
+  history=push({entries:[],index:0},homeURL);doc=home;field=showURL(home.url);tabs.push({doc,history,scroll:0});
+  // The page keeps the keys of Lean's table for a host with no menu, and needs them at once.
+  post({type:'keys',table:call('',{op:'keyTable',platform:data.platform==='mac'?'mac':'other'})});
   ready=true;
-  if(data.page&&/^[a-z0-9-]+\.(html|xml)$/.test(data.page))navigate(pagesBase+data.page);else request();
+  // A new window starts in the address bar with the address selected (issue 1268).
+  if(data.page&&/^[a-z0-9-]+\.(html|xml)$/.test(data.page))navigate(pagesBase+data.page);else focusAddress();
   for(const message of early.splice(0))receive(message);
 }
 function flush(){
@@ -275,6 +289,7 @@ function apply(data){
   if(data.type==='resize'){({width,height,scale}=data);if(doc.graph)graphInput(1,width,height);request();}
   if(data.type==='scroll')scrollBy(data.amount);
   if(data.type==='command')command(data.command);
+  if(data.type==='paste')command(14,data.text);
   if(data.type==='press'){
     const control=call('',{op:'shellHit',shell:shell(),x:data.x,y:data.y,width}).control;
     if(control)chrome(control);else{if(focused)leaveAddress();if(doc.graph)graphInput(2,data.x,data.y);}
@@ -289,13 +304,11 @@ function apply(data){
       if(answer.go==='page')go({go:'page',url:new URL(target.href,doc.baseURL||doc.url).href});else go(answer);
     }
   }
-  if(data.type==='text'&&focused){if(fresh){address='';cursor=0;fresh=false;}
-    ({address,cursor}=call('',{op:'shellText',shell:shell(),text:data.text}));request();}
+  if(data.type==='text'&&focused){const {clipboard:_,...next}=call('',{op:'shellText',shell:shell(),text:data.text});field=next;request();}
   if(data.type==='key'&&focused){
-    if(data.key===36){const target=address;leaveAddress();go(call('',{op:'shellSubmit',address:target}));}
+    if(data.key===36){const target=field.address;leaveAddress();go(call('',{op:'shellSubmit',address:target}));}
     else if(data.key===53)leaveAddress();
-    else if(data.key===51&&fresh){address='';cursor=0;fresh=false;request();}
-    else{({address,cursor}=call('',{op:'shellKey',shell:shell(),key:data.key}));fresh=false;request();}
+    else{field=call('',{op:'shellKey',shell:shell(),key:data.key,modifiers:data.modifiers??0});request();}
   }
 }
 if(inWorker)self.onmessage=({data})=>receive(data);

@@ -13,11 +13,26 @@ structure Tab where
   title : String := ""
   deriving Repr, BEq
 
+/-- The address text with its cursor and selection anchor, as an undo step keeps it. -/
+structure Snapshot where
+  address : String
+  cursor : Nat
+  anchor : Nat
+  deriving Repr, BEq
+
 structure Shell where
   tabs : Array Tab := #[{}]
   active : Nat := 0
   address : String := ""
   cursor : Nat := 0
+  /-- The other end of the selection: the text between `anchor` and `cursor` is
+  selected. `anchor == cursor` is no selection. -/
+  anchor : Nat := 0
+  /-- One undo step and one redo step (Command-Z, Shift-Command-Z). -/
+  undo : Option Snapshot := none
+  redo : Option Snapshot := none
+  /-- The last edit typed text: more typed text joins the same undo step. -/
+  typing : Bool := false
   focused : Bool := false
   canBack : Bool := false
   canForward : Bool := false
@@ -41,12 +56,14 @@ private structure Theme where
   muted : Rendering.Color
   accent : Rendering.Color
   coin : Rendering.Color
+  /-- Behind selected address text. -/
+  selected : Rendering.Color
 
 private def hex (r g b : Nat) : Rendering.Color := ⟨Float.ofNat r/255,Float.ofNat g/255,Float.ofNat b/255⟩
 private def next : Theme :=
-  ⟨hex 170 170 170,hex 255 255 255,hex 85 85 85,hex 0 0 0,hex 255 255 255,hex 0 0 0,hex 128 128 128,hex 32 32 32,hex 224 32 138,hex 255 196 0⟩
+  ⟨hex 170 170 170,hex 255 255 255,hex 85 85 85,hex 0 0 0,hex 255 255 255,hex 0 0 0,hex 128 128 128,hex 32 32 32,hex 224 32 138,hex 255 196 0,hex 176 200 255⟩
 private def arcade : Theme :=
-  ⟨hex 34 38 54,hex 84 92 128,hex 10 12 20,hex 216 240 255,hex 10 12 20,hex 120 255 170,hex 20 23 34,hex 150 160 200,hex 57 255 136,hex 255 196 0⟩
+  ⟨hex 34 38 54,hex 84 92 128,hex 10 12 20,hex 216 240 255,hex 10 12 20,hex 120 255 170,hex 20 23 34,hex 150 160 200,hex 57 255 136,hex 255 196 0,hex 40 70 130⟩
 private def themeOf (s : Shell) : Theme := if s.theme == "arcade" then arcade else next
 
 /-! ### Measures, in backing pixels -/
@@ -229,9 +246,16 @@ private def addressNodes (s : Shell) (t : Theme) (box : Box) : List Rendering.No
   let body := if s.address.isEmpty && !s.focused
     then text t.dark (fit s "url, search or :command" room) textX textY size
     else text t.wellInk shown textX textY size
-  let cursorColumn := min (shown.length) (s.cursor+shown.length-min s.address.length (s.address.length))
-  let cursor := if s.focused then [paint t.accent (textX+cursorColumn*charWidth s) (textY-u) (5*size) (7*size+2*u)] else []
-  bevel s t t.well false box.x box.y box.w box.h ++ prompt ++ cursor ++ body
+  -- The column of address position `i` in the shown text: the start of a long
+  -- address is cut off, so the columns count from its end.
+  let column := fun (i : Nat) => min shown.length (i+shown.length-s.address.length)
+  let lo := column (min s.anchor s.cursor)
+  let hi := column (max s.anchor s.cursor)
+  let marked := if s.focused && hi > lo
+    then [paint t.selected (textX+lo*charWidth s-u) (textY-u) ((hi-lo)*charWidth s) (7*size+2*u)] else []
+  -- As in a macOS text field, a selection hides the caret.
+  let cursor := if s.focused && hi == lo then [paint t.accent (textX+column s.cursor*charWidth s) (textY-u) (5*size) (7*size+2*u)] else []
+  bevel s t t.well false box.x box.y box.w box.h ++ prompt ++ marked ++ cursor ++ body
 
 /-- The bar under the chrome: a thin accent line, or a level bar while loading. -/
 private def edgeNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.Node := Id.run do
@@ -284,26 +308,114 @@ def compose (s : Shell) (page : Rendering.Scene) (width height' : Nat) : Renderi
 
 /-! ### Editing the address -/
 
-private def insertAt (value : String) (at_ : Nat) (extra : String) : String :=
-  String.ofList (value.toList.take at_) ++ extra ++ String.ofList (value.toList.drop at_)
-private def removeAt (value : String) (at_ : Nat) : String :=
-  String.ofList (value.toList.take at_ ++ value.toList.drop (at_+1))
+/-- The longest address the bar takes. -/
+def maxAddress : Nat := 2048
 
+/-- The start and the end of the selection. -/
+def Shell.lo (s : Shell) : Nat := min s.anchor s.cursor
+def Shell.hi (s : Shell) : Nat := max s.anchor s.cursor
+def Shell.selected (s : Shell) : String :=
+  String.ofList ((s.address.toList.take s.hi).drop s.lo)
+
+private def snapshot (s : Shell) : Snapshot := ⟨s.address,s.cursor,s.anchor⟩
+private def restore (s : Shell) (v : Snapshot) : Shell :=
+  {s with address := v.address,cursor := min v.cursor v.address.length,anchor := min v.anchor v.address.length}
+
+/-- Put the cursor at `i`. With `extend` the anchor stays, so the selection grows or shrinks. -/
+private def moveTo (s : Shell) (i : Nat) (extend : Bool) : Shell :=
+  let i := min i s.address.length
+  {s with cursor := i,anchor := if extend then s.anchor else i,typing := false}
+
+/-- The text from `lo` to `hi` becomes `text`. The state before is the undo step,
+except that typing after typing stays in one step. -/
+private def replaceRange (s : Shell) (lo hi : Nat) (text : String) (typing : Bool) : Shell :=
+  let chars := s.address.toList
+  let next := String.ofList (chars.take lo) ++ text ++ String.ofList (chars.drop hi)
+  if next.length > maxAddress || next == s.address then s else
+  let undo := if typing && s.typing then s.undo else some (snapshot s)
+  {s with address := next,cursor := lo+text.length,anchor := lo+text.length,undo,redo := none,typing}
+
+/-- Only printable characters go into the address; a line break and the white space
+around it go away, so a pasted address that wraps reads as one line. -/
+def clean (value : String) : String :=
+  let lines := (value.splitOn "\n").flatMap (·.splitOn "\r")
+  let joined := if lines.length > 1
+    then (String.join (lines.map (fun line => line.trimAscii.toString))).trimAscii.toString else value
+  String.ofList (joined.toList.filter (fun c => c.toNat >= 32 && c.toNat != 127))
+
+/-- Typed text replaces the selection, as in any text field. -/
 def Shell.typed (s : Shell) (value : String) : Shell :=
-  let clean := String.ofList (value.toList.filter (fun c => c.toNat >= 32 && c.toNat != 127))
-  if s.address.length+clean.length > 2048 then s else
-  {s with address := insertAt s.address s.cursor clean,cursor := s.cursor+clean.length}
+  let text := clean value
+  if text.isEmpty then s else replaceRange s s.lo s.hi text true
 
-/-- macOS key codes that edit: delete, forward delete, left, right, home, end. -/
-def Shell.key (s : Shell) (code : Nat) : Shell :=
+private def wordChar (c : Char) : Bool := c.isAlphanum || c.toNat > 127
+/-- Option-Left: past the separators before `i`, then past the word. -/
+def wordStart (value : String) (i : Nat) : Nat :=
+  let before := (value.toList.take i).reverse
+  let gap := (before.takeWhile (!wordChar ·)).length
+  let word := ((before.drop gap).takeWhile wordChar).length
+  i-gap-word
+/-- Option-Right: past the separators after `i`, then past the word. -/
+def wordEnd (value : String) (i : Nat) : Nat :=
+  let after := value.toList.drop i
+  let gap := (after.takeWhile (!wordChar ·)).length
+  let word := ((after.drop gap).takeWhile wordChar).length
+  min value.length (i+gap+word)
+
+/-- Modifier bits of a key event: 1 Shift, 2 Command, 4 Option, 8 Control. -/
+def shiftBit : Nat := 1
+def commandBit : Nat := 2
+def optionBit : Nat := 4
+private def has (modifiers bit : Nat) : Bool := modifiers / bit % 2 == 1
+
+/-- macOS key codes that edit: delete, forward delete, left, right, up, down, home,
+end. Shift extends the selection; Option moves or deletes by word; Command moves to
+the end of the line. With a selection, delete removes it, and left or right with no
+Shift goes to its start or end. -/
+def Shell.key (s : Shell) (code : Nat) (modifiers : Nat := 0) : Shell :=
+  let extend := has modifiers shiftBit
+  let word := has modifiers optionBit
+  let line := has modifiers commandBit
+  let size := s.address.length
   match code with
-  | 51 => if s.cursor == 0 then s else {s with address := removeAt s.address (s.cursor-1),cursor := s.cursor-1}
-  | 117 => {s with address := removeAt s.address s.cursor}
-  | 123 => {s with cursor := s.cursor-1}
-  | 124 => {s with cursor := min s.address.length (s.cursor+1)}
-  | 115 => {s with cursor := 0}
-  | 119 => {s with cursor := s.address.length}
+  | 51 =>
+    if s.lo < s.hi then replaceRange s s.lo s.hi "" false
+    else if s.cursor == 0 then s
+    else replaceRange s (if line then 0 else if word then wordStart s.address s.cursor else s.cursor-1) s.cursor "" false
+  | 117 =>
+    if s.lo < s.hi then replaceRange s s.lo s.hi "" false
+    else if s.cursor >= size then s
+    else replaceRange s s.cursor (if line then size else if word then wordEnd s.address s.cursor else s.cursor+1) "" false
+  | 123 =>
+    if !extend && s.lo < s.hi && !word && !line then moveTo s s.lo false
+    else moveTo s (if line then 0 else if word then wordStart s.address s.cursor else s.cursor-1) extend
+  | 124 =>
+    if !extend && s.lo < s.hi && !word && !line then moveTo s s.hi false
+    else moveTo s (if line then size else if word then wordEnd s.address s.cursor else s.cursor+1) extend
+  | 115 | 126 => moveTo s 0 extend
+  | 119 | 125 => moveTo s size extend
   | _ => s
+
+/-- An edit command from the menu or a key, and the text it puts on the clipboard. -/
+def Shell.edit (s : Shell) (action : String) (text : String := "") : Shell × Option String :=
+  match action with
+  | "focus" =>
+    let value := String.ofList (text.toList.take maxAddress)
+    ({s with address := value,cursor := value.length,anchor := 0,undo := none,redo := none,typing := false,focused := true},none)
+  | "selectAll" => ({s with anchor := 0,cursor := s.address.length,typing := false},none)
+  | "copy" => (s,if s.lo < s.hi then some s.selected else none)
+  | "cut" => if s.lo < s.hi then (replaceRange s s.lo s.hi "" false,some s.selected) else (s,none)
+  | "paste" => let value := clean text; (if value.isEmpty then s else replaceRange s s.lo s.hi value false,none)
+  | "undo" => match s.undo with
+    | some v => ({restore s v with undo := none,redo := some (snapshot s),typing := false},none)
+    | none => (s,none)
+  | "redo" => match s.redo with
+    | some v => ({restore s v with redo := none,undo := some (snapshot s),typing := false},none)
+    | none => (s,none)
+  | _ => (s,none)
+
+/-- The menu commands that act on the address bar when it has the focus. -/
+def addressCommands : List String := ["copy","selectAll","cut","paste","undo","redo"]
 
 /-! ### What an address and a link mean -/
 
@@ -410,13 +522,24 @@ def Shell.ofJson (j : JSON.Json) : Shell :=
     | _ => #[{}]
   let tabs := if tabs.isEmpty then #[{}] else tabs
   let address := str j "address"
-  { tabs,active := min (nat j "active") (tabs.size-1),address,cursor := min (nat j "cursor") address.length,
+  let cursor := min (nat j "cursor") address.length
+  let step := fun (key : String) => match j.field? key with
+    | some v@(.object _) => some (⟨str v "address",nat v "cursor",nat v "anchor"⟩ : Snapshot)
+    | _ => none
+  { tabs,active := min (nat j "active") (tabs.size-1),address,cursor,
+    -- No anchor is no selection.
+    anchor := min (nat j "anchor" cursor) address.length,undo := step "undo",redo := step "redo",typing := flag j "typing",
     focused := flag j "focused",canBack := flag j "canBack",canForward := flag j "canForward",
     loading := flag j "loading",scale := max 1 (nat j "scale" 1),theme := str j "theme" "next",pages := nat j "pages",
     scroll := nat j "scroll" }
 
+private def Snapshot.json (v : Snapshot) : JSON.Json :=
+  .object [("address",.string v.address),("cursor",.number (toString v.cursor)),("anchor",.number (toString v.anchor))]
+
+/-- The edit state the host keeps and sends back in `shell`. -/
 def Shell.editJson (s : Shell) : JSON.Json :=
-  .object [("address",.string s.address),("cursor",.number (toString s.cursor))]
+  .object [("address",.string s.address),("cursor",.number (toString s.cursor)),("anchor",.number (toString s.anchor)),
+    ("undo",(s.undo.map Snapshot.json).getD .null),("redo",(s.redo.map Snapshot.json).getD .null),("typing",.bool s.typing)]
 
 #guard submit "http://example.org/" == .page "http://example.org/"
 #guard submit "example.org" == .page "https://example.org"
@@ -440,6 +563,35 @@ def Shell.editJson (s : Shell) : JSON.Json :=
 #guard pointer {} (hit {} 1000 10 40) false == .arrow && pointer {canBack := true} (hit {} 1000 10 40) false == .hand
 #guard pointer {} (some "address") true == .text && pointer {} (some "chrome") true == .arrow
 #guard pointer {} (some "settings") false == .hand && pointer {tabs := #[{},{}]} (hit {tabs := #[{},{}]} 1000 40 12) false == .hand
+-- Address editing (issue 1268): a new window or tab selects the whole address, and typing replaces it.
+private def opened : Shell := (({} : Shell).edit "focus" "https://example.org/a").1
+#guard opened.selected == "https://example.org/a" && opened.focused
+#guard (opened.typed "w").address == "w" && (opened.typed "w").cursor == 1
+#guard (opened.key 51).address == "" && ((opened.key 51).edit "undo").1.address == "https://example.org/a"
+-- Command-A, Command-C, Command-X, Command-V, Command-Z and Shift-Command-Z.
+private def typedAb : Shell := ((({} : Shell).edit "focus" "").1.typed "a").typed "b"
+#guard typedAb.address == "ab" && (typedAb.edit "copy").2 == none
+#guard ((typedAb.edit "selectAll").1.edit "copy").2 == some "ab"
+#guard ((typedAb.edit "selectAll").1.edit "cut").2 == some "ab" && ((typedAb.edit "selectAll").1.edit "cut").1.address == ""
+#guard ((((typedAb.edit "selectAll").1.edit "cut").1.edit "undo").1).address == "ab"
+#guard ((((((typedAb.edit "selectAll").1.edit "cut").1.edit "undo").1.edit "redo").1)).address == ""
+#guard ((typedAb.key 123).edit "paste" "X\n  y").1.address == "aXyb"
+#guard (((typedAb.key 123).edit "paste" "X").1.edit "undo").1.address == "ab"
+-- Typing is one undo step; `undo` with no step changes nothing.
+#guard (typedAb.edit "undo").1.address == "" && ((typedAb.edit "undo").1.edit "undo").1.address == ""
+-- A space typed alone stays: a search has spaces.
+#guard (typedAb.typed " ").address == "ab "
+-- Shift extends the selection; left with a selection goes to its start.
+#guard ((typedAb.key 123 shiftBit).key 123 shiftBit).selected == "ab"
+#guard (((typedAb.key 123 shiftBit).key 123 shiftBit).key 123).cursor == 0
+#guard ((typedAb.key 115 shiftBit).typed "z").address == "z"
+-- Option moves and deletes by word; Command goes to the end of the line.
+private def deep : Shell := (({} : Shell).edit "focus" "http://x.org/one/two").1.key 124
+#guard wordStart "http://x.org/one/two" 20 == 17 && wordEnd "http://x.org/one/two" 0 == 4
+#guard (deep.key 123 optionBit).cursor == 17 && (deep.key 51 optionBit).address == "http://x.org/one/"
+#guard (deep.key 123 commandBit).cursor == 0 && ((deep.key 123 commandBit).key 124 (commandBit+shiftBit)).selected == "http://x.org/one/two"
+#guard (Shell.ofJson (opened.editJson)).anchor == 0 && (Shell.ofJson (((opened.typed "x").edit "undo").1.editJson)).redo.isSome
+#guard (Shell.ofJson (JSON.Json.object [("address",.string "abc"),("cursor",.number "2")])).lo == 2
 #guard hit {} 1000 10 1000 == none
 #guard hit {} 1000 10 40 == some "back"
 #guard hit {} 300 10 10 == some "back"

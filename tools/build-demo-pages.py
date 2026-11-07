@@ -45,6 +45,8 @@ for page in manifest['pages']:
     source = page.get('source')
     if page['page'].endswith('.xml'):
         continue  # An XML page is its own source; the engine runs its stylesheet.
+    if page.get('handwritten'):
+        continue  # A page written by hand is its own source.
     if source is None:
         pages[page['page']] = index()
     else:
