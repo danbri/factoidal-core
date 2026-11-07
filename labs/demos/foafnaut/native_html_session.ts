@@ -9,13 +9,13 @@
 import {requestRenderPlan,textureUsage,bufferUsage,commandInterpreter,type RenderPlan} from "./render_plan.ts";
 import {SurfaceLifecycle} from "./surface_lifecycle.ts";
 import {unpad,checkPixels} from "./gpu_transport.ts";
-import type {HTMLArtifact} from "./native_html_engine.ts";
+import type {HTMLArtifact,HTMLLayers} from "./native_html_engine.ts";
+import {createLayerRenderer,READBACK_COMMANDS} from "./layer_compositor.ts";
 
-// The plan commands that read the frame back to the CPU. Lean's plan always
-// lists them. The host leaves them out for a frame that is not checked, and
-// runs them in full under --check-engine, in every sweep and on an idle check.
-// Lean is not changed: it still decides every other command and its order.
-export const READBACK_COMMANDS:ReadonlySet<string>=new Set(["copyTextureToBuffer","mapRead","readMapped","unmap"]);
+// The plan commands that read the frame back to the CPU (layer_compositor.ts). The host
+// leaves them out for a frame that is not checked, and runs them in full under
+// --check-engine, in every sweep and on an idle check.
+export {READBACK_COMMANDS};
 
 export type SessionStats={pipelineBuilds:number;planRequests:number;configures:number;uniformBuffers:number;tileBuffers:number;bindGroups:number};
 export type DrawResult={presented:boolean;checked:boolean;pixelHash:string;steps:Record<string,number>;
@@ -70,6 +70,35 @@ export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.Unsa
       fragment:{module:shader,entryPoint:plan.pipeline.fragmentEntry,targets:[{format:plan.format}]},
       primitive:{topology:plan.pipeline.topology}});
     pipelineKey=key;bindKey="";stats.pipelineBuilds++;
+  }
+  // Two layers (issue 1268): each Lean render is drawn into two textures, and every
+  // present is Lean's composite of them at an offset. A scroll in the band presents again.
+  const layered=createLayerRenderer(device,format);
+  let lastLayers:{layers:HTMLLayers;width:number;height:number;offset:number}|undefined;
+  // GPU work of this session runs one call at a time, in the order asked.
+  let queue:Promise<unknown>=Promise.resolve();
+  const inOrder=<T>(work:()=>Promise<T>):Promise<T>=>{const next=queue.then(work,work);queue=next.catch(()=>{});return next;};
+  async function present(width:number,height:number,offset:number,check:boolean,start:number,drawn:Record<string,number>):Promise<DrawResult> {
+    const plan=await layered.plan(width,height,[0,0,0,0]);
+    configure(plan,width,height);
+    const prepared=performance.now();
+    const texture=lifecycle!.acquire();
+    if(!texture)return {presented:false,checked:false,pixelHash:lastHash,steps:lastSteps,prepareMs:prepared-start,drawMs:0,presentedAt:0};
+    const result=await layered.composite(texture,width,height,offset,check);
+    lifecycle!.present();
+    const presentedAt=performance.now();
+    const steps={...drawn,...Object.fromEntries(Object.entries(result.steps).map(([k,v])=>["composite."+k,v]))};
+    if(check)lastHash=result.hash;
+    lastSteps=steps;lastChecked=check;last=undefined;
+    return {presented:true,checked:check,pixelHash:result.hash,steps,prepareMs:prepared-start,drawMs:presentedAt-prepared,presentedAt};
+  }
+  async function renderLayers(layers:HTMLLayers,width:number,height:number,offset:number,check:boolean):Promise<DrawResult> {
+    if(disposed)throw new Error("Native HTML session already disposed");
+    const start=performance.now();
+    const drawn=await layered.drawLayers(layers,check);
+    const steps=Object.fromEntries([...Object.entries(drawn.chrome.steps).map(([k,v])=>["chrome."+k,v]),...Object.entries(drawn.page.steps).map(([k,v])=>["page."+k,v])]);
+    lastLayers={layers,width,height,offset};
+    return present(width,height,offset,check,start,steps);
   }
   async function render(frame:HTMLArtifact,check:boolean):Promise<DrawResult> {
     if(disposed)throw new Error("Native HTML session already disposed");
@@ -134,18 +163,30 @@ export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.Unsa
   }
   return {
     /** Draw one Lean scene. check=true also reads the window back, checks Lean's probe pixels and hashes. */
-    draw:(frame:HTMLArtifact,check:boolean)=>render(frame,check),
+    draw:(frame:HTMLArtifact,check:boolean)=>inOrder(()=>{lastLayers=undefined;return render(frame,check);}),
+    /** Draw the two layers of one Lean render and present their composite at `offset`. */
+    drawLayers:(layers:HTMLLayers,width:number,height:number,offset:number,check:boolean)=>inOrder(()=>renderLayers(layers,width,height,offset,check)),
+    /** Present the layers already drawn at another offset: no Lean call and no scene draw. */
+    shift:(offset:number,check:boolean)=>inOrder(async()=>{
+      if(disposed)throw new Error("Native HTML session already disposed");
+      if(!lastLayers)throw new Error("shift before any layers were drawn");
+      lastLayers.offset=offset;
+      return present(lastLayers.width,lastLayers.height,offset,check,performance.now(),{});
+    }),
     /** Draw the last presented scene again with the readback checks. Used after input has been idle. */
-    checkLast():Promise<DrawResult|undefined> {return last?render(last,true):Promise.resolve(undefined);},
+    checkLast():Promise<DrawResult|undefined> {
+      return inOrder(()=>lastLayers?renderLayers(lastLayers.layers,lastLayers.width,lastLayers.height,lastLayers.offset,true)
+        :last?render(last,true):Promise.resolve(undefined));
+    },
     get lastChecked(){return lastChecked;},
     get frames(){return lifecycle?.framesPresented??0;},
     get steps(){return lastSteps;},
     get pixelHash(){return lastHash;},
-    get stats(){return {...stats};},
+    get stats(){return {...stats,layers:{...layered.stats}};},
     dispose(){
       if(disposed)return;disposed=true;
       if(lifecycle)context.unconfigure();
-      readback?.buffer.destroy();uniform?.buffer.destroy();tiles?.buffer.destroy();
+      readback?.buffer.destroy();uniform?.buffer.destroy();tiles?.buffer.destroy();layered.dispose();
     },
   };
 }

@@ -8,6 +8,11 @@ export type HTMLArtifact = {
   primitiveCount:number; checks:{x:number;y:number;rgb:number[]}[];
   webRender:{links:unknown[][];[name:string]:unknown};
 };
+/** A render with `layers:true` (WebDocument.layersJSON): the chrome layer in window
+rows, the page layer in band rows from page row `bandTop`, and the WGSL that puts them
+in the window. `keepFrom`..`keepTo` are the scrolls that this band shows with no new render. */
+export type HTMLLayerPlace = {top:number;view:number;bandTop:number;bandHeight:number;keepFrom:number;keepTo:number;composite:string};
+export type HTMLLayers = {layers:HTMLLayerPlace;page:HTMLArtifact;chrome:HTMLArtifact};
 export type Inspection = {
   baseURL:string;
   title:string;
@@ -53,6 +58,20 @@ function wasmBackend(module:Module):DocumentBackend {
     finally{module.ccall("web_render_free",null,["number"],[pointer]);}
   };
 }
+/** Lean sends the storage floats as the bytes the GPU reads; this only decodes and checks them. */
+function sceneOf(result:Record<string,unknown>&{dataBase64?:unknown},width:number,height:number):HTMLArtifact {
+  if(typeof result.dataBase64==="string"){
+    const text=atob(result.dataBase64),bytes=new Uint8Array(text.length);
+    for(let i=0;i<text.length;i++)bytes[i]=text.charCodeAt(i);
+    result.data=new Float32Array(bytes.buffer);delete result.dataBase64;
+  }
+  const data=result.data as number[]|Float32Array,web=result.webRender as {links?:unknown}|undefined;
+  if(result.abi!=="lean-svg-v1" || result.width!==width || result.height!==height ||
+     !(Array.isArray(data)||data instanceof Float32Array) || !data.length || !data.every(Number.isFinite) ||
+     typeof result.wgsl!=="string" || !Array.isArray(result.checks) || !Array.isArray(web?.links))
+    throw new Error("Unexpected published Lean HTML scene ABI");
+  return result as unknown as HTMLArtifact;
+}
 export async function loadHTML(nativeEngine?:string) {
   const module = await createModule() as unknown as Module;
   const backend=nativeEngine?nativeBackend(nativeEngine):wasmBackend(module);
@@ -83,18 +102,15 @@ export async function loadHTML(nativeEngine?:string) {
     fontLoad:(fontBase64:string,fontFamily:string,fontSha256:string)=>documentCall("",{op:"fontLoad",fontBase64,fontFamily,fontSha256}) as {family:string;glyphs:number},
     fontRequests:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"fontRequests"}),
     compile(source:string,width:number,height:number,options:Record<string,unknown>):HTMLArtifact {
-      // Lean sends the storage floats as the bytes the GPU reads; this only decodes them.
-      const result=documentCall(source,{binary:true,...options,op:"render"},width,height);
-      if(typeof result.dataBase64==="string"){
-        const text=atob(result.dataBase64),bytes=new Uint8Array(text.length);
-        for(let i=0;i<text.length;i++)bytes[i]=text.charCodeAt(i);
-        result.data=new Float32Array(bytes.buffer);delete result.dataBase64;
-      }
-      if(result.abi!=="lean-svg-v1" || result.width!==width || result.height!==height ||
-         !(Array.isArray(result.data)||result.data instanceof Float32Array) || !result.data.length || !result.data.every(Number.isFinite) ||
-         typeof result.wgsl!=="string" || !Array.isArray(result.checks) || !Array.isArray(result.webRender?.links))
-        throw new Error("Unexpected published Lean HTML scene ABI");
-      return result;
+      return sceneOf(documentCall(source,{binary:true,...options,op:"render"},width,height),width,height);
+    },
+    /** One render as two layers; the options must carry a shell. */
+    compileLayers(source:string,width:number,height:number,options:Record<string,unknown>):HTMLLayers {
+      const result=documentCall(source,{binary:true,...options,layers:true,op:"render"},width,height);
+      const place=result.layers as HTMLLayerPlace|undefined;
+      if(!place||!["top","view","bandTop","bandHeight","keepFrom","keepTo"].every(k=>Number.isSafeInteger((place as Record<string,unknown>)[k]))||typeof place.composite!=="string")
+        throw new Error("Unexpected published Lean HTML layers ABI");
+      return {layers:place,page:sceneOf(result.page,width,place.bandHeight),chrome:sceneOf(result.chrome,width,Math.max(1,place.top))};
     },
     // Lean decides what a chrome click, a key, an address and a link mean.
     shellHit:(shell:unknown,x:number,y:number,width:number)=>(documentCall("",{op:"shellHit",shell,x,y,width}) as {control:string|null}).control,

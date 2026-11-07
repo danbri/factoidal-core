@@ -8,7 +8,7 @@ import {loadHTML,type HTMLArtifact,type HTMLEngine} from "./native_html_engine.t
 import {loadFontFile} from "./native_html_document.ts";
 
 /** The engine methods a caller may run in the worker. */
-export const REMOTE_CALLS=["xmlStylesheet","xslt","inspect","fontRequests","graphStart","graphEvent","graphPage","sourcePage","selectedText","compile"] as const;
+export const REMOTE_CALLS=["xmlStylesheet","xslt","inspect","fontRequests","graphStart","graphEvent","graphPage","sourcePage","selectedText","compile","compileLayers"] as const;
 export type RemoteCall=typeof REMOTE_CALLS[number];
 export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string};nativeEngine?:string}
   |{id:number;op:"call";name:RemoteCall;args:unknown[]};
@@ -30,8 +30,9 @@ const handle=async(request:WorkerRequest)=>{
     if(!(REMOTE_CALLS as readonly string[]).includes(request.name))throw new Error(`Engine call ${request.name} is not available in the worker`);
     const e=await engine as unknown as Record<string,(...args:unknown[])=>unknown>;
     const value=e[request.name](...request.args);
-    const artifact=value as Partial<HTMLArtifact>|null;
-    const transfer:Transferable[]=artifact?.data instanceof Float32Array?[artifact.data.buffer as ArrayBuffer]:[];
+    // The storage floats move to the main thread, not copied: one scene, or the two layers.
+    const scenes=[value,(value as {page?:unknown})?.page,(value as {chrome?:unknown})?.chrome] as (Partial<HTMLArtifact>|null|undefined)[];
+    const transfer:Transferable[]=scenes.flatMap(scene=>scene?.data instanceof Float32Array?[scene.data.buffer as ArrayBuffer]:[]);
     scope.postMessage({id:request.id,ok:true,value,ms:performance.now()-start} satisfies WorkerReply,transfer);
   }catch(error){
     scope.postMessage({id:request.id,ok:false,error:String(error instanceof Error?error.message:error)} satisfies WorkerReply);

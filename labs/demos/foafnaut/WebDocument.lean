@@ -245,6 +245,136 @@ private def inWindow (top bottom : Float) : Rendering.Node → Bool
     (t.a == 1 && t.f == 0) || (top <= t.f && t.f <= bottom)
   | _ => true
 
+/-! ### Two layers: the chrome and a band of the page (issue 1268)
+
+With `layers:true` and a shell, a render answers two artifacts. The chrome layer
+holds window rows `0 .. top`. The page layer holds the page rows `band.top ..
+band.top+band.height`: the page moved up by `band.top`. The host draws each layer
+once into its own texture. Each present then copies, with `composite`: window row
+`y < top` from chrome row `y`, and window row `y ≥ top` from page row
+`y-top+offset`, with `offset = scroll-band.top`. A scroll whose view stays in the
+band changes only `offset`, so it needs no Lean call. -/
+
+/-- Page rows that a page layer keeps above and below the view. -/
+def bandMargin : Nat := 512
+/-- When the view comes this near to an edge of the band that the page goes on
+past, the host asks for a new band. -/
+def refreshMargin : Nat := 128
+/-- A layer is at most this many rows: the texture side that the hosts ask for. -/
+def maxLayerRows : Nat := 4096
+
+/-- The page rows of a page layer: from page row `top`, `height` rows. -/
+structure Band where
+  top : Nat
+  height : Nat
+  deriving Repr, DecidableEq
+
+/-- The band around a view of `view` rows from page row `scroll`. -/
+def band (scroll view : Nat) : Band :=
+  let margin := min bandMargin ((maxLayerRows-view)/2)
+  ⟨scroll-min scroll margin,view+2*margin⟩
+
+/-- True when a view of `view` rows from page row `scroll` is in the band. -/
+def Band.fits (b : Band) (view scroll : Nat) : Bool := b.top ≤ scroll && scroll+view ≤ b.top+b.height
+/-- The scroll positions that the host shows from this band with no new one. -/
+def Band.keepFrom (b : Band) : Nat := if b.top = 0 then 0 else b.top+refreshMargin
+def Band.keepTo (b : Band) (view : Nat) : Nat := b.top+b.height-view-refreshMargin
+
+theorem band_fits (scroll view : Nat) : (band scroll view).fits view scroll = true := by
+  dsimp only [band,Band.fits]
+  rw [Bool.and_eq_true]
+  exact ⟨decide_eq_true (by omega),decide_eq_true (by omega)⟩
+
+theorem band_height_le (scroll view : Nat) (small : view ≤ maxLayerRows) :
+    (band scroll view).height ≤ maxLayerRows := by
+  simp only [band,maxLayerRows,bandMargin] at *
+  omega
+
+/-- Every scroll that the host keeps is in the band. -/
+theorem keep_fits (b : Band) (view scroll : Nat) (tall : view ≤ b.height)
+    (low : b.keepFrom ≤ scroll) (high : scroll ≤ b.keepTo view) : b.fits view scroll = true := by
+  simp only [Band.keepFrom,Band.keepTo,Band.fits,Bool.and_eq_true,decide_eq_true_eq] at *
+  split at low <;> omega
+
+/-- What the composite shader writes at window pixel `(x,y)`: `compositeShader`
+states the same in WGSL. -/
+def composite {α : Type} (chrome page : Nat → Nat → α) (top offset x y : Nat) : α :=
+  if y < top then chrome x y else page x (y-top+offset)
+
+/-- The composite is the window. Let `image` be the page drawn in page rows and let
+the page layer be that image from row `b.top`. Then the composite at offset
+`scroll-b.top` is the chrome over rows `0 .. top`, and below it the page from row
+`scroll`: the frame that one render at `scroll` describes. The GPU part, that
+drawing the page moved up by `b.top` gives `image` moved up by `b.top`, is checked
+by pixel hashes (`scroll_layers_test.ts`), not proved here. -/
+theorem composite_eq_frame {α : Type} (image chrome : Nat → Nat → α) (b : Band) (top scroll x y : Nat)
+    (inside : b.top ≤ scroll) :
+    composite chrome (fun x row => image x (row+b.top)) top (scroll-b.top) x y =
+      if y < top then chrome x y else image x (y-top+scroll) := by
+  unfold composite
+  split
+  · rfl
+  · next above =>
+    dsimp only
+    rw [show y-top+(scroll-b.top)+b.top = y-top+scroll by omega]
+
+/-- The composite reads only rows of the page layer, for a view in the band. -/
+theorem composite_row_lt (b : Band) (top view scroll y : Nat) (fits : b.fits view scroll = true)
+    (below : top ≤ y) (within : y < top+view) : y-top+(scroll-b.top) < b.height := by
+  simp only [Band.fits,Bool.and_eq_true,decide_eq_true_eq] at fits
+  omega
+
+/-- The WGSL of `composite`: binding 0 the chrome texture, 1 the page texture,
+2 the words `top`, `offset` and the page layer height. A row past the page layer
+is white, as the scene shader paints outside its viewport. -/
+def compositeShader : String :=
+  "@group(0) @binding(0) var chrome:texture_2d<f32>;\n" ++
+  "@group(0) @binding(1) var page:texture_2d<f32>;\n" ++
+  "@group(0) @binding(2) var<uniform> place:vec4u;\n" ++
+  "@vertex fn vertex(@builtin(vertex_index) i:u32)->@builtin(position) vec4f {" ++
+  "let vertices=array<vec2f,3>(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));return vec4f(vertices[i],0,1);}\n" ++
+  "@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {" ++
+  "let x=u32(pixel.x);let y=u32(pixel.y);" ++
+  "if(y<place.x){return textureLoad(chrome,vec2u(x,y),0);}" ++
+  "let row=y-place.x+place.y;if(row>=place.z){return vec4f(1.0);}" ++
+  "return textureLoad(page,vec2u(x,row),0);}\n"
+
+/-- The page layer of a band: the page moved up by `b.top`, with the glyphs within
+`bandMargin` of the band. `extra` (the selection) is not filtered. -/
+def pageLayer (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band) : Rendering.Scene :=
+  let lift := Float.ofNat b.top
+  let keep := page.tree.filter (inWindow (lift-Float.ofNat bandMargin) (lift+Float.ofNat (b.height+bandMargin)))
+  {page with
+    height := b.height
+    mapping := {page.mapping with viewportHeight := Float.ofNat b.height}
+    tree := [.group none ⟨1,0,0,1,0,-lift⟩ (keep ++ extra)]
+    links := page.links.map (fun link => {link with y := link.y-lift})}
+
+/-- The chrome layer: window rows `0 .. WebShell.height`. -/
+def chromeLayer (shell : WebShell.Shell) (page : Rendering.Scene) (width : Nat) : Rendering.Scene :=
+  let top := max 1 (WebShell.height shell width)
+  {page with
+    height := top
+    mapping := {page.mapping with viewportHeight := Float.ofNat top}
+    tree := WebShell.nodes shell width
+    glyphRuns := #[]
+    links := #[]}
+
+/-- The answer to a render with `layers:true`. -/
+def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
+    (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
+    (width height : Nat) (live binary checks : Bool) : Except String String := do
+  let top := WebShell.height shell width
+  let view := max 1 (height-top)
+  let b := band shell.scroll view
+  let pageText ← WebRender.artifact (pageLayer page extra b) boxes face live binary checks
+  let chromeText ← WebRender.artifact (chromeLayer shell page width) #[] face live binary checks
+  let number := fun (n : Nat) => JSON.Json.number (toString n)
+  let place := JSON.Json.object [("top",number top),("view",number view),("bandTop",number b.top),
+    ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
+    ("composite",.string compositeShader)]
+  return "{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}"
+
 /-- The font the engine holds between calls, so that a scroll does not read it again. -/
 structure HeldFont where
   font : Rendering.SfntProfile.Font
@@ -430,13 +560,18 @@ def runWith (laidOut : LayoutKey → Except String Laid) (html : String) (reques
   let marks := match chosen with
     | some value => WebSelection.highlight items value
     | none => []
+  let live := request.field? "live" == some (.bool true)
+  let binary := request.field? "binary" == some (.bool true)
+  let checks := request.field? "checks" != some (.bool false)
+  if let some value := shell then
+    if request.field? "layers" == some (.bool true) then
+      return ← layersJSON value scene marks boxes face width height live binary checks
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := scene.tree.filter (inWindow (scrolled-512) (scrolled+Float.ofNat height+512))
   let page := {scene with tree := near ++ marks}
   WebRender.artifact (match shell with
     | some value => WebShell.compose value page width height
-    | none => page) boxes face (request.field? "live" == some (.bool true)) (request.field? "binary" == some (.bool true))
-    (request.field? "checks" != some (.bool false))
+    | none => page) boxes face live binary checks
 
 def run := runWith cachedLayOut
 def runUncached := runWith layOut

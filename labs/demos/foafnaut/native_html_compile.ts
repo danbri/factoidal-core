@@ -1,12 +1,13 @@
 // Main-thread side of native_html_worker.ts. Calls answer promises, so the event loop
 // keeps pumping, and they run in the order sent. A worker that fails to start or dies
 // rejects its calls; the caller decides what to do and says so in the trace.
-import type {HTMLArtifact} from "./native_html_engine.ts";
+import type {HTMLArtifact,HTMLLayers} from "./native_html_engine.ts";
 import type {RemoteCall,WorkerReply,WorkerRequest} from "./native_html_worker.ts";
 
 export type CompileClient={
   call(name:RemoteCall,...args:unknown[]):Promise<{value:unknown;workerMs:number}>;
   compile(source:string,width:number,height:number,options:Record<string,unknown>):Promise<{artifact:HTMLArtifact;workerMs:number}>;
+  compileLayers(source:string,width:number,height:number,options:Record<string,unknown>):Promise<{layers:HTMLLayers;workerMs:number}>;
   /** The engine methods that run in the worker, as promise-returning functions. */
   engine:Record<RemoteCall,(...args:unknown[])=>Promise<unknown>>;
   readonly alive:boolean;
@@ -32,7 +33,7 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
     if(!reply.ok)throw new Error(reply.error);
     return {value:reply.value,workerMs:reply.ms};
   };
-  const names:RemoteCall[]=["xmlStylesheet","xslt","inspect","fontRequests","graphStart","graphEvent","graphPage","sourcePage","selectedText","compile"];
+  const names:RemoteCall[]=["xmlStylesheet","xslt","inspect","fontRequests","graphStart","graphEvent","graphPage","sourcePage","selectedText","compile","compileLayers"];
   const engine=Object.fromEntries(names.map(name=>[name,async(...args:unknown[])=>(await call(name,...args)).value])) as CompileClient["engine"];
   return {
     get alive(){return alive;},
@@ -40,6 +41,10 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
     async compile(source,width,height,options){
       const {value,workerMs}=await call("compile",source,width,height,options);
       return {artifact:value as HTMLArtifact,workerMs};
+    },
+    async compileLayers(source,width,height,options){
+      const {value,workerMs}=await call("compileLayers",source,width,height,options);
+      return {layers:value as HTMLLayers,workerMs};
     },
     terminate(){alive=false;worker.terminate();},
   };

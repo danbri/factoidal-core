@@ -1,4 +1,5 @@
-import {loadHTML,type HTMLArtifact,type HistoryAnswer} from "./native_html_engine.ts";
+import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer} from "./native_html_engine.ts";
+import {clampOffset,keeps} from "./layer_compositor.ts";
 import {inputURL,navigationURL,loadFontFile,prepareHTML,refusalHTML,type PageView} from "./native_html_document.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {nativePreflight} from "./native_preflight.ts";
@@ -12,9 +13,9 @@ import type {UIEvent} from "./ui_engine.ts";
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--graph-sweep] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--graph-sweep] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
   }
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false;
+  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -27,6 +28,8 @@ async function main() {
     // Sweeps read back every frame. This flag gives them the interactive rule (check when idle), to measure input latency without the check cost.
     else if(arg==="--idle-checks-only")idleChecksOnly=true;
     else if(arg==="--wasm-engine")wasmEngine=true;
+    // One Lean frame for each scroll step, as before the two layers (for comparison).
+    else if(arg==="--single-frame")layered=false;
     else if(arg==="--native-engine"){nativeEngine=args.shift();if(!nativeEngine)throw new Error("--native-engine needs a dylib path");}
     else if(arg==="--font")fontFile=args.shift();
     else if(arg==="--bitmap-font")bitmapFont=true;
@@ -34,6 +37,8 @@ async function main() {
     else if(arg==="--paste-sweep")pasted=args.shift();
     else if(arg==="--command-sweep")commands=["=","+","-","_","0","a","c",[2,60,60],[3,300,60],[4,300,60],"c",[2,60,60],[4,60,60],"link"];
     else if(arg==="--graph-sweep")commands=["graph",[2,800,565],[3,900,640],[3,1000,720],[4,1000,720]];
+    // Twenty scroll steps of 120 backing pixels down the page: per-step frame time and input latency.
+    else if(arg==="--scroll-sweep")commands=Array.from({length:20},()=>[11,-120,0]);
     else if(arg==="--history-sweep")commands=["left","link","left","right","[","]","]","[","link1","]","[","]"];
     else throw new Error(`Unknown native HTML argument: ${arg}`);
   }
@@ -202,8 +207,21 @@ async function main() {
     const bottom=Math.max(0,...(boxes??[]).map(box=>box[2]+box[4]));
     const limit=Math.max(0,bottom-height+Math.round(60*scale));
     const next=Math.max(0,Math.min(limit,scroll+Math.round(amount)));
-    if(next!==scroll){scroll=next;dirty=true;}
+    if(next===scroll)return;
+    scroll=next;
+    // Inside the band of the layers on screen, a scroll only moves the composite: no Lean call.
+    // Lean's keep range says when to ask for a new band; until it comes, the view stays in the old one.
+    if(canShift()){shiftPending=true;shiftedByEvent=true;if(!keeps(current!.layers.layers,scroll))dirty=true;}
+    else dirty=true;
   };
+  // The layers on screen, and the page row of the band shown at the top of the view.
+  let current:{layers:HTMLLayers;document:typeof document;width:number;height:number}|undefined,shownOffset=0;
+  let shiftPending=false,shiftedByEvent=false;
+  // A selection is in window coordinates, so with one a scroll needs a Lean frame.
+  const canShift=()=>layered&&!!current&&current.document===document&&!candidate&&current.width===width&&current.height===height&&!Array.isArray(view.selection);
+  // Window and page-layer rows, for link picking: the composite maps one to the other.
+  const pageRow=(y:number)=>current?y-current.layers.layers.top+shownOffset:y;
+  const windowRow=(y:number)=>current?y+current.layers.layers.top-shownOffset:y;
   const settingsURL=new URL("./pages/settings.html",import.meta.url).href;
   const shellCommand=(name:string,argument:string)=>{
     if(name==="back")windowCommand(6);
@@ -288,8 +306,10 @@ async function main() {
       refuse(target,error);
     });
   };
+  let lastStep=0;
   let lastActivity=performance.now(),queueMax=0,fatal:unknown,rendering:Promise<void>|undefined;
-  let awaiting:{kind:number;at:number}[]=[],checkedFrames=0,workerFrames=0,mainFrames=0;
+  let awaiting:{kind:number;at:number}[]=[],awaitingShift:{kind:number;at:number}[]=[],checkedFrames=0,workerFrames=0,mainFrames=0;
+  let shifting:Promise<void>|undefined;const shifts:number[]=[];
   const latencies:number[]=[],totals:number[]=[],pumpGaps:number[]=[],pumpGapsLate:number[]=[];let lastPump:number|undefined,firstFrameAt:number|undefined;
   const percentile=(values:number[],q:number)=>{if(!values.length)return null;const sorted=[...values].sort((a,b)=>a-b);return Math.round(sorted[Math.min(sorted.length-1,Math.ceil(q*sorted.length)-1)]*10)/10;};
   // Latency starts when the window library queued the event, or at dequeue with an older library.
@@ -297,7 +317,9 @@ async function main() {
   // Exit summary: input to present latency, and frame totals. Always traced; --perf-summary also prints it.
   const summary=()=>{
     const line={type:"native-html-perf-summary",inputEventsDropped:native?.eventsDropped()??0,inputLatency:{from:latencyFrom(),count:latencies.length,p50Ms:percentile(latencies,0.5),p95Ms:percentile(latencies,0.95),maxMs:latencies.length?Math.max(...latencies):null},
-      compileBackend:nativeEngine?"native":"wasm",frames:{presented:totals.length,checked:checkedFrames,compiledInWorker:workerFrames,compiledOnMain:mainFrames,totalMsP50:percentile(totals,0.5),totalMsP95:percentile(totals,0.95)},
+      compileBackend:nativeEngine?"native":"wasm",layered,
+      scrollPresents:{count:shifts.length,totalMsP50:percentile(shifts,0.5),totalMsP95:percentile(shifts,0.95),maxMs:shifts.length?Math.round(Math.max(...shifts)*10)/10:null},
+      frames:{presented:totals.length,checked:checkedFrames,compiledInWorker:workerFrames,compiledOnMain:mainFrames,totalMsP50:percentile(totals,0.5),totalMsP95:percentile(totals,0.95)},
       // Time between two native event pumps: the longest time the window takes no input.
       // After the first frame is presented: the figure the 50 ms target is judged on.
       pumpGapAfterFirstFrameMs:{count:pumpGapsLate.length,p50:percentile(pumpGapsLate,0.5),p95:percentile(pumpGapsLate,0.95),max:pumpGapsLate.length?Math.round(Math.max(...pumpGapsLate)*10)/10:null},
@@ -305,7 +327,7 @@ async function main() {
       pumpGapMs:{p50:percentile(pumpGaps,0.5),p95:percentile(pumpGaps,0.95),max:pumpGaps.length?Math.round(Math.max(...pumpGaps)*10)/10:null},
       queueMax,sessionStats:session?.stats};
     trace(line.type,line);
-    if(perfSummary)console.log(`input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
+    if(perfSummary)console.log(`input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
   };
   try {
     device=await adapter.requestDevice();native=await nativePreflight(()=>loadNativeWindow());
@@ -346,13 +368,20 @@ async function main() {
       const stamps=awaiting;awaiting=[];
       // An interactive frame asks Lean for no CPU probe (checks:false, about a fifth of a
       // frame); the idle check below asks for the same frame with its probe and checks it.
-      const request=nextDocument.request(width,height,{...shown(),live:nextDocument===checked,...(everyFrame?{}:{checks:false})});
+      // A new page starts at the top, so its band does too.
+      const view0=shown();if(nextDocument!==document)view0.shell={...view0.shell,scroll:0};
+      const request=nextDocument.request(width,height,{...view0,live:nextDocument===checked,...(everyFrame?{}:{checks:false})});
       const sentWidth=width,sentHeight=height;
       // Events from here on mark the page dirty again: latest state wins, in the next frame.
       dirty=false;
-      let next:HTMLArtifact,where="worker",workerMs:number|undefined;
+      let next:HTMLArtifact,nextLayers:HTMLLayers|undefined,where="worker",workerMs:number|undefined;
       try{
-        if(worker?.alive){({artifact:next,workerMs}=await worker.compile(request.source,sentWidth,sentHeight,request.options));}
+        if(layered){
+          if(worker?.alive){({layers:nextLayers,workerMs}=await worker.compileLayers(request.source,sentWidth,sentHeight,request.options));}
+          else{where="main";nextLayers=engine.compileLayers(request.source,sentWidth,sentHeight,request.options);}
+          next=nextLayers.page;
+        }
+        else if(worker?.alive){({artifact:next,workerMs}=await worker.compile(request.source,sentWidth,sentHeight,request.options));}
         else{where="main";next=engine.compile(request.source,sentWidth,sentHeight,request.options);}
       }catch(error){
         if(worker&&!worker.alive){
@@ -365,7 +394,10 @@ async function main() {
       const compiled=performance.now();
       // A newer page was chosen while this one compiled: drop this scene.
       if((candidate??document)!==nextDocument){awaiting=[...stamps,...awaiting];dirty=true;return;}
-      const result=await session!.draw(next,everyFrame);
+      // With layers, the composite shows the scroll of now, kept in the new band.
+      const scrollNow=nextDocument!==document?0:scroll;
+      const place=nextLayers?clampOffset(nextLayers.layers,scrollNow):undefined;
+      const result=nextLayers?await session!.drawLayers(nextLayers,sentWidth,sentHeight,place!.offset,everyFrame):await session!.draw(next,everyFrame);
       if(result.presented)lastRequest={request,width:sentWidth,height:sentHeight,document:nextDocument};
       const finished=performance.now();
       const stats=session!.stats;
@@ -373,13 +405,20 @@ async function main() {
       trace("native-html-frame",{frame:++frameNumber,width:sentWidth,height:sentHeight,primitives:next.primitiveCount,wgslBytes:next.wgsl.length,dataFloats:next.data.length,
         layoutMs:ms(frameStart,compiled),sessionMs:Math.round(result.prepareMs*10)/10,drawMs:Math.round(result.drawMs*10)/10,totalMs:ms(frameStart,finished),
         resizeToFrameMs:resizeAt===undefined?null:ms(resizeAt,finished),presented:result.presented,compiledIn:where,workerMs:workerMs===undefined?null:Math.round(workerMs*10)/10,
-        checked:result.checked,steps:result.steps,pixelHash:result.checked?result.pixelHash:null,pipelineBuilds:stats.pipelineBuilds,configures:stats.configures,...engineFact});
+        checked:result.checked,steps:result.steps,pixelHash:result.checked?result.pixelHash:null,pipelineBuilds:stats.pipelineBuilds,configures:stats.configures,
+        ...(nextLayers?{layers:{bandTop:nextLayers.layers.bandTop,bandHeight:nextLayers.layers.bandHeight,offset:place!.offset,chromeFloats:nextLayers.chrome.data.length}}:{}),...engineFact});
       resizeAt=undefined;
       if(!result.presented){awaiting=[...stamps,...awaiting];dirty=true;return;}
       firstFrameAt??=finished;totals.push(finished-frameStart);if(where==="worker")workerFrames++;else mainFrames++;
       if(result.checked)checkedFrames++;
       lastActivity=Math.max(lastActivity,finished);
       settle(stamps,result.presentedAt);
+      if(nextLayers){
+        current={layers:nextLayers,document:nextDocument,width:sentWidth,height:sentHeight};shownOffset=place!.offset;
+        // Scrolls taken while Lean worked: shown now if the band holds them, else after the next band.
+        if(place!.exact){settle(awaitingShift,result.presentedAt);awaitingShift=[];}
+        if(nextDocument===document&&!keeps(nextLayers.layers,scroll))dirty=true;
+      } else current=undefined;
       checked=nextDocument;
       if(nextDocument!==document)view.selection=undefined;
       if(nextDocument!==document){scroll=0;if(!focused)address=nextDocument.url;}frame=next;document=nextDocument;candidate=undefined;native!.setTitle(windowTitle(document));
@@ -389,7 +428,15 @@ async function main() {
     const idleCheck=async()=>{
       const idleStart=performance.now();
       let result;
-      if(lastRequest&&lastRequest.request.options.checks===false&&worker?.alive){
+      if(layered&&current&&lastRequest&&lastRequest.request.options.checks===false&&worker?.alive){
+        // The layers on screen were made with no probe: Lean makes them again with probes, at this scroll.
+        const shownRequest=lastRequest,options:Record<string,unknown>={...shownRequest.request.options,shell:shell()};delete options.checks;
+        const {layers}=await worker.compileLayers(shownRequest.request.source,shownRequest.width,shownRequest.height,options);
+        if(dirty||shiftPending||shifting||lastRequest!==shownRequest||document!==shownRequest.document)return;
+        const {offset}=clampOffset(layers.layers,scroll);
+        result=await session!.drawLayers(layers,shownRequest.width,shownRequest.height,offset,true);
+        if(result.presented){current={layers,document,width:shownRequest.width,height:shownRequest.height};frame=layers.page;shownOffset=offset;}
+      } else if(lastRequest&&lastRequest.request.options.checks===false&&worker?.alive){
         // The frame on screen was made with no probe: Lean makes it again with its probe.
         // The page must not have changed meanwhile; if it has, the next idle time checks.
         const shownRequest=lastRequest,options={...shownRequest.request.options};delete options.checks;
@@ -450,7 +497,7 @@ async function main() {
           const released=press;press=undefined;
           if(engine.pointerUp(released)!=="click")return;
           if(view.selection){view.selection=undefined;dirty=true;}
-          const target=engine.hit(frame,released[0],released[1]);
+          const target=engine.hit(frame,released[0],pageRow(released[1]));
           if(target){console.log(JSON.stringify({type:"native-html-link",...target,url:document.url}));
             const answer=engine.shellLink(target.href);
             if(answer.go!=="page")go(answer);
@@ -469,9 +516,12 @@ async function main() {
         if(batch.length>QUEUE_WARN)trace("native-html-queue-high",{queued:batch.length});}
       for(const {event,at} of batch){
         if(!running)break;
+        shiftedByEvent=false;
         handle(event);
         // An event with a visible effect waits until a frame that includes it is presented.
-        if(STAMPED.has(event.kind)&&(dirty||loading||graphBusy())){if(awaiting.length<256)awaiting.push({kind:event.kind,at});else trace("native-html-latency-overflow",{kind:event.kind});}
+        // A scroll in the band waits only for the composite at its offset.
+        if(STAMPED.has(event.kind)&&shiftedByEvent){if(awaitingShift.length<256)awaitingShift.push({kind:event.kind,at});}
+        else if(STAMPED.has(event.kind)&&(dirty||loading||graphBusy())){if(awaiting.length<256)awaiting.push({kind:event.kind,at});else trace("native-html-latency-overflow",{kind:event.kind});}
       }
       if(!running)break;
       const clock=(document as Page).graph;
@@ -488,10 +538,26 @@ async function main() {
         Deno.exitCode=3;running=false;continue;
       }
       if(fatal)throw fatal;
+      // A scroll in the band: present the composite at the new offset. A Lean frame in the
+      // worker does not wait for this, and this does not wait for it.
+      if(shiftPending&&!shifting&&current&&native.canPresent()){
+        shiftPending=false;
+        const stamps=awaitingShift;awaitingShift=[];
+        const start=performance.now(),{offset,exact}=clampOffset(current.layers.layers,scroll),at=scroll;
+        shifting=session!.shift(offset,everyFrame).then(result=>{
+          const finished=performance.now();
+          trace("native-html-scroll",{frame:frameNumber,scroll:at,offset,exact,totalMs:ms(start,finished),drawMs:Math.round(result.drawMs*10)/10,
+            presented:result.presented,checked:result.checked,pixelHash:result.checked?result.pixelHash:null});
+          if(!result.presented){awaitingShift=[...stamps,...awaitingShift];shiftPending=true;return;}
+          shownOffset=offset;shifts.push(finished-start);lastActivity=Math.max(lastActivity,finished);if(result.checked)checkedFrames++;
+          // A scroll past the band is not fully shown: it waits for the next Lean frame.
+          if(exact)settle(stamps,result.presentedAt);else awaiting=[...stamps,...awaiting];
+        }).catch(error=>{fatal=error;}).finally(()=>{shifting=undefined;});
+      }
       if(dirty&&native.canPresent()&&!rendering){
         waiting=false;
         rendering=renderFrame().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
-      } else if(!everyFrame&&!dirty&&!rendering&&session?.frames&&!session.lastChecked&&native.canPresent()&&performance.now()-lastActivity>=IDLE_CHECK_MS){
+      } else if(!everyFrame&&!dirty&&!rendering&&!shifting&&!shiftPending&&session?.frames&&!session.lastChecked&&native.canPresent()&&performance.now()-lastActivity>=IDLE_CHECK_MS){
         // Interactive frames are not read back. When input has been idle, the last frame is drawn again with the checks.
         rendering=idleCheck().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
       }
@@ -501,12 +567,17 @@ async function main() {
         if(size)native.setContentSize(size[0],size[1]);else running=false;
       }
       // Each step runs on a settled page: a key through real menu matching, or an input event.
-      if(commands&&!dirty&&!rendering&&!graphBusy()&&!loading&&session?.frames){
+      // A scroll step with layers waits only for the composite of the step before, 16 ms apart:
+      // a Lean frame for a new band runs meanwhile, as when a person scrolls.
+      const scrollStep=layered&&Array.isArray(commands?.[0])&&(commands![0] as number[])[0]===11;
+      const settled=!dirty&&!rendering&&!graphBusy()&&!loading&&!shiftPending&&!shifting;
+      if(commands&&session?.frames&&(settled||(scrollStep&&!loading&&!shiftPending&&!shifting&&performance.now()-lastStep>=16))){
+        lastStep=performance.now();
         const step=commands.shift();
         if(step==="graph"){shellCommand("graph","");loading=true;setTimeout(()=>{loading=false;},600);}
         else if(typeof step==="string"&&step.startsWith("link")){
           // A press and release on a link of the page: link is the first, link1 the second.
-          const link=frame.webRender.links[Number(step.slice(4))] as number[],x=Math.round(link[2]+link[4]/2),y=Math.round(link[3]+link[5]/2);
+          const link=frame.webRender.links[Number(step.slice(4))] as number[],x=Math.round(link[2]+link[4]/2),y=Math.round(windowRow(link[3]+link[5]/2));
           native.testEvent(2,x,y);native.testEvent(4,x,y);
         }
         else if(step==="settle")trace("native-html-paste",{url:document.url,title:document.title});
@@ -515,12 +586,12 @@ async function main() {
       }
       // Wake at least every 8 ms to pump; wake at once when a frame ends.
       const nap=new Promise(resolve=>setTimeout(resolve,8));
-      await (rendering?Promise.race([nap,rendering]):nap);
+      await Promise.race([nap,...(rendering?[rendering]:[]),...(shifting?[shifting]:[])]);
     }
   } finally {
     running=false;controller?.abort();
     // A frame in progress ends before its session is disposed.
-    try{await rendering;}catch(error){console.error("Native HTML frame ended with an error:",String(error));}
+    try{await rendering;await shifting;}catch(error){console.error("Native HTML frame ended with an error:",String(error));}
     worker?.terminate();
     try{summary();}catch(error){console.error("Native HTML summary failed:",String(error));}
     if(!cleanupUI({session,device,native}))Deno.exitCode=1;

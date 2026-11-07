@@ -188,6 +188,47 @@ private def frames : List (String × JSON.Json × Nat) :=
   kept.toOption.isSome && kept.toOption == fresh.toOption
 #guard (WebDocument.run keptPage (frame 0 [("checks",.bool false)]) 280 200).toOption.any (·.contains "\"checks\":[]")
 
+/-! Layers (issue 1268). The CPU sampler of the composite of the two layers must
+give the colour of one frame at the same scroll, at every point tried, for scrolls
+inside a band that was made at another scroll. -/
+private def layerShell (scroll : Nat) : WebShell.Shell := {tabs := #[{title := "t"}],address := "a",scroll}
+private def sameAsFrame (html : String) (width height frameScroll : Nat) (scrolls : List Nat) : Bool :=
+  let top := WebShell.height (layerShell 0) width
+  let view := max 1 (height-top)
+  let b := WebDocument.band frameScroll view
+  match WebDocument.layOut ⟨html,WebDocument.layoutRequest (json []),width,height,top,none⟩ with
+  | .error _ => false
+  | .ok laid =>
+    match WebRenderSVG.toScene (WebDocument.pageLayer laid.scene [] b) with
+    | .error _ => false
+    | .ok page => scrolls.all fun scroll =>
+      match WebRenderSVG.toScene (WebShell.compose (layerShell scroll) laid.scene width height),
+          WebRenderSVG.toScene (WebDocument.chromeLayer (layerShell scroll) laid.scene width) with
+      | .ok full,.ok chrome =>
+        let points := (List.range ((height+12)/13)).flatMap fun row => [41,150,width-2].map (·,row*13)
+        let offset := scroll-b.top
+        let pagePoints := (points.filter (·.2 ≥ top)).map fun (x,y) => (x,y-top+offset)
+        let chromePoints := points.filter (·.2 < top)
+        let want := full.samplePixels (chromePoints ++ points.filter (·.2 ≥ top))
+        let got := chrome.samplePixels chromePoints ++ page.samplePixels pagePoints
+        b.fits view scroll && want.length == got.length &&
+          (want.zip got).all fun (a,c) => a.r == c.r && a.g == c.g && a.b == c.b
+      | _,_ => false
+#guard sameAsFrame keptPage 300 200 100 [60,137]
+#guard sameAsFrame keptPage 300 200 700 [733]
+-- The band holds the view, and a layered render answers both layers in band rows.
+#guard WebDocument.band 100 161 == ⟨0,1185⟩
+#guard WebDocument.band 700 161 == ⟨188,1185⟩
+#guard WebDocument.band 0 4096 == ⟨0,4096⟩
+#guard (WebDocument.run keptPage (frame 80 [("layers",.bool true),("checks",.bool false)]) 300 200).toOption.any fun text =>
+  match JSON.parseJson text with
+  | .ok value => (value.field? "layers").bind (·.field? "bandTop") == some (.number "0") &&
+      (value.field? "page").bind (·.field? "height") == some (.number "1185") &&
+      (value.field? "chrome").bind (·.field? "height") == some (.number "39")
+  | .error _ => false
+#guard (WebDocument.run keptPage (frame 80 [("layers",.bool true)]) 300 200).toOption ==
+  (WebDocument.runUncached keptPage (frame 80 [("layers",.bool true)]) 300 200).toOption
+
 /-- Optional runtime evidence uses actual HarfBuzz/FreeType records generated
 from the requests above. It does not replace the pure cascade/request guards. -/
 def main (args : List String) : IO UInt32 := do

@@ -46,6 +46,10 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   cp "$LAB/.build/web-render/engines/web-render."{mjs,wasm} "$LAB/.build/native-html/runtime/"
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-write --allow-net "$LAB/native_html_test.ts"
+  # Two-layer scroll (issue 1268): the composite of the layers has the bytes of one Lean
+  # frame at each scroll tried, on this machine's GPU. With no GPU adapter it says NOT RUN.
+  deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-ffi "$LAB/scroll_layers_check.ts"
 else
   echo 'NOT RUN: native_html_test.ts needs the web-render engine, which this build does not have yet'
 fi
