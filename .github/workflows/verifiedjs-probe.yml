@@ -55,6 +55,11 @@ jobs:
         run: |
           set -o pipefail
           node $PROBE/probe.mjs "$PWD/$VJS/.lake/build/bin/verifiedjs" report/stage2.json 2>&1 | tee report/stage2.txt
+      - name: Upstream unit tests
+        continue-on-error: true
+        run: |
+          cd "$VJS"
+          /usr/bin/time -f 'lake build Tests: %e s, exit %x' -a -o "$GITHUB_WORKSPACE/report/stage1.txt" lake build Tests 2>&1 | tee "$GITHUB_WORKSPACE/report/unit.log" | grep -E '^(✖|error|Build completed|Some required)' | head -20
       - name: Upstream end-to-end suite
         continue-on-error: true
         run: |

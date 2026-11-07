@@ -40,6 +40,7 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-03 | [Browser navigation and byte transport](20261103-lean-browser-navigation.md) | this commit | current — HTTP navigation controls, browser integration |
 | 2026-11-03 | [Dynamic font requests](20261103-web-render-dynamic-font-requests.md) | this commit | current — Lean requests, actual HarfBuzz/FreeType broker and arbitrary edited text |
 | 2026-11-03 | [QuickJS scripting boundary](20261103-web-render-script-engine.md) | this commit | current — actual isolated QuickJS WASM, typed Lean DOM commands |
+| 2026-11-07 | [VerifiedJS for page scripts](designissues/2026-11-07-verifiedjs-page-scripts.md) | this commit | current: compiler builds, proofs do not; fixtures fail at each level; QuickJS stays; https://github.com/danbri/factoidal/issues/1252 |
 | 2026-11-03 | [Script engine architecture](designissues/2026-11-03-script-engine-architecture.md) | this commit | current — separate instances and heaps, message transactions, verified-JS research limits |
 
 | 2026-11-03 | [Original HTML document context for embedded SVG](20261103-html-svg-document-context.md) | this commit | current — original DOM paths and cross-root source guards; linked runtime and original browser comparison next |

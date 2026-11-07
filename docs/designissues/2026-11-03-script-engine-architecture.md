@@ -198,6 +198,8 @@ The root directory has no LICENSE file and the [GitHub repository
 metadata](https://api.github.com/repos/BasisResearch/VerifiedJS) reports
 `license:null`; reuse terms need clarification before vendoring.
 
+Measured results, 7 November: [VerifiedJS for page scripts](2026-11-07-verifiedjs-page-scripts.md).
+
 Keep VerifiedJS as an optional compiler backend experiment. To replace
 QuickJS in this browser profile it must first run the same script/click
 fixture, implement explicit host bindings, pass boundary and interruption

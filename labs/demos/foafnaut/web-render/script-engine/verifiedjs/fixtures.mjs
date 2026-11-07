@@ -27,9 +27,11 @@ function __click() {
 // The gate: a fixture passes when its output equals Node's. Every case not
 // named here is an expected failure of the issue below. A listed case that
 // fails, or an unlisted fixture that passes, makes the probe exit 1: flip the
-// list and close the issue. Filled from run 42318218843 and its successors.
+// list and close the issue. Measured in run 42319450564.
+// lean-dom-named-error passes at Core by accident: `Object` and `Error` are
+// unbound there, each use logs a ReferenceError, and evaluation continues.
 export const ISSUE = 'https://github.com/danbri/factoidal/issues/1252';
-export const PASSING = { core: [], wasm: [] };
+export const PASSING = { core: ['lean-dom-named-error'], wasm: [] };
 
 export const FIXTURES = [
   ['session-classic-1', `let count = 1; document.getElementById("message").textContent = "loaded"; console.log(document.getElementById("message").textContent);`],
@@ -103,6 +105,7 @@ export const FEATURES = [
   ['for-of', `var t = 0; for (const x of [1, 2]) t = t + x; console.log(t);`],
   ['for-in', `var o = { a: 1 }; for (var k in o) console.log(k);`],
   ['try-catch-local', `try { throw 1; } catch (e) { console.log(e); }`],
+  ['try-in-function', `function t(f) { try { f(); } catch (e) {} } console.log(1);`],
   ['try-catch-across-call', `function f() { throw 2; } try { f(); console.log('continued'); } catch (e) { console.log('caught', e); }`],
   ['uncaught-throw-stops', `console.log('a'); throw 1; console.log('b');`],
   ['error-constructor', `var e = Error('stop'); console.log(e.message);`],
