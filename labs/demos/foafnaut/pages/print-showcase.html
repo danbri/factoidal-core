@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Print showcase</title>
+<style>
+body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:white}
+main{width:640px}
+h1{margin:0;font-size:24px;line-height:32px;color:#184078}
+h2{margin:0;padding-top:14px;font-size:17px;line-height:24px;color:#184078}
+p{margin:0;padding-top:6px}
+.note{margin-top:10px;padding:8px;background:#fff4c8;color:#604000}
+.figure{margin-top:10px;padding:8px;background:#f0f4fa}
+.caption{font-size:12px;line-height:16px;color:#405060}
+.row{padding:2px 0}
+.head{background:#184078;color:white}
+.odd{background:#eef2f8}
+/* Only on paper: no screen note, and each chapter starts a page; a figure or a table
+   is not cut by a page edge. */
+@media print {
+  .note{display:none}
+  .chapter{break-before:page}
+  .figure,.table{break-inside:avoid}
+  body{color:black}
+  main{width:auto}
+}
+</style></head><body><main>
+<h1>Print showcase</h1>
+<p>This page tests printing in foafnaut2525. Choose File, Print (Command-P). The Lean engine lays the page out again for the paper of the page setup, with the print rules of its style sheet, and breaks it into pages. The system print panel then prints it, or saves it as a PDF.</p>
+<p class="note">On screen you see this note. On paper it is not there: a print style rule hides it.</p>
+<h2>What the print rules do</h2>
+<p>An <b>@media print</b> block holds rules for paper only. This page has five:</p>
+<p>- The note above has display none.</p>
+<p>- Each chapter heading has break-before page, so a chapter starts on a new page.</p>
+<p>- The figure and the table have break-inside avoid, so a page edge does not cut them.</p>
+<p>- The text is black.</p>
+<p>- The text column is the width of the paper.</p>
+<p>Lines are never cut: a page ends at the last line that fits.</p>
+
+<h2 class="chapter">Chapter 1: a figure</h2>
+<p>The figure is inline SVG. Lean draws it with the page.</p>
+<div class="figure">
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="240" viewBox="0 0 600 240">
+<rect x="0" y="0" width="600" height="240" fill="#ffffff"/>
+<line x1="120" y1="80" x2="300" y2="60" stroke="#ffc400" stroke-width="6"/>
+<line x1="300" y1="60" x2="460" y2="170" stroke="#ffc400" stroke-width="6"/>
+<line x1="460" y1="170" x2="200" y2="190" stroke="#ffc400" stroke-width="6"/>
+<line x1="200" y1="190" x2="120" y2="80" stroke="#ffc400" stroke-width="6"/>
+<circle cx="120" cy="80" r="30" fill="#e0208a"/>
+<circle cx="300" cy="60" r="30" fill="#e0208a"/>
+<circle cx="460" cy="170" r="30" fill="#e0208a"/>
+<circle cx="200" cy="190" r="30" fill="#e0208a"/>
+</svg>
+<p class="caption">Figure 1. Four people and who knows whom, as in a FOAF graph.</p>
+</div>
+<p>Text after the figure continues on the same page when there is room.</p>
+
+<h2 class="chapter">Chapter 2: a table</h2>
+<p>The rows of this table are blocks with the cells joined by a bar, because the engine does not lay out HTML tables yet (https://github.com/danbri/factoidal/issues/1279).</p>
+<div class="table">
+<p class="row head">Paper | Millimetres | Points | Inches</p>
+<p class="row">A4 | 210 x 297 | 595 x 842 | 8.27 x 11.69</p>
+<p class="row odd">US Letter | 216 x 279 | 612 x 792 | 8.5 x 11</p>
+<p class="row">A5 | 148 x 210 | 420 x 595 | 5.83 x 8.27</p>
+<p class="row odd">US Legal | 216 x 356 | 612 x 1008 | 8.5 x 14</p>
+</div>
+<p class="caption">Table 1. Paper sizes. One point is 1/72 inch; foafnaut prints at 2 device pixels a point.</p>
+
+<h2 class="chapter">Chapter 3: long text</h2>
+<p>A long chapter goes over more than one page. The page ends at the last line that fits, so no line is cut in half.</p>
+<p>Paragraph 1. The engine keeps every line box whole. When a line box crosses the bottom edge of the page, the page ends at the top of that line, and the line starts the next page.</p>
+<p>Paragraph 2. The engine keeps every line box whole. When a line box crosses the bottom edge of the page, the page ends at the top of that line, and the line starts the next page.</p>
+<p>Paragraph 3. The engine keeps every line box whole. When a line box crosses the bottom edge of the page, the page ends at the top of that line, and the line starts the next page.</p>
+<p>Paragraph 4. The engine keeps every line box whole. When a line box crosses the bottom edge of the page, the page ends at the top of that line, and the line starts the next page.</p>
+<p>Paragraph 5. The engine keeps every line box whole. When a line box crosses the bottom edge of the page, the page ends at the top of that line, and the line starts the next page.</p>
+<p>Paragraph 6. The engine keeps every line box whole. When a line box crosses the bottom edge of the page, the page ends at the top of that line, and the line starts the next page.</p>
+<p>Paragraph 7. The engine keeps every line box whole. When a line box crosses the bottom edge of the page, the page ends at the top of that line, and the line starts the next page.</p>
+<p>Paragraph 8. The engine keeps every line box whole. When a line box crosses the bottom edge of the page, the page ends at the top of that line, and the line starts the next page.</p>
+<p><a href="index.html">Back to the demo index</a></p>
+</main></body></html>

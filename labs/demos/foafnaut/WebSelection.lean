@@ -134,6 +134,11 @@ def commandName : Nat → String
   | 12 => "settings"
   | 13 => "viewSource"
   | 14 => "paste"
+  | 15 => "cut"
+  | 16 => "undo"
+  | 17 => "redo"
+  | 18 => "print"
+  | 19 => "pageSetup"
   | _ => "none"
 
 /-- Text size of a new window on a desktop screen. -/

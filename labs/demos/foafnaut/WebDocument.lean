@@ -5,6 +5,7 @@ import L4Factoidal.Syntax.IriResolve
 import WebSelection
 import WebHistory
 import WebShell
+import WebPrint
 import WebGraph
 import L4Factoidal.Rendering.SfntProfile
 
@@ -21,11 +22,15 @@ private def stylesheet (n : DOM.Node) : Bool :=
   DOM.Dom.isHtmlElement n "link" &&
     (((attr n "rel").toLower.replace "\t" " " |>.replace "\n" " " |>.replace "\r" " ").splitOn " ").contains "stylesheet"
 
-private def activeSheet (n : DOM.Node) : Except String Bool := do
+/-- The media type of a request: "print" when the host prints, else "screen". -/
+def medium (request : JSON.Json) : String := if str request "media" == "print" then "print" else "screen"
+
+private def activeSheet (medium : String) (n : DOM.Node) : Except String Bool := do
   if Rendering.CSS.hasAttribute n "disabled" || !["","text/css"].contains (attr n "type") then return false
-  if (attr n "media").toLower == "print" then return false
-  if !["","all","screen"].contains (attr n "media").toLower then throw "unsupported stylesheet media condition"
-  return true
+  let media := (attr n "media").toLower
+  if media == "" || media == "all" || media == medium then return true
+  if media == "print" || media == "screen" then return false
+  throw "unsupported stylesheet media condition"
 
 private def validateResources (dom : DOM.Dom) (request : JSON.Json) : Except String Unit := do
   let .array resources := (request.field? "resources").getD (.array []) | throw "document resources must be an array"
@@ -119,14 +124,14 @@ def rules (dom : DOM.Dom) (request : JSON.Json) : Except String (List Rendering.
   for id in dom.treeOrder 0 do
     let n := dom.get id
     let source ← if DOM.Dom.isHtmlElement n "style" then do
-        if ← activeSheet n then pure ((dom.textContent id).getD "") else pure ""
+        if ← activeSheet (medium request) n then pure ((dom.textContent id).getD "") else pure ""
       else if stylesheet n && Rendering.CSS.hasAttribute n "href" then do
-        if ← activeSheet n then supplied request id else pure ""
+        if ← activeSheet (medium request) n then supplied request id else pure ""
       else pure ""
     bytes := bytes+source.utf8ByteSize
     if bytes > 2097152 then throw "document stylesheets exceed 2MiB"
     sheets := source::sheets
-  Rendering.CSS.parse (String.intercalate "\n" sheets.reverse)
+  Rendering.CSS.parseFor (medium request) (String.intercalate "\n" sheets.reverse)
 
 /-- Script MIME classification has one owner: the Lean scripting snapshot.
 All callers use its normalized kind, including whitespace/case and legacy
@@ -142,7 +147,8 @@ def inspect (dom : DOM.Dom) (url : String) : Except String JSON.Json := do
   let mut sheets : List JSON.Json := []
   for id in dom.treeOrder 0 do
     let n := dom.get id
-    if stylesheet n && Rendering.CSS.hasAttribute n "href" && (← activeSheet n) then
+    -- The host fetches the sheets of the screen and of print: it prints the page it shows.
+    if stylesheet n && Rendering.CSS.hasAttribute n "href" && ((← activeSheet "screen" n) || (← activeSheet "print" n)) then
       sheets := .object [("nodeId",.number (toString id)),("href",.string (attr n "href")),
         ("url",.string (Syntax.resolveIri base (attr n "href")))]::sheets
   let scripts ← classicScripts (WebRenderScript.scriptRecords dom)
@@ -248,8 +254,14 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     let some (.number raw) := request.field? "command" | throw "command number required"
     let some command := raw.toNat? | throw "command must be natural"
     let percent ← scalePercent request
-    let fields := [("action",JSON.Json.string (WebSelection.commandName command)),
-      ("textScalePercent",.number (toString (WebSelection.commandPercent command percent)))]
+    let action := WebSelection.commandName command
+    -- An edit command acts on the address bar when it has the focus; paste always does,
+    -- since the bar is the only text field. Else it acts on the page (issue 1268).
+    let focused := request.field? "focused" == some (.bool true)
+    let target := if WebShell.addressCommands.contains action && (focused || action == "paste") then "address" else "page"
+    let fields := [("action",JSON.Json.string action)] ++
+      (if WebShell.addressCommands.contains action then [("target",JSON.Json.string target)] else []) ++
+      [("textScalePercent",.number (toString (WebSelection.commandPercent command percent)))]
     if (request.field? "history").isNone then return some (JSON.Json.object fields).toString
     let (next,url) := WebHistory.apply command (← history request)
     return some (JSON.Json.object (fields ++ historyFields next url)).toString
@@ -293,7 +305,19 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     return some (WebShell.Shell.ofJson ((request.field? "shell").getD .null) |>.typed (str request "text")).editJson.toString
   if op == "shellKey" then
     let some (.number code) := request.field? "key" | throw "key required"
-    return some (WebShell.Shell.ofJson ((request.field? "shell").getD .null) |>.key (code.toNat?.getD 0)).editJson.toString
+    let modifiers := match request.field? "modifiers" with | some (.number m) => m.toNat?.getD 0 | _ => 0
+    return some (WebShell.Shell.ofJson ((request.field? "shell").getD .null) |>.key (code.toNat?.getD 0) modifiers).editJson.toString
+  -- Select all, copy, cut, paste (`text` is the clipboard), undo, redo, and focus (`text`
+  -- is the page address). The answer is the edit state and the text for the clipboard.
+  if op == "shellEdit" then
+    let (next,copied) := (WebShell.Shell.ofJson ((request.field? "shell").getD .null)).edit (str request "action") (str request "text")
+    let .object fields := next.editJson | throw "edit state"
+    return some (JSON.Json.object (fields ++ [("clipboard",match copied with | some t => .string t | none => .null)])).toString
+  -- The key table for a host with no menu, which must decide at once which keys it keeps.
+  if op == "keyTable" then
+    let platform := str request "platform" "other"
+    return some (JSON.Json.array ((WebHistory.keyTable.filter (·.1 == platform)).map fun (_,m,k,c) =>
+      .object [("modifier",.string m),("key",.string k),("command",.number (toString c))])).toString
   if op == "shellSubmit" then return some (WebShell.submit (str request "address")).json.toString
   if let some answer ← WebGraph.op op request then return some answer
   if op == "sourcePage" then
@@ -529,7 +553,7 @@ def fontLoadBin (bytes : ByteArray) (family sha256 : String) : String :=
 the height of the chrome, which the key holds as `top`; `selection`, `live`, `binary`,
 `checks`, `tree`, `op` and the scroll act after layout. -/
 def layoutFields : List String := ["commands","resources","images","url","fontData","textScalePercent","graphModel",
-  "hover","active","visited"]
+  "hover","active","visited","media"]
 
 /-- The request with only `layoutFields`, in that order. -/
 def layoutRequest (request : JSON.Json) : JSON.Json :=
@@ -689,7 +713,7 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     return ((JSON.Json.object [("source",.string source),("engine",.string engine)]).toString,#[])
   if let some answer ← inputOp (str request "op" "render") request then return (answer,#[])
   let op := str request "op" "render"
-  if op != "render" && op != "selectedText" then
+  if op != "render" && op != "selectedText" && op != "printLayout" then
     let dom ← prepareDOM html request
     validateResources dom request
     let _ ← classicScripts (WebRenderScript.scriptRecords dom)
@@ -707,6 +731,17 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   let scene := laid.scene
   let boxes := laid.boxes
   let face := laid.face
+  -- Printing (issue 1268): the host lays the document out at the paper width, with
+  -- `media:"print"`, and `height` the rows of one page. The answer is the pages.
+  if op == "printLayout" then
+    let dom ← prepareDOM html request
+    let sheet ← rules dom request
+    let styles ← Rendering.CSS.computeAll dom sheet
+    let content := WebPrint.contentHeight boxes
+    let pages := WebPrint.paginate (WebPrint.pieces dom sheet styles boxes) content height
+    let number := fun (n : Nat) => JSON.Json.number (toString n)
+    return ((JSON.Json.object [("contentHeight",number content),
+      ("pages",.array (pages.map fun (top,rows) => .array [number top,number rows]))]).toString,#[])
   -- Pointer positions are in window coordinates; the page starts below the chrome.
   let moved := Float.ofNat top-Float.ofNat ((shell.map (·.scroll)).getD 0)
   let chosen := (← selection request).map (fun value => WebSelection.shift value moved)
@@ -724,6 +759,14 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   let checks := request.field? "checks" != some (.bool false)
   -- The inspector tree only when the request asks (`tree:true`); no frame host reads it.
   let tree := request.field? "tree" == some (.bool true)
+  -- One printed page: the rows `top .. top+rows` of the document at the top of the
+  -- image, and white below them. No chrome and no selection.
+  if let some (.array [.number rawTop,.number rawRows]) := request.field? "printPage" then
+    let top := rawTop.toNat?.getD 0
+    let rows := min height (rawRows.toNat?.getD height)
+    let page := pageLayer scene [] ⟨top,height⟩
+    let page := {page with tree := page.tree ++ (if rows < height then [WebPrint.cover width rows (height-rows)] else [])}
+    return ← WebRender.artifactWith page boxes face live form checks tree
   if let some value := shell then
     if request.field? "layers" == some (.bool true) then
       return ← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules

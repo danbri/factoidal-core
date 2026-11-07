@@ -75,10 +75,23 @@ else
 fi
 # A double-click wrapper. macOS starts it in the desktop session, which WebGPU
 # needs. It stays beside the package files; it does not copy them.
+# The app icon: a FOAF graph drawn by make-icon.py, at the sizes of an .icns.
+ICONSET="$LAB/.build/foafnaut.iconset"
+rm -rf "$ICONSET"; mkdir -p "$ICONSET"
+python3 "$LAB/make-icon.py" "$ICONSET/icon_512x512@2x.png" 1024
+for size in 16 32 128 256 512; do
+  sips -z "$size" "$size" "$ICONSET/icon_512x512@2x.png" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+  double=$((size*2))
+  [ "$size" = 512 ] || sips -z "$double" "$double" "$ICONSET/icon_512x512@2x.png" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$LAB/.build/foafnaut.icns"
+rm -rf "$ICONSET"
+# A regular app (no LSUIElement): in the Dock and in Command-Tab, with its name and icon.
 make_app() {
   local name=$1 id=$2 command=$3 app="$OUT/$1.app"
   rm -rf "$app"
-  mkdir -p "$app/Contents/MacOS"
+  mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+  cp "$LAB/.build/foafnaut.icns" "$app/Contents/Resources/AppIcon.icns"
   cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -86,7 +99,14 @@ make_app() {
 <key>CFBundleExecutable</key><string>run</string>
 <key>CFBundleIdentifier</key><string>org.factoidal.$id.development</string>
 <key>CFBundleName</key><string>$name</string>
+<key>CFBundleDisplayName</key><string>$name</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.1</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+<key>LSMinimumSystemVersion</key><string>13.0</string>
+<key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST

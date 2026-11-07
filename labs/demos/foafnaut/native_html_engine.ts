@@ -24,7 +24,9 @@ export type Inspection = {
 export type History = {entries:string[];index:number};
 export type HistoryAnswer = {history:History;url:string|null;canBack:boolean;canForward:boolean};
 export type GraphFrame = {model:string;commands:string[]};
-export type ShellEdit = {address:string;cursor:number};
+/** The address bar's edit state; the host keeps it and sends it back in `shell`. */
+export type ShellEdit = {address:string;cursor:number;anchor:number;undo:unknown;redo:unknown;typing:boolean};
+export type PrintLayout = {contentHeight:number;pages:[number,number][]};
 export type ShellGo = {go:"page";url:string}|{go:"system";url:string}|{go:"command";name:string;argument:string};
 export type HTMLResource = {nodeId:number;url:string;source:string};
 type Module = {ccall(name:string,result:string|null,types:string[],values:unknown[]):number;
@@ -226,7 +228,12 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     pointerCursor:(request:{shell:unknown;x:number;y:number;width:number;model?:string;links?:string;pageY?:number})=>
       (documentCall("",{...request,op:"pointerCursor"}) as {cursor:string}).cursor,
     shellText:(shell:unknown,text:string)=>documentCall("",{op:"shellText",shell,text}) as ShellEdit,
-    shellKey:(shell:unknown,key:number)=>documentCall("",{op:"shellKey",shell,key}) as ShellEdit,
+    shellKey:(shell:unknown,key:number,modifiers=0)=>documentCall("",{op:"shellKey",shell,key,modifiers}) as ShellEdit,
+    // Select all, copy, cut, paste, undo, redo and focus in the address bar; `clipboard` is the text to copy.
+    shellEdit:(shell:unknown,action:string,text="")=>documentCall("",{op:"shellEdit",shell,action,text}) as ShellEdit&{clipboard:string|null},
+    // Where the pages of a print layout break (`media:"print"` in the options).
+    printLayout:(source:string,width:number,height:number,options:Record<string,unknown>)=>
+      documentCall(source,{...options,op:"printLayout"},width,height) as PrintLayout,
     shellSubmit:(address:string)=>documentCall("",{op:"shellSubmit",address}) as ShellGo,
     // The FOAF graph page: the model is Lean's; the host keeps it as text.
     graphStart:(rdf:string,width:number,height:number,shell:unknown)=>documentCall("",{op:"graphStart",rdf,width,height,shell}) as GraphFrame,
@@ -235,8 +242,8 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     sourcePage:(kind:string,url:string,source:string)=>(documentCall("",{op:"sourcePage",kind,url,source}) as {source:string}).source,
     shellLink:(href:string)=>documentCall("",{op:"shellLink",href}) as ShellGo,
     // Lean decides what a menu command and a pointer release mean.
-    command:(command:number,textScalePercent:number,history?:History)=>documentCall("",{op:"command",command,textScalePercent,...(history?{history}:{})}) as
-      {action:string;textScalePercent:number}&Partial<HistoryAnswer>,
+    command:(command:number,textScalePercent:number,history?:History,focused=false)=>documentCall("",{op:"command",command,textScalePercent,focused,...(history?{history}:{})}) as
+      {action:string;target?:"address"|"page";textScalePercent:number}&Partial<HistoryAnswer>,
     historyPush:(history:History,url:string)=>documentCall("",{op:"historyPush",history,url}) as HistoryAnswer,
     keyCommand:(platform:string,modifier:string,key:string)=>(documentCall("",{op:"keyCommand",platform,modifier,key}) as {command:number|null}).command,
     pointerUp:(selection:number[])=>(documentCall("",{op:"pointerUp",selection}) as {action:string}).action,

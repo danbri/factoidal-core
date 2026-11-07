@@ -1,4 +1,5 @@
-import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer} from "./native_html_engine.ts";
+import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type ShellEdit} from "./native_html_engine.ts";
+import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
 import {inputURL,navigationURL,loadFontFile,prepareHTML,refusalHTML,type PageView} from "./native_html_document.ts";
@@ -14,9 +15,9 @@ import type {UIEvent} from "./ui_engine.ts";
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
   }
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true;
+  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -38,7 +39,16 @@ async function main() {
     else if(arg==="--bitmap-font")bitmapFont=true;
     else if(arg==="--resize-sweep")sweep=[[800,500],[700,500],[600,500],[500,500],[400,500],[800,300],[800,500]];
     else if(arg==="--paste-sweep")pasted=args.shift();
-    else if(arg==="--command-sweep")commands=["=","+","-","_","0","a","c",[2,60,60],[3,300,60],[4,300,60],"c",[2,60,60],[4,60,60],"link"];
+    // The window starts with the address bar focused; Escape leaves it, so A and C act on the page.
+    else if(arg==="--command-sweep")commands=["=","+","-","_","0",[5,53,0],"a","c",[2,60,60],[3,300,60],[4,300,60],"c",[2,60,60],[4,60,60],"link"];
+    // The address bar as a Mac text field (issue 1268): focused and all selected at start and in a
+    // new tab; typing replaces; Command-Z, Shift-Command-Z, A, C, X, V; Shift and Option with arrows.
+    // "focus:all" checks the start state; "addr=X", "sel=X" and "clip=X" check the text (@url: the page URL).
+    else if(arg==="--edit-sweep")commands=["focus:all",[9,120,0],"addr=x","z","addr=@url","Z","addr=x","a","c","clip=x","x","addr=","clip=x",
+      "v","addr=x",[9,121,0],"addr=xy",[5,123,1],"sel=y","c","clip=y",[5,51,0],"addr=x","v","addr=xy",[5,123,4],"sel=","addr=xy",
+      "z","addr=x","t","focus:all",[5,53,0],"unfocused"];
+    // Print to a PDF with no panel, then check its page count (issue 1268).
+    else if(arg==="--print-pdf"){printPDF=args.shift();if(!printPDF)throw new Error("--print-pdf needs a file path");commands=["print"];}
     else if(arg==="--graph-sweep")commands=["graph",[2,800,565],[3,900,640],[3,1000,720],[4,1000,720]];
     // Twenty scroll steps of 120 backing pixels down the page: per-step frame time and input latency.
     else if(arg==="--scroll-sweep")commands=Array.from({length:20},()=>[11,-120,0]);
@@ -53,6 +63,9 @@ async function main() {
     else throw new Error(`Unknown native HTML argument: ${arg}`);
   }
   // Lean engine for compile: --native-engine PATH, else libweb-render.dylib beside the program, else Wasm.
+  // The app goes into the Dock and Command-Tab, with its menu, before the engine loads (issue 1268).
+  const early=check||Deno.build.os!=="darwin"?undefined:await nativePreflight(()=>loadNativeWindow());
+  early?.appStart();
   if(nativeEngine&&wasmEngine)throw new Error("Use one of --native-engine and --wasm-engine");
   if(wasmEngine)nativeEngine=undefined;
   else if(!nativeEngine){
@@ -82,7 +95,7 @@ async function main() {
   // Every engine call that can take more than about 2 ms runs in one worker, in order. `lean` is that
   // engine (promises), or the main-thread engine when the worker can not start (said once, loudly) or in --check-engine.
   let worker:CompileClient|undefined,mainFont=false;
-  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage">;
+  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"printLayout">;
   let lean:Lean=engine;
   // The engine that runs Lean's renders: the native library in the worker, or Wasm (in the
   // worker, or on the main thread, which has only the Wasm engine). Said at start and in the summary.
@@ -161,9 +174,12 @@ async function main() {
   let history=engine.historyPush({entries:[],index:0},document.url);
   // The chrome is a Lean value too. The host stores it and shows what Lean draws.
   const home=document;
-  let address=document.url,cursor=0,focused=false,fresh=false,theme="next",pages=1,scale=1,active=0,scroll=0;
+  // The address bar's text, cursor, selection and undo step: a Lean value (WebShell.editJson).
+  type Field=Omit<ShellEdit,"clipboard">;
+  const showURL=(url:string):Field=>({address:url,cursor:url.length,anchor:url.length,undo:null,redo:null,typing:false});
+  let field=showURL(document.url),focused=false,theme="next",pages=1,scale=1,active=0,scroll=0;
   const tabs:{document:typeof document;history:typeof history;scroll:number}[]=[{document,history,scroll:0}];
-  const shell=()=>({tabs:tabs.map((tab,index)=>({title:(index===active?document:tab.document).title??""})),active,address,cursor,focused,
+  const shell=()=>({tabs:tabs.map((tab,index)=>({title:(index===active?document:tab.document).title??""})),active,...field,focused,
     canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,pressed:pressed?.control??""});
   // The URLs of the session history of every tab: Lean matches `:visited` against them.
   const visited=()=>[...new Set([...tabs.flatMap((tab,index)=>(index===active?history:tab.history).history.entries)])].slice(-100);
@@ -171,7 +187,7 @@ async function main() {
     ...(pressed?.active!==undefined?{active:pressed.active}:{}),...(hoverNode!==undefined?{hover:hoverNode}:{})});
   const showTab=(index:number)=>{
     controller?.abort();candidate=undefined;loading=false;focused=false;active=index;
-    ({document,history,scroll}=tabs[index]);address=document.url;dirty=true;
+    ({document,history,scroll}=tabs[index]);field=showURL(document.url);dirty=true;
     native?.setHistory(history.canBack,history.canForward);
   };
   const keepTab=()=>{tabs[active]={document,history,scroll};};
@@ -187,7 +203,7 @@ async function main() {
     session?.setPress(undefined);
     if(was.framed||was.asked)dirty=true;else if(layered&&current)pressPresent=true;
   };
-  const newTab=()=>{keepTab();tabs.push({document:home,history:engine.historyPush({entries:[],index:0},home.url),scroll:0});showTab(tabs.length-1);};
+  const newTab=()=>{keepTab();tabs.push({document:home,history:engine.historyPush({entries:[],index:0},home.url),scroll:0});showTab(tabs.length-1);focusAddress();};
   const closeTab=(index:number)=>{
     if(tabs.length===1){running=false;return;}
     keepTab();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));
@@ -264,8 +280,9 @@ async function main() {
     const kind=engine.pointerCursor(request);
     if(kind!==pointerShown){pointerShown=kind;native.setCursor(kind);}
   };
-  const focusAddress=()=>{focused=true;fresh=true;address=document.url;cursor=address.length;dirty=true;};
-  const leaveAddress=()=>{focused=false;address=document.url;dirty=true;};
+  // Lean selects the whole address when the bar takes the focus; typing then replaces it.
+  const focusAddress=()=>{const {clipboard:_,...next}=engine.shellEdit(shell(),"focus",document.url);field=next;focused=true;dirty=true;};
+  const leaveAddress=()=>{focused=false;field=showURL(document.url);dirty=true;};
   const scrollLimit=()=>{
     const boxes=frame.webRender.boxes as number[][]|undefined;
     const bottom=Math.max(0,...(boxes??[]).map(box=>box[2]+box[4]));
@@ -344,14 +361,24 @@ async function main() {
     else if(name==="close")closeTab(Number(index));
     else if(name==="tabs"){keepTab();showTab((active+1)%tabs.length);}
   };
-  const edit=(answer:{address:string;cursor:number})=>{({address,cursor}=answer);fresh=false;dirty=true;};
+  const edit=(answer:ShellEdit&{clipboard?:string|null})=>{const {clipboard:_,...next}=answer;field=next;dirty=true;};
   const remember=(answer:HistoryAnswer,action:string)=>{
     history=answer;native?.setHistory(answer.canBack,answer.canForward);
     if(action==="push")pages++;
     trace("native-html-history",{action,index:answer.history.index,size:answer.history.entries.length,url:answer.url});
   };
   const windowCommand=(id:number)=>{
-    const answer=engine.command(id,view.textScalePercent??100,history.history);
+    const answer=engine.command(id,view.textScalePercent??100,history.history,focused);
+    // Lean says when an edit command acts on the address bar: when it has the focus, and paste
+    // always. The host only reads and writes the clipboard (issue 1268).
+    if(answer.target==="address"){
+      if(!focused)focusAddress();
+      const result=engine.shellEdit(shell(),answer.action,answer.action==="paste"?native!.readClipboard():"");
+      edit(result);
+      if(result.clipboard){native!.writeClipboard(result.clipboard);lastCopied=result.clipboard;trace("native-html-copy",{characters:result.clipboard.length,from:"address"});}
+      trace("native-html-edit",{action:answer.action,characters:field.address.length,anchor:field.anchor,cursor:field.cursor});
+      return;
+    }
     if(["back","forward","reload"].includes(answer.action)){
       if(answer.url)navigate(answer.url,false);
       remember(answer as HistoryAnswer,answer.action);
@@ -364,12 +391,7 @@ async function main() {
     if(answer.action==="newTab")newTab();
     if(answer.action==="closeTab")closeTab(active);
     if(answer.action==="settings")navigate(settingsURL);
-    // Paste always lands in the address bar: it is the only text field there is.
-    if(answer.action==="paste"){
-      if(!focused)focusAddress();
-      if(fresh){address="";cursor=0;}
-      edit(engine.shellText(shell(),native!.readClipboard().replace(/\s*[\r\n]+\s*/g,"").trim()));
-    }
+    if(answer.action==="print")printDocument().catch(error=>console.error("Native HTML print failed:",String(error)));
     if(answer.action==="viewSource")viewSource().catch(error=>refuse(document.url,error));
     if(answer.action==="selectAll"){view.selection="all";dirty=true;}
     if(answer.action==="copy"&&view.selection){
@@ -378,6 +400,29 @@ async function main() {
         if(text){native!.writeClipboard(text);lastCopied=text;trace("native-html-copy",{characters:text.length});}
       }).catch(error=>console.error("Native HTML copy failed:",String(error)));
     }
+  };
+  // Printing (issue 1268). Lean lays the page out for the paper of the page setup with the
+  // print media type and says where the pages break; it draws each page; the GPU renders it;
+  // the window library gives the images to the system print panel (or, with a path, to a PDF
+  // with no panel). Device pixels are 2 for each point (144 dpi), so CSS text is 150%.
+  let printing=false;
+  const printDocument=async(pdfPath?:string)=>{
+    if(printing||!native)return false;
+    printing=true;
+    try{
+      const start=performance.now(),page=document;
+      const paper=native.printPaper()??DEFAULT_PAPER;
+      const job=await printImages(lean,page,paper);
+      const drawn=performance.now();
+      const sent=native.print(job.images,job.count,job.width,job.height,job.pointWidth,job.pointHeight,page.title||page.url,pdfPath);
+      const record:Record<string,unknown>={pages:job.count,breaks:job.breaks,paper,width:job.width,height:job.height,drawMs:ms(start,drawn),sent};
+      if(pdfPath&&sent>0){
+        record.pdfPages=pdfPageCount(await Deno.readFile(pdfPath));
+        if(record.pdfPages!==job.count){console.error(`Native HTML print: ${job.count} pages laid out, ${record.pdfPages} in the PDF`);Deno.exitCode=1;}
+      }
+      trace("native-html-print",record);
+      return sent>0;
+    }finally{printing=false;}
   };
   // A new page goes into history when its load ends, and a refused page does too.
   const navigate=(target:string,push=true)=>{
@@ -421,17 +466,20 @@ async function main() {
     if(perfSummary)console.log(`engine: ${engineRan}\ninput latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
   };
   try {
-    device=await adapter.requestDevice();native=await nativePreflight(()=>loadNativeWindow());
+    device=await adapter.requestDevice();native=early??await nativePreflight(()=>loadNativeWindow());
     native.setInputTrace(traceInput);native.setHistory(history.canBack,history.canForward);
     // The command sweep copies text. It gives the clipboard back unless the person
     // copied something else meanwhile.
     const savedClipboard=commands||pasted?native.readClipboard():"";
     // Paste a URL into the address bar through the real menu key, then press Return.
     if(pasted){native.writeClipboard(pasted);lastCopied=pasted;commands=["v",[5,36,0],"settle"];}
-    const windowTitle=(page:typeof document)=>page.title?`foafnaut - ${page.title}`:"foafnaut";
+    // The window title is the page title, as in Safari.
+    const windowTitle=(page:typeof document)=>page.title||"foafnaut";
     const handles=native.create(800,500,windowTitle(document));
     const surface=new Deno.UnsafeWindowSurface(cocoaSurfaceOptions(handles,width,height));
     native.showAfterSurface();
+    // A new window starts in the address bar with the address selected (issue 1268).
+    focusAddress();
     scale=Math.max(1,Math.round(native.surfaceState().contentsScale||1));
     if(commands)native.testRaise();
     device.addEventListener("uncapturederror",event=>{console.error("Native HTML GPU error:",(event as GPUUncapturedErrorEvent).error.message);running=false;Deno.exitCode=1;});
@@ -525,7 +573,7 @@ async function main() {
       if(nextDocument!==document)prefetched=undefined;
       checked=nextDocument;
       if(nextDocument!==document)view.selection=undefined;
-      if(nextDocument!==document){scroll=0;if(!focused)address=nextDocument.url;}frame=next;document=nextDocument;candidate=undefined;native!.setTitle(windowTitle(document));
+      if(nextDocument!==document){scroll=0;if(!focused)field=showURL(nextDocument.url);}frame=next;document=nextDocument;candidate=undefined;native!.setTitle(windowTitle(document));
       // A new page under a pointer that has not moved.
       if(lastPointer)pointAt(lastPointer[0],lastPointer[1]);
       console.log(JSON.stringify({type:"native-html-presented",url:document.url,width:sentWidth,height:sentHeight,primitives:frame.primitiveCount,links:frame.webRender.links.length,frames:session!.frames}));
@@ -568,14 +616,13 @@ async function main() {
         const graph=(document as Page).graph;
         if(graph&&!focused&&(event.kind===3||event.kind===4||event.kind===9||(event.kind===5&&!(event.b&2)))){graphInput(event.kind,event.a,event.b);return;}
         if(event.kind===5&&focused&&!(event.b&2)){
-          if(event.a===36){const target=address;leaveAddress();go(engine.shellSubmit(target));}
+          if(event.a===36){const target=field.address;leaveAddress();go(engine.shellSubmit(target));}
           else if(event.a===53)leaveAddress();
-          else if(event.a===51&&fresh)edit({address:"",cursor:0});
-          else edit(engine.shellKey(shell(),event.a));
+          // Shift, Option and Command change what the key does; Lean decides.
+          else edit(engine.shellKey(shell(),event.a,event.b));
           return;
         }
         if(event.kind===9&&focused){
-          if(fresh){address="";cursor=0;}
           edit(engine.shellText(shell(),String.fromCodePoint(event.a)));
           return;
         }
@@ -787,7 +834,22 @@ async function main() {
           if(!at)throw new Error("back sweep: no back button in the chrome");
           native.testEvent(2,at[0],at[1]);native.testEvent(4,at[0],at[1]);
         }
-        else if(typeof step==="string")trace("native-html-test-key",{key:step,handled:native.testKey(step,"+_".includes(step))});
+        else if(step==="print"){
+          const done=await printDocument(printPDF);
+          if(!done){console.error("Native HTML print sweep: no PDF");Deno.exitCode=1;}
+        }
+        else if(typeof step==="string"&&/^(focus:all|unfocused|addr=|sel=|clip=)/.test(step)){
+          const url=step.endsWith("@url")?document.url:undefined,value=step.slice(step.indexOf("=")+1);
+          const selected=field.address.slice(Math.min(field.anchor,field.cursor),Math.max(field.anchor,field.cursor));
+          const ok=step==="focus:all"?focused&&field.anchor===0&&field.cursor===field.address.length&&field.address===document.url
+            :step==="unfocused"?!focused
+            :step.startsWith("addr=")?field.address===(url??value)
+            :step.startsWith("sel=")?selected===value
+            :native.readClipboard()===value;
+          trace("native-html-test-edit",{step,ok,address:field.address,anchor:field.anchor,cursor:field.cursor,focused});
+          if(!ok){console.error(`Native HTML edit sweep: ${step} failed; address ${JSON.stringify(field.address)}, selection ${JSON.stringify(selected)}, focused ${focused}`);Deno.exitCode=1;}
+        }
+        else if(typeof step==="string")trace("native-html-test-key",{key:step,handled:native.testKey(step,"+_Z".includes(step))});
         else if(step)native.testEvent(step[0],step[1],step[2]);else{if(native.readClipboard()===lastCopied)native.writeClipboard(savedClipboard);running=false;}
       }
       // Wake at least every 8 ms to pump; wake at once when a frame ends.

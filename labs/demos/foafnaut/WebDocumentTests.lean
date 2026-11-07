@@ -139,12 +139,21 @@ private def primitives (request : JSON.Json) : Option JSON.Json := do
   let (value,_) ← (JSON.parseJsonText output).toOption
   value.field? "primitiveCount"
 #guard primitives (json []) != primitives (json [("selection",.string "all")])
+private def historyField' (request : List (String × JSON.Json)) (key : String) : Option JSON.Json := do
+  let output ← (WebDocument.run "" (json request) 1 1).toOption
+  let (value,_) ← (JSON.parseJsonText output).toOption
+  value.field? key
 private def menu (number : Nat) (percent : Nat := 100) : Option String :=
   (WebDocument.run "" (json [("op",.string "command"),("command",.number (toString number)),("textScalePercent",.number (toString percent))]) 1 1).toOption
 #guard menu 1 == some "{\"action\":\"zoomIn\",\"textScalePercent\":110}"
 #guard menu 2 == some "{\"action\":\"zoomOut\",\"textScalePercent\":90}"
 #guard menu 3 200 == some "{\"action\":\"zoomReset\",\"textScalePercent\":150}"
-#guard menu 4 == some "{\"action\":\"copy\",\"textScalePercent\":100}"
+#guard menu 4 == some "{\"action\":\"copy\",\"target\":\"page\",\"textScalePercent\":100}"
+-- Edit commands act on the address bar when it has the focus; paste always does (issue 1268).
+private def focusedMenu (number : Nat) : Option JSON.Json :=
+  historyField' [("op",.string "command"),("command",.number (toString number)),("textScalePercent",.number "100"),("focused",.bool true)] "target"
+#guard focusedMenu 5 == some (.string "address") && focusedMenu 15 == some (.string "address") && focusedMenu 1 == none
+#guard (menu 14).map (fun t => decide ((t.splitOn "address").length > 1)) == some true
 #guard menu 6 == some "{\"action\":\"back\",\"textScalePercent\":100}"
 private def pages : JSON.Json := json [("entries",.array [.string "a",.string "b"]),("index",.number "1")]
 private def historyField (request : List (String × JSON.Json)) (key : String) : Option JSON.Json := do
@@ -408,3 +417,12 @@ private def sameAsText (layers : Bool) : Bool :=
 -- The layout of `packAnswer`.
 #guard (WebDocument.packAnswer "{}" #[⟨#[1,2,3,4,5]⟩]).data.toList ==
   [28,0,0,0, 4,0,0,0, 1,0,0,0, 5,0,0,0, 123,125,32,32, 1,2,3,4,5,0,0,0]
+-- The address edit op: the edit state and the text for the clipboard (issue 1268).
+private def shellEdit (action text : String) (shell : JSON.Json) : Option JSON.Json := do
+  let output ← (WebDocument.run "" (json [("op",.string "shellEdit"),("action",.string action),("text",.string text),("shell",shell)]) 1 1).toOption
+  return (← (JSON.parseJsonText output).toOption).1
+#guard ((shellEdit "focus" "https://x.org/" (json [])).bind (·.field? "anchor")) == some (.number "0")
+#guard ((shellEdit "copy" "" (json [("address",.string "abc"),("cursor",.number "3"),("anchor",.number "1")])).bind (·.field? "clipboard")) == some (.string "bc")
+#guard ((shellEdit "cut" "" (json [("address",.string "abc"),("cursor",.number "3"),("anchor",.number "1")])).bind (·.field? "address")) == some (.string "a")
+#guard ((shellEdit "copy" "" (json [("address",.string "abc"),("cursor",.number "3")])).bind (·.field? "clipboard")) == some .null
+#guard (WebDocument.run "" (json [("op",.string "keyTable"),("platform",.string "mac")]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"p\"").length > 1)) == some true

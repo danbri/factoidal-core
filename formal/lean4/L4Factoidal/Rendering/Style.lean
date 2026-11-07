@@ -216,15 +216,35 @@ private def topLevel (source : String) : List (String × String) := Id.run do
   if depth > 0 then out := (prelude,body) :: out
   return out.reverse
 
-/-- At-rules are skipped whole, and a rule with a selector this profile can not
-read is dropped whole, as CSS drops an invalid selector list. Only the first
-131072 characters of a sheet are read. -/
-def parse (source : String) : Except String (List Rule) := do
+/-- A media query list of `@media` (Media Queries Level 4 §2) holds for the media
+type `medium` when one of its queries is that type or `all`, with an optional
+`only`. A query with a media feature, `not`, or `and` is not read by this profile,
+and so does not hold. -/
+def mediaMatches (medium queries : String) : Bool :=
+  (queries.splitOn ",").any fun query =>
+    let words := ((trim query).toLower.splitOn " ").filter (· != "")
+    let words := if words.head? == some "only" then words.drop 1 else words
+    match words with
+    | [kind] => kind == medium || kind == "all"
+    | _ => false
+
+/-- Rules of a sheet for the media type `medium` ("screen" or "print"). The rules of
+an `@media` block whose query list holds for `medium` are read in place; other
+at-rules are skipped whole, as is an `@media` block in an `@media` block. A rule
+with a selector this profile can not read is dropped whole, as CSS drops an
+invalid selector list. Only the first 131072 characters of a sheet are read. -/
+def parseFor (medium source : String) : Except String (List Rule) := do
   let mut out : List Rule := []
   for (head,body) in topLevel (comments (source.take 131072).toString) do
-    if !(trim head).startsWith "@" then
-      if let .ok selectors := (head.splitOn ",").mapM selector then
-        out := ⟨selectors,← declarations body⟩ :: out
+    let head := trim head
+    let blocks := if !head.startsWith "@" then [(head,body)]
+      else if (head.take 6).toString.toLower == "@media" && mediaMatches medium (head.drop 6).toString
+        then topLevel body
+      else []
+    for (inner,content) in blocks do
+      if !(trim inner).startsWith "@" then
+        if let .ok selectors := (inner.splitOn ",").mapM selector then
+          out := ⟨selectors,← declarations content⟩ :: out
   return out.reverse
 /-- `id` is `target` or one of its ancestors. The walk is bounded by the arena size. -/
 def inclusiveAncestor (dom : Dom) (id : Nat) : Nat → Option Nat → Bool
@@ -242,6 +262,9 @@ private def pseudoMatches (dom : Dom) (state : ElementState) (id : Nat) (n : DOM
   | .visited => isHyperlink n && state.visited.contains id
   | .hover => inclusiveAncestor dom id (dom.size+1) state.hover
   | .active => inclusiveAncestor dom id (dom.size+1) state.active
+
+/-- The rules of a sheet on a screen. -/
+def parse (source : String) : Except String (List Rule) := parseFor "screen" source
 
 private def selectorMatchesCompound (dom : Dom) (state : ElementState) (id : Nat) (s : Compound) : Bool :=
   let n := dom.get id

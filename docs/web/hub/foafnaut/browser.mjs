@@ -19,12 +19,17 @@ async function inPageLoop(){
 const scale=()=>Math.max(1,Math.round(window.devicePixelRatio||1));
 const size=()=>({width:Math.min(4096,Math.round(innerWidth*scale())),height:Math.min(4096,Math.round(innerHeight*scale())),scale:scale()});
 const point=event=>({x:Math.round(event.clientX*scale()),y:Math.round(event.clientY*scale())});
-const edits={Backspace:51,Delete:117,ArrowLeft:123,ArrowRight:124,Home:115,End:119,Enter:36,Escape:53};
+const edits={Backspace:51,Delete:117,ArrowLeft:123,ArrowRight:124,ArrowUp:126,ArrowDown:125,Home:115,End:119,Enter:36,Escape:53};
+// Modifier bits as the window library sends them: 1 Shift, 2 Command, 4 Option.
+const modifiers=event=>(event.shiftKey?1:0)|(event.metaKey?2:0)|(event.altKey?4:0);
 // Input carries the time it happened, in epoch milliseconds, which both threads can read.
 const now=()=>performance.timeOrigin+performance.now();
 const send=message=>worker.postMessage(message.type==='start'||message.type==='hello'?message:{...message,t:now()});
 window.foafnautThread=worker instanceof Worker?'worker':'page';
 let focused=false,moved=undefined;
+// Lean's key table for a host with no menu (WebHistory.keyTable): Command on a Mac, Control elsewhere.
+const mac=/Mac|iPhone|iPad/.test(navigator.platform||navigator.userAgent);
+let keyTable=[];
 worker.onmessage=({data})=>{
   if(data.type==='caps')return begin(data.surface);
   if(data.type==='frame'){
@@ -43,6 +48,9 @@ worker.onmessage=({data})=>{
         (latency===undefined?'':`, input to frame ${latency} ms`)+(s.pixelHash?`, pixels ${s.pixelHash}`:'');
     }
   }
+  if(data.type==='keys')keyTable=data.table;
+  // Copy and cut in the address bar: Lean chose the text; the key press still counts as a user action.
+  if(data.type==='clipboard')navigator.clipboard?.writeText(data.text).catch(()=>{note.hidden=false;note.textContent='The browser did not allow writing to the clipboard.';});
   if(data.type==='focus'){focused=data.focused;if(focused)keys.focus({preventScroll:true});else keys.blur();}
   if(data.type==='open'&&!window.open(data.url,'_blank','noopener')){note.hidden=false;note.textContent=`Open this address in your browser: ${data.url}`;}
   if(data.type==='error'){note.hidden=false;note.textContent=data.error;}
@@ -52,7 +60,7 @@ worker.onerror=event=>{note.hidden=false;note.textContent='The browser worker fa
 // to an OffscreenCanvas with WebGPU. If not, or with ?check=1, the worker reads each frame
 // back and the page paints it with putImageData.
 function begin(surface){
-  const options={...size(),page:query.get('page'),check:checkParam==='1'||checkParam==='surface',stats:showStats};
+  const options={...size(),page:query.get('page'),check:checkParam==='1'||checkParam==='surface',stats:showStats,platform:mac?'mac':'other'};
   if(surface&&checkParam!=='1'){
     const offscreen=canvas.transferControlToOffscreen();
     window.foafnautSurface=true;
@@ -84,11 +92,22 @@ addEventListener('keydown',event=>{
   if((event.metaKey||event.ctrlKey)&&!event.altKey&&zoomKeys[event.key]){event.preventDefault();send({type:'command',command:zoomKeys[event.key]});return;}
   if(event.altKey&&event.key==='ArrowLeft'){event.preventDefault();send({type:'command',command:6});return;}
   if(event.altKey&&event.key==='ArrowRight'){event.preventDefault();send({type:'command',command:7});return;}
-  if(focused&&edits[event.key]){event.preventDefault();send({type:'key',key:edits[event.key]});return;}
+  // A key of Lean's table: the page keeps it from the host browser. Paste is left to the
+  // paste event below, which carries the clipboard text.
+  const modifier=(event.shiftKey?'shift+':'')+(mac?(event.metaKey?'command':''):(event.ctrlKey?'control':''));
+  const entry=(mac?event.metaKey:event.ctrlKey)&&!event.altKey?keyTable.find(row=>row.modifier===modifier&&row.key.toLowerCase()===event.key.toLowerCase()):undefined;
+  if(entry&&entry.command!==14){event.preventDefault();send({type:'command',command:entry.command});return;}
+  if(focused&&edits[event.key]){event.preventDefault();send({type:'key',key:edits[event.key],modifiers:modifiers(event)});return;}
   if((event.metaKey||event.ctrlKey)&&event.key==='u'){event.preventDefault();send({type:'command',command:13});return;}
   if(!focused&&event.key==='/'){event.preventDefault();send({type:'command',command:9});return;}
   if(!focused&&event.key==='ArrowDown')send({type:'scroll',amount:80*scale()});
   if(!focused&&event.key==='ArrowUp')send({type:'scroll',amount:-80*scale()});
   if(!focused&&(event.key===' '||event.key==='PageDown'))send({type:'scroll',amount:innerHeight*0.8*scale()});
   if(!focused&&event.key==='PageUp')send({type:'scroll',amount:-innerHeight*0.8*scale()});
+});
+// Paste: the clipboard text goes to Lean, which puts it in the address bar (issue 1268).
+addEventListener('paste',event=>{
+  const text=event.clipboardData?.getData('text/plain');
+  if(text===undefined)return;
+  event.preventDefault();send({type:'paste',text});
 });

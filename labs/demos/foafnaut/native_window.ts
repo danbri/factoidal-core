@@ -34,6 +34,10 @@ export function loadNativeWindow() {
     ng_clipboard_write: { parameters: ["buffer"], result: "i32" },
     ng_open_url: { parameters: ["buffer"], result: "i32" },
     ng_set_cursor: { parameters: ["i32"], result: "void", optional: true },
+    ng_app_start: { parameters: [], result: "void", optional: true },
+    ng_app_state: { parameters: ["buffer"], result: "void", optional: true },
+    ng_print_paper: { parameters: ["buffer"], result: "void", optional: true },
+    ng_print: { parameters: ["buffer","u32","u32","u32","f64","f64","buffer","buffer"], result: "i32", optional: true },
   } as const);
   const symbols = library.symbols;
   const isMainThread = () => symbols.ng_is_main_thread() === 1;
@@ -63,6 +67,24 @@ export function loadNativeWindow() {
     // Lean chose the pointer; an older window library keeps the arrow.
     setCursor:(kind:string)=>symbols.ng_set_cursor?.(kind==="hand"?1:kind==="text"?2:0),
     setHistory:(back:boolean,forward:boolean)=>symbols.ng_set_history(back?1:0,forward?1:0),
+    // A regular app in the Dock and Command-Tab, with its menu, before the engine loads.
+    appStart:()=>symbols.ng_app_start?.(),
+    appState() {
+      const state=new Int32Array(3);symbols.ng_app_state?.(state);
+      return {regular:state[0]===1,active:state[1]===1,keyWindow:state[2]===1};
+    },
+    // The paper of the page setup, in points; null with an older window library.
+    printPaper() {
+      if(!symbols.ng_print_paper)return null;
+      const state=new Float64Array(6);symbols.ng_print_paper(state);
+      return {width:state[0],height:state[1],left:state[2],right:state[3],top:state[4],bottom:state[5]};
+    },
+    // Page images Lean drew, to the system print operation. With pdfPath, saved there with no panel.
+    print(pages:Uint8Array,count:number,width:number,height:number,pointWidth:number,pointHeight:number,title:string,pdfPath?:string) {
+      if(!symbols.ng_print)throw new Error("This window library can not print");
+      const encoder=new TextEncoder();
+      return symbols.ng_print(pages,count,width,height,pointWidth,pointHeight,encoder.encode(title.replaceAll("\0","")+"\0"),encoder.encode((pdfPath??"")+"\0"));
+    },
     testRaise:()=>symbols.ng_test_raise(),
     testKey:(key:string,shift=false)=>symbols.ng_test_key(new TextEncoder().encode(key+"\0"),shift?1:0)===1,
     testEvent:(kind:number,a:number,b:number)=>symbols.ng_test_event(kind,a,b),

@@ -160,6 +160,11 @@ void ng_set_cursor(int kind) {
 }
 @end
 
+// Bring the app to the front: on macOS 14 and later through cooperative activation.
+static void activateApp(void) {
+  if (@available(macOS 14.0, *)) [NSApp activate];
+  else [NSApp activateIgnoringOtherApps:YES];
+}
 int ng_is_main_thread(void) { return pthread_main_np(); }
 void ng_set_content_size(uint32_t width, uint32_t height) {
   if (!pthread_main_np() || !window) return;
@@ -173,7 +178,7 @@ void ng_show_after_surface(void) {
     // UnsafeWindowSurface can request pathless FFI permission from Terminal,
     // obscuring our window. Restore focus once after that constructor returns.
     [window makeKeyAndOrderFront:nil];
-    [NSApp activateIgnoringOtherApps:YES];
+    activateApp();
     [NSApp updateWindows];
     [CATransaction flush];
   }
@@ -294,9 +299,18 @@ static void installMenu(void) {
   commandItem(fileMenu,@"Open Location",@"l",9);
   commandItem(fileMenu,@"Close Tab",@"w",11);
   commandItem(fileMenu,@"Settings",@",",12);
+  [fileMenu addItem:[NSMenuItem separatorItem]];
+  // Page Setup is the system panel; it changes the paper that Print lays out for.
+  [fileMenu addItemWithTitle:@"Page Setup\u2026" action:@selector(runPageLayout:) keyEquivalent:@"P"];
+  commandItem(fileMenu,@"Print\u2026",@"p",18);
   fileItem.submenu=fileMenu;
   NSMenuItem *editItem=[bar addItemWithTitle:@"Edit" action:nil keyEquivalent:@""];
   NSMenu *editMenu=[[NSMenu alloc] initWithTitle:@"Edit"];
+  // Lean edits the address bar and the page selection; these only send the command.
+  commandItem(editMenu,@"Undo",@"z",16);
+  commandItem(editMenu,@"Redo",@"Z",17);
+  [editMenu addItem:[NSMenuItem separatorItem]];
+  commandItem(editMenu,@"Cut",@"x",15);
   commandItem(editMenu,@"Copy",@"c",4);
   commandItem(editMenu,@"Paste",@"v",14);
   commandItem(editMenu,@"Select All",@"a",5);
@@ -344,8 +358,13 @@ void ng_test_raise(void) {
   window.level=NSFloatingWindowLevel;[window orderFrontRegardless];
 }
 void ng_test_event(uint32_t kind,int32_t a,int32_t b) { enqueue(kind,a,b); }
-void *ng_create(uint32_t width, uint32_t height) {
-  if (!pthread_main_np() || window) return NULL;
+// The app as macOS sees it: a regular app, in the Dock and in Command-Tab, with its
+// menu. The host calls this first, before it loads the engine, so the Dock icon
+// stops bouncing at once; ng_create calls it too. It runs once.
+static int appStarted;
+void ng_app_start(void) {
+  if (!pthread_main_np() || appStarted) return;
+  appStarted=1;
   @autoreleasepool {
     // A wrapper app runs a program outside its bundle, so macOS would show the file
     // name in the menu bar. The wrapper names the app; this must precede NSApp.
@@ -355,6 +374,23 @@ void *ng_create(uint32_t width, uint32_t height) {
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     delegate = [[NGDelegate alloc] init];
     NSApp.delegate = delegate;
+    installMenu();
+    [NSApp finishLaunching];
+    activateApp();
+  }
+}
+// What macOS says about this app: [regular policy, active, frontmost window is ours].
+void ng_app_state(int32_t *out) {
+  out[0]=out[1]=out[2]=0;
+  if (!pthread_main_np() || !appStarted) return;
+  out[0]=NSApp.activationPolicy==NSApplicationActivationPolicyRegular;
+  out[1]=NSApp.active;
+  out[2]=window && window.keyWindow;
+}
+void *ng_create(uint32_t width, uint32_t height) {
+  if (!pthread_main_np() || window) return NULL;
+  ng_app_start();
+  @autoreleasepool {
     window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,width,height)
       styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable
       backing:NSBackingStoreBuffered defer:NO];
@@ -374,9 +410,7 @@ void *ng_create(uint32_t width, uint32_t height) {
     [window makeFirstResponder:content];
     [window center];
     [window makeKeyAndOrderFront:nil];
-    [NSApp finishLaunching];
-    installMenu();
-    [NSApp activateIgnoringOtherApps:YES];
+    activateApp();
     resizeEvent();
     [NSApp updateWindows];
     [CATransaction flush];
@@ -457,4 +491,74 @@ void ng_hide(void) {
   @autoreleasepool { [window orderOut:nil]; }
   // Retain window/view and loaded dylib until process exit: the WebGPU surface
   // holds their native handles. Never free NSView underneath that surface.
+}
+
+// Printing (issue 1268). Lean lays the document out for the paper and draws each
+// page; this hands the page images to the system print operation, which gives the
+// print panel, Save as PDF and the printer. No layout or page decision is made here.
+@interface NGPrintView : NSView
+@property(nonatomic) NSArray<NSBitmapImageRep *> *pages;
+@property(nonatomic) NSSize pageSize;
+@end
+@implementation NGPrintView
+- (BOOL)isFlipped { return YES; }
+- (BOOL)knowsPageRange:(NSRangePointer)range { *range=NSMakeRange(1,self.pages.count); return YES; }
+- (NSRect)rectForPage:(NSInteger)page {
+  return NSMakeRect(0,(page-1)*self.pageSize.height,self.pageSize.width,self.pageSize.height);
+}
+- (void)drawRect:(NSRect)dirty {
+  for (NSUInteger i=0;i<self.pages.count;i++) {
+    NSRect rect=NSMakeRect(0,i*self.pageSize.height,self.pageSize.width,self.pageSize.height);
+    if (NSIntersectsRect(rect,dirty))
+      [self.pages[i] drawInRect:rect fromRect:NSZeroRect operation:NSCompositingOperationCopy fraction:1 respectFlipped:YES hints:nil];
+  }
+}
+@end
+// The paper of the current page setup, in points: width, height, and the left,
+// right, top and bottom margins.
+void ng_print_paper(double *out) {
+  @autoreleasepool {
+    NSPrintInfo *info=NSPrintInfo.sharedPrintInfo;
+    out[0]=info.paperSize.width;out[1]=info.paperSize.height;
+    out[2]=info.leftMargin;out[3]=info.rightMargin;out[4]=info.topMargin;out[5]=info.bottomMargin;
+  }
+}
+// Print `count` pages of RGBA pixels, each `width` by `height`, drawn at `pointWidth`
+// by `pointHeight` points inside the margins of the shared page setup. With a PDF
+// path the job is saved there with no panel (for tests); else the print panel shows,
+// modal, as in other Mac apps. Returns the pages sent, 0 when cancelled, -1 on error.
+int32_t ng_print(const uint8_t *rgba,uint32_t count,uint32_t width,uint32_t height,
+    double pointWidth,double pointHeight,const char *title,const char *pdfPath) {
+  if (!pthread_main_np() || !rgba || !count || !width || !height) return -1;
+  @autoreleasepool {
+    NSMutableArray<NSBitmapImageRep *> *pages=[NSMutableArray arrayWithCapacity:count];
+    size_t bytes=(size_t)width*height*4;
+    for (uint32_t i=0;i<count;i++) {
+      NSBitmapImageRep *rep=[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:width pixelsHigh:height
+        bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace
+        bitmapFormat:NSBitmapFormatAlphaNonpremultiplied bytesPerRow:width*4 bitsPerPixel:32];
+      if (!rep) return -1;
+      memcpy(rep.bitmapData,rgba+i*bytes,bytes);
+      rep.size=NSMakeSize(pointWidth,pointHeight);
+      [pages addObject:rep];
+    }
+    NGPrintView *view=[[NGPrintView alloc] initWithFrame:NSMakeRect(0,0,pointWidth,pointHeight*count)];
+    view.pages=pages;view.pageSize=NSMakeSize(pointWidth,pointHeight);
+    NSPrintInfo *info=[NSPrintInfo.sharedPrintInfo copy];
+    info.horizontalPagination=NSPrintingPaginationModeClip;
+    info.verticalPagination=NSPrintingPaginationModeClip;
+    info.horizontallyCentered=NO;info.verticallyCentered=NO;
+    NSString *path=pdfPath&&*pdfPath?[NSString stringWithUTF8String:pdfPath]:nil;
+    if (path) {
+      info.jobDisposition=NSPrintSaveJob;
+      info.dictionary[NSPrintJobSavingURL]=[NSURL fileURLWithPath:path];
+    }
+    NSPrintOperation *operation=[NSPrintOperation printOperationWithView:view printInfo:info];
+    operation.jobTitle=title?[NSString stringWithUTF8String:title]:@"foafnaut";
+    operation.showsPrintPanel=path==nil;
+    operation.showsProgressPanel=path==nil;
+    BOOL done=[operation runOperation];
+    if (window) [window makeKeyAndOrderFront:nil];
+    return done?(int32_t)count:0;
+  }
 }
