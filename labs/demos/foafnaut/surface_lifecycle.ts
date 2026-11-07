@@ -15,6 +15,8 @@ export class SurfaceLifecycle<T> {
   framesPresented=0;
   constructor(private driver:SurfaceDriver<T>,private format:string,
     private log:(message:string,details:unknown)=>void=(message,details)=>console.log(message,details)) {}
+  /** A long-lived lifecycle takes a new driver when the plan changes. */
+  setDriver(driver:SurfaceDriver<T>) {this.driver=driver;}
   private snapshot() {
     let native:unknown;
     try { native=this.driver.state?.(); } catch(error) { native={snapshotError:String(error)}; }

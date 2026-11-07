@@ -85,6 +85,8 @@ export async function prepareHTML(engine:HTMLEngine,url:string,signal?:AbortSign
   signal?.throwIfAborted();
   return {
     url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,
+    // What compile needs, as plain data, so the engine in a worker can run it.
+    request:(_width:number,_height:number,view:PageView={})=>({source:document.source,options:{...options,...view} as Record<string,unknown>}),
     compile:(width:number,height:number,view:PageView={})=>engine.compile(document.source,width,height,{...options,...view}),
     selectedText:(width:number,height:number,view:PageView={})=>engine.selectedText(document.source,width,height,{...options,...view}),
   };
