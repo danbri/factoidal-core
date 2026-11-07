@@ -273,10 +273,34 @@ private def conditionsPass (attrs : List NamespaceAttribute) : Bool :=
   let extensions := match plainAttr attrs "requiredExtensions" with | none => true | some _ => false
   language && extensions
 
+/-- Elements of the tree that have an id, by id; the first one with an id wins. -/
+private def idTargets : Nat → NamespaceNode → List (String × NamespaceNode)
+  | 0,_ => []
+  | _,.other _ => []
+  | fuel+1,node@(.element _ attrs children) =>
+    ((plainAttr (renameId attrs) "id").toList.map (·,node)) ++ children.flatMap (idTargets fuel)
+
+private def hasElement (tag : String) : Nat → NamespaceNode → Bool
+  | 0,_ => false
+  | _,.other _ => false
+  | fuel+1,.element name _ children => name.localPart == tag || children.any (hasElement tag fuel)
+
+/-- SVG Tiny 1.2 §5.6: an instance inherits from its `use` element. Text lowers
+    here, with the font values in force, so a `use` of text must lower its own
+    copy. A target with a `use` inside stays with the strict reader, which has
+    the cycle check. -/
+private def textInstance (targets : Std.HashMap String NamespaceNode) (attrs : List NamespaceAttribute) : Option NamespaceNode := do
+  let source ← NativeSVGReferences.href attrs
+  if !source.startsWith "#" then none
+  let target ← targets.get? (source.drop 1).toString
+  let .element name _ _ := target | none
+  if !["g","text"].contains name.localPart || !hasElement "text" maxDepth target || hasElement "use" maxDepth target then none
+  pure target
+
 /-- Remove foreign and unread elements, stray text and the content of silent
     elements, and lower `text` when a font is known. Returns the new tree and
     one log line for each removal. -/
-private def normalise (fonts : List SVGFont) : Nat → TextState → Bool → NamespaceNode → Option NamespaceNode × List String
+private def normalise (fonts : List SVGFont) (targets : Std.HashMap String NamespaceNode) : Nat → TextState → Bool → NamespaceNode → Option NamespaceNode × List String
   | 0,_,_,_ => (none,["element: nesting exceeds 64"])
   | _,_,_,.other (.comment c) => (some (.other (.comment c)),[])
   | _,_,keepText,.other raw => match raw with
@@ -295,19 +319,29 @@ private def normalise (fonts : List SVGFont) : Nat → TextState → Bool → Na
       -- SVG Tiny 1.2 §5.8: draw only the first child whose conditions pass.
       let chosen := children.find? fun | .element n a _ => n.namespace_ == some svgURI && conditionsPass a | _ => false
       let inner := state.read attrs
-      let result := (chosen.toList).map (normalise fonts fuel inner false)
+      let result := (chosen.toList).map (normalise fonts targets fuel inner false)
       (some (svgElement "g" (renameId attrs) (result.filterMap (·.1))),result.flatMap (·.2))
     else if name.localPart == "a" then
       -- A link draws its content. Link regions are not part of this pass.
       let inner := state.read attrs
-      let results := children.map (normalise fonts fuel inner false)
+      let results := children.map (normalise fonts targets fuel inner false)
       (some (svgElement "g" (renameId attrs) (results.filterMap (·.1))),results.flatMap (·.2))
+    else if name.localPart == "use" && !fonts.isEmpty && (textInstance targets attrs).isSome then
+      let inner := state.read attrs
+      let target := (textInstance targets attrs).getD (.other (.comment ""))
+      let (node,log) := normalise fonts targets fuel inner false target
+      let x := float (plainAttr attrs "x") 0
+      let y := float (plainAttr attrs "y") 0
+      let frame := ((plainAttr attrs "transform").getD "") ++ s!" translate({x},{y})"
+      let kept := (renameId attrs).filter fun a => a.name.namespace_.isNone &&
+        !["x","y","width","height","transform","href","font-size","font-family","text-anchor"].contains a.name.localPart
+      (some (svgElement "g" (kept ++ [mkAttr "transform" frame]) node.toList),log)
     else if !readable.contains name.localPart then (none,["element: " ++ name.localPart])
     else if silent.contains name.localPart then (some (.element name (renameId attrs) []),[])
     else
       let keepText := name.localPart == "style"
       let inner := state.read attrs
-      let results := children.map (normalise fonts fuel inner keepText)
+      let results := children.map (normalise fonts targets fuel inner keepText)
       (some (.element name (renameId attrs) (results.filterMap (·.1))),results.flatMap (·.2))
 
 private def stripAttr (tag : String) (key : String) : Nat → NamespaceNode → NamespaceNode × Nat
@@ -429,7 +463,9 @@ def parse (xml : String) (width height : Nat) (font : Option SVGFont := none) :
   let root ← parseNamespaceView xml
   let (root,rootLog) := rootAttrs root
   -- Fonts in the document come first; the host's font is the default.
-  let (some root,log) := normalise (fontsIn root ++ font.toList) maxDepth {} false root | throw "root element is not read"
+  let targets := (idTargets maxDepth root).foldl (fun map (id,node) =>
+    if map.contains id then map else map.insert id node) ({} : Std.HashMap String NamespaceNode)
+  let (some root,log) := normalise (fontsIn root ++ font.toList) targets maxDepth {} false root | throw "root element is not read"
   repair width height 1024 {root,dropped:=rootLog ++ log,parses:=0}
 
 end NativeSVGForgiving

@@ -136,3 +136,7 @@ private def textPixel (body : String) (x y : Nat) : List Nat :=
 #guard close (textPixel (redBlueGradient "" ++ "<text x='0' y='50' font-size='50' fill='url(#g)'>aa</text>") 1 25) [254,0,1] 4
 #guard close (textPixel (redBlueGradient "gradientUnits='userSpaceOnUse' x2='100'" ++
   "<text x='0' y='50' font-size='50' fill='url(#g)'>aa</text>") 75 25) [64,0,191]
+-- An instance of text takes its font from the `use` element.
+#guard textPixel "<defs><text id='t' y='50'>a</text></defs><use xlink:href='#t' font-size='50'/>" 25 25 == [0,0,0]
+#guard textPixel "<defs><text id='t' y='50'>a</text></defs><use xlink:href='#t' x='50' font-size='50'/>" 25 25 == [255,255,255]
+#guard textPixel "<defs><g id='t'><text y='50'>a</text></g></defs><use xlink:href='#t' fill='lime' font-size='50'/>" 25 25 == [0,255,0]

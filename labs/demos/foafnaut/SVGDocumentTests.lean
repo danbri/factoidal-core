@@ -95,11 +95,12 @@ def run : IO Unit := do
   let styles ← unwrap (ReferenceContext.create styledDoc)
   let styled ← unwrap (parseRootInContext styles [1])
   color styled 50 50 1 0 0 "global SVG stylesheet was confined to its defining SVG root"
-  let paintDoc := document [root [svg "defs" [] [svg "linearGradient" [attr "id" "paint"]]] [attr "style" "display:none"],
+  let paintDoc := document [root [svg "defs" [] [svg "linearGradient" [attr "id" "paint"] [svg "stop" [attr "stop-color" "blue"]]]] [attr "style" "display:none"],
     root [rect [attr "fill" "url(#paint) red"]]]
   let paints ← unwrap (ReferenceContext.create paintDoc)
-  check (!(parseRootInContext paints [1]).isOk) "existing global paint server was treated as missing fallback"
-  IO.println "PASS cross-root cycle refusal, sibling survival, global SVG styles and explicit global paint-server refusal"
+  let painted ← unwrap (parseRootInContext paints [1])
+  color painted 50 50 0 0 1 "paint server in a hidden root was treated as missing fallback"
+  IO.println "PASS cross-root cycle refusal, sibling survival, global SVG styles and global paint server"
 
 #eval run
 end NativeSVGDocumentTests
