@@ -711,6 +711,21 @@ room). First user: the FoafOS shell's bus room (danbri/glitchcan-minigam,
   `--dangerously-disable-ratelimits` turns the sender rate off; the caps stay on.
 - Tests: `#guard`s in `Held.lean`; `npm/factoidal/test/xmpp-held.test.mjs`.
 
+## 2026-11-07: PROXY protocol v2; address tags in place of addresses
+
+Owner, 2026-11-07: "can you not pass through a salted hash of the original IP, something in that vein, so the logins can
+count against that? we don't want a big denial of service switch here."
+
+- `L4Factoidal/Net/ProxyProtocol.lean`: `parse`, every accept and refuse decision on a PROXY protocol v2 header (HAProxy
+  section 2.2): signature, version 2, command LOCAL or PROXY, TCP over IPv4 or IPv6, length bounds, TLVs skipped.
+  Theorems `parse_signature`, `parse_local_sig`, `parse_proxy_sig`, `parse_more_bounded`, `parse_local_le`,
+  `parse_proxy_le`; `#guard`s for each refusal and for every split point of a header. Wasm op `proxyHeaderParse`
+  (`Wasm/Ops/XmppSession.lean`), called by `xmpp-serve --proxy-protocol` before TLS.
+- `Net.LoginLimit.addressTag`: HMAC-SHA-256 under the host's in-memory `addressKey` of `clientPrefix address`. Sessions
+  keep the tag (`XmppOpenSession.address`), never the address; `AuthGuard` is unchanged and counts `address:` and the
+  tag. Theorems `addressTag_prefix` (the grouping is `clientPrefix`'s only), `addressTag_empty`.
+- Tests: `npm/factoidal/test/xmpp-proxy-protocol.test.mjs`.
+
 ## 2026-11-06: SASL: stream close, address backoff, one exchange for every name, keys once (finding H3)
 
 Already on `main` from https://github.com/danbri/factoidal/issues/1128: `AuthGuard`, 5 failures in

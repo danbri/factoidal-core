@@ -45,8 +45,19 @@ two transports never collide.
 Theorems: `requesterKey_injective_kind`, `requesterKey_xmpp_injective`,
 `requesterKey_length`, `loginKeys_nonempty`.
 
+The address tag (`addressTag`, 2026-11-07): `xmpp-serve` keeps no client
+address. At start the host makes a random key that lives in memory only (a new
+one at each restart), and the engine keys the client's address part
+(`clientPrefix`: the IPv4 address, or the /64 of an IPv6 address) with
+HMAC-SHA-256 under it. The counters then hold `address:` and 64 hexadecimal
+digits. `clientPrefix` stays the one place that groups addresses: theorem
+`addressTag_prefix`. The address can come from the socket or from a PROXY
+protocol header (`Net.ProxyProtocol`). Theorems `addressTag_prefix`,
+`addressTag_empty`.
+
 No `sorry`, no `axiom`, no `partial`.
 -/
+import L4Factoidal.Crypto.Hmac
 
 namespace L4Factoidal.Net.LoginLimit
 
@@ -127,6 +138,27 @@ def clientPrefix (addr : String) : String :=
   else match ipv6Groups? h with
     | some gs => ":".intercalate ((gs.take 4).map (fun g => String.ofList (Nat.toDigits 16 g))) ++ "::/64"
     | none => h
+
+/-! ## The address tag -/
+
+/-- The tag of a client address under the host's key: lower-case hexadecimal
+of HMAC-SHA-256(key, `clientPrefix address`), or `""` when there is no
+address. A host that logs a connection logs a prefix of this, never the
+address. -/
+def addressTag (key : ByteArray) (address : String) : String :=
+  let p := clientPrefix address
+  if address.isEmpty || p.isEmpty then "" else L4Factoidal.Crypto.bytesToHex (L4Factoidal.Crypto.hmacSha256 key p.toUTF8)
+
+/-- Two addresses with one prefix (one IPv4 address, one IPv6 /64) have one
+tag: the grouping is `clientPrefix`'s, and the tag adds none of its own. -/
+theorem addressTag_prefix (key : ByteArray) (a b : String) (ha : a.isEmpty = false)
+    (hb : b.isEmpty = false) (h : clientPrefix a = clientPrefix b) :
+    addressTag key a = addressTag key b := by
+  simp only [addressTag, h, ha, hb]
+
+/-- No address, no tag: a session with no address counts per account only. -/
+theorem addressTag_empty (key : ByteArray) : addressTag key "" = "" := by
+  simp [addressTag]
 
 /-! ## The requester (invariant I2) -/
 
@@ -306,5 +338,21 @@ def jidB : Requester := .xmpp "b@example.org"
 -- Five names from JID A, one failure each: the sixth name is refused.
 #guard (failMany {} (fun i => loginKeys s!"user{i}" jidA) 5 100).check lDefault 105 (loginKeys "user5" jidA) == some 55
 #guard (failMany {} (fun i => loginKeys s!"user{i}" jidA) 5 100).check lDefault 105 (loginKeys "user5" jidB) == none
+
+-- The tag: one per IPv4 address and per IPv6 /64, 64 hexadecimal digits,
+-- and a tag reads as itself where a requester key is made.
+def tagKey : ByteArray := "test key, not a secret".toUTF8
+#guard (addressTag tagKey "2001:db8:1:2:3:4:5:6") == addressTag tagKey "2001:db8:1:2:ffff:4:5:7"
+#guard (addressTag tagKey "2001:db8:1:2:3:4:5:6") != addressTag tagKey "2001:db8:1:3:3:4:5:6"
+#guard (addressTag tagKey "203.0.113.7") == addressTag tagKey "::ffff:203.0.113.7"
+#guard (addressTag tagKey "203.0.113.7") != addressTag tagKey "203.0.113.8"
+#guard (addressTag tagKey "203.0.113.7") != addressTag "another key".toUTF8 "203.0.113.7"
+#guard (addressTag tagKey "203.0.113.7").length == 64
+#guard addressTag tagKey "" == ""
+#guard clientPrefix (addressTag tagKey "203.0.113.7") == addressTag tagKey "203.0.113.7"
+#guard requesterKey (.tcp (addressTag tagKey "203.0.113.7")) == "address:" ++ addressTag tagKey "203.0.113.7"
+-- RFC 4231 test case 2 through this path: the tag is HMAC-SHA-256 itself.
+#guard L4Factoidal.Crypto.bytesToHex (L4Factoidal.Crypto.hmacSha256 "Jefe".toUTF8 "what do ya want for nothing?".toUTF8)
+  == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
 
 end L4Factoidal.Net.LoginLimit

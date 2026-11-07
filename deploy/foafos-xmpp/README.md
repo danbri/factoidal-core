@@ -53,8 +53,43 @@ node smoke.mjs ~/.config/foafos-xmpp-fly/accounts --idle 240
 - `xmpp-serve` closes a new connection above 200 open connections, a connection with no bound resource after 30 seconds,
   and a client with more than 8 MiB queued. Fly also stops at 256 connections for each port.
 - Since 0.33.0 failed logins have a limit per account name and one per client address. Behind Fly's proxy every client has
-  the proxy's address, so run with `--no-address-limit` in `XMPP_EXTRA_ARGS`: the limit then counts per account name only.
-  The passwords are 192 random bits, which is the main defence against guessing.
+  the proxy's address, so until the step below this box runs with `--no-address-limit` in `XMPP_EXTRA_ARGS`: the limit
+  then counts per account name only. The passwords are 192 random bits, which is the main defence against guessing.
+
+## Next deploy: the PROXY protocol, and the limit per client address on again
+
+Needs a `@factoidal/core` release with `xmpp-serve --proxy-protocol` (in `CHANGELOG.md` under "Unreleased" on
+2026-11-07; not in 0.33.0). `fly deploy` reads `fly.toml` from this directory, not from `main`, so `fly.toml` here is not
+changed yet: with 0.33.0 the flag would stop the start. With that release, in one deploy:
+
+1. `[build.args] FACTOIDAL_VERSION` = the release with `--proxy-protocol`.
+2. `[env] XMPP_EXTRA_ARGS = "--proxy-protocol"` (in place of `--no-address-limit`).
+3. On each of the three XMPP services (internal ports 5223, 5222 and 5281; not 8080 and not 8090), in its
+   `[[services.ports]]`:
+
+   ```toml
+   [[services.ports]]
+     port = 5223
+     handlers = ["proxy_proto"]
+     proxy_proto_options = { version = "v2" }
+   ```
+
+   All three or none: with `--proxy-protocol` the server closes every connection that does not start with a header, on
+   every listener.
+4. After the deploy: `node smoke.mjs ~/.config/foafos-xmpp-fly/accounts` (all three ports), and the log shows
+   `connection from address <12 hex digits>`, never an address.
+
+Risks to check at that deploy:
+
+- The `tcp_checks` on 5223. Fly's documentation does not say whether a TCP check goes through the proxy or sends a header.
+  A TCP check only connects, so it passes either way; the server closes it after 10 seconds without a header, and logs
+  `closing a connection that sent no PROXY header in time`.
+- The server must be reachable only through Fly's proxy: a client that reaches the machine directly can send a header with
+  any address. `entrypoint.sh` binds `--host 0.0.0.0` (IPv4); Fly's private network (6PN) is IPv6. Do not change it to
+  `::` while `--proxy-protocol` is on.
+- IPv6 clients are counted by /64. A client with a larger allocation (a /56 or /48) can move between /64s; the limit per
+  account name still applies.
+- Rollback: `XMPP_EXTRA_ARGS = "--no-address-limit"` and remove the two lines from the three services, in one deploy.
 - The server keeps passwords in clear in machine memory and in a Fly secret. Each account has its own SCRAM salt.
 - Any account can join any room unless the room is on a `--muc-members` list, or it is banned there. Rooms have no history.
 - Room owners: with no `--muc-owners`, the first occupant of a room is its owner, and can kick and ban there. With

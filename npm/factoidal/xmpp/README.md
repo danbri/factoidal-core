@@ -212,6 +212,7 @@ The host closes a socket when a limit is reached. These are limits on bytes and 
 | `loginTimeoutMs` | `--login-timeout SECONDS` | 30 s | Time to bind a resource |
 | `maxQueuedBytes` | | 8 MiB | Bytes waiting for a client that is not reading |
 | `maxBuffered` | | 1 MiB | Bytes of an unfinished unit |
+| `proxyHeaderTimeoutMs` | | 10 s | With `proxyProtocol`: time to send the PROXY header and, on a TLS listener, to finish the TLS handshake |
 
 There is no connection limit per address: behind a proxy, every client has the same one.
 
@@ -222,6 +223,39 @@ There is no connection limit per address: behind a proxy, every client has the s
 | `heldLimits.perAccount`, `.perAccountBytes` | | 256 stanzas, 4 MiB | Held for one offline account |
 | `heldLimits.total`, `.totalBytes` | | 10,000 stanzas, 64 MiB | Held on the server |
 | `heldLimits.senderPerWindow`, `.senderWindow` | | 60 in 60 s | Stanzas one account may have held; roster writes of one account |
-| `addressLimit: false` | `--no-address-limit` | on | Failed logins per client address (5 in 60 s, 20 in an hour). Turn it off behind a proxy, where every client has one address |
+| `addressLimit: false` | `--no-address-limit` | on | Failed logins per client address (5 in 60 s, 20 in an hour). Turn it off only behind a proxy that sends no PROXY header, where every client has one address |
 
 Fixed in the engine: 5 failed logins in 60 s per account name, 3 failed attempts on a stream, 1,000 items in a roster, 64 levels and 8,192 elements in a stanza, and room nicks of at most 64 bytes.
+
+## Client addresses and the PROXY protocol
+
+The server keeps no client address. At start the host makes a random 32-byte key (`addressKey` of `xmppOpen`) that is in
+memory only and new at each start. The engine keeps, for each session, the tag HMAC-SHA-256(key, prefix), where the
+prefix is the IPv4 address or the /64 of an IPv6 address (`LoginLimit.clientPrefix`, the one place that groups addresses;
+`LoginLimit.addressTag`, theorem `addressTag_prefix`). The failed-login counters hold `address:` and the tag. A log line
+shows the first 12 hexadecimal digits of the tag (`addressTag` of `xmppSessionOpen` and `xmppWsOpen`). After a restart
+the tags change, and so do the counters, which are in memory too.
+
+`proxyProtocol: true` (`xmpp-serve --proxy-protocol`) is for a listener behind a TCP proxy that ends no TLS, such as Fly
+with `handlers = ["proxy_proto"]` and `proxy_proto_options = { version = "v2" }`. Every connection on every listener
+(the main port, `--tls-port`, `--ws-port`) must start with a PROXY protocol version 2 header (HAProxy,
+https://www.haproxy.org/download/2.9/doc/proxy-protocol.txt section 2.2), and the client address in it is the one the
+limit counts. The host buffers the first bytes and calls `proxyHeaderParse` (IN region: the bytes so far) until the
+engine decides (`L4Factoidal/Net/ProxyProtocol.lean`, `parse`):
+
+| Decision | Host |
+|---|---|
+| `more` | Waits. Theorem `parse_more_bounded`: only while fewer than 1,040 bytes are held. `proxyHeaderTimeoutMs` closes a connection that never completes a header |
+| `refuse`, with `reason` `signature`, `version`, `command`, `family` or `length` | Closes the connection. No XMPP and no TLS byte is read. A connection that starts with anything else (an XMPP stream header, a TLS ClientHello) is refused at its first byte |
+| `local` | A connection the proxy made itself (a health check). Spec: the receiver uses the real endpoints, so the address is the socket's |
+| `proxy`, with `address` and `port` | The address goes to the session as `remoteAddress` |
+
+The bytes after the header, in the same read, go to TLS or to the XMPP session (theorems `parse_proxy_le`,
+`parse_local_le`). PROXY is accepted for TCP over IPv4 (`0x11`) and IPv6 (`0x21`) only; UNSPEC, UNIX and UDP name no
+client address for the limit and are refused. TLVs are skipped. A length field above 1,024 is refused. An IPv4-mapped IPv6
+source is counted as its IPv4 address. Version 1 (the text form) is not read: Fly sends version 2 when asked, and a second
+parser would only be one more input path.
+
+Without `proxyProtocol` no header is read, so no client can claim an address; the socket's address is tagged the same way.
+`proxyProtocol` on a listener that is reachable without the proxy lets a client choose its address for the limit: use it
+only where every connection comes through the proxy.

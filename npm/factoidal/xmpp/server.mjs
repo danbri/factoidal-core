@@ -43,9 +43,19 @@
 // `xmppWsPing` on a WebSocket), and one that sends no byte in the timeout after
 // that is closed. There is no connection limit per address: behind a
 // proxy, every client has the same one.
+//
+// Client addresses (the failed-login limit): the engine keeps a tag of each,
+// HMAC-SHA-256 under `addressKey`, a random key made here at start and kept in
+// memory only (`L4Factoidal/Net/LoginLimit.lean`, `addressTag`). Logs show the
+// first 12 digits of the tag, never the address. With `proxyProtocol` each
+// connection must start with a PROXY protocol v2 header, which names the client
+// behind a proxy; the engine decides on it (`proxyHeaderParse`,
+// `L4Factoidal/Net/ProxyProtocol.lean`) and this file only buffers the bytes,
+// then hands what follows the header to TLS or to the XMPP session.
 
 import { createHash, randomBytes } from 'node:crypto'
 import { StringDecoder } from 'node:string_decoder'
+import { Duplex } from 'node:stream'
 import { mkdir, readFile, writeFile, readdir, unlink, rename, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { loadEngine } from '../bin/engine.mjs'
@@ -173,6 +183,9 @@ export async function openXmppServer (options = {}) {
   // (https://github.com/danbri/factoidal/issues/1128); the engine decides.
   if (options.disableRateLimits === true) config.disableRateLimits = true
   if (options.heldLimits && typeof options.heldLimits === 'object') config.heldLimits = options.heldLimits
+  // The key of the client address tags: random, in memory only, new at each start.
+  // A tag is no use to anyone who does not hold it, so it never goes to a log or a file.
+  config.addressKey = typeof options.addressKey === 'string' ? options.addressKey : randomToken(32)
   let opened
   try {
     opened = engine.call('xmppOpen', [JSON.stringify(config)])
@@ -241,6 +254,8 @@ export async function openXmppServer (options = {}) {
       let open = true
       return {
         handle: session,
+        /** The first digits of the client's address tag, for a log line ('' for no address). */
+        addressTag: typeof answer.addressTag === 'string' ? answer.addressTag : '',
         /** Feed received text; returns the engine's answer document. */
         feed (text) {
           tick()
@@ -334,8 +349,14 @@ async function accountsFileWarnings (path) {
  *   gets a ping (default 30000; 0 disables pings and the timeout)
  * @param {number} [options.pingTimeoutMs] how long after a ping a session that sends
  *   no byte is closed, so that its resource is free again (default 20000)
- * @param {boolean} [options.addressLimit] false: count failed logins per account name only, for a
- *   listener behind a proxy, where every client has one address (default true)
+ * @param {boolean} [options.addressLimit] false: count failed logins per account name only
+ *   (default true). Behind a proxy that sends no PROXY header every client has the proxy's address
+ * @param {boolean} [options.proxyProtocol] every connection, on every listener, starts with a
+ *   PROXY protocol v2 header, read before TLS; the client address it names is the one the
+ *   failed-login limit counts. A connection without a valid header is closed. Without this option no
+ *   header is ever read, so a client cannot claim an address (default false)
+ * @param {number} [options.proxyHeaderTimeoutMs] with `proxyProtocol`, how long a connection has to
+ *   send its header and, on a TLS listener, finish the TLS handshake (default 10000)
  * @param {Function} [options.onError]
  * @param {Function} [options.onLog]
  * @returns {Promise<{server: object, xmpp: object, close: Function, sessions: Function}>}
@@ -358,6 +379,8 @@ export async function createXmppServer (options = {}) {
   const maxQueuedBytes = limit('maxQueuedBytes', 8 * 1024 * 1024)
   const pingIntervalMs = limit('pingIntervalMs', 30000)
   const pingTimeoutMs = limit('pingTimeoutMs', 20000)
+  const proxyProtocol = options.proxyProtocol === true
+  const proxyHeaderTimeoutMs = limit('proxyHeaderTimeoutMs', 10000)
   if (pingIntervalMs > 0 && pingTimeoutMs === 0) throw new XmppHostError('pingTimeoutMs must be positive when pings are on')
   if (!Number.isSafeInteger(maxBuffered) || maxBuffered < 0) {
     throw new XmppHostError('maxBuffered must be a nonnegative safe integer')
@@ -391,6 +414,17 @@ export async function createXmppServer (options = {}) {
   if (dir !== null && options.stateKey !== undefined) serverOptions.persist = true
   const xmpp = await openXmppServer(serverOptions)
   if (accountsFile !== null) xmpp.warnings.push(...await accountsFileWarnings(accountsFile))
+  if (proxyProtocol) {
+    try {
+      xmpp.engine.callBlobIO('proxyHeaderParse', [], new Uint8Array(0))
+    } catch (error) {
+      xmpp.close()
+      if (isUnknownOp(error)) {
+        throw new XmppHostError('the loaded l4factoidal WebAssembly module does not carry proxyHeaderParse', { unknownOp: true })
+      }
+      throw error
+    }
+  }
 
   // Rosters the previous run persisted.
   try {
@@ -500,10 +534,95 @@ export async function createXmppServer (options = {}) {
   // connection callback and therefore have no engine session yet.
   const transports = new Set()
 
-  // The client's address for the login limit. Behind a proxy every client has
-  // the proxy's address, and a limit on it would stop them all: `addressLimit: false`.
-  const addressOf = (socket) =>
-    options.addressLimit !== false && typeof socket.remoteAddress === 'string' ? socket.remoteAddress : ''
+  // The client's address for the login limit: the socket's, or the one a PROXY
+  // header named. The engine keeps only its tag. `addressLimit: false` gives none.
+  const addressOf = (address) =>
+    options.addressLimit !== false && typeof address === 'string' ? address : ''
+
+  /** With `proxyProtocol`: buffer a new connection's bytes until the engine
+   *  decides on its PROXY v2 header, then `then(address, rest)` with the client
+   *  address and the bytes after the header. A refused header, or none in
+   *  `proxyHeaderTimeoutMs`, closes the connection. */
+  function readProxyHeader (socket, then) {
+    let buffered = Buffer.alloc(0)
+    const timer = setTimeout(() => {
+      onLog('closing a connection that sent no PROXY header in time')
+      finish()
+      socket.destroy()
+    }, proxyHeaderTimeoutMs)
+    timer.unref()
+    const finish = () => {
+      clearTimeout(timer)
+      socket.removeListener('data', onData)
+      socket.removeListener('error', onSocketError)
+    }
+    const onSocketError = () => { finish(); socket.destroy() }
+    const onData = (chunk) => {
+      buffered = buffered.length === 0 ? chunk : Buffer.concat([buffered, chunk])
+      let decision
+      try {
+        decision = xmpp.engine.callBlobIO('proxyHeaderParse', [],
+          new Uint8Array(buffered.buffer, buffered.byteOffset, buffered.byteLength)).envelope
+      } catch (error) {
+        onError(error)
+        finish()
+        socket.destroy()
+        return
+      }
+      if (decision.decision === 'more') return
+      finish()
+      if ((decision.decision !== 'proxy' && decision.decision !== 'local') ||
+          !Number.isSafeInteger(decision.consumed) || decision.consumed > buffered.length) {
+        onLog(`closing a connection: PROXY header refused (${decision.reason || decision.error || 'no decision'})`)
+        socket.destroy()
+        return
+      }
+      // LOCAL: the proxy's own connection (a health check); its address is the socket's.
+      const address = decision.decision === 'proxy' ? decision.address : socket.remoteAddress
+      then(address, buffered.subarray(decision.consumed))
+    }
+    socket.on('data', onData)
+    socket.on('error', onSocketError)
+  }
+
+  /** A stream that yields `head` and then what `socket` reads, and writes to
+   *  `socket`: TLS over a connection whose first bytes were a PROXY header. */
+  function prefixed (socket, head) {
+    const stream = new Duplex({
+      read () { socket.resume() },
+      write (chunk, _encoding, callback) { socket.write(chunk, callback) },
+      final (callback) { socket.end(); callback() },
+      destroy (error, callback) { socket.destroy(); callback(error) }
+    })
+    if (head.length > 0) stream.push(head)
+    socket.on('data', (chunk) => { if (!stream.push(chunk)) socket.pause() })
+    socket.on('end', () => stream.push(null))
+    socket.on('error', (error) => stream.destroy(error))
+    socket.on('close', () => stream.destroy())
+    return stream
+  }
+
+  /** With `proxyProtocol`, a TLS listener is a TCP listener: read the header,
+   *  then be the TLS server over the rest, within `proxyHeaderTimeoutMs`. */
+  function acceptTls (tls, socket, tlsOptions, then) {
+    readProxyHeader(socket, (address, rest) => {
+      const secure = new tls.TLSSocket(prefixed(socket, rest), { isServer: true, ...tlsOptions })
+      const timer = setTimeout(() => { secure.destroy(); socket.destroy() }, proxyHeaderTimeoutMs)
+      timer.unref()
+      const onHandshakeError = (error) => {
+        clearTimeout(timer)
+        if (error && error.code !== 'ECONNRESET') onError(new XmppHostError(`TLS handshake: ${error.message}`))
+        secure.destroy()
+        socket.destroy()
+      }
+      secure.once('error', onHandshakeError)
+      secure.once('secure', () => {
+        clearTimeout(timer)
+        secure.removeListener('error', onHandshakeError)
+        then(secure, address)
+      })
+    })
+  }
 
   // Transport limits, like `maxBuffered`: bytes and time, not protocol.
   function closeIfBacklogged (c) {
@@ -663,10 +782,10 @@ export async function createXmppServer (options = {}) {
     }
   }
 
-  function onConnection (socket, direct = false) {
+  function onConnection (socket, direct = false, address = socket.remoteAddress, rest = null) {
     let session
     try {
-      session = xmpp.openSession({ tlsCarrier: useTls || direct, startTls: startTls && !direct, remoteAddress: addressOf(socket) })
+      session = xmpp.openSession({ tlsCarrier: useTls || direct, startTls: startTls && !direct, remoteAddress: addressOf(address) })
     } catch (error) {
       onError(error)
       socket.destroy()
@@ -694,7 +813,8 @@ export async function createXmppServer (options = {}) {
     }
     connections.add(c)
     startLoginTimer(c)
-    onLog(`connection from ${socket.remoteAddress}:${socket.remotePort}`)
+    // The tag's first digits, never the address (the tag's key is in memory only).
+    onLog(`connection from ${session.addressTag === '' ? 'no address' : 'address ' + session.addressTag}`)
     c.onData = (chunk) => {
       heard(c)
       if (!connections.has(c) || c.closing || c.upgrading) return
@@ -728,6 +848,8 @@ export async function createXmppServer (options = {}) {
       if (error && error.code !== 'ECONNRESET') onError(error)
       endSession(c)
     })
+    // The bytes that came in one read with a PROXY header.
+    if (rest !== null && rest.length > 0) c.onData(rest)
   }
 
   // XMPP over WebSocket (RFC 7395): every byte goes to xmppWsFeed, which
@@ -738,17 +860,19 @@ export async function createXmppServer (options = {}) {
     const got = xmpp.engine.callBlobIO(op, args, bytes)
     return { envelope: got.envelope, bytes: got.bytes instanceof Uint8Array ? got.bytes : new Uint8Array(0) }
   }
-  function onWsConnection (socket) {
+  function onWsConnection (socket, address = socket.remoteAddress, rest = null) {
     let handle
+    let tag = ''
     try {
       const opened = xmpp.engine.call('xmppWsOpen', [xmpp.handle, JSON.stringify({
-        streamId: randomToken(), nonce: randomToken(), remoteAddress: addressOf(socket),
+        streamId: randomToken(), nonce: randomToken(), remoteAddress: addressOf(address),
         path: typeof ws.path === 'string' ? ws.path : '/xmpp-websocket',
         allowedOrigins: Array.isArray(ws.allowedOrigins) ? ws.allowedOrigins : [],
         allowNoOrigin: ws.allowNoOrigin === true,
         tlsCarrier: ws.cert !== undefined && ws.key !== undefined
       })])
       handle = opened.handle
+      if (typeof opened.addressTag === 'string') tag = opened.addressTag
     } catch (error) {
       onError(error)
       socket.destroy()
@@ -781,7 +905,8 @@ export async function createXmppServer (options = {}) {
     }
     connections.add(c)
     startLoginTimer(c)
-    socket.on('data', (chunk) => {
+    onLog(`WebSocket connection from ${tag === '' ? 'no address' : 'address ' + tag}`)
+    const onData = (chunk) => {
       heard(c)
       if (!connections.has(c) || c.closing) return
       let got
@@ -801,13 +926,16 @@ export async function createXmppServer (options = {}) {
         socket.destroy()
         endSession(c)
       }
-    })
+    }
+    socket.on('data', onData)
     socket.on('end', () => endSession(c))
     socket.on('close', () => endSession(c))
     socket.on('error', (error) => {
       if (error && error.code !== 'ECONNRESET') onError(error)
       endSession(c)
     })
+    // The bytes that came in one read with a PROXY header.
+    if (rest !== null && rest.length > 0) onData(rest)
   }
   let wsServer = null
   if (ws !== null) {
@@ -815,19 +943,34 @@ export async function createXmppServer (options = {}) {
       xmpp.close()
       throw new XmppHostError('the WebSocket listener needs both cert and key for TLS')
     }
-    if (ws.cert !== undefined) {
+    if (proxyProtocol) {
+      const net = await import('node:net')
+      const tls = ws.cert !== undefined ? await import('node:tls') : null
+      wsServer = net.createServer((socket) => {
+        if (tls === null) readProxyHeader(socket, (address, rest) => onWsConnection(socket, address, rest))
+        else acceptTls(tls, socket, { cert: ws.cert, key: ws.key }, (secure, address) => onWsConnection(secure, address))
+      })
+    } else if (ws.cert !== undefined) {
       const tls = await import('node:tls')
-      wsServer = tls.createServer({ cert: ws.cert, key: ws.key }, onWsConnection)
+      wsServer = tls.createServer({ cert: ws.cert, key: ws.key }, (socket) => onWsConnection(socket))
     } else {
       const net = await import('node:net')
-      wsServer = net.createServer(onWsConnection)
+      wsServer = net.createServer((socket) => onWsConnection(socket))
     }
     wsServer.on('connection', admit)
   }
 
   let server
   try {
-    if (useTls) {
+    if (proxyProtocol) {
+      // Every listener is TCP: the header comes before TLS.
+      const net = await import('node:net')
+      const tls = useTls ? await import('node:tls') : null
+      server = net.createServer((socket) => {
+        if (tls === null) readProxyHeader(socket, (address, rest) => onConnection(socket, false, address, rest))
+        else acceptTls(tls, socket, { cert: options.cert, key: options.key }, (secure, address) => onConnection(secure, false, address))
+      })
+    } else if (useTls) {
       const tls = await import('node:tls')
       server = tls.createServer({ cert: options.cert, key: options.key }, (socket) => onConnection(socket))
     } else {
@@ -845,7 +988,13 @@ export async function createXmppServer (options = {}) {
   let directServer = null
   if (startTls && options.directTlsPort !== undefined) {
     const tls = await import('node:tls')
-    directServer = tls.createServer({ cert: options.cert, key: options.key }, (socket) => onConnection(socket, true))
+    if (proxyProtocol) {
+      const net = await import('node:net')
+      directServer = net.createServer((socket) =>
+        acceptTls(tls, socket, { cert: options.cert, key: options.key }, (secure, address) => onConnection(secure, true, address)))
+    } else {
+      directServer = tls.createServer({ cert: options.cert, key: options.key }, (socket) => onConnection(socket, true))
+    }
     directServer.on('connection', admit)
   }
 
