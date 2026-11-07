@@ -30,9 +30,16 @@ fi
 # The native HTML tests need the web-render engine, which Builds makes after this
 # step in its engines job and before it in its macOS job, and more permissions.
 TESTS=()
-for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/native_html_bytes_test.ts"|"$LAB/native_window_queue_test.ts"|"$LAB/showcase_gaps_test.ts") ;; *) TESTS+=("$test");; esac; done
+for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/native_html_bytes_test.ts"|"$LAB/native_window_queue_test.ts"|"$LAB/showcase_gaps_test.ts"|"$LAB/page_scripts_test.ts") ;; *) TESTS+=("$test");; esac; done
 deno check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
-  "$LAB/run_ui.ts" "$LAB/run_lean.ts" "$LAB/run_svg.ts" "$LAB/run_foaf_svg.ts" "${TESTS[@]}"
+  "$LAB/run_ui.ts" "$LAB/run_lean.ts" "$LAB/run_svg.ts" "$LAB/run_foaf_svg.ts" "$LAB/run_html.ts" "$LAB/page_scripts_test.ts" "${TESTS[@]}"
+# Page scripts (issue 1271): the QuickJS-NG session, the Lean DOM and the guest API.
+if [ -f "$LAB/.build/script-engine/qjs-wasi-reactor.wasm" ]; then
+  node --test "$LAB/web-render/script-engine/session.test.mjs"
+  if [ -f "$LAB/.build/web-render/engines/web-render.mjs" ]; then node --test "$LAB/web-render/script-engine/lean-dom.test.mjs"; fi
+else
+  echo 'NOT RUN: session.test.mjs needs the QuickJS-NG reactor (web-render/script-engine/fetch-reactor.mjs)'
+fi
 deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --allow-read "${TESTS[@]}"
 # The input queue test needs the macOS window library from build-executables.sh.
 if [ "$(uname -s)" = Darwin ] && [ -f "$LAB/.build/native/libnative-window.dylib" ]; then
@@ -59,6 +66,9 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # an engine change closes it, so the test and its issue change together.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read "$LAB/showcase_gaps_test.ts"
+  # Page scripts in the desktop host (issue 1271), and VerifiedJS refusing visibly (issue 1252).
+  deno test --no-check --no-config --no-npm --node-modules-dir=none --allow-read --allow-write --allow-run \
+    "$LAB/page_scripts_test.ts"
   # Print page breaks of the print showcase (issue 1268): chapters start pages, print rules apply.
   deno run --no-check --no-config --no-npm --node-modules-dir=none --allow-read --allow-ffi --allow-env "$LAB/print_layout_check.ts"
   # The whole print path to a PDF with no window or panel: Lean pages, GPU images, NSPrintOperation.

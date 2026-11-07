@@ -282,6 +282,12 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
   if op == "scriptPlan" then
     let scripts := match request.field? "scripts" with | some (.number n) => n.toNat?.getD 0 | _ => 0
     return some (WebRenderScript.plan (str request "setting") scripts (str request "unavailable") (str request "failure")).json.toString
+  -- The rows of the chrome above the page: a host with one composed frame maps a pointer
+  -- to document rows with it (the page script click target, issue 1271).
+  if op == "shellHeight" then
+    let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
+    let width := match request.field? "width" with | some (.number n) => n.toNat?.getD 1 | _ => 1
+    return some (JSON.Json.object [("height",.number (toString (WebShell.height shell width)))]).toString
   if op == "keyCommand" then
     let answer := WebHistory.keyCommand (str request "platform" "") (str request "modifier" "") (str request "key" "")
     return some (JSON.Json.object [("command",match answer with

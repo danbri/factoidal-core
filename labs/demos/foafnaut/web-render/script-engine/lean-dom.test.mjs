@@ -5,6 +5,7 @@ import { Worker } from 'node:worker_threads';
 import { createScriptSession } from './session.mjs';
 import { createQuickJS } from './quickjs.mjs';
 import { createLeanDOM } from './lean-dom.mjs';
+import { createPageScripts } from './page-scripts.mjs';
 
 const leanModuleURL = new URL('../../.build/web-render/engines/web-render.mjs', import.meta.url).href;
 const wasmBytes = await readFile(new URL('../../.build/script-engine/qjs-wasi-reactor.wasm', import.meta.url));
@@ -122,4 +123,65 @@ test('actual Lean WASM makes ancestor text and connected ID lookup current insid
     assert.equal(final.nodes.find(n=>n.attributes.id==='parent').textContent,'Replacement');
     assert.equal(final.nodes.some(n=>n.attributes.id==='renamed'),false);
   } finally { session.reset(); }
+});
+
+// Issue 1271: the guest API that Lean checks, in one turn and across many turns.
+const page = '<!doctype html><body><ul id="list"><li class="a">one</li></ul><svg id="chart"></svg><p id="out">x</p></body>';
+const lean = commands => inspect(commands, page);
+const session = () => createScriptSession({wasmBytes,leanModuleURL,workerFactory:()=>new Worker(new URL('./worker.mjs',import.meta.url))});
+
+test('actual Lean: createElement, createElementNS, appendChild, queries, classList and style', async () => {
+  const s = session();
+  try {
+    const start = lean([]);
+    const batch = await s.start({nodes:start.nodes,next:start.next,document:{source:page,url:'https://example.test/'},budgetMs:1000,source:`
+      const list = document.getElementById('list');
+      const item = document.createElement('LI');
+      item.textContent = 'two';
+      list.appendChild(item);
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('width', '10');
+      document.querySelector('#chart').appendChild(rect);
+      const out = document.getElementById('out');
+      out.classList.add('b'); out.classList.toggle('c'); out.style.backgroundColor = 'red';
+      console.log(document.querySelectorAll('ul li').length, item.parentNode === list, list.children.length,
+        rect.namespaceURI, item.tagName, out.className, out.style.backgroundColor, document.querySelector('li.a').textContent);
+      try { document.querySelector('ul > li'); } catch (error) { console.log(error.name); }
+      list.removeChild(list.firstElementChild);
+      console.log(list.textContent);`});
+    assert.deepEqual(batch.errors, []);
+    assert.deepEqual(batch.logs, ['2 true 2 http://www.w3.org/2000/svg LI b c red one', 'SyntaxError', 'two']);
+    const final = lean(batch.commands);
+    const out = final.nodes.find(n => n.attributes.id === 'out');
+    assert.equal(out.attributes.class, 'b c');
+    assert.equal(out.attributes.style, 'background-color: red');
+    assert.equal(final.nodes.find(n => n.attributes.id === 'list').textContent, 'two');
+    assert.equal(final.nodes.filter(n => n.tagName === 'rect' && n.namespace === 'svg').length, 1);
+  } finally { s.reset(); }
+});
+
+test('actual Lean: a long animation stays within the history bound through compaction', async () => {
+  const s = session(), start = lean([]);
+  const compact = async commands => {
+    const pointer = engine.ccall('web_document_call','number',['string','string','number','number'],
+      [page,JSON.stringify({op:'compactCommands',url:'https://example.test/',commands}),1,1]);
+    try { const answer = JSON.parse(engine.UTF8ToString(pointer)); assert.equal(answer.error, undefined); return answer.commands; }
+    finally { engine.ccall('web_render_free',null,['number'],[pointer]); }
+  };
+  let frames = 0, done;
+  const finished = new Promise(resolve => { done = resolve; });
+  const runtime = createPageScripts({ session: s, compact, frameInterval: 0,
+    onBatch: async (batch, kind) => { if (kind === 'frame' && ++frames === 1500) done(); } });
+  try {
+    await runtime.start({nodes:start.nodes,next:start.next,document:{source:page,url:'https://example.test/'},budgetMs:1000,source:`
+      let n = 0; const out = document.getElementById('out');
+      function step() { n++; out.setAttribute('data-frame', String(n)); out.textContent = 'frame ' + n; if (n < 1500) requestAnimationFrame(step); }
+      requestAnimationFrame(step);`});
+    await finished;
+    assert.ok(runtime.stats.compactions >= 1, 'the history was compacted');
+    assert.ok(runtime.commands.length <= 1024, `history ${runtime.commands.length}`);
+    const out = lean(runtime.commands).nodes.find(n => n.attributes.id === 'out');
+    assert.equal(out.attributes['data-frame'], '1500');
+    assert.equal(out.textContent, 'frame 1500');
+  } finally { runtime.stop('test end'); }
 });

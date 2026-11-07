@@ -1,3 +1,4 @@
+// @ts-self-types="./page-scripts.d.ts"
 // The page script runtime of one document, shared by the web build, the desktop
 // window and the Hub (issue 1271). It keeps the document's DOM command history,
 // runs input, timer and animation frame turns one at a time in the order they come,

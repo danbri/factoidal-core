@@ -1,3 +1,4 @@
+// @ts-self-types="./session.d.ts"
 const workerURL = new URL('./worker.mjs', import.meta.url);
 const defaultWasmURL = new URL('/lab/.build/script-engine/qjs-wasi-reactor.wasm', import.meta.url);
 const defaultLeanURL = new URL('/lab/.build/web-render/engines/web-render.mjs', import.meta.url);

@@ -11,12 +11,17 @@ import {cleanupUI} from "./ui_cleanup.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
 import type {UIEvent} from "./ui_engine.ts";
+import {scriptHook,type Batch,type PageScripts} from "./native_html_scripts.ts";
+import type {ScriptState} from "./native_html_document.ts";
 
+/** Mac key codes that a page script gets as KeyboardEvent.key (UI Events KeyboardEvent key values). */
+const KEY_NAMES:Record<number,string>={36:"Enter",48:"Tab",51:"Backspace",53:"Escape",117:"Delete",123:"ArrowLeft",124:"ArrowRight",125:"ArrowDown",126:"ArrowUp",115:"Home",119:"End",116:"PageUp",121:"PageDown"};
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--script-sweep] [--native-engine DYLIB | --wasm-engine]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints. HTML/CSS/layout/link picking run in Lean. Page scripts run in QuickJS-NG (the default) or VerifiedJS, chosen on the settings page; every DOM change is a Lean command.");return;
   }
+  let scriptSweep=false;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
@@ -52,6 +57,11 @@ async function main() {
     else if(arg==="--graph-sweep")commands=["graph",[2,800,565],[3,900,640],[3,1000,720],[4,1000,720]];
     // Twenty scroll steps of 120 backing pixels down the page: per-step frame time and input latency.
     else if(arg==="--scroll-sweep")commands=Array.from({length:20},()=>[11,-120,0]);
+    // Page scripts (issue 1271): a click on the counter changes the DOM and the frame; keys typed while
+    // the animation runs reach the page in order; animation frames are drawn.
+    else if(arg==="--script-sweep"){scriptSweep=true;commands=["script:wait 700","script:hash","script:click counter","script:expect count Clicks: 1",
+      "script:changed","script:keys abc","script:wait 400","script:expect typed abc","script:click grow","script:expect-children list 4",
+      "script:click sort","script:expect people-body Ada1815Grace1906Tim1955","script:frames 10"];}
     else if(arg==="--history-sweep")commands=["left","link","left","right","[","]","]","[","link1","]","[","]"];
     // Press and hold a link, then the reload button, then release each (issue 1268): the
     // press acknowledgement, the Lean frame of a held press, and the release.
@@ -76,7 +86,7 @@ async function main() {
     ?Deno.readFile(nativeEngine).then(async bytes=>({backend:"native",path:nativeEngine!,
       sha256:[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("")}))
     :Promise.resolve({backend:"wasm",path:null,sha256:null});
-  url??=new URL("./pages/index.html",import.meta.url).href;
+  url??=new URL(scriptSweep?"./pages/showcase-script.html":"./pages/index.html",import.meta.url).href;
   // The main-thread engine answers only small calls that input needs at once (shellHit, hit,
   // pointerUp, command, history, shell text). Each is timed; one over 2 ms is traced.
   const slowCalls:Record<string,{count:number;maxMs:number}>={};
@@ -95,7 +105,7 @@ async function main() {
   // Every engine call that can take more than about 2 ms runs in one worker, in order. `lean` is that
   // engine (promises), or the main-thread engine when the worker can not start (said once, loudly) or in --check-engine.
   let worker:CompileClient|undefined,mainFont=false;
-  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"printLayout">;
+  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"printLayout"|"compactCommands">;
   let lean:Lean=engine;
   // The engine that runs Lean's renders: the native library in the worker, or Wasm (in the
   // worker, or on the main thread, which has only the Wasm engine). Said at start and in the summary.
@@ -126,7 +136,37 @@ async function main() {
     }
     if(worker){lean=worker.engine as unknown as Lean;sayEngine("worker");}
   }
-  let document=await prepareHTML(lean,url),width=1280,height=800;
+  // Page scripts (issue 1271). The setting is kept here; Lean says what it means for a page
+  // and for the chrome. Lean's default is QuickJS-NG.
+  let scriptSetting=engine.scriptPlan({setting:"",scripts:0}).engine,scriptNote="";
+  const traceLine=(type:string,fields:Record<string,unknown>)=>console.log(JSON.stringify({type,t:Math.round(performance.now()),...fields}));
+  // Presented frames resolve the batches that wait for them; a click or a key keeps its time.
+  type Waiter={after:number;resolve:()=>void;from?:number};
+  const presentWaiters:Waiter[]=[],scriptInputAt:number[]=[],scriptLatencies:number[]=[],scriptFrameMs:number[]=[],scriptPeriods:number[]=[];
+  let lastAnimationPresent:number|undefined,scriptsDirty=()=>{};
+  const scriptOf=(page:unknown)=>(page as {script?:ScriptState}).script;
+  const runtimeOf=(page:unknown)=>{const r=scriptOf(page)?.runtime as unknown as PageScripts|undefined;return r&&!r.stopped?r:undefined;};
+  const hook=scriptHook(()=>scriptSetting,{
+    plan:request=>engine.scriptPlan(request),
+    compact:async(source,url,commands)=>await (lean as Lean).compactCommands(source,{url,commands}) as unknown[],
+    changed:(page,batch:Batch,kind)=>{
+      const from=kind==="event"?scriptInputAt.shift():undefined;
+      if(kind==="start")return Promise.resolve();
+      // A page in another tab waits as a hidden page does in a browser: its frames slow down.
+      if(page!==currentPage()&&page!==pendingPage())return new Promise(resolve=>setTimeout(resolve,1000));
+      if(!batch.commands.length)return Promise.resolve();
+      scriptsDirty();
+      return new Promise<void>(resolve=>{
+        const waiter:Waiter={after:performance.now(),resolve,from};presentWaiters.push(waiter);
+        // A window that can not present does not hold the scripts for ever.
+        setTimeout(()=>{const i=presentWaiters.indexOf(waiter);if(i>=0){presentWaiters.splice(i,1);resolve();}},1000);
+      });
+    },
+    stopped:page=>{if(page===currentPage())scriptsDirty();},
+    trace:traceLine,
+  });
+  let currentPage:()=>unknown=()=>undefined,pendingPage:()=>unknown=()=>undefined;
+  let document=await prepareHTML(lean,url,undefined,undefined,hook),width=1280,height=800;
   // The first compile runs in the worker too: it warms the worker, and no frame is compiled on the main thread.
   let frame:HTMLArtifact=await document.compile(width,height);
   console.log(JSON.stringify({type:"native-html-loaded",url:document.url,primitives:frame.primitiveCount,links:frame.webRender.links.length,width,height}));
@@ -179,8 +219,15 @@ async function main() {
   const showURL=(url:string):Field=>({address:url,cursor:url.length,anchor:url.length,undo:null,redo:null,typing:false});
   let field=showURL(document.url),focused=false,theme="next",pages=1,scale=1,active=0,scroll=0;
   const tabs:{document:typeof document;history:typeof history;scroll:number}[]=[{document,history,scroll:0}];
+  currentPage=()=>document;pendingPage=()=>candidate;scriptsDirty=()=>{dirty=true;};
+  // A page's scripts stop when no tab shows it any more.
+  const retire=(page:unknown)=>{
+    if(page===document||page===candidate||tabs.some(tab=>tab.document===page))return;
+    runtimeOf(page)?.stop("the page was closed");
+  };
   const shell=()=>({tabs:tabs.map((tab,index)=>({title:(index===active?document:tab.document).title??""})),active,...field,focused,
-    canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,pressed:pressed?.control??""});
+    canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,pressed:pressed?.control??"",
+    script:scriptOf(document)?.marker||scriptNote});
   // The URLs of the session history of every tab: Lean matches `:visited` against them.
   const visited=()=>[...new Set([...tabs.flatMap((tab,index)=>(index===active?history:tab.history).history.entries)])].slice(-100);
   const shown=()=>({...view,shell:shell(),visited:visited(),
@@ -206,7 +253,8 @@ async function main() {
   const newTab=()=>{keepTab();tabs.push({document:home,history:engine.historyPush({entries:[],index:0},home.url),scroll:0});showTab(tabs.length-1);focusAddress();};
   const closeTab=(index:number)=>{
     if(tabs.length===1){running=false;return;}
-    keepTab();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));
+    keepTab();const [closed]=tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));
+    retire(closed.document);
   };
   // One tab for each source: an XML page opens its XML, its XSLT and the result.
   const viewSource=async()=>{
@@ -339,6 +387,13 @@ async function main() {
     else if(name==="source")viewSource().catch(error=>refuse(document.url,error));
     else if(name==="theme"){theme=argument||(theme==="next"?"arcade":"next");dirty=true;}
     else if(name==="zoom"&&/^[0-9]+$/.test(argument)){view.textScalePercent=Math.max(50,Number(argument));dirty=true;}
+    // The page script setting (issue 1271): pages loaded from now on use it.
+    else if(name==="scripts"){
+      try{const chosen=engine.scriptSetting(argument);scriptSetting=chosen.setting;
+        scriptNote=engine.scriptPlan({setting:scriptSetting,scripts:1}).marker;dirty=true;
+        traceLine("native-html-script-setting",{setting:scriptSetting,name:chosen.name});}
+      catch(error){console.error("Native HTML: page script setting refused:",String(error));}
+    }
     else navigate(settingsURL);
   };
   const go=(answer:ReturnType<typeof engine.shellSubmit>)=>{
@@ -428,7 +483,7 @@ async function main() {
   const navigate=(target:string,push=true)=>{
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (target===graphURL?graphPage():prepareHTML(lean,target,current.signal)).then(next=>{
+    (target===graphURL?graphPage():prepareHTML(lean,target,current.signal,undefined,hook)).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
@@ -461,9 +516,14 @@ async function main() {
       prefetch:prefetchStats,queueMax,sessionStats:session?.stats,
       // Pointer press to the present that shows it: the composite darkening, and the Lean frame of a held press.
       press:{overlay:{count:pressOverlayMs.length,p50Ms:percentile(pressOverlayMs,0.5),maxMs:pressOverlayMs.length?Math.round(Math.max(...pressOverlayMs)*10)/10:null},
-        frame:{count:pressFrameMs.length,p50Ms:percentile(pressFrameMs,0.5),maxMs:pressFrameMs.length?Math.round(Math.max(...pressFrameMs)*10)/10:null}}};
+        frame:{count:pressFrameMs.length,p50Ms:percentile(pressFrameMs,0.5),maxMs:pressFrameMs.length?Math.round(Math.max(...pressFrameMs)*10)/10:null}},
+      // Page scripts (issue 1271): click or key to the present that shows its DOM change, and animation frames.
+      scripts:{setting:scriptSetting,inputToPresent:{count:scriptLatencies.length,p50Ms:percentile(scriptLatencies,0.5),maxMs:scriptLatencies.length?Math.max(...scriptLatencies):null},
+        animationFrames:{count:scriptFrameMs.length,totalMsP50:percentile(scriptFrameMs,0.5),totalMsP95:percentile(scriptFrameMs,0.95),
+          periodMsP50:percentile(scriptPeriods,0.5),periodMsP95:percentile(scriptPeriods,0.95)},
+        runtime:runtimeOf(document)?.stats??null}};
     trace(line.type,line);
-    if(perfSummary)console.log(`engine: ${engineRan}\ninput latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
+    if(perfSummary)console.log(`engine: ${engineRan}\ninput latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\npage scripts (${line.scripts.setting}): input to present ${line.scripts.inputToPresent.count}, p50 ${line.scripts.inputToPresent.p50Ms} ms, max ${line.scripts.inputToPresent.maxMs} ms; animation frames ${line.scripts.animationFrames.count}, total p50 ${line.scripts.animationFrames.totalMsP50} ms, p95 ${line.scripts.animationFrames.totalMsP95} ms, period p50 ${line.scripts.animationFrames.periodMsP50} ms, p95 ${line.scripts.animationFrames.periodMsP95} ms`);
   };
   try {
     device=await adapter.requestDevice();native=early??await nativePreflight(()=>loadNativeWindow());
@@ -559,8 +619,22 @@ async function main() {
         checked:result.checked,steps:result.steps,pixelHash:result.checked?result.pixelHash:null,pipelineBuilds:stats.pipelineBuilds,configures:stats.configures,
         ...(nextLayers?{layers:{bandTop:nextLayers.layers.bandTop,bandHeight:nextLayers.layers.bandHeight,offset:place!.offset,chromeFloats:nextLayers.chrome.data.length}}:{}),...engineFact});
       resizeAt=undefined;
+      if(result.checked&&result.pixelHash)lastHash=result.pixelHash;
       if(!result.presented){awaiting=[...stamps,...awaiting];dirty=true;return;}
       firstFrameAt??=finished;totals.push(finished-frameStart);if(where==="worker")workerFrames++;else mainFrames++;
+      // Script batches whose commands this frame includes (issue 1271): click or key to present, and
+      // the time and period of frames while an animation runs.
+      for(const waiter of presentWaiters.filter(w=>w.after<=frameStart)){
+        presentWaiters.splice(presentWaiters.indexOf(waiter),1);
+        if(waiter.from!==undefined){const latency=Math.round((result.presentedAt-waiter.from)*10)/10;scriptLatencies.push(latency);
+          trace("native-html-script-latency",{ms:latency,frame:frameNumber});}
+        waiter.resolve();
+      }
+      if(runtimeOf(nextDocument)?.animating){
+        scriptFrameMs.push(finished-frameStart);
+        if(lastAnimationPresent!==undefined)scriptPeriods.push(result.presentedAt-lastAnimationPresent);
+        lastAnimationPresent=result.presentedAt;
+      } else lastAnimationPresent=undefined;
       if(result.checked)checkedFrames++;
       lastActivity=Math.max(lastActivity,finished);
       settle(stamps,result.presentedAt);
@@ -573,7 +647,10 @@ async function main() {
       if(nextDocument!==document)prefetched=undefined;
       checked=nextDocument;
       if(nextDocument!==document)view.selection=undefined;
-      if(nextDocument!==document){scroll=0;if(!focused)field=showURL(nextDocument.url);}frame=next;document=nextDocument;candidate=undefined;native!.setTitle(windowTitle(document));
+      if(nextDocument!==document){scroll=0;if(!focused)field=showURL(nextDocument.url);scriptNote="";}
+      const previous=document;
+      frame=next;document=nextDocument;candidate=undefined;native!.setTitle(windowTitle(document));
+      if(previous!==document)retire(previous);
       // A new page under a pointer that has not moved.
       if(lastPointer)pointAt(lastPointer[0],lastPointer[1]);
       console.log(JSON.stringify({type:"native-html-presented",url:document.url,width:sentWidth,height:sentHeight,primitives:frame.primitiveCount,links:frame.webRender.links.length,frames:session!.frames}));
@@ -602,6 +679,37 @@ async function main() {
       checkedFrames++;
       trace("native-html-checked",{frame:frameNumber,why:"idle",idleMs:ms(lastActivity,idleStart),drawMs:Math.round(result.drawMs*10)/10,pixelHash:result.pixelHash});
     };
+    // The element a click goes to: Lean's hit test over the layout boxes of the elements with a
+    // click listener, in document rows; null is the document's own listener; undefined is none.
+    const documentRow=(y:number)=>current?y-current.layers.layers.top+shownOffset+current.layers.layers.bandTop:y;
+    const scriptTarget=(runtime:PageScripts,x:number,y:number):number|null|undefined=>{
+      const ids=new Set(runtime.listeners.filter(l=>l.type==="click").map(l=>l.nodeId));
+      const boxes=(frame.webRender.boxes as number[][]|undefined??[]).filter(box=>ids.has(box[0]));
+      if(boxes.length){
+        const rows=boxes.map(([id,bx,by,bw,bh])=>[id,"",bx,by,bw,bh]);
+        const bottom=Math.max(1,...boxes.map(b=>Math.ceil(b[2]+b[4])+1));
+        const hit=engine.hit({...frame,height:bottom,webRender:{...frame.webRender,links:rows}} as HTMLArtifact,x,documentRow(y));
+        if(hit)return hit.sourceNode;
+      }
+      return runtime.documentListeners.includes("click")?null:undefined;
+    };
+    // The window point of the middle of an element's box (the script sweep).
+    const elementPoint=(id:string)=>{
+      const node=(scriptOf(document)?.nodes as {id:number;attributes:Record<string,string>}[]|undefined)?.find(n=>n.attributes.id===id);
+      const box=node&&(frame.webRender.boxes as number[][]|undefined)?.find(b=>b[0]===node.id);
+      if(!box||!current)return undefined;
+      return [Math.round(box[1]+box[3]/2),Math.round(box[2]+box[4]/2-current.layers.layers.bandTop+current.layers.layers.top-shownOffset)];
+    };
+    let checking:Promise<void>|undefined,savedHash:string|null=null,lastHash:string|null=null;
+    // A check of Lean's DOM after the page's commands: the text or the children of an element.
+    const domCheck=(step:string,test:(nodes:{id:number;tagName:string;parent?:number|null;attributes:Record<string,string>;textContent:string}[])=>{ok:boolean;got:unknown})=>{
+      const script=scriptOf(document);
+      checking=Promise.resolve(lean.inspect(document.source,{url:document.url,...(script?.commands.length?{commands:script.commands}:{})})).then(answer=>{
+        const result=test((answer as unknown as {nodes:{id:number;tagName:string;parent?:number|null;attributes:Record<string,string>;textContent:string}[]}).nodes);
+        trace("native-html-test-script",{step,ok:result.ok,got:result.got});
+        if(!result.ok){console.error(`Native HTML script sweep: ${step} failed; got ${JSON.stringify(result.got)}`);Deno.exitCode=1;}
+      }).catch(error=>{console.error(`Native HTML script sweep: ${step} failed:`,String(error));Deno.exitCode=1;}).finally(()=>{checking=undefined;});
+    };
     const handle=(event:UIEvent)=>{
         if(event.kind===6){running=false;return;}
         // A release ends the press look, on the graph page too.
@@ -625,6 +733,16 @@ async function main() {
         if(event.kind===9&&focused){
           edit(engine.shellText(shell(),String.fromCodePoint(event.a)));
           return;
+        }
+        // Keys to the page's scripts (issue 1271): text as its character, other keys by name. The
+        // script runs in its worker; the key also keeps its default action here (scrolling).
+        if(!focused&&(event.kind===9||(event.kind===5&&!(event.b&2)&&KEY_NAMES[event.a]))){
+          const runtime=runtimeOf(document);
+          const key=event.kind===9?(event.a>=32&&event.a!==127?String.fromCodePoint(event.a):""):KEY_NAMES[event.a];
+          if(runtime&&key&&runtime.documentListeners.includes("keydown")){
+            scriptInputAt.push(eventAt);
+            runtime.dispatch({type:"keydown",key,shiftKey:!!(event.b&1),altKey:!!(event.b&4)}).catch(()=>{});
+          }
         }
         if(event.kind===9)return;
         // Page keys: arrows, page up and down, space.
@@ -663,10 +781,24 @@ async function main() {
           if(engine.pointerUp(released)!=="click")return;
           if(view.selection){view.selection=undefined;dirty=true;}
           const target=engine.hit(frame,released[0],pageRow(released[1]));
-          if(target){console.log(JSON.stringify({type:"native-html-link",...target,url:document.url}));
-            const answer=engine.shellLink(target.href);
+          const page=document;
+          const follow1=(link:typeof target)=>{
+            if(!link||page!==document)return;
+            console.log(JSON.stringify({type:"native-html-link",...link,url:document.url}));
+            const answer=engine.shellLink(link.href);
             if(answer.go!=="page"||answer.url===graphURL)go(answer);
-            else if(follow)try{navigate(navigationURL(target.href,document.baseURL,document.url));}catch(error){console.error("Native HTML link refused:",String(error));}}
+            else if(follow)try{navigate(navigationURL(link.href,document.baseURL,document.url));}catch(error){console.error("Native HTML link refused:",String(error));}
+          };
+          // A click on an element with a script listener is a script turn first; a link under it
+          // is followed after the turn unless a listener cancelled the click (issue 1271).
+          const runtime=runtimeOf(document),node=runtime?scriptTarget(runtime,released[0],released[1]):undefined;
+          if(runtime&&node!==undefined){
+            scriptInputAt.push(eventAt);
+            trace("native-html-script-click",{node,link:target?.sourceNode??null});
+            runtime.dispatch({type:"click",nodeId:node??undefined}).then(batch=>{if(!batch.defaultPrevented)follow1(target);}).catch(()=>{});
+            return;
+          }
+          follow1(target);
         }
     };
     while(running){
@@ -792,7 +924,7 @@ async function main() {
       // A scroll step with layers waits only for the composite of the step before, 16 ms apart:
       // a Lean frame for a new band runs meanwhile, as when a person scrolls.
       const scrollStep=layered&&Array.isArray(commands?.[0])&&(commands![0] as number[])[0]===11;
-      const settled=!dirty&&!rendering&&!graphBusy()&&!loading&&!shiftPending&&!shifting;
+      const settled=!dirty&&!rendering&&!graphBusy()&&!loading&&!shiftPending&&!shifting&&!checking;
       if(commands&&session?.frames&&performance.now()>=stepAt&&(settled||(scrollStep&&!loading&&!shiftPending&&!shifting&&performance.now()-lastStep>=16))){
         lastStep=performance.now();
         const step=commands.shift();
@@ -803,6 +935,22 @@ async function main() {
           native.testEvent(2,x,y);native.testEvent(4,x,y);
         }
         else if(step==="settle")trace("native-html-paste",{url:document.url,title:document.title});
+        else if(typeof step==="string"&&step.startsWith("script:")){
+          const [verb,...rest]=step.slice(7).split(" "),argument=rest.join(" ");
+          const fail=(why:string)=>{console.error(`Native HTML script sweep: ${step}: ${why}`);trace("native-html-test-script",{step,ok:false,why});Deno.exitCode=1;};
+          if(verb==="wait")stepAt=performance.now()+Number(argument);
+          else if(verb==="hash")savedHash=lastHash;
+          else if(verb==="changed"){const ok=!!lastHash&&lastHash!==savedHash;trace("native-html-test-script",{step,ok,before:savedHash,after:lastHash});if(!ok)fail("the frame did not change");}
+          else if(verb==="click"){const at=elementPoint(argument);if(!at)fail("no box for #"+argument);else{native.testEvent(2,at[0],at[1]);native.testEvent(4,at[0],at[1]);stepAt=performance.now()+150;}}
+          else if(verb==="keys"){for(const ch of argument)native.testEvent(9,ch.codePointAt(0)!,0);stepAt=performance.now()+150;}
+          else if(verb==="expect"){const [id,...words]=argument.split(" "),want=words.join(" ");
+            domCheck(step,nodes=>{const got=nodes.find(n=>n.attributes.id===id)?.textContent;return {ok:got===want,got};});}
+          else if(verb==="expect-children"){const [id,count]=argument.split(" ");
+            domCheck(step,nodes=>{const parent=nodes.find(n=>n.attributes.id===id);const got=nodes.filter(n=>parent&&n.parent===parent.id).length;return {ok:got===Number(count),got};});}
+          else if(verb==="frames"){const stats=runtimeOf(document)?.stats??(scriptOf(document)?.runtime as unknown as PageScripts|undefined)?.stats;const ok=(stats?.frames??0)>=Number(argument);
+            trace("native-html-test-script",{step,ok,frames:stats?.frames??0,stats});if(!ok)fail(`only ${stats?.frames??0} animation frames`);}
+          else fail("unknown script step");
+        }
         else if(step==="hold")stepAt=performance.now()+300;
         else if(step==="press-link"){
           const link=frame.webRender.links[0] as number[];pressAt=[Math.round(link[2]+link[4]/2),Math.round(windowRow(link[3]+link[5]/2))];
@@ -858,6 +1006,7 @@ async function main() {
     }
   } finally {
     running=false;controller?.abort();
+    for(const page of new Set([document,candidate,...tabs.map(tab=>tab.document)]))runtimeOf(page)?.stop("the window closed");
     // A frame in progress ends before its session is disposed.
     try{await rendering;await shifting;}catch(error){console.error("Native HTML frame ended with an error:",String(error));}
     worker?.terminate();

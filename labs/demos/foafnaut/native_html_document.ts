@@ -62,7 +62,15 @@ export type PageEngine=Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compile
   compile(...a:Parameters<HTMLEngine["compile"]>):Promise<ReturnType<HTMLEngine["compile"]>>;
   selectedText(...a:Parameters<HTMLEngine["selectedText"]>):Promise<ReturnType<HTMLEngine["selectedText"]>>;
 };
-export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string) {
+/** The page script state of a document (issue 1271): the DOM commands that Lean replays,
+the notice Lean puts on the page and the marker the chrome shows. A host that runs scripts
+(native_html_scripts.ts) changes them; every request of the page carries them. */
+export type ScriptState={commands:unknown[];notice:string;marker:string;
+  sources:string[];nodes:unknown[];next:number;runtime?:{stop(reason:string):void;readonly stopped:string|null}};
+/** Called before prepareHTML returns, so the first frame has the scripts' first changes. */
+export type ScriptHook=(page:{url:string;baseURL:string;source:string;script:ScriptState})=>Promise<void>;
+const MAX_SCRIPTS=64;
+export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string,scripts?:ScriptHook) {
   const document=inline===undefined?await readSource(url,signal):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
   // View source shows each input and the result. Lean makes the page.
   const sources=[{kind:"Source",url:document.url,source:document.source}];
@@ -76,8 +84,23 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     sources.push({kind:"XSLT source",url:sheet.url,source:sheet.source},{kind:"Generated page",url:document.url,source:document.source});
   }
   const inspection=await engine.inspect(document.source,{url:document.url});
-  if(inspection.scripts.some(script=>script.kind!=="data"))
-    throw new Error("Native HTML milestone does not execute scripts; classic/module script input is refused");
+  // Lean lists the classic scripts (a module script is refused by Lean). The host fetches
+  // the bytes of an external one, under the rules of a stylesheet.
+  const classic=inspection.scripts.filter(script=>script.kind==="classic");
+  if(classic.length>MAX_SCRIPTS)throw new Error("Native HTML exceeds 64 scripts");
+  const script:ScriptState={commands:[],notice:"",marker:"",sources:[],nodes:inspection.nodes??[],next:inspection.next??0};
+  let scriptBytes=0;
+  for(const item of classic){
+    signal?.throwIfAborted();
+    let text=item.source;
+    if(item.src){
+      navigationURL(item.url,inspection.baseURL,document.url);
+      const resource=await readSource(item.url,signal);text=resource.source;
+      sources.push({kind:"Script",url:resource.url,source:text});
+    }
+    scriptBytes+=text.length;if(scriptBytes>MAX_SOURCE_BYTES)throw new Error("Native HTML scripts exceed 1 MiB");
+    script.sources.push(text);
+  }
   if(inspection.stylesheets.length>MAX_RESOURCES)throw new Error("Native HTML exceeds 16 external stylesheets");
   let resourceBytes=0;
   for(const descriptor of inspection.stylesheets) {
@@ -89,15 +112,24 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     resources.push({nodeId:descriptor.nodeId,url:resource.url,source:resource.source});
   }
   const options={url:document.url,resources};
+  // The commands and the notice of the page scripts, as they are when the call is made.
+  const scripted=()=>({...(script.commands.length?{commands:script.commands}:{}),...(script.notice?{scriptNotice:script.notice}:{})});
   // Pages show in the font of loadFontFile, or else in the Lean bitmap face.
   signal?.throwIfAborted();
-  return {
-    url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,
+  const page={
+    url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,script,
     // What compile needs, as plain data, so the engine in a worker can run it.
-    request:(_width:number,_height:number,view:PageView={})=>({source:document.source,options:{...options,...view} as Record<string,unknown>}),
-    compile:(width:number,height:number,view:PageView={})=>engine.compile(document.source,width,height,{...options,...view}),
-    selectedText:(width:number,height:number,view:PageView={})=>engine.selectedText(document.source,width,height,{...options,...view}),
+    request:(_width:number,_height:number,view:PageView={})=>({source:document.source,options:{...options,...scripted(),...view} as Record<string,unknown>}),
+    compile:(width:number,height:number,view:PageView={})=>engine.compile(document.source,width,height,{...options,...scripted(),...view}),
+    selectedText:(width:number,height:number,view:PageView={})=>engine.selectedText(document.source,width,height,{...options,...scripted(),...view}),
   };
+  if(script.sources.length){
+    if(scripts)await scripts(page);
+    // A host with no script engine says so on the page: the scripts are never silently inert.
+    else script.notice="Page scripts did not run: this host has no script engine (issue 1271)";
+  }
+  signal?.throwIfAborted();
+  return page;
 }
 
 /** Give the engine a font file. Lean reads it, shapes words and takes outlines; this only moves bytes.

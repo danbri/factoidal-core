@@ -18,7 +18,10 @@ export type HTMLLayers = {layers:HTMLLayerPlace;page:HTMLArtifact;chrome:HTMLArt
 export type Inspection = {
   baseURL:string;
   title:string;
-  scripts:{kind:string;type:string;src:string}[];
+  scripts:{kind:string;type:string;src:string;source:string;nodeId:number;url:string}[];
+  /** The element projection a page script starts with, and the id of the next created node. */
+  nodes:{id:number;tagName:string;attributes:Record<string,string>;textContent:string}[];
+  next:number;
   stylesheets:{nodeId:number;url:string}[];
 };
 export type History = {entries:string[];index:number};
@@ -29,6 +32,8 @@ export type ShellEdit = {address:string;cursor:number;anchor:number;undo:unknown
 export type PrintLayout = {contentHeight:number;pages:[number,number][]};
 export type ShellGo = {go:"page";url:string}|{go:"system";url:string}|{go:"command";name:string;argument:string};
 export type HTMLResource = {nodeId:number;url:string;source:string};
+/** WebRenderScript.Plan: which engine runs a page's scripts, and what the chrome and page say. */
+export type ScriptPlan = {engine:string;name:string;run:boolean;marker:string;notice:string};
 type Module = {ccall(name:string,result:string|null,types:string[],values:unknown[]):number;
   UTF8ToString(pointer:number):string;HEAPU8:Uint8Array;_malloc?(size:number):number;_free?(pointer:number):void};
 const encoder = new TextEncoder();
@@ -243,6 +248,13 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     graphPage:(model:string)=>(documentCall("",{op:"graphPage",model}) as {source:string}).source,
     sourcePage:(kind:string,url:string,source:string)=>(documentCall("",{op:"sourcePage",kind,url,source}) as {source:string}).source,
     shellLink:(href:string)=>documentCall("",{op:"shellLink",href}) as ShellGo,
+    // Page scripts (issue 1271): the setting a link names, and what it means for a page.
+    scriptSetting:(setting:string)=>documentCall("",{op:"scriptSetting",setting}) as {setting:string;name:string},
+    scriptPlan:(request:{setting:string;scripts:number;unavailable?:string;failure?:string})=>
+      documentCall("",{...request,op:"scriptPlan"}) as ScriptPlan,
+    // A shorter script command history that Lean replays to the same arena.
+    compactCommands:(source:string,options:{url:string;commands:unknown[]})=>
+      (documentCall(source,{...options,op:"compactCommands"}) as {commands:unknown[]}).commands,
     // Lean decides what a menu command and a pointer release mean.
     command:(command:number,textScalePercent:number,history?:History,focused=false)=>documentCall("",{op:"command",command,textScalePercent,focused,...(history?{history}:{})}) as
       {action:string;target?:"address"|"page";textScalePercent:number}&Partial<HistoryAnswer>,

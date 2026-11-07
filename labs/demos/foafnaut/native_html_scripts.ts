@@ -8,6 +8,8 @@ import {createPageScripts} from "./web-render/script-engine/page-scripts.mjs";
 import {verifiedJSAvailable,createVerifiedJSSession} from "./web-render/script-engine/verifiedjs/adapter.mjs";
 import type {ScriptHook,ScriptState} from "./native_html_document.ts";
 import type {ScriptPlan} from "./native_html_engine.ts";
+import type {ScriptBatch} from "./web-render/script-engine/session.d.ts";
+import type {PageScripts} from "./web-render/script-engine/page-scripts.d.ts";
 
 const lab=new URL("./",import.meta.url);
 /** The Lean module the script worker uses for its DOM: the local build when there is one. */
@@ -40,8 +42,8 @@ export type ScriptEvents={
   stopped(page:{url:string;script:ScriptState},reason:string):void;
   trace(type:string,fields:Record<string,unknown>):void;
 };
-export type Batch={commands:unknown[];listeners:{nodeId:number;type:string}[];documentListeners:string[];logs:string[];errors:string[];defaultPrevented:boolean;timer:number|null;frame:boolean};
-export type PageScripts=ReturnType<typeof createPageScripts>;
+export type Batch=ScriptBatch;
+export type {PageScripts};
 
 /** The hook for prepareHTML: plan, start, and keep the runtime in `page.script.runtime`. */
 export function scriptHook(setting:()=>string,events:ScriptEvents):ScriptHook {
@@ -56,7 +58,7 @@ export function scriptHook(setting:()=>string,events:ScriptEvents):ScriptHook {
     const session=plan.engine==="verifiedjs"?createVerifiedJSSession():createScriptSession({wasmBytes:reactor,leanModuleURL:scriptLeanModule()});
     const runtime=createPageScripts({
       session,
-      compact:commands=>events.compact(page.source,page.url,commands),
+      compact:(commands:unknown[])=>events.compact(page.source,page.url,commands),
       onBatch:async(batch:Batch,kind:string)=>{
         script.commands=runtime.commands;
         for(const value of batch.logs)events.trace("native-html-script-console",{url:page.url,value});
@@ -64,7 +66,7 @@ export function scriptHook(setting:()=>string,events:ScriptEvents):ScriptHook {
         await events.changed(page,batch,kind);
       },
       // An engine that can not start this page refuses it; one that fails later has stopped.
-      onStop:reason=>{
+      onStop:(reason:string)=>{
         const stop=events.plan({setting:chosen,scripts:script.sources.length,...(starting?{unavailable:reason}:{failure:reason})});
         script.marker=stop.marker;script.notice=stop.notice;
         events.trace("native-html-scripts",{url:page.url,engine:stop.engine,run:false,marker:stop.marker,notice:stop.notice,stopped:reason});
