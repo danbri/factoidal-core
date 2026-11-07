@@ -196,7 +196,7 @@ private def sameAsFrame (html : String) (width height frameScroll : Nat) (scroll
   let top := WebShell.height (layerShell 0) width
   let view := max 1 (height-top)
   let b := WebDocument.band frameScroll view
-  match WebDocument.layOut ⟨html,WebDocument.layoutRequest (json []),width,height,top,none⟩ with
+  match WebDocument.layOut ⟨html,WebDocument.layoutRequest (json []),width,height,top,[]⟩ with
   | .error _ => false
   | .ok laid =>
     match WebRenderSVG.toScene (WebDocument.pageLayer laid.scene [] b) with

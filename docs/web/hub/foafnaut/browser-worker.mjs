@@ -62,33 +62,46 @@ function render(source,options,w,h){
 }
 // A font file into the engine. As bytes it goes into the engine's heap: a font above about
 // 3 MB does not fit as a Base64 string, which Wasm copies onto its 4 MB stack. A runtime
-// with no such export takes Base64 in the JSON request.
-function fontLoad(bytes,family,sha){
+// with no such export takes Base64 in the JSON request. fallback adds the font after the
+// fonts the engine holds, for the characters they lack; otherwise it replaces them.
+function fontLoad(bytes,family,sha,fallback=false){
   if(typeof module._web_document_font_call_bin!=='function'||typeof module._malloc!=='function'){
     let text='';
     for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
-    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha});
+    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha,...(fallback?{fallback:true}:{})});
   }
   const input=module._malloc(Math.max(1,bytes.length));
   if(!input)throw Error('Lean engine allocation failed');
   try{
     module.HEAPU8.set(bytes,input);
-    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string'],[input,bytes.length,family,sha]);
+    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string','number'],[input,bytes.length,family,sha,fallback?1:0]);
     if(!pointer)throw Error('Lean engine allocation failed');
     try{const result=JSON.parse(module.UTF8ToString(pointer));if(result?.error)throw Error(result.error);return result;}
     finally{module.ccall('web_render_free',null,['number'],[pointer]);}
   }finally{module._free(input);}
 }
+async function fontFile(path){
+  const response=await fetch(new URL(path,import.meta.url));
+  if(!response.ok)throw Error(`HTTP ${response.status}`);
+  const bytes=new Uint8Array(await response.arrayBuffer());
+  const sha=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
+  return {bytes,sha};
+}
+// Fonts after Noto Sans, for the characters it lacks. Lean picks the font for each one.
+const fallbackFonts=[['./fonts/noto-sans-armenian/NotoSansArmenian-Regular.ttf','Noto Sans Armenian']];
 // Noto Sans is the default face. Lean reads and shapes it; if it does not load, the
-// page stays in the bitmap face.
+// page stays in the bitmap face. Fallback fonts need an engine that takes fonts as
+// bytes: an older one would read a fallback font as a replacement.
 async function loadFont(){
   try{
-    const response=await fetch(new URL('./fonts/noto-sans/NotoSans-Regular.ttf',import.meta.url));
-    if(!response.ok)throw Error(`HTTP ${response.status}`);
-    const bytes=new Uint8Array(await response.arrayBuffer());
-    const sha=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
+    const {bytes,sha}=await fontFile('./fonts/noto-sans/NotoSans-Regular.ttf');
     fontLoad(bytes,'Noto Sans',sha);
-  }catch(error){console.warn('foafnaut: bitmap font, because Noto Sans did not load:',String(error));}
+  }catch(error){console.warn('foafnaut: bitmap font, because Noto Sans did not load:',String(error));return;}
+  if(typeof module._web_document_font_call_bin!=='function')return;
+  for(const [path,family] of fallbackFonts){
+    try{const {bytes,sha}=await fontFile(path);fontLoad(bytes,family,sha,true);}
+    catch(error){console.warn(`foafnaut: no ${family}:`,String(error));}
+  }
 }
 async function fetchText(url){
   const response=await fetch(url);if(!response.ok)throw Error(`HTTP ${response.status}`);

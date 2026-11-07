@@ -34,7 +34,7 @@ async function pair(nativeEngine?:string):Promise<[HTMLEngine,HTMLEngine]> {
   const bytes=await loadHTML(nativeEngine,"bytes"),text=await loadHTML(nativeEngine,"text");
   const held=[await loadFontFile(bytes,font,"Noto Sans","bytes"),await loadFontFile(text,font,"Noto Sans","text")];
   assert.deepEqual(held[0],held[1],"font answers differ");
-  assert.deepEqual(held[0],{family:"Noto Sans",glyphs:3884});
+  assert.deepEqual(held[0],{family:"Noto Sans",glyphs:3884,fonts:1});
   return [bytes,text];
 }
 async function compare(nativeEngine?:string){
@@ -76,7 +76,7 @@ async function largeFont(nativeEngine?:string){
   const engine=await loadHTML(nativeEngine,"bytes");
   const file=await Deno.readFile(font),big=new Uint8Array(6*1048576);
   big.set(file);
-  assert.deepEqual(await loadFontData(engine,big,"Noto Sans 6 MiB"),{family:"Noto Sans 6 MiB",glyphs:3884});
+  assert.deepEqual(await loadFontData(engine,big,"Noto Sans 6 MiB"),{family:"Noto Sans 6 MiB",glyphs:3884,fonts:1});
   const scene=engine.compile("<p>A large font file</p>",200,80,{checks:false});
   assert(scene.data.length>0);
   // Not a font: a Lean refusal, and the engine still answers after it.
