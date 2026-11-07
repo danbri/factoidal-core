@@ -1,4 +1,5 @@
 import L4Factoidal.WasmVM.Spec.Wasm30
+import L4Factoidal.WasmVM.Spec.BuiltinsTheorems
 
 /-!
 Sanity checks for the generated WebAssembly 3.0 spec layer (`Spec/Wasm30.lean`).
@@ -61,5 +62,37 @@ every input: the first bridge lemma a refinement proof needs for `i32.add`. -/
 theorem iadd_32_eq_uint32 (a b : UInt32) :
     iadd_ 32 (.mk_uN a.toNat) (.mk_uN b.toNat) = .mk_uN (a + b).toNat := by
   simp [iadd_, proj_uN_0, UInt32.toNat_add]
+
+/-- `i32.and` in the spec layer is `UInt32` conjunction: the opaque `iand_` is now the
+definition in `Spec/Builtins.lean`, and the lemma there carries over. -/
+theorem iand_32_eq_uint32 (a b : UInt32) :
+    iand_ 32 (.mk_uN a.toNat) (.mk_uN b.toNat) = .mk_uN (a &&& b).toNat := by
+  simp only [iand_, proj_uN_0, Builtins.OnNat.iand_, Builtins.ofNat_toNat_32, Builtins.iand_32]
+  rfl
+
+/-- `i32.shl` in the spec layer is `UInt32` shift left (count modulo 32). -/
+theorem ishl_32_eq_uint32 (a b : UInt32) :
+    ishl_ 32 (.mk_uN a.toNat) (.mk_uN b.toNat) = .mk_uN (a <<< b).toNat := by
+  simp only [ishl_, proj_uN_0, Builtins.OnNat.ishl_, Builtins.ofNat_toNat_32, Builtins.ishl_32]
+  rfl
+
+/-- `i32.lt_s` in the spec layer is `Int32` comparison. -/
+theorem ilt_s_32_eq_int32 (a b : UInt32) :
+    ilt_ 32 .S (.mk_uN a.toNat) (.mk_uN b.toNat) =
+      .mk_uN (if a.toInt32 < b.toInt32 then 1 else 0) := by
+  simp only [ilt_, proj_uN_0, Builtins.OnNat.ilt_, Builtins.OnNat.bool, Builtins.ofNat_toNat_32,
+    Builtins.ilt_s_32]
+  simp
+
+/-- Little-endian bytes in the spec layer: storing then loading an `i32` gives it back. -/
+theorem inv_ibytes_ibytes_32 (a : UInt32) :
+    inv_ibytes_ 32 (ibytes_ 32 (.mk_uN a.toNat)) = .mk_uN a.toNat := by
+  simp only [ibytes_, inv_ibytes_, proj_uN_0, Builtins.OnNat.ibytes_, Builtins.OnNat.inv_ibytes_,
+    List.map_map, Builtins.ofNat_toNat_32]
+  congr 1
+  rw [show (BitVec.ofNat 8 ∘ proj_byte_0 ∘ byte.mk_byte ∘ BitVec.toNat) =
+      (id : BitVec 8 → BitVec 8) by funext x; simp [proj_byte_0],
+    List.map_id, Builtins.inv_ibytes_ibytes_32]
+  rfl
 
 end L4Factoidal.WasmVM.Spec.Sanity

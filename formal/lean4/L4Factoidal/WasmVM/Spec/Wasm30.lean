@@ -1,3 +1,5 @@
+import L4Factoidal.WasmVM.Spec.Builtins
+
 /-
 GENERATED FILE. Do not edit. Made by tools/wasmvm/port-spec.py from
 third_party/spectec-lean4/spectec/test-lean4/Wasm.lean
@@ -6072,52 +6074,104 @@ noncomputable opaque R_laneselect : relaxed2 := opaqueDef
 noncomputable opaque s33_to_u32 : forall (v_s33 : s33), u32 := opaqueDef
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:12.1-12.107 -/
-noncomputable opaque ibits_ : forall (v_N : N) (v_iN : iN), (List bit) := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def ibits_ : forall (v_N : N) (v_iN : iN), (List bit) :=
+  fun v_N v_iN => (Builtins.OnNat.ibits_ v_N (proj_uN_0 v_iN)).map bit.mk_bit
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:13.1-13.107 -/
 noncomputable opaque fbits_ : forall (v_N : N) (v_fN : fN), (List bit) := opaqueDef
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:14.1-14.109 -/
-noncomputable opaque ibytes_ : forall (v_N : N) (v_iN : iN), (List byte) := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def ibytes_ : forall (v_N : N) (v_iN : iN), (List byte) :=
+  fun v_N v_iN => (Builtins.OnNat.ibytes_ v_N (proj_uN_0 v_iN)).map byte.mk_byte
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:15.1-15.109 -/
 noncomputable opaque fbytes_ : forall (v_N : N) (v_fN : fN), (List byte) := opaqueDef
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:16.1-16.104 -/
-noncomputable opaque nbytes_ : forall (v_numtype : numtype) (v_num_ : num_), (List byte) := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def nbytes_ : forall (v_numtype : numtype) (v_num_ : num_), (List byte) :=
+  fun v_numtype v_num_ => match v_numtype, v_num_ with
+    | .I32, .mk_num__0 _ i => ibytes_ 32 i
+    | .I64, .mk_num__0 _ i => ibytes_ 64 i
+    | .F32, .mk_num__1 _ f => fbytes_ 32 f
+    | .F64, .mk_num__1 _ f => fbytes_ 64 f
+    | _, _ => []
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:17.1-17.104 -/
-noncomputable opaque vbytes_ : forall (v_vectype : vectype) (v_vec_ : vec_), (List byte) := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def vbytes_ : forall (v_vectype : vectype) (v_vec_ : vec_), (List byte) :=
+  fun v_vectype v_vec_ => ibytes_ (vsize v_vectype) v_vec_
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:18.1-18.104 -/
-noncomputable opaque zbytes_ : forall (v_storagetype : storagetype) (v_lit_ : lit_), (List byte) := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def zbytes_ : forall (v_storagetype : storagetype) (v_lit_ : lit_), (List byte) :=
+  fun v_storagetype v_lit_ => match v_lit_ with
+    | .mk_lit__0 nt c => nbytes_ nt c
+    | .mk_lit__1 vt c => vbytes_ vt c
+    | .mk_lit__2 pt c => ibytes_ (psize pt) c
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:19.1-19.104 -/
-noncomputable opaque cbytes_ : forall (v_Cnn : Cnn) (v_lit_ : lit_), (List byte) := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def cbytes_ : forall (v_Cnn : Cnn) (v_lit_ : lit_), (List byte) :=
+  fun v_Cnn v_lit_ => match v_lit_ with
+    | .mk_lit__0 nt c => nbytes_ nt c
+    | .mk_lit__1 vt c => vbytes_ vt c
+    | .mk_lit__2 pt c => ibytes_ (psize pt) c
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:21.1-21.91 -/
-noncomputable opaque inv_ibits_ : forall (v_N : N) (var_0 : (List bit)), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def inv_ibits_ : forall (v_N : N) (var_0 : (List bit)), iN :=
+  fun v_N var_0 => .mk_uN (Builtins.OnNat.inv_ibits_ v_N (var_0.map fun d => match d with | .mk_bit k => k))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:22.1-22.91 -/
 noncomputable opaque inv_fbits_ : forall (v_N : N) (var_0 : (List bit)), fN := opaqueDef
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:23.1-23.92 -/
-noncomputable opaque inv_ibytes_ : forall (v_N : N) (var_0 : (List byte)), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def inv_ibytes_ : forall (v_N : N) (var_0 : (List byte)), iN :=
+  fun v_N var_0 => .mk_uN (Builtins.OnNat.inv_ibytes_ v_N (var_0.map proj_byte_0))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:24.1-24.92 -/
 noncomputable opaque inv_fbytes_ : forall (v_N : N) (var_0 : (List byte)), fN := opaqueDef
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:25.1-25.87 -/
-noncomputable opaque inv_nbytes_ : forall (v_numtype : numtype) (var_0 : (List byte)), num_ := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def inv_nbytes_ : forall (v_numtype : numtype) (var_0 : (List byte)), num_ :=
+  fun v_numtype var_0 => match v_numtype with
+    | .I32 => .mk_num__0 .I32 (inv_ibytes_ 32 var_0)
+    | .I64 => .mk_num__0 .I64 (inv_ibytes_ 64 var_0)
+    | .F32 => .mk_num__1 .F32 (inv_fbytes_ 32 var_0)
+    | .F64 => .mk_num__1 .F64 (inv_fbytes_ 64 var_0)
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:26.1-26.87 -/
-noncomputable opaque inv_vbytes_ : forall (v_vectype : vectype) (var_0 : (List byte)), vec_ := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def inv_vbytes_ : forall (v_vectype : vectype) (var_0 : (List byte)), vec_ :=
+  fun v_vectype var_0 => inv_ibytes_ (vsize v_vectype) var_0
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:27.1-27.92 -/
-noncomputable opaque inv_zbytes_ : forall (v_storagetype : storagetype) (var_0 : (List byte)), lit_ := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def inv_zbytes_ : forall (v_storagetype : storagetype) (var_0 : (List byte)), lit_ :=
+  fun v_storagetype var_0 => match v_storagetype with
+    | .I32 => .mk_lit__0 .I32 (inv_nbytes_ .I32 var_0)
+    | .I64 => .mk_lit__0 .I64 (inv_nbytes_ .I64 var_0)
+    | .F32 => .mk_lit__0 .F32 (inv_nbytes_ .F32 var_0)
+    | .F64 => .mk_lit__0 .F64 (inv_nbytes_ .F64 var_0)
+    | .V128 => .mk_lit__1 .V128 (inv_vbytes_ .V128 var_0)
+    | .I8 => .mk_lit__2 .I8 (inv_ibytes_ 8 var_0)
+    | .I16 => .mk_lit__2 .I16 (inv_ibytes_ 16 var_0)
+    | _ => default
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:28.1-28.87 -/
-noncomputable opaque inv_cbytes_ : forall (v_Cnn : Cnn) (var_0 : (List byte)), lit_ := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def inv_cbytes_ : forall (v_Cnn : Cnn) (var_0 : (List byte)), lit_ :=
+  fun v_Cnn var_0 => match v_Cnn with
+    | .I32 => .mk_lit__0 .I32 (inv_nbytes_ .I32 var_0)
+    | .I64 => .mk_lit__0 .I64 (inv_nbytes_ .I64 var_0)
+    | .F32 => .mk_lit__0 .F32 (inv_nbytes_ .F32 var_0)
+    | .F64 => .mk_lit__0 .F64 (inv_nbytes_ .F64 var_0)
+    | .V128 => .mk_lit__1 .V128 (inv_vbytes_ .V128 var_0)
 
 /- Inductive Relations Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:52.6-52.14 -/
 inductive fun_signed_ : N -> Nat -> Nat -> Prop where
@@ -6187,7 +6241,9 @@ noncomputable def nat_of_bool : ∀  (v_bool : Bool) , Nat
 
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:76.1-76.23 -/
-noncomputable opaque truncz : forall (rat : Nat), Nat := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def truncz : forall (rat : Nat), Nat :=
+  fun rat => rat
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:80.1-80.59 -/
 noncomputable opaque ceilz : forall (rat : Nat), Nat := opaqueDef
@@ -6211,16 +6267,24 @@ noncomputable def ineg_ : ∀  (v_N : N) (v_iN : iN) , iN
 
 
 /- Auxiliary Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:101.1-101.29 -/
-noncomputable opaque iabs_ : forall (v_N : N) (v_iN : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def iabs_ : forall (v_N : N) (v_iN : iN), iN :=
+  fun v_N v_iN => .mk_uN (Builtins.OnNat.iabs_ v_N (proj_uN_0 v_iN))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:102.1-102.29 -/
-noncomputable opaque iclz_ : forall (v_N : N) (v_iN : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def iclz_ : forall (v_N : N) (v_iN : iN), iN :=
+  fun v_N v_iN => .mk_uN (Builtins.OnNat.iclz_ v_N (proj_uN_0 v_iN))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:103.1-103.29 -/
-noncomputable opaque ictz_ : forall (v_N : N) (v_iN : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def ictz_ : forall (v_N : N) (v_iN : iN), iN :=
+  fun v_N v_iN => .mk_uN (Builtins.OnNat.ictz_ v_N (proj_uN_0 v_iN))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:104.1-104.32 -/
-noncomputable opaque ipopcnt_ : forall (v_N : N) (v_iN : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def ipopcnt_ : forall (v_N : N) (v_iN : iN), iN :=
+  fun v_N v_iN => .mk_uN (Builtins.OnNat.ipopcnt_ v_N (proj_uN_0 v_iN))
 
 /- Inductive Relations Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:105.6-105.15 -/
 inductive fun_iextend_ : N -> M -> sx -> iN -> iN -> Prop where
@@ -6277,58 +6341,92 @@ inductive fun_irem_ : N -> sx -> iN -> iN -> (Option iN) -> Prop where
     fun_irem_ v_N .S i_1 i_2 (some (.mk_uN var_0))
 
 /- Auxiliary Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:112.1-112.83 -/
-noncomputable opaque imin_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def imin_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), iN :=
+  fun v_N v_sx v_iN v_iN_0 => .mk_uN (Builtins.OnNat.imin_ v_N (match v_sx with | .U => false | .S => true) (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Auxiliary Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:113.1-113.83 -/
-noncomputable opaque imax_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def imax_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), iN :=
+  fun v_N v_sx v_iN v_iN_0 => .mk_uN (Builtins.OnNat.imax_ v_N (match v_sx with | .U => false | .S => true) (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Auxiliary Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:114.1-114.88 -/
-noncomputable opaque iadd_sat_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def iadd_sat_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), iN :=
+  fun v_N v_sx v_iN v_iN_0 => .mk_uN (Builtins.OnNat.iadd_sat_ v_N (match v_sx with | .U => false | .S => true) (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Auxiliary Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:115.1-115.88 -/
-noncomputable opaque isub_sat_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def isub_sat_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), iN :=
+  fun v_N v_sx v_iN v_iN_0 => .mk_uN (Builtins.OnNat.isub_sat_ v_N (match v_sx with | .U => false | .S => true) (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:116.1-116.92 -/
-noncomputable opaque iq15mulr_sat_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def iq15mulr_sat_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), iN :=
+  fun v_N v_sx v_iN v_iN_0 => .mk_uN (Builtins.OnNat.iq15mulr_sat_ v_N (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:117.1-117.101 -/
 noncomputable opaque irelaxed_q15mulr_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), (List iN) := opaqueDef
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:118.1-118.84 -/
-noncomputable opaque iavgr_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def iavgr_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), iN :=
+  fun v_N v_sx v_iN v_iN_0 => .mk_uN (Builtins.OnNat.iavgr_ v_N (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:120.1-120.29 -/
-noncomputable opaque inot_ : forall (v_N : N) (v_iN : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def inot_ : forall (v_N : N) (v_iN : iN), iN :=
+  fun v_N v_iN => .mk_uN (Builtins.OnNat.inot_ v_N (proj_uN_0 v_iN))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:121.1-121.29 -/
-noncomputable opaque irev_ : forall (v_N : N) (v_iN : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def irev_ : forall (v_N : N) (v_iN : iN), iN :=
+  fun v_N v_iN => .mk_uN (Builtins.OnNat.irev_ v_N (proj_uN_0 v_iN))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:122.1-122.36 -/
-noncomputable opaque iand_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def iand_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN), iN :=
+  fun v_N v_iN v_iN_0 => .mk_uN (Builtins.OnNat.iand_ v_N (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:123.1-123.39 -/
-noncomputable opaque iandnot_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def iandnot_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN), iN :=
+  fun v_N v_iN v_iN_0 => .mk_uN (Builtins.OnNat.iandnot_ v_N (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:124.1-124.35 -/
-noncomputable opaque ior_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def ior_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN), iN :=
+  fun v_N v_iN v_iN_0 => .mk_uN (Builtins.OnNat.ior_ v_N (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:125.1-125.36 -/
-noncomputable opaque ixor_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def ixor_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN), iN :=
+  fun v_N v_iN v_iN_0 => .mk_uN (Builtins.OnNat.ixor_ v_N (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:126.1-126.34 -/
-noncomputable opaque ishl_ : forall (v_N : N) (v_iN : iN) (v_u32 : u32), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def ishl_ : forall (v_N : N) (v_iN : iN) (v_u32 : u32), iN :=
+  fun v_N v_iN v_u32 => .mk_uN (Builtins.OnNat.ishl_ v_N (proj_uN_0 v_iN) (proj_uN_0 v_u32))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:127.1-127.76 -/
-noncomputable opaque ishr_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_u32 : u32), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def ishr_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_u32 : u32), iN :=
+  fun v_N v_sx v_iN v_u32 => .mk_uN (Builtins.OnNat.ishr_ v_N (match v_sx with | .U => false | .S => true) (proj_uN_0 v_iN) (proj_uN_0 v_u32))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:128.1-128.37 -/
-noncomputable opaque irotl_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def irotl_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN), iN :=
+  fun v_N v_iN v_iN_0 => .mk_uN (Builtins.OnNat.irotl_ v_N (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:129.1-129.37 -/
-noncomputable opaque irotr_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def irotr_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN), iN :=
+  fun v_N v_iN v_iN_0 => .mk_uN (Builtins.OnNat.irotr_ v_N (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:131.1-131.49 -/
-noncomputable opaque ibitselect_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN) (v_iN_1 : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def ibitselect_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN) (v_iN_1 : iN), iN :=
+  fun v_N v_iN v_iN_0 v_iN_1 => .mk_uN (Builtins.OnNat.ibitselect_ v_N (proj_uN_0 v_iN) (proj_uN_0 v_iN_0) (proj_uN_0 v_iN_1))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:132.1-132.59 -/
 noncomputable opaque irelaxed_laneselect_ : forall (v_N : N) (v_iN : iN) (v_iN_0 : iN) (v_iN_1 : iN), (List iN) := opaqueDef
@@ -6358,16 +6456,24 @@ noncomputable def ine_ : ∀  (v_N : N) (v_iN : iN) (v_iN_0 : iN) , u32
 
 
 /- Auxiliary Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:139.1-139.75 -/
-noncomputable opaque ilt_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), u32 := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def ilt_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), u32 :=
+  fun v_N v_sx v_iN v_iN_0 => .mk_uN (Builtins.OnNat.ilt_ v_N (match v_sx with | .U => false | .S => true) (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Auxiliary Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:140.1-140.75 -/
-noncomputable opaque igt_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), u32 := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def igt_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), u32 :=
+  fun v_N v_sx v_iN v_iN_0 => .mk_uN (Builtins.OnNat.igt_ v_N (match v_sx with | .U => false | .S => true) (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Auxiliary Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:141.1-141.75 -/
-noncomputable opaque ile_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), u32 := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def ile_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), u32 :=
+  fun v_N v_sx v_iN v_iN_0 => .mk_uN (Builtins.OnNat.ile_ v_N (match v_sx with | .U => false | .S => true) (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Auxiliary Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:142.1-142.75 -/
-noncomputable opaque ige_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), u32 := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def ige_ : forall (v_N : N) (v_sx : sx) (v_iN : iN) (v_iN_0 : iN), u32 :=
+  fun v_N v_sx v_iN v_iN_0 => .mk_uN (Builtins.OnNat.ige_ v_N (match v_sx with | .U => false | .S => true) (proj_uN_0 v_iN) (proj_uN_0 v_iN_0))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:242.1-242.30 -/
 noncomputable opaque fabs_ : forall (v_N : N) (v_fN : fN), (List fN) := opaqueDef
@@ -6448,10 +6554,14 @@ noncomputable opaque frelaxed_madd_ : forall (v_N : N) (v_fN : fN) (v_fN_0 : fN)
 noncomputable opaque frelaxed_nmadd_ : forall (v_N : N) (v_fN : fN) (v_fN_0 : fN) (v_fN_1 : fN), (List fN) := opaqueDef
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:308.1-308.33 -/
-noncomputable opaque wrap__ : forall (v_M : M) (v_N : N) (v_iN : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def wrap__ : forall (v_M : M) (v_N : N) (v_iN : iN), iN :=
+  fun v_M v_N v_iN => .mk_uN (Builtins.OnNat.wrap_ v_M v_N (proj_uN_0 v_iN))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:309.1-309.90 -/
-noncomputable opaque extend__ : forall (v_M : M) (v_N : N) (v_sx : sx) (v_iN : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def extend__ : forall (v_M : M) (v_N : N) (v_sx : sx) (v_iN : iN), iN :=
+  fun v_M v_N v_sx v_iN => .mk_uN (Builtins.OnNat.extend_ v_M v_N (match v_sx with | .U => false | .S => true) (proj_uN_0 v_iN))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:310.1-310.89 -/
 noncomputable opaque trunc__ : forall (v_M : M) (v_N : N) (v_sx : sx) (v_fN : fN), (Option iN) := opaqueDef
@@ -6472,7 +6582,9 @@ noncomputable opaque promote__ : forall (v_M : M) (v_N : N) (v_fN : fN), (List f
 noncomputable opaque convert__ : forall (v_M : M) (v_N : N) (v_sx : sx) (v_iN : iN), fN := opaqueDef
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:316.1-316.88 -/
-noncomputable opaque narrow__ : forall (v_M : M) (v_N : N) (v_sx : sx) (v_iN : iN), iN := opaqueDef
+/- PORT (rule builtin-definitions): defined in L4Factoidal.WasmVM.Spec.Builtins. -/
+noncomputable def narrow__ : forall (v_M : M) (v_N : N) (v_sx : sx) (v_iN : iN), iN :=
+  fun v_M v_N v_sx v_iN => .mk_uN (Builtins.OnNat.narrow_ v_M v_N (match v_sx with | .U => false | .S => true) (proj_uN_0 v_iN))
 
 /- Axiom Definition at: ../../../../specification/wasm-3.0/3.1-numerics.scalar.spectec:318.1-318.76 -/
 noncomputable opaque reinterpret__ : forall (numtype_1 : numtype) (numtype_2 : numtype) (v_num_ : num_), num_ := opaqueDef

@@ -9,8 +9,9 @@ WebAssembly engine). Author: wasmvm-spec, a subagent of session depmap-0e.
 specification as Lean definitions and inductive relations, in namespace
 `L4Factoidal.WasmVM.Spec`. It builds on our Lean, v4.33.1, in about 13 s of
 wall time and about 1 GB of memory (`lake build L4Factoidal.WasmVM.Spec`,
-measured 2026-11-07 on the owner's Mac). It imports nothing; the library root
-`L4Factoidal.WasmVM` imports it.
+measured 2026-11-07 on the owner's Mac). It imports only `Spec/Builtins.lean`
+(section 4a), which imports only Lean core; the library root `L4Factoidal.WasmVM`
+imports it.
 
 The file is GENERATED (Iron Rule 2). The chain is:
 
@@ -26,7 +27,7 @@ The file is GENERATED (Iron Rule 2). The chain is:
 
 Upstream never compiled `Wasm.lean`: its dune rule only compares the text with
 the last output. On v4.33.1 the unmodified file stops with more than 100 errors.
-The port needs ten rules (section 3).
+The port needs eleven rules (section 3).
 
 `Spec/Sanity.lean` holds kernel-checked examples (section 6).
 
@@ -36,14 +37,15 @@ theorems lists `propext` and `Quot.sound` only.
 ## 2. What is in the layer
 
 Counts in `Wasm30.lean`: 515 `inductive` (types and relations), 17 `structure`,
-275 `def`, 60 `abbrev`, 116 `opaque` (section 4).
+316 `def`, 60 `abbrev`, 75 `opaque` (section 4). Before the rule
+`builtin-definitions` (2026-11-07): 275 `def`, 116 `opaque`.
 
 | Spec chapter (SpecTec file) | In the layer | Notes |
 |---|---|---|
 | 0 auxiliary (numbers, sequences) | yes | `fun_sum`, `concat_`, `opt_`, ... |
 | 1 syntax: values, types, instructions, modules | yes | all abstract syntax as inductive types |
 | 2 validation: contexts, types, subtyping, instructions, modules | yes | `Instr_ok`, `Instrs_ok`, `Expr_ok`, `Module_ok`, the `*_sub` subtyping relations |
-| 3 numerics: relaxed, scalar, vector | partly | integer add, sub, mul, div, rem, neg, extend-in-place are defined; most other operators are opaque (section 4) |
+| 3 numerics: relaxed, scalar, vector | partly | all scalar integer operators, wrap, extend, narrow and the integer byte and bit encodings are defined (section 4a); float, vector-lifting and relaxed operators are opaque (section 4) |
 | 4 execution: configurations, values, types, instructions, modules | yes | `Step_pure`, `Step_read`, `Step`, `Steps`, `Eval_expr`, `fun_instantiate`, `fun_invoke` |
 | 5 binary format | no | only five type aliases. The backend was run on files `[012345]*`, but the binary grammars produce no Lean |
 | 6 text format | no | not given to the backend |
@@ -78,6 +80,7 @@ number of places, the port stops.
 | `relaxed-choice-getD` | 4 | `fun_relaxed2/4` index a list of a type variable with `l[i]!`, which needs `Inhabited`. `l.getD i X_1` is equal for the in-range indices used. |
 | `strip-trailing-whitespace` | 1042 | `git diff --check`. No token changes. |
 | `wrap-namespace` | 409 | Namespace, `noncomputable section`, `noncomputable` on every `def`, `opaque` and `instance`; the preamble's `Append (Option a)` instance becomes `scoped`. |
+| `builtin-definitions` | 42 | 41 opaque built-ins become `def`s that call the hand-written `Spec/Builtins.lean`, plus its import (section 4a). The list, with each exact signature, is in `tools/wasmvm/port_builtins.py`, apart from the generator rules. |
 
 Generated C: the module is not run, but Lake still emits `Wasm30.c` (about 1.3 MB)
 for the derived `BEq` and `Inhabited` instances of the non-recursive types. These
@@ -87,7 +90,8 @@ the module.
 
 ## 4. What is opaque
 
-116 constants are `opaque ... := opaqueDef`. The macro is
+As generated, 116 constants were `opaque ... := opaqueDef`; 41 of them are now
+defined (section 4a) and 75 remain. The macro is
 `by first | exact Inhabited.default | intros; assumption`: it picks some value
 of the type, and nothing can be proved about which. It is not `sorry` and adds
 no axiom. Grouped by why, against our pinned spec (WebAssembly/spec `f3268fa9`,
@@ -133,7 +137,123 @@ The way to close the first two groups without hand-writing spec content: a
 separate, small module of definitions for the builtins, each cited to the
 prose spec section, with the `opaque` replaced by a port rule that points at it.
 That module is hand-written and must be reviewed as spec text; it is a decision
-for the owner, not taken here.
+for the owner, not taken here. (The owner took it on 2026-11-07: section 4a.)
+
+## 4a. The integer built-ins, defined (2026-11-07)
+
+`Spec/Builtins.lean` (namespace `L4Factoidal.WasmVM.Spec.Builtins`) defines the
+integer built-ins on Lean's `BitVec n`, by hand, from the prose of the pinned spec
+(`document/core/exec/numerics.rst`, 4.3). Each definition's doc comment cites the
+section and anchor and quotes the defining sentence or formula. Shift and rotate
+counts are taken modulo N. It imports only Lean core, and its definitions are
+computable (so `decide` runs them); it has no recursion of its own and the
+tail-recursion gate passes. A sub-namespace `OnNat` reads the generated layer's
+`Nat` values with `BitVec.ofNat N` and returns `toNat`; the port rule
+`builtin-definitions` (`tools/wasmvm/port_builtins.py`) makes each opaque below a
+`def` that calls it.
+
+Defined now (41 of the 116):
+
+- Bitwise: `inot_ iand_ iandnot_ ior_ ixor_ irev_ ibitselect_`.
+- Shifts and rotates: `ishl_ ishr_ irotl_ irotr_` (signed and unsigned `ishr_`).
+- Bit counts: `iclz_ ictz_ ipopcnt_` (core `BitVec.clz`, `ctz`, `cpop`).
+- From their SpecTec clauses, which the backend left opaque: `iabs_ imin_ imax_
+  iadd_sat_ isub_sat_ ilt_ igt_ ile_ ige_`. These use the module's own `signed_`,
+  `inv_signed_`, `sat_u_`, `sat_s_` on `Int`, so they are correct for signed operands
+  although the generated `fun_signed_` is not (D1).
+- Vector-only integer operators: `iavgr_ iq15mulr_sat_`.
+- Conversions: `wrap__ extend__ narrow__`.
+- Encodings: `ibits_ inv_ibits_ ibytes_ inv_ibytes_ nbytes_ inv_nbytes_ vbytes_
+  inv_vbytes_ zbytes_ inv_zbytes_ cbytes_ inv_cbytes_`. Little endian. `nbytes_`
+  and `inv_nbytes_` call `fbytes_`/`inv_fbytes_` for `f32`/`f64`, which stay opaque;
+  integer loads and stores are fully defined.
+- `truncz`, as the identity: in this generated layer a SpecTec `rat` is a `Nat`
+  (D1) and its only uses, `$idiv_` and `$irem_` for `U`, divide two `Nat`s, which is
+  already the floor. Unsigned `div` and `rem` are now defined. Recheck after
+  regeneration (D1 fixed).
+
+Also in the module, for the engine and for later rules: `ieqz_`, `iextend_`
+(`i32.extend8_s` and friends), `signed_`, `inv_signed_`.
+
+Remaining opaque (75):
+
+- Floats (27): `fabs_ fneg_ fsqrt_ fceil_ ffloor_ ftrunc_ fnearest_ fadd_ fsub_
+  fmul_ fdiv_ fmin_ fmax_ fpmin_ fpmax_ fcopysign_ feq_ fne_ flt_ fgt_ fle_ fge_`,
+  the encodings `fbits_ inv_fbits_ fbytes_ inv_fbytes_`, and `ceilz`.
+- Float conversions (6): `trunc__ trunc_sat__ demote__ promote__ convert__
+  reinterpret__`.
+- Vector and relaxed SIMD (38): `lanes_ inv_lanes_`, the lifting functions `ivunop_
+  fvunop_ ivbinop_ ivbinopsx_ ivbinopsxnd_ fvbinop_ ivternopnd_ fvternop_ ivrelop_
+  ivrelopsx_ fvrelop_ ivshiftop_ ivshiftopsx_ ivswizzlop_ ivadd_pairwise_ ivextunop__
+  ivdot_ ivdot_sat_ ivextbinop__`, the relaxed `irelaxed_q15mulr_
+  irelaxed_laneselect_ irelaxed_swizzle_lane_ frelaxed_min_ frelaxed_max_
+  frelaxed_madd_ frelaxed_nmadd_ relaxed_trunc__`, and the choice constants `R_fmadd
+  R_fmin R_fmax R_idot R_iq15mulr R_trunc_u R_trunc_s R_swizzle R_laneselect`.
+- Other (4): `inv_concat_ inv_concatn_` (sequence inverses), `ND` (the
+  nondeterminism profile flag), `s33_to_u32`.
+
+`Spec/BuiltinsTheorems.lean` proves, for 32 and 64 bits, that each built-in equals the
+matching `UInt32`/`UInt64` (or `Int32`/`Int64`) operation through `toBitVec`:
+`and or xor not andnot shl shr_u shr_s eqz lt/gt/le/ge (u and s)`, `wrap`,
+`extend_u/s` (32 to 64, 8 and 16 to 32 and 64), `extend8_s`/`16_s`/`32_s`. Rotates are
+proved equal to the two-shift formula the engine uses (`(a <<< k) ||| (a >>> (32 - k))`,
+`k = b % 32`). `ibytes_` of a `UInt32`/`UInt64` is proved equal to the list of
+`(a >>> 8k).toUInt8`, which is how an engine stores; `inv_ibytes_ (ibytes_ x) = x` is
+proved for 8, 16, 32 and 64 bits. Lemmas tie the `BitVec` forms to the spec's
+arithmetic: `signed_N(x) = x.toInt`, `ilt_s` compares `signed_N`, `extend_s =
+signed_N^-1(signed_M(i))`, `wrap = i mod 2^N`. `Spec/Sanity.lean` carries four of
+them up to the generated layer (`iand_`, `ishl_`, `ilt_ .S`, the `i32` byte round trip).
+
+Not proved: that the engine's branch-free `clz64`, `ctz64`, `popcnt64`
+(`WasmVM/Numerics.lean`) equal `iclz_`, `ictz_`, `ipopcnt_`. `bv_decide` would prove
+them, but in Lean v4.33.1 a `bv_decide` proof depends on an extra axiom
+`<theorem>._native.bv_decide.ax_...` (checked with `#print axioms`), the same trust in
+compiled code as `native_decide`; no proof here uses it. `#print axioms` of the
+theorems lists `propext`, `Classical.choice`, `Quot.sound` at most.
+
+### Floats: plan
+
+Not implemented. We already have an exact model: `XSD/IEEE754.lean` rounds an exact
+rational to binary32/binary64 with ties-to-even (`roundRational`) into a sign and class
+(`Fval`: zero, infinity, NaN, or `mant * 2^bexp`) and encodes it as bits
+(`fvalToBits32/64`); `Fn/Arithmetic.lean` adds, subtracts, multiplies and divides by
+exact rationals with one rounding. The Wasm `fN` type (sign with `NORM m e`,
+`SUBNORM m`, `INF`, `NAN m`) maps onto it. What the Wasm operators need beyond it:
+
+- **NaN payloads and sign.** `Fval.nan` has no payload and no sign. Wasm keeps both
+  (`NAN m`, sign), and its results are SETS: an arithmetic NaN result is any canonical
+  NaN, or (4.3.3 "NaN propagation") any arithmetic NaN derived from an input NaN's
+  payload, with either sign. The model needs a payload field, and the operators must
+  return the spec's set (the generated signatures already return `List fN`).
+- **`fbits_`/`inv_fbits_`**: the spec formula (sign, `E` exponent bits, `M` mantissa
+  bits) for N = 32, 64, with `fvalToBits` extended to NaN payloads, and the inverse.
+  This also defines `fbytes_` (little endian, as `ibytes_`) and `reinterpret__`.
+- **`sqrt`**: the exact square root is irrational in general. Correct rounding needs
+  an integer square root of the scaled significand and a remainder test for ties
+  (ties cannot occur for sqrt, but the rounding bit must be exact). Core `Nat.sqrt`
+  exists.
+- **`fma`** (relaxed `madd`, and as a check for the others): exact `a*b+c` as a
+  rational, then one rounding; this is the same shape as `Arithmetic.add`.
+- **`min`, `max`, `pmin`, `pmax`, `copysign`, `abs`, `neg`**: sign-aware choices, with
+  `-0 < +0` for min and max and NaN results; `abs`, `neg`, `copysign` act on the sign bit
+  only, also for NaN.
+- **`nearest`, `ceil`, `floor`, `trunc`**: rounding to an integer in the float format;
+  exact on the rational value (`ceilz`, `truncz` on rationals), signed zeros kept
+  (`ceil(-0.5) = -0`).
+- **Comparisons** `feq fne flt fgt fle fge`: on the rational value, false on NaN
+  (except `ne`), `-0 = +0`.
+- **Conversions**: `trunc`/`trunc_sat` (float to integer: exact truncation, then a
+  range check, trap or saturate), `convert` (integer to float: one rounding of an
+  exact integer), `demote` (one rounding of an exact binary64 to binary32, NaN
+  handling as above) and `promote` (exact).
+
+How the model extends: add a NaN payload (`nan (payload : Nat)`) to `FClass`, or a
+Wasm-specific wrapper type, so that `fN` maps one to one onto bits; express each finite
+result as "exact rational, then `roundRational`"; and return the spec's NaN set where
+the spec allows a choice. The XSD layer does not need payloads, so a wrapper keeps its
+proofs as they are. Issue https://github.com/danbri/factoidal/issues/695 assesses
+lean-dojo/FloatLib, which would give a proved IEEE model but needs Mathlib; this plan
+avoids that dependency.
 
 ## 5. Defects and gaps of the generated layer
 
@@ -168,6 +288,8 @@ All checked by the kernel; constructors, `decide` and `simp` only.
 - `nop_ok`: `nop` validates with type `[] -> []` in any context.
 - `iadd_32_eq_uint32`: `iadd_ 32 (mk_uN a.toNat) (mk_uN b.toNat) = mk_uN (a + b).toNat`
   for all `a b : UInt32`. This is the first bridge lemma (section 8).
+- `iand_32_eq_uint32`, `ishl_32_eq_uint32`, `ilt_s_32_eq_int32`,
+  `inv_ibytes_ibytes_32`: the same for built-ins that were opaque before section 4a.
 
 One lesson: `cases` on a `Step_pure` hypothesis fails on rules whose left side
 is `instr_val v` (a function of the value), because Lean cannot invert a `match`.
@@ -256,7 +378,8 @@ above when the opaque numerics or D1 block a proof.
 ## 10. Open items
 
 - D1 (signed numbers as `Nat`): blocks every proof about signed integer operators.
-- The 76 builtin numerics: a reviewed definitions module, owner decision.
+- The 76 builtin numerics: the integer ones are defined (section 4a, owner decision
+  2026-11-07); floats follow the plan in section 4a; vector and relaxed remain.
 - Binary format relations: none; the decoder has nothing to refine yet.
 - `.github/workflows/verify-lean4.yml` does not build the `WasmVM` library; the
   port test runs, the Lean build of the layer does not.

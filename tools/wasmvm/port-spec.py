@@ -23,6 +23,9 @@ import pathlib
 import re
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import port_builtins  # noqa: E402  (rule builtin-definitions, kept in its own file)
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_INPUT = ROOT / "third_party/spectec-lean4/spectec/test-lean4/Wasm.lean"
 OUTPUT = ROOT / "formal/lean4/L4Factoidal/WasmVM/Spec/Wasm30.lean"
@@ -300,7 +303,15 @@ def r_strip_ws(text):
     return subn_exact(r"[ \t]+$", "", text, 1042, "strip-trailing-whitespace", flags=re.M)
 
 
-PIPELINE = [r_preamble, r_classical_beq, r_field_prefix, r_record_update, r_missing_wf, r_partial_defs, r_mod, r_relaxed, r_strip_ws, r_wrap]
+@rule("builtin-definitions", port_builtins.REASON)
+def r_builtins(text):
+    # After wrap-namespace: the import must come before the header and namespace.
+    text, n = port_builtins.apply(text, PortError)
+    expect("builtin-definitions", n, len(port_builtins.DEFS) + 1)
+    return text, n
+
+
+PIPELINE = [r_preamble, r_classical_beq, r_field_prefix, r_record_update, r_missing_wf, r_partial_defs, r_mod, r_relaxed, r_strip_ws, r_wrap, r_builtins]
 
 
 def port(src):
