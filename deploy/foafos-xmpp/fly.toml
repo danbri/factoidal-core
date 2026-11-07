@@ -5,8 +5,7 @@ kill_signal = "SIGTERM"
 kill_timeout = "10s"
 
 [build.args]
-  FACTOIDAL_VERSION = "0.32.0"
-  FACTOIDAL_HOST_COMMIT = "a9caa45d874772b86660a87ac97eb5ec3eb6ca96"
+  FACTOIDAL_VERSION = "0.33.0"
   FOAFOS_POD_COMMIT = "6462105c92f8d7088118e293e3020da9a52daba7"
 
 [env]
