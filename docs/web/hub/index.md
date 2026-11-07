@@ -24,6 +24,7 @@ in your browser.
 
 <ul class="post-series">
   <li><a href="./foafnaut2525-status/">foafnaut2525 project status</a> — where the Lean web rendering engine stands, suite by suite; the engine renders this note too.</li>
+  <li><a href="./render-scores/#svg-tiny-pixels">SVG Tiny 1.2 test suite results</a> — each W3C SVG Tiny 1.2 test drawn by the Lean engine and compared with its reference image.</li>
   <li><a href="./render-scores/">Rendering and font scores</a> — the score of each rendering and font suite by commit, and the largest failure groups: the next fixes.</li>
   <li><a href="./foafnaut/">foafnaut</a> — the Lean browser in a page: tabs, an address bar for URLs, searches and commands, view source, XML with XSLT, drawn with WebGPU. It works at phone width.</li>
   <li><a href="./html-webgpu/">HTML and CSS in Lean</a> — editable HTML/CSS, Lean block and inline layout, shared vector geometry, WebGPU pixels and clickable source-mapped links</li>

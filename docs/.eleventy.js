@@ -58,6 +58,7 @@ module.exports = function(eleventyConfig) {
     eleventyConfig.addPassthroughCopy({ [`../labs/demos/foafnaut/web-render/script-engine/${name}`]: `web/hub/foafnaut/script-engine/${name}` });
   }
   eleventyConfig.addPassthroughCopy({ "../third_party/fonts/noto-sans": "web/hub/foafnaut/fonts/noto-sans" });
+  eleventyConfig.addPassthroughCopy({ "../third_party/fonts/noto-sans-armenian": "web/hub/foafnaut/fonts/noto-sans-armenian" });
   eleventyConfig.addPassthroughCopy({
     "../labs/demos/foafnaut/web-render/fixtures": "web/hub/html-webgpu/fixtures"
   });

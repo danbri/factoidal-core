@@ -35,26 +35,30 @@ def svg(path, title):
 # The SVG pages that draw well, linked first from the start page (owner, 2026-11-07:
 # "please get the cool svg enriched demo pages linked into our start page").
 FEATURED = ['showcase-dataviz.html', 'showcase-lettering.html', 'showcase-tables-svg.html',
-            'showcase-emoji.html', 'svg-gallery.html', 'solving-showcase.html', 'books-svg.xml']
+            'svg-gallery.html', 'solving-showcase.html', 'books-svg.xml']
+# Text and layout pages, linked next (owner, 2026-11-07, on the writing systems page).
+TEXT = ['showcase-scripts.html', 'showcase-tables.html', 'showcase-emoji.html', 'print-showcase.html']
 SVG_TINY_SCORES = 'https://danbri.github.io/factoidal/web/hub/render-scores/#svg-tiny-pixels'
 
 
 def index():
     # foafnaut:graph is a built-in page: the interactive graph, run by the Lean app.
     titles = {p['page']: p['title'] for p in manifest['pages']}
-    missing = [page for page in FEATURED if page not in titles]
+    missing = [page for page in FEATURED + TEXT if page not in titles]
     if missing:
         raise SystemExit(f'featured pages not in manifest.json: {missing}')
     link = lambda page: f'<p><a href="{page}">{html.escape(titles[page])}</a></p>'
     featured = '\n'.join(link(page) for page in FEATURED)
+    text = '\n'.join(link(page) for page in TEXT)
     rest = '\n'.join(link(p['page']) for p in manifest['pages']
-                     if p['page'] != 'index.html' and not p.get('showcase') and p['page'] not in FEATURED)
+                     if p['page'] != 'index.html' and not p.get('showcase') and p['page'] not in FEATURED + TEXT)
     return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Demo pages</title>'
             f'<style>{STYLE}h2{{margin:0;padding-top:14px;font-size:17px;line-height:24px;color:#184078}}</style></head><body><main>\n<h1>foafnaut2525 demo pages</h1>\n'
             f'<p>Every page here is rendered by the Lean engine with WebGPU.</p>\n'
             f'<p><a href="foafnaut:graph">Interactive FOAF graph</a></p>\n'
             f'<h2>Drawn with SVG</h2>\n{featured}\n'
             f'<p><a href="{SVG_TINY_SCORES}">SVG Tiny 1.2 test suite results (web)</a></p>\n'
+            f'<h2>Text and layout</h2>\n{text}\n'
             f'<h2>More pages</h2>\n{rest}\n</main></body></html>\n')
 
 

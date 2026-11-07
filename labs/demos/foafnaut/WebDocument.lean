@@ -525,10 +525,16 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
   return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
     pageSections ++ chromeSections)
 
-/-- The font the engine holds between calls, so that a scroll does not read it again. -/
+/-- The fonts the engine holds between calls, so that a scroll does not read them
+again. The first is the primary font; the others draw the characters it lacks, in
+order (`SfntProfile.wordIn`). The memo holds words shaped with this list. -/
 structure HeldFont where
-  font : Rendering.SfntProfile.Font
+  fonts : Array Rendering.SfntProfile.Font
   memo : Rendering.SfntProfile.Memo
+
+/-- The family and SHA-256 of each held font, in order: the font part of `LayoutKey`. -/
+def HeldFont.names (held : HeldFont) : List (String × String) :=
+  held.fonts.toList.map fun f => (f.family,f.sha256)
 
 initialize heldFontRef : IO.Ref (Option HeldFont) ← IO.mkRef none
 
@@ -545,27 +551,41 @@ and each returns what it kept so that the caller uses the result and the call st
 @[implemented_by keepFontImpl, noinline] private opaque keepFont (held : HeldFont) (_ : JSON.Json) : HeldFont := held
 @[implemented_by keepWordsImpl, noinline] private opaque keepWords (words : Rendering.SfntProfile.Memo) (request : JSON.Json) : Rendering.SfntProfile.Memo
 
-/-- Read the bytes of a font file once. Later renders use it until another replaces it.
-`request` only keeps the call in place (see `keepFont`). -/
-private def loadFontBytes (bytes : ByteArray) (family sha256 : String) (request : JSON.Json) : Except String String := do
+/-- Most fonts that the engine holds at once. -/
+def maxHeldFonts : Nat := 64
+
+/-- Read the bytes of a font file once. Later renders use it until another load
+changes the list. With `fallback`, the font goes at the end of the held list (a font
+with the same SHA-256 is not added twice); otherwise it replaces the list. Either
+way the word memo starts again, as words may now draw differently. `request` only
+keeps the call in place (see `keepFont`). -/
+private def loadFontBytes (bytes : ByteArray) (family sha256 : String) (fallback : Bool) (request : JSON.Json) :
+    Except String String := do
   let font ← Rendering.SfntProfile.Font.read bytes family sha256
-  let held := keepFont ⟨font,{}⟩ request
-  return (JSON.Json.object [("family",.string held.font.family),("glyphs",.number (toString held.font.face.numGlyphs))]).toString
+  let fonts := match fallback,heldFont request with
+    | true,some held => if held.fonts.any (·.sha256 == sha256) then held.fonts else held.fonts.push font
+    | _,_ => #[font]
+  if fonts.size > maxHeldFonts then throw "font file: more than 64 fonts held"
+  let held := keepFont ⟨fonts,{}⟩ request
+  return (JSON.Json.object [("family",.string font.family),("glyphs",.number (toString font.face.numGlyphs)),
+    ("fonts",.number (toString held.fonts.size))]).toString
 
 /-- The `fontLoad` op: the font file as Base64 in the JSON request. This is the text
 reference path; `fontLoadBin` takes the same file as bytes. -/
 private def loadFont (request : JSON.Json) : Except String String := do
   let some bytes := Rendering.SfntProfile.decodeBase64 (str request "fontBase64") | throw "font file: invalid base64"
-  loadFontBytes bytes (str request "fontFamily" "font") (str request "fontSha256" "unnamed") request
+  loadFontBytes bytes (str request "fontFamily" "font") (str request "fontSha256" "unnamed")
+    (request.field? "fallback" == some (.bool true)) request
 
 /-- `fontLoad` with the font file as bytes, with no Base64 and no JSON around it.
 A host copies the file into engine memory, so a font is not limited by the call stack,
-which holds string arguments in Wasm. The answer is the `fontLoad` answer. -/
+which holds string arguments in Wasm. `fallback` is 1 to add the font to the held
+list, 0 to replace the list. The answer is the `fontLoad` answer. -/
 @[export web_document_font_load_bin]
-def fontLoadBin (bytes : ByteArray) (family sha256 : String) : String :=
+def fontLoadBin (bytes : ByteArray) (family sha256 : String) (fallback : UInt32) : String :=
   let request := JSON.Json.object [("op",.string "fontLoad"),("fontFamily",.string family),
-    ("fontSha256",.string sha256),("fontBytes",.number (toString bytes.size))]
-  match loadFontBytes bytes family sha256 request with
+    ("fontSha256",.string sha256),("fontBytes",.number (toString bytes.size)),("fallback",.bool (fallback != 0))]
+  match loadFontBytes bytes family sha256 (fallback != 0) request with
   | .ok value => value | .error message => WebRender.errorJSON message
 
 /-- The request fields that a render reads before its layout ends. `shell` gives only
@@ -578,9 +598,10 @@ def layoutFields : List String := ["commands","resources","images","url","fontDa
 def layoutRequest (request : JSON.Json) : JSON.Json :=
   .object (layoutFields.filterMap fun key => (request.field? key).map (key,·))
 
-/-- Everything that a render reads before its layout ends. The held font is named by
-its family and SHA-256: `layOut` reads the font that `fontLoad` holds, and only
-`fontLoad` replaces it. -/
+/-- Everything that a render reads before its layout ends. The held fonts are named by
+family and SHA-256, all of them in order: `layOut` reads the fonts that `fontLoad`
+holds, and only `fontLoad` changes them. A fallback font added after a render gives
+a new key, so the kept layout of the old list is not used. -/
 structure LayoutKey where
   html : String
   request : JSON.Json
@@ -588,7 +609,9 @@ structure LayoutKey where
   height : Nat
   /-- Height of the browser chrome above the page. -/
   top : Nat
-  font : Option (String × String)
+  /-- The held fonts by family and SHA-256, in order (`HeldFont.names`); empty when
+  none is held. The layout depends on every one of them, not only the first. -/
+  fonts : List (String × String)
   deriving DecidableEq
 
 /-- A laid-out document: the scene before the window, the selection and the chrome. -/
@@ -642,10 +665,10 @@ def layOut (key : LayoutKey) : Except String Laid := do
     some <$> Rendering.FontProvider.Face.decode fontData
   -- A font loaded by the fontLoad op: Lean shapes the words and takes the outlines.
   let loaded := heldFont request
-  let memo := loaded.map fun held => Rendering.SfntProfile.remember held.font held.memo (Rendering.SfntProfile.wordsOf dom)
+  let memo := loaded.map fun held => Rendering.SfntProfile.remember held.fonts held.memo (Rendering.SfntProfile.wordsOf dom)
   let font ← match loaded,memo with
     | some held,some words =>
-      Rendering.SfntProfile.profile held.font (keepWords words request)
+      Rendering.SfntProfile.profile held.fonts (keepWords words request)
     | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   let url := baseURL dom (str request "url")
   let embedding ← match graph with
@@ -761,8 +784,8 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     throw "unknown document operation"
   let shell := (request.field? "shell").map WebShell.Shell.ofJson
   let top := (shell.map (fun value => WebShell.height value width)).getD 0
-  let font := (heldFont request).map fun held => (held.font.family,held.font.sha256)
-  let key : LayoutKey := ⟨html,layoutRequest request,width,height,top,font⟩
+  let fonts := ((heldFont request).map HeldFont.names).getD []
+  let key : LayoutKey := ⟨html,layoutRequest request,width,height,top,fonts⟩
   let laid ← laidOut key
   let scene := laid.scene
   let boxes := laid.boxes

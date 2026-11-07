@@ -25,6 +25,8 @@ export type Inspection = {
   stylesheets:{nodeId:number;url:string}[];
 };
 export type History = {entries:string[];index:number};
+/** The answer of a font load: the font's family and glyph count, and how many fonts the engine holds. */
+export type FontLoaded = {family:string;glyphs:number;fonts:number};
 export type HistoryAnswer = {history:History;url:string|null;canBack:boolean;canForward:boolean};
 export type GraphFrame = {model:string;commands:string[]};
 /** The address bar's edit state; the host keeps it and sends it back in `shell`. */
@@ -49,14 +51,14 @@ a JSON head and raw sections, with no Base64. The buffer is the host's own copy.
 export type BytesBackend=(html:string,requestJSON:string,width:number,height:number)=>ArrayBuffer;
 /** A font file as bytes (`web_document_font_call_bin`, WebDocument.fontLoadBin): no Base64
 and no JSON, so the file is not copied onto the call stack. The answer is the fontLoad JSON. */
-export type FontBackend=(bytes:Uint8Array,family:string,sha256:string)=>string;
+export type FontBackend=(bytes:Uint8Array,family:string,sha256:string,fallback:boolean)=>string;
 type Backends={text:DocumentBackend;bytes:BytesBackend;font:FontBackend};
 /** Backend 2: a native dylib of the same Lean objects. Every call must come from one thread; no nonblocking FFI. */
 export function nativeBackends(path:string):Backends {
   const library=Deno.dlopen(path,{
     web_document_call:{parameters:["buffer","buffer","u32","u32"],result:"pointer"},
     web_document_call_bin:{parameters:["buffer","buffer","u32","u32","buffer"],result:"pointer"},
-    web_document_font_call_bin:{parameters:["buffer","u32","buffer","buffer"],result:"pointer"},
+    web_document_font_call_bin:{parameters:["buffer","u32","buffer","buffer","u32"],result:"pointer"},
     web_render_free:{parameters:["pointer"],result:"void"},
   } as const);
   const cstring=(text:string)=>{if(text.includes("\0"))throw new Error("Native engine input contains NUL");return encoder.encode(text+"\0");};
@@ -75,8 +77,8 @@ export function nativeBackends(path:string):Backends {
       try{return Deno.UnsafePointerView.getArrayBuffer(pointer,size[0]).slice(0);}
       finally{library.symbols.web_render_free(pointer);}
     },
-    font:(bytes,family,sha256)=>{
-      const pointer=library.symbols.web_document_font_call_bin(bytes,bytes.length,cstring(family),cstring(sha256));
+    font:(bytes,family,sha256,fallback)=>{
+      const pointer=library.symbols.web_document_font_call_bin(bytes,bytes.length,cstring(family),cstring(sha256),fallback?1:0);
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       try{return new Deno.UnsafePointerView(pointer).getCString();}
       finally{library.symbols.web_render_free(pointer);}
@@ -101,14 +103,14 @@ function wasmBackends(module:Module):Backends {
         return heap.slice(pointer,pointer+total).buffer;}
       finally{module.ccall("web_render_free",null,["number"],[pointer]);}
     },
-    font:(bytes,family,sha256)=>{
+    font:(bytes,family,sha256,fallback)=>{
       if(!module._malloc||!module._free)throw new Error("Published Lean HTML engine has no font bytes call");
       // The file goes into the engine's heap, not onto its 4 MB stack.
       const input=module._malloc(Math.max(1,bytes.length));
       if(!input)throw new Error("Published Lean HTML engine allocation failed");
       try{
         module.HEAPU8.set(bytes,input);
-        const pointer=module.ccall("web_document_font_call_bin","number",["number","number","string","string"],[input,bytes.length,family,sha256]);
+        const pointer=module.ccall("web_document_font_call_bin","number",["number","number","string","string","number"],[input,bytes.length,family,sha256,fallback?1:0]);
         if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
         try{return module.UTF8ToString(pointer);}
         finally{module.ccall("web_render_free",null,["number"],[pointer]);}
@@ -206,12 +208,15 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     xslt:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"xslt"}) as {source:string;engine:string},
     inspect:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"inspect"}) as Inspection,
     // Lean reads the font once and holds it; later renders draw with it.
-    fontLoad:(fontBase64:string,fontFamily:string,fontSha256:string)=>documentCall("",{op:"fontLoad",fontBase64,fontFamily,fontSha256}) as {family:string;glyphs:number},
+    // fallback:true adds the font to the engine's list, after the fonts it holds;
+    // otherwise the font replaces the list. The answer counts the fonts held.
+    fontLoad:(fontBase64:string,fontFamily:string,fontSha256:string,fallback=false)=>
+      documentCall("",{op:"fontLoad",fontBase64,fontFamily,fontSha256,...(fallback?{fallback:true}:{})}) as FontLoaded,
     // The same, with the file as bytes: no Base64, and no size limit from the call stack.
-    fontLoadBytes:(bytes:Uint8Array,fontFamily:string,fontSha256:string)=>{
-      const result=JSON.parse(backends.font(bytes,fontFamily,fontSha256));
+    fontLoadBytes:(bytes:Uint8Array,fontFamily:string,fontSha256:string,fallback=false)=>{
+      const result=JSON.parse(backends.font(bytes,fontFamily,fontSha256,fallback));
       if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
-      return result as {family:string;glyphs:number};
+      return result as FontLoaded;
     },
     fontRequests:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"fontRequests"}),
     // The CSS declarations that Lean's profile can not read and drops, "property: value (reason)".
