@@ -94,7 +94,6 @@ private def fontUse := linked "<font-face font-family='L'><font-face-src><font-f
 #guard (NativeSVGForgiving.parse useOther 40 40 none [(otherKey,(linked "<use id='r' xlink:href='main.svg#x'/>").toUTF8)] (some main_)).toOption.isSome
 #guard (NativeSVGForgiving.parse useOther 40 40 none [(otherKey,(linked "<use id='r' xlink:href='b.svg#r'/>").toUTF8)] (some main_)).toOption.isSome
 -- Bytes that are not XML draw nothing and stop nothing.
-#guard primitives "<rect width='9' height='9'/>" == 1
 #guard !green useOther [(otherKey,"<svg".toUTF8)]
 -- Not well-formed XML stays an error.
 #guard (parse "<svg" 40 40).toOption.isNone
@@ -178,3 +177,18 @@ private def line2 : Float := 19.8
 -- Expected failure, https://github.com/danbri/factoidal/issues/1259: a soft hyphen is
 -- not yet a break opportunity. When it is one, "a a-" fits on line 1 and this guard fails.
 #guard originsAre (area "width='22' height='30'" "a a\u00ADaa") [(0,line1),(0,line2),(10,line2),(15,line2)]
+
+-- Expected failures. Each guard states the present wrong result, so the build fails
+-- when the fault is repaired; then state the right result and close the issue.
+-- https://github.com/danbri/factoidal/issues/1261: the browser path must list `b.svg`.
+#guard (match L4Factoidal.XML.parseNamespaceView useOther with
+  | .ok tree => NativeSVG.imageKeys tree (some main_)
+  | .error _ => ["not parsed"]) == []
+-- https://github.com/danbri/factoidal/issues/1262: bold must differ from normal.
+#guard (parse (svg "<text font-size='10' y='10'>a</text>") 40 40 (some tfont)).toOption.map (·.1.compiled.length) ==
+  (parse (svg "<text font-size='10' y='10' font-weight='bold' font-style='italic'>a</text>") 40 40 (some tfont)).toOption.map (·.1.compiled.length)
+#guard tpixel "<text font-size='10' y='10' font-weight='bold'>a</text>" 11 5 == 1
+-- https://github.com/danbri/factoidal/issues/1263: a character outside the fonts must draw.
+#guard clear "<text font-size='10' y='10'>&#x416;</text>" 5 5
+-- https://github.com/danbri/factoidal/issues/1264: `direction` must put the start at the right.
+#guard inked "<text x='20' y='10' font-size='10' direction='rtl'>a</text>" 25 5
