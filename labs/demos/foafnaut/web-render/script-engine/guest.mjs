@@ -43,6 +43,9 @@ export function installGuest(snapshot) {
     return value;
   };
   const read = () => flush();
+  // Attribute names that Lean accepted: name validity (DOM §4.9) depends on the name only,
+  // so a later write with the same name can wait for the batch and still not fail there.
+  const acceptedNames = new Set();
   // The exact next node id: Lean's, after every queued command.
   const sync = () => { flush(); if (!nextKnown && mutate) refresh(parse(mutate('[]'))); };
   const record = id => { read(); return records.get(id); };
@@ -89,8 +92,8 @@ export function installGuest(snapshot) {
     const attrName = name => html ? String(name).toLowerCase() : String(name);
     const classTokens = () => String(attributes()[attrName('class')] ?? '').split(/[ \t\n\r\f]+/).filter(Boolean);
     const classList = freeze({
-      add(...tokens) { for (const token of tokens) { emit({ op: 'classList', nodeId: id, action: 'add', token: text(token) }); provisional('class', [...new Set([...classTokens(), String(token)])].join(' ')); } },
-      remove(...tokens) { for (const token of tokens) { emit({ op: 'classList', nodeId: id, action: 'remove', token: text(token) }); provisional('class', classTokens().filter(t => t !== String(token)).join(' ')); } },
+      add(...tokens) { for (const token of tokens) { emit({ op: 'classList', nodeId: id, action: 'add', token: text(token) }); flush(); provisional('class', [...new Set([...classTokens(), String(token)])].join(' ')); } },
+      remove(...tokens) { for (const token of tokens) { emit({ op: 'classList', nodeId: id, action: 'remove', token: text(token) }); flush(); provisional('class', classTokens().filter(t => t !== String(token)).join(' ')); } },
       toggle(token, force) {
         token = text(token);
         const has = classTokens().includes(token), want = force === undefined ? !has : !!force;
@@ -111,6 +114,7 @@ export function installGuest(snapshot) {
     const setStyle = (property, value) => {
       property = text(property).trim().toLowerCase(); value = text(value);
       emit({ op: 'setStyleProperty', nodeId: id, property, value });
+      flush();
       if (!mutate) {
         const rest = declarations(attributes().style).filter(([k]) => k !== property);
         if (value.trim()) rest.push([property, value.trim()]);
@@ -164,7 +168,8 @@ export function installGuest(snapshot) {
       setAttribute(name, value) {
         name = text(name); value = text(value);
         emit({ op: 'setAttribute', nodeId: id, name, value });
-        if (mutate) flush(); else provisional(name, value);
+        if (!mutate) provisional(name, value);
+        else if (!acceptedNames.has(name)) { flush(); acceptedNames.add(name); }
       },
       removeAttribute(name) {
         name = text(name);
@@ -221,6 +226,7 @@ export function installGuest(snapshot) {
     if (!nextKnown || next === null) throw new TypeError('createElement: the next node id is not known');
     const id = next;
     emit({ op: 'createElement', nodeId: id, tagName: tag, namespace });
+    flush();
     next = id + 1;
     records.set(id, { id, tagName: namespace === 'html' ? tag.toLowerCase() : tag, namespace, parent: null, attributes: {}, textContent: '' });
     return handleOf(id);
@@ -353,7 +359,8 @@ export function installGuest(snapshot) {
     lastDefaultPrevented = defaultPrevented;
   } });
   Object.defineProperty(globalThis, '__factoidalDrain', { value: () => {
-    flush();
+    // A batch Lean refuses here is reported, and none of it is kept.
+    try { flush(); } catch (error) { report(error); }
     const listeners = [], document = [];
     for (const [key, state] of callbacks) {
       const types = EVENTS.filter(type => state.handlers[type] || state.listeners[type]?.length);
