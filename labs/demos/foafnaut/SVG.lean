@@ -2720,6 +2720,70 @@ private def Primitive.screenBox (m : Mapping) (p : BackendPrimitive) :
                xs.foldl max (xs.headD 0)+2,ys.foldl max (ys.headD 0)+2)
   | _ => none
 
+/-- The bounds of `Primitive.screenBox` with no list: `pointBounds` always has four
+values, so the reference's other case is never taken. -/
+private def geometryBox : BackendGeometry → BoxFold
+  | .rect x y w h => ⟨min x (x+w),min y (y+h),max x (x+w),max y (y+h)⟩
+  | .circle cx cy r => ⟨cx-r,cy-r,cx+r,cy+r⟩
+  | .ellipse cx cy rx ry => ⟨cx-rx,cy-ry,cx+rx,cy+ry⟩
+  | .line x1 y1 x2 y2 => ⟨min x1 x2,min y1 y2,max x1 x2,max y1 y2⟩
+  | .polygon points => (points.foldl boundsStep none).getD ⟨0,0,0,0⟩
+  | .path contours => (contourBounds contours).getD ⟨0,0,0,0⟩
+
+/-- `Primitive.screenBox` with the same Float operations in the same order, and no
+list of corners. `Primitive.screenBox_eq_fast` proves it equal. -/
+private def Primitive.screenBoxFast (m : Mapping) (p : BackendPrimitive) :
+    Option (Float × Float × Float × Float) :=
+  let b := geometryBox p.geometry
+  let pad : Float := match p.style.stroke with
+    | .none => 0
+    | _ => (max 2 (p.style.miterLimit/2))*p.style.strokeWidth+1
+  let px := fun (x y : Float) =>
+    let w := p.transform.apply x y
+    ((w.1-m.minX)*m.sx+m.tx,(w.2-m.minY)*m.sy+m.ty)
+  let c0 := px (b.x0-pad) (b.y0-pad)
+  let c1 := px (b.x1+pad) (b.y0-pad)
+  let c2 := px (b.x0-pad) (b.y1+pad)
+  let c3 := px (b.x1+pad) (b.y1+pad)
+  let bad := fun (v : Float) => v.isNaN || v.isInf
+  if m.sx <= 0 || m.sy <= 0 ||
+      (bad c0.1 || (bad c1.1 || (bad c2.1 || (bad c3.1 ||
+        (bad c0.2 || (bad c1.2 || (bad c2.2 || (bad c3.2 || false)))))))) then none
+  else some (min (min (min (min c0.1 c0.1) c1.1) c2.1) c3.1-2,
+             min (min (min (min c0.2 c0.2) c1.2) c2.2) c3.2-2,
+             max (max (max (max c0.1 c0.1) c1.1) c2.1) c3.1+2,
+             max (max (max (max c0.2 c0.2) c1.2) c2.2) c3.2+2)
+
+private theorem bounds_rows_box (b : Option BoxFold) :
+    boundsRows b = [(b.getD ⟨0,0,0,0⟩).x0,(b.getD ⟨0,0,0,0⟩).y0,(b.getD ⟨0,0,0,0⟩).x1,(b.getD ⟨0,0,0,0⟩).y1] := by
+  cases b <;> rfl
+
+@[csimp] private theorem Primitive.screenBox_eq_fast :
+    @Primitive.screenBox = @Primitive.screenBoxFast := by
+  funext m p
+  unfold Primitive.screenBox Primitive.screenBoxFast
+  cases hg : p.geometry with
+  | polygon points =>
+    dsimp only [geometryBox]
+    rw [pointBounds_eq_step]
+    cases points.foldl boundsStep none <;>
+      simp only [boundsRows, Option.getD, List.map_cons, List.map_nil, List.cons_append,
+        List.nil_append, List.any_cons, List.any_nil, List.foldl_cons, List.foldl_nil, List.headD_cons,
+        Bool.or_false]
+  | path contours =>
+    dsimp only [geometryBox]
+    rw [pointBounds_eq_step, contourBounds_eq]
+    cases contourBounds contours <;>
+      simp only [boundsRows, Option.getD, List.map_cons, List.map_nil, List.cons_append,
+        List.nil_append, List.any_cons, List.any_nil, List.foldl_cons, List.foldl_nil, List.headD_cons,
+        Bool.or_false]
+  | _ =>
+    simp only [geometryBox, List.map_cons, List.map_nil, List.cons_append, List.nil_append,
+      List.any_cons, List.any_nil, List.foldl_cons, List.foldl_nil, List.headD_cons, Bool.or_false]
+
+#print axioms Primitive.screenBox_eq_fast
+
+
 /-- The tile of a pixel coordinate, kept in `0..count-1`. -/
 private def tileIndex (value : Float) (count : Nat) : Nat :=
   if value <= 0 then 0
