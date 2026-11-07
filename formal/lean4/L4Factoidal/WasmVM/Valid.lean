@@ -567,7 +567,36 @@ def mkCtx (m : Module) : Ctx :=
     refs := funcRefs m
     reps := typeReps m.types }
 
-def validate (m : Module) : Except ValidationError ValidModule := do
+/-- Compile functions `lo` to `hi` (module-local indices), in order. -/
+def compileRange (c : Ctx) (m : Module) (nImp lo hi : Nat) : Except ValidationError (Array CompiledFunc) :=
+  go lo (Array.mkEmpty (hi - lo))
+where
+  go (i : Nat) (acc : Array CompiledFunc) : Except ValidationError (Array CompiledFunc) :=
+    if h : i < hi ∧ i < m.funcs.size then
+      match compileFunc c (nImp + i) m.funcs[i] with
+      | .ok cf => go (i + 1) (acc.push cf)
+      | .error e => .error e
+    else .ok acc
+  termination_by hi - i
+
+/-- Compile all functions. With `parallel`, bodies are compiled in chunks, one
+`Task` each; the chunks are joined in order, so the result (and the first error) is
+the same as the serial one. Each body needs only the read-only context `c`. -/
+def compileAll (c : Ctx) (m : Module) (nImp : Nat) (parallel : Bool) :
+    Except ValidationError (Array CompiledFunc) :=
+  let n := m.funcs.size
+  if !parallel || n < 64 then compileRange c m nImp 0 n else
+  let chunk := max 16 (n / 64)
+  let starts := (List.range ((n + chunk - 1) / chunk)).map (· * chunk)
+  let tasks := starts.map fun lo => Task.spawn fun _ => compileRange c m nImp lo (min n (lo + chunk))
+  tasks.foldl (init := .ok (Array.mkEmpty n)) fun acc t =>
+    match acc with
+    | .error e => .error e
+    | .ok a => match t.get with
+      | .ok b => .ok (a ++ b)
+      | .error e => .error e
+
+def validateWith (parallel : Bool) (m : Module) : Except ValidationError ValidModule := do
   let c := mkCtx m
   let err := fun (s : String) => (Except.error { msg := s } : Except ValidationError Unit)
   let lift := fun (x : V Unit) => match x with
@@ -631,11 +660,10 @@ def validate (m : Module) : Except ValidationError ValidModule := do
       if x ≥ c.mems.size then err "unknown memory"
       lift (checkConst c c.globals.size off .i32)
     | .passive => pure ()
-  let mut code := Array.mkEmpty m.funcs.size
-  let mut fi := nImpFuncs
-  for f in m.funcs do
-    code := code.push (← compileFunc c fi f)
-    fi := fi + 1
+  let code ← compileAll c m nImpFuncs parallel
   return ⟨m, c, code⟩
+
+def validate (m : Module) : Except ValidationError ValidModule := validateWith false m
+def validateParallel (m : Module) : Except ValidationError ValidModule := validateWith true m
 
 end L4Factoidal.WasmVM

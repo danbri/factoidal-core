@@ -42,7 +42,7 @@ structure Machine where
   frames : Array Frame
   deriving Inhabited
 
-/-- Why `run` stopped. -/
+/-- Why `run` stopped. (`run` also returns the fuel left.) -/
 inductive Event where
   | done
   | trap (t : Trap)
@@ -177,13 +177,13 @@ def enter (lim : RunLimits) (st : Store) (m : Machine) (fa retPc : Nat) : Enter 
 
 /-! ### The loop -/
 
-def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine × Event
-  | 0 => (st, m, .outOfFuel)
+def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine × Nat × Event
+  | 0 => (st, m, 0, .outOfFuel)
   | fuel + 1 =>
     if h : m.pc < m.code.size then
     let sp := m.sp
     match m.code[m.pc] with
-    | .unreachable => (st, m, .trap .unreachable)
+    | .unreachable => (st, m, fuel, .trap .unreachable)
     | .jump pc => run lim st { m with pc } fuel
     | .jumpIf pc =>
       let c := rd m.stack (sp - 1)
@@ -203,7 +203,7 @@ def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine 
     | .return_ k =>
       let stack := if sp - k == m.fp then m.stack else moveDown m.stack (sp - k) m.fp k
       let sp := m.fp + k
-      if m.frames.isEmpty then (st, { m with stack, sp }, .done) else
+      if m.frames.isEmpty then (st, { m with stack, sp }, fuel, .done) else
       let f := m.frames.back!
       run lim st { m with stack, sp, frames := m.frames.pop, code := f.code, pc := f.pc,
                           fp := f.fp, inst := f.inst } fuel
@@ -211,20 +211,20 @@ def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine 
       let fa := m.inst.funcs[f]!
       match enter lim st m fa (m.pc + 1) with
       | .ok m => run lim st m fuel
-      | .host id fa args m => (st, m, .hostCall id fa args)
-      | .trap t m => (st, m, .trap t)
+      | .host id fa args m => (st, m, fuel, .hostCall id fa args)
+      | .trap t m => (st, m, fuel, .trap t)
     | .callIndirect ti x =>
       let i := (rd m.stack (sp - 1)).toNat
       let tab := st.tables[m.inst.tables[x]!]!
-      if i ≥ tab.elems.size then (st, m, .trap .undefinedElement) else
+      if i ≥ tab.elems.size then (st, m, fuel, .trap .undefinedElement) else
       let r := tab.elems[i]!
-      if r == nullRef then (st, m, .trap .uninitializedElement) else
+      if r == nullRef then (st, m, fuel, .trap .uninitializedElement) else
       let fa := r.toNat
-      if (st.funcs[fa]!).typeId != m.inst.typeIds[ti]! then (st, m, .trap .indirectTypeMismatch) else
+      if (st.funcs[fa]!).typeId != m.inst.typeIds[ti]! then (st, m, fuel, .trap .indirectTypeMismatch) else
       match enter lim st { m with sp := sp - 1 } fa (m.pc + 1) with
       | .ok m => run lim st m fuel
-      | .host id fa args m => (st, m, .hostCall id fa args)
-      | .trap t m => (st, m, .trap t)
+      | .host id fa args m => (st, m, fuel, .hostCall id fa args)
+      | .trap t m => (st, m, fuel, .trap t)
     | .drop => run lim st { m with sp := sp - 1, pc := m.pc + 1 } fuel
     | .select =>
       let c := rd m.stack (sp - 1)
@@ -251,7 +251,7 @@ def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine 
       let tab := st.tables[m.inst.tables[x]!]!
       if h : i < tab.elems.size then
         run lim st { m with stack := wr m.stack (sp - 1) tab.elems[i], pc := m.pc + 1 } fuel
-      else (st, m, .trap .tableOOB)
+      else (st, m, fuel, .trap .tableOOB)
     | .tableSet x =>
       let v := rd m.stack (sp - 1)
       let i := (rd m.stack (sp - 2)).toNat
@@ -259,7 +259,7 @@ def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine 
       if i < (st.tables[ta]!).elems.size then
         let st := { st with tables := st.tables.modify ta fun t => { t with elems := t.elems.set! i v } }
         run lim st { m with sp := sp - 2, pc := m.pc + 1 } fuel
-      else (st, m, .trap .tableOOB)
+      else (st, m, fuel, .trap .tableOOB)
     | .tableSize x =>
       let n := (st.tables[m.inst.tables[x]!]!).elems.size
       run lim st { m with stack := wr m.stack sp n.toUInt64, sp := sp + 1, pc := m.pc + 1 } fuel
@@ -280,7 +280,7 @@ def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine 
       let v := rd m.stack (sp - 2)
       let i := (rd m.stack (sp - 3)).toNat
       let ta := m.inst.tables[x]!
-      if i + n > (st.tables[ta]!).elems.size then (st, m, .trap .tableOOB) else
+      if i + n > (st.tables[ta]!).elems.size then (st, m, fuel, .trap .tableOOB) else
       let st := { st with tables := st.tables.modify ta fun t => { t with elems := fillArr t.elems i v n } }
       run lim st { m with sp := sp - 3, pc := m.pc + 1 } fuel
     | .tableCopy dx sx =>
@@ -289,7 +289,7 @@ def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine 
       let d := (rd m.stack (sp - 3)).toNat
       let td := m.inst.tables[dx]!
       let src := (st.tables[m.inst.tables[sx]!]!).elems
-      if s + n > src.size || d + n > (st.tables[td]!).elems.size then (st, m, .trap .tableOOB) else
+      if s + n > src.size || d + n > (st.tables[td]!).elems.size then (st, m, fuel, .trap .tableOOB) else
       let slice := src.extract s (s + n)
       let st := { st with tables := st.tables.modify td fun t => { t with elems := copyArr t.elems slice 0 d n } }
       run lim st { m with sp := sp - 3, pc := m.pc + 1 } fuel
@@ -299,7 +299,7 @@ def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine 
       let d := (rd m.stack (sp - 3)).toNat
       let ta := m.inst.tables[x]!
       let seg := st.elems[m.inst.elems[e]!]!
-      if s + n > seg.size || d + n > (st.tables[ta]!).elems.size then (st, m, .trap .tableOOB) else
+      if s + n > seg.size || d + n > (st.tables[ta]!).elems.size then (st, m, fuel, .trap .tableOOB) else
       let st := { st with tables := st.tables.modify ta fun t => { t with elems := copyArr t.elems seg s d n } }
       run lim st { m with sp := sp - 3, pc := m.pc + 1 } fuel
     | .elemDrop e =>
@@ -310,7 +310,7 @@ def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine 
       let d := (st.mems[memAddr m mem]!).data
       if ea + LoadOp.width op ≤ d.size then
         run lim st { m with stack := wr m.stack (sp - 1) (loadVal d ea op), pc := m.pc + 1 } fuel
-      else (st, m, .trap .memOOB)
+      else (st, m, fuel, .trap .memOOB)
     | .store op mem off =>
       let v := rd m.stack (sp - 1)
       let ea := (rd m.stack (sp - 2)).toNat + off
@@ -319,7 +319,7 @@ def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine 
       if ea + w ≤ (st.mems[ma]!).data.size then
         let st := { st with mems := st.mems.modify ma fun mi => { mi with data := wrLE mi.data ea v w } }
         run lim st { m with sp := sp - 2, pc := m.pc + 1 } fuel
-      else (st, m, .trap .memOOB)
+      else (st, m, fuel, .trap .memOOB)
     | .memorySize mem =>
       let n := (st.mems[memAddr m mem]!).data.size / pageSize
       run lim st { m with stack := wr m.stack sp n.toUInt64, sp := sp + 1, pc := m.pc + 1 } fuel
@@ -341,7 +341,7 @@ def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine 
       let d := (rd m.stack (sp - 3)).toNat
       let ma := memAddr m mem
       let src := st.datas[m.inst.datas[di]!]!
-      if s + n > src.size || d + n > (st.mems[ma]!).data.size then (st, m, .trap .memOOB) else
+      if s + n > src.size || d + n > (st.mems[ma]!).data.size then (st, m, fuel, .trap .memOOB) else
       let st := { st with mems := st.mems.modify ma fun mi => { mi with data := src.copySlice s mi.data d n } }
       run lim st { m with sp := sp - 3, pc := m.pc + 1 } fuel
     | .dataDrop di =>
@@ -354,7 +354,7 @@ def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine 
       let da := memAddr m dm
       let sa := memAddr m sm
       if s + n > (st.mems[sa]!).data.size || d + n > (st.mems[da]!).data.size then
-        (st, m, .trap .memOOB) else
+        (st, m, fuel, .trap .memOOB) else
       let st := if da == sa then
           { st with mems := st.mems.modify da fun mi => { mi with data := copyWithin mi.data s d n } }
         else
@@ -366,7 +366,7 @@ def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine 
       let v := (rd m.stack (sp - 2)).toUInt8
       let d := (rd m.stack (sp - 3)).toNat
       let ma := memAddr m mem
-      if d + n > (st.mems[ma]!).data.size then (st, m, .trap .memOOB) else
+      if d + n > (st.mems[ma]!).data.size then (st, m, fuel, .trap .memOOB) else
       let st := { st with mems := st.mems.modify ma fun mi => { mi with data := fillBytes mi.data d v n } }
       run lim st { m with sp := sp - 3, pc := m.pc + 1 } fuel
     | .const v => run lim st { m with stack := wr m.stack sp v, sp := sp + 1, pc := m.pc + 1 } fuel
@@ -381,16 +381,16 @@ def run (lim : RunLimits) (st : Store) (m : Machine) : Nat → Store × Machine 
         let b := rd m.stack (sp - 1)
         let a := rd m.stack (sp - 2)
         match (if op.mayTrap then op.trapBin a b else none) with
-        | some t => (st, m, .trap t)
+        | some t => (st, m, fuel, .trap t)
         | none =>
           run lim st { m with stack := wr m.stack (sp - 2) (op.evalBin a b), sp := sp - 1,
                               pc := m.pc + 1 } fuel
       else
         let a := rd m.stack (sp - 1)
         match (if op.mayTrap then op.trapUn a else none) with
-        | some t => (st, m, .trap t)
+        | some t => (st, m, fuel, .trap t)
         | none => run lim st { m with stack := wr m.stack (sp - 1) (op.evalUn a), pc := m.pc + 1 } fuel
-    else (st, m, .trap (.host "pc out of range"))
+    else (st, m, fuel, .trap (.host "pc out of range"))
 
 end Run
 end L4Factoidal.WasmVM

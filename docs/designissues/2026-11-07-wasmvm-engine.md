@@ -201,16 +201,63 @@ uses the direct C conversion (one rounding), not a path through f64.
 
 Filled in by each stage; the commands are in `L4Factoidal/WasmVM/Bench.lean`.
 
-**Operand-stack representation** (`lake exe wasmvm-bench`, `Bench/Repr.lean`, Apple
-M-series, native, 2026-11-07). Same program in each: two pushes, two reads, one add,
+All numbers: Apple M1 (8 cores, 4 performance), native build, 2026-11-07, with other
+sessions' builds running on the machine (load average about 2.5). Commands run in
+`formal/lean4`.
+
+### Spec tests
+
+`lake exe wasmvm-spectest` over `third_party/wasm-spec/test/core-json` (259 files,
+65353 commands): **pass 35085, fail 0, not run 30268.**
+
+| Part | pass | not run | why not run |
+|---|---|---|---|
+| core (2.0 + 3.0 reference types, tail and GC files) | 27612 | 1075 | text-format modules, tail calls, `call_ref`, tags |
+| multi-memory | 912 | 0 | |
+| memory64 directory | 6367 | 2352 | 64-bit address type |
+| simd | 122 | 25868 | SIMD |
+| gc | 14 | 784 | GC types |
+| exceptions, relaxed-simd | 0 | 189 | proposals not done |
+
+Files in parallel (one `IO.asTask` each): 1.1 s; `--serial`: 2.15 s.
+
+### Interpreter
+
+`lake exe wasmvm-bench engine 10000000` (the module is in `Bench/Engine.lean`):
+
+| Function | instructions | time | million instructions per second |
+|---|---|---|---|
+| `sum` loop, 10^7 iterations | 140 000 008 | 3.6 s | 38 |
+| `memsum` (a store and a load per iteration) | 240 000 004 | 8.0 s | 29 |
+| `fib(30)` recursive calls | 28 271 637 | 0.78 s | 36 |
+
+This is about 25 ns per instruction: slow next to wasm3 (about 1 ns). The main cost is
+the slot form (8 checked byte reads and writes per slot). Next steps are in "Next".
+
+### Decoder and validator
+
+`lake exe wasmvm-bench decode FILE`:
+
+| Module | size | functions | decode | validate and compile, serial | parallel |
+|---|---|---|---|---|---|
+| a Rust `wasm-bindgen` module (`kgx/web_bg.wasm`) | 3.7 MB | 4482 | 270 ms | 207 ms | 174 ms |
+| `wikilambda` (Emscripten) | 28.4 MB | 19365 | 1113 ms | 807 ms | 655 ms |
+
+The factoidal core `l4factoidal.wasm` (31 MB) is not decoded yet: it has a tag section
+(exceptions). Parallel compilation of bodies gains only 1.2x; decode is not parallel yet.
+
+### Operand-stack representation
+
+`lake exe wasmvm-bench repr`, `Bench/Repr.lean`. Same program in each: two pushes, two reads, one add,
 one write, 20 million times.
 
 | Representation | ns per iteration |
 |---|---|
-| `FloatArray`, slots as bits, loop arguments | 17 |
+| `FloatArray`, slots as bits, loop arguments (WRONG for NaN patterns) | 17 |
 | `FloatArray` inside a structure updated with `{ m with … }` | 17 |
 | `Array UInt64` (boxed slots) | 24 |
-| `ByteArray`, 8 bytes per slot | 25 |
+| `ByteArray`, 8 bytes per slot (used) | 25 |
+| `ByteArray`, one check and proved byte indices | 36 |
 
 A machine structure costs nothing over separate arguments: Lean reuses the unique
 structure in place. The `FloatArray` form is NOT used. Lean 4.33 models `Float` with all
@@ -221,3 +268,31 @@ round trip through the stack: the spec test `fac` (`fac-opt`) failed with
 float operation sees a NaN operand as the canonical NaN; the result is still an
 arithmetic NaN, which the spec allows, and `abs`, `neg`, `copysign`, loads, stores and
 reinterpretations work on bits and never call `Float.ofBits`.
+
+## Theorems proved (stage 1)
+
+All with axioms `propext`, `Classical.choice`, `Quot.sound` only; no `sorry`.
+
+- `Binary.Leb.uSpec_eq_fast` (`@[csimp]`): the LEB128 grammar `u(N)` written as in the
+  spec equals the loop. The decoder calls the grammar form; compiled code runs the
+  loop (`tools/lean-csimp-reach.py` passes).
+- `Proofs.i32_bin_refines`: the pattern for an i32 binary instruction without a trap.
+  If the spec function on the two read constants gives the read result, then one
+  engine step (`NumOp.evalBin` on two slots) is a `Spec.Step_pure` step
+  (`binop_val`). The read is `absI32`, the low 32 bits of the slot.
+- `Proofs.i32_add_refines`, `i32_sub_refines`, `i32_mul_refines`: the pattern applied
+  to `Spec.iadd_`, `Spec.isub_`, `Spec.imul_` (Nat definitions, modulo 2^32).
+
+## Next
+
+1. Speed: slots as `UInt64` reads with `USize` indices and proofs, or registers for the
+   top of stack; superinstructions (`local.get; i32.const; i32.add`); a `br_if` that
+   fuses the compare. Target: 10x.
+2. Refinement: the rest of the integer table (div, rem with `binop_trap`, shifts,
+   compares through `Step_pure.relop`), then `Run.step_refines` with the abstraction to
+   `Spec.config`.
+3. Proposals in the order of the planned uses: exceptions (tags; needed by the
+   factoidal core wasm and by Emscripten C++ code), tail calls, `call_ref`, SIMD
+   (HarfBuzz builds use it when enabled), memory64, GC.
+4. Parallel decode of the code section; parallel compile by chunks of equal byte size.
+5. The JSON op form for the hosts, and the Emscripten build of the engine.

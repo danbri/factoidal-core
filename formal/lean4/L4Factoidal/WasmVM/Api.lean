@@ -62,9 +62,9 @@ def Outcome.describe : Outcome → String
   | .hostCall id _ _ => s!"host call {id}"
   | .exit s => s!"exit {s}"
 
-private def finish (st : Store) (results : Array ValType) (r : Store × Machine × Event) :
+private def finish (st : Store) (results : Array ValType) (r : Store × Machine × Nat × Event) :
     Store × Outcome :=
-  let (st', m, ev) := r
+  let (st', m, _, ev) := r
   let _ := st
   match ev with
   | .done =>
@@ -89,6 +89,20 @@ def invoke (st : Store) (fa : Nat) (args : Array Value) (lim : Budget := {}) : S
     let inst : ModuleInst := { funcs := #[fa] }
     let m : Machine := ⟨stack, n, 0, 0, code, inst, #[]⟩
     finish st fi.type.results (Run.run lim.run st m lim.fuel)
+
+/-- `invoke`, also giving the number of instructions run (for measurements). -/
+def invokeSteps (st : Store) (fa : Nat) (args : Array Value) (lim : Budget := {}) : Store × Outcome × Nat :=
+  match st.funcs[fa]? with
+  | none => (st, .trap (.host "unknown function"), 0)
+  | some fi =>
+    let stack := args.foldl (init := (Slots.zeros (max 1024 (2 * args.size)), 0))
+      (fun (s, i) v => (Run.wr s i v.toBits, i + 1)) |>.1
+    let code : Array Op := #[.call 0, .return_ fi.type.results.size]
+    let inst : ModuleInst := { funcs := #[fa] }
+    let m : Machine := ⟨stack, args.size, 0, 0, code, inst, #[]⟩
+    let r := Run.run lim.run st m lim.fuel
+    let (st', o) := finish st fi.type.results r
+    (st', o, lim.fuel - r.2.2.1)
 
 def resume (st : Store) (k : Suspended) (r : HostResult) (lim : Budget := {}) : Store × Outcome :=
   match r with

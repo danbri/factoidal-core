@@ -65,6 +65,9 @@ abbrev Slots := ByteArray
 
 namespace Slots
 
+/-- Eight checked byte reads. A form with one check and proved indices
+(`s[o+k]'h`) measured slower (29 against 39 million instructions per second on
+`wasmvm-bench engine`, 2026-11-07), because each `o + k` is a `Nat` addition. -/
 @[inline] def rd (s : Slots) (i : Nat) : UInt64 :=
   let o := i * 8
   (s.get! o).toUInt64 ||| ((s.get! (o+1)).toUInt64 <<< 8) ||| ((s.get! (o+2)).toUInt64 <<< 16)
