@@ -131,6 +131,28 @@ private def transformList (source : String) : Except String Transform := do
     result ← checkedTransform (result.compose nextTransform)
   return result
 
+/-- The transform of an element under `parent`, its CTM below the root mapping.
+    SVG Tiny 1.2 §7.7.5: `ref(svg)` and `ref(svg, x, y)` are the whole value. The
+    CTM of the element is then the root `viewBox` mapping and the translation by
+    x and y, so the local transform is the inverse of `parent` and that
+    translation. No user agent transform exists here, so the only effect is to
+    leave the transforms of the ancestors out. -/
+private def elementTransform (parent : Transform) (source : String) : Except String Transform := do
+  let s := trim source
+  if !s.startsWith "ref" then return ← transformList s
+  let open_ := trim (s.drop 3).toString
+  if !open_.startsWith "(" || !open_.endsWith ")" then throw "invalid ref transform syntax"
+  let inner := trim ((open_.drop 1).toString.dropEnd 1).toString
+  if !inner.startsWith "svg" then throw s!"unsupported ref transform: {source}"
+  let rest := trim (inner.drop 3).toString
+  let rest := if rest.startsWith "," then (rest.drop 1).toString else rest
+  let offset : Transform ← match ← (if (trim rest).isEmpty then pure [] else numbers rest) with
+    | [] => pure identityTransform
+    | [x,y] => pure ⟨1,0,0,1,x,y⟩
+    | _ => throw "ref(svg) takes no number or two numbers"
+  if parent.det == 0 then throw "ref(svg) needs an invertible parent transform"
+  checkedTransform (parent.inverse.compose offset)
+
 abbrev Color := NativeGraphics.FloatRGB
 private def rgb (r g b : Nat) : Color := ⟨Float.ofNat r/255,Float.ofNat g/255,Float.ofNat b/255⟩
 private def hex (c : Char) : Option Nat :=
@@ -1198,7 +1220,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         let inherited ← readStyle lengths paints attrs style
         let x ← geometryNumber lengths attrs "x"
         let y ← geometryNumber lengths attrs "y"
-        let transform ← checkedTransform ((← transformList ((attr attrs "transform").getD "")).compose ⟨1,0,0,1,x,y⟩)
+        let transform ← checkedTransform ((← elementTransform parent ((attr attrs "transform").getD "")).compose ⟨1,0,0,1,x,y⟩)
         let cumulative ← checkedTransform (parent.compose transform)
         let some source := NativeSVGReferences.href attrs | return []
         let some id ← NativeSVGReferences.fragment source references.documentURL baseURL | return []
@@ -1234,7 +1256,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         if let some (_,_,vw,vh) := view then
           if vw == 0 || vh == 0 then return []
         let mapping ← viewportMapping w h attrs
-        let viewportTransform ← checkedTransform ((← transformList ((attr attrs "transform").getD "")).compose ⟨1,0,0,1,x,y⟩)
+        let viewportTransform ← checkedTransform ((← elementTransform parent ((attr attrs "transform").getD "")).compose ⟨1,0,0,1,x,y⟩)
         let contentTransform ← checkedTransform (viewportTransform.compose
           ⟨mapping.sx,0,0,mapping.sy,mapping.tx-mapping.minX*mapping.sx,mapping.ty-mapping.minY*mapping.sy⟩)
         let cumulative ← checkedTransform (parent.compose contentTransform)
@@ -1250,7 +1272,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         return [.clipped (attr attrs "id") contentTransform ⟨0,0,w,h,viewportTransform⟩ retainedChildren]
       else if tag == "g" then
         validateAttrs tag attrs ["transform","clip-path"]
-        let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
+        let transform ← checkedTransform (← elementTransform parent ((attr attrs "transform").getD ""))
         let cumulative ← checkedTransform (parent.compose transform)
         let inherited ← readStyle lengths paints attrs style
         let retainedChildren ← readChildren lengths cumulative inherited children
@@ -1262,7 +1284,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
           return [.clipped (attr attrs "id") transform ⟨x,y,w,h,transform⟩ retainedChildren]
       else
         validateAttrs tag attrs (extraAttrs tag)
-        let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
+        let transform ← checkedTransform (← elementTransform parent ((attr attrs "transform").getD ""))
         let cumulative ← checkedTransform (parent.compose transform)
         let inherited ← textFrame attrs transform (← readStyle lengths paints attrs style)
         let authorLength ← match attr attrs "pathLength" with
