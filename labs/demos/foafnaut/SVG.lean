@@ -197,6 +197,20 @@ private def named : List (String × (Nat × Nat × Nat)) := [
   ("springgreen",(0,255,127)),("steelblue",(70,130,180)),("tan",(210,180,140)),("thistle",(216,191,216)),
   ("tomato",(255,99,71)),("turquoise",(64,224,208)),("violet",(238,130,238)),("wheat",(245,222,179)),
   ("whitesmoke",(245,245,245)),("yellowgreen",(154,205,50))]
+/-- CSS 2 §18.2 system colours, which SVG Tiny 1.2 §11.13.1 admits. The values belong
+    to the user agent. These are the classic desktop colours. -/
+private def systemColors : List (String × Nat × Nat × Nat) :=
+  [("activeborder",(212,208,200)),("activecaption",(10,36,106)),("appworkspace",(128,128,128)),
+   ("background",(58,110,165)),("buttonface",(212,208,200)),("buttonhighlight",(255,255,255)),
+   ("buttonshadow",(128,128,128)),("buttontext",(0,0,0)),("captiontext",(255,255,255)),
+   ("graytext",(128,128,128)),("highlight",(10,36,106)),("highlighttext",(255,255,255)),
+   ("inactiveborder",(212,208,200)),("inactivecaption",(128,128,128)),
+   ("inactivecaptiontext",(212,208,200)),("infobackground",(255,255,225)),("infotext",(0,0,0)),
+   ("menu",(212,208,200)),("menutext",(0,0,0)),("scrollbar",(212,208,200)),
+   ("threeddarkshadow",(64,64,64)),("threedface",(212,208,200)),("threedhighlight",(255,255,255)),
+   ("threedlightshadow",(212,208,200)),("threedshadow",(128,128,128)),("window",(255,255,255)),
+   ("windowframe",(0,0,0)),("windowtext",(0,0,0))]
+
 private def color (input : String) : Except String Color := do
   let s := (trim input).toLower
   if s.startsWith "#" then
@@ -219,7 +233,8 @@ private def color (input : String) : Except String Color := do
     | [r,g,b] => return ⟨r,g,b⟩
     | _ => throw "rgb() component count"
   else
-    match named.find? (fun item => item.1 == s) with
+    match (named.find? (fun item => item.1 == s)).orElse
+        (fun _ => systemColors.find? (fun item => item.1 == s.toLower)) with
     | some (_,r,g,b) => return rgb r g b
     | none => throw s!"unsupported color: {input}"
 abbrev Gradient := L4Factoidal.Rendering.Gradient
@@ -519,10 +534,15 @@ private def readStyle (lengths : LengthContext) (paints : PaintContext) (attrs :
   let mut style := parent
   if let some value := attr attrs "color" then
     if !["inherit","currentcolor"].contains (trim value).toLower then style := {style with currentColor:= ← color value}
+  -- CSS Color: `currentColor` computes on the element that states it, so a child
+  -- with its own `color` inherits the colour of this element (paint-color-05-t).
+  let computed := fun (paint : Paint) => match paint with
+    | .current => Paint.solid style.currentColor
+    | other => other
   if let some value := attr attrs "fill" then
-    if trim value != "inherit" then style := {style with fill:= ← readPaint lengths paints value}
+    if trim value != "inherit" then style := {style with fill:=computed (← readPaint lengths paints value)}
   if let some value := attr attrs "stroke" then
-    if trim value != "inherit" then style := {style with stroke:= ← readPaint lengths paints value}
+    if trim value != "inherit" then style := {style with stroke:=computed (← readPaint lengths paints value)}
   if let some value := attr attrs "stroke-dasharray" then
     if trim value != "inherit" then
       style := {style with dashArray:= ← dashArray lengths value}

@@ -122,6 +122,11 @@ private def forgiven (body : String) : List String :=
 #guard (forgiven ("<radialGradient id='g' fx='0'>" ++ redBlue ++ "</radialGradient>" ++ full)).contains "attribute: radialGradient fx"
 #guard (forgiven (redBlueGradient "" ++ full)).isEmpty
 
+private def forgivenPixel (body : String) (x y : Nat) : List Nat :=
+  match NativeSVGForgiving.parse (svg body) 100 100 with
+  | .error _ => []
+  | .ok (s,_) => let c := s.samplePixel x y; [c.r,c.g,c.b].map fun f => (f*255).round.toUInt32.toNat
+
 -- A glyph paints in the user space of its text, with the box of its text.
 private def font : NativeSVGForgiving.SVGFont :=
   match NativeSVGForgiving.SVGFont.parse "<svg xmlns='http://www.w3.org/2000/svg'><font horiz-adv-x='1000'><font-face font-family='T' units-per-em='1000' ascent='1000' descent='0'/><glyph unicode='a' d='M0 0H1000V1000H0Z'/></font></svg>" with
@@ -157,10 +162,19 @@ private def textPixel (body : String) (x y : Nat) : List Nat :=
 -- A thin filled rectangle: the area times the opacity stays the same.
 #guard close (pixel "<rect x='50.4' y='0' width='0.25' height='100'/>" 50 50) [191,191,191] 8
 
+-- `currentColor` computes where it is stated (W3C paint-color-05-t).
+#guard pixel "<g fill='currentColor' color='lime'><rect width='100' height='100' color='blue'/></g>" 50 50 == [0,255,0]
+#guard pixel "<rect width='100' height='100' fill='currentColor' color='lime'/>" 50 50 == [0,255,0]
+-- A system colour has a value, in any case.
+#guard pixel "<rect width='100' height='100' fill='ButtonText'/>" 50 50 == [0,0,0]
+#guard pixel "<rect width='100' height='100' fill='WINDOW'/><rect width='9' height='9' fill='infoBackground'/>" 5 5 == [255,255,225]
+-- A paint value in error is as if not specified (W3C styling-pres-01-t).
+#guard forgivenPixel "<g fill='lime'><rect width='100' height='100' fill='red !important'/></g>" 50 50 == [0,255,0]
+
 -- Expected failures. Each guard states the present wrong result, so the build
 -- fails when the fault is repaired; then state the right result and close the issue.
 -- https://github.com/danbri/factoidal/issues/1260: this thin path must draw 10% grey.
-#guard pixel "<path d='M50.4 0h0.1v100h-0.1z'/>" 50 50 == [255,255,255]
+#guard pixel "<path d='M50.5 0h0.1v100h-0.1z'/>" 50 50 == [255,255,255]
 -- https://github.com/danbri/factoidal/issues/1254: animation of a paint must run.
 #guard (forgiven ("<solidColor id='g' solid-color='red'><animate attributeName='solid-color' to='lime' dur='1s'/></solidColor>" ++ full)).contains "element: animate"
 -- https://github.com/danbri/factoidal/issues/1255: a paint in another document must be fetched.

@@ -680,6 +680,8 @@ private def removeOffender (width height : Nat) (message : String) (a : Attempt)
       return some {a with root:=next,parses,dropped:=a.dropped ++ [s!"removed {tag}: {message}"]}
   return none
 
+private def colourProperties := ["fill","stroke","color","stop-color","solid-color","viewport-fill"]
+
 private def repair (width height : Nat) : Nat → Attempt → Except String (NativeSVG.Scene × List String)
   | 0,_ => throw "forgiving pass exceeded its repair limit"
   | fuel+1,a =>
@@ -696,7 +698,15 @@ private def repair (width height : Nat) : Nat → Attempt → Except String (Nat
         let (root,count) := stripAttr "" key (some refused) maxDepth a.root
         if count == 0 then none
         else some {a with root,parses:=a.parses+1,dropped:=a.dropped ++ [s!"approximated: {key}"]}
-      match (stripped.orElse fun _ => restyled).orElse (fun _ => removeOffender width height message a) with
+      -- SVG Tiny 1.2 appendix C: a property value in error is as if not specified.
+      let recoloured := if !message.startsWith "unsupported color: " then none else
+        let refused := (message.drop "unsupported color: ".length).toString
+        let (root,count) := colourProperties.foldl (fun (root,count) key =>
+          let (next,n) := stripAttr "" key (some refused) maxDepth root
+          (next,count+n)) (a.root,0)
+        if count == 0 then none
+        else some {a with root,parses:=a.parses+1,dropped:=a.dropped ++ [s!"approximated: colour {refused}"]}
+      match ((stripped.orElse fun _ => restyled).orElse fun _ => recoloured).orElse (fun _ => removeOffender width height message a) with
       | some next => repair width height fuel next
       | none => throw message
 
