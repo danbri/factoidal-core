@@ -458,7 +458,7 @@ def compileFunc (c : Ctx) (fIdx : Nat) (f : Func) : Except ValidationError Compi
   match bodyLoop c fc f.body 0 s0 with
   | .error (i, e) => .error { msg := e, func := some fIdx, at_ := i }
   | .ok s =>
-    let code := s.ops.map (resolve s.labels)
+    let code := fuse (s.ops.map (resolve s.labels))
     .ok { type := f.type, nParams := ft.params.size, localInit := f.locals.map ValType.zeroBits,
           maxHeight := s.maxH, code }
 

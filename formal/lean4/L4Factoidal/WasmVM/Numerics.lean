@@ -316,7 +316,7 @@ def evalUn (op : NumOp) (a : UInt64) : UInt64 :=
   | _ => 0
 
 /-- Result of a two-operand instruction (after `trapBin` returned `none`). -/
-def evalBin (op : NumOp) (a b : UInt64) : UInt64 :=
+@[inline] def evalBin (op : NumOp) (a b : UInt64) : UInt64 :=
   match op with
   | i32_eq => ofBool (lo a == lo b)
   | i32_ne => ofBool (lo a != lo b)

@@ -14,6 +14,7 @@ operand stack of the function starts at `fp + nLocals`.
 -/
 import L4Factoidal.WasmVM.Syntax
 import L4Factoidal.WasmVM.Exec.Bytes
+import L4Factoidal.WasmVM.Numerics
 
 namespace L4Factoidal.WasmVM
 
@@ -52,7 +53,88 @@ inductive Op where
   | const (v : UInt64)
   | refIsNull | refFunc (f : Nat)
   | num (op : NumOp)
+  -- Fused ops, made by `fuse`. Each stands for its parts (`Op.parts`), which stay in
+  -- the code after it, so a branch into the middle still finds them. `run` executes a
+  -- fused op as its parts in sequence (`Proofs/Fuse.lean`). Every `op` here is a binary
+  -- (`lUn`: unary) numeric op that cannot trap.
+  | llBin (x y : Nat) (op : NumOp)
+  | lcBin (x : Nat) (c : UInt64) (op : NumOp)
+  | cBin (c : UInt64) (op : NumOp)
+  | lUn (x : Nat) (op : NumOp)
+  | binSet (op : NumOp) (z : Nat)
+  | lcBinSet (x : Nat) (c : UInt64) (op : NumOp) (z : Nat)
+  /-- `local.get x; local.get y; op; jumpIf t` (`jumpUnless t` when `onZero`). -/
+  | llBinJump (x y : Nat) (op : NumOp) (t : Nat) (onZero : Bool)
+  | lcBinJump (x : Nat) (c : UInt64) (op : NumOp) (t : Nat) (onZero : Bool)
+  | binJump (op : NumOp) (t : Nat) (onZero : Bool)
   deriving Repr, Inhabited
+
+/-- The conditional jump at the end of a fused op. -/
+def Op.condJump (t : Nat) : Bool → Op
+  | false => .jumpIf t
+  | true => .jumpUnless t
+
+/-- The ops a fused op stands for; empty for every other op. -/
+def Op.parts : Op → List Op
+  | .llBin x y op => [.localGet x, .localGet y, .num op]
+  | .lcBin x c op => [.localGet x, .const c, .num op]
+  | .cBin c op => [.const c, .num op]
+  | .lUn x op => [.localGet x, .num op]
+  | .binSet op z => [.num op, .localSet z]
+  | .lcBinSet x c op z => [.localGet x, .const c, .num op, .localSet z]
+  | .llBinJump x y op t z => [.localGet x, .localGet y, .num op, Op.condJump t z]
+  | .lcBinJump x c op t z => [.localGet x, .const c, .num op, Op.condJump t z]
+  | .binJump op t z => [.num op, Op.condJump t z]
+  | _ => []
+
+/-- A numeric op that `fuse` may put in a fused op as its binary op. -/
+def NumOp.pureBin (op : NumOp) : Bool := op.isBinary && !op.mayTrap
+def NumOp.pureUn (op : NumOp) : Bool := !op.isBinary && !op.mayTrap
+
+/-- The conditional jump `o` is, if any. -/
+def jumpAt : Option Op → Option (Nat × Bool)
+  | some (.jumpIf t) => some (t, false)
+  | some (.jumpUnless t) => some (t, true)
+  | _ => none
+
+/-- The fused op that starts at `i`, the longest that matches. -/
+def fuseAt (c : Array Op) (i : Nat) : Option Op :=
+  match c[i]?, c[i+1]?, c[i+2]? with
+  | some (.localGet x), some (.localGet y), some (.num op) =>
+    if op.pureBin then
+      match jumpAt c[i+3]? with
+      | some (t, z) => some (.llBinJump x y op t z)
+      | none => some (.llBin x y op)
+    else none
+  | some (.localGet x), some (.const v), some (.num op) =>
+    if op.pureBin then
+      match jumpAt c[i+3]?, c[i+3]? with
+      | some (t, z), _ => some (.lcBinJump x v op t z)
+      | none, some (.localSet w) => some (.lcBinSet x v op w)
+      | none, _ => some (.lcBin x v op)
+    else none
+  | some (.localGet x), some (.num op), _ => if op.pureUn then some (.lUn x op) else none
+  | some (.const v), some (.num op), _ => if op.pureBin then some (.cBin v op) else none
+  | some (.num op), some (.localSet z), _ => if op.pureBin then some (.binSet op z) else none
+  | some (.num op), o, _ =>
+    if op.pureBin then
+      match jumpAt o with
+      | some (t, z) => some (.binJump op t z)
+      | none => none
+    else none
+  | _, _, _ => none
+
+/-- Put fused ops into compiled code. The length and every op that is not the first
+of a fused group stay as they were. -/
+def fuse (c : Array Op) : Array Op := go 0 c
+where
+  go (i : Nat) (out : Array Op) : Array Op :=
+    if i < c.size then
+      match fuseAt c i with
+      | some f => go (i + max 1 f.parts.length) (out.set! i f)
+      | none => go (i + 1) out
+    else out
+  termination_by c.size - i
 
 /-- 64-bit slots, 8 little-endian bytes each, in a `ByteArray`: the operand stack and
 the globals. Slot `i` is bytes `8i .. 8i+8`.

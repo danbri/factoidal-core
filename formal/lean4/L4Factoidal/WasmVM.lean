@@ -12,6 +12,7 @@ import L4Factoidal.WasmVM.Exec.Run
 import L4Factoidal.WasmVM.Exec.Instantiate
 import L4Factoidal.WasmVM.Api
 import L4Factoidal.WasmVM.Proofs.Numerics
+import L4Factoidal.WasmVM.Proofs.Fuse
 import L4Factoidal.WasmVM.Tests.Memory
 
 /-

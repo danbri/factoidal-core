@@ -323,6 +323,13 @@ million Wasm instructions per second. Spec tests after each row: pass 35085, fai
 |---|---|---|---|---|
 | before (stage 1) | 39 | 30 | 37 | |
 | slots: one `USize` check per access, 8-byte load in Lean, 8-byte store in inline C; registers as `run` arguments; memory interface | 191 | 164 | 156 | `Slots.slot_ok`, `Bytes.byte_ok`, `Bytes.nat_ok`, `Run.pc_ok` |
+| 9 fused ops (below) | 257 | 202 | 168 | `Proofs.Fuse.fuse_agrees` (from `run_parts`, `run_fused`, `run_fusedJump`, `fuseAt_sound`, `fuse_sound`) |
+| `NumOp.evalBin` `@[inline]` (it was a C call with its own `switch` in each binary op) | 270 to 296 | 221 | 174 | none needed (same function) |
+
+Speed-up over stage 1: sum 7 to 7.6 times, memsum 7.4 times, fib 4.7 times. The 10x
+target is not reached; see "Next". Instruction counts are the same as before fusion
+(140 000 008, 240 000 004, 28 271 637), so a fused op takes the fuel of its parts.
+Runs vary by about 10% (other sessions build on the machine).
 
 **Slot form, measured first** (`lake exe wasmvm-bench repr`, ns per iteration of
 2 pushes, 2 reads, 1 add, 1 write):
@@ -356,6 +363,70 @@ million Wasm instructions per second. Spec tests after each row: pass 35085, fai
   slot access. Removing it needs `maxHeight_sound` and a typing invariant carried by
   `run` (next steps).
 
+## Fused ops
+
+`lake exe wasmvm-bench profile DIR` (`Bench/Profile.lean`) counts op pairs and triples:
+executed in the benchmarks (one instruction per `run` call), and present in the
+compiled code of the 1687 spec-test modules. Before fusion, the benchmarks ran mostly
+`local.get; const` (4929 per 3 runs), `local.get; local.get` (4001), `i32.add;
+local.set` (3000), `local.get; const; i32.add`, `const; i32.add; local.set`, a compare
+then `jumpIf`, and `const; i32.and` before a load. The spec-test modules are mostly
+test scaffolding (`const; return`, `const; load i64`), so they did not choose the set.
+
+The fused ops (`Exec/Code.lean`; `op` is a numeric op that cannot trap):
+
+| Op | Parts |
+|---|---|
+| `llBin x y op` | `local.get x; local.get y; op` |
+| `lcBin x c op` | `local.get x; const c; op` |
+| `cBin c op` | `const c; op` |
+| `lUn x op` | `local.get x; op` (unary) |
+| `binSet op z` | `op; local.set z` |
+| `lcBinSet x c op z` | `local.get x; const c; op; local.set z` |
+| `llBinJump x y op t z` | `local.get x; local.get y; op; jumpIf t` (`jumpUnless` when `z`) |
+| `lcBinJump x c op t z` | `local.get x; const c; op; jumpIf/jumpUnless t` |
+| `binJump op t z` | `op; jumpIf/jumpUnless t` |
+
+- `fuse` runs after the validator's compiler. It replaces the op at the start of a
+  group and leaves the parts after it, so the code keeps its length and a branch into
+  the middle of a group finds the original ops. Longest match first.
+- `run` executes a fused op as `Simple.exec` of its parts in order, each part written
+  to the slots as the single op would (so the states are equal, not only equal below
+  `sp`). It takes the fuel of all its parts; with less fuel it runs only its first
+  part and goes to `pc + 1`.
+- **The general lemma** is `Proofs.Fuse.run_parts`: straight-line ops in the code from
+  `pc`, run one at a time, give `Simple.execAll` of them and `run` at `pc + k` with `k`
+  less fuel. Each fusion's small proof is its case in `run_fused`/`run_fusedJump`
+  (unfold `run` once; the definition is its expansion). `fused_agrees` puts these
+  together; `fuseAt_sound` and `fuse_sound` show the pass only makes well-formed fused
+  ops where the original code holds the parts; `fuse_agrees` is the result for
+  compiled code (side condition: the code has fewer than `USize.size` ops).
+  Axioms: `propext`, `Classical.choice`, `Quot.sound`.
+- Not proved: whole runs of `fuse c` and `c` agree (induction on fuel; it also needs
+  every function in the store fused the same way).
+
+## The dispatch loop in C
+
+Checked in `.lake/build/ir/L4Factoidal/WasmVM/Bench/Engine.c`, the copy of `run`
+specialised for `ByteMem` (`Run.run_at_..._spec`), after the changes above:
+
+- One C function, one `switch (lean_obj_tag(op))` (ARM64: a jump table, `br x9`), and
+  a `goto _start` for each tail call. No call per instruction except the slow paths.
+- No allocation per instruction: `lean_alloc_ctor` is only on the exits (the result
+  tuple and `Machine`) and in `call` (the `Frame`). Before: the `Machine` structure was
+  reset and reused at each step, with an increment and decrement of each of its seven
+  fields.
+- `UInt64` slot values and `sp`, `fp`, `pc` are unboxed (`uint64_t`, `size_t`).
+- Per instruction, two reference-count operations remain on the code: `lean_array_uget`
+  increments the `Op` it reads and the case decrements it after reading the fields
+  (Lean has no borrowed array read). A `Nat` field of an `Op` is read with
+  `lean_usize_of_nat`. Removing these needs the code in an unboxed array (bytecode in a
+  `ByteArray`): "Next".
+- The fuel is a `Nat` (two inline `Nat` operations per step); it is what makes `run`
+  structurally recursive.
+- Before `NumOp.evalBin` was `@[inline]`, every binary op called it (a second
+  `switch` behind a call).
+
 ## Theorems proved (stage 1)
 
 All with axioms `propext`, `Classical.choice`, `Quot.sound` only; no `sorry`.
@@ -372,9 +443,10 @@ All with axioms `propext`, `Classical.choice`, `Quot.sound` only; no `sorry`.
 
 ## Next
 
-1. Speed: slots as `UInt64` reads with `USize` indices and proofs, or registers for the
-   top of stack; superinstructions (`local.get; i32.const; i32.add`); a `br_if` that
-   fuses the compare. Target: 10x.
+1. Speed (now 4.7 to 7.6 times stage 1; target 10x): code as bytecode in a `ByteArray`
+   (no reference counts per instruction); the last slot check removed with
+   `maxHeight_sound` and a typing invariant carried by `run`; a cheaper `call`/`return`
+   (`fib` is call-bound); whole-run equality of fused and unfused code.
 2. Refinement: the rest of the integer table (div, rem with `binop_trap`, shifts,
    compares through `Step_pure.relop`), then `Run.step_refines` with the abstraction to
    `Spec.config`.
