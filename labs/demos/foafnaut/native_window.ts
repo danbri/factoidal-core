@@ -33,6 +33,7 @@ export function loadNativeWindow() {
     ng_free: { parameters: ["pointer"], result: "void" },
     ng_clipboard_write: { parameters: ["buffer"], result: "i32" },
     ng_open_url: { parameters: ["buffer"], result: "i32" },
+    ng_set_cursor: { parameters: ["i32"], result: "void", optional: true },
   } as const);
   const symbols = library.symbols;
   const isMainThread = () => symbols.ng_is_main_thread() === 1;
@@ -59,6 +60,8 @@ export function loadNativeWindow() {
       if(!symbols.ng_clipboard_write(new TextEncoder().encode(text+"\0")))
         throw new Error("Native clipboard write failed");
     },
+    // Lean chose the pointer; an older window library keeps the arrow.
+    setCursor:(kind:string)=>symbols.ng_set_cursor?.(kind==="hand"?1:kind==="text"?2:0),
     setHistory:(back:boolean,forward:boolean)=>symbols.ng_set_history(back?1:0,forward?1:0),
     testRaise:()=>symbols.ng_test_raise(),
     testKey:(key:string,shift=false)=>symbols.ng_test_key(new TextEncoder().encode(key+"\0"),shift?1:0)===1,

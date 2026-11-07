@@ -265,7 +265,12 @@ Deno.test("the interactive FOAF graph runs as a browser page through Lean",async
       assert.equal(JSON.stringify(direct),JSON.stringify(text));
     }
   }
-  assert.deepEqual(engine.shellLink("foafnaut:graph"),{go:"command",name:"graph",argument:""});
+  // The graph is a page of the session history (issue 1268).
+  assert.deepEqual(engine.shellLink("foafnaut:graph"),{go:"page",url:"foafnaut:graph"});
+  assert.deepEqual(engine.shellSubmit(":graph"),{go:"page",url:"foafnaut:graph"});
+  // The pointer (issue 1268): the hand over a person, the arrow over the empty canvas.
+  assert.equal(engine.pointerCursor({shell,x,y:screenY(y),width:1000,model:start.model}),"hand");
+  assert.equal(engine.pointerCursor({shell,x:3,y:676,width:1000,model:start.model}),"arrow");
 });
 
 Deno.test("compile in a worker answers what the main-thread engine answers, and every readback command is filtered by name",async()=>{

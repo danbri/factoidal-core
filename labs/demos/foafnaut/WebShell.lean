@@ -114,6 +114,33 @@ def hit (s : Shell) (width x y : Nat) : Option String :=
   | some box => some box.name
   | none => some "chrome"
 
+/-! ### The pointer -/
+
+/-- The system pointer the window shows (issue 1268). -/
+inductive Pointer where
+  | arrow
+  | hand
+  | text
+  deriving Repr, BEq
+
+def Pointer.name : Pointer → String
+  | .arrow => "arrow"
+  | .hand => "hand"
+  | .text => "text"
+
+/-- The pointer over `control`, the answer of `hit`: the I-beam over the address bar,
+the pointing hand over a control that acts on a click, else the arrow. A back or
+forward button with no entry does nothing, so it gets the arrow. `none` is the page:
+`onPage` says that a click there acts (a link, a graph node). -/
+def pointer (s : Shell) (control : Option String) (onPage : Bool) : Pointer :=
+  match control with
+  | none => if onPage then .hand else .arrow
+  | some "address" => .text
+  | some "chrome" => .arrow
+  | some "back" => if s.canBack then .hand else .arrow
+  | some "forward" => if s.canForward then .hand else .arrow
+  | some _ => .hand
+
 /-! ### Drawing -/
 
 private def paint (c : Rendering.Color) (x y w h : Nat) : Rendering.Node :=
@@ -294,11 +321,19 @@ inductive Go where
   | command (name : String) (argument : String)
   deriving Repr, BEq
 
+/-- The FOAF graph is a page of the browser, so it goes into the session history of the
+tab it opens in, and back leaves it (issue 1268). The host draws this URL with the graph app. -/
+def graphURL : String := "foafnaut:graph"
+
+/-- A browser command. `graph` is the graph page, not a command. -/
+def command (name argument : String) : Go :=
+  if name == "graph" && argument.isEmpty then .page graphURL else .command name argument
+
 def link (href : String) : Go :=
   if href.startsWith "foafnaut:" then
     match ((href.drop 9).toString.splitOn "/") with
-    | [name,argument] => .command name argument
-    | [name] => .command name ""
+    | [name,argument] => command name argument
+    | [name] => command name ""
     | _ => .command "help" ""
   else if externalHosts.contains (hostOf href) then .system href
   else .page href
@@ -317,9 +352,9 @@ def submit (input : String) : Go :=
   let value := input.trimAscii.toString
   if value.startsWith ":" then
     match ((value.drop 1).toString.splitOn " ").filter (· != "") with
-    | [name] => .command name ""
+    | [name] => command name ""
     | ["open",url] => .system url
-    | name::argument::_ => .command name argument
+    | name::argument::_ => command name argument
     | [] => .command "help" ""
   else if (value.splitOn "://").length > 1 || value.startsWith "file:" || value.startsWith "about:" then link value
   else if !value.contains ' ' && value.contains '.' then link ("https://" ++ value)
@@ -395,9 +430,16 @@ def Shell.editJson (s : Shell) : JSON.Json :=
 #guard link "https://github.com/danbri/factoidal-core" == .system "https://github.com/danbri/factoidal-core"
 #guard link "foafnaut:theme/arcade" == .command "theme" "arcade"
 #guard link "status.html" == .page "status.html"
+-- The graph is a page: a link or `:graph` loads it in the tab and pushes it on the history.
+#guard link "foafnaut:graph" == .page graphURL && submit ":graph" == .page graphURL
+#guard link "foafnaut:settings" == .command "settings" ""
 #guard (({address := "ac",cursor := 1} : Shell).typed "b").address == "abc"
 #guard (({address := "abc",cursor := 3} : Shell).key 51).address == "ab"
 #guard (({address := "abc",cursor := 0} : Shell).key 123).cursor == 0
+#guard pointer {} none true == .hand && pointer {} none false == .arrow
+#guard pointer {} (hit {} 1000 10 40) false == .arrow && pointer {canBack := true} (hit {} 1000 10 40) false == .hand
+#guard pointer {} (some "address") true == .text && pointer {} (some "chrome") true == .arrow
+#guard pointer {} (some "settings") false == .hand && pointer {tabs := #[{},{}]} (hit {tabs := #[{},{}]} 1000 40 12) false == .hand
 #guard hit {} 1000 10 1000 == none
 #guard hit {} 1000 10 40 == some "back"
 #guard hit {} 300 10 10 == some "back"
