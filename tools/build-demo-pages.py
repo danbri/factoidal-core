@@ -64,7 +64,7 @@ for page in manifest['pages']:
     if page['page'].endswith('.xml'):
         continue  # An XML page is its own source; the engine runs its stylesheet.
     if page.get('handwritten') or page.get('generator'):
-        continue  # Written by hand, or by its generator (which needs fontTools): not rebuilt here.
+        continue  # Written by hand, or by its generator (tools/showcase-pages.mjs): not rebuilt here.
     if source is None:
         pages[page['page']] = index()
     else:

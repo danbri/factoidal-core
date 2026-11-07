@@ -12,8 +12,8 @@ lists each page and what the engine must do with it.
   when it starts to render.
 - The showcase pages (`showcase*.html`, issue 1268) are linked from `showcase.html`, not
   from the start page. A page marked `handwritten` is edited by hand. A page with a
-  `generator` comes from `../tools/showcase-pages.py` (needs fontTools; run it again after a
-  change). A page marked `appRefused` renders in `check-demo-pages.py` but the window
+  `generator` comes from `../tools/showcase-pages.mjs` (`node tools/showcase-pages.mjs`, no
+  packages; run it again after a change). A page marked `appRefused` renders in `check-demo-pages.py` but the window
   refuses it, so the bytes test skips it. `showcase_gaps_test.ts` holds one expected
   failure for each gap these pages show, with its issue.
 - `source/foaf-graph.svg` comes from `native-webgpu-ui-darwin-arm64 --demo foafnaut
