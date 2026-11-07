@@ -207,3 +207,46 @@ visible glyphs again, because a scroll moves every primitive. The next cut is th
 pre-rendered band with a GPU offset (issue item 2), or keeping the packed data of the
 page and changing only the page transform. After that: `Primitive.rows` makes lists of
 boxed floats (a `FloatArray` data path), and `float32Base64`.
+
+## Scroll in a drawn band (2026-11-07, evening)
+
+Tracking: https://github.com/danbri/factoidal/issues/1268 (responsiveness and frame time).
+Design and proofs: `docs/designissues/2026-11-07-foafnaut-frame-pipeline.md`, section
+"Scroll in a drawn band: two layers". Branch `wip/1268-gpu-scroll`.
+
+A render with `layers:true` answers the chrome and a band of the page as two layers. The
+host draws each layer once; a scroll inside the band presents only the Lean composite at
+a new offset, with no Lean call.
+
+Measurement: `scroll_layers_check.ts --bench`, off screen on the laptop GPU (the screen
+was locked, so the window sweep could not run). Status page, 1600 by 1000, Noto Sans,
+scale 150%, `checks:false`, 20 steps of 120 backing pixels from the top (scroll limit
+1424). "Before" is one Lean frame and its draw for each step (the path that
+`--single-frame` keeps). "After" is the composite for each step. A Deno
+`onSubmittedWorkDone` wait has a delay of its own (14.6 ms for an empty submit), so the
+GPU time is also given from 20 passes with one wait.
+
+| Per scroll step | Native before | Native after | Wasm before | Wasm after |
+| --- | --- | --- | --- | --- |
+| Lean call | 63.7 ms | none | 86.7 ms | none |
+| Host CPU to submit | 2.4 ms | 0.2 ms (max 0.3) | 2.5 ms | 0.2 ms (max 0.4) |
+| GPU, one pass | 22.1 ms | 0.15 ms | 21.9 ms | 0.16 ms |
+| Step to GPU done, p50 (includes the 14.6 ms wait) | 107.7 ms | 14.8 ms | 128.4 ms | 14.7 ms |
+
+A new band was needed at steps 8 and 12 of 20 (Lean keep range): 113 to 133 ms native,
+141 to 163 ms Wasm, for the layer render and the two layer draws. In the window host this
+runs in the worker while composites go on; the view stays at the band edge only if the
+scroll passes the band before it arrives.
+
+The before figure here is larger than the 55 ms of the section above because it
+includes the GPU draw of the frame to the end (22 ms) and runs the engine on the
+calling thread.
+
+Pixels: the composite is compared with one Lean frame at 8 scrolls (`scroll_layers_check.ts`,
+in `test.sh`). 6 pass with 1 to 3 pixels different (float32 rounding of the moved
+geometry). 2 are an expected failure,
+https://github.com/danbri/factoidal/issues/1269 (the 16-sample edge rule depends on
+the scene row count).
+
+Not measured yet: `run_html.ts --scroll-sweep` in a window (input latency from queue
+time to present), before with `--single-frame` and after without, Wasm and native.

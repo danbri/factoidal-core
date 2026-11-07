@@ -61,13 +61,65 @@ against 162.6 ms; index 11.7 ms against 19.5 ms).
   and 94 ms (native) after. These sweeps have 1 or 2 events each, so these are single
   readings, not percentiles.
 
+## Scroll in a drawn band: two layers (done 2026-11-07)
+
+Branch `wip/1268-gpu-scroll`. Before this, a scroll step was one full Lean frame: every
+primitive moves, so all floats are packed again and the tiles are binned again.
+
+Design:
+
+- A render with `layers:true` and a shell (`WebDocument.layersJSON`) answers two scenes.
+  The chrome layer holds window rows `0 .. top`. The page layer holds the page rows of a
+  band, `band.top .. band.top+band.height`: the view plus `bandMargin` (512) rows above
+  and below, at most `maxLayerRows` (4096). Lean also answers the composite WGSL
+  (`compositeShader`) and the scroll range that the band keeps with no new render,
+  `keepFrom .. keepTo` (`refreshMargin`, 128 rows, from a band edge that the page goes on
+  past).
+- The host (`layer_compositor.ts`, `native_html_session.ts`) draws each layer once into
+  its own texture with the Lean plan. Each present runs the Lean composite: window row
+  `y < top` from chrome row `y`, else page row `y-top+offset`, `offset = scroll-band.top`.
+  The host decides no colour; it computes only the offset, kept in the band.
+- `run_html.ts`: a scroll in the keep range presents the composite only (no Lean call;
+  trace `native-html-scroll`). Outside the keep range it asks the worker for a new band
+  and goes on presenting; past the band the view stays at the band edge until the new
+  band arrives, and that scroll's latency is counted to that frame. With a drag
+  selection (window coordinates) a scroll still makes a Lean frame. `--single-frame`
+  keeps the old path for comparison.
+- Link picking: the page layer's links are in band rows; the host converts the window
+  row (`pageRow`).
+
+Proof and tests:
+
+- Lean (`WebDocument.lean`): `band_fits` (the band holds the view), `band_height_le`,
+  `keep_fits` (every kept scroll is in the band), `composite_eq_frame` (for any page
+  image, the composite at `scroll-band.top` is the chrome over the page from row
+  `scroll`), `composite_row_lt` (the composite reads only band rows).
+- The GPU part, that drawing the page moved by `band.top` gives the image moved by
+  `band.top`, is not proved: Float has no algebraic laws in Lean. Two checks instead:
+  `#guard sameAsFrame` in `WebDocumentTests.lean` compares the Lean CPU sampler of the
+  composite with one frame (compose) at scrolls in bands made at other scrolls, exactly
+  (a mutation with the offset off by one fails it); and `scroll_layers_check.ts`
+  (in `test.sh`) compares the GPU bytes of the composite with one Lean frame.
+- GPU result, status page, 1600 by 1000, Noto Sans, 8 scrolls: 6 pass with 1 to 3
+  pixels different (the moved geometry rounds to float32 differently in the band than in
+  one frame; offsets are whole device pixels). 2 are an expected failure: the 16-sample
+  edge rule depends on the scene row count (65,536), and the band and the frame fall on
+  different sides of it (about 35,000 pixels differ):
+  https://github.com/danbri/factoidal/issues/1269 (refinement depends on the row count).
+  One frame on main has the same defect from one scroll to the next.
+
+Measurements: see `docs/20261105-render-embedded-perf.md`, section "Scroll in a drawn
+band".
+
 ## Open
 
-- Scroll redoes the Lean frame build. Plan: the page is drawn into a texture that is the
-  window height plus 512 px above and below (the scene already keeps only items in that
-  band), the chrome is a second layer, and a scroll step inside the band only moves the
-  texture offset. A theorem states that drawing a translated scene equals drawing the
-  scene and then moving the image.
+- The window sweep (`--scroll-sweep`, before with `--single-frame`, after without) was not
+  run on 2026-11-07: the screen was locked, so the window could not present (exit 3).
+  The numbers above are off screen on the same GPU.
+- The Hub page (`docs/web/hub/foafnaut/browser-worker.mjs`) loads its GPU transport from
+  a published package. It gets the layer path with the next release.
+- https://github.com/danbri/factoidal/issues/1269 (16-sample rule depends on the row count).
+- A drag selection is in window coordinates, so a scroll with one makes a Lean frame.
 - A graph click needs two worker calls (graph event, then graph page) before the frame
   build. Passing the graph scene to the engine without SVG text removes the second.
 - No press state is drawn before Lean answers.
