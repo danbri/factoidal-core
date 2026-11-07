@@ -28,6 +28,8 @@ structure Shell where
   pages : Nat := 0
   /-- How far the page has moved up, in backing pixels. -/
   scroll : Nat := 0
+  /-- The control the pointer is pressed on (`:active`), or "". -/
+  pressed : String := ""
   deriving Repr, BEq
 
 private structure Theme where
@@ -106,6 +108,19 @@ private def boxes (s : Shell) (width : Nat) : List Box := Id.run do
 
 private def Box.contains (b : Box) (x y : Nat) : Bool :=
   x >= b.x && x < b.x+b.w && y >= b.y && y < b.y+b.h
+
+/-- A control that is drawn pressed while the pointer is down on it. -/
+def pressable (s : Shell) (name : String) : Bool :=
+  match name.splitOn ":" with
+  | ["back"] => s.canBack
+  | ["forward"] => s.canForward
+  | ["reload"] | ["home"] | ["source"] | ["settings"] | ["newTab"] | ["tabs"] | ["close",_] => true
+  | _ => false
+
+/-- The box of a pressable control: `(x,y,w,h)` in window pixels. -/
+def pressBox (s : Shell) (width : Nat) (name : String) : Option (Nat × Nat × Nat × Nat) :=
+  if !pressable s name then none else
+  ((boxes s width).find? (·.name == name)).map fun b => (b.x,b.y,b.w,b.h)
 
 /-- The control under a point; none means the page. Close wins over its tab. -/
 def hit (s : Shell) (width x y : Nat) : Option String :=
@@ -250,20 +265,29 @@ def nodes (s : Shell) (width : Nat) : List Rendering.Node := Id.run do
   let row := tabRow s width
   let mut out := [paint t.back 0 0 width row,paint t.base 0 row width (navRow s)]
   out := out ++ [paint t.light 0 row width u]
+  -- A pressed control (`s.pressed`) is sunken: dark face, light and dark edges swapped,
+  -- and its icon one unit down and to the right.
+  let down := fun (name : String) => s.pressed == name && pressable s name
+  let face := fun (box : Box) => if down box.name then bevel s t t.back false box.x box.y box.w box.h
+    else bevel s t t.base true box.x box.y box.w box.h
+  let sink := fun (name : String) (box : Box) => if down name then {box with x := box.x+u,y := box.y+u} else box
   for box in boxes s width do
     match box.name.splitOn ":" with
     | ["tab",i] => out := out ++ tabNodes s t width box (i.toNat?.getD 0)
-    | ["close",_] => out := out ++ iconAt s t.ink "close" box
-    | ["newTab"] => out := out ++ bevel s t t.base true box.x box.y box.w box.h ++ iconAt s t.ink "newTab" box
+    | ["close",_] =>
+      out := out ++ (if down box.name then bevel s t t.back false box.x box.y box.w box.h else []) ++
+        iconAt s t.ink "close" (sink box.name box)
+    | ["newTab"] => out := out ++ face box ++ iconAt s t.ink "newTab" (sink box.name box)
     | ["address"] => out := out ++ addressNodes s t box
     | ["tabs"] =>
-      out := out ++ bevel s t t.base true box.x box.y box.w box.h ++
-        text t.ink (toString s.tabs.size) (box.x+(box.w-5*dot s)/2) (box.y+(box.h-7*dot s)/2) (dot s)
+      let at_ := sink box.name box
+      out := out ++ face box ++
+        text t.ink (toString s.tabs.size) (at_.x+(at_.w-5*dot s)/2) (at_.y+(at_.h-7*dot s)/2) (dot s)
     | [name] =>
       let enabled := (name != "back" || s.canBack) && (name != "forward" || s.canForward)
       let shape := if name == "reload" && s.loading then "stop" else name
-      out := out ++ bevel s t t.base true box.x box.y box.w box.h ++
-        iconAt s (if enabled then t.ink else t.dark) shape box
+      out := out ++ face box ++
+        iconAt s (if enabled then t.ink else t.dark) shape (sink box.name box)
     | _ => pure ()
   if !narrow s width then
     let label := toString s.pages
@@ -413,7 +437,7 @@ def Shell.ofJson (j : JSON.Json) : Shell :=
   { tabs,active := min (nat j "active") (tabs.size-1),address,cursor := min (nat j "cursor") address.length,
     focused := flag j "focused",canBack := flag j "canBack",canForward := flag j "canForward",
     loading := flag j "loading",scale := max 1 (nat j "scale" 1),theme := str j "theme" "next",pages := nat j "pages",
-    scroll := nat j "scroll" }
+    scroll := nat j "scroll", pressed := str j "pressed" }
 
 def Shell.editJson (s : Shell) : JSON.Json :=
   .object [("address",.string s.address),("cursor",.number (toString s.cursor))]
@@ -445,5 +469,14 @@ def Shell.editJson (s : Shell) : JSON.Json :=
 #guard hit {} 300 10 10 == some "back"
 #guard hit {tabs := #[{},{}]} 1000 40 12 == some "tab:0"
 #guard height {} 1000 > height {} 300
+#guard pressBox {} 1000 "back" == none
+#guard pressBox {canBack := true} 1000 "back" == some (4,30,28,28)
+#guard pressBox {} 1000 "reload" == some (64,30,28,28)
+#guard pressBox {} 1000 "address" == none
+-- A pressed button draws other paint than a raised one; another name changes nothing.
+#guard reprStr (nodes {pressed := "reload"} 1000) != reprStr (nodes {} 1000)
+#guard reprStr (nodes {pressed := "address"} 1000) == reprStr (nodes {} 1000)
+#guard reprStr (nodes {pressed := "back"} 1000) == reprStr (nodes {} 1000)
+#guard (Shell.ofJson (.object [("pressed",.string "home")])).pressed == "home"
 
 end WebShell

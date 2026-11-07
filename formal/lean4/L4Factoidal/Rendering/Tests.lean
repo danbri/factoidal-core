@@ -96,7 +96,8 @@ private def links := run "<div><a id='target' href='https://example.test/link'>A
 private def spacedLink := run "<div style='width:60px'><a href='url'>AA BB</a></div>" css
 #guard (spacedLink.toOption.map fun r => r.1.links.size) == some 3
 #guard (spacedLink.toOption.bind fun r => hitLink r.1.links.toList 14 3 |>.map (·.href)) == some "url"
-#guard ((computedAt "<a id='x' href='url'>AA</a>" "" "x").toOption.map fun s => (s.color.b,s.underline)) == some (1,true)
+-- HTML §15.3.4: an unvisited hyperlink is #0000EE and underlined.
+#guard ((computedAt "<a id='x' href='url'>AA</a>" "" "x").toOption.map fun s => ((s.color.b*255).round,s.color.r,s.underline)) == some (238,0,true)
 #guard ((computedAt "<a id='x' href='url'>AA</a>" "a{color:red}" "x").toOption.map fun s => (s.color.r,s.decorationColor.map (·.r))) == some (1,some 1)
 #guard ((computedAt "<a id='x'>AA</a>" "" "x").toOption.map (·.underline)) == some false
 #guard ((computedAt "<a id='x' href=''>AA</a>" "" "x").toOption.map (·.underline)) == some true
@@ -165,7 +166,8 @@ private def rules (source : String) : Nat := ((CSS.parse source).toOption.map Li
 #guard rules ".a > b{color:red} p{color:blue}" == 1
 #guard rules "@media (max-width: 800px) { .a { color: red } } p{color:blue}" == 1
 #guard rules "@import 'x.css'; @charset \"utf-8\"; p{color:blue}" == 1
-#guard rules "a:hover, p{color:red} p{color:blue}" == 1
+#guard rules "a:focus, p{color:red} p{color:blue}" == 1
+#guard rules "a:hover, p{color:red} p{color:blue}" == 2
 #guard rules "p{color:blue" == 1
 #guard rules "p{color:blue} /* never closed" == 1
 #guard rules "} p{content:'}'}" == 1
@@ -177,5 +179,85 @@ private def rules (source : String) : Nat := ((CSS.parse source).toOption.map Li
 #guard (run "<table><tr><td>A<td>B</table><hr><pre>A\nB</pre>" css) matches .ok _
 #guard (run "<div style='display:grid;gap:1px'>A</div>" (css ++ ".a > div{color:red} div{font-family:Arial,serif}")) matches .ok _
 #guard ((run "<pre>A\nB</pre>" css).toOption.map fun r => r.1.glyphRuns.toList.map (fun g => g.glyphs.toList.map (·.y)) |>.eraseDups |>.length) == some 2
+
+/-! ### User agent sheet, `:link`, `:visited`, `:hover`, `:active` (issue 1268) -/
+
+/-- The computed style of element `id` with the element state of ids `hover`, `active`
+and `visited`, named by their `id` attributes. -/
+private def stateAt (html css id : String) (hover active : Option String := none) (visited : List String := []) :
+    Except String Computed := do
+  let dom := DOM.parseHtmlDocument html
+  let some idx := dom.getElementById 0 id | throw "test id missing"
+  let named := fun (name : String) => dom.getElementById 0 name
+  let state : ElementState := {hover := hover.bind named, active := active.bind named, visited := visited.filterMap named}
+  let styles ← CSS.computeAll dom (← CSS.parse css) 1 state
+  return styles[idx]!
+private def rgb255 (c : Color) : Nat × Nat × Nat :=
+  ((c.r*255).round.toUInt32.toNat,(c.g*255).round.toUInt32.toNat,(c.b*255).round.toUInt32.toNat)
+private def page := "<p><a id='a' href='u'><span id='s'>AA</span></a> <a id='b'>B</a> <button id='k'>OK</button></p>"
+#guard userAgentRules.length == 7
+#guard ((stateAt page "" "a").toOption.map (rgb255 ·.color)) == some (0,0,238)
+#guard ((stateAt page "" "a" (visited := ["a"])).toOption.map fun s => (rgb255 s.color,s.underline)) == some ((85,26,139),true)
+-- `:active` on the link, or on a descendant of it (Selectors 4 §9.2), gives #FF0000.
+#guard ((stateAt page "" "a" (active := some "a")).toOption.map (rgb255 ·.color)) == some (255,0,0)
+#guard ((stateAt page "" "a" (active := some "s")).toOption.map (rgb255 ·.color)) == some (255,0,0)
+#guard ((stateAt page "" "a" (active := some "s") (visited := ["a"])).toOption.map (rgb255 ·.color)) == some (255,0,0)
+-- An `a` with no href is not a link, active or not.
+#guard ((stateAt page "" "b" (active := some "b")).toOption.map fun s => (rgb255 s.color,s.underline)) == some ((0,0,0),false)
+-- Author rules win over the user agent origin, whatever the specificity.
+#guard ((stateAt page "a{color:green}" "a" (active := some "a")).toOption.map (rgb255 ·.color)) == some (0,128,0)
+-- `:hover` matches the designated element and its ancestors only.
+#guard ((stateAt page "a:hover{color:red}" "a" (hover := some "s")).toOption.map (rgb255 ·.color)) == some (255,0,0)
+#guard ((stateAt page "span:hover{color:red}" "s" (hover := some "a")).toOption.map (rgb255 ·.color)) == some (0,0,238)
+-- A pseudo-class counts as a class in specificity.
+#guard ((stateAt "<p id='x' class='c'>A</p>" ".c:hover{color:red} .c{color:green}" "x" (hover := some "x")).toOption.map (rgb255 ·.color)) == some (255,0,0)
+#guard ((stateAt "<p id='x' class='c'>A</p>" ".c:hover{color:red} .c{color:green}" "x").toOption.map (rgb255 ·.color)) == some (0,128,0)
+-- `:any-link` matches visited and unvisited links.
+#guard ((stateAt page ":any-link{color:red}" "a" (visited := ["a"])).toOption.map (rgb255 ·.color)) == some (255,0,0)
+-- A rule that matches only through `:visited` sets colours only.
+#guard ((stateAt page "a:visited{color:red;display:none}" "a" (visited := ["a"])).toOption.map fun s => (rgb255 s.color,s.display == .inline)) == some ((255,0,0),true)
+#guard ((stateAt page "a:link{display:none}" "a").toOption.map (·.display == .none)) == some true
+-- An unknown pseudo-class drops its rule; the other rules stand.
+#guard ((stateAt page "a:focus{color:red} a{color:green}" "a" (active := some "a")).toOption.map (rgb255 ·.color)) == some (0,128,0)
+-- HTML §15.5.4: a button is an inline-block with a raised border; pressed, it is sunken and darker.
+#guard ((stateAt page "" "k").toOption.map fun s => (s.display == .inlineBlock,s.borderStyle == .outset,s.borderEdges.top,s.background.map rgb255)) == some (true,true,2,some (239,239,239))
+#guard ((stateAt page "" "k" (active := some "k")).toOption.map fun s => (s.borderStyle == .inset,s.background.map rgb255)) == some (true,some (200,200,200))
+#guard ((stateAt page "" "k" (hover := some "k")).toOption.map fun s => s.background.map rgb255) == some (some (229,229,229))
+#guard ((stateAt "<p id='x' style='border:1px solid red'>A</p>" "" "x").toOption.map fun s => (s.borderEdges.left,s.borderColor.map rgb255)) == some (1,some (255,0,0))
+#guard ((stateAt "<p id='x' style='border-width:4px'>A</p>" "" "x").toOption.map (·.borderEdges.left)) == some 0
+
+private def runState (html css : String) (active : Option String := none) : Except String (Scene × Array Box) := do
+  let dom := DOM.parseHtmlDocument html
+  Layout.render dom (← CSS.parse css) font noSVG 120 100 1 {active := active.bind (dom.getElementById 0 ·)}
+private def boxOf (html css id : String) : Option (Float × Float) :=
+  let dom := DOM.parseHtmlDocument html
+  match dom.getElementById 0 id, runState html css with
+  | some idx, .ok (_,boxes) => (boxes.find? (·.source == idx)).map fun b => (b.width,b.height)
+  | _, _ => none
+private def fills (r : Except String (Scene × Array Box)) : List (Nat × Nat × Nat) :=
+  match r with
+  | .ok (scene,_) => scene.tree.flatMap fun
+      | .paint p => match p.primitive.style.fill with | .solid c => [rgb255 c] | _ => []
+      | .group _ _ kids => kids.flatMap fun
+          | .paint p => match p.primitive.style.fill with | .solid c => [rgb255 c] | _ => []
+          | .group _ _ deeper => deeper.flatMap fun
+            | .paint p => match p.primitive.style.fill with | .solid c => [rgb255 c] | _ => []
+            | _ => []
+          | _ => []
+      | _ => []
+  | .error _ => []
+-- The button's border box: 2+6 + two glyphs of 6 + 6+2 wide; 2+1 + 7 + 1+2 high.
+#guard boxOf "<button id='k'>OK</button>" css "k" == some (28,13)
+#guard ((runState "<button>OK</button>" css).toOption.map fun r => r.1.glyphRuns.size) == some 1
+-- A block border adds to the border box.
+#guard boxOf "<div id='d' style='border:1px solid red'>A</div>" css "d" == some (26,9)
+-- Pressed and unpressed buttons paint different colours: the face and the bevel.
+#guard (fills (runState "<button id='k'>OK</button>" css)).contains (239,239,239)
+#guard !(fills (runState "<button id='k'>OK</button>" css (some "k"))).contains (239,239,239)
+#guard (fills (runState "<button id='k'>OK</button>" css (some "k"))).contains (200,200,200)
+#guard fills (runState "<button id='k'>OK</button>" css) != fills (runState "<button id='k'>OK</button>" css (some "k"))
+-- A pressed link paints its glyphs and underline red.
+#guard (fills (runState "<a id='a' href='u'>AA</a>" css (some "a"))).contains (255,0,0)
+#guard !(fills (runState "<a id='a' href='u'>AA</a>" css)).contains (255,0,0)
 
 end L4Factoidal.Rendering.Tests

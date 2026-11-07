@@ -84,13 +84,15 @@ export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.Unsa
     const prepared=performance.now();
     const texture=lifecycle!.acquire();
     if(!texture)return {presented:false,checked:false,pixelHash:lastHash,steps:lastSteps,prepareMs:prepared-start,drawMs:0,presentedAt:0};
-    const result=await layered.composite(texture,width,height,offset,check);
+    // A press darkening is not Lean's frame: its present is not checked against Lean's probes.
+    const checking=check&&!layered.pressed;
+    const result=await layered.composite(texture,width,height,offset,checking);
     lifecycle!.present();
     const presentedAt=performance.now();
     const steps={...drawn,...Object.fromEntries(Object.entries(result.steps).map(([k,v])=>["composite."+k,v]))};
-    if(check)lastHash=result.hash;
-    lastSteps=steps;lastChecked=check;last=undefined;
-    return {presented:true,checked:check,pixelHash:result.hash,steps,prepareMs:prepared-start,drawMs:presentedAt-prepared,presentedAt};
+    if(checking)lastHash=result.hash;
+    lastSteps=steps;lastChecked=checking;last=undefined;
+    return {presented:true,checked:checking,pixelHash:result.hash,steps,prepareMs:prepared-start,drawMs:presentedAt-prepared,presentedAt};
   }
   async function renderLayers(layers:HTMLLayers,width:number,height:number,offset:number,check:boolean):Promise<DrawResult> {
     if(disposed)throw new Error("Native HTML session already disposed");
@@ -173,6 +175,9 @@ export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.Unsa
       lastLayers.offset=offset;
       return present(lastLayers.width,lastLayers.height,offset,check,performance.now(),{});
     }),
+    /** The press rectangles of the next presents (Lean's `press` answer); undefined clears them. */
+    setPress:(rects:number[][]|undefined)=>layered.setPress(rects),
+    get pressed(){return layered.pressed;},
     /** Draw the last presented scene again with the readback checks. Used after input has been idle. */
     checkLast():Promise<DrawResult|undefined> {
       return inOrder(()=>lastLayers?renderLayers(lastLayers.layers,lastLayers.width,lastLayers.height,lastLayers.offset,true)

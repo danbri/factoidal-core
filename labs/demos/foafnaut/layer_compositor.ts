@@ -34,6 +34,10 @@ type Growing={buffer:GPUBuffer;capacity:number};
 type Slot={uniform?:Growing;tiles?:Growing;bind?:GPUBindGroup;bindKey:string;texture?:GPUTexture;size:string};
 export type PassResult={steps:Record<string,number>;pixels?:Uint8Array;hash:string};
 
+// The composite uniform: one word-of-four for the place and the rectangle count, then the
+// rectangles (WebDocument.compositeShader: array<vec4u,maxPressRects+2>).
+export const MAX_PRESS_RECTS=8;
+const PLACE_WORDS=4*(MAX_PRESS_RECTS+2);
 const LAYER_USAGE=()=>GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC;
 
 export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,limits:DeviceFacts=device.limits) {
@@ -127,6 +131,8 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
   }
   const chrome:Slot={bindKey:"",size:""},page:Slot={bindKey:"",size:""},single:Slot={bindKey:"",size:""};
   let shown:HTMLLayers|undefined,place:GPUBuffer|undefined,compositeBind:GPUBindGroup|undefined,compositeKey="";
+  // Press rectangles from Lean's `press` answer, in source rows (WebDocument.compositePress).
+  let pressRects:number[][]=[];
   let textureIds=new WeakMap<GPUTexture,number>(),nextId=0;
   const idOf=(t:GPUTexture)=>{let id=textureIds.get(t);if(id===undefined){id=++nextId;textureIds.set(t,id);}return id;};
   return {
@@ -147,16 +153,23 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
       if(!shown)throw new Error("composite before any layers were drawn");
       const p=await plan(width,height,[0,0,0,0]);
       const pipeline=await pipelineFor(p,shown.layers.composite);
-      place??=device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
+      place??=device.createBuffer({size:PLACE_WORDS*4,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
       const key=`${idOf(chrome.texture!)}|${idOf(page.texture!)}|${JSON.stringify(p.pipeline)}`;
       if(!compositeBind||compositeKey!==key){
         compositeBind=device.createBindGroup({layout:pipeline.getBindGroupLayout(p.bindGroup.layoutIndex),entries:[
           {binding:0,resource:chrome.texture!.createView()},{binding:1,resource:page.texture!.createView()},{binding:2,resource:{buffer:place}}]});
         compositeKey=key;stats.bindGroups++;
       }
-      const words=new Uint32Array([shown.layers.top,offset,shown.layers.bandHeight,0]);
+      const words=new Uint32Array(PLACE_WORDS);
+      words.set([shown.layers.top,offset,shown.layers.bandHeight,pressRects.length]);
+      pressRects.forEach((rect,i)=>words.set(rect,4*(i+1)));
       return run(p,{pipeline,bindGroup:compositeBind},target,check,()=>device.queue.writeBuffer(place!,0,words));
     },
+    /** The rectangles the next composites darken (Lean's `press` answer); none clears them. */
+    setPress(rects:number[][]|undefined){
+      pressRects=(rects??[]).slice(0,MAX_PRESS_RECTS).filter(r=>r.length===4&&r.every(n=>Number.isSafeInteger(n)&&n>=0&&n<2**31));
+    },
+    get pressed(){return pressRects.length>0;},
     dispose(){
       for(const slot of [chrome,page,single]){slot.texture?.destroy();slot.uniform?.buffer.destroy();slot.tiles?.buffer.destroy();}
       place?.destroy();readback?.buffer.destroy();textureIds=new WeakMap();

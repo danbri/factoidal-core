@@ -83,6 +83,51 @@ if(!bench){
   }
   console.log(`scroll layers: ${compared-failed-expected} pass, ${failed} fail, ${expected} expected failures (https://github.com/danbri/factoidal/issues/1269) (out of ${compared} scrolls)`);
   if(!compared||compared===expected||failed)Deno.exitCode=1;
+
+  // Press (issue 1268). (1) The composite with Lean's press rectangles of a link: the pixels in
+  // the rectangles are darkened (3/4 of each channel, within 1 for rounding), every other pixel
+  // is unchanged. (2) A Lean frame with the reload button pressed differs from one with it raised,
+  // and only inside the button's box.
+  let pressFailed=0;
+  // The status page has no link: the press checks use the index page.
+  const pressDoc=await prepareHTML(engine,inputURL(new URL("./pages/index.html",import.meta.url).pathname,true));
+  const pressOptions=(checks:boolean,extra:Record<string,unknown>={})=>({...pressDoc.request(W,H).options,textScalePercent:150,shell:{...shell(0),address:pressDoc.url},...(checks?{}:{checks:false}),...extra});
+  const layers=engine.compileLayers(pressDoc.source,W,H,pressOptions(true));
+  await renderer.drawLayers(layers,true);
+  renderer.setPress(undefined);
+  const idle=await renderer.composite(composed,W,H,0,true);
+  const top=layers.layers.top,links=layers.page.webRender.links as unknown[][];
+  const link=links[0] as number[];
+  const answer=engine.press({...shell(0),address:pressDoc.url},Math.round(link[2]+link[4]/2),Math.round(link[3]+link[5]/2+top),W,Math.round(link[3]+link[5]/2),links);
+  renderer.setPress(answer.rects);
+  const down=await renderer.composite(composed,W,H,0,true);
+  renderer.setPress(undefined);
+  const inside=(x:number,y:number)=>answer.rects.some(([rx,ry,rw,rh])=>x>=rx&&x<rx+rw&&y>=ry&&y<ry+rh);
+  let darkened=0,wrong=0;
+  for(let i=0;i<idle.pixels!.length;i+=4){
+    const x=(i>>2)%W,y=Math.floor((i>>2)/W);
+    for(let c=0;c<3;c++){
+      const want=inside(x,y)?idle.pixels![i+c]*0.75:idle.pixels![i+c];
+      if(Math.abs(down.pixels![i+c]-want)>1)wrong++;
+    }
+    if(inside(x,y))darkened++;
+  }
+  if(!answer.rects.length||!darkened||wrong)pressFailed++;
+  console.log(JSON.stringify({type:"press-composite",href:answer.href,rects:answer.rects,darkenedPixels:darkened,wrongChannels:wrong,verdict:answer.rects.length&&darkened&&!wrong?"pass":"fail"}));
+  const box=[64*scale,30*scale,28*scale,28*scale];
+  const raised=engine.compileLayers(pressDoc.source,W,H,pressOptions(true,{shell:{...shell(0),address:pressDoc.url,pressed:"reload"}}));
+  await renderer.drawLayers(raised,true);
+  const pressedFrame=await renderer.composite(composed,W,H,0,true);
+  let changed=0,outside=0;
+  for(let i=0;i<idle.pixels!.length;i+=4){
+    if(idle.pixels![i]===pressedFrame.pixels![i]&&idle.pixels![i+1]===pressedFrame.pixels![i+1]&&idle.pixels![i+2]===pressedFrame.pixels![i+2])continue;
+    const x=(i>>2)%W,y=Math.floor((i>>2)/W);
+    if(x>=box[0]&&x<box[0]+box[2]&&y>=box[1]&&y<box[1]+box[3])changed++;else outside++;
+  }
+  if(!changed||outside)pressFailed++;
+  console.log(JSON.stringify({type:"press-frame",control:"reload",box,changedPixels:changed,changedOutside:outside,verdict:changed&&!outside?"pass":"fail"}));
+  console.log(`press: ${2-pressFailed} pass, ${pressFailed} fail (out of 2)`);
+  if(pressFailed)Deno.exitCode=1;
 } else {
   // Warm both paths once: plans, pipelines and the kept layout.
   await renderer.drawSingle(engine.compile(doc.source,W,H,options(0,false)),single,false);await done();

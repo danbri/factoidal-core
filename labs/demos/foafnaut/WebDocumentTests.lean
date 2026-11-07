@@ -229,6 +229,54 @@ private def sameAsFrame (html : String) (width height frameScroll : Nat) (scroll
 #guard (WebDocument.run keptPage (frame 80 [("layers",.bool true)]) 300 200).toOption ==
   (WebDocument.runUncached keptPage (frame 80 [("layers",.bool true)]) 300 200).toOption
 
+/-! Press acknowledgement and element state (issue 1268). -/
+private def pressAnswer (fields : List (String × JSON.Json)) : Option JSON.Json :=
+  (WebDocument.run "" (json (("op",.string "press")::fields)) 1 1).toOption.bind fun text => (JSON.parseJson text).toOption
+private def pressShell := json [("tabs",.array [json [("title",.string "t")]]),("canBack",.bool true)]
+-- A chrome button: its control and its box. A press on the address bar darkens nothing.
+#guard (pressAnswer [("shell",pressShell),("width",.number "1000"),("x",.number "70"),("y",.number "40")]).map (·.toString) ==
+  some "{\"control\":\"reload\",\"rects\":[[64,30,28,28]]}"
+#guard ((pressAnswer [("shell",pressShell),("width",.number "1000"),("x",.number "400"),("y",.number "40")]).bind (·.field? "rects")) == some (.array [])
+-- A link: every region of the same anchor, in source rows (page-layer row + top 65).
+private def pressLinks := JSON.Json.array [.array [.number "7",.string "u",.number "10",.number "105",.number "30",.number "14"],
+  .array [.number "7",.string "u",.number "0",.number "121",.number "12",.number "14"],
+  .array [.number "8",.string "v",.number "50",.number "105",.number "30",.number "14"]]
+#guard (pressAnswer [("shell",pressShell),("width",.number "1000"),("x",.number "20"),("y",.number "70"),("row",.number "105"),("links",pressLinks)]).map (·.toString) ==
+  some "{\"control\":null,\"sourceNode\":7,\"href\":\"u\",\"rects\":[[10,170,30,14],[0,186,12,14]]}"
+#guard ((pressAnswer [("shell",pressShell),("width",.number "1000"),("x",.number "200"),("y",.number "70"),("row",.number "105"),("links",pressLinks)]).bind (·.field? "sourceNode")) == some .null
+-- The composite darkens the source pixel of a rectangle, at any offset in the band.
+#guard WebDocument.inRects [(10,170,30,14)] 20 (WebDocument.sourceRow 65 100 75)
+#guard !WebDocument.inRects [(10,170,30,14)] 20 (WebDocument.sourceRow 65 120 75)
+#guard WebDocument.compositePress (· + 100) (fun _ _ => 1) (fun _ _ => 2) 65 100 [(10,170,30,14)] 20 75 == 102
+#guard WebDocument.compositePress (· + 100) (fun _ _ => 1) (fun _ _ => 2) 65 100 [(64,30,28,28)] 70 40 == 101
+#guard WebDocument.compositePress (· + 100) (fun _ _ => 1) (fun _ _ => 2) 65 100 [(64,30,28,28)] 10 40 == 1
+#guard (WebDocument.compositeShader.splitOn s!"array<vec4u,{WebDocument.maxPressRects+2}>").length == 2
+-- `active`, `hover` and `visited` are layout fields: the kept layout and a fresh one agree,
+-- and an active link is drawn otherwise than an idle one.
+private def linkPage := "<p><a href='https://x.test/a'>Go there</a> <a href='b'>B</a></p>"
+private def anchorId : Nat :=
+  let dom := DOM.parseHtmlDocument linkPage
+  ((dom.treeOrder 0).find? fun id => DOM.Dom.isHtmlElement (dom.get id) "a").getD 0
+private def stateFrames : List JSON.Json :=
+  [frame 0, frame 0 [("active",.number (toString anchorId))], frame 0 [("hover",.number (toString anchorId))],
+   frame 0 [("visited",.array [.string "https://x.test/a"])], frame 0 [("active",.number "99999")]]
+#guard stateFrames.all fun request =>
+  let kept := WebDocument.run linkPage request 300 200
+  kept.toOption.isSome && kept.toOption == (WebDocument.runUncached linkPage request 300 200).toOption
+#guard (WebDocument.run linkPage (frame 0 [("active",.number (toString anchorId))]) 300 200).toOption !=
+  (WebDocument.run linkPage (frame 0) 300 200).toOption
+#guard (WebDocument.run linkPage (frame 0 [("visited",.array [.string "https://x.test/a"])]) 300 200).toOption !=
+  (WebDocument.run linkPage (frame 0) 300 200).toOption
+-- An id outside the document is no element: the frame is the idle one.
+#guard (WebDocument.run linkPage (frame 0 [("active",.number "99999")]) 300 200).toOption ==
+  (WebDocument.run linkPage (frame 0) 300 200).toOption
+-- The layers answer says whether an author rule names `:hover`.
+private def hoverRulesOf (html : String) : Option JSON.Json :=
+  (WebDocument.run html (frame 0 [("layers",.bool true),("checks",.bool false)]) 300 200).toOption.bind fun text =>
+    (JSON.parseJson text).toOption.bind (·.field? "layers") |>.bind (·.field? "hoverRules")
+#guard hoverRulesOf linkPage == some (.bool false)
+#guard hoverRulesOf ("<style>a:hover{color:red}</style>" ++ linkPage) == some (.bool true)
+
 /-- Optional runtime evidence uses actual HarfBuzz/FreeType records generated
 from the requests above. It does not replace the pure cascade/request guards. -/
 def main (args : List String) : IO UInt32 := do

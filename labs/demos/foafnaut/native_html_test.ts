@@ -327,3 +327,48 @@ Deno.test("a low-priority layers call runs after ordinary calls, a newer one rep
     assert.equal(await dropped,undefined);
   }finally{client.terminate();}
 });
+
+// Press acknowledgement and :active (issue 1268). A shortfall is an expected failure that names
+// its issue and fails the run when it passes.
+const xfail=(name:string,issue:string,fn:()=>void|Promise<void>)=>Deno.test(`xfail: ${name} (${issue})`,async()=>{
+  let passed=false;
+  try{await fn();passed=true;}catch(error){console.log(`xfail ${name} (${issue}): ${String(error).split("\n")[0]}`);}
+  if(passed)throw new Error(`unexpected pass: flip to an assertion and close ${issue}`);
+});
+const pressShell={tabs:[{title:"t"}],active:0,address:"a",cursor:0,focused:false,canBack:false,canForward:false,loading:false,scale:1,theme:"next",pages:1,scroll:0};
+const pressPage=html(`<p><a href="next.html">Next page</a> <button>OK</button></p>`);
+const pressOptions={textScalePercent:100,shell:pressShell};
+
+Deno.test("Lean press: a chrome button and a link, with the rectangles the composite darkens",()=>{
+  assert.deepEqual(engine.press(pressShell,70,40,1000,0,[]),{control:"reload",rects:[[64,30,28,28]]});
+  assert.deepEqual(engine.press(pressShell,10,40,1000,0,[]),{control:"back",rects:[]});
+  const layers=engine.compileLayers(pressPage,600,400,pressOptions);
+  const link=layers.page.webRender.links[0] as [number,string,number,number,number,number];
+  const top=layers.layers.top,y=Math.round(link[3]+link[5]/2);
+  const answer=engine.press(pressShell,Math.round(link[2]+link[4]/2),y+top,600,y,layers.page.webRender.links as unknown[]);
+  assert.equal(answer.control,null);assert.equal(answer.sourceNode,link[0]);assert.equal(answer.href,"next.html");
+  assert(answer.rects.length>=1);
+  assert.equal(answer.rects[0][1],Math.floor(link[3])+top);
+  assert.equal(layers.layers.hoverRules,false);
+  // A frame with the link active is drawn otherwise; so is one with the reload button pressed,
+  // and that one changes only the chrome layer.
+  const active=engine.compileLayers(pressPage,600,400,{...pressOptions,active:link[0]});
+  assert.notDeepEqual([...active.page.data],[...layers.page.data]);
+  const sunk=engine.compileLayers(pressPage,600,400,{...pressOptions,shell:{...pressShell,pressed:"reload"}});
+  assert.notDeepEqual([...sunk.chrome.data],[...layers.chrome.data]);
+  assert.deepEqual([...sunk.page.data],[...layers.page.data]);
+  const hovering=engine.compileLayers(html(`<p><a href="n">N</a></p>`,"a:hover{color:red}"),600,400,pressOptions);
+  assert.equal(hovering.layers.hoverRules,true);
+});
+
+xfail("press on a page button gives its node","https://github.com/danbri/factoidal/issues/1277",()=>{
+  const layers=engine.compileLayers(pressPage,600,400,pressOptions);
+  const run=(layers.page.webRender.glyphRuns as {text:string;glyphs:number[][]}[]).find(r=>r.text==="OK")!;
+  const x=Math.round(run.glyphs[0][1]+3),y=Math.round(run.glyphs[0][2]+5);
+  const answer=engine.press(pressShell,x,y+layers.layers.top,600,y,layers.page.webRender.links as unknown[]);
+  assert.equal(typeof answer.sourceNode,"number");
+});
+xfail("hover on a paragraph gives its node","https://github.com/danbri/factoidal/issues/1277",()=>{
+  const frame=engine.compile(html(`<p>Plain text</p>`,"p:hover{color:red}"),600,400,{textScalePercent:100});
+  assert.notEqual(engine.hit(frame,20,10),null);
+});
