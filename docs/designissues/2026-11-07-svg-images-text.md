@@ -139,19 +139,73 @@ supplied`.
 An HTML document decodes its images for each render. A cache across frames is not
 done yet.
 
+## Text placement
+
+`lowerText` works in three steps. It reads all characters of the `text` element first,
+because forms and direction depend on neighbours. It picks glyphs in logical order. Then
+it lays out each text chunk in visual order and moves the chunk by its own `text-anchor`.
+
+- §10.6.1: each absolute `x` or `y` starts a text chunk, and §10.8.1 applies `text-anchor`
+  to each chunk.
+- §10.10: `xml:space="default"` removes newlines, turns tabs into spaces, strips and
+  collapses. `preserve` turns newlines and tabs into spaces and removes nothing.
+- §10.4: `rotate` turns a glyph about its position, and the last value holds for the
+  characters after it. The advance does not rotate.
+- A font with no U+00A0 draws its space for it.
+
+`direction` is not read: https://github.com/danbri/factoidal/issues/1264. Its initial
+value is `ltr` (§10.6.3), and `fonts-glyph-02-t.svg` puts the left end of Arabic text at
+`x`. But `text-align-202-t.svg`, which sets no `direction`, says that `start` is at the
+right for text with `xml:lang="ar"` or `"he"`. So the base direction is right to left only
+for those languages (`rightToLeftLanguage`). This is an agent's choice, not the owner's,
+guided by the two files; the specification text alone gives `ltr`.
+
+## SVG fonts
+
+A `font` holds its glyphs by first character, in document order. `SVGFont.pick` takes the
+first glyph that matches the characters at a position, the `lang` in force and the
+`arabic-form`, so a ligature wins only when it stands before its parts
+(`fonts-glyph-04-t.svg`). `lang` matches a language or a more specific form of it.
+`arabicForms` gets the form from the joins on the two sides of a character; the joining
+table covers the Arabic block only.
+
+`chooseFont` needs family and `font-variant` to match, in the order of `font-family`.
+Without a match the host font is used. A character that the chosen font does not have
+comes from the host font too. `hkern` reads `g1`, `g2`, `u1`, `u2`, with lists and
+`U+` ranges.
+
+`font-face-uri` names a font in another document (`externalFont`), and the family is the
+one that the referring `font-face` gives. The W3C files that name
+`SVGFreeSans-ISO-8859-1.svg` need this: that font has the accented letters, and its
+digits have other kerning than `SVGFreeSans.svg`.
+
+`requiredFeatures` holds only for the SVG Tiny 1.2 strings in `supportedFeatures`, which
+leaves out animation, media, scripting, handlers and the DOM. So `struct-cond-205-t.svg`
+says No in those rows, where the W3C PNG says Yes. An SVG 1.1 string is unknown
+(`struct-cond-03-t.svg`). `requiredFormats` holds for PNG, JPEG and SVG, and
+`requiredFonts` for a family in the document.
+
+## use of another document
+
+`importDocuments` turns a `use` of another document into a same-document `use`. The other
+document goes into a `defs` at the end, with a prefix on each id and on each same-document
+reference in it. An `image` in it keeps the document as its base. Each document is
+imported once, so a cycle of documents ends, and at most 16 are read. A `use` whose
+document has no bytes goes alone and is logged.
+
+Bytes are the same as for images: `imageRequests` gives the keys, and a host supplies
+bytes. A document can name more, so the CLI asks again until no key is new. Only the CLI
+does this: https://github.com/danbri/factoidal/issues/1261.
+
+Invariants for https://github.com/danbri/factoidal/issues/1120: no fetch is new, because
+Lean reads only what the host supplies under the broker's policy; the document limit is
+16; the size limit is that of image bytes; ids can not meet those of the page, by the
+prefix. Tests: `SVGForgivingTests.lean`.
+
 ## Result
 
-W3C SVG Tiny 1.2, first frame, real WebGPU pixels against the W3C PNGs, our bands
-(`tests/browser-wpt/svg-tiny-pixels-20261107c.json`): 0 match, 118 close, 375 mismatch,
-2 refused, 1 not read (out of 496). Before this work
-(`tests/browser-wpt/svg-tiny-pixels-20261107b.json`): 0 match, 96 close, 397 mismatch,
-2 refused, 1 not read (out of 496). 22 files moved from mismatch to close, all of them
-with images; no file moved down. The 15 `text-area-*` files stay mismatch, for the
-reasons in the section on `textArea`.
-
-GPU readback agrees with the Lean CPU probes on the 30 W3C files of the `struct-image`,
-`jpeg-required`, `render-groups`, `paint-vfill`, `struct-progressive` and
-`coords-viewattr-05` groups (`Scene.checks`, 30 agree, 0 disagree, out of 30).
+The current result and the table of each remaining file:
+`docs/designissues/2026-11-07-svg-static-triage.md`.
 
 `images/earth.jpg`, which `interact-focus-212-t.svg` names, is not in the W3C archive.
 The forgiving pass removes that `image` alone and logs it.
@@ -162,3 +216,9 @@ The forgiving pass removes that `image` alone and logs it.
   refused)
 - https://github.com/danbri/factoidal/issues/1259 (UAX 14, soft hyphens and
   bidirectional text in `textArea`)
+- https://github.com/danbri/factoidal/issues/1261 (the browser path does not fetch
+  documents that `use` or `font-face-uri` name)
+- https://github.com/danbri/factoidal/issues/1262 (`font-weight` and `font-style` with a
+  font of one face)
+- https://github.com/danbri/factoidal/issues/1263 (no fallback font for other scripts)
+- https://github.com/danbri/factoidal/issues/1264 (`direction` is not read)

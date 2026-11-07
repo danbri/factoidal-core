@@ -181,7 +181,7 @@ private def langSuits (lang : String) (glyph : Glyph) : Bool :=
   glyph.lang.isEmpty || glyph.lang.any fun l =>
     lang.toLower == l.toLower || lang.toLower.startsWith (l.toLower ++ "-")
 
-/-- SVG Tiny 1.2 §11.6: the first glyph in document order that matches the characters
+/-- SVG Tiny 1.2: the first glyph in document order that matches the characters
     at `i`, so a ligature wins only when it stands before its parts. -/
 private def SVGFont.pick (font : SVGFont) (chars : Array Char) (i : Nat) (lang : String)
     (form : Option String) : Option Glyph :=
@@ -441,7 +441,7 @@ private def lowerText (font : SVGFont) (fallback : Option SVGFont) (state : Text
       first := false
       position := position+max 1 g.text.length
     index := start+text.size
-  -- An absolute position starts a text chunk (SVG Tiny 1.2 §10.5). Each chunk is laid
+  -- An absolute position starts a text chunk (SVG Tiny 1.2 §10.6.1). Each chunk is laid
   -- out in visual order (UAX 9), and moves by its anchor and width.
   let mut positions : Array Position := Array.replicate placed.size {}
   let mut x := (numberList attrs "dx").headD 0

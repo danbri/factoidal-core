@@ -197,7 +197,7 @@ private def named : List (String × (Nat × Nat × Nat)) := [
   ("springgreen",(0,255,127)),("steelblue",(70,130,180)),("tan",(210,180,140)),("thistle",(216,191,216)),
   ("tomato",(255,99,71)),("turquoise",(64,224,208)),("violet",(238,130,238)),("wheat",(245,222,179)),
   ("whitesmoke",(245,245,245)),("yellowgreen",(154,205,50))]
-/-- CSS 2 §18.2 system colours, which SVG Tiny 1.2 §11.13.1 admits. The values belong
+/-- CSS 2 §18.2 system colours, the system paint of SVG Tiny 1.2 §11.14.1. The values belong
     to the user agent. These are the classic desktop colours. -/
 private def systemColors : List (String × Nat × Nat × Nat) :=
   [("activeborder",(212,208,200)),("activecaption",(10,36,106)),("appworkspace",(128,128,128)),
@@ -534,15 +534,17 @@ private def readStyle (lengths : LengthContext) (paints : PaintContext) (attrs :
   let mut style := parent
   if let some value := attr attrs "color" then
     if !["inherit","currentcolor"].contains (trim value).toLower then style := {style with currentColor:= ← color value}
-  -- CSS Color: `currentColor` computes on the element that states it, so a child
-  -- with its own `color` inherits the colour of this element (paint-color-05-t).
-  let computed := fun (paint : Paint) => match paint with
-    | .current => Paint.solid style.currentColor
+  -- W3C paint-color-05-t: a plain `currentColor` computes on the element that states it,
+  -- so a child with its own `color` inherits the colour of this element. CSS Color 4
+  -- keeps the keyword instead; the upstream fallback tests need that for
+  -- `url(#missing) currentColor`, so a fallback stays a keyword.
+  let computed := fun (value : String) (paint : Paint) => match paint with
+    | .current => if (trim value).toLower == "currentcolor" then Paint.solid style.currentColor else paint
     | other => other
   if let some value := attr attrs "fill" then
-    if trim value != "inherit" then style := {style with fill:=computed (← readPaint lengths paints value)}
+    if trim value != "inherit" then style := {style with fill:=computed value (← readPaint lengths paints value)}
   if let some value := attr attrs "stroke" then
-    if trim value != "inherit" then style := {style with stroke:=computed (← readPaint lengths paints value)}
+    if trim value != "inherit" then style := {style with stroke:=computed value (← readPaint lengths paints value)}
   if let some value := attr attrs "stroke-dasharray" then
     if trim value != "inherit" then
       style := {style with dashArray:= ← dashArray lengths value}
