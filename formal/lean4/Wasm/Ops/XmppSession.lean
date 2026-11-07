@@ -76,6 +76,7 @@ import L4Factoidal.XMPP.StateCodec
 import L4Factoidal.HTTP.WebSocket
 import L4Factoidal.HTTP.Wire
 import L4Factoidal.Net.LoginLimit
+import L4Factoidal.Net.ProxyProtocol
 
 namespace L4Wasm.Ops
 
@@ -174,6 +175,11 @@ structure XmppServerConfig where
   /-- How many stanzas one account may have held in one window (on unless
   `disableRateLimits`), from `"heldLimits"`. -/
   senderLimits : L4Factoidal.Net.LoginLimit.Limits := { maxFailures := 60, window := 60 }
+  /-- From the host's random source, kept in memory only (a new one at each start), from
+  `"addressKey"`: the key of the client address tags (`LoginLimit.addressTag`). A session keeps the
+  tag, never the address. A host that gives none gets tags under the empty key, which hide no
+  address from anyone who tries them all; `xmpp-serve` always gives one. -/
+  addressKey : ByteArray := ByteArray.empty
   deriving Inhabited
 
 /-- The SCRAM iteration count of a server that names none. RFC 7677 section 4 says at least 4096;
@@ -241,6 +247,7 @@ def xmppServerConfigOfJson (text : String) : Except String XmppServerConfig :=
               mucOwners := mucOwners.bind id,
               mucReserved := (mucReserved.bind id).getD [],
               persist := (j.getBool? "persist").getD false,
+              addressKey := ((j.getString? "addressKey").getD "").toUTF8,
               limits := if disabled then { enabled := false } else {} }
 
 -- A member list reaches the config; a malformed one stops the start.
@@ -312,7 +319,9 @@ structure XmppOpenSession where
   than an unbounded loop. -/
   maxUnits : Nat
   closed : Bool
-  /-- The client's address as the socket gives it (`remoteAddress`). -/
+  /-- The client's address tag: `LoginLimit.addressTag` of the address the host gives
+  (`remoteAddress`: the socket's, or the one of a PROXY protocol header), under the server's
+  `addressKey`. `""`: no address. The address itself is not kept. -/
   address : String := ""
 
 /-- The full JID this session holds: its bound one, while its stream is open. A session whose stream
@@ -343,6 +352,13 @@ session's address. -/
 def XmppOpenServer.guardFor (srv : XmppOpenServer) (os : XmppOpenSession) : Server.AuthGuard :=
   { limits := srv.cfg.limits, failures := srv.failures, backoff := srv.backoff
     now := srv.now, address := os.address }
+
+/-- The tag of the `remoteAddress` a host gives at a session open (`LoginLimit.addressTag`). -/
+def XmppOpenServer.addressTagOf (srv : XmppOpenServer) (j : Json) : String :=
+  L4Factoidal.Net.LoginLimit.addressTag srv.cfg.addressKey ((j.getString? "remoteAddress").getD "")
+
+/-- The first 12 hexadecimal digits of a tag: what a host may write in a log line. -/
+def shortTag (tag : String) : String := (tag.take 12).toString
 
 def unknownXmppServer (h : String) : String :=
   errJson s!"unknown XMPP server handle: {h}"
@@ -731,11 +747,12 @@ def xmppSessionOpen (server optionsJson : String) : IO String := do
           -- The host's clock (seconds) moves the server's clock forward.
           if let some now := natField? j "now" then
             xmppServers.modify (·.insert server { srv with now := max srv.now now })
+          let tag := srv.addressTagOf j
           xmppSessions.modify (·.insert h
             { server, session := Session.init cfg, buffer := "", units := 0
               maxUnits := (natField? j "maxUnits").getD 1000000, closed := false
-              address := (j.getString? "remoteAddress").getD "" })
-          pure (okWith [("handle", .string h)])
+              address := tag })
+          pure (okWith [("handle", .string h), ("addressTag", .string (shortTag tag))])
 
 /-- `xmppSessionFeed(sessionHandle, text)`: the bytes a socket read, as
 UTF-8 text. An incomplete unit stays in the buffer until the rest
@@ -998,12 +1015,13 @@ def xmppWsOpen (server optionsJson : String) : IO String := do
               protocol := "xmpp" }
           let n ← xmppWsCounter.modifyGet fun n => (n + 1, n + 1)
           let h := s!"xmppws{n}"
+          let tag := srv.addressTagOf j
           xmppWsSessions.modify (·.insert h
             { inner := { server, session := Session.init cfg, buffer := "", units := 0
                          maxUnits := (natField? j "maxUnits").getD 1000000, closed := false
-                         address := (j.getString? "remoteAddress").getD "" }
+                         address := tag }
               policy, path, phase := .handshake ByteArray.empty })
-          pure (okWith [("handle", .string h)])
+          pure (okWith [("handle", .string h), ("addressTag", .string (shortTag tag))])
       | _, _, _ => pure (errJson "xmppWsOpen: \"streamId\", \"nonce\" and \"path\" are required")
 
 /-- `xmppWsFeed(handle)` with the bytes the socket read as the IN region;
@@ -1064,6 +1082,31 @@ def xmppWsCloseWith (h : String) : IO (String × ByteArray) := do
     | _ => pure (okWith [("routeFull", left)], ByteArray.empty)
 
 def xmppWsBlobIoOpNames : List String := ["xmppWsFeed", "xmppWsDeliver", "xmppWsPing", "xmppWsClose"]
+
+/-! ## The PROXY protocol header (`L4Factoidal.Net.ProxyProtocol`)
+
+`proxyHeaderParse()` with the bytes a new connection has sent so far as the IN region. The host of
+`xmpp-serve --proxy-protocol` calls it on every read until it answers other than `more`, before TLS
+and before any XMPP session exists: `{"decision":"more"}` (wait), `{"decision":"refuse","reason"}`
+(close the connection), `{"decision":"local","consumed"}` (drop `consumed` bytes; the address is
+the socket's) or `{"decision":"proxy","consumed","address","port"}` (drop `consumed` bytes; give
+`address` as `remoteAddress`). The bytes after `consumed` belong to the connection. -/
+def proxyHeaderEnvelope : L4Factoidal.Net.ProxyProtocol.Result → String
+  | .more => okWith [("decision", .string "more")]
+  | .refuse r => okWith [("decision", .string "refuse"), ("reason", .string r.name)]
+  | .local_ n => okWith [("decision", .string "local"), ("consumed", .number (toString n))]
+  | .proxy n a p => okWith [("decision", .string "proxy"), ("consumed", .number (toString n)),
+                             ("address", .string a), ("port", .number (toString p))]
+
+def proxyHeaderParseWith (bytes : ByteArray) : IO (String × ByteArray) :=
+  pure (proxyHeaderEnvelope (L4Factoidal.Net.ProxyProtocol.parseBytes bytes), ByteArray.empty)
+
+#guard proxyHeaderEnvelope .more == "{\"ok\":true,\"decision\":\"more\"}"
+#guard proxyHeaderEnvelope (L4Factoidal.Net.ProxyProtocol.parseBytes
+    (ByteArray.mk (L4Factoidal.Net.ProxyProtocol.mk 0x21 0x11 L4Factoidal.Net.ProxyProtocol.v4Block).toArray)) ==
+  "{\"ok\":true,\"decision\":\"proxy\",\"consumed\":28,\"address\":\"203.0.113.7\",\"port\":50000}"
+
+def proxyBlobIoOpNames : List String := ["proxyHeaderParse"]
 
 /-! ## A message carrier: RFC 7395 without the socket
 

@@ -775,7 +775,7 @@ usage: factoidal xmpp-serve DIR [--domain NAME] [--port N] [--host ADDRESS]
                             [--muc DOMAIN [--muc-members FILE] [--muc-owners FILE]] [--mix DOMAIN] [--gc3 DOMAIN]
                             [--state-key FILE] [--max-connections N]
                             [--login-timeout SECONDS] [--ping-interval SECONDS]
-                            [--ping-timeout SECONDS] [--no-address-limit]
+                            [--ping-timeout SECONDS] [--proxy-protocol] [--no-address-limit]
                             [--dangerously-disable-ratelimits]
 
 Starts a Node TCP server that runs one engine session per connection and
@@ -855,10 +855,21 @@ DIR/spool/<bare jid>/ is delivered to that account's bound session.
                    membership, stable participant ids, optional events. There is
                    no published GC3 spec; every wire format is invented and listed
                    in L4Factoidal/XMPP/Gc3.lean and danbri/factoidal issue 1236
+  --proxy-protocol every connection, on every listener (--port, --tls-port,
+                   --ws-port), must start with a PROXY protocol version 2 header
+                   (HAProxy's spec), read before TLS. The client address in it is
+                   the one the failed-login limit counts. A connection with no
+                   valid header in 10 seconds is closed; a version 1 (text)
+                   header is refused. A LOCAL header (a health check of the
+                   proxy) is accepted with the socket's address. Use it only
+                   behind a proxy that always sends the header, such as Fly with
+                   handlers = ["proxy_proto"] and proxy_proto_options =
+                   { version = "v2" }; without it no header is ever read, so a
+                   client cannot claim an address
   --no-address-limit
                    count failed logins per account name only. For a listener
-                   behind a proxy, where every client has the proxy's address
-                   and a limit on it would stop them all
+                   behind a proxy that sends no PROXY header, where every client
+                   has the proxy's address and a limit on it would stop them all
   --dangerously-disable-ratelimits
                    no failed SASL login limit and no sender rate on held
                    messages (a warning is printed at start); any client can
@@ -872,6 +883,9 @@ the SASL failure temporary-auth-failure, and no password is checked, also
 the right one, until that window ends. A client address also has a slower
 limit of 20 failed logins in an hour. A malformed SASL payload checks no
 password and does not count. A stream closes after 3 failed attempts.
+The server keeps no client address: the counters hold an HMAC-SHA-256
+tag of it (of its /64 for IPv6) under a random key that is in memory
+only and new at each start, and logs show the first 12 digits of the tag.
 
 The server makes no protocol decision. Stream negotiation, SASL PLAIN and
 SCRAM-SHA-256, resource binding, the roster, presence subscription and
@@ -2997,6 +3011,7 @@ async function commandXmppServe (positional, options) {
     settings.disableRateLimits = options['dangerously-disable-ratelimits'] === true
   }
   if (options['no-address-limit'] === true) settings.addressLimit = false
+  if (options['proxy-protocol'] === true) settings.proxyProtocol = true
   if (useTls) {
     settings.cert = await fs.readFile(options.cert)
     settings.key = await fs.readFile(options.key)
@@ -3116,6 +3131,8 @@ async function commandXmppServe (positional, options) {
     err(`xmpp-serve: listening on ${running.origin} for domain ${running.xmpp.domain}` +
         ` (${running.xmpp.accounts} accounts, state ${positional[0]}` +
         (startTls ? ', STARTTLS required)' : useTls ? ', direct TLS)' : ', PLAINTEXT: no TLS on this listener)'))
+    if (settings.proxyProtocol) err('xmpp-serve: every connection must start with a PROXY protocol v2 header')
+    else if (settings.addressLimit === false) err('xmpp-serve: failed logins count per account name only (--no-address-limit)')
     if (settings.mucDomain) err(`xmpp-serve: multi-user chat (XEP-0045) at ${settings.mucDomain}`)
     if (settings.mixDomain) err(`xmpp-serve: MIX channels (XEP-0369, joined by XEP-0405) at ${settings.mixDomain}`)
     if (settings.gc3Domain) err(`xmpp-serve: GC3 PROTOTYPE groups at ${settings.gc3Domain} (no published spec; invented wire format)`)

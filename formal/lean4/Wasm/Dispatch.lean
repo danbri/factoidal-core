@@ -197,7 +197,7 @@ def blobIoOpNames : List String :=
   [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit",
     "datasetQuadsBin", "sbm11Query", "sbm11PackFiles",
     "storeManifestInspectBytes", "storeQueryPlanBytes", "storeOpenBytes" ] ++
-  Ops.lwsBlobIoOpNames ++ Ops.webdavBlobIoOpNames ++ Ops.xmppWsBlobIoOpNames
+  Ops.lwsBlobIoOpNames ++ Ops.webdavBlobIoOpNames ++ Ops.xmppWsBlobIoOpNames ++ Ops.proxyBlobIoOpNames
 
 /-- Largest out region `blobEcho` builds: 67,108,864 bytes. A count above
 this is refused by name rather than made into an allocation the module
@@ -998,6 +998,13 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .error e => pure (errJson e, ByteArray.empty)
       | .ok [a]  => Ops.xmppWsFeedWith a blob
       | .ok args => pure (errJson s!"xmppWsFeed expects 1 argument, got {args.length}", ByteArray.empty)
+  -- The PROXY protocol v2 header of a new connection (`Wasm/Ops/XmppSession.lean`): IN is what
+  -- the connection has sent so far; no OUT.
+  | "proxyHeaderParse" =>
+      match decodeArgs argsJson with
+      | .error e => pure (errJson e, ByteArray.empty)
+      | .ok []   => Ops.proxyHeaderParseWith blob
+      | .ok args => pure (errJson s!"proxyHeaderParse expects 0 arguments, got {args.length}", ByteArray.empty)
   | "xmppWsDeliver" =>
       match decodeArgs argsJson with
       | .error e   => pure (errJson e, ByteArray.empty)

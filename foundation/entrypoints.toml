@@ -257,6 +257,10 @@ id = "wasm:xmppVerifier"
 reason = "one accounts-file line holding SCRAM keys in place of a password (Wasm/Ops/XmppSession.lean over Server.verifierText and Scram.credentialsOfPassword); reads no RDF data"
 
 [[nonstage]]
+id = "wasm:proxyHeaderParse"
+reason = "decides on the PROXY protocol v2 header of a new xmpp-serve connection before TLS (Wasm/Ops/XmppSession.lean over Net/ProxyProtocol.lean parse, theorems parse_signature, parse_more_bounded, parse_proxy_le); reads no RDF data"
+
+[[nonstage]]
 id = "wasm:xmppSessionTlsUp"
 reason = "the host reports a finished STARTTLS handshake to an XMPP session (Wasm/Ops/XmppSession.lean over Server.Session.tlsEstablished, theorem tlsEstablished_spec); reads no RDF data"
 
