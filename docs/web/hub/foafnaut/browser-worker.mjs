@@ -25,6 +25,27 @@ const refusal=(url,message)=>{
   const text=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;');
   return {url,title:'Page refused',source:`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`};
 };
+// Lean sends the storage floats as the bytes the GPU reads. This only decodes them.
+function frameFloats(frame){
+  if(typeof frame.dataBase64!=='string')return frame;
+  const text=atob(frame.dataBase64),bytes=new Uint8Array(text.length);
+  for(let i=0;i<text.length;i++)bytes[i]=text.charCodeAt(i);
+  frame.data=new Float32Array(bytes.buffer);delete frame.dataBase64;
+  return frame;
+}
+// Noto Sans is the default face. Lean reads and shapes it; if it does not load, the
+// page stays in the bitmap face.
+async function loadFont(){
+  try{
+    const response=await fetch(new URL('./fonts/noto-sans/NotoSans-Regular.ttf',import.meta.url));
+    if(!response.ok)throw Error(`HTTP ${response.status}`);
+    const bytes=new Uint8Array(await response.arrayBuffer());
+    const sha=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
+    let text='';
+    for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+    call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:'Noto Sans',fontSha256:sha});
+  }catch(error){console.warn('foafnaut: bitmap font, because Noto Sans did not load:',String(error));}
+}
 async function fetchText(url){
   const response=await fetch(url);if(!response.ok)throw Error(`HTTP ${response.status}`);
   return {url:response.url||url,source:await response.text()};
@@ -143,7 +164,7 @@ async function draw(){
     const start=performance.now();
     try{
       // A page already on screen had Lean's full probe set on its first frame.
-      const next=call(doc.source,{op:'render',url:doc.url,textScalePercent:percent,shell:shell(),live:doc===checked},width,height);
+      const next=frameFloats(call(doc.source,{op:'render',url:doc.url,textScalePercent:percent,shell:shell(),live:doc===checked,binary:true},width,height));
       checked=doc;
       const laid=performance.now();
       if(session&&(typeof session.update!=='function'||!(await session.update(next)))){session.close();session=undefined;}
@@ -166,6 +187,7 @@ async function start(data){
   const [{default:createModule},{createOffscreenSession}]=await Promise.all([
     import('../html-webgpu/runtime/web-render.mjs'),import('../html-webgpu/runtime/gpu-transport.mjs')]);
   module=await createModule();createSession=createOffscreenSession;
+  await loadFont();
   home=await prepare(homeURL);
   history=push({entries:[],index:0},homeURL);doc=home;address=home.url;tabs.push({doc,history,scroll:0});
   if(data.page&&/^[a-z0-9-]+\.(html|xml)$/.test(data.page))navigate(pagesBase+data.page);else request();
