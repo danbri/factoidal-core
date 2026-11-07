@@ -6,21 +6,26 @@
 import {loadHTML,type HTMLArtifact} from "./native_html_engine.ts";
 import {loadFontFile} from "./native_html_document.ts";
 
-export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string}}
+export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string};nativeEngine?:string}
   |{id:number;op:"compile";source:string;width:number;height:number;options:Record<string,unknown>};
 export type WorkerReply={id:number;ok:true;artifact?:HTMLArtifact;ms:number}|{id:number;ok:false;error:string};
 
-const ready=loadHTML();
+// The engine starts at the init message: it may be the Wasm module or a native dylib.
+// All Lean calls stay on this one thread.
+let ready:ReturnType<typeof loadHTML>|undefined;
 const scope=globalThis as unknown as {onmessage:(event:MessageEvent<WorkerRequest>)=>void;postMessage(message:unknown,transfer?:Transferable[]):void};
 scope.onmessage=async event=>{
   const request=event.data;
   try{
-    const engine=await ready,start=performance.now();
+    const start=performance.now();
     if(request.op==="init"){
+      ready=loadHTML(request.nativeEngine);const engine=await ready;
       if(request.font)await loadFontFile(engine,request.font.path,request.font.family);
       scope.postMessage({id:request.id,ok:true,ms:performance.now()-start} satisfies WorkerReply);
       return;
     }
+    if(!ready)throw new Error("compile worker was not initialised");
+    const engine=await ready;
     const artifact=engine.compile(request.source,request.width,request.height,request.options);
     const transfer:Transferable[]=artifact.data instanceof Float32Array?[artifact.data.buffer as ArrayBuffer]:[];
     scope.postMessage({id:request.id,ok:true,artifact,ms:performance.now()-start} satisfies WorkerReply,transfer);

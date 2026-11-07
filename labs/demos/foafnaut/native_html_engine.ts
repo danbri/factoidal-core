@@ -28,8 +28,34 @@ export function sourceBound(source:string) {
   if(source.includes("\0") || encoder.encode(source).length>MAX_SOURCE_BYTES)
     throw new Error("HTML/CSS input contains NUL or exceeds 1 MiB");
 }
-export async function loadHTML() {
+/** One call into Lean's document engine: HTML text, a JSON request, a viewport; a JSON answer. */
+export type DocumentBackend=(html:string,requestJSON:string,width:number,height:number)=>string;
+/** Backend 2: a native dylib of the same Lean objects. Every call must come from one thread; no nonblocking FFI. */
+export function nativeBackend(path:string):DocumentBackend {
+  const library=Deno.dlopen(path,{
+    web_document_call:{parameters:["buffer","buffer","u32","u32"],result:"pointer"},
+    web_render_free:{parameters:["pointer"],result:"void"},
+  } as const);
+  const cstring=(text:string)=>{if(text.includes("\0"))throw new Error("Native engine input contains NUL");return encoder.encode(text+"\0");};
+  return (html,request,width,height)=>{
+    const pointer=library.symbols.web_document_call(cstring(html),cstring(request),width,height);
+    if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
+    try{return new Deno.UnsafePointerView(pointer).getCString();}
+    finally{library.symbols.web_render_free(pointer);}
+  };
+}
+/** Backend 1: the Wasm module. */
+function wasmBackend(module:Module):DocumentBackend {
+  return (html,request,width,height)=>{
+    const pointer=module.ccall("web_document_call","number",["string","string","number","number"],[html,request,width,height]);
+    if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
+    try{return module.UTF8ToString(pointer);}
+    finally{module.ccall("web_render_free",null,["number"],[pointer]);}
+  };
+}
+export async function loadHTML(nativeEngine?:string) {
   const module = await createModule() as unknown as Module;
+  const backend=nativeEngine?nativeBackend(nativeEngine):wasmBackend(module);
   function call(name:string,types:string[],args:unknown[]) {
     const pointer=module.ccall(name,"number",types,args);
     if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
@@ -45,7 +71,9 @@ export async function loadHTML() {
       throw new Error("Native HTML viewport must be 1..4096 backing pixels");
     const request=JSON.stringify(options);
     if(encoder.encode(request).length>20971520)throw new Error("Document request exceeds 20 MiB");
-    return call("web_document_call",["string","string","number","number"],[source,request,width,height]);
+    const result=JSON.parse(backend(source,request,width,height));
+    if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
+    return result;
   };
   return {
     xmlStylesheet:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"xmlStylesheet"}) as {url:string|null},

@@ -9,7 +9,7 @@ export type CompileClient={
   readonly alive:boolean;
   terminate():void;
 };
-export async function startCompileWorker(font?:{path:string;family:string}):Promise<CompileClient> {
+export async function startCompileWorker(font?:{path:string;family:string},nativeEngine?:string):Promise<CompileClient> {
   const worker=new Worker(new URL("./native_html_worker.ts",import.meta.url),{type:"module"});
   const pending=new Map<number,{resolve:(reply:WorkerReply)=>void;reject:(error:Error)=>void}>();
   let next=0,alive=true;
@@ -22,7 +22,7 @@ export async function startCompileWorker(font?:{path:string;family:string}):Prom
     if(!alive){reject(new Error("compile worker is not running"));return;}
     const id=++next;pending.set(id,{resolve,reject});worker.postMessage({...request,id});
   });
-  const init=await send({op:"init",font});
+  const init=await send({op:"init",font,nativeEngine});
   if(!init.ok)throw new Error(init.error);
   return {
     get alive(){return alive;},

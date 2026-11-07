@@ -12,9 +12,9 @@ import type {UIEvent} from "./ui_engine.ts";
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--graph-sweep] [--check-pixels] [--perf-summary]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--graph-sweep] [--check-pixels] [--perf-summary] [--native-engine DYLIB]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
   }
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,perfSummary=false;
+  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,perfSummary=false,nativeEngine:string|undefined;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -24,6 +24,7 @@ async function main() {
     else if(arg==="--trace-input")traceInput=true;
     else if(arg==="--check-pixels")checkAll=true;
     else if(arg==="--perf-summary")perfSummary=true;
+    else if(arg==="--native-engine"){nativeEngine=args.shift();if(!nativeEngine)throw new Error("--native-engine needs a dylib path");}
     else if(arg==="--font")fontFile=args.shift();
     else if(arg==="--bitmap-font")bitmapFont=true;
     else if(arg==="--resize-sweep")sweep=[[800,500],[700,500],[600,500],[500,500],[400,500],[800,300],[800,500]];
@@ -54,6 +55,13 @@ async function main() {
     console.log(`Native HTML CPU plan: ${plan.abi}; ${plan.uniform.bindingType}; ${plan.uniform.bytes} bytes`);
     console.log("Native HTML CPU engine check complete; GPU/window not requested");return;
   }
+  // Start the compile worker now, so its font load and cold first compile run while the GPU and window start.
+  const compilerStart=startCompileWorker(workerFont,nativeEngine).then(client=>{
+    const warm=document.request(width,height,{textScalePercent:125});
+    client.compile(warm.source,width,height,warm.options).then(()=>{workerWarm=true;},()=>{});
+    return client;
+  });
+  compilerStart.catch(()=>{});
   const adapter=await navigator.gpu?.requestAdapter();
   if(!adapter){console.error("GPU BLOCKED: native HTML adapter unavailable in this launch context");Deno.exitCode=2;return;}
   console.log("Native HTML GPU adapter:",adapter.info);
@@ -221,16 +229,18 @@ async function main() {
   };
   let lastActivity=performance.now(),queueMax=0,fatal:unknown,rendering:Promise<void>|undefined;
   let awaiting:{kind:number;at:number}[]=[],checkedFrames=0,workerFrames=0,mainFrames=0;
-  const latencies:number[]=[],totals:number[]=[];
+  const latencies:number[]=[],totals:number[]=[],pumpGaps:number[]=[];let lastPump:number|undefined;
   const percentile=(values:number[],q:number)=>{if(!values.length)return null;const sorted=[...values].sort((a,b)=>a-b);return Math.round(sorted[Math.min(sorted.length-1,Math.ceil(q*sorted.length)-1)]*10)/10;};
-  let compiler:CompileClient|undefined;
+  let compiler:CompileClient|undefined,workerWarm=false;
   // Exit summary: input to present latency, and frame totals. Always traced; --perf-summary also prints it.
   const summary=()=>{
     const line={type:"native-html-perf-summary",inputLatency:{count:latencies.length,p50Ms:percentile(latencies,0.5),p95Ms:percentile(latencies,0.95),maxMs:latencies.length?Math.max(...latencies):null},
-      frames:{presented:totals.length,checked:checkedFrames,compiledInWorker:workerFrames,compiledOnMain:mainFrames,totalMsP50:percentile(totals,0.5),totalMsP95:percentile(totals,0.95)},
+      compileBackend:nativeEngine?"native":"wasm",frames:{presented:totals.length,checked:checkedFrames,compiledInWorker:workerFrames,compiledOnMain:mainFrames,totalMsP50:percentile(totals,0.5),totalMsP95:percentile(totals,0.95)},
+      // Time between two native event pumps: the longest time the window takes no input.
+      pumpGapMs:{p50:percentile(pumpGaps,0.5),p95:percentile(pumpGaps,0.95),max:pumpGaps.length?Math.round(Math.max(...pumpGaps)*10)/10:null},
       queueMax,sessionStats:session?.stats};
     trace(line.type,line);
-    if(perfSummary)console.log(`input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}`);
+    if(perfSummary)console.log(`input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\npump gap: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
   };
   try {
     device=await adapter.requestDevice();native=await nativePreflight(()=>loadNativeWindow());
@@ -252,7 +262,7 @@ async function main() {
     session=await createHTMLWindowSession(device,surface,native);
     // Lean's compile runs in a worker so this loop keeps pumping. If the worker
     // can not start or dies, compile runs here instead, and the trace says so.
-    try{compiler=await startCompileWorker(workerFont);}
+    try{compiler=await compilerStart;}
     catch(error){console.error("Native HTML: compile worker unavailable, compiling on the main thread:",String(error));trace("native-html-worker",{state:"unavailable",reason:String(error)});}
     // Readback, pixel checks and the frame hash are test work. They run on every frame
     // in sweeps and with --check-pixels; interactively, once after input has been idle.
@@ -278,7 +288,8 @@ async function main() {
       dirty=false;
       let next:HTMLArtifact,where="worker",workerMs:number|undefined;
       try{
-        if(compiler?.alive){({artifact:next,workerMs}=await compiler.compile(request.source,sentWidth,sentHeight,request.options));}
+        // Until the worker's cold first compile ends, the warm main-thread engine compiles.
+        if(compiler?.alive&&workerWarm){({artifact:next,workerMs}=await compiler.compile(request.source,sentWidth,sentHeight,request.options));}
         else{where="main";next=engine.compile(request.source,sentWidth,sentHeight,request.options);}
       }catch(error){
         if(compiler&&!compiler.alive){
@@ -372,7 +383,7 @@ async function main() {
         }
     };
     while(running){
-      const pumpStart=performance.now();native.pump();const pumpEnd=performance.now();
+      const pumpStart=performance.now();if(lastPump!==undefined){pumpGaps.push(pumpStart-lastPump);if(pumpStart-lastPump>50)trace("native-html-pump-gap",{ms:ms(lastPump,pumpStart),frames:frameNumber,rendering:!!rendering});}lastPump=pumpStart;native.pump();const pumpEnd=performance.now();
       if(pumpEnd-pumpStart>30)trace("native-html-pump-stall",{ms:ms(pumpStart,pumpEnd)});
       // Take every native event now and keep each with the time it was taken. None is dropped here.
       const arrived=performance.now(),batch:{event:UIEvent;at:number}[]=[];let taken;
