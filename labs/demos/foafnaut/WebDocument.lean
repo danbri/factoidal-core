@@ -178,7 +178,7 @@ private def scalePercent (request : JSON.Json) : Except String Nat := do
       | some value => pure value
       | none => throw "textScalePercent must be an integer"
     | _ => throw "textScalePercent must be an integer"
-  if percent < 50 || percent > 250 then throw "textScalePercent must be 50 to 250"
+  if percent < WebSelection.minPercent then throw s!"textScalePercent must be at least {WebSelection.minPercent}"
   return percent
 
 private def history (request : JSON.Json) : Except String WebHistory.History := do

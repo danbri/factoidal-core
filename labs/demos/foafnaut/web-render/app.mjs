@@ -97,11 +97,10 @@ let textScalePercent=100;
 function showTextScale(){
  $('#text-scale').textContent=textScalePercent+'%';
  $('#text-smaller').disabled=textScalePercent<=50;
- $('#text-larger').disabled=textScalePercent>=250;
 }
 function changeTextScale(value){textScalePercent=value;showTextScale();return render().catch(()=>{});}
 $('#text-smaller').addEventListener('click',()=>changeTextScale(Math.max(50,textScalePercent-25)));
-$('#text-larger').addEventListener('click',()=>changeTextScale(Math.min(250,textScalePercent+25)));
+$('#text-larger').addEventListener('click',()=>changeTextScale(textScalePercent+25));
 $('#text-reset').addEventListener('click',()=>changeTextScale(100));
 window.webBrowser={navigation,render:()=>render().catch(()=>{}),get currentURL(){return documentURL;},get textScalePercent(){return textScalePercent;}};
 $('#navigation').addEventListener('submit',event=>{event.preventDefault();navigation.go($('#address').value,{base:documentURL});});

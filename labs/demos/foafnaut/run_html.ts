@@ -122,7 +122,7 @@ async function main() {
   };
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.
-  const view:PageView={textScalePercent:125};
+  const view:PageView={textScalePercent:150};
   let press:number[]|undefined,lastCopied:string|undefined,loading=false;
   // Session history is a Lean value. The host keeps it and loads the URLs Lean returns.
   let history=engine.historyPush({entries:[],index:0},document.url);
@@ -215,7 +215,7 @@ async function main() {
     else if(name==="graph")openGraph().catch(error=>refuse("foafnaut:graph",error));
     else if(name==="source")viewSource().catch(error=>refuse(document.url,error));
     else if(name==="theme"){theme=argument||(theme==="next"?"arcade":"next");dirty=true;}
-    else if(name==="zoom"&&/^[0-9]+$/.test(argument)){view.textScalePercent=Math.max(50,Math.min(250,Number(argument)));dirty=true;}
+    else if(name==="zoom"&&/^[0-9]+$/.test(argument)){view.textScalePercent=Math.max(50,Number(argument));dirty=true;}
     else navigate(settingsURL);
   };
   const go=(answer:ReturnType<typeof engine.shellSubmit>)=>{

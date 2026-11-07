@@ -13,7 +13,7 @@ let module,createSession,session,createSurface,hashPixels,surface,surfaceCanvas,
 // order it arrived; only moves and scrolls are merged.
 let ready=false,currentStamp,pendingStamp,pendingMove,pendingScroll,flushPort;
 const early=[];
-let width=800,height=600,scale=1,theme='next',percent=125,pages=1;
+let width=800,height=600,scale=1,theme='next',percent=150,pages=1;
 let address='',cursor=0,focused=false,fresh=false,loading=false,scroll=0,active=0;
 let doc,history,frame,home,checked,dirty=false,drawing=false,serial=0,ticking=false;
 const tabs=[];
@@ -141,7 +141,7 @@ function shellCommand(name,argument){
   else if(name==='home')navigate(homeURL);else if(name==='source')viewSource();
   else if(name==='graph')openGraph().catch(error=>{doc=refusal('foafnaut:graph',String(error.message??error));request();});
   else if(name==='theme'){theme=argument||(theme==='next'?'arcade':'next');request();}
-  else if(name==='zoom'&&/^[0-9]+$/.test(argument)){percent=Math.max(50,Math.min(250,Number(argument)));request();}
+  else if(name==='zoom'&&/^[0-9]+$/.test(argument)){percent=Math.max(50,Number(argument));request();}
   else navigate(settingsURL);
 }
 function go(answer){

@@ -40,8 +40,16 @@ test('native and WASM text zoom reflow the same Lean scene at unchanged viewport
  assert.ok(large.webRender.boxes.some(box=>box[3]===48&&box[4]===28));
 });
 
+test('native and WASM accept text scales above 250 with no maximum',()=>{
+ for(const percent of [251,2000]){
+  const result=wasm(html,{textScalePercent:percent});
+  assert.equal(result.error,undefined);
+  assert.deepEqual(native(html,{textScalePercent:percent}),result);
+ }
+});
+
 test('native and WASM reject invalid text scales for layout and font requests',()=>{
- for(const op of ['render','fontRequests'])for(const percent of [49,251,150.5,'150']){
+ for(const op of ['render','fontRequests'])for(const percent of [49,150.5,'150']){
   const options={op,textScalePercent:percent},result=wasm(html,options);
   assert.match(result.error,/textScalePercent/);
   assert.deepEqual(native(html,options),result);

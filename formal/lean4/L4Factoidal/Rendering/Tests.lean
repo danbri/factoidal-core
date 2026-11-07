@@ -47,7 +47,10 @@ private def computedAt (html css id : String) (textScale : Float := 1) : Except 
 #guard ((computedAt "<div style='font-size:10px;line-height:18px'><span id='x'>A</span></div>"
   "" "x" 1.5).toOption.map fun s => (s.fontSize,s.lineHeight)) == some (15,27)
 #guard ((run "<div>A</div>" css 0.49).toOption.isNone)
-#guard ((run "<div>A</div>" css 2.51).toOption.isNone)
+-- No largest text scale: 2.51 and 20 lay out.
+#guard ((run "<div>A</div>" css 2.51).toOption.isSome)
+#guard ((run "<div>A B C</div>" css 20).toOption.isSome)
+#guard ((run "<div>A</div>" css (1/0)).toOption.isNone)
 
 private def paddingAt (source : String) := (computedAt "<div id='x'></div>" source "x").toOption.map
   (fun s => (s.padding.top,s.padding.right,s.padding.bottom,s.padding.left))

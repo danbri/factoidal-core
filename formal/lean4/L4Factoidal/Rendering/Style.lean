@@ -434,7 +434,7 @@ def Computed.scaleText (s : Computed) (scale : Float) : Computed :=
 
 /-- Visit parents before children, using a work list and bounded arena size. -/
 def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1) : Except String (Array Computed) := do
-  if !textScale.isFinite || textScale < 0.5 || textScale > 2.5 then throw "text scale must be 50% to 250%"
+  if !textScale.isFinite || textScale < 0.5 then throw "text scale must be finite and at least 50%"
   let mut pending := [0]
   let mut styles := Array.replicate dom.size ({} : Computed)
   for _ in [:dom.size+1] do

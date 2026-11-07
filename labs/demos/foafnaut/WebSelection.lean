@@ -106,13 +106,17 @@ def clickSlop : Float := 4
 def isClick (ax ay fx fy : Float) : Bool :=
   (ax-fx).abs < clickSlop && (ay-fy).abs < clickSlop
 
-def zoomSteps : List Nat := [50,67,75,90,100,110,125,150,175,200,250]
+/-- The smallest text scale. There is no largest: layout cost depends on the
+content, and the window shows only the glyphs near it. -/
+def minPercent : Nat := 50
 
+/-- A zoom step multiplies by about 1.1, rounded to a multiple of 5, and always moves. -/
 def zoomIn (percent : Nat) : Nat :=
-  (zoomSteps.find? (· > percent)).getD percent
+  max (percent+1) ((percent*11+25)/50*5)
 
 def zoomOut (percent : Nat) : Nat :=
-  (zoomSteps.reverse.find? (· < percent)).getD percent
+  if percent <= minPercent then percent
+  else max minPercent (min (percent-1) ((percent*20+55)/110*5))
 
 /-- Window commands by the number that the native menu sends. -/
 def commandName : Nat → String
@@ -132,8 +136,8 @@ def commandName : Nat → String
   | 14 => "paste"
   | _ => "none"
 
-/-- Text size of a new window: two steps above 100 on a desktop screen. -/
-def defaultPercent : Nat := 125
+/-- Text size of a new window on a desktop screen. -/
+def defaultPercent : Nat := 150
 
 def commandPercent (command percent : Nat) : Nat :=
   match command with
@@ -142,10 +146,14 @@ def commandPercent (command percent : Nat) : Nat :=
   | 3 => defaultPercent
   | _ => percent
 
-#guard zoomIn 100 == 110 && zoomIn 250 == 250 && zoomIn 105 == 110
-#guard zoomOut 100 == 90 && zoomOut 50 == 50 && zoomOut 105 == 100
-#guard commandPercent 3 175 == 125 && commandPercent 4 175 == 175
-#guard zoomSteps.all (fun p => 50 <= p && p <= 250)
+#guard zoomIn 100 == 110 && zoomIn 105 == 115 && zoomIn 150 == 165 && zoomIn 250 == 275
+#guard zoomIn 2000 == 2200 && zoomIn 1 == 2
+#guard zoomOut 100 == 90 && zoomOut 50 == 50 && zoomOut 105 == 95 && zoomOut 165 == 150
+#guard zoomOut 51 == 50 && zoomOut 10 == 10 && zoomOut 2200 == 2000
+#guard commandPercent 3 175 == 150 && commandPercent 4 175 == 175
+-- Zoom in then out comes back on the steps from 100 up.
+#guard (List.range 40).all fun i => let p := 100+5*i; zoomOut (zoomIn p) == p || p % 10 != 0
+#guard (List.range 2000).all fun p => zoomIn p > p && (p <= minPercent || (zoomOut p < p && zoomOut p >= minPercent))
 #guard isClick 10 10 12 8 && !isClick 10 10 14 10
 
 private def sampleRun (source : Nat) (text : String) (x y : Float) (start : Nat := 0) : GlyphRun :=
