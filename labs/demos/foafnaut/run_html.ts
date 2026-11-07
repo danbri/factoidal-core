@@ -12,9 +12,9 @@ import type {UIEvent} from "./ui_engine.ts";
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--graph-sweep] [--check-pixels] [--perf-summary] [--native-engine DYLIB | --wasm-engine]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--graph-sweep] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
   }
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false;
+  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -24,6 +24,8 @@ async function main() {
     else if(arg==="--trace-input")traceInput=true;
     else if(arg==="--check-pixels")checkAll=true;
     else if(arg==="--perf-summary")perfSummary=true;
+    // Sweeps read back every frame. This flag gives them the interactive rule (check when idle), to measure input latency without the check cost.
+    else if(arg==="--idle-checks-only")idleChecksOnly=true;
     else if(arg==="--wasm-engine")wasmEngine=true;
     else if(arg==="--native-engine"){nativeEngine=args.shift();if(!nativeEngine)throw new Error("--native-engine needs a dylib path");}
     else if(arg==="--font")fontFile=args.shift();
@@ -47,16 +49,49 @@ async function main() {
       sha256:[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("")}))
     :Promise.resolve({backend:"wasm",path:null,sha256:null});
   url??=new URL("./pages/index.html",import.meta.url).href;
-  const engine=await loadHTML();
+  // The main-thread engine answers only small calls that input needs at once (shellHit, hit,
+  // pointerUp, command, history, shell text). Each is timed; one over 2 ms is traced.
+  const slowCalls:Record<string,{count:number;maxMs:number}>={};
+  const timed=<T extends Record<string,unknown>>(raw:T):T=>Object.fromEntries(Object.entries(raw).map(([name,fn])=>
+    [name,typeof fn!=="function"?fn:(...args:unknown[])=>{
+      const start=performance.now(),result=(fn as (...a:unknown[])=>unknown)(...args),took=performance.now()-start;
+      if(took>2){const entry=slowCalls[name]??={count:0,maxMs:0};entry.count++;entry.maxMs=Math.max(entry.maxMs,Math.round(took*10)/10);
+        console.log(JSON.stringify({type:"native-html-slow-call",t:Math.round(performance.now()),call:name,ms:Math.round(took*10)/10}));}
+      return result;
+    }])) as T;
+  const engine=timed(await loadHTML());
   // Noto Sans is the default face; the bitmap face is the safe mode, and the fallback.
   const defaultFont=new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url);
   let workerFont:{path:string;family:string}|undefined;
-  if(!bitmapFont){
-    try{const path=fontFile??decodeURIComponent(defaultFont.pathname),family=fontFile?"font":"Noto Sans";await loadFontFile(engine,path,family);workerFont={path,family};}
-    catch(error){if(fontFile)throw error;console.error("Native HTML: bitmap font, because Noto Sans did not load:",String(error));}
+  if(!bitmapFont)workerFont={path:fontFile??decodeURIComponent(defaultFont.pathname),family:fontFile?"font":"Noto Sans"};
+  // Every engine call that can take more than about 2 ms runs in one worker, in order. `lean` is that
+  // engine (promises), or the main-thread engine when the worker can not start (said once, loudly) or in --check-engine.
+  let worker:CompileClient|undefined,mainFont=false;
+  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage">;
+  let lean:Lean=engine;
+  const useMainEngine=async(reason:string)=>{
+    console.error("Native HTML: ENGINE WORKER UNAVAILABLE, so Lean runs on the main thread and the window can miss input:",reason);
+    console.log(JSON.stringify({type:"native-html-worker",state:"main-thread-fallback",reason}));
+    worker=undefined;lean=engine;
+    if(workerFont&&!mainFont){mainFont=true;try{await loadFontFile(engine,workerFont.path,workerFont.family);}catch(error){if(fontFile)throw error;workerFont=undefined;}}
+  };
+  if(check){
+    if(workerFont)try{await loadFontFile(engine,workerFont.path,workerFont.family);}catch(error){if(fontFile)throw error;console.error("Native HTML: bitmap font, because Noto Sans did not load:",String(error));}
+  } else {
+    try{worker=await startCompileWorker(workerFont,nativeEngine);}
+    catch(error){
+      if(workerFont&&!fontFile){
+        console.error("Native HTML: bitmap font, because Noto Sans did not load or the worker failed:",String(error));
+        workerFont=undefined;
+        try{worker=await startCompileWorker(undefined,nativeEngine);}catch(error2){await useMainEngine(String(error2));}
+      } else if(fontFile)throw error;
+      else await useMainEngine(String(error));
+    }
+    if(worker)lean=worker.engine as unknown as Lean;
   }
-  let document=await prepareHTML(engine,url),width=1280,height=800;
-  let frame:HTMLArtifact=document.compile(width,height);
+  let document=await prepareHTML(lean,url),width=1280,height=800;
+  // The first compile runs in the worker too: it warms the worker, and no frame is compiled on the main thread.
+  let frame:HTMLArtifact=await document.compile(width,height);
   console.log(JSON.stringify({type:"native-html-loaded",url:document.url,primitives:frame.primitiveCount,links:frame.webRender.links.length,width,height}));
   if(check){
     // Synthetic limits exercise only the published planner ABI. Window rendering
@@ -67,13 +102,6 @@ async function main() {
     console.log(`Native HTML CPU plan: ${plan.abi}; ${plan.uniform.bindingType}; ${plan.uniform.bytes} bytes`);
     console.log("Native HTML CPU engine check complete; GPU/window not requested");return;
   }
-  // Start the compile worker now, so its font load and cold first compile run while the GPU and window start.
-  const compilerStart=startCompileWorker(workerFont,nativeEngine).then(client=>{
-    const warm=document.request(width,height,{textScalePercent:125});
-    client.compile(warm.source,width,height,warm.options).then(()=>{workerWarm=true;},()=>{});
-    return client;
-  });
-  compilerStart.catch(()=>{});
   const adapter=await navigator.gpu?.requestAdapter();
   if(!adapter){console.error("GPU BLOCKED: native HTML adapter unavailable in this launch context");Deno.exitCode=2;return;}
   console.log("Native HTML GPU adapter:",adapter.info);
@@ -89,7 +117,7 @@ async function main() {
   const refuse=(target:string,error:unknown)=>{
     console.error("Native HTML refused:",target,String(error));
     trace("native-html-refused",{url:target,reason:String(error)});
-    prepareHTML(engine,target,undefined,refusalHTML(target,String(error))).then(next=>{if(running){candidate=next;dirty=true;}})
+    prepareHTML(lean,target,undefined,refusalHTML(target,String(error))).then(next=>{if(running){candidate=next;dirty=true;}})
       .catch(failure=>console.error("Native HTML refusal page failed:",String(failure)));
   };
   // View state is held here and applied by Lean. Pointer positions are in the
@@ -120,32 +148,51 @@ async function main() {
   // One tab for each source: an XML page opens its XML, its XSLT and the result.
   const viewSource=async()=>{
     for(const item of document.sources){
-      const page=await prepareHTML(engine,item.url+"#source",undefined,engine.sourcePage(item.kind,item.url,item.source));
+      const page=await prepareHTML(lean,item.url+"#source",undefined,await lean.sourcePage(item.kind,item.url,item.source));
       keepTab();tabs.push({document:page,history:engine.historyPush({entries:[],index:0},page.url),scroll:0});showTab(tabs.length-1);
     }
   };
   // The FOAF graph is a page whose model and frames come from Lean's graph app.
   type Page=typeof document&{graph?:{model:string;clock:boolean;last:number}};
-  const graphFrame=(page:Page,frame:{model:string;commands:string[]})=>{
+  const graphFrame=async(page:Page,frame:{model:string;commands:string[]})=>{
     page.graph!.model=frame.model;
     if(frame.commands.includes("startClock")){page.graph!.clock=true;page.graph!.last=performance.now();}
     if(frame.commands.includes("stopClock"))page.graph!.clock=false;
-    if(frame.commands.includes("render")){page.source=engine.graphPage(frame.model);dirty=true;}
+    if(frame.commands.includes("render")){page.source=await lean.graphPage(frame.model);dirty=true;}
+  };
+  // Graph input runs in the worker, in the order it arrived. Each call takes the model the call before it
+  // returned. A queued move, resize or clock tick that has not started is replaced by a later one of the same
+  // kind (the clock keeps the sum of its elapsed time); presses, releases and keys are never merged or dropped.
+  const graphQueue:{kind:number;a:number;b:number;page:Page}[]=[];
+  let graphRunning=false;
+  const graphBusy=()=>graphRunning||graphQueue.length>0;
+  const runGraph=async()=>{
+    graphRunning=true;
+    try{
+      while(graphQueue.length){
+        const op=graphQueue.shift()!,page=op.page;
+        if(!page.graph)continue;
+        try{await graphFrame(page,await lean.graphEvent(page.graph.model,op.kind,op.a,op.b,width,shell()));}
+        catch(error){refuse(page.url,error);}
+      }
+    }finally{graphRunning=false;}
   };
   const graphInput=(kind:number,a:number,b:number)=>{
-    const page=document as Page;
-    try{graphFrame(page,engine.graphEvent(page.graph!.model,kind,a,b,width,shell()));}
-    catch(error){refuse(page.url,error);}
+    const page=document as Page,last=graphQueue[graphQueue.length-1];
+    if(last&&last.page===page&&last.kind===kind&&(kind===1||kind===3||kind===7)){
+      if(kind===7)last.a+=a;else{last.a=a;last.b=b;}
+    } else graphQueue.push({kind,a,b,page});
+    if(!graphRunning)runGraph();
   };
   const openGraph=async()=>{
     const rdf=await Deno.readTextFile(new URL("./pages/foaf-demo.ttl",import.meta.url));
-    const frame=engine.graphStart(rdf,width,height,shell());
-    const page={url:"foafnaut:graph",baseURL:"foafnaut:graph",title:"FOAF graph",source:engine.graphPage(frame.model),sources:[] as typeof document.sources,
+    const frame=await lean.graphStart(rdf,width,height,shell());
+    const page={url:"foafnaut:graph",baseURL:"foafnaut:graph",title:"FOAF graph",source:await lean.graphPage(frame.model),sources:[] as typeof document.sources,
       graph:{model:frame.model,clock:false,last:0},
       request(_w:number,_h:number,view:PageView={}){return {source:page.source,options:{url:page.url,resources:[],...view} as Record<string,unknown>};},
-      compile(w:number,h:number,view:PageView={}){return engine.compile(page.source,w,h,{url:page.url,resources:[],...view});},
+      compile(w:number,h:number,view:PageView={}){return lean.compile(page.source,w,h,{url:page.url,resources:[],...view});},
       selectedText:()=>""} as unknown as Page;
-    graphFrame(page,frame);
+    await graphFrame(page,frame);
     keepTab();tabs.push({document:page,history:engine.historyPush({entries:[],index:0},page.url),scroll:0});showTab(tabs.length-1);
   };
   const focusAddress=()=>{focused=true;fresh=true;address=document.url;cursor=address.length;dirty=true;};
@@ -220,15 +267,17 @@ async function main() {
     if(answer.action==="viewSource")viewSource().catch(error=>refuse(document.url,error));
     if(answer.action==="selectAll"){view.selection="all";dirty=true;}
     if(answer.action==="copy"&&view.selection){
-      const text=document.selectedText(width,height,shown());
-      if(text){native!.writeClipboard(text);lastCopied=text;trace("native-html-copy",{characters:text.length});}
+      // The selected text is made in the worker; the clipboard is written when it arrives.
+      Promise.resolve(document.selectedText(width,height,shown())).then(text=>{
+        if(text){native!.writeClipboard(text);lastCopied=text;trace("native-html-copy",{characters:text.length});}
+      }).catch(error=>console.error("Native HTML copy failed:",String(error)));
     }
   };
   // A new page goes into history when its load ends, and a refused page does too.
   const navigate=(target:string,push=true)=>{
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    prepareHTML(engine,target,current.signal).then(next=>{
+    prepareHTML(lean,target,current.signal).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
@@ -241,9 +290,8 @@ async function main() {
   };
   let lastActivity=performance.now(),queueMax=0,fatal:unknown,rendering:Promise<void>|undefined;
   let awaiting:{kind:number;at:number}[]=[],checkedFrames=0,workerFrames=0,mainFrames=0;
-  const latencies:number[]=[],totals:number[]=[],pumpGaps:number[]=[];let lastPump:number|undefined;
+  const latencies:number[]=[],totals:number[]=[],pumpGaps:number[]=[],pumpGapsLate:number[]=[];let lastPump:number|undefined,firstFrameAt:number|undefined;
   const percentile=(values:number[],q:number)=>{if(!values.length)return null;const sorted=[...values].sort((a,b)=>a-b);return Math.round(sorted[Math.min(sorted.length-1,Math.ceil(q*sorted.length)-1)]*10)/10;};
-  let compiler:CompileClient|undefined,workerWarm=false;
   // Latency starts when the window library queued the event, or at dequeue with an older library.
   const latencyFrom=()=>native?.eventClock()===null?"dequeued":"queued";
   // Exit summary: input to present latency, and frame totals. Always traced; --perf-summary also prints it.
@@ -251,10 +299,13 @@ async function main() {
     const line={type:"native-html-perf-summary",inputEventsDropped:native?.eventsDropped()??0,inputLatency:{from:latencyFrom(),count:latencies.length,p50Ms:percentile(latencies,0.5),p95Ms:percentile(latencies,0.95),maxMs:latencies.length?Math.max(...latencies):null},
       compileBackend:nativeEngine?"native":"wasm",frames:{presented:totals.length,checked:checkedFrames,compiledInWorker:workerFrames,compiledOnMain:mainFrames,totalMsP50:percentile(totals,0.5),totalMsP95:percentile(totals,0.95)},
       // Time between two native event pumps: the longest time the window takes no input.
+      // After the first frame is presented: the figure the 50 ms target is judged on.
+      pumpGapAfterFirstFrameMs:{count:pumpGapsLate.length,p50:percentile(pumpGapsLate,0.5),p95:percentile(pumpGapsLate,0.95),max:pumpGapsLate.length?Math.round(Math.max(...pumpGapsLate)*10)/10:null},
+      slowCalls,
       pumpGapMs:{p50:percentile(pumpGaps,0.5),p95:percentile(pumpGaps,0.95),max:pumpGaps.length?Math.round(Math.max(...pumpGaps)*10)/10:null},
       queueMax,sessionStats:session?.stats};
     trace(line.type,line);
-    if(perfSummary)console.log(`input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\npump gap: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
+    if(perfSummary)console.log(`input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
   };
   try {
     device=await adapter.requestDevice();native=await nativePreflight(()=>loadNativeWindow());
@@ -276,11 +327,9 @@ async function main() {
     session=await createHTMLWindowSession(device,surface,native);
     // Lean's compile runs in a worker so this loop keeps pumping. If the worker
     // can not start or dies, compile runs here instead, and the trace says so.
-    try{compiler=await compilerStart;}
-    catch(error){console.error("Native HTML: compile worker unavailable, compiling on the main thread:",String(error));trace("native-html-worker",{state:"unavailable",reason:String(error)});}
     // Readback, pixel checks and the frame hash are test work. They run on every frame
     // in sweeps and with --check-pixels; interactively, once after input has been idle.
-    const everyFrame=checkAll||!!sweep||!!commands;
+    const everyFrame=checkAll||(!idleChecksOnly&&(!!sweep||!!commands));
     const IDLE_CHECK_MS=500,QUEUE_WARN=1024;
     const STAMPED=new Set([2,4,5,11]);
     const KIND_NAMES:Record<number,string>={2:"pointer-down",4:"pointer-up",5:"key",11:"scroll"};
@@ -301,13 +350,12 @@ async function main() {
       dirty=false;
       let next:HTMLArtifact,where="worker",workerMs:number|undefined;
       try{
-        // Until the worker's cold first compile ends, the warm main-thread engine compiles.
-        if(compiler?.alive&&workerWarm){({artifact:next,workerMs}=await compiler.compile(request.source,sentWidth,sentHeight,request.options));}
+        if(worker?.alive){({artifact:next,workerMs}=await worker.compile(request.source,sentWidth,sentHeight,request.options));}
         else{where="main";next=engine.compile(request.source,sentWidth,sentHeight,request.options);}
       }catch(error){
-        if(compiler&&!compiler.alive){
-          // The worker died. Compile here once and do not use it again.
-          trace("native-html-worker",{state:"died",reason:String(error)});compiler=undefined;
+        if(worker&&!worker.alive){
+          // The worker died: Lean runs on the main thread from now on, and the trace says so.
+          await useMainEngine("worker died: "+String(error));
           awaiting=[...stamps,...awaiting];dirty=true;return;
         }
         awaiting=[...stamps,...awaiting];candidate=undefined;dirty=false;refuse(nextDocument.url,error);return;
@@ -325,7 +373,7 @@ async function main() {
         checked:result.checked,steps:result.steps,pixelHash:result.checked?result.pixelHash:null,pipelineBuilds:stats.pipelineBuilds,configures:stats.configures,...engineFact});
       resizeAt=undefined;
       if(!result.presented){awaiting=[...stamps,...awaiting];dirty=true;return;}
-      totals.push(finished-frameStart);if(where==="worker")workerFrames++;else mainFrames++;
+      firstFrameAt??=finished;totals.push(finished-frameStart);if(where==="worker")workerFrames++;else mainFrames++;
       if(result.checked)checkedFrames++;
       lastActivity=Math.max(lastActivity,finished);
       settle(stamps,result.presentedAt);
@@ -397,7 +445,7 @@ async function main() {
         }
     };
     while(running){
-      const pumpStart=performance.now();if(lastPump!==undefined){pumpGaps.push(pumpStart-lastPump);if(pumpStart-lastPump>50)trace("native-html-pump-gap",{ms:ms(lastPump,pumpStart),frames:frameNumber,rendering:!!rendering});}lastPump=pumpStart;native.pump();const pumpEnd=performance.now();
+      const pumpStart=performance.now();if(lastPump!==undefined){pumpGaps.push(pumpStart-lastPump);if(firstFrameAt!==undefined&&lastPump>=firstFrameAt)pumpGapsLate.push(pumpStart-lastPump);if(pumpStart-lastPump>50)trace("native-html-pump-gap",{ms:ms(lastPump,pumpStart),frames:frameNumber,rendering:!!rendering});}lastPump=pumpStart;native.pump();const pumpEnd=performance.now();
       if(pumpEnd-pumpStart>30)trace("native-html-pump-stall",{ms:ms(pumpStart,pumpEnd)});
       // Take every native event now and keep each with the time it was taken. None is dropped here.
       // The window library stamps each event when it is queued; its clock maps onto
@@ -410,11 +458,11 @@ async function main() {
         if(!running)break;
         handle(event);
         // An event with a visible effect waits until a frame that includes it is presented.
-        if(STAMPED.has(event.kind)&&(dirty||loading)){if(awaiting.length<256)awaiting.push({kind:event.kind,at});else trace("native-html-latency-overflow",{kind:event.kind});}
+        if(STAMPED.has(event.kind)&&(dirty||loading||graphBusy())){if(awaiting.length<256)awaiting.push({kind:event.kind,at});else trace("native-html-latency-overflow",{kind:event.kind});}
       }
       if(!running)break;
       const clock=(document as Page).graph;
-      if(clock?.clock&&!dirty&&!rendering&&performance.now()-clock.last>=33){
+      if(clock?.clock&&!dirty&&!rendering&&!graphBusy()&&performance.now()-clock.last>=33){
         const now=performance.now();graphInput(7,Math.min(1000,Math.floor(now-clock.last)),0);clock.last=now;
       }
       // A covered, hidden or minimized window can not present. Say so, once.
@@ -435,12 +483,12 @@ async function main() {
         rendering=idleCheck().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
       }
       // A repeatable measurement: step the window through fixed sizes, then exit.
-      if(sweep&&!dirty&&!rendering&&session?.frames){
+      if(sweep&&!dirty&&!rendering&&!graphBusy()&&session?.frames){
         const size=sweep.shift();
         if(size)native.setContentSize(size[0],size[1]);else running=false;
       }
       // Each step runs on a settled page: a key through real menu matching, or an input event.
-      if(commands&&!dirty&&!rendering&&!loading&&session?.frames){
+      if(commands&&!dirty&&!rendering&&!graphBusy()&&!loading&&session?.frames){
         const step=commands.shift();
         if(step==="graph"){shellCommand("graph","");loading=true;setTimeout(()=>{loading=false;},600);}
         else if(typeof step==="string"&&step.startsWith("link")){
@@ -460,7 +508,7 @@ async function main() {
     running=false;controller?.abort();
     // A frame in progress ends before its session is disposed.
     try{await rendering;}catch(error){console.error("Native HTML frame ended with an error:",String(error));}
-    compiler?.terminate();
+    worker?.terminate();
     try{summary();}catch(error){console.error("Native HTML summary failed:",String(error));}
     if(!cleanupUI({session,device,native}))Deno.exitCode=1;
   }

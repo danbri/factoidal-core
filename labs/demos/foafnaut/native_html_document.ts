@@ -54,20 +54,28 @@ export function refusalHTML(url:string,message:string) {
   const text=(s:string)=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`;
 }
-export async function prepareHTML(engine:HTMLEngine,url:string,signal?:AbortSignal,inline?:string) {
+/** The engine, or the same calls in a worker, which answer promises. prepareHTML awaits every call. */
+export type PageEngine=Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText">|{
+  xmlStylesheet(...a:Parameters<HTMLEngine["xmlStylesheet"]>):Promise<ReturnType<HTMLEngine["xmlStylesheet"]>>;
+  xslt(...a:Parameters<HTMLEngine["xslt"]>):Promise<ReturnType<HTMLEngine["xslt"]>>;
+  inspect(...a:Parameters<HTMLEngine["inspect"]>):Promise<ReturnType<HTMLEngine["inspect"]>>;
+  compile(...a:Parameters<HTMLEngine["compile"]>):Promise<ReturnType<HTMLEngine["compile"]>>;
+  selectedText(...a:Parameters<HTMLEngine["selectedText"]>):Promise<ReturnType<HTMLEngine["selectedText"]>>;
+};
+export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string) {
   const document=inline===undefined?await readSource(url,signal):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
   // View source shows each input and the result. Lean makes the page.
   const sources=[{kind:"Source",url:document.url,source:document.source}];
   // Lean finds the stylesheet and runs it. The host only fetches the bytes.
-  const xml=engine.xmlStylesheet(document.source,{url:document.url});
+  const xml=await engine.xmlStylesheet(document.source,{url:document.url});
   if(xml.url) {
     navigationURL(xml.url,document.url,document.url);
     const sheet=await readSource(xml.url,signal);
-    document.source=engine.xslt(document.source,{url:document.url,stylesheet:sheet.source,stylesheetURL:sheet.url}).source;
+    document.source=(await engine.xslt(document.source,{url:document.url,stylesheet:sheet.source,stylesheetURL:sheet.url})).source;
     sources[0].kind="XML source";
     sources.push({kind:"XSLT source",url:sheet.url,source:sheet.source},{kind:"Generated page",url:document.url,source:document.source});
   }
-  const inspection=engine.inspect(document.source,{url:document.url});
+  const inspection=await engine.inspect(document.source,{url:document.url});
   if(inspection.scripts.some(script=>script.kind!=="data"))
     throw new Error("Native HTML milestone does not execute scripts; classic/module script input is refused");
   if(inspection.stylesheets.length>MAX_RESOURCES)throw new Error("Native HTML exceeds 16 external stylesheets");
