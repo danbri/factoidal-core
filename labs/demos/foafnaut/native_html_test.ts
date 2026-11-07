@@ -158,6 +158,17 @@ Deno.test("a live frame paints the same data as a full frame, with one probe",()
   assert.deepEqual(live.checks[0],full.checks.find(p=>p.x===200&&p.y===150));
 });
 
+Deno.test("the bytes Lean sends are the floats of the text form, exactly",async()=>{
+  for(const name of ["index.html","settings.html"]){
+    const source=await Deno.readTextFile(new URL("./pages/"+name,import.meta.url));
+    const options={url:"file:///"+name,resources:[]};
+    const bytes=engine.compile(source,800,600,options),text=engine.compile(source,800,600,{...options,binary:false});
+    assert.ok(bytes.data instanceof Float32Array&&Array.isArray(text.data));
+    assert.equal(bytes.data.length,text.data.length);
+    assert.deepEqual([...bytes.data],[...new Float32Array(text.data)]);
+  }
+});
+
 Deno.test("the first website renders from its mirror, with its links",async()=>{
   const root=new URL("../../../third_party/testing/old-web/info.cern.ch/",import.meta.url);
   const pages:string[]=[];

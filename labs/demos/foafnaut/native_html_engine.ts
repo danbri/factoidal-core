@@ -4,7 +4,7 @@
 import createModule from "./.build/native-html/runtime/web-render.mjs";
 
 export type HTMLArtifact = {
-  abi:string; width:number; height:number; data:number[]; wgsl:string; tiles:number[];
+  abi:string; width:number; height:number; data:number[]|Float32Array; wgsl:string; tiles:number[];
   primitiveCount:number; checks:{x:number;y:number;rgb:number[]}[];
   webRender:{links:unknown[][];[name:string]:unknown};
 };
@@ -55,9 +55,15 @@ export async function loadHTML() {
     fontLoad:(fontBase64:string,fontFamily:string,fontSha256:string)=>documentCall("",{op:"fontLoad",fontBase64,fontFamily,fontSha256}) as {family:string;glyphs:number},
     fontRequests:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"fontRequests"}),
     compile(source:string,width:number,height:number,options:Record<string,unknown>):HTMLArtifact {
-      const result=documentCall(source,{...options,op:"render"},width,height);
+      // Lean sends the storage floats as the bytes the GPU reads; this only decodes them.
+      const result=documentCall(source,{binary:true,...options,op:"render"},width,height);
+      if(typeof result.dataBase64==="string"){
+        const text=atob(result.dataBase64),bytes=new Uint8Array(text.length);
+        for(let i=0;i<text.length;i++)bytes[i]=text.charCodeAt(i);
+        result.data=new Float32Array(bytes.buffer);delete result.dataBase64;
+      }
       if(result.abi!=="lean-svg-v1" || result.width!==width || result.height!==height ||
-         !Array.isArray(result.data) || !result.data.length || !result.data.every(Number.isFinite) ||
+         !(Array.isArray(result.data)||result.data instanceof Float32Array) || !result.data.length || !result.data.every(Number.isFinite) ||
          typeof result.wgsl!=="string" || !Array.isArray(result.checks) || !Array.isArray(result.webRender?.links))
         throw new Error("Unexpected published Lean HTML scene ABI");
       return result;

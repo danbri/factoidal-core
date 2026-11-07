@@ -2274,6 +2274,42 @@ mutual
   termination_by nodes => sizeOf nodes
 end
 
+private def base64Table : ByteArray :=
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toUTF8
+
+/-- Storage floats as the GPU reads them: IEEE 754 binary32, little-endian, in Base64.
+Decimal text for these floats was 57% of a frame of the status page. The host stores
+them as binary32 either way, so the text form carried nothing more. -/
+def float32Base64 (data : Array Float) : String := Id.run do
+  let mut bytes := ByteArray.emptyWithCapacity (data.size*4)
+  for value in data do
+    let bits := value.toFloat32.toBits
+    bytes := bytes.push bits.toUInt8 |>.push (bits >>> 8).toUInt8
+      |>.push (bits >>> 16).toUInt8 |>.push (bits >>> 24).toUInt8
+  let whole := bytes.size/3*3
+  let mut text := ByteArray.emptyWithCapacity ((bytes.size+2)/3*4)
+  for index in [0:whole:3] do
+    let a := bytes[index]!
+    let b := bytes[index+1]!
+    let c := bytes[index+2]!
+    text := text.push base64Table[(a >>> 2).toNat]!
+      |>.push base64Table[(((a &&& 3) <<< 4) ||| (b >>> 4)).toNat]!
+      |>.push base64Table[(((b &&& 15) <<< 2) ||| (c >>> 6)).toNat]!
+      |>.push base64Table[(c &&& 63).toNat]!
+  if whole+1 == bytes.size then
+    let a := bytes[whole]!
+    text := text.push base64Table[(a >>> 2).toNat]!
+      |>.push base64Table[((a &&& 3) <<< 4).toNat]! |>.push 61 |>.push 61
+  else if whole+2 == bytes.size then
+    let a := bytes[whole]!
+    let b := bytes[whole+1]!
+    text := text.push base64Table[(a >>> 2).toNat]!
+      |>.push base64Table[(((a &&& 3) <<< 4) ||| (b >>> 4)).toNat]!
+      |>.push base64Table[((b &&& 15) <<< 2).toNat]! |>.push 61
+  return String.fromUTF8! text
+
+#guard float32Base64 #[1.5,-2.0,0.1] == "AADAPwAAAMDNzMw9"
+
 /-- Lean's expected colors for the GPU readback check. A frame of a page that is
 already on screen (`live`) has one probe; each probe costs a pass over the scene. -/
 private def Scene.checks (s : Scene) (data : Array Float) (live : Bool := false) : List String :=
@@ -2283,7 +2319,7 @@ private def Scene.checks (s : Scene) (data : Array Float) (live : Bool := false)
   let probes := (rawProbes.map fun (x,y) => (min (s.width-1) x,min (s.height-1) y)).eraseDups
   (probes.zip (s.samplesWithData data probes)).map fun ((x,y),color) => "{\"x\":" ++ toString x ++ ",\"y\":" ++ toString y ++ ",\"rgb\":" ++ color.json ++ "}"
 
-private def Scene.json (s : Scene) (live : Bool := false) : Except String String := do
+private def Scene.json (s : Scene) (live binary : Bool := false) : Except String String := do
   let data := s.data
   if data.size > maxDataFloats then throw "storage data exceeds 1048576 floats"
   let checks := s.checks data live
@@ -2292,10 +2328,11 @@ private def Scene.json (s : Scene) (live : Bool := false) : Except String String
   return "{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
     ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.compiled.length ++
     ",\"tree\":" ++ tree ++
-    ",\"data\":" ++ jsonArray (floatJSONList data.toList) ++ ",\"tiles\":" ++ jsonArray (s.tiles.toList.map toString) ++ ",\"wgsl\":" ++ sceneShaderJSON ++ ",\"checks\":" ++ jsonArray checks ++ "}"
+    (if binary then ",\"dataBase64\":\"" ++ float32Base64 data ++ "\""
+     else ",\"data\":" ++ jsonArray (floatJSONList data.toList)) ++ ",\"tiles\":" ++ jsonArray (s.tiles.toList.map toString) ++ ",\"wgsl\":" ++ sceneShaderJSON ++ ",\"checks\":" ++ jsonArray checks ++ "}"
 /-- Serialize an existing checked SVG scene through the same packed-data/WGSL
     producer as the string ABI; no XML serialization or reparsing is required. -/
-def Scene.artifact (s : Scene) (live : Bool := false) : Except String String := s.json live
+def Scene.artifact (s : Scene) (live binary : Bool := false) : Except String String := s.json live binary
 
 /-- Each part of the artifact as separate work, so that a tool can time it. A part
 returns a size, so that the work is done. -/

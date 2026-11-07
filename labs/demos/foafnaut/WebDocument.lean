@@ -302,7 +302,7 @@ def run (html : String) (request : JSON.Json) (width height : Nat) : Except Stri
   let page := {scene with tree := near ++ marks}
   WebRender.artifact (match shell with
     | some value => WebShell.compose value page width height
-    | none => page) boxes face (request.field? "live" == some (.bool true))
+    | none => page) boxes face (request.field? "live" == some (.bool true)) (request.field? "binary" == some (.bool true))
 
 @[export web_document_compile]
 def compile (html request : String) (width height : UInt32) : String :=

@@ -169,17 +169,21 @@ structure Shaped where
 
 abbrev Memo := Std.TreeMap String Shaped
 
-/-- Add `texts` to the memo. Outlines are in font units, so one record serves every size. -/
+/-- Add `texts` to the memo. Outlines are in font units, so one record serves every size.
+The space is always added: `wordsOf` splits on it, and layout asks for it at every gap,
+which was 42% of a frame of the status page. -/
 def remember (f : Font) (memo : Memo) (texts : Array String) (limit : Nat := 65536) : Memo := Id.run do
   let mut out := if memo.size > limit then {} else memo
-  for text in texts do
+  for text in #[" "] ++ texts do
     unless out.contains text do
       if let .ok word := f.word text 16 then out := out.insert text ⟨word,flatWord word⟩
   return out
 
 /-- The memo is only a shortcut: a word that is not in it is shaped when asked for. -/
 def profile (f : Font) (memo : Memo) : Except String Layout.FontProfile := do
-  let space ← f.word " " 16
+  let space ← match memo.get? " " with
+    | some shaped => pure shaped.curves
+    | none => f.word " " 16
   return {
     family := f.family,unitsPerEm := space.unitsPerEm,advance := 0,ascent := space.ascent,
     descent := space.descent,outline := fun _ => [],admits := fun _ => false,cssFamilies := [f.family],

@@ -90,7 +90,7 @@ for module in MathML/Rat Math/Matrix; do
   mkdir -p "$BUILD/olean/L4Factoidal/$(dirname "$module")"
   "$TOOLCHAIN/bin/lean" -R "$PROJECT" -o "$BUILD/olean/L4Factoidal/$module.olean" "$PROJECT/L4Factoidal/$module.lean"
 done
-"$TOOLCHAIN/bin/lean" -R "$PROJECT" --run "$PROJECT/L4Factoidal/Math/AffineTests.lean"
+"$TOOLCHAIN/bin/lean" -R "$PROJECT" --run "$PROJECT/Harness/AffineProbe.lean"
 "$TOOLCHAIN/bin/lean" -R "$LAB" -o "$BUILD/olean/FoafGraph.olean" \
   -c "$BUILD/ir/FoafGraph.c" "$LAB/FoafGraph.lean"
 for name in Graphics GraphicsPrepared Font Geometry UI Demos SVGPathData SVGCurves SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke SVG SceneSVG Solving SolvingPolicy SolvingSVG FoafNaut FoafPresentation FoafLiveBridge RenderPlan PolicyBridge; do

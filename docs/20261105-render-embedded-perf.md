@@ -120,3 +120,24 @@ under `/usr/bin/sample`) showed `HTML.adjustName` at 1,253 of 3,432 samples: it 
 the whole SVG name table for each name. The tables are now lowered once
 (`adjustLowered_eq` proves the same result). `compile` went from 190 ms to 133 ms in
 Wasm and from 83 ms to 50 ms native. Next in that sample: SVG parse, then float text.
+
+## Real font and float transfer (2026-11-07)
+
+Stack samples of `status.html` with Noto Sans gave two faults. First, `wordsOf` splits on
+spaces, so the space was never in the word memo, and layout ran the whole shaper for it at
+each gap: 42% of the frame. Second, decimal text for the storage floats was 57% of what
+remained. Hosts stored those floats as binary32 anyway, so `render` with `binary` now sends
+them as Base64 bytes (`float32Base64`). `native_html_test.ts` checks the bytes equal the
+text form exactly.
+
+Wasm, 1600 by 1200, repeat frames, with other builds running on the machine:
+
+| Page | Bitmap before | Bitmap after | Real font before | Real font after |
+| --- | --- | --- | --- | --- |
+| Demo index | 80 ms | 37 ms | 181 ms | 26 ms |
+| Settings | 89 ms | 43 ms | 243 ms | 31 ms |
+| Architecture | 294 ms | 146 ms | 868 ms | 117 ms |
+| Project status | 384 ms | 209 ms | 1,756 ms | 175 ms |
+
+The real font is now faster than the bitmap font, because it has about a third of the
+primitives. Graph frame `compile`: 133 ms to 106 ms.
