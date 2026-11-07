@@ -5,6 +5,8 @@ import {pathToFileURL} from "node:url";
 import {loadHTML} from "./native_html_engine.ts";
 import {inputURL,loadFontFile,navigationURL,prepareHTML,readSource} from "./native_html_document.ts";
 import {requestRenderPlan} from "./render_plan.ts";
+import {startCompileWorker} from "./native_html_compile.ts";
+import {READBACK_COMMANDS} from "./native_html_session.ts";
 
 let engine=await loadHTML();
 const html=(body:string,css="")=>`<!doctype html><style>body{margin:0;font-family:monospace;font-size:14px;line-height:20px}${css}</style>${body}`;
@@ -255,4 +257,25 @@ Deno.test("the interactive FOAF graph runs as a browser page through Lean",async
   assert.match(page,/<svg/);
   assert.ok(engine.compile(page,1000,680,{url:"foafnaut:graph",resources:[],shell}).primitiveCount>100);
   assert.deepEqual(engine.shellLink("foafnaut:graph"),{go:"command",name:"graph",argument:""});
+});
+
+Deno.test("compile in a worker answers what the main-thread engine answers, and every readback command is filtered by name",async()=>{
+  const document=await prepareHTML(engine,new URL("./native-html/default.html",import.meta.url).href);
+  const request=document.request(640,400,{textScalePercent:125});
+  const local=engine.compile(request.source,640,400,request.options);
+  const client=await startCompileWorker();
+  try{
+    const remote=await client.compile(request.source,640,400,request.options);
+    assert.equal(remote.artifact.wgsl,local.wgsl);
+    assert.deepEqual([...remote.artifact.data],[...local.data]);
+    assert.deepEqual(remote.artifact.checks,local.checks);
+    // A Lean error comes back as an error and does not stop the worker.
+    await assert.rejects(client.compile("",0,0,{}));
+    assert(client.alive);
+  }finally{client.terminate();}
+  const plan=await requestRenderPlan("svg-offscreen","rgba8unorm",local,facts);
+  // Commands left after the filter draw and submit; none of them reads the window back.
+  const kept=plan.commands.filter(command=>!READBACK_COMMANDS.has(command));
+  assert(kept.includes("draw")&&kept.includes("submit"));
+  assert(plan.commands.filter(command=>READBACK_COMMANDS.has(command)).length>=3);
 });
