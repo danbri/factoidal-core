@@ -120,6 +120,7 @@ band".
   a published package. It gets the layer path with the next release.
 - https://github.com/danbri/factoidal/issues/1269 (16-sample rule depends on the row count).
 - A drag selection is in window coordinates, so a scroll with one makes a Lean frame.
-- A graph click needs two worker calls (graph event, then graph page) before the frame
-  build. Passing the graph scene to the engine without SVG text removes the second.
+- A graph frame is built from the model with no SVG text (`graphModel`, 2026-11-07,
+  branch `wip/1268-packed`): one worker call for the event, then the frame build, with no
+  `graphPage` call. Checked by differential guards, not proved.
 - No press state is drawn before Lean answers.

@@ -250,3 +250,85 @@ the scene row count).
 
 Not measured yet: `run_html.ts --scroll-sweep` in a window (input latency from queue
 time to present), before with `--single-frame` and after without, Wasm and native.
+
+## Packed scene bytes and graph frames from the model (2026-11-07, night)
+
+Tracking: https://github.com/danbri/factoidal/issues/1268 (responsiveness and frame time).
+Branch `wip/1268-packed`.
+
+Changes, in order:
+
+1. Storage bytes with no list of floats. `Scene.float32Bytes` pushes the binary32 bytes
+   of each record onto one `ByteArray` (`Primitive.writeRows`). Proof:
+   `Primitive.writeRows_eq` (the bytes of the reference list `Primitive.rows`) and the
+   `csimp` theorem `Scene.float32Bytes_eq_fast`. Edge counts with no edge list: `csimp`
+   on `Geometry.recordTagCount`, `geometryTailRowCount` and
+   `BackendPrimitive.storageRows` (`edges_length`). `Scene.json` takes the size from
+   `Scene.dataSize` (`Scene.dataSize_eq`) and builds `s.data` only for the CPU probes and
+   the decimal text. The Base64 text is valid UTF-8 by construction
+   (`ascii_push_valid`), so no pass checks it; it is compared with the reference
+   `float32Base64Ref` by differential `#guard`s, not by a proof.
+2. Tile boxes with no list: `csimp` `Primitive.screenBox_eq_fast` (bounds by a fold
+   over the contours, four corners as values, the same Float operations in the same
+   order).
+3. Graph frames from the model. A render with `graphModel` lays out `WebGraph.skeleton`
+   (the graph page with an empty `svg` element, so the same layout, boxes and node
+   numbers) and takes the picture from `WebGraph.embedding`, which builds the scene
+   from the model (`WebGraph.directScene`). There is no SVG text, XML parse or path
+   parse. `graphPage` still gives the SVG text for export. Not proved: differential
+   `#guard`s in `WebDocumentTests.lean` compare the artifact of the direct scene with
+   the artifact of the parsed SVG text, and the frame through `graphModel` with the
+   frame of the page text, for three models; a changed stroke cap fails both.
+   `native_html_test.ts` compares the frames of three models with three requests.
+
+Output bytes: SHA-256 of the render of each of the 13 demo pages and the graph frame,
+5 requests each (binary with and without probes, decimal text, scroll 400, layers),
+equal before and after each step, native (library and CLI) and Wasm.
+
+Measurements, 1600 by 1200, Noto Sans, scale 150%, `checks:false`. Native: mean of 40
+(`web-render-native --document-repeat`, `--document-scroll`). Wasm: median of 9
+(`web_document_call` time only). Before is the branch `wip/1268-gpu-scroll`.
+
+| Page, frame | Native before | Native after | Wasm before | Wasm after |
+| --- | --- | --- | --- | --- |
+| Status, full | 70 ms | 44 ms | 80 ms | 48 ms |
+| Status, scroll | 54 ms | 29 ms | 82 ms | 49 ms |
+| Architecture, full | 45 ms | 29 ms | 53 ms | 34 ms |
+| Architecture, scroll | 31 ms | 17 ms | 53 ms | 33 ms |
+| Graph, full, page text | 25 ms | 21 ms | 48 ms | 44 ms |
+| Graph, full, `graphModel` | | 8 ms | | 22 ms |
+| Graph, scroll | 9.6 ms | 5.8 ms | 15 ms | 11 ms |
+
+Where the status frame goes now (stack samples, native): Base64 text 15%, storage bytes
+16%, inspector tree JSON 10%, tiles 8%, `Scene.make` 22% (curve flattening 14%, mostly
+allocation of a list and an array for each path segment), layout and the rest 29%.
+Next cuts: push flattened points onto the contour array in `NativeSVGCurves.flatten`;
+Base64 from the record writer in one pass; leave out the inspector tree on interactive
+frames (a request field).
+
+### Proposal, not landed: an edge rule independent of the scene row count
+
+https://github.com/danbri/factoidal/issues/1269 (refinement depends on the row count).
+Today a pixel takes 16 samples at an edge only when the whole scene has at most 65,536
+rows. The status page has 73,521 rows, so its frame never refines, and a band of it
+does. The limit was set before tiles, when each pixel visited every row. With tiles,
+a pixel visits only the records of its tile. Per-tile work (sum of record rows of the
+listed primitives), from the artifacts:
+
+| Scene | Scene rows | Largest tile | 99th percentile tile |
+| --- | --- | --- | --- |
+| Status page | 73,521 | 2,891 | 1,078 |
+| Architecture page | 48,396 | 2,630 | 383 |
+| Graph page | 13,110 | 545 | 427 |
+| W3C `metadata-example-01-t.svg` (forgiving mode) | 11,186 | 6,533 | 6,125 |
+
+Rule: refine a pixel at an edge when the rows of its tile are at most 65,536. That keeps
+the per-pixel bound of the old rule. `Scene.tiles` adds the rows of each list (one
+addition per entry) and sets the top bit of the tile start offset (offsets are below
+1,000,000, so the bit is free). The shader tests that bit in place of
+`arrayLength(&params.rows)`; the CPU sampler (`samplesWithData`) reads the same bit.
+Cost: no new words; Lean CPU about one pass over the tile entries; GPU: edge pixels of
+pages above 65,536 rows take 16 samples in place of 4. On the status page that is the
+cost the band already pays; the GPU time of a full frame is not measured yet (the
+screen was locked). A band and a frame still have different tile grids, so a tile near
+the bound can differ between them; anchoring page tiles to page rows removes that.
