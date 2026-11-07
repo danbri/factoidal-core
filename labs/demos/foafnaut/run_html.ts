@@ -244,9 +244,11 @@ async function main() {
   const latencies:number[]=[],totals:number[]=[],pumpGaps:number[]=[];let lastPump:number|undefined;
   const percentile=(values:number[],q:number)=>{if(!values.length)return null;const sorted=[...values].sort((a,b)=>a-b);return Math.round(sorted[Math.min(sorted.length-1,Math.ceil(q*sorted.length)-1)]*10)/10;};
   let compiler:CompileClient|undefined,workerWarm=false;
+  // Latency starts when the window library queued the event, or at dequeue with an older library.
+  const latencyFrom=()=>native?.eventClock()===null?"dequeued":"queued";
   // Exit summary: input to present latency, and frame totals. Always traced; --perf-summary also prints it.
   const summary=()=>{
-    const line={type:"native-html-perf-summary",inputLatency:{count:latencies.length,p50Ms:percentile(latencies,0.5),p95Ms:percentile(latencies,0.95),maxMs:latencies.length?Math.max(...latencies):null},
+    const line={type:"native-html-perf-summary",inputEventsDropped:native?.eventsDropped()??0,inputLatency:{from:latencyFrom(),count:latencies.length,p50Ms:percentile(latencies,0.5),p95Ms:percentile(latencies,0.95),maxMs:latencies.length?Math.max(...latencies):null},
       compileBackend:nativeEngine?"native":"wasm",frames:{presented:totals.length,checked:checkedFrames,compiledInWorker:workerFrames,compiledOnMain:mainFrames,totalMsP50:percentile(totals,0.5),totalMsP95:percentile(totals,0.95)},
       // Time between two native event pumps: the longest time the window takes no input.
       pumpGapMs:{p50:percentile(pumpGaps,0.5),p95:percentile(pumpGaps,0.95),max:pumpGaps.length?Math.round(Math.max(...pumpGaps)*10)/10:null},
@@ -282,12 +284,11 @@ async function main() {
     const IDLE_CHECK_MS=500,QUEUE_WARN=1024;
     const STAMPED=new Set([2,4,5,11]);
     const KIND_NAMES:Record<number,string>={2:"pointer-down",4:"pointer-up",5:"key",11:"scroll"};
-    // Events are stamped with the time the host took them from the native queue:
-    // the native event has no timestamp field in this ABI.
+    // Events carry the time the window library queued them (see the event loop).
     const settle=(stamps:{kind:number;at:number}[],at:number)=>{
       for(const stamp of stamps){
         const latency=Math.round((at-stamp.at)*10)/10;latencies.push(latency);
-        trace("native-html-input-latency",{kind:KIND_NAMES[stamp.kind]??stamp.kind,ms:latency,frame:frameNumber,from:"dequeued"});
+        trace("native-html-input-latency",{kind:KIND_NAMES[stamp.kind]??stamp.kind,ms:latency,frame:frameNumber,from:latencyFrom()});
       }
     };
     const renderFrame=async()=>{
@@ -399,8 +400,10 @@ async function main() {
       const pumpStart=performance.now();if(lastPump!==undefined){pumpGaps.push(pumpStart-lastPump);if(pumpStart-lastPump>50)trace("native-html-pump-gap",{ms:ms(lastPump,pumpStart),frames:frameNumber,rendering:!!rendering});}lastPump=pumpStart;native.pump();const pumpEnd=performance.now();
       if(pumpEnd-pumpStart>30)trace("native-html-pump-stall",{ms:ms(pumpStart,pumpEnd)});
       // Take every native event now and keep each with the time it was taken. None is dropped here.
-      const arrived=performance.now(),batch:{event:UIEvent;at:number}[]=[];let taken;
-      while((taken=native.next()))batch.push({event:taken,at:arrived});
+      // The window library stamps each event when it is queued; its clock maps onto
+      // performance.now() through one reading of both. An older library has no clock.
+      const arrived=performance.now(),queueClock=native.eventClock(),offset=queueClock===null?null:arrived-queueClock,batch:{event:UIEvent;at:number}[]=[];let taken;
+      while((taken=native.next()))batch.push({event:taken,at:offset===null||!taken.time?arrived:Math.min(arrived,taken.time+offset)});
       if(batch.length){lastActivity=arrived;queueMax=Math.max(queueMax,batch.length);
         if(batch.length>QUEUE_WARN)trace("native-html-queue-high",{queued:batch.length});}
       for(const {event,at} of batch){
