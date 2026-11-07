@@ -272,6 +272,12 @@ extern_lib libl4hostread pkg := do
 
 @[default_target] lean_lib L4Factoidal
 
+-- The WebAssembly engine (issue 1244): spec relations generated from SpecTec, the
+-- executable engine, and the theorems between them. Its own library, so the main
+-- library and the l4wasm closure do not grow until something imports it.
+@[default_target] lean_lib WasmVM where
+  roots := #[`L4Factoidal.WasmVM]
+
 -- Explicit non-default roots: prototype tests stay outside production imports.
 lean_lib ScopedQueryPrototype where
   roots := #[`Wasm.Ops.ScopedQuery, `Wasm.Ops.ScopedQueryTests]
