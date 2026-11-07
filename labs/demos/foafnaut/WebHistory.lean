@@ -66,6 +66,11 @@ private def three : History := ((({} : History).push "a").push "b").push "c"
 #guard (apply backCommand ({} : History)).2 == none && (apply reloadCommand ({} : History)).2 == none
 #guard ((List.range 150).foldl (fun h i => h.push (toString i)) ({} : History)).entries.size == maxEntries
 #guard ((List.range 150).foldl (fun h i => h.push (toString i)) ({} : History)).current == some "149"
+-- The graph page is an entry like any other: back from it loads the page before it,
+-- forward loads it again (issue 1268).
+private def toGraph : History := (({} : History).push "file:///pages/index.html").push "foafnaut:graph"
+#guard toGraph.canBack && (apply backCommand toGraph).2 == some "file:///pages/index.html"
+#guard (apply forwardCommand (apply backCommand toGraph).1).2 == some "foafnaut:graph"
 #guard keyCommand "mac" "command" "ArrowLeft" == some 6 && keyCommand "mac" "command" "]" == some 7
 #guard keyCommand "other" "alt" "ArrowRight" == some 7 && keyCommand "other" "command" "ArrowLeft" == none
 

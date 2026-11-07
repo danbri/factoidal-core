@@ -189,6 +189,9 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     },
     // Lean decides what a chrome click, a key, an address and a link mean.
     shellHit:(shell:unknown,x:number,y:number,width:number)=>(documentCall("",{op:"shellHit",shell,x,y,width}) as {control:string|null}).control,
+    // The system pointer for a window point: "arrow", "hand" or "text" (issue 1268).
+    pointerCursor:(request:{shell:unknown;x:number;y:number;width:number;model?:string;links?:string;pageY?:number})=>
+      (documentCall("",{...request,op:"pointerCursor"}) as {cursor:string}).cursor,
     shellText:(shell:unknown,text:string)=>documentCall("",{op:"shellText",shell,text}) as ShellEdit,
     shellKey:(shell:unknown,key:number)=>documentCall("",{op:"shellKey",shell,key}) as ShellEdit,
     shellSubmit:(address:string)=>documentCall("",{op:"shellSubmit",address}) as ShellGo,

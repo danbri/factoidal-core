@@ -88,6 +88,16 @@ static void resizeEvent(void) {
   enqueue(1, (int32_t)llround(rect.size.width), (int32_t)llround(rect.size.height));
 }
 
+// The pointer Lean chose: 0 arrow, 1 pointing hand, 2 I-beam. The host sends it only when it changes.
+static int cursorKind;
+static NSCursor *shownCursor(void) {
+  return cursorKind==1 ? NSCursor.pointingHandCursor : cursorKind==2 ? NSCursor.IBeamCursor : NSCursor.arrowCursor;
+}
+void ng_set_cursor(int kind) {
+  if (!pthread_main_np() || kind<0 || kind>2 || kind==cursorKind) return;
+  cursorKind=kind;[shownCursor() set];
+}
+
 @interface NGView : NSView
 @end
 @implementation NGView
@@ -101,7 +111,11 @@ static void resizeEvent(void) {
   enqueue(type, (int32_t)floor(point.x), (int32_t)floor(point.y));
 }
 - (void)mouseDown:(NSEvent *)event { [self sendPointer:event type:2]; }
-- (void)mouseMoved:(NSEvent *)event { [self sendPointer:event type:3]; }
+- (void)mouseMoved:(NSEvent *)event {
+  // AppKit sets its own pointer at a window edge; back in the view, show Lean's again.
+  if (NSCursor.currentCursor!=shownCursor()) [shownCursor() set];
+  [self sendPointer:event type:3];
+}
 - (void)mouseDragged:(NSEvent *)event { [self sendPointer:event type:3]; }
 - (void)mouseUp:(NSEvent *)event { [self sendPointer:event type:4]; }
 - (void)scrollWheel:(NSEvent *)event {
