@@ -10,7 +10,6 @@ p{margin:0;padding-top:6px}
 .figure{margin-top:10px;padding:8px;background:#f0f4fa}
 .caption{font-size:12px;line-height:16px;color:#405060}
 .row{padding:2px 0}
-.row span{display:inline-block;width:150px}
 .head{background:#184078;color:white}
 .odd{background:#eef2f8}
 /* Only on paper: no screen note, and each chapter starts a page; a figure or a table
@@ -20,17 +19,19 @@ p{margin:0;padding-top:6px}
   .chapter{break-before:page}
   .figure,.table{break-inside:avoid}
   body{color:black}
+  main{width:auto}
 }
 </style></head><body><main>
 <h1>Print showcase</h1>
 <p>This page tests printing in foafnaut2525. Choose File, Print (Command-P). The Lean engine lays the page out again for the paper of the page setup, with the print rules of its style sheet, and breaks it into pages. The system print panel then prints it, or saves it as a PDF.</p>
 <p class="note">On screen you see this note. On paper it is not there: a print style rule hides it.</p>
 <h2>What the print rules do</h2>
-<p>An <b>@media print</b> block holds rules for paper only. This page has four:</p>
+<p>An <b>@media print</b> block holds rules for paper only. This page has five:</p>
 <p>- The note above has display none.</p>
 <p>- Each chapter heading has break-before page, so a chapter starts on a new page.</p>
 <p>- The figure and the table have break-inside avoid, so a page edge does not cut them.</p>
 <p>- The text is black.</p>
+<p>- The text column is the width of the paper.</p>
 <p>Lines are never cut: a page ends at the last line that fits.</p>
 
 <h2 class="chapter">Chapter 1: a figure</h2>
@@ -52,13 +53,13 @@ p{margin:0;padding-top:6px}
 <p>Text after the figure continues on the same page when there is room.</p>
 
 <h2 class="chapter">Chapter 2: a table</h2>
-<p>The rows of this table are blocks with cells of a fixed width, because the engine does not lay out HTML tables yet.</p>
+<p>The rows of this table are blocks with the cells joined by a bar, because the engine does not lay out HTML tables yet (https://github.com/danbri/factoidal/issues/1279).</p>
 <div class="table">
-<p class="row head"><span>Paper</span><span>Millimetres</span><span>Points</span><span>Inches</span></p>
-<p class="row"><span>A4</span><span>210 x 297</span><span>595 x 842</span><span>8.27 x 11.69</span></p>
-<p class="row odd"><span>US Letter</span><span>216 x 279</span><span>612 x 792</span><span>8.5 x 11</span></p>
-<p class="row"><span>A5</span><span>148 x 210</span><span>420 x 595</span><span>5.83 x 8.27</span></p>
-<p class="row odd"><span>US Legal</span><span>216 x 356</span><span>612 x 1008</span><span>8.5 x 14</span></p>
+<p class="row head">Paper | Millimetres | Points | Inches</p>
+<p class="row">A4 | 210 x 297 | 595 x 842 | 8.27 x 11.69</p>
+<p class="row odd">US Letter | 216 x 279 | 612 x 792 | 8.5 x 11</p>
+<p class="row">A5 | 148 x 210 | 420 x 595 | 5.83 x 8.27</p>
+<p class="row odd">US Legal | 216 x 356 | 612 x 1008 | 8.5 x 14</p>
 </div>
 <p class="caption">Table 1. Paper sizes. One point is 1/72 inch; foafnaut prints at 2 device pixels a point.</p>
 

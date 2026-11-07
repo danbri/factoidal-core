@@ -1,5 +1,5 @@
 import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type ShellEdit} from "./native_html_engine.ts";
-import {render} from "./gpu_transport.ts";
+import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
 import {inputURL,navigationURL,loadFontFile,prepareHTML,refusalHTML,type PageView} from "./native_html_document.ts";
@@ -377,34 +377,19 @@ async function main() {
   // the window library gives the images to the system print panel (or, with a path, to a PDF
   // with no panel). Device pixels are 2 for each point (144 dpi), so CSS text is 150%.
   let printing=false;
-  const PIXELS_PER_POINT=2,PRINT_TEXT_PERCENT=150;
   const printDocument=async(pdfPath?:string)=>{
     if(printing||!native)return false;
     printing=true;
     try{
       const start=performance.now(),page=document;
-      const paper=native.printPaper()??{width:595,height:842,left:36,right:36,top:36,bottom:36};
-      const pointWidth=paper.width-paper.left-paper.right,pointHeight=paper.height-paper.top-paper.bottom;
-      const w=Math.min(4096,Math.round(pointWidth*PIXELS_PER_POINT)),h=Math.min(4096,Math.round(pointHeight*PIXELS_PER_POINT));
-      const base=page.request(w,h,{textScalePercent:PRINT_TEXT_PERCENT});
-      const options={...base.options,media:"print"} as Record<string,unknown>;
-      delete options.shell;delete options.selection;delete options.live;delete options.checks;
-      const layout=await lean.printLayout(base.source,w,h,options);
-      const images=new Uint8Array(w*h*4*layout.pages.length);
-      for(const [index,[top,rows]] of layout.pages.entries()){
-        const artifact=await lean.compile(base.source,w,h,{...options,printPage:[top,rows]});
-        const rgba=await render(artifact as unknown as Parameters<typeof render>[0],"svg-offscreen");
-        if(!rgba)throw new Error("no GPU adapter to draw the printed page");
-        images.set(rgba,index*w*h*4);
-      }
+      const paper=native.printPaper()??DEFAULT_PAPER;
+      const job=await printImages(lean,page,paper);
       const drawn=performance.now();
-      const sent=native.print(images,layout.pages.length,w,h,pointWidth,pointHeight,page.title||page.url,pdfPath);
-      const record:Record<string,unknown>={pages:layout.pages.length,breaks:layout.pages,paper,width:w,height:h,drawMs:ms(start,drawn),sent};
+      const sent=native.print(job.images,job.count,job.width,job.height,job.pointWidth,job.pointHeight,page.title||page.url,pdfPath);
+      const record:Record<string,unknown>={pages:job.count,breaks:job.breaks,paper,width:job.width,height:job.height,drawMs:ms(start,drawn),sent};
       if(pdfPath&&sent>0){
-        // The page count of the PDF: Quartz writes each page object with /Type /Page.
-        const pdf=new TextDecoder("latin1").decode(await Deno.readFile(pdfPath));
-        record.pdfPages=(pdf.match(/\/Type\s*\/Page(?![s\w])/g)??[]).length;
-        if(record.pdfPages!==layout.pages.length){console.error(`Native HTML print: ${layout.pages.length} pages laid out, ${record.pdfPages} in the PDF`);Deno.exitCode=1;}
+        record.pdfPages=pdfPageCount(await Deno.readFile(pdfPath));
+        if(record.pdfPages!==job.count){console.error(`Native HTML print: ${job.count} pages laid out, ${record.pdfPages} in the PDF`);Deno.exitCode=1;}
       }
       trace("native-html-print",record);
       return sent>0;

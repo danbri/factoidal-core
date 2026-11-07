@@ -161,7 +161,11 @@ function newTab(){keep();tabs.push({doc:home,history:push({entries:[],index:0},h
 function closeTab(index){if(tabs.length===1)return;keep();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));}
 function setFocus(value){if(focused!==value){focused=value;post({type:'focus',focused});}}
 // Lean selects the whole address when the bar takes the focus; typing then replaces it.
-function focusAddress(){const {clipboard:_,...next}=call('',{op:'shellEdit',shell:shell(),action:'focus',text:doc.url});field=next;setFocus(true);request();}
+function focusAddress(){
+  try{const {clipboard:_,...next}=call('',{op:'shellEdit',shell:shell(),action:'focus',text:doc.url});field=next;}
+  catch{field=showURL(doc.url);/* older engine: no selection */}
+  setFocus(true);request();
+}
 function leaveAddress(){setFocus(false);field=showURL(doc.url);request();}
 function scrollBy(amount){
   const bottom=Math.max(0,...(frame?.webRender.boxes??[]).map(box=>box[2]+box[4]));
@@ -257,7 +261,8 @@ async function start(data){
   home=await prepare(homeURL);
   history=push({entries:[],index:0},homeURL);doc=home;field=showURL(home.url);tabs.push({doc,history,scroll:0});
   // The page keeps the keys of Lean's table for a host with no menu, and needs them at once.
-  post({type:'keys',table:call('',{op:'keyTable',platform:data.platform==='mac'?'mac':'other'})});
+  // An engine from before these ops (issue 1268) has no key table and no address edits.
+  try{post({type:'keys',table:call('',{op:'keyTable',platform:data.platform==='mac'?'mac':'other'})});}catch{/* older engine */}
   ready=true;
   // A new window starts in the address bar with the address selected (issue 1268).
   if(data.page&&/^[a-z0-9-]+\.(html|xml)$/.test(data.page))navigate(pagesBase+data.page);else focusAddress();

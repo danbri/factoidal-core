@@ -284,9 +284,27 @@ the same `shellEdit` and `command` ops as the window host.
 Page images are raster (144 dpi). There is no vector path for the HTML scene:
 `SceneSVG.lean` exports the older `NativeGraphics` scene, not `Rendering.Scene`.
 
-### Checks
+### Checks (2026-11-07, Apple M1 laptop, screen locked)
 
-RESULTS
+- Lean guards, in the native and the Wasm build of `build-web-render.sh`: the address
+  edits (`WebShell`), the page breaks (`WebPrint`), the `command` target, `shellEdit` and
+  `keyTable` ops (`WebDocumentTests`), and `@media` (`Rendering.Tests`).
+- `test.sh --skip-build`: exit 0. Demo pages: 14 rendered, 0 failed (out of 14), with
+  `print-showcase.html`. New in it: `native_print_check.ts` (three page images to a PDF
+  with no panel: 3 pages, each 595 by 842 points, A4); `print_layout_check.ts` (the
+  showcase in Lean: 4 pages, each chapter starts a page, the screen note is not in the
+  print layout and is on screen); `print_document_check.ts` (the whole path with no
+  window: Lean pages, GPU images, `NSPrintOperation`; 4 pages laid out, 4 in the PDF).
+- The same path on other pages: `svg-gallery.html` 1 page, `status.html` 3 pages. Pages
+  looked at as images (`pdftoppm`): no line cut at a page edge.
+- `open -n foafnaut.app`: LaunchServices lists it as `type="Foreground"` (Dock and
+  Command-Tab), `Version="1"`, check-in 3.1 s after launch.
+- NOT RUN in a window: `--edit-sweep`, `--print-pdf` and the frontmost check. The screen
+  was locked, so the window could not present (`native-html-sweep-blocked`, exit 3). The
+  Dock icon was not seen.
+- The Hub page: syntax checked only (`node --check`); no WebGPU browser here.
+- SVG Tiny: no comparison page is in `labs/demos/foafnaut/pages`; the hub page
+  `render-scores` is a Nunjucks template. `svg-gallery.html` prints on one page.
 
 ### Open
 

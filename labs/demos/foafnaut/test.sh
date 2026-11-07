@@ -38,6 +38,11 @@ deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-web
 if [ "$(uname -s)" = Darwin ] && [ -f "$LAB/.build/native/libnative-window.dylib" ]; then
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
     --allow-read --allow-ffi --allow-run "$LAB/native_window_queue_test.ts"
+  # Print with no panel to a PDF: three pages of the paper size (issue 1268).
+  PRINT_PDF=$(mktemp -t foafnaut-print).pdf
+  deno run --no-check --no-config --no-npm --node-modules-dir=none --allow-ffi --allow-read --allow-write \
+    "$LAB/native_print_check.ts" "$LAB/.build/native/libnative-window.dylib" "$PRINT_PDF"
+  rm -f "$PRINT_PDF"
 else
   echo 'NOT RUN: native_window_queue_test.ts needs the macOS window library'
 fi
@@ -50,6 +55,17 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # the native library when it is built.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/native_html_bytes_test.ts"
+  # Print page breaks of the print showcase (issue 1268): chapters start pages, print rules apply.
+  deno run --no-check --no-config --no-npm --node-modules-dir=none --allow-read --allow-ffi --allow-env "$LAB/print_layout_check.ts"
+  # The whole print path to a PDF with no window or panel: Lean pages, GPU images, NSPrintOperation.
+  if [ "$(uname -s)" = Darwin ] && [ -f "$LAB/.build/native/libnative-window.dylib" ]; then
+    PRINT_PDF=$(mktemp -t foafnaut-showcase).pdf
+    deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+      --allow-read --allow-ffi --allow-env "$LAB/print_document_check.ts" print-showcase.html "$PRINT_PDF"
+    rm -f "$PRINT_PDF"
+  else
+    echo 'NOT RUN: print_document_check.ts needs the macOS window library'
+  fi
   # Two-layer scroll (issue 1268): the composite of the layers has the bytes of one Lean
   # frame at each scroll tried, on this machine's GPU. With no GPU adapter it says NOT RUN.
   deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
