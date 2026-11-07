@@ -389,9 +389,7 @@ reasons:
 Cheapest route: build the `lean4-wip` SpecTec as it is and give it our pinned
 `.spectec` files. The frontend may reject syntax the spec gained since February;
 each rejection is a small frontend backport. Second route: rebase `lean4-wip`
-(the eleven passes and `print.ml`) onto `f3268fa9`; that is the upstream
-backend work Joachim Breitner's branch is heading for, and worth asking him
-about before doing it here.
+(the eleven passes and `print.ml`) onto `f3268fa9`.
 
 Either route should also fix D1 (`IntT -> "Int"` in `print.ml`, with the
 coercions the printer then needs) and emit the missing `wf_` relations (G1).
@@ -435,8 +433,8 @@ By the cheapest route of section 9. One opam switch `spectec` (OCaml 5.2.1;
    injections (`Inn_addrtype`, `lanetype_Lnn`, ...); `fun_signed_` and other
    `int`-valued relations and functions take or return `Int`.
 
-Still open: the 29 functions of section 4 (a backend limit, worth raising with
-Joachim Breitner), and the binary format (G3).
+Still open: the 29 functions of section 4 (a backend limit), and the binary
+format (G3).
 
 ## 10. Open items
 
