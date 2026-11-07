@@ -183,7 +183,15 @@ async function main() {
   const showURL=(url:string):Field=>({address:url,cursor:url.length,anchor:url.length,undo:null,redo:null,typing:false});
   let field=showURL(document.url),focused=false,theme="next",pages=1,scale=1,active=0,scroll=0;
   const tabs:{document:typeof document;history:typeof history;scroll:number}[]=[{document,history,scroll:0}];
-  const shell=()=>({tabs:tabs.map((tab,index)=>({title:(index===active?document:tab.document).title??""})),active,...field,focused,
+  // The tab icon of a page: Lean prepares it once from the bytes the page fetched (HTML §4.6.7.8).
+  const icons=new WeakMap<object,unknown>();
+  const iconOf=(page:typeof document)=>{
+    const bytes=(page as {iconBase64?:string}).iconBase64;
+    if(!bytes)return undefined;
+    if(!icons.has(page))try{icons.set(page,engine.iconPrepare(bytes,2));}catch(error){icons.set(page,null);console.error("Native HTML icon refused:",String(error));}
+    return icons.get(page)??undefined;
+  };
+  const shell=()=>({tabs:tabs.map((tab,index)=>{const page=index===active?document:tab.document;return {title:page.title??"",icon:iconOf(page)};}),active,...field,focused,
     canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,pressed:pressed?.control??""});
   // The URLs of the session history of every tab: Lean matches `:visited` against them.
   const visited=()=>[...new Set([...tabs.flatMap((tab,index)=>(index===active?history:tab.history).history.entries)])].slice(-100);

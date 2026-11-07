@@ -10,8 +10,18 @@ decision here: Lean says what a click, a key or an address means. -/
 namespace WebShell
 open L4Factoidal
 
+/-- The icon of a tab, as `WebDocument.iconPrepare` gives it: SVG text (`kind` "svg"),
+or RGBA pixels in Base64 (`kind` "bitmap"). -/
+structure TabIcon where
+  kind : String
+  width : Nat := 0
+  height : Nat := 0
+  data : String
+  deriving Repr, BEq
+
 structure Tab where
   title : String := ""
+  icon : Option TabIcon := none
   deriving Repr, BEq
 
 /-- The address text with its cursor and selection anchor, as an undo step keeps it. -/
@@ -242,19 +252,55 @@ private def iconAt (s : Shell) (c : Rendering.Color) (name : String) (box : Box)
   let size := dot s
   bitmapNodes c (icon name) 7 (box.x+(box.w-7*size)/2) (box.y+(box.h-7*size)/2) size
 
+/-- The paint id of the bitmap of tab `index`: page images use small ids. -/
+private def iconPaintId (index : Nat) : Nat := 1048576+index
+
+/-- A tab icon in a square of `side` backing pixels at `x`, `y`: an SVG icon drawn by the
+SVG engine at that size, a bitmap scaled to fit it. An icon that does not draw is left out. -/
+def iconNodes (icon : TabIcon) (index x y side : Nat) : List Rendering.Node :=
+  let at_ : Rendering.Transform := ⟨1,0,0,1,Float.ofNat x,Float.ofNat y⟩
+  let clip : Rendering.ClipRect := ⟨0,0,Float.ofNat side,Float.ofNat side,Rendering.identity⟩
+  if icon.kind == "svg" then
+    match NativeSVG.parse icon.data side side with
+    | .ok scene =>
+      let m := scene.mapping
+      let fit : Rendering.Transform := ⟨m.sx,0,0,m.sy,m.tx-m.minX*m.sx,m.ty-m.minY*m.sy⟩
+      [.group none at_ [.clipped none fit clip (WebRenderSVG.fromScene scene).tree]]
+    | .error _ => []
+  else match NativeImage.base64 icon.data.toUTF8 0 with
+    | .ok rgba =>
+      if icon.width == 0 || icon.height == 0 || rgba.size != icon.width*icon.height*4 then [] else
+      let large := Float.ofNat (max icon.width icon.height)
+      let w := Float.ofNat side*Float.ofNat icon.width/large
+      let h := Float.ofNat side*Float.ofNat icon.height/large
+      let left := (Float.ofNat side-w)/2
+      let top := (Float.ofNat side-h)/2
+      let map : Rendering.Transform := ⟨Float.ofNat icon.width/w,0,0,Float.ofNat icon.height/h,0,0⟩
+      let bitmap : Rendering.Bitmap := {width := icon.width,height := icon.height,rgba}
+      [.group none ⟨1,0,0,1,Float.ofNat x+left,Float.ofNat y+top⟩
+        [.paint ⟨none,{geometry := .rect 0 0 w h,style := {fill := .image ⟨map,iconPaintId index,bitmap⟩}}⟩]]
+    | .error _ => []
+
 private def tabNodes (s : Shell) (t : Theme) (width : Nat) (box : Box) (index : Nat) : List Rendering.Node :=
   let u := unit s
   let active := index == s.active
   let face := if active then t.base else t.back
   let title := ((s.tabs[index]?).map (·.title)).getD ""
+  -- The icon, 16 points square, before the title (HTML §4.6.7.8).
+  let icon := (s.tabs[index]?).bind (·.icon)
+  let iconSide := 16*u
+  let shift := if icon.isSome then iconSide+4*u else 0
+  let iconPaint := match icon with
+    | some i => iconNodes i index (box.x+7*u) (box.y+(box.h-min box.h iconSide)/2+u) iconSide
+    | none => []
   -- Arcade capitals: the bitmap font is at its best here.
   let title := (if title.isEmpty then "new tab" else title).toUpper
-  let room := box.w-(if s.tabs.size > 1 then 32*u else 14*u)
+  let room := box.w-(if s.tabs.size > 1 then 32*u else 14*u)-min (box.w/2) shift
   let colour := if active then t.ink else t.muted
   let mark := if active then [paint t.accent (box.x+u) (box.y+u) (box.w-2*u) (2*u)] else []
   let _ := width
-  bevel s t face true box.x box.y box.w (box.h+(if active then u else 0)) ++ mark ++
-    text colour (fit s title room) (box.x+7*u) (box.y+(box.h-7*dot s)/2+u) (dot s)
+  bevel s t face true box.x box.y box.w (box.h+(if active then u else 0)) ++ mark ++ iconPaint ++
+    text colour (fit s title room) (box.x+7*u+shift) (box.y+(box.h-7*dot s)/2+u) (dot s)
 
 private def addressNodes (s : Shell) (t : Theme) (box : Box) : List Rendering.Node :=
   let u := unit s
@@ -552,9 +598,18 @@ private def nat (j : JSON.Json) (key : String) (fallback := 0) : Nat :=
 private def flag (j : JSON.Json) (key : String) : Bool :=
   match j.field? key with | some (.bool value) => value | _ => false
 
+/-- The icon of a tab in the JSON of the shell: `WebDocument.iconPrepare`'s answer. -/
+private def tabIcon (item : JSON.Json) : Option TabIcon :=
+  match item.field? "icon" with
+  | some i@(.object _) =>
+    let kind := str i "kind"
+    let data := if kind == "svg" then str i "source" else str i "rgba"
+    some ⟨kind,nat i "width",nat i "height",data⟩
+  | _ => none
+
 def Shell.ofJson (j : JSON.Json) : Shell :=
   let tabs : Array Tab := match j.field? "tabs" with
-    | some (.array items) => (items.map (fun item => ({title := str item "title"} : Tab))).toArray
+    | some (.array items) => (items.map (fun item => ({title := str item "title",icon := tabIcon item} : Tab))).toArray
     | _ => #[{}]
   let tabs := if tabs.isEmpty then #[{}] else tabs
   let address := str j "address"

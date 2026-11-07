@@ -72,11 +72,14 @@ def suppliedImages (request : JSON.Json) : Except String (List (String × ByteAr
     found := (key,← NativeImage.base64 data.toUTF8 0)::found
   return found
 
-/-- `image` references that the host must fetch, by key and URL. -/
+/-- SVG `image` and HTML `img` references that the host must fetch, by key and URL. -/
 private def imageRequests (dom : DOM.Dom) (base : String) : Except String (List JSON.Json) := do
-  if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then return []
-  let (_,tree) ← WebRender.documentNamespaceTree dom
-  let keys := (NativeSVG.imageKeys tree (some base)).filter (!·.toLower.startsWith "data:")
+  let pictures := (WebRender.htmlImageKeys dom (some base)).map (·.2)
+  let svgKeys ← if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then pure []
+    else do
+      let (_,tree) ← WebRender.documentNamespaceTree dom
+      pure (NativeSVG.imageKeys tree (some base))
+  let keys := (svgKeys ++ pictures).eraseDups.filter (!·.toLower.startsWith "data:")
   if keys.length > maxDocumentImages then throw s!"document images exceed {maxDocumentImages}"
   return keys.map fun key => .object [("key",.string key),("url",.string key)]
 
@@ -95,6 +98,108 @@ def baseURL (dom : DOM.Dom) (url : String) : String := Id.run do
     if DOM.Dom.isHtmlElement n "base" && Rendering.CSS.hasAttribute n "href" then
       return Syntax.resolveIri url (attr n "href")
   return url
+
+/-! ### The icon of a page (HTML §4.6.7.8, link type "icon") -/
+
+/-- The ASCII-lowercase tokens of an attribute (HTML §2.3.8, space-separated tokens). -/
+private def tokens (value : String) : List String :=
+  ((value.toLower.replace "\t" " ").replace "\n" " " |>.replace "\r" " " |>.replace "\x0c" " ").splitOn " " |>.filter (· != "")
+
+/-- The path of a URL with no query or fragment, lowercase. -/
+private def pathOf (url : String) : String :=
+  (((url.splitOn "#").headD "").splitOn "?").headD "" |>.toLower
+
+/-- An icon the engine can not decode: ICO, https://github.com/danbri/factoidal/issues/1282 -/
+def iconUnsupported (url type : String) : Bool :=
+  type.toLower == "image/x-icon" || type.toLower == "image/vnd.microsoft.icon" || (pathOf url).endsWith ".ico"
+
+/-- How well an icon fits a tab of `target` device pixels; less is better. A scalable
+icon fits any size; then the smallest at least `target`; then the largest; then an
+icon with no `sizes`. -/
+def iconRank (url type sizes : String) (target : Nat) : Nat × Nat :=
+  let words := tokens sizes
+  if type.toLower == "image/svg+xml" || (pathOf url).endsWith ".svg" || words.contains "any" then (0,0) else
+  let sides := words.filterMap fun w => match w.splitOn "x" with
+    | [a,b] => match a.toNat?, b.toNat? with | some x, some y => some (max x y) | _, _ => none
+    | _ => none
+  match (sides.filter (· >= target)).min?, sides.max? with
+  | some s, _ => (1,s)
+  | none, some s => (2,100000-min s 100000)
+  | none, none => (3,0)
+
+/-- The URL of the icon for a tab of `target` device pixels, resolved against `base`.
+Of the links whose `rel` has the token "icon" and that the engine can decode, the best
+by `iconRank`, the last in tree order of equal ones (HTML §4.6.7.8). With none, an
+`apple-touch-icon` the same way. No link gives no icon: `/favicon.ico` is not tried. -/
+def iconURL (dom : DOM.Dom) (base : String) (target : Nat := 32) : Option String := Id.run do
+  let mut best : Option ((Nat × Nat) × String) := none
+  let mut touch : Option ((Nat × Nat) × String) := none
+  for id in dom.treeOrder 0 do
+    let n := dom.get id
+    if !DOM.Dom.isHtmlElement n "link" then continue
+    let href := (attr n "href").trimAscii.toString
+    if href.isEmpty then continue
+    let url := Syntax.resolveIri base href
+    let type := attr n "type"
+    if iconUnsupported url type then continue
+    let rank := iconRank url type (attr n "sizes") target
+    let better := fun (held : Option ((Nat × Nat) × String)) => match held with
+      | none => true
+      | some (r,_) => rank.1 < r.1 || (rank.1 == r.1 && rank.2 <= r.2)
+    let rel := tokens (attr n "rel")
+    if rel.contains "icon" && better best then best := some (rank,url)
+    else if (rel.contains "apple-touch-icon" || rel.contains "apple-touch-icon-precomposed") && better touch then
+      touch := some (rank,url)
+  return (best.orElse fun _ => touch).map (·.2)
+
+/-- Limit on the bytes of an icon. -/
+def maxIconBytes : Nat := 65536
+
+/-- An image `side` pixels at most each way, from `b`: each pixel the mean of the
+pixels it covers, with colour weighted by opacity. An image that fits is kept. -/
+def fitBitmap (b : Rendering.Bitmap) (side : Nat) : Rendering.Bitmap := Id.run do
+  if b.width <= side && b.height <= side then return b
+  let large := max b.width b.height
+  let w := max 1 (b.width*side/large)
+  let h := max 1 (b.height*side/large)
+  let mut out := ByteArray.emptyWithCapacity (w*h*4)
+  for y in [0:h] do
+    for x in [0:w] do
+      let x0 := x*b.width/w
+      let x1 := max (x0+1) ((x+1)*b.width/w)
+      let y0 := y*b.height/h
+      let y1 := max (y0+1) ((y+1)*b.height/h)
+      let mut r := 0
+      let mut g := 0
+      let mut bl := 0
+      let mut a := 0
+      for sy in [y0:y1] do
+        for sx in [x0:x1] do
+          let i := (sy*b.width+sx)*4
+          let alpha := (b.rgba.get! (i+3)).toNat
+          r := r+(b.rgba.get! i).toNat*alpha
+          g := g+(b.rgba.get! (i+1)).toNat*alpha
+          bl := bl+(b.rgba.get! (i+2)).toNat*alpha
+          a := a+alpha
+      let count := (x1-x0)*(y1-y0)
+      let colour := fun (sum : Nat) => if a == 0 then 0 else (sum/a).toUInt8
+      out := out.push (colour r) |>.push (colour g) |>.push (colour bl) |>.push (a/count).toUInt8
+  return {width := w,height := h,rgba := out}
+
+/-- The tab icon from the bytes of an icon resource, for a screen of `scale` device
+pixels to the point: SVG text as it is, after a check that the SVG profile draws it at
+16 points; PNG, JPEG and GIF (its first frame) decoded and fitted to 16 points. -/
+def iconPrepare (bytes : ByteArray) (scale : Nat) : Except String JSON.Json := do
+  if bytes.size > maxIconBytes then throw s!"icon exceeds {maxIconBytes} bytes"
+  let side := 16*max 1 scale
+  let text := (String.fromUTF8? bytes).getD ""
+  let head := text.trimAsciiStart.toString
+  if head.startsWith "<" then
+    let _ ← NativeSVG.parse head side side
+    return .object [("kind",.string "svg"),("source",.string head)]
+  let b := fitBitmap (← NativeImage.decode bytes) side
+  return .object [("kind",.string "bitmap"),("width",.number (toString b.width)),("height",.number (toString b.height)),
+    ("rgba",.string (NativeSVG.base64Bytes b.rgba))]
 
 /-- The text of the first HTML `title` element, with white space collapsed. -/
 def documentTitle (dom : DOM.Dom) : String := Id.run do
@@ -163,7 +268,8 @@ def inspect (dom : DOM.Dom) (url : String) : Except String JSON.Json := do
     | other => other
   return .object [("nodes",(snapshot.field? "nodes").getD (.array [])),
     ("scripts",.array scripts),("stylesheets",.array sheets.reverse),("images",.array (← imageRequests dom base)),
-    ("baseURL",.string base),("title",.string (documentTitle dom))]
+    ("baseURL",.string base),("title",.string (documentTitle dom)),
+    ("icon",match iconURL dom base with | some url => .string url | none => .null)]
 
 private def float (j : JSON.Json) : Except String Float :=
   match j with
@@ -656,9 +762,10 @@ def layOut (key : LayoutKey) : Except String Laid := do
       Rendering.SfntProfile.profile held.font (keepWords words request)
     | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   let url := baseURL dom (str request "url")
-  let embedding ← match graph with
-    | some m => pure (WebGraph.embedding m)
-    | none => WebRender.makeEmbedding dom (if url.isEmpty then none else some url) (← suppliedImages request)
+  -- Each decoded `img` gets the size of its box (`WebRender.sizeImages`).
+  let (dom,embedding) ← match graph with
+    | some m => pure (dom,WebGraph.embedding m)
+    | none => WebRender.makeImageEmbedding dom (if url.isEmpty then none else some url) (← suppliedImages request)
   -- A window shorter than the chrome still lays out, on one row.
   let state ← elementState dom url request
   let (scene,boxes) ← Rendering.Layout.render dom rules font embedding key.width (max 1 (key.height-key.top)) textScale state

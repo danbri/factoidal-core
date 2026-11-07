@@ -197,29 +197,86 @@ def embedding (dom : DOM.Dom) (id : Nat) (style : Rendering.CSS.Computed) (width
   let scene ← NativeSVG.parseRoot root width.toUInt32.toNat height.toUInt32.toNat inherited
   return placeSVG scene id style width height
 
-/-- One source-bound index per render, shared by all embedded SVG roots. -/
-def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none)
-    (images : List (String × ByteArray) := []) : Except String Rendering.Layout.Embedding := do
-  if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
-    return embedding dom
+/-- An HTML `img` drawn at `width` by `height`: its decoded bitmap scaled to the box. An
+image that did not decode draws nothing in its box. -/
+def imageNodes (store : NativeImage.Store) (key : String) (id : Nat) (style : Rendering.CSS.Computed)
+    (width height : Float) : List Rendering.Node :=
+  match store.get? key with
+  | some (.ok (index,bitmap)) =>
+    if !style.visible || width <= 0 || height <= 0 then [] else
+    let map : Rendering.Transform := ⟨Float.ofNat bitmap.width/width,0,0,Float.ofNat bitmap.height/height,0,0⟩
+    [.paint ⟨some id,{geometry := .rect 0 0 width height,style := {fill := .image ⟨map,index,bitmap⟩}}⟩]
+  | _ => []
+
+/-- The image key of each HTML `img` with a `src`, by node: its URL resolved against
+`base`, or the `data:` URI itself. -/
+def htmlImageKeys (dom : DOM.Dom) (base : Option String) : List (Nat × String) :=
+  (List.range dom.size).filterMap fun id =>
+    let n := dom.get id
+    if DOM.Dom.isHtmlElement n "img" && Rendering.CSS.hasAttribute n "src" && !(Rendering.CSS.attrValue n "src").trimAscii.isEmpty
+    then some (id,NativeSVG.imageKey base (Rendering.CSS.attrValue n "src")) else none
+
+/-- The document with a `width` and a `height` attribute on each `img` that decoded: the
+author's, else from the decoded size, keeping its ratio when the author gave one of
+them. The layout then knows the box of each image (`Layout.imageSize`). -/
+def sizeImages (dom : DOM.Dom) (pictures : List (Nat × String)) (store : NativeImage.Store) : DOM.Dom :=
+  {dom with nodes := dom.nodes.mapIdx fun id n =>
+    match pictures.lookup id with
+    | none => n
+    | some key => match store.get? key with
+      | some (.ok (_,b)) =>
+        if b.width == 0 || b.height == 0 then n else
+        let iw := Float.ofNat b.width
+        let ih := Float.ofNat b.height
+        let (w,h) := match Rendering.Layout.dimensionValue (Rendering.CSS.attrValue n "width"),
+            Rendering.Layout.dimensionValue (Rendering.CSS.attrValue n "height") with
+          | some w, some h => (w,h)
+          | some w, none => (w,w*ih/iw)
+          | none, some h => (h*iw/ih,h)
+          | none, none => (iw,ih)
+        let kept := n.attrs.filter fun a => !(a.ns.isNone && (a.lname == "width" || a.lname == "height"))
+        {n with attrs := kept ++ #[{lname := "width",value := toString w},{lname := "height",value := toString h}]}
+      | _ => n}
+
+/-- One source-bound index per render, shared by all embedded SVG roots and HTML
+images, and the document with the size of each decoded `img` (`sizeImages`).
+`htmlBase` is the base URL of the HTML document, for `img`. -/
+def makeImageEmbedding (dom : DOM.Dom) (documentURL : Option String := none)
+    (images : List (String × ByteArray) := []) (htmlBase : Option String := documentURL) :
+    Except String (DOM.Dom × Rendering.Layout.Embedding) := do
+  let pictures := htmlImageKeys dom htmlBase
+  let hasSVG := dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)
+  if !hasSVG then
+    if pictures.isEmpty then return (dom,embedding dom)
+    let store := NativeSVG.imageStoreOf (pictures.map (·.2)).eraseDups images
+    return (sizeImages dom pictures store,fun id style width height =>
+      match pictures.lookup id with
+      | some key => .ok (imageNodes store key id style width height)
+      | none => embedding dom id style width height)
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
   let (root,tree) ← documentNamespaceTree dom
   let context ← NativeSVG.ReferenceContext.create tree documentURL
-  -- Each image decodes once for the document, not once for each SVG root.
-  let store := NativeSVG.imageStore tree documentURL images
-  return fun id style width height => do
+  -- Each image decodes once for the document, not once for each SVG root or `img`.
+  let store := NativeSVG.imageStoreOf (NativeSVG.imageKeys tree documentURL ++ pictures.map (·.2)).eraseDups images
+  return (sizeImages dom pictures store,fun id style width height => do
+    if let some key := pictures.lookup id then return imageNodes store key id style width height
     if Float.ofNat width.toUInt32.toNat != width || Float.ofNat height.toUInt32.toNat != height then
       throw "unsupported fractional embedded SVG viewport"
     let path ← sourcePath dom root (dom.size+1) id []
     let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
     let scene ← NativeSVG.parseRootInContext context path width.toUInt32.toNat height.toUInt32.toNat inherited embeddedAttributes (some store)
-    return placeSVG scene id style width height
+    return placeSVG scene id style width height)
+
+def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none)
+    (images : List (String × ByteArray) := []) : Except String Rendering.Layout.Embedding :=
+  Prod.snd <$> makeImageEmbedding dom documentURL images
 
 def render (html : String) (width height : Nat) : Except String (Rendering.Scene × Array Rendering.Layout.Box) := do
   if html.length > 1048576 then throw "unsupported HTML input exceeding 1048576 characters"
   let dom := DOM.parseHtmlDocument html
-  renderDOM dom width height (← makeEmbedding dom)
+  let (dom,embedding) ← makeImageEmbedding dom
+  renderDOM dom width height embedding
 
 private def array (xs : List String) := "[" ++ String.intercalate "," xs ++ "]"
 private def runJSON (r : Rendering.GlyphRun) : String :=

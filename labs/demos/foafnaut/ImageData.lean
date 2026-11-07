@@ -1,4 +1,5 @@
 import ImageJPEG
+import ImageGIF
 import Std.Data.HashMap
 
 /- Raster image sources of a document.
@@ -22,7 +23,8 @@ abbrev Store := Std.HashMap String Entry
 def decode (bytes : ByteArray) : Except String Bitmap :=
   if bytes.size >= 2 && bytes.get! 0 == 0xFF && bytes.get! 1 == 0xD8 then decodeJPEG bytes
   else if bytes.size >= 8 && bytes.get! 0 == 137 && bytes.get! 1 == 80 then decodePNG bytes
-  else .error "image is not PNG or JPEG"
+  else if bytes.size >= 6 && bytes.get! 0 == 71 && bytes.get! 1 == 73 && bytes.get! 2 == 70 then decodeGIF bytes
+  else .error "image is not PNG, JPEG or GIF"
 
 private def base64Value (c : UInt8) : Option Nat :=
   if c >= 65 && c <= 90 then some (c.toNat-65)

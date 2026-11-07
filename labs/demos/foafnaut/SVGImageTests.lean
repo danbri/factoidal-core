@@ -52,10 +52,10 @@ private def refusal (body : String) : String :=
 #guard refusal (image "width='-1' height='40'") == "negative image size"
 #guard refusal (image "width='9' height='9'" "x.png") == "image resource not supplied: x.png"
 #guard refusal (image "width='9' height='9'" "file:///etc/passwd") == "image resource not supplied: file:///etc/passwd"
-#guard refusal (image "width='9' height='9'" "data:image/png;base64,aGk=") == "image is not PNG or JPEG"
+#guard refusal (image "width='9' height='9'" "data:image/png;base64,aGk=") == "image is not PNG, JPEG or GIF"
 -- Expected failure, https://github.com/danbri/factoidal/issues/1258: an `image` of an SVG
 -- document is refused. When it draws, this guard fails.
-#guard refusal (image "width='9' height='9'" "data:image/svg+xml;base64,PHN2Zy8+") == "image is not PNG or JPEG"
+#guard refusal (image "width='9' height='9'" "data:image/svg+xml;base64,PHN2Zy8+") == "image is not PNG, JPEG or GIF"
 -- The forgiving pass removes only that element, and logs it.
 private def forgiven (body : String) : Nat × List String :=
   match NativeSVGForgiving.parse (doc body) 40 40 with

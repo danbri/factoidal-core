@@ -1,6 +1,7 @@
 // Chrome pixels on the real GPU (issue 1268), off screen. A selected address differs from
 // the same address with the caret only inside the address box (Lean's own hit test of the
-// chrome gives the box), and some pixels there have the selection colour.
+// chrome gives the box), and some pixels there have the selection colour. The SVG tab
+// icon of the page changes only the tab box.
 //
 // deno run --unstable-webgpu --unstable-ffi --allow-read --allow-ffi chrome_pixels_check.ts [--native-engine DYLIB]
 import {loadHTML} from "./native_html_engine.ts";
@@ -52,5 +53,20 @@ for(let i=0;i<selected.length;i+=4){
 const ok=diff.inside>0&&diff.outside===0&&blue>0;
 if(!ok)failed++;
 console.log(JSON.stringify({type:"chrome-pixels-selection",box,changedInside:diff.inside,changedOutside:diff.outside,selectionBluePixels:blue,verdict:ok?"pass":"fail"}));
-console.log(`chrome pixels: ${1-failed} pass, ${failed} fail (out of 1)`);
+// The tab icon (HTML §4.6.7.8): the page's SVG icon changes only the tab, and draws its pink.
+const icon=engine.iconPrepare(doc.iconBase64??"",scale);
+const plain={...base,focused:false,cursor:0,anchor:0};
+const without=await draw(plain);
+const withIcon=await draw({...plain,tabs:[{title:doc.title??"",icon}]});
+const tab=boxOf(plain,"tab:0");
+const iconDiff=compare(without,withIcon,tab);
+let pink=0;
+for(let i=0;i<withIcon.length;i+=4){
+  const [p,g,q]=[withIcon[i],withIcon[i+1],withIcon[i+2]];
+  if(g>=24&&g<=40&&((p>=216&&q>=130&&q<=146)||(q>=216&&p>=130&&p<=146)))pink++;
+}
+const iconOk=icon.kind==="svg"&&iconDiff.inside>0&&iconDiff.outside===0&&pink>0;
+if(!iconOk)failed++;
+console.log(JSON.stringify({type:"chrome-pixels-icon",kind:icon.kind,box:tab,changedInside:iconDiff.inside,changedOutside:iconDiff.outside,iconPinkPixels:pink,verdict:iconOk?"pass":"fail"}));
+console.log(`chrome pixels: ${2-failed} pass, ${failed} fail (out of 2)`);
 if(failed)Deno.exitCode=1;

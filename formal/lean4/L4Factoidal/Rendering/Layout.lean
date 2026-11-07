@@ -104,6 +104,28 @@ def svgSize (node : DOM.Node) (style : Computed) (available : Float) : Except St
   | none,none,some (rw,rh) => return (max 0 available,max 0 (available*rh/rw))
   | _,_,_ => return (max 0 (width.getD 300),max 0 (height.getD 150))
 
+/-- HTML §2.3.4.4, rules for parsing dimension values, for a length in pixels: the
+leading digits and one fraction. A percentage, and text with no digit first, give none. -/
+def dimensionValue (source : String) : Option Float :=
+  let text := source.trimAscii.toString
+  let lead := text.toList.takeWhile (fun c => c.isDigit || c == '.')
+  let rest := text.toList.drop lead.length
+  if lead.isEmpty || !(lead.head?.any Char.isDigit) || rest.head? == some '%' then none
+  else match CSS.number (String.ofList lead) with
+    | .ok n => some n
+    | .error _ => none
+
+/-- The size of an `img` (HTML §4.8.3): CSS `width` and `height`, else its `width` and
+`height` attributes (HTML §15.4.3 maps them to those properties). The host's adapter
+gives an image with no attribute the attributes of its decoded size; an image with no
+size is its description. -/
+def imageSize (node : DOM.Node) (style : Computed) (available : Float) : Option (Float × Float) :=
+  let width := (CSS.resolve available style.width).orElse fun _ => dimensionValue (CSS.attrValue node "width")
+  let height := (CSS.resolve 0 style.height).orElse fun _ => dimensionValue (CSS.attrValue node "height")
+  match width, height with
+  | some w, some h => some (max 0 w,max 0 h)
+  | _, _ => none
+
 inductive Inline where
   | word (source : Nat) (style : Computed) (text : String) (start : Nat)
   | space (source : Nat) (style : Computed)
@@ -158,8 +180,12 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (a
     if s.display == .none then return #[]
     if n.type == .text then return (textItems id s n.data).toArray
     if n.type != .element then return #[]
-    -- No image decoder yet: an image stands as its description, and stays a link.
+    -- An image with a size is a replaced box that the embedding draws; with none it
+    -- stands as its description. Either one stays a link.
     if n.lname == "img" then
+      if let some (width,height) := imageSize n s available then
+        if width <= 0 || height <= 0 then return #[]
+        return #[.replaced id width height (← embedding id s width height)]
       let alt := CSS.attrValue n "alt"
       return (textItems id s (if alt.isEmpty then "[image]" else s!"[{alt}]")).toArray
     if n.lname == "br" then return #[.lineBreak s]

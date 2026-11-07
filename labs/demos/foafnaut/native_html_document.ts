@@ -5,6 +5,8 @@ import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource} from "./
 /** The view state of a page. Lean applies it; the host only keeps the values. */
 export type PageView={textScalePercent?:number;selection?:"all"|number[];shell?:unknown;live?:boolean};
 const MAX_RESOURCES=16, MAX_RESOURCE_BYTES=4*MAX_SOURCE_BYTES;
+// Lean's limits: 64 images, 8 MiB of Base64 for all of them (WebDocument.suppliedImages), 64 KiB for an icon.
+const MAX_IMAGES=64, MAX_IMAGE_BYTES=6*MAX_SOURCE_BYTES, MAX_ICON_BYTES=65536;
 export function inputURL(input:string,file=false) {
   const url=file?pathToFileURL(resolve(input)):new URL(input);
   if(!["file:","http:","https:"].includes(url.protocol))throw new Error("Native HTML accepts file, HTTP and HTTPS inputs only");
@@ -18,12 +20,14 @@ export function navigationURL(href:string,baseURL:string,documentURL:string) {
     throw new Error("Remote HTML cannot read or navigate to local files");
   return target;
 }
-export async function readSource(url:string,signal?:AbortSignal):Promise<{url:string;source:string;bytes:number}> {
+/** The bytes of a file, HTTP or HTTPS resource, at most `limit` of them. */
+export async function readBytes(url:string,signal?:AbortSignal,limit=MAX_SOURCE_BYTES):Promise<{url:string;bytes:Uint8Array}> {
   const parsed=new URL(inputURL(url));
   const abort=()=>signal?.throwIfAborted();abort();
+  const over=`Native HTML resource exceeds ${limit>=1048576?`${limit/1048576} MiB`:`${limit/1024} KiB`}`;
   let bytes:Uint8Array,finalURL=url;
   if(parsed.protocol==="file:") {
-    if((await Deno.stat(parsed)).size>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 1 MiB");
+    if((await Deno.stat(parsed)).size>limit)throw new Error(over);
     bytes=await Deno.readFile(parsed);abort();
   } else {
     const response=await fetch(parsed,{signal:AbortSignal.any([AbortSignal.timeout(10000),...(signal?[signal]:[])])});
@@ -34,20 +38,30 @@ export async function readSource(url:string,signal?:AbortSignal):Promise<{url:st
     const chunks:Uint8Array[]=[];let length=0;
     try {
       while(true){const next=await reader.read();if(next.done)break;
-        length+=next.value.length;if(length>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 1 MiB");
+        length+=next.value.length;if(length>limit)throw new Error(over);
         chunks.push(next.value);
       }
     } finally {await reader.cancel();}
     bytes=new Uint8Array(length);let offset=0;
     for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   }
-  abort();if(bytes.length>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 1 MiB");
+  abort();if(bytes.length>limit)throw new Error(over);
+  return {url:finalURL,bytes};
+}
+export async function readSource(url:string,signal?:AbortSignal):Promise<{url:string;source:string;bytes:number}> {
+  const {url:finalURL,bytes}=await readBytes(url,signal);
   // Older pages are often Latin-1 and say nothing about it. Browsers read those as windows-1252.
   let source:string;
   try{source=new TextDecoder("utf-8",{fatal:true}).decode(bytes);}
   catch{source=new TextDecoder("windows-1252").decode(bytes);}
   sourceBound(source);
   return {url:finalURL,source,bytes:bytes.length};
+}
+/** Base64 of bytes, for the JSON requests that carry images. */
+export function toBase64(bytes:Uint8Array) {
+  let text="";
+  for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+  return btoa(text);
 }
 /** A refused page must say so in the window, not only in a log. */
 export function refusalHTML(url:string,message:string) {
@@ -88,11 +102,30 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     resourceBytes+=resource.bytes;if(resourceBytes>MAX_RESOURCE_BYTES)throw new Error("Native HTML stylesheets exceed 4 MiB");
     resources.push({nodeId:descriptor.nodeId,url:resource.url,source:resource.source});
   }
-  const options={url:document.url,resources};
+  // Images (SVG `image`, HTML `img`) and the icon: Lean chose and resolved each URL. The
+  // host fetches the bytes, with the rules of stylesheets: a remote page reads no local
+  // file. A fetch that fails leaves the image out; Lean then draws nothing in its box.
+  const images:{key:string;base64:string}[]=[];
+  let imageBytes=0;
+  for(const image of (inspection.images??[]).slice(0,MAX_IMAGES)) {
+    signal?.throwIfAborted();
+    try{
+      navigationURL(image.url,inspection.baseURL,document.url);
+      const fetched=await readBytes(image.url,signal,MAX_IMAGE_BYTES);
+      imageBytes+=fetched.bytes.length;if(imageBytes>MAX_IMAGE_BYTES)break;
+      images.push({key:image.key,base64:toBase64(fetched.bytes)});
+    }catch(error){if(signal?.aborted)throw error;console.error(`Native HTML image refused: ${image.url}: ${String(error instanceof Error?error.message:error)}`);}
+  }
+  let iconBase64:string|undefined;
+  if(inspection.icon)try{
+    navigationURL(inspection.icon,inspection.baseURL,document.url);
+    iconBase64=toBase64((await readBytes(inspection.icon,signal,MAX_ICON_BYTES)).bytes);
+  }catch(error){if(signal?.aborted)throw error;console.error(`Native HTML icon refused: ${inspection.icon}: ${String(error instanceof Error?error.message:error)}`);}
+  const options={url:document.url,resources,...(images.length?{images}:{})};
   // Pages show in the font of loadFontFile, or else in the Lean bitmap face.
   signal?.throwIfAborted();
   return {
-    url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,
+    url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,iconBase64,
     // What compile needs, as plain data, so the engine in a worker can run it.
     request:(_width:number,_height:number,view:PageView={})=>({source:document.source,options:{...options,...view} as Record<string,unknown>}),
     compile:(width:number,height:number,view:PageView={})=>engine.compile(document.source,width,height,{...options,...view}),

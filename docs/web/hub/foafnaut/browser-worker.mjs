@@ -25,7 +25,7 @@ function call(source,options,w=1,h=1){
   try{const result=JSON.parse(module.UTF8ToString(pointer));if(result?.error)throw Error(result.error);return result;}
   finally{module.ccall('web_render_free',null,['number'],[pointer]);}
 }
-const shell=()=>({tabs:tabs.map((tab,i)=>({title:(i===active?doc:tab.doc)?.title??''})),active,...field,focused,
+const shell=()=>({tabs:tabs.map((tab,i)=>{const page=i===active?doc:tab.doc;return {title:page?.title??'',icon:page?.icon};}),active,...field,focused,
   canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll});
 const push=(state,url)=>call('',{op:'historyPush',history:state,url});
 const refusal=(url,message)=>{
@@ -96,6 +96,16 @@ async function fetchText(url){
   const response=await fetch(url);if(!response.ok)throw Error(`HTTP ${response.status}`);
   return {url:response.url||url,source:await response.text()};
 }
+// Bytes as Base64, for the JSON requests that carry images and icons.
+function toBase64(bytes){let text='';for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(text);}
+// Images and the icon: Lean chose and resolved each URL. Only this site's files are read;
+// an image that does not load is left out, and Lean draws nothing in its box.
+async function fetchBase64(url,limit){
+  if(!url.startsWith(siteOrigin))throw Error('only this site is read');
+  const response=await fetch(url);if(!response.ok)throw Error(`HTTP ${response.status}`);
+  const bytes=new Uint8Array(await response.arrayBuffer());if(bytes.length>limit)throw Error('too large');
+  return toBase64(bytes);
+}
 async function prepare(url){
   const page=await fetchText(url);
   const sources=[{kind:'Source',url:page.url,source:page.source}];
@@ -107,7 +117,14 @@ async function prepare(url){
     sources.push({kind:'XSLT source',url:xsl.url,source:xsl.source},{kind:'Generated page',url:page.url,source:page.source});
   }
   const facts=call(page.source,{op:'inspect',url:page.url});
-  return {url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources};
+  const images=[];
+  for(const image of (facts.images??[]).slice(0,64)){
+    try{images.push({key:image.key,base64:await fetchBase64(image.url,4194304)});}catch(error){console.warn('foafnaut: image refused:',image.url,String(error));}
+  }
+  // The tab icon (HTML §4.6.7.8), prepared once by Lean.
+  let icon;
+  if(facts.icon)try{icon=call('',{op:'iconPrepare',base64:await fetchBase64(facts.icon,65536),scale:2});}catch(error){console.warn('foafnaut: icon refused:',facts.icon,String(error));}
+  return {url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,images,icon};
 }
 function show(next,remember=true){
   doc=next;if(!focused)field=showURL(next.url);scroll=0;loading=false;
@@ -236,7 +253,7 @@ async function draw(){
     const start=performance.now(),inputAt=pendingStamp;pendingStamp=undefined;
     try{
       // A page already on screen had Lean's full probe set on its first frame.
-      const next=render(doc.source,{op:'render',url:doc.url,textScalePercent:percent,shell:shell(),live:doc===checked,binary:true},width,height);
+      const next=render(doc.source,{op:'render',url:doc.url,...(doc.images?.length?{images:doc.images}:{}),textScalePercent:percent,shell:shell(),live:doc===checked,binary:true},width,height);
       checked=doc;
       const laid=performance.now();
       let rgba,pixelHash,gpuMs;

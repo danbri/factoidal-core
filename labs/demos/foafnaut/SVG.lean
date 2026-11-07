@@ -1323,14 +1323,17 @@ def imageKeys (root : NamespaceNode) (base : Option String := none) : List Strin
 /-- Decode each image of a tree once. `supplied` holds the bytes that the host
     fetched, by key; a `data:` URI needs no host. A reference with no bytes, and an
     image past the budget of the document, stay in the store as a refusal. -/
-def imageStore (root : NamespaceNode) (base : Option String := none)
-    (supplied : List (String × ByteArray) := []) : NativeImage.Store :=
-  ((imageKeys root base).foldl (fun (state : NativeImage.Store × Nat) key =>
+def imageStoreOf (keys : List String) (supplied : List (String × ByteArray) := []) : NativeImage.Store :=
+  (keys.foldl (fun (state : NativeImage.Store × Nat) key =>
     if key.toLower.startsWith "data:" then state.1.addData state.2 key
     else match supplied.find? (·.1 == key) with
       | some (_,bytes) => state.1.addBytes state.2 key bytes
       | none => (state.1.insert key (.error s!"image resource not supplied: {key}"),state.2))
     (({} : NativeImage.Store),0)).1
+
+def imageStore (root : NamespaceNode) (base : Option String := none)
+    (supplied : List (String × ByteArray) := []) : NativeImage.Store :=
+  imageStoreOf (imageKeys root base) supplied
 
 /-- SVG Tiny 1.2 §5.7 and §7.8: where the pixels go in the viewport x, y, w, h. The
     result is the rectangle to fill and the map from the user space to pixels. With

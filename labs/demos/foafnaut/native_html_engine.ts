@@ -22,7 +22,13 @@ export type Inspection = {
   title:string;
   scripts:{kind:string;type:string;src:string}[];
   stylesheets:{nodeId:number;url:string}[];
+  /** SVG `image` and HTML `img` resources to fetch, by key. */
+  images?:{key:string;url:string}[];
+  /** The icon Lean chose for the tab (HTML §4.6.7.8), or null. */
+  icon?:string|null;
 };
+/** A tab icon as Lean prepared it (WebDocument.iconPrepare). */
+export type TabIcon={kind:"svg";source:string}|{kind:"bitmap";width:number;height:number;rgba:string};
 export type History = {entries:string[];index:number};
 export type HistoryAnswer = {history:History;url:string|null;canBack:boolean;canForward:boolean};
 export type GraphFrame = {model:string;commands:string[]};
