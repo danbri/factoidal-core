@@ -64,4 +64,4 @@ def main (args : List String) : IO Unit := do
   match args with
   | [] => pure ()
   | ["--emit-json",path] => L4Factoidal.Math.AffineTests.emit path
-  | _ => throw (IO.userError "usage: AffineTests [--emit-json PATH]")
+  | _ => throw (IO.userError "usage: l4affine-test [--emit-json PATH]")

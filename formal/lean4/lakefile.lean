@@ -280,6 +280,14 @@ lean_lib ScopedQueryPrototype where
 lean_lib ServiceVariableRegression where
   roots := #[`Wasm.Ops.ServiceVariableTests, `Wasm.Ops.ServiceSerializationTests]
 
+-- Checks that may not enter the L4Factoidal or l4wasm closures: two handoff
+-- tests that import Wasm.Ops.Handles, and the XProc function-library adapter,
+-- which needs XSLT4 and XQuery4. Not a default target: verify-lean4.yml names it.
+lean_lib ClosureChecks where
+  roots := #[`L4Factoidal.Dataflow.GraphProjectionTests,
+             `L4Factoidal.Dataflow.NormalizationHandoffTests,
+             `L4Factoidal.XProc31.ImportedFunctions]
+
 -- Observable cardinality of the dataset handle store: 41 assertions over
 -- open / clone / update / add / delete (RDF 1.1 Concepts §3: a graph is a set).
 @[default_target] lean_exe «l4dataset-set-regression» where root := `Harness.DatasetSetRegression
@@ -406,6 +414,9 @@ lean_lib ServiceVariableRegression where
 -- Capability-aware planner, KR 2.2 (https://github.com/danbri/factoidal/issues/801):
 -- the structural planner's test set, with its expected-failure bucket.
 @[default_target] lean_exe «l4planner-test» where root := `Harness.PlannerTest
+-- The shared affine type against exact TOAN matrix products. It defines `main`,
+-- so it lives under Harness: build-wasm.sh links every other module's C.
+@[default_target] lean_exe «l4affine-test» where root := `Harness.AffineProbe
 -- The q07 kernel timing loop alone (no FFI in its imports), for the native and
 -- wasm32 measurements of issue 797 (tools/lean-wasm-exe.sh builds the wasm32 one).
 @[default_target] lean_exe «l4qlvr-kernel» where root := `Harness.QlvrKernelBench

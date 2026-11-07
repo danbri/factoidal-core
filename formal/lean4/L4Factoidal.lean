@@ -1225,3 +1225,7 @@ import L4Factoidal.Rendering.LayoutStackAudit
 import L4Factoidal.Rendering.RdfViewTests
 import L4Factoidal.Rendering.FloatFormat
 import L4Factoidal.LWS.Base64FastTests
+import L4Factoidal.Dataflow.FailureConditions
+import L4Factoidal.Dataflow.ConditionalTests
+import L4Factoidal.SPARQL.ResultsXmlAdmission
+import L4Factoidal.SPARQL.ResultsXmlRoutingTests
