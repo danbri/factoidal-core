@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Showcase</title>
+<style>
+body{margin:16px;font-size:14px;line-height:21px;color:#22303c;background:white}
+h1{margin:0;font-size:26px;line-height:34px;color:#184078}
+h2{margin:0;padding-top:20px;font-size:18px;line-height:26px;color:#184078}
+p{margin:0;padding-top:6px}
+.lead{font-size:16px;line-height:24px;color:#34485c}
+.card{margin:10px 0 0 0;padding:10px 14px;background:#f3f6fa}
+.card p{padding-top:2px}
+.title{font-size:17px;line-height:24px}
+.good{color:#2d7d4f}
+.gap{color:#a8432f}
+.note{color:#5b6876;font-size:13px}
+svg{display:block}
+</style></head><body><main>
+<p><a href="index.html">Demo index</a></p>
+<h1>foafnaut showcase</h1>
+<p class="lead">Pages that show what the Lean engine draws well today, and pages that show, without
+excuse, where it is weak. Every page here is parsed, styled, laid out and painted by Lean; the
+host only moves bytes to the GPU.</p>
+<svg width="760" height="56" viewBox="0 0 760 56">
+<rect x="0" y="8" width="760" height="40" rx="8" fill="#184078"/>
+<circle cx="28" cy="28" r="10" fill="#f0c75e"/>
+<circle cx="58" cy="28" r="10" fill="#e07b39"/>
+<circle cx="88" cy="28" r="10" fill="#c4455a"/>
+<path d="M120 28 C 220 12 300 44 400 28 S 580 12 740 28" fill="none" stroke="#9fb7dc" stroke-width="3" stroke-linecap="round"/>
+<path d="M120 28 C 220 12 300 44 400 28 S 580 12 740 28" fill="none" stroke="#f7f3e8" stroke-width="1" stroke-dasharray="6 6"/>
+</svg>
+
+<h2>Pages</h2>
+<div class="card"><p class="title"><a href="showcase-dataviz.html">Data visualisation</a></p>
+<p>Bar chart, line and area chart, tidy tree, circle packing and a force-directed graph, computed in the
+manner of D3 with no library, from real data (this browser's own Lean files).</p>
+<p class="good">Works: paths, Bézier curves, dashes, opacity, rounded rectangles, many hundreds of shapes.</p></div>
+
+<div class="card"><p class="title"><a href="showcase-dataviz-script.html">Data visualisation with a script</a></p>
+<p>The same bar chart, but sized and animated by a script from a data array.</p>
+<p class="gap">Gap: the window refuses pages with scripts, and the script binding has no timers
+(<a href="https://github.com/danbri/factoidal/issues/1271">issue 1271</a>).</p></div>
+
+<div class="card"><p class="title"><a href="showcase-tables.html">Tables</a></p>
+<p>A caption, a header row, zebra rows, numbers aligned right, colspan and rowspan.</p>
+<p class="gap">Gap: no table layout, and no borders or text alignment
+(<a href="https://github.com/danbri/factoidal/issues/1272">issue 1272</a>,
+<a href="https://github.com/danbri/factoidal/issues/1273">issue 1273</a>).</p></div>
+
+<div class="card"><p class="title"><a href="showcase-tables-svg.html">Tables drawn as SVG</a></p>
+<p>The same tables, with zebra rows, a rule under the header, numbers aligned right, a spanning cell and a totals row.</p>
+<p class="good">Works as SVG shapes and glyph outlines placed at build time.</p></div>
+
+<div class="card"><p class="title"><a href="showcase-lettering.html">Lettering on curves</a></p>
+<p>A badge with text round a circle, text on a wave and a spiral, words rotated in a ring.</p>
+<p class="good">Works as glyph outlines placed at build time; the engine draws the curves.</p></div>
+
+<div class="card"><p class="title"><a href="showcase-textpath.html">SVG text and textPath</a></p>
+<p>The same lettering written as SVG text, textPath and rotate.</p>
+<p class="gap">Gap: SVG text refuses the whole page
+(<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>).</p></div>
+
+<div class="card"><p class="title"><a href="showcase-scripts.html">Writing systems and direction</a></p>
+<p>Latin with diacritics, Greek, Cyrillic, Arabic, Hebrew, Devanagari, Thai, Chinese, Japanese, Korean; right to left and mixed direction.</p>
+<p class="gap">Gap: one font with no fallback
+(<a href="https://github.com/danbri/factoidal/issues/1274">issue 1274</a>), and no bidirectional layout
+(<a href="https://github.com/danbri/factoidal/issues/1275">issue 1275</a>).</p></div>
+
+<div class="card"><p class="title"><a href="showcase-emoji.html">Emoji</a></p>
+<p>Single emoji, ZWJ sequences, skin tones, flags and keycaps.</p>
+<p class="gap">Gap: no emoji font and no colour glyphs
+(<a href="https://github.com/danbri/factoidal/issues/1276">issue 1276</a>).</p></div>
+
+<h2>Test suites</h2>
+<p>The W3C SVG Tiny 1.2 suite, 496 tests, scored with WebGPU pixels against the W3C reference images:
+<a href="https://danbri.github.io/factoidal/web/hub/render-scores/#svg-tiny-pixels">SVG Tiny pixel results</a>.
+The strict Lean SVG compiler on the same files:
+<a href="https://danbri.github.io/factoidal/web/hub/render-scores/#svg-tiny-admission">SVG Tiny admission results</a>.</p>
+<p>All rendering and font suites (WPT, html5lib, HarfBuzz, the old web mirror, these demo pages):
+<a href="https://danbri.github.io/factoidal/web/hub/render-scores/">rendering and font scores</a>.</p>
+<p class="note">Those links open the public hub. The pages there are large; the window draws them slowly.</p>
+
+<h2>Fonts</h2>
+<p>The window has one font, Noto Sans Regular (OFL), with 3,884 glyphs: Latin, Greek and Cyrillic,
+with the Vietnamese and other Latin diacritics. There is no bold or italic face, and no fallback font
+for other writing systems.</p>
+</main></body></html>

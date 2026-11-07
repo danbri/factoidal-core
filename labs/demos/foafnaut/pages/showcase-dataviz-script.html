@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Data visualisation with a script</title>
+<style>
+body{margin:16px;font-size:14px;line-height:20px;color:#22303c;background:white}
+h1{margin:0;font-size:24px;line-height:32px;color:#184078}
+p{margin:0;padding-top:6px}
+.note{color:#5b6876;font-size:13px}
+svg{display:block}
+</style></head><body><main>
+<p><a href="showcase.html">Showcase</a> · <a href="index.html">Demo index</a></p>
+<h1>Data visualisation with a script</h1>
+<p>A bar chart in the manner of D3: a script joins a data array to SVG rectangles, sizes each bar
+with <code>setAttribute</code>, adds one bar with <code>createElementNS</code>, and grows the bars
+with <code>requestAnimationFrame</code>. A click on the chart sorts the bars.</p>
+<p class="note">Expected failure. The foafnaut window refuses a page with a script, and the script
+binding of the web build has no timers, no <code>requestAnimationFrame</code> and no element
+creation (<a href="https://github.com/danbri/factoidal/issues/1271">issue 1271</a>). With no
+script, the bars below have their final static sizes.</p>
+<p id="status">Static bars: the script did not run.</p>
+<svg id="chart" width="640" height="260" viewBox="0 0 640 260">
+<line x1="40" y1="220" x2="620" y2="220" stroke="#22303c" stroke-width="1.5"/>
+<rect id="bar0" x="60" y="100" width="56" height="120" rx="3" fill="#3b6fb6"/>
+<rect id="bar1" x="140" y="60" width="56" height="160" rx="3" fill="#e07b39"/>
+<rect id="bar2" x="220" y="140" width="56" height="80" rx="3" fill="#3f9d6b"/>
+<rect id="bar3" x="300" y="40" width="56" height="180" rx="3" fill="#c4455a"/>
+<rect id="bar4" x="380" y="120" width="56" height="100" rx="3" fill="#7a5cb8"/>
+<rect id="bar5" x="460" y="170" width="56" height="50" rx="3" fill="#8a6d3b"/>
+</svg>
+<script>
+// Data, a scale and a join, as d3.scaleLinear and selection.data would make them.
+const data = [12, 16, 8, 18, 10, 5, 14];
+const colours = ['#3b6fb6', '#e07b39', '#3f9d6b', '#c4455a', '#7a5cb8', '#8a6d3b', '#cc6aa8'];
+const base = 220, scale = v => v * 10;
+const status = document.getElementById('status');
+const chart = document.getElementById('chart');
+const bars = data.map((v, i) => {
+  let bar = document.getElementById('bar' + i);
+  if (!bar) {
+    // The enter selection: a new element for a datum with no element.
+    bar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    bar.setAttribute('id', 'bar' + i);
+    bar.setAttribute('rx', '3');
+    bar.setAttribute('fill', colours[i]);
+    chart.appendChild(bar);
+  }
+  bar.setAttribute('x', String(60 + i * 80));
+  bar.setAttribute('width', '56');
+  return bar;
+});
+function draw(t) {
+  bars.forEach((bar, i) => {
+    const h = scale(data[i]) * Math.min(1, t);
+    bar.setAttribute('y', String(base - h));
+    bar.setAttribute('height', String(h));
+  });
+}
+let start = null;
+function frame(now) {
+  if (start === null) start = now;
+  const t = (now - start) / 800;
+  draw(t);
+  if (t < 1) requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+chart.addEventListener('click', () => {
+  data.sort((a, b) => b - a);
+  start = null;
+  requestAnimationFrame(frame);
+});
+status.textContent = 'The script ran: ' + data.length + ' bars.';
+</script>
+</main></body></html>

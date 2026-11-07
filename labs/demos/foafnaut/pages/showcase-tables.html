@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Tables</title>
+<style>
+body{margin:16px;font-size:14px;line-height:20px;color:#22303c;background:white}
+h1{margin:0;font-size:24px;line-height:32px;color:#184078}
+h2{margin:0;padding-top:20px;font-size:18px;line-height:26px;color:#184078}
+p{margin:0;padding-top:6px}
+.note{color:#5b6876;font-size:13px}
+table{margin:10px 0 0 0;border-collapse:collapse;border:1px solid #c9d2dc}
+caption{caption-side:top;padding:6px 10px;background:#184078;color:white;font-size:15px;text-align:left}
+th{padding:6px 10px;background:#dfe7f1;color:#184078;font-weight:bold;text-align:left;border-bottom:2px solid #184078}
+td{padding:5px 10px;border-bottom:1px solid #e3e8ee;vertical-align:top}
+tr.odd td{background:#f6f8fb}
+tr.even td{background:white}
+td.num, th.num{text-align:right;font-variant-numeric:tabular-nums}
+td.total{background:#fff4d6;font-weight:bold;border-top:2px solid #184078}
+td.group{background:#eef3e9;color:#2d6a3e;font-weight:bold}
+.swatch{color:#a8432f}
+</style></head><body><main>
+<p><a href="showcase.html">Showcase</a> · <a href="index.html">Demo index</a></p>
+<h1>Tables</h1>
+<p>Three tables with the CSS a browser would draw: a caption bar, a header row with a rule under it,
+zebra rows, numbers aligned right, cells that span columns and rows, and a totals row.</p>
+<p class="note">Expected failure. The engine has no table layout, so each cell is a block on its own
+line, and colspan and rowspan have no effect
+(<a href="https://github.com/danbri/factoidal/issues/1272">issue 1272</a>). Borders, text-align
+and font-weight are dropped
+(<a href="https://github.com/danbri/factoidal/issues/1273">issue 1273</a>). Backgrounds, padding,
+colours and the caption work, so the cells keep their zebra colours. The same tables drawn as SVG: <a href="showcase-tables-svg.html">showcase-tables-svg.html</a>.</p>
+
+<h2>1. Numbers aligned right, with a total</h2>
+<table>
+<caption>Lean files in the foafnaut lab, by part (7 November 2026)</caption>
+<thead><tr><th>Part</th><th class="num">Files</th><th class="num">Lines</th><th class="num">Share</th></tr></thead>
+<tbody>
+<tr class="odd"><td>SVG</td><td class="num">36</td><td class="num">7,505</td><td class="num">48.2%</td></tr>
+<tr class="even"><td>HTML and CSS</td><td class="num">18</td><td class="num">2,937</td><td class="num">18.9%</td></tr>
+<tr class="odd"><td>FOAF</td><td class="num">8</td><td class="num">1,535</td><td class="num">9.9%</td></tr>
+<tr class="even"><td>Other</td><td class="num">8</td><td class="num">1,290</td><td class="num">8.3%</td></tr>
+<tr class="odd"><td>Images</td><td class="num">4</td><td class="num">1,064</td><td class="num">6.8%</td></tr>
+<tr class="even"><td>Solving</td><td class="num">4</td><td class="num">552</td><td class="num">3.5%</td></tr>
+<tr class="odd"><td>GPU plan</td><td class="num">4</td><td class="num">513</td><td class="num">3.3%</td></tr>
+<tr class="even"><td>Fonts</td><td class="num">2</td><td class="num">166</td><td class="num">1.1%</td></tr>
+</tbody>
+<tfoot><tr><td class="total">Total</td><td class="num total">84</td><td class="num total">15,562</td><td class="num total">100.0%</td></tr></tfoot>
+</table>
+
+<h2>2. Column spans and row spans</h2>
+<table>
+<caption>What the engine draws, by layer</caption>
+<thead>
+<tr><th rowspan="2">Layer</th><th colspan="2">HTML page</th><th colspan="2">SVG document</th></tr>
+<tr><th>Lean</th><th>GPU</th><th>Lean</th><th>GPU</th></tr>
+</thead>
+<tbody>
+<tr class="odd"><td>Parse</td><td>HTML5 tokenizer and tree builder</td><td rowspan="2">none</td><td>XML namespace view</td><td rowspan="2">none</td></tr>
+<tr class="even"><td>Style</td><td>CSS cascade, small profile</td><td>presentation attributes and CSS</td></tr>
+<tr class="odd"><td>Layout</td><td>block and inline boxes</td><td>scene floats</td><td>paths, strokes, dashes</td><td>scene floats</td></tr>
+<tr class="even"><td>Paint</td><td colspan="4" class="group">One WGSL program from Lean draws every primitive, in tiles</td></tr>
+</tbody>
+</table>
+
+<h2>3. A timetable</h2>
+<table>
+<caption>Train times, Bristol Temple Meads to London Paddington (sample data)</caption>
+<thead><tr><th>Departs</th><th>Arrives</th><th class="num">Minutes</th><th>Changes</th><th>Notes</th></tr></thead>
+<tbody>
+<tr class="odd"><td>06:00</td><td>07:39</td><td class="num">99</td><td>0</td><td>Calls at Bath Spa, Chippenham, Swindon, Reading</td></tr>
+<tr class="even"><td>06:30</td><td>08:04</td><td class="num">94</td><td>0</td><td>Fast</td></tr>
+<tr class="odd"><td>07:00</td><td>08:42</td><td class="num">102</td><td>1</td><td>Change at Reading</td></tr>
+<tr class="even"><td>07:30</td><td>09:01</td><td class="num">91</td><td>0</td><td>Fast</td></tr>
+</tbody>
+</table>
+<p class="note">Times are sample data for the layout, not a timetable.</p>
+</main></body></html>

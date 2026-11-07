@@ -11,7 +11,10 @@ import {inputURL,loadFontFile,prepareHTML} from "./native_html_document.ts";
 const font=new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url).pathname;
 const library=new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;
 const pagesDir=new URL("./pages/",import.meta.url).pathname;
-const pages=[...Deno.readDirSync(pagesDir)].map(e=>e.name).filter(n=>n.endsWith(".html")).sort();
+// A page that is an expected refusal (manifest "refused" or "appRefused", with its issue) has no scene.
+const refusedPages=new Set((JSON.parse(Deno.readTextFileSync(pagesDir+"manifest.json")).pages as {page:string;refused?:string;appRefused?:string}[])
+  .filter(p=>p.refused||p.appRefused).map(p=>p.page));
+const pages=[...Deno.readDirSync(pagesDir)].map(e=>e.name).filter(n=>n.endsWith(".html")&&!refusedPages.has(n)).sort();
 
 const bytesOf=(part:unknown)=>{
   if(part instanceof Float32Array||part instanceof Uint32Array)return new Uint8Array(part.buffer,part.byteOffset,part.byteLength);

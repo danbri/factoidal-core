@@ -34,7 +34,8 @@ def svg(path, title):
 
 def index():
     # foafnaut:graph is a built-in page: the interactive graph, run by the Lean app.
-    links = '<p><a href="foafnaut:graph">Interactive FOAF graph</a></p>\n' + '\n'.join(f'<p><a href="{p["page"]}">{html.escape(p["title"])}</a></p>' for p in manifest['pages'] if p['page'] != 'index.html')
+    # Showcase pages are linked from showcase.html, not from here.
+    links = '<p><a href="foafnaut:graph">Interactive FOAF graph</a></p>\n' + '\n'.join(f'<p><a href="{p["page"]}">{html.escape(p["title"])}</a></p>' for p in manifest['pages'] if p['page'] != 'index.html' and not p.get('showcase'))
     return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Demo pages</title>'
             f'<style>{STYLE}</style></head><body><main>\n<h1>foafnaut2525 demo pages</h1>\n'
             f'<p>Every page here is rendered by the Lean engine with WebGPU.</p>\n{links}\n</main></body></html>\n')
@@ -45,6 +46,8 @@ for page in manifest['pages']:
     source = page.get('source')
     if page['page'].endswith('.xml'):
         continue  # An XML page is its own source; the engine runs its stylesheet.
+    if page.get('handwritten') or page.get('generator'):
+        continue  # Written by hand, or by its generator (which needs fontTools): not rebuilt here.
     if source is None:
         pages[page['page']] = index()
     else:
