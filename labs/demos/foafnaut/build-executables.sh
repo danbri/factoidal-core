@@ -58,6 +58,8 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   deno compile --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-net --allow-ffi \
     --include "$LAB/.build/native-html/runtime/web-render.wasm" \
+    --include "$LAB/../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf" \
+    --include "$LAB/../../../third_party/fonts/noto-sans/OFL.txt" \
     --include "$LAB/.build/engines/render-plan.wasm" \
     --include "$LAB/native-html/default.html" --include "$LAB/native-html/next.html" --include "$LAB/pages" \
     --output "$OUT/native-webgpu-html-darwin-arm64.tmp" "$LAB/run_html.ts"
