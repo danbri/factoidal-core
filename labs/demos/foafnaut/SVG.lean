@@ -10,6 +10,7 @@ import SVGStroke
 import L4Factoidal.Math.Affine
 import L4Factoidal.Tdb2.Format
 import L4Factoidal.Rendering.FloatFormat
+import L4Factoidal.Rendering.Scene
 import L4Factoidal.XML.NamespaceView
 
 /- Isolated strict SVG document reader, not SVG Tiny/full conformance.
@@ -198,8 +199,15 @@ private def color (input : String) : Except String Color := do
     match named.find? (fun item => item.1 == s) with
     | some (_,r,g,b) => return rgb r g b
     | none => throw s!"unsupported color: {input}"
+abbrev Gradient := L4Factoidal.Rendering.Gradient
+abbrev GradientStop := L4Factoidal.Rendering.GradientStop
+abbrev GradientRecord := L4Factoidal.Rendering.GradientRecord
 inductive Paint where
   | none | solid (color : Color) | current
+  /-- A paint server as read from the document, for any primitive. -/
+  | gradient (source : Gradient)
+  /-- The server lowered for this primitive, at a word offset of the paint table. -/
+  | gradientRecord (cursor : Nat) (record : GradientRecord)
   deriving Repr
 inductive FillRule where | nonzero | evenodd
   deriving Repr, BEq
@@ -221,27 +229,6 @@ structure Style where
   rule : FillRule := .nonzero
   lineCap : LineCap := .butt
   deriving Repr
-private def readPaint (ids : List String) (source : String) : Except String Paint := do
-  let s := trim source
-  if s.startsWith "url(" then
-    let pieces := s.splitOn ")"
-    let [target, fallback] := pieces | throw "unsupported paint URL syntax"
-    let target := trim (String.ofList (target.toList.drop 4))
-    let target := if (target.startsWith "\"" && target.endsWith "\"") ||
-        (target.startsWith "'" && target.endsWith "'") then
-        String.ofList (target.toList.drop 1 |>.take (target.length-2)) else target
-    if !target.startsWith "#" || target.length < 2 then throw "external/unsupported paint URL"
-    let id := String.ofList (target.toList.drop 1)
-    if !id.toList.all (fun c => c.isAlphanum && c.toNat < 128 || ['_','-',':','.'].contains c) then
-      throw "unsupported paint fragment syntax/encoding"
-    if ids.contains id then throw "referenced paint server unsupported"
-    let fallback := trim fallback
-    if fallback.isEmpty || fallback.toLower == "none" then pure .none
-    else if fallback.toLower == "currentcolor" then pure .current
-    else Paint.solid <$> color fallback
-  else if s.toLower == "none" then pure .none
-  else if s.toLower == "currentcolor" then pure .current
-  else Paint.solid <$> color s
 private def attr (attrs : List NamespaceAttribute) (key : String) : Option String :=
   (attrs.find? (fun a => a.name.namespace_.isNone && a.name.localPart == key)).map (·.value)
 /-- SVG 2 §8.9: percentage bases belong to the viewport's user space. -/
@@ -258,14 +245,233 @@ private def relativeLength (source : String) (base : Float) : Except String Floa
 
 private def common := ["id","fill","stroke","color","fill-opacity","stroke-opacity","stroke-width",
   "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule","stroke-dasharray","stroke-dashoffset",
-  "display","visibility"]
+  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity"]
+/-- SVG Tiny 1.2 §11.13 and §11.16: elements that define a paint and draw nothing. -/
+private def paintServers := ["linearGradient","radialGradient","solidColor"]
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
     if let some uri := a.name.namespace_ then
-      if uri == svgURI || (uri == "http://www.w3.org/1999/xlink" && !(tag == "use" && a.name.localPart == "href")) ||
+      if uri == svgURI || (uri == "http://www.w3.org/1999/xlink" && !(["use","linearGradient","radialGradient"].contains tag && a.name.localPart == "href")) ||
           (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base"].contains a.name.localPart) then
         throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
     else if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
+private def cssProperties := (common.filter (· != "id")) ++ ["opacity","overflow"]
+private def sheetProperties := cssProperties ++ ["width","height"]
+private def displaySuppressed (attrs : List NamespaceAttribute) : Bool :=
+  (attr attrs "display").any (fun value => (trim value).toLower == "none")
+private def cssAttribute (d : NativeSVGCSS.Declaration) : NamespaceAttribute :=
+  {name:={namespace_:=none,localPart:=d.property},value:=d.value}
+private def applyCSSWith (validate : NativeSVGCSS.Declaration → Except String Unit) (rules : List NativeSVGCSS.Rule)
+    (tag : String) (attrs : List NamespaceAttribute) (nested : Bool := false) : Except String (List NamespaceAttribute) := do
+  let presentation := attrs.filterMap fun a =>
+    if a.name.namespace_.isNone && cssProperties.contains a.name.localPart then
+      some ({property:=a.name.localPart,value:=a.value} : NativeSVGCSS.Declaration) else none
+  let inlineStyle ← NativeSVGCSS.parseDeclarations sheetProperties ((attr attrs "style").getD "")
+  let ignoredDimension := fun (d : NativeSVGCSS.Declaration) =>
+    (["use","symbol"].contains tag || (tag == "svg" && nested)) && ["width","height"].contains d.property
+  let inlineStyle := inlineStyle.filter (!ignoredDimension ·)
+  let rules := rules.map fun rule => {rule with declarations:=rule.declarations.filter (!ignoredDimension ·)}
+  let winning ← NativeSVGCSS.cascade validate tag presentation rules inlineStyle
+  pure (attrs.filter (fun a => !(a.name.namespace_.isNone && (cssProperties.contains a.name.localPart || a.name.localPart=="style"))) ++ winning.map cssAttribute)
+
+/-- Document data that a paint reference needs. -/
+private structure PaintContext where
+  references : NativeSVGReferences.Index
+  rules : List NativeSVGCSS.Rule
+  document : NamespaceNode
+
+/-- Attributes of an element that a paint server depends on, after the cascade.
+    Values are checked where they are read, so that an unrelated property of an
+    ancestor does not refuse the paint. -/
+private def serverAttrs (paints : PaintContext) (tag : String) (attrs : List NamespaceAttribute) :
+    Except String (List NamespaceAttribute) :=
+  applyCSSWith (fun _ => pure ()) paints.rules tag attrs
+
+/-- Attributes of the SVG ancestors of the element at `path`, nearest first. A
+    paint server takes inherited values from where it stands, not from where it
+    is used (SVG Tiny 1.2 §6.7). -/
+private def ancestorAttrs (paints : PaintContext) (path : List Nat) :
+    Except String (List (List NamespaceAttribute)) := do
+  let mut node := paints.document
+  let mut chain : List (List NamespaceAttribute) := []
+  for index in path do
+    match node with
+    | .other _ => throw "paint server path enters a non-element"
+    | .element name attrs children =>
+      if name.namespace_ == some svgURI then
+        chain := (← serverAttrs paints name.localPart attrs) :: chain
+      else chain := []
+      let some child := children[index]? | throw "paint server path is outside the document"
+      node := child
+  return chain
+
+/-- The `color` property: inherited, with black as this reader's initial value. -/
+private def computedColor : List (List NamespaceAttribute) → Except String Color
+  | [] => pure (rgb 0 0 0)
+  | attrs::rest =>
+    match attr attrs "color" with
+    | none => computedColor rest
+    | some value =>
+      if ["inherit","currentcolor"].contains (trim value).toLower then computedColor rest
+      else color value
+
+/-- A property that does not inherit unless its value is `inherit`. -/
+private def computedProperty (key : String) (initial : α)
+    (read : String → List (List NamespaceAttribute) → Except String α) :
+    List (List NamespaceAttribute) → Except String α
+  | [] => pure initial
+  | attrs::rest =>
+    match attr attrs key with
+    | none => pure initial
+    | some value =>
+      if trim value == "inherit" then computedProperty key initial read rest
+      else read value (attrs::rest)
+
+private def paintColor (source : String) (chain : List (List NamespaceAttribute)) : Except String Color :=
+  if (trim source).toLower == "currentcolor" then computedColor chain else color source
+private def paintOpacity (source : String) (_ : List (List NamespaceAttribute)) : Except String Float := do
+  return max 0 (min 1 (← number source))
+private def renderingColor (c : Color) : L4Factoidal.Rendering.Color := ⟨c.r,c.g,c.b⟩
+
+/-- SVG Tiny 1.2 §11.16: a number or a percentage; clamping is in `normalizeStops`. -/
+private def stopOffset (source : Option String) : Except String Float := do
+  let some source := source | return 0
+  let s := trim source
+  if s.endsWith "%" then
+    return (← number (String.ofList (s.toList.take (s.length-1))))/100
+  number s
+
+private def readStops (paints : PaintContext) (chain : List (List NamespaceAttribute))
+    (children : List NamespaceNode) : Except String (List GradientStop) := do
+  let mut stops : Array GradientStop := #[]
+  for child in children do
+    let .element name raw _ := child | continue
+    if name.namespace_ != some svgURI || name.localPart != "stop" then continue
+    if stops.size >= L4Factoidal.Rendering.maxGradientStops then
+      throw s!"gradient stop count exceeds {L4Factoidal.Rendering.maxGradientStops}"
+    let attrs ← serverAttrs paints "stop" raw
+    let own := attrs::chain
+    stops := stops.push {
+      offset := ← stopOffset (attr attrs "offset")
+      color := renderingColor (← computedProperty "stop-color" (rgb 0 0 0) paintColor own)
+      opacity := ← computedProperty "stop-opacity" 1 paintOpacity own }
+  return L4Factoidal.Rendering.normalizeStops stops.toList
+
+private structure ServerLink where
+  entry : NativeSVGReferences.Entry
+  tag : String
+  attrs : List NamespaceAttribute
+  children : List NamespaceNode
+
+/-- SVG Tiny 1.2 §11.15: the gradient, then the gradients its `xlink:href` chain
+    names. A target that is not a gradient ends the chain; a cycle is refused. -/
+private def gradientChain (paints : PaintContext) (start : String) : Except String (List ServerLink) := do
+  let mut links : Array ServerLink := #[]
+  let mut seen : List String := []
+  let mut next := some start
+  for _ in [:33] do
+    let some id := next | return links.toList
+    if seen.contains id then throw s!"gradient xlink:href cycle at {id}"
+    seen := id::seen
+    let some entry := paints.references.get? id | return links.toList
+    let .element name raw children := entry.node | return links.toList
+    if name.namespace_ != some svgURI || !["linearGradient","radialGradient"].contains name.localPart then
+      return links.toList
+    let attrs ← serverAttrs paints name.localPart raw
+    let extra := ["x1","y1","x2","y2","cx","cy","r","gradientUnits","gradientTransform","href"] ++
+      (if (attr attrs "spreadMethod").any (trim · == "pad") then ["spreadMethod"] else [])
+    validateAttrs name.localPart attrs extra
+    links := links.push {entry,tag:=name.localPart,attrs,children}
+    next := match NativeSVGReferences.href attrs with
+      | none => none
+      | some source => (NativeSVGReferences.fragment source paints.references.documentURL entry.parentBase).toOption.join
+  throw "gradient xlink:href chain exceeds 32"
+
+/-- SVG Tiny 1.2 §11.15: a percentage is of the viewport in user space, and of
+    the bounding box (where 100% is 1) in bounding box units. -/
+private def gradientLength (lengths : LengthContext) (boundingBox : Bool) (key source : String) : Except String Float := do
+  let base := if ["x1","x2","cx"].contains key then lengths.width
+    else if ["y1","y2","cy"].contains key then lengths.height else lengths.diagonal
+  relativeLength source (if boundingBox then 1 else base)
+
+private def readGradient (lengths : LengthContext) (paints : PaintContext)
+    (fallback : L4Factoidal.Rendering.FallbackPaint) (id : String) : Except String Gradient := do
+  let links ← gradientChain paints id
+  let some first := links.head? | throw "paint server is not a gradient"
+  let value := fun (key : String) => links.findSome? (attr ·.attrs key)
+  let units := (value "gradientUnits").map trim |>.getD "objectBoundingBox"
+  if !["objectBoundingBox","userSpaceOnUse"].contains units then
+    throw s!"unsupported attribute on {first.tag}: gradientUnits"
+  let boundingBox := units == "objectBoundingBox"
+  -- A coordinate comes only from a gradient of the same kind.
+  let coordinate := fun (key fallback : String) =>
+    gradientLength lengths boundingBox key
+      ((links.filter (·.tag == first.tag) |>.findSome? (attr ·.attrs key)).getD fallback)
+  let shape ← if first.tag == "linearGradient" then
+      pure (L4Factoidal.Rendering.GradientShape.linear (← coordinate "x1" "0%") (← coordinate "y1" "0%")
+        (← coordinate "x2" "100%") (← coordinate "y2" "0%"))
+    else do
+      let r ← coordinate "r" "50%"
+      if r < 0 then throw "negative radialGradient r"
+      pure (.radial (← coordinate "cx" "50%") (← coordinate "cy" "50%") r)
+  let transform ← checkedTransform (← transformList ((value "gradientTransform").getD ""))
+  -- The first gradient of the chain that has stops gives all of them.
+  let holder := links.find? fun link => link.children.any fun
+    | .element name _ _ => name.namespace_ == some svgURI && name.localPart == "stop"
+    | _ => false
+  let stops ← match holder with
+    | none => pure []
+    | some link => do
+      let ancestors ← ancestorAttrs paints link.entry.path
+      readStops paints (link.attrs::ancestors) link.children
+  return {shape,boundingBoxUnits:=boundingBox,transform,stops,fallback}
+
+/-- SVG Tiny 1.2 §11.13: a solid colour is a one-stop gradient in user space. -/
+private def readSolidColor (paints : PaintContext) (entry : NativeSVGReferences.Entry)
+    (raw : List NamespaceAttribute) : Except String Gradient := do
+  let attrs ← serverAttrs paints "solidColor" raw
+  let own := attrs :: (← ancestorAttrs paints entry.path)
+  return {shape:=.linear 0 0 1 0,boundingBoxUnits:=false,stops:=[{
+    offset:=0
+    color:=renderingColor (← computedProperty "solid-color" (rgb 0 0 0) paintColor own)
+    opacity:=← computedProperty "solid-opacity" 1 paintOpacity own}]}
+
+private def readPaint (lengths : LengthContext) (paints : PaintContext) (source : String) : Except String Paint := do
+  let s := trim source
+  if s.startsWith "url(" then
+    let pieces := s.splitOn ")"
+    let [target, fallback] := pieces | throw "unsupported paint URL syntax"
+    let target := trim (String.ofList (target.toList.drop 4))
+    let target := if (target.startsWith "\"" && target.endsWith "\"") ||
+        (target.startsWith "'" && target.endsWith "'") then
+        String.ofList (target.toList.drop 1 |>.take (target.length-2)) else target
+    if !target.startsWith "#" || target.length < 2 then throw "external/unsupported paint URL"
+    let id := String.ofList (target.toList.drop 1)
+    if !id.toList.all (fun c => c.isAlphanum && c.toNat < 128 || ['_','-',':','.'].contains c) then
+      throw "unsupported paint fragment syntax/encoding"
+    let fallback := trim fallback
+    let fallbackPaint : Paint ←
+      if fallback.isEmpty || fallback.toLower == "none" then pure .none
+      else if fallback.toLower == "currentcolor" then pure .current
+      else Paint.solid <$> color fallback
+    let rendered : L4Factoidal.Rendering.FallbackPaint := match fallbackPaint with
+      | .current => .current
+      | .solid c => .solid (renderingColor c)
+      | _ => .none
+    -- §11.3: a target that is not a paint server gives the fallback.
+    match paints.references.get? id with
+    | some entry =>
+      match entry.node with
+      | .element name raw _ =>
+        if name.namespace_ != some svgURI || !paintServers.contains name.localPart then pure fallbackPaint
+        else if name.localPart == "solidColor" then
+          pure (.gradient {← readSolidColor paints entry raw with fallback:=rendered})
+        else pure (.gradient (← readGradient lengths paints rendered id))
+      | _ => pure fallbackPaint
+    | none => pure fallbackPaint
+  else if s.toLower == "none" then pure .none
+  else if s.toLower == "currentcolor" then pure .current
+  else Paint.solid <$> color s
 private def inheritedNumber (lengths : LengthContext) (attrs : List NamespaceAttribute) (key : String) (old : Float) : Except String Float :=
   match attr attrs key with
   | none => pure old
@@ -280,14 +486,14 @@ private def dashArray (lengths : LengthContext) (source : String) : Except Strin
   if tokens.length > 64 then throw "dash pattern exceeds 64 entries"
   NativeSVGDash.normalizeLengths (← tokens.mapM fun token => do
     pure {value:= ← relativeLength token lengths.diagonal,percentage:=(trim token).endsWith "%"})
-private def readStyle (lengths : LengthContext) (ids : List String) (attrs : List NamespaceAttribute) (parent : Style) : Except String Style := do
+private def readStyle (lengths : LengthContext) (paints : PaintContext) (attrs : List NamespaceAttribute) (parent : Style) : Except String Style := do
   let mut style := parent
   if let some value := attr attrs "color" then
     if !["inherit","currentcolor"].contains (trim value).toLower then style := {style with currentColor:= ← color value}
   if let some value := attr attrs "fill" then
-    if trim value != "inherit" then style := {style with fill:= ← readPaint ids value}
+    if trim value != "inherit" then style := {style with fill:= ← readPaint lengths paints value}
   if let some value := attr attrs "stroke" then
-    if trim value != "inherit" then style := {style with stroke:= ← readPaint ids value}
+    if trim value != "inherit" then style := {style with stroke:= ← readPaint lengths paints value}
   if let some value := attr attrs "stroke-dasharray" then
     if trim value != "inherit" then
       style := {style with dashArray:= ← dashArray lengths value}
@@ -317,30 +523,15 @@ private def readStyle (lengths : LengthContext) (ids : List String) (attrs : Lis
     if let some value := attr attrs key then
       if !allowed.contains (trim value) then throw s!"unsupported {key}: {value}"
   return style
-private def cssProperties := (common.filter (· != "id")) ++ ["opacity","overflow"]
-private def sheetProperties := cssProperties ++ ["width","height"]
-private def displaySuppressed (attrs : List NamespaceAttribute) : Bool :=
-  (attr attrs "display").any (fun value => (trim value).toLower == "none")
-private def cssAttribute (d : NativeSVGCSS.Declaration) : NamespaceAttribute :=
-  {name:={namespace_:=none,localPart:=d.property},value:=d.value}
-private def applyCSS (lengths : LengthContext) (ids : List String) (rules : List NativeSVGCSS.Rule)
-    (tag : String) (attrs : List NamespaceAttribute) (nested : Bool := false) : Except String (List NamespaceAttribute) := do
-  let presentation := attrs.filterMap fun a =>
-    if a.name.namespace_.isNone && cssProperties.contains a.name.localPart then
-      some ({property:=a.name.localPart,value:=a.value} : NativeSVGCSS.Declaration) else none
-  let inlineStyle ← NativeSVGCSS.parseDeclarations sheetProperties ((attr attrs "style").getD "")
-  let ignoredDimension := fun (d : NativeSVGCSS.Declaration) =>
-    (["use","symbol"].contains tag || (tag == "svg" && nested)) && ["width","height"].contains d.property
-  let inlineStyle := inlineStyle.filter (!ignoredDimension ·)
-  let rules := rules.map fun rule => {rule with declarations:=rule.declarations.filter (!ignoredDimension ·)}
+private def applyCSS (lengths : LengthContext) (paints : PaintContext) (rules : List NativeSVGCSS.Rule)
+    (tag : String) (attrs : List NamespaceAttribute) (nested : Bool := false) : Except String (List NamespaceAttribute) :=
   let validate := fun (d : NativeSVGCSS.Declaration) => do
     if d.property == "opacity" then let _ ← number d.value; pure ()
     else if d.property == "overflow" then
       if !["hidden","visible","scroll","auto"].contains (trim d.value) then throw "unsupported overflow"
     else if ["width","height"].contains d.property then throw "unsupported CSS geometry property"
-    else let _ ← readStyle lengths ids [cssAttribute d] {}; pure ()
-  let winning ← NativeSVGCSS.cascade validate tag presentation rules inlineStyle
-  pure (attrs.filter (fun a => !(a.name.namespace_.isNone && (cssProperties.contains a.name.localPart || a.name.localPart=="style"))) ++ winning.map cssAttribute)
+    else let _ ← readStyle lengths paints [cssAttribute d] {}; pure ()
+  applyCSSWith validate rules tag attrs nested
 
 private def geometryNumber (lengths : LengthContext) (attrs : List NamespaceAttribute) (key : String) (fallback : Float := 0) : Except String Float :=
   match attr attrs key with | none => pure fallback | some s => relativeLength s (if ["x","x1","x2","cx","width","rx"].contains key then lengths.width
@@ -922,8 +1113,25 @@ private def rectClip (lengths : LengthContext) (references : NativeSVGReferences
   return (← geometryNumber lengths shape "x",← geometryNumber lengths shape "y",
     ← geometryNumber lengths shape "width",← geometryNumber lengths shape "height")
 
+/-- Namespace of an attribute that the forgiving pass writes on a glyph path. -/
+def internalURI := "urn:factoidal:svg-internal"
+/-- Attribute with the bounding box of the whole text: x, y, width and height. -/
+def textBoxAttribute := "text-box"
+
+/-- SVG Tiny 1.2 §11.13 and §7.11: a glyph path paints in the user space of its
+    text and with the bounding box of its text. -/
+private def Paint.ofText (frame : Transform) (box : Float × Float × Float × Float) : Paint → Paint
+  | .gradient g => .gradient {g with frame,box:=some box}
+  | paint => paint
+
+private def textFrame (attrs : List NamespaceAttribute) (transform : Transform) (style : Style) : Except String Style := do
+  let some mark := attrs.find? (fun a => a.name.namespace_ == some internalURI && a.name.localPart == textBoxAttribute)
+    | return style
+  let [x,y,w,h] ← numbers mark.value | throw "text box requires four numbers"
+  return {style with fill:=style.fill.ofText transform (x,y,w,h),stroke:=style.stroke.ofText transform (x,y,w,h)}
+
 private def readNode (references : NativeSVGReferences.Index) (rules : List NativeSVGCSS.Rule)
-    (ids : List String) : Nat → ReadContext → NamespaceNode → Except String (List DisplayNode)
+    (paints : PaintContext) : Nat → ReadContext → NamespaceNode → Except String (List DisplayNode)
   | 0,_,_ => throw "SVG group/instance nesting exceeds 32"
   | fuel+1,context,node => do
     let context := match node with
@@ -933,7 +1141,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
     let active := path :: ancestors
     let readChildren := fun (lengths : LengthContext) (parent : Transform) (style : Style)
         (children : List NamespaceNode) =>
-      readListWith (fun child i => readNode references rules ids fuel
+      readListWith (fun child i => readNode references rules paints fuel
         {lengths,parent,style,path:=path++[i],ancestors:=active,baseURL} child) children
     match node with
     | .other (.comment _) => pure []
@@ -952,8 +1160,9 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         return []
       if name.namespace_ != some svgURI then throw s!"foreign/non-SVG element: {name.localPart}"
       let tag := name.localPart
-      if ["style","metadata","defs"].contains tag || (tag == "symbol" && !instanceRoot) then return []
-      let attrs ← applyCSS lengths ids rules tag rawAttrs true
+      if ["style","metadata","defs","stop"].contains tag || paintServers.contains tag ||
+          (tag == "symbol" && !instanceRoot) then return []
+      let attrs ← applyCSS lengths paints rules tag rawAttrs true
       if tag == "title" || tag == "desc" then
         validateAttrs tag attrs ["id"]
         for child in children do metadata child
@@ -961,7 +1170,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
       else if tag == "use" then
         validateAttrs tag attrs ["href","x","y","width","height","transform","opacity"]
         if !(← containerVisible attrs) then return []
-        let inherited ← readStyle lengths ids attrs style
+        let inherited ← readStyle lengths paints attrs style
         let x ← geometryNumber lengths attrs "x"
         let y ← geometryNumber lengths attrs "y"
         let transform ← checkedTransform ((← transformList ((attr attrs "transform").getD "")).compose ⟨1,0,0,1,x,y⟩)
@@ -980,7 +1189,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
                 let size ← relativeLength value (if key == "width" then lengths.width else lengths.height)
                 if size < 0 then throw "negative use viewport dimensions unsupported"
                 targetAttrs := replaceAttr targetAttrs key value
-        let targetTree ← readNode references rules ids fuel
+        let targetTree ← readNode references rules paints fuel
           {lengths,parent:=cumulative,style:=inherited,path:=target.path,ancestors:=active,instanceRoot:=true,baseURL:=target.parentBase}
           (.element targetName targetAttrs targetChildren)
         return [.group (attr attrs "id") transform targetTree]
@@ -1007,7 +1216,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         let childLengths : LengthContext := match view with
           | none => {width:=w,height:=h}
           | some (_,_,vw,vh) => {width:=vw,height:=vh}
-        let inherited ← readStyle childLengths ids attrs style
+        let inherited ← readStyle childLengths paints attrs style
         let retainedChildren ← readChildren childLengths cumulative inherited children
         let overflow := trim ((attr attrs "overflow").getD "hidden")
         if overflow == "visible" then
@@ -1018,7 +1227,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         validateAttrs tag attrs ["transform","clip-path"]
         let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
         let cumulative ← checkedTransform (parent.compose transform)
-        let inherited ← readStyle lengths ids attrs style
+        let inherited ← readStyle lengths paints attrs style
         let retainedChildren ← readChildren lengths cumulative inherited children
         if displaySuppressed attrs then return []
         match attr attrs "clip-path" with
@@ -1030,7 +1239,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         validateAttrs tag attrs (extraAttrs tag)
         let transform ← checkedTransform (← transformList ((attr attrs "transform").getD ""))
         let cumulative ← checkedTransform (parent.compose transform)
-        let inherited ← readStyle lengths ids attrs style
+        let inherited ← textFrame attrs transform (← readStyle lengths paints attrs style)
         let authorLength ← match attr attrs "pathLength" with
           | none => pure none
           | some source => do
@@ -1042,7 +1251,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
           match child with
           | .element n _ _ =>
             if n.namespace_ == some svgURI && ["title","desc","metadata"].contains n.localPart then
-              let _ ← readNode references rules ids fuel
+              let _ ← readNode references rules paints fuel
                 {lengths,parent:=cumulative,style:=inherited,path,ancestors:=active,baseURL} child
               pure ()
             else throw "graphics children unsupported"
@@ -1068,78 +1277,133 @@ def BackendPrimitive.storageRows (p : BackendPrimitive) : Nat :=
   5+shapeRows+(p.dashParts.getD []).length*5+
     (if p.transform.identity then 0 else 2)+p.clips.length*3
 
-private def compilePrimitive (mapping : Mapping) (p : Primitive) : Except String BackendPrimitive := do
+/-- Largest paint table of a scene, in 32-bit words. -/
+def maxPaintTableWords : Nat := 1048576
+
+private def pointBox (points : List Point) : Float × Float × Float × Float :=
+  match points with
+  | [] => (0,0,0,0)
+  | p::rest =>
+    let (x0,y0,x1,y1) := rest.foldl (fun (b : Float × Float × Float × Float) p =>
+      (min b.1 p.x,min b.2.1 p.y,max b.2.2.1 p.x,max b.2.2.2 p.y)) (p.x,p.y,p.x,p.y)
+    (x0,y0,x1-x0,y1-y0)
+
+/-- Object bounding box of the geometry, in its local frame: x, y, width, height.
+    Stroke width takes no part in it (SVG Tiny 1.2 §7.11). -/
+private def Geometry.box : BackendGeometry → Float × Float × Float × Float
+  | .rect x y w h => (x,y,w,h)
+  | .circle cx cy r => (cx-r,cy-r,2*r,2*r)
+  | .ellipse cx cy rx ry => (cx-rx,cy-ry,2*rx,2*ry)
+  | .line x1 y1 x2 y2 => (min x1 x2,min y1 y2,(x2-x1).abs,(y2-y1).abs)
+  | .polygon points => pointBox points
+  | .path contours => pointBox (contours.flatMap (·.points))
+
+private def fallbackPaint : L4Factoidal.Rendering.FallbackPaint → Paint
+  | .none => .none
+  | .current => .current
+  | .solid c => .solid ⟨c.r,c.g,c.b⟩
+
+/-- Lower a server for one primitive. No stops paint as `none` (§11.16); a server
+    that paints nothing for this geometry gives its fallback paint. -/
+private def lowerPaint (box : Float × Float × Float × Float) (cursor : Nat) : Paint → Except String Paint
+  | .gradient g =>
+    if g.stops.isEmpty then pure .none else
+    match g.lower box with
+    | none => pure (fallbackPaint g.fallback)
+    | some record =>
+      if !record.words.all (fun word => word.isFinite && word.toFloat32.isFinite) then
+        throw "gradient map exceeds finite binary32 range"
+      else pure (.gradientRecord cursor record)
+  | paint => pure paint
+
+def Paint.tableWords : Paint → List Float
+  | .gradientRecord _ record => record.words
+  | _ => []
+
+/-- Words of this primitive in the scene's paint table: fill, then stroke. -/
+def Primitive.paintWords (p : BackendPrimitive) : List Float :=
+  p.style.fill.tableWords ++ p.style.stroke.tableWords
+
+private def compilePrimitive (mapping : Mapping) (cursor : Nat) (p : Primitive) : Except String BackendPrimitive := do
   let root : Transform := ⟨mapping.sx,0,0,mapping.sy,
     mapping.tx-mapping.minX*mapping.sx,mapping.ty-mapping.minY*mapping.sy⟩
   let geometry ← p.geometry.compile (root.compose p.transform)
+  let box := geometry.box
+  let fill ← lowerPaint box cursor p.style.fill
+  let stroke ← lowerPaint box (cursor+fill.tableWords.length) p.style.stroke
+  let style := {p.style with fill,stroke}
+  if cursor+fill.tableWords.length+stroke.tableWords.length > maxPaintTableWords then
+    throw s!"paint table exceeds {maxPaintTableWords} words"
   let dashParts ← match p.dashParts,p.geometry with
     | some parts,_ => pure (some parts)
-    | none,.path _ => dashedParts geometry p.style p.pathLength
+    | none,.path _ => dashedParts geometry style p.pathLength
     | none,_ => pure none
-  return {geometry,style:=p.style,opacity:=p.opacity,transform:=p.transform,dashParts,groupPath:=p.groupPath,clips:=p.clips,pathLength:=p.pathLength}
+  return {geometry,style,opacity:=p.opacity,transform:=p.transform,dashParts,groupPath:=p.groupPath,clips:=p.clips,pathLength:=p.pathLength}
 
 private def compilePrimitivesLoop (mapping : Mapping) : List Primitive →
-    List BackendPrimitive → Nat → Except String (List BackendPrimitive)
-  | [],acc,_ => pure acc.reverse
-  | primitive::rest,acc,rows => do
-    let compiled ← compilePrimitive mapping primitive
+    List BackendPrimitive → Nat → Nat → Except String (List BackendPrimitive)
+  | [],acc,_,_ => pure acc.reverse
+  | primitive::rest,acc,rows,cursor => do
+    let compiled ← compilePrimitive mapping cursor primitive
     let rows := rows+compiled.storageRows
     if rows*4 > maxDataFloats then throw "storage data exceeds 1048576 floats"
-    compilePrimitivesLoop mapping rest (compiled::acc) rows
+    compilePrimitivesLoop mapping rest (compiled::acc) rows (cursor+compiled.paintWords.length)
 
 /-- Canonical Float path geometry becomes checked linear backend geometry once,
     using the full viewport/primitive CTM and the existing cumulative budget.
     A non-flat or over-budget curve is an error, never a substituted chord. -/
 def compilePrimitives (mapping : Mapping) (primitives : List Primitive) : Except String (List BackendPrimitive) :=
-  compilePrimitivesLoop mapping primitives [] 2
+  compilePrimitivesLoop mapping primitives [] 2 0
 
 private theorem compilePrimitivesLoop_length (mapping : Mapping) (source : List Primitive) :
-    ∀ acc rows compiled, compilePrimitivesLoop mapping source acc rows = .ok compiled →
+    ∀ acc rows cursor compiled, compilePrimitivesLoop mapping source acc rows cursor = .ok compiled →
       compiled.length = source.length+acc.length := by
   induction source with
   | nil =>
-    intro acc rows compiled found
+    intro acc rows cursor compiled found
     have same : acc.reverse = compiled := Except.ok.inj found
     rw [← same,List.length_reverse]
     simp
   | cons primitive rest ih =>
-    intro acc rows compiled found
-    cases one : compilePrimitive mapping primitive with
+    intro acc rows cursor compiled found
+    cases one : compilePrimitive mapping cursor primitive with
     | error message => simp [compilePrimitivesLoop,one,bind,Except.bind] at found
     | ok value =>
       by_cases over : (rows+value.storageRows)*4 > maxDataFloats
       · simp [compilePrimitivesLoop,one,over,bind,Except.bind] at found
-      · have tail : compilePrimitivesLoop mapping rest (value::acc) (rows+value.storageRows) = .ok compiled := by
+      · have tail : compilePrimitivesLoop mapping rest (value::acc) (rows+value.storageRows)
+            (cursor+value.paintWords.length) = .ok compiled := by
           simpa [compilePrimitivesLoop,one,over,bind,pure,Except.bind,Except.pure] using found
-        have count := ih (value::acc) (rows+value.storageRows) compiled tail
+        have count := ih (value::acc) (rows+value.storageRows) _ compiled tail
         simpa [List.length_cons,Nat.add_assoc,Nat.add_comm,Nat.add_left_comm] using count
 
 theorem compilePrimitives_length (mapping : Mapping) (source : List Primitive)
     (compiled : List BackendPrimitive) (found : compilePrimitives mapping source = .ok compiled) :
     compiled.length = source.length := by
-  simpa [compilePrimitives] using compilePrimitivesLoop_length mapping source [] 2 compiled found
+  simpa [compilePrimitives] using compilePrimitivesLoop_length mapping source [] 2 0 compiled found
 
 private theorem compilePrimitivesLoop_budget (mapping : Mapping) (source : List Primitive) :
-    ∀ acc rows compiled, rows = 2+(acc.map BackendPrimitive.storageRows).sum →
-      rows*4 ≤ maxDataFloats → compilePrimitivesLoop mapping source acc rows = .ok compiled →
+    ∀ acc rows cursor compiled, rows = 2+(acc.map BackendPrimitive.storageRows).sum →
+      rows*4 ≤ maxDataFloats → compilePrimitivesLoop mapping source acc rows cursor = .ok compiled →
       (2+(compiled.map BackendPrimitive.storageRows).sum)*4 ≤ maxDataFloats := by
   induction source with
   | nil =>
-    intro acc rows compiled invariant bounded found
+    intro acc rows cursor compiled invariant bounded found
     have same : acc.reverse = compiled := Except.ok.inj found
     subst compiled
     rw [invariant] at bounded
     simpa [List.map_reverse,List.sum_reverse] using bounded
   | cons primitive rest ih =>
-    intro acc rows compiled invariant bounded found
-    cases one : compilePrimitive mapping primitive with
+    intro acc rows cursor compiled invariant bounded found
+    cases one : compilePrimitive mapping cursor primitive with
     | error message => simp [compilePrimitivesLoop,one,bind,Except.bind] at found
     | ok value =>
       by_cases over : (rows+value.storageRows)*4 > maxDataFloats
       · simp [compilePrimitivesLoop,one,over,bind,Except.bind] at found
-      · have tail : compilePrimitivesLoop mapping rest (value::acc) (rows+value.storageRows) = .ok compiled := by
+      · have tail : compilePrimitivesLoop mapping rest (value::acc) (rows+value.storageRows)
+            (cursor+value.paintWords.length) = .ok compiled := by
           simpa [compilePrimitivesLoop,one,over,bind,pure,Except.bind,Except.pure] using found
-        apply ih (value::acc) (rows+value.storageRows) compiled
+        apply ih (value::acc) (rows+value.storageRows) (cursor+value.paintWords.length) compiled
         · simp only [List.map_cons,List.sum_cons]
           omega
         · omega
@@ -1148,7 +1412,7 @@ private theorem compilePrimitivesLoop_budget (mapping : Mapping) (source : List 
 theorem compilePrimitives_budget (mapping : Mapping) (source : List Primitive)
     (compiled : List BackendPrimitive) (found : compilePrimitives mapping source = .ok compiled) :
     (2+(compiled.map BackendPrimitive.storageRows).sum)*4 ≤ maxDataFloats := by
-  exact compilePrimitivesLoop_budget mapping source [] 2 compiled rfl (by decide) found
+  exact compilePrimitivesLoop_budget mapping source [] 2 0 compiled rfl (by decide) found
 
 structure Scene where
   width : Nat
@@ -1322,13 +1586,14 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
     | none => {width:=w,height:=h}
     | some (_,_,vw,vh) => {width:=vw,height:=vh}
   let (context,sourcePath,rootBase) ← referenceSource ()
-  let ids ← context.idsResult
+  let _ ← context.idsResult
   let rules ← context.rulesResult
-  let attrs ← applyCSS lengths ids rules "svg" attrs
+  let paints : PaintContext := {references:=context.references,rules,document:=context.document}
+  let attrs ← applyCSS lengths paints rules "svg" attrs
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version"]
-  let inherited ← readStyle lengths ids attrs inheritedStyle
+  let inherited ← readStyle lengths paints attrs inheritedStyle
   let ancestors := (List.range (sourcePath.length+1)).map (fun depth => sourcePath.take depth)
-  let parsedTree ← readListWith (fun child i => readNode context.references rules ids 33
+  let parsedTree ← readListWith (fun child i => readNode context.references rules paints 33
     {lengths,parent:=identityTransform,style:=inherited,path:=sourcePath ++ [i],ancestors,baseURL:=rootBase} child) children
   let tree := if displaySuppressed attrs then [] else parsedTree
   Scene.make w.ceil.toUInt32.toNat h.ceil.toUInt32.toNat mapping tree
@@ -1513,6 +1778,9 @@ private def resolved (paint : Paint) (style : Style) (alpha : Float) : List Floa
   | .none => [0,0,0,0]
   | .solid c => [c.r,c.g,c.b,alpha]
   | .current => [style.currentColor.r,style.currentColor.g,style.currentColor.b,alpha]
+  | .gradient _ => [0,0,0,0]
+  -- A negative alpha marks a gradient: the shader finds its record in the table.
+  | .gradientRecord cursor _ => [Float.ofNat cursor,alpha,0,-1]
 private def pointBounds (points : List Point) : List Float :=
   match points with
   | [] => [0,0,0,0]
@@ -1827,12 +2095,19 @@ private def tileIndex (value : Float) (count : Nat) : Nat :=
   if value <= 0 then 0
   else min (count-1) (value/tileSize.toFloat).floor.toUInt64.toNat
 
+/-- The words of all gradient records as binary32 bit patterns, in the order that
+`compilePrimitives` gave their cursors, then the count of those words. -/
+private def Scene.paintTableTail (s : Scene) : Array Nat :=
+  let words := s.compiled.flatMap Primitive.paintWords
+  (words.map (·.toFloat32.toBits.toNat)).toArray.push words.length
+
 /-- Primitive lists for each screen tile, in paint order: tile size, tiles
 across, tiles down, one start offset for each tile and a final end offset, then
-the record row of each listed primitive. A primitive is left out of a tile only
+the record row of each listed primitive, then the paint table. A primitive is left out of a tile only
 when its conservative box does not touch the tile; there it can not change a
 pixel, so the image does not change. -/
 private def Scene.tiles (s : Scene) : Array Nat := Id.run do
+  let tail := s.paintTableTail
   let across := (s.width+tileSize-1)/tileSize
   let down := (s.height+tileSize-1)/tileSize
   let mut lists : Array (Array Nat) := Array.replicate (across*down) #[]
@@ -1858,11 +2133,11 @@ private def Scene.tiles (s : Scene) : Array Nat := Id.run do
     for p in s.compiled do
       rows := rows.push row
       row := row+p.rowCount
-    return #[max s.width s.height+1,1,1,0,rows.size] ++ rows
+    return #[max s.width s.height+1,1,1,0,rows.size] ++ rows ++ tail
   let mut out : Array Nat := #[tileSize,across,down] ++ offsets
   for list in lists do
     out := out ++ list
-  return out
+  return out ++ tail
 
 /-- The shader does not depend on the scene: all scene values are storage data. -/
 private def sceneShader : String :=
@@ -1879,6 +2154,17 @@ private def sceneShader : String :=
   "if(b.y<=p.y&&p.y<a.y&&cross<0.0){winding-=1;}}" ++
   "if(rule==1u){return (winding%2)!=0;}return winding!=0; }\n" ++
   "fn withinBounds(base:u32,p:vec2f)->bool{let b=params.rows[base];return all(p>=b.xy)&&all(p<=b.zw);}" ++
+  "fn word(i:u32)->f32{return bitcast<f32>(tiles[i]);}" ++
+  "fn stopColor(s:u32)->vec4f{return vec4f(word(s+1u),word(s+2u),word(s+3u),word(s+4u));}" ++
+  -- `GradientRecord.colorAt`: map, stop search, mix before premultiplying.
+  "fn paintSample(row:vec4f,p:vec2f)->vec4f{if(row.w>=0.0){return row;}" ++
+  "let last=arrayLength(&tiles)-1u;let r=last-tiles[last]+u32(row.x);" ++
+  "let u=word(r)*p.x+word(r+1u)*p.y+word(r+2u);let v=word(r+4u)*p.x+word(r+5u)*p.y+word(r+6u);" ++
+  "let t=select(u,sqrt(u*u+v*v),word(r+3u)==1.0);let n=u32(word(r+7u));" ++
+  "var s=r+" ++ toString L4Factoidal.Rendering.gradientRecordHeaderWords ++ "u;var c=stopColor(s);" ++
+  "for(var i=1u;i<n;i++){let q=s+" ++ toString L4Factoidal.Rendering.gradientStopWords ++ "u;let o0=word(s);let o1=word(q);" ++
+  "if(t>=o1){c=stopColor(q);s=q;continue;}if(t>o0){let f=(t-o0)/(o1-o0);c=c*(1.0-f)+stopColor(q)*f;}break;}" ++
+  "return vec4f(c.rgb,c.a*row.y);}\n" ++
   "@vertex fn vertex(@builtin(vertex_index) i:u32)->@builtin(position) vec4f {" ++
   "let vertices=array<vec2f,3>(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));return vec4f(vertices[i],0,1); }\n" ++
   "fn samplePixel(pixel:vec4f)->vec4f {" ++
@@ -1902,9 +2188,9 @@ private def sceneShader : String :=
   "if(dt==4u){piece=" ++ relativeCondition (strokeCondition (.line 0 0 0 0) 0 .butt) ++ ";}" ++
   "else if(dt==2u){piece=" ++ relativeCondition (fillCondition (.circle 0 0 0) 0) ++ ";}" ++
   "else if(dt==7u){piece=" ++ relativeCondition (triangleCondition 0) ++ ";}strokeHit=strokeHit||piece;}base=parentBase;}" ++
-  "fillHit=fillHit&&clipHit;strokeHit=strokeHit&&clipHit;let fill=params.rows[base+2u];let stroke=params.rows[base+3u];var element=vec4f(0.0);" ++
-  "if fillHit {element=vec4f(fill.rgb*fill.a,fill.a);}" ++
-  "if strokeHit {element=vec4f(stroke.rgb*stroke.a,stroke.a)+element*(1.0-stroke.a);}" ++
+  "fillHit=fillHit&&clipHit;strokeHit=strokeHit&&clipHit;var element=vec4f(0.0);" ++
+  "if fillHit {let fill=paintSample(params.rows[base+2u],p.xy);element=vec4f(fill.rgb*fill.a,fill.a);}" ++
+  "if strokeHit {let stroke=paintSample(params.rows[base+3u],p.xy);element=vec4f(stroke.rgb*stroke.a,stroke.a)+element*(1.0-stroke.a);}" ++
   "let opacity=params.rows[base+4u].y;rgb=element.rgb*opacity+rgb*(1.0-element.a*opacity);" ++
   "}return vec4f(rgb,1.0); }\n" ++
   "@fragment fn fragment(@builtin(position) pixel:vec4f)->@location(0) vec4f {var total=vec4f(0.0);" ++
@@ -2042,20 +2328,47 @@ private def overColors (fill stroke : List Float) (opacity : Float)
     ⟨premul.r*opacity,premul.g*opacity,premul.b*opacity,(sa+fa*(1-sa))*opacity⟩
   layer.overOpaque result
 
+/-- Paint `[r,g,b,a]` at a world position: the row of a plain paint, and the
+    colour of a gradient at the primitive's local point. -/
+private def Primitive.paintAt (p : BackendPrimitive) (paint : Paint) (alpha : Float)
+    (position : Float × Float) : List Float :=
+  match paint with
+  | .gradientRecord _ record =>
+    let q := p.transform.inverse.apply position.1 position.2
+    let c := record.colorAt q.1 q.2
+    [c[0]!,c[1]!,c[2]!,c[3]!*alpha]
+  | _ => resolved paint p.style alpha
+
+/-- `paintAt` with the work that does not depend on the position done once. -/
+private def Primitive.preparePaint (p : BackendPrimitive) (paint : Paint) (alpha : Float) :
+    Float × Float → List Float :=
+  match paint with
+  | .gradientRecord _ record =>
+    let inverse := p.transform.inverse
+    fun position =>
+      let q := inverse.apply position.1 position.2
+      let c := record.colorAt q.1 q.2
+      [c[0]!,c[1]!,c[2]!,c[3]!*alpha]
+  | _ => let row := resolved paint p.style alpha; fun _ => row
+
+private theorem Primitive.preparePaint_correct (p : BackendPrimitive) (paint : Paint) (alpha : Float)
+    (position : Float × Float) : p.preparePaint paint alpha position = p.paintAt paint alpha position := by
+  cases paint <;> rfl
+
 private def Primitive.sampleStep (p : BackendPrimitive) (data : Array Float) (base : Nat)
     (position : Float × Float) (result : Color) : Color :=
-  overColors (resolved p.style.fill p.style p.style.fillOpacity)
-    (resolved p.style.stroke p.style p.style.strokeOpacity) p.effectiveOpacity
+  overColors (p.paintAt p.style.fill p.style.fillOpacity position)
+    (p.paintAt p.style.stroke p.style.strokeOpacity position) p.effectiveOpacity
     (p.coverageAt data base position) result
 
 private structure PreparedSample where
   coverage : PreparedCoverage
-  fill : List Float
-  stroke : List Float
+  fill : Float × Float → List Float
+  stroke : Float × Float → List Float
   opacity : Float
 
 private def PreparedSample.apply (p : PreparedSample) (position : Float × Float) (result : Color) : Color :=
-  overColors p.fill p.stroke p.opacity (p.coverage.eval position) result
+  overColors (p.fill position) (p.stroke position) p.opacity (p.coverage.eval position) result
 
 /-- With no stroke paint the stroke's alpha is the literal 0 on both branches, so the
     stroke test cannot change a sample. Text rectangles are this case. -/
@@ -2067,8 +2380,8 @@ private theorem overColors_no_stroke (fill : List Float) (style : Style) (alpha 
   | mk a b => cases b <;> rfl
 
 private def Primitive.prepareSample (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedSample :=
-  let fill := resolved p.style.fill p.style p.style.fillOpacity
-  let stroke := resolved p.style.stroke p.style p.style.strokeOpacity
+  let fill := p.preparePaint p.style.fill p.style.fillOpacity
+  let stroke := p.preparePaint p.style.stroke p.style.strokeOpacity
   match p.clips,p.dashParts,p.geometry,p.style.stroke with
   | [],none,.rect ..,.none =>
     ⟨.rectFill p.transform.inverse data[base+0]! data[base+1]! data[base+2]! data[base+3]!,
@@ -2087,9 +2400,13 @@ private theorem Primitive.prepareSample_correct (p : BackendPrimitive) (data : A
         (fillCondition (.rect a b c d) base).eval
           {data,position := p.transform.inverse.apply position.1 position.2} := by
       simp [Primitive.coverageAt,clips,dash,geo]
-    simp only [PreparedSample.apply,PreparedCoverage.eval,Primitive.sampleStep,noStroke]
+    simp only [PreparedSample.apply,PreparedCoverage.eval,Primitive.sampleStep,
+      Primitive.preparePaint_correct,noStroke]
+    change overColors _ (resolved .none p.style p.style.strokeOpacity) _ _ _ =
+      overColors _ (resolved .none p.style p.style.strokeOpacity) _ _ _
     rw [overColors_no_stroke _ _ _ _ (p.coverageAt data base position),covered,fillHit]
-  next => simp only [PreparedSample.apply,Primitive.sampleStep,Primitive.prepareCoverage_correct]
+  next => simp only [PreparedSample.apply,Primitive.sampleStep,Primitive.preparePaint_correct,
+    Primitive.prepareCoverage_correct]
 
 private def sampleFold (items : List BackendPrimitive) (data : Array Float) (position : Float × Float)
     (base : Nat) (initial : Color) : Color × Nat :=
@@ -2105,8 +2422,8 @@ private def Scene.sampleAt (s : Scene) (data : Array Float)
   let mut base := 8
   for primitive in s.compiled do
     let (fillHit,strokeHit) := primitive.coverageAt data base position
-    let fill := resolved primitive.style.fill primitive.style primitive.style.fillOpacity
-    let stroke := resolved primitive.style.stroke primitive.style primitive.style.strokeOpacity
+    let fill := primitive.paintAt primitive.style.fill primitive.style.fillOpacity position
+    let stroke := primitive.paintAt primitive.style.stroke primitive.style.strokeOpacity position
     let fa : Float := if fillHit then fill[3]! else 0
     let sa : Float := if strokeHit then stroke[3]! else 0
     -- Compose this element's fill/stroke in premultiplied form, then apply its

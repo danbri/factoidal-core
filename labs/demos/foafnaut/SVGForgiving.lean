@@ -23,7 +23,8 @@ private def maxParses : Nat := 4000
 
 /-- Elements the strict reader reads. Any other element is removed and logged. -/
 private def readable := ["svg","g","use","symbol","defs","style","metadata","title","desc",
-  "rect","circle","ellipse","line","polygon","polyline","path"]
+  "rect","circle","ellipse","line","polygon","polyline","path",
+  "linearGradient","radialGradient","stop","solidColor"]
 /-- Elements that paint nothing: their content needs no reader support. -/
 private def silent := ["title","desc","metadata"]
 
@@ -57,6 +58,9 @@ structure SVGFont where
   family : String := ""
   unitsPerEm : Float := 1000
   defaultAdvance : Float := 500
+  /-- `font-face` ascent and descent, in font units, both as positive depths. -/
+  ascent : Float := 800
+  descent : Float := 200
   glyphs : Std.HashMap Char Glyph := {}
   kerning : Std.HashMap (String × String) Float := {}
   missing : Glyph := ⟨"",500,""⟩
@@ -84,7 +88,9 @@ private def SVGFont.ofElement (attrs : List NamespaceAttribute) (children : List
     let advance := float (plainAttr a "horiz-adv-x") fallback
     let data := (plainAttr a "d").getD ""
     match name.localPart with
-    | "font-face" => font := {font with unitsPerEm:=float (plainAttr a "units-per-em") 1000,family:=(plainAttr a "font-family").getD ""}
+    | "font-face" => 
+      let units := float (plainAttr a "units-per-em") 1000
+      font := {font with unitsPerEm:=units,family:=(plainAttr a "font-family").getD "",ascent:=(float (plainAttr a "ascent") (units*0.8)).abs,descent:=(float (plainAttr a "descent") (units*0.2)).abs}
     | "missing-glyph" => font := {font with missing:=⟨"",advance,data⟩}
     | "glyph" =>
       if let some text := plainAttr a "unicode" then
@@ -189,6 +195,16 @@ private def runAdvance (font : SVGFont) (run : Run) : Float :=
     (total+(g.advance-kern)*scale,some g)) ((0 : Float),(none : Option Glyph))
   total
 
+/-- Tell each glyph path of a run the bounding box of the whole text, x0 y0 x1 y1. -/
+private def markGlyphs (box : Float × Float × Float × Float) : NamespaceNode → NamespaceNode
+  | .element name attrs paths =>
+    let (x0,y0,x1,y1) := box
+    let mark : NamespaceAttribute := {name:={namespace_:=some NativeSVG.internalURI,localPart:=NativeSVG.textBoxAttribute},value:=s!"{x0} {y0} {x1-x0} {y1-y0}"}
+    .element name attrs (paths.map fun
+      | .element n a c => .element n (a ++ [mark]) c
+      | node => node)
+  | node => node
+
 /-- Lower one `text` element to a group of glyph paths. -/
 private def lowerText (font : SVGFont) (state : TextState) (attrs : List NamespaceAttribute)
     (children : List NamespaceNode) : NamespaceNode × List String := Id.run do
@@ -208,6 +224,8 @@ private def lowerText (font : SVGFont) (state : TextState) (attrs : List Namespa
   let mut y := ys.headD 0 + (numberList attrs "dy").headD 0
   let mut index := 0
   let mut groups : Array NamespaceNode := #[]
+  -- SVG Tiny 1.2 §7.11: the bounding box of a text is that of its character cells.
+  let mut box : Option (Float × Float × Float × Float) := none
   for run in runs do
     x := x+run.dx
     y := y+run.dy
@@ -229,12 +247,21 @@ private def lowerText (font : SVGFont) (state : TextState) (attrs : List Namespa
       if !g.data.isEmpty then
         paths := paths.push (svgElement "path" [mkAttr "d" g.data,mkAttr "stroke-width" (toString (run.strokeWidth/scale)),
           mkAttr "transform" s!"translate({x},{y}) scale({scale},{-scale})"] [])
+      let cellTop := y-font.ascent*scale
+      let cellBottom := y+font.descent*scale
+      let cellRight := x+g.advance*scale
+      box := some (match box with
+        | none => (x,cellTop,cellRight,cellBottom)
+        | some (x0,y0,x1,y1) => (min x0 x,min y0 cellTop,max x1 cellRight,max y1 cellBottom))
       x := x+g.advance*scale
       previous := some g
     groups := groups.push (svgElement "g" run.paint paths.toList)
   let outer := paintOf attrs ++ (attrs.filter (fun a => a.name.namespace_.isNone && a.name.localPart == "transform"))
   let ids := renameId attrs |>.filter (fun a => a.name.namespace_.isNone && a.name.localPart == "id")
-  return (svgElement "g" (ids ++ outer) groups.toList,results.flatMap (·.2))
+  let marked := match box with
+    | none => groups.toList
+    | some box => groups.toList.map (markGlyphs box)
+  return (svgElement "g" (ids ++ outer) marked,results.flatMap (·.2))
 
 /-- SVG Tiny 1.2 §5.8.2: this agent's language is en, and it has no extensions. -/
 private def conditionsPass (attrs : List NamespaceAttribute) : Bool :=

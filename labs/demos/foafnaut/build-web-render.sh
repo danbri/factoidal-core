@@ -43,6 +43,7 @@ for check in WebRenderTests WebRenderFontRequestsTests WebRenderScriptTests WebD
 done
 lean -R "$LAB" "$LAB/WebRenderCurveTests.lean"
 lean -R "$LAB" "$LAB/SVGForgivingTests.lean"
+lean -R "$LAB" "$LAB/SVGGradientTests.lean"
 lean -R "$LAB" -c "$BUILD/ir/WebRenderCLI.c" "$LAB/WebRenderCLI.lean"
 # Enumerate exactly the project import closure, excluding the unrelated library.
 python3 - "$PROJECT" "$BUILD/core-c-files.txt" <<'PY'
