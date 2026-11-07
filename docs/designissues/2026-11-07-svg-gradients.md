@@ -63,6 +63,8 @@ is equal, so a changed table starts a new one.
 A record is eight words (map x row, radial flag, map y row, stop count), then five
 words for each stop (offset, red, green, blue, opacity).
 
+An image uses the same table: see `docs/designissues/2026-11-07-svg-images-text.md`.
+
 ## Limits
 
 - 64 stops for each gradient (`maxGradientStops`): a refusal with the number.

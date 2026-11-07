@@ -142,6 +142,23 @@ supplied`.
 An HTML document decodes its images for each render. A cache across frames is not
 done yet.
 
+## Result
+
+W3C SVG Tiny 1.2, first frame, real WebGPU pixels against the W3C PNGs, our bands
+(`tests/browser-wpt/svg-tiny-pixels-20261107c.json`): 0 match, 118 close, 375 mismatch,
+2 refused, 1 not read (out of 496). Before this work
+(`tests/browser-wpt/svg-tiny-pixels-20261107b.json`): 0 match, 96 close, 397 mismatch,
+2 refused, 1 not read (out of 496). 22 files moved from mismatch to close, all of them
+with images; no file moved down. The 15 `text-area-*` files stay mismatch, for the
+reasons in the section on `textArea`.
+
+GPU readback agrees with the Lean CPU probes on the 30 W3C files of the `struct-image`,
+`jpeg-required`, `render-groups`, `paint-vfill`, `struct-progressive` and
+`coords-viewattr-05` groups (`Scene.checks`, 30 agree, 0 disagree, out of 30).
+
+`images/earth.jpg`, which `interact-focus-212-t.svg` names, is not in the W3C archive.
+The forgiving pass removes that `image` alone and logs it.
+
 ## Open
 
 - https://github.com/danbri/factoidal/issues/1258 (an `image` of an SVG document is

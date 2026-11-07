@@ -184,3 +184,17 @@ def main (args : List String) : IO UInt32 := do
 
 #print axioms WebDocument.run
 #print axioms WebDocument.compile
+
+-- SVG `image` in a document: `inspect` names what the host fetches, by key and URL, and
+-- `render` takes the bytes. No bytes and a reference outside HTTP stay refusals.
+private def imagePage := "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><image href='a.png' width='20' height='20'/></svg>"
+private def imageBytes := "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGP4z8DwHwwZGP6DCAYAP9IF+9wCo9QAAAAASUVORK5CYII="
+private def contains (text part : String) : Bool := (text.splitOn part).length > 1
+#guard contains (WebDocument.compile imagePage "{\"op\":\"inspect\",\"url\":\"https://e.test/p/\"}" 40 40)
+  "\"images\":[{\"key\":\"https://e.test/p/a.png\",\"url\":\"https://e.test/p/a.png\"}]"
+#guard contains (WebDocument.compile imagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 40 40)
+  "image resource not supplied: https://e.test/p/a.png"
+#guard !contains (WebDocument.compile imagePage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"" ++ imageBytes ++ "\"}]}") 40 40) "\"error\""
+#guard contains (WebDocument.compile imagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"aGk=\"}]}" 40 40)
+  "image is not PNG or JPEG"
+#guard contains (WebDocument.compile imagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":3}" 40 40) "document images must be an array"

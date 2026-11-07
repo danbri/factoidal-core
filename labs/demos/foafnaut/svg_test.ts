@@ -145,7 +145,7 @@ Deno.test("SVG CSS stylesheet and inline declarations affect Lean geometry paint
 
 Deno.test("SVG refuses unsupported features rather than silently losing rendering semantics",async()=>{
  const e=await loadSVG();
- for(const element of ['text','image','foreignObject','filter','clipPath','mask','script'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
+ for(const element of ['text','foreignObject','filter','clipPath','mask','script'])rejects(()=>e.compile(wrap(`<${element}/>`)),"SVG profile:");
  for(const attrs of ['style="filter:blur(2px)"','class="red"','transform="perspective(1)"','stroke-linecap="pointed"','stroke-linejoin="arcs"','stroke-miterlimit=".5"','filter="url(#f)"'])rejects(()=>e.compile(wrap(`<rect width="20" height="20" ${attrs}/>`)),"unsupported");
  rejects(()=>e.compile('<?xml-stylesheet href="a.css"?>'+wrap('')),"processing instruction");
  rejects(()=>e.compile('<!DOCTYPE svg>'+wrap('')),"DOCTYPE");
@@ -448,7 +448,7 @@ Deno.test("SVG images are one paint in the table, and the GPU agrees with Lean's
  equal(a.data.slice(8+8,8+12),[0,1,0,-2]);
  // Nine header words and four pixels, then the count. Red is the low byte of a word.
  equal(a.tiles!.at(-1),13);equal(a.tiles!.at(-5),0xff0000ff);
- equal(e.sample(svg,16,16),[255,0,0]);equal(e.sample(svg,48,16),[0,255,0]);equal(e.sample(svg,48,48),[255,255,255]);
+ equal(e.sample(svg,8,8),[255,0,0]);equal(e.sample(svg,56,8),[0,255,0]);equal(e.sample(svg,56,56),[255,255,255]);
  await renderSVG(a);
  const b=e.compile(wrap(image('x="8" y="8" width="40" height="20" opacity=".5" transform="rotate(10)" preserveAspectRatio="xMaxYMid slice"')));
  await renderSVG(b);
