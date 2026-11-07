@@ -113,3 +113,22 @@ Deno.test("expected failure, issue 1276: emoji draw as .notdef",()=>{
   for(const text of ["😀","🌍"])
     assert.deepEqual(ids(run(`<p>${text}</p>`,text)),[0],stillGap("1276")+` (${text})`);
 });
+
+// Owner report (issues 1268, 1270): the data visualisation and lettering pages did not
+// scroll to the end. Lean's scroll limit with the layers: at the limit, the view ends at
+// the last row of the layout, and the band made there holds that view.
+Deno.test("the scroll limit reaches the last row of long SVG pages",async()=>{
+  const W=1600,H=1000,scale=2;
+  for(const name of ["showcase-dataviz.html","showcase-lettering.html","solving-showcase.html","showcase.html"]){
+    const doc=await prepareHTML(engine,inputURL(pages+name,true));
+    const shell=(scroll:number)=>({tabs:[{title:doc.title??""}],active:0,address:doc.url,cursor:0,focused:false,canBack:false,canForward:false,
+      loading:false,scale,theme:"next",pages:1,scroll});
+    const at=(scroll:number)=>engine.compileLayers(doc.source,W,H,{...doc.request(W,H).options,textScalePercent:150,shell:shell(scroll),checks:false});
+    const first=at(0),place=first.layers;
+    const bottom=Math.max(...(first.page.webRender.boxes as number[][]).map(b=>b[2]+b[4]));
+    assert.equal(typeof place.scrollLimit,"number",name);
+    assert.equal(place.scrollLimit!+place.view,Math.max(Math.ceil(bottom),place.view),`${name}: the view at the limit ends at the last row`);
+    const end=at(place.scrollLimit!).layers;
+    assert.ok(end.bandTop<=place.scrollLimit! && place.scrollLimit!+place.view<=end.bandTop+end.bandHeight,`${name}: the band at the limit holds the view`);
+  }
+});
