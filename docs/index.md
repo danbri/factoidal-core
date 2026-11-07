@@ -24,6 +24,11 @@ maintained, runnable RDF/SPARQL notebooks. Start with
 or the [life-sciences named-graph workload]({{ '/web/hub/45-life-sciences-named-graphs/' | url }}).
 They run in the browser without sending your data to a server.
 
+**[foafnaut, the Lean web browser &rarr;]({{ '/web/hub/foafnaut/' | url }})** — HTML, CSS and SVG
+laid out and drawn by Lean, with WebGPU. Its test scores:
+[SVG Tiny 1.2 test suite results]({{ '/web/hub/render-scores/' | url }}#svg-tiny-pixels) and
+[all rendering and font scores]({{ '/web/hub/render-scores/' | url }}).
+
 ## What it covers
 
 RDF Core 1.1 in every concrete syntax (N-Triples, Turtle, N-Quads,
