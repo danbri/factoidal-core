@@ -278,6 +278,9 @@ extern_lib libl4hostread pkg := do
 @[default_target] lean_lib WasmVM where
   roots := #[`L4Factoidal.WasmVM]
 
+-- WasmVM measurements (issue 1244): `lake exe wasmvm-bench`.
+lean_exe «wasmvm-bench» where root := `L4Factoidal.WasmVM.Bench
+
 -- Explicit non-default roots: prototype tests stay outside production imports.
 lean_lib ScopedQueryPrototype where
   roots := #[`Wasm.Ops.ScopedQuery, `Wasm.Ops.ScopedQueryTests]
