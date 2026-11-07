@@ -30,7 +30,8 @@ p.add_argument('--native', required=True, type=Path)
 p.add_argument('--output', required=True, type=Path)
 p.add_argument('--timeout', type=float, default=120)
 p.add_argument('--deno', default='deno')
-# Each job is a WebGPU process. Six at once ran the GPU out of memory on 2026-11-07.
+# Each job is a WebGPU process. A session crashed with an out of GPU error on 2026-11-07
+# while six jobs were in use; the link is not proved.
 p.add_argument('--jobs', type=int, default=2)
 p.add_argument('--only', help='run only names that contain this text')
 a = p.parse_args()
