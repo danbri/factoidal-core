@@ -108,6 +108,12 @@ inductive Inline where
   | space (source : Nat) (style : Computed)
   | lineBreak (style : Computed)
   | replaced (source : Nat) (width height : Float) (nodes : List Node)
+  /-- An `inline-block` from `openAtomic` to `closeAtomic`, laid out (`atomize`): its
+  margin box and its content at the origin. -/
+  | atomic (source : Nat) (width height : Float) (inner : Result)
+  /-- Bounds of an `inline-block` in the flat list that `inlineItems` gives. -/
+  | openAtomic (source : Nat) (style : Computed)
+  | closeAtomic
   deriving Repr
 
 private def textItems (id : Nat) (style : Computed) (text : String) : List Inline := Id.run do
@@ -161,9 +167,12 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (a
       if width <= 0 || height <= 0 then return #[]
       return #[.replaced id width height (← embedding id s width height)]
     -- A block inside an inline (old pages often have one) breaks the line around it.
-    let mut out : Array Inline := if s.display == .block then #[.lineBreak s] else #[]
+    -- An inline-block is one atomic box: `atomize` lays out what is between its bounds.
+    let mut out : Array Inline := if s.display == .block then #[.lineBreak s]
+      else if s.display == .inlineBlock then #[.openAtomic id s] else #[]
     for child in n.kids do out := out ++ (← inlineItems dom styles embedding available fuel child)
-    return if s.display == .block then out.push (.lineBreak s) else out
+    return if s.display == .block then out.push (.lineBreak s)
+      else if s.display == .inlineBlock then out.push .closeAtomic else out
 
 private def translate (x y : Float) : Transform := ⟨1,0,0,1,x,y⟩
 private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Array Node := Id.run do
@@ -188,7 +197,7 @@ private def itemWidth (font : FontProfile) : Inline → Except String Float
     match ← font.word s text with
     | none => return font.advance*s.fontSize/font.unitsPerEm*Float.ofNat text.length
     | some word => return word.advance*s.fontSize/font.unitsPerEm
-  | .replaced _ w _ _ => pure w
+  | .replaced _ w _ _ | .atomic _ w _ _ => pure w
   | _ => pure 0
 
 private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Computed)
@@ -203,6 +212,13 @@ private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Compute
     let thickness := max 1 (run.fontSize/14)
     out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness, style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
   return out
+
+/-- A laid-out box moved by `(dx,dy)`: its paint in a translated group, its boxes and
+its glyph positions moved by the same amount. -/
+private def shiftResult (dx dy : Float) (r : Result) : Result :=
+  let boxes := r.boxes.map fun b => {b with x := b.x+dx, y := b.y+dy}
+  let runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}}
+  {r with nodes := #[.group none (translate dx dy) r.nodes.toList], boxes, runs}
 
 /-- All inline participants share the line baseline, computed before any glyph
 position or replaced-element position is emitted. -/
@@ -220,7 +236,8 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let leading := lineLeading font s
       ascent := max ascent (font.ascent*s.fontSize/font.unitsPerEm+leading)
       descent := max descent (font.descent*s.fontSize/font.unitsPerEm+leading)
-    | .replaced _ _ h _ => ascent := max ascent h
+    | .replaced _ _ h _ | .atomic _ _ h _ => ascent := max ascent h
+    | .openAtomic _ _ | .closeAtomic => pure ()
   let mut out : Result := {height := ascent+descent}
   for (offset,item) in items do
     match item with
@@ -254,6 +271,12 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     | .replaced source width height nodes =>
       let top := y+ascent-height
       out := {out with nodes := out.nodes.push (.group none (translate (x+offset) top) nodes), boxes := out.boxes.push ⟨source,x+offset,top,width,height⟩}
+    | .atomic source width height inner =>
+      let top := y+ascent-height
+      let moved := shiftResult (x+offset) top inner
+      -- `inner` holds the border box of the inline-block first, then its content boxes.
+      let _ := width
+      out := {out with nodes := out.nodes ++ moved.nodes, runs := out.runs ++ moved.runs, boxes := out.boxes ++ moved.boxes}
     | _ => pure ()
   return out
 
@@ -305,6 +328,78 @@ private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node 
   | some c => if !s.visible || w <= 0 || h <= 0 then #[] else
     #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
 
+/-- The two colours of a 3D border (CSS Backgrounds 3 §4.2 leaves them to the user
+agent): the colour moved 60% of the way to white, and 60% of the colour. -/
+def lighter (c : Color) : Color := ⟨c.r+(1-c.r)*0.6,c.g+(1-c.g)*0.6,c.b+(1-c.b)*0.6⟩
+def darker (c : Color) : Color := ⟨c.r*0.6,c.g*0.6,c.b*0.6⟩
+
+/-- The border of a border box at `(x,y)`, size `w` by `h`: top and bottom across the
+whole width, left and right between them. `outset` is light at the top and left and
+dark at the bottom and right; `inset` is the reverse. -/
+def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.run do
+  let b := s.borderEdges
+  if !s.visible || w <= 0 || h <= 0 || s.borderStyle == .none then return #[]
+  let c := s.borderColor.getD s.color
+  let (near,far) := match s.borderStyle with
+    | .outset => (lighter c,darker c)
+    | .inset => (darker c,lighter c)
+    | _ => (c,c)
+  let rect := fun (c : Color) (x y w h : Float) =>
+    if w <= 0 || h <= 0 then #[] else #[Node.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+  return rect near x y w b.top ++ rect far x (y+h-b.bottom) w b.bottom ++
+    rect near x (y+b.top) b.left (h-b.top-b.bottom) ++ rect far (x+w-b.right) (y+b.top) b.right (h-b.top-b.bottom)
+
+/-- Background, then border, of a border box. -/
+private def decorations (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
+  background id s x y w h ++ borderNodes id s x y w h
+
+/-- CSS 2.2 §10.3.9 and §10.6.6: an inline-block with `width:auto` is as wide as its
+widest line (at most the room); its content is laid out at the origin inside its
+border and padding. Its bottom margin edge sits on the line's baseline, as a
+replaced element does here. -/
+private def atomicBox (font : FontProfile) (id : Nat) (s : Computed) (items : Array Inline)
+    (available : Float) : Except String Inline := do
+  let b := s.borderEdges
+  let p := s.padding
+  let m := s.margin
+  let room := max 0 (available-m.left-m.right-b.left-b.right-p.left-p.right)
+  let fixed := CSS.resolve available s.width
+  let content ← inlineLayout font items 0 0 (fixed.getD room) (some s)
+  let used := fixed.getD (content.boxes.foldl (fun w box => max w (box.x+box.width)) 0)
+  let height := match s.height with
+    | .percent _ => content.height
+    | _ => max 0 ((CSS.resolve 0 s.height).getD content.height)
+  let w := b.left+p.left+used+p.right+b.right
+  let h := b.top+p.top+height+p.bottom+b.bottom
+  let inner := shiftResult (m.left+b.left+p.left) (m.top+b.top+p.top) content
+  let box : Box := ⟨id,m.left,m.top,w,h⟩
+  return .atomic id (m.left+w+m.right) (m.top+h+m.bottom)
+    {inner with nodes := decorations id s m.left m.top w h ++ inner.nodes, boxes := #[box] ++ inner.boxes}
+
+/-- Each outermost `openAtomic .. closeAtomic` becomes one `atomic` item. An
+inline-block inside another is laid out inline in it (its bounds are dropped). One
+pass over the items: a loop. -/
+def atomize (font : FontProfile) (items : Array Inline) (available : Float) : Except String (Array Inline) := do
+  let mut out : Array Inline := #[]
+  let mut depth : Nat := 0
+  let mut opened : Option (Nat × Computed) := none
+  let mut inside : Array Inline := #[]
+  for item in items do
+    match item with
+    | .openAtomic id s =>
+      if depth == 0 then
+        opened := some (id,s)
+        inside := #[]
+      depth := depth+1
+    | .closeAtomic =>
+      if depth == 1 then
+        if let some (id,s) := opened then out := out.push (← atomicBox font id s inside available)
+        opened := none
+      depth := depth-1
+    | other => if depth == 0 then out := out.push other else inside := inside.push other
+  -- Bounds always pair in `inlineItems`; an unpaired open keeps its content inline.
+  return if depth == 0 then out else out ++ inside
+
 /-- What goes before a list item: its number in an ordered list, else a star. -/
 private def listMarker (dom : Dom) (id : Nat) : String := Id.run do
   let some parent := (dom.get id).parent | return "* "
@@ -333,12 +428,13 @@ def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding 
       return {nodes := #[.paint ⟨some id,{geometry := .rect x (y+8) available 1,style := {fill := .solid ⟨0.5,0.5,0.5⟩}}⟩],height := 17}
     let margin := s.margin
     let padding := s.padding
+    let border := s.borderEdges
     let outerX := x+margin.left
     let outerY := y+margin.top
     let width := max 0 ((CSS.resolve available s.width).getD
-      (available-margin.left-margin.right-padding.left-padding.right))
-    let innerX := outerX+padding.left
-    let innerY := outerY+padding.top
+      (available-margin.left-margin.right-border.left-border.right-padding.left-padding.right))
+    let innerX := outerX+border.left+padding.left
+    let innerY := outerY+border.top+padding.top
     if n.ns == some DOM.svgNS then
       let (sw,sh) ← svgSize n s available
       let nodes ← embedding id s sw sh
@@ -349,18 +445,18 @@ def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding 
       let cs := styles[child]!
       if cs.display == .block then
         if !inline.isEmpty then
-          content := append content (← inlineLayout font inline innerX (innerY+content.height) width (some s))
+          content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
           inline := #[]
         content := append content (← block dom styles font embedding fuel child innerX (innerY+content.height) width)
       else
         inline := inline ++ (← inlineItems dom styles embedding width fuel child)
-    if !inline.isEmpty then content := append content (← inlineLayout font inline innerX (innerY+content.height) width (some s))
+    if !inline.isEmpty then content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
     let height := match s.height with
       | .percent _ => content.height
       | _ => max 0 ((CSS.resolve 0 s.height).getD content.height)
-    let borderWidth := width+padding.left+padding.right
-    let borderHeight := height+padding.top+padding.bottom
-    let nodes := background id s outerX outerY borderWidth borderHeight ++ content.nodes
+    let borderWidth := width+padding.left+padding.right+border.left+border.right
+    let borderHeight := height+padding.top+padding.bottom+border.top+border.bottom
+    let nodes := decorations id s outerX outerY borderWidth borderHeight ++ content.nodes
     let nodes := if s.clipOverflow then
       #[.clipped none identity ⟨outerX,outerY,borderWidth,borderHeight,identity⟩ nodes.toList]
       else nodes
@@ -430,9 +526,9 @@ def linkRegions (dom : Dom) (styles : Array Computed) (boxes : Array Box)
 
 /-- Existing DOM input, explicit viewport and font data, immutable scene output. -/
 def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding : Embedding)
-    (width height : Nat) (textScale : Float := 1) : Except String (Scene × Array Box) := do
+    (width height : Nat) (textScale : Float := 1) (state : CSS.ElementState := {}) : Except String (Scene × Array Box) := do
   if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported viewport: require dimensions 1 to 4096"
-  let styles := (← CSS.computeAll dom rules textScale).map fun s =>
+  let styles := (← CSS.computeAll dom rules textScale state).map fun s =>
     {s with width := s.width.atViewport (Float.ofNat width) (Float.ofNat height),
             height := s.height.atViewport (Float.ofNat width) (Float.ofNat height)}
   let result ← block dom styles font embedding 64 0 0 0 (Float.ofNat width)

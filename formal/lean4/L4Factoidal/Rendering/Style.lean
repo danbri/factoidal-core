@@ -4,7 +4,9 @@ import Std.Data.TreeMap
 
 /-! Computed styles for an explicitly bounded CSS block/inline profile.
 Selectors: universal, type, id and class compound selectors, selector lists and
-descendants. CSS error handling applies: what this profile does not understand
+descendants, and the pseudo-classes `:link`, `:visited`, `:any-link`, `:hover`
+and `:active` (Selectors Level 4 §8 and §9) over an `ElementState` that the
+host supplies. CSS error handling applies: what this profile does not understand
 is dropped, and the rest of the sheet still applies. A page is never refused
 for its style sheet. -/
 namespace L4Factoidal.Rendering.CSS
@@ -21,6 +23,9 @@ structure Edges where
   left : Float := 0
   deriving Repr
 inductive Display where | none | block | inline | inlineBlock
+  deriving Repr, BEq
+/-- CSS Backgrounds 3 §4.2 line styles of this profile. -/
+inductive BorderStyle where | none | solid | inset | outset
   deriving Repr, BEq
 structure Computed where
   display : Display := .inline
@@ -40,6 +45,11 @@ structure Computed where
   decorationColor : Option Color := none
   /-- Line breaks in the source are kept (pre and its older relatives). -/
   preformatted : Bool := false
+  /-- Border widths as specified; `Computed.borderEdges` is the used width (0 with no style). -/
+  borderWidth : Edges := ⟨3,3,3,3⟩
+  borderStyle : BorderStyle := .none
+  /-- None: `currentColor`. -/
+  borderColor : Option Color := none
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -50,23 +60,44 @@ def htmlProperties : List String :=
    "margin-top","margin-right","margin-bottom","margin-left",
    "padding-top","padding-right","padding-bottom","padding-left",
    "color","background","background-color","font-size","font-family",
-   "line-height","visibility","overflow","text-decoration","text-decoration-line"]
+   "line-height","visibility","overflow","text-decoration","text-decoration-line",
+   "border","border-width","border-style","border-color"]
+
+/-- CSS Backgrounds 3 §4.3: the computed border width is 0 when the style is none. -/
+def Computed.borderEdges (s : Computed) : Edges :=
+  if s.borderStyle == .none then {} else s.borderWidth
 
 structure Declaration where
   property : String
   value : String
   important : Bool := false
   deriving Repr
+/-- Selectors Level 4 location (§8) and user action (§9) pseudo-classes. -/
+inductive PseudoClass where | link | visited | anyLink | hover | active
+  deriving Repr, BEq
 structure Compound where
   tag : Option String := none
   id : Option String := none
   classes : List String := []
+  pseudo : List PseudoClass := []
   deriving Repr
 structure Selector where
   /-- Rightmost compound first; ancestors follow. -/
   parts : List Compound
   specificity : Nat × Nat × Nat
   deriving Repr
+/-- A selector that names `:visited` anywhere. Such a rule sets only colours. -/
+def Selector.visitedDependent (sel : Selector) : Bool :=
+  sel.parts.any (·.pseudo.contains .visited)
+
+/-- The element state the host says (Selectors Level 4 §9.1-§9.2, HTML §4.16.3):
+the element the pointer designates, the element being activated (each with its
+ancestors), and the hyperlinks whose target is in the session history. -/
+structure ElementState where
+  hover : Option Nat := none
+  active : Option Nat := none
+  visited : List Nat := []
+  deriving Repr, BEq, Inhabited
 structure Rule where
   selectors : List Selector
   declarations : List Declaration
@@ -80,9 +111,12 @@ def hasAttribute (n : DOM.Node) (key : String) : Bool :=
 private def words (s : String) : List String :=
   (s.replace "\n" " " |>.replace "\t" " " |>.replace "\r" " ").splitOn " " |>.filter (· != "")
 private def ident (s : String) : Bool := !s.isEmpty && s.toList.all (fun c => c.isAlphanum || c == '-' || c == '_')
+private def pseudoClass : String → Option PseudoClass
+  | "link" => some .link | "visited" => some .visited | "any-link" => some .anyLink
+  | "hover" => some .hover | "active" => some .active | _ => none
 private def compound (s : String) : Except String Compound := do
   let chunks := s.toList.foldl (fun (acc : List String) c =>
-    if c == '#' || c == '.' then String.singleton c :: acc
+    if c == '#' || c == '.' || c == ':' then String.singleton c :: acc
     else match acc with | [] => [String.singleton c] | a::rest => (a.push c)::rest) []
   let mut out : Compound := {}
   for chunk in chunks.reverse do
@@ -94,6 +128,9 @@ private def compound (s : String) : Except String Compound := do
       let value := (chunk.drop 1).toString
       if !ident value then throw "unsupported CSS class selector"
       out := {out with classes := value :: out.classes}
+    else if chunk.startsWith ":" then
+      let some value := pseudoClass ((chunk.drop 1).toString.toLower) | throw s!"unsupported CSS pseudo-class: {chunk}"
+      out := {out with pseudo := value :: out.pseudo}
     else if chunk == "*" then pure ()
     else if ident chunk then out := {out with tag := some chunk.toLower}
     else throw s!"unsupported CSS selector: {s}"
@@ -102,7 +139,7 @@ private def selector (s : String) : Except String Selector := do
   let parts ← (words (trim s)).mapM compound
   if parts.isEmpty || parts.length > 16 then throw "CSS selector exceeds supported depth"
   let specificity := parts.foldl (fun (n : Nat × Nat × Nat) p =>
-    (n.1 + (if p.id.isSome then 1 else 0), n.2.1 + p.classes.length,
+    (n.1 + (if p.id.isSome then 1 else 0), n.2.1 + p.classes.length + p.pseudo.length,
       n.2.2 + (if p.tag.isSome then 1 else 0))) (0,0,0)
   return ⟨parts.reverse,specificity⟩
 
@@ -189,26 +226,44 @@ def parse (source : String) : Except String (List Rule) := do
       if let .ok selectors := (head.splitOn ",").mapM selector then
         out := ⟨selectors,← declarations body⟩ :: out
   return out.reverse
-private def selectorMatchesCompound (n : DOM.Node) (s : Compound) : Bool :=
+/-- `id` is `target` or one of its ancestors. The walk is bounded by the arena size. -/
+def inclusiveAncestor (dom : Dom) (id : Nat) : Nat → Option Nat → Bool
+  | 0, _ => false
+  | _+1, none => false
+  | f+1, some at_ => at_ == id || inclusiveAncestor dom id f (dom.get at_).parent
+
+/-- HTML §4.16.3: an `a` or `area` element with an `href` attribute is a hyperlink. -/
+def isHyperlink (n : DOM.Node) : Bool :=
+  (n.lname == "a" || n.lname == "area") && hasAttribute n "href"
+
+private def pseudoMatches (dom : Dom) (state : ElementState) (id : Nat) (n : DOM.Node) : PseudoClass → Bool
+  | .anyLink => isHyperlink n
+  | .link => isHyperlink n && !state.visited.contains id
+  | .visited => isHyperlink n && state.visited.contains id
+  | .hover => inclusiveAncestor dom id (dom.size+1) state.hover
+  | .active => inclusiveAncestor dom id (dom.size+1) state.active
+
+private def selectorMatchesCompound (dom : Dom) (state : ElementState) (id : Nat) (s : Compound) : Bool :=
+  let n := dom.get id
   n.type == .element && (s.tag.map (· == n.lname)).getD true &&
     (s.id.map (· == attrValue n "id")).getD true &&
-    s.classes.all ((words (attrValue n "class")).contains ·)
-private def matchAncestors (dom : Dom) : Nat → Option Nat → Compound → Option Nat
+    s.classes.all ((words (attrValue n "class")).contains ·) &&
+    s.pseudo.all (pseudoMatches dom state id n)
+private def matchAncestors (dom : Dom) (state : ElementState) : Nat → Option Nat → Compound → Option Nat
   | 0, _, _ => none
   | _+1, none, _ => none
   | f+1, some id, sel =>
-    let n := dom.get id
-    if selectorMatchesCompound n sel then some id else matchAncestors dom f n.parent sel
-private def selectorMatchesParts (dom : Dom) : List Compound → Option Nat → Bool
+    if selectorMatchesCompound dom state id sel then some id else matchAncestors dom state f (dom.get id).parent sel
+private def selectorMatchesParts (dom : Dom) (state : ElementState) : List Compound → Option Nat → Bool
   | [], _ => true
-  | sel::rest, ancestor => match matchAncestors dom (dom.size+1) ancestor sel with
+  | sel::rest, ancestor => match matchAncestors dom state (dom.size+1) ancestor sel with
     | none => false
-    | some id => selectorMatchesParts dom rest (dom.get id).parent
+    | some id => selectorMatchesParts dom state rest (dom.get id).parent
 
-def selectorMatches (dom : Dom) (id : Nat) (sel : Selector) : Bool :=
+def selectorMatches (dom : Dom) (id : Nat) (sel : Selector) (state : ElementState := {}) : Bool :=
   match sel.parts with
   | [] => false
-  | head::rest => selectorMatchesCompound (dom.get id) head && selectorMatchesParts dom rest (dom.get id).parent
+  | head::rest => selectorMatchesCompound dom state id head && selectorMatchesParts dom state rest (dom.get id).parent
 
 /-- Strict finite decimal conversion for CSS lengths; exponent syntax is outside
 this first profile, and malformed declarations are refused. -/
@@ -282,6 +337,13 @@ private def edgePixel (source : String) : Except String Float := do
   let value ← pixels source
   if value < 0 then throw "negative edges outside first CSS profile"
   return value
+private def borderStyle (source : String) : Except String BorderStyle :=
+  match (trim source).toLower with
+  | "none" | "hidden" => pure .none
+  | "solid" => pure .solid
+  | "inset" => pure .inset
+  | "outset" => pure .outset
+  | _ => throw "unsupported CSS border style"
 private def apply (s : Computed) (d : Declaration) : Except String Computed := do
   match d.property with
   | "display" => match d.value with
@@ -328,6 +390,17 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     if d.value == "underline" then return {s with underline := true}
     if d.value == "none" then return {s with underline := false}
     throw "unsupported CSS text decoration"
+  | "border-style" => return {s with borderStyle := ← borderStyle d.value}
+  | "border-width" => return {s with borderWidth := ← edgeValues d.value}
+  | "border-color" => return {s with borderColor := some (← color d.value)}
+  | "border" =>
+    -- CSS Backgrounds 3 §4.4: width, style and colour in any order; each omitted one is reset.
+    let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyle := .none, borderColor := none}
+    for part in words d.value do
+      if let .ok style := borderStyle part then out := {out with borderStyle := style}
+      else if let .ok w := edgePixel part then out := {out with borderWidth := ⟨w,w,w,w⟩}
+      else out := {out with borderColor := some (← color part)}
+    return out
   | "font-family" =>
     let raw := trim d.value
     let quoted := (raw.startsWith "'" && raw.endsWith "'") || (raw.startsWith "\"" && raw.endsWith "\"")
@@ -360,22 +433,44 @@ private def lexLE : List Nat → List Nat → Bool
   | _::_, [] => false
   | a::as, b::bs => if a == b then lexLE as bs else a < b
 
-/-- Winning declarations are keyed by property, with importance, specificity
-and source order compared lexicographically. Inheritance is applied first. -/
-def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Except String Computed := do
+/-- The user agent style sheet of this profile: HTML §15.3.4 (phrasing content:
+hyperlink colours and underline) and §15.5.4 (the `button` element as an
+inline-block with a raised border, sunken while it is `:active`). The colours are
+the ones that HTML gives (`#0000EE`, `#551A8B`, `#FF0000`); the button colours are
+this profile's choice, since HTML leaves a button's look to the platform. -/
+def userAgentSheet : String :=
+  ":link{color:#0000ee}" ++
+  ":visited{color:#551a8b}" ++
+  -- `:link,:visited` in HTML; one `:any-link` rule, so that the `:visited` colour rule stays colour only.
+  ":any-link{text-decoration:underline}" ++
+  ":link:active,:visited:active{color:#ff0000}" ++
+  "button{display:inline-block;padding:1px 6px;border:2px outset #767676;background-color:#efefef;color:#000000}" ++
+  "button:hover{background-color:#e5e5e5}" ++
+  "button:active{border-style:inset;background-color:#c8c8c8}"
+
+def userAgentRules : List Rule := (parse userAgentSheet).toOption.getD []
+
+/-- A rule that matches only through `:visited` sets only colours (Selectors 4 §8.2,
+the privacy restriction that browsers apply to visited links). -/
+def visitedProperties : List String := ["color","background-color","border-color"]
+
+/-- Winning declarations are keyed by property, with importance, origin, specificity
+and source order compared lexicographically (CSS Cascade 4 §6.1). The user agent
+origin (`userAgentRules`) is below the author origin. Inheritance is applied first. -/
+def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
+    (state : ElementState := {}) : Except String Computed := do
   let n := dom.get id
   let block := ["html","body","div","p","section","main","article","header","footer","nav","aside",
     "h1","h2","h3","h4","h5","h6","ul","ol","li","dir","menu","dl","dt","dd","pre","listing","xmp","plaintext",
     "blockquote","address","center","hr","form","fieldset","figure","figcaption",
     "table","caption","thead","tbody","tfoot","tr","td","th"].contains n.lname
   let hidden := ["head","style","script","title","meta","link","template","base","area","param"].contains n.lname
-  let hyperlink := n.lname == "a" && hasAttribute n "href"
   let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg"
   let svgOverflow := attrValue n "overflow"
   let scale := headingScale n.lname
   let fontSize := if scale == 1 then parent.fontSize else (parent.fontSize*scale).round
   let mut initial : Computed := {
-    color := if hyperlink then ⟨0,0,1⟩ else parent.color, underline := hyperlink,
+    color := parent.color,
     clipOverflow := svgViewport && svgOverflow != "visible", fontSize, fontFamily := parent.fontFamily,
     lineHeight := parent.lineHeightFactor.map (fontSize*·) |>.getD parent.lineHeight,
     lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
@@ -397,16 +492,19 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
           else {initial with height := dimension}
   let mut winners : Std.TreeMap String (List Nat × Declaration) := {}
   let mut order : Nat := 0
-  for rule in rules do
-    let specificity := (rule.selectors.filter (selectorMatches dom id)).foldl (fun m s => if lexLE [m.1,m.2.1,m.2.2] [s.specificity.1,s.specificity.2.1,s.specificity.2.2] then s.specificity else m) (0,0,0)
-    if rule.selectors.any (selectorMatches dom id) then
+  for (origin,rule) in userAgentRules.map (0,·) ++ rules.map (1,·) do
+    let matched := rule.selectors.filter (selectorMatches dom id · state)
+    let specificity := matched.foldl (fun m s => if lexLE [m.1,m.2.1,m.2.2] [s.specificity.1,s.specificity.2.1,s.specificity.2.2] then s.specificity else m) (0,0,0)
+    if !matched.isEmpty then
+      let onlyVisited := matched.all (·.visitedDependent)
       for d in rule.declarations do
-        let key := [if d.important then 1 else 0,0,specificity.1,specificity.2.1,specificity.2.2,order]
-        if (winners.get? d.property).all (fun old => lexLE old.1 key) then
-          winners := winners.insert d.property (key,d)
+        if !onlyVisited || visitedProperties.contains d.property then
+          let key := [if d.important then 1 else 0,origin,0,specificity.1,specificity.2.1,specificity.2.2,order]
+          if (winners.get? d.property).all (fun old => lexLE old.1 key) then
+            winners := winners.insert d.property (key,d)
         order := order+1
   for d in ← declarations (attrValue n "style") do
-    let key := [if d.important then 1 else 0,1,0,0,0,order]
+    let key := [if d.important then 1 else 0,1,1,0,0,0,order]
     if (winners.get? d.property).all (fun old => lexLE old.1 key) then winners := winners.insert d.property (key,d)
     order := order+1
   -- Font size precedes line-height and inheritance-sensitive dependent values.
@@ -416,7 +514,7 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed) : Ex
     if key != "font-size" then
       -- Inline SVG paint declarations stay with the existing SVG producer.
       -- External HTML paint rules are refused until that cascade is unified.
-      if n.ns == some DOM.svgNS && priority[1]? == some 1 && !htmlProperties.contains key then pure ()
+      if n.ns == some DOM.svgNS && priority[2]? == some 1 && !htmlProperties.contains key then pure ()
       else result := applyOrKeep result d
   -- A root or body never clips here: the window scrolls instead.
   if ["html","body"].contains n.lname then result := {result with clipOverflow := false}
@@ -433,7 +531,8 @@ def Computed.scaleText (s : Computed) (scale : Float) : Computed :=
   {s with fontSize := size, lineHeight := height}
 
 /-- Visit parents before children, using a work list and bounded arena size. -/
-def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1) : Except String (Array Computed) := do
+def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1)
+    (state : ElementState := {}) : Except String (Array Computed) := do
   if !textScale.isFinite || textScale < 0.5 then throw "text scale must be finite and at least 50%"
   let mut pending := [0]
   let mut styles := Array.replicate dom.size ({} : Computed)
@@ -444,9 +543,10 @@ def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1) : Except
       let n := dom.get id
       let parent := (n.parent.bind (styles[·]?)).getD {}
       let svgDescendant := n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
-      let style ← if n.type == .element && !svgDescendant then computed dom id rules parent else pure {parent with
+      let style ← if n.type == .element && !svgDescendant then computed dom id rules parent state else pure {parent with
         display := .inline, width := .auto, height := .auto,
-        margin := {}, padding := {}, background := none, clipOverflow := false}
+        margin := {}, padding := {}, background := none, clipOverflow := false,
+        borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none}
       styles := styles.set! id style
       pending := n.kids.toList ++ rest
   throw "DOM style traversal exceeds arena bound"
