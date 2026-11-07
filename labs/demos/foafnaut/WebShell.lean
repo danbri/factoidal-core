@@ -556,8 +556,9 @@ def Shell.editJson (s : Shell) : JSON.Json :=
 -- The graph is a page: a link or `:graph` loads it in the tab and pushes it on the history.
 #guard link "foafnaut:graph" == .page graphURL && submit ":graph" == .page graphURL
 #guard link "foafnaut:settings" == .command "settings" ""
-#guard (({address := "ac",cursor := 1} : Shell).typed "b").address == "abc"
-#guard (({address := "abc",cursor := 3} : Shell).key 51).address == "ab"
+-- A struct literal sets the anchor too: `anchor := 0` would select from the start.
+#guard (({address := "ac",cursor := 1,anchor := 1} : Shell).typed "b").address == "abc"
+#guard (({address := "abc",cursor := 3,anchor := 3} : Shell).key 51).address == "ab"
 #guard (({address := "abc",cursor := 0} : Shell).key 123).cursor == 0
 #guard pointer {} none true == .hand && pointer {} none false == .arrow
 #guard pointer {} (hit {} 1000 10 40) false == .arrow && pointer {canBack := true} (hit {} 1000 10 40) false == .hand

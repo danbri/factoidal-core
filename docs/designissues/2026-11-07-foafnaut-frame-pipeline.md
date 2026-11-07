@@ -204,6 +204,105 @@ text for each frame, and calls `ng_set_cursor` only when the answer changes. The
 library sets the NSCursor again when a move comes back into the view after AppKit's
 window-edge pointer. `--back-sweep` checks the hand over a link and the arrow off it.
 
+## Mac app conventions, address bar editing and printing (2026-11-07)
+
+Owner, 2026-11-07, verbatim: "Can we add more conventional OSX-isms for it to work nicely
+as an OSX app? Like can I alt-tab to it, my focus automatically beginning in the URL bar,
+and be able to do command-a select all and command-c or command-x or whatever as well as
+command-v? (and same on other platform builds which I hope are continuing, and ideally in
+hub/web version too). In OSX I want to be able to print a showcaase page, and print in
+general, which should be easy since osx is nicely designed, right? So we'll need a demo
+page well suited for printing. As well as maybe the svg tiny page of comparisons."
+
+### The app
+
+- `foafnaut.app` is a regular app: no `LSUIElement`; `Info.plist` has `CFBundleName`,
+  `CFBundleDisplayName`, `CFBundleIconFile` (`AppIcon.icns`, a FOAF graph drawn by
+  `make-icon.py` and made with `sips` and `iconutil` in `build-executables.sh`), version,
+  category and `NSPrincipalClass`. The `run` script `exec`s the window program, so the
+  process keeps the bundle's identity.
+- `ng_app_start` (window library) sets the regular activation policy, installs the menu,
+  calls `finishLaunching` and activates the app. `run_html.ts` calls it before it loads the
+  engine, so the Dock icon and Command-Tab entry are there at once. `ng_create` and
+  `ng_show_after_surface` activate again with `[NSApp activate]` (macOS 14 and later; the
+  older `activateIgnoringOtherApps:` before that).
+- The window title is the page title (Safari), else "foafnaut".
+
+### The address bar is a text field (Lean: `WebShell`)
+
+The `Shell` value has a selection anchor, one undo step and one redo step, and a
+`typing` flag (typed text after typed text is one undo step). `Shell.edit` does `focus`
+(the address, all selected), `selectAll`, `copy`, `cut`, `paste`, `undo` and `redo`, and
+answers the text for the clipboard. `Shell.key` takes the modifier bits: Shift extends the
+selection, Option moves and deletes by word (`wordStart`, `wordEnd`), Command goes to the
+end of the line; delete with a selection removes it; left or right with a selection goes to
+its start or end. Typed and pasted text replaces the selection; a pasted line break and
+the white space around it go (`clean`). The bar draws the selection behind the text and
+hides the caret, as a macOS field does.
+
+- A new window and a new tab start with the bar focused and the address selected.
+- The `command` op takes `focused`. Lean answers `target:"address"` for copy, select
+  all, cut, paste, undo and redo when the bar has the focus, and for paste always (the
+  bar is the only text field). Else copy and select all act on the page, as before.
+- The host keeps the edit state (`editJson`) and only reads and writes the clipboard.
+- Menus: Edit has Undo (Command-Z), Redo (Shift-Command-Z), Cut, Copy, Paste, Select
+  All; File has Page Setup (Shift-Command-P, the system panel) and Print (Command-P).
+- Command-Left and Command-Right stay Back and Forward (History menu) when the bar has
+  the focus; Home and End, Up and Down, and Option with the arrows move in the bar.
+
+### The Hub page
+
+`browser.mjs` gets Lean's key table (`keyTable` op, platform `mac` or `other`) from the
+worker at start, and keeps from the host browser each key in it (Command on a Mac,
+Control elsewhere). Paste comes from the `paste` event, which carries the clipboard text;
+copy and cut send the text Lean chose to `navigator.clipboard.writeText`. The worker uses
+the same `shellEdit` and `command` ops as the window host.
+
+### Printing
+
+1. Command-P sends command 18; Lean answers `print`.
+2. The host reads the paper of the page setup (`ng_print_paper`, points) and lays the page
+   out at 2 device pixels a point, text at 150% (16 CSS px is 12 pt), with
+   `media:"print"`.
+3. CSS: `CSS.parseFor medium` reads the rules of `@media` blocks whose media query list
+   holds for the medium (a media type, `all`, with `only`; a query with a feature, `not`
+   or `and` does not hold). `CSS.parse` is `parseFor "screen"`. Style sheets with
+   `media="print"` apply when printing; `inspect` lists them, so the host fetches them.
+4. `printLayout` answers the page breaks (`WebPrint.paginate`): a forced break at
+   `break-before`/`break-after: page` (and the CSS 2 `page-break-*: always`), counted
+   once when two have no text between them; else the lowest row that no line box, image or
+   `break-inside: avoid` block crosses; else the page edge (a box taller than a page is
+   cut). At most 200 pages. The break properties come from the cascade
+   (`WebPrint.declared`: importance, `style` attribute, specificity, order).
+5. For each page, a render with `printPage:[top,rows]` draws those rows at the top of a
+   page image, white below them. The GPU renders it offscreen (`gpu_transport.render`).
+6. `ng_print` gives the images to `NSPrintOperation` with an `NSView` that knows its pages.
+   The print panel shows, modal, as in other Mac apps: Save as PDF, Preview, printers.
+   With `--print-pdf FILE` the job is saved to the file with no panel, and the host counts
+   the PDF's pages against Lean's.
+
+Page images are raster (144 dpi). There is no vector path for the HTML scene:
+`SceneSVG.lean` exports the older `NativeGraphics` scene, not `Rendering.Scene`.
+
+### Checks
+
+RESULTS
+
+### Open
+
+- Printing gaps, one issue: https://github.com/danbri/factoidal/issues/1279 (vector
+  output, panel paper changes, tables, Hub print, `@page`).
+- Printing is raster at 144 dpi; a vector PDF needs a `Rendering.Scene` to PDF or SVG
+  writer.
+- The page is laid out for the paper of Page Setup when Command-P is pressed. A paper
+  change in the print panel does not lay the page out again.
+- HTML tables are not laid out as tables (cells stack). The print showcase uses rows of
+  fixed-width inline blocks.
+- The Hub page does not print through Lean: Command-P there is the host browser's print
+  of the canvas.
+- Linux and Windows have no window library: https://github.com/danbri/factoidal/issues/1278
+  (foafnaut desktop window on Linux and Windows).
+
 ## Open
 
 - The scroll sweep moves down only. Scroll up is tested by the rule tests, not in a window.

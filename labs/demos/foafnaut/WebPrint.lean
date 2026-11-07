@@ -130,8 +130,8 @@ def contentHeight (boxes : Array Rendering.Layout.Box) : Nat :=
 /-- White over the rows of a page image below its slice, so a line that begins on
 the next page does not show at the bottom of this one. -/
 def cover (width top height : Nat) : Rendering.Node :=
-  .paint {primitive := {geometry := .rect 0 (Float.ofNat top) (Float.ofNat width) (Float.ofNat height),
-    style := {fill := .solid ⟨1,1,1⟩}}}
+  let geometry : Rendering.Geometry := .rect 0 (Float.ofNat top) (Float.ofNat width) (Float.ofNat height)
+  .paint {primitive := {geometry,style := {fill := .solid ⟨1,1,1⟩}}}
 
 /-! ### Checks -/
 

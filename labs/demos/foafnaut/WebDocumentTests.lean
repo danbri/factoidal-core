@@ -153,7 +153,7 @@ private def menu (number : Nat) (percent : Nat := 100) : Option String :=
 private def focusedMenu (number : Nat) : Option JSON.Json :=
   historyField' [("op",.string "command"),("command",.number (toString number)),("textScalePercent",.number "100"),("focused",.bool true)] "target"
 #guard focusedMenu 5 == some (.string "address") && focusedMenu 15 == some (.string "address") && focusedMenu 1 == none
-#guard (menu 14).map (fun t => (t.splitOn "address").length > 1) == some true
+#guard (menu 14).map (fun t => decide ((t.splitOn "address").length > 1)) == some true
 #guard menu 6 == some "{\"action\":\"back\",\"textScalePercent\":100}"
 private def pages : JSON.Json := json [("entries",.array [.string "a",.string "b"]),("index",.number "1")]
 private def historyField (request : List (String × JSON.Json)) (key : String) : Option JSON.Json := do
@@ -377,4 +377,4 @@ private def shellEdit (action text : String) (shell : JSON.Json) : Option JSON.J
 #guard ((shellEdit "copy" "" (json [("address",.string "abc"),("cursor",.number "3"),("anchor",.number "1")])).bind (·.field? "clipboard")) == some (.string "bc")
 #guard ((shellEdit "cut" "" (json [("address",.string "abc"),("cursor",.number "3"),("anchor",.number "1")])).bind (·.field? "address")) == some (.string "a")
 #guard ((shellEdit "copy" "" (json [("address",.string "abc"),("cursor",.number "3")])).bind (·.field? "clipboard")) == some .null
-#guard (WebDocument.run "" (json [("op",.string "keyTable"),("platform",.string "mac")]) 1 1).toOption.map (fun t => (t.splitOn "\"p\"").length > 1) == some true
+#guard (WebDocument.run "" (json [("op",.string "keyTable"),("platform",.string "mac")]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"p\"").length > 1)) == some true
