@@ -7,11 +7,15 @@ function assert(b:boolean,message:string){if(!b)throw new Error(message);}
 function rejects(action:()=>unknown,contains:string){let message="";try{action();}catch(error){message=String(error);}assert(message.includes(contains),`Expected ${contains}; got ${message||"success"}`);}
 const wrap=(body:string,attrs="")=>`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" ${attrs}>${body}</svg>`;
 const wrap100=(body:string)=>`<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">${body}</svg>`;
-// Independent analytic membership, sampled at the specified four quarter
-// positions. These black-on-white cases need no renderer-derived expectation.
+// Independent analytic membership, sampled by the stated rule: four samples, and
+// twelve more when the four differ. These black-on-white cases need no
+// renderer-derived expectation.
 function quarterBlackRGB(x:number,y:number,contains:(x:number,y:number)=>boolean){
- const covered=[[.25,.25],[.75,.25],[.25,.75],[.75,.75]].filter(([dx,dy])=>contains(x+dx,y+dy)).length;
- const channel=Math.round(255*(1-covered/4));return [channel,channel,channel];
+ const first=[[1,5],[6,14],[10,2],[15,11]],rest=[[0,0],[2,10],[3,15],[4,4],[5,9],[7,3],[8,8],[9,13],[11,7],[12,12],[13,1],[14,6]];
+ const count=(cells:number[][])=>cells.filter(([cx,cy])=>contains(x+(cx+.5)/16,y+(cy+.5)/16)).length;
+ const covered=count(first);
+ const share=covered===0||covered===4?covered/4:(covered+count(rest))/16;
+ const channel=Math.round(255*(1-share));return [channel,channel,channel];
 }
 
 Deno.test("SVG XML.NamespaceView resolves real namespaces and rejects lexical lookalikes",async()=>{
@@ -93,7 +97,7 @@ Deno.test("SVG round line caps use capsule geometry with inherited overrides",as
   }
  }
  const edge=wrap('<line x1="10" y1="10.5" x2="20" y2="10.5" stroke="black" stroke-width="4" stroke-linecap="round"/>');
- equal(e.sample(edge,9,8),[128,128,128]); // two of four quarter points are inside
+ equal(e.sample(edge,9,8),quarterBlackRGB(9,8,(px,py)=>(px-10)**2+(py-10.5)**2<=4));
  equal(e.sample(edge,15,10),[0,0,0]);equal(e.sample(edge,0,0),[255,255,255]);
  const inherited=wrap('<g stroke="black" stroke-width="4" stroke-linecap="round"><line x1="10" y1="10.5" x2="20" y2="10.5"/><line x1="10" y1="30.5" x2="20" y2="30.5" stroke-linecap="butt"/></g>');
  equal(e.sample(inherited,8,10),[0,0,0]);equal(e.sample(inherited,8,30),[255,255,255]);

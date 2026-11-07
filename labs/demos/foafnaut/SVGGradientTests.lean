@@ -122,6 +122,11 @@ private def forgiven (body : String) : List String :=
 #guard (forgiven ("<radialGradient id='g' fx='0'>" ++ redBlue ++ "</radialGradient>" ++ full)).contains "attribute: radialGradient fx"
 #guard (forgiven (redBlueGradient "" ++ full)).isEmpty
 
+private def forgivenPixel (body : String) (x y : Nat) : List Nat :=
+  match NativeSVGForgiving.parse (svg body) 100 100 with
+  | .error _ => []
+  | .ok (s,_) => let c := s.samplePixel x y; [c.r,c.g,c.b].map fun f => (f*255).round.toUInt32.toNat
+
 -- A glyph paints in the user space of its text, with the box of its text.
 private def font : NativeSVGForgiving.SVGFont :=
   match NativeSVGForgiving.SVGFont.parse "<svg xmlns='http://www.w3.org/2000/svg'><font horiz-adv-x='1000'><font-face font-family='T' units-per-em='1000' ascent='1000' descent='0'/><glyph unicode='a' d='M0 0H1000V1000H0Z'/></font></svg>" with
@@ -144,10 +149,32 @@ private def textPixel (body : String) (x y : Nat) : List Nat :=
 #guard textPixel "<switch><rect width='1' height='1'/><linearGradient id='g'><stop stop-color='lime'/></linearGradient></switch><rect width='100' height='100' fill='url(#g)'/>" 50 50 == [0,255,0]
 #guard textPixel "<switch><rect width='1' height='1' fill='lime'/><rect width='100' height='100' fill='red'/></switch>" 50 50 == [255,255,255]
 
+-- A stroke narrower than the samples: https://github.com/danbri/factoidal/issues/1253.
+-- A stroke of width 0.3 on a pixel edge is about 15% in each pixel.
+#guard close (pixel "<rect x='50' width='40' height='100' fill='none' stroke='black' stroke-width='0.3'/>" 50 50) [216,216,216] 6
+#guard close (pixel "<rect x='50' width='40' height='100' fill='none' stroke='black' stroke-width='0.3'/>" 49 50) [216,216,216] 6
+-- A stroke of width 0.25 in a pixel is about 25%, and the same on a transform.
+#guard close (pixel "<line x1='50.5' y1='0' x2='50.5' y2='100' stroke='black' stroke-width='0.25'/>" 50 50) [191,191,191] 8
+#guard close (pixel "<g transform='scale(0.25)'><line x1='202' y1='0' x2='202' y2='400' stroke='black'/></g>" 50 50) [191,191,191] 8
+-- A dashed thin stroke keeps its dashes, and a diagonal thin stroke has no gap.
+#guard pixel "<line x1='0' y1='50.5' x2='100' y2='50.5' stroke='black' stroke-width='0.25' stroke-dasharray='10'/>" 15 50 == [255,255,255]
+#guard (List.range 40).all fun i => (pixel "<line x1='0' y1='3' x2='100' y2='97' stroke='black' stroke-width='0.2'/>" (30+i) ((600+94*(2*(30+i)+1))/200)).head! < 255
+-- A thin filled rectangle: the area times the opacity stays the same.
+#guard close (pixel "<rect x='50.4' y='0' width='0.25' height='100'/>" 50 50) [191,191,191] 8
+
+#guard pixel "<rect width='100' height='100' fill='currentColor' color='lime'/>" 50 50 == [0,255,0]
+-- A system colour has a value, in any case.
+#guard pixel "<rect width='100' height='100' fill='ButtonText'/>" 50 50 == [0,0,0]
+#guard pixel "<rect width='100' height='100' fill='WINDOW'/><rect width='9' height='9' fill='infoBackground'/>" 5 5 == [255,255,225]
+-- A paint value in error is as if not specified (W3C styling-pres-01-t).
+#guard forgivenPixel "<g fill='lime'><rect width='100' height='100' fill='red !important'/></g>" 50 50 == [0,255,0]
+
 -- Expected failures. Each guard states the present wrong result, so the build
 -- fails when the fault is repaired; then state the right result and close the issue.
--- https://github.com/danbri/factoidal/issues/1253: this stroke must draw a grey line.
-#guard pixel "<rect x='50' width='40' height='100' fill='none' stroke='black' stroke-width='0.3'/>" 50 50 == [255,255,255]
+-- https://github.com/danbri/factoidal/issues/1260: this thin path must draw 10% grey.
+#guard pixel "<path d='M50.5 0h0.1v100h-0.1z'/>" 50 50 == [255,255,255]
+-- https://github.com/danbri/factoidal/issues/1265: W3C paint-color-05-t wants the colour of the `g`; this is CSS Color 4.
+#guard pixel "<g fill='currentColor' color='lime'><rect width='100' height='100' color='blue'/></g>" 50 50 == [0,0,255]
 -- https://github.com/danbri/factoidal/issues/1254: animation of a paint must run.
 #guard (forgiven ("<solidColor id='g' solid-color='red'><animate attributeName='solid-color' to='lime' dur='1s'/></solidColor>" ++ full)).contains "element: animate"
 -- https://github.com/danbri/factoidal/issues/1255: a paint in another document must be fetched.

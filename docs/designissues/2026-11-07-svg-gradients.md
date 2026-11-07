@@ -82,8 +82,6 @@ compares its pixels with it.
 
 ## Open
 
-- https://github.com/danbri/factoidal/issues/1253 (a stroke narrower than the
-  sample grid can draw nothing)
 - https://github.com/danbri/factoidal/issues/1254 (animation of paint)
 - https://github.com/danbri/factoidal/issues/1255 (references to another document)
 

@@ -16,8 +16,85 @@ private def log (body : String) : List String := ((result body).map (·.2)).getD
 #guard (log "<foo xmlns='urn:x'/>").contains "foreign element: foo"
 #guard (log "<g font-size='9'/>").contains "attribute: g font-size"
 -- A value the reader refuses removes that element only, and is logged.
-#guard primitives "<rect fill='nocolour' width='9' height='9'/><rect width='9' height='9'/>" == 1
-#guard (log "<rect fill='nocolour' width='9' height='9'/>").any (·.startsWith "removed rect")
+#guard primitives "<rect width='-1' height='9'/><rect width='9' height='9'/>" == 1
+#guard (log "<rect width='-1' height='9'/>").any (·.startsWith "removed rect")
+-- A colour the reader refuses goes alone, and the element stays (W3C styling-pres-01-t).
+#guard primitives "<rect fill='nocolour' width='9' height='9'/><rect width='9' height='9'/>" == 2
+#guard (log "<rect fill='nocolour' width='9' height='9'/>").contains "approximated: colour nocolour"
+
+-- Text. `font` has the glyph shapes that these guards tell apart by position.
+private def tfont : SVGFont :=
+  match SVGFont.parse "<svg xmlns='http://www.w3.org/2000/svg'><font horiz-adv-x='1000'><font-face font-family='T' units-per-em='1000' ascent='1000' descent='0'/><glyph unicode=' ' horiz-adv-x='500'/><glyph unicode='a' glyph-name='a' d='M0 0H1000V1000H0Z'/><glyph unicode='ab' glyph-name='ab' horiz-adv-x='2000' d='M0 0H2000V500H0Z'/><glyph unicode='b' glyph-name='b' d='M0 0H1000V500H0Z'/><glyph unicode='c' lang='fr' d='M0 0H1000V1000H0Z'/><glyph unicode='&#x69A;' arabic-form='isolated' d='M0 0H1000V1000H0Z'/><glyph unicode='&#x69A;' arabic-form='initial' d='M0 0H1000V500H0Z'/><glyph unicode='&#x69A;' arabic-form='terminal' d='M0 500H1000V1000H0Z'/><hkern u1='U+0061' u2='a' k='500'/></font></svg>" with
+  | .ok f => f | .error _ => {}
+private def tpixel (body : String) (x y : Nat) : Float :=
+  match parse (svg body) 40 40 (some tfont) with
+  | .error _ => -1
+  | .ok (s,_) => (s.samplePixel x y).r
+private def inked (body : String) (x y : Nat) : Bool := tpixel body x y == 0
+private def clear (body : String) (x y : Nat) : Bool := tpixel body x y == 1
+-- xml:space: a newline goes by default, and is a space under preserve.
+#guard inked "<text x='0' y='10' font-size='10'>a\na</text>" 12 5 && clear "<text x='0' y='10' font-size='10' xml:space='preserve'>a\n a</text>" 12 5
+#guard inked "<text x='0' y='10' font-size='10' xml:space='preserve'> a</text>" 8 5 && clear "<text x='0' y='10' font-size='10' xml:space='preserve'> a</text>" 2 5
+-- A no-break space with no glyph draws as a space, not as the missing glyph.
+#guard inked "<text x='0' y='10' font-size='10'>&#160;a</text>" 8 5
+-- rotate turns a glyph about its origin, and the last value holds.
+#guard inked "<text x='20' y='20' font-size='10' rotate='90'>a</text>" 25 25 && clear "<text x='20' y='20' font-size='10' rotate='90'>a</text>" 25 15
+-- A tspan with x starts a chunk, with its own anchor.
+#guard inked "<text x='0' y='10' font-size='10'>a<tspan x='30' text-anchor='end'>a</tspan></text>" 25 5
+-- A ligature wins where it stands first; `lang` selects, and a fragment suits a language.
+#guard inked "<text x='0' y='10' font-size='10'>ab</text>" 15 8 && clear "<text x='0' y='10' font-size='10'>ab</text>" 15 2
+#guard inked "<text x='0' y='10' font-size='10' xml:lang='fr-ca'>c</text>" 5 2
+#guard clear "<text x='0' y='10' font-size='10' xml:lang='de'>c</text>" 5 2
+-- hkern with u1 and u2, by a range and by a character.
+#guard clear "<text x='0' y='10' font-size='10'>aa</text>" 16 5
+-- arabic-form follows joins, and the order is right to left.
+#guard inked "<text x='0' y='10' font-size='10'>&#x69A;&#x69A;</text>" 15 8 && clear "<text x='0' y='10' font-size='10'>&#x69A;&#x69A;</text>" 15 2
+
+-- Conditions. Each list must hold in full; an SVG 1.1 feature string is unknown.
+private def feature (name : String) := "http://www.w3.org/Graphics/SVG/feature/1.2/#" ++ name
+#guard primitives s!"<rect width='9' height='9' requiredFeatures='{feature "Shape"} {feature "Text"}'/>" == 1
+#guard primitives s!"<rect width='9' height='9' requiredFeatures='{feature "Shape"} {feature "Animation"}'/>" == 0
+#guard primitives "<rect width='9' height='9' requiredFeatures='http://www.w3.org/TR/SVG11/feature#BasicText'/>" == 0
+#guard primitives "<rect width='9' height='9' requiredFeatures=''/>" == 0
+#guard primitives "<rect width='9' height='9' requiredFormats='image/png image/svg+xml'/>" == 1
+#guard primitives "<rect width='9' height='9' requiredFormats='image/png foo/foo'/>" == 0
+#guard ((parse (svg "<rect width='9' height='9' requiredFonts='T'/>") 40 40 (some tfont)).toOption.map (·.1.compiled.length)) == some 1
+#guard primitives "<rect width='9' height='9' requiredFonts='T'/>" == 0
+
+-- `use` of another document. Only bytes that the host supplies are read.
+private def linked (body : String) : String :=
+  "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' width='40' height='40'>" ++ body ++ "</svg>"
+private def otherRect := linked "<rect id='r' width='40' height='40' fill='lime'/>"
+private def main_ := "http://h.invalid/a/main.svg"
+private def otherKey := "http://h.invalid/a/b.svg"
+private def useOther := linked "<use xlink:href='b.svg#r'/>"
+private def green (xml : String) (supplied : List (String × ByteArray)) : Bool :=
+  match NativeSVGForgiving.parse xml 40 40 none supplied (some main_) with
+  | .ok (s,_) => let c := s.samplePixel 20 20; c.g == 1 && c.r == 0
+  | .error _ => false
+#guard green useOther [(otherKey,otherRect.toUTF8)]
+#guard !green useOther []
+-- Without its bytes the `use` goes alone, and is logged with the document.
+#guard match NativeSVGForgiving.parse (linked "<g><use xlink:href='b.svg#r'/><rect width='9' height='9'/></g>") 40 40 none [] (some main_) with
+  | .ok (s,log) => s.compiled.length == 1 && log.contains s!"removed use: document not supplied: {otherKey}"
+  | .error _ => false
+-- Ids of the other document do not meet ids of this one.
+#guard green (linked "<rect id='r' width='1' height='1' fill='red'/><use xlink:href='b.svg#r'/>") [(otherKey,otherRect.toUTF8)]
+-- The host asks for the document, then for what that document names.
+#guard (NativeSVGForgiving.imageRequests useOther (some main_)).toOption == some [otherKey]
+private def nested := linked "<use id='r' xlink:href='c.svg#s'/>"
+#guard (NativeSVGForgiving.imageRequests useOther (some main_) [(otherKey,nested.toUTF8)]).toOption == some ["http://h.invalid/a/c.svg"]
+#guard green useOther [(otherKey,nested.toUTF8),("http://h.invalid/a/c.svg",(linked "<rect id='s' width='40' height='40' fill='lime'/>").toUTF8)]
+-- `font-face-uri` names a font in another document; the referring face gives the family.
+private def fontDoc := "<svg xmlns='http://www.w3.org/2000/svg'><font id='f' horiz-adv-x='1000'><font-face font-family='Other' units-per-em='1000' ascent='1000' descent='0'/><glyph unicode='a' d='M0 0H1000V1000H0Z'/></font></svg>"
+private def fontUse := linked "<font-face font-family='L'><font-face-src><font-face-uri xlink:href='b.svg#f'/></font-face-src></font-face><text font-family='L' font-size='40' y='40' fill='lime'>a</text>"
+#guard green fontUse [(otherKey,fontDoc.toUTF8)]
+#guard (NativeSVGForgiving.imageRequests fontUse (some main_)).toOption == some [otherKey]
+-- A cycle of documents ends: each document is imported once.
+#guard (NativeSVGForgiving.parse useOther 40 40 none [(otherKey,(linked "<use id='r' xlink:href='main.svg#x'/>").toUTF8)] (some main_)).toOption.isSome
+#guard (NativeSVGForgiving.parse useOther 40 40 none [(otherKey,(linked "<use id='r' xlink:href='b.svg#r'/>").toUTF8)] (some main_)).toOption.isSome
+-- Bytes that are not XML draw nothing and stop nothing.
+#guard !green useOther [(otherKey,"<svg".toUTF8)]
 -- Not well-formed XML stays an error.
 #guard (parse "<svg" 40 40).toOption.isNone
 
@@ -100,3 +177,27 @@ private def line2 : Float := 19.8
 -- Expected failure, https://github.com/danbri/factoidal/issues/1259: a soft hyphen is
 -- not yet a break opportunity. When it is one, "a a-" fits on line 1 and this guard fails.
 #guard originsAre (area "width='22' height='30'" "a a\u00ADaa") [(0,line1),(0,line2),(10,line2),(15,line2)]
+
+-- Expected failures. Each guard states the present wrong result, so the build fails
+-- when the fault is repaired; then state the right result and close the issue.
+-- https://github.com/danbri/factoidal/issues/1261: the browser path must list `b.svg`.
+#guard (match L4Factoidal.XML.parseNamespaceView useOther with
+  | .ok tree => NativeSVG.imageKeys tree (some main_)
+  | .error _ => ["not parsed"]) == []
+-- https://github.com/danbri/factoidal/issues/1262: bold must differ from normal.
+#guard (parse (svg "<text font-size='10' y='10'>a</text>") 40 40 (some tfont)).toOption.map (·.1.compiled.length) ==
+  (parse (svg "<text font-size='10' y='10' font-weight='bold' font-style='italic'>a</text>") 40 40 (some tfont)).toOption.map (·.1.compiled.length)
+#guard tpixel "<text font-size='10' y='10' font-weight='bold'>a</text>" 11 5 == 1
+-- https://github.com/danbri/factoidal/issues/1263: a character outside the fonts must draw.
+#guard clear "<text font-size='10' y='10'>&#x416;</text>" 5 5
+-- https://github.com/danbri/factoidal/issues/1264: `direction` must put the start at the right.
+#guard inked "<text x='20' y='10' font-size='10' direction='rtl'>a</text>" 25 5
+-- https://github.com/danbri/factoidal/issues/1266: the shape must stand on the baseline.
+private def baselineFont : SVGFont :=
+  match SVGFont.parse "<svg xmlns='http://www.w3.org/2000/svg'><font horiz-adv-x='1000'><font-face font-family='B' units-per-em='1000' ascent='800' descent='200' alphabetic='200'/><glyph unicode='a' d='M0 200H1000V900H0Z'/></font></svg>" with
+  | .ok f => f | .error _ => {}
+#guard match parse (svg "<text y='30' font-size='10'>a</text>") 40 40 (some baselineFont) with
+  | .ok (s,_) => (s.samplePixel 5 28).r == 1
+  | .error _ => false
+-- https://github.com/danbri/factoidal/issues/1267: the sheet of the other document must not reach this rectangle.
+#guard green (linked "<use xlink:href='b.svg#r'/><rect width='40' height='40'/>") [(otherKey,(linked "<style>rect{fill:lime}</style><rect id='r' width='1' height='1'/>").toUTF8)]

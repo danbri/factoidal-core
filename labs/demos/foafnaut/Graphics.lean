@@ -2,55 +2,79 @@ import Init
 
 namespace NativeGraphics
 
-/-- Exact quarter-pixel coordinates for the common 2×2 sampling rule. These
-    integer coordinates are the semantic source for both the SVG CPU reference
-    and generated WGSL; Float conversion happens only at those boundaries. -/
-def pixelSampleQuarterCoordinates : List (Nat × Nat) :=
-  [(1,1),(3,1),(1,3),(3,3)]
+/-- Sample cells of one pixel. The pixel has a 16 by 16 grid of cells, and a
+    sample is at the centre of its cell. Each row and each column of the grid has
+    exactly one sample, so an axis-aligned edge has 17 coverage levels, and an
+    axis-aligned bar one cell wide contains a sample wherever it stands.
+    The first four are one sample in each row and each column of the 4 by 4 grid
+    of quarter cells: they are the test for an edge in the pixel.
+    These integers are the semantic source for both the SVG CPU reference and
+    generated WGSL; Float conversion happens only at those boundaries. -/
+def pixelSampleFirstCells : List (Nat × Nat) := [(1,5),(6,14),(10,2),(15,11)]
 
-theorem pixelSampleQuarterCoordinates_count : pixelSampleQuarterCoordinates.length = 4 := rfl
+/-- The other twelve samples: the lattice y = 5x mod 16, without the first four. -/
+def pixelSampleRestCells : List (Nat × Nat) :=
+  [(0,0),(2,10),(3,15),(4,4),(5,9),(7,3),(8,8),(9,13),(11,7),(12,12),(13,1),(14,6)]
 
-/-- Every sample lies strictly inside its unit pixel, with one quarter-pixel
-    clearance from every edge. -/
-theorem pixelSampleQuarterCoordinates_interior :
-    pixelSampleQuarterCoordinates.all (fun p => 0 < p.1 && p.1 < 4 && 0 < p.2 && p.2 < 4) = true := by
+def pixelSampleCells : List (Nat × Nat) := pixelSampleFirstCells ++ pixelSampleRestCells
+
+theorem pixelSampleCells_count : pixelSampleCells.length = 16 := rfl
+theorem pixelSampleFirstCells_count : pixelSampleFirstCells.length = 4 := rfl
+
+/-- One sample in each column and in each row of the 16 by 16 grid. -/
+theorem pixelSampleCells_rooks :
+    (List.range 16).all (fun k => (pixelSampleCells.map Prod.fst).contains k) = true ∧
+    (List.range 16).all (fun k => (pixelSampleCells.map Prod.snd).contains k) = true := by
   decide
 
-/-- The grid is centered in both axes: its exact quarter-coordinate centroid
-    is (2,2), i.e. the unit pixel center. -/
-theorem pixelSampleQuarterCoordinates_centered :
-    (pixelSampleQuarterCoordinates.map Prod.fst).sum = 8 ∧
-    (pixelSampleQuarterCoordinates.map Prod.snd).sum = 8 := by
+/-- The first four samples: one in each column and row of quarter cells. -/
+theorem pixelSampleFirstCells_rooks :
+    (List.range 4).all (fun k => (pixelSampleFirstCells.map (·.1/4)).contains k) = true ∧
+    (List.range 4).all (fun k => (pixelSampleFirstCells.map (·.2/4)).contains k) = true := by
   decide
 
-/-- Exact quarter-pixel coordinate reached by the CPU-style pixel-origin
-    plus sample-offset calculation. -/
-def pixelSampleAbsoluteQuarter (pixel sample : Nat) : Nat := 4 * pixel + sample
+/-- Exact position of a sample in 1/32 pixels, from the pixel origin. -/
+def pixelSampleAbsolute (pixel cell : Nat) : Nat := 32 * pixel + (2 * cell + 1)
 
-/-- Exact quarter-pixel location of the GPU fragment center. -/
-def fragmentCenterQuarter (pixel : Nat) : Nat := 4 * pixel + 2
+/-- Exact position of the GPU fragment centre in 1/32 pixels. -/
+def fragmentCenter (pixel : Nat) : Nat := 32 * pixel + 16
 
-/-- Exact quarter-pixel displacement from the fragment center used by the
-    WGSL `pixel.xy + (offset - 0.5)` expression. -/
-def sampleFromFragmentCenterQuarter (sample : Nat) : Int := (sample : Int) - 2
+/-- Exact displacement from the fragment centre used by the WGSL
+    `pixel.xy + (offset - 0.5)` expression. -/
+def sampleFromFragmentCenter (cell : Nat) : Int := (2 * (cell : Int) + 1) - 16
 
 /-- CPU origin-plus-offset and GPU center-plus-relative-offset identify the
     same mathematical sample positions. This is an exact coordinate theorem;
     it does not prove that Float/Float32 operations preserve the equality. -/
-theorem pixelSample_cpu_gpu_coordinate_agreement (pixel sample : Nat) :
-    (fragmentCenterQuarter pixel : Int) + sampleFromFragmentCenterQuarter sample =
-      (pixelSampleAbsoluteQuarter pixel sample : Int) := by
-  simp [fragmentCenterQuarter, sampleFromFragmentCenterQuarter, pixelSampleAbsoluteQuarter,
-    Int.add_assoc]
-  rw [Int.add_comm (2 : Int) ((sample : Int) - 2), Int.sub_add_cancel]
+theorem pixelSample_cpu_gpu_coordinate_agreement (pixel cell : Nat) :
+    (fragmentCenter pixel : Int) + sampleFromFragmentCenter cell =
+      (pixelSampleAbsolute pixel cell : Int) := by
+  simp only [fragmentCenter, sampleFromFragmentCenter, pixelSampleAbsolute]
+  omega
 
-/-- Floating offsets used at raster boundaries, derived from the exact grid.
-    Four-point sampling is not analytic area coverage or a universal error bound. -/
-def pixelSampleOffsets : List (Float × Float) :=
-  pixelSampleQuarterCoordinates.map fun p => (Float.ofNat p.1 / 4, Float.ofNat p.2 / 4)
+/-- Floating offset of a cell at raster boundaries. -/
+def pixelSampleOffset (cell : Nat × Nat) : Float × Float :=
+  (Float.ofNat (2*cell.1+1) / 32, Float.ofNat (2*cell.2+1) / 32)
 
-theorem pixelSampleOffsets_count : pixelSampleOffsets.length = 4 := by
-  simp [pixelSampleOffsets, pixelSampleQuarterCoordinates_count]
+def pixelSampleFirstOffsets : List (Float × Float) := pixelSampleFirstCells.map pixelSampleOffset
+def pixelSampleRestOffsets : List (Float × Float) := pixelSampleRestCells.map pixelSampleOffset
+
+/-- Two samples that differ by more than this in a channel mean an edge. A pixel
+    with no edge takes four samples; a pixel with an edge takes sixteen. Sixteen
+    point samples are not analytic area coverage or a universal error bound. -/
+def pixelSampleEdgeThreshold : Float := 1/64
+
+/-- A scene of more rows than this takes four samples in every pixel. A fill costs
+    one pass over its edges for each sample, so sixteen samples on the largest W3C
+    file (153,354 rows, `metadata-example-01-t.svg`) took the GPU past its time limit
+    and it drew nothing. -/
+def pixelSampleRefineRowLimit : Nat := 65536
+
+/-- Narrowest stroke in device pixels. Four samples have a lattice with lines
+    0.56 pixels apart, so a narrower stroke can pass between them on a diagonal.
+    `Primitive.widenThin` draws a narrower stroke at this width, with its opacity
+    reduced in the same ratio, so its area times opacity stays the same. -/
+def minDeviceWidth : Float := 0.6
 
 inductive Ty where | scalar | vec2 | boolean
 

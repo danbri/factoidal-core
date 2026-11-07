@@ -22,10 +22,14 @@ private def inDiamond (x y : Float) : Bool :=
   let dx := x-20; let dy := y-10
   0 <= dx+dy && dx+dy <= 8 && 0 <= dy-dx && dy-dx <= 8
 private def expectedGreen (inside : Float → Float → Bool) (x y : Nat) : Float :=
-  let offsets : List (Float × Float) := [(0.25,0.25),(0.75,0.25),(0.25,0.75),(0.75,0.75)]
-  let covered := offsets.foldl (fun count (dx,dy) =>
-    count + if inside (Float.ofNat x+dx) (Float.ofNat y+dy) then 1 else 0) 0
-  Float.ofNat (4-covered)/4
+  -- Sixteenths of a pixel: four samples, and twelve more when the four differ.
+  let first : List (Nat × Nat) := [(1,5),(6,14),(10,2),(15,11)]
+  let rest : List (Nat × Nat) := [(0,0),(2,10),(3,15),(4,4),(5,9),(7,3),(8,8),(9,13),(11,7),(12,12),(13,1),(14,6)]
+  let count := fun (cells : List (Nat × Nat)) => cells.foldl (fun n (cx,cy) =>
+    n + if inside (Float.ofNat x+(Float.ofNat cx+0.5)/16) (Float.ofNat y+(Float.ofNat cy+0.5)/16) then 1 else 0) 0
+  let covered := count first
+  if covered == 0 || covered == 4 then Float.ofNat (4-covered)/4
+  else Float.ofNat (16-covered-count rest)/16
 private def compareGrid (s : Scene) (inside : Float → Float → Bool) : IO Unit := do
   let coordinates := (List.range 24).flatMap fun y => (List.range 36).map fun x => (x,y)
   for ((x,y),actual) in coordinates.zip (s.samplePixels coordinates) do
@@ -48,7 +52,7 @@ def controls : IO (List (String × Scene × (Float → Float → Bool))) := do
     ("singular",singular,fun _ _ => false)]
 
 /-- Write actual Lean artifacts and independently calculated full-size RGBA
-    quarter-grid expectations. This is a backend diagnostic, not an SVG/WPT case. -/
+    sample-rule expectations. This is a backend diagnostic, not an SVG/WPT case. -/
 def writeControls (directory : System.FilePath) : IO Unit := do
   IO.FS.createDirAll directory
   for (name,s,inside) in (← controls) do

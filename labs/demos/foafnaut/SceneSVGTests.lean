@@ -28,12 +28,12 @@ def run : IO Unit := do
   check (xml.startsWith "<svg xmlns=\"http://www.w3.org/2000/svg\"") "standalone namespace"
   check ((NativeSVG.parse xml).isOk) "primitive scene refused"
   -- Compare interior/control pixels only. The SVG path now uses a shared
-  -- four-sample antialiasing grid, while Scene.sample is a binary native
+  -- adaptive antialiasing samples, while Scene.sample is a binary native
   -- predicate; boundary pixels are expected to differ between those models.
   let scenePoints := [(1,1),(8,8),(20,8),(15,18)]
   sampleAgreement scene xml scenePoints
-  check (NativeSVG.sample xml 0 0 5 3 == "{\"rgb\":[27,76,73]}")
-    "shared four-sample SVG coverage at the circle boundary"
+  check (NativeSVG.sample xml 0 0 5 3 == "{\"rgb\":[28,87,79]}")
+    "shared SVG coverage at the circle boundary"
   IO.println "PASS circles, rectangles, background and round segment SVG roundtrip"
 
   for (a,b,width,x,y) in [(Point.mk 5 6,Point.mk 24 19,5,14,12),(Point.mk 16 12,Point.mk 16 12,7,16,12),
@@ -41,7 +41,7 @@ def run : IO Unit := do
     let s : Scene := {width:=32,height:=24,background:=white,shapes:=[.segment a b width black]}
     sampleAgreement s (← xmlOf s) [(1,1),(x,y)]
   IO.println "PASS diagonal, endpoint and zero-length capsule geometry"
-  -- This near-boundary pixel has two of four quarter samples covered by the
+  -- This near-boundary pixel has half of its samples covered by the
   -- analytic capsule predicate. It is an antialiasing control, not a claim of
   -- general Float/native/WGSL rounding equivalence.
   let tie : Scene := {
@@ -50,7 +50,7 @@ def run : IO Unit := do
     background:=white
     shapes:=[.segment ⟨24,5⟩ ⟨4,20⟩ 3 black]}
   check (NativeSVG.sample (← xmlOf tie) 0 0 7 15 == "{\"rgb\":[128,128,128]}")
-    "analytic capsule quarter-sample coverage"
+    "analytic capsule sample coverage"
   let caps := "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='24'>" ++
     "<g stroke='black' stroke-width='4' stroke-linecap='round'>" ++
     "<line x1='10' y1='6.5' x2='20' y2='6.5' stroke-linecap='inherit'/>" ++

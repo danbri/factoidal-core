@@ -54,10 +54,16 @@ private def localImages (document root : System.FilePath) (source : String) :
   let prefix_ := base.toString ++ "/"
   if !real.toString.startsWith prefix_ then return ([],none)
   let url := resourceOrigin ++ (real.toString.drop prefix_.length).toString
-  let keys := (NativeSVGForgiving.imageRequests source (some url)).toOption.getD []
   let mut found : List (String × ByteArray) := []
-  for key in keys do
-    if let some bytes ← localImage root key then found := (key,bytes)::found
+  let mut tried : List String := []
+  -- A document that a `use` names can name more. Each key is read once.
+  for _ in [:8] do
+    let keys := (NativeSVGForgiving.imageRequests source (some url) found).toOption.getD []
+    let fresh := keys.filter (!tried.contains ·)
+    if fresh.isEmpty then break
+    tried := tried ++ fresh
+    for key in fresh do
+      if let some bytes ← localImage root key then found := (key,bytes)::found
   return (found,some url)
 
 def main (args : List String) : IO UInt32 := do

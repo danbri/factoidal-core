@@ -40,7 +40,8 @@ assert sha(a.archive.read_bytes()) == ARCHIVE_SHA256, 'Official archive SHA256 m
 out = a.output.resolve()
 (out / 'actual').mkdir(parents=True, exist_ok=True)
 (out / 'expected').mkdir(exist_ok=True)
-(out / 'originals').mkdir(exist_ok=True)
+# svg/ and images/ as in the archive: tests name each other by ../svg/ and ../images/.
+(out / 'svg').mkdir(exist_ok=True)
 pairs = {}
 with tarfile.open(a.archive) as archive:
     for member in archive.getmembers():
@@ -48,13 +49,16 @@ with tarfile.open(a.archive) as archive:
         if member.name == 'images/SVGFreeSans.svg':
             # The tests name this font by font-face-uri. It is the font in the PNGs.
             (out / 'SVGFreeSans.svg').write_bytes(archive.extractfile(member).read())
-        if member.isfile() and len(parts) == 2 and parts[0] == 'images':
-            # Raster images that the tests name by ../images/; --svg-resources keeps reads under out.
-            (out / 'images').mkdir(exist_ok=True)
-            (out / 'images' / parts[1]).write_bytes(archive.extractfile(member).read())
+        if member.isfile() and len(parts) >= 2 and parts[0] == 'images' and '..' not in parts:
+            # Resources that the tests name by ../images/; --svg-resources keeps reads under out.
+            target = out.joinpath(*parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(archive.extractfile(member).read())
         if member.isfile() and len(parts) == 2 and parts[0] in ('svg', 'png'):
             stem = parts[1].rsplit('.', 1)[0]
             pairs.setdefault(stem, {})[parts[0]] = archive.extractfile(member).read()
+            if parts[0] == 'svg':
+                (out / 'svg' / parts[1]).write_bytes(pairs[stem]['svg'])
 assert len(pairs) == 496 and all(len(v) == 2 for v in pairs.values()), 'Official inventory changed'
 
 
@@ -79,8 +83,7 @@ def score(actual, expected):
 def prepare(stem):
     """Lean: original SVG to WebGPU artifact."""
     data = pairs[stem]
-    source = out / 'originals' / (stem + '.svg')
-    source.write_bytes(data['svg'])
+    source = out / 'svg' / (stem + '.svg')
     (out / 'expected' / (stem + '.png')).write_bytes(data['png'])
     with Image.open(out / 'expected' / (stem + '.png')) as image:
         expected = flatten(image)
