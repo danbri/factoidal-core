@@ -12,6 +12,15 @@
 - [Large](foafnaut:zoom/150)
 - [Huge](foafnaut:zoom/200)
 
+## Page scripts
+
+The engine that runs the scripts of a page. The chrome shows which one ran, or why none did.
+A new setting applies to the pages you open next.
+
+- [QuickJS-NG](foafnaut:scripts/quickjs) (the default)
+- [VerifiedJS](foafnaut:scripts/verifiedjs): it can not run page scripts yet, so a page says why ([issue 1252](https://github.com/danbri/factoidal/issues/1252))
+- [None](foafnaut:scripts/none)
+
 ## The address bar
 
 Type a URL, or words to search, or a command.
