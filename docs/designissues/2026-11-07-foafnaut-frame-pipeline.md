@@ -24,6 +24,13 @@ The worker calls `call(html, requestJSON, width, height) -> string`, from one of
   the Wasm build, with a static Lean runtime. The release package puts it beside the
   window program; with no library, or with `--wasm-engine`, the worker uses Wasm.
 
+A render goes through `call_bin(html, requestJSON, width, height) -> bytes`
+(`web_document_call_bin`, 2026-11-07, branch `wip/1268-bytes`): a JSON head and the
+storage floats and tile words as raw sections, with no Base64 and no inspector tree
+(`tree:true` asks for it). The host views the sections as typed arrays of one buffer
+and the worker transfers that buffer. The text call stays the reference
+(`native_html_bytes_test.ts`).
+
 Measured 2026-11-07, 1600 by 1200, Noto Sans, 5 pages: the native output is the same
 bytes as the Wasm output. Frame build time is 1.6 to 1.9 times less (status page 99.5 ms
 against 162.6 ms; index 11.7 ms against 19.5 ms).
