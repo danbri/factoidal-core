@@ -87,7 +87,9 @@ def Font.word (f : Font) (text : String) (pixelSize : Nat) : Except String FontP
     | .ok value => pure value
     | .error _ => nominal f text
   let length := text.length
-  let starts := (placed.map (·.cluster)).toList.eraseDups.toArray.qsort (· < ·)
+  -- A TreeMap gives each cluster once, in order, with no recursive sort.
+  let clusters : Std.TreeMap Nat Unit := placed.foldl (fun seen g => seen.insert g.cluster ()) {}
+  let starts := (clusters.toList.map Prod.fst).toArray
   let finish := fun (c : Nat) => (starts.find? (· > c)).getD length
   let mut outlines : Std.TreeMap Nat FontData.Outline := {}
   for g in placed do
