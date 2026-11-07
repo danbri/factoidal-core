@@ -118,11 +118,69 @@ Proof and tests:
 Measurements: see `docs/20261105-render-embedded-perf.md`, section "Scroll in a drawn
 band".
 
+## Scroll prefetch of the next band (done 2026-11-07)
+
+Branch `wip/1268-prefetch`. Before this, a scroll step that left the keep range waited
+for a full Lean frame in the worker (one band render, then the GPU draw of both layers).
+
+Rule (`scroll_prefetch.ts`, applied in `run_html.ts`):
+
+- The host keeps the scroll motion: direction, and rows per millisecond (the mean of the
+  last and the new step; a turn takes the new speed; a pause of more than 250 ms ends it).
+- A prefetch is due when the scroll is in the keep range and moving, and either it is 256
+  rows or fewer from the edge in its direction, or its speed reaches that edge within
+  two frames (33 ms) plus the time of the last band render in the worker.
+- Target: the next band starts its keep range where the band on screen ends. Down, the
+  target scroll is `keepTo + reach`; up, `keepFrom - reach`; clamped to the page. `reach`
+  is read from Lean's answer: `(bandHeight-view)/2 - (bandTop+bandHeight-view-keepTo)`,
+  384 rows for `bandMargin` 512 and `refreshMargin` 128. No prefetch when the band on
+  screen already reaches the page edge.
+- The request is the one a frame at the target would send. Its state key is that request
+  with `shell.scroll` left out: the document, the width and height, the resources (by
+  identity), the graph model, and every other option and shell field. A prefetched band
+  is shown only when its key equals the key now, the band on screen does not keep the
+  scroll, and the prefetched band does. The chrome does not depend on the scroll
+  (`WebShell.compose` uses it only to move the page), and `composite_eq_frame` holds for
+  any band that keeps the scroll, so the swap shows what a Lean frame at that scroll shows.
+- Priority (`native_html_worker.ts`): a request with `low` runs only when no ordinary
+  request waits; before it starts, the worker takes in the messages that came while a
+  Lean call ran. A newer low request replaces an unstarted one (answered `dropped`). A
+  frame for another state sends `dropLow`. A low request that has started runs to its
+  end: one Lean call holds the thread. The host sends a prefetch only when the worker has
+  no ordinary call, no frame is due or running, no page loads and the graph queue is empty.
+- A scroll past the band while a prefetch for the same state is made, within `reach` of
+  its target, waits for it and makes no frame; when it comes and does not keep the scroll,
+  or is dropped or stale, the host makes a frame (`missed` in the summary).
+- Input order does not change: clicks, keys and graph events take the paths they took
+  before; the prefetch only adds a low request.
+
+Tests: `scroll_prefetch_test.ts` (7 tests: reach, trigger, contiguous next band down and
+up and at both page ends, speed, motion, state key, swap rule) and a worker test in
+`native_html_test.ts` (with the Wasm engine: order, replace, `dropLow`, and the prefetched
+band equals an ordinary call for the same request).
+
+Window sweep, status page, 1600 by 1000, layers, Apple M1, engines from `724f5bf7a`
+(12 scroll steps of 120 rows; trace `native-html-scroll`, `native-html-prefetch`):
+
+- Idle checks only (`--idle-checks-only`), max input latency: native 100.4 and 104.0 ms
+  before; 33.3, 17.1 and 18.5 ms after. Wasm 135.0 and 133.8 ms before; 18.1, 17.0 and
+  17.6 ms after. Lean frames after the first: 3 (native) and 2 (Wasm) before, 0 after.
+  One prefetch was sent, made and shown in each run; the swap present took 5 to 8 ms.
+- Every frame checked (no `--idle-checks-only`; every probe pixel checked, so a swap reads
+  back both layers): max input latency native 428.8 ms before, 109.4 ms after; Wasm 459.8 ms
+  before, 127.0 ms after. All probe checks pass.
+- `--graph-sweep` (no scroll; one event): native 170.5 ms before, 161.9 ms after; Wasm
+  245.7 ms before, 171.9 ms after. No prefetch is sent.
+
+`--perf-summary` and the start trace (`native-html-engine`) name the engine: `engine:
+native PATH` or `engine: wasm`. When the worker can not start, Lean runs on the main
+thread, which has only the Wasm engine; the summary said `native` then.
+
 ## Open
 
-- The window sweep (`--scroll-sweep`, before with `--single-frame`, after without) was not
-  run on 2026-11-07: the screen was locked, so the window could not present (exit 3).
-  The numbers above are off screen on the same GPU.
+- The scroll sweep moves down only. Scroll up is tested by the rule tests, not in a window.
+- The status page has 1,424 rows of scroll, so a sweep makes one prefetch; a chain of
+  prefetches on a long page was not measured in a window.
 - The Hub page (`docs/web/hub/foafnaut/browser-worker.mjs`) loads its GPU transport from
   a published package. It gets the layer path with the next release.
 - https://github.com/danbri/factoidal/issues/1269 (16-sample rule depends on the row count).
