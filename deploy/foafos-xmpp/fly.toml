@@ -10,7 +10,7 @@ kill_timeout = "10s"
 
 [env]
   XMPP_DOMAIN = "foafos-xmpp.fly.dev"
-  XMPP_EXTRA_ARGS = ""
+  XMPP_EXTRA_ARGS = "--no-address-limit"
 
 [mounts]
   source = "foafos_xmpp_data"
