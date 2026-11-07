@@ -16,8 +16,42 @@ private def log (body : String) : List String := ((result body).map (·.2)).getD
 #guard (log "<foo xmlns='urn:x'/>").contains "foreign element: foo"
 #guard (log "<g font-size='9'/>").contains "attribute: g font-size"
 -- A value the reader refuses removes that element only, and is logged.
-#guard primitives "<rect fill='nocolour' width='9' height='9'/><rect width='9' height='9'/>" == 1
-#guard (log "<rect fill='nocolour' width='9' height='9'/>").any (·.startsWith "removed rect")
+#guard primitives "<rect width='-1' height='9'/><rect width='9' height='9'/>" == 1
+#guard (log "<rect width='-1' height='9'/>").any (·.startsWith "removed rect")
+-- A colour the reader refuses goes alone, and the element stays (W3C styling-pres-01-t).
+#guard primitives "<rect fill='nocolour' width='9' height='9'/><rect width='9' height='9'/>" == 2
+#guard (log "<rect fill='nocolour' width='9' height='9'/>").contains "approximated: colour nocolour"
+
+-- `use` of another document. Only bytes that the host supplies are read.
+private def linked (body : String) : String :=
+  "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' width='40' height='40'>" ++ body ++ "</svg>"
+private def otherRect := linked "<rect id='r' width='40' height='40' fill='lime'/>"
+private def main_ := "http://h.invalid/a/main.svg"
+private def otherKey := "http://h.invalid/a/b.svg"
+private def useOther := linked "<use xlink:href='b.svg#r'/>"
+private def green (xml : String) (supplied : List (String × ByteArray)) : Bool :=
+  match NativeSVGForgiving.parse xml 40 40 none supplied (some main_) with
+  | .ok (s,_) => let c := s.samplePixel 20 20; c.g == 1 && c.r == 0
+  | .error _ => false
+#guard green useOther [(otherKey,otherRect.toUTF8)]
+#guard !green useOther []
+-- Without its bytes the `use` goes alone, and is logged with the document.
+#guard match NativeSVGForgiving.parse (linked "<g><use xlink:href='b.svg#r'/><rect width='9' height='9'/></g>") 40 40 none [] (some main_) with
+  | .ok (s,log) => s.compiled.length == 1 && log.contains s!"removed use: document not supplied: {otherKey}"
+  | .error _ => false
+-- Ids of the other document do not meet ids of this one.
+#guard green (linked "<rect id='r' width='1' height='1' fill='red'/><use xlink:href='b.svg#r'/>") [(otherKey,otherRect.toUTF8)]
+-- The host asks for the document, then for what that document names.
+#guard (NativeSVGForgiving.imageRequests useOther (some main_)).toOption == some [otherKey]
+private def nested := linked "<use id='r' xlink:href='c.svg#s'/>"
+#guard (NativeSVGForgiving.imageRequests useOther (some main_) [(otherKey,nested.toUTF8)]).toOption == some ["http://h.invalid/a/c.svg"]
+#guard green useOther [(otherKey,nested.toUTF8),("http://h.invalid/a/c.svg",(linked "<rect id='s' width='40' height='40' fill='lime'/>").toUTF8)]
+-- A cycle of documents ends: each document is imported once.
+#guard (NativeSVGForgiving.parse useOther 40 40 none [(otherKey,(linked "<use id='r' xlink:href='main.svg#x'/>").toUTF8)] (some main_)).toOption.isSome
+#guard (NativeSVGForgiving.parse useOther 40 40 none [(otherKey,(linked "<use id='r' xlink:href='b.svg#r'/>").toUTF8)] (some main_)).toOption.isSome
+-- Bytes that are not XML draw nothing and stop nothing.
+#guard primitives "<rect width='9' height='9'/>" == 1
+#guard !green useOther [(otherKey,"<svg".toUTF8)]
 -- Not well-formed XML stays an error.
 #guard (parse "<svg" 40 40).toOption.isNone
 

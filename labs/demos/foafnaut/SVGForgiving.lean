@@ -698,7 +698,8 @@ private def repair (width height : Nat) : Nat → Attempt → Except String (Nat
         let (root,count) := stripAttr "" key (some refused) maxDepth a.root
         if count == 0 then none
         else some {a with root,parses:=a.parses+1,dropped:=a.dropped ++ [s!"approximated: {key}"]}
-      -- SVG Tiny 1.2 appendix C: a property value in error is as if not specified.
+      -- An unsupported colour is as if not specified, and the element stays (W3C
+      -- styling-pres-01-t, "rendering continues after the element").
       let recoloured := if !message.startsWith "unsupported color: " then none else
         let refused := (message.drop "unsupported color: ".length).toString
         let (root,count) := colourProperties.foldl (fun (root,count) key =>
@@ -746,6 +747,115 @@ private def dropBrokenImages (store : NativeImage.Store) : Nat → Option String
       let results := children.map (dropBrokenImages store fuel base)
       (some (.element name attrs (results.filterMap (·.1))),results.flatMap (·.2))
 
+/-! ### `use` of another document (SVG Tiny 1.2 §5.6)
+
+   A `use` that names an element of another document becomes a same-document `use`.
+   The other document goes into a `defs` at the end of this one, with each id renamed
+   by a prefix, so the reader needs no new case. Only bytes from the host are read,
+   under the same policy as image bytes. Each document is imported once, so a cycle
+   of documents ends; the reader then treats a cycle of `use` as in one document. -/
+
+private def maxExternalDocuments : Nat := 16
+
+private def splitFragment (url : String) : String × String :=
+  match url.splitOn "#" with
+  | document::rest => (document,"#".intercalate rest)
+  | [] => (url,"")
+
+private def renameUrlRefs (idPrefix value : String) : String :=
+  value.replace "url(#" ("url(#" ++ idPrefix)
+
+private def hrefName (a : NamespaceAttribute) : Bool :=
+  a.name.localPart == "href" && (a.name.namespace_.isNone || a.name.namespace_ == some "http://www.w3.org/1999/xlink")
+
+private def setHref (attrs : List NamespaceAttribute) (value : String) : List NamespaceAttribute :=
+  attrs.map fun a => if hrefName a then {a with value} else a
+
+private structure ImportState where
+  documents : Array String := #[]
+  missing : List String := []
+  log : List String := []
+
+private def ImportState.indexOf (s : ImportState) (key : String) : ImportState × Nat :=
+  match s.documents.findIdx? (· == key) with
+  | some i => (s,i)
+  | none => ({s with documents:=s.documents.push key},s.documents.size)
+
+/-- Prefix of the ids of the document at `i`. -/
+private def importPrefix (i : Nat) : String := s!"external-{i}-"
+
+/-- `self` is the document that holds this tree, with the prefix of its ids; `main` is
+    the document of the page. `available` says which documents the host supplied. -/
+private def rewriteImport (main self : Option String) (idPrefix : String) (available : String → Bool) :
+    Nat → Option String → ImportState → NamespaceNode → Option NamespaceNode × ImportState
+  | 0,_,s,_ => (none,s)
+  | _,_,s,.other raw => (some (.other raw),s)
+  | fuel+1,base,s,.element name attrs children =>
+    let base := NativeSVGReferences.elementBase attrs base
+    let imported := !idPrefix.isEmpty
+    let renamed := if !imported then attrs else
+      (attrs.filter fun a => !(a.name.localPart == "base" && a.name.namespace_.isSome)).map fun a =>
+        if a.name.localPart == "id" then {a with value:=idPrefix ++ a.value}
+        else {a with value:=renameUrlRefs idPrefix a.value}
+    let isUse := name.namespace_ == some svgURI && name.localPart == "use"
+    let href := NativeSVGReferences.href attrs
+    let external := (href.filter fun h => !h.trimAscii.toString.startsWith "#").map fun h =>
+      splitFragment (NativeSVG.imageKey base h)
+    let step : Option (List NamespaceAttribute) × ImportState :=
+      match isUse,external,href with
+      | true,some (document,fragment),_ =>
+        if some document == self then (some (setHref renamed ("#" ++ idPrefix ++ fragment)),s)
+        else if some document == main then (some (setHref renamed ("#" ++ fragment)),s)
+        else if available document then
+          let (s,i) := s.indexOf document
+          (some (setHref renamed ("#" ++ importPrefix i ++ fragment)),s)
+        else (none,{s with missing:=s.missing ++ [document],log:=s.log ++ [s!"removed use: document not supplied: {document}"]})
+      | false,some (document,fragment),_ =>
+        -- An imported `image` keeps the document that named it as its base.
+        if imported then (some (setHref renamed (document ++ (if fragment.isEmpty then "" else "#" ++ fragment))),s)
+        else (some renamed,s)
+      | _,none,some h =>
+        if imported then (some (setHref renamed ("#" ++ idPrefix ++ (h.trimAscii.toString.drop 1).toString)),s)
+        else (some renamed,s)
+      | _,_,_ => (some renamed,s)
+    match step with
+    | (none,s) => (none,s)
+    | (some attrs,s) =>
+      let (kept,s) := children.foldl (fun ((kept,s) : Array NamespaceNode × ImportState) child =>
+        match rewriteImport main self idPrefix available fuel base s child with
+        | (some node,s) => (kept.push node,s)
+        | (none,s) => (kept,s)) (#[],s)
+      (some (.element name attrs kept.toList),s)
+
+/-- All `use` references to other documents in `root`, resolved. The result is the
+    new tree, the documents that were found and those that the host has not supplied. -/
+private def importDocuments (root : NamespaceNode) (documentURL : Option String)
+    (supplied : List (String × ByteArray)) : NamespaceNode × ImportState := Id.run do
+  let tree := fun (key : String) => do
+    let (_,bytes) ← supplied.find? (·.1 == key)
+    let text ← String.fromUTF8? bytes
+    (parseNamespaceView text).toOption
+  let available := fun key => (tree key).isSome
+  let (some main,first) := rewriteImport documentURL documentURL "" available maxDepth documentURL {} root
+    | return (root,{})
+  let mut state := first
+  let mut defs : Array NamespaceNode := #[]
+  let mut next := 0
+  for _ in [:maxExternalDocuments] do
+    let some key := state.documents[next]? | break
+    if let some document := tree key then
+      let (rewritten,after) := rewriteImport documentURL (some key) (importPrefix next) available maxDepth (some key) state document
+      state := after
+      if let some node := rewritten then
+        -- The root stays: a `use` can name it (W3C struct-use-206-t).
+        defs := defs.push (svgElement "defs" [] [node])
+    next := next+1
+  if state.documents.size > maxExternalDocuments then
+    state := {state with log:=state.log ++ [s!"external documents past {maxExternalDocuments} are not read"]}
+  match main with
+  | .element name attrs children => return (.element name attrs (children ++ defs.toList),state)
+  | node => return (node,state)
+
 /-- Parse as a browser would: draw what the strict reader can draw. A document
     that is not well-formed XML stays an error. -/
 def parse (xml : String) (width height : Nat) (font : Option SVGFont := none)
@@ -754,18 +864,25 @@ def parse (xml : String) (width height : Nat) (font : Option SVGFont := none)
   if xml.length > NativeSVG.maxInputChars then throw "SVG input exceeds 1048576 characters"
   let root ← parseNamespaceView xml
   let (root,rootLog) := rootAttrs root
+  let (root,imports) := importDocuments root documentURL images
   -- Fonts in the document come first; the host's font is the default.
   let targets := (idTargets maxDepth root).foldl (fun map (id,node) =>
     if map.contains id then map else map.insert id node) ({} : Std.HashMap String NamespaceNode)
   let (some root,log) := normalise (fontsIn root ++ font.toList) targets maxDepth {} false root | throw "root element is not read"
   let store := NativeSVG.imageStore root documentURL images
   let (some root,imageLog) := dropBrokenImages store maxDepth documentURL root | throw "root element is not read"
-  repair width height 1024 {root,dropped:=rootLog ++ log ++ imageLog,parses:=0,documentURL,images:=store}
+  repair width height 1024 {root,dropped:=rootLog ++ imports.log ++ log ++ imageLog,parses:=0,documentURL,images:=store}
 
-/-- The image references of a document that a host must fetch: not the `data:` ones. -/
-def imageRequests (xml : String) (documentURL : Option String := none) : Except String (List String) := do
+/-- The references of a document that a host must fetch: not the `data:` ones. These
+    are images, and other documents that a `use` names. `supplied` holds what the host
+    has already; a supplied document can name more, so the host asks again until no
+    key is new. -/
+def imageRequests (xml : String) (documentURL : Option String := none)
+    (supplied : List (String × ByteArray) := []) : Except String (List String) := do
   if xml.length > NativeSVG.maxInputChars then throw "SVG input exceeds 1048576 characters"
   let root ← parseNamespaceView xml
-  return (NativeSVG.imageKeys root documentURL).filter (!·.toLower.startsWith "data:")
+  let (root,imports) := importDocuments root documentURL supplied
+  let external := imports.missing.filter (!·.toLower.startsWith "data:")
+  return (external ++ (NativeSVG.imageKeys root documentURL).filter (!·.toLower.startsWith "data:")).eraseDups
 
 end NativeSVGForgiving
