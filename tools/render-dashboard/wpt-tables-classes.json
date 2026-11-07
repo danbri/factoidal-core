@@ -1,0 +1,6522 @@
+{
+ "format": "factoidal-wpt-tables-classes-v1",
+ "root": "third_party/testing/wpt-css-tables",
+ "summary": {
+  "tests": 356,
+  "kinds": {
+   "crashtest": 42,
+   "testharness": 141,
+   "reftest": 169,
+   "print-reftest": 4
+  },
+  "tentative": {
+   "reftest": 32,
+   "testharness": 26
+  },
+  "reftests": {
+   "total": 169,
+   "match": 167,
+   "withMismatch": 2,
+   "withFuzzy": 2,
+   "tiers": {
+    "blocked": 102,
+    "basic-table": 16,
+    "table-plus": 51
+   },
+   "tierMeaning": {
+    "basic-table": "Table elements or display:table* with at most border-spacing, colspan/rowspan and col/colgroup; nothing in the blocking list",
+    "table-plus": "As basic-table, but also border-collapse, caption, table-layout:fixed, percentages, vertical-align, box-sizing, overflow, outline/box-shadow or Ahem text",
+    "blocked": "Uses a feature far from table layout (see BLOCKING)",
+    "no-table": "No table element and no display:table* found in test or reference",
+    "print": "A print reftest (paged media)",
+    "missing-reference": "A reference file is not in the vendored tree"
+   },
+   "basicTableTests": [
+    "css/css-tables/anonymous-table-cell-margin-collapsing.html",
+    "css/css-tables/anonymous-table-ws-001.html",
+    "css/css-tables/colspan-004.html",
+    "css/css-tables/empty-table-height.html",
+    "css/css-tables/html-display-table.html",
+    "css/css-tables/max-height-table.html",
+    "css/css-tables/min-height-table.html",
+    "css/css-tables/subpixel-table-cell-height-001.html",
+    "css/css-tables/subpixel-table-cell-width-001.html",
+    "css/css-tables/table-intrinsic-size-001.html",
+    "css/css-tables/table-intrinsic-size-002.html",
+    "css/css-tables/table-row-group-nested-anonymous-001.html",
+    "css/css-tables/tentative/section-no-tbody-fixed-distribution.html",
+    "css/css-tables/th-text-align.html",
+    "css/css-tables/zero-rowspan-001.html",
+    "css/css-tables/zero-rowspan-002.html"
+   ],
+   "features": {
+    "table-elements": 126,
+    "border-collapse": 69,
+    "display-table": 52,
+    "border-spacing": 46,
+    "percent-size": 45,
+    "position": 39,
+    "script": 29,
+    "colspan-rowspan": 25,
+    "col-colgroup": 22,
+    "overflow": 18,
+    "box-sizing": 15,
+    "writing-mode": 12,
+    "ahem": 11,
+    "calc": 7,
+    "gradient": 7,
+    "images": 6,
+    "flex-grid": 6,
+    "caption": 5,
+    "transform-filter": 5,
+    "table-layout-fixed": 4,
+    "contain-content-visibility": 4,
+    "visibility-collapse": 4,
+    "quirks-mode": 3,
+    "outline-shadow": 2,
+    "vertical-align": 1,
+    "float": 1
+   },
+   "blockingFeatures": {
+    "position": 39,
+    "script": 29,
+    "writing-mode": 12,
+    "calc": 7,
+    "gradient": 7,
+    "images": 6,
+    "flex-grid": 6,
+    "transform-filter": 5,
+    "contain-content-visibility": 4,
+    "visibility-collapse": 4,
+    "quirks-mode": 3,
+    "float": 1
+   }
+  }
+ },
+ "tests": [
+  {
+   "test": "css/css-tables/absolute-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/absolute-tables-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/absolute-tables-002.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/absolute-tables-003.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/absolute-tables-004.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/absolute-tables-005.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/absolute-tables-006.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "percent-size",
+    "position",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "script",
+    "position",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position",
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/absolute-tables-007.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "percent-size",
+    "position"
+   ],
+   "testFeatures": [
+    "display-table",
+    "position",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/absolute-tables-008.tentative.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/absolute-tables-009.tentative.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/absolute-tables-010.tentative.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/absolute-tables-011.tentative.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/absolute-tables-012.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "percent-size",
+    "position",
+    "table-elements",
+    "table-layout-fixed"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "table-layout-fixed",
+    "position",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/absolute-tables-013.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "percent-size",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "position",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/absolute-tables-014.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "percent-size",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "position",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/absolute-tables-015.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "percent-size",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "position",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/absolute-tables-016.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "position"
+   ],
+   "testFeatures": [
+    "display-table",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/absolute-tables-height-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/absolute-tables-height-quirks-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/abspos-container-change-dynamic-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "abspos-container-change-dynamic-001-ref.html",
+     "path": "css/css-tables/abspos-container-change-dynamic-001-ref.html",
+     "features": [
+      "position",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "position",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "script",
+    "position"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position",
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/animations/border-spacing-interpolation.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/anonymous-table-cell-margin-collapsing.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table"
+   ],
+   "testFeatures": [
+    "display-table"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/anonymous-table-ws-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "anonymous-table-ws-001-ref.html",
+     "path": "css/css-tables/anonymous-table-ws-001-ref.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table"
+   ],
+   "testFeatures": [
+    "display-table"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/auto-layout-calc-width-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/background-clip-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/baseline-empty-cell-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "baseline-empty-cell-ref.html",
+     "path": "css/css-tables/baseline-empty-cell-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/baseline-vertical.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "baseline-vertical-ref.html",
+     "path": "css/css-tables/baseline-vertical-ref.html",
+     "features": [
+      "border-spacing"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "table-elements",
+    "writing-mode"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "writing-mode"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "writing-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/border-collapse-double-border.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "mismatch",
+     "href": "border-collapse-double-border-notref.html",
+     "path": "css/css-tables/border-collapse-double-border-notref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/border-collapse-dynamic-col-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "border-collapse-dynamic-col-001-ref.html",
+     "path": "css/css-tables/border-collapse-dynamic-col-001-ref.html",
+     "features": [
+      "border-collapse",
+      "border-spacing",
+      "col-colgroup",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "border-spacing",
+    "col-colgroup",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "border-spacing",
+    "col-colgroup",
+    "script"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/border-collapse-dynamic-oof.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "display-table",
+    "position",
+    "script"
+   ],
+   "testFeatures": [
+    "display-table",
+    "border-collapse",
+    "script",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position",
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/border-collapse-dynamic-section.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "script"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/border-collapse-empty-cell.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "border-collapse-empty-cell-ref.html",
+     "path": "css/css-tables/border-collapse-empty-cell-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/border-collapse-rowspan-cell.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "border-collapse-rowspan-cell-ref.html",
+     "path": "css/css-tables/border-collapse-rowspan-cell-ref.html",
+     "features": [
+      "border-collapse",
+      "colspan-rowspan",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "colspan-rowspan",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "colspan-rowspan",
+    "position"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/border-conflict-resolution.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "border-conflict-resolution-ref.html",
+     "path": "css/css-tables/border-conflict-resolution-ref.html",
+     "features": [
+      "border-collapse",
+      "colspan-rowspan",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "colspan-rowspan",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "colspan-rowspan"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/border-spacing-included-in-sizes-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/border-writing-mode-dynamic-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/bounding-box-computation-1.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/bounding-box-computation-2.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/bounding-box-computation-3.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/box-shadow-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "outline-shadow",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "outline-shadow"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/calc-percent-plus-0px-auto.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "calc-percent-plus-0px-ref.html",
+     "path": "css/css-tables/calc-percent-plus-0px-ref.html",
+     "features": [
+      "percent-size",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "calc",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "calc"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "calc"
+   ]
+  },
+  {
+   "test": "css/css-tables/calc-percent-plus-0px-fixed.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "calc-percent-plus-0px-fixed-ref.html",
+     "path": "css/css-tables/calc-percent-plus-0px-fixed-ref.html",
+     "features": [
+      "percent-size",
+      "table-elements",
+      "table-layout-fixed"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "calc",
+    "percent-size",
+    "table-elements",
+    "table-layout-fixed"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "table-layout-fixed",
+    "calc"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "calc"
+   ]
+  },
+  {
+   "test": "css/css-tables/caption-cyclic-percentage.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/caption-orthogonal-block-start-margin.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/caption-orthogonal-margin-in-table-block-axis.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/caption-relative-positioning.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "/css/reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "caption",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "caption",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/caption-side-1.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/caption-writing-mode-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/caption-writing-mode-002.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/chrome-rowspan-bug.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/col-definite-max-size-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "col-definite-max-size-001-ref.html",
+     "path": "css/css-tables/col-definite-max-size-001-ref.html",
+     "features": [
+      "border-collapse",
+      "border-spacing",
+      "col-colgroup",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "border-spacing",
+    "calc",
+    "col-colgroup",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "border-spacing",
+    "col-colgroup",
+    "percent-size",
+    "calc"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "calc"
+   ]
+  },
+  {
+   "test": "css/css-tables/col-definite-min-size-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "col-definite-size-001-ref.html",
+     "path": "css/css-tables/col-definite-size-001-ref.html",
+     "features": [
+      "border-collapse",
+      "border-spacing",
+      "col-colgroup",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "border-spacing",
+    "calc",
+    "col-colgroup",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "border-spacing",
+    "col-colgroup",
+    "percent-size",
+    "calc"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "calc"
+   ]
+  },
+  {
+   "test": "css/css-tables/col-definite-size-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "col-definite-size-001-ref.html",
+     "path": "css/css-tables/col-definite-size-001-ref.html",
+     "features": [
+      "border-collapse",
+      "border-spacing",
+      "col-colgroup",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "border-spacing",
+    "calc",
+    "col-colgroup",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "border-spacing",
+    "col-colgroup",
+    "percent-size",
+    "calc"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "calc"
+   ]
+  },
+  {
+   "test": "css/css-tables/col_removal.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/collapsed-border-background-inset.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "mismatch",
+     "href": "collapsed-border-background-inset-notref.html",
+     "path": "css/css-tables/collapsed-border-background-inset-notref.html",
+     "features": [
+      "border-collapse",
+      "overflow",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "overflow",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "overflow"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/collapsed-border-color-change-with-compositing.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-color-change-with-compositing-ref.html",
+     "path": "css/css-tables/collapsed-border-color-change-with-compositing-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements",
+      "transform-filter"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "script",
+    "table-elements",
+    "transform-filter"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "script",
+    "transform-filter"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script",
+    "transform-filter"
+   ]
+  },
+  {
+   "test": "css/css-tables/collapsed-border-fragmentation-001-print.html",
+   "kind": "print-reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-fragmentation-001-print-ref.html",
+     "path": "css/css-tables/collapsed-border-fragmentation-001-print-ref.html",
+     "features": [
+      "border-collapse",
+      "multicol-print",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "multicol-print",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "multicol-print"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "print",
+   "blocking": [
+    "multicol-print"
+   ]
+  },
+  {
+   "test": "css/css-tables/collapsed-border-fragmentation-002-print.html",
+   "kind": "print-reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-fragmentation-002-print-ref.html",
+     "path": "css/css-tables/collapsed-border-fragmentation-002-print-ref.html",
+     "features": [
+      "border-collapse",
+      "multicol-print",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "multicol-print",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "multicol-print"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "print",
+   "blocking": [
+    "multicol-print"
+   ]
+  },
+  {
+   "test": "css/css-tables/collapsed-border-large-rowgroup-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-large-rowgroup-001-ref.html",
+     "path": "css/css-tables/collapsed-border-large-rowgroup-001-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "colspan-rowspan",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "colspan-rowspan"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/collapsed-border-large-rowgroup-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-large-rowgroup-002-ref.html",
+     "path": "css/css-tables/collapsed-border-large-rowgroup-002-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "colspan-rowspan",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "colspan-rowspan"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/collapsed-border-paint-phase-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "border-spacing",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "border-spacing"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/collapsed-border-paint-phase-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "border-spacing",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "border-spacing"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/collapsed-border-partial-invalidation-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-partial-invalidation-001-ref.html",
+     "path": "css/css-tables/collapsed-border-partial-invalidation-001-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "script"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/collapsed-border-partial-invalidation-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-partial-invalidation-002-ref.html",
+     "path": "css/css-tables/collapsed-border-partial-invalidation-002-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "script"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/collapsed-border-partial-invalidation-003.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-partial-invalidation-003-ref.html",
+     "path": "css/css-tables/collapsed-border-partial-invalidation-003-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "script"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/collapsed-border-positioned-tr-td.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-positioned-tr-td-ref.html",
+     "path": "css/css-tables/collapsed-border-positioned-tr-td-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "position"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/collapsed-border-remove-cell.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-remove-cell-ref.html",
+     "path": "css/css-tables/collapsed-border-remove-cell-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "script"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/collapsed-border-remove-row-group.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-remove-row-group-ref.html",
+     "path": "css/css-tables/collapsed-border-remove-row-group-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "script"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/collapsed-border-sideways-rl-rtl-overflow.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-sideways-rl-rtl-overflow-ref.html",
+     "path": "css/css-tables/collapsed-border-sideways-rl-rtl-overflow-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements",
+      "writing-mode"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements",
+    "transform-filter",
+    "writing-mode"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "writing-mode",
+    "transform-filter"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "transform-filter",
+    "writing-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/collapsed-border-vertical-lr-rtl-overflow.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-vertical-lr-rtl-overflow-ref.html",
+     "path": "css/css-tables/collapsed-border-vertical-lr-rtl-overflow-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements",
+      "writing-mode"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements",
+    "transform-filter",
+    "writing-mode"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "writing-mode",
+    "transform-filter"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "transform-filter",
+    "writing-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/collapsed-border-vertical-rtl-overflow.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-vertical-rtl-overflow-ref.html",
+     "path": "css/css-tables/collapsed-border-vertical-rtl-overflow-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements",
+      "writing-mode"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements",
+    "transform-filter",
+    "writing-mode"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "writing-mode",
+    "transform-filter"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "transform-filter",
+    "writing-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/collapsed-border-writing-mode-color.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/collapsed-scroll-overflow.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/colspan-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/colspan-002.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/colspan-003.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/colspan-004.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "colspan-rowspan",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "colspan-rowspan"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/colspan-zero-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/column-track-merging.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/atomic-item-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/border-collapse-dynamic-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/caption-repaint-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/caption-with-multicol-table-cell.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/cell-contents-with-negative-outer-size.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/col_span_dynamic_crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/dialog-table-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/dynamic-recompute-baseline.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/dynamic_col_width_crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/dynamic_table_layout_crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/empty-tbody-after-tall-section-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/empty_cells_crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/empty_table_with_cols.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/expression_width_crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/inline-splitting-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/large-border-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/large-col-widths.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/legacy_ng_mix_crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/move-oof-inside-section-row-with-borders.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/negative-section-distribution.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/negative_caption_margin.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/orthogonal-cell-borders.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/orthogonal-cell-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/remove-table-column-group.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/row-size-distribution-rowspan-sorting.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/rtl-replace-cells-with-colspan-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/table-column-display-change-chrome-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/table-content-size-blending-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/textarea-intrinsic-size-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/transition-table-row-group-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/uninitialized_read_crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/vertical_percentage_crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/crashtests/webkit-background-clip-on-row-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/display-contents-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "display-contents-001-ref.html",
+     "path": "css/css-tables/display-contents-001-ref.html",
+     "features": [
+      "ahem"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "ahem",
+    "contain-content-visibility",
+    "display-table"
+   ],
+   "testFeatures": [
+    "display-table",
+    "ahem",
+    "contain-content-visibility"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "contain-content-visibility"
+   ]
+  },
+  {
+   "test": "css/css-tables/display-contents-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "display-contents-001-ref.html",
+     "path": "css/css-tables/display-contents-001-ref.html",
+     "features": [
+      "ahem"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "ahem",
+    "contain-content-visibility",
+    "display-table"
+   ],
+   "testFeatures": [
+    "display-table",
+    "ahem",
+    "contain-content-visibility"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "contain-content-visibility"
+   ]
+  },
+  {
+   "test": "css/css-tables/display-contents-003.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "display-contents-003-ref.html",
+     "path": "css/css-tables/display-contents-003-ref.html",
+     "features": [
+      "ahem"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "ahem",
+    "contain-content-visibility",
+    "display-table"
+   ],
+   "testFeatures": [
+    "display-table",
+    "ahem",
+    "contain-content-visibility"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "contain-content-visibility"
+   ]
+  },
+  {
+   "test": "css/css-tables/dynamic-rowspan-change.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/dynamic-table-cell-block-size-vertical-rl.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "script",
+    "table-elements",
+    "writing-mode"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "writing-mode",
+    "script"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script",
+    "writing-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/dynamic-table-cell-height.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "/css/reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "position",
+    "script"
+   ],
+   "testFeatures": [
+    "display-table",
+    "script",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position",
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/empty-table-height.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "min-height-table-ref.html",
+     "path": "css/css-tables/min-height-table-ref.html",
+     "features": [
+      "border-spacing",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "display-table",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "display-table"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/fixed-layout-1.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/fixed-layout-2.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/fixed-layout-calc-width-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/fixed-layout-excess-width-distribution-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/fixup-dynamic-anonymous-inline-table-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "script"
+   ],
+   "testFeatures": [
+    "display-table",
+    "script"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/fixup-dynamic-anonymous-inline-table-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "script"
+   ],
+   "testFeatures": [
+    "display-table",
+    "script"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/fixup-dynamic-anonymous-inline-table-003.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "script"
+   ],
+   "testFeatures": [
+    "display-table",
+    "script"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/fixup-dynamic-anonymous-table-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "script"
+   ],
+   "testFeatures": [
+    "display-table",
+    "script"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/fractional-percent-width.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/height-distribution/computing-row-measure-0.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/height-distribution/computing-row-measure-1.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/height-distribution/extra-height-given-to-all-row-groups-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/height-distribution/extra-height-given-to-all-row-groups-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/height-distribution/extra-height-given-to-all-row-groups-003.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/height-distribution/extra-height-given-to-all-row-groups-004.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/height-distribution/extra-height-given-to-all-row-groups-005.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/height-distribution/percentage-sizing-of-table-cell-007.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "percentage-sizing-of-table-cell-007-ref.html",
+     "path": "css/css-tables/height-distribution/percentage-sizing-of-table-cell-007-ref.html",
+     "features": [
+      "overflow",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "overflow",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "percent-size",
+    "overflow"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/height-distribution/percentage-sizing-of-table-cell-children-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "percentage-sizing-of-table-cell-children-002-ref.html",
+     "path": "css/css-tables/height-distribution/percentage-sizing-of-table-cell-children-002-ref.html",
+     "features": [
+      "box-sizing",
+      "overflow",
+      "percent-size"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "box-sizing",
+    "display-table",
+    "overflow",
+    "percent-size"
+   ],
+   "testFeatures": [
+    "display-table",
+    "percent-size",
+    "overflow"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/height-distribution/percentage-sizing-of-table-cell-children-003.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "overflow",
+    "percent-size",
+    "position"
+   ],
+   "testFeatures": [
+    "display-table",
+    "position",
+    "percent-size",
+    "overflow"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/height-distribution/percentage-sizing-of-table-cell-children-004.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "overflow",
+    "percent-size",
+    "position"
+   ],
+   "testFeatures": [
+    "display-table",
+    "position",
+    "percent-size",
+    "overflow"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/height-distribution/percentage-sizing-of-table-cell-children-005.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "overflow",
+    "percent-size",
+    "position"
+   ],
+   "testFeatures": [
+    "display-table",
+    "position",
+    "percent-size",
+    "overflow"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/height-distribution/percentage-sizing-of-table-cell-children-006.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "overflow",
+    "percent-size",
+    "position"
+   ],
+   "testFeatures": [
+    "display-table",
+    "position",
+    "percent-size",
+    "overflow"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/height-distribution/percentage-sizing-of-table-cell-children.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/height-distribution/percentage-sizing-of-table-cell-replaced-children-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "percentage-sizing-of-table-cell-replaced-children-001-ref.html",
+     "path": "css/css-tables/height-distribution/percentage-sizing-of-table-cell-replaced-children-001-ref.html",
+     "features": [
+      "box-sizing",
+      "images",
+      "overflow",
+      "percent-size"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "box-sizing",
+    "display-table",
+    "images",
+    "overflow",
+    "percent-size"
+   ],
+   "testFeatures": [
+    "display-table",
+    "images",
+    "percent-size",
+    "overflow"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "images"
+   ]
+  },
+  {
+   "test": "css/css-tables/height-distribution/td-different-subpixel-padding-in-same-row-vertical-rl.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "td-different-subpixel-padding-in-same-row-vertical-rl-ref.html",
+     "path": "css/css-tables/height-distribution/td-different-subpixel-padding-in-same-row-vertical-rl-ref.html",
+     "features": [
+      "border-collapse",
+      "position",
+      "table-elements",
+      "writing-mode"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "position",
+    "table-elements",
+    "writing-mode"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "writing-mode",
+    "position"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position",
+    "writing-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/height-distribution/td-different-subpixel-padding-in-same-row.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "td-different-subpixel-padding-in-same-row-ref.html",
+     "path": "css/css-tables/height-distribution/td-different-subpixel-padding-in-same-row-ref.html",
+     "features": [
+      "border-collapse",
+      "position",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "position"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/html-display-table.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "html-display-table-ref.html",
+     "path": "css/css-tables/html-display-table-ref.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "display-table"
+   ],
+   "testFeatures": [
+    "display-table",
+    "border-spacing"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/html-to-css-mapping-1.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/html-to-css-mapping-2.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/html5-table-formatting-1.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/html5-table-formatting-2.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/html5-table-formatting-3.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/html5-table-formatting-fixed-layout-1.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/iframe-display-table-content-insertion.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "iframe-display-table-content-insertion-ref.html",
+     "path": "css/css-tables/iframe-display-table-content-insertion-ref.html",
+     "features": [
+      "col-colgroup",
+      "display-table",
+      "images"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "col-colgroup",
+    "display-table",
+    "images",
+    "script"
+   ],
+   "testFeatures": [
+    "display-table",
+    "col-colgroup",
+    "images",
+    "script"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "images",
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/inheritance.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/insert-after-col.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "insert-after-col-ref.html",
+     "path": "css/css-tables/insert-after-col-ref.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "col-colgroup",
+    "contain-content-visibility",
+    "display-table",
+    "overflow",
+    "script"
+   ],
+   "testFeatures": [
+    "display-table",
+    "col-colgroup",
+    "script",
+    "overflow",
+    "contain-content-visibility"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "contain-content-visibility",
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/insert-after-colgroup.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "insert-after-colgroup-ref.html",
+     "path": "css/css-tables/insert-after-colgroup-ref.html",
+     "features": [
+      "border-collapse",
+      "col-colgroup",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "col-colgroup",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "col-colgroup",
+    "script"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/internal-containing-block-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/max-height-table.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "max-height-table-ref.html",
+     "path": "css/css-tables/max-height-table-ref.html",
+     "features": [
+      "border-spacing",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/min-height-table-2.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "min-height-table-ref.html",
+     "path": "css/css-tables/min-height-table-ref.html",
+     "features": [
+      "border-spacing",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "calc",
+    "overflow",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "percent-size",
+    "calc",
+    "overflow"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "calc"
+   ]
+  },
+  {
+   "test": "css/css-tables/min-height-table.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "min-height-table-ref.html",
+     "path": "css/css-tables/min-height-table-ref.html",
+     "features": [
+      "border-spacing",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/min-max-size-table-content-box.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "min-max-size-table-content-box-ref.html",
+     "path": "css/css-tables/min-max-size-table-content-box-ref.html",
+     "features": [
+      "box-sizing",
+      "flex-grid"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "box-sizing",
+    "flex-grid",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "flex-grid",
+    "box-sizing"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "flex-grid"
+   ]
+  },
+  {
+   "test": "css/css-tables/multicol-table-collapsed-border-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/multicol-table-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/no-overflow-with-table-cell-margins.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/out-of-order-elements-collapsed-border.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "out-of-order-elements-collapsed-border-ref.html",
+     "path": "css/css-tables/out-of-order-elements-collapsed-border-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/paint/col-change-span-bg-invalidation-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": {
+    "reference": null,
+    "value": [
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      4400
+     ]
+    ]
+   },
+   "features": [
+    "border-spacing",
+    "col-colgroup",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "col-colgroup",
+    "script"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/paint/col-change-span-bg-invalidation-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": {
+    "reference": null,
+    "value": [
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      4400
+     ]
+    ]
+   },
+   "features": [
+    "border-spacing",
+    "col-colgroup",
+    "colspan-rowspan",
+    "gradient",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "colspan-rowspan",
+    "col-colgroup",
+    "gradient",
+    "script"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "gradient",
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/paint/col-paint-htb-rtl.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "col-paint-htb-rtl-ref.html",
+     "path": "css/css-tables/paint/col-paint-htb-rtl-ref.html",
+     "features": [
+      "border-spacing",
+      "col-colgroup",
+      "gradient",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "col-colgroup",
+    "gradient",
+    "table-elements",
+    "writing-mode"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "col-colgroup",
+    "writing-mode",
+    "gradient"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "gradient",
+    "writing-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/paint/col-paint-vrl-rtl.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "col-paint-vrl-rtl-ref.html",
+     "path": "css/css-tables/paint/col-paint-vrl-rtl-ref.html",
+     "features": [
+      "border-spacing",
+      "col-colgroup",
+      "gradient",
+      "table-elements",
+      "transform-filter"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "col-colgroup",
+    "gradient",
+    "table-elements",
+    "transform-filter",
+    "writing-mode"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "col-colgroup",
+    "writing-mode",
+    "gradient"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "gradient",
+    "transform-filter",
+    "writing-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/paint/row-background-paint-remove-last-cell.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "row-background-paint-remove-last-cell-ref.html",
+     "path": "css/css-tables/paint/row-background-paint-remove-last-cell-ref.html",
+     "features": [
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "script"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/paint/table-border-paint-caption-change.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "table-border-paint-caption-change-ref.html",
+     "path": "css/css-tables/paint/table-border-paint-caption-change-ref.html",
+     "features": [
+      "caption",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "caption",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "caption",
+    "script"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/parsing/border-collapse-computed.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/parsing/border-collapse-invalid.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/parsing/border-collapse-valid.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/parsing/border-spacing-computed.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/parsing/border-spacing-invalid.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/parsing/border-spacing-valid.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/parsing/caption-side-computed.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/parsing/caption-side-invalid.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/parsing/caption-side-valid.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/parsing/empty-cells-computed.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/parsing/empty-cells-invalid.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/parsing/empty-cells-valid.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/parsing/table-layout-computed.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/parsing/table-layout-invalid.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/parsing/table-layout-valid.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/percent-height-overflow-auto-in-restricted-block-size-cell.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/percent-height-overflow-auto-in-unrestricted-block-size-cell.tentative.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "overflow",
+    "percent-size"
+   ],
+   "testFeatures": [
+    "display-table",
+    "percent-size",
+    "overflow"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/percent-height-replaced-in-percent-cell-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "images",
+    "percent-size"
+   ],
+   "testFeatures": [
+    "display-table",
+    "images",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "images"
+   ]
+  },
+  {
+   "test": "css/css-tables/percent-height-replaced-in-percent-cell-003.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "images",
+    "percent-size"
+   ],
+   "testFeatures": [
+    "display-table",
+    "images",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "images"
+   ]
+  },
+  {
+   "test": "css/css-tables/percent-height-replaced-in-percent-cell-004.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "images",
+    "percent-size"
+   ],
+   "testFeatures": [
+    "display-table",
+    "images",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "images"
+   ]
+  },
+  {
+   "test": "css/css-tables/percent-height-replaced-in-percent-cell.tentative.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "images",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "images",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "images"
+   ]
+  },
+  {
+   "test": "css/css-tables/percent-height-table-cell-child.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "/css/reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "percent-size"
+   ],
+   "testFeatures": [
+    "display-table",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/percent-width-cell-dynamic.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "overflow",
+    "percent-size",
+    "script"
+   ],
+   "testFeatures": [
+    "display-table",
+    "script",
+    "percent-size",
+    "overflow"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/percent-width-ignored-001.tentative.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/percent-width-ignored-002.tentative.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/percent-width-ignored-003.tentative.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/percentages-grandchildren-quirks-mode-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "percent-size",
+    "quirks-mode"
+   ],
+   "testFeatures": [
+    "display-table",
+    "percent-size",
+    "quirks-mode"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "quirks-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/percentages-grandchildren-quirks-mode-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "percent-size",
+    "quirks-mode"
+   ],
+   "testFeatures": [
+    "display-table",
+    "percent-size",
+    "quirks-mode"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "quirks-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/remove-caption-from-anon-table.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "remove-caption-from-anon-table-ref.html",
+     "path": "css/css-tables/remove-caption-from-anon-table-ref.html",
+     "features": [
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "caption",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "caption",
+    "script"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/remove-colgroup-from-anon-table.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "remove-caption-from-anon-table-ref.html",
+     "path": "css/css-tables/remove-caption-from-anon-table-ref.html",
+     "features": [
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "col-colgroup",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "col-colgroup",
+    "script"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/row-group-margin-border-padding.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "row-group-margin-border-padding-ref.html",
+     "path": "css/css-tables/row-group-margin-border-padding-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements",
+      "writing-mode"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements",
+    "writing-mode"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "writing-mode"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "writing-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/row-group-order.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "row-group-order-ref.html",
+     "path": "css/css-tables/row-group-order-ref.html",
+     "features": [
+      "ahem",
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "ahem",
+    "border-collapse",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "ahem"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/row-margin-border-padding.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "row-margin-border-padding-ref.html",
+     "path": "css/css-tables/row-margin-border-padding-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements",
+      "writing-mode"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements",
+    "writing-mode"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "writing-mode"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "writing-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/rowspan-cell-border-after-color.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "rowspan-cell-border-after-color-ref.html",
+     "path": "css/css-tables/rowspan-cell-border-after-color-ref.html",
+     "features": [
+      "border-collapse",
+      "colspan-rowspan",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "colspan-rowspan",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "colspan-rowspan"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/rules-groups.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "rules-groups-ref.html",
+     "path": "css/css-tables/rules-groups-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/subpixel-collapsed-borders-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "subpixel-collapsed-borders-ref.html",
+     "path": "css/css-tables/subpixel-collapsed-borders-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/subpixel-collapsed-borders-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "subpixel-collapsed-borders-ref.html",
+     "path": "css/css-tables/subpixel-collapsed-borders-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/subpixel-collapsed-borders-003.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "reference/subpixel-collapsed-borders-003-ref.html",
+     "path": "css/css-tables/reference/subpixel-collapsed-borders-003-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/subpixel-table-cell-height-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "subpixel-table-cell-height-001-ref.html",
+     "path": "css/css-tables/subpixel-table-cell-height-001-ref.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/subpixel-table-cell-width-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "subpixel-table-cell-width-001-ref.html",
+     "path": "css/css-tables/subpixel-table-cell-width-001-ref.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table"
+   ],
+   "testFeatures": [
+    "display-table"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/subpixel-table-cell-width-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "subpixel-table-cell-width-001-ref.html",
+     "path": "css/css-tables/subpixel-table-cell-width-001-ref.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "percent-size"
+   ],
+   "testFeatures": [
+    "display-table",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/subpixel-table-width-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "subpixel-table-width-001-ref.html",
+     "path": "css/css-tables/subpixel-table-width-001-ref.html",
+     "features": [
+      "percent-size"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/table-as-item-cell-percentage-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "flex-grid",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "flex-grid",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "flex-grid"
+   ]
+  },
+  {
+   "test": "css/css-tables/table-as-item-cell-percentage-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "flex-grid",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "flex-grid",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "flex-grid"
+   ]
+  },
+  {
+   "test": "css/css-tables/table-as-item-cell-percentage-003.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "flex-grid",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "flex-grid",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "flex-grid"
+   ]
+  },
+  {
+   "test": "css/css-tables/table-as-item-cell-percentage-004.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "flex-grid",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "flex-grid",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "flex-grid"
+   ]
+  },
+  {
+   "test": "css/css-tables/table-caption-after-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/table-cell-baseline-static-position.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/table-cell-child-overflow-measure.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "table-cell-child-overflow-measure-ref.html",
+     "path": "css/css-tables/table-cell-child-overflow-measure-ref.html",
+     "features": [
+      "overflow",
+      "percent-size"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "overflow",
+    "percent-size"
+   ],
+   "testFeatures": [
+    "display-table",
+    "percent-size",
+    "overflow"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/table-cell-inline-size-box-sizing-quirks.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "table-cell-inline-size-box-sizing-quirks-ref.html",
+     "path": "css/css-tables/table-cell-inline-size-box-sizing-quirks-ref.html",
+     "features": [
+      "box-sizing",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "box-sizing",
+    "quirks-mode",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "box-sizing",
+    "quirks-mode"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "quirks-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/table-cell-overflow-auto-scrolled.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "table-cell-overflow-auto-scrolled-ref.html",
+     "path": "css/css-tables/table-cell-overflow-auto-scrolled-ref.html",
+     "features": [
+      "box-sizing",
+      "overflow",
+      "percent-size",
+      "script"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "box-sizing",
+    "overflow",
+    "percent-size",
+    "script",
+    "table-elements",
+    "table-layout-fixed"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "table-layout-fixed",
+    "script",
+    "overflow"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/table-cell-overflow-auto.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "table-cell-overflow-auto-ref.html",
+     "path": "css/css-tables/table-cell-overflow-auto-ref.html",
+     "features": [
+      "display-table",
+      "overflow",
+      "vertical-align"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "overflow",
+    "vertical-align"
+   ],
+   "testFeatures": [
+    "display-table",
+    "vertical-align",
+    "overflow"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/table-cell-overflow-explicit-height-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "table-cell-overflow-explicit-height-ref.html",
+     "path": "css/css-tables/table-cell-overflow-explicit-height-ref.html",
+     "features": [
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "overflow",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "overflow"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/table-cell-overflow-explicit-height-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "table-cell-overflow-explicit-height-ref.html",
+     "path": "css/css-tables/table-cell-overflow-explicit-height-ref.html",
+     "features": [
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "overflow",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "overflow"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/table-cell-scroll-height.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/table-cell-tiny-width-excess-width-distribution.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "table-cell-tiny-width-excess-width-distribution-ref.html",
+     "path": "css/css-tables/table-cell-tiny-width-excess-width-distribution-ref.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/table-cell-width-0-excess-width-distribution.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "table-cell-width-0-excess-width-distribution-ref.html",
+     "path": "css/css-tables/table-cell-width-0-excess-width-distribution-ref.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "ahem",
+    "border-spacing",
+    "colspan-rowspan",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "colspan-rowspan",
+    "ahem",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/table-cell-width-0.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "table-cell-width-0-ref.html",
+     "path": "css/css-tables/table-cell-width-0-ref.html",
+     "features": [
+      "border-spacing",
+      "box-sizing",
+      "flex-grid",
+      "percent-size"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "border-spacing",
+    "box-sizing",
+    "flex-grid",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "flex-grid"
+   ]
+  },
+  {
+   "test": "css/css-tables/table-cell-writing-mode-computed.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/table-collapsed-row-or-column-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/table-colspan-percent-auto.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "table-colspan-percent-auto-ref.html",
+     "path": "css/css-tables/table-colspan-percent-auto-ref.html",
+     "features": [
+      "border-collapse",
+      "colspan-rowspan",
+      "percent-size",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "colspan-rowspan",
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "colspan-rowspan",
+    "percent-size"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/table-continuation-border-model-crash-print.html",
+   "kind": "print-reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "mismatch",
+     "href": "/common/blank.html",
+     "path": "common/blank.html",
+     "features": [
+      "quirks-mode"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "col-colgroup",
+    "float",
+    "multicol-print",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "col-colgroup",
+    "script",
+    "float",
+    "multicol-print"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "print",
+   "blocking": [
+    "float",
+    "multicol-print",
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/table-has-box-sizing-border-box-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "percent-size",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/table-has-box-sizing-border-box-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "box-sizing",
+    "display-table",
+    "percent-size",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "display-table",
+    "position",
+    "percent-size",
+    "box-sizing"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/table-height-distribution-proportional.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/table-height-distribution-with-border-spacing.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "table-height-distribution-with-border-spacing-ref.html",
+     "path": "css/css-tables/table-height-distribution-with-border-spacing-ref.html",
+     "features": [
+      "ahem",
+      "border-spacing",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "ahem",
+    "border-spacing",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "ahem"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/table-intrinsic-size-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table"
+   ],
+   "testFeatures": [
+    "display-table"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/table-intrinsic-size-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table"
+   ],
+   "testFeatures": [
+    "display-table"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/table-intrinsic-size-003.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "writing-mode"
+   ],
+   "testFeatures": [
+    "display-table",
+    "writing-mode"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "writing-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/table-intrinsic-size-004.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "writing-mode"
+   ],
+   "testFeatures": [
+    "display-table",
+    "writing-mode"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "writing-mode"
+   ]
+  },
+  {
+   "test": "css/css-tables/table-min-max-width-intrinsic-contribution-border-padding.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/table-min-max-width-intrinsic-contribution.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/table-model-fixup-2.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/table-model-fixup.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/table-position-sticky-computed.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/table-row-group-color-inheritance-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-200px-square.html",
+     "path": "css/reference/ref-filled-green-200px-square.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "ahem",
+    "display-table"
+   ],
+   "testFeatures": [
+    "display-table",
+    "ahem"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/table-row-group-nested-anonymous-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "table-row-group-nested-anonymous-001-ref.html",
+     "path": "css/css-tables/table-row-group-nested-anonymous-001-ref.html",
+     "features": [
+      "display-table"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table"
+   ],
+   "testFeatures": [
+    "display-table"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/table-stretch-in-flex-and-grid.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/table_grid_size_col_colspan.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "table_grid_size_col_colspan-ref.html",
+     "path": "css/css-tables/table_grid_size_col_colspan-ref.html",
+     "features": [
+      "border-collapse",
+      "table-elements",
+      "table-layout-fixed"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "col-colgroup",
+    "colspan-rowspan",
+    "table-elements",
+    "table-layout-fixed"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "colspan-rowspan",
+    "col-colgroup",
+    "table-layout-fixed"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/baseline-table.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/baseline-td.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/border-collapse-spanning-cells-001.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-200px-square.html",
+     "path": "css/reference/ref-filled-green-200px-square.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "ahem",
+    "border-collapse",
+    "col-colgroup",
+    "colspan-rowspan",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "colspan-rowspan",
+    "col-colgroup",
+    "ahem"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/border-collapse-spanning-cells-002.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-200px-square.html",
+     "path": "css/reference/ref-filled-green-200px-square.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "ahem",
+    "border-collapse",
+    "col-colgroup",
+    "colspan-rowspan",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "colspan-rowspan",
+    "col-colgroup",
+    "ahem"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/border-collapse-spanning-cells-003.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-200px-square.html",
+     "path": "css/reference/ref-filled-green-200px-square.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "ahem",
+    "border-collapse",
+    "col-colgroup",
+    "colspan-rowspan",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "colspan-rowspan",
+    "col-colgroup",
+    "ahem"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/border-collapse-spanning-cells-004.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-200px-square.html",
+     "path": "css/reference/ref-filled-green-200px-square.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "ahem",
+    "border-collapse",
+    "col-colgroup",
+    "colspan-rowspan",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "colspan-rowspan",
+    "col-colgroup",
+    "ahem"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/caption.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/col-collapse-table-size.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/colgroup-col.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/collapsed-borders-painting-order-001.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/collapsed-borders-painting-order-002.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/tentative/collapsed-borders-painting-order-003.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "display-table",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "display-table",
+    "border-collapse"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/collapsed-borders-painting-order-004.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/collapsed-borders-painting-order-005.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/tentative/collapsed-borders-painting-order-006.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "display-table",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "display-table",
+    "border-collapse"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/collapsed-borders-painting-order-007.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/collapsed-borders-painting-order-008.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/tentative/collapsed-borders-painting-order-009.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/tentative/collapsed-borders-painting-order-010.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "position"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/tentative/collapsed-borders-painting-order-011.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "display-table",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "display-table",
+    "border-collapse"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/collapsed-borders-painting-order-012.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "display-table",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "display-table",
+    "border-collapse"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/collapsed-borders-painting-order-013.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "display-table",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "display-table",
+    "border-collapse"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/colspan-redistribution.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/column-widths.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/element-sizing.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/padding-percentage.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "/css/reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "calc",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "position",
+    "calc"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "calc",
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/tentative/paint/background-image-column-collapsed.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "background-image-column-collapsed-ref.html",
+     "path": "css/css-tables/tentative/paint/background-image-column-collapsed-ref.html",
+     "features": [
+      "box-sizing",
+      "gradient",
+      "position"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "border-spacing",
+    "box-sizing",
+    "col-colgroup",
+    "colspan-rowspan",
+    "gradient",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "border-spacing",
+    "colspan-rowspan",
+    "col-colgroup",
+    "gradient",
+    "box-sizing"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "gradient",
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/tentative/paint/background-image-column.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "background-image-column-ref.html",
+     "path": "css/css-tables/tentative/paint/background-image-column-ref.html",
+     "features": [
+      "box-sizing",
+      "gradient",
+      "position"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "box-sizing",
+    "col-colgroup",
+    "colspan-rowspan",
+    "gradient",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "colspan-rowspan",
+    "col-colgroup",
+    "gradient",
+    "box-sizing"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "gradient",
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/tentative/paint/background-image-row-collapsed.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "background-image-row-collapsed-ref.html",
+     "path": "css/css-tables/tentative/paint/background-image-row-collapsed-ref.html",
+     "features": [
+      "box-sizing",
+      "gradient",
+      "position"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "box-sizing",
+    "colspan-rowspan",
+    "gradient",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "colspan-rowspan",
+    "gradient",
+    "box-sizing"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "gradient",
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/tentative/paint/background-image-row.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "background-image-row-ref.html",
+     "path": "css/css-tables/tentative/paint/background-image-row-ref.html",
+     "features": [
+      "box-sizing",
+      "gradient"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "box-sizing",
+    "colspan-rowspan",
+    "gradient",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "colspan-rowspan",
+    "gradient",
+    "box-sizing"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "gradient"
+   ]
+  },
+  {
+   "test": "css/css-tables/tentative/paint/collapsed-border-large-cell.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "collapsed-border-large-cell-ref.html",
+     "path": "css/css-tables/tentative/paint/collapsed-border-large-cell-ref.html",
+     "features": [
+      "box-sizing",
+      "position"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "box-sizing",
+    "col-colgroup",
+    "colspan-rowspan",
+    "position",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "colspan-rowspan",
+    "col-colgroup",
+    "box-sizing"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "position"
+   ]
+  },
+  {
+   "test": "css/css-tables/tentative/paint/overflow-hidden-table.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "overflow-hidden-table-ref.html",
+     "path": "css/css-tables/tentative/paint/overflow-hidden-table-ref.html",
+     "features": [
+      "box-sizing",
+      "caption",
+      "overflow"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "box-sizing",
+    "caption",
+    "overflow",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "caption",
+    "overflow",
+    "box-sizing"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/position-sticky-container.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/rowspan-height-redistribution.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/section-no-tbody-fixed-distribution.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table"
+   ],
+   "testFeatures": [
+    "display-table"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/section-no-tbody-percent-distribution.html",
+   "kind": "reftest",
+   "tentative": true,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../../reference/ref-filled-green-100px-square-only.html",
+     "path": "css/reference/ref-filled-green-100px-square-only.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "percent-size"
+   ],
+   "testFeatures": [
+    "display-table",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/tentative/table-fixed-minmax.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/table-height-redistribution.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/table-limited-quirks.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/table-minmax.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/table-quirks.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/table-rows-with-zero-columns.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/table-width-redistribution-fixed-padding.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/table-width-redistribution-fixed.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/table-width-redistribution.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/tbody-height-redistribution.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/td-box-sizing-001.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/td-box-sizing-002.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tentative/td-box-sizing-003.html",
+   "kind": "testharness",
+   "tentative": true
+  },
+  {
+   "test": "css/css-tables/tfoot-crash-print.html",
+   "kind": "print-reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "mismatch",
+     "href": "/common/blank.html",
+     "path": "common/blank.html",
+     "features": [
+      "quirks-mode"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "caption",
+    "quirks-mode",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "caption",
+    "script",
+    "quirks-mode"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "print",
+   "blocking": [
+    "quirks-mode",
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/th-text-align.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "th-text-align-ref.html",
+     "path": "css/css-tables/th-text-align-ref.html",
+     "features": [
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/toggle-row-display-property-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "toggle-row-display-property-001-ref.html",
+     "path": "css/css-tables/toggle-row-display-property-001-ref.html",
+     "features": [
+      "colspan-rowspan",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "colspan-rowspan",
+    "display-table",
+    "script",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "display-table",
+    "colspan-rowspan",
+    "script"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "script"
+   ]
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-border-spacing-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "outline-shadow",
+    "table-elements",
+    "visibility-collapse"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "visibility-collapse",
+    "outline-shadow"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "visibility-collapse"
+   ]
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-border-spacing-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-200px-square.html",
+     "path": "css/reference/ref-filled-green-200px-square.html",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-spacing",
+    "colspan-rowspan",
+    "table-elements",
+    "visibility-collapse"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-spacing",
+    "colspan-rowspan",
+    "visibility-collapse"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "visibility-collapse"
+   ]
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-col-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-col-002.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-col-003.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-col-004-dynamic.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-col-005.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-colgroup-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-colspan-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-colspan-002.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-colspan-003.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "visibility-collapse-colspan-003-ref.html",
+     "path": "css/css-tables/visibility-collapse-colspan-003-ref.html",
+     "features": [
+      "col-colgroup",
+      "colspan-rowspan",
+      "table-elements",
+      "visibility-collapse"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "col-colgroup",
+    "colspan-rowspan",
+    "table-elements",
+    "visibility-collapse"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "colspan-rowspan",
+    "col-colgroup",
+    "visibility-collapse"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "visibility-collapse"
+   ]
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-colspan-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-non-rowcol-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-row-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-row-002-dynamic.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-row-003-dynamic.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-row-004.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-row-005.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-row-group-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-row-group-002.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-rowcol-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-rowcol-002.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-rowspan-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-rowspan-002-border-separate.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-rowspan-002.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-rowspan-003-border-separate.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-rowspan-003.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-rowspan-004-dynamic.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-rowspan-005.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "visibility-collapse-rowspan-005-ref.html",
+     "path": "css/css-tables/visibility-collapse-rowspan-005-ref.html",
+     "features": [
+      "border-collapse",
+      "border-spacing",
+      "box-sizing",
+      "caption",
+      "col-colgroup",
+      "colspan-rowspan",
+      "display-table",
+      "float",
+      "percent-size",
+      "table-elements",
+      "visibility-collapse"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "border-spacing",
+    "box-sizing",
+    "caption",
+    "col-colgroup",
+    "colspan-rowspan",
+    "display-table",
+    "float",
+    "percent-size",
+    "table-elements",
+    "visibility-collapse"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "display-table",
+    "border-collapse",
+    "border-spacing",
+    "colspan-rowspan",
+    "col-colgroup",
+    "caption",
+    "visibility-collapse",
+    "float",
+    "percent-size",
+    "box-sizing"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "blocked",
+   "blocking": [
+    "float",
+    "visibility-collapse"
+   ]
+  },
+  {
+   "test": "css/css-tables/visibility-collapse-rowspan-crash.html",
+   "kind": "crashtest",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-hidden-col-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-hidden-collapsed-borders.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "../reference/ref-filled-green-100px-square.xht",
+     "path": "css/reference/ref-filled-green-100px-square.xht",
+     "features": []
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "border-collapse",
+    "box-sizing",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "border-collapse",
+    "box-sizing"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/visibility-hidden-nested-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-hidden-nested-002.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-hidden-row-001.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/visibility-hidden-row-002.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/whitespace-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "whitespace-001-ref.html",
+     "path": "css/css-tables/whitespace-001-ref.html",
+     "features": [
+      "percent-size"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "display-table",
+    "percent-size"
+   ],
+   "testFeatures": [
+    "display-table",
+    "percent-size"
+   ],
+   "referenceUsesTable": false,
+   "references_missing": false,
+   "tier": "table-plus",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/width-distribution/computing-column-measure-0.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/width-distribution/computing-column-measure-1.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/width-distribution/computing-column-measure-2.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/width-distribution/computing-table-width-0.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/width-distribution/computing-table-width-1.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/width-distribution/distribution-algo-1.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/width-distribution/distribution-algo-2.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/width-distribution/distribution-algo-min-content-guess.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/width-distribution/distribution-algo-min-content-percent-guess.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/width-distribution/distribution-algo-min-content-specified-guess.1.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/width-distribution/distribution-algo-min-content-specified-guess.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/width-distribution/td-max-width-auto-layout.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/width-distribution/td-min-width-auto-layout.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/width-distribution/td-with-subpixel-padding-vertical-rl.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/width-distribution/td-with-subpixel-padding.html",
+   "kind": "testharness",
+   "tentative": false
+  },
+  {
+   "test": "css/css-tables/zero-rowspan-001.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "zero-rowspan-001-ref.html",
+     "path": "css/css-tables/zero-rowspan-001-ref.html",
+     "features": [
+      "colspan-rowspan",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "colspan-rowspan",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "colspan-rowspan"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  },
+  {
+   "test": "css/css-tables/zero-rowspan-002.html",
+   "kind": "reftest",
+   "tentative": false,
+   "references": [
+    {
+     "relation": "match",
+     "href": "zero-rowspan-002-ref.html",
+     "path": "css/css-tables/zero-rowspan-002-ref.html",
+     "features": [
+      "colspan-rowspan",
+      "table-elements"
+     ]
+    }
+   ],
+   "fuzzy": null,
+   "features": [
+    "colspan-rowspan",
+    "table-elements"
+   ],
+   "testFeatures": [
+    "table-elements",
+    "colspan-rowspan"
+   ],
+   "referenceUsesTable": true,
+   "references_missing": false,
+   "tier": "basic-table",
+   "blocking": []
+  }
+ ]
+}

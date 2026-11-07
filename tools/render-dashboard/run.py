@@ -400,6 +400,38 @@ class Run:
                  groups_of(bad, lambda r: plain_reason(r.get('reason')), lambda r: r['page']),
                  notes='Rendered means the page gave a frame with data. It does not say the frame is correct.')
 
+    def wpt_tables(self):
+        self.wasm()
+        runtime = LAB / '.build/native-html/runtime'
+        runtime.mkdir(parents=True, exist_ok=True)
+        for name in ['web-render.mjs', 'web-render.wasm']:
+            shutil.copy(LAB / '.build/web-render/engines' / name, runtime / name)
+        tree = ROOT / 'third_party/testing/wpt-css-tables'
+        self.need(tree / 'SHA256SUMS', 'The vendored WPT css-tables tree')
+        classes = self.dir / 'wpt-tables-classes.json'
+        self.call('wpt-tables-classes', [sys.executable, Path(__file__).with_name('wpt_tables_classify.py'), '--root', tree,
+                                         '--output', classes], 120, cwd=ROOT)
+        out = self.dir / 'wpt-tables.json'
+        self.call('wpt-tables', ['deno', 'run', '--no-check', '--no-config', '--no-npm', '--node-modules-dir=none',
+                                 '--unstable-webgpu', '--unstable-ffi', '--allow-read', '--allow-write', '--allow-net=127.0.0.1',
+                                 '--allow-ffi', '--allow-env', Path(__file__).with_name('wpt_tables.ts'),
+                                 '--classes', classes, '--output', out], 1800, cwd=ROOT)
+        if not out.exists():
+            raise NotRun(f'wpt_tables.ts wrote no report, see {self.dir}/wpt-tables.log')
+        report = json.loads(out.read_text())
+        rows = [row for row in report['cases'] if row['kind'] == 'reftest']
+        bad = [row for row in rows if row['status'] != 'pass']
+        counts = dict(report['reftests']['counts'])
+        self.add('wpt-tables', 'WPT css/css-tables reftests, browser document path and WebGPU pixels at 800x600',
+                 'tools/render-dashboard/wpt_tables.ts', {'name': 'WPT css/css-tables', 'pin': report['input']['commit']},
+                 report['reftests']['total'], counts,
+                 groups_of(bad, lambda r: r['status'] + ': ' + plain_reason(r.get('reason') or ('Pixels differ in ' + r['test'].rsplit('/', 1)[0])),
+                           lambda r: r['test'], top=20),
+                 uniformPasses=report['reftests']['uniformPasses'], brokenReferencePasses=report['reftests']['brokenReferencePasses'],
+                 passes=sorted(row['test'] for row in rows if row['status'] == 'pass'),
+                 notes='A pass is equal pixels with the reference. Tables are laid out as blocks today, so many passes are '
+                       'coincidences; uniformPasses and brokenReferencePasses count the weakest.')
+
     def demo_pages(self):
         native = self.native()
         code, log = self.call('demo-pages', [sys.executable, 'tools/check-demo-pages.py', native], 600, cwd=ROOT)
@@ -452,7 +484,7 @@ def tiny_groups(cases):
 SUITES = {'html-parser': Run.html_parser, 'svg-tiny-admission': Run.svg_tiny_admission, 'svg-tiny-pixels': Run.svg_tiny_pixels,
           'wpt-images-wasm': Run.wpt_images_wasm, 'wpt-images-native': Run.wpt_images_native, 'wpt-scripts': Run.wpt_scripts,
           'harfbuzz': Run.harfbuzz, 'font-records': Run.font_records, 'font-coverage': Run.font_coverage, 'old-web': Run.old_web,
-          'demo-pages': Run.demo_pages, 'lab-suite': Run.lab_suite}
+          'wpt-tables': Run.wpt_tables, 'demo-pages': Run.demo_pages, 'lab-suite': Run.lab_suite}
 # Suites of the OKRs this command does not run, and why. They appear as not run.
 NOT_HERE = {'frame-time': 'Needs the macOS app opened in a window session; tools/native-frame-report.py reads its trace',
             'tile-equivalence': 'KR 2.2 has no runner yet',
