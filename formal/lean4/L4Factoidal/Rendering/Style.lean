@@ -22,7 +22,32 @@ structure Edges where
   bottom : Float := 0
   left : Float := 0
   deriving Repr
-inductive Display where | none | block | inline | inlineBlock
+/-- CSS Display 3 outer and inner display types that this profile lays out.
+The table values are those of CSS 2.1 §17.2 (CSS Tables 3 §2). -/
+inductive Display where
+  | none | block | inline | inlineBlock
+  | table | inlineTable | tableRowGroup | tableHeaderGroup | tableFooterGroup
+  | tableRow | tableCell | tableCaption | tableColumn | tableColumnGroup
+  deriving Repr, BEq
+
+/-- Boxes that are laid out by the table layout. `inline-table` is laid out as a
+block-level table: this profile has no atomic inline boxes
+(https://github.com/danbri/factoidal/issues/1272). -/
+def Display.isTable : Display → Bool
+  | .table | .inlineTable => true | _ => false
+/-- Internal table boxes (CSS 2.1 §17.2): outside a table they get an anonymous table. -/
+def Display.isTableInternal : Display → Bool
+  | .tableRowGroup | .tableHeaderGroup | .tableFooterGroup | .tableRow | .tableCell
+  | .tableCaption | .tableColumn | .tableColumnGroup => true
+  | _ => false
+/-- Boxes that stack in block flow: blocks and tables. -/
+def Display.isBlockLevel (d : Display) : Bool := d == .block || d.isTable
+/-- Boxes whose contents are one block formatting context (the strut of their lines). -/
+def Display.isBlockContainer (d : Display) : Bool :=
+  d == .block || d == .tableCell || d == .tableCaption
+
+/-- `vertical-align` as it applies to table cells (CSS 2.1 §17.5.3). -/
+inductive VerticalAlign where | baseline | top | middle | bottom
   deriving Repr, BEq
 /-- CSS Backgrounds 3 §4.2 line styles of this profile. -/
 inductive BorderStyle where | none | solid | inset | outset
@@ -50,6 +75,16 @@ structure Computed where
   borderStyle : BorderStyle := .none
   /-- None: `currentColor`. -/
   borderColor : Option Color := none
+  /-- `border-spacing`, horizontal and vertical (inherited). -/
+  borderSpacingX : Float := 0
+  borderSpacingY : Float := 0
+  /-- `border-collapse: collapse` (inherited). -/
+  borderCollapse : Bool := false
+  /-- `caption-side: bottom` (inherited). -/
+  captionBottom : Bool := false
+  verticalAlign : VerticalAlign := .baseline
+  /-- `table-layout: fixed`. -/
+  tableFixed : Bool := false
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -61,7 +96,8 @@ def htmlProperties : List String :=
    "padding-top","padding-right","padding-bottom","padding-left",
    "color","background","background-color","font-size","font-family",
    "line-height","visibility","overflow","text-decoration","text-decoration-line",
-   "border","border-width","border-style","border-color"]
+   "border","border-width","border-style","border-color",
+   "border-spacing","border-collapse","caption-side","vertical-align","table-layout"]
 
 /-- CSS Backgrounds 3 §4.3: the computed border width is 0 when the style is none. -/
 def Computed.borderEdges (s : Computed) : Edges :=
@@ -374,6 +410,16 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "block" => return {s with display := .block}
     | "inline" => return {s with display := .inline}
     | "inline-block" => return {s with display := .inlineBlock}
+    | "table" => return {s with display := .table}
+    | "inline-table" => return {s with display := .inlineTable}
+    | "table-row-group" => return {s with display := .tableRowGroup}
+    | "table-header-group" => return {s with display := .tableHeaderGroup}
+    | "table-footer-group" => return {s with display := .tableFooterGroup}
+    | "table-row" => return {s with display := .tableRow}
+    | "table-cell" => return {s with display := .tableCell}
+    | "table-caption" => return {s with display := .tableCaption}
+    | "table-column" => return {s with display := .tableColumn}
+    | "table-column-group" => return {s with display := .tableColumnGroup}
     | _ => throw "unsupported CSS display"
   | "width" => return {s with width := ← length d.value}
   | "height" => return {s with height := ← length d.value}
@@ -424,6 +470,29 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
       else if let .ok w := edgePixel part then out := {out with borderWidth := ⟨w,w,w,w⟩}
       else out := {out with borderColor := some (← color part)}
     return out
+  | "border-spacing" =>
+    match ← (words d.value).mapM pixels with
+    | [a] => if a < 0 then throw "negative border-spacing" else return {s with borderSpacingX := a, borderSpacingY := a}
+    | [a,b] => if a < 0 || b < 0 then throw "negative border-spacing" else return {s with borderSpacingX := a, borderSpacingY := b}
+    | _ => throw "border-spacing requires one or two lengths"
+  | "border-collapse" => match d.value with
+    | "collapse" => return {s with borderCollapse := true}
+    | "separate" => return {s with borderCollapse := false}
+    | _ => throw "unsupported CSS border-collapse"
+  | "caption-side" => match d.value with
+    | "top" => return {s with captionBottom := false}
+    | "bottom" => return {s with captionBottom := true}
+    | _ => throw "unsupported CSS caption-side"
+  | "table-layout" => match d.value with
+    | "fixed" => return {s with tableFixed := true}
+    | "auto" => return {s with tableFixed := false}
+    | _ => throw "unsupported CSS table-layout"
+  | "vertical-align" => match d.value with
+    | "top" | "text-top" => return {s with verticalAlign := .top}
+    | "middle" => return {s with verticalAlign := .middle}
+    | "bottom" | "text-bottom" => return {s with verticalAlign := .bottom}
+    | "baseline" | "sub" | "super" => return {s with verticalAlign := .baseline}
+    | _ => throw "unsupported CSS vertical-align"
   | "font-family" =>
     let raw := trim d.value
     let quoted := (raw.startsWith "'" && raw.endsWith "'") || (raw.startsWith "\"" && raw.endsWith "\"")
@@ -436,6 +505,30 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
 /-- A value or property this profile can not use leaves the style as it was. -/
 private def applyOrKeep (s : Computed) (d : Declaration) : Computed :=
   (apply s d).toOption.getD s
+
+/-- The declarations of `rules` and of `style` attributes that this profile can not
+read, each once, in source order, as "property: value (reason)". Such a declaration is
+dropped (`applyOrKeep`), as CSS error handling drops it; this list says which, so that
+a page that renders wrong can be grouped by the feature it lacks. It reads each
+declaration alone, with no cascade: a declaration that an overriding one hides is
+listed too. -/
+def droppedDeclarations (dom : Dom) (rules : List Rule) : Array String := Id.run do
+  let mut seen : Std.TreeMap String Unit := {}
+  let mut out : Array String := #[]
+  let mut all : Array Declaration := #[]
+  for rule in rules do all := all ++ rule.declarations.toArray
+  for n in dom.nodes do
+    if n.type == .element && hasAttribute n "style" then
+      if let .ok ds := declarations (attrValue n "style") then all := all ++ ds.toArray
+  for d in all do
+    match apply {} d with
+    | .ok _ => pure ()
+    | .error reason =>
+      let line := s!"{d.property}: {d.value} ({reason})"
+      if !seen.contains line && out.size < 1024 then
+        seen := seen.insert line ()
+        out := out.push line
+  return out
 
 /-- Spacing an unstyled page starts with. Margins here do not collapse, so each
 side has half of what a browser's single collapsed margin would be. -/
@@ -450,6 +543,69 @@ private def startMargin (tag : String) (size : Float) : Edges :=
 
 private def headingScale : String → Float
   | "h1" => 2 | "h2" => 1.5 | "h3" => 1.17 | "h5" => 0.83 | "h6" => 0.67 | _ => 1
+
+/-- The HTML rendering section's display for table elements (HTML §15.3.8). -/
+private def tableDisplay : String → Display
+  | "table" => .table | "caption" => .tableCaption | "thead" => .tableHeaderGroup
+  | "tbody" => .tableRowGroup | "tfoot" => .tableFooterGroup | "tr" => .tableRow
+  | "td" | "th" => .tableCell | "col" => .tableColumn | "colgroup" => .tableColumnGroup
+  | _ => .inline
+
+/-- A non-negative integer attribute value with an optional `%`, as HTML's rules
+for dimension values read it (HTML §2.3.4.4), in this profile's lengths. -/
+def dimensionAttribute (value : String) : Option Length :=
+  let v := trim value
+  let digits := v.toList.takeWhile Char.isDigit
+  if digits.isEmpty then none else
+  let n := Float.ofNat (String.ofList digits).toNat!
+  if (v.drop digits.length).toString.startsWith "%" then some (.percent (n/100)) else some (.px n)
+
+/-- The nearest table element above a cell, within three levels (row, row group). -/
+private def tableAncestor (dom : Dom) (id : Nat) : Option DOM.Node := Id.run do
+  let mut cursor := (dom.get id).parent
+  for _ in [0:3] do
+    match cursor with
+    | none => return none
+    | some p =>
+      if (dom.get p).lname == "table" then return some (dom.get p)
+      cursor := (dom.get p).parent
+  return none
+
+/-- Presentational hints and the user agent table rules of HTML §15.3.8 and §15.3.10:
+`table { border-spacing: 2px }`, `td, th { padding: 1px }`, the `cellspacing`,
+`cellpadding`, `width`, `height`, `bgcolor` and `valign` attributes, and the
+`vertical-align: middle` of rows and row groups that cells inherit. Author CSS
+overrides them all, as it does presentation attributes. -/
+private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed := Id.run do
+  let n := dom.get id
+  let mut s := s
+  let tag := n.lname
+  if !["table","caption","thead","tbody","tfoot","tr","td","th","col","colgroup"].contains tag then return s
+  if tag == "table" then
+    let spacing := (dimensionAttribute (attrValue n "cellspacing")).bind (resolve 0)
+    let v := spacing.getD 2
+    s := {s with borderSpacingX := v, borderSpacingY := v, borderCollapse := false, captionBottom := false}
+  if ["thead","tbody","tfoot","tr"].contains tag then s := {s with verticalAlign := .middle}
+  if tag == "td" || tag == "th" then
+    let pad := ((tableAncestor dom id).bind fun t => (dimensionAttribute (attrValue t "cellpadding")).bind (resolve 0)).getD 1
+    s := {s with padding := ⟨pad,pad,pad,pad⟩, verticalAlign := parent.verticalAlign}
+  if ["table","td","th","col"].contains tag then
+    if let some w := dimensionAttribute (attrValue n "width") then
+      if !(tag == "table" && (match w with | .px 0 => true | _ => false)) then s := {s with width := w}
+  if ["table","td","th","tr"].contains tag then
+    if let some h := dimensionAttribute (attrValue n "height") then
+      if let .px _ := h then s := {s with height := h}
+  if ["table","tr","td","th"].contains tag then
+    let bg := attrValue n "bgcolor"
+    if !bg.isEmpty then if let .ok c := color bg then s := {s with background := some c}
+  if ["tr","td","th","thead","tbody","tfoot"].contains tag then
+    match (attrValue n "valign").toLower with
+    | "top" => s := {s with verticalAlign := .top}
+    | "middle" => s := {s with verticalAlign := .middle}
+    | "bottom" => s := {s with verticalAlign := .bottom}
+    | "baseline" => s := {s with verticalAlign := .baseline}
+    | _ => pure ()
+  return s
 
 private def lexLE : List Nat → List Nat → Bool
   | [], _ => true
@@ -485,8 +641,7 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
   let n := dom.get id
   let block := ["html","body","div","p","section","main","article","header","footer","nav","aside",
     "h1","h2","h3","h4","h5","h6","ul","ol","li","dir","menu","dl","dt","dd","pre","listing","xmp","plaintext",
-    "blockquote","address","center","hr","form","fieldset","figure","figcaption",
-    "table","caption","thead","tbody","tfoot","tr","td","th"].contains n.lname
+    "blockquote","address","center","hr","form","fieldset","figure","figcaption"].contains n.lname
   let hidden := ["head","style","script","title","meta","link","template","base","area","param"].contains n.lname
   let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg"
   let svgOverflow := attrValue n "overflow"
@@ -498,8 +653,11 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
     lineHeight := parent.lineHeightFactor.map (fontSize*·) |>.getD parent.lineHeight,
     lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
     preformatted := parent.preformatted || ["pre","listing","xmp","plaintext"].contains n.lname,
-    display := if hidden then .none else if block then .block else .inline,
-    margin := startMargin n.lname fontSize}
+    display := if hidden then .none else if block then .block else tableDisplay n.lname,
+    margin := startMargin n.lname fontSize,
+    borderSpacingX := parent.borderSpacingX, borderSpacingY := parent.borderSpacingY,
+    borderCollapse := parent.borderCollapse, captionBottom := parent.captionBottom}
+  if n.ns == some DOM.htmlNS || n.ns.isNone then initial := tableHints dom id initial parent
   -- SVG presentation attributes have lower priority than author CSS.
   -- These properties affect HTML layout/inheritance, so compute them here.
   if svgViewport then

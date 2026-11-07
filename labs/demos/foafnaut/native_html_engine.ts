@@ -209,6 +209,8 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       return result as {family:string;glyphs:number};
     },
     fontRequests:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"fontRequests"}),
+    // The CSS declarations that Lean's profile can not read and drops, "property: value (reason)".
+    droppedCSS:(source:string,options:Record<string,unknown>)=>(documentCall(source,{...options,op:"droppedCSS"}) as {dropped:string[]}).dropped,
     compile(source:string,width:number,height:number,options:Record<string,unknown>):HTMLArtifact {
       return sceneOf(renderCall(source,{binary:true,...options,op:"render"},width,height),width,height);
     },

@@ -21,12 +21,10 @@ td.group{background:#eef3e9;color:#2d6a3e;font-weight:bold}
 <h1>Tables</h1>
 <p>Three tables with the CSS a browser would draw: a caption bar, a header row with a rule under it,
 zebra rows, numbers aligned right, cells that span columns and rows, and a totals row.</p>
-<p class="note">Expected failure. The engine has no table layout, so each cell is a block on its own
-line, and colspan and rowspan have no effect
-(<a href="https://github.com/danbri/factoidal/issues/1272">issue 1272</a>). Text-align
-and font-weight are dropped
-(<a href="https://github.com/danbri/factoidal/issues/1273">issue 1273</a>). Backgrounds, padding,
-colours and the caption work, so the cells keep their zebra colours. The same tables drawn as SVG: <a href="showcase-tables-svg.html">showcase-tables-svg.html</a>.</p>
+<p class="note">Partly an expected failure. The engine lays out the tables: columns sized from
+their cells, colspan, rowspan, the caption, the header and footer groups, and the cells' vertical
+alignment (<a href="https://github.com/danbri/factoidal/issues/1272">issue 1272</a>). Text-align and font-weight are dropped, so the numbers are not aligned right and the headings are not bold
+(<a href="https://github.com/danbri/factoidal/issues/1273">issue 1273</a>). The same tables drawn as SVG: <a href="showcase-tables-svg.html">showcase-tables-svg.html</a>.</p>
 
 <h2>1. Numbers aligned right, with a total</h2>
 <table>

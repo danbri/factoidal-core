@@ -34,7 +34,9 @@ private def context (dom : Dom) (styles : Array Computed) : Nat → Nat → Exce
   | fuel+1,id => do
     let some node := dom.nodes[id]? | throw "font requests: invalid DOM node"
     let some style := styles[id]? | throw "font requests: missing computed style"
-    if id == 0 || style.display == .block then return id
+    -- The block containers whose style is the strut of their lines (`Layout.layoutTask`):
+    -- blocks, cells and captions, and the table boxes that hold anonymous cells.
+    if id == 0 || style.display.isBlockContainer || style.display.isTable || style.display.isTableInternal then return id
     match node.parent with
     | none => return id
     | some parent => context dom styles fuel parent

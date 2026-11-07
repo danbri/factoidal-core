@@ -1,4 +1,5 @@
 import WebRenderFontRequests
+import L4Factoidal.DOM.OfXml
 import WebRenderScript
 import WebXslt
 import L4Factoidal.Syntax.IriResolve
@@ -79,9 +80,13 @@ private def imageRequests (dom : DOM.Dom) (base : String) : Except String (List 
   if keys.length > maxDocumentImages then throw s!"document images exceed {maxDocumentImages}"
   return keys.map fun key => .object [("key",.string key),("url",.string key)]
 
+/-- The document tree: the XML syntax of HTML for a `.xht` or `.xhtml` URL (HTML §14,
+`DOM.parseXmlDocument`), else the HTML syntax (HTML §13). -/
 def prepareDOM (html : String) (request : JSON.Json) : Except String DOM.Dom := do
   if html.utf8ByteSize > 1048576 then throw "document HTML exceeds 1MiB"
-  WebRenderScript.applyCommands (DOM.parseHtmlDocument html)
+  let dom ← if DOM.isXhtmlPath (str request "url") then DOM.parseXmlDocument html
+    else pure (DOM.parseHtmlDocument html)
+  WebRenderScript.applyCommands dom
     ((request.field? "commands").getD (.array []))
 
 def baseURL (dom : DOM.Dom) (url : String) : String := Id.run do
@@ -720,6 +725,8 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     if op == "inspect" then return ((← inspect dom (str request "url")).toString,#[])
     let textScale := Float.ofNat (← scalePercent request) / 100
     let rules ← rules dom request
+    if op == "droppedCSS" then
+      return ((JSON.Json.object [("dropped",.array ((Rendering.CSS.droppedDeclarations dom rules).toList.map .string))]).toString,#[])
     if op == "fontRequests" then
       return (WebRenderFontRequests.requestsJSON (← WebRenderFontRequests.collectDOMWithRules dom rules textScale),#[])
     throw "unknown document operation"

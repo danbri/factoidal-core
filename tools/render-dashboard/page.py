@@ -20,6 +20,7 @@ SUITES = [
     ('svg-tiny-pixels', 'match', None),
     ('svg-tiny-admission', 'admitted', 'KR 3.6: 250 admitted'),
     ('wpt-scripts', 'pass', 'KR 3.5: 50 complete PASS documents'),
+    ('wpt-tables', 'pass', None),
     ('html-tree', 'pass', 'KR 3.1: 1,973 pass'),
     ('html-dom-tree', 'pass', None),
     ('html-tokenizer', 'pass', 'KR 3.2: 7,053 pass'),

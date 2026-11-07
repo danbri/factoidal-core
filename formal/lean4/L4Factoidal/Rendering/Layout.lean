@@ -1,5 +1,6 @@
 import L4Factoidal.Rendering.Style
 import L4Factoidal.Rendering.FontFace
+import L4Factoidal.Rendering.TableLayout
 
 /-! Block flow and inline word wrapping over the existing DOM arena. This
 profile excludes floats, positioning, bidi, flex/grid, margin collapse and
@@ -168,10 +169,10 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (a
       return #[.replaced id width height (← embedding id s width height)]
     -- A block inside an inline (old pages often have one) breaks the line around it.
     -- An inline-block is one atomic box: `atomize` lays out what is between its bounds.
-    let mut out : Array Inline := if s.display == .block then #[.lineBreak s]
+    let mut out : Array Inline := if s.display.isBlockLevel then #[.lineBreak s]
       else if s.display == .inlineBlock then #[.openAtomic id s] else #[]
     for child in n.kids do out := out ++ (← inlineItems dom styles embedding available fuel child)
-    return if s.display == .block then out.push (.lineBreak s)
+    return if s.display.isBlockLevel then out.push (.lineBreak s)
       else if s.display == .inlineBlock then out.push .closeAtomic else out
 
 private def translate (x y : Float) : Transform := ⟨1,0,0,1,x,y⟩
@@ -410,58 +411,313 @@ private def listMarker (dom : Dom) (id : Nat) : String := Id.run do
     if (dom.get kid).lname == "li" then number := number+1
   return s!"{number}. "
 
+/-- What `layoutTask` and `intrinsic` lay out: an element's box, the contents of a
+block container (a cell's contents, or an anonymous cell's), or a table (an element,
+or the anonymous table of a run of internal table boxes, CSS 2.1 §17.2.1). -/
+inductive Task where
+  | box (id : Nat)
+  /-- The children `kids` in the block formatting context of `container`, with its style. -/
+  | contents (container : Nat) (kids : Array Nat)
+  /-- A table: `element` is the table element, or `none` for an anonymous table of the
+  children `kids` of `container`. -/
+  | table (element : Option Nat) (container : Nat) (kids : Array Nat)
+  deriving Repr
+
+/-- The right edge of what a line layout placed, from its left edge `0`. -/
+private def lineExtent (r : Result) : Float := r.boxes.foldl (fun m b => max m (b.x+b.width)) 0
+
+/-- A result moved down by `dy`: its paint in a translated group, its boxes and glyphs moved. -/
+private def Result.shiftY (r : Result) (dy : Float) : Result :=
+  if dy == 0 then r else
+  {r with nodes := if r.nodes.isEmpty then #[] else #[.group none (translate 0 dy) r.nodes.toList],
+          boxes := r.boxes.map fun b => {b with y := b.y+dy},
+          runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with y := g.y+dy}}}
+
+/-- The style of the contents of a cell: the cell's own, or for an anonymous cell
+its parent's, with no box edges (an anonymous box has none). -/
+private def anonymousBox (base : Computed) : Computed :=
+  {base with padding := {}, margin := {}, background := none, width := .auto, height := .auto,
+             verticalAlign := .baseline}
+private def cellStyle (styles : Array Computed) : Table.Source → Computed
+  | .element id => styles[id]!
+  | .anonymous parent _ => anonymousBox styles[parent]!
+private def cellContents (dom : Dom) : Table.Source → Nat × Array Nat
+  | .element id => (id,(dom.get id).kids)
+  | .anonymous parent kids => (parent,kids)
+
+/-- The width a cell asks of its columns (CSS 2.1 §17.5.2.2): its min-content and
+max-content widths with its padding, and its specified width. -/
+private def cellMeasure (s : Computed) (widths : Float × Float) : Table.Measure :=
+  let pad := s.padding.left+s.padding.right
+  {min := widths.1+pad, max := widths.2+pad,
+   fixed := match s.width with | .px w => some (w+pad) | _ => none,
+   percent := match s.width with | .percent p => some p | _ => none}
+private def columnMeasure (styles : Array Computed) : Option Nat → Table.Measure
+  | none => {}
+  | some id => match (styles[id]!).width with
+    | .px w => {fixed := some w}
+    | .percent p => {percent := some p}
+    | _ => {}
+
+/-- Table width inputs shared by measuring and laying out. -/
+private structure TableFrame where
+  style : Computed
+  margin : Edges
+  padding : Edges
+  hs : Float
+  vs : Float
+
+private def tableFrame (styles : Array Computed) (element : Option Nat) (container : Nat) : TableFrame :=
+  let s := match element with
+    | some id => styles[id]!
+    | none => {anonymousBox styles[container]! with display := .table, tableFixed := false}
+  let edges := element.isSome
+  {style := s, margin := if edges then s.margin else {}, padding := if edges then s.padding else {},
+   hs := if s.borderCollapse then 0 else s.borderSpacingX,
+   vs := if s.borderCollapse then 0 else s.borderSpacingY}
+
+/-- Min-content and max-content widths (CSS Sizing 3 §5), margins included for a box.
+Text is measured with `inlineLayout` itself: with no room, every break opportunity is
+taken (min-content); with unbounded room, none is (max-content). A table's widths are
+those of its columns (`Table.columns`). Fuel is shared with `layoutTask`: one level per
+element or table. -/
+def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding) :
+    Nat → Task → Except String (Float × Float)
+  | 0, _ => throw "unsupported HTML nesting depth (maximum 64)"
+  | fuel+1, task => do
+    let inlineWidths (items : Array Inline) : Except String (Float × Float) := do
+      if items.isEmpty then return (0,0)
+      let narrow ← inlineLayout font (← atomize font items 0) 0 0 0
+      let wide ← inlineLayout font (← atomize font items 1.0e9) 0 0 1.0e9
+      return (lineExtent narrow,lineExtent wide)
+    let flowWidths (container : Nat) (kids : Array Nat) (lead : Array Inline) : Except String (Float × Float) := do
+      let mut widths : Float × Float := (0,0)
+      let mut inline := lead
+      for seg in Table.segments dom styles kids do
+        match seg with
+        | .run run =>
+          let (a,b) ← inlineWidths inline
+          inline := #[]
+          let (c,d) ← intrinsic dom styles font embedding fuel (.table none container run)
+          widths := (max widths.1 (max a c),max widths.2 (max b d))
+        | .node k =>
+          if (styles[k]!).display.isBlockLevel then
+            let (a,b) ← inlineWidths inline
+            inline := #[]
+            let (c,d) ← intrinsic dom styles font embedding fuel (.box k)
+            widths := (max widths.1 (max a c),max widths.2 (max b d))
+          else
+            inline := inline ++ (← inlineItems dom styles embedding 0 fuel k)
+      let (a,b) ← inlineWidths inline
+      return (max widths.1 a,max widths.2 b)
+    let tableWidths (element : Option Nat) (container : Nat) (kids : Array Nat) : Except String (Float × Float) := do
+      let frame := tableFrame styles element container
+      let grid := Table.build dom styles (element.getD container) kids
+      let mut measures : Array Table.Measure := #[]
+      for cell in grid.cells do
+        let (c,ks) := cellContents dom cell.source
+        measures := measures.push (cellMeasure (cellStyle styles cell.source) (← intrinsic dom styles font embedding fuel (.contents c ks)))
+      let cols := Table.columns grid.columns grid.cells measures (grid.columnElements.map (columnMeasure styles)) frame.hs
+      let spacing := if grid.columns == 0 then 0 else frame.hs*Float.ofNat (grid.columns+1)
+      let edges := frame.padding.left+frame.padding.right
+      let low := Table.total (cols.map (·.min))+spacing+edges
+      let high := max low (Table.total ((Table.guesses cols 0)[3]!)+spacing+edges)
+      let margins := frame.margin.left+frame.margin.right
+      match frame.style.width with
+      | .px w => return (max w low+margins,max w low+margins)
+      | _ => return (low+margins,high+margins)
+    match task with
+    | .contents container kids => flowWidths container kids #[]
+    | .table element container kids => tableWidths element container kids
+    | .box id =>
+      let n := dom.get id
+      let s := styles[id]!
+      if s.display == .none then return (0,0)
+      if s.display.isTable then return (← tableWidths (some id) (n.parent.getD 0) n.kids)
+      if n.ns == some DOM.svgNS then
+        let (w,_) ← svgSize n s 0
+        return (w,w)
+      let edges := s.margin.left+s.margin.right+s.padding.left+s.padding.right
+      match s.width with
+      | .px w => return (w+edges,w+edges)
+      | _ =>
+        let lead := if n.lname == "li" then (textItems id s (listMarker dom id)).toArray else #[]
+        let (a,b) ← flowWidths id n.kids lead
+        return (a+edges,b+edges)
+
 /-- Block children stack vertically, and adjacent inline children share an
 anonymous inline formatting context. Width/height use the CSS content box.
-Every descent to either `block` or `inlineItems` passes the predecessor
-`fuel`, and the compiled sibling fold is a loop. This lower-level API has
+Tables are laid out by the table model (`Table`): see `layoutTask`'s `.table` case.
+Every descent to `layoutTask`, `intrinsic` or `inlineItems` passes the predecessor
+`fuel`, and the compiled sibling folds are loops. This lower-level API has
 stack depth O(fuel); production `render` starts it with the fixed budget 64.
-The budget is shared across block and inline descendants, never reset for
+The budget is shared across block, table and inline descendants, never reset for
 a formatting context. See `docs/20261103-layout-stack-audit.md`. -/
-def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding) :
-    Nat → Nat → Float → Float → Float → Except String Result
+def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding) :
+    Nat → Task → Float → Float → Float → Except String Result
   | 0, _, _, _, _ => throw "unsupported HTML nesting depth (maximum 64)"
-  | fuel+1, id, x, y, available => do
-    let n := dom.get id
-    let s := styles[id]!
-    if s.display == .none then return {}
-    if n.lname == "hr" then
-      return {nodes := #[.paint ⟨some id,{geometry := .rect x (y+8) available 1,style := {fill := .solid ⟨0.5,0.5,0.5⟩}}⟩],height := 17}
-    let margin := s.margin
-    let padding := s.padding
-    let border := s.borderEdges
-    let outerX := x+margin.left
-    let outerY := y+margin.top
-    let width := max 0 ((CSS.resolve available s.width).getD
-      (available-margin.left-margin.right-border.left-border.right-padding.left-padding.right))
-    let innerX := outerX+border.left+padding.left
-    let innerY := outerY+border.top+padding.top
-    if n.ns == some DOM.svgNS then
-      let (sw,sh) ← svgSize n s available
-      let nodes ← embedding id s sw sh
-      return {nodes := #[.group none (translate outerX outerY) nodes], boxes := #[⟨id,outerX,outerY,sw,sh⟩],height := margin.top+sh+margin.bottom}
-    let mut content : Result := {}
-    let mut inline : Array Inline := if n.lname == "li" then (textItems id s (listMarker dom id)).toArray else #[]
-    for child in n.kids do
-      let cs := styles[child]!
-      if cs.display == .block then
-        if !inline.isEmpty then
-          content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
-          inline := #[]
-        content := append content (← block dom styles font embedding fuel child innerX (innerY+content.height) width)
-      else
-        inline := inline ++ (← inlineItems dom styles embedding width fuel child)
-    if !inline.isEmpty then content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
-    let height := match s.height with
-      | .percent _ => content.height
-      | _ => max 0 ((CSS.resolve 0 s.height).getD content.height)
-    let borderWidth := width+padding.left+padding.right+border.left+border.right
-    let borderHeight := height+padding.top+padding.bottom+border.top+border.bottom
-    let nodes := decorations id s outerX outerY borderWidth borderHeight ++ content.nodes
-    let nodes := if s.clipOverflow then
-      #[.clipped none identity ⟨outerX,outerY,borderWidth,borderHeight,identity⟩ nodes.toList]
-      else nodes
-    let box : Box := ⟨id,outerX,outerY,borderWidth,borderHeight⟩
-    return {content with nodes, boxes := #[box] ++ content.boxes, height := margin.top+borderHeight+margin.bottom}
+  | fuel+1, task, x, y, available => do
+    -- The flow of `kids` in a block container with style `s`: block-level children
+    -- stack, inline children share line boxes, runs of internal table boxes are tables.
+    let flow (s : Computed) (container : Nat) (kids : Array Nat) (lead : Array Inline)
+        (innerX innerY width : Float) : Except String Result := do
+      let mut content : Result := {}
+      let mut inline : Array Inline := lead
+      for seg in Table.segments dom styles kids do
+        match seg with
+        | .run run =>
+          if !inline.isEmpty then
+            content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
+            inline := #[]
+          content := append content (← layoutTask dom styles font embedding fuel (.table none container run) innerX (innerY+content.height) width)
+        | .node child =>
+          let cs := styles[child]!
+          if cs.display.isBlockLevel then
+            if !inline.isEmpty then
+              content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
+              inline := #[]
+            content := append content (← layoutTask dom styles font embedding fuel (.box child) innerX (innerY+content.height) width)
+          else
+            inline := inline ++ (← inlineItems dom styles embedding width fuel child)
+      if !inline.isEmpty then content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
+      return content
+    -- A table box (CSS 2.1 §17): captions, then the grid, then bottom captions.
+    let table (element : Option Nat) (container : Nat) (kids : Array Nat) : Except String Result := do
+      let frame := tableFrame styles element container
+      let ts := frame.style
+      let grid := Table.build dom styles (element.getD container) kids
+      let (hs,vs) := (frame.hs,frame.vs)
+      -- Column widths from the cells' min-content and max-content widths.
+      let mut measures : Array Table.Measure := #[]
+      for cell in grid.cells do
+        let (c,ks) := cellContents dom cell.source
+        measures := measures.push (cellMeasure (cellStyle styles cell.source) (← intrinsic dom styles font embedding fuel (.contents c ks)))
+      let elements := grid.columnElements.map (columnMeasure styles)
+      let cols := Table.columns grid.columns grid.cells measures elements hs
+      let spacing := if grid.columns == 0 then 0 else hs*Float.ofNat (grid.columns+1)
+      let padX := frame.padding.left+frame.padding.right
+      let padY := frame.padding.top+frame.padding.bottom
+      let lowest := Table.total (cols.map (·.min))+spacing
+      -- `width` of a table is its border box (HTML §15.3.8 `table { box-sizing: border-box }`).
+      let specified := (CSS.resolve available ts.width).map (·-padX)
+      let room := available-frame.margin.left-frame.margin.right-padX
+      let contentWidth := match specified with
+        | some w => max w lowest
+        | none => max lowest (min room (Table.total ((Table.guesses cols room)[3]!)+spacing))
+      let target := max 0 (contentWidth-spacing)
+      let widths := if ts.tableFixed && specified.isSome then
+          let firstRow := (grid.cells.zip measures).filter (·.1.row == 0)
+          Table.fixedWidths grid.columns firstRow elements target hs
+        else Table.distribute cols target
+      let contentWidth := max contentWidth (Table.extent widths hs)
+      let borderWidth := contentWidth+padX
+      let outerX := x+frame.margin.left
+      let innerX := outerX+frame.padding.left
+      let colX := Table.offsets widths hs
+      -- Each cell laid out once, at its column and at the top; moved down when the rows are known.
+      let mut laid : Array (Result × Float) := #[]
+      for cell in grid.cells do
+        let cs := cellStyle styles cell.source
+        let (c,ks) := cellContents dom cell.source
+        let w := Table.spanSize widths cell.col cell.colSpan hs
+        let left := innerX+colX.getD cell.col 0+cs.padding.left
+        let r ← layoutTask dom styles font embedding fuel (.contents c ks) left cs.padding.top (max 0 (w-cs.padding.left-cs.padding.right))
+        let own := (CSS.resolve 0 cs.height).getD 0
+        let outer := max (r.height+cs.padding.top+cs.padding.bottom) (own+cs.padding.top+cs.padding.bottom)
+        laid := laid.push (r,outer)
+      let minimum := grid.rows.map fun row => match row.element with
+        | some id => (CSS.resolve 0 (styles[id]!).height).getD 0
+        | none => 0
+      let rows := Table.rowHeights minimum grid.cells (laid.map (·.2)) vs
+      let gridHeight := Table.extent rows vs
+      let rows := match CSS.resolve 0 ts.height with
+        | some h => Table.stretch rows (h-padY-gridHeight)
+        | none => rows
+      let gridHeight := Table.extent rows vs
+      let borderHeight := max (gridHeight+padY) ((CSS.resolve 0 ts.height).getD 0)
+      let rowY := Table.offsets rows vs
+      -- Captions above and below, as wide as the table's border box.
+      let mut out : Result := {}
+      let mut top := y+frame.margin.top
+      for caption in grid.captions do
+        if !(styles[caption]!).captionBottom then
+          let r ← layoutTask dom styles font embedding fuel (.box caption) outerX top borderWidth
+          out := append out r
+          top := top+r.height
+      let innerY := top+frame.padding.top
+      let mut nodes : Array Node := background (element.getD container) ts outerX top borderWidth borderHeight
+      let mut paints : Array Node := #[]
+      let mut boxes : Array Box := #[]
+      let mut runs : Array GlyphRun := #[]
+      for (cell,(r,outer)) in grid.cells.zip laid do
+        let cs := cellStyle styles cell.source
+        let cx := innerX+colX.getD cell.col 0
+        let cy := innerY+rowY.getD cell.row 0
+        let w := Table.spanSize widths cell.col cell.colSpan hs
+        let h := Table.spanSize rows cell.row cell.rowSpan vs
+        -- Row group, row and cell backgrounds, each in the cell's area (CSS 2.1 §17.5.1).
+        let row := grid.rows.getD cell.row ⟨none,none⟩
+        for layer in [row.group,row.element] do
+          if let some id := layer then nodes := nodes ++ background id (styles[id]!) cx cy w h
+        if let .element id := cell.source then
+          nodes := nodes ++ decorations id cs cx cy w h
+          boxes := boxes.push ⟨id,cx,cy,w,h⟩
+        let moved := r.shiftY (cy+Table.alignOffset cs.verticalAlign h outer)
+        paints := paints ++ moved.nodes
+        boxes := boxes ++ moved.boxes
+        runs := runs ++ moved.runs
+      let tableBox : Array Box := match element with
+        | some id => #[⟨id,outerX,top,borderWidth,borderHeight⟩]
+        | none => #[]
+      out := {out with nodes := out.nodes ++ nodes ++ paints, boxes := out.boxes ++ tableBox ++ boxes,
+                       runs := out.runs ++ runs, height := out.height+borderHeight}
+      top := top+borderHeight
+      for caption in grid.captions do
+        if (styles[caption]!).captionBottom then
+          let r ← layoutTask dom styles font embedding fuel (.box caption) outerX top borderWidth
+          out := append out r
+          top := top+r.height
+      return {out with height := top-y+frame.margin.bottom}
+    match task with
+    | .contents container kids => flow (styles[container]!) container kids #[] x y available
+    | .table element container kids => table element container kids
+    | .box id =>
+      let n := dom.get id
+      let s := styles[id]!
+      if s.display == .none then return {}
+      if s.display.isTable then return (← table (some id) (n.parent.getD 0) n.kids)
+      if n.lname == "hr" then
+        return {nodes := #[.paint ⟨some id,{geometry := .rect x (y+8) available 1,style := {fill := .solid ⟨0.5,0.5,0.5⟩}}⟩],height := 17}
+      let margin := s.margin
+      let padding := s.padding
+      let border := s.borderEdges
+      let outerX := x+margin.left
+      let outerY := y+margin.top
+      let width := max 0 ((CSS.resolve available s.width).getD
+        (available-margin.left-margin.right-border.left-border.right-padding.left-padding.right))
+      let innerX := outerX+border.left+padding.left
+      let innerY := outerY+border.top+padding.top
+      if n.ns == some DOM.svgNS then
+        let (sw,sh) ← svgSize n s available
+        let nodes ← embedding id s sw sh
+        return {nodes := #[.group none (translate outerX outerY) nodes], boxes := #[⟨id,outerX,outerY,sw,sh⟩],height := margin.top+sh+margin.bottom}
+      let content ← flow s id n.kids (if n.lname == "li" then (textItems id s (listMarker dom id)).toArray else #[]) innerX innerY width
+      let height := match s.height with
+        | .percent _ => content.height
+        | _ => max 0 ((CSS.resolve 0 s.height).getD content.height)
+      let borderWidth := width+padding.left+padding.right+border.left+border.right
+      let borderHeight := height+padding.top+padding.bottom+border.top+border.bottom
+      let nodes := decorations id s outerX outerY borderWidth borderHeight ++ content.nodes
+      let nodes := if s.clipOverflow then
+        #[.clipped none identity ⟨outerX,outerY,borderWidth,borderHeight,identity⟩ nodes.toList]
+        else nodes
+      let box : Box := ⟨id,outerX,outerY,borderWidth,borderHeight⟩
+      return {content with nodes, boxes := #[box] ++ content.boxes, height := margin.top+borderHeight+margin.bottom}
+
+/-- An element's block box: `layoutTask` of `.box id`. -/
+def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding)
+    (fuel id : Nat) (x y available : Float) : Except String Result :=
+  layoutTask dom styles font embedding fuel (.box id) x y available
 
 /-- The nearest HTML anchor with an href attribute, including href="". -/
 def anchorAncestor (dom : Dom) : Nat → Nat → Option (Nat × String)

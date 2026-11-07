@@ -426,3 +426,20 @@ private def shellEdit (action text : String) (shell : JSON.Json) : Option JSON.J
 #guard ((shellEdit "cut" "" (json [("address",.string "abc"),("cursor",.number "3"),("anchor",.number "1")])).bind (·.field? "address")) == some (.string "a")
 #guard ((shellEdit "copy" "" (json [("address",.string "abc"),("cursor",.number "3")])).bind (·.field? "clipboard")) == some .null
 #guard (WebDocument.run "" (json [("op",.string "keyTable"),("platform",.string "mac")]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"p\"").length > 1)) == some true
+
+-- XHTML (HTML §14): a `.xht` URL is read as XML, so a style sheet in a CDATA section
+-- applies (the WPT reference ref-filled-green-100px-square.xht has one).
+private def xhtmlSource := "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\n<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><style type=\"text/css\"><![CDATA[\n div { width: 100px }\n ]]></style></head><body><div id=\"target\">a</div></body></html>"
+private def xhtmlWidth (url : String) : Option String := do
+  let request := json [("url",.string url)]
+  let dom ← (WebDocument.prepareDOM xhtmlSource request).toOption
+  let rules ← (WebDocument.rules dom request).toOption
+  let styles ← (Rendering.CSS.computeAll dom rules).toOption
+  let id ← dom.getElementById 0 "target"
+  return reprStr (← styles[id]?).width
+#guard xhtmlWidth "https://example.test/a.xht" == some (reprStr (Rendering.CSS.Length.px 100))
+#guard xhtmlWidth "https://example.test/a.XHTML?x=1#y" == some (reprStr (Rendering.CSS.Length.px 100))
+-- The same text as HTML: the CDATA markers are text in the style element, the rule is lost.
+#guard xhtmlWidth "https://example.test/a.html" == some (reprStr Rendering.CSS.Length.auto)
+-- Not well-formed XML is refused, as an XML user agent shows a parse error.
+#guard (WebDocument.prepareDOM "<html xmlns=\"http://www.w3.org/1999/xhtml\"><p></html>" (json [("url",.string "a.xht")])).toOption.isNone
