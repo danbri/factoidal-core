@@ -20,6 +20,8 @@ on:
       - 'tools/test-owl-public-artifact.mjs'
       - 'tools/lean-*'
       - 'tools/test_lean_*'
+      - 'tools/wasmvm/**'
+      - 'third_party/spectec-lean4/**'
       - 'third_party/testing/owl/**'
       - 'third_party/testing/n3'
       - 'tests/n3/**'
@@ -141,6 +143,9 @@ jobs:
         run: |
           python3 tools/test_lean_tail_recursion_audit.py
           python3 tools/test_lean_csimp_reach.py
+
+      - name: WasmVM spec layer is the port of the vendored SpecTec output
+        run: python3 tools/wasmvm/test_port_spec.py
 
       - name: Gate compiled recursion and compiler replacement reach
         run: |

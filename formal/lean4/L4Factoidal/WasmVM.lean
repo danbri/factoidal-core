@@ -1,3 +1,5 @@
+import L4Factoidal.WasmVM.Spec
+
 /-
 L4Factoidal.WasmVM: a WebAssembly engine in Lean 4 (https://github.com/danbri/factoidal/issues/1244).
 
