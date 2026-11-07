@@ -12,10 +12,10 @@ svg{display:block}
 <p>A bar chart in the manner of D3: a script joins a data array to SVG rectangles, sizes each bar
 with <code>setAttribute</code>, adds one bar with <code>createElementNS</code>, and grows the bars
 with <code>requestAnimationFrame</code>. A click on the chart sorts the bars.</p>
-<p class="note">Expected failure. The foafnaut window refuses a page with a script, and the script
-binding of the web build has no timers, no <code>requestAnimationFrame</code> and no element
-creation (<a href="https://github.com/danbri/factoidal/issues/1271">issue 1271</a>). With no
-script, the bars below have their final static sizes.</p>
+<p class="note">The script runs in the engine chosen on the <a href="settings.html">settings page</a>
+(QuickJS-NG unless you choose another). Each change it makes is a DOM command that Lean checks and
+applies (<a href="https://github.com/danbri/factoidal/issues/1271">issue 1271</a>). With scripts off,
+the bars below have their final static sizes.</p>
 <p id="status">Static bars: the script did not run.</p>
 <svg id="chart" width="640" height="260" viewBox="0 0 640 260">
 <line x1="40" y1="220" x2="620" y2="220" stroke="#22303c" stroke-width="1.5"/>

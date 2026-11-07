@@ -97,7 +97,13 @@
    "title": "Data visualisation with a script",
    "showcase": true,
    "handwritten": true,
-   "appRefused": "does not execute scripts",
+   "issue": "https://github.com/danbri/factoidal/issues/1271"
+  },
+  {
+   "page": "showcase-script.html",
+   "title": "Page scripts",
+   "showcase": true,
+   "handwritten": true,
    "issue": "https://github.com/danbri/factoidal/issues/1271"
   },
   {

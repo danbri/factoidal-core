@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Page scripts</title>
+<style>
+body{margin:16px;font-size:14px;line-height:20px;color:#22303c;background:white}
+h1{margin:0;font-size:24px;line-height:32px;color:#184078}
+h2{margin:0;padding-top:14px;font-size:17px;line-height:24px;color:#184078}
+p{margin:0;padding-top:6px}
+.note{color:#5b6876;font-size:13px}
+.button{display:inline-block;margin-top:6px;padding:4px 12px;border:2px solid #184078;background:#e8eef8;color:#184078}
+.even{background:#dff0d8}
+td{padding:2px 10px;border:1px solid #c0c8d0}
+svg{display:block}
+</style></head><body><main>
+<p><a href="showcase.html">Showcase</a> · <a href="index.html">Demo index</a></p>
+<h1>Page scripts</h1>
+<p>Each part of this page is changed by its script. The script runs in the engine chosen on the
+<a href="settings.html">settings page</a> (QuickJS-NG unless you choose another), in its own worker.
+Each change it makes is a DOM command that Lean checks and applies, and then Lean lays the page out again
+(<a href="https://github.com/danbri/factoidal/issues/1271">issue 1271</a>).</p>
+<h2>A click counter</h2>
+<div class="button" id="counter">Click me</div>
+<p id="count">Clicks: 0</p>
+<h2>A list that grows</h2>
+<div class="button" id="grow">Add an item</div>
+<ul id="list"><li>First item</li><li>Second item</li><li>Third item</li></ul>
+<h2>A sortable table</h2>
+<div class="button" id="sort">Sort by name</div>
+<table><tbody id="people-body"><tr><td>Tim</td><td>1955</td></tr><tr><td>Ada</td><td>1815</td></tr><tr><td>Grace</td><td>1906</td></tr></tbody></table>
+<h2>Keys and timers</h2>
+<p>Type on the page (not in the address bar): <span id="typed"></span></p>
+<p id="clock">Seconds on this page: 0</p>
+<h2>An animation</h2>
+<div class="button" id="replay">Play again</div>
+<svg id="orbit" width="400" height="80" viewBox="0 0 400 80">
+<rect x="0" y="0" width="400" height="80" fill="#f4f6fa"/>
+<circle id="ball" cx="20" cy="40" r="14" fill="#c4455a"/>
+</svg>
+<p class="note" id="frames">Frames drawn: 0</p>
+<script>
+const $ = id => document.getElementById(id);
+// The counter: textContent, classList and an inline style.
+let clicks = 0;
+$('counter').addEventListener('click', () => {
+  clicks++;
+  $('count').textContent = 'Clicks: ' + clicks;
+  $('counter').classList.toggle('even');
+  $('counter').style.borderColor = clicks % 2 ? '#c4455a' : '#184078';
+});
+// The list: createElement and appendChild; Lean gives the new element its node.
+$('grow').addEventListener('click', () => {
+  const item = document.createElement('li');
+  item.textContent = 'Item ' + ($('list').children.length + 1);
+  $('list').appendChild(item);
+});
+// The table: querySelectorAll with Lean's selector matcher, then appendChild moves each row.
+$('sort').addEventListener('click', () => {
+  const rows = [...document.querySelectorAll('#people-body tr')];
+  rows.sort((a, b) => a.querySelector('td').textContent.localeCompare(b.querySelector('td').textContent));
+  for (const row of rows) $('people-body').appendChild(row);
+});
+// Keys: a document listener, in the order they are typed.
+let typed = '';
+document.addEventListener('keydown', event => {
+  if (event.key.length === 1) { typed += event.key; $('typed').textContent = typed; }
+});
+// A timer.
+let seconds = 0;
+setInterval(() => { seconds++; $('clock').textContent = 'Seconds on this page: ' + seconds; }, 1000);
+// An animation: requestAnimationFrame moves the circle for six seconds.
+let start = null, frames = 0, animating = false;
+function step(now) {
+  if (start === null) start = now;
+  const t = Math.min(1, (now - start) / 6000);
+  const x = 20 + 360 * (0.5 - 0.5 * Math.cos(t * Math.PI * 4));
+  $('ball').setAttribute('cx', x.toFixed(1));
+  frames++;
+  if (frames % 10 === 0 || t === 1) $('frames').textContent = 'Frames drawn: ' + frames;
+  if (t < 1) requestAnimationFrame(step); else animating = false;
+}
+function play() { if (animating) return; animating = true; start = null; requestAnimationFrame(step); }
+play();
+$('replay').addEventListener('click', play);
+</script>
+</main></body></html>

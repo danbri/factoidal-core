@@ -36,8 +36,15 @@ manner of D3 with no library, from real data (this browser's own Lean files).</p
 
 <div class="card"><p class="title"><a href="showcase-dataviz-script.html">Data visualisation with a script</a></p>
 <p>The same bar chart, but sized and animated by a script from a data array.</p>
-<p class="gap">Gap: the window refuses pages with scripts, and the script binding has no timers
+<p class="good">Works: the script makes an SVG element, sizes the bars and grows them with
+<code>requestAnimationFrame</code>; a click sorts them
 (<a href="https://github.com/danbri/factoidal/issues/1271">issue 1271</a>).</p></div>
+
+<div class="card"><p class="title"><a href="showcase-script.html">Page scripts</a></p>
+<p>A click counter, a list that grows, a sortable table, keys, a timer and an SVG animation, all made by a script.</p>
+<p class="good">Works: in QuickJS-NG, with every DOM change checked by Lean. The engine is chosen on the
+<a href="settings.html">settings page</a>. VerifiedJS can not run page scripts yet
+(<a href="https://github.com/danbri/factoidal/issues/1252">issue 1252</a>).</p></div>
 
 <div class="card"><p class="title"><a href="showcase-tables.html">Tables</a></p>
 <p>A caption, a header row, zebra rows, numbers aligned right, colspan and rowspan.</p>

@@ -6,6 +6,7 @@
 import {strict as assert} from "node:assert";
 import {loadHTML} from "./native_html_engine.ts";
 import {inputURL,loadFontFile,prepareHTML} from "./native_html_document.ts";
+import {scriptHook,type PageScripts} from "./native_html_scripts.ts";
 
 const ISSUE="https://github.com/danbri/factoidal/issues/";
 const font=new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url).pathname;
@@ -29,10 +30,27 @@ Deno.test("expected failure, issue 1270: SVG text refuses the showcase textPath 
   assert.throws(()=>doc.compile(900,700),/unsupported (attribute on text|SVG element: text)/,stillGap("1270"));
 });
 
-Deno.test("expected failure, issue 1271: the window refuses the showcase script page",async()=>{
-  await assert.rejects(()=>prepareHTML(engine,inputURL(pages+"showcase-dataviz-script.html",true)),
-    /does not execute scripts/,stillGap("1271"));
-});
+// Closed by branch wip/1271-page-scripts: the window runs the page's script in QuickJS-NG.
+// The script makes the seventh bar, sizes every bar and grows them with animation frames.
+Deno.test({name:"issue 1271: the showcase script page runs its script, makes an SVG element and animates the bars",sanitizeOps:false,sanitizeResources:false,fn:async()=>{
+  let frames=0;
+  const hook=scriptHook(()=>"quickjs",{plan:request=>engine.scriptPlan(request),
+    compact:(source,url,commands)=>Promise.resolve(engine.compactCommands(source,{url,commands})),
+    changed:(_page,_batch,kind)=>{if(kind==="frame")frames++;return Promise.resolve();},stopped:()=>{},trace:()=>{}});
+  const doc=await prepareHTML(engine,inputURL(pages+"showcase-dataviz-script.html",true),undefined,undefined,hook);
+  const runtime=doc.script.runtime as unknown as PageScripts;
+  try{
+    assert.equal(doc.script.marker,"JS QUICKJS-NG");
+    for(const start=performance.now();runtime.animating&&performance.now()-start<10000;)await new Promise(r=>setTimeout(r,20));
+    assert.ok(frames>=10,`animation frames: ${frames}`);
+    const nodes=engine.inspect(doc.source,{url:doc.url,commands:doc.script.commands}).nodes;
+    const bar=(id:string)=>nodes.find(n=>n.attributes.id===id)?.attributes;
+    assert.equal(bar("bar6")?.height,"140","the created bar has its final height");
+    assert.equal(bar("bar3")?.y,"40");
+    assert.equal(nodes.find(n=>n.attributes.id==="status")?.textContent,"The script ran: 7 bars.");
+    assert.ok((await doc.compile(900,700)).primitiveCount>0);
+  }finally{runtime.stop("test end");}
+}});
 
 Deno.test("issue 1272: table cells are side by side, and colspan widens a cell",()=>{
   const body="<table><tr><td>alpha</td><td>beta</td></tr></table>";
