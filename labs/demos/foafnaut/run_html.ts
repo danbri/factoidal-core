@@ -12,9 +12,9 @@ import type {UIEvent} from "./ui_engine.ts";
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--graph-sweep] [--check-pixels] [--perf-summary] [--native-engine DYLIB]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--graph-sweep] [--check-pixels] [--perf-summary] [--native-engine DYLIB | --wasm-engine]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A and Command-C select and copy. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
   }
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,perfSummary=false,nativeEngine:string|undefined;
+  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -24,6 +24,7 @@ async function main() {
     else if(arg==="--trace-input")traceInput=true;
     else if(arg==="--check-pixels")checkAll=true;
     else if(arg==="--perf-summary")perfSummary=true;
+    else if(arg==="--wasm-engine")wasmEngine=true;
     else if(arg==="--native-engine"){nativeEngine=args.shift();if(!nativeEngine)throw new Error("--native-engine needs a dylib path");}
     else if(arg==="--font")fontFile=args.shift();
     else if(arg==="--bitmap-font")bitmapFont=true;
@@ -34,6 +35,17 @@ async function main() {
     else if(arg==="--history-sweep")commands=["left","link","left","right","[","]","]","[","link1","]","[","]"];
     else throw new Error(`Unknown native HTML argument: ${arg}`);
   }
+  // Lean engine for compile: --native-engine PATH, else libweb-render.dylib beside the program, else Wasm.
+  if(nativeEngine&&wasmEngine)throw new Error("Use one of --native-engine and --wasm-engine");
+  if(wasmEngine)nativeEngine=undefined;
+  else if(!nativeEngine){
+    const beside=Deno.execPath().slice(0,Deno.execPath().lastIndexOf("/")+1)+"libweb-render.dylib";
+    try{if(Deno.statSync(beside).isFile)nativeEngine=beside;}catch{/* none beside the program: Wasm */}
+  }
+  const engineInfo:Promise<{backend:string;path:string|null;sha256:string|null}>=nativeEngine
+    ?Deno.readFile(nativeEngine).then(async bytes=>({backend:"native",path:nativeEngine!,
+      sha256:[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("")}))
+    :Promise.resolve({backend:"wasm",path:null,sha256:null});
   url??=new URL("./pages/index.html",import.meta.url).href;
   const engine=await loadHTML();
   // Noto Sans is the default face; the bitmap face is the safe mode, and the fallback.
@@ -305,10 +317,11 @@ async function main() {
       const result=await session!.draw(next,everyFrame);
       const finished=performance.now();
       const stats=session!.stats;
+      const engineFact=frameNumber===0?{engine:await engineInfo}:{};
       trace("native-html-frame",{frame:++frameNumber,width:sentWidth,height:sentHeight,primitives:next.primitiveCount,wgslBytes:next.wgsl.length,dataFloats:next.data.length,
         layoutMs:ms(frameStart,compiled),sessionMs:Math.round(result.prepareMs*10)/10,drawMs:Math.round(result.drawMs*10)/10,totalMs:ms(frameStart,finished),
         resizeToFrameMs:resizeAt===undefined?null:ms(resizeAt,finished),presented:result.presented,compiledIn:where,workerMs:workerMs===undefined?null:Math.round(workerMs*10)/10,
-        checked:result.checked,steps:result.steps,pixelHash:result.checked?result.pixelHash:null,pipelineBuilds:stats.pipelineBuilds,configures:stats.configures});
+        checked:result.checked,steps:result.steps,pixelHash:result.checked?result.pixelHash:null,pipelineBuilds:stats.pipelineBuilds,configures:stats.configures,...engineFact});
       resizeAt=undefined;
       if(!result.presented){awaiting=[...stamps,...awaiting];dirty=true;return;}
       totals.push(finished-frameStart);if(where==="worker")workerFrames++;else mainFrames++;
