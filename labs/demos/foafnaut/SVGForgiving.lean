@@ -53,6 +53,7 @@ private structure Glyph where
   name : String
   advance : Float
   data : String
+  deriving Inhabited
 
 structure SVGFont where
   family : String := ""
@@ -118,8 +119,11 @@ def SVGFont.parse (xml : String) : Except String SVGFont := do
   | font::_ => pure font
   | [] => throw "no font element"
 
+/-- A font with no glyph for a no-break space draws its space. -/
 private def SVGFont.glyph (font : SVGFont) (c : Char) : Glyph :=
-  font.glyphs.getD c font.missing
+  match font.glyphs.get? c with
+  | some g => g
+  | none => if c == '\u00A0' then font.glyphs.getD ' ' font.missing else font.missing
 
 /-- Attributes of a text element that the strict reader paints with. -/
 private def paintKeys := ["fill","stroke","fill-opacity","stroke-opacity","color","display","visibility","opacity",
@@ -189,6 +193,7 @@ private structure Run where
   lineBreak : Bool := false
   increment : Option Float := none
   preserveSpace : Bool := false
+  anchor : String := "start"
 
 private def paintOf (attrs : List NamespaceAttribute) : List NamespaceAttribute :=
   attrs.filter fun a => a.name.namespace_.isNone && paintKeys.contains a.name.localPart
@@ -202,7 +207,7 @@ private def numberList (attrs : List NamespaceAttribute) (key : String) : List F
 private def textRuns (area : Bool) : Nat → TextState → List NamespaceAttribute → NamespaceNode → List Run × List String
   | 0,_,_,_ => ([],[])
   | _,state,paint,.other raw => match raw with
-    | .text t | .cdata t => ([{text := t, size := state.size, strokeWidth := state.strokeWidth, paint := paint, increment := state.lineIncrement, preserveSpace := state.preserveSpace}],[])
+    | .text t | .cdata t => ([{text := t, size := state.size, strokeWidth := state.strokeWidth, paint := paint, increment := state.lineIncrement, preserveSpace := state.preserveSpace, anchor := state.anchor}],[])
     | _ => ([],[])
   | fuel+1,state,paint,.element name attrs children =>
     if area && name.localPart == "tbreak" then
@@ -222,19 +227,18 @@ private def textRuns (area : Bool) : Nat → TextState → List NamespaceAttribu
       | [] => []
     (runs,results.flatMap (·.2))
 
+/-- `xml:space="default"`: newlines go, tabs become spaces, and spaces collapse.
+    Leading and trailing spaces of the whole text go in `lowerText`. -/
 private def collapse (s : String) : String :=
-  let spaced := s.toList.map (fun c => if c == '\n' || c == '\t' || c == '\r' then ' ' else c)
+  let kept := s.toList.filter (fun c => c != '\n' && c != '\r')
+  let spaced := kept.map (fun c => if c == '\t' then ' ' else c)
   String.ofList (spaced.foldr (fun c acc => match acc with
     | ' '::_ => if c == ' ' then acc else c::acc
     | _ => c::acc) [])
 
-private def runAdvance (font : SVGFont) (run : Run) : Float :=
-  let scale := run.size/font.unitsPerEm
-  let (total,_) := run.text.toList.foldl (fun (total,previous) c =>
-    let g := font.glyph c
-    let kern := (previous.bind (fun (p : Glyph) => font.kerning.get? (p.name,g.name))).getD 0
-    (total+(g.advance-kern)*scale,some g)) ((0 : Float),(none : Option Glyph))
-  total
+/-- `xml:space="preserve"`: newlines and tabs become spaces, and nothing goes. -/
+private def preserved (s : String) : String :=
+  String.ofList (s.toList.map fun c => if c == '\n' || c == '\t' || c == '\r' then ' ' else c)
 
 /-- Tell each glyph path of a run the bounding box of the whole text, x0 y0 x1 y1. -/
 private def markGlyphs (box : Float × Float × Float × Float) : NamespaceNode → NamespaceNode
@@ -246,56 +250,99 @@ private def markGlyphs (box : Float × Float × Float × Float) : NamespaceNode 
       | node => node)
   | node => node
 
+/-- One character of a text, placed before anchoring. -/
+private structure Placed where
+  glyph : Glyph
+  run : Nat
+  x : Float
+  y : Float
+  rotate : Float
+  scale : Float
+  /-- An absolute position starts a text chunk (SVG Tiny 1.2 §10.5). -/
+  chunk : Bool
+  deriving Inhabited
+
 /-- Lower one `text` element to a group of glyph paths. -/
 private def lowerText (font : SVGFont) (state : TextState) (attrs : List NamespaceAttribute)
     (children : List NamespaceNode) : NamespaceNode × List String := Id.run do
   let state := state.read attrs
   let results := children.map (textRuns false maxDepth state [])
-  let raw := (results.flatMap (·.1)).map (fun r => {r with text:=collapse r.text})
+  let raw := (results.flatMap (·.1)).map (fun r =>
+    {r with text:=if r.preserveSpace then preserved r.text else collapse r.text})
   -- Default xml:space: no leading or trailing space on the whole text.
   let lastIndex := raw.length-1
   let runs := raw.zipIdx.map fun (r,i) =>
-    let text := if i == 0 then r.text.trimAsciiStart.toString else r.text
-    {r with text:=if i == lastIndex then text.trimAsciiEnd.toString else text}
-  let width := (runs.map (runAdvance font)).foldl (·+·) 0
-  let shift := match state.anchor with | "middle" => -width/2 | "end" => -width | _ => 0
+    let text := if i == 0 && !r.preserveSpace then r.text.trimAsciiStart.toString else r.text
+    {r with text:=if i == lastIndex && !r.preserveSpace then text.trimAsciiEnd.toString else text}
   let xs := numberList attrs "x"
   let ys := numberList attrs "y"
-  let mut x := xs.headD 0 + (numberList attrs "dx").headD 0 + shift
+  let rotations := numberList attrs "rotate"
+  let mut x := xs.headD 0 + (numberList attrs "dx").headD 0
   let mut y := ys.headD 0 + (numberList attrs "dy").headD 0
   let mut index := 0
-  let mut groups : Array NamespaceNode := #[]
-  -- SVG Tiny 1.2 §7.11: the bounding box of a text is that of its character cells.
-  let mut box : Option (Float × Float × Float × Float) := none
-  for run in runs do
+  let mut placed : Array Placed := #[]
+  for (run,runIndex) in runs.zipIdx do
     x := x+run.dx
     y := y+run.dy
     if run.size <= 0 then continue
     let scale := run.size/font.unitsPerEm
-    let mut paths : Array NamespaceNode := #[]
     let mut previous : Option Glyph := none
     for (c,position) in run.text.toList.zipIdx do
       -- A coordinate list places the characters it covers (SVG Tiny 1.2 §10.5).
-      if let some value := run.xs[position]? then x := value
-      if let some value := run.ys[position]? then y := value
+      let mut absolute := index == 0
+      if let some value := run.xs[position]? then x := value; absolute := true
+      if let some value := run.ys[position]? then y := value; absolute := true
       if position > 0 || index > 0 then
-        if let some value := xs[index]? then x := value
-        if let some value := ys[index]? then y := value
-      index := index+1
+        if let some value := xs[index]? then x := value; absolute := true
+        if let some value := ys[index]? then y := value; absolute := true
       let g := font.glyph c
-      let kern := (previous.bind (fun p => font.kerning.get? (p.name,g.name))).getD 0
-      x := x-kern*scale
-      if !g.data.isEmpty then
-        paths := paths.push (svgElement "path" [mkAttr "d" g.data,mkAttr "stroke-width" (toString (run.strokeWidth/scale)),
-          mkAttr "transform" s!"translate({x},{y}) scale({scale},{-scale})"] [])
-      let cellTop := y-font.ascent*scale
-      let cellBottom := y+font.descent*scale
-      let cellRight := x+g.advance*scale
-      box := some (match box with
-        | none => (x,cellTop,cellRight,cellBottom)
-        | some (x0,y0,x1,y1) => (min x0 x,min y0 cellTop,max x1 cellRight,max y1 cellBottom))
+      if !absolute then
+        x := x-((previous.bind (fun p => font.kerning.get? (p.name,g.name))).getD 0)*scale
+      -- A rotation list: the last value holds for the characters after it.
+      let rotate := match rotations[index]? with
+        | some value => value
+        | none => rotations.getLast?.getD 0
+      placed := placed.push {glyph:=g,run:=runIndex,x,y,rotate,scale,chunk:=absolute}
+      index := index+1
       x := x+g.advance*scale
       previous := some g
+  -- Each chunk moves by its own anchor and width.
+  let mut shifts : Array Float := Array.replicate placed.size 0
+  let mut start := 0
+  for i in [:placed.size] do
+    let next := i+1
+    if next == placed.size || placed[next]!.chunk then
+      let first := placed[start]!
+      let last := placed[i]!
+      let width := last.x+last.glyph.advance*last.scale-first.x
+      let shift := match (runs[first.run]?.map (·.anchor)).getD "start" with
+        | "middle" => -width/2 | "end" => -width | _ => 0
+      for j in [start:next] do
+        shifts := shifts.set! j shift
+      start := next
+  let mut groups : Array NamespaceNode := #[]
+  -- SVG Tiny 1.2 §7.11: the bounding box of a text is that of its character cells.
+  let mut box : Option (Float × Float × Float × Float) := none
+  let mut cursor := 0
+  for (run,runIndex) in runs.zipIdx do
+    let mut paths : Array NamespaceNode := #[]
+    for i in [cursor:placed.size] do
+      let cell := placed[i]!
+      if cell.run != runIndex then break
+      let left := cell.x+shifts[i]!
+      let g := cell.glyph
+      let scale := cell.scale
+      if !g.data.isEmpty then
+        let turn := if cell.rotate == 0 then "" else s!" rotate({cell.rotate})"
+        paths := paths.push (svgElement "path" [mkAttr "d" g.data,mkAttr "stroke-width" (toString (run.strokeWidth/scale)),
+          mkAttr "transform" s!"translate({left},{cell.y}){turn} scale({scale},{-scale})"] [])
+      let cellTop := cell.y-font.ascent*scale
+      let cellBottom := cell.y+font.descent*scale
+      let cellRight := left+g.advance*scale
+      box := some (match box with
+        | none => (left,cellTop,cellRight,cellBottom)
+        | some (x0,y0,x1,y1) => (min x0 left,min y0 cellTop,max x1 cellRight,max y1 cellBottom))
+      cursor := i+1
     groups := groups.push (svgElement "g" run.paint paths.toList)
   let outer := paintOf attrs ++ (attrs.filter (fun a => a.name.namespace_.isNone && a.name.localPart == "transform"))
   let ids := renameId attrs |>.filter (fun a => a.name.namespace_.isNone && a.name.localPart == "id")
@@ -808,7 +855,13 @@ private def rewriteImport (main self : Option String) (idPrefix : String) (avail
         else if some document == main then (some (setHref renamed ("#" ++ fragment)),s)
         else if available document then
           let (s,i) := s.indexOf document
-          (some (setHref renamed ("#" ++ importPrefix i ++ fragment)),s)
+          -- The new reference is in this document, whatever base is in force here.
+          let attrs := setHref renamed ("#" ++ importPrefix i ++ fragment)
+          let attrs := match main with
+            | some url => attrs.filter (fun a => !(a.name.localPart == "base" && a.name.namespace_ == some xmlURI)) ++
+                [{name:={namespace_:=some xmlURI,localPart:="base"},value:=url}]
+            | none => attrs
+          (some attrs,s)
         else (none,{s with missing:=s.missing ++ [document],log:=s.log ++ [s!"removed use: document not supplied: {document}"]})
       | false,some (document,fragment),_ =>
         -- An imported `image` keeps the document that named it as its base.
