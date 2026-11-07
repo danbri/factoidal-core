@@ -32,7 +32,7 @@ host only moves bytes to the GPU.</p>
 <div class="card"><p class="title"><a href="showcase-dataviz.html">Data visualisation</a></p>
 <p>Bar chart, line and area chart, tidy tree, circle packing and a force-directed graph, computed in the
 manner of D3 with no library, from real data (this browser's own Lean files).</p>
-<p class="good">Works: paths, Bézier curves, dashes, opacity, rounded rectangles, many hundreds of shapes.</p></div>
+<p class="good">Works: paths, Bézier curves, dashes, opacity, rounded rectangles, many hundreds of shapes, and SVG text for every label.</p></div>
 
 <div class="card"><p class="title"><a href="showcase-dataviz-script.html">Data visualisation with a script</a></p>
 <p>The same bar chart, but sized and animated by a script from a data array.</p>
@@ -47,16 +47,18 @@ manner of D3 with no library, from real data (this browser's own Lean files).</p
 
 <div class="card"><p class="title"><a href="showcase-tables-svg.html">Tables drawn as SVG</a></p>
 <p>The same tables, with zebra rows, a rule under the header, numbers aligned right, a spanning cell and a totals row.</p>
-<p class="good">Works as SVG shapes and glyph outlines placed at build time.</p></div>
+<p class="good">Works as SVG shapes and SVG text with text-anchor.</p></div>
 
 <div class="card"><p class="title"><a href="showcase-lettering.html">Lettering on curves</a></p>
 <p>A badge with text round a circle, text on a wave and a spiral, words rotated in a ring.</p>
-<p class="good">Works as glyph outlines placed at build time; the engine draws the curves.</p></div>
+<p class="good">Works: textPath on arcs, a wave and a spiral, rotated text, tspan sizes; Lean places each glyph.</p></div>
 
 <div class="card"><p class="title"><a href="showcase-textpath.html">SVG text and textPath</a></p>
 <p>The same lettering written as SVG text, textPath and rotate.</p>
-<p class="gap">Gap: SVG text refuses the whole page
-(<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>).</p></div>
+<p class="good">Works: text, tspan, textPath, rotate, dx and dy, text-anchor, letter-spacing (<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>).</p>
+<p class="gap">Gap: vertical writing-mode is laid out horizontally
+(<a href="https://github.com/danbri/factoidal/issues/1285">issue 1285</a>), and SVG text can not be selected
+(<a href="https://github.com/danbri/factoidal/issues/1286">issue 1286</a>).</p></div>
 
 <div class="card"><p class="title"><a href="showcase-scripts.html">Writing systems and direction</a></p>
 <p>Latin with diacritics, Greek, Cyrillic, Arabic, Hebrew, Devanagari, Thai, Chinese, Japanese, Korean; right to left and mixed direction.</p>

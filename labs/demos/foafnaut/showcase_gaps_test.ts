@@ -24,9 +24,31 @@ const ids=(r:Run)=>r.glyphs.map(g=>g[0]);
 const left=(r:Run)=>r.glyphs[0][1];
 const stillGap=(issue:string)=>`expected failure of ${ISSUE}${issue} no longer fails: make this test assert the correct result and close the issue`;
 
-Deno.test("expected failure, issue 1270: SVG text refuses the showcase textPath page",async()=>{
-  const doc=await prepareHTML(engine,inputURL(pages+"showcase-textpath.html",true));
-  assert.throws(()=>doc.compile(900,700),/unsupported (attribute on text|SVG element: text)/,stillGap("1270"));
+// Issue 1270 closed by branch wip/1270-svg-text: SVG text, tspan and textPath draw.
+const svgFrame=(svg:string)=>frame(`<svg width="400" height="200" viewBox="0 0 400 200">${svg}</svg>`);
+Deno.test("issue 1270: the showcase textPath and lettering pages render, with SVG text",async()=>{
+  for(const name of ["showcase-textpath.html","showcase-lettering.html","showcase-dataviz.html","showcase-tables-svg.html"]){
+    const doc=await prepareHTML(engine,inputURL(pages+name,true));
+    const f=await doc.compile(900,700) as unknown as {primitiveCount:number};
+    assert.ok(f.primitiveCount>0,name);
+  }
+});
+Deno.test("issue 1270: SVG text draws glyphs; anchors, tspan and textPath add paint",()=>{
+  const empty=svgFrame("").primitiveCount;
+  const one=svgFrame("<text x='10' y='50' font-size='20'>Hello</text>").primitiveCount;
+  assert.ok(one>empty,"a text adds paint");
+  assert.equal(svgFrame("<text x='200' y='50' font-size='20' text-anchor='middle'>Hello</text>").primitiveCount,one,"an anchor moves the same glyphs");
+  assert.ok(svgFrame("<text x='10' y='50' font-size='20'>Hel<tspan fill='red'>lo</tspan></text>").primitiveCount>one,"a tspan of another colour is its own paint");
+  assert.ok(svgFrame("<defs><path id='p' d='M10 100 C 100 0 300 0 390 100'/></defs><text font-size='20'><textPath href='#p'>Hello</textPath></text>").primitiveCount>empty,"textPath draws");
+});
+Deno.test("expected failure, issue 1285: vertical writing-mode is laid out horizontally",()=>{
+  // The same frame with and without writing-mode: vertical text would place the glyphs differently.
+  const text=(mode:string)=>engine.compile(`<!doctype html><html><body><svg width="200" height="200"><text x="100" y="20" font-size="20"${mode}>ABC</text></svg></body></html>`,400,300,options) as unknown as {data:ArrayLike<number>};
+  const a=Array.from(text("").data),b=Array.from(text(" writing-mode='vertical-rl'").data);
+  assert.deepEqual(a,b,stillGap("1285"));
+});
+Deno.test("expected failure, issue 1286: SVG text gives no glyph runs, so it can not be selected",()=>{
+  assert.equal(runs("<svg width='200' height='100'><text x='10' y='50'>Selectable</text></svg>").filter(r=>r.text==="Selectable").length,0,stillGap("1286"));
 });
 
 Deno.test("expected failure, issue 1271: the window refuses the showcase script page",async()=>{

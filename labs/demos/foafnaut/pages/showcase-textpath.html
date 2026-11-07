@@ -10,10 +10,12 @@ svg{display:block}
 </style></head><body><main>
 <p><a href="showcase.html">Showcase</a> · <a href="index.html">Demo index</a></p>
 <h1>SVG text and textPath</h1>
-<p class="note">Expected failure. The engine refuses this whole page with "unsupported attribute on text: font-family" (a text element with no attributes gives "unsupported SVG element:
-text") (<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>). The page
-<a href="showcase-lettering.html">showcase-lettering.html</a> draws the same lettering as glyph outlines.
-A browser draws this page as the specification says.</p>
+<p class="note">SVG text, written by hand. Lean shapes each run with the held font and draws the
+glyph outlines (<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>). On a path the
+middle of each glyph's advance sits on the path, turned to its tangent. The vertical text at the end is
+laid out horizontally (<a href="https://github.com/danbri/factoidal/issues/1285">issue 1285</a>), and its
+CJK characters need a font that has them. The page <a href="showcase-lettering.html">showcase-lettering.html</a>
+has more lettering.</p>
 
 <h2>Text round a circle</h2>
 <svg width="380" height="380" viewBox="0 0 380 380">

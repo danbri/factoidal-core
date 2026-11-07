@@ -86,7 +86,7 @@
    "page": "showcase-dataviz.html",
    "title": "Data visualisation",
    "showcase": true,
-   "generator": "../tools/showcase-pages.py",
+   "generator": "../tools/showcase-pages.mjs",
    "size": [
     900,
     2700
@@ -114,13 +114,13 @@
    "page": "showcase-tables-svg.html",
    "title": "Tables drawn as SVG",
    "showcase": true,
-   "generator": "../tools/showcase-pages.py"
+   "generator": "../tools/showcase-pages.mjs"
   },
   {
    "page": "showcase-lettering.html",
    "title": "Lettering on curves",
    "showcase": true,
-   "generator": "../tools/showcase-pages.py",
+   "generator": "../tools/showcase-pages.mjs",
    "size": [
     900,
     2000
@@ -131,8 +131,7 @@
    "title": "SVG text and textPath",
    "showcase": true,
    "handwritten": true,
-   "refused": "unsupported attribute on text",
-   "issue": "https://github.com/danbri/factoidal/issues/1270"
+   "issue": "https://github.com/danbri/factoidal/issues/1285"
   },
   {
    "page": "showcase-scripts.html",
