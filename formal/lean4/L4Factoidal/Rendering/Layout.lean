@@ -789,7 +789,11 @@ def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding :
             height := s.height.atViewport (Float.ofNat width) (Float.ofNat height)}
   let result ← block dom styles font embedding 64 0 0 0 (Float.ofNat width)
   if result.nodes.size > 1048576 then throw "HTML paint count exceeds 1048576"
-  let links := linkRegions dom styles result.boxes (Float.ofNat width) (Float.ofNat height)
+  -- Link regions are in page rows, so a link below the first screen keeps its region:
+  -- the limit is the bottom of the layout, not the viewport (issue 1268: a link of the
+  -- showcase page below the first screen did nothing when clicked after a scroll).
+  let bottom := result.boxes.foldl (fun m b => max m (b.y+b.height)) (Float.ofNat height)
+  let links := linkRegions dom styles result.boxes (Float.ofNat width) bottom
   if links.size > 49152 || links.any (fun link => link.href.utf8ByteSize > 2048) then
     throw "unsupported link region count or href exceeding 2048 UTF-8 bytes"
   return (⟨width,height,⟨1,1,0,0,0,0,Float.ofNat width,Float.ofNat height⟩, result.nodes.toList,result.runs,links⟩,result.boxes)

@@ -366,6 +366,18 @@ structure Band where
   height : Nat
   deriving Repr, DecidableEq
 
+/-- The largest scroll: the view of `view` rows then ends at the last page row
+`content` (issue 1270 report: the host took the chrome as 60 rows and stopped 5 rows
+short at scale 1, 10 at scale 2). -/
+def scrollLimit (content view : Nat) : Nat := content-view
+
+/-- At the largest scroll, the last page row is in the view. -/
+theorem scrollLimit_reaches (content view : Nat) : content ≤ scrollLimit content view+view := by
+  simp only [scrollLimit]; omega
+/-- A page shorter than the view does not scroll. -/
+theorem scrollLimit_short (content view : Nat) (short : content ≤ view) : scrollLimit content view = 0 := by
+  simp only [scrollLimit]; omega
+
 /-- The band around a view of `view` rows from page row `scroll`. -/
 def band (scroll view : Nat) : Band :=
   let margin := min bandMargin ((maxLayerRows-view)/2)
@@ -507,7 +519,8 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
   let number := fun (n : Nat) => JSON.Json.number (toString n)
   let place := JSON.Json.object [("top",number top),("view",number view),("bandTop",number b.top),
     ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
-    ("composite",.string compositeShader),("hoverRules",.bool hoverRules)]
+    ("composite",.string compositeShader),("hoverRules",.bool hoverRules),
+    ("scrollLimit",number (scrollLimit (WebPrint.contentHeight boxes) view))]
   return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
     pageSections ++ chromeSections)
 

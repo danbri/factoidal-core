@@ -419,3 +419,26 @@ Page images are raster (144 dpi). There is no vector path for the HTML scene:
   https://github.com/danbri/factoidal/issues/1277 (no element hit test).
 - An `:active` link frame lays out again (the state is a layout field); a paint-only
   restyle with the kept layout is not done.
+
+## Links below the first screen, the scroll limit (2026-11-07)
+
+Owner reports: a link of `showcase.html` below the first screen did nothing when
+clicked after a scroll; the data visualisation and lettering pages did not scroll to
+the end.
+
+- Cause 1, in Lean. `Layout.render` cut each link region at the viewport height, so a
+  link below the first screen had no region in any frame, and a click on it found no
+  link. Link regions are in page rows; the limit is now the bottom of the layout.
+- Cause 2, in the host. A navigation could finish while a frame of the old page was
+  being drawn; the end of that frame cleared `candidate`, so the new page was never
+  drawn. The frame now clears `candidate` only when it drew it.
+- Cause 3, in the host. `scrollLimit` took the chrome as 60 rows; it is 65 (39 when
+  narrow) at scale 1, so the last 5 to 10 rows were out of reach. Lean now gives the
+  limit with the layers (`WebDocument.scrollLimit`, the page bottom less the view;
+  theorems `scrollLimit_reaches`, `scrollLimit_short`).
+
+Window checks: `run_html.ts --follow-links --link-scroll-sweep` on `showcase.html`
+(wheel steps down to each page link, the hand pointer over it, a click at its drawn
+place, the URL after the load, back; then the last link again from the end of the
+page). `run_html.ts --scroll-end-sweep` scrolls to the end and fails unless the last
+row of the layout is in the view.
