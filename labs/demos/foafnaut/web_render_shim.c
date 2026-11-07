@@ -8,7 +8,10 @@ extern lean_object *initialize_WebRenderRDF(uint8_t builtin);
 extern lean_object *initialize_WebRenderFont(uint8_t builtin);
 extern lean_object *initialize_WebDocument(uint8_t builtin);
 extern lean_object *web_render_compile(lean_object *,uint32_t,uint32_t);
+#ifdef __EMSCRIPTEN__
+// Wasm has no libuv; the native runtime has its own.
 void initialize_libuv(void) {}
+#endif
 static int ready(void) {
   static int initialized;
   if (initialized) return 1;

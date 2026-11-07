@@ -78,6 +78,24 @@ if [ "$MODE" = --native ]; then
   done
   leanc -O2 -o "$BUILD/web-render-native" "${OBJECTS[@]}"
   echo "WEB_RENDER_NATIVE=$BUILD/web-render-native"
+  # The same objects and the Wasm C shim, as a library the desktop app opens through FFI.
+  # Native output is the same bytes as Wasm output (native_html_test.ts checks this).
+  LIBRARY_OBJECTS=()
+  for object in "${OBJECTS[@]}"; do [ "$(basename "$object")" = WebRenderCLI.o ] || LIBRARY_OBJECTS+=("$object"); done
+  LEANLIB="$TOOLCHAIN/lib/lean"
+  case "$(uname -s)" in
+    Darwin) LIBRARY="$BUILD/engines/libweb-render.dylib"; SHARED=(-dynamiclib -Wl,-dead_strip -lc++);;
+    *) LIBRARY="";;
+  esac
+  # The desktop app is macOS only, so other hosts make no library.
+  if [ -n "$LIBRARY" ]; then
+  "${CC:-cc}" -O2 -I "$TOOLCHAIN/include" -c "$LAB/web_render_shim.c" -o "$BUILD/obj-native/web_render_shim.o"
+  # Static Lean runtime from the same toolchain: the library needs no Lean at run time.
+  "${CC:-cc}" -O2 -o "$LIBRARY" "${LIBRARY_OBJECTS[@]}" "$BUILD/obj-native/web_render_shim.o" \
+    "$LEANLIB/libInit.a" "$LEANLIB/libStd.a" "$LEANLIB/libleancpp.a" "$LEANLIB/libleanrt.a" \
+    -L"$TOOLCHAIN/lib" -lgmp -luv "${SHARED[@]}" 2>&1 | { grep -v "was built for newer .macOS. version" >&2 || true; }
+  echo "WEB_RENDER_LIBRARY=$LIBRARY"
+  fi
 else
   RUNTIME=${FACTOIDAL_WASM_RUNTIME_CACHE:?Set verified Lean 4.33.1 runtime cache path}
   hash_file(){ shasum -a 256 "$1" | cut -d' ' -f1; }
