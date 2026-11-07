@@ -317,10 +317,16 @@ private def normalise (fonts : List SVGFont) (targets : Std.HashMap String Names
       | none => (none,["element: text"])
     else if name.localPart == "switch" then
       -- SVG Tiny 1.2 §5.8: draw only the first child whose conditions pass.
-      let chosen := children.find? fun | .element n a _ => n.namespace_ == some svgURI && conditionsPass a | _ => false
+      let selected : NamespaceNode → Bool := fun
+        | .element n a _ => n.namespace_ == some svgURI && conditionsPass a | _ => false
+      let chosen := children.find? selected
       let inner := state.read attrs
       let result := (chosen.toList).map (normalise fonts targets fuel inner false)
-      (some (svgElement "g" (renameId attrs) (result.filterMap (·.1))),result.flatMap (·.2))
+      -- A child that is not drawn can still be referenced, so it stays as a definition.
+      let unused := children.eraseIdx (children.findIdx selected)
+      let kept := unused.map (normalise fonts targets fuel inner false)
+      (some (svgElement "g" (renameId attrs) (result.filterMap (·.1) ++ [svgElement "defs" [] (kept.filterMap (·.1))])),
+        result.flatMap (·.2) ++ kept.flatMap (·.2))
     else if name.localPart == "a" then
       -- A link draws its content. Link regions are not part of this pass.
       let inner := state.read attrs

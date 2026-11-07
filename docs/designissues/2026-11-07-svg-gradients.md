@@ -40,6 +40,10 @@ cells of the whole text on each glyph, in the attribute
 gradient's `frame` to the glyph transform and its `box` to that box. Paint
 therefore uses the user space and the bounding box of the text.
 
+The same pass lowers a `use` of text from the `use` element's font values, because
+an instance inherits from its `use` element (§5.6). It keeps each `switch` branch
+that it does not draw as a definition, so that a reference into it still works.
+
 ## Wire form
 
 The fill and stroke rows stay four floats. `[cursor, opacity, 0, -1]` marks a
@@ -73,3 +77,15 @@ words for each stop (offset, red, green, blue, opacity).
 same steps. Colour and opacity interpolate separately and are premultiplied by the
 existing compositing. `Scene.checks` runs on this reference, so each GPU run
 compares its pixels with it.
+
+## Open
+
+- https://github.com/danbri/factoidal/issues/1253 (a stroke narrower than the
+  sample grid can draw nothing)
+- https://github.com/danbri/factoidal/issues/1254 (animation of paint)
+- https://github.com/danbri/factoidal/issues/1255 (references to another document)
+
+The W3C reference PNGs put a stroke of width 1 at x=1 on pixel 1 alone; the
+geometry covers half of pixels 0 and 1, and this engine draws that. The references
+are 0.5 pixel from the geometry at every edge, which keeps each file out of the
+MATCH band. This engine does not copy that offset.

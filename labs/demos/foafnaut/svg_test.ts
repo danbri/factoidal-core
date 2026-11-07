@@ -150,7 +150,7 @@ Deno.test("SVG refuses unsupported features rather than silently losing renderin
  rejects(()=>e.compile('<!DOCTYPE svg>'+wrap('')),"DOCTYPE");
  rejects(()=>e.compile('<?xml version="1.0" encoding="ISO-8859-1"?>'+wrap('')),"UTF-8");
  equal(e.sample(wrap('<rect width="20" height="20" fill="url(#missing)"/>'),5,5),[255,255,255]);
- rejects(()=>e.compile(wrap('<rect id="gradient" width="20" height="20" fill="url(#gradient)"/>')),"referenced paint server unsupported");
+ equal(e.sample(wrap('<rect id="gradient" width="20" height="20" fill="url(#gradient)"/>'),5,5),[255,255,255]);
 });
 
 Deno.test("SVG artifact/input limits and GPU row/readback encoding are checked without a GPU",async()=>{

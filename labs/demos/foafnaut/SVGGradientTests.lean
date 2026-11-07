@@ -140,3 +140,15 @@ private def textPixel (body : String) (x y : Nat) : List Nat :=
 #guard textPixel "<defs><text id='t' y='50'>a</text></defs><use xlink:href='#t' font-size='50'/>" 25 25 == [0,0,0]
 #guard textPixel "<defs><text id='t' y='50'>a</text></defs><use xlink:href='#t' x='50' font-size='50'/>" 25 25 == [255,255,255]
 #guard textPixel "<defs><g id='t'><text y='50'>a</text></g></defs><use xlink:href='#t' fill='lime' font-size='50'/>" 25 25 == [0,255,0]
+-- A paint server in a branch of `switch` that is not drawn can still be used.
+#guard textPixel "<switch><rect width='1' height='1'/><linearGradient id='g'><stop stop-color='lime'/></linearGradient></switch><rect width='100' height='100' fill='url(#g)'/>" 50 50 == [0,255,0]
+#guard textPixel "<switch><rect width='1' height='1' fill='lime'/><rect width='100' height='100' fill='red'/></switch>" 50 50 == [255,255,255]
+
+-- Expected failures. Each guard states the present wrong result, so the build
+-- fails when the fault is repaired; then state the right result and close the issue.
+-- https://github.com/danbri/factoidal/issues/1253: this stroke must draw a grey line.
+#guard pixel "<rect x='50' width='40' height='100' fill='none' stroke='black' stroke-width='0.3'/>" 50 50 == [255,255,255]
+-- https://github.com/danbri/factoidal/issues/1254: animation of a paint must run.
+#guard (forgiven ("<solidColor id='g' solid-color='red'><animate attributeName='solid-color' to='lime' dur='1s'/></solidColor>" ++ full)).contains "element: animate"
+-- https://github.com/danbri/factoidal/issues/1255: a paint in another document must be fetched.
+#guard (scene "<rect width='100' height='100' fill='url(other.svg#g) lime'/>").isNone
