@@ -322,7 +322,12 @@ Deno.test("SVG dash union retains pattern phase and single opacity",async()=>{
  equal(e.sample(doc,15,20),[0,0,0]);equal(e.sample(doc,25,20),[255,255,255]);
  const alpha=wrap('<line x1="20" y1="20" x2="60" y2="20" stroke="red" stroke-width="10" stroke-linecap="round" stroke-dasharray="2 2" stroke-opacity=".5" opacity=".5"/>');
  equal(e.sample(alpha,23,20),[255,191,191]);
- rejects(()=>e.compile(wrap('<circle r="10" stroke="black" stroke-dasharray="2 2"/>')),"dashed curved strokes unsupported");
+ const ring=(shape:string,x:string)=>wrap100(`<${shape} fill="none" stroke="black" stroke-width="6" stroke-dasharray="20 1000" ${x}/>`);
+ for(const shape of ['circle cx="50" cy="50" r="30"','ellipse cx="50" cy="50" rx="30" ry="30"']){
+  equal(e.sample(ring(shape,''),79,53),[0,0,0]);   // the first dash leaves the 3 o'clock point
+  equal(e.sample(ring(shape,''),79,46),[255,255,255]); // and goes towards 6 o'clock
+  equal(e.sample(ring(shape,''),20,50),[255,255,255]);
+ }
  rejects(()=>e.compile(wrap('<line stroke="black" stroke-dasharray="-1 2"/>')),"negative");
 });
 

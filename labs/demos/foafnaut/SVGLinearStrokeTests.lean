@@ -45,6 +45,13 @@ def run : IO Unit := do
   check (sample "<rect x='20' y='20' width='20' height='20' fill='none' stroke='black' stroke-width='10' stroke-linejoin='bevel'/>" 15 15==white) "rectangle bevel corner"
   check (sample "<polygon points='20,20 40,20 40,40 20,40' fill='none' stroke='black' stroke-width='10' stroke-linejoin='round'/>" 42 42==black) "polygon round corner"
   check (sample "<line x1='20' y1='20' x2='40' y2='20' stroke='black' stroke-width='10' stroke-linecap='square'/>" 15 15==black) "line square cap"
+  let ring (shape : String) := s!"<{shape} fill='none' stroke='black' stroke-width='6' stroke-dasharray='20 1000'/>"
+  for shape in ["circle cx='50' cy='50' r='30'","ellipse cx='50' cy='50' rx='30' ry='30'"] do
+    check (sample (ring shape) 79 53==black) "dashed outline starts at 3 o'clock"
+    check (sample (ring shape) 79 46==white) "dashed outline goes towards 6 o'clock"
+    check (sample (ring shape) 20 50==white) "dash reaches the far side"
+  let spaced := "<circle cx='50' cy='50' r='30' fill='none' stroke='black' stroke-width='6' stroke-dasharray='10 10' stroke-linecap='round'/>"
+  check (sample spaced 79 52==black) "round caps on a dashed circle"
   let openPath := "<path d='M10 10H30V30' fill='none' stroke='black' stroke-width='4'/>"
   let closedPath := "<path d='M10 10H30V30Z' fill='none' stroke='black' stroke-width='4'/>"
   check (sample openPath 20 20==white && sample closedPath 20 20==black) "fill closure leaked into stroke"

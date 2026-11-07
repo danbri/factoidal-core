@@ -937,6 +937,14 @@ theorem DisplayNode.lower_clipped (parent : Transform) (groups : List (Option St
 private def strokeEnabled (style : Style) : Bool :=
   match style.stroke with | .none => false | _ => style.strokeWidth > 0
 
+/-- SVG Tiny 1.2 §9.3 and §9.4: the outline of a circle or an ellipse starts at
+    the 3 o'clock point and goes towards the 9 o'clock point through 6 o'clock.
+    Dashes start there. -/
+private def arcOutline (x y rx ry : Float) : String :=
+  let n := fun (v : Float) => toString v
+  let arc := fun (ex : Float) => s!"A{n rx} {n ry} 0 1 1 {n ex} {n y}"
+  s!"M{n (x+rx)} {n y}" ++ arc (x-rx) ++ arc (x+rx) ++ "Z"
+
 private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List NamespaceAttribute) (style : Style) : Except String (Option Geometry) := do
   if tag == "rect" then
     let x ← geometryNumber lengths attrs "x"; let y ← geometryNumber lengths attrs "y"
@@ -961,7 +969,11 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     let x ← geometryNumber lengths attrs "cx"; let y ← geometryNumber lengths attrs "cy"; let r ← geometryNumber lengths attrs "r"
     -- SVG 2 §10.3: an invalid negative r presentation value is ignored;
     -- the admitted attribute-only geometry cascade has initial r = 0.
-    return if r <= 0 then none else some (.circle x y r)
+    if r <= 0 then return none
+    if strokeEnabled style && !style.dashArray.isEmpty then
+      -- The circle primitive has no dashes; a path of two arcs does.
+      return some (.path (← NativeSVGPath.parse number (arcOutline x y r r)))
+    return some (.circle x y r)
   else if tag == "ellipse" then
     if (attr attrs "rx").isNone || (attr attrs "ry").isNone then throw "ellipse requires explicit numeric rx and ry; auto radii unsupported"
     let x ← geometryNumber lengths attrs "cx"; let y ← geometryNumber lengths attrs "cy"
@@ -970,9 +982,7 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     if rx == 0 || ry == 0 then return none
     if strokeEnabled style then
       -- The ellipse primitive has no stroke; a path of two arcs does.
-      let n := fun (v : Float) => toString v
-      let arc := fun (ex : Float) => s!"A{n rx} {n ry} 0 1 1 {n ex} {n y}"
-      return some (.path (← NativeSVGPath.parse number (s!"M{n (x-rx)} {n y}" ++ arc (x+rx) ++ arc (x-rx) ++ "Z")))
+      return some (.path (← NativeSVGPath.parse number (arcOutline x y rx ry)))
     return some (.ellipse x y rx ry)
   else if tag == "line" then
     let x1 ← geometryNumber lengths attrs "x1"; let y1 ← geometryNumber lengths attrs "y1"
