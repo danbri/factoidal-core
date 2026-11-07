@@ -207,7 +207,7 @@ export async function createSurfaceSession(canvas:{width:number;height:number;ge
         }
         if(check)readback=grow(readback,plan.readback!.bytes,bufferUsage(plan.readback!.usage),()=>{});
         if(check){device.pushErrorScope("validation");scoped=true;}
-        device.queue.writeBuffer(uniform.buffer,plan.uniform.offset,frame.data instanceof Float32Array?frame.data:new Float32Array(frame.data));
+        device.queue.writeBuffer(uniform.buffer,plan.uniform.offset,(frame.data instanceof Float32Array?frame.data:new Float32Array(frame.data)) as Float32Array<ArrayBuffer>);
         if(tileWords)device.queue.writeBuffer(tiles!.buffer,0,new Uint32Array(tileWords));
         const texture=context.getCurrentTexture();
         const interpreter=commandInterpreter(device,plan,{pipeline:pipeline!,bindGroup:bindGroup!},texture.createView(),{texture,readback:readback?.buffer});
