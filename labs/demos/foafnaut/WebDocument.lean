@@ -418,12 +418,28 @@ and each returns what it kept so that the caller uses the result and the call st
 @[implemented_by keepFontImpl, noinline] private opaque keepFont (held : HeldFont) (_ : JSON.Json) : HeldFont := held
 @[implemented_by keepWordsImpl, noinline] private opaque keepWords (words : Rendering.SfntProfile.Memo) (request : JSON.Json) : Rendering.SfntProfile.Memo
 
-/-- Read a font file once. Later renders use it until another replaces it. -/
-private def loadFont (request : JSON.Json) : Except String String := do
-  let some bytes := Rendering.SfntProfile.decodeBase64 (str request "fontBase64") | throw "font file: invalid base64"
-  let font ← Rendering.SfntProfile.Font.read bytes (str request "fontFamily" "font") (str request "fontSha256" "unnamed")
+/-- Read the bytes of a font file once. Later renders use it until another replaces it.
+`request` only keeps the call in place (see `keepFont`). -/
+private def loadFontBytes (bytes : ByteArray) (family sha256 : String) (request : JSON.Json) : Except String String := do
+  let font ← Rendering.SfntProfile.Font.read bytes family sha256
   let held := keepFont ⟨font,{}⟩ request
   return (JSON.Json.object [("family",.string held.font.family),("glyphs",.number (toString held.font.face.numGlyphs))]).toString
+
+/-- The `fontLoad` op: the font file as Base64 in the JSON request. This is the text
+reference path; `fontLoadBin` takes the same file as bytes. -/
+private def loadFont (request : JSON.Json) : Except String String := do
+  let some bytes := Rendering.SfntProfile.decodeBase64 (str request "fontBase64") | throw "font file: invalid base64"
+  loadFontBytes bytes (str request "fontFamily" "font") (str request "fontSha256" "unnamed") request
+
+/-- `fontLoad` with the font file as bytes, with no Base64 and no JSON around it.
+A host copies the file into engine memory, so a font is not limited by the call stack,
+which holds string arguments in Wasm. The answer is the `fontLoad` answer. -/
+@[export web_document_font_load_bin]
+def fontLoadBin (bytes : ByteArray) (family sha256 : String) : String :=
+  let request := JSON.Json.object [("op",.string "fontLoad"),("fontFamily",.string family),
+    ("fontSha256",.string sha256),("fontBytes",.number (toString bytes.size))]
+  match loadFontBytes bytes family sha256 request with
+  | .ok value => value | .error message => WebRender.errorJSON message
 
 /-- The request fields that a render reads before its layout ends. `shell` gives only
 the height of the chrome, which the key holds as `top`; `selection`, `live`, `binary`,

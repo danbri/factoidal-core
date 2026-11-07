@@ -123,7 +123,7 @@ else
   done
   em++ -O2 -DNDEBUG -fwasm-exceptions --no-entry "${OBJECTS[@]}" "$RUNTIME/core-obj/"*.o "$RUNTIME/rt-obj/"*.o \
     -o "$BUILD/engines/web-render.mjs" -sMODULARIZE=1 -sEXPORT_ES6=1 -sINVOKE_RUN=0 \
-    -sEXPORTED_FUNCTIONS=_web_render_call,_web_render_rdf_call,_web_render_font_call,_web_render_font_requests_call,_web_document_call,_web_document_call_bin,_web_render_hit,_web_render_free -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString,HEAPU8 \
+    -sEXPORTED_FUNCTIONS=_web_render_call,_web_render_rdf_call,_web_render_font_call,_web_render_font_requests_call,_web_document_call,_web_document_call_bin,_web_document_font_call_bin,_web_render_hit,_web_render_free,_malloc,_free -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString,HEAPU8 \
     -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4MB -sENVIRONMENT=node,web,worker -sASSERTIONS=1
   emcc "${FLAGS[@]}" -c "$LAB/render_plan_shim.c" -o "$BUILD/obj-wasm/render_plan_shim.o"
   em++ -O2 -DNDEBUG -fwasm-exceptions --no-entry "$BUILD/obj-wasm/RenderPlan.o" "$BUILD/obj-wasm/render_plan_shim.o" "$RUNTIME/core-obj/"*.o "$RUNTIME/rt-obj/"*.o \
