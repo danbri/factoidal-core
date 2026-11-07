@@ -1,11 +1,11 @@
 {
  "format": "factoidal-svg-tiny-pixels-v1",
- "measuredAt": "2026-11-07T07:09:20Z",
+ "measuredAt": "2026-11-07T08:20:25Z",
  "scope": "First frame, real WebGPU pixels against W3C PNG. Our bands, not a W3C verdict.",
  "gpu": "adapter {}",
  "archiveSha256": "2203d6f44178cbb3853bdc7abe865f4e7e42506727ecc9e34b408b6f33e2e718",
- "nativeSha256": "035736270babe747d2868074ec1e6ac1d97273d7e23bf2d7089c51dd7c636c79",
- "runnerSha256": "155225381e537fbeb930f2700c9b30d2871495355fd359ef2fe5a5e8b3d29ed8",
+ "nativeSha256": "95cc0b28c697aea95d06063f7cf25e1591d228483f9c06743972448fc4b14cdb",
+ "runnerSha256": "f85d4234f07773719d8897f2f42ce7794e76502e6206f4161ee6836ea6fd71f6",
  "tolerance": 32,
  "match": [
   0.005,
@@ -29,11 +29,11 @@
  },
  "exact": 0,
  "filesAffectedByDrop": {
-  "foreign element: SVGTestCase": 493,
-  "attribute: svg version": 493,
-  "attribute: g font-family": 493,
   "attribute: g font-size": 493,
   "attribute: svg baseProfile": 493,
+  "attribute: svg version": 493,
+  "attribute: g font-family": 493,
+  "foreign element: SVGTestCase": 493,
   "element: font-face": 491,
   "element: animate": 89,
   "element: script": 82,
@@ -68,47 +68,47 @@
   "element in text: handler": 2,
   "attribute: g text-rendering": 2,
   "element in text: a": 2,
-  "attribute: g target": 2,
   "attribute: g show": 2,
+  "attribute: g target": 2,
   "attribute: radialGradient fy": 2,
   "attribute: radialGradient fx": 2,
   "attribute: rect vector-effect": 2,
   "attribute: image viewport-fill": 2,
   "attribute: g font-style": 2,
   "removed style: unsupported CSS selector": 2,
-  "foreign element: apple": 2,
   "foreign element: asparagus": 2,
+  "foreign element: apple": 2,
   "removed g: graphics children unsupported": 2,
   "element in text: animateMotion": 1,
   "foreign element: Results": 1,
   "attribute: rect nav-index": 1,
-  "attribute: g nav-next": 1,
-  "attribute: g nav-down": 1,
   "attribute: g nav-left": 1,
-  "attribute: g nav-up-left": 1,
   "attribute: g nav-up-right": 1,
-  "attribute: g nav-down-right": 1,
+  "attribute: g nav-down": 1,
   "attribute: g nav-down-left": 1,
-  "attribute: g nav-prev": 1,
-  "attribute: g nav-right": 1,
+  "attribute: g nav-up-left": 1,
+  "attribute: g nav-next": 1,
   "attribute: g nav-up": 1,
+  "attribute: g nav-right": 1,
+  "attribute: g nav-down-right": 1,
+  "attribute: g nav-prev": 1,
   "attribute: svg focusable": 1,
   "removed image: image resource not supplied: http://svg-resources.invalid/images/earth.jpg": 1,
-  "attribute: polygon focusable": 1,
   "attribute: ellipse focusable": 1,
-  "attribute: polyline focusable": 1,
   "attribute: path focusable": 1,
+  "attribute: polygon focusable": 1,
+  "attribute: polyline focusable": 1,
   "attribute: g pointer-events": 1,
   "attribute: circle pointer-events": 1,
-  "attribute: image role": 1,
   "attribute: image arcrole": 1,
-  "attribute: g actuate": 1,
-  "attribute: g type": 1,
+  "attribute: image role": 1,
   "attribute: g title": 1,
+  "attribute: g type": 1,
   "attribute: g role": 1,
+  "attribute: g actuate": 1,
   "attribute: line vector-effect": 1,
-  "attribute: ellipse vector-effect": 1,
   "attribute: circle vector-effect": 1,
+  "attribute: ellipse vector-effect": 1,
   "attribute: path vector-effect": 1,
   "attribute: polygon vector-effect": 1,
   "attribute: svg shape-rendering": 1,
@@ -116,24 +116,24 @@
   "attribute: g viewport-fill": 1,
   "attribute: image viewport-fill-opacity": 1,
   "element: listener": 1,
+  "removed polygon: polygon/polyline requires 2\u201364 pairs (polygon at least 3)": 1,
   "removed polygon: empty or trailing numeric list item": 1,
   "removed polygon: polygon requires points": 1,
-  "removed polygon: polygon/polyline requires 2\u201364 pairs (polygon at least 3)": 1,
-  "removed polyline: polygon/polyline requires 2\u201364 pairs (polygon at least 3)": 1,
-  "removed polyline: empty or trailing numeric list item": 1,
   "removed polyline: polygon requires points": 1,
+  "removed polyline: empty or trailing numeric list item": 1,
+  "removed polyline: polygon/polyline requires 2\u201364 pairs (polygon at least 3)": 1,
   "attribute: circle class": 1,
   "attribute: g systemLanguage": 1,
   "foreign element: circle": 1,
   "attribute: use externalResourcesRequired": 1,
   "attribute: svg snapshotTime": 1,
-  "removed use: document not supplied: http://svg-resources.invalid/images/1pixelred.png": 1,
   "removed use: document not supplied: data:image/svg+xml;charset=utf-8,%3Crect%20width%3D%22100%22%20height%3D%22100%22%20fill%3D%22red%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E": 1,
+  "removed use: document not supplied: http://svg-resources.invalid/images/1pixelred.png": 1,
   "removed image: image is not PNG or JPEG": 1,
   "approximated: colour red !important": 1,
   "attribute: rect focusHighlight": 1,
-  "attribute: image focusable": 1,
   "attribute: image focusHighlight": 1,
+  "attribute: image focusable": 1,
   "text outside a text element": 1
  },
  "cases": [
@@ -150,7 +150,7 @@
     "inkRecall": 0.6316,
     "exact": false
    },
-   "leanSeconds": 0.16,
+   "leanSeconds": 0.196,
    "status": "MISMATCH",
    "primitiveCount": 56,
    "dropped": [
@@ -187,7 +187,7 @@
     "inkRecall": 0.0205,
     "exact": false
    },
-   "leanSeconds": 0.14,
+   "leanSeconds": 0.182,
    "status": "MISMATCH",
    "primitiveCount": 42,
    "dropped": [
@@ -222,7 +222,7 @@
     "inkRecall": 0.0085,
     "exact": false
    },
-   "leanSeconds": 0.168,
+   "leanSeconds": 0.16,
    "status": "MISMATCH",
    "primitiveCount": 66,
    "dropped": [
@@ -256,7 +256,7 @@
     "inkRecall": 0.0051,
     "exact": false
    },
-   "leanSeconds": 0.176,
+   "leanSeconds": 0.169,
    "status": "MISMATCH",
    "primitiveCount": 62,
    "dropped": [
@@ -290,7 +290,7 @@
     "inkRecall": 0.0066,
     "exact": false
    },
-   "leanSeconds": 0.31,
+   "leanSeconds": 0.302,
    "status": "MISMATCH",
    "primitiveCount": 61,
    "dropped": [
@@ -358,7 +358,7 @@
     "inkRecall": 0.0175,
     "exact": false
    },
-   "leanSeconds": 0.348,
+   "leanSeconds": 0.341,
    "status": "MISMATCH",
    "primitiveCount": 120,
    "dropped": [
@@ -394,7 +394,7 @@
     "inkRecall": 0.011,
     "exact": false
    },
-   "leanSeconds": 0.143,
+   "leanSeconds": 0.138,
    "status": "MISMATCH",
    "primitiveCount": 79,
    "dropped": [
@@ -429,7 +429,7 @@
     "inkRecall": 0.0118,
     "exact": false
    },
-   "leanSeconds": 0.153,
+   "leanSeconds": 0.151,
    "status": "MISMATCH",
    "primitiveCount": 79,
    "dropped": [
@@ -464,7 +464,7 @@
     "inkRecall": 0.012,
     "exact": false
    },
-   "leanSeconds": 0.164,
+   "leanSeconds": 0.158,
    "status": "MISMATCH",
    "primitiveCount": 79,
    "dropped": [
@@ -534,7 +534,7 @@
     "inkRecall": 0.0016,
     "exact": false
    },
-   "leanSeconds": 0.162,
+   "leanSeconds": 0.158,
    "status": "MISMATCH",
    "primitiveCount": 64,
    "dropped": [
@@ -573,7 +573,7 @@
     "inkRecall": 0.0227,
     "exact": false
    },
-   "leanSeconds": 0.165,
+   "leanSeconds": 0.163,
    "status": "MISMATCH",
    "primitiveCount": 72,
    "dropped": [
@@ -607,7 +607,7 @@
     "inkRecall": 0.0263,
     "exact": false
    },
-   "leanSeconds": 0.173,
+   "leanSeconds": 0.17,
    "status": "MISMATCH",
    "primitiveCount": 71,
    "dropped": [
@@ -641,7 +641,7 @@
     "inkRecall": 0.0274,
     "exact": false
    },
-   "leanSeconds": 0.166,
+   "leanSeconds": 0.165,
    "status": "MISMATCH",
    "primitiveCount": 70,
    "dropped": [
@@ -675,7 +675,7 @@
     "inkRecall": 0.0236,
     "exact": false
    },
-   "leanSeconds": 0.165,
+   "leanSeconds": 0.163,
    "status": "MISMATCH",
    "primitiveCount": 70,
    "dropped": [
@@ -709,7 +709,7 @@
     "inkRecall": 0.0019,
     "exact": false
    },
-   "leanSeconds": 0.108,
+   "leanSeconds": 0.105,
    "status": "MISMATCH",
    "primitiveCount": 31,
    "dropped": [
@@ -744,7 +744,7 @@
     "inkRecall": 0.0552,
     "exact": false
    },
-   "leanSeconds": 0.259,
+   "leanSeconds": 0.256,
    "status": "MISMATCH",
    "primitiveCount": 254,
    "dropped": [
@@ -783,7 +783,7 @@
     "inkRecall": 0.0281,
     "exact": false
    },
-   "leanSeconds": 0.123,
+   "leanSeconds": 0.121,
    "status": "MISMATCH",
    "primitiveCount": 88,
    "dropped": [
@@ -822,7 +822,7 @@
     "inkRecall": 0.0895,
     "exact": false
    },
-   "leanSeconds": 0.275,
+   "leanSeconds": 0.271,
    "status": "MISMATCH",
    "primitiveCount": 135,
    "dropped": [
@@ -861,7 +861,7 @@
     "inkRecall": 0.0516,
     "exact": false
    },
-   "leanSeconds": 0.406,
+   "leanSeconds": 0.4,
    "status": "CLOSE",
    "primitiveCount": 138,
    "dropped": [
@@ -910,7 +910,7 @@
     "inkRecall": 0.0507,
     "exact": false
    },
-   "leanSeconds": 0.2,
+   "leanSeconds": 0.194,
    "status": "CLOSE",
    "primitiveCount": 124,
    "dropped": [
@@ -946,7 +946,7 @@
     "inkRecall": 0.062,
     "exact": false
    },
-   "leanSeconds": 0.413,
+   "leanSeconds": 0.391,
    "status": "CLOSE",
    "primitiveCount": 137,
    "dropped": [
@@ -993,7 +993,7 @@
     "inkRecall": 0.0074,
     "exact": false
    },
-   "leanSeconds": 0.151,
+   "leanSeconds": 0.147,
    "status": "MISMATCH",
    "primitiveCount": 79,
    "dropped": [
@@ -1121,7 +1121,7 @@
     "inkRecall": 0.0021,
     "exact": false
    },
-   "leanSeconds": 0.107,
+   "leanSeconds": 0.106,
    "status": "MISMATCH",
    "primitiveCount": 33,
    "dropped": [
@@ -1160,7 +1160,7 @@
     "inkRecall": 0.0047,
     "exact": false
    },
-   "leanSeconds": 0.198,
+   "leanSeconds": 0.194,
    "status": "MISMATCH",
    "primitiveCount": 330,
    "dropped": [
@@ -1288,7 +1288,7 @@
     "inkRecall": 0.018,
     "exact": false
    },
-   "leanSeconds": 0.533,
+   "leanSeconds": 0.529,
    "status": "MISMATCH",
    "primitiveCount": 207,
    "dropped": [
@@ -1398,7 +1398,7 @@
     "inkRecall": 0.0173,
     "exact": false
    },
-   "leanSeconds": 0.32,
+   "leanSeconds": 0.315,
    "status": "MISMATCH",
    "primitiveCount": 216,
    "dropped": [
@@ -1512,7 +1512,7 @@
     "inkRecall": 0.0176,
     "exact": false
    },
-   "leanSeconds": 0.317,
+   "leanSeconds": 0.315,
    "status": "MISMATCH",
    "primitiveCount": 216,
    "dropped": [
@@ -1626,7 +1626,7 @@
     "inkRecall": 0.0184,
     "exact": false
    },
-   "leanSeconds": 0.324,
+   "leanSeconds": 0.314,
    "status": "MISMATCH",
    "primitiveCount": 215,
    "dropped": [
@@ -1740,7 +1740,7 @@
     "inkRecall": 0.0162,
     "exact": false
    },
-   "leanSeconds": 0.326,
+   "leanSeconds": 0.322,
    "status": "MISMATCH",
    "primitiveCount": 235,
    "dropped": [
@@ -1850,7 +1850,7 @@
     "inkRecall": 0.0167,
     "exact": false
    },
-   "leanSeconds": 0.277,
+   "leanSeconds": 0.273,
    "status": "MISMATCH",
    "primitiveCount": 215,
    "dropped": [
@@ -1964,7 +1964,7 @@
     "inkRecall": 0.0174,
     "exact": false
    },
-   "leanSeconds": 0.281,
+   "leanSeconds": 0.274,
    "status": "MISMATCH",
    "primitiveCount": 215,
    "dropped": [
@@ -2078,7 +2078,7 @@
     "inkRecall": 0.0053,
     "exact": false
    },
-   "leanSeconds": 0.955,
+   "leanSeconds": 0.936,
    "status": "MISMATCH",
    "primitiveCount": 85,
    "dropped": [
@@ -2120,7 +2120,7 @@
     "inkRecall": 0.0085,
     "exact": false
    },
-   "leanSeconds": 0.115,
+   "leanSeconds": 0.111,
    "status": "MISMATCH",
    "primitiveCount": 55,
    "dropped": [
@@ -2162,7 +2162,7 @@
     "inkRecall": 0.0008,
     "exact": false
    },
-   "leanSeconds": 0.127,
+   "leanSeconds": 0.122,
    "status": "MISMATCH",
    "primitiveCount": 74,
    "dropped": [
@@ -2198,7 +2198,7 @@
     "inkRecall": 0.0133,
     "exact": false
    },
-   "leanSeconds": 0.135,
+   "leanSeconds": 0.131,
    "status": "MISMATCH",
    "primitiveCount": 97,
    "dropped": [
@@ -2232,7 +2232,7 @@
     "inkRecall": 0.0015,
     "exact": false
    },
-   "leanSeconds": 0.109,
+   "leanSeconds": 0.107,
    "status": "MISMATCH",
    "primitiveCount": 45,
    "dropped": [
@@ -2271,7 +2271,7 @@
     "inkRecall": 0.0018,
     "exact": false
    },
-   "leanSeconds": 0.086,
+   "leanSeconds": 0.084,
    "status": "CLOSE",
    "primitiveCount": 18,
    "dropped": [
@@ -2305,7 +2305,7 @@
     "inkRecall": 0.0006,
     "exact": false
    },
-   "leanSeconds": 0.156,
+   "leanSeconds": 0.151,
    "status": "MISMATCH",
    "primitiveCount": 42,
    "dropped": [
@@ -2339,7 +2339,7 @@
     "inkRecall": 0.0016,
     "exact": false
    },
-   "leanSeconds": 0.085,
+   "leanSeconds": 0.086,
    "status": "MISMATCH",
    "primitiveCount": 22,
    "dropped": [
@@ -2376,7 +2376,7 @@
     "inkRecall": 0.0018,
     "exact": false
    },
-   "leanSeconds": 0.116,
+   "leanSeconds": 0.113,
    "status": "MISMATCH",
    "primitiveCount": 50,
    "dropped": [
@@ -2410,7 +2410,7 @@
     "inkRecall": 0.0259,
     "exact": false
    },
-   "leanSeconds": 0.13,
+   "leanSeconds": 0.127,
    "status": "MISMATCH",
    "primitiveCount": 85,
    "dropped": [
@@ -2447,7 +2447,7 @@
     "inkRecall": 0.0125,
     "exact": false
    },
-   "leanSeconds": 0.158,
+   "leanSeconds": 0.149,
    "status": "MISMATCH",
    "primitiveCount": 110,
    "dropped": [
@@ -2481,7 +2481,7 @@
     "inkRecall": 0.0026,
     "exact": false
    },
-   "leanSeconds": 0.112,
+   "leanSeconds": 0.105,
    "status": "MISMATCH",
    "primitiveCount": 35,
    "dropped": [
@@ -2518,7 +2518,7 @@
     "inkRecall": 0.0117,
     "exact": false
    },
-   "leanSeconds": 0.16,
+   "leanSeconds": 0.155,
    "status": "MISMATCH",
    "primitiveCount": 101,
    "dropped": [
@@ -2554,7 +2554,7 @@
     "inkRecall": 0.0009,
     "exact": false
    },
-   "leanSeconds": 0.383,
+   "leanSeconds": 0.373,
    "status": "MISMATCH",
    "primitiveCount": 19,
    "dropped": [
@@ -2586,7 +2586,7 @@
     "inkRecall": 0.0021,
     "exact": false
    },
-   "leanSeconds": 0.107,
+   "leanSeconds": 0.106,
    "status": "MISMATCH",
    "primitiveCount": 33,
    "dropped": [
@@ -2621,7 +2621,7 @@
     "inkRecall": 0.0114,
     "exact": false
    },
-   "leanSeconds": 0.24,
+   "leanSeconds": 0.232,
    "status": "MISMATCH",
    "primitiveCount": 45,
    "dropped": [
@@ -2669,7 +2669,7 @@
     "inkRecall": 0.0054,
     "exact": false
    },
-   "leanSeconds": 0.156,
+   "leanSeconds": 0.152,
    "status": "MISMATCH",
    "primitiveCount": 119,
    "dropped": [
@@ -2714,7 +2714,7 @@
     "inkRecall": 0.016,
     "exact": false
    },
-   "leanSeconds": 0.172,
+   "leanSeconds": 0.17,
    "status": "MISMATCH",
    "primitiveCount": 136,
    "dropped": [
@@ -2771,7 +2771,7 @@
     "inkRecall": 0.0139,
     "exact": false
    },
-   "leanSeconds": 0.177,
+   "leanSeconds": 0.174,
    "status": "MISMATCH",
    "primitiveCount": 146,
    "dropped": [
@@ -2806,7 +2806,7 @@
     "inkRecall": 0.0207,
     "exact": false
    },
-   "leanSeconds": 0.303,
+   "leanSeconds": 0.298,
    "status": "MISMATCH",
    "primitiveCount": 146,
    "dropped": [
@@ -2846,7 +2846,7 @@
     "inkRecall": 0.0319,
     "exact": false
    },
-   "leanSeconds": 0.398,
+   "leanSeconds": 0.402,
    "status": "MISMATCH",
    "primitiveCount": 158,
    "dropped": [
@@ -2893,7 +2893,7 @@
     "inkRecall": 0.4498,
     "exact": false
    },
-   "leanSeconds": 2.571,
+   "leanSeconds": 2.614,
    "status": "MISMATCH",
    "primitiveCount": 143,
    "dropped": [
@@ -2931,7 +2931,7 @@
     "inkRecall": 0.4765,
     "exact": false
    },
-   "leanSeconds": 0.483,
+   "leanSeconds": 0.493,
    "status": "MISMATCH",
    "primitiveCount": 107,
    "dropped": [
@@ -2969,7 +2969,7 @@
     "inkRecall": 0.0396,
     "exact": false
    },
-   "leanSeconds": 1.564,
+   "leanSeconds": 1.586,
    "status": "CLOSE",
    "primitiveCount": 105,
    "dropped": [
@@ -3009,7 +3009,7 @@
     "inkRecall": 0.281,
     "exact": false
    },
-   "leanSeconds": 1.059,
+   "leanSeconds": 1.048,
    "status": "MISMATCH",
    "primitiveCount": 96,
    "dropped": [
@@ -3056,7 +3056,7 @@
     "inkRecall": 0.117,
     "exact": false
    },
-   "leanSeconds": 1.107,
+   "leanSeconds": 1.084,
    "status": "MISMATCH",
    "primitiveCount": 197,
    "dropped": [
@@ -3119,7 +3119,7 @@
     "inkRecall": 0.0396,
     "exact": false
    },
-   "leanSeconds": 0.236,
+   "leanSeconds": 0.225,
    "status": "MISMATCH",
    "primitiveCount": 254,
    "dropped": [
@@ -3231,7 +3231,7 @@
     "inkRecall": 0.0182,
     "exact": false
    },
-   "leanSeconds": 0.339,
+   "leanSeconds": 0.33,
    "status": "MISMATCH",
    "primitiveCount": 145,
    "dropped": [
@@ -3264,7 +3264,7 @@
     "inkRecall": 0.0478,
     "exact": false
    },
-   "leanSeconds": 0.144,
+   "leanSeconds": 0.141,
    "status": "MISMATCH",
    "primitiveCount": 151,
    "dropped": [
@@ -3396,7 +3396,7 @@
     "inkRecall": 0.0149,
     "exact": false
    },
-   "leanSeconds": 0.435,
+   "leanSeconds": 0.424,
    "status": "MISMATCH",
    "primitiveCount": 200,
    "dropped": [
@@ -3430,7 +3430,7 @@
     "inkRecall": 0.03,
     "exact": false
    },
-   "leanSeconds": 0.244,
+   "leanSeconds": 0.235,
    "status": "CLOSE",
    "primitiveCount": 186,
    "dropped": [
@@ -3467,7 +3467,7 @@
     "inkRecall": 0.0238,
     "exact": false
    },
-   "leanSeconds": 0.204,
+   "leanSeconds": 0.199,
    "status": "MISMATCH",
    "primitiveCount": 116,
    "dropped": [
@@ -3510,7 +3510,7 @@
     "inkRecall": 0.0246,
     "exact": false
    },
-   "leanSeconds": 0.146,
+   "leanSeconds": 0.143,
    "status": "MISMATCH",
    "primitiveCount": 76,
    "dropped": [
@@ -3548,7 +3548,7 @@
     "inkRecall": 0.0242,
     "exact": false
    },
-   "leanSeconds": 0.216,
+   "leanSeconds": 0.209,
    "status": "MISMATCH",
    "primitiveCount": 158,
    "dropped": [
@@ -3591,7 +3591,7 @@
     "inkRecall": 0.0193,
     "exact": false
    },
-   "leanSeconds": 0.229,
+   "leanSeconds": 0.226,
    "status": "MISMATCH",
    "primitiveCount": 147,
    "dropped": [
@@ -3635,7 +3635,7 @@
     "inkRecall": 0.0284,
     "exact": false
    },
-   "leanSeconds": 0.195,
+   "leanSeconds": 0.204,
    "status": "MISMATCH",
    "primitiveCount": 138,
    "dropped": [
@@ -3676,7 +3676,7 @@
     "inkRecall": 0.0321,
     "exact": false
    },
-   "leanSeconds": 0.194,
+   "leanSeconds": 0.205,
    "status": "MISMATCH",
    "primitiveCount": 149,
    "dropped": [
@@ -3715,7 +3715,7 @@
     "inkRecall": 0.0321,
     "exact": false
    },
-   "leanSeconds": 0.201,
+   "leanSeconds": 0.199,
    "status": "MISMATCH",
    "primitiveCount": 163,
    "dropped": [
@@ -3755,7 +3755,7 @@
     "inkRecall": 0.0348,
     "exact": false
    },
-   "leanSeconds": 0.175,
+   "leanSeconds": 0.17,
    "status": "MISMATCH",
    "primitiveCount": 130,
    "dropped": [
@@ -3794,7 +3794,7 @@
     "inkRecall": 0.0309,
     "exact": false
    },
-   "leanSeconds": 0.144,
+   "leanSeconds": 0.139,
    "status": "MISMATCH",
    "primitiveCount": 147,
    "dropped": [
@@ -3870,7 +3870,7 @@
     "inkRecall": 0.0371,
     "exact": false
    },
-   "leanSeconds": 0.235,
+   "leanSeconds": 0.234,
    "status": "MISMATCH",
    "primitiveCount": 257,
    "dropped": [
@@ -3982,7 +3982,7 @@
     "inkRecall": 0.0554,
     "exact": false
    },
-   "leanSeconds": 0.162,
+   "leanSeconds": 0.16,
    "status": "MISMATCH",
    "primitiveCount": 214,
    "dropped": [
@@ -4054,7 +4054,7 @@
     "inkRecall": 0.4197,
     "exact": false
    },
-   "leanSeconds": 0.194,
+   "leanSeconds": 0.192,
    "status": "MISMATCH",
    "primitiveCount": 187,
    "dropped": [
@@ -4094,7 +4094,7 @@
     "inkRecall": 0.0282,
     "exact": false
    },
-   "leanSeconds": 0.249,
+   "leanSeconds": 0.243,
    "status": "MISMATCH",
    "primitiveCount": 188,
    "dropped": [
@@ -4158,7 +4158,7 @@
     "inkRecall": 0.3747,
     "exact": false
    },
-   "leanSeconds": 2.221,
+   "leanSeconds": 2.193,
    "status": "MISMATCH",
    "primitiveCount": 249,
    "dropped": [
@@ -4209,7 +4209,7 @@
     "inkRecall": 0.0019,
     "exact": false
    },
-   "leanSeconds": 0.101,
+   "leanSeconds": 0.099,
    "status": "MISMATCH",
    "primitiveCount": 44,
    "dropped": [
@@ -4247,7 +4247,7 @@
     "inkRecall": 0.0008,
     "exact": false
    },
-   "leanSeconds": 0.09,
+   "leanSeconds": 0.089,
    "status": "MISMATCH",
    "primitiveCount": 25,
    "dropped": [
@@ -4286,7 +4286,7 @@
     "inkRecall": 0.027,
     "exact": false
    },
-   "leanSeconds": 0.133,
+   "leanSeconds": 0.13,
    "status": "MISMATCH",
    "primitiveCount": 68,
    "dropped": [
@@ -4322,7 +4322,7 @@
     "inkRecall": 0.0099,
     "exact": false
    },
-   "leanSeconds": 0.129,
+   "leanSeconds": 0.128,
    "status": "MISMATCH",
    "primitiveCount": 75,
    "dropped": [
@@ -4355,7 +4355,7 @@
     "inkRecall": 0.0269,
     "exact": false
    },
-   "leanSeconds": 0.167,
+   "leanSeconds": 0.165,
    "status": "CLOSE",
    "primitiveCount": 183,
    "dropped": [
@@ -4386,7 +4386,7 @@
     "inkRecall": 0.0305,
     "exact": false
    },
-   "leanSeconds": 0.193,
+   "leanSeconds": 0.185,
    "status": "CLOSE",
    "primitiveCount": 250,
    "dropped": [
@@ -4418,7 +4418,7 @@
     "inkRecall": 0.0325,
     "exact": false
    },
-   "leanSeconds": 0.194,
+   "leanSeconds": 0.189,
    "status": "CLOSE",
    "primitiveCount": 258,
    "dropped": [
@@ -4452,7 +4452,7 @@
     "inkRecall": 0.0096,
     "exact": false
    },
-   "leanSeconds": 0.085,
+   "leanSeconds": 0.084,
    "status": "MISMATCH",
    "primitiveCount": 17,
    "dropped": [
@@ -4485,7 +4485,7 @@
     "inkRecall": 0.0114,
     "exact": false
    },
-   "leanSeconds": 0.093,
+   "leanSeconds": 0.09,
    "status": "MISMATCH",
    "primitiveCount": 23,
    "dropped": [
@@ -4516,7 +4516,7 @@
     "inkRecall": 0.009,
     "exact": false
    },
-   "leanSeconds": 0.21,
+   "leanSeconds": 0.208,
    "status": "MISMATCH",
    "primitiveCount": 309,
    "dropped": [
@@ -4560,7 +4560,7 @@
     "inkRecall": 0.0074,
     "exact": false
    },
-   "leanSeconds": 0.166,
+   "leanSeconds": 0.161,
    "status": "CLOSE",
    "primitiveCount": 236,
    "dropped": [
@@ -4592,7 +4592,7 @@
     "inkRecall": 0.0176,
     "exact": false
    },
-   "leanSeconds": 0.125,
+   "leanSeconds": 0.123,
    "status": "CLOSE",
    "primitiveCount": 53,
    "dropped": [
@@ -4624,7 +4624,7 @@
     "inkRecall": 0.0205,
     "exact": false
    },
-   "leanSeconds": 0.104,
+   "leanSeconds": 0.103,
    "status": "CLOSE",
    "primitiveCount": 43,
    "dropped": [
@@ -4656,7 +4656,7 @@
     "inkRecall": 0.0163,
     "exact": false
    },
-   "leanSeconds": 0.109,
+   "leanSeconds": 0.113,
    "status": "CLOSE",
    "primitiveCount": 28,
    "dropped": [
@@ -4688,7 +4688,7 @@
     "inkRecall": 0.024,
     "exact": false
    },
-   "leanSeconds": 0.124,
+   "leanSeconds": 0.127,
    "status": "CLOSE",
    "primitiveCount": 47,
    "dropped": [
@@ -4720,7 +4720,7 @@
     "inkRecall": 0.018,
     "exact": false
    },
-   "leanSeconds": 0.135,
+   "leanSeconds": 0.137,
    "status": "CLOSE",
    "primitiveCount": 51,
    "dropped": [
@@ -4752,7 +4752,7 @@
     "inkRecall": 0.027,
     "exact": false
    },
-   "leanSeconds": 0.097,
+   "leanSeconds": 0.099,
    "status": "CLOSE",
    "primitiveCount": 51,
    "dropped": [
@@ -4783,7 +4783,7 @@
     "inkRecall": 0.0098,
     "exact": false
    },
-   "leanSeconds": 0.101,
+   "leanSeconds": 0.098,
    "status": "CLOSE",
    "primitiveCount": 63,
    "dropped": [
@@ -4814,7 +4814,7 @@
     "inkRecall": 0.0312,
     "exact": false
    },
-   "leanSeconds": 0.169,
+   "leanSeconds": 0.163,
    "status": "CLOSE",
    "primitiveCount": 159,
    "dropped": [
@@ -4845,7 +4845,7 @@
     "inkRecall": 0.0162,
     "exact": false
    },
-   "leanSeconds": 0.162,
+   "leanSeconds": 0.156,
    "status": "CLOSE",
    "primitiveCount": 134,
    "dropped": [
@@ -4877,7 +4877,7 @@
     "inkRecall": 0.0141,
     "exact": false
    },
-   "leanSeconds": 0.202,
+   "leanSeconds": 0.195,
    "status": "CLOSE",
    "primitiveCount": 210,
    "dropped": [
@@ -4909,7 +4909,7 @@
     "inkRecall": 0.0027,
     "exact": false
    },
-   "leanSeconds": 0.374,
+   "leanSeconds": 0.368,
    "status": "MISMATCH",
    "primitiveCount": 64,
    "dropped": [
@@ -4984,7 +4984,7 @@
     "inkRecall": 0.116,
     "exact": false
    },
-   "leanSeconds": 0.214,
+   "leanSeconds": 0.215,
    "status": "CLOSE",
    "primitiveCount": 71,
    "dropped": [
@@ -5018,7 +5018,7 @@
     "inkRecall": 0.0057,
     "exact": false
    },
-   "leanSeconds": 0.216,
+   "leanSeconds": 0.225,
    "status": "CLOSE",
    "primitiveCount": 84,
    "dropped": [
@@ -5054,7 +5054,7 @@
     "inkRecall": 0.1161,
     "exact": false
    },
-   "leanSeconds": 0.194,
+   "leanSeconds": 0.199,
    "status": "CLOSE",
    "primitiveCount": 79,
    "dropped": [
@@ -5088,7 +5088,7 @@
     "inkRecall": 0.0236,
     "exact": false
    },
-   "leanSeconds": 0.144,
+   "leanSeconds": 0.14,
    "status": "MISMATCH",
    "primitiveCount": 108,
    "dropped": [
@@ -5123,7 +5123,7 @@
     "inkRecall": 0.0102,
     "exact": false
    },
-   "leanSeconds": 0.126,
+   "leanSeconds": 0.13,
    "status": "CLOSE",
    "primitiveCount": 23,
    "dropped": [
@@ -5160,7 +5160,7 @@
     "inkRecall": 0.0062,
     "exact": false
    },
-   "leanSeconds": 0.099,
+   "leanSeconds": 0.1,
    "status": "MISMATCH",
    "primitiveCount": 19,
    "dropped": [
@@ -5227,7 +5227,7 @@
     "inkRecall": 0.0255,
     "exact": false
    },
-   "leanSeconds": 2.342,
+   "leanSeconds": 2.308,
    "status": "CLOSE",
    "primitiveCount": 96,
    "dropped": [
@@ -5261,7 +5261,7 @@
     "inkRecall": 0.0336,
     "exact": false
    },
-   "leanSeconds": 2.325,
+   "leanSeconds": 2.302,
    "status": "CLOSE",
    "primitiveCount": 97,
    "dropped": [
@@ -5367,7 +5367,7 @@
     "inkRecall": 0.01,
     "exact": false
    },
-   "leanSeconds": 0.237,
+   "leanSeconds": 0.227,
    "status": "CLOSE",
    "primitiveCount": 59,
    "dropped": [
@@ -5401,7 +5401,7 @@
     "inkRecall": 0.0013,
     "exact": false
    },
-   "leanSeconds": 0.119,
+   "leanSeconds": 0.118,
    "status": "MISMATCH",
    "primitiveCount": 26,
    "dropped": [
@@ -5434,7 +5434,7 @@
     "inkRecall": 0.0056,
     "exact": false
    },
-   "leanSeconds": 0.115,
+   "leanSeconds": 0.112,
    "status": "MISMATCH",
    "primitiveCount": 62,
    "dropped": [
@@ -5472,7 +5472,7 @@
     "inkRecall": 0.0091,
     "exact": false
    },
-   "leanSeconds": 0.182,
+   "leanSeconds": 0.173,
    "status": "MISMATCH",
    "primitiveCount": 232,
    "dropped": [
@@ -5508,7 +5508,7 @@
     "inkRecall": 0.0112,
     "exact": false
    },
-   "leanSeconds": 0.25,
+   "leanSeconds": 0.244,
    "status": "MISMATCH",
    "primitiveCount": 343,
    "dropped": [
@@ -5549,7 +5549,7 @@
     "inkRecall": 0.0113,
     "exact": false
    },
-   "leanSeconds": 0.134,
+   "leanSeconds": 0.128,
    "status": "MISMATCH",
    "primitiveCount": 79,
    "dropped": [
@@ -5590,7 +5590,7 @@
     "inkRecall": 0.0006,
     "exact": false
    },
-   "leanSeconds": 0.289,
+   "leanSeconds": 0.274,
    "status": "CLOSE",
    "primitiveCount": 349,
    "dropped": [
@@ -5644,7 +5644,7 @@
     "inkRecall": 0.0319,
     "exact": false
    },
-   "leanSeconds": 0.216,
+   "leanSeconds": 0.202,
    "status": "MISMATCH",
    "primitiveCount": 202,
    "dropped": [
@@ -5690,7 +5690,7 @@
     "inkRecall": 0.0316,
     "exact": false
    },
-   "leanSeconds": 0.501,
+   "leanSeconds": 0.489,
    "status": "MISMATCH",
    "primitiveCount": 207,
    "dropped": [
@@ -5841,7 +5841,7 @@
     "inkRecall": 0.0047,
     "exact": false
    },
-   "leanSeconds": 0.189,
+   "leanSeconds": 0.184,
    "status": "MISMATCH",
    "primitiveCount": 133,
    "dropped": [
@@ -5887,7 +5887,7 @@
     "inkRecall": 0.037,
     "exact": false
    },
-   "leanSeconds": 0.195,
+   "leanSeconds": 0.186,
    "status": "MISMATCH",
    "primitiveCount": 203,
    "dropped": [
@@ -5929,7 +5929,7 @@
     "inkRecall": 0.0341,
     "exact": false
    },
-   "leanSeconds": 0.203,
+   "leanSeconds": 0.198,
    "status": "MISMATCH",
    "primitiveCount": 203,
    "dropped": [
@@ -5965,7 +5965,7 @@
     "inkRecall": 0.0433,
     "exact": false
    },
-   "leanSeconds": 0.174,
+   "leanSeconds": 0.168,
    "status": "MISMATCH",
    "primitiveCount": 157,
    "dropped": [
@@ -6010,7 +6010,7 @@
     "inkRecall": 0.0348,
     "exact": false
    },
-   "leanSeconds": 0.194,
+   "leanSeconds": 0.19,
    "status": "MISMATCH",
    "primitiveCount": 235,
    "dropped": [
@@ -6073,7 +6073,7 @@
     "inkRecall": 0.0135,
     "exact": false
    },
-   "leanSeconds": 0.231,
+   "leanSeconds": 0.219,
    "status": "MISMATCH",
    "primitiveCount": 221,
    "dropped": [
@@ -6130,7 +6130,7 @@
     "inkRecall": 0.0663,
     "exact": false
    },
-   "leanSeconds": 0.492,
+   "leanSeconds": 0.469,
    "status": "MISMATCH",
    "primitiveCount": 911,
    "dropped": [
@@ -6176,7 +6176,7 @@
     "inkRecall": 0.033,
     "exact": false
    },
-   "leanSeconds": 1.023,
+   "leanSeconds": 0.97,
    "status": "CLOSE",
    "primitiveCount": 221,
    "dropped": [
@@ -6224,7 +6224,7 @@
     "inkRecall": 0.016,
     "exact": false
    },
-   "leanSeconds": 0.166,
+   "leanSeconds": 0.163,
    "status": "MISMATCH",
    "primitiveCount": 96,
    "dropped": [
@@ -6263,7 +6263,7 @@
     "inkRecall": 0.015,
     "exact": false
    },
-   "leanSeconds": 0.174,
+   "leanSeconds": 0.164,
    "status": "MISMATCH",
    "primitiveCount": 86,
    "dropped": [
@@ -6301,7 +6301,7 @@
     "inkRecall": 0.0175,
     "exact": false
    },
-   "leanSeconds": 0.213,
+   "leanSeconds": 0.204,
    "status": "MISMATCH",
    "primitiveCount": 122,
    "dropped": [
@@ -6341,7 +6341,7 @@
     "inkRecall": 0.0048,
     "exact": false
    },
-   "leanSeconds": 2.203,
+   "leanSeconds": 2.121,
    "status": "MISMATCH",
    "primitiveCount": 88,
    "dropped": [
@@ -6439,7 +6439,7 @@
     "inkRecall": 0.2829,
     "exact": false
    },
-   "leanSeconds": 0.424,
+   "leanSeconds": 0.414,
    "status": "CLOSE",
    "primitiveCount": 432,
    "dropped": [
@@ -6532,7 +6532,7 @@
     "inkRecall": 0.2914,
     "exact": false
    },
-   "leanSeconds": 0.369,
+   "leanSeconds": 0.353,
    "status": "CLOSE",
    "primitiveCount": 380,
    "dropped": [
@@ -6697,7 +6697,7 @@
     "inkRecall": 0.0229,
     "exact": false
    },
-   "leanSeconds": 0.156,
+   "leanSeconds": 0.154,
    "status": "MISMATCH",
    "primitiveCount": 51,
    "dropped": [
@@ -6738,7 +6738,7 @@
     "inkRecall": 0.0187,
     "exact": false
    },
-   "leanSeconds": 0.108,
+   "leanSeconds": 0.104,
    "status": "MISMATCH",
    "primitiveCount": 58,
    "dropped": [
@@ -6771,7 +6771,7 @@
     "inkRecall": 0.0192,
     "exact": false
    },
-   "leanSeconds": 0.112,
+   "leanSeconds": 0.106,
    "status": "MISMATCH",
    "primitiveCount": 60,
    "dropped": [
@@ -6804,7 +6804,7 @@
     "inkRecall": 0.006,
     "exact": false
    },
-   "leanSeconds": 0.139,
+   "leanSeconds": 0.132,
    "status": "CLOSE",
    "primitiveCount": 61,
    "dropped": [
@@ -6837,9 +6837,9 @@
     "inkRecall": 0.0181,
     "exact": false
    },
-   "leanSeconds": 0.029,
+   "leanSeconds": 0.028,
    "status": "UNAVAILABLE",
-   "reason": "uncaught exception: Tried to read file '/Users/danbri/working/sandbox/october/tpac/depmap/cache/svg-tiny/svg-basics-4/final/svg/intro-compat-201-t.svg' containing non UTF-8 data.\n"
+   "reason": "uncaught exception: Tried to read file '/Users/danbri/working/sandbox/october/tpac/depmap/cache/svg-tiny/run10/svg/intro-compat-201-t.svg' containing non UTF-8 data.\n"
   },
   {
    "file": "jpeg-required-201-t.svg",
@@ -6854,7 +6854,7 @@
     "inkRecall": 0.0013,
     "exact": false
    },
-   "leanSeconds": 0.24,
+   "leanSeconds": 0.229,
    "status": "CLOSE",
    "primitiveCount": 39,
    "dropped": [
@@ -6885,7 +6885,7 @@
     "inkRecall": 0.0015,
     "exact": false
    },
-   "leanSeconds": 0.242,
+   "leanSeconds": 0.237,
    "status": "CLOSE",
    "primitiveCount": 40,
    "dropped": [
@@ -6916,7 +6916,7 @@
     "inkRecall": 0.0015,
     "exact": false
    },
-   "leanSeconds": 0.247,
+   "leanSeconds": 0.242,
    "status": "CLOSE",
    "primitiveCount": 41,
    "dropped": [
@@ -6947,7 +6947,7 @@
     "inkRecall": 0.0195,
     "exact": false
    },
-   "leanSeconds": 0.17,
+   "leanSeconds": 0.171,
    "status": "CLOSE",
    "primitiveCount": 35,
    "dropped": [
@@ -6978,7 +6978,7 @@
     "inkRecall": 0.0017,
     "exact": false
    },
-   "leanSeconds": 0.252,
+   "leanSeconds": 0.238,
    "status": "CLOSE",
    "primitiveCount": 55,
    "dropped": [
@@ -7009,7 +7009,7 @@
     "inkRecall": 0.0018,
     "exact": false
    },
-   "leanSeconds": 0.251,
+   "leanSeconds": 0.242,
    "status": "CLOSE",
    "primitiveCount": 48,
    "dropped": [
@@ -7040,7 +7040,7 @@
     "inkRecall": 0.0016,
     "exact": false
    },
-   "leanSeconds": 0.279,
+   "leanSeconds": 0.269,
    "status": "CLOSE",
    "primitiveCount": 40,
    "dropped": [
@@ -7071,7 +7071,7 @@
     "inkRecall": 0.0021,
     "exact": false
    },
-   "leanSeconds": 0.248,
+   "leanSeconds": 0.239,
    "status": "CLOSE",
    "primitiveCount": 69,
    "dropped": [
@@ -7102,7 +7102,7 @@
     "inkRecall": 0.0017,
     "exact": false
    },
-   "leanSeconds": 0.247,
+   "leanSeconds": 0.235,
    "status": "CLOSE",
    "primitiveCount": 55,
    "dropped": [
@@ -7133,7 +7133,7 @@
     "inkRecall": 0.0085,
     "exact": false
    },
-   "leanSeconds": 0.1,
+   "leanSeconds": 0.093,
    "status": "MISMATCH",
    "primitiveCount": 16,
    "dropped": [
@@ -7165,7 +7165,7 @@
     "inkRecall": 0.0181,
     "exact": false
    },
-   "leanSeconds": 0.1,
+   "leanSeconds": 0.095,
    "status": "MISMATCH",
    "primitiveCount": 29,
    "dropped": [
@@ -7199,7 +7199,7 @@
     "inkRecall": 0.0024,
     "exact": false
    },
-   "leanSeconds": 0.104,
+   "leanSeconds": 0.103,
    "status": "CLOSE",
    "primitiveCount": 18,
    "dropped": [
@@ -7295,7 +7295,7 @@
     "inkRecall": 0.6394,
     "exact": false
    },
-   "leanSeconds": 0.239,
+   "leanSeconds": 0.231,
    "status": "MISMATCH",
    "primitiveCount": 246,
    "dropped": [
@@ -7352,7 +7352,7 @@
     "inkRecall": 0.0005,
     "exact": false
    },
-   "leanSeconds": 0.089,
+   "leanSeconds": 0.088,
    "status": "MISMATCH",
    "primitiveCount": 18,
    "dropped": [
@@ -7386,7 +7386,7 @@
     "inkRecall": 0.001,
     "exact": false
    },
-   "leanSeconds": 0.088,
+   "leanSeconds": 0.087,
    "status": "MISMATCH",
    "primitiveCount": 16,
    "dropped": [
@@ -7418,7 +7418,7 @@
     "inkRecall": 0.0285,
     "exact": false
    },
-   "leanSeconds": 0.428,
+   "leanSeconds": 0.434,
    "status": "MISMATCH",
    "primitiveCount": 247,
    "dropped": [
@@ -7460,7 +7460,7 @@
     "inkRecall": 0.0095,
     "exact": false
    },
-   "leanSeconds": 0.35,
+   "leanSeconds": 0.349,
    "status": "CLOSE",
    "primitiveCount": 106,
    "dropped": [
@@ -7496,7 +7496,7 @@
     "inkRecall": 0.0247,
     "exact": false
    },
-   "leanSeconds": 0.56,
+   "leanSeconds": 0.546,
    "status": "CLOSE",
    "primitiveCount": 421,
    "dropped": [
@@ -7534,7 +7534,7 @@
     "inkRecall": 0.0193,
     "exact": false
    },
-   "leanSeconds": 0.424,
+   "leanSeconds": 0.428,
    "status": "MISMATCH",
    "primitiveCount": 219,
    "dropped": [
@@ -7572,7 +7572,7 @@
     "inkRecall": 0.0107,
     "exact": false
    },
-   "leanSeconds": 0.296,
+   "leanSeconds": 0.28,
    "status": "CLOSE",
    "primitiveCount": 113,
    "dropped": [
@@ -7605,7 +7605,7 @@
     "inkRecall": 0.0013,
     "exact": false
    },
-   "leanSeconds": 0.107,
+   "leanSeconds": 0.102,
    "status": "MISMATCH",
    "primitiveCount": 20,
    "dropped": [
@@ -7640,7 +7640,7 @@
     "inkRecall": 0.0181,
     "exact": false
    },
-   "leanSeconds": 0.236,
+   "leanSeconds": 0.225,
    "status": "MISMATCH",
    "primitiveCount": 278,
    "dropped": [
@@ -7678,7 +7678,7 @@
     "inkRecall": 0.037,
     "exact": false
    },
-   "leanSeconds": 0.201,
+   "leanSeconds": 0.194,
    "status": "MISMATCH",
    "primitiveCount": 202,
    "dropped": [
@@ -7738,7 +7738,7 @@
     "inkRecall": 0.0363,
     "exact": false
    },
-   "leanSeconds": 0.189,
+   "leanSeconds": 0.186,
    "status": "MISMATCH",
    "primitiveCount": 196,
    "dropped": [
@@ -7798,7 +7798,7 @@
     "inkRecall": 0.0044,
     "exact": false
    },
-   "leanSeconds": 0.095,
+   "leanSeconds": 0.094,
    "status": "CLOSE",
    "primitiveCount": 37,
    "dropped": [
@@ -7831,7 +7831,7 @@
     "inkRecall": 0.0057,
     "exact": false
    },
-   "leanSeconds": 0.133,
+   "leanSeconds": 0.132,
    "status": "CLOSE",
    "primitiveCount": 116,
    "dropped": [
@@ -7866,7 +7866,7 @@
     "inkRecall": 0.0067,
     "exact": false
    },
-   "leanSeconds": 0.112,
+   "leanSeconds": 0.111,
    "status": "CLOSE",
    "primitiveCount": 58,
    "dropped": [
@@ -7938,7 +7938,7 @@
     "inkRecall": 0.0233,
     "exact": false
    },
-   "leanSeconds": 0.147,
+   "leanSeconds": 0.14,
    "status": "CLOSE",
    "primitiveCount": 100,
    "dropped": [
@@ -7970,7 +7970,7 @@
     "inkRecall": 0.0229,
     "exact": false
    },
-   "leanSeconds": 0.141,
+   "leanSeconds": 0.134,
    "status": "CLOSE",
    "primitiveCount": 97,
    "dropped": [
@@ -8002,7 +8002,7 @@
     "inkRecall": 0.0368,
     "exact": false
    },
-   "leanSeconds": 0.287,
+   "leanSeconds": 0.284,
    "status": "MISMATCH",
    "primitiveCount": 496,
    "dropped": [
@@ -8049,7 +8049,7 @@
     "inkRecall": 0.0357,
     "exact": false
    },
-   "leanSeconds": 0.335,
+   "leanSeconds": 0.314,
    "status": "MISMATCH",
    "primitiveCount": 506,
    "dropped": [
@@ -8103,7 +8103,7 @@
     "inkRecall": 0.0354,
     "exact": false
    },
-   "leanSeconds": 0.254,
+   "leanSeconds": 0.244,
    "status": "MISMATCH",
    "primitiveCount": 406,
    "dropped": [
@@ -8155,7 +8155,7 @@
     "inkRecall": 0.0419,
     "exact": false
    },
-   "leanSeconds": 0.401,
+   "leanSeconds": 0.382,
    "status": "MISMATCH",
    "primitiveCount": 686,
    "dropped": [
@@ -8219,7 +8219,7 @@
     "inkRecall": 0.005,
     "exact": false
    },
-   "leanSeconds": 0.173,
+   "leanSeconds": 0.162,
    "status": "MISMATCH",
    "primitiveCount": 148,
    "dropped": [
@@ -8258,7 +8258,7 @@
     "inkRecall": 0.0044,
     "exact": false
    },
-   "leanSeconds": 0.175,
+   "leanSeconds": 0.164,
    "status": "MISMATCH",
    "primitiveCount": 183,
    "dropped": [
@@ -8294,7 +8294,7 @@
     "inkRecall": 0.0096,
     "exact": false
    },
-   "leanSeconds": 0.185,
+   "leanSeconds": 0.179,
    "status": "MISMATCH",
    "primitiveCount": 188,
    "dropped": [
@@ -8333,7 +8333,7 @@
     "inkRecall": 0.0471,
     "exact": false
    },
-   "leanSeconds": 0.363,
+   "leanSeconds": 0.362,
    "status": "MISMATCH",
    "primitiveCount": 666,
    "dropped": [
@@ -8399,7 +8399,7 @@
     "inkRecall": 0.0158,
     "exact": false
    },
-   "leanSeconds": 0.16,
+   "leanSeconds": 0.151,
    "status": "MISMATCH",
    "primitiveCount": 89,
    "dropped": [
@@ -8438,7 +8438,7 @@
     "inkRecall": 0.0069,
     "exact": false
    },
-   "leanSeconds": 0.122,
+   "leanSeconds": 0.117,
    "status": "MISMATCH",
    "primitiveCount": 55,
    "dropped": [
@@ -8473,7 +8473,7 @@
     "inkRecall": 0.0104,
     "exact": false
    },
-   "leanSeconds": 0.108,
+   "leanSeconds": 0.106,
    "status": "MISMATCH",
    "primitiveCount": 53,
    "dropped": [
@@ -8508,7 +8508,7 @@
     "inkRecall": 0.0229,
     "exact": false
    },
-   "leanSeconds": 0.197,
+   "leanSeconds": 0.194,
    "status": "MISMATCH",
    "primitiveCount": 212,
    "dropped": [
@@ -8550,7 +8550,7 @@
     "inkRecall": 0.0023,
     "exact": false
    },
-   "leanSeconds": 0.082,
+   "leanSeconds": 0.08,
    "status": "MISMATCH",
    "primitiveCount": 15,
    "dropped": [
@@ -8582,7 +8582,7 @@
     "inkRecall": 0.0171,
     "exact": false
    },
-   "leanSeconds": 0.109,
+   "leanSeconds": 0.101,
    "status": "MISMATCH",
    "primitiveCount": 37,
    "dropped": [
@@ -8615,7 +8615,7 @@
     "inkRecall": 0.0113,
     "exact": false
    },
-   "leanSeconds": 0.111,
+   "leanSeconds": 0.101,
    "status": "MISMATCH",
    "primitiveCount": 30,
    "dropped": [
@@ -8647,7 +8647,7 @@
     "inkRecall": 0.0119,
     "exact": false
    },
-   "leanSeconds": 0.115,
+   "leanSeconds": 0.104,
    "status": "MISMATCH",
    "primitiveCount": 39,
    "dropped": [
@@ -8679,7 +8679,7 @@
     "inkRecall": 0.0093,
     "exact": false
    },
-   "leanSeconds": 0.109,
+   "leanSeconds": 0.107,
    "status": "MISMATCH",
    "primitiveCount": 39,
    "dropped": [
@@ -8712,7 +8712,7 @@
     "inkRecall": 0.0111,
     "exact": false
    },
-   "leanSeconds": 0.103,
+   "leanSeconds": 0.096,
    "status": "MISMATCH",
    "primitiveCount": 25,
    "dropped": [
@@ -8744,7 +8744,7 @@
     "inkRecall": 0.0158,
     "exact": false
    },
-   "leanSeconds": 0.113,
+   "leanSeconds": 0.106,
    "status": "MISMATCH",
    "primitiveCount": 57,
    "dropped": [
@@ -8777,7 +8777,7 @@
     "inkRecall": 0.0158,
     "exact": false
    },
-   "leanSeconds": 0.107,
+   "leanSeconds": 0.106,
    "status": "MISMATCH",
    "primitiveCount": 57,
    "dropped": [
@@ -8810,7 +8810,7 @@
     "inkRecall": 0.0178,
     "exact": false
    },
-   "leanSeconds": 0.124,
+   "leanSeconds": 0.119,
    "status": "MISMATCH",
    "primitiveCount": 66,
    "dropped": [
@@ -8843,7 +8843,7 @@
     "inkRecall": 0.0168,
     "exact": false
    },
-   "leanSeconds": 0.115,
+   "leanSeconds": 0.11,
    "status": "MISMATCH",
    "primitiveCount": 51,
    "dropped": [
@@ -8876,7 +8876,7 @@
     "inkRecall": 0.015,
     "exact": false
    },
-   "leanSeconds": 0.112,
+   "leanSeconds": 0.11,
    "status": "MISMATCH",
    "primitiveCount": 42,
    "dropped": [
@@ -8910,7 +8910,7 @@
     "inkRecall": 0.0165,
     "exact": false
    },
-   "leanSeconds": 0.113,
+   "leanSeconds": 0.111,
    "status": "MISMATCH",
    "primitiveCount": 60,
    "dropped": [
@@ -8942,7 +8942,7 @@
     "inkRecall": 0.0151,
     "exact": false
    },
-   "leanSeconds": 0.175,
+   "leanSeconds": 0.174,
    "status": "CLOSE",
    "primitiveCount": 162,
    "dropped": [
@@ -9022,7 +9022,7 @@
     "inkRecall": 0.1114,
     "exact": false
    },
-   "leanSeconds": 0.138,
+   "leanSeconds": 0.135,
    "status": "MISMATCH",
    "primitiveCount": 124,
    "dropped": [
@@ -9056,7 +9056,7 @@
     "inkRecall": 0.0336,
     "exact": false
    },
-   "leanSeconds": 0.226,
+   "leanSeconds": 0.216,
    "status": "MISMATCH",
    "primitiveCount": 301,
    "dropped": [
@@ -9107,7 +9107,7 @@
     "inkRecall": 0.0151,
     "exact": false
    },
-   "leanSeconds": 0.384,
+   "leanSeconds": 0.383,
    "status": "MISMATCH",
    "primitiveCount": 142,
    "dropped": [
@@ -9175,7 +9175,7 @@
     "inkRecall": 0.0057,
     "exact": false
    },
-   "leanSeconds": 0.167,
+   "leanSeconds": 0.168,
    "status": "MISMATCH",
    "primitiveCount": 138,
    "dropped": [
@@ -9210,7 +9210,7 @@
     "inkRecall": 0.0185,
     "exact": false
    },
-   "leanSeconds": 0.148,
+   "leanSeconds": 0.146,
    "status": "MISMATCH",
    "primitiveCount": 145,
    "dropped": [
@@ -9243,7 +9243,7 @@
     "inkRecall": 0.0176,
     "exact": false
    },
-   "leanSeconds": 0.147,
+   "leanSeconds": 0.145,
    "status": "MISMATCH",
    "primitiveCount": 145,
    "dropped": [
@@ -9276,7 +9276,7 @@
     "inkRecall": 0.0181,
     "exact": false
    },
-   "leanSeconds": 0.15,
+   "leanSeconds": 0.146,
    "status": "MISMATCH",
    "primitiveCount": 146,
    "dropped": [
@@ -9309,7 +9309,7 @@
     "inkRecall": 0.0245,
     "exact": false
    },
-   "leanSeconds": 0.153,
+   "leanSeconds": 0.146,
    "status": "MISMATCH",
    "primitiveCount": 146,
    "dropped": [
@@ -9342,7 +9342,7 @@
     "inkRecall": 0.0224,
     "exact": false
    },
-   "leanSeconds": 0.15,
+   "leanSeconds": 0.156,
    "status": "MISMATCH",
    "primitiveCount": 145,
    "dropped": [
@@ -9375,7 +9375,7 @@
     "inkRecall": 0.024,
     "exact": false
    },
-   "leanSeconds": 0.147,
+   "leanSeconds": 0.151,
    "status": "MISMATCH",
    "primitiveCount": 145,
    "dropped": [
@@ -9408,7 +9408,7 @@
     "inkRecall": 0.0242,
     "exact": false
    },
-   "leanSeconds": 0.403,
+   "leanSeconds": 0.388,
    "status": "MISMATCH",
    "primitiveCount": 151,
    "dropped": [
@@ -9441,7 +9441,7 @@
     "inkRecall": 0.0224,
     "exact": false
    },
-   "leanSeconds": 0.151,
+   "leanSeconds": 0.145,
    "status": "MISMATCH",
    "primitiveCount": 144,
    "dropped": [
@@ -9474,7 +9474,7 @@
     "inkRecall": 0.0182,
     "exact": false
    },
-   "leanSeconds": 0.303,
+   "leanSeconds": 0.293,
    "status": "MISMATCH",
    "primitiveCount": 283,
    "dropped": [
@@ -9518,7 +9518,7 @@
     "inkRecall": 0.0102,
     "exact": false
    },
-   "leanSeconds": 0.212,
+   "leanSeconds": 0.207,
    "status": "MISMATCH",
    "primitiveCount": 46,
    "dropped": [
@@ -9553,7 +9553,7 @@
     "inkRecall": 0.0122,
     "exact": false
    },
-   "leanSeconds": 0.125,
+   "leanSeconds": 0.117,
    "status": "MISMATCH",
    "primitiveCount": 57,
    "dropped": [
@@ -9588,7 +9588,7 @@
     "inkRecall": 0.0129,
     "exact": false
    },
-   "leanSeconds": 0.139,
+   "leanSeconds": 0.135,
    "status": "MISMATCH",
    "primitiveCount": 65,
    "dropped": [
@@ -9623,7 +9623,7 @@
     "inkRecall": 0.0267,
     "exact": false
    },
-   "leanSeconds": 0.141,
+   "leanSeconds": 0.135,
    "status": "MISMATCH",
    "primitiveCount": 48,
    "dropped": [
@@ -9654,7 +9654,7 @@
     "inkRecall": 0.021,
     "exact": false
    },
-   "leanSeconds": 0.185,
+   "leanSeconds": 0.191,
    "status": "MISMATCH",
    "primitiveCount": 183,
    "dropped": [
@@ -9693,7 +9693,7 @@
     "inkRecall": 0.0256,
     "exact": false
    },
-   "leanSeconds": 0.132,
+   "leanSeconds": 0.14,
    "status": "MISMATCH",
    "primitiveCount": 64,
    "dropped": [
@@ -9727,7 +9727,7 @@
     "inkRecall": 0.0191,
     "exact": false
    },
-   "leanSeconds": 0.136,
+   "leanSeconds": 0.13,
    "status": "MISMATCH",
    "primitiveCount": 59,
    "dropped": [
@@ -9761,7 +9761,7 @@
     "inkRecall": 0.0044,
     "exact": false
    },
-   "leanSeconds": 0.165,
+   "leanSeconds": 0.157,
    "status": "MISMATCH",
    "primitiveCount": 129,
    "dropped": [
@@ -9799,7 +9799,7 @@
     "inkRecall": 0.0166,
     "exact": false
    },
-   "leanSeconds": 0.151,
+   "leanSeconds": 0.142,
    "status": "MISMATCH",
    "primitiveCount": 162,
    "dropped": [
@@ -9832,7 +9832,7 @@
     "inkRecall": 0.0167,
     "exact": false
    },
-   "leanSeconds": 4.28,
+   "leanSeconds": 4.147,
    "status": "CLOSE",
    "primitiveCount": 469,
    "dropped": [
@@ -9865,7 +9865,7 @@
     "inkRecall": 0.0037,
     "exact": false
    },
-   "leanSeconds": 0.113,
+   "leanSeconds": 0.108,
    "status": "CLOSE",
    "primitiveCount": 38,
    "dropped": [
@@ -9897,7 +9897,7 @@
     "inkRecall": 0.0064,
     "exact": false
    },
-   "leanSeconds": 0.096,
+   "leanSeconds": 0.091,
    "status": "CLOSE",
    "primitiveCount": 42,
    "dropped": [
@@ -9928,7 +9928,7 @@
     "inkRecall": 0.0063,
     "exact": false
    },
-   "leanSeconds": 0.237,
+   "leanSeconds": 0.228,
    "status": "MISMATCH",
    "primitiveCount": 340,
    "dropped": [
@@ -9960,7 +9960,7 @@
     "inkRecall": 0.0022,
     "exact": false
    },
-   "leanSeconds": 0.092,
+   "leanSeconds": 0.089,
    "status": "MISMATCH",
    "primitiveCount": 16,
    "dropped": [
@@ -9991,7 +9991,7 @@
     "inkRecall": 0.0061,
     "exact": false
    },
-   "leanSeconds": 0.138,
+   "leanSeconds": 0.131,
    "status": "CLOSE",
    "primitiveCount": 126,
    "dropped": [
@@ -10022,7 +10022,7 @@
     "inkRecall": 0.0101,
     "exact": false
    },
-   "leanSeconds": 0.147,
+   "leanSeconds": 0.14,
    "status": "CLOSE",
    "primitiveCount": 64,
    "dropped": [
@@ -10053,7 +10053,7 @@
     "inkRecall": 0.0089,
     "exact": false
    },
-   "leanSeconds": 0.166,
+   "leanSeconds": 0.159,
    "status": "CLOSE",
    "primitiveCount": 71,
    "dropped": [
@@ -10084,7 +10084,7 @@
     "inkRecall": 0.0168,
     "exact": false
    },
-   "leanSeconds": 0.143,
+   "leanSeconds": 0.138,
    "status": "CLOSE",
    "primitiveCount": 81,
    "dropped": [
@@ -10146,7 +10146,7 @@
     "inkRecall": 0.0021,
     "exact": false
    },
-   "leanSeconds": 0.122,
+   "leanSeconds": 0.121,
    "status": "CLOSE",
    "primitiveCount": 27,
    "dropped": [
@@ -10177,7 +10177,7 @@
     "inkRecall": 0.009,
     "exact": false
    },
-   "leanSeconds": 0.143,
+   "leanSeconds": 0.141,
    "status": "CLOSE",
    "primitiveCount": 69,
    "dropped": [
@@ -10210,7 +10210,7 @@
     "inkRecall": 0.028,
     "exact": false
    },
-   "leanSeconds": 0.151,
+   "leanSeconds": 0.148,
    "status": "CLOSE",
    "primitiveCount": 37,
    "dropped": [
@@ -10243,7 +10243,7 @@
     "inkRecall": 0.0061,
     "exact": false
    },
-   "leanSeconds": 0.148,
+   "leanSeconds": 0.14,
    "status": "CLOSE",
    "primitiveCount": 79,
    "dropped": [
@@ -10274,7 +10274,7 @@
     "inkRecall": 0.0189,
     "exact": false
    },
-   "leanSeconds": 0.273,
+   "leanSeconds": 0.254,
    "status": "CLOSE",
    "primitiveCount": 99,
    "dropped": [
@@ -10306,7 +10306,7 @@
     "inkRecall": 0.0122,
     "exact": false
    },
-   "leanSeconds": 0.233,
+   "leanSeconds": 0.219,
    "status": "CLOSE",
    "primitiveCount": 348,
    "dropped": [
@@ -10337,7 +10337,7 @@
     "inkRecall": 0.0094,
     "exact": false
    },
-   "leanSeconds": 2.52,
+   "leanSeconds": 2.486,
    "status": "CLOSE",
    "primitiveCount": 192,
    "dropped": [
@@ -10368,7 +10368,7 @@
     "inkRecall": 0.0085,
     "exact": false
    },
-   "leanSeconds": 0.209,
+   "leanSeconds": 0.205,
    "status": "CLOSE",
    "primitiveCount": 286,
    "dropped": [
@@ -10399,7 +10399,7 @@
     "inkRecall": 0.0008,
     "exact": false
    },
-   "leanSeconds": 0.094,
+   "leanSeconds": 0.09,
    "status": "CLOSE",
    "primitiveCount": 17,
    "dropped": [
@@ -10430,7 +10430,7 @@
     "inkRecall": 0.0008,
     "exact": false
    },
-   "leanSeconds": 0.092,
+   "leanSeconds": 0.087,
    "status": "CLOSE",
    "primitiveCount": 18,
    "dropped": [
@@ -10461,7 +10461,7 @@
     "inkRecall": 0.0499,
     "exact": false
    },
-   "leanSeconds": 0.121,
+   "leanSeconds": 0.114,
    "status": "MISMATCH",
    "primitiveCount": 52,
    "dropped": [
@@ -10492,7 +10492,7 @@
     "inkRecall": 0.0014,
     "exact": false
    },
-   "leanSeconds": 0.087,
+   "leanSeconds": 0.083,
    "status": "CLOSE",
    "primitiveCount": 19,
    "dropped": [
@@ -10523,7 +10523,7 @@
     "inkRecall": 0.0013,
     "exact": false
    },
-   "leanSeconds": 0.094,
+   "leanSeconds": 0.089,
    "status": "MISMATCH",
    "primitiveCount": 19,
    "dropped": [
@@ -10562,7 +10562,7 @@
     "inkRecall": 0.0194,
     "exact": false
    },
-   "leanSeconds": 0.165,
+   "leanSeconds": 0.152,
    "status": "CLOSE",
    "primitiveCount": 97,
    "dropped": [
@@ -10597,7 +10597,7 @@
     "inkRecall": 0.0315,
     "exact": false
    },
-   "leanSeconds": 0.237,
+   "leanSeconds": 0.238,
    "status": "CLOSE",
    "primitiveCount": 303,
    "dropped": [
@@ -10630,7 +10630,7 @@
     "inkRecall": 0.0047,
     "exact": false
    },
-   "leanSeconds": 0.164,
+   "leanSeconds": 0.157,
    "status": "CLOSE",
    "primitiveCount": 91,
    "dropped": [
@@ -10661,7 +10661,7 @@
     "inkRecall": 0.0024,
     "exact": false
    },
-   "leanSeconds": 0.115,
+   "leanSeconds": 0.112,
    "status": "CLOSE",
    "primitiveCount": 45,
    "dropped": [
@@ -10692,7 +10692,7 @@
     "inkRecall": 0.0016,
     "exact": false
    },
-   "leanSeconds": 0.095,
+   "leanSeconds": 0.092,
    "status": "CLOSE",
    "primitiveCount": 17,
    "dropped": [
@@ -10723,7 +10723,7 @@
     "inkRecall": 0.0094,
     "exact": false
    },
-   "leanSeconds": 1.248,
+   "leanSeconds": 1.161,
    "status": "MISMATCH",
    "primitiveCount": 222,
    "dropped": [
@@ -10764,7 +10764,7 @@
     "inkRecall": 0.0066,
     "exact": false
    },
-   "leanSeconds": 0.349,
+   "leanSeconds": 0.322,
    "status": "MISMATCH",
    "primitiveCount": 195,
    "dropped": [
@@ -10810,7 +10810,7 @@
     "inkRecall": 0.0057,
     "exact": false
    },
-   "leanSeconds": 0.158,
+   "leanSeconds": 0.146,
    "status": "CLOSE",
    "primitiveCount": 151,
    "dropped": [
@@ -10843,7 +10843,7 @@
     "inkRecall": 0.0025,
     "exact": false
    },
-   "leanSeconds": 0.244,
+   "leanSeconds": 0.228,
    "status": "MISMATCH",
    "primitiveCount": 17,
    "dropped": [
@@ -10878,7 +10878,7 @@
     "inkRecall": 0.0082,
     "exact": false
    },
-   "leanSeconds": 0.157,
+   "leanSeconds": 0.146,
    "status": "CLOSE",
    "primitiveCount": 70,
    "dropped": [
@@ -10909,7 +10909,7 @@
     "inkRecall": 0.0122,
     "exact": false
    },
-   "leanSeconds": 0.166,
+   "leanSeconds": 0.163,
    "status": "CLOSE",
    "primitiveCount": 85,
    "dropped": [
@@ -10940,7 +10940,7 @@
     "inkRecall": 0.0149,
     "exact": false
    },
-   "leanSeconds": 0.158,
+   "leanSeconds": 0.152,
    "status": "CLOSE",
    "primitiveCount": 83,
    "dropped": [
@@ -10971,7 +10971,7 @@
     "inkRecall": 0.0167,
     "exact": false
    },
-   "leanSeconds": 0.161,
+   "leanSeconds": 0.16,
    "status": "CLOSE",
    "primitiveCount": 91,
    "dropped": [
@@ -11002,7 +11002,7 @@
     "inkRecall": 0.1388,
     "exact": false
    },
-   "leanSeconds": 0.116,
+   "leanSeconds": 0.108,
    "status": "CLOSE",
    "primitiveCount": 61,
    "dropped": [
@@ -11034,7 +11034,7 @@
     "inkRecall": 0.0277,
     "exact": false
    },
-   "leanSeconds": 0.103,
+   "leanSeconds": 0.099,
    "status": "MISMATCH",
    "primitiveCount": 21,
    "dropped": [
@@ -11065,7 +11065,7 @@
     "inkRecall": 0.0092,
     "exact": false
    },
-   "leanSeconds": 0.093,
+   "leanSeconds": 0.091,
    "status": "MISMATCH",
    "primitiveCount": 21,
    "dropped": [
@@ -11096,7 +11096,7 @@
     "inkRecall": 0.0019,
     "exact": false
    },
-   "leanSeconds": 0.092,
+   "leanSeconds": 0.089,
    "status": "CLOSE",
    "primitiveCount": 36,
    "dropped": [
@@ -11127,7 +11127,7 @@
     "inkRecall": 0.0114,
     "exact": false
    },
-   "leanSeconds": 0.118,
+   "leanSeconds": 0.11,
    "status": "MISMATCH",
    "primitiveCount": 90,
    "dropped": [
@@ -11162,7 +11162,7 @@
     "inkRecall": 0.0103,
     "exact": false
    },
-   "leanSeconds": 0.927,
+   "leanSeconds": 0.91,
    "status": "CLOSE",
    "primitiveCount": 91,
    "dropped": [
@@ -11195,7 +11195,7 @@
     "inkRecall": 0.006,
     "exact": false
    },
-   "leanSeconds": 0.126,
+   "leanSeconds": 0.117,
    "status": "CLOSE",
    "primitiveCount": 93,
    "dropped": [
@@ -11227,7 +11227,7 @@
     "inkRecall": 0.0129,
     "exact": false
    },
-   "leanSeconds": 0.499,
+   "leanSeconds": 0.491,
    "status": "MISMATCH",
    "primitiveCount": 106,
    "dropped": [
@@ -11271,7 +11271,7 @@
     "inkRecall": 0.006,
     "exact": false
    },
-   "leanSeconds": 0.262,
+   "leanSeconds": 0.242,
    "status": "CLOSE",
    "primitiveCount": 60,
    "dropped": [
@@ -11338,7 +11338,7 @@
     "inkRecall": 0.0002,
     "exact": false
    },
-   "leanSeconds": 0.122,
+   "leanSeconds": 0.115,
    "status": "CLOSE",
    "primitiveCount": 18,
    "dropped": [
@@ -11372,7 +11372,7 @@
     "inkRecall": 0.0,
     "exact": false
    },
-   "leanSeconds": 0.099,
+   "leanSeconds": 0.094,
    "status": "MISMATCH",
    "primitiveCount": 17,
    "dropped": [
@@ -11406,7 +11406,7 @@
     "inkRecall": 0.0016,
     "exact": false
    },
-   "leanSeconds": 0.125,
+   "leanSeconds": 0.116,
    "status": "CLOSE",
    "primitiveCount": 18,
    "dropped": [
@@ -11442,7 +11442,7 @@
     "inkRecall": 0.0,
     "exact": false
    },
-   "leanSeconds": 0.092,
+   "leanSeconds": 0.09,
    "status": "CLOSE",
    "primitiveCount": 17,
    "dropped": [
@@ -11475,7 +11475,7 @@
     "inkRecall": 0.0,
     "exact": false
    },
-   "leanSeconds": 0.199,
+   "leanSeconds": 0.197,
    "status": "MISMATCH",
    "primitiveCount": 279,
    "dropped": [
@@ -11512,7 +11512,7 @@
     "inkRecall": 0.0174,
     "exact": false
    },
-   "leanSeconds": 1.35,
+   "leanSeconds": 1.3,
    "status": "CLOSE",
    "primitiveCount": 143,
    "dropped": [
@@ -11543,7 +11543,7 @@
     "inkRecall": 0.0107,
     "exact": false
    },
-   "leanSeconds": 2.352,
+   "leanSeconds": 2.229,
    "status": "MISMATCH",
    "primitiveCount": 155,
    "dropped": [
@@ -11574,7 +11574,7 @@
     "inkRecall": 0.0204,
     "exact": false
    },
-   "leanSeconds": 0.143,
+   "leanSeconds": 0.134,
    "status": "CLOSE",
    "primitiveCount": 113,
    "dropped": [
@@ -11667,7 +11667,7 @@
     "inkRecall": 0.0087,
     "exact": false
    },
-   "leanSeconds": 0.132,
+   "leanSeconds": 0.127,
    "status": "CLOSE",
    "primitiveCount": 116,
    "dropped": [
@@ -11698,7 +11698,7 @@
     "inkRecall": 0.0206,
     "exact": false
    },
-   "leanSeconds": 0.151,
+   "leanSeconds": 0.136,
    "status": "CLOSE",
    "primitiveCount": 108,
    "dropped": [
@@ -11729,7 +11729,7 @@
     "inkRecall": 0.0195,
     "exact": false
    },
-   "leanSeconds": 0.144,
+   "leanSeconds": 0.135,
    "status": "CLOSE",
    "primitiveCount": 95,
    "dropped": [
@@ -11760,7 +11760,7 @@
     "inkRecall": 0.0136,
     "exact": false
    },
-   "leanSeconds": 0.177,
+   "leanSeconds": 0.175,
    "status": "CLOSE",
    "primitiveCount": 234,
    "dropped": [
@@ -11822,7 +11822,7 @@
     "inkRecall": 0.0277,
     "exact": false
    },
-   "leanSeconds": 0.118,
+   "leanSeconds": 0.117,
    "status": "MISMATCH",
    "primitiveCount": 68,
    "dropped": [
@@ -11853,7 +11853,7 @@
     "inkRecall": 0.0221,
     "exact": false
    },
-   "leanSeconds": 0.14,
+   "leanSeconds": 0.131,
    "status": "CLOSE",
    "primitiveCount": 95,
    "dropped": [
@@ -11884,7 +11884,7 @@
     "inkRecall": 0.0283,
     "exact": false
    },
-   "leanSeconds": 0.359,
+   "leanSeconds": 0.339,
    "status": "MISMATCH",
    "primitiveCount": 85,
    "dropped": [
@@ -11915,7 +11915,7 @@
     "inkRecall": 0.0018,
     "exact": false
    },
-   "leanSeconds": 0.11,
+   "leanSeconds": 0.109,
    "status": "CLOSE",
    "primitiveCount": 26,
    "dropped": [
@@ -11946,7 +11946,7 @@
     "inkRecall": 0.0091,
     "exact": false
    },
-   "leanSeconds": 0.125,
+   "leanSeconds": 0.124,
    "status": "CLOSE",
    "primitiveCount": 28,
    "dropped": [
@@ -11977,7 +11977,7 @@
     "inkRecall": 0.0023,
     "exact": false
    },
-   "leanSeconds": 0.132,
+   "leanSeconds": 0.13,
    "status": "CLOSE",
    "primitiveCount": 35,
    "dropped": [
@@ -12008,7 +12008,7 @@
     "inkRecall": 0.0033,
     "exact": false
    },
-   "leanSeconds": 0.093,
+   "leanSeconds": 0.092,
    "status": "CLOSE",
    "primitiveCount": 25,
    "dropped": [
@@ -12042,7 +12042,7 @@
     "inkRecall": 0.0055,
     "exact": false
    },
-   "leanSeconds": 0.121,
+   "leanSeconds": 0.117,
    "status": "CLOSE",
    "primitiveCount": 27,
    "dropped": [
@@ -12076,7 +12076,7 @@
     "inkRecall": 0.0024,
     "exact": false
    },
-   "leanSeconds": 0.139,
+   "leanSeconds": 0.13,
    "status": "CLOSE",
    "primitiveCount": 34,
    "dropped": [
@@ -12110,7 +12110,7 @@
     "inkRecall": 0.0024,
     "exact": false
    },
-   "leanSeconds": 0.12,
+   "leanSeconds": 0.11,
    "status": "CLOSE",
    "primitiveCount": 30,
    "dropped": [
@@ -12142,7 +12142,7 @@
     "inkRecall": 0.0024,
     "exact": false
    },
-   "leanSeconds": 0.114,
+   "leanSeconds": 0.11,
    "status": "CLOSE",
    "primitiveCount": 30,
    "dropped": [
@@ -12174,7 +12174,7 @@
     "inkRecall": 0.0009,
     "exact": false
    },
-   "leanSeconds": 0.091,
+   "leanSeconds": 0.088,
    "status": "MISMATCH",
    "primitiveCount": 16,
    "dropped": [
@@ -12206,7 +12206,7 @@
     "inkRecall": 0.001,
     "exact": false
    },
-   "leanSeconds": 0.1,
+   "leanSeconds": 0.094,
    "status": "MISMATCH",
    "primitiveCount": 26,
    "dropped": [
@@ -12239,7 +12239,7 @@
     "inkRecall": 0.0085,
     "exact": false
    },
-   "leanSeconds": 0.111,
+   "leanSeconds": 0.106,
    "status": "MISMATCH",
    "primitiveCount": 38,
    "dropped": [
@@ -12279,7 +12279,7 @@
     "inkRecall": 0.032,
     "exact": false
    },
-   "leanSeconds": 0.163,
+   "leanSeconds": 0.154,
    "status": "MISMATCH",
    "primitiveCount": 73,
    "dropped": [
@@ -12312,7 +12312,7 @@
     "inkRecall": 0.0213,
     "exact": false
    },
-   "leanSeconds": 0.154,
+   "leanSeconds": 0.15,
    "status": "CLOSE",
    "primitiveCount": 109,
    "dropped": [
@@ -12347,7 +12347,7 @@
     "inkRecall": 0.0247,
     "exact": false
    },
-   "leanSeconds": 0.17,
+   "leanSeconds": 0.159,
    "status": "CLOSE",
    "primitiveCount": 107,
    "dropped": [
@@ -12382,7 +12382,7 @@
     "inkRecall": 0.0242,
     "exact": false
    },
-   "leanSeconds": 0.16,
+   "leanSeconds": 0.15,
    "status": "CLOSE",
    "primitiveCount": 113,
    "dropped": [
@@ -12417,7 +12417,7 @@
     "inkRecall": 0.032,
     "exact": false
    },
-   "leanSeconds": 0.152,
+   "leanSeconds": 0.142,
    "status": "MISMATCH",
    "primitiveCount": 152,
    "dropped": [
@@ -12457,7 +12457,7 @@
     "inkRecall": 0.0044,
     "exact": false
    },
-   "leanSeconds": 0.136,
+   "leanSeconds": 0.125,
    "status": "CLOSE",
    "primitiveCount": 91,
    "dropped": [
@@ -12494,7 +12494,7 @@
     "inkRecall": 0.0225,
     "exact": false
    },
-   "leanSeconds": 0.036,
+   "leanSeconds": 0.035,
    "status": "REFUSED",
    "reason": "XML namespace well-formedness violation"
   },
@@ -12546,7 +12546,7 @@
     "inkRecall": 0.0033,
     "exact": false
    },
-   "leanSeconds": 0.099,
+   "leanSeconds": 0.095,
    "status": "MISMATCH",
    "primitiveCount": 17,
    "dropped": [
@@ -12581,7 +12581,7 @@
     "inkRecall": 0.0023,
     "exact": false
    },
-   "leanSeconds": 0.094,
+   "leanSeconds": 0.093,
    "status": "MISMATCH",
    "primitiveCount": 35,
    "dropped": [
@@ -12622,7 +12622,7 @@
     "inkRecall": 0.0114,
     "exact": false
    },
-   "leanSeconds": 0.13,
+   "leanSeconds": 0.122,
    "status": "CLOSE",
    "primitiveCount": 97,
    "dropped": [
@@ -12653,7 +12653,7 @@
     "inkRecall": 0.0061,
     "exact": false
    },
-   "leanSeconds": 0.126,
+   "leanSeconds": 0.116,
    "status": "CLOSE",
    "primitiveCount": 67,
    "dropped": [
@@ -12684,7 +12684,7 @@
     "inkRecall": 0.0056,
     "exact": false
    },
-   "leanSeconds": 0.59,
+   "leanSeconds": 0.572,
    "status": "CLOSE",
    "primitiveCount": 134,
    "dropped": [
@@ -12715,7 +12715,7 @@
     "inkRecall": 0.0087,
     "exact": false
    },
-   "leanSeconds": 0.894,
+   "leanSeconds": 0.833,
    "status": "CLOSE",
    "primitiveCount": 84,
    "dropped": [
@@ -12746,7 +12746,7 @@
     "inkRecall": 0.008,
     "exact": false
    },
-   "leanSeconds": 0.681,
+   "leanSeconds": 0.657,
    "status": "CLOSE",
    "primitiveCount": 79,
    "dropped": [
@@ -12777,7 +12777,7 @@
     "inkRecall": 0.0086,
     "exact": false
    },
-   "leanSeconds": 0.624,
+   "leanSeconds": 0.581,
    "status": "CLOSE",
    "primitiveCount": 131,
    "dropped": [
@@ -12808,7 +12808,7 @@
     "inkRecall": 0.0242,
     "exact": false
    },
-   "leanSeconds": 0.204,
+   "leanSeconds": 0.203,
    "status": "MISMATCH",
    "primitiveCount": 203,
    "dropped": [
@@ -12934,7 +12934,7 @@
     "inkRecall": 0.0166,
     "exact": false
    },
-   "leanSeconds": 12.778,
+   "leanSeconds": 12.218,
    "status": "MISMATCH",
    "primitiveCount": 191,
    "dropped": [
@@ -12968,7 +12968,7 @@
     "inkRecall": 0.0097,
     "exact": false
    },
-   "leanSeconds": 0.156,
+   "leanSeconds": 0.145,
    "status": "CLOSE",
    "primitiveCount": 98,
    "dropped": [
@@ -12999,7 +12999,7 @@
     "inkRecall": 0.0165,
     "exact": false
    },
-   "leanSeconds": 12.241,
+   "leanSeconds": 11.702,
    "status": "MISMATCH",
    "primitiveCount": 190,
    "dropped": [
@@ -13033,7 +13033,7 @@
     "inkRecall": 0.0076,
     "exact": false
    },
-   "leanSeconds": 0.394,
+   "leanSeconds": 0.371,
    "status": "CLOSE",
    "primitiveCount": 87,
    "dropped": [
@@ -13064,7 +13064,7 @@
     "inkRecall": 0.0062,
     "exact": false
    },
-   "leanSeconds": 0.383,
+   "leanSeconds": 0.363,
    "status": "CLOSE",
    "primitiveCount": 73,
    "dropped": [
@@ -13095,7 +13095,7 @@
     "inkRecall": 0.0086,
     "exact": false
    },
-   "leanSeconds": 0.176,
+   "leanSeconds": 0.174,
    "status": "CLOSE",
    "primitiveCount": 75,
    "dropped": [
@@ -13161,7 +13161,7 @@
     "inkRecall": 0.0085,
     "exact": false
    },
-   "leanSeconds": 0.118,
+   "leanSeconds": 0.115,
    "status": "MISMATCH",
    "primitiveCount": 84,
    "dropped": [
@@ -13197,7 +13197,7 @@
     "inkRecall": 0.0016,
     "exact": false
    },
-   "leanSeconds": 0.092,
+   "leanSeconds": 0.089,
    "status": "CLOSE",
    "primitiveCount": 16,
    "dropped": [
@@ -13228,7 +13228,7 @@
     "inkRecall": 0.0174,
     "exact": false
    },
-   "leanSeconds": 0.144,
+   "leanSeconds": 0.141,
    "status": "MISMATCH",
    "primitiveCount": 55,
    "dropped": [
@@ -13263,7 +13263,7 @@
     "inkRecall": 0.0014,
     "exact": false
    },
-   "leanSeconds": 0.141,
+   "leanSeconds": 0.133,
    "status": "CLOSE",
    "primitiveCount": 86,
    "dropped": [
@@ -13294,7 +13294,7 @@
     "inkRecall": 0.0533,
     "exact": false
    },
-   "leanSeconds": 0.244,
+   "leanSeconds": 0.243,
    "status": "MISMATCH",
    "primitiveCount": 425,
    "dropped": [
@@ -13328,7 +13328,7 @@
     "inkRecall": 0.0586,
     "exact": false
    },
-   "leanSeconds": 0.5,
+   "leanSeconds": 0.455,
    "status": "MISMATCH",
    "primitiveCount": 1282,
    "dropped": [
@@ -13362,7 +13362,7 @@
     "inkRecall": 0.0112,
     "exact": false
    },
-   "leanSeconds": 0.093,
+   "leanSeconds": 0.088,
    "status": "MISMATCH",
    "primitiveCount": 17,
    "dropped": [
@@ -13391,7 +13391,7 @@
     "inkRecall": 0.0011,
     "exact": false
    },
-   "leanSeconds": 0.095,
+   "leanSeconds": 0.088,
    "status": "CLOSE",
    "primitiveCount": 19,
    "dropped": [
@@ -13422,7 +13422,7 @@
     "inkRecall": 0.0013,
     "exact": false
    },
-   "leanSeconds": 0.09,
+   "leanSeconds": 0.102,
    "status": "CLOSE",
    "primitiveCount": 16,
    "dropped": [
@@ -13453,7 +13453,7 @@
     "inkRecall": 0.0004,
     "exact": false
    },
-   "leanSeconds": 0.084,
+   "leanSeconds": 0.083,
    "status": "CLOSE",
    "primitiveCount": 31,
    "dropped": [
@@ -13484,7 +13484,7 @@
     "inkRecall": 0.021,
     "exact": false
    },
-   "leanSeconds": 0.198,
+   "leanSeconds": 0.179,
    "status": "MISMATCH",
    "primitiveCount": 208,
    "dropped": [
@@ -13527,7 +13527,7 @@
     "inkRecall": 0.0036,
     "exact": false
    },
-   "leanSeconds": 0.09,
+   "leanSeconds": 0.106,
    "status": "MISMATCH",
    "primitiveCount": 23,
    "dropped": [
@@ -13597,7 +13597,7 @@
     "inkRecall": 0.0058,
     "exact": false
    },
-   "leanSeconds": 0.086,
+   "leanSeconds": 0.084,
    "status": "MISMATCH",
    "primitiveCount": 21,
    "dropped": [
@@ -13635,7 +13635,7 @@
     "inkRecall": 0.0057,
     "exact": false
    },
-   "leanSeconds": 0.1,
+   "leanSeconds": 0.096,
    "status": "MISMATCH",
    "primitiveCount": 34,
    "dropped": [
@@ -13669,7 +13669,7 @@
     "inkRecall": 0.0061,
     "exact": false
    },
-   "leanSeconds": 0.094,
+   "leanSeconds": 0.088,
    "status": "CLOSE",
    "primitiveCount": 19,
    "dropped": [
@@ -13700,7 +13700,7 @@
     "inkRecall": 0.0061,
     "exact": false
    },
-   "leanSeconds": 0.094,
+   "leanSeconds": 0.089,
    "status": "CLOSE",
    "primitiveCount": 19,
    "dropped": [
@@ -13731,7 +13731,7 @@
     "inkRecall": 0.0061,
     "exact": false
    },
-   "leanSeconds": 0.092,
+   "leanSeconds": 0.089,
    "status": "CLOSE",
    "primitiveCount": 19,
    "dropped": [
@@ -13797,7 +13797,7 @@
     "inkRecall": 0.0333,
     "exact": false
    },
-   "leanSeconds": 0.182,
+   "leanSeconds": 0.17,
    "status": "CLOSE",
    "primitiveCount": 148,
    "dropped": [
@@ -13828,7 +13828,7 @@
     "inkRecall": 0.0005,
     "exact": false
    },
-   "leanSeconds": 0.093,
+   "leanSeconds": 0.09,
    "status": "CLOSE",
    "primitiveCount": 21,
    "dropped": [
@@ -13859,7 +13859,7 @@
     "inkRecall": 0.0285,
     "exact": false
    },
-   "leanSeconds": 0.449,
+   "leanSeconds": 0.402,
    "status": "MISMATCH",
    "primitiveCount": 282,
    "dropped": [
@@ -13895,7 +13895,7 @@
     "inkRecall": 0.0078,
     "exact": false
    },
-   "leanSeconds": 0.201,
+   "leanSeconds": 0.192,
    "status": "CLOSE",
    "primitiveCount": 17,
    "dropped": [
@@ -13926,7 +13926,7 @@
     "inkRecall": 0.0479,
     "exact": false
    },
-   "leanSeconds": 0.14,
+   "leanSeconds": 0.139,
    "status": "CLOSE",
    "primitiveCount": 36,
    "dropped": [
@@ -13988,7 +13988,7 @@
     "inkRecall": 0.0123,
     "exact": false
    },
-   "leanSeconds": 0.155,
+   "leanSeconds": 0.143,
    "status": "CLOSE",
    "primitiveCount": 137,
    "dropped": [
@@ -14020,7 +14020,7 @@
     "inkRecall": 0.0068,
     "exact": false
    },
-   "leanSeconds": 0.148,
+   "leanSeconds": 0.135,
    "status": "CLOSE",
    "primitiveCount": 59,
    "dropped": [
@@ -14051,7 +14051,7 @@
     "inkRecall": 0.0006,
     "exact": false
    },
-   "leanSeconds": 0.118,
+   "leanSeconds": 0.108,
    "status": "CLOSE",
    "primitiveCount": 21,
    "dropped": [
@@ -14082,7 +14082,7 @@
     "inkRecall": 0.0045,
     "exact": false
    },
-   "leanSeconds": 0.113,
+   "leanSeconds": 0.108,
    "status": "CLOSE",
    "primitiveCount": 20,
    "dropped": [
@@ -14113,7 +14113,7 @@
     "inkRecall": 0.0006,
     "exact": false
    },
-   "leanSeconds": 0.11,
+   "leanSeconds": 0.111,
    "status": "CLOSE",
    "primitiveCount": 21,
    "dropped": [
@@ -14144,7 +14144,7 @@
     "inkRecall": 0.0064,
     "exact": false
    },
-   "leanSeconds": 0.324,
+   "leanSeconds": 0.293,
    "status": "MISMATCH",
    "primitiveCount": 1862,
    "dropped": [
@@ -14175,7 +14175,7 @@
     "inkRecall": 0.0085,
     "exact": false
    },
-   "leanSeconds": 0.354,
+   "leanSeconds": 0.321,
    "status": "MISMATCH",
    "primitiveCount": 1905,
    "dropped": [
@@ -14207,7 +14207,7 @@
     "inkRecall": 0.013,
     "exact": false
    },
-   "leanSeconds": 0.305,
+   "leanSeconds": 0.287,
    "status": "MISMATCH",
    "primitiveCount": 1431,
    "dropped": [
@@ -14238,7 +14238,7 @@
     "inkRecall": 0.012,
     "exact": false
    },
-   "leanSeconds": 0.315,
+   "leanSeconds": 0.286,
    "status": "MISMATCH",
    "primitiveCount": 1416,
    "dropped": [
@@ -14269,7 +14269,7 @@
     "inkRecall": 0.0176,
     "exact": false
    },
-   "leanSeconds": 0.169,
+   "leanSeconds": 0.154,
    "status": "MISMATCH",
    "primitiveCount": 101,
    "dropped": [
@@ -14302,7 +14302,7 @@
     "inkRecall": 0.0285,
     "exact": false
    },
-   "leanSeconds": 0.175,
+   "leanSeconds": 0.158,
    "status": "MISMATCH",
    "primitiveCount": 113,
    "dropped": [
@@ -14334,7 +14334,7 @@
     "inkRecall": 0.0311,
     "exact": false
    },
-   "leanSeconds": 0.147,
+   "leanSeconds": 0.137,
    "status": "MISMATCH",
    "primitiveCount": 134,
    "dropped": [
@@ -14365,7 +14365,7 @@
     "inkRecall": 1.0,
     "exact": true
    },
-   "leanSeconds": 0.047,
+   "leanSeconds": 0.045,
    "status": "REFUSED",
    "reason": "negative root dimensions"
   },
@@ -14382,7 +14382,7 @@
     "inkRecall": 0.0266,
     "exact": false
    },
-   "leanSeconds": 0.162,
+   "leanSeconds": 0.148,
    "status": "MISMATCH",
    "primitiveCount": 105,
    "dropped": [
@@ -14419,7 +14419,7 @@
     "inkRecall": 0.0047,
     "exact": false
    },
-   "leanSeconds": 0.105,
+   "leanSeconds": 0.104,
    "status": "CLOSE",
    "primitiveCount": 31,
    "dropped": [
@@ -14450,7 +14450,7 @@
     "inkRecall": 0.0055,
     "exact": false
    },
-   "leanSeconds": 0.125,
+   "leanSeconds": 0.116,
    "status": "MISMATCH",
    "primitiveCount": 25,
    "dropped": [
@@ -14479,7 +14479,7 @@
     "inkRecall": 0.0094,
     "exact": false
    },
-   "leanSeconds": 0.157,
+   "leanSeconds": 0.144,
    "status": "MISMATCH",
    "primitiveCount": 63,
    "dropped": [
@@ -14513,7 +14513,7 @@
     "inkRecall": 0.0208,
     "exact": false
    },
-   "leanSeconds": 0.113,
+   "leanSeconds": 0.103,
    "status": "MISMATCH",
    "primitiveCount": 49,
    "dropped": [
@@ -14545,7 +14545,7 @@
     "inkRecall": 0.0036,
     "exact": false
    },
-   "leanSeconds": 0.11,
+   "leanSeconds": 0.108,
    "status": "MISMATCH",
    "primitiveCount": 48,
    "dropped": [
@@ -14578,7 +14578,7 @@
     "inkRecall": 0.0036,
     "exact": false
    },
-   "leanSeconds": 0.109,
+   "leanSeconds": 0.108,
    "status": "MISMATCH",
    "primitiveCount": 48,
    "dropped": [
@@ -14611,7 +14611,7 @@
     "inkRecall": 0.0042,
     "exact": false
    },
-   "leanSeconds": 0.137,
+   "leanSeconds": 0.13,
    "status": "MISMATCH",
    "primitiveCount": 86,
    "dropped": [
@@ -14644,7 +14644,7 @@
     "inkRecall": 0.0007,
     "exact": false
    },
-   "leanSeconds": 0.084,
+   "leanSeconds": 0.081,
    "status": "CLOSE",
    "primitiveCount": 18,
    "dropped": [
@@ -14675,7 +14675,7 @@
     "inkRecall": 0.0112,
     "exact": false
    },
-   "leanSeconds": 0.135,
+   "leanSeconds": 0.122,
    "status": "CLOSE",
    "primitiveCount": 54,
    "dropped": [
@@ -14707,7 +14707,7 @@
     "inkRecall": 0.0022,
     "exact": false
    },
-   "leanSeconds": 0.089,
+   "leanSeconds": 0.087,
    "status": "CLOSE",
    "primitiveCount": 19,
    "dropped": [
@@ -14738,7 +14738,7 @@
     "inkRecall": 0.0087,
     "exact": false
    },
-   "leanSeconds": 0.164,
+   "leanSeconds": 0.151,
    "status": "MISMATCH",
    "primitiveCount": 101,
    "dropped": [
@@ -14770,7 +14770,7 @@
     "inkRecall": 0.0174,
     "exact": false
    },
-   "leanSeconds": 0.188,
+   "leanSeconds": 0.171,
    "status": "MISMATCH",
    "primitiveCount": 43,
    "dropped": [
@@ -14801,7 +14801,7 @@
     "inkRecall": 0.0265,
     "exact": false
    },
-   "leanSeconds": 0.161,
+   "leanSeconds": 0.149,
    "status": "MISMATCH",
    "primitiveCount": 41,
    "dropped": [
@@ -14838,7 +14838,7 @@
     "inkRecall": 0.0178,
     "exact": false
    },
-   "leanSeconds": 0.149,
+   "leanSeconds": 0.148,
    "status": "MISMATCH",
    "primitiveCount": 41,
    "dropped": [
@@ -14875,7 +14875,7 @@
     "inkRecall": 0.0184,
     "exact": false
    },
-   "leanSeconds": 0.431,
+   "leanSeconds": 0.384,
    "status": "CLOSE",
    "primitiveCount": 19,
    "dropped": [
@@ -14906,7 +14906,7 @@
     "inkRecall": 0.0017,
     "exact": false
    },
-   "leanSeconds": 0.098,
+   "leanSeconds": 0.09,
    "status": "MISMATCH",
    "primitiveCount": 18,
    "dropped": [
@@ -14939,7 +14939,7 @@
     "inkRecall": 0.0014,
     "exact": false
    },
-   "leanSeconds": 0.091,
+   "leanSeconds": 0.086,
    "status": "MISMATCH",
    "primitiveCount": 19,
    "dropped": [
@@ -14973,7 +14973,7 @@
     "inkRecall": 0.0009,
     "exact": false
    },
-   "leanSeconds": 0.093,
+   "leanSeconds": 0.091,
    "status": "CLOSE",
    "primitiveCount": 19,
    "dropped": [
@@ -15005,7 +15005,7 @@
     "inkRecall": 0.0195,
     "exact": false
    },
-   "leanSeconds": 0.16,
+   "leanSeconds": 0.158,
    "status": "MISMATCH",
    "primitiveCount": 118,
    "dropped": [
@@ -15038,7 +15038,7 @@
     "inkRecall": 0.0142,
     "exact": false
    },
-   "leanSeconds": 0.097,
+   "leanSeconds": 0.092,
    "status": "MISMATCH",
    "primitiveCount": 25,
    "dropped": [
@@ -15071,7 +15071,7 @@
     "inkRecall": 0.003,
     "exact": false
    },
-   "leanSeconds": 0.089,
+   "leanSeconds": 0.085,
    "status": "MISMATCH",
    "primitiveCount": 27,
    "dropped": [
@@ -15104,7 +15104,7 @@
     "inkRecall": 0.0095,
     "exact": false
    },
-   "leanSeconds": 0.153,
+   "leanSeconds": 0.139,
    "status": "MISMATCH",
    "primitiveCount": 112,
    "dropped": [
@@ -15136,7 +15136,7 @@
     "inkRecall": 0.0088,
     "exact": false
    },
-   "leanSeconds": 0.239,
+   "leanSeconds": 0.216,
    "status": "MISMATCH",
    "primitiveCount": 58,
    "dropped": [
@@ -15174,7 +15174,7 @@
     "inkRecall": 0.0487,
     "exact": false
    },
-   "leanSeconds": 0.307,
+   "leanSeconds": 0.293,
    "status": "MISMATCH",
    "primitiveCount": 487,
    "dropped": [
@@ -15207,7 +15207,7 @@
     "inkRecall": 0.0501,
     "exact": false
    },
-   "leanSeconds": 0.296,
+   "leanSeconds": 0.268,
    "status": "MISMATCH",
    "primitiveCount": 311,
    "dropped": [
@@ -15240,7 +15240,7 @@
     "inkRecall": 0.0479,
     "exact": false
    },
-   "leanSeconds": 0.407,
+   "leanSeconds": 0.366,
    "status": "MISMATCH",
    "primitiveCount": 792,
    "dropped": [
@@ -15279,7 +15279,7 @@
     "inkRecall": 0.0373,
     "exact": false
    },
-   "leanSeconds": 0.377,
+   "leanSeconds": 0.378,
    "status": "MISMATCH",
    "primitiveCount": 744,
    "dropped": [
@@ -15313,7 +15313,7 @@
     "inkRecall": 0.0462,
     "exact": false
    },
-   "leanSeconds": 0.358,
+   "leanSeconds": 0.364,
    "status": "MISMATCH",
    "primitiveCount": 729,
    "dropped": [
@@ -15344,7 +15344,7 @@
     "inkRecall": 0.0123,
     "exact": false
    },
-   "leanSeconds": 0.225,
+   "leanSeconds": 0.206,
    "status": "MISMATCH",
    "primitiveCount": 278,
    "dropped": [
@@ -15375,7 +15375,7 @@
     "inkRecall": 0.0651,
     "exact": false
    },
-   "leanSeconds": 0.35,
+   "leanSeconds": 0.349,
    "status": "MISMATCH",
    "primitiveCount": 638,
    "dropped": [
@@ -15406,7 +15406,7 @@
     "inkRecall": 0.0427,
     "exact": false
    },
-   "leanSeconds": 0.653,
+   "leanSeconds": 0.588,
    "status": "MISMATCH",
    "primitiveCount": 1337,
    "dropped": [
@@ -15436,7 +15436,7 @@
     "inkRecall": 0.059,
     "exact": false
    },
-   "leanSeconds": 0.454,
+   "leanSeconds": 0.425,
    "status": "MISMATCH",
    "primitiveCount": 1083,
    "dropped": [
@@ -15467,7 +15467,7 @@
     "inkRecall": 0.0406,
     "exact": false
    },
-   "leanSeconds": 0.215,
+   "leanSeconds": 0.201,
    "status": "MISMATCH",
    "primitiveCount": 310,
    "dropped": [
@@ -15498,7 +15498,7 @@
     "inkRecall": 0.0362,
     "exact": false
    },
-   "leanSeconds": 0.319,
+   "leanSeconds": 0.292,
    "status": "MISMATCH",
    "primitiveCount": 500,
    "dropped": [
@@ -15533,7 +15533,7 @@
     "inkRecall": 0.0543,
     "exact": false
    },
-   "leanSeconds": 0.297,
+   "leanSeconds": 0.271,
    "status": "MISMATCH",
    "primitiveCount": 455,
    "dropped": [
@@ -15577,7 +15577,7 @@
     "inkRecall": 0.0434,
     "exact": false
    },
-   "leanSeconds": 0.33,
+   "leanSeconds": 0.299,
    "status": "MISMATCH",
    "primitiveCount": 542,
    "dropped": [
@@ -15608,7 +15608,7 @@
     "inkRecall": 0.0302,
     "exact": false
    },
-   "leanSeconds": 0.247,
+   "leanSeconds": 0.224,
    "status": "MISMATCH",
    "primitiveCount": 278,
    "dropped": [
@@ -15639,7 +15639,7 @@
     "inkRecall": 0.0311,
     "exact": false
    },
-   "leanSeconds": 0.272,
+   "leanSeconds": 0.249,
    "status": "MISMATCH",
    "primitiveCount": 346,
    "dropped": [
@@ -15674,7 +15674,7 @@
     "inkRecall": 0.0517,
     "exact": false
    },
-   "leanSeconds": 0.364,
+   "leanSeconds": 0.349,
    "status": "MISMATCH",
    "primitiveCount": 181,
    "dropped": [
@@ -15744,7 +15744,7 @@
     "inkRecall": 0.0161,
     "exact": false
    },
-   "leanSeconds": 0.211,
+   "leanSeconds": 0.19,
    "status": "MISMATCH",
    "primitiveCount": 89,
    "dropped": [
@@ -15779,7 +15779,7 @@
     "inkRecall": 0.0415,
     "exact": false
    },
-   "leanSeconds": 0.173,
+   "leanSeconds": 0.166,
    "status": "CLOSE",
    "primitiveCount": 132,
    "dropped": [
@@ -15812,7 +15812,7 @@
     "inkRecall": 0.0192,
     "exact": false
    },
-   "leanSeconds": 0.156,
+   "leanSeconds": 0.143,
    "status": "MISMATCH",
    "primitiveCount": 132,
    "dropped": [
@@ -15843,7 +15843,7 @@
     "inkRecall": 0.0167,
     "exact": false
    },
-   "leanSeconds": 0.239,
+   "leanSeconds": 0.218,
    "status": "MISMATCH",
    "primitiveCount": 150,
    "dropped": [
@@ -15879,7 +15879,7 @@
     "inkRecall": 0.0189,
     "exact": false
    },
-   "leanSeconds": 0.169,
+   "leanSeconds": 0.164,
    "status": "MISMATCH",
    "primitiveCount": 206,
    "dropped": [
@@ -15917,7 +15917,7 @@
     "inkRecall": 0.0252,
     "exact": false
    },
-   "leanSeconds": 0.172,
+   "leanSeconds": 0.171,
    "status": "MISMATCH",
    "primitiveCount": 295,
    "dropped": [
@@ -15950,7 +15950,7 @@
     "inkRecall": 0.0184,
     "exact": false
    },
-   "leanSeconds": 0.103,
+   "leanSeconds": 0.102,
    "status": "MISMATCH",
    "primitiveCount": 111,
    "dropped": [
@@ -15981,7 +15981,7 @@
     "inkRecall": 0.0261,
     "exact": false
    },
-   "leanSeconds": 0.092,
+   "leanSeconds": 0.091,
    "status": "MISMATCH",
    "primitiveCount": 26,
    "dropped": [
@@ -16013,7 +16013,7 @@
     "inkRecall": 0.0255,
     "exact": false
    },
-   "leanSeconds": 1.962,
+   "leanSeconds": 1.889,
    "status": "MISMATCH",
    "primitiveCount": 147,
    "dropped": [
@@ -16044,7 +16044,7 @@
     "inkRecall": 0.0108,
     "exact": false
    },
-   "leanSeconds": 0.141,
+   "leanSeconds": 0.13,
    "status": "CLOSE",
    "primitiveCount": 201,
    "dropped": [
@@ -16077,7 +16077,7 @@
     "inkRecall": 0.0213,
     "exact": false
    },
-   "leanSeconds": 0.107,
+   "leanSeconds": 0.106,
    "status": "CLOSE",
    "primitiveCount": 104,
    "dropped": [
@@ -16111,7 +16111,7 @@
     "inkRecall": 0.0168,
     "exact": false
    },
-   "leanSeconds": 0.125,
+   "leanSeconds": 0.123,
    "status": "CLOSE",
    "primitiveCount": 40,
    "dropped": [
@@ -16142,7 +16142,7 @@
     "inkRecall": 0.0092,
     "exact": false
    },
-   "leanSeconds": 2.359,
+   "leanSeconds": 2.214,
    "status": "MISMATCH",
    "primitiveCount": 49,
    "dropped": [
@@ -16173,7 +16173,7 @@
     "inkRecall": 0.0141,
     "exact": false
    },
-   "leanSeconds": 0.129,
+   "leanSeconds": 0.123,
    "status": "MISMATCH",
    "primitiveCount": 40,
    "dropped": [
@@ -16204,7 +16204,7 @@
     "inkRecall": 0.0254,
     "exact": false
    },
-   "leanSeconds": 0.22,
+   "leanSeconds": 0.2,
    "status": "CLOSE",
    "primitiveCount": 68,
    "dropped": [
@@ -16236,7 +16236,7 @@
     "inkRecall": 0.0347,
     "exact": false
    },
-   "leanSeconds": 0.23,
+   "leanSeconds": 0.216,
    "status": "CLOSE",
    "primitiveCount": 179,
    "dropped": [
@@ -16267,7 +16267,7 @@
     "inkRecall": 0.0412,
     "exact": false
    },
-   "leanSeconds": 0.239,
+   "leanSeconds": 0.221,
    "status": "CLOSE",
    "primitiveCount": 181,
    "dropped": [
@@ -16298,7 +16298,7 @@
     "inkRecall": 0.0107,
     "exact": false
    },
-   "leanSeconds": 0.12,
+   "leanSeconds": 0.114,
    "status": "MISMATCH",
    "primitiveCount": 85,
    "dropped": [
@@ -16331,7 +16331,7 @@
     "inkRecall": 0.0137,
     "exact": false
    },
-   "leanSeconds": 0.106,
+   "leanSeconds": 0.101,
    "status": "MISMATCH",
    "primitiveCount": 32,
    "dropped": [
@@ -16363,7 +16363,7 @@
     "inkRecall": 0.0177,
     "exact": false
    },
-   "leanSeconds": 0.113,
+   "leanSeconds": 0.105,
    "status": "MISMATCH",
    "primitiveCount": 42,
    "dropped": [
@@ -16397,7 +16397,7 @@
     "inkRecall": 0.0215,
     "exact": false
    },
-   "leanSeconds": 0.125,
+   "leanSeconds": 0.114,
    "status": "MISMATCH",
    "primitiveCount": 85,
    "dropped": [
@@ -16430,7 +16430,7 @@
     "inkRecall": 0.008,
     "exact": false
    },
-   "leanSeconds": 0.135,
+   "leanSeconds": 0.127,
    "status": "MISMATCH",
    "primitiveCount": 73,
    "dropped": [
@@ -16462,7 +16462,7 @@
     "inkRecall": 0.0182,
     "exact": false
    },
-   "leanSeconds": 0.175,
+   "leanSeconds": 0.164,
    "status": "MISMATCH",
    "primitiveCount": 178,
    "dropped": [
@@ -16497,7 +16497,7 @@
     "inkRecall": 0.0123,
     "exact": false
    },
-   "leanSeconds": 0.139,
+   "leanSeconds": 0.127,
    "status": "MISMATCH",
    "primitiveCount": 75,
    "dropped": [
@@ -16533,7 +16533,7 @@
     "inkRecall": 0.0098,
     "exact": false
    },
-   "leanSeconds": 0.137,
+   "leanSeconds": 0.125,
    "status": "MISMATCH",
    "primitiveCount": 75,
    "dropped": [
@@ -16565,7 +16565,7 @@
     "inkRecall": 0.0209,
     "exact": false
    },
-   "leanSeconds": 0.18,
+   "leanSeconds": 0.165,
    "status": "MISMATCH",
    "primitiveCount": 172,
    "dropped": [
@@ -16598,7 +16598,7 @@
     "inkRecall": 0.0179,
     "exact": false
    },
-   "leanSeconds": 0.111,
+   "leanSeconds": 0.104,
    "status": "MISMATCH",
    "primitiveCount": 44,
    "dropped": [
@@ -16630,7 +16630,7 @@
     "inkRecall": 0.0178,
     "exact": false
    },
-   "leanSeconds": 0.102,
+   "leanSeconds": 0.094,
    "status": "MISMATCH",
    "primitiveCount": 36,
    "dropped": [
@@ -16664,7 +16664,7 @@
     "inkRecall": 0.0154,
     "exact": false
    },
-   "leanSeconds": 0.12,
+   "leanSeconds": 0.113,
    "status": "MISMATCH",
    "primitiveCount": 71,
    "dropped": [
@@ -16696,7 +16696,7 @@
     "inkRecall": 0.0274,
     "exact": false
    },
-   "leanSeconds": 0.149,
+   "leanSeconds": 0.139,
    "status": "MISMATCH",
    "primitiveCount": 107,
    "dropped": [
@@ -16728,7 +16728,7 @@
     "inkRecall": 0.0266,
     "exact": false
    },
-   "leanSeconds": 0.147,
+   "leanSeconds": 0.137,
    "status": "MISMATCH",
    "primitiveCount": 99,
    "dropped": [
@@ -16760,7 +16760,7 @@
     "inkRecall": 0.0322,
     "exact": false
    },
-   "leanSeconds": 0.158,
+   "leanSeconds": 0.153,
    "status": "MISMATCH",
    "primitiveCount": 123,
    "dropped": [
@@ -16793,7 +16793,7 @@
     "inkRecall": 0.0332,
     "exact": false
    },
-   "leanSeconds": 0.274,
+   "leanSeconds": 0.264,
    "status": "MISMATCH",
    "primitiveCount": 368,
    "dropped": [
@@ -16828,7 +16828,7 @@
     "inkRecall": 0.029,
     "exact": false
    },
-   "leanSeconds": 0.146,
+   "leanSeconds": 0.143,
    "status": "MISMATCH",
    "primitiveCount": 132,
    "dropped": [
@@ -16860,7 +16860,7 @@
     "inkRecall": 0.0102,
     "exact": false
    },
-   "leanSeconds": 0.165,
+   "leanSeconds": 0.171,
    "status": "MISMATCH",
    "primitiveCount": 192,
    "dropped": [
@@ -16892,7 +16892,7 @@
     "inkRecall": 0.0274,
     "exact": false
    },
-   "leanSeconds": 0.144,
+   "leanSeconds": 0.138,
    "status": "MISMATCH",
    "primitiveCount": 107,
    "dropped": [
@@ -16924,7 +16924,7 @@
     "inkRecall": 0.0112,
     "exact": false
    },
-   "leanSeconds": 0.12,
+   "leanSeconds": 0.11,
    "status": "CLOSE",
    "primitiveCount": 52,
    "dropped": [
@@ -16957,7 +16957,7 @@
     "inkRecall": 0.0193,
     "exact": false
    },
-   "leanSeconds": 0.121,
+   "leanSeconds": 0.113,
    "status": "MISMATCH",
    "primitiveCount": 44,
    "dropped": [
@@ -16989,7 +16989,7 @@
     "inkRecall": 0.0099,
     "exact": false
    },
-   "leanSeconds": 0.096,
+   "leanSeconds": 0.095,
    "status": "MISMATCH",
    "primitiveCount": 35,
    "dropped": [
@@ -17021,7 +17021,7 @@
     "inkRecall": 0.0298,
     "exact": false
    },
-   "leanSeconds": 0.158,
+   "leanSeconds": 0.156,
    "status": "MISMATCH",
    "primitiveCount": 125,
    "dropped": [
@@ -17121,7 +17121,7 @@
     "inkRecall": 0.0212,
     "exact": false
    },
-   "leanSeconds": 0.217,
+   "leanSeconds": 0.205,
    "status": "MISMATCH",
    "primitiveCount": 68,
    "dropped": [
@@ -17157,7 +17157,7 @@
     "inkRecall": 0.0201,
     "exact": false
    },
-   "leanSeconds": 0.131,
+   "leanSeconds": 0.12,
    "status": "MISMATCH",
    "primitiveCount": 59,
    "dropped": [
@@ -17189,7 +17189,7 @@
     "inkRecall": 0.0164,
     "exact": false
    },
-   "leanSeconds": 0.09,
+   "leanSeconds": 0.089,
    "status": "MISMATCH",
    "primitiveCount": 16,
    "dropped": [
@@ -17222,7 +17222,7 @@
     "inkRecall": 0.0106,
     "exact": false
    },
-   "leanSeconds": 0.169,
+   "leanSeconds": 0.16,
    "status": "MISMATCH",
    "primitiveCount": 93,
    "dropped": [
@@ -17258,7 +17258,7 @@
     "inkRecall": 0.0252,
     "exact": false
    },
-   "leanSeconds": 0.179,
+   "leanSeconds": 0.162,
    "status": "MISMATCH",
    "primitiveCount": 163,
    "dropped": [
@@ -17296,7 +17296,7 @@
     "inkRecall": 0.0096,
     "exact": false
    },
-   "leanSeconds": 0.175,
+   "leanSeconds": 0.159,
    "status": "MISMATCH",
    "primitiveCount": 90,
    "dropped": [
@@ -17335,7 +17335,7 @@
     "inkRecall": 0.02,
     "exact": false
    },
-   "leanSeconds": 0.116,
+   "leanSeconds": 0.108,
    "status": "MISMATCH",
    "primitiveCount": 41,
    "dropped": [
@@ -17367,7 +17367,7 @@
     "inkRecall": 0.0163,
     "exact": false
    },
-   "leanSeconds": 0.124,
+   "leanSeconds": 0.114,
    "status": "MISMATCH",
    "primitiveCount": 38,
    "dropped": [
@@ -17399,7 +17399,7 @@
     "inkRecall": 0.0227,
     "exact": false
    },
-   "leanSeconds": 0.148,
+   "leanSeconds": 0.132,
    "status": "MISMATCH",
    "primitiveCount": 95,
    "dropped": [
@@ -17431,7 +17431,7 @@
     "inkRecall": 0.0188,
     "exact": false
    },
-   "leanSeconds": 0.116,
+   "leanSeconds": 0.11,
    "status": "MISMATCH",
    "primitiveCount": 46,
    "dropped": [
@@ -17463,7 +17463,7 @@
     "inkRecall": 0.0175,
     "exact": false
    },
-   "leanSeconds": 0.133,
+   "leanSeconds": 0.131,
    "status": "MISMATCH",
    "primitiveCount": 108,
    "dropped": [
@@ -17496,7 +17496,7 @@
     "inkRecall": 0.0312,
     "exact": false
    },
-   "leanSeconds": 0.246,
+   "leanSeconds": 0.245,
    "status": "MISMATCH",
    "primitiveCount": 203,
    "dropped": [
@@ -17567,7 +17567,7 @@
     "inkRecall": 0.0115,
     "exact": false
    },
-   "leanSeconds": 0.28,
+   "leanSeconds": 0.269,
    "status": "MISMATCH",
    "primitiveCount": 172,
    "dropped": [
@@ -17674,7 +17674,7 @@
     "inkRecall": 0.0226,
     "exact": false
    },
-   "leanSeconds": 0.208,
+   "leanSeconds": 0.191,
    "status": "MISMATCH",
    "primitiveCount": 148,
    "dropped": [
@@ -17722,7 +17722,7 @@
     "inkRecall": 0.0208,
     "exact": false
    },
-   "leanSeconds": 0.196,
+   "leanSeconds": 0.182,
    "status": "MISMATCH",
    "primitiveCount": 120,
    "dropped": [
@@ -17770,7 +17770,7 @@
     "inkRecall": 0.0208,
     "exact": false
    },
-   "leanSeconds": 0.146,
+   "leanSeconds": 0.134,
    "status": "MISMATCH",
    "primitiveCount": 89,
    "dropped": [
@@ -17804,7 +17804,7 @@
     "inkRecall": 0.0103,
     "exact": false
    },
-   "leanSeconds": 0.118,
+   "leanSeconds": 0.111,
    "status": "MISMATCH",
    "primitiveCount": 49,
    "dropped": [
@@ -17836,7 +17836,7 @@
     "inkRecall": 0.038,
     "exact": false
    },
-   "leanSeconds": 0.186,
+   "leanSeconds": 0.18,
    "status": "MISMATCH",
    "primitiveCount": 205,
    "dropped": [
@@ -17868,7 +17868,7 @@
     "inkRecall": 0.0134,
     "exact": false
    },
-   "leanSeconds": 0.117,
+   "leanSeconds": 0.107,
    "status": "MISMATCH",
    "primitiveCount": 44,
    "dropped": [
@@ -17900,7 +17900,7 @@
     "inkRecall": 0.0076,
     "exact": false
    },
-   "leanSeconds": 0.193,
+   "leanSeconds": 0.176,
    "status": "MISMATCH",
    "primitiveCount": 39,
    "dropped": [
@@ -17932,7 +17932,7 @@
     "inkRecall": 0.0137,
     "exact": false
    },
-   "leanSeconds": 0.42,
+   "leanSeconds": 0.375,
    "status": "MISMATCH",
    "primitiveCount": 68,
    "dropped": [
@@ -17968,7 +17968,7 @@
     "inkRecall": 0.0348,
     "exact": false
    },
-   "leanSeconds": 0.187,
+   "leanSeconds": 0.169,
    "status": "MISMATCH",
    "primitiveCount": 128,
    "dropped": [
@@ -18009,7 +18009,7 @@
     "inkRecall": 0.0389,
     "exact": false
    },
-   "leanSeconds": 0.173,
+   "leanSeconds": 0.163,
    "status": "MISMATCH",
    "primitiveCount": 76,
    "dropped": [
@@ -18050,7 +18050,7 @@
     "inkRecall": 0.0404,
     "exact": false
    },
-   "leanSeconds": 0.224,
+   "leanSeconds": 0.205,
    "status": "MISMATCH",
    "primitiveCount": 83,
    "dropped": [
@@ -18101,7 +18101,7 @@
     "inkRecall": 0.0235,
     "exact": false
    },
-   "leanSeconds": 0.146,
+   "leanSeconds": 0.137,
    "status": "MISMATCH",
    "primitiveCount": 74,
    "dropped": [
@@ -18135,7 +18135,7 @@
     "inkRecall": 0.0294,
     "exact": false
    },
-   "leanSeconds": 0.15,
+   "leanSeconds": 0.137,
    "status": "MISMATCH",
    "primitiveCount": 69,
    "dropped": [
@@ -18169,7 +18169,7 @@
     "inkRecall": 0.024,
     "exact": false
    },
-   "leanSeconds": 0.152,
+   "leanSeconds": 0.133,
    "status": "MISMATCH",
    "primitiveCount": 65,
    "dropped": [
@@ -18202,7 +18202,7 @@
     "inkRecall": 0.0243,
     "exact": false
    },
-   "leanSeconds": 0.131,
+   "leanSeconds": 0.132,
    "status": "MISMATCH",
    "primitiveCount": 65,
    "dropped": [
@@ -18273,7 +18273,7 @@
     "inkRecall": 0.0263,
     "exact": false
    },
-   "leanSeconds": 0.142,
+   "leanSeconds": 0.132,
    "status": "MISMATCH",
    "primitiveCount": 43,
    "dropped": [
@@ -18305,7 +18305,7 @@
     "inkRecall": 0.0128,
     "exact": false
    },
-   "leanSeconds": 0.148,
+   "leanSeconds": 0.136,
    "status": "MISMATCH",
    "primitiveCount": 62,
    "dropped": [
@@ -18337,7 +18337,7 @@
     "inkRecall": 0.0014,
     "exact": false
    },
-   "leanSeconds": 0.147,
+   "leanSeconds": 0.135,
    "status": "MISMATCH",
    "primitiveCount": 68,
    "dropped": [
@@ -18369,7 +18369,7 @@
     "inkRecall": 0.0008,
     "exact": false
    },
-   "leanSeconds": 0.155,
+   "leanSeconds": 0.142,
    "status": "MISMATCH",
    "primitiveCount": 67,
    "dropped": [
@@ -18401,7 +18401,7 @@
     "inkRecall": 0.0377,
     "exact": false
    },
-   "leanSeconds": 0.155,
+   "leanSeconds": 0.141,
    "status": "MISMATCH",
    "primitiveCount": 56,
    "dropped": [
@@ -18433,7 +18433,7 @@
     "inkRecall": 0.0443,
     "exact": false
    },
-   "leanSeconds": 0.134,
+   "leanSeconds": 0.124,
    "status": "MISMATCH",
    "primitiveCount": 51,
    "dropped": [
@@ -18465,7 +18465,7 @@
     "inkRecall": 0.045,
     "exact": false
    },
-   "leanSeconds": 0.141,
+   "leanSeconds": 0.127,
    "status": "MISMATCH",
    "primitiveCount": 53,
    "dropped": [
@@ -18497,7 +18497,7 @@
     "inkRecall": 0.0617,
     "exact": false
    },
-   "leanSeconds": 0.138,
+   "leanSeconds": 0.126,
    "status": "MISMATCH",
    "primitiveCount": 51,
    "dropped": [
@@ -18529,7 +18529,7 @@
     "inkRecall": 0.0423,
     "exact": false
    },
-   "leanSeconds": 0.14,
+   "leanSeconds": 0.125,
    "status": "MISMATCH",
    "primitiveCount": 50,
    "dropped": [
@@ -18561,7 +18561,7 @@
     "inkRecall": 0.041,
     "exact": false
    },
-   "leanSeconds": 0.135,
+   "leanSeconds": 0.126,
    "status": "MISMATCH",
    "primitiveCount": 54,
    "dropped": [
@@ -18593,7 +18593,7 @@
     "inkRecall": 0.0418,
     "exact": false
    },
-   "leanSeconds": 0.177,
+   "leanSeconds": 0.165,
    "status": "MISMATCH",
    "primitiveCount": 77,
    "dropped": [
@@ -18625,7 +18625,7 @@
     "inkRecall": 0.0481,
     "exact": false
    },
-   "leanSeconds": 0.286,
+   "leanSeconds": 0.26,
    "status": "MISMATCH",
    "primitiveCount": 72,
    "dropped": [
@@ -18657,7 +18657,7 @@
     "inkRecall": 0.0624,
     "exact": false
    },
-   "leanSeconds": 0.127,
+   "leanSeconds": 0.121,
    "status": "MISMATCH",
    "primitiveCount": 31,
    "dropped": [
@@ -18689,7 +18689,7 @@
     "inkRecall": 0.0383,
     "exact": false
    },
-   "leanSeconds": 0.133,
+   "leanSeconds": 0.124,
    "status": "MISMATCH",
    "primitiveCount": 39,
    "dropped": [
@@ -18721,7 +18721,7 @@
     "inkRecall": 0.0347,
     "exact": false
    },
-   "leanSeconds": 0.282,
+   "leanSeconds": 0.256,
    "status": "MISMATCH",
    "primitiveCount": 167,
    "dropped": [
@@ -18758,7 +18758,7 @@
     "inkRecall": 0.0205,
     "exact": false
    },
-   "leanSeconds": 0.168,
+   "leanSeconds": 0.167,
    "status": "MISMATCH",
    "primitiveCount": 30,
    "dropped": [
@@ -18793,7 +18793,7 @@
     "inkRecall": 0.0135,
     "exact": false
    },
-   "leanSeconds": 0.139,
+   "leanSeconds": 0.138,
    "status": "MISMATCH",
    "primitiveCount": 60,
    "dropped": [
@@ -18827,7 +18827,7 @@
     "inkRecall": 0.0222,
     "exact": false
    },
-   "leanSeconds": 0.368,
+   "leanSeconds": 0.337,
    "status": "MISMATCH",
    "primitiveCount": 234,
    "dropped": [
@@ -18859,7 +18859,7 @@
     "inkRecall": 0.0139,
     "exact": false
    },
-   "leanSeconds": 0.333,
+   "leanSeconds": 0.306,
    "status": "MISMATCH",
    "primitiveCount": 160,
    "dropped": [
@@ -18891,7 +18891,7 @@
     "inkRecall": 0.0079,
     "exact": false
    },
-   "leanSeconds": 0.141,
+   "leanSeconds": 0.14,
    "status": "MISMATCH",
    "primitiveCount": 72,
    "dropped": [
@@ -18923,7 +18923,7 @@
     "inkRecall": 0.0003,
     "exact": false
    },
-   "leanSeconds": 0.101,
+   "leanSeconds": 0.1,
    "status": "MISMATCH",
    "primitiveCount": 34,
    "dropped": [
@@ -18956,7 +18956,7 @@
     "inkRecall": 0.0006,
     "exact": false
    },
-   "leanSeconds": 0.108,
+   "leanSeconds": 0.104,
    "status": "MISMATCH",
    "primitiveCount": 34,
    "dropped": [
@@ -18989,7 +18989,7 @@
     "inkRecall": 0.0,
     "exact": false
    },
-   "leanSeconds": 0.118,
+   "leanSeconds": 0.116,
    "status": "MISMATCH",
    "primitiveCount": 43,
    "dropped": [
