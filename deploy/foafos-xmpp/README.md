@@ -52,9 +52,10 @@ node smoke.mjs ~/.config/foafos-xmpp-fly/accounts --idle 240
 
 - `xmpp-serve` closes a new connection above 200 open connections, a connection with no bound resource after 30 seconds,
   and a client with more than 8 MiB queued. Fly also stops at 256 connections for each port.
-- No limit per address and no login throttle (https://github.com/danbri/factoidal-core/pull/337 is a draft). The passwords
-  are 192 random bits, which is the defence against guessing.
-- The server keeps passwords in clear in machine memory and in a Fly secret. One SCRAM salt serves all accounts.
+- Since 0.33.0 failed logins have a limit per account name and one per client address. Behind Fly's proxy every client has
+  the proxy's address, so run with `--no-address-limit` in `XMPP_EXTRA_ARGS`: the limit then counts per account name only.
+  The passwords are 192 random bits, which is the main defence against guessing.
+- The server keeps passwords in clear in machine memory and in a Fly secret. Each account has its own SCRAM salt.
 - Any account can join any room unless the room is on a `--muc-members` list, or it is banned there. Rooms have no history.
 - Room owners: with no `--muc-owners`, the first occupant of a room is its owner, and can kick and ban there. With
   `--muc-owners FILE` only the accounts in the file are owners, and bans and grants survive a restart (the state key seals
