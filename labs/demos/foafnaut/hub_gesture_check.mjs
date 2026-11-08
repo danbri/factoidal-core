@@ -8,6 +8,9 @@
 // - With the op: a swipe from the left edge goes back, from the right edge forward; a
 //   trackpad swipe across (wheel deltaX) goes back and forward, a vertical one does not.
 // - A drag in the middle still flings.
+// - The address menu (WebShell.menuActions): with the op, a finger's tap on the address bar
+//   gives the page Lean's action table; Copy address writes the page's address to the
+//   clipboard and Paste and go goes to the address on it. Without the op, no table.
 //
 //   node labs/demos/foafnaut/hub_gesture_check.mjs [--runtime DIR] [--only published|local]
 // CHROME=/path/to/chrome overrides the browser. Exit 1 on a failure; NOT RUN with no browser.
@@ -59,6 +62,7 @@ try{
     const {sessionId}=await send('Target.attachToTarget',{targetId,flatten:true});
     const s=(m,p)=>send(m,p,sessionId);
     await s('Page.enable');await s('Runtime.enable');
+    await send('Browser.grantPermissions',{origin,permissions:['clipboardReadWrite','clipboardSanitizedWrite']});
     await s('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:true});
     await s('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:5});
     await s('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{let f;window.__frames=[];window.__opened=[];window.open=u=>{window.__opened.push(String(u));return {};};
@@ -133,6 +137,25 @@ try{
     await step('trackpad vertical',()=>page.wheel(200,400,Array.from({length:10},()=>[-20,60])),sitemap);
     // 9. A fling after a drag in the middle still glides on.
     await step('fling',()=>page.drag(200,700,500,6,16),sitemap,(b,a)=>{if(a.scroll-b.scroll<240)fail(run.name,'no fling after a drag:',b.scroll,'->',a.scroll);});
+    // 10. The address menu: a finger's tap on the bar (navigation row, right of back and reload).
+    const table=async()=>{for(let i=0;i<30;i++){const a=await page.evaluate('window.foafnautActions??[]');if(a.length)return a;await sleep(100);}return [];};
+    await page.tap(150,18);
+    const menu=await table();
+    console.log(JSON.stringify({run:run.name,step:'address menu',actions:menu.map(a=>a.action)}));
+    if(has&&menu.length!==2)fail(run.name,'no address menu after a tap on the bar');
+    if(!has&&menu.length)fail(run.name,'an engine without the op showed the address menu');
+    if(has&&menu.length===2){
+      const centre=r=>[Math.round(r[0]+r[2]/2),Math.round(r[1]+r[3]/2)];
+      await page.evaluate("navigator.clipboard.writeText('-')");
+      await page.tap(...centre(menu.find(a=>a.action==='copy').rect));await sleep(400);
+      const copied=await page.evaluate('navigator.clipboard.readText()');
+      if(copied!==sitemap)fail(run.name,'Copy address wrote',copied,'not',sitemap);
+      await page.evaluate(`navigator.clipboard.writeText(${JSON.stringify(index)})`);
+      await page.tap(150,18);
+      const again=await table();
+      if(again.length!==2)fail(run.name,'no address menu on the second tap');
+      else await step('paste and go',()=>page.tap(...centre(again.find(a=>a.action==='paste').rect)),index);
+    }
     await page.close();
   }
 }catch(error){fail(String(error?.stack??error));}

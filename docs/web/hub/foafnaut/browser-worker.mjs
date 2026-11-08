@@ -547,6 +547,44 @@ function edit(action,text=''){
   field=next;request();
   if(clipboard)post({type:'clipboard',text:clipboard});
 }
+// The address menu: "Copy address" and "Paste and go", drawn by Lean in the chrome. Lean
+// says when a press opens it (shellHit `menu`) and closes it on any other edit. Each frame
+// carries the menu's action table for the page, which runs the action inside the tap's
+// pointerup, since the clipboard wants a user gesture there; then it tells this loop.
+let menuOps=false;
+function openMenu(){
+  if(!menuOps)return;
+  if(!focused)focusAddress();
+  edit('menu');
+}
+function closeMenu(){if(field.menu)edit('closeMenu');}
+const menuControl=control=>control==='copyAddress'||control==='pasteGo';
+/** The action table of the frame about to be posted: none with the menu closed. */
+function menuTable(){
+  if(!menuOps||!field.menu)return undefined;
+  try{
+    const actions=call('',{op:'shellActions',shell:shell(),width}).actions;
+    return actions.length?actions:undefined;
+  }catch{return undefined;}
+}
+/** What the page did with a menu button: Copy wrote the text; Paste and go read `text`. */
+function menuDone(data){
+  if(data.action!=='paste'){closeMenu();return;}
+  const {go,clipboard:_,...next}=call('',{op:'shellEdit',shell:shell(),action:'pasteGo',text:data.text??''});
+  field=next;
+  if(go)goTo(go);else request();
+}
+// An address from the bar (Enter, or Paste and go): Lean routes it as typed.
+function goTo(target){
+  leaveAddress();
+  const route=router.address({...site,address:target,base:doc.baseURL||doc.url});
+  if(route)follow(route);else legacyGo(call('',{op:'shellSubmit',address:target}));
+}
+function menuPress(data,how){
+  if(!menuOps)return;
+  const answer=call('',{op:'shellHit',shell:shell(),x:data.x,y:data.y,width,how,touch:data.pointer==='touch'});
+  if(answer.menu)openMenu();
+}
 function command(id,text=''){
   const answer=call('',{op:'command',command:id,textScalePercent:percent,history:history.history,focused});
   if(answer.target==='address'){if(!focused)focusAddress();edit(answer.action,text);return;}
@@ -838,7 +876,7 @@ async function draw(){
       }
       const done=performance.now();incoming=undefined;
       phase('firstFrame');
-      post({type:'frame',width,height,title:shown.title,rgba:rgba?.buffer,presented:!rgba,inputAt,
+      post({type:'frame',width,height,title:shown.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
         stats:{path,layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
           pixelHash,primitives:frame.primitiveCount,url:shown.url,address:field.address,scroll,tabs:tabs.length,theme,percent,
           leanRenders:leanRenders-calls,leanCalls,chromeRenders,collapse:foldNow(),rows:Math.round(frame.data.length/4),...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{}),
@@ -876,7 +914,7 @@ async function shift(){
     const pixels=await layerSurface.composite(width,height,offset);
     shownOffset=offset;
     const done=performance.now(),rgba=surfaceCanvas?undefined:pixels;
-    post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,inputAt,
+    post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
       stats:{path:surfaceCanvas?'shift':'shift-readback',layoutMs:0,drawMs:Math.round(done-start),totalMs:Math.round(done-start),pixelHash:pixels?L.hashPixels(pixels):undefined,
         primitives:0,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent,leanRenders:0,leanCalls,chromeRenders,collapse:fold,chromeMs,top:current.answer.layers.top,rows:Math.round(current.answer.page.data.length/4),bandTop:current.answer.layers.bandTop,offset}},rgba?[rgba.buffer]:[]);
   }catch(error){
@@ -943,7 +981,9 @@ async function start(data){
   // An engine from before these ops (issue 1268) has no key table and no address edits.
   try{post({type:'keys',table:call('',{op:'keyTable',platform:data.platform==='mac'?'mac':'other'})});}catch{/* older engine */}
   // Back and forward swipes (WebGesture.lean): asked once; an engine without the op has none.
-  try{gestures=call('',{op:'gesture',action:'info'});post({type:'gestures',edgeZone:gestures.edgeZone});}catch{gestures=undefined;}
+  try{gestures=call('',{op:'gesture',action:'info'});post({type:'gestures',edgeZone:gestures.edgeZone,holdMs:gestures.actions?.includes('hold')?gestures.holdMs:0});}catch{gestures=undefined;}
+  // The address menu (WebShell.menuActions): asked once; an engine without the op has none.
+  try{menuOps=Array.isArray(call('',{op:'shellActions',shell:{},width:1}).actions);}catch{menuOps=false;}
   ready=true;
   openState().then(()=>{if(first!==home&&!first.title?.startsWith('Page refused'))browserState?.visit(first.url,first.title??'',homeURL).catch(()=>{});})
     .catch(error=>{stateReason=String(error.message??error);});
@@ -1113,8 +1153,15 @@ function handle(data){
 function apply(data){
   if(data.type==='visit'){visit(data.address);return;}
   if(data.type==='resize'){({width,height,scale}=data);folded=Math.min(folded,foldRows());if(doc.graph)graphInput(1,width,height);request();}
-  if(data.type==='scroll')scrollBy(data.amount);
+  if(data.type==='scroll'){closeMenu();scrollBy(data.amount);}
   if(data.type==='swipe')swipe(data);
+  // A long press (WebGesture hold, asked when the page's timer ran out) or a right click.
+  if(data.type==='hold'&&gestures?.actions?.includes('hold')){
+    const phase=call('',{op:'gesture',action:'hold',startX:data.startX,startY:data.startY,x:data.cssX,y:data.cssY,elapsed:data.elapsed}).phase;
+    if(phase==='hold')menuPress(data,'hold');
+  }
+  if(data.type==='context')menuPress(data,'context');
+  if(data.type==='menu')menuDone(data);
   if(data.type==='wheel')wheel(data);
   if(data.type==='command')command(data.command);
   // A touch pinch: the zoom at its start times the finger ratio, in steps of 5 percent,
@@ -1128,8 +1175,12 @@ function apply(data){
   }
   if(data.type==='paste')command(14,data.text);
   if(data.type==='press'){
-    const control=call('',{op:'shellHit',shell:shell(),x:data.x,y:data.y,width}).control;
-    if(control)chrome(control);else{if(focused)leaveAddress();if(doc.graph)graphInput(2,data.x,data.y);}
+    const answer=call('',{op:'shellHit',shell:shell(),x:data.x,y:data.y,width,how:'tap',touch:data.pointer==='touch'});
+    const control=answer.control;
+    // A menu button acts when the tap lifts on it, in the page (menuDone).
+    if(control&&menuControl(control))return;
+    if(control){if(control!=='address')closeMenu();chrome(control);if(control==='address'&&answer.menu)openMenu();}
+    else{if(focused)leaveAddress();if(doc.graph)graphInput(2,data.x,data.y);}
   }
   if(data.type==='move'&&doc.graph&&!focused)graphInput(3,data.x,data.y);
   if(data.type==='release'&&doc.graph){graphInput(4,data.x,data.y);return;}
@@ -1141,9 +1192,7 @@ function apply(data){
   }
   if(data.type==='text'&&focused){const {clipboard:_,...next}=call('',{op:'shellText',shell:shell(),text:data.text});field=next;request();}
   if(data.type==='key'&&focused){
-    if(data.key===36){const target=field.address;leaveAddress();
-      const route=router.address({...site,address:target,base:doc.baseURL||doc.url});
-      if(route)follow(route);else legacyGo(call('',{op:'shellSubmit',address:target}));}
+    if(data.key===36)goTo(field.address);
     else if(data.key===53)leaveAddress();
     else{field=call('',{op:'shellKey',shell:shell(),key:data.key,modifiers:data.modifiers??0});request();}
   }

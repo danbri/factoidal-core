@@ -51,7 +51,12 @@ const modifiers=event=>(event.shiftKey?1:0)|(event.metaKey?2:0)|(event.altKey?4:
 const now=()=>performance.timeOrigin+performance.now();
 const send=message=>worker.postMessage(message.type==='start'||message.type==='hello'?message:{...message,t:now()});
 window.foafnautThread=worker instanceof Worker?'worker':'page';
-let focused=false,moved=undefined,edgeZone=0,swipeId=0;
+let focused=false,moved=undefined,edgeZone=0,swipeId=0,holdMs=0;
+// The address menu's action table for the frame on screen (WebShell.menuActions): each
+// button's rectangle in CSS px and what a tap on it does. The page keeps only the table of
+// the last frame, and drops it on a scroll and on navigation.
+let actions=[];
+const dropActions=()=>{actions=[];window.foafnautActions=actions;};
 // Lean's key table for a host with no menu (WebHistory.keyTable): Command on a Mac, Control elsewhere.
 const mac=/Mac|iPhone|iPad/.test(navigator.platform||navigator.userAgent);
 let keyTable=[];
@@ -64,6 +69,7 @@ worker.onmessage=({data})=>{
       canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data.rgba),data.width,data.height),0,0);
     }
     document.title=data.title?`foafnaut - ${data.title}`:'foafnaut';
+    actions=data.actions??[];window.foafnautActions=actions;
     const latency=data.inputAt===undefined?undefined:Math.round(now()-data.inputAt);
     window.foafnautFrame={...data.stats,inputToFrameMs:latency};
     if(statsLine&&showStats){
@@ -104,7 +110,7 @@ worker.onmessage=({data})=>{
   if(data.type==='edge')fling.edge(data.direction);
   // Back and forward swipes: Lean's edge zone, sent once if the engine has them; and Lean's
   // phase for the touch under way (WebGesture.lean).
-  if(data.type==='gestures')edgeZone=data.edgeZone;
+  if(data.type==='gestures'){edgeZone=data.edgeZone;holdMs=data.holdMs??0;}
   if(data.type==='swipe'&&moved?.edge?.id===data.id)swipeAnswer(data.phase);
   if(data.type==='error'){note.hidden=false;note.textContent=data.error;}
   if(data.type==='print-status'&&data.preparing){note.textContent='Preparing pages\u2026';note.hidden=false;}
@@ -173,7 +179,7 @@ function askToLeave(){
   note.classList.add('ask');note.hidden=false;stay.focus({preventScroll:true});
 }
 addEventListener('popstate',event=>{
-  fling.stop();
+  fling.stop();dropActions();
   if(event.state?.foafnaut==='guard'){askToLeave();return;}
   fromHost=true;send({type:'visit',address:hubAddress()||new URL('pages/index.html',location.href).href});
 });
@@ -181,9 +187,44 @@ addEventListener('popstate',event=>{
 canvas.addEventListener('mousedown',event=>event.preventDefault());
 // A long press or a right click is the inner browser's, not the outer page's menu; a touch
 // drag never scrolls or bounces the outer page (iOS ignores overscroll-behavior on body).
-canvas.addEventListener('contextmenu',event=>event.preventDefault());
+// A right click (or a long press where the browser reports one) goes to Lean, which may open the
+// address menu (op shellHit, `how` context).
+canvas.addEventListener('contextmenu',event=>{event.preventDefault();send({type:'context',pointer:event.pointerType??'mouse',...point(event)});});
 for(const name of ['touchstart','touchmove'])canvas.addEventListener(name,event=>{if(event.cancelable)event.preventDefault();},{passive:false});
-addEventListener('selectstart',event=>{if(event.target!==keys)event.preventDefault();});
+addEventListener('selectstart',event=>{if(event.target!==keys&&event.target!==copyArea)event.preventDefault();});
+// Copy address and Paste and go. The table came from Lean with the frame; the page only
+// runs it, inside the pointerup of a tap that went down and came up on the button, which
+// is the user gesture the clipboard asks for (WebKit above all).
+let copyArea;
+const inside=(rect,x,y)=>x>=rect[0]&&x<rect[0]+rect[2]&&y>=rect[1]&&y<rect[1]+rect[3];
+function tell(text){note.textContent=text;note.hidden=false;clearTimeout(note.hideTimer);note.hideTimer=setTimeout(()=>{note.hidden=true;},6000);}
+// The older way, in the same gesture: a hidden text field, selected, and the copy command.
+function copyByCommand(text){
+  copyArea=document.createElement('textarea');
+  copyArea.value=text;copyArea.setAttribute('readonly','');
+  copyArea.style.cssText='position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;border:0;padding:0;font-size:16px;-webkit-user-select:text;user-select:text';
+  document.body.append(copyArea);copyArea.select();copyArea.setSelectionRange(0,text.length);
+  let ok=false;try{ok=document.execCommand('copy');}catch{ok=false;}
+  copyArea.remove();copyArea=undefined;
+  if(focused)keys.focus({preventScroll:true});
+  return ok;
+}
+function runAction(action){
+  window.foafnautLastAction=action.action;
+  if(action.action==='copy'){
+    const text=action.text??'';
+    const done=ok=>{send({type:'menu',action:'copy',ok});if(!ok)tell('The browser did not allow writing to the clipboard.');};
+    if(navigator.clipboard?.writeText)navigator.clipboard.writeText(text).then(()=>done(true),()=>done(copyByCommand(text)));
+    else done(copyByCommand(text));
+  }else if(action.action==='paste'){
+    // On iPhone and iPad the system shows its own Paste button first.
+    if(!navigator.clipboard?.readText){tell('This browser does not let a page read the clipboard: paste into the address bar with the keyboard.');send({type:'menu',action:'paste',text:''});return;}
+    navigator.clipboard.readText().then(text=>send({type:'menu',action:'paste',text}),
+      ()=>{tell('The browser did not allow reading the clipboard.');send({type:'menu',action:'paste',text:''});});
+  }
+}
+/** The action under a tap that went down at (startX,startY) and lifted at (x,y), CSS px. */
+const actionAt=(startX,startY,x,y)=>actions.find(action=>inside(action.rect,startX,startY)&&inside(action.rect,x,y));
 // Two fingers on a touch screen are a pinch: Lean's text zoom, as Ctrl+wheel is on a
 // trackpad. The page sends the ratio of finger distances since the pinch began, and the
 // worker sets the zoom from it. A pinch ends any press, without a click.
@@ -251,17 +292,29 @@ canvas.addEventListener('pointerdown',event=>{
   if(touches.size===2&&!pinch){
     if(moved&&!moved.stopper)send({type:'release',scrolled:true,...point(event)});
     if(moved?.edge?.asked)send({type:'swipe',phase:'cancel'});
+    if(moved)clearTimeout(moved.holdTimer);
     moved=undefined;pinch={gap:Math.max(1,fingerGap())};send({type:'pinch',phase:'start'});return;
   }
   if(pinch)return;
-  moved={y:event.clientY,startX:event.clientX,startY:event.clientY,scrolled:false,stopper,samples:[{t:event.timeStamp,x:event.clientX,y:event.clientY}],
+  moved={y:event.clientY,startX:event.clientX,startY:event.clientY,lastX:event.clientX,lastY:event.clientY,scrolled:false,stopper,samples:[{t:event.timeStamp,x:event.clientX,y:event.clientY}],
     // A touch that starts in Lean's edge zone may be a back or forward swipe: past the tap slop
     // its moves go to Lean and wait for its phase before they scroll (edgeTouch below).
     edge:event.pointerType==='touch'&&edgeZone>0&&(event.clientX<edgeZone||innerWidth-event.clientX<edgeZone)?{id:++swipeId,phase:undefined,asked:false}:undefined};
-  if(!stopper)send({type:'press',...point(event)});
+  if(!stopper)send({type:'press',pointer:event.pointerType,...point(event)});
+  // A long press (WebGesture hold): when Lean's time has passed with the press still down,
+  // Lean is asked whether it is one; it says no if the finger moved off the tap slop.
+  if(holdMs>0&&!stopper){
+    const down=moved,downAt=performance.now();
+    down.holdTimer=setTimeout(()=>{
+      if(moved!==down||pinch||down.scrolled)return;
+      const at={clientX:down.lastX,clientY:down.lastY};
+      send({type:'hold',pointer:event.pointerType,startX:Math.round(down.startX),startY:Math.round(down.startY),cssX:Math.round(down.lastX),cssY:Math.round(down.lastY),elapsed:Math.round(performance.now()-downAt),...point(at)});
+    },holdMs);
+  }
 });
 canvas.addEventListener('pointermove',event=>{
   if(touches.has(event.pointerId))touches.set(event.pointerId,{x:event.clientX,y:event.clientY});
+  if(moved){moved.lastX=event.clientX;moved.lastY=event.clientY;}
   if(pinch){if(touches.size===2)send({type:'pinch',phase:'move',ratio:fingerGap()/pinch.gap});return;}
   // A finger drifts a few pixels during a tap. Until it has gone further than the
   // tap slop, the touch is still a tap: no scroll and no drag.
@@ -274,10 +327,16 @@ canvas.addEventListener('pointermove',event=>{
   moved.samples.push({t:event.timeStamp,x:event.clientX,y:event.clientY});
   while(moved.samples.length>2&&event.timeStamp-moved.samples[0].t>200)moved.samples.shift();
   const step=moved.y-event.clientY;if(Math.abs(step)<2)return;
-  moved={...moved,y:event.clientY,scrolled:true};send({type:'scroll',amount:step*scale()});
+  moved.y=event.clientY;moved.scrolled=true;dropActions();send({type:'scroll',amount:step*scale()});
 });
 const lift=event=>{
   touches.delete(event.pointerId);
+  if(moved)clearTimeout(moved.holdTimer);
+  // A tap on a button of the address menu: its action, now, inside this pointerup.
+  if(event.type==='pointerup'&&moved&&!moved.scrolled&&!pinch&&actions.length){
+    const action=actionAt(moved.startX,moved.startY,event.clientX,event.clientY);
+    if(action){dropActions();runAction(action);}
+  }
   if(pinch){if(touches.size<2){send({type:'pinch',phase:'end'});pinch=undefined;}return;}
   // A swipe Lean took, or one it has not answered yet, ends in Lean: no click and no fling.
   if(moved?.edge?.asked&&moved.edge.phase!=='other'){
@@ -326,7 +385,7 @@ canvas.addEventListener('pointercancel',lift);
 // Safari's own pinch would zoom the whole page, address bar included.
 for(const name of ['gesturestart','gesturechange'])addEventListener(name,event=>event.preventDefault(),{passive:false});
 // Ctrl+wheel is a trackpad pinch: Lean's text zoom, not the host browser's page zoom.
-addEventListener('wheel',event=>{event.preventDefault();fling.stop();
+addEventListener('wheel',event=>{event.preventDefault();fling.stop();dropActions();
   if(event.ctrlKey){if(event.deltaY)send({type:'command',command:event.deltaY<0?1:2});return;}
   send({type:'scroll',amount:event.deltaY*scale()});
   // A trackpad's horizontal swipe is back or forward if Lean says so (the worker adds it up).
