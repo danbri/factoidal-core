@@ -17,18 +17,9 @@ Numeric literals are rounded correctly: the decimal digits go to
 namespace L4Factoidal.JS
 
 inductive TokKind where
-  | ident | kw | num | str | punct | eof
+  | ident | kw | num | str | punct | tmpl | eof
   deriving BEq, Repr, Inhabited, DecidableEq
 
-structure Token where
-  kind : TokKind
-  /-- The name, keyword, punctuator, or the string value. -/
-  text : String := ""
-  num : Float := 0
-  /-- A line terminator comes before this token. -/
-  nl : Bool := false
-  pos : Nat := 0
-  deriving Inhabited
 
 def keywords : List String :=
   ["break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete",
@@ -96,6 +87,56 @@ def hex4 (cs : Array Char) (i : Nat) : Option Nat := do
 def charOfCode (n : Nat) : Char :=
   if n ≥ 0xD800 && n ≤ 0xDFFF then Char.ofNat 0xFFFD else Char.ofNat n
 
+/-- The escape sequence at `i` (a backslash) of a string or template literal
+(§12.9.4.1, §12.9.6): its value and the index after it. In a template, legacy
+octal escapes are errors. -/
+def escapeAt (cs : Array Char) (i : Nat) (tmpl : Bool) : Except String (String × Nat) :=
+  let e := charAt cs (i + 1)
+  let one (c : Char) := Except.ok (String.singleton c, i + 2)
+  match e with
+  | 'n' => one '\n'
+  | 't' => one '\t'
+  | 'r' => one '\r'
+  | 'b' => one (Char.ofNat 8)
+  | 'f' => one (Char.ofNat 12)
+  | 'v' => one (Char.ofNat 11)
+  | '\r' => .ok ("", if charAt cs (i + 2) == '\n' then i + 3 else i + 2)
+  | '\n' => .ok ("", i + 2)
+  | 'x' =>
+    match hexVal (charAt cs (i + 2)), hexVal (charAt cs (i + 3)) with
+    | some a, some b => .ok (String.singleton (Char.ofNat (a * 16 + b)), i + 4)
+    | _, _ => .error "SyntaxError: invalid hexadecimal escape"
+  | 'u' =>
+    if charAt cs (i + 2) == '{' then
+      let j := scanWhile cs (fun c => (hexVal c).isSome) cs.size (i + 3)
+      if charAt cs j != '}' || j == i + 3 then .error "SyntaxError: invalid Unicode escape" else
+      let v := digitsVal cs 16 cs.size (i + 3) j 0
+      if v > 0x10FFFF then .error "SyntaxError: undefined Unicode code-point"
+      else .ok (String.singleton (charOfCode v), j + 1)
+    else
+      match hex4 cs (i + 2) with
+      | none => .error "SyntaxError: invalid Unicode escape"
+      | some hi =>
+        if hi ≥ 0xD800 && hi ≤ 0xDBFF && charAt cs (i + 6) == '\\' && charAt cs (i + 7) == 'u' then
+          match hex4 cs (i + 8) with
+          | some lo =>
+            if lo ≥ 0xDC00 && lo ≤ 0xDFFF then
+              .ok (String.singleton (Char.ofNat (0x10000 + (hi - 0xD800) * 0x400 + (lo - 0xDC00))), i + 12)
+            else .ok (String.singleton (charOfCode hi), i + 6)
+          | none => .ok (String.singleton (charOfCode hi), i + 6)
+        else .ok (String.singleton (charOfCode hi), i + 6)
+  | c' =>
+    if c' == '0' && !(charAt cs (i + 2)).isDigit then one (Char.ofNat 0)
+    else if c'.isDigit && tmpl then .error "SyntaxError: octal escape sequences are not allowed in template literals"
+    else if '0' ≤ c' && c' ≤ '7' then
+      -- legacy octal escape (Annex B.1.2)
+      let j := scanWhile cs (fun c => '0' ≤ c && c ≤ '7') 3 (i + 1)
+      let j := if c' ≥ '4' then min j (i + 3) else j
+      .ok (String.singleton (Char.ofNat (digitsVal cs 8 3 (i + 1) j 0)), j)
+    else if isLineTerm c' then .ok ("", i + 2)
+    else if i + 1 ≥ cs.size then .error "SyntaxError: unterminated string literal"
+    else one c'
+
 /-- A string literal body from `i` (after the quote). Answers the value and the
 index after the closing quote. -/
 def scanStr (cs : Array Char) (q : Char) : Nat → Nat → String → Except String (String × Nat)
@@ -106,50 +147,102 @@ def scanStr (cs : Array Char) (q : Char) : Nat → Nat → String → Except Str
     if c == q then .ok (acc, i + 1)
     else if c == '\n' || c == '\r' then .error "SyntaxError: unterminated string literal"
     else if c != '\\' then scanStr cs q fuel (i + 1) (acc.push c)
-    else
-      let e := charAt cs (i + 1)
-      match e with
-      | 'n' => scanStr cs q fuel (i + 2) (acc.push '\n')
-      | 't' => scanStr cs q fuel (i + 2) (acc.push '\t')
-      | 'r' => scanStr cs q fuel (i + 2) (acc.push '\r')
-      | 'b' => scanStr cs q fuel (i + 2) (acc.push (Char.ofNat 8))
-      | 'f' => scanStr cs q fuel (i + 2) (acc.push (Char.ofNat 12))
-      | 'v' => scanStr cs q fuel (i + 2) (acc.push (Char.ofNat 11))
-      | '\r' => scanStr cs q fuel (if charAt cs (i + 2) == '\n' then i + 3 else i + 2) acc
-      | '\n' => scanStr cs q fuel (i + 2) acc
-      | 'x' =>
-        match hexVal (charAt cs (i + 2)), hexVal (charAt cs (i + 3)) with
-        | some a, some b => scanStr cs q fuel (i + 4) (acc.push (Char.ofNat (a * 16 + b)))
-        | _, _ => .error "SyntaxError: invalid hexadecimal escape"
-      | 'u' =>
-        if charAt cs (i + 2) == '{' then
-          let j := scanWhile cs (fun c => (hexVal c).isSome) cs.size (i + 3)
-          if charAt cs j != '}' || j == i + 3 then .error "SyntaxError: invalid Unicode escape" else
-          let v := digitsVal cs 16 cs.size (i + 3) j 0
-          if v > 0x10FFFF then .error "SyntaxError: undefined Unicode code-point"
-          else scanStr cs q fuel (j + 1) (acc.push (charOfCode v))
-        else
-          match hex4 cs (i + 2) with
-          | none => .error "SyntaxError: invalid Unicode escape"
-          | some hi =>
-            if hi ≥ 0xD800 && hi ≤ 0xDBFF && charAt cs (i + 6) == '\\' && charAt cs (i + 7) == 'u' then
-              match hex4 cs (i + 8) with
-              | some lo =>
-                if lo ≥ 0xDC00 && lo ≤ 0xDFFF then
-                  scanStr cs q fuel (i + 12)
-                    (acc.push (Char.ofNat (0x10000 + (hi - 0xD800) * 0x400 + (lo - 0xDC00))))
-                else scanStr cs q fuel (i + 6) (acc.push (charOfCode hi))
-              | none => scanStr cs q fuel (i + 6) (acc.push (charOfCode hi))
-            else scanStr cs q fuel (i + 6) (acc.push (charOfCode hi))
-      | c' =>
-        if c' == '0' && !(charAt cs (i + 2)).isDigit then scanStr cs q fuel (i + 2) (acc.push (Char.ofNat 0))
-        else if '0' ≤ c' && c' ≤ '7' then
-          -- legacy octal escape (Annex B.1.2)
-          let j := scanWhile cs (fun c => '0' ≤ c && c ≤ '7') 3 (i + 1)
-          let j := if c' ≥ '4' then min j (i + 3) else j
-          scanStr cs q fuel j (acc.push (Char.ofNat (digitsVal cs 8 3 (i + 1) j 0)))
-        else if isLineTerm c' then scanStr cs q fuel (i + 2) acc
-        else scanStr cs q fuel (i + 2) (acc.push c')
+    else match escapeAt cs i false with
+      | .error e => .error e
+      | .ok (t, j) => scanStr cs q fuel j (acc ++ t)
+
+/-- A template literal (§12.9.6). -/
+structure Tmpl where
+  cooked : Array String := #[]
+  raw : Array String := #[]
+  subs : Array String := #[]
+
+mutual
+/-- The template body from `i` (after a backtick or a `}`): the cooked and raw
+strings and the source text of each substitution, and the index after the
+closing backtick. -/
+def scanTmpl (cs : Array Char) : Nat → Nat → String → String → Tmpl → Except String (Tmpl × Nat)
+  | 0, _, _, _, _ => .error "SyntaxError: unterminated template literal"
+  | fuel + 1, i, cooked, raw, t =>
+    if i ≥ cs.size then .error "SyntaxError: unterminated template literal" else
+    let c := cs[i]!
+    if c == '`' then .ok ({ t with cooked := t.cooked.push cooked, raw := t.raw.push raw }, i + 1)
+    else if c == '$' && charAt cs (i + 1) == '{' then
+      match matchBrace cs fuel (i + 2) 1 with
+      | .error e => .error e
+      | .ok j =>
+        let t := { t with cooked := t.cooked.push cooked, raw := t.raw.push raw,
+                          subs := t.subs.push (slice cs (i + 2) j) }
+        scanTmpl cs fuel (j + 1) "" "" t
+    else if c == '\\' then
+      match escapeAt cs i true with
+      | .error e => .error e
+      | .ok (x, j) => scanTmpl cs fuel j (cooked ++ x) (raw ++ (slice cs i j).replace "\r\n" "\n") t
+    else if c == '\r' then
+      let j := if charAt cs (i + 1) == '\n' then i + 2 else i + 1
+      scanTmpl cs fuel j (cooked.push '\n') (raw.push '\n') t
+    else scanTmpl cs fuel (i + 1) (cooked.push c) (raw.push c) t
+
+/-- The index of the `}` that closes a substitution opened before `i`. -/
+def matchBrace (cs : Array Char) : Nat → Nat → Nat → Except String Nat
+  | 0, _, _ => .error "SyntaxError: unterminated template literal"
+  | fuel + 1, i, depth =>
+    if i ≥ cs.size then .error "SyntaxError: unterminated template literal" else
+    let c := cs[i]!
+    if c == '}' then (if depth == 1 then .ok i else matchBrace cs fuel (i + 1) (depth - 1))
+    else if c == '{' then matchBrace cs fuel (i + 1) (depth + 1)
+    else if c == '"' || c == '\'' then
+      match scanStr cs c cs.size (i + 1) "" with
+      | .error e => .error e
+      | .ok (_, j) => matchBrace cs fuel j depth
+    else if c == '`' then
+      match scanTmpl cs fuel (i + 1) "" "" {} with
+      | .error e => .error e
+      | .ok (_, j) => matchBrace cs fuel j depth
+    else if c == '/' && charAt cs (i + 1) == '/' then
+      matchBrace cs fuel (scanWhile cs (fun c => !isLineTerm c) cs.size i) depth
+    else if c == '/' && charAt cs (i + 1) == '*' then
+      let rec close : Nat → Nat → Nat
+        | 0, k => k
+        | f + 1, k => if k + 1 ≥ cs.size then cs.size
+          else if cs[k]! == '*' && cs[k+1]! == '/' then k + 2 else close f (k + 1)
+      matchBrace cs fuel (close cs.size (i + 2)) depth
+    else matchBrace cs fuel (i + 1) depth
+end
+
+structure Token where
+  kind : TokKind
+  /-- The name, keyword, punctuator, or the string value. -/
+  text : String := ""
+  num : Float := 0
+  /-- A line terminator comes before this token. -/
+  nl : Bool := false
+  pos : Nat := 0
+  /-- A template literal's parts (`kind = tmpl`). -/
+  tmpl : Tmpl := {}
+  /-- The identifier had a Unicode escape (so it is never a keyword, §12.7.2). -/
+  escaped : Bool := false
+  deriving Inhabited
+
+/-- An identifier with `\\u` escapes (§12.7.1): its value and the index after it. -/
+def scanIdent (cs : Array Char) : Nat → Nat → String → Bool → Except String (String × Nat × Bool)
+  | 0, i, acc, esc => .ok (acc, i, esc)
+  | fuel + 1, i, acc, esc =>
+    let c := charAt cs i
+    if i < cs.size && (if acc.isEmpty then isIdStart c else isIdPart c) then
+      scanIdent cs fuel (i + 1) (acc.push c) esc
+    else if c == '\\' then
+      if charAt cs (i + 1) != 'u' then .error "SyntaxError: invalid escape in identifier" else
+      match escapeAt cs i false with
+      | .error e => .error e
+      | .ok (x, j) =>
+        match x.toList with
+        | [d] =>
+          if (if acc.isEmpty then isIdStart d else isIdPart d) && d != '\\' then
+            scanIdent cs fuel j (acc.push d) true
+          else .error "SyntaxError: invalid identifier escape"
+        | _ => .error "SyntaxError: invalid identifier escape"
+    else .ok (acc, i, esc)
 
 /-- A numeric literal at `i`: its value and the index after it. -/
 def scanNum (cs : Array Char) (i : Nat) : Except String (Float × Nat) :=
@@ -225,13 +318,13 @@ def lexGo (cs : Array Char) : Nat → Nat → Bool → Array Token → Except St
       match skipBlock cs cs.size (i + 2) false with
       | none => .error "SyntaxError: unterminated comment"
       | some (j, nl') => lexGo cs fuel j (nl || nl') acc
-    else if isIdStart c then
-      let j := scanWhile cs isIdPart cs.size i
-      let s := slice cs i j
-      if charAt cs j == '\\' then .error "SyntaxError: escapes in identifiers are not supported" else
-      let kind := if keywords.contains s then TokKind.kw else .ident
-      lexGo cs fuel j false (acc.push { kind, text := s, nl, pos := i })
-    else if c == '\\' then .error "SyntaxError: escapes in identifiers are not supported"
+    else if isIdStart c || c == '\\' then
+      match scanIdent cs cs.size i "" false with
+      | .error e => .error e
+      | .ok (s, j, esc) =>
+        if s.isEmpty then .error "SyntaxError: invalid or unexpected token" else
+        let kind := if keywords.contains s && !esc then TokKind.kw else .ident
+        lexGo cs fuel j false (acc.push { kind, text := s, nl, pos := i, escaped := esc })
     else if c.isDigit || (c == '.' && (charAt cs (i + 1)).isDigit) then
       match scanNum cs i with
       | .error e => .error e
@@ -240,7 +333,10 @@ def lexGo (cs : Array Char) : Nat → Nat → Bool → Array Token → Except St
       match scanStr cs c cs.size (i + 1) "" with
       | .error e => .error e
       | .ok (s, j) => lexGo cs fuel j false (acc.push { kind := .str, text := s, nl, pos := i })
-    else if c == '`' then .error "SyntaxError: template literals are not supported"
+    else if c == '`' then
+      match scanTmpl cs cs.size (i + 1) "" "" {} with
+      | .error e => .error e
+      | .ok (t, j) => lexGo cs fuel j false (acc.push { kind := .tmpl, tmpl := t, nl, pos := i })
     else
       match matchPunct cs i with
       | some p => lexGo cs fuel (i + p.length) false (acc.push { kind := .punct, text := p, nl, pos := i })

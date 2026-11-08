@@ -2186,3 +2186,17 @@ L4Factoidal_JS_stringOrMath  # (c) String.prototype and Math built-ins: ToString
 L4Factoidal_JS_Obj_ownKeys  # (c) core Array.qsort over the integer keys of one object (the integer-like keys of ordinary properties only; array elements are not sorted here); to be replaced by List.mergeSort
 L4Factoidal_JS_Main_jsFiles  # (c) core Array.qsort of the Test262 file list in the leanjs runner; not in the engine
 L4Factoidal_PageGpu_Glsl_*  # (c) the GLSL ES front end of page WebGL (PageGpu/Glsl.lean): gStmt, gBody and gBlock nest by the parser's fuel (maxDepth 32), each block holds at most maxBlock 128 statements, and Stmts.append runs over one such block list; the same constant bounds as PageGpu.Wgsl
+L4Factoidal_JS_Pat_*  # (b) BoundNames of a binding pattern (JS/Syntax.lean): depth is the nesting of the pattern in the source
+L4Factoidal_JS_exprToPat  # (b) an array/object literal read again as an assignment pattern (JS/Parser.lean): depth is its nesting; fuel 256
+L4Factoidal_JS_arrElems  # (b) as L4Factoidal_JS_exprToPat
+L4Factoidal_JS_objProps  # (b) as L4Factoidal_JS_exprToPat
+L4Factoidal_JS_scanTmpl  # (b) template literal lexing (JS/Lexer.lean): the character loop is a self tail call; the cycle is a template nested in a substitution, depth is that nesting
+L4Factoidal_JS_matchBrace  # (b) as L4Factoidal_JS_scanTmpl
+L4Factoidal_JS_bind*  # (b)(c) destructuring and parameter binding (JS/Interp.lean): depth is the nesting of the pattern; element and property lists are self tail calls; initialisers are evaluations, as L4Factoidal_JS_eval*
+L4Factoidal_JS_copyDataProps  # (c) CopyDataProperties: getters as L4Factoidal_JS_get*
+L4Factoidal_JS_defineMembers  # (b) class members: self tail call per member; computed keys and static fields as L4Factoidal_JS_eval*
+L4Factoidal_JS_directEval  # (c) eval: the code is parsed and run as L4Factoidal_JS_eval*; each nested eval is one more JavaScript call, bounded by Heap.maxDepth through the call
+L4Factoidal_JS_initFields  # (c) class field initialisers: one call per field, as L4Factoidal_JS_call*
+L4Factoidal_JS_iter*  # (c) the iteration protocol (GetIterator, IteratorStep, IteratorClose, collecting to an array): next/return are calls, as L4Factoidal_JS_call*; collecting is a self tail call
+L4Factoidal_JS_superCall  # (c) super(...): the parent constructor is a call, as L4Factoidal_JS_call*
+L4Factoidal_JS_gen*  # (b)(c) the generator machine (JS/Interp.lean): frame steps are self tail calls; nesting is the statement nesting around a yield; calls as L4Factoidal_JS_call*

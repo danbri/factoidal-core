@@ -130,6 +130,63 @@ def isTarget : Expr → Bool
   | .ident _ | .member _ _ | .index _ _ => true
   | _ => false
 
+/-- The hole of an array literal `[,]` (an empty name cannot come from source). -/
+def holeExpr : Expr := .ident ""
+
+mutual
+/-- An array or object literal read again as an assignment pattern
+(§13.15.5, the cover grammar AssignmentPattern). -/
+def exprToPat : Nat → Expr → Option Pat
+  | 0, _ => none
+  | n + 1, e =>
+    match e with
+    | .ident "" => none
+    | .ident x => some (.id x)
+    | .member _ _ | .index _ _ => some (.target e)
+    | .array es => do
+      let (elems, rest) ← arrElems n es []
+      pure (.arr elems rest)
+    | .object ps => do
+      let (props, rest) ← objProps n ps []
+      pure (.obj props rest)
+    | _ => none
+
+def arrElems : Nat → List Expr → List (Option PatElem) → Option (List (Option PatElem) × Option Pat)
+  | 0, _, _ => none
+  | _ + 1, [], acc => some (acc.reverse, none)
+  | n + 1, [.spread t], acc => do
+    let p ← exprToPat n t
+    some (acc.reverse, some p)
+  | n + 1, e :: es, acc =>
+    match e with
+    | .ident "" => arrElems n es (none :: acc)
+    | .spread _ => none
+    | .assign none t d => do
+      let p ← exprToPat n t
+      arrElems n es (some (.mk p (some d)) :: acc)
+    | _ => do
+      let p ← exprToPat n e
+      arrElems n es (some (.mk p none) :: acc)
+
+def objProps : Nat → List PropDef → List PatProp → Option (List PatProp × Option Pat)
+  | 0, _, _ => none
+  | _ + 1, [], acc => some (acc.reverse, none)
+  | n + 1, [.spread t], acc => do
+    let p ← exprToPat n t
+    match p with
+    | .id _ | .target _ => some (acc.reverse, some p)
+    | _ => none
+  | n + 1, p :: ps, acc =>
+    match p with
+    | .init k (.assign none t d) => do
+      let q ← exprToPat n t
+      objProps n ps (.mk k q (some d) :: acc)
+    | .init k v => do
+      let q ← exprToPat n v
+      objProps n ps (.mk k q none :: acc)
+    | _ => none
+end
+
 /-- A property name from a token: identifier name, string or number. -/
 def propName? (t : Token) : Option String :=
   match t.kind with
@@ -189,9 +246,10 @@ def parseStmt : Nat → P Stmt
         semi; return .decl .constK ds
       | "function" =>
         advance
+        if ← atP "*" then fail "generators are not supported"
         let name ← bindingName
         addVar name
-        let f ← parseFunction n (some name) false
+        let f ← parseFunction n (some name) .normal
         return .funDecl name f
       | "if" =>
         advance; expectP "("
@@ -241,7 +299,10 @@ def parseStmt : Nat → P Stmt
         let cs ← parseCases n false []
         return .switchS d cs
       | "debugger" => advance; semi; return .empty
-      | "class" => fail "classes are not supported"
+      | "class" =>
+        advance
+        let name ← bindingName
+        return .classDecl name (← parseClass n (some name))
       | "import" | "export" => fail "modules are not supported"
       | "with" => fail "'with' is not supported"
       | _ => parseExprStmt n
@@ -287,17 +348,24 @@ def parseDecls : Nat → DeclKind → Bool → List Decl → P (List Decl)
   | 0, _, _, _ => fail "parser fuel exhausted"
   | n + 1, kind, noIn, acc => do
     let t ← peek
-    if isP t "[" || isP t "{" then fail "destructuring is not supported"
-    let name ← bindingName
-    if kind != .var && name == "let" then fail "'let' cannot be a lexically bound name"
-    if kind == .var then addVar name
+    let target ← if isP t "[" || isP t "{" then parsePattern n kind
+      else do
+        let name ← bindingName
+        if kind != .var && name == "let" then fail "'let' cannot be a lexically bound name"
+        pure (Pat.id name)
+    if kind == .var then for x in target.names do addVar x
     let init ← if ← atP "=" then advance; pure (some (← parseAssign n noIn)) else pure none
-    let acc := acc ++ [Decl.mk name init]
+    let acc := acc ++ [Decl.mk target init]
     if ← atP "," then advance; parseDecls n kind noIn acc
     else
-      -- a `const` needs an initialiser, except as the head of `for`-`in`
-      if kind == .constK && init.isNone && !(noIn && (← atK "in")) then
-        fail "missing initializer in const declaration"
+      -- an initialiser is needed for `const` and patterns, except in a for-in/of head
+      let headOk ← if noIn then do
+          let t ← peek
+          pure (isK t "in" || (t.kind == .ident && t.text == "of"))
+        else pure false
+      if init.isNone && !headOk then
+        if kind == .constK then fail "missing initializer in const declaration"
+        if target.name?.isNone then fail "missing initializer in destructuring declaration"
       return acc
 
 def parseFor : Nat → P Stmt
@@ -315,19 +383,24 @@ def parseFor : Nat → P Stmt
     let init : Option ForInit ← match declKind with
       | some k => do advance; pure (some (ForInit.decl k (← parseDecls n k true [])))
       | none => if isP t ";" then pure none else pure (some (ForInit.expr (← parseExpr n true)))
-    if (← peek).kind == .ident && (← peek).text == "of" then fail "for-of is not supported"
-    if ← atK "in" then
+    let isOf := (← peek).kind == .ident && (← peek).text == "of"
+    if isOf || (← atK "in") then
       advance
-      let obj ← parseExpr n false
+      let obj ← if isOf then parseAssign n false else parseExpr n false
       expectP ")"
       let body ← parseStmt n
-      match init with
-      | some (.decl k [Decl.mk name none]) => return .forIn (some k) (.ident name) obj body
-      | some (.decl _ _) => fail "invalid for-in declaration"
-      | some (.expr e) =>
-        if isTarget e then return .forIn none e obj body
-        else fail "invalid left-hand side in for-in"
-      | none => fail "invalid for-in"
+      let (kind, pat) ← match init with
+        | some (.decl k [Decl.mk p none]) => pure (some k, p)
+        | some (.decl .var [Decl.mk (.id x) (some _)]) =>
+          if isOf || (← get).strict then fail "for-in/of declarations may not have initializers"
+          pure (some DeclKind.var, Pat.id x)
+        | some (.decl _ _) => fail "invalid for-in/of declaration"
+        | some (.expr e) =>
+          match exprToPat 64 e with
+          | some p => pure (none, p)
+          | none => fail "invalid left-hand side in for-in/of"
+        | none => fail "invalid for-in/of"
+      return if isOf then .forOf kind pat obj body else .forIn kind pat obj body
     expectP ";"
     let test ← if ← atP ";" then pure none else pure (some (← parseExpr n false))
     expectP ";"
@@ -344,8 +417,7 @@ def parseTry : Nat → P Stmt
         advance
         let p ← if ← atP "(" then do
             advance
-            if (← atP "[") || (← atP "{") then fail "destructuring is not supported"
-            let x ← bindingName
+            let x ← if (← atP "[") || (← atP "{") then parsePattern n .letK else do pure (Pat.id (← bindingName))
             expectP ")"; pure (some x)
           else pure none
         pure (p, some (← parseBlock n))
@@ -376,54 +448,63 @@ def parseCaseBody : Nat → Array Stmt → P (List Stmt)
     parseCaseBody n (acc.push s)
 
 /-- Parameters and body of a function, after its name. -/
-def parseFunction : Nat → Option String → Bool → P FunDef
+def parseFunction : Nat → Option String → FunKind → P FunDef
   | 0, _, _ => fail "parser fuel exhausted"
-  | n + 1, name, isExpr => do
-    let _ := isExpr
+  | n + 1, name, kind => do
     if ← atP "*" then fail "generators are not supported"
     expectP "("
-    let ps ← parseParams n []
-    parseBody n name ps false
+    let (ps, rest) ← parseParams n #[]
+    parseBody n name ps rest kind
 
-def parseParams : Nat → List String → P (List String)
+/-- A parameter list after `(`, to the `)` (consumed): patterns with initialisers
+and a rest parameter (§15.1). -/
+def parseParams : Nat → Array PatElem → P (List PatElem × Option Pat)
   | 0, _ => fail "parser fuel exhausted"
   | n + 1, acc => do
-    if ← atP ")" then advance; return acc
-    if ← atP "..." then fail "rest parameters are not supported"
-    if (← atP "[") || (← atP "{") then fail "destructuring is not supported"
-    let p ← bindingName
-    if ← atP "=" then fail "default parameters are not supported"
-    if ← atP "," then advance; parseParams n (acc ++ [p])
-    else expectP ")"; return acc ++ [p]
+    if ← atP ")" then advance; return (acc.toList, none)
+    if ← atP "..." then
+      advance
+      let r ← if (← atP "[") || (← atP "{") then parsePattern n .letK else do pure (Pat.id (← bindingName))
+      if ← atP "=" then fail "a rest parameter may not have an initializer"
+      expectP ")"
+      return (acc.toList, some r)
+    let p ← if (← atP "[") || (← atP "{") then parsePattern n .letK else do pure (Pat.id (← bindingName))
+    let d ← if ← atP "=" then advance; pure (some (← parseAssign n false)) else pure none
+    let acc := acc.push (.mk p d)
+    if ← atP "," then advance; parseParams n acc
+    else expectP ")"; return (acc.toList, none)
 
 /-- A function body `{ ... }` with its own `var` scope. -/
-def parseBody : Nat → Option String → List String → Bool → P FunDef
-  | 0, _, _, _ => fail "parser fuel exhausted"
-  | n + 1, name, params, arrow => do
+def parseBody : Nat → Option String → List PatElem → Option Pat → FunKind → P FunDef
+  | 0, _, _, _, _ => fail "parser fuel exhausted"
+  | n + 1, name, params, rest, kind => do
     let outer ← get
     if !(isP (← peek) "{") then fail "expected '{'"
     let strict := outer.strict || hasUseStrict outer.toks (outer.pos + 1)
-    if strict && params.any (fun p => p == "eval" || p == "arguments") then
+    let names := params.flatMap (fun p => match p with | .mk q _ => q.names) ++
+      (match rest with | some r => r.names | none => [])
+    if strict && names.any (fun p => p == "eval" || p == "arguments") then
       fail "'eval' or 'arguments' cannot be a parameter in strict mode code"
     set { outer with vars := #[], usesArgs := false, strict, inFun := true }
     let body ← parseBlock n
     let inner ← get
     let usesArgs := inner.usesArgs
+    let arrow := kind == .arrow
     set { inner with vars := outer.vars, strict := outer.strict, inFun := outer.inFun,
                      usesArgs := outer.usesArgs || (arrow && usesArgs) }
-    return FunDef.mk name params body inner.vars.toList (usesArgs && !arrow) strict arrow
+    return FunDef.mk name params rest body inner.vars.toList (usesArgs && !arrow) strict kind
 
 /-- An arrow function after its parameters and `=>`. -/
-def parseArrowBody : Nat → List String → P Expr
-  | 0, _ => fail "parser fuel exhausted"
-  | n + 1, params => do
-    if ← atP "{" then return .func (← parseBody n none params true)
+def parseArrowBody : Nat → List PatElem → Option Pat → P Expr
+  | 0, _, _ => fail "parser fuel exhausted"
+  | n + 1, params, rest => do
+    if ← atP "{" then return .func (← parseBody n none params rest .arrow)
     let outer ← get
     set { outer with vars := #[], inFun := true }
     let e ← parseAssign n false
     let inner ← get
     set { inner with vars := outer.vars, inFun := outer.inFun }
-    return .func (FunDef.mk none params [.ret (some e)] inner.vars.toList false outer.strict true)
+    return .func (FunDef.mk none params rest [.ret (some e)] inner.vars.toList false outer.strict .arrow)
 
 def parseExpr : Nat → Bool → P Expr
   | 0, _ => fail "parser fuel exhausted"
@@ -449,12 +530,12 @@ def parseAssign : Nat → Bool → P Expr
     if (t.kind == .ident || (t.kind == .kw && t.text == "yield")) && isP t2 "=>" && !t2.nl then
       if t.text == "async" then fail "async functions are not supported"
       advance; advance
-      return ← parseArrowBody n [t.text]
+      return ← parseArrowBody n [.mk (.id t.text) none] none
     if isP t "(" && arrowAhead (← get).toks (← get).pos then
       advance
-      let ps ← parseParams n []
+      let (ps, rest) ← parseParams n #[]
       expectP "=>"
-      return ← parseArrowBody n ps
+      return ← parseArrowBody n ps rest
     if t.kind == .ident && t.text == "async" && !t2.nl && (t2.kind == .ident || isP t2 "(") then
       if isP t2 "(" && !arrowAhead (← get).toks ((← get).pos + 1) then pure ()
       else fail "async functions are not supported"
@@ -462,7 +543,16 @@ def parseAssign : Nat → Bool → P Expr
     match assignOp (← peek) with
     | none => return lhs
     | some op =>
-      if !isTarget lhs then fail "invalid assignment target"
+      if !isTarget lhs then
+        match op, lhs with
+        | .inl none, .array _ | .inl none, .object _ =>
+          match exprToPat 256 lhs with
+          | some p =>
+            advance
+            let rhs ← parseAssign n noIn
+            return .assignPat p rhs
+          | none => fail "invalid destructuring assignment target"
+        | _, _ => fail "invalid assignment target"
       if (← get).strict then
         match lhs with
         | .ident x => if x == "eval" || x == "arguments" then
@@ -565,7 +655,11 @@ def parseNew : Nat → P Expr
   | 0 => fail "parser fuel exhausted"
   | n + 1 => do
     advance -- `new`
-    if ← atP "." then fail "new.target is not supported"
+    if ← atP "." then
+      advance
+      let t ← peek
+      if t.kind == .ident && t.text == "target" then advance; return .newTarget
+      fail "expected new.target"
     let callee ← if ← atK "new" then parseNew n else do
       let p ← parsePrimary n
       parseTail n p false
@@ -592,17 +686,21 @@ def parseTail : Nat → Expr → Bool → P Expr
       advance
       let args ← parseArgs n []
       parseTail n (.call e args) allowCall
+    else if t.kind == .tmpl then
+      advance
+      let subs ← parseSubs n t.tmpl.subs.toList []
+      parseTail n (.tagged e t.tmpl.cooked.toList t.tmpl.raw.toList subs) allowCall
     else if isP t "?." then fail "optional chaining is not supported"
     else return e
 
 def parseArgs : Nat → List Expr → P (List Expr)
   | 0, _ => fail "parser fuel exhausted"
   | n + 1, acc => do
-    if ← atP ")" then advance; return acc
-    if ← atP "..." then fail "spread is not supported"
-    let a ← parseAssign n false
-    if ← atP "," then advance; parseArgs n (acc ++ [a])
-    else expectP ")"; return acc ++ [a]
+    if ← atP ")" then advance; return acc.reverse
+    let a ← if ← atP "..." then do advance; pure (Expr.spread (← parseAssign n false))
+      else parseAssign n false
+    if ← atP "," then advance; parseArgs n (a :: acc)
+    else expectP ")"; return (a :: acc).reverse
 
 def parsePrimary : Nat → P Expr
   | 0 => fail "parser fuel exhausted"
@@ -611,6 +709,10 @@ def parsePrimary : Nat → P Expr
     match t.kind with
     | .num => advance; return .num t.num
     | .str => advance; return .str t.text
+    | .tmpl =>
+      advance
+      let subs ← parseSubs n t.tmpl.subs.toList []
+      return .template t.tmpl.cooked.toList subs
     | .ident =>
       advance
       if t.text == "arguments" then modify fun s => { s with usesArgs := true }
@@ -623,11 +725,28 @@ def parsePrimary : Nat → P Expr
       | "false" => advance; return .bool false
       | "function" =>
         advance
+        if ← atP "*" then fail "generators are not supported"
         let name ← if (← peek).kind == .ident then pure (some (← bindingName)) else pure none
-        return .func (← parseFunction n name true)
+        return .func (← parseFunction n name .normal)
       | "let" | "yield" => advance; return .ident t.text
-      | "class" => fail "classes are not supported"
-      | "super" => fail "super is not supported"
+      | "class" =>
+        advance
+        let name ← if (← peek).kind == .ident then pure (some (← bindingName)) else pure none
+        return .classE (← parseClass n name)
+      | "super" =>
+        advance
+        if ← atP "(" then advance; return .superCall (← parseArgs n [])
+        if ← atP "." then
+          advance
+          let nt ← peek
+          if nt.kind == .ident || nt.kind == .kw then advance; return .superMember nt.text
+          fail "expected a property name"
+        if ← atP "[" then
+          advance
+          let k ← parseExpr n false
+          expectP "]"
+          return .superIndex k
+        fail "'super' keyword unexpected here"
       | "import" => fail "modules are not supported"
       | _ => fail "unexpected keyword"
     | .punct =>
@@ -646,13 +765,13 @@ def parsePrimary : Nat → P Expr
 def parseArray : Nat → List Expr → P (List Expr)
   | 0, _ => fail "parser fuel exhausted"
   | n + 1, acc => do
-    if ← atP "]" then advance; return acc
-    if ← atP "," then advance; parseArray n (acc ++ [.ident "undefined"])
+    if ← atP "]" then advance; return acc.reverse
+    if ← atP "," then advance; parseArray n (holeExpr :: acc)
     else
-      if ← atP "..." then fail "spread is not supported"
-      let e ← parseAssign n false
-      if ← atP "," then advance; parseArray n (acc ++ [e])
-      else expectP "]"; return acc ++ [e]
+      let e ← if ← atP "..." then do advance; pure (Expr.spread (← parseAssign n false))
+        else parseAssign n false
+      if ← atP "," then advance; parseArray n (e :: acc)
+      else expectP "]"; return (e :: acc).reverse
 
 def parsePropKey : Nat → P PropKey
   | 0 => fail "parser fuel exhausted"
@@ -670,33 +789,166 @@ def parsePropKey : Nat → P PropKey
 def parseObject : Nat → List PropDef → P (List PropDef)
   | 0, _ => fail "parser fuel exhausted"
   | n + 1, acc => do
-    if ← atP "}" then advance; return acc
+    if ← atP "}" then advance; return acc.reverse
     let t ← peek
     let t2 ← peekAt 1
     let p ← do
-      if t.kind == .ident && (t.text == "get" || t.text == "set") &&
-          !(isP t2 ":" || isP t2 "(" || isP t2 "," || isP t2 "}") then
+      if isP t "..." then
+        advance; pure (PropDef.spread (← parseAssign n false))
+      else if t.kind == .ident && (t.text == "get" || t.text == "set") &&
+          !(isP t2 ":" || isP t2 "(" || isP t2 "," || isP t2 "}" || isP t2 "=") then
         advance
         let k ← parsePropKey n
         expectP "("
-        let ps ← parseParams n []
-        let f ← parseBody n none ps false
+        let (ps, rest) ← parseParams n #[]
+        let f ← parseBody n none ps rest .method
         pure (if t.text == "get" then PropDef.getter k f else PropDef.setter k f)
-      else if isP t "*" || (t.kind == .ident && t.text == "async" && !(isP t2 ":" || isP t2 "(" || isP t2 "," || isP t2 "}")) then
+      else if isP t "*" || (t.kind == .ident && t.text == "async" && !(isP t2 ":" || isP t2 "(" || isP t2 "," || isP t2 "}" || isP t2 "=")) then
         fail "generator and async methods are not supported"
       else if t.kind == .ident && (isP t2 "," || isP t2 "}") then
         advance; pure (PropDef.init (.lit t.text) (.ident t.text))
+      else if t.kind == .ident && isP t2 "=" then
+        -- CoverInitializedName: only valid when the literal becomes a pattern
+        advance; advance
+        let d ← parseAssign n false
+        pure (PropDef.init (.lit t.text) (.assign none (.ident t.text) d))
       else
         let k ← parsePropKey n
         if ← atP "(" then
           advance
-          let ps ← parseParams n []
-          pure (PropDef.init k (.func (← parseBody n none ps false)))
+          let (ps, rest) ← parseParams n #[]
+          pure (PropDef.init k (.func (← parseBody n none ps rest .method)))
         else
           expectP ":"
           pure (PropDef.init k (← parseAssign n false))
-    if ← atP "," then advance; parseObject n (acc ++ [p])
-    else expectP "}"; return acc ++ [p]
+    if ← atP "," then advance; parseObject n (p :: acc)
+    else expectP "}"; return (p :: acc).reverse
+
+/-- A binding pattern `[...]` or `{...}` (§14.3.3). -/
+def parsePattern : Nat → DeclKind → P Pat
+  | 0, _ => fail "parser fuel exhausted"
+  | n + 1, kind => do
+    if ← atP "[" then
+      advance
+      let (es, rest) ← parsePatElems n kind []
+      return .arr es rest
+    if ← atP "{" then
+      advance
+      let (ps, rest) ← parsePatProps n kind []
+      return .obj ps rest
+    return .id (← bindingName)
+
+def parsePatElems : Nat → DeclKind → List (Option PatElem) → P (List (Option PatElem) × Option Pat)
+  | 0, _, _ => fail "parser fuel exhausted"
+  | n + 1, kind, acc => do
+    if ← atP "]" then advance; return (acc.reverse, none)
+    if ← atP "," then advance; return ← parsePatElems n kind (none :: acc)
+    if ← atP "..." then
+      advance
+      let r ← parsePattern n kind
+      expectP "]"
+      return (acc.reverse, some r)
+    let p ← parsePattern n kind
+    let d ← if ← atP "=" then advance; pure (some (← parseAssign n false)) else pure none
+    let acc := some (PatElem.mk p d) :: acc
+    if ← atP "," then advance; parsePatElems n kind acc
+    else expectP "]"; return (acc.reverse, none)
+
+def parsePatProps : Nat → DeclKind → List PatProp → P (List PatProp × Option Pat)
+  | 0, _, _ => fail "parser fuel exhausted"
+  | n + 1, kind, acc => do
+    if ← atP "}" then advance; return (acc.reverse, none)
+    if ← atP "..." then
+      advance
+      let r ← bindingName
+      expectP "}"
+      return (acc.reverse, some (.id r))
+    let t ← peek
+    let t2 ← peekAt 1
+    let (k, p) ← if (t.kind == .ident || (t.kind == .kw && (t.text == "let" || t.text == "yield"))) && !isP t2 ":" then do
+        let x ← bindingName
+        pure (PropKey.lit x, Pat.id x)
+      else do
+        let k ← parsePropKey n
+        expectP ":"
+        pure (k, ← parsePattern n kind)
+    let d ← if ← atP "=" then advance; pure (some (← parseAssign n false)) else pure none
+    let acc := PatProp.mk k p d :: acc
+    if ← atP "," then advance; parsePatProps n kind acc
+    else expectP "}"; return (acc.reverse, none)
+
+/-- The substitutions of a template literal: each source text parsed as an
+Expression with the state of the enclosing code. -/
+def parseSubs : Nat → List String → List Expr → P (List Expr)
+  | 0, _, _ => fail "parser fuel exhausted"
+  | _ + 1, [], acc => return acc.reverse
+  | n + 1, src :: rest, acc => do
+    match lex src with
+    | .error e => throw e
+    | .ok toks =>
+      let outer ← get
+      set { outer with toks, pos := 0 }
+      let e ← parseExpr n false
+      if (← peek).kind != .eof then fail "unexpected token in template substitution"
+      modify fun s => { s with toks := outer.toks, pos := outer.pos }
+      parseSubs n rest (e :: acc)
+
+/-- A class body after the name (§15.7). Class code is strict. -/
+def parseClass : Nat → Option String → P ClassDef
+  | 0, _ => fail "parser fuel exhausted"
+  | n + 1, name => do
+    let outerStrict := (← get).strict
+    modify fun s => { s with strict := true }
+    let heritage ← if ← atK "extends" then advance; pure (some (← parseLHS n)) else pure none
+    expectP "{"
+    let (ctor, members) ← parseMembers n heritage.isSome none []
+    modify fun s => { s with strict := outerStrict }
+    return .mk name heritage ctor members
+
+def parseMembers : Nat → Bool → Option FunDef → List Member → P (Option FunDef × List Member)
+  | 0, _, _, _ => fail "parser fuel exhausted"
+  | n + 1, derived, ctor, acc => do
+    if ← atP "}" then advance; return (ctor, acc.reverse)
+    if ← atP ";" then advance; return ← parseMembers n derived ctor acc
+    let t0 ← peek
+    let t1 ← peekAt 1
+    let static := t0.kind == .ident && t0.text == "static" &&
+      !(isP t1 "(" || isP t1 "=" || isP t1 ";" || isP t1 "}")
+    if static then advance
+    if static && (← atP "{") then fail "class static blocks are not supported"
+    let t ← peek
+    let t2 ← peekAt 1
+    if isP t "*" then fail "generator methods are not supported"
+    if isP t "#" then fail "private class members are not supported"
+    if t.kind == .ident && t.text == "async" && !t2.nl && !(isP t2 "(" || isP t2 "=" || isP t2 ";" || isP t2 "}") then
+      fail "async methods are not supported"
+    let accessor := t.kind == .ident && (t.text == "get" || t.text == "set") &&
+      !(isP t2 "(" || isP t2 "=" || isP t2 ";" || isP t2 "}")
+    if accessor then advance
+    if ← atP "#" then fail "private class members are not supported"
+    let kt ← peek
+    let k ← parsePropKey n
+    if ← atP "(" then
+      advance
+      let (ps, rest) ← parseParams n #[]
+      let isCtor := !static && !accessor && (kt.kind == .ident || kt.kind == .kw || kt.kind == .str) && kt.text == "constructor"
+      if isCtor then
+        if ctor.isSome then fail "a class may only have one constructor"
+        let f ← parseBody n none ps rest (.ctor derived)
+        return ← parseMembers n derived (some f) acc
+      let f ← parseBody n none ps rest .method
+      let kind := if accessor then (if t.text == "get" then MemberKind.getter else .setter) else .method
+      parseMembers n derived ctor (.mk static kind k f :: acc)
+    else
+      if accessor then fail "expected '('"
+      -- a field: its initialiser is the body of a method that returns it
+      let outer ← get
+      set { outer with vars := #[], inFun := true }
+      let init ← if ← atP "=" then advance; pure (some (← parseAssign n false)) else pure none
+      set { (← get) with vars := outer.vars, inFun := outer.inFun }
+      semi
+      let f := FunDef.mk none [] none [.ret init] [] false true .method
+      parseMembers n derived ctor (.mk static .field k f :: acc)
 
 end
 

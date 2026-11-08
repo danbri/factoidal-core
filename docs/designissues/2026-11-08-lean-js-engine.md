@@ -15,7 +15,12 @@ values, objects and prototypes, property access with accessors, functions, closu
 that share their environment, `this`, `new`, `let`/`const`/`var` with hoisting and the
 temporal dead zone, `if`/`while`/`do`/`for`/`for`-`in`/`switch`/labels,
 `return`/`throw`/`try`/`catch`/`finally`, arrow functions, and the built-ins that the
-Test262 harness and simple pages use. `lake exe leanjs` runs a script, Test262 files
+Test262 harness and simple pages use. Stage 2 added destructuring (binding and
+assignment patterns), default and rest parameters, spread, template literals (and
+tagged templates), Symbol with the well-known symbols, the iteration protocol with
+`for`-`of` and Array and String iterators, classes (`extends`, `super`, accessors,
+static members, public fields), `new.target`, direct and indirect `eval`, the `Function`
+constructor and identifier escapes. `lake exe leanjs` runs a script, Test262 files
 or the benchmarks.
 
 Measured results are in section 9 (Test262 counts) and section 10 (speed).
@@ -245,6 +250,19 @@ Results, stage 1 (commit of this record; 2026-11-08, the owner's Mac):
   negative test that ran) 159; invalid assignment targets that should parse
   (destructuring assignment) 143.
 
+Stage 2 (destructuring, parameters, spread, templates, Symbol and iterators, classes,
+eval, the `Function` constructor, identifier escapes): **4,558 pass, 1,515 fail, 228
+skip (75.0 % of 6,073 run)**. Of the passes, 638 are negative tests (an expected
+early or runtime error); the positive tests pass 3,920 of 5,068 (77.3 %). Stage 1 by
+the same split: 840 negative and 1,971 positive passes. The negative count went down
+because the parser now accepts syntax that it refused before, so a test that expects
+an early error the parser does not check yet now fails.
+
+Remaining failures by cause (stage 2): early errors not detected 362; generator
+functions 296 and generator or async methods 261; BigInt 148; other unsupported syntax
+94 (async, optional chaining, regular expression literals); private class members 79;
+class static blocks 17; call depth (`RangeError` at depth 400) 30.
+
 ## 10. Speed
 
 The same two scripts as the QuickJS measurement in `2026-11-07-wasmvm-engine.md`
@@ -252,7 +270,7 @@ The same two scripts as the QuickJS measurement in `2026-11-07-wasmvm-engine.md`
 
 | Script | Lean JS (`leanjs`) | QuickJS-NG in WasmVM (`wasmvm-bench qjs`) | QuickJS-NG native |
 |---|---|---|---|
-| `fib(24)` | 126 to 137 ms | 1,069 ms (154 M Wasm instructions) | 6 ms |
+| `fib(24)` | 126 to 143 ms | 1,069 ms (154 M Wasm instructions) | 6 ms |
 | loop of 200,000 + `JSON.stringify` of 2,000 objects | 321 to 341 ms | 2,123 ms (330 M Wasm instructions) | 18 ms |
 
 So the Lean engine is 6 to 8 times faster than QuickJS in WasmVM, and 18 to 20
@@ -288,10 +306,10 @@ small objects as shapes with slot arrays, and caches property lookups.
 
 ## 12. Next steps
 
-1. Language: destructuring and default and rest parameters, spread, `Symbol` and the
-   iteration protocol with `for`-`of`, template literals, classes; then generators
-   and `async`/`await` (they need the evaluator in continuation-passing or step form);
-   `eval` and the `Function` constructor; identifier escapes; BigInt; early errors.
+1. Language: generators (a frame machine around `yield`: the code without `yield`
+   stays in the ordinary evaluator), then `async`/`await` on the same machine with
+   Promise jobs on the event loop; the early errors of the grammar; BigInt; private
+   class members; regular expression literals.
 2. Built-ins in Test262 order: Object, Function, Array, String, Number, Math, JSON,
    Error, Symbol, Map/Set, Promise, RegExp (the repository's `L4Factoidal.Regex`
    engines are candidates), Date (on the virtual clock).

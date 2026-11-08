@@ -30,6 +30,8 @@ inductive Value where
   | num (n : Float)
   | str (s : String)
   | obj (id : Nat)
+  /-- A Symbol (§6.1.5): its number in `Heap.syms`. -/
+  | sym (id : Nat)
   deriving Inhabited
 
 /-- A property: data (value, writable, enumerable, configurable) or accessor. -/
@@ -72,14 +74,26 @@ inductive Native where
   | mathTrunc | mathSign
   | jsonStringify
   | throwTypeError
+  | eval | symbolCtor | symbolToString | symbolDescription | symbolValueOf
+  | objectGetOwnPropertySymbols | objectAssign | objectEntries | objectValues
+  | arrayValues | arrayKeys | arrayEntries | arrayFrom | arrayOf | stringIterator
+  | iterNext | iterSelf | dateNow
+  | functionHasInstance
   deriving BEq, Repr, Inhabited
 
 inductive Kind where
   | ordinary
   | array (elems : Array Value)
-  /-- A function object (§10.2) and the environment it closes over. `thisV` is
-  the `this` an arrow function captured. -/
-  | closure (f : FunDef) (env : Nat) (thisV : Value)
+  /-- A function object (§10.2) and the environment it closes over. An arrow
+  function captured `thisV` and `newTarget`; `home` is `[[HomeObject]]` (a
+  method's object, for `super`); `fields` are a class constructor's instance
+  fields (§15.7.10: name and initialiser). -/
+  | closure (f : FunDef) (env : Nat) (thisV newTarget home : Value)
+      (fields : Array (String × Value))
+  /-- An Array or String Iterator (§23.1.5, §22.1.5): the iterated object
+  (`undefined` once done), the next index, and the kind (0 values, 1 keys,
+  2 entries, 3 string code points). -/
+  | iter (target : Value) (idx : Nat) (mode : Nat)
   | native (id : Native)
   | bound (target thisV : Value) (args : Array Value)
   /-- A Boolean, Number or String object (`[[BooleanData]]` etc.). -/
@@ -119,6 +133,10 @@ structure Realm where
   /-- Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError. -/
   errorProtos : Array Nat := #[]
   throwTypeError : Nat := 0
+  symbolProto : Nat := 0
+  iterProto : Nat := 0
+  arrayIterProto : Nat := 0
+  evalFn : Nat := 0
   deriving Inhabited
 
 /-- The error constructors, by their index in `Realm.errorProtos`. -/
@@ -132,6 +150,25 @@ inductive ErrKind where
 def ErrKind.idx : ErrKind → Nat
   | .error => 0 | .eval => 1 | .range => 2 | .reference => 3 | .syntax => 4 | .type => 5 | .uri => 6
 
+/-- The well-known symbols (§6.1.5.1), numbered by their place here. -/
+def wellKnown : Array String :=
+  #["iterator", "asyncIterator", "hasInstance", "toPrimitive", "toStringTag", "unscopables",
+    "isConcatSpreadable", "species", "match", "matchAll", "replace", "search", "split"]
+
+def symIterator : Nat := 0
+def symHasInstance : Nat := 2
+def symToPrimitive : Nat := 3
+def symToStringTag : Nat := 4
+
+/-- The property key of a Symbol: a string that starts with U+10FFFF. Source text
+can make such a string (`"\u{10FFFF}0"`), and it would then name the same
+property as the Symbol: a known limit of this encoding (record, section 5). -/
+def symMark : Char := Char.ofNat 0x10FFFF
+def symKey (id : Nat) : String := String.singleton symMark ++ toString id
+def isSymKey (k : String) : Bool := k.front == symMark
+def symOfKey? (k : String) : Option Nat :=
+  if isSymKey k then (k.drop 1).toString.toNat? else none
+
 structure Heap where
   objs : Array Obj := #[]
   envs : Array Env := #[{}]
@@ -142,6 +179,8 @@ structure Heap where
   maxDepth : Nat := 400
   rng : UInt64 := 0x2545F4914F6CDD1D
   realm : Realm := {}
+  /-- The description of each Symbol; the well-known ones first (`wellKnown`). -/
+  syms : Array String := wellKnown.map ("Symbol." ++ ·)
   deriving Inhabited
 
 /-- Why evaluation stopped early: a thrown value, or the host stopped it. -/
@@ -165,6 +204,11 @@ structure Ctx where
   env : Nat
   thisV : Value
   strict : Bool
+  newTarget : Value := .undef
+  /-- `[[HomeObject]]` of the running method, for `super`. -/
+  home : Value := .undef
+  /-- The running function object (a class constructor's fields). -/
+  fnObj : Value := .undef
   deriving Inhabited
 
 /-! ## Pure operations -/
@@ -185,6 +229,7 @@ def strictEq : Value → Value → Bool
   | .num a, .num b => a == b
   | .str a, .str b => a == b
   | .obj a, .obj b => a == b
+  | .sym a, .sym b => a == b
   | _, _ => false
 
 /-- SameValue (§7.2.10): NaN is NaN, +0 is not -0. -/
@@ -208,6 +253,7 @@ def toBool : Value → Bool
   | .num n => !(n == 0 || n.isNaN)
   | .str s => !s.isEmpty
   | .obj _ => true
+  | .sym _ => true
 
 def Heap.obj (h : Heap) (id : Nat) : Obj := h.objs.getD id default
 
@@ -236,12 +282,16 @@ def Obj.ownKeys (o : Obj) : Array String :=
     | _ => #[]
   let ks := o.keys.filter fun k => o.props.contains k
   let (ints, rest) := ks.partition fun k => (arrayIndex? k).isSome
-  let ints := ints.qsort fun a b => (arrayIndex? a).getD 0 < (arrayIndex? b).getD 0
+  let ints := (ints.toList.mergeSort fun a b => (arrayIndex? a).getD 0 ≤ (arrayIndex? b).getD 0).toArray
   let extra := match o.kind with
     | .array _ => #["length"]
     | .prim (.str _) => #["length"]
     | _ => #[]
-  idx ++ ints ++ extra ++ rest
+  let (syms, strs) := rest.partition isSymKey
+  idx ++ ints ++ extra ++ strs ++ syms
+
+/-- The own string keys (no Symbols), in order. -/
+def Obj.ownStrKeys (o : Obj) : Array String := o.ownKeys.filter (!isSymKey ·)
 
 /-- Find a property on the prototype chain (`fuel` bounds the chain). -/
 def Heap.findProp (h : Heap) (id : Nat) (key : String) : Nat → Option PropV

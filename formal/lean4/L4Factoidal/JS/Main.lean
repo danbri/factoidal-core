@@ -62,7 +62,8 @@ def parseMeta (src : String) : Meta := Id.run do
   return m
 
 inductive Verdict where
-  | pass | fail (why : String) | skip (why : String)
+  /-- `neg`: a negative test (an expected error). -/
+  | pass (neg : Bool) | fail (why : String) | skip (why : String)
 
 /-- The heap after the default harness, computed once per run. -/
 def harnessHeap (root : System.FilePath) : IO Heap := do
@@ -94,14 +95,14 @@ def runTest (root : System.FilePath) (base : Heap) (path : System.FilePath) : IO
   let hRun := { h with steps := 20000000 }
   let (o, _) := runScript hRun src strict
   match m.negPhase, m.negType, o with
-  | none, _, .ok => pure .pass
+  | none, _, .ok => pure (.pass false)
   | none, _, .syntaxError e => pure (.fail e)
   | none, _, .threw _ e => pure (.fail e)
   | none, _, .halted w => pure (.fail s!"halted: {w}")
-  | some "parse", some t, .syntaxError _ => pure (if t == "SyntaxError" then .pass else .fail "wrong error")
+  | some "parse", some t, .syntaxError _ => pure (if t == "SyntaxError" then .pass true else .fail "wrong error")
   | some "parse", _, _ => pure (.fail "expected a SyntaxError at parse time")
   | some "runtime", some t, .threw _ e =>
-    pure (if e.startsWith (t ++ ":") || e == t then .pass else .fail s!"expected {t}, got {e}")
+    pure (if e.startsWith (t ++ ":") || e == t then .pass true else .fail s!"expected {t}, got {e}")
   | some _, _, _ => pure (.fail "expected an error")
 
 def jsFiles (dir : System.FilePath) : IO (Array System.FilePath) := do
@@ -114,33 +115,34 @@ def jsFiles (dir : System.FilePath) : IO (Array System.FilePath) := do
 def test262 (root : System.FilePath) (dirs : List String) (listOut : Option String) : IO Unit := do
   let base ← harnessHeap root
   let mut lines : Array String := #[]
-  let mut tp := 0; let mut tf := 0; let mut ts := 0
+  let mut tp := 0; let mut tf := 0; let mut ts := 0; let mut tneg := 0
   let t0 ← IO.monoMsNow
   for d in dirs do
     let files ← jsFiles (root / d)
-    let mut p := 0; let mut f := 0; let mut s := 0
+    let mut p := 0; let mut f := 0; let mut s := 0; let mut neg := 0
     for file in files do
       let v ← runTest root base file
       let rel := (file.toString.drop (root.toString.length + 1)).toString
       match v with
-      | .pass => p := p + 1; lines := lines.push s!"PASS {rel}"
+      | .pass ng =>
+        p := p + 1
+        if ng then neg := neg + 1
+        lines := lines.push s!"PASS {rel}"
       | .fail why => f := f + 1; lines := lines.push s!"FAIL {rel} {(why.replace "\n" " ").take 160}"
       | .skip why => s := s + 1; lines := lines.push s!"SKIP {rel} {why}"
-    IO.println s!"{d}: {p} pass, {f} fail, {s} skip (of {files.size})"
-    tp := tp + p; tf := tf + f; ts := ts + s
+    IO.println s!"{d}: {p} pass ({neg} negative), {f} fail, {s} skip (of {files.size})"
+    tp := tp + p; tf := tf + f; ts := ts + s; tneg := tneg + neg
   let t1 ← IO.monoMsNow
-  IO.println s!"total: {tp} pass, {tf} fail, {ts} skip; run {tp + tf}, {if tp + tf == 0 then 0 else tp * 1000 / (tp + tf)} per mille pass; {t1 - t0} ms"
+  IO.println s!"total: {tp} pass ({tneg} of them negative tests), {tf} fail, {ts} skip; run {tp + tf}, {if tp + tf == 0 then 0 else tp * 1000 / (tp + tf)} per mille pass; {t1 - t0} ms"
   if let some out := listOut then IO.FS.writeFile out ("\n".intercalate lines.toList ++ "\n")
 
 def fibSrc : String := "function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); } print(fib(24));"
 
-/-- The loop benchmark of `WasmVM/Bench/QuickJS.lean`'s measurement in
-`docs/designissues/2026-11-07-wasmvm-engine.md`: 200 000 iterations, then 2000
-objects turned into strings (JSON.stringify). -/
+/-- The loop benchmark of `WasmVM/Bench/QuickJS.lean` (`speed: loop and JSON`), the same text. -/
 def loopSrc : String :=
-  "var s = 0; for (var i = 0; i < 200000; i++) { s = (s + i * 7) % 1000003; }\n" ++
-  "var a = []; for (var j = 0; j < 2000; j++) { a.push({ id: j, name: 'n' + j, ok: j % 2 == 0 }); }\n" ++
-  "print(s, JSON.stringify(a).length);"
+  "print((() => { let s = 0; for (let i = 0; i < 200000; i++) s = (s + i * i) % 1000003; " ++
+  "const o = []; for (let i = 0; i < 2000; i++) o.push({ k: 'k' + i, v: i }); " ++
+  "return s + ' ' + JSON.stringify(o).length })())"
 
 def timeIt (name src : String) : IO Unit := do
   let t0 ← IO.monoNanosNow
