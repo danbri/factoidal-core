@@ -109,6 +109,108 @@ def baseURL (dom : DOM.Dom) (url : String) : String := Id.run do
       return Syntax.resolveIri url (attr n "href")
   return url
 
+/-! ### The icon of a page (HTML §4.6.7.8, link type "icon") -/
+
+/-- The ASCII-lowercase tokens of an attribute (HTML §2.3.8, space-separated tokens). -/
+private def tokens (value : String) : List String :=
+  ((value.toLower.replace "\t" " ").replace "\n" " " |>.replace "\r" " " |>.replace "\x0c" " ").splitOn " " |>.filter (· != "")
+
+/-- The path of a URL with no query or fragment, lowercase. -/
+private def pathOf (url : String) : String :=
+  (((url.splitOn "#").headD "").splitOn "?").headD "" |>.toLower
+
+/-- An icon the engine can not decode: ICO, https://github.com/danbri/factoidal/issues/1282 -/
+def iconUnsupported (url type : String) : Bool :=
+  type.toLower == "image/x-icon" || type.toLower == "image/vnd.microsoft.icon" || (pathOf url).endsWith ".ico"
+
+/-- How well an icon fits a tab of `target` device pixels; less is better. A scalable
+icon fits any size; then the smallest at least `target`; then the largest; then an
+icon with no `sizes`. -/
+def iconRank (url type sizes : String) (target : Nat) : Nat × Nat :=
+  let words := tokens sizes
+  if type.toLower == "image/svg+xml" || (pathOf url).endsWith ".svg" || words.contains "any" then (0,0) else
+  let sides := words.filterMap fun w => match w.splitOn "x" with
+    | [a,b] => match a.toNat?, b.toNat? with | some x, some y => some (max x y) | _, _ => none
+    | _ => none
+  match (sides.filter (· >= target)).min?, sides.max? with
+  | some s, _ => (1,s)
+  | none, some s => (2,100000-min s 100000)
+  | none, none => (3,0)
+
+/-- The URL of the icon for a tab of `target` device pixels, resolved against `base`.
+Of the links whose `rel` has the token "icon" and that the engine can decode, the best
+by `iconRank`, the last in tree order of equal ones (HTML §4.6.7.8). With none, an
+`apple-touch-icon` the same way. No link gives no icon: `/favicon.ico` is not tried. -/
+def iconURL (dom : DOM.Dom) (base : String) (target : Nat := 32) : Option String := Id.run do
+  let mut best : Option ((Nat × Nat) × String) := none
+  let mut touch : Option ((Nat × Nat) × String) := none
+  for id in dom.treeOrder 0 do
+    let n := dom.get id
+    if !DOM.Dom.isHtmlElement n "link" then continue
+    let href := (attr n "href").trimAscii.toString
+    if href.isEmpty then continue
+    let url := Syntax.resolveIri base href
+    let type := attr n "type"
+    if iconUnsupported url type then continue
+    let rank := iconRank url type (attr n "sizes") target
+    let better := fun (held : Option ((Nat × Nat) × String)) => match held with
+      | none => true
+      | some (r,_) => rank.1 < r.1 || (rank.1 == r.1 && rank.2 <= r.2)
+    let rel := tokens (attr n "rel")
+    if rel.contains "icon" && better best then best := some (rank,url)
+    else if (rel.contains "apple-touch-icon" || rel.contains "apple-touch-icon-precomposed") && better touch then
+      touch := some (rank,url)
+  return (best.orElse fun _ => touch).map (·.2)
+
+/-- Limit on the bytes of an icon. -/
+def maxIconBytes : Nat := 65536
+
+/-- An image `side` pixels at most each way, from `b`: each pixel the mean of the
+pixels it covers, with colour weighted by opacity. An image that fits is kept. -/
+def fitBitmap (b : Rendering.Bitmap) (side : Nat) : Rendering.Bitmap := Id.run do
+  if b.width <= side && b.height <= side then return b
+  let large := max b.width b.height
+  let w := max 1 (b.width*side/large)
+  let h := max 1 (b.height*side/large)
+  let mut out := ByteArray.emptyWithCapacity (w*h*4)
+  for y in [0:h] do
+    for x in [0:w] do
+      let x0 := x*b.width/w
+      let x1 := max (x0+1) ((x+1)*b.width/w)
+      let y0 := y*b.height/h
+      let y1 := max (y0+1) ((y+1)*b.height/h)
+      let mut r := 0
+      let mut g := 0
+      let mut bl := 0
+      let mut a := 0
+      for sy in [y0:y1] do
+        for sx in [x0:x1] do
+          let i := (sy*b.width+sx)*4
+          let alpha := (b.rgba.get! (i+3)).toNat
+          r := r+(b.rgba.get! i).toNat*alpha
+          g := g+(b.rgba.get! (i+1)).toNat*alpha
+          bl := bl+(b.rgba.get! (i+2)).toNat*alpha
+          a := a+alpha
+      let count := (x1-x0)*(y1-y0)
+      let colour := fun (sum : Nat) => if a == 0 then 0 else (sum/a).toUInt8
+      out := out.push (colour r) |>.push (colour g) |>.push (colour bl) |>.push (a/count).toUInt8
+  return {width := w,height := h,rgba := out}
+
+/-- The tab icon from the bytes of an icon resource, for a screen of `scale` device
+pixels to the point: SVG text as it is, after a check that the SVG profile draws it at
+16 points; PNG, JPEG and GIF (its first frame) decoded and fitted to 16 points. -/
+def iconPrepare (bytes : ByteArray) (scale : Nat) : Except String JSON.Json := do
+  if bytes.size > maxIconBytes then throw s!"icon exceeds {maxIconBytes} bytes"
+  let side := 16*max 1 scale
+  let text := (String.fromUTF8? bytes).getD ""
+  let head := text.trimAsciiStart.toString
+  if head.startsWith "<" then
+    let _ ← NativeSVG.parse head side side
+    return .object [("kind",.string "svg"),("source",.string head)]
+  let b := fitBitmap (← NativeImage.decode bytes) side
+  return .object [("kind",.string "bitmap"),("width",.number (toString b.width)),("height",.number (toString b.height)),
+    ("rgba",.string (NativeSVG.base64Bytes b.rgba))]
+
 /-- The text of the first HTML `title` element, with white space collapsed. -/
 def documentTitle (dom : DOM.Dom) : String := Id.run do
   for id in dom.treeOrder 0 do
@@ -176,7 +278,8 @@ def inspect (dom : DOM.Dom) (url : String) : Except String JSON.Json := do
     | other => other
   return .object [("nodes",(snapshot.field? "nodes").getD (.array [])),
     ("scripts",.array scripts),("stylesheets",.array sheets.reverse),("images",.array (← imageRequests dom base)),
-    ("baseURL",.string base),("title",.string (documentTitle dom))]
+    ("baseURL",.string base),("title",.string (documentTitle dom)),
+    ("icon",match iconURL dom base with | some url => .string url | none => .null)]
 
 private def float (j : JSON.Json) : Except String Float :=
   match j with
@@ -277,9 +380,19 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     -- since the bar is the only text field. Else it acts on the page (issue 1268).
     let focused := request.field? "focused" == some (.bool true)
     let target := if WebShell.addressCommands.contains action && (focused || action == "paste") then "address" else "page"
+    let nat := fun (name : String) => match request.field? name with
+      | some (.number n) => n.toNat?.getD 0 | _ => 0
+    -- A tab command answers the tab to show, from `tabs` and `active`; a scroll command the
+    -- scroll, from `scroll`, `view`, `scrollLimit` and `scale` (issue 1268).
+    let tab := match WebHistory.tabTarget command (nat "active") (nat "tabs") with
+      | some i => [("tab",JSON.Json.number (toString i))] | none => []
+    let scrollTo := match WebHistory.scrollTarget command (nat "scroll") (nat "view") (nat "scrollLimit") (80*max 1 (nat "scale")) with
+      | some n => [("scrollTo",JSON.Json.number (toString n))] | none => []
+    let refused := if command == WebHistory.findCommand
+      then [("refused",JSON.Json.string "find in page is not implemented: https://github.com/danbri/factoidal/issues/1280")] else []
     let fields := [("action",JSON.Json.string action)] ++
       (if WebShell.addressCommands.contains action then [("target",JSON.Json.string target)] else []) ++
-      [("textScalePercent",.number (toString (WebSelection.commandPercent command percent)))]
+      [("textScalePercent",.number (toString (WebSelection.commandPercent command percent)))] ++ tab ++ scrollTo ++ refused
     if (request.field? "history").isNone then return some (JSON.Json.object fields).toString
     let (next,url) := WebHistory.apply command (← history request)
     return some (JSON.Json.object (fields ++ historyFields next url)).toString
@@ -287,6 +400,18 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     let some (.string url) := request.field? "url" | throw "history URL required"
     let next := (← history request).push url
     return some (JSON.Json.object (historyFields next next.current)).toString
+  -- The tab icon from the bytes of an icon resource (`iconPrepare`).
+  if op == "iconPrepare" then
+    let some (.string data) := request.field? "base64" | throw "icon base64 required"
+    if data.utf8ByteSize > 4*maxIconBytes/3+4 then throw s!"icon exceeds {maxIconBytes} bytes"
+    let scale := match request.field? "scale" with | some (.number n) => n.toNat?.getD 1 | _ => 1
+    return some (← iconPrepare (← NativeImage.base64 data.toUTF8 0) scale).toString
+  -- A key that the macOS menu did not take, as the window library sends it.
+  if op == "pageKey" then
+    let some (.number code) := request.field? "key" | throw "key required"
+    let bits := match request.field? "modifiers" with | some (.number m) => m.toNat?.getD 0 | _ => 0
+    return some (JSON.Json.object [("command",match WebHistory.pageKey (code.toNat?.getD 0) bits with
+      | some value => .number (toString value) | none => .null)]).toString
   if op == "keyCommand" then
     let answer := WebHistory.keyCommand (str request "platform" "") (str request "modifier" "") (str request "key" "")
     return some (JSON.Json.object [("command",match answer with

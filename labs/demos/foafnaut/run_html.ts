@@ -19,7 +19,7 @@ import type {UIEvent} from "./ui_engine.ts";
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let scrollSweep=false;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false;
@@ -58,6 +58,10 @@ async function main() {
     else if(arg==="--edit-sweep")commands=["focus:all",[9,120,0],"addr=x","z","addr=@url","Z","addr=x","a","c","clip=x","x","addr=","clip=x",
       "v","addr=x",[9,121,0],"addr=xy",[5,123,1],"sel=y","c","clip=y",[5,51,0],"addr=x","v","addr=xy",[5,123,4],"sel=","addr=xy",
       "z","addr=x","t","focus:all",[5,53,0],"unfocused"];
+    // Tab and scroll keys of Lean's key table through the real menu and key path (issue 1268):
+    // "tabs=N:A" checks N tabs with tab A shown; "scroll=0" and "scroll=end" check the scroll.
+    else if(arg==="--shortcut-sweep")commands=["t","t","tabs=3:2","1","tabs=3:0","9","tabs=3:2","{","tabs=3:1","}","tabs=3:2",
+      "w","tabs=2:1","T","tabs=3:2","1",[5,119,0],"scroll=end",[5,115,0],"scroll=0",[5,121,0],[5,126,2],"scroll=0","r","tabs=3:0"];
     // Print to a PDF with no panel, then check its page count (issue 1268).
     else if(arg==="--print-pdf"){printPDF=args.shift();if(!printPDF)throw new Error("--print-pdf needs a file path");commands=["print"];}
     else if(arg==="--graph-sweep")commands=["graph",[2,800,565],[3,900,640],[3,1000,720],[4,1000,720]];
@@ -260,7 +264,15 @@ async function main() {
   const showURL=(url:string):Field=>({address:url,cursor:url.length,anchor:url.length,undo:null,redo:null,typing:false});
   let field=showURL(document.url),focused=false,theme="next",pages=1,scale=1,active=0,scroll=0,swipeHint=0;
   const tabs:{document:typeof document;history:typeof history;scroll:number}[]=[{document,history,scroll:0}];
-  const shell=()=>({tabs:tabs.map((tab,index)=>({title:(index===active?document:tab.document).title??""})),active,...field,focused,
+  // The tab icon of a page: Lean prepares it once from the bytes the page fetched (HTML §4.6.7.8).
+  const icons=new WeakMap<object,unknown>();
+  const iconOf=(page:typeof document)=>{
+    const bytes=(page as {iconBase64?:string}).iconBase64;
+    if(!bytes)return undefined;
+    if(!icons.has(page))try{icons.set(page,engine.iconPrepare(bytes,2));}catch(error){icons.set(page,null);console.error("Native HTML icon refused:",String(error));}
+    return icons.get(page)??undefined;
+  };
+  const shell=()=>({tabs:tabs.map((tab,index)=>{const page=index===active?document:tab.document;return {title:page.title??"",icon:iconOf(page)};}),active,...field,focused,
     canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,pressed:pressed?.control??"",...(swipeHint?{swipe:swipeHint}:{})});
   // The URLs of the session history of every tab: Lean matches `:visited` against them.
   const visited=()=>[...new Set([...tabs.flatMap((tab,index)=>(index===active?history:tab.history).history.entries)])].slice(-100);
@@ -285,9 +297,11 @@ async function main() {
     if(was.framed||was.asked)dirty=true;else if(layered&&current)pressPresent=true;
   };
   const newTab=()=>{keepTab();tabs.push({document:home,history:engine.historyPush({entries:[],index:0},home.url),scroll:0});showTab(tabs.length-1);focusAddress();};
+  // Closed tabs, the last one last, for Shift-Command-T (issue 1268).
+  const closed:typeof tabs=[];
   const closeTab=(index:number)=>{
     if(tabs.length===1){running=false;return;}
-    keepTab();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));
+    keepTab();closed.push(tabs[index]);if(closed.length>25)closed.shift();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));
   };
   // One tab for each source: an XML page opens its XML, its XSLT and the result.
   const viewSource=async()=>{
@@ -566,7 +580,8 @@ async function main() {
     trace("native-html-history",{action,index:answer.history.index,size:answer.history.entries.length,url:answer.url});
   };
   const windowCommand=(id:number)=>{
-    const answer=engine.command(id,view.textScalePercent??100,history.history,focused);
+    const answer=engine.command(id,view.textScalePercent??100,history.history,focused,
+      {tabs:tabs.length,active,scroll:Math.round(scroll),view:height,scrollLimit:Math.floor(scrollLimit()),scale});
     // Lean says when an edit command acts on the address bar: when it has the focus, and paste
     // always. The host only reads and writes the clipboard (issue 1268).
     if(answer.target==="address"){
@@ -588,6 +603,12 @@ async function main() {
     }
     if(answer.action==="focusAddress")focusAddress();
     if(answer.action==="newTab")newTab();
+    // Lean answers the tab to show and the scroll; the host shows them.
+    if(answer.tab!==undefined&&answer.tab!==active){keepTab();showTab(answer.tab);}
+    if(answer.scrollTo!==undefined)scrollBy(answer.scrollTo-scroll);
+    if(answer.action==="stop"&&loading){controller?.abort();loading=false;dirty=true;trace("native-html-stop",{url:document.url});}
+    if(answer.action==="reopenTab"){const tab=closed.pop();if(tab){keepTab();tabs.push(tab);showTab(tabs.length-1);}}
+    if(answer.refused)console.error(`Native HTML ${answer.action}: ${answer.refused}`);
     if(answer.action==="closeTab")closeTab(active);
     if(answer.action==="settings")navigate(settingsURL);
     if(answer.action==="print")printDocument().catch(error=>console.error("Native HTML print failed:",String(error)));
@@ -841,14 +862,9 @@ async function main() {
           return;
         }
         if(event.kind===9)return;
-        // Page keys: arrows, page up and down, space.
-        if(event.kind===5&&!(event.b&2)){
-          const page=height*0.8;
-          if(event.a===125)scrollBy(80*scale);
-          if(event.a===126)scrollBy(-80*scale);
-          if(event.a===121||event.a===49)scrollBy(page);
-          if(event.a===116)scrollBy(-page);
-        }
+        // Keys the menu did not take: space, page up and down, home, end, arrows, escape,
+        // Control-Tab. Lean's key table gives the command (issue 1268).
+        if(event.kind===5){const id=engine.pageKey(event.a,event.b);if(id!==null)windowCommand(id);}
         if(event.kind===11){closeMenu();if(wheelSum)wheelSum.dy-=event.a/scale;scrollBy(-event.a);}
         // Kind 13, a right click (native_window.m): Lean may open the address menu.
         if(event.kind===13)menuPress(event.a,event.b,"context");
@@ -1123,7 +1139,12 @@ async function main() {
           trace("native-html-test-edit",{step,ok,address:field.address,anchor:field.anchor,cursor:field.cursor,focused});
           if(!ok){console.error(`Native HTML edit sweep: ${step} failed; address ${JSON.stringify(field.address)}, selection ${JSON.stringify(selected)}, focused ${focused}`);Deno.exitCode=1;}
         }
-        else if(typeof step==="string")trace("native-html-test-key",{key:step,handled:native.testKey(step,"+_Z".includes(step))});
+        else if(typeof step==="string"&&/^(tabs|scroll)=/.test(step)){
+          const ok=step.startsWith("tabs=")?step===`tabs=${tabs.length}:${active}`:scroll===(step==="scroll=0"?0:Math.floor(scrollLimit()));
+          trace("native-html-test-shortcut",{step,ok,tabs:tabs.length,active,scroll,limit:scrollLimit()});
+          if(!ok){console.error(`Native HTML shortcut sweep: ${step} failed; ${tabs.length} tabs, tab ${active} shown, scroll ${scroll} of ${scrollLimit()}`);Deno.exitCode=1;}
+        }
+        else if(typeof step==="string")trace("native-html-test-key",{key:step,handled:native.testKey(step,"+_ZT{}".includes(step))});
         else if(step)native.testEvent(step[0],step[1],step[2]);else{if(native.readClipboard()===lastCopied)native.writeClipboard(savedClipboard);running=false;}
       }
       // Page script timers and animation frames: the virtual clock of the page's event loop

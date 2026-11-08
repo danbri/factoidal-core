@@ -170,6 +170,17 @@ private def historyCommand (number : Nat) : List (String × JSON.Json) :=
 #guard (WebDocument.run "" (json [("op",.string "historyPush"),("url",.string "c"),
   ("history",json [("entries",.array []),("index",.number "3")])]) 1 1).toOption.isNone
 #guard historyField [("op",.string "keyCommand"),("platform",.string "other"),("modifier",.string "alt"),("key",.string "ArrowLeft")] "command" == some (.number "6")
+-- Tab, scroll, stop and find commands (issue 1268): Lean answers the tab and the scroll.
+private def counted (command : Nat) (more : List (String × JSON.Json)) : List (String × JSON.Json) :=
+  [("op",.string "command"),("command",.number (toString command)),("textScalePercent",.number "100")] ++ more
+#guard historyField (counted 29 [("tabs",.number "4"),("active",.number "1")]) "tab" == some (.number "3")
+#guard historyField (counted 31 [("tabs",.number "4"),("active",.number "0")]) "tab" == some (.number "3")
+#guard historyField (counted 33 [("scroll",.number "100"),("view",.number "500"),("scrollLimit",.number "2000"),("scale",.number "2")]) "scrollTo" == some (.number "500")
+#guard historyField (counted 38 [("scroll",.number "100"),("view",.number "500"),("scrollLimit",.number "2000"),("scale",.number "2")]) "scrollTo" == some (.number "0")
+#guard historyField (counted 39 []) "action" == some (.string "stop") && historyField (counted 20 []) "action" == some (.string "reopenTab")
+#guard (historyField (counted 32 []) "refused").isSome && (historyField (counted 33 []) "refused").isNone
+#guard historyField [("op",.string "pageKey"),("key",.number "49"),("modifiers",.number "1")] "command" == some (.number "34")
+#guard historyField [("op",.string "pageKey"),("key",.number "0"),("modifiers",.number "0")] "command" == some .null
 #guard menu 1 250 == some "{\"action\":\"zoomIn\",\"textScalePercent\":275}"
 #guard menu 1 2000 == some "{\"action\":\"zoomIn\",\"textScalePercent\":2200}"
 #guard menu 99 == some "{\"action\":\"none\",\"textScalePercent\":100}"
@@ -359,7 +370,7 @@ private def contains (text part : String) : Bool := (text.splitOn part).length >
   "image resource not supplied: https://e.test/p/a.png"
 #guard !contains (WebDocument.compile imagePage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"" ++ imageBytes ++ "\"}]}") 40 40) "\"error\""
 #guard contains (WebDocument.compile imagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"aGk=\"}]}" 40 40)
-  "image is not PNG or JPEG"
+  "image is not PNG, JPEG or GIF"
 #guard contains (WebDocument.compile imagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":3}" 40 40) "document images must be an array"
 
 -- HTML `img` (Layout `Picture`): `inspect` lists its key; with the bytes it is drawn as an
@@ -371,6 +382,31 @@ private def imgDrawn := WebDocument.compile imgPage ("{\"op\":\"render\",\"url\"
 #guard !contains imgDrawn "\"error\"" && !contains imgDrawn "[Gone]"
 #guard contains (WebDocument.compile imgPage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 40 40) "\"text\":\"[Gone]\""
 #guard contains (WebDocument.compile imgPage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"aGk=\"}]}") 40 40) "\"text\":\"[Gone]\""
+
+-- The tab icon (HTML §4.6.7.8): a scalable icon first, then the smallest at least 32
+-- device pixels, the last of equal ones; ICO is skipped (issue 1282); with no icon link,
+-- an apple-touch-icon; with none, no icon and no `/favicon.ico`.
+private def iconOf (head : String) : Option String :=
+  let dom := DOM.parseHtmlDocument s!"<html><head>{head}</head><body></body></html>"
+  WebDocument.iconURL dom "https://e.test/p/"
+#guard iconOf "<link rel='shortcut icon' href='a.png'><link rel=icon href='b.svg'><link rel=icon href='c.png'>" == some "https://e.test/p/b.svg"
+#guard iconOf "<link rel=icon sizes='16x16' href='s.png'><link rel=icon sizes='64x64' href='l.png'><link rel=icon sizes='32x32' href='m.png'>" == some "https://e.test/p/m.png"
+#guard iconOf "<link rel=icon href='a.png'><link rel=ICON href='b.png'>" == some "https://e.test/p/b.png"
+#guard iconOf "<link rel=icon href='a.ico'><link rel=icon type='image/x-icon' href='b'>" == none
+#guard iconOf "<link rel=apple-touch-icon href='t.png'>" == some "https://e.test/p/t.png"
+#guard iconOf "<link rel=apple-touch-icon href='t.png'><link rel=icon href='i.png'>" == some "https://e.test/p/i.png"
+#guard iconOf "<link rel=stylesheet href='a.css'>" == none
+#guard contains (WebDocument.compile "<link rel=icon href='i.svg'>" "{\"op\":\"inspect\",\"url\":\"https://e.test/p/\"}" 40 40) "\"icon\":\"https://e.test/p/i.svg\""
+private def prepared (base64 : String) : String :=
+  WebDocument.compile "" ("{\"op\":\"iconPrepare\",\"scale\":1,\"base64\":\"" ++ base64 ++ "\"}") 1 1
+#guard contains (prepared imageBytes) "\"kind\":\"bitmap\",\"width\":2,\"height\":2"
+-- <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'><rect width='4' height='4'/></svg>
+#guard contains (prepared "PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCA0IDQnPjxyZWN0IHdpZHRoPSc0JyBoZWlnaHQ9JzQnLz48L3N2Zz4=") "\"kind\":\"svg\""
+#guard contains (prepared "aGk=") "not PNG, JPEG or GIF"
+-- A large bitmap is fitted to 16 device pixels a side, keeping its ratio.
+#guard (WebDocument.fitBitmap {width := 64,height := 32,rgba := NativeImage.zeroBytes (64*32*4)} 16).width == 16
+#guard (WebDocument.fitBitmap {width := 64,height := 32,rgba := NativeImage.zeroBytes (64*32*4)} 16).height == 8
+#guard (WebDocument.fitBitmap {width := 64,height := 32,rgba := NativeImage.zeroBytes (64*32*4)} 16).rgba.size == 16*8*4
 
 /-! The FOAF graph page with no SVG text (issue 1268). `WebGraph.directScene` builds the
 scene from the model; these differential guards (not a proof) check that it is the scene

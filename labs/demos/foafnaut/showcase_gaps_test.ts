@@ -132,3 +132,49 @@ Deno.test("the scroll limit reaches the last row of long SVG pages",async()=>{
     assert.ok(end.bandTop<=place.scrollLimit! && place.scrollLimit!+place.view<=end.bandTop+end.bandHeight,`${name}: the band at the limit holds the view`);
   }
 });
+
+// Images, icons and keys (issue 1268, owner requests of 2026-11-07).
+Deno.test("issue 1268: an img draws its PNG, JPEG or GIF",async()=>{
+  const doc=await prepareHTML(engine,inputURL(pages+"showcase-image-formats.html",true));
+  const frame=doc.compile(900,1400) as unknown as {error?:string;webRender:{glyphRuns:Run[]}};
+  assert.equal(frame.error,undefined);
+  // No image stands as its description: each one decoded and has a box.
+  assert.ok(!frame.webRender.glyphRuns.some(r=>r.text.startsWith("[")),"an image fell back to its alt text");
+  assert.ok(doc.iconBase64,"the page's SVG icon was fetched");
+  assert.equal(engine.iconPrepare(doc.iconBase64!,2).kind,"svg");
+});
+
+Deno.test("issue 1268: Lean's key table answers the cross-browser keys",()=>{
+  assert.equal(engine.keyCommand("mac","command","r"),8);
+  assert.equal(engine.keyCommand("other","","F5"),8);
+  assert.equal(engine.keyCommand("mac","shift+command","t"),20);
+  assert.equal(engine.pageKey(49,0),33);
+  assert.equal(engine.command(29,100,undefined,false,{tabs:5,active:0}).tab,4);
+  assert.equal(engine.command(36,100,undefined,false,{scroll:0,view:500,scrollLimit:1200,scale:1}).scrollTo,1200);
+});
+
+Deno.test("expected failure, issue 1280: find in page is refused",()=>{
+  assert.match(engine.command(32,100).refused??"",/issues\/1280/,stillGap("1280"));
+});
+
+Deno.test("expected failure, issue 1282: an ICO icon link gives no icon",()=>{
+  const facts=engine.inspect("<link rel=icon href='/favicon.ico'><p>x</p>",{url:"https://example.test/"});
+  assert.equal(facts.icon,null,stillGap("1282"));
+});
+
+Deno.test("expected failure, issue 1283: WebP and AVIF are refused",()=>{
+  // A 1 by 1 lossless WebP, and a 64 by 64 AVIF from SVT-AV1 through FFmpeg.
+  const webp="UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==";
+  const avif="AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAAD5bWV0YQAAAAAAAAAvaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAFBpY3R1cmVIYW5kbGVyAAAAAA5waXRtAAAAAAABAAAAHmlsb2MAAAAARAAAAQABAAAAAQAAASEAAAAlAAAAKGlpbmYAAAAAAAEAAAAaaW5mZQIAAAAAAQAAYXYwMUNvbG9yAAAAAGppcHJwAAAAS2lwY28AAAAUaXNwZQAAAAAAAABAAAAAQAAAABBwaXhpAAAAAAMICAgAAAAMYXYxQ4EADAAAAAATY29scm5jbHgAAgACAAIAAAAAF2lwbWEAAAAAAAAAAQABBAECgwQAAAAtbWRhdAoLAgAABVV//Gr5gEAyFhAAugIIIEEBAAAIAJXR4n6sTwStpHA=";
+  for(const bytes of [webp,avif])
+    assert.throws(()=>engine.iconPrepare(bytes,1),/not PNG, JPEG or GIF/,stillGap("1283"));
+});
+
+Deno.test("expected failure, issue 1284: an animated GIF shows its first frame only",()=>{
+  // Two frames of 500 ms (ImageGIFTests.lean decodes both); a frame of the page names no next frame time.
+  const anim="R0lGODlhBAACAPcfAAAAAAAA/wD/AAD///8AAP8A////AP///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////yH/C05FVFNDQVBFMi4wAwEAAAAh+QQEMgAfACwAAAAABAACAAAIDAAJCAhwAICBAQUCAgAh+QQFMgABACwAAAAAAgACAAAIBwABBAhwICAAOw==";
+  const frame=engine.compile("<p><img src='a.gif'></p>",200,60,{url:"https://example.test/",resources:[],
+    images:[{key:"https://example.test/a.gif",base64:anim}]}) as unknown as Record<string,unknown>;
+  assert.equal(frame.error,undefined);
+  assert.equal(frame.nextFrameMs,undefined,stillGap("1284"));
+});

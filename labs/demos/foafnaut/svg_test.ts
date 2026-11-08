@@ -458,5 +458,5 @@ Deno.test("SVG images are one paint in the table, and the GPU agrees with Lean's
  await renderSVG(b);
  rejects(()=>e.compile(wrap(image('width="9" height="9"',"x.png"))),"image resource not supplied: x.png");
  rejects(()=>e.compile(wrap(image('width="9" height="9"',"file:///etc/passwd"))),"image resource not supplied");
- rejects(()=>e.compile(wrap(image('width="9" height="9"',"data:image/png;base64,aGk="))),"image is not PNG or JPEG");
+ rejects(()=>e.compile(wrap(image('width="9" height="9"',"data:image/png;base64,aGk="))),"image is not PNG, JPEG or GIF");
 });

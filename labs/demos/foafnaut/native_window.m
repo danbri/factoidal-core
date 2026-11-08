@@ -280,7 +280,8 @@ void ng_set_history(int back,int forward) { canGoBack=back!=0;canGoForward=forwa
 @implementation NGMenuTarget
 - (void)command:(NSMenuItem *)item { enqueue(10,(int32_t)item.tag,0); }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
-  return item.tag==6 ? canGoBack : item.tag==7 ? canGoForward : YES;
+  // Find (32) has no implementation yet: https://github.com/danbri/factoidal/issues/1280
+  return item.tag==6 ? canGoBack : item.tag==7 ? canGoForward : item.tag!=32;
 }
 @end
 static NGMenuTarget *menuTarget;
@@ -294,7 +295,13 @@ static void hiddenCommand(NSMenu *menu,NSString *title,NSString *key,NSInteger c
   NSMenuItem *item=commandItem(menu,title,key,command);
   item.hidden=YES;item.allowsKeyEquivalentWhenHidden=YES;
 }
-// The standard menu. Quit reaches applicationShouldTerminate, which sends the host
+// A key with Control and no Command: Control-Tab and Control-Shift-Tab.
+static void controlCommand(NSMenu *menu,NSString *title,NSString *key,NSEventModifierFlags flags,NSInteger command) {
+  NSMenuItem *item=commandItem(menu,title,key,command);
+  item.keyEquivalentModifierMask=flags;item.hidden=YES;item.allowsKeyEquivalentWhenHidden=YES;
+}
+// The standard menu. The command numbers and keys are those of Lean's key table
+// (WebHistory.keyTable); the menu takes the keys with Command and Control-Tab. Quit reaches applicationShouldTerminate, which sends the host
 // a close event, and Close goes through windowShouldClose. Page keys stay with Lean.
 static void installMenu(void) {
   NSString *name=NSProcessInfo.processInfo.processName;
@@ -311,6 +318,7 @@ static void installMenu(void) {
   commandItem(fileMenu,@"New Tab",@"t",10);
   commandItem(fileMenu,@"Open Location",@"l",9);
   commandItem(fileMenu,@"Close Tab",@"w",11);
+  commandItem(fileMenu,@"Reopen Closed Tab",@"T",20);
   commandItem(fileMenu,@"Settings",@",",12);
   [fileMenu addItem:[NSMenuItem separatorItem]];
   // Page Setup is the system panel; it changes the paper that Print lays out for.
@@ -327,9 +335,15 @@ static void installMenu(void) {
   commandItem(editMenu,@"Copy",@"c",4);
   commandItem(editMenu,@"Paste",@"v",14);
   commandItem(editMenu,@"Select All",@"a",5);
+  [editMenu addItem:[NSMenuItem separatorItem]];
+  commandItem(editMenu,@"Find\u2026",@"f",32);
   editItem.submenu=editMenu;
   NSMenuItem *viewItem=[bar addItemWithTitle:@"View" action:nil keyEquivalent:@""];
   NSMenu *viewMenu=[[NSMenu alloc] initWithTitle:@"View"];
+  commandItem(viewMenu,@"Reload Page",@"r",8);
+  hiddenCommand(viewMenu,@"Reload Page",@"R",8);
+  commandItem(viewMenu,@"Stop",@".",39);
+  [viewMenu addItem:[NSMenuItem separatorItem]];
   commandItem(viewMenu,@"View Source",@"u",13);
   commandItem(viewMenu,@"Actual Size",@"0",3);
   commandItem(viewMenu,@"Zoom In",@"=",1);
@@ -348,6 +362,14 @@ static void installMenu(void) {
   NSMenu *windowMenu=[[NSMenu alloc] initWithTitle:@"Window"];
   [windowMenu addItemWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
   [windowMenu addItemWithTitle:@"Close Window" action:@selector(performClose:) keyEquivalent:@"W"];
+  [windowMenu addItem:[NSMenuItem separatorItem]];
+  commandItem(windowMenu,@"Show Previous Tab",@"{",31);
+  commandItem(windowMenu,@"Show Next Tab",@"}",30);
+  controlCommand(windowMenu,@"Show Next Tab",@"\t",NSEventModifierFlagControl,30);
+  controlCommand(windowMenu,@"Show Previous Tab",@"\t",NSEventModifierFlagControl|NSEventModifierFlagShift,31);
+  for (NSInteger tab=1;tab<=8;tab++)
+    commandItem(windowMenu,[NSString stringWithFormat:@"Select Tab %ld",(long)tab],[NSString stringWithFormat:@"%ld",(long)tab],20+tab);
+  commandItem(windowMenu,@"Select Last Tab",@"9",29);
   windowItem.submenu=windowMenu;
   NSApp.mainMenu=bar;
 }

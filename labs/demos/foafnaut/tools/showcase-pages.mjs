@@ -304,6 +304,7 @@ export const STYLE = "body{margin:16px;font-size:14px;line-height:20px;color:#22
 
 export function page(title, body) {
   return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>${title}</title>` +
+    `<link rel="icon" type="image/svg+xml" href="foafnaut-icon.svg">` +
     `<style>${STYLE}</style></head><body><main>\n` +
     `<p><a href="showcase.html">Showcase</a> · <a href="index.html">Demo index</a></p>\n` +
     `<h1>${title}</h1>\n${body}\n</main></body></html>\n`;

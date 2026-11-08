@@ -178,6 +178,16 @@
    "doesNotShow": "srcset, picture, lazy loading, images from other sites, and object-position other than the centre"
   },
   {
+   "page": "showcase-image-formats.html",
+   "title": "Image formats",
+   "showcase": true,
+   "handwritten": true,
+   "size": [
+    900,
+    1400
+   ]
+  },
+  {
    "page": "print-showcase.html",
    "title": "Print showcase",
    "handwritten": true,

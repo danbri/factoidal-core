@@ -3,6 +3,8 @@
 // @ts-ignore generated release module
 import createModule from "./.build/native-html/runtime/web-render.mjs";
 
+/** What a tab or scroll command needs: tab count and active tab; scroll, view height, scroll limit and screen scale. */
+export type CommandState={tabs?:number;active?:number;scroll?:number;view?:number;scrollLimit?:number;scale?:number};
 export type HTMLArtifact = {
   abi:string; width:number; height:number; data:number[]|Float32Array; wgsl:string; tiles:number[]|Uint32Array;
   primitiveCount:number; checks:{x:number;y:number;rgb:number[]}[];
@@ -22,7 +24,11 @@ export type Inspection = {
   stylesheets:{nodeId:number;url:string}[];
   /** Images that Lean wants (SVG `image`, HTML `img`), by store key; an older engine lists none for `img`. */
   images?:{key:string;url:string}[];
+  /** The icon Lean chose for the tab (HTML §4.6.7.8), or null. */
+  icon?:string|null;
 };
+/** A tab icon as Lean prepared it (WebDocument.iconPrepare). */
+export type TabIcon={kind:"svg";source:string}|{kind:"bitmap";width:number;height:number;rgba:string};
 export type History = {entries:string[];index:number};
 /** The answer of a font load: the font's family and glyph count, and how many fonts the engine holds. */
 export type FontLoaded = {family:string;glyphs:number;fonts:number};
@@ -378,8 +384,13 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     nodeAt:(source:string,width:number,height:number,options:Record<string,unknown>)=>
       (documentCall(source,{...options,op:"nodeAt"},width,height) as {node:number|null}).node,
     // Lean decides what a menu command and a pointer release mean.
-    command:(command:number,textScalePercent:number,history?:History,focused=false)=>documentCall("",{op:"command",command,textScalePercent,focused,...(history?{history}:{})}) as
-      {action:string;target?:"address"|"page";textScalePercent:number}&Partial<HistoryAnswer>,
+    // `state` gives the tab count, the scroll and the view, from which Lean answers a tab or a scroll.
+    command:(command:number,textScalePercent:number,history?:History,focused=false,state:CommandState={})=>documentCall("",{op:"command",command,textScalePercent,focused,...state,...(history?{history}:{})}) as
+      {action:string;target?:"address"|"page";textScalePercent:number;tab?:number;scrollTo?:number;refused?:string}&Partial<HistoryAnswer>,
+    // The tab icon from the Base64 bytes of an icon resource, for a screen of `scale`.
+    iconPrepare:(base64:string,scale:number)=>documentCall("",{op:"iconPrepare",base64,scale}) as TabIcon,
+    // A key that the macOS menu did not take: the command of Lean's key table, or null.
+    pageKey:(key:number,modifiers:number)=>(documentCall("",{op:"pageKey",key,modifiers}) as {command:number|null}).command,
     historyPush:(history:History,url:string)=>documentCall("",{op:"historyPush",history,url}) as HistoryAnswer,
     keyCommand:(platform:string,modifier:string,key:string)=>(documentCall("",{op:"keyCommand",platform,modifier,key}) as {command:number|null}).command,
     pointerUp:(selection:number[])=>(documentCall("",{op:"pointerUp",selection}) as {action:string}).action,

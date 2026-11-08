@@ -403,6 +403,44 @@ Page images are raster (144 dpi). There is no vector path for the HTML scene:
 - Linux and Windows have no window library: https://github.com/danbri/factoidal/issues/1278
   (foafnaut desktop window on Linux and Windows).
 
+## Keys, selection colours, images and tab icons (2026-11-07)
+
+Owner, 2026-11-07, verbatim: "todo: add command-r for reload (or ctrl, per platform). And
+most common other keyboard shortcuts that are dominant especially cross-browser." / "the
+toolbar ctrl-a ctrl-c etc needs to use CSS to style text differently when selected" /
+"please support favicons, at least SVG ones." / "can we display GIF or PNG or JPEG or
+animated GIFs or similar yet?"
+
+- **Keys.** `WebHistory.keyTable` is the one table, for macOS (Command) and other
+  platforms (Control): reload (Command-R, Shift-Command-R, F5), new, close and reopen tab
+  (T, W, Shift-T), tab 1 to 8 and the last tab (1 to 9), next and previous tab
+  (Control-Tab, Shift-Control-Tab, Shift-Command-[ and ], Control-Page Up and Down), find
+  (F), page and line scroll (Space, Shift-Space, Page Up and Down, arrows), top and bottom
+  (Home, End, Command-Up and Down), stop (Escape, Command-.). Lean answers the tab to show
+  (`tabTarget`) and the scroll (`scrollTarget`) in the `command` answer. The macOS menu
+  has an item for each key with Command and for Control-Tab; other keys come from the
+  window as key codes and Lean maps them (`pageKey`). The Hub page reads the same table.
+  Find is refused: https://github.com/danbri/factoidal/issues/1280.
+- **Selection colours.** Selected address text is white on blue
+  (`WebSelection.selectionBackground`, `selectionText`), and the caret is hidden. The page
+  selection uses the same blue as a translucent mark; its glyphs keep their colour:
+  https://github.com/danbri/factoidal/issues/1281.
+- **Images.** HTML `img` is main's replaced element (92e82d268, `Layout` `Picture`,
+  `WebRender.makeReplaced`); the branch's own `img` box (`Layout.imageSize`,
+  `WebRender.sizeImages`) was dropped when the branches were merged. The branch adds GIF
+  to the one image store: `ImageGIF` reads every frame with its delay and disposal, and
+  a page shows the first frame: https://github.com/danbri/factoidal/issues/1284. WebP and
+  AVIF: https://github.com/danbri/factoidal/issues/1283. Page `showcase-image-formats.html`
+  shows PNG, JPEG, GIF and animated GIF.
+- **Tab icons.** `WebDocument.iconURL` chooses the icon (HTML §4.6.7.8): scalable first,
+  then the smallest at least 32 device pixels, the last of equal ones, then an
+  `apple-touch-icon`. No link gives no icon; `/favicon.ico` is not tried. ICO is skipped:
+  https://github.com/danbri/factoidal/issues/1282. `iconPrepare` keeps SVG text (drawn by
+  the SVG engine in the tab) or fits a bitmap to 16 points. The built-in pages name
+  `pages/foafnaut-icon.svg`, the graph of the app icon.
+  The native window shows them; the Hub page does not fetch them yet (its files are kept
+  as main has them; the dropped hunks are with the Hub session).
+
 ## Open
 
 - The scroll sweep moves down only. Scroll up is tested by the rule tests, not in a window.

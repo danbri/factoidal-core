@@ -52,6 +52,8 @@ export async function readSource(url:string,signal?:AbortSignal):Promise<{url:st
 /** Limits on image bytes: each image, and all images of a page (Lean takes at most
 8 MiB of Base64 text for a page, which is 6 MiB of bytes). */
 export const MAX_IMAGE_BYTES=4*1048576, MAX_PAGE_IMAGE_BYTES=6*1048576;
+/** Limit on the bytes of a tab icon (WebDocument.maxIconBytes). */
+export const MAX_ICON_BYTES=65536;
 /** An image may come from the page's own origin only: a file page reads local files, an
 HTTP page its own scheme, host and port. There is no proxy. */
 export function imageAllowed(url:string,documentURL:string) {
@@ -176,6 +178,12 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // size caps. One that fails or is refused is left out, and the page shows its alt text.
   // An engine that holds images gets each one once, and renders name them.
   const images=await imageOptions(engine,await fetchImageBytes(inspection.images??[],document.url,signal));
+  // The tab icon that Lean chose (WebDocument.iconURL), by the rules of images: the page's
+  // own origin only. One that fails or is refused leaves the tab with no icon.
+  let iconBase64:string|undefined;
+  if(inspection.icon)try{
+    if(imageAllowed(inspection.icon,document.url))iconBase64=base64(await readBytes(inspection.icon,MAX_ICON_BYTES,signal));
+  }catch(error){if(signal?.aborted)throw error;console.error(`Native HTML icon refused: ${inspection.icon}: ${String(error instanceof Error?error.message:error)}`);}
   const options:Record<string,unknown>={url:document.url,resources,...images};
   // Page scripts: Lean runs them (WebScripts). The host only fetches the bytes of `src`
   // scripts, as for stylesheets. The script session's commands are part of each render
@@ -198,7 +206,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // Pages show in the font of loadFontFile, or else in the Lean bitmap face.
   signal?.throwIfAborted();
   return {
-    url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,script,
+    url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,script,iconBase64,
     /** A later turn of the page's script session: its commands, when the DOM changed. */
     applyTurn:(turn:ScriptTurn)=>{if(script)script.turn=turn;if(turn.changed&&turn.commands)options.commands=turn.commands;return turn.changed;},
     // What compile needs, as plain data, so the engine in a worker can run it.

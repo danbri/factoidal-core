@@ -95,10 +95,16 @@ def lineRects (items : Array Cell) (selection : Selection) : Array (Float × Flo
       line := some c
   return out
 
-/-- Translucent marks over the text, drawn after the page. -/
+/-- The active selection colours of the common desktop browsers (the CSS `::selection`
+default, CSS Pseudo-Elements 4 §3.1): white text on blue. The address bar uses both. -/
+def selectionBackground : Color := ⟨0,99/255,225/255⟩
+def selectionText : Color := ⟨1,1,1⟩
+
+/-- Translucent marks of the selection colour over the text, drawn after the page. The
+glyphs keep their colour: https://github.com/danbri/factoidal/issues/1281 -/
 def highlight (items : Array Cell) (selection : Selection) : List Node :=
   (lineRects items selection).toList.map fun (x,y,w,h) =>
-    .paint ⟨none,{geometry := .rect x y w h,style := {fill := .solid ⟨0.2,0.45,0.95⟩,fillOpacity := 0.35}}⟩
+    .paint ⟨none,{geometry := .rect x y w h,style := {fill := .solid selectionBackground,fillOpacity := 0.35}}⟩
 
 /-- A pointer that moves less than this many backing pixels is a click. -/
 def clickSlop : Float := 4
@@ -139,6 +145,18 @@ def commandName : Nat → String
   | 17 => "redo"
   | 18 => "print"
   | 19 => "pageSetup"
+  | 20 => "reopenTab"
+  | 21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29 => "selectTab"
+  | 30 => "nextTab"
+  | 31 => "previousTab"
+  | 32 => "find"
+  | 33 => "pageDown"
+  | 34 => "pageUp"
+  | 35 => "top"
+  | 36 => "bottom"
+  | 37 => "lineDown"
+  | 38 => "lineUp"
+  | 39 => "stop"
   | _ => "none"
 
 /-- Text size of a new window on a desktop screen. -/
@@ -172,4 +190,8 @@ private def sample := cells #[sampleRun 1 "one" 0 0,sampleRun 1 "two" 24 0 4,sam
 #guard text sample (.span 500 500 500 500) == ""
 #guard (lineRects sample .all).size == 3
 #guard (lineRects sample (.span 5 5 5 5)).size == 0
+-- Expected failure, https://github.com/danbri/factoidal/issues/1281: the page selection is
+-- marks over the text only, one rectangle for each line; no glyph is drawn again in
+-- `selectionText`. When the glyphs get the selection text colour, this fails: change it.
+#guard (highlight sample .all).length == (lineRects sample .all).size
 end WebSelection
