@@ -99,13 +99,3 @@ def caseJSON (seed : Nat) : String :=
 def output : String := "\n".intercalate ((List.range 80).map caseJSON) ++ "\n"
 
 end L4Factoidal.FrameCost.Cases
-
-open L4Factoidal.FrameCost.Cases in
-def main (args : List String) : IO UInt32 := do
-  match args with
-  | ["--check",file] =>
-    if (← IO.FS.readFile file) == output then return 0
-    IO.eprintln s!"{file} is not the output of frame-cost-cases: regenerate it with `lake exe frame-cost-cases > {file}`"
-    return 1
-  | [] => IO.print output; return 0
-  | _ => IO.eprintln "usage: frame-cost-cases [--check FILE]"; return 2

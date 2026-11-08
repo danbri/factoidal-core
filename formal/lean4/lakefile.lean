@@ -288,7 +288,7 @@ extern_lib libl4hostread pkg := do
 @[default_target] lean_lib FrameCost where
   roots := #[`L4Factoidal.FrameCost]
 -- The event sequences that labs/demos/foafnaut/frame_cost_test.ts replays.
-lean_exe «frame-cost-cases» where root := `L4Factoidal.FrameCost.Cases
+lean_exe «frame-cost-cases» where root := `Harness.FrameCostCases
 
 -- WasmVM measurements (issue 1244): `lake exe wasmvm-bench`.
 lean_exe «wasmvm-bench» where root := `L4Factoidal.WasmVM.Bench
