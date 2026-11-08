@@ -15,8 +15,8 @@ The session code is `Hosts.Page`'s `Prog`. Here are the parts of the other machi
 - `serveHost`: one import call that the host passes back, served by `Page.serve` (the
   interpreter's function for each binding) on a `Window` of the guest's memory.
 
-A guest import with no entry in `readsOf` makes `prepare` refuse the module, so a new
-import that reads memory can not be served with bytes missing: such a module runs on the
+A guest import with no entry in `readsOf` makes `prepare` refuse the module, so a newly
+added import that reads memory can not be served with bytes missing: such a module runs on the
 interpreter. `Import.reads` is an exhaustive match: a new `foafnaut_dom` import does not
 compile until its reads are stated.
 -/
