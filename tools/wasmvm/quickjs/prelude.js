@@ -412,7 +412,7 @@
     // callback, node, phase + 8 * capture, depth]: L4Factoidal.EventLoop.Dispatch.plan.
     const plan = chk(n.plan(tid, s.type, s.bubbles ? 1 : 0));
     const k = plan[0];
-    s.path = []; for (let i = k; i >= 1; i--) s.path.push(wrapTarget(plan[i]));
+    s.path = []; for (let i = 1; i <= k; i++) s.path.push(wrapTarget(plan[i]));
     let stopAt = null;
     for (let i = k + 1; i + 3 < plan.length; i += 4) {
       const cb = plan[i], node = plan[i + 1], phase = plan[i + 2] & 7, capture = (plan[i + 2] & 8) !== 0, depth = plan[i + 3];
