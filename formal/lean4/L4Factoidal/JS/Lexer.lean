@@ -18,6 +18,8 @@ namespace L4Factoidal.JS
 
 inductive TokKind where
   | ident | kw | num | big | str | punct | tmpl | eof
+  /-- A regular expression literal (§12.9.5): `text` is the body, `flags` the flags. -/
+  | regex
   deriving BEq, Repr, Inhabited, DecidableEq
 
 
@@ -222,6 +224,8 @@ structure Token where
   tmpl : Tmpl := {}
   /-- The identifier had a Unicode escape (so it is never a keyword, §12.7.2). -/
   escaped : Bool := false
+  /-- The flags of a regular expression literal (`kind = regex`). -/
+  flags : String := ""
   deriving Inhabited
 
 /-- An identifier with `\\u` escapes (§12.7.1): its value and the index after it. -/
@@ -324,6 +328,35 @@ def skipBlock (cs : Array Char) : Nat → Nat → Bool → Option (Nat × Bool)
     else if cs[i]! == '*' && cs[i+1]! == '/' then some (i + 2, nl)
     else skipBlock cs fuel (i + 1) (nl || isLineTerm cs[i]!)
 
+/-- Whether a `/` after these tokens starts a regular expression literal (§12, the goal
+symbols InputElementRegExp and InputElementDiv): not after a value (a name, a literal, a
+closing bracket, or the keywords `this`, `super`, `null`, `true`, `false`). A `}` is
+taken as the end of an expression (an object literal or a template part). -/
+def regexAllowed (acc : Array Token) : Bool :=
+  match acc.back? with
+  | none => true
+  | some t => match t.kind with
+    | .ident | .num | .big | .str | .tmpl | .regex => false
+    | .kw => !["this", "super", "null", "true", "false"].contains t.text
+    | .punct => !([")", "]", "}"].contains t.text)
+    | .eof => true
+
+/-- The body of a regular expression literal from `i` (after the `/`): up to the `/`
+that is not escaped and not in a class (§12.9.5). A line terminator ends it with an
+error. -/
+def scanRegex (cs : Array Char) : Nat → Nat → Bool → Except String Nat
+  | 0, _, _ => .error "SyntaxError: unterminated regular expression literal"
+  | fuel + 1, i, cls =>
+    if i ≥ cs.size || isLineTerm cs[i]! then .error "SyntaxError: unterminated regular expression literal" else
+    let c := cs[i]!
+    if c == '\\' then
+      if i + 1 ≥ cs.size || isLineTerm cs[i+1]! then .error "SyntaxError: unterminated regular expression literal"
+      else scanRegex cs fuel (i + 2) cls
+    else if c == '[' then scanRegex cs fuel (i + 1) true
+    else if c == ']' then scanRegex cs fuel (i + 1) false
+    else if c == '/' && !cls then .ok i
+    else scanRegex cs fuel (i + 1) cls
+
 def lexGo (cs : Array Char) : Nat → Nat → Bool → Array Token → Except String (Array Token)
   | 0, i, nl, acc => .ok (acc.push { kind := .eof, nl, pos := i })
   | fuel + 1, i, nl, acc =>
@@ -360,6 +393,14 @@ def lexGo (cs : Array Char) : Nat → Nat → Bool → Array Token → Except St
       match scanTmpl cs cs.size (i + 1) "" "" {} with
       | .error e => .error e
       | .ok (t, j) => lexGo cs fuel j false (acc.push { kind := .tmpl, tmpl := t, nl, pos := i })
+    else if c == '/' && regexAllowed acc then
+      match scanRegex cs cs.size (i + 1) false with
+      | .error e => .error e
+      | .ok j =>
+        let k := scanWhile cs isIdPart cs.size (j + 1)
+        let body := String.ofList (cs.extract (i + 1) j).toList
+        let flags := String.ofList (cs.extract (j + 1) k).toList
+        lexGo cs fuel k false (acc.push { kind := .regex, text := body, flags, nl, pos := i })
     else
       match matchPunct cs i with
       | some p => lexGo cs fuel (i + p.length) false (acc.push { kind := .punct, text := p, nl, pos := i })

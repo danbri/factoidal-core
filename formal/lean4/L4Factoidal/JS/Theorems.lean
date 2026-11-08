@@ -48,12 +48,12 @@ theorem arrayIndex?_lt {s : String} {n : Nat} (h : arrayIndex? s = some n) : n <
         · rename_i hlt; cases h; exact hlt
         · simp at h
 
-theorem loopNext_break (ls : List String) : loopNext ls (.brk none) = some .normal := rfl
-theorem loopNext_continue (ls : List String) : loopNext ls (.cont none) = none := rfl
-theorem loopNext_normal (ls : List String) : loopNext ls .normal = none := rfl
-theorem loopNext_return (ls : List String) (v : Value) : loopNext ls (.ret v) = some (.ret v) := rfl
+theorem loopNext_break (ls : List String) : loopNext (H := Unit) ls (.brk none) = some .normal := rfl
+theorem loopNext_continue (ls : List String) : loopNext (H := Unit) ls (.cont none) = none := rfl
+theorem loopNext_normal (ls : List String) : loopNext (H := Unit) ls .normal = none := rfl
+theorem loopNext_return (ls : List String) (v : Value) : loopNext (H := Unit) ls (.ret v) = some (.ret v) := rfl
 theorem loopNext_label (l : String) (ls : List String) :
-    loopNext (l :: ls) (.brk (some l)) = some .normal := by simp [loopNext]
+    loopNext (H := Unit) (l :: ls) (.brk (some l)) = some .normal := by simp [loopNext]
 
 theorem sameValue_str (s : String) : sameValue (.str s) (.str s) = true := by
   simp [sameValue, strictEq]

@@ -2197,6 +2197,20 @@ L4Factoidal_JS_copyDataProps  # (c) CopyDataProperties: getters as L4Factoidal_J
 L4Factoidal_JS_defineMembers  # (b) class members: self tail call per member; computed keys and static fields as L4Factoidal_JS_eval*
 L4Factoidal_JS_directEval  # (c) eval: the code is parsed and run as L4Factoidal_JS_eval*; each nested eval is one more JavaScript call, bounded by Heap.maxDepth through the call
 L4Factoidal_JS_initFields  # (c) class field initialisers: one call per field, as L4Factoidal_JS_call*
+L4Factoidal_JS_Re_disjunction  # (b) the regular expression parser (JS/Regex.lean): recursive descent, depth is the nesting of groups in the pattern; alternatives and terms are loops or self tail calls; fuel 4 * pattern length + 16
+L4Factoidal_JS_Re_alternative  # (b) as L4Factoidal_JS_Re_disjunction
+L4Factoidal_JS_Re_term  # (b) as L4Factoidal_JS_Re_disjunction
+L4Factoidal_JS_Re_atomP  # (b) as L4Factoidal_JS_Re_disjunction
+L4Factoidal_JS_Re_resolve  # (b) named back references resolved over the parsed pattern: depth is its group nesting
+L4Factoidal_JS_Re_groupCount  # (b) the capture count of a quantified atom: depth is its group nesting
+L4Factoidal_JS_Re_matchNode  # (b) the backtracking matcher (§22.2.2 continuations): depth is the pattern's nesting plus one level per repetition of a quantified group or sequence element matched so far; a repetition of one character matcher (.*, [a-z]+) is a loop, so the common long runs do not nest; fuel 64 * input length + 4096
+L4Factoidal_JS_proxyTrap  # (c) a Proxy handler's trap: one [[Get]] on the handler, as L4Factoidal_JS_get*
+L4Factoidal_JS_hasProp  # (c) HasProperty: a `has` trap is a call, as L4Factoidal_JS_call*; a proxy of a proxy adds one level per proxy
+L4Factoidal_JS_ownKeysOf  # (c) OwnPropertyKeys: an `ownKeys` trap is a call, as L4Factoidal_JS_call*; one level per proxy in a chain
+L4Factoidal_JS_ownDesc  # (c) GetOwnProperty: a `getOwnPropertyDescriptor` trap and the descriptor's getters, as L4Factoidal_JS_get*
+L4Factoidal_JS_regexExec  # (c) RegExpBuiltinExec: lastIndex read and written through [[Get]]/[[Set]], as L4Factoidal_JS_get* and L4Factoidal_JS_put*; the match itself is L4Factoidal_JS_Re_matchNode
+L4Factoidal_JS_extraNative  # (c) RegExp, Proxy, typed array, JSON.parse and host built-ins: ToString/ToNumber of arguments and replacer calls, as L4Factoidal_JS_to* and L4Factoidal_JS_call*
+L4Factoidal_JS_jsonToValue  # (b) JSON.parse: depth is the nesting of the JSON text (its parser bounds it); fuel 100000
 L4Factoidal_JS_iter*  # (c) the iteration protocol (GetIterator, IteratorStep, IteratorClose, collecting to an array): next/return are calls, as L4Factoidal_JS_call*; collecting is a self tail call
 L4Factoidal_JS_superCall  # (c) super(...): the parent constructor is a call, as L4Factoidal_JS_call*
 L4Factoidal_JS_gen*  # (b)(c) the generator machine (JS/Interp.lean): frame steps are self tail calls; nesting is the statement nesting around a yield; calls as L4Factoidal_JS_call*

@@ -102,6 +102,14 @@ inductive Expr where
   | newTarget
   /-- `yield e`, `yield* e` (§15.5). -/
   | yieldE (delegate : Bool) (arg : Option Expr)
+  /-- A regular expression literal (§13.2.7): a new RegExp object at each evaluation. -/
+  | regex (pattern flags : String)
+  /-- Optional chaining (§13.3.9): `chain` is an OptionalExpression; inside it, `optBase e`
+  is the value of `e`, and a nullish one ends the whole chain with `undefined`;
+  `optCallee e` is the callee of `e?.()`. -/
+  | chain (e : Expr)
+  | optBase (e : Expr)
+  | optCallee (e : Expr)
 
 /-- A property definition in an object literal (§13.2.5). -/
 inductive PropDef where
@@ -262,7 +270,8 @@ def Expr.hasYieldF : Nat → Expr → Bool
     match e with
     | .yieldE .. => true
     | .num _ | .bigint _ | .str _ | .bool _ | .null | .ident _ | .this | .newTarget | .superMember _
-    | .func _ | .classE _ => false
+    | .func _ | .classE _ | .regex _ _ => false
+    | .chain a | .optBase a | .optCallee a => Expr.hasYieldF n a
     | .array es | .template _ es | .superCall es | .tagged _ _ _ es => Expr.anyYield n es
     | .object ps => PropDef.anyYield n ps
     | .unary _ a | .update _ _ a | .spread a | .superIndex a | .member a _ => Expr.hasYieldF n a

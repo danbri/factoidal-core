@@ -828,7 +828,27 @@ def parseTail : Nat → Expr → Bool → P Expr
       advance
       let subs ← parseSubs n t.tmpl.subs.toList []
       parseTail n (.tagged e t.tmpl.cooked.toList t.tmpl.raw.toList subs) allowCall
-    else if isP t "?." then fail "optional chaining is not supported"
+    else if isP t "?." then
+      -- Optional chaining (§13.3.9): the rest of the chain is inside one `chain`.
+      advance
+      let nt ← peek
+      let first ← if isP nt "(" then do
+          advance; pure (Expr.call (.optCallee e) (← parseArgs n []))
+        else if isP nt "[" then do
+          advance
+          let k ← parseExpr n false
+          expectP "]"
+          pure (Expr.index (.optBase e) k)
+        else if nt.kind == .ident || nt.kind == .kw then do
+          advance; pure (Expr.member (.optBase e) nt.text)
+        else if isP nt "#" then do
+          advance
+          let pt ← peek
+          if !(pt.kind == .ident || pt.kind == .kw) then fail "expected a private name"
+          advance; pure (Expr.member (.optBase e) (privKey pt.text))
+        else fail "expected a property name after ?."
+      if (← peek).kind == .tmpl then fail "Invalid tagged template on optional chain"
+      return .chain (← parseTail n first allowCall)
     else return e
 
 def parseArgs : Nat → List Expr → P (List Expr)
@@ -848,6 +868,7 @@ def parsePrimary : Nat → P Expr
     | .num => advance; return .num t.num
     | .big => advance; return .bigint t.text.toNat!
     | .str => advance; return .str t.text
+    | .regex => advance; return .regex t.text t.flags
     | .tmpl =>
       advance
       let subs ← parseSubs n t.tmpl.subs.toList []
