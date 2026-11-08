@@ -218,7 +218,7 @@ async function main() {
     for(const line of turn.errors)console.error(`page error: ${line}`);
     trace("native-html-script",{cause,session:turn.session,clock:turn.clock,changed:turn.changed,commands:turn.commandCount,
       instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake});
-    if(turn.gpu?.length&&page===document){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();}
+    if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();}
     if(page.applyTurn(turn)&&page===document)dirty=true;
   };
   // Page GPU commands (docs/designissues/2026-11-08-page-gpu.md): Lean validated each one; the

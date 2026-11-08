@@ -391,7 +391,8 @@ function scriptTurn(page,turn){
   for(const line of turn.logs)console.log('page:',line);
   for(const line of turn.errors)console.warn('page error:',line);
   if(page.script)page.script.turn=turn;
-  if(turn.gpu?.length&&page===doc)gpuTake(turn.gpuPage,turn.gpu);
+  // The start turn comes before the page is shown: its commands make the objects.
+  if(turn.gpu?.length)gpuTake(turn.gpuPage,turn.gpu);
   if(turn.changed&&turn.commands){page.commands=turn.commands;if(page===doc)request();}
 }
 // Page GPU commands (docs/designissues/2026-11-08-page-gpu.md): Lean validated each one
@@ -418,6 +419,9 @@ async function gpuFeed(){
 /** A new page canvas frame on screen: replay, blit into the page layer, composite. No Lean call. */
 async function gpuShow(){
   if(gpuBusy){gpuAgain=true;return;}
+  // Page canvases are drawn into the page layer: with no band on screen, ask Lean for one.
+  if(!doc||doc.script?.session!==gpuPage)return;
+  if(!drawing&&layered!==false&&L&&(!current||current.doc!==doc)){bandWanted=true;request();return;}
   if(drawing||!layerSurface||!current||current.doc!==doc)return;
   gpuBusy=true;
   try{
@@ -444,8 +448,12 @@ async function gpuShow(){
 setInterval(()=>{
   const script=doc?.script;
   if(!script||drawing||dirty||script.turn.nextWake===null||script.turn.nextWake===undefined)return;
-  const elapsed=performance.now()-script.epoch;
+  let elapsed=performance.now()-script.epoch;
   if(elapsed<script.turn.nextWake)return;
+  // A page whose callbacks take longer than real time would fall further behind at each
+  // advance (each one running every frame it missed): the virtual clock moves at most
+  // 100 ms past the page's own clock per advance, and the epoch slips by the rest.
+  if(elapsed-script.turn.clock>100){script.epoch+=elapsed-script.turn.clock-100;elapsed=script.turn.clock+100;}
   try{scriptTurn(doc,call('',{op:'scriptSession',action:'advance',session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock))}));}
   catch(error){console.warn('foafnaut: page script timers:',String(error.message??error));script.turn.nextWake=null;}
 },16);
