@@ -116,6 +116,24 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
     # Pointer events, layout reads and the page GPU subset run in page scripts too.
     QUICKJS_WASM="$QJS_GUEST" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/native_html_pointer_test.ts" "$LAB/page_gpu_test.ts"
+    # The window replays the page GPU commands (2026-11-08: the start turn's commands, which make
+    # the canvas and buffers, were dropped, so every later turn failed and the canvas stayed
+    # blank). Each triangle page runs off screen for 8 s (25 s on Wasm); any page GPU or page error fails.
+    if [ "$(uname -s)" = Darwin ] && [ -f "$LAB/.build/native/libnative-window.dylib" ]; then
+      GPU_ENGINE=() GPU_SECONDS=25
+      if [ -f "$LAB/.build/web-render/engines/libweb-render.dylib" ]; then GPU_ENGINE=(--native-engine "$LAB/.build/web-render/engines/libweb-render.dylib"); GPU_SECONDS=8; fi
+      for gpu_page in webgpu-triangle webgl-triangle; do
+        GPU_LOG=$(mktemp -t foafnaut-page-gpu)
+        GPU_RC=0
+        QUICKJS_WASM="$QJS_GUEST" perl -e 'alarm shift; exec @ARGV' "$GPU_SECONDS" deno run --no-check --no-config --no-npm --node-modules-dir=none \
+          --unstable-webgpu --unstable-ffi -A "$LAB/run_html.ts" --offscreen --no-state --html "$LAB/pages/$gpu_page.html" ${GPU_ENGINE[@]+"${GPU_ENGINE[@]}"} >"$GPU_LOG" 2>&1 || GPU_RC=$?
+        # 142: the alarm ended the run, as planned. Any other non-zero code is a failure.
+        if { [ "$GPU_RC" != 0 ] && [ "$GPU_RC" != 142 ]; } || grep -qE 'page GPU|page error' "$GPU_LOG" || ! grep -q '"native-html-presented"' "$GPU_LOG"; then
+          echo "page GPU in the window: $gpu_page failed:" >&2; grep -m5 -E 'page GPU|page error|rror' "$GPU_LOG" >&2; rm -f "$GPU_LOG"; exit 1
+        fi
+        echo "page GPU in the window: $gpu_page replayed with no error"; rm -f "$GPU_LOG"
+      done
+    fi
   else
     echo 'NOT RUN: native_html_scripts_test.ts needs the QuickJS guest module (tools/wasmvm/build-quickjs.sh)'
   fi

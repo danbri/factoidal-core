@@ -165,6 +165,16 @@ async function main() {
   type ScriptCall=(name:"scriptInfo"|"scriptLoad"|"scriptSession"|"nodeAt"|"pointerAt",...args:unknown[])=>Promise<unknown>;
   const scriptCall:ScriptCall=async(name,...args)=>worker?await worker.engine[name](...args)
     :(engine as unknown as Record<string,(...a:unknown[])=>unknown>)[name](...args);
+  let session:Awaited<ReturnType<typeof createHTMLWindowSession>>|undefined;
+  // Page GPU commands (docs/designissues/2026-11-08-page-gpu.md): Lean validated each one; the
+  // window session replays them in order and presents the page canvases. Before the session
+  // exists they wait here. Declared before the first page, whose scripts start before the window.
+  const gpuTurns:{page:number;commands:unknown[]}[]=[];
+  const gpuFlush=()=>{
+    if(!session)return;
+    while(gpuTurns.length){const t=gpuTurns.shift()!;
+      session.pageGpu(t.page,t.commands).catch(error=>console.error("Native HTML: page GPU failed:",String(error)));}
+  };
   let scriptsOn=false,scriptOps:string[]=[];
   // The real time at which each session's virtual clock was 0.
   const scriptEpochs=new Map<number,number>();
@@ -189,6 +199,8 @@ async function main() {
         const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,
           ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent}}) as ScriptTurn;
         scriptEpochs.set(turn.session,performance.now()-turn.clock);
+        // The start turn makes the page's GPU objects (canvas, buffers, pipelines); the later turns use them.
+        if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();}
         for(const line of turn.logs)console.log(`page: ${line}`);
         for(const line of turn.errors)console.error(`page error: ${line}`);
         console.log(JSON.stringify({type:"native-html-script",cause:"start",t:Math.round(performance.now()),session:turn.session,
@@ -217,7 +229,6 @@ async function main() {
   if(!adapter){console.error("GPU BLOCKED: native HTML adapter unavailable in this launch context");Deno.exitCode=2;return;}
   console.log("Native HTML GPU adapter:",adapter.info);
   let device:GPUDevice|undefined,native:ReturnType<typeof loadNativeWindow>|undefined;
-  let session:Awaited<ReturnType<typeof createHTMLWindowSession>>|undefined;
   let running=true,dirty=true,controller:AbortController|undefined;
   // Frame trace, one JSON line for each event: every number a tool needs to find
   // where the time goes. A pump stall means AppKit held the thread in its own loop.
@@ -258,15 +269,6 @@ async function main() {
       instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake});
     if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();}
     if(page.applyTurn(turn)&&page===document)dirty=true;
-  };
-  // Page GPU commands (docs/designissues/2026-11-08-page-gpu.md): Lean validated each one; the
-  // window session replays them in order and presents the page canvases. Before the session
-  // exists they wait here.
-  const gpuTurns:{page:number;commands:unknown[]}[]=[];
-  const gpuFlush=()=>{
-    if(!session)return;
-    while(gpuTurns.length){const t=gpuTurns.shift()!;
-      session.pageGpu(t.page,t.commands).catch(error=>console.error("Native HTML: page GPU failed:",String(error)));}
   };
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.
