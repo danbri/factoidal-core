@@ -77,6 +77,7 @@ try{
         return st;},
       async click(x,y){await s('Page.bringToFront');
         for(const type of ['mouseMoved','mousePressed','mouseReleased'])await s('Input.dispatchMouseEvent',{type,x,y,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});},
+      async wheel(x,y,deltaY){await s('Page.bringToFront');await s('Input.dispatchMouseEvent',{type:'mouseWheel',x,y,deltaX:0,deltaY});},
       async key(key,code,keyCode){await s('Page.bringToFront');
         for(const type of ['keyDown','keyUp'])await s('Input.dispatchKeyEvent',{type,key,code,windowsVirtualKeyCode:keyCode,modifiers:1});},
       close:()=>send('Target.closeTarget',{targetId})};
@@ -132,6 +133,21 @@ try{
     }
     console.log(JSON.stringify({run:run.name,...results}));
     await page.close();
+    // A link below the first screen, after a scroll, in a short window (2026-11-08: Lean kept
+    // link regions only down to the viewport, so rows further down clicked nothing).
+    const short=await open('page=sitemap.xml&stats=1&layers=0',width,700),sitemapURL=base+'pages/sitemap.xml';
+    const atSitemap=st=>st.frame?.url===sitemapURL&&Array.isArray(st.frame.links);
+    if(!atSitemap(await short.until(atSitemap,60000)??{})){fail(run.name,'sitemap.xml did not load');await short.close();continue;}
+    for(let i=0;i<20;i++){await short.wheel(500,400,400);await sleep(60);}
+    const low=await short.until(st=>atSitemap(st)&&st.frame.scroll>500,20000);
+    const row=low?.frame?.links?.find(l=>/\.(html|xml)$/.test(l[1])&&l[3]>100&&l[3]+l[5]<690);
+    if(!row){fail(run.name,'sitemap.xml: no page link on screen after a scroll to',low?.frame?.scroll);await short.close();continue;}
+    await short.click(Math.round(row[2]+row[4]/2),Math.round(row[3]+row[5]/2));
+    const went=await short.until(st=>st.frame&&st.frame.url!==sitemapURL,20000);
+    const want=new URL(row[1],sitemapURL).href;
+    if(went?.frame?.url!==want)fail(run.name,'sitemap.xml: a link at scroll',low.frame.scroll,'went to',went?.frame?.url,'not',want);
+    else console.log(JSON.stringify({run:run.name,scrolledLink:row[1],scroll:low.frame.scroll,kind:'navigated'}));
+    await short.close();
   }
 }catch(error){fail(String(error?.stack??error));}
 finally{chrome.kill('SIGKILL');server.close();fs.rmSync(profile,{recursive:true,force:true});}
