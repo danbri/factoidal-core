@@ -13,7 +13,7 @@ type Touch={width:number;startX:number;startY:number;x:number;y:number;vx:number
 
 function checks(engine:HTMLEngine){
   const info=engine.gesture({action:"info"}) as unknown as Record<string,unknown>;
-  assert.deepEqual(info,{actions:["touch","wheel"],edgeZone:20,tapSlop:10,commitPercent:30,flingSpeed:500,wheelCommit:140,dominance:2});
+  assert.deepEqual(info,{actions:["touch","wheel","hold"],edgeZone:20,holdMs:500,tapSlop:10,commitPercent:30,flingSpeed:500,wheelCommit:140,dominance:2});
   const touch=(t:Touch)=>engine.gesture({action:"touch",...t});
   // Conventions.
   const at=(startX:number,x:number,more:Partial<Touch>={}):Touch=>({width:400,startX,startY:300,x,y:300,vx:0,fingers:1,ended:true,...more});
