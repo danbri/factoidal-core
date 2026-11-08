@@ -15,6 +15,7 @@ a header line of decimal numbers separated by spaces, then `\n`, then a payload:
 | 6 | createBindGroup | id pipeline buffer | |
 | 7 | pass | canvas r g b a nDraws (pipeline bind nVb vb* count instances first firstInstance)* | |
 | 8 | destroy | id | |
+| 9 | createProgram | id | the GLSL vertex shader, U+0000, the fragment shader |
 
 `bind` 0 is none (page ids start at 1). Formats 1..4 are `float32`..`float32x4`;
 topologies 0..3 are triangle-list, triangle-strip, line-list, point-list.
@@ -122,6 +123,11 @@ def decode (op : Nat) (bytes : ByteArray) : Except String Command := do
     let r ← next; let g ← next; let b ← next; let a ← next
     return Command.pass c (r, g, b, a) (← draws (← next))
   | 8 => read do return Command.destroy (← next)
+  | 9 => do
+    let some k := (List.range payload.size).find? (fun i => payload[i]! == 0) | throw "gpu: program needs two shaders"
+    let vs ← text (payload.extract 0 k)
+    let fs ← text (payload.extract (k + 1) payload.size)
+    read do return Command.createProgram (← next) vs fs
   | _ => throw "gpu: unknown command"
 
 /-! ## JSON of host commands -/

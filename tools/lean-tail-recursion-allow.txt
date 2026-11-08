@@ -2185,3 +2185,4 @@ L4Factoidal_JS_jsonStr  # (c) JSON.stringify: depth is the nesting of the value,
 L4Factoidal_JS_stringOrMath  # (c) String.prototype and Math built-ins: ToString/ToNumber of arguments, as L4Factoidal_JS_to*
 L4Factoidal_JS_Obj_ownKeys  # (c) core Array.qsort over the integer keys of one object (the integer-like keys of ordinary properties only; array elements are not sorted here); to be replaced by List.mergeSort
 L4Factoidal_JS_Main_jsFiles  # (c) core Array.qsort of the Test262 file list in the leanjs runner; not in the engine
+L4Factoidal_PageGpu_Glsl_*  # (c) the GLSL ES front end of page WebGL (PageGpu/Glsl.lean): gStmt, gBody and gBlock nest by the parser's fuel (maxDepth 32), each block holds at most maxBlock 128 statements, and Stmts.append runs over one such block list; the same constant bounds as PageGpu.Wgsl

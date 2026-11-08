@@ -36,21 +36,30 @@ theorem validate_sound (m : Module) (h : validate m = true) : InSubset m := by
   simp only [fnOk, Bool.and_eq_true, decide_eq_true_eq] at this
   exact this.2
 
-theorem compile_validated {src : String} {h : Module} (hc : compile src = .ok h) : validate h = true := by
+theorem finish_spec {m h : Module} (hf : finish m = .ok h) : harden m = some h ∧ validate h = true := by
+  unfold finish at hf
+  by_cases hv : validate m = true
+  · rw [if_pos hv] at hf
+    cases hh : harden m with
+    | none => rw [hh] at hf; cases hf
+    | some h' =>
+      rw [hh] at hf
+      simp only at hf
+      by_cases hv' : validate h' = true
+      · rw [if_pos hv'] at hf; cases hf; exact ⟨rfl, hv'⟩
+      · rw [if_neg hv'] at hf; cases hf
+  · rw [if_neg hv] at hf; cases hf
+
+theorem compile_finish {src : String} {h : Module} (hc : compile src = .ok h) : ∃ m, finish m = .ok h := by
   unfold compile at hc
   simp only [bind, Except.bind] at hc
   split at hc
   · cases hc
-  · rename_i m _
-    split at hc
-    · cases hc
-    · split at hc
-      · split at hc
-        · cases hc
-        · rename_i hv
-          cases hc
-          simpa using hv
-      · cases hc
+  · rename_i m _; exact ⟨m, hc⟩
+
+theorem compile_validated {src : String} {h : Module} (hc : compile src = .ok h) : validate h = true := by
+  obtain ⟨m, hm⟩ := compile_finish hc
+  exact (finish_spec hm).2
 
 /-- A shader the host receives is in the subset. -/
 theorem compile_inSubset {src : String} {h : Module} (hc : compile src = .ok h) : InSubset h :=
@@ -311,23 +320,37 @@ theorem harden_clamped {m h : Module} (hh : harden m = some h) :
   obtain ⟨b, hb, rfl⟩ := hfe
   exact ⟨f, hfm, rfl, rfl, hardenSs_clamped _ _ _ _ hb⟩
 
+/-- A WebGL program the host receives (`Glsl.compileProgram`, a `createProgram` command)
+is in the subset, with every index clamped: it is the `finish` of its translation. -/
+theorem program_finish {vs fs : String} {h : Module} {i : Glsl.Info}
+    (hc : Glsl.compileProgram vs fs = .ok (h, i)) : ∃ m, finish m = .ok h := by
+  unfold Glsl.compileProgram at hc
+  simp only [bind, Except.bind] at hc
+  split at hc
+  · cases hc
+  · split at hc
+    · cases hc
+    · split at hc
+      · cases hc
+      · rename_i p _
+        split at hc
+        · cases hc
+        · rename_i h' hf
+          simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at hc
+          obtain ⟨rfl, _⟩ := hc
+          exact ⟨_, hf⟩
+
+theorem program_inSubset {vs fs : String} {h : Module} {i : Glsl.Info}
+    (hc : Glsl.compileProgram vs fs = .ok (h, i)) : InSubset h ∧ ∃ m, harden m = some h := by
+  obtain ⟨m, hm⟩ := program_finish hc
+  exact ⟨validate_sound h (finish_spec hm).2, m, (finish_spec hm).1⟩
+
 /-- A shader the host receives has every index clamped (`clampedE`): it is the
 hardening of a parsed, validated module. -/
 theorem compile_clamped {src : String} {h : Module} (hc : compile src = .ok h) :
     ∃ m, harden m = some h := by
-  unfold compile at hc
-  simp only [bind, Except.bind] at hc
-  split at hc
-  · cases hc
-  · rename_i m _
-    split at hc
-    · cases hc
-    · split at hc
-      · rename_i h' hh
-        split at hc
-        · cases hc
-        · cases hc; exact ⟨m, hh⟩
-      · cases hc
+  obtain ⟨m, hm⟩ := compile_finish hc
+  exact ⟨m, (finish_spec hm).1⟩
 
 /-! ## Commands -/
 

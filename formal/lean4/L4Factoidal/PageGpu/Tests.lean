@@ -87,6 +87,48 @@ def page : List Command := [
 #guard ok (Wire.decode 7 "1 0 0 0 255 1 5 6 1 2 3 1 0 0".toUTF8)
 #guard Wire.base64 "Man".toUTF8 == "TWFu" && Wire.base64 "Ma".toUTF8 == "TWE="
 
+-- WebGL: one front end for GLSL ES 3.00 and 1.00.
+def vs300 : String := "#version 300 es
+layout(location = 0) in vec2 pos;
+in vec3 color;
+uniform float angle;
+out vec3 vcolor;
+void main() {
+  float s = sin(angle);
+  float c = cos(angle);
+  vcolor = color;
+  gl_Position = vec4(pos.x * c - pos.y * s, pos.x * s + pos.y * c, 0.0, 1.0);
+}"
+def fs300 : String := "#version 300 es
+precision mediump float;
+in vec3 vcolor;
+out vec4 outColor;
+void main() { outColor = vec4(vcolor, 1.0); }"
+def vs100 : String := "attribute vec2 pos;
+attribute vec3 color;
+uniform float angle;
+uniform vec2 scale;
+varying vec3 vcolor;
+void main() {
+  vcolor = color;
+  for (int i = 0; i < 3; i++) { vcolor.x += 0.0; }
+  gl_Position = vec4(pos * scale * cos(angle), 0.0, 1.0);
+}"
+def fs100 : String := "#ifdef GL_ES
+precision mediump float;
+#endif
+varying vec3 vcolor;
+void main() { gl_FragColor = vec4(vcolor, 1.0); }"
+#guard ok (Glsl.compileProgram vs300 fs300)
+#guard ok (Glsl.compileProgram vs100 fs100)
+#guard ((Glsl.compileProgram vs100 fs100).toOption.map (·.2.json)) ==
+  some "{\"attributes\":{\"pos\":0,\"color\":1},\"uniforms\":{\"angle\":[0,\"float\"],\"scale\":[8,\"vec2\"]},\"uniformSize\":16}"
+#guard !ok (Glsl.compileProgram "#define X 1\nvoid main() { gl_Position = vec4(0.0); }" fs100)
+#guard !ok (Glsl.compileProgram "attribute vec2 p; void main() { while (true) { } }" fs100)
+#guard !ok (Glsl.compileProgram vs100 "varying vec3 other; void main() { gl_FragColor = vec4(other, 1.0); }")
+#guard ok (step (run (State.empty 1) page).1 (.createProgram 20 vs100 fs100))
+
+#print axioms program_inSubset
 #print axioms compile_inSubset
 #print axioms compile_cost
 #print axioms compile_loops
