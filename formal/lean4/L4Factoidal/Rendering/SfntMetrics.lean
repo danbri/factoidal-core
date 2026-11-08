@@ -197,6 +197,11 @@ structure NominalGlyph where
   ligNum : Nat := 0
   /-- Output of a multiple substitution (HarfBuzz `_hb_glyph_info_multiplied`). -/
   multiplied : Bool := false
+  /-- Feature mask (HarfBuzz `hb_glyph_info_t.mask`): bit 0 is the global mask
+  that every glyph has; the other bits are features that apply to chosen
+  glyphs only, such as the Arabic joining forms (`SfntArabic.maskOf`). A GSUB
+  lookup applies at a glyph only when their masks share a bit. -/
+  mask : Nat := 1
   deriving Repr, BEq, Inhabited
 
 /-- One glyph for each character, by `cmap` and `hmtx` only (no GSUB/GPOS). -/

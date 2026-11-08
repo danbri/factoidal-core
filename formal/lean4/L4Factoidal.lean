@@ -1200,6 +1200,8 @@ import L4Factoidal.Unicode.BidiTheorems
 import L4Factoidal.Unicode.LineBreakData
 import L4Factoidal.Unicode.LineBreak
 import L4Factoidal.Unicode.LineBreakTheorems
+import L4Factoidal.Unicode.JoiningData
+import L4Factoidal.Unicode.ScriptDirection
 import L4Factoidal.XSD11.ElementMapTests
 import L4Factoidal.UI.LayoutPolicyTests
 import L4Factoidal.UI.PolicyProtocolTests
@@ -1221,6 +1223,7 @@ import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.Rendering.SfntProfileTests
 import L4Factoidal.Rendering.SfntOutlineTests
 import L4Factoidal.Rendering.SfntShape
+import L4Factoidal.Rendering.SfntArabic
 import L4Factoidal.Rendering.FontFaceTests
 import L4Factoidal.Rendering.FontLayoutTests
 import L4Factoidal.Rendering.FontRequestsTests

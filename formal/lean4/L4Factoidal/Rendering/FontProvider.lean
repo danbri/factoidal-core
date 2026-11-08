@@ -67,12 +67,14 @@ def outlineGeometry (ascent : Float) (outline : FontData.Outline) : Except Strin
   if start.isSome then throw "font provider: unclosed outline"
   return if contours.isEmpty then [] else [.path contours.reverse]
 
-/-- Consume one already-shaped horizontal LTR word. Glyph IDs, advances,
+/-- Consume one already-shaped horizontal word. Glyph IDs, advances,
 ligature/mark source spans and offsets come from the typed font adapter; this
-function neither substitutes characters nor computes shaping. With `notdef`,
-a character the font lacks shows as the font's own .notdef glyph. -/
+function neither substitutes characters nor computes shaping. A right-to-left
+word (`rtl`) has its glyphs in drawing order, left to right, as HarfBuzz gives
+them; only its clusters run the other way. With `notdef`, a character the font
+lacks shows as the font's own .notdef glyph. -/
 def prepare (input : FontData.ShapedWord) (notdef : Bool := false) : Except String Word := do
-  if input.direction != "ltr" then throw "unsupported font direction: horizontal LTR required"
+  if input.direction != "ltr" && input.direction != "rtl" then throw "unsupported font direction: horizontal LTR or RTL required"
   if input.pixelSize == 0 || input.pixelSize > 512 then throw "unsupported shaped font size: require 1 to 512 pixels"
   let m := input.metrics
   if ![m.upem,m.ascender,m.descender,m.lineGap,input.advance].all Float.isFinite ||

@@ -47,3 +47,15 @@
 - Copied unchanged on 2026-11-06.
 - Use: `tools/render-dashboard/font_coverage.py` reads the sequence totals
   from these files.
+
+## Added 2026-11-08 (Arabic joining, https://github.com/danbri/factoidal/issues/1275)
+
+- Source: https://www.unicode.org/Public/18.0.0/ucd/ — `ArabicShaping.txt`
+  (dated 2026-08-18, sha256
+  `8ccde4ebd070500a68e8bcb9d5514522fb0bebe57b9ebad3ff925b8e1e669f83`), the file
+  HarfBuzz 15.0.0 generates its Arabic joining table from.
+- Copied unchanged on 2026-11-08.
+- Use: `tools/unicode/gen-joining-data.py` writes
+  `formal/lean4/L4Factoidal/Unicode/JoiningData.lean` (Joining_Type, with the
+  Syriac joining groups ALAPH and DALATH RISH) from it and
+  `DerivedGeneralCategory.txt`; the Lean shaper's Arabic joining forms read it.

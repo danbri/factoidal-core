@@ -25,7 +25,8 @@ private def withMark := prepare {shaped with
   outlines := #[outline,{outline with id := 88}]}
 #guard (withMark.toOption.bind fun word => word.glyphs[1]? |>.map
   (fun g => (g.index,g.x,g.y,g.advance,g.clusterStart,g.clusterEnd))) == some (88,400,(-100 : Float),0,0,2)
-#guard (prepare {shaped with direction := "rtl"}).toOption.isNone
+#guard (prepare {shaped with direction := "rtl"}).toOption.isSome
+#guard (prepare {shaped with direction := "ttb"}).toOption.isNone
 #guard (prepare {shaped with outlines := #[]}).toOption.isNone
 #guard (prepare {shaped with glyphs := #[⟨0,0,0,2,500,0,0,0⟩]}).toOption.isNone
 #guard (prepare {shaped with glyphs := #[⟨77,0,0,2,500,1,0,0⟩]}).toOption.isNone

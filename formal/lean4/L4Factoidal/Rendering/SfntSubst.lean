@@ -63,9 +63,12 @@ def chooseScript (b : ByteArray) (tbl : Nat) (tags : List String) : Except Strin
 
 /-- Lookup indices of the features of `stages` (and the required feature) in
 the default language system of the first of `tags` that the table has, as
-(stage, index): a feature's stage is the first stage that names it; sorted. -/
-def featureLookups (b : ByteArray) (tbl : Nat) (tags : List String) (stages : List (List String)) :
-    Except String (List (Nat × Nat)) := do
+(stage, index, mask): a feature's stage is the first stage that names it; sorted
+by stage, then index. The mask of a lookup is the OR of `maskOf` of the features
+of that stage that name it (HarfBuzz `hb_ot_map_builder_t::compile`); the
+required feature has the global mask 1. -/
+def featureLookupsMasked (b : ByteArray) (tbl : Nat) (tags : List String) (stages : List (List String))
+    (maskOf : String → Nat := fun _ => 1) : Except String (List (Nat × Nat × Nat)) := do
   let featureList := tbl + u16 b (tbl + 6)
   let some (_, s) ← chooseScript b tbl tags | return []
   need b s 4 "script table"
@@ -79,13 +82,14 @@ def featureLookups (b : ByteArray) (tbl : Nat) (tags : List String) (stages : Li
   let nfl := u16 b featureList
   need b (featureList + 2) (6 * nfl) "feature records"
   let indices := (List.range nf).map (fun k => u16 b (lang + 6 + 2 * k)) ++ (if required == 0xFFFF then [] else [required])
-  -- One flag for each (stage, lookup index); reading them in order gives the
-  -- sorted, distinct list with no recursion. The flags run to the largest lookup
-  -- index the features name, not to 65536: this runs for every word shaped, and
-  -- 65536 flags for each stage were most of the time of a page's first layout.
+  -- One mask for each (stage, lookup index), 0 for unused; reading them in order
+  -- gives the sorted, distinct list with no recursion. The masks run to the
+  -- largest lookup index the features name, not to 65536: this runs for every
+  -- word shaped, and 65536 entries for each stage were most of the time of a
+  -- page's first layout.
   let nStages := max stages.length 2
   let stageOf (tag : String) : Option Nat := stages.findIdx? (·.contains tag)
-  let mut named : Array (Nat × Nat) := #[]
+  let mut named : Array (Nat × Nat × Nat) := #[]
   let mut width := 1
   for fi in indices do
     if fi ≥ nfl then throw "font.file.malformed: GSUB feature index"
@@ -96,18 +100,25 @@ def featureLookups (b : ByteArray) (tbl : Nat) (tags : List String) (stages : Li
       need b f 4 "feature table"
       let nl := u16 b (f + 2)
       need b (f + 4) (2 * nl) "feature lookups"
+      let mask := if fi == required then 1 else maskOf tag
       for j in [0:nl] do
         let stage := (stageOf tag).getD 1
         let lookup := u16 b (f + 4 + 2 * j)
-        named := named.push (stage, lookup)
+        named := named.push (stage, lookup, mask)
         width := max width (lookup + 1)
-  let mut used : Array Bool := Array.replicate (nStages * width) false
-  for (stage, lookup) in named do
-    used := used.set! (stage * width + lookup) true
-  let mut out : Array (Nat × Nat) := #[]
+  let mut used : Array Nat := Array.replicate (nStages * width) 0
+  for (stage, lookup, mask) in named do
+    let k := stage * width + lookup
+    used := used.set! k (used[k]! ||| mask)
+  let mut out : Array (Nat × Nat × Nat) := #[]
   for k in [0:nStages * width] do
-    if used[k]! then out := out.push (k / width, k % width)
+    if used[k]! != 0 then out := out.push (k / width, k % width, used[k]!)
   return out.toList
+
+/-- `featureLookupsMasked` without the masks: (stage, index). -/
+def featureLookups (b : ByteArray) (tbl : Nat) (tags : List String) (stages : List (List String)) :
+    Except String (List (Nat × Nat)) := do
+  return (← featureLookupsMasked b tbl tags stages).map fun (s, l, _) => (s, l)
 
 /-- The result of one lookup at one position. -/
 inductive Step where
@@ -513,15 +524,20 @@ def applyAt (c : Ctx) : Nat → Nat → Array NominalGlyph → Nat → SubM (Opt
           return some (next, after)
     return none
 
-/-- Apply the default GSUB features to a nominal run. Advances are re-read
-from `hmtx` for every substituted glyph. -/
+/-- Apply the GSUB features of `stages` to a nominal run. Advances are re-read
+from `hmtx` for every substituted glyph. Each lookup has the mask of its
+features (`maskOf`, `featureLookupsMasked`), and applies only at glyphs whose
+`mask` shares a bit with it, as HarfBuzz's `apply_forward` does: the Arabic
+joining forms (`SfntArabic`) are features of chosen glyphs. With the default
+`maskOf` every lookup and every glyph has the global mask 1. -/
 def substitute (f : Face) (b : ByteArray) (dir : Array TableRecord) (text : String)
     (run : Array NominalGlyph) (limits : Limits := {}) (stages : List (List String) := defaultStages)
-    (tags : List String := scriptTags text) (isMarkCp : Nat → Bool := fun _ => false) :
+    (tags : List String := scriptTags text) (isMarkCp : Nat → Bool := fun _ => false)
+    (maskOf : String → Nat := fun _ => 1) :
     Except String (Array NominalGlyph) := do
   let some gsubRec := dir.find? (·.tag == "GSUB") | return run
   let gsub := gsubRec.offset
-  let lookups ← featureLookups b gsub tags stages
+  let lookups ← featureLookupsMasked b gsub tags stages maskOf
   let lookupList := gsub + u16 b (gsub + 8)
   need b lookupList 2 "lookup list"
   let c : Ctx := { f, b, lookupList, count := u16 b lookupList,
@@ -529,7 +545,7 @@ def substitute (f : Face) (b : ByteArray) (dir : Array TableRecord) (text : Stri
   let mut out := run
   let mut ops := 0
   let mut serial := 0
-  for (_, l) in lookups do
+  for (_, l, mask) in lookups do
     let mut i := 0
     -- Each step moves i forward by at least one position.
     for _ in [0:limits.lookupOperationsPerRun] do
@@ -537,6 +553,10 @@ def substitute (f : Face) (b : ByteArray) (dir : Array TableRecord) (text : Stri
       ops := ops + 1
       if ops > limits.lookupOperationsPerRun then
         throw s!"font.layout.limit: more than {limits.lookupOperationsPerRun} lookup operations in one run"
+      -- HarfBuzz `apply_forward`: the lookup applies only at a glyph that has its mask.
+      if out[i]!.mask &&& mask == 0 then
+        i := i + 1
+        continue
       let (r, s') ← (applyAt c 8 l out i).run serial
       serial := s'
       match r with

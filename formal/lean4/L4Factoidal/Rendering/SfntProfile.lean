@@ -5,9 +5,11 @@ import L4Factoidal.Rendering.SfntOutline
 /-! A font profile from the bytes of a font file. Lean reads the file, shapes
 each word and takes the outlines, so no font library and no host runs.
 
-A page never fails because of a word. Text the shaper refuses, such as
-right-to-left text, shows with one glyph for each character, and a character
-the font lacks shows as the font's .notdef glyph. -/
+A page never fails because of a word. Text the shaper refuses shows with one
+glyph for each character, and a character the font lacks shows as the font's
+.notdef glyph. A word is shaped in the direction asked for, or with none, in
+the direction of its script; its glyphs are always in drawing order, left to
+right (https://github.com/danbri/factoidal/issues/1275). -/
 namespace L4Factoidal.Rendering.SfntProfile
 
 structure Font where
@@ -65,27 +67,31 @@ def Font.read (bytes : ByteArray) (family sha256 : String) (faceIndex : Nat := 0
     throw "font.file.refused"
   return ⟨bytes,dir,← SfntMetrics.Face.read bytes dir,← SfntOutline.cffFont bytes dir,family,sha256,faceIndex⟩
 
-private def shaped (f : Font) (text : String) : Except String (String × Array Placed) := do
-  let s ← SfntShape.shape f.bytes f.dir f.face text
+private def shaped (f : Font) (text : String) (rtl : Option Bool) :
+    Except String (String × Bool × Array Placed) := do
+  let s ← SfntShape.shape f.bytes f.dir f.face text (direction := rtl)
   let chars := FontData.byteToCharMap text
   let mut out := #[]
   for (g,byte) in s.glyphs.zip s.clusterBytes do
     let some cluster := chars.get? byte | throw "font profile: cluster inside a character"
     out := out.push ⟨g.id,g.advance.toNat,g.xOffset,g.yOffset,cluster⟩
-  return (s.script,out)
+  return (s.script,s.rtl,out)
 
 /-- One glyph for each character, in visual order for right-to-left text. -/
-private def nominal (f : Font) (text : String) : Except String (String × Array Placed) := do
+private def nominal (f : Font) (text : String) (rtl : Option Bool) : Except String (String × Bool × Array Placed) := do
   let run ← f.face.nominalRun f.bytes text
   let glyphs := run.map fun g => ({id := g.id,advance := g.advance,xOffset := 0,yOffset := 0,cluster := g.cluster} : Placed)
-  return ("",if text.toList.any (SfntShape.isStrongRtl ·.toNat) then glyphs.reverse else glyphs)
+  let backward := rtl.getD (Unicode.ScriptDirection.guessRtl text)
+  return ("",backward,if backward then glyphs.reverse else glyphs)
 
-/-- The word as the font provider takes it. Only the outlines and the shaper
-touch font data; `prepare` checks the record, as for the native adapter. -/
-def Font.word (f : Font) (text : String) (pixelSize : Nat) : Except String FontProvider.Word := do
-  let (script,placed) ← match shaped f text with
+/-- The word as the font provider takes it, shaped in direction `rtl` (`none`:
+the script's). Only the outlines and the shaper touch font data; `prepare`
+checks the record, as for the native adapter. -/
+def Font.word (f : Font) (text : String) (pixelSize : Nat) (rtl : Option Bool := none) :
+    Except String FontProvider.Word := do
+  let (script,backward,placed) ← match shaped f text rtl with
     | .ok value => pure value
-    | .error _ => nominal f text
+    | .error _ => nominal f text rtl
   let length := text.length
   -- A TreeMap gives each cluster once, in order, with no recursive sort.
   let clusters : Std.TreeMap Nat Unit := placed.foldl (fun seen g => seen.insert g.cluster ()) {}
@@ -102,7 +108,8 @@ def Font.word (f : Font) (text : String) (pixelSize : Nat) : Except String FontP
   FontProvider.prepare {
     text,fontSha256 := f.sha256,fontPath := "",faceIndex := f.faceIndex,family := f.family,style := "",
     metrics := ⟨Float.ofNat face.unitsPerEm,ofInt face.ascender,ofInt face.descender,ofInt face.lineGap⟩,
-    direction := "ltr",script,language := "",harfbuzzVersion := "none (Lean shaper)",freeTypeVersion := "none (Lean outlines)",
+    direction := if backward then "rtl" else "ltr",script,language := "",
+    harfbuzzVersion := "none (Lean shaper)",freeTypeVersion := "none (Lean outlines)",
     pixelSize,glyphs,outlines := outlines.toList.toArray.map Prod.snd,bitmaps := #[],
     advance := glyphs.foldl (fun total g => total+g.xAdvance) 0} (notdef := true)
 
@@ -186,20 +193,32 @@ primary font draws alone is `Font.word` of that font, unchanged. Otherwise each 
 is shaped by its own font, and its glyphs are put in the primary font's units: the
 outlines and advances are scaled by the ratio of the units per em, and each glyph
 moves down by the difference of the ascents, so that the baselines are one line.
-The word keeps the primary font's name, units and metrics, which layout checks. -/
-def wordIn (fonts : Array Font) (text : String) (pixelSize : Nat) : Except String FontProvider.Word := do
+The word keeps the primary font's name, units and metrics, which layout checks.
+Each run is shaped in direction `rtl` (`none`: its own script's), and the runs
+are drawn right to left when the word is (`rtl`, or with none, its script's). -/
+def wordIn (fonts : Array Font) (text : String) (pixelSize : Nat) (rtl : Option Bool := none) :
+    Except String FontProvider.Word := do
   let some primary := fonts[0]? | throw "font profile: no font"
   let runs := runsOf fonts text
-  if runs.all (·.1 == 0) then return ← primary.word text pixelSize
+  if runs.all (·.1 == 0) then return ← primary.word text pixelSize rtl
   let face := primary.face
   let units := Float.ofNat face.unitsPerEm
   let ascent := ofInt face.ascender
   let mut glyphs : Array FontProvider.Glyph := #[]
   let mut pen : Float := 0
-  let mut start := 0
-  for (i,part) in runs do
+  -- The first character of each run, in logical order.
+  let mut starts : Array Nat := #[]
+  let mut at_ := 0
+  for (_,part) in runs do
+    starts := starts.push at_
+    at_ := at_+part.length
+  let backward := rtl.getD (Unicode.ScriptDirection.guessRtl text)
+  let order := if backward then (List.range runs.size).reverse else List.range runs.size
+  for r in order do
+    let (i,part) := runs[r]!
+    let start := starts[r]!
     let some f := fonts[i]? | throw "font profile: run names no font"
-    let w ← f.word part pixelSize
+    let w ← f.word part pixelSize rtl
     let k := units/w.unitsPerEm
     let down := ascent-k*w.ascent
     for g in w.glyphs do
@@ -207,7 +226,6 @@ def wordIn (fonts : Array Font) (text : String) (pixelSize : Nat) : Except Strin
         start+g.clusterStart,start+g.clusterEnd,g.geometry.map (scaleGeometry k)⟩
       glyphs := glyphs.push placed
     pen := pen+k*w.advance
-    start := start+part.length
   -- FontProvider.Word in field order: text, font, face, family, style, size, units,
   -- ascent, descent, line gap, glyphs, advance.
   return ⟨text,primary.sha256,primary.faceIndex,primary.family,"",pixelSize,units,
@@ -296,16 +314,17 @@ def profile (fonts : Array Font) (memo : Memo) : Except String Layout.FontProfil
   let space ← match memo.get? " " with
     | some shaped => pure shaped.curves
     | none => wordIn fonts " " 16
+  let shapedWord := fun (text : String) (px : Nat) => do
+    let word ← match memo.get? text with
+      | some shaped => pure (if px < flatBelow then shaped.flat else shaped.curves)
+      | none => do
+        let word ← wordIn fonts text px
+        pure (if px < flatBelow then flatWord word else word)
+    return {word with pixelSize := px}
   return {
     family := f.family,unitsPerEm := space.unitsPerEm,advance := 0,ascent := space.ascent,
     descent := space.descent,outline := fun _ => [],admits := fun _ => false,cssFamilies := [f.family],
     fontSha256 := some f.sha256,faceIndex := f.faceIndex,scalable := true,
-    shapedWord := some fun text px => do
-      let word ← match memo.get? text with
-        | some shaped => pure (if px < flatBelow then shaped.flat else shaped.curves)
-        | none => do
-          let word ← wordIn fonts text px
-          pure (if px < flatBelow then flatWord word else word)
-      return {word with pixelSize := px}}
+    shapedWord := some shapedWord}
 
 end L4Factoidal.Rendering.SfntProfile

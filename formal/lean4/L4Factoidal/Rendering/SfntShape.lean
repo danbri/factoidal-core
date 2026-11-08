@@ -1,18 +1,35 @@
 import L4Factoidal.Rendering.SfntNormalize
 import L4Factoidal.Rendering.SfntFallback
+import L4Factoidal.Rendering.SfntArabic
 import L4Factoidal.Unicode.Segmentation
+import L4Factoidal.Unicode.ScriptDirection
+import L4Factoidal.Unicode.Bidi
 
 /-!
 # The Lean shaper pipeline
 
-One left-to-right run through every stage of the Lean shaper
+One run through every stage of the Lean shaper
 (https://github.com/danbri/factoidal/issues/1233): font-aware normalization,
 nominal glyphs, cluster merging at HarfBuzz's monotone-grapheme level, GSUB,
 GPOS. Clusters are given as UTF-8 byte offsets into the input text, as in the
 `factoidal-font-data-v1` record.
 
-Refused, with a message: a strong right-to-left character (the RTL shaper is
-not implemented), and everything the stages refuse. A font with no GPOS table
+Direction (https://github.com/danbri/factoidal/issues/1275): a run is left to
+right or right to left; with no direction given, the direction of its script,
+as HarfBuzz guesses it (`Unicode.ScriptDirection.guessRtl`). A right-to-left
+run has its mirrored characters replaced by their mirror glyphs where the font
+has them (`rtlm` applies to the others), uses `rtla` and `rtlm` in place of
+`ltra` and `ltrm`, is substituted and positioned in logical order, and its
+glyphs are then reversed, so the result is always in drawing order, left to
+right. A run whose direction is not that of its script (Latin right to left,
+for example) has its graphemes reversed and is shaped the other way, as
+HarfBuzz `hb_ensure_native_direction` does.
+
+Arabic and Syriac get the Arabic shaper's joining forms (`SfntArabic`), and USE
+scripts that join (N'Ko, Mongolian, Adlam and others) get the same forms as
+USE topographical features; both through per-glyph feature masks.
+
+Refused, with a message: everything the stages refuse. A font with no GPOS table
 gets HarfBuzz's fallback mark positioning (`SfntFallback`).
 -/
 namespace L4Factoidal.Rendering.SfntShape
@@ -67,9 +84,12 @@ def spaceFallbackType : Nat → Nat
 
 structure Shaped where
   script : String
+  /-- Glyphs in drawing order, left to right, for either direction. -/
   glyphs : Array Glyph
   /-- UTF-8 byte offset of each glyph's cluster. -/
   clusterBytes : Array Nat
+  /-- The run was shaped right to left, so its clusters decrease along `glyphs`. -/
+  rtl : Bool := false
 
 /-- A default feature list with user settings (tag, on) applied in order; the
 last setting of a tag wins, as in HarfBuzz for whole-text features. -/
@@ -97,14 +117,43 @@ def useScripts : List String :=
    "Berf", "Sidt", "Tayo", "Tols", "Jurc", "Pcun", "Seal"]
 
 /-- Scripts with another HarfBuzz shaper that Lean does not have yet
-(Indic, Khmer, Myanmar, Thai and Lao, Hangul, Hebrew). -/
+(Indic, Khmer, Myanmar, Thai and Lao, Hangul). HarfBuzz's Hebrew shaper is
+the default shaper with composition fallbacks for fonts with no GPOS mark
+feature, so Hebrew takes the default shaper here. -/
 def otherComplexScripts : List String :=
   ["Beng", "Deva", "Gujr", "Guru", "Knda", "Mlym", "Orya", "Taml", "Telu",
-   "Khmr", "Mymr", "Thai", "Laoo", "Hang", "Hebr"]
+   "Khmr", "Mymr", "Thai", "Laoo", "Hang"]
+
+/-- `ltra` and `ltrm` become `rtla` and `rtlm` for a right-to-left run. -/
+def directed (rtl : Bool) (stages : List (List String)) : List (List String) :=
+  if !rtl then stages else
+  stages.map (·.map fun t => if t == "ltra" then "rtla" else if t == "ltrm" then "rtlm" else t)
+
+/-- USE stages with the topographical features (`isol`, `init`, `medi`, `fina`)
+in their own stage before the presentation features, for USE scripts that join
+(HarfBuzz `collect_features_use`). -/
+def useJoiningStages : List (List String) :=
+  SfntSubst.useStages.dropLast ++ [["isol", "init", "medi", "fina"]] ++ [SfntSubst.useStages.getLastD []]
+
+/-- HarfBuzz `_hb_ot_layout_reverse_graphemes`: the graphemes of a run in
+reverse order, each keeping its own order (`cont` marks continuations). -/
+def reverseGraphemes {α : Type} (xs : Array α) (cont : Array Bool) : Array α := Id.run do
+  let mut out : Array α := Array.mkEmpty xs.size
+  let mut stop := xs.size
+  for q in [0:xs.size] do
+    let k := xs.size - 1 - q
+    if !(cont[k]?.getD false) || k == 0 then
+      out := out ++ xs.extract k stop
+      stop := k
+  return out
+
+#guard reverseGraphemes #[1, 2, 3, 4] #[false, true, false, false] == #[4, 3, 1, 2]
 
 inductive ShaperKind where
   | default
   | use
+  /-- HarfBuzz's Arabic shaper (`SfntArabic`). -/
+  | arabic
   /-- A shaper Lean does not have: shape with the default shaper on `DFLT`,
   as HarfBuzz does for a font with no table for the script
   (https://github.com/danbri/factoidal/issues/1233). -/
@@ -119,7 +168,9 @@ def shaperKind (iso : Option String) (gsubTag : Option String) : ShaperKind :=
   match iso with
   | none => .default
   | some s =>
-    if useScripts.contains s then (if generic then .default else .use)
+    if SfntArabic.shaperScripts.contains s then
+      (if s == "Arab" || (gsubTag.isSome && gsubTag != some "DFLT") then .arabic else .default)
+    else if useScripts.contains s then (if generic then .default else .use)
     else if ["Beng", "Deva", "Gujr", "Guru", "Knda", "Mlym", "Orya", "Taml", "Telu"].contains s then
       (if generic then .default
        else if (gsubTag.getD "").endsWith "3" then .use else .dfltOnly)
@@ -148,11 +199,42 @@ def parseFeatures (s : String) : Except String (List (String × Bool)) := do
     out := out ++ [(tag ++ String.ofList (List.replicate (4 - tag.length) ' '), on)]
   return out
 
+/-- Shape `text` with the font. `direction`: `some true` right to left, `some
+false` left to right, `none` the direction of the script (see the module comment). -/
 def shape (b : ByteArray) (dir : Array TableRecord) (face : Face) (text : String)
-    (limits : Limits := {}) (settings : List (String × Bool) := []) : Except String Shaped := do
-  if let some c := text.toList.find? (isStrongRtl ·.toNat) then
-    throw s!"font.layout.unsupported: right-to-left text (U+{(String.ofList (Nat.toDigits 16 c.toNat)).toUpper}) needs the RTL shaper (https://github.com/danbri/factoidal/issues/1233)"
-  let cps ← SfntNormalize.forFontIndexed face b text
+    (limits : Limits := {}) (settings : List (String × Bool) := [])
+    (direction : Option Bool := none) : Except String Shaped := do
+  let iso := SfntKern.textScript text
+  let scriptRtl := iso.any Unicode.ScriptDirection.isRtl
+  let target := direction.getD scriptRtl
+  -- The script's own direction; a right-to-left script's run of digits with no
+  -- letter is left to right when asked to be (HarfBuzz `hb_ensure_native_direction`).
+  let strong (c : Char) : Bool := let k := Unicode.bidiClassOf c; k == .L || k == .R || k == .AL
+  let numeric (c : Char) : Bool :=
+    let k := Unicode.bidiClassOf c; k == .EN || k == .AN || isRegionalIndicator c.toNat
+  let native := scriptRtl && (target || !(text.toList.any numeric && !text.toList.any strong))
+  -- HarfBuzz `hb_ot_rotate_chars`: right to left, a character with a mirror the
+  -- font has becomes the mirror; the others get the `rtlm` mask.
+  let mut mirrored : Array Bool := Array.replicate text.length false
+  let mut text' := text
+  if target then
+    let mut chars : Array Char := #[]
+    let mut k := 0
+    for c in text.toList do
+      match Unicode.mirrorOf c with
+      | some m =>
+        if (← face.glyph b m) != 0 then
+          chars := chars.push m
+          mirrored := mirrored.set! k true
+        else chars := chars.push c
+      | none => chars := chars.push c
+      k := k + 1
+    text' := String.ofList chars.toList
+  let mut cps ← SfntNormalize.forFontIndexed face b text'
+  -- A run against its script's direction: graphemes reversed, shaped the other way.
+  let rtl := native
+  if target != native then
+    cps := reverseGraphemes cps (continuations (cps.map (·.1)))
   let mut nominal ← face.nominalOf b cps
   -- HarfBuzz normalizer fallbacks for characters the font lacks: Unicode
   -- spaces become the U+0020 glyph (width set after positioning) and U+2011
@@ -175,14 +257,32 @@ def shape (b : ByteArray) (dir : Array TableRecord) (face : Face) (text : String
       nominal := nominal.set! k { g with cluster := nominal[k - 1]!.cluster }
   -- The shaper HarfBuzz would choose, and the script tags Lean uses.
   let tags0 := SfntKern.scriptTags text
-  let gsubTag ← match dir.find? (·.tag == "GSUB") with
+  let gsub? := dir.find? (·.tag == "GSUB")
+  let gsubTag ← match gsub? with
     | some r => do pure ((← SfntSubst.chooseScript b r.offset tags0).map (·.1))
     | none => pure none
-  let kind := shaperKind (SfntKern.textScript text) gsubTag
+  let kind := shaperKind iso gsubTag
   let tags := if kind == .dfltOnly then ["DFLT"] else tags0
+  -- Feature masks: `rtlm` right to left, and the joining forms.
+  if target then
+    nominal := nominal.map fun g =>
+      if mirrored[g.cluster]?.getD false then g else { g with mask := g.mask ||| SfntArabic.rtlmMask }
+  let joins := kind == .arabic || (kind == .use && iso.any SfntArabic.joiningScripts.contains)
+  if joins then
+    let forms := SfntArabic.joiningActions (nominal.map (·.codepoint))
+    nominal := (nominal.zip forms).map fun (g, a) => { g with mask := g.mask ||| SfntArabic.formMask a }
+  let stages ← match kind with
+    | .arabic => do
+      let hasRclt ← match gsub? with
+        | some r => do
+          let ls ← SfntSubst.featureLookupsMasked b r.offset tags [["rclt"]] (fun t => if t == "rclt" then 2 else 1)
+          pure (ls.any fun (_, _, m) => m &&& 2 != 0)
+        | none => pure false
+      pure (SfntArabic.stages hasRclt)
+    | .use => pure (directed rtl (if joins then useJoiningStages else SfntSubst.useStages))
+    | _ => pure (directed rtl SfntSubst.defaultStages)
   let mut run ← SfntSubst.substitute face b dir text nominal limits
-    (stagesWithSettings (if kind == .use then SfntSubst.useStages else SfntSubst.defaultStages) settings) tags
-    isUnicodeMark
+    (stagesWithSettings stages settings) tags isUnicodeMark SfntArabic.maskOf
   -- Hide default ignorables before positioning (HarfBuzz
   -- `hb_ot_hide_default_ignorables`): the space glyph, or deleted when the
   -- font has no space glyph.
@@ -215,13 +315,15 @@ def shape (b : ByteArray) (dir : Array TableRecord) (face : Face) (text : String
         else if st == 21 then g.advance / 2
         else g.advance
       run := run.set! k { g with advance := adv }
-  let mut glyphs ← position b dir text run limits (withSettings SfntGpos.defaultFeatures settings) tags
+  let mut glyphs ← position b dir text run limits (withSettings SfntGpos.defaultFeatures settings) tags rtl
   -- HarfBuzz `hb_ot_zero_width_default_ignorables`.
   glyphs := glyphs.map fun g =>
     if isDefaultIgnorable g.codepoint && !g.substituted then { g with advance := 0, xOffset := 0 } else g
   -- HarfBuzz fallback mark positioning, for a font with no GPOS table.
   if !dir.any (·.tag == "GPOS") then
     glyphs ← SfntFallback.position b dir face.unitsPerEm face.advances (fun g => isUnicodeMark g.codepoint) glyphs
+  -- Right to left: drawing order is the reverse of logical order.
+  if rtl then glyphs := glyphs.reverse
   -- Source character index to UTF-8 byte offset.
   let mut offsets : Array Nat := #[]
   let mut acc := 0
@@ -230,6 +332,6 @@ def shape (b : ByteArray) (dir : Array TableRecord) (face : Face) (text : String
     acc := acc + c.utf8Size
   let script := match SfntKern.scriptTag text with
     | "latn" => "Latn" | "grek" => "Grek" | "cyrl" => "Cyrl" | _ => "Zyyy"
-  return { script, glyphs, clusterBytes := glyphs.map fun g => offsets[g.cluster]?.getD acc }
+  return { script, glyphs, clusterBytes := glyphs.map fun g => offsets[g.cluster]?.getD acc, rtl }
 
 end L4Factoidal.Rendering.SfntShape

@@ -22,7 +22,9 @@ follows HarfBuzz's default shaper for a left-to-right run:
 4. each attached mark gets the offsets of the glyph it is attached to, less
    the advances from that glyph up to the mark.
 
-Cursive attachment (type 3) follows HarfBuzz for left-to-right text; context
+Cursive attachment (type 3) follows HarfBuzz for either direction; a
+right-to-left run is positioned in logical order (`rtl`), and the caller
+reverses it for drawing, as HarfBuzz does. Context
 positioning (types 7 and 8) matches as GSUB types 5 and 6. Mark to ligature
 (type 5) uses the component of the mark (HarfBuzz lig_id, lig_comp). Mark filtering sets apply as in HarfBuzz. Device tables in value
 records and anchors are not applied (unhinted, no variations). The OpenType
@@ -160,6 +162,8 @@ structure PCtx where
   count : Nat
   gdef? : Option Nat
   classes : Array (Nat × Nat)
+  /-- The run is right to left, in logical order (HarfBuzz direction RTL). -/
+  rtl : Bool := false
 
 /-- Flag, mark filtering set and subtables (type, offset; extensions
 resolved) of GPOS lookup `l`. -/
@@ -230,9 +234,16 @@ def applyPosSubtable (c : PCtx) (flag : Nat) (keep : Array Bool) (t s : Nat) (ou
       let some pci ← coverage b (s + u16 b (s + 2)) out[pi]!.id | return none
       let (_, some exit) ← entryExit b s pci | return none
       let gp := out[pi]!
-      out := out.set! pi { gp with advance := exit.1 + gp.xOffset }
-      let d := entry.1 + g.xOffset
-      out := out.set! i { g with advance := g.advance - d, xOffset := g.xOffset - d }
+      -- Main-direction adjustment (HarfBuzz CursivePosFormat1::apply): the
+      -- previous glyph's exit meets this glyph's entry.
+      if c.rtl then
+        let d := exit.1 + gp.xOffset
+        out := out.set! pi { gp with advance := gp.advance - d, xOffset := gp.xOffset - d }
+        out := out.set! i { g with advance := entry.1 + g.xOffset }
+      else
+        out := out.set! pi { gp with advance := exit.1 + gp.xOffset }
+        let d := entry.1 + g.xOffset
+        out := out.set! i { g with advance := g.advance - d, xOffset := g.xOffset - d }
       -- Without the RightToLeft flag the later glyph is the child.
       let rtlFlag := flag &&& 1 != 0
       let (child, parent) := if rtlFlag then (pi, i) else (i, pi)
@@ -333,7 +344,7 @@ def posAt (c : PCtx) : Nat → Nat → Array Glyph → Nat → Option (Array Boo
 glyph class uses the glyph's source code point (`NominalGlyph.codepoint`). -/
 def position (b : ByteArray) (dir : Array TableRecord) (text : String)
     (run : Array NominalGlyph) (limits : Limits := {}) (features : List String := defaultFeatures)
-    (tags : List String := scriptTags text) : Except String (Array Glyph) := do
+    (tags : List String := scriptTags text) (rtl : Bool := false) : Except String (Array Glyph) := do
   let mut out : Array Glyph := run.map fun g =>
     { id := g.id, advance := g.advance, xOffset := 0, yOffset := 0, cluster := g.cluster,
       codepoint := g.codepoint, substituted := g.substituted, ligated := g.ligated, spaceFallback := g.spaceFallback,
@@ -353,7 +364,7 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String)
     let lookups ← featureLookups b gpos tags [features]
     let lookupList := gpos + u16 b (gpos + 8)
     need b lookupList 2 "lookup list"
-    let c : PCtx := { b, lookupList, count := u16 b lookupList, gdef?, classes }
+    let c : PCtx := { b, lookupList, count := u16 b lookupList, gdef?, classes, rtl }
     let mut ops := 0
     for (_, l) in lookups do
       let (flag, set?, _) ← gposLookup c l
@@ -394,12 +405,20 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String)
         sum := sum + before[n]!.yOffset
       out := out.set! k { out[k]! with yOffset := out[k]!.yOffset + sum }
   -- Propagate attachment offsets, parents first (a parent precedes its mark).
+  -- Left to right, a mark moves back by the advances from its parent up to
+  -- itself; right to left (logical order, drawn reversed), it moves forward by
+  -- the advances after its parent up to and including itself (HarfBuzz
+  -- `propagate_attachment_offsets`).
   for k in [0:out.size] do
     let g := out[k]!
     if let some p := g.attachedTo then
       let parent := out[p]!
-      let between := ((List.range (k - p)).map (p + ·)).foldl (fun acc q => acc + out[q]!.advance) (0 : Int)
-      out := out.set! k { g with xOffset := g.xOffset + parent.xOffset - between, yOffset := g.yOffset + parent.yOffset }
+      if rtl then
+        let between := ((List.range (k - p)).map (p + 1 + ·)).foldl (fun acc q => acc + out[q]!.advance) (0 : Int)
+        out := out.set! k { g with xOffset := g.xOffset + parent.xOffset + between, yOffset := g.yOffset + parent.yOffset }
+      else
+        let between := ((List.range (k - p)).map (p + ·)).foldl (fun acc q => acc + out[q]!.advance) (0 : Int)
+        out := out.set! k { g with xOffset := g.xOffset + parent.xOffset - between, yOffset := g.yOffset + parent.yOffset }
   return out
 
 end L4Factoidal.Rendering.SfntGpos
