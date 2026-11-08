@@ -296,8 +296,16 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     let some (.number x) := request.field? "x" | throw "x required"
     let some (.number y) := request.field? "y" | throw "y required"
     let some (.number width) := request.field? "width" | throw "width required"
-    return some (JSON.Json.object [("control",match WebShell.hit shell (width.toNat?.getD 1) (x.toNat?.getD 0) (y.toNat?.getD 0) with
-      | some name => .string name | none => .null)]).toString
+    let control := WebShell.hit shell (width.toNat?.getD 1) (x.toNat?.getD 0) (y.toNat?.getD 0)
+    -- `how` (tap, hold or context) and `touch`: whether this press opens the address menu.
+    return some (JSON.Json.object [("control",match control with
+      | some name => .string name | none => .null),
+      ("menu",.bool (WebShell.opensMenu control (str request "how" "tap") (request.field? "touch" == some (.bool true))))]).toString
+  -- The address menu's action table (WebShell.menuActions): the buttons in CSS px and the
+  -- text Copy writes. Empty with the menu closed; an engine without the op has no menu.
+  if op == "shellActions" then
+    let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
+    return some (JSON.Json.object [("actions",.array ((WebShell.menuActions shell (natField request "width")).map (·.json)))]).toString
   if op == "press" then return some (← press request)
   -- The pointer for a point of the window (issue 1268): the chrome's control, else the page.
   -- On the page a click acts over a person of the graph `model`, or over a link of
@@ -330,7 +338,9 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
   if op == "shellEdit" then
     let (next,copied) := (WebShell.Shell.ofJson ((request.field? "shell").getD .null)).edit (str request "action") (str request "text")
     let .object fields := next.editJson | throw "edit state"
-    return some (JSON.Json.object (fields ++ [("clipboard",match copied with | some t => .string t | none => .null)])).toString
+    -- Paste and go answers the address to go to in `go`, not for the clipboard.
+    let key := if str request "action" == "pasteGo" then "go" else "clipboard"
+    return some (JSON.Json.object (fields ++ [(key,match copied with | some t => .string t | none => .null)])).toString
   -- The key table for a host with no menu, which must decide at once which keys it keeps.
   if op == "keyTable" then
     let platform := str request "platform" "other"

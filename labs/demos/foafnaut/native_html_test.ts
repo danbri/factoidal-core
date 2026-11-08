@@ -339,6 +339,27 @@ const pressShell={tabs:[{title:"t"}],active:0,address:"a",cursor:0,focused:false
 const pressPage=html(`<p><a href="next.html">Next page</a> <button>OK</button></p>`);
 const pressOptions={textScalePercent:100,shell:pressShell};
 
+Deno.test("Lean address menu: a finger's tap, a long press or a right click on the bar opens it; Copy and Paste and go",()=>{
+  // The bar of a 1000 px window is at (136,30); a mouse click does not open the menu.
+  assert.equal(engine.shellMenu(pressShell,300,40,1000,"tap",true).menu,true);
+  assert.equal(engine.shellMenu(pressShell,300,40,1000,"tap",false).menu,false);
+  assert.equal(engine.shellMenu(pressShell,300,40,1000,"context").menu,true);
+  assert.equal(engine.shellMenu(pressShell,70,40,1000,"hold").menu,false);
+  assert.deepEqual(engine.shellActions(pressShell,1000),[]);
+  const focused=engine.shellEdit(pressShell,"focus","https://example.org/a");
+  const open=engine.shellEdit({...pressShell,...focused,focused:true},"menu");
+  assert.equal(open.menu,true);
+  const actions=engine.shellActions({...pressShell,...open,focused:true},1000);
+  assert.deepEqual(actions.map(action=>action.action),["copy","paste"]);
+  assert.equal(actions[0].text,"https://example.org/a");
+  const [x,y,w,h]=actions[1].rect;
+  assert.equal(engine.press({...pressShell,...open,focused:true},x+Math.floor(w/2),y+Math.floor(h/2),1000,0,[]).control,"pasteGo");
+  const pasted=engine.shellEdit({...pressShell,...open,focused:true},"pasteGo","  example.org/b\n");
+  assert.equal(pasted.go,"example.org/b");assert.equal(pasted.menu,false);
+  assert.equal(engine.gesture({action:"hold",startX:10,startY:10,x:14,y:13,elapsed:600}).phase as string,"hold");
+  assert.equal(engine.gesture({action:"hold",startX:10,startY:10,x:14,y:13,elapsed:300}).phase as string,"pending");
+});
+
 Deno.test("Lean press: a chrome button and a link, with the rectangles the composite darkens",()=>{
   assert.deepEqual(engine.press(pressShell,70,40,1000,0,[]),{control:"reload",rects:[[64,30,28,28]]});
   assert.deepEqual(engine.press(pressShell,10,40,1000,0,[]),{control:"back",rects:[]});

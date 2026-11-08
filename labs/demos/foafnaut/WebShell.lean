@@ -55,6 +55,10 @@ structure Shell where
   collapsible : Bool := false
   /-- A back or forward swipe under way (WebGesture.hint): −100 .. 100, negative for back. -/
   swipe : Int := 0
+  /-- The address menu is open: "Copy address" and "Paste and go" in the navigation row
+  (`menuControls`). `edit "menu"` opens it on a focused bar (`opensMenu` says when); an
+  edit, a key, typed text or the bar losing the focus closes it. -/
+  menu : Bool := false
   deriving Repr, BEq
 
 private structure Theme where
@@ -142,9 +146,55 @@ private structure Box where
   w : Nat
   h : Nat
 
+/-! ### The address menu
+
+On a phone there is no menu bar and no keyboard shortcut, so the address bar has its own
+two buttons: "Copy address" copies the whole address, "Paste and go" goes to the address
+on the clipboard. They are in the navigation row, right of the address bar, while
+`Shell.menu` is set and the chrome is not folded. -/
+
+/-- The controls of the address menu, left to right. -/
+def menuControls : List String := ["copyAddress","pasteGo"]
+
+def menuLabel : String → String
+  | "copyAddress" => "Copy address"
+  | "pasteGo" => "Paste and go"
+  | _ => ""
+
+/-- The menu is drawn: open, and the chrome full. -/
+def menuShown (s : Shell) : Bool := s.menu && s.collapse == 0
+
+/-- Whether a press opens the address menu. `how` is "tap" (a press), "hold" (a long press,
+`WebGesture.hold`) or "context" (a right click); `touch` says a finger made it. A long press
+or a right click on the address bar opens it, and so does a tap on it with a finger, since a
+touch screen has no other way to copy or paste. -/
+def opensMenu (control : Option String) (how : String) (touch : Bool) : Bool :=
+  control == some "address" && (how == "hold" || how == "context" || (how == "tap" && touch))
+
+theorem opensMenu_address {control : Option String} {how : String} {touch : Bool}
+    (h : opensMenu control how touch = true) : control = some "address" := by
+  unfold opensMenu at h
+  simp only [Bool.and_eq_true, beq_iff_eq] at h
+  exact h.1
+
+/-- A mouse click (no finger, no hold, no right click) never opens the menu. -/
+theorem click_never_opens (control : Option String) : opensMenu control "tap" false = false := by
+  simp [opensMenu]
+
 private def tabWidth (s : Shell) (width : Nat) : Nat :=
   let room := width-(90*unit s)
   min (180*unit s) (room/max 1 s.tabs.size)
+
+/-- A menu button: its label and 6 lettering pixels of margin on each side. -/
+private def menuButtonWidth (s : Shell) (size : Nat) (name : String) : Nat :=
+  (menuLabel name).length*6*size+12*unit s
+
+/-- The lettering size of the menu: the bar's, or the folded strip's smaller one when the
+two buttons would leave the address bar less than 80 logical pixels. -/
+private def menuSize (s : Shell) (width : Nat) : Nat :=
+  let u := unit s
+  let need := menuButtonWidth s (dot s) "copyAddress"+menuButtonWidth s (dot s) "pasteGo"+(2+4+4+4)*u+80*u
+  if width ≥ need then dot s else smallDot s
 
 /-- Every control and where it is. Drawing and hit testing both read this. -/
 private def boxes (s : Shell) (width : Nat) : List Box := Id.run do
@@ -173,6 +223,18 @@ private def boxes (s : Shell) (width : Nat) : List Box := Id.run do
     out := out ++ [⟨"home",x,by_,button,button⟩]
     x := x+button+2*u
   x := x+4*u
+  if menuShown s then
+    -- The menu's buttons take the right of the row; on a narrow window the bar starts at
+    -- the left edge, so it keeps room for the end of the address.
+    let size := menuSize s width
+    let paste := menuButtonWidth s size "pasteGo"
+    let copy := menuButtonWidth s size "copyAddress"
+    let pasteX := width-min width (pad+paste)
+    let copyX := pasteX-min pasteX (2*u+copy)
+    let left := if narrow s width then pad else x
+    let kept := if narrow s width then out.filter (fun b => b.name != "back" && b.name != "reload") else out
+    return kept ++ [⟨"address",left,by_,copyX-min copyX (left+4*u),button⟩,
+      ⟨"copyAddress",copyX,by_,copy,button⟩,⟨"pasteGo",pasteX,by_,paste,button⟩]
   let tail := if narrow s width then 2*button+8*u+pad else 2*button+8*u+pad
   out := out ++ [⟨"address",x,by_,width-x-tail,button⟩]
   out := out ++ [⟨if narrow s width then "tabs" else "source",width-pad-2*button-2*u,by_,button,button⟩]
@@ -188,6 +250,7 @@ def pressable (s : Shell) (name : String) : Bool :=
   | ["back"] => s.canBack
   | ["forward"] => s.canForward
   | ["reload"] | ["home"] | ["source"] | ["settings"] | ["newTab"] | ["tabs"] | ["close",_] => true
+  | ["copyAddress"] | ["pasteGo"] => s.menu
   | _ => false
 
 /-- The box of a pressable control: `(x,y,w,h)` in window pixels. -/
@@ -381,6 +444,13 @@ private def controlNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.
         iconAt s t.ink "close" (sink box.name box)
     | ["newTab"] => out := out ++ face box ++ iconAt s t.ink "newTab" (sink box.name box)
     | ["address"] => out := out ++ addressNodes s t box
+    | ["copyAddress"] | ["pasteGo"] =>
+      let size := menuSize s width
+      let label := menuLabel box.name
+      let at_ := sink box.name box
+      -- Raised, with the accent line along its top, as the active tab.
+      out := out ++ face box ++ [paint t.accent (at_.x+2*u) (at_.y+2*u) (at_.w-4*u) u] ++
+        text t.ink label (at_.x+(at_.w-min at_.w (label.length*6*size-size))/2) (at_.y+(at_.h-7*size)/2+u) size
     | ["tabs"] =>
       let at_ := sink box.name box
       out := out ++ face box ++
@@ -507,7 +577,7 @@ def clean (value : String) : String :=
 /-- Typed text replaces the selection, as in any text field. -/
 def Shell.typed (s : Shell) (value : String) : Shell :=
   let text := clean value
-  if text.isEmpty then s else replaceRange s s.lo s.hi text true
+  if text.isEmpty then s else {replaceRange s s.lo s.hi text true with menu := false}
 
 private def wordChar (c : Char) : Bool := c.isAlphanum || c.toNat > 127
 /-- Option-Left: past the separators before `i`, then past the word. -/
@@ -534,6 +604,8 @@ end. Shift extends the selection; Option moves or deletes by word; Command moves
 the end of the line. With a selection, delete removes it, and left or right with no
 Shift goes to its start or end. -/
 def Shell.key (s : Shell) (code : Nat) (modifiers : Nat := 0) : Shell :=
+  -- A key closes the address menu, as typing does.
+  let s := {s with menu := false}
   let extend := has modifiers shiftBit
   let word := has modifiers optionBit
   let line := has modifiers commandBit
@@ -557,12 +629,16 @@ def Shell.key (s : Shell) (code : Nat) (modifiers : Nat := 0) : Shell :=
   | 119 | 125 => moveTo s size extend
   | _ => s
 
-/-- An edit command from the menu or a key, and the text it puts on the clipboard. -/
-def Shell.edit (s : Shell) (action : String) (text : String := "") : Shell × Option String :=
+/-- `edit` for every action but `menu`, before it closes the menu. -/
+def Shell.editStep (s : Shell) (action : String) (text : String) : Shell × Option String :=
   match action with
   | "focus" =>
     let value := String.ofList (text.toList.take maxAddress)
     ({s with address := value,cursor := value.length,anchor := 0,undo := none,redo := none,typing := false,focused := true},none)
+  | "pasteGo" =>
+    let value := String.ofList ((clean text).trimAscii.toString.toList.take maxAddress)
+    if value.isEmpty then (s,none) else
+    ({s with address := value,cursor := value.length,anchor := value.length,undo := some (snapshot s),redo := none,typing := false},some value)
   | "selectAll" => ({s with anchor := 0,cursor := s.address.length,typing := false},none)
   | "copy" => (s,if s.lo < s.hi then some s.selected else none)
   | "cut" => if s.lo < s.hi then (replaceRange s s.lo s.hi "" false,some s.selected) else (s,none)
@@ -574,6 +650,58 @@ def Shell.edit (s : Shell) (action : String) (text : String := "") : Shell × Op
     | some v => ({restore s v with redo := none,undo := some (snapshot s),typing := false},none)
     | none => (s,none)
   | _ => (s,none)
+
+/-- An edit command from the menu or a key, and the text it puts on the clipboard. Every
+edit but `menu` closes the address menu. `menu` opens it on a focused bar; `closeMenu`
+closes it. `pasteGo` puts the clipboard `text` in the bar, cleaned as a paste is, and
+answers the address to go to (`none` for a clipboard with no text). -/
+def Shell.edit (s : Shell) (action : String) (text : String := "") : Shell × Option String :=
+  if action == "menu" then ({s with menu := s.focused},none) else
+  let step := s.editStep action text
+  ({step.1 with menu := false},step.2)
+
+/-- The address menu opens only on a focused bar, and any other edit closes it. -/
+theorem edit_menu (s : Shell) : (s.edit "menu").1.menu = s.focused := by
+  simp [Shell.edit]
+
+theorem edit_closes (s : Shell) (action text : String) (h : action ≠ "menu") :
+    (s.edit action text).1.menu = false := by
+  simp [Shell.edit, h]
+
+/-- What the host does for one button of the address menu: `action` is "copy" or "paste",
+`rect` the button in window CSS pixels `(x,y,w,h)` (backing pixels over `scale`, rounded
+out), and `text` for "copy" the address to write. A web host runs the action inside the
+tap that lifts on the rectangle, since the clipboard wants a user gesture. -/
+structure MenuAction where
+  action : String
+  control : String
+  rect : Nat × Nat × Nat × Nat
+  text : Option String := none
+  deriving Repr, BEq
+
+/-- The address the menu copies: the whole text of the bar, as Lean cleans a paste. -/
+def copyText (s : Shell) : String := clean s.address
+
+/-- The action table of the shown menu, for `width` backing pixels; empty with the menu
+closed or the chrome folded. -/
+def menuActions (s : Shell) (width : Nat) : List MenuAction :=
+  if !menuShown s then [] else
+  let u := unit s
+  let css := fun (b : Box) => (b.x/u,b.y/u,(b.x+b.w+u-1)/u-b.x/u,(b.y+b.h+u-1)/u-b.y/u)
+  (boxes s width).filterMap fun b =>
+    if b.name == "copyAddress" then some {action := "copy",control := b.name,rect := css b,text := some (copyText s)}
+    else if b.name == "pasteGo" then some {action := "paste",control := b.name,rect := css b}
+    else none
+
+/-- A closed menu gives the host no actions: a tap can not copy or paste. -/
+theorem menuActions_closed (s : Shell) (width : Nat) (h : s.menu = false) : menuActions s width = [] := by
+  simp [menuActions, menuShown, h]
+
+def MenuAction.json (a : MenuAction) : JSON.Json :=
+  let n := fun (v : Nat) => JSON.Json.number (toString v)
+  .object ([("action",.string a.action),("control",.string a.control),
+    ("rect",.array [n a.rect.1,n a.rect.2.1,n a.rect.2.2.1,n a.rect.2.2.2])] ++
+    (match a.text with | some t => [("text",.string t)] | none => []))
 
 /-- The menu commands that act on the address bar when it has the focus. -/
 def addressCommands : List String := ["copy","selectAll","cut","paste","undo","redo"]
@@ -719,7 +847,8 @@ def Shell.ofJson (j : JSON.Json) : Shell :=
     scroll := nat j "scroll", pressed := str j "pressed",
     collapse := min 100 (nat j "collapse"), collapsible := flag j "collapsible",
     swipe := match j.field? "swipe" with
-      | some (.number value) => max (-100) (min 100 (value.toInt?.getD 0)) | _ => 0 }
+      | some (.number value) => max (-100) (min 100 (value.toInt?.getD 0)) | _ => 0,
+    menu := flag j "menu" }
 
 private def Snapshot.json (v : Snapshot) : JSON.Json :=
   .object [("address",.string v.address),("cursor",.number (toString v.cursor)),("anchor",.number (toString v.anchor))]
@@ -727,7 +856,8 @@ private def Snapshot.json (v : Snapshot) : JSON.Json :=
 /-- The edit state the host keeps and sends back in `shell`. -/
 def Shell.editJson (s : Shell) : JSON.Json :=
   .object [("address",.string s.address),("cursor",.number (toString s.cursor)),("anchor",.number (toString s.anchor)),
-    ("undo",(s.undo.map Snapshot.json).getD .null),("redo",(s.redo.map Snapshot.json).getD .null),("typing",.bool s.typing)]
+    ("undo",(s.undo.map Snapshot.json).getD .null),("redo",(s.redo.map Snapshot.json).getD .null),("typing",.bool s.typing),
+    ("menu",.bool s.menu)]
 
 #guard submit "http://example.org/" == .page "http://example.org/"
 #guard submit "example.org" == .page "https://example.org"
@@ -819,5 +949,25 @@ private def deep : Shell := (({} : Shell).edit "focus" "http://x.org/one/two").1
 -- A swipe's hint (WebGesture): kept from the host's shell, drawn only while it is not 0.
 #guard (Shell.ofJson (.object [("swipe",.number "-60")])).swipe == -60 && (Shell.ofJson (.object [("swipe",.number "900")])).swipe == 100
 #guard (nodes {swipe := -60} 800).length > (nodes {} 800).length && (nodes {swipe := 0} 800).length == (nodes {} 800).length
+-- The address menu: a finger's tap, a long press or a right click on the bar opens it; a click does not.
+#guard opensMenu (some "address") "tap" true && opensMenu (some "address") "hold" false && opensMenu (some "address") "context" false
+#guard !opensMenu (some "address") "tap" false && !opensMenu (some "reload") "hold" true && !opensMenu none "context" true
+private def menuOpen : Shell := (opened.edit "menu").1
+#guard menuOpen.menu && !(({} : Shell).edit "menu").1.menu
+-- A phone, 390 CSS px at 3x: both buttons in the navigation row, right of a shorter bar.
+private def phone : Shell := {menuOpen with scale := 3}
+#guard hit phone 1170 1100 60 == some "pasteGo" && hit phone 1170 700 60 == some "copyAddress"
+#guard hit phone 1170 60 60 == some "address" && hit {phone with menu := false} 1170 1100 60 == some "settings"
+#guard (menuActions phone 1170).map (·.action) == ["copy","paste"]
+#guard (menuActions phone 1170).head?.bind (·.text) == some "https://example.org/a"
+#guard (menuActions phone 1170).all fun a => a.rect.1+a.rect.2.2.1 ≤ 390 && a.rect.2.1+a.rect.2.2.2 ≤ fullHeight phone 1170/3
+#guard menuActions {phone with menu := false} 1170 == [] && menuActions {phone with collapse := 50} 1170 == []
+-- A desktop window keeps back, forward, reload and home; the menu replaces source and settings.
+#guard hit menuOpen 1000 10 40 == some "back" && (menuActions menuOpen 1000).length == 2
+#guard reprStr (nodes menuOpen 1000) != reprStr (nodes opened 1000)
+-- Typing, a key and any other edit close the menu; Paste and go answers the cleaned address.
+#guard !(menuOpen.typed "x").menu && !(menuOpen.key 123).menu && !(menuOpen.edit "selectAll").1.menu
+#guard (menuOpen.edit "pasteGo" "  example.org/b\n").2 == some "example.org/b" && (menuOpen.edit "pasteGo" "\n").2 == none
+#guard (Shell.ofJson menuOpen.editJson).menu && pressable menuOpen "pasteGo" && !pressable opened "pasteGo"
 
 end WebShell

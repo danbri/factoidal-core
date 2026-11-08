@@ -20,6 +20,12 @@ Two conventions, both in CSS pixels:
   content moving left is forward, when the gesture ends past `wheelCommit` (140 px).
   Firefox on macOS draws its arrow over about the same distance.
 
+* **Long press** (iOS `UILongPressGestureRecognizer`, Android `onLongPress`). A finger or
+  a button held for `holdMs` (500 ms) within the tap slop of where it went down, and not
+  lifted, is a long press. The host asks once when the time has passed; Lean says `hold`,
+  or `other` if the finger moved off or lifted. A tap (lifted, or held for less) is never
+  a long press, nor is a touch that moved past the tap slop.
+
 While a swipe is under way, `hint` (−100 .. 100 in steps of 10, negative for back) is the
 value the hosts put in the shell (`WebShell.Shell.swipe`): WebShell draws the arrow, the
 host draws nothing. Steps of 10 bound the frames one swipe asks for to about twenty.
@@ -46,6 +52,8 @@ def flingSpeed : Int := 500
 def wheelCommit : Int := 140
 /-- Movement across must be more than this times the movement down. -/
 def dominance : Int := 2
+/-- A press held this long without moving is a long press (iOS and Android: 500 ms). -/
+def holdMs : Int := 500
 
 inductive Direction where
   | back
@@ -175,6 +183,66 @@ def wheel (w : Wheel) : Decision :=
   else if w.dx > 0 then sideways .forward (along .forward (-w.dx)) w.dy w.ended
   else other
 
+/-! ### Long press -/
+
+structure Hold where
+  startX : Int
+  startY : Int
+  /-- Where the finger or pointer is now. -/
+  x : Int
+  y : Int
+  /-- Milliseconds since it went down. -/
+  elapsed : Int
+  /-- It has been lifted (the press ended). -/
+  lifted : Bool := false
+  deriving Repr, BEq
+
+/-- Within the tap slop of the start: the distance is under `tapSlop`, as the Hub measures
+a tap (`Math.hypot`), in integers. -/
+def Hold.still (h : Hold) : Bool :=
+  decide ((h.x-h.startX)*(h.x-h.startX)+(h.y-h.startY)*(h.y-h.startY) < tapSlop*tapSlop)
+
+/-- What a press held so far means: `pending`, it may still become a long press; `hold`, it
+is one; `other`, it is a tap, a drag, or over. -/
+inductive HoldPhase where
+  | pending
+  | hold
+  | other
+  deriving Repr, BEq, DecidableEq
+
+def HoldPhase.name : HoldPhase → String
+  | .pending => "pending"
+  | .hold => "hold"
+  | .other => "other"
+
+def hold (h : Hold) : HoldPhase :=
+  if h.lifted || !h.still then .other
+  else if h.elapsed ≥ holdMs then .hold
+  else .pending
+
+/-- A tap never becomes a long press: a press held less than `holdMs` is not one, whatever
+else is true of it. -/
+theorem tap_never_holds (h : Hold) (short : h.elapsed < holdMs) : hold h ≠ .hold := by
+  unfold hold
+  split
+  · simp
+  · split
+    · omega
+    · simp
+
+/-- A lifted press is not a long press: the host asks while the finger is down. -/
+theorem lifted_never_holds (h : Hold) (up : h.lifted = true) : hold h = .other := by
+  simp [hold, up]
+
+/-- A touch that moved past the tap slop (a scroll, a drag, a swipe) is not a long press. -/
+theorem moved_never_holds (h : Hold) (moved : h.still = false) : hold h = .other := by
+  simp [hold, moved]
+
+/-- A long press is still, down and at least `holdMs` old. -/
+theorem hold_iff (h : Hold) : hold h = .hold ↔ h.lifted = false ∧ h.still = true ∧ h.elapsed ≥ holdMs := by
+  unfold hold
+  cases hl : h.lifted <;> cases hs : h.still <;> simp
+
 /-! ### The shell's hint and the op -/
 
 /-- The value of `WebShell.Shell.swipe`: −100 .. 100 in steps of 10, negative for back. -/
@@ -205,12 +273,13 @@ def Decision.json (d : Decision) : JSON.Json :=
 
 /-- The thresholds, for a host that asks first whether this engine has the op. -/
 def info : JSON.Json :=
-  .object [("actions",.array [.string "touch",.string "wheel"]),("edgeZone",number edgeZone),
+  .object [("actions",.array [.string "touch",.string "wheel",.string "hold"]),("edgeZone",number edgeZone),("holdMs",number holdMs),
     ("tapSlop",number tapSlop),("commitPercent",number commitPercent),("flingSpeed",number flingSpeed),
     ("wheelCommit",number wheelCommit),("dominance",number dominance)]
 
 /-- The op `gesture`. `action` "info" gives the thresholds; "touch" takes `width`,
-`startX`, `startY`, `x`, `y`, `vx`, `fingers`, `ended`; "wheel" takes `dx`, `dy`, `ended`. -/
+`startX`, `startY`, `x`, `y`, `vx`, `fingers`, `ended`; "wheel" takes `dx`, `dy`, `ended`;
+"hold" takes `startX`, `startY`, `x`, `y`, `elapsed`, `lifted` and answers `phase`. -/
 def op (name : String) (request : JSON.Json) : Except String (Option String) := do
   if name != "gesture" then return none
   match request.field? "action" with
@@ -231,7 +300,16 @@ def op (name : String) (request : JSON.Json) : Except String (Option String) := 
   | some (.string "wheel") =>
     let w : Wheel := {dx := int request "dx", dy := int request "dy", ended := flag request "ended"}
     return some (wheel w).json.toString
-  | _ => throw "gesture: action must be info, touch or wheel"
+  | some (.string "hold") =>
+    let h : Hold := {
+      startX := int request "startX"
+      startY := int request "startY"
+      x := int request "x"
+      y := int request "y"
+      elapsed := int request "elapsed"
+      lifted := flag request "lifted" }
+    return some (JSON.Json.object [("phase",.string (hold h).name)]).toString
+  | _ => throw "gesture: action must be info, touch, wheel or hold"
 
 /-! ### Theorems -/
 
@@ -413,5 +491,10 @@ private def at_ (startX x : Int) (y : Int := 300) (ended := true) (vx : Int := 0
 #guard (wheel {dx := 150, dy := 0, ended := true}).direction == some .forward
 #guard (wheel {dx := -150, dy := 100, ended := true}).phase == .other
 #guard (wheel {dx := -100, dy := 0, ended := true}).navigate == false && hint (wheel {dx := -100, dy := 0}) == -70
+-- A long press: held 500 ms within 10 px; sooner, moved, or lifted is not one.
+#guard hold {startX := 100, startY := 40, x := 106, y := 46, elapsed := 520} == .hold
+#guard hold {startX := 100, startY := 40, x := 108, y := 46, elapsed := 520} == .other
+#guard hold {startX := 100, startY := 40, x := 100, y := 40, elapsed := 300} == .pending
+#guard hold {startX := 100, startY := 40, x := 100, y := 40, elapsed := 900, lifted := true} == .other
 
 end WebGesture

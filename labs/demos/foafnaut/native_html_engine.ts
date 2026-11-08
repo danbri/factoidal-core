@@ -29,7 +29,9 @@ export type FontLoaded = {family:string;glyphs:number;fonts:number};
 export type HistoryAnswer = {history:History;url:string|null;canBack:boolean;canForward:boolean};
 export type GraphFrame = {model:string;commands:string[]};
 /** The address bar's edit state; the host keeps it and sends it back in `shell`. */
-export type ShellEdit = {address:string;cursor:number;anchor:number;undo:unknown;redo:unknown;typing:boolean};
+export type ShellEdit = {address:string;cursor:number;anchor:number;undo:unknown;redo:unknown;typing:boolean;menu?:boolean};
+/** One button of the address menu (WebShell.menuActions): its rectangle in CSS px, and for copy the text. */
+export type MenuAction = {action:"copy"|"paste";control:string;rect:[number,number,number,number];text?:string};
 export type PrintLayout = {contentHeight:number;pages:[number,number][]};
 export type WasmValue = {type:string;value:string;shown?:string};
 export type WasmRequest = {wasmBase64:string;export?:string;args?:WasmValue[];fuel?:number};
@@ -316,6 +318,11 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     },
     // Lean decides what a chrome click, a key, an address and a link mean.
     shellHit:(shell:unknown,x:number,y:number,width:number)=>(documentCall("",{op:"shellHit",shell,x,y,width}) as {control:string|null}).control,
+    // The control under a press, and whether this press opens the address menu (`how`: tap, hold or context).
+    shellMenu:(shell:unknown,x:number,y:number,width:number,how:string,touch=false)=>
+      documentCall("",{op:"shellHit",shell,x,y,width,how,touch}) as {control:string|null;menu?:boolean},
+    // The address menu's buttons and the text Copy writes; empty with the menu closed.
+    shellActions:(shell:unknown,width:number)=>(documentCall("",{op:"shellActions",shell,width}) as {actions:MenuAction[]}).actions,
     // A press: the control or the link under the pointer (`row` is the page-layer row) and what to darken.
     press:(shell:unknown,x:number,y:number,width:number,row:number,links:unknown[])=>documentCall("",{op:"press",shell,x,y,width,row:Math.max(0,Math.floor(row)),links}) as PressAnswer,
     // The system pointer for a window point: "arrow", "hand" or "text" (issue 1268).
@@ -324,7 +331,7 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     shellText:(shell:unknown,text:string)=>documentCall("",{op:"shellText",shell,text}) as ShellEdit,
     shellKey:(shell:unknown,key:number,modifiers=0)=>documentCall("",{op:"shellKey",shell,key,modifiers}) as ShellEdit,
     // Select all, copy, cut, paste, undo, redo and focus in the address bar; `clipboard` is the text to copy.
-    shellEdit:(shell:unknown,action:string,text="")=>documentCall("",{op:"shellEdit",shell,action,text}) as ShellEdit&{clipboard:string|null},
+    shellEdit:(shell:unknown,action:string,text="")=>documentCall("",{op:"shellEdit",shell,action,text}) as ShellEdit&{clipboard?:string|null;go?:string|null},
     // Where the pages of a print layout break (`media:"print"` in the options).
     printLayout:(source:string,width:number,height:number,options:Record<string,unknown>)=>
       documentCall(source,{...options,op:"printLayout"},width,height) as PrintLayout,
