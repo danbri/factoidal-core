@@ -32,7 +32,7 @@ only (the spec-test runner also imports `Lean.Data.Json`).
 | `Exec.Run` | the interpreter loop |
 | `Exec.Instantiate` | linking, segment initialisation, start function |
 | `Api` | the public surface |
-| `Proofs.*` | refinement theorems (`Proofs.Proposals`: exceptions and tail calls) |
+| `Proofs.*` | refinement theorems (`Proofs.Proposals`: exceptions and tail calls; `Proofs.Refine`, `Proofs.RefineRun`: the state abstraction `R` and `step_refines`) |
 | `SpecTest` | `lake exe wasmvm-spectest` |
 | `Tests.Memory`, `Tests.Proposals`, `Tests.Wasi` | run after the spec tests (legacy exceptions, 10^6 tail calls, `try_table` cost, WASI) |
 | `Wasi`, `WasiIO` | WASI Preview 1 host, deny by default (`Tests.Wasi`: `lake exe wasmvm-bench wasi`) |
@@ -243,7 +243,8 @@ Named theorems, in the order they will be proved:
    prefix of the instruction list, the frames become nested `FRAME_`/`LABEL_`
    contexts, and the pc becomes the rest of the structured body. First cases: the
    numeric instructions through `Spec.Step_pure` (`binop_val`, `binop_trap`, `unop_val`,
-   `testop`, `relop`).
+   `testop`, `relop`). Done for a first instruction set on 2026-11-08 as `step_refines`, with
+   `abs` a relation `R` (section "Refinement: the state abstraction").
 6. `@[csimp]` equalities for hot pieces where the spec shape is a function: LEB128,
    branch-target lookup (a linear scan over the structured body equals the
    precomputed target), the integer operations.
@@ -1050,20 +1051,135 @@ with `#print axioms`); no `sorry`.
 - `vals_beq_self`, `exninst_beq_self`: the generated `BEq` on spec values and
   exceptions is reflexive (the rules' side conditions need it).
 
-Open obligations (stated, not proved):
+Open obligations: now stated against the state abstraction `R`, as exact theorem
+statements, in "Refinement: the state abstraction" below. `enterTail_refines` has
+moved forward: the read-back it needed (`moveDown` through `Slots.rd`, `ld64` of
+`st64`) is proved (`SlotLemmas.moveDown_rd`, `rd_wr_same`, `rd_wr_ne`).
+Legacy exceptions: no spec rules exist to prove against; tested only.
 
-- `unwind_refines`: for a fast state reached from a valid module, if `raise` gives
-  `.caught` at a clause, the abstraction of the state (proof plan item 5) takes spec
-  steps (`throw`, then `throw_ref_label`/`_frame`/`_handler_next` out to the handler,
-  then the clause's rule) to the abstraction of the state after `deliver`. It needs
-  the abstraction `abs` and a lemma that the innermost handler entry holding the pc is
-  the innermost `HANDLER_` around the instruction in the nested body.
-- `uncaught_refines`: if `raise` gives `.uncaught`, the spec configuration reaches
-  `REF_EXN_ADDR a; THROW_REF` at top level.
-- `enterTail_refines`: the slots after `enterTail` are the abstraction of the frame
-  that `return_call_ref_frame_addr` then `call_ref_func` give (needs `moveDown` read
-  back through `Slots.rd`, which needs `ld64` of `st64` on the Lean reference).
-- Legacy exceptions: no spec rules exist to prove against; tested only.
+## Refinement: the state abstraction (stage 3, 2026-11-08)
+
+Code: `Proofs/Slots.lean`, `Proofs/Memory.lean`, `Proofs/Refine.lean`,
+`Proofs/RefineRun.lean`. Axioms of every theorem below: `propext`,
+`Classical.choice`, `Quot.sound` (`#print axioms`); no `sorry`. The spec is
+`Spec/Wasm30.lean` after spectec patches 0005 and 0006 (spec-layer record, section
+9b): both defects were found by these proofs.
+
+### The abstraction
+
+A relation, not a function: `R e c` (`RefineRun.lean`) between the engine state
+`e : EState M` (store, slots, `sp`, `fp`, `pc`, code, instance, frames) and a spec
+`config`. The engine has no types and no nesting; both come from witnesses:
+
+- `Comp code locals maxH L d pc ts is pe te` (the compiler's relation): the spec
+  instructions `is` are compiled into `code` from `pc` to `pe`; `ts`/`te` are the
+  operand types of the current block at both ends, `d` the number of operand values
+  below the block, `L` the labels in scope. A label `Lbl` is the side-table entry a
+  branch uses (target pc, arity, height, types). `block` compiles to no op (its label
+  targets the pc after its body); `loop`'s label targets its first pc; `br l` is the op
+  `br (L[l]).target`. So the side table is proved right by the induction in `br_up`.
+- `Nest .. L H d e te`: the open blocks, innermost first. Each is a `Hole`, the spec
+  context `vals ++ [LABEL_ n cont □] ++ rest`; its values are slots and its `rest` is
+  compiled (`Comp`) from the block's end pc. The outermost hole is the function's own
+  label, whose end pc holds `return`.
+- `ValR t b v`: slot bits `b` are value `v` at type `t` (i32 zero-extended; i64 the
+  whole slot; references by address with `nullRef` for null; floats only as "a float
+  constant", because the generated float encodings are opaque). `SlotsR` lifts it to a
+  run of slots; `LocalsR`: slot `fp + x` is local `x` of the spec frame.
+- `ActR`: the function's spec body is `plug H (valsC ++ is)`, the slots from
+  `fp + nLocals` to `sp` are the holes' values then `valsC`, and `Comp` holds at `pc`.
+  `DoneR`: after a branch to the function's own label, only the results remain.
+- `R e c`: `c = config (state S f0) (wrap cs m f body)` with `ActR` or `DoneR` for
+  `body`; `wrap` puts `FRAME_ m f body` inside the callers' bodies (`CallersR`, each
+  caller's slots below the callee's `fp`); `StoreR`: each engine memory is the spec
+  memory at the same address, read through `LinearMemoryLaws.byte`; size side
+  conditions (slots and code below `USize.size`, room for `maxH` slots above `fp`).
+
+### Theorems
+
+The general shape, proved:
+
+```lean
+theorem step_refines (e e' : EState M) (c : Spec.config) (hR : R e c) (hs : stepE e = some e') :
+    ∃ c', Spec.Steps c c' ∧ R e' c'
+theorem stepE_run (lim : RunLimits) (e e' : EState M) (n : Nat) (h : stepE e = some e') :
+    e.run lim (n + 1) = e'.run lim n
+```
+
+`stepE` is one engine step for the covered ops, written as the cases of `run`;
+`stepE_run` says `run` makes exactly that step. Covered: `const` (i32, i64),
+`local.get`, `local.set`, `local.tee`, i32/i64 `add`/`sub`/`mul`, `br`, `br_if` (taken
+and not), `block`/`loop`/`end` (spec steps only: `norm` enters and leaves blocks with
+`Step_read.block`/`loop` and `label_vals`, the engine takes no step), `i32.load` and
+`i32.store` on memory 0 through `LinearMemory` (backend laws `LinearMemoryLaws`,
+proved for `ByteMem`). The parts, each a theorem:
+
+| Theorem | Statement (short) |
+|---|---|
+| `SlotLemmas.rd_wr_same`, `rd_wr_ne`, `moveDown_rd`, `le64_bytes` | slot read-back on the Lean reference bodies of `ld64`/`st64` |
+| `MemLaws.ld32_eq`, `st32_byte`, instance `LinearMemoryLaws ByteMem` | `load32` is 4 bytes little-endian; `store32` writes them and keeps the rest |
+| `i64_add_refines`, `i64_sub_refines`, `i64_mul_refines`, `bin_step` | each `BinR` op is `Step_pure.binop_val` (i32 from stage 1) |
+| `exit_level`, `enter_block`, `enter_loop`, `norm` | block structure, spec side only |
+| `op_const32/64`, `op_localGet/Set/Tee`, `op_binop`, `op_load`, `op_store` | body-level step lemmas |
+| `br_up`, `op_br`, `op_brIf_true`, `op_brIf_false` | `br_label_succ` l times then `br_label_zero`; the side-table target and `brMove` agree |
+| `step_wrap`, `steps_wrap`, `CallersR.frame` | steps in the running function lift through `FRAME_` and the callers |
+| `case_*`, `step_refines` | the whole-state theorem |
+| `fused_refines` | a fused op without a jump (`llBin`, `lcBin`, `cBin`, `binSet`, `lcBinSet`): `run` on `fuse code` reaches the registers `after` (`Fuse.fuse_agrees`), and `R` holds there (`simple_chain`: one `step_refines` per part) |
+
+### Left, as exact statements
+
+```lean
+-- the compiler establishes the relation (validator item 4, now with a target):
+theorem compile_establishes (c : Ctx) (fc : FnCtx) (body : Array Instr) (cf : CompiledFunc)
+    (h : compileFunc c fc body = .ok cf) :
+    ∃ is L pe rs, Comp cf.code fc.locals.toList cf.maxHeight L 0 0 [] is pe rs ∧
+      Nest cf.code fc.locals.toList cf.maxHeight s fp L [⟨[], rs.length, [], []⟩] 0 pe rs ∧
+      toSpec body = is            -- for every s, fp; `toSpec`: Syntax.Instr to Spec.instr
+-- the jumps the validator emits for `br_if` with nothing to move, `if`, `else`:
+theorem step_refines_jump : R e c → stepE' e = some e' → ∃ c', Spec.Steps c c' ∧ R e' c'
+  -- with `Comp.jumpIf`, `Comp.ifElse` and `stepOp` cases for `jump`, `jumpIf`, `jumpUnless`
+-- calls and returns (CallersR gains the call site; Step.call_ref_func, frame_vals):
+theorem step_refines_call : R e c → stepOp e (.call f) = ... → ∃ c', Spec.Steps c c' ∧ R e' c'
+theorem step_refines_return : R e c → e.code[e.pc.toNat]? = some (.return_ k) → ...
+-- exceptions (stage 2 obligations, stated against R):
+theorem unwind_refines (hR : R e c) (hthrow : e.code[e.pc.toNat]? = some (.throw x n))
+    (hcaught : raise st' exn e.stack e.fp e.pc e.code e.inst e.frames
+      = .caught stack' sp' fp' pc' code' inst' frames') :
+    ∃ c', Spec.Steps c c' ∧ R ⟨st', stack', sp', fp', pc', code', inst', frames'⟩ c'
+  -- needs `HANDLER_` holes in `Nest` (a `tryTable` hole kind) and: the innermost handler
+  -- entry holding pc (`innermost`, `searchChain`) is the innermost HANDLER_ around it
+theorem uncaught_refines (hR : R e c) (hthrow : ...) (hunc : raise .. = .uncaught) :
+    ∃ S f0, Spec.Steps c (.mk_config (.mk_state S f0) [.REF_EXN_ADDR exn, .THROW_REF])
+theorem enterTail_refines (hR : R e c) (hop : e.code[e.pc.toNat]? = some (.returnCall f))
+    (hok : enterTail lim e.st e.stack e.sp e.fp (e.inst.funcs[f]!) = .ok stack' sp' code' inst') :
+    ∃ c', Spec.Steps c c' ∧ R ⟨e.st, stack', sp', e.fp, 0, code', inst', e.frames⟩ c'
+  -- moveDown read-back is proved (moveDown_rd); left: Slots.grow and initLocals read-back,
+  -- and the spec side return_call_ref_frame_addr then call_ref_func
+-- whole runs of fused and unfused code agree (induction on fuel; every function fused):
+theorem run_fuse_agrees : (∀ fa, st.funcs code fused) → run lim st .. (fuse c) .. n = run lim st .. c .. n
+```
+
+Also left: floats (`ValR` relates them only as "a float constant"), `drop`/`select`,
+unary ops, the jump-ending fused ops (`llBinJump`, `lcBinJump`, `binJump`: they end in
+`jumpIf`/`jumpUnless`), globals and tables in `StoreR`, and the generator's dropped
+iteration lengths (spec-layer section 9b, third defect): the generated `block`,
+`br_label_zero` and `call_ref_func` do not tie `n` to the number of values, so these
+theorems are proved against relations that allow more than the official ones; the
+engine's steps keep the counts, but the theorems do not yet say so.
+
+### Speed tricks and their proofs
+
+| Trick | Covered by proof |
+|---|---|
+| Precomputed branch targets (side table in the op) | yes for `br`, `br_if` (`br_up`, `Comp.br`), given `Comp` (compiler theorem open) |
+| Untyped slots, no tag checks | yes: the types are `Comp`'s, `ValR` per slot |
+| One bounds check per slot access (8 byte checks removed) | yes: `rd_wr_same`/`rd_wr_ne` on the Lean reference body; `R` keeps every access in range |
+| One bounds check per memory access | yes for `i32.load`/`i32.store` (`LinearMemoryLaws`, `ByteMem`) |
+| Fused ops | yes for the five without a jump (`fused_refines`); not the three ending in a jump |
+| Trusted inline C stores (`Bytes.st16/32/64`) | no: the proofs are about the Lean bodies; the C `memcpy` is trusted to equal them ("Trusted pieces") |
+| No stack-overflow check inside a function | in `R` as `fp + maxH ≤ slots` and `Comp`'s push bound; `maxHeight_sound` (compiler) open |
+| `cold` ops, tail calls, exceptions | no (statements above) |
+
 
 ## Next
 
