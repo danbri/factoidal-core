@@ -113,8 +113,19 @@ export function wrapper(file:string):string {
   return `<!doctype html>\n<meta charset=utf-8>\n${long?'<meta name="timeout" content="long">\n':""}${title?`<title>${escapeHTML(title)}</title>\n`:""}`+
     `<script>\nself.GLOBAL = {isWindow: function() { return true; }, isWorker: function() { return false; }, isShadowRealm: function() { return false; }};\n</script>\n`+
     `<script src="/resources/testharness.js"></script>\n<script src="/resources/testharnessreport.js"></script>\n`+
-    scripts.map(s=>`<script src="${escapeHTML(s)}"></script>\n`).join("")+
+    scripts.map(s=>`<script src="${escapeHTML(s)}"></script>\n`).join("")+dataShim(file)+
     `<div id=log></div>\n<script src="/${file}"></script>\n`;
+}
+// A test that loads its own JSON data with fetch("resources/x.json") (url/) gets that data
+// from a runner shim, since page scripts have no fetch: the shim answers only those files.
+function dataShim(file:string):string {
+  const text=Deno.readTextFileSync(wptFile(file));
+  const names=[...new Set([...text.matchAll(/fetch\("(resources\/[\w.-]+\.json)"\)/g)].map(m=>m[1]))];
+  if(!names.length)return "";
+  const dir=file.slice(0,file.lastIndexOf("/")+1);
+  const data=Object.fromEntries(names.map(n=>[n,Deno.readTextFileSync(wptFile(dir+n))]));
+  return `<script>/* runner shim: the test's own data files */(()=>{const data=${JSON.stringify(data).replace(/<\//g,"<\\/")};`+
+    `self.fetch=u=>data[u]===undefined?Promise.reject(new TypeError("runner shim: no "+u)):Promise.resolve({ok:true,json:()=>Promise.resolve(JSON.parse(data[u]))});})();</script>\n`;
 }
 const pageOf=(file:string)=>file.endsWith(".js")?file.replace(/\.js$/,".html"):file;
 /** A script URL of the test origin as a file: our testharnessreport.js, else the pinned WPT file. */
