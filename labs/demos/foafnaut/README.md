@@ -259,6 +259,24 @@ one drag move per gesture, not continuous idle/animation output. Source users ca
 pass `--directory .build/dist` to the summarizer; it is read-only unless an output
 is requested. Traces count observed input and frames, not general correctness.
 
+### Sweeps with no visible window
+
+`run_html.ts --offscreen` makes the same NSWindow and view (`ng_create_offscreen`)
+and never puts it on screen: no Dock icon, no activation, a private pasteboard,
+and a fixed backing scale of 2. The synthetic events of a sweep go through the
+same queue with the same coalescing rules (`native_window_queue_test.ts` checks
+both windows). Frames go to a WebGPU texture of the window size; "presented"
+means drawn and submitted to that texture, and the pixel checks read it. The
+perf summary says `present: offscreen-texture`. A page link that Lean sends to
+the system browser is traced and not opened.
+
+`sweeps.sh` runs every sweep this way, with the native and the Wasm engine, and
+prints one line for each: rc, seconds and the offscreen latency summary. It runs
+with the screen locked or the display asleep (about 65 s on an M1); `test.sh`
+runs it on macOS, and the Builds foafnaut job runs it after the window library
+is built. Exit code 4 from a sweep means the engine is older than the sweep (for
+example `--swipe-sweep` with no `gesture` op); sweeps.sh reports it as NOT RUN.
+
 ## Shared geometry and checked SVG (source prototype)
 
 Drawing, hit-testing and node footprints now derive from one Lean shape list.
