@@ -658,36 +658,15 @@ def kindNames : List (String × String) :=
 
 /-! ### The SVG: operator boxes with numbers, edges as wide as their rows -/
 
-/-- Segments of a seven-segment digit, in a 7 by 12 cell: a b c d e f g. -/
-def segments : List (Nat × Nat × Nat × Nat) :=
-  [(0,0,7,0), (7,0,7,6), (7,6,7,12), (0,12,7,12), (0,6,0,12), (0,0,0,6), (0,6,7,6)]
+/-- The first `n` characters of a label, with "..." when it is longer. -/
+def clip (n : Nat) (text : String) : String :=
+  if text.length <= n then text else String.ofList (text.toList.take (n - 3)) ++ "..."
 
-def digitMask : Nat → List Bool
-  | 0 => [true,true,true,true,true,true,false]
-  | 1 => [false,true,true,false,false,false,false]
-  | 2 => [true,true,false,true,true,false,true]
-  | 3 => [true,true,true,true,false,false,true]
-  | 4 => [false,true,true,false,false,true,true]
-  | 5 => [true,false,true,true,false,true,true]
-  | 6 => [true,false,true,true,true,true,true]
-  | 7 => [true,true,true,false,false,false,false]
-  | 8 => [true,true,true,true,true,true,true]
-  | _ => [true,true,true,true,false,true,true]
-
-def digitsOf (n : Nat) : List Nat := (toString n).toList.map (fun c => c.toNat - 48)
-
-/-- A number drawn as strokes centred on (cx, cy). -/
-def numberPath (n : Nat) (cx cy : Int) : String :=
-  let ds := digitsOf n
-  let w : Int := ds.length * 11 - 4
-  let x0 := cx - w / 2
-  let y0 := cy - 6
-  String.join (ds.zipIdx.map fun (d, i) =>
-    String.join ((segments.zip (digitMask d)).map fun ((ax, ay, bx, by_), on) =>
-      if on then
-        let ox := x0 + i * 11
-        s!"M{ox + ax} {y0 + ay}L{ox + bx} {y0 + by_}"
-      else ""))
+def kindTitle : String → String
+  | "scan" => "Scan" | "probe" => "Probe" | "bgp" => "BGP" | "join" => "Join" | "leftjoin" => "Optional"
+  | "minus" => "Minus" | "filter" => "Filter" | "union" => "Union" | "path" => "Path" | "extend" => "Extend"
+  | "values" => "Values" | "group" => "Group" | "modifier" => "Modifier" | "service" => "Service"
+  | "subquery" => "Subquery" | "graph" => "Graph" | "empty" => "Empty" | _ => "Pattern"
 
 /-- Depth from the root, and the leaf column of each operator, by a walk from the root. -/
 def placeGo (ops : Array Op) : Nat → Nat → Nat → Array (Nat × Float) → Nat → Array (Nat × Float) × Nat
@@ -712,10 +691,14 @@ def fmt (x : Float) : String :=
   let t := (if x < 0 then 0 else x * 10).round.toUInt64.toNat
   if t % 10 == 0 then toString (t / 10) else s!"{t / 10}.{t % 10}"
 
-def boxW : Float := 56
-def boxH : Float := 30
-def colW : Float := 76
-def rowH : Float := 74
+/-- SVG text, drawn by the engine with the held font (SVGText.lean). -/
+def svgText (x y : Float) (size : Nat) (fill anchor text : String) : String :=
+  s!"<text x=\"{fmt x}\" y=\"{fmt y}\" font-size=\"{size}\" fill=\"{fill}\" text-anchor=\"{anchor}\">{escape text}</text>"
+
+def boxW : Float := 168
+def boxH : Float := 40
+def colW : Float := 186
+def rowH : Float := 92
 def margin : Float := 20
 
 /-- `done i`: operator `i` has run. `current`: the operator of this step. -/
@@ -744,14 +727,23 @@ def planSVG (ops : Array Op) (done : Nat → Bool) (current : Option Nat) : Stri
       let act := match child.actual, ran with
         | some a, true => s!"<line x1=\"{fmt (x1 + 5)}\" y1=\"{fmt y1}\" x2=\"{fmt (x2 + 5)}\" y2=\"{fmt y2}\" stroke=\"#203040\" stroke-width=\"{fmt (strokeWidth a)}\"/>"
         | _, _ => s!"<line x1=\"{fmt (x1 + 5)}\" y1=\"{fmt y1}\" x2=\"{fmt (x2 + 5)}\" y2=\"{fmt y2}\" stroke=\"#b8c0c8\" stroke-width=\"1\" stroke-dasharray=\"2 3\"/>"
-      est ++ act))
+      let mx := (x1 + x2) / 2 + 12
+      let my := (y1 + y2) / 2 + 4
+      let words := match child.actual, ran, child.est with
+        | some a, true, some e => s!"{a} rows (est. {e})"
+        | some a, true, none => s!"{a} rows"
+        | _, _, some e => s!"est. {e}"
+        | _, _, none => ""
+      est ++ act ++ (if words.isEmpty then "" else svgText mx my 11 "#203040" "start" words)))
   let boxes := String.join (ops.toList.zipIdx.map fun (op, i) =>
     let x := cx i - boxW / 2
     let y := cy i - boxH / 2
     let fill := if done i then kindColour op.kind else "#d4d8dc"
     let ring := if current == some i then " stroke=\"#ff2a2a\" stroke-width=\"4\"" else " stroke=\"#ffffff\" stroke-width=\"1\""
     s!"<rect x=\"{fmt x}\" y=\"{fmt y}\" width=\"{fmt boxW}\" height=\"{fmt boxH}\" rx=\"6\" fill=\"{fill}\"{ring}/>" ++
-    s!"<path d=\"{numberPath (i + 1) (cx i).round.toUInt64.toNat (cy i).round.toUInt64.toNat}\" fill=\"none\" stroke=\"{if done i then "#ffffff" else "#506070"}\" stroke-width=\"2\"/>")
+    let ink := if done i then "#ffffff" else "#405060"
+    svgText (cx i) (y + 16) 12 ink "middle" s!"{i + 1}  {kindTitle op.kind}" ++
+    svgText (cx i) (y + 32) 10 ink "middle" (clip 30 op.label))
   let shownW := if width > 880 then 880 else width
   let shownH := height * shownW / width
   s!"<svg width=\"{fmt shownW}\" height=\"{fmt shownH}\" viewBox=\"0 0 {fmt width} {fmt height}\">" ++
@@ -765,7 +757,8 @@ def legend (ops : Array Op) : String :=
   "<table class=\"legend\"><tr>" ++ String.join (used.map fun (k, name) =>
     s!"<td>{swatch (kindColour k)}</td><td class=\"dim\">{escape name}</td>") ++ "</tr></table>" ++
   "<p class=\"dim\">Edges go from an operator up to the operator that reads its rows. The solid line is as wide as the rows that went up; " ++
-  "the dashed yellow line beside it is as wide as the store planner's estimate, where it makes one. Grey boxes have not run yet.</p>"
+  "the dashed yellow line beside it is as wide as the store planner's estimate, where it makes one. Grey boxes have not run yet. " ++
+  "Each box has the operator's number in the table below.</p>"
 
 def cell (s : String) (cls : String := "") : String :=
   if cls.isEmpty then s!"<td>{escape s}</td>" else s!"<td class=\"{cls}\">{escape s}</td>"

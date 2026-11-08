@@ -34,7 +34,7 @@ function png(rgba:Uint8Array,width:number,height:number):Uint8Array{
 }
 
 const encode=(q:string)=>encodeURIComponent(q).replace(/%20/g,"+");
-const W=1000,H=2200;
+const W=1000,H=1500;
 await Deno.mkdir(out,{recursive:true});
 const shots:[string,string][]=engine.sparqlInfo().examples.map(e=>[e.name.toLowerCase().replace(/[^a-z]+/g,"-"),"q="+encode(e.query)]);
 shots.push(["bgp-join-step-3","q="+encode(engine.sparqlInfo().examples[0].query)+"&step=3"]);
@@ -42,7 +42,8 @@ for(const [name,argument] of shots){
   const page=engine.sparqlPage(argument);
   const doc=await prepareHTML(engine,"foafnaut:sparql/"+argument,undefined,page.source);
   const frame=doc.compile(W,H);
-  const rgba=await render(frame);
+  // The storage-buffer mode: a whole page is more than a uniform buffer holds.
+  const rgba=await render(frame,"svg-offscreen");
   if(!rgba)throw new Error("no GPU frame");
   const file=`${out}/sparql-${name}.png`;
   await Deno.writeFile(file,png(rgba,frame.width,frame.height));
