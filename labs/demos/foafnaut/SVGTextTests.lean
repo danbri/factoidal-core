@@ -106,3 +106,13 @@ private def html : L4Factoidal.XML.NamespaceNode :=
 #guard match NativeSVGForgiving.parse "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 9'><text>a</text></svg>" 9 9 with
   | .ok (_,log) => log.contains "element: text"
   | .error _ => false
+
+-- `fmt` (the fast two-decimal path) writes what `FloatFormat.format` writes, on a sample of
+-- 20,000 values from -7.4e3 to 7.4e3 with every hundredths ending, and 2,000 values up to
+-- about 10^7 (2026-11-08: 202,000 values compared outside the build, no difference).
+#guard (List.range 20000).all fun i =>
+  let v := (Float.ofNat i - 10000.0) * 0.739 + 0.0049 * Float.ofNat (i % 7)
+  fmt v == fmtReference v
+#guard (List.range 2000).all fun i =>
+  let v := Float.ofNat i * 4999.73 + 0.5
+  fmt v == fmtReference v && fmt (-v) == fmtReference (-v)

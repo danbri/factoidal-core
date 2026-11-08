@@ -508,9 +508,27 @@ structure Spot where
   shown : Bool := true
   deriving Inhabited
 
-/-- A number of path data, to 1/100 of a user unit. -/
+/-- A number of path data, to 1/100 of a user unit, as `FloatFormat.format` writes it
+(`100`, `1.5`; exponent form for large values). Below 10^7 the digits come
+from the integer `round (v*100)` with no general formatter (a glyph outline writes many
+numbers per layout); the `#guard`s below check it against `FloatFormat.format`. -/
 def fmt (v : Float) : String :=
+  if !v.isFinite then "0" else
+  let r := (v*100).round
+  if r.abs >= 1e9 || r == 0 then L4Factoidal.Rendering.FloatFormat.format (r/100) else
+  let n := r.abs.toUInt64.toNat
+  let frac := n % 100
+  let tail := if frac == 0 then "" else if frac % 10 == 0 then "." ++ toString (frac/10)
+    else if frac < 10 then ".0" ++ toString frac else "." ++ toString frac
+  (if r < 0 then "-" else "") ++ toString (n/100) ++ tail
+
+/-- The two-decimal digits that `fmt` writes, as `FloatFormat.format` writes them. -/
+def fmtReference (v : Float) : String :=
   if !v.isFinite then "0" else L4Factoidal.Rendering.FloatFormat.format ((v*100).round/100)
+
+#guard [0, -0.001, 0.004, 0.005, 0.07, 0.1, 0.2, 0.3, 0.25, 1.5, -1.5, 12.345, -12.355, 99.995, 100, -100,
+  3.14159, -2.71828, 1234.5, 123456.789, 1e8+0.25, -1e9-0.75, 1e12+0.01, 9.99e12, 2e13, 1e15, -0.5, 7.1,
+  0.0001, 1/0, 0/0].all (fun v => fmt v == fmtReference v)
 
 /-- Path data of a glyph in user units, about its origin. -/
 def glyphData (cell : GlyphCell) : String := Id.run do
