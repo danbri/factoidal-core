@@ -15,6 +15,10 @@ import L4Factoidal.WasmVM.Wasi
 import L4Factoidal.WasmVM.WasiIO
 import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.WasmVM.Hosts.Page
+import L4Factoidal.WasmVM.Aot.Encode
+import L4Factoidal.WasmVM.Aot.Translate
+import L4Factoidal.WasmVM.Aot.Window
+import L4Factoidal.WasmVM.Hosts.PageAot
 import L4Factoidal.WasmVM.Proofs.Numerics
 import L4Factoidal.WasmVM.Proofs.Fuse
 import L4Factoidal.WasmVM.Proofs.Cost
@@ -23,10 +27,14 @@ import L4Factoidal.WasmVM.Proofs.Slots
 import L4Factoidal.WasmVM.Proofs.Memory
 import L4Factoidal.WasmVM.Proofs.Refine
 import L4Factoidal.WasmVM.Proofs.RefineRun
+import L4Factoidal.WasmVM.Proofs.Aot
+import L4Factoidal.WasmVM.Proofs.AotCheck
+import L4Factoidal.WasmVM.Proofs.AotNames
 import L4Factoidal.WasmVM.Tests.Memory
 import L4Factoidal.WasmVM.Tests.Proposals
 import L4Factoidal.WasmVM.Tests.Wasi
 import L4Factoidal.WasmVM.Tests.DomCommands
+import L4Factoidal.WasmVM.Tests.Aot
 
 /-
 L4Factoidal.WasmVM: a WebAssembly engine in Lean 4 (https://github.com/danbri/factoidal/issues/1244).

@@ -2206,3 +2206,12 @@ L4Factoidal_JS_lift*  # (b) moving yield/await out of an expression (JS/Interp.l
 L4Factoidal_JS_asyncStep  # (c) one step of an async function: genRun to the next await, as L4Factoidal_JS_gen*; resumption is a later job, not a nested call
 L4Factoidal_JS_promiseResolve  # (c) PromiseResolve: one [[Get]] of constructor or then, as L4Factoidal_JS_get*
 L4Factoidal_JS_resolvePromise  # (c) Promise resolve functions: one [[Get]] of then, as L4Factoidal_JS_get*; a thenable is a queued job, not a nested call
+L4Factoidal_WasmVM_Aot_erase  # (s) specification only: `erase_instrument` states the translation with it; no executed code calls it
+L4Factoidal_WasmVM_Hosts_Page_Prog_bind  # (c) the nesting of `bind` in the session code's do blocks: each ask returns at once with its continuation, and `runLocal` is a loop over asks
+L4Factoidal_WasmVM_Hosts_Page_DriverM_advanceGo  # (c) EventLoop.Driver.advanceGo in a monad: every run of a task is an ask, so the nesting is reset at each one; the steps without a run are tail calls
+L4Factoidal_WasmVM_Hosts_Page_DriverM_frameGo  # (c) as DriverM_advanceGo: each callback of the frame batch is an ask
+L4Factoidal_WasmVM_Hosts_Page_Session_runJobsP  # (c) Std.Range.forIn in Prog: each promise job is an ask, so the nesting is reset at each iteration
+L4Factoidal_WasmVM_Hosts_Page_Session_settleP  # (c) Std.Range.forIn in Prog: each iteration runs a timer, frame or task (an ask) or returns
+L4Factoidal_WasmVM_Hosts_Page_Session_startP  # (c) Array.forIn over the page's scripts in Prog: each script is an ask
+L4Factoidal_WasmVM_Tests_Aot_run  # (c) core Array.qsort of the file list of the AOT round-trip test; not in the engine
+L4Factoidal_WasmVM_Aot_emit  # (s) specification only: `instrument` runs `emitAcc` (a loop), proved equal by `emitAcc_eq`; no executed code calls `emit`

@@ -353,9 +353,22 @@ def serve (mem : Nat) (bs : Array Wasi.Binding) (id : Nat) (args : Array Value) 
 
 end
 
-/-! ## Running exports -/
+/-! ## The machine that runs the guest
 
-/-- Run function `fa`: host calls are served until the run ends, and the fuel is shared
+The session code below is written once, as a `Prog`: pure Lean that stops with an `Ask`
+where it needs the guest, and goes on with the `Reply`. Two machines answer the asks:
+
+- the interpreter (`Prog.runLocal`): `Session.run` on the session's own store, the path
+  of every embedding so far;
+- the host's WebAssembly engine, running the guest that `WasmVM.Aot` translated
+  (`labs/demos/foafnaut/WebScripts.lean` on the Hub): the engine hands each ask to the
+  host and continues the program with the host's reply
+  (docs/designissues/2026-11-08-wasmvm-aot.md, section 5).
+
+So the order of scripts, tasks, microtask checkpoints and frames, and every DOM command,
+is decided by the same Lean code on both. -/
+
+/-- Run function `fa` with the interpreter: host calls are served until the run ends, and the fuel is shared
 by the whole run. The answer has the instructions run. The script clock counts them
 (`ScriptClock`), and the loop's clock moves up to script time at the end. -/
 def Session.run (s : Session) (fa : Nat) (args : Array Value) : Session × Outcome := Id.run do
@@ -379,71 +392,149 @@ def Session.run (s : Session) (fa : Nat) (args : Array Value) : Session × Outco
   h := { h with time, loop := { h.loop with clock := time.sync h.loop.clock } }
   return (⟨st, inst, mem, bs, h, fx, lim, steps + n, jobs, tasks, errors, lastFrame⟩, o)
 
+/-- What the session code asks of the machine. -/
+inductive Ask where
+  /-- Run export `fa` (a number of `Session.fx`) with these arguments; the machine serves
+  the host calls on the session's host state and adds the instructions to `steps`. -/
+  | invoke (fa : Nat) (args : Array Value)
+  /-- `len` bytes of the guest's memory at `ptr`. -/
+  | read (ptr len : Nat)
+  /-- Write the bytes into the guest's memory at `ptr`. -/
+  | write (ptr : Nat) (bytes : ByteArray)
+
+inductive Reply where
+  | ran (o : Outcome)
+  | bytes (r : Except String ByteArray)
+  | wrote (r : Except String Unit)
+  deriving Inhabited
+
+/-- A session program. `ask q s k`: the machine answers `q` on session `s` and the
+program goes on with `k` of the session and the reply. -/
+inductive Prog (α : Type) where
+  | done (a : α)
+  | ask (q : Ask) (s : Session) (k : Session → Reply → Prog α)
+
+def Prog.bind : Prog α → (α → Prog β) → Prog β
+  | .done a, f => f a
+  | .ask q s k, f => .ask q s fun s r => (k s r).bind f
+
+instance : Monad Prog where
+  pure := .done
+  bind := Prog.bind
+
+/-- The interpreter's answer to one ask. The store is taken apart before a write, so the
+memory is written in place. -/
+def Session.serveAsk (s : Session) : Ask → Session × Reply
+  | .invoke fa args => let (s, o) := s.run fa args; (s, .ran o)
+  | .read p n => (s, .bytes (s.store.readMem s.mem p n))
+  | .write p b =>
+    let ⟨st, inst, mem, bs, h, fx, lim, steps, jobs, tasks, errors, lastFrame⟩ := s
+    match st.writeMem mem p b with
+    | .ok st => (⟨st, inst, mem, bs, h, fx, lim, steps, jobs, tasks, errors, lastFrame⟩, .wrote (.ok ()))
+    | .error e => (⟨st, inst, mem, bs, h, fx, lim, steps, jobs, tasks, errors, lastFrame⟩, .wrote (.error e))
+
+/-- Run a program with the interpreter. -/
+def Prog.runLocal : Prog α → α
+  | .done a => a
+  | .ask q s k => let (s, r) := s.serveAsk q; runLocal (k s r)
+
+/-- `runLocal` is a monad morphism to `Id`: on the interpreter a program is its steps, in
+order, each ask answered by `serveAsk` as it comes. So the interpreter path computes what
+the same code computed before it was a program. -/
+@[simp] theorem Prog.runLocal_pure (a : α) : (pure a : Prog α).runLocal = a := rfl
+
+theorem Prog.runLocal_bind (p : Prog α) (f : α → Prog β) : (p >>= f).runLocal = (f p.runLocal).runLocal := by
+  induction p with
+  | done a => rfl
+  | ask q s k ih =>
+    show (Prog.bind (.ask q s k) f).runLocal = _
+    simp only [Prog.bind, Prog.runLocal]
+    exact ih _ _
+
+/-- Run export `fa` on the machine. -/
+def Session.runP (s : Session) (fa : Nat) (args : Array Value) : Prog (Session × Outcome) :=
+  .ask (.invoke fa args) s fun s r => .done (s, match r with
+    | .ran o => o
+    | _ => .trap (.host "the machine answered a run with no outcome"))
+
+/-- On the interpreter, a run on the machine is `Session.run`. -/
+theorem runP_local (s : Session) (fa : Nat) (args : Array Value) :
+    (s.runP fa args).runLocal = s.run fa args := by
+  simp only [Session.runP, Prog.runLocal, Session.serveAsk]
+
 def i32v (x : Int) : Value := .i32 (Int.toNat (x % 4294967296)).toUInt32
 
 def Session.fail (s : Session) (what : String) : Session :=
   { s with errors := if s.errors.size < 256 then s.errors.push what else s.errors }
 
 /-- An export that answers one i32. -/
-def Session.i32 (s : Session) (fa : Nat) (args : Array Value) : Session × Option Nat :=
-  match s.run fa args with
-  | (s, .values #[.i32 r]) => (s, some r.toNat)
-  | (s, .values _) => (s, some 0)
-  | (s, o) => (s.fail s!"WasmVM: {o.describe}", none)
+def Session.i32P (s : Session) (fa : Nat) (args : Array Value) : Prog (Session × Option Nat) := do
+  let (s, o) ← s.runP fa args
+  return match o with
+    | .values #[.i32 r] => (s, some r.toNat)
+    | .values _ => (s, some 0)
+    | o => (s.fail s!"WasmVM: {o.describe}", none)
 
 /-- Copy `b` into the module (`qjs_alloc`, with a NUL after it). -/
-def Session.put (s : Session) (b : ByteArray) : Session × Option Nat :=
-  match s.i32 s.fx.alloc #[.i32 (b.size + 1).toUInt32] with
+def Session.putP (s : Session) (b : ByteArray) : Prog (Session × Option Nat) := do
+  match ← s.i32P s.fx.alloc #[.i32 (b.size + 1).toUInt32] with
   | (s, some p) =>
-    if p == 0 then (s.fail "qjs_alloc gave 0", none) else
-    let ⟨st, inst, mem, bs, h, fx, lim, steps, jobs, tasks, errors, lastFrame⟩ := s
-    match st.writeMem mem p (b.push 0) with
-    | .ok st => (⟨st, inst, mem, bs, h, fx, lim, steps, jobs, tasks, errors, lastFrame⟩, some p)
-    | .error e => (Session.fail ⟨st, inst, mem, bs, h, fx, lim, steps, jobs, tasks, errors, lastFrame⟩ e, none)
-  | (s, none) => (s, none)
+    if p == 0 then return (s.fail "qjs_alloc gave 0", none)
+    .ask (.write p (b.push 0)) s fun s r => .done (match r with
+      | .wrote (.ok ()) => (s, some p)
+      | .wrote (.error e) => (s.fail e, none)
+      | _ => (s.fail "the machine answered a write with no result", none))
+  | (s, none) => return (s, none)
 
-def Session.freePtr (s : Session) (p : Nat) : Session := (s.run s.fx.free #[.i32 p.toUInt32]).1
+def Session.freeP (s : Session) (p : Nat) : Prog Session := do
+  return (← s.runP s.fx.free #[.i32 p.toUInt32]).1
 
 def u32At (b : ByteArray) (i : Nat) : Nat :=
   b[i]!.toNat + b[i+1]!.toNat * 256 + b[i+2]!.toNat * 65536 + b[i+3]!.toNat * 16777216
 
+def Session.readP (s : Session) (p n : Nat) : Prog (Session × Except String ByteArray) :=
+  .ask (.read p n) s fun s r => .done (s, match r with
+    | .bytes b => b
+    | _ => .error "the machine answered a read with no bytes")
+
 /-- A result block (status, text), freed after reading. -/
-def Session.result (s : Session) (p : Nat) : Session × Nat × String :=
-  if p == 0 then (s.fail "no result block", 2, "") else
-  match s.store.readMem s.mem p 8 with
-  | .error e => (s.fail e, 2, "")
-  | .ok hdr =>
+def Session.resultP (s : Session) (p : Nat) : Prog (Session × Nat × String) := do
+  if p == 0 then return (s.fail "no result block", 2, "")
+  match ← s.readP p 8 with
+  | (s, .error e) => return (s.fail e, 2, "")
+  | (s, .ok hdr) =>
     let status := u32At hdr 0
     let len := u32At hdr 4
-    let text := match s.store.readMem s.mem (p + 8) len with
+    let (s, b) ← s.readP (p + 8) len
+    let text := match b with
       | .ok b => (String.fromUTF8? b).getD "<not UTF-8>"
       | .error _ => ""
-    (s.freePtr p, status, text)
+    return (← s.freeP p, status, text)
 
 /-- An export that answers a result block. -/
-def Session.block (s : Session) (fa : Nat) (args : Array Value) : Session × Nat × String :=
-  match s.i32 fa args with
-  | (s, some p) => s.result p
-  | (s, none) => (s, 2, "")
+def Session.blockP (s : Session) (fa : Nat) (args : Array Value) : Prog (Session × Nat × String) := do
+  match ← s.i32P fa args with
+  | (s, some p) => s.resultP p
+  | (s, none) => return (s, 2, "")
 
 /-- Run a classic script. -/
-def Session.eval (s : Session) (src : String) : Session × Nat × String :=
+def Session.evalP (s : Session) (src : String) : Prog (Session × Nat × String) := do
   let b := src.toUTF8
-  match s.put b with
+  match ← s.putP b with
   | (s, some p) =>
-    let (s, r) := s.block s.fx.eval #[.i32 p.toUInt32, .i32 b.size.toUInt32]
-    (s.freePtr p, r)
-  | (s, none) => (s, 2, "")
+    let (s, r) ← s.blockP s.fx.eval #[.i32 p.toUInt32, .i32 b.size.toUInt32]
+    return (← s.freeP p, r)
+  | (s, none) => return (s, 2, "")
 
 /-- `qjs_page`: 0 the document URL; 1 the current script node (`-1` none). -/
-def Session.setUrl (s : Session) (url : String) : Session :=
+def Session.setUrlP (s : Session) (url : String) : Prog Session := do
   let b := url.toUTF8
-  match s.put b with
-  | (s, some p) => ((s.run s.fx.page #[.i32 0, .i32 p.toUInt32, .i32 b.size.toUInt32]).1).freePtr p
-  | (s, none) => s
+  match ← s.putP b with
+  | (s, some p) => (← s.runP s.fx.page #[.i32 0, .i32 p.toUInt32, .i32 b.size.toUInt32]).1.freeP p
+  | (s, none) => return s
 
-def Session.setScript (s : Session) (node : Int) : Session :=
-  (s.run s.fx.page #[.i32 1, .i32 0, i32v node]).1
+def Session.setScriptP (s : Session) (node : Int) : Prog Session := do
+  return (← s.runP s.fx.page #[.i32 1, .i32 0, i32v node]).1
 
 /-- Queue the `load` event of each new `about:blank` frame (HTML §4.8.5 "iframe load
 event steps", as a task). -/
@@ -457,10 +548,10 @@ def Session.blankLoads (s : Session) : Session := Id.run do
   return { s with host := { s.host with dom := { s.host.dom with navigations := navs.filter (!·.2.isEmpty) } } }
 
 /-- The microtask checkpoint: run promise jobs until none is pending, at most `limits.jobs`. -/
-def Session.runJobs (s : Session) : Session := Id.run do
+def Session.runJobsP (s : Session) : Prog Session := do
   let mut s := s
   for _ in [0:s.limits.jobs] do
-    match s.i32 s.fx.runJob #[] with
+    match ← s.i32P s.fx.runJob #[] with
     | (s', some 1) => s := { s' with jobs := s'.jobs + 1 }
     | (s', some 0) => s := s'; break
     | (s', some _) => s := { s' with jobs := s'.jobs + 1 }
@@ -477,44 +568,44 @@ def Session.loop (s : Session) : Loop := s.host.loop
 def Session.setLoop (s : Session) (l : Loop) : Session := { s with host := { s.host with loop := l } }
 
 /-- Dispatch an event of the user agent, with no microtask checkpoint. -/
-def Session.dispatchOnly (s : Session) (target : Nat) (type : String) : Session × Bool :=
+def Session.dispatchOnlyP (s : Session) (target : Nat) (type : String) : Prog (Session × Bool) := do
   let b := type.toUTF8
-  match s.put b with
+  match ← s.putP b with
   | (s, some p) =>
-    let (s, status, text) := s.block s.fx.dispatch #[.i32 target.toUInt32, .i32 p.toUInt32, .i32 b.size.toUInt32, .i32 (flagsOf type).toUInt32]
-    let s := s.freePtr p
+    let (s, status, text) ← s.blockP s.fx.dispatch #[.i32 target.toUInt32, .i32 p.toUInt32, .i32 b.size.toUInt32, .i32 (flagsOf type).toUInt32]
+    let s ← s.freeP p
     let s := if status == 1 then s.fail text else s
-    ({ s with tasks := s.tasks + 1 }, text == "prevented")
-  | (s, none) => (s, false)
+    return ({ s with tasks := s.tasks + 1 }, text == "prevented")
+  | (s, none) => return (s, false)
 
 /-- Dispatch an event of the user agent; then the microtask checkpoint. -/
-def Session.dispatch (s : Session) (target : Nat) (type : String) : Session × Bool :=
-  let (s, prevented) := s.dispatchOnly target type
-  (s.runJobs, prevented)
+def Session.dispatchP (s : Session) (target : Nat) (type : String) : Prog (Session × Bool) := do
+  let (s, prevented) ← s.dispatchOnlyP target type
+  return (← s.runJobsP, prevented)
 
 /-- Run one callback of a timer (target -1) or of an animation frame (-2). -/
-def Session.callbackOnly (s : Session) (cb : Nat) (target : Int) (arg : Nat) : Session :=
-  let (s, status, text) := s.block s.fx.call #[i32v cb, i32v target, i32v arg]
+def Session.callbackOnlyP (s : Session) (cb : Nat) (target : Int) (arg : Nat) : Prog Session := do
+  let (s, status, text) ← s.blockP s.fx.call #[i32v cb, i32v target, i32v arg]
   let s := if status == 1 then s.fail text else s
-  { s with tasks := s.tasks + 1 }
+  return { s with tasks := s.tasks + 1 }
 
 /-- Run one callback, then the microtask checkpoint. -/
-def Session.callback (s : Session) (cb : Nat) (target : Int) (arg : Nat) : Session :=
-  (s.callbackOnly cb target arg).runJobs
+def Session.callbackP (s : Session) (cb : Nat) (target : Int) (arg : Nat) : Prog Session := do
+  (← s.callbackOnlyP cb target arg).runJobsP
 
 /-- Run what the event loop gave. A task's steps end (`EventLoop.State.finish`: an interval
 is armed again, and the currently running task is null again) before the microtask
 checkpoint, as in HTML §8.1.7.3 steps 6 and 7: so a timer set from a microtask does not
 take the nesting level of the task before it. -/
-def Session.runTask (s : Session) (r : L4Factoidal.EventLoop.Run) : Session :=
+def Session.runTaskP (s : Session) (r : L4Factoidal.EventLoop.Run) : Prog Session := do
   match r.kind with
   | .task =>
     match r.event with
     | some e =>
-      let s := (s.dispatchOnly e.target e.type).1
-      (s.setLoop s.loop.finish).runJobs
+      let s := (← s.dispatchOnlyP e.target e.type).1
+      (s.setLoop s.loop.finish).runJobsP
     | none =>
-      let s := s.callbackOnly r.callback (-1) 0
+      let s ← s.callbackOnlyP r.callback (-1) 0
       -- A timeout's callback runs once; an interval's stays.
       let periodic : Bool := match s.loop.current with
         | some t => match t.timer with
@@ -522,10 +613,12 @@ def Session.runTask (s : Session) (r : L4Factoidal.EventLoop.Run) : Session :=
           | none => false
         | none => false
       let s := s.setLoop s.loop.finish
-      let s := if periodic = true then s else (s.run s.fx.release #[.i32 r.callback.toUInt32]).1
-      s.runJobs
-  | .microtask => s.callback r.callback (-1) 0
-  | .frame => s.callback r.callback (-2) r.now
+      if periodic = true then s.runJobsP
+      else
+        let (s, _) ← s.runP s.fx.release #[.i32 r.callback.toUInt32]
+        s.runJobsP
+  | .microtask => s.callbackP r.callback (-1) 0
+  | .frame => s.callbackP r.callback (-2) r.now
 
 /-- The next animation frame time: frames come every 16 ms of the virtual clock. -/
 def Session.nextFrame (s : Session) : Option Nat :=
@@ -533,10 +626,86 @@ def Session.nextFrame (s : Session) : Option Nat :=
   let t := (s.loop.clock + 15) / 16 * 16
   some (if s.lastFrame == some t then t + 16 else t)
 
-/-- The session as a host of the event loop (`EventLoop.Driver`): the loop's runs are
-callbacks in the module. -/
-def Session.driver : L4Factoidal.EventLoop.Driver Session :=
-  { loop := Session.loop, setLoop := Session.setLoop, run := Session.runTask }
+/-! ### The event loop's host, with runs on the machine
+
+`DriverM` is `EventLoop.Driver` with `run` in a monad: the same loop, step for step
+(`DriverM.ofDriver_advanceGo`: in `Id` it is `Driver.advanceGo`), so the theorems of
+`EventLoop.Driver` (one animation frame batch per advance) are about this loop. -/
+
+structure DriverM (m : Type → Type) (σ : Type) where
+  loop : σ → Loop
+  setLoop : σ → Loop → σ
+  run : σ → L4Factoidal.EventLoop.Run → m σ
+
+namespace DriverM
+variable {m : Type → Type} [Monad m] {σ : Type} (d : DriverM m σ)
+
+def frameGo : Nat → σ → m σ
+  | 0, s => pure s
+  | fuel + 1, s =>
+    let (l, r) := (d.loop s).frameStep
+    let s := d.setLoop s l
+    match r with
+    | some r => do frameGo fuel (← d.run s r)
+    | none => pure s
+
+def frame (s : σ) : m σ :=
+  let s := d.setLoop s (d.loop s).render
+  d.frameGo ((d.loop s).frameBatch.length + 1) s
+
+def advanceGo (target : Nat) : Nat → Option Nat → σ → Nat → m (σ × Nat × Bool)
+  | 0, _, s, frames => pure (s, frames, true)
+  | fuel + 1, slot, s, frames =>
+    let (l, r) := (d.loop s).step
+    let s := d.setLoop s l
+    match r with
+    | some r => do advanceGo target fuel slot (← d.run s r) frames
+    | none =>
+      let goal := match slot with | some f => min f target | none => target
+      let (l, fired) := (d.loop s).advanceTo goal
+      let s := d.setLoop s l
+      if fired.isEmpty ∧ slot = some l.clock then
+        if l.frames.isEmpty then advanceGo target fuel none s frames
+        else do advanceGo target fuel none (← d.frame s) (frames + 1)
+      else if fired.isEmpty ∧ target ≤ l.clock then pure (s, frames, false)
+      else advanceGo target fuel slot s frames
+
+/-- A pure driver as a driver in `Id`. -/
+def ofDriver (d : L4Factoidal.EventLoop.Driver σ) : DriverM Id σ := ⟨d.loop, d.setLoop, d.run⟩
+
+theorem ofDriver_frameGo (d : L4Factoidal.EventLoop.Driver σ) :
+    ∀ (fuel : Nat) (s : σ), (ofDriver d).frameGo fuel s = d.frameGo fuel s := by
+  intro fuel; induction fuel with
+  | zero => intro s; rfl
+  | succ fuel ih =>
+    intro s
+    simp only [frameGo, L4Factoidal.EventLoop.Driver.frameGo]
+    split <;> simp_all [ofDriver, bind, pure]
+
+theorem ofDriver_frame (d : L4Factoidal.EventLoop.Driver σ) (s : σ) :
+    (ofDriver d).frame s = d.frame s := by
+  simp only [frame, L4Factoidal.EventLoop.Driver.frame, ofDriver_frameGo]; rfl
+
+/-- In `Id`, this loop is `EventLoop.Driver.advanceGo`. -/
+theorem ofDriver_advanceGo (d : L4Factoidal.EventLoop.Driver σ) (target : Nat) :
+    ∀ (fuel : Nat) (slot : Option Nat) (s : σ) (frames : Nat),
+      (ofDriver d).advanceGo target fuel slot s frames = d.advanceGo target fuel slot s frames := by
+  intro fuel; induction fuel with
+  | zero => intro slot s frames; rfl
+  | succ fuel ih =>
+    intro slot s frames
+    simp only [advanceGo, L4Factoidal.EventLoop.Driver.advanceGo]
+    first
+      | (simp only [ih, ofDriver_frame]; rfl)
+      | (simp only [ih, ofDriver_frame]; simp [ofDriver, bind, pure])
+      | (split <;> (try split) <;> (try split) <;> (try split) <;> simp [ih, ofDriver_frame, ofDriver, bind, pure])
+
+end DriverM
+
+/-- The session as a host of the event loop: the loop's runs are callbacks in the
+module, on the machine. -/
+def Session.driver : DriverM Prog Session :=
+  { loop := Session.loop, setLoop := Session.setLoop, run := Session.runTaskP }
 
 /-- Run the event loop until the virtual clock is at `target` and no task waits, or
 `maxTasks` steps have run. The clock stops at each due timer, in order. At most one
@@ -544,10 +713,10 @@ animation frame batch runs, at the last frame time the advance reaches
 (`EventLoop.frameSlot`; `EventLoop.Driver.advanceGo_frames`): a host that fell behind
 gets one frame with the latest time, as a browser does, not every missed frame. The
 answer says whether the loop ran out of steps. -/
-def Session.advance (s : Session) (target : Nat) (maxTasks : Nat := 100000) : Session × Bool :=
+def Session.advanceP (s : Session) (target : Nat) (maxTasks : Nat := 100000) : Prog (Session × Bool) := do
   let slot := L4Factoidal.EventLoop.frameSlot s.loop.clock target s.lastFrame
-  let (s, frames, out) := Session.driver.advanceGo target maxTasks slot s 0
-  ({ s with lastFrame := if frames == 0 then s.lastFrame else slot }, out)
+  let (s, frames, out) ← Session.driver.advanceGo target maxTasks slot s 0
+  return ({ s with lastFrame := if frames == 0 then s.lastFrame else slot }, out)
 
 /-- No task, timer or animation frame waits. -/
 def Session.quiet (s : Session) : Bool :=
@@ -556,11 +725,11 @@ def Session.quiet (s : Session) : Bool :=
 /-- Run the loop until nothing waits (no task, armed timer or animation frame), or the
 virtual clock has moved `budgetMs`, or `maxTasks` steps. The answer says whether it
 ended quiet. -/
-def Session.settle (s : Session) (budgetMs : Nat) (maxTasks : Nat := 100000) : Session × Bool := Id.run do
+def Session.settleP (s : Session) (budgetMs : Nat) (maxTasks : Nat := 100000) : Prog (Session × Bool) := do
   let stop := s.loop.clock + budgetMs
   let mut s := s
   for _ in [0:maxTasks] do
-    let (s', _) := s.advance s.loop.clock 1000
+    let (s', _) ← s.advanceP s.loop.clock 1000
     s := s'
     if s.quiet then return (s, true)
     -- A navigation waits for the embedder: give the session back (not quiet).
@@ -571,9 +740,9 @@ def Session.settle (s : Session) (budgetMs : Nat) (maxTasks : Nat := 100000) : S
       | [], some f => f
       | [], none => s.loop.clock
     if next > stop then
-      let (s', _) := s.advance stop 1000
+      let (s', _) ← s.advanceP stop 1000
       return (s', s'.quiet)
-    let (s', _) := s.advance next 1000
+    let (s', _) ← s.advanceP next 1000
     s := s'
   return (s, s.quiet)
 
@@ -590,17 +759,18 @@ def elementOf (d : Arena) (n : Nat) : Nat := Id.run do
 
 /-- A click of the user at `node` (a task of the user interaction source); then the loop
 runs at the current time. -/
-def Session.click (s : Session) (node : Nat) : Session :=
+def Session.clickP (s : Session) (node : Nat) : Prog Session := do
   let target := elementOf s.host.dom.dom node
   let s := s.setLoop (s.loop.queueTask .userInteraction 0 (some { type := "click", target }))
-  (s.advance s.loop.clock).1
+  return (← s.advanceP s.loop.clock).1
+
 
 /-- Dispatch an event of the user agent with the pointer data `init` (a JSON object the
 prelude reads with `node_query` op 16), then the microtask checkpoint. -/
-def Session.dispatchWith (s : Session) (target : Nat) (type init : String) : Session × Bool :=
+def Session.dispatchWithP (s : Session) (target : Nat) (type init : String) : Prog (Session × Bool) := do
   let s := { s with host := { s.host with event := init } }
-  let (s, prevented) := s.dispatch target type
-  ({ s with host := { s.host with event := "" } }, prevented)
+  let (s, prevented) ← s.dispatchP target type
+  return ({ s with host := { s.host with event := "" } }, prevented)
 
 def Session.setPointer (s : Session) (p : PointerState) : Session := { s with host := { s.host with pointer := p } }
 
@@ -614,17 +784,17 @@ def commonAncestor (d : Arena) (a b : Nat) : Nat :=
 def frameOf (clock : Nat) : Nat := clock / 16
 
 /-- `pointermove`, then `mousemove` unless the press's `pointerdown` was canceled. -/
-def Session.moveNow (s : Session) (target : Nat) (init : String) : Session :=
+def Session.moveNowP (s : Session) (target : Nat) (init : String) : Prog Session := do
   let p := s.host.pointer
-  let (s, _) := s.dispatchWith target "pointermove" init
-  let s := if p.pressed.isSome && p.canceled then s else (s.dispatchWith target "mousemove" init).1
-  s.setPointer { s.host.pointer with moveFrame := some (frameOf s.loop.clock), pending := none }
+  let (s, _) ← s.dispatchWithP target "pointermove" init
+  let s ← if p.pressed.isSome && p.canceled then pure s else (·.1) <$> s.dispatchWithP target "mousemove" init
+  return s.setPointer { s.host.pointer with moveFrame := some (frameOf s.loop.clock), pending := none }
 
 /-- The move that waits, when its frame has come. -/
-def Session.flushMove (s : Session) : Session :=
+def Session.flushMoveP (s : Session) : Prog Session :=
   match s.host.pointer.pending with
-  | some (target, init) => if s.host.pointer.moveFrame == some (frameOf s.loop.clock) then s else s.moveNow target init
-  | none => s
+  | some (target, init) => if s.host.pointer.moveFrame == some (frameOf s.loop.clock) then pure s else s.moveNowP target init
+  | none => pure s
 
 /-- When the move that waits is due: the next frame. -/
 def Session.moveWake (s : Session) : Option Nat :=
@@ -642,41 +812,66 @@ at most one in a frame (a later move in the same frame replaces the one that wai
 cancel is `pointercancel`. A canceled `pointerdown` stops the compatibility mouse events
 of its press, not the click. `init` is the JSON of the coordinates and buttons. What is
 due runs first; then the loop runs at the current time. -/
-def Session.pointer (s : Session) (kind : PointerKind) (node : Nat) (init : String) : Session :=
+def Session.pointerP (s : Session) (kind : PointerKind) (node : Nat) (init : String) : Prog Session := do
   let target := elementOf s.host.dom.dom node
-  let s := (s.advance s.loop.clock).1
-  let s := if kind == .move then s else s.flushMove
+  let (s, _) ← s.advanceP s.loop.clock
+  let s ← if kind == .move then pure s else s.flushMoveP
   let p := s.host.pointer
-  let s := match kind with
-    | .down =>
-      let (s, prevented) := s.dispatchWith target "pointerdown" init
-      let s := if prevented then s else (s.dispatchWith target "mousedown" init).1
-      s.setPointer { s.host.pointer with pressed := some target, canceled := prevented }
-    | .up =>
-      let (s, _) := s.dispatchWith target "pointerup" init
-      let s := if p.pressed.isSome && p.canceled then s else (s.dispatchWith target "mouseup" init).1
-      let s := match p.pressed with
-        | some pressed => (s.dispatchWith (commonAncestor s.host.dom.dom pressed target) "click" init).1
-        | none => s
-      s.setPointer { s.host.pointer with pressed := none, canceled := false }
-    | .cancel =>
-      let (s, _) := s.dispatchWith target "pointercancel" init
-      s.setPointer { s.host.pointer with pressed := none, canceled := false, pending := none }
+  let s ← match kind with
+    | .down => do
+      let (s, prevented) ← s.dispatchWithP target "pointerdown" init
+      let s ← if prevented then pure s else (·.1) <$> s.dispatchWithP target "mousedown" init
+      pure (s.setPointer { s.host.pointer with pressed := some target, canceled := prevented })
+    | .up => do
+      let (s, _) ← s.dispatchWithP target "pointerup" init
+      let s ← if p.pressed.isSome && p.canceled then pure s else (·.1) <$> s.dispatchWithP target "mouseup" init
+      let s ← match p.pressed with
+        | some pressed => (·.1) <$> s.dispatchWithP (commonAncestor s.host.dom.dom pressed target) "click" init
+        | none => pure s
+      pure (s.setPointer { s.host.pointer with pressed := none, canceled := false })
+    | .cancel => do
+      let (s, _) ← s.dispatchWithP target "pointercancel" init
+      pure (s.setPointer { s.host.pointer with pressed := none, canceled := false, pending := none })
     | .move =>
-      if p.moveFrame == some (frameOf s.loop.clock) then s.setPointer { p with pending := some (target, init) }
-      else s.moveNow target init
-  (s.advance s.loop.clock).1
+      if p.moveFrame == some (frameOf s.loop.clock) then pure (s.setPointer { p with pending := some (target, init) })
+      else s.moveNowP target init
+  return (← s.advanceP s.loop.clock).1
 
 /-- The viewport moved to `width` by `height` CSS pixels: reads lay out again, and `resize`
 is dispatched at the window (CSSOM View §13.1) when the size changed. -/
-def Session.resize (s : Session) (width height : Nat) : Session :=
+def Session.resizeP (s : Session) (width height : Nat) : Prog Session := do
   let r := s.host.reads
-  if r.width == width && r.height == height then s else
+  if r.width == width && r.height == height then return s
   let s := { s with host := { s.host with reads := { r with width, height, kept := none } } }
-  (s.dispatch windowId "resize").1
+  return (← s.dispatchP windowId "resize").1
 
 /-- Layouts made for the reads of scripts. -/
 def Session.layouts (s : Session) : Nat := s.host.reads.layouts
+
+/-! ### The same actions with the interpreter -/
+
+def Session.i32 (s : Session) (fa : Nat) (args : Array Value) : Session × Option Nat := (s.i32P fa args).runLocal
+def Session.put (s : Session) (b : ByteArray) : Session × Option Nat := (s.putP b).runLocal
+def Session.freePtr (s : Session) (p : Nat) : Session := (s.freeP p).runLocal
+def Session.result (s : Session) (p : Nat) : Session × Nat × String := (s.resultP p).runLocal
+def Session.block (s : Session) (fa : Nat) (args : Array Value) : Session × Nat × String := (s.blockP fa args).runLocal
+def Session.eval (s : Session) (src : String) : Session × Nat × String := (s.evalP src).runLocal
+def Session.setUrl (s : Session) (url : String) : Session := (s.setUrlP url).runLocal
+def Session.setScript (s : Session) (node : Int) : Session := (s.setScriptP node).runLocal
+def Session.runJobs (s : Session) : Session := s.runJobsP.runLocal
+def Session.dispatchOnly (s : Session) (target : Nat) (type : String) : Session × Bool := (s.dispatchOnlyP target type).runLocal
+def Session.dispatch (s : Session) (target : Nat) (type : String) : Session × Bool := (s.dispatchP target type).runLocal
+def Session.callbackOnly (s : Session) (cb : Nat) (target : Int) (arg : Nat) : Session := (s.callbackOnlyP cb target arg).runLocal
+def Session.callback (s : Session) (cb : Nat) (target : Int) (arg : Nat) : Session := (s.callbackP cb target arg).runLocal
+def Session.runTask (s : Session) (r : L4Factoidal.EventLoop.Run) : Session := (s.runTaskP r).runLocal
+def Session.advance (s : Session) (target : Nat) (maxTasks : Nat := 100000) : Session × Bool := (s.advanceP target maxTasks).runLocal
+def Session.settle (s : Session) (budgetMs : Nat) (maxTasks : Nat := 100000) : Session × Bool := (s.settleP budgetMs maxTasks).runLocal
+def Session.click (s : Session) (node : Nat) : Session := (s.clickP node).runLocal
+def Session.dispatchWith (s : Session) (target : Nat) (type init : String) : Session × Bool := (s.dispatchWithP target type init).runLocal
+def Session.moveNow (s : Session) (target : Nat) (init : String) : Session := (s.moveNowP target init).runLocal
+def Session.flushMove (s : Session) : Session := s.flushMoveP.runLocal
+def Session.pointer (s : Session) (kind : PointerKind) (node : Nat) (init : String) : Session := (s.pointerP kind node init).runLocal
+def Session.resize (s : Session) (width height : Nat) : Session := (s.resizeP width height).runLocal
 
 /-! ## Starting a page -/
 
@@ -697,6 +892,36 @@ def memOf (st : Store) (ia : Nat) : Nat :=
   | some (.mem a) => a
   | _ => st.mems.size + 1
 
+/-- The exports a page needs, in this order: the eight of `Exports`, then `_initialize`,
+`qjs_new` and `qjs_page_mode`. On the AOT path an export's number is its place here. -/
+def exportNames : Array String :=
+  #["qjs_alloc", "qjs_free", "qjs_eval", "qjs_call", "qjs_dispatch", "qjs_run_job", "qjs_page",
+    "qjs_release", "_initialize", "qjs_new", "qjs_page_mode"]
+
+/-- The exports, each found by `find`. -/
+def Exports.of (find : String → Except String Nat) : Except String (Exports × Nat × Nat × Nat) := do
+  let alloc ← find "qjs_alloc"
+  let free ← find "qjs_free"
+  let evalF ← find "qjs_eval"
+  let callF ← find "qjs_call"
+  let dispatchF ← find "qjs_dispatch"
+  let runJob ← find "qjs_run_job"
+  let page ← find "qjs_page"
+  let release ← find "qjs_release"
+  let init ← find "_initialize"
+  let qnew ← find "qjs_new"
+  let mode ← find "qjs_page_mode"
+  return ({ alloc, free, eval := evalF, call := callF, dispatch := dispatchF, runJob, page, release }, init, qnew, mode)
+
+/-- After instantiation: `_initialize`, `qjs_new` (the prelude) and page mode. -/
+def Session.initP (s : Session) (init qnew mode : Nat) : Prog (Except String Session) := do
+  let (s, o) ← s.runP init #[]
+  if let .values _ := o then pure () else return .error s!"_initialize: {o.describe}"
+  let (s, r) ← s.i32P qnew #[]
+  if r != some 0 then return .error s!"qjs_new: {r} {s.errors.toList}"
+  let (s, _) ← s.runP mode #[.i32 1]
+  return .ok s
+
 /-- Instantiate the module on arena `dom`, run `_initialize`, `qjs_new` (the prelude)
 and page mode. -/
 def instantiatePage (m : Module') (dom : Arena) (lim : Limits := {}) : Except String Session := do
@@ -708,26 +933,10 @@ def instantiatePage (m : Module') (dom : Arena) (lim : Limits := {}) : Except St
   let fa := fun (name : String) => match st.export? ia name with
     | some (.func a) => Except.ok a
     | _ => Except.error s!"the module has no export {name}"
-  let alloc ← fa "qjs_alloc"
-  let free ← fa "qjs_free"
-  let evalF ← fa "qjs_eval"
-  let callF ← fa "qjs_call"
-  let dispatchF ← fa "qjs_dispatch"
-  let runJob ← fa "qjs_run_job"
-  let page ← fa "qjs_page"
-  let release ← fa "qjs_release"
-  let fx : Exports := { alloc, free, eval := evalF, call := callF, dispatch := dispatchF, runJob, page, release }
-  let init ← fa "_initialize"
-  let qnew ← fa "qjs_new"
-  let mode ← fa "qjs_page_mode"
+  let (fx, init, qnew, mode) ← Exports.of fa
   let host : Host := { dom := { dom, commandLimit := lim.commands, logLimit := lim.logs } }
   let s : Session := { store := st, inst := ia, mem := memOf st ia, bindings := bs, host, fx, limits := lim }
-  let (s, o) := s.run init #[]
-  if let .values _ := o then pure () else throw s!"_initialize: {o.describe}"
-  let (s, r) := s.i32 qnew #[]
-  if r != some 0 then throw s!"qjs_new: {r} {s.errors.toList}"
-  let (s, _) := s.run mode #[.i32 1]
-  return s
+  (s.initP init qnew mode).runLocal
 
 def prepare (bytes : ByteArray) (lim : Limits := {}) : Except String Module' := do
   let md ← match Binary.decode bytes with
@@ -739,6 +948,18 @@ def prepare (bytes : ByteArray) (lim : Limits := {}) : Except String Module' := 
   let m : Module' := { module := md, valid := vm, bytes := bytes.size }
   let base ← instantiatePage m emptyDocument lim
   return { m with base := some base }
+
+/-- The document of an `iframe` with no `src` (HTML §7.3.1 "about:blank"): an HTML
+document with `html`, `head` and `body` and no doctype. -/
+def aboutBlank : Arena := Id.run do
+  let el := fun (d : Arena) (name : String) => d.create { type := .element, doc := 0, ns := some L4Factoidal.DOM.htmlNS, lname := name }
+  let d : Arena := { nodes := #[{ type := .document, doc := 0 }] }
+  let (d, html) := el d "html"
+  let d := d.linkChild 0 html none
+  let (d, head) := el d "head"
+  let d := d.linkChild html head none
+  let (d, body) := el d "body"
+  return d.linkChild html body none
 
 /-- The navigations that wait for the embedder: an `iframe` and its `src` URL. The
 `load` events of `about:blank` documents are queued here, as tasks. -/
@@ -758,6 +979,36 @@ def Session.attachFrame (s : Session) (el : Nat) (doc : Option Arena) : Session 
   let s := { s with host := { s.host with dom := h } }
   return s.setLoop (s.loop.queueTask .networking 0 (some { type := "load", target := el }))
 
+/-- The arena of a page with its frames' documents grafted in (`Dom.graft`), and each
+`iframe` element with the root of its document. -/
+def graftFrames (dom : Arena) (frames : Array (Nat × Arena)) : Arena × Array (Nat × Nat) := Id.run do
+  let mut dom := dom
+  let mut framed : Array (Nat × Nat) := #[]
+  for (el, doc) in frames do
+    if el < dom.size then
+      let (d, root) := dom.graft doc
+      dom := d
+      framed := framed.push (el, root)
+  return (dom, framed)
+
+/-- The page's scripts, `DOMContentLoaded`, the frames' and the window's `load` events,
+and the tasks due at time 0, on a session that holds the page's arena. -/
+def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)) (framed : Array (Nat × Nat)) :
+    Prog Session := do
+  let s := (← s.runP s.fx.page #[.i32 2, .i32 0, .i32 0]).1
+  let mut s ← s.setUrlP url
+  for (node, src) in scripts do
+    s ← s.setScriptP node
+    let (s', status, text) ← s.evalP src
+    s := if status == 1 then s'.fail text else s'
+    s ← s.runJobsP
+  s ← s.setScriptP (-1)
+  s := (← s.dispatchP 0 "DOMContentLoaded").1
+  for (el, _) in framed do
+    s := s.setLoop (s.loop.queueTask .domManipulation 0 (some { type := "load", target := el }))
+  s := s.setLoop (s.loop.queueTask .domManipulation 0 (some { type := "load", target := windowId }))
+  return (← s.advanceP 0).1
+
 /-- Start a page: its classic scripts in document order (each with the current script set
 and a microtask checkpoint after it), `DOMContentLoaded` at the document, then the `load`
 event at the window as a task, and the tasks that are due at time 0. `scripts` are the
@@ -767,13 +1018,7 @@ the embedder loaded, each with its document parsed on its own: each joins the pa
 frames share the page's script realm. -/
 def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Limits := {})
     (frames : Array (Nat × Arena) := #[]) (reads : Reads := {}) (time : ScriptClock := {}) : Except String Session := do
-  let mut dom := dom
-  let mut framed : Array (Nat × Nat) := #[]
-  for (el, doc) in frames do
-    if el < dom.size then
-      let (d, root) := dom.graft doc
-      dom := d
-      framed := framed.push (el, root)
+  let (dom, framed) := graftFrames dom frames
   let s : Session ← match m.base with
     | some b =>
       let domHost : DomHost := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames }
@@ -783,19 +1028,7 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
       let s ← instantiatePage m dom lim
       pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames }, reads, time } }
   let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage } } }
-  let s := (s.run s.fx.page #[.i32 2, .i32 0, .i32 0]).1
-  let mut s := s.setUrl url
-  for (node, src) in scripts do
-    s := s.setScript node
-    let (s', status, text) := s.eval src
-    s := if status == 1 then s'.fail text else s'
-    s := s.runJobs
-  s := s.setScript (-1)
-  s := (s.dispatch 0 "DOMContentLoaded").1
-  for (el, _) in framed do
-    s := s.setLoop (s.loop.queueTask .domManipulation 0 (some { type := "load", target := el }))
-  s := s.setLoop (s.loop.queueTask .domManipulation 0 (some { type := "load", target := windowId }))
-  return (s.advance 0).1
+  return (s.startP url scripts framed).runLocal
 
 /-! ## What a turn did -/
 
