@@ -703,6 +703,70 @@ def canvasRects (cs : List Rendering.Layout.Box) (b : Band) (width : Nat) : JSON
     some (.object [("node",number c.source),("rect",.array [number x,number y,number w,number h]),
       ("clip",.array [number x0,number y0,number (x1-x0),number (y1-y0)])]))
 
+/-- A page layer answer that the engine keeps, with every input it was made from. -/
+structure KeptPage where
+  page : Rendering.Scene
+  extra : List Rendering.Node
+  band : Band
+  boxes : Array Rendering.Layout.Box
+  face : Option Rendering.FontProvider.Face
+  live : Bool
+  form : NativeSVG.DataForm
+  checks : Bool
+  tree : Bool
+  answer : String × Array ByteArray
+
+/-- Page layer answers kept: the last two, for a chrome change and back. -/
+def keptPageSlots : Nat := 2
+
+initialize keptPageRef : IO.Ref (List KeptPage) ← IO.mkRef []
+/-- Page layers made, and page layers given again from `keptPageRef`. -/
+initialize pageWorkRef : IO.Ref (Nat × Nat) ← IO.mkRef (0,0)
+
+private def formSame : NativeSVG.DataForm → NativeSVG.DataForm → Bool
+  | .decimal,.decimal => true
+  | .base64,.base64 => true
+  | .sections a,.sections b => a == b
+  | _,_ => false
+
+/- The kept answer is used only when the scene, the boxes, the face and the extra nodes
+are the same objects as those it was made from (`ptrEq`; the entry holds them, so their
+addresses are not used again while it is kept) and the band and flags are equal. So it is
+the answer that `artifactWith` gives again for these inputs. -/
+set_option compiler.extract_closed false in
+private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
+    (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
+    (form : NativeSVG.DataForm) (checks tree : Bool) : Except String (String × Array ByteArray) :=
+  unsafeBaseIO do
+    let same := fun (k : KeptPage) => ptrEq k.page page && ptrEq k.boxes boxes && ptrEq k.face face &&
+      ptrEq k.extra extra && k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree
+    let kept ← keptPageRef.get
+    match kept.find? same with
+    | some k =>
+      pageWorkRef.modify fun (m,g) => (m,g+1)
+      return .ok k.answer
+    | none =>
+      let made := WebRender.artifactWith (pageLayer page extra b) boxes face live form checks tree
+      if let .ok answer := made then
+        keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer⟩ :: kept).take keptPageSlots)
+        pageWorkRef.modify fun (m,g) => (m+1,g)
+      return made
+
+/-- The page layer of a layers answer. Its value is `artifactWith` of the band of the page;
+the engine gives a kept answer again when the inputs are the same objects (a frame whose
+only change is in the chrome: loading, the address, a pressed chrome control, the menu). -/
+@[implemented_by pageArtifactImpl]
+def pageArtifact (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
+    (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
+    (form : NativeSVG.DataForm) (checks tree : Bool) : Except String (String × Array ByteArray) :=
+  WebRender.artifactWith (pageLayer page extra b) boxes face live form checks tree
+
+theorem pageArtifact_eq (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
+    (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
+    (form : NativeSVG.DataForm) (checks tree : Bool) :
+    pageArtifact page extra b boxes face live form checks tree =
+      WebRender.artifactWith (pageLayer page extra b) boxes face live form checks tree := rfl
+
 /-- The answer to a render with `layers:true`. -/
 def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
@@ -714,7 +778,7 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
   -- so a change of `collapse` keeps the band and only the chrome layer is drawn again.
   let view := max 1 (height-(if shell.collapsible then bandTop shell width else top))
   let b := band shell.scroll view
-  let (pageText,pageSections) ← WebRender.artifactWith (pageLayer page extra b) boxes face live form checks tree
+  let (pageText,pageSections) ← pageArtifact page extra b boxes face live form checks tree
   let (chromeText,chromeSections) ←
     WebRender.artifactWith (chromeLayer shell page width) #[] face live form.next checks tree
   let number := fun (n : Nat) => JSON.Json.number (toString n)
@@ -1163,6 +1227,14 @@ count the work, as `heldFont` and `keepFont` do for the font. -/
 @[implemented_by keepLayoutImpl, noinline] private opaque keepLayout (key : LayoutKey) (laid : Laid) : Laid := laid
 @[implemented_by countRepaintImpl, noinline] private opaque countRepaint (laid : Laid) : Laid := laid
 @[implemented_by frameWorkImpl, noinline] private opaque frameWork (reset : Bool) : Nat × Nat × Nat
+set_option compiler.extract_closed false in
+private unsafe def pageWorkImpl (reset : Bool) : Nat × Nat :=
+  unsafeBaseIO do
+    let work ← pageWorkRef.get
+    if reset then pageWorkRef.set (0,0)
+    return work
+/-- Page layers made and page layers kept (`pageArtifact`), as `frameWork` counts layouts. -/
+@[implemented_by pageWorkImpl, noinline] private opaque pageWork (reset : Bool) : Nat × Nat
 
 /-- `lookupLayout` over the kept memo. -/
 private def cachedLayOut (key : LayoutKey) : Except String Laid :=
@@ -1260,10 +1332,12 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     return ((JSON.Json.object [("held",.number (toString held.length))]).toString,#[])
   -- Layouts done, kept layouts used and pointer states painted with no layout.
   if str request "op" == "frameWork" then
-    let (layouts,kept,repaints) := frameWork (request.field? "reset" == some (.bool true))
+    let reset := request.field? "reset" == some (.bool true)
+    let (layouts,kept,repaints) := frameWork reset
+    let (pagesMade,pagesKept) := pageWork reset
     let number := fun (n : Nat) => JSON.Json.number (toString n)
     return ((JSON.Json.object [("layouts",number layouts),("kept",number kept),("repaints",number repaints),
-      ("layoutSlots",number layoutSlots)]).toString,#[])
+      ("layoutSlots",number layoutSlots),("pagesMade",number pagesMade),("pagesKept",number pagesKept)]).toString,#[])
   if str request "op" == "xmlStylesheet" then
     let url := match ← WebXslt.stylesheetHref html with
       | some href => JSON.Json.string (Syntax.resolveIri (str request "url") href)
