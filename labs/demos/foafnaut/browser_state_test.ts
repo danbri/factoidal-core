@@ -9,7 +9,7 @@
 // carries the state ops. Needs the `factoidal` command (npm @factoidal/core) on PATH.
 //   deno test --no-check --allow-read --allow-write --allow-run --allow-net --allow-env browser_state_test.ts
 import {strict as assert} from "node:assert";
-import {startLocalState,factoidalPackage,webStateCall,defaultWebState} from "./native_state.ts";
+import {startLocalState,factoidalPackage,webStateCall,defaultWebState,hostState} from "./native_state.ts";
 import {createBrowserState,guardedFetch,memoryStore} from "../../../docs/web/hub/foafnaut/browser-state.mjs";
 
 const cliPath=Deno.env.get("WEB_STATE")??defaultWebState;
@@ -159,5 +159,33 @@ Deno.test("Browser state in a local LWS server: write, restart, read back, sync 
     if(remote){remote.child.kill("SIGTERM");await remote.child.status;}
     await lean.close();
     await Deno.remove(top,{recursive:true});
+  }
+});
+
+Deno.test("The window's view: an engine without the state ops falls back to web-state; commands and pages",{ignore:!haveCli||!haveFactoidal},async()=>{
+  const dir=await Deno.makeTempDir({prefix:"foafnaut-state-host-"});
+  const log:Record<string,unknown>[]=[];
+  // An engine built before WebState answers "unknown op".
+  const host=hostState({engineState:()=>{throw new Error("unknown op stateInfo");},dir,log:r=>log.push(r)});
+  try{
+    assert(await host.ready,"the state starts through web-state");
+    assert(log.some(r=>r.type==="browser-state"&&r.via==="web-state"));
+    host.visit("https://a.example/","Page A","");
+    host.visit("foafnaut:bookmarks","Bookmarks","");
+    assert.equal(await host.command("bookmark","demo, lws",{url:"https://a.example/",title:"Page A"}),"foafnaut:bookmarks");
+    const bookmarks=await host.page("foafnaut:bookmarks");
+    assert.match(bookmarks,/Page A/);assert.match(bookmarks,/demo, lws/);
+    const history=await host.page("foafnaut:history");
+    assert.match(history,/Page A/);
+    assert(!history.includes("foafnaut:bookmarks"),"foafnaut: pages are not history");
+    await assert.rejects(host.command("sync","",{url:"",title:""}),/No pod is set/);
+    await assert.rejects(host.command("pod","http://pod.example/",{url:"",title:""}),/https/);
+    await host.command("pod","https://pod.example/",{url:"",title:""});
+    host.settings({theme:"arcade"});
+    const read=await host.read();
+    assert.deepEqual([read.settings.theme,read.settings.remotePod,read.settings.textZoom],["arcade","https://pod.example/",150]);
+  }finally{
+    await host.close();
+    await Deno.remove(dir,{recursive:true});
   }
 });

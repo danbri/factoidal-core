@@ -4,6 +4,11 @@
 // an iframe sandbox without allow-same-origin has an opaque origin, and the worker
 // constructor refuses that (Foafos guests). `post` is the only way out of the loop.
 let post=(message,transfer)=>self.postMessage(message,transfer);
+// Bookmarks, history and settings in this browser's IndexedDB, in the resource format Lean
+// decides for the native browser's local pod (browser-state.mjs, WebState.lean).
+import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './browser-state.mjs';
+let browserState,stateReason='starting';
+const statePages=['foafnaut:bookmarks','foafnaut:history'];
 const inWorker=typeof WorkerGlobalScope!=='undefined'&&self instanceof WorkerGlobalScope;
 const pagesBase=new URL('./pages/',import.meta.url).href,siteOrigin=new URL(import.meta.url).origin;
 const homeURL=pagesBase+'index.html',settingsURL=pagesBase+'settings.html';
@@ -165,7 +170,13 @@ async function wasmPage(url){
   const answer=call('',{op:'wasmPage',...(argument?await wasmModule(argument):{})});
   return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
 }
+async function statePage(url){
+  if(!browserState)throw Error(`Browser state is off: ${stateReason}`);
+  const answer=await browserState.page(url.slice(9));
+  return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
+}
 function show(next,remember=true){
+  if(remember&&doc&&!next.title?.startsWith('Page refused'))browserState?.visit(next.url,next.title??'',doc.url).catch(()=>{});
   doc=next;if(!focused)field=showURL(next.url);scroll=0;loading=false;
   if(remember){history=push(history.history,next.url);pages++;}
   request();
@@ -173,7 +184,7 @@ function show(next,remember=true){
 async function navigate(url,remember=true){
   const mine=++serial;loading=true;request();
   const stamp=currentStamp;
-  let next;try{next=await (url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):prepare(url));}catch(error){next=refusal(url,String(error.message??error));}
+  let next;try{next=await (statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):prepare(url));}catch(error){next=refusal(url,String(error.message??error));}
   if(mine===serial){const before=currentStamp;currentStamp=stamp;try{show(next,remember);}finally{currentStamp=before;}}
 }
 // An edit in the address bar. Lean gives the new state and the text for the clipboard,
@@ -187,7 +198,7 @@ function command(id,text=''){
   const answer=call('',{op:'command',command:id,textScalePercent:percent,history:history.history,focused});
   if(answer.target==='address'){if(!focused)focusAddress();edit(answer.action,text);return;}
   if(['back','forward','reload'].includes(answer.action)){if(answer.url)navigate(answer.url,false);history=answer;request();}
-  if(answer.textScalePercent!==percent){percent=answer.textScalePercent;request();}
+  if(answer.textScalePercent!==percent){percent=answer.textScalePercent;request();browserState?.settings({textZoom:percent}).catch(()=>{});}
   if(answer.action==='focusAddress')focusAddress();
   if(answer.action==='newTab')newTab();
   if(answer.action==='closeTab')closeTab(active);
@@ -250,10 +261,33 @@ function shellCommand(name,argument){
   else if(name==='new')newTab();else if(name==='close')closeTab(active);
   else if(name==='home')navigate(homeURL);else if(name==='source')viewSource();
   else if(name==='graph')openGraph().catch(error=>{doc=refusal('foafnaut:graph',String(error.message??error));request();});
-  else if(name==='theme'){theme=argument||(theme==='next'?'arcade':'next');request();}
-  else if(name==='zoom'&&/^[0-9]+$/.test(argument)){percent=Math.max(50,Number(argument));request();}
+  else if(name==='theme'){theme=argument||(theme==='next'?'arcade':'next');request();browserState?.settings({theme}).catch(()=>{});}
+  else if(name==='zoom'&&/^[0-9]+$/.test(argument)){percent=Math.max(50,Number(argument));request();browserState?.settings({textZoom:percent}).catch(()=>{});}
+  else if(['bookmarks','history'].includes(name))navigate('foafnaut:'+name);
+  else if(['bookmark','unbookmark','pod','sync'].includes(name))stateCommand(name,argument);
   else if(name==='wasm')navigate(wasmURL+(argument?'/'+argument:''));
   else navigate(settingsURL);
+}
+// :bookmark [tags], :unbookmark, :pod URL. :sync needs the LWS client in the page, which the Hub
+// does not load yet; the native browser syncs.
+async function stateCommand(name,argument){
+  try{
+    if(!browserState)throw Error(`Browser state is off: ${stateReason}`);
+    if(name==='bookmark')await browserState.bookmark(doc.url,doc.title??'',argument?argument.split(',').map(t=>t.trim()).filter(Boolean):undefined);
+    else if(name==='unbookmark')await browserState.unbookmark(doc.url);
+    else if(name==='pod'){await browserState.settings({remotePod:argument});return;}
+    else throw Error('Sync with a pod runs in the native browser; the Hub keeps its state in this browser only.');
+    navigate('foafnaut:bookmarks');
+  }catch(error){doc=refusal('foafnaut:'+name,String(error.message??error));request();}
+}
+async function openState(){
+  const stateCall=(op,request)=>call('',{...request,op});
+  const available=await stateAvailable(stateCall);
+  if(!available.available){stateReason=available.reason;return;}
+  let store;try{store=await indexedDbStore();}catch{store=memoryStore('/','this tab only (no IndexedDB)');}
+  browserState=createBrowserState({call:stateCall,store});stateReason='';
+  const saved=await browserState.read();
+  if(saved.settings){theme=saved.settings.theme;percent=saved.settings.textZoom;request();}
 }
 function go(answer){
   if(answer.go==='command')shellCommand(answer.name,answer.argument);
@@ -338,6 +372,7 @@ async function start(data){
   // An engine from before these ops (issue 1268) has no key table and no address edits.
   try{post({type:'keys',table:call('',{op:'keyTable',platform:data.platform==='mac'?'mac':'other'})});}catch{/* older engine */}
   ready=true;
+  openState().catch(error=>{stateReason=String(error.message??error);});
   // A new window starts in the address bar with the address selected (issue 1268).
   if(data.page&&/^[a-z0-9-]+\.(html|xml)$/.test(data.page))navigate(pagesBase+data.page);
   else if(data.page==='wasm'||/^wasm\/[a-z0-9-]+\.wasm(#[A-Za-z0-9_-]+)?$/.test(data.page??''))navigate('foafnaut:'+data.page);

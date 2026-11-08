@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-08 | [Foafnaut browser state in Linked Web Storage](designissues/2026-11-08-browser-state-lws.md) | | current — local pod and IndexedDB; pod sync native only |
 | 2026-11-06 | [Deployable modules: the mechanism, by measurement](20261106-deployable-modules.md) | | |
 | 2026-11-05 | [Branch sweep](20261105-branch-sweep.md) | | current |
 | 2026-11-05 | [Render performance pass and ESP32-P4 target](20261105-render-embedded-perf.md) | | |

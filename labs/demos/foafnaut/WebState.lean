@@ -355,7 +355,8 @@ def Bookmark.ofDoc (j : Json) : Option Bookmark := do
 
 structure Settings where
   theme : String := "next"
-  textZoom : Nat := 100
+  /-- Text size in percent; the browsers start at 150. -/
+  textZoom : Nat := 150
   fonts : List String := []
   fallback : List String := []
   remotePod : String := ""
@@ -369,7 +370,7 @@ def Settings.doc (s : Settings) : Json :=
     [("dateModified", .string (isoOf s.modified))])
 
 def Settings.ofDoc (j : Json) : Settings :=
-  { theme := str j "foafnaut:theme" "next", textZoom := max 50 (natField j "foafnaut:textZoom" 100),
+  { theme := str j "foafnaut:theme" "next", textZoom := max 50 (natField j "foafnaut:textZoom" 150),
     fonts := strings j "foafnaut:font", fallback := strings j "foafnaut:fontFallback",
     remotePod := str j "foafnaut:remotePod", modified := (millisOf (str j "dateModified")).getD 0 }
 
@@ -574,6 +575,9 @@ def op (name : String) (request : Json) : Except String (Option String) := do
     return some (write base (bookmarkPath url) b.doc.toString)
   if name == "stateSettings" then
     let old := ((current request).map Settings.ofDoc).getD {}
+    let pod := str request "remotePod"
+    if !pod.isEmpty && (!(fetchAllowed pod pod).1 || !pod.endsWith "/") then
+      throw "the pod must be an https URL (or a loopback http URL) that ends in /"
     let fonts := match request.field? "fonts" with | some _ => strings request "fonts" | none => old.fonts
     let fallback := match request.field? "fallback" with | some _ => strings request "fallback" | none => old.fallback
     let s : Settings := {

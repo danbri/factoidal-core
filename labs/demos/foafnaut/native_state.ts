@@ -139,3 +139,72 @@ export async function startLocalState({call,dir=defaultStateDir(),log=()=>{},cli
     }
   };
 }
+
+/** Pages and commands of the browser state, for the host's address bar. */
+export const STATE_PAGES=["foafnaut:bookmarks","foafnaut:history"];
+export const STATE_COMMANDS=["bookmark","unbookmark","bookmarks","history","sync","pod"];
+
+/** The state ops: the engine's when it carries them, else `web-state` when it is built. */
+export async function openStateCall(engineState:Call):Promise<{call:Call;via:string;close():Promise<void>}>{
+  if((await stateAvailable(engineState)).available)return {call:engineState,via:"engine",close:async()=>{}};
+  try{Deno.statSync(defaultWebState);}catch{throw new Error("the engine has no browser-state ops and web-state is not built (build-web-state.sh)");}
+  const cli=webStateCall();
+  return {call:cli.call,via:"web-state",close:cli.close};
+}
+
+/**
+ * The browser state as the native window uses it. Nothing here waits on the window: the
+ * server starts in the background, writes go in order behind it, and a failure is logged
+ * once and leaves the browser working without state.
+ */
+export function hostState({engineState,dir,log}:{engineState:Call;dir?:string;log:Log}){
+  let reason="starting";
+  let closeCall=async()=>{};
+  const ready:Promise<LocalState|undefined>=(async()=>{
+    const opened=await openStateCall(engineState);closeCall=opened.close;
+    const state=await startLocalState({call:opened.call,dir,log});
+    reason="";log({type:"browser-state",state:"ready",via:opened.via,origin:state.origin,agent:state.agent});
+    return state;
+  })().catch(error=>{reason=String(error?.message??error);log({type:"browser-state",state:"off",reason});return undefined;});
+  // Writes go one after another, so a visit and a session write never race.
+  let queue:Promise<unknown>=ready;
+  const later=(what:string,act:(s:LocalState)=>Promise<unknown>)=>{
+    queue=queue.then(()=>ready).then(s=>s?act(s):undefined).catch(error=>log({type:"browser-state",state:"write-failed",what,reason:String(error?.message??error)}));
+    return queue;
+  };
+  const need=async()=>{const s=await ready;if(!s)throw new Error(`Browser state is off: ${reason}`);await queue;return s;};
+  let sessionTimer:number|undefined;
+  return {
+    ready,
+    visit:(url:string,title:string,from:string)=>later("visit",s=>s.visit(url,title,from)),
+    settings:(changes:Record<string,unknown>)=>later("settings",s=>s.settings(changes)),
+    /** Open tabs, written at most once a second. */
+    session(tabs:{url:string;title:string;scroll:number}[],active:number){
+      clearTimeout(sessionTimer);
+      sessionTimer=setTimeout(()=>{later("session",s=>s.session(tabs,active));},1000) as unknown as number;
+    },
+    async read(){const s=await need();return await s.read();},
+    /** Lean's HTML of foafnaut:bookmarks or foafnaut:history. */
+    async page(url:string){const s=await need();return (await s.page(url.slice("foafnaut:".length))).source as string;},
+    /**
+     * An address-bar command. The answer names a page to open, when there is one.
+     * `:bookmark [tag,tag]`, `:unbookmark`, `:bookmarks`, `:history`, `:pod URL`, `:sync`.
+     */
+    async command(name:string,argument:string,page:{url:string;title:string}):Promise<string|undefined>{
+      if(name==="bookmarks"||name==="history")return "foafnaut:"+name;
+      const s=await need();
+      if(name==="bookmark"){await s.bookmark(page.url,page.title,argument?argument.split(",").map(t=>t.trim()).filter(Boolean):undefined);return "foafnaut:bookmarks";}
+      if(name==="unbookmark"){await s.unbookmark(page.url);return "foafnaut:bookmarks";}
+      if(name==="pod"){await s.settings({remotePod:argument});return undefined;}
+      if(name==="sync"){
+        const pod=(await s.read()).settings?.remotePod;
+        if(!pod)throw new Error("No pod is set. Type :pod https://your.pod.example/ first; the pod must give this browser's did:key access.");
+        const result=await s.sync(await s.remote(pod));
+        log({type:"browser-state",state:"synced",pod:new URL(pod).origin,...result});
+        return "foafnaut:bookmarks";
+      }
+      return undefined;
+    },
+    async close(){clearTimeout(sessionTimer);await queue.catch(()=>{});const s=await ready;await s?.close();await closeCall();}
+  };
+}

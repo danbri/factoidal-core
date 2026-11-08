@@ -263,6 +263,8 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     /** The page foafnaut:wasm, as HTML that Lean then lays out. */
     wasmPage:(request:Partial<WasmRequest>&{url?:string}={})=>documentCall("",{...request,op:"wasmPage"}) as {source:string;title:string},
     shellLink:(href:string)=>documentCall("",{op:"shellLink",href}) as ShellGo,
+    // Browser state (WebState.lean): bookmarks, history, settings and tabs as LWS resources.
+    state:(op:string,request:Record<string,unknown>={})=>documentCall("",{...request,op}),
     // Lean decides what a menu command and a pointer release mean.
     command:(command:number,textScalePercent:number,history?:History,focused=false)=>documentCall("",{op:"command",command,textScalePercent,focused,...(history?{history}:{})}) as
       {action:string;target?:"address"|"page";textScalePercent:number}&Partial<HistoryAnswer>,

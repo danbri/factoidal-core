@@ -7,6 +7,7 @@ import {loadNativeWindow} from "./native_window.ts";
 import {nativePreflight} from "./native_preflight.ts";
 import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
 import {createHTMLWindowSession} from "./native_html_session.ts";
+import {hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
 import {cleanupUI} from "./ui_cleanup.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
@@ -15,9 +16,9 @@ import type {UIEvent} from "./ui_engine.ts";
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
   }
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined;
+  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -27,6 +28,10 @@ async function main() {
     else if(arg==="--trace-input")traceInput=true;
     else if(arg==="--check-pixels")checkAll=true;
     else if(arg==="--perf-summary")perfSummary=true;
+    // Browser state in a local LWS server (native_state.ts): on in an interactive window, off in sweeps and checks.
+    else if(arg==="--no-state")stateOff=true;
+    else if(arg==="--state-dir"){stateDir=args.shift();if(!stateDir)throw new Error("--state-dir needs a folder");}
+    else if(arg==="--restore-session")restoreSession=true;
     // Sweeps read back every frame. This flag gives them the interactive rule (check when idle), to measure input latency without the check cost.
     else if(arg==="--idle-checks-only")idleChecksOnly=true;
     else if(arg==="--wasm-engine")wasmEngine=true;
@@ -88,6 +93,8 @@ async function main() {
       return result;
     }])) as T;
   const engine=timed(await loadHTML());
+  const browserState=stateOff||check||sweep||commands||printPDF?undefined:
+    hostState({engineState:engine.state,dir:stateDir,log:record=>console.log(JSON.stringify({t:Math.round(performance.now()),...record}))});
   // Noto Sans is the default face; the bitmap face is the safe mode, and the fallback.
   const defaultFont=new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url);
   let workerFont:{path:string;family:string}|undefined;
@@ -353,8 +360,12 @@ async function main() {
     else if(name==="home")navigate(home.url);
     else if(name==="graph")navigate(graphURL);
     else if(name==="source")viewSource().catch(error=>refuse(document.url,error));
-    else if(name==="theme"){theme=argument||(theme==="next"?"arcade":"next");dirty=true;}
-    else if(name==="zoom"&&/^[0-9]+$/.test(argument)){view.textScalePercent=Math.max(50,Number(argument));dirty=true;}
+    else if(name==="theme"){theme=argument||(theme==="next"?"arcade":"next");dirty=true;browserState?.settings({theme});}
+    else if(name==="zoom"&&/^[0-9]+$/.test(argument)){view.textScalePercent=Math.max(50,Number(argument));dirty=true;browserState?.settings({textZoom:view.textScalePercent});}
+    else if(STATE_COMMANDS.includes(name)){
+      if(!browserState){refuse(`foafnaut:${name}`,"Browser state is off (--no-state, a sweep or a check)");return;}
+      browserState.command(name,argument,{url:document.url,title:document.title??""}).then(page=>{if(page)navigate(page);}).catch(error=>refuse(`foafnaut:${name}`,error));
+    }
     else if(name==="wasm")navigate(wasmURL+(argument?"/"+argument:""));
     else navigate(settingsURL);
   };
@@ -403,6 +414,7 @@ async function main() {
     if(answer.textScalePercent!==view.textScalePercent){
       view.textScalePercent=answer.textScalePercent;view.selection=undefined;dirty=true;
       trace("native-html-zoom",{textScalePercent:answer.textScalePercent});
+      browserState?.settings({textZoom:answer.textScalePercent});
     }
     if(answer.action==="focusAddress")focusAddress();
     if(answer.action==="newTab")newTab();
@@ -442,13 +454,19 @@ async function main() {
     }finally{printing=false;}
   };
   // A new page goes into history when its load ends, and a refused page does too.
+  // Open tabs go to the browser state (at most once a second), for --restore-session.
+  const saveSession=()=>browserState?.session(tabs.map((tab,index)=>{const page=index===active?document:tab.document;
+    return {url:page.url,title:page.title??"",scroll:index===active?scroll:tab.scroll};}),active);
   const navigate=(target:string,push=true)=>{
+    const from=document.url;
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):prepareHTML(lean,target,current.signal)).then(next=>{
+    (STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):prepareHTML(lean,target,current.signal)).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
+        if(push)browserState?.visit(next.url,next.title??"",from);
+        saveSession();
       }
     }).catch(error=>{
       if(current.signal.aborted)return;
@@ -497,6 +515,11 @@ async function main() {
     native.showAfterSurface();
     // A new window starts in the address bar with the address selected (issue 1268).
     focusAddress();
+    // Saved settings (theme, text zoom), and with --restore-session the tabs of the last run.
+    browserState?.read().then(saved=>{
+      if(saved.settings){theme=saved.settings.theme;view.textScalePercent=saved.settings.textZoom;dirty=true;}
+      if(restoreSession)(saved.session?.tabs??[]).forEach((tab:{url:string},index:number)=>{if(index>0)newTab();navigate(tab.url);});
+    }).catch(()=>{/* state off: said once in the log */});
     scale=Math.max(1,Math.round(native.surfaceState().contentsScale||1));
     if(commands)native.testRaise();
     device.addEventListener("uncapturederror",event=>{console.error("Native HTML GPU error:",(event as GPUUncapturedErrorEvent).error.message);running=false;Deno.exitCode=1;});
@@ -878,6 +901,7 @@ async function main() {
     // A frame in progress ends before its session is disposed.
     try{await rendering;await shifting;}catch(error){console.error("Native HTML frame ended with an error:",String(error));}
     worker?.terminate();
+    await browserState?.close().catch(error=>console.error("Native HTML: browser state did not close:",String(error)));
     try{summary();}catch(error){console.error("Native HTML summary failed:",String(error));}
     if(!cleanupUI({session,device,native}))Deno.exitCode=1;
   }

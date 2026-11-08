@@ -58,6 +58,17 @@ triple or access decision found in a `.mjs` under `npm/factoidal/lws/` or
 `npm/factoidal/solid/` is a rule violation. The only status a host writes
 is `500`, for a failure of the host itself.
 
+## A user of these servers: Foafnaut browser state
+
+The Foafnaut browser keeps bookmarks, history and settings in a local
+`lws-serve --authz --owner <did:key>` on 127.0.0.1 and syncs them with a pod
+through the LWS client: `labs/demos/foafnaut/native_state.ts`,
+`labs/demos/foafnaut/WebState.lean`, design record
+`docs/designissues/2026-11-08-browser-state-lws.md`. It does not change the
+server. Two facts it depends on: a PUT to a missing path answers 404 (create
+with POST and a slug), and the port must stay the same across restarts (a
+token names the storage origin; a new port answered 403).
+
 ## Docker target for other testers
 
 `deploy/lws-target/` (README there): `lws-serve` and `authz-serve` in one
