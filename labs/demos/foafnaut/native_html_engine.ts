@@ -62,6 +62,8 @@ export type LinkRoute = {route:"page";name:string;url:string}|{route:"graph";url
 export type HTMLResource = {nodeId:number;url:string;source:string};
 /** One turn of a script session (WebScripts.turnAnswer). `commands` is the whole command
 list, given only when `changed`: a host lays the page out again only then. */
+/** What a page script setting means for a page (WebRenderScript.Plan). */
+export type ScriptPlan={engine:string;name:string;run:boolean;marker:string;notice:string};
 export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCount:number;commands?:unknown[];
   logs:string[];errors:string[];timers:number;nextTimer:number|null;frames:number;nextWake:number|null;quiet:boolean;
   instructions:number;jobs:number;tasks:number;ns:number;
@@ -380,7 +382,14 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // Page scripts run by Lean (WebScripts.lean): QuickJS-NG in WasmVM on the page's arena,
     // the Lean event loop deciding each callback. An older engine answers "unknown document
     // operation" to scriptInfo; a host then keeps refusing scripted pages (issue 1274).
-    scriptInfo:()=>documentCall("",{op:"scriptSession",action:"info"}) as {ops:string[];module:boolean;bytes:number;engine:string},
+    scriptInfo:()=>documentCall("",{op:"scriptSession",action:"info"}) as {ops:string[];module:boolean;bytes:number;engine:string;engines?:string[]},
+    // The page script setting (WebRenderScript.plan): Lean says what a setting means on a host
+    // ("native" or "hub"): the engine, whether the scripts run, the chrome marker, a notice.
+    scriptSetting:(setting:string)=>documentCall("",{op:"scriptSetting",setting}) as {setting:string;name:string},
+    scriptPlan:(request:{setting:string;scripts:number;host?:string;unavailable?:string;failure?:string})=>
+      documentCall("",{...request,op:"scriptPlan"}) as ScriptPlan,
+    /** The settings page's rows of the engines, the current one ticked. */
+    scriptChoices:(setting:string,host="native")=>(documentCall("",{op:"scriptChoices",setting,host}) as {html:string}).html,
     /** The guest module, as bytes through the font byte call (family `guest:quickjs`). */
     scriptLoad:(bytes:Uint8Array)=>{
       const result=JSON.parse(backends.font(bytes,"guest:quickjs","",false));

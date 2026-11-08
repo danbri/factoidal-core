@@ -22,6 +22,12 @@ script, natively or on the Hub.
 - A host gives clicks and moves time; it lays the page out again only when the DOM
   changed.
 
+Since 2026-11-08 evening a second engine runs the same pages: BubblePopJS, the
+JavaScript engine written in Lean (`scriptSession` with `engine:"bubblepop"`,
+`WasmVM/Hosts/LeanJS.lean`; record `2026-11-08-lean-js-engine.md`, sections 11 and 12). It
+runs this prelude with the same imports, commands and event loop, and is the default in
+native hosts; the Hub keeps QuickJS-NG. The setting is on the settings page.
+
 ## 2. Parts
 
 - `formal/lean4/L4Factoidal/WasmVM/Hosts/Page.lean`: the session. A `Session` is a pure

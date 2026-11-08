@@ -129,7 +129,7 @@ function call(source,options,w=1,h=1,counted=true){
 }
 const shell=()=>({tabs:tabs.map((tab,i)=>{const page=i===active?doc:tab.doc;return {title:page?.title??'',...(page?.icon?{icon:page.icon}:{})};}),active,...field,focused,
   canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,
-  ...(folding()?{collapsible:true,collapse:foldPercent()}:{}),...(swipeHint?{swipe:swipeHint}:{})});
+  ...(folding()?{collapsible:true,collapse:foldPercent()}:{}),...(swipeHint?{swipe:swipeHint}:{}),...scriptMarker()});
 /** This engine draws a folding chrome: it answers shellInfo with the op chromeLayer. */
 // The text size of the settings page (WebSelection.textZoom, op textZoom): Lean answers the
 // zoom for foafnaut:zoom/up, /down, /reset and /PERCENT, and the text size the reader sees,
@@ -323,7 +323,12 @@ function settingsSource(source){
     ?`<p class="check"><a href="foafnaut:classic/${classicUI?'off':'on'}">${box} Classic browser UI</a></p>`+
       `<p>On: the whole chrome stays at the top. Off: scrolling down folds it away to the site's name at the very top, and scrolling up brings it back.</p>`
     :`<p class="check">${box} Classic browser UI</p><p>The engine this page loaded is older and always shows the whole chrome. The next engine release can fold it as you scroll.</p>`;
-  return source.replace(classicMark,row);
+  source=source.replace(classicMark,row);
+  // The page script rows, as Lean makes them for the setting (scriptChoices); an engine
+  // from before the op keeps the static links.
+  const open='<!--foafnaut:scripts-->',close='<!--/foafnaut:scripts-->',i=source.indexOf(open),j=source.indexOf(close);
+  if(planOp&&i>=0&&j>i)try{source=source.slice(0,i+open.length)+call('',{op:'scriptChoices',setting:scriptSetting,host:'hub'}).html+source.slice(j);}catch{planOp=false;}
+  return source;
 }
 async function prepare(url){
   const page=await fetchText(url);
@@ -343,7 +348,7 @@ async function prepare(url){
   if(facts.icon){const icon=await tabIcon(facts.icon);if(icon)next.icon=icon;}
   // The page is drawn first and its scripts start after that frame, as deferred scripts do:
   // a slow start turn (QuickJS in WasmVM) no longer keeps the page blank.
-  if(facts.scripts?.some(s=>s.kind==='classic'))next.pendingScripts=facts.scripts;
+  if(facts.scripts?.some(s=>s.kind==='classic')){next.pendingScripts=facts.scripts;next.scripted=true;}
   return next;
 }
 // The tab icon (HTML §4.6.7.8): Lean picks the link and resolves its URL (inspect `icon`,
@@ -431,7 +436,21 @@ async function pageImageBytes(wanted){
 // answers scriptSession info AND the guest module (docs/web/hub/wasm-guests/, published beside
 // the engine runtime by factoidal-builds) loads; otherwise the page shows without its scripts, as before. An
 // older engine answers "unknown document operation" (no new export is called, issue 1274).
-let engineScripts,scriptOps=[];
+let engineScripts,scriptOps=[],scriptEngines=[],quickjsLoaded=false;
+// The page script setting (WebRenderScript.plan): "" is Lean's default for the Hub
+// (QuickJS-NG, translated to this browser's WebAssembly). Lean says what a setting means; an
+// engine from before the op (probed once) runs QuickJS-NG, as before.
+let scriptSetting='',planOp=true;
+function planFor(setting,scripts,unavailable=''){
+  if(planOp)try{return call('',{op:'scriptPlan',setting,scripts,host:'hub',...(unavailable?{unavailable}:{})});}catch{planOp=false;}
+  return {engine:'quickjs',name:'QuickJS-NG',run:scripts>0&&!unavailable,marker:'',notice:unavailable};
+}
+// The chrome marker of the page's scripts: the engine that runs them, else what the setting says.
+function scriptMarker(){
+  if(!doc?.scripted||!planOp)return {};
+  const marker=planFor(doc.script?.engine??doc.scriptEngine??scriptSetting,1).marker;
+  return marker?{script:marker}:{};
+}
 // AOT (docs/designissues/2026-11-08-wasmvm-aot.md): an engine whose scriptSession info says
 // aot:true translates the guest (validated by Lean) into a module for this browser's own
 // WebAssembly engine, which then runs QuickJS at near native speed. Lean still decides
@@ -445,6 +464,7 @@ async function hasScripts(){
   engineScripts=false;
   let info;
   try{info=call('',{op:'scriptSession',action:'info'});scriptOps=info.ops??[];if(!scriptOps.includes('start'))return false;}catch{return false;}
+  scriptEngines=info.engines??['quickjs'];
   try{
     const response=await fetch(new URL('../wasm-guests/qjs-wasmvm.wasm',import.meta.url));
     if(!response.ok)return false;
@@ -460,7 +480,7 @@ async function hasScripts(){
     }
     if(!aot)fontLoad(bytes,'guest:quickjs','',false);
     scriptStats.path=aot?'aot':'wasmvm';
-    engineScripts=true;
+    engineScripts=true;quickjsLoaded=true;
   }catch(error){console.warn('foafnaut: page scripts off:',String(error.message??error));}
   return engineScripts;
 }
@@ -560,10 +580,17 @@ async function startScripts(page,scripts){
   // The viewport and the render request that lays the page out for its scripts' layout
   // reads (clientWidth, getBoundingClientRect); an engine without them ignores the fields.
   const layout={url:page.url,...(page.images?{images:page.images}:{}),...(page.heldImages?{heldImages:page.heldImages}:{}),textScalePercent:percent};
+  // The setting: Lean's plan says which engine runs the page, or why none does.
+  let plan=planFor(scriptSetting,1);
+  if(plan.run&&!scriptEngines.includes(plan.engine))plan=planFor(scriptSetting,1,`this engine has no ${plan.name}`);
+  else if(plan.run&&plan.engine==='quickjs'&&!quickjsLoaded)plan=planFor(scriptSetting,1,'the QuickJS-NG guest module did not load');
+  page.scriptEngine=plan.engine;
+  if(!plan.run){if(plan.notice)console.warn('foafnaut:',plan.notice);if(page===doc)request();return;}
   // The first page of a session starts before the history exists: no shell then.
-  const turn=scriptCall(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,...(history?{shell:shell()}:{}),layout});
-  scriptStats.startMs=scriptStats.lastMs;
-  page.script={session:turn.session,turn,epoch:performance.now()-turn.clock};
+  const turn=scriptCall(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,...(history?{shell:shell()}:{}),layout,
+    ...(plan.engine==='bubblepop'?{engine:'bubblepop'}:{})});
+  scriptStats.startMs=scriptStats.lastMs;scriptStats.engine=plan.engine;
+  page.script={session:turn.session,turn,epoch:performance.now()-turn.clock,engine:plan.engine};
   scriptTurn(page,turn);
 }
 // A turn's logs, and a new frame only when the DOM changed: no DOM change, no layout (the
@@ -977,6 +1004,12 @@ function shellCommand(name,argument){
     if(doc?.url===settingsURL)navigate(settingsURL,false);else request();
   }
   else if(name==='zoom')zoomCommand(argument);
+  else if(name==='scripts'&&planOp){
+    // The page script engine: Lean checks the name; pages opened after it use it.
+    try{scriptSetting=call('',{op:'scriptSetting',setting:argument}).setting;browserState?.settings({scripts:scriptSetting}).catch(()=>{});
+      if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
+    catch(error){doc=refusal('foafnaut:scripts/'+argument,String(error.message??error));request();}
+  }
   else if(['bookmarks','history'].includes(name))navigate('foafnaut:'+name);
   else if(['bookmark','unbookmark','pod','sync'].includes(name))stateCommand(name,argument);
   else if(name==='wasm')navigate(wasmURL+(argument?'/'+argument:''));
@@ -1006,6 +1039,7 @@ async function openState(){
   if(saved.settings){theme=saved.settings.theme;percent=saved.settings.textZoom;
     // An engine from before the setting does not keep it: the classic chrome then.
     if(typeof saved.settings.classicUI==='boolean')classicUI=saved.settings.classicUI;
+    if(typeof saved.settings.scripts==='string')scriptSetting=saved.settings.scripts;
     if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
 }
 // Lean's route for a link or an address (link-route.mjs), done as it says. This host tests

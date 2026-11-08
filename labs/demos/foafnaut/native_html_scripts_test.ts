@@ -8,6 +8,10 @@
 // fetch-builds installs (docs/web/hub/wasm-guests/). Run with --allow-read --allow-ffi --allow-env.
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLEngine,type ScriptTurn} from "./native_html_engine.ts";
+// SCRIPT_ENGINE=bubblepop runs the same turns on BubblePopJS (the JavaScript engine written in Lean) (WasmVM/Hosts/LeanJS.lean):
+// the start requests carry engine:"bubblepop", and no guest module is needed.
+const lean=Deno.env.get("SCRIPT_ENGINE")==="bubblepop";
+const withEngine=(request:Record<string,unknown>)=>lean?{...request,engine:"bubblepop"}:request;
 
 const library=new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;
 const exists=(p:string)=>{try{return Deno.statSync(p).isFile;}catch{return false;}};
@@ -37,12 +41,12 @@ const text=(engine:HTMLEngine,commands:unknown[])=>engine.selectedText(page,800,
 async function runs(engine:HTMLEngine){
   const info=engine.scriptInfo();
   assert(info.ops.includes("start")&&info.ops.includes("click"));
-  engine.scriptLoad(await Deno.readFile(guest!));
+  if(!lean)engine.scriptLoad(await Deno.readFile(guest!));
   const turns:ScriptTurn[]=[];
   // Start: the script runs in document order; the timer is armed, not fired.
   // The script clock runs at a rate so high that script time stays 0 here: this test is of
   // the event loop's clock (native_html_pointer_test.ts tests script time).
-  let turn=engine.scriptSession(page,{action:"start",url:"file:///scripted.html",resources:[],instructionsPerMs:1e12});turns.push(turn);
+  let turn=engine.scriptSession(page,withEngine({action:"start",url:"file:///scripted.html",resources:[],instructionsPerMs:1e12}));turns.push(turn);
   assert.equal(turn.changed,true);
   assert.deepEqual(turn.logs,["loaded at 0"]);
   assert.equal(turn.timers,1);
@@ -86,7 +90,7 @@ const t1 = performance.now();
 console.log('ran ' + (t1 - t0 >= 1) + ' ' + (Date.now() >= d0));
 setTimeout(() => console.log('timer after ' + (performance.now() - t1 >= 10)), 10);
 </script>`;
-  let clock=engine.scriptSession(busy,{action:"start",url:"file:///busy.html",resources:[]});turns.push(clock);
+  let clock=engine.scriptSession(busy,withEngine({action:"start",url:"file:///busy.html",resources:[]}));turns.push(clock);
   assert.deepEqual(clock.logs,["ran true true"]);
   assert.ok(clock.clock>=1,"the loop's clock moved up to script time");
   clock=engine.scriptSession("",{action:"settle",session:clock.session,budgetMs:1000});turns.push(clock);
@@ -95,13 +99,16 @@ setTimeout(() => console.log('timer after ' + (performance.now() - t1 >= 10)), 1
   return turns.map(({ns:_,instructions:__,...t})=>t);
 }
 
-Deno.test({name:"Lean runs a scripted page: clicks and timers change the DOM (Wasm)",ignore:!guest,fn:async()=>{
+// BubblePopJS does not run in the Wasm engine yet (docs/designissues/2026-11-08-lean-js-engine.md,
+// section 12): with SCRIPT_ENGINE=bubblepop the native library runs alone.
+Deno.test({name:"Lean runs a scripted page: clicks and timers change the DOM (Wasm)",ignore:lean||!guest,fn:async()=>{
   const engine=await loadHTML();
   try{engine.scriptInfo();}catch{console.log("NOT RUN: this Wasm engine has no scriptSession");return;}
   await runs(engine);
 }});
-Deno.test({name:"Lean runs a scripted page (native library), with the turns of the Wasm engine",ignore:!guest||!exists(library),fn:async()=>{
+Deno.test({name:"Lean runs a scripted page (native library), with the turns of the Wasm engine",ignore:(!lean&&!guest)||!exists(library),fn:async()=>{
   const native=await runs(await loadHTML(library));
+  if(lean){console.log("native only: BubblePopJS does not run in the Wasm engine yet");return;}
   const wasm=await loadHTML();
   try{wasm.scriptInfo();}catch{console.log("native only: this Wasm engine has no scriptSession");return;}
   assert.equal(JSON.stringify(native),JSON.stringify(await runs(wasm)));

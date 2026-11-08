@@ -48,3 +48,14 @@ private def made := dom.size
 #guard match WebRenderScript.applyCommands dom (.array [
     .object [("op",.string "removeChild"),("parent",.number "1"),("nodeId",.number "2"),("extra",.bool true)]]) with
   | .error _ => true | _ => false
+
+-- The page script setting: BubblePopJS by default in a native host, QuickJS-NG on the Hub.
+#guard WebRenderScript.defaultEngine "native" == "bubblepop" && WebRenderScript.defaultEngine "hub" == "quickjs"
+#guard WebRenderScript.setting? "QuickJS-NG" == some "quickjs" && WebRenderScript.setting? "BubblePopJS" == some "bubblepop"
+#guard WebRenderScript.setting? "lean" == none && WebRenderScript.setting? "verifiedjs" == none && WebRenderScript.setting? "x" == none
+#guard (WebRenderScript.plan "" 1).marker == "JS BUBBLEPOP" && (WebRenderScript.plan "" 1 "hub").marker == "JS QUICKJS-NG"
+#guard (WebRenderScript.plan "none" 1).marker == "JS OFF" && !(WebRenderScript.plan "none" 1).run
+#guard (WebRenderScript.plan "bubblepop" 0).marker == "" && !(WebRenderScript.plan "bubblepop" 0).run
+#guard (WebRenderScript.plan "quickjs" 1 "native" "no guest module").marker == "JS REFUSED"
+#guard ((WebRenderScript.choicesHTML "quickjs").splitOn "class=\"tick\"").length == 2
+#guard (WebRenderScript.plan "bubblepop" 1 "hub").marker == "JS REFUSED" && !(WebRenderScript.plan "bubblepop" 1 "hub").run

@@ -458,6 +458,16 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     let some (.string url) := request.field? "url" | throw "history URL required"
     let next := (← history request).push url
     return some (JSON.Json.object (historyFields next next.current)).toString
+  -- The page script setting (WebRenderScript.plan): what a setting means for a page, on a host.
+  if op == "scriptSetting" then
+    let some value := WebRenderScript.setting? (str request "setting") | throw "unknown page script engine"
+    return some (JSON.Json.object [("setting",.string value),("name",.string (WebRenderScript.engineName value))]).toString
+  if op == "scriptPlan" then
+    let scripts := match request.field? "scripts" with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    return some (WebRenderScript.plan (str request "setting") scripts (str request "host" "native")
+      (str request "unavailable") (str request "failure")).json.toString
+  if op == "scriptChoices" then
+    return some (JSON.Json.object [("html",.string (WebRenderScript.choicesHTML (str request "setting") (str request "host" "native")))]).toString
   -- The tab icon from the bytes of an icon resource (`iconPrepare`).
   if op == "iconPrepare" then
     let some (.string data) := request.field? "base64" | throw "icon base64 required"

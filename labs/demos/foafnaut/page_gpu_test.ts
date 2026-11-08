@@ -9,6 +9,10 @@
 // Run: deno run --allow-read --allow-ffi --allow-env page_gpu_test.ts
 import {strict as assert} from "node:assert";
 import {loadHTML} from "./native_html_engine.ts";
+// SCRIPT_ENGINE=bubblepop runs the same turns on BubblePopJS (the JavaScript engine written in Lean) (WasmVM/Hosts/LeanJS.lean):
+// the start requests carry engine:"bubblepop", and no guest module is needed.
+const lean=Deno.env.get("SCRIPT_ENGINE")==="bubblepop";
+const withEngine=(request:Record<string,unknown>)=>lean?{...request,engine:"bubblepop"}:request;
 
 const library=new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;
 const guest=Deno.env.get("QUICKJS_WASM")??`${Deno.env.get("HOME")}/working/qjs-wasm/qjs-wasmvm.wasm`;
@@ -19,8 +23,8 @@ type Gpu={k:string;g?:[number,number];[k:string]:unknown};
 type Turn={session:number;gpuPage?:number;gpu?:Gpu[];logs:string[];errors:string[];commands?:unknown[];nextWake:number|null};
 
 const engine=await loadHTML(library);
-engine.scriptLoad(await Deno.readFile(guest));
-let turn=engine.scriptSession(page,{action:"start",url,resources:[]}) as unknown as Turn;
+if(!lean)engine.scriptLoad(await Deno.readFile(guest));
+let turn=engine.scriptSession(page,withEngine({action:"start",url,resources:[]})) as unknown as Turn;
 const all:Gpu[]=[...(turn.gpu??[])];
 const pages=new Set<number>();if(turn.gpuPage!==undefined)pages.add(turn.gpuPage);
 let commands=turn.commands;
@@ -72,7 +76,7 @@ console.log("page_gpu_test: ok");
 {
   const gl=await Deno.readTextFile(new URL("./pages/webgl-triangle.html",import.meta.url));
   const glURL="file:///webgl-triangle.html";
-  let t=engine.scriptSession(gl,{action:"start",url:glURL,resources:[]}) as unknown as Turn;
+  let t=engine.scriptSession(gl,withEngine({action:"start",url:glURL,resources:[]})) as unknown as Turn;
   const got:Gpu[]=[...(t.gpu??[])];let glCommands=t.commands;
   for(let i=0;i<12;i++){
     t=engine.scriptSession("",{action:"advance",session:t.session,ms:20}) as unknown as Turn;

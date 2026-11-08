@@ -165,4 +165,95 @@ def snapshot (dom : DOM.Dom) : JSON.Json := Id.run do
     ("nodes",.array nodes.reverse),("scripts",.array (scriptRecords dom))]
 
 def snapshotJSON (dom : DOM.Dom) : String := (snapshot dom).toString
+
+/-! ### The page script setting
+
+Which engine runs a page's classic scripts: BubblePopJS, the JavaScript engine written in
+Lean (`L4Factoidal.JS`, run by `WasmVM.Hosts.LeanJS`), QuickJS-NG in WasmVM
+(`WasmVM.Hosts.Page`), or none. The settings page links each choice
+(`foafnaut:scripts/bubblepop`, `/quickjs`, `/none`, a `scripts` command of `WebShell.link`);
+the host keeps the value in its browser state (`WebState.Settings.scripts`) and asks Lean
+what it means (ops `scriptSetting`, `scriptPlan`, `scriptChoices`). VerifiedJS is not a
+choice: it cannot run the script fixtures (issue 1252). -/
+
+/-- The engines and their names, in the order of the settings page. -/
+def engines : List (String × String) := [("bubblepop","BubblePopJS"),("quickjs","QuickJS-NG"),("none","None")]
+
+/-- The chrome marker of an engine that runs a page's scripts. -/
+def engineMarker (setting : String) : String :=
+  if setting == "bubblepop" then "JS BUBBLEPOP" else if setting == "quickjs" then "JS QUICKJS-NG" else "JS " ++ setting.toUpper
+
+/-- The default engine of a host. A native host (the window, `run_html.ts`) runs
+BubblePopJS: Lean compiles it to native code, so it runs without a second interpreter. The
+Hub runs QuickJS-NG: there the guest is translated to the browser's WebAssembly
+(`WasmVM.Aot`), and runs faster than BubblePopJS compiled to WebAssembly. -/
+def defaultEngine (host : String) : String := if host == "hub" || host == "wasm" then "quickjs" else "bubblepop"
+
+def engineName (setting : String) : String := ((engines.find? (·.1 == setting)).map (·.2)).getD setting
+
+/-- A setting from a link or a command (`foafnaut:scripts/bubblepop`, `:scripts none`). -/
+def setting? (value : String) : Option String :=
+  let key := value.trimAscii.toString.toLower
+  let key := if key == "quickjs-ng" then "quickjs" else if key == "bubblepopjs" then "bubblepop" else key
+  (engines.find? (·.1 == key)).map (·.1)
+
+/-- What a page with `scripts` classic scripts does under `setting` on `host` (an empty
+or unknown setting is the host's default). `unavailable` is the host's reason why the
+engine can not start here, and `failure` the reason why a started engine stopped; either
+makes a refusal that names the reason. `marker` is drawn in the chrome
+(`WebShell.Shell.script`); `notice` is a line at the top of the page. -/
+structure Plan where
+  engine : String
+  run : Bool
+  marker : String
+  notice : String
+  deriving Repr, BEq
+
+/-- Why an engine can not run on a host, or "". BubblePopJS does not run in the Wasm engine
+yet (docs/designissues/2026-11-08-lean-js-engine.md, section 12). -/
+def hostRefusal (setting host : String) : String :=
+  if setting == "bubblepop" && (host == "hub" || host == "wasm") then
+    "BubblePopJS does not run in the WebAssembly engine yet"
+  else ""
+
+def plan (setting : String) (scripts : Nat) (host : String := "native") (unavailable failure : String := "") : Plan :=
+  let setting := (setting? setting).getD (defaultEngine host)
+  let name := engineName setting
+  let unavailable := if unavailable.isEmpty then hostRefusal setting host else unavailable
+  if scripts == 0 then ⟨setting,false,"",""⟩
+  else if setting == "none" then ⟨setting,false,"JS OFF",""⟩
+  else if !failure.isEmpty then
+    ⟨setting,false,"JS STOPPED",s!"Page scripts stopped ({name}): {failure}"⟩
+  else if !unavailable.isEmpty then
+    ⟨setting,false,"JS REFUSED",s!"Page scripts refused ({name}): {unavailable}"⟩
+  else ⟨setting,true,engineMarker setting,""⟩
+
+def Plan.json (p : Plan) : JSON.Json :=
+  .object [("engine",.string p.engine),("name",.string (engineName p.engine)),("run",.bool p.run),
+    ("marker",.string p.marker),("notice",.string p.notice)]
+
+/-- The rows of the settings page for the setting: one large link for each engine, the
+current one ticked (the boxes of the classic UI row). A host puts them in place of the
+part of `settings.html` between the comments `foafnaut:scripts` and `/foafnaut:scripts`. -/
+def choicesHTML (setting : String) (host : String := "native") : String :=
+  let current := (setting? setting).getD (defaultEngine host)
+  let row := fun (e : String × String) =>
+    let box := if e.1 == current then "<span class=\"box\"><span class=\"tick\"></span></span>" else "<span class=\"box\"></span>"
+    let note := if e.1 == defaultEngine host then " (default here)"
+      else if !(hostRefusal e.1 host).isEmpty then " (not here yet)" else ""
+    s!"<p class=\"check\"><a href=\"foafnaut:scripts/{e.1}\">{box} {e.2}{note}</a></p>"
+  String.join (engines.map row)
+
+/-- A notice at the top of the body, as the page's first element. It is made after the
+script commands, so it takes no node id that a script holds. -/
+def withNotice (dom : DOM.Dom) (notice : String) : DOM.Dom := Id.run do
+  if notice.isEmpty then return dom
+  let some body := (dom.treeOrder 0).toList.find? (fun id => DOM.Dom.isHtmlElement (dom.get id) "body") | return dom
+  let (d,result) := dom.createElement 0 "p"
+  let .ok p := result | return dom
+  let (d,_) := d.setAttribute p "style"
+    "margin:0 0 8px 0;padding:6px 8px;background:#fff3cd;color:#5c3c00;border:1px solid #c89b2c;font-size:13px;line-height:18px"
+  let d := d.setTextContent p (String.ofList (notice.toList.take 512))
+  let (d,_) := d.insertBefore body p (d.get body).kids[0]?
+  return d
 end WebRenderScript

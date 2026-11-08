@@ -134,9 +134,11 @@ export function refusalHTML(url:string,message:string) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`;
 }
 /** Page scripts (WebScripts.lean): the engine that holds the script session. A host sets
-one when its engine answers `scriptSession` info and the QuickJS guest module is loaded;
-with none, a page with scripts is refused, as before. */
-export type ScriptHost={start(source:string,url:string,resources:{nodeId:number;source:string}[]):Promise<ScriptTurn>|ScriptTurn};
+one when its engine answers `scriptSession` info (with BubblePopJS, or the QuickJS
+guest module loaded); with none, a page with scripts is refused, as before. `start`
+answers no turn when the setting says the scripts do not run (`scriptPlan`), and throws
+when they are refused. */
+export type ScriptHost={start(source:string,url:string,resources:{nodeId:number;source:string}[]):Promise<ScriptTurn|undefined>|ScriptTurn|undefined};
 let scriptHost:ScriptHost|undefined;
 export function setScriptHost(host:ScriptHost|undefined){scriptHost=host;}
 /** The engine, or the same calls in a worker, which answer promises. prepareHTML awaits every call. */
@@ -200,13 +202,17 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       supplied.push({nodeId:descriptor.nodeId,source:resource.source});
     }
     const turn=await scriptHost.start(document.source,document.url,supplied);
-    script={session:turn.session,turn};
-    if(turn.commands?.length)options.commands=turn.commands;
+    if(turn){
+      script={session:turn.session,turn};
+      if(turn.commands?.length)options.commands=turn.commands;
+    }
   }
   // Pages show in the font of loadFontFile, or else in the Lean bitmap face.
   signal?.throwIfAborted();
   return {
     url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,script,iconBase64,
+    /** Whether the page has classic scripts (they run, or the setting says why not). */
+    scripted,
     /** A later turn of the page's script session: its commands, when the DOM changed. */
     applyTurn:(turn:ScriptTurn)=>{if(script)script.turn=turn;if(turn.changed&&turn.commands)options.commands=turn.commands;return turn.changed;},
     // What compile needs, as plain data, so the engine in a worker can run it.

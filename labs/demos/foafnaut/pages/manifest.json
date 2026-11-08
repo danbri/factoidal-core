@@ -66,7 +66,7 @@
    "page": "js-status.html",
    "title": "JavaScript in Foafnaut: status",
    "handwritten": true,
-   "shows": "WPT and Test262 counts for page scripts (QuickJS in WasmVM) and for the Lean JS engine, and the speed of guest Wasm translated for the Hub"
+   "shows": "WPT and Test262 counts for page scripts on BubblePopJS and on QuickJS in WasmVM, and the speed of guest Wasm translated for the Hub"
   },
   {
    "page": "foaf-graph.html",

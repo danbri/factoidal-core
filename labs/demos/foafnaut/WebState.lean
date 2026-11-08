@@ -360,6 +360,9 @@ structure Settings where
   /-- The classic chrome, always full (owner, 2026-11-08: on by default). Off, the chrome
   folds to the domain as the page scrolls down. -/
   classicUI : Bool := true
+  /-- The page script engine (`WebRenderScript.engines`: "bubblepop", "quickjs", "none"); ""
+  for the host's default (`WebRenderScript.defaultEngine`). -/
+  scripts : String := ""
   fonts : List String := []
   fallback : List String := []
   remotePod : String := ""
@@ -368,14 +371,16 @@ structure Settings where
 
 def Settings.doc (s : Settings) : Json :=
   document "foafnaut:Settings" ([("foafnaut:theme", .string s.theme), ("foafnaut:textZoom", num s.textZoom),
-    ("foafnaut:classicUI", .bool s.classicUI),
-    ("foafnaut:font", .array (s.fonts.map .string)), ("foafnaut:fontFallback", .array (s.fallback.map .string))] ++
+    ("foafnaut:classicUI", .bool s.classicUI)] ++
+    (if s.scripts.isEmpty then [] else [("foafnaut:scripts", .string s.scripts)]) ++
+    [("foafnaut:font", .array (s.fonts.map .string)), ("foafnaut:fontFallback", .array (s.fallback.map .string))] ++
     (if s.remotePod.isEmpty then [] else [("foafnaut:remotePod", .string s.remotePod)]) ++
     [("dateModified", .string (isoOf s.modified))])
 
 def Settings.ofDoc (j : Json) : Settings :=
   { theme := str j "foafnaut:theme" "next", textZoom := max 50 (natField j "foafnaut:textZoom" 150),
     classicUI := (match j.field? "foafnaut:classicUI" with | some (.bool b) => b | _ => true),
+    scripts := str j "foafnaut:scripts",
     fonts := strings j "foafnaut:font", fallback := strings j "foafnaut:fontFallback",
     remotePod := str j "foafnaut:remotePod", modified := (millisOf (str j "dateModified")).getD 0 }
 
@@ -383,6 +388,9 @@ def Settings.ofDoc (j : Json) : Settings :=
 #guard (Settings.ofDoc (Json.object [])).classicUI
 #guard !(Settings.ofDoc ({classicUI := false} : Settings).doc).classicUI
 #guard (Settings.ofDoc ({} : Settings).doc).classicUI
+-- The page script engine: the host's default until a choice; a choice survives a round trip.
+#guard (Settings.ofDoc (Json.object [])).scripts == ""
+#guard (Settings.ofDoc ({scripts := "quickjs"} : Settings).doc).scripts == "quickjs"
 
 structure Tab where
   url : String
@@ -593,6 +601,9 @@ def op (name : String) (request : Json) : Except String (Option String) := do
     let s : Settings := {
       theme := str request "theme" old.theme, textZoom := max 50 (natField request "textZoom" old.textZoom),
       classicUI := (match request.field? "classicUI" with | some (.bool b) => b | _ => old.classicUI),
+      scripts := (match request.field? "scripts" with
+        | some (.string v) => if v.isEmpty || ["bubblepop", "quickjs", "none"].contains v then v else old.scripts
+        | _ => old.scripts),
       fonts := fonts, fallback := fallback, remotePod := str request "remotePod" old.remotePod, modified := now }
     return some (write base settingsPath s.doc.toString)
   if name == "stateSession" then
@@ -622,7 +633,7 @@ def op (name : String) (request : Json) : Except String (Option String) := do
         ("tags", .array (b.tags.map .string)), ("added", num b.added)])),
       ("visits", num vs.length),
       ("settings", match settings with
-        | some s => .object [("theme", .string s.theme), ("textZoom", num s.textZoom), ("classicUI", .bool s.classicUI), ("fonts", .array (s.fonts.map .string)),
+        | some s => .object [("theme", .string s.theme), ("textZoom", num s.textZoom), ("classicUI", .bool s.classicUI), ("scripts", .string s.scripts), ("fonts", .array (s.fonts.map .string)),
             ("fallback", .array (s.fallback.map .string)), ("remotePod", .string s.remotePod)]
         | none => .null),
       ("session", match session with

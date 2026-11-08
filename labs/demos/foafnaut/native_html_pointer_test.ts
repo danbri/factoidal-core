@@ -12,6 +12,10 @@
 // (QUICKJS_WASM, else ~/working/qjs-wasm/qjs-wasmvm.wasm). Run with --allow-read --allow-ffi --allow-env.
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLEngine,type ScriptTurn} from "./native_html_engine.ts";
+// SCRIPT_ENGINE=bubblepop runs the same turns on BubblePopJS (the JavaScript engine written in Lean) (WasmVM/Hosts/LeanJS.lean):
+// the start requests carry engine:"bubblepop", and no guest module is needed.
+const lean=Deno.env.get("SCRIPT_ENGINE")==="bubblepop";
+const withEngine=(request:Record<string,unknown>)=>lean?{...request,engine:"bubblepop"}:request;
 
 const library=new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;
 const exists=(p:string)=>{try{return Deno.statSync(p).isFile;}catch{return false;}};
@@ -44,9 +48,9 @@ addEventListener('resize', () => console.log('resize ' + innerWidth + 'x' + inne
 async function runs(engine:HTMLEngine){
   const info=engine.scriptInfo();
   assert.ok(info.ops.includes("pointer")&&info.ops.includes("resize"));
-  engine.scriptLoad(await Deno.readFile(guest!));
+  if(!lean)engine.scriptLoad(await Deno.readFile(guest!));
   const lines:string[]=[];
-  let turn=engine.scriptSession(page,{action:"start",url,resources:[],width:400,height:300,layout:{url}});
+  let turn=engine.scriptSession(page,withEngine({action:"start",url,resources:[],width:400,height:300,layout:{url}}));
   lines.push(...turn.logs);
   assert.deepEqual(turn.errors,[]);
   assert.ok(turn.logs.includes("viewport 400x300"),turn.logs.join("\n"));
@@ -94,8 +98,9 @@ async function runs(engine:HTMLEngine){
 }
 
 Deno.test({name:"Lean page input: SVG targets, pointer events, layout reads, script clock (native library)",
-  ignore:!guest||!exists(library),fn:async()=>{
+  ignore:(!lean&&!guest)||!exists(library),fn:async()=>{
   const native=await runs(await loadHTML(library));
+  if(lean){console.log("native only: BubblePopJS does not run in the Wasm engine yet");return;}
   const wasm=await loadHTML();
   let ops:string[]=[];
   try{ops=wasm.scriptInfo().ops;}catch{/* no scriptSession */}

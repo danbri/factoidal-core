@@ -19,13 +19,19 @@ th{background:#e8eef6}
 <p class="note">Status on 8 November 2026. Every number here comes from the repository's own test runners.</p>
 
 <h2>Page scripts today</h2>
-<p>A page's scripts run in QuickJS-NG, compiled to WebAssembly and run by WasmVM, the WebAssembly engine written in Lean. Lean's event loop decides every callback, and every change to the page is a typed command on Lean's DOM.</p>
+<p>Two engines run a page's scripts, and Settings chooses between them (Page scripts: BubblePopJS, QuickJS-NG, None). Both run the same page objects on Lean's DOM: Lean's event loop decides every callback, and every change to the page is a typed command on Lean's DOM.</p>
+<ul>
+<li><b>BubblePopJS</b>, the JavaScript engine written in Lean, compiled with the rest of the engine. The default in the desktop browser.</li>
+<li><b>QuickJS-NG</b>, compiled to WebAssembly and run by WasmVM, the WebAssembly engine written in Lean. The default on the Hub.</li>
+</ul>
 <table>
-<tr><th>Measure</th><th class="num">Result</th></tr>
-<tr><td>Web platform tests (testharness.js; dom, events, timers, microtasks, event loops)</td><td class="num"><span class="big">12,605</span> of 13,705 subtests</td></tr>
-<tr><td>The same suite this morning</td><td class="num">7,788 of 9,566</td></tr>
-<tr><td>Test262 sample (436 files: built-ins, language, Annex B)</td><td class="num">431 of 436 (native QuickJS: 434)</td></tr>
+<tr><th>Measure</th><th class="num">BubblePopJS</th><th class="num">QuickJS-NG</th></tr>
+<tr><td>Web platform tests through the desktop engine (testharness.js; dom, events, timers, microtasks, event loops; no iframes)</td><td class="num"><span class="big">8,844</span> of 9,729</td><td class="num">8,858 of 9,729</td></tr>
+<tr><td>The same suite in the WasmVM bench, which also loads iframes</td><td class="num">not run</td><td class="num">12,605 of 13,705</td></tr>
+<tr><td>Demo pages (the triangles, Timers and clicks, the FOAF explorer, the bar chart)</td><td class="num" colspan="2">the same DOM and GPU commands on both</td></tr>
+<tr><td>Test262 sample (436 files: built-ins, language, Annex B)</td><td class="num">261 of 436</td><td class="num">431 of 436 (native QuickJS: 434)</td></tr>
 </table>
+<p class="note">Desktop speed, the same scripts: <code>fib(24)</code> 134 ms on BubblePopJS against 1,773 ms on QuickJS-NG in WasmVM; the start of a WPT page 92 ms against 1,107 ms; the engine is ready for the first page in 120 ms against 1,594 ms.</p>
 
 <h2>Speed on the Hub</h2>
 <p>On the Hub the engine is itself WebAssembly, so the guest ran in an interpreter inside WebAssembly. WasmVM now checks the guest and translates it into a module the browser's own WebAssembly engine runs. Lean still decides every step and every DOM change.</p>
@@ -37,16 +43,16 @@ th{background:#e8eef6}
 </table>
 <p class="note">Measured in headless Chrome. Animation is now limited by layout and drawing, not by the script.</p>
 
-<h2>BubblePopJS, a JavaScript engine written in Lean</h2>
-<p>BubblePopJS, a second engine written in Lean from the ECMAScript specification, is built and tested and is being wired in as a choice for page scripts.</p>
+<h2>BubblePopJS: the JavaScript engine written in Lean</h2>
+<p>Written in Lean from the ECMAScript specification. It now runs page scripts.</p>
 <table>
 <tr><th>Measure</th><th class="num">Result</th></tr>
-<tr><td>Test262 language subset (70 directories, 6,297 tests run)</td><td class="num"><span class="big">5,618</span> (89.2%)</td></tr>
-<tr><td>Positive tests in that subset</td><td class="num">4,887 of 5,292 (92.3%)</td></tr>
-<tr><td>Test262 sample with built-ins (the 436 files above)</td><td class="num">247 of 436 (56.7%)</td></tr>
-<tr><td><code>fib(24)</code>, native</td><td class="num">125–143 ms (QuickJS in WasmVM: 1,069 ms; native QuickJS: 6 ms)</td></tr>
+<tr><td>Test262 language subset (70 directories, 6,297 tests run)</td><td class="num"><span class="big">5,625</span> (89.3%)</td></tr>
+<tr><td>Test262 sample with built-ins (the 436 files above)</td><td class="num">261 of 436 (59.9%)</td></tr>
+<tr><td><code>fib(24)</code>, native</td><td class="num">110–135 ms (QuickJS in WasmVM: about 1,100 to 1,800 ms; native QuickJS: 6 ms)</td></tr>
 </table>
-<p class="note">Stages: core language; destructuring, classes, iterators; generators; BigInt; Promises and async functions; async generators and private members; Map, Set, Reflect.</p>
+<p class="note">Stages: core language; destructuring, classes, iterators; generators; BigInt; Promises and async functions; async generators and private members; Map, Set, Reflect; for pages: regular expressions, Proxy, optional chaining, typed arrays, JSON.parse.</p>
+<p class="note">On the Hub, BubblePopJS is compiled to WebAssembly with the engine. It does not run there yet (its evaluator needs more stack than WebAssembly gives it), so the Hub runs QuickJS-NG.</p>
 
 <h2>What pages can use</h2>
 <p>Timers, animation frames, microtasks and Promises; clicks and pointer events with coordinates; taps on SVG shapes; createElement and createElementNS; selectors matched by Lean; DOMParser; MutationObserver; forms, checkboxes and radio buttons; layout reads such as clientWidth and getBoundingClientRect; WebGPU and WebGL drawing, each command checked by Lean.</p>

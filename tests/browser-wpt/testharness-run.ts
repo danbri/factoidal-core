@@ -12,7 +12,7 @@
 // third_party/testing/wpt-scripting-PROVENANCE.md). `.any.js` and `.window.js` files
 // get the window wrapper that wptserve gives them.
 //
-//   deno run -A tests/browser-wpt/testharness-run.ts [--engine native|wasm|bench]
+//   deno run -A tests/browser-wpt/testharness-run.ts [--engine native|wasm|bench] [--script-engine quickjs|bubblepop] [--exclude a,b]
 //     [--native-engine DYLIB] [--quickjs-wasm FILE] [--dirs a,b] [--only SUBSTRING]
 //     [--out FILE] [--baseline FILE] [--bench EXE] [--instructions-per-ms N]
 //
@@ -20,6 +20,8 @@
 // engines/libweb-render.dylib. wasm: the engine's Wasm build. bench: the same session
 // through `lake exe wasmvm-bench page` (formal/lean4), for work on the guest without an
 // engine build. With --baseline, the run fails when a subtest that passed there fails.
+// --script-engine bubblepop runs the pages' scripts on BubblePopJS (the JavaScript engine written in Lean) (engine:"bubblepop" in
+// the start request, WasmVM/Hosts/LeanJS.lean) in place of QuickJS-NG in WasmVM.
 import {dirname,join,resolve} from "node:path";
 import {fileURLToPath as fromFileUrl} from "node:url";
 
@@ -27,11 +29,14 @@ const here=dirname(fromFileUrl(import.meta.url)),root=resolve(here,"../.."),
   wpt=join(root,"third_party/testing/wpt-scripting");
 const args=Deno.args,opt=(name:string,fallback="")=>{const i=args.indexOf(name);return i>=0?args[i+1]:fallback;};
 const engineKind=opt("--engine","native");
+const scriptEngine=opt("--script-engine","quickjs");
 const quickjs=opt("--quickjs-wasm",join(Deno.env.get("HOME")??"","working/qjs-wasm/qjs-wasmvm.wasm"));
 export const directories=["html/webappapis/timers","html/webappapis/microtask-queuing","dom/events","dom/nodes",
   "html/webappapis/scripting/event-loops"];
 const dirs=opt("--dirs")?opt("--dirs").split(","):directories;
 const only=opt("--only");
+// --exclude a,b: files whose path holds one of these are counted SKIP ("excluded").
+const excluded=opt("--exclude")?opt("--exclude").split(","):[];
 const origin="http://web-platform.test";
 // The script clock's rate (Hosts.Page.ScriptClock). A test's own timeouts (testharness.js
 // gives each file 10 s) assume a browser's speed; this engine runs many more instructions
@@ -116,8 +121,9 @@ function resultOf(file:string,logs:string[]):Case {
 async function engineBackend():Promise<{run:(file:string)=>Promise<Case>;info:Record<string,unknown>}> {
   const {loadHTML}=await import("../../labs/demos/foafnaut/native_html_engine.ts");
   const engine=await loadHTML(engineKind==="wasm"?undefined:opt("--native-engine",join(root,"labs/demos/foafnaut/.build/web-render/engines/libweb-render.dylib")));
-  const info=engine.scriptInfo();
-  engine.scriptLoad(await Deno.readFile(quickjs));
+  const info={...engine.scriptInfo(),scriptEngine};
+  if(scriptEngine==="bubblepop"&&!(info.engines??[]).includes("bubblepop"))throw new Error("this engine has no BubblePopJS");
+  if(scriptEngine!=="bubblepop")engine.scriptLoad(await Deno.readFile(quickjs));
   return {info,run:async(file)=>{
     const html=file.endsWith(".js")?wrapper(file):await Deno.readTextFile(join(wpt,file));
     const url=`${origin}/${pageOf(file)}`;
@@ -129,7 +135,8 @@ async function engineBackend():Promise<{run:(file:string)=>Promise<Case>;info:Re
       const path=scriptFile(s.url);
       if(path)try{resources.push({nodeId:s.nodeId,source:await Deno.readTextFile(path)});}catch{/* not vendored: the page reports it */}
     }
-    let turn=engine.scriptSession(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate});
+    let turn=engine.scriptSession(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,
+      ...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
     const logs=[...turn.logs],errors=[...turn.errors];
     let instructions=turn.instructions;
     turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:70000});
@@ -169,6 +176,7 @@ if(import.meta.main) {
   for(const dir of dirs) for(const t of testsOf(dir)) {
     if(only&&!t.file.includes(only))continue;
     if(t.skip){cases.push({file:t.file,harness:"SKIP",message:t.skip,subtests:[]});continue;}
+    if(excluded.some(x=>t.file.includes(x))){cases.push({file:t.file,harness:"SKIP",message:"excluded",subtests:[]});continue;}
     let c:Case;
     try{c=await backend.run(t.file);}catch(e){c={file:t.file,harness:"ERROR",message:String((e as Error).message??e).slice(0,300),subtests:[]};}
     cases.push(c);
@@ -184,7 +192,7 @@ if(import.meta.main) {
   }
   const hash=async(path:string)=>{try{return [...new Uint8Array(await crypto.subtle.digest("SHA-256",await Deno.readFile(path)))].map(b=>b.toString(16).padStart(2,"0")).join("");}catch{return null;}};
   const report={format:"factoidal-wpt-testharness-v1",measuredAt:started,
-    scope:"WPT testharness.js tests, window variant, in the engine's script session (QuickJS-NG in WasmVM, Lean DOM arena, Lean event loop, virtual clock). Subtest counts are of the subtests a page reported; a page that reported none counts 0 of 0.",
+    scope:`WPT testharness.js tests, window variant, in the engine's script session (${scriptEngine==="bubblepop"?"BubblePopJS (the JavaScript engine written in Lean)":"QuickJS-NG in WasmVM"}, Lean DOM arena, Lean event loop, virtual clock). Subtest counts are of the subtests a page reported; a page that reported none counts 0 of 0.`,scriptEngine,
     wptCommit:"ce5ca39646886a9349fc42913f843ec6e1c8a36f",engine:engineKind,info:backend.info,
     quickjsWasmSha256:await hash(quickjs),runnerSha256:await hash(fromFileUrl(import.meta.url)),
     reportSha256:await hash(join(here,"testharnessreport.js")),

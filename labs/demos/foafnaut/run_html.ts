@@ -3,7 +3,7 @@ import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
 import {inputURL,loadFontFile,prepareHTML,refusalHTML,setScriptHost,type PageView} from "./native_html_document.ts";
-import type {ScriptTurn} from "./native_html_engine.ts";
+import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {nativePreflight} from "./native_preflight.ts";
 import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
@@ -162,7 +162,7 @@ async function main() {
   // Page scripts (WebScripts.lean): the QuickJS guest module goes into the engine that runs
   // the renders (the worker), once. The engine must answer scriptSession info first: an older
   // engine has no such op, and then a page with scripts is refused as before (issue 1274).
-  type ScriptCall=(name:"scriptInfo"|"scriptLoad"|"scriptSession"|"nodeAt"|"pointerAt",...args:unknown[])=>Promise<unknown>;
+  type ScriptCall=(name:"scriptInfo"|"scriptLoad"|"scriptSession"|"nodeAt"|"pointerAt"|"scriptPlan"|"scriptSetting"|"scriptChoices",...args:unknown[])=>Promise<unknown>;
   const scriptCall:ScriptCall=async(name,...args)=>worker?await worker.engine[name](...args)
     :(engine as unknown as Record<string,(...a:unknown[])=>unknown>)[name](...args);
   let session:Awaited<ReturnType<typeof createHTMLWindowSession>>|undefined;
@@ -176,6 +176,23 @@ async function main() {
       session.pageGpu(t.page,t.commands).catch(error=>console.error("Native HTML: page GPU failed:",String(error)));}
   };
   let scriptsOn=false,scriptOps:string[]=[];
+  // The page script setting (WebRenderScript.plan): "" is Lean's default for this host (the
+  // Lean engine where the engine has it). Lean says what a setting means; an engine from
+  // before the op (probed once) runs QuickJS-NG, as before.
+  let scriptSetting="",scriptEngines:string[]=[],quickjsLoaded=false,planOp=true;
+  const sessionEngines=new Map<number,string>();
+  // Lean's plan, from the engine that runs the scripts (the worker's); the plans of the
+  // settings are kept for the chrome marker, which is drawn without waiting.
+  const plans=new Map<string,ScriptPlan>();
+  const askPlan=async(setting:string,unavailable=""):Promise<ScriptPlan>=>{
+    if(planOp)try{return await scriptCall("scriptPlan",{setting,scripts:1,host:scriptHostKind(),...(unavailable?{unavailable}:{})}) as ScriptPlan;}catch{planOp=false;}
+    return {engine:"quickjs",name:"QuickJS-NG",run:!unavailable,marker:"",notice:unavailable};
+  };
+  // The host Lean's plan is for: "native" when the native library runs the scripts (in the
+  // worker), else "wasm" (the engine's WebAssembly build, which BubblePopJS does not run in yet).
+  const scriptHostKind=()=>worker&&nativeEngine?"native":"wasm";
+  const keepPlans=async()=>{for(const setting of ["","bubblepop","quickjs","none"])plans.set(setting,await askPlan(setting));};
+  const planFor=(setting:string)=>plans.get(setting)??plans.get("");
   // The real time at which each session's virtual clock was 0.
   const scriptEpochs=new Map<number,number>();
   // The guest module: --quickjs-wasm FILE, else a local build (tools/wasmvm/build-quickjs.sh),
@@ -185,29 +202,38 @@ async function main() {
   const quickjsPath=quickjsWasm??[local,installed].find(p=>{try{return Deno.statSync(p).isFile;}catch{return false;}})??local;
   if(!scriptsOff&&!check) {
     try{
-      const bytes=await Deno.readFile(quickjsPath);
       const t0=performance.now();
-      scriptOps=((await scriptCall("scriptInfo")) as {ops?:string[]}).ops??[];
-      const loaded=await scriptCall("scriptLoad",bytes);
+      const info=(await scriptCall("scriptInfo")) as {ops?:string[];engines?:string[]};
+      scriptOps=info.ops??[];scriptEngines=info.engines??["quickjs"];
+      let loaded:unknown;
+      try{loaded=await scriptCall("scriptLoad",await Deno.readFile(quickjsPath));quickjsLoaded=true;}
+      catch(error){if(!scriptEngines.includes("bubblepop"))throw error;
+        console.log(JSON.stringify({type:"native-html-scripts",engine:"quickjs",state:"off",module:quickjsPath,reason:String(error instanceof Error?error.message:error)}));}
       scriptsOn=true;
       setScriptHost({start:async(source,pageURL,resources)=>{
+        // The setting: Lean's plan says which engine runs the page, or why none does.
+        let plan=await askPlan(scriptSetting);
+        if(plan.run&&!scriptEngines.includes(plan.engine))plan=await askPlan(scriptSetting,`this engine has no ${plan.name}`);
+        else if(plan.run&&plan.engine==="quickjs"&&!quickjsLoaded)plan=await askPlan(scriptSetting,`no guest module (${quickjsPath})`);
+        if(!plan.run){if(plan.notice)throw new Error(plan.notice);return undefined;}
         // The viewport (innerWidth, innerHeight) and the render request that lays the page out
         // for its scripts' layout reads; an engine without them ignores the fields.
         // (The first page starts before the window's size and chrome are set: then 1280 by 800.)
         const at=(()=>{try{return {width,height,shell:shell(),textScalePercent:view.textScalePercent??100};}
           catch{return {width:1280,height:800,textScalePercent:150};}})();
         const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,
-          ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent}}) as ScriptTurn;
-        scriptEpochs.set(turn.session,performance.now()-turn.clock);
+          ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent},
+          ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{})}) as ScriptTurn;
+        scriptEpochs.set(turn.session,performance.now()-turn.clock);sessionEngines.set(turn.session,plan.engine);
         // The start turn makes the page's GPU objects (canvas, buffers, pipelines); the later turns use them.
         if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();}
         for(const line of turn.logs)console.log(`page: ${line}`);
         for(const line of turn.errors)console.error(`page error: ${line}`);
-        console.log(JSON.stringify({type:"native-html-script",cause:"start",t:Math.round(performance.now()),session:turn.session,
+        console.log(JSON.stringify({type:"native-html-script",cause:"start",engine:plan.engine,t:Math.round(performance.now()),session:turn.session,
           commands:turn.commandCount,instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake}));
         return turn;
       }});
-      console.log(JSON.stringify({type:"native-html-scripts",state:"on",module:quickjsPath,loaded,ms:Math.round(performance.now()-t0)}));
+      console.log(JSON.stringify({type:"native-html-scripts",state:"on",engines:scriptEngines,default:(await keepPlans(),planFor("")?.engine),module:quickjsLoaded?quickjsPath:null,loaded,ms:Math.round(performance.now()-t0)}));
     }catch(error){
       console.log(JSON.stringify({type:"native-html-scripts",state:"off",module:quickjsPath,reason:String(error instanceof Error?error.message:error)}));
     }
@@ -303,7 +329,14 @@ async function main() {
     return icons.get(page)??undefined;
   };
   const shell=()=>({tabs:tabs.map((tab,index)=>{const page=index===active?document:tab.document;return {title:page.title??"",icon:iconOf(page)};}),active,...field,focused,
-    canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,pressed:pressed?.control??"",...(swipeHint?{swipe:swipeHint}:{})});
+    canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,pressed:pressed?.control??"",...(swipeHint?{swipe:swipeHint}:{}),
+    script:scriptMarker()});
+  // The chrome marker of the page's scripts: the engine of its session, else what the setting says.
+  function scriptMarker(){
+    if(!scriptsOn||!document?.scripted)return "";
+    const running=document.script?sessionEngines.get(document.script.session):undefined;
+    return planFor(running??scriptSetting)?.marker??"";
+  }
   // The URLs of the session history of every tab: Lean matches `:visited` against them.
   const visited=()=>[...new Set([...tabs.flatMap((tab,index)=>(index===active?history:tab.history).history.entries)])].slice(-100);
   const shown=()=>({...view,shell:shell(),visited:visited(),
@@ -515,8 +548,11 @@ async function main() {
     else if(["up","down","reset"].includes(argument))windowCommand(["up","down","reset"].indexOf(argument)+1);
   };
   // The settings page with the text size now where it says <!--foafnaut:text-size-->.
+  // The page script rows too, as Lean makes them for the current setting (scriptChoices).
   const settingsSource=async()=>{
-    const source=await Deno.readTextFile(new URL(settingsURL));
+    let source=await Deno.readTextFile(new URL(settingsURL));
+    const open="<!--foafnaut:scripts-->",close="<!--/foafnaut:scripts-->",i=source.indexOf(open),j=source.indexOf(close);
+    if(planOp&&scriptsOn&&i>=0&&j>i)try{source=source.slice(0,i+open.length)+await scriptCall("scriptChoices",scriptSetting,scriptHostKind())+source.slice(j);}catch{/* the static links */}
     const size=textZoom();
     return source.replace("<!--foafnaut:text-size-->",size
       ?`<h2 class="size">Text size: ${size.shown}%</h2>`
@@ -533,6 +569,14 @@ async function main() {
     else if(name==="source")viewSource().catch(error=>refuse(document.url,error));
     else if(name==="theme"){theme=argument||(theme==="next"?"arcade":"next");dirty=true;browserState?.settings({theme});}
     else if(name==="zoom")zoomCommand(argument);
+    else if(name==="scripts"&&planOp){
+      // The page script engine: Lean checks the name; pages opened after it use it.
+      (scriptCall("scriptSetting",argument) as Promise<{setting:string}>).then(chosen=>{
+        scriptSetting=chosen.setting;browserState?.settings({scripts:scriptSetting});
+        trace("native-html-script-setting",{setting:scriptSetting});
+        if(document.url===settingsURL)navigate(settingsURL,false);else dirty=true;
+      }).catch(error=>refuse(`foafnaut:scripts/${argument}`,error));
+    }
     else if(STATE_COMMANDS.includes(name)){
       if(!browserState){refuse(`foafnaut:${name}`,"Browser state is off (--no-state, a sweep or a check)");return;}
       browserState.command(name,argument,{url:document.url,title:document.title??""}).then(page=>{if(page)navigate(page);}).catch(error=>refuse(`foafnaut:${name}`,error));
@@ -712,6 +756,7 @@ async function main() {
   // Open tabs go to the browser state (at most once a second), for --restore-session.
   const saveSession=()=>browserState?.session(tabs.map((tab,index)=>{const page=index===active?document:tab.document;
     return {url:page.url,title:page.title??"",scroll:index===active?scroll:tab.scroll};}),active);
+  // The settings page with the page script rows that Lean makes for the current setting.
   const navigate=(target:string,push=true)=>{
     const from=document.url;
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
@@ -782,7 +827,8 @@ async function main() {
     focusAddress();
     // Saved settings (theme, text zoom), and with --restore-session the tabs of the last run.
     browserState?.read().then(saved=>{
-      if(saved.settings){theme=saved.settings.theme;view.textScalePercent=saved.settings.textZoom;dirty=true;}
+      if(saved.settings){theme=saved.settings.theme;view.textScalePercent=saved.settings.textZoom;dirty=true;
+        if(typeof saved.settings.scripts==="string")scriptSetting=saved.settings.scripts;}
       if(restoreSession)(saved.session?.tabs??[]).forEach((tab:{url:string},index:number)=>{if(index>0)newTab();navigate(tab.url);});
     }).catch(()=>{/* state off: said once in the log */});
     scale=Math.max(1,Math.round(native.surfaceState().contentsScale||1));

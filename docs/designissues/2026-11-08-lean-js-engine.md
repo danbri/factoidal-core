@@ -40,7 +40,8 @@ or the benchmarks.
 
 Measured results are in section 9 (Test262 counts) and section 10 (speed).
 
-It is not wired into the browser (section 11 says what that takes).
+It runs page scripts in Foafnaut under the name BubblePopJS (section 11), the default in
+native builds (section 12).
 
 ## 2. Why a JavaScript engine in Lean
 
@@ -404,31 +405,149 @@ times slower than native QuickJS. A loop of 10^6 iterations runs in constant sta
 Where the time goes, from the design (not yet sampled): each variable access is a
 hash lookup by `String` along the environment chain; each call allocates a
 `HashMap` environment; numbers are boxed in `Value.num`; property keys are strings.
-The planned fast form (section 12) resolves names to slots at parse time, keeps
+The planned fast form (section 13) resolves names to slots at parse time, keeps
 small objects as shapes with slot arrays, and caches property lookups.
 
-## 11. Not wired into the browser: what it takes
+## 11. Wired into the browser: BubblePopJS
 
-1. A host object layer in Lean for the page: `document`, `window`, `Node`, `Element`,
-   `Event` and the rest of `tools/wasmvm/quickjs/prelude.js` (1,493 lines of
-   JavaScript). The prelude can run as JavaScript in the Lean engine as it does in
-   QuickJS, once the engine has classes, getters on prototypes (present),
-   `Symbol.iterator` and the other features it uses. Its 13 `foafnaut_dom` natives
-   become `Native` cases that call `WasmVM.Hosts.Dom`'s operations on the arena
-   directly (`Dom.setTextContent`, `Dom.setAttribute`, `Dom.createElement`, ...), and
-   record the same typed `Command`s, so `WebRenderScript.applyCommands` and the
-   render replay do not change.
-2. A `Session` variant in `Hosts/Page.lean` that holds the JavaScript `Heap` and the
-   `DOM.Arena` in place of the WasmVM store: `start` runs the scripts with
-   `runScript`, `click` asks `EventLoop.Dispatch.plan` and calls listeners with
-   `callV`, `advance` and `settle` run timer and frame callbacks.
-3. Promise jobs on the event loop's microtask queue (section 6).
-4. A selector in `scriptSession` (`engine: "lean"`), with QuickJS as the default
-   until the WPT testharness results are at least as good.
-5. The Wasm build: the engine is plain Lean, so it compiles into the Foafnaut core
-   Wasm as the rest of the engine does; it adds no import.
+The engine's name in Foafnaut is **BubblePopJS** (the settings page, the chrome marker,
+pages and records). The Lean module paths stay `L4Factoidal/JS/` and the lake targets
+stay `JS` and `leanjs`. `scriptSession` takes `engine:"bubblepop"`.
 
-## 12. Next steps
+What was done, by the plan this section held:
+
+1. **The prelude runs in BubblePopJS.** `tools/wasmvm/quickjs/prelude.js` is the same
+   file (`include_str` in `WasmVM/Hosts/LeanJS.lean`); it runs once (`LeanJS.prepare`) on
+   an empty document, and each page starts from that realm with its own arena, as QuickJS
+   does with its base instance. Its 24 natives of `n` are `JS.Native.host k`. Lean serves
+   each with the `foafnaut_dom` import that `qjs_wasmvm_entry.c` calls, through
+   `Hosts.Page.serveExtra` on a `WasmVM.Aot.Window` that holds the call's strings: so the
+   same Lean code runs on the same arena and records the same typed `Hosts.Dom.Command`s,
+   and `WebRenderScript.applyCommands` and the render replay do not change. An ArrayBuffer
+   or typed array argument (the page GPU payloads) reaches the host as its bytes
+   (`JS.HostArg.bytes`). The heap is generic in its host's state (`JS.HeapOf H`): the page
+   host's state lives in the heap during a run and is taken out for each native call, so
+   the arena is changed in place.
+2. **A session over the JavaScript heap.** `LeanJS.Session` holds the heap (with the page
+   `Host`: DOM arena, event loop, listeners, script clock, pointer, layout reads) and the
+   prelude's object. The event code is `Hosts.PageEvents`, the steps of `Hosts.Page` over an
+   `Engine` (dispatch, call a callback, forget a callback, checkpoint): the task order,
+   `EventLoop.State.finish` before the checkpoint, one frame batch per advance through
+   `Page.DriverM`, pointer and resize as `Hosts.Page`. `Hosts.Page` itself is unchanged; it
+   could move onto `PageEvents` later.
+3. **Promise jobs.** The microtask queue is the engine's job queue (§9.5); the prelude makes
+   `queueMicrotask` a Promise reaction, so both are one FIFO, run by `JS.checkpoint`
+   wherever the event code runs a checkpoint (after each script, task, event and frame
+   callback), as with QuickJS. The theorems of `EventLoop.checkpoint` are not yet about this
+   queue.
+4. **`engine:"bubblepop"` in `scriptSession`** (`WebScripts.startLean`, `actLean`); `info`
+   lists `engines`. Every action answers the fields of a QuickJS turn, and `engine`.
+5. **The Wasm build**: the engine is plain Lean and compiles into the Foafnaut core Wasm
+   with no new import (section 12 has its speed).
+
+What the prelude needed of the engine, added here (each in `JS/Interp.lean`, `JS/Regex.lean`,
+`JS/Value.lean`):
+
+- regular expression literals and RegExp: a backtracking matcher in the shape of §22.2.2
+  (`JS/Regex.lean`: classes, groups, named groups, back references, lookahead and
+  lookbehind, lazy quantifiers, flags `gimsuy`), `exec`, `test`, the flag getters, and
+  `String.prototype.match`, `matchAll`, `search`, `replace`, `replaceAll` and `split` with
+  a RegExp (GetSubstitution, function replacers, named groups);
+- Proxy (`get`, `set`, `has`, `deleteProperty`, `ownKeys`, `getOwnPropertyDescriptor`,
+  and `instanceof` through the target), and `Reflect.get` with a receiver;
+- optional chaining (`a?.b`, `a?.[k]`, `f?.()`, short-circuiting the whole chain);
+- ArrayBuffer and the nine typed arrays (views, `set`, `subarray`, `fill`, the iteration
+  methods), `JSON.parse`, `Date` and `performance.now()` on the host's clock;
+- Map and Set lookups by hash (they scanned the entries: the prelude keeps a wrapper per
+  node in a Map).
+
+Test262 after these: language subset 5,625 of 6,297 run (89.3 %; 5,618 before); the
+built-ins sample 261 of 436 (59.9 %; 247 before, section 9a).
+
+## 12. BubblePopJS in pages: results
+
+Measured on the owner's Mac, 2026-11-08, native engine library (`build-web-render.sh
+--native`), with other builds running on the machine; the QuickJS guest built from this
+prelude (`tools/wasmvm/build-quickjs.sh`).
+
+**The scripted-page tests** pass on BubblePopJS (`SCRIPT_ENGINE=bubblepop`):
+`native_html_scripts_test.ts`, `native_html_pointer_test.ts` (SVG targets, pointer events,
+layout reads, the script clock) and `page_gpu_test.ts` (WebGPU and WebGL). The Lean check
+`WasmVM/Tests/LeanJSPage.lean` starts a page at build time.
+
+**The demo pages** (`bubblepop_pages_test.ts`): timers-and-clicks, foaf-explorer,
+showcase-dataviz-script, webgpu-triangle, webgl-triangle and js-status start, run six
+seconds of virtual time, take a click and settle, with no page error, and make the same DOM
+commands, logs, timers and page GPU commands on both engines. In the off-screen window
+(`run_html.ts --offscreen`) the WebGPU triangle and Timers and clicks run on BubblePopJS
+with no page error.
+
+**WPT** (`tests/browser-wpt/testharness-run.ts`, the engine backend, which loads no
+iframes; `--script-engine bubblepop`):
+
+| Directory | BubblePopJS | QuickJS-NG in WasmVM |
+|---|---|---|
+| html/webappapis/timers | 22 / 23 | 22 / 23 |
+| html/webappapis/microtask-queuing | 8 / 8 | 8 / 8 |
+| dom/events | 567 / 618 | 567 / 618 |
+| dom/nodes | 8,243 / 9,074 | 8,257 / 9,074 |
+| html/webappapis/scripting/event-loops | 4 / 6 | 4 / 6 |
+| **total** | **8,844 / 9,729** | **8,858 / 9,729** |
+
+Result file: `tests/browser-wpt/testharness-bubblepop-20261108.json`. The 14 subtests that
+QuickJS passes and BubblePopJS does not: 10 of `CharacterData` with characters outside the
+BMP (BubblePopJS counts a string's characters, not its UTF-16 units; section 7) and 4 of
+`attributes.html` (the own keys of a NamedNodeMap). No subtest passes only on BubblePopJS.
+Eight files that loop until the step budget ends (`Event-timestamp-safe-resolution`, the
+six `NodeList-static-length-getter-tampered`, `name-validation`) were left out of the
+BubblePopJS run (`--exclude`); on QuickJS each is a TIMEOUT with no subtest. The
+13,705 subtests of the earlier count (12,605 pass) are of the WasmVM bench backend
+(`--engine bench`), which loads iframes; the engine backend loads none, so pages with
+iframes report fewer subtests. Two engine bugs this run found are fixed: the call depth was
+not given back when a call threw (after 400 caught exceptions every call was a
+`RangeError`), and `hasOwnProperty` did not see a Proxy's own keys.
+
+**Speed** (`bubblepop_bench.ts`, the scripts of `hub_scripts_speed.mjs`; the engine's own
+time of each turn):
+
+| Case | BubblePopJS | QuickJS-NG in WasmVM |
+|---|---|---|
+| Ready for the first page | 120 ms (the prelude runs at the first page) | 1,594 ms (module load; the prelude runs then) |
+| A later page start (one empty script) | 0.47 ms | 7.8 ms |
+| `fib(24)` (start turn) | 134 ms | 1,773 ms |
+| Start of a WPT page (Node-appendChild, testharness.js) | 92 ms | 1,107 ms |
+| A 16 ms turn of timers-and-clicks, mean / largest over 3 s | 0.08 / 1.3 ms | 0.81 / 13.3 ms |
+
+So natively BubblePopJS runs these scripts 10 to 13 times faster than QuickJS in WasmVM.
+A script that loops until its budget ends is slower: the budget is 5 M steps
+(`LeanJS.runBudget`), a step is a call or an iteration, and a loop that builds a DOM event
+at each step (`dom/events/Event-timestamp-safe-resolution.html`) spends minutes on it, where
+QuickJS's 4 G instructions take 40 s. The heap has no collector yet (section 8).
+
+**The defaults.** Native hosts (`run_html.ts`, the desktop app) run BubblePopJS by default
+(`WebRenderScript.defaultEngine "native"`): it passes the scripted-page tests, gives the
+demo pages the same commands as QuickJS, and is faster there. The Hub keeps QuickJS-NG:
+it runs there translated to the browser's WebAssembly (36 to 216 times faster than
+interpreted, `2026-11-08-wasmvm-aot.md`), and BubblePopJS does not run in the Wasm engine
+yet. In the Wasm build the prelude's run overflowed the 4 MB stack (`-sSTACK_SIZE=4MB`):
+natively clang turns the evaluator's mutual tail calls (statement lists, loops) into
+jumps, and WebAssembly without the tail-call proposal can not, so the stack grows with
+each statement. With a 64 MB stack (a local build, not committed) the run stopped with a
+WebAssembly trap ("remainder by zero") instead, not yet traced. Lean refuses BubblePopJS on
+the Hub and in a window whose engine is the Wasm build (`run_html.ts` without
+`--native-engine`; `WebRenderScript.hostRefusal`: marker `JS REFUSED`, the settings row says "not here
+yet"). To lift it: find the trap, then build with the tail-call proposal (`-mtail-call`) or
+make the evaluator's statement and loop paths self tail calls.
+
+**The setting.** Settings has three large choices under "Page scripts" (BubblePopJS,
+QuickJS-NG, None; `foafnaut:scripts/...`); Lean makes the rows with the current one ticked
+(op `scriptChoices`), says what a setting means for a page on a host (op `scriptPlan`:
+engine, whether it runs, the chrome marker `JS BUBBLEPOP`, `JS QUICKJS-NG`, `JS OFF` or
+`JS REFUSED`, and a notice), and checks a choice (op `scriptSetting`). The browser state
+keeps it (`WebState.Settings.scripts`, `foafnaut:scripts`); "" is the host's default.
+
+
+## 13. Next steps
 
 1. Language: the remaining early errors (269 tests, now the largest group); `for
    await`; exact private-name brands; regular expression literals (the repository's
