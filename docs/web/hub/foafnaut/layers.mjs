@@ -240,3 +240,66 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
     },
   };
 }
+
+// The layer surface with no GPU (docs/designissues/2026-11-08-cpu-render-backend.md). Lean
+// drew each layer on the CPU (SVGRaster: a render with cpu:true gives each scene its RGBA
+// rows, `pixels`); this keeps those bytes and copies them. It decides no colour and no
+// position: the composite is WebDocument.compositeShader's copy, window row y<top from
+// chrome row y and row y>=top from page row y-top+offset, white past the page layer. The
+// Hub draws no press rectangle, as with the GPU. A scroll inside the band is a copy, with
+// no Lean call, as with the GPU.
+const pixelsOf=scene=>scene?.pixels instanceof Uint8Array&&scene.pixels.length===scene.width*scene.height*4?scene.pixels:undefined;
+/** The answer of a render with layers:true and cpu:true, checked; undefined for any other. */
+export function cpuLayersOf(answer){
+  const layers=layersOf(answer);
+  return layers&&pixelsOf(layers.page)&&pixelsOf(layers.chrome)?layers:undefined;
+}
+/** The window at this offset from the two layers' bytes: WebDocument.compositeShader. */
+export function compositeBytes(chrome,page,place,width,height,offset){
+  const out=new Uint8Array(width*height*4).fill(255),row=width*4;
+  const top=Math.min(place.top,height,chrome.height);
+  if(chrome.width===width)out.set(chrome.pixels.subarray(0,top*row),0);
+  if(page.width===width){
+    const rows=Math.max(0,Math.min(height-place.top,page.height-offset));
+    if(rows>0)out.set(page.pixels.subarray(offset*row,(offset+rows)*row),place.top*row);
+  }
+  return out;
+}
+/** A canvas (OffscreenCanvas or HTMLCanvasElement, 2D) shown with Lean's CPU layers, or
+ * with no canvas, frames read back (the page paints them). Same calls as createLayerSurface. */
+export function createCpuLayerSurface(canvas){
+  const context=canvas?canvas.getContext('2d'):undefined;
+  if(canvas&&!context)return null;
+  const stats={planRequests:0,pipelineBuilds:0,layerTextures:0,composites:0,scenes:0,cpu:true};
+  let shown,closed=false;
+  const ensure=()=>{if(closed)throw Error('CPU layer surface is closed');};
+  const need=scene=>{const pixels=pixelsOf(scene);if(!pixels)throw Error('Lean answered no CPU pixels for a layer');stats.scenes++;return {width:scene.width,height:scene.height,pixels};};
+  let chrome,page;
+  function show(width,height,rgba){
+    if(!context)return rgba;
+    if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}
+    context.putImageData(new ImageData(new Uint8ClampedArray(rgba.buffer,rgba.byteOffset,rgba.byteLength),width,height),0,0);
+  }
+  return {
+    format:'rgba8unorm',cpu:true,
+    get stats(){return {...stats,failed:false,lost:''};},
+    get layers(){return shown;},
+    async drawLayers(answer){ensure();chrome=need(answer.chrome);page=need(answer.page);shown=answer;},
+    // Page canvases need a GPU: with none they stay as Lean drew them (blank).
+    async replayGpu(){},
+    refreshCanvases(){return false;},
+    get pageGpuStats(){return undefined;},
+    async setChrome(scene,top){
+      ensure();if(!shown)throw Error('setChrome before any layers were drawn');
+      chrome=need(scene);shown={...shown,chrome:scene,layers:{...shown.layers,top}};
+    },
+    async composite(width,height,offset){
+      ensure();if(!shown)throw Error('composite before any layers were drawn');
+      stats.composites++;
+      return show(width,height,compositeBytes(chrome,page,shown.layers,width,height,offset));
+    },
+    async drawSingle(frame){ensure();const f=need(frame);return show(f.width,f.height,f.pixels.slice());},
+    target:()=>undefined,
+    close(){closed=true;chrome=page=shown=undefined;},
+  };
+}

@@ -165,6 +165,14 @@ private def Transform.identity (t : Transform) : Bool :=
   t.a == 1 && t.b == 0 && t.c == 0 && t.d == 1 && t.e == 0 && t.f == 0
 private def Transform.apply (t : Transform) (x y : Float) : Float × Float :=
   L4Factoidal.Math.Affine2.applyPoint floatOps t x y
+/-- `Transform.apply` with the Float operations written out, in the same order: no
+    scalar-operations record and no boxed closure per operation. Every sample of the
+    CPU raster maps its point into each primitive's space with it. -/
+private def Transform.applyFast (t : Transform) (x y : Float) : Float × Float :=
+  (t.a*x+t.c*y+t.e,t.b*x+t.d*y+t.f)
+@[csimp] private theorem Transform.apply_eq_fast : @Transform.apply = @Transform.applyFast := by
+  funext t x y
+  rfl
 private def checkedTransform (t : Transform) : Except String Transform := do
   let values (m : Transform) := [m.a,m.b,m.c,m.d,m.e,m.f]
   if !(values t).all (fun x => x.isFinite && x.abs <= 1000000000) || !t.det.isFinite then
@@ -2193,6 +2201,188 @@ private def pathHit (env : Env) (base count : Nat) (rule : FillRule) : Bool := I
     if up.eval env then winding := winding+1
     if down.eval env then winding := winding-1
   return if rule == .nonzero then winding != 0 else winding%2 != 0
+/-- The two tests of one edge of `pathHit` and `windingHit` as plain code: `edgeConditions`
+    of the points at floats `oa` and `ob` of the record, with the same Float operations in
+    the same order, and no expression tree, environment or pair (`edgeUp_eq`,
+    `polygonUp_eq`). The CPU raster (`SVGRaster`) tests every glyph edge with them. -/
+private def edgeUpAt (data : Array Float) (base oa ob : Nat) (q : Float × Float) : Bool :=
+  let px := q.1*Float.ofNat 1+q.2*Float.ofNat 0
+  let py := q.1*Float.ofNat 0+q.2*Float.ofNat 1
+  let a1 := data[base+oa]!
+  let a2 := data[base+(oa+1)]!
+  let b1 := data[base+ob]!
+  let b2 := data[base+(ob+1)]!
+  let ax := a1*Float.ofNat 1+a2*Float.ofNat 0
+  let ay := a1*Float.ofNat 0+a2*Float.ofNat 1
+  let bx := b1*Float.ofNat 1+b2*Float.ofNat 0
+  let byy := b1*Float.ofNat 0+b2*Float.ofNat 1
+  let cross := (bx-ax)*(py-ay)-(byy-ay)*(px-ax)
+  (decide (ay <= py) && !decide (byy <= py)) && !decide (cross <= Float.ofNat 0)
+private def edgeDownAt (data : Array Float) (base oa ob : Nat) (q : Float × Float) : Bool :=
+  let px := q.1*Float.ofNat 1+q.2*Float.ofNat 0
+  let py := q.1*Float.ofNat 0+q.2*Float.ofNat 1
+  let a1 := data[base+oa]!
+  let a2 := data[base+(oa+1)]!
+  let b1 := data[base+ob]!
+  let b2 := data[base+(ob+1)]!
+  let ax := a1*Float.ofNat 1+a2*Float.ofNat 0
+  let ay := a1*Float.ofNat 0+a2*Float.ofNat 1
+  let bx := b1*Float.ofNat 1+b2*Float.ofNat 0
+  let byy := b1*Float.ofNat 0+b2*Float.ofNat 1
+  let cross := (bx-ax)*(py-ay)-(byy-ay)*(px-ax)
+  (decide (byy <= py) && !decide (ay <= py)) && !decide (Float.ofNat 0 <= cross)
+private def edgeUp (data : Array Float) (base : Nat) (q : Float × Float) (i : Nat) : Bool :=
+  edgeUpAt data base (20+4*i) (22+4*i) q
+private def edgeDown (data : Array Float) (base : Nat) (q : Float × Float) (i : Nat) : Bool :=
+  edgeDownAt data base (20+4*i) (22+4*i) q
+private theorem edgeUp_eq (env : Env) (base i : Nat) :
+    Test.eval env (pathConditions base i).1 = edgeUp env.data base env.position i := rfl
+private theorem edgeDown_eq (env : Env) (base i : Nat) :
+    Test.eval env (pathConditions base i).2 = edgeDown env.data base env.position i := rfl
+
+/-- One polygon edge of `windingHit`: from point `i` to point `i+1` (the last to the first). -/
+private def polygonEdgeStep (data : Array Float) (base count : Nat) (q : Float × Float) (winding : Int) (i : Nat) : Int :=
+  let w := if edgeUpAt data base (20+2*i) (20+2*((i+1)%count)) q then winding+1 else winding
+  if edgeDownAt data base (20+2*i) (20+2*((i+1)%count)) q then w-1 else w
+
+private theorem polygonEdge_body (env : Env) (base count i : Nat) (w : Int) :
+    (if Test.eval env (windingConditions base count i).fst = true then
+        if Test.eval env (windingConditions base count i).snd = true then (pure (ForInStep.yield (w + 1 - 1)) : Id (ForInStep Int))
+        else pure (ForInStep.yield (w + 1))
+      else
+        if Test.eval env (windingConditions base count i).snd = true then pure (ForInStep.yield (w - 1))
+        else pure (ForInStep.yield w)) =
+      pure (ForInStep.yield (polygonEdgeStep env.data base count env.position w i)) := by
+  have up : Test.eval env (windingConditions base count i).1 =
+      edgeUpAt env.data base (20+2*i) (20+2*((i+1)%count)) env.position := rfl
+  have down : Test.eval env (windingConditions base count i).2 =
+      edgeDownAt env.data base (20+2*i) (20+2*((i+1)%count)) env.position := rfl
+  rw [up, down]
+  unfold polygonEdgeStep
+  cases edgeUpAt env.data base (20+2*i) (20+2*((i+1)%count)) env.position <;>
+    cases edgeDownAt env.data base (20+2*i) (20+2*((i+1)%count)) env.position <;> rfl
+
+/-- `windingHit` as a loop over `polygonEdgeStep`. -/
+private def polygonWindingFrom (data : Array Float) (base : Nat) (q : Float × Float) (count i : Nat)
+    (winding : Int) : Int :=
+  if i < count then polygonWindingFrom data base q count (i+1) (polygonEdgeStep data base count q winding i) else winding
+termination_by count - i
+
+private theorem polygonWindingFrom_eq (data : Array Float) (base : Nat) (q : Float × Float) (count : Nat) :
+    ∀ n i winding, count - i = n →
+      polygonWindingFrom data base q count i winding = (List.range' i n).foldl (polygonEdgeStep data base count q) winding := by
+  intro n
+  induction n with
+  | zero =>
+    intro i winding h
+    rw [polygonWindingFrom]
+    simp [show ¬ i < count by omega]
+  | succ n ih =>
+    intro i winding h
+    rw [polygonWindingFrom, if_pos (by omega), ih (i+1) _ (by omega)]
+    simp [List.range'_succ]
+
+private def windingHitFast (data : Array Float) (base count : Nat) (rule : FillRule) (q : Float × Float) : Bool :=
+  let winding := polygonWindingFrom data base q count 0 0
+  if rule == .nonzero then winding != 0 else winding%2 != 0
+
+private theorem windingHitFast_eq (env : Env) (base count : Nat) (rule : FillRule) :
+    windingHit env base count rule = windingHitFast env.data base count rule env.position := by
+  have loop := polygonWindingFrom_eq env.data base env.position count count 0 0 (by omega)
+  rw [← List.range_eq_range'] at loop
+  simp only [windingHit, windingHitFast, polygonEdge_body, List.forIn_pure_yield_eq_foldl, loop]
+  rfl
+#print axioms windingHitFast_eq
+
+/-- One edge's change of the winding number in `pathHit`. -/
+private def pathEdgeStep (data : Array Float) (base : Nat) (q : Float × Float) (winding : Int) (i : Nat) : Int :=
+  let w := if edgeUp data base q i then winding+1 else winding
+  if edgeDown data base q i then w-1 else w
+
+/-- The loop body of `pathHit` is `pathEdgeStep`. -/
+private theorem pathEdge_body (env : Env) (base i : Nat) (w : Int) :
+    (if Test.eval env (pathConditions base i).fst = true then
+        if Test.eval env (pathConditions base i).snd = true then (pure (ForInStep.yield (w + 1 - 1)) : Id (ForInStep Int))
+        else pure (ForInStep.yield (w + 1))
+      else
+        if Test.eval env (pathConditions base i).snd = true then pure (ForInStep.yield (w - 1))
+        else pure (ForInStep.yield w)) =
+      pure (ForInStep.yield (pathEdgeStep env.data base env.position w i)) := by
+  rw [edgeUp_eq, edgeDown_eq]
+  unfold pathEdgeStep
+  cases edgeUp env.data base env.position i <;> cases edgeDown env.data base env.position i <;> rfl
+
+private def pathWindingFrom (data : Array Float) (base : Nat) (q : Float × Float) (count i : Nat)
+    (winding : Int) : Int :=
+  if i < count then pathWindingFrom data base q count (i+1) (pathEdgeStep data base q winding i) else winding
+termination_by count - i
+
+private theorem pathWindingFrom_eq (data : Array Float) (base : Nat) (q : Float × Float) (count : Nat) :
+    ∀ n i winding, count - i = n →
+      pathWindingFrom data base q count i winding = (List.range' i n).foldl (pathEdgeStep data base q) winding := by
+  intro n
+  induction n with
+  | zero =>
+    intro i winding h
+    rw [pathWindingFrom]
+    simp [show ¬ i < count by omega]
+  | succ n ih =>
+    intro i winding h
+    rw [pathWindingFrom, if_pos (by omega), ih (i+1) _ (by omega)]
+    simp [List.range'_succ]
+
+/-- `pathHit` with `pathEdgeStep` in a loop: no list of edge indices and no expression tree. -/
+private def pathHitFast (data : Array Float) (base count : Nat) (rule : FillRule) (q : Float × Float) : Bool :=
+  let px := q.1*Float.ofNat 1+q.2*Float.ofNat 0
+  let py := q.1*Float.ofNat 0+q.2*Float.ofNat 1
+  if !((decide (data[base+0]! <= px) && decide (px <= data[base+2]!)) &&
+      (decide (data[base+1]! <= py) && decide (py <= data[base+3]!))) then false
+  else
+    let winding := pathWindingFrom data base q count 0 0
+    if rule == .nonzero then winding != 0 else winding%2 != 0
+
+private theorem pathHitFast_eq (env : Env) (base count : Nat) (rule : FillRule) :
+    pathHit env base count rule = pathHitFast env.data base count rule env.position := by
+  have loop := pathWindingFrom_eq env.data base env.position count count 0 0 (by omega)
+  rw [← List.range_eq_range'] at loop
+  simp only [pathHit, pathHitFast, pathEdge_body, List.forIn_pure_yield_eq_foldl, loop]
+  rfl
+#print axioms pathHitFast_eq
+
+/-- The local `py` of `edgeUp` and `edgeDown` at point `q`. -/
+def pathSampleY (q : Float × Float) : Float := q.1*Float.ofNat 0+q.2*Float.ofNat 1
+
+/-- The edges of a path record whose two tests can hold on the line at local `py`: an
+    edge whose ends are both at or both below `py` (by `<=`, as the tests compare them)
+    has both tests false there. -/
+def pathSpansAt (data : Array Float) (base count : Nat) (py : Float) : Array Nat := Id.run do
+  let mut out := #[]
+  for i in [0:count] do
+    let a1 := data[base+(20+4*i)]!
+    let a2 := data[base+(20+4*i+1)]!
+    let b1 := data[base+(22+4*i)]!
+    let b2 := data[base+(22+4*i+1)]!
+    let ay := a1*Float.ofNat 0+a2*Float.ofNat 1
+    let byy := b1*Float.ofNat 0+b2*Float.ofNat 1
+    if decide (ay <= py) != decide (byy <= py) then out := out.push i
+  return out
+
+/-- `pathHitFast` with the crossing edges of some lines known (`pathSpansAt`): at a point
+    on one of those lines (its `pathSampleY` equal, so every comparison with it is the
+    same) only those edges are tested; elsewhere every edge is. The CPU raster
+    (`SVGRaster`) knows them for the sixteen sample lines of a pixel row. -/
+def pathHitSpans (data : Array Float) (base count : Nat) (rule : FillRule)
+    (spans : Array (Float × Array Nat)) (q : Float × Float) : Bool :=
+  let px := q.1*Float.ofNat 1+q.2*Float.ofNat 0
+  let py := q.1*Float.ofNat 0+q.2*Float.ofNat 1
+  if !((decide (data[base+0]! <= px) && decide (px <= data[base+2]!)) &&
+      (decide (data[base+1]! <= py) && decide (py <= data[base+3]!))) then false
+  else
+    let winding := match spans.find? (·.1 == py) with
+      | some (_,edges) => edges.foldl (pathEdgeStep data base q) 0
+      | none => pathWindingFrom data base q count 0 0
+    if rule == .nonzero then winding != 0 else winding%2 != 0
+
 private def windingWGSL (count : Nat) (conditions : Nat → Test × Test) (rule : FillRule) : String :=
   "var winding:i32=0;\n" ++ String.join ((List.range count).map fun i =>
     let (up,down) := conditions i
@@ -2470,7 +2660,7 @@ theorem BackendPrimitive.data_length (items : List BackendPrimitive) :
     rw [Primitive.rows_length,Primitive.rowCount_eq_storageRows,ih]
     exact (Nat.add_mul _ _ _).symm
 
-private def Scene.data (s : Scene) : Array Float :=
+def Scene.data (s : Scene) : Array Float :=
   ([s.mapping.sx,s.mapping.sy,s.mapping.tx,s.mapping.ty,
     s.mapping.minX,s.mapping.minY,s.mapping.viewportWidth,s.mapping.viewportHeight] ++
     s.compiled.flatMap Primitive.rows).toArray
@@ -2784,7 +2974,7 @@ def maxTileEntries : Nat := 1000000
 widened for a stroke, through the transform and the page mapping, with a
 margin. `none` means the box is not known, and the primitive joins every tile.
 Clips can only shrink what is painted, so they are not used. -/
-private def Primitive.screenBox (m : Mapping) (p : BackendPrimitive) :
+def Primitive.screenBox (m : Mapping) (p : BackendPrimitive) :
     Option (Float × Float × Float × Float) :=
   let bounds : List Float := match p.geometry with
     | .rect x y w h => [min x (x+w),min y (y+h),max x (x+w),max y (y+h)]
@@ -2914,7 +3104,7 @@ across, tiles down, one start offset for each tile and a final end offset, then
 the record row of each listed primitive, then the paint table. A primitive is left out of a tile only
 when its conservative box does not touch the tile; there it can not change a
 pixel, so the image does not change. -/
-private def Scene.tiles (s : Scene) : Array Nat := Id.run do
+def Scene.tiles (s : Scene) : Array Nat := Id.run do
   let tail := s.paintTableTail
   let across := (s.width+tileSize-1)/tileSize
   let down := (s.height+tileSize-1)/tileSize
@@ -3028,19 +3218,23 @@ private def Scene.wgsl (_s : Scene) : String := sceneShader
 private def sceneShaderJSON : String := quote sceneShader
 
 
-private def Primitive.coverageAt (primitive : BackendPrimitive) (data : Array Float)
-    (base : Nat) (position : Float × Float) : Bool × Bool := Id.run do
-  let clipCount := primitive.clips.length
-  let mut clipBase := base + (primitive.rowCount-clipCount*clipRowCount)*4
-  for _ in primitive.clips do
-    if data[clipBase+3]! != 1 then return (false,false)
-    let x := data[clipBase]! * position.1 + data[clipBase+1]! * position.2 + data[clipBase+2]!
-    let y := data[clipBase+4]! * position.1 + data[clipBase+5]! * position.2 + data[clipBase+6]!
-    if x < data[clipBase+8]! || y < data[clipBase+9]! ||
-        x > data[clipBase+8]!+data[clipBase+10]! || y > data[clipBase+9]!+data[clipBase+11]! then
-      return (false,false)
-    clipBase := clipBase+clipRowCount*4
-  let localPoint := primitive.transform.inverse.apply position.1 position.2
+/-- The clip rectangles of a record, from its first clip row: every one must hold the
+    point, as the scene shader's clip loop. -/
+private def clipPass (data : Array Float) (clipBase : Nat) : List ClipRect → Float × Float → Bool
+  | [],_ => true
+  | _::rest,position =>
+    if data[clipBase+3]! != 1 then false
+    else
+      let x := data[clipBase]! * position.1 + data[clipBase+1]! * position.2 + data[clipBase+2]!
+      let y := data[clipBase+4]! * position.1 + data[clipBase+5]! * position.2 + data[clipBase+6]!
+      if x < data[clipBase+8]! || y < data[clipBase+9]! ||
+          x > data[clipBase+8]!+data[clipBase+10]! || y > data[clipBase+9]!+data[clipBase+11]! then false
+      else clipPass data (clipBase+clipRowCount*4) rest position
+
+/-- Fill and stroke coverage at a point of the primitive's own space (after its
+    transform), with no clip. -/
+private def Primitive.coverageLocal (primitive : BackendPrimitive) (data : Array Float)
+    (base : Nat) (localPoint : Float × Float) : Bool × Bool :=
   let env : Env := {data,position:=localPoint}
   let fillHit := match primitive.geometry with
     | .polygon points => (boundsCondition base).eval env && windingHit env base points.length primitive.style.rule
@@ -3055,7 +3249,17 @@ private def Primitive.coverageAt (primitive : BackendPrimitive) (data : Array Fl
         hit := hit || (pieceCondition piece offset).eval env
         offset := offset+20
       return hit
-  return (fillHit,strokeHit)
+  (fillHit,strokeHit)
+
+/-- The first float of a record's clip rows. -/
+private def Primitive.clipStart (primitive : BackendPrimitive) (base : Nat) : Nat :=
+  base + (primitive.rowCount-primitive.clips.length*clipRowCount)*4
+
+def Primitive.coverageAt (primitive : BackendPrimitive) (data : Array Float)
+    (base : Nat) (position : Float × Float) : Bool × Bool :=
+  if clipPass data (primitive.clipStart base) primitive.clips position then
+    primitive.coverageLocal data base (primitive.transform.inverse.apply position.1 position.2)
+  else (false,false)
 
 /-- `fillCondition` of a rectangle as plain code: the same Float operations in the same
     order, with no closures or boxed values. `rectHit_eq_fillCondition` ties the two. -/
@@ -3070,52 +3274,93 @@ private theorem rectHit_eq_fillCondition (data : Array Float) (base : Nat) (a b 
     rectHit data[base+0]! data[base+1]! data[base+2]! data[base+3]! q =
       (fillCondition (.rect a b c d) base).eval {data,position := q} := rfl
 
-/-- Prepare un-clipped, un-dashed geometry once. Winding paths retain the
-    reference edge traversal, with its edge count shared across all samples.
-    Clipped and dashed geometry keeps every existing coverage check. -/
-private inductive PreparedCoverage where
+/-- Coverage with the work that does not depend on the point done once: the inverse
+    transform, the conditions with their data, the clip rows. Dashed strokes keep the
+    reference test of each piece (`local`). -/
+inductive PreparedCoverage where
   | rectFill (inverse : Transform) (x y w h : Float)
   | analytic (inverse : Transform) (data : Array Float) (fill stroke : Prepared Bool)
-  | reference (primitive : BackendPrimitive) (data : Array Float) (base : Nat)
+  | local (inverse : Transform) (run : Float × Float → Bool × Bool)
+  | clipped (pass : Float × Float → Bool) (inner : PreparedCoverage)
 
-private def PreparedCoverage.eval : PreparedCoverage → (Float × Float) → Bool × Bool
+def PreparedCoverage.eval : PreparedCoverage → (Float × Float) → Bool × Bool
   | .rectFill inverse x y w h,position =>
     (rectHit x y w h (inverse.apply position.1 position.2),false)
   | .analytic inverse data fill stroke,position =>
     let env : Env := {data,position := inverse.apply position.1 position.2}
     (fill.eval env,stroke.eval env)
-  | .reference p data base,position => p.coverageAt data base position
+  | .local inverse run,position => run (inverse.apply position.1 position.2)
+  | .clipped pass inner,position => if pass position then inner.eval position else (false,false)
 
-private def Primitive.prepareCoverage (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedCoverage :=
-  match p.clips,p.dashParts,p.geometry with
-  | [],none,.rect .. | [],none,.circle .. | [],none,.ellipse .. | [],none,.line .. =>
+private def Primitive.prepareLocal (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedCoverage :=
+  match p.dashParts,p.geometry with
+  | none,.rect .. | none,.circle .. | none,.ellipse .. | none,.line .. =>
     .analytic p.transform.inverse data ((fillCondition p.geometry base).prepare data)
       ((strokeCondition p.geometry base p.style.lineCap).prepare data)
-  | [],none,.polygon points =>
+  | none,.polygon points =>
     let count := points.length
     .analytic p.transform.inverse data
       (((boundsCondition base).prepare data).and
-        (.dynamic (fun env => windingHit env base count p.style.rule)))
+        (.dynamic (fun env => windingHitFast env.data base count p.style.rule env.position)))
       ((strokeCondition p.geometry base p.style.lineCap).prepare data)
-  | [],none,.path contours =>
+  | none,.path contours =>
     let count := (NativeSVGPath.edges contours).length
     .analytic p.transform.inverse data
-      (.dynamic (fun env => pathHit env base count p.style.rule))
+      (.dynamic (fun env => pathHitFast env.data base count p.style.rule env.position))
       ((strokeCondition p.geometry base p.style.lineCap).prepare data)
-  | _,_,_ => .reference p data base
+  | _,_ => .local p.transform.inverse (p.coverageLocal data base)
 
-private theorem Primitive.prepareCoverage_correct (p : BackendPrimitive) (data : Array Float)
+def Primitive.prepareCoverage (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedCoverage :=
+  match p.clips with
+  | [] => p.prepareLocal data base
+  | clips => .clipped (clipPass data (p.clipStart base) clips) (p.prepareLocal data base)
+
+private theorem Primitive.prepareLocal_correct (p : BackendPrimitive) (data : Array Float)
+    (base : Nat) (position : Float × Float) :
+    (p.prepareLocal data base).eval position =
+      p.coverageLocal data base (p.transform.inverse.apply position.1 position.2) := by
+  cases dash : p.dashParts with
+  | some pieces => simp [Primitive.prepareLocal,PreparedCoverage.eval,dash]
+  | none =>
+    cases geo : p.geometry <;>
+      simp [Primitive.prepareLocal,PreparedCoverage.eval,Primitive.coverageLocal,dash,geo,
+        Prepared.eval_and,Test.prepare_correct] <;> simp [Prepared.eval,pathHitFast_eq,windingHitFast_eq]
+
+/-- A page point in the primitive's own space. -/
+def Primitive.localPoint (p : BackendPrimitive) (x y : Float) : Float × Float :=
+  p.transform.inverse.apply x y
+
+/-- The edge count of a path record without dashes: the primitives whose fill
+    `prepareCoverageSpans` tests with known crossing edges. -/
+def Primitive.pathEdges? (p : BackendPrimitive) : Option Nat :=
+  match p.dashParts,p.geometry with
+  | none,.path contours => some (NativeSVGPath.edges contours).length
+  | _,_ => none
+
+/-- `prepareCoverage` with the path fill test `pathHitSpans`. -/
+def Primitive.prepareCoverageSpans (p : BackendPrimitive) (data : Array Float) (base : Nat)
+    (spans : Array (Float × Array Nat)) : PreparedCoverage :=
+  let inner : PreparedCoverage := match p.dashParts,p.geometry with
+    | none,.path contours =>
+      let count := (NativeSVGPath.edges contours).length
+      .analytic p.transform.inverse data
+        (.dynamic (fun env => pathHitSpans env.data base count p.style.rule spans env.position))
+        ((strokeCondition p.geometry base p.style.lineCap).prepare data)
+    | _,_ => p.prepareLocal data base
+  match p.clips with
+  | [] => inner
+  | clips => .clipped (clipPass data (p.clipStart base) clips) inner
+
+theorem Primitive.prepareCoverage_correct (p : BackendPrimitive) (data : Array Float)
     (base : Nat) (position : Float × Float) :
     (p.prepareCoverage data base).eval position = p.coverageAt data base position := by
+  unfold Primitive.prepareCoverage Primitive.coverageAt
   cases clips : p.clips with
-  | cons clip rest => simp [Primitive.prepareCoverage,PreparedCoverage.eval,clips]
-  | nil =>
-    cases dash : p.dashParts with
-    | some pieces => simp [Primitive.prepareCoverage,PreparedCoverage.eval,clips,dash]
-    | none =>
-      cases geo : p.geometry <;>
-        simp [Primitive.prepareCoverage,PreparedCoverage.eval,Primitive.coverageAt,clips,dash,geo,
-          Prepared.eval_and,Test.prepare_correct] <;> simp [Prepared.eval]
+  | nil => simp [clipPass,Primitive.prepareLocal_correct]
+  | cons clip rest =>
+    simp only [PreparedCoverage.eval,Primitive.prepareLocal_correct]
+
+#print axioms Primitive.prepareCoverage_correct
 
 /-- Topmost geometric paint item at a viewport coordinate, in the same
     painter order and using the exact retained coverage predicates as sampling.
@@ -3181,7 +3426,7 @@ theorem Scene.hitTestAt_none_outside_viewport (s : Scene) (screenX screenY : Flo
     s.hitTestAt screenX screenY = none := by
   simp [Scene.hitTestAt, outside]
 
-private def overColors (fill stroke : List Float) (opacity : Float)
+def overColors (fill stroke : List Float) (opacity : Float)
     (hits : Bool × Bool) (result : Color) : Color :=
   let fa : Float := if hits.1 then fill[3]! else 0
   let sa : Float := if hits.2 then stroke[3]! else 0
@@ -3205,6 +3450,10 @@ private def Primitive.paintAt (p : BackendPrimitive) (paint : Paint) (alpha : Fl
     [c[0]!,c[1]!,c[2]!,c[3]!*alpha]
   | _ => resolved paint p.style alpha
 
+/-- A paint that is the same row at every point. Not inlined, so that the row is made
+    once when the record is prepared and not again at each sample. -/
+@[noinline] private def constantPaint (row : List Float) : Float × Float → List Float := fun _ => row
+
 /-- `paintAt` with the work that does not depend on the position done once. -/
 private def Primitive.preparePaint (p : BackendPrimitive) (paint : Paint) (alpha : Float) :
     Float × Float → List Float :=
@@ -3221,25 +3470,25 @@ private def Primitive.preparePaint (p : BackendPrimitive) (paint : Paint) (alpha
       let q := inverse.apply position.1 position.2
       let c := record.colorAt q.1 q.2
       [c[0]!,c[1]!,c[2]!,c[3]!*alpha]
-  | _ => let row := resolved paint p.style alpha; fun _ => row
+  | _ => constantPaint (resolved paint p.style alpha)
 
 private theorem Primitive.preparePaint_correct (p : BackendPrimitive) (paint : Paint) (alpha : Float)
     (position : Float × Float) : p.preparePaint paint alpha position = p.paintAt paint alpha position := by
   cases paint <;> rfl
 
-private def Primitive.sampleStep (p : BackendPrimitive) (data : Array Float) (base : Nat)
+def Primitive.sampleStep (p : BackendPrimitive) (data : Array Float) (base : Nat)
     (position : Float × Float) (result : Color) : Color :=
   overColors (p.paintAt p.style.fill p.style.fillOpacity position)
     (p.paintAt p.style.stroke p.style.strokeOpacity position) p.effectiveOpacity
     (p.coverageAt data base position) result
 
-private structure PreparedSample where
+structure PreparedSample where
   coverage : PreparedCoverage
   fill : Float × Float → List Float
   stroke : Float × Float → List Float
   opacity : Float
 
-private def PreparedSample.apply (p : PreparedSample) (position : Float × Float) (result : Color) : Color :=
+def PreparedSample.apply (p : PreparedSample) (position : Float × Float) (result : Color) : Color :=
   overColors (p.fill position) (p.stroke position) p.opacity (p.coverage.eval position) result
 
 /-- With no stroke paint the stroke's alpha is the literal 0 on both branches, so the
@@ -3251,7 +3500,7 @@ private theorem overColors_no_stroke (fill : List Float) (style : Style) (alpha 
   cases hits with
   | mk a b => cases b <;> rfl
 
-private def Primitive.prepareSample (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedSample :=
+def Primitive.prepareSample (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedSample :=
   let fill := p.preparePaint p.style.fill p.style.fillOpacity
   let stroke := p.preparePaint p.style.stroke p.style.strokeOpacity
   match p.clips,p.dashParts,p.geometry,p.style.stroke with
@@ -3260,7 +3509,7 @@ private def Primitive.prepareSample (p : BackendPrimitive) (data : Array Float) 
       fill,stroke,p.effectiveOpacity⟩
   | _,_,_,_ => ⟨p.prepareCoverage data base,fill,stroke,p.effectiveOpacity⟩
 
-private theorem Primitive.prepareSample_correct (p : BackendPrimitive) (data : Array Float)
+theorem Primitive.prepareSample_correct (p : BackendPrimitive) (data : Array Float)
     (base : Nat) (position : Float × Float) (result : Color) :
     (p.prepareSample data base).apply position result = p.sampleStep data base position result := by
   simp only [Primitive.prepareSample]
@@ -3271,7 +3520,7 @@ private theorem Primitive.prepareSample_correct (p : BackendPrimitive) (data : A
     have covered : (p.coverageAt data base position).1 =
         (fillCondition (.rect a b c d) base).eval
           {data,position := p.transform.inverse.apply position.1 position.2} := by
-      simp [Primitive.coverageAt,clips,dash,geo]
+      simp [Primitive.coverageAt,clipPass,Primitive.coverageLocal,clips,dash,geo]
     simp only [PreparedSample.apply,PreparedCoverage.eval,Primitive.sampleStep,
       Primitive.preparePaint_correct,noStroke]
     change overColors _ (resolved .none p.style p.style.strokeOpacity) _ _ _ =
@@ -3372,8 +3621,8 @@ private theorem Scene.sampleAtPrepared_correct (s : Scene) (data : Array Float) 
 
 /-- The CPU statement of the fragment shader: four samples, and the other twelve
     when two of the four differ by more than the threshold in a channel. -/
-private def adaptiveSample (at_ : Float → Float → Color) (rows x y : Nat) : Color := Id.run do
-  let sample := fun ((dx,dy) : Float × Float) => at_ (Float.ofNat x+dx) (Float.ofNat y+dy)
+def adaptiveSampleAt (at_ : Float → Float → Color) (rows : Nat) (px py : Float) : Color := Id.run do
+  let sample := fun ((dx,dy) : Float × Float) => at_ (px+dx) (py+dy)
   let mut total : Color := ⟨0,0,0⟩
   let mut low : Color := ⟨1e9,1e9,1e9⟩
   let mut high : Color := ⟨-1e9,-1e9,-1e9⟩
@@ -3390,6 +3639,10 @@ private def adaptiveSample (at_ : Float → Float → Color) (rows x y : Nat) : 
       total := ⟨total.r+c.r,total.g+c.g,total.b+c.b⟩
     n := n+Float.ofNat pixelSampleRestOffsets.length
   return ⟨total.r/n,total.g/n,total.b/n⟩
+
+/-- `adaptiveSampleAt` at pixel `(x,y)`; a host that draws a row converts `y` once. -/
+def adaptiveSample (at_ : Float → Float → Color) (rows x y : Nat) : Color :=
+  adaptiveSampleAt at_ rows (Float.ofNat x) (Float.ofNat y)
 
 private def Scene.sampleWithData (s : Scene) (data : Array Float) (x y : Nat) : Color :=
   adaptiveSample (s.sampleAt data) (data.size/4) x y
@@ -3601,10 +3854,16 @@ inductive DataForm where
   /-- `"dataSection":k,"tilesSection":k+1`: the bytes go beside the JSON text, as
   section `k` (binary32 little-endian) and section `k+1` (uint32 little-endian). -/
   | sections (first : Nat)
+  /-- As `sections`, and `"pixelsSection":k+2`: the RGBA bytes of the scene drawn on the
+  CPU (`SVGRaster`, docs/designissues/2026-11-08-cpu-render-backend.md). The scene's own
+  answer is that of `sections`; the frontend (`WebRender.artifactWith`) adds the pixels. -/
+  | sectionsCpu (first : Nat)
 
-/-- The form of the next scene of the same answer: its sections follow these two. -/
+/-- The form of the next scene of the same answer: its sections follow these two (three
+with the CPU pixels). -/
 def DataForm.next : DataForm → DataForm
   | .sections k => .sections (k+2)
+  | .sectionsCpu k => .sectionsCpu (k+3)
   | other => other
 
 /-- Tile words as uint32 little-endian bytes, the bytes that the host writes to the GPU
@@ -3639,6 +3898,8 @@ private def Scene.jsonWith (s : Scene) (live : Bool) (form : DataForm) (checks t
     | .base64 => (",\"dataBase64\":\"" ++ base64Bytes s.float32Bytes ++ "\"",
         ",\"tiles\":" ++ jsonArray (tiles.toList.map toString),#[])
     | .sections k => (",\"dataSection\":" ++ toString k,",\"tilesSection\":" ++ toString (k+1),
+        #[s.float32Bytes,wordBytes tiles])
+    | .sectionsCpu k => (",\"dataSection\":" ++ toString k,",\"tilesSection\":" ++ toString (k+1),
         #[s.float32Bytes,wordBytes tiles])
   return ("{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString s.width ++
     ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.compiled.length ++

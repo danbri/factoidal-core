@@ -127,4 +127,32 @@ theorem Expr.prepare_correct (data : Array Float) {ty : Ty} (expr : Expr ty) (en
 #guard ((Prepared.constant true).or (.dynamic (fun _ => panic! "unreachable"))).eval {data := #[]}
 #guard !((Prepared.constant false).and (.dynamic (fun _ => panic! "unreachable"))).eval {data := #[]}
 #print axioms Expr.prepare_correct
+
+/-- `Expr.eval` with each literal from `literalFloat`: the same values (`literalFloat_eq`)
+    with no bignum conversion at each call. Polygon fills, dashed strokes and clipped
+    primitives evaluate expressions at every sample of the CPU raster (`SVGRaster`). -/
+def Expr.evalFast {ty : Ty} (env : Env) : Expr ty → ty.Value
+  | .lit n => literalFloat n
+  | .param i => env.data[i]!
+  | .var v => v.eval env
+  | .vec x y => (x.evalFast env, y.evalFast env)
+  | .add a b => a.evalFast env + b.evalFast env
+  | .sub a b => a.evalFast env - b.evalFast env
+  | .mul a b => a.evalFast env * b.evalFast env
+  | .divide a b => a.evalFast env / b.evalFast env
+  | .maximum a b => max (a.evalFast env) (b.evalFast env)
+  | .clamp01 a => max 0 (min 1 (a.evalFast env))
+  | .addV a b => let x := a.evalFast env; let y := b.evalFast env; (x.1+y.1, x.2+y.2)
+  | .subV a b => let x := a.evalFast env; let y := b.evalFast env; (x.1-y.1, x.2-y.2)
+  | .scale a b => let x := a.evalFast env; let y := b.evalFast env; (x*y.1, x*y.2)
+  | .dot a b => let x := a.evalFast env; let y := b.evalFast env; x.1*y.1+x.2*y.2
+  | .le a b => a.evalFast env <= b.evalFast env
+  | .and a b => a.evalFast env && b.evalFast env
+
+@[csimp] theorem Expr.eval_eq_evalFast : @Expr.eval = @Expr.evalFast := by
+  funext ty env e
+  induction e with
+  | lit n => simp [Expr.eval,Expr.evalFast,literalFloat_eq]
+  | _ => simp_all [Expr.eval,Expr.evalFast]
+#print axioms Expr.eval_eq_evalFast
 end NativeGraphics

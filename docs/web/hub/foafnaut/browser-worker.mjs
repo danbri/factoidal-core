@@ -24,6 +24,16 @@ let module,createSession,renderOffscreen,session,createSurface,hashPixels,surfac
 // `current` is the band on screen and the state it was made for; a scroll inside its keep
 // range only moves the composite.
 let layered,layerSurface,current,shownOffset=0,shiftPending=false,prefetched,motion,bandMs=100,prefetchTimer;
+// No WebGPU (no navigator.gpu, or no adapter) and an engine that draws on the CPU (op cpuInfo,
+// asked once): every frame is Lean's CPU pixels, copied (layers.mjs createCpuLayerSurface).
+let cpuMode=false;
+async function gpuAdapter(){try{return !!navigator.gpu&&!!(await navigator.gpu.requestAdapter());}catch{return false;}}
+function cpuEngine(){
+  if(typeof module?._web_document_call_bin!=='function')return false;
+  try{return call('',{op:'cpuInfo'}).engine==='cpu';}catch{return false;}
+}
+/** The layer surface for this worker: WebGPU, or Lean's CPU pixels when there is no GPU. */
+const layerSurfaceFor=async()=>cpuMode?L.createCpuLayerSurface(surfaceCanvas):L.createLayerSurface(surfaceCanvas,{check:checkMode,waitForGpu:statsMode});
 // layers.mjs, imported beside the engine (a static import would hold this script back
 // until it and the plan engine it imports had loaded).
 let L;const layersModule=import('./layers.mjs');layersModule.catch(()=>{});
@@ -164,6 +174,8 @@ function frameFloats(frame){
 const textDecoder=new TextDecoder();
 function render(source,options,w,h,chromeOnly=false,counted=true){
   if(counted){leanCalls++;if(chromeOnly)chromeRenders++;else leanRenders++;}
+  // With no GPU, Lean also draws each scene on the CPU (cpuInfo, SVGRaster).
+  if(cpuMode)options={...options,cpu:true};
   if(typeof module._web_document_call_bin!=='function')return frameFloats(call(source,options,w,h,counted));
   const pointer=module.ccall('web_document_call_bin','number',['string','string','number','number','number'],[source,JSON.stringify(options),w,h,0]);
   if(!pointer)throw Error('Lean engine allocation failed');
@@ -182,6 +194,7 @@ function render(source,options,w,h,chromeOnly=false,counted=true){
     if(!scene||typeof scene!=='object')continue;
     if(typeof scene.dataSection==='number'){const [o,l]=sections[scene.dataSection];scene.data=new Float32Array(buffer,o,l/4);delete scene.dataSection;}
     if(typeof scene.tilesSection==='number'){const [o,l]=sections[scene.tilesSection];scene.tiles=new Uint32Array(buffer,o,l/4);delete scene.tilesSection;}
+    if(typeof scene.pixelsSection==='number'){const [o,l]=sections[scene.pixelsSection];scene.pixels=new Uint8Array(buffer,o,l);delete scene.pixelsSection;}
   }
   return frame;
 }
@@ -877,7 +890,7 @@ function scheduleBand(){
     if(!answer||doc!==shownDoc||dirty)return;
     drawing=true;
     try{
-      layerSurface??=await L.createLayerSurface(surfaceCanvas,{check:checkMode,waitForGpu:statsMode});
+      layerSurface??=await layerSurfaceFor();
       if(!layerSurface)return;
       // Into the layer textures only: the screen already shows this state.
       incoming=answer;
@@ -1016,10 +1029,10 @@ async function draw(){
       let rgba,pixelHash,gpuMs,path;
       // The layer surface draws every frame when this engine makes layers or may (the first
       // frame comes before its band says), with one device for the canvas.
-      if(layers||layerSurface||layered!==false){
+      if(layers||layerSurface||layered!==false||cpuMode){
         // With no canvas in this thread, each frame is read back and the page paints it.
-        layerSurface??=await L.createLayerSurface(surfaceCanvas,{check:checkMode,waitForGpu:statsMode});
-        if(!layerSurface)throw Error('A WebGPU adapter is unavailable in this browser.');
+        layerSurface??=await layerSurfaceFor();
+        if(!layerSurface)throw Error(cpuMode?'This browser can not show the CPU frames.':'A WebGPU adapter is unavailable in this browser.');
         let pixels;
         if(layers){
           incoming=layers;
@@ -1051,7 +1064,7 @@ async function draw(){
       const done=performance.now();incoming=undefined;
       phase('firstFrame');
       post({type:'frame',width,height,title:shown.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
-        stats:{path,layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
+        stats:{path,...(cpuMode?{cpu:true}:{}),layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
           pixelHash,primitives:frame.primitiveCount,url:shown.url,address:field.address,scroll,tabs:tabs.length,theme,percent,
           leanRenders:leanRenders-calls,leanCalls,chromeRenders,collapse:foldNow(),rows:Math.round(frame.data.length/4),scripts:{...scriptStats},...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{}),
           // For hub_links_check.mjs: the links of a one-frame view, and who routes them.
@@ -1133,13 +1146,19 @@ async function start(data){
   checkMode=data.check===true;statsMode=data.stats===true;
   // ?layers=0: one Lean frame for each scroll, as before the two-layer view.
   if(data.layers===false)layered=false;
-  if(!navigator.gpu)throw Error('This browser does not provide WebGPU.');
+  const gpuReady=gpuAdapter();
   const wanted=pageURL(data.page)??(data.page==='sparql'?sparqlURL:undefined)??(data.page==='wasm'||/^wasm\/[a-z0-9-]+\.wasm(#[A-Za-z0-9_-]+)?$/.test(data.page??'')?'foafnaut:'+data.page:undefined);
   // The page's fallback fonts start to come with the page, beside the engine.
   if(wanted?.startsWith('http'))fetchEarly(wanted,'text').then(page=>fontsWanted(page.source)).catch(()=>{});
   const [{default:createModule},transport]=await Promise.all(runtimeModules);
   try{L=await layersModule;}catch(error){layered=false;console.warn('foafnaut: no layers:',String(error));}
   module=await startEngine(createModule);phase('engineReady');
+  // No WebGPU: an engine that answers cpuInfo draws every frame on the CPU; with an older
+  // engine the Hub says, as before, that it needs WebGPU.
+  if(!await gpuReady){
+    if(!L||!cpuEngine()||typeof L.createCpuLayerSurface!=='function')throw Error('This browser does not provide WebGPU.');
+    cpuMode=true;console.warn('foafnaut: no WebGPU adapter; Lean draws the frames on the CPU');
+  }
   createSession=transport.createOffscreenSession;renderOffscreen=transport.render;hashPixels=transport.hashPixels;
   if(data.canvas&&typeof transport.createSurfaceSession==='function'){surfaceCanvas=data.canvas;createSurface=transport.createSurfaceSession;}
   await loadFont();phase('fontReady');
@@ -1206,7 +1225,7 @@ function printOptions(){
     textScalePercent:printPercent(),media:'print'};
 }
 async function printPNG(frame){
-  const rgba=await renderOffscreen(frame,'svg-offscreen');
+  const rgba=frame.pixels??await renderOffscreen(frame,'svg-offscreen');
   if(!rgba)throw Error('A WebGPU adapter is unavailable in this browser.');
   const canvas=new OffscreenCanvas(frame.width,frame.height);
   canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba.buffer,rgba.byteOffset,rgba.byteLength),frame.width,frame.height),0,0);

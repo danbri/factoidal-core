@@ -1290,6 +1290,9 @@ theorem frameWith_eq (memo : Lru LayoutKey Laid) (valid : ValidEntry memo) (soun
 /-- `frameWith` over the kept memo: what a render uses. -/
 private def cachedFrame (key : LayoutKey) : Except String Laid := frameWith cachedLayOut key countRepaint
 
+/-- `cpu:true`: each scene of a bytes answer also carries its CPU pixels. -/
+private def cpuPixels (request : JSON.Json) : Bool := request.field? "cpu" == some (.bool true)
+
 /-- A document request, with `laidOut` as the layout of a render. `run` passes the
 kept layout; `runUncached` passes `layOut`, so that tests compare the two. With
 `bytes`, a render answer names its storage floats and tile words as sections
@@ -1311,6 +1314,13 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   -- with `collapse` or calls `chromeLayer`: an older engine answers "unknown document
   -- operation" and the host keeps the classic chrome (issue 1274). `full` and `strip` are
   -- the chrome's rows unfolded and folded, for the `width` and `shell` of the request.
+  -- The CPU raster (docs/designissues/2026-11-08-cpu-render-backend.md): a host with no
+  -- GPU asks this once. An engine without it answers "unknown document operation", and
+  -- such a host shows no page. With `cpu:true` on a bytes call, each scene of the answer
+  -- also names `pixelsSection`: its RGBA bytes, row by row, drawn by `SVGRaster`.
+  if str request "op" == "cpuInfo" then
+    return ((JSON.Json.object [("engine",.string "cpu"),("pixels",.string "rgba8"),
+      ("ops",.array ([.string "render",.string "chromeLayer"]))]).toString,#[])
   if str request "op" == "shellInfo" then
     let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
     let w := natField request "width"
@@ -1321,7 +1331,7 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   if str request "op" == "chromeLayer" then
     let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
     let live := request.field? "live" == some (.bool true)
-    let form : NativeSVG.DataForm := if bytes then .sections 0
+    let form : NativeSVG.DataForm := if bytes then (if cpuPixels request then .sectionsCpu 0 else .sections 0)
       else if request.field? "binary" == some (.bool true) then .base64 else .decimal
     let checks := request.field? "checks" != some (.bool false)
     let scene := chromeScene shell width
@@ -1405,7 +1415,8 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     | none => []
   let live := request.field? "live" == some (.bool true)
   let binary := request.field? "binary" == some (.bool true)
-  let form : NativeSVG.DataForm := if bytes then .sections 0 else if binary then .base64 else .decimal
+  let form : NativeSVG.DataForm :=
+    if bytes then (if cpuPixels request then .sectionsCpu 0 else .sections 0) else if binary then .base64 else .decimal
   let checks := request.field? "checks" != some (.bool false)
   -- The inspector tree only when the request asks (`tree:true`); no frame host reads it.
   let tree := request.field? "tree" == some (.bool true)

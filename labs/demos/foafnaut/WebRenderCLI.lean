@@ -70,6 +70,10 @@ private def localImages (document root : System.FilePath) (source : String) :
 def main (args : List String) : IO UInt32 := do
   match args with
   | path::width::height::flags =>
+    -- `--cpu-out FILE` last: an SVG scene's CPU pixels (`SVGRaster`) are written there.
+    let (flags,cpuOut) := match flags.reverse with
+      | file::"--cpu-out"::rest => (rest.reverse,some file)
+      | _ => (flags,none)
     -- `--svg-sfnt FILE` last: text that has no SVG font is drawn with this SFNT font.
     let (flags,sfntFile) := match flags.reverse with
       | file::"--svg-sfnt"::rest => (rest.reverse,some file)
@@ -97,6 +101,11 @@ def main (args : List String) : IO UInt32 := do
           | .ok f => pure #[f]
           | .error e => throw (IO.userError s!"SFNT font refused: {e}")
       IO.println (svgArtifact source w h font images documentURL sfnt)
+      if let some out := cpuOut then
+        let parsed := do
+          let font ← font.mapM NativeSVGForgiving.SVGFont.parse
+          NativeSVGForgiving.parse source w h font images documentURL sfnt
+        if let .ok (scene,_) := parsed then IO.FS.writeBinFile out scene.rgba
       return 0
     if flags == ["--svg-profile"] then
       let some w := width.toNat? | throw (IO.userError "invalid width")
@@ -136,6 +145,35 @@ def main (args : List String) : IO UInt32 := do
         -- The space differs on each pass, so a pass can not be shared with another.
         bytes := bytes+(WebDocument.compile (html ++ String.ofList (List.replicate (i%2) ' ')) request w.toUInt32 h.toUInt32).utf8ByteSize
       IO.println s!"{n} frames, {((← IO.monoNanosNow)-start)/1000000/(max n 1)} ms each, {bytes} bytes"
+      return 0
+    -- The packed bytes answer (`WebDocument.compileBin`) written to OUT, after a font file
+    -- (TTF or OTF) is loaded as the Hub loads Noto Sans; then COUNT more calls, each timed
+    -- (a field `repeat` makes each call its own). With `"cpu":true` in the options each
+    -- scene also carries its CPU pixels (cpu_render_diff_check.mjs).
+    if let ["--document-bin",options,font,out,count] := flags then
+      let some w := width.toNat? | throw (IO.userError "invalid width")
+      let some h := height.toNat? | throw (IO.userError "invalid height")
+      let some n := count.toNat? | throw (IO.userError "invalid count")
+      if font != "-" then
+        let loaded := WebDocument.fontLoadBin (← IO.FS.readBinFile font) "Noto Sans" "cli" 0
+        if loaded.startsWith "{\"error\"" then IO.println loaded; return 1
+      let html ← IO.FS.readFile path
+      let .ok (request,_) := JSON.parseJsonText (← IO.FS.readFile options) | throw (IO.userError "invalid options JSON")
+      let numbered := fun (i : Nat) => match request with
+        | .object fields => (JSON.Json.object (fields ++ [("repeat",.number (toString i))])).toString
+        | other => other.toString
+      let start ← IO.monoNanosNow
+      let first ← IO.lazyPure fun _ => WebDocument.compileBin html (numbered 0) w.toUInt32 h.toUInt32
+      let firstNs := (← IO.monoNanosNow)-start
+      IO.FS.writeBinFile out first
+      let mut times : Array String := #[]
+      for i in [0:n] do
+        let at_ ← IO.monoNanosNow
+        let bytes ← IO.lazyPure fun _ => WebDocument.compileBin html (numbered (i+1)) w.toUInt32 h.toUInt32
+        if bytes.size == 0 then return 1
+        times := times.push (toString (((← IO.monoNanosNow)-at_)/1000))
+      IO.println ("{\"bytes\":" ++ toString first.size ++ ",\"firstUs\":" ++ toString (firstNs/1000) ++
+        ",\"us\":[" ++ String.intercalate "," times.toList ++ "]}")
       return 0
     -- Scroll frames: the same document each time, with `shell.scroll` 40 pixels further.
     if let ["--document-scroll",options,count,font] := flags then

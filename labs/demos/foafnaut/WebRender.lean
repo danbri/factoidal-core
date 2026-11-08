@@ -1,4 +1,5 @@
 import WebRenderSVG
+import SVGRaster
 import SVGText
 import Font
 import L4Factoidal.Rendering.Layout
@@ -278,7 +279,11 @@ def artifactWith (scene : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
     Except String (String × Array ByteArray) := do
   let native ← WebRenderSVG.toScene scene
   let (value,sections) ← native.artifactWith live form checks tree
-  return ((value.dropEnd 1).toString ++ ",\"webRender\":" ++ layoutJSON scene boxes font ++ "}",sections)
+  let value := (value.dropEnd 1).toString ++ ",\"webRender\":" ++ layoutJSON scene boxes font
+  match form with
+  -- The scene drawn on the CPU (`SVGRaster`): the section after the tile words.
+  | .sectionsCpu k => return (value ++ ",\"pixelsSection\":" ++ toString (k+2) ++ "}",sections.push native.rgba)
+  | _ => return (value ++ "}",sections)
 
 def artifact (scene : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
     (font : Option Rendering.FontProvider.Face := none) (live binary : Bool := false) (checks : Bool := true)

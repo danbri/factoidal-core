@@ -168,6 +168,10 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   else
     echo 'NOT RUN: sweeps.sh needs macOS and the window library'
   fi
+  # The CPU backend (SVGRaster.lean) against WebGPU: each demo page and each SVG shapes test,
+  # per pixel, within the tolerance of docs/designissues/2026-11-08-cpu-render-backend.md.
+  # NOT RUN with no Chrome.
+  node "$LAB/cpu_render_diff_check.mjs"
 else
   echo 'NOT RUN: native_html_test.ts needs the web-render engine, which this build does not have yet'
 fi
