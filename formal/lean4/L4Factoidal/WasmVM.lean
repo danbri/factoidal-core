@@ -19,6 +19,7 @@ import L4Factoidal.WasmVM.Proofs.Proposals
 import L4Factoidal.WasmVM.Proofs.Slots
 import L4Factoidal.WasmVM.Proofs.Memory
 import L4Factoidal.WasmVM.Proofs.Refine
+import L4Factoidal.WasmVM.Proofs.RefineRun
 import L4Factoidal.WasmVM.Tests.Memory
 import L4Factoidal.WasmVM.Tests.Proposals
 import L4Factoidal.WasmVM.Tests.Wasi
