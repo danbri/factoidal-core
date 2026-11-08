@@ -715,6 +715,9 @@ async function main() {
   const navigate=(target:string,push=true)=>{
     const from=document.url;
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
+    // The loading state is drawn now (a chrome-only frame: the page layer is kept), so a click
+    // is answered on screen before the new page is prepared and laid out.
+    dirty=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
     (STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):prepareHTML(lean,target,current.signal)).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){

@@ -39,7 +39,8 @@ function hoverCounts(engine:HTMLEngine) {
   // Colours only: the layout of the idle page is kept and painted; no layout.
   const colour=hoverWork(engine,colourPage);
   assert.equal(colour.work.layouts,0,`a colour-only hover laid out: ${JSON.stringify(colour.work)}`);
-  assert.equal(colour.work.repaints,2,`two hover frames painted: ${JSON.stringify(colour.work)}`);
+  // On, off, on: the second hover frame is the painted layout kept from the first (WebDocument.keptPainted).
+  assert.equal(colour.work.repaints,1,`one hover frame painted, then kept: ${JSON.stringify(colour.work)}`);
   assert(colour.changed,"the hover frame differs from the idle one");
   assert(colour.same,"hover on twice gives one picture");
   // A hover style that changes geometry: one layout with the pointer in the key, kept.

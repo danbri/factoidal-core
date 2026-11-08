@@ -1256,6 +1256,13 @@ initialize frameWorkRef : IO.Ref (Nat × Nat × Nat) ← IO.mkRef (0,0,0)
 
 initialize layoutRef : IO.Ref (Lru LayoutKey Laid) ← IO.mkRef []
 
+/-- Pointer states painted on a kept layout (`:hover`, `:active`), kept apart from the
+layouts so that they do not push a layout out: a press, a hover and a loading frame under
+the pointer then give the same layout object again, and the page layer that
+`pageArtifact` keeps for it. -/
+def paintedSlots : Nat := 2
+initialize paintedRef : IO.Ref (Lru LayoutKey Laid) ← IO.mkRef []
+
 set_option compiler.extract_closed false in
 private unsafe def keptLayoutImpl (key : LayoutKey) : Option Laid :=
   unsafeBaseIO do
@@ -1345,8 +1352,31 @@ theorem frameWith_eq (memo : Lru LayoutKey Laid) (valid : ValidEntry memo) (soun
       | none => rfl
       | some laid => exact (sound key base laid hb hr).symm
 
-/-- `frameWith` over the kept memo: what a render uses. -/
-private def cachedFrame (key : LayoutKey) : Except String Laid := frameWith cachedLayOut key countRepaint
+set_option compiler.extract_closed false in
+private unsafe def keptPaintedImpl (key : LayoutKey) : Option Laid :=
+  unsafeBaseIO do
+    match Lru.find? (← paintedRef.get) key with
+    | some laid =>
+      paintedRef.modify (Lru.putIn LayoutKey.html paintedSlots · key laid)
+      frameWorkRef.modify fun (l,k,r) => (l,k+1,r)
+      return some laid
+    | none => return none
+private unsafe def keepPaintedImpl (key : LayoutKey) (laid : Laid) : Laid :=
+  unsafeBaseIO do
+    paintedRef.modify (Lru.putIn LayoutKey.html paintedSlots · key laid)
+    return laid
+/-- A frame with a pointer state that the engine painted before, and keeping one. The
+entries are values of `frameWith cachedLayOut` for their keys. -/
+@[implemented_by keptPaintedImpl, noinline] private opaque keptPainted (key : LayoutKey) : Option Laid
+@[implemented_by keepPaintedImpl, noinline] private opaque keepPainted (key : LayoutKey) (laid : Laid) : Laid := laid
+
+/-- `frameWith` over the kept memo: what a render uses. A key with a pointer state is
+looked up in the painted memo first. -/
+private def cachedFrame (key : LayoutKey) : Except String Laid :=
+  if key.pointer == (none,none) then frameWith cachedLayOut key countRepaint else
+  match keptPainted key with
+  | some laid => .ok laid
+  | none => keepPainted key <$> frameWith cachedLayOut key countRepaint
 
 /-- `cpu:true`: each scene of a bytes answer also carries its CPU pixels. -/
 private def cpuPixels (request : JSON.Json) : Bool := request.field? "cpu" == some (.bool true)
