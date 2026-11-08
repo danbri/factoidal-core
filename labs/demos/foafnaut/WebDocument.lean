@@ -18,6 +18,7 @@ import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.FrameCost.Band
 import L4Factoidal.FrameCost.Lru
 import WebRepaint
+import WebHit
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
 orders supplied CSS, collects font requests and renders the resulting arena.
@@ -1123,17 +1124,14 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   -- Pointer positions are in window coordinates; the page starts below the chrome.
   let moved := Float.ofNat top-Float.ofNat ((shell.map (·.scroll)).getD 0)
   let chosen := (← selection request).map (fun value => WebSelection.shift value moved)
-  -- The node under a window point (`x`, `y`), for a click that page scripts receive: the
-  -- smallest layout box that holds the point, in page rows (`y` below the chrome, plus
-  -- the scroll). Lean's DOM, not the host, then dispatches the click (WebScripts).
+  -- The node under a window point (`x`, `y`), for the pointer events that page scripts
+  -- receive: the smallest layout box that holds the point, in page rows (`y` below the
+  -- chrome, plus the scroll), and inside an embedded `svg` the shape under the point
+  -- (WebHit). The answer has the event's coordinates. Lean's DOM, not the host, then
+  -- dispatches the events (WebScripts).
   if op == "nodeAt" then
-    let px := Float.ofNat (natField request "x")
-    let py := Float.ofNat (natField request "y") - Float.ofNat top + Float.ofNat ((shell.map (·.scroll)).getD 0)
-    let inside := boxes.filter fun b => b.x ≤ px && px < b.x + b.width && b.y ≤ py && py < b.y + b.height
-    let best := inside.foldl (init := none) fun acc b => match acc with
-      | some (a : Rendering.Layout.Box) => if b.width * b.height ≤ a.width * a.height then some b else some a
-      | none => some b
-    return ((JSON.Json.object [("node",match best with | some b => .number (toString b.source) | none => .null)]).toString,#[])
+    return ((WebHit.nodeAtAnswer laid.dom scene boxes (Float.ofNat (natField request "x"))
+      (Float.ofNat (natField request "y")) (Float.ofNat top) (Float.ofNat ((shell.map (·.scroll)).getD 0))).toString,#[])
   let items := WebSelection.cells scene.glyphRuns
   if op == "selectedText" then
     return ((JSON.Json.object [("text",.string (match chosen with
