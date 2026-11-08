@@ -283,6 +283,13 @@ extern_lib libl4hostread pkg := do
 @[default_target] lean_lib EventLoop where
   roots := #[`L4Factoidal.EventLoop]
 
+-- The JavaScript engine written in Lean (docs/designissues/2026-11-08-lean-js-engine.md):
+-- parser, evaluator and built-ins. Its own library; only Lean core, Std and the XSD/XPath
+-- number code. `lake exe leanjs` runs a script, Test262 files, or the benchmarks.
+@[default_target] lean_lib JS where
+  roots := #[`L4Factoidal.JS]
+lean_exe leanjs where root := `L4Factoidal.JS.Main
+
 -- Frame scheduling in the Foafnaut hosts with a cost semantics, and its cost theorems
 -- (docs/designissues/2026-11-08-cost-theorems.md). Only Lean core.
 @[default_target] lean_lib FrameCost where
