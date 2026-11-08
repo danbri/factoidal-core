@@ -222,6 +222,14 @@ function sceneOf(result:Record<string,unknown>&{dataBase64?:unknown},width:numbe
 }
 /** `answers:"bytes"` (the default) takes render answers as bytes with raw sections;
 `"text"` takes the JSON text with Base64, the reference that tests compare with. */
+/** The link regions of a frame as text, made once per array: `hit` and `press` on the same
+ * frame send the same string, and Lean decodes it once (WebDocument.decodeLinks). */
+const linkTexts=new WeakMap<object,string>();
+function linksText(links:unknown[]):string {
+  let text=linkTexts.get(links);
+  if(text===undefined){text=JSON.stringify(links);linkTexts.set(links,text);}
+  return text;
+}
 export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="bytes") {
   const module = await createModule() as unknown as Module;
   const backends=nativeEngine?nativeBackends(nativeEngine):wasmBackends(module);
@@ -330,7 +338,7 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // The address menu's buttons and the text Copy writes; empty with the menu closed.
     shellActions:(shell:unknown,width:number)=>(documentCall("",{op:"shellActions",shell,width}) as {actions:MenuAction[]}).actions,
     // A press: the control or the link under the pointer (`row` is the page-layer row) and what to darken.
-    press:(shell:unknown,x:number,y:number,width:number,row:number,links:unknown[])=>documentCall("",{op:"press",shell,x,y,width,row:Math.max(0,Math.floor(row)),links}) as PressAnswer,
+    press:(shell:unknown,x:number,y:number,width:number,row:number,links:unknown[])=>documentCall("",{op:"press",shell,x,y,width,row:Math.max(0,Math.floor(row)),linksText:linksText(links)}) as PressAnswer,
     // The system pointer for a window point: "arrow", "hand" or "text" (issue 1268).
     pointerCursor:(request:{shell:unknown;x:number;y:number;width:number;model?:string;links?:string;pageY?:number})=>
       (documentCall("",{...request,op:"pointerCursor"}) as {cursor:string}).cursor,
@@ -402,7 +410,7 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     hit(artifact:HTMLArtifact,x:number,y:number):{href:string;sourceNode:number}|null {
       if(!Number.isFinite(x)||!Number.isFinite(y))return null;
       return call("web_render_hit",["string","number","number","number","number"],
-        [JSON.stringify(artifact.webRender.links),artifact.width,artifact.height,x,y]);
+        [linksText(artifact.webRender.links),artifact.width,artifact.height,x,y]);
     },
   };
 }

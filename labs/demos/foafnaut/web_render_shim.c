@@ -96,9 +96,9 @@ char *web_render_font_requests_call(const char *html) {
   lean_object *value=web_render_font_requests(lean_mk_string(html));
   char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
 }
-extern lean_object *web_render_pick_link(lean_object *,uint32_t,uint32_t,double,double);
+extern lean_object *web_render_pick_link_kept(lean_object *,uint32_t,uint32_t,double,double);
 char *web_render_hit(const char *regions,uint32_t width,uint32_t height,double x,double y) {
   if (!ready()) return NULL;
-  lean_object *value=web_render_pick_link(lean_mk_string(regions),width,height,x,y);
+  lean_object *value=web_render_pick_link_kept(lean_mk_string(regions),width,height,x,y);
   char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
 }

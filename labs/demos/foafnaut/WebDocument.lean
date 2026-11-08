@@ -338,8 +338,38 @@ def maxPressRects : Nat := 8
 private def natField (j : JSON.Json) (key : String) : Nat :=
   match j.field? key with | some (.number n) => n.toNat?.getD 0 | _ => 0
 
+/-- The link regions of the frame on screen, decoded once: a press, a hover and a click
+on the same frame send the same text. One slot, by string equality. -/
+initialize keptLinksRef : IO.Ref (Option (String × List Rendering.LinkRegion)) ← IO.mkRef none
+
+set_option compiler.extract_closed false in
+private unsafe def decodeLinksImpl (text : String) : Except String (List Rendering.LinkRegion) :=
+  unsafeBaseIO do
+    if let some (kept,regions) ← keptLinksRef.get then
+      if kept == text then return .ok regions
+    let made := Rendering.Links.decode text
+    if let .ok regions := made then keptLinksRef.set (some (text,regions))
+    return made
+
+/-- `Links.decode`; the engine gives the regions of the last text again when the text is equal. -/
+@[implemented_by decodeLinksImpl]
+def decodeLinks (text : String) : Except String (List Rendering.LinkRegion) := Rendering.Links.decode text
+
+/-- `Links.pick` over `decodeLinks` (the C shim's `web_render_hit`). -/
+@[export web_render_pick_link_kept]
+def pickKept (regions : String) (width height : UInt32) (x y : Float) : String :=
+  if !x.isFinite || !y.isFinite || x < 0 || y < 0 ||
+    x >= Float.ofNat width.toNat || y >= Float.ofNat height.toNat then "null"
+  else match decodeLinks regions with
+    | .error message => "{\"error\":" ++ "\"" ++ JSON.escapeString message ++ "\"" ++ "}"
+    | .ok regions => Rendering.Links.targetJSON (Rendering.hitLink regions x y)
+
+theorem pickKept_eq (regions : String) (width height : UInt32) (x y : Float) :
+    pickKept regions width height x y = Rendering.Links.pick regions width height x y := by
+  unfold pickKept Rendering.Links.pick decodeLinks; rfl
+
 /-- The answer to `press`: `control` for a chrome control; `sourceNode` and `href` for a
-link of the page layer (`links`, in band rows, as the frame answered them, picked at
+link of the page layer (`linksText` or `links`, in band rows, as the frame answered them, picked at
 `(x,row)`); `rects` for the composite. -/
 def press (request : JSON.Json) : Except String String := do
   let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
@@ -354,9 +384,12 @@ def press (request : JSON.Json) : Except String String := do
     let rects := (WebShell.pressBox shell width control).toList
     return (JSON.Json.object [("control",.string control),("rects",.array (rects.map rect))]).toString
   | none =>
-    let regions ← match request.field? "links" with
-      | some (.array items) => Rendering.Links.decode (JSON.Json.array items).toString
-      | _ => pure []
+    -- `linksText`: the regions as the frame gave them, decoded once per frame (`decodeLinks`);
+    -- `links`: the same as a JSON array, decoded on each call (older hosts).
+    let regions ← match request.field? "linksText",request.field? "links" with
+      | some (.string text),_ => decodeLinks text
+      | _,some (.array items) => Rendering.Links.decode (JSON.Json.array items).toString
+      | _,_ => pure []
     -- `row`: the page-layer row under the pointer, as the host converts it for `hit`.
     let row := Float.ofNat (natField request "row")
     match Rendering.hitLink regions (Float.ofNat x) row with
