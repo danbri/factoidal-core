@@ -343,8 +343,12 @@ million Wasm instructions per second. Spec tests after each row: pass 35085, fai
 | slots: one `USize` check per access, 8-byte load in Lean, 8-byte store in inline C; registers as `run` arguments; memory interface | 191 | 164 | 156 | `Slots.slot_ok`, `Bytes.byte_ok`, `Bytes.nat_ok`, `Run.pc_ok` |
 | 9 fused ops (below) | 257 | 202 | 168 | `Proofs.Fuse.fuse_agrees` (from `run_parts`, `run_fused`, `run_fusedJump`, `fuseAt_sound`, `fuse_sound`) |
 | `NumOp.evalBin` `@[inline]` (it was a C call with its own `switch` in each binary op) | 270 to 296 | 221 | 174 | none needed (same function) |
+| `Simple.exec` takes the slots and `sp` as two arguments (with one `SP` argument the compiler allocated and freed a pair in `lUn`, 5% of samples in `mi_free`) | 336 to 360 | 211 | 175 | none needed (`Simple.execAll` is unchanged up to structure eta; the `Proofs/Fuse.lean` proofs still check) |
 
-Speed-up over stage 1: sum 7 to 7.6 times, memsum 7.4 times, fib 4.7 times. The 10x
+Tried and dropped: `NumOp.evalUn` `@[inline]` (sum 300, memsum 190, fib 150: the float
+cases made the loop larger and slower).
+
+Speed-up over stage 1: sum 8.6 to 9.2 times, memsum 7 times, fib 4.7 times. The 10x
 target is not reached; see "Next". Instruction counts are the same as before fusion
 (140 000 008, 240 000 004, 28 271 637), so a fused op takes the fuel of its parts.
 Runs vary by about 10% (other sessions build on the machine).
@@ -461,7 +465,9 @@ All with axioms `propext`, `Classical.choice`, `Quot.sound` only; no `sorry`.
 
 ## Next
 
-1. Speed (now 4.7 to 7.6 times stage 1; target 10x): code as bytecode in a `ByteArray`
+1. Speed (now 4.7 to 9.2 times stage 1; target 10x): memory 0 held as a loop
+   argument during a run (a load now reads `st.mems[inst.mems[0]]` with reference
+   counts, a store rebuilds the store record); code as bytecode in a `ByteArray`
    (no reference counts per instruction); the last slot check removed with
    `maxHeight_sound` and a typing invariant carried by `run`; a cheaper `call`/`return`
    (`fib` is call-bound); whole-run equality of fused and unfused code.

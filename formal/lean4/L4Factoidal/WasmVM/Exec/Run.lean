@@ -96,18 +96,23 @@ structure SP where
   stack : Slots
   sp : USize
 
-@[inline] def Simple.exec (fp : USize) : Simple → SP → SP
-  | .localGet x, ⟨s, sp⟩ => ⟨wr s sp (rd s (fp + x)), sp + 1⟩
-  | .localSet x, ⟨s, sp⟩ => ⟨wr s (fp + x) (rd s (sp - 1)), sp - 1⟩
-  | .localTee x, ⟨s, sp⟩ => ⟨wr s (fp + x) (rd s (sp - 1)), sp⟩
-  | .const v, ⟨s, sp⟩ => ⟨wr s sp v, sp + 1⟩
-  | .bin op, ⟨s, sp⟩ => ⟨wr s (sp - 2) (op.evalBin (rd s (sp - 2)) (rd s (sp - 1))), sp - 1⟩
-  | .un op, ⟨s, sp⟩ => ⟨wr s (sp - 1) (op.evalUn (rd s (sp - 1))), sp⟩
-  | .drop, ⟨s, sp⟩ => ⟨s, sp - 1⟩
+/-- One straight-line op. The slots and `sp` are separate arguments: with an `SP`
+argument the compiler allocated the pair on one path (`lUn`, seen in the C). -/
+@[inline] def Simple.exec (fp : USize) : Simple → Slots → USize → SP
+  | .localGet x, s, sp => ⟨wr s sp (rd s (fp + x)), sp + 1⟩
+  | .localSet x, s, sp => ⟨wr s (fp + x) (rd s (sp - 1)), sp - 1⟩
+  | .localTee x, s, sp => ⟨wr s (fp + x) (rd s (sp - 1)), sp⟩
+  | .const v, s, sp => ⟨wr s sp v, sp + 1⟩
+  | .bin op, s, sp => ⟨wr s (sp - 2) (op.evalBin (rd s (sp - 2)) (rd s (sp - 1))), sp - 1⟩
+  | .un op, s, sp => ⟨wr s (sp - 1) (op.evalUn (rd s (sp - 1))), sp⟩
+  | .drop, s, sp => ⟨s, sp - 1⟩
+
+/-- One straight-line op after others. -/
+@[inline] def Simple.next (fp : USize) (o : Simple) (x : SP) : SP := o.exec fp x.stack x.sp
 
 /-- Run a list of simple ops in order. -/
 def Simple.execAll (fp : USize) (ops : List Simple) (x : SP) : SP :=
-  ops.foldl (fun x o => o.exec fp x) x
+  ops.foldl (fun x o => o.next fp x) x
 
 /-- The pc after a conditional jump on `c` (`onZero`: `jumpUnless`, else `jumpIf`). -/
 @[inline] def jumpTo (c : UInt64) (onZero : Bool) (t next : USize) : USize :=
@@ -276,20 +281,20 @@ variable {M : Type} [LinearMemory M]
         (st, ⟨stack, sp, fp, pc + 1, code, inst, frames⟩, fuel, .hostCall id fa args)
       | .trap t stack => (st, ⟨stack, sp - 1, fp, pc, code, inst, frames⟩, fuel, .trap t)
     | .drop =>
-      let x := Simple.exec fp .drop ⟨stack, sp⟩
+      let x := Simple.exec fp .drop stack sp
       run lim st x.stack x.sp fp (pc + 1) code inst frames fuel
     | .select =>
       let c := rd stack (sp - 1)
       let stack := if c != 0 then stack else wr stack (sp - 3) (rd stack (sp - 2))
       run lim st stack (sp - 2) fp (pc + 1) code inst frames fuel
     | .localGet x =>
-      let x := Simple.exec fp (.localGet x.toUSize) ⟨stack, sp⟩
+      let x := Simple.exec fp (.localGet x.toUSize) stack sp
       run lim st x.stack x.sp fp (pc + 1) code inst frames fuel
     | .localSet x =>
-      let x := Simple.exec fp (.localSet x.toUSize) ⟨stack, sp⟩
+      let x := Simple.exec fp (.localSet x.toUSize) stack sp
       run lim st x.stack x.sp fp (pc + 1) code inst frames fuel
     | .localTee x =>
-      let x := Simple.exec fp (.localTee x.toUSize) ⟨stack, sp⟩
+      let x := Simple.exec fp (.localTee x.toUSize) stack sp
       run lim st x.stack x.sp fp (pc + 1) code inst frames fuel
     | .globalGet x =>
       let v := st.globalBits inst.globals[x]!
@@ -426,7 +431,7 @@ variable {M : Type} [LinearMemory M]
       let st := { st with mems := st.mems.modify ma fun mi => { mi with data := LinearMemory.fill mi.data d v n } }
       run lim st stack (sp - 3) fp (pc + 1) code inst frames fuel
     | .const v =>
-      let x := Simple.exec fp (.const v) ⟨stack, sp⟩
+      let x := Simple.exec fp (.const v) stack sp
       run lim st x.stack x.sp fp (pc + 1) code inst frames fuel
     | .refIsNull =>
       let v := rd stack (sp - 1)
@@ -439,95 +444,95 @@ variable {M : Type} [LinearMemory M]
         match (if op.mayTrap then op.trapBin (rd stack (sp - 2)) (rd stack (sp - 1)) else none) with
         | some t => (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap t)
         | none =>
-          let x := Simple.exec fp (.bin op) ⟨stack, sp⟩
+          let x := Simple.exec fp (.bin op) stack sp
           run lim st x.stack x.sp fp (pc + 1) code inst frames fuel
       else
         match (if op.mayTrap then op.trapUn (rd stack (sp - 1)) else none) with
         | some t => (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap t)
         | none =>
-          let x := Simple.exec fp (.un op) ⟨stack, sp⟩
+          let x := Simple.exec fp (.un op) stack sp
           run lim st x.stack x.sp fp (pc + 1) code inst frames fuel
     -- Fused ops: `k` parts take `k` fuel. With less fuel, run the first part only
     -- (the others follow it in the code).
     | .llBin x y op =>
       match fuel with
       | f + 2 =>
-        let s := Simple.exec fp (.bin op) (Simple.exec fp (.localGet y.toUSize)
-          (Simple.exec fp (.localGet x.toUSize) ⟨stack, sp⟩))
+        let s := Simple.next fp (.bin op) (Simple.next fp (.localGet y.toUSize)
+          (Simple.exec fp (.localGet x.toUSize) stack sp))
         run lim st s.stack s.sp fp (pc + 3) code inst frames f
       | g =>
-        let s := Simple.exec fp (.localGet x.toUSize) ⟨stack, sp⟩
+        let s := Simple.exec fp (.localGet x.toUSize) stack sp
         run lim st s.stack s.sp fp (pc + 1) code inst frames g
     | .lcBin x c op =>
       match fuel with
       | f + 2 =>
-        let s := Simple.exec fp (.bin op) (Simple.exec fp (.const c)
-          (Simple.exec fp (.localGet x.toUSize) ⟨stack, sp⟩))
+        let s := Simple.next fp (.bin op) (Simple.next fp (.const c)
+          (Simple.exec fp (.localGet x.toUSize) stack sp))
         run lim st s.stack s.sp fp (pc + 3) code inst frames f
       | g =>
-        let s := Simple.exec fp (.localGet x.toUSize) ⟨stack, sp⟩
+        let s := Simple.exec fp (.localGet x.toUSize) stack sp
         run lim st s.stack s.sp fp (pc + 1) code inst frames g
     | .cBin c op =>
       match fuel with
       | f + 1 =>
-        let s := Simple.exec fp (.bin op) (Simple.exec fp (.const c) ⟨stack, sp⟩)
+        let s := Simple.next fp (.bin op) (Simple.exec fp (.const c) stack sp)
         run lim st s.stack s.sp fp (pc + 2) code inst frames f
       | g =>
-        let s := Simple.exec fp (.const c) ⟨stack, sp⟩
+        let s := Simple.exec fp (.const c) stack sp
         run lim st s.stack s.sp fp (pc + 1) code inst frames g
     | .lUn x op =>
       match fuel with
       | f + 1 =>
-        let s := Simple.exec fp (.un op) (Simple.exec fp (.localGet x.toUSize) ⟨stack, sp⟩)
+        let s := Simple.next fp (.un op) (Simple.exec fp (.localGet x.toUSize) stack sp)
         run lim st s.stack s.sp fp (pc + 2) code inst frames f
       | g =>
-        let s := Simple.exec fp (.localGet x.toUSize) ⟨stack, sp⟩
+        let s := Simple.exec fp (.localGet x.toUSize) stack sp
         run lim st s.stack s.sp fp (pc + 1) code inst frames g
     | .binSet op z =>
       match fuel with
       | f + 1 =>
-        let s := Simple.exec fp (.localSet z.toUSize) (Simple.exec fp (.bin op) ⟨stack, sp⟩)
+        let s := Simple.next fp (.localSet z.toUSize) (Simple.exec fp (.bin op) stack sp)
         run lim st s.stack s.sp fp (pc + 2) code inst frames f
       | g =>
-        let s := Simple.exec fp (.bin op) ⟨stack, sp⟩
+        let s := Simple.exec fp (.bin op) stack sp
         run lim st s.stack s.sp fp (pc + 1) code inst frames g
     | .lcBinSet x c op z =>
       match fuel with
       | f + 3 =>
-        let s := Simple.exec fp (.localSet z.toUSize) (Simple.exec fp (.bin op) (Simple.exec fp (.const c)
-          (Simple.exec fp (.localGet x.toUSize) ⟨stack, sp⟩)))
+        let s := Simple.next fp (.localSet z.toUSize) (Simple.next fp (.bin op) (Simple.next fp (.const c)
+          (Simple.exec fp (.localGet x.toUSize) stack sp)))
         run lim st s.stack s.sp fp (pc + 4) code inst frames f
       | g =>
-        let s := Simple.exec fp (.localGet x.toUSize) ⟨stack, sp⟩
+        let s := Simple.exec fp (.localGet x.toUSize) stack sp
         run lim st s.stack s.sp fp (pc + 1) code inst frames g
     | .llBinJump x y op t z =>
       match fuel with
       | f + 3 =>
-        let s := Simple.exec fp (.bin op) (Simple.exec fp (.localGet y.toUSize)
-          (Simple.exec fp (.localGet x.toUSize) ⟨stack, sp⟩))
+        let s := Simple.next fp (.bin op) (Simple.next fp (.localGet y.toUSize)
+          (Simple.exec fp (.localGet x.toUSize) stack sp))
         let c := rd s.stack (s.sp - 1)
         run lim st s.stack (s.sp - 1) fp (jumpTo c z t.toUSize (pc + 4)) code inst frames f
       | g =>
-        let s := Simple.exec fp (.localGet x.toUSize) ⟨stack, sp⟩
+        let s := Simple.exec fp (.localGet x.toUSize) stack sp
         run lim st s.stack s.sp fp (pc + 1) code inst frames g
     | .lcBinJump x v op t z =>
       match fuel with
       | f + 3 =>
-        let s := Simple.exec fp (.bin op) (Simple.exec fp (.const v)
-          (Simple.exec fp (.localGet x.toUSize) ⟨stack, sp⟩))
+        let s := Simple.next fp (.bin op) (Simple.next fp (.const v)
+          (Simple.exec fp (.localGet x.toUSize) stack sp))
         let c := rd s.stack (s.sp - 1)
         run lim st s.stack (s.sp - 1) fp (jumpTo c z t.toUSize (pc + 4)) code inst frames f
       | g =>
-        let s := Simple.exec fp (.localGet x.toUSize) ⟨stack, sp⟩
+        let s := Simple.exec fp (.localGet x.toUSize) stack sp
         run lim st s.stack s.sp fp (pc + 1) code inst frames g
     | .binJump op t z =>
       match fuel with
       | f + 1 =>
-        let s := Simple.exec fp (.bin op) ⟨stack, sp⟩
+        let s := Simple.exec fp (.bin op) stack sp
         let c := rd s.stack (s.sp - 1)
         run lim st s.stack (s.sp - 1) fp (jumpTo c z t.toUSize (pc + 2)) code inst frames f
       | g =>
-        let s := Simple.exec fp (.bin op) ⟨stack, sp⟩
+        let s := Simple.exec fp (.bin op) stack sp
         run lim st s.stack s.sp fp (pc + 1) code inst frames g
     else (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap (.host "pc out of range"))
 

@@ -40,7 +40,7 @@ theorem run_simple (lim : RunLimits) (st : StoreOf M) (stack : Slots) (sp fp pc 
     (code : Array Op) (inst : ModuleInst) (frames : Array Frame) (n : Nat) (o : Op) (s : Simple)
     (hpc : pc < code.usize) (hc : code[pc.toNat]'(pc_ok hpc) = o) (hs : simple? o = some s) :
     run lim st stack sp fp pc code inst frames (n + 1) =
-      run lim st (s.exec fp ⟨stack, sp⟩).stack (s.exec fp ⟨stack, sp⟩).sp fp (pc + 1) code inst frames n := by
+      run lim st (s.exec fp stack sp).stack (s.exec fp stack sp).sp fp (pc + 1) code inst frames n := by
   conv => lhs; unfold run
   rw [dif_pos hpc]
   simp only [Array.uget, hc]
