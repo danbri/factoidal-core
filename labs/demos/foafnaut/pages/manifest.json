@@ -63,6 +63,12 @@
    "doesNotShow": "dragging: script events carry no pointer coordinates in foafnaut yet"
   },
   {
+   "page": "js-status.html",
+   "title": "JavaScript in Foafnaut: status",
+   "handwritten": true,
+   "shows": "WPT and Test262 counts for page scripts (QuickJS in WasmVM) and for the Lean JS engine, and the speed of guest Wasm translated for the Hub"
+  },
+  {
    "page": "foaf-graph.html",
    "title": "FOAF graph (static)",
    "source": "source/foaf-graph.svg",

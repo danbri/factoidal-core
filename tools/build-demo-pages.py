@@ -47,7 +47,7 @@ COMBINATIONS = ['books-xslt4.xml', 'foaf-people.xml', 'sparql-results.xml', 'fee
 # Pages written for features that are still in progress; the manifest says what each one needs.
 NEXT = ['timers-and-clicks.html', 'webgpu-triangle.html', 'webgl-triangle.html']
 # A scripted page linked beside foafnaut:graph at the top: the same kind of graph, drawn by the page's own JavaScript.
-TOP = ['foaf-explorer.html']
+TOP = ['foaf-explorer.html', 'js-status.html']
 SVG_TINY_SCORES = 'https://danbri.github.io/factoidal/web/hub/render-scores/#svg-tiny-pixels'
 
 
