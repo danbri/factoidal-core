@@ -147,10 +147,10 @@ async function main() {
   // Page scripts (WebScripts.lean): the QuickJS guest module goes into the engine that runs
   // the renders (the worker), once. The engine must answer scriptSession info first: an older
   // engine has no such op, and then a page with scripts is refused as before (issue 1274).
-  type ScriptCall=(name:"scriptInfo"|"scriptLoad"|"scriptSession"|"nodeAt",...args:unknown[])=>Promise<unknown>;
+  type ScriptCall=(name:"scriptInfo"|"scriptLoad"|"scriptSession"|"nodeAt"|"pointerAt",...args:unknown[])=>Promise<unknown>;
   const scriptCall:ScriptCall=async(name,...args)=>worker?await worker.engine[name](...args)
     :(engine as unknown as Record<string,(...a:unknown[])=>unknown>)[name](...args);
-  let scriptsOn=false;
+  let scriptsOn=false,scriptOps:string[]=[];
   // The real time at which each session's virtual clock was 0.
   const scriptEpochs=new Map<number,number>();
   // The guest module: --quickjs-wasm FILE, else a local build (tools/wasmvm/build-quickjs.sh),
@@ -162,7 +162,7 @@ async function main() {
     try{
       const bytes=await Deno.readFile(quickjsPath);
       const t0=performance.now();
-      await scriptCall("scriptInfo");
+      scriptOps=((await scriptCall("scriptInfo")) as {ops?:string[]}).ops??[];
       const loaded=await scriptCall("scriptLoad",bytes);
       scriptsOn=true;
       setScriptHost({start:async(source,pageURL,resources)=>{
@@ -213,6 +213,22 @@ async function main() {
   // A turn of a page's script session: its logs, and a new frame only when the DOM changed
   // (no DOM change, no layout; the commands are part of the layout key).
   let scriptBusy=false;
+  // Pointer input for page scripts (WebScripts pointer): Lean finds the target and the
+  // coordinates (nodeAt), then dispatches pointer and mouse events, a click on release, at
+  // most one move in a frame. A move waits while one is on its way. An engine without the
+  // action gets a click on release.
+  let pointerBusy=false;
+  const scriptPointer=(kind:"down"|"move"|"up",x:number,y:number)=>{
+    if(!scriptsOn||!document.script||!scriptOps.includes("pointer"))return;
+    if(kind==="move"&&pointerBusy)return;
+    const page=document,session=document.script.session;pointerBusy=true;
+    (scriptCall("pointerAt",page.source,width,height,{...requestAt(page,scroll).options,x,y}) as Promise<{node:number|null}>)
+      .then(at=>typeof at.node==="number"?scriptCall("scriptSession","",{action:"pointer",session,kind,...at,button:0,
+        buttons:kind==="up"?0:1,pressure:kind==="up"?0:0.5,pointerType:"mouse"}) as Promise<ScriptTurn>:undefined)
+      .then(turn=>{if(turn)scriptTurn(page,turn,`pointer ${kind}`);})
+      .catch(error=>console.error("Native HTML: page script pointer failed:",String(error)))
+      .finally(()=>{pointerBusy=false;});
+  };
   const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
     for(const line of turn.logs)console.log(`page: ${line}`);
     for(const line of turn.errors)console.error(`page error: ${line}`);
@@ -860,6 +876,7 @@ async function main() {
           if(focused)leaveAddress();
           if((document as Page).graph){graphInput(2,event.a,event.b);return;}
           press=[event.a,event.b,event.a,event.b];
+          scriptPointer("down",event.a,event.b);
           if(typeof answer.sourceNode==="number")startPress({active:answer.sourceNode,rects:answer.rects});
           if(view.selection){view.selection=undefined;dirty=true;}
         }
@@ -869,14 +886,15 @@ async function main() {
           const node=engine.hit(frame,event.a,pageRow(event.b))?.sourceNode;
           if(node!==hoverNode){hoverNode=node;dirty=true;}
         }
-        if(event.kind===3&&press){press=[press[0],press[1],event.a,event.b];view.selection=press;dirty=true;}
+        if(event.kind===3&&press){press=[press[0],press[1],event.a,event.b];view.selection=press;dirty=true;scriptPointer("move",event.a,event.b);}
         if(event.kind===4&&press){
           const released=press;press=undefined;
+          scriptPointer("up",released[2],released[3]);
           if(engine.pointerUp(released)!=="click")return;
           if(view.selection){view.selection=undefined;dirty=true;}
           // A page with scripts: Lean finds the node under the point, and the click is a task of
           // the page's event loop; Lean runs the listeners in QuickJS and changes its DOM.
-          if(scriptsOn&&document.script){
+          if(scriptsOn&&document.script&&!scriptOps.includes("pointer")){
             const page=document,session=document.script.session;
             scriptCall("nodeAt",page.source,width,height,{...requestAt(page,scroll).options,x:released[0],y:released[1]})
               .then(node=>typeof node==="number"?scriptCall("scriptSession","",{action:"click",session,node}) as Promise<ScriptTurn>:undefined)

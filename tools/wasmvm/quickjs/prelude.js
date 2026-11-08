@@ -163,6 +163,27 @@
   }
   for (const k of ['screenX', 'screenY', 'clientX', 'clientY', 'button', 'buttons', 'ctrlKey', 'shiftKey', 'altKey', 'metaKey', 'relatedTarget'])
     Object.defineProperty(MouseEvent.prototype, k, { get() { return state(this)[k]; }, configurable: true });
+  // CSSOM View §10: page and offset coordinates. An event of the user agent has them from
+  // Lean's layout (the nodeAt answer); a script's own event has page = client (no scroll)
+  // and offset = client.
+  for (const [k, c] of [['pageX', 'clientX'], ['pageY', 'clientY'], ['offsetX', 'clientX'], ['offsetY', 'clientY'], ['x', 'clientX'], ['y', 'clientY']])
+    Object.defineProperty(MouseEvent.prototype, k, { get() { const s = state(this); return s[k] ?? s[c]; }, configurable: true });
+  for (const k of ['movementX', 'movementY']) Object.defineProperty(MouseEvent.prototype, k, { get() { return state(this)[k] ?? 0; }, configurable: true });
+  // Pointer Events 3 §4.1.
+  class PointerEvent extends MouseEvent {
+    constructor(type, init = undefined) {
+      super(type, init); const s = state(this), d = initOf(init);
+      s.pointerId = (d.pointerId ?? 0) | 0; s.width = Number(d.width ?? 1); s.height = Number(d.height ?? 1);
+      s.pressure = Number(d.pressure ?? 0); s.tangentialPressure = Number(d.tangentialPressure ?? 0);
+      s.tiltX = (d.tiltX ?? 0) | 0; s.tiltY = (d.tiltY ?? 0) | 0; s.twist = (d.twist ?? 0) | 0;
+      s.altitudeAngle = Number(d.altitudeAngle ?? Math.PI / 2); s.azimuthAngle = Number(d.azimuthAngle ?? 0);
+      s.pointerType = String(d.pointerType ?? ''); s.isPrimary = !!d.isPrimary;
+    }
+    getCoalescedEvents() { return []; }
+    getPredictedEvents() { return []; }
+  }
+  getters(PointerEvent, ['pointerId', 'width', 'height', 'pressure', 'tangentialPressure', 'tiltX', 'tiltY', 'twist',
+    'altitudeAngle', 'azimuthAngle', 'pointerType', 'isPrimary']);
   class WheelEvent extends MouseEvent {
     constructor(type, init = undefined) {
       super(type, init); const s = state(this), d = initOf(init);
@@ -361,7 +382,7 @@
     // callback, node, phase + 8 * capture, depth]: L4Factoidal.EventLoop.Dispatch.plan.
     const plan = chk(n.plan(tid, s.type, s.bubbles ? 1 : 0));
     const k = plan[0];
-    s.path = []; for (let i = k; i >= 1; i--) s.path.push(wrapTarget(plan[i]));
+    s.path = []; for (let i = 1; i <= k; i++) s.path.push(wrapTarget(plan[i]));
     let stopAt = null;
     for (let i = k + 1; i + 3 < plan.length; i += 4) {
       const cb = plan[i], node = plan[i + 1], phase = plan[i + 2] & 7, capture = (plan[i + 2] & 8) !== 0, depth = plan[i + 3];
@@ -1731,7 +1752,7 @@
   def('alert', () => {}); def('confirm', () => false); def('prompt', () => null);
   def('open', () => null);
   for (const [k, v] of Object.entries({ EventTarget, Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, ErrorEvent,
-    WheelEvent, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
+    WheelEvent, PointerEvent, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, CharacterData, Text, CDATASection, Comment,
     ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr,
@@ -1758,8 +1779,13 @@
     },
     // Lean dispatches an event of the user agent at a node, the document (0) or the window.
     dispatch(target, type, flags) {
-      const C = type === 'click' || type.startsWith('mouse') ? MouseEvent : Event;
-      const e = new C(type, { bubbles: (flags & 1) !== 0, cancelable: (flags & 2) !== 0, composed: (flags & 4) !== 0, view: window });
+      const C = type.startsWith('pointer') ? PointerEvent : type === 'click' || type.startsWith('mouse') ? MouseEvent : Event;
+      const init = { bubbles: (flags & 1) !== 0, cancelable: (flags & 2) !== 0, composed: (flags & 4) !== 0, view: window };
+      // The pointer's coordinates, buttons and pointer fields, as Lean gives them.
+      let data = {};
+      if (C !== Event) { const s = n.query(0, 16, ''); if (typeof s === 'string' && s !== '') { try { data = JSON.parse(s); } catch {} } }
+      const e = new C(type, Object.assign({}, data, init));
+      for (const k of ['pageX', 'pageY', 'offsetX', 'offsetY', 'movementX', 'movementY']) if (typeof data[k] === 'number') state(e)[k] = data[k];
       state(e).trusted = true;
       if (type === 'DOMContentLoaded') readyState = 'interactive';
       if (type === 'load' && target === WINDOW) readyState = 'complete';

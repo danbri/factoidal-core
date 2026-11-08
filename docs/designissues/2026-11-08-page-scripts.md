@@ -94,6 +94,30 @@ frame back to back. The loop is `EventLoop.Driver.advanceGo`, and
 `run_html.ts` start no turn while a frame is asked for or being drawn, so each presented
 frame has at most one turn before it.
 
+### Pointer input
+
+A host asks `nodeAt` for the window point. Lean takes the smallest layout box there; when
+that box is an embedded `svg` (or inside one), the target is the shape under the point
+(`WebHit.svgTarget`): each SVG primitive keeps the source path of the element that
+painted it (`NativeSVG.Primitive.element`; a `use` instance is its `use` element), and
+`NativeSVG.Scene.hitTestWith` takes the topmost primitive at the point in painter order,
+with the sampler's coverage, clips and transforms, under the primitive's
+`pointer-events` (SVG 2 §15.6: `none`, `visiblePainted` (initial), `visibleFill`,
+`visibleStroke`, `visible`, `painted`, `fill`, `stroke`, `all`). The answer has the node
+and the event's coordinates: `clientX/Y` (in the page's viewport), `pageX/Y` (plus the
+scroll) and `offsetX/Y` (from the target's box; an SVG shape's box is its outer `svg`'s).
+
+The host passes that answer to `scriptSession pointer` with `kind` (down, move, up,
+cancel), `button`, `buttons` and `pointerType`. Lean (`Page.Session.pointer`) dispatches
+`pointerdown` then `mousedown`; `pointerup`, `mouseup`, then `click` at the common
+ancestor of the press and release targets; `pointermove` and `mousemove`;
+`pointercancel` (a press that scrolled). A canceled `pointerdown` drops the compatibility
+mouse events of its press, not the click. At most one move is dispatched in a frame (16
+ms of the clock): a later move in the same frame replaces the one that waits, which is
+dispatched at the next turn of a later frame (`nextWake` says when). The event data
+reaches the prelude through `node_query` op 16 while Lean dispatches: no change to the
+guest's exports. A move or a press changes no DOM by itself, so no layout.
+
 ### The script clock
 
 The event loop's clock is virtual and moves by rule, so runs replay. Script time is the

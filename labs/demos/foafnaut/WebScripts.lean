@@ -28,6 +28,10 @@ argument for `start`:
   script clock (`Page.ScriptClock`; 100000 by default).
 - `click` (`node`), `advance` (`ms`: move the virtual clock), `settle` (`budgetMs`: run
   until no task, timer or frame waits), `turn` (run what is due now), `close`.
+- `pointer` (`kind` down, move, up or cancel; `node`; the coordinates of the `nodeAt`
+  answer; `button`, `buttons`, `pointerType`): the pointer and mouse events of
+  `Page.Session.pointer`, with a click on release; at most one move in a frame. A host
+  that finds no `pointer` in `info` sends `click`.
 
 Every answer but `info` and `close` is a turn: `session`, `clock`, `changed`,
 `commandCount`, `commands` (the whole list, compacted: one write per attribute and per
@@ -85,7 +89,7 @@ stays. -/
 @[implemented_by keepImpl, noinline] private opaque keep (h : Held) (request : JSON.Json) : Nat
 @[implemented_by peekImpl, noinline] private opaque peek (request : JSON.Json) : Bool × Nat
 
-def actions : List String := ["info", "load", "start", "click", "advance", "settle", "turn", "close"]
+def actions : List String := ["info", "load", "start", "click", "pointer", "advance", "settle", "turn", "close"]
 
 /-- An answer object with `nextSession` first: the value `keep` answered, so the
 compiled code keeps the call. -/
@@ -133,9 +137,9 @@ def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (
     ("timers",num loop.timers.length),
     ("nextTimer",match loop.timers with | t :: _ => num t.due | [] => .null),
     ("frames",num loop.frames.length),
-    ("nextWake",match loop.timers, s.nextFrame with
-      | t :: _, some f => num (min t.due f) | t :: _, none => num t.due
-      | [], some f => num f | [], none => .null),
+    ("nextWake",match [loop.timers.head?.map (·.due), s.nextFrame, s.moveWake].filterMap (fun x => x) with
+      | [] => .null
+      | t :: ts => num (ts.foldl min t)),
     ("quiet",.bool s.quiet),
     ("instructions",num (s.steps - before.steps)),("jobs",num (s.jobs - before.jobs)),
     ("tasks",num (s.tasks - before.tasks)),("ns",num ns)] ++ extra
@@ -182,6 +186,27 @@ def scriptSources (dom : DOM.Dom) (request : JSON.Json) : Except String (Array (
       | none => missing := missing.push s!"script {src} was not supplied"
   return (out, missing)
 
+/-- The pointer data of a `pointer` request as the JSON init of its events: the
+coordinates of the `nodeAt` answer (`clientX`, `clientY`, `pageX`, `pageY`, `offsetX`,
+`offsetY`), `button`, `buttons`, `pointerId`, `pressure`, `width`, `height`, and
+`pointerType` (mouse, pen or touch). Only numbers of these names pass, so the prelude
+reads nothing else. -/
+def pointerInit (request : JSON.Json) : String :=
+  let numeric := ["clientX","clientY","pageX","pageY","offsetX","offsetY","screenX","screenY","movementX","movementY",
+    "button","buttons","pointerId","pressure","width","height","tiltX","tiltY"]
+  let fields := numeric.filterMap fun k => match request.field? k with
+    | some (.number n) => some (k,JSON.Json.number n)
+    | _ => none
+  let kind := str request "pointerType" "mouse"
+  let kind := if ["mouse","pen","touch"].contains kind then kind else "mouse"
+  let screen := (if fields.any (·.1 == "screenX") then [] else (fields.find? (·.1 == "clientX")).map (fun f => ("screenX",f.2)) |>.toList) ++
+    (if fields.any (·.1 == "screenY") then [] else (fields.find? (·.1 == "clientY")).map (fun f => ("screenY",f.2)) |>.toList)
+  (JSON.Json.object (fields ++ screen ++ [("pointerType",.string kind),("isPrimary",.bool true)] ++
+    (if fields.any (·.1 == "pointerId") then [] else [("pointerId",num 1)]))).toString
+
+def pointerKind : String → Option Page.PointerKind
+  | "down" => some .down | "move" => some .move | "up" => some .up | "cancel" => some .cancel | _ => none
+
 /-- One action on what the engine holds. -/
 def act (held : Held) (action html : String) (request : JSON.Json) : Held × Except String String :=
   let full := request.field? "full" == some (.bool true)
@@ -227,9 +252,13 @@ def act (held : Held) (action html : String) (request : JSON.Json) : Held × Exc
         match natField request "node" with
         | some node => run (·.click node)
         | none => ({ held with session := some (id, s, marks) }, .error "scriptSession: click needs node")
-      | "advance" => run fun s => (s.advance (s.loop.clock + ((natField request "ms").getD 0))).1
-      | "settle" => run fun s => (s.settle ((natField request "budgetMs").getD 30000)).1
-      | "turn" => run fun s => (s.advance s.loop.clock).1
+      | "pointer" =>
+        match pointerKind (str request "kind"), natField request "node" with
+        | some kind, some node => run (·.pointer kind node (pointerInit request))
+        | _, _ => ({ held with session := some (id, s, marks) }, .error "scriptSession: pointer needs kind (down, move, up, cancel) and node")
+      | "advance" => run fun s => ((s.advance (s.loop.clock + ((natField request "ms").getD 0))).1).flushMove
+      | "settle" => run fun s => (s.flushMove.settle ((natField request "budgetMs").getD 30000)).1
+      | "turn" => run fun s => (s.flushMove.advance s.loop.clock).1
       | _ => ({ held with session := some (id, s, marks) }, .error "scriptSession: unknown action")
 
 /-- The `scriptSession` operation. `html` is the page, for `start`. -/

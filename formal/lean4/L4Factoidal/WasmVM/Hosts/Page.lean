@@ -122,12 +122,30 @@ theorem ScriptClock.ms_mark (c : ScriptClock) (h : c.steps - c.markSteps < max 1
     c.ms = c.markClock := by
   simp [ScriptClock.ms, Nat.div_eq_of_lt h]
 
+/-! ### Pointer input -/
+
+/-- A press, a pointer move waiting for its frame, and the event being dispatched. -/
+structure PointerState where
+  /-- The target of the press not yet released, and whether its `pointerdown` was
+  canceled (then no compatibility mouse events, Pointer Events 3 §11.1). -/
+  pressed : Option Nat := none
+  canceled : Bool := false
+  /-- The frame (the clock in 16 ms steps) of the last `pointermove` dispatched, and a
+  move that waits for the next frame: at most one move is dispatched in a frame. -/
+  moveFrame : Option Nat := none
+  pending : Option (Nat × String) := none
+  deriving Inhabited, Repr
+
 /-- Everything the imports change, except the store. -/
 structure Host where
   dom : DomHost
   loop : Loop := {}
   listeners : Array Listener := #[]
   time : ScriptClock := {}
+  pointer : PointerState := {}
+  /-- The init of the event of the user agent being dispatched, as JSON (`node_query`
+  op 16); empty when none. -/
+  event : String := ""
   deriving Inhabited
 
 /-- Budgets of one session. -/
@@ -232,12 +250,26 @@ def planList (h : Host) (target : Nat) (type : String) (bubbles : Bool) : Array 
 section
 variable {M : Type} [LinearMemory M]
 
+/-- `node_query` ops served here: 16 the init of the event being dispatched (JSON). -/
+def pageQuery (h : Host) (_node op : Nat) : Host × Except Int String :=
+  match op with
+  | 16 => (h, if h.event.isEmpty then .error (-1) else .ok h.event)
+  | _ => (h, .error (-2))
+
 /-- Serve one `foafnaut_dom` import, or `env.emscripten_notify_memory_growth`. -/
 def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st : StoreOf M) :
     Host × StoreOf M × HostResult :=
   if mo != Hosts.Dom.moduleName then (h, st, .values #[]) else
   let a := Hosts.Dom.arg args
   match nm with
+  | "node_query" =>
+    if a 1 < 16 then
+      let (dom, st, r) := Hosts.Dom.serve mem nm args h.dom st
+      ({ h with dom }, st, r)
+    else
+      let (h, answer) := pageQuery h (a 0) (a 1)
+      let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
+      (h, st, r)
   | "listen" =>
     match Hosts.Dom.readStr mem st (a 1) (a 2) Hosts.Dom.maxAttrName with
     | .error e => (h, st, Hosts.Dom.codeOrTrap e)
@@ -514,6 +546,78 @@ runs at the current time. -/
 def Session.click (s : Session) (node : Nat) : Session :=
   let target := elementOf s.host.dom.dom node
   let s := s.setLoop (s.loop.queueTask .userInteraction 0 (some { type := "click", target }))
+  (s.advance s.loop.clock).1
+
+/-- Dispatch an event of the user agent with the pointer data `init` (a JSON object the
+prelude reads with `node_query` op 16), then the microtask checkpoint. -/
+def Session.dispatchWith (s : Session) (target : Nat) (type init : String) : Session × Bool :=
+  let s := { s with host := { s.host with event := init } }
+  let (s, prevented) := s.dispatch target type
+  ({ s with host := { s.host with event := "" } }, prevented)
+
+def Session.setPointer (s : Session) (p : PointerState) : Session := { s with host := { s.host with pointer := p } }
+
+/-- The nearest inclusive ancestor of `a` that is also an inclusive ancestor of `b` (HTML
+"click": the press and the release on different elements click their common ancestor). -/
+def commonAncestor (d : Arena) (a b : Nat) : Nat :=
+  let pb := path d b
+  ((path d a).find? fun k => k < d.size && (d.get k).type == .element && pb.contains k).getD b
+
+/-- The frame of a time: the clock in 16 ms steps, as `nextFrame`. -/
+def frameOf (clock : Nat) : Nat := clock / 16
+
+/-- `pointermove`, then `mousemove` unless the press's `pointerdown` was canceled. -/
+def Session.moveNow (s : Session) (target : Nat) (init : String) : Session :=
+  let p := s.host.pointer
+  let (s, _) := s.dispatchWith target "pointermove" init
+  let s := if p.pressed.isSome && p.canceled then s else (s.dispatchWith target "mousemove" init).1
+  s.setPointer { s.host.pointer with moveFrame := some (frameOf s.loop.clock), pending := none }
+
+/-- The move that waits, when its frame has come. -/
+def Session.flushMove (s : Session) : Session :=
+  match s.host.pointer.pending with
+  | some (target, init) => if s.host.pointer.moveFrame == some (frameOf s.loop.clock) then s else s.moveNow target init
+  | none => s
+
+/-- When the move that waits is due: the next frame. -/
+def Session.moveWake (s : Session) : Option Nat :=
+  match s.host.pointer.pending, s.host.pointer.moveFrame with
+  | some _, some f => some ((f + 1) * 16)
+  | _, _ => none
+
+inductive PointerKind where | down | move | up | cancel
+  deriving BEq, Repr
+
+/-- Pointer input of the user at `node` (Pointer Events 3, UI Events §5): a press is
+`pointerdown` then `mousedown`; a release is `pointerup`, `mouseup`, then `click` at the
+common ancestor of the press and the release; a move is `pointermove` and `mousemove`,
+at most one in a frame (a later move in the same frame replaces the one that waits); a
+cancel is `pointercancel`. A canceled `pointerdown` stops the compatibility mouse events
+of its press, not the click. `init` is the JSON of the coordinates and buttons. What is
+due runs first; then the loop runs at the current time. -/
+def Session.pointer (s : Session) (kind : PointerKind) (node : Nat) (init : String) : Session :=
+  let target := elementOf s.host.dom.dom node
+  let s := (s.advance s.loop.clock).1
+  let s := if kind == .move then s else s.flushMove
+  let p := s.host.pointer
+  let s := match kind with
+    | .down =>
+      let (s, prevented) := s.dispatchWith target "pointerdown" init
+      let s := if prevented then s else (s.dispatchWith target "mousedown" init).1
+      s.setPointer { s.host.pointer with pressed := some target, canceled := prevented }
+    | .up =>
+      let (s, _) := s.dispatchWith target "pointerup" init
+      let s := if p.pressed.isSome && p.canceled then s else (s.dispatchWith target "mouseup" init).1
+      let s := match p.pressed with
+        | some pressed => (s.dispatchWith (commonAncestor s.host.dom.dom pressed target) "click" init).1
+        | none => s
+      s.setPointer { s.host.pointer with pressed := none, canceled := false }
+    | .cancel =>
+      let (s, _) := s.dispatchWith target "pointercancel" init
+      s.setPointer { s.host.pointer with pressed := none, canceled := false, pending := none }
+    | .move =>
+      if p.moveFrame == some (frameOf s.loop.clock) then s.setPointer { p with pending := some (target, init) }
+      else s.moveNow target init
   (s.advance s.loop.clock).1
 
 /-! ## Starting a page -/
