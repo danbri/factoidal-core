@@ -92,6 +92,6 @@ try{
   const replayWarnings=logs.filter(l=>/page GPU|WebGPU:|WebGL:/.test(l));
   if(replayWarnings.length)fail('console:',replayWarnings.slice(0,5).join(' | '));
   if(shotFile){const r=await s('Page.captureScreenshot',{format:'png'});fs.writeFileSync(shotFile,Buffer.from(r.data,'base64'));console.log('screenshot',shotFile);}
-}finally{chrome.kill();server.close();fs.rmSync(profile,{recursive:true,force:true});}
+}finally{chrome.kill();server.close();await sleep(300);try{fs.rmSync(profile,{recursive:true,force:true});}catch{/* Chrome still closing */}}
 console.log(failures?`hub_page_gpu_check: ${failures} failures`:'hub_page_gpu_check: pass');
 process.exit(failures?1:0);
