@@ -117,7 +117,7 @@ function call(source,options,w=1,h=1,counted=true){
   try{const result=JSON.parse(module.UTF8ToString(pointer));if(result?.error)throw Error(result.error);return result;}
   finally{module.ccall('web_render_free',null,['number'],[pointer]);}
 }
-const shell=()=>({tabs:tabs.map((tab,i)=>({title:(i===active?doc:tab.doc)?.title??''})),active,...field,focused,
+const shell=()=>({tabs:tabs.map((tab,i)=>{const page=i===active?doc:tab.doc;return {title:page?.title??'',...(page?.icon?{icon:page.icon}:{})};}),active,...field,focused,
   canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,
   ...(folding()?{collapsible:true,collapse:foldPercent()}:{}),...(swipeHint?{swipe:swipeHint}:{})});
 /** This engine draws a folding chrome: it answers shellInfo with the op chromeLayer. */
@@ -289,10 +289,29 @@ async function prepare(url){
   const facts=call(page.source,{op:'inspect',url:page.url});
   const images=await pageImages(facts.images);
   const next={url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images};
+  if(facts.icon){const icon=await tabIcon(facts.icon);if(icon)next.icon=icon;}
   // The page is drawn first and its scripts start after that frame, as deferred scripts do:
   // a slow start turn (QuickJS in WasmVM) no longer keeps the page blank.
   if(facts.scripts?.some(s=>s.kind==='classic'))next.pendingScripts=facts.scripts;
   return next;
+}
+// The tab icon (HTML §4.6.7.8): Lean picks the link and resolves its URL (inspect `icon`,
+// WebDocument.iconURL) and prepares the bytes (iconPrepare); the shell draws it in the tab.
+// Only this site's files are read. An engine without iconPrepare (asked once) has no icons;
+// an icon that does not load or that Lean refuses is left out.
+let engineIcons;
+const iconProbe='<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>';
+function hasIcons(){
+  if(engineIcons===undefined){try{engineIcons=call('',{op:'iconPrepare',base64:btoa(iconProbe),scale:1}).kind==='svg';}catch{engineIcons=false;}}
+  return engineIcons;
+}
+async function tabIcon(url){
+  try{
+    if(!hasIcons()||new URL(url).origin!==siteOrigin)return;
+    const response=await fetch(url);if(!response.ok)return;
+    const bytes=new Uint8Array(await response.arrayBuffer());if(bytes.length>65536)return;
+    return call('',{op:'iconPrepare',base64:toBase64(bytes),scale:Math.max(2,scale)});
+  }catch(error){console.warn('foafnaut: tab icon left out:',url,String(error.message??error));}
 }
 // Lean lists the images a page wants (SVG image, HTML img) by key. The page fetches only
 // those of this site, with size caps, and gives the bytes back with the key. One that
@@ -727,13 +746,21 @@ function menuPress(data,how){
   if(answer.menu)openMenu();
 }
 function command(id,text=''){
-  const answer=call('',{op:'command',command:id,textScalePercent:percent,history:history.history,focused});
+  const answer=call('',{op:'command',command:id,textScalePercent:percent,history:history.history,focused,
+    tabs:tabs.length,active,scroll:Math.round(scroll),view:height,scrollLimit:Math.floor(scrollLimit()),scale});
   if(answer.target==='address'){if(!focused)focusAddress();edit(answer.action,text);return;}
   if(['back','forward','reload'].includes(answer.action)){if(answer.url)navigate(answer.url,false);history=answer;request();}
   if(answer.textScalePercent!==percent){percent=answer.textScalePercent;request();browserState?.settings({textZoom:percent}).catch(()=>{});}
   if(answer.action==='focusAddress')focusAddress();
   if(answer.action==='newTab')newTab();
   if(answer.action==='closeTab')closeTab(active);
+  // Lean answers the tab to show and the scroll for the tab and scroll keys (issue 1268):
+  // an engine without them answers neither, and those keys do nothing.
+  if(answer.tab!==undefined&&answer.tab!==active){keep();showTab(answer.tab);}
+  if(answer.scrollTo!==undefined){closeMenu();if(answer.scrollTo!==scroll)scrollTo(answer.scrollTo);}
+  if(answer.action==='stop'&&loading){serial++;loading=false;request();}
+  if(answer.action==='reopenTab'){const tab=closedTabs.pop();if(tab){keep();tabs.push(tab);showTab(tabs.length-1);}}
+  if(answer.refused)post({type:'error',error:answer.refused});
   if(answer.action==='settings')navigate(settingsURL);
   if(answer.action==='viewSource')viewSource();
   if(answer.action==='print')printNow();
@@ -778,7 +805,9 @@ async function graphPage(){
 function keep(){tabs[active]={doc,history,scroll};}
 function showTab(index){serial++;loading=false;setFocus(false);active=index;({doc,history,scroll}=tabs[index]);field=showURL(doc.url);request();startPendingScripts(doc);}
 function newTab(){if(!home)return;keep();tabs.push({doc:home,history:push({entries:[],index:0},homeURL),scroll:0});showTab(tabs.length-1);focusAddress();}
-function closeTab(index){if(tabs.length===1)return;keep();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));}
+// Closed tabs, the last one last, for Shift-Command-T (reopenTab).
+const closedTabs=[];
+function closeTab(index){if(tabs.length===1)return;keep();closedTabs.push(tabs[index]);if(closedTabs.length>25)closedTabs.shift();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));}
 function setFocus(value){if(focused!==value){focused=value;post({type:'focus',focused});}}
 // Lean selects the whole address when the bar takes the focus; typing then replaces it.
 function focusAddress(){
@@ -815,6 +844,10 @@ function scrollBy(amount){
     if(refolded){if(canShift()){shiftPending=true;if(!drawing)draw();}else request();}
     return;
   }
+  scrollTo(next);
+}
+/** Show the page at scroll `next` (backing px, within the limit): a composite inside the band. */
+function scrollTo(next){
   const at=performance.now(),delta=next-scroll;scroll=next;
   // Scroll speed and direction (scroll_prefetch.ts trackMotion): when the next band is asked for.
   if(!motion||at-motion.at>250)motion={direction:Math.sign(delta),rowsPerMs:0,at};

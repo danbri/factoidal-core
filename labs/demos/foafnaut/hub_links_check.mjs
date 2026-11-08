@@ -78,8 +78,9 @@ try{
       async click(x,y){await s('Page.bringToFront');
         for(const type of ['mouseMoved','mousePressed','mouseReleased'])await s('Input.dispatchMouseEvent',{type,x,y,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});},
       async wheel(x,y,deltaY){await s('Page.bringToFront');await s('Input.dispatchMouseEvent',{type:'mouseWheel',x,y,deltaX:0,deltaY});},
-      async key(key,code,keyCode){await s('Page.bringToFront');
-        for(const type of ['keyDown','keyUp'])await s('Input.dispatchKeyEvent',{type,key,code,windowsVirtualKeyCode:keyCode,modifiers:1});},
+      // Back and forward as Lean's key table has them: Command-Left and Right on a Mac, Alt elsewhere.
+      async key(key,code,keyCode){await s('Page.bringToFront');const mac=process.platform==='darwin';
+        for(const type of ['keyDown','keyUp'])await s('Input.dispatchKeyEvent',{type,key,code,windowsVirtualKeyCode:keyCode,modifiers:mac?4:1});},
       close:()=>send('Target.closeTarget',{targetId})};
   }
   const runs=[{name:'published',runtime:''},{name:'local',runtime:localRuntime}].filter(r=>!only||r.name===only);

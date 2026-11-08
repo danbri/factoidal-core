@@ -394,27 +394,25 @@ addEventListener('wheel',event=>{event.preventDefault();fling.stop();dropActions
   send({type:'scroll',amount:event.deltaY*scale()});
   // A trackpad's horizontal swipe is back or forward if Lean says so (the worker adds it up).
   if(edgeZone>0){const lines=event.deltaMode===1?16:event.deltaMode===2?innerHeight:1;send({type:'wheel',dx:event.deltaX*lines,dy:event.deltaY*lines});}},{passive:false});
-// Cmd/Ctrl with = + - _ 0 are the same zoom commands as the desktop View menu (1 in, 2 out,
-// 3 actual size). Without this the host browser zooms the whole page, chrome included.
-const zoomKeys={'=':1,'+':1,'-':2,'_':2,'0':3};
 keys.addEventListener('input',()=>{for(const text of keys.value)send({type:'text',text});keys.value='';});
+// The modifier name of Lean's key table (WebHistory.modifierName) and the key name
+// (KeyboardEvent.key, "Space" for " "). A shifted key reads as its shifted character
+// ("{" for Shift-[), as on the macOS menu.
+const modifierName=event=>[event.shiftKey&&'shift',event.ctrlKey&&'control',event.altKey&&'alt',event.metaKey&&'command'].filter(Boolean).join('+');
+const keyName=event=>event.key===' '?'Space':event.key.length===1?event.key.toLowerCase():event.key;
 addEventListener('keydown',event=>{
   fling.stop();
-  if((event.metaKey||event.ctrlKey)&&!event.altKey&&zoomKeys[event.key]){event.preventDefault();send({type:'command',command:zoomKeys[event.key]});return;}
-  if(event.altKey&&event.key==='ArrowLeft'){event.preventDefault();send({type:'command',command:6});return;}
-  if(event.altKey&&event.key==='ArrowRight'){event.preventDefault();send({type:'command',command:7});return;}
-  // A key of Lean's table: the page keeps it from the host browser. Paste is left to the
-  // paste event below, which carries the clipboard text.
-  const modifier=(event.shiftKey?'shift+':'')+(mac?(event.metaKey?'command':''):(event.ctrlKey?'control':''));
-  const entry=(mac?event.metaKey:event.ctrlKey)&&!event.altKey?keyTable.find(row=>row.modifier===modifier&&row.key.toLowerCase()===event.key.toLowerCase()):undefined;
+  // A key of Lean's table (zoom, back and forward, tabs, scrolling, stop, print...): the page
+  // keeps it from the host browser and Lean says what it does. Paste is left to the paste
+  // event below, which carries the clipboard text. In the address bar a key with no Command
+  // or Control is an edit, not a table key. Some keys (Command-T, Command-W and Command-N in
+  // most browsers) never reach a page.
+  const primary=mac?event.metaKey:event.ctrlKey;
+  const entry=primary||!focused?keyTable.find(row=>row.modifier===modifierName(event)&&row.key===keyName(event)):undefined;
   if(entry&&entry.command!==14){event.preventDefault();send({type:'command',command:entry.command});return;}
   if(focused&&edits[event.key]){event.preventDefault();send({type:'key',key:edits[event.key],modifiers:modifiers(event)});return;}
   if((event.metaKey||event.ctrlKey)&&event.key==='u'){event.preventDefault();send({type:'command',command:13});return;}
   if(!focused&&event.key==='/'){event.preventDefault();send({type:'command',command:9});return;}
-  if(!focused&&event.key==='ArrowDown')send({type:'scroll',amount:80*scale()});
-  if(!focused&&event.key==='ArrowUp')send({type:'scroll',amount:-80*scale()});
-  if(!focused&&(event.key===' '||event.key==='PageDown'))send({type:'scroll',amount:innerHeight*0.8*scale()});
-  if(!focused&&event.key==='PageUp')send({type:'scroll',amount:-innerHeight*0.8*scale()});
 });
 // Paste: the clipboard text goes to Lean, which puts it in the address bar (issue 1268).
 addEventListener('paste',event=>{
