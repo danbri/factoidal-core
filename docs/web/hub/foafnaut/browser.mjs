@@ -69,6 +69,8 @@ worker.onmessage=({data})=>{
       clearTimeout(note.hideTimer);note.hideTimer=setTimeout(hide,10000);
     }
   }
+  // The page is at its top or bottom: a fling stops there (iOS stops a fling at the edge).
+  if(data.type==='edge')fling.edge(data.direction);
   if(data.type==='error'){note.hidden=false;note.textContent=data.error;}
 };
 worker.onerror=event=>{note.hidden=false;note.textContent='The browser worker failed: '+event.message;};
@@ -85,7 +87,7 @@ function begin(surface){
 }
 const canTransfer=worker instanceof Worker&&typeof canvas.transferControlToOffscreen==='function'&&typeof OffscreenCanvas==='function';
 if(canTransfer)send({type:'hello',page:query.get('page')});else begin(false);
-addEventListener('resize',()=>send({type:'resize',...size()}));
+addEventListener('resize',()=>{fling.stop();send({type:'resize',...size()});});
 // Keep focus where the loop puts it: the press must not move it back to the page.
 canvas.addEventListener('mousedown',event=>event.preventDefault());
 // Two fingers on a touch screen are a pinch: Lean's text zoom, as Ctrl+wheel is on a
@@ -97,17 +99,64 @@ const fingerGap=()=>{const [a,b]=[...touches.values()];return Math.hypot(a.x-b.x
 // A finger whose lift never reached the canvas (the app left mid-touch, a system gesture)
 // would stay in touches, and every later one-finger tap would start a pinch and click
 // nothing. The primary pointer begins a new gesture, so it clears whatever is left.
+// Momentum after a touch drag (owner, 2026-11-08), as iOS UIScrollView: the release velocity
+// is taken from the moves of the last 100 ms, and the page keeps scrolling at a velocity that
+// falls by the factor 0.998 each millisecond (UIScrollView.DecelerationRate.normal). Each step
+// is an ordinary scroll message, so inside a band it moves only the composite: no Lean render.
+// A new touch stops it, as does the page's top or bottom (the worker says `edge`), a wheel or
+// key scroll and a pinch. A tap that stops a fling does nothing else, as on iOS. Wheel and
+// trackpad scrolls have the system's own momentum and get none here.
+const fling=(()=>{
+  const rate=0.998,lnRate=Math.log(rate),windowMs=100,minStart=0.15,minSpeed=0.02,maxSpeed=8;
+  let velocity=0,last=0,carry=0,frameId=0;
+  const step=at=>{
+    const dt=Math.min(64,Math.max(0,at-last));last=at;
+    // The exact distance over dt at an exponentially falling velocity (frame rate independent).
+    const decay=Math.pow(rate,dt),distance=velocity*(decay-1)/lnRate;
+    velocity*=decay;carry+=distance*scale();
+    const whole=Math.trunc(carry);
+    if(whole){carry-=whole;send({type:'scroll',amount:whole,fling:true});}
+    if(Math.abs(velocity)<minSpeed){stop();return;}
+    frameId=requestAnimationFrame(step);
+  };
+  function stop(){if(frameId)cancelAnimationFrame(frameId);frameId=0;velocity=0;carry=0;}
+  return {
+    stop,
+    /** The page reached its end in this direction: a fling that way stops (an older one may not). */
+    edge(direction){if(frameId&&Math.sign(velocity)===direction)stop();},
+    get active(){return frameId!==0;},
+    /** Start from the moves of a drag ({t,y} in ms and CSS px), ending at the lift (t,y). */
+    start(samples,t,y){
+      stop();
+      const recent=samples.filter(s=>t-s.t<=windowMs);
+      if(!recent.length)return false;
+      const first=recent[0],span=t-first.t;
+      if(span<8)return false;
+      // Scroll rows per ms: a finger moving up scrolls the page down.
+      const v=(first.y-y)/span;
+      if(Math.abs(v)<minStart)return false;
+      velocity=Math.sign(v)*Math.min(maxSpeed,Math.abs(v));
+      last=performance.now();frameId=requestAnimationFrame(step);
+      return true;
+    },
+    constants:{rate,windowMs,minStart,minSpeed,maxSpeed},
+  };
+})();
+window.foafnautFling=fling;
 const forgetTouches=()=>{touches.clear();if(pinch){send({type:'pinch',phase:'end'});pinch=undefined;}};
-addEventListener('visibilitychange',()=>{if(document.hidden){forgetTouches();moved=undefined;}});
+addEventListener('visibilitychange',()=>{if(document.hidden){forgetTouches();moved=undefined;fling.stop();}});
 canvas.addEventListener('pointerdown',event=>{
+  // A touch during a fling stops it and is not a press: a tap then clicks nothing.
+  const stopper=fling.active;fling.stop();
   if(event.isPrimary)forgetTouches();
   if(event.pointerType==='touch')touches.set(event.pointerId,{x:event.clientX,y:event.clientY});
   if(touches.size===2&&!pinch){
-    if(moved)send({type:'release',scrolled:true,...point(event)});
+    if(moved&&!moved.stopper)send({type:'release',scrolled:true,...point(event)});
     moved=undefined;pinch={gap:Math.max(1,fingerGap())};send({type:'pinch',phase:'start'});return;
   }
   if(pinch)return;
-  moved={y:event.clientY,startX:event.clientX,startY:event.clientY,scrolled:false};send({type:'press',...point(event)});
+  moved={y:event.clientY,startX:event.clientX,startY:event.clientY,scrolled:false,stopper,samples:[{t:event.timeStamp,y:event.clientY}]};
+  if(!stopper)send({type:'press',...point(event)});
 });
 canvas.addEventListener('pointermove',event=>{
   if(touches.has(event.pointerId))touches.set(event.pointerId,{x:event.clientX,y:event.clientY});
@@ -116,15 +165,26 @@ canvas.addEventListener('pointermove',event=>{
   // tap slop, the touch is still a tap: no scroll and no drag.
   const touch=event.pointerType==='touch';
   if(moved&&touch&&!moved.scrolled&&Math.hypot(event.clientX-moved.startX,event.clientY-moved.startY)<tapSlop)return;
-  if(moved&&event.buttons)send({type:'move',...point(event)});
+  if(moved&&event.buttons&&!moved.stopper)send({type:'move',...point(event)});
   if(!moved||!touch)return;
+  // Where the finger was and when, for the velocity at the lift (the last 100 ms are kept).
+  moved.samples.push({t:event.timeStamp,y:event.clientY});
+  while(moved.samples.length>2&&event.timeStamp-moved.samples[0].t>200)moved.samples.shift();
   const step=moved.y-event.clientY;if(Math.abs(step)<2)return;
   moved={...moved,y:event.clientY,scrolled:true};send({type:'scroll',amount:step*scale()});
 });
 const lift=event=>{
   touches.delete(event.pointerId);
   if(pinch){if(touches.size<2){send({type:'pinch',phase:'end'});pinch=undefined;}return;}
-  if(moved&&event.type==='pointerup')send({type:'release',scrolled:moved.scrolled,...point(event)});
+  if(moved&&event.type==='pointerup'){
+    if(!moved.stopper)send({type:'release',scrolled:moved.scrolled,...point(event)});
+    // A drag of a finger flings; a tap (no scroll) and a mouse drag do not.
+    if(moved.scrolled&&event.pointerType==='touch'){
+      const rest=moved.y-event.clientY;
+      if(Math.abs(rest)>=1)send({type:'scroll',amount:rest*scale()});
+      fling.start(moved.samples,event.timeStamp,event.clientY);
+    }
+  }
   moved=undefined;
 };
 canvas.addEventListener('pointerup',lift);
@@ -132,7 +192,7 @@ canvas.addEventListener('pointercancel',lift);
 // Safari's own pinch would zoom the whole page, address bar included.
 for(const name of ['gesturestart','gesturechange'])addEventListener(name,event=>event.preventDefault(),{passive:false});
 // Ctrl+wheel is a trackpad pinch: Lean's text zoom, not the host browser's page zoom.
-addEventListener('wheel',event=>{event.preventDefault();
+addEventListener('wheel',event=>{event.preventDefault();fling.stop();
   if(event.ctrlKey){if(event.deltaY)send({type:'command',command:event.deltaY<0?1:2});return;}
   send({type:'scroll',amount:event.deltaY*scale()});},{passive:false});
 // Cmd/Ctrl with = + - _ 0 are the same zoom commands as the desktop View menu (1 in, 2 out,
@@ -140,6 +200,7 @@ addEventListener('wheel',event=>{event.preventDefault();
 const zoomKeys={'=':1,'+':1,'-':2,'_':2,'0':3};
 keys.addEventListener('input',()=>{for(const text of keys.value)send({type:'text',text});keys.value='';});
 addEventListener('keydown',event=>{
+  fling.stop();
   if((event.metaKey||event.ctrlKey)&&!event.altKey&&zoomKeys[event.key]){event.preventDefault();send({type:'command',command:zoomKeys[event.key]});return;}
   if(event.altKey&&event.key==='ArrowLeft'){event.preventDefault();send({type:'command',command:6});return;}
   if(event.altKey&&event.key==='ArrowRight'){event.preventDefault();send({type:'command',command:7});return;}

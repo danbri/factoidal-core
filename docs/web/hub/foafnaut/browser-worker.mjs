@@ -515,7 +515,9 @@ const canShift=()=>!!(layerSurface&&current&&current.doc===doc&&current.source==
 const swapReady=()=>!!(prefetched&&prefetched.doc===doc&&prefetched.source===doc.source&&prefetched.width===width&&prefetched.height===height
   &&L.keeps(prefetched.answer.layers,scroll)&&prefetched.sig===signature(renderOptions(scroll)));
 function scrollBy(amount){
-  const next=Math.max(0,Math.min(scrollLimit(),scroll+Math.round(amount)));
+  const want=scroll+Math.round(amount),next=Math.max(0,Math.min(scrollLimit(),want));
+  // At the top or bottom: the page stops a touch fling there.
+  if(next!==want)post({type:'edge',direction:Math.sign(amount)});
   if(next===scroll)return;
   const at=performance.now(),delta=next-scroll;scroll=next;
   // Scroll speed and direction (scroll_prefetch.ts trackMotion): when the next band is asked for.
