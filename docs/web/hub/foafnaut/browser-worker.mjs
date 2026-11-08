@@ -119,7 +119,7 @@ function call(source,options,w=1,h=1){
 }
 const shell=()=>({tabs:tabs.map((tab,i)=>({title:(i===active?doc:tab.doc)?.title??''})),active,...field,focused,
   canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,
-  ...(folding()?{collapsible:true,collapse:foldPercent()}:{})});
+  ...(folding()?{collapsible:true,collapse:foldPercent()}:{}),...(swipeHint?{swipe:swipeHint}:{})});
 /** This engine draws a folding chrome: it answers shellInfo with the op chromeLayer. */
 function canFold(){
   if(engineFolds===undefined){
@@ -894,6 +894,8 @@ async function start(data){
   // The page keeps the keys of Lean's table for a host with no menu, and needs them at once.
   // An engine from before these ops (issue 1268) has no key table and no address edits.
   try{post({type:'keys',table:call('',{op:'keyTable',platform:data.platform==='mac'?'mac':'other'})});}catch{/* older engine */}
+  // Back and forward swipes (WebGesture.lean): asked once; an engine without the op has none.
+  try{gestures=call('',{op:'gesture',action:'info'});post({type:'gestures',edgeZone:gestures.edgeZone});}catch{gestures=undefined;}
   ready=true;
   openState().then(()=>{if(first!==home&&!first.title?.startsWith('Page refused'))browserState?.visit(first.url,first.title??'',homeURL).catch(()=>{});})
     .catch(error=>{stateReason=String(error.message??error);});
@@ -901,6 +903,39 @@ async function start(data){
   if(data.address)visit(data.address);
   else if(wanted)request();else focusAddress();
   for(const message of early.splice(0))receive(message);
+}
+// Back and forward swipes. Lean (WebGesture.lean, op gesture) says what
+// a touch from the window's edge or a trackpad's horizontal swipe means; the worker puts
+// its hint in the shell, where WebShell draws the arrow, and goes back or forward when it
+// says so. A trackpad gesture has no end on the web: 160 ms with no wheel event ends it
+// (its momentum included). The page keeps wheel events from the host browser, so the host's
+// own swipe never navigates as well.
+let gestures,swipeHint=0,wheelSum,wheelTimer;
+const wheelIdleMs=160;
+function setHint(value){if(value!==swipeHint){swipeHint=value;request();}}
+function gestureAnswer(answer){
+  setHint(answer.navigate?0:answer.hint);
+  if(answer.navigate)command(answer.direction==='back'?6:7);
+}
+function swipe(data){
+  if(!gestures)return;
+  if(data.phase==='cancel'){setHint(0);return;}
+  const answer=call('',{op:'gesture',action:'touch',width:data.width,startX:data.startX,startY:data.startY,x:data.x,y:data.y,
+    vx:data.vx??0,fingers:1,ended:data.phase==='end'});
+  if(data.phase==='end'){gestureAnswer({...answer,hint:0});return;}
+  post({type:'swipe',id:data.id,phase:answer.phase});
+  setHint(answer.hint);
+}
+function wheel(data){
+  if(!gestures)return;
+  clearTimeout(wheelTimer);
+  wheelTimer=setTimeout(()=>{
+    const sum=wheelSum;wheelSum=undefined;
+    if(sum)gestureAnswer({...call('',{op:'gesture',action:'wheel',dx:Math.round(sum.dx),dy:Math.round(sum.dy),ended:true}),hint:0});
+  },wheelIdleMs);
+  wheelSum??={dx:0,dy:0};
+  wheelSum.dx+=data.dx;wheelSum.dy+=data.dy;
+  setHint(call('',{op:'gesture',action:'wheel',dx:Math.round(wheelSum.dx),dy:Math.round(wheelSum.dy),ended:false}).hint);
 }
 function flush(){
   const move=pendingMove,scrolled=pendingScroll;pendingMove=pendingScroll=undefined;
@@ -928,6 +963,8 @@ function apply(data){
   if(data.type==='visit'){visit(data.address);return;}
   if(data.type==='resize'){({width,height,scale}=data);folded=Math.min(folded,foldRows());if(doc.graph)graphInput(1,width,height);request();}
   if(data.type==='scroll')scrollBy(data.amount);
+  if(data.type==='swipe')swipe(data);
+  if(data.type==='wheel')wheel(data);
   if(data.type==='command')command(data.command);
   // A touch pinch: the zoom at its start times the finger ratio, in steps of 5 percent,
   // from Lean's smallest (50) to 1000. Lean lays the page out again at each new step.

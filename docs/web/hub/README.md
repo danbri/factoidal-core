@@ -649,6 +649,22 @@ the composite's `top` follows it. The layout key holds the full chrome
 (`WebDocument.layoutTop_collapse`), so a fold lays nothing out. An engine that
 does not answer `shellInfo` keeps the classic chrome.
 
+### Back and forward swipes
+
+Lean decides (`labs/demos/foafnaut/WebGesture.lean`, op `gesture`, theorems in the
+same file). A one-finger touch from within 20 px of the left edge, mostly across,
+goes back when lifted past 30 % of the width or thrown at 500 px/s; from the right
+edge, forward. A trackpad's horizontal swipe (wheel `deltaX`, content moving right is
+back) goes back or forward past 140 px; on the web it ends after 160 ms with no wheel
+event. The page keeps wheel events from the host browser, so the host's own trackpad
+swipe never navigates as well; on a phone a system edge gesture that takes the touch
+cancels it (`pointercancel`), so it never navigates twice either. While a swipe is
+under way Lean draws the hint in the chrome (`shell.swipe`, `WebShell.swipeNodes`).
+The worker asks `{op:'gesture',action:'info'}` once; an engine without the op has no
+swipes and nothing else changes. `labs/demos/foafnaut/hub_gesture_check.mjs` (same
+stand-in server and runs) checks edge swipes, taps and vertical drags at the edge,
+trackpad swipes and the fling.
+
 ## Constraints every cell must respect
 
 - **Same-origin only (strict pages).** Every import in `hub.njk` is a

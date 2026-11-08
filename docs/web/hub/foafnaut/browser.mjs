@@ -40,7 +40,7 @@ const modifiers=event=>(event.shiftKey?1:0)|(event.metaKey?2:0)|(event.altKey?4:
 const now=()=>performance.timeOrigin+performance.now();
 const send=message=>worker.postMessage(message.type==='start'||message.type==='hello'?message:{...message,t:now()});
 window.foafnautThread=worker instanceof Worker?'worker':'page';
-let focused=false,moved=undefined;
+let focused=false,moved=undefined,edgeZone=0,swipeId=0;
 // Lean's key table for a host with no menu (WebHistory.keyTable): Command on a Mac, Control elsewhere.
 const mac=/Mac|iPhone|iPad/.test(navigator.platform||navigator.userAgent);
 let keyTable=[];
@@ -91,6 +91,10 @@ worker.onmessage=({data})=>{
   }
   // The page is at its top or bottom: a fling stops there (iOS stops a fling at the edge).
   if(data.type==='edge')fling.edge(data.direction);
+  // Back and forward swipes: Lean's edge zone, sent once if the engine has them; and Lean's
+  // phase for the touch under way (WebGesture.lean).
+  if(data.type==='gestures')edgeZone=data.edgeZone;
+  if(data.type==='swipe'&&moved?.edge?.id===data.id)swipeAnswer(data.phase);
   if(data.type==='error'){note.hidden=false;note.textContent=data.error;}
 };
 worker.onerror=event=>{note.hidden=false;note.textContent='The browser worker failed: '+event.message;};
@@ -205,10 +209,14 @@ canvas.addEventListener('pointerdown',event=>{
   if(event.pointerType==='touch')touches.set(event.pointerId,{x:event.clientX,y:event.clientY});
   if(touches.size===2&&!pinch){
     if(moved&&!moved.stopper)send({type:'release',scrolled:true,...point(event)});
+    if(moved?.edge?.asked)send({type:'swipe',phase:'cancel'});
     moved=undefined;pinch={gap:Math.max(1,fingerGap())};send({type:'pinch',phase:'start'});return;
   }
   if(pinch)return;
-  moved={y:event.clientY,startX:event.clientX,startY:event.clientY,scrolled:false,stopper,samples:[{t:event.timeStamp,y:event.clientY}]};
+  moved={y:event.clientY,startX:event.clientX,startY:event.clientY,scrolled:false,stopper,samples:[{t:event.timeStamp,x:event.clientX,y:event.clientY}],
+    // A touch that starts in Lean's edge zone may be a back or forward swipe: past the tap slop
+    // its moves go to Lean and wait for its phase before they scroll (edgeTouch below).
+    edge:event.pointerType==='touch'&&edgeZone>0&&(event.clientX<edgeZone||innerWidth-event.clientX<edgeZone)?{id:++swipeId,phase:undefined,asked:false}:undefined};
   if(!stopper)send({type:'press',...point(event)});
 });
 canvas.addEventListener('pointermove',event=>{
@@ -218,10 +226,11 @@ canvas.addEventListener('pointermove',event=>{
   // tap slop, the touch is still a tap: no scroll and no drag.
   const touch=event.pointerType==='touch';
   if(moved&&touch&&!moved.scrolled&&Math.hypot(event.clientX-moved.startX,event.clientY-moved.startY)<tapSlop)return;
+  if(moved?.edge&&edgeTouch(event))return;
   if(moved&&event.buttons&&!moved.stopper)send({type:'move',...point(event)});
   if(!moved||!touch)return;
   // Where the finger was and when, for the velocity at the lift (the last 100 ms are kept).
-  moved.samples.push({t:event.timeStamp,y:event.clientY});
+  moved.samples.push({t:event.timeStamp,x:event.clientX,y:event.clientY});
   while(moved.samples.length>2&&event.timeStamp-moved.samples[0].t>200)moved.samples.shift();
   const step=moved.y-event.clientY;if(Math.abs(step)<2)return;
   moved={...moved,y:event.clientY,scrolled:true};send({type:'scroll',amount:step*scale()});
@@ -229,6 +238,13 @@ canvas.addEventListener('pointermove',event=>{
 const lift=event=>{
   touches.delete(event.pointerId);
   if(pinch){if(touches.size<2){send({type:'pinch',phase:'end'});pinch=undefined;}return;}
+  // A swipe Lean took, or one it has not answered yet, ends in Lean: no click and no fling.
+  if(moved?.edge?.asked&&moved.edge.phase!=='other'){
+    if(event.type==='pointerup')send({type:'swipe',phase:'end',...swipePoint(event),vx:swipeSpeed(event)});
+    else send({type:'swipe',phase:'cancel'});
+    if(!moved.edge.released&&!moved.stopper)send({type:'release',scrolled:true,...point(event)});
+    moved=undefined;return;
+  }
   if(moved&&event.type==='pointerup'){
     if(!moved.stopper)send({type:'release',scrolled:moved.scrolled,...point(event)});
     // A drag of a finger flings; a tap (no scroll) and a mouse drag do not.
@@ -240,6 +256,30 @@ const lift=event=>{
   }
   moved=undefined;
 };
+// The touch from an edge, past the tap slop: true when Lean has it or has not answered yet,
+// so the move neither scrolls nor drags.
+function edgeTouch(event){
+  const edge=moved.edge;
+  if(edge.phase==='other')return false;
+  edge.asked=true;moved.samples.push({t:event.timeStamp,x:event.clientX,y:event.clientY});
+  while(moved.samples.length>2&&event.timeStamp-moved.samples[0].t>200)moved.samples.shift();
+  send({type:'swipe',phase:'move',...swipePoint(event)});
+  return true;
+}
+const swipePoint=event=>({id:moved.edge.id,width:Math.round(innerWidth),startX:Math.round(moved.startX),startY:Math.round(moved.startY),x:Math.round(event.clientX),y:Math.round(event.clientY)});
+// CSS px per second across, from the moves of the last 100 ms.
+function swipeSpeed(event){
+  const recent=moved.samples.filter(s=>event.timeStamp-s.t<=100),first=recent[0];
+  const span=first?event.timeStamp-first.t:0;
+  return span>=8?Math.round((event.clientX-first.x)/span*1000):0;
+}
+// Lean's phase: a swipe ends the press with no click; anything else is a touch as before
+// (its next move scrolls by all the way the finger has gone).
+function swipeAnswer(phase){
+  const edge=moved.edge;edge.phase=phase;
+  if(phase==='swipe'&&!edge.released){edge.released=true;if(!moved.stopper)send({type:'release',scrolled:true,x:Math.round(moved.startX*scale()),y:Math.round(moved.startY*scale())});}
+  if(phase==='other')send({type:'swipe',phase:'cancel'});
+}
 canvas.addEventListener('pointerup',lift);
 canvas.addEventListener('pointercancel',lift);
 // Safari's own pinch would zoom the whole page, address bar included.
@@ -247,7 +287,9 @@ for(const name of ['gesturestart','gesturechange'])addEventListener(name,event=>
 // Ctrl+wheel is a trackpad pinch: Lean's text zoom, not the host browser's page zoom.
 addEventListener('wheel',event=>{event.preventDefault();fling.stop();
   if(event.ctrlKey){if(event.deltaY)send({type:'command',command:event.deltaY<0?1:2});return;}
-  send({type:'scroll',amount:event.deltaY*scale()});},{passive:false});
+  send({type:'scroll',amount:event.deltaY*scale()});
+  // A trackpad's horizontal swipe is back or forward if Lean says so (the worker adds it up).
+  if(edgeZone>0){const lines=event.deltaMode===1?16:event.deltaMode===2?innerHeight:1;send({type:'wheel',dx:event.deltaX*lines,dy:event.deltaY*lines});}},{passive:false});
 // Cmd/Ctrl with = + - _ 0 are the same zoom commands as the desktop View menu (1 in, 2 out,
 // 3 actual size). Without this the host browser zooms the whole page, chrome included.
 const zoomKeys={'=':1,'+':1,'-':2,'_':2,'0':3};
