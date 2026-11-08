@@ -171,10 +171,11 @@ if [ -x native-webgpu-html-darwin-arm64 ]; then shasum -a 256 native-webgpu-html
 if [ -f libweb-render.dylib ]; then shasum -a 256 libweb-render.dylib >> "$OUT/SHA256SUMS"; fi
 # The compiled browser must start as the app starts it (issue 1268). On 2026-11-08 the binary
 # had no env permission, run_html.ts read HOME to find the script guest, and the app stopped
-# at start while every test of run_html.ts from source passed. One off-screen graph sweep.
+# at start while every test of run_html.ts from source passed. One off-screen graph sweep,
+# limited to 180 s with perl's alarm (macOS has no GNU timeout).
 if [ -x "$OUT/native-webgpu-html-darwin-arm64" ]; then
   START_RC=0
-  (cd "$OUT" && timeout 180 ./native-webgpu-html-darwin-arm64 --offscreen --no-state --idle-checks-only --graph-sweep >"$OUT/start-check.log" 2>&1) || START_RC=$?
+  (cd "$OUT" && perl -e 'alarm shift; exec @ARGV' 180 ./native-webgpu-html-darwin-arm64 --offscreen --no-state --idle-checks-only --graph-sweep >"$OUT/start-check.log" 2>&1) || START_RC=$?
   if [ "$START_RC" != 0 ]; then echo "compiled foafnaut did not start (rc $START_RC):" >&2; grep -v '^{' "$OUT/start-check.log" | head -20 >&2; exit 1; fi
   rm -f "$OUT/start-check.log"
   echo 'Compiled foafnaut started off screen and passed the graph sweep'
