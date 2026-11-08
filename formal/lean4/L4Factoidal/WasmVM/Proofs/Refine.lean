@@ -1058,18 +1058,18 @@ variable {code : Array Op} {locals : List ValType} {maxH : Nat} {s : Slots} {fp 
   {te tsC : List ValType} {valsC : List Spec.val} {is : List Spec.instr}
 
 /-- `br l`: what the side table says (`Comp.br`), and `br_up`. -/
-theorem op_br {l : Nat} (z : Spec.state) {s' : Slots}
+theorem op_br {l : Nat} (z : Spec.state)
     (hw : ActW code locals maxH s fp sp pc f body L H d e te tsC valsC (.BR (.mk_uN l) :: is)) :
     ∃ lb ts0, L[l]? = some lb ∧ code[pc]? = some (.br lb.target) ∧ tsC = ts0 ++ lb.types ∧
       lb.arity = lb.types.length ∧
-      (Moved s s' (fp + locals.length + d + ts0.length) (fp + lb.base) lb.arity →
+      (∀ s' : Slots, Moved s s' (fp + locals.length + d + ts0.length) (fp + lb.base) lb.arity →
       ∃ body', Spec.Steps (.mk_config z body) (.mk_config z body') ∧
         (ActR code locals maxH s' fp (fp + lb.base + lb.arity) lb.pc f body' ∨
           DoneR code locals maxH s' fp (fp + lb.base + lb.arity) lb.pc f body')) := by
   obtain ⟨hn, hsl, hc, hsp, hmax, hb, hloc⟩ := hw
   cases hc with
   | @br _ _ _ _ _ _ _ _ lb ts0 _ hl hcode hts har hbase hnext =>
-    refine ⟨lb, ts0, hl, hcode, hts, har, fun hmv => ?_⟩
+    refine ⟨lb, ts0, hl, hcode, hts, har, fun s' hmv => ?_⟩
     subst hts hb
     exact br_up lb z hloc har l L H d e te ts0 valsC is hn hsl hl hmax hmv
 
@@ -1098,19 +1098,19 @@ theorem op_brIf_false {l : Nat} (z : Spec.state)
     simpa [i32c, Spec.instr_val] using h
 
 /-- `br_if l`, taken: `br_if_true`, then as `br`. -/
-theorem op_brIf_true {l : Nat} (z : Spec.state) {s' : Slots}
+theorem op_brIf_true {l : Nat} (z : Spec.state)
     (hw : ActW code locals maxH s fp sp pc f body L H d e te tsC valsC (.BR_IF (.mk_uN l) :: is))
     (hc0 : slot s (sp - 1) ≠ 0) :
     ∃ lb ts0, L[l]? = some lb ∧ code[pc]? = some (.brIf lb.target) ∧ tsC = ts0 ++ lb.types ++ [.i32] ∧
       lb.arity = lb.types.length ∧
-      (Moved s s' (fp + locals.length + d + ts0.length) (fp + lb.base) lb.arity →
+      (∀ s' : Slots, Moved s s' (fp + locals.length + d + ts0.length) (fp + lb.base) lb.arity →
       ∃ body', Spec.Steps (.mk_config z body) (.mk_config z body') ∧
         (ActR code locals maxH s' fp (fp + lb.base + lb.arity) lb.pc f body' ∨
           DoneR code locals maxH s' fp (fp + lb.base + lb.arity) lb.pc f body')) := by
   obtain ⟨hn, hsl, hc, hsp, hmax, hb, hloc⟩ := hw
   cases hc with
   | @brIf _ _ _ ts _ _ _ _ lb ts0 hl hcode hts har hbase hnext =>
-    refine ⟨lb, ts0, hl, hcode, by rw [hts], har, fun hmv => ?_⟩
+    refine ⟨lb, ts0, hl, hcode, by rw [hts], har, fun s' hmv => ?_⟩
     obtain ⟨vs1, vs2, rfl, h1, h2⟩ := SlotsR.split hsl
     obtain ⟨vc, rfl, hvc⟩ := SlotsR.one h2
     have hl1 := h1.length

@@ -316,4 +316,461 @@ theorem brMove_moved (s : Slots) (sp fp : USize) (t : BrTarget) (hS : s.size < U
         rw [addU _ _ (by rw [hsrc, hsub]; omega), hsrc, hsub]
       rw [hadd, natU _ (by omega)]
 
+/-! ### The whole-state relation -/
+
+section Top
+variable {M : Type} [LinearMemory M] [LinearMemoryLaws M]
+
+/-- The spec store holds the engine's memories (other store parts are not related yet). -/
+def StoreR (st : StoreOf M) (S : Spec.store) : Prop :=
+  ∀ a, a < st.mems.size → a < S.MEMS.length ∧ MemR (st.mems[a]!).data S.MEMS[a]!
+
+/-- Memory 0 of the instance is memory 0 of the frame's module. -/
+def MemOk (st : StoreOf M) (inst : ModuleInst) (f : Spec.frame) : Prop :=
+  ∀ a, inst.mems[0]? = some a → f.MODULE.MEMS[0]? = some a ∧ a < st.mems.size
+
+/-- Code without loads and stores (an instance without memory runs only such code). -/
+def NoMem (code : Array Op) : Prop :=
+  ∀ (pc : Nat) mem off, (∀ op, code[pc]? ≠ some (Op.load op mem off)) ∧ (∀ op, code[pc]? ≠ some (Op.store op mem off))
+
+/-- What `R` says besides the running function's body. -/
+structure Ctx (e : EState M) (S : Spec.store) (f : Spec.frame) (cs : List Caller) (maxH : Nat) : Prop where
+  store : StoreR e.st S
+  memok : MemOk e.st e.inst f
+  mem : (e.inst.mems[0]?).isSome ∨ NoMem e.code
+  callers : CallersR e.stack e.fp.toNat e.frames.toList.reverse cs
+  hS : e.stack.size < USize.size
+  hC : e.code.size < USize.size
+  hcap : e.fp.toNat + maxH ≤ e.stack.size / 8
+
+/-- THE STATE ABSTRACTION. The spec configuration `c` is: the store `S` (holding the
+engine's memories), and the running function's body (`ActR`: open blocks, values,
+locals, code position; or `DoneR`) inside `FRAME_ m f`, inside the callers' bodies. -/
+def R (e : EState M) (c : Spec.config) : Prop :=
+  ∃ S f0 cs m f locals maxH body,
+    c = .mk_config (.mk_state S f0) (wrap cs m f body) ∧ Ctx e S f cs maxH ∧
+    (ActR e.code locals maxH e.stack e.fp.toNat e.sp.toNat e.pc.toNat f body ∨
+      DoneR e.code locals maxH e.stack e.fp.toNat e.sp.toNat e.pc.toNat f body)
+
+/-- One engine step `e'`, matched by spec steps under the function's frame. -/
+def Next (e' : EState M) (S : Spec.store) (f : Spec.frame) (body : List Spec.instr) (cs : List Caller)
+    (locals : List ValType) (maxH : Nat) : Prop :=
+  ∃ S' f' body', Spec.Steps (.mk_config (.mk_state S f) body) (.mk_config (.mk_state S' f') body') ∧
+    Ctx e' S' f' cs maxH ∧
+    (ActR e'.code locals maxH e'.stack e'.fp.toNat e'.sp.toNat e'.pc.toNat f' body' ∨
+      DoneR e'.code locals maxH e'.stack e'.fp.toNat e'.sp.toNat e'.pc.toNat f' body')
+
+theorem Ctx.regs {e : EState M} {S f cs maxH} (hx : Ctx e S f cs maxH) (e' : EState M) (f' : Spec.frame)
+    (hst : e'.st = e.st) (hinst : e'.inst = e.inst) (hcode : e'.code = e.code) (hfp : e'.fp = e.fp)
+    (hfr : e'.frames = e.frames) (hsize : e'.stack.size = e.stack.size)
+    (hbelow : ∀ i, i < e.fp.toNat → slot e'.stack i = slot e.stack i) (hmod : f'.MODULE = f.MODULE) :
+    Ctx e' S f' cs maxH := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := hx
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [hst]; exact h1
+  · intro a ha; rw [hinst] at ha; rw [hmod, hst]; exact h2 a ha
+  · rw [hinst, hcode]; exact h3
+  · rw [hfp, hfr]; exact CallersR.frame h4 fun i hi => hbelow i hi
+  · rw [hsize]; exact h5
+  · rw [hcode]; exact h6
+  · rw [hfp, hsize]; exact h7
+
+theorem pc_succ (e : EState M) (o : Op) (hcode : e.code[e.pc.toNat]? = some o) (hC : e.code.size < USize.size) :
+    (e.pc + 1).toNat = e.pc.toNat + 1 := by
+  have := (Array.getElem?_eq_some_iff.mp hcode).1
+  exact addLit e.pc 1 (by decide) (by omega)
+
+end Top
+
+/-! ### The step, case by case -/
+
+section Cases
+variable {M : Type} [LinearMemory M] [LinearMemoryLaws M]
+variable {e e' : EState M} {S : Spec.store} {f : Spec.frame} {cs : List Caller} {maxH : Nat}
+  {locals : List ValType} {body : List Spec.instr} {L : List Lbl} {H : List Hole} {d en : Nat}
+  {te tsC : List ValType} {valsC : List Spec.val} {rest : List Spec.instr}
+
+theorem ActW.sp_le (hw : ActW e.code locals maxH e.stack e.fp.toNat e.sp.toNat e.pc.toNat f body L H d en te tsC valsC rest)
+    (hx : Ctx e S f cs maxH) : e.fp.toNat + locals.length ≤ e.sp.toNat ∧ e.sp.toNat ≤ e.stack.size / 8 := by
+  have h1 := hw.2.2.2.1; have h2 := hw.2.2.2.2.1; have h3 := hx.hcap
+  omega
+
+theorem case_const32 {n : Nat} {b : UInt64} (hx : Ctx e S f cs maxH)
+    (hw : ActW e.code locals maxH e.stack e.fp.toNat e.sp.toNat e.pc.toNat f body L H d en te tsC valsC
+      (.CONST .I32 (.mk_num__0 .I32 (.mk_uN n)) :: rest))
+    (hcode : e.code[e.pc.toNat]? = some (.const b)) (hs : stepE e = some e') :
+    Next e' S f body cs locals maxH := by
+  rw [stepE_of e _ hcode hx.hC] at hs
+  simp only [stepOp, Option.some.injEq] at hs; subst hs
+  obtain ⟨hfs, hss⟩ := hw.sp_le hx
+  have hw' := op_const32 hcode hw hx.hS hx.hcap e.sp rfl
+  have hsp := hw'.2.2.2.1; have hmax := hw'.2.2.2.2.1; have hcap := hx.hcap; have hS := hx.hS
+  simp at hsp hmax
+  have hsp1 : (e.sp + 1).toNat = e.sp.toNat + 1 := addLit e.sp 1 (by decide) (by omega)
+  refine ⟨S, f, body, Spec.Steps.refl _ _, Ctx.regs hx _ f rfl rfl rfl rfl rfl (wr_size _ _ _)
+    (fun i hi => slot_wr_ne _ _ _ _ hx.hS (by omega) (by omega)) rfl,
+    Or.inl ⟨L, H, d, en, te, tsC ++ [.i32], valsC ++ [i32c n], rest, ?_⟩⟩
+  show ActW e.code locals maxH (Slots.wr e.stack e.sp b) e.fp.toNat (e.sp + 1).toNat (e.pc + 1).toNat f body
+    L H d en te (tsC ++ [.i32]) (valsC ++ [i32c n]) rest
+  rw [hsp1, pc_succ e _ hcode hx.hC]; exact hw'
+
+theorem case_const64 {n : Nat} {b : UInt64} (hx : Ctx e S f cs maxH)
+    (hw : ActW e.code locals maxH e.stack e.fp.toNat e.sp.toNat e.pc.toNat f body L H d en te tsC valsC
+      (.CONST .I64 (.mk_num__0 .I64 (.mk_uN n)) :: rest))
+    (hcode : e.code[e.pc.toNat]? = some (.const b)) (hs : stepE e = some e') :
+    Next e' S f body cs locals maxH := by
+  rw [stepE_of e _ hcode hx.hC] at hs
+  simp only [stepOp, Option.some.injEq] at hs; subst hs
+  obtain ⟨hfs, hss⟩ := hw.sp_le hx
+  have hw' := op_const64 hcode hw hx.hS hx.hcap e.sp rfl
+  have hsp := hw'.2.2.2.1; have hmax := hw'.2.2.2.2.1; have hcap := hx.hcap; have hS := hx.hS
+  simp at hsp hmax
+  have hsp1 : (e.sp + 1).toNat = e.sp.toNat + 1 := addLit e.sp 1 (by decide) (by omega)
+  refine ⟨S, f, body, Spec.Steps.refl _ _, Ctx.regs hx _ f rfl rfl rfl rfl rfl (wr_size _ _ _)
+    (fun i hi => slot_wr_ne _ _ _ _ hx.hS (by omega) (by omega)) rfl,
+    Or.inl ⟨L, H, d, en, te, tsC ++ [.i64], valsC ++ [i64c n], rest, ?_⟩⟩
+  show ActW e.code locals maxH (Slots.wr e.stack e.sp b) e.fp.toNat (e.sp + 1).toNat (e.pc + 1).toNat f body
+    L H d en te (tsC ++ [.i64]) (valsC ++ [i64c n]) rest
+  rw [hsp1, pc_succ e _ hcode hx.hC]; exact hw'
+
+theorem case_localGet {x : Nat} (hx : Ctx e S f cs maxH)
+    (hw : ActW e.code locals maxH e.stack e.fp.toNat e.sp.toNat e.pc.toNat f body L H d en te tsC valsC
+      (.LOCAL_GET (.mk_uN x) :: rest))
+    (hs : stepE e = some e') : Next e' S f body cs locals maxH := by
+  have hc := hw.2.2.1
+  cases hc with
+  | @localGet _ _ _ _ _ _ _ _ t hcode hloct hroom hnext =>
+  have hxl : x < locals.length := (List.getElem?_eq_some_iff.mp hloct).1
+  rw [stepE_of e _ hcode hx.hC] at hs
+  simp only [stepOp, Option.some.injEq] at hs; subst hs
+  obtain ⟨hfs, hss⟩ := hw.sp_le hx
+  obtain ⟨_, t', v, body', hw', hst⟩ := op_localGet S hw hx.hS hx.hcap e.sp rfl
+  have hsp := hw'.2.2.2.1; have hmax := hw'.2.2.2.2.1; have hcap := hx.hcap; have hS := hx.hS
+  simp at hsp hmax
+  have hsp1 : (e.sp + 1).toNat = e.sp.toNat + 1 := addLit e.sp 1 (by decide) (by omega)
+  have hrd : Slots.rd e.stack (e.fp + x.toUSize) = slot e.stack (e.fp.toNat + x) :=
+    rd_slot _ _ _ (by rw [addU _ _ (by rw [natU x (by omega)]; omega), natU x (by omega)]) (by omega)
+  refine ⟨S, f, body', hst, Ctx.regs hx _ f rfl rfl rfl rfl rfl (wr_size _ _ _)
+    (fun i hi => slot_wr_ne _ _ _ _ hx.hS (by omega) (by omega)) rfl,
+    Or.inl ⟨L, H, d, en, te, tsC ++ [t'], valsC ++ [v], rest, ?_⟩⟩
+  show ActW e.code locals maxH (Slots.wr e.stack e.sp (Slots.rd e.stack (e.fp + x.toUSize))) e.fp.toNat
+    (e.sp + 1).toNat (e.pc + 1).toNat f body' L H d en te (tsC ++ [t']) (valsC ++ [v]) rest
+  rw [hsp1, pc_succ e _ hcode hx.hC, hrd]; exact hw'
+
+theorem case_localSet {x : Nat} (hx : Ctx e S f cs maxH)
+    (hw : ActW e.code locals maxH e.stack e.fp.toNat e.sp.toNat e.pc.toNat f body L H d en te tsC valsC
+      (.LOCAL_SET (.mk_uN x) :: rest))
+    (hs : stepE e = some e') : Next e' S f body cs locals maxH := by
+  have hc := hw.2.2.1
+  cases hc with
+  | @localSet _ _ _ ts _ _ _ _ t hcode hloct hnext =>
+  have hxl : x < locals.length := (List.getElem?_eq_some_iff.mp hloct).1
+  rw [stepE_of e _ hcode hx.hC] at hs
+  simp only [stepOp, Option.some.injEq] at hs; subst hs
+  obtain ⟨hfs, hss⟩ := hw.sp_le hx
+  have hsp0 := hw.2.2.2.1; simp at hsp0
+  have hcap := hx.hcap; have hS := hx.hS
+  have hu : (e.fp + x.toUSize).toNat = e.fp.toNat + x := by
+    rw [addU _ _ (by rw [natU x (by omega)]; omega), natU x (by omega)]
+  obtain ⟨_, ts', v, vs', body', hw', hst⟩ := op_localSet S hw hx.hS hx.hcap (e.fp + x.toUSize) hu
+  have hsm1 : (e.sp - 1).toNat = e.sp.toNat - 1 := by rw [subU _ _ (by rw [lit 1 (by decide)]; omega), lit 1 (by decide)]
+  have hrd : Slots.rd e.stack (e.sp - 1) = slot e.stack (e.sp.toNat - 1) := rd_slot _ _ _ hsm1 (by omega)
+  refine ⟨S, setLocal f x v, body', hst, Ctx.regs hx _ _ rfl rfl rfl rfl rfl (wr_size _ _ _)
+    (fun i hi => slot_wr_ne _ _ _ _ hx.hS (by omega) (by omega)) rfl,
+    Or.inl ⟨L, H, d, en, te, ts', vs', rest, ?_⟩⟩
+  show ActW e.code locals maxH (Slots.wr e.stack (e.fp + x.toUSize) (Slots.rd e.stack (e.sp - 1))) e.fp.toNat
+    (e.sp - 1).toNat (e.pc + 1).toNat (setLocal f x v) body' L H d en te ts' vs' rest
+  rw [hsm1, pc_succ e _ hcode hx.hC, hrd]; exact hw'
+
+theorem case_localTee {x : Nat} (hx : Ctx e S f cs maxH)
+    (hw : ActW e.code locals maxH e.stack e.fp.toNat e.sp.toNat e.pc.toNat f body L H d en te tsC valsC
+      (.LOCAL_TEE (.mk_uN x) :: rest))
+    (hs : stepE e = some e') : Next e' S f body cs locals maxH := by
+  have hc := hw.2.2.1
+  cases hc with
+  | @localTee _ _ _ ts _ _ _ _ t hcode hloct hnext =>
+  have hxl : x < locals.length := (List.getElem?_eq_some_iff.mp hloct).1
+  rw [stepE_of e _ hcode hx.hC] at hs
+  simp only [stepOp, Option.some.injEq] at hs; subst hs
+  obtain ⟨hfs, hss⟩ := hw.sp_le hx
+  have hsp0 := hw.2.2.2.1; simp at hsp0
+  have hcap := hx.hcap; have hS := hx.hS
+  have hu : (e.fp + x.toUSize).toNat = e.fp.toNat + x := by
+    rw [addU _ _ (by rw [natU x (by omega)]; omega), natU x (by omega)]
+  obtain ⟨_, v, body', hw', hst⟩ := op_localTee S hw hx.hS hx.hcap (e.fp + x.toUSize) hu
+  have hsm1 : (e.sp - 1).toNat = e.sp.toNat - 1 := by rw [subU _ _ (by rw [lit 1 (by decide)]; omega), lit 1 (by decide)]
+  have hrd : Slots.rd e.stack (e.sp - 1) = slot e.stack (e.sp.toNat - 1) := rd_slot _ _ _ hsm1 (by omega)
+  refine ⟨S, setLocal f x v, body', hst, Ctx.regs hx _ _ rfl rfl rfl rfl rfl (wr_size _ _ _)
+    (fun i hi => slot_wr_ne _ _ _ _ hx.hS (by omega) (by omega)) rfl,
+    Or.inl ⟨L, H, d, en, te, ts ++ [t], valsC, rest, ?_⟩⟩
+  show ActW e.code locals maxH (Slots.wr e.stack (e.fp + x.toUSize) (Slots.rd e.stack (e.sp - 1))) e.fp.toNat
+    e.sp.toNat (e.pc + 1).toNat (setLocal f x v) body' L H d en te (ts ++ [t]) valsC rest
+  rw [pc_succ e _ hcode hx.hC, hrd]; exact hw'
+
+theorem case_binop {nt : Spec.numtype} {bop : Spec.binop_} (hx : Ctx e S f cs maxH)
+    (hw : ActW e.code locals maxH e.stack e.fp.toNat e.sp.toNat e.pc.toNat f body L H d en te tsC valsC
+      (.BINOP nt bop :: rest))
+    (hs : stepE e = some e') : Next e' S f body cs locals maxH := by
+  have hc := hw.2.2.1
+  cases hc with
+  | @binop _ _ _ ts _ _ _ op t _ _ hcode hbin hnext =>
+  rw [stepE_of e _ hcode hx.hC] at hs
+  have hp := hbin.pure
+  simp only [NumOp.pureBin] at hp
+  simp only [stepOp, hp, ↓reduceIte, Option.some.injEq] at hs; subst hs
+  obtain ⟨hfs, hss⟩ := hw.sp_le hx
+  have hsp0 := hw.2.2.2.1; simp at hsp0
+  have hcap := hx.hcap; have hS := hx.hS
+  have hsm2 : (e.sp - 2).toNat = e.sp.toNat - 2 := by rw [subU _ _ (by rw [lit 2 (by decide)]; omega), lit 2 (by decide)]
+  have hsm1 : (e.sp - 1).toNat = e.sp.toNat - 1 := by rw [subU _ _ (by rw [lit 1 (by decide)]; omega), lit 1 (by decide)]
+  obtain ⟨t', ts', vr, vs', body', _, hw', hst⟩ := op_binop S hw hx.hS hx.hcap (e.sp - 2) hsm2 hcode
+  have hrd1 : Slots.rd e.stack (e.sp - 1) = slot e.stack (e.sp.toNat - 1) := rd_slot _ _ _ hsm1 (by omega)
+  have hrd2 : Slots.rd e.stack (e.sp - 2) = slot e.stack (e.sp.toNat - 2) := rd_slot _ _ _ hsm2 (by omega)
+  refine ⟨S, f, body', hst, Ctx.regs hx _ f rfl rfl rfl rfl rfl (wr_size _ _ _)
+    (fun i hi => slot_wr_ne _ _ _ _ hx.hS (by omega) (by omega)) rfl,
+    Or.inl ⟨L, H, d, en, te, ts' ++ [t'], vs' ++ [vr], rest, ?_⟩⟩
+  show ActW e.code locals maxH (Slots.wr e.stack (e.sp - 2) (op.evalBin (Slots.rd e.stack (e.sp - 2))
+    (Slots.rd e.stack (e.sp - 1)))) e.fp.toNat (e.sp - 1).toNat (e.pc + 1).toNat f body' L H d en te
+    (ts' ++ [t']) (vs' ++ [vr]) rest
+  rw [hsm1, pc_succ e _ hcode hx.hC, hrd1, hrd2]; exact hw'
+
+theorem mem0 (hx : Ctx e S f cs maxH) {op : LoadOp ⊕ StoreOp} {off : Nat}
+    (hcode : e.code[e.pc.toNat]? = some (match op with | .inl o => Op.load o 0 off | .inr o => Op.store o 0 off)) :
+    ∃ a, e.inst.mems[0]? = some a ∧ f.MODULE.MEMS[0]? = some a ∧ a < e.st.mems.size ∧
+      a < S.MEMS.length ∧ MemR (e.st.mems[a]!).data S.MEMS[a]! ∧ e.inst.mems[0]! = a ∧ f.MODULE.MEMS[0]! = a := by
+  obtain ⟨a, ha⟩ : ∃ a, e.inst.mems[0]? = some a := by
+    rcases hx.mem with h | h
+    · exact Option.isSome_iff_exists.mp h
+    · cases op with
+      | inl o => exact absurd hcode ((h _ 0 off).1 o)
+      | inr o => exact absurd hcode ((h _ 0 off).2 o)
+  obtain ⟨hfa, hal⟩ := hx.memok a ha
+  obtain ⟨hsl, hmr⟩ := hx.store a hal
+  exact ⟨a, ha, hfa, hal, hsl, hmr, by simp [getElem!_def, ha], by simp [getElem!_def, hfa]⟩
+
+theorem case_load {al off : Nat} (hx : Ctx e S f cs maxH)
+    (hw : ActW e.code locals maxH e.stack e.fp.toNat e.sp.toNat e.pc.toNat f body L H d en te tsC valsC
+      (.LOAD .I32 none (.mk_uN 0) ⟨.mk_uN al, .mk_uN off⟩ :: rest))
+    (hs : stepE e = some e') : Next e' S f body cs locals maxH := by
+  have hc := hw.2.2.1
+  cases hc with
+  | @load _ _ _ ts _ _ _ _ _ hcode hnext =>
+  rw [stepE_of e _ hcode hx.hC] at hs
+  obtain ⟨hfs, hss⟩ := hw.sp_le hx
+  have hsp0 := hw.2.2.2.1; simp at hsp0
+  have hcap := hx.hcap; have hS := hx.hS
+  have hsm1 : (e.sp - 1).toNat = e.sp.toNat - 1 := by rw [subU _ _ (by rw [lit 1 (by decide)]; omega), lit 1 (by decide)]
+  have hrd1 := rd_slot e.stack (e.sp - 1) _ hsm1 (by omega)
+  obtain ⟨a, ha, hfa, hal, _, hmr, hia, hfa'⟩ := mem0 (op := .inl .i32) hx hcode
+  have hmem : MemR (memData e.st e.inst 0) (Spec.fun_mem (.mk_state S f) (.mk_uN 0)) := by
+    simp only [memData, Spec.fun_mem, Spec.sof, Spec.fof, Spec.fun_store, Spec.fun_frame, Spec.proj_uN_0, hia, hfa']
+    exact hmr
+  simp only [stepOp] at hs
+  split at hs
+  · rename_i hin
+    simp only [Option.some.injEq] at hs; subst hs
+    obtain ⟨_, ts', vs', body', hw', hst⟩ := op_load S (memData e.st e.inst 0) hmem hw hx.hS hx.hcap _
+      (by rw [← hrd1]; rfl) hin (e.sp - 1) hsm1
+    refine ⟨S, f, body', hst, Ctx.regs hx _ f rfl rfl rfl rfl rfl (wr_size _ _ _)
+      (fun i hi => slot_wr_ne _ _ _ _ hx.hS (by omega) (by omega)) rfl,
+      Or.inl ⟨L, H, d, en, te, ts' ++ [.i32], vs' ++ [i32c (LinearMemory.load32 (memData e.st e.inst 0) _ hin).toNat],
+        rest, ?_⟩⟩
+    show ActW e.code locals maxH (Slots.wr e.stack (e.sp - 1) (LinearMemory.load32 (memData e.st e.inst 0) _ hin))
+      e.fp.toNat e.sp.toNat (e.pc + 1).toNat f body' L H d en te (ts' ++ [.i32])
+      (vs' ++ [i32c (LinearMemory.load32 (memData e.st e.inst 0) _ hin).toNat]) rest
+    rw [pc_succ e _ hcode hx.hC]; exact hw'
+  · simp at hs
+
+theorem case_br {l : Nat} (hx : Ctx e S f cs maxH)
+    (hw : ActW e.code locals maxH e.stack e.fp.toNat e.sp.toNat e.pc.toNat f body L H d en te tsC valsC
+      (.BR (.mk_uN l) :: rest))
+    (hs : stepE e = some e') : Next e' S f body cs locals maxH := by
+  obtain ⟨hfs, hss⟩ := hw.sp_le hx
+  have hn := hw.1
+  have hsp0 := hw.2.2.2.1
+  have hcap := hx.hcap; have hS := hx.hS; have hC := hx.hC
+  obtain ⟨lb, ts0, hl, hcode, hts, har, hk⟩ := op_br (.mk_state S f) hw
+  rw [stepE_of e _ hcode hx.hC] at hs
+  simp only [stepOp, Option.some.injEq] at hs; subst hs
+  have hbase := Nest.base_le hn lb (List.mem_of_getElem? hl)
+  have hlbpc := (Nest.bounds hn).2 lb (List.mem_of_getElem? hl)
+  subst hts
+  simp only [List.length_append] at hsp0
+  obtain ⟨hmv, hsp'⟩ := brMove_moved e.stack e.sp e.fp lb.target hx.hS
+    (by simp only [Lbl.target]; omega) hss
+  have hsrc : e.sp.toNat - lb.target.keep = e.fp.toNat + locals.length + d + ts0.length := by
+    simp only [Lbl.target]; omega
+  rw [hsrc] at hmv
+  obtain ⟨body', hst, hres⟩ := hk _ hmv
+  have hpc' : lb.target.pc.toUSize.toNat = lb.pc := natU _ (by simp only [Lbl.target]; omega)
+  refine ⟨S, f, body', hst, Ctx.regs hx _ f rfl rfl rfl rfl rfl hmv.1 (fun i hi => hmv.2.1 i (by
+    simp only [Lbl.target]; omega)) rfl, ?_⟩
+  show ActR e.code locals maxH (brMove e.stack e.sp e.fp lb.target).stack e.fp.toNat
+      (brMove e.stack e.sp e.fp lb.target).sp.toNat lb.target.pc.toUSize.toNat f body' ∨
+    DoneR e.code locals maxH (brMove e.stack e.sp e.fp lb.target).stack e.fp.toNat
+      (brMove e.stack e.sp e.fp lb.target).sp.toNat lb.target.pc.toUSize.toNat f body'
+  rw [hsp', hpc']; simpa [Lbl.target] using hres
+
+theorem case_brIf {l : Nat} (hx : Ctx e S f cs maxH)
+    (hw : ActW e.code locals maxH e.stack e.fp.toNat e.sp.toNat e.pc.toNat f body L H d en te tsC valsC
+      (.BR_IF (.mk_uN l) :: rest))
+    (hs : stepE e = some e') : Next e' S f body cs locals maxH := by
+  obtain ⟨hfs, hss⟩ := hw.sp_le hx
+  have hn := hw.1
+  have hsp0 := hw.2.2.2.1
+  have hcap := hx.hcap; have hS := hx.hS; have hC := hx.hC
+  have hc := hw.2.2.1
+  cases hc with
+  | @brIf _ _ _ ts _ _ _ _ lb ts0 hl hcode hts har hbase hnext =>
+  subst hts
+  simp only [List.length_append, List.length_singleton] at hsp0
+  have hsm1 : (e.sp - 1).toNat = e.sp.toNat - 1 := by rw [subU _ _ (by rw [lit 1 (by decide)]; omega), lit 1 (by decide)]
+  have hrd1 := rd_slot e.stack (e.sp - 1) _ hsm1 (by omega)
+  rw [stepE_of e _ hcode hx.hC] at hs
+  simp only [stepOp] at hs
+  split at hs
+  · rename_i hc0
+    simp only [Option.some.injEq] at hs; subst hs
+    have hne : slot e.stack (e.sp.toNat - 1) ≠ 0 := by rw [← hrd1]; simpa [Run.rd] using hc0
+    obtain ⟨lb', ts0', hl', _, hts', har', hk⟩ := op_brIf_true (.mk_state S f) hw hne
+    rw [hl] at hl'; cases hl'
+    have hts0 : ts0' = ts0 := by have h := hts'; simp at h; exact h.symm
+    subst hts0
+    have hbase' := Nest.base_le hn lb (List.mem_of_getElem? hl)
+    have hlbpc := (Nest.bounds hn).2 lb (List.mem_of_getElem? hl)
+    obtain ⟨hmv, hsp'⟩ := brMove_moved e.stack (e.sp - 1) e.fp lb.target hx.hS
+      (by simp only [Lbl.target]; rw [hsm1]; omega) (by omega)
+    have hsrc : (e.sp - 1).toNat - lb.target.keep = e.fp.toNat + locals.length + d + ts0'.length := by
+      simp only [Lbl.target]; rw [hsm1]; omega
+    rw [hsrc] at hmv
+    obtain ⟨body', hst, hres⟩ := hk _ hmv
+    have hpc' : lb.target.pc.toUSize.toNat = lb.pc := natU _ (by simp only [Lbl.target]; omega)
+    refine ⟨S, f, body', hst, Ctx.regs hx _ f rfl rfl rfl rfl rfl hmv.1 (fun i hi => hmv.2.1 i (by
+      simp only [Lbl.target]; omega)) rfl, ?_⟩
+    show ActR e.code locals maxH (brMove e.stack (e.sp - 1) e.fp lb.target).stack e.fp.toNat
+        (brMove e.stack (e.sp - 1) e.fp lb.target).sp.toNat lb.target.pc.toUSize.toNat f body' ∨
+      DoneR e.code locals maxH (brMove e.stack (e.sp - 1) e.fp lb.target).stack e.fp.toNat
+        (brMove e.stack (e.sp - 1) e.fp lb.target).sp.toNat lb.target.pc.toUSize.toNat f body'
+    rw [hsp', hpc']; simpa [Lbl.target] using hres
+  · rename_i hc0
+    simp only [Option.some.injEq] at hs; subst hs
+    have hz : slot e.stack (e.sp.toNat - 1) = 0 := by rw [← hrd1]; simpa [Run.rd] using hc0
+    obtain ⟨ts', vs', body', hw', hst⟩ := op_brIf_false (.mk_state S f) hw hz
+    refine ⟨S, f, body', hst, Ctx.regs hx _ f rfl rfl rfl rfl rfl rfl (fun i hi => rfl) rfl,
+      Or.inl ⟨L, H, d, en, te, ts', vs', rest, ?_⟩⟩
+    show ActW e.code locals maxH e.stack e.fp.toNat (e.sp - 1).toNat (e.pc + 1).toNat f body' L H d en te ts' vs' rest
+    rw [hsm1, pc_succ e _ hcode hx.hC]; exact hw'
+
+theorem storeS_mems (S : Spec.store) (f : Spec.frame) (ea v a : Nat) (hfa : f.MODULE.MEMS[0]! = a) :
+    (storeS S f ea v).MEMS = S.MEMS.modify a (fun mi =>
+      { mi with BYTES := Spec.list_slice_update mi.BYTES ea 4 (Spec.nbytes_ .I32 (.mk_num__0 .I32 (.mk_uN v))) }) := by
+  simp only [storeS, Spec.with_mem, Spec.fun_store, Spec.sof, Spec.fof, Spec.fun_frame, Spec.list_update_func,
+    Spec.proj_uN_0, hfa]
+
+theorem storeR_store {st : StoreOf M} {S : Spec.store} {f : Spec.frame} {a ea : Nat} {v : UInt64}
+    (hst : StoreR st S) (ha : a < st.mems.size) (hfa : f.MODULE.MEMS[0]! = a) (hv : v.toNat < 2^32)
+    (hin : ea + StoreOp.width .i32 ≤ LinearMemory.size (st.mems[a]!).data) :
+    StoreR (storeMem st a ea v .i32) (storeS S f ea v.toNat) := by
+  intro a' ha'
+  simp only [storeMem, Array.size_modify] at ha'
+  obtain ⟨hlt, hmr⟩ := hst a' ha'
+  rw [storeS_mems S f ea v.toNat a hfa]
+  refine ⟨by simpa using hlt, ?_⟩
+  simp only [storeMem]
+  rw [getElem!_pos (st.mems.modify a _) a' (by simpa using ha'), Array.getElem_modify,
+    getElem!_pos (S.MEMS.modify a _) a' (by simpa using hlt), List.getElem_modify]
+  by_cases h : a = a'
+  · subst h
+    rw [if_pos rfl, if_pos rfl]
+    rw [getElem!_pos st.mems a ha] at hin hmr
+    rw [getElem!_pos S.MEMS a hlt] at hmr
+    rcases hm : st.mems[a] with ⟨data, mx⟩
+    rw [hm] at hin hmr
+    simp only [dif_pos hin]
+    exact MemR.store hmr ea v hv hin
+  · rw [if_neg h, if_neg h]
+    rw [getElem!_pos st.mems a' ha', getElem!_pos S.MEMS a' hlt] at hmr
+    exact hmr
+
+theorem case_store {al off : Nat} (hx : Ctx e S f cs maxH)
+    (hw : ActW e.code locals maxH e.stack e.fp.toNat e.sp.toNat e.pc.toNat f body L H d en te tsC valsC
+      (.STORE .I32 none (.mk_uN 0) ⟨.mk_uN al, .mk_uN off⟩ :: rest))
+    (hs : stepE e = some e') : Next e' S f body cs locals maxH := by
+  have hc := hw.2.2.1
+  cases hc with
+  | @store _ _ _ ts _ _ _ _ _ hcode hnext =>
+  rw [stepE_of e _ hcode hx.hC] at hs
+  obtain ⟨hfs, hss⟩ := hw.sp_le hx
+  have hsp0 := hw.2.2.2.1; simp at hsp0
+  have hcap := hx.hcap; have hS := hx.hS
+  have hsm1 : (e.sp - 1).toNat = e.sp.toNat - 1 := by rw [subU _ _ (by rw [lit 1 (by decide)]; omega), lit 1 (by decide)]
+  have hsm2 : (e.sp - 2).toNat = e.sp.toNat - 2 := by rw [subU _ _ (by rw [lit 2 (by decide)]; omega), lit 2 (by decide)]
+  have hrd1 := rd_slot e.stack (e.sp - 1) _ hsm1 (by omega)
+  have hrd2 := rd_slot e.stack (e.sp - 2) _ hsm2 (by omega)
+  obtain ⟨a, ha, hfa, hal, _, hmr, hia, hfa'⟩ := mem0 (op := .inr .i32) hx hcode
+  simp only [stepOp, hia] at hs
+  split at hs
+  · rename_i hin
+    simp only [Option.some.injEq] at hs; subst hs
+    obtain ⟨_, hv32, ts', vs', body', hw', hst⟩ := op_store S hw ((Slots.rd e.stack (e.sp - 2)).toNat + off)
+      (by rw [hrd2])
+    rw [← hrd1] at hv32 hst
+    refine ⟨_, f, body', hst, ⟨storeR_store hx.store hal hfa' hv32 hin, ?_, ?_, ?_, ?_, ?_, ?_⟩,
+      Or.inl ⟨L, H, d, en, te, ts', vs', rest, ?_⟩⟩
+    · intro a' ha'; obtain ⟨h1, h2⟩ := hx.memok a' ha'; exact ⟨h1, by simpa [storeMem] using h2⟩
+    · exact hx.mem
+    · exact hx.callers
+    · exact hx.hS
+    · exact hx.hC
+    · exact hx.hcap
+    show ActW e.code locals maxH e.stack e.fp.toNat (e.sp - 2).toNat (e.pc + 1).toNat f body' L H d en te ts' vs' rest
+    rw [hsm2, pc_succ e _ hcode hx.hC]; exact hw'
+  · simp at hs
+
+theorem Nest.len_pos {code locals maxH s fp L H d e te} (hn : Nest code locals maxH s fp L H d e te) :
+    1 ≤ H.length := by
+  cases hn <;> simp
+
+/-- THE STEP THEOREM. If the spec configuration `c` is the abstraction of the engine
+state `e`, and the engine takes one step from `e` to `e'` (one of the covered ops:
+`stepE`, which `run` makes by `stepE_run`), then the spec takes zero or more steps from
+`c` to a configuration `c'` that is the abstraction of `e'`. -/
+theorem step_refines (e e' : EState M) (c : Spec.config) (hR : R e c) (hs : stepE e = some e') :
+    ∃ c', Spec.Steps c c' ∧ R e' c' := by
+  obtain ⟨S, f0, cs, m, f, locals, maxH, body, rfl, hx, hact⟩ := hR
+  suffices hN : Next e' S f body cs locals maxH by
+    obtain ⟨S', f', body', hst, hx', hact'⟩ := hN
+    exact ⟨_, steps_wrap f0 cs m hst, S', f0, cs, m, f', locals, maxH, body', rfl, hx', hact'⟩
+  rcases hact with ⟨L, H, d, en, te, tsC, valsC, is, hw⟩ | ⟨rs, vals, hret, _⟩
+  · obtain ⟨body1, L1, H1, d1, e1, te1, tsC1, valsC1, is1, hw1, hst1, hcan⟩ :=
+      norm (.mk_state S f) _ (Nat.lt_succ_self _) hw
+    suffices hN : Next e' S f body1 cs locals maxH by
+      obtain ⟨S', f', body', hst, hx', hact'⟩ := hN
+      exact ⟨S', f', body', steps_trans hst1 hst, hx', hact'⟩
+    have hc := hw1.2.2.1
+    cases hc with
+    | nil =>
+      have hlen := hcan.1 rfl
+      have hn := hw1.1
+      cases hn with
+      | func pe rs' m' hret =>
+        rw [stepE_of e _ hret hx.hC] at hs; simp [stepOp] at hs
+      | block => have := Nest.len_pos (by assumption); simp only [List.length_cons] at hlen; omega
+      | loop => have := Nest.len_pos (by assumption); simp only [List.length_cons] at hlen; omega
+    | const32 => exact case_const32 hx hw1 (by assumption) hs
+    | const64 => exact case_const64 hx hw1 (by assumption) hs
+    | localGet => exact case_localGet hx hw1 hs
+    | localSet => exact case_localSet hx hw1 hs
+    | localTee => exact case_localTee hx hw1 hs
+    | binop => exact case_binop hx hw1 hs
+    | load => exact case_load hx hw1 hs
+    | store => exact case_store hx hw1 hs
+    | block => exact absurd rfl (hcan.2.1 _ _ _)
+    | loop => exact absurd rfl (hcan.2.2 _ _ _)
+    | br => exact case_br hx hw1 hs
+    | brIf => exact case_brIf hx hw1 hs
+  · exfalso; rw [stepE_of e _ hret hx.hC] at hs; simp [stepOp] at hs
+
+end Cases
+
 end L4Factoidal.WasmVM.Proofs.Refine
