@@ -248,6 +248,24 @@ the slot form (8 checked byte reads and writes per slot). Next steps are in "Nex
 | a Rust `wasm-bindgen` module (`kgx/web_bg.wasm`) | 3.7 MB | 4482 | 270 ms | 207 ms | 174 ms |
 | `wikilambda` (Emscripten) | 28.4 MB | 19365 | 1113 ms | 807 ms | 655 ms |
 
+**Parallel decode of the code section** (`Binary.decodeParallel`, 2026-11-08). A scan
+of the size fields gives every entry's start; entries are decoded in chunks of about
+1/64 of the section (at least 64 KiB), one `Task.spawn` per chunk; results are taken
+in order, the first error in entry order wins, and from the first entry the scan
+cannot place, the serial loop takes over, so the result and the error are those of
+`decode`. Checked on every module of the spec tests: `wasmvm-spectest` decodes each
+module both ways and fails when the functions or the error message differ (pass
+35085, fail 0). `wikilambda` (28.4 MB, 19365 functions, `wasmvm-bench decode`):
+
+| decode | serial | code entries in parallel |
+|---|---|---|
+| ms | 1079 to 1100 | 714 to 716 |
+
+1.5 times faster, so it is kept. `decode` stays serial (the reference); embedders of
+large modules call `decodeParallel`. The rest of the time is serial: the other
+sections, and `b.extract 0 e`, which copies the module up to the end of each section
+so that a reader cannot see past it (a cost to remove later with an end bound).
+
 The factoidal core `l4factoidal.wasm` (31 MB) is not decoded yet: it has a tag section
 (exceptions). Parallel compilation of bodies gains only 1.2x; decode is not parallel yet.
 
@@ -453,5 +471,6 @@ All with axioms `propext`, `Classical.choice`, `Quot.sound` only; no `sorry`.
 3. Proposals in the order of the planned uses: exceptions (tags; needed by the
    factoidal core wasm and by Emscripten C++ code), tail calls, `call_ref`, SIMD
    (HarfBuzz builds use it when enabled), memory64, GC.
-4. Parallel decode of the code section; parallel compile by chunks of equal byte size.
+4. Parallel compile by chunks of equal byte size; decode without the per-section
+   copy (`b.extract 0 e`).
 5. The JSON op form for the hosts, and the Emscripten build of the engine.

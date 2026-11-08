@@ -22,7 +22,7 @@ import L4Factoidal.WasmVM.Exec.Instantiate
 
 namespace L4Factoidal.WasmVM
 
-export Binary (decode DecodeError)
+export Binary (decode decodeParallel DecodeError)
 
 section
 variable {M : Type} [LinearMemory M]

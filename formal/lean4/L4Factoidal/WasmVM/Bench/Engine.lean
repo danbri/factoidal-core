@@ -48,6 +48,11 @@ def decodeFile (path : String) : IO Unit := do
   | .error e => IO.println s!"decode: {e.toString}"
   | .ok m =>
     IO.println s!"{path}: {b.size} bytes, {m.funcs.size} functions; decode {ns / 1000000} ms"
+    let (r2, ns2) ← timeIt fun _ => Binary.decodeParallel b
+    let same := match r2 with
+      | .ok m2 => m2.funcs.size == m.funcs.size && (m2.funcs.zip m.funcs).all fun (x, y) => x.body.size == y.body.size && x.locals == y.locals
+      | .error _ => false
+    IO.println s!"decode with code entries in parallel: {ns2 / 1000000} ms (same functions: {same})"
     let (v, ns) ← timeIt fun _ => validate m
     match v with
     | .error e => IO.println s!"validate: {e.toString}"

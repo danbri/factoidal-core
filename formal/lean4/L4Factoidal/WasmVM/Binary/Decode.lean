@@ -433,6 +433,64 @@ def codesLoop (b : ByteArray) : Nat → Nat → Array (Array ValType × Expr) �
     let (c, p, u) ← code b p
     codesLoop b k p (acc.push c) (ud || u)
 
+/-! ### Code entries in parallel
+
+Each code entry starts with its byte size, so the start of every entry is known after
+a scan of the size fields. `codesPar` decodes the entries in chunks of about equal byte
+size, one `Task.spawn` per chunk, then takes the results in order. It returns what
+`codesLoop` returns: each entry is decoded by the same call `code b p` at the same
+position `p`; the first error in entry order wins; at the first entry whose size field
+the scan cannot read (or that runs past the end), `codesLoop` takes over serially from
+there, so it reports the same error. Without threads (Emscripten), the tasks run one
+after the other. -/
+
+/-- Start positions of up to `k` code entries from `p`, stopping before an entry whose
+size field cannot be read or which runs past the end. -/
+def codeStarts (b : ByteArray) : Nat → Nat → Array Nat → Array Nat × Nat
+  | 0, p, acc => (acc, p)
+  | k + 1, p, acc =>
+    match u32 b p with
+    | .ok (size, q) => if q + size > b.size then (acc, p) else codeStarts b k (q + size) (acc.push p)
+    | .error _ => (acc, p)
+
+/-- Group positions into chunks of at least `target` bytes (by the next start). -/
+def chunkStarts (starts : Array Nat) (stop target : Nat) : Array (Array Nat) := Id.run do
+  let mut out : Array (Array Nat) := #[]
+  let mut cur : Array Nat := #[]
+  let mut from_ := 0
+  for i in [0:starts.size] do
+    if cur.isEmpty then from_ := starts[i]!
+    cur := cur.push starts[i]!
+    let next := starts[i+1]?.getD stop
+    if next - from_ ≥ target then
+      out := out.push cur
+      cur := #[]
+  if !cur.isEmpty then out := out.push cur
+  return out
+
+def codesPar (b : ByteArray) (n p : Nat) : Except DecodeError (Array (Array ValType × Expr) × Nat × Bool) :=
+  let (starts, stop) := codeStarts b n p #[]
+  let target := max 65536 ((stop - p) / 64)
+  let tasks := (chunkStarts starts stop target).map fun ps =>
+    Task.spawn fun _ => ps.map fun q => code b q
+  let rec gather (ts : List (Task (Array (Except DecodeError ((Array ValType × Expr) × Nat × Bool)))))
+      (acc : Array (Array ValType × Expr)) (q : Nat) (ud : Bool) :
+      Except DecodeError (Array (Array ValType × Expr) × Nat × Bool) :=
+    match ts with
+    | [] => .ok (acc, q, ud)
+    | t :: ts =>
+      match t.get.foldl (init := Except.ok (acc, q, ud)) fun r x =>
+          match r, x with
+          | .ok (acc, _, ud), .ok (c, q, u) => .ok (acc.push c, q, ud || u)
+          | .ok _, .error e => .error e
+          | .error e, _ => .error e with
+      | .error e => .error e
+      | .ok (acc, q, ud) => gather ts acc q ud
+  match gather tasks.toList #[] p false with
+  | .error e => .error e
+  | .ok (acc, q, ud) =>
+    if starts.size == n then .ok (acc, q, ud) else codesLoop b (n - starts.size) stop acc ud
+
 /-- The rank of a section id in the required order; custom sections (0) have none. -/
 def sectionRank : Nat → Option Nat
   | 1 => some 1 | 2 => some 2 | 3 => some 3 | 4 => some 4 | 5 => some 5 | 13 => some 6
@@ -440,7 +498,7 @@ def sectionRank : Nat → Option Nat
   | 10 => some 12 | 11 => some 13
   | _ => none
 
-def readSection (b : ByteArray) (id : Nat) (p e : Nat) (s : DState) : Except DecodeError (DState × Nat) := do
+def readSection (parallel : Bool) (b : ByteArray) (id : Nat) (p e : Nat) (s : DState) : Except DecodeError (DState × Nat) := do
   let m := s.m
   match id with
   | 0 => let (_, q) ← name b p; if q > e then bad "unexpected end" p else .ok (s, e)
@@ -459,12 +517,12 @@ def readSection (b : ByteArray) (id : Nat) (p e : Nat) (s : DState) : Except Dec
   | 10 =>
     let (n, p) ← u32 b p
     if n > e - p then bad "length out of bounds" p else
-    let (cs, q, ud) ← codesLoop b n p #[] false
+    let (cs, q, ud) ← if parallel then codesPar b n p else codesLoop b n p #[] false
     .ok ({ s with codes := cs, usesData := s.usesData || ud, sawCode := true }, q)
   | 11 => let (ds, q) ← vec data b p; .ok ({ s with m := { m with datas := ds } }, q)
   | _ => bad "malformed section id" p
 
-def sectionsLoop (b : ByteArray) : Nat → Nat → Nat → DState → Except DecodeError DState
+def sectionsLoop (parallel : Bool) (b : ByteArray) : Nat → Nat → Nat → DState → Except DecodeError DState
   | 0, p, _, _ => bad "unexpected end" p
   | fuel + 1, p, last, s => do
     if p ≥ b.size then return s
@@ -476,16 +534,16 @@ def sectionsLoop (b : ByteArray) : Nat → Nat → Nat → DState → Except Dec
       | some r => if r ≤ last then bad "unexpected content after last section" p else pure r
       | none => if id == 0 then pure last else bad "malformed section id" p
     -- Only the bytes of the section are visible to its reader.
-    let (s, q) ← readSection (b.extract 0 e) id.toNat p2 e s
+    let (s, q) ← readSection parallel (b.extract 0 e) id.toNat p2 e s
     if q != e then bad "section size mismatch" q else
-    sectionsLoop b fuel e rank s
+    sectionsLoop parallel b fuel e rank s
 
-def decode (b : ByteArray) : Except DecodeError Module := do
+def decodeWith (parallel : Bool) (b : ByteArray) : Except DecodeError Module := do
   if b.size < 4 then bad "unexpected end" 0
   if b.extract 0 4 != ⟨#[0x00, 0x61, 0x73, 0x6D]⟩ then bad "magic header not detected" 0
   if b.size < 8 then bad "unexpected end" 4
   if b.extract 4 8 != ⟨#[0x01, 0x00, 0x00, 0x00]⟩ then bad "unknown binary version" 4
-  let s ← sectionsLoop b (b.size + 1) 8 0 {}
+  let s ← sectionsLoop parallel b (b.size + 1) 8 0 {}
   if s.funcTypes.size != s.codes.size then
     bad "function and code section have inconsistent lengths" b.size
   if s.usesData && s.m.dataCount.isNone then bad "data count section required" b.size
@@ -493,5 +551,9 @@ def decode (b : ByteArray) : Except DecodeError Module := do
     if n != s.m.datas.size then bad "data count and data section have inconsistent lengths" b.size
   let funcs := (s.funcTypes.zip s.codes).map fun (t, (ls, body)) => ({ type := t, locals := ls, body } : Func)
   return { s.m with funcs }
+
+def decode (b : ByteArray) : Except DecodeError Module := decodeWith false b
+/-- `decode` with the code entries decoded in parallel (same result). -/
+def decodeParallel (b : ByteArray) : Except DecodeError Module := decodeWith true b
 
 end L4Factoidal.WasmVM.Binary

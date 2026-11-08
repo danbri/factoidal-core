@@ -156,6 +156,12 @@ def readModule (dir : System.FilePath) (cmd : Json) : IO (Except Res Module) := 
   if str cmd "module_type" == some "text" then return .error (.notRun "text-format module")
   let some fn := str cmd "filename" | return .error (.fail "no filename")
   let bytes ← IO.FS.readBinFile (dir / fn)
+  -- Differential check of the parallel code-section decoder on every module.
+  let same := match decode bytes, Binary.decodeParallel bytes with
+    | .ok a, .ok b => a.funcs == b.funcs
+    | .error a, .error b => a.toString == b.toString
+    | _, _ => false
+  if !same then return .error (.fail s!"decodeParallel differs from decode on {fn}")
   match decode bytes with
   | .ok m => return .ok m
   | .error e@(.unsupported ..) => return .error (.notRun e.toString)
