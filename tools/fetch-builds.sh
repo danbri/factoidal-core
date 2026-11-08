@@ -89,6 +89,26 @@ TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 fetch -H 'Accept: application/vnd.github+json' ${AUTH[@]+"${AUTH[@]}"} "$API" -o "$TMP/releases.json" \
   || { log "cannot list releases of $BUILDS_REPO"; exit 1; }
 
+# One release asset of $TAG. The github.com download address sometimes answers 504
+# for hours while the API serves the same asset (2026-11-08); the API address of
+# each asset is in releases.json. The files are checked against build-info.json
+# either way.
+asset() {
+  fetch "$BASE/$1" -o "$2" && return 0
+  local url
+  url="$(python3 - "$TMP/releases.json" "$TAG" "$1" <<'PY'
+import json, sys
+for r in json.load(open(sys.argv[1])):
+    if r.get('tag_name') == sys.argv[2]:
+        for a in r.get('assets', []):
+            if a.get('name') == sys.argv[3]: print(a['url'])
+PY
+)"
+  [ -n "$url" ] || return 1
+  log "$1: download address failed; trying the API"
+  fetch -H 'Accept: application/octet-stream' ${AUTH[@]+"${AUTH[@]}"} "$url" -o "$2"
+}
+
 RC=0
 for S in "${SETS[@]}"; do
   # Candidate releases for this set, newest first: "<tag> <short sha>".
@@ -151,8 +171,8 @@ PY
 
   BASE="https://github.com/$BUILDS_REPO/releases/download/$TAG"
   log "$S: downloading $TAG"
-  fetch "$BASE/build-info.json" -o "$TMP/build-info-$S.json" || { log "download failed"; exit 1; }
-  fetch "$BASE/$S.tar.gz" -o "$TMP/$S.tar.gz" || { log "download failed"; exit 1; }
+  asset build-info.json "$TMP/build-info-$S.json" || { log "download failed"; exit 1; }
+  asset "$S.tar.gz" "$TMP/$S.tar.gz" || { log "download failed"; exit 1; }
   mkdir -p "$TMP/x-$S"
   tar -xzf "$TMP/$S.tar.gz" -C "$TMP/x-$S"
   # Verify: tarball digest, then every listed file, and no unlisted files.
