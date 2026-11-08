@@ -525,9 +525,105 @@ def lettering():
 <h2>Vertical, rotated and scaled</h2>
 <div class="figure">{"".join(stack)}</div>
 <div class="about">
-<p>Each letter is a Noto Sans outline placed and turned by <code>tools/showcase-pages.py</code>, drawn by Lean's SVG path renderer. <a href="showcase-textpath.html">showcase-textpath.html</a> has the same lettering as SVG text.</p>
+<p>Each letter is a Noto Sans outline placed and turned by <code>tools/showcase-pages.py</code>, drawn by Lean's SVG path renderer. <a href="showcase-textpath.html">showcase-textpath.html</a> has the same lettering, curves and colours as SVG text, shaped by Lean when the page is drawn.</p>
 </div>'''
     return page('Lettering on curves', body)
+
+
+def textpath():
+    """The lettering page again, as SVG text: the same curves, words, sizes and colours, so
+    any difference between the two pages is the engine's text layout, not the content."""
+    esc = lambda t: t.replace('&', '&amp;').replace('<', '&lt;')
+    def txt(text, x, y, size, fill=INK, anchor='start', angle=0.0, extra=''):
+        rot = f' transform="rotate({fmt(angle)} {fmt(x)} {fmt(y)})"' if angle else ''
+        return (f'<text x="{fmt(x)}" y="{fmt(y)}" font-family="Noto Sans" font-size="{size}" fill="{fill}"'
+                f' text-anchor="{anchor}"{rot}{extra}>{esc(text)}</text>')
+    def along(pid, text, size, fill, spacing=0.0):
+        ls = f' letter-spacing="{fmt(spacing)}"' if spacing else ''
+        return (f'<text font-family="Noto Sans" font-size="{size}" fill="{fill}"{ls}>'
+                f'<textPath href="#{pid}" startOffset="50%" text-anchor="middle">{esc(text)}</textPath></text>')
+    # 1. The badge, on the same two arcs.
+    cx, cy, R = 190, 190, 150
+    r = R - 28
+    badge = ['<svg width="380" height="380" viewBox="0 0 380 380"><defs>',
+             f'<path id="top-arc" d="M{cx - R} {cy} A{R} {R} 0 0 1 {cx + R} {cy}"/>',
+             f'<path id="bottom-arc" d="M{cx - r} {cy} A{r} {r} 0 0 0 {cx + r} {cy}"/></defs>',
+             f'<circle cx="{cx}" cy="{cy}" r="{R + 22}" fill="#184078"/>',
+             f'<circle cx="{cx}" cy="{cy}" r="{R - 50}" fill="#f7f3e8"/>',
+             f'<circle cx="{cx}" cy="{cy}" r="{R + 14}" fill="none" stroke="#f0c75e" stroke-width="2"/>',
+             f'<circle cx="{cx}" cy="{cy}" r="{R - 42}" fill="none" stroke="#f0c75e" stroke-width="2"/>',
+             along('top-arc', 'FOAFNAUT · A BROWSER IN LEAN', 26, '#f7f3e8', 1.5),
+             along('bottom-arc', 'HTML · CSS · SVG · WEBGPU', 17, '#f0c75e', 2),
+             txt('2525', cx, cy + 22, 64, '#184078', 'middle'), '</svg>']
+    # 2. The wave: the same sampled curve and sentence.
+    wave = lambda t: (20 + 700 * t, 110 + 55 * math.sin(t * 2 * math.pi * 1.5))
+    _, _, d_w = sampled(wave)
+    wave_svg = ['<svg width="740" height="220" viewBox="0 0 740 220">',
+                f'<path id="wave" d="{d_w}" fill="none" stroke="#c9d6e8" stroke-width="22" stroke-linecap="round"/>',
+                f'<path d="{d_w}" fill="none" stroke="#3b6fb6" stroke-width="1" stroke-dasharray="4 4"/>',
+                along('wave', 'Each glyph sits on the curve and turns with its tangent, as SVG textPath would place it.', 17, '#22303c'),
+                '</svg>']
+    # 3. The spiral.
+    spiral = lambda t: (190 + (16 + 150 * (1 - t)) * math.cos(6 * math.pi * t - math.pi / 2),
+                        190 + (16 + 150 * (1 - t)) * math.sin(6 * math.pi * t - math.pi / 2))
+    _, _, d_s = sampled(spiral, 2000)
+    words = ('The Resource Description Framework is a framework for representing information in the Web. '
+             'An RDF graph is a set of RDF triples. An RDF triple has a subject, a predicate and an object. '
+             'The set of nodes of an RDF graph is the set of subjects and objects of the triples in the graph.')
+    spiral_svg = ['<svg width="380" height="380" viewBox="0 0 380 380">',
+                  f'<path id="spiral" d="{d_s}" fill="none" stroke="#efe3cc" stroke-width="1"/>',
+                  along('spiral', words, 13, '#8a3b2b'), '</svg>']
+    # 4. Rotated words: each a text element turned by a transform.
+    burst = ['<svg width="380" height="380" viewBox="0 0 380 380">',
+             '<circle cx="190" cy="190" r="34" fill="#e07b39"/>']
+    rays = ['subject', 'predicate', 'object', 'graph', 'triple', 'literal', 'IRI', 'blank node',
+            'dataset', 'datatype', 'language', 'quad']
+    for i, w in enumerate(rays):
+        a = i * 360 / len(rays)
+        u = (math.cos(math.radians(a)), math.sin(math.radians(a)))
+        n = (math.cos(math.radians(a + 90)), math.sin(math.radians(a + 90)))
+        r0, size = 48, 15
+        if 90 < a <= 270:
+            r1 = r0 + width(w, size)
+            burst.append(txt(w, 190 + r1 * u[0] - 5 * n[0], 190 + r1 * u[1] - 5 * n[1], size, PALETTE[i % 8], 'start', a + 180))
+        else:
+            burst.append(txt(w, 190 + r0 * u[0] + 5 * n[0], 190 + r0 * u[1] + 5 * n[1], size, PALETTE[i % 8], 'start', a))
+    burst.append('</svg>')
+    # 5. Vertical, rotated and scaled: VERTICAL with writing-mode, the rest with transforms.
+    stack = ['<svg width="740" height="150" viewBox="0 0 740 150">',
+             '<text x="30" y="10" font-family="Noto Sans" font-size="16" fill="#3f9d6b" writing-mode="vertical-rl" text-orientation="upright">VERTICAL</text>',
+             txt('rotated 90°', 70, 20, 16, '#7a5cb8', 'start', 90),
+             txt('rotated −90°', 110, 128, 16, '#7a5cb8', 'start', -90)]
+    x = 150
+    for i, size in enumerate([12, 16, 21, 28, 36, 46]):
+        stack.append(txt('Aa', x, 120, size, PALETTE[i % 8]))
+        x += width('Aa', size) + 14
+    stack.append(txt('rotated −12°', 540, 80, 22, '#c4455a', 'start', -12))
+    stack.append('</svg>')
+    # 6. Glyph rotation, tspan shifts and anchors, which the outline page has no twin for.
+    extra = ('<svg width="740" height="160" viewBox="0 0 740 160">'
+             '<text x="20" y="60" font-family="Noto Sans" font-size="28" fill="#3f9d6b" rotate="0 10 20 30 40 50 60 70 80">ROTATE ME</text>'
+             '<text x="370" y="60" font-family="Noto Sans" font-size="22" text-anchor="middle" fill="#7a5cb8">middle <tspan fill="#c4455a" dy="-8">raised</tspan><tspan dy="8"> anchor</tspan></text>'
+             '<text x="720" y="60" font-family="Noto Sans" font-size="22" text-anchor="end" fill="#3b6fb6">end</text>'
+             '<text x="500" y="140" font-family="Noto Sans" font-size="20" fill="#cc6aa8" writing-mode="vertical-rl">縦書き</text>'
+             '</svg>')
+    body = f'''<h2>A badge: text around a circle</h2>
+<div class="figure">{"".join(badge)}</div>
+<h2>A wave</h2>
+<div class="figure">{"".join(wave_svg)}</div>
+<h2>A spiral</h2>
+<div class="figure">{"".join(spiral_svg)}</div>
+<h2>Rotated words</h2>
+<div class="figure">{"".join(burst)}</div>
+<h2>Vertical, rotated and scaled</h2>
+<div class="figure">{"".join(stack)}</div>
+<h2>Rotated glyphs, tspan and anchors</h2>
+<div class="figure">{extra}</div>
+<div class="about">
+<p>The same lettering as <a href="showcase-lettering.html">showcase-lettering.html</a>, written as SVG <code>text</code>, <code>tspan</code> and <code>textPath</code>: Lean shapes it with the page font and places each glyph when the page is drawn. Both pages come from <code>tools/showcase-pages.py</code>, with the same curves, words, sizes and colours.</p>
+<p>Not yet: <code>writing-mode</code> vertical text, which is drawn horizontally.</p>
+</div>'''
+    return page('SVG text and textPath', body)
 
 
 def svg_table(caption, columns, rows, foot=None, spans=()):
@@ -606,6 +702,7 @@ def tables():
 
 
 for name, text in [('showcase-dataviz.html', dataviz()), ('showcase-lettering.html', lettering()),
+                   ('showcase-textpath.html', textpath()),
                    ('showcase-tables-svg.html', tables())]:
     open(os.path.join(PAGES, name), 'w', encoding='utf-8').write(text)
     print(f'wrote {name}: {len(text):,} bytes')
