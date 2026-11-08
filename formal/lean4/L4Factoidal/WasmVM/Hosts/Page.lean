@@ -50,11 +50,84 @@ structure Listener where
 
 def maxListeners : Nat := 65536
 
+/-! ### The script clock
+
+The event loop's clock is virtual and moves only by rule, so tests replay. A script's
+own time is the instructions it ran, at `instructionsPerMs` (a stated rate, not a
+measurement of this run): script time is the clock at the mark plus the instructions run
+since the mark, in whole milliseconds. `performance.now()` and `Date.now()` read the
+later of the loop's clock and script time; the loop's clock moves up to script time before
+a timer or an animation frame is requested and after each run of the module, so a timer
+set after a long script is due its delay after the script time it was set at. The host
+moving the clock past script time moves the mark. A reading is never less than the
+reading before it (`ScriptClock.read_monotone`, `ScriptClock.read_read`), and the loop's
+clock never goes back (`ScriptClock.sync_ge`). -/
+
+structure ScriptClock where
+  /-- Instructions for one millisecond of script time: about the rate of QuickJS on the
+  native and Wasm engines (100 million instructions a second). -/
+  instructionsPerMs : Nat := 100000
+  /-- The mark: a time (ms) and the instructions run in the session then. -/
+  markClock : Nat := 0
+  markSteps : Nat := 0
+  /-- Instructions run in the session up to now. -/
+  steps : Nat := 0
+  /-- The last reading, in ns. -/
+  last : Nat := 0
+  deriving Inhabited, Repr
+
+/-- Script time in ms: the mark, plus the whole milliseconds of instructions since it. -/
+def ScriptClock.ms (c : ScriptClock) : Nat :=
+  c.markClock + (c.steps - c.markSteps) / max 1 c.instructionsPerMs
+
+/-- The time in ns with the loop's clock at `clock`: the later of the two, and never less
+than the last reading. -/
+def ScriptClock.reading (c : ScriptClock) (clock : Nat) : Nat :=
+  max c.last (max clock c.ms * 1000000)
+
+/-- A reading, kept as the last. -/
+def ScriptClock.read (c : ScriptClock) (clock : Nat) : Nat × ScriptClock :=
+  let t := c.reading clock
+  (t, { c with last := t })
+
+/-- Each reading is at least the one before, and is the next reading's floor. -/
+theorem ScriptClock.read_monotone (c : ScriptClock) (clock : Nat) :
+    c.last ≤ (c.read clock).1 ∧ (c.read clock).2.last = (c.read clock).1 :=
+  ⟨Nat.le_max_left _ _, rfl⟩
+
+/-- Two readings with any change between them that keeps the last reading (instructions
+run, the mark moved, the loop's clock moved): the second is not less. -/
+theorem ScriptClock.read_read (c : ScriptClock) (clock clock' : Nat) (f : ScriptClock → ScriptClock)
+    (keeps : ∀ d, (f d).last = d.last) :
+    (c.read clock).1 ≤ ((f (c.read clock).2).read clock').1 := by
+  have h := (ScriptClock.read_monotone (f (c.read clock).2) clock').1
+  rw [keeps, (ScriptClock.read_monotone c clock).2] at h
+  exact h
+
+/-- At a run of the module with `steps` instructions run so far: when the loop's clock is
+past script time (the host moved it), the mark moves to it. -/
+def ScriptClock.atRun (c : ScriptClock) (clock steps : Nat) : ScriptClock :=
+  let c := { c with steps }
+  if c.ms < clock then { c with markClock := clock, markSteps := steps } else c
+
+/-- The loop's clock moved up to script time. -/
+def ScriptClock.sync (c : ScriptClock) (clock : Nat) : Nat := max clock c.ms
+
+theorem ScriptClock.sync_ge (c : ScriptClock) (clock : Nat) : clock ≤ c.sync clock := Nat.le_max_left _ _
+
+/-- With no instructions run past the mark, script time is the mark: a page whose scripts
+run fewer than `instructionsPerMs` instructions between moves of the clock sees the
+clock alone. -/
+theorem ScriptClock.ms_mark (c : ScriptClock) (h : c.steps - c.markSteps < max 1 c.instructionsPerMs) :
+    c.ms = c.markClock := by
+  simp [ScriptClock.ms, Nat.div_eq_of_lt h]
+
 /-- Everything the imports change, except the store. -/
 structure Host where
   dom : DomHost
   loop : Loop := {}
   listeners : Array Listener := #[]
+  time : ScriptClock := {}
   deriving Inhabited
 
 /-- Budgets of one session. -/
@@ -111,10 +184,15 @@ structure Session where
 
 /-! ## The host: WASI with the virtual clock, `foafnaut_dom`, and the event loop imports -/
 
-/-- WASI: the event loop's clock (realtime and monotonic), in nanoseconds. Nothing else. -/
+/-- WASI: the script clock (realtime and monotonic), in nanoseconds (`ScriptClock`).
+Nothing else. -/
 def caps : Wasi.Caps (StateM Host) :=
-  { clock := fun id => if id ≤ 1 then some (do return ((← get).loop.clock * 1000000).toUInt64) else none,
-    clockRes := fun id => if id ≤ 1 then some 1000000 else none }
+  { clock := fun id => if id ≤ 1 then some (do
+      let h ← get
+      let (t, time) := h.time.read h.loop.clock
+      set { h with time }
+      return t.toUInt64) else none,
+    clockRes := fun id => if id ≤ 1 then some 1000 else none }
 
 /-- The imports served here rather than by `Hosts.Dom`. -/
 def loopImports : List (String × Nat) :=
@@ -175,17 +253,16 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
       let (st, r) := Hosts.Dom.answerList mem st (a 4) (a 5) (.ok (planList h (a 0) type (a 3 != 0)))
       (h, st, r)
   | "set_timer" =>
-    let (loop, id) := h.loop.setTimer (a 0) (a 1) (a 2 != 0)
+    let (loop, id) := { h.loop with clock := h.time.sync h.loop.clock }.setTimer (a 0) (a 1) (a 2 != 0)
     ({ h with loop }, st, Hosts.Dom.ret id)
   | "clear_timer" => ({ h with loop := h.loop.clearTimer (a 0) }, st, Hosts.Dom.ret 0)
   | "request_frame" =>
-    let (loop, id) := h.loop.requestFrame (a 0)
+    let (loop, id) := { h.loop with clock := h.time.sync h.loop.clock }.requestFrame (a 0)
     ({ h with loop }, st, Hosts.Dom.ret id)
   | "cancel_frame" => ({ h with loop := h.loop.cancelFrame (a 0) }, st, Hosts.Dom.ret 0)
   | _ =>
-    let ⟨dom, loop, listeners⟩ := h
-    let (dom, st, r) := Hosts.Dom.serve mem nm args dom st
-    (⟨dom, loop, listeners⟩, st, r)
+    let (dom, st, r) := Hosts.Dom.serve mem nm args h.dom st
+    ({ h with dom }, st, r)
 
 /-- Host id `id` (an import index) with its binding. -/
 def serve (mem : Nat) (bs : Array Wasi.Binding) (id : Nat) (args : Array Value) (h : Host) (st : StoreOf M) :
@@ -200,7 +277,8 @@ end
 /-! ## Running exports -/
 
 /-- Run function `fa`: host calls are served until the run ends, and the fuel is shared
-by the whole run. The answer has the instructions run. -/
+by the whole run. The answer has the instructions run. The script clock counts them
+(`ScriptClock`), and the loop's clock moves up to script time at the end. -/
 def Session.run (s : Session) (fa : Nat) (args : Array Value) : Session × Outcome := Id.run do
   let ⟨st, inst, mem, bs, h, fx, lim, steps, jobs, tasks, errors, lastFrame⟩ := s
   let budget : Budget := { fuel := lim.fuel }
@@ -208,15 +286,18 @@ def Session.run (s : Session) (fa : Nat) (args : Array Value) : Session × Outco
   let mut st := st0
   let mut o := o0
   let mut n := n0
-  let mut h := h
+  let mut h := { h with time := h.time.atRun h.loop.clock steps }
   for _ in [0:lim.hostCalls] do
     match o with
     | .hostCall id vs k =>
-      let (h', st', r) := serve mem bs id vs h st
+      let (h', st', r) := serve mem bs id vs { h with time := h.time.atRun h.loop.clock (steps + n) } st
       h := h'
       let (st'', o', n') := resumeSteps st' k r { budget with fuel := lim.fuel - n }
       st := st''; o := o'; n := n + n'
     | _ => break
+  -- Script time passed: the loop's clock moves up to it.
+  let time := h.time.atRun h.loop.clock (steps + n)
+  h := { h with time, loop := { h.loop with clock := time.sync h.loop.clock } }
   return (⟨st, inst, mem, bs, h, fx, lim, steps + n, jobs, tasks, errors, lastFrame⟩, o)
 
 def i32v (x : Int) : Value := .i32 (Int.toNat (x % 4294967296)).toUInt32
@@ -523,7 +604,7 @@ the embedder loaded, each with its document parsed on its own: each joins the pa
 (`Dom.graft`), and its `load` event at the `iframe` is a task before the window's. The
 frames share the page's script realm. -/
 def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Limits := {})
-    (frames : Array (Nat × Arena) := #[]) : Except String Session := do
+    (frames : Array (Nat × Arena) := #[]) (time : ScriptClock := {}) : Except String Session := do
   let mut dom := dom
   let mut framed : Array (Nat × Nat) := #[]
   for (el, doc) in frames do
@@ -532,10 +613,13 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
       dom := d
       framed := framed.push (el, root)
   let s : Session ← match m.base with
-    | some b => pure { b with host := { dom := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames } }, limits := lim, steps := 0 }
+    | some b =>
+      let domHost : DomHost := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames }
+      let host : Host := { dom := domHost, time }
+      pure { b with host, limits := lim, steps := 0 }
     | none => do
       let s ← instantiatePage m dom lim
-      pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames } } }
+      pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames }, time } }
   let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage } } }
   let s := (s.run s.fx.page #[.i32 2, .i32 0, .i32 0]).1
   let mut s := s.setUrl url

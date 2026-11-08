@@ -83,16 +83,19 @@ def jn (n : Nat) : Json := .num (Lean.JsonNumber.fromNat n)
 def run (args : List String) : IO UInt32 := do
   let (wasm, root, rest) ← match args with
     | w :: r :: rest => pure (w, r, rest)
-    | _ => throw (IO.userError "usage: wasmvm-bench page WASM ROOT FILE... [--settle MS] [--commands N]")
+    | _ => throw (IO.userError "usage: wasmvm-bench page WASM ROOT FILE... [--settle MS] [--commands N] [--instructions-per-ms N]")
   let mut files : Array String := #[]
   let mut settleMs := 30000
   let mut commands := 4096
+  -- The rate of the script clock (`ScriptClock`): the engine's by default.
+  let mut rate := 100000
   let xs := rest.toArray
   let mut i := 0
   while i < xs.size do
     match xs[i]! with
     | "--settle" => settleMs := (xs[i+1]?.bind String.toNat?).getD settleMs; i := i + 2
     | "--commands" => commands := (xs[i+1]?.bind String.toNat?).getD commands; i := i + 2
+    | "--instructions-per-ms" => rate := max 1 ((xs[i+1]?.bind String.toNat?).getD rate); i := i + 2
     | f => files := files.push f; i := i + 1
   let t0 ← IO.monoNanosNow
   let bytes ← IO.FS.readBinFile wasm
@@ -117,7 +120,8 @@ def run (args : List String) : IO UInt32 := do
     for (node, src) in iframeElements dom do
       if let some fd ← frameDocument root dir src then frames := frames.push (node, fd)
     let a ← IO.monoNanosNow
-    match start m dom ("http://web-platform.test/" ++ f) scripts { commands, logs := 100000, frames := true } frames with
+    match start m dom ("http://web-platform.test/" ++ f) scripts { commands, logs := 100000, frames := true } frames {}
+        { instructionsPerMs := rate } with
     | .error e =>
       bad := bad + 1
       IO.println (Json.mkObj [("file", .str f), ("error", .str e)]).compress

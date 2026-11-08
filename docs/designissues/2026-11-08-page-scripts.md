@@ -94,6 +94,22 @@ frame back to back. The loop is `EventLoop.Driver.advanceGo`, and
 `run_html.ts` start no turn while a frame is asked for or being drawn, so each presented
 frame has at most one turn before it.
 
+### The script clock
+
+The event loop's clock is virtual and moves by rule, so runs replay. Script time is the
+instructions a script ran at `instructionsPerMs` (100 000 by default, a stated rate near
+QuickJS on the native and Wasm engines; `start` may give another), in whole milliseconds
+from a mark (`Page.ScriptClock`). `performance.now()` and `Date.now()` read the later of
+the loop's clock and script time. The loop's clock moves up to script time before a timer
+or an animation frame is requested and after each run of the module, so a timer set after
+a long script is due its delay after the time it was set at. A host moving the clock past
+script time moves the mark. Readings never go back (`ScriptClock.read_monotone`,
+`read_read`) and the loop's clock never goes back (`sync_ge`); a page that runs fewer than
+`instructionsPerMs` instructions between moves of the clock sees the clock alone
+(`ms_mark`). The WPT runner gives a rate of a trillion a millisecond (script time as good
+as off): testharness.js times a file out after 10 s of browser time, and this engine runs
+many more instructions than a browser for the same work.
+
 ## 4. Cost
 
 The contract: a turn's answer says `changed` exactly when the turn recorded a DOM change

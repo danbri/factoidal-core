@@ -24,7 +24,8 @@ argument for `start`:
 - `load`: `moduleBase64`, the guest module.
 - `start`: `url`, `resources` (`[{nodeId, source}]` for `src` scripts, as for
   stylesheets), optional `commandLimit` and `logLimit`. Runs the classic scripts in document order,
-  `DOMContentLoaded`, then the `load` event.
+  `DOMContentLoaded`, then the `load` event. Optional `instructionsPerMs`: the rate of the
+  script clock (`Page.ScriptClock`; 100000 by default).
 - `click` (`node`), `advance` (`ms`: move the virtual clock), `settle` (`budgetMs`: run
   until no task, timer or frame waits), `turn` (run what is due now), `close`.
 
@@ -199,7 +200,8 @@ def act (held : Held) (action html : String) (request : JSON.Json) : Held × Exc
       let started := WebWasm.timed fun _ => show Except String Page.Session from do
         let dom ← parse html url
         let (scripts, missing) ← scriptSources dom request
-        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession }
+        let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
+        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession } #[] { instructionsPerMs := rate }
         return missing.foldl Page.Session.fail s
       match started with
       | (.error e, _) => (held, .error s!"scriptSession: {e}")
