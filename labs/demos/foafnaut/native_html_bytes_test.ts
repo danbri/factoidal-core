@@ -42,6 +42,8 @@ async function compare(nativeEngine?:string){
   let scenes=0;
   for(const name of pages){
     const doc=await prepareHTML(text,inputURL(pagesDir+name,true));
+    // Both engines hold the page's images (held images, issue 1292): the request names them.
+    await prepareHTML(bytes,inputURL(pagesDir+name,true));
     const shell=(scroll:number)=>({tabs:[{title:doc.title??""}],active:0,address:doc.url,cursor:0,focused:false,canBack:false,
       canForward:false,loading:false,scale:2,theme:"next",pages:1,scroll});
     const {source,options}=doc.request(1600,1200);

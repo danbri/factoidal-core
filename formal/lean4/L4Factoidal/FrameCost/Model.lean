@@ -1,62 +1,36 @@
+import L4Factoidal.FrameCost.Band
+import L4Factoidal.FrameCost.Lru
+
 /-! # Frame scheduling in the Foafnaut hosts, with its cost
 
-Record: `docs/designissues/2026-11-08-cost-theorems.md`. Issue 1268.
+Record: `docs/designissues/2026-11-08-cost-theorems.md`. Issues 1268 and 1292.
 
-A host session holds the layout key of the page, the scroll, the band of page rows on
-screen, the kept layout (one entry, as `WebDocument.layoutRef`) and a prefetched band.
+A host session holds the layout key of the page, the pointer state that is painted
+and not laid out (hover and active), the scroll, the band of page rows on screen,
+the kept layouts (the engine's `Lru`, `layoutSlots` entries) and a prefetched band.
 For each event the host does one of four things:
 
 * `shift`: the band on screen keeps the scroll; the composite runs at a new offset.
   No Lean call.
 * `swap`: a prefetched band of the same state keeps the scroll; it is uploaded and
   shown. No Lean call (the prefetch already paid its render).
-* `render`: the kept layout is the layout of this key; Lean draws a new band from it.
+* `render`: a kept layout is the layout of this key; Lean draws a new band from it,
+  with the pointer state painted on it (`WebDocument.cachedFrame`, `WebRepaint`).
 * `layout`: the key is new; Lean parses, cascades and lays out, then draws a band.
 
-The band and its keep range are `WebDocument.band`, `Band.keepFrom` and `Band.keepTo`
-with the same numbers; `run_html.ts` reads `keepFrom` and `keepTo` from Lean's answer
-and tests them with `layer_compositor.keeps`. The key has the fields of
-`WebDocument.LayoutKey`; the scroll is not one of them, as it is not in that structure.
+The band, its keep range and the memo are the engine's own definitions
+(`FrameCost.Band`, `FrameCost.Lru`, which `WebDocument` uses). The key has the fields
+of `WebDocument.LayoutKey`; the scroll is not one of them, and the pointer is one only
+when a `:hover` or `:active` style changes geometry (`WebDocument.LayoutKey.pointer`).
 
 Only Lean core. -/
 namespace L4Factoidal.FrameCost
 
-/-- Page rows that a page layer keeps above and below the view (`WebDocument.bandMargin`). -/
-def bandMargin : Nat := 512
-/-- `WebDocument.refreshMargin`. -/
-def refreshMargin : Nat := 128
-/-- `WebDocument.maxLayerRows`. -/
-def maxLayerRows : Nat := 4096
-
-/-- The page rows of a page layer: from page row `top`, `height` rows. -/
-structure Band where
-  top : Nat
-  height : Nat
-  deriving Repr, DecidableEq
-
-/-- The margin of a band for a view of `view` rows. -/
-def margin (view : Nat) : Nat := min bandMargin ((maxLayerRows-view)/2)
-
-/-- The band around a view of `view` rows from page row `scroll` (`WebDocument.band`). -/
-def band (scroll view : Nat) : Band :=
-  ⟨scroll-min scroll (margin view),view+2*margin view⟩
-
-/-- `WebDocument.Band.keepFrom`. -/
-def Band.keepFrom (b : Band) : Nat := if b.top = 0 then 0 else b.top+refreshMargin
-/-- `WebDocument.Band.keepTo`. -/
-def Band.keepTo (b : Band) (view : Nat) : Nat := b.top+b.height-view-refreshMargin
-/-- `layer_compositor.keeps`: the band shows this scroll with no new render. -/
-def Band.keeps (b : Band) (view scroll : Nat) : Bool :=
-  decide (b.keepFrom ≤ scroll) && decide (scroll ≤ b.keepTo view)
-
-/-- Rows that a band made at scroll `s` keeps on each side of `s`
-(`scroll_prefetch.keepReach`): 384 for a view of at most 3072 rows. -/
-def reach (view : Nat) : Nat := margin view-refreshMargin
-
 /-- The fields of `WebDocument.LayoutKey`, each named by a number. `page` stands for
 the HTML and the request fields that name the document (`url`, `resources`,
-`commands`, `images`, `graphModel`, `media`); `element` for `hover`, `active` and
-`visited`; `fonts` for the held font list. There is no scroll. -/
+`commands`, `heldImages`, `graphModel`, `media`); `visited` for the visited URLs;
+`fonts` for the held font list; `pointer` for the hover and active nodes when a style
+of theirs changes geometry, else 0. There is no scroll. -/
 structure Key where
   page : Nat
   width : Nat
@@ -65,30 +39,41 @@ structure Key where
   top : Nat
   /-- `textScalePercent`. -/
   scale : Nat
-  element : Nat
+  visited : Nat
   fonts : Nat
+  pointer : Nat
   deriving Repr, DecidableEq
+
+/-- What a band on screen shows: the key it was laid out for and the pointer state
+painted on it. -/
+abbrev Shown := Key × Nat
 
 /-- A host session. -/
 structure Session where
   key : Key
+  /-- The hover and active state that the frame paints (0: none). -/
+  paint : Nat
   scroll : Nat
   /-- The largest scroll of the page. -/
   limit : Nat
-  /-- The band on screen and the key it was drawn for. -/
-  shown : Option (Key × Band)
-  /-- The key of the kept layout (`WebDocument.layoutRef` holds one entry). -/
-  kept : Option Key
-  /-- A band drawn ahead for a key (`run_html.ts` `prefetched`). -/
-  prefetched : Option (Key × Band)
+  /-- The band on screen and the state it was drawn for. -/
+  shown : Option (Shown × Band)
+  /-- The keys of the kept layouts (`WebDocument.layoutRef` with the values left out,
+  `Lru.erase`). -/
+  kept : Lru Key Unit
+  /-- A band drawn ahead for a state (`run_html.ts` `prefetched`). -/
+  prefetched : Option (Shown × Band)
   deriving Repr
 
 /-- Page rows of the window. -/
 def Session.view (s : Session) : Nat := s.key.height-s.key.top
 
+/-- The state on screen after this session's frame. -/
+def Session.state (s : Session) : Shown := (s.key,s.paint)
+
 /-- The first session of a window: nothing drawn, nothing kept. -/
 def Session.start (key : Key) (limit : Nat) : Session :=
-  {key, scroll := 0, limit, shown := none, kept := none, prefetched := none}
+  {key, paint := 0, scroll := 0, limit, shown := none, kept := [], prefetched := none}
 
 inductive Event where
   /-- A wheel or key scroll by `delta` rows; the host clamps it to `0 .. limit`. -/
@@ -96,8 +81,13 @@ inductive Event where
   | resize (width height : Nat)
   /-- Text zoom to `percent`. -/
   | zoom (percent : Nat)
-  /-- A change of hover, active or visited state. -/
-  | element (state : Nat)
+  /-- The visited links change (a navigation in another tab). -/
+  | visit (state : Nat)
+  /-- The pointer moves onto another link, or a press starts or ends: `state` is the
+  hover and active nodes (0: none). `geometry` is true when a `:hover` or `:active`
+  style of the page for that state changes more than colours (`WebRepaint.restyle`
+  answers `none`); then the state is in the layout key. -/
+  | hover (state : Nat) (geometry : Bool)
   | navigate (page limit : Nat)
   | fontLoad
   /-- The host asks the worker for a band at this scroll (`scroll_prefetch.prefetchTarget`). -/
@@ -114,8 +104,9 @@ def apply (s : Session) : Event → Session
   | .scroll d => {s with scroll := clampScroll s.limit s.scroll d}
   | .resize w h => {s with key := {s.key with width := w, height := h}, scroll := min s.scroll s.limit}
   | .zoom p => {s with key := {s.key with scale := p}}
-  | .element e => {s with key := {s.key with element := e}}
-  | .navigate p l => {s with key := {s.key with page := p}, scroll := 0, limit := l}
+  | .visit v => {s with key := {s.key with visited := v}}
+  | .hover e g => {s with key := {s.key with pointer := if g then e else 0}, paint := e}
+  | .navigate p l => {s with key := {s.key with page := p, pointer := 0}, paint := 0, scroll := 0, limit := l}
   | .fontLoad => {s with key := {s.key with fonts := s.key.fonts+1}}
   | .prefetch _ => s
   | .tick => s
@@ -133,32 +124,45 @@ def Decision.name : Decision → String
   | .render => "render"
   | .layout => "layout"
 
-/-- A band for `key` that keeps `scroll`. -/
-def keepsFor (band : Option (Key × Band)) (key : Key) (view scroll : Nat) : Bool :=
+/-- A band for the state `st` that keeps `scroll`. -/
+def keepsFor (band : Option (Shown × Band)) (st : Shown) (view scroll : Nat) : Bool :=
   match band with
-  | some (k,b) => decide (k = key) && b.keeps view scroll
+  | some (k,b) => decide (k = st) && b.keeps view scroll
   | none => false
+
+/-- The band on screen is for this state (it may not keep the scroll). -/
+def shownFor (band : Option (Shown × Band)) (st : Shown) : Bool :=
+  match band with
+  | some (k,_) => decide (k = st)
+  | none => false
+
+/-- The engine keeps a layout of this key: the engine's own test, `Lru.find?`. -/
+def Session.warmFor (s : Session) (k : Key) : Bool := (Lru.find? s.kept k).isSome
 
 /-- The decision for a session after an event changed it: the one source of truth.
 `run_html.ts` makes it as `canShift() && keeps(...)`, then `swapReady()` or
-`bandComing()`, then a Lean frame (`dirty`), which takes the kept layout when the
-key is the same (`WebDocument.cachedLayOut`). -/
+`bandComing()` (only when the band on screen is for this state: `canSwap`; a change of
+state goes to a Lean frame), then a Lean frame (`dirty`), which takes a kept layout when the key
+is kept (`WebDocument.cachedFrame`). -/
 def decideFrame (s : Session) : Decision :=
-  if keepsFor s.shown s.key s.view s.scroll then .shift
-  else if keepsFor s.prefetched s.key s.view s.scroll then .swap
-  else if s.kept = some s.key then .render
+  if keepsFor s.shown s.state s.view s.scroll then .shift
+  else if shownFor s.shown s.state && keepsFor s.prefetched s.state s.view s.scroll then .swap
+  else if s.warmFor s.key then .render
   else .layout
 
-/-- What a decision leaves. A layout replaces the kept entry; a band made for the old
-entry is dropped with it (the host drops a prefetched band of another state). -/
+/-- What a decision leaves. A render uses the kept layout, which moves it first in the
+memo (`Lru.putIn`, as `WebDocument.cachedLayOut` does; the memo keeps the layouts of one
+page, so a navigation drops the others); a layout puts the new one, and
+the band drawn ahead for another state is dropped (the host drops it). -/
 def commit (s : Session) : Decision → Session
   | .shift => s
   | .swap => {s with shown := s.prefetched, prefetched := none}
-  | .render => {s with shown := some (s.key,band s.scroll s.view)}
-  | .layout => {s with kept := some s.key, shown := some (s.key,band s.scroll s.view), prefetched := none}
+  | .render => {s with kept := Lru.putIn Key.page layoutSlots s.kept s.key (), shown := some (s.state,band s.scroll s.view)}
+  | .layout => {s with kept := Lru.putIn Key.page layoutSlots s.kept s.key (), shown := some (s.state,band s.scroll s.view), prefetched := none}
 
-/-- The work of one step: Lean layouts, Lean band renders, and bytes of page layer
-uploaded to the GPU (four per pixel of the band). -/
+/-- The work of one step: Lean layouts, Lean band renders, bytes of page layer uploaded
+to the GPU (four per pixel of the band), and bytes of request sent to Lean beyond
+the fixed fields. -/
 structure Cost where
   layouts : Nat
   renders : Nat
@@ -183,11 +187,11 @@ def cost (s : Session) : Decision → Cost
   | .render => ⟨0,1,bandBytes s.key.width (band s.scroll s.view)⟩
   | .layout => ⟨1,1,bandBytes s.key.width (band s.scroll s.view)⟩
 
-/-- A prefetch is made only for the state whose layout is kept (the host prefetches
-only when `canShift()`, with a band of this state on screen). It is one render from
-the kept layout and no upload: the upload is at the swap. Otherwise it is not made. -/
+/-- A prefetch is made only for the state on screen, whose layout is kept (the host
+prefetches only when `canShift()`). It is one render from the kept layout and no
+upload: the upload is at the swap. Otherwise it is not made. -/
 def prefetchStep (s : Session) (target : Nat) : Session × Decision × Cost :=
-  if s.kept = some s.key then ({s with prefetched := some (s.key,band target s.view)},.render,⟨0,1,0⟩)
+  if s.warmFor s.key then ({s with prefetched := some (s.state,band target s.view)},.render,⟨0,1,0⟩)
   else (s,.shift,0)
 
 /-- One event: the session after it, the decision and its cost. -/
@@ -218,5 +222,30 @@ def travelled : Session → List Event → Nat
 def keyChanges : Session → List Event → Nat
   | _, [] => 0
   | s, e :: es => let s' := (step s e).1; (if s'.key = s.key then 0 else 1)+keyChanges s' es
+
+/-- Every key that the sessions of a sequence take is in `W`. A proposition, so no
+code is made for it. -/
+def KeysIn (W : List Key) : Session → List Event → Prop
+  | _, [] => True
+  | s, e :: es => (step s e).1.key ∈ W ∧ KeysIn W (step s e).1 es
+
+/-! ## The prefetch rule
+
+`scroll_prefetch.prefetchTarget` with no speed term: the host asks for the next band
+when the scroll is `prefetchMargin` rows or fewer from the edge of the keep range it
+moves to. The next band starts its keep range where this one's ends. -/
+
+/-- `scroll_prefetch.PREFETCH_MARGIN_ROWS`. -/
+def prefetchMargin : Nat := 256
+
+/-- The scroll to draw the next band at, or none when no prefetch is due. -/
+def prefetchTarget (b : Band) (view scroll limit : Nat) (down : Bool) : Option Nat :=
+  if scroll < b.keepFrom ∨ b.keepTo view < scroll ∨ reach view = 0 then none
+  else if down then
+    if limit ≤ b.keepTo view ∨ prefetchMargin < b.keepTo view-scroll then none
+    else some (min limit (b.keepTo view+reach view))
+  else
+    if b.keepFrom = 0 ∨ prefetchMargin < scroll-b.keepFrom then none
+    else some (b.keepFrom-reach view)
 
 end L4Factoidal.FrameCost

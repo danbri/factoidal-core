@@ -205,7 +205,7 @@ private def sameAsFrame (html : String) (width height frameScroll : Nat) (scroll
   let top := WebShell.height (layerShell 0) width
   let view := max 1 (height-top)
   let b := WebDocument.band frameScroll view
-  match WebDocument.layOut ⟨html,WebDocument.layoutRequest (json []),width,height,top,[]⟩ with
+  match WebDocument.layOut ⟨html,WebDocument.layoutRequest (json []),width,height,top,[],[],(none,none)⟩ with
   | .error _ => false
   | .ok laid =>
     match WebRenderSVG.toScene (WebDocument.pageLayer laid.scene [] b) with
@@ -260,8 +260,10 @@ private def pressLinks := JSON.Json.array [.array [.number "7",.string "u",.numb
 #guard WebDocument.compositePress (· + 100) (fun _ _ => 1) (fun _ _ => 2) 65 100 [(64,30,28,28)] 70 40 == 101
 #guard WebDocument.compositePress (· + 100) (fun _ _ => 1) (fun _ _ => 2) 65 100 [(64,30,28,28)] 10 40 == 1
 #guard (WebDocument.compositeShader.splitOn s!"array<vec4u,{WebDocument.maxPressRects+2}>").length == 2
--- `active`, `hover` and `visited` are layout fields: the kept layout and a fresh one agree,
--- and an active link is drawn otherwise than an idle one.
+-- `visited` is a layout field; `active` and `hover` are painted on the layout with no
+-- pointer state (`WebRepaint`), or laid out with the pointer in the key when a style of
+-- theirs changes geometry. Either way the frame is the one a layout with the state gives
+-- (`runUncached`), and an active link is drawn otherwise than an idle one.
 private def linkPage := "<p><a href='https://x.test/a'>Go there</a> <a href='b'>B</a></p>"
 private def anchorId : Nat :=
   let dom := DOM.parseHtmlDocument linkPage
@@ -276,6 +278,47 @@ private def stateFrames : List JSON.Json :=
   (WebDocument.run linkPage (frame 0) 300 200).toOption
 #guard (WebDocument.run linkPage (frame 0 [("visited",.array [.string "https://x.test/a"])]) 300 200).toOption !=
   (WebDocument.run linkPage (frame 0) 300 200).toOption
+-- Author pointer styles: colours, backgrounds, a border colour, a button's :active border
+-- style (colours only), an underline colour, inherited colours; and styles that change
+-- geometry (a font size, an underline that comes, a background that comes, a padding).
+-- Each frame through the kept layout is the frame of a layout with the pointer state.
+private def pointerPages : List String :=
+  ["<style>a{color:#0000ee;background-color:#eeeeee}a:hover{color:#ff0000;background-color:#ffff00}</style>",
+   "<style>p{color:#333333}p:hover{color:#00aa00}a:hover{text-decoration-color:red}</style>",
+   "<style>a{border:2px solid #000000}a:hover{border-color:#ff0000}</style>",
+   "<style>a{text-decoration:underline;color:#0000ee}a:hover{color:#ee0000}</style>",
+   "<style>body{background-color:#ffffff}body:hover{background-color:#fafafa}</style>",
+   "<style>a:hover{font-size:30px}</style>",
+   "<style>a{text-decoration:none}a:hover{text-decoration:underline}</style>",
+   "<style>a:hover{background-color:#ffff00}</style>",
+   "<style>a:hover{padding:4px;border:1px solid red}</style>",
+   "<style>a{color:#ff0000;background-color:#0000ff}a:hover{color:#0000ff;background-color:#ff0000}</style>"].map (· ++ linkPage)
+#guard pointerPages.all fun html =>
+  [frame 0 [("hover",.number (toString anchorId))],frame 0 [("active",.number (toString anchorId))],
+   frame 0 [("hover",.number (toString anchorId)),("active",.number (toString anchorId))],frame 0].all fun request =>
+    let kept := WebDocument.run html request 300 200
+    kept.toOption.isSome && kept.toOption == (WebDocument.runUncached html request 300 200).toOption
+-- A button: its :active style sinks the border (inset) and darkens the background.
+private def buttonPage := "<p><button id=b>Press</button></p>"
+private def buttonId : Nat :=
+  let dom := DOM.parseHtmlDocument buttonPage
+  ((dom.treeOrder 0).find? fun id => DOM.Dom.isHtmlElement (dom.get id) "button").getD 0
+#guard [frame 0 [("hover",.number (toString buttonId))],frame 0 [("active",.number (toString buttonId))],frame 0].all fun request =>
+  let kept := WebDocument.run buttonPage request 300 200
+  kept.toOption.isSome && kept.toOption == (WebDocument.runUncached buttonPage request 300 200).toOption
+-- The pointer is not in the layout request: the shell and the hover and active nodes are
+-- not layout fields (`pointer_not_layout_field`).
+#guard WebDocument.layoutRequest (json [("hover",.number "3"),("active",.number "4"),("url",.string "u")]) ==
+  json [("url",.string "u")]
+-- `WebRepaint.recolor` answers a scene for colours only, and none for geometry.
+private def restyled (html : String) : Option Bool :=
+  let dom := DOM.parseHtmlDocument html
+  match WebDocument.layOut ⟨html,WebDocument.layoutRequest (json []),300,200,0,[],[],(none,none)⟩ with
+  | .ok laid => some (WebDocument.restyle laid (some (((dom.treeOrder 0).find? fun id => DOM.Dom.isHtmlElement (dom.get id) "a").getD 0),none)).isSome
+  | .error _ => none
+#guard restyled (pointerPages[0]!) == some true
+#guard restyled (pointerPages[5]!) == some false
+#guard restyled (pointerPages[6]!) == some false
 -- An id outside the document is no element: the frame is the idle one.
 #guard (WebDocument.run linkPage (frame 0 [("active",.number "99999")]) 300 200).toOption ==
   (WebDocument.run linkPage (frame 0) 300 200).toOption

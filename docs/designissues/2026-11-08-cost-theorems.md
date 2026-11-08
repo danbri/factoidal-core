@@ -151,3 +151,70 @@ is slower, and then to lower:
   engine's `lookupLayout_eq` and `stored_valid` say the same entry gives the
   layout of the key; an instance of one abstract memo for both would follow
   "Prove over an abstraction".
+
+## 6. Round 2 (ratchet-2, 2026-11-08): the costs the theorems exposed, lowered
+
+Related: https://github.com/danbri/factoidal/issues/1292.
+
+### The model is the engine's code
+
+- `FrameCost/Band.lean` holds `Band`, `band`, `keepFrom`, `keepTo`, `keeps`, `fits`,
+  `composite` and `composite_eq_frame`. `WebDocument` imports it and exports these
+  names; it no longer has its own copies (`build-web-render.sh` builds the two
+  modules into the engine).
+- `FrameCost/Lru.lean` is the layout memo: `find?`, `put` (least recently used out),
+  `lookup`, with `lookup_eq` and `put_valid`. `WebDocument.layoutRef` is an
+  `Lru LayoutKey Laid` of `layoutSlots` (4) entries of one document (`Lru.putIn`
+  scoped by `LayoutKey.html`: a layout of another page drops them; with four pages kept,
+  `native_html_bytes_test.ts`, two engines over every demo page, was killed at 2.6 GB);
+  `lookupLayout_eq` and `stored_valid` are now instances of `Lru.lookup_eq` and
+  `Lru.putIn_valid`. The model
+  keeps the same memo with its values left out (`Session.kept : Lru Key Unit`), and
+  `Lru.erase_putIn` and `Lru.find?_erase` (`WebDocument.model_put`, `model_hit`) prove that leaving
+  out the values commutes with every operation: the model's cache hit is the engine's.
+- The key: `WebDocument.pointer_not_layout_field` ("shell", "hover", "active" are not
+  layout fields), `layoutRequest_congr` (requests that agree on the layout fields have
+  one layout request) and `shell_height_scroll` (the chrome height does not read the
+  scroll) are the engine lemmas behind the model's `apply_scroll_key` and
+  `apply_hover_key`.
+
+### Hover and `:active` repaint
+
+`hover` and `active` left `layoutFields`. A page is laid out once with no pointer state;
+a frame with one re-runs the cascade and `WebRepaint.recolor` maps the colours of the
+paints of the nodes whose styles changed. When a changed style changes anything but
+colours (`WebRepaint.sameShape`: a font size, a padding, an underline that comes or goes,
+a background that comes or goes, a table, SVG or a replaced element), `restyle` answers
+none and the frame lays out with the pointer in the key (`LayoutKey.pointer`).
+`WebDocument.frameWith_eq`: with a valid memo and a sound restyle (`RestyleSound`, which
+`WebDocumentTests.lean` checks on ten pointer-style pages and a button, `run` against
+`runUncached`), a frame is the layout of its key.
+
+### Held images
+
+`imageLoad` (Base64) and `web_document_image_call_bin` (bytes) hold an image by key and
+SHA-256 (at most 64 images, 32 MiB). A render names them in `heldImages`; the key holds
+the names found. `imageInfo` answers the ops; the native host (`prepareHTML`,
+`imageOptions`) and the Hub worker use held images only when it does, and send `images`
+with the bytes to an older engine (issue 1274). The native dylib symbol is optional.
+
+### The ratchet now states
+
+| Theorem | Before | Now |
+|---|---|---|
+| `hover_never_layouts` | `element_change_lays_out`: 1 layout | 0 layouts for a colour-only pointer state |
+| `hover_geometry_layouts` | (none) | at most 1, and 0 when that key is kept |
+| `layout_once_per_distinct_key` | bound by key changes (`one_entry_relayouts`: hover on and off = 2) | in a window of at most 4 keys of one page, each key at most once; `hover_on_off_paint` = 0, `hover_on_off_geometry` = 1 |
+| `prefetch_band_spacing`, `prefetch_chain` | 768 rows not proved | the rule's next band starts its keep range where this one ends and ends 768 rows on (view up to 3072) |
+| image bytes per frame | the Base64 of every image in every request | the names only: `frame_work_test.ts` counts equal bytes per frame for a 272-byte and a 556 KB image |
+
+The swap of a prefetched band now asks, as `canSwap` does, that the band on screen be of
+the same state (`shownFor`); the fixture found the model swapping where the host would not.
+
+### Not done
+
+- The turn back and forth inside one band still asks for a new prefetch at each turn (one
+  prefetch slot in `run_html.ts` and the Hub). Two slots would bound it; that touches
+  `run_html.ts`, the Hub worker and the model's `prefetched`, and is left for the next round.
+- An underline that comes on hover (`a:hover{text-decoration:underline}`) lays out: its
+  rectangle is placed by the line layout.

@@ -77,9 +77,9 @@ async function readBytes(url:string,limit:number,signal?:AbortSignal):Promise<Ui
   for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   return bytes;
 }
-/** Fetch the images Lean listed, as `{key,base64}` records for the compile request. */
-export async function fetchImages(wanted:{key:string;url:string}[],documentURL:string,signal?:AbortSignal) {
-  const images:{key:string;base64:string}[]=[];let total=0;
+/** Fetch the images Lean listed, as `{key,bytes}`. */
+export async function fetchImageBytes(wanted:{key:string;url:string}[],documentURL:string,signal?:AbortSignal) {
+  const images:{key:string;bytes:Uint8Array}[]=[];let total=0;
   for(const {key,url} of wanted) {
     signal?.throwIfAborted();
     try {
@@ -87,14 +87,44 @@ export async function fetchImages(wanted:{key:string;url:string}[],documentURL:s
       const bytes=await readBytes(url,MAX_IMAGE_BYTES,signal);
       if(total+bytes.length>MAX_PAGE_IMAGE_BYTES)continue;
       total+=bytes.length;
-      let text="";
-      for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
-      images.push({key,base64:btoa(text)});
+      images.push({key,bytes});
     } catch(error) {
       if(signal?.aborted)throw error;
     }
   }
   return images;
+}
+function base64(bytes:Uint8Array) {
+  let text="";
+  for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+  return btoa(text);
+}
+export async function sha256Hex(bytes:Uint8Array) {
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes as Uint8Array<ArrayBuffer>))].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+/** Fetch the images Lean listed, as `{key,base64}` records for the compile request. */
+export async function fetchImages(wanted:{key:string;url:string}[],documentURL:string,signal?:AbortSignal) {
+  return (await fetchImageBytes(wanted,documentURL,signal)).map(({key,bytes})=>({key,base64:base64(bytes)}));
+}
+/** An engine that may hold images (WebDocument, issue 1292). */
+type ImageHolder={
+  imageInfo?:()=>unknown;
+  imageLoad?:(bytes:Uint8Array,key:string,sha256:string)=>unknown;
+};
+/** The request fields for the fetched images: `heldImages` names, once the engine holds
+them (it says so in `imageInfo`), so a render request does not carry the bytes; else
+`images` with the bytes, for an engine from before held images (issue 1274). */
+export async function imageOptions(engine:ImageHolder,fetched:{key:string;bytes:Uint8Array}[]):Promise<Record<string,unknown>> {
+  if(!fetched.length)return {};
+  const info=typeof engine.imageInfo==="function"&&typeof engine.imageLoad==="function"?await engine.imageInfo():undefined;
+  if(!info)return {images:fetched.map(({key,bytes})=>({key,base64:base64(bytes)}))};
+  const heldImages:{key:string;sha256:string}[]=[];
+  for(const {key,bytes} of fetched){
+    const sha256=await sha256Hex(bytes);
+    await engine.imageLoad!(bytes,key,sha256);
+    heldImages.push({key,sha256});
+  }
+  return {heldImages};
 }
 /** A refused page must say so in the window, not only in a log. */
 export function refusalHTML(url:string,message:string) {
@@ -102,7 +132,7 @@ export function refusalHTML(url:string,message:string) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`;
 }
 /** The engine, or the same calls in a worker, which answer promises. prepareHTML awaits every call. */
-export type PageEngine=Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText">|{
+export type PageEngine=(Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText">&ImageHolder)|ImageHolder&{
   xmlStylesheet(...a:Parameters<HTMLEngine["xmlStylesheet"]>):Promise<ReturnType<HTMLEngine["xmlStylesheet"]>>;
   xslt(...a:Parameters<HTMLEngine["xslt"]>):Promise<ReturnType<HTMLEngine["xslt"]>>;
   inspect(...a:Parameters<HTMLEngine["inspect"]>):Promise<ReturnType<HTMLEngine["inspect"]>>;
@@ -137,8 +167,9 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   }
   // Lean lists the images it wants; the host fetches each one of the page's origin, with
   // size caps. One that fails or is refused is left out, and the page shows its alt text.
-  const images=await fetchImages(inspection.images??[],document.url,signal);
-  const options={url:document.url,resources,...(images.length?{images}:{})};
+  // An engine that holds images gets each one once, and renders name them.
+  const images=await imageOptions(engine,await fetchImageBytes(inspection.images??[],document.url,signal));
+  const options={url:document.url,resources,...images};
   // Pages show in the font of loadFontFile, or else in the Lean bitmap face.
   signal?.throwIfAborted();
   return {

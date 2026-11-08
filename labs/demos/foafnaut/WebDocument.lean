@@ -13,6 +13,9 @@ import WebWasm
 import WebState
 import WebSparql
 import L4Factoidal.Rendering.SfntProfile
+import L4Factoidal.FrameCost.Band
+import L4Factoidal.FrameCost.Lru
+import WebRepaint
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
 orders supplied CSS, collects font requests and renders the resulting arena.
@@ -367,74 +370,10 @@ once into its own texture. Each present then copies, with `composite`: window ro
 `y-top+offset`, with `offset = scroll-band.top`. A scroll whose view stays in the
 band changes only `offset`, so it needs no Lean call. -/
 
-/-- Page rows that a page layer keeps above and below the view. -/
-def bandMargin : Nat := 512
-/-- When the view comes this near to an edge of the band that the page goes on
-past, the host asks for a new band. -/
-def refreshMargin : Nat := 128
-/-- A layer is at most this many rows: the texture side that the hosts ask for. -/
-def maxLayerRows : Nat := 4096
-
-/-- The page rows of a page layer: from page row `top`, `height` rows. -/
-structure Band where
-  top : Nat
-  height : Nat
-  deriving Repr, DecidableEq
-
-/-- The band around a view of `view` rows from page row `scroll`. -/
-def band (scroll view : Nat) : Band :=
-  let margin := min bandMargin ((maxLayerRows-view)/2)
-  ⟨scroll-min scroll margin,view+2*margin⟩
-
-/-- True when a view of `view` rows from page row `scroll` is in the band. -/
-def Band.fits (b : Band) (view scroll : Nat) : Bool := b.top ≤ scroll && scroll+view ≤ b.top+b.height
-/-- The scroll positions that the host shows from this band with no new one. -/
-def Band.keepFrom (b : Band) : Nat := if b.top = 0 then 0 else b.top+refreshMargin
-def Band.keepTo (b : Band) (view : Nat) : Nat := b.top+b.height-view-refreshMargin
-
-theorem band_fits (scroll view : Nat) : (band scroll view).fits view scroll = true := by
-  dsimp only [band,Band.fits]
-  rw [Bool.and_eq_true]
-  exact ⟨decide_eq_true (by omega),decide_eq_true (by omega)⟩
-
-theorem band_height_le (scroll view : Nat) (small : view ≤ maxLayerRows) :
-    (band scroll view).height ≤ maxLayerRows := by
-  simp only [band,maxLayerRows,bandMargin] at *
-  omega
-
-/-- Every scroll that the host keeps is in the band. -/
-theorem keep_fits (b : Band) (view scroll : Nat) (tall : view ≤ b.height)
-    (low : b.keepFrom ≤ scroll) (high : scroll ≤ b.keepTo view) : b.fits view scroll = true := by
-  simp only [Band.keepFrom,Band.keepTo,Band.fits,Bool.and_eq_true,decide_eq_true_eq] at *
-  split at low <;> omega
-
-/-- What the composite shader writes at window pixel `(x,y)`: `compositeShader`
-states the same in WGSL. -/
-def composite {α : Type} (chrome page : Nat → Nat → α) (top offset x y : Nat) : α :=
-  if y < top then chrome x y else page x (y-top+offset)
-
-/-- The composite is the window. Let `image` be the page drawn in page rows and let
-the page layer be that image from row `b.top`. Then the composite at offset
-`scroll-b.top` is the chrome over rows `0 .. top`, and below it the page from row
-`scroll`: the frame that one render at `scroll` describes. The GPU part, that
-drawing the page moved up by `b.top` gives `image` moved up by `b.top`, is checked
-by pixel hashes (`scroll_layers_test.ts`), not proved here. -/
-theorem composite_eq_frame {α : Type} (image chrome : Nat → Nat → α) (b : Band) (top scroll x y : Nat)
-    (inside : b.top ≤ scroll) :
-    composite chrome (fun x row => image x (row+b.top)) top (scroll-b.top) x y =
-      if y < top then chrome x y else image x (y-top+scroll) := by
-  unfold composite
-  split
-  · rfl
-  · next above =>
-    dsimp only
-    rw [show y-top+(scroll-b.top)+b.top = y-top+scroll by omega]
-
-/-- The composite reads only rows of the page layer, for a view in the band. -/
-theorem composite_row_lt (b : Band) (top view scroll y : Nat) (fits : b.fits view scroll = true)
-    (below : top ≤ y) (within : y < top+view) : y-top+(scroll-b.top) < b.height := by
-  simp only [Band.fits,Bool.and_eq_true,decide_eq_true_eq] at fits
-  omega
+-- The band, its keep range and the composite are `FrameCost.Band`, the definitions that
+-- the cost theorems (`L4Factoidal.FrameCost.Theorems`, section `Ratchet`) are about.
+export L4Factoidal.FrameCost (bandMargin refreshMargin maxLayerRows Band band composite
+  composite_eq_frame band_fits band_height_le keep_fits composite_row_lt)
 
 /-- The source row of window row `y`: the chrome row, or the page-layer row moved down
 by `top`. Press rectangles (`press`) are in these rows. -/
@@ -589,11 +528,89 @@ def fontLoadBin (bytes : ByteArray) (family sha256 : String) (fallback : UInt32)
   match loadFontBytes bytes family sha256 (fallback != 0) request with
   | .ok value => value | .error message => WebRender.errorJSON message
 
+/-! ### Held images (issues 1268, 1274 and 1292)
+
+The host sends each image once, by key (the URL that `inspect` gave) and SHA-256, with
+`imageLoad` (Base64 in JSON) or `web_document_image_load_bin` (bytes). Lean holds it;
+a render names the images in `heldImages`, `[{key,sha256}]`, so the bytes of a render
+request do not grow with the images (`frame_work_test.ts` counts them). `imageInfo`
+says that the engine has these ops: a host calls none of them before it asks. -/
+
+/-- An image the engine holds: the key `inspect` gave, its SHA-256 as the host said,
+and its bytes, opaque until `NativeImage.decode`. -/
+structure HeldImage where
+  key : String
+  sha256 : String
+  bytes : ByteArray
+
+/-- Most images, and most bytes of images, that the engine holds; the oldest go first. -/
+def maxHeldImages : Nat := 64
+def maxHeldImageBytes : Nat := 33554432
+
+initialize heldImagesRef : IO.Ref (List HeldImage) ← IO.mkRef []
+
+set_option compiler.extract_closed false in
+private unsafe def heldImagesImpl (_ : JSON.Json) : List HeldImage := unsafeBaseIO heldImagesRef.get
+private unsafe def keepImagesImpl (images : List HeldImage) (_ : JSON.Json) : List HeldImage :=
+  unsafeBaseIO (do heldImagesRef.set images; return images)
+/-- These read and change the held images, as `heldFont` and `keepFont` do. -/
+@[implemented_by heldImagesImpl, noinline] private opaque heldImages (request : JSON.Json) : List HeldImage
+@[implemented_by keepImagesImpl, noinline] private opaque keepImages (images : List HeldImage) (request : JSON.Json) : List HeldImage := images
+
+/-- Hold `bytes` as the image `key` with `sha256`, first; drop another image of the same
+key, then the oldest past the limits. -/
+private def loadImageBytes (bytes : ByteArray) (key sha256 : String) (request : JSON.Json) : Except String String := do
+  if key.isEmpty || sha256.isEmpty then throw "image key and sha256 required"
+  if bytes.size > maxHeldImageBytes then throw s!"image exceeds {maxHeldImageBytes} bytes"
+  let others := (heldImages request).filter (·.key != key)
+  let (kept,_) := others.foldl (fun (acc : List HeldImage × Nat) image =>
+    if acc.1.length+1 < maxHeldImages && acc.2+image.bytes.size ≤ maxHeldImageBytes then (acc.1 ++ [image],acc.2+image.bytes.size)
+    else acc) ([],bytes.size)
+  let held := keepImages (⟨key,sha256,bytes⟩ :: kept) request
+  let number := fun (n : Nat) => JSON.Json.number (toString n)
+  return (JSON.Json.object [("key",.string key),("sha256",.string sha256),("bytes",number bytes.size),
+    ("held",number held.length)]).toString
+
+/-- `imageLoad`: the image as Base64 in the JSON request. -/
+private def loadImage (request : JSON.Json) : Except String String := do
+  let bytes ← NativeImage.base64 (str request "imageBase64").toUTF8 0
+  loadImageBytes bytes (str request "key") (str request "sha256") request
+
+/-- `imageLoad` with the image as bytes, with no Base64 and no JSON around it. -/
+@[export web_document_image_load_bin]
+def imageLoadBin (bytes : ByteArray) (key sha256 : String) : String :=
+  let request := JSON.Json.object [("op",.string "imageLoad"),("key",.string key),("sha256",.string sha256),
+    ("imageBytes",.number (toString bytes.size))]
+  match loadImageBytes bytes key sha256 request with
+  | .ok value => value | .error message => WebRender.errorJSON message
+
+/-- The images a render names (`heldImages`), as key and SHA-256. -/
+def namedImages (request : JSON.Json) : Except String (List (String × String)) := do
+  let .array items := (request.field? "heldImages").getD (.array []) | throw "heldImages must be an array"
+  if items.length > maxHeldImages then throw s!"heldImages exceed {maxHeldImages}"
+  items.mapM fun item => do
+    let some (.string key) := item.field? "key" | throw "held image key must be a string"
+    let some (.string sha) := item.field? "sha256" | throw "held image sha256 must be a string"
+    pure (key,sha)
+
+/-- The named images that the engine holds: the image part of `LayoutKey`. A named
+image that is not held is left out (the page shows its alt text), and the key says so. -/
+def heldNamed (request : JSON.Json) (names : List (String × String)) : List (String × String) :=
+  let held := heldImages request
+  names.filter fun (key,sha) => held.any fun image => image.key == key && image.sha256 == sha
+
+/-- The bytes of the held images of a key. -/
+private def heldBytes (request : JSON.Json) (names : List (String × String)) : List (String × ByteArray) :=
+  let held := heldImages request
+  names.filterMap fun (key,sha) => (held.find? fun image => image.key == key && image.sha256 == sha).map (key,·.bytes)
+
 /-- The request fields that a render reads before its layout ends. `shell` gives only
 the height of the chrome, which the key holds as `top`; `selection`, `live`, `binary`,
-`checks`, `tree`, `op` and the scroll act after layout. -/
-def layoutFields : List String := ["commands","resources","images","url","fontData","textScalePercent","graphModel",
-  "hover","active","visited","media"]
+`checks`, `tree`, `op` and the scroll act after layout. `hover` and `active` are not
+here: the pointer state is painted (`WebRepaint`), and is in the key, as `pointer`,
+only for a frame whose pointer styles change geometry. -/
+def layoutFields : List String := ["commands","resources","images","heldImages","url","fontData","textScalePercent","graphModel",
+  "visited","media"]
 
 /-- The request with only `layoutFields`, in that order. -/
 def layoutRequest (request : JSON.Json) : JSON.Json :=
@@ -613,6 +630,11 @@ structure LayoutKey where
   /-- The held fonts by family and SHA-256, in order (`HeldFont.names`); empty when
   none is held. The layout depends on every one of them, not only the first. -/
   fonts : List (String × String)
+  /-- The held images that `heldImages` names and the engine holds, by key and SHA-256. -/
+  held : List (String × String) := []
+  /-- The hover and active nodes, for a layout with them (a pointer style that changes
+  geometry); `(none,none)` for the layout that every pointer state is painted on. -/
+  pointer : Option Nat × Option Nat := (none,none)
   deriving DecidableEq
 
 /-- A laid-out document: the scene before the window, the selection and the chrome. -/
@@ -622,6 +644,14 @@ structure Laid where
   face : Option Rendering.FontProvider.Face
   /-- An author rule names `:hover`: a pointer move over the page can change the frame. -/
   hoverRules : Bool := false
+  /-- What a pointer state is painted with (`restyle`): the document, its rules, the
+  text scale, the element state of the layout, and its computed styles, made at the
+  first repaint and kept. -/
+  dom : DOM.Dom := default
+  rules : List Rendering.CSS.Rule := []
+  textScale : Float := 1
+  state : Rendering.CSS.ElementState := {}
+  styles : Thunk (Except String (Array Rendering.CSS.Computed)) := Thunk.pure (.ok #[])
 
 /-- The element state of a request (Selectors 4 §9): `hover` and `active` are node ids
 of the page (a link's `sourceNode`); `visited` lists URLs of the session history. A
@@ -640,6 +670,19 @@ def elementState (dom : DOM.Dom) (base : String) (request : JSON.Json) : Except 
     let n := dom.get id
     Rendering.CSS.isHyperlink n && urls.contains (Syntax.resolveIri base (attr n "href"))
   return {hover := node "hover", active := node "active", visited}
+
+/-- The hover and active nodes a request names. -/
+def requestPointer (request : JSON.Json) : Option Nat × Option Nat :=
+  let node := fun (key : String) => match request.field? key with
+    | some (.number n) => n.toNat?
+    | _ => none
+  (node "hover",node "active")
+
+/-- A pointer state on the element state of the document: an id outside it is no element. -/
+def withPointer (dom : DOM.Dom) (state : Rendering.CSS.ElementState) (pointer : Option Nat × Option Nat) :
+    Rendering.CSS.ElementState :=
+  let inside := fun (id : Option Nat) => id.bind fun n => if n < dom.size then some n else none
+  {state with hover := inside pointer.1, active := inside pointer.2}
 
 /-- Parse, script check, cascade and layout of a render. It reads only the key: the
 request it reads is `key.request`, which has only `layoutFields`. With `graphModel`
@@ -674,70 +717,176 @@ def layOut (key : LayoutKey) : Except String Laid := do
   let url := baseURL dom (str request "url")
   -- SVG text is drawn with the fonts of the HTML text.
   let svgFonts := (loaded.map (·.fonts)).getD #[]
+  let images := (← suppliedImages request) ++ heldBytes request key.held
   let (embedding,pictures) ← match graph with
     | some m => pure (WebGraph.embedding m,Rendering.Layout.noPictures)
-    | none => WebRender.makeReplaced dom (if url.isEmpty then none else some url) (← suppliedImages request) svgFonts
+    | none => WebRender.makeReplaced dom (if url.isEmpty then none else some url) images svgFonts
   -- A window shorter than the chrome still lays out, on one row.
-  let state ← elementState dom url request
+  let state := withPointer dom (← elementState dom url request) key.pointer
   let (scene,boxes) ← Rendering.Layout.render dom rules font embedding key.width (max 1 (key.height-key.top)) textScale state pictures
   let hoverRules := rules.any fun rule => rule.selectors.any fun sel => sel.parts.any (·.pseudo.contains .hover)
-  return {scene := scene,boxes := boxes,face := face,hoverRules}
+  let laid : Laid := {scene := scene,boxes := boxes,face := face,hoverRules := hoverRules}
+  return {laid with dom := dom}
+    |> fun l => {l with rules := rules}
+    |> fun l => {l with textScale := textScale}
+    |> fun l => {l with state := state}
+    |> fun l => {l with styles := Thunk.mk fun _ => Rendering.CSS.computeAll dom rules textScale state}
 
-/-! ### The layout of the last render, kept
+/-! ### The layouts of the last keys, kept
 
 A scroll, a selection or a pointer move sends the same document, width, height,
-chrome height, text scale and font again. `run` then takes the kept layout and does
-not parse, cascade or lay out again. The cache holds one entry, `(key, layOut key)`
-when that was a success. `lookupLayout` states what `run` does with it, and
-`lookupLayout_eq` shows the answer is `layOut key` for any entry so made. -/
+chrome height, text scale and font again. `run` then takes a kept layout and does
+not parse, cascade or lay out again. The engine keeps the layouts of its last
+`FrameCost.layoutSlots` keys (four) of one document in a `FrameCost.Lru` (a layout of
+another document drops them, so memory holds one page's layouts), the memo that the frame cost
+model keeps with its values left out, so that a hover on and off, or a zoom step and
+back, lays out once (`FrameCost.layout_once_per_distinct_key`). `lookupLayout` states
+what `run` does with the memo, and `lookupLayout_eq` shows the answer is `layOut key`
+for any memo so made (`FrameCost.Lru.lookup_eq`). -/
 
-/-- An entry is valid when its value is the layout of its key. `keepLayout` makes
-only such entries. -/
-def ValidEntry (entry : Option (LayoutKey × Laid)) : Prop :=
-  ∀ key laid, entry = some (key,laid) → layOut key = .ok laid
+open L4Factoidal.FrameCost
 
-def lookupLayout (entry : Option (LayoutKey × Laid)) (key : LayoutKey) : Except String Laid :=
-  match entry with
-  | some (kept,laid) => if kept = key then .ok laid else layOut key
-  | none => layOut key
+/-- A memo is valid when each value is the layout of its key. `keepLayout` makes only
+such entries. -/
+def ValidEntry (memo : Lru LayoutKey Laid) : Prop := Lru.Valid layOut memo
 
-theorem lookupLayout_eq (entry : Option (LayoutKey × Laid)) (valid : ValidEntry entry) (key : LayoutKey) :
-    lookupLayout entry key = layOut key := by
-  unfold lookupLayout
-  match entry, valid with
-  | none, _ => rfl
-  | some (kept,laid), valid =>
-    simp only
-    split
-    · next same => subst same; exact (valid kept laid rfl).symm
-    · rfl
+def lookupLayout (memo : Lru LayoutKey Laid) (key : LayoutKey) : Except String Laid :=
+  Lru.lookup layOut memo key
 
-/-- The entry that a render leaves is valid. -/
-theorem stored_valid (key : LayoutKey) (laid : Laid) (made : layOut key = .ok laid) :
-    ValidEntry (some (key,laid)) := by
-  intro k l same
-  cases same
-  exact made
+theorem lookupLayout_eq (memo : Lru LayoutKey Laid) (valid : ValidEntry memo) (key : LayoutKey) :
+    lookupLayout memo key = layOut key :=
+  Lru.lookup_eq layOut memo valid key
 
-initialize layoutRef : IO.Ref (Option (LayoutKey × Laid)) ← IO.mkRef none
+/-- The memo that a render leaves is valid. -/
+theorem stored_valid (memo : Lru LayoutKey Laid) (valid : ValidEntry memo) (key : LayoutKey) (laid : Laid)
+    (made : layOut key = .ok laid) : ValidEntry (Lru.putIn LayoutKey.html layoutSlots memo key laid) :=
+  Lru.putIn_valid LayoutKey.html layOut layoutSlots memo valid key laid made
+
+/-- The frame cost model's cache hit is this memo's: leaving out the values keeps
+`find?`'s answer and commutes with the scoped put (`FrameCost.Session.kept` is
+`Lru.erase` of it, scoped by page as this memo is by document). -/
+theorem model_hit (memo : Lru LayoutKey Laid) (key : LayoutKey) :
+    (Lru.find? (Lru.erase memo) key).isSome = (Lru.find? memo key).isSome :=
+  Lru.find?_erase memo key
+theorem model_put (memo : Lru LayoutKey Laid) (key : LayoutKey) (laid : Laid) :
+    Lru.erase (Lru.putIn LayoutKey.html layoutSlots memo key laid) = Lru.putIn LayoutKey.html layoutSlots (Lru.erase memo) key () :=
+  Lru.erase_putIn LayoutKey.html layoutSlots memo key laid
+
+/-! The layout key leaves the scroll and the pointer out (`FrameCost.apply_scroll_key`,
+`FrameCost.apply_hover_key` state the same of the model's key). -/
+
+/-- Neither the shell, which holds the scroll, nor the hover and active nodes are
+fields of the layout request. -/
+theorem pointer_not_layout_field : "shell" ∉ layoutFields ∧ "hover" ∉ layoutFields ∧ "active" ∉ layoutFields := by
+  decide
+
+/-- Two requests that agree on the layout fields have the same layout request: a request
+that differs only in its shell (and so its scroll), hover or active has the same key. -/
+theorem layoutRequest_congr (a b : JSON.Json) (agree : ∀ k ∈ layoutFields, a.field? k = b.field? k) :
+    layoutRequest a = layoutRequest b := by
+  have same : ∀ l : List String, (∀ k ∈ l, a.field? k = b.field? k) →
+      l.filterMap (fun key => (a.field? key).map (key,·)) = l.filterMap (fun key => (b.field? key).map (key,·)) := by
+    intro l h
+    induction l with
+    | nil => rfl
+    | cons k r ih =>
+      simp only [List.filterMap_cons,h k (List.mem_cons_self ..),ih (fun x m => h x (List.mem_cons_of_mem _ m))]
+  unfold layoutRequest
+  rw [same _ agree]
+
+/-- The chrome height, which the key holds as `top`, does not read the scroll. -/
+theorem shell_height_scroll (shell : WebShell.Shell) (scroll width : Nat) :
+    WebShell.height {shell with scroll} width = WebShell.height shell width := rfl
+
+/-- Frame work the engine did since it started (or since `frameWork` with `reset`):
+layouts, kept layouts used, and pointer states painted on a kept layout. -/
+initialize frameWorkRef : IO.Ref (Nat × Nat × Nat) ← IO.mkRef (0,0,0)
+
+initialize layoutRef : IO.Ref (Lru LayoutKey Laid) ← IO.mkRef []
 
 set_option compiler.extract_closed false in
 private unsafe def keptLayoutImpl (key : LayoutKey) : Option Laid :=
   unsafeBaseIO do
-    match ← layoutRef.get with
-    | some (kept,laid) => return if kept == key then some laid else none
+    let memo ← layoutRef.get
+    match Lru.find? memo key with
+    | some laid =>
+      layoutRef.set (Lru.putIn LayoutKey.html layoutSlots memo key laid)
+      frameWorkRef.modify fun (l,k,r) => (l,k+1,r)
+      return some laid
     | none => return none
 private unsafe def keepLayoutImpl (key : LayoutKey) (laid : Laid) : Laid :=
-  unsafeBaseIO (do layoutRef.set (some (key,laid)); return laid)
-/-- These read and set the kept layout, as `heldFont` and `keepFont` do for the font. -/
+  unsafeBaseIO do
+    layoutRef.modify (Lru.putIn LayoutKey.html layoutSlots · key laid)
+    frameWorkRef.modify fun (l,k,r) => (l+1,k,r)
+    return laid
+private unsafe def countRepaintImpl (laid : Laid) : Laid :=
+  unsafeBaseIO (do frameWorkRef.modify (fun (l,k,r) => (l,k,r+1)); return laid)
+set_option compiler.extract_closed false in
+private unsafe def frameWorkImpl (reset : Bool) : Nat × Nat × Nat :=
+  unsafeBaseIO do
+    let work ← frameWorkRef.get
+    if reset then frameWorkRef.set (0,0,0)
+    return work
+/-- These read and change the memo (a hit moves its entry first, as `Lru.put`), and
+count the work, as `heldFont` and `keepFont` do for the font. -/
 @[implemented_by keptLayoutImpl, noinline] private opaque keptLayout (key : LayoutKey) : Option Laid
 @[implemented_by keepLayoutImpl, noinline] private opaque keepLayout (key : LayoutKey) (laid : Laid) : Laid := laid
+@[implemented_by countRepaintImpl, noinline] private opaque countRepaint (laid : Laid) : Laid := laid
+@[implemented_by frameWorkImpl, noinline] private opaque frameWork (reset : Bool) : Nat × Nat × Nat
 
-/-- `lookupLayout` over the kept entry. -/
+/-- `lookupLayout` over the kept memo. -/
 private def cachedLayOut (key : LayoutKey) : Except String Laid :=
   match keptLayout key with
   | some laid => .ok laid
   | none => keepLayout key <$> layOut key
+
+/-- The pointer state of `pointer` painted on a layout with none (`WebRepaint`): the
+layout with the new colours, or none when a style of that state changes geometry. -/
+def restyle (base : Laid) (pointer : Option Nat × Option Nat) : Option Laid := do
+  let .ok old := base.styles.get | none
+  let .ok new := Rendering.CSS.computeAll base.dom base.rules base.textScale (withPointer base.dom base.state pointer) | none
+  let scene ← WebRepaint.recolor base.dom old new base.scene
+  return {base with scene,state := withPointer base.dom base.state pointer,styles := Thunk.pure (.ok new)}
+
+/-- The layout of a frame from a source of layouts: with no pointer state, the layout of
+the key; with one, the layout with no pointer state, restyled, or, when a style of the
+state changes geometry (or that layout fails), the layout of the key with the pointer in it. -/
+def frameWith (laidOut : LayoutKey → Except String Laid) (key : LayoutKey) (painted : Laid → Laid := id) :
+    Except String Laid :=
+  if key.pointer == (none,none) then laidOut key else
+  match laidOut {key with pointer := (none,none)} with
+  | .ok base =>
+    match restyle base key.pointer with
+    | some laid => .ok (painted laid)
+    | none => laidOut key
+  | .error _ => laidOut key
+
+/-- What `WebDocumentTests.lean` checks on pages with pointer styles: a restyled layout
+is the layout with the pointer state. -/
+def RestyleSound : Prop :=
+  ∀ key base laid, layOut {key with pointer := (none,none)} = .ok base → restyle base key.pointer = some laid →
+    layOut key = .ok laid
+
+/-- With a valid memo and a sound restyle, a frame is the layout of its key: the cost
+cut (no layout for a colour-only hover) gives the picture of the expensive path. The
+engine passes `countRepaint` as `painted`, which counts and gives back its argument,
+as `keepLayout` does for `lookupLayout`. -/
+theorem frameWith_eq (memo : Lru LayoutKey Laid) (valid : ValidEntry memo) (sound : RestyleSound) (key : LayoutKey) :
+    frameWith (lookupLayout memo) key = layOut key := by
+  unfold frameWith
+  simp only [lookupLayout_eq memo valid]
+  split
+  · rfl
+  · cases hb : layOut {key with pointer := (none,none)} with
+    | error e => rfl
+    | ok base =>
+      simp only
+      cases hr : restyle base key.pointer with
+      | none => rfl
+      | some laid => exact (sound key base laid hb hr).symm
+
+/-- `frameWith` over the kept memo: what a render uses. -/
+private def cachedFrame (key : LayoutKey) : Except String Laid := frameWith cachedLayOut key countRepaint
 
 /-- A document request, with `laidOut` as the layout of a render. `run` passes the
 kept layout; `runUncached` passes `layOut`, so that tests compare the two. With
@@ -748,6 +897,23 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   let .object fields := request | throw "document request must be an object"
   if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
   if str request "op" == "fontLoad" then return (← loadFont request,#[])
+  if str request "op" == "imageLoad" then return (← loadImage request,#[])
+  -- The ops of held images and frame work: a host asks this before it calls them (issue 1274).
+  if str request "op" == "imageInfo" then
+    let number := fun (n : Nat) => JSON.Json.number (toString n)
+    return ((JSON.Json.object [("engine",.string "heldImages"),
+      ("ops",.array (["imageLoad","imageLoadBin","imageDrop","frameWork"].map .string)),
+      ("maxImages",number maxHeldImages),("maxBytes",number maxHeldImageBytes),
+      ("held",number (heldImages request).length),("layoutSlots",number layoutSlots)]).toString,#[])
+  if str request "op" == "imageDrop" then
+    let held := keepImages [] request
+    return ((JSON.Json.object [("held",.number (toString held.length))]).toString,#[])
+  -- Layouts done, kept layouts used and pointer states painted with no layout.
+  if str request "op" == "frameWork" then
+    let (layouts,kept,repaints) := frameWork (request.field? "reset" == some (.bool true))
+    let number := fun (n : Nat) => JSON.Json.number (toString n)
+    return ((JSON.Json.object [("layouts",number layouts),("kept",number kept),("repaints",number repaints),
+      ("layoutSlots",number layoutSlots)]).toString,#[])
   if str request "op" == "xmlStylesheet" then
     let url := match ← WebXslt.stylesheetHref html with
       | some href => JSON.Json.string (Syntax.resolveIri (str request "url") href)
@@ -773,7 +939,8 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   let shell := (request.field? "shell").map WebShell.Shell.ofJson
   let top := (shell.map (fun value => WebShell.height value width)).getD 0
   let fonts := ((heldFont request).map HeldFont.names).getD []
-  let key : LayoutKey := ⟨html,layoutRequest request,width,height,top,fonts⟩
+  let key : LayoutKey := ⟨html,layoutRequest request,width,height,top,fonts,
+    heldNamed request (← namedImages request),requestPointer request⟩
   let laid ← laidOut key
   let scene := laid.scene
   let boxes := laid.boxes
@@ -829,7 +996,7 @@ def runWith (laidOut : LayoutKey → Except String Laid) (html : String) (reques
     Except String String :=
   Prod.fst <$> answerWith laidOut false html request width height
 
-def run := runWith cachedLayOut
+def run := runWith cachedFrame
 def runUncached := runWith layOut
 
 /-- The request text as JSON, with the bounds of `compile`. -/
@@ -871,7 +1038,7 @@ and tile words as raw sections (`packAnswer`). The head is the `compile` answer 
 `"tiles"`; other answers have no section. -/
 @[export web_document_compile_bin]
 def compileBin (html request : String) (width height : UInt32) : ByteArray :=
-  match parseRequest request >>= fun j => answerWith cachedLayOut true html j width.toNat height.toNat with
+  match parseRequest request >>= fun j => answerWith cachedFrame true html j width.toNat height.toNat with
   | .ok (head,sections) => packAnswer head sections
   | .error message => packAnswer (WebRender.errorJSON message) #[]
 

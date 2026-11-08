@@ -204,14 +204,55 @@ async function prepare(url){
   }
   const facts=call(page.source,{op:'inspect',url:page.url});
   const images=await pageImages(facts.images);
-  return {url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...(images.length?{images}:{})};
+  return {url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images};
 }
 // Lean lists the images a page wants (SVG image, HTML img) by key. The page fetches only
 // those of this site, with size caps, and gives the bytes back with the key. One that
 // fails is left out and shows its alt text. An engine that lists no images gets none,
 // so an older engine never sees the field (issue 1274).
+// An engine that answers imageInfo holds images (WebDocument, issue 1292): each is sent once,
+// as bytes when the engine has web_document_image_call_bin, and renders name it in
+// heldImages, so a frame's request does not carry the image. Others get `images`.
 const maxImageBytes=4194304,maxPageImageBytes=6291456;
+let engineHoldsImages;
+function holdsImages(){
+  if(engineHoldsImages===undefined){try{engineHoldsImages=(call('',{op:'imageInfo'}).ops??[]).includes('imageLoad');}catch{engineHoldsImages=false;}}
+  return engineHoldsImages;
+}
+function imageLoad(bytes,key,sha){
+  if(typeof module._web_document_image_call_bin!=='function'||typeof module._malloc!=='function'){
+    let text='';
+    for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+    return call('',{op:'imageLoad',key,sha256:sha,imageBase64:btoa(text)});
+  }
+  const input=module._malloc(Math.max(1,bytes.length));
+  if(!input)throw Error('Lean engine allocation failed');
+  try{
+    module.HEAPU8.set(bytes,input);
+    const pointer=module.ccall('web_document_image_call_bin','number',['number','number','string','string'],[input,bytes.length,key,sha]);
+    if(!pointer)throw Error('Lean engine allocation failed');
+    try{const result=JSON.parse(module.UTF8ToString(pointer));if(result?.error)throw Error(result.error);return result;}
+    finally{module.ccall('web_render_free',null,['number'],[pointer]);}
+  }finally{module._free(input);}
+}
 async function pageImages(wanted){
+  const fetched=await pageImageBytes(wanted);
+  if(!fetched.length)return {};
+  if(holdsImages()){
+    const heldImages=[];
+    for(const {key,bytes} of fetched){
+      const sha=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
+      try{imageLoad(bytes,key,sha);heldImages.push({key,sha256:sha});}catch(error){console.warn('foafnaut: image not held:',key,String(error));}
+    }
+    return {heldImages};
+  }
+  return {images:fetched.map(({key,bytes})=>{
+    let text='';
+    for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+    return {key,base64:btoa(text)};
+  })};
+}
+async function pageImageBytes(wanted){
   const images=[];let total=0;
   for(const {key,url} of wanted??[]){
     try{
@@ -221,9 +262,7 @@ async function pageImages(wanted){
       const bytes=new Uint8Array(await response.arrayBuffer());
       if(bytes.length>maxImageBytes||total+bytes.length>maxPageImageBytes)continue;
       total+=bytes.length;
-      let text='';
-      for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
-      images.push({key,base64:btoa(text)});
+      images.push({key,bytes});
     }catch{}
   }
   return images;
@@ -369,7 +408,7 @@ function scrollLimit(){
 }
 // The request for a frame of this page at a scroll; its signature leaves the scroll out, so
 // a band made at one scroll is known to be for the same state at another.
-const renderOptions=at=>({op:'render',url:doc.url,...(doc.images?{images:doc.images}:{}),textScalePercent:percent,shell:{...shell(),scroll:at},live:doc===checked,binary:true});
+const renderOptions=at=>({op:'render',url:doc.url,...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),textScalePercent:percent,shell:{...shell(),scroll:at},live:doc===checked,binary:true});
 const signature=options=>JSON.stringify({...options,images:undefined,shell:{...options.shell,scroll:0}});
 // The graph page keeps its document and changes its source: the band must be of this source.
 const canShift=()=>!!(layerSurface&&current&&current.doc===doc&&current.source===doc.source&&current.width===width&&current.height===height&&current.sig===signature(renderOptions(scroll)));

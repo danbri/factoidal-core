@@ -77,6 +77,19 @@ char *web_document_font_call_bin(const uint8_t *bytes,uint32_t length,const char
   lean_object *value=web_document_font_load_bin(array,lean_mk_string(family),lean_mk_string(sha256),fallback);
   char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
 }
+extern lean_object *web_document_image_load_bin(lean_object *,lean_object *,lean_object *);
+/* The imageLoad op with the image as bytes (WebDocument.imageLoadBin): the engine holds
+   the image by key and SHA-256, and render requests name it in heldImages, so its
+   bytes cross once, not with every frame. The caller keeps and frees its own buffer.
+   The answer is the imageLoad JSON answer, freed with web_render_free. A host calls
+   this only after imageInfo says the engine has it (issue 1274). */
+char *web_document_image_call_bin(const uint8_t *bytes,uint32_t length,const char *key,const char *sha256) {
+  if (!ready()) return NULL;
+  lean_object *array=lean_alloc_sarray(1,length,length);
+  if (length) memcpy(lean_sarray_cptr(array),bytes,length);
+  lean_object *value=web_document_image_load_bin(array,lean_mk_string(key),lean_mk_string(sha256));
+  char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
+}
 extern lean_object *web_render_font_requests(lean_object *);
 char *web_render_font_requests_call(const char *html) {
   if (!ready()) return NULL;

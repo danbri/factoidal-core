@@ -63,13 +63,22 @@ export type BytesBackend=(html:string,requestJSON:string,width:number,height:num
 /** A font file as bytes (`web_document_font_call_bin`, WebDocument.fontLoadBin): no Base64
 and no JSON, so the file is not copied onto the call stack. The answer is the fontLoad JSON. */
 export type FontBackend=(bytes:Uint8Array,family:string,sha256:string,fallback:boolean)=>string;
-type Backends={text:DocumentBackend;bytes:BytesBackend;font:FontBackend};
+/** An image as bytes (`web_document_image_call_bin`, WebDocument.imageLoadBin), held by key
+and SHA-256; undefined when the engine has no such export. The answer is the imageLoad JSON. */
+export type ImageBackend=(bytes:Uint8Array,key:string,sha256:string)=>string;
+type Backends={text:DocumentBackend;bytes:BytesBackend;font:FontBackend;image?:ImageBackend};
+/** The answer of `imageInfo`: the engine holds images (WebDocument, issue 1292). */
+export type ImageInfo={engine:string;ops:string[];maxImages:number;maxBytes:number;held:number;layoutSlots:number};
+/** The answer of `frameWork`: layouts, kept layouts used and pointer states painted with no layout. */
+export type FrameWork={layouts:number;kept:number;repaints:number;layoutSlots:number};
 /** Backend 2: a native dylib of the same Lean objects. Every call must come from one thread; no nonblocking FFI. */
 export function nativeBackends(path:string):Backends {
   const library=Deno.dlopen(path,{
     web_document_call:{parameters:["buffer","buffer","u32","u32"],result:"pointer"},
     web_document_call_bin:{parameters:["buffer","buffer","u32","u32","buffer"],result:"pointer"},
     web_document_font_call_bin:{parameters:["buffer","u32","buffer","buffer","u32"],result:"pointer"},
+    // An engine from before held images has no such symbol (issue 1274): it stays null.
+    web_document_image_call_bin:{parameters:["buffer","u32","buffer","buffer"],result:"pointer",optional:true},
     web_render_free:{parameters:["pointer"],result:"void"},
   } as const);
   const cstring=(text:string)=>{if(text.includes("\0"))throw new Error("Native engine input contains NUL");return encoder.encode(text+"\0");};
@@ -94,6 +103,12 @@ export function nativeBackends(path:string):Backends {
       try{return new Deno.UnsafePointerView(pointer).getCString();}
       finally{library.symbols.web_render_free(pointer);}
     },
+    image:library.symbols.web_document_image_call_bin?(bytes,key,sha256)=>{
+      const pointer=library.symbols.web_document_image_call_bin!(bytes,bytes.length,cstring(key),cstring(sha256));
+      if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
+      try{return new Deno.UnsafePointerView(pointer).getCString();}
+      finally{library.symbols.web_render_free(pointer);}
+    }:undefined,
   };
 }
 export function nativeBackend(path:string):DocumentBackend {return nativeBackends(path).text;}
@@ -127,6 +142,18 @@ function wasmBackends(module:Module):Backends {
         finally{module.ccall("web_render_free",null,["number"],[pointer]);}
       }finally{module._free(input);}
     },
+    // An engine from before held images has no such export (issue 1274).
+    image:typeof (module as unknown as Record<string,unknown>)._web_document_image_call_bin==="function"&&module._malloc&&module._free?(bytes,key,sha256)=>{
+      const input=module._malloc!(Math.max(1,bytes.length));
+      if(!input)throw new Error("Published Lean HTML engine allocation failed");
+      try{
+        module.HEAPU8.set(bytes,input);
+        const pointer=module.ccall("web_document_image_call_bin","number",["number","number","string","string"],[input,bytes.length,key,sha256]);
+        if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
+        try{return module.UTF8ToString(pointer);}
+        finally{module.ccall("web_render_free",null,["number"],[pointer]);}
+      }finally{module._free!(input);}
+    }:undefined,
   };
 }
 const decoder=new TextDecoder();
@@ -188,11 +215,19 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       return result;
     } finally {module.ccall("web_render_free",null,["number"],[pointer]);}
   }
+  // Bytes of JSON request sent to Lean for renders: the last one and the most (frame_work_test.ts).
+  const sent={renders:0,lastRenderBytes:0,maxRenderBytes:0};
+  const countRender=(request:string)=>{
+    const n=encoder.encode(request).length;
+    sent.renders++;sent.lastRenderBytes=n;sent.maxRenderBytes=Math.max(sent.maxRenderBytes,n);
+    return n;
+  };
   const documentCall=(source:string,options:Record<string,unknown>,width=1,height=1)=>{
     sourceBound(source);
     if(![width,height].every(n=>Number.isInteger(n)&&n>0&&n<=4096))
       throw new Error("Native HTML viewport must be 1..4096 backing pixels");
     const request=JSON.stringify(options);
+    if(options.op==="render")countRender(request);
     if(encoder.encode(request).length>20971520)throw new Error("Document request exceeds 20 MiB");
     const result=JSON.parse(backend(source,request,width,height));
     if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
@@ -206,7 +241,7 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     if(![width,height].every(n=>Number.isInteger(n)&&n>0&&n<=4096))
       throw new Error("Native HTML viewport must be 1..4096 backing pixels");
     const request=JSON.stringify(options);
-    if(encoder.encode(request).length>20971520)throw new Error("Document request exceeds 20 MiB");
+    if(countRender(request)>20971520)throw new Error("Document request exceeds 20 MiB");
     const buffer=backends.bytes(source,request,width,height);
     const {head,sections}=unpackAnswer(buffer);
     if(head?.error)throw new Error(`Lean HTML: ${head.error}`);
@@ -230,6 +265,30 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       return result as FontLoaded;
     },
     fontRequests:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"fontRequests"}),
+    // Held images (WebDocument, issue 1292): sent once, named by renders in `heldImages`.
+    // `imageInfo` answers undefined for an engine from before them, which then gets
+    // `images` with the bytes in each request, as before (issue 1274).
+    imageInfo:():ImageInfo|undefined=>{
+      try{const info=documentCall("",{op:"imageInfo"}) as ImageInfo;return Array.isArray(info?.ops)&&info.ops.includes("imageLoad")?info:undefined;}
+      catch{return undefined;}
+    },
+    imageLoad:(bytes:Uint8Array,key:string,sha256:string)=>{
+      if(backends.image){
+        const result=JSON.parse(backends.image(bytes,key,sha256));
+        if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
+        return result as {key:string;sha256:string;bytes:number;held:number};
+      }
+      let text="";
+      for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+      return documentCall("",{op:"imageLoad",key,sha256,imageBase64:btoa(text)}) as {key:string;sha256:string;bytes:number;held:number};
+    },
+    imageDrop:()=>documentCall("",{op:"imageDrop"}) as {held:number},
+    /** Lean's count of its frame work; undefined for an engine without it. */
+    frameWork:(reset=false):FrameWork|undefined=>{
+      try{return documentCall("",{op:"frameWork",...(reset?{reset:true}:{})}) as FrameWork;}catch{return undefined;}
+    },
+    /** Bytes of JSON request this host sent to Lean for renders. */
+    requestBytes:()=>({...sent}),
     // The CSS declarations that Lean's profile can not read and drops, "property: value (reason)".
     droppedCSS:(source:string,options:Record<string,unknown>)=>(documentCall(source,{...options,op:"droppedCSS"}) as {dropped:string[]}).dropped,
     compile(source:string,width:number,height:number,options:Record<string,unknown>):HTMLArtifact {
