@@ -153,15 +153,19 @@ const fling=(()=>{
     /** The page reached its end in this direction: a fling that way stops (an older one may not). */
     edge(direction){if(frameId&&Math.sign(velocity)===direction)stop();},
     get active(){return frameId!==0;},
-    /** Start from the moves of a drag ({t,y} in ms and CSS px), ending at the lift (t,y). */
+    /** Start from the moves of a drag ({t,y} in ms and CSS px), ending at the lift (t,y).
+     * The velocity is that of the moves in the last 100 ms before the last move; a finger
+     * that rested longer than that before the lift does not fling. */
     start(samples,t,y){
       stop();
-      const recent=samples.filter(s=>t-s.t<=windowMs);
-      if(!recent.length)return false;
-      const first=recent[0],span=t-first.t;
+      const moves=samples.length?samples:[{t,y}],end=moves.at(-1);
+      if(t-end.t>windowMs)return false;
+      const recent=moves.filter(s=>end.t-s.t<=windowMs);
+      const first=recent[0],span=end.t-first.t;
+      this.last={t,y,samples:samples.length,recent:recent.length,span};
       if(span<8)return false;
       // Scroll rows per ms: a finger moving up scrolls the page down.
-      const v=(first.y-y)/span;
+      const v=(first.y-end.y)/span;
       if(Math.abs(v)<minStart)return false;
       velocity=Math.sign(v)*Math.min(maxSpeed,Math.abs(v));
       last=performance.now();frameId=requestAnimationFrame(step);
