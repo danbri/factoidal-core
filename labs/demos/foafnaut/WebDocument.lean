@@ -10,6 +10,7 @@ import WebPrint
 import WebGraph
 import WebEventLoop
 import WebWasm
+import WebState
 import L4Factoidal.Rendering.SfntProfile
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
@@ -333,6 +334,8 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
   if op == "shellLink" then return some (WebShell.link (str request "href")).json.toString
   -- WebAssembly run by Lean's own engine, WasmVM (WebWasm; issue 1244).
   if let some answer ← WebWasm.op op request then return some answer
+  -- Bookmarks, history, settings and tabs as LWS resources (WebState; browser_state_test.ts).
+  if let some answer ← WebState.op op request then return some answer
   if op == "pointerUp" then
     let (ax,ay,fx,fy) ← points ((request.field? "selection").getD .null)
     return some (JSON.Json.object [("action",.string (if WebSelection.isClick ax ay fx fy then "click" else "select"))]).toString

@@ -30,10 +30,18 @@ fi
 # The native HTML tests need the web-render engine, which Builds makes after this
 # step in its engines job and before it in its macOS job, and more permissions.
 TESTS=()
-for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/native_html_bytes_test.ts"|"$LAB/native_html_fonts_test.ts"|"$LAB/native_html_wasm_test.ts"|"$LAB/native_window_queue_test.ts"|"$LAB/showcase_gaps_test.ts"|"$LAB/svg_text_test.ts") ;; *) TESTS+=("$test");; esac; done
+for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/native_html_bytes_test.ts"|"$LAB/native_html_fonts_test.ts"|"$LAB/native_html_wasm_test.ts"|"$LAB/native_window_queue_test.ts"|"$LAB/showcase_gaps_test.ts"|"$LAB/svg_text_test.ts"|"$LAB/browser_state_test.ts") ;; *) TESTS+=("$test");; esac; done
 deno check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
   "$LAB/run_ui.ts" "$LAB/run_lean.ts" "$LAB/run_svg.ts" "$LAB/run_foaf_svg.ts" "${TESTS[@]}"
 deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --allow-read "${TESTS[@]}"
+# Browser state (WebState.lean): local LWS servers in temporary folders, through the
+# `factoidal` command, and Lean through web-state (build-web-state.sh).
+if [ -x "$LAB/.build/web-state/web-state" ] && command -v factoidal >/dev/null; then
+  deno test --no-check --no-config --no-npm --node-modules-dir=none \
+    --allow-read --allow-write --allow-run --allow-net --allow-env "$LAB/browser_state_test.ts"
+else
+  echo 'NOT RUN: browser_state_test.ts needs web-state (build-web-state.sh) and the factoidal command'
+fi
 # The input queue test needs the macOS window library from build-executables.sh.
 if [ "$(uname -s)" = Darwin ] && [ -f "$LAB/.build/native/libnative-window.dylib" ]; then
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
