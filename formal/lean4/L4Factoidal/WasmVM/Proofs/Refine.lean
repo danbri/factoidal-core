@@ -1130,4 +1130,101 @@ theorem op_brIf_true {l : Nat} (z : Spec.state) {s' : Slots}
 
 end BrOps
 
+theorem slice_get {α} (l bs : List α) (ea n : Nat) (hb : bs.length = 4) (hl : ea + 4 ≤ l.length) :
+    (Spec.list_slice_update l ea 4 bs)[n]? = if n < ea then l[n]? else if n < ea + 4 then bs[n - ea]? else l[n]? := by
+  unfold Spec.list_slice_update
+  by_cases h1 : n < ea
+  · rw [if_pos h1, List.append_assoc, List.getElem?_append_left (by simp; omega), List.getElem?_take, if_pos h1]
+  · rw [if_neg h1, List.append_assoc, List.getElem?_append_right (by simp; omega)]
+    simp only [List.length_take, Nat.min_eq_left (by omega : ea ≤ l.length)]
+    by_cases h2 : n < ea + 4
+    · rw [if_pos h2, List.getElem?_append_left (by omega)]
+    · rw [if_neg h2, List.getElem?_append_right (by omega), List.getElem?_drop, hb]
+      congr 1; omega
+
+theorem slice_length {α} (l bs : List α) (ea : Nat) (hb : bs.length = 4) (hl : ea + 4 ≤ l.length) :
+    (Spec.list_slice_update l ea 4 bs).length = l.length := by
+  simp [Spec.list_slice_update, hb]; omega
+
+section StoreOps
+variable {M : Type} [LinearMemory M] [LinearMemoryLaws M]
+
+theorem nbytes_i32 (v : Nat) (h : v < 2^32) :
+    Spec.nbytes_ .I32 (.mk_num__0 .I32 (.mk_uN v)) =
+      [.mk_byte (v % 256), .mk_byte (v / 256 % 256), .mk_byte (v / 65536 % 256), .mk_byte (v / 16777216 % 256)] := by
+  simp only [Spec.nbytes_, Spec.ibytes_, Spec.proj_uN_0]
+  rw [ibytes32 _ h]; rfl
+
+/-- After `store32` of an i32 value, the memory holds the spec's slice update with the
+value's `nbytes_`. -/
+theorem MemR.store {m : M} {mi : Spec.meminst} (h : MemR m mi) (ea : Nat) (v : UInt64) (hv : v.toNat < 2^32)
+    (hin : ea + 4 ≤ LinearMemory.size m) :
+    MemR (LinearMemory.store32 m ea v hin)
+      { mi with BYTES := Spec.list_slice_update mi.BYTES ea 4 (Spec.nbytes_ .I32 (.mk_num__0 .I32 (.mk_uN v.toNat))) } := by
+  rw [nbytes_i32 _ hv]
+  refine ⟨?_, fun n hn => ?_⟩
+  · simp only [LinearMemoryLaws.store32_size]; rw [slice_length _ _ _ rfl (by rw [h.1]; exact hin), h.1]
+  · rw [LinearMemoryLaws.store32_size] at hn
+    simp only
+    rw [slice_get _ _ _ _ rfl (by rw [h.1]; exact hin), LinearMemoryLaws.store32_byte]
+    by_cases h1 : n < ea
+    · rw [if_pos h1, h.2 n hn, if_neg (by omega), if_neg (by omega), if_neg (by omega), if_neg (by omega)]
+    · rw [if_neg h1]
+      by_cases h2 : n < ea + 4
+      · rw [if_pos h2]
+        have : n = ea + 0 ∨ n = ea + 1 ∨ n = ea + 2 ∨ n = ea + 3 := by omega
+        rcases this with rfl | rfl | rfl | rfl <;>
+          simp [UInt64.toNat_toUInt8, UInt64.toNat_shiftRight, Nat.shiftRight_eq_div_pow] <;> omega
+      · rw [if_neg h2, h.2 n hn, if_neg (by omega), if_neg (by omega), if_neg (by omega), if_neg (by omega)]
+
+/-- The spec store after `i32.store` of `v` at `ea` in memory 0 of frame `f`. -/
+noncomputable def storeS (S : Spec.store) (f : Spec.frame) (ea : Nat) (v : Nat) : Spec.store :=
+  Spec.fun_store (Spec.with_mem (.mk_state S f) (.mk_uN 0) ea 4 (Spec.nbytes_ .I32 (.mk_num__0 .I32 (.mk_uN v))))
+
+theorem with_mem_eq (S : Spec.store) (f : Spec.frame) (ea v : Nat) :
+    Spec.with_mem (.mk_state S f) (.mk_uN 0) ea 4 (Spec.nbytes_ .I32 (.mk_num__0 .I32 (.mk_uN v))) =
+      .mk_state (storeS S f ea v) f := rfl
+
+/-- `i32.store` (memory 0): `Step.store_num_val`. The spec store changes by `with_mem`
+(`storeS`); `MemR.store` relates it to the engine's `store32`. -/
+theorem op_store {code : Array Op} {locals : List ValType} {maxH : Nat} {s : Slots} {fp sp pc : Nat}
+    {f : Spec.frame} {body : List Spec.instr} {L : List Lbl} {H : List Hole} {d e : Nat}
+    {te tsC : List ValType} {valsC : List Spec.val} {is : List Spec.instr} {al off : Nat}
+    (S : Spec.store)
+    (hw : ActW code locals maxH s fp sp pc f body L H d e te tsC valsC
+      (.STORE .I32 none (.mk_uN 0) ⟨.mk_uN al, .mk_uN off⟩ :: is))
+    (ea : Nat) (hea : ea = (slot s (sp - 2)).toNat + off) :
+    code[pc]? = some (.store .i32 0 off) ∧ (slot s (sp - 1)).toNat < 2^32 ∧ ∃ ts vs1 body',
+    ActW code locals maxH s fp (sp - 2) (pc + 1) f body' L H d e te ts vs1 is ∧
+    Spec.Steps (.mk_config (.mk_state S f) body)
+      (.mk_config (.mk_state (storeS S f ea (slot s (sp - 1)).toNat) f) body') := by
+  obtain ⟨hn, hsl, hc, hsp, hmax, hb, hloc⟩ := hw
+  cases hc with
+  | @store _ _ _ ts _ _ _ _ _ hcode hnext =>
+    obtain ⟨vs1, vs2, rfl, h1, h2⟩ := SlotsR.split hsl
+    obtain ⟨va, vv, rfl, hva, hvv⟩ := SlotsR.two h2
+    have hl1 := h1.length
+    simp at hsp hmax
+    have e2 : sp - 2 = fp + locals.length + d + ts.length := by omega
+    have e1 : sp - 1 = fp + locals.length + d + ts.length + 1 := by omega
+    rw [e2] at hea; rw [e1]
+    obtain ⟨ha32, rfl⟩ := hva
+    obtain ⟨hv32, rfl⟩ := hvv
+    refine ⟨hcode, hv32, ts, vs1, _, ⟨hn, h1, hnext, by omega, by omega, rfl, hloc⟩, ?_⟩
+    subst hb
+    refine steps_one (step_plug _ _ H _ _ ?_)
+    have hst := Spec.Step.store_num_val (.mk_state S f) .I32
+      (.mk_num__0 .I32 (.mk_uN (slot s (fp + locals.length + d + ts.length)).toNat)) .I32
+      (.mk_num__0 .I32 (.mk_uN (slot s (fp + locals.length + d + ts.length + 1)).toNat)) (.mk_uN 0)
+      ⟨.mk_uN al, .mk_uN off⟩ _ rfl (wf_i32 _ ha32) (wf_i32 _ hv32) (bytes_beq_self _)
+    simp only [Spec.proj_num__0, Option.get!_some, Spec.proj_uN_0, floor4, ← hea] at hst
+    rw [with_mem_eq] at hst
+    have h := step_ctx _ _ vs1
+      [Spec.instr_val (i32c (slot s (fp + locals.length + d + ts.length)).toNat),
+        Spec.instr_val (i32c (slot s (fp + locals.length + d + ts.length + 1)).toNat),
+        .STORE .I32 none (.mk_uN 0) ⟨.mk_uN al, .mk_uN off⟩] [] is hst
+    simpa using h
+
+end StoreOps
+
 end L4Factoidal.WasmVM.Proofs.Refine
