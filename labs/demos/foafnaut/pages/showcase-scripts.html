@@ -18,12 +18,15 @@ td.bad{background:#c4455a;color:white;font-size:12px;width:64px}
 </style></head><body><main>
 <p><a href="showcase.html">Showcase</a> · <a href="index.html">Demo index</a></p>
 <h1>Writing systems and direction</h1>
-<p>One line per writing system. The engine holds two fonts: Noto Sans Regular (3,884 glyphs) and, for the
-characters that it lacks, Noto Sans Armenian Regular. Green rows draw from Noto Sans, blue rows from the fallback font.
-Red rows are in neither font and draw as empty boxes (.notdef). The counts are characters of the sample that a font maps,
-read from its cmap table.</p>
-<p class="note">Fallback fonts landed with <a href="https://github.com/danbri/factoidal/issues/1274">issue 1274</a>; only Armenian has a fallback font so far.
-Gaps: no bidirectional layout or right-to-left shaping (<a href="https://github.com/danbri/factoidal/issues/1275">issue 1275</a>).</p>
+<p>One line per writing system. The engine holds Noto Sans Regular (3,884 glyphs) and, for the characters
+that it lacks, fallback fonts: Noto Sans Armenian, Georgian, Ethiopic, Hebrew, Arabic, Devanagari, Bengali, Tamil,
+Thai and Math, and slices of Noto Sans CJK. Green rows draw from Noto Sans, blue rows from a fallback font.
+The counts are characters of the sample that a font maps, read from its cmap table.</p>
+<p class="note">Fallback fonts landed with <a href="https://github.com/danbri/factoidal/issues/1274">issue 1274</a>. The Hub fetches a
+fallback font only for a page with a character that the font adds, so this page fetches thirteen of them and a page in
+English none. Gaps: no bidirectional layout or right-to-left shaping (<a href="https://github.com/danbri/factoidal/issues/1275">issue 1275</a>),
+so Arabic shows its letters unjoined and right-to-left text runs left to right; Indic conjuncts and reordered vowel signs
+need the Indic shaper, and these lines show the letters one by one.</p>
 
 <h2>In the font</h2>
 <table>
@@ -40,42 +43,39 @@ Gaps: no bidirectional layout or right-to-left shaping (<a href="https://github.
 <tr><td class="ok">Draws</td><td><p class="name">Ligatures (GSUB liga) and currency signs, all in the font</p>
 <p class="sample">office, affluent, flag · € £ ¥ ₹ ₪ © ® ™ § ¶ † ‡ … ‰</p></td></tr>
 </table>
-<h2>From the fallback font</h2>
+<h2>From the fallback fonts</h2>
 <table>
 <tr><td class="fb">Draws</td><td><p class="name">Armenian, 11 of 11, from the fallback font Noto Sans Armenian</p>
 <p class="sample" lang="hy">Բարեւ աշխարհ</p></td></tr>
-</table>
-<h2>Not in either font</h2>
-<table>
-<tr><td class="bad">Not yet</td><td><p class="name">Arabic, right to left, joining forms, 0 of 12</p>
+<tr><td class="fb">Draws</td><td><p class="name">Arabic, 12 of 12, Noto Sans Arabic; not yet joined or right to left</p>
 <p class="sample" lang="ar" dir="rtl">مرحبا بالعالم</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Hebrew, right to left, 0 of 8</p>
+<tr><td class="fb">Draws</td><td><p class="name">Hebrew, 8 of 8, Noto Sans Hebrew; not yet right to left</p>
 <p class="sample" lang="he" dir="rtl">שלום עולם</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Devanagari, conjuncts and vowel signs, 1 of 22 (the middle dot)</p>
+<tr><td class="fb">Draws</td><td><p class="name">Devanagari, 21 of 22 from Noto Sans Devanagari (the middle dot from Noto Sans); conjuncts not yet formed</p>
 <p class="sample" lang="hi">नमस्ते दुनिया · क्ष त्र ज्ञ</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Bengali, 0 of 8</p>
+<tr><td class="fb">Draws</td><td><p class="name">Bengali, 8 of 8, Noto Sans Bengali; vowel signs not yet reordered</p>
 <p class="sample" lang="bn">ওহে বিশ্ব</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Tamil, 0 of 12</p>
+<tr><td class="fb">Draws</td><td><p class="name">Tamil, 12 of 12, Noto Sans Tamil</p>
 <p class="sample" lang="ta">வணக்கம் உலகம்</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Thai, no spaces between words, 0 of 12</p>
+<tr><td class="fb">Draws</td><td><p class="name">Thai, no spaces between words, 12 of 12, Noto Sans Thai</p>
 <p class="sample" lang="th">สวัสดีชาวโลก</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Georgian, 0 of 16</p>
+<tr><td class="fb">Draws</td><td><p class="name">Georgian, 16 of 16, Noto Sans Georgian</p>
 <p class="sample" lang="ka">გამარჯობა მსოფლიო</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Ethiopic, 0 of 6</p>
+<tr><td class="fb">Draws</td><td><p class="name">Ethiopic, 6 of 6, Noto Sans Ethiopic</p>
 <p class="sample" lang="am">ሰላም ልዑል</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Chinese (simplified), 0 of 5</p>
+<tr><td class="fb">Draws</td><td><p class="name">Chinese (simplified), 5 of 5: Han from the common Han slices of Noto Sans CJK, the comma from the kana slice</p>
 <p class="sample" lang="zh-Hans">你好，世界</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Japanese: hiragana, katakana, kanji, 0 of 15</p>
+<tr><td class="fb">Draws</td><td><p class="name">Japanese: hiragana, katakana, kanji, 15 of 15, the kana and common Han slices of Noto Sans CJK JP</p>
 <p class="sample" lang="ja">こんにちは世界・カタカナ・漢字</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Korean (Hangul), 0 of 7</p>
+<tr><td class="fb">Draws</td><td><p class="name">Korean (Hangul), 7 of 7, the common Hangul slice of Noto Sans CJK KR</p>
 <p class="sample" lang="ko">안녕하세요 세계</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Mathematical symbols, 2 of 15</p>
+<tr><td class="fb">Draws</td><td><p class="name">Mathematical symbols, 15 of 15: Noto Sans has 2, Noto Sans Math the rest</p>
 <p class="sample">∑ ∫ √ ∞ ≠ ≤ ≥ → ⇒ ∀ ∃ ∈ ∅ ℕ ℝ</p></td></tr>
 </table>
 <h2>Right to left and mixed direction</h2>
 <p>In a browser, each <code>dir="rtl"</code> line below starts at the right edge, and its words run from
 right to left. Latin words and numbers inside it keep their own left-to-right order (the Unicode
-Bidirectional Algorithm, UAX 9). Here the Hebrew and Arabic letters are boxes, so the order of the
+Bidirectional Algorithm, UAX 9). Here the Hebrew and Arabic letters come from fallback fonts but run left to right, so the order of the
 Latin words and numbers shows what the engine does.</p>
 <table>
 <tr><td class="bad">Not yet</td><td><p class="name">A Hebrew paragraph, dir="rtl"</p>

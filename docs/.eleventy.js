@@ -48,12 +48,16 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "engine.mjs", "worker.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/html-webgpu/${name}`);
   }
-  for (const name of ["browser.mjs", "browser-worker.mjs", "browser-state.mjs", "layers.mjs", "link-route.mjs"]) {
+  for (const name of ["browser.mjs", "browser-worker.mjs", "browser-state.mjs", "layers.mjs", "link-route.mjs", "fallback-fonts.mjs", "font-coverage.mjs"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/foafnaut/${name}`);
   }
   eleventyConfig.addPassthroughCopy({ "../labs/demos/foafnaut/pages": "web/hub/foafnaut/pages" });
   eleventyConfig.addPassthroughCopy({ "../third_party/fonts/noto-sans": "web/hub/foafnaut/fonts/noto-sans" });
-  eleventyConfig.addPassthroughCopy({ "../third_party/fonts/noto-sans-armenian": "web/hub/foafnaut/fonts/noto-sans-armenian" });
+  // Fallback fonts (labs/demos/foafnaut/fallback_fonts.py); the Hub fetches each only for a page that needs it.
+  for (const dir of ["noto-sans-armenian", "noto-sans-georgian", "noto-sans-ethiopic", "noto-sans-hebrew", "noto-sans-arabic",
+    "noto-sans-devanagari", "noto-sans-bengali", "noto-sans-tamil", "noto-sans-thai", "noto-sans-math", "noto-sans-cjk"]) {
+    eleventyConfig.addPassthroughCopy({ [`../third_party/fonts/${dir}`]: `web/hub/foafnaut/fonts/${dir}` });
+  }
   eleventyConfig.addPassthroughCopy({
     "../labs/demos/foafnaut/web-render/fixtures": "web/hub/html-webgpu/fixtures"
   });

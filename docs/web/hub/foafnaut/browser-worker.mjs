@@ -74,10 +74,30 @@ for(const p of runtimeModules)p.catch(()=>{});
 // The plan engine's module goes into the HTTP cache now; its own loader reads it at the first draw.
 fetch(new URL('render-plan.wasm',runtimeBase),{credentials:'same-origin'}).then(r=>r.arrayBuffer()).catch(()=>{});
 const notoSans='./fonts/noto-sans/NotoSans-Regular.ttf';
-// Fonts after Noto Sans, for the characters it lacks. Lean picks the font for each one.
-const fallbackFonts=[['./fonts/noto-sans-armenian/NotoSansArmenian-Regular.ttf','Noto Sans Armenian']];
 fetchEarly(new URL(notoSans,import.meta.url).href,'bytes');
-for(const [path] of fallbackFonts)fetchEarly(new URL(path,import.meta.url).href,'bytes');
+// Fonts after Noto Sans, for the characters it lacks (fallback-fonts.mjs, made by
+// labs/demos/foafnaut/fallback_fonts.py): scripts, maths, and CJK in slices. Each is fetched
+// only for a page with a character that it adds, so a page of Latin text fetches none, and a
+// line of Japanese fetches the kana and common Han slices (about 1.1 MB), not all of CJK.
+// Lean picks the font for each character.
+const fontCoverage=import('./font-coverage.mjs');
+fontCoverage.catch(()=>{});
+const coverageFiles=new Map();
+function coverage(path){
+  const url=new URL(path,import.meta.url).href;
+  if(!coverageFiles.has(url)){const p=fetch(url).then(r=>{if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json();});p.catch(()=>{});coverageFiles.set(url,p);}
+  return coverageFiles.get(url);
+}
+// The fallback fonts that a page needs and the engine does not hold yet. Their files start
+// to come at once.
+const heldFallbacks=new Set();
+// How long a page waits for its fallback fonts before it is laid out without the late ones.
+const fallbackWait=600;
+async function fontsWanted(source){
+  const wanted=await (await fontCoverage).fontsFor(source,coverage,heldFallbacks);
+  for(const font of wanted)fontFile(font.path).catch(()=>{});
+  return wanted;
+}
 fetchEarly(pagesBase+'index.html','text');
 const pageURL=page=>page&&/^[a-z0-9-]+\.(html|xml)$/.test(page)?pagesBase+page:undefined;
 // Lean calls made, for ?stats=1 and the tests: a scroll inside a band makes none.
@@ -175,22 +195,32 @@ async function loadFont(){
     if(typeof primary?.fonts==='number')fontBytesTakeFallback=true;
   }catch(error){console.warn('foafnaut: bitmap font, because Noto Sans did not load:',String(error));}
 }
-// The fallback fonts. A font that has come by the first frame goes in before it; the first
-// frame does not wait for one still on its way, and the page is drawn again when it comes.
-let fallbacksLoaded=false;
-async function loadFallbackFonts(wait){
-  if(!fontBytesTakeFallback||fallbacksLoaded)return;
-  const files=fallbackFonts.map(([path,family])=>fontFile(path).then(file=>({...file,family}),error=>({error,family})));
-  if(wait!==undefined){
-    const late=Symbol();
-    if(await Promise.race([Promise.all(files),new Promise(r=>setTimeout(r,wait,late))])===late)return;
-  }
-  fallbacksLoaded=true;
-  for(const file of await Promise.all(files)){
-    if(file.error){console.warn(`foafnaut: no ${file.family}:`,String(file.error));continue;}
-    try{fontLoad(file.bytes,file.family,file.sha,true);}catch(error){console.warn(`foafnaut: no ${file.family}:`,String(error));}
-  }
-  if(wait===undefined&&doc){current=undefined;prefetched=undefined;request();}
+// The fallback fonts a page needs, into the engine. Those that come within `wait` ms go in
+// before the page is laid out; the rest go in together when they have all come, and the
+// page is drawn again then. Each font load starts Lean's word memo again, so they go in at once.
+// An engine that holds one font would take a fallback font as a replacement (issue 1274).
+async function loadFallbackFonts(source,wait){
+  if(!fontBytesTakeFallback)return;
+  let wanted;
+  try{wanted=await fontsWanted(source);}catch(error){console.warn('foafnaut: no fallback font table:',String(error));return;}
+  if(!wanted.length)return;
+  for(const font of wanted)heldFallbacks.add(font.family);
+  const files=wanted.map(font=>fontFile(font.path).then(file=>({...file,font}),error=>({error,font})));
+  const settled=[];
+  files.forEach((p,i)=>p.then(file=>{settled[i]=file;}));
+  const all=Promise.all(files);
+  const late=Symbol();
+  const early=await Promise.race([all,new Promise(r=>setTimeout(r,wait,late))]);
+  const put=list=>{
+    for(const file of list){
+      if(file.error){console.warn(`foafnaut: no ${file.font.family}:`,String(file.error));heldFallbacks.delete(file.font.family);continue;}
+      try{fontLoad(file.bytes,file.font.family,file.sha,true);}catch(error){console.warn(`foafnaut: no ${file.font.family}:`,String(error));}
+    }
+  };
+  if(early!==late){put(early);return;}
+  // In order: those that have come now, the rest when all have come.
+  const now=settled.filter(Boolean);put(now);
+  all.then(list=>{put(list.filter(file=>!now.includes(file)));if(doc){current=undefined;prefetched=undefined;request();}});
 }
 async function fetchText(url){
   // A page fetched early is used once; a reload fetches it again.
@@ -208,6 +238,7 @@ async function prepare(url){
     sources[0].kind='XML source';
     sources.push({kind:'XSLT source',url:xsl.url,source:xsl.source},{kind:'Generated page',url:page.url,source:page.source});
   }
+  await loadFallbackFonts(page.source,fallbackWait);
   const facts=call(page.source,{op:'inspect',url:page.url});
   const images=await pageImages(facts.images);
   const next={url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images};
@@ -747,13 +778,14 @@ async function start(data){
   if(data.layers===false)layered=false;
   if(!navigator.gpu)throw Error('This browser does not provide WebGPU.');
   const wanted=pageURL(data.page)??(data.page==='sparql'?sparqlURL:undefined)??(data.page==='wasm'||/^wasm\/[a-z0-9-]+\.wasm(#[A-Za-z0-9_-]+)?$/.test(data.page??'')?'foafnaut:'+data.page:undefined);
-  if(wanted?.startsWith('http'))fetchEarly(wanted,'text');
+  // The page's fallback fonts start to come with the page, beside the engine.
+  if(wanted?.startsWith('http'))fetchEarly(wanted,'text').then(page=>fontsWanted(page.source)).catch(()=>{});
   const [{default:createModule},transport]=await Promise.all(runtimeModules);
   try{L=await layersModule;}catch(error){layered=false;console.warn('foafnaut: no layers:',String(error));}
   module=await startEngine(createModule);phase('engineReady');
   createSession=transport.createOffscreenSession;hashPixels=transport.hashPixels;
   if(data.canvas&&typeof transport.createSurfaceSession==='function'){surfaceCanvas=data.canvas;createSurface=transport.createSurfaceSession;}
-  await loadFont();await loadFallbackFonts(250);phase('fontReady');
+  await loadFont();phase('fontReady');
   home=await prepare(homeURL);
   // A page asked for in the address is the first frame: the demo index is not drawn first.
   let first=home;
@@ -770,7 +802,6 @@ async function start(data){
     .catch(error=>{stateReason=String(error.message??error);});
   // A new window starts in the address bar with the address selected (issue 1268).
   if(wanted)request();else focusAddress();
-  firstFrame.then(()=>loadFallbackFonts());
   for(const message of early.splice(0))receive(message);
 }
 function flush(){

@@ -84,6 +84,8 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # geometry hover once; render request bytes do not grow with image size. Wasm and native.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/frame_work_test.ts"
+  # The Hub's fallback fonts: files, sizes, SHA-256, and which fonts each demo page fetches.
+  deno test --no-check --no-config --allow-read "$LAB/fallback_fonts_test.ts"
   # SVG text, tspan and textPath drawn with the held font (issue 1270), Wasm and native.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/svg_text_test.ts"
