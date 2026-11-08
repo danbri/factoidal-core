@@ -8,7 +8,8 @@ Spec side (rules of `Spec.Step`, `Spec.Step_read` generated from WebAssembly 3.0
   first clause is `catch x l`, reaches `br l` with the payload in two steps (`throw`,
   then `throw_ref_handler_catch`). `throw_reaches_catch_all`: the same for `catch_all l`.
 - `skip_clauses`: clauses whose tag is not the exception's are passed over, in order
-  (`throw_ref_handler_next`). With the two above, this is the rule the engine's
+  (`throw_ref_handler_next`, whose premise since spectec patch 0005 is that no
+  earlier rule, `Step_read_before_throw_ref_handler_next`, applies to the clause). With the two above, this is the rule the engine's
   `catchFor` follows: the first clause whose tag matches, or the first catch-all.
 - `return_call_keeps_args`: a tail call from a frame drops every value of the frame
   except the callee's arguments, the top `n` (`return_call_ref_frame_addr`). The
@@ -141,15 +142,13 @@ theorem skip_clauses (z : Spec.state) (n : Nat) (a : Nat) (ha : a < (Spec.s z).E
   | [], rest, _ => Spec.Steps.refl _ _
   | c :: pre, rest, h => by
     have hc := h c (by simp)
-    have hx : ∃ x : Spec.idx, Spec.proj_uN_0 x < (Spec.f z).MODULE.TAGS.length ∧
-        (Spec.s z).EXNS[a]!.TAG ≠ (Spec.f z).MODULE.TAGS[Spec.proj_uN_0 x]! := by
-      cases c <;> simp only [Skipped] at hc <;> first | exact ⟨_, hc⟩ | exact hc.elim
-    obtain ⟨x, hx1, hx2⟩ := hx
     refine Spec.Steps.trans _ _ _ _ _ _ (Spec.Step.read _ _ _ ?_)
       (skip_clauses z n a ha pre rest fun c' hc' => h c' (by simp [hc']))
-    refine Spec.Step_read.throw_ref_handler_next z n c (pre ++ rest) a x [] x [] ha hx1 ?_
-    simp only [bne_iff_ne, ne_eq, Bool.or_eq_true]
-    exact Or.inl hx2
+    refine Spec.Step_read.throw_ref_handler_next z n c (pre ++ rest) a ?_
+    intro hb
+    cases c <;> simp only [Skipped] at hc <;> first
+      | exact hc.elim
+      | (cases hb <;> simp_all)
 
 /-! ### Tail calls -/
 

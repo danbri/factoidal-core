@@ -18,11 +18,11 @@ The file is GENERATED (Iron Rule 2). The chain is:
 1. SpecTec sources of the WebAssembly 3.0 spec, pinned at WebAssembly/spec
    `f3268fa9` in `third_party/wasm-spec/specification/wasm-3.0/`.
 2. Joachim Breitner's SpecTec-to-Lean 4 backend (`print.ml`), on Wasm-DSL/spectec
-   branch `lean4-wip`, commit `16b70bde`, with four patches of ours
-   (`tools/wasmvm/spectec-patches/`, section 9a). Its output for our pinned
-   spec, `Wasm-f3268fa9.lean` (12,820 lines), is vendored at
+   branch `lean4-wip`, commit `16b70bde`, with five patches of ours
+   (`tools/wasmvm/spectec-patches/`, sections 9a and 9b). Its output for our
+   pinned spec, `Wasm-f3268fa9.lean` (12,854 lines), is vendored at
    `third_party/spectec-lean4/generated/` with its exact command (SHA-256
-   `dc63e139...`). Until the regeneration of 2026-11-07 the input was the
+   `94472478...`). Until the regeneration of 2026-11-07 the input was the
    branch's own output for its February copy of the spec,
    `third_party/spectec-lean4/spectec/test-lean4/Wasm.lean`, which is kept.
 3. `tools/wasmvm/port-spec.py` rewrites that file for Lean v4.33.1 and our
@@ -41,7 +41,8 @@ theorems lists `propext` and `Quot.sound` only.
 
 ## 2. What is in the layer
 
-Counts in `Wasm30.lean` since the regeneration from `f3268fa9`: 532 `inductive`
+Counts in `Wasm30.lean` since the regeneration from `f3268fa9` with patch 0005
+(section 9b): 534 `inductive`
 (types and relations), 17 `structure`, 314 `def`, 57 `abbrev`, 77 `opaque`
 (section 4). As generated, before the rule `builtin-definitions`: 270 `def`,
 118 `opaque`. From the old February input: 515 `inductive`, 316 `def` and
@@ -435,6 +436,47 @@ By the cheapest route of section 9. One opam switch `spectec` (OCaml 5.2.1;
 
 Still open: the 29 functions of section 4 (a backend limit), and the binary
 format (G3).
+
+## 9b. Generator defect: "otherwise" lost its pattern (fixed 2026-11-08)
+
+Found from the engine proofs: the generated `Step_read.throw_ref_handler_next` bound
+`x` and `val_lst` twice and apart from the clause it skips, with the premise
+`TAG != TAGS[x] || val_lst != FIELDS`. Any `x` and any `val_lst` satisfy it, so as
+generated the rule let a handler skip any clause, `catch_all` included.
+
+Cause: the middle-end pass `elsesimp` (`spectec/src/middlend/elsesimp.ml`), not
+`print.ml`. The pass `else` turns `-- otherwise` into `~ before(e)`, where each rule
+of the new relation `before` is an earlier rule's left side `e_i` with its premises
+`prems_i`. So the premise means `not (exists binds_i, e_i = e /\ prems_i)` for every
+`i`. `elsesimp` replaced it by `not prems_i` and added the binders of `prems_i` to
+the rule: `exists x, not ..` in place of `not exists x, ..`, and the match `e_i = e`
+(here: the clause is `catch x l`) dropped. The same defect made
+`table_copy_zero`, `_le` and `_gt` test the bounds of tables `x_1`, `x_2` that are
+not the instruction's operands.
+
+Fix: patch `0005` (`tools/wasmvm/spectec-patches/`). The pass now simplifies only
+when every `before` rule's left side is `e` itself and its boolean premises have no
+variable outside `e`; otherwise it keeps the relation, which the printer already
+handles (`Step_read_before_br_on_cast_fail`). Output: two new relations,
+`Step_read_before_throw_ref_handler_next` and `Step_read_before_table_copy_gt`;
+`throw_ref_handler_next` has the premise
+`¬ Step_read_before_throw_ref_handler_next (config z [HANDLER_ n (catch :: catch') [REF_EXN_ADDR a, THROW_REF]])`;
+the three `table_copy` rules have their `before` premises. The port needed one count
+changed (`strip-trailing-whitespace`, 1255 to 1260: the new multi-line rules) and the
+new input hash. `Proofs/Proposals.lean` `skip_clauses` now proves the negated
+premise by cases on the four `before` rules.
+
+Second defect, found at the same time and NOT fixed: the backend prints an iteration
+`x^n` as the list `x*` and drops `|x*| = n`. So in the generated relations the arity
+of a label, a block and a call is not tied to the number of values: `Step_read.block`
+and `loop` (`val^m` with `t_1^m`), `Step_pure.br_label_zero` (`val^n` with the label's
+`n`), `Step.call_ref_func` (`val^n` with `t_1^n`), `Step_pure.return_frame`,
+`Step_read.try_table`. The generated relations allow MORE reductions than the
+official ones (for example a `br` that keeps more values than its label's arity). A
+refinement theorem proved against them (engine steps are spec steps) stays true
+against the official spec only for steps where the counts agree; the engine's steps
+do, but the theorems do not yet say so. Fix to come in `print.ml`: emit
+`List.length x_lst = n` for each `ListN` iteration.
 
 ## 10. Open items
 

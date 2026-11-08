@@ -32,7 +32,7 @@ import port_builtins  # noqa: E402  (rule builtin-definitions, kept in its own f
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_INPUT = ROOT / "third_party/spectec-lean4/generated/Wasm-f3268fa9.lean"
 OUTPUT = ROOT / "formal/lean4/L4Factoidal/WasmVM/Spec/Wasm30.lean"
-INPUT_SHA256 = "dc63e1395605cefcdb94c8a471c92d24f806149d61948de39428f64d4596dada"
+INPUT_SHA256 = "944724783582ce90c2d90a8a7259d727fea7266509089aa7412e7bd69e1ea6c5"
 NAMESPACE = "L4Factoidal.WasmVM.Spec"
 
 RULES = []  # (name, reason, count) in the order applied; filled by `rule`
@@ -265,7 +265,7 @@ def r_classical_beq(text):
       "The backend leaves spaces at line ends (after `forall ...,` and in the preamble); "
       "`git diff --check` reports them. Removing them changes no token.")
 def r_strip_ws(text):
-    return subn_exact(r"[ \t]+$", "", text, 1255, "strip-trailing-whitespace", flags=re.M)
+    return subn_exact(r"[ \t]+$", "", text, 1260, "strip-trailing-whitespace", flags=re.M)
 
 
 @rule("builtin-definitions", port_builtins.REASON)

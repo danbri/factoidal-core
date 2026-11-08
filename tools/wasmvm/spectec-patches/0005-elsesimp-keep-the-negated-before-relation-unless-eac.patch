@@ -1,0 +1,74 @@
+From be2d31b3393e211f0ad0d72ccc10cf147cec32c0 Mon Sep 17 00:00:00 2001
+From: Dan Brickley <danbri@danbri.org>
+Date: Sun, 8 Nov 2026 00:50:05 +0000
+Subject: [PATCH] elsesimp: keep the negated before-relation unless each before
+ rule has the same pattern and no existential variables
+
+`~ before(e)` is `not (exists binds_i, e_i = e /\ prems_i)` for each rule i of
+the before relation. The pass replaced it with `not prems_i` and added the
+rule's binders to the outer rule, which turns `not exists` into `exists not`
+and drops the pattern `e_i`. In WebAssembly 3.0 this made
+throw_ref-handler-next skip any catch clause (its x and val* became free), and
+table.copy's zero/le/gt rules test bounds on tables x_1, x_2 unrelated to the
+instruction. Now the simplification is made only when every before rule's
+conclusion is the negated premise's argument and its boolean premises have no
+variable outside that argument; otherwise the before relation is kept.
+---
+ spectec/src/middlend/elsesimp.ml | 33 ++++++++++++++++++++++++++------
+ 1 file changed, 27 insertions(+), 6 deletions(-)
+
+diff --git a/spectec/src/middlend/elsesimp.ml b/spectec/src/middlend/elsesimp.ml
+index 23b91ef..ae74ff1 100644
+--- a/spectec/src/middlend/elsesimp.ml
++++ b/spectec/src/middlend/elsesimp.ml
+@@ -100,20 +100,41 @@ let is_in_bind (free_sets : Free.sets) b =
+   | DefB (id, _, _) -> Free.Set.mem id.it free_sets.defid
+   | GramB (id, _, _) -> Free.Set.mem id.it free_sets.gramid
+ 
+-let t_rule env else_ids rule = 
++(* The argument of the negated `before` premise of a rule. *)
++let neg_prem_arg else_id prems =
++  List.find_map (fun prem -> match prem.it with
++    | NegPr { it = RulePr (id, _, e); _ } when id.it = else_id -> Some e
++    | _ -> None) prems
++
++(* `~ before(e)` means: no rule of `before` matches `e`. Each rule of `before` is
++   `before(e_i) -- prems_i` with its own binders, so the premise is
++   `not (exists binds_i, e_i = e /\ prems_i)` for every i. It may be replaced by the
++   boolean `not prems_i` only when (a) `e_i` is `e` itself (same pattern, same
++   variable names), so that the match adds nothing, and (b) `prems_i` has no free
++   variable that the rule does not bind, so that there is no existential to keep.
++   A `before` rule without a boolean premise matches unconditionally; then the
++   negation is `false` for that pattern, and no simplification is made either.
++   Without (a) and (b), the earlier pass turned `not exists x` into `exists x, not`,
++   and lost the pattern: `throw_ref-handler-next` could then skip any catch clause. *)
++let t_rule env else_ids rule =
+   let RuleD (id, binds, m, exp, prems) = rule.it in
+   let* else_id = List.find_opt (fun id -> List.exists (is_neg_prem [id]) prems) else_ids in
++  let* neg_arg = neg_prem_arg else_id prems in
+   let* else_relation = Il.Env.find_opt_rel env.il_env (else_id $ no_region) in
+   let (_, _, rules) = else_relation in
+-  let free_vars_binds = Free.free_list Free.bound_bind binds in 
++  let same_pattern = List.for_all (fun r ->
++    let RuleD (_, _, _, exp', _) = r.it in Il.Eq.eq_exp exp' neg_arg) rules in
+   let prems_list, binds' = List.map (fun r ->
+     let RuleD (_, binds', _, _, prems') = r.it in
+-    let free_vars = Free.diff (Free.free_list Free.free_prem prems') free_vars_binds in 
+-    Lib.List.filter_not (is_wf_or_neg_prem else_ids env) prems', List.filter (is_in_bind free_vars) binds'
++    let prems' = Lib.List.filter_not (is_wf_or_neg_prem else_ids env) prems' in
++    let free_vars = Free.diff (Free.free_list Free.free_prem prems') (Free.free_exp neg_arg) in
++    prems', List.filter (is_in_bind free_vars) binds'
+   ) rules |> List.split in
+   let binds' = List.concat binds' in
+-  
+-  if prems_list = [] || not (List.for_all (fun prems' -> List.for_all is_boolean_prem prems') prems_list) then None else
++
++  if prems_list = [] || not same_pattern || binds' <> []
++    || List.exists (fun prems' -> prems' = []) prems_list
++    || not (List.for_all (fun prems' -> List.for_all is_boolean_prem prems') prems_list) then None else
+   let neg_exps = List.filter_map (fun prems' -> 
+     let exps = List.filter_map get_exp prems' in
+     match exps with 
+-- 
+2.50.1 (Apple Git-155)
+

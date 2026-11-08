@@ -545,10 +545,10 @@ tables of the frames it unwinds (linear in the entries of each function).
 `_empty`, `_label`, `_frame`, `_null`), `Step_read.try_table`, the `HANDLER_`
 administrative instruction and its `Step_pure` rules. It has no legacy rules (the
 legacy form is not in 3.0), so the legacy cases are tested, not proved. The generated
-`throw_ref_handler_next` binds its `x` and `val_lst` apart from the clause it skips (two
-binders named `x`, two named `val_lst`), so as generated it lets any clause be skipped;
-the theorems below use it only for clauses whose tag does not match. Reported to the
-spec-layer owners in this record, not fixed here (`WasmVM/Spec*` is theirs).
+`throw_ref_handler_next` used to bind its `x` and `val_lst` apart from the clause it
+skips, so it let any clause be skipped. Fixed in the generator on 2026-11-08 (spectec
+patch 0005, spec-layer record section 9b): the rule now requires that no earlier
+`throw_ref` rule applies to the clause.
 
 ## Tail calls
 

@@ -11538,6 +11538,23 @@ inductive Step_read_before_br_on_cast_fail_fail : config -> Prop where
     (Ref_ok v_s v_ref var_0) ->
     Step_read_before_br_on_cast_fail_fail (.mk_config (.mk_state v_s v_f) [(instr_ref v_ref), (.BR_ON_CAST_FAIL l rt_1 rt_2)])
 
+/- Inductive Relations Definition at: third_party/wasm-spec/specification/wasm-3.0/4.3-execution.instructions.spectec:283.1-286.15 -/
+inductive Step_read_before_throw_ref_handler_next : config -> Prop where
+  | throw_ref_handler_catch_all_ref_0 : forall (z : state) (v_n : n) (l : labelidx) (catch'_lst : (List «catch»)) (a : addr), Step_read_before_throw_ref_handler_next (.mk_config z [(.HANDLER_ v_n ([(.CATCH_ALL_REF l)] ++ catch'_lst) [(.REF_EXN_ADDR a), .THROW_REF])])
+  | throw_ref_handler_catch_all_0 : forall (z : state) (v_n : n) (l : labelidx) (catch'_lst : (List «catch»)) (a : addr), Step_read_before_throw_ref_handler_next (.mk_config z [(.HANDLER_ v_n ([(.CATCH_ALL l)] ++ catch'_lst) [(.REF_EXN_ADDR a), .THROW_REF])])
+  | throw_ref_handler_catch_ref_0 : forall (z : state) (v_n : n) (x : idx) (l : labelidx) (catch'_lst : (List «catch»)) (a : addr) (val_lst : (List val)), 
+    (a < (List.length ((s z).EXNS))) ->
+    ((proj_uN_0 x) < (List.length (((f z).MODULE).TAGS))) ->
+    (((((s z).EXNS)[a]!).TAG) == ((((f z).MODULE).TAGS)[(proj_uN_0 x)]!)) ->
+    (val_lst == ((((s z).EXNS)[a]!).FIELDS)) ->
+    Step_read_before_throw_ref_handler_next (.mk_config z [(.HANDLER_ v_n ([(.CATCH_REF x l)] ++ catch'_lst) [(.REF_EXN_ADDR a), .THROW_REF])])
+  | throw_ref_handler_catch_0 : forall (z : state) (v_n : n) (x : idx) (l : labelidx) (catch'_lst : (List «catch»)) (a : addr) (val_lst : (List val)), 
+    (a < (List.length ((s z).EXNS))) ->
+    ((proj_uN_0 x) < (List.length (((f z).MODULE).TAGS))) ->
+    (((((s z).EXNS)[a]!).TAG) == ((((f z).MODULE).TAGS)[(proj_uN_0 x)]!)) ->
+    (val_lst == ((((s z).EXNS)[a]!).FIELDS)) ->
+    Step_read_before_throw_ref_handler_next (.mk_config z [(.HANDLER_ v_n ([(.CATCH x l)] ++ catch'_lst) [(.REF_EXN_ADDR a), .THROW_REF])])
+
 /- Inductive Relations Definition at: third_party/wasm-spec/specification/wasm-3.0/4.3-execution.instructions.spectec:375.1-378.14 -/
 inductive Step_read_before_table_fill_zero : config -> Prop where
   | table_fill_oob_0 : forall (z : state) («at» : addrtype) (i : num_) (v_val : val) (v_n : n) (x : idx), 
@@ -11571,6 +11588,30 @@ inductive Step_read_before_table_copy_le : config -> Prop where
     ((proj_num__0 i_2) != none) ->
     ((((proj_uN_0 (Option.get! (proj_num__0 i_1))) + v_n) > (List.length ((fun_table z x_1).REFS))) || (((proj_uN_0 (Option.get! (proj_num__0 i_2))) + v_n) > (List.length ((fun_table z x_2).REFS)))) ->
     Step_read_before_table_copy_le (.mk_config z [(.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN v_n))), (.TABLE_COPY x_1 x_2)])
+
+/- Inductive Relations Definition at: third_party/wasm-spec/specification/wasm-3.0/4.3-execution.instructions.spectec:404.1-408.15 -/
+inductive Step_read_before_table_copy_gt : config -> Prop where
+  | table_copy_le_0 : forall (z : state) (at_1 : addrtype) (i_1 : num_) (at_2 : addrtype) (i_2 : num_) (at' : addrtype) (v_n : n) (x : idx) (y : idx), 
+    (wf_num_ (numtype_addrtype at_1) i_1) ->
+    (wf_num_ (numtype_addrtype at_2) i_2) ->
+    (¬(Step_read_before_table_copy_le (.mk_config z [(.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN v_n))), (.TABLE_COPY x y)]))) ->
+    ((proj_num__0 i_1) != none) ->
+    ((proj_num__0 i_2) != none) ->
+    ((proj_uN_0 (Option.get! (proj_num__0 i_1))) <= (proj_uN_0 (Option.get! (proj_num__0 i_2)))) ->
+    Step_read_before_table_copy_gt (.mk_config z [(.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN v_n))), (.TABLE_COPY x y)])
+  | table_copy_zero_1 : forall (z : state) (at_1 : addrtype) (i_1 : num_) (at_2 : addrtype) (i_2 : num_) (at' : addrtype) (v_n : n) (x : idx) (y : idx), 
+    (wf_num_ (numtype_addrtype at_1) i_1) ->
+    (wf_num_ (numtype_addrtype at_2) i_2) ->
+    (¬(Step_read_before_table_copy_zero (.mk_config z [(.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN v_n))), (.TABLE_COPY x y)]))) ->
+    (v_n == 0) ->
+    Step_read_before_table_copy_gt (.mk_config z [(.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN v_n))), (.TABLE_COPY x y)])
+  | table_copy_oob_2 : forall (z : state) (at_1 : addrtype) (i_1 : num_) (at_2 : addrtype) (i_2 : num_) (at' : addrtype) (v_n : n) (x_1 : idx) (x_2 : idx), 
+    (wf_num_ (numtype_addrtype at_1) i_1) ->
+    (wf_num_ (numtype_addrtype at_2) i_2) ->
+    ((proj_num__0 i_1) != none) ->
+    ((proj_num__0 i_2) != none) ->
+    ((((proj_uN_0 (Option.get! (proj_num__0 i_1))) + v_n) > (List.length ((fun_table z x_1).REFS))) || (((proj_uN_0 (Option.get! (proj_num__0 i_2))) + v_n) > (List.length ((fun_table z x_2).REFS)))) ->
+    Step_read_before_table_copy_gt (.mk_config z [(.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN v_n))), (.TABLE_COPY x_1 x_2)])
 
 /- Inductive Relations Definition at: third_party/wasm-spec/specification/wasm-3.0/4.3-execution.instructions.spectec:416.1-419.14 -/
 inductive Step_read_before_table_init_zero : config -> Prop where
@@ -11839,10 +11880,8 @@ inductive Step_read : config -> (List instr) -> Prop where
     Step_read (.mk_config z [(.HANDLER_ v_n ([(.CATCH_REF x l)] ++ catch'_lst) [(.REF_EXN_ADDR a), .THROW_REF])]) ((List.map (fun (v_val : val) => (instr_val v_val)) val_lst) ++ [(.REF_EXN_ADDR a), (.BR l)])
   | throw_ref_handler_catch_all : forall (z : state) (v_n : n) (l : labelidx) (catch'_lst : (List «catch»)) (a : addr), Step_read (.mk_config z [(.HANDLER_ v_n ([(.CATCH_ALL l)] ++ catch'_lst) [(.REF_EXN_ADDR a), .THROW_REF])]) [(.BR l)]
   | throw_ref_handler_catch_all_ref : forall (z : state) (v_n : n) (l : labelidx) (catch'_lst : (List «catch»)) (a : addr), Step_read (.mk_config z [(.HANDLER_ v_n ([(.CATCH_ALL_REF l)] ++ catch'_lst) [(.REF_EXN_ADDR a), .THROW_REF])]) [(.REF_EXN_ADDR a), (.BR l)]
-  | throw_ref_handler_next : forall (z : state) (v_n : n) (v_catch : «catch») (catch'_lst : (List «catch»)) (a : addr) (x : idx) (val_lst : (List val)) (x : idx) (val_lst : (List val)), 
-    (a < (List.length ((s z).EXNS))) ->
-    ((proj_uN_0 x) < (List.length (((f z).MODULE).TAGS))) ->
-    ((((((s z).EXNS)[a]!).TAG) != ((((f z).MODULE).TAGS)[(proj_uN_0 x)]!)) || (val_lst != ((((s z).EXNS)[a]!).FIELDS))) ->
+  | throw_ref_handler_next : forall (z : state) (v_n : n) (v_catch : «catch») (catch'_lst : (List «catch»)) (a : addr), 
+    (¬(Step_read_before_throw_ref_handler_next (.mk_config z [(.HANDLER_ v_n ([v_catch] ++ catch'_lst) [(.REF_EXN_ADDR a), .THROW_REF])]))) ->
     Step_read (.mk_config z [(.HANDLER_ v_n ([v_catch] ++ catch'_lst) [(.REF_EXN_ADDR a), .THROW_REF])]) [(.HANDLER_ v_n catch'_lst [(.REF_EXN_ADDR a), .THROW_REF])]
   | try_table : forall (z : state) (val_lst : (List val)) (v_m : m) (bt : blocktype) (catch_lst : (List «catch»)) (instr_lst : (List instr)) (v_n : n) (t_1_lst : (List valtype)) (t_2_lst : (List valtype)) (var_0 : instrtype), 
     (fun_blocktype_ z bt var_0) ->
@@ -11892,31 +11931,26 @@ inductive Step_read : config -> (List instr) -> Prop where
     ((proj_num__0 i_2) != none) ->
     ((((proj_uN_0 (Option.get! (proj_num__0 i_1))) + v_n) > (List.length ((fun_table z x_1).REFS))) || (((proj_uN_0 (Option.get! (proj_num__0 i_2))) + v_n) > (List.length ((fun_table z x_2).REFS)))) ->
     Step_read (.mk_config z [(.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN v_n))), (.TABLE_COPY x_1 x_2)]) [.TRAP]
-  | table_copy_zero : forall (z : state) (at_1 : addrtype) (i_1 : num_) (at_2 : addrtype) (i_2 : num_) (at' : addrtype) (v_n : n) (x : idx) (y : idx) (x_1 : idx) (x_2 : idx), 
-    ((proj_num__0 i_1) != none) ->
-    ((proj_num__0 i_2) != none) ->
-    ((((proj_uN_0 (Option.get! (proj_num__0 i_1))) + v_n) <= (List.length ((fun_table z x_1).REFS))) && (((proj_uN_0 (Option.get! (proj_num__0 i_2))) + v_n) <= (List.length ((fun_table z x_2).REFS)))) ->
+  | table_copy_zero : forall (z : state) (at_1 : addrtype) (i_1 : num_) (at_2 : addrtype) (i_2 : num_) (at' : addrtype) (v_n : n) (x : idx) (y : idx), 
     (wf_num_ (numtype_addrtype at_1) i_1) ->
     (wf_num_ (numtype_addrtype at_2) i_2) ->
+    (¬(Step_read_before_table_copy_zero (.mk_config z [(.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN v_n))), (.TABLE_COPY x y)]))) ->
     (v_n == 0) ->
     Step_read (.mk_config z [(.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN v_n))), (.TABLE_COPY x y)]) []
-  | table_copy_le : forall (z : state) (at_1 : addrtype) (i_1 : num_) (at_2 : addrtype) (i_2 : num_) (at' : addrtype) (v_n : n) (x : idx) (y : idx) (x_1 : idx) (x_2 : idx), 
+  | table_copy_le : forall (z : state) (at_1 : addrtype) (i_1 : num_) (at_2 : addrtype) (i_2 : num_) (at' : addrtype) (v_n : n) (x : idx) (y : idx), 
     ((proj_num__0 i_1) != none) ->
     ((proj_num__0 i_2) != none) ->
-    (v_n != 0) ->
-    ((((proj_uN_0 (Option.get! (proj_num__0 i_1))) + v_n) <= (List.length ((fun_table z x_1).REFS))) && (((proj_uN_0 (Option.get! (proj_num__0 i_2))) + v_n) <= (List.length ((fun_table z x_2).REFS)))) ->
     (wf_num_ (numtype_addrtype at_1) i_1) ->
     (wf_num_ (numtype_addrtype at_2) i_2) ->
+    (¬(Step_read_before_table_copy_le (.mk_config z [(.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN v_n))), (.TABLE_COPY x y)]))) ->
     ((proj_uN_0 (Option.get! (proj_num__0 i_1))) <= (proj_uN_0 (Option.get! (proj_num__0 i_2)))) ->
     Step_read (.mk_config z [(.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN v_n))), (.TABLE_COPY x y)]) [(.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.TABLE_GET y), (.TABLE_SET x), (.CONST (numtype_addrtype at_1) (.mk_num__0 (Inn_addrtype at_1) (.mk_uN ((proj_uN_0 (Option.get! (proj_num__0 i_1))) + 1)))), (.CONST (numtype_addrtype at_2) (.mk_num__0 (Inn_addrtype at_2) (.mk_uN ((proj_uN_0 (Option.get! (proj_num__0 i_2))) + 1)))), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN (Int.toNat ((Int.ofNat v_n) - (Int.ofNat 1)))))), (.TABLE_COPY x y)]
-  | table_copy_gt : forall (z : state) (at_1 : addrtype) (i_1 : num_) (at_2 : addrtype) (i_2 : num_) (at' : addrtype) (v_n : n) (x : idx) (y : idx) (x_1 : idx) (x_2 : idx), 
+  | table_copy_gt : forall (z : state) (at_1 : addrtype) (i_1 : num_) (at_2 : addrtype) (i_2 : num_) (at' : addrtype) (v_n : n) (x : idx) (y : idx), 
     ((proj_num__0 i_1) != none) ->
     ((proj_num__0 i_2) != none) ->
-    ((proj_uN_0 (Option.get! (proj_num__0 i_1))) > (proj_uN_0 (Option.get! (proj_num__0 i_2)))) ->
-    (v_n != 0) ->
-    ((((proj_uN_0 (Option.get! (proj_num__0 i_1))) + v_n) <= (List.length ((fun_table z x_1).REFS))) && (((proj_uN_0 (Option.get! (proj_num__0 i_2))) + v_n) <= (List.length ((fun_table z x_2).REFS)))) ->
     (wf_num_ (numtype_addrtype at_1) i_1) ->
     (wf_num_ (numtype_addrtype at_2) i_2) ->
+    (¬(Step_read_before_table_copy_gt (.mk_config z [(.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN v_n))), (.TABLE_COPY x y)]))) ->
     Step_read (.mk_config z [(.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN v_n))), (.TABLE_COPY x y)]) [(.CONST (numtype_addrtype at_1) (.mk_num__0 (Inn_addrtype at_1) (.mk_uN (Int.toNat ((Int.ofNat ((proj_uN_0 (Option.get! (proj_num__0 i_1))) + v_n)) - (Int.ofNat 1)))))), (.CONST (numtype_addrtype at_2) (.mk_num__0 (Inn_addrtype at_2) (.mk_uN (Int.toNat ((Int.ofNat ((proj_uN_0 (Option.get! (proj_num__0 i_2))) + v_n)) - (Int.ofNat 1)))))), (.TABLE_GET y), (.TABLE_SET x), (.CONST (numtype_addrtype at_1) i_1), (.CONST (numtype_addrtype at_2) i_2), (.CONST (numtype_addrtype at') (.mk_num__0 (Inn_addrtype at') (.mk_uN (Int.toNat ((Int.ofNat v_n) - (Int.ofNat 1)))))), (.TABLE_COPY x y)]
   | table_init_oob : forall (z : state) («at» : addrtype) (i : num_) (j : num_) (v_n : n) (x : idx) (y : idx), 
     (wf_num_ (numtype_addrtype «at») i) ->
