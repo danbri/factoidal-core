@@ -289,7 +289,9 @@ async function prepare(url){
   const facts=call(page.source,{op:'inspect',url:page.url});
   const images=await pageImages(facts.images);
   const next={url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images};
-  if(facts.scripts?.some(s=>s.kind==='classic')&&await hasScripts())await startScripts(next,facts.scripts);
+  // The page is drawn first and its scripts start after that frame, as deferred scripts do:
+  // a slow start turn (QuickJS in WasmVM) no longer keeps the page blank.
+  if(facts.scripts?.some(s=>s.kind==='classic'))next.pendingScripts=facts.scripts;
   return next;
 }
 // Lean lists the images a page wants (SVG image, HTML img) by key. The page fetches only
@@ -374,6 +376,17 @@ async function hasScripts(){
     engineScripts=true;
   }catch(error){console.warn('foafnaut: page scripts off:',String(error.message??error));}
   return engineScripts;
+}
+function startPendingScripts(page){
+  if(!page?.pendingScripts)return;
+  // Loading the QuickJS guest into WasmVM (the first scripted page only) and the start turn
+  // both come after the frame.
+  setTimeout(async()=>{
+    if(doc!==page||!page.pendingScripts)return;
+    const scripts=page.pendingScripts;page.pendingScripts=undefined;
+    try{if(await hasScripts()&&doc===page)await startScripts(page,scripts);}
+    catch(error){console.warn('foafnaut: page scripts did not start:',String(error.message??error));}
+  },120);
 }
 async function startScripts(page,scripts){
   const resources=[];
@@ -550,6 +563,7 @@ function show(next,remember=true){
   if(remember){history=push(history.history,next.url);pages++;}
   post({type:'location',url:next.url,home:next.url===homeURL,push:remember});
   request();
+  startPendingScripts(next);
 }
 // An address from the host browser's history or from the Hub address (#…): Lean's link rules
 // route it as a typed address. One that leaves this site is refused, not opened: only the
@@ -667,7 +681,7 @@ async function graphPage(){
   return page;
 }
 function keep(){tabs[active]={doc,history,scroll};}
-function showTab(index){serial++;loading=false;setFocus(false);active=index;({doc,history,scroll}=tabs[index]);field=showURL(doc.url);request();}
+function showTab(index){serial++;loading=false;setFocus(false);active=index;({doc,history,scroll}=tabs[index]);field=showURL(doc.url);request();startPendingScripts(doc);}
 function newTab(){if(!home)return;keep();tabs.push({doc:home,history:push({entries:[],index:0},homeURL),scroll:0});showTab(tabs.length-1);focusAddress();}
 function closeTab(index){if(tabs.length===1)return;keep();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));}
 function setFocus(value){if(focused!==value){focused=value;post({type:'focus',focused});}}
@@ -1027,7 +1041,7 @@ async function start(data){
     .catch(error=>{stateReason=String(error.message??error);});
   // A new window starts in the address bar with the address selected (issue 1268).
   if(data.address&&!fromAddress)visit(data.address);
-  else if(opening)request();else focusAddress();
+  else if(opening){request();startPendingScripts(first);}else focusAddress();
   for(const message of early.splice(0))receive(message);
 }
 // Printing (issue 1268). The canvas is drawn by WebGPU and does not print, so the page
