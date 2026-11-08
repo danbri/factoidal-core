@@ -20,7 +20,10 @@ assignment patterns), default and rest parameters, spread, template literals (an
 tagged templates), Symbol with the well-known symbols, the iteration protocol with
 `for`-`of` and Array and String iterators, classes (`extends`, `super`, accessors,
 static members, public fields), `new.target`, direct and indirect `eval`, the `Function`
-constructor and identifier escapes. `lake exe leanjs` runs a script, Test262 files
+constructor and identifier escapes. Stage 3 added generators (section 6a) and early
+errors: `break`/`continue` targets, labels, lexical declarations in single-statement
+positions, redeclarations in a block or script, duplicate parameters where they are
+not allowed, strict-mode reserved words. `lake exe leanjs` runs a script, Test262 files
 or the benchmarks.
 
 Measured results are in section 9 (Test262 counts) and section 10 (speed).
@@ -176,6 +179,26 @@ Not built tonight. The design:
   (`load`, `start`, `click`, `advance`, `settle`, `turn`, `close`); its `Session`
   holds the JavaScript heap in place of the WasmVM store.
 
+### 6a. Generators
+
+A generator (§27.5) must stop at a `yield` and go on later. The evaluator is a
+recursive Lean function, so it cannot stop in the middle of a call. The engine runs a
+generator body on a second, small machine (`genRun` in `JS/Interp.lean`): a stack of
+frames (`GFrame` in `JS/Value.lean`) for the statement lists, loops (`while`, `do`,
+`for`, `for`-`of`), `try` statements, a pending completion while a `finally` runs, a
+`yield*` delegate, and where the value sent by `next(v)` goes. Only a statement that
+holds a `yield` is taken apart into frames; every statement without one runs in the
+ordinary evaluator. `return()` and `throw()` unwind the frames, run `finally` blocks
+and close `for`-`of` iterators. The generator object holds its frames in the heap
+(`Kind.gen`), so a suspended generator is a value like any other object.
+
+Supported `yield` positions: an expression statement (`yield e;`, `yield* e;`), the
+right side of an assignment to a name or property, a declaration initialiser, and
+`return yield e`. A `yield` inside another expression (`f(yield x)`) throws a
+`SyntaxError` at run time; Test262 has 30 such tests in the subset. `async` functions
+can use the same machine, with `await` as a suspension point and the Promise jobs on
+the event loop's microtask queue (section 6).
+
 ## 7. Strings and numbers
 
 - Strings: ECMAScript strings are sequences of UTF-16 code units (§6.1.4). The slice
@@ -263,6 +286,18 @@ functions 296 and generator or async methods 261; BigInt 148; other unsupported 
 94 (async, optional chaining, regular expression literals); private class members 79;
 class static blocks 17; call depth (`RangeError` at depth 400) 30.
 
+Stage 3 (generators, early errors): **5,098 pass, 975 fail, 228 skip (83.9 % of 6,073
+run)**; 722 of the passes are negative tests, 4,376 of 5,068 positive tests pass
+(86.3 %). 38 tests that passed at stage 2 fail now: 32 are negative tests that passed
+only because the parser refused generators, 5 are `let` followed by a line break as
+an identifier in a single-statement position (`if (x) let // newline {}`), 1 is an
+escaped `let`.
+
+Remaining failures by cause (stage 3): early errors not detected 278; BigInt 148;
+other unsupported syntax 94 (optional chaining, regular expression literals, `async`
+arrows); private class members 79; `async` methods 58; `yield` inside an expression
+30; call depth 30; class static blocks 17.
+
 ## 10. Speed
 
 The same two scripts as the QuickJS measurement in `2026-11-07-wasmvm-engine.md`
@@ -306,10 +341,10 @@ small objects as shapes with slot arrays, and caches property lookups.
 
 ## 12. Next steps
 
-1. Language: generators (a frame machine around `yield`: the code without `yield`
-   stays in the ordinary evaluator), then `async`/`await` on the same machine with
-   Promise jobs on the event loop; the early errors of the grammar; BigInt; private
-   class members; regular expression literals.
+1. Language: `async`/`await` on the generator machine with Promise jobs on the event
+   loop; `yield` inside expressions (lift it into a temporary before the statement);
+   the remaining early errors; BigInt; private class members; regular expression
+   literals (the repository's `L4Factoidal.Regex` engines are candidates).
 2. Built-ins in Test262 order: Object, Function, Array, String, Number, Math, JSON,
    Error, Symbol, Map/Set, Promise, RegExp (the repository's `L4Factoidal.Regex`
    engines are candidates), Date (on the virtual clock).

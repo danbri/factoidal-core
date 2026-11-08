@@ -50,6 +50,11 @@ def out (src : String) : List String :=
 #guard out "var it = { [Symbol.iterator]() { var i = 0; return { next: () => ({ value: i, done: i++ >= 2 }), return() { print('closed'); return {} } }; } }; for (var v of it) { print(v); break; }" == ["0", "closed"]
 #guard out "print(eval('var q = 1; q + 1'), typeof q, new Function('a', 'b', 'return a * b')(3, 4))" == ["2 number 12"]
 #guard out "[a, b] = [1, 2]; ({c: d} = {c: 3}); print(a, b, d)" == ["1 2 3"]
+#guard out "function* g() { var x = yield 1; print('got', x); try { yield 2 } finally { print('fin') } } var it = g(); print(it.next().value); print(it.next('a').value); print(JSON.stringify(it.return(7)))" ==
+  ["1", "got a", "2", "fin", "{\"value\":7,\"done\":true}"]
+#guard out "function* r(n) { for (let i = 0; i < n; i++) yield i; } print([...r(4)].join(), Array.from(r(2)).length)" == ["0,1,2,3 2"]
+#guard out "function* a() { yield 1; yield* [2, 3]; return 4 } var s = []; for (var v of a()) s.push(v); print(s.join())" == ["1,2,3"]
+#guard out "label: for (var i = 0; i < 3; i++) { if (i == 1) continue label; } try { eval('break;') } catch (e) { print(e.name) }" == ["SyntaxError"]
 #guard out "1 +" == ["SyntaxError: unexpected end of input at end of input (offset 3)"]
 
 end L4Factoidal.JS.Tests

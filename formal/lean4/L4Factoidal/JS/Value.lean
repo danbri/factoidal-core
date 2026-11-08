@@ -79,7 +79,74 @@ inductive Native where
   | arrayValues | arrayKeys | arrayEntries | arrayFrom | arrayOf | stringIterator
   | iterNext | iterSelf | dateNow
   | functionHasInstance
+  | genNext | genReturn | genThrow
   deriving BEq, Repr, Inhabited
+
+/-- What a running function sees. -/
+structure Ctx where
+  env : Nat
+  thisV : Value
+  strict : Bool
+  newTarget : Value := .undef
+  /-- `[[HomeObject]]` of the running method, for `super`. -/
+  home : Value := .undef
+  /-- The running function object (a class constructor's fields). -/
+  fnObj : Value := .undef
+  deriving Inhabited
+
+inductive BindMode where
+  /-- Initialise in this environment (let, const, parameters, catch). -/
+  | declare (env : Nat) (mutable : Bool)
+  /-- PutValue to a name already declared (var). -/
+  | var
+  /-- An assignment pattern (§13.15.5). -/
+  | assign
+  deriving Inhabited
+
+/-- Completions while unwinding a generator's frames. -/
+inductive GCompl where
+  | ret (v : Value)
+  | throw (v : Value)
+  | brk (l : Option String)
+  | cont (l : Option String)
+
+/-- A suspended generator's control state (§27.5): the stack of what is left to
+run, top first. The body runs on this machine only around a `yield`; code with
+no `yield` runs in the ordinary evaluator. -/
+inductive GFrame where
+  /-- The rest of a statement list. -/
+  | block (ctx : Ctx) (ss : List Stmt)
+  /-- A `while` loop: test, then the body. -/
+  | loopW (ctx : Ctx) (labels : List String) (c : Expr) (body : Stmt)
+  /-- A `do`-`while` loop after its body: test, then the body again. -/
+  | loopDo (ctx : Ctx) (labels : List String) (body : Stmt) (c : Expr)
+  /-- A `for` loop: update (unless first), test, then the body. -/
+  | loopFor (ctx : Ctx) (labels : List String) (perIter : List String) (test update : Option Expr)
+      (body : Stmt) (first : Bool)
+  /-- A `for`-`of` loop over an iterator. -/
+  | loopOf (ctx : Ctx) (labels : List String) (kind : Option DeclKind) (target : Pat) (it : Value)
+      (body : Stmt)
+  /-- A `try` statement; `phase` 0 in the block, 1 in the handler. -/
+  | tryF (ctx : Ctx) (param : Option Pat) (handler : Option (List Stmt)) (fin : Option (List Stmt))
+      (phase : Nat)
+  /-- A completion that waits for a `finally` block to end normally. -/
+  | pending (c : GCompl)
+  /-- Where the value sent by `next(v)` goes: a pattern, or nowhere. -/
+  | resume (ctx : Ctx) (target : Option (Pat × BindMode))
+  /-- `yield*`: the inner iterator. -/
+  | delegate (ctx : Ctx) (it : Value) (target : Option (Pat × BindMode))
+
+
+/-- What the caller of a generator sends (§27.5.3.3, §27.5.3.4). -/
+inductive GInput where
+  | send (v : Value)
+  | throwV (v : Value)
+  | retV (v : Value)
+
+/-- What a generator step ends with. -/
+inductive GOut where
+  | yielded (v : Value) (frames : List GFrame)
+  | done (v : Value)
 
 inductive Kind where
   | ordinary
@@ -94,6 +161,9 @@ inductive Kind where
   (`undefined` once done), the next index, and the kind (0 values, 1 keys,
   2 entries, 3 string code points). -/
   | iter (target : Value) (idx : Nat) (mode : Nat)
+  /-- A generator object (§27.5): its frames and state (0 suspended at the start,
+  1 suspended at a yield, 2 running, 3 completed). -/
+  | gen (frames : List GFrame) (state : Nat)
   | native (id : Native)
   | bound (target thisV : Value) (args : Array Value)
   /-- A Boolean, Number or String object (`[[BooleanData]]` etc.). -/
@@ -137,6 +207,7 @@ structure Realm where
   iterProto : Nat := 0
   arrayIterProto : Nat := 0
   evalFn : Nat := 0
+  generatorProto : Nat := 0
   deriving Inhabited
 
 /-- The error constructors, by their index in `Realm.errorProtos`. -/
@@ -199,17 +270,6 @@ inductive Compl where
   | cont (label : Option String)
   deriving Inhabited
 
-/-- What a running function sees. -/
-structure Ctx where
-  env : Nat
-  thisV : Value
-  strict : Bool
-  newTarget : Value := .undef
-  /-- `[[HomeObject]]` of the running method, for `super`. -/
-  home : Value := .undef
-  /-- The running function object (a class constructor's fields). -/
-  fnObj : Value := .undef
-  deriving Inhabited
 
 /-! ## Pure operations -/
 

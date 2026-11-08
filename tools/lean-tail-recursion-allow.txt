@@ -2200,3 +2200,5 @@ L4Factoidal_JS_initFields  # (c) class field initialisers: one call per field, a
 L4Factoidal_JS_iter*  # (c) the iteration protocol (GetIterator, IteratorStep, IteratorClose, collecting to an array): next/return are calls, as L4Factoidal_JS_call*; collecting is a self tail call
 L4Factoidal_JS_superCall  # (c) super(...): the parent constructor is a call, as L4Factoidal_JS_call*
 L4Factoidal_JS_gen*  # (b)(c) the generator machine (JS/Interp.lean): frame steps are self tail calls; nesting is the statement nesting around a yield; calls as L4Factoidal_JS_call*
+L4Factoidal_JS_*_anyYield  # (b) does a statement or expression hold a yield (JS/Syntax.lean): depth is the nesting of the source; fuel 100000
+L4Factoidal_JS_*_hasYieldF  # (b) as L4Factoidal_JS_*_anyYield

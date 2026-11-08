@@ -90,6 +90,8 @@ inductive Expr where
   | superMember (name : String)
   | superIndex (key : Expr)
   | newTarget
+  /-- `yield e`, `yield* e` (§15.5). -/
+  | yieldE (delegate : Bool) (arg : Option Expr)
 
 /-- A property definition in an object literal (§13.2.5). -/
 inductive PropDef where
@@ -121,7 +123,7 @@ inductive PatElem where
 constructor. `params` are patterns with initialisers; `rest` is `...p`. -/
 inductive FunDef where
   | mk (name : Option String) (params : List PatElem) (rest : Option Pat) (body : List Stmt)
-      (vars : List String) (usesArgs : Bool) (strict : Bool) (kind : FunKind)
+      (vars : List String) (usesArgs : Bool) (strict : Bool) (kind : FunKind) (gen : Bool)
 
 /-- A class (§15.7): name, heritage, constructor, members. A field is a member whose
 function returns the initial value. -/
@@ -171,7 +173,7 @@ inductive Stmt where
 end
 
 instance : Inhabited Expr := ⟨.null⟩
-instance : Inhabited FunDef := ⟨.mk none [] none [] [] false false .normal⟩
+instance : Inhabited FunDef := ⟨.mk none [] none [] [] false false .normal false⟩
 instance : Inhabited Stmt := ⟨.empty⟩
 instance : Inhabited PropDef := ⟨.init (.lit "") .null⟩
 instance : Inhabited PropKey := ⟨.lit ""⟩
@@ -187,11 +189,12 @@ def FunDef.rest : FunDef → Option Pat | .mk _ _ r .. => r
 def FunDef.body : FunDef → List Stmt | .mk _ _ _ b .. => b
 def FunDef.vars : FunDef → List String | .mk _ _ _ _ v .. => v
 def FunDef.usesArgs : FunDef → Bool | .mk _ _ _ _ _ u .. => u
-def FunDef.strict : FunDef → Bool | .mk _ _ _ _ _ _ s _ => s
-def FunDef.kind : FunDef → FunKind | .mk _ _ _ _ _ _ _ k => k
+def FunDef.strict : FunDef → Bool | .mk _ _ _ _ _ _ s _ _ => s
+def FunDef.kind : FunDef → FunKind | .mk _ _ _ _ _ _ _ k _ => k
+def FunDef.gen : FunDef → Bool | .mk _ _ _ _ _ _ _ _ g => g
 def FunDef.arrow (f : FunDef) : Bool := f.kind == .arrow
 def FunDef.withName (f : FunDef) (n : String) : FunDef :=
-  match f with | .mk _ p r b v u s k => .mk (some n) p r b v u s k
+  match f with | .mk _ p r b v u s k g => .mk (some n) p r b v u s k g
 
 /-- The `length` of a function: parameters before the first initialiser or rest (§15.1.5). -/
 def FunDef.expectedArgs (f : FunDef) : Nat :=
@@ -232,5 +235,92 @@ structure Script where
   vars : List String
   strict : Bool
   deriving Inhabited
+
+end L4Factoidal.JS
+
+namespace L4Factoidal.JS
+mutual
+/-- The expression holds a `yield` outside nested functions. `fuel` bounds the
+walk (out of fuel answers `true`, the safe side). -/
+def Expr.hasYieldF : Nat → Expr → Bool
+  | 0, _ => true
+  | n + 1, e =>
+    match e with
+    | .yieldE .. => true
+    | .num _ | .str _ | .bool _ | .null | .ident _ | .this | .newTarget | .superMember _
+    | .func _ | .classE _ => false
+    | .array es | .template _ es | .superCall es | .tagged _ _ _ es => Expr.anyYield n es
+    | .object ps => PropDef.anyYield n ps
+    | .unary _ a | .update _ _ a | .spread a | .superIndex a | .member a _ => Expr.hasYieldF n a
+    | .binary _ a b | .logical _ a b | .assign _ a b | .logAssign _ a b | .index a b | .seq a b =>
+      Expr.hasYieldF n a || Expr.hasYieldF n b
+    | .assignPat _ v => Expr.hasYieldF n v
+    | .cond a b c => Expr.hasYieldF n a || Expr.hasYieldF n b || Expr.hasYieldF n c
+    | .call f args | .new f args => Expr.hasYieldF n f || Expr.anyYield n args
+
+def Expr.anyYield : Nat → List Expr → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | n + 1, e :: es => Expr.hasYieldF n e || Expr.anyYield n es
+
+def PropDef.anyYield : Nat → List PropDef → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | n + 1, p :: ps =>
+    (match p with
+      | .init (.computed k) v => Expr.hasYieldF n k || Expr.hasYieldF n v
+      | .init _ v => Expr.hasYieldF n v
+      | .spread e => Expr.hasYieldF n e
+      | .getter (.computed k) _ | .setter (.computed k) _ => Expr.hasYieldF n k
+      | _ => false) || PropDef.anyYield n ps
+
+def Stmt.hasYieldF : Nat → Stmt → Bool
+  | 0, _ => true
+  | n + 1, s =>
+    match s with
+    | .expr e | .throwS e => Expr.hasYieldF n e
+    | .decl _ ds => Decl.anyYield n ds
+    | .funDecl .. | .classDecl .. | .brk _ | .cont _ | .empty | .ret none => false
+    | .ret (some e) => Expr.hasYieldF n e
+    | .ifS c t e => Expr.hasYieldF n c || Stmt.hasYieldF n t ||
+        (match e with | some e => Stmt.hasYieldF n e | none => false)
+    | .whileS c b | .doWhile b c => Expr.hasYieldF n c || Stmt.hasYieldF n b
+    | .forS i t u b =>
+      (match i with
+        | some (.expr e) => Expr.hasYieldF n e
+        | some (.decl _ ds) => Decl.anyYield n ds
+        | none => false) ||
+      (match t with | some e => Expr.hasYieldF n e | none => false) ||
+      (match u with | some e => Expr.hasYieldF n e | none => false) || Stmt.hasYieldF n b
+    | .forIn _ _ o b | .forOf _ _ o b => Expr.hasYieldF n o || Stmt.hasYieldF n b
+    | .block ss => Stmt.anyYield n ss
+    | .tryS b _ h f => Stmt.anyYield n b ||
+        (match h with | some h => Stmt.anyYield n h | none => false) ||
+        (match f with | some f => Stmt.anyYield n f | none => false)
+    | .labeled _ b => Stmt.hasYieldF n b
+    | .switchS d cs => Expr.hasYieldF n d || Case.anyYield n cs
+
+def Stmt.anyYield : Nat → List Stmt → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | n + 1, s :: ss => Stmt.hasYieldF n s || Stmt.anyYield n ss
+
+def Decl.anyYield : Nat → List Decl → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | n + 1, (.mk _ i) :: ds =>
+    (match i with | some e => Expr.hasYieldF n e | none => false) || Decl.anyYield n ds
+
+def Case.anyYield : Nat → List Case → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | n + 1, (.mk t b) :: cs =>
+    (match t with | some e => Expr.hasYieldF n e | none => false) || Stmt.anyYield n b ||
+      Case.anyYield n cs
+end
+
+def Expr.hasYield (e : Expr) : Bool := Expr.hasYieldF 100000 e
+def Stmt.hasYield (s : Stmt) : Bool := Stmt.hasYieldF 100000 s
+def Decl.hasYield (d : Decl) : Bool := Decl.anyYield 100000 [d]
 
 end L4Factoidal.JS

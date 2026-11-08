@@ -86,7 +86,7 @@ def newArray (es : Array Value) : M Value := do
 def isConstructor (v : Value) : M Bool := do
   match v with
   | .obj id => match (← getObj id).kind with
-    | .closure f .. => pure (f.kind != .arrow && f.kind != .method)
+    | .closure f .. => pure (f.kind != .arrow && f.kind != .method && !f.gen)
     | .native nid => pure (match nid with
         | .objectCtor | .functionCtor | .arrayCtor | .stringCtor | .numberCtor | .booleanCtor
         | .errorCtor _ | .symbolCtor => true
@@ -135,7 +135,10 @@ def makeClosure (ctx : Ctx) (f : FunDef) (nameHint : String := "") (home : Value
     if let some n := f.name then declare env n { v := .obj id, mutable := false }
   defineOwn id "length" (.data (.num (Float.ofNat f.expectedArgs)) false false true)
   defineOwn id "name" (.data (.str (f.name.getD nameHint)) false false true)
-  if f.kind == .normal then
+  if f.gen then
+    let p ← alloc { proto := .obj r.generatorProto }
+    defineOwn id "prototype" (.data (.obj p) true false false)
+  else if f.kind == .normal then
     let p ← newObject
     setHidden p "constructor" (.obj id)
     defineOwn id "prototype" (.data (.obj p) true false false)
@@ -166,14 +169,7 @@ def nameOfKey (key : String) : M String := do
     pure (if d.isEmpty && id ≥ wellKnown.size then "" else "[" ++ d ++ "]")
   | none => pure key
 
-inductive BindMode where
-  /-- Initialise in this environment (let, const, parameters, catch). -/
-  | declare (env : Nat) (mutable : Bool)
-  /-- PutValue to a name already declared (var). -/
-  | var
-  /-- An assignment pattern (§13.15.5). -/
-  | assign
-  deriving Inhabited
+
 
 /-- Enumerable string keys of an object and its prototypes (§14.7.5.9 EnumerateObjectProperties). -/
 def enumKeys (v : Value) : M (Array String) := do
@@ -629,6 +625,14 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
     for v in fd.vars do
       if !((← getBinding fenv v).isSome) then declare fenv v { v := .undef }
     if fd.kind == .ctor false then initFields n ctx fnObj thisV
+    if fd.gen then
+      -- a generator function returns its generator, suspended at the start (§27.5.3.1)
+      let p ← getV n fnObj "prototype"
+      let ctx' ← enterBlock n ctx fd.body
+      let g ← alloc { proto := if p.isObj then p else .obj r.generatorProto,
+                      kind := .gen [.block ctx' fd.body] 0 }
+      modify fun h => { h with depth := h.depth - 1 }
+      return .obj g
     let c ← evalBody n ctx fd.body
     modify fun h => { h with depth := h.depth - 1 }
     match c with
@@ -934,6 +938,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       pure v
     | .classE c => evalClass n ctx c ""
     | .newTarget => pure ctx.newTarget
+    | .yieldE .. => throwErr .syntax "yield in this position is not supported"
     | .superMember k =>
       let proto ← homeProto ctx
       getSuper n proto k ctx.thisV
@@ -1566,8 +1571,8 @@ def evalClass : Nat → Ctx → ClassDef → String → M Value
       | some f => f
       | none =>
         if derived then
-          FunDef.mk none [] (some (.id "args")) [.expr (.superCall [.spread (.ident "args")])] [] false true (.ctor true)
-        else FunDef.mk none [] none [] [] false true (.ctor false)
+          FunDef.mk none [] (some (.id "args")) [.expr (.superCall [.spread (.ident "args")])] [] false true (.ctor true) false
+        else FunDef.mk none [] none [] [] false true (.ctor false) false
     let cname := name.getD nameHint
     let fid ← alloc { proto := ctorParent, kind := .closure fd cenv .undef .undef (.obj proto) #[] }
     defineOwn fid "length" (.data (.num (Float.ofNat fd.expectedArgs)) false false true)
@@ -1654,6 +1659,293 @@ def evalCompletion : Nat → Ctx → List Stmt → Value → M Value
       | .normal => evalCompletion n ctx rest v
       | _ => pure v
 termination_by structural n _ _ _ => n
+
+/-- Run a generator's frames until it yields, returns or throws (§27.5.3.3
+GeneratorResume). `input` is what the caller sent: a value for `next`, a
+completion for `throw` and `return`. Answers the yielded value and the frames to
+keep, or the return value. -/
+def genRun : Nat → List GFrame → GInput → M GOut
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, frames, input => do
+    tick
+    match input with
+    | .throwV v => genUnwind n frames (.throw v)
+    | .retV v => genUnwind n frames (.ret v)
+    | .send v =>
+    match frames with
+    | [] => pure (.done .undef)
+    | f :: rest =>
+      match f with
+      | .resume ctx target =>
+        let r ← tryCatch (do
+            if let some (p, m) := target then bindPat n ctx p v m
+            pure none)
+          (fun a => pure (some a))
+        match r with
+        | some (.throw e) => genUnwind n rest (.throw e)
+        | some a => throw a
+        | none => genRun n rest (.send .undef)
+      | .delegate ctx it target =>
+        let r ← tryCatch (do
+            let next ← getV n it "next"
+            let res ← callV n next it #[v]
+            if !res.isObj then throwErr .type "Iterator result is not an object"
+            pure (Except.ok res))
+          (fun a => pure (Except.error a))
+        match r with
+        | .error (.throw e) => genUnwind n rest (.throw e)
+        | .error a => throw a
+        | .ok res =>
+          if toBool (← getV n res "done") then
+            let x ← getV n res "value"
+            genRun n (.resume ctx target :: rest) (.send x)
+          else pure (.yielded (← getV n res "value") (f :: rest))
+      | .pending c =>
+        -- the finally block ended normally: go on with the completion it held
+        genUnwind n rest c
+      | .block _ [] => genRun n rest (.send .undef)
+      | .block ctx (s :: ss) =>
+        if !s.hasYield then
+          let r ← tryCatch (do let c ← evalStmt n ctx [] s; pure (Except.ok c))
+            (fun a => pure (Except.error a))
+          match r with
+          | .error (.throw e) => genUnwind n (.block ctx ss :: rest) (.throw e)
+          | .error a => throw a
+          | .ok .normal => genRun n (.block ctx ss :: rest) (.send .undef)
+          | .ok (.ret x) => genUnwind n (.block ctx ss :: rest) (.ret x)
+          | .ok (.brk l) => genUnwind n (.block ctx ss :: rest) (.brk l)
+          | .ok (.cont l) => genUnwind n (.block ctx ss :: rest) (.cont l)
+        else genEnter n ctx [] s (.block ctx ss :: rest)
+      | .loopW ctx labels c body =>
+        let t ← genEval n ctx c
+        match t with
+        | .error e => genUnwind n rest (.throw e)
+        | .ok t =>
+          if toBool t then genRun n (.block ctx [body] :: f :: rest) (.send .undef)
+          else genRun n rest (.send .undef)
+      | .loopDo ctx labels body c =>
+        let t ← genEval n ctx c
+        match t with
+        | .error e => genUnwind n rest (.throw e)
+        | .ok t =>
+          if toBool t then genRun n (.block ctx [body] :: f :: rest) (.send .undef)
+          else genRun n rest (.send .undef)
+      | .loopFor ctx labels perIter test update body first =>
+        let ctx ← if perIter.isEmpty then pure ctx else copyEnv n ctx perIter
+        let r ← tryCatch (do
+            if !first then
+              if let some u := update then let _ ← evalExpr n ctx u
+            match test with
+            | some t => pure (Except.ok (toBool (← evalExpr n ctx t)))
+            | none => pure (Except.ok true))
+          (fun a => pure (Except.error a))
+        match r with
+        | .error (.throw e) => genUnwind n rest (.throw e)
+        | .error a => throw a
+        | .ok false => genRun n rest (.send .undef)
+        | .ok true =>
+          genRun n (.block ctx [body] :: .loopFor ctx labels perIter test update body false :: rest) (.send .undef)
+      | .loopOf ctx labels kind target it body =>
+        let r ← tryCatch (do pure (Except.ok (← iterStep n it))) (fun a => pure (Except.error a))
+        match r with
+        | .error (.throw e) => genUnwind n rest (.throw e)
+        | .error a => throw a
+        | .ok none => genRun n rest (.send .undef)
+        | .ok (some x) =>
+          let r ← tryCatch (do pure (Except.ok (← bindIter n ctx kind target x)))
+            (fun a => pure (Except.error a))
+          match r with
+          | .error (.throw e) =>
+            let _ ← tryCatch (iterClose n it) (fun _ => pure ())
+            genUnwind n rest (.throw e)
+          | .error a => throw a
+          | .ok ctx' => genRun n (.block ctx' [body] :: f :: rest) (.send .undef)
+      | .tryF ctx _ _ (some fs) _ =>
+        let ctx' ← enterBlock n ctx fs
+        genRun n (.block ctx' fs :: rest) (.send .undef)
+      | .tryF .. => genRun n rest (.send .undef)
+termination_by structural n _ _ => n
+
+/-- Evaluate a `yield`-free expression, catching a thrown value. -/
+def genEval : Nat → Ctx → Expr → M (Except Value Value)
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, e => do
+    let r ← tryCatch (do pure (Except.ok (← evalExpr n ctx e))) (fun a => pure (Except.error a))
+    match r with
+    | .ok v => pure (.ok v)
+    | .error (.throw v) => pure (.error v)
+    | .error a => throw a
+termination_by structural n _ _ => n
+
+/-- Start a statement that holds a `yield`, on top of `rest`. -/
+def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, labels, s, rest => do
+    let yieldAt (arg : Option Expr) (delegate : Bool) (target : Option (Pat × BindMode)) : M GOut := do
+      let v ← match arg with
+        | some e => genEval n ctx e
+        | none => pure (.ok .undef)
+      match v with
+      | .error e => genUnwind n rest (.throw e)
+      | .ok v =>
+        if delegate then
+          let r ← tryCatch (do pure (Except.ok (← getIterator n v))) (fun a => pure (Except.error a))
+          match r with
+          | .error (.throw e) => genUnwind n rest (.throw e)
+          | .error a => throw a
+          | .ok it => genRun n (.delegate ctx it target :: rest) (.send .undef)
+        else pure (.yielded v (.resume ctx target :: rest))
+    match s with
+    | .expr (.yieldE d arg) => yieldAt arg d none
+    | .expr (.assign none t (.yieldE d arg)) =>
+      match t with
+      | .ident x => yieldAt arg d (some (.id x, .assign))
+      | .member .. | .index .. => yieldAt arg d (some (.target t, .assign))
+      | _ => genUnsupported n rest
+    | .decl k [Decl.mk p (some (.yieldE d arg))] =>
+      let m : BindMode := match k with
+        | .var => .var
+        | .letK => .declare ctx.env true
+        | .constK => .declare ctx.env false
+      yieldAt arg d (some (p, m))
+    | .ret (some (.yieldE d arg)) =>
+      -- `return yield x`: the value sent back is the return value
+      let _ := d
+      let v ← match arg with
+        | some e => genEval n ctx e
+        | none => pure (.ok .undef)
+      match v with
+      | .error e => genUnwind n rest (.throw e)
+      | .ok v => pure (.yielded v (.resume ctx (some (.id "%ret", .declare ctx.env true)) ::
+          .block ctx [.ret (some (.ident "%ret"))] :: rest))
+    | .block ss =>
+      let ctx' ← enterBlock n ctx ss
+      genRun n (.block ctx' ss :: rest) (.send .undef)
+    | .ifS c t e =>
+      if c.hasYield then genUnsupported n rest else
+      match ← genEval n ctx c with
+      | .error x => genUnwind n rest (.throw x)
+      | .ok v =>
+        if toBool v then genRun n (.block ctx [t] :: rest) (.send .undef)
+        else match e with
+          | some e => genRun n (.block ctx [e] :: rest) (.send .undef)
+          | none => genRun n rest (.send .undef)
+    | .whileS c body =>
+      if c.hasYield then genUnsupported n rest
+      else genRun n (.loopW ctx labels c body :: rest) (.send .undef)
+    | .doWhile body c =>
+      if c.hasYield then genUnsupported n rest
+      else genRun n (.block ctx [body] :: .loopDo ctx labels body c :: rest) (.send .undef)
+    | .forS init test update body =>
+      let ok := !(test.any Expr.hasYield) && !(update.any Expr.hasYield) &&
+        (match init with | some (.expr e) => !e.hasYield | some (.decl _ ds) => !(ds.any Decl.hasYield) | none => true)
+      if !ok then genUnsupported n rest else
+      let r ← tryCatch (do
+          match init with
+          | some (.decl .var ds) => evalDecls n ctx .var ds; pure (Except.ok (ctx, ([] : List String)))
+          | some (.decl k ds) =>
+            let env ← newEnv (some ctx.env)
+            let ctx' := { ctx with env }
+            for d in ds do
+              for x in d.names do declare env x { v := .undef, mutable := k == .letK, init := false }
+            evalDecls n ctx' k ds
+            pure (Except.ok (ctx', if k == .letK then ds.flatMap Decl.names else []))
+          | some (.expr e) => let _ ← evalExpr n ctx e; pure (Except.ok (ctx, []))
+          | none => pure (Except.ok (ctx, [])))
+        (fun a => pure (Except.error a))
+      match r with
+      | .error (.throw x) => genUnwind n rest (.throw x)
+      | .error a => throw a
+      | .ok (ctx', perIter) => genRun n (.loopFor ctx' labels perIter test update body true :: rest) (.send .undef)
+    | .forOf kind target obj body =>
+      if obj.hasYield then genUnsupported n rest else
+      let r ← tryCatch (do pure (Except.ok (← getIterator n (← evalExpr n ctx obj))))
+        (fun a => pure (Except.error a))
+      match r with
+      | .error (.throw x) => genUnwind n rest (.throw x)
+      | .error a => throw a
+      | .ok it => genRun n (.loopOf ctx labels kind target it body :: rest) (.send .undef)
+    | .tryS body param handler fin =>
+      let ctx' ← enterBlock n ctx body
+      genRun n (.block ctx' body :: .tryF ctx param handler fin 0 :: rest) (.send .undef)
+    | .labeled l body => genEnter n ctx (l :: labels) body rest
+    | _ => genUnsupported n rest
+termination_by structural n _ _ _ _ => n
+
+def genUnsupported : Nat → List GFrame → M GOut
+  | 0, _ => throw (.halt "fuel")
+  | n + 1, rest => do
+    genUnwind n rest (.throw (← mkError .syntax "yield in this position is not supported"))
+termination_by structural n _ => n
+
+/-- Unwind the frames with an abrupt completion: loops take their `break` and
+`continue`, `try` takes a throw, `finally` runs, `for`-`of` closes its iterator. -/
+def genUnwind : Nat → List GFrame → GCompl → M GOut
+  | 0, _, _ => throw (.halt "fuel")
+  | _ + 1, [], c =>
+    match c with
+    | .ret v => pure (.done v)
+    | .throw v => throw (.throw v)
+    | _ => pure (.done .undef)
+  | n + 1, f :: rest, c => do
+    match f, c with
+    | .loopW _ labels _ _, .brk l | .loopDo _ labels _ _, .brk l | .loopFor _ labels _ _ _ _ _, .brk l =>
+      if l.isNone || labels.contains (l.getD "") then genRun n rest (.send .undef)
+      else genUnwind n rest c
+    | .loopW _ labels _ _, .cont l | .loopDo _ labels _ _, .cont l | .loopFor _ labels _ _ _ _ _, .cont l =>
+      if l.isNone || labels.contains (l.getD "") then genRun n (f :: rest) (.send .undef)
+      else genUnwind n rest c
+    | .loopOf _ labels _ _ it _, .brk l =>
+      if l.isNone || labels.contains (l.getD "") then
+        iterClose n it; genRun n rest (.send .undef)
+      else iterClose n it; genUnwind n rest c
+    | .loopOf _ labels _ _ it _, .cont l =>
+      if l.isNone || labels.contains (l.getD "") then genRun n (f :: rest) (.send .undef)
+      else iterClose n it; genUnwind n rest c
+    | .loopOf _ _ _ _ it _, .ret _ => iterClose n it; genUnwind n rest c
+    | .loopOf _ _ _ _ it _, .throw _ =>
+      let _ ← tryCatch (iterClose n it) (fun _ => pure ())
+      genUnwind n rest c
+    | .delegate _ it _, .throw v =>
+      let th ← getV n it "throw"
+      match th with
+      | .undef | .null =>
+        let _ ← tryCatch (iterClose n it) (fun _ => pure ())
+        genUnwind n rest (.throw (← mkError .type "The iterator does not provide a 'throw' method"))
+      | _ =>
+        let res ← callV n th it #[v]
+        if !res.isObj then throwErr .type "Iterator result is not an object"
+        if toBool (← getV n res "done") then genRun n rest (.send (← getV n res "value"))
+        else pure (.yielded (← getV n res "value") (f :: rest))
+    | .delegate _ it _, .ret v =>
+      let rt ← getV n it "return"
+      match rt with
+      | .undef | .null => genUnwind n rest c
+      | _ =>
+        let res ← callV n rt it #[v]
+        if !res.isObj then throwErr .type "Iterator result is not an object"
+        if toBool (← getV n res "done") then genUnwind n rest (.ret (← getV n res "value"))
+        else pure (.yielded (← getV n res "value") (f :: rest))
+    | .tryF ctx param (some hs) fin 0, .throw v =>
+      let env ← newEnv (some ctx.env)
+      let ctx' := { ctx with env }
+      let r ← tryCatch (do
+          if let some p := param then
+            for x in p.names do declare env x { v := .undef, init := false }
+            bindPat n ctx' p v (.declare env true)
+          pure none)
+        (fun a => pure (some a))
+      match r with
+      | some (.throw e) => genUnwind n (.tryF ctx param none fin 1 :: rest) (.throw e)
+      | some a => throw a
+      | none =>
+        let ctx'' ← enterBlock n ctx' hs
+        genRun n (.block ctx'' hs :: .tryF ctx param (some hs) fin 1 :: rest) (.send .undef)
+    | .tryF ctx _ _ (some fs) _, _ =>
+      let ctx' ← enterBlock n ctx fs
+      genRun n (.block ctx' fs :: .pending c :: rest) (.send .undef)
+    | _, _ => genUnwind n rest c
+termination_by structural n _ _ => n
 
 /-- Built-in functions. `newTarget` is set for `new`. -/
 def callNative : Nat → Native → Value → Array Value → Option Value → M Value
@@ -2167,6 +2459,39 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       newArray vs
     | .arrayOf => newArray args
     | .dateNow => pure (.num 0)
+    | .genNext | .genReturn | .genThrow =>
+      let gid ← match thisV with
+        | .obj g => pure g
+        | _ => throwErr .type "next method called on incompatible receiver"
+      match (← getObj gid).kind with
+      | .gen frames st =>
+        let result (v : Value) (done : Bool) : M Value := do
+          let o ← newObject
+          defineOwn o "value" (.data v true true true)
+          defineOwn o "done" (.data (.bool done) true true true)
+          pure (.obj o)
+        if st == 2 then throwErr .type "Generator is already running"
+        let setG (fs : List GFrame) (s : Nat) : M Unit :=
+          modifyObj gid fun o => { o with kind := .gen fs s }
+        if st == 3 || (st == 0 && id_ != .genNext) then
+          setG [] 3
+          match id_ with
+          | .genNext => result .undef true
+          | .genReturn => result a0 true
+          | _ => throw (.throw a0)
+        else
+          setG frames 2
+          let input := match id_ with
+            | .genNext => GInput.send a0
+            | .genReturn => .retV a0
+            | _ => .throwV a0
+          let r ← tryCatch (do pure (Except.ok (← genRun n frames input)))
+            (fun a => pure (Except.error a))
+          match r with
+          | .error a => setG [] 3; throw a
+          | .ok (.yielded v fs) => setG fs 1; result v false
+          | .ok (.done v) => setG [] 3; result v true
+      | _ => throwErr .type "next method called on incompatible receiver"
     | _ =>
       -- string methods and Math
       stringOrMath n id thisV args
@@ -2649,6 +2974,12 @@ def initRealm : M Unit := do
   defineOwn symbolProto (symKey symToStringTag) (.data (.str "Symbol") false false true)
   setHidden iterProto (symKey symIterator) (← mkNative .iterSelf "[Symbol.iterator]" 0)
   method arrayIterProto "next" .iterNext 0
+  let genProto ← alloc { proto := .obj iterProto }
+  modify fun h => { h with realm := { h.realm with generatorProto := genProto } }
+  method genProto "next" .genNext 1
+  method genProto "return" .genReturn 1
+  method genProto "throw" .genThrow 1
+  defineOwn genProto (symKey symToStringTag) (.data (.str "Generator") false false true)
   defineOwn arrayIterProto (symKey symToStringTag) (.data (.str "Array Iterator") false false true)
   let values ← mkNative .arrayValues "values" 0
   setHidden arrayProto "values" values

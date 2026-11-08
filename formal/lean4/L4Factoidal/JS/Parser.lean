@@ -32,6 +32,14 @@ structure PState where
   usesArgs : Bool := false
   strict : Bool := false
   inFun : Bool := false
+  /-- In the body of a generator: `yield` is an operator. -/
+  inGen : Bool := false
+  /-- Enclosing loops, and loops or switches, of the current function (§14.8.1,
+  §14.9.1 early errors for `continue` and `break`). -/
+  loops : Nat := 0
+  breakables : Nat := 0
+  /-- Labels in scope, with whether each labels a loop. -/
+  labels : List (String × Bool) := []
   deriving Inhabited
 
 abbrev P := EStateM String PState
@@ -77,6 +85,10 @@ def bindingName : P String := do
     let s ← get
     if s.strict && (t.text == "eval" || t.text == "arguments") then
       fail s!"'{t.text}' cannot be a binding name in strict mode code"
+    if s.strict && ["implements", "interface", "package", "private", "protected", "public",
+        "static", "yield", "let"].contains t.text then
+      fail s!"'{t.text}' is a reserved word in strict mode code"
+    if s.inGen && t.text == "yield" then fail "'yield' cannot be a binding name in a generator"
     advance; pure t.text
   else if t.kind == .kw && (t.text == "let" || t.text == "yield") then advance; pure t.text
   else fail "expected an identifier"
@@ -87,6 +99,22 @@ def addVar (n : String) : P Unit :=
 end P
 
 open P
+
+/-- The lexically declared names of a statement list (§8.2.4). -/
+def lexNames (ss : List Stmt) : List String :=
+  ss.flatMap fun s => match s with
+    | .decl .letK ds | .decl .constK ds => ds.flatMap Decl.names
+    | .classDecl x _ => [x]
+    | _ => []
+
+/-- Early errors of a block (§14.2.1): a name declared twice lexically, or both
+lexically and with `var` inside the block. -/
+def checkDecls (ss : List Stmt) (vars : List String) : P Unit := do
+  let lex := lexNames ss
+  if lex.eraseDups.length != lex.length then fail "identifier has already been declared"
+  let funs := ss.flatMap fun s => match s with | .funDecl x _ => [x] | _ => []
+  if lex.any (fun x => vars.contains x || funs.contains x) then
+    fail "identifier has already been declared"
 
 /-- Binary operator precedence; `in` is excluded in a `for` head (`noIn`). -/
 def binPrec (t : Token) (noIn : Bool) : Option (Nat × Sum BinOp LogOp) :=
@@ -246,26 +274,26 @@ def parseStmt : Nat → P Stmt
         semi; return .decl .constK ds
       | "function" =>
         advance
-        if ← atP "*" then fail "generators are not supported"
+        let gen ← eatP "*"
         let name ← bindingName
         addVar name
-        let f ← parseFunction n (some name) .normal
+        let f ← parseFunction n (some name) .normal gen
         return .funDecl name f
       | "if" =>
         advance; expectP "("
         let c ← parseExpr n false
         expectP ")"
-        let th ← parseStmt n
-        if ← atK "else" then advance; return .ifS c th (some (← parseStmt n))
+        let th ← parseSubStmt n
+        if ← atK "else" then advance; return .ifS c th (some (← parseSubStmt n))
         return .ifS c th none
       | "while" =>
         advance; expectP "("
         let c ← parseExpr n false
         expectP ")"
-        return .whileS c (← parseStmt n)
+        return .whileS c (← parseLoopBody n)
       | "do" =>
         advance
-        let body ← parseStmt n
+        let body ← parseLoopBody n
         if !(← atK "while") then fail "expected 'while'"
         advance; expectP "("
         let c ← parseExpr n false
@@ -284,6 +312,15 @@ def parseStmt : Nat → P Stmt
         advance
         let t' ← peek
         let label ← if t'.kind == .ident && !t'.nl then advance; pure (some t'.text) else pure none
+        let st ← get
+        match label with
+        | some l =>
+          match st.labels.lookup l with
+          | none => fail s!"undefined label '{l}'"
+          | some isLoop => if t.text == "continue" && !isLoop then fail s!"'{l}' does not label a loop"
+        | none =>
+          if t.text == "continue" && st.loops == 0 then fail "'continue' outside of a loop"
+          if t.text == "break" && st.breakables == 0 then fail "'break' outside of a loop or switch"
         semi
         return if t.text == "break" then .brk label else .cont label
       | "throw" =>
@@ -296,7 +333,10 @@ def parseStmt : Nat → P Stmt
         advance; expectP "("
         let d ← parseExpr n false
         expectP ")"; expectP "{"
+        let st ← get
+        set { st with breakables := st.breakables + 1 }
         let cs ← parseCases n false []
+        modify fun s => { s with breakables := st.breakables }
         return .switchS d cs
       | "debugger" => advance; semi; return .empty
       | "class" =>
@@ -310,8 +350,16 @@ def parseStmt : Nat → P Stmt
       let t2 ← peekAt 1
       if isP t2 ":" then
         advance; advance
+        let st ← get
+        if st.labels.any (·.1 == t.text) then fail s!"label '{t.text}' has already been declared"
+        let nt ← peek
+        let isLoop := isK nt "for" || isK nt "while" || isK nt "do" ||
+          (nt.kind == .ident && st.labels.isEmpty && false)
         if (← atK "function") then fail "labelled function declarations are not supported"
-        return .labeled t.text (← parseStmt n)
+        set { st with labels := (t.text, isLoop) :: st.labels }
+        let body ← parseSubStmt n
+        modify fun s => { s with labels := st.labels }
+        return .labeled t.text body
       if t.text == "let" && (t2.kind == .ident || isP t2 "[" || isP t2 "{" ||
           (t2.kind == .kw && (t2.text == "let" || t2.text == "yield"))) then
         advance
@@ -320,6 +368,35 @@ def parseStmt : Nat → P Stmt
       if t.text == "async" && isK t2 "function" && !t2.nl then fail "async functions are not supported"
       parseExprStmt n
     else parseExprStmt n
+
+/-- A statement in a single-statement position (the body of `if`, a loop or a
+label): a lexical declaration there is an early error (§14.6.1, §14.7.1.1). -/
+def parseSubStmt : Nat → P Stmt
+  | 0 => fail "parser fuel exhausted"
+  | n + 1 => do
+    let t ← peek
+    let t2 ← peekAt 1
+    if isK t "const" || isK t "class" then fail "lexical declaration in a single-statement context"
+    if t.kind == .ident && t.text == "let" && isP t2 "[" then
+      fail "lexical declaration in a single-statement context"
+    if isK t "function" && ((← get).strict || isP t2 "*") then
+      fail "function declaration in a single-statement context"
+    let s ← parseStmt n
+    match s with
+    | .decl .letK _ | .decl .constK _ | .classDecl .. =>
+      fail "lexical declaration in a single-statement context"
+    | _ => pure s
+
+/-- A loop body: `break` and `continue` are allowed in it. -/
+def parseLoopBody : Nat → P Stmt
+  | 0 => fail "parser fuel exhausted"
+  | n + 1 => do
+    let st ← get
+    -- labels just before this loop label it
+    set { st with loops := st.loops + 1, breakables := st.breakables + 1 }
+    let b ← parseSubStmt n
+    modify fun s => { s with loops := st.loops, breakables := st.breakables }
+    pure b
 
 def parseExprStmt : Nat → P Stmt
   | 0 => fail "parser fuel exhausted"
@@ -340,7 +417,10 @@ def parseBlock : Nat → P (List Stmt)
   | 0 => fail "parser fuel exhausted"
   | n + 1 => do
     expectP "{"
+    let before := (← get).vars
     let ss ← parseStmts n #[]
+    let after := (← get).vars
+    checkDecls ss (after.toList.filter (!before.contains ·))
     expectP "}"
     return ss
 
@@ -388,7 +468,7 @@ def parseFor : Nat → P Stmt
       advance
       let obj ← if isOf then parseAssign n false else parseExpr n false
       expectP ")"
-      let body ← parseStmt n
+      let body ← parseLoopBody n
       let (kind, pat) ← match init with
         | some (.decl k [Decl.mk p none]) => pure (some k, p)
         | some (.decl .var [Decl.mk (.id x) (some _)]) =>
@@ -406,7 +486,7 @@ def parseFor : Nat → P Stmt
     expectP ";"
     let update ← if ← atP ")" then pure none else pure (some (← parseExpr n false))
     expectP ")"
-    let body ← parseStmt n
+    let body ← parseLoopBody n
     return .forS init test update body
 
 def parseTry : Nat → P Stmt
@@ -448,13 +528,15 @@ def parseCaseBody : Nat → Array Stmt → P (List Stmt)
     parseCaseBody n (acc.push s)
 
 /-- Parameters and body of a function, after its name. -/
-def parseFunction : Nat → Option String → FunKind → P FunDef
-  | 0, _, _ => fail "parser fuel exhausted"
-  | n + 1, name, kind => do
-    if ← atP "*" then fail "generators are not supported"
+def parseFunction : Nat → Option String → FunKind → Bool → P FunDef
+  | 0, _, _, _ => fail "parser fuel exhausted"
+  | n + 1, name, kind, gen => do
     expectP "("
+    let outerGen := (← get).inGen
+    modify fun s => { s with inGen := gen }
     let (ps, rest) ← parseParams n #[]
-    parseBody n name ps rest kind
+    modify fun s => { s with inGen := outerGen }
+    parseBody n name ps rest kind gen
 
 /-- A parameter list after `(`, to the `)` (consumed): patterns with initialisers
 and a rest parameter (§15.1). -/
@@ -475,9 +557,9 @@ def parseParams : Nat → Array PatElem → P (List PatElem × Option Pat)
     else expectP ")"; return (acc.toList, none)
 
 /-- A function body `{ ... }` with its own `var` scope. -/
-def parseBody : Nat → Option String → List PatElem → Option Pat → FunKind → P FunDef
-  | 0, _, _, _, _ => fail "parser fuel exhausted"
-  | n + 1, name, params, rest, kind => do
+def parseBody : Nat → Option String → List PatElem → Option Pat → FunKind → Bool → P FunDef
+  | 0, _, _, _, _, _ => fail "parser fuel exhausted"
+  | n + 1, name, params, rest, kind, gen => do
     let outer ← get
     if !(isP (← peek) "{") then fail "expected '{'"
     let strict := outer.strict || hasUseStrict outer.toks (outer.pos + 1)
@@ -485,26 +567,32 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
       (match rest with | some r => r.names | none => [])
     if strict && names.any (fun p => p == "eval" || p == "arguments") then
       fail "'eval' or 'arguments' cannot be a parameter in strict mode code"
-    set { outer with vars := #[], usesArgs := false, strict, inFun := true }
+    let simple := rest.isNone && params.all (fun p => match p with | .mk (.id _) none => true | _ => false)
+    if (strict || kind == .arrow || kind == .method || !simple) && names.eraseDups.length != names.length then
+      fail "duplicate parameter name not allowed in this context"
+    set { outer with vars := #[], usesArgs := false, strict, inFun := true, loops := 0,
+                     breakables := 0, labels := [],
+                     inGen := gen }
     let body ← parseBlock n
     let inner ← get
     let usesArgs := inner.usesArgs
     let arrow := kind == .arrow
     set { inner with vars := outer.vars, strict := outer.strict, inFun := outer.inFun,
-                     usesArgs := outer.usesArgs || (arrow && usesArgs) }
-    return FunDef.mk name params rest body inner.vars.toList (usesArgs && !arrow) strict kind
+                     loops := outer.loops, breakables := outer.breakables, labels := outer.labels,
+                     inGen := outer.inGen, usesArgs := outer.usesArgs || (arrow && usesArgs) }
+    return FunDef.mk name params rest body inner.vars.toList (usesArgs && !arrow) strict kind gen
 
 /-- An arrow function after its parameters and `=>`. -/
 def parseArrowBody : Nat → List PatElem → Option Pat → P Expr
   | 0, _, _ => fail "parser fuel exhausted"
   | n + 1, params, rest => do
-    if ← atP "{" then return .func (← parseBody n none params rest .arrow)
+    if ← atP "{" then return .func (← parseBody n none params rest .arrow false)
     let outer ← get
     set { outer with vars := #[], inFun := true }
     let e ← parseAssign n false
     let inner ← get
     set { inner with vars := outer.vars, inFun := outer.inFun }
-    return .func (FunDef.mk none params rest [.ret (some e)] inner.vars.toList false outer.strict .arrow)
+    return .func (FunDef.mk none params rest [.ret (some e)] inner.vars.toList false outer.strict .arrow false)
 
 def parseExpr : Nat → Bool → P Expr
   | 0, _ => fail "parser fuel exhausted"
@@ -526,6 +614,16 @@ def parseAssign : Nat → Bool → P Expr
   | n + 1, noIn => do
     let t ← peek
     let t2 ← peekAt 1
+    if (← get).inGen && (t.kind == .ident || t.kind == .kw) && t.text == "yield" && !t.escaped then
+      advance
+      if ← atP "*" then
+        advance
+        return .yieldE true (some (← parseAssign n noIn))
+      let nt ← peek
+      let ends := nt.nl || nt.kind == .eof || isP nt ")" || isP nt "]" || isP nt "}" ||
+        isP nt "," || isP nt ";" || isP nt ":" || isK nt "in"
+      if ends then return .yieldE false none
+      return .yieldE false (some (← parseAssign n noIn))
     -- arrow functions
     if (t.kind == .ident || (t.kind == .kw && t.text == "yield")) && isP t2 "=>" && !t2.nl then
       if t.text == "async" then fail "async functions are not supported"
@@ -725,9 +823,9 @@ def parsePrimary : Nat → P Expr
       | "false" => advance; return .bool false
       | "function" =>
         advance
-        if ← atP "*" then fail "generators are not supported"
+        let gen ← eatP "*"
         let name ← if (← peek).kind == .ident then pure (some (← bindingName)) else pure none
-        return .func (← parseFunction n name .normal)
+        return .func (← parseFunction n name .normal gen)
       | "let" | "yield" => advance; return .ident t.text
       | "class" =>
         advance
@@ -801,10 +899,19 @@ def parseObject : Nat → List PropDef → P (List PropDef)
         let k ← parsePropKey n
         expectP "("
         let (ps, rest) ← parseParams n #[]
-        let f ← parseBody n none ps rest .method
+        let f ← parseBody n none ps rest .method false
         pure (if t.text == "get" then PropDef.getter k f else PropDef.setter k f)
-      else if isP t "*" || (t.kind == .ident && t.text == "async" && !(isP t2 ":" || isP t2 "(" || isP t2 "," || isP t2 "}" || isP t2 "=")) then
-        fail "generator and async methods are not supported"
+      else if isP t "*" then
+        advance
+        let k ← parsePropKey n
+        expectP "("
+        let og := (← get).inGen
+        let (ps, rest) ← parseParams n #[]
+        let f ← parseBody n none ps rest .method true
+        modify fun s => { s with inGen := og }
+        pure (PropDef.init k (.func f))
+      else if t.kind == .ident && t.text == "async" && !(isP t2 ":" || isP t2 "(" || isP t2 "," || isP t2 "}" || isP t2 "=") then
+        fail "async methods are not supported"
       else if t.kind == .ident && (isP t2 "," || isP t2 "}") then
         advance; pure (PropDef.init (.lit t.text) (.ident t.text))
       else if t.kind == .ident && isP t2 "=" then
@@ -817,7 +924,7 @@ def parseObject : Nat → List PropDef → P (List PropDef)
         if ← atP "(" then
           advance
           let (ps, rest) ← parseParams n #[]
-          pure (PropDef.init k (.func (← parseBody n none ps rest .method)))
+          pure (PropDef.init k (.func (← parseBody n none ps rest .method false)))
         else
           expectP ":"
           pure (PropDef.init k (← parseAssign n false))
@@ -918,7 +1025,10 @@ def parseMembers : Nat → Bool → Option FunDef → List Member → P (Option 
     if static && (← atP "{") then fail "class static blocks are not supported"
     let t ← peek
     let t2 ← peekAt 1
-    if isP t "*" then fail "generator methods are not supported"
+    let gen := isP t "*"
+    if gen then advance
+    let t ← peek
+    let t2 ← peekAt 1
     if isP t "#" then fail "private class members are not supported"
     if t.kind == .ident && t.text == "async" && !t2.nl && !(isP t2 "(" || isP t2 "=" || isP t2 ";" || isP t2 "}") then
       fail "async methods are not supported"
@@ -934,9 +1044,9 @@ def parseMembers : Nat → Bool → Option FunDef → List Member → P (Option 
       let isCtor := !static && !accessor && (kt.kind == .ident || kt.kind == .kw || kt.kind == .str) && kt.text == "constructor"
       if isCtor then
         if ctor.isSome then fail "a class may only have one constructor"
-        let f ← parseBody n none ps rest (.ctor derived)
+        let f ← parseBody n none ps rest (.ctor derived) false
         return ← parseMembers n derived (some f) acc
-      let f ← parseBody n none ps rest .method
+      let f ← parseBody n none ps rest .method gen
       let kind := if accessor then (if t.text == "get" then MemberKind.getter else .setter) else .method
       parseMembers n derived ctor (.mk static kind k f :: acc)
     else
@@ -947,7 +1057,7 @@ def parseMembers : Nat → Bool → Option FunDef → List Member → P (Option 
       let init ← if ← atP "=" then advance; pure (some (← parseAssign n false)) else pure none
       set { (← get) with vars := outer.vars, inFun := outer.inFun }
       semi
-      let f := FunDef.mk none [] none [.ret init] [] false true .method
+      let f := FunDef.mk none [] none [.ret init] [] false true .method false
       parseMembers n derived ctor (.mk static .field k f :: acc)
 
 end
@@ -967,7 +1077,12 @@ def parseScript (src : String) (strict : Bool := false) : Except String Script :
     | .ok body st' =>
       if (st'.toks.getD st'.pos default).kind != .eof then
         .error s!"SyntaxError: unexpected '{(st'.toks.getD st'.pos default).text}'"
-      else .ok { body, vars := st'.vars.toList, strict }
+      else
+        let lex := lexNames body
+        let funs := body.flatMap fun s => match s with | .funDecl x _ => [x] | _ => []
+        if lex.eraseDups.length != lex.length || lex.any (fun x => st'.vars.contains x || funs.contains x) then
+          .error "SyntaxError: identifier has already been declared"
+        else .ok { body, vars := st'.vars.toList, strict }
     | .error e _ => .error e
 
 end L4Factoidal.JS
