@@ -17,7 +17,7 @@ Numeric literals are rounded correctly: the decimal digits go to
 namespace L4Factoidal.JS
 
 inductive TokKind where
-  | ident | kw | num | str | punct | tmpl | eof
+  | ident | kw | num | big | str | punct | tmpl | eof
   deriving BEq, Repr, Inhabited, DecidableEq
 
 
@@ -244,6 +244,25 @@ def scanIdent (cs : Array Char) : Nat → Nat → String → Bool → Except Str
         | _ => .error "SyntaxError: invalid identifier escape"
     else .ok (acc, i, esc)
 
+/-- A BigInt literal at `i` (§12.9.3: digits then `n`): its value and the index
+after it, or `none` when the literal is not one. -/
+def scanBig (cs : Array Char) (i : Nat) : Option (Nat × Nat) :=
+  let c0 := charAt cs i
+  let c1 := charAt cs (i + 1)
+  let radixOf : Nat × Nat × (Char → Bool) :=
+    if c0 == '0' && (c1 == 'x' || c1 == 'X') then (16, i + 2, fun c => (hexVal c).isSome)
+    else if c0 == '0' && (c1 == 'o' || c1 == 'O') then (8, i + 2, fun c => '0' ≤ c && c ≤ '7')
+    else if c0 == '0' && (c1 == 'b' || c1 == 'B') then (2, i + 2, fun c => c == '0' || c == '1')
+    else (10, i, Char.isDigit)
+  let (b, st, ok) := radixOf
+  let j := scanWhile cs ok cs.size st
+  if j == st || charAt cs j != 'n' then none
+  else if b == 10 && c0 == '0' && j > i + 1 then none
+  else
+    let k := j + 1
+    if k < cs.size && (isIdPart (charAt cs k)) then none
+    else some (digitsVal cs b cs.size st j 0, k)
+
 /-- A numeric literal at `i`: its value and the index after it. -/
 def scanNum (cs : Array Char) (i : Nat) : Except String (Float × Nat) :=
   let c0 := charAt cs i
@@ -325,6 +344,10 @@ def lexGo (cs : Array Char) : Nat → Nat → Bool → Array Token → Except St
         if s.isEmpty then .error "SyntaxError: invalid or unexpected token" else
         let kind := if keywords.contains s && !esc then TokKind.kw else .ident
         lexGo cs fuel j false (acc.push { kind, text := s, nl, pos := i, escaped := esc })
+    else if c.isDigit && (scanBig cs i).isSome then
+      match scanBig cs i with
+      | some (v, j) => lexGo cs fuel j false (acc.push { kind := .big, text := toString v, nl, pos := i })
+      | none => .error "SyntaxError: invalid BigInt literal"
     else if c.isDigit || (c == '.' && (charAt cs (i + 1)).isDigit) then
       match scanNum cs i with
       | .error e => .error e

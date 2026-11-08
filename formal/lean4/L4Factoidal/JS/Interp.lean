@@ -108,6 +108,7 @@ def typeOf (v : Value) : M String := do
   | .num _ => pure "number"
   | .str _ => pure "string"
   | .sym _ => pure "symbol"
+  | .big _ => pure "bigint"
   | .obj id => pure (typeOfKind (← getObj id).kind)
 
 /-- A function object for a native, with `name` and `length`. -/
@@ -282,6 +283,62 @@ def parseFloatStr (s : String) : Float :=
       if f.isNaN then go k else f
   go n
 
+/-! ## BigInt (§6.1.6.2) -/
+
+/-- Two's complement bit operations on integers, through naturals of a width that
+holds both operands. -/
+def bigBits (f : Nat → Nat → Nat) (x y : Int) : Int :=
+  let k := Nat.max (Nat.log2 x.natAbs) (Nat.log2 y.natAbs) + 2
+  let m : Nat := 2 ^ k
+  let enc (i : Int) : Nat := (i % (m : Int)).toNat
+  let r := f (enc x) (enc y) % m
+  if r ≥ m / 2 then (r : Int) - m else r
+
+/-- Compare an integer with a finite double exactly: `lt`, `eq` or `gt`. -/
+def cmpIntFloat (i : Int) (x : Float) : Ordering :=
+  let (neg, num, den) := parts x
+  let xn : Int := if neg then -(num : Int) else num
+  compare (i * den) xn
+
+/-- StringToBigInt (§7.1.14): `none` when the text is not an integer literal. -/
+def strToBigInt (s0 : String) : Option Int :=
+  let s := trimJs s0
+  if s.isEmpty then some 0 else
+  let cs := s.toList
+  let radix (b : Nat) (ds : List Char) : Option Int :=
+    if ds.isEmpty then none else
+    ds.foldlM (fun (a : Nat) c => (hexVal c).bind fun d => if d < b then some (a * b + d) else none) 0
+      |>.map (fun v => (v : Int))
+  match cs with
+  | '0' :: 'x' :: r | '0' :: 'X' :: r => radix 16 r
+  | '0' :: 'o' :: r | '0' :: 'O' :: r => radix 8 r
+  | '0' :: 'b' :: r | '0' :: 'B' :: r => radix 2 r
+  | '-' :: r => (if r.all Char.isDigit && !r.isEmpty then radix 10 r else none).map (- ·)
+  | '+' :: r => if r.all Char.isDigit then radix 10 r else none
+  | r => if r.all Char.isDigit then radix 10 r else none
+
+def bigOp (op : BinOp) (x y : Int) : M Value := do
+  match op with
+  | .sub => pure (.big (x - y))
+  | .mul => pure (.big (x * y))
+  | .div => if y == 0 then throwErr .range "Division by zero" else pure (.big (x.tdiv y))
+  | .mod => if y == 0 then throwErr .range "Division by zero" else pure (.big (x.tmod y))
+  | .exp =>
+    if y < 0 then throwErr .range "Exponent must be non-negative"
+    else if y > 100000 && x.natAbs > 1 then throwErr .range "Maximum BigInt size exceeded"
+    else pure (.big (x ^ y.toNat))
+  | .shl =>
+    if y > 1000000 then throwErr .range "Maximum BigInt size exceeded"
+    else pure (.big (if y ≥ 0 then x * 2 ^ y.toNat else x.fdiv (2 ^ (-y).toNat)))
+  | .sar =>
+    if y < -1000000 then throwErr .range "Maximum BigInt size exceeded"
+    else pure (.big (if y ≥ 0 then x.fdiv (2 ^ y.toNat) else x * 2 ^ (-y).toNat))
+  | .shr => throwErr .type "BigInts have no unsigned right shift, use >> instead"
+  | .band => pure (.big (bigBits (· &&& ·) x y))
+  | .bor => pure (.big (bigBits (· ||| ·) x y))
+  | .bxor => pure (.big (bigBits (· ^^^ ·) x y))
+  | _ => pure (.big 0)
+
 /-! ## The evaluator -/
 
 /-- The prototype of the running method's `[[HomeObject]]` (§13.3.7, `super`). -/
@@ -314,6 +371,7 @@ def getV : Nat → Value → String → M Value
     | .num _ => getProto n (← realm).numberProto key v
     | .bool _ => getProto n (← realm).booleanProto key v
     | .sym _ => getProto n (← realm).symbolProto key v
+    | .big _ => getProto n (← realm).bigintProto key v
     | .undef => throwErr .type s!"Cannot read properties of undefined (reading '{key}')"
     | .null => throwErr .type s!"Cannot read properties of null (reading '{key}')"
 termination_by structural n _ _ => n
@@ -411,6 +469,7 @@ def toNum : Nat → Value → M Float
     | .num x => pure x
     | .str s => pure (strToNumber s)
     | .sym _ => throwErr .type "Cannot convert a Symbol value to a number"
+    | .big _ => throwErr .type "Cannot convert a BigInt value to a number"
     | .obj _ => toNum n (← toPrim n v "number")
 termination_by structural n _ => n
 
@@ -425,6 +484,7 @@ def toStr : Nat → Value → M String
     | .num x => pure (numToString x)
     | .str s => pure s
     | .sym _ => throwErr .type "Cannot convert a Symbol value to a string"
+    | .big i => pure (toString i)
     | .obj _ => toStr n (← toPrim n v "string")
 termination_by structural n _ => n
 
@@ -452,6 +512,7 @@ def toObj : Nat → Value → M Nat
     | .num _ => alloc { proto := .obj r.numberProto, kind := .prim v }
     | .bool _ => alloc { proto := .obj r.booleanProto, kind := .prim v }
     | .sym _ => alloc { proto := .obj r.symbolProto, kind := .prim v }
+    | .big _ => alloc { proto := .obj r.bigintProto, kind := .prim v }
 termination_by structural n _ => n
 
 /-- IsLooselyEqual (§7.2.14). -/
@@ -466,6 +527,11 @@ def looseEq : Nat → Value → Value → M Bool
     | _, .bool y => looseEq n a (.num (if y then 1 else 0))
     | .obj _, .num _ | .obj _, .str _ => looseEq n (← toPrim n a "default") b
     | .num _, .obj _ | .str _, .obj _ => looseEq n a (← toPrim n b "default")
+    | .big x, .num y | .num y, .big x =>
+      pure (y.isFinite && cmpIntFloat x y == .eq)
+    | .big x, .str t | .str t, .big x => pure (strToBigInt t == some x)
+    | .obj _, .big _ => looseEq n (← toPrim n a "default") b
+    | .big _, .obj _ => looseEq n a (← toPrim n b "default")
     | .obj _, .sym _ => looseEq n (← toPrim n a "default") b
     | .sym _, .obj _ => looseEq n a (← toPrim n b "default")
     | _, _ => pure (strictEq a b)
@@ -481,6 +547,17 @@ def lessThan : Nat → Value → Value → Bool → M (Option Bool)
         let y ← toPrim n b "number"; let x ← toPrim n a "number"; pure (x, y)
     match pa, pb with
     | .str x, .str y => pure (some (decide (x < y)))
+    | .big x, .big y => pure (some (decide (x < y)))
+    | .big x, .str t => pure ((strToBigInt t).map fun y => decide (x < y))
+    | .str t, .big y => pure ((strToBigInt t).map fun x => decide (x < y))
+    | .big x, _ =>
+      let y ← toNum n pb
+      if y.isNaN then pure none else if y.isInf then pure (some (y > 0))
+      else pure (some (cmpIntFloat x y == .lt))
+    | _, .big y =>
+      let x ← toNum n pa
+      if x.isNaN then pure none else if x.isInf then pure (some (x < 0))
+      else pure (some (cmpIntFloat y x == .gt))
     | _, _ =>
       let x ← toNum n pa
       let y ← toNum n pb
@@ -524,6 +601,27 @@ termination_by structural n _ _ => n
 def binop : Nat → BinOp → Value → Value → M Value
   | 0, _, _, _ => throw (.halt "fuel")
   | n + 1, op, a, b => do
+    let numeric := match op with
+      | .sub | .mul | .div | .mod | .exp | .shl | .sar | .shr | .band | .bor | .bxor => true
+      | _ => false
+    -- ToNumeric (§7.1.3) of the left operand completes before the right one starts
+    let (a, b) ← if numeric && (a.isObj || b.isObj) then do
+        let x ← toPrim n a "number"
+        let x ← match x with
+          | .big _ => pure x
+          | _ => do pure (Value.num (← toNum n x))
+        let y ← toPrim n b "number"
+        let y ← match y with
+          | .big _ => pure y
+          | _ => do pure (Value.num (← toNum n y))
+        pure (x, y)
+      else pure (a, b)
+    match a, b with
+    | .big x, .big y =>
+      if numeric then return ← bigOp op x y
+    | .big _, _ | _, .big _ =>
+      if numeric then throwErr .type "Cannot mix BigInt and other types, use explicit conversions"
+    | _, _ => pure ()
     match op with
     | .add =>
       match a, b with
@@ -534,6 +632,8 @@ def binop : Nat → BinOp → Value → Value → M Value
         let pb ← toPrim n b "default"
         match pa, pb with
         | .str _, _ | _, .str _ => pure (.str ((← toStr n pa) ++ (← toStr n pb)))
+        | .big x, .big y => pure (.big (x + y))
+        | .big _, _ | _, .big _ => throwErr .type "Cannot mix BigInt and other types, use explicit conversions"
         | _, _ => pure (.num ((← toNum n pa) + (← toNum n pb)))
     | .sub => pure (.num ((← toNum n a) - (← toNum n b)))
     | .mul => pure (.num ((← toNum n a) * (← toNum n b)))
@@ -785,7 +885,10 @@ def assignName : Nat → Ctx → String → Value → M Unit
           if b.v.isObj && ctx.strict == false && false then pure ()
           else throwErr .type "Assignment to constant variable."
         declare e x { b with v }
-      | none => pure ()
+      | none =>
+        match (h.envs.getD e default).withObj with
+        | some o => putV n (.obj o) x v ctx.strict
+        | none => pure ()
     | none =>
       let g := h.realm.globalObj
       if (h.findProp g x 1000).isSome || !ctx.strict then putV n (.obj g) x v ctx.strict
@@ -801,7 +904,10 @@ def lookup : Nat → Ctx → String → M Value
       match (h.envs.getD e default).vars.get? x with
       | some b =>
         if b.init then pure b.v else throwErr .reference s!"Cannot access '{x}' before initialization"
-      | none => pure .undef
+      | none =>
+        match (h.envs.getD e default).withObj with
+        | some o => getV n (.obj o) x
+        | none => pure .undef
     | none =>
       let g := h.realm.globalObj
       if (h.findProp g x 1000).isSome then getV n (.obj g) x
@@ -901,6 +1007,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
   | n + 1, ctx, e => do
     match e with
     | .num x => pure (.num x)
+    | .bigint v => pure (.big v)
     | .str s => pure (.str s)
     | .bool b => pure (.bool b)
     | .null => pure .null
@@ -994,10 +1101,14 @@ def evalExpr : Nat → Ctx → Expr → M Value
       | _, _ =>
         let v ← evalExpr n ctx a
         match op with
-        | .neg => pure (.num (-(← toNum n v)))
+        | .neg => match ← toPrim n v "number" with
+          | .big i => pure (.big (-i))
+          | p => pure (.num (-(← toNum n p)))
         | .plus => pure (.num (← toNum n v))
         | .not => pure (.bool !(toBool v))
-        | .bnot => pure (intV (-(toInt32 (← toNum n v)) - 1))
+        | .bnot => match ← toPrim n v "number" with
+          | .big i => pure (.big (-i - 1))
+          | p => pure (intV (-(toInt32 (← toNum n p)) - 1))
         | .typeof => pure (.str (← typeOf v))
         | .void => pure .undef
         | .delete => pure (.bool true)
@@ -1045,10 +1156,16 @@ def evalExpr : Nat → Ctx → Expr → M Value
       pure v
     | .update pre inc target =>
       let (b, k) ← evalRef n ctx target
-      let old ← toNum n (← getRef n ctx target b k)
-      let nv := if inc then old + 1 else old - 1
-      putTarget n ctx target b k (.num nv)
-      pure (.num (if pre then nv else old))
+      match ← toPrim n (← getRef n ctx target b k) "number" with
+      | .big i =>
+        let nv := if inc then i + 1 else i - 1
+        putTarget n ctx target b k (.big nv)
+        pure (.big (if pre then nv else i))
+      | p =>
+        let old ← toNum n p
+        let nv := if inc then old + 1 else old - 1
+        putTarget n ctx target b k (.num nv)
+        pure (.num (if pre then nv else old))
     | .cond c t f => if toBool (← evalExpr n ctx c) then evalExpr n ctx t else evalExpr n ctx f
     | .seq a b => let _ ← evalExpr n ctx a; evalExpr n ctx b
     | .call callee args =>
@@ -1063,6 +1180,14 @@ def evalExpr : Nat → Ctx → Expr → M Value
         | .superMember k =>
           let proto ← homeProto ctx
           pure (← getSuper n proto k ctx.thisV, ctx.thisV)
+        | .ident x =>
+          let h ← get
+          let thisV := match h.findEnv x 100000 (some ctx.env) with
+            | some e => match (h.envs.getD e default).withObj with
+              | some o => if ((h.envs.getD e default).vars.contains x) then Value.undef else .obj o
+              | none => .undef
+            | none => .undef
+          pure (← lookup n ctx x, thisV)
         | _ => pure (← evalExpr n ctx callee, Value.undef)
       let argv ← evalArgs n ctx args #[]
       -- a direct eval (§19.2.1.1, PerformEval with direct = true)
@@ -1297,6 +1422,10 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
       let o ← evalExpr n ctx obj
       let it ← getIterator n o
       forOfLoop n ctx labels kind target it body
+    | .withS o body =>
+      let id ← toObj n (← evalExpr n ctx o)
+      let env ← modifyGet fun h => (h.envs.size, { h with envs := h.envs.push { parent := some ctx.env, withObj := some id } })
+      evalStmt n { ctx with env } [] body
     | .classDecl name c =>
       let v ← evalClass n ctx c name
       declare ctx.env name { v }
@@ -2459,6 +2588,27 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       newArray vs
     | .arrayOf => newArray args
     | .dateNow => pure (.num 0)
+    | .bigintCtor =>
+      if newTarget.isSome then throwErr .type "BigInt is not a constructor"
+      match ← toPrim n a0 "number" with
+      | .num x =>
+        if !isIntegral x then throwErr .range s!"The number {numToString x} cannot be converted to a BigInt because it is not an integer"
+        pure (.big (truncInt x))
+      | .str t => match strToBigInt t with
+        | some i => pure (.big i)
+        | none => throwErr .syntax s!"Cannot convert {t} to a BigInt"
+      | .bool b => pure (.big (if b then 1 else 0))
+      | .big i => pure (.big i)
+      | _ => throwErr .type "Cannot convert value to a BigInt"
+    | .bigintToString | .bigintValueOf =>
+      match ← thisPrim thisV with
+      | .big i =>
+        if id_ == .bigintValueOf then pure (.big i) else
+        let radix ← match a0 with | .undef => pure 10 | v => do pure (toIntegerOrInf (← toNum n v))
+        if radix < 2 || radix > 36 then throwErr .range "toString() radix must be between 2 and 36"
+        let ds := Nat.toDigits radix.toUInt64.toNat i.natAbs
+        pure (.str ((if i < 0 then "-" else "") ++ String.ofList ds))
+      | _ => throwErr .type "BigInt.prototype method requires that 'this' be a BigInt"
     | .genNext | .genReturn | .genThrow =>
       let gid ← match thisV with
         | .obj g => pure g
@@ -2670,6 +2820,7 @@ def jsonStr : Nat → Value → Nat → M Value
     | .num x => pure (.str (if x.isFinite then numToString x else "null"))
     | .str s => pure (.str (quote s))
     | .sym _ => pure .undef
+    | .big _ => throwErr .type "Do not know how to serialize a BigInt"
     | .obj id =>
       let o ← getObj id
       match o.kind with
@@ -2995,6 +3146,12 @@ def initRealm : M Unit := do
     method oc "assign" .objectAssign 2
     method oc "entries" .objectEntries 1
     method oc "values" .objectValues 1
+  let bigintProto ← mk
+  modify fun h => { h with realm := { h.realm with bigintProto := bigintProto } }
+  setHidden g "BigInt" (← ctorWith "BigInt" .bigintCtor 1 bigintProto)
+  method bigintProto "toString" .bigintToString 0
+  method bigintProto "valueOf" .bigintValueOf 0
+  defineOwn bigintProto (symKey symToStringTag) (.data (.str "BigInt") false false true)
   let date ← mk
   setHidden g "Date" (.obj date)
   method date "now" .dateNow 0

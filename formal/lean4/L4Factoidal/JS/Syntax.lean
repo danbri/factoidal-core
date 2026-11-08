@@ -53,6 +53,8 @@ mutual
 /-- Expressions. -/
 inductive Expr where
   | num (n : Float)
+  /-- A BigInt literal (§12.9.3, `123n`). -/
+  | bigint (v : Nat)
   | str (s : String)
   | bool (b : Bool)
   | null
@@ -169,6 +171,8 @@ inductive Stmt where
   | cont (label : Option String)
   | labeled (label : String) (body : Stmt)
   | switchS (disc : Expr) (cases : List Case)
+  /-- `with (o) s` (§14.11), sloppy mode only. -/
+  | withS (obj : Expr) (body : Stmt)
   | empty
 end
 
@@ -247,7 +251,7 @@ def Expr.hasYieldF : Nat → Expr → Bool
   | n + 1, e =>
     match e with
     | .yieldE .. => true
-    | .num _ | .str _ | .bool _ | .null | .ident _ | .this | .newTarget | .superMember _
+    | .num _ | .bigint _ | .str _ | .bool _ | .null | .ident _ | .this | .newTarget | .superMember _
     | .func _ | .classE _ => false
     | .array es | .template _ es | .superCall es | .tagged _ _ _ es => Expr.anyYield n es
     | .object ps => PropDef.anyYield n ps
@@ -298,6 +302,7 @@ def Stmt.hasYieldF : Nat → Stmt → Bool
         (match h with | some h => Stmt.anyYield n h | none => false) ||
         (match f with | some f => Stmt.anyYield n f | none => false)
     | .labeled _ b => Stmt.hasYieldF n b
+    | .withS o b => Expr.hasYieldF n o || Stmt.hasYieldF n b
     | .switchS d cs => Expr.hasYieldF n d || Case.anyYield n cs
 
 def Stmt.anyYield : Nat → List Stmt → Bool

@@ -55,6 +55,10 @@ def out (src : String) : List String :=
 #guard out "function* r(n) { for (let i = 0; i < n; i++) yield i; } print([...r(4)].join(), Array.from(r(2)).length)" == ["0,1,2,3 2"]
 #guard out "function* a() { yield 1; yield* [2, 3]; return 4 } var s = []; for (var v of a()) s.push(v); print(s.join())" == ["1,2,3"]
 #guard out "label: for (var i = 0; i < 3; i++) { if (i == 1) continue label; } try { eval('break;') } catch (e) { print(e.name) }" == ["SyntaxError"]
+#guard out "print(2n ** 64n, -7n / 2n, -7n % 2n, typeof 1n, 1n == 1, 2n > 1, 5n & -2n, BigInt('0x10'), (255n).toString(16))" ==
+  ["18446744073709551616 -3 -1 bigint true true 4 16 ff"]
+#guard out "try { 1n + 1 } catch (e) { print(e.name) }" == ["TypeError"]
+#guard out "var o = { a: 1, f: function () { return this === o } }; with (o) { a = 2; print(a, f()) } print(o.a)" == ["2 true", "2"]
 #guard out "1 +" == ["SyntaxError: unexpected end of input at end of input (offset 3)"]
 
 end L4Factoidal.JS.Tests

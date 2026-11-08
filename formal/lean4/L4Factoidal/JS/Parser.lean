@@ -81,6 +81,8 @@ def semi : P Unit := do
 /-- An identifier that may be a binding name. -/
 def bindingName : P String := do
   let t ← peek
+  if t.kind == .ident && t.escaped && keywords.contains t.text then
+    fail s!"keyword '{t.text}' must not contain escapes"
   if t.kind == .ident then
     let s ← get
     if s.strict && (t.text == "eval" || t.text == "arguments") then
@@ -192,6 +194,7 @@ def arrElems : Nat → List Expr → List (Option PatElem) → Option (List (Opt
     | .assign none t d => do
       let p ← exprToPat n t
       arrElems n es (some (.mk p (some d)) :: acc)
+    | .assignPat p d => arrElems n es (some (.mk p (some d)) :: acc)
     | _ => do
       let p ← exprToPat n e
       arrElems n es (some (.mk p none) :: acc)
@@ -209,6 +212,7 @@ def objProps : Nat → List PropDef → List PatProp → Option (List PatProp ×
     | .init k (.assign none t d) => do
       let q ← exprToPat n t
       objProps n ps (.mk k q (some d) :: acc)
+    | .init k (.assignPat q d) => objProps n ps (.mk k q (some d) :: acc)
     | .init k v => do
       let q ← exprToPat n v
       objProps n ps (.mk k q none :: acc)
@@ -221,6 +225,7 @@ def propName? (t : Token) : Option String :=
   | .ident | .kw => some t.text
   | .str => some t.text
   | .num => some (numToString t.num)
+  | .big => some t.text
   | _ => none
 
 /-- Does the token after the `(` at the current position, past its `)`, read `=>`? -/
@@ -337,6 +342,8 @@ def parseStmt : Nat → P Stmt
         set { st with breakables := st.breakables + 1 }
         let cs ← parseCases n false []
         modify fun s => { s with breakables := st.breakables }
+        let after := (← get).vars
+        checkDecls (cs.flatMap fun c => match c with | .mk _ b => b) (after.toList.filter (!st.vars.contains ·))
         return .switchS d cs
       | "debugger" => advance; semi; return .empty
       | "class" =>
@@ -344,7 +351,12 @@ def parseStmt : Nat → P Stmt
         let name ← bindingName
         return .classDecl name (← parseClass n (some name))
       | "import" | "export" => fail "modules are not supported"
-      | "with" => fail "'with' is not supported"
+      | "with" =>
+        if (← get).strict then fail "strict mode code may not include a with statement"
+        advance; expectP "("
+        let o ← parseExpr n false
+        expectP ")"
+        return .withS o (← parseSubStmt n)
       | _ => parseExprStmt n
     else if t.kind == .ident then
       let t2 ← peekAt 1
@@ -379,6 +391,8 @@ def parseSubStmt : Nat → P Stmt
     if isK t "const" || isK t "class" then fail "lexical declaration in a single-statement context"
     if t.kind == .ident && t.text == "let" && isP t2 "[" then
       fail "lexical declaration in a single-statement context"
+    if t.kind == .ident && t.text == "let" && t2.nl && !(← get).strict then
+      return ← parseExprStmt n
     if isK t "function" && ((← get).strict || isP t2 "*") then
       fail "function declaration in a single-statement context"
     let s ← parseStmt n
@@ -646,6 +660,8 @@ def parseAssign : Nat → Bool → P Expr
         | .inl none, .array _ | .inl none, .object _ =>
           match exprToPat 256 lhs with
           | some p =>
+            if (← get).strict && p.names.any (fun x => x == "eval" || x == "arguments") then
+              fail "cannot assign to 'eval' or 'arguments' in strict mode code"
             advance
             let rhs ← parseAssign n noIn
             return .assignPat p rhs
@@ -806,12 +822,17 @@ def parsePrimary : Nat → P Expr
     let t ← peek
     match t.kind with
     | .num => advance; return .num t.num
+    | .big => advance; return .bigint t.text.toNat!
     | .str => advance; return .str t.text
     | .tmpl =>
       advance
       let subs ← parseSubs n t.tmpl.subs.toList []
       return .template t.tmpl.cooked.toList subs
     | .ident =>
+      if t.escaped && (keywords.contains t.text ||
+          ((← get).strict && ["implements", "interface", "package", "private", "protected",
+            "public", "static", "yield", "let"].contains t.text)) then
+        fail s!"keyword '{t.text}' must not contain escapes"
       advance
       if t.text == "arguments" then modify fun s => { s with usesArgs := true }
       return .ident t.text
@@ -893,7 +914,7 @@ def parseObject : Nat → List PropDef → P (List PropDef)
     let p ← do
       if isP t "..." then
         advance; pure (PropDef.spread (← parseAssign n false))
-      else if t.kind == .ident && (t.text == "get" || t.text == "set") &&
+      else if t.kind == .ident && !t.escaped && (t.text == "get" || t.text == "set") &&
           !(isP t2 ":" || isP t2 "(" || isP t2 "," || isP t2 "}" || isP t2 "=") then
         advance
         let k ← parsePropKey n
@@ -913,6 +934,7 @@ def parseObject : Nat → List PropDef → P (List PropDef)
       else if t.kind == .ident && t.text == "async" && !(isP t2 ":" || isP t2 "(" || isP t2 "," || isP t2 "}" || isP t2 "=") then
         fail "async methods are not supported"
       else if t.kind == .ident && (isP t2 "," || isP t2 "}") then
+        if t.escaped && keywords.contains t.text then fail s!"keyword '{t.text}' must not contain escapes"
         advance; pure (PropDef.init (.lit t.text) (.ident t.text))
       else if t.kind == .ident && isP t2 "=" then
         -- CoverInitializedName: only valid when the literal becomes a pattern

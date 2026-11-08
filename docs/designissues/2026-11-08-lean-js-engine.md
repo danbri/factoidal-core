@@ -23,7 +23,10 @@ static members, public fields), `new.target`, direct and indirect `eval`, the `F
 constructor and identifier escapes. Stage 3 added generators (section 6a) and early
 errors: `break`/`continue` targets, labels, lexical declarations in single-statement
 positions, redeclarations in a block or script, duplicate parameters where they are
-not allowed, strict-mode reserved words. `lake exe leanjs` runs a script, Test262 files
+not allowed, strict-mode reserved words. Stage 4 added BigInt (literals, arithmetic,
+comparison with Numbers, `BigInt()`), the `with` statement (an object environment
+record, with `@@unscopables`), and more early errors (escaped keywords, `switch`
+redeclarations, `eval`/`arguments` in strict assignment patterns). `lake exe leanjs` runs a script, Test262 files
 or the benchmarks.
 
 Measured results are in section 9 (Test262 counts) and section 10 (speed).
@@ -298,6 +301,15 @@ other unsupported syntax 94 (optional chaining, regular expression literals, `as
 arrows); private class members 79; `async` methods 58; `yield` inside an expression
 30; call depth 30; class static blocks 17.
 
+Stage 4 (BigInt, `with`, more early errors, ToNumeric order): **5,403 pass, 670 fail,
+228 skip (89.0 % of 6,073 run)**; 830 negative and 4,573 positive passes (positive
+tests 90.2 %). No test that passed at stage 3 fails.
+
+Remaining failures by cause (stage 4): early errors not detected 170; private class
+members 79; `async` methods 58; `yield` inside an expression 35; call depth 31; class
+static blocks 17; the rest are single semantic differences (about 280, each cause
+under 35 tests).
+
 ## 10. Speed
 
 The same two scripts as the QuickJS measurement in `2026-11-07-wasmvm-engine.md`
@@ -305,8 +317,8 @@ The same two scripts as the QuickJS measurement in `2026-11-07-wasmvm-engine.md`
 
 | Script | Lean JS (`leanjs`) | QuickJS-NG in WasmVM (`wasmvm-bench qjs`) | QuickJS-NG native |
 |---|---|---|---|
-| `fib(24)` | 126 to 143 ms | 1,069 ms (154 M Wasm instructions) | 6 ms |
-| loop of 200,000 + `JSON.stringify` of 2,000 objects | 321 to 341 ms | 2,123 ms (330 M Wasm instructions) | 18 ms |
+| `fib(24)` | 125 to 143 ms | 1,069 ms (154 M Wasm instructions) | 6 ms |
+| loop of 200,000 + `JSON.stringify` of 2,000 objects | 277 to 341 ms | 2,123 ms (330 M Wasm instructions) | 18 ms |
 
 So the Lean engine is 6 to 8 times faster than QuickJS in WasmVM, and 18 to 20
 times slower than native QuickJS. A loop of 10^6 iterations runs in constant stack

@@ -32,6 +32,8 @@ inductive Value where
   | obj (id : Nat)
   /-- A Symbol (§6.1.5): its number in `Heap.syms`. -/
   | sym (id : Nat)
+  /-- A BigInt (§6.1.6.2). -/
+  | big (i : Int)
   deriving Inhabited
 
 /-- A property: data (value, writable, enumerable, configurable) or accessor. -/
@@ -80,6 +82,7 @@ inductive Native where
   | iterNext | iterSelf | dateNow
   | functionHasInstance
   | genNext | genReturn | genThrow
+  | bigintCtor | bigintToString | bigintValueOf
   deriving BEq, Repr, Inhabited
 
 /-- What a running function sees. -/
@@ -189,6 +192,8 @@ structure Binding where
 structure Env where
   vars : Std.HashMap String Binding := {}
   parent : Option Nat := none
+  /-- The binding object of an Object Environment Record (§9.1.1.2, `with`). -/
+  withObj : Option Nat := none
   deriving Inhabited
 
 /-- The intrinsics of the realm (§9.3). -/
@@ -208,6 +213,7 @@ structure Realm where
   arrayIterProto : Nat := 0
   evalFn : Nat := 0
   generatorProto : Nat := 0
+  bigintProto : Nat := 0
   deriving Inhabited
 
 /-- The error constructors, by their index in `Realm.errorProtos`. -/
@@ -290,6 +296,7 @@ def strictEq : Value → Value → Bool
   | .str a, .str b => a == b
   | .obj a, .obj b => a == b
   | .sym a, .sym b => a == b
+  | .big a, .big b => a == b
   | _, _ => false
 
 /-- SameValue (§7.2.10): NaN is NaN, +0 is not -0. -/
@@ -314,6 +321,7 @@ def toBool : Value → Bool
   | .str s => !s.isEmpty
   | .obj _ => true
   | .sym _ => true
+  | .big i => i != 0
 
 def Heap.obj (h : Heap) (id : Nat) : Obj := h.objs.getD id default
 
@@ -364,12 +372,26 @@ def Heap.findProp (h : Heap) (id : Nat) (key : String) : Nat → Option PropV
       | .obj p => h.findProp p key fuel
       | _ => none
 
+/-- `@@unscopables` of a `with` object names `name` with a true data value. -/
+def Heap.unscopable (h : Heap) (o : Nat) (name : String) : Bool :=
+  match h.findProp o (String.singleton (Char.ofNat 0x10FFFF) ++ "5") 1000 with
+  | some (.data (.obj u) ..) =>
+    match h.findProp u name 1000 with
+    | some (.data v ..) => toBool v
+    | _ => false
+  | _ => false
+
 /-- The binding of a name: the number of the environment that holds it. -/
 def Heap.findEnv (h : Heap) (name : String) : Nat → Option Nat → Option Nat
   | 0, _ => none
   | _, none => none
   | fuel + 1, some e =>
     let env := h.envs.getD e default
-    if env.vars.contains name then some e else h.findEnv name fuel env.parent
+    if env.vars.contains name then some e
+    else match env.withObj with
+      | some o =>
+        if (h.findProp o name 1000).isSome && !h.unscopable o name then some e
+        else h.findEnv name fuel env.parent
+      | none => h.findEnv name fuel env.parent
 
 end L4Factoidal.JS
