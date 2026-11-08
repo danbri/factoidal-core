@@ -381,7 +381,10 @@ async function startScripts(page,scripts){
     try{const r=await fetchText(s.url);resources.push({nodeId:s.nodeId,source:r.source});page.sources.push({kind:'Script',url:r.url,source:r.source});}
     catch(error){console.warn('foafnaut: script not fetched:',s.url,String(error.message??error));}
   }
-  const turn=call(page.source,{op:'scriptSession',action:'start',url:page.url,resources});
+  // The viewport and the render request that lays the page out for its scripts' layout
+  // reads (clientWidth, getBoundingClientRect); an engine without them ignores the fields.
+  const layout={url:page.url,...(page.images?{images:page.images}:{}),...(page.heldImages?{heldImages:page.heldImages}:{}),textScalePercent:percent};
+  const turn=call(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,shell:shell(),layout});
   page.script={session:turn.session,turn,epoch:performance.now()-turn.clock};
   scriptTurn(page,turn);
 }
@@ -477,6 +480,11 @@ function scriptPointer(kind,x,y,pointerType){
     scriptTurn(doc,call('',{op:'scriptSession',action:'pointer',session:script.session,kind,...at,button:0,buttons:down?1:0,
       pressure:down?0.5:0,pointerType:pointerType??'mouse'}));
   }catch(error){console.warn('foafnaut: page script pointer:',String(error.message??error));}
+}
+function scriptResize(){
+  const script=doc?.script;if(!script||!scriptOps.includes('resize'))return;
+  try{scriptTurn(doc,call('',{op:'scriptSession',action:'resize',session:script.session,width,height,shell:shell()}));}
+  catch(error){console.warn('foafnaut: page script resize:',String(error.message??error));}
 }
 // foafnaut:wasm (issue 1244): WebAssembly run by WasmVM, the engine written in Lean, inside this
 // Lean engine. The host browser's WebAssembly never runs the module: the page only fetches its
@@ -1182,7 +1190,7 @@ function handle(data){
 }
 function apply(data){
   if(data.type==='visit'){visit(data.address);return;}
-  if(data.type==='resize'){({width,height,scale}=data);folded=Math.min(folded,foldRows());if(doc.graph)graphInput(1,width,height);request();}
+  if(data.type==='resize'){({width,height,scale}=data);folded=Math.min(folded,foldRows());if(doc.graph)graphInput(1,width,height);scriptResize();request();}
   if(data.type==='scroll'){closeMenu();scrollBy(data.amount);}
   if(data.type==='swipe')swipe(data);
   // A long press (WebGesture hold, asked when the page's timer ran out) or a right click.

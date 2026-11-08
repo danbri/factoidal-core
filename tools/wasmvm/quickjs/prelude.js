@@ -81,6 +81,28 @@
   const isElement = x => x instanceof Element;
   const str = (id, which) => { const s = n.str(id, which); return typeof s === 'number' ? (s === -1 ? null : fail(s)) : s; };
 
+  // ---- what Lean's layout answers (node_query ops 16 to 19) ------------------------
+  // 16: the init of the event of the user agent being dispatched (JSON); 17: the layout
+  // of a node: border box x y w h in the page, client box left top w h; 18: an SVG
+  // element's bounding box in its user space; 19: the viewport in CSS pixels. An engine
+  // without them answers an error: then zeros, and a viewport of 800 by 600.
+  const query = (id, op, count) => {
+    const s = n.query(id, op, '');
+    const xs = typeof s === 'string' && s !== '' ? s.split(' ').map(Number) : [];
+    return xs.length >= count ? xs : new Array(count).fill(0);
+  };
+  const layoutOf = el => query(nodeId(el), 17, 8);
+  const viewport = () => { const v = query(0, 19, 2); return v[0] > 0 ? v : [800, 600]; };
+  class DOMRectReadOnly {
+    constructor(x = 0, y = 0, width = 0, height = 0) { Object.assign(this, { x: +x, y: +y, width: +width, height: +height }); }
+    get top() { return Math.min(this.y, this.y + this.height); }
+    get bottom() { return Math.max(this.y, this.y + this.height); }
+    get left() { return Math.min(this.x, this.x + this.width); }
+    get right() { return Math.max(this.x, this.x + this.width); }
+    toJSON() { return { x: this.x, y: this.y, width: this.width, height: this.height, top: this.top, right: this.right, bottom: this.bottom, left: this.left }; }
+  }
+  class DOMRect extends DOMRectReadOnly {}
+
   // ---- events --------------------------------------------------------------------
   const ev = new WeakMap();
   const state = e => { const s = ev.get(e); if (!s) throw new TypeError('not an Event'); return s; };
@@ -164,10 +186,18 @@
   for (const k of ['screenX', 'screenY', 'clientX', 'clientY', 'button', 'buttons', 'ctrlKey', 'shiftKey', 'altKey', 'metaKey', 'relatedTarget'])
     Object.defineProperty(MouseEvent.prototype, k, { get() { return state(this)[k]; }, configurable: true });
   // CSSOM View §10: page and offset coordinates. An event of the user agent has them from
-  // Lean's layout (the nodeAt answer); a script's own event has page = client (no scroll)
-  // and offset = client.
-  for (const [k, c] of [['pageX', 'clientX'], ['pageY', 'clientY'], ['offsetX', 'clientX'], ['offsetY', 'clientY'], ['x', 'clientX'], ['y', 'clientY']])
+  // Lean's layout (the nodeAt answer); for a script's own event, page = client (no scroll),
+  // and offset is from the padding edge of the target's box in Lean's layout.
+  for (const [k, c] of [['pageX', 'clientX'], ['pageY', 'clientY'], ['x', 'clientX'], ['y', 'clientY']])
     Object.defineProperty(MouseEvent.prototype, k, { get() { const s = state(this); return s[k] ?? s[c]; }, configurable: true });
+  for (const [k, c, i] of [['offsetX', 'clientX', 0], ['offsetY', 'clientY', 1]])
+    Object.defineProperty(MouseEvent.prototype, k, { get() {
+      const s = state(this);
+      if (s[k] !== undefined) return s[k];
+      if (!(s.target instanceof Element)) return s[c];
+      const b = layoutOf(s.target);
+      return s[c] - b[i] - b[i + 4];
+    }, configurable: true });
   for (const k of ['movementX', 'movementY']) Object.defineProperty(MouseEvent.prototype, k, { get() { return state(this)[k] ?? 0; }, configurable: true });
   // Pointer Events 3 §4.1.
   class PointerEvent extends MouseEvent {
@@ -382,7 +412,7 @@
     // callback, node, phase + 8 * capture, depth]: L4Factoidal.EventLoop.Dispatch.plan.
     const plan = chk(n.plan(tid, s.type, s.bubbles ? 1 : 0));
     const k = plan[0];
-    s.path = []; for (let i = 1; i <= k; i++) s.path.push(wrapTarget(plan[i]));
+    s.path = []; for (let i = k; i >= 1; i--) s.path.push(wrapTarget(plan[i]));
     let stopAt = null;
     for (let i = k + 1; i + 3 < plan.length; i += 4) {
       const cb = plan[i], node = plan[i + 1], phase = plan[i + 2] & 7, capture = (plan[i + 2] & 8) !== 0, depth = plan[i + 3];
@@ -654,6 +684,19 @@
   const tokenLists = new WeakMap();
 
   class Element extends Node {
+    // CSSOM View §6 and §7, from Lean's layout of the current DOM (laid out when a script
+    // reads, once until the DOM or the viewport changes). The root element's client box
+    // is the viewport.
+    getBoundingClientRect() { const b = layoutOf(this); return new DOMRect(b[0], b[1], b[2], b[3]); }
+    getClientRects() { const b = layoutOf(this); return b[2] === 0 && b[3] === 0 && !this.isConnected ? [] : [new DOMRect(b[0], b[1], b[2], b[3])]; }
+    get clientWidth() { return this === document.documentElement ? viewport()[0] : Math.round(layoutOf(this)[6]); }
+    get clientHeight() { return this === document.documentElement ? viewport()[1] : Math.round(layoutOf(this)[7]); }
+    get clientLeft() { return Math.round(layoutOf(this)[4]); }
+    get clientTop() { return Math.round(layoutOf(this)[5]); }
+    get scrollWidth() { return this.clientWidth; }
+    get scrollHeight() { return this.clientHeight; }
+    get scrollTop() { return 0; } set scrollTop(v) {}
+    get scrollLeft() { return 0; } set scrollLeft(v) {}
     get tagName() { return str(nodeId(this), 1); }
     get localName() { return str(nodeId(this), 0); }
     get namespaceURI() { return str(nodeId(this), 2); }
@@ -884,9 +927,11 @@
     }
     focus() {}
     blur() {}
-    get offsetWidth() { return 0; }
-    get offsetHeight() { return 0; }
-    getBoundingClientRect() { return { x: 0, y: 0, width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0 }; }
+    get offsetWidth() { return Math.round(layoutOf(this)[2]); }
+    get offsetHeight() { return Math.round(layoutOf(this)[3]); }
+    get offsetLeft() { return Math.round(layoutOf(this)[0]); }
+    get offsetTop() { return Math.round(layoutOf(this)[1]); }
+    get offsetParent() { return this.isConnected && this.localName !== 'body' && this.localName !== 'html' ? document.body : null; }
   }
   const clicking = new WeakSet();
   const styles = new WeakMap();
@@ -1314,7 +1359,10 @@
     'figcaption', 'figure', 'noscript', 'ruby', 'rt', 'rp', 'summary', 'wbr', 'center', 'tt', 'big', 'nobr', 'acronym',
     'basefont', 'noframes', 'noembed', 'plaintext', 'search', 'strike']) htmlClasses[t] = HTMLElement;
   for (const t of ['listing', 'xmp']) htmlClasses[t] = named.HTMLPreElement;
-  class SVGElement extends Element {}
+  class SVGElement extends Element {
+    // SVG 2 §8.10 getBBox: the bounds of the element's geometry in its own user space.
+    getBBox() { const b = query(nodeId(this), 18, 4); return new DOMRect(b[0], b[1], b[2], b[3]); }
+  }
   class CharacterData extends Node {
     get data() { return str(nodeId(this), 3); }
     set data(v) { chk(n.setText(nodeId(this), v === null ? '' : String(v))); }
@@ -1728,7 +1776,9 @@
   def('WebGLUniformLocation', WebGLUniformLocation);
   def('history', Object.freeze({ length: 1, state: null, pushState() {}, replaceState() {}, back() {}, forward() {}, go() {} }));
   def('screen', Object.freeze({ width: 800, height: 600, availWidth: 800, availHeight: 600, colorDepth: 24, pixelDepth: 24 }));
-  def('innerWidth', 800); def('innerHeight', 600); def('devicePixelRatio', 1); def('scrollX', 0); def('scrollY', 0);
+  for (const [k, i] of [['innerWidth', 0], ['innerHeight', 1], ['outerWidth', 0], ['outerHeight', 1]])
+    Object.defineProperty(globalThis, k, { get: () => viewport()[i], set(v) {}, configurable: true, enumerable: true });
+  def('devicePixelRatio', 1); def('scrollX', 0); def('scrollY', 0);
   def('pageXOffset', 0); def('pageYOffset', 0);
   const log = (...xs) => n.log(xs.map(x => typeof x === 'string' ? x : (() => { try { return typeof x === 'object' && x !== null && !(x instanceof Error) ? JSON.stringify(x) : String(x); } catch { return String(x); } })()).join(' '));
   def('console', Object.freeze({ log, info: log, debug: log, warn: log, error: log, trace: log, assert: (c, ...xs) => { if (!c) log('Assertion failed:', ...xs); },
@@ -1752,7 +1802,7 @@
   def('alert', () => {}); def('confirm', () => false); def('prompt', () => null);
   def('open', () => null);
   for (const [k, v] of Object.entries({ EventTarget, Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, ErrorEvent,
-    WheelEvent, PointerEvent, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
+    WheelEvent, PointerEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, CharacterData, Text, CDATASection, Comment,
     ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr,

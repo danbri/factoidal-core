@@ -15,6 +15,9 @@ with the coverage predicates of the sampler, the clips, the transforms, and the
 primitive's `pointer-events`. Its path names the DOM element: source paths count the
 children of the arena's nodes from the root element (`WebRender.documentNamespaceTree`
 keeps every child, text and comments too).
+
+The same scene answers the bounds of an SVG element for page scripts
+(`getBoundingClientRect`, `getBBox`): the union of the bounds of its primitives.
 -/
 
 namespace WebHit
@@ -99,6 +102,81 @@ def target (dom : DOM.Dom) (scene : Rendering.Scene) (boxes : Array Rendering.La
     | none => some b
   let node := ((outerSvg dom best.source).bind fun svg => svgTarget dom scene svg px py).getD best.source
   return (node,(boxes.find? (·.source == node)).getD best)
+
+/-! ### Bounds of an SVG element -/
+
+/-- A rectangle as `(x0, y0, x1, y1)`. -/
+abbrev Bounds := Float × Float × Float × Float
+
+def Bounds.union (a b : Bounds) : Bounds := (min a.1 b.1,min a.2.1 b.2.1,max a.2.2.1 b.2.2.1,max a.2.2.2 b.2.2.2)
+
+private def joined (a : Option Bounds) (b : Bounds) : Option Bounds := some ((a.map (·.union b)).getD b)
+
+private def ofPoints : List Rendering.Point → Option Bounds
+  | [] => none
+  | p :: ps => some (ps.foldl (fun (b : Bounds) q => b.union (q.x,q.y,q.x,q.y)) (p.x,p.y,p.x,p.y))
+
+private def segmentPoints : Rendering.PathSegment → List Rendering.Point
+  | .line e => [e]
+  | .quadratic c e => [c,e]
+  | .cubic c d e => [c,d,e]
+  | .arc rx ry _ _ _ e => [⟨e.x-rx,e.y-ry⟩,⟨e.x+rx,e.y+ry⟩]
+
+/-- The bounds of a geometry in its own frame: exact for rectangles, circles, ellipses,
+lines and polygons; for a path, its points and control points (a cover of the curve). -/
+def geometryBounds : Rendering.Geometry → Option Bounds
+  | .rect x y w h => some (min x (x+w),min y (y+h),max x (x+w),max y (y+h))
+  | .circle cx cy r => some (cx-r,cy-r,cx+r,cy+r)
+  | .ellipse cx cy rx ry => some (cx-rx,cy-ry,cx+rx,cy+ry)
+  | .line x1 y1 x2 y2 => some (min x1 x2,min y1 y2,max x1 x2,max y1 y2)
+  | .polygon points => ofPoints points
+  | .path contours => ofPoints (contours.flatMap fun
+      | .empty _ => []
+      | .path start segments _ => start :: segments.flatMap segmentPoints)
+
+/-- The bounds of a rectangle after a transform: of its four corners. -/
+def Bounds.through (t : Rendering.Transform) (b : Bounds) : Bounds :=
+  let at_ := fun (x y : Float) => Math.Affine2.applyPoint .float t x y
+  let (x0,y0,x1,y1) := b
+  let corners := [at_ x0 y0,at_ x1 y0,at_ x0 y1,at_ x1 y1]
+  corners.foldl (fun (r : Bounds) (x,y) => r.union (x,y,x,y)) (let (x,y) := at_ x0 y0; (x,y,x,y))
+
+/-- The bounds of the element at source path `path`, from the primitives it and its
+descendants painted in `tree`: in the page (`getBoundingClientRect`), and in its own user
+space (`getBBox`, SVG 2 §8.10). For the user space a primitive of a descendant goes
+through the groups between the element and it: one group for each container element
+between them (`g`, `svg`, `use`, and the runs of lowered text), then its own transform.
+A primitive whose groups do not count so is left out of the user-space bounds. -/
+def elementBounds (tree : List Rendering.Node) (path : List Nat) : Option Bounds × Option Bounds := Id.run do
+  let mut work : List (Rendering.Node × List Rendering.Transform) := tree.map (·,[])
+  let mut page : Option Bounds := none
+  let mut user : Option Bounds := none
+  for _ in [0:4194304] do
+    match work with
+    | [] => break
+    | (node,stack) :: rest =>
+      work := rest
+      match node with
+      | .group _ t children | .clipped _ t _ children => work := children.map (·,t :: stack) ++ work
+      | .paint item =>
+        let p := item.primitive
+        if !under path p.element then continue
+        let some local_ := geometryBounds p.geometry | continue
+        let toPage := stack.foldl (fun acc s => Math.Affine2.compose .float s acc) p.transform
+        page := joined page (local_.through toPage)
+        if p.element == path then user := joined user local_
+        else
+          let between := p.element.length - path.length - 1
+          if stack.length ≥ between then
+            let toUser := (stack.take between).foldl (fun acc s => Math.Affine2.compose .float s acc) p.transform
+            user := joined user (local_.through toUser)
+  return (page,user)
+
+/-- `elementBounds` of the SVG element `id` of the arena. -/
+def boundsOf (dom : DOM.Dom) (scene : Rendering.Scene) (id : Nat) : Option Bounds × Option Bounds := Id.run do
+  let some root := rootElement dom | return (none,none)
+  let .ok path := WebRender.sourcePath dom root (dom.size+1) id [] | return (none,none)
+  return elementBounds scene.tree path
 
 private def num (x : Float) : JSON.Json := .number (Rendering.FloatFormat.format x)
 

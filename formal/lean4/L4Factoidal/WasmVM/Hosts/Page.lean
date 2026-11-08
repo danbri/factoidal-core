@@ -122,7 +122,7 @@ theorem ScriptClock.ms_mark (c : ScriptClock) (h : c.steps - c.markSteps < max 1
     c.ms = c.markClock := by
   simp [ScriptClock.ms, Nat.div_eq_of_lt h]
 
-/-! ### Pointer input -/
+/-! ### Pointer input and layout reads -/
 
 /-- A press, a pointer move waiting for its frame, and the event being dispatched. -/
 structure PointerState where
@@ -136,6 +136,23 @@ structure PointerState where
   pending : Option (Nat × String) := none
   deriving Inhabited, Repr
 
+/-- The layout reads of scripts: the engine's layout of an arena at a viewport (CSS
+pixels), as the answers of `node_query` ops 17 (a node's boxes) and 18 (an SVG element's
+bounding box). The engine gives the function; it lays out when a read first asks. -/
+abbrev Measure := Arena → Nat → Nat → (Nat → Nat → Option String)
+
+structure Reads where
+  measure : Option Measure := none
+  width : Nat := 800
+  height : Nat := 600
+  /-- DOM writes served so far: a layout is of one version. -/
+  version : Nat := 0
+  /-- The answers of the layout of `version` at the viewport, once a read asked. -/
+  kept : Option (Nat × (Nat → Nat → Option String)) := none
+  /-- Layouts made for reads. -/
+  layouts : Nat := 0
+  deriving Inhabited
+
 /-- Everything the imports change, except the store. -/
 structure Host where
   dom : DomHost
@@ -146,6 +163,7 @@ structure Host where
   /-- The init of the event of the user agent being dispatched, as JSON (`node_query`
   op 16); empty when none. -/
   event : String := ""
+  reads : Reads := {}
   deriving Inhabited
 
 /-- Budgets of one session. -/
@@ -250,11 +268,39 @@ def planList (h : Host) (target : Nat) (type : String) (bubbles : Bool) : Array 
 section
 variable {M : Type} [LinearMemory M]
 
-/-- `node_query` ops served here: 16 the init of the event being dispatched (JSON). -/
-def pageQuery (h : Host) (_node op : Nat) : Host × Except Int String :=
+/-- The imports of `foafnaut_dom` that change nothing a layout reads. -/
+def readOnlyImports : List String :=
+  ["get_element_by_id", "document_element", "tag_name", "text_content_get", "get_attribute", "node_info",
+   "node_string", "node_children", "node_query", "console_log", "gpu_command"]
+
+/-- A layout of the current arena and viewport for reads, counted. -/
+def Host.measureNow (h : Host) : Host × Option (Nat → Nat → Option String) :=
+  match h.reads.measure with
+  | none => (h, none)
+  | some m =>
+    let f := m h.dom.dom h.reads.width h.reads.height
+    ({ h with reads := { h.reads with kept := some (h.reads.version, f), layouts := h.reads.layouts + 1 } }, some f)
+
+/-- The answers of the layout of the current arena and viewport: kept until a write or a
+new viewport, so reads after no write share one layout, and a read after writes makes
+one (as a browser's forced layout). -/
+def Host.measured (h : Host) : Host × Option (Nat → Nat → Option String) :=
+  match h.reads.kept with
+  | some (v, f) => if v == h.reads.version then (h, some f) else h.measureNow
+  | none => h.measureNow
+
+/-- `node_query` ops served here: 16 the init of the event being dispatched; 17 a node's
+layout, "x y w h left top width height" (border box in the page, then the client box);
+18 an SVG element's bounding box in its user space, "x y w h"; 19 the viewport, "w h". -/
+def pageQuery (h : Host) (node op : Nat) : Host × Except Int String :=
   match op with
   | 16 => (h, if h.event.isEmpty then .error (-1) else .ok h.event)
-  | _ => (h, .error (-2))
+  | 19 => (h, .ok s!"{h.reads.width} {h.reads.height}")
+  | _ =>
+    let (h, f) := h.measured
+    match f with
+    | some f => (h, match f node op with | some r => .ok r | none => .error (-1))
+    | none => (h, .error (-2))
 
 /-- Serve one `foafnaut_dom` import, or `env.emscripten_notify_memory_growth`. -/
 def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st : StoreOf M) :
@@ -294,7 +340,8 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
   | "cancel_frame" => ({ h with loop := h.loop.cancelFrame (a 0) }, st, Hosts.Dom.ret 0)
   | _ =>
     let (dom, st, r) := Hosts.Dom.serve mem nm args h.dom st
-    ({ h with dom }, st, r)
+    let reads := if readOnlyImports.contains nm then h.reads else { h.reads with version := h.reads.version + 1 }
+    ({ h with dom, reads }, st, r)
 
 /-- Host id `id` (an import index) with its binding. -/
 def serve (mem : Nat) (bs : Array Wasi.Binding) (id : Nat) (args : Array Value) (h : Host) (st : StoreOf M) :
@@ -620,6 +667,17 @@ def Session.pointer (s : Session) (kind : PointerKind) (node : Nat) (init : Stri
       else s.moveNow target init
   (s.advance s.loop.clock).1
 
+/-- The viewport moved to `width` by `height` CSS pixels: reads lay out again, and `resize`
+is dispatched at the window (CSSOM View §13.1) when the size changed. -/
+def Session.resize (s : Session) (width height : Nat) : Session :=
+  let r := s.host.reads
+  if r.width == width && r.height == height then s else
+  let s := { s with host := { s.host with reads := { r with width, height, kept := none } } }
+  (s.dispatch windowId "resize").1
+
+/-- Layouts made for the reads of scripts. -/
+def Session.layouts (s : Session) : Nat := s.host.reads.layouts
+
 /-! ## Starting a page -/
 
 /-- The module, decoded and validated once. `base` is an instance after `_initialize`,
@@ -708,7 +766,7 @@ the embedder loaded, each with its document parsed on its own: each joins the pa
 (`Dom.graft`), and its `load` event at the `iframe` is a task before the window's. The
 frames share the page's script realm. -/
 def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Limits := {})
-    (frames : Array (Nat × Arena) := #[]) (time : ScriptClock := {}) : Except String Session := do
+    (frames : Array (Nat × Arena) := #[]) (reads : Reads := {}) (time : ScriptClock := {}) : Except String Session := do
   let mut dom := dom
   let mut framed : Array (Nat × Nat) := #[]
   for (el, doc) in frames do
@@ -719,11 +777,11 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
   let s : Session ← match m.base with
     | some b =>
       let domHost : DomHost := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames }
-      let host : Host := { dom := domHost, time }
+      let host : Host := { dom := domHost, reads, time }
       pure { b with host, limits := lim, steps := 0 }
     | none => do
       let s ← instantiatePage m dom lim
-      pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames }, time } }
+      pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames }, reads, time } }
   let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage } } }
   let s := (s.run s.fx.page #[.i32 2, .i32 0, .i32 0]).1
   let mut s := s.setUrl url

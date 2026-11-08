@@ -166,7 +166,13 @@ async function main() {
       const loaded=await scriptCall("scriptLoad",bytes);
       scriptsOn=true;
       setScriptHost({start:async(source,pageURL,resources)=>{
-        const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources}) as ScriptTurn;
+        // The viewport (innerWidth, innerHeight) and the render request that lays the page out
+        // for its scripts' layout reads; an engine without them ignores the fields.
+        // (The first page starts before the window's size and chrome are set: then 1280 by 800.)
+        const at=(()=>{try{return {width,height,shell:shell(),textScalePercent:view.textScalePercent??100};}
+          catch{return {width:1280,height:800,textScalePercent:150};}})();
+        const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,
+          ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent}}) as ScriptTurn;
         scriptEpochs.set(turn.session,performance.now()-turn.clock);
         for(const line of turn.logs)console.log(`page: ${line}`);
         for(const line of turn.errors)console.error(`page error: ${line}`);
@@ -826,7 +832,10 @@ async function main() {
         if(event.kind===1){
           if(event.a<1||event.b<1)return;
           if(event.a>4096||event.b>4096)throw new Error("Native HTML window exceeds 4096 backing pixels; close or use a smaller window");
-          if(event.a!==width||event.b!==height){width=event.a;height=event.b;dirty=true;if((document as Page).graph)graphInput(1,width,height);resizeAt??=performance.now();trace("native-html-resize",{width,height});}
+          if(event.a!==width||event.b!==height){width=event.a;height=event.b;dirty=true;if((document as Page).graph)graphInput(1,width,height);
+            if(scriptsOn&&document.script&&scriptOps.includes("resize")){const page=document;
+              (scriptCall("scriptSession","",{action:"resize",session:document.script.session,width,height,shell:shell()}) as Promise<ScriptTurn>)
+                .then(turn=>scriptTurn(page,turn,"resize")).catch(error=>console.error("Native HTML: page script resize failed:",String(error)));}resizeAt??=performance.now();trace("native-html-resize",{width,height});}
         }
         if(event.kind===8&&event.a)dirty=true;
         if(event.kind===3)pointAt(event.a,event.b);

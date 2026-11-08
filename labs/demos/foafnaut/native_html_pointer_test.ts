@@ -4,6 +4,10 @@
 //   and the event path goes through the SVG elements;
 // - pointer and mouse events carry client, page and offset coordinates, buttons and the
 //   pointer type; a release clicks; at most one pointermove in a frame;
+// - innerWidth/innerHeight are the viewport; clientWidth, getBoundingClientRect and getBBox
+//   come from Lean's layout of the current DOM, laid out once until the DOM changes;
+//   resize fires `resize`;
+// - performance.now() moves with the instructions a script runs, at the stated rate.
 // Run on the native engine library and the Wasm engine when built, with the guest module
 // (QUICKJS_WASM, else ~/working/qjs-wasm/qjs-wasmvm.wasm). Run with --allow-read --allow-ffi --allow-env.
 import {strict as assert} from "node:assert";
@@ -24,16 +28,36 @@ for (const t of ['pointerdown','mousedown','pointerup','mouseup','click','pointe
   document.addEventListener(t, e => console.log(t + ' ' + e.target.id + ' ' + e.composedPath().map(n => n.id).filter(x => x).sort().join('<') +
     ' client ' + e.clientX + ',' + e.clientY + ' offset ' + e.offsetX + ',' + e.offsetY + ' page ' + e.pageX + ',' + e.pageY +
     ' ' + e.button + '/' + e.buttons + (e instanceof PointerEvent ? ' ' + e.pointerType : '')));
+const b = document.getElementById('box');
+console.log('viewport ' + innerWidth + 'x' + innerHeight);
+const r = b.getBoundingClientRect();
+console.log('box ' + b.clientWidth + 'x' + b.clientHeight + ' offset ' + b.offsetWidth + 'x' + b.offsetHeight + ' rect ' + [r.x, r.y, r.width, r.height].join(','));
+const bb = document.getElementById('r').getBBox();
+console.log('bbox ' + [bb.x, bb.y, bb.width, bb.height].join(','));
+const cr = document.getElementById('c').getBoundingClientRect();
+console.log('circle ' + [cr.x, cr.y, cr.width, cr.height].join(','));
+const t0 = performance.now(); let x = 0; for (let i = 0; i < 300000; i++) x += i;
+console.log('busy ' + (performance.now() - t0 >= 1));
+addEventListener('resize', () => console.log('resize ' + innerWidth + 'x' + innerHeight));
 </script></body></html>`;
 
 async function runs(engine:HTMLEngine){
   const info=engine.scriptInfo();
-  assert.ok(info.ops.includes("pointer"));
+  assert.ok(info.ops.includes("pointer")&&info.ops.includes("resize"));
   engine.scriptLoad(await Deno.readFile(guest!));
   const lines:string[]=[];
-  let turn=engine.scriptSession(page,{action:"start",url,resources:[]});
+  let turn=engine.scriptSession(page,{action:"start",url,resources:[],width:400,height:300,layout:{url}});
   lines.push(...turn.logs);
   assert.deepEqual(turn.errors,[]);
+  assert.ok(turn.logs.includes("viewport 400x300"),turn.logs.join("\n"));
+  // The border box is 305 by 54; the client box is inside the 2px borders.
+  assert.ok(turn.logs.includes("box 301x50 offset 305x54 rect 0,0,305,54"),turn.logs.join("\n"));
+  // getBBox is in the element's user space: its own transform is not applied.
+  assert.ok(turn.logs.includes("bbox 120,10,60,30"),turn.logs.join("\n"));
+  assert.ok(turn.logs.includes("circle 10,64,80,80"),turn.logs.join("\n"));
+  assert.ok(turn.logs.includes("busy true"),turn.logs.join("\n"));
+  // Reads after no write share one layout.
+  assert.equal((turn as ScriptTurn&{layouts:number}).layouts,1);
   const commands=turn.commands!;
   const at=(x:number,y:number)=>engine.pointerAt(page,400,300,{url,commands,x,y});
   // The circle is at (50,104) in the page: the tap targets the circle, through g and svg.
@@ -62,11 +86,14 @@ async function runs(engine:HTMLEngine){
   assert.equal(at(5,60).node,svg);
   assert.notEqual(at(140,74).node,svg);
   assert.notEqual(at(140,74).node,hit.node);
+  // Resize: the viewport and the event.
+  turn=engine.scriptSession("",{action:"resize",session:turn.session,width:500,height:300});
+  assert.deepEqual(turn.logs,["resize 500x300"]);
   engine.scriptSession("",{action:"close"});
   return lines;
 }
 
-Deno.test({name:"Lean page input: SVG targets and pointer events (native library)",
+Deno.test({name:"Lean page input: SVG targets, pointer events, layout reads, script clock (native library)",
   ignore:!guest||!exists(library),fn:async()=>{
   const native=await runs(await loadHTML(library));
   const wasm=await loadHTML();

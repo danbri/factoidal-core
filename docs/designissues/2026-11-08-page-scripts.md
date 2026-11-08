@@ -118,6 +118,20 @@ dispatched at the next turn of a later frame (`nextWake` says when). The event d
 reaches the prelude through `node_query` op 16 while Lean dispatches: no change to the
 guest's exports. A move or a press changes no DOM by itself, so no layout.
 
+### Layout reads
+
+`innerWidth`/`innerHeight` are the viewport the host gives at `start` (`width`, `height`
+less the full chrome of `shell`) and at `resize` (which also dispatches `resize` at the
+window). `clientWidth/Height/Left/Top`, `offsetWidth/Height/Left/Top`,
+`getBoundingClientRect`, `getClientRects` and SVG `getBBox` ask Lean (`node_query` ops
+17 and 18). Lean lays the arena out as a render with the session's `layout` request
+(`WebDocument.measure`, `layOutDOM`: no parse) when a read first asks, and keeps that
+layout until a DOM write or a resize, as a browser forces one layout for a read after
+writes. Each turn's `layouts` counts the layouts made for reads. An SVG element inside
+an `svg` has no CSS box: its client box is zero and its rectangle is the bounds of what
+it painted (`WebHit.elementBounds`); `getBBox` is in the element's user space, exact for
+shapes and groups of shapes (a path's bounds are those of its control points).
+
 ### The script clock
 
 The event loop's clock is virtual and moves by rule, so runs replay. Script time is the
@@ -173,7 +187,7 @@ Measured on the owner's Mac, native engine library (2026-11-08):
 - Promise jobs are QuickJS's own queue (one queue, in order, as HTML's microtask queue);
   Lean decides when a checkpoint runs, not the order inside it. A host click's listeners
   get one checkpoint after the whole dispatch, not one after each listener.
-- No layout reads from script (`offsetWidth` is 0); `style` is the `style` attribute.
+- `style` is the `style` attribute; `getComputedStyle` returns it too. `scrollTop` is 0.
 - No `innerHTML` setter, no `Range`, no `TreeWalker`.
 - Iframes: only in the WPT bench (`wasmvm-bench page`, `Limits.frames`). Markup iframes:
   the bench parses each `src` document (XML for `.xml`, `.xhtml` and `.svg`, else HTML;

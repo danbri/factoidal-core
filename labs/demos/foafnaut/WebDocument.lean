@@ -810,24 +810,15 @@ def withPointer (dom : DOM.Dom) (state : Rendering.CSS.ElementState) (pointer : 
   let inside := fun (id : Option Nat) => id.bind fun n => if n < dom.size then some n else none
   {state with hover := inside pointer.1, active := inside pointer.2}
 
-/-- Parse, script check, cascade and layout of a render. It reads only the key: the
-request it reads is `key.request`, which has only `layoutFields`. With `graphModel`
-(the FOAF graph page) the document is `WebGraph.skeleton` of the model, not `key.html`,
-and the picture comes from the model with no SVG text (`WebGraph.embedding`). -/
-def layOut (key : LayoutKey) : Except String Laid := do
-  let request := key.request
-  let graph ← match request.field? "graphModel" with
-    | none => pure none
-    | some (.string wire) => match NativeFoafNaut.Model.decode wire with
-      | some m => pure (some m)
-      | none => throw "invalid FOAF graph model"
-    | some _ => throw "graphModel must be a string"
-  let dom ← prepareDOM (match graph with | some m => WebGraph.skeleton m | none => key.html) request
+/-- `layOut` after the parse: the layout of the arena `dom`, `width` by `rows` CSS pixels.
+A script session's layout reads (`measure`) lay its arena out here, with no parse. -/
+def layOutDOM (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom) (width rows : Nat)
+    (held : List (String × String)) (pointer : Option Nat × Option Nat) : Except String Laid := do
   validateResources dom request
   let _ ← classicScripts (WebRenderScript.scriptRecords dom)
   let textScale := Float.ofNat (← scalePercent request) / 100
   let rules ← rules dom request
-  if key.width == 0 || key.height == 0 || key.width > 4096 || key.height > 4096 then throw "unsupported document viewport"
+  if width == 0 || rows == 0 || width > 4096 || rows > 4096 then throw "unsupported document viewport"
   let fontData := str request "fontData"
   if !fontData.isEmpty then
     let _ ← WebRenderFontRequests.collectDOMWithRules dom rules textScale
@@ -843,13 +834,13 @@ def layOut (key : LayoutKey) : Except String Laid := do
   let url := baseURL dom (str request "url")
   -- SVG text is drawn with the fonts of the HTML text.
   let svgFonts := (loaded.map (·.fonts)).getD #[]
-  let images := (← suppliedImages request) ++ heldBytes request key.held
+  let images := (← suppliedImages request) ++ heldBytes request held
   let (embedding,pictures) ← match graph with
     | some m => pure (WebGraph.embedding m,Rendering.Layout.noPictures)
     | none => WebRender.makeReplaced dom (if url.isEmpty then none else some url) images svgFonts
   -- A window shorter than the chrome still lays out, on one row.
-  let state := withPointer dom (← elementState dom url request) key.pointer
-  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding key.width (max 1 (key.height-key.top)) textScale state pictures
+  let state := withPointer dom (← elementState dom url request) pointer
+  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding width rows textScale state pictures
   let hoverRules := rules.any fun rule => rule.selectors.any fun sel => sel.parts.any (·.pseudo.contains .hover)
   let laid : Laid := {scene := scene,boxes := boxes,face := face,hoverRules := hoverRules}
   return {laid with dom := dom}
@@ -857,6 +848,66 @@ def layOut (key : LayoutKey) : Except String Laid := do
     |> fun l => {l with textScale := textScale}
     |> fun l => {l with state := state}
     |> fun l => {l with styles := Thunk.mk fun _ => Rendering.CSS.computeAll dom rules textScale state}
+
+/-- Parse, script check, cascade and layout of a render. It reads only the key: the
+request it reads is `key.request`, which has only `layoutFields`. With `graphModel`
+(the FOAF graph page) the document is `WebGraph.skeleton` of the model, not `key.html`,
+and the picture comes from the model with no SVG text (`WebGraph.embedding`). -/
+def layOut (key : LayoutKey) : Except String Laid := do
+  let request := key.request
+  let graph ← match request.field? "graphModel" with
+    | none => pure none
+    | some (.string wire) => match NativeFoafNaut.Model.decode wire with
+      | some m => pure (some m)
+      | none => throw "invalid FOAF graph model"
+    | some _ => throw "graphModel must be a string"
+  let dom ← prepareDOM (match graph with | some m => WebGraph.skeleton m | none => key.html) request
+  if key.width == 0 || key.height == 0 || key.width > 4096 || key.height > 4096 then throw "unsupported document viewport"
+  layOutDOM request graph dom key.width (max 1 (key.height-key.top)) key.held key.pointer
+
+/-! ### Layout reads of page scripts
+
+A script that reads a size (`clientWidth`, `getBoundingClientRect`, `getBBox`) gets it
+from this engine's layout of its arena as it stands (`WasmVM.Hosts.Page.Reads`): laid out
+when a read first asks, once until the DOM or the viewport changes, as a browser forces
+a layout. The layout is that of a render with the session's `layout` request. -/
+
+/-- The answer of a layout read: op 17 "x y w h left top width height" (the border box
+in the page, then the client box: inside the borders; zero for an SVG element inside an
+`svg`, which has no CSS box, CSSOM View §6); op 18 an SVG element's bounding box in its
+user space, "x y w h" (`WebHit.boundsOf`). -/
+def readAnswer (l : Laid) (node op : Nat) : Option String :=
+  let line := fun (xs : List Float) => " ".intercalate (xs.map Rendering.FloatFormat.format)
+  let box := l.boxes.foldl (init := (none : Option WebHit.Bounds)) fun acc b =>
+    if b.source != node then acc else
+    let r : WebHit.Bounds := (b.x,b.y,b.x+b.width,b.y+b.height)
+    some ((acc.map (·.union r)).getD r)
+  match op with
+  | 17 =>
+    match box with
+    | some (x0,y0,x1,y1) =>
+      let e : Rendering.CSS.Edges := match l.styles.get with
+        | .ok styles => (styles[node]?.map (·.borderEdges)).getD {}
+        | .error _ => {}
+      some (line [x0,y0,x1-x0,y1-y0,e.left,e.top,max 0 (x1-x0-e.left-e.right),max 0 (y1-y0-e.top-e.bottom)])
+    | none => match (WebHit.boundsOf l.dom l.scene node).1 with
+      | some (x0,y0,x1,y1) => some (line [x0,y0,x1-x0,y1-y0,0,0,0,0])
+      | none => some "0 0 0 0 0 0 0 0"
+  | 18 => match (WebHit.boundsOf l.dom l.scene node).2 with
+    | some (x0,y0,x1,y1) => some (line [x0,y0,x1-x0,y1-y0])
+    | none => some "0 0 0 0"
+  | _ => none
+
+/-- The layout reads of a script session (`Page.Measure`) with the render request
+`request` (its `layoutFields`): the arena laid out `width` by `height` (`layOutDOM`)
+when a read first asks, then the answers from that one layout. -/
+def measure (request : JSON.Json) : WasmVM.Hosts.Page.Measure := fun dom width height =>
+  let request := layoutRequest request
+  let held := heldNamed request ((namedImages request).toOption.getD [])
+  let laid : Thunk (Except String Laid) := Thunk.mk fun _ => layOutDOM request none dom width height held (none,none)
+  fun node op => match laid.get with
+    | .ok l => readAnswer l node op
+    | .error _ => none
 
 /-! ### The layouts of the last keys, kept
 
@@ -1085,7 +1136,7 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     return ((JSON.Json.object [("source",.string source),("engine",.string engine)]).toString,#[])
   if let some answer ← inputOp (str request "op" "render") request then return (answer,#[])
   -- Page scripts run by Lean: QuickJS in WasmVM on the page's arena (WebScripts).
-  if let some answer ← WebScripts.op (str request "op" "render") html request then return (answer,#[])
+  if let some answer ← WebScripts.op (str request "op" "render") html request (fun r => some (measure r)) then return (answer,#[])
   let op := str request "op" "render"
   if op != "render" && op != "selectedText" && op != "printLayout" && op != "nodeAt" then
     let dom ← prepareDOM html request
