@@ -41,9 +41,9 @@ shots.push(["bgp-join-step-3","q="+encode(engine.sparqlInfo().examples[0].query)
 for(const [name,argument] of shots){
   const page=engine.sparqlPage(argument);
   const doc=await prepareHTML(engine,"foafnaut:sparql/"+argument,undefined,page.source);
-  const frame=doc.compile(W,H);
+  const frame=engine.compile(page.source,W,H,doc.request(W,H).options);
   // The storage-buffer mode: a whole page is more than a uniform buffer holds.
-  const rgba=await render(frame,"svg-offscreen");
+  const rgba=await render(frame as unknown as Parameters<typeof render>[0],"svg-offscreen");
   if(!rgba)throw new Error("no GPU frame");
   const file=`${out}/sparql-${name}.png`;
   await Deno.writeFile(file,png(rgba,frame.width,frame.height));

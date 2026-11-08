@@ -34,7 +34,7 @@ async function runs(engine:HTMLEngine){
       if(step)assert.match(page.next,new RegExp(`step=${step+1}$`));
       // Lean lays the page out and draws it: a refusal throws here.
       const doc=await prepareHTML(engine,"foafnaut:sparql/"+argument,undefined,page.source);
-      const frame=doc.compile(900,2000);
+      const frame=engine.compile(page.source,900,2000,doc.request(900,2000).options);
       assert(frame.primitiveCount>100,`${example.name}: ${frame.primitiveCount} paint items`);
     }
     plans.push({name:example.name,operators:plan.operators.map(({ns:_,...op})=>op),capability:plan.capability,rows:plan.rows,answer:plan.answer});
