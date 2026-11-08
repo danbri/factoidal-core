@@ -26,6 +26,7 @@ module runs no checkpoint of its own.
 import L4Factoidal.WasmVM.Api
 import L4Factoidal.WasmVM.Wasi
 import L4Factoidal.WasmVM.Hosts.Dom
+import L4Factoidal.WasmVM.Hosts.WebApi
 import L4Factoidal.EventLoop.Model
 import L4Factoidal.EventLoop.Dispatch
 
@@ -164,6 +165,8 @@ structure Host where
   op 16); empty when none. -/
   event : String := ""
   reads : Reads := {}
+  /-- The web APIs over Lean (`Hosts.WebApi`): streaming decoders and the generator. -/
+  web : Hosts.WebApi.State := {}
   deriving Inhabited
 
 /-- Budgets of one session. -/
@@ -184,6 +187,9 @@ structure Limits where
   logs : Nat := 1024
   /-- Nested browsing contexts for `iframe` elements (`Hosts.Dom.State.framing`). -/
   frames : Bool := false
+  /-- Entropy from the embedder's own generator, which seeds the page's
+  `crypto.getRandomValues` (`Hosts.WebApi`); empty leaves it off. -/
+  entropy : ByteArray := ByteArray.empty
   deriving Inhabited
 
 /-- The exports of the module, by function address. -/
@@ -233,7 +239,7 @@ def caps : Wasi.Caps (StateM Host) :=
 /-- The imports served here rather than by `Hosts.Dom`. -/
 def loopImports : List (String × Nat) :=
   [("listen", 5), ("unlisten", 1), ("dispatch_plan", 6), ("set_timer", 3), ("clear_timer", 1),
-   ("request_frame", 1), ("cancel_frame", 1)]
+   ("request_frame", 1), ("cancel_frame", 1), ("web_api", 6)]
 
 def accepts (mo nm : String) : Bool :=
   (mo == Hosts.Dom.moduleName && (Hosts.Dom.accepts mo nm || loopImports.any (·.1 == nm))) ||
@@ -338,6 +344,9 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     let (loop, id) := { h.loop with clock := h.time.sync h.loop.clock }.requestFrame (a 0)
     ({ h with loop }, st, Hosts.Dom.ret id)
   | "cancel_frame" => ({ h with loop := h.loop.cancelFrame (a 0) }, st, Hosts.Dom.ret 0)
+  | "web_api" =>
+    let (web, st, r) := Hosts.WebApi.serve mem args h.web st h.dom.dom
+    ({ h with web }, st, r)
   | _ =>
     let (dom, st, r) := Hosts.Dom.serve mem nm args h.dom st
     let reads := if readOnlyImports.contains nm then h.reads else { h.reads with version := h.reads.version + 1 }
@@ -934,7 +943,7 @@ def instantiatePage (m : Module') (dom : Arena) (lim : Limits := {}) : Except St
     | some (.func a) => Except.ok a
     | _ => Except.error s!"the module has no export {name}"
   let (fx, init, qnew, mode) ← Exports.of fa
-  let host : Host := { dom := { dom, commandLimit := lim.commands, logLimit := lim.logs } }
+  let host : Host := { dom := { dom, commandLimit := lim.commands, logLimit := lim.logs }, web := { entropy := lim.entropy } }
   let s : Session := { store := st, inst := ia, mem := memOf st ia, bindings := bs, host, fx, limits := lim }
   (s.initP init qnew mode).runLocal
 
@@ -1022,11 +1031,12 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
   let s : Session ← match m.base with
     | some b =>
       let domHost : DomHost := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames }
-      let host : Host := { dom := domHost, reads, time }
+      let host : Host := { dom := domHost, reads, time, web := { entropy := lim.entropy } }
       pure { b with host, limits := lim, steps := 0 }
     | none => do
       let s ← instantiatePage m dom lim
-      pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames }, reads, time } }
+      pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames }, reads, time,
+        web := { entropy := lim.entropy } } }
   let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage } } }
   return (s.startP url scripts framed).runLocal
 

@@ -76,6 +76,7 @@ def readsOf : Wasi.Binding → Option (List Read)
     else match nm with
       | "listen" | "dispatch_plan" => some [⟨1, 2, Hosts.Dom.maxAttrName⟩]
       | "unlisten" | "set_timer" | "clear_timer" | "request_frame" | "cancel_frame" => some []
+      | "web_api" => some [⟨2, 3, Hosts.WebApi.maxInput⟩]
       | _ => (Hosts.Dom.Import.ofName? nm).map domReads
 
 /-- A guest prepared for the host's engine. -/
@@ -125,7 +126,7 @@ def session (p : Prepared) (dom : Arena) (lim : Hosts.Page.Limits := {}) (framed
   let (fx, init, qnew, mode) := (Exports.of fun n => .ok (idx n)).toOption.getD (default, 0, 0, 0)
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage
   let domHost : DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames, gpu := gpu }
-  let host : Host := { dom := domHost, reads := reads, time := time }
+  let host : Host := { dom := domHost, reads := reads, time := time, web := { entropy := lim.entropy } }
   ({ store := {}, inst := 0, mem := 0, bindings := p.bindings, host, fx, limits := lim }, init, qnew, mode)
 
 /-- The program of a page start on the host's engine, after the host made a fresh

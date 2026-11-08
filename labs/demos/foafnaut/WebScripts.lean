@@ -157,6 +157,17 @@ stays. -/
 @[implemented_by keepImpl, noinline] private opaque keep (h : Held) (request : JSON.Json) : Nat
 @[implemented_by peekImpl, noinline] private opaque peek (request : JSON.Json) : Bool × Nat × Bool
 
+/-- Entropy for session `id`'s `crypto.getRandomValues` (`Hosts.WebApi`): 32 bytes of the
+host's own generator, `IO.getRandomBytes` (the operating system's natively; the browser's
+`crypto.getRandomValues` under Emscripten), then the session number. Empty when the host
+has none: the page then has no `getRandomValues`. -/
+private unsafe def entropyImpl (id : Nat) : ByteArray :=
+  unsafeBaseIO (do
+    match ← (IO.getRandomBytes 32).toBaseIO with
+    | .ok b => return b ++ (toString id).toUTF8
+    | .error _ => return ByteArray.empty)
+@[implemented_by entropyImpl, noinline] private opaque entropy (id : Nat) : ByteArray
+
 def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close",
   "aotModule", "resume", "host"]
 
@@ -602,7 +613,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let (vw, vh) := (viewport request).getD (800, 600)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
-        let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession } #[] missing
+        let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession } #[] missing
           reads { instructionsPerMs := rate }
         let id := held.nextSession
         beginTurn { held with session := none, leanSession := none, nextSession := id + 1 } id {} {} true true prog
@@ -617,7 +628,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let (vw, vh) := (viewport request).getD (800, 600)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
-        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession } #[] reads { instructionsPerMs := rate }
+        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession } #[] reads { instructionsPerMs := rate }
         return missing.foldl Page.Session.fail s
       match started with
       | (.error e, _) => (held, .error s!"scriptSession: {e}")

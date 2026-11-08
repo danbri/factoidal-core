@@ -170,7 +170,8 @@ def run (args : List String) : IO UInt32 := do
     for (node, src) in iframeElements dom do
       if let some fd ← frameDocument root dir src then frames := frames.push (node, fd)
     let a ← IO.monoNanosNow
-    match start m dom ("http://web-platform.test/" ++ f) scripts { commands, logs := 100000, frames := true } frames {}
+    let entropy ← IO.getRandomBytes 32
+    match start m dom ("http://web-platform.test/" ++ f) scripts { commands, logs := 100000, frames := true, entropy } frames {}
         { instructionsPerMs := rate } with
     | .error e =>
       bad := bad + 1
