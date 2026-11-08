@@ -1072,9 +1072,11 @@ async function main() {
         else if(step)native.testEvent(step[0],step[1],step[2]);else{if(native.readClipboard()===lastCopied)native.writeClipboard(savedClipboard);running=false;}
       }
       // Page script timers and animation frames: the virtual clock of the page's event loop
-      // follows real time since the page's scripts started. Lean decides what runs.
+      // follows real time since the page's scripts started. Lean decides what runs, at most
+      // one animation frame a turn. Frame pacing: no turn while a frame is pending (asked for
+      // or being made), so each presented frame has at most one turn before it.
       const script=document.script;
-      if(scriptsOn&&script&&!scriptBusy&&script.turn.nextWake!==null){
+      if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null){
         const elapsed=performance.now()-(scriptEpochs.get(script.session)??performance.now());
         if(elapsed>=script.turn.nextWake){
           const page=document;scriptBusy=true;

@@ -439,9 +439,11 @@ async function gpuShow(){
   finally{gpuBusy=false;}
 }
 // Timers and animation frames: the page's virtual clock follows real time since its scripts started.
+// Lean runs at most one animation frame a turn. Frame pacing: no turn while a frame is pending
+// (asked for or being drawn), so each presented frame has at most one turn before it.
 setInterval(()=>{
   const script=doc?.script;
-  if(!script||script.turn.nextWake===null||script.turn.nextWake===undefined)return;
+  if(!script||drawing||dirty||script.turn.nextWake===null||script.turn.nextWake===undefined)return;
   const elapsed=performance.now()-script.epoch;
   if(elapsed<script.turn.nextWake)return;
   try{scriptTurn(doc,call('',{op:'scriptSession',action:'advance',session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock))}));}
