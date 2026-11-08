@@ -408,6 +408,13 @@
     if (s.dispatching || !s.initialized) throw new DOMException('The event is already being dispatched.', 'InvalidStateError');
     const tid = idOf(target);
     s.dispatching = true; s.target = target;
+    // DOM §2.9 steps 5.4 and 5.9.3: the activation target of a click (Lean's choice), and its
+    // legacy-pre-activation behaviour before any listener runs.
+    let act = null, actState = null;
+    if (event instanceof MouseEvent && s.type === 'click' && tid < WINDOW) {
+      const r = chk(n.query(tid, 10, s.bubbles ? '1' : '0'));
+      if (r !== null) { act = Number(r); actState = preActivation(act); }
+    }
     // Lean answers [path length, path (target first)..., then per listener call:
     // callback, node, phase + 8 * capture, depth]: L4Factoidal.EventLoop.Dispatch.plan.
     const plan = chk(n.plan(tid, s.type, s.bubbles ? 1 : 0));
@@ -430,6 +437,7 @@
       if (s.stop && stopAt === null) stopAt = { depth, capture };
     }
     s.phase = 0; s.currentTarget = null; s.dispatching = false; s.stop = false; s.stopImmediate = false;
+    if (act !== null) { if (s.canceled) canceledActivation(act, actState); else activation(act, tid); }
     return !s.canceled;
   };
   const wrapTarget = id => id === WINDOW ? window : (id >= 0x10000000 ? targets.get(id) ?? null : wrap(id));
@@ -459,7 +467,8 @@
     'input', 'keydown', 'keypress', 'keyup', 'load', 'mousedown', 'mouseenter', 'mouseleave', 'mousemove', 'mouseout',
     'mouseover', 'mouseup', 'reset', 'resize', 'scroll', 'select', 'submit', 'toggle', 'wheel', 'animationend',
     'transitionend', 'pointerdown', 'pointerup', 'pointermove', 'message', 'unhandledrejection', 'rejectionhandled',
-    'beforeunload', 'unload', 'hashchange', 'popstate', 'pageshow', 'pagehide', 'storage', 'online', 'offline'];
+    'beforeunload', 'unload', 'hashchange', 'popstate', 'pageshow', 'pagehide', 'storage', 'online', 'offline',
+    'afterprint', 'beforeprint', 'languagechange', 'messageerror'];
   const handlers = new WeakMap();
   const handlerOf = (t, name) => handlers.get(t)?.get(name)?.value ?? null;
   const setHandler = (t, name, f) => {
@@ -481,6 +490,12 @@
       }, false);
     } else h.value = value;
   };
+  // HTML §8.1.8.2: on body and frameset elements, the window-reflecting body element event
+  // handlers and the WindowEventHandlers are the window's.
+  const bodyWindowHandlers = new Set(['blur', 'error', 'focus', 'load', 'resize', 'scroll', 'afterprint', 'beforeprint',
+    'beforeunload', 'hashchange', 'languagechange', 'message', 'messageerror', 'offline', 'online', 'pagehide', 'pageshow',
+    'popstate', 'rejectionhandled', 'storage', 'unhandledrejection', 'unload']);
+  const windowReflecting = el => el instanceof HTMLElement && (el.localName === 'body' || el.localName === 'frameset');
   const addHandlers = proto => {
     for (const name of handlerNames)
       Object.defineProperty(proto, 'on' + name, { get() { return handlerOf(this, name); },
@@ -580,7 +595,7 @@
     get textContent() { return str(nodeId(this), 4); }
     set textContent(v) { chk(n.setText(nodeId(this), v == null ? '' : String(v))); }
     normalize() { chk(n.treeOp(nodeId(this), 0, 2)); }
-    cloneNode(deep = false) { return wrap(chk(n.clone(nodeId(this), deep ? 1 : 0))); }
+    cloneNode(deep = false) { const c = chk(n.clone(nodeId(this), deep ? 1 : 0)); scanHandlers(c, true); return wrap(c); }
     isEqualNode(other) { return other === null || other === undefined ? false : chk(n.treeOp(nodeId(this), nodeId(other), 1)) === 1; }
     isSameNode(other) { return this === other; }
     compareDocumentPosition(other) {
@@ -725,7 +740,14 @@
       if (arguments.length < 3) throw new TypeError('setAttributeNS: 3 arguments required');
       chk(n.setAttr(nodeId(this), nsArg(ns) + '\u0000' + String(name), String(value)));
     }
-    removeAttribute(name) { const a = attrNodes(this).find(x => x.name === lowerIfHtml(this, String(name))); if (a) detachAttr(a); chk(n.removeAttr(nodeId(this), String(name))); }
+    removeAttribute(name) {
+      const k = lowerIfHtml(this, String(name)), a = attrNodes(this).find(x => x.name === k);
+      if (a) detachAttr(a);
+      chk(n.removeAttr(nodeId(this), String(name)));
+      // Removing an event handler content attribute deactivates the handler (HTML §8.1.8.1).
+      if (a && k.startsWith('on') && handlerNames.includes(k.slice(2)) && this instanceof HTMLElement)
+        setHandler(windowReflecting(this) && bodyWindowHandlers.has(k.slice(2)) ? window : this, k.slice(2), null);
+    }
     removeAttributeNS(ns, name) { const a = attrNode(this, nsArg(ns) || null, String(name)); if (a) detachAttr(a); chk(n.removeAttr(nodeId(this), nsArg(ns) + '\u0000' + String(name))); }
     toggleAttribute(name, force) {
       name = String(name);
@@ -918,6 +940,7 @@
     }
     get style() { let s = styles.get(this); if (!s) styles.set(this, s = styleOf(this)); return s; }
     click() {
+      if (chk(n.query(nodeId(this), 11, '')) === '1') return;
       if (clicking.has(this)) return;
       clicking.add(this);
       try {
@@ -988,8 +1011,101 @@
   const reflectString = (C, names) => { for (const k of names) Object.defineProperty(C.prototype, k, {
     get() { return this.getAttribute(k.toLowerCase()) ?? ''; }, set(v) { this.setAttribute(k.toLowerCase(), String(v)); }, configurable: true, enumerable: true }); };
   const reflectURL = (C, names) => { for (const k of names) Object.defineProperty(C.prototype, k, {
-    get() { const v = this.getAttribute(k); if (v === null) return ''; try { return new URL(v, document.URL).href; } catch { return v; } },
+    get() { const v = this.getAttribute(k); if (v === null) return ''; return resolveURL(v) ?? v; },
     set(v) { this.setAttribute(k, String(v)); }, configurable: true, enumerable: true }); };
+  // Form controls, links, labels and details (HTML §4.10, §4.6, §4.11): the state and the
+  // decisions are Lean's (DOM.Forms: node_query 10-14, tree_op 6-9).
+  const reflectBool = (C, names) => { for (const k of names) Object.defineProperty(C.prototype, k, {
+    get() { return this.hasAttribute(k.toLowerCase()); }, set(v) { this.toggleAttribute(k.toLowerCase(), !!v); }, configurable: true, enumerable: true }); };
+  const typeState = el => chk(n.query(nodeId(el), 14, ''));
+  Object.defineProperties(named.HTMLInputElement.prototype, {
+    checked: { get() { return chk(n.treeOp(nodeId(this), 0, 7)) === 1; }, set(v) { chk(n.treeOp(nodeId(this), v ? 1 : 0, 6)); }, configurable: true, enumerable: true },
+    defaultChecked: { get() { return this.hasAttribute('checked'); }, set(v) { this.toggleAttribute('checked', !!v); }, configurable: true, enumerable: true },
+    type: { get() { return typeState(this); }, set(v) { this.setAttribute('type', String(v)); }, configurable: true, enumerable: true },
+    value: { get() { return this.getAttribute('value') ?? (['checkbox', 'radio'].includes(typeState(this)) ? 'on' : ''); }, set(v) { this.setAttribute('value', String(v)); }, configurable: true, enumerable: true },
+    form: { get() { return formOf(this); }, configurable: true, enumerable: true },
+  });
+  Object.defineProperties(named.HTMLButtonElement.prototype, {
+    type: { get() { return typeState(this); }, set(v) { this.setAttribute('type', String(v)); }, configurable: true, enumerable: true },
+    form: { get() { return formOf(this); }, configurable: true, enumerable: true },
+  });
+  reflectString(named.HTMLInputElement, ['name']); reflectBool(named.HTMLInputElement, ['disabled', 'required', 'readOnly', 'multiple']);
+  reflectString(named.HTMLButtonElement, ['name', 'value']); reflectBool(named.HTMLButtonElement, ['disabled']);
+  reflectBool(named.HTMLSelectElement, ['disabled']); reflectBool(named.HTMLTextAreaElement, ['disabled']);
+  reflectBool(named.HTMLFieldSetElement, ['disabled']); reflectBool(named.HTMLDetailsElement, ['open']);
+  reflectString(named.HTMLFormElement, ['name', 'method', 'action']);
+  reflectURL(named.HTMLAnchorElement, ['href']); reflectString(named.HTMLAnchorElement, ['target', 'download', 'rel']);
+  reflectURL(named.HTMLAreaElement, ['href']);
+  Object.defineProperty(named.HTMLLabelElement.prototype, 'htmlFor', { get() { return this.getAttribute('for') ?? ''; }, set(v) { this.setAttribute('for', String(v)); }, configurable: true });
+  const formOf = el => { let k = info(nodeId(el), 1); while (k >= 0) { if (info(k, 0) === 1 && info(k, 8) === 1 && str(k, 0) === 'form') return wrap(k); k = info(k, 1); } return null; };
+  class SubmitEvent extends Event {
+    constructor(type, init = undefined) { super(type, init); state(this).submitter = initOf(init).submitter ?? null; }
+    get submitter() { return state(this).submitter; }
+  }
+  // The form submission algorithm up to navigation (HTML §4.10.21.3 steps 6.5-6.7): the
+  // submit event; a navigation would follow, but nothing loads here.
+  const submitForm = (form, submitter) => {
+    if (!form.isConnected) return; // a form that is not connected does not submit (§4.10.21.3 step 1)
+    const e = new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: submitter === form ? null : submitter });
+    state(e).trusted = true;
+    dispatch(form, e);
+  };
+  const resetForm = form => {
+    const e = new Event('reset', { bubbles: true, cancelable: true });
+    state(e).trusted = true;
+    if (dispatch(form, e)) chk(n.treeOp(nodeId(form), 0, 9));
+  };
+  Object.defineProperties(named.HTMLFormElement.prototype, {
+    submit: { value() {}, writable: true, configurable: true },
+    requestSubmit: { value(submitter) { submitForm(this, submitter ?? this); }, writable: true, configurable: true },
+    reset: { value() { resetForm(this); }, writable: true, configurable: true },
+  });
+  const fire = (target, type, init) => { const e = new Event(type, init); state(e).trusted = true; return dispatch(target, e); };
+  // DOM §2.9: legacy-pre-activation, legacy-canceled-activation and activation behaviours.
+  const preActivation = k => {
+    if (!(info(k, 8) === 1 && str(k, 0) === 'input')) return null;
+    const t = chk(n.query(k, 14, ''));
+    if (t === 'checkbox') { const old = chk(n.treeOp(k, 0, 7)); chk(n.treeOp(k, old ? 0 : 1, 6)); return { old }; }
+    if (t === 'radio') { const prev = chk(n.treeOp(k, 0, 8)), old = chk(n.treeOp(k, 0, 7)); chk(n.treeOp(k, 1, 6)); return { prev, old }; }
+    return null;
+  };
+  const canceledActivation = (k, st) => {
+    if (!st) return;
+    if (st.prev === undefined) chk(n.treeOp(k, st.old, 6));
+    else if (st.prev >= 0) chk(n.treeOp(st.prev, 1, 6));
+    else chk(n.treeOp(k, st.old, 6));
+  };
+  const activation = (k, targetId) => {
+    if (info(k, 8) !== 1) return;
+    const el = wrap(k), name = str(k, 0);
+    if (name === 'input' || name === 'button') {
+      const t = chk(n.query(k, 14, ''));
+      if (t === 'checkbox' || t === 'radio') {
+        if (!el.isConnected) return;
+        fire(el, 'input', { bubbles: true, composed: true }); fire(el, 'change', { bubbles: true });
+        return;
+      }
+      if (chk(n.query(k, 11, '')) === '1') return;
+      const form = formOf(el);
+      if (!form) return;
+      if (t === 'submit' || t === 'image') submitForm(form, el);
+      else if (t === 'reset') resetForm(form);
+    } else if (name === 'a' || name === 'area') {
+      followHyperlink(el.href);
+    } else if (name === 'label') {
+      const c = chk(n.query(k, 13, String(targetId)));
+      if (c !== null) wrap(Number(c)).click();
+    } else if (name === 'summary') {
+      const details = el.parentNode;
+      details.toggleAttribute('open');
+      setTimeout(() => fire(details, 'toggle', {}), 0);
+    }
+  };
+  for (const C of [named.HTMLBodyElement, named.HTMLFrameSetElement])
+    for (const name of bodyWindowHandlers) {
+      Object.defineProperty(C.prototype, 'on' + name, { get() { return handlerOf(window, name); },
+        set(f) { setHandler(window, name, f); }, configurable: true, enumerable: true });
+    }
   reflectURL(named.HTMLIFrameElement, ['src']); reflectString(named.HTMLIFrameElement, ['srcdoc', 'name', 'width', 'height', 'allow']);
   reflectURL(named.HTMLImageElement, ['src']); reflectString(named.HTMLImageElement, ['alt']);
   reflectURL(named.HTMLScriptElement, ['src']);
@@ -1480,7 +1596,7 @@
     importNode(node, options = false) {
       const deep = typeof options === 'object' && options !== null ? !options.selfOnly : !!options;
       if (node instanceof Attr) { const c = node.cloneNode(); attrState.get(c).doc = nodeId(this); return c; }
-      return wrap(chk(n.treeOp(nodeId(node), nodeId(this), deep ? 5 : 4)));
+      const c = chk(n.treeOp(nodeId(node), nodeId(this), deep ? 5 : 4)); scanHandlers(c, true); return wrap(c);
     }
     adoptNode(node) {
       if (node instanceof Attr) { const a = attrState.get(node); if (a.el) node.ownerElement.removeAttributeNode(node); a.doc = nodeId(this); return node; }
@@ -1594,6 +1710,23 @@
   const observed = new Map();          // node -> [{ observer, options }]
   let pendingObservers = [], notifyQueued = false;
   const observerState = new WeakMap();
+  let nextObserver = 0;
+  const withTransients = new Set();
+  // DOM §4.2.3 "remove" step 15: each subtree registration on an inclusive ancestor of the
+  // parent also watches the removed node, until the observer is next notified.
+  const addTransients = (parent, removed) => {
+    if (!observed.size) return;
+    for (let k = parent; k >= 0; k = info(k, 1)) {
+      for (const r of observed.get(k) ?? []) {
+        if (!r.options.subtree) continue;
+        for (const node of removed) {
+          const list = observed.get(node) ?? [];
+          list.push({ observer: r.observer, options: r.options, source: r });
+          observed.set(node, list); observerState.get(r.observer).nodes.add(node); withTransients.add(r.observer); scheduleNotify();
+        }
+      }
+    }
+  };
   class MutationRecord { constructor() { throw new TypeError('Illegal constructor'); } }
   const record = (fields) => {
     const r = Object.create(MutationRecord.prototype);
@@ -1601,6 +1734,23 @@
       previousSibling: null, nextSibling: null, attributeName: null, attributeNamespace: null, oldValue: null, ...fields }))
       Object.defineProperty(r, k, { value: v, enumerable: true });
     return r;
+  };
+  // Queue a mutation observer microtask (DOM §4.3.1), once.
+  const scheduleNotify = () => {
+    if (notifyQueued) return;
+    notifyQueued = true;
+    Promise.resolve().then(() => {
+      notifyQueued = false;
+      // DOM §4.3.2 "notify mutation observers": in the order the observers were made; the
+      // transient registrations of each go before its callback runs.
+      const list = [...new Set([...pendingObservers, ...withTransients])].sort((a, b) => observerState.get(a).order - observerState.get(b).order);
+      pendingObservers = []; withTransients.clear();
+      for (const o of list) {
+        const st = observerState.get(o), rs = st.records; st.records = [];
+        for (const k of st.nodes) { const l = observed.get(k); if (l && l.some(x => x.source && x.observer === o)) { const kept = l.filter(x => !(x.source && x.observer === o)); if (kept.length) observed.set(k, kept); else observed.delete(k); } }
+        if (rs.length) try { st.callback.call(o, rs, o); } catch (e) { report(e); }
+      }
+    });
   };
   const queueRecord = (type, target, fields, name) => {
     if (observed.size === 0) return;
@@ -1619,20 +1769,11 @@
       observerState.get(observer).records.push(record({ type, target: wrap(target), ...fields, oldValue: keepOld ? fields.oldValue ?? null : null }));
       if (!pendingObservers.includes(observer)) pendingObservers.push(observer);
     }
-    if (interested.size && !notifyQueued) {
-      notifyQueued = true;
-      Promise.resolve().then(() => {
-        notifyQueued = false;
-        const list = pendingObservers; pendingObservers = [];
-        for (const o of list) {
-          const st = observerState.get(o), rs = st.records; st.records = [];
-          if (rs.length) try { st.callback.call(o, rs, o); } catch (e) { report(e); }
-        }
-      });
-    }
+    if (interested.size) scheduleNotify();
   };
   const nodes = ids => staticList(ids.map(wrap));
   const childList = (parent, added, removed, prev, next) => {
+    if (removed.length) addTransients(parent, removed);
     if (added.length || removed.length)
       queueRecord('childList', parent, { addedNodes: nodes(added), removedNodes: nodes(removed), previousSibling: wrap(prev), nextSibling: wrap(next) });
   };
@@ -1702,7 +1843,7 @@
   class MutationObserver {
     constructor(callback) {
       if (typeof callback !== 'function') throw new TypeError("parameter 1 is not of type 'MutationCallback'");
-      observerState.set(this, { callback, records: [], nodes: new Set() });
+      observerState.set(this, { callback, records: [], nodes: new Set(), order: nextObserver++ });
     }
     observe(target, init = {}) {
       const id = nodeId(target), o = { ...init };
@@ -1716,8 +1857,12 @@
         attributeOldValue: !!o.attributeOldValue, characterDataOldValue: !!o.characterDataOldValue,
         attributeFilter: o.attributeFilter === undefined ? null : [...o.attributeFilter].map(String) };
       const list = observed.get(id) ?? [];
-      const existing = list.find(x => x.observer === this);
-      if (existing) existing.options = options; else list.push({ observer: this, options });
+      const existing = list.find(x => x.observer === this && !x.source);
+      if (existing) {
+        // DOM §4.3.3 observe() step 7.1: the transient registrations made from this one go.
+        for (const k of observerState.get(this).nodes) { const l = observed.get(k); if (l) { const kept = l.filter(x => x.source !== existing); if (kept.length) observed.set(k, kept); else observed.delete(k); } }
+        existing.options = options;
+      } else list.push({ observer: this, options });
       observed.set(id, list); observerState.get(this).nodes.add(id);
     }
     disconnect() {
@@ -1754,11 +1899,24 @@
     get protocol() { return /^[a-z][a-z0-9+.-]*:/i.exec(href)?.[0] ?? ''; },
     get pathname() { const m = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*([^?#]*)/i.exec(href); return m ? m[1] || '/' : ''; },
     get search() { const i = href.indexOf('?'); if (i < 0) return ''; const j = href.indexOf('#', i); return href.slice(i, j < 0 ? undefined : j); },
-    get hash() { const i = href.indexOf('#'); return i < 0 ? '' : href.slice(i); },
+    get hash() { const i = href.indexOf('#'); return i < 0 || i === href.length - 1 ? '' : href.slice(i); },
+    set hash(v) { v = String(v); const base = href.split('#')[0]; followHyperlink(v === '' ? base + '#' : base + (v.startsWith('#') ? v : '#' + v)); },
+    set href(v) { const u = resolveURL(String(v)); if (u !== null) followHyperlink(u); },
     get host() { return /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(href)?.[1] ?? ''; },
     get hostname() { return this.host.replace(/:\d+$/, ''); },
     get origin() { const m = /^([a-z][a-z0-9+.-]*:\/\/[^/?#]*)/i.exec(href); return m ? m[1] : 'null'; },
     reload() {}, assign() {}, replace() {},
+  };
+  // URLs are parsed by Lean (WHATWG URL, node_query 12).
+  const resolveURL = (input, base = href) => { const r = n.query(0, 12, base + '\u0000' + String(input)); return typeof r === 'string' ? r : null; };
+  // Navigate to a fragment of this document (HTML §7.4.2.3.3): the URL changes and a
+  // hashchange event is queued; any other navigation loads nothing here.
+  const followHyperlink = url => {
+    if (url === null || url === undefined) return;
+    const oldURL = href, strip = u => u.split('#')[0];
+    if (strip(url) !== strip(oldURL) || !url.includes('#') || url === oldURL) return;
+    href = url;
+    setTimeout(() => { const e = new HashChangeEvent('hashchange', { oldURL, newURL: url }); state(e).trusted = true; dispatch(window, e); }, 0);
   };
   let currentScript = null;
   // HTML §8.6: a handler that is not a function is converted to a string at once; the
@@ -1774,7 +1932,9 @@
   def('window', window); def('self', window); def('globalThis', window); def('frames', window);
   Object.defineProperty(globalThis, 'parent', { get: () => window, configurable: true });
   Object.defineProperty(globalThis, 'top', { get: () => window, configurable: true });
-  Object.defineProperty(globalThis, 'event', { get: () => globalEvent, set(v) {}, configurable: true });
+  // [Replaceable] (WebIDL §3.7.4): an assignment replaces the attribute with a data property.
+  Object.defineProperty(globalThis, 'event', { get: () => globalEvent,
+    set(v) { Object.defineProperty(globalThis, 'event', { value: v, writable: true, configurable: true, enumerable: true }); }, configurable: true, enumerable: true });
   def('opener', null); def('frameElement', null); def('name', '');
   def('document', document); def('location', location);
   def('navigator', Object.freeze({ userAgent: 'Foafnaut', language: 'en', languages: ['en'], platform: '', onLine: true,
@@ -1816,14 +1976,22 @@
     WheelEvent, PointerEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, CharacterData, Text, CDATASection, Comment,
-    ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser,
+    ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser, SubmitEvent,
     DOMTokenList, DOMException, AbortController, AbortSignal, Window, MutationObserver, MutationRecord, ...named })) def(k, v);
 
   // Content event handler attributes (HTML §8.1.8.1): onclick="..." and <body onload>.
-  const bodyWindowHandlers = new Set(['load', 'error', 'resize', 'scroll', 'message', 'unload', 'beforeunload', 'hashchange', 'popstate', 'pageshow', 'pagehide', 'online', 'offline']);
+  // The event handler content attributes of the elements of a subtree (a page's, or a clone's:
+  // a clone's attributes are set by Lean, not through setAttribute).
+  const scanHandlers = (root, inclusive) => {
+    for (const k of inclusive && info(root, 0) === 1 ? [root, ...elementsOf(root)] : elementsOf(root)) {
+      if (info(k, 8) !== 1) continue;
+      const a = str(k, 6) ?? ''; const xs = a === '' ? [] : a.split('\u0000');
+      for (let i = 0; i + 1 < xs.length; i += 2) if (/^on[a-z]+$/.test(xs[i])) contentHandler(wrap(k), xs[i].slice(2), xs[i + 1]);
+    }
+  };
   const contentHandler = (el, name, source) => {
     if (!handlerNames.includes(name)) return;
-    const onBody = el.localName === 'body' && bodyWindowHandlers.has(name);
+    const onBody = windowReflecting(el) && bodyWindowHandlers.has(name);
     let f;
     try { f = new Function('event', source); } catch (e) { report(e); return; }
     const t = onBody ? window : el;
@@ -1855,12 +2023,7 @@
     report(e) { report(e); },
     // A page starts: the content event handler attributes of its elements. The host may
     // run the prelude once on an empty document and copy that state for each page.
-    start() {
-      for (const k of elementsOf(0)) {
-        const a = str(k, 6) ?? ''; const xs = a === '' ? [] : a.split('\u0000');
-        for (let i = 0; i + 1 < xs.length; i += 2) if (/^on[a-z]+$/.test(xs[i])) contentHandler(wrap(k), xs[i].slice(2), xs[i + 1]);
-      }
-    },
+    start() { scanHandlers(0, false); },
     script(id) { currentScript = id < 0 ? null : wrap(id); },
     url(u) { href = String(u); },
     release(id) { callbacks.delete(id); },

@@ -233,3 +233,16 @@ DOMParser (2026-11-08): `parseFromString` makes the document with Lean's HTML pa
 (`create_node` kinds 11 and 12, so the command list replays it). An XML source that is not
 namespace-well-formed gives a document whose element is `parsererror` with the parser's
 message.
+
+Activation (2026-11-08): the dispatch of a `click` MouseEvent asks Lean for its activation
+target (`DOM.Forms.activationTarget`, `node_query` 10), runs the legacy-pre-activation
+behaviour of a checkbox or radio button before the listeners, and after them either the
+legacy-canceled-activation or the activation behaviour: `input` and `change` for a
+connected checkbox or radio button, form submission (the `submit` event; no navigation)
+and reset, a fragment navigation of `a` and `area` (the URL is parsed by Lean's WHATWG URL
+parser, `node_query` 12; a `hashchange` task follows), the labeled control's `click()` for
+a `label`, and the `open` toggle of `details` for its summary. Checkedness and its dirty
+flag are arena state (`Node.checkedness`, commands `setChecked` and `resetForm`).
+`click()` does nothing on a disabled form control. Event handler content attributes of
+cloned and imported subtrees are compiled as those of the page are; on `body` and
+`frameset` the window-reflecting handlers are the window's.

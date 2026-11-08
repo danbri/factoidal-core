@@ -103,6 +103,9 @@ structure Node where
   /-- A document's content type (DOM §4.5); "" is the default of its type, "text/html"
   or "application/xml". -/
   contentType : String := ""
+  /-- The checkedness of an `input` once its dirty checkedness flag is set (HTML §4.10.5);
+  `none` while the flag is false (`DOM.Forms.checkedness`). -/
+  checkedness : Option Bool := none
 deriving Inhabited, Repr
 
 structure Dom where
@@ -702,7 +705,7 @@ def cloneSingle (d : Dom) (src : NodeId) (doc : Option NodeId) : Dom × NodeId :
   let x := d.get src
   let n : Node := { type := x.type, doc := doc.getD x.doc, ns := x.ns, pfx := x.pfx, lname := x.lname,
                     attrs := x.attrs, data := x.data, pubId := x.pubId, sysId := x.sysId,
-                    htmlDoc := x.htmlDoc, contentType := x.contentType }
+                    htmlDoc := x.htmlDoc, contentType := x.contentType, checkedness := x.checkedness }
   let (d, id) := d.create n
   if x.type == .document then (d.setNode id fun y => { y with doc := id }, id) else (d, id)
 

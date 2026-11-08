@@ -40,6 +40,8 @@ import L4Factoidal.DOM.Selectors
 import Std.Data.HashMap
 import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.OfXml
+import L4Factoidal.DOM.Forms
+import L4Factoidal.WHATWG.URL.Parser
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.WasmVM L4Factoidal.DOM
@@ -75,6 +77,10 @@ inductive Command where
   | adoptNode (node doc : Nat)
   /-- `document.importNode(node, deep)` of document `doc` made node `result`. -/
   | importNode (node doc : Nat) (deep : Bool) (result : Nat)
+  /-- The checkedness of an `input` set to `value` (`DOM.Forms.setChecked`). -/
+  | setChecked (node : Nat) (value : Bool)
+  /-- The reset algorithm of form `node` (`DOM.Forms.resetForm`). -/
+  | resetForm (node : Nat)
   deriving BEq, Repr, Inhabited
 
 /-- A request to the event loop. -/
@@ -280,10 +286,11 @@ def Command.sameWrite : Command → Command → Bool
 /-- The commands that read attributes or character data (`cloneNode`, `importNode`,
 `normalize`), the namespaced attribute writes (whose attribute may be one that
 `writeKey` names otherwise), and `adoptNode` (a node's document decides how
-`setAttribute` names an attribute): a write before one of them stays before it. -/
+`setAttribute` names an attribute), and the form state commands (which read `type`,
+`name` and the tree): a write before one of them stays before it. -/
 def Command.reads : Command → Bool
   | .cloneNode .. | .importNode .. | .normalize _ | .setAttributeNS .. | .removeAttributeNS ..
-  | .adoptNode .. => true
+  | .adoptNode .. | .setChecked .. | .resetForm _ => true
   | _ => false
 
 /-- Record command `c`, whose result is the arena `d`. A write of an attribute or of
@@ -697,7 +704,9 @@ def cloneNode (args : Array Value) (s : State) : State × HostResult :=
 
 /-- `tree_op(a, b, which)`: 1 `isEqualNode` (1 or 0); 2 `normalize()` of `a`; 3
 `b.adoptNode(a)` (DOM §4.5: a document is NotSupportedError); 4 and 5
-`b.importNode(a, deep)` (shallow, deep; the new node). -/
+`b.importNode(a, deep)` (shallow, deep; the new node); 6 set the checkedness of input `a`
+to `b` (1 or 0); 7 the checkedness of `a`; 8 the other checked radio button of `a`'s
+group, or -1; 9 reset form `a` (DOM.Forms). -/
 def treeOp (args : Array Value) (s : State) : State × HostResult :=
   let a := arg args 0
   let b := arg args 1
@@ -708,6 +717,12 @@ def treeOp (args : Array Value) (s : State) : State × HostResult :=
     -- the template contents of a template element stay where they are
     else if (s.dom.get a).type == .fragment && (s.dom.get a).host.isSome then (s, ret 0)
     else addCommand s (.adoptNode a b) (s.dom.adopt a b)
+  | 6 => if !Forms.isHtml s.dom a ["input"] then (s, ret (-2))
+    else addCommand s (.setChecked a (b != 0)) (Forms.setChecked s.dom a (b != 0))
+  | 7 => (s, ret (if Forms.checkedness s.dom a then 1 else 0))
+  | 8 => match Forms.checkedInGroup s.dom a with | some k => (s, ret k) | none => (s, ret (-1))
+  | 9 => if !Forms.isHtml s.dom a ["form"] then (s, ret (-2))
+    else addCommand s (.resetForm a) (Forms.resetForm s.dom a)
   | 4 | 5 => if !isNode s.dom b || !isDoc b then (s, ret (-2)) else if isDoc a then (s, ret (-10)) else
     let deep := arg args 2 == 5
     let (d, c) := s.dom.cloneNode a deep (some b)
@@ -755,9 +770,20 @@ or the error. Ops 3 and 4 do not read the node. 5 `getElementById(s)` in the sub
 the node (DOM §4.2.4), as a decimal node number. 6 `querySelectorAll(s)`: the node numbers,
 separated by spaces; 7 `querySelector(s)`: the first, or ""; 8 `matches(s)`: "1" or "0";
 9 `closest(s)`: a node number, or -1 (DOM.Selectors). An invalid selector is -12
-(SyntaxError). -/
+(SyntaxError). 10 the activation target of a click dispatched to the node (`s` "1" when
+it bubbles); 11 "1" for a disabled form control; 12 the URL `input` parsed against `base`
+("base U+0000 input"; WHATWG URL), as its href; 13 the control a click on label node
+activates for the event target `s` (a decimal node number); 14 the type state of an
+`input` or `button` (DOM.Forms). Op 12 does not read the node. -/
 def nodeQueryOf (d : Dom) (n op : Nat) (q : String) : Except Int String :=
   if op == 3 then (if Dom.validAttributeLocalName q then .ok "" else .error (-3)) else
+  if op == 12 then
+    match q.splitOn "\x00" with
+    | [base, input] => match L4Factoidal.WHATWG.URL.parseUrl input (if base.isEmpty then none else some base) with
+      | some u => .ok u.href
+      | none => .error (-1)
+    | _ => .error (-2)
+  else
   if op == 4 then
     match nsName? q with
     | none => .error (-2)
@@ -781,6 +807,16 @@ def nodeQueryOf (d : Dom) (n op : Nat) (q : String) : Except Int String :=
     | some l => match Selectors.closest d n l with
       | some k => .ok (toString k)
       | none => .error (-1)
+  | 10 => match Forms.activationTarget d n (q == "1") with
+    | some k => .ok (toString k)
+    | none => .error (-1)
+  | 11 => .ok (if Forms.disabledControl d n then "1" else "0")
+  | 13 => match q.toNat? with
+    | some t => if t < d.size then (match Forms.labelActivates d n t with
+        | some k => .ok (toString k)
+        | none => .error (-1)) else .error (-2)
+    | none => .error (-2)
+  | 14 => .ok (if Forms.isHtml d n ["button"] then Forms.buttonType d n else Forms.inputType d n)
   | 5 => match d.getElementById n q with
     | some k => .ok (toString k)
     | none => .error (-1)
@@ -1025,6 +1061,14 @@ def Command.apply (d : Dom) : Command → Except String Dom
     checkNode d n; checkNode d doc
     if (d.get doc).type != .document || (d.get n).type == .document then throw "script command: NotSupportedError"
     return d.adopt n doc
+  | .setChecked n v => do
+    checkNode d n
+    if !Forms.isHtml d n ["input"] then throw "script command: target must be an input"
+    return Forms.setChecked d n v
+  | .resetForm n => do
+    checkNode d n
+    if !Forms.isHtml d n ["form"] then throw "script command: target must be a form"
+    return Forms.resetForm d n
   | .importNode n doc deep r => do
     checkNode d n; checkNode d doc
     if (d.get doc).type != .document || (d.get n).type == .document then throw "script command: NotSupportedError"

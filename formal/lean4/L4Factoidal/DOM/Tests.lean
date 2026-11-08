@@ -7,6 +7,7 @@ algorithm in whatwg/dom `3c53f93a`.
 -/
 import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.Selectors
+import L4Factoidal.DOM.Forms
 
 namespace L4Factoidal.DOM.Tests
 
@@ -133,5 +134,26 @@ def qsa (sel : String) : Option (List String) :=
 #guard qsa "#\\74 3" == some ["t3"]
 #guard qsa "*|li:is(#t3)" == some ["t3"]
 #guard (["", "div,", ".5cm", "ns|div", ":example", ">*", "[*=test]", "div::example"].map Selectors.parse).all (·.isNone)
+
+/-! ## Form state and activation (DOM.Forms) -/
+
+def formDoc : Dom := parseHtmlDocument
+  "<body><form><input type=radio name=g id=r1 checked><input type=RADIO name=g id=r2><input type=checkbox id=c></form><label id=l><span id=s>x</span><input id=i></label><details><summary id=su>s</summary></details></body>"
+def byId (d : Dom) (id : String) : NodeId := (d.getElementById 0 id).getD 0
+-- checking a radio button unchecks the rest of its group; the attribute stays
+#guard (let d := Forms.setChecked formDoc (byId formDoc "r2") true
+  (Forms.checkedness d (byId d "r1"), Forms.checkedness d (byId d "r2"), (Forms.attr? d (byId d "r1") "checked").isSome)) == (false, true, true)
+-- reset clears the dirty flag
+#guard (let f := ((formDoc.treeOrder 0).find? (Forms.isHtml formDoc · ["form"])).getD 0
+  let d := Forms.resetForm (Forms.setChecked formDoc (byId formDoc "r2") true) f
+  Forms.checkedness d (byId d "r1")) == true
+-- the activation target: the target itself, else the nearest ancestor when it bubbles
+#guard Forms.activationTarget formDoc (byId formDoc "s") true == some (byId formDoc "l")
+#guard Forms.activationTarget formDoc (byId formDoc "s") false == none
+#guard Forms.activationTarget formDoc (byId formDoc "c") true == some (byId formDoc "c")
+#guard Forms.isDetailsSummary formDoc (byId formDoc "su")
+-- a label activates its first labelable descendant, not for a click on interactive content
+#guard Forms.labelActivates formDoc (byId formDoc "l") (byId formDoc "s") == some (byId formDoc "i")
+#guard Forms.labelActivates formDoc (byId formDoc "l") (byId formDoc "i") == none
 
 end L4Factoidal.DOM.Tests

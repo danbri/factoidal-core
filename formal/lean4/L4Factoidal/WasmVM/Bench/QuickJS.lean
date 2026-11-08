@@ -152,6 +152,8 @@ def commandJson : Hosts.Dom.Command → Json
   | .removeAttributeNS n ns l => Json.mkObj [("op", Json.str "removeAttributeNS"), ("nodeId", jn n), ("namespace", Json.str ns), ("name", Json.str l)]
   | .adoptNode n doc => Json.mkObj [("op", Json.str "adoptNode"), ("nodeId", jn n), ("document", jn doc)]
   | .importNode n doc deep r => Json.mkObj [("op", Json.str "importNode"), ("source", jn n), ("document", jn doc), ("deep", Json.bool deep), ("nodeId", jn r)]
+  | .setChecked n v => Json.mkObj [("op", Json.str "setChecked"), ("nodeId", jn n), ("value", Json.bool v)]
+  | .resetForm n => Json.mkObj [("op", Json.str "resetForm"), ("nodeId", jn n)]
 
 /-- One turn: its commands, logs and whether the default was prevented. -/
 structure Batch where

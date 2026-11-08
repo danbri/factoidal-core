@@ -46,6 +46,8 @@ def commandJson : L4Factoidal.WasmVM.Hosts.Dom.Command → JSON.Json
   | .removeAttributeNS n ns l => .object [("op",.string "removeAttributeNS"),("nodeId",num n),("namespace",.string ns),("name",.string l)]
   | .adoptNode n doc => .object [("op",.string "adoptNode"),("nodeId",num n),("document",num doc)]
   | .importNode n doc deep r => .object [("op",.string "importNode"),("source",num n),("document",num doc),("deep",.bool deep),("nodeId",num r)]
+  | .setChecked n v => .object [("op",.string "setChecked"),("nodeId",num n),("value",.bool v)]
+  | .resetForm n => .object [("op",.string "resetForm"),("nodeId",num n)]
 where num (n : Nat) : JSON.Json := .number (toString n)
 
 private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.Hosts.Dom.Command := do
@@ -69,6 +71,13 @@ private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.H
   | "createElementNS" => exactly ["namespace","name","nodeId"]; return .createElementNS (← str "namespace") (← attrName "name") (← node "nodeId")
   | "setAttributeNS" => exactly ["nodeId","namespace","name","value"]; return .setAttributeNS (← node "nodeId") (← str "namespace") (← attrName "name") (← str "value")
   | "removeAttributeNS" => exactly ["nodeId","namespace","name"]; return .removeAttributeNS (← node "nodeId") (← str "namespace") (← attrName "name")
+  | "setChecked" =>
+    exactly ["nodeId","value"]
+    let v ← match ← field command "value" with
+      | .bool b => pure b
+      | _ => throw "script command: value must be a boolean"
+    return .setChecked (← node "nodeId") v
+  | "resetForm" => exactly ["nodeId"]; return .resetForm (← node "nodeId")
   | "adoptNode" => exactly ["nodeId","document"]; return .adoptNode (← node "nodeId") (← node "document")
   | "importNode" =>
     exactly ["source","document","deep","nodeId"]

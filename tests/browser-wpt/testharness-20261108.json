@@ -1,14 +1,14 @@
 {
  "format": "factoidal-wpt-testharness-v1",
- "measuredAt": "2026-11-08T13:16:06.712Z",
+ "measuredAt": "2026-11-08T15:06:27.003Z",
  "scope": "WPT testharness.js tests, window variant, in the engine's script session (QuickJS-NG in WasmVM, Lean DOM arena, Lean event loop, virtual clock). Subtest counts are of the subtests a page reported; a page that reported none counts 0 of 0.",
  "wptCommit": "ce5ca39646886a9349fc42913f843ec6e1c8a36f",
  "engine": "bench",
  "info": {
   "engine": "wasmvm-bench page"
  },
- "quickjsWasmSha256": "46dabc6b8de909cf951e86f306006ea89024d206d7e8275000bccacc582a1262",
- "runnerSha256": "9f7113eeab818449a2ee426d53ae79a4ca36a38621a727b8bfdefbe69db33482",
+ "quickjsWasmSha256": "d8c0d09a06c21e814bcd55edbb0efdd77084a3edc0fb371559c6c8d82ddd7c86",
+ "runnerSha256": "3e24d6c191c47d6cca0ec738b07b1dc9b600e622e595520bd0e7d1b197121421",
  "reportSha256": "0f8a869b6a6d735acad7cab070da098a78583969454ddf1f09a8a2721291b35e",
  "directories": {
   "html/webappapis/timers": {
@@ -31,9 +31,9 @@
    "files": 101,
    "run": 98,
    "skipped": 3,
-   "harnessOK": 84,
-   "subtests": 645,
-   "pass": 403
+   "harnessOK": 85,
+   "subtests": 651,
+   "pass": 572
   },
   "dom/nodes": {
    "files": 264,
@@ -41,7 +41,7 @@
    "skipped": 30,
    "harnessOK": 221,
    "subtests": 13016,
-   "pass": 11984
+   "pass": 11999
   },
   "html/webappapis/scripting/event-loops": {
    "files": 9,
@@ -55,8 +55,8 @@
  "totals": {
   "files": 394,
   "run": 359,
-  "subtests": 13699,
-  "pass": 12421
+  "subtests": 13705,
+  "pass": 12605
  },
  "cases": [
   {
@@ -72,8 +72,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2390,
-   "instructions": 89818294,
+   "ms": 1759,
+   "instructions": 89616862,
    "clock": 70000
   },
   {
@@ -85,8 +85,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1394,
-   "instructions": 60815093,
+   "ms": 1513,
+   "instructions": 60496892,
    "clock": 70000
   },
   {
@@ -102,8 +102,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1371,
-   "instructions": 60538597,
+   "ms": 1556,
+   "instructions": 60231891,
    "clock": 10000
   },
   {
@@ -127,8 +127,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1414,
-   "instructions": 63727186,
+   "ms": 1607,
+   "instructions": 63379854,
    "clock": 10000
   },
   {
@@ -140,8 +140,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1440,
-   "instructions": 60032832,
+   "ms": 1550,
+   "instructions": 59722286,
    "clock": 10000
   },
   {
@@ -157,8 +157,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1415,
-   "instructions": 61202867,
+   "ms": 1532,
+   "instructions": 60890824,
    "clock": 10000
   },
   {
@@ -170,8 +170,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1523,
-   "instructions": 63102125,
+   "ms": 1527,
+   "instructions": 62629341,
    "clock": 10000
   },
   {
@@ -183,16 +183,16 @@
      "status": "PASS"
     }
    ],
-   "ms": 1413,
-   "instructions": 62911980,
+   "ms": 1574,
+   "instructions": 62442854,
    "clock": 10000
   },
   {
    "file": "html/webappapis/timers/setinterval-cross-realm-callback-report-exception.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1430,
-   "instructions": 60255263,
+   "ms": 1556,
+   "instructions": 59962925,
    "clock": 10000,
    "errors": [
     "TypeError: cannot set property 'onerror' of undefined\n    at <eval> (<page-script>:6:1)\n"
@@ -211,16 +211,16 @@
      "status": "PASS"
     }
    ],
-   "ms": 1503,
-   "instructions": 60931683,
+   "ms": 1588,
+   "instructions": 60642540,
    "clock": 10000
   },
   {
    "file": "html/webappapis/timers/settimeout-cross-realm-callback-report-exception.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1385,
-   "instructions": 60204560,
+   "ms": 1526,
+   "instructions": 59912511,
    "clock": 10000,
    "errors": [
     "TypeError: cannot set property 'onerror' of undefined\n    at <eval> (<page-script>:6:1)\n"
@@ -236,8 +236,8 @@
      "message": "assert_false: the detached realm's timeout callback did not run expected false got true"
     }
    ],
-   "ms": 1444,
-   "instructions": 63158426,
+   "ms": 2041,
+   "instructions": 62600586,
    "clock": 10000
   },
   {
@@ -253,8 +253,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1517,
-   "instructions": 60527083,
+   "ms": 2161,
+   "instructions": 60131385,
    "clock": 10000
   },
   {
@@ -270,8 +270,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1429,
-   "instructions": 61727254,
+   "ms": 1682,
+   "instructions": 61343653,
    "clock": 10000
   },
   {
@@ -283,8 +283,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1475,
-   "instructions": 63011452,
+   "ms": 1663,
+   "instructions": 62552102,
    "clock": 10000
   },
   {
@@ -296,16 +296,16 @@
      "status": "PASS"
     }
    ],
-   "ms": 1516,
-   "instructions": 62970982,
+   "ms": 1669,
+   "instructions": 62505275,
    "clock": 10000
   },
   {
    "file": "html/webappapis/microtask-queuing/queue-microtask-cross-realm-callback-report-exception.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1450,
-   "instructions": 60201505,
+   "ms": 1650,
+   "instructions": 59902799,
    "clock": 10000,
    "errors": [
     "TypeError: cannot set property 'onerror' of undefined\n    at <eval> (<page-script>:6:1)\n"
@@ -320,8 +320,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1463,
-   "instructions": 60268516,
+   "ms": 1602,
+   "instructions": 59981762,
    "clock": 10000
   },
   {
@@ -349,8 +349,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1472,
-   "instructions": 63555039,
+   "ms": 1704,
+   "instructions": 63314097,
    "clock": 10000
   },
   {
@@ -366,8 +366,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1528,
-   "instructions": 62310156,
+   "ms": 1751,
+   "instructions": 62170367,
    "clock": 10000
   },
   {
@@ -391,8 +391,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1503,
-   "instructions": 67016060,
+   "ms": 1839,
+   "instructions": 66700898,
    "clock": 10000
   },
   {
@@ -421,8 +421,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1545,
-   "instructions": 75893175,
+   "ms": 1810,
+   "instructions": 75581471,
    "clock": 10000
   },
   {
@@ -475,8 +475,8 @@
      "message": "assert_throws_js: function \"() => { et.addEventListener(\"foo\", null, { signal: null }); }\" did not throw"
     }
    ],
-   "ms": 1595,
-   "instructions": 82113590,
+   "ms": 1795,
+   "instructions": 79787338,
    "clock": 10000
   },
   {
@@ -497,8 +497,7 @@
     },
     {
      "name": "Forward HTMLBodyElement.onblur to Window",
-     "status": "FAIL",
-     "message": "assert_equals: Convert to function expected \"function\" but got \"object\""
+     "status": "PASS"
     },
     {
      "name": "Set HTMLFrameSetElement.onblur",
@@ -514,8 +513,7 @@
     },
     {
      "name": "Forward HTMLFrameSetElement.onblur to Window",
-     "status": "FAIL",
-     "message": "assert_equals: Convert to function expected \"function\" but got \"object\""
+     "status": "PASS"
     },
     {
      "name": "Set HTMLBodyElement.onerror",
@@ -527,13 +525,11 @@
     },
     {
      "name": "Reflect HTMLBodyElement.onerror",
-     "status": "FAIL",
-     "message": "assert_equals: Convert to function expected \"function\" but got \"object\""
+     "status": "PASS"
     },
     {
      "name": "Forward HTMLBodyElement.onerror to Window",
-     "status": "FAIL",
-     "message": "assert_equals: Forward content attribute expected (object) null but got (function) function \"function (m, s, l, c, e) { return f.call(this, m); }\""
+     "status": "PASS"
     },
     {
      "name": "Set HTMLFrameSetElement.onerror",
@@ -549,8 +545,7 @@
     },
     {
      "name": "Forward HTMLFrameSetElement.onerror to Window",
-     "status": "FAIL",
-     "message": "assert_equals: Convert to function expected \"function\" but got \"object\""
+     "status": "PASS"
     },
     {
      "name": "Set HTMLBodyElement.onfocus",
@@ -566,8 +561,7 @@
     },
     {
      "name": "Forward HTMLBodyElement.onfocus to Window",
-     "status": "FAIL",
-     "message": "assert_equals: Convert to function expected \"function\" but got \"object\""
+     "status": "PASS"
     },
     {
      "name": "Set HTMLFrameSetElement.onfocus",
@@ -583,8 +577,7 @@
     },
     {
      "name": "Forward HTMLFrameSetElement.onfocus to Window",
-     "status": "FAIL",
-     "message": "assert_equals: Convert to function expected \"function\" but got \"object\""
+     "status": "PASS"
     },
     {
      "name": "Set HTMLBodyElement.onload",
@@ -596,13 +589,11 @@
     },
     {
      "name": "Reflect HTMLBodyElement.onload",
-     "status": "FAIL",
-     "message": "assert_equals: Convert to function expected \"function\" but got \"object\""
+     "status": "PASS"
     },
     {
      "name": "Forward HTMLBodyElement.onload to Window",
-     "status": "FAIL",
-     "message": "assert_equals: Forward content attribute expected (object) null but got (function) function \"function anonymous(event\n) {\nreturn\n}\""
+     "status": "PASS"
     },
     {
      "name": "Set HTMLFrameSetElement.onload",
@@ -618,8 +609,7 @@
     },
     {
      "name": "Forward HTMLFrameSetElement.onload to Window",
-     "status": "FAIL",
-     "message": "assert_equals: Convert to function expected \"function\" but got \"object\""
+     "status": "PASS"
     },
     {
      "name": "Set HTMLBodyElement.onscroll",
@@ -631,13 +621,11 @@
     },
     {
      "name": "Reflect HTMLBodyElement.onscroll",
-     "status": "FAIL",
-     "message": "assert_equals: Convert to function expected \"function\" but got \"object\""
+     "status": "PASS"
     },
     {
      "name": "Forward HTMLBodyElement.onscroll to Window",
-     "status": "FAIL",
-     "message": "assert_equals: Forward content attribute expected (object) null but got (function) function \"function anonymous(event\n) {\nreturn\n}\""
+     "status": "PASS"
     },
     {
      "name": "Set HTMLFrameSetElement.onscroll",
@@ -653,8 +641,7 @@
     },
     {
      "name": "Forward HTMLFrameSetElement.onscroll to Window",
-     "status": "FAIL",
-     "message": "assert_equals: Convert to function expected \"function\" but got \"object\""
+     "status": "PASS"
     },
     {
      "name": "Set HTMLBodyElement.onresize",
@@ -666,13 +653,11 @@
     },
     {
      "name": "Reflect HTMLBodyElement.onresize",
-     "status": "FAIL",
-     "message": "assert_equals: Convert to function expected \"function\" but got \"object\""
+     "status": "PASS"
     },
     {
      "name": "Forward HTMLBodyElement.onresize to Window",
-     "status": "FAIL",
-     "message": "assert_equals: Forward content attribute expected (object) null but got (function) function \"function anonymous(event\n) {\nreturn\n}\""
+     "status": "PASS"
     },
     {
      "name": "Set HTMLFrameSetElement.onresize",
@@ -688,12 +673,11 @@
     },
     {
      "name": "Forward HTMLFrameSetElement.onresize to Window",
-     "status": "FAIL",
-     "message": "assert_equals: Convert to function expected \"function\" but got \"object\""
+     "status": "PASS"
     }
    ],
-   "ms": 2512,
-   "instructions": 131679572,
+   "ms": 1907,
+   "instructions": 94436661,
    "clock": 10000
   },
   {
@@ -714,8 +698,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1477,
-   "instructions": 63267241,
+   "ms": 1601,
+   "instructions": 62689012,
    "clock": 10000
   },
   {
@@ -755,8 +739,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1515,
-   "instructions": 69962127,
+   "ms": 1699,
+   "instructions": 69626228,
    "clock": 10000
   },
   {
@@ -780,8 +764,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1491,
-   "instructions": 61960114,
+   "ms": 1655,
+   "instructions": 61643657,
    "clock": 10000
   },
   {
@@ -847,8 +831,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1694,
-   "instructions": 81623963,
+   "ms": 1705,
+   "instructions": 81120975,
    "clock": 10000
   },
   {
@@ -864,8 +848,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1470,
-   "instructions": 61998560,
+   "ms": 1580,
+   "instructions": 61603655,
    "clock": 10000
   },
   {
@@ -905,8 +889,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1478,
-   "instructions": 63873382,
+   "ms": 1644,
+   "instructions": 63509533,
    "clock": 10000
   },
   {
@@ -918,8 +902,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1436,
-   "instructions": 64996164,
+   "ms": 1625,
+   "instructions": 64699183,
    "clock": 10000
   },
   {
@@ -947,8 +931,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1741,
-   "instructions": 90987698,
+   "ms": 1859,
+   "instructions": 92450827,
    "clock": 10000
   },
   {
@@ -976,8 +960,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1858,
-   "instructions": 94162535,
+   "ms": 1893,
+   "instructions": 95764335,
    "clock": 10000
   },
   {
@@ -986,83 +970,75 @@
    "subtests": [
     {
      "name": "basic with click()",
-     "status": "FAIL",
-     "message": "assert_true: expected true got undefined"
+     "status": "PASS"
     },
     {
      "name": "basic with dispatchEvent()",
-     "status": "FAIL",
-     "message": "assert_true: expected true got undefined"
+     "status": "PASS"
     },
     {
      "name": "basic with wrong event class",
-     "status": "FAIL",
-     "message": "assert_false: expected false got undefined"
+     "status": "PASS"
     },
     {
      "name": "look at parents only when event bubbles",
-     "status": "FAIL",
-     "message": "assert_false: expected false got undefined"
+     "status": "PASS"
     },
     {
      "name": "look at parents when event bubbles",
-     "status": "FAIL",
-     "message": "assert_true: expected true got undefined"
+     "status": "PASS"
     },
     {
      "name": "pick the first with activation behavior <input type=checkbox>",
-     "status": "FAIL",
-     "message": "assert_true: child pre-click must be triggered expected true got undefined"
+     "status": "PASS"
     },
     {
      "name": "pick the first with activation behavior <input type=radio>",
-     "status": "FAIL",
-     "message": "assert_true: child pre-click must be triggered expected true got undefined"
+     "status": "PASS"
+    },
+    {
+     "name": "event state during post-click handling",
+     "status": "PASS"
+    },
+    {
+     "name": "redispatch during post-click handling",
+     "status": "PASS"
     },
     {
      "name": "disabled checkbox still has activation behavior",
-     "status": "FAIL",
-     "message": "assert_false: expected false got undefined"
+     "status": "PASS"
     },
     {
      "name": "disabled checkbox still has activation behavior, part 2",
-     "status": "FAIL",
-     "message": "assert_unreached: Reached unreachable code"
+     "status": "PASS"
     },
     {
      "name": "disabled radio still has activation behavior",
-     "status": "FAIL",
-     "message": "assert_unreached: Reached unreachable code"
+     "status": "PASS"
     },
     {
      "name": "disconnected checkbox should be checked",
-     "status": "FAIL",
-     "message": "assert_true: expected true got undefined"
+     "status": "PASS"
     },
     {
      "name": "disconnected radio should be checked",
-     "status": "FAIL",
-     "message": "assert_true: expected true got undefined"
+     "status": "PASS"
     },
     {
      "name": "disconnected checkbox should be checked from dispatchEvent(new MouseEvent('click'))",
-     "status": "FAIL",
-     "message": "assert_true: expected true got undefined"
+     "status": "PASS"
     },
     {
      "name": "disconnected radio should be checked from dispatchEvent(new MouseEvent('click'))",
-     "status": "FAIL",
-     "message": "assert_true: expected true got undefined"
+     "status": "PASS"
     },
     {
      "name": "disabled checkbox should be checked from dispatchEvent(new MouseEvent(\"click\"))",
-     "status": "FAIL",
-     "message": "assert_true: expected true got undefined"
+     "status": "PASS"
     },
     {
      "name": "disabled radio should be checked from dispatchEvent(new MouseEvent(\"click\"))",
-     "status": "FAIL",
-     "message": "assert_true: expected true got undefined"
+     "status": "PASS"
     },
     {
      "name": "disabled checkbox should fire onclick",
@@ -1073,24 +1049,28 @@
      "status": "PASS"
     },
     {
-     "name": "disabled checkbox should get legacy-canceled-activation behavior",
-     "status": "FAIL",
-     "message": "assert_true: expected true got undefined"
-    },
-    {
-     "name": "disabled radio should get legacy-canceled-activation behavior",
-     "status": "FAIL",
-     "message": "assert_true: expected true got undefined"
-    },
-    {
      "name": "disabled checkbox should get legacy-canceled-activation behavior 2",
-     "status": "FAIL",
-     "message": "assert_false: expected false got undefined"
+     "status": "PASS"
     },
     {
      "name": "disabled radio should get legacy-canceled-activation behavior 2",
-     "status": "FAIL",
-     "message": "assert_false: expected false got undefined"
+     "status": "PASS"
+    },
+    {
+     "name": "disabling checkbox in onclick listener shouldn't suppress oninput",
+     "status": "PASS"
+    },
+    {
+     "name": "disabling checkbox in onclick listener shouldn't suppress onchange",
+     "status": "PASS"
+    },
+    {
+     "name": "disabling radio in onclick listener shouldn't suppress oninput",
+     "status": "PASS"
+    },
+    {
+     "name": "disabling radio in onclick listener shouldn't suppress onchange",
+     "status": "PASS"
     },
     {
      "name": "disconnected form should not submit",
@@ -1107,10 +1087,18 @@
     {
      "name": "submit button that morphed from checkbox should not activate",
      "status": "PASS"
+    },
+    {
+     "name": "disabled checkbox should get legacy-canceled-activation behavior",
+     "status": "PASS"
+    },
+    {
+     "name": "disabled radio should get legacy-canceled-activation behavior",
+     "status": "PASS"
     }
    ],
-   "ms": 2206,
-   "instructions": 158632508,
+   "ms": 1966,
+   "instructions": 105871550,
    "clock": 10000
   },
   {
@@ -1119,37 +1107,32 @@
    "subtests": [
     {
      "name": "disabled checkbox should not be checked from label click",
-     "status": "FAIL",
-     "message": "assert_false: expected false got undefined"
+     "status": "PASS"
     },
     {
      "name": "disabled radio should not be checked from label click",
-     "status": "FAIL",
-     "message": "assert_false: expected false got undefined"
+     "status": "PASS"
     },
     {
      "name": "disabled checkbox should not be checked from label click by dispatchEvent",
-     "status": "FAIL",
-     "message": "assert_false: expected false got undefined"
+     "status": "PASS"
     },
     {
      "name": "disabled radio should not be checked from label click by dispatchEvent",
-     "status": "FAIL",
-     "message": "assert_false: expected false got undefined"
+     "status": "PASS"
     },
     {
      "name": "checkbox morphed into another type should not mutate checked state",
-     "status": "FAIL",
-     "message": "assert_false: expected false got undefined"
+     "status": "PASS"
     },
     {
      "name": "radio morphed into another type should not steal the existing checked state",
      "status": "FAIL",
-     "message": "assert_false: expected false got undefined"
+     "message": "assert_false: expected false got true"
     }
    ],
-   "ms": 1767,
-   "instructions": 77443997,
+   "ms": 1628,
+   "instructions": 66889488,
    "clock": 10000
   },
   {
@@ -1165,8 +1148,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1477,
-   "instructions": 60825865,
+   "ms": 1655,
+   "instructions": 60486433,
    "clock": 10000
   },
   {
@@ -1191,23 +1174,19 @@
     },
     {
      "name": "attached checkbox should emit input and change events on click().",
-     "status": "FAIL",
-     "message": "assert_true: expected true got false"
+     "status": "PASS"
     },
     {
      "name": "attached radio should emit input and change events on click().",
-     "status": "FAIL",
-     "message": "assert_true: expected true got false"
+     "status": "PASS"
     },
     {
      "name": "attached checkbox should emit input and change events on dispatchEvent(new MouseEvent('click')).",
-     "status": "FAIL",
-     "message": "assert_true: expected true got false"
+     "status": "PASS"
     },
     {
      "name": "attached radio should emit input and change events on dispatchEvent(new MouseEvent('click')).",
-     "status": "FAIL",
-     "message": "assert_true: expected true got false"
+     "status": "PASS"
     },
     {
      "name": "attached to shadow dom checkbox should emit input and change events on click().",
@@ -1230,8 +1209,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1678,
-   "instructions": 84259744,
+   "ms": 1715,
+   "instructions": 77059665,
    "clock": 10000
   },
   {
@@ -1244,8 +1223,8 @@
      "message": "assert_array_equals: actual_targets lengths differ, expected array [object \"[object global]\", Document node with 2 children, Element node <html><head><meta charset=\"utf-8\">\n<title> Dispatch addit..., Element node <body><div id=\"log\"></div>\n\n<table id=\"table\" border=\"1\" ..., Element node <table id=\"t"
     }
    ],
-   "ms": 1868,
-   "instructions": 98021093,
+   "ms": 1885,
+   "instructions": 97824644,
    "clock": 10000
   },
   {
@@ -1258,8 +1237,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1430,
-   "instructions": 60975338,
+   "ms": 1642,
+   "instructions": 60654457,
    "clock": 10000
   },
   {
@@ -1271,8 +1250,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1488,
-   "instructions": 61727927,
+   "ms": 1533,
+   "instructions": 61378087,
    "clock": 10000
   },
   {
@@ -1284,8 +1263,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1545,
-   "instructions": 61732074,
+   "ms": 1563,
+   "instructions": 61386289,
    "clock": 10000
   },
   {
@@ -1297,8 +1276,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1522,
-   "instructions": 64808561,
+   "ms": 1567,
+   "instructions": 64450832,
    "clock": 10000
   },
   {
@@ -1319,12 +1298,11 @@
     },
     {
      "name": "Calling click() on disabled elements must not dispatch events.",
-     "status": "FAIL",
-     "message": "assert_true: .click() must not dispatch \"click\" event on disabled HTMLButtonElement. expected true got false"
+     "status": "PASS"
     }
    ],
-   "ms": 1815,
-   "instructions": 109988787,
+   "ms": 1890,
+   "instructions": 110196128,
    "clock": 10000
   },
   {
@@ -1336,8 +1314,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1544,
-   "instructions": 61004938,
+   "ms": 1570,
+   "instructions": 60611609,
    "clock": 10000
   },
   {
@@ -1349,8 +1327,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1487,
-   "instructions": 61004474,
+   "ms": 2122,
+   "instructions": 60610429,
    "clock": 10000
   },
   {
@@ -1362,8 +1340,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1495,
-   "instructions": 60656181,
+   "ms": 2238,
+   "instructions": 60314021,
    "clock": 10000
   },
   {
@@ -1375,8 +1353,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1495,
-   "instructions": 64971105,
+   "ms": 2455,
+   "instructions": 64700506,
    "clock": 10000
   },
   {
@@ -1393,8 +1371,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1895,
-   "instructions": 110570456,
+   "ms": 2632,
+   "instructions": 110168207,
    "clock": 10000
   },
   {
@@ -1406,667 +1384,553 @@
      "status": "PASS"
     }
    ],
-   "ms": 1560,
-   "instructions": 69035299,
+   "ms": 2945,
+   "instructions": 68741401,
    "clock": 10000
   },
   {
    "file": "dom/events/Event-dispatch-single-activation-behavior.html",
-   "harness": "ERROR",
-   "message": "39 duplicate test names: \"When clicking child <INPUT></INPUT> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.\", \"When clicking child <INPUT></INPUT> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.\", \"When clicking child <INPUT></INPUT> of parent <INP",
+   "harness": "OK",
    "subtests": [
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test0\" type=\"chec...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=checkbox></INPUT> of parent <INPUT type=radio></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test1\" type=\"chec...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=checkbox></INPUT> of parent <FORM><INPUT type=submit></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test2\" type=\"chec...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=checkbox></INPUT> of parent <FORM><INPUT type=image></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test3\" type=\"chec...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=checkbox></INPUT> of parent <FORM><INPUT type=reset></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test4\" type=\"chec...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=checkbox></INPUT> of parent <FORM><BUTTON type=submit></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test5\" type=\"chec...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=checkbox></INPUT> of parent <FORM><BUTTON type=reset></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <A></A>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test6\" type=\"chec...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=checkbox></INPUT> of parent <A></A>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <AREA></AREA>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test7\" type=\"chec...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=checkbox></INPUT> of parent <AREA></AREA>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test8\" type=\"chec...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=checkbox></INPUT> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test9\" type=\"chec...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=checkbox></INPUT> of parent <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <LABEL><BUTTON></BUTTON></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test10\" type=\"che...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=checkbox></INPUT> of parent <LABEL><BUTTON type=button></BUTTON></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test11\" type=\"rad...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=radio></INPUT> of parent <INPUT type=checkbox></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test12\" type=\"rad...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=radio></INPUT> of parent <FORM><INPUT type=submit></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test13\" type=\"rad...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=radio></INPUT> of parent <FORM><INPUT type=image></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test14\" type=\"rad...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=radio></INPUT> of parent <FORM><INPUT type=reset></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test15\" type=\"rad...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=radio></INPUT> of parent <FORM><BUTTON type=submit></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test16\" type=\"rad...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=radio></INPUT> of parent <FORM><BUTTON type=reset></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <A></A>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test17\" type=\"rad...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=radio></INPUT> of parent <A></A>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <AREA></AREA>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test18\" type=\"rad...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=radio></INPUT> of parent <AREA></AREA>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test19\" type=\"rad...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=radio></INPUT> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test20\" type=\"rad...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=radio></INPUT> of parent <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <INPUT></INPUT> of parent <LABEL><BUTTON></BUTTON></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input class=\"click activates container test21\" type=\"rad...] length 1, got [] length 0"
+     "name": "When clicking child <INPUT type=radio></INPUT> of parent <LABEL><BUTTON type=button></BUTTON></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=submit></INPUT></FORM> of parent <INPUT type=checkbox></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=submit></INPUT></FORM> of parent <INPUT type=radio></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
+     "name": "When clicking child <FORM><INPUT type=submit></INPUT></FORM> of parent <FORM><INPUT type=image></INPUT></FORM>, only child should be activated.",
      "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [Element node <form onsubmit=\"activated(this); return false\" class=\"act..., Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length "
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=submit></INPUT></FORM> of parent <FORM><INPUT type=reset></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
+     "name": "When clicking child <FORM><INPUT type=submit></INPUT></FORM> of parent <FORM><BUTTON type=submit></BUTTON></FORM>, only child should be activated.",
      "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [Element node <form onsubmit=\"activated(this); return false\" class=\"act..., Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length "
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=submit></INPUT></FORM> of parent <FORM><BUTTON type=reset></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <A></A>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=submit></INPUT></FORM> of parent <A></A>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <AREA></AREA>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=submit></INPUT></FORM> of parent <AREA></AREA>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=submit></INPUT></FORM> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=submit></INPUT></FORM> of parent <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <LABEL><BUTTON></BUTTON></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=submit></INPUT></FORM> of parent <LABEL><BUTTON type=button></BUTTON></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=image></INPUT></FORM> of parent <INPUT type=checkbox></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=image></INPUT></FORM> of parent <INPUT type=radio></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
+     "name": "When clicking child <FORM><INPUT type=image></INPUT></FORM> of parent <FORM><INPUT type=submit></INPUT></FORM>, only child should be activated.",
      "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [Element node <form onsubmit=\"activated(this); return false\" class=\"act..., Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length "
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=image></INPUT></FORM> of parent <FORM><INPUT type=reset></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
+     "name": "When clicking child <FORM><INPUT type=image></INPUT></FORM> of parent <FORM><BUTTON type=submit></BUTTON></FORM>, only child should be activated.",
      "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [Element node <form onsubmit=\"activated(this); return false\" class=\"act..., Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length "
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=image></INPUT></FORM> of parent <FORM><BUTTON type=reset></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <A></A>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=image></INPUT></FORM> of parent <A></A>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <AREA></AREA>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=image></INPUT></FORM> of parent <AREA></AREA>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=image></INPUT></FORM> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=image></INPUT></FORM> of parent <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <LABEL><BUTTON></BUTTON></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=image></INPUT></FORM> of parent <LABEL><BUTTON type=button></BUTTON></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test44\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=reset></INPUT></FORM> of parent <INPUT type=checkbox></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test45\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=reset></INPUT></FORM> of parent <INPUT type=radio></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test46\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=reset></INPUT></FORM> of parent <FORM><INPUT type=submit></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test47\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=reset></INPUT></FORM> of parent <FORM><INPUT type=image></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test48\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=reset></INPUT></FORM> of parent <FORM><BUTTON type=submit></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
+     "name": "When clicking child <FORM><INPUT type=reset></INPUT></FORM> of parent <FORM><BUTTON type=reset></BUTTON></FORM>, only child should be activated.",
      "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test49\">...] length 1, got [] length 0"
+     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test49\">...] length 1, got [Element node <form onreset=\"activated(this)\" class=\"activates test49\">..., Element node <form onreset=\"activated(this)\" class=\"activates test49\">...] length "
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <A></A>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test50\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=reset></INPUT></FORM> of parent <A></A>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <AREA></AREA>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test51\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=reset></INPUT></FORM> of parent <AREA></AREA>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test52\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=reset></INPUT></FORM> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test53\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=reset></INPUT></FORM> of parent <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><INPUT></INPUT></FORM> of parent <LABEL><BUTTON></BUTTON></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test54\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><INPUT type=reset></INPUT></FORM> of parent <LABEL><BUTTON type=button></BUTTON></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=submit></BUTTON></FORM> of parent <INPUT type=checkbox></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=submit></BUTTON></FORM> of parent <INPUT type=radio></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
+     "name": "When clicking child <FORM><BUTTON type=submit></BUTTON></FORM> of parent <FORM><INPUT type=submit></INPUT></FORM>, only child should be activated.",
      "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [Element node <form onsubmit=\"activated(this); return false\" class=\"act..., Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length "
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
+     "name": "When clicking child <FORM><BUTTON type=submit></BUTTON></FORM> of parent <FORM><INPUT type=image></INPUT></FORM>, only child should be activated.",
      "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [Element node <form onsubmit=\"activated(this); return false\" class=\"act..., Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length "
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=submit></BUTTON></FORM> of parent <FORM><INPUT type=reset></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=submit></BUTTON></FORM> of parent <FORM><BUTTON type=reset></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <A></A>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=submit></BUTTON></FORM> of parent <A></A>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <AREA></AREA>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=submit></BUTTON></FORM> of parent <AREA></AREA>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=submit></BUTTON></FORM> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=submit></BUTTON></FORM> of parent <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <LABEL><BUTTON></BUTTON></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onsubmit=\"activated(this); return false\" class=\"act...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=submit></BUTTON></FORM> of parent <LABEL><BUTTON type=button></BUTTON></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test66\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=reset></BUTTON></FORM> of parent <INPUT type=checkbox></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test67\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=reset></BUTTON></FORM> of parent <INPUT type=radio></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test68\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=reset></BUTTON></FORM> of parent <FORM><INPUT type=submit></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test69\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=reset></BUTTON></FORM> of parent <FORM><INPUT type=image></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
+     "name": "When clicking child <FORM><BUTTON type=reset></BUTTON></FORM> of parent <FORM><INPUT type=reset></INPUT></FORM>, only child should be activated.",
      "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test70\">...] length 1, got [] length 0"
+     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test70\">...] length 1, got [Element node <form onreset=\"activated(this)\" class=\"activates test70\">..., Element node <form onreset=\"activated(this)\" class=\"activates test70\">...] length "
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test71\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=reset></BUTTON></FORM> of parent <FORM><BUTTON type=submit></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <A></A>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test72\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=reset></BUTTON></FORM> of parent <A></A>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <AREA></AREA>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test73\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=reset></BUTTON></FORM> of parent <AREA></AREA>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test74\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=reset></BUTTON></FORM> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test75\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=reset></BUTTON></FORM> of parent <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <FORM><BUTTON></BUTTON></FORM> of parent <LABEL><BUTTON></BUTTON></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <form onreset=\"activated(this)\" class=\"activates test76\">...] length 1, got [] length 0"
+     "name": "When clicking child <FORM><BUTTON type=reset></BUTTON></FORM> of parent <LABEL><BUTTON type=button></BUTTON></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <A></A> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test77_link\"] length 1, got [] length 0"
+     "name": "When clicking child <A></A> of parent <INPUT type=checkbox></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <A></A> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test78_link\"] length 1, got [] length 0"
+     "name": "When clicking child <A></A> of parent <INPUT type=radio></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <A></A> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test79_link\"] length 1, got [] length 0"
+     "name": "When clicking child <A></A> of parent <FORM><INPUT type=submit></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <A></A> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test80_link\"] length 1, got [] length 0"
+     "name": "When clicking child <A></A> of parent <FORM><INPUT type=image></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <A></A> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test81_link\"] length 1, got [] length 0"
+     "name": "When clicking child <A></A> of parent <FORM><INPUT type=reset></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <A></A> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test82_link\"] length 1, got [] length 0"
+     "name": "When clicking child <A></A> of parent <FORM><BUTTON type=submit></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <A></A> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test83_link\"] length 1, got [] length 0"
+     "name": "When clicking child <A></A> of parent <FORM><BUTTON type=reset></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
      "name": "When clicking child <A></A> of parent <AREA></AREA>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test84_link\"] length 1, got [] length 0"
+     "status": "PASS"
     },
     {
      "name": "When clicking child <A></A> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test85_link\"] length 1, got [] length 0"
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <A></A> of parent <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test86_link\"] length 1, got [] length 0"
+     "name": "When clicking child <A></A> of parent <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <A></A> of parent <LABEL><BUTTON></BUTTON></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test87_link\"] length 1, got [] length 0"
+     "name": "When clicking child <A></A> of parent <LABEL><BUTTON type=button></BUTTON></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <AREA></AREA> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test88_link\"] length 1, got [] length 0"
+     "name": "When clicking child <AREA></AREA> of parent <INPUT type=checkbox></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <AREA></AREA> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test89_link\"] length 1, got [] length 0"
+     "name": "When clicking child <AREA></AREA> of parent <INPUT type=radio></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <AREA></AREA> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test90_link\"] length 1, got [] length 0"
+     "name": "When clicking child <AREA></AREA> of parent <FORM><INPUT type=submit></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <AREA></AREA> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test91_link\"] length 1, got [] length 0"
+     "name": "When clicking child <AREA></AREA> of parent <FORM><INPUT type=image></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <AREA></AREA> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test92_link\"] length 1, got [] length 0"
+     "name": "When clicking child <AREA></AREA> of parent <FORM><INPUT type=reset></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <AREA></AREA> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test93_link\"] length 1, got [] length 0"
+     "name": "When clicking child <AREA></AREA> of parent <FORM><BUTTON type=submit></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <AREA></AREA> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test94_link\"] length 1, got [] length 0"
+     "name": "When clicking child <AREA></AREA> of parent <FORM><BUTTON type=reset></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
      "name": "When clicking child <AREA></AREA> of parent <A></A>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test95_link\"] length 1, got [] length 0"
+     "status": "PASS"
     },
     {
      "name": "When clicking child <AREA></AREA> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test96_link\"] length 1, got [] length 0"
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <AREA></AREA> of parent <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test97_link\"] length 1, got [] length 0"
+     "name": "When clicking child <AREA></AREA> of parent <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <AREA></AREA> of parent <LABEL><BUTTON></BUTTON></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"#test98_link\"] length 1, got [] length 0"
+     "name": "When clicking child <AREA></AREA> of parent <LABEL><BUTTON type=button></BUTTON></LABEL>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <details ontoggle=\"activated(this)\" class=\"activates test...] length 1, got [] length 0"
+     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <INPUT type=checkbox></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <details ontoggle=\"activated(this)\" class=\"activates test...] length 1, got [] length 0"
+     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <INPUT type=radio></INPUT>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <details ontoggle=\"activated(this)\" class=\"activates test...] length 1, got [] length 0"
+     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <FORM><INPUT type=submit></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <details ontoggle=\"activated(this)\" class=\"activates test...] length 1, got [] length 0"
+     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <FORM><INPUT type=image></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <details ontoggle=\"activated(this)\" class=\"activates test...] length 1, got [] length 0"
+     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <FORM><INPUT type=reset></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <details ontoggle=\"activated(this)\" class=\"activates test...] length 1, got [] length 0"
+     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <FORM><BUTTON type=submit></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
-     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <details ontoggle=\"activated(this)\" class=\"activates test...] length 1, got [] length 0"
+     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <FORM><BUTTON type=reset></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
     },
     {
      "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <A></A>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <details ontoggle=\"activated(this)\" class=\"activates test...] length 1, got [] length 0"
+     "status": "PASS"
     },
     {
      "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <AREA></AREA>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <details ontoggle=\"activated(this)\" class=\"activates test...] length 1, got [] length 0"
-    },
-    {
-     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <details ontoggle=\"activated(this)\" class=\"activates test...] length 1, got [] length 0"
-    },
-    {
-     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <LABEL><BUTTON></BUTTON></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <details ontoggle=\"activated(this)\" class=\"activates test...] length 1, got [] length 0"
-    },
-    {
-     "name": "When clicking child <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input type=\"checkbox\" onclick=\"this.checked ? activated(...] length 1, got [] length 0"
-    },
-    {
-     "name": "When clicking child <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL> of parent <INPUT></INPUT>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input type=\"checkbox\" onclick=\"this.checked ? activated(...] length 1, got [] length 0"
-    },
-    {
-     "name": "When clicking child <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input type=\"checkbox\" onclick=\"this.checked ? activated(...] length 1, got [] length 0"
-    },
-    {
-     "name": "When clicking child <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input type=\"checkbox\" onclick=\"this.checked ? activated(...] length 1, got [] length 0"
-    },
-    {
-     "name": "When clicking child <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input type=\"checkbox\" onclick=\"this.checked ? activated(...] length 1, got [] length 0"
-    },
-    {
-     "name": "When clicking child <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input type=\"checkbox\" onclick=\"this.checked ? activated(...] length 1, got [] length 0"
-    },
-    {
-     "name": "When clicking child <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input type=\"checkbox\" onclick=\"this.checked ? activated(...] length 1, got [] length 0"
-    },
-    {
-     "name": "When clicking child <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL> of parent <A></A>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input type=\"checkbox\" onclick=\"this.checked ? activated(...] length 1, got [] length 0"
-    },
-    {
-     "name": "When clicking child <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL> of parent <AREA></AREA>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input type=\"checkbox\" onclick=\"this.checked ? activated(...] length 1, got [] length 0"
-    },
-    {
-     "name": "When clicking child <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input type=\"checkbox\" onclick=\"this.checked ? activated(...] length 1, got [] length 0"
-    },
-    {
-     "name": "When clicking child <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL> of parent <LABEL><BUTTON></BUTTON></LABEL>, only child should be activated.",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [Element node <input type=\"checkbox\" onclick=\"this.checked ? activated(...] length 1, got [] length 0"
-    },
-    {
-     "name": "When clicking child <LABEL><BUTTON></BUTTON></LABEL> of parent <INPUT></INPUT>, only child should be activated.",
      "status": "PASS"
     },
     {
-     "name": "When clicking child <LABEL><BUTTON></BUTTON></LABEL> of parent <INPUT></INPUT>, only child should be activated.",
+     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
      "status": "PASS"
     },
     {
-     "name": "When clicking child <LABEL><BUTTON></BUTTON></LABEL> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
+     "name": "When clicking child <DETAILS><SUMMARY></SUMMARY></DETAILS> of parent <LABEL><BUTTON type=button></BUTTON></LABEL>, only child should be activated.",
      "status": "PASS"
     },
     {
-     "name": "When clicking child <LABEL><BUTTON></BUTTON></LABEL> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
+     "name": "When clicking child <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL> of parent <INPUT type=checkbox></INPUT>, only child should be activated.",
      "status": "PASS"
     },
     {
-     "name": "When clicking child <LABEL><BUTTON></BUTTON></LABEL> of parent <FORM><INPUT></INPUT></FORM>, only child should be activated.",
+     "name": "When clicking child <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL> of parent <INPUT type=radio></INPUT>, only child should be activated.",
      "status": "PASS"
     },
     {
-     "name": "When clicking child <LABEL><BUTTON></BUTTON></LABEL> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
+     "name": "When clicking child <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL> of parent <FORM><INPUT type=submit></INPUT></FORM>, only child should be activated.",
      "status": "PASS"
     },
     {
-     "name": "When clicking child <LABEL><BUTTON></BUTTON></LABEL> of parent <FORM><BUTTON></BUTTON></FORM>, only child should be activated.",
+     "name": "When clicking child <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL> of parent <FORM><INPUT type=image></INPUT></FORM>, only child should be activated.",
      "status": "PASS"
     },
     {
-     "name": "When clicking child <LABEL><BUTTON></BUTTON></LABEL> of parent <A></A>, only child should be activated.",
+     "name": "When clicking child <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL> of parent <FORM><INPUT type=reset></INPUT></FORM>, only child should be activated.",
      "status": "PASS"
     },
     {
-     "name": "When clicking child <LABEL><BUTTON></BUTTON></LABEL> of parent <AREA></AREA>, only child should be activated.",
+     "name": "When clicking child <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL> of parent <FORM><BUTTON type=submit></BUTTON></FORM>, only child should be activated.",
      "status": "PASS"
     },
     {
-     "name": "When clicking child <LABEL><BUTTON></BUTTON></LABEL> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
+     "name": "When clicking child <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL> of parent <FORM><BUTTON type=reset></BUTTON></FORM>, only child should be activated.",
      "status": "PASS"
     },
     {
-     "name": "When clicking child <LABEL><BUTTON></BUTTON></LABEL> of parent <LABEL><INPUT></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
+     "name": "When clicking child <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL> of parent <A></A>, only child should be activated.",
+     "status": "PASS"
+    },
+    {
+     "name": "When clicking child <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL> of parent <AREA></AREA>, only child should be activated.",
+     "status": "PASS"
+    },
+    {
+     "name": "When clicking child <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
+     "status": "PASS"
+    },
+    {
+     "name": "When clicking child <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL> of parent <LABEL><BUTTON type=button></BUTTON></LABEL>, only child should be activated.",
+     "status": "PASS"
+    },
+    {
+     "name": "When clicking child <LABEL><BUTTON type=button></BUTTON></LABEL> of parent <INPUT type=checkbox></INPUT>, only child should be activated.",
+     "status": "PASS"
+    },
+    {
+     "name": "When clicking child <LABEL><BUTTON type=button></BUTTON></LABEL> of parent <INPUT type=radio></INPUT>, only child should be activated.",
+     "status": "PASS"
+    },
+    {
+     "name": "When clicking child <LABEL><BUTTON type=button></BUTTON></LABEL> of parent <FORM><INPUT type=submit></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
+    },
+    {
+     "name": "When clicking child <LABEL><BUTTON type=button></BUTTON></LABEL> of parent <FORM><INPUT type=image></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
+    },
+    {
+     "name": "When clicking child <LABEL><BUTTON type=button></BUTTON></LABEL> of parent <FORM><INPUT type=reset></INPUT></FORM>, only child should be activated.",
+     "status": "PASS"
+    },
+    {
+     "name": "When clicking child <LABEL><BUTTON type=button></BUTTON></LABEL> of parent <FORM><BUTTON type=submit></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
+    },
+    {
+     "name": "When clicking child <LABEL><BUTTON type=button></BUTTON></LABEL> of parent <FORM><BUTTON type=reset></BUTTON></FORM>, only child should be activated.",
+     "status": "PASS"
+    },
+    {
+     "name": "When clicking child <LABEL><BUTTON type=button></BUTTON></LABEL> of parent <A></A>, only child should be activated.",
+     "status": "PASS"
+    },
+    {
+     "name": "When clicking child <LABEL><BUTTON type=button></BUTTON></LABEL> of parent <AREA></AREA>, only child should be activated.",
+     "status": "PASS"
+    },
+    {
+     "name": "When clicking child <LABEL><BUTTON type=button></BUTTON></LABEL> of parent <DETAILS><SUMMARY></SUMMARY></DETAILS>, only child should be activated.",
+     "status": "PASS"
+    },
+    {
+     "name": "When clicking child <LABEL><BUTTON type=button></BUTTON></LABEL> of parent <LABEL><INPUT type=checkbox></INPUT><SPAN></SPAN></LABEL>, only child should be activated.",
      "status": "PASS"
     }
    ],
-   "ms": 11614,
-   "instructions": 1274465553,
+   "ms": 27174,
+   "instructions": 1994162055,
    "clock": 10000
   },
   {
@@ -2078,8 +1942,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1503,
-   "instructions": 68000976,
+   "ms": 1558,
+   "instructions": 67683018,
    "clock": 10000
   },
   {
@@ -2091,8 +1955,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1480,
-   "instructions": 67910335,
+   "ms": 1522,
+   "instructions": 67591537,
    "clock": 10000
   },
   {
@@ -2110,8 +1974,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"TypeError: cannot set property 'handleEvent' of undefined\""
     }
    ],
-   "ms": 1502,
-   "instructions": 68463206,
+   "ms": 1512,
+   "instructions": 67935735,
    "clock": 10000
   },
   {
@@ -2127,8 +1991,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1454,
-   "instructions": 62655541,
+   "ms": 1490,
+   "instructions": 62263720,
    "clock": 10000
   },
   {
@@ -2158,8 +2022,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1603,
-   "instructions": 66560476,
+   "ms": 1498,
+   "instructions": 66140682,
    "clock": 10000
   },
   {
@@ -2215,8 +2079,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1477,
-   "instructions": 69848116,
+   "ms": 1565,
+   "instructions": 69483812,
    "clock": 10000
   },
   {
@@ -2229,8 +2093,8 @@
      "message": "assert_not_equals: got disallowed value undefined"
     }
    ],
-   "ms": 2048,
-   "instructions": 63112526,
+   "ms": 1607,
+   "instructions": 62636398,
    "clock": 10000
   },
   {
@@ -2266,8 +2130,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1558,
-   "instructions": 70525416,
+   "ms": 1850,
+   "instructions": 70076830,
    "clock": 10000
   },
   {
@@ -2303,8 +2167,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1485,
-   "instructions": 65173384,
+   "ms": 2291,
+   "instructions": 64831120,
    "clock": 10000
   },
   {
@@ -2316,8 +2180,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1483,
-   "instructions": 61303502,
+   "ms": 2092,
+   "instructions": 60902504,
    "clock": 10000
   },
   {
@@ -2329,8 +2193,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1514,
-   "instructions": 61031053,
+   "ms": 2048,
+   "instructions": 60665739,
    "clock": 10000
   },
   {
@@ -2534,8 +2398,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1922,
-   "instructions": 121052578,
+   "ms": 2728,
+   "instructions": 118528999,
    "clock": 10000
   },
   {
@@ -2547,8 +2411,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1493,
-   "instructions": 61465564,
+   "ms": 2114,
+   "instructions": 61125898,
    "clock": 10000
   },
   {
@@ -2572,8 +2436,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1428,
-   "instructions": 61463817,
+   "ms": 2158,
+   "instructions": 61058316,
    "clock": 10000
   },
   {
@@ -2586,16 +2450,16 @@
      "message": "not a function"
     }
    ],
-   "ms": 1466,
-   "instructions": 59285582,
+   "ms": 2048,
+   "instructions": 58885441,
    "clock": 10000
   },
   {
    "file": "dom/events/Event-timestamp-safe-resolution.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 34776,
-   "instructions": 4058383454,
+   "ms": 41164,
+   "instructions": 4057991377,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -2614,8 +2478,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1428,
-   "instructions": 61045685,
+   "ms": 1857,
+   "instructions": 60645912,
    "clock": 10000
   },
   {
@@ -2635,8 +2499,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1451,
-   "instructions": 60591524,
+   "ms": 1860,
+   "instructions": 60193462,
    "clock": 10000
   },
   {
@@ -2648,8 +2512,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1398,
-   "instructions": 60845104,
+   "ms": 1845,
+   "instructions": 60558369,
    "clock": 10000
   },
   {
@@ -2682,8 +2546,8 @@
      "message": "eventListenerGlobalObject is not defined"
     }
    ],
-   "ms": 1520,
-   "instructions": 64352319,
+   "ms": 1885,
+   "instructions": 64022918,
    "clock": 10000
   },
   {
@@ -2715,8 +2579,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1491,
-   "instructions": 68607062,
+   "ms": 1950,
+   "instructions": 68254904,
    "clock": 10000
   },
   {
@@ -2735,8 +2599,8 @@
    "file": "dom/events/EventListener-invoke-legacy.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1505,
-   "instructions": 66452665,
+   "ms": 1900,
+   "instructions": 66128996,
    "clock": 10000
   },
   {
@@ -2760,8 +2624,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1562,
-   "instructions": 77550340,
+   "ms": 2224,
+   "instructions": 77383695,
    "clock": 10000
   },
   {
@@ -2774,8 +2638,8 @@
      "message": "TypeError: cannot read property 'define' of undefined"
     }
    ],
-   "ms": 1410,
-   "instructions": 60659881,
+   "ms": 1867,
+   "instructions": 60267983,
    "clock": 10000,
    "errors": [
     "TypeError: cannot read property 'define' of undefined\n    at <eval> (<page-script>:16:1)\n"
@@ -2790,8 +2654,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1486,
-   "instructions": 60649498,
+   "ms": 1862,
+   "instructions": 60317308,
    "clock": 10000
   },
   {
@@ -2803,8 +2667,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1407,
-   "instructions": 60088336,
+   "ms": 2114,
+   "instructions": 59749412,
    "clock": 10000
   },
   {
@@ -2824,8 +2688,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1479,
-   "instructions": 63325277,
+   "ms": 1921,
+   "instructions": 63011521,
    "clock": 10000
   },
   {
@@ -2841,8 +2705,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1446,
-   "instructions": 64864356,
+   "ms": 1932,
+   "instructions": 64553009,
    "clock": 10000
   },
   {
@@ -2951,8 +2815,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1698,
-   "instructions": 92980931,
+   "ms": 2491,
+   "instructions": 90347735,
    "clock": 10000
   },
   {
@@ -2964,8 +2828,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1453,
-   "instructions": 60120603,
+   "ms": 2067,
+   "instructions": 59808693,
    "clock": 10000
   },
   {
@@ -2997,8 +2861,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1556,
-   "instructions": 76385223,
+   "ms": 2208,
+   "instructions": 76024400,
    "clock": 10000
   },
   {
@@ -3010,8 +2874,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1477,
-   "instructions": 60758363,
+   "ms": 2409,
+   "instructions": 60371423,
    "clock": 10000
   },
   {
@@ -3031,8 +2895,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1387,
-   "instructions": 61159175,
+   "ms": 2704,
+   "instructions": 60782289,
    "clock": 10000
   },
   {
@@ -3045,8 +2909,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"Error: action_sequence() is not implemented by testdriver-vendor.js\""
     }
    ],
-   "ms": 1905,
-   "instructions": 107386397,
+   "ms": 2584,
+   "instructions": 106769522,
    "clock": 10000
   },
   {
@@ -3066,8 +2930,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1505,
-   "instructions": 65304181,
+   "ms": 2121,
+   "instructions": 65253343,
    "clock": 10000
   },
   {
@@ -3079,8 +2943,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1420,
-   "instructions": 61091900,
+   "ms": 2678,
+   "instructions": 60958887,
    "clock": 10000
   },
   {
@@ -3110,8 +2974,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1468,
-   "instructions": 63787664,
+   "ms": 2776,
+   "instructions": 63408703,
    "clock": 10000
   },
   {
@@ -3148,8 +3012,8 @@
      "message": "frameState is not defined"
     }
    ],
-   "ms": 1577,
-   "instructions": 74538013,
+   "ms": 2087,
+   "instructions": 74081736,
    "clock": 10000
   },
   {
@@ -3162,8 +3026,8 @@
      "message": "iframe is not defined"
     }
    ],
-   "ms": 1422,
-   "instructions": 60904028,
+   "ms": 1872,
+   "instructions": 60549366,
    "clock": 10000
   },
   {
@@ -3176,8 +3040,8 @@
      "message": "cannot read property 'Function' of undefined"
     }
    ],
-   "ms": 1469,
-   "instructions": 61673103,
+   "ms": 1945,
+   "instructions": 61355401,
    "clock": 10000
   },
   {
@@ -3186,17 +3050,15 @@
    "subtests": [
     {
      "name": "Setting window.event replaces it",
-     "status": "FAIL",
-     "message": "assert_equals: expected (string) \"foo\" but got (undefined) undefined"
+     "status": "PASS"
     },
     {
      "name": "Dispatching does not affect window.event after it's been replaced",
-     "status": "FAIL",
-     "message": "assert_equals: Still set before dispatch expected (string) \"foo\" but got (undefined) undefined"
+     "status": "PASS"
     }
    ],
-   "ms": 1517,
-   "instructions": 64234829,
+   "ms": 1932,
+   "instructions": 60418861,
    "clock": 10000
   },
   {
@@ -3208,8 +3070,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1453,
-   "instructions": 60318142,
+   "ms": 1935,
+   "instructions": 60039583,
    "clock": 10000
   },
   {
@@ -3253,8 +3115,8 @@
      "message": "XMLHttpRequest is not defined"
     }
    ],
-   "ms": 1462,
-   "instructions": 66717165,
+   "ms": 2202,
+   "instructions": 66361977,
    "clock": 10000
   },
   {
@@ -3276,8 +3138,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1486,
-   "instructions": 62808936,
+   "ms": 2038,
+   "instructions": 62497746,
    "clock": 10000
   },
   {
@@ -3310,8 +3172,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"TypeError: cannot read property 'createElement' of undefined\""
     }
    ],
-   "ms": 1576,
-   "instructions": 79149021,
+   "ms": 2117,
+   "instructions": 78193799,
    "clock": 10000
   },
   {
@@ -3337,8 +3199,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
     }
    ],
-   "ms": 1507,
-   "instructions": 71152997,
+   "ms": 1955,
+   "instructions": 70623733,
    "clock": 10000
   },
   {
@@ -3361,8 +3223,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: URL is not defined\""
     }
    ],
-   "ms": 1500,
-   "instructions": 71797386,
+   "ms": 1963,
+   "instructions": 71098783,
    "clock": 10000
   },
   {
@@ -3450,8 +3312,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"TypeError: parameter 1 is not of type 'Event'\""
     }
    ],
-   "ms": 1948,
-   "instructions": 125921182,
+   "ms": 2808,
+   "instructions": 124211344,
    "clock": 10000
   },
   {
@@ -3463,24 +3325,24 @@
      "status": "PASS"
     }
    ],
-   "ms": 1437,
-   "instructions": 60296685,
+   "ms": 1910,
+   "instructions": 59913359,
    "clock": 10000
   },
   {
    "file": "dom/events/focus-event-document-move.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1791,
-   "instructions": 104249813,
+   "ms": 2172,
+   "instructions": 103999797,
    "clock": 10000
   },
   {
    "file": "dom/events/handler-count.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1781,
-   "instructions": 108188314,
+   "ms": 2440,
+   "instructions": 107770461,
    "clock": 10000
   },
   {
@@ -3489,12 +3351,11 @@
    "subtests": [
     {
      "name": "Label default action should not trigger when clicked button removes itself",
-     "status": "FAIL",
-     "message": "assert_false: expected false got undefined"
+     "status": "PASS"
     }
    ],
-   "ms": 1448,
-   "instructions": 61279850,
+   "ms": 1985,
+   "instructions": 59710647,
    "clock": 10000
   },
   {
@@ -3506,8 +3367,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1446,
-   "instructions": 60682199,
+   "ms": 2147,
+   "instructions": 60695896,
    "clock": 10000
   },
   {
@@ -3520,8 +3381,8 @@
      "message": "target is not defined"
     }
    ],
-   "ms": 1386,
-   "instructions": 59312064,
+   "ms": 1881,
+   "instructions": 58915979,
    "clock": 10000
   },
   {
@@ -3539,8 +3400,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"Error: action_sequence() is not implemented by testdriver-vendor.js\""
     }
    ],
-   "ms": 1840,
-   "instructions": 112817595,
+   "ms": 2387,
+   "instructions": 112008081,
    "clock": 10000
   },
   {
@@ -3557,8 +3418,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1405,
-   "instructions": 61095439,
+   "ms": 1939,
+   "instructions": 60705419,
    "clock": 10000
   },
   {
@@ -3966,8 +3827,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2102,
-   "instructions": 140855405,
+   "ms": 2848,
+   "instructions": 141350962,
    "clock": 10000
   },
   {
@@ -3977,11 +3838,11 @@
     {
      "name": "Moving a node to new document should move the registered event listeners together",
      "status": "FAIL",
-     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+     "message": "promise_test: Unhandled rejection with value: object \"Error: document.elementsFromPoint unsupported\""
     }
    ],
-   "ms": 1753,
-   "instructions": 106638858,
+   "ms": 2363,
+   "instructions": 106278126,
    "clock": 10000
   },
   {
@@ -3990,12 +3851,11 @@
    "subtests": [
     {
      "name": "behavior of preventDefault during activation behavior",
-     "status": "FAIL",
-     "message": "assert_true: expected true got false"
+     "status": "PASS"
     }
    ],
-   "ms": 1440,
-   "instructions": 63191069,
+   "ms": 2009,
+   "instructions": 60648255,
    "clock": 10000
   },
   {
@@ -4003,8 +3863,8 @@
    "harness": "ERROR",
    "message": "TypeError: not a function",
    "subtests": [],
-   "ms": 1454,
-   "instructions": 60585567,
+   "ms": 2214,
+   "instructions": 60283603,
    "clock": 10000,
    "errors": [
     "TypeError: not a function\n    at <eval> (<page-script>:5:21)\n"
@@ -4023,8 +3883,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1481,
-   "instructions": 62726463,
+   "ms": 1869,
+   "instructions": 62352255,
    "clock": 10000
   },
   {
@@ -4032,8 +3892,8 @@
    "harness": "ERROR",
    "message": "ReferenceError: host is not defined",
    "subtests": [],
-   "ms": 1428,
-   "instructions": 58955971,
+   "ms": 1825,
+   "instructions": 58569150,
    "clock": 10000,
    "errors": [
     "ReferenceError: host is not defined\n    at <eval> (<page-script>:2:14)\n"
@@ -4044,8 +3904,8 @@
    "harness": "ERROR",
    "message": "TypeError: cannot read property 'insertRule' of undefined",
    "subtests": [],
-   "ms": 1431,
-   "instructions": 63353571,
+   "ms": 1847,
+   "instructions": 62931550,
    "clock": 10000,
    "errors": [
     "TypeError: cannot read property 'insertRule' of undefined\n    at runAnimationEventTests (<page-script>:33:5)\n    at <eval> (<page-script>:4:1)\n"
@@ -4056,8 +3916,8 @@
    "harness": "ERROR",
    "message": "TypeError: cannot read property 'insertRule' of undefined",
    "subtests": [],
-   "ms": 1491,
-   "instructions": 63358843,
+   "ms": 1857,
+   "instructions": 62951320,
    "clock": 10000,
    "errors": [
     "TypeError: cannot read property 'insertRule' of undefined\n    at runAnimationEventTests (<page-script>:33:5)\n    at <eval> (<page-script>:4:1)\n"
@@ -4068,8 +3928,8 @@
    "harness": "ERROR",
    "message": "TypeError: cannot read property 'insertRule' of undefined",
    "subtests": [],
-   "ms": 1474,
-   "instructions": 63352297,
+   "ms": 1941,
+   "instructions": 62932400,
    "clock": 10000,
    "errors": [
     "TypeError: cannot read property 'insertRule' of undefined\n    at runAnimationEventTests (<page-script>:33:5)\n    at <eval> (<page-script>:4:1)\n"
@@ -4080,8 +3940,8 @@
    "harness": "ERROR",
    "message": "TypeError: cannot read property 'insertRule' of undefined",
    "subtests": [],
-   "ms": 1446,
-   "instructions": 63361104,
+   "ms": 1944,
+   "instructions": 62939135,
    "clock": 10000,
    "errors": [
     "TypeError: cannot read property 'insertRule' of undefined\n    at runAnimationEventTests (<page-script>:29:5)\n    at <eval> (<page-script>:4:1)\n"
@@ -4096,8 +3956,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1479,
-   "instructions": 59361632,
+   "ms": 1903,
+   "instructions": 58976067,
    "clock": 10000
   },
   {
@@ -4109,8 +3969,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1422,
-   "instructions": 60799718,
+   "ms": 1869,
+   "instructions": 60422148,
    "clock": 10000
   },
   {
@@ -4148,8 +4008,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1584,
-   "instructions": 66935548,
+   "ms": 1921,
+   "instructions": 66634213,
    "clock": 10000
   },
   {
@@ -4193,8 +4053,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1502,
-   "instructions": 67761878,
+   "ms": 2038,
+   "instructions": 67338825,
    "clock": 10000
   },
   {
@@ -4260,8 +4120,8 @@
      "message": "assert_throws_js: function \"function() { node.appendData() }\" did not throw"
     }
    ],
-   "ms": 1552,
-   "instructions": 72409958,
+   "ms": 2057,
+   "instructions": 71731296,
    "clock": 10000
   },
   {
@@ -4333,8 +4193,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1494,
-   "instructions": 68869778,
+   "ms": 1900,
+   "instructions": 68489142,
    "clock": 10000
   },
   {
@@ -4414,8 +4274,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1619,
-   "instructions": 73590954,
+   "ms": 1926,
+   "instructions": 73306160,
    "clock": 10000
   },
   {
@@ -4495,8 +4355,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1532,
-   "instructions": 73405027,
+   "ms": 1963,
+   "instructions": 73041886,
    "clock": 10000
   },
   {
@@ -4552,8 +4412,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1478,
-   "instructions": 68975022,
+   "ms": 1898,
+   "instructions": 68655379,
    "clock": 10000
   },
   {
@@ -4697,8 +4557,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1579,
-   "instructions": 86004292,
+   "ms": 2004,
+   "instructions": 83405788,
    "clock": 10000
   },
   {
@@ -4820,8 +4680,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1685,
-   "instructions": 86064951,
+   "ms": 2009,
+   "instructions": 83488869,
    "clock": 10000
   },
   {
@@ -4867,8 +4727,8 @@
      "message": "DOM error -7"
     }
    ],
-   "ms": 1442,
-   "instructions": 65776865,
+   "ms": 1839,
+   "instructions": 65371081,
    "clock": 10000
   },
   {
@@ -5056,8 +4916,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1711,
-   "instructions": 97182437,
+   "ms": 2123,
+   "instructions": 97284450,
    "clock": 10000
   },
   {
@@ -5245,8 +5105,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1702,
-   "instructions": 97295069,
+   "ms": 3318,
+   "instructions": 97425565,
    "clock": 10000
   },
   {
@@ -5386,8 +5246,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1614,
-   "instructions": 86002540,
+   "ms": 2082,
+   "instructions": 83651955,
    "clock": 10000
   },
   {
@@ -5460,8 +5320,8 @@
      "message": "assert_equals: expected Document node with 1 child but got Document node with 2 children"
     }
    ],
-   "ms": 1516,
-   "instructions": 72884596,
+   "ms": 1911,
+   "instructions": 72292223,
    "clock": 10000
   },
   {
@@ -5488,16 +5348,15 @@
     },
     {
      "name": "createHTMLDocument: proxied event handlers on body are null without a window",
-     "status": "FAIL",
-     "message": "assert_equals: onafterprint should be null because there is no window expected (object) null but got (string) \"1 + 2\""
+     "status": "PASS"
     },
     {
      "name": "createHTMLDocument: iframe should not load in a document without a browsing context",
      "status": "PASS"
     }
    ],
-   "ms": 1483,
-   "instructions": 65708701,
+   "ms": 1890,
+   "instructions": 70818795,
    "clock": 10000
   },
   {
@@ -7241,8 +7100,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 4862,
-   "instructions": 526758390,
+   "ms": 5686,
+   "instructions": 523847640,
    "clock": 10000
   },
   {
@@ -7578,8 +7437,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2021,
-   "instructions": 138271377,
+   "ms": 2498,
+   "instructions": 138449105,
    "clock": 10000
   },
   {
@@ -7591,8 +7450,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1443,
-   "instructions": 59693790,
+   "ms": 1892,
+   "instructions": 59359305,
    "clock": 10000
   },
   {
@@ -7645,16 +7504,15 @@
     },
     {
      "name": "createHTMLDocument(): URL parsing",
-     "status": "FAIL",
-     "message": "assert_equals: expected \"http://example.org/?%C3%A4\" but got \"http://example.org/?ä\""
+     "status": "PASS"
     },
     {
      "name": "createHTMLDocument(): document location getter is null",
      "status": "PASS"
     }
    ],
-   "ms": 1556,
-   "instructions": 80442375,
+   "ms": 1994,
+   "instructions": 75563050,
    "clock": 10000
   },
   {
@@ -8210,8 +8068,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2062,
-   "instructions": 139951170,
+   "ms": 2520,
+   "instructions": 140497854,
    "clock": 10000
   },
   {
@@ -8224,8 +8082,8 @@
      "message": "assert_equals: expected \"http://web-platform.test/common/blank.html\" but got \"about:blank\""
     }
    ],
-   "ms": 1416,
-   "instructions": 63521066,
+   "ms": 1853,
+   "instructions": 63007308,
    "clock": 10000
   },
   {
@@ -8264,8 +8122,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1545,
-   "instructions": 72031942,
+   "ms": 1891,
+   "instructions": 71433426,
    "clock": 10000
   },
   {
@@ -8303,8 +8161,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1474,
-   "instructions": 71392496,
+   "ms": 2000,
+   "instructions": 70630886,
    "clock": 10000
   },
   {
@@ -8322,8 +8180,8 @@
      "message": "assert_equals: container base URL changed expected \"http://example.com/changed/\" but got \"http://web-platform.test/generated/dom/nodes/Document-base-url-not-live.window.html\""
     }
    ],
-   "ms": 1525,
-   "instructions": 70524596,
+   "ms": 2036,
+   "instructions": 70145740,
    "clock": 10000
   },
   {
@@ -9888,8 +9746,8 @@
      "message": "assert_equals: expected \"ISO-8859-16\" but got \"UTF-8\""
     }
    ],
-   "ms": 15393,
-   "instructions": 1821666881,
+   "ms": 20151,
+   "instructions": 1826506633,
    "clock": 10000
   },
   {
@@ -11592,8 +11450,8 @@
      "message": "assert_equals: expected \"replacement\" but got \"UTF-8\""
     }
    ],
-   "ms": 18223,
-   "instructions": 2178906594,
+   "ms": 22830,
+   "instructions": 2119526859,
    "clock": 10000
   },
   {
@@ -11621,8 +11479,8 @@
      "message": "assert_equals: deep clone before expected \"https://example.com/\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-about-base-url-relative.window.html\""
     }
    ],
-   "ms": 1559,
-   "instructions": 77297724,
+   "ms": 1811,
+   "instructions": 76853397,
    "clock": 10000
   },
   {
@@ -11651,8 +11509,8 @@
      "message": "assert_equals: source expected \"http://example.com/foo/bar\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-about-base-url.window.html\""
     }
    ],
-   "ms": 1520,
-   "instructions": 70435341,
+   "ms": 1634,
+   "instructions": 70359350,
    "clock": 10000
   },
   {
@@ -11675,8 +11533,8 @@
      "message": "assert_equals: source expected \"about:blank\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-base-url-xml.window.html\""
     }
    ],
-   "ms": 1534,
-   "instructions": 70083819,
+   "ms": 4895,
+   "instructions": 69288038,
    "clock": 10000
   },
   {
@@ -11739,8 +11597,8 @@
      "message": "URL is not defined"
     }
    ],
-   "ms": 1650,
-   "instructions": 92447575,
+   "ms": 4370,
+   "instructions": 88855341,
    "clock": 10000
   },
   {
@@ -11768,8 +11626,8 @@
      "message": "assert_equals: deep clone before expected \"https://example.com/\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-srcdoc-base-url.window.html\""
     }
    ],
-   "ms": 1573,
-   "instructions": 77055251,
+   "ms": 2437,
+   "instructions": 76584700,
    "clock": 10000
   },
   {
@@ -11796,11 +11654,11 @@
     {
      "name": "new Document(): URL parsing",
      "status": "FAIL",
-     "message": "assert_equals: expected function \"class extends HTMLElement {}\" but got function \"class Element extends Node {\n    get tagName() { return str(nodeId(this), 1); }\n    get localName() { return str(nodeId(this), 0); }\n    get namespaceURI() { return str(nodeId(this), 2); }\n    get prefix() { return str"
+     "message": "assert_equals: expected function \"class extends HTMLElement {}\" but got function \"class Element extends Node {\n    // CSSOM View §6 and §7, from Lean's layout of the current DOM (laid out when a script\n    // reads, once until the DOM or the viewport changes). The root element's client box\n    // is"
     }
    ],
-   "ms": 1432,
-   "instructions": 68184400,
+   "ms": 2479,
+   "instructions": 67762819,
    "clock": 10000
   },
   {
@@ -11952,8 +11810,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1631,
-   "instructions": 87863254,
+   "ms": 2143,
+   "instructions": 85459676,
    "clock": 10000
   },
   {
@@ -11971,8 +11829,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1491,
-   "instructions": 60489684,
+   "ms": 1622,
+   "instructions": 60100040,
    "clock": 10000
   },
   {
@@ -12004,8 +11862,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1458,
-   "instructions": 65758165,
+   "ms": 1530,
+   "instructions": 65366434,
    "clock": 10000
   },
   {
@@ -12247,8 +12105,8 @@
      "message": "assert_equals: Wrong MIME type returned from doc.contentType expected \"image/svg+xml\" but got \"text/html\""
     }
    ],
-   "ms": 2964,
-   "instructions": 241384789,
+   "ms": 2817,
+   "instructions": 236610556,
    "clock": 10000
   },
   {
@@ -12844,8 +12702,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2636,
-   "instructions": 218166301,
+   "ms": 2572,
+   "instructions": 218297047,
    "clock": 10000
   },
   {
@@ -15237,8 +15095,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 8682,
-   "instructions": 1083175029,
+   "ms": 8823,
+   "instructions": 1089870533,
    "clock": 10000
   },
   {
@@ -15258,8 +15116,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1423,
-   "instructions": 62191755,
+   "ms": 1689,
+   "instructions": 61888578,
    "clock": 10000
   },
   {
@@ -16389,8 +16247,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 3275,
-   "instructions": 303563249,
+   "ms": 6615,
+   "instructions": 300376691,
    "clock": 10000
   },
   {
@@ -16452,8 +16310,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1544,
-   "instructions": 70970219,
+   "ms": 2495,
+   "instructions": 70559014,
    "clock": 10000
   },
   {
@@ -16485,8 +16343,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1441,
-   "instructions": 65753886,
+   "ms": 1965,
+   "instructions": 65367615,
    "clock": 10000
   },
   {
@@ -16518,8 +16376,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1490,
-   "instructions": 63569359,
+   "ms": 1880,
+   "instructions": 63206596,
    "clock": 10000
   },
   {
@@ -16535,8 +16393,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1475,
-   "instructions": 60592087,
+   "ms": 2000,
+   "instructions": 60202341,
    "clock": 10000
   },
   {
@@ -16620,8 +16478,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1637,
-   "instructions": 89655440,
+   "ms": 2121,
+   "instructions": 86913360,
    "clock": 10000
   },
   {
@@ -16633,8 +16491,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1463,
-   "instructions": 62245500,
+   "ms": 1681,
+   "instructions": 61850395,
    "clock": 10000
   },
   {
@@ -16721,8 +16579,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2514,
-   "instructions": 185886225,
+   "ms": 2498,
+   "instructions": 185621517,
    "clock": 10000
   },
   {
@@ -16786,8 +16644,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2665,
-   "instructions": 197996477,
+   "ms": 2843,
+   "instructions": 197550329,
    "clock": 10000
   },
   {
@@ -16803,8 +16661,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1384,
-   "instructions": 60509169,
+   "ms": 1801,
+   "instructions": 60107025,
    "clock": 10000
   },
   {
@@ -16832,8 +16690,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1464,
-   "instructions": 65483345,
+   "ms": 1670,
+   "instructions": 65208358,
    "clock": 10000
   },
   {
@@ -16849,8 +16707,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1405,
-   "instructions": 60452877,
+   "ms": 1563,
+   "instructions": 60071968,
    "clock": 10000
   },
   {
@@ -16878,8 +16736,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1522,
-   "instructions": 62898933,
+   "ms": 1600,
+   "instructions": 62517710,
    "clock": 10000
   },
   {
@@ -16891,8 +16749,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1429,
-   "instructions": 60360319,
+   "ms": 1750,
+   "instructions": 59969165,
    "clock": 10000
   },
   {
@@ -16910,8 +16768,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1420,
-   "instructions": 59935645,
+   "ms": 1759,
+   "instructions": 59618125,
    "clock": 10000
   },
   {
@@ -16935,8 +16793,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1448,
-   "instructions": 63025762,
+   "ms": 1943,
+   "instructions": 62660932,
    "clock": 10000
   },
   {
@@ -16954,8 +16812,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1448,
-   "instructions": 60597911,
+   "ms": 1809,
+   "instructions": 60202569,
    "clock": 10000
   },
   {
@@ -16973,8 +16831,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1419,
-   "instructions": 60784195,
+   "ms": 1974,
+   "instructions": 60396369,
    "clock": 10000
   },
   {
@@ -16992,8 +16850,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1444,
-   "instructions": 60914554,
+   "ms": 1690,
+   "instructions": 60530942,
    "clock": 10000
   },
   {
@@ -17011,8 +16869,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1386,
-   "instructions": 60581510,
+   "ms": 1782,
+   "instructions": 60188820,
    "clock": 10000
   },
   {
@@ -17030,8 +16888,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1448,
-   "instructions": 61411171,
+   "ms": 1663,
+   "instructions": 61027314,
    "clock": 10000
   },
   {
@@ -17048,8 +16906,8 @@
      "message": "assert_array_equals: lengths differ, expected array [\"0\", \"1\", \"2\", \"3\", \"4\", \"5\", \"foo\", \"bar\", \"baz\"] length 9, got [\"0\", \"1\", \"2\", \"3\", \"4\", \"5\"] length 6"
     }
    ],
-   "ms": 1459,
-   "instructions": 66386360,
+   "ms": 1744,
+   "instructions": 65910498,
    "clock": 10000
   },
   {
@@ -22737,8 +22595,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 13277,
-   "instructions": 1545643405,
+   "ms": 19076,
+   "instructions": 1592117276,
    "clock": 10000
   },
   {
@@ -22754,8 +22612,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1397,
-   "instructions": 60484949,
+   "ms": 2338,
+   "instructions": 60083506,
    "clock": 10000
   },
   {
@@ -22881,8 +22739,8 @@
      "message": "':has(> :scope)' is not a valid selector"
     }
    ],
-   "ms": 1624,
-   "instructions": 80797125,
+   "ms": 2270,
+   "instructions": 78476926,
    "clock": 10000
   },
   {
@@ -22906,8 +22764,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1395,
-   "instructions": 60863622,
+   "ms": 2377,
+   "instructions": 60470838,
    "clock": 10000
   },
   {
@@ -22925,8 +22783,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1429,
-   "instructions": 60813691,
+   "ms": 2208,
+   "instructions": 60418930,
    "clock": 10000
   },
   {
@@ -22946,8 +22804,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1421,
-   "instructions": 63130397,
+   "ms": 1954,
+   "instructions": 62758231,
    "clock": 10000
   },
   {
@@ -22960,8 +22818,8 @@
      "message": "TypeError: cannot read property 'document' of undefined"
     }
    ],
-   "ms": 1482,
-   "instructions": 64719156,
+   "ms": 1989,
+   "instructions": 64403629,
    "clock": 10000
   },
   {
@@ -23046,8 +22904,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2040,
-   "instructions": 132071863,
+   "ms": 2609,
+   "instructions": 131994715,
    "clock": 10000
   },
   {
@@ -23119,8 +22977,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1956,
-   "instructions": 125754071,
+   "ms": 3282,
+   "instructions": 126917512,
    "clock": 10000
   },
   {
@@ -23136,8 +22994,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1451,
-   "instructions": 60685323,
+   "ms": 3246,
+   "instructions": 60291400,
    "clock": 10000
   },
   {
@@ -23153,8 +23011,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1438,
-   "instructions": 61907730,
+   "ms": 2161,
+   "instructions": 61501112,
    "clock": 10000
   },
   {
@@ -23186,8 +23044,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1460,
-   "instructions": 66751928,
+   "ms": 2009,
+   "instructions": 66318948,
    "clock": 10000
   },
   {
@@ -23219,8 +23077,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1453,
-   "instructions": 66010430,
+   "ms": 2180,
+   "instructions": 65628339,
    "clock": 10000
   },
   {
@@ -23238,8 +23096,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1389,
-   "instructions": 61041134,
+   "ms": 2039,
+   "instructions": 60650339,
    "clock": 10000
   },
   {
@@ -23263,8 +23121,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1461,
-   "instructions": 61974214,
+   "ms": 1960,
+   "instructions": 61591735,
    "clock": 10000
   },
   {
@@ -23277,8 +23135,8 @@
      "message": "no setter for property"
     }
    ],
-   "ms": 1408,
-   "instructions": 60287922,
+   "ms": 1928,
+   "instructions": 59919204,
    "clock": 10000
   },
   {
@@ -23330,8 +23188,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1537,
-   "instructions": 69106466,
+   "ms": 2015,
+   "instructions": 68785238,
    "clock": 10000
   },
   {
@@ -23363,8 +23221,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1388,
-   "instructions": 62566026,
+   "ms": 1969,
+   "instructions": 62201939,
    "clock": 10000
   },
   {
@@ -26052,8 +25910,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 7201,
-   "instructions": 897657291,
+   "ms": 9231,
+   "instructions": 937542651,
    "clock": 10000
   },
   {
@@ -26071,8 +25929,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1482,
-   "instructions": 61049740,
+   "ms": 1944,
+   "instructions": 60659211,
    "clock": 10000
   },
   {
@@ -26090,8 +25948,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1394,
-   "instructions": 61287035,
+   "ms": 1963,
+   "instructions": 60898704,
    "clock": 10000
   },
   {
@@ -26111,8 +25969,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1464,
-   "instructions": 61901949,
+   "ms": 1918,
+   "instructions": 61523981,
    "clock": 10000
   },
   {
@@ -26136,8 +25994,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1412,
-   "instructions": 62996572,
+   "ms": 1933,
+   "instructions": 62643245,
    "clock": 10000
   },
   {
@@ -26153,8 +26011,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1362,
-   "instructions": 61826170,
+   "ms": 1912,
+   "instructions": 61471965,
    "clock": 10000
   },
   {
@@ -26166,8 +26024,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1324,
-   "instructions": 60382260,
+   "ms": 1874,
+   "instructions": 60006917,
    "clock": 10000
   },
   {
@@ -26179,8 +26037,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1362,
-   "instructions": 59245996,
+   "ms": 1779,
+   "instructions": 58860285,
    "clock": 10000
   },
   {
@@ -26196,8 +26054,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1401,
-   "instructions": 60883037,
+   "ms": 1800,
+   "instructions": 60509507,
    "clock": 10000
   },
   {
@@ -26220,8 +26078,8 @@
      "message": "assert_equals: expected \"plain\" but got \"replacement\""
     }
    ],
-   "ms": 1448,
-   "instructions": 67889328,
+   "ms": 1852,
+   "instructions": 66929097,
    "clock": 10000
   },
   {
@@ -26239,8 +26097,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1391,
-   "instructions": 60724254,
+   "ms": 1773,
+   "instructions": 60328903,
    "clock": 10000
   },
   {
@@ -26252,8 +26110,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1427,
-   "instructions": 59910422,
+   "ms": 1706,
+   "instructions": 59530356,
    "clock": 10000
   },
   {
@@ -26285,8 +26143,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1397,
-   "instructions": 63239633,
+   "ms": 1708,
+   "instructions": 62987600,
    "clock": 10000
   },
   {
@@ -28974,8 +28832,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 7503,
-   "instructions": 912530962,
+   "ms": 8080,
+   "instructions": 954229066,
    "clock": 10000
   },
   {
@@ -29004,8 +28862,7 @@
     },
     {
      "name": "attributes HTMLInputElement.type: type update mutation",
-     "status": "FAIL",
-     "message": "assert_equals: mutation records must match expected 2 but got 1"
+     "status": "PASS"
     },
     {
      "name": "attributes Element.className: new value mutation",
@@ -29152,8 +29009,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2338,
-   "instructions": 133365391,
+   "ms": 2649,
+   "instructions": 129608082,
    "clock": 10000
   },
   {
@@ -29165,8 +29022,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1601,
-   "instructions": 60728604,
+   "ms": 1717,
+   "instructions": 60357062,
    "clock": 10000
   },
   {
@@ -29175,21 +29032,19 @@
    "subtests": [
     {
      "name": "Mutation observers are notified in the order they were created",
-     "status": "FAIL",
-     "message": "assert_array_equals: expected property 0 to be \"first\" but got \"second\" (expected array [\"first\", \"second\"] got [\"second\", \"first\"])"
+     "status": "PASS"
     },
     {
      "name": "Mutation observers are notified in the order they were created, also when one observes a removed subtree",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"first\", \"second\"] length 2, got [\"first\"] length 1"
+     "status": "PASS"
     },
     {
      "name": "The mutation observer microtask is only queued once a record is queued for an observer",
      "status": "PASS"
     }
    ],
-   "ms": 1532,
-   "instructions": 70991982,
+   "ms": 1708,
+   "instructions": 64786717,
    "clock": 10000
   },
   {
@@ -29205,8 +29060,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1463,
-   "instructions": 62699764,
+   "ms": 1752,
+   "instructions": 62497906,
    "clock": 10000
   },
   {
@@ -29314,8 +29169,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1701,
-   "instructions": 93185024,
+   "ms": 3138,
+   "instructions": 93812749,
    "clock": 10000
   },
   {
@@ -29492,16 +29347,16 @@
      "status": "PASS"
     }
    ],
-   "ms": 2163,
-   "instructions": 146042856,
+   "ms": 2918,
+   "instructions": 147113881,
    "clock": 10000
   },
   {
    "file": "dom/nodes/MutationObserver-cross-realm-callback-report-exception.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1397,
-   "instructions": 60252631,
+   "ms": 1755,
+   "instructions": 59937919,
    "clock": 10000,
    "errors": [
     "TypeError: cannot set property 'onerror' of undefined\n    at <eval> (<page-script>:6:1)\n"
@@ -29512,16 +29367,16 @@
    "harness": "OK",
    "subtests": [
     {
-     "name": "disconnect discarded some mutations",
+     "name": "subtree mutations",
      "status": "PASS"
     },
     {
-     "name": "subtree mutations",
+     "name": "disconnect discarded some mutations",
      "status": "PASS"
     }
    ],
-   "ms": 1555,
-   "instructions": 63253740,
+   "ms": 1687,
+   "instructions": 62933592,
    "clock": 10000
   },
   {
@@ -29548,8 +29403,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1752,
-   "instructions": 75474731,
+   "ms": 1792,
+   "instructions": 74741730,
    "clock": 10000
   },
   {
@@ -29562,8 +29417,8 @@
      "message": "assert_equals: mutation records must match expected 2 but got 1"
     }
    ],
-   "ms": 1693,
-   "instructions": 65684386,
+   "ms": 1773,
+   "instructions": 65139150,
    "clock": 10000
   },
   {
@@ -29583,8 +29438,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1731,
-   "instructions": 63810233,
+   "ms": 1770,
+   "instructions": 63527634,
    "clock": 10000
   },
   {
@@ -29656,8 +29511,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1506,
-   "instructions": 70646000,
+   "ms": 1756,
+   "instructions": 70361988,
    "clock": 10000
   },
   {
@@ -29677,8 +29532,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1485,
-   "instructions": 64929309,
+   "ms": 1666,
+   "instructions": 64601108,
    "clock": 10000
   },
   {
@@ -29702,8 +29557,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1490,
-   "instructions": 64405994,
+   "ms": 1711,
+   "instructions": 64220349,
    "clock": 10000
   },
   {
@@ -29712,23 +29567,19 @@
    "subtests": [
     {
      "name": "Mutations in a removed subtree are observed until mutation observers are notified",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"childList parent -child\", \"childList child +added\"] length 2, got [\"childList parent -child\"] length 1"
+     "status": "PASS"
     },
     {
      "name": "Attribute mutations in a removed subtree are observed until mutation observers are notified",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"attributes child data-test\"] length 1, got [] length 0"
+     "status": "PASS"
     },
     {
      "name": "Mutations in a subtree removed by replaceChildren() are observed until mutation observers are notified",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"childList parent -child\", \"childList child +added\"] length 2, got [\"childList parent -child\"] length 1"
+     "status": "PASS"
     },
     {
      "name": "takeRecords() does not stop observing a removed subtree",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"childList child +added\"] length 1, got [] length 0"
+     "status": "PASS"
     },
     {
      "name": "disconnect() stops observing a removed subtree",
@@ -29740,23 +29591,20 @@
     },
     {
      "name": "disconnect() does not affect another observer observing a removed subtree",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"childList parent -child\", \"childList child +added\"] length 2, got [\"childList parent -child\"] length 1"
+     "status": "PASS"
     },
     {
      "name": "observe() stops observing a removed subtree through the target, but not through other targets",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"childList child -grandchild\", \"childList grandchild +added\"] length 2, got [\"childList child -grandchild\"] length 1"
+     "status": "PASS"
     },
     {
      "name": "observe() stops observing subtrees removed from a removed subtree",
      "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"childList parent -child\", \"childList child -grandchild\"] length 2, got [\"childList parent -child\"] length 1"
+     "message": "assert_array_equals: lengths differ, expected array [\"childList parent -child\", \"childList child -grandchild\"] length 2, got [\"childList parent -child\", \"childList child -grandchild\", \"childList grandchild +added-to-grandchild\"] length 3"
     },
     {
      "name": "A removed subtree is no longer observed after mutation observers are notified",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"childList parent -child\", \"childList child +before\"] length 2, got [\"childList parent -child\"] length 1"
+     "status": "PASS"
     },
     {
      "name": "A removed subtree is no longer observed after mutation observers are notified, even if no record was queued",
@@ -29768,21 +29616,19 @@
     },
     {
      "name": "A subtree removed from a removed subtree is no longer observed after mutation observers are notified",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"childList parent -child\", \"childList child -grandchild\", \"childList grandchild +before\"] length 3, got [\"childList parent -child\"] length 1"
+     "status": "PASS"
     },
     {
      "name": "Removing a node from an observed subtree queues the mutation observer microtask",
-     "status": "FAIL",
-     "message": "assert_array_equals: lengths differ, expected array [\"observer\", \"promise\"] length 2, got [\"promise\"] length 1"
+     "status": "PASS"
     },
     {
      "name": "observe() on a node in a removed subtree keeps observing it after mutation observers are notified",
      "status": "PASS"
     }
    ],
-   "ms": 1891,
-   "instructions": 122025501,
+   "ms": 1975,
+   "instructions": 95927451,
    "clock": 10000
   },
   {
@@ -29801,8 +29647,8 @@
      "message": "customElements is not defined"
     }
    ],
-   "ms": 1469,
-   "instructions": 60167286,
+   "ms": 1665,
+   "instructions": 59857154,
    "clock": 10000
   },
   {
@@ -29857,8 +29703,8 @@
      "message": "cannot read property 'document' of undefined"
     }
    ],
-   "ms": 1477,
-   "instructions": 67754859,
+   "ms": 1714,
+   "instructions": 67459740,
    "clock": 10000
   },
   {
@@ -29902,8 +29748,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1525,
-   "instructions": 66126637,
+   "ms": 1726,
+   "instructions": 65892689,
    "clock": 10000
   },
   {
@@ -29915,8 +29761,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1457,
-   "instructions": 61787094,
+   "ms": 1633,
+   "instructions": 61404633,
    "clock": 10000
   },
   {
@@ -29928,8 +29774,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1466,
-   "instructions": 61617510,
+   "ms": 1647,
+   "instructions": 61218351,
    "clock": 10000
   },
   {
@@ -29961,8 +29807,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1536,
-   "instructions": 69597940,
+   "ms": 1671,
+   "instructions": 69443913,
    "clock": 10000
   },
   {
@@ -29974,8 +29820,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1431,
-   "instructions": 60042446,
+   "ms": 1587,
+   "instructions": 59660516,
    "clock": 10000
   },
   {
@@ -29988,8 +29834,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1530,
-   "instructions": 59947869,
+   "ms": 1579,
+   "instructions": 59940866,
    "clock": 10000
   },
   {
@@ -30009,8 +29855,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1426,
-   "instructions": 62082549,
+   "ms": 1814,
+   "instructions": 61894317,
    "clock": 10000
   },
   {
@@ -30032,8 +29878,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1438,
-   "instructions": 62834998,
+   "ms": 1635,
+   "instructions": 62686994,
    "clock": 10000
   },
   {
@@ -30057,8 +29903,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1326,
-   "instructions": 62656044,
+   "ms": 1980,
+   "instructions": 62299427,
    "clock": 10000
   },
   {
@@ -30606,8 +30452,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2353,
-   "instructions": 204627196,
+   "ms": 4337,
+   "instructions": 211519282,
    "clock": 10000
   },
   {
@@ -36391,8 +36237,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 10300,
-   "instructions": 1120641113,
+   "ms": 10703,
+   "instructions": 1132117542,
    "clock": 10000
   },
   {
@@ -36432,8 +36278,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1659,
-   "instructions": 74627407,
+   "ms": 1772,
+   "instructions": 74424137,
    "clock": 10000
   },
   {
@@ -42369,8 +42215,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 8205,
-   "instructions": 953307298,
+   "ms": 9061,
+   "instructions": 960581923,
    "clock": 10000
   },
   {
@@ -42538,8 +42384,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1904,
-   "instructions": 133743260,
+   "ms": 2257,
+   "instructions": 133972004,
    "clock": 10000
   },
   {
@@ -42557,8 +42403,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1674,
-   "instructions": 61099535,
+   "ms": 1694,
+   "instructions": 60713218,
    "clock": 10000
   },
   {
@@ -42575,8 +42421,8 @@
      "message": "assert_true: expected true got false"
     }
    ],
-   "ms": 1805,
-   "instructions": 65154115,
+   "ms": 1743,
+   "instructions": 64598752,
    "clock": 10000
   },
   {
@@ -42626,8 +42472,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1689,
-   "instructions": 68216817,
+   "ms": 1721,
+   "instructions": 67857621,
    "clock": 10000
   },
   {
@@ -42671,8 +42517,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1712,
-   "instructions": 65573492,
+   "ms": 1683,
+   "instructions": 65200779,
    "clock": 10000
   },
   {
@@ -42980,8 +42826,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2019,
-   "instructions": 102684437,
+   "ms": 1981,
+   "instructions": 102995013,
    "clock": 10000
   },
   {
@@ -43004,8 +42850,8 @@
      "message": "assert_equals: expected Document node with 2 children but got Document node with 2 children"
     }
    ],
-   "ms": 1655,
-   "instructions": 64211123,
+   "ms": 1715,
+   "instructions": 63654478,
    "clock": 10000
   },
   {
@@ -43043,8 +42889,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1838,
-   "instructions": 62411746,
+   "ms": 1660,
+   "instructions": 62093992,
    "clock": 10000
   },
   {
@@ -43080,8 +42926,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1701,
-   "instructions": 64050746,
+   "ms": 1706,
+   "instructions": 63694781,
    "clock": 10000
   },
   {
@@ -43099,8 +42945,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1558,
-   "instructions": 60191620,
+   "ms": 1660,
+   "instructions": 59813751,
    "clock": 10000
   },
   {
@@ -43124,8 +42970,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1525,
-   "instructions": 68618469,
+   "ms": 1691,
+   "instructions": 68513047,
    "clock": 10000
   },
   {
@@ -43181,8 +43027,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1651,
-   "instructions": 67774475,
+   "ms": 2079,
+   "instructions": 67425896,
    "clock": 10000
   },
   {
@@ -43210,8 +43056,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1578,
-   "instructions": 62274619,
+   "ms": 2664,
+   "instructions": 62089222,
    "clock": 10000
   },
   {
@@ -46123,8 +45969,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 5912,
-   "instructions": 493535665,
+   "ms": 5823,
+   "instructions": 488140689,
    "clock": 10000
   },
   {
@@ -46253,8 +46099,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2013,
-   "instructions": 92208511,
+   "ms": 1905,
+   "instructions": 89927049,
    "clock": 10000
   },
   {
@@ -46378,8 +46224,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2292,
-   "instructions": 119657750,
+   "ms": 2243,
+   "instructions": 119674306,
    "clock": 10000
   },
   {
@@ -46711,8 +46557,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2289,
-   "instructions": 124212314,
+   "ms": 2232,
+   "instructions": 124641629,
    "clock": 10000
   },
   {
@@ -46752,8 +46598,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1739,
-   "instructions": 65781325,
+   "ms": 1721,
+   "instructions": 65476157,
    "clock": 10000
   },
   {
@@ -46777,16 +46623,16 @@
      "status": "PASS"
     }
    ],
-   "ms": 1735,
-   "instructions": 63792151,
+   "ms": 1721,
+   "instructions": 63484267,
    "clock": 10000
   },
   {
    "file": "dom/nodes/NodeList-static-length-getter-tampered-1.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 28201,
-   "instructions": 4060697124,
+   "ms": 25836,
+   "instructions": 4060336107,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -46796,8 +46642,8 @@
    "file": "dom/nodes/NodeList-static-length-getter-tampered-2.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 30892,
-   "instructions": 4060696976,
+   "ms": 28615,
+   "instructions": 4060335885,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -46807,8 +46653,8 @@
    "file": "dom/nodes/NodeList-static-length-getter-tampered-3.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 30878,
-   "instructions": 4060697066,
+   "ms": 30693,
+   "instructions": 4060336077,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -46818,8 +46664,8 @@
    "file": "dom/nodes/NodeList-static-length-getter-tampered-indexOf-1.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 32206,
-   "instructions": 4060695676,
+   "ms": 31003,
+   "instructions": 4060336791,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -46829,8 +46675,8 @@
    "file": "dom/nodes/NodeList-static-length-getter-tampered-indexOf-2.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 32381,
-   "instructions": 4060695586,
+   "ms": 40236,
+   "instructions": 4060336599,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -46840,8 +46686,8 @@
    "file": "dom/nodes/NodeList-static-length-getter-tampered-indexOf-3.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 32761,
-   "instructions": 4060695701,
+   "ms": 38388,
+   "instructions": 4060336995,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -46876,8 +46722,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1966,
-   "instructions": 64772509,
+   "ms": 2395,
+   "instructions": 64385729,
    "clock": 10000
   },
   {
@@ -46985,8 +46831,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2176,
-   "instructions": 85731926,
+   "ms": 2681,
+   "instructions": 86339767,
    "clock": 10000
   },
   {
@@ -46998,8 +46844,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1880,
-   "instructions": 60870537,
+   "ms": 2959,
+   "instructions": 60501408,
    "clock": 10000
   },
   {
@@ -47095,8 +46941,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2085,
-   "instructions": 83105833,
+   "ms": 2634,
+   "instructions": 81148823,
    "clock": 10000
   },
   {
@@ -47152,8 +46998,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1953,
-   "instructions": 70542312,
+   "ms": 3252,
+   "instructions": 70210208,
    "clock": 10000
   },
   {
@@ -47169,8 +47015,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1863,
-   "instructions": 60860267,
+   "ms": 2965,
+   "instructions": 60457569,
    "clock": 10000
   },
   {
@@ -47182,8 +47028,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1861,
-   "instructions": 61163737,
+   "ms": 2809,
+   "instructions": 60777216,
    "clock": 10000
   },
   {
@@ -47223,8 +47069,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1905,
-   "instructions": 67375362,
+   "ms": 2320,
+   "instructions": 67138977,
    "clock": 10000
   },
   {
@@ -55160,8 +55006,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 24807,
-   "instructions": 2657001202,
+   "ms": 25982,
+   "instructions": 2706422511,
    "clock": 10000
   },
   {
@@ -55181,8 +55027,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1858,
-   "instructions": 62009478,
+   "ms": 1932,
+   "instructions": 61621675,
    "clock": 10000
   },
   {
@@ -55218,8 +55064,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1916,
-   "instructions": 68949141,
+   "ms": 2076,
+   "instructions": 68539212,
    "clock": 10000
   },
   {
@@ -55232,8 +55078,8 @@
      "message": "'p:has(span)' is not a valid selector"
     }
    ],
-   "ms": 1884,
-   "instructions": 60752350,
+   "ms": 2031,
+   "instructions": 60357056,
    "clock": 10000
   },
   {
@@ -55249,8 +55095,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1951,
-   "instructions": 60457786,
+   "ms": 1864,
+   "instructions": 60049792,
    "clock": 10000
   },
   {
@@ -55282,8 +55128,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1875,
-   "instructions": 63991201,
+   "ms": 1882,
+   "instructions": 63609577,
    "clock": 10000
   },
   {
@@ -55299,8 +55145,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1832,
-   "instructions": 61101341,
+   "ms": 1919,
+   "instructions": 60829463,
    "clock": 10000
   },
   {
@@ -55316,8 +55162,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1849,
-   "instructions": 61003914,
+   "ms": 1987,
+   "instructions": 60616655,
    "clock": 10000
   },
   {
@@ -55599,8 +55445,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2314,
-   "instructions": 107620271,
+   "ms": 2360,
+   "instructions": 107796343,
    "clock": 10000
   },
   {
@@ -55613,8 +55459,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1865,
-   "instructions": 60697788,
+   "ms": 1848,
+   "instructions": 60305971,
    "clock": 10000
   },
   {
@@ -55638,8 +55484,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1887,
-   "instructions": 62289190,
+   "ms": 1945,
+   "instructions": 61884515,
    "clock": 10000
   },
   {
@@ -55652,8 +55498,8 @@
      "message": "no setter for property"
     }
    ],
-   "ms": 1860,
-   "instructions": 60526786,
+   "ms": 1956,
+   "instructions": 60137673,
    "clock": 10000
   },
   {
@@ -55673,8 +55519,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1928,
-   "instructions": 62220442,
+   "ms": 1856,
+   "instructions": 61838804,
    "clock": 10000
   },
   {
@@ -55690,8 +55536,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1891,
-   "instructions": 61906557,
+   "ms": 1860,
+   "instructions": 61516036,
    "clock": 10000
   },
   {
@@ -55703,8 +55549,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1821,
-   "instructions": 60043214,
+   "ms": 1896,
+   "instructions": 59669533,
    "clock": 10000
   },
   {
@@ -55716,8 +55562,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1859,
-   "instructions": 60178214,
+   "ms": 1821,
+   "instructions": 59778928,
    "clock": 10000
   },
   {
@@ -55741,8 +55587,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1878,
-   "instructions": 62020500,
+   "ms": 1858,
+   "instructions": 61639819,
    "clock": 10000
   },
   {
@@ -55790,8 +55636,8 @@
      "message": "':is([xml|lang])' is not a valid selector"
     }
    ],
-   "ms": 1882,
-   "instructions": 64863093,
+   "ms": 1861,
+   "instructions": 64508206,
    "clock": 10000
   },
   {
@@ -55803,8 +55649,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1843,
-   "instructions": 61297030,
+   "ms": 1840,
+   "instructions": 60923770,
    "clock": 10000
   },
   {
@@ -55816,8 +55662,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1845,
-   "instructions": 61342599,
+   "ms": 2356,
+   "instructions": 60963239,
    "clock": 10000
   },
   {
@@ -55829,8 +55675,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1858,
-   "instructions": 62351238,
+   "ms": 2251,
+   "instructions": 62015376,
    "clock": 10000
   },
   {
@@ -55846,8 +55692,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1830,
-   "instructions": 60727508,
+   "ms": 2069,
+   "instructions": 60354807,
    "clock": 10000
   },
   {
@@ -55860,8 +55706,8 @@
      "message": "no setter for property"
     }
    ],
-   "ms": 1854,
-   "instructions": 60471938,
+   "ms": 2112,
+   "instructions": 60080843,
    "clock": 10000
   },
   {
@@ -55873,8 +55719,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1848,
-   "instructions": 61141010,
+   "ms": 2060,
+   "instructions": 60757682,
    "clock": 10000
   },
   {
@@ -55904,8 +55750,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1850,
-   "instructions": 62131705,
+   "ms": 2284,
+   "instructions": 61745544,
    "clock": 10000
   },
   {
@@ -55918,8 +55764,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1842,
-   "instructions": 60279906,
+   "ms": 2287,
+   "instructions": 59870123,
    "clock": 10000
   },
   {
@@ -55931,8 +55777,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1907,
-   "instructions": 60939543,
+   "ms": 2119,
+   "instructions": 60390614,
    "clock": 10000
   },
   {
@@ -55964,8 +55810,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1888,
-   "instructions": 65021294,
+   "ms": 2086,
+   "instructions": 64641126,
    "clock": 10000
   },
   {
@@ -55991,8 +55837,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1918,
-   "instructions": 61783759,
+   "ms": 2126,
+   "instructions": 61511489,
    "clock": 10000
   },
   {
@@ -56008,8 +55854,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1897,
-   "instructions": 60780178,
+   "ms": 2092,
+   "instructions": 60412370,
    "clock": 10000
   },
   {
@@ -56021,8 +55867,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1902,
-   "instructions": 60682177,
+   "ms": 2111,
+   "instructions": 60272447,
    "clock": 10000
   },
   {
@@ -56035,8 +55881,8 @@
      "message": "'dd:not(:has(dd))' is not a valid selector"
     }
    ],
-   "ms": 1936,
-   "instructions": 62740101,
+   "ms": 2425,
+   "instructions": 62403189,
    "clock": 10000
   },
   {
@@ -56048,8 +55894,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1945,
-   "instructions": 62038433,
+   "ms": 2531,
+   "instructions": 61658402,
    "clock": 10000
   },
   {
@@ -56062,8 +55908,8 @@
      "message": "TypeError: no setter for property"
     }
    ],
-   "ms": 1900,
-   "instructions": 60564319,
+   "ms": 2176,
+   "instructions": 60169568,
    "clock": 10000,
    "errors": [
     "TypeError: no setter for property\n    at <eval> (<page-script>:11:1)\n"
@@ -56078,8 +55924,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1914,
-   "instructions": 62258725,
+   "ms": 1925,
+   "instructions": 61954085,
    "clock": 10000
   },
   {
@@ -56095,8 +55941,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2067,
-   "instructions": 60952097,
+   "ms": 1906,
+   "instructions": 60561971,
    "clock": 10000
   },
   {
@@ -56112,8 +55958,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1901,
-   "instructions": 61235600,
+   "ms": 1912,
+   "instructions": 60829931,
    "clock": 10000
   },
   {
@@ -56125,8 +55971,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1895,
-   "instructions": 60543695,
+   "ms": 1878,
+   "instructions": 60137083,
    "clock": 10000
   },
   {
@@ -56139,8 +55985,8 @@
      "message": "TypeError: no setter for property"
     }
    ],
-   "ms": 1902,
-   "instructions": 60791443,
+   "ms": 1950,
+   "instructions": 60408224,
    "clock": 10000,
    "errors": [
     "TypeError: no setter for property\n    at <eval> (<page-script>:19:1)\n"
@@ -56155,8 +56001,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2014,
-   "instructions": 60427199,
+   "ms": 2047,
+   "instructions": 60000201,
    "clock": 10000
   },
   {
@@ -56172,8 +56018,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2127,
-   "instructions": 60479713,
+   "ms": 2192,
+   "instructions": 60097585,
    "clock": 10000
   },
   {
@@ -56309,8 +56155,8 @@
      "message": "assert_equals: mutations.length expected 1 but got 3"
     }
    ],
-   "ms": 2317,
-   "instructions": 104831754,
+   "ms": 3083,
+   "instructions": 105548085,
    "clock": 10000
   },
   {
@@ -56407,8 +56253,8 @@
      "message": "assert_equals: expected Document node with 1 child but got Document node with 2 children"
     }
    ],
-   "ms": 1977,
-   "instructions": 72807872,
+   "ms": 2332,
+   "instructions": 72253590,
    "clock": 10000
   },
   {
@@ -56440,8 +56286,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1888,
-   "instructions": 63595043,
+   "ms": 2576,
+   "instructions": 63186977,
    "clock": 10000
   },
   {
@@ -56453,8 +56299,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1872,
-   "instructions": 60931718,
+   "ms": 2573,
+   "instructions": 60560887,
    "clock": 10000
   },
   {
@@ -56490,8 +56336,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1970,
-   "instructions": 69630649,
+   "ms": 2282,
+   "instructions": 69062205,
    "clock": 10000
   },
   {
@@ -56519,8 +56365,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1933,
-   "instructions": 64775076,
+   "ms": 2080,
+   "instructions": 64502648,
    "clock": 10000
   },
   {
@@ -56528,8 +56374,8 @@
    "harness": "ERROR",
    "message": "TypeError: cannot read property 'define' of undefined",
    "subtests": [],
-   "ms": 1886,
-   "instructions": 60279006,
+   "ms": 2051,
+   "instructions": 59895883,
    "clock": 10000,
    "errors": [
     "TypeError: cannot read property 'define' of undefined\n    at <eval> (<page-script>:10:1)\n"
@@ -56549,8 +56395,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1932,
-   "instructions": 64968058,
+   "ms": 2095,
+   "instructions": 64549711,
    "clock": 10000
   },
   {
@@ -56590,8 +56436,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1978,
-   "instructions": 67437428,
+   "ms": 2685,
+   "instructions": 67132374,
    "clock": 10000
   },
   {
@@ -56870,8 +56716,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 3154,
-   "instructions": 185124582,
+   "ms": 3470,
+   "instructions": 184959156,
    "clock": 10000
   },
   {
@@ -58019,8 +57865,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 6995,
-   "instructions": 545758663,
+   "ms": 6733,
+   "instructions": 541619984,
    "clock": 10000
   },
   {
@@ -58028,8 +57874,8 @@
    "harness": "ERROR",
    "message": "TypeError: cannot read property 'define' of undefined",
    "subtests": [],
-   "ms": 1858,
-   "instructions": 60613920,
+   "ms": 2050,
+   "instructions": 60238033,
    "clock": 10000,
    "errors": [
     "TypeError: cannot read property 'define' of undefined\n    at <eval> (<page-script>:11:1)\n"
@@ -58042,26 +57888,26 @@
     {
      "name": "append a namespaced ID preserves ID lookup and form association",
      "status": "FAIL",
-     "message": "assert_equals: expected (object) Element node <form id=\"owner\" id=\"unrelated\"></form> but got (undefined) undefined"
+     "message": "assert_equals: expected Element node <form id=\"owner\" id=\"unrelated\"></form> but got null"
     },
     {
      "name": "change a namespaced ID preserves ID lookup and form association",
      "status": "FAIL",
-     "message": "assert_equals: expected (object) Element node <form id=\"owner\" id=\"unrelated\"></form> but got (undefined) undefined"
+     "message": "assert_equals: expected Element node <form id=\"owner\" id=\"unrelated\"></form> but got null"
     },
     {
      "name": "remove a namespaced ID preserves ID lookup and form association",
      "status": "FAIL",
-     "message": "assert_equals: expected (object) Element node <form id=\"owner\"></form> but got (undefined) undefined"
+     "message": "assert_equals: expected Element node <form id=\"owner\"></form> but got null"
     },
     {
      "name": "replace a namespaced ID preserves ID lookup and form association",
      "status": "FAIL",
-     "message": "assert_equals: expected (object) Element node <form id=\"owner\" id=\"unrelated\"></form> but got (undefined) undefined"
+     "message": "assert_equals: expected Element node <form id=\"owner\" id=\"unrelated\"></form> but got null"
     }
    ],
-   "ms": 2073,
-   "instructions": 74796169,
+   "ms": 2167,
+   "instructions": 73787811,
    "clock": 10000
   },
   {
@@ -58085,8 +57931,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2767,
-   "instructions": 126104978,
+   "ms": 2787,
+   "instructions": 126755504,
    "clock": 10000
   },
   {
@@ -58106,8 +57952,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1876,
-   "instructions": 61602552,
+   "ms": 1997,
+   "instructions": 61217287,
    "clock": 10000
   },
   {
@@ -58219,8 +58065,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 11009,
-   "instructions": 859473249,
+   "ms": 14796,
+   "instructions": 863680410,
    "clock": 10000
   },
   {
@@ -58285,8 +58131,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2054,
-   "instructions": 72855362,
+   "ms": 3129,
+   "instructions": 72315016,
    "clock": 10000
   },
   {
@@ -58303,16 +58149,16 @@
      "status": "PASS"
     }
    ],
-   "ms": 2018,
-   "instructions": 64906309,
+   "ms": 2696,
+   "instructions": 64371046,
    "clock": 10000
   },
   {
    "file": "dom/nodes/name-validation.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 40185,
-   "instructions": 4059094324,
+   "ms": 65207,
+   "instructions": 4058712775,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -58408,8 +58254,7 @@
     },
     {
      "name": "A namespaced type attribute does not change an input's state",
-     "status": "FAIL",
-     "message": "assert_equals: expected (string) \"text\" but got (undefined) undefined"
+     "status": "PASS"
     },
     {
      "name": "A namespaced selected attribute does not change an option's selectedness",
@@ -58429,11 +58274,11 @@
     {
      "name": "A namespaced open attribute does not fire a toggle event",
      "status": "FAIL",
-     "message": "assert_false: expected false got undefined"
+     "message": "assert_false: expected false got true"
     }
    ],
-   "ms": 2176,
-   "instructions": 93008137,
+   "ms": 3920,
+   "instructions": 88046501,
    "clock": 10000
   },
   {
@@ -58495,8 +58340,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1936,
-   "instructions": 69078453,
+   "ms": 3637,
+   "instructions": 68836454,
    "clock": 10000
   },
   {
@@ -58519,8 +58364,8 @@
      "message": "cannot read property 'ownerDocument' of null"
     }
    ],
-   "ms": 1943,
-   "instructions": 65030331,
+   "ms": 3421,
+   "instructions": 64784807,
    "clock": 10000
   },
   {
@@ -58548,8 +58393,8 @@
      "message": "cannot read property 'define' of undefined"
     }
    ],
-   "ms": 1953,
-   "instructions": 67319330,
+   "ms": 3421,
+   "instructions": 66930760,
    "clock": 10000
   },
   {
@@ -58581,8 +58426,8 @@
      "message": "cannot read property 'ownerDocument' of null"
     }
    ],
-   "ms": 1885,
-   "instructions": 64727541,
+   "ms": 3436,
+   "instructions": 64333824,
    "clock": 10000
   },
   {
@@ -58610,8 +58455,8 @@
      "message": "cannot read property 'ownerDocument' of null"
     }
    ],
-   "ms": 1937,
-   "instructions": 63967254,
+   "ms": 3529,
+   "instructions": 63674895,
    "clock": 10000
   },
   {
@@ -58624,8 +58469,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1840,
-   "instructions": 60045545,
+   "ms": 3774,
+   "instructions": 59660322,
    "clock": 10000
   },
   {
@@ -58653,8 +58498,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1902,
-   "instructions": 64800547,
+   "ms": 3488,
+   "instructions": 64525514,
    "clock": 10000
   },
   {
@@ -59352,16 +59197,16 @@
      "message": "assert_equals: expected 7 but got 1"
     }
    ],
-   "ms": 5084,
-   "instructions": 359524687,
+   "ms": 8830,
+   "instructions": 344559538,
    "clock": 10000
   },
   {
    "file": "dom/nodes/query-target-in-load-event.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1833,
-   "instructions": 59067968,
+   "ms": 3330,
+   "instructions": 58700480,
    "clock": 10000
   },
   {
@@ -59374,8 +59219,8 @@
      "message": "root is not defined"
     }
    ],
-   "ms": 1860,
-   "instructions": 59428444,
+   "ms": 3261,
+   "instructions": 59037931,
    "clock": 10000
   },
   {
@@ -59392,8 +59237,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1831,
-   "instructions": 60116874,
+   "ms": 3525,
+   "instructions": 59702235,
    "clock": 10000
   },
   {
@@ -59406,8 +59251,8 @@
      "message": "no setter for property"
     }
    ],
-   "ms": 1950,
-   "instructions": 73586415,
+   "ms": 3663,
+   "instructions": 73138612,
    "clock": 10000
   },
   {
@@ -59420,8 +59265,8 @@
      "message": "d1 is not defined"
     }
    ],
-   "ms": 1813,
-   "instructions": 59444893,
+   "ms": 3135,
+   "instructions": 59033383,
    "clock": 10000
   },
   {
@@ -59434,8 +59279,8 @@
      "message": "target is not defined"
     }
    ],
-   "ms": 1883,
-   "instructions": 60466680,
+   "ms": 3209,
+   "instructions": 60096654,
    "clock": 10000
   },
   {
@@ -59467,8 +59312,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1962,
-   "instructions": 64098263,
+   "ms": 3791,
+   "instructions": 64165143,
    "clock": 10000
   },
   {
@@ -59497,8 +59342,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1787,
-   "instructions": 64528301,
+   "ms": 3517,
+   "instructions": 64129131,
    "clock": 10000
   },
   {
@@ -59518,8 +59363,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1676,
-   "instructions": 61544209,
+   "ms": 3757,
+   "instructions": 61157596,
    "clock": 10000
   },
   {
@@ -59531,8 +59376,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1679,
-   "instructions": 59997922,
+   "ms": 3045,
+   "instructions": 59600664,
    "clock": 10000
   },
   {
@@ -59544,8 +59389,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1677,
-   "instructions": 59948484,
+   "ms": 2910,
+   "instructions": 59535876,
    "clock": 10000
   },
   {
@@ -59558,8 +59403,8 @@
      "message": "assert_false: Classic script should not run expected false got true"
     }
    ],
-   "ms": 1693,
-   "instructions": 62563931,
+   "ms": 2966,
+   "instructions": 62038224,
    "clock": 10000
   },
   {
@@ -59578,8 +59423,8 @@
      "message": "assert_true: precondition expected true got false"
     }
    ],
-   "ms": 1725,
-   "instructions": 65433990,
+   "ms": 3119,
+   "instructions": 64958123,
    "clock": 10000
   },
   {
@@ -59592,8 +59437,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
     }
    ],
-   "ms": 1699,
-   "instructions": 63370328,
+   "ms": 3108,
+   "instructions": 62977834,
    "clock": 10000
   },
   {
@@ -59615,16 +59460,16 @@
      "status": "PASS"
     }
    ],
-   "ms": 1687,
-   "instructions": 63601641,
+   "ms": 3141,
+   "instructions": 63228769,
    "clock": 10000
   },
   {
    "file": "html/webappapis/scripting/event-loops/update-the-rendering-resize-autofocus.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1675,
-   "instructions": 60132655,
+   "ms": 2948,
+   "instructions": 59955611,
    "clock": 10000
   }
  ]
