@@ -43,5 +43,5 @@ stylesheet that Lean runs, SVG, CSS tables and fonts. Each page says what it sho
   output of `factoidal query` over `foaf-people.xml` (the comment in the file gives the query and the commands);
   `feed.xml` entries are commits on the main branch; `sitemap.xml` dates and `lab-files.xml` counts were read
   with git on 2026-11-08.
-- "Needs the next engine": `timers-and-clicks.html` needs page scripts in foafnaut and an event loop;
+- "Needs the next engine": `timers-and-clicks.html` needs an engine with page scripts (`scriptSession`);
   `svg-text-labels.html` needs SVG text (an expected refusal until then). Each says so on the page and in `needs`.

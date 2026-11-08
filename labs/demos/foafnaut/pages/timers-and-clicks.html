@@ -2,95 +2,74 @@
 <html lang="en"><head><meta charset="utf-8"><title>Timers and clicks</title>
 <style>
 body{margin:0;padding:16px;font-size:15px;line-height:22px;color:#22303c;background:#f3f1f8}
-h1{margin:0;font-size:26px;line-height:34px;color:#4a2f8a}
-h2{margin:0;padding-top:20px;font-size:18px;line-height:26px;color:#4a2f8a}
+main{max-width:640px;margin:0 auto}
+h1{margin:0;font-size:26px;line-height:34px;color:#4a2f8a;text-align:center}
 p{margin:0;padding-top:6px}
-.note{color:#5d5a6b;font-size:13px;line-height:19px}
-.panel{margin-top:10px;padding:10px 12px;background:white;border:1px solid #d9d3e8}
-.out{color:#4a2f8a;font-size:18px;line-height:26px}
-.later{margin-top:10px;padding:10px 12px;background:#fff4e0;border:1px solid #e8c98f}
-.tag{color:#9a5b00;font-size:12px;letter-spacing:2px}
+.lede{text-align:center;color:#5d5a6b}
+.stage{margin-top:14px;padding:12px 0;background:white;border:1px solid #d9d3e8}
+svg{display:block;margin:0 auto}
+.controls{text-align:center;padding-top:12px}
 button{font-size:15px}
-svg{display:block}
-code{color:#7a3e12}
+.out{text-align:center;color:#4a2f8a;font-size:17px;line-height:26px;padding-top:8px}
 </style></head><body><main>
 <p><a href="index.html">Demo index</a></p>
 <h1>Timers and clicks</h1>
-<p class="later"><span class="tag">NEEDS THE NEXT ENGINE: PAGE SCRIPTS IN FOAFNAUT</span><br>
-Today foafnaut does not run this page's script: the Hub draws the page without it, and the native window refuses a page with a script.
-The script is written for the DOM command set that Lean already checks (<code>WebRenderScript.lean</code>): a click goes to the script's listener,
-and the script changes the page only with <code>textContent</code> and <code>setAttribute</code>. That command set runs in the earlier
-web-render host (<code>labs/demos/foafnaut/web-render</code>), and QuickJS inside the Lean Wasm VM will bring it to foafnaut.</p>
-<p id="ran" class="out">The script did not run: these buttons do nothing yet.</p>
-<p class="note">Shows today: the static page, with buttons and SVG shapes in their first state. With scripts: click listeners on buttons, text changes,
-and attribute changes on SVG shapes (fill, width, transform). Not even then: timers, animation frames, events other than a click, or selectors other
-than <code>#id</code>. See also <a href="foafnaut:wasm">WebAssembly run inside the engine</a>.</p>
-
-<h2>Part 1: clicks (needs page scripts)</h2>
-<div class="panel">
-<p><button id="count">Add one</button> <button id="reset">Reset</button></p>
-<p class="out" id="total">Clicked 0 times.</p>
-<svg width="600" height="150" viewBox="0 0 600 150">
-<rect x="0" y="0" width="600" height="150" rx="10" fill="#f6f4fb"/>
-<rect id="bar" x="20" y="40" width="0" height="34" rx="6" fill="#7a5cb8"/>
-<path d="M 20 90 L 580 90" stroke="#d9d3e8" stroke-width="2"/>
-<g id="dial" transform="translate(520 52) rotate(0)"><circle cx="0" cy="0" r="30" fill="#4a2f8a"/><path d="M 0 0 L 0 -26" stroke="white" stroke-width="5"/></g>
-<circle id="dot0" cx="40" cy="120" r="12" fill="#d9d3e8"/><circle id="dot1" cx="80" cy="120" r="12" fill="#d9d3e8"/>
-<circle id="dot2" cx="120" cy="120" r="12" fill="#d9d3e8"/><circle id="dot3" cx="160" cy="120" r="12" fill="#d9d3e8"/>
-<circle id="dot4" cx="200" cy="120" r="12" fill="#d9d3e8"/>
+<p class="lede">Twelve dots, three layouts. The script runs in QuickJS inside the Lean engine.</p>
+<div class="stage">
+<svg width="340" height="340" viewBox="0 0 340 340">
+<g id="dots">
+<circle id="d0" r="1" fill="#7a5cb8" transform="translate(70 70) scale(0.1) scale(160)"/><circle id="d1" r="1" fill="#7a5cb8" transform="translate(137 70) scale(0.1) scale(160)"/>
+<circle id="d2" r="1" fill="#7a5cb8" transform="translate(203 70) scale(0.1) scale(160)"/><circle id="d3" r="1" fill="#7a5cb8" transform="translate(270 70) scale(0.1) scale(160)"/>
+<circle id="d4" r="1" fill="#7a5cb8" transform="translate(70 170) scale(0.1) scale(160)"/><circle id="d5" r="1" fill="#7a5cb8" transform="translate(137 170) scale(0.1) scale(160)"/>
+<circle id="d6" r="1" fill="#7a5cb8" transform="translate(203 170) scale(0.1) scale(160)"/><circle id="d7" r="1" fill="#7a5cb8" transform="translate(270 170) scale(0.1) scale(160)"/>
+<circle id="d8" r="1" fill="#7a5cb8" transform="translate(70 270) scale(0.1) scale(160)"/><circle id="d9" r="1" fill="#7a5cb8" transform="translate(137 270) scale(0.1) scale(160)"/>
+<circle id="d10" r="1" fill="#7a5cb8" transform="translate(203 270) scale(0.1) scale(160)"/><circle id="d11" r="1" fill="#7a5cb8" transform="translate(270 270) scale(0.1) scale(160)"/>
+</g>
 </svg>
-<p class="note">Each click grows the bar by 40 pixels (up to 11 clicks), turns the dial 30 degrees, and lights the next dot.</p>
-</div>
-<div class="panel">
-<p><button id="light">Next light</button> <span class="out" id="state">Stop</span></p>
-<svg width="600" height="90" viewBox="0 0 600 90">
-<rect x="10" y="5" width="220" height="80" rx="40" fill="#2b2b33"/>
-<circle id="red" cx="50" cy="45" r="26" fill="#e23b3b"/>
-<circle id="amber" cx="120" cy="45" r="26" fill="#4a3d1e"/>
-<circle id="green" cx="190" cy="45" r="26" fill="#1e3d27"/>
-</svg>
-</div>
-
-<h2>Part 2: timers (needs page scripts and an event loop)</h2>
-<div class="later">
-<p class="tag">NEEDS THE NEXT ENGINE: AN EVENT LOOP</p>
-<p>A page needs an event loop for <code>setTimeout</code>, <code>setInterval</code> and <code>requestAnimationFrame</code>. The script below
-checks for each one and writes what it finds, so this line is true on every engine that runs the page:</p>
-<p class="out" id="timers">The script has not run.</p>
-<p><button id="start">Start a 3 second countdown</button> <span class="out" id="countdown">Not started.</span></p>
-<p class="note">With an event loop, the countdown goes 3, 2, 1, done, one step a second. Without one, the button says so.</p>
+<p class="controls"><button id="grid">Grid</button> <button id="ring">Ring</button> <button id="bars">Bars</button> <button id="auto">Pause</button></p>
+<p class="out" id="state">Grid</p>
 </div>
 <script>
-document.getElementById('ran').textContent = 'The script ran. Click the buttons.';
-let n = 0, light = 0;
-const dots = ['dot0', 'dot1', 'dot2', 'dot3', 'dot4'];
-function show() {
-  document.getElementById('total').textContent = 'Clicked ' + n + (n === 1 ? ' time.' : ' times.');
-  document.getElementById('bar').setAttribute('width', String(Math.min(n, 11) * 40));
-  document.getElementById('dial').setAttribute('transform', 'translate(520 52) rotate(' + (n * 30) % 360 + ')');
-  dots.forEach((id, i) => document.getElementById(id).setAttribute('fill', i < n % 6 ? '#7a5cb8' : '#d9d3e8'));
+// Each dot eases from where it is to where the next layout puts it, one animation frame at
+// a time, as a d3 transition does. A frame writes one transform per dot; colours change
+// once, when a transition starts.
+const N = 12, dots = Array.from({length: N}, (_, i) => document.getElementById('d' + i));
+const hues = ['#7a5cb8', '#5c7ab8', '#3f9d8b', '#c4455a', '#e08a2e', '#4a2f8a'];
+const heights = [5, 9, 4, 11, 7, 3, 10, 6, 8, 2, 12, 1];
+const layouts = {
+  grid: i => ({x: 70 + (i % 4) * 66.7, y: 70 + Math.floor(i / 4) * 100, r: 16, fill: '#7a5cb8'}),
+  ring: i => {const a = i / N * 2 * Math.PI - Math.PI / 2;
+              return {x: 170 + 120 * Math.cos(a), y: 170 + 120 * Math.sin(a), r: 12 + (i % 3) * 5, fill: hues[i % 6]};},
+  bars: i => ({x: 30 + i * 25.5, y: 300 - heights[i] * 22, r: 10, fill: hues[heights[i] % 6]})
+};
+const order = ['grid', 'ring', 'bars'];
+let now = dots.map((_, i) => layouts.grid(i)), current = 'grid', auto = true, running = 0;
+const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+// Whole numbers only: a transform is the dot's centre and ten times its radius.
+const place = (el, x, y, r) =>
+  el.setAttribute('transform', 'translate(' + (x + 0.5 | 0) + ' ' + (y + 0.5 | 0) + ') scale(0.1) scale(' + (r * 10 + 0.5 | 0) + ')');
+function go(name) {
+  current = name;
+  document.getElementById('state').textContent = name[0].toUpperCase() + name.slice(1);
+  const from = now.map(d => ({...d})), to = dots.map((_, i) => layouts[name](i)), mine = ++running;
+  for (let i = 0; i < N; i++) dots[i].setAttribute('fill', to[i].fill);
+  let start;
+  const frame = t => {
+    if (mine !== running) return;
+    if (start === undefined) start = t;
+    const k = ease(Math.min(1, (t - start) / 900));
+    for (let i = 0; i < N; i++) {
+      const a = from[i], b = to[i], d = now[i];
+      d.x = a.x + (b.x - a.x) * k; d.y = a.y + (b.y - a.y) * k; d.r = a.r + (b.r - a.r) * k;
+      place(dots[i], d.x, d.y, d.r);
+    }
+    if (k < 1) requestAnimationFrame(frame); else running = 0;
+  };
+  requestAnimationFrame(frame);
 }
-document.getElementById('count').addEventListener('click', () => { n += 1; show(); });
-document.getElementById('reset').addEventListener('click', () => { n = 0; show(); });
-const lights = [['Stop', '#e23b3b', '#4a3d1e', '#1e3d27'], ['Get ready', '#e23b3b', '#f2a93b', '#1e3d27'],
-                ['Go', '#4a1e1e', '#4a3d1e', '#35c25a'], ['Stop if you can', '#4a1e1e', '#f2a93b', '#1e3d27']];
-document.getElementById('light').addEventListener('click', () => {
-  light = (light + 1) % lights.length;
-  const [name, r, a, g] = lights[light];
-  document.getElementById('state').textContent = name;
-  document.getElementById('red').setAttribute('fill', r);
-  document.getElementById('amber').setAttribute('fill', a);
-  document.getElementById('green').setAttribute('fill', g);
-});
-const found = ['setTimeout', 'setInterval', 'requestAnimationFrame'].map(name =>
-  name + (typeof globalThis[name] === 'function' ? ': present' : ': not present'));
-document.getElementById('timers').textContent = found.join('; ') + '.';
-document.getElementById('start').addEventListener('click', () => {
-  const out = document.getElementById('countdown');
-  if (typeof setTimeout !== 'function') { out.textContent = 'No setTimeout in this engine yet.'; return; }
-  let left = 3;
-  const step = () => { out.textContent = left > 0 ? String(left) : 'Done.'; if (left-- > 0) setTimeout(step, 1000); };
-  step();
-});
+const label = () => { document.getElementById('auto').textContent = auto ? 'Pause' : 'Play'; };
+for (const name of order) document.getElementById(name).addEventListener('click', () => { auto = false; label(); go(name); });
+document.getElementById('auto').addEventListener('click', () => { auto = !auto; label(); });
+setInterval(() => { if (auto && !running) go(order[(order.indexOf(current) + 1) % order.length]); }, 2600);
 </script>
 </main></body></html>

@@ -118,6 +118,13 @@ Measured on the owner's Mac, native engine library (2026-11-08):
 - Page start on the base copy: 2 to 12 ms for a small page; a WPT test page (with
   testharness.js, 5200 lines) about 60 M instructions, 0.5 s.
 - A click turn: 150 000 to 220 000 instructions, about 2 ms.
+- An animation frame of `pages/timers-and-clicks.html` (twelve `transform` writes): about
+  0.40 M instructions natively. On the Hub (headless Chrome on the same Mac, local engine
+  build): a turn of 40 to 50 ms (WasmVM runs about 8 to 10 M instructions a second
+  there), a layout of 20 to 25 ms and a draw of about 25 ms, so 9 to 11 frames a second
+  while the dots move. A `setAttribute` costs about 17 000 instructions in the guest, a
+  host read such as `nodeType` about 6 000: the guest's path to an import is the next
+  cost to cut.
 
 ## 5. Limits
 

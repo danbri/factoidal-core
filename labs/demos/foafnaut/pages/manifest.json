@@ -282,10 +282,10 @@
    "page": "timers-and-clicks.html",
    "title": "Timers and clicks",
    "handwritten": true,
-   "needs": "page scripts in foafnaut (QuickJS in the Lean Wasm VM) for part 1, and an event loop for part 2",
-   "appRefused": "does not execute scripts",
-   "shows": "today: the static page; with scripts: click listeners, textContent and setAttribute on SVG shapes; with an event loop: a setTimeout countdown",
-   "doesNotShow": "any script effect on this engine yet; the page says so in its text"
+   "needs": "page scripts in the engine (scriptSession: QuickJS-NG in WasmVM)",
+   "appRefused": "a host with no QuickJS guest module refuses a page with scripts",
+   "shows": "twelve SVG dots eased between grid, ring and bars by requestAnimationFrame, auto-played by setInterval; buttons with click listeners; centred with text-align and auto margins",
+   "doesNotShow": "CSS transitions or SVG animation elements: the script moves each dot"
   },
   {
    "page": "webgpu-triangle.html",
