@@ -791,6 +791,12 @@ million Wasm instructions per second, about half of `fib` in the engine benchmar
 `WasiIO.Loaded.run` takes the store out of the `Loaded` record before the run: while
 the record also held it, the first memory write of a run would copy the whole memory.
 
+## Audio and video decoders in the VM
+
+2026-11-08: libopus, libvorbis and libvpx's VP8 decoder, built to Wasm by
+`tools/wasmvm/build-media.sh`, decode in WasmVM; Ogg and WebM are read in Lean
+(`L4Factoidal/Media/`). Record: `docs/designissues/2026-11-08-media-wasmvm.md`.
+
 ## In the Foafnaut engine: `wasmRun` and `foafnaut:wasm`
 
 WasmVM is compiled into the Foafnaut engine (`labs/demos/foafnaut/WebWasm.lean`, in

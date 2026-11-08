@@ -288,6 +288,12 @@ lean_exe «wasmvm-bench» where root := `L4Factoidal.WasmVM.Bench
 -- The official core test suite (third_party/wasm-spec/test/core-json): `lake exe wasmvm-spectest`.
 lean_exe «wasmvm-spectest» where root := `L4Factoidal.WasmVM.SpecTest
 
+-- Audio and video decoded in WasmVM; Ogg and WebM read in Lean
+-- (docs/designissues/2026-11-08-media-wasmvm.md): `lake exe media-bench`.
+@[default_target] lean_lib Media where
+  roots := #[`L4Factoidal.Media]
+lean_exe «media-bench» where root := `L4Factoidal.Media.Bench
+
 -- Explicit non-default roots: prototype tests stay outside production imports.
 lean_lib ScopedQueryPrototype where
   roots := #[`Wasm.Ops.ScopedQuery, `Wasm.Ops.ScopedQueryTests]
