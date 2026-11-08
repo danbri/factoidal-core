@@ -689,3 +689,39 @@ trackpad swipes and the fling.
   library change with its own issue and an expected-failure case in the
   post's test (CLAUDE.md, "A stated shortfall is a failing test plus an
   open issue"), not a cell-side workaround.
+
+## Foafnaut: the FOAF graph shows only layouts that pass the overlap check
+
+The interactive FOAF graph (`foafnaut:graph`) is a Lean program: layout,
+drawing, picking and admission are all in Lean, and the Hub only passes input
+and draws what Lean gives it. Its no-overlap rule is a checked certificate, not
+a layout that can never overlap: the layout may move nodes freely, but a frame
+is shown only if it passes the check.
+
+- **The check** (`formal/lean4/L4Factoidal/UI/LayoutPolicy.lean`). For each
+  node, `checkFootprints` adds up the area its box shares with every other
+  node's box (`overlapSum`). The node passes when its box has positive area and
+  that sum is at most `overlapBps` basis points of its own area. The default is
+  500 (5%), and the profile `experimental-graph-browser-v1` allows 300–700.
+  Pairwise sums can count one region more than once, so the bound is
+  conservative. `certify` is true only if every node passes.
+  `certify_sound` proves that a certified layout meets the budget for every
+  node, and `certify_application_bound` proves it against the application's
+  ceiling.
+- **Only certified frames are shown** (`formal/lean4/L4Factoidal/UI/Presentation.lean`,
+  `labs/demos/foafnaut/FoafPresentation.lean`). A layout reaches the screen
+  only as an `Approved` value, which carries its certificate. When a candidate
+  fails, the last approved frame stays on screen.
+  - `shown_certified` and `displayed_certified` (FoafPresentationProofs.lean)
+    prove that the model shown, and the model the host has acknowledged, both
+    pass the check.
+  - `picked_displayed_geometry` proves that a pointer pick lands on a visible
+    part of that acknowledged, certified model.
+- **What it does not claim.** It says nothing about pixels, GPU rasterisation,
+  the order of host callbacks, or how fast the layout settles. The 5% budget
+  and the 12 Hz check rate are design choices, not proved properties.
+
+The graph stays in Lean. A version written as a page script would run in
+QuickJS inside WasmVM, which is far slower on the Hub. It would also be outside
+these proofs, unless the page's script handed its positions to this same Lean
+check before each frame.
