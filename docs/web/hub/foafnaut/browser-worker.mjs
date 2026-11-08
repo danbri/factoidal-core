@@ -476,6 +476,10 @@ async function openState(){
 }
 function go(answer){
   if(answer.go==='command')shellCommand(answer.name,answer.argument);
+  // Pages of the browser itself (foafnaut:graph, foafnaut:wasm, ...): Lean answers them as
+  // pages since issue 1268, so they are never handed to the host browser.
+  else if(answer.url==='foafnaut:graph')shellCommand('graph','');
+  else if(answer.url?.startsWith('foafnaut:'))navigate(answer.url);
   else if(answer.go==='system'||!answer.url.startsWith(siteOrigin))post({type:'open',url:answer.url});
   else navigate(answer.url);
 }
