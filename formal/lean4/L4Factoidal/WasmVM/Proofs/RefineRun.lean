@@ -773,4 +773,82 @@ theorem step_refines (e e' : EState M) (c : Spec.config) (hR : R e c) (hs : step
 
 end Cases
 
+/-! ### Fused ops -/
+
+section Fused
+variable {M : Type} [LinearMemory M] [LinearMemoryLaws M]
+open Fuse
+
+/-- A straight-line op that `stepE` covers (all but `drop` and unary numeric ops). -/
+def covered : Simple → Prop
+  | .drop | .un _ => False
+  | _ => True
+
+theorem stepOp_simple (e : EState M) (o : Op) (sm : Simple) (h : simple? o = some sm) (hc : covered sm) :
+    stepOp e o = some (simpleNext e sm) := by
+  cases o <;> simp only [simple?, Option.some.injEq, reduceCtorEq] at h
+  case num op =>
+    unfold NumOp.pureBin NumOp.pureUn at h
+    cases hb : op.isBinary <;> cases ht : op.mayTrap <;> simp [hb, ht] at h <;> subst h <;>
+      simp_all [covered, stepOp]
+  all_goals (subst h; first | rfl | exact absurd hc (by simp [covered]))
+
+/-- Covered straight-line ops in the code, run one `stepE` at a time, keep `R`. -/
+theorem simple_chain : ∀ (ss : List Simple) (ops : List Op) (e : EState M) (c : Spec.config),
+    At e.code e.pc ops → ops.map simple? = ss.map some → (∀ sm ∈ ss, covered sm) → R e c →
+    ∃ c', Spec.Steps c c' ∧
+      R { e with stack := (Simple.execAll e.fp ss ⟨e.stack, e.sp⟩).stack,
+                 sp := (Simple.execAll e.fp ss ⟨e.stack, e.sp⟩).sp, pc := e.pc + ss.length.toUSize } c'
+  | [], _, e, c, _, _, _, hR => ⟨c, by cases c; exact Spec.Steps.refl _ _, by
+      simp only [List.length_nil, usize_zero]; exact hR⟩
+  | sm :: ss, [], _, _, _, h, _, _ => by simp at h
+  | sm :: ss, o :: os, e, c, ⟨⟨hpc, hco⟩, hat⟩, h, hcov, hR => by
+    simp only [List.map_cons, List.cons.injEq] at h
+    obtain ⟨h1, h2⟩ := h
+    have hs : stepE e = some (simpleNext e sm) := by
+      unfold stepE; rw [dif_pos hpc, hco]; exact stepOp_simple e o sm h1 (hcov sm (by simp))
+    obtain ⟨c1, hst1, hR1⟩ := step_refines e _ c hR hs
+    obtain ⟨c2, hst2, hR2⟩ := simple_chain ss os (simpleNext e sm) c1 hat h2
+      (fun x hx => hcov x (by simp [hx])) hR1
+    refine ⟨c2, steps_trans hst1 hst2, ?_⟩
+    have e1 : (simpleNext e sm).pc + ss.length.toUSize = e.pc + (sm :: ss).length.toUSize := by
+      simp only [simpleNext, List.length_cons]; exact usize_succ e.pc ss.length
+    simp only [simpleNext] at hR2 e1 ⊢
+    rw [← e1]; exact hR2
+
+theorem R.codeSize {e : EState M} {c : Spec.config} (hR : R e c) : e.code.size < USize.size := by
+  obtain ⟨_, _, _, _, _, _, _, _, _, hx, _⟩ := hR; exact hx.hC
+
+/-- A FUSED OP is covered by the same theorem. When `fuse` put a fused op `f` (no
+conditional jump at its end, no unary op) at `pc`, `run` on the fused code executes it
+in `f.parts.length` fuel to the registers `after` (`Fuse.fuse_agrees`), and those
+registers are what `stepE` reaches on the original code one part at a time, so `R`
+holds there again, after spec steps (`simple_chain`, from `step_refines`). The relation
+`R` is stated on the original code `e.code`; the engine runs `fuse e.code`. -/
+theorem fused_refines (e : EState M) (c : Spec.config) (hR : R e c) (f : Op)
+    (hfa : fuseAt e.code e.pc.toNat = some f) (hj : fusedJump? f = none)
+    (hcov : ∀ sm ∈ fusedSimple f, covered sm) :
+    (∀ (lim : RunLimits) (n : Nat) (hpc : e.pc < (fuse e.code).usize),
+      (fuse e.code)[e.pc.toNat]'(pc_ok hpc) = f →
+      Run.run lim e.st e.stack e.sp e.fp e.pc (fuse e.code) e.inst e.frames (n + f.parts.length) =
+        Run.run lim e.st (after e.fp e.pc f ⟨e.stack, e.sp⟩).1 (after e.fp e.pc f ⟨e.stack, e.sp⟩).2.1 e.fp
+          (after e.fp e.pc f ⟨e.stack, e.sp⟩).2.2 (fuse e.code) e.inst e.frames n) ∧
+    ∃ c', Spec.Steps c c' ∧
+      R { e with stack := (after e.fp e.pc f ⟨e.stack, e.sp⟩).1, sp := (after e.fp e.pc f ⟨e.stack, e.sp⟩).2.1,
+                 pc := (after e.fp e.pc f ⟨e.stack, e.sp⟩).2.2 } c' := by
+  have hsz := hR.codeSize
+  obtain ⟨hparts, hw, _⟩ := fuseAt_sound e.code e.pc.toNat f hfa
+  refine ⟨fun lim n hpc hc => (fuse_agrees lim e.st e.stack e.sp e.fp e.pc e.code e.inst e.frames n f hsz hpc hc hfa).1, ?_⟩
+  have hat := At_of_get e.code hsz f.parts e.pc hparts
+  obtain ⟨hmap, hlen⟩ := hw
+  rw [hj] at hlen
+  simp only at hlen
+  rw [List.take_of_length_le (by omega)] at hmap
+  obtain ⟨c', hst, hR'⟩ := simple_chain (fusedSimple f) f.parts e c hat hmap hcov hR
+  refine ⟨c', hst, ?_⟩
+  simp only [after, hj]
+  exact hR'
+
+end Fused
+
 end L4Factoidal.WasmVM.Proofs.Refine
