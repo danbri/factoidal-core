@@ -1015,7 +1015,10 @@ def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding :
     | some (id,c) => {result with nodes := #[Node.paint ⟨some id,{geometry := .rect 0 0 vw (max vh result.height),style := {fill := .solid c}}⟩] ++ result.nodes}
     | none => result
   if result.nodes.size > 1048576 then throw "HTML paint count exceeds 1048576"
-  let links := linkRegions dom styles result.boxes (Float.ofNat width) (Float.ofNat height)
+  -- Links are kept down to the foot of the document, not the viewport: a host that scrolls
+  -- a band of the page with no new layout (the Hub, issue 1268) hit-tests links below the
+  -- first screen with this list.
+  let links := linkRegions dom styles result.boxes (Float.ofNat width) (max vh result.height)
   if links.size > 49152 || links.any (fun link => link.href.utf8ByteSize > 2048) then
     throw "unsupported link region count or href exceeding 2048 UTF-8 bytes"
   return (⟨width,height,⟨1,1,0,0,0,0,Float.ofNat width,Float.ofNat height⟩, result.nodes.toList,result.runs,links⟩,result.boxes)

@@ -105,6 +105,11 @@ private def spacedLink := run "<div style='width:60px'><a href='url'>AA BB</a></
 #guard ((run "<a href='url' style='display:none'>AA</a>" css).toOption.map fun r => r.1.links.size) == some 0
 
 /-- Overflow affects both paint clips and the Lean link picker. -/
+-- A link below the 100 px viewport keeps its region: the Hub scrolls a band of the page with
+-- no new layout and hit-tests these (2026-11-08, links past the first screen did nothing).
+private def lowLink := run "<p style='height:300px;margin:0'>x</p><a href='low'>AA</a>" css
+#guard (lowLink.toOption.map fun r => r.1.links.toList.map (fun a => (a.href,a.y))) == some [("low",300)]
+#guard (lowLink.toOption.bind fun r => hitLink r.1.links.toList 3 303 |>.map (·.href)) == some "low"
 private def clippedLink := run "<div style='height:7px;overflow:clip'><a href='url'>AA BB</a></div>" css
 #guard (clippedLink.toOption.map fun r => r.1.links.size) == some 1
 #guard (clippedLink.toOption.bind fun r => hitLink r.1.links.toList 3 3 |>.map (·.href)) == some "url"
