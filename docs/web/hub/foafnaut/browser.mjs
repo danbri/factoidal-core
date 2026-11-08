@@ -55,7 +55,20 @@ worker.onmessage=({data})=>{
   // Copy and cut in the address bar: Lean chose the text; the key press still counts as a user action.
   if(data.type==='clipboard')navigator.clipboard?.writeText(data.text).catch(()=>{note.hidden=false;note.textContent='The browser did not allow writing to the clipboard.';});
   if(data.type==='focus'){focused=data.focused;if(focused)keys.focus({preventScroll:true});else keys.blur();}
-  if(data.type==='open'&&!window.open(data.url,'_blank','noopener')){note.hidden=false;note.textContent=`Open this address in your browser: ${data.url}`;}
+  // A link to another site opens in a host tab. The worker answers after the tap has ended,
+  // so a browser that only opens tabs during a tap (iPhone Safari) blocks window.open; the
+  // note then offers the address as a link, and tapping that is a tap of its own.
+  if(data.type==='open'){
+    const opened=window.open(data.url,'_blank');
+    if(opened)opened.opener=null;
+    else{
+      const link=document.createElement('a');link.href=data.url;link.target='_blank';link.rel='noopener';
+      link.textContent=data.url;link.style.cssText='color:#00e;word-break:break-all';
+      note.replaceChildren('Open in a new tab: ',link);note.hidden=false;
+      const hide=()=>{note.hidden=true;};link.addEventListener('click',()=>setTimeout(hide,0));
+      clearTimeout(note.hideTimer);note.hideTimer=setTimeout(hide,10000);
+    }
+  }
   if(data.type==='error'){note.hidden=false;note.textContent=data.error;}
 };
 worker.onerror=event=>{note.hidden=false;note.textContent='The browser worker failed: '+event.message;};
