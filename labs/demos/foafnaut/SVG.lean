@@ -1899,7 +1899,7 @@ theorem ReferenceContext.create_existing (context : ReferenceContext) :
 /-- SVG 2 §5.1: render an already namespace-expanded SVG fragment, including
     one supplied by an HTML foreign-content parser. The caller owns DOM parsing;
     root validation, SVG style, geometry and viewport semantics remain here. -/
-private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeight : Nat)
+private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeight : Float)
     (inheritedStyle : Style) (images : Option NativeImage.Store)
     (referenceSource : Unit → Except String (ReferenceContext × List Nat × Option String)) : Except String Scene := do
   let .element name attrs children := root | throw "SVG root must be an element"
@@ -1911,13 +1911,13 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
     if let some source := attr attrs key then
       let viewportUnit := (trim source).endsWith "vw" || (trim source).endsWith "vh"
       let size ← if (trim source).endsWith "%" || viewportUnit then
-        if outputWidth == 0 || outputHeight == 0 then throw "percentage root dimensions require explicit host output viewport"
+        if outputWidth <= 0 || outputHeight <= 0 then throw "percentage root dimensions require explicit host output viewport"
         -- The host output size already holds the viewport unit's computed value.
         else if viewportUnit then pure 0
-        else relativeLength source (Float.ofNat (if key == "width" then outputWidth else outputHeight))
+        else relativeLength source (if key == "width" then outputWidth else outputHeight)
       else lengthNumber source
       if size < 0 then throw "negative root dimensions"
-  let (w,h) ← if outputWidth > 0 && outputHeight > 0 then pure (Float.ofNat outputWidth,Float.ofNat outputHeight)
+  let (w,h) ← if outputWidth > 0 && outputHeight > 0 then pure (outputWidth,outputHeight)
     else if outputWidth != 0 || outputHeight != 0 then throw "both output dimensions are required"
     else do
       let rw ← need (attr attrs "width") "root width required unless explicit output viewport is supplied"
@@ -1953,7 +1953,7 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
 def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
     (inheritedStyle : Style := {}) (documentURL : Option String := none)
     (images : Option NativeImage.Store := none) : Except String Scene :=
-  parseRootWithContext root outputWidth outputHeight inheritedStyle images fun _ => do
+  parseRootWithContext root (Float.ofNat outputWidth) (Float.ofNat outputHeight) inheritedStyle images fun _ => do
     let context ← ReferenceContext.create root documentURL
     let base := match root with
       | .element _ attrs _ => NativeSVGReferences.elementBase attrs documentURL
@@ -1962,9 +1962,11 @@ def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
 
 /-- Select an SVG root from the indexed original document in Lean. The caller
     may normalize only root attributes after its own Lean HTML/CSS computation;
-    original children, reference targets, source identity and bases are retained. -/
-def parseRootInContext (context : ReferenceContext) (rootSourcePath : List Nat)
-    (outputWidth outputHeight : Nat := 0) (inheritedStyle : Style := {})
+    original children, reference targets, source identity and bases are retained.
+    The output viewport may be fractional (CSS pixels of an HTML layout): the viewBox
+    maps onto it exactly, and the backing raster is the next whole pixel. -/
+def parseRootInContextSized (context : ReferenceContext) (rootSourcePath : List Nat)
+    (outputWidth outputHeight : Float := 0) (inheritedStyle : Style := {})
     (rootAttributeNormalizer : List NamespaceAttribute → Except String (List NamespaceAttribute) := fun attrs => .ok attrs)
     (images : Option NativeImage.Store := none) : Except String Scene := do
   let initialBase := context.initialBaseURL.orElse (fun _ => context.documentURL)
@@ -1974,6 +1976,14 @@ def parseRootInContext (context : ReferenceContext) (rootSourcePath : List Nat)
   let attrs ← rootAttributeNormalizer originalAttrs
   parseRootWithContext (.element name attrs children) outputWidth outputHeight inheritedStyle images
     (fun _ => .ok (context,entry.path,base))
+
+/-- `parseRootInContextSized` at a viewport of whole pixels. -/
+def parseRootInContext (context : ReferenceContext) (rootSourcePath : List Nat)
+    (outputWidth outputHeight : Nat := 0) (inheritedStyle : Style := {})
+    (rootAttributeNormalizer : List NamespaceAttribute → Except String (List NamespaceAttribute) := fun attrs => .ok attrs)
+    (images : Option NativeImage.Store := none) : Except String Scene :=
+  parseRootInContextSized context rootSourcePath (Float.ofNat outputWidth) (Float.ofNat outputHeight)
+    inheritedStyle rootAttributeNormalizer images
 
 def parse (xml : String) (outputWidth outputHeight : Nat := 0)
     (documentURL : Option String := none) : Except String Scene := do

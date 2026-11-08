@@ -236,12 +236,12 @@ def makeReplaced (dom : DOM.Dom) (documentURL : Option String := none)
   let context ← NativeSVG.ReferenceContext.create tree documentURL
   -- Each image decodes once for the document, not once for each SVG root.
   let store := NativeSVG.imageStoreOf (NativeSVG.imageKeys tree documentURL ++ imgs.map (·.2)) images
+  -- A viewport of fractional CSS pixels (a percentage width with `height:auto`) keeps its
+  -- exact size: the viewBox maps onto it, and the backing raster is the next whole pixel.
   return (fun id style width height => do
-    if Float.ofNat width.toUInt32.toNat != width || Float.ofNat height.toUInt32.toNat != height then
-      throw "unsupported fractional embedded SVG viewport"
     let path ← sourcePath dom root (dom.size+1) id []
     let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
-    let scene ← NativeSVG.parseRootInContext context path width.toUInt32.toNat height.toUInt32.toNat inherited embeddedAttributes (some store)
+    let scene ← NativeSVG.parseRootInContextSized context path width height inherited embeddedAttributes (some store)
     return placeSVG scene id style width height,picturesOf store imgs)
 
 /-- The SVG embedding of `makeReplaced`. -/

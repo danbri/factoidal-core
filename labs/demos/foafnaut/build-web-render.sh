@@ -43,6 +43,7 @@ for check in WebRenderTests WebRenderFontRequestsTests WebRenderScriptTests WebD
 done
 lean -R "$LAB" "$LAB/WebRenderCurveTests.lean"
 lean -R "$LAB" "$LAB/SVGForgivingTests.lean"
+lean -R "$LAB" "$LAB/WebHitTests.lean"
 lean -R "$LAB" "$LAB/SVGTextTests.lean"
 lean -R "$LAB" "$LAB/SVGGradientTests.lean"
 lean -R "$LAB" "$LAB/ImageTests.lean"
