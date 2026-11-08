@@ -119,6 +119,9 @@ void ng_set_cursor(int kind) {
 }
 - (void)mouseDragged:(NSEvent *)event { [self sendPointer:event type:3]; }
 - (void)mouseUp:(NSEvent *)event { [self sendPointer:event type:4]; }
+// Kind 13, a right click (two-finger click on a trackpad): Lean may open the address menu (WebShell
+// opensMenu, `how` context). An older host ignores the kind.
+- (void)rightMouseDown:(NSEvent *)event { [self sendPointer:event type:13]; }
 - (void)scrollWheel:(NSEvent *)event {
   // Backing pixels. Up is positive in Cocoa; the page moves the same way.
   CGFloat scale=self.window.backingScaleFactor;

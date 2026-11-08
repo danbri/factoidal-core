@@ -506,12 +506,49 @@ async function main() {
     else if(name==="home")navigate(home.url);
     else if(name==="source")viewSource().catch(error=>refuse(document.url,error));
     else if(name==="address")focusAddress();
+    // The address menu (WebShell): the Mac pasteboard needs no user gesture, so the buttons act
+    // on the press. Copy writes the text Lean chose; Paste and go reads the pasteboard and Lean
+    // routes it as a typed address.
+    else if(name==="copyAddress"){
+      const copy=engine.shellActions(shell(),width).find(action=>action.action==="copy");
+      if(copy?.text){native!.writeClipboard(copy.text);lastCopied=copy.text;trace("native-html-copy",{characters:copy.text.length,from:"menu"});}
+      closeMenu();
+    }
+    else if(name==="pasteGo"){
+      const {go,clipboard:_,...next}=engine.shellEdit(shell(),"pasteGo",native!.readClipboard());
+      field=next;dirty=true;trace("native-html-paste-go",{characters:go?.length??0});
+      if(go)goTo(go);
+    }
     else if(name==="newTab")newTab();
     else if(name==="tab"&&Number(index)!==active){keepTab();showTab(Number(index));}
     else if(name==="close")closeTab(Number(index));
     else if(name==="tabs"){keepTab();showTab((active+1)%tabs.length);}
   };
   const edit=(answer:ShellEdit&{clipboard?:string|null})=>{const {clipboard:_,...next}=answer;field=next;dirty=true;};
+  // The address menu: Lean says when a press opens it; any other edit closes it. An engine
+  // without the op shellActions has none.
+  const menuOps=(()=>{try{return Array.isArray(engine.shellActions({},1));}catch{return false;}})();
+  const openMenu=()=>{if(!menuOps)return;if(!focused)focusAddress();edit(engine.shellEdit(shell(),"menu"));trace("native-html-menu",{open:field.menu===true});};
+  const closeMenu=()=>{if(field.menu)edit(engine.shellEdit(shell(),"closeMenu"));};
+  const menuPress=(x:number,y:number,how:string)=>{if(menuOps&&engine.shellMenu(shell(),x,y,width,how).menu)openMenu();};
+  // An address from the bar (Return, or Paste and go): Lean routes it as typed.
+  const goTo=(target:string)=>{
+    leaveAddress();
+    const route=router.address({...site,address:target,base:document.baseURL||document.url}) as LinkRoute|undefined;
+    if(route)followRoute(route);else go(engine.shellSubmit(target));
+  };
+  // A long press of the mouse (WebGesture hold): asked once when Lean's time has passed with
+  // the button still down at the press.
+  const holdInfo=gestures as unknown as {actions?:string[];holdMs?:number}|undefined;
+  const holdMs=holdInfo?.actions?.includes("hold")?Number(holdInfo.holdMs)||0:0;
+  let holding:{x:number;y:number;startX:number;startY:number;at:number}|undefined;
+  const checkHold=()=>{
+    if(!holding||!holdMs||performance.now()-holding.at<holdMs)return;
+    const held=holding;holding=undefined;
+    const answer=engine.gesture({action:"hold",startX:Math.round(held.startX/scale),startY:Math.round(held.startY/scale),
+      x:Math.round(held.x/scale),y:Math.round(held.y/scale),elapsed:Math.round(performance.now()-held.at)}) as unknown as {phase:string};
+    if(answer.phase==="hold")menuPress(held.startX,held.startY,"hold");
+  };
   const remember=(answer:HistoryAnswer,action:string)=>{
     history=answer;native?.setHistory(answer.canBack,answer.canForward);
     if(action==="push")pages++;
@@ -780,9 +817,7 @@ async function main() {
         const graph=(document as Page).graph;
         if(graph&&!focused&&(event.kind===3||event.kind===4||event.kind===9||(event.kind===5&&!(event.b&2)))){graphInput(event.kind,event.a,event.b);return;}
         if(event.kind===5&&focused&&!(event.b&2)){
-          if(event.a===36){const target=field.address;leaveAddress();
-            const route=router.address({...site,address:target,base:document.baseURL||document.url}) as LinkRoute|undefined;
-            if(route)followRoute(route);else go(engine.shellSubmit(target));}
+          if(event.a===36)goTo(field.address);
           else if(event.a===53)leaveAddress();
           // Shift, Option and Command change what the key does; Lean decides.
           else edit(engine.shellKey(shell(),event.a,event.b));
@@ -801,7 +836,11 @@ async function main() {
           if(event.a===121||event.a===49)scrollBy(page);
           if(event.a===116)scrollBy(-page);
         }
-        if(event.kind===11){if(wheelSum)wheelSum.dy-=event.a/scale;scrollBy(-event.a);}
+        if(event.kind===11){closeMenu();if(wheelSum)wheelSum.dy-=event.a/scale;scrollBy(-event.a);}
+        // Kind 13, a right click (native_window.m): Lean may open the address menu.
+        if(event.kind===13)menuPress(event.a,event.b,"context");
+        if(event.kind===3&&holding){holding.x=event.a;holding.y=event.b;}
+        if(event.kind===4)holding=undefined;
         if(event.kind===12)gestureWheel(event.a,event.b);
         if(event.kind===5&&event.a===15)windowCommand(8);
         if(event.kind===10)windowCommand(event.a);
@@ -811,7 +850,13 @@ async function main() {
           // One small Lean call: the control or the link pressed, and what the composite darkens.
           const answer=engine.press(shell(),event.a,event.b,width,pageRow(event.b),layered&&current?frame.webRender.links as unknown[]:[]);
           const control=answer.control;
-          if(control){if(answer.rects.length)startPress({control,rects:answer.rects});chrome(control);return;}
+          if(control){
+            if(answer.rects.length)startPress({control,rects:answer.rects});
+            if(control!=="address"&&control!=="copyAddress"&&control!=="pasteGo")closeMenu();
+            chrome(control);
+            if(control==="address")holding={x:event.a,y:event.b,startX:event.a,startY:event.b,at:performance.now()};
+            return;
+          }
           if(focused)leaveAddress();
           if((document as Page).graph){graphInput(2,event.a,event.b);return;}
           press=[event.a,event.b,event.a,event.b];
@@ -844,7 +889,7 @@ async function main() {
         }
     };
     while(running){
-      const pumpStart=performance.now();if(lastPump!==undefined){pumpGaps.push(pumpStart-lastPump);if(firstFrameAt!==undefined&&lastPump>=firstFrameAt)pumpGapsLate.push(pumpStart-lastPump);if(pumpStart-lastPump>50)trace("native-html-pump-gap",{ms:ms(lastPump,pumpStart),frames:frameNumber,rendering:!!rendering});}lastPump=pumpStart;native.pump();const pumpEnd=performance.now();
+      const pumpStart=performance.now();if(lastPump!==undefined){pumpGaps.push(pumpStart-lastPump);if(firstFrameAt!==undefined&&lastPump>=firstFrameAt)pumpGapsLate.push(pumpStart-lastPump);if(pumpStart-lastPump>50)trace("native-html-pump-gap",{ms:ms(lastPump,pumpStart),frames:frameNumber,rendering:!!rendering});}lastPump=pumpStart;native.pump();checkHold();const pumpEnd=performance.now();
       if(pumpEnd-pumpStart>30)trace("native-html-pump-stall",{ms:ms(pumpStart,pumpEnd)});
       // Take every native event now and keep each with the time it was taken. None is dropped here.
       // The window library stamps each event when it is queued; its clock maps onto
