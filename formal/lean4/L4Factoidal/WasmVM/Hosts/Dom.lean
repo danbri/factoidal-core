@@ -35,6 +35,7 @@ the only memory a DOM import can change is at most `capacity` bytes at that buff
 -/
 import L4Factoidal.WasmVM.Api
 import L4Factoidal.DOM.Arena
+import L4Factoidal.PageGpu.Wire
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.WasmVM L4Factoidal.DOM
@@ -92,6 +93,10 @@ structure State where
   logLimit : Nat := 1024
   /-- The nested browsing contexts: an `iframe` element and its content document. -/
   frames : Array (Nat × Nat) := #[]
+  /-- The page's GPU objects (`L4Factoidal.PageGpu`), and the host commands Lean emitted
+  that the host has not taken yet (a turn of `scriptSession` takes them). -/
+  gpu : L4Factoidal.PageGpu.State := {}
+  gpuOut : Array L4Factoidal.PageGpu.HostCmd := #[]
   deriving Inhabited
 
 /-- Bounds, as in `WebRenderScript`. -/
@@ -110,7 +115,7 @@ inductive Import where
   | getAttribute | setAttribute | createElement | appendChild | addEventListener
   | setTimer | clearTimer | consoleLog
   | nodeInfo | nodeString | nodeChildren | createNode | insertBefore | removeChild
-  | replaceChild | removeAttribute | cloneNode | treeOp | nodeQuery
+  | replaceChild | removeAttribute | cloneNode | treeOp | nodeQuery | gpuCommand
   deriving DecidableEq, Repr, Inhabited
 
 namespace Import
@@ -119,7 +124,7 @@ def all : List Import :=
   [getElementById, documentElement, tagName, textContentGet, textContentSet, getAttribute,
    setAttribute, createElement, appendChild, addEventListener, setTimer, clearTimer, consoleLog,
    nodeInfo, nodeString, nodeChildren, createNode, insertBefore, removeChild, replaceChild,
-   removeAttribute, cloneNode, treeOp, nodeQuery]
+   removeAttribute, cloneNode, treeOp, nodeQuery, gpuCommand]
 
 def name : Import → String
   | getElementById => "get_element_by_id" | documentElement => "document_element"
@@ -132,6 +137,7 @@ def name : Import → String
   | createNode => "create_node" | insertBefore => "insert_before" | removeChild => "remove_child"
   | replaceChild => "replace_child" | removeAttribute => "remove_attribute"
   | cloneNode => "clone_node" | treeOp => "tree_op" | nodeQuery => "node_query"
+  | gpuCommand => "gpu_command"
 
 /-- Number of i32 parameters; every import answers one i32. -/
 def arity : Import → Nat
@@ -140,7 +146,7 @@ def arity : Import → Nat
   | appendChild => 2 | addEventListener => 4 | setTimer => 3 | clearTimer => 1 | consoleLog => 2
   | nodeInfo => 2 | nodeString => 4 | nodeChildren => 4 | createNode => 3 | insertBefore => 3
   | removeChild => 2 | replaceChild => 3 | removeAttribute => 3 | cloneNode => 2 | treeOp => 3
-  | nodeQuery => 6
+  | nodeQuery => 6 | gpuCommand => 6
 
 def type (f : Import) : FuncType := ⟨Array.replicate f.arity .i32, #[.i32]⟩
 
@@ -151,9 +157,10 @@ that write a string into VM memory. -/
 def outBuffer : Import → Option (Nat × Nat)
   | tagName => some (1, 2) | textContentGet => some (1, 2) | getAttribute => some (3, 4)
   | nodeString => some (2, 3) | nodeChildren => some (2, 3) | nodeQuery => some (4, 5)
+  | gpuCommand => some (4, 5)
   | _ => none
 
-theorem all_length : all.length = 24 := rfl
+theorem all_length : all.length = 25 := rfl
 theorem all_names_distinct : (all.map name).Nodup := by decide
 theorem ofName?_name (f : Import) : ofName? f.name = some f := by cases f <;> rfl
 
@@ -606,6 +613,29 @@ def nodeQuery (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : St
   | .error e => (st, codeOrTrap e)
   | .ok q => answerStr mem st (arg args 4) (arg args 5) (nodeQueryOf s.dom (arg args 0) (arg args 1) q)
 
+/-- The most host commands a page may have waiting for the host. -/
+def maxGpuOut : Nat := 65536
+
+/-- One page GPU command (`L4Factoidal.PageGpu.Wire.decode`, then `PageGpu.step`): the
+new state and the answer text, "" when accepted, else the refusal (at most 900 bytes,
+so the guest's first buffer holds it and the import runs once). -/
+@[irreducible] def gpuStep (s : State) (op : Nat) (bytes : ByteArray) : State × String :=
+  match L4Factoidal.PageGpu.Wire.decode op bytes >>= L4Factoidal.PageGpu.step s.gpu with
+  | .ok (g, out) =>
+    if s.gpuOut.size + out.length > maxGpuOut then (s, "gpu: too many commands waiting for the host")
+    else ({ s with gpu := g, gpuOut := s.gpuOut ++ out.toArray }, "")
+  | .error e => (s, String.ofList (e.toList.take 900))
+
+/-- `gpu_command(op, unused, ptr, len, buf, cap)`. -/
+def gpuCommand (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × StoreOf M × HostResult :=
+  if arg args 3 > L4Factoidal.PageGpu.maxBuffer + 65536 then (s, st, ret (-5)) else
+  match st.readMem mem (arg args 2) (arg args 3) with
+  | .error _ => (s, st, codeOrTrap (-8))
+  | .ok b =>
+    let r := gpuStep s (arg args 0) b
+    let a := answerStr mem st (arg args 4) (arg args 5) (.ok r.2)
+    (r.1, a.1, a.2)
+
 /-- One import: the new state, the new store and the answer. -/
 def call (mem : Nat) (f : Import) (args : Array Value) (s : State) (st : StoreOf M) :
     State × StoreOf M × HostResult :=
@@ -636,6 +666,7 @@ def call (mem : Nat) (f : Import) (args : Array Value) (s : State) (st : StoreOf
   | .cloneNode => pure1 (cloneNode args s)
   | .treeOp => pure1 (treeOp args s)
   | .nodeQuery => write (nodeQuery mem args s st)
+  | .gpuCommand => gpuCommand mem args s st
 
 /-! ## What a DOM import can do to VM memory -/
 
@@ -683,6 +714,16 @@ theorem nodeQuery_within (mem : Nat) (args : Array Value) (s : State) (st : Stor
   · exact .inl rfl
   · exact answerStr_within ..
 
+theorem gpuCommand_within (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) :
+    WritesWithin mem (arg args 4) (arg args 5) st (gpuCommand mem args s st).2.1 := by
+  unfold gpuCommand
+  split
+  · exact .inl rfl
+  · split
+    · exact .inl rfl
+    · dsimp only
+      exact answerStr_within mem st (arg args 4) (arg args 5) _
+
 /-- A DOM import changes VM memory only at its output buffer, by at most its capacity
 bytes; an import with no output buffer does not change the store at all. -/
 theorem call_writes_within (mem : Nat) (f : Import) (args : Array Value) (s : State) (st : StoreOf M) :
@@ -696,6 +737,7 @@ theorem call_writes_within (mem : Nat) (f : Import) (args : Array Value) (s : St
   · exact answerStr_within ..
   · exact answerList_within ..
   · exact nodeQuery_within ..
+  · exact gpuCommand_within ..
 
 /-- A DOM import changes the store only by `writeMem`: never memory growth, tables,
 globals or functions. (A corollary of `call_writes_within`.) -/
