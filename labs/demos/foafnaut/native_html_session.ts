@@ -94,6 +94,16 @@ export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.Unsa
     lastSteps=steps;lastChecked=checking;last=undefined;
     return {presented:true,checked:checking,pixelHash:result.hash,steps,prepareMs:prepared-start,drawMs:presentedAt-prepared,presentedAt};
   }
+  /** Page GPU commands of a turn (L4Factoidal.PageGpu): replay them; with page canvases on
+   * screen, blit them into the page layer and present the composite again (no Lean call). */
+  function pageGpu(p:number,commands:unknown[]):Promise<DrawResult|undefined> {
+    return inOrder(async()=>{
+      if(disposed)return undefined;
+      await layered.replayGpu(p,commands);
+      if(!lastLayers||!layered.refreshCanvases())return undefined;
+      return present(lastLayers.width,lastLayers.height,lastLayers.offset,false,performance.now(),{});
+    });
+  }
   async function renderLayers(layers:HTMLLayers,width:number,height:number,offset:number,check:boolean):Promise<DrawResult> {
     if(disposed)throw new Error("Native HTML session already disposed");
     const start=performance.now();
@@ -175,6 +185,8 @@ export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.Unsa
       lastLayers.offset=offset;
       return present(lastLayers.width,lastLayers.height,offset,check,performance.now(),{});
     }),
+    /** Replay a turn's page GPU commands and present the page canvases (no Lean call). */
+    pageGpu,
     /** The press rectangles of the next presents (Lean's `press` answer); undefined clears them. */
     setPress:(rects:number[][]|undefined)=>layered.setPress(rects),
     get pressed(){return layered.pressed;},

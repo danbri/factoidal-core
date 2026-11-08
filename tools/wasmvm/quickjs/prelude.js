@@ -917,6 +917,194 @@
     contentDocument: { get() { return wrap(info(nodeId(this), 11)); }, configurable: true },
     contentWindow: { get() { const d = info(nodeId(this), 11); return d < 0 ? null : frameWindow(d); }, configurable: true },
   });
+  // ---- WebGPU subset (docs/designissues/2026-11-08-page-gpu.md) ------------------------
+  // Page-facing objects only. Each method packs its arguments into one `gpu_command` import
+  // (`n.gpu(op, header, payload)`); Lean (L4Factoidal.PageGpu) decodes, validates and turns
+  // it into host commands, or refuses it. A refusal comes back as text and becomes a
+  // GPUValidationError of the device (error scopes, `onuncapturederror`), as in WebGPU.
+  // Nothing here decides what is allowed.
+  const gpuNames = { float32: 1, float32x2: 2, float32x3: 3, float32x4: 4 };
+  const gpuTopology = { 'triangle-list': 0, 'triangle-strip': 1, 'line-list': 2, 'point-list': 3 };
+  const GPUBufferUsage = Object.freeze({ MAP_READ: 1, MAP_WRITE: 2, COPY_SRC: 4, COPY_DST: 8, INDEX: 16, VERTEX: 32,
+    UNIFORM: 64, STORAGE: 128, INDIRECT: 256, QUERY_RESOLVE: 512 });
+  const GPUTextureUsage = Object.freeze({ COPY_SRC: 1, COPY_DST: 2, TEXTURE_BINDING: 4, STORAGE_BINDING: 8, RENDER_ATTACHMENT: 16 });
+  const GPUShaderStage = Object.freeze({ VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 });
+  const GPUColorWrite = Object.freeze({ RED: 1, GREEN: 2, BLUE: 4, ALPHA: 8, ALL: 15 });
+  class GPUError { constructor(message) { this.message = String(message); } }
+  class GPUValidationError extends GPUError {}
+  class GPUOutOfMemoryError extends GPUError {}
+  let gpuNext = 1;
+  const gpuBytes = data => {
+    if (data instanceof ArrayBuffer) return data;
+    if (ArrayBuffer.isView(data)) return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    throw new TypeError('GPU data must be an ArrayBuffer or a typed array');
+  };
+  const unorm = x => Math.max(0, Math.min(255, Math.round(Number(x) * 255) || 0));
+  class GPUDevice extends EventTarget {}
+  const gpuDevice = (() => {
+    const device = new GPUDevice();
+    const scopes = [];
+    let lostResolve;
+    const report = message => {
+      const error = new GPUValidationError(message);
+      for (let i = scopes.length - 1; i >= 0; i--) if (scopes[i].filter === 'validation') { scopes[i].error ??= error; return; }
+      console.warn('WebGPU: ' + message);
+      const ev = new Event('uncapturederror'); ev.error = error;
+      if (typeof device.onuncapturederror === 'function') device.onuncapturederror.call(device, ev);
+      device.dispatchEvent(ev);
+    };
+    const send = (op, header, payload) => {
+      const r = n.gpu(op, header.map(x => String(Math.max(0, Math.floor(Number(x) || 0)))).join(' '), payload ?? '');
+      const message = typeof r === 'number' ? 'gpu: import error ' + r : r;
+      if (message) report(message);
+      return !message;
+    };
+    class GPUBuffer {
+      constructor(d) {
+        this.id = gpuNext++; this.size = Number(d.size) || 0; this.usage = Number(d.usage) | 0;
+        this.mapState = d.mappedAtCreation ? 'mapped' : 'unmapped';
+        // mappedAtCreation: the page fills a local copy; unmap writes it (so COPY_DST is added).
+        this.ok = send(2, [this.id, this.size, this.usage | (d.mappedAtCreation ? 8 : 0)]);
+        if (d.mappedAtCreation) this.mapped = new ArrayBuffer(this.size);
+      }
+      getMappedRange(offset = 0, size) {
+        if (!this.mapped) throw new DOMException('buffer is not mapped', 'OperationError');
+        if (offset !== 0) throw new DOMException('getMappedRange at an offset is not in the page GPU subset', 'OperationError');
+        return this.mapped;
+      }
+      unmap() {
+        if (!this.mapped) return;
+        send(3, [this.id, 0], this.mapped); this.mapped = undefined; this.mapState = 'unmapped';
+      }
+      mapAsync() { return Promise.reject(new DOMException('mapAsync is not in the page GPU subset', 'OperationError')); }
+      destroy() { send(8, [this.id]); }
+    }
+    class GPUShaderModule {
+      constructor(d) {
+        this.id = gpuNext++; this.code = String(d.code);
+        const r = n.gpu(4, String(this.id), this.code), got = typeof r === 'number' ? 'gpu: import error ' + r : r;
+        this.error = got || null;
+        if (got) report(got);
+      }
+      getCompilationInfo() { return Promise.resolve({ messages: this.error ? [{ type: 'error', message: this.error, lineNum: 0, linePos: 0, offset: 0, length: 0 }] : [] }); }
+    }
+    class GPUBindGroupLayout { constructor(pipeline) { this.pipeline = pipeline; } }
+    class GPURenderPipeline {
+      constructor(d) {
+        this.id = gpuNext++;
+        const v = d.vertex ?? {}, f = d.fragment ?? {};
+        if (f.module && v.module && f.module !== v.module) { report('gpu: vertex and fragment must be one shader module'); this.ok = false; return; }
+        const buffers = (v.buffers ?? []).filter(Boolean);
+        const header = [this.id, v.module?.id ?? 0, gpuTopology[d.primitive?.topology ?? 'triangle-list'] ?? 99, buffers.length];
+        for (const b of buffers) {
+          const attrs = b.attributes ?? [];
+          header.push(b.arrayStride, attrs.length);
+          for (const a of attrs) header.push(gpuNames[a.format] ?? 0, a.offset, a.shaderLocation);
+        }
+        this.ok = send(5, header, (v.entryPoint ?? '') + '\n' + (f.entryPoint ?? ''));
+      }
+      getBindGroupLayout() { return new GPUBindGroupLayout(this); }
+    }
+    class GPUBindGroup {
+      constructor(d) {
+        this.id = gpuNext++;
+        const e = (d.entries ?? []).find(x => x.binding === 0);
+        this.ok = send(6, [this.id, d.layout?.pipeline?.id ?? 0, e?.resource?.buffer?.id ?? e?.resource?.id ?? 0]);
+      }
+    }
+    class GPURenderPassEncoder {
+      constructor(target, clear) { this.target = target; this.clear = clear; this.draws = []; this.state = { vbufs: [] }; }
+      setPipeline(p) { this.state.pipeline = p; }
+      setBindGroup(index, g) { if (index === 0) this.state.bind = g; }
+      setVertexBuffer(slot, b) { this.state.vbufs[slot] = b; }
+      setViewport() {} setScissorRect() {} setBlendConstant() {} setStencilReference() {}
+      draw(count, instances = 1, first = 0, firstInstance = 0) {
+        const s = this.state;
+        this.draws.push([s.pipeline?.id ?? 0, s.bind?.id ?? 0, s.vbufs.length, ...s.vbufs.map(b => b?.id ?? 0), count, instances, first, firstInstance]);
+      }
+      end() {}
+    }
+    class GPUCommandEncoder {
+      constructor() { this.passes = []; }
+      beginRenderPass(d) {
+        const a = (d.colorAttachments ?? [])[0] ?? {}, c = a.clearValue ?? { r: 0, g: 0, b: 0, a: 0 };
+        const rgba = Array.isArray(c) ? c : [c.r, c.g, c.b, c.a];
+        const pass = new GPURenderPassEncoder(a.view?.canvas ?? 0, rgba.map(unorm));
+        this.passes.push(pass); return pass;
+      }
+      finish() { return { passes: this.passes }; }
+    }
+    const queue = Object.freeze({
+      writeBuffer(buffer, offset, data, dataOffset = 0, size) {
+        let bytes = gpuBytes(data);
+        if (dataOffset || size !== undefined) {
+          const unit = ArrayBuffer.isView(data) && data.BYTES_PER_ELEMENT ? data.BYTES_PER_ELEMENT : 1;
+          const from = dataOffset * unit;
+          bytes = bytes.slice(from, size === undefined ? undefined : from + size * unit);
+        }
+        send(3, [buffer.id, offset], bytes);
+      },
+      submit(buffers) {
+        for (const cb of buffers ?? []) for (const p of cb.passes ?? []) {
+          const header = [p.target, ...p.clear, p.draws.length];
+          for (const d of p.draws) header.push(...d);
+          send(7, header);
+        }
+      },
+      onSubmittedWorkDone() { return Promise.resolve(); },
+    });
+    Object.assign(device, {
+      queue, features: new Set(), limits: Object.freeze({ maxBufferSize: 16777216, maxVertexBuffers: 8, maxVertexAttributes: 16,
+        maxTextureDimension2D: 2048, maxBindGroups: 1, maxUniformBufferBindingSize: 65536 }),
+      lost: new Promise(r => { lostResolve = r; }), onuncapturederror: null, label: '',
+      createBuffer: d => new GPUBuffer(d ?? {}),
+      createShaderModule: d => new GPUShaderModule(d ?? {}),
+      createRenderPipeline: d => new GPURenderPipeline(d ?? {}),
+      createRenderPipelineAsync: d => Promise.resolve(new GPURenderPipeline(d ?? {})),
+      createBindGroup: d => new GPUBindGroup(d ?? {}),
+      createCommandEncoder: () => new GPUCommandEncoder(),
+      createPipelineLayout: () => 'auto',
+      createBindGroupLayout: () => new GPUBindGroupLayout(null),
+      pushErrorScope: filter => { scopes.push({ filter, error: null }); },
+      popErrorScope: () => scopes.length ? Promise.resolve(scopes.pop().error) : Promise.reject(new DOMException('no error scope', 'OperationError')),
+      destroy() {},
+    });
+    return device;
+  })();
+  const gpuAdapter = Object.freeze({ features: new Set(), limits: gpuDevice.limits, isFallbackAdapter: false,
+    info: Object.freeze({ vendor: 'foafnaut', architecture: 'lean-validated', device: '', description: 'WebGPU subset validated by Lean' }),
+    requestDevice: () => Promise.resolve(gpuDevice), requestAdapterInfo: () => Promise.resolve(gpuAdapter.info) });
+  const gpu = Object.freeze({ requestAdapter: () => Promise.resolve(gpuAdapter), getPreferredCanvasFormat: () => 'rgba8unorm',
+    wgslLanguageFeatures: new Set() });
+  const canvasSize = (el, name, fallback) => { const v = parseInt(el.getAttribute(name), 10); return v > 0 ? v : fallback; };
+  const gpuContexts = new Map();
+  class GPUCanvasContext {
+    constructor(canvas) { this.canvas = canvas; this.id = 0; }
+    configure(d) {
+      if (this.id) return;
+      this.id = gpuNext++;
+      if (d?.device !== gpuDevice) throw new TypeError('configure needs the device');
+      const node = nodeId(this.canvas);
+      if (!(n.gpu(1, [this.id, node, canvasSize(this.canvas, 'width', 300), canvasSize(this.canvas, 'height', 150)].join(' '), '') === '')) {
+        console.warn('WebGPU: the canvas could not be configured'); this.id = 0;
+      }
+    }
+    unconfigure() {}
+    getCurrentTexture() {
+      const canvas = this.id, width = canvasSize(this.canvas, 'width', 300), height = canvasSize(this.canvas, 'height', 150);
+      return { width, height, format: 'rgba8unorm', createView: () => ({ canvas }), destroy() {} };
+    }
+  }
+  Object.defineProperties(named.HTMLCanvasElement.prototype, {
+    width: { get() { return canvasSize(this, 'width', 300); }, set(v) { this.setAttribute('width', String(v >>> 0)); }, configurable: true },
+    height: { get() { return canvasSize(this, 'height', 150); }, set(v) { this.setAttribute('height', String(v >>> 0)); }, configurable: true },
+    getContext: { value(kind) {
+      if (kind !== 'webgpu') return null;
+      const id = nodeId(this);
+      if (!gpuContexts.has(id)) gpuContexts.set(id, new GPUCanvasContext(this));
+      return gpuContexts.get(id);
+    }, writable: true, configurable: true },
+  });
   for (const t of ['address', 'article', 'aside', 'footer', 'header', 'hgroup', 'main', 'nav', 'section', 'b', 'i', 'em', 'strong',
     'small', 'code', 'abbr', 'cite', 'dfn', 'kbd', 'mark', 's', 'samp', 'sub', 'sup', 'u', 'var', 'bdi', 'bdo', 'dd', 'dt',
     'figcaption', 'figure', 'noscript', 'ruby', 'rt', 'rp', 'summary', 'wbr', 'center', 'tt', 'big', 'nobr', 'acronym',
@@ -1416,7 +1604,10 @@
   def('opener', null); def('frameElement', null); def('name', '');
   def('document', document); def('location', location);
   def('navigator', Object.freeze({ userAgent: 'Foafnaut', language: 'en', languages: ['en'], platform: '', onLine: true,
-    cookieEnabled: false, hardwareConcurrency: 1 }));
+    cookieEnabled: false, hardwareConcurrency: 1, gpu }));
+  def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
+  def('GPUColorWrite', GPUColorWrite); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
+  def('GPUCanvasContext', GPUCanvasContext); def('GPUDevice', GPUDevice);
   def('history', Object.freeze({ length: 1, state: null, pushState() {}, replaceState() {}, back() {}, forward() {}, go() {} }));
   def('screen', Object.freeze({ width: 800, height: 600, availWidth: 800, availHeight: 600, colorDepth: 24, pixelDepth: 24 }));
   def('innerWidth', 800); def('innerHeight', 600); def('devicePixelRatio', 1); def('scrollX', 0); def('scrollY', 0);

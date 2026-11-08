@@ -56,7 +56,9 @@ export type HTMLResource = {nodeId:number;url:string;source:string};
 list, given only when `changed`: a host lays the page out again only then. */
 export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCount:number;commands?:unknown[];
   logs:string[];errors:string[];timers:number;nextTimer:number|null;frames:number;nextWake:number|null;quiet:boolean;
-  instructions:number;jobs:number;tasks:number;ns:number};
+  instructions:number;jobs:number;tasks:number;ns:number;
+  /** Lean-validated page GPU commands of this turn (L4Factoidal.PageGpu) and their page session. */
+  gpu?:unknown[];gpuPage?:number};
 type Module = {ccall(name:string,result:string|null,types:string[],values:unknown[]):number;
   UTF8ToString(pointer:number):string;HEAPU8:Uint8Array;_malloc?(size:number):number;_free?(pointer:number):void};
 const encoder = new TextEncoder();

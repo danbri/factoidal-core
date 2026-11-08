@@ -8,6 +8,12 @@
 import {requestRenderPlan,bufferUsage,commandInterpreter,type RenderPlan,type DeviceFacts} from "./render_plan.ts";
 import {unpad,checkPixels} from "./gpu_transport.ts";
 import type {HTMLArtifact,HTMLLayers} from "./native_html_engine.ts";
+// Page canvases drawn by page scripts: Lean-validated GPU commands (L4Factoidal.PageGpu,
+// docs/designissues/2026-11-08-page-gpu.md), the same replay as the Hub's.
+import {createPageGpu} from "../../../docs/web/hub/foafnaut/page-gpu.mjs";
+
+/** The canvas rectangles of a layers answer (WebDocument.canvasRects) and Lean's blit WGSL. */
+type CanvasPlace={canvases?:{node:number;rect:number[];clip:number[]}[];canvasBlit?:string};
 
 // The plan commands that read the frame back to the CPU. Lean's plan always
 // lists them. The host leaves them out for a frame that is not checked.
@@ -130,6 +136,12 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
     return result;
   }
   const chrome:Slot={bindKey:"",size:""},page:Slot={bindKey:"",size:""},single:Slot={bindKey:"",size:""};
+  // deno-lint-ignore no-explicit-any
+  let pageGpu:any;
+  const blitCanvases=():boolean=>{
+    const place=shown?.layers as CanvasPlace|undefined;
+    return !!(place?.canvases&&page.texture&&pageGpu?.blit(page.texture,place.canvases,place.canvasBlit));
+  };
   let shown:HTMLLayers|undefined,place:GPUBuffer|undefined,compositeBind:GPUBindGroup|undefined,compositeKey="";
   // Press rectangles from Lean's `press` answer, in source rows (WebDocument.compositePress).
   let pressRects:number[][]=[];
@@ -143,8 +155,13 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
       const c=await drawScene(chrome,layers.chrome,check);
       const g=await drawScene(page,layers.page,check);
       shown=layers;
+      blitCanvases();
       return {chrome:c,page:g};
     },
+    /** Replay page GPU commands (Lean's host commands of page session `p`), in order. */
+    async replayGpu(p:number,commands:unknown[]){await (pageGpu??=createPageGpu(device)).replay(p,commands);},
+    /** The page canvases again, into the page layer; true when one was drawn (then composite). */
+    refreshCanvases:()=>blitCanvases(),
     /** Draw one single-frame Lean scene into `target`: the reference that the composite must equal. */
     drawSingle:(frame:HTMLArtifact,target:GPUTexture,check:boolean)=>drawScene(single,frame,check,target),
     get layers(){return shown;},
@@ -172,7 +189,7 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
     get pressed(){return pressRects.length>0;},
     dispose(){
       for(const slot of [chrome,page,single]){slot.texture?.destroy();slot.uniform?.buffer.destroy();slot.tiles?.buffer.destroy();}
-      place?.destroy();readback?.buffer.destroy();textureIds=new WeakMap();
+      place?.destroy();readback?.buffer.destroy();textureIds=new WeakMap();pageGpu?.close();
     },
   };
 }

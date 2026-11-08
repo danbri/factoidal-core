@@ -69,6 +69,8 @@ structure Limits where
   pages : Nat := 2048
   /-- Commands a page may make (`Hosts.Dom.State.commandLimit`). -/
   commands : Nat := 4096
+  /-- The page number of this session's GPU objects (`L4Factoidal.PageGpu.Gid.page`). -/
+  gpuPage : Nat := 0
   /-- Console lines a page may write (`Hosts.Dom.State.logLimit`). -/
   logs : Nat := 1024
   deriving Inhabited
@@ -526,11 +528,12 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
       let (d, root) := dom.graft doc
       dom := d
       framed := framed.push (el, root)
-  let s ← match m.base with
+  let s : Session ← match m.base with
     | some b => pure { b with host := { dom := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed } }, limits := lim, steps := 0 }
     | none => do
       let s ← instantiatePage m dom lim
       pure { s with host := { s.host with dom := { s.host.dom with frames := framed } } }
+  let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage } } }
   let s := (s.run s.fx.page #[.i32 2, .i32 0, .i32 0]).1
   let mut s := s.setUrl url
   for (node, src) in scripts do

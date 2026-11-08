@@ -95,6 +95,12 @@ DOM_IMPORT(request_frame) int32_t dom_request_frame(int32_t callback);
 DOM_IMPORT(cancel_frame) int32_t dom_cancel_frame(int32_t id);
 DOM_IMPORT(node_query) int32_t dom_node_query(int32_t node, int32_t op, const char *s, int32_t slen,
                                               char *buf, int32_t cap);
+/* gpu_command(op, unused, bytes, len, out, cap): one page GPU command (header line, '\n',
+ * payload), which Lean decodes, validates and turns into host commands
+ * (L4Factoidal.PageGpu; docs/designissues/2026-11-08-page-gpu.md). The answer is the
+ * length of Lean's refusal message, 0 when accepted. */
+DOM_IMPORT(gpu_command) int32_t dom_gpu_command(int32_t op, int32_t unused, const char *s, int32_t slen,
+                                                char *buf, int32_t cap);
 
 static JSRuntime *rt;
 static JSContext *ctx;
@@ -167,6 +173,9 @@ static int32_t rd_kids(int32_t node, int32_t which, const char *s, int32_t slen,
 static int32_t rd_query(int32_t node, int32_t op, const char *s, int32_t slen, char *buf, int32_t cap) {
   return dom_node_query(node, op, s, slen, buf, cap);
 }
+static int32_t rd_gpu(int32_t op, int32_t unused, const char *s, int32_t slen, char *buf, int32_t cap) {
+  return dom_gpu_command(op, unused, s, slen, buf, cap);
+}
 static int32_t rd_plan(int32_t node, int32_t bubbles, const char *s, int32_t slen, char *buf, int32_t cap) {
   return dom_dispatch_plan(node, s, slen, bubbles, buf, cap);
 }
@@ -208,6 +217,24 @@ static JSValue n_query(JSContext *c, JSValueConst this_val, int argc, JSValueCon
   JSValue r = string_result(c, rd_query, node, op, s, (int32_t) len);
   JS_FreeCString(c, s);
   if (JS_IsNumber(r)) { int32_t code; JS_ToInt32(c, &code, r); if (code == -1) return JS_NULL; }
+  return r;
+}
+/* gpu(op, header, payload): payload a string or an ArrayBuffer. Answers "" when Lean
+ * accepted the command, else Lean's refusal; a negative number for a memory error. */
+static JSValue n_gpu(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, op); STR(1, h, hl);
+  size_t pl = 0; const char *ps = 0; uint8_t *pb = 0;
+  if (JS_IsString(argv[2])) ps = JS_ToCStringLen(c, &pl, argv[2]);
+  else pb = JS_GetArrayBuffer(c, &pl, argv[2]);
+  if (!ps && !pb) pl = 0;
+  if (hl + 1 + pl > (size_t) (1 << 26)) { JS_FreeCString(c, h); if (ps) JS_FreeCString(c, ps); return JS_NewInt32(c, -5); }
+  char *buf = malloc(hl + 1 + pl + 1);
+  if (!buf) { JS_FreeCString(c, h); if (ps) JS_FreeCString(c, ps); return JS_NewInt32(c, -5); }
+  memcpy(buf, h, hl); buf[hl] = '\n';
+  if (pl) memcpy(buf + hl + 1, ps ? (const void *) ps : (const void *) pb, pl);
+  JS_FreeCString(c, h); if (ps) JS_FreeCString(c, ps);
+  JSValue r = string_result(c, rd_gpu, op, 0, buf, (int32_t) (hl + 1 + pl));
+  free(buf);
   return r;
 }
 static JSValue n_set_attr(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
@@ -389,6 +416,7 @@ static const JSCFunctionListEntry native_fns[] = {
   JS_CFUNC_DEF("frame", 1, n_frame),
   JS_CFUNC_DEF("cancelFrame", 1, n_cancel_frame),
   JS_CFUNC_DEF("log", 1, n_log),
+  JS_CFUNC_DEF("gpu", 3, n_gpu),
 };
 
 __attribute__((export_name("qjs_new")))
@@ -604,6 +632,7 @@ int32_t dom_dispatch_plan(int32_t target, const char *type, int32_t tlen, int32_
 int32_t dom_request_frame(int32_t callback) { return -6; }
 int32_t dom_cancel_frame(int32_t id) { return -6; }
 int32_t dom_node_query(int32_t node, int32_t op, const char *s, int32_t slen, char *buf, int32_t cap) { return -6; }
+int32_t dom_gpu_command(int32_t op, int32_t unused, const char *s, int32_t slen, char *buf, int32_t cap) { return -6; }
 
 /* qjs-native FILE...: for each file, one line: FILE <tab> status <tab> text (400 bytes, one line) */
 int main(int argc, char **argv) {

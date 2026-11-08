@@ -516,10 +516,50 @@ def chromeScene (shell : WebShell.Shell) (width : Nat) : Rendering.Scene :=
   {width,height := top,mapping := {viewportWidth := Float.ofNat width,viewportHeight := Float.ofNat top},
    tree := WebShell.nodes shell width}
 
+/-- The blit of a page GPU canvas (docs/designissues/2026-11-08-page-gpu.md) into the page
+layer: the canvas texture scaled to the canvas box `r` (x, y, width, height in layer
+pixels), over white. The host draws it with the scissor `clip` of `canvasRects`. -/
+def canvasBlitShader : String :=
+  "@group(0) @binding(0) var src:texture_2d<f32>;\n" ++
+  "@group(0) @binding(1) var<uniform> r:vec4f;\n" ++
+  "@vertex fn vertex(@builtin(vertex_index) i:u32)->@builtin(position) vec4f {" ++
+  "let v=array<vec2f,3>(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));return vec4f(v[min(i,2u)],0,1);}\n" ++
+  "@fragment fn fragment(@builtin(position) p:vec4f)->@location(0) vec4f {" ++
+  "let size=vec2f(textureDimensions(src));let uv=(p.xy-r.xy)/max(r.zw,vec2f(1.0));" ++
+  "let t=vec2u(clamp(uv*size,vec2f(0.0),size-vec2f(1.0)));let c=textureLoad(src,t,0);" ++
+  "return vec4f(c.rgb*c.a+vec3f(1.0-c.a),1.0);}\n"
+
+/-- The `canvas` elements of the page with their layout boxes (the largest box of each). -/
+def canvasBoxes (dom : DOM.Dom) (boxes : Array Rendering.Layout.Box) : List Rendering.Layout.Box :=
+  boxes.foldl (init := []) fun acc b =>
+    if b.source < dom.size && (dom.get b.source).type == .element && (dom.get b.source).lname == "canvas" then
+      match acc.find? (·.source == b.source) with
+      | some a => if a.width * a.height ≥ b.width * b.height then acc else b :: acc.filter (·.source != b.source)
+      | none => b :: acc
+    else acc
+
+/-- Each canvas box in the page layer of band `b`: its rectangle (layer pixels) and the
+part of it inside the layer (`clip`), for the host's blit. Boxes outside are left out. -/
+def canvasRects (cs : List Rendering.Layout.Box) (b : Band) (width : Nat) : JSON.Json :=
+  let number := fun (n : Int) => JSON.Json.number (toString n)
+  .array (cs.reverse.filterMap fun c =>
+    let x := c.x.round.toInt64.toInt
+    let y := c.y.round.toInt64.toInt - Int.ofNat b.top
+    let w := c.width.round.toInt64.toInt
+    let h := c.height.round.toInt64.toInt
+    let x0 := max 0 x
+    let y0 := max 0 y
+    let x1 := min (Int.ofNat width) (x + w)
+    let y1 := min (Int.ofNat b.height) (y + h)
+    if w ≤ 0 || h ≤ 0 || x1 ≤ x0 || y1 ≤ y0 then none else
+    some (.object [("node",number c.source),("rect",.array [number x,number y,number w,number h]),
+      ("clip",.array [number x0,number y0,number (x1-x0),number (y1-y0)])]))
+
 /-- The answer to a render with `layers:true`. -/
 def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
-    (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false) :
+    (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false)
+    (canvases : List Rendering.Layout.Box := []) :
     Except String (String × Array ByteArray) := do
   let top := WebShell.height shell width
   -- A chrome that may fold: the band covers the view under the strip, the most it shows,
@@ -530,9 +570,10 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
   let (chromeText,chromeSections) ←
     WebRender.artifactWith (chromeLayer shell page width) #[] face live form.next checks tree
   let number := fun (n : Nat) => JSON.Json.number (toString n)
-  let place := JSON.Json.object [("top",number top),("view",number view),("bandTop",number b.top),
+  let place := JSON.Json.object ([("top",number top),("view",number view),("bandTop",number b.top),
     ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
-    ("composite",.string compositeShader),("hoverRules",.bool hoverRules)]
+    ("composite",.string compositeShader),("hoverRules",.bool hoverRules)] ++
+    (if canvases.isEmpty then [] else [("canvases",canvasRects canvases b width),("canvasBlit",.string canvasBlitShader)]))
   return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
     pageSections ++ chromeSections)
 
@@ -1108,6 +1149,7 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   if let some value := shell then
     if request.field? "layers" == some (.bool true) then
       return ← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
+        (canvasBoxes laid.dom boxes)
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
   let page := {scene with tree := near ++ marks}

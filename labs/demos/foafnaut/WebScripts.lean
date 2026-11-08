@@ -137,7 +137,18 @@ def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (
     ("quiet",.bool s.quiet),
     ("instructions",num (s.steps - before.steps)),("jobs",num (s.jobs - before.jobs)),
     ("tasks",num (s.tasks - before.tasks)),("ns",num ns)] ++ extra
-  ((JSON.Json.object fields).toString, { logs := s.logs.size, errors := s.errors.size })
+  let text := (JSON.Json.object fields).toString
+  -- The page's GPU commands, validated by Lean (L4Factoidal.PageGpu): the host replays them
+  -- on its WebGPU device. They need no layout; the canvas rectangles come with a render.
+  let gpu := s.host.dom.gpuOut
+  let text := if gpu.isEmpty then text else
+    (text.dropEnd 1).toString ++ ",\"gpuPage\":" ++ toString s.host.dom.gpu.page ++ ",\"gpu\":[" ++
+      ",".intercalate (gpu.toList.map PageGpu.Wire.HostCmd.json) ++ "]}"
+  (text, { logs := s.logs.size, errors := s.errors.size })
+
+/-- The session after a turn answer: the GPU commands it carried are the host's now. -/
+def drained (s : Page.Session) : Page.Session :=
+  { s with host := { s.host with dom := { s.host.dom with gpuOut := #[] } } }
 
 /-- The page's arena, parsed as `WebDocument.prepareDOM` parses it, so node numbers agree
 with a render's replay of the commands. -/
@@ -187,13 +198,14 @@ def act (held : Held) (action html : String) (request : JSON.Json) : Held × Exc
       let started := WebWasm.timed fun _ => show Except String Page.Session from do
         let dom ← parse html url
         let (scripts, missing) ← scriptSources dom request
-        let s ← Page.start m dom url scripts { commands, logs }
+        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession }
         return missing.foldl Page.Session.fail s
       match started with
       | (.error e, _) => (held, .error s!"scriptSession: {e}")
       | (.ok s, ns) =>
         let id := held.nextSession
         let (answer, marks) := turnAnswer id {} s {} true ns
+        let s := drained s
         ({ held with session := some (id, s, marks), nextSession := id + 1 }, .ok answer)
   | "close" => ({ held with session := none }, .ok "{\"closed\":true}")
   | _ =>
@@ -206,7 +218,7 @@ def act (held : Held) (action html : String) (request : JSON.Json) : Held × Exc
       let run := fun (f : Page.Session → Page.Session) =>
         let (s', ns) := WebWasm.timed fun _ => f s
         let (answer, marks) := turnAnswer id before s' marks full ns
-        ({ held with session := some (id, s', marks) }, Except.ok answer)
+        ({ held with session := some (id, drained s', marks) }, Except.ok answer)
       match action with
       | "click" =>
         match natField request "node" with

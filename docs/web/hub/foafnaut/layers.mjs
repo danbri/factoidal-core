@@ -7,6 +7,7 @@
 // A scroll inside the band only runs the composite plan again with a new offset: no Lean
 // layout and no scene draw.
 import {requestRenderPlan,bufferUsage,commandInterpreter} from '../html-webgpu/runtime/render-plan-host.mjs';
+import {createPageGpu} from './page-gpu.mjs';
 
 const READBACK=new Set(['copyTextureToBuffer','mapRead','readMapped','unmap']);
 // The composite uniform: the place and the press-rectangle count, then the rectangles
@@ -151,6 +152,11 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
     return pixels;
   }
   const chrome={},page={},single={};
+  // Page canvases drawn by page scripts (page-gpu.mjs): Lean-validated commands, blitted into
+  // the page layer at Lean's rectangles.
+  let pageGpu;
+  const gpuOf=()=>pageGpu??=createPageGpu(device);
+  const blitCanvases=answer=>!!(answer?.layers?.canvases&&page.texture&&pageGpu?.blit(page.texture,answer.layers.canvases,answer.layers.canvasBlit));
   let shown,place,compositeBind,compositeKey='',ids=new WeakMap(),nextId=0;
   const idOf=t=>{let id=ids.get(t);if(id===undefined){id=++nextId;ids.set(t,id);}return id;};
   // The canvas, at the window's size; with check it can be read back.
@@ -178,8 +184,15 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
       ensure();
       await drawScene(chrome,answer.chrome,check);
       await drawScene(page,answer.page,check);
+      blitCanvases(answer);
       shown=answer;
     },
+    /** Replay page GPU commands (Lean's host commands of page session `p`). */
+    async replayGpu(p,commands){ensure();await gpuOf().replay(p,commands);},
+    /** The page canvases again, into the page layer on screen; true when one was drawn
+     * (the caller then composites). */
+    refreshCanvases(){ensure();return blitCanvases(shown);},
+    get pageGpuStats(){return pageGpu?.stats;},
     /** A new chrome layer alone (Lean's chromeLayer answer: a fold of the chrome), `top`
      * rows high: the page layer stays, and the next composite shows it under this chrome. */
     async setChrome(scene,top){
@@ -222,7 +235,7 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
       if(closed)return;closed=true;
       try{context?.unconfigure();window?.destroy();}catch{/* gone */}
       for(const slot of [chrome,page,single]){slot.texture?.destroy();slot.uniform?.buffer.destroy();slot.tiles?.buffer.destroy();}
-      place?.destroy();readback?.buffer.destroy();ids=new WeakMap();
+      place?.destroy();readback?.buffer.destroy();ids=new WeakMap();pageGpu?.close();
       try{device.destroy();}catch{/* gone */}
     },
   };

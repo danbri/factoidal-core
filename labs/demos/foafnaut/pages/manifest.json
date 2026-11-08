@@ -288,6 +288,15 @@
    "doesNotShow": "any script effect on this engine yet; the page says so in its text"
   },
   {
+   "page": "webgpu-triangle.html",
+   "title": "WebGPU triangle, checked by Lean",
+   "handwritten": true,
+   "needs": "page scripts and the page GPU commands (gpu_command import, L4Factoidal.PageGpu) in the engine and the guest",
+   "appRefused": "does not execute scripts",
+   "shows": "a spinning triangle drawn by the page with navigator.gpu at about 24 frames a second; Lean validates every command and shader, and draws the canvas into the page",
+   "doesNotShow": "readback, textures, compute, WebGL; without the new engine the canvas stays blank and the page says the script has not run"
+  },
+  {
    "page": "svg-text-labels.html",
    "title": "SVG text labels",
    "handwritten": true,

@@ -218,7 +218,17 @@ async function main() {
     for(const line of turn.errors)console.error(`page error: ${line}`);
     trace("native-html-script",{cause,session:turn.session,clock:turn.clock,changed:turn.changed,commands:turn.commandCount,
       instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake});
+    if(turn.gpu?.length&&page===document){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();}
     if(page.applyTurn(turn)&&page===document)dirty=true;
+  };
+  // Page GPU commands (docs/designissues/2026-11-08-page-gpu.md): Lean validated each one; the
+  // window session replays them in order and presents the page canvases. Before the session
+  // exists they wait here.
+  const gpuTurns:{page:number;commands:unknown[]}[]=[];
+  const gpuFlush=()=>{
+    if(!session)return;
+    while(gpuTurns.length){const t=gpuTurns.shift()!;
+      session.pageGpu(t.page,t.commands).catch(error=>console.error("Native HTML: page GPU failed:",String(error)));}
   };
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.
@@ -638,6 +648,7 @@ async function main() {
     device.lost.then(info=>{if(running){console.error("Native HTML GPU lost:",info.message);running=false;Deno.exitCode=1;}});
     // One session for the window's life. It keeps the pipeline and buffers (issue 1268).
     session=await createHTMLWindowSession(device,surface,native);
+    gpuFlush();
     // Lean's compile runs in a worker so this loop keeps pumping. If the worker
     // can not start or dies, compile runs here instead, and the trace says so.
     // Readback, pixel checks and the frame hash are test work. They run on every frame

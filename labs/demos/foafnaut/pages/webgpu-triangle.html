@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>WebGPU triangle, checked by Lean</title>
+<style>
+body{margin:0;padding:16px;font-size:15px;line-height:22px;color:#22303c;background:#f3f1f8}
+h1{margin:0;font-size:26px;line-height:34px;color:#4a2f8a}
+h2{margin:0;padding-top:20px;font-size:18px;line-height:26px;color:#4a2f8a}
+p{margin:0;padding-top:6px}
+.note{color:#5d5a6b;font-size:13px;line-height:19px}
+.out{color:#4a2f8a}
+canvas{display:block;width:360px;height:360px;margin-top:10px;border:1px solid #d9d3e8;background:white}
+code{color:#7a3e12}
+</style></head><body><main>
+<p><a href="index.html">Demo index</a></p>
+<h1>WebGPU triangle, checked by Lean</h1>
+<p>This page's script draws a spinning triangle with <code>navigator.gpu</code>. The script runs in QuickJS inside the Lean Wasm VM.
+Each WebGPU call is a typed command that Lean checks before the GPU sees it: the shader is parsed and checked against a small WGSL
+subset, every array index is clamped, every buffer write and every draw is bounds-checked, and the page has a GPU memory quota.
+Lean then draws the canvas into the page.</p>
+<canvas id="gpu" width="360" height="360"></canvas>
+<p id="status" class="out">The script has not run: this engine has no page scripts or no page GPU.</p>
+<p class="note">Record: <code>docs/designissues/2026-11-08-page-gpu.md</code>. Lean: <code>formal/lean4/L4Factoidal/PageGpu/</code>.</p>
+<h2>What the script cannot do</h2>
+<p class="note">Read pixels back, map a buffer, use storage buffers, textures or compute, loop without a literal bound,
+or name an object of another page or of the browser. Lean refuses each of these and the refusal reaches the page as a
+<code>GPUValidationError</code>.</p>
+<script>
+const status = document.getElementById('status');
+const say = text => { status.textContent = text; };
+const shader = `
+struct U { angle: f32, aspect: f32, pulse: f32, pad: f32 }
+@group(0) @binding(0) var<uniform> u: U;
+struct VOut { @builtin(position) pos: vec4f, @location(0) color: vec3f }
+@vertex fn vs(@location(0) p: vec2f, @location(1) c: vec3f) -> VOut {
+  var o: VOut;
+  let s = sin(u.angle);
+  let k = cos(u.angle);
+  o.pos = vec4f((p.x * k - p.y * s) * u.aspect, p.x * s + p.y * k, 0.0, 1.0);
+  o.color = c * (0.75 + 0.25 * u.pulse);
+  return o;
+}
+@fragment fn fs(@location(0) color: vec3f) -> @location(0) vec4f {
+  return vec4f(color, 1.0);
+}`;
+async function main() {
+  if (!navigator.gpu) { say('No navigator.gpu in this engine.'); return; }
+  const adapter = await navigator.gpu.requestAdapter();
+  const device = await adapter.requestDevice();
+  const canvas = document.getElementById('gpu');
+  const context = canvas.getContext('webgpu');
+  context.configure({ device, format: navigator.gpu.getPreferredCanvasFormat() });
+  device.pushErrorScope('validation');
+  // x, y, r, g, b for three vertices.
+  const vertices = new Float32Array([
+    0.0, 0.8, 0.95, 0.35, 0.35,
+    -0.7, -0.45, 0.30, 0.75, 0.40,
+    0.7, -0.45, 0.35, 0.45, 0.95]);
+  const vbuf = device.createBuffer({ size: vertices.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(vbuf, 0, vertices);
+  const ubuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const module = device.createShaderModule({ code: shader });
+  const pipeline = device.createRenderPipeline({ layout: 'auto',
+    vertex: { module, entryPoint: 'vs', buffers: [{ arrayStride: 20, attributes: [
+      { format: 'float32x2', offset: 0, shaderLocation: 0 }, { format: 'float32x3', offset: 8, shaderLocation: 1 }] }] },
+    fragment: { module, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
+    primitive: { topology: 'triangle-list' } });
+  const bind = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ubuf } }] });
+  const setup = await device.popErrorScope();
+  if (setup) { say('Lean refused the setup: ' + setup.message); return; }
+  // A refused command, to show the check: a write past the end of the uniform buffer.
+  device.pushErrorScope('validation');
+  device.queue.writeBuffer(ubuf, 8, new Float32Array(4));
+  const refused = await device.popErrorScope();
+  let frames = 0, last = -1000;
+  const frame = t => {
+    requestAnimationFrame(frame);
+    if (t - last < 41) return; // about 24 frames a second
+    last = t;
+    device.queue.writeBuffer(ubuf, 0, new Float32Array([t / 1000, 1.0, 0.5 + 0.5 * Math.sin(t / 400), 0]));
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({ colorAttachments: [{ view: context.getCurrentTexture().createView(),
+      clearValue: { r: 0.97, g: 0.96, b: 0.99, a: 1 }, loadOp: 'clear', storeOp: 'store' }] });
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bind);
+    pass.setVertexBuffer(0, vbuf);
+    pass.draw(3);
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+    frames++;
+    if (frames === 1) say('Drawing with WebGPU through Lean. Lean refused a write past a buffer: ' + (refused ? refused.message : 'no (unexpected)'));
+  };
+  requestAnimationFrame(frame);
+}
+main().catch(e => say('Error: ' + e.message));
+</script>
+</main></body></html>

@@ -391,7 +391,52 @@ function scriptTurn(page,turn){
   for(const line of turn.logs)console.log('page:',line);
   for(const line of turn.errors)console.warn('page error:',line);
   if(page.script)page.script.turn=turn;
+  if(turn.gpu?.length&&page===doc)gpuTake(turn.gpuPage,turn.gpu);
   if(turn.changed&&turn.commands){page.commands=turn.commands;if(page===doc)request();}
+}
+// Page GPU commands (docs/designissues/2026-11-08-page-gpu.md): Lean validated each one
+// (L4Factoidal.PageGpu) and gives them in the turn; the layer surface replays them and draws
+// the page canvases into the page layer. The log is what a new device needs to make the
+// page's objects again: every command but passes, and only the last write of each range.
+let gpuPage=-1,gpuLog=[],gpuPending=[],gpuFed,gpuBusy=false,gpuAgain=false;
+function gpuTake(p,commands){
+  if(p!==gpuPage){gpuPage=p;gpuLog=[];gpuPending=[];}
+  for(const c of commands){
+    if(c.k==='write'){const i=gpuLog.findIndex(x=>x.k==='write'&&x.g[1]===c.g[1]&&x.offset===c.offset&&x.data.length===c.data.length);if(i>=0)gpuLog.splice(i,1);}
+    if(c.k!=='pass')gpuLog.push(c);
+  }
+  gpuPending.push(...commands);
+  gpuShow();
+}
+/** Give the layer surface what it has not had: the whole log for a new surface or page. */
+async function gpuFeed(){
+  if(!layerSurface||gpuPage<0)return;
+  if(gpuFed!==layerSurface||layerSurface.pageGpuStats?.page!==gpuPage){
+    gpuFed=layerSurface;const log=gpuLog;gpuPending=[];await layerSurface.replayGpu(gpuPage,log);
+  }else if(gpuPending.length){const now=gpuPending;gpuPending=[];await layerSurface.replayGpu(gpuPage,now);}
+}
+/** A new page canvas frame on screen: replay, blit into the page layer, composite. No Lean call. */
+async function gpuShow(){
+  if(gpuBusy){gpuAgain=true;return;}
+  if(drawing||!layerSurface||!current||current.doc!==doc)return;
+  gpuBusy=true;
+  try{
+    do{
+      gpuAgain=false;
+      const start=performance.now();
+      await gpuFeed();
+      if(drawing||!current||current.doc!==doc||!layerSurface.refreshCanvases())continue;
+      const {offset}=L.clampOffset(current.answer.layers,scroll);
+      const pixels=await layerSurface.composite(width,height,offset);
+      shownOffset=offset;
+      const done=performance.now(),rgba=surfaceCanvas?undefined:pixels;
+      post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,
+        stats:{path:surfaceCanvas?'page-gpu':'page-gpu-readback',layoutMs:0,drawMs:Math.round(done-start),totalMs:Math.round(done-start),
+          primitives:0,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent,leanRenders:0,leanCalls,chromeRenders,
+          pageGpu:layerSurface.pageGpuStats,bandTop:current.answer.layers.bandTop,offset}},rgba?[rgba.buffer]:[]);
+    }while(gpuAgain);
+  }catch(error){console.warn('foafnaut: page GPU frame:',String(error.message??error));}
+  finally{gpuBusy=false;}
 }
 // Timers and animation frames: the page's virtual clock follows real time since its scripts started.
 setInterval(()=>{
@@ -624,6 +669,7 @@ function scheduleBand(){
       if(!layerSurface)return;
       // Into the layer textures only: the screen already shows this state.
       incoming=answer;
+      await gpuFeed();
       await layerSurface.drawLayers(answer);
       current={answer,doc:shownDoc,source:shownDoc.source,width,height,sig:signature(options),fold:options.shell.collapse??0};
       shownOffset=L.clampOffset(answer.layers,at).offset;frame=answer.page;
@@ -765,6 +811,7 @@ async function draw(){
         let pixels;
         if(layers){
           incoming=layers;
+          await gpuFeed();
           await layerSurface.drawLayers(layers);
           const {offset}=L.clampOffset(layers.layers,scroll);
           pixels=await layerSurface.composite(width,height,offset);
