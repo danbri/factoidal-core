@@ -79,6 +79,29 @@ async function imageCounts(engine:HTMLEngine) {
   return {held:big.bytes[0],inline:before.bytes[0],imageBytes:bigBytes};
 }
 
+// A frame whose only change is in the chrome (here `loading`) gives the page layer it gave
+// before: Lean keeps the page layer answer for the same scene objects (WebDocument.pageArtifact).
+function chromeOnlyCounts(engine:HTMLEngine) {
+  const html=`<!doctype html><p>${Array.from({length:40},(_,i)=>`<a href="https://x.test/${i}">link ${i}</a>`).join(" ")}</p>`;
+  const shell=(loading:boolean)=>({tabs:[{title:"t"}],active:0,address:"https://x.test/",focused:false,canBack:false,canForward:false,loading,scale:1,theme:"light",pages:1,scroll:0,pressed:""});
+  const options=(loading:boolean)=>({url:pageURL,shell:shell(loading),checks:false});
+  const first=engine.compileLayers(html,800,600,options(false));
+  engine.frameWork(true);
+  const second=engine.compileLayers(html,800,600,options(true));
+  const third=engine.compileLayers(html,800,600,options(false));
+  const work=engine.frameWork(true)!;
+  assert.equal(work.layouts,0,"no layout: the layout is kept");
+  assert.equal(work.pagesMade,0,`no page layer made again: ${JSON.stringify(work)}`);
+  assert.equal(work.pagesKept,2,`the page layer kept twice: ${JSON.stringify(work)}`);
+  for(const next of [second,third]){
+    assert.deepEqual(Array.from(next.page.data),Array.from(first.page.data),"the same page floats");
+    assert.equal(next.page.wgsl,first.page.wgsl,"the same page shader");
+  }
+  assert.notDeepEqual(Array.from(second.chrome.data),Array.from(first.chrome.data),"the chrome is drawn again");
+  return work;
+}
+Deno.test("frame work: a chrome-only frame keeps the page layer, Wasm engine",async()=>{console.log(JSON.stringify(chromeOnlyCounts(await loadHTML())));});
+Deno.test({name:"frame work: a chrome-only frame keeps the page layer, native library",ignore:noLibrary,fn:async()=>{console.log(JSON.stringify(chromeOnlyCounts(await loadHTML(library))));}});
 Deno.test("frame work: hover repaints, Wasm engine",async()=>{console.log(JSON.stringify(hoverCounts(await loadHTML())));});
 Deno.test("frame work: request bytes do not grow with images, Wasm engine",async()=>{console.log(JSON.stringify(await imageCounts(await loadHTML())));});
 Deno.test({name:"frame work: hover repaints, native library",ignore:noLibrary,fn:async()=>{console.log(JSON.stringify(hoverCounts(await loadHTML(library))));}});
