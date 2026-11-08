@@ -92,8 +92,14 @@ try{
     const first=frames.at(-1);
     console.log(JSON.stringify({check:'cpu-frames',frames:frames.map(f=>({path:f.path,cpu:f.cpu,layoutMs:f.layoutMs,drawMs:f.drawMs,totalMs:f.totalMs,pixels:f.pixelHash}))}));
     if(!frames.length||!frames.every(f=>f.cpu===true))fail('frames without stats.cpu');
-    const start=frames.length;
-    for(let i=0;i<6;i++){await page.wheel(60);await page.settle(400);}
+    // The band comes after the first frame, while the page is idle (scheduleBand): on the CPU
+    // it takes a while, so wait for it, then each scroll waits for its frame.
+    const count=async()=>(await page.frames()).length;
+    const waitFrame=async(n,limit=120000)=>{const t=Date.now();while(Date.now()-t<limit){if(await count()>n)return true;await new Promise(r=>setTimeout(r,200));}return false;};
+    await new Promise(r=>setTimeout(r,15000));
+    const start=await count();
+    for(let i=0;i<6;i++){const n=await count();await page.wheel(60);if(!await waitFrame(n))fail('no frame after a scroll');}
+    await page.settle(800);
     frames=(await page.frames()).slice(start);
     const shifts=frames.filter(f=>/^shift/.test(f.path));
     console.log(JSON.stringify({check:'cpu-shift',frames:frames.map(f=>({path:f.path,scroll:f.scroll,offset:f.offset,leanRenders:f.leanRenders,totalMs:f.totalMs}))}));

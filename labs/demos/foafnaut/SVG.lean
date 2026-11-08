@@ -3337,6 +3337,47 @@ def Primitive.pathEdges? (p : BackendPrimitive) : Option Nat :=
   | none,.path contours => some (NativeSVGPath.edges contours).length
   | _,_ => none
 
+/-- A box in the primitive's space that holds every point a dash piece covers: the
+    piece's points, widened by the stroke width (a strip), the radius (a disk), or a
+    millionth (a triangle), with room for rounding. -/
+private def pieceBox (piece : NativeSVGStroke.Piece) (width : Float) : Float × Float × Float × Float :=
+  match piece with
+  | .strip a b =>
+    let m := width.abs*1.001+1e-6
+    (min a.x b.x-m,min a.y b.y-m,max a.x b.x+m,max a.y b.y+m)
+  | .disk c r =>
+    let m := r.abs*1.001+1e-6
+    (c.x-m,c.y-m,c.x+m,c.y+m)
+  | .triangle a b c =>
+    let m := 1e-6*(1+max (max (max a.x.abs a.y.abs) (max b.x.abs b.y.abs)) (max c.x.abs c.y.abs))
+    (min (min a.x b.x) c.x-m,min (min a.y b.y) c.y-m,max (max a.x b.x) c.x+m,max (max a.y b.y) c.y+m)
+
+/-- `prepareCoverage` for the CPU raster: a dashed stroke tests a piece only when the
+    point is in the piece's box (`pieceBox`). A point outside the box is outside the
+    piece, so the coverage is that of `prepareCoverage`; no theorem states this (it
+    is geometry over Float), and the CPU raster's differential test checks it. -/
+def Primitive.prepareCoverageCulled (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedCoverage :=
+  match p.dashParts with
+  | none => p.prepareCoverage data base
+  | some pieces =>
+    let fill : Prepared Bool := match p.geometry with
+      | .polygon points => ((boundsCondition base).prepare data).and
+          (.dynamic (fun env => windingHitFast env.data base points.length p.style.rule env.position))
+      | .path contours =>
+        .dynamic (fun env => pathHitFast env.data base (NativeSVGPath.edges contours).length p.style.rule env.position)
+      | g => (fillCondition g base).prepare data
+    let start := base+20+geometryTailSize p.geometry
+    let culled := (pieces.zipIdx.map fun (piece,i) =>
+      let o := start+20*i
+      (pieceBox piece data[o+16]!,(pieceCondition piece o).prepare data)).toArray
+    let inner : PreparedCoverage := .local p.transform.inverse fun q =>
+      let env : Env := {data,position := q}
+      (fill.eval env,culled.any fun ((x0,y0,x1,y1),c) =>
+        x0 <= q.1 && q.1 <= x1 && y0 <= q.2 && q.2 <= y1 && c.eval env)
+    match p.clips with
+    | [] => inner
+    | clips => .clipped (clipPass data (p.clipStart base) clips) inner
+
 /-- `prepareCoverage` with the path fill test `pathHitSpans`. -/
 def Primitive.prepareCoverageSpans (p : BackendPrimitive) (data : Array Float) (base : Nat)
     (spans : Array (Float × Array Nat)) : PreparedCoverage :=

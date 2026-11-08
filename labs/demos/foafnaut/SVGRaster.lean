@@ -156,7 +156,10 @@ private def infinity : Float := 1.0/0.0
 /-- `Primitive.screenBox`, the box `Scene.tiles` lists by; no box means every pixel. -/
 def prep (m : Mapping) (data : Array Float) (item : Item) : Prep :=
   let (x0,y0,x1,y1) := (item.1.screenBox m).getD (-infinity,-infinity,infinity,infinity)
-  ⟨item,item.1.prepareSample data item.2,x0,y0,x1,y1⟩
+  let sample := item.1.prepareSample data item.2
+  -- A dashed stroke tests only the pieces whose box holds the point.
+  let sample := if item.1.dashParts.isSome then {sample with coverage := item.1.prepareCoverageCulled data item.2} else sample
+  ⟨item,sample,x0,y0,x1,y1⟩
 
 /-- True when the box of `r` meets the pixel square at `(x,y)`. -/
 @[inline] def Prep.meetsRow (r : Prep) (y : Float) : Bool := r.y0 <= y+1 && y <= r.y1
@@ -262,7 +265,9 @@ private def guardScene : Option Scene := (parse ("<svg xmlns='http://www.w3.org/
   "<path d='M30 4 L38 12 L31 14 Z' fill='navy'/></g>" ++
   "<g transform='translate(0.3 0.7)'><path d='M24 26 C 30 20, 36 30, 38 34 L 26 35 Z' fill='maroon'/></g>" ++
   "<svg x='2' y='18' width='12' height='12' overflow='hidden'><circle cx='6' cy='6' r='9' fill='orange' stroke='black' stroke-dasharray='2 1'/>" ++
-  "<path d='M0 0 L12 6 L0 12 Z' fill='gray' fill-opacity='0.7'/></svg></svg>") 40 36).toOption
+  "<path d='M0 0 L12 6 L0 12 Z' fill='gray' fill-opacity='0.7'/></svg>" ++
+  "<ellipse cx='30' cy='8' rx='7' ry='4' fill='none' stroke='crimson' stroke-width='1.5' stroke-dasharray='3 2'/>" ++
+  "<path d='M4 4 Q 12 0 18 8' fill='none' stroke='black' stroke-width='1' stroke-linejoin='miter'/></svg>") 40 36).toOption
 
 -- The fast form gives the reference bytes on this scene, for the whole target and a band of rows.
 #guard (guardScene.map fun s => (s.rasterFast 0 s.height).data == (s.rasterSpec 0 s.height).data) == some true
