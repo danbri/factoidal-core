@@ -3515,7 +3515,8 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
                           "storeManifestInspectBytes","storeQueryPlanBytes","storeOpenBytes",
                           "lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead",
                           "webdavStep","webdavResume",
-                          "xmppWsFeed","xmppWsDeliver","xmppWsPing","xmppWsClose"]'
+                          "xmppWsFeed","xmppWsDeliver","xmppWsPing","xmppWsClose",
+                          "proxyHeaderParse"]'
 
 # SBM11 over host positioned reads (https://github.com/danbri/factoidal/issues/1009).
 # Natively the host is a pread of source/file (ffi/l4_hostread.c). A bad
