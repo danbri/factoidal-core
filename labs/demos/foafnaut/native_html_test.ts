@@ -106,7 +106,7 @@ Deno.test("actual HTTP redirect, CSS and link retain final document base",async(
 });
 
 Deno.test("XML pages run their XSLT stylesheet in Lean, and refusals are visible",async()=>{
-  for(const [name,title] of [["books-xslt1","Web standards reading (XSLT 1.0)"],["books-xslt4","Web standards reading (XSLT 4.0)"],["books-svg","Web standards reading as a chart"]]){
+  for(const [name,title] of [["books-xslt1","Web standards reading (XSLT 1.0)"],["books-xslt4","XSLT 4 in a browser"],["books-svg","Web standards reading as a chart"]]){
     const document=await prepareHTML(engine,new URL(`./pages/${name}.xml`,import.meta.url).href);
     assert.equal(document.title,title);
     const artifact=document.compile(640,480);

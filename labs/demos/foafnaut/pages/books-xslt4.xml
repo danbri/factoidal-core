@@ -1,8 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href="books-xslt4.xsl"?>
 <library name="Web standards reading">
- <book year="1999"><title>XSL Transformations 1.0</title><by>James Clark</by><pages>90</pages></book>
- <book year="2017"><title>XSL Transformations 3.0</title><by>Michael Kay</by><pages>1000</pages></book>
- <book year="2026"><title>XSL Transformations 4.0 draft</title><by>QT4 Community Group</by><pages>1100</pages></book>
- <book year="2008"><title>SVG Tiny 1.2</title><by>Ola Andersson and others</by><pages>450</pages></book>
+ <book id="xpath1" year="1999" pages="40" status="read"><title>XML Path Language 1.0</title><by>James Clark and Steve DeRose</by></book>
+ <book id="xslt1" year="1999" pages="90" status="read"><title>XSL Transformations 1.0</title><by>James Clark</by></book>
+ <book id="svg12" year="2008" pages="450" status="reading"><title>SVG Tiny 1.2</title><by>Ola Andersson and others</by></book>
+ <book id="rdf11" year="2014" pages="60" status="wish"><title>RDF 1.1 Concepts</title><by>Richard Cyganiak, David Wood and Markus Lanthaler</by></book>
+ <book id="xslt3" year="2017" pages="1000" status="read"><title>XSL Transformations 3.0</title><by>Michael Kay</by></book>
+ <book id="xslt4" year="2026" pages="1100" status="reading"><title>XSL Transformations 4.0 draft</title><by>QT4 Community Group</by></book>
+ <ratings>{"xpath1": 4, "xslt1": 5, "svg12": 4, "rdf11": 3, "xslt3": 5, "xslt4": 4}</ratings>
+ <loans>reader,book,days
+Ada,xslt3,12
+Bo,svg12,3
+Ada,rdf11,30
+Cy,xslt1,7</loans>
+ <review><![CDATA[<p>The 4.0 draft brings <b>maps</b>, <b>arrays</b> and <i>records</i> into templates.</p>]]></review>
 </library>

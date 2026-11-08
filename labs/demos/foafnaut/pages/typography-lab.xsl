@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Typography lab: the Lean shaper beside unshaped glyph outlines. XSLT 3.0, run by Lean. -->
-<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+<!-- Typography lab: the Lean shaper beside unshaped glyph outlines. XSLT 4.0, run by Lean. -->
+<xsl:stylesheet version="4.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
  xmlns="http://www.w3.org/2000/svg" xmlns:xs="http://www.w3.org/2001/XMLSchema"
  xmlns:ty="urn:foafnaut:typeset" exclude-result-prefixes="#all" expand-text="yes">
  <xsl:output method="xml"/>
  <!-- ty:text sets a string as SVG paths, one for each character, from the glyph table
-      ty:font below. The engine does not draw SVG <text> yet (issue 1270). -->
+      ty:font below, made before the engine drew SVG <text>. -->
  <xsl:key name="ty:glyph" match="ty:g" use="@c"/>
  <xsl:function name="ty:width" as="xs:double">
   <xsl:param name="text" as="xs:string"/><xsl:param name="size" as="xs:double"/>
@@ -165,23 +165,17 @@ p{{margin:0;padding-top:6px}}.note{{color:#6e655b;font-size:13px;line-height:19p
 .sample{{margin-top:12px;padding:10px 12px;background:white;border:1px solid #e4dccb}}
 .tests{{margin:0;font-size:13px;color:#a0522d;letter-spacing:1px}}.what{{margin:0;font-size:13px;color:#6e655b}}
 .shaped{{margin:0;padding-top:8px;font-size:34px;line-height:44px;color:#1f2a44}}.tag{{margin:0;font-size:11px;color:#9a9086}}
-code{{color:#7a3e12}}</style></head>
+code{{color:#7a3e12}}
+.about{{margin-top:22px;padding:10px 14px;background:#efe9dc;color:#6e655b;font-size:13px;line-height:19px}}.about p{{padding-top:4px}}</style></head>
   <body><main>
    <p><a href="index.html">Demo index</a> · <a href="showcase-scripts.html">Writing systems</a> · <a href="showcase-lettering.html">Lettering on curves</a></p>
    <h1>Typography lab</h1>
-   <p>Each sample is drawn twice. The first line is HTML text: the Lean shaper reads {@font} (and {@fallback} for Armenian), applies the font's
-    substitutions and positions, and takes the outlines. The second line is the same string set by this page's XSLT stylesheet from a table of the same
-    outlines, one glyph for each character, with no kerning, no ligatures and no mark positioning. The difference between the two lines is the shaper's work.</p>
-   <p class="note">Shows: GPOS kerning and mark positioning, GSUB ligatures, font fallback, and XSLT 3.0 that sets glyph outlines as SVG paths.
-    Does not show: bold or italic (there is one face, Regular, and <code>font-weight</code> is dropped:
-    <a href="https://github.com/danbri/factoidal/issues/1273">issue 1273</a>), SVG &lt;text&gt; (<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>),
-    or right-to-left text (see <a href="showcase-scripts.html">Writing systems</a>).</p>
    <xsl:for-each select="sample">
     <div class="sample">
      <p class="tests">{upper-case(@tests)}</p>
      <p class="what">{@what}</p>
      <p class="shaped">{.}</p>
-     <p class="tag">Above: HTML text, shaped by Lean. Below: outlines, one for each character, not shaped.</p>
+     <p class="tag">Above: shaped by Lean. Below: the same outlines, unshaped.</p>
      <svg xmlns="http://www.w3.org/2000/svg" width="820" height="52" viewBox="0 0 820 52">
       <xsl:sequence select="ty:text(string(.), 0, 40, 34, '#8a7f73', 'start')"/>
      </svg>
@@ -189,14 +183,18 @@ code{{color:#7a3e12}}</style></head>
    </xsl:for-each>
    <h2>Sizes</h2>
    <xsl:for-each select="(10, 12, 14, 18, 24, 32, 48, 64)">
-    <p style="font-size:{.}px;line-height:{round(. * 1.3)}px;padding-top:2px">{.} px · Hamburgefonstiv · Բարեւ</p>
+    <p style="font-size:{.}px;line-height:{round(. * 1.3)}px;padding-top:2px">{`{.} px · Hamburgefonstiv · Բարեւ`}</p>
    </xsl:for-each>
    <h2>Weights and styles</h2>
    <p style="font-size:24px;line-height:32px">Regular 400: Hamburgefonstiv</p>
    <p style="font-size:24px;line-height:32px;font-weight:700">Bold 700: Hamburgefonstiv</p>
    <p style="font-size:24px;line-height:32px;font-style:italic">Italic: Hamburgefonstiv</p>
-   <p class="note">Expected failure: the last two lines are drawn in Regular. The engine holds one face of Noto Sans and drops <code>font-weight</code> and
-    <code>font-style</code> (<a href="https://github.com/danbri/factoidal/issues/1273">issue 1273</a>).</p>
+   <div class="about">
+    <p>Each sample's top line is HTML text shaped by Lean from {@font} (and {@fallback} for Armenian). The XSLT 4.0 stylesheet sets the line
+     below from the same outlines, one per character; the difference is the shaper's work.</p>
+    <p>Not yet: bold and italic; the last two lines above are drawn in Regular (<a href="https://github.com/danbri/factoidal/issues/1273">issue 1273</a>).
+     Right-to-left text is on <a href="showcase-scripts.html">Writing systems</a>.</p>
+   </div>
   </main></body></html>
  </xsl:template>
 </xsl:stylesheet>

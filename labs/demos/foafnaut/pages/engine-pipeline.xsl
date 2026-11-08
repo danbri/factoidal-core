@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Draws engine-pipeline.xml as an SVG diagram and a table. XSLT 3.0, run by Lean. -->
-<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+<!-- Draws engine-pipeline.xml as an SVG diagram and a table. XSLT 4.0, run by Lean. -->
+<xsl:stylesheet version="4.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
  xmlns="http://www.w3.org/2000/svg" xmlns:xs="http://www.w3.org/2001/XMLSchema"
  xmlns:ty="urn:foafnaut:typeset" exclude-result-prefixes="#all" expand-text="yes">
  <xsl:output method="xml"/>
  <!-- ty:text sets a string as SVG paths, one for each character, from the glyph table
-      ty:font below. The engine does not draw SVG <text> yet (issue 1270). -->
+      ty:font below, made before the engine drew SVG <text>. -->
  <xsl:key name="ty:glyph" match="ty:g" use="@c"/>
  <xsl:function name="ty:width" as="xs:double">
   <xsl:param name="text" as="xs:string"/><xsl:param name="size" as="xs:double"/>
@@ -136,17 +136,12 @@ p{{margin:0;padding-top:6px}}.note{{color:#5b6876;font-size:13px;line-height:19p
 .panel{{margin-top:12px;padding:10px;background:white;border:1px solid #d6d0c4}}
 table{{margin-top:10px;border-collapse:collapse;background:white;border:1px solid #c9c2b4}}
 th{{padding:6px 8px;background:#173a6b;color:white;font-size:13px}}td{{padding:6px 8px;border-top:1px solid #e3ddd2;vertical-align:top;font-size:13px;line-height:18px}}
-td.stage{{color:#173a6b}}td.host{{color:#6b6458}}code{{color:#7a3e12}}</style></head>
+td.stage{{color:#173a6b}}td.host{{color:#6b6458}}code{{color:#7a3e12}}
+.about{{margin-top:22px;padding:10px 14px;background:#e9e3d6;color:#5b6876;font-size:13px;line-height:19px}}.about p{{padding-top:4px}}</style></head>
   <body><main>
    <p><a href="index.html">Demo index</a> · <a href="foafnaut:wasm">WebAssembly run by Lean (WasmVM)</a> · <a href="architecture.html">How foafnaut is built</a></p>
    <h1>The engine explains itself</h1>
-   <p>This page is the XML file <code>engine-pipeline.xml</code>. It names an XSLT 3.0 stylesheet. Lean ran the stylesheet,
-    which drew the diagram below as SVG and wrote the table. Then Lean laid out and painted the result.</p>
-   <p class="note">Shows: XSLT 3.0 (keys, functions, xsl:iterate, math on numbers), SVG gradients, paths, dashes and transforms,
-    and a CSS table. The labels in the diagram are glyph outlines: the stylesheet holds a table of Noto Sans outlines and
-    places one SVG path for each character, with no kerning. Does not show: SVG &lt;text&gt;, which the engine does not draw yet
-    (<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>), and bold or centred HTML text
-    (<a href="https://github.com/danbri/factoidal/issues/1273">issue 1273</a>).</p>
+   <p>The stages that turn a page into pixels, and the Lean files and proofs behind each.</p>
    <div class="panel">
    <svg xmlns="http://www.w3.org/2000/svg" width="820" height="{count(stage) * $rowH + 40}" viewBox="0 0 820 {count(stage) * $rowH + 40}">
     <defs>
@@ -190,14 +185,19 @@ td.stage{{color:#173a6b}}td.host{{color:#6b6458}}code{{color:#7a3e12}}</style></
     <tr><th>Stage</th><th>Runs in</th><th>What it does</th><th>Files</th></tr>
     <xsl:for-each select="stage">
      <tr><td class="stage">{position()}. {@label}</td>
-      <td class="{if (@by = 'host') then 'host' else 'stage'}">{if (@by = 'host') then 'Host' else if (@by = 'both') then 'QuickJS and Lean' else 'Lean'}</td>
+      <td class="{if (@by = 'host') then 'host' else 'stage'}"><xsl:switch select="string(@by)">
+        <xsl:when test="'host'">Host</xsl:when><xsl:when test="'both'">QuickJS and Lean</xsl:when><xsl:otherwise>Lean</xsl:otherwise></xsl:switch></td>
       <td>{does}</td>
       <td><xsl:for-each select="file, proof"><code>{.}</code><xsl:if test="self::proof"> (proofs)</xsl:if><br/></xsl:for-each></td></tr>
     </xsl:for-each>
    </table>
-   <p class="note">{count(stage)} stages: {count(stage[@by = 'lean'])} in Lean, {count(stage[@by = 'host'])} in the host,
-    {count(stage[@by = 'both'])} shared. {count(stage/file)} source files and {count(stage/proof)} proof files are named.
-    These counts were computed by the stylesheet. L4F/ is <code>formal/lean4/L4Factoidal/</code>; foafnaut/ is <code>labs/demos/foafnaut/</code>.</p>
+   <p class="note">{`{count(stage)} stages: {count(stage[@by = 'lean'])} in Lean, {count(stage[@by = 'host'])} in the host, {count(stage[@by = 'both'])} shared.
+    {count(stage/file)} source files and {count(stage/proof)} proof files.`} L4F/ is <code>formal/lean4/L4Factoidal/</code>; foafnaut/ is <code>labs/demos/foafnaut/</code>.</p>
+   <div class="about">
+    <p>The XML file <code>engine-pipeline.xml</code>, drawn by its XSLT 4.0 stylesheet as an SVG diagram and a table. XSLT 4 at work:
+     <code>xsl:switch</code> and string templates; also keys, functions and <code>xsl:iterate</code>. The diagram labels are glyph outlines set by the stylesheet.</p>
+    <p>Not yet: bold and centred HTML text (<a href="https://github.com/danbri/factoidal/issues/1273">issue 1273</a>).</p>
+   </div>
   </main></body></html>
  </xsl:template>
 </xsl:stylesheet>

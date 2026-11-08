@@ -10,12 +10,10 @@ p{margin:0;padding-top:6px}
 .frame{border:2px solid #184078;padding:4px;background:white}
 .fit{width:96px;height:96px;border:1px solid #9aa8b6;background:#e8edf2}
 pre{margin:6px 0 0 0;padding:6px;background:#eef1f4;font-size:13px;line-height:18px}
+.about{margin-top:22px;padding:10px 14px;background:#eef2f7;color:#5b6876;font-size:13px;line-height:19px}.about p{padding-top:4px}
 </style></head><body><main>
 <p><a href="index.html">Demo index</a></p>
 <h1>Images</h1>
-<p>The Lean engine decodes PNG and JPEG and draws <code>img</code> elements itself. The host only fetches the bytes
-of images from the page's own site.</p>
-<p class="note">An engine from before this page draws each image as its alt text in brackets.</p>
 
 <h2>In a line of text</h2>
 <p>A badge <img src="images-badge.png" alt="badge"> sits on the baseline, and one with
@@ -50,4 +48,7 @@ of images from the page's own site.</p>
 <pre>name      width  height
 badge        48      48
 landscape   160      96</pre>
+<div class="about">
+<p>Lean decodes the PNG and JPEG images and draws each <code>img</code> itself; the host only fetches the bytes from the page's own site.</p>
+</div>
 </main></body></html>

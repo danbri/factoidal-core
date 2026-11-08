@@ -40,7 +40,7 @@ FEATURED = ['showcase-dataviz.html', 'showcase-lettering.html', 'showcase-tables
 TEXT = ['showcase-scripts.html', 'showcase-tables.html', 'showcase-images.html', 'showcase-emoji.html', 'print-showcase.html']
 # Pages that combine two or more parts: XSLT, SVG, fonts, tables, print, RDF and SPARQL (owner, 2026-11-08:
 # "Think of creative demo pages and exciting combinations of our technologies!").
-COMBINATIONS = ['foaf-people.xml', 'sparql-results.xml', 'feed.xml', 'sitemap.xml', 'lab-files.xml',
+COMBINATIONS = ['books-xslt4.xml', 'foaf-people.xml', 'sparql-results.xml', 'feed.xml', 'sitemap.xml', 'lab-files.xml',
                 'engine-pipeline.xml', 'typography-lab.xml', 'print-poster.html', 'svg-text-labels.html']
 # Pages written for features that are still in progress; the manifest says what each one needs.
 NEXT = ['timers-and-clicks.html']

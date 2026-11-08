@@ -16,15 +16,10 @@ td.num, th.num{text-align:right;font-variant-numeric:tabular-nums}
 td.total{background:#fff4d6;font-weight:bold;border-top:2px solid #184078}
 td.group{background:#eef3e9;color:#2d6a3e;font-weight:bold}
 .swatch{color:#a8432f}
+.about{margin-top:22px;padding:10px 14px;background:#eef2f7;color:#5b6876;font-size:13px;line-height:19px}.about p{padding-top:4px}
 </style></head><body><main>
 <p><a href="showcase.html">Showcase</a> · <a href="index.html">Demo index</a></p>
 <h1>Tables</h1>
-<p>Three tables with the CSS a browser would draw: a caption bar, a header row with a rule under it,
-zebra rows, numbers aligned right, cells that span columns and rows, and a totals row.</p>
-<p class="note">Partly an expected failure. The engine lays out the tables: columns sized from
-their cells, colspan, rowspan, the caption, the header and footer groups, and the cells' vertical
-alignment (<a href="https://github.com/danbri/factoidal/issues/1272">issue 1272</a>). Text-align and font-weight are dropped, so the numbers are not aligned right and the headings are not bold
-(<a href="https://github.com/danbri/factoidal/issues/1273">issue 1273</a>). The same tables drawn as SVG: <a href="showcase-tables-svg.html">showcase-tables-svg.html</a>.</p>
 
 <h2>1. Numbers aligned right, with a total</h2>
 <table>
@@ -70,4 +65,8 @@ alignment (<a href="https://github.com/danbri/factoidal/issues/1272">issue 1272<
 </tbody>
 </table>
 <p class="note">Times are sample data for the layout, not a timetable.</p>
+<div class="about">
+<p>Three HTML tables (caption, header rule, zebra rows, spans, a totals row) laid out by Lean (<a href="https://github.com/danbri/factoidal/issues/1272">issue 1272</a>). The same tables drawn as SVG: <a href="showcase-tables-svg.html">showcase-tables-svg.html</a>.</p>
+<p>Not yet: numbers aligned right and bold headings (<a href="https://github.com/danbri/factoidal/issues/1273">issue 1273</a>).</p>
+</div>
 </main></body></html>

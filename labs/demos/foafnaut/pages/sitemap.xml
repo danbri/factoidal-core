@@ -4,23 +4,23 @@
      date of the last commit to each page on 2026-11-08; changefreq and priority were chosen for this demo. -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
  <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/architecture.html</loc><lastmod>2026-11-05</lastmod><changefreq>monthly</changefreq><priority>0.5</priority></url>
- <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/books-svg.xml</loc><lastmod>2026-11-05</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
- <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/books-xslt1.xml</loc><lastmod>2026-11-05</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
- <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/books-xslt4.xml</loc><lastmod>2026-11-05</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+ <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/books-svg.xml</loc><lastmod>2026-11-08</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+ <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/books-xslt1.xml</loc><lastmod>2026-11-08</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+ <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/books-xslt4.xml</loc><lastmod>2026-11-08</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
  <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/foaf-graph.html</loc><lastmod>2026-11-05</lastmod><changefreq>monthly</changefreq><priority>0.5</priority></url>
  <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/index.html</loc><lastmod>2026-11-08</lastmod><changefreq>daily</changefreq><priority>1.0</priority></url>
  <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/markdown-sample.html</loc><lastmod>2026-11-05</lastmod><changefreq>monthly</changefreq><priority>0.5</priority></url>
  <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/print-showcase.html</loc><lastmod>2026-11-07</lastmod><changefreq>monthly</changefreq><priority>0.5</priority></url>
  <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/settings.html</loc><lastmod>2026-11-06</lastmod><changefreq>monthly</changefreq><priority>0.5</priority></url>
- <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-dataviz-script.html</loc><lastmod>2026-11-07</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
- <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-dataviz.html</loc><lastmod>2026-11-07</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
- <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-emoji.html</loc><lastmod>2026-11-07</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
- <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-lettering.html</loc><lastmod>2026-11-07</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
- <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-scripts.html</loc><lastmod>2026-11-07</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
- <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-tables-svg.html</loc><lastmod>2026-11-07</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
- <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-tables.html</loc><lastmod>2026-11-07</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
- <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-textpath.html</loc><lastmod>2026-11-07</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
- <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase.html</loc><lastmod>2026-11-07</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+ <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-dataviz-script.html</loc><lastmod>2026-11-08</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+ <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-dataviz.html</loc><lastmod>2026-11-08</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+ <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-emoji.html</loc><lastmod>2026-11-08</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+ <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-lettering.html</loc><lastmod>2026-11-08</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+ <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-scripts.html</loc><lastmod>2026-11-08</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+ <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-tables-svg.html</loc><lastmod>2026-11-08</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+ <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-tables.html</loc><lastmod>2026-11-08</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+ <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase-textpath.html</loc><lastmod>2026-11-08</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+ <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/showcase.html</loc><lastmod>2026-11-08</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
  <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/solving-showcase.html</loc><lastmod>2026-11-05</lastmod><changefreq>monthly</changefreq><priority>0.5</priority></url>
  <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/status.html</loc><lastmod>2026-11-06</lastmod><changefreq>monthly</changefreq><priority>0.5</priority></url>
  <url><loc>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/svg-affine.html</loc><lastmod>2026-11-05</lastmod><changefreq>monthly</changefreq><priority>0.5</priority></url>

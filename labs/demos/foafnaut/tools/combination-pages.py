@@ -3,8 +3,7 @@
 
     python3 labs/demos/foafnaut/tools/combination-pages.py
 
-The engine does not draw SVG <text> yet (https://github.com/danbri/factoidal/issues/1270).
-The combination pages label their SVG with XSLT: each stylesheet holds a table of glyph
+The combination pages were written before the engine drew SVG <text>, and label their SVG with XSLT: each stylesheet holds a table of glyph
 outlines and advance widths, and the XSLT function ty:text sets a string as one SVG <path>
 for each character. Lean runs that XSLT and draws the paths. This script writes the
 table, between the comments "typeset:begin" and "typeset:end", into each stylesheet

@@ -7,14 +7,10 @@ h2{margin:0;padding-top:18px;font-size:18px;line-height:26px;color:#184078}
 p{margin:0;padding-top:6px}
 .note{color:#5b6876;font-size:13px}
 svg{display:block}
+.about{margin-top:22px;padding:10px 14px;background:#eef2f7;color:#5b6876;font-size:13px;line-height:19px}.about p{padding-top:4px}
 </style></head><body><main>
 <p><a href="showcase.html">Showcase</a> · <a href="index.html">Demo index</a></p>
 <h1>SVG text and textPath</h1>
-<p class="note">The engine draws SVG <code>text</code>, <code>tspan</code> and <code>textPath</code> with the font
-that draws the HTML text: Lean shapes each run and puts each glyph on its path
-(<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>). Vertical text is drawn
-horizontally. The page <a href="showcase-lettering.html">showcase-lettering.html</a> draws the same
-lettering as glyph outlines made when the page was built.</p>
 
 <h2>Text round a circle</h2>
 <svg width="380" height="380" viewBox="0 0 380 380">
@@ -49,4 +45,8 @@ lettering as glyph outlines made when the page was built.</p>
 <text x="60" y="140" font-family="Noto Sans" font-size="20" fill="#8a6d3b" transform="rotate(-12 60 140)">rotated −12° by a transform</text>
 <text x="500" y="140" font-family="Noto Sans" font-size="20" fill="#cc6aa8" writing-mode="vertical-rl">縦書き</text>
 </svg>
+<div class="about">
+<p>Lean shapes SVG <code>text</code>, <code>tspan</code> and <code>textPath</code> with the page font and puts each glyph on its path. <a href="showcase-lettering.html">showcase-lettering.html</a> draws the same lettering as outlines made at build time.</p>
+<p>Not yet: vertical text, which is drawn horizontally.</p>
+</div>
 </main></body></html>

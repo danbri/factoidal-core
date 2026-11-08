@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- A feed reader view for an Atom feed. XSLT 3.0, run by Lean; the page has no script. -->
-<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+<!-- A feed reader view for an Atom feed. XSLT 4.0, run by Lean; the page has no script. -->
+<xsl:stylesheet version="4.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
  xmlns="http://www.w3.org/2000/svg" xmlns:xs="http://www.w3.org/2001/XMLSchema"
- xmlns:a="http://www.w3.org/2005/Atom"
+ xmlns:a="http://www.w3.org/2005/Atom" xmlns:map="http://www.w3.org/2005/xpath-functions/map"
  xmlns:ty="urn:foafnaut:typeset" exclude-result-prefixes="#all" expand-text="yes">
  <xsl:output method="xml"/>
  <!-- ty:text sets a string as SVG paths, one for each character, from the glyph table
-      ty:font below. The engine does not draw SVG <text> yet (issue 1270). -->
+      ty:font below, made before the engine drew SVG <text>. -->
  <xsl:key name="ty:glyph" match="ty:g" use="@c"/>
  <xsl:function name="ty:width" as="xs:double">
   <xsl:param name="text" as="xs:string"/><xsl:param name="size" as="xs:double"/>
@@ -126,7 +126,7 @@
 <!-- typeset:end -->
  <xsl:variable name="colours" select="map{'Wasm':'#6a4fb8','Hub':'#7d7568','Fonts':'#b5487a','Layout':'#2d63a8','Print':'#3f7f5f','SVG':'#e07020','XSLT':'#1f7a8c','Scripts':'#a8432f'}"/>
  <xsl:template match="/a:feed">
-  <xsl:variable name="entries" as="element()*"><xsl:perform-sort select="a:entry"><xsl:sort select="xs:dateTime(a:updated)" order="descending"/></xsl:perform-sort></xsl:variable>
+  <xsl:variable name="entries" select="sort(a:entry, (), fn { xs:dateTime(a:updated) }) => reverse()"/>
   <xsl:variable name="first" select="min($entries/xs:date(substring(a:updated, 1, 10)))"/>
   <xsl:variable name="last" select="max($entries/xs:date(substring(a:updated, 1, 10)))"/>
   <xsl:variable name="days" select="xs:integer(($last - $first) div xs:dayTimeDuration('P1D')) + 1"/>
@@ -140,7 +140,8 @@ h2{{margin:0;padding-top:20px;font-size:14px;line-height:20px;color:#8a6d3b;lett
 .entry{{margin-top:10px;padding:12px 14px;background:white;border:1px solid #e4dccb}}
 .entry h3{{margin:0;font-size:20px;line-height:28px}}.entry h3 a{{color:#1f3b4d}}
 .meta{{margin:0;padding-top:2px;font-size:13px;color:#7d7568}}.chip{{display:inline-block;color:white;padding:0 8px;font-size:12px;line-height:18px}}
-svg{{display:block}}.gap{{padding-top:14px}}code{{color:#7a3e12}}</style></head>
+svg{{display:block}}.gap{{padding-top:14px}}code{{color:#7a3e12}}
+.about{{margin-top:22px;padding:10px 14px;background:#efe9dc;color:#6b6458;font-size:13px;line-height:19px}}.about p{{padding-top:4px}}</style></head>
   <body>
    <div class="top">
     <p><a href="index.html">Demo index</a></p>
@@ -148,11 +149,6 @@ svg{{display:block}}.gap{{padding-top:14px}}code{{color:#7a3e12}}</style></head>
     <p class="sub">{a:subtitle}. {count($entries)} entries, last updated {format-dateTime(xs:dateTime(a:updated), '[D] [MNn] [Y] at [H01]:[m01] UTC')}.</p>
    </div>
    <div class="wrap">
-    <p class="note">This page is an Atom feed, <code>feed.xml</code>. Its first line names an XSLT 3.0 stylesheet; Lean ran it and drew this reading view.
-     There is no JavaScript. The stylesheet sorts the entries by date, groups them by day, writes the dates in words, and draws the strip below.
-     Does not show yet: a built-in feed view for a feed that names no stylesheet (<a href="https://github.com/danbri/factoidal/issues/1287">issue 1287</a>);
-     RSS 2.0 and RSS 1.0. The labels in the strip are glyph outlines set by the stylesheet, because SVG &lt;text&gt; is not drawn yet
-     (<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>).</p>
     <div class="gap"><svg xmlns="http://www.w3.org/2000/svg" width="720" height="150" viewBox="0 0 720 150">
      <xsl:for-each select="0 to $days - 1">
       <xsl:variable name="d" select="$first + xs:dayTimeDuration('P1D') * ."/>
@@ -173,12 +169,17 @@ svg{{display:block}}.gap{{padding-top:14px}}code{{color:#7a3e12}}</style></head>
       <div class="entry">
        <h3><a href="{a:link/@href}">{a:title}</a></h3>
        <p class="meta"><span class="chip" style="background:{$colours(string(a:category/@term))}">{a:category/@term}</span>
-        {format-dateTime(xs:dateTime(a:updated), '[H01]:[m01] UTC')} · commit <code>{tokenize(a:id, '/')[last()]}</code></p>
+        {`{format-dateTime(xs:dateTime(a:updated), '[H01]:[m01] UTC')} · commit `}<code>{tokenize(a:id, '/') => foot()}</code></p>
        <p>{a:summary}</p>
       </div>
      </xsl:for-each>
     </xsl:for-each-group>
-    <p class="note">Categories, counted by the stylesheet: <xsl:for-each-group select="$entries" group-by="a:category/@term"><xsl:sort select="current-grouping-key()"/>{current-grouping-key()} {count(current-group())}<xsl:if test="position() != last()">, </xsl:if></xsl:for-each-group>.</p>
+    <p class="note">By category: {map:build($entries, fn { string(a:category/@term) }) => map:for-each(fn($k, $v) { `{$k} {count($v)}` }) => sort() => string-join(', ')}.</p>
+    <div class="about">
+     <p>An Atom feed, <code>feed.xml</code>, drawn by its XSLT 4.0 stylesheet; the page has no script. XSLT 4 at work: <code>sort</code> with an
+      <code>fn {{ }}</code> key, <code>map:build</code>, string templates and the <code>=&gt;</code> arrow; also grouping by day and dates in words.</p>
+     <p>Not yet: a built-in view for a feed with no stylesheet, and RSS (<a href="https://github.com/danbri/factoidal/issues/1287">issue 1287</a>).</p>
+    </div>
    </div>
   </body></html>
  </xsl:template>

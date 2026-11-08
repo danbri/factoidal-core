@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- SPARQL Query Results XML as a table and a chart. XSLT 3.0, run by Lean. -->
-<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+<!-- SPARQL Query Results XML as a table and a chart. XSLT 4.0, run by Lean. -->
+<xsl:stylesheet version="4.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
  xmlns="http://www.w3.org/2000/svg" xmlns:xs="http://www.w3.org/2001/XMLSchema"
- xmlns:r="http://www.w3.org/2005/sparql-results#"
+ xmlns:r="http://www.w3.org/2005/sparql-results#" xmlns:map="http://www.w3.org/2005/xpath-functions/map"
  xmlns:ty="urn:foafnaut:typeset" exclude-result-prefixes="#all" expand-text="yes">
  <xsl:output method="xml"/>
  <!-- ty:text sets a string as SVG paths, one for each character, from the glyph table
-      ty:font below. The engine does not draw SVG <text> yet (issue 1270). -->
+      ty:font below, made before the engine drew SVG <text>. -->
  <xsl:key name="ty:glyph" match="ty:g" use="@c"/>
  <xsl:function name="ty:width" as="xs:double">
   <xsl:param name="text" as="xs:string"/><xsl:param name="size" as="xs:double"/>
@@ -142,7 +142,9 @@
 <!-- typeset:end -->
  <xsl:template match="/r:sparql">
   <xsl:variable name="rows" select="r:results/r:result"/>
-  <xsl:variable name="most" select="max($rows/r:binding[@name = ('knows', 'knownBy')]/number(.))"/>
+  <!-- Each solution as a map from variable name to value. -->
+  <xsl:variable name="solutions" select="$rows ! map:merge(r:binding ! map { string(@name): string(.) })"/>
+  <xsl:variable name="most" select="max($solutions ! (?knows, ?knownBy) ! number(.))"/>
   <html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta charset="utf-8"/><title>SPARQL results through XSLT</title>
    <style>body{{margin:0;padding:16px;font-size:14px;line-height:20px;color:#22303c;background:#f1f4f2}}
 h1{{margin:0;font-size:26px;line-height:34px;color:#7a2e3a}}h2{{margin:0;padding-top:18px;font-size:18px;line-height:26px;color:#7a2e3a}}
@@ -151,24 +153,11 @@ p{{margin:0;padding-top:6px}}.note{{color:#5b6876;font-size:13px;line-height:19p
 .panel{{margin-top:10px;padding:8px;background:white;border:1px solid #d3dbd6}}
 table{{margin-top:10px;border-collapse:collapse;background:white;border:1px solid #cbd5cf}}
 th{{padding:6px 10px;background:#7a2e3a;color:white;font-size:13px}}td{{padding:5px 10px;border-top:1px solid #e3e9e5;font-size:14px}}
-.dt{{color:#8a96a3;font-size:11px}}code{{color:#7a3e12}}</style></head>
+.dt{{color:#8a96a3;font-size:11px}}code{{color:#7a3e12}}
+.about{{margin-top:22px;padding:10px 14px;background:#e2e8e4;color:#5b6876;font-size:13px;line-height:19px}}.about p{{padding-top:4px}}</style></head>
   <body><main>
    <p><a href="index.html">Demo index</a> · <a href="foaf-people.xml">The same people as a FOAF chart</a></p>
    <h1>SPARQL results through XSLT</h1>
-   <p>Two parts of Factoidal meet on this page. Factoidal's SPARQL engine (Lean, compiled to WebAssembly, run with the <code>factoidal</code> command)
-    answered the query below over <a href="foaf-people.xml">foaf-people.xml</a>. Its answer is this page, <code>sparql-results.xml</code>, in the SPARQL 1.1
-    Query Results XML format. Foafnaut ran the page's XSLT 3.0 stylesheet, which read the query from the file's comment, made a table from the
-    variables, and drew the chart.</p>
-   <p class="note">Shows: real SPARQL output (GROUP BY, COUNT DISTINCT, GROUP_CONCAT, property paths, ORDER BY), and XSLT that works for any
-    results file with these variables. Does not show: a query run by the browser. The query ran once, ahead of time; foafnaut does not yet run SPARQL
-    from a page. Chart labels are glyph outlines placed by the stylesheet (<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>).</p>
-   <h2>The query</h2>
-   <div class="query">
-    <xsl:variable name="c" select="string(/comment()[last()])"/>
-    <xsl:for-each select="tokenize(substring-after($c, 'unchanged.'), '\n')[normalize-space()]">
-     <p>{replace(., '^     ', '')}</p>
-    </xsl:for-each>
-   </div>
    <h2>{count($rows)} results</h2>
    <table>
     <tr><xsl:for-each select="r:head/r:variable"><th>?{@name}</th></xsl:for-each></tr>
@@ -185,21 +174,35 @@ th{{padding:6px 10px;background:#7a2e3a;color:white;font-size:13px}}td{{padding:
    <svg xmlns="http://www.w3.org/2000/svg" width="820" height="{count($rows) * 34 + 50}" viewBox="0 0 820 {count($rows) * 34 + 50}">
     <xsl:sequence select="ty:text('knows', 330, 18, 14, '#c4455a', 'end')"/>
     <xsl:sequence select="ty:text('known by', 490, 18, 14, '#2d63a8', 'start')"/>
-    <xsl:for-each select="$rows">
+    <xsl:for-each select="$solutions">
      <xsl:variable name="y" select="30 + (position() - 1) * 34"/>
-     <xsl:variable name="out" select="number(r:binding[@name = 'knows'])"/>
-     <xsl:variable name="in" select="number(r:binding[@name = 'knownBy'])"/>
+     <xsl:variable name="out" select="number(?knows)"/>
+     <xsl:variable name="in" select="number(?knownBy)"/>
      <rect x="0" y="{$y}" width="820" height="30" fill="{if (position() mod 2) then '#f6f8f7' else 'white'}"/>
      <rect x="{340 - $out * 280 div $most}" y="{$y + 6}" width="{$out * 280 div $most}" height="18" rx="4" fill="#c4455a"/>
      <rect x="480" y="{$y + 6}" width="{$in * 280 div $most}" height="18" rx="4" fill="#2d63a8"/>
-     <xsl:sequence select="ty:text(string(r:binding[@name = 'name']), 410, $y + 21, 16, '#22303c', 'middle')"/>
+     <xsl:sequence select="ty:text(?name, 410, $y + 21, 16, '#22303c', 'middle')"/>
      <xsl:sequence select="ty:text(string($out), 334 - $out * 280 div $most, $y + 20, 13, '#c4455a', 'end')"/>
      <xsl:sequence select="ty:text(string($in), 486 + $in * 280 div $most, $y + 20, 13, '#2d63a8', 'start')"/>
     </xsl:for-each>
    </svg>
    </div>
-   <p class="note">Totals computed by the stylesheet: {sum($rows/r:binding[@name = 'knows'])} links out and {sum($rows/r:binding[@name = 'knownBy'])} links in,
-    which must be equal; {if (sum($rows/r:binding[@name = 'knows']) = sum($rows/r:binding[@name = 'knownBy'])) then 'they are.' else 'they are not.'}</p>
+   <p class="note">{`{sum($solutions ! number(?knows))} links out and {sum($solutions ! number(?knownBy))} links in`}: {
+    if (sum($solutions ! number(?knows)) = sum($solutions ! number(?knownBy))) then 'equal, as they must be.' else 'not equal.'}</p>
+   <h2>The query</h2>
+   <div class="query">
+    <xsl:variable name="c" select="string(/comment()[last()])"/>
+    <xsl:for-each select="tokenize(substring-after($c, 'unchanged.'), '\n')[normalize-space()]">
+     <p>{replace(., '^     ', '')}</p>
+    </xsl:for-each>
+   </div>
+   <div class="about">
+    <p>Real SPARQL output: Factoidal's SPARQL engine answered this query over <a href="foaf-people.xml">foaf-people.xml</a>, and saved the
+     answer as SPARQL 1.1 Query Results XML. Its XSLT 4.0 stylesheet turns each solution into a map (<code>map:merge</code>, <code>?</code> lookup)
+     and draws the table and chart; it reads the query from the file's comment.</p>
+    <p>Not yet: running a query in the browser. This one ran ahead of time.</p>
+   </div>
+
   </main></body></html>
  </xsl:template>
 </xsl:stylesheet>

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Draws the FOAF RDF/XML of foaf-people.xml as a social chart, a table and a bar chart. XSLT 3.0, run by Lean. -->
-<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+<!-- Draws the FOAF RDF/XML of foaf-people.xml as a social chart, a table and a bar chart. XSLT 4.0, run by Lean. -->
+<xsl:stylesheet version="4.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
  xmlns="http://www.w3.org/2000/svg" xmlns:xs="http://www.w3.org/2001/XMLSchema"
  xmlns:math="http://www.w3.org/2005/xpath-functions/math" xmlns:map="http://www.w3.org/2005/xpath-functions/map"
  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
@@ -8,7 +8,7 @@
  xmlns:ty="urn:foafnaut:typeset" xmlns:f="urn:foafnaut:foaf" exclude-result-prefixes="#all" expand-text="yes">
  <xsl:output method="xml"/>
  <!-- ty:text sets a string as SVG paths, one for each character, from the glyph table
-      ty:font below. The engine does not draw SVG <text> yet (issue 1270). -->
+      ty:font below, made before the engine drew SVG <text>. -->
  <xsl:key name="ty:glyph" match="ty:g" use="@c"/>
  <xsl:function name="ty:width" as="xs:double">
   <xsl:param name="text" as="xs:string"/><xsl:param name="size" as="xs:double"/>
@@ -152,10 +152,14 @@
   <xsl:sequence select="count($p/preceding-sibling::foaf:Person)"/></xsl:function>
  <xsl:function name="f:angle" as="xs:double"><xsl:param name="p" as="element()"/>
   <xsl:sequence select="-math:pi() div 2 + 2 * math:pi() * f:i($p) div $n"/></xsl:function>
+ <!-- A point on the chart is a record with two typed fields; f:point(x, y) constructs one. -->
+ <xsl:record-type name="f:point"><xsl:field name="x" as="xs:double"/><xsl:field name="y" as="xs:double"/></xsl:record-type>
+ <xsl:function name="f:at" as="f:point"><xsl:param name="p" as="element()"/><xsl:param name="r" as="xs:double"/>
+  <xsl:sequence select="f:point($cx + $r * math:cos(f:angle($p)), $cy + $r * math:sin(f:angle($p)))"/></xsl:function>
  <xsl:function name="f:x" as="xs:double"><xsl:param name="p" as="element()"/><xsl:param name="r" as="xs:double"/>
-  <xsl:sequence select="$cx + $r * math:cos(f:angle($p))"/></xsl:function>
+  <xsl:sequence select="f:at($p, $r)?x"/></xsl:function>
  <xsl:function name="f:y" as="xs:double"><xsl:param name="p" as="element()"/><xsl:param name="r" as="xs:double"/>
-  <xsl:sequence select="$cy + $r * math:sin(f:angle($p))"/></xsl:function>
+  <xsl:sequence select="f:at($p, $r)?y"/></xsl:function>
  <xsl:function name="f:n" as="xs:string"><xsl:param name="v" as="xs:double"/><xsl:sequence select="format-number($v, '0.#')"/></xsl:function>
  <xsl:function name="f:topic" as="xs:string"><xsl:param name="p" as="element()"/>
   <xsl:sequence select="string(key('label', $p/foaf:topic_interest[1]/@rdf:resource, root($p))/rdfs:label)"/></xsl:function>
@@ -170,19 +174,12 @@ p{{margin:0;padding-top:6px}}.note{{color:#5b6876;font-size:13px;line-height:19p
 .panel{{margin-top:12px;padding:8px;background:white;border:1px solid #d3d9e1}}
 table{{margin-top:10px;border-collapse:collapse;background:white;border:1px solid #c9d2dc}}
 th{{padding:6px 10px;background:#1d3557;color:white;font-size:13px}}td{{padding:5px 10px;border-top:1px solid #e3e8ee;font-size:13px}}
-td.name{{font-size:16px;color:#1d3557}}td.num{{color:#8a4fb8}}code{{color:#7a3e12}}</style></head>
+td.name{{font-size:16px;color:#1d3557}}td.num{{color:#8a4fb8}}code{{color:#7a3e12}}
+.about{{margin-top:22px;padding:10px 14px;background:#e3e8ef;color:#5b6876;font-size:13px;line-height:19px}}.about p{{padding-top:4px}}</style></head>
   <body><main>
    <p><a href="index.html">Demo index</a> · <a href="foafnaut:graph">Interactive FOAF graph</a></p>
    <h1>FOAF to SVG through XSLT</h1>
-   <p>This page is the RDF/XML file <code>foaf-people.xml</code>: {$n} invented people, who knows whom, and their interests.
-    It names an XSLT 3.0 stylesheet. Lean ran it. The stylesheet placed the people on a circle with
-    <code>math:sin</code> and <code>math:cos</code>, drew each <code>foaf:knows</code> link as a curve, found the links that go both ways, and counted
-    the interests.</p>
-   <p class="note">Shows: RDF/XML read as XML by XSLT 3.0, SVG curves, gradients and transforms, names in Latin, Armenian, Greek and Cyrillic
-    (Armenian comes from the fallback font Noto Sans Armenian). The names in the chart are glyph outlines placed by the stylesheet, one SVG path for
-    each character with no kerning, because the engine does not draw SVG &lt;text&gt; yet
-    (<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>). Does not show: Factoidal's RDF parser. The stylesheet reads only this
-    RDF/XML layout; the <a href="foafnaut:graph">interactive FOAF graph</a> reads Turtle with the RDF stack.</p>
+   <p>{$n} invented people, who knows whom, and their interests.</p>
    <div class="panel">
    <svg xmlns="http://www.w3.org/2000/svg" width="840" height="510" viewBox="0 0 840 510">
     <defs>
@@ -243,10 +240,10 @@ td.name{{font-size:16px;color:#1d3557}}td.num{{color:#8a4fb8}}code{{color:#7a3e1
      <xsl:variable name="me" select="."/>
      <xsl:variable name="knownBy" select="$people[foaf:knows/@rdf:resource = $me/@rdf:about]"/>
      <tr><td class="name">{foaf:name}</td><td><code>{foaf:nick}</code></td>
-      <td>{string-join(foaf:knows ! key('person', @rdf:resource)/foaf:name, ', ')}</td>
+      <td>{foaf:knows ! key('person', @rdf:resource)/foaf:name => string-join(', ')}</td>
       <td class="num">{count($knownBy)}</td>
-      <td>{string-join(($knownBy[f:mutual(., $me)])/foaf:name, ', ')}</td>
-      <td>{string-join(foaf:topic_interest ! key('label', @rdf:resource)/rdfs:label, ', ')}</td></tr>
+      <td>{filter($knownBy, fn { f:mutual(., $me) })/foaf:name => string-join(', ')}</td>
+      <td>{foaf:topic_interest ! key('label', @rdf:resource)/rdfs:label => string-join(', ')}</td></tr>
     </xsl:for-each>
    </table>
    <p class="note">{count($people/foaf:knows)} <code>foaf:knows</code> links, of which
@@ -260,9 +257,15 @@ td.name{{font-size:16px;color:#1d3557}}td.num{{color:#8a4fb8}}code{{color:#7a3e1
      <xsl:variable name="y" select="(position() - 1) * 40 + 8"/>
      <xsl:sequence select="ty:text($label, 70, $y + 21, 16, '#22303c', 'end')"/>
      <rect x="84" y="{$y}" width="{count(current-group()) * 150}" height="28" rx="6" fill="{$colours($label)}"/>
-     <xsl:sequence select="ty:text(count(current-group()) || (if (count(current-group()) = 1) then ' person' else ' people'), 96 + count(current-group()) * 150, $y + 20, 14, '#5b6876', 'start')"/>
+     <xsl:sequence select="ty:text(`{count(current-group())} {if (count(current-group()) = 1) then 'person' else 'people'}`, 96 + count(current-group()) * 150, $y + 20, 14, '#5b6876', 'start')"/>
     </xsl:for-each-group>
    </svg>
+   </div>
+   <div class="about">
+    <p>The RDF/XML file <code>foaf-people.xml</code>, drawn by its XSLT 4.0 stylesheet: people on a circle (<code>math:sin</code>, <code>math:cos</code>),
+     each <code>foaf:knows</code> link as a curve, mutual links found and interests counted. XSLT 4 at work: chart points are records of a named
+     <code>xsl:record-type</code>; also <code>fn {{ }}</code>, string templates and the <code>=&gt;</code> arrow. Names in Armenian come from a fallback font.</p>
+    <p>The stylesheet reads only this RDF/XML layout; the <a href="foafnaut:graph">interactive FOAF graph</a> reads Turtle with Factoidal's RDF stack.</p>
    </div>
   </main></body></html>
  </xsl:template>

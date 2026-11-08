@@ -10,13 +10,10 @@ p{margin:0;padding-top:6px}
 .name{color:#5b6876;font-size:12px;line-height:16px;padding-top:0}
 .sample{font-size:30px;line-height:42px;padding-top:2px}
 svg{display:block}
+.about{margin-top:22px;padding:10px 14px;background:#eef2f7;color:#5b6876;font-size:13px;line-height:19px}.about p{padding-top:4px}
 </style></head><body><main>
 <p><a href="showcase.html">Showcase</a> · <a href="index.html">Demo index</a></p>
 <h1>Emoji</h1>
-<p>Emoji as text. Noto Sans has no emoji glyphs and the engine has no colour glyph support, so
-each emoji draws as an empty box (.notdef). A sequence of several code points (a ZWJ family, a
-skin tone, a flag) draws as several boxes, because it is not shaped as one cluster.</p>
-<p class="note">Gap: <a href="https://github.com/danbri/factoidal/issues/1276">issue 1276</a>.</p>
 
 <h2>Single emoji</h2>
 <div class="row"><p class="name">Faces, objects, nature (one code point each)</p>
@@ -57,4 +54,7 @@ SVG, not font glyphs.</p>
 <circle r="40" fill="none" stroke="#2f5f9f" stroke-width="2"/>
 </g>
 </svg>
+<div class="about">
+<p>Not yet: emoji (<a href="https://github.com/danbri/factoidal/issues/1276">issue 1276</a>). Noto Sans has no emoji glyphs and the engine no colour glyphs, so each emoji draws as an empty box, and a sequence of code points (ZWJ family, skin tone, flag) as several boxes.</p>
+</div>
 </main></body></html>

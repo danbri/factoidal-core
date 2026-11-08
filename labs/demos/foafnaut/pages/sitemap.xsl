@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- A sitemap explorer: sorts, counts and charts a sitemaps.org file. XSLT 3.0, run by Lean. -->
-<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+<!-- A sitemap explorer: sorts, counts and charts a sitemaps.org file. XSLT 4.0, run by Lean. -->
+<xsl:stylesheet version="4.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
  xmlns="http://www.w3.org/2000/svg" xmlns:xs="http://www.w3.org/2001/XMLSchema"
- xmlns:sm="http://www.sitemaps.org/schemas/sitemap/0.9"
+ xmlns:sm="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:map="http://www.w3.org/2005/xpath-functions/map"
  xmlns:ty="urn:foafnaut:typeset" exclude-result-prefixes="#all" expand-text="yes">
  <xsl:output method="xml"/>
  <!-- ty:text sets a string as SVG paths, one for each character, from the glyph table
-      ty:font below. The engine does not draw SVG <text> yet (issue 1270). -->
+      ty:font below, made before the engine drew SVG <text>. -->
  <xsl:key name="ty:glyph" match="ty:g" use="@c"/>
  <xsl:function name="ty:width" as="xs:double">
   <xsl:param name="text" as="xs:string"/><xsl:param name="size" as="xs:double"/>
@@ -129,7 +129,8 @@
   <xsl:variable name="newest" select="max(sm:url/xs:date(sm:lastmod))"/>
   <xsl:variable name="oldest" select="min(sm:url/xs:date(sm:lastmod))"/>
   <xsl:variable name="span" select="xs:integer(($newest - $oldest) div xs:dayTimeDuration('P1D'))"/>
-  <xsl:variable name="peak" select="max(for $d in distinct-values(sm:url/sm:lastmod) return count(sm:url[sm:lastmod = $d]))"/>
+  <xsl:variable name="byDay" select="map:build(sm:url, fn { xs:date(sm:lastmod) })"/>
+  <xsl:variable name="peak" select="map:for-each($byDay, fn($day, $pages) { count($pages) }) => max()"/>
   <html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta charset="utf-8"/><title>Sitemap explorer</title>
    <style>body{{margin:0;padding:16px;font-size:14px;line-height:20px;color:#1e2a24;background:#eef3ef}}
 h1{{margin:0;font-size:26px;line-height:34px;color:#1e5b3a}}h2{{margin:0;padding-top:18px;font-size:18px;line-height:26px;color:#1e5b3a}}
@@ -137,23 +138,19 @@ p{{margin:0;padding-top:6px}}.note{{color:#56645b;font-size:13px;line-height:19p
 .panel{{margin-top:10px;padding:8px;background:white;border:1px solid #c9d8cd}}
 table{{margin-top:10px;border-collapse:collapse;background:white;border:1px solid #c9d8cd}}
 th{{padding:6px 10px;background:#1e5b3a;color:white;font-size:13px}}td{{padding:4px 10px;border-top:1px solid #e1ebe4;font-size:13px}}
-tr.new td{{background:#f3fbf1}}td.age{{color:#7a8a80}}code{{color:#7a3e12}}</style></head>
+tr.new td{{background:#f3fbf1}}td.age{{color:#7a8a80}}code{{color:#7a3e12}}
+.about{{margin-top:22px;padding:10px 14px;background:#dfe9e2;color:#56645b;font-size:13px;line-height:19px}}.about p{{padding-top:4px}}</style></head>
   <body><main>
    <p><a href="index.html">Demo index</a> · <a href="feed.xml">Feed reader</a></p>
    <h1>Sitemap explorer</h1>
-   <p>This page is <code>sitemap.xml</code>, a sitemap of the {count(sm:url)} foafnaut demo pages. Lean ran its XSLT 3.0 stylesheet, which sorted the
-    pages by date, counted them, and drew the chart. Every link below opens the page in foafnaut.</p>
-   <p class="note">Shows: XSLT 3.0 date arithmetic (<code>xs:date</code>, durations), sorting with two keys, grouping, and a table with small SVG bars in its cells.
-    The dates are the last commit to each page on 8 November 2026. Does not show: a built-in sitemap view for a file that names no stylesheet
-    (<a href="https://github.com/danbri/factoidal/issues/1287">issue 1287</a>), or sorting by a click: the order is fixed when the stylesheet runs, and
-    there is no script on this page.</p>
+   <p>{count(sm:url)} demo pages, changed between {format-date($oldest, '[D] [MNn]')} and {format-date($newest, '[D] [MNn] [Y]')}.</p>
    <h2>Pages changed each day</h2>
    <div class="panel">
    <svg xmlns="http://www.w3.org/2000/svg" width="820" height="200" viewBox="0 0 820 200">
     <path d="M 40 160 L 800 160" stroke="#9fb5a6" stroke-width="1.5"/>
     <xsl:for-each select="0 to $span">
      <xsl:variable name="d" select="$oldest + xs:dayTimeDuration('P1D') * ."/>
-     <xsl:variable name="k" select="count($urls[xs:date(sm:lastmod) = $d])"/>
+     <xsl:variable name="k" select="count($byDay($d))"/>
      <xsl:variable name="x" select="60 + . * (720 div max((1, $span)))"/>
      <xsl:variable name="h" select="$k * 130 div $peak"/>
      <defs><linearGradient id="bar{.}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4caf74"/><stop offset="1" stop-color="#1e5b3a"/></linearGradient></defs>
@@ -172,15 +169,21 @@ tr.new td{{background:#f3fbf1}}td.age{{color:#7a8a80}}code{{color:#7a3e12}}</sty
      <xsl:variable name="name" select="tokenize(sm:loc, '/')[last()]"/>
      <xsl:variable name="age" select="xs:integer(($newest - xs:date(sm:lastmod)) div xs:dayTimeDuration('P1D'))"/>
      <tr class="{if ($age = 0) then 'new' else ''}"><td><a href="{$name}">{$name}</a></td>
-      <td>{if (ends-with($name, '.xml')) then 'XML and XSLT' else 'HTML'}</td>
+      <td><xsl:switch select="tokenize($name, '\.') => foot()"><xsl:when test="'xml'">XML and XSLT</xsl:when><xsl:when test="'html'">HTML</xsl:when><xsl:otherwise>Other</xsl:otherwise></xsl:switch></td>
       <td>{format-date(xs:date(sm:lastmod), '[FNn,3-3] [D] [MNn,3-3]')}</td>
-      <td class="age">{if ($age = 0) then 'newest' else $age || (if ($age = 1) then ' day' else ' days') || ' older'}</td>
+      <td class="age">{if ($age = 0) then 'newest' else `{$age} day{if ($age != 1) { 's' }} older`}</td>
       <td>{sm:changefreq}</td>
       <td><svg xmlns="http://www.w3.org/2000/svg" width="110" height="12" viewBox="0 0 110 12"><rect x="0" y="2" width="100" height="8" rx="4" fill="#e1ebe4"/><rect x="0" y="2" width="{number(sm:priority) * 100}" height="8" rx="4" fill="#2f8a55"/></svg></td></tr>
     </xsl:for-each>
    </table>
    <p class="note">By change frequency: <xsl:for-each-group select="sm:url" group-by="sm:changefreq"><xsl:sort select="count(current-group())" order="descending"/>{current-grouping-key()} {count(current-group())}<xsl:if test="position() != last()">, </xsl:if></xsl:for-each-group>.
-    Mean priority {format-number(avg(sm:url/sm:priority), '0.00')}. Oldest change {format-date($oldest, '[D] [MNn] [Y]')}, newest {format-date($newest, '[D] [MNn] [Y]')}.</p>
+    Mean priority {format-number(avg(sm:url/sm:priority), '0.00')}.</p>
+   <div class="about">
+    <p>A sitemaps.org file, <code>sitemap.xml</code>, drawn by its XSLT 4.0 stylesheet. Each link opens the page in foafnaut.
+     XSLT 4 at work: <code>map:build</code> to count pages by day, <code>xsl:switch</code>, string templates, and an <code>if {{ }}</code> with no else;
+     also date arithmetic and sorting on two keys.</p>
+    <p>Not yet: a built-in view for a sitemap with no stylesheet (<a href="https://github.com/danbri/factoidal/issues/1287">issue 1287</a>), and sorting by a click.</p>
+   </div>
   </main></body></html>
  </xsl:template>
 </xsl:stylesheet>

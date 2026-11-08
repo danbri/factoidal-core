@@ -15,18 +15,11 @@ td.bad{background:#c4455a;color:white;font-size:12px;width:64px}
 .sample{font-size:24px;line-height:34px;padding-top:2px}
 .rtl{text-align:right;direction:rtl}
 .key{margin-top:8px}
+.about{margin-top:22px;padding:10px 14px;background:#eef2f7;color:#5b6876;font-size:13px;line-height:19px}.about p{padding-top:4px}
 </style></head><body><main>
 <p><a href="showcase.html">Showcase</a> · <a href="index.html">Demo index</a></p>
 <h1>Writing systems and direction</h1>
-<p>One line per writing system. The engine holds Noto Sans Regular (3,884 glyphs) and, for the characters
-that it lacks, fallback fonts: Noto Sans Armenian, Georgian, Ethiopic, Hebrew, Arabic, Devanagari, Bengali, Tamil,
-Thai and Math, and slices of Noto Sans CJK. Green rows draw from Noto Sans, blue rows from a fallback font.
-The counts are characters of the sample that a font maps, read from its cmap table.</p>
-<p class="note">Fallback fonts landed with <a href="https://github.com/danbri/factoidal/issues/1274">issue 1274</a>. The Hub fetches a
-fallback font only for a page with a character that the font adds, so this page fetches thirteen of them and a page in
-English none. Gaps: no bidirectional layout or right-to-left shaping (<a href="https://github.com/danbri/factoidal/issues/1275">issue 1275</a>),
-so Arabic shows its letters unjoined and right-to-left text runs left to right; Indic conjuncts and reordered vowel signs
-need the Indic shaper, and these lines show the letters one by one.</p>
+<p>Green rows draw from Noto Sans, blue rows from a fallback font.</p>
 
 <h2>In the font</h2>
 <table>
@@ -91,4 +84,8 @@ Latin words and numbers shows what the engine does.</p>
 <tr><td class="bad">Not yet</td><td><p class="name">An English line with dir="rtl": a browser puts the full stop at the left end</p>
 <p class="sample rtl" dir="rtl">Hello, world.</p></td></tr>
 </table>
+<div class="about">
+<p>One line per writing system; each count is the sample's characters that the font maps. Fallback fonts (<a href="https://github.com/danbri/factoidal/issues/1274">issue 1274</a>) are fetched only for a page that needs them.</p>
+<p>Not yet: bidirectional layout and right-to-left shaping (<a href="https://github.com/danbri/factoidal/issues/1275">issue 1275</a>), so Arabic letters are unjoined and right-to-left text runs left to right; Indic conjuncts, which need the Indic shaper.</p>
+</div>
 </main></body></html>

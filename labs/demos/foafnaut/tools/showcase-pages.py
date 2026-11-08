@@ -416,7 +416,8 @@ STYLE = ('body{margin:16px;font-size:14px;line-height:20px;color:#22303c;backgro
          'h1{margin:0;font-size:24px;line-height:32px;color:#184078}'
          'h2{margin:0;padding-top:18px;font-size:18px;line-height:26px;color:#184078}'
          'p{margin:0;padding-top:6px}svg{display:block}'
-         '.note{color:#5b6876;font-size:13px}.figure{padding-top:8px}')
+         '.note{color:#5b6876;font-size:13px}.figure{padding-top:8px}'
+         '.about{margin-top:22px;padding:10px 14px;background:#eef2f7;color:#5b6876;font-size:13px;line-height:19px}.about p{padding-top:4px}')
 
 
 def page(title, body):
@@ -430,15 +431,7 @@ def dataviz():
     files = lean_files()
     bars, total, count = bar_chart(files)
     force, nodes, links = force_chart(files)
-    body = f'''<p>Five chart layouts in the manner of D3, made with no library. A Python program
-(<code>tools/showcase-pages.py</code>) computes each layout and writes plain SVG; the Lean engine
-draws it. The labels are glyph outlines from Noto Sans, made before the engine drew SVG text
-(<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>).</p>
-<p class="note">The page does not use script. The desktop window refuses a page with a script,
-and the script binding has no timers, so the charts can not animate yet; see
-<a href="showcase-dataviz-script.html">the scripted version</a> and
-<a href="https://github.com/danbri/factoidal/issues/1271">issue 1271</a>.</p>
-<h2>Bar chart: lines of Lean in this browser, by part</h2>
+    body = f'''<h2>Bar chart: lines of Lean in this browser, by part</h2>
 <p class="note">{count} Lean files in labs/demos/foafnaut, {total:,} lines in all.</p>
 <div class="figure">{bars}</div>
 <h2>Line chart: hours of daylight through the year</h2>
@@ -452,7 +445,10 @@ and the script binding has no timers, so the charts can not animate yet; see
 <div class="figure">{pack_chart(files)}</div>
 <h2>Force-directed graph: which Lean file imports which</h2>
 <p class="note">The largest connected part: {nodes} files, {links} import links. 400 steps of a spring-electric simulation with cooling; files with five or more links are named.</p>
-<div class="figure">{force}</div>'''
+<div class="figure">{force}</div>
+<div class="about">
+<p>Five chart layouts in the manner of D3, with no library and no script: <code>tools/showcase-pages.py</code> computes each layout as plain SVG, and Lean draws it. Labels are Noto Sans outlines. The <a href="showcase-dataviz-script.html">scripted version</a> needs timers in the script binding (<a href="https://github.com/danbri/factoidal/issues/1271">issue 1271</a>).</p>
+</div>'''
     return page('Data visualisation', body)
 
 
@@ -518,13 +514,7 @@ def lettering():
         x += width('Aa', size) + 14
     stack.append(label('rotated −12°', 540, 80, 22, '#c4455a', 'start', -12))
     stack.append('</svg>')
-    body = f'''<p>Lettering on circles, waves and spirals, and rotated words. Each letter is a
-glyph outline from Noto Sans, placed and turned by <code>tools/showcase-pages.py</code> and drawn
-by the Lean SVG path renderer.</p>
-<p class="note">This page was the workaround before the engine drew SVG <code>text</code> and
-<code>textPath</code> (<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>). The page
-<a href="showcase-textpath.html">showcase-textpath.html</a> has the same lettering as real SVG text, for comparison.</p>
-<h2>A badge: text around a circle</h2>
+    body = f'''<h2>A badge: text around a circle</h2>
 <div class="figure">{"".join(badge)}</div>
 <h2>A wave</h2>
 <div class="figure">{"".join(wave_svg)}</div>
@@ -533,7 +523,10 @@ by the Lean SVG path renderer.</p>
 <h2>Rotated words</h2>
 <div class="figure">{"".join(burst)}</div>
 <h2>Vertical, rotated and scaled</h2>
-<div class="figure">{"".join(stack)}</div>'''
+<div class="figure">{"".join(stack)}</div>
+<div class="about">
+<p>Each letter is a Noto Sans outline placed and turned by <code>tools/showcase-pages.py</code>, drawn by Lean's SVG path renderer. <a href="showcase-textpath.html">showcase-textpath.html</a> has the same lettering as SVG text.</p>
+</div>'''
     return page('Lettering on curves', body)
 
 
@@ -602,17 +595,13 @@ def tables():
                         ['Layout', 'block and inline boxes', 'paths, strokes, dashes'],
                         ['Paint', 'one WGSL program from Lean draws every primitive, in tiles', '']],
                        spans=[((3, 1), 2)])
-    body = f'''<p>The tables of <a href="showcase-tables.html">showcase-tables.html</a>, drawn as SVG:
-a caption bar, a header row with a rule, zebra rows, numbers aligned right on their last digit, a cell
-that spans two columns, and a totals row. <code>tools/showcase-pages.py</code> computes the column
-positions; the labels are glyph outlines from Noto Sans.</p>
-<p class="note">This is the workaround. HTML table layout is not implemented
-(<a href="https://github.com/danbri/factoidal/issues/1272">issue 1272</a>). The labels were made
-before the engine drew SVG text (<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>).</p>
-<h2>Numbers aligned right, with a total</h2>
+    body = f'''<h2>Numbers aligned right, with a total</h2>
 <div class="figure">{first}</div>
 <h2>A cell that spans two columns</h2>
-<div class="figure">{second}</div>'''
+<div class="figure">{second}</div>
+<div class="about">
+<p>The tables of <a href="showcase-tables.html">showcase-tables.html</a> drawn as SVG: <code>tools/showcase-pages.py</code> computes the column positions, and the labels are Noto Sans outlines.</p>
+</div>'''
     return page('Tables drawn as SVG', body)
 
 

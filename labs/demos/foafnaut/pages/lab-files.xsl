@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Tables that compute: totals, shares, means and charts from lab-files.xml. XSLT 3.0, run by Lean. -->
-<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+<!-- Tables that compute: totals, shares, means and charts from lab-files.xml. XSLT 4.0, run by Lean. -->
+<xsl:stylesheet version="4.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
  xmlns="http://www.w3.org/2000/svg" xmlns:xs="http://www.w3.org/2001/XMLSchema"
  xmlns:math="http://www.w3.org/2005/xpath-functions/math"
  xmlns:ty="urn:foafnaut:typeset" xmlns:f="urn:foafnaut:files" exclude-result-prefixes="#all" expand-text="yes">
  <xsl:output method="xml"/>
  <!-- ty:text sets a string as SVG paths, one for each character, from the glyph table
-      ty:font below. The engine does not draw SVG <text> yet (issue 1270). -->
+      ty:font below, made before the engine drew SVG <text>. -->
  <xsl:key name="ty:glyph" match="ty:g" use="@c"/>
  <xsl:function name="ty:width" as="xs:double">
   <xsl:param name="text" as="xs:string"/><xsl:param name="size" as="xs:double"/>
@@ -142,7 +142,7 @@
    || ' A ' || $r1 || ' ' || $r1 || ' 0 ' || $large || ' 0 ' || f:n($cx + $r1 * math:cos($t1)) || ' ' || f:n($cy + $r1 * math:sin($t1)) || ' Z'"/>
  </xsl:function>
  <xsl:template match="/files">
-  <xsl:variable name="kinds" as="element()*"><xsl:perform-sort select="kind"><xsl:sort select="number(@bytes)" order="descending"/></xsl:perform-sort></xsl:variable>
+  <xsl:variable name="kinds" select="sort(kind, (), fn { -number(@bytes) })"/>
   <xsl:variable name="bytes" select="sum($kinds/@bytes)"/>
   <xsl:variable name="files" select="sum($kinds/@files)"/>
   <xsl:variable name="lines" select="sum($kinds/@lines)"/>
@@ -156,15 +156,12 @@ table{{margin-top:10px;border-collapse:collapse;background:white;border:1px soli
 caption{{padding:6px 10px;background:#2d3a8c;color:white}}
 th{{padding:6px 10px;background:#e3e7f3;color:#2d3a8c;font-size:13px;border-bottom:2px solid #2d3a8c}}td{{padding:4px 10px;border-top:1px solid #e6e9ef;font-size:13px}}
 tr.odd td{{background:#f8f9fc}}tr.total td{{background:#fff4d6;border-top:2px solid #2d3a8c}}tr.mean td{{background:#eef7ee}}
-code{{color:#7a3e12}}</style></head>
+code{{color:#7a3e12}}
+.about{{margin-top:22px;padding:10px 14px;background:#e4e8f2;color:#5b6876;font-size:13px;line-height:19px}}.about p{{padding-top:4px}}</style></head>
   <body><main>
    <p><a href="index.html">Demo index</a> · <a href="showcase-tables.html">Tables showcase</a></p>
    <h1>Tables that compute</h1>
-   <p>This page is <code>lab-files.xml</code>: one line for each kind of file in <code>{@of}</code> at commit <code>{@commit}</code>, with its count, lines and bytes.
-    The XML holds no totals, shares or means. Lean ran the XSLT 3.0 stylesheet, which computed them and drew the ring and the bars.</p>
-   <p class="note">Shows: XSLT 3.0 arithmetic (<code>sum</code>, <code>avg</code>, <code>max</code>, <code>format-number</code>), sorting, SVG arcs made with
-    <code>math:sin</code> and <code>math:cos</code>, and a CSS table with zebra rows and a totals row. Does not show: numbers aligned right or bold
-    totals, because the engine drops <code>text-align</code> and <code>font-weight</code> (<a href="https://github.com/danbri/factoidal/issues/1273">issue 1273</a>).</p>
+   <p>The files of <code>{@of}</code> at commit <code>{@commit}</code>, by kind.</p>
    <table>
     <caption>Files of {@of}, by kind, largest first</caption>
     <tr><th>#</th><th>Kind</th><th>Files</th><th>Lines</th><th>Size</th><th>Share of bytes</th><th>Lines per file</th><th>Bytes per line</th></tr>
@@ -182,8 +179,8 @@ code{{color:#7a3e12}}</style></head>
     <tr class="mean"><td></td><td>Mean of {count($kinds)} kinds</td><td>{format-number(avg($kinds/@files), '0.0')}</td><td>{format-number(avg($kinds/@lines), '#,##0')}</td>
      <td>{f:kb(avg($kinds/@bytes))}</td><td>{format-number(1 div count($kinds), '0.0%')}</td><td></td><td></td></tr>
    </table>
-   <p class="note">Largest kind by bytes: {$kinds[1]/@name}. Most files: {$kinds[number(@files) = max($kinds/@files)]/@name} ({max($kinds/@files)}).
-    Longest files on average: {($kinds[number(@lines) gt 0])[number(@lines) div number(@files) = max($text/(number(@lines) div number(@files)))]/@name}.</p>
+   <p class="note">Largest kind by bytes: {$kinds[1]/@name}. Most files: {highest($kinds, (), fn { number(@files) })/@name} ({max($kinds/@files)}).
+    Longest files on average: {highest($text, (), fn { @lines div @files })/@name}.</p>
    <h2>Share of bytes</h2>
    <div class="panel">
    <svg xmlns="http://www.w3.org/2000/svg" width="820" height="300" viewBox="0 0 820 300">
@@ -220,6 +217,12 @@ code{{color:#7a3e12}}</style></head>
      <xsl:sequence select="ty:text(format-number(@lines, '#,##0'), 128 + $w, $y + 14, 13, '#5b6876', 'start')"/>
     </xsl:for-each>
    </svg>
+   </div>
+   <div class="about">
+    <p>The XML, <code>lab-files.xml</code>, holds only counts, lines and bytes for each kind of file. Its XSLT 4.0 stylesheet computes the totals,
+     shares and means and draws the ring and bars. XSLT 4 at work: <code>sort</code> and <code>highest</code> with <code>fn {{ }}</code> keys;
+     also <code>xsl:iterate</code> and SVG arcs from <code>math:sin</code> and <code>math:cos</code>.</p>
+    <p>Not yet: numbers aligned right and bold totals (<a href="https://github.com/danbri/factoidal/issues/1273">issue 1273</a>).</p>
    </div>
   </main></body></html>
  </xsl:template>
