@@ -6,11 +6,20 @@ engine (https://github.com/danbri/factoidal/issues/1244).
 `lake exe wasmvm-bench l4core FILE`: decode, validate, instantiate with stub imports,
 then call `__wasm_call_ctors` (export `t`), `l4_init` (`w`) and `l4_version_c` (`x`),
 and print the version string that `x` returns. The 18 imports are the Emscripten and
-WASI functions named in the build's JavaScript (`var wasmImports = {..}`); the stubs
-here are the least each needs: no files but `/dev/urandom` (constant bytes, not
-random), no environment, a clock at 0, and `emscripten_resize_heap` grows memory 0.
+WASI functions named in the build's JavaScript (`var wasmImports = {..}`), all in
+module `a` with minified names: it imports no `wasi_snapshot_preview1` module. Eight
+of them are the WASI functions under Emscripten's names (`_fd_write`, `_fd_read`,
+`_fd_close`, `_fd_seek`, `_fd_fdstat_get`, `_environ_get`, `_environ_sizes_get`,
+`_clock_time_get`) with the witx types; these go to the WASI host (`WasmVM/Wasi.lean`)
+when the type matches. Capabilities: the system clock, output forwarded to this
+process, no arguments or environment, and REAL randomness (`IO.getRandomBytes`).
+The Lean runtime reads `/dev/urandom` at start: `___syscall_openat` opens that one
+path (fd 3), only when `Caps.random` is granted, and `_fd_read` on fd 3 is served from
+`Caps.random`. Every other path is ENOENT. The other Emscripten imports keep the
+least stubs: `emscripten_resize_heap` grows memory 0, `emscripten_get_now` is 0.
 -/
 import L4Factoidal.WasmVM.Api
+import L4Factoidal.WasmVM.WasiIO
 import L4Factoidal.WasmVM.Bench.Engine
 
 namespace L4Factoidal.WasmVM.Bench.Core
@@ -30,39 +39,42 @@ def u32At (b : ByteArray) (i : Nat) : Nat :=
 
 def le32 (v : Nat) : ByteArray := ⟨#[(v % 256).toUInt8, (v / 256 % 256).toUInt8, (v / 65536 % 256).toUInt8, (v / 16777216 % 256).toUInt8]⟩
 
-/-- The stub host. `names[id]` is the JavaScript name of import `id`; `mem` is the
-store address of memory 0. Host calls are counted by name. -/
-def host (names : Array String) (mem : Nat) (counts : IO.Ref (Std.HashMap String Nat))
+/-- The WASI function an Emscripten import is, when its name is `_` and a Preview 1
+name and its type is the witx type. -/
+def wasiFn (jsName : String) (ft : FuncType) : Option Wasi.Fn :=
+  match Wasi.Fn.ofName? (jsName.drop 1).toString with
+  | some f => if jsName.startsWith "_" && ft == f.type then some f else none
+  | none => none
+
+/-- The host. `names[id]` is the JavaScript name of import `id`, `fns[id]` its WASI
+function if it is one; `mem` is the store address of memory 0. Host calls are counted
+by name; `randomBytes` counts the bytes served from `caps.random`. -/
+def host (caps : Wasi.Caps IO) (names : Array String) (fns : Array (Option Wasi.Fn)) (mem : Nat)
+    (counts : IO.Ref (Std.HashMap String Nat)) (randomBytes : IO.Ref Nat)
     (id : Nat) (args : Array Value) (st : Store) : IO (Store × HostResult) := do
   let nm := names[id]?.getD s!"import {id}"
   counts.modify fun m => m.insert nm (m.getD nm 0 + 1)
   let i32 := fun (k : Nat) => match args[k]? with | some (.i32 v) => v.toNat | _ => 0
-  match nm with
-  | "_fd_write" =>
-    -- (fd, iov, iovcnt, pnwritten): print the bytes, report them all written.
+  match nm, caps.random with
+  | "_fd_read", some gen =>
+    -- The `/dev/urandom` device (fd 3): each iovec filled from `caps.random`.
+    if i32 0 != 3 then return (st, .values #[.i32 Wasi.Errno.badf.toUInt32])
     let (iov, cnt, pn) := (i32 1, i32 2, i32 3)
     let mut total := 0
     let mut st := st
     for k in [0:cnt] do
-      match st.readMem mem (iov + 8 * k) 8 with
-      | .ok d =>
+      if let .ok d := st.readMem mem (iov + 8 * k) 8 then
         let (p, n) := (u32At d 0, u32At d 4)
-        if let .ok bytes := st.readMem mem p n then
-          IO.print (String.fromUTF8? bytes |>.getD "<bytes>")
-        total := total + n
-      | .error _ => pure ()
+        let bytes ← gen n
+        if let .ok st' := st.writeMem mem p bytes then st := st'; total := total + n
+    randomBytes.modify (· + total)
     if let .ok st' := st.writeMem mem pn (le32 total) then st := st'
     return (st, .values #[.i32 0])
-  | "_environ_sizes_get" =>
-    let st := (st.writeMem mem (i32 0) (le32 0)).toOption.getD st
-    let st := (st.writeMem mem (i32 1) (le32 0)).toOption.getD st
-    return (st, .values #[.i32 0])
-  | "_environ_get" => return (st, .values #[.i32 0])
-  | "_clock_time_get" =>
-    -- (clock, precision : i64, ptime): time 0.
-    let p := i32 2
-    let st := (st.writeMem mem p (le32 0 ++ le32 0)).toOption.getD st
-    return (st, .values #[.i32 0])
+  | "_fd_close", some _ => if i32 0 == 3 then return (st, .values #[.i32 0]) else
+    Wasi.call caps mem .fd_close args st
+  | _, _ =>
+  if let some (some f) := fns[id]? then Wasi.call caps mem f args st else
+  match nm with
   | "_emscripten_get_heap_max" => return (st, .values #[.i32 0x80000000])
   | "_emscripten_resize_heap" =>
     let want := i32 0
@@ -79,27 +91,15 @@ def host (names : Array String) (mem : Nat) (counts : IO.Ref (Std.HashMap String
   | "__tzset_js" => return (st, .values #[])
   | "___syscall_openat" =>
     -- (dirfd, path, flags, mode): only `/dev/urandom` (the Lean runtime reads it at
-    -- start), as fd 3; anything else is ENOENT (44).
+    -- start), as fd 3, and only when `caps.random` is granted; anything else is
+    -- ENOENT (Emscripten's errno 44, negated).
     let path := match st.readMem mem (i32 1) 13 with
       | .ok b => String.fromUTF8? b |>.getD ""
       | .error _ => ""
-    if path == "/dev/urandom\x00" || path.startsWith "/dev/urandom" then return (st, .values #[.i32 3])
+    if caps.random.isSome && path == "/dev/urandom\x00" then return (st, .values #[.i32 3])
     return (st, .values #[.i32 (UInt32.ofNat (4294967296 - 44))])
-  | "_fd_read" =>
-    -- (fd, iov, iovcnt, pnread): fd 3 gives bytes 0x5A (not random: a test stub).
-    if i32 0 != 3 then return (st, .values #[.i32 8])
-    let (iov, cnt, pn) := (i32 1, i32 2, i32 3)
-    let mut total := 0
-    let mut st := st
-    for k in [0:cnt] do
-      if let .ok d := st.readMem mem (iov + 8 * k) 8 then
-        let (p, n) := (u32At d 0, u32At d 4)
-        if let .ok st' := st.writeMem mem p ⟨Array.replicate n 0x5A⟩ then st := st'
-        total := total + n
-    if let .ok st' := st.writeMem mem pn (le32 total) then st := st'
-    return (st, .values #[.i32 0])
   | _ =>
-    -- Other WASI calls: EBADF (8); the l4 host hooks: 0.
+    -- The l4 host hooks: 0. (A WASI name whose type is not the witx type: EBADF.)
     let ft := match st.funcs.find? (fun f => match f.kind with | .host i => i == id | _ => false) with
       | some f => f.type | none => ⟨#[], #[]⟩
     let r := if nm.startsWith "_fd" || nm.startsWith "_clock" || nm.startsWith "_environ" then 8 else 0
@@ -119,17 +119,20 @@ def run (path : String) : IO UInt32 := do
     | .error e => IO.println s!"validate: {e.toString}"; return 1
   let handlers := vm.code.foldl (fun a c => a + (handlersOf c.code).size) 0
   IO.println s!"validate and compile: {ns / 1000000} ms, {handlers} handler-table entries"
-  -- Stub imports.
+  -- Imports: the WASI host for the eight WASI functions, stubs for the rest.
   let mut st0 : Store := {}
   let mut imps : Array ExternVal := #[]
   let mut names : Array String := #[]
+  let mut fns : Array (Option Wasi.Fn) := #[]
   for imp in m.imports do
     match imp.desc with
     | .func t =>
       let (st', a) := st0.addHostFunc (m.types[t]!) names.size
       st0 := st'
       imps := imps.push (.func a)
-      names := names.push ((importNames.lookup imp.name).getD s!"{imp.module}.{imp.name}")
+      let nm := (importNames.lookup imp.name).getD s!"{imp.module}.{imp.name}"
+      names := names.push nm
+      fns := fns.push (wasiFn nm (m.types[t]!))
     | _ => IO.println s!"import {imp.module}.{imp.name}: not a function, no stub"; return 1
   let (st1, r) := instantiate st0 vm imps
   let ia ← match r with
@@ -137,13 +140,19 @@ def run (path : String) : IO UInt32 := do
     | .error e => IO.println s!"instantiate: {e.toString}"; return 1
   let some (.mem mem) := st1.export? ia "s" | IO.println "no memory export s"; return 1
   IO.println s!"instantiate: ok, memory {(LinearMemory.size (st1.mems[mem]!).data) / pageSize} pages"
+  IO.println s!"WASI host: {(names.zip fns).filterMap (fun (n, f) => f.map fun _ => n)}"
   let counts ← IO.mkRef ({} : Std.HashMap String Nat)
+  let randomBytes ← IO.mkRef 0
+  -- Real randomness (IO.getRandomBytes) for /dev/urandom; the system clock.
+  let caps : Wasi.Caps IO := {
+    clock := Wasi.systemClock, clockRes := Wasi.systemClockRes, random := some Wasi.systemRandom,
+    stdout := some Wasi.forwardStdout, stderr := some Wasi.forwardStderr }
   let lim : Budget := { fuel := 20000000000, run := { maxDepth := 50000, maxSlots := 1 <<< 24 } }
   let mut st := st1
   for (exp, what) in [("t", "__wasm_call_ctors"), ("w", "l4_init"), ("x", "l4_version_c")] do
     let some (.func fa) := st.export? ia exp | IO.println s!"no export {exp}"; return 1
     let t0 ← IO.monoNanosNow
-    let (st', o) ← runIO st fa #[] lim (host names mem counts)
+    let (st', o) ← runIO st fa #[] lim (host caps names fns mem counts randomBytes)
     let t1 ← IO.monoNanosNow
     st := st'
     IO.println s!"{what} (export {exp}): {o.describe} in {(t1 - t0) / 1000000} ms"
@@ -159,6 +168,7 @@ def run (path : String) : IO UInt32 := do
     | _ => break
   let cs ← counts.get
   IO.println s!"host calls: {cs.toList}"
+  IO.println s!"random bytes from IO.getRandomBytes: {← randomBytes.get}"
   return 0
 
 end L4Factoidal.WasmVM.Bench.Core

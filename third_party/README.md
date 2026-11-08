@@ -44,6 +44,14 @@ third_party/
 │                   Document Licence), core test suite (Apache-2.0) and
 │                   its JSON + .wasm conversion (tools/wasmvm/
 │                   convert-spec-tests.sh). See wasm-spec/README.md
+├── wasi/          WebAssembly/WASI at 9ea0e7534f: the Preview 1 witx
+│                   (wasi_snapshot_preview1.witx, typenames.witx), the
+│                   reference for WasmVM/Wasi.lean (W3C Community CLA).
+│                   See wasi/README.md
+├── wasi-testsuite/ WebAssembly/wasi-testsuite at 9d84631e42 (branch
+│                   prod/testsuite-base): 16 prebuilt Preview 1 tests
+│                   for the functions WasmVM grants (Apache-2.0).
+│                   See wasi-testsuite/README.md
 ├── spectec-lean4/  SpecTec-to-Lean 4 backend and generated Wasm.lean,
 │                   Wasm-DSL/spectec branch lean4-wip at 16b70bde87
 │                   (Apache-2.0; spec-version notes in its README.md)

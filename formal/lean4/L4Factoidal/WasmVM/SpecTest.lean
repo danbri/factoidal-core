@@ -17,6 +17,7 @@ Not part of the verified library: it does file I/O and prints scores.
 -/
 import L4Factoidal.WasmVM.Tests.Memory
 import L4Factoidal.WasmVM.Tests.Proposals
+import L4Factoidal.WasmVM.Tests.Wasi
 import Lean.Data.Json
 import L4Factoidal.WasmVM.Api
 
@@ -372,7 +373,8 @@ def main (args : List String) : IO UInt32 := do
   IO.println s!"TOTAL files {files.size}: pass {tot.pass} fail {tot.fail} not-run {tot.notRun} ({t1 - t0} ms, {if serial then "serial" else "parallel"})"
   let memOk ← if names.isEmpty then Tests.Memory.run else pure true
   let propOk ← if names.isEmpty then Tests.Proposals.run else pure true
-  return if tot.fail == 0 && memOk && propOk then 0 else 1
+  let wasiOk ← if names.isEmpty then Tests.Wasi.run else pure true
+  return if tot.fail == 0 && memOk && propOk && wasiOk then 0 else 1
 
 end L4Factoidal.WasmVM.SpecTest
 

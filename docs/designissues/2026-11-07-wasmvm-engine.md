@@ -34,7 +34,8 @@ only (the spec-test runner also imports `Lean.Data.Json`).
 | `Api` | the public surface |
 | `Proofs.*` | refinement theorems (`Proofs.Proposals`: exceptions and tail calls) |
 | `SpecTest` | `lake exe wasmvm-spectest` |
-| `Tests.Memory`, `Tests.Proposals` | run after the spec tests (legacy exceptions, 10^6 tail calls, `try_table` cost) |
+| `Tests.Memory`, `Tests.Proposals`, `Tests.Wasi` | run after the spec tests (legacy exceptions, 10^6 tail calls, `try_table` cost, WASI) |
+| `Wasi`, `WasiIO` | WASI Preview 1 host, deny by default (`Tests.Wasi`: `lake exe wasmvm-bench wasi`) |
 | `Bench` | `lake exe wasmvm-bench` (`Bench.Core`: `l4core FILE` loads `l4factoidal.wasm`) |
 
 ## API
@@ -77,22 +78,116 @@ resume      : Store → Suspended → Array Value → Limits → Store × Outcom
   Values use the spec-test JSON form (`{"type":"i32","value":"42"}`), so the runner
   and the hosts share one codec.
 
-## WASI (later; no code now)
+## WASI Preview 1
+
+Issue https://github.com/danbri/factoidal/issues/1289 (section 4), 2026-11-08. Code:
+`Wasi.lean` (host, linker, theorems; imports `Api` only), `WasiIO.lean` (capability
+sources in `IO`, `load`, `Loaded.run`), `Tests/Wasi.lean`. Reference: the Preview 1
+witx in `third_party/wasi/` (WebAssembly/WASI at 9ea0e7534f, the last commit with
+`legacy/preview1/witx`). Errno values, the `$fdstat` layout (24 bytes: filetype u8 at
+0, flags u16 at 2, rights u64 at 8 and 16), the `$rights` bit of `fd_write` (bit 6)
+and the core type of each function (the witx lowering) follow those files.
 
 WASI is a layer of Lean host functions over the import API, not part of the engine.
-Order: a Preview 1 subset first (`fd_write` to a debug sink, `proc_exit`,
-`clock_time_get`, `random_get`, `args_*`, `environ_*`), deny by default; files and
-sockets only by an explicit grant through the engine's network policy; then the
-Component Model and WASI 0.2. The API carries this as follows:
+Files and sockets later only by an explicit grant through the engine's network
+policy; then the Component Model and WASI 0.2.
 
-- Imports are resolved by (module name, field name) against a host-function set that
-  is a Lean value (`HostSet`), chosen by the embedder. An import that the set does not
-  name fails at link time. So "no capability given, no access" is a statement about
-  `instantiate` and the set, which can be proved.
-- A host function runs between steps, on the suspended store: it reads and writes the
-  instance's memory through `Store.readMem`/`Store.writeMem`, bounds-checked.
-- A host function answers `resume` with `HostResult.values`, `.trap msg` or
-  `.exit status`; `.exit` ends the run with `Outcome.exit status` (for `proc_exit`).
+**Linking.** `Wasi.link st md extra` binds every import of the module: a
+`wasi_snapshot_preview1` import must be one of the 46 Preview 1 functions (`Fn`) with
+its witx type, else a link error; another import must be one the embedder's `extra`
+accepts. Each import gets one host function, whose host id is the import's index.
+`Wasi.host caps mem bindings extraFn` is the host function set for `runIO`; `mem` is
+the store address of the instance's exported `memory`.
+
+**Functions.** All 46 link, so a module that imports more than it uses still runs.
+
+| Functions | Answer |
+|---|---|
+| `args_get`, `args_sizes_get`, `environ_get`, `environ_sizes_get` | the strings of `Caps.args`, `Caps.env` (UTF-8, NUL after each) |
+| `clock_time_get`, `clock_res_get` | `Caps.clock id`, `Caps.clockRes id`; `ENOTCAPABLE` when not granted, `EINVAL` for an id over 3 |
+| `random_get` | `Caps.random n`; `ENOTCAPABLE` when not granted; `EFAULT` before the source is asked when the buffer is out of bounds |
+| `fd_write` | fd 1 to `Caps.stdout`, fd 2 to `Caps.stderr` (`ENOTCAPABLE` without a sink); fd 0 and fd over 2: `EBADF`. The bytes go to the sink only after every iovec and the result pointer are checked |
+| `fd_fdstat_get` | fd 0 to 2: character device, rights `fd_write` for 1 and 2 when their sink is granted, else none; fd over 2: `EBADF` |
+| `proc_exit` | `HostResult.exit`, which ends the run with `Outcome.exit` |
+| `sched_yield` | success |
+| the other 19 `fd_*` (`fd_read`, `fd_seek`, `fd_close`, `fd_prestat_get`, ...) | `EBADF` |
+| the 10 `path_*` and 4 `sock_*` | `ENOTCAPABLE` |
+| `poll_oneoff`, `proc_raise` | `ENOSYS` |
+
+A pointer out of bounds is `EFAULT`; memory is read and written only through
+`Store.readMem`/`Store.writeMem`.
+
+**The capability record** (`Caps m`, built by the embedder in Lean):
+
+| Field | Meaning | `{}` |
+|---|---|---|
+| `args`, `env` | the strings; `env` entries are `KEY=VALUE` | none |
+| `clock : UInt32 → Option (m UInt64)` | the action that reads clock `id`, in ns | no clock |
+| `clockRes : UInt32 → Option UInt64` | the stated resolution | none |
+| `random : Option (Nat → m ByteArray)` | the random source, a host function | none |
+| `stdout`, `stderr : Option (ByteArray → m Unit)` | the sinks: capture or forward | none |
+
+There is no field for files, directories or sockets: this host cannot grant them.
+`WasiIO.lean` gives the sources: `systemClock` (realtime from `Std.Time.Timestamp.now`,
+monotonic from `IO.monoNanosNow`; the CPU clocks are not granted), `systemRandom`
+(`IO.getRandomBytes`), `seededRandom seed` (SplitMix64: deterministic, NOT random;
+a test that uses it says so), `capture ref`, `forwardStdout`, `forwardStderr`.
+
+**Deny by default: the theorems** (`Wasi.lean`; axioms `propext`, `Quot.sound`, and
+`Classical.choice` for `resolve_wasi` only; no `sorry`):
+
+- `denied_is_pure`: for every function that is not granted (35 of 46,
+  `denied_count`), in EVERY monad, for every capability record, memory, argument list
+  and store, `call caps mem f args st = pure (st, .values #[.i32 f.denyErrno])`. So
+  the call runs no action at all (the host is generic in its monad and has no action
+  but those in `Caps`), leaves the store and memory unchanged, and
+  `denyErrno_ne_success` says it never answers success.
+- `path_open_denied`: `path_open` answers `ENOTCAPABLE`; `fd_read_denied`: `fd_read`
+  and `fd_pread` answer `EBADF`; `path_sock_denied`: every `path_*` and `sock_*`
+  function is denied with `ENOTCAPABLE`.
+- `host_path_open`: in the host function set (`host`), an import bound to `path_open`
+  answers `ENOTCAPABLE`, whatever the capabilities and the embedder's other functions.
+  `resolve_wasi`: the linker binds a `wasi_snapshot_preview1` import only to the
+  Preview 1 function of that name, never to an embedder function.
+- `fd_write_needs_sink`, `random_get_needs_source`, `clock_time_get_needs_clock`: with
+  the capability not granted, the function never succeeds and is `pure` (no effect).
+
+Stated plainly: no host function of this module can open, read or write a file or a
+socket, and none of the 35 denied functions has any effect, in any embedding. Not
+proved: that the 11 granted functions write only the memory ranges the witx names
+(tested byte by byte, below), and that `link` gives `host` exactly
+`md.imports.mapM resolve` (it does by definition; no lemma about `Array.mapM` is
+stated).
+
+**Trusted host pieces** (outside Lean's kernel): `IO.getRandomBytes`,
+`IO.monoNanosNow`, `Std.Time.Timestamp.now`, and the stdout/stderr writes, used only
+through the capability record. `IO.getRandomBytes` is the Lean runtime's call to the
+operating system's random source.
+
+**Tests** (`lake exe wasmvm-bench wasi`, and at the end of `wasmvm-spectest`), all pass:
+
+| Part | checks |
+|---|---|
+| the function table (46 names, round trip, `pathSock` is the `path_`/`sock_` set) | 4 |
+| `wasi_all.c` (Emscripten 6.0.8): 45 imports typed by the C compiler from Emscripten's `wasi/api.h` link (an outside check of the witx lowering; `sock_accept` is not in that header), and each answers the expected errno with no capabilities | 46 |
+| `wasi_hand.wat`: each granted function with memory checked byte by byte (fixed arguments, environment, clock, and `seededRandom 42`, deterministic); denied functions with all 64 KiB of memory checked unchanged; no-capability answers | 30 |
+| a wrong type and a non-Preview 1 name are link errors | 2 |
+| `third_party/wasi-testsuite` (WebAssembly/wasi-testsuite, Apache-2.0): 12 AssemblyScript tests (args, environ, fd_write, proc_exit, random_get) and 4 C clock tests, with REAL randomness | 16 |
+
+A red check, run once: with `random := none` in the suite's capabilities, both
+`random_get` tests fail (`abort`, exit 255); with one wrong byte in an expected
+`$fdstat`, its check fails.
+
+**`l4factoidal.wasm`** imports no `wasi_snapshot_preview1` module: its 18 imports are
+Emscripten's own, in module `a` with minified names. Eight are the WASI functions
+under Emscripten's names (`_fd_write`, `_fd_read`, `_fd_close`, `_fd_seek`,
+`_fd_fdstat_get`, `_environ_get`, `_environ_sizes_get`, `_clock_time_get`) with the
+witx types; `Bench/Core.lean` sends these to `Wasi.call` when the type matches. The Lean
+runtime opens `/dev/urandom` with `___syscall_openat` and reads it with `_fd_read`:
+the bench opens that one path as fd 3 only when `Caps.random` is granted, and serves
+fd 3 from `Caps.random` = `systemRandom`. Result (2026-11-08): `l4_init` returns 1
+(18.2 s, 8556 clock reads), the version string is printed, and 8 bytes of real
+randomness from `IO.getRandomBytes` reached the module. The constant-byte stub is gone.
 
 ## Run-time representation
 
@@ -615,8 +710,9 @@ The stubs are the least each import needs (no files, no environment, clock 0;
 `emscripten_resize_heap` grows memory 0 through `Store.growMem`). What was missing: the
 Lean runtime opens `/dev/urandom` at start; with `openat` answering ENOENT, `l4_init`
 returned 0 and printed "uncaught exception: no such file or directory (error code: 44)
-file: /dev/urandom". The stub now serves it as a file of constant bytes (a test stub,
-not a source of randomness). A real host needs WASI `random_get` or an equivalent.
+file: /dev/urandom". The first fix served it as a file of constant bytes; since
+2026-11-08 the bench uses the WASI host and serves `/dev/urandom` from
+`IO.getRandomBytes` ("WASI Preview 1").
 18 s for `l4_init` is the module initialisers run by the interpreter (it calls
 `clock_time_get` 8697 times); not measured further.
 
@@ -630,6 +726,8 @@ as for all compiled Lean.
 |---|---|---|---|
 | `Exec/Bytes.lean` `Bytes.st16`, `st32`, `st64` (`@[extern c inline]`) | one `memcpy` of 2, 4 or 8 bytes after the uniqueness check that `lean_byte_array_uset` makes (copy when shared), byte swap on a big-endian host | the `uset` chain in each definition's body (the proofs use it) | every slot write and every memory store of the spec tests (35501 pass) and of `memtest`; the Lean interpreter cannot run them, so no `#eval` calls a store |
 | `Bench/Repr.lean` `rdX`, `wrX` (`@[extern c inline]`) | an 8-byte load and store; benchmark only, not in the engine | `rdF`, `wrF` | `wasmvm-bench repr` prints each variant's result beside the others; not compared automatically |
+
+| `WasiIO.lean` capability sources | `IO.getRandomBytes` (the operating system's random source), `IO.monoNanosNow`, `Std.Time.Timestamp.now`, the stdout and stderr writes | none: these are I/O; the WASI host reaches them only through `Caps` (`denied_is_pure`) | `Tests/Wasi.lean`: the wasi-testsuite clock and random tests |
 
 Not trusted pieces: `@[csimp]` (`Binary.Leb.uSpec_eq_fast` is a theorem),
 `@[noinline]` and `@&` (compiler hints; they do not change what a function computes).
@@ -698,8 +796,8 @@ Open obligations (stated, not proved):
    `Spec.config`.
 3. Proposals in the order of the planned uses: SIMD (HarfBuzz builds use it when
    enabled), memory64, GC. Exceptions, tail calls and `call_ref` are done (stage 2).
-   A real host for `l4factoidal.wasm` (WASI subset with `random_get`), and why its
-   `l4_init` takes 18 s.
+   Why `l4factoidal.wasm`'s `l4_init` takes 18 s (its host now has real randomness:
+   "WASI Preview 1").
 4. Parallel compile by chunks of equal byte size; decode without the per-section
    copy (`b.extract 0 e`).
 5. The JSON op form for the hosts, and the Emscripten build of the engine.
