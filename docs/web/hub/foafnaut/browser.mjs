@@ -80,7 +80,11 @@ worker.onmessage=({data})=>{
     }
   }
   if(data.type==='location'){
-    const want=location.pathname+location.search+(data.home?'':'#'+hashOf(data.url));
+    // The # address is the page shown; ?page= only picks the first page of a new visit,
+    // so it leaves the address once the history follows the tab.
+    const search=new URLSearchParams(location.search);search.delete('page');
+    const kept=search.toString();
+    const want=location.pathname+(kept?'?'+kept:'')+(data.home?'':'#'+hashOf(data.url));
     if(want!==location.pathname+location.search+location.hash){
       if(data.push&&!fromHost)history.pushState(pageState,'',want);else history.replaceState(pageState,'',want);
     }
@@ -149,7 +153,7 @@ worker.onerror=event=>{note.hidden=false;note.textContent='The browser worker fa
 // to an OffscreenCanvas with WebGPU. If not, or with ?check=1, the worker reads each frame
 // back and the page paints it with putImageData.
 function begin(surface){
-  const options={...size(),page:query.get('page'),...(hubAddress()?{address:hubAddress()}:{}),check:checkParam==='1'||checkParam==='surface',stats:showStats,platform:mac?'mac':'other',...(query.get('layers')==='0'?{layers:false}:{})};
+  const options={...size(),page:hubAddress()?undefined:query.get('page'),...(hubAddress()?{address:hubAddress()}:{}),check:checkParam==='1'||checkParam==='surface',stats:showStats,platform:mac?'mac':'other',...(query.get('layers')==='0'?{layers:false}:{})};
   if(surface&&checkParam!=='1'){
     const offscreen=canvas.transferControlToOffscreen();
     window.foafnautSurface=true;
@@ -157,7 +161,7 @@ function begin(surface){
   }else{window.foafnautSurface=false;send({type:'start',...options});}
 }
 const canTransfer=worker instanceof Worker&&typeof canvas.transferControlToOffscreen==='function'&&typeof OffscreenCanvas==='function';
-if(canTransfer)send({type:'hello',page:query.get('page')});else begin(false);
+if(canTransfer)send({type:'hello',page:hubAddress()?undefined:query.get('page')});else begin(false);
 addEventListener('resize',()=>{fling.stop();send({type:'resize',...size()});});
 // Back and forward in the host browser: the engine shows that address, not as a new entry.
 let fromHost=false;

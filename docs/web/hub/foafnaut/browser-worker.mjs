@@ -972,7 +972,13 @@ async function start(data){
   home=await prepare(homeURL);
   // A page asked for in the address is the first frame: the demo index is not drawn first.
   let first=home;
-  if(wanted){try{first=await pageFor(wanted);}catch(error){first=refusal(wanted,String(error.message??error));}}
+  // A # address that the link rules load in the tab is the first frame too; any other route
+  // (a command, a refusal, another site) is handled by visit() once the tab is ready.
+  let fromAddress;
+  if(data.address){try{const route=router.route({...site,href:data.address,base:homeURL});
+    if(route&&!['system','command','refuse'].includes(route.route))fromAddress=route.url;}catch{}}
+  const opening=fromAddress??wanted;
+  if(opening){try{first=await pageFor(opening);}catch(error){first=refusal(opening,String(error.message??error));}}
   phase('pageReady');
   history=push({entries:[],index:0},homeURL);
   if(first!==home){history=push(history.history,first.url);pages++;}
@@ -988,8 +994,8 @@ async function start(data){
   openState().then(()=>{if(first!==home&&!first.title?.startsWith('Page refused'))browserState?.visit(first.url,first.title??'',homeURL).catch(()=>{});})
     .catch(error=>{stateReason=String(error.message??error);});
   // A new window starts in the address bar with the address selected (issue 1268).
-  if(data.address)visit(data.address);
-  else if(wanted)request();else focusAddress();
+  if(data.address&&!fromAddress)visit(data.address);
+  else if(opening)request();else focusAddress();
   for(const message of early.splice(0))receive(message);
 }
 // Printing (issue 1268). The canvas is drawn by WebGPU and does not print, so the page
