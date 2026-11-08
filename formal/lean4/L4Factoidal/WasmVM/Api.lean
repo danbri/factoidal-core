@@ -146,6 +146,23 @@ private def finish (st : StoreOf M) (results : Array ValType) (r : StoreOf M × 
     let (st', o) := finish st k.results r
     (st', o, lim.fuel - r.2.2.1)
 
+/-- `runIO`, also giving the number of instructions run. -/
+@[specialize] def runIOSteps (st : StoreOf M) (fa : Nat) (args : Array Value) (lim : Budget)
+    (host : Nat → Array Value → StoreOf M → IO (StoreOf M × HostResult)) (maxHostCalls : Nat := 1000000) :
+    IO (StoreOf M × Outcome × Nat) := do
+  let (st0, o0, n0) := invokeSteps st fa args lim
+  let mut st := st0
+  let mut o := o0
+  let mut n := n0
+  for _ in [0:maxHostCalls] do
+    match o with
+    | .hostCall id vs k =>
+      let (st', r) ← host id vs st
+      let (st'', o', n') := resumeSteps st' k r lim
+      st := st''; o := o'; n := n + n'
+    | _ => break
+  return (st, o, n)
+
 /-- A pure host: host function id, arguments, store → store and result. -/
 abbrev PureHost (M : Type) := Nat → Array Value → StoreOf M → StoreOf M × HostResult
 

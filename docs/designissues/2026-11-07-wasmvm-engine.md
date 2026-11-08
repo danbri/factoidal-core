@@ -844,6 +844,160 @@ memsum 69 / 168 / 190, tail calls 59 / 115 / 120. The native library is slower t
 the Wasm engine and than `lake exe wasmvm-bench` (sum 369): not looked into yet (the
 library is built with `leanc -O2` and links the static Lean runtime).
 
+## QuickJS in WasmVM
+
+2026-11-08. Page scripts run in QuickJS-NG v0.18.0 (MIT;
+https://github.com/quickjs-ng/quickjs, the version that
+`labs/demos/foafnaut/web-render/script-engine/quickjs.mjs` already pins), compiled to
+a standalone WebAssembly module and run by WasmVM. No host JavaScript engine runs the
+page script, natively or on the Hub. The DOM stays in Lean: each DOM operation of a
+script is one host import that Lean serves on its DOM arena (`DOM.Arena`). The binary
+is NOT in the repository.
+
+**Build** (`tools/wasmvm/build-quickjs.sh [WORKDIR]`, default `~/working/qjs-wasm`;
+README and licences in `tools/wasmvm/quickjs/README.md`): the release tarball (SHA-256
+checked), the four library files (`quickjs.c`, `libregexp.c`, `libunicode.c`,
+`dtoa.c`; not `quickjs-libc.c`, so no `std` or `os` module) and the entry point
+`tools/wasmvm/quickjs/qjs_wasmvm_entry.c`, with Emscripten 6.0.8:
+
+    emcc -O2 -fno-exceptions -mno-simd128 -D_GNU_SOURCE -funsigned-char -c ...
+    emcc -O2 ... -sSTANDALONE_WASM --no-entry -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=4MB \
+      -sSTACK_SIZE=1MB -sERROR_ON_UNDEFINED_SYMBOLS=0
+
+No threads, no atomics, no SIMD, no exceptions. 1 001 097 bytes; 11 s to build; the
+whole work directory (source, objects, Test262 sample) is under 30 MB.
+
+**Imports**: 13 functions of the module `foafnaut_dom` (below);
+`wasi_snapshot_preview1` `clock_time_get`, `fd_write`, `fd_seek`, `fd_close`,
+`environ_sizes_get`, `environ_get`; `env.emscripten_notify_memory_growth` (does
+nothing). WASI capabilities given: a virtual clock only, which the event loop sets.
+QuickJS-NG stops at `unreachable` in `JS_NewRuntime` when the clock answers an error
+(the same in V8), so a clock must be granted; it is the event loop's clock, so
+`Date.now()` is virtual time (0 at the start). No randomness, output, environment or
+files.
+
+**Exports** (the ABI is in the comment at the top of the entry point):
+
+- `qjs_new()`: runtime (64 MB heap limit, 768 KB JS stack limit) and context, then a
+  JavaScript prelude that builds `document` (`getElementById`, `querySelector` for
+  `#id`, `body`, `html`; `createElement`; `documentElement`, `body`, `head`), elements
+  (`textContent`, `getAttribute`, `setAttribute`, `hasAttribute`, `id`, `tagName`,
+  `appendChild`, `append`, `addEventListener`, `onclick`), `console`, `setTimeout`,
+  `setInterval`, `clearTimeout`, `clearInterval`, `queueMicrotask`, `window`, `self`.
+  The prelude gets the native functions as an argument; they are not globals.
+- `qjs_eval(src, len) -> result`: a classic script in global scope (`let` and `class`
+  bindings are shared between scripts, as in HTML).
+- `qjs_call(callback, target, event) -> result`: run one registered callback: a
+  listener with the event's target node, or a timer with target -1. Calls with the
+  same event number share one event object, so `preventDefault` is seen by the later
+  listeners of the same dispatch.
+- `qjs_release(callback)`, `qjs_alloc`, `qjs_free`, and `qjs_test262` (Test262 only:
+  a fresh context with `print` and `$262`).
+- Each of `qjs_eval` and `qjs_call` ends with a microtask checkpoint: QuickJS's promise
+  jobs run until none is left. A result is `u32 status` (0 normal, 1 exception),
+  `u32 length`, UTF-8 text (the completion value, or the exception and its stack).
+
+**The host** (`WasmVM/Hosts/Dom.lean`): `Import` names the 13 imports with their
+types; `call` serves one. Strings cross as (pointer, length) in UTF-8 and are read
+with `Store.readMem` (bounds checked; a pointer outside memory traps). Mutations are
+the typed `Command`s of `WebRenderScript` (`setTextContent`, `setAttribute`, with its
+bounds: 64 KiB strings, 256-byte attribute names, 4096 commands, 1048576 nodes) plus
+`createElement` and `appendChild`, applied with the `DOM.Arena` operations
+(`Dom.setTextContent`, `Dom.setAttribute`, `Dom.createElement`, `Dom.appendChild`), so
+DOM errors are the arena's (`InvalidCharacterError`, `HierarchyRequestError`). The host
+keeps the list of commands, so it can send the same list to another arena. Timers and
+listeners only record a `Request` (`listen node type callback`, `timer id callback
+delay repeating`, `clearTimer id`); the embedder's event loop decides which callback
+runs and when, and runs it with `qjs_call`. The host is a pure function of its state,
+the arguments and the store: no monad, so no network, file, clock or randomness.
+Theorems (no `sorry`):
+
+- `call_writes_within`: an import with no output buffer returns the store unchanged;
+  the three that return a string (`tag_name`, `text_content_get`, `get_attribute`)
+  change it at most by one `writeMem` of at most `capacity` bytes at the buffer the
+  module gave (`WritesWithin`). A string that does not fit is not written; the length
+  is returned and the module asks again with a larger buffer.
+- `call_store`: so a DOM import never grows memory or changes tables, globals or
+  functions.
+- `Import.all_names_distinct`, `Import.ofName?_name`.
+
+**Run** (`lake exe wasmvm-bench qjs WASM [REACTOR]`, `Bench/QuickJS.lean`; machine:
+the owner's Mac, 2026-11-08):
+
+- Load, `_initialize` and `qjs_new`: 220 ms.
+- Plain JavaScript, 25 cases, 25 pass: arithmetic and float printing, strings and
+  UTF-16 length, closures, arrays, JSON, `try`/`catch`, classes with private fields,
+  `extends`/`super`, destructuring, `Map`/`Set`, generators, regular expressions with
+  `\p{L}`, BigInt, `Date` on the virtual clock, promises and `queueMicrotask` (order
+  after the checkpoint: `sync,then 1,micro`), `async`/`await`, no host objects
+  (`process`, `require`, `fetch`, `XMLHttpRequest`, `WebAssembly` are undefined), a
+  thrown `RangeError`, a `SyntaxError`, `fib(20)`, and unbounded recursion caught as
+  a `RangeError`.
+- Scripted pages, parsed with the Lean HTML parser; Lean dispatches the clicks (the
+  target's `click` listeners, in the order added) and runs the timers. 8 pages, 8 as
+  expected:
+  - compared with the host-run QuickJS path (`tools/wasmvm/quickjs/host-reference.mjs`:
+    the pinned `qjs-wasi-reactor.wasm` in Node with `guest.mjs` and the same element
+    snapshot and sources): `fixtures/scripted.html` (2 clicks),
+    `fixtures/mvp.html` (3 clicks, `preventDefault`), two scripts that share a `let`
+    binding with `this` and `event.type` in the listener, and two listeners where the
+    second sees the first's `preventDefault`. Same commands, logs and
+    `defaultPrevented` in every turn.
+  - with an expected result (the host-run path has no timers, `createElement` or
+    promise jobs): `setTimeout` order by due time, `setInterval` with `clearInterval`,
+    a cleared `setTimeout`; `createElement`, `setAttribute`, `appendChild` from a
+    click; promise jobs after a script and after a callback; a refused attribute name
+    (`InvalidCharacterError`, caught in the script). The host-run reference without
+    its Lean DOM binding accepts that name, so that case is not compared with it.
+- Speed: 104 to 121 million Wasm instructions per second on QuickJS (the interpreter
+  loop of QuickJS is a large `switch`, which suits the engine). `fib(24)`: 146 M
+  instructions, 1.39 s (native QuickJS-NG, same build flags: 8 ms, about 170 times
+  faster). A loop of 200 000 iterations plus `JSON.stringify` of 2000 objects: 329 M
+  instructions, 2.7 s (native 18 ms). One scripted-page turn (a click that sets
+  `textContent`): 40 000 to 70 000 instructions, 0.5 to 1 ms. Running the scripts of
+  a page: 170 000 to 420 000 instructions, 2 to 12 ms.
+
+**Test262** (`tools/wasmvm/quickjs/test262-sample.py 500 1244`, then
+`lake exe wasmvm-bench test262 WASM DIR [NATIVE [FUEL]]`, `Bench/Test262.lean`): 500
+tests drawn at random (seed 1244) from `test/built-ins`, `test/language` and
+`test/annexB` of Test262 at commit 5ef1e5723b (the commit that QuickJS-NG v0.18.0
+pins). 64 are not run, by QuickJS-NG's own `test262.conf`: 10 module tests, 54 with a
+feature it marks `skip` (for example Temporal). The 436 others run once each,
+non-strict unless `onlyStrict` (the upstream runner runs both modes), with the harness
+files the test names, in a fresh context.
+
+- WasmVM, budget 2 G instructions per test: 431 of 436 pass (98.8 %), 15.8 G
+  instructions in 130 s (121 M per second).
+- Native QuickJS-NG (the same entry point built with `cc -DQJS_NATIVE`): 434 of 436
+  pass in 0.7 s.
+- The 2 failures in both: dynamic `import()` of a fixture module; the page host gives
+  no module loader (deny by default).
+- 3 more fail in the VM with the default budget of 2 G instructions per test: the
+  `RegExp` property-escape tests `Script=Kannada`, `Script_Extensions=Kannada` and
+  `Script_Extensions=Tibetan` (upstream's `test262.conf` names that directory as
+  slow). With a budget of 40 G they pass: 6.6 G instructions for the 3, 53 s. So with
+  enough fuel the VM gives the same result as native on all 436: 434 pass (99.5 %).
+  No case passes natively and fails in the VM for another reason.
+- Apple's EU bar for an alternative engine is 80 % of Test262 without a JIT.
+  QuickJS-NG in WasmVM is over it on this sample. This is a sample of 436, not the
+  full suite (about 48 600 files in the three directories).
+
+**What wiring into the Foafnaut engine needs**:
+
+1. The engine (`WebRenderScript`) loads the QuickJS module once per page, with this
+   host on the page's arena, in place of the host-run worker. The command list of the
+   host is the list `WebRenderScript.applyCommands` takes today; `createElement` and
+   `appendChild` need two new cases there.
+2. The event loop (`L4Factoidal.EventLoop`, the "event-loop" work) takes the
+   `Request`s as its timer and listener calls and gives back which callback runs
+   next; the embedder runs it with `qjs_call`. The virtual clock of the WASI caps is
+   the event loop's clock.
+3. Speed: a page script of a few hundred thousand instructions is a few milliseconds;
+   a heavy script is about 170 times slower than native QuickJS. The engine speed
+   work (above, "Next" 1) applies directly.
+4. The module (1 MB) is not committed. The owner decides whether it is vendored or
+   built (as for HarfBuzz).
+
 ## Trusted pieces
 
 Code whose meaning is not checked by Lean's kernel, in the engine and its tools. Lean's
