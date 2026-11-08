@@ -297,6 +297,15 @@
    "doesNotShow": "readback, textures, compute, WebGL; without the new engine the canvas stays blank and the page says the script has not run"
   },
   {
+   "page": "webgl-triangle.html",
+   "title": "WebGL 1 and 2, checked by Lean",
+   "handwritten": true,
+   "needs": "page scripts and the page GPU commands with WebGL programs (gpu_command op 9, L4Factoidal.PageGpu.Glsl) in the engine and the guest",
+   "appRefused": "does not execute scripts",
+   "shows": "two spinning triangles, one drawn with getContext('webgl2') and GLSL ES 3.00, one with getContext('webgl') and GLSL ES 1.00; Lean translates both to its WGSL subset",
+   "doesNotShow": "textures, index buffers, depth, blending, readPixels"
+  },
+  {
    "page": "svg-text-labels.html",
    "title": "SVG text labels",
    "handwritten": true,

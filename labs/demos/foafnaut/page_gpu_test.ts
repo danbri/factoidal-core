@@ -66,3 +66,29 @@ console.log("canvas rect:",place.canvases![0].rect,"clip:",place.canvases![0].cl
 assert.equal(place.canvases![0].rect[2],362); // 360 plus the 1px border box each side
 assert.match(place.canvasBlit!,/textureLoad/);
 console.log("page_gpu_test: ok");
+
+// WebGL 1 and 2 (PageGpu.Glsl): both programs link (Lean answers attribute locations), each
+// canvas gets its own frames, and the shaders the host gets are Lean's WGSL.
+{
+  const gl=await Deno.readTextFile(new URL("./pages/webgl-triangle.html",import.meta.url));
+  const glURL="file:///webgl-triangle.html";
+  let t=engine.scriptSession(gl,{action:"start",url:glURL,resources:[]}) as unknown as Turn;
+  const got:Gpu[]=[...(t.gpu??[])];let glCommands=t.commands;
+  for(let i=0;i<12;i++){
+    t=engine.scriptSession("",{action:"advance",session:t.session,ms:20}) as unknown as Turn;
+    got.push(...(t.gpu??[]));if(t.commands)glCommands=t.commands;
+    for(const l of t.logs)assert(!l.startsWith("WebGL:"),l);
+    for(const e of t.errors)assert.fail("page error: "+e);
+  }
+  const canvases=got.filter(c=>c.k==="canvas").map(c=>c.g![1]);
+  assert.equal(canvases.length,2);
+  const shaders=got.filter(c=>c.k==="shader").map(c=>c.code as string);
+  assert.equal(shaders.length,2);
+  for(const code of shaders)assert.match(code,/@vertex fn vs\(/);
+  const passCanvases=new Set(got.filter(c=>c.k==="pass").map(c=>(c.canvas as number[])[1]));
+  assert.deepEqual([...passCanvases].sort(),canvases.sort());
+  const glText=engine.selectedText(gl,800,1200,{url:glURL,selection:"all",commands:glCommands});
+  assert.match(glText,/Drawing with WebGL 2\.0/);assert.match(glText,/Drawing with WebGL 1\.0/);
+  console.log("webgl: 2 canvases,",got.filter(c=>c.k==="pass").length,"passes; programs linked");
+}
+console.log("page_gpu_test (webgl): ok");
