@@ -1,13 +1,13 @@
 {
  "format": "factoidal-wpt-testharness-v1",
- "measuredAt": "2026-11-08T11:57:08.133Z",
+ "measuredAt": "2026-11-08T13:16:06.712Z",
  "scope": "WPT testharness.js tests, window variant, in the engine's script session (QuickJS-NG in WasmVM, Lean DOM arena, Lean event loop, virtual clock). Subtest counts are of the subtests a page reported; a page that reported none counts 0 of 0.",
  "wptCommit": "ce5ca39646886a9349fc42913f843ec6e1c8a36f",
  "engine": "bench",
  "info": {
   "engine": "wasmvm-bench page"
  },
- "quickjsWasmSha256": "18fe71e60656eed40e0d47bc90c09c7d3939e58d6b049ee60b0844e29710253d",
+ "quickjsWasmSha256": "46dabc6b8de909cf951e86f306006ea89024d206d7e8275000bccacc582a1262",
  "runnerSha256": "9f7113eeab818449a2ee426d53ae79a4ca36a38621a727b8bfdefbe69db33482",
  "reportSha256": "0f8a869b6a6d735acad7cab070da098a78583969454ddf1f09a8a2721291b35e",
  "directories": {
@@ -39,9 +39,9 @@
    "files": 264,
    "run": 234,
    "skipped": 30,
-   "harnessOK": 218,
-   "subtests": 13006,
-   "pass": 11951
+   "harnessOK": 221,
+   "subtests": 13016,
+   "pass": 11984
   },
   "html/webappapis/scripting/event-loops": {
    "files": 9,
@@ -55,8 +55,8 @@
  "totals": {
   "files": 394,
   "run": 359,
-  "subtests": 13689,
-  "pass": 12388
+  "subtests": 13699,
+  "pass": 12421
  },
  "cases": [
   {
@@ -72,8 +72,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2792,
-   "instructions": 89822442,
+   "ms": 2390,
+   "instructions": 89818294,
    "clock": 70000
   },
   {
@@ -85,8 +85,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1583,
-   "instructions": 60727600,
+   "ms": 1394,
+   "instructions": 60815093,
    "clock": 70000
   },
   {
@@ -102,8 +102,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1802,
-   "instructions": 60458524,
+   "ms": 1371,
+   "instructions": 60538597,
    "clock": 10000
   },
   {
@@ -127,8 +127,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1948,
-   "instructions": 63647632,
+   "ms": 1414,
+   "instructions": 63727186,
    "clock": 10000
   },
   {
@@ -140,8 +140,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1887,
-   "instructions": 59948534,
+   "ms": 1440,
+   "instructions": 60032832,
    "clock": 10000
   },
   {
@@ -157,8 +157,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2499,
-   "instructions": 61118443,
+   "ms": 1415,
+   "instructions": 61202867,
    "clock": 10000
   },
   {
@@ -170,8 +170,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2512,
-   "instructions": 63011958,
+   "ms": 1523,
+   "instructions": 63102125,
    "clock": 10000
   },
   {
@@ -183,16 +183,16 @@
      "status": "PASS"
     }
    ],
-   "ms": 1960,
-   "instructions": 62826090,
+   "ms": 1413,
+   "instructions": 62911980,
    "clock": 10000
   },
   {
    "file": "html/webappapis/timers/setinterval-cross-realm-callback-report-exception.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1867,
-   "instructions": 60197357,
+   "ms": 1430,
+   "instructions": 60255263,
    "clock": 10000,
    "errors": [
     "TypeError: cannot set property 'onerror' of undefined\n    at <eval> (<page-script>:6:1)\n"
@@ -211,16 +211,16 @@
      "status": "PASS"
     }
    ],
-   "ms": 1703,
-   "instructions": 60870481,
+   "ms": 1503,
+   "instructions": 60931683,
    "clock": 10000
   },
   {
    "file": "html/webappapis/timers/settimeout-cross-realm-callback-report-exception.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1691,
-   "instructions": 60146588,
+   "ms": 1385,
+   "instructions": 60204560,
    "clock": 10000,
    "errors": [
     "TypeError: cannot set property 'onerror' of undefined\n    at <eval> (<page-script>:6:1)\n"
@@ -236,8 +236,8 @@
      "message": "assert_false: the detached realm's timeout callback did not run expected false got true"
     }
    ],
-   "ms": 1797,
-   "instructions": 63040767,
+   "ms": 1444,
+   "instructions": 63158426,
    "clock": 10000
   },
   {
@@ -253,8 +253,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2581,
-   "instructions": 60443201,
+   "ms": 1517,
+   "instructions": 60527083,
    "clock": 10000
   },
   {
@@ -270,8 +270,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1902,
-   "instructions": 61642029,
+   "ms": 1429,
+   "instructions": 61727254,
    "clock": 10000
   },
   {
@@ -283,8 +283,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1835,
-   "instructions": 62926672,
+   "ms": 1475,
+   "instructions": 63011452,
    "clock": 10000
   },
   {
@@ -296,16 +296,16 @@
      "status": "PASS"
     }
    ],
-   "ms": 1827,
-   "instructions": 62884979,
+   "ms": 1516,
+   "instructions": 62970982,
    "clock": 10000
   },
   {
    "file": "html/webappapis/microtask-queuing/queue-microtask-cross-realm-callback-report-exception.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1714,
-   "instructions": 60120477,
+   "ms": 1450,
+   "instructions": 60201505,
    "clock": 10000,
    "errors": [
     "TypeError: cannot set property 'onerror' of undefined\n    at <eval> (<page-script>:6:1)\n"
@@ -320,8 +320,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1826,
-   "instructions": 60210164,
+   "ms": 1463,
+   "instructions": 60268516,
    "clock": 10000
   },
   {
@@ -349,8 +349,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1778,
-   "instructions": 63458939,
+   "ms": 1472,
+   "instructions": 63555039,
    "clock": 10000
   },
   {
@@ -366,8 +366,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1708,
-   "instructions": 62258317,
+   "ms": 1528,
+   "instructions": 62310156,
    "clock": 10000
   },
   {
@@ -391,8 +391,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1872,
-   "instructions": 66867079,
+   "ms": 1503,
+   "instructions": 67016060,
    "clock": 10000
   },
   {
@@ -421,8 +421,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1925,
-   "instructions": 75784358,
+   "ms": 1545,
+   "instructions": 75893175,
    "clock": 10000
   },
   {
@@ -475,8 +475,8 @@
      "message": "assert_throws_js: function \"() => { et.addEventListener(\"foo\", null, { signal: null }); }\" did not throw"
     }
    ],
-   "ms": 2064,
-   "instructions": 81915762,
+   "ms": 1595,
+   "instructions": 82113590,
    "clock": 10000
   },
   {
@@ -692,8 +692,8 @@
      "message": "assert_equals: Convert to function expected \"function\" but got \"object\""
     }
    ],
-   "ms": 2656,
-   "instructions": 131664007,
+   "ms": 2512,
+   "instructions": 131679572,
    "clock": 10000
   },
   {
@@ -714,8 +714,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1928,
-   "instructions": 63187289,
+   "ms": 1477,
+   "instructions": 63267241,
    "clock": 10000
   },
   {
@@ -755,8 +755,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2251,
-   "instructions": 69846618,
+   "ms": 1515,
+   "instructions": 69962127,
    "clock": 10000
   },
   {
@@ -780,8 +780,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2141,
-   "instructions": 61879908,
+   "ms": 1491,
+   "instructions": 61960114,
    "clock": 10000
   },
   {
@@ -847,8 +847,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2220,
-   "instructions": 81605212,
+   "ms": 1694,
+   "instructions": 81623963,
    "clock": 10000
   },
   {
@@ -864,8 +864,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1965,
-   "instructions": 61923617,
+   "ms": 1470,
+   "instructions": 61998560,
    "clock": 10000
   },
   {
@@ -905,8 +905,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2304,
-   "instructions": 63785200,
+   "ms": 1478,
+   "instructions": 63873382,
    "clock": 10000
   },
   {
@@ -918,8 +918,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2406,
-   "instructions": 64915449,
+   "ms": 1436,
+   "instructions": 64996164,
    "clock": 10000
   },
   {
@@ -947,8 +947,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2340,
-   "instructions": 90878189,
+   "ms": 1741,
+   "instructions": 90987698,
    "clock": 10000
   },
   {
@@ -976,8 +976,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2108,
-   "instructions": 93920180,
+   "ms": 1858,
+   "instructions": 94162535,
    "clock": 10000
   },
   {
@@ -1109,8 +1109,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2786,
-   "instructions": 158733180,
+   "ms": 2206,
+   "instructions": 158632508,
    "clock": 10000
   },
   {
@@ -1148,8 +1148,8 @@
      "message": "assert_false: expected false got undefined"
     }
    ],
-   "ms": 1873,
-   "instructions": 77429268,
+   "ms": 1767,
+   "instructions": 77443997,
    "clock": 10000
   },
   {
@@ -1165,8 +1165,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1706,
-   "instructions": 60743938,
+   "ms": 1477,
+   "instructions": 60825865,
    "clock": 10000
   },
   {
@@ -1230,8 +1230,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1973,
-   "instructions": 86081014,
+   "ms": 1678,
+   "instructions": 84259744,
    "clock": 10000
   },
   {
@@ -1244,8 +1244,8 @@
      "message": "assert_array_equals: actual_targets lengths differ, expected array [object \"[object global]\", Document node with 2 children, Element node <html><head><meta charset=\"utf-8\">\n<title> Dispatch addit..., Element node <body><div id=\"log\"></div>\n\n<table id=\"table\" border=\"1\" ..., Element node <table id=\"t"
     }
    ],
-   "ms": 2042,
-   "instructions": 98040526,
+   "ms": 1868,
+   "instructions": 98021093,
    "clock": 10000
   },
   {
@@ -1258,8 +1258,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1750,
-   "instructions": 60885786,
+   "ms": 1430,
+   "instructions": 60975338,
    "clock": 10000
   },
   {
@@ -1271,8 +1271,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1747,
-   "instructions": 61644878,
+   "ms": 1488,
+   "instructions": 61727927,
    "clock": 10000
   },
   {
@@ -1284,8 +1284,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1894,
-   "instructions": 61650738,
+   "ms": 1545,
+   "instructions": 61732074,
    "clock": 10000
   },
   {
@@ -1297,8 +1297,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1732,
-   "instructions": 64740685,
+   "ms": 1522,
+   "instructions": 64808561,
    "clock": 10000
   },
   {
@@ -1323,8 +1323,8 @@
      "message": "assert_true: .click() must not dispatch \"click\" event on disabled HTMLButtonElement. expected true got false"
     }
    ],
-   "ms": 2210,
-   "instructions": 109922673,
+   "ms": 1815,
+   "instructions": 109988787,
    "clock": 10000
   },
   {
@@ -1336,8 +1336,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1739,
-   "instructions": 60944213,
+   "ms": 1544,
+   "instructions": 61004938,
    "clock": 10000
   },
   {
@@ -1349,8 +1349,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1721,
-   "instructions": 60923425,
+   "ms": 1487,
+   "instructions": 61004474,
    "clock": 10000
   },
   {
@@ -1362,8 +1362,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1734,
-   "instructions": 60575718,
+   "ms": 1495,
+   "instructions": 60656181,
    "clock": 10000
   },
   {
@@ -1375,8 +1375,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1765,
-   "instructions": 64896172,
+   "ms": 1495,
+   "instructions": 64971105,
    "clock": 10000
   },
   {
@@ -1393,8 +1393,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2173,
-   "instructions": 110440673,
+   "ms": 1895,
+   "instructions": 110570456,
    "clock": 10000
   },
   {
@@ -1406,8 +1406,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1830,
-   "instructions": 68950902,
+   "ms": 1560,
+   "instructions": 69035299,
    "clock": 10000
   },
   {
@@ -2065,8 +2065,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 16099,
-   "instructions": 1275181936,
+   "ms": 11614,
+   "instructions": 1274465553,
    "clock": 10000
   },
   {
@@ -2078,8 +2078,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2006,
-   "instructions": 67930419,
+   "ms": 1503,
+   "instructions": 68000976,
    "clock": 10000
   },
   {
@@ -2091,8 +2091,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2194,
-   "instructions": 67835095,
+   "ms": 1480,
+   "instructions": 67910335,
    "clock": 10000
   },
   {
@@ -2110,8 +2110,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"TypeError: cannot set property 'handleEvent' of undefined\""
     }
    ],
-   "ms": 2235,
-   "instructions": 68422526,
+   "ms": 1502,
+   "instructions": 68463206,
    "clock": 10000
   },
   {
@@ -2127,8 +2127,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2233,
-   "instructions": 62569554,
+   "ms": 1454,
+   "instructions": 62655541,
    "clock": 10000
   },
   {
@@ -2158,8 +2158,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2019,
-   "instructions": 66441112,
+   "ms": 1603,
+   "instructions": 66560476,
    "clock": 10000
   },
   {
@@ -2215,8 +2215,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2139,
-   "instructions": 69754453,
+   "ms": 1477,
+   "instructions": 69848116,
    "clock": 10000
   },
   {
@@ -2229,8 +2229,8 @@
      "message": "assert_not_equals: got disallowed value undefined"
     }
    ],
-   "ms": 1997,
-   "instructions": 63026078,
+   "ms": 2048,
+   "instructions": 63112526,
    "clock": 10000
   },
   {
@@ -2266,8 +2266,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1998,
-   "instructions": 70405985,
+   "ms": 1558,
+   "instructions": 70525416,
    "clock": 10000
   },
   {
@@ -2303,8 +2303,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1914,
-   "instructions": 65088066,
+   "ms": 1485,
+   "instructions": 65173384,
    "clock": 10000
   },
   {
@@ -2316,8 +2316,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1885,
-   "instructions": 61242445,
+   "ms": 1483,
+   "instructions": 61303502,
    "clock": 10000
   },
   {
@@ -2329,8 +2329,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1930,
-   "instructions": 60947841,
+   "ms": 1514,
+   "instructions": 61031053,
    "clock": 10000
   },
   {
@@ -2534,8 +2534,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 3137,
-   "instructions": 121035395,
+   "ms": 1922,
+   "instructions": 121052578,
    "clock": 10000
   },
   {
@@ -2547,8 +2547,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2566,
-   "instructions": 61386848,
+   "ms": 1493,
+   "instructions": 61465564,
    "clock": 10000
   },
   {
@@ -2572,8 +2572,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2276,
-   "instructions": 61375851,
+   "ms": 1428,
+   "instructions": 61463817,
    "clock": 10000
   },
   {
@@ -2586,16 +2586,16 @@
      "message": "not a function"
     }
    ],
-   "ms": 1842,
-   "instructions": 59203268,
+   "ms": 1466,
+   "instructions": 59285582,
    "clock": 10000
   },
   {
    "file": "dom/events/Event-timestamp-safe-resolution.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 43551,
-   "instructions": 4058299809,
+   "ms": 34776,
+   "instructions": 4058383454,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -2614,8 +2614,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1765,
-   "instructions": 60983920,
+   "ms": 1428,
+   "instructions": 61045685,
    "clock": 10000
   },
   {
@@ -2635,8 +2635,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1773,
-   "instructions": 60517209,
+   "ms": 1451,
+   "instructions": 60591524,
    "clock": 10000
   },
   {
@@ -2648,8 +2648,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1728,
-   "instructions": 60775785,
+   "ms": 1398,
+   "instructions": 60845104,
    "clock": 10000
   },
   {
@@ -2682,8 +2682,8 @@
      "message": "eventListenerGlobalObject is not defined"
     }
    ],
-   "ms": 1853,
-   "instructions": 64265319,
+   "ms": 1520,
+   "instructions": 64352319,
    "clock": 10000
   },
   {
@@ -2715,8 +2715,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1576,
-   "instructions": 68530143,
+   "ms": 1491,
+   "instructions": 68607062,
    "clock": 10000
   },
   {
@@ -2735,8 +2735,8 @@
    "file": "dom/events/EventListener-invoke-legacy.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1560,
-   "instructions": 66409625,
+   "ms": 1505,
+   "instructions": 66452665,
    "clock": 10000
   },
   {
@@ -2760,8 +2760,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1636,
-   "instructions": 77475143,
+   "ms": 1562,
+   "instructions": 77550340,
    "clock": 10000
   },
   {
@@ -2774,8 +2774,8 @@
      "message": "TypeError: cannot read property 'define' of undefined"
     }
    ],
-   "ms": 1497,
-   "instructions": 60583959,
+   "ms": 1410,
+   "instructions": 60659881,
    "clock": 10000,
    "errors": [
     "TypeError: cannot read property 'define' of undefined\n    at <eval> (<page-script>:16:1)\n"
@@ -2790,8 +2790,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1487,
-   "instructions": 60564981,
+   "ms": 1486,
+   "instructions": 60649498,
    "clock": 10000
   },
   {
@@ -2803,8 +2803,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1473,
-   "instructions": 60004166,
+   "ms": 1407,
+   "instructions": 60088336,
    "clock": 10000
   },
   {
@@ -2824,8 +2824,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1608,
-   "instructions": 63217947,
+   "ms": 1479,
+   "instructions": 63325277,
    "clock": 10000
   },
   {
@@ -2841,8 +2841,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1494,
-   "instructions": 64784227,
+   "ms": 1446,
+   "instructions": 64864356,
    "clock": 10000
   },
   {
@@ -2951,8 +2951,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1751,
-   "instructions": 92887803,
+   "ms": 1698,
+   "instructions": 92980931,
    "clock": 10000
   },
   {
@@ -2964,8 +2964,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1454,
-   "instructions": 60036141,
+   "ms": 1453,
+   "instructions": 60120603,
    "clock": 10000
   },
   {
@@ -2997,8 +2997,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1636,
-   "instructions": 76247285,
+   "ms": 1556,
+   "instructions": 76385223,
    "clock": 10000
   },
   {
@@ -3010,8 +3010,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1466,
-   "instructions": 60696108,
+   "ms": 1477,
+   "instructions": 60758363,
    "clock": 10000
   },
   {
@@ -3031,8 +3031,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1457,
-   "instructions": 61084498,
+   "ms": 1387,
+   "instructions": 61159175,
    "clock": 10000
   },
   {
@@ -3045,8 +3045,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"Error: action_sequence() is not implemented by testdriver-vendor.js\""
     }
    ],
-   "ms": 1839,
-   "instructions": 107299534,
+   "ms": 1905,
+   "instructions": 107386397,
    "clock": 10000
   },
   {
@@ -3066,8 +3066,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2111,
-   "instructions": 65267509,
+   "ms": 1505,
+   "instructions": 65304181,
    "clock": 10000
   },
   {
@@ -3079,8 +3079,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2215,
-   "instructions": 61010586,
+   "ms": 1420,
+   "instructions": 61091900,
    "clock": 10000
   },
   {
@@ -3110,8 +3110,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1705,
-   "instructions": 63717407,
+   "ms": 1468,
+   "instructions": 63787664,
    "clock": 10000
   },
   {
@@ -3148,8 +3148,8 @@
      "message": "frameState is not defined"
     }
    ],
-   "ms": 1794,
-   "instructions": 74469450,
+   "ms": 1577,
+   "instructions": 74538013,
    "clock": 10000
   },
   {
@@ -3162,8 +3162,8 @@
      "message": "iframe is not defined"
     }
    ],
-   "ms": 1658,
-   "instructions": 60845865,
+   "ms": 1422,
+   "instructions": 60904028,
    "clock": 10000
   },
   {
@@ -3176,8 +3176,8 @@
      "message": "cannot read property 'Function' of undefined"
     }
    ],
-   "ms": 1654,
-   "instructions": 61612291,
+   "ms": 1469,
+   "instructions": 61673103,
    "clock": 10000
   },
   {
@@ -3195,8 +3195,8 @@
      "message": "assert_equals: Still set before dispatch expected (string) \"foo\" but got (undefined) undefined"
     }
    ],
-   "ms": 1673,
-   "instructions": 64179818,
+   "ms": 1517,
+   "instructions": 64234829,
    "clock": 10000
   },
   {
@@ -3208,8 +3208,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2024,
-   "instructions": 60259864,
+   "ms": 1453,
+   "instructions": 60318142,
    "clock": 10000
   },
   {
@@ -3253,8 +3253,8 @@
      "message": "XMLHttpRequest is not defined"
     }
    ],
-   "ms": 1798,
-   "instructions": 66629489,
+   "ms": 1462,
+   "instructions": 66717165,
    "clock": 10000
   },
   {
@@ -3276,8 +3276,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1694,
-   "instructions": 62759761,
+   "ms": 1486,
+   "instructions": 62808936,
    "clock": 10000
   },
   {
@@ -3310,8 +3310,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"TypeError: cannot read property 'createElement' of undefined\""
     }
    ],
-   "ms": 1936,
-   "instructions": 79115951,
+   "ms": 1576,
+   "instructions": 79149021,
    "clock": 10000
   },
   {
@@ -3337,8 +3337,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
     }
    ],
-   "ms": 1805,
-   "instructions": 71104561,
+   "ms": 1507,
+   "instructions": 71152997,
    "clock": 10000
   },
   {
@@ -3361,8 +3361,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: URL is not defined\""
     }
    ],
-   "ms": 1848,
-   "instructions": 71717413,
+   "ms": 1500,
+   "instructions": 71797386,
    "clock": 10000
   },
   {
@@ -3450,8 +3450,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"TypeError: parameter 1 is not of type 'Event'\""
     }
    ],
-   "ms": 2286,
-   "instructions": 126101815,
+   "ms": 1948,
+   "instructions": 125921182,
    "clock": 10000
   },
   {
@@ -3463,24 +3463,24 @@
      "status": "PASS"
     }
    ],
-   "ms": 1655,
-   "instructions": 60230140,
+   "ms": 1437,
+   "instructions": 60296685,
    "clock": 10000
   },
   {
    "file": "dom/events/focus-event-document-move.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 2024,
-   "instructions": 104310550,
+   "ms": 1791,
+   "instructions": 104249813,
    "clock": 10000
   },
   {
    "file": "dom/events/handler-count.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 2159,
-   "instructions": 108239167,
+   "ms": 1781,
+   "instructions": 108188314,
    "clock": 10000
   },
   {
@@ -3493,8 +3493,8 @@
      "message": "assert_false: expected false got undefined"
     }
    ],
-   "ms": 1660,
-   "instructions": 61209032,
+   "ms": 1448,
+   "instructions": 61279850,
    "clock": 10000
   },
   {
@@ -3506,8 +3506,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1672,
-   "instructions": 60612875,
+   "ms": 1446,
+   "instructions": 60682199,
    "clock": 10000
   },
   {
@@ -3520,8 +3520,8 @@
      "message": "target is not defined"
     }
    ],
-   "ms": 1639,
-   "instructions": 59231830,
+   "ms": 1386,
+   "instructions": 59312064,
    "clock": 10000
   },
   {
@@ -3539,8 +3539,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"Error: action_sequence() is not implemented by testdriver-vendor.js\""
     }
    ],
-   "ms": 2096,
-   "instructions": 112709536,
+   "ms": 1840,
+   "instructions": 112817595,
    "clock": 10000
   },
   {
@@ -3557,8 +3557,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1639,
-   "instructions": 61013401,
+   "ms": 1405,
+   "instructions": 61095439,
    "clock": 10000
   },
   {
@@ -3966,8 +3966,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2358,
-   "instructions": 140692441,
+   "ms": 2102,
+   "instructions": 140855405,
    "clock": 10000
   },
   {
@@ -3980,8 +3980,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
     }
    ],
-   "ms": 2035,
-   "instructions": 106602398,
+   "ms": 1753,
+   "instructions": 106638858,
    "clock": 10000
   },
   {
@@ -3994,8 +3994,8 @@
      "message": "assert_true: expected true got false"
     }
    ],
-   "ms": 1676,
-   "instructions": 63085720,
+   "ms": 1440,
+   "instructions": 63191069,
    "clock": 10000
   },
   {
@@ -4003,8 +4003,8 @@
    "harness": "ERROR",
    "message": "TypeError: not a function",
    "subtests": [],
-   "ms": 1629,
-   "instructions": 60501366,
+   "ms": 1454,
+   "instructions": 60585567,
    "clock": 10000,
    "errors": [
     "TypeError: not a function\n    at <eval> (<page-script>:5:21)\n"
@@ -4023,8 +4023,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1669,
-   "instructions": 62657134,
+   "ms": 1481,
+   "instructions": 62726463,
    "clock": 10000
   },
   {
@@ -4032,8 +4032,8 @@
    "harness": "ERROR",
    "message": "ReferenceError: host is not defined",
    "subtests": [],
-   "ms": 1633,
-   "instructions": 58875561,
+   "ms": 1428,
+   "instructions": 58955971,
    "clock": 10000,
    "errors": [
     "ReferenceError: host is not defined\n    at <eval> (<page-script>:2:14)\n"
@@ -4044,8 +4044,8 @@
    "harness": "ERROR",
    "message": "TypeError: cannot read property 'insertRule' of undefined",
    "subtests": [],
-   "ms": 1682,
-   "instructions": 63260077,
+   "ms": 1431,
+   "instructions": 63353571,
    "clock": 10000,
    "errors": [
     "TypeError: cannot read property 'insertRule' of undefined\n    at runAnimationEventTests (<page-script>:33:5)\n    at <eval> (<page-script>:4:1)\n"
@@ -4056,8 +4056,8 @@
    "harness": "ERROR",
    "message": "TypeError: cannot read property 'insertRule' of undefined",
    "subtests": [],
-   "ms": 1696,
-   "instructions": 63273978,
+   "ms": 1491,
+   "instructions": 63358843,
    "clock": 10000,
    "errors": [
     "TypeError: cannot read property 'insertRule' of undefined\n    at runAnimationEventTests (<page-script>:33:5)\n    at <eval> (<page-script>:4:1)\n"
@@ -4068,8 +4068,8 @@
    "harness": "ERROR",
    "message": "TypeError: cannot read property 'insertRule' of undefined",
    "subtests": [],
-   "ms": 1638,
-   "instructions": 63260914,
+   "ms": 1474,
+   "instructions": 63352297,
    "clock": 10000,
    "errors": [
     "TypeError: cannot read property 'insertRule' of undefined\n    at runAnimationEventTests (<page-script>:33:5)\n    at <eval> (<page-script>:4:1)\n"
@@ -4080,8 +4080,8 @@
    "harness": "ERROR",
    "message": "TypeError: cannot read property 'insertRule' of undefined",
    "subtests": [],
-   "ms": 1657,
-   "instructions": 63267711,
+   "ms": 1446,
+   "instructions": 63361104,
    "clock": 10000,
    "errors": [
     "TypeError: cannot read property 'insertRule' of undefined\n    at runAnimationEventTests (<page-script>:29:5)\n    at <eval> (<page-script>:4:1)\n"
@@ -4096,8 +4096,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1623,
-   "instructions": 59281364,
+   "ms": 1479,
+   "instructions": 59361632,
    "clock": 10000
   },
   {
@@ -4109,8 +4109,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1659,
-   "instructions": 60719045,
+   "ms": 1422,
+   "instructions": 60799718,
    "clock": 10000
   },
   {
@@ -4148,8 +4148,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1710,
-   "instructions": 66949737,
+   "ms": 1584,
+   "instructions": 66935548,
    "clock": 10000
   },
   {
@@ -4193,8 +4193,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1728,
-   "instructions": 67653113,
+   "ms": 1502,
+   "instructions": 67761878,
    "clock": 10000
   },
   {
@@ -4260,8 +4260,8 @@
      "message": "assert_throws_js: function \"function() { node.appendData() }\" did not throw"
     }
    ],
-   "ms": 1766,
-   "instructions": 72317833,
+   "ms": 1552,
+   "instructions": 72409958,
    "clock": 10000
   },
   {
@@ -4333,8 +4333,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1734,
-   "instructions": 68828455,
+   "ms": 1494,
+   "instructions": 68869778,
    "clock": 10000
   },
   {
@@ -4414,8 +4414,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1809,
-   "instructions": 73513012,
+   "ms": 1619,
+   "instructions": 73590954,
    "clock": 10000
   },
   {
@@ -4495,8 +4495,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1825,
-   "instructions": 73314803,
+   "ms": 1532,
+   "instructions": 73405027,
    "clock": 10000
   },
   {
@@ -4552,8 +4552,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1898,
-   "instructions": 68862197,
+   "ms": 1478,
+   "instructions": 68975022,
    "clock": 10000
   },
   {
@@ -4697,8 +4697,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1914,
-   "instructions": 85658120,
+   "ms": 1579,
+   "instructions": 86004292,
    "clock": 10000
   },
   {
@@ -4820,8 +4820,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1869,
-   "instructions": 85970885,
+   "ms": 1685,
+   "instructions": 86064951,
    "clock": 10000
   },
   {
@@ -4867,8 +4867,8 @@
      "message": "DOM error -7"
     }
    ],
-   "ms": 1751,
-   "instructions": 65677290,
+   "ms": 1442,
+   "instructions": 65776865,
    "clock": 10000
   },
   {
@@ -5056,8 +5056,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1998,
-   "instructions": 97231722,
+   "ms": 1711,
+   "instructions": 97182437,
    "clock": 10000
   },
   {
@@ -5245,8 +5245,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1981,
-   "instructions": 97340826,
+   "ms": 1702,
+   "instructions": 97295069,
    "clock": 10000
   },
   {
@@ -5386,8 +5386,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1868,
-   "instructions": 85820083,
+   "ms": 1614,
+   "instructions": 86002540,
    "clock": 10000
   },
   {
@@ -5460,8 +5460,8 @@
      "message": "assert_equals: expected Document node with 1 child but got Document node with 2 children"
     }
    ],
-   "ms": 1738,
-   "instructions": 72776133,
+   "ms": 1516,
+   "instructions": 72884596,
    "clock": 10000
   },
   {
@@ -5496,8 +5496,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1680,
-   "instructions": 65626465,
+   "ms": 1483,
+   "instructions": 65708701,
    "clock": 10000
   },
   {
@@ -7241,8 +7241,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 5345,
-   "instructions": 526623887,
+   "ms": 4862,
+   "instructions": 526758390,
    "clock": 10000
   },
   {
@@ -7578,8 +7578,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2152,
-   "instructions": 138073847,
+   "ms": 2021,
+   "instructions": 138271377,
    "clock": 10000
   },
   {
@@ -7591,8 +7591,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1440,
-   "instructions": 59634255,
+   "ms": 1443,
+   "instructions": 59693790,
    "clock": 10000
   },
   {
@@ -7653,8 +7653,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1604,
-   "instructions": 80350685,
+   "ms": 1556,
+   "instructions": 80442375,
    "clock": 10000
   },
   {
@@ -8210,8 +8210,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2121,
-   "instructions": 140015346,
+   "ms": 2062,
+   "instructions": 139951170,
    "clock": 10000
   },
   {
@@ -8224,8 +8224,8 @@
      "message": "assert_equals: expected \"http://web-platform.test/common/blank.html\" but got \"about:blank\""
     }
    ],
-   "ms": 1463,
-   "instructions": 63470955,
+   "ms": 1416,
+   "instructions": 63521066,
    "clock": 10000
   },
   {
@@ -8264,8 +8264,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1558,
-   "instructions": 72043840,
+   "ms": 1545,
+   "instructions": 72031942,
    "clock": 10000
   },
   {
@@ -8303,8 +8303,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1525,
-   "instructions": 71296479,
+   "ms": 1474,
+   "instructions": 71392496,
    "clock": 10000
   },
   {
@@ -8322,8 +8322,8 @@
      "message": "assert_equals: container base URL changed expected \"http://example.com/changed/\" but got \"http://web-platform.test/generated/dom/nodes/Document-base-url-not-live.window.html\""
     }
    ],
-   "ms": 2140,
-   "instructions": 70506718,
+   "ms": 1525,
+   "instructions": 70524596,
    "clock": 10000
   },
   {
@@ -9888,8 +9888,8 @@
      "message": "assert_equals: expected \"ISO-8859-16\" but got \"UTF-8\""
     }
    ],
-   "ms": 18133,
-   "instructions": 1821179390,
+   "ms": 15393,
+   "instructions": 1821666881,
    "clock": 10000
   },
   {
@@ -11592,8 +11592,8 @@
      "message": "assert_equals: expected \"replacement\" but got \"UTF-8\""
     }
    ],
-   "ms": 21073,
-   "instructions": 2180221776,
+   "ms": 18223,
+   "instructions": 2178906594,
    "clock": 10000
   },
   {
@@ -11621,8 +11621,8 @@
      "message": "assert_equals: deep clone before expected \"https://example.com/\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-about-base-url-relative.window.html\""
     }
    ],
-   "ms": 1794,
-   "instructions": 77280764,
+   "ms": 1559,
+   "instructions": 77297724,
    "clock": 10000
   },
   {
@@ -11651,8 +11651,8 @@
      "message": "assert_equals: source expected \"http://example.com/foo/bar\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-about-base-url.window.html\""
     }
    ],
-   "ms": 1716,
-   "instructions": 70383774,
+   "ms": 1520,
+   "instructions": 70435341,
    "clock": 10000
   },
   {
@@ -11662,21 +11662,21 @@
     {
      "name": "Clone of an XML document ignores a non-HTML <base> element",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: source expected \"about:blank\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-base-url-xml.window.html\""
     },
     {
      "name": "Clone of an XHTML document with a <base>",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: source expected \"http://example.com/foo/bar\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-base-url-xml.window.html\""
     },
     {
      "name": "Clone of an XML document without a <base>",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: source expected \"about:blank\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-base-url-xml.window.html\""
     }
    ],
-   "ms": 1622,
-   "instructions": 61235956,
+   "ms": 1534,
+   "instructions": 70083819,
    "clock": 10000
   },
   {
@@ -11686,17 +11686,17 @@
     {
      "name": "Deep clone of a document with a <base>",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: source expected \"http://example.com/foo/bar\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-base-url.window.html\""
     },
     {
      "name": "Shallow clone of a document with a <base>",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: source expected \"http://example.com/foo/bar\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-base-url.window.html\""
     },
     {
      "name": "Clone of a document without a <base>",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: source expected \"about:blank\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-base-url.window.html\""
     },
     {
      "name": "Clone of a createHTMLDocument() document without a <base>",
@@ -11711,27 +11711,27 @@
     {
      "name": "Deep clone of a document with a relative <base>",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "URL is not defined"
     },
     {
      "name": "Shallow clone of a document with a relative <base>",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "URL is not defined"
     },
     {
      "name": "Shallow clone is unaffected by later mutation of the source",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: source updated expected \"about:blank\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-base-url.window.html\""
     },
     {
      "name": "Shallow clone's base URL survives later mutation of the clone",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: expected \"http://example.com/foo/bar\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-base-url.window.html\""
     },
     {
      "name": "Inserting a <base> into a shallow clone overrides the copied base URL",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: before inserting <base> expected \"http://example.com/foo/bar\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-base-url.window.html\""
     },
     {
      "name": "Clone of a blob: URL document",
@@ -11739,8 +11739,8 @@
      "message": "URL is not defined"
     }
    ],
-   "ms": 1749,
-   "instructions": 72832327,
+   "ms": 1650,
+   "instructions": 92447575,
    "clock": 10000
   },
   {
@@ -11768,8 +11768,8 @@
      "message": "assert_equals: deep clone before expected \"https://example.com/\" but got \"http://web-platform.test/generated/dom/nodes/Document-cloneNode-srcdoc-base-url.window.html\""
     }
    ],
-   "ms": 1774,
-   "instructions": 76987341,
+   "ms": 1573,
+   "instructions": 77055251,
    "clock": 10000
   },
   {
@@ -11799,8 +11799,8 @@
      "message": "assert_equals: expected function \"class extends HTMLElement {}\" but got function \"class Element extends Node {\n    get tagName() { return str(nodeId(this), 1); }\n    get localName() { return str(nodeId(this), 0); }\n    get namespaceURI() { return str(nodeId(this), 2); }\n    get prefix() { return str"
     }
    ],
-   "ms": 1669,
-   "instructions": 68101868,
+   "ms": 1432,
+   "instructions": 68184400,
    "clock": 10000
   },
   {
@@ -11952,8 +11952,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1876,
-   "instructions": 87773538,
+   "ms": 1631,
+   "instructions": 87863254,
    "clock": 10000
   },
   {
@@ -11971,8 +11971,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1627,
-   "instructions": 60406915,
+   "ms": 1491,
+   "instructions": 60489684,
    "clock": 10000
   },
   {
@@ -12004,8 +12004,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1655,
-   "instructions": 65673192,
+   "ms": 1458,
+   "instructions": 65758165,
    "clock": 10000
   },
   {
@@ -12038,28 +12038,23 @@
     },
     {
      "name": "Created element's namespace in created HTML document by DOMParser ('text/html')",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Created element's namespace in created XML document by DOMParser ('text/xml')",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Created element's namespace in created XML document by DOMParser ('application/xml')",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Created element's namespace in created XHTML document by DOMParser ('application/xhtml+xml')",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Created element's namespace in created SVG document by DOMParser ('image/svg+xml')",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Created element's namespace in empty.html",
@@ -12252,8 +12247,8 @@
      "message": "assert_equals: Wrong MIME type returned from doc.contentType expected \"image/svg+xml\" but got \"text/html\""
     }
    ],
-   "ms": 3226,
-   "instructions": 240368018,
+   "ms": 2964,
+   "instructions": 241384789,
    "clock": 10000
   },
   {
@@ -12849,8 +12844,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 3009,
-   "instructions": 217343799,
+   "ms": 2636,
+   "instructions": 218166301,
    "clock": 10000
   },
   {
@@ -15242,8 +15237,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 10046,
-   "instructions": 1083051621,
+   "ms": 8682,
+   "instructions": 1083175029,
    "clock": 10000
   },
   {
@@ -15263,8 +15258,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1647,
-   "instructions": 62104155,
+   "ms": 1423,
+   "instructions": 62191755,
    "clock": 10000
   },
   {
@@ -16394,8 +16389,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 3850,
-   "instructions": 303543581,
+   "ms": 3275,
+   "instructions": 303563249,
    "clock": 10000
   },
   {
@@ -16457,8 +16452,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1715,
-   "instructions": 70821916,
+   "ms": 1544,
+   "instructions": 70970219,
    "clock": 10000
   },
   {
@@ -16490,8 +16485,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1659,
-   "instructions": 65665535,
+   "ms": 1441,
+   "instructions": 65753886,
    "clock": 10000
   },
   {
@@ -16523,8 +16518,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1677,
-   "instructions": 63486404,
+   "ms": 1490,
+   "instructions": 63569359,
    "clock": 10000
   },
   {
@@ -16540,8 +16535,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1593,
-   "instructions": 60509337,
+   "ms": 1475,
+   "instructions": 60592087,
    "clock": 10000
   },
   {
@@ -16625,8 +16620,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1950,
-   "instructions": 89716820,
+   "ms": 1637,
+   "instructions": 89655440,
    "clock": 10000
   },
   {
@@ -16638,8 +16633,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1673,
-   "instructions": 62233982,
+   "ms": 1463,
+   "instructions": 62245500,
    "clock": 10000
   },
   {
@@ -16726,8 +16721,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2836,
-   "instructions": 185693805,
+   "ms": 2514,
+   "instructions": 185886225,
    "clock": 10000
   },
   {
@@ -16791,8 +16786,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2686,
-   "instructions": 197118031,
+   "ms": 2665,
+   "instructions": 197996477,
    "clock": 10000
   },
   {
@@ -16808,8 +16803,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1430,
-   "instructions": 60419849,
+   "ms": 1384,
+   "instructions": 60509169,
    "clock": 10000
   },
   {
@@ -16837,8 +16832,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1507,
-   "instructions": 65406874,
+   "ms": 1464,
+   "instructions": 65483345,
    "clock": 10000
   },
   {
@@ -16854,8 +16849,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1448,
-   "instructions": 60369143,
+   "ms": 1405,
+   "instructions": 60452877,
    "clock": 10000
   },
   {
@@ -16883,8 +16878,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1433,
-   "instructions": 62810672,
+   "ms": 1522,
+   "instructions": 62898933,
    "clock": 10000
   },
   {
@@ -16896,8 +16891,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1438,
-   "instructions": 60271417,
+   "ms": 1429,
+   "instructions": 60360319,
    "clock": 10000
   },
   {
@@ -16915,8 +16910,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1432,
-   "instructions": 59849409,
+   "ms": 1420,
+   "instructions": 59935645,
    "clock": 10000
   },
   {
@@ -16940,8 +16935,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1438,
-   "instructions": 62939440,
+   "ms": 1448,
+   "instructions": 63025762,
    "clock": 10000
   },
   {
@@ -16959,8 +16954,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1819,
-   "instructions": 60522855,
+   "ms": 1448,
+   "instructions": 60597911,
    "clock": 10000
   },
   {
@@ -16978,8 +16973,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1954,
-   "instructions": 60706525,
+   "ms": 1419,
+   "instructions": 60784195,
    "clock": 10000
   },
   {
@@ -16997,8 +16992,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1756,
-   "instructions": 60833938,
+   "ms": 1444,
+   "instructions": 60914554,
    "clock": 10000
   },
   {
@@ -17016,8 +17011,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1674,
-   "instructions": 60495192,
+   "ms": 1386,
+   "instructions": 60581510,
    "clock": 10000
   },
   {
@@ -17035,8 +17030,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1630,
-   "instructions": 61322797,
+   "ms": 1448,
+   "instructions": 61411171,
    "clock": 10000
   },
   {
@@ -17053,8 +17048,8 @@
      "message": "assert_array_equals: lengths differ, expected array [\"0\", \"1\", \"2\", \"3\", \"4\", \"5\", \"foo\", \"bar\", \"baz\"] length 9, got [\"0\", \"1\", \"2\", \"3\", \"4\", \"5\"] length 6"
     }
    ],
-   "ms": 1656,
-   "instructions": 66336469,
+   "ms": 1459,
+   "instructions": 66386360,
    "clock": 10000
   },
   {
@@ -22742,8 +22737,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 15418,
-   "instructions": 1553074218,
+   "ms": 13277,
+   "instructions": 1545643405,
    "clock": 10000
   },
   {
@@ -22759,8 +22754,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1599,
-   "instructions": 60407322,
+   "ms": 1397,
+   "instructions": 60484949,
    "clock": 10000
   },
   {
@@ -22886,8 +22881,8 @@
      "message": "':has(> :scope)' is not a valid selector"
     }
    ],
-   "ms": 1783,
-   "instructions": 80635079,
+   "ms": 1624,
+   "instructions": 80797125,
    "clock": 10000
   },
   {
@@ -22911,8 +22906,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1603,
-   "instructions": 60789669,
+   "ms": 1395,
+   "instructions": 60863622,
    "clock": 10000
   },
   {
@@ -22930,8 +22925,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1629,
-   "instructions": 60737055,
+   "ms": 1429,
+   "instructions": 60813691,
    "clock": 10000
   },
   {
@@ -22951,8 +22946,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1656,
-   "instructions": 63084447,
+   "ms": 1421,
+   "instructions": 63130397,
    "clock": 10000
   },
   {
@@ -22965,8 +22960,8 @@
      "message": "TypeError: cannot read property 'document' of undefined"
     }
    ],
-   "ms": 1625,
-   "instructions": 64625963,
+   "ms": 1482,
+   "instructions": 64719156,
    "clock": 10000
   },
   {
@@ -23051,8 +23046,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2310,
-   "instructions": 131958815,
+   "ms": 2040,
+   "instructions": 132071863,
    "clock": 10000
   },
   {
@@ -23124,8 +23119,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2240,
-   "instructions": 125545698,
+   "ms": 1956,
+   "instructions": 125754071,
    "clock": 10000
   },
   {
@@ -23141,8 +23136,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1610,
-   "instructions": 60606721,
+   "ms": 1451,
+   "instructions": 60685323,
    "clock": 10000
   },
   {
@@ -23158,8 +23153,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1792,
-   "instructions": 61825040,
+   "ms": 1438,
+   "instructions": 61907730,
    "clock": 10000
   },
   {
@@ -23191,8 +23186,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1681,
-   "instructions": 66665657,
+   "ms": 1460,
+   "instructions": 66751928,
    "clock": 10000
   },
   {
@@ -23224,8 +23219,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1672,
-   "instructions": 65949414,
+   "ms": 1453,
+   "instructions": 66010430,
    "clock": 10000
   },
   {
@@ -23243,8 +23238,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1622,
-   "instructions": 60961398,
+   "ms": 1389,
+   "instructions": 61041134,
    "clock": 10000
   },
   {
@@ -23268,8 +23263,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1649,
-   "instructions": 61892954,
+   "ms": 1461,
+   "instructions": 61974214,
    "clock": 10000
   },
   {
@@ -23282,8 +23277,8 @@
      "message": "no setter for property"
     }
    ],
-   "ms": 1616,
-   "instructions": 60207541,
+   "ms": 1408,
+   "instructions": 60287922,
    "clock": 10000
   },
   {
@@ -23335,8 +23330,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1712,
-   "instructions": 69074469,
+   "ms": 1537,
+   "instructions": 69106466,
    "clock": 10000
   },
   {
@@ -23368,8 +23363,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1648,
-   "instructions": 62482320,
+   "ms": 1388,
+   "instructions": 62566026,
    "clock": 10000
   },
   {
@@ -26057,8 +26052,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 8233,
-   "instructions": 898843189,
+   "ms": 7201,
+   "instructions": 897657291,
    "clock": 10000
   },
   {
@@ -26076,8 +26071,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1644,
-   "instructions": 60969915,
+   "ms": 1482,
+   "instructions": 61049740,
    "clock": 10000
   },
   {
@@ -26095,8 +26090,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1645,
-   "instructions": 61207303,
+   "ms": 1394,
+   "instructions": 61287035,
    "clock": 10000
   },
   {
@@ -26116,8 +26111,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1661,
-   "instructions": 61836936,
+   "ms": 1464,
+   "instructions": 61901949,
    "clock": 10000
   },
   {
@@ -26141,8 +26136,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1713,
-   "instructions": 62924836,
+   "ms": 1412,
+   "instructions": 62996572,
    "clock": 10000
   },
   {
@@ -26158,8 +26153,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1603,
-   "instructions": 61744617,
+   "ms": 1362,
+   "instructions": 61826170,
    "clock": 10000
   },
   {
@@ -26171,8 +26166,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1616,
-   "instructions": 60308945,
+   "ms": 1324,
+   "instructions": 60382260,
    "clock": 10000
   },
   {
@@ -26184,8 +26179,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1577,
-   "instructions": 59170279,
+   "ms": 1362,
+   "instructions": 59245996,
    "clock": 10000
   },
   {
@@ -26201,8 +26196,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1614,
-   "instructions": 60807481,
+   "ms": 1401,
+   "instructions": 60883037,
    "clock": 10000
   },
   {
@@ -26225,8 +26220,8 @@
      "message": "assert_equals: expected \"plain\" but got \"replacement\""
     }
    ],
-   "ms": 1653,
-   "instructions": 67774932,
+   "ms": 1448,
+   "instructions": 67889328,
    "clock": 10000
   },
   {
@@ -26244,8 +26239,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1594,
-   "instructions": 60638815,
+   "ms": 1391,
+   "instructions": 60724254,
    "clock": 10000
   },
   {
@@ -26257,8 +26252,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1583,
-   "instructions": 59827986,
+   "ms": 1427,
+   "instructions": 59910422,
    "clock": 10000
   },
   {
@@ -26290,8 +26285,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1552,
-   "instructions": 63044491,
+   "ms": 1397,
+   "instructions": 63239633,
    "clock": 10000
   },
   {
@@ -28979,8 +28974,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 7888,
-   "instructions": 913989188,
+   "ms": 7503,
+   "instructions": 912530962,
    "clock": 10000
   },
   {
@@ -29157,8 +29152,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2242,
-   "instructions": 133027510,
+   "ms": 2338,
+   "instructions": 133365391,
    "clock": 10000
   },
   {
@@ -29170,8 +29165,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1537,
-   "instructions": 60646300,
+   "ms": 1601,
+   "instructions": 60728604,
    "clock": 10000
   },
   {
@@ -29193,8 +29188,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1738,
-   "instructions": 70850816,
+   "ms": 1532,
+   "instructions": 70991982,
    "clock": 10000
   },
   {
@@ -29210,8 +29205,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1691,
-   "instructions": 62642452,
+   "ms": 1463,
+   "instructions": 62699764,
    "clock": 10000
   },
   {
@@ -29319,8 +29314,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1860,
-   "instructions": 93084766,
+   "ms": 1701,
+   "instructions": 93185024,
    "clock": 10000
   },
   {
@@ -29497,16 +29492,16 @@
      "status": "PASS"
     }
    ],
-   "ms": 2119,
-   "instructions": 145991350,
+   "ms": 2163,
+   "instructions": 146042856,
    "clock": 10000
   },
   {
    "file": "dom/nodes/MutationObserver-cross-realm-callback-report-exception.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 2007,
-   "instructions": 60171723,
+   "ms": 1397,
+   "instructions": 60252631,
    "clock": 10000,
    "errors": [
     "TypeError: cannot set property 'onerror' of undefined\n    at <eval> (<page-script>:6:1)\n"
@@ -29525,8 +29520,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1995,
-   "instructions": 63174385,
+   "ms": 1555,
+   "instructions": 63253740,
    "clock": 10000
   },
   {
@@ -29553,8 +29548,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1817,
-   "instructions": 75359733,
+   "ms": 1752,
+   "instructions": 75474731,
    "clock": 10000
   },
   {
@@ -29567,8 +29562,8 @@
      "message": "assert_equals: mutation records must match expected 2 but got 1"
     }
    ],
-   "ms": 1805,
-   "instructions": 65604221,
+   "ms": 1693,
+   "instructions": 65684386,
    "clock": 10000
   },
   {
@@ -29588,8 +29583,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1799,
-   "instructions": 63755604,
+   "ms": 1731,
+   "instructions": 63810233,
    "clock": 10000
   },
   {
@@ -29661,8 +29656,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1918,
-   "instructions": 70531007,
+   "ms": 1506,
+   "instructions": 70646000,
    "clock": 10000
   },
   {
@@ -29682,13 +29677,13 @@
      "status": "PASS"
     }
    ],
-   "ms": 1726,
-   "instructions": 64840773,
+   "ms": 1485,
+   "instructions": 64929309,
    "clock": 10000
   },
   {
    "file": "dom/nodes/MutationObserver-textContent.html",
-   "harness": "TIMEOUT",
+   "harness": "OK",
    "subtests": [
     {
      "name": "Setting Element.textContent",
@@ -29701,10 +29696,14 @@
     {
      "name": "Setting Element.textContent to a different value",
      "status": "PASS"
+    },
+    {
+     "name": "Setting Element.textContent to the same value when the old node is a CDATASection",
+     "status": "PASS"
     }
    ],
-   "ms": 1841,
-   "instructions": 63177641,
+   "ms": 1490,
+   "instructions": 64405994,
    "clock": 10000
   },
   {
@@ -29782,8 +29781,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2289,
-   "instructions": 121858958,
+   "ms": 1891,
+   "instructions": 122025501,
    "clock": 10000
   },
   {
@@ -29802,8 +29801,8 @@
      "message": "customElements is not defined"
     }
    ],
-   "ms": 1693,
-   "instructions": 60083044,
+   "ms": 1469,
+   "instructions": 60167286,
    "clock": 10000
   },
   {
@@ -29858,8 +29857,8 @@
      "message": "cannot read property 'document' of undefined"
     }
    ],
-   "ms": 1762,
-   "instructions": 67719078,
+   "ms": 1477,
+   "instructions": 67754859,
    "clock": 10000
   },
   {
@@ -29903,8 +29902,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1867,
-   "instructions": 66107686,
+   "ms": 1525,
+   "instructions": 66126637,
    "clock": 10000
   },
   {
@@ -29916,8 +29915,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1725,
-   "instructions": 61717246,
+   "ms": 1457,
+   "instructions": 61787094,
    "clock": 10000
   },
   {
@@ -29929,8 +29928,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1512,
-   "instructions": 61511614,
+   "ms": 1466,
+   "instructions": 61617510,
    "clock": 10000
   },
   {
@@ -29962,8 +29961,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1578,
-   "instructions": 69410196,
+   "ms": 1536,
+   "instructions": 69597940,
    "clock": 10000
   },
   {
@@ -29975,8 +29974,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1428,
-   "instructions": 59959189,
+   "ms": 1431,
+   "instructions": 60042446,
    "clock": 10000
   },
   {
@@ -29989,8 +29988,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1435,
-   "instructions": 59894114,
+   "ms": 1530,
+   "instructions": 59947869,
    "clock": 10000
   },
   {
@@ -30007,12 +30006,11 @@
     },
     {
      "name": "Created with DOMParser",
-     "status": "FAIL",
-     "message": "not a function"
+     "status": "PASS"
     }
    ],
-   "ms": 1637,
-   "instructions": 61790889,
+   "ms": 1426,
+   "instructions": 62082549,
    "clock": 10000
   },
   {
@@ -30034,8 +30032,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1652,
-   "instructions": 62754608,
+   "ms": 1438,
+   "instructions": 62834998,
    "clock": 10000
   },
   {
@@ -30059,8 +30057,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1639,
-   "instructions": 62578338,
+   "ms": 1326,
+   "instructions": 62656044,
    "clock": 10000
   },
   {
@@ -30608,8 +30606,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2944,
-   "instructions": 204524739,
+   "ms": 2353,
+   "instructions": 204627196,
    "clock": 10000
   },
   {
@@ -36393,8 +36391,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 10742,
-   "instructions": 1122874821,
+   "ms": 10300,
+   "instructions": 1120641113,
    "clock": 10000
   },
   {
@@ -36434,8 +36432,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1535,
-   "instructions": 74653595,
+   "ms": 1659,
+   "instructions": 74627407,
    "clock": 10000
   },
   {
@@ -42371,8 +42369,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 9121,
-   "instructions": 955722800,
+   "ms": 8205,
+   "instructions": 953307298,
    "clock": 10000
   },
   {
@@ -42540,8 +42538,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2470,
-   "instructions": 133435762,
+   "ms": 1904,
+   "instructions": 133743260,
    "clock": 10000
   },
   {
@@ -42559,8 +42557,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1864,
-   "instructions": 61021756,
+   "ms": 1674,
+   "instructions": 61099535,
    "clock": 10000
   },
   {
@@ -42577,8 +42575,8 @@
      "message": "assert_true: expected true got false"
     }
    ],
-   "ms": 1930,
-   "instructions": 65126432,
+   "ms": 1805,
+   "instructions": 65154115,
    "clock": 10000
   },
   {
@@ -42628,8 +42626,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2071,
-   "instructions": 68098845,
+   "ms": 1689,
+   "instructions": 68216817,
    "clock": 10000
   },
   {
@@ -42673,8 +42671,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1936,
-   "instructions": 65485230,
+   "ms": 1712,
+   "instructions": 65573492,
    "clock": 10000
   },
   {
@@ -42982,8 +42980,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2396,
-   "instructions": 102521436,
+   "ms": 2019,
+   "instructions": 102684437,
    "clock": 10000
   },
   {
@@ -43006,8 +43004,8 @@
      "message": "assert_equals: expected Document node with 2 children but got Document node with 2 children"
     }
    ],
-   "ms": 1988,
-   "instructions": 64107995,
+   "ms": 1655,
+   "instructions": 64211123,
    "clock": 10000
   },
   {
@@ -43045,8 +43043,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1828,
-   "instructions": 62344292,
+   "ms": 1838,
+   "instructions": 62411746,
    "clock": 10000
   },
   {
@@ -43082,8 +43080,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1762,
-   "instructions": 63984136,
+   "ms": 1701,
+   "instructions": 64050746,
    "clock": 10000
   },
   {
@@ -43101,8 +43099,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1722,
-   "instructions": 60112229,
+   "ms": 1558,
+   "instructions": 60191620,
    "clock": 10000
   },
   {
@@ -43123,12 +43121,11 @@
     },
     {
      "name": "Non-text nodes with empty textContent values.",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     }
    ],
-   "ms": 1787,
-   "instructions": 64296305,
+   "ms": 1525,
+   "instructions": 68618469,
    "clock": 10000
   },
   {
@@ -43184,8 +43181,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1731,
-   "instructions": 67677753,
+   "ms": 1651,
+   "instructions": 67774475,
    "clock": 10000
   },
   {
@@ -43213,8 +43210,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1646,
-   "instructions": 62287470,
+   "ms": 1578,
+   "instructions": 62274619,
    "clock": 10000
   },
   {
@@ -46126,8 +46123,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 5700,
-   "instructions": 493241535,
+   "ms": 5912,
+   "instructions": 493535665,
    "clock": 10000
   },
   {
@@ -46256,8 +46253,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2243,
-   "instructions": 92173961,
+   "ms": 2013,
+   "instructions": 92208511,
    "clock": 10000
   },
   {
@@ -46381,8 +46378,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2240,
-   "instructions": 119705013,
+   "ms": 2292,
+   "instructions": 119657750,
    "clock": 10000
   },
   {
@@ -46714,8 +46711,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2097,
-   "instructions": 124046924,
+   "ms": 2289,
+   "instructions": 124212314,
    "clock": 10000
   },
   {
@@ -46755,8 +46752,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1630,
-   "instructions": 65680348,
+   "ms": 1739,
+   "instructions": 65781325,
    "clock": 10000
   },
   {
@@ -46780,16 +46777,16 @@
      "status": "PASS"
     }
    ],
-   "ms": 1516,
-   "instructions": 63653379,
+   "ms": 1735,
+   "instructions": 63792151,
    "clock": 10000
   },
   {
    "file": "dom/nodes/NodeList-static-length-getter-tampered-1.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 30429,
-   "instructions": 4060616822,
+   "ms": 28201,
+   "instructions": 4060697124,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -46799,8 +46796,8 @@
    "file": "dom/nodes/NodeList-static-length-getter-tampered-2.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 29794,
-   "instructions": 4060616674,
+   "ms": 30892,
+   "instructions": 4060696976,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -46810,8 +46807,8 @@
    "file": "dom/nodes/NodeList-static-length-getter-tampered-3.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 31888,
-   "instructions": 4060616843,
+   "ms": 30878,
+   "instructions": 4060697066,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -46821,8 +46818,8 @@
    "file": "dom/nodes/NodeList-static-length-getter-tampered-indexOf-1.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 31664,
-   "instructions": 4060615515,
+   "ms": 32206,
+   "instructions": 4060695676,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -46832,8 +46829,8 @@
    "file": "dom/nodes/NodeList-static-length-getter-tampered-indexOf-2.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 37204,
-   "instructions": 4060615346,
+   "ms": 32381,
+   "instructions": 4060695586,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -46843,8 +46840,8 @@
    "file": "dom/nodes/NodeList-static-length-getter-tampered-indexOf-3.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 38062,
-   "instructions": 4060615582,
+   "ms": 32761,
+   "instructions": 4060695701,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -46879,8 +46876,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2011,
-   "instructions": 64732136,
+   "ms": 1966,
+   "instructions": 64772509,
    "clock": 10000
   },
   {
@@ -46988,8 +46985,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1836,
-   "instructions": 85671088,
+   "ms": 2176,
+   "instructions": 85731926,
    "clock": 10000
   },
   {
@@ -47001,8 +46998,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1682,
-   "instructions": 60785180,
+   "ms": 1880,
+   "instructions": 60870537,
    "clock": 10000
   },
   {
@@ -47098,8 +47095,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1890,
-   "instructions": 82975679,
+   "ms": 2085,
+   "instructions": 83105833,
    "clock": 10000
   },
   {
@@ -47155,8 +47152,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1841,
-   "instructions": 70465239,
+   "ms": 1953,
+   "instructions": 70542312,
    "clock": 10000
   },
   {
@@ -47172,8 +47169,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1737,
-   "instructions": 60783051,
+   "ms": 1863,
+   "instructions": 60860267,
    "clock": 10000
   },
   {
@@ -47185,8 +47182,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1824,
-   "instructions": 61088212,
+   "ms": 1861,
+   "instructions": 61163737,
    "clock": 10000
   },
   {
@@ -47219,17 +47216,15 @@
     },
     {
      "name": "querySelectorAll with :scope in unattached svg document",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "querySelectorAll with :scope in document where element moved",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     }
    ],
-   "ms": 2690,
-   "instructions": 66972379,
+   "ms": 1905,
+   "instructions": 67375362,
    "clock": 10000
   },
   {
@@ -55165,8 +55160,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 25229,
-   "instructions": 2657372633,
+   "ms": 24807,
+   "instructions": 2657001202,
    "clock": 10000
   },
   {
@@ -55186,8 +55181,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1880,
-   "instructions": 61927315,
+   "ms": 1858,
+   "instructions": 62009478,
    "clock": 10000
   },
   {
@@ -55223,8 +55218,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2110,
-   "instructions": 68896595,
+   "ms": 1916,
+   "instructions": 68949141,
    "clock": 10000
   },
   {
@@ -55237,8 +55232,8 @@
      "message": "'p:has(span)' is not a valid selector"
     }
    ],
-   "ms": 1819,
-   "instructions": 60672457,
+   "ms": 1884,
+   "instructions": 60752350,
    "clock": 10000
   },
   {
@@ -55254,8 +55249,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1796,
-   "instructions": 60380923,
+   "ms": 1951,
+   "instructions": 60457786,
    "clock": 10000
   },
   {
@@ -55287,8 +55282,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1867,
-   "instructions": 63928747,
+   "ms": 1875,
+   "instructions": 63991201,
    "clock": 10000
   },
   {
@@ -55297,17 +55292,15 @@
    "subtests": [
     {
      "name": "Sanity: returns a non-null value",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Returns a non-null value for connected cloned node with duplicated ID",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     }
    ],
-   "ms": 1808,
-   "instructions": 60647130,
+   "ms": 1832,
+   "instructions": 61101341,
    "clock": 10000
   },
   {
@@ -55323,8 +55316,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1826,
-   "instructions": 60924255,
+   "ms": 1849,
+   "instructions": 61003914,
    "clock": 10000
   },
   {
@@ -55606,8 +55599,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2291,
-   "instructions": 107503366,
+   "ms": 2314,
+   "instructions": 107620271,
    "clock": 10000
   },
   {
@@ -55620,8 +55613,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1813,
-   "instructions": 60616568,
+   "ms": 1865,
+   "instructions": 60697788,
    "clock": 10000
   },
   {
@@ -55645,8 +55638,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1834,
-   "instructions": 62211802,
+   "ms": 1887,
+   "instructions": 62289190,
    "clock": 10000
   },
   {
@@ -55659,8 +55652,8 @@
      "message": "no setter for property"
     }
    ],
-   "ms": 2014,
-   "instructions": 60444580,
+   "ms": 1860,
+   "instructions": 60526786,
    "clock": 10000
   },
   {
@@ -55680,8 +55673,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2003,
-   "instructions": 62144654,
+   "ms": 1928,
+   "instructions": 62220442,
    "clock": 10000
   },
   {
@@ -55697,8 +55690,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2132,
-   "instructions": 61818109,
+   "ms": 1891,
+   "instructions": 61906557,
    "clock": 10000
   },
   {
@@ -55710,8 +55703,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2186,
-   "instructions": 59959750,
+   "ms": 1821,
+   "instructions": 60043214,
    "clock": 10000
   },
   {
@@ -55723,8 +55716,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2204,
-   "instructions": 60091503,
+   "ms": 1859,
+   "instructions": 60178214,
    "clock": 10000
   },
   {
@@ -55748,8 +55741,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1822,
-   "instructions": 61941338,
+   "ms": 1878,
+   "instructions": 62020500,
    "clock": 10000
   },
   {
@@ -55760,15 +55753,46 @@
   },
   {
    "file": "dom/nodes/ParentNode-querySelector-namespace-tagname-attribute.html",
-   "harness": "ERROR",
-   "message": "TypeError: not a function",
-   "subtests": [],
-   "ms": 1849,
-   "instructions": 59773192,
-   "clock": 10000,
-   "errors": [
-    "TypeError: not a function\n    at <eval> (<page-script>:12:17)\n"
-   ]
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "match selector without prefix",
+     "status": "PASS"
+    },
+    {
+     "name": "match namespace selector with universal prefix",
+     "status": "PASS"
+    },
+    {
+     "name": "throws on specified namespace selector",
+     "status": "PASS"
+    },
+    {
+     "name": "does not throw on specified namespace selector if forgiven",
+     "status": "FAIL",
+     "message": "':is(cp|coreProperties)' is not a valid selector"
+    },
+    {
+     "name": "does not match attriubte selector without prefix",
+     "status": "PASS"
+    },
+    {
+     "name": "match namespace attriubte selector with universal prefix",
+     "status": "PASS"
+    },
+    {
+     "name": "throws on specified namespace attriubte selector",
+     "status": "PASS"
+    },
+    {
+     "name": "does not throw on specified namespace attriubte selector if forgiven",
+     "status": "FAIL",
+     "message": "':is([xml|lang])' is not a valid selector"
+    }
+   ],
+   "ms": 1882,
+   "instructions": 64863093,
+   "clock": 10000
   },
   {
    "file": "dom/nodes/ParentNode-querySelector-nested-nth-child.html",
@@ -55779,8 +55803,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1847,
-   "instructions": 61209199,
+   "ms": 1843,
+   "instructions": 61297030,
    "clock": 10000
   },
   {
@@ -55792,8 +55816,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1827,
-   "instructions": 61254102,
+   "ms": 1845,
+   "instructions": 61342599,
    "clock": 10000
   },
   {
@@ -55805,8 +55829,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1832,
-   "instructions": 62261266,
+   "ms": 1858,
+   "instructions": 62351238,
    "clock": 10000
   },
   {
@@ -55822,8 +55846,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1892,
-   "instructions": 60651190,
+   "ms": 1830,
+   "instructions": 60727508,
    "clock": 10000
   },
   {
@@ -55836,8 +55860,8 @@
      "message": "no setter for property"
     }
    ],
-   "ms": 1819,
-   "instructions": 60398365,
+   "ms": 1854,
+   "instructions": 60471938,
    "clock": 10000
   },
   {
@@ -55849,8 +55873,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1844,
-   "instructions": 61046469,
+   "ms": 1848,
+   "instructions": 61141010,
    "clock": 10000
   },
   {
@@ -55880,8 +55904,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1854,
-   "instructions": 62056961,
+   "ms": 1850,
+   "instructions": 62131705,
    "clock": 10000
   },
   {
@@ -55894,8 +55918,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1808,
-   "instructions": 60190911,
+   "ms": 1842,
+   "instructions": 60279906,
    "clock": 10000
   },
   {
@@ -55907,8 +55931,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1975,
-   "instructions": 60857599,
+   "ms": 1907,
+   "instructions": 60939543,
    "clock": 10000
   },
   {
@@ -55940,8 +55964,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1988,
-   "instructions": 64919924,
+   "ms": 1888,
+   "instructions": 65021294,
    "clock": 10000
   },
   {
@@ -55956,22 +55980,19 @@
    "subtests": [
     {
      "name": "Descendant combinator",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Descendant combinator with *",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Child combinator",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     }
    ],
-   "ms": 1988,
-   "instructions": 61217669,
+   "ms": 1918,
+   "instructions": 61783759,
    "clock": 10000
   },
   {
@@ -55987,21 +56008,22 @@
      "status": "PASS"
     }
    ],
-   "ms": 1935,
-   "instructions": 60732670,
+   "ms": 1897,
+   "instructions": 60780178,
    "clock": 10000
   },
   {
    "file": "dom/nodes/ParentNode-querySelectorAll-namespace.html",
-   "harness": "ERROR",
-   "message": "TypeError: not a function",
-   "subtests": [],
-   "ms": 1913,
-   "instructions": 59620065,
-   "clock": 10000,
-   "errors": [
-    "TypeError: not a function\n    at <eval> (<page-script>:33:18)\n"
-   ]
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "querySelectorAll with namespaced XML elements",
+     "status": "PASS"
+    }
+   ],
+   "ms": 1902,
+   "instructions": 60682177,
+   "clock": 10000
   },
   {
    "file": "dom/nodes/ParentNode-querySelectorAll-nested-not-has.html",
@@ -56013,8 +56035,8 @@
      "message": "'dd:not(:has(dd))' is not a valid selector"
     }
    ],
-   "ms": 1879,
-   "instructions": 62656369,
+   "ms": 1936,
+   "instructions": 62740101,
    "clock": 10000
   },
   {
@@ -56026,8 +56048,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1797,
-   "instructions": 61942361,
+   "ms": 1945,
+   "instructions": 62038433,
    "clock": 10000
   },
   {
@@ -56040,8 +56062,8 @@
      "message": "TypeError: no setter for property"
     }
    ],
-   "ms": 1905,
-   "instructions": 60483069,
+   "ms": 1900,
+   "instructions": 60564319,
    "clock": 10000,
    "errors": [
     "TypeError: no setter for property\n    at <eval> (<page-script>:11:1)\n"
@@ -56053,12 +56075,11 @@
    "subtests": [
     {
      "name": "Change the scope of querySelectorAll",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     }
    ],
-   "ms": 1666,
-   "instructions": 60831138,
+   "ms": 1914,
+   "instructions": 62258725,
    "clock": 10000
   },
   {
@@ -56074,8 +56095,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1662,
-   "instructions": 60873289,
+   "ms": 2067,
+   "instructions": 60952097,
    "clock": 10000
   },
   {
@@ -56091,8 +56112,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1644,
-   "instructions": 61159040,
+   "ms": 1901,
+   "instructions": 61235600,
    "clock": 10000
   },
   {
@@ -56104,8 +56125,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1653,
-   "instructions": 60461786,
+   "ms": 1895,
+   "instructions": 60543695,
    "clock": 10000
   },
   {
@@ -56118,8 +56139,8 @@
      "message": "TypeError: no setter for property"
     }
    ],
-   "ms": 2770,
-   "instructions": 60713357,
+   "ms": 1902,
+   "instructions": 60791443,
    "clock": 10000,
    "errors": [
     "TypeError: no setter for property\n    at <eval> (<page-script>:19:1)\n"
@@ -56134,8 +56155,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2193,
-   "instructions": 60343316,
+   "ms": 2014,
+   "instructions": 60427199,
    "clock": 10000
   },
   {
@@ -56151,8 +56172,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1907,
-   "instructions": 60426281,
+   "ms": 2127,
+   "instructions": 60479713,
    "clock": 10000
   },
   {
@@ -56288,8 +56309,8 @@
      "message": "assert_equals: mutations.length expected 1 but got 3"
     }
    ],
-   "ms": 2352,
-   "instructions": 104752446,
+   "ms": 2317,
+   "instructions": 104831754,
    "clock": 10000
   },
   {
@@ -56386,8 +56407,8 @@
      "message": "assert_equals: expected Document node with 1 child but got Document node with 2 children"
     }
    ],
-   "ms": 2200,
-   "instructions": 72743762,
+   "ms": 1977,
+   "instructions": 72807872,
    "clock": 10000
   },
   {
@@ -56419,8 +56440,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2051,
-   "instructions": 63510978,
+   "ms": 1888,
+   "instructions": 63595043,
    "clock": 10000
   },
   {
@@ -56432,8 +56453,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2098,
-   "instructions": 60863180,
+   "ms": 1872,
+   "instructions": 60931718,
    "clock": 10000
   },
   {
@@ -56469,8 +56490,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1983,
-   "instructions": 69517043,
+   "ms": 1970,
+   "instructions": 69630649,
    "clock": 10000
   },
   {
@@ -56498,8 +56519,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1948,
-   "instructions": 64738368,
+   "ms": 1933,
+   "instructions": 64775076,
    "clock": 10000
   },
   {
@@ -56507,8 +56528,8 @@
    "harness": "ERROR",
    "message": "TypeError: cannot read property 'define' of undefined",
    "subtests": [],
-   "ms": 1921,
-   "instructions": 60190994,
+   "ms": 1886,
+   "instructions": 60279006,
    "clock": 10000,
    "errors": [
     "TypeError: cannot read property 'define' of undefined\n    at <eval> (<page-script>:10:1)\n"
@@ -56528,8 +56549,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2215,
-   "instructions": 64901534,
+   "ms": 1932,
+   "instructions": 64968058,
    "clock": 10000
   },
   {
@@ -56569,8 +56590,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2178,
-   "instructions": 67361500,
+   "ms": 1978,
+   "instructions": 67437428,
    "clock": 10000
   },
   {
@@ -56849,8 +56870,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 3593,
-   "instructions": 185343654,
+   "ms": 3154,
+   "instructions": 185124582,
    "clock": 10000
   },
   {
@@ -57998,8 +58019,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 6826,
-   "instructions": 546634601,
+   "ms": 6995,
+   "instructions": 545758663,
    "clock": 10000
   },
   {
@@ -58007,8 +58028,8 @@
    "harness": "ERROR",
    "message": "TypeError: cannot read property 'define' of undefined",
    "subtests": [],
-   "ms": 1866,
-   "instructions": 60536837,
+   "ms": 1858,
+   "instructions": 60613920,
    "clock": 10000,
    "errors": [
     "TypeError: cannot read property 'define' of undefined\n    at <eval> (<page-script>:11:1)\n"
@@ -58039,8 +58060,8 @@
      "message": "assert_equals: expected (object) Element node <form id=\"owner\" id=\"unrelated\"></form> but got (undefined) undefined"
     }
    ],
-   "ms": 2023,
-   "instructions": 74763771,
+   "ms": 2073,
+   "instructions": 74796169,
    "clock": 10000
   },
   {
@@ -58064,8 +58085,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2604,
-   "instructions": 128121335,
+   "ms": 2767,
+   "instructions": 126104978,
    "clock": 10000
   },
   {
@@ -58085,8 +58106,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1805,
-   "instructions": 61528096,
+   "ms": 1876,
+   "instructions": 61602552,
    "clock": 10000
   },
   {
@@ -58198,8 +58219,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 10749,
-   "instructions": 861314900,
+   "ms": 11009,
+   "instructions": 859473249,
    "clock": 10000
   },
   {
@@ -58264,8 +58285,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2043,
-   "instructions": 72821562,
+   "ms": 2054,
+   "instructions": 72855362,
    "clock": 10000
   },
   {
@@ -58282,16 +58303,16 @@
      "status": "PASS"
     }
    ],
-   "ms": 1949,
-   "instructions": 64775513,
+   "ms": 2018,
+   "instructions": 64906309,
    "clock": 10000
   },
   {
    "file": "dom/nodes/name-validation.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 39433,
-   "instructions": 4059030799,
+   "ms": 40185,
+   "instructions": 4059094324,
    "clock": 10000,
    "errors": [
     "WasmVM: out of fuel"
@@ -58411,8 +58432,8 @@
      "message": "assert_false: expected false got undefined"
     }
    ],
-   "ms": 1954,
-   "instructions": 92896680,
+   "ms": 2176,
+   "instructions": 93008137,
    "clock": 10000
   },
   {
@@ -58474,8 +58495,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1736,
-   "instructions": 68986718,
+   "ms": 1936,
+   "instructions": 69078453,
    "clock": 10000
   },
   {
@@ -58498,8 +58519,8 @@
      "message": "cannot read property 'ownerDocument' of null"
     }
    ],
-   "ms": 1687,
-   "instructions": 64933257,
+   "ms": 1943,
+   "instructions": 65030331,
    "clock": 10000
   },
   {
@@ -58527,8 +58548,8 @@
      "message": "cannot read property 'define' of undefined"
     }
    ],
-   "ms": 1700,
-   "instructions": 67244230,
+   "ms": 1953,
+   "instructions": 67319330,
    "clock": 10000
   },
   {
@@ -58560,8 +58581,8 @@
      "message": "cannot read property 'ownerDocument' of null"
     }
    ],
-   "ms": 1775,
-   "instructions": 64576686,
+   "ms": 1885,
+   "instructions": 64727541,
    "clock": 10000
   },
   {
@@ -58589,8 +58610,8 @@
      "message": "cannot read property 'ownerDocument' of null"
     }
    ],
-   "ms": 1663,
-   "instructions": 63879189,
+   "ms": 1937,
+   "instructions": 63967254,
    "clock": 10000
   },
   {
@@ -58603,8 +58624,8 @@
      "message": "not a function"
     }
    ],
-   "ms": 1616,
-   "instructions": 59961469,
+   "ms": 1840,
+   "instructions": 60045545,
    "clock": 10000
   },
   {
@@ -58632,8 +58653,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2640,
-   "instructions": 64772670,
+   "ms": 1902,
+   "instructions": 64800547,
    "clock": 10000
   },
   {
@@ -58993,52 +59014,52 @@
     {
      "name": "Processing instruction attribute parsing rejects unquoted attributes from xml-dom",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "Processing instruction attribute mutation from xml-dom",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "Processing instruction attribute parsing allows _ in attribute names from xml-dom",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "Processing instruction toggleAttribute from xml-dom",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "check attribute value: \"=\" (source: \"xml-dom\")",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "check attribute value: \"axx\"\" (source: \"xml-dom\")",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "check attribute value: \"axx>\" (source: \"xml-dom\")",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "check attribute value: \"some<>\" (source: \"xml-dom\")",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "check attribute value: \"'\"\"'\" (source: \"xml-dom\")",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "check attribute value: \"aa\"aa\"\" (source: \"xml-dom\")",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "Invalid attribute name: = (source: xml-dom)",
@@ -59118,102 +59139,101 @@
     {
      "name": "Valid attribute name: $ (source: xml-dom)",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "Valid attribute name: _ (source: xml-dom)",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "Valid attribute name: $foo (source: xml-dom)",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "Valid attribute name: _bar (source: xml-dom)",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "Valid attribute name: a$b (source: xml-dom)",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "Valid attribute name: a_b (source: xml-dom)",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "Distinct attribute name (source: xml-dom): ABC and abc",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "Distinct attribute name (source: xml-dom): abC and abc",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "Distinct attribute name (source: xml-dom): x123A and x123a",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "Processing instruction attributes with xml-stylesheet from xml-dom",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "not a function"
     },
     {
      "name": "Processing instruction attribute parsing rejects unquoted attributes from xml-parser",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Processing instruction attribute mutation from xml-parser",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: expected 7 but got 1"
     },
     {
      "name": "Processing instruction attribute parsing allows _ in attribute names from xml-parser",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_true: expected true got false"
     },
     {
      "name": "Processing instruction toggleAttribute from xml-parser",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: expected 7 but got 1"
     },
     {
      "name": "check attribute value: \"=\" (source: \"xml-parser\")",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: expected (string) \"attr=\\\"=\\\"\" but got (undefined) undefined"
     },
     {
      "name": "check attribute value: \"axx\"\" (source: \"xml-parser\")",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: expected (string) \"attr=\\\"axx&quot;\\\"\" but got (undefined) undefined"
     },
     {
      "name": "check attribute value: \"axx>\" (source: \"xml-parser\")",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: expected (string) \"attr=\\\"axx\" but got (undefined) undefined"
     },
     {
      "name": "check attribute value: \"some<>\" (source: \"xml-parser\")",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: expected (string) \"attr=\\\"some<\" but got (undefined) undefined"
     },
     {
      "name": "check attribute value: \"'\"\"'\" (source: \"xml-parser\")",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: expected (string) \"attr=\\\"'&quot;&quot;'\\\"\" but got (undefined) undefined"
     },
     {
      "name": "check attribute value: \"aa\"aa\"\" (source: \"xml-parser\")",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: expected (string) \"attr=\\\"aa&quot;aa&quot;\\\"\" but got (undefined) undefined"
     },
     {
      "name": "Invalid attribute name: = (source: xml-parser)",
@@ -59292,65 +59312,56 @@
     },
     {
      "name": "Valid attribute name: $ (source: xml-parser)",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Valid attribute name: _ (source: xml-parser)",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Valid attribute name: $foo (source: xml-parser)",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Valid attribute name: _bar (source: xml-parser)",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Valid attribute name: a$b (source: xml-parser)",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Valid attribute name: a_b (source: xml-parser)",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Distinct attribute name (source: xml-parser): ABC and abc",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Distinct attribute name (source: xml-parser): abC and abc",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Distinct attribute name (source: xml-parser): x123A and x123a",
-     "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "status": "PASS"
     },
     {
      "name": "Processing instruction attributes with xml-stylesheet from xml-parser",
      "status": "FAIL",
-     "message": "DOMParser is not defined"
+     "message": "assert_equals: expected 7 but got 1"
     }
    ],
-   "ms": 4781,
-   "instructions": 325063003,
+   "ms": 5084,
+   "instructions": 359524687,
    "clock": 10000
   },
   {
    "file": "dom/nodes/query-target-in-load-event.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1803,
-   "instructions": 58984168,
+   "ms": 1833,
+   "instructions": 59067968,
    "clock": 10000
   },
   {
@@ -59363,8 +59374,8 @@
      "message": "root is not defined"
     }
    ],
-   "ms": 1749,
-   "instructions": 59348238,
+   "ms": 1860,
+   "instructions": 59428444,
    "clock": 10000
   },
   {
@@ -59381,8 +59392,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1802,
-   "instructions": 60028356,
+   "ms": 1831,
+   "instructions": 60116874,
    "clock": 10000
   },
   {
@@ -59395,8 +59406,8 @@
      "message": "no setter for property"
     }
    ],
-   "ms": 2174,
-   "instructions": 73681896,
+   "ms": 1950,
+   "instructions": 73586415,
    "clock": 10000
   },
   {
@@ -59409,8 +59420,8 @@
      "message": "d1 is not defined"
     }
    ],
-   "ms": 2063,
-   "instructions": 59363463,
+   "ms": 1813,
+   "instructions": 59444893,
    "clock": 10000
   },
   {
@@ -59423,8 +59434,8 @@
      "message": "target is not defined"
     }
    ],
-   "ms": 1876,
-   "instructions": 60384640,
+   "ms": 1883,
+   "instructions": 60466680,
    "clock": 10000
   },
   {
@@ -59456,8 +59467,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 2185,
-   "instructions": 64210147,
+   "ms": 1962,
+   "instructions": 64098263,
    "clock": 10000
   },
   {
@@ -59486,8 +59497,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1888,
-   "instructions": 64438435,
+   "ms": 1787,
+   "instructions": 64528301,
    "clock": 10000
   },
   {
@@ -59507,8 +59518,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1792,
-   "instructions": 61462959,
+   "ms": 1676,
+   "instructions": 61544209,
    "clock": 10000
   },
   {
@@ -59520,8 +59531,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1770,
-   "instructions": 59925988,
+   "ms": 1679,
+   "instructions": 59997922,
    "clock": 10000
   },
   {
@@ -59533,8 +59544,8 @@
      "status": "PASS"
     }
    ],
-   "ms": 1814,
-   "instructions": 59857825,
+   "ms": 1677,
+   "instructions": 59948484,
    "clock": 10000
   },
   {
@@ -59547,8 +59558,8 @@
      "message": "assert_false: Classic script should not run expected false got true"
     }
    ],
-   "ms": 1912,
-   "instructions": 62482657,
+   "ms": 1693,
+   "instructions": 62563931,
    "clock": 10000
   },
   {
@@ -59567,8 +59578,8 @@
      "message": "assert_true: precondition expected true got false"
     }
    ],
-   "ms": 1931,
-   "instructions": 65306756,
+   "ms": 1725,
+   "instructions": 65433990,
    "clock": 10000
   },
   {
@@ -59581,8 +59592,8 @@
      "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
     }
    ],
-   "ms": 1864,
-   "instructions": 63283950,
+   "ms": 1699,
+   "instructions": 63370328,
    "clock": 10000
   },
   {
@@ -59604,16 +59615,16 @@
      "status": "PASS"
     }
    ],
-   "ms": 1875,
-   "instructions": 63510807,
+   "ms": 1687,
+   "instructions": 63601641,
    "clock": 10000
   },
   {
    "file": "html/webappapis/scripting/event-loops/update-the-rendering-resize-autofocus.html",
    "harness": "TIMEOUT",
    "subtests": [],
-   "ms": 1772,
-   "instructions": 60207511,
+   "ms": 1675,
+   "instructions": 60132655,
    "clock": 10000
   }
  ]

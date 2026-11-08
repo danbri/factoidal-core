@@ -227,3 +227,9 @@ attribute values, the structural pseudo-classes with `An+B [of S]`, `:not`, `:is
 `:where`, `:scope`, `:lang`, `:link`, `:checked`, `:disabled`, `:enabled`. User-state
 pseudo-classes match nothing; the four legacy pseudo-elements never match. The JavaScript
 selector engine of the prelude is gone.
+
+DOMParser (2026-11-08): `parseFromString` makes the document with Lean's HTML parser
+(`text/html`) or namespace-aware XML parser (the four XML types), grafted into the arena
+(`create_node` kinds 11 and 12, so the command list replays it). An XML source that is not
+namespace-well-formed gives a document whose element is `parsererror` with the parser's
+message.

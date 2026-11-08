@@ -38,6 +38,8 @@ import L4Factoidal.DOM.Arena
 import L4Factoidal.PageGpu.Wire
 import L4Factoidal.DOM.Selectors
 import Std.Data.HashMap
+import L4Factoidal.DOM.OfHtml
+import L4Factoidal.DOM.OfXml
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.WasmVM L4Factoidal.DOM
@@ -525,17 +527,36 @@ def createHTMLDocument (d : Dom) (title : Option String) : Dom × Nat := Id.run 
   let (d, body) := el d "body"
   return (d.linkChild html body none, doc)
 
+/-- `DOMParser.parseFromString(source, type)` for an XML type (HTML §8.5.1.1): the
+document the XML parser makes, with that content type; when the source is not
+namespace-well-formed, a document whose element is a `parsererror` element (in the
+namespace browsers use for it) with the parser's message. -/
+def parsererrorNS : String := "http://www.mozilla.org/newlayout/xml/parsererror.xml"
+
+def xmlDocument (contentType source : String) : Dom :=
+  let d := match parseXmlDocument source with
+    | .ok d => d
+    | .error msg => Id.run do
+      let d : Dom := { nodes := #[{ type := .document, doc := 0, htmlDoc := false }] }
+      let el0 : Node := { type := .element, doc := 0, ns := some parsererrorNS, lname := "parsererror" }
+      let (d, el) := d.create el0
+      let d := d.linkChild 0 el none
+      let (d, t) := d.createTextNode 0 msg
+      return d.linkChild el t none
+  d.setNode 0 fun n => { n with contentType := contentType }
+
 /-- `create_node(kind + 16 × doc, data)`: the node a script makes, in document `doc`.
 Kinds: 0 `createTextNode`, 1 `createComment`, 2 `createDocumentFragment`, 3
 `createElement`, 4 `createElementNS` (`data` is namespace, U+0000, qualified name), 5
 `createProcessingInstruction` (target, U+0000, data), 6 `createCDATASection`, 7
 `createHTMLDocument` with the title `data`, 10 the same with no title, 8 an XML document
 (`createDocument`, `new Document()`), 9 `createDocumentType` (name, U+0000, public id,
-U+0000, system id). -/
+U+0000, system id), 11 a document the HTML parser makes from `data` and 12 one the XML
+parser makes (content type, U+0000, source) (`DOMParser`). -/
 def createKind (d : Dom) (kind : Nat) (data : String) : Res Nat :=
   let doc := kind / 16
   let ok := fun (r : Dom × Nat) => ((r.1, .ok r.2) : Res Nat)
-  if kind % 16 ∉ [7, 8, 10] && (doc ≥ d.size || (d.get doc).type != .document) then (d, .error .notSupported) else
+  if kind % 16 ∉ [7, 8, 10, 11, 12] && (doc ≥ d.size || (d.get doc).type != .document) then (d, .error .notSupported) else
   match kind % 16, data.splitOn "\x00" with
   | 0, _ => ok (d.createTextNode doc data)
   | 1, _ => ok (d.createComment doc data)
@@ -555,6 +576,8 @@ def createKind (d : Dom) (kind : Nat) (data : String) : Res Nat :=
     let ct := if data == htmlNS then "application/xhtml+xml" else if data == svgNS then "image/svg+xml" else ""
     ok (d.setNode doc fun n => { n with contentType := ct }, doc)
   | 9, [name, pub, sys] => d.createDocumentType doc name pub sys
+  | 11, _ => ok (d.graft (parseHtmlDocument data))
+  | 12, ct :: rest => ok (d.graft (xmlDocument ct ("\x00".intercalate rest)))
   | _, _ => (d, .error .invalidCharacter)
 
 def createNode (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
@@ -1006,5 +1029,17 @@ def Command.apply (d : Dom) : Command → Except String Dom
     checkNode d n; checkNode d doc
     if (d.get doc).type != .document || (d.get n).type == .document then throw "script command: NotSupportedError"
     made r (d.cloneNode n deep (some doc))
+
+-- DOMParser: an XML document, a parse error, and an HTML document joined to an arena
+#guard (match createKind { nodes := #[{ type := .document }] } 12 "application/xml\x00<a xmlns='u'/>" with
+  | (d, .ok r) => let e := d.get ((d.get r).kids[0]!)
+    (e.lname, e.ns, (d.get r).contentType, (d.get r).htmlDoc) == ("a", some "u", "application/xml", false)
+  | _ => false)
+#guard (match createKind { nodes := #[{ type := .document }] } 12 "text/xml\x00<a>" with
+  | (d, .ok r) => (d.get ((d.get r).kids[0]!)).lname == "parsererror"
+  | _ => false)
+#guard (match createKind { nodes := #[{ type := .document }] } 11 "<p>x" with
+  | (d, .ok r) => r == 1 && (d.get r).htmlDoc && (d.get r).doc == r
+  | _ => false)
 
 end L4Factoidal.WasmVM.Hosts.Dom

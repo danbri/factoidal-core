@@ -1512,6 +1512,17 @@
     }
     hasFeature() { return true; }
   }
+  // DOMParser (HTML §8.5.1): the document is parsed by Lean (Hosts.Dom.createKind 11, 12).
+  const xmlTypes = ['text/xml', 'application/xml', 'application/xhtml+xml', 'image/svg+xml'];
+  class DOMParser {
+    parseFromString(source, type) {
+      if (arguments.length < 2) throw new TypeError('parseFromString: 2 arguments required');
+      source = String(source); type = String(type);
+      if (type === 'text/html') return wrap(chk(n.create(11, source)));
+      if (xmlTypes.includes(type)) return wrap(chk(n.create(12, type + '\u0000' + source)));
+      throw new TypeError(`'${type}' is not a valid value for DOMParserSupportedType`);
+    }
+  }
   class HTMLDocument extends Document {}
   class XMLDocument extends Document {}
   mix(Element, parentNode); mix(Document, parentNode); mix(DocumentFragment, parentNode);
@@ -1805,7 +1816,7 @@
     WheelEvent, PointerEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, CharacterData, Text, CDATASection, Comment,
-    ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr,
+    ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser,
     DOMTokenList, DOMException, AbortController, AbortSignal, Window, MutationObserver, MutationRecord, ...named })) def(k, v);
 
   // Content event handler attributes (HTML §8.1.8.1): onclick="..." and <body onload>.
