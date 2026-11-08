@@ -13,7 +13,9 @@ import L4Factoidal.WasmVM.Exec.Instantiate
 import L4Factoidal.WasmVM.Api
 import L4Factoidal.WasmVM.Proofs.Numerics
 import L4Factoidal.WasmVM.Proofs.Fuse
+import L4Factoidal.WasmVM.Proofs.Proposals
 import L4Factoidal.WasmVM.Tests.Memory
+import L4Factoidal.WasmVM.Tests.Proposals
 
 /-
 L4Factoidal.WasmVM: a WebAssembly engine in Lean 4 (https://github.com/danbri/factoidal/issues/1244).

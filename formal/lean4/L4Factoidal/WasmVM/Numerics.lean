@@ -37,6 +37,7 @@ inductive Trap where
   | memOOB | tableOOB | undefinedElement | uninitializedElement
   | indirectTypeMismatch | nullReference | callStackExhausted
   | dataOOB | elemOOB
+  | nullFuncRef | nullExnRef
   | host (msg : String)
   deriving BEq, Repr, Inhabited
 
@@ -54,6 +55,8 @@ def Trap.message : Trap → String
   | .callStackExhausted => "call stack exhausted"
   | .dataOOB => "out of bounds memory access"
   | .elemOOB => "out of bounds table access"
+  | .nullFuncRef => "null function reference"
+  | .nullExnRef => "null exception reference"
   | .host m => m
 
 namespace Num

@@ -32,9 +32,10 @@ only (the spec-test runner also imports `Lean.Data.Json`).
 | `Exec.Run` | the interpreter loop |
 | `Exec.Instantiate` | linking, segment initialisation, start function |
 | `Api` | the public surface |
-| `Proofs.*` | refinement theorems |
+| `Proofs.*` | refinement theorems (`Proofs.Proposals`: exceptions and tail calls) |
 | `SpecTest` | `lake exe wasmvm-spectest` |
-| `Bench` | `lake exe wasmvm-bench` |
+| `Tests.Memory`, `Tests.Proposals` | run after the spec tests (legacy exceptions, 10^6 tail calls, `try_table` cost) |
+| `Bench` | `lake exe wasmvm-bench` (`Bench.Core`: `l4core FILE` loads `l4factoidal.wasm`) |
 
 ## API
 
@@ -63,7 +64,9 @@ resume      : Store → Suspended → Array Value → Limits → Store × Outcom
   resumable. So a host function cannot change the store during a step, a host error is
   a value (`Outcome.hostError`), and one driver loop (`Api.runIO`) serves every host.
 - **Outcomes**: `values (Array Value)`, `trap (TrapReason)`, `exhausted` (call depth or
-  stack), `outOfFuel Suspended`, `hostCall HostFuncId (Array Value) Suspended`.
+  stack), `outOfFuel Suspended`, `hostCall HostFuncId (Array Value) Suspended`,
+  `exception tag (Array Value)` (an exception no handler caught: its tag address and
+  payload).
 - **Limits**: fuel (instructions), maximum call depth, maximum memory pages (applied
   under the module's own maximum at `memory.grow`).
 - **Host ABI for later** (Deno, browser, Mac app; not wired now): the same JSON op
@@ -190,9 +193,11 @@ a pure function over an array; the theorem is `Array.map` equals the task-based 
 ## Scope
 
 Stage 1: Wasm 1.0 (MVP) plus multi-value, sign extension, non-trapping float-to-int,
-bulk memory, reference types and multi-memory. Later, with room left in `Syntax`
-(`ValType.v128`, `HeapType` with type indices, `Op` constructors): SIMD, GC, exceptions,
-memory64, tail calls, threads.
+bulk memory, reference types and multi-memory. Stage 2 (2026-11-08): exception handling
+(3.0 `try_table`, `throw`, `throw_ref`, `exnref`, tags; and the legacy `try`, `catch`,
+`catch_all`, `delegate`, `rethrow` that Emscripten emits), tail calls and typed function
+references. Later, with room left in `Syntax` (`ValType.v128`, `HeapType` with type
+indices, `Op` constructors): SIMD, GC, memory64, threads.
 
 Floating point, where the host C library can differ: `Float.sqrt`/`Float32.sqrt`
 (correctly rounded by IEEE 754 in every C library we use), `floor`/`ceil`/`trunc`
@@ -213,7 +218,32 @@ sessions' builds running on the machine (load average about 2.5). Commands run i
 ### Spec tests
 
 `lake exe wasmvm-spectest` over `third_party/wasm-spec/test/core-json` (259 files,
-65353 commands): **pass 35085, fail 0, not run 30268.**
+65353 commands). 2026-11-08, after exceptions, tail calls and typed function
+references: **pass 35501, fail 0, not run 29852.** By part:
+
+| Part | pass | not run | why not run |
+|---|---|---|---|
+| core | 27988 | 757 | text-format modules, GC types (`rec`, `sub`), SIMD in core files |
+| exceptions | 98 | 12 | `cast` uses GC instructions; 3 `tag` modules use `rec` groups; 2 text-format modules |
+| multi-memory | 912 | 0 | |
+| memory64 directory | 6367 | 2352 | 64-bit address type |
+| simd | 122 | 25868 | SIMD |
+| gc | 14 | 784 | GC types |
+| relaxed-simd | 0 | 79 | proposal not done |
+
+By proposal (files, before and after):
+
+| Area | files | before: pass, fail, not run | after: pass, fail, not run |
+|---|---|---|---|
+| exception handling | `tag`, `throw`, `throw_ref`, `try_table`, `cast` | 0, 0, 110 | 98, 0, 12 |
+| tail calls | `return_call`, `return_call_indirect`, `return_call_ref` | 1, 0, 186 | 176, 0, 11 (text format) |
+| typed function references | `call_ref`, `br_on_null`, `br_on_non_null`, `ref_as_non_null` | 0, 0, 64 | 64, 0, 0 |
+| files that needed these for some modules | `imports`, `exports`, `ref_null`, `unreached-valid`, `unreached-invalid` | 385, 0, 98 | 464, 0, 19 |
+
+The suite has no legacy `try`; `Tests/Proposals.lean` has 13 legacy cases with the
+results Node 22 gives for the same binary (all pass), and runs after the spec tests.
+
+Before (2026-11-07): pass 35085, fail 0, not run 30268:
 
 | Part | pass | not run | why not run |
 |---|---|---|---|
@@ -449,6 +479,162 @@ specialised for `ByteMem` (`Run.run_at_..._spec`), after the changes above:
 - Before `NumOp.evalBin` was `@[inline]`, every binary op called it (a second
   `switch` behind a call).
 
+## Exception handling
+
+Issue 1244, 2026-11-08. Code: `Valid.lean` (compile), `Exec/Code.lean` (`Handler`,
+`CatchTarget`), `Exec/Run.lean` (`raise`, `unwind`, `cold`). Both forms are read: the
+3.0 form (`try_table` with `catch`, `catch_ref`, `catch_all`, `catch_all_ref`;
+`throw`, `throw_ref`; `exnref`) and the legacy form (`try`, `catch`, `catch_all`,
+`delegate`, `rethrow`), which Emscripten emits for C++ with `-fwasm-exceptions` and
+which `l4factoidal.wasm` uses (419 `try` blocks; `wasm-tools validate` needs its
+`legacy_exceptions` feature).
+
+**Store.** Tags are store entries (`ExcStore.tags`, the canonical function type of
+each; a tag import is matched by type like a function import). An exception is an
+`ExnInst` (tag address, payload slots) in `ExcStore.exns`; an `exnref` slot holds its
+index. Exceptions are never freed, so the store grows by one entry per `throw` (a
+program that throws in a loop grows without bound; a later collector, or reuse once no
+`exnref` can reach an entry, is open).
+
+**Handler tables, like the branch side table.** The validator gives each function a
+table of entries, one per `try_table` or legacy `try`:
+
+- `start`, `stop`: the range of ops of the body (pcs of the flat code; `fuse` keeps
+  every pc, so the range stays exact);
+- `catches`: for each clause, the tag (module index, or none for catch-all), the pc to
+  go to, the operand height (relative to `fp`) where its values go, and which values:
+  the payload, the exception reference after it (`catch_ref`, `catch_all_ref`), or the
+  exception reference before it (legacy `catch`, see below);
+- `next`: the entry to search when no clause matches: the enclosing `try`, or for a
+  legacy `delegate l` the handler that applies at label `l`.
+
+Entries are in the order their `try` starts, and ranges nest, so the innermost entry
+that holds a pc is the last one that holds it. The table is stored as one extra op,
+`Op.handlers`, after the final `return_` of the function, where no pc reaches; only
+functions with a `try` have it. So a `Frame` needs no new field: the code array a
+frame already holds carries its table (`handlersOf code`).
+
+**Unwinding** (`Run.unwind`). To raise exception `e` at pc `p`: take the innermost
+entry holding `p`, test its clauses in order (`catchFor`: the first catch-all, or the
+first clause whose tag address is `e`'s), then the entries that `next` names. When one
+matches, write its values at `fp + height` and go to its pc. When none matches, pop a
+frame and search the caller at its call site (the frame's return pc minus 1). With no
+frame left, the run stops with `Event.exception e`, and the API gives
+`Outcome.exception tag payload`. Traps are not exceptions: `try_table` does not catch
+them (spec test `unreachable-not-caught`).
+
+**Legacy `catch` and `rethrow`.** A legacy clause needs the caught exception later
+(`rethrow l` throws it again). The validator keeps it on the operand stack, in a slot
+below the clause's frame: at a legacy `catch`, the stack is cut to the `try`'s height,
+the exception reference goes in the next slot, then the payload. Branches to the
+`try`'s label still cut to the `try`'s height (`Ctrl.base`, the branch height, is
+the height without the slot); the end of the clause moves its results down over the
+slot (a `br` to the next pc). `rethrow l` reads the slot at `fp + base` of the clause
+`l` names. So no hidden locals and no change to `nLocals`.
+
+**What it costs when nothing is thrown: nothing.** `try_table` and `try` compile to no
+op: the code inside is the code of a plain `block`. `Tests/Proposals.lean`
+(`tryIsFree`) checks this: a 10^7-iteration loop inside `try_table` compiles to the
+same ops as inside a `block` (plus the table after the end), and runs the same
+140 000 008 instructions in the same time (382 ms and 382 ms). There is no handler
+stack to push or pop on `try`, call or return. A `throw` pays a scan of the handler
+tables of the frames it unwinds (linear in the entries of each function).
+
+**Spec layer.** `Spec/Wasm30.lean` (generated from WebAssembly/spec f3268fa9) has the
+3.0 rules: `Step.throw`, `Step_read.throw_ref_*` (one per clause kind, `_next`,
+`_empty`, `_label`, `_frame`, `_null`), `Step_read.try_table`, the `HANDLER_`
+administrative instruction and its `Step_pure` rules. It has no legacy rules (the
+legacy form is not in 3.0), so the legacy cases are tested, not proved. The generated
+`throw_ref_handler_next` binds its `x` and `val_lst` apart from the clause it skips (two
+binders named `x`, two named `val_lst`), so as generated it lets any clause be skipped;
+the theorems below use it only for clauses whose tag does not match. Reported to the
+spec-layer owners in this record, not fixed here (`WasmVM/Spec*` is theirs).
+
+## Tail calls
+
+`return_call f`, `return_call_indirect t x`, `return_call_ref t`
+(`Run.enterTail`). The callee's arguments, the top `nParams` slots, move down to the
+caller's `fp`; the callee's locals are set up there; the run goes on with the callee's
+code and the SAME frame stack and `fp`. The frame stack never grows, and the operand
+stack needs only `fp + maxHeight(callee)` slots. A tail call to a host function is an
+ordinary host call: the validator emits `return_ k` after every tail call op, which
+returns the host's results when the run resumes (it is never reached after a Wasm
+callee). Inside a `try_table`, a tail call leaves the handler behind, as the spec says
+(spec test `return-call-in-try-catch` expects the exception to escape).
+
+Test (`Tests/Proposals.lean`, `tailConstantSpace`): 10^6 tail calls through each of
+`return_call`, `return_call_indirect` (two functions in turn) and `return_call_ref`,
+with a call-depth limit of 4 and 64 operand slots, give the right sums (93 ms for the
+`return_call` loop); the same recursion with `call` stops with "call stack exhausted"
+(the control). Theorem: `Proofs.Proposals.cold_tail_frames`.
+
+## Typed function references
+
+`call_ref t` (trap "null function reference" on null), `return_call_ref t`,
+`ref.as_non_null` (trap "null reference"), `br_on_null l`, `br_on_non_null l`, and
+the typing of `ref.func` as `(ref $t)`. Non-null reference types and non-defaultable
+locals were already validated. A reference is a slot (`nullRef` is all ones), so
+`br_on_null` and `br_on_non_null` are a compare and a `brMove`.
+
+## Cold ops: new cases outside `run`
+
+The first version put every new op as a case of `run`. The benchmarks fell (best of 5,
+interleaved with the build of the commit before, same machine): sum 363 to 265,
+memsum 212 to 170, fib 176 to 145 million instructions per second. The C of the hot
+cases was unchanged; the larger function made the C compiler's register allocation
+worse for all of them. Three steps brought it back, each measured:
+
+| Step | sum | memsum | fib |
+|---|---|---|---|
+| before these proposals (d750b4515) | 363 | 211 | 176 |
+| new ops as cases of `run` | 265 | 170 | 145 |
+| new ops in `cold` (a `@[noinline]` function returning `.go` registers or `.stop`), called from one case per op group | 349 | 206 | 165 |
+| `cold`'s `RunLimits` borrowed (`@&`): passing it to `cold` had made `run` own it, with a `lean_dec_ref` on every exit | 344 | 205 | 165 |
+| `cold` called from ONE `default` case (`| o => cold ..`) instead of four (Lean had copied the call into each `switch` case of the group) | 369 | 215 | 180 |
+
+Tried and not the cause: the order of `Op` constructors (the new ones are now last,
+so the old ops keep their numbers), and the two new store fields (now one, `exc`).
+Rule for later proposals: a new op that is not hot goes in `cold`, reached by the one
+`default` case; only an op that benchmarks show hot becomes a case of `run`.
+
+## Factoidal's own core: `l4factoidal.wasm`
+
+`lake exe wasmvm-bench l4core FILE` (`Bench/Core.lean`), with the 31.3 MB build in
+`npm/factoidal-lean/` (as `tools/fetch-builds.sh --set web` installs it):
+
+| Step | result |
+|---|---|
+| decode (code entries in parallel) | 23300 functions, 18 imports, 1 tag; 1.6 s |
+| validate and compile (parallel) | 1.75 s; 419 handler-table entries |
+| instantiate with stub imports | ok; memory 256 pages |
+| `__wasm_call_ctors` (export `t`) | returns, 4 ms |
+| `l4_init` (export `w`) | returns 1 (the Lean runtime and every module initialised) in 18 s |
+| `l4_version_c` (export `x`) | `l4factoidal-wasm 0.2.0 (dispatch: RDF parse/serialize, SPARQL query+update, RDFS/OWL-RL closures, RDFC-1.0, CL/IKL)` |
+
+The stubs are the least each import needs (no files, no environment, clock 0;
+`emscripten_resize_heap` grows memory 0 through `Store.growMem`). What was missing: the
+Lean runtime opens `/dev/urandom` at start; with `openat` answering ENOENT, `l4_init`
+returned 0 and printed "uncaught exception: no such file or directory (error code: 44)
+file: /dev/urandom". The stub now serves it as a file of constant bytes (a test stub,
+not a source of randomness). A real host needs WASI `random_get` or an equivalent.
+18 s for `l4_init` is the module initialisers run by the interpreter (it calls
+`clock_time_get` 8697 times); not measured further.
+
+## Trusted pieces
+
+Code whose meaning is not checked by Lean's kernel, in the engine and its tools. Lean's
+compiler and runtime, and the C library's float functions (see "Scope"), are trusted
+as for all compiled Lean.
+
+| Piece | What is trusted | Lean reference | How it is tested |
+|---|---|---|---|
+| `Exec/Bytes.lean` `Bytes.st16`, `st32`, `st64` (`@[extern c inline]`) | one `memcpy` of 2, 4 or 8 bytes after the uniqueness check that `lean_byte_array_uset` makes (copy when shared), byte swap on a big-endian host | the `uset` chain in each definition's body (the proofs use it) | every slot write and every memory store of the spec tests (35501 pass) and of `memtest`; the Lean interpreter cannot run them, so no `#eval` calls a store |
+| `Bench/Repr.lean` `rdX`, `wrX` (`@[extern c inline]`) | an 8-byte load and store; benchmark only, not in the engine | `rdF`, `wrF` | `wasmvm-bench repr` prints each variant's result beside the others; not compared automatically |
+
+Not trusted pieces: `@[csimp]` (`Binary.Leb.uSpec_eq_fast` is a theorem),
+`@[noinline]` and `@&` (compiler hints; they do not change what a function computes).
+These proposals added no extern.
+
 ## Theorems proved (stage 1)
 
 All with axioms `propext`, `Classical.choice`, `Quot.sound` only; no `sorry`.
@@ -463,6 +649,42 @@ All with axioms `propext`, `Classical.choice`, `Quot.sound` only; no `sorry`.
 - `Proofs.i32_add_refines`, `i32_sub_refines`, `i32_mul_refines`: the pattern applied
   to `Spec.iadd_`, `Spec.isub_`, `Spec.imul_` (Nat definitions, modulo 2^32).
 
+## Theorems proved (stage 2: exceptions and tail calls)
+
+`Proofs/Proposals.lean`. Axioms: `propext`, `Classical.choice`, `Quot.sound` (checked
+with `#print axioms`); no `sorry`.
+
+- `throw_reaches_catch`: in any state, `throw x` with its payload, directly inside a
+  `HANDLER_` whose first clause is `catch x l`, reaches the payload and `br l` in two
+  spec steps (`Step.throw` under `Step.ctxt_handler`, then
+  `Step_read.throw_ref_handler_catch`), with the new exception appended to the store.
+  `throw_reaches_catch_all`: the same for `catch_all l`.
+- `skip_clauses`: clauses whose tag is not the exception's are passed over in order
+  (`throw_ref_handler_next`). With the two above this is what the engine's `catchFor`
+  does: the first clause whose tag matches, or the first catch-all.
+- `return_call_keeps_args`: a tail call from a frame keeps the top `n` values (the
+  callee's arguments) and drops the rest of the frame
+  (`Step_read.return_call_ref_frame_addr`).
+- `cold_tail_frames`: the engine's three tail-call ops go on with the same frame stack
+  and the same `fp`.
+- `vals_beq_self`, `exninst_beq_self`: the generated `BEq` on spec values and
+  exceptions is reflexive (the rules' side conditions need it).
+
+Open obligations (stated, not proved):
+
+- `unwind_refines`: for a fast state reached from a valid module, if `raise` gives
+  `.caught` at a clause, the abstraction of the state (proof plan item 5) takes spec
+  steps (`throw`, then `throw_ref_label`/`_frame`/`_handler_next` out to the handler,
+  then the clause's rule) to the abstraction of the state after `deliver`. It needs
+  the abstraction `abs` and a lemma that the innermost handler entry holding the pc is
+  the innermost `HANDLER_` around the instruction in the nested body.
+- `uncaught_refines`: if `raise` gives `.uncaught`, the spec configuration reaches
+  `REF_EXN_ADDR a; THROW_REF` at top level.
+- `enterTail_refines`: the slots after `enterTail` are the abstraction of the frame
+  that `return_call_ref_frame_addr` then `call_ref_func` give (needs `moveDown` read
+  back through `Slots.rd`, which needs `ld64` of `st64` on the Lean reference).
+- Legacy exceptions: no spec rules exist to prove against; tested only.
+
 ## Next
 
 1. Speed (now 4.7 to 9.2 times stage 1; target 10x): memory 0 held as a loop
@@ -474,9 +696,10 @@ All with axioms `propext`, `Classical.choice`, `Quot.sound` only; no `sorry`.
 2. Refinement: the rest of the integer table (div, rem with `binop_trap`, shifts,
    compares through `Step_pure.relop`), then `Run.step_refines` with the abstraction to
    `Spec.config`.
-3. Proposals in the order of the planned uses: exceptions (tags; needed by the
-   factoidal core wasm and by Emscripten C++ code), tail calls, `call_ref`, SIMD
-   (HarfBuzz builds use it when enabled), memory64, GC.
+3. Proposals in the order of the planned uses: SIMD (HarfBuzz builds use it when
+   enabled), memory64, GC. Exceptions, tail calls and `call_ref` are done (stage 2).
+   A real host for `l4factoidal.wasm` (WASI subset with `random_get`), and why its
+   `l4_init` takes 18 s.
 4. Parallel compile by chunks of equal byte size; decode without the per-section
    copy (`b.extract 0 e`).
 5. The JSON op form for the hosts, and the Emscripten build of the engine.

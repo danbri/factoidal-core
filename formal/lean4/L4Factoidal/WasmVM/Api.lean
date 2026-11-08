@@ -49,6 +49,8 @@ inductive Outcome where
   | outOfFuel (k : Suspended)
   | hostCall (id : Nat) (args : Array Value) (k : Suspended)
   | exit (status : Nat)
+  /-- An exception no handler caught: its tag address and payload. -/
+  | exception (tag : Nat) (args : Array Value)
   deriving Inhabited
 
 /-- What a host function gives back. -/
@@ -64,6 +66,7 @@ def Outcome.describe : Outcome → String
   | .outOfFuel _ => "out of fuel"
   | .hostCall id _ _ => s!"host call {id}"
   | .exit s => s!"exit {s}"
+  | .exception t _ => s!"uncaught exception of tag {t}"
 
 private def finish (st : StoreOf M) (results : Array ValType) (r : StoreOf M × Machine × Nat × Event) :
     StoreOf M × Outcome :=
@@ -79,6 +82,10 @@ private def finish (st : StoreOf M) (results : Array ValType) (r : StoreOf M × 
     let ft := (st'.funcs[fa]!).type
     let vs := (ft.params.zip args).map fun (t, b) => Value.ofBits t b
     (st', .hostCall id vs { machine := m, results, hostResults := some ft.results })
+  | .exception exn =>
+    let e := st'.exc.exns[exn]!
+    let ps := (st'.exc.tags[e.tag]?).map (·.params) |>.getD #[]
+    (st', .exception e.tag ((ps.zip e.fields).map fun (t, b) => Value.ofBits t b))
 
 @[specialize] def invoke (st : StoreOf M) (fa : Nat) (args : Array Value) (lim : Budget := {}) : StoreOf M × Outcome :=
   match st.funcs[fa]? with

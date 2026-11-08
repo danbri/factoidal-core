@@ -47,6 +47,8 @@ structure Ctx where
   refs : Std.HashSet Nat
   /-- For each type index, the least index of an equivalent type. -/
   reps : Array Nat := #[]
+  /-- Type index of each tag, imports first. -/
+  tags : Array Nat := #[]
   deriving Inhabited
 
 namespace Ctx
@@ -80,6 +82,13 @@ def valOk (c : Ctx) : ValType → Bool
   | .ref r => c.heapOk r.heap
   | _ => true
 
+def resultSub (c : Ctx) (ts us : Array ValType) : Bool :=
+  ts.size == us.size && (ts.zip us).all fun (a, b) => c.valSub a b
+
+/-- The payload types of tag `x`. -/
+def tagParams (c : Ctx) (x : Nat) : Option (Array ValType) :=
+  c.tags[x]? >>= fun ti => c.types[ti]? |>.map (·.params)
+
 def blockSig (c : Ctx) : BlockType → Option (Array ValType × Array ValType)
   | .empty => some (#[], #[])
   | .val t => if c.valOk t then some (#[], #[t]) else none
@@ -87,8 +96,10 @@ def blockSig (c : Ctx) : BlockType → Option (Array ValType × Array ValType)
 
 end Ctx
 
+/-- `try_` is a legacy `try` before its first clause, `catch_` a legacy `catch` or
+`catch_all` clause. A `try_table` is a `block` with a handler entry. -/
 inductive CtrlKind where
-  | block | loop | if_ | else_ | func
+  | block | loop | if_ | else_ | func | try_ | catch_
   deriving BEq, Inhabited
 
 structure Ctrl where
@@ -101,6 +112,17 @@ structure Ctrl where
   elseLabel : Nat := 0
   /-- Which locals were set at entry (only tracked when a local has no default). -/
   inits : Array Bool := #[]
+  /-- Operand height that branches to this label cut back to. It is `height` except
+  in a legacy catch clause, where the exception slot sits between the two. -/
+  base : Nat := 0
+  /-- The handler entry that applies to code directly in this frame. -/
+  handler : Option Nat := none
+  /-- The handler entry whose range ends where this frame's body ends (`try_table`,
+  legacy `try` before its first clause). -/
+  closeEntry : Option Nat := none
+  /-- Legacy catch clause: the `try`'s entry, and whether this clause is `catch_all`. -/
+  tryEntry : Option Nat := none
+  sawCatchAll : Bool := false
   deriving Inhabited
 
 def Ctrl.labelTypes (f : Ctrl) : Array ValType :=
@@ -115,6 +137,8 @@ structure VState where
   maxH : Nat := 0
   /-- Which locals are set; empty when every local has a default value. -/
   inits : Array Bool := #[]
+  /-- The handler table, with label ids for the catch pcs. -/
+  handlers : Array Handler := #[]
   deriving Inhabited
 
 abbrev V := Except String
@@ -161,7 +185,8 @@ def emit (s : VState) (o : Op) : VState := { s with ops := s.ops.push o }
 def pushCtrl (s : VState) (nLocals : Nat) (k : CtrlKind) (ps rs : Array ValType)
     (label elseLabel : Nat) : VState :=
   let fr : Ctrl := { kind := k, params := ps, results := rs, height := s.vals.size,
-                     label := label, elseLabel := elseLabel, inits := s.inits }
+                     label := label, elseLabel := elseLabel, inits := s.inits,
+                     base := s.vals.size, handler := if s.ctrls.isEmpty then none else s.top.handler }
   let s := { s with ctrls := s.ctrls.push fr }
   s.pushAll nLocals ps
 
@@ -178,6 +203,19 @@ def setUnreachable (s : VState) : VState :=
   { s with vals := s.vals.extract 0 f.height,
            ctrls := s.ctrls.set! (s.ctrls.size - 1) { f with unreachable := true } }
 
+/-- Change the frame on top. -/
+def modTop (s : VState) (g : Ctrl → Ctrl) : VState :=
+  { s with ctrls := s.ctrls.modify (s.ctrls.size - 1) g }
+
+/-- Close handler entry `i`: its range ends at the next pc. -/
+def setStop (s : VState) (i : Nat) : VState :=
+  { s with handlers := s.handlers.modify i fun h => { h with stop := s.ops.size } }
+
+/-- Start a handler entry at the next pc; returns its index. -/
+def newEntry (s : VState) (cs : Array CatchTarget) (next : Option Nat) : VState × Nat :=
+  ({ s with handlers := s.handlers.push { start := s.ops.size, stop := s.ops.size, catches := cs, next } },
+   s.handlers.size)
+
 /-- The control frame for label `l`. -/
 def label? (s : VState) (l : Nat) : Option Ctrl :=
   if l < s.ctrls.size then s.ctrls[s.ctrls.size - 1 - l]? else none
@@ -190,7 +228,7 @@ structure FnCtx where
   results : Array ValType
 
 def target (nLocals : Nat) (f : Ctrl) : BrTarget :=
-  { pc := f.label, keep := f.labelTypes.size, height := nLocals + f.height }
+  { pc := f.label, keep := f.labelTypes.size, height := nLocals + f.base }
 
 /-- Check `ts` against the top of the stack without popping it. -/
 def checkTop (c : Ctx) (s : VState) (ts : Array ValType) : V Unit := do
@@ -227,6 +265,12 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     .ok (s.pushCtrl nL .else_ f.params f.results f.label 0)
   | .end_ =>
     let (s, f) ← s.popCtrl c
+    let s := match f.closeEntry with | some i => s.setStop i | none => s
+    -- A legacy catch clause: move the results down over the exception slot.
+    let s := if f.kind == .catch_ then
+        { (s.emit (.br { pc := f.label, keep := f.results.size, height := nL + f.base })) with
+          vals := s.vals.pop }
+      else s
     let s ← if f.kind == .if_ then
         if f.params == f.results then .ok (s.place f.elseLabel)
         else .error "type mismatch: if without else must not change the stack"
@@ -247,7 +291,7 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     let s := s.pushAll nL ts
     let t := target nL f
     -- When the kept values already sit at the label's height, nothing moves.
-    let o := if s.vals.size == f.height + ts.size then Op.jumpIf t.pc else Op.brIf t
+    let o := if s.vals.size == f.base + ts.size then Op.jumpIf t.pc else Op.brIf t
     .ok (s.emit o)
   | .brTable ls d =>
     let some fd := s.label? d | .error "unknown label"
@@ -417,6 +461,144 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     let (a, r) := op.sig
     let s ← if op.isBinary then s.popAll c #[a, a] else s.pop c a
     .ok ((s.push nL (some r)).emit (.num op))
+  -- Exception handling.
+  | .throw x =>
+    let some ps := c.tagParams x | .error "unknown tag"
+    let s ← s.popAll c ps
+    .ok ((s.emit (.throw x ps.size)).setUnreachable)
+  | .throwRef =>
+    let s ← s.pop c (.ref ⟨true, .exn⟩)
+    .ok ((s.emit .throwRef).setUnreachable)
+  | .tryTable bt cs =>
+    let some (ps, rs) := c.blockSig bt | .error "unknown type"
+    let s ← s.popAll c ps
+    -- Catch labels are seen from outside the `try_table`.
+    let mut cts : Array CatchTarget := #[]
+    for cl in cs do
+      let (tag, l, ref) := match cl with
+        | .catch_ x l => (some x, l, false) | .catchRef x l => (some x, l, true)
+        | .catchAll l => (none, l, false) | .catchAllRef l => (none, l, true)
+      let some f := s.label? l | .error "unknown label"
+      let vals ← match tag with
+        | some x => match c.tagParams x with
+          | some ps => pure ps
+          | none => .error "unknown tag"
+        | none => pure #[]
+      let vals := if ref then vals.push (.ref ⟨false, .exn⟩) else vals
+      if !c.resultSub vals f.labelTypes then .error "type mismatch: catch label"
+      cts := cts.push { tag := tag, pc := f.label, height := nL + f.base, payload := tag.isSome, exnAbove := ref }
+    let (s, l) := s.newLabel
+    let (s, e) := s.newEntry cts s.top.handler
+    let s := s.pushCtrl nL .block ps rs l 0
+    .ok (s.modTop fun f => { f with handler := some e, closeEntry := some e })
+  | .try_ bt =>
+    let some (ps, rs) := c.blockSig bt | .error "unknown type"
+    let s ← s.popAll c ps
+    let (s, l) := s.newLabel
+    let (s, e) := s.newEntry #[] s.top.handler
+    let s := s.pushCtrl nL .try_ ps rs l 0
+    .ok (s.modTop fun f => { f with handler := some e, closeEntry := some e })
+  | .catch_ _ | .catchAll =>
+    if s.ctrls.isEmpty then .error "catch without try"
+    let f0 := s.top
+    if f0.kind != .try_ && f0.kind != .catch_ then .error "catch without try"
+    if f0.kind == .catch_ && f0.sawCatchAll then .error "catch after catch_all"
+    let tag := match i with | .catch_ x => some x | _ => none
+    let payload ← match tag with
+      | some x => match c.tagParams x with
+        | some ps => pure ps
+        | none => .error "unknown tag"
+      | none => pure #[]
+    let (s, f) ← s.popCtrl c
+    let (s, e) ← if f.kind == .try_ then
+        match f.closeEntry with
+        | some e => pure ((s.setStop e).emit (.jump f.label), e)
+        | none => .error "catch without try"
+      else
+        match f.tryEntry with
+        | some e =>
+          pure ({ (s.emit (.br { pc := f.label, keep := f.results.size, height := nL + f.base })) with
+                  vals := s.vals.pop }, e)
+        | none => .error "catch without try"
+    let base := s.vals.size
+    let (s, cl) := s.newLabel
+    let s := s.place cl
+    let s := { s with handlers := s.handlers.modify e fun h =>
+      let ct : CatchTarget := { tag := tag, pc := cl, height := nL + base, exnBelow := true, payload := tag.isSome }
+      { h with catches := h.catches.push ct } }
+    let outer := (s.handlers[e]?).bind (·.next)
+    -- The exception slot, below the clause's frame.
+    let s := s.push nL (some (.ref ⟨false, .exn⟩))
+    let s := s.pushCtrl nL .catch_ #[] f.results f.label 0
+    let s := s.modTop fun g => { g with base, handler := outer, tryEntry := some e,
+                                        sawCatchAll := tag.isNone, params := f.params }
+    .ok (s.pushAll nL payload)
+  | .delegate l =>
+    if s.ctrls.isEmpty || s.top.kind != .try_ then .error "delegate without try"
+    let (s, f) ← s.popCtrl c
+    let some e := f.closeEntry | .error "delegate without try"
+    let some g := s.label? l | .error "unknown label"
+    let s := s.setStop e
+    let s := { s with handlers := s.handlers.modify e fun h => { h with next := g.handler } }
+    .ok ((s.place f.label).pushAll nL f.results)
+  | .rethrow l =>
+    let some f := s.label? l | .error "unknown label"
+    if f.kind != .catch_ then .error "invalid rethrow label"
+    .ok ((s.emit (.rethrow (nL + f.base))).setUnreachable)
+  -- Tail calls.
+  | .returnCall f =>
+    let some ti := c.funcs[f]? | .error "unknown function"
+    let some ft := c.types[ti]? | .error "unknown type"
+    if !c.resultSub ft.results fc.results then .error "type mismatch: tail call results"
+    let s ← s.popAll c ft.params
+    .ok (((s.emit (.returnCall f)).emit (.return_ fc.results.size)).setUnreachable)
+  | .returnCallIndirect ti x =>
+    let some tt := c.tables[x]? | .error "unknown table"
+    if !c.refSub tt.elem ⟨true, .func⟩ then .error "type mismatch: call_indirect table is not funcref"
+    let some ft := c.types[ti]? | .error "unknown type"
+    if !c.resultSub ft.results fc.results then .error "type mismatch: tail call results"
+    let s ← s.pop c .i32
+    let s ← s.popAll c ft.params
+    .ok (((s.emit (.returnCallIndirect ti x)).emit (.return_ fc.results.size)).setUnreachable)
+  -- Typed function references.
+  | .callRef ti =>
+    let some ft := c.types[ti]? | .error "unknown type"
+    let s ← s.pop c (.ref ⟨true, .idx ti⟩)
+    let s ← s.popAll c ft.params
+    .ok ((s.pushAll nL ft.results).emit .callRef)
+  | .returnCallRef ti =>
+    let some ft := c.types[ti]? | .error "unknown type"
+    if !c.resultSub ft.results fc.results then .error "type mismatch: tail call results"
+    let s ← s.pop c (.ref ⟨true, .idx ti⟩)
+    let s ← s.popAll c ft.params
+    .ok (((s.emit .returnCallRef).emit (.return_ fc.results.size)).setUnreachable)
+  | .refAsNonNull =>
+    let (s, a) ← s.popRef
+    let t := a.map fun | .ref r => .ref { r with nullable := false } | t => t
+    .ok ((s.push nL t).emit .refAsNonNull)
+  | .brOnNull l =>
+    let some f := s.label? l | .error "unknown label"
+    let (s, a) ← s.popRef
+    let ts := f.labelTypes
+    let s ← s.popAll c ts
+    let s := s.pushAll nL ts
+    let t := a.map fun | .ref r => .ref { r with nullable := false } | t => t
+    .ok ((s.push nL t).emit (.brOnNull (target nL f)))
+  | .brOnNonNull l =>
+    let some f := s.label? l | .error "unknown label"
+    let ts := f.labelTypes
+    if ts.isEmpty then .error "type mismatch: br_on_non_null label has no values"
+    let last := ts.back!
+    if !last.isRef then .error "type mismatch: br_on_non_null label must end in a reference"
+    let (s, a) ← s.popRef
+    match a with
+    | some (.ref r) =>
+      if !c.valSub (.ref { r with nullable := false }) last then .error "type mismatch: br_on_non_null"
+    | _ => pure ()
+    let rest := ts.pop
+    let s ← s.popAll c rest
+    let s := s.pushAll nL rest
+    .ok (s.emit (.brOnNonNull (target nL f)))
 
 /-- Replace label ids by pcs. -/
 def resolveT (labels : Array Nat) (t : BrTarget) : BrTarget := { t with pc := labels[t.pc]! }
@@ -428,7 +610,13 @@ def resolve (labels : Array Nat) : Op → Op
   | .jumpIf l => .jumpIf labels[l]!
   | .jumpUnless l => .jumpUnless labels[l]!
   | .brTable ts d => .brTable (ts.map (resolveT labels)) (resolveT labels d)
+  | .brOnNull t => .brOnNull (resolveT labels t)
+  | .brOnNonNull t => .brOnNonNull (resolveT labels t)
   | o => o
+
+/-- Replace label ids by pcs in the handler table. -/
+def resolveH (labels : Array Nat) (h : Handler) : Handler :=
+  { h with catches := h.catches.map fun ct => { ct with pc := labels[ct.pc]! } }
 
 def bodyLoop (c : Ctx) (fc : FnCtx) (body : Array Instr) (i : Nat) (s : VState) :
     Except (Nat × String) VState :=
@@ -459,6 +647,8 @@ def compileFunc (c : Ctx) (fIdx : Nat) (f : Func) : Except ValidationError Compi
   | .error (i, e) => .error { msg := e, func := some fIdx, at_ := i }
   | .ok s =>
     let code := fuse (s.ops.map (resolve s.labels))
+    -- The handler table goes after the last op, where no pc reaches it.
+    let code := if s.handlers.isEmpty then code else code.push (.handlers (s.handlers.map (resolveH s.labels)))
     .ok { type := f.type, nParams := ft.params.size, localInit := f.locals.map ValType.zeroBits,
           maxHeight := s.maxH, code }
 
@@ -565,7 +755,8 @@ def mkCtx (m : Module) : Ctx :=
     elems := m.elems.map (·.type)
     dataCount := m.dataCount
     refs := funcRefs m
-    reps := typeReps m.types }
+    reps := typeReps m.types
+    tags := m.importedTags ++ m.tags }
 
 /-- Compile functions `lo` to `hi` (module-local indices), in order. -/
 def compileRange (c : Ctx) (m : Module) (nImp lo hi : Nat) : Except ValidationError (Array CompiledFunc) :=
@@ -615,6 +806,9 @@ def validateWith (parallel : Bool) (m : Module) : Except ValidationError ValidMo
     | .table t => if !limitsOk t.limits 4294967295 then err "size minimum must not be greater than maximum"
     | .mem t => if !limitsOk t.limits 65536 then err "memory size must be at most 65536 pages (4GiB)"
     | .global g => if !c.valOk g.type then err "unknown type"
+    | .tag t => match m.types[t]? with
+      | none => err "unknown type"
+      | some ft => if !ft.results.isEmpty then err "non-empty tag result type"
   let nImpFuncs := m.importedFuncTypes.size
   let nImpGlobals := m.importedGlobals.size
   for t in m.tables do
@@ -623,6 +817,10 @@ def validateWith (parallel : Bool) (m : Module) : Except ValidationError ValidMo
     match t.init with
     | some e => lift (checkConst c nImpGlobals e (.ref t.type.elem))
     | none => if !t.type.elem.nullable then err "type mismatch"
+  for t in m.tags do
+    match m.types[t]? with
+    | none => err "unknown type"
+    | some ft => if !ft.results.isEmpty then err "non-empty tag result type"
   for mt in m.mems do
     if !limitsOk mt.limits 65536 then err "memory size must be at most 65536 pages (4GiB)"
   let mut gi := nImpGlobals
@@ -639,6 +837,7 @@ def validateWith (parallel : Bool) (m : Module) : Except ValidationError ValidMo
     | .table i => if i ≥ c.tables.size then err "unknown table"
     | .mem i => if i ≥ c.mems.size then err "unknown memory"
     | .global i => if i ≥ c.globals.size then err "unknown global"
+    | .tag i => if i ≥ c.tags.size then err "unknown tag"
   if let some s := m.start then
     match c.funcs[s]? with
     | none => err "unknown function"

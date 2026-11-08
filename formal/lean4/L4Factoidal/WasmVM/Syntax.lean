@@ -9,9 +9,11 @@ that nests a flat body is the bridge for the refinement proofs
 (docs/designissues/2026-11-07-wasmvm-engine.md, "Proof plan"). Flat code keeps the
 decoder and the validator as loops, with no recursion on nesting depth.
 
-Scope now: WebAssembly 2.0 plus multi-memory and the reference types of 3.0 without
-GC types. Constructors for SIMD, GC, exceptions, memory64 and tail calls come later;
-`ValType.v128` and `HeapType.idx` already exist so that the types do not change shape.
+Scope now: WebAssembly 2.0 plus multi-memory, the reference types of 3.0 without
+GC types, exception handling (3.0 `try_table` and the legacy `try`/`catch`/`delegate`/
+`rethrow`), tail calls and typed function references. Constructors for SIMD, GC and
+memory64 come later; `ValType.v128` and `HeapType.idx` already exist so that the types
+do not change shape.
 -/
 namespace L4Factoidal.WasmVM
 
@@ -155,7 +157,16 @@ inductive NumOp where
   | i64_trunc_sat_f32_s | i64_trunc_sat_f32_u | i64_trunc_sat_f64_s | i64_trunc_sat_f64_u
   deriving BEq, Repr, Inhabited, DecidableEq
 
-/-- The instructions. Flat: structure is in `block`/`loop`/`if_`/`else_`/`end_`. -/
+/-- A catch clause of `try_table` (3.0 exception handling). -/
+inductive Catch where
+  | catch_ (tag label : Nat)
+  | catchRef (tag label : Nat)
+  | catchAll (label : Nat)
+  | catchAllRef (label : Nat)
+  deriving BEq, Repr, Inhabited
+
+/-- The instructions. Flat: structure is in `block`/`loop`/`if_`/`else_`/`end_`
+(and `tryTable`, legacy `try_`, `catch_`, `catchAll`, `delegate`). -/
 inductive Instr where
   | unreachable | nop
   | block (bt : BlockType) | loop (bt : BlockType) | if_ (bt : BlockType)
@@ -175,6 +186,15 @@ inductive Instr where
   | f32Const (bits : UInt32) | f64Const (bits : UInt64)
   | refNull (h : HeapType) | refIsNull | refFunc (f : Nat)
   | num (op : NumOp)
+  -- Exception handling (3.0).
+  | throw (tag : Nat) | throwRef | tryTable (bt : BlockType) (cs : Array Catch)
+  -- Legacy exception handling (the form Emscripten emits with `-fwasm-exceptions`):
+  -- `try_` opens a block; `catch_`/`catchAll` start a clause; `delegate` ends it.
+  | try_ (bt : BlockType) | catch_ (tag : Nat) | catchAll | delegate (l : Nat) | rethrow (l : Nat)
+  -- Tail calls.
+  | returnCall (f : Nat) | returnCallIndirect (type : Nat) (table : Nat) | returnCallRef (type : Nat)
+  -- Typed function references.
+  | callRef (type : Nat) | refAsNonNull | brOnNull (l : Nat) | brOnNonNull (l : Nat)
   deriving BEq, Repr, Inhabited
 
 /-- A constant expression or a function body: flat instructions ending in `end_`. -/
@@ -182,6 +202,8 @@ abbrev Expr := Array Instr
 
 inductive ImportDesc where
   | func (type : Nat) | table (t : TableType) | mem (t : MemType) | global (t : GlobalType)
+  /-- A tag (exception handling); its type is a function type with no results. -/
+  | tag (type : Nat)
   deriving BEq, Repr, Inhabited
 
 structure Import where
@@ -191,7 +213,7 @@ structure Import where
   deriving BEq, Repr, Inhabited
 
 inductive ExternIdx where
-  | func (i : Nat) | table (i : Nat) | mem (i : Nat) | global (i : Nat)
+  | func (i : Nat) | table (i : Nat) | mem (i : Nat) | global (i : Nat) | tag (i : Nat)
   deriving BEq, Repr, Inhabited
 
 structure Export where
@@ -246,6 +268,8 @@ structure Module where
   tables : Array Table := #[]
   mems : Array MemType := #[]
   globals : Array Global := #[]
+  /-- The tag section: the type index of each tag. -/
+  tags : Array Nat := #[]
   exports : Array Export := #[]
   start : Option Nat := none
   elems : Array Elem := #[]
@@ -262,6 +286,8 @@ def importedMems (m : Module) : Array MemType :=
   m.imports.filterMap fun i => match i.desc with | .mem t => some t | _ => none
 def importedGlobals (m : Module) : Array GlobalType :=
   m.imports.filterMap fun i => match i.desc with | .global t => some t | _ => none
+def importedTags (m : Module) : Array Nat :=
+  m.imports.filterMap fun i => match i.desc with | .tag t => some t | _ => none
 end Module
 
 end L4Factoidal.WasmVM

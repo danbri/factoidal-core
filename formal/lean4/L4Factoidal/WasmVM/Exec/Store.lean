@@ -22,12 +22,14 @@ inductive Value where
   | funcRef (a : Option Nat)
   /-- An external reference: a host-chosen number, or `none` for null. -/
   | externRef (a : Option Nat)
+  /-- An exception reference: an exception address in the store, or `none` for null. -/
+  | exnRef (a : Option Nat)
   deriving BEq, Repr, Inhabited
 
 def Value.toBits : Value → UInt64
   | .i32 v => v.toUInt64 | .i64 v => v | .f32 b => b.toUInt64 | .f64 b => b
-  | .funcRef none | .externRef none => nullRef
-  | .funcRef (some a) | .externRef (some a) => a.toUInt64
+  | .funcRef none | .externRef none | .exnRef none => nullRef
+  | .funcRef (some a) | .externRef (some a) | .exnRef (some a) => a.toUInt64
 
 def Value.ofBits (t : ValType) (b : UInt64) : Value :=
   match t with
@@ -37,14 +39,16 @@ def Value.ofBits (t : ValType) (b : UInt64) : Value :=
     let a := if b == nullRef then none else some b.toNat
     match r.heap with
     | .extern | .noextern => .externRef a
+    | .exn | .noexn => .exnRef a
     | _ => .funcRef a
 
 def Value.type : Value → ValType
   | .i32 _ => .i32 | .i64 _ => .i64 | .f32 _ => .f32 | .f64 _ => .f64
   | .funcRef _ => .ref .funcref | .externRef _ => .ref .externref
+  | .exnRef _ => .ref ⟨true, .exn⟩
 
 inductive ExternVal where
-  | func (a : Nat) | table (a : Nat) | mem (a : Nat) | global (a : Nat)
+  | func (a : Nat) | table (a : Nat) | mem (a : Nat) | global (a : Nat) | tag (a : Nat)
   deriving BEq, Repr, Inhabited
 
 /-- A module instance: maps from the module's index spaces to store addresses. -/
@@ -58,6 +62,7 @@ structure ModuleInst where
   globals : Array Nat := #[]
   elems : Array Nat := #[]
   datas : Array Nat := #[]
+  tags : Array Nat := #[]
   exports : Array (String × ExternVal) := #[]
   deriving Inhabited
 
@@ -79,6 +84,21 @@ structure TableInst where
   elem : RefType
   deriving Inhabited
 
+/-- An exception: its tag address and payload bits (spec: exninst). -/
+structure ExnInst where
+  tag : Nat
+  fields : Array UInt64
+  deriving Inhabited
+
+/-- The exception part of the store. -/
+structure ExcStore where
+  /-- Tag instances: the canonical type of each tag (results empty). -/
+  tags : Array FuncType := #[]
+  /-- Exceptions thrown so far. An exception reference is an index here. They are
+  never freed: the store grows with each `throw` (record, "Exception handling"). -/
+  exns : Array ExnInst := #[]
+  deriving Inhabited
+
 /-- A memory instance; `M` is the backend (`Exec/Memory.lean`). -/
 structure MemInst (M : Type) where
   data : M
@@ -98,6 +118,9 @@ structure StoreOf (M : Type) where
   elems : Array (Array UInt64) := #[]
   datas : Array ByteArray := #[]
   insts : Array ModuleInst := #[]
+  /-- Tags and exceptions. One field, not two: each extra store field is one more
+  word that every `{ st with .. }` in the loop copies (measured 2026-11-08). -/
+  exc : ExcStore := {}
   /-- Distinct function types; a type's id is its index here. -/
   typeTable : Array FuncType := #[]
   /-- Most pages one memory may have here (an engine limit under the module's own). -/
@@ -119,6 +142,9 @@ def typeId (st : StoreOf M) (ft : FuncType) : StoreOf M × Nat :=
 def addHostFunc (st : StoreOf M) (ft : FuncType) (id : Nat) : StoreOf M × Nat :=
   let (st, tid) := st.typeId ft
   ({ st with funcs := st.funcs.push { type := ft, typeId := tid, kind := .host id } }, st.funcs.size)
+
+def addTag (st : StoreOf M) (ft : FuncType) : StoreOf M × Nat :=
+  ({ st with exc := { st.exc with tags := st.exc.tags.push ft } }, st.exc.tags.size)
 
 def addGlobal (st : StoreOf M) (t : GlobalType) (v : UInt64) : StoreOf M × Nat :=
   ({ st with globals := st.globals.push v, globalTypes := st.globalTypes.push t },
@@ -150,6 +176,18 @@ def writeMem (st : StoreOf M) (a off : Nat) (bytes : ByteArray) : Except String 
     if off + bytes.size ≤ LinearMemory.size m.data then
       .ok { st with mems := st.mems.modify a fun mi => { mi with data := LinearMemory.writeBytes mi.data off bytes 0 bytes.size } }
     else .error "out of bounds memory access"
+
+/-- Grow memory `a` by `delta` pages (for host functions such as Emscripten's
+`emscripten_resize_heap`); `none` when the memory's maximum or the store's page limit
+does not allow it. Gives the store and the old size in pages. -/
+def growMem (st : StoreOf M) (a delta : Nat) : Option (StoreOf M × Nat) :=
+  match st.mems[a]? with
+  | none => none
+  | some m =>
+    let old := LinearMemory.size m.data / pageSize
+    if old + delta ≤ min (m.max.getD 65536) st.pageLimit then
+      some ({ st with mems := st.mems.modify a fun ⟨data, max⟩ => ⟨LinearMemory.grow data (delta * pageSize), max⟩ }, old)
+    else none
 
 def export? (st : StoreOf M) (inst : Nat) (name : String) : Option ExternVal :=
   st.insts[inst]? >>= fun i => (i.exports.find? (·.1 == name)).map (·.2)

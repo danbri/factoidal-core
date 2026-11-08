@@ -59,6 +59,8 @@ inductive Event where
   /-- A call of host function `id` (store address `fa`) with these argument bits.
   The machine is ready to take the results. -/
   | hostCall (id : Nat) (fa : Nat) (args : Array UInt64)
+  /-- An exception (store address `exn`) that no handler caught. -/
+  | exception (exn : Nat)
   deriving Inhabited
 
 /-- Engine limits of a run. -/
@@ -197,8 +199,113 @@ inductive Enter where
   | host (id fa : Nat) (args : Array UInt64) (stack : Slots) (sp : USize)
   | trap (t : Trap) (stack : Slots)
 
+/-! ### Exceptions
+
+A function's handler table (`handlersOf`, built by the validator) lists its `try`
+ranges. To raise exception `exn` at pc `pc`: take the innermost entry that holds `pc`,
+test its catches in order, then the entries its `next` links name; when none catches,
+pop a frame and search the caller from its call site (the frame's return pc minus 1).
+Nothing of this runs unless an exception is raised: the normal path has no handler
+stack to push or pop. Record: "Exception handling" in
+docs/designissues/2026-11-07-wasmvm-engine.md. -/
+
+/-- The innermost entry among `hs[0..i)` whose range holds `pc`. Entries are in the
+order their `try` starts and ranges nest, so it is the last one that holds `pc`. -/
+def innermost (hs : Array Handler) (pc : Nat) : Nat → Option Nat
+  | 0 => none
+  | i + 1 =>
+    match hs[i]? with
+    | some h => if h.start ≤ pc && pc < h.stop then some i else innermost hs pc i
+    | none => none
+
+/-- The first catch that takes an exception of tag address `ta`. -/
+def catchFor (ta : Nat) (inst : ModuleInst) (cs : Array CatchTarget) : Option CatchTarget :=
+  cs.find? fun c => match c.tag with
+    | none => true
+    | some x => inst.tags[x]? == some ta
+
+/-- Test entry `e`, then the entries its `next` links name (each names an earlier
+entry; `k` bounds the walk). -/
+def searchChain (ta : Nat) (inst : ModuleInst) (hs : Array Handler) : Nat → Option Nat → Option CatchTarget
+  | 0, _ => none
+  | _, none => none
+  | k + 1, some e =>
+    match hs[e]? with
+    | none => none
+    | some h =>
+      match catchFor ta inst h.catches with
+      | some c => some c
+      | none => searchChain ta inst hs k h.next
+
+/-- Write `vs[i..]` into slots from `p`; gives the slots and the next slot. -/
+def writeVals (s : Slots) (vs : Array UInt64) (p : USize) (i : Nat) : Slots × USize :=
+  if h : i < vs.size then writeVals (wr s p vs[i]) vs (p + 1) (i + 1) else (s, p)
+termination_by vs.size - i
+
+/-- Put a caught exception's values where its handler wants them; gives the slots and `sp`. -/
+def deliver (s : Slots) (fp : USize) (c : CatchTarget) (exn : Nat) (fields : Array UInt64) : Slots × USize :=
+  let p := fp + c.height.toUSize
+  let (s, p) := if c.exnBelow then (wr s p exn.toUInt64, p + 1) else (s, p)
+  let (s, p) := if c.payload then writeVals s fields p 0 else (s, p)
+  if c.exnAbove then (wr s p exn.toUInt64, p + 1) else (s, p)
+
+/-- Where an exception went. -/
+inductive Unwound where
+  | caught (stack : Slots) (sp fp pc : USize) (code : Array Op) (inst : ModuleInst) (frames : Array Frame)
+  | uncaught
+
+/-- Unwind exception `exn` (tag address `ta`, payload `fields`) from pc `pc` of the
+running function; `k` bounds the frames popped. -/
+def unwind (exn ta : Nat) (fields : Array UInt64) (stack : Slots) (fp : USize) (pc : Nat)
+    (code : Array Op) (inst : ModuleInst) (frames : Array Frame) : Nat → Unwound
+  | 0 => .uncaught
+  | k + 1 =>
+    let hs := handlersOf code
+    match searchChain ta inst hs (hs.size + 1) (innermost hs pc hs.size) with
+    | some c =>
+      let (stack, sp) := deliver stack fp c exn fields
+      .caught stack sp fp c.pc.toUSize code inst frames
+    | none =>
+      if frames.isEmpty then .uncaught else
+      let f := frames.back!
+      unwind exn ta fields stack f.fp (f.pc.toNat - 1) f.code f.inst frames.pop k
+
 section
 variable {M : Type} [LinearMemory M]
+
+/-- Raise exception `exn` of the store at pc `pc`. -/
+@[noinline] def raise (st : StoreOf M) (exn : Nat) (stack : Slots) (fp pc : USize)
+    (code : Array Op) (inst : ModuleInst) (frames : Array Frame) : Unwound :=
+  match st.exc.exns[exn]? with
+  | some e => unwind exn e.tag e.fields stack fp pc.toNat code inst frames (frames.size + 1)
+  | none => .uncaught
+
+/-- What a tail call gives: the frame stack and `fp` stay as they are. -/
+inductive TailEnter where
+  | ok (stack : Slots) (sp : USize) (code : Array Op) (inst : ModuleInst)
+  | host (id fa : Nat) (args : Array UInt64) (stack : Slots) (sp : USize)
+  | trap (t : Trap) (stack : Slots)
+
+/-- Tail call of function `fa`: the arguments (the top slots) move down to `fp`, and
+the callee runs in the caller's frame. The frame stack does not grow. A host callee
+is an ordinary host call; the `return_` after the tail call op returns its results. -/
+@[noinline] def enterTail (lim : RunLimits) (st : StoreOf M) (stack : Slots) (sp fp : USize) (fa : Nat) : TailEnter :=
+  match st.funcs[fa]? with
+  | none => .trap (.host "unknown function address") stack
+  | some fi =>
+    match fi.kind with
+    | .host id =>
+      let n := fi.type.params.size
+      .host id fa (argBits stack (sp - n.toUSize) n) stack (sp - n.toUSize)
+    | .wasm ia cf =>
+      let n := cf.nParams.toUSize
+      let need := fp.toNat + cf.maxHeight + 1
+      if need > lim.maxSlots then .trap .callStackExhausted stack else
+      let stack := if sp - n == fp then stack else moveDown stack (sp - n) fp cf.nParams
+      let stack := if need > stack.count then Slots.grow stack (max need (2 * stack.count) - stack.count)
+        else stack
+      let stack := initLocals stack (fp + n) cf.localInit 0
+      .ok stack (fp + cf.nLocals.toUSize) cf.code (st.insts[ia]!)
 
 /-- Enter function `fa`; the arguments are the top slots; the caller resumes at `retPc`. -/
 @[inline] def enter (lim : RunLimits) (st : StoreOf M) (stack : Slots) (sp fp : USize) (code : Array Op)
@@ -220,6 +327,94 @@ variable {M : Type} [LinearMemory M]
       let stack := initLocals stack (nfp + cf.nParams.toUSize) cf.localInit 0
       .ok stack (nfp + cf.nLocals.toUSize) nfp cf.code (st.insts[ia]!)
         (frames.push { code, pc := retPc, fp, inst })
+
+/-- `enter`, not inlined: for the calls that are not on the hot path (`call_ref`). -/
+@[noinline] def enterCold (lim : RunLimits) (st : StoreOf M) (stack : Slots) (sp fp : USize) (code : Array Op)
+    (inst : ModuleInst) (frames : Array Frame) (fa : Nat) (retPc : USize) : Enter :=
+  enter lim st stack sp fp code inst frames fa retPc
+
+/-- What a cold op gives: go on from these registers, or stop. -/
+inductive Cold (M : Type) where
+  | go (st : StoreOf M) (stack : Slots) (sp fp pc : USize) (code : Array Op) (inst : ModuleInst) (frames : Array Frame)
+  | stop (st : StoreOf M) (m : Machine) (ev : Event)
+
+/-- The ops off the hot path: exceptions, tail calls, typed function references. They
+are a separate function, reached from the one `default` case of `run`, because as cases
+of `run` they made every benchmark slower (sum 363 to 265 million instructions per
+second, measured 2026-11-08): the C of the hot cases was the same, the C compiler's
+register allocation for the larger function was not. `lim` is borrowed (`@&`), or
+`run` would own it and release it on every exit. Each op takes one fuel unit in `run`.
+Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
+@[noinline] def cold (lim : @& RunLimits) (st : StoreOf M) (stack : Slots) (sp fp pc : USize)
+    (code : Array Op) (inst : ModuleInst) (frames : Array Frame) : Op → Cold M
+  | .throw x n =>
+    let fields := argBits stack (sp - n.toUSize) n
+    let exn := st.exc.exns.size
+    let st := { st with exc := { st.exc with exns := st.exc.exns.push ⟨inst.tags[x]!, fields⟩ } }
+    match raise st exn stack fp pc code inst frames with
+    | .caught stack sp fp pc code inst frames => .go st stack sp fp pc code inst frames
+    | .uncaught => .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.exception exn)
+  | .throwRef =>
+    let r := rd stack (sp - 1)
+    if r == nullRef then .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap .nullExnRef) else
+    match raise st r.toNat stack fp pc code inst frames with
+    | .caught stack sp fp pc code inst frames => .go st stack sp fp pc code inst frames
+    | .uncaught => .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.exception r.toNat)
+  | .rethrow slot =>
+    let r := rd stack (fp + slot.toUSize)
+    if r == nullRef then .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap .nullExnRef) else
+    match raise st r.toNat stack fp pc code inst frames with
+    | .caught stack sp fp pc code inst frames => .go st stack sp fp pc code inst frames
+    | .uncaught => .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.exception r.toNat)
+  | .returnCall f =>
+    match enterTail lim st stack sp fp inst.funcs[f]! with
+    | .ok stack sp code inst => .go st stack sp fp 0 code inst frames
+    | .host id fa args stack sp =>
+      .stop st ⟨stack, sp, fp, pc + 1, code, inst, frames⟩ (.hostCall id fa args)
+    | .trap t stack => .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap t)
+  | .returnCallIndirect ti x =>
+    let i := (rd stack (sp - 1)).toNat
+    let tab := st.tables[inst.tables[x]!]!
+    if i ≥ tab.elems.size then .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap .undefinedElement) else
+    let r := tab.elems[i]!
+    if r == nullRef then .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap .uninitializedElement) else
+    if (st.funcs[r.toNat]!).typeId != inst.typeIds[ti]! then
+      .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap .indirectTypeMismatch) else
+    match enterTail lim st stack (sp - 1) fp r.toNat with
+    | .ok stack sp code inst => .go st stack sp fp 0 code inst frames
+    | .host id fa args stack sp =>
+      .stop st ⟨stack, sp, fp, pc + 1, code, inst, frames⟩ (.hostCall id fa args)
+    | .trap t stack => .stop st ⟨stack, sp - 1, fp, pc, code, inst, frames⟩ (.trap t)
+  | .callRef =>
+    let r := rd stack (sp - 1)
+    if r == nullRef then .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap .nullFuncRef) else
+    match enterCold lim st stack (sp - 1) fp code inst frames r.toNat (pc + 1) with
+    | .ok stack sp fp code inst frames => .go st stack sp fp 0 code inst frames
+    | .host id fa args stack sp =>
+      .stop st ⟨stack, sp, fp, pc + 1, code, inst, frames⟩ (.hostCall id fa args)
+    | .trap t stack => .stop st ⟨stack, sp - 1, fp, pc, code, inst, frames⟩ (.trap t)
+  | .returnCallRef =>
+    let r := rd stack (sp - 1)
+    if r == nullRef then .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap .nullFuncRef) else
+    match enterTail lim st stack (sp - 1) fp r.toNat with
+    | .ok stack sp code inst => .go st stack sp fp 0 code inst frames
+    | .host id fa args stack sp =>
+      .stop st ⟨stack, sp, fp, pc + 1, code, inst, frames⟩ (.hostCall id fa args)
+    | .trap t stack => .stop st ⟨stack, sp - 1, fp, pc, code, inst, frames⟩ (.trap t)
+  | .refAsNonNull =>
+    if rd stack (sp - 1) == nullRef then .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap .nullReference)
+    else .go st stack sp fp (pc + 1) code inst frames
+  | .brOnNull t =>
+    if rd stack (sp - 1) == nullRef then
+      let x := brMove stack (sp - 1) fp t
+      .go st x.stack x.sp fp t.pc.toUSize code inst frames
+    else .go st stack sp fp (pc + 1) code inst frames
+  | .brOnNonNull t =>
+    if rd stack (sp - 1) != nullRef then
+      let x := brMove stack sp fp t
+      .go st x.stack x.sp fp t.pc.toUSize code inst frames
+    else .go st stack (sp - 1) fp (pc + 1) code inst frames
+  | _ => .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap .unreachable)
 
 /-! ### The loop -/
 
@@ -534,6 +729,12 @@ variable {M : Type} [LinearMemory M]
       | g =>
         let s := Simple.exec fp (.bin op) stack sp
         run lim st s.stack s.sp fp (pc + 1) code inst frames g
+    -- Everything else (exceptions, tail calls, typed function references): one
+    -- `default` case of the C `switch`, which calls `cold`.
+    | o =>
+      match cold lim st stack sp fp pc code inst frames o with
+      | .go st stack sp fp pc code inst frames => run lim st stack sp fp pc code inst frames fuel
+      | .stop st m ev => (st, m, fuel, ev)
     else (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap (.host "pc out of range"))
 
 /-- Run from a stopped machine. -/

@@ -26,6 +26,32 @@ structure BrTarget where
   height : Nat
   deriving Repr, Inhabited, BEq
 
+/-- Where a caught exception goes: the handler's pc, and the operand height (relative
+to `fp`) at which its values are written. What is written, in order: the exception
+reference when `exnBelow` (legacy `catch`: the slot `rethrow` reads), the payload when
+`payload`, the exception reference when `exnAbove` (`catch_ref`, `catch_all_ref`). -/
+structure CatchTarget where
+  /-- Tag index in the module; `none` catches every exception. -/
+  tag : Option Nat
+  pc : Nat
+  height : Nat
+  exnBelow : Bool := false
+  payload : Bool := true
+  exnAbove : Bool := false
+  deriving Repr, Inhabited, BEq
+
+/-- One entry of a function's handler table: an exception raised at a pc in
+`[start, stop)` is tested against `catches` in order; when none matches, the search
+goes on at entry `next` (an enclosing `try`, or a legacy `delegate` target), then in
+the caller. Entries are in the order their `try` starts, so for properly nested ranges
+the innermost entry holding a pc is the last one that holds it. -/
+structure Handler where
+  start : Nat
+  stop : Nat
+  catches : Array CatchTarget
+  next : Option Nat
+  deriving Repr, Inhabited, BEq
+
 inductive Op where
   | unreachable
   /-- Branch that moves `keep` values down to `height`. -/
@@ -67,6 +93,27 @@ inductive Op where
   | llBinJump (x y : Nat) (op : NumOp) (t : Nat) (onZero : Bool)
   | lcBinJump (x : Nat) (c : UInt64) (op : NumOp) (t : Nat) (onZero : Bool)
   | binJump (op : NumOp) (t : Nat) (onZero : Bool)
+  -- Ops off the hot path, last so that the constructor numbers of the ops above (the
+  -- `switch` cases of `run`) are those they had before these were added.
+  /-- Throw a new exception of tag `tag` (module index) with `n` payload values. -/
+  | throw (tag : Nat) (n : Nat)
+  | throwRef
+  /-- Legacy `rethrow`: throw again the exception held at slot `fp + slot`. -/
+  | rethrow (slot : Nat)
+  /-- A tail call. The validator puts `return_ k` after it, which runs after a host
+  callee returns. -/
+  | returnCall (f : Nat)
+  | returnCallIndirect (type table : Nat)
+  | callRef
+  | returnCallRef
+  | refAsNonNull
+  /-- Branch to `t` when the reference on top is null (popping it). -/
+  | brOnNull (t : BrTarget)
+  /-- Branch to `t` with the reference when it is not null; else pop it. -/
+  | brOnNonNull (t : BrTarget)
+  /-- The function's handler table. Data, not an instruction: the validator puts it
+  last, after the final `return_`, only in functions with a `try`. -/
+  | handlers (hs : Array Handler)
   deriving Repr, Inhabited
 
 /-- The conditional jump at the end of a fused op. -/
@@ -206,5 +253,11 @@ structure CompiledFunc where
   deriving Inhabited
 
 def CompiledFunc.nLocals (f : CompiledFunc) : Nat := f.nParams + f.localInit.size
+
+/-- The handler table of compiled code (empty when the function has no `try`). -/
+def handlersOf (code : Array Op) : Array Handler :=
+  match code.back? with
+  | some (.handlers hs) => hs
+  | _ => #[]
 
 end L4Factoidal.WasmVM

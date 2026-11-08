@@ -9,7 +9,7 @@ instruction sequence is read with the bytes left as its fuel. The loops are tail
 calls, so they compile to C loops.
 
 `DecodeError.unsupported` marks a construct of a proposal that this engine does not
-run yet (SIMD, GC types, exceptions, memory64, threads, tail calls); the spec-test
+run yet (SIMD, GC types, memory64, threads); the spec-test
 runner counts those as not run, not as failures.
 -/
 import L4Factoidal.WasmVM.Syntax
@@ -173,6 +173,16 @@ def loadOps : Array LoadOp :=
 def storeOps : Array StoreOp :=
   #[.i32, .i64, .f32, .f64, .i32_8, .i32_16, .i64_8, .i64_16, .i64_32]
 
+/-- A catch clause of `try_table`. -/
+def catchClause (b : ByteArray) (p : Nat) : Except DecodeError (Catch × Nat) := do
+  let (k, q) ← byte b p
+  match k with
+  | 0 => let (x, q) ← u32 b q; let (l, q) ← u32 b q; .ok (.catch_ x l, q)
+  | 1 => let (x, q) ← u32 b q; let (l, q) ← u32 b q; .ok (.catchRef x l, q)
+  | 2 => let (l, q) ← u32 b q; .ok (.catchAll l, q)
+  | 3 => let (l, q) ← u32 b q; .ok (.catchAllRef l, q)
+  | _ => bad "malformed catch clause" p
+
 /-- One instruction. `usesData` is set when the instruction names a data segment
 (the data-count section is then required). -/
 def instr (b : ByteArray) (p : Nat) : Except DecodeError (Instr × Nat × Bool) := do
@@ -231,9 +241,29 @@ def instr (b : ByteArray) (p : Nat) : Except DecodeError (Instr × Nat × Bool) 
   | 0xFD => unsup "SIMD instruction" p
   | 0xFB => unsup "GC instruction" p
   | 0xFE => unsup "atomic instruction" p
-  | 0x06 | 0x07 | 0x08 | 0x09 | 0x0A | 0x18 | 0x19 | 0x1F => unsup "exception instruction" p
-  | 0x12 | 0x13 => unsup "tail call" p
-  | 0x14 | 0x15 | 0xD3 | 0xD4 | 0xD5 | 0xD6 => unsup "typed function reference" p
+  -- Exception handling.
+  | 0x08 => let (x, q) ← u32 b q; r (.throw x) q
+  | 0x0A => r .throwRef q
+  | 0x1F =>
+    let (bt, q) ← blockType b q
+    let (cs, q) ← vec catchClause b q
+    r (.tryTable bt cs) q
+  -- Legacy exception handling.
+  | 0x06 => let (bt, q) ← blockType b q; r (.try_ bt) q
+  | 0x07 => let (x, q) ← u32 b q; r (.catch_ x) q
+  | 0x19 => r .catchAll q
+  | 0x18 => let (l, q) ← u32 b q; r (.delegate l) q
+  | 0x09 => let (l, q) ← u32 b q; r (.rethrow l) q
+  -- Tail calls.
+  | 0x12 => let (f, q) ← u32 b q; r (.returnCall f) q
+  | 0x13 => let (t, q) ← u32 b q; let (x, q) ← u32 b q; r (.returnCallIndirect t x) q
+  -- Typed function references.
+  | 0x14 => let (t, q) ← u32 b q; r (.callRef t) q
+  | 0x15 => let (t, q) ← u32 b q; r (.returnCallRef t) q
+  | 0xD4 => r .refAsNonNull q
+  | 0xD5 => let (l, q) ← u32 b q; r (.brOnNull l) q
+  | 0xD6 => let (l, q) ← u32 b q; r (.brOnNonNull l) q
+  | 0xD3 => unsup "GC instruction" p
   | _ =>
     if op ≥ 0x28 && op ≤ 0x35 then
       let (m, q) ← memArg b q; r (.load loadOps[(op - 0x28).toNat]! m) q
@@ -256,7 +286,10 @@ def exprLoop (b : ByteArray) : Nat → Nat → Nat → Array Instr → Bool →
     match i with
     | .end_ =>
       if depth == 0 then .ok (acc, q, ud) else exprLoop b fuel q (depth - 1) acc ud
-    | .block _ | .loop _ | .if_ _ => exprLoop b fuel q (depth + 1) acc ud
+    | .delegate _ =>
+      -- `delegate` closes a legacy `try` as `end` does.
+      if depth == 0 then bad "delegate outside try" p else exprLoop b fuel q (depth - 1) acc ud
+    | .block _ | .loop _ | .if_ _ | .tryTable .. | .try_ _ => exprLoop b fuel q (depth + 1) acc ud
     | _ => exprLoop b fuel q depth acc ud
 
 def expr (b : ByteArray) (p : Nat) : Except DecodeError (Expr × Nat × Bool) :=
@@ -276,6 +309,11 @@ structure DState where
   sawCode : Bool := false
   sawFunc : Bool := false
 
+/-- A tag type: attribute 0 (exception), then a type index. -/
+def tagType (b : ByteArray) (p : Nat) : Except DecodeError (Nat × Nat) := do
+  let (a, q) ← byte b p
+  if a != 0 then bad "malformed tag attribute" p else u32 b q
+
 def importDesc (b : ByteArray) (p : Nat) : Except DecodeError (ImportDesc × Nat) := do
   let (k, q) ← byte b p
   match k with
@@ -283,7 +321,7 @@ def importDesc (b : ByteArray) (p : Nat) : Except DecodeError (ImportDesc × Nat
   | 1 => let (t, q) ← tableType b q; .ok (.table t, q)
   | 2 => let (l, q) ← limits b q; .ok (.mem ⟨l⟩, q)
   | 3 => let (g, q) ← globalType b q; .ok (.global g, q)
-  | 4 => unsup "tag import (exceptions)" p
+  | 4 => let (t, q) ← tagType b q; .ok (.tag t, q)
   | _ => bad "malformed import kind" p
 
 def import_ (b : ByteArray) (p : Nat) : Except DecodeError (Import × Nat) := do
@@ -328,7 +366,7 @@ def export_ (b : ByteArray) (p : Nat) : Except DecodeError (Export × Nat) := do
   | 1 => .ok (⟨nm, .table i⟩, q)
   | 2 => .ok (⟨nm, .mem i⟩, q)
   | 3 => .ok (⟨nm, .global i⟩, q)
-  | 4 => unsup "tag export (exceptions)" p
+  | 4 => .ok (⟨nm, .tag i⟩, q)
   | _ => bad "malformed export kind" p
 
 def funcRefExpr (f : Nat) : Expr := #[.refFunc f, .end_]
@@ -508,7 +546,7 @@ def readSection (parallel : Bool) (b : ByteArray) (id : Nat) (p e : Nat) (s : DS
   | 4 => let (ts, q) ← vec table b p; .ok ({ s with m := { m with tables := ts } }, q)
   | 5 => let (ls, q) ← vec limits b p
          .ok ({ s with m := { m with mems := ls.map MemType.mk } }, q)
-  | 13 => unsup "tag section (exceptions)" p
+  | 13 => let (ts, q) ← vec tagType b p; .ok ({ s with m := { m with tags := ts } }, q)
   | 6 => let (gs, q) ← vec global b p; .ok ({ s with m := { m with globals := gs } }, q)
   | 7 => let (es, q) ← vec export_ b p; .ok ({ s with m := { m with exports := es } }, q)
   | 8 => let (f, q) ← u32 b p; .ok ({ s with m := { m with start := some f } }, q)

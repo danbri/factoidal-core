@@ -112,6 +112,10 @@ def checkImport (st : StoreOf M) (types : Array FuncType) (ids : Array Nat) (d :
       let ok := if gt.mutable then t.mutable && t.type == want else !t.mutable && valSubC t.type want
       if ok then .ok () else .error "incompatible import type"
     | none => .error "unknown import"
+  | .tag t, .tag a =>
+    match st.exc.tags[a]?, types[t]? with
+    | some tt, some ft => if tt == canonFunc ids ft then .ok () else .error "incompatible import type"
+    | _, _ => .error "unknown import"
   | _, _ => .error "incompatible import type"
 
 /-- Write `vals` into table `ta` at `d`. -/
@@ -147,11 +151,16 @@ def instantiate (st : StoreOf M) (vm : ValidModule) (imports : Array ExternVal) 
     | .table a => inst := { inst with tables := inst.tables.push a }
     | .mem a => inst := { inst with mems := inst.mems.push a }
     | .global a => inst := { inst with globals := inst.globals.push a }
+    | .tag a => inst := { inst with tags := inst.tags.push a }
   let instAddr := st.insts.size
   for (f, cf) in m.funcs.zip vm.code do
     let ft := canonFunc typeIds m.types[f.type]!
     inst := { inst with funcs := inst.funcs.push st.funcs.size }
     st := { st with funcs := st.funcs.push { type := ft, typeId := typeIds[f.type]!, kind := .wasm instAddr cf } }
+  for t in m.tags do
+    let (st', a) := st.addTag (canonFunc typeIds m.types[t]!)
+    st := st'
+    inst := { inst with tags := inst.tags.push a }
   for g in m.globals do
     let (st', a) := st.addGlobal { g.type with type := canonVal typeIds g.type.type } (evalConst st inst g.init)
     st := st'
@@ -177,7 +186,8 @@ def instantiate (st : StoreOf M) (vm : ValidModule) (imports : Array ExternVal) 
     | .func i => ExternVal.func inst.funcs[i]!
     | .table i => .table inst.tables[i]!
     | .mem i => .mem inst.mems[i]!
-    | .global i => .global inst.globals[i]!)
+    | .global i => .global inst.globals[i]!
+    | .tag i => .tag inst.tags[i]!)
   inst := { inst with exports }
   st := { st with insts := st.insts.push inst }
   let mut ei := 0

@@ -16,6 +16,7 @@ was not run. Files run in parallel (one task each, each with its own store) unle
 Not part of the verified library: it does file I/O and prints scores.
 -/
 import L4Factoidal.WasmVM.Tests.Memory
+import L4Factoidal.WasmVM.Tests.Proposals
 import Lean.Data.Json
 import L4Factoidal.WasmVM.Api
 
@@ -124,9 +125,13 @@ def matches1 (e : Json) (got : Value) : Option Bool := do
     match got with
     | .funcRef a => some (if v == "null" then a.isNone else a.isSome)
     | _ => some false
-  | "refnull" | "nullfuncref" | "nullexternref" | "nullref" =>
+  | "exnref" =>
     match got with
-    | .funcRef none | .externRef none => some true
+    | .exnRef a => some (if v == "null" then a.isNone else a.isSome)
+    | _ => some false
+  | "refnull" | "nullfuncref" | "nullexternref" | "nullref" | "nullexnref" =>
+    match got with
+    | .funcRef none | .externRef none | .exnRef none => some true
     | _ => some false
   | _ => none
 
@@ -206,8 +211,14 @@ def targetInst (s : St) (act : Json) : Except Res Nat :=
     | none, some w => .error (.notRun s!"module not run: {w}")
     | none, none => .error (.fail "no current module")
 
-/-- Perform an action: values, or a trap, or a Res when it could not run. -/
-def doAction (s : St) (act : Json) : Except Res (St × Except Trap (Array Value)) := do
+/-- How an action ended. -/
+inductive Ended where
+  | values (vs : Array Value)
+  | trap (t : Trap)
+  | exception
+
+/-- Perform an action: values, a trap or an exception, or a Res when it could not run. -/
+def doAction (s : St) (act : Json) : Except Res (St × Ended) := do
   let inst ← targetInst s act
   let field := (str act "field").getD ""
   match str act "type" with
@@ -215,7 +226,7 @@ def doAction (s : St) (act : Json) : Except Res (St × Except Trap (Array Value)
     match s.store.export? inst field with
     | some (.global a) =>
       let t := (s.store.globalTypes[a]!).type
-      .ok (s, .ok #[Value.ofBits t (s.store.globalBits a)])
+      .ok (s, .values #[Value.ofBits t (s.store.globalBits a)])
     | _ => .error (.fail s!"no global {field}")
   | _ =>
     let args := ((act.getObjValAs? (Array Json) "args").toOption).getD #[]
@@ -225,8 +236,9 @@ def doAction (s : St) (act : Json) : Except Res (St × Except Trap (Array Value)
       let (store, o) := invokePure specHost s.store fa vs budget
       let s := { s with store }
       match o with
-      | .values r => .ok (s, .ok r)
-      | .trap t => .ok (s, .error t)
+      | .values r => .ok (s, .values r)
+      | .trap t => .ok (s, .trap t)
+      | .exception .. => .ok (s, .exception)
       | o => .error (.fail s!"run stopped: {o.describe}")
     | _ => .error (.fail s!"no function {field}")
 
@@ -266,8 +278,9 @@ def step (dir : System.FilePath) (s : St) (cmd : Json) : IO (St × Res) := do
   | "assert_return" =>
     match doAction s act with
     | .error r => return (s, r)
-    | .ok (s, .error t) => return (s, .fail s!"trap: {t.message}")
-    | .ok (s, .ok vs) =>
+    | .ok (s, .trap t) => return (s, .fail s!"trap: {t.message}")
+    | .ok (s, .exception) => return (s, .fail "uncaught exception")
+    | .ok (s, .values vs) =>
       let es := expectedList cmd
       if es.size != vs.size then return (s, .fail s!"{vs.size} results, expected {es.size}")
       let ms := (es.zip vs).map fun (e, v) => valueMatches e v
@@ -277,8 +290,15 @@ def step (dir : System.FilePath) (s : St) (cmd : Json) : IO (St × Res) := do
   | "assert_trap" | "assert_exhaustion" =>
     match doAction s act with
     | .error r => return (s, r)
-    | .ok (s, .error _) => return (s, .pass)
-    | .ok (s, .ok vs) => return (s, .fail s!"expected trap {(str cmd "text").getD ""}, got {repr vs}")
+    | .ok (s, .trap _) => return (s, .pass)
+    | .ok (s, .exception) => return (s, .fail s!"expected trap {(str cmd "text").getD ""}, got an exception")
+    | .ok (s, .values vs) => return (s, .fail s!"expected trap {(str cmd "text").getD ""}, got {repr vs}")
+  | "assert_exception" =>
+    match doAction s act with
+    | .error r => return (s, r)
+    | .ok (s, .exception) => return (s, .pass)
+    | .ok (s, .trap t) => return (s, .fail s!"expected an exception, got trap {t.message}")
+    | .ok (s, .values vs) => return (s, .fail s!"expected an exception, got {repr vs}")
   | "assert_invalid" =>
     match ← readModule dir cmd with
     | .error (.notRun w) => return (s, .notRun w)
@@ -351,7 +371,8 @@ def main (args : List String) : IO UInt32 := do
     tot := { tot with pass := tot.pass + t.pass, fail := tot.fail + t.fail, notRun := tot.notRun + t.notRun }
   IO.println s!"TOTAL files {files.size}: pass {tot.pass} fail {tot.fail} not-run {tot.notRun} ({t1 - t0} ms, {if serial then "serial" else "parallel"})"
   let memOk ← if names.isEmpty then Tests.Memory.run else pure true
-  return if tot.fail == 0 && memOk then 0 else 1
+  let propOk ← if names.isEmpty then Tests.Proposals.run else pure true
+  return if tot.fail == 0 && memOk && propOk then 0 else 1
 
 end L4Factoidal.WasmVM.SpecTest
 
