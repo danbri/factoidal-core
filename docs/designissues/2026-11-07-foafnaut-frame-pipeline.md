@@ -481,3 +481,25 @@ Window checks: `run_html.ts --follow-links --link-scroll-sweep` on `showcase.htm
 place, the URL after the load, back; then the last link again from the end of the
 page). `run_html.ts --scroll-end-sweep` scrolls to the end and fails unless the last
 row of the layout is in the view.
+
+## Engine capability and host permissions (2026-11-08)
+
+Two failures of 2026-11-08 had the same form: host code used something that the engine or the
+compiled program in use did not give.
+
+1. **Page code must probe the engine before it uses a new ABI.** The Hub page called the
+   font export with 5 arguments (fallback fonts) on a published engine whose export takes 4.
+   The engine aborted and the page fell back to the bitmap font. Rule: a new argument, op or
+   export is used only after the page reads the engine's capability list (`scriptInfo().ops`,
+   `info().ops`, or the export's presence), and the page has a path for the older engine.
+   Fixes: 34a00e5a7 and 463c07016 (`fontBytesTakeFallback`).
+2. **A compiled host must have every permission its source uses.** `run_html.ts` started to
+   read `HOME` (to find the QuickJS guest, ac482fba8), but `deno compile` in
+   `build-executables.sh` gave no `--allow-env`. Every test from source passed; the app
+   stopped at start. Fix: 384230207, `--allow-env=HOME`, and `build-executables.sh` now starts
+   the compiled program off screen (graph sweep) and fails when it does not start. A new
+   `Deno.env` read needs its name added to that flag.
+
+Related measurement: `sweeps.sh` input latency includes a pixel check of every frame (a sweep
+sets `everyFrame`). The graph click is 195 ms there and 27.6 ms with `--idle-checks-only`
+(native engine, off screen); in a window it is 23 ms.
