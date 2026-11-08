@@ -2,6 +2,7 @@ import L4Factoidal.WasmVM.Hosts.Page
 import L4Factoidal.DOM.OfXml
 import WebRenderScript
 import WebWasm
+import WebShell
 
 /-!
 # WebScripts: page scripts run by Lean in the Foafnaut engine
@@ -27,13 +28,23 @@ argument for `start`:
   `DOMContentLoaded`, then the `load` event.
 - `click` (`node`), `advance` (`ms`: move the virtual clock), `settle` (`budgetMs`: run
   until no task, timer or frame waits), `turn` (run what is due now), `close`.
+- `pointer` (`kind` down, move, up or cancel; `node`; the coordinates of the `nodeAt`
+  answer; `button`, `buttons`, `pointerType`): the pointer and mouse events of
+  `Page.Session.pointer`, with a click on release; at most one move in a frame. A host
+  that finds no `pointer` in `info` sends `click`.
+- `resize` (`width`, `height`): the viewport in CSS pixels; `resize` at the window.
+
+`start` also takes `width` and `height` (the viewport in CSS pixels: `innerWidth`,
+`innerHeight`), `layout` (the render request whose `layoutFields` lay the page out for
+the layout reads of its scripts, `WebDocument.measure`) and `instructionsPerMs` (the
+rate of the script clock, `Page.ScriptClock`; 100000 by default).
 
 Every answer but `info` and `close` is a turn: `session`, `clock`, `changed`,
 `commandCount`, `commands` (the whole list, compacted: one write per attribute and per
 character data, so bounded by the DOM, in the JSON form of `WebRenderScript.commandJson`,
 only when `changed` or `full:true`), `changes` (all changes since the start), the new `logs` and
 `errors`, `timers`, `nextTimer`, `frames`, `nextWake`, `quiet`, `instructions`, `jobs`,
-`tasks` and `ns`.
+`tasks`, `layouts` (layouts made for the layout reads of scripts in the turn) and `ns`.
 
 The cost contract: `changed` is true exactly when the turn recorded a DOM change. A
 host renders again only then; the render request carries the command list, which is part
@@ -84,7 +95,7 @@ stays. -/
 @[implemented_by keepImpl, noinline] private opaque keep (h : Held) (request : JSON.Json) : Nat
 @[implemented_by peekImpl, noinline] private opaque peek (request : JSON.Json) : Bool × Nat
 
-def actions : List String := ["info", "load", "start", "click", "advance", "settle", "turn", "close"]
+def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close"]
 
 /-- An answer object with `nextSession` first: the value `keep` answered, so the
 compiled code keeps the call. -/
@@ -115,8 +126,10 @@ structure Before where
   steps : Nat := 0
   jobs : Nat := 0
   tasks : Nat := 0
+  layouts : Nat := 0
 
-def Before.of (s : Page.Session) : Before := ⟨s.changes, s.steps, s.jobs, s.tasks⟩
+def Before.of (s : Page.Session) : Before :=
+  { changes := s.changes, steps := s.steps, jobs := s.jobs, tasks := s.tasks, layouts := s.layouts }
 
 /-- The answer of a turn. -/
 def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (full : Bool) (ns : Nat)
@@ -132,12 +145,12 @@ def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (
     ("timers",num loop.timers.length),
     ("nextTimer",match loop.timers with | t :: _ => num t.due | [] => .null),
     ("frames",num loop.frames.length),
-    ("nextWake",match loop.timers, s.nextFrame with
-      | t :: _, some f => num (min t.due f) | t :: _, none => num t.due
-      | [], some f => num f | [], none => .null),
+    ("nextWake",match [loop.timers.head?.map (·.due), s.nextFrame, s.moveWake].filterMap (fun x => x) with
+      | [] => .null
+      | t :: ts => num (ts.foldl min t)),
     ("quiet",.bool s.quiet),
     ("instructions",num (s.steps - before.steps)),("jobs",num (s.jobs - before.jobs)),
-    ("tasks",num (s.tasks - before.tasks)),("ns",num ns)] ++ extra
+    ("tasks",num (s.tasks - before.tasks)),("layouts",num (s.layouts - before.layouts)),("ns",num ns)] ++ extra
   let text := (JSON.Json.object fields).toString
   -- The page's GPU commands, validated by Lean (L4Factoidal.PageGpu): the host replays them
   -- on its WebGPU device. They need no layout; the canvas rectangles come with a render.
@@ -181,8 +194,42 @@ def scriptSources (dom : DOM.Dom) (request : JSON.Json) : Except String (Array (
       | none => missing := missing.push s!"script {src} was not supplied"
   return (out, missing)
 
-/-- One action on what the engine holds. -/
-def act (held : Held) (action html : String) (request : JSON.Json) : Held × Except String String :=
+/-- The pointer data of a `pointer` request as the JSON init of its events: the
+coordinates of the `nodeAt` answer (`clientX`, `clientY`, `pageX`, `pageY`, `offsetX`,
+`offsetY`), `button`, `buttons`, `pointerId`, `pressure`, `width`, `height`, and
+`pointerType` (mouse, pen or touch). Only numbers of these names pass, so the prelude
+reads nothing else. -/
+def pointerInit (request : JSON.Json) : String :=
+  let numeric := ["clientX","clientY","pageX","pageY","offsetX","offsetY","screenX","screenY","movementX","movementY",
+    "button","buttons","pointerId","pressure","width","height","tiltX","tiltY"]
+  let fields := numeric.filterMap fun k => match request.field? k with
+    | some (.number n) => some (k,JSON.Json.number n)
+    | _ => none
+  let kind := str request "pointerType" "mouse"
+  let kind := if ["mouse","pen","touch"].contains kind then kind else "mouse"
+  let screen := (if fields.any (·.1 == "screenX") then [] else (fields.find? (·.1 == "clientX")).map (fun f => ("screenX",f.2)) |>.toList) ++
+    (if fields.any (·.1 == "screenY") then [] else (fields.find? (·.1 == "clientY")).map (fun f => ("screenY",f.2)) |>.toList)
+  (JSON.Json.object (fields ++ screen ++ [("pointerType",.string kind),("isPrimary",.bool true)] ++
+    (if fields.any (·.1 == "pointerId") then [] else [("pointerId",num 1)]))).toString
+
+/-- The page's viewport in CSS pixels: the window's `width`, and its `height` less the
+full chrome of `shell` (the rows that a render lays the page out in,
+`WebDocument.layoutTop`). -/
+def viewport (request : JSON.Json) : Option (Nat × Nat) := do
+  let w ← natField request "width"
+  let h ← natField request "height"
+  let top := match request.field? "shell" with
+    | some j => WebShell.fullHeight (WebShell.Shell.ofJson j) w
+    | none => 0
+  return (w, max 1 (h - top))
+
+def pointerKind : String → Option Page.PointerKind
+  | "down" => some .down | "move" => some .move | "up" => some .up | "cancel" => some .cancel | _ => none
+
+/-- One action on what the engine holds. `measure` lays out an arena for the layout reads
+of its scripts (`WebDocument.measure`), with the `layout` request of `start`. -/
+def act (held : Held) (action html : String) (request : JSON.Json)
+    (measure : JSON.Json → Option Page.Measure := fun _ => none) : Held × Except String String :=
   let full := request.field? "full" == some (.bool true)
   match action with
   | "load" =>
@@ -199,7 +246,10 @@ def act (held : Held) (action html : String) (request : JSON.Json) : Held × Exc
       let started := WebWasm.timed fun _ => show Except String Page.Session from do
         let dom ← parse html url
         let (scripts, missing) ← scriptSources dom request
-        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession }
+        let (vw, vh) := (viewport request).getD (800, 600)
+        let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh }
+        let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
+        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession } #[] reads { instructionsPerMs := rate }
         return missing.foldl Page.Session.fail s
       match started with
       | (.error e, _) => (held, .error s!"scriptSession: {e}")
@@ -225,13 +275,22 @@ def act (held : Held) (action html : String) (request : JSON.Json) : Held × Exc
         match natField request "node" with
         | some node => run (·.click node)
         | none => ({ held with session := some (id, s, marks) }, .error "scriptSession: click needs node")
-      | "advance" => run fun s => (s.advance (s.loop.clock + ((natField request "ms").getD 0))).1
-      | "settle" => run fun s => (s.settle ((natField request "budgetMs").getD 30000)).1
-      | "turn" => run fun s => (s.advance s.loop.clock).1
+      | "pointer" =>
+        match pointerKind (str request "kind"), natField request "node" with
+        | some kind, some node => run (·.pointer kind node (pointerInit request))
+        | _, _ => ({ held with session := some (id, s, marks) }, .error "scriptSession: pointer needs kind (down, move, up, cancel) and node")
+      | "resize" =>
+        match viewport request with
+        | some (w, h) => run fun s => ((s.resize w h).advance s.loop.clock).1
+        | none => ({ held with session := some (id, s, marks) }, .error "scriptSession: resize needs width and height")
+      | "advance" => run fun s => ((s.advance (s.loop.clock + ((natField request "ms").getD 0))).1).flushMove
+      | "settle" => run fun s => (s.flushMove.settle ((natField request "budgetMs").getD 30000)).1
+      | "turn" => run fun s => (s.flushMove.advance s.loop.clock).1
       | _ => ({ held with session := some (id, s, marks) }, .error "scriptSession: unknown action")
 
 /-- The `scriptSession` operation. `html` is the page, for `start`. -/
-def op (name html : String) (request : JSON.Json) : Except String (Option String) := do
+def op (name html : String) (request : JSON.Json) (measure : JSON.Json → Option Page.Measure := fun _ => none) :
+    Except String (Option String) := do
   if name != "scriptSession" then return none
   let action := str request "action"
   if !actions.contains action then throw "scriptSession: unknown action"
@@ -239,7 +298,7 @@ def op (name html : String) (request : JSON.Json) : Except String (Option String
     let (loaded, bytes) := peek request
     return some (JSON.Json.object [("ops",.array (actions.map .string)),("module",.bool loaded),
       ("bytes",num bytes),("engine",.string "QuickJS-NG in WasmVM")]).toString
-  let (held, answer) := act (take request) action html request
+  let (held, answer) := act (take request) action html request measure
   let n := keep held request
   return some (← answer.map (withNext n))
 

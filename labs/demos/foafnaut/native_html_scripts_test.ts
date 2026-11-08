@@ -40,7 +40,9 @@ async function runs(engine:HTMLEngine){
   engine.scriptLoad(await Deno.readFile(guest!));
   const turns:ScriptTurn[]=[];
   // Start: the script runs in document order; the timer is armed, not fired.
-  let turn=engine.scriptSession(page,{action:"start",url:"file:///scripted.html",resources:[]});turns.push(turn);
+  // The script clock runs at a rate so high that script time stays 0 here: this test is of
+  // the event loop's clock (native_html_pointer_test.ts tests script time).
+  let turn=engine.scriptSession(page,{action:"start",url:"file:///scripted.html",resources:[],instructionsPerMs:1e12});turns.push(turn);
   assert.equal(turn.changed,true);
   assert.deepEqual(turn.logs,["loaded at 0"]);
   assert.equal(turn.timers,1);
@@ -74,6 +76,21 @@ async function runs(engine:HTMLEngine){
   turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:1000});turns.push(turn);
   assert.equal(turn.quiet,true);
   assert.equal(turn.changed,false);
+  engine.scriptSession("",{action:"close"});
+  // The script clock (Page.ScriptClock) at its default rate, 100 000 instructions a ms: a
+  // busy loop moves performance.now(); readings never go back; a timer set after the
+  // loop is due its delay after the script time it was set at.
+  const busy=`<!doctype html><title>Busy</title><script>
+const t0 = performance.now(), d0 = Date.now(); let x = 0; for (let i = 0; i < 300000; i++) x += i;
+const t1 = performance.now();
+console.log('ran ' + (t1 - t0 >= 1) + ' ' + (Date.now() >= d0));
+setTimeout(() => console.log('timer after ' + (performance.now() - t1 >= 10)), 10);
+</script>`;
+  let clock=engine.scriptSession(busy,{action:"start",url:"file:///busy.html",resources:[]});turns.push(clock);
+  assert.deepEqual(clock.logs,["ran true true"]);
+  assert.ok(clock.clock>=1,"the loop's clock moved up to script time");
+  clock=engine.scriptSession("",{action:"settle",session:clock.session,budgetMs:1000});turns.push(clock);
+  assert.deepEqual(clock.logs,["timer after true"]);
   engine.scriptSession("",{action:"close"});
   return turns.map(({ns:_,instructions:__,...t})=>t);
 }

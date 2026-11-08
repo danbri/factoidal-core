@@ -39,6 +39,22 @@ def out (src : String) : List String :=
 #guard out "print(1 << 31, -1 >>> 0, ~5, 5 & 3, 5 | 3, 5 ^ 3)" == ["-2147483648 4294967295 -6 1 7 6"]
 #guard out "var o = { get v() { return 4 }, set v(x) { print('set', x) } }; o.v = 9; print(o.v)" == ["set 9", "4"]
 #guard out "print(typeof undeclared, typeof null, typeof function(){}, typeof {})" == ["undefined object function object"]
+#guard out "var [a, , b = 5, ...r] = [1, 2, undefined, 4, 5]; var {x, y: {z} = {z: 9}, ...o} = {x: 1, p: 2, q: 3}; print(a, b, r.join(), x, z, Object.keys(o).join())" ==
+  ["1 5 4,5 1 9 p,q"]
+#guard out "function f(a, b = a + 1, ...c) { return [a, b, c.length]; } print(f(1).join(), f(1, 2, 3, 4).join(), f.length)" == ["1,2,0 1,2,2 1"]
+#guard out "var s = 0; for (const v of [1, 2, 3]) s += v; for (const ch of 'ab') s += ch; print(s)" == ["6ab"]
+#guard out "print(Math.max(...[1, 5, 3]), [...'hi', ...[1]].join('-'), `a${1 + 1}b${'c'}`)" == ["5 h-i-1 a2bc"]
+#guard out "class A { constructor(x) { this.x = x } get dbl() { return this.x * 2 } static mk() { return new A(3) } } class B extends A { constructor() { super(4); this.y = 1 } sum() { return this.x + this.y + super.constructor.name.length } } print(A.mk().dbl, new B().sum(), new B() instanceof A)" == ["6 6 true"]
+#guard out "class C { n = 2; m() { return this.n } } print(new C().m(), typeof C, (() => { try { C() } catch (e) { return e.name } })())" == ["2 function TypeError"]
+#guard out "var s = Symbol('k'); var o = {[s]: 1, a: 2}; print(typeof s, String(s), o[s], Object.keys(o).length, s.description)" == ["symbol Symbol(k) 1 1 k"]
+#guard out "var it = { [Symbol.iterator]() { var i = 0; return { next: () => ({ value: i, done: i++ >= 2 }), return() { print('closed'); return {} } }; } }; for (var v of it) { print(v); break; }" == ["0", "closed"]
+#guard out "print(eval('var q = 1; q + 1'), typeof q, new Function('a', 'b', 'return a * b')(3, 4))" == ["2 number 12"]
+#guard out "[a, b] = [1, 2]; ({c: d} = {c: 3}); print(a, b, d)" == ["1 2 3"]
+#guard out "function* g() { var x = yield 1; print('got', x); try { yield 2 } finally { print('fin') } } var it = g(); print(it.next().value); print(it.next('a').value); print(JSON.stringify(it.return(7)))" ==
+  ["1", "got a", "2", "fin", "{\"value\":7,\"done\":true}"]
+#guard out "function* r(n) { for (let i = 0; i < n; i++) yield i; } print([...r(4)].join(), Array.from(r(2)).length)" == ["0,1,2,3 2"]
+#guard out "function* a() { yield 1; yield* [2, 3]; return 4 } var s = []; for (var v of a()) s.push(v); print(s.join())" == ["1,2,3"]
+#guard out "label: for (var i = 0; i < 3; i++) { if (i == 1) continue label; } try { eval('break;') } catch (e) { print(e.name) }" == ["SyntaxError"]
 #guard out "1 +" == ["SyntaxError: unexpected end of input at end of input (offset 3)"]
 
 end L4Factoidal.JS.Tests

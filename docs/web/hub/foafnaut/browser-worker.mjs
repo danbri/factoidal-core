@@ -359,11 +359,11 @@ async function pageImageBytes(wanted){
 // answers scriptSession info AND the guest module (docs/web/hub/wasm-guests/, published beside
 // the engine runtime by factoidal-builds) loads; otherwise the page shows without its scripts, as before. An
 // older engine answers "unknown document operation" (no new export is called, issue 1274).
-let engineScripts;
+let engineScripts,scriptOps=[];
 async function hasScripts(){
   if(engineScripts!==undefined)return engineScripts;
   engineScripts=false;
-  try{if(!call('',{op:'scriptSession',action:'info'}).ops?.includes('start'))return false;}catch{return false;}
+  try{scriptOps=call('',{op:'scriptSession',action:'info'}).ops??[];if(!scriptOps.includes('start'))return false;}catch{return false;}
   try{
     const response=await fetch(new URL('../wasm-guests/qjs-wasmvm.wasm',import.meta.url));
     if(!response.ok)return false;
@@ -381,7 +381,10 @@ async function startScripts(page,scripts){
     try{const r=await fetchText(s.url);resources.push({nodeId:s.nodeId,source:r.source});page.sources.push({kind:'Script',url:r.url,source:r.source});}
     catch(error){console.warn('foafnaut: script not fetched:',s.url,String(error.message??error));}
   }
-  const turn=call(page.source,{op:'scriptSession',action:'start',url:page.url,resources});
+  // The viewport and the render request that lays the page out for its scripts' layout
+  // reads (clientWidth, getBoundingClientRect); an engine without them ignores the fields.
+  const layout={url:page.url,...(page.images?{images:page.images}:{}),...(page.heldImages?{heldImages:page.heldImages}:{}),textScalePercent:percent};
+  const turn=call(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,shell:shell(),layout});
   page.script={session:turn.session,turn,epoch:performance.now()-turn.clock};
   scriptTurn(page,turn);
 }
@@ -463,6 +466,25 @@ function scriptClick(x,y){
     const node=call(doc.source,{op:'nodeAt',url:doc.url,textScalePercent:percent,shell:shell(),...(doc.commands?{commands:doc.commands}:{}),x,y},width,height).node;
     if(typeof node==='number')scriptTurn(doc,call('',{op:'scriptSession',action:'click',session:script.session,node}));
   }catch(error){console.warn('foafnaut: page script click:',String(error.message??error));}
+}
+// Pointer input for page scripts: Lean finds the target and its coordinates (nodeAt), then
+// dispatches pointer and mouse events, a click on release, at most one move in a frame
+// (WebScripts pointer). An engine without the action gets a click on release, as before.
+const scriptPointers=()=>scriptOps.includes('pointer');
+function scriptPointer(kind,x,y,pointerType){
+  const script=doc?.script;if(!script)return;
+  try{
+    const at=call(doc.source,{op:'nodeAt',url:doc.url,textScalePercent:percent,shell:shell(),...(doc.commands?{commands:doc.commands}:{}),x,y},width,height);
+    if(typeof at.node!=='number')return;
+    const down=kind==='down'||kind==='move';
+    scriptTurn(doc,call('',{op:'scriptSession',action:'pointer',session:script.session,kind,...at,button:0,buttons:down?1:0,
+      pressure:down?0.5:0,pointerType:pointerType??'mouse'}));
+  }catch(error){console.warn('foafnaut: page script pointer:',String(error.message??error));}
+}
+function scriptResize(){
+  const script=doc?.script;if(!script||!scriptOps.includes('resize'))return;
+  try{scriptTurn(doc,call('',{op:'scriptSession',action:'resize',session:script.session,width,height,shell:shell()}));}
+  catch(error){console.warn('foafnaut: page script resize:',String(error.message??error));}
 }
 // foafnaut:wasm (issue 1244): WebAssembly run by WasmVM, the engine written in Lean, inside this
 // Lean engine. The host browser's WebAssembly never runs the module: the page only fetches its
@@ -1168,7 +1190,7 @@ function handle(data){
 }
 function apply(data){
   if(data.type==='visit'){visit(data.address);return;}
-  if(data.type==='resize'){({width,height,scale}=data);folded=Math.min(folded,foldRows());if(doc.graph)graphInput(1,width,height);request();}
+  if(data.type==='resize'){({width,height,scale}=data);folded=Math.min(folded,foldRows());if(doc.graph)graphInput(1,width,height);scriptResize();request();}
   if(data.type==='scroll'){closeMenu();scrollBy(data.amount);}
   if(data.type==='swipe')swipe(data);
   // A long press (WebGesture hold, asked when the page's timer ran out) or a right click.
@@ -1196,13 +1218,20 @@ function apply(data){
     // A menu button acts when the tap lifts on it, in the page (menuDone).
     if(control&&menuControl(control))return;
     if(control){if(control!=='address')closeMenu();chrome(control);if(control==='address'&&answer.menu)openMenu();}
-    else{if(focused)leaveAddress();if(doc.graph)graphInput(2,data.x,data.y);}
+    else{if(focused)leaveAddress();if(doc.graph)graphInput(2,data.x,data.y);
+      if(doc.script&&scriptPointers()){doc.script.pressed=true;scriptPointer('down',data.x,data.y,data.pointer);}}
   }
   if(data.type==='move'&&doc.graph&&!focused)graphInput(3,data.x,data.y);
+  if(data.type==='move'&&doc.script?.pressed&&!focused)scriptPointer('move',data.x,data.y,data.pointer);
   if(data.type==='release'&&doc.graph){graphInput(4,data.x,data.y);return;}
+  if(data.type==='release'&&doc.script?.pressed&&scriptPointers()){
+    doc.script.pressed=false;
+    // A press that scrolled the page is a pointercancel (Pointer Events 3 §4.1.3.5), so no click.
+    if(data.scrolled)scriptPointer('cancel',data.x,data.y,data.pointer);
+  }
   if(data.type==='release'&&frame&&!data.scrolled){
     if(call('',{op:'shellHit',shell:shell(),x:data.x,y:data.y,width}).control)return;
-    scriptClick(data.x,data.y);
+    if(scriptPointers()){if(doc.script)scriptPointer('up',data.x,data.y,data.pointer);}else scriptClick(data.x,data.y);
     const target=hit(data.x,data.y);
     if(target?.href)follow(router.route({...site,href:target.href,base:doc.baseURL||doc.url}));
   }

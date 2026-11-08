@@ -30,7 +30,7 @@ fi
 # The native HTML tests need the web-render engine, which Builds makes after this
 # step in its engines job and before it in its macOS job, and more permissions.
 TESTS=()
-for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/native_html_bytes_test.ts"|"$LAB/native_html_fonts_test.ts"|"$LAB/native_html_wasm_test.ts"|"$LAB/native_html_sparql_test.ts"|"$LAB/native_window_queue_test.ts"|"$LAB/showcase_gaps_test.ts"|"$LAB/svg_text_test.ts"|"$LAB/browser_state_test.ts"|"$LAB/html_images_test.ts"|"$LAB/frame_work_test.ts"|"$LAB/link_route_test.ts"|"$LAB/native_html_scripts_test.ts"|"$LAB/gesture_test.ts"|"$LAB/page_gpu_test.ts") ;; *) TESTS+=("$test");; esac; done
+for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/native_html_bytes_test.ts"|"$LAB/native_html_fonts_test.ts"|"$LAB/native_html_wasm_test.ts"|"$LAB/native_html_sparql_test.ts"|"$LAB/native_window_queue_test.ts"|"$LAB/showcase_gaps_test.ts"|"$LAB/svg_text_test.ts"|"$LAB/browser_state_test.ts"|"$LAB/html_images_test.ts"|"$LAB/frame_work_test.ts"|"$LAB/link_route_test.ts"|"$LAB/native_html_scripts_test.ts"|"$LAB/gesture_test.ts"|"$LAB/frame_cost_test.ts"|"$LAB/scroll_prefetch_test.ts"|"$LAB/native_html_pointer_test.ts"|"$LAB/page_gpu_test.ts") ;; *) TESTS+=("$test");; esac; done
 deno check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
   "$LAB/run_ui.ts" "$LAB/run_lean.ts" "$LAB/run_svg.ts" "$LAB/run_foaf_svg.ts" "${TESTS[@]}"
 deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --allow-read "${TESTS[@]}"
@@ -98,6 +98,10 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # trackpad swipes, against the conventions and the theorems. Wasm and native.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/gesture_test.ts"
+  # These import the engine module too, so they run here, once it is built: the frame cost
+  # cases and scroll prefetch (Wasm and native).
+  deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-ffi "$LAB/frame_cost_test.ts" "$LAB/scroll_prefetch_test.ts"
   # The SPARQL planner page (WebSparql.lean): plans, rows and the drawn page, Wasm and native.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/native_html_sparql_test.ts"
@@ -109,6 +113,9 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   if [ -f "$QJS_GUEST" ]; then
     QUICKJS_WASM="$QJS_GUEST" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/native_html_scripts_test.ts"
+    # Pointer events, layout reads and the page GPU subset run in page scripts too.
+    QUICKJS_WASM="$QJS_GUEST" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+      --allow-read --allow-ffi --allow-env "$LAB/native_html_pointer_test.ts" "$LAB/page_gpu_test.ts"
   else
     echo 'NOT RUN: native_html_scripts_test.ts needs the QuickJS guest module (tools/wasmvm/build-quickjs.sh)'
   fi

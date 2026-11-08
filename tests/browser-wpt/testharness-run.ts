@@ -14,7 +14,7 @@
 //
 //   deno run -A tests/browser-wpt/testharness-run.ts [--engine native|wasm|bench]
 //     [--native-engine DYLIB] [--quickjs-wasm FILE] [--dirs a,b] [--only SUBSTRING]
-//     [--out FILE] [--baseline FILE] [--bench EXE]
+//     [--out FILE] [--baseline FILE] [--bench EXE] [--instructions-per-ms N]
 //
 // --engine native (default): the engine library labs/demos/foafnaut/.build/web-render/
 // engines/libweb-render.dylib. wasm: the engine's Wasm build. bench: the same session
@@ -33,6 +33,14 @@ export const directories=["html/webappapis/timers","html/webappapis/microtask-qu
 const dirs=opt("--dirs")?opt("--dirs").split(","):directories;
 const only=opt("--only");
 const origin="http://web-platform.test";
+// The script clock's rate (Hosts.Page.ScriptClock). A test's own timeouts (testharness.js
+// gives each file 10 s) assume a browser's speed; this engine runs many more instructions
+// for the same work, so at the engine's rate (100 000 a ms) script time alone would time
+// out heavy files. The runner measures conformance, so script time is as good as off
+// (a trillion instructions a ms) unless --instructions-per-ms says otherwise. An engine
+// from before the clock ignores the field; a bench from before it takes the flag for a
+// file name, so run this runner with a bench built from the same tree.
+const scriptRate=Number(opt("--instructions-per-ms","1000000000000"));
 const statusNames=["PASS","FAIL","TIMEOUT","NOTRUN","PRECONDITION_FAILED"];
 const harnessNames=["OK","ERROR","TIMEOUT","PRECONDITION_FAILED"];
 
@@ -121,7 +129,7 @@ async function engineBackend():Promise<{run:(file:string)=>Promise<Case>;info:Re
       const path=scriptFile(s.url);
       if(path)try{resources.push({nodeId:s.nodeId,source:await Deno.readTextFile(path)});}catch{/* not vendored: the page reports it */}
     }
-    let turn=engine.scriptSession(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000});
+    let turn=engine.scriptSession(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate});
     const logs=[...turn.logs],errors=[...turn.errors];
     let instructions=turn.instructions;
     turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:70000});
@@ -145,7 +153,8 @@ async function benchBackend():Promise<{run:(file:string)=>Promise<Case>;info:Rec
     if(file.endsWith(".js")){page=`generated/${pageOf(file)}`;await Deno.mkdir(dirname(join(served,page)),{recursive:true});
       await Deno.writeTextFile(join(served,page),wrapper(file));}
     const t0=performance.now();
-    const out=await new Deno.Command(exe,{args:["page",quickjs,served,page,"--settle","70000","--commands","200000"],stdout:"piped",stderr:"null"}).output();
+    const out=await new Deno.Command(exe,{args:["page",quickjs,served,page,"--settle","70000","--commands","200000",
+      "--instructions-per-ms",String(scriptRate)],stdout:"piped",stderr:"null"}).output();
     const line=new TextDecoder().decode(out.stdout).trim().split("\n").pop()??"{}";
     const r=JSON.parse(line||"{}");
     if(r.error)return {file,harness:"ERROR",message:r.error,subtests:[]};

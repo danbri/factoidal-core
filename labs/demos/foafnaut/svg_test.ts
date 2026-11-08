@@ -203,7 +203,9 @@ Deno.test("SVG storage artifact stays bounded and uses compact data-driven geome
  rejects(()=>validateSVG({...large,binding:"uniform"}),"Invalid Lean SVG artifact");
  rejects(()=>validateSVG({...large,data:Array(1048580).fill(0)}),"Invalid Lean SVG artifact");
  // Compact paths reach the storage budget inside the input character budget.
- rejects(()=>e.compile(wrap(`<path d="M0 0${'h1v1'.repeat(120)}z"/>`.repeat(1200))),"storage data");
+ // Over the 4,194,304-float storage budget (NativeSVG.maxDataFloats): sixty dashed lines of
+ // 4000 dashes, as SVGCapacityTests.lean; 1200 long paths no longer exceed it.
+ rejects(()=>e.compile(wrap(`<line x1="0" y1="8" x2="8000" y2="8" stroke="black" stroke-dasharray="1"/>`.repeat(60))),"storage data");
 });
 
 Deno.test("SVG gallery is an actual parsed document with Float data and generated WGSL",async()=>{
@@ -262,7 +264,7 @@ Deno.test("SVG affine transforms compose in SVG order and preserve local stroke 
  assert(e.compile(mixed).wgsl.includes('var p=worldP')&&e.compile(mixed).wgsl.includes('(header.w%4u)>=2u'),"Missing dynamic inverse CTM lowering");
  equal(e.sample(doc('matrix(1,2,2,4,0,0)','<rect width="64" height="64"/>'),5,5),[255,255,255]);
  for(const t of ['matrix(1,2)','translate(1),','scale(1e-12)','skewX(90)','translate(1)'.repeat(33)])rejects(()=>e.compile(doc(t)),"SVG profile:");
- rejects(()=>e.compile(wrap(`<path transform="translate(1)" d="M0 0${'h1v1'.repeat(120)}z"/>`.repeat(1200))),"storage data");
+ rejects(()=>e.compile(wrap(`<line transform="translate(1)" x1="0" y1="8" x2="8000" y2="8" stroke="black" stroke-dasharray="1"/>`.repeat(60))),"storage data");
  rejects(()=>e.compile('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" transform="translate(1)"/>'),"unsupported attribute");
 });
 

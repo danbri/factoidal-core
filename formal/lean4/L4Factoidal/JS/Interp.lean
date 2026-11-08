@@ -83,6 +83,18 @@ def newObject : M Nat := do alloc { proto := .obj (← realm).objectProto }
 def newArray (es : Array Value) : M Value := do
   pure (.obj (← alloc { proto := .obj (← realm).arrayProto, kind := .array es }))
 
+def isConstructor (v : Value) : M Bool := do
+  match v with
+  | .obj id => match (← getObj id).kind with
+    | .closure f .. => pure (f.kind != .arrow && f.kind != .method && !f.gen)
+    | .native nid => pure (match nid with
+        | .objectCtor | .functionCtor | .arrayCtor | .stringCtor | .numberCtor | .booleanCtor
+        | .errorCtor _ | .symbolCtor => true
+        | _ => false)
+    | .bound .. => pure true
+    | _ => pure false
+  | _ => pure false
+
 def isCallable (v : Value) : M Bool := do
   match v with
   | .obj id => pure (← getObj id).kind.callable
@@ -95,6 +107,7 @@ def typeOf (v : Value) : M String := do
   | .bool _ => pure "boolean"
   | .num _ => pure "number"
   | .str _ => pure "string"
+  | .sym _ => pure "symbol"
   | .obj id => pure (typeOfKind (← getObj id).kind)
 
 /-- A function object for a native, with `name` and `length`. -/
@@ -109,19 +122,23 @@ def method (target : Nat) (name : String) (id : Native) (len : Nat) : M Unit := 
   setHidden target name (← mkNative id name len)
 
 /-- OrdinaryFunctionCreate and MakeConstructor (§10.2.3, §10.2.5). -/
-def makeClosure (ctx : Ctx) (f : FunDef) (nameHint : String := "") : M Value := do
+def makeClosure (ctx : Ctx) (f : FunDef) (nameHint : String := "") (home : Value := .undef) : M Value := do
   let r ← realm
   -- a named function expression sees its own name (§15.2.5)
   let env ← match f.name with
     | some n => if f.arrow then pure ctx.env else do
         let e ← newEnv (some ctx.env); pure e
     | none => pure ctx.env
-  let id ← alloc { proto := .obj r.functionProto, kind := .closure f env ctx.thisV }
+  let home := if f.arrow then ctx.home else home
+  let id ← alloc { proto := .obj r.functionProto, kind := .closure f env ctx.thisV ctx.newTarget home #[] }
   if env != ctx.env then
     if let some n := f.name then declare env n { v := .obj id, mutable := false }
-  defineOwn id "length" (.data (.num (Float.ofNat f.params.length)) false false true)
+  defineOwn id "length" (.data (.num (Float.ofNat f.expectedArgs)) false false true)
   defineOwn id "name" (.data (.str (f.name.getD nameHint)) false false true)
-  if !f.arrow then
+  if f.gen then
+    let p ← alloc { proto := .obj r.generatorProto }
+    defineOwn id "prototype" (.data (.obj p) true false false)
+  else if f.kind == .normal then
     let p ← newObject
     setHidden p "constructor" (.obj id)
     defineOwn id "prototype" (.data (.obj p) true false false)
@@ -144,6 +161,16 @@ def protoOf (v : Value) : M Value := do
 
 def keyOfNum (x : Float) : String := numToString x
 
+/-- The `name` of a function stored under a property key (§10.2.9 SetFunctionName). -/
+def nameOfKey (key : String) : M String := do
+  match symOfKey? key with
+  | some id =>
+    let d := (← get).syms.getD id ""
+    pure (if d.isEmpty && id ≥ wellKnown.size then "" else "[" ++ d ++ "]")
+  | none => pure key
+
+
+
 /-- Enumerable string keys of an object and its prototypes (§14.7.5.9 EnumerateObjectProperties). -/
 def enumKeys (v : Value) : M (Array String) := do
   let h ← get
@@ -151,7 +178,7 @@ def enumKeys (v : Value) : M (Array String) := do
     | 0, _, _, acc => acc
     | fuel + 1, .obj id, seen, acc =>
       let o := h.obj id
-      let ks := o.ownKeys
+      let ks := o.ownStrKeys
       let acc := ks.foldl (fun a k =>
         if seen.contains k then a
         else match o.getOwn k with
@@ -257,6 +284,13 @@ def parseFloatStr (s : String) : Float :=
 
 /-! ## The evaluator -/
 
+/-- The prototype of the running method's `[[HomeObject]]` (§13.3.7, `super`). -/
+def homeProto (ctx : Ctx) : M Value := do
+  match ctx.home with
+  | .obj h => pure (← getObj h).proto
+  | _ => throwErr .syntax "'super' keyword unexpected here"
+
+
 set_option maxHeartbeats 2000000 in
 mutual
 
@@ -279,8 +313,10 @@ def getV : Nat → Value → String → M Value
         | none => getProto n (← realm).stringProto key v
     | .num _ => getProto n (← realm).numberProto key v
     | .bool _ => getProto n (← realm).booleanProto key v
+    | .sym _ => getProto n (← realm).symbolProto key v
     | .undef => throwErr .type s!"Cannot read properties of undefined (reading '{key}')"
     | .null => throwErr .type s!"Cannot read properties of null (reading '{key}')"
+termination_by structural n _ _ => n
 
 def getProto : Nat → Nat → String → Value → M Value
   | 0, _, _, _ => throw (.halt "fuel")
@@ -289,6 +325,7 @@ def getProto : Nat → Nat → String → Value → M Value
     | none => pure .undef
     | some (.data x ..) => pure x
     | some (.acc g _ _ _) => if g.isObj then callV n g recv #[] else pure .undef
+termination_by structural n _ _ _ => n
 
 /-- `[[Set]]` (§10.1.9 OrdinarySet), with the Array `length` (§10.4.2.4). -/
 def putV : Nat → Value → String → Value → Bool → M Unit
@@ -331,16 +368,26 @@ def putV : Nat → Value → String → Value → Bool → M Unit
           else if strict then throwErr .type s!"Cannot add property {key}, object is not extensible"
     | .undef | .null => throwErr .type s!"Cannot set properties of {if target.isObj then "" else "undefined or null"} (setting '{key}')"
     | _ => if strict then throwErr .type s!"Cannot create property '{key}' on a primitive" else pure ()
+termination_by structural n _ _ _ _ => n
 
 /-- ToPrimitive (§7.1.1) with OrdinaryToPrimitive (§7.1.1.1). -/
-def toPrim : Nat → Value → Bool → M Value
+def toPrim : Nat → Value → String → M Value
   | 0, _, _ => throw (.halt "fuel")
-  | n + 1, v, preferString => do
+  | n + 1, v, hint => do
     match v with
     | .obj _ =>
-      let order := if preferString then ["toString", "valueOf"] else ["valueOf", "toString"]
-      tryMethods n v order
+      let ex ← getV n v (symKey symToPrimitive)
+      match ex with
+      | .undef | .null =>
+        let order := if hint == "string" then ["toString", "valueOf"] else ["valueOf", "toString"]
+        tryMethods n v order
+      | f =>
+        if !(← isCallable f) then throwErr .type "Symbol.toPrimitive is not a function"
+        let r ← callV n f v #[.str hint]
+        if r.isObj then throwErr .type "Cannot convert object to primitive value"
+        pure r
     | _ => pure v
+termination_by structural n _ _ => n
 
 def tryMethods : Nat → Value → List String → M Value
   | 0, _, _ => throw (.halt "fuel")
@@ -351,6 +398,7 @@ def tryMethods : Nat → Value → List String → M Value
       let r ← callV n f v #[]
       if !r.isObj then return r
     tryMethods n v ms
+termination_by structural n _ _ => n
 
 /-- ToNumber (§7.1.4). -/
 def toNum : Nat → Value → M Float
@@ -362,7 +410,9 @@ def toNum : Nat → Value → M Float
     | .bool b => pure (if b then 1 else 0)
     | .num x => pure x
     | .str s => pure (strToNumber s)
-    | .obj _ => toNum n (← toPrim n v false)
+    | .sym _ => throwErr .type "Cannot convert a Symbol value to a number"
+    | .obj _ => toNum n (← toPrim n v "number")
+termination_by structural n _ => n
 
 /-- ToString (§7.1.17). -/
 def toStr : Nat → Value → M String
@@ -374,7 +424,9 @@ def toStr : Nat → Value → M String
     | .bool b => pure (if b then "true" else "false")
     | .num x => pure (numToString x)
     | .str s => pure s
-    | .obj _ => toStr n (← toPrim n v true)
+    | .sym _ => throwErr .type "Cannot convert a Symbol value to a string"
+    | .obj _ => toStr n (← toPrim n v "string")
+termination_by structural n _ => n
 
 /-- ToPropertyKey (§7.1.19). -/
 def toKey : Nat → Value → M String
@@ -383,7 +435,10 @@ def toKey : Nat → Value → M String
     match v with
     | .str s => pure s
     | .num x => pure (keyOfNum x)
+    | .sym id => pure (symKey id)
+    | .obj _ => toKey n (← toPrim n v "string")
     | _ => toStr n v
+termination_by structural n _ => n
 
 /-- ToObject (§7.1.18). -/
 def toObj : Nat → Value → M Nat
@@ -396,6 +451,8 @@ def toObj : Nat → Value → M Nat
     | .str _ => alloc { proto := .obj r.stringProto, kind := .prim v }
     | .num _ => alloc { proto := .obj r.numberProto, kind := .prim v }
     | .bool _ => alloc { proto := .obj r.booleanProto, kind := .prim v }
+    | .sym _ => alloc { proto := .obj r.symbolProto, kind := .prim v }
+termination_by structural n _ => n
 
 /-- IsLooselyEqual (§7.2.14). -/
 def looseEq : Nat → Value → Value → M Bool
@@ -407,24 +464,28 @@ def looseEq : Nat → Value → Value → M Bool
     | .str s, .num _ => pure (strictEq (.num (strToNumber s)) b)
     | .bool x, _ => looseEq n (.num (if x then 1 else 0)) b
     | _, .bool y => looseEq n a (.num (if y then 1 else 0))
-    | .obj _, .num _ | .obj _, .str _ => looseEq n (← toPrim n a false) b
-    | .num _, .obj _ | .str _, .obj _ => looseEq n a (← toPrim n b false)
+    | .obj _, .num _ | .obj _, .str _ => looseEq n (← toPrim n a "default") b
+    | .num _, .obj _ | .str _, .obj _ => looseEq n a (← toPrim n b "default")
+    | .obj _, .sym _ => looseEq n (← toPrim n a "default") b
+    | .sym _, .obj _ => looseEq n a (← toPrim n b "default")
     | _, _ => pure (strictEq a b)
+termination_by structural n _ _ => n
 
 /-- IsLessThan (§7.2.13): `none` is undefined (a NaN operand). -/
 def lessThan : Nat → Value → Value → Bool → M (Option Bool)
   | 0, _, _, _ => throw (.halt "fuel")
   | n + 1, a, b, leftFirst => do
     let (pa, pb) ← if leftFirst then do
-        let x ← toPrim n a false; let y ← toPrim n b false; pure (x, y)
+        let x ← toPrim n a "number"; let y ← toPrim n b "number"; pure (x, y)
       else do
-        let y ← toPrim n b false; let x ← toPrim n a false; pure (x, y)
+        let y ← toPrim n b "number"; let x ← toPrim n a "number"; pure (x, y)
     match pa, pb with
     | .str x, .str y => pure (some (decide (x < y)))
     | _, _ =>
       let x ← toNum n pa
       let y ← toNum n pb
       if x.isNaN || y.isNaN then pure none else pure (some (x < y))
+termination_by structural n _ _ _ => n
 
 /-- OrdinaryHasInstance (§7.3.21). -/
 def instOf : Nat → Value → Value → M Bool
@@ -433,6 +494,10 @@ def instOf : Nat → Value → Value → M Bool
     match c with
     | .obj cid =>
       let co ← getObj cid
+      let hi ← getV n c (symKey symHasInstance)
+      match hi with
+      | .undef | .null => pure ()
+      | f => return toBool (← callV n f c #[v])
       if !co.kind.callable then throwErr .type "Right-hand side of 'instanceof' is not callable"
       match co.kind with
       | .bound t _ _ => instOf n v t
@@ -453,6 +518,7 @@ def instOf : Nat → Value → Value → M Bool
           | _ => pure false
         | _ => throwErr .type "Function has non-object prototype in instanceof check"
     | _ => throwErr .type "Right-hand side of 'instanceof' is not an object"
+termination_by structural n _ _ => n
 
 /-- The binary operators (§13.15.3 ApplyStringOrNumericBinaryOperator and §13.10, §13.11). -/
 def binop : Nat → BinOp → Value → Value → M Value
@@ -464,8 +530,8 @@ def binop : Nat → BinOp → Value → Value → M Value
       | .num x, .num y => pure (.num (x + y))
       | .str x, .str y => pure (.str (x ++ y))
       | _, _ =>
-        let pa ← toPrim n a false
-        let pb ← toPrim n b false
+        let pa ← toPrim n a "default"
+        let pb ← toPrim n b "default"
         match pa, pb with
         | .str _, _ | _, .str _ => pure (.str ((← toStr n pa) ++ (← toStr n pb)))
         | _, _ => pure (.num ((← toNum n pa) + (← toNum n pb)))
@@ -504,6 +570,7 @@ def binop : Nat → BinOp → Value → Value → M Value
         let k ← toKey n a
         pure (.bool ((← get).findProp id k 1000).isSome)
       | _ => throwErr .type "Cannot use 'in' operator to search for a key in a non-object"
+termination_by structural n _ _ _ => n
 
 /-- `[[Call]]` (§10.2.1, §10.3.1, §10.4.1.1). -/
 def callV : Nat → Value → Value → Array Value → M Value
@@ -512,64 +579,140 @@ def callV : Nat → Value → Value → Array Value → M Value
     match f with
     | .obj id =>
       match (← getObj id).kind with
-      | .closure fd env lexThis => callClosure n fd env lexThis thisV args
+      | .closure fd env capThis capNT home _ =>
+        match fd.kind with
+        | .ctor _ => throwErr .type "Class constructor cannot be invoked without 'new'"
+        | _ => callClosure n fd env capThis capNT home f thisV .undef args
       | .native nid => callNative n nid thisV args none
       | .bound t bt bargs => callV n t bt (bargs ++ args)
       | _ => throwErr .type "not a function"
     | _ => throwErr .type "not a function"
+termination_by structural n _ _ _ => n
 
 /-- PrepareForOrdinaryCall, OrdinaryCallBindThis, FunctionDeclarationInstantiation
 (§10.2.1.1, §10.2.1.2, §10.2.11), then the body. -/
-def callClosure : Nat → FunDef → Nat → Value → Value → Array Value → M Value
-  | 0, _, _, _, _, _ => throw (.halt "fuel")
-  | n + 1, fd, env, lexThis, thisV, args => do
+def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value → Value → Value → Array Value → M Value
+  | 0, _, _, _, _, _, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, fd, env, capThis, capNT, home, fnObj, thisV, newTarget, args => do
     tick
     let h ← get
     if h.depth ≥ h.maxDepth then throwErr .range "Maximum call stack size exceeded"
     set { h with depth := h.depth + 1 }
     let fenv ← newEnv (some env)
     let r ← realm
-    let thisV := if fd.arrow then lexThis
-      else if fd.strict then thisV
+    let thisV ← if fd.arrow then pure capThis
+      else if fd.strict then pure thisV
       else match thisV with
-        | .undef | .null => .obj r.globalObj
-        | v => v
-    let rec bindParams : List String → Nat → M Unit
-      | [], _ => pure ()
-      | p :: ps, i => do declare fenv p { v := args.getD i .undef }; bindParams ps (i + 1)
-    bindParams fd.params 0
-    if fd.usesArgs && !fd.params.contains "arguments" then
+        | .undef | .null => pure (.obj r.globalObj)
+        | .obj _ => pure thisV
+        | v => do pure (.obj (← toObj n v))
+    let nt := if fd.arrow then capNT else newTarget
+    let fo := if fd.arrow then Value.undef else fnObj
+    let ctx : Ctx := { env := fenv, thisV := thisV, strict := fd.strict, newTarget := nt, home := home, fnObj := fo }
+    if fd.usesArgs then
       let a ← alloc { proto := .obj r.objectProto, kind := .args }
       for i in [0:args.size] do defineOwn a (toString i) (.data args[i]! true true true)
       setHidden a "length" (.num (Float.ofNat args.size))
+      setHidden a (symKey symIterator) (← ownValue r.arrayProto "values")
+      if fd.strict then
+        let t := Value.obj r.throwTypeError
+        defineOwn a "callee" (.acc t t false false)
+      else setHidden a "callee" fnObj
       declare fenv "arguments" { v := .obj a }
+    bindParams n ctx fd.params args 0
+    if let some rp := fd.rest then
+      bindPat n ctx rp (← newArray (args.extract fd.params.length args.size)) (.declare fenv true)
     for v in fd.vars do
       if !((← getBinding fenv v).isSome) then declare fenv v { v := .undef }
-    let ctx : Ctx := { env := fenv, thisV, strict := fd.strict }
+    if fd.kind == .ctor false then initFields n ctx fnObj thisV
+    if fd.gen then
+      -- a generator function returns its generator, suspended at the start (§27.5.3.1)
+      let p ← getV n fnObj "prototype"
+      let ctx' ← enterBlock n ctx fd.body
+      let g ← alloc { proto := if p.isObj then p else .obj r.generatorProto,
+                      kind := .gen [.block ctx' fd.body] 0 }
+      modify fun h => { h with depth := h.depth - 1 }
+      return .obj g
     let c ← evalBody n ctx fd.body
     modify fun h => { h with depth := h.depth - 1 }
     match c with
     | .ret v => pure v
     | _ => pure .undef
+termination_by structural n _ _ _ _ _ _ _ _ _ => n
+
+def bindParams : Nat → Ctx → List PatElem → Array Value → Nat → M Unit
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | _ + 1, _, [], _, _ => pure ()
+  | n + 1, ctx, (.mk p d) :: ps, args, i => do
+    let v := args.getD i .undef
+    let v ← match v, d with
+      | .undef, some e => evalNamed n ctx e p
+      | _, _ => pure v
+    match p with
+    | .id x => declare ctx.env x { v }
+    | _ => bindPat n ctx p v (.declare ctx.env true)
+    bindParams n ctx ps args (i + 1)
+termination_by structural n _ _ _ _ => n
+
+/-- Evaluate an initialiser; an anonymous function takes the binding's name
+(§8.4.5 NamedEvaluation). -/
+def evalNamed : Nat → Ctx → Expr → Pat → M Value
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, e, p => do
+    match e, p with
+    | .func f, .id x => if f.name.isNone then makeClosure ctx f x else evalExpr n ctx e
+    | .classE c, .id x => match c with
+      | .mk none h k ms => evalClass n ctx (.mk none h k ms) x
+      | _ => evalExpr n ctx e
+    | _, _ => evalExpr n ctx e
+termination_by structural n _ _ _ => n
+
+/-- InitializeInstanceElements (§7.3.34): the class's fields on a new object. -/
+def initFields : Nat → Ctx → Value → Value → M Unit
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, _, fnObj, thisV => do
+    match fnObj with
+    | .obj fid =>
+      match (← getObj fid).kind with
+      | .closure _ _ _ _ _ fields =>
+        for (k, init) in fields do
+          let v ← callV n init thisV #[]
+          match thisV with
+          | .obj tid =>
+            match (← getObj tid).getOwn k with
+            | some p => if !p.configurable then throwErr .type s!"Cannot redefine property: {k}"
+            | none => pure ()
+            defineOwn tid k (.data v true true true)
+          | _ => pure ()
+      | _ => pure ()
+    | _ => pure ()
+termination_by structural n _ _ _ => n
 
 /-- `[[Construct]]` (§10.2.2). -/
-def construct : Nat → Value → Array Value → M Value
-  | 0, _, _ => throw (.halt "fuel")
-  | n + 1, f, args => do
+def construct : Nat → Value → Array Value → Value → M Value
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, f, args, newTarget => do
     match f with
     | .obj id =>
       match (← getObj id).kind with
-      | .closure fd env lexThis =>
-        if fd.arrow then throwErr .type "not a constructor"
-        let p ← getV n f "prototype"
-        let r ← realm
-        let o ← alloc { proto := if p.isObj then p else .obj r.objectProto }
-        let res ← callClosure n fd env lexThis (.obj o) args
-        pure (if res.isObj then res else .obj o)
-      | .native nid => callNative n nid .undef args (some f)
-      | .bound t _ bargs => construct n t (bargs ++ args)
+      | .closure fd env capThis capNT home _ =>
+        match fd.kind with
+        | .arrow | .method => throwErr .type "not a constructor"
+        | _ =>
+          let p ← getV n newTarget "prototype"
+          let r ← realm
+          let o ← alloc { proto := if p.isObj then p else .obj r.objectProto }
+          let res ← callClosure n fd env capThis capNT home f (.obj o) newTarget args
+          match fd.kind, res with
+          | _, .obj _ => pure res
+          | .ctor true, .undef => pure (.obj o)
+          | .ctor true, _ => throwErr .type "Derived constructors may only return object or undefined"
+          | _, _ => pure (.obj o)
+      | .native nid => callNative n nid .undef args (some newTarget)
+      | .bound t _ bargs => construct n t (bargs ++ args) (if strictEq newTarget f then t else newTarget)
       | _ => throwErr .type "not a constructor"
     | _ => throwErr .type "not a constructor"
+termination_by structural n _ _ _ => n
 
 /-- The block body of a function or script, after its declarations are bound. -/
 def evalBody : Nat → Ctx → List Stmt → M Compl
@@ -577,6 +720,7 @@ def evalBody : Nat → Ctx → List Stmt → M Compl
   | n + 1, ctx, ss => do
     let ctx ← enterBlock n ctx ss
     evalStmts n ctx ss
+termination_by structural n _ _ => n
 
 /-- BlockDeclarationInstantiation (§14.2.3): a new environment when the block
 declares `let`, `const` or functions; functions are created here (hoisting). -/
@@ -584,13 +728,14 @@ def enterBlock : Nat → Ctx → List Stmt → M Ctx
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, ctx, ss => do
     let needs := ss.any fun s => match s with
-      | .decl .letK _ | .decl .constK _ | .funDecl .. => true
+      | .decl .letK _ | .decl .constK _ | .funDecl .. | .classDecl .. => true
       | _ => false
     if !needs then return ctx
     let env ← newEnv (some ctx.env)
     let ctx' := { ctx with env }
     declareLexical n ctx' ss
     return ctx'
+termination_by structural n _ _ => n
 
 def declareLexical : Nat → Ctx → List Stmt → M Unit
   | 0, _, _ => throw (.halt "fuel")
@@ -600,13 +745,14 @@ def declareLexical : Nat → Ctx → List Stmt → M Unit
     | .decl .letK ds | .decl .constK ds =>
       let mutable := match s with | .decl .letK _ => true | _ => false
       for d in ds do
-        match d with
-        | .mk x _ => declare ctx.env x { v := .undef, mutable, init := false }
+        for x in d.names do declare ctx.env x { v := .undef, mutable, init := false }
+    | .classDecl name _ => declare ctx.env name { v := .undef, mutable := true, init := false }
     | .funDecl name f =>
       let c ← makeClosure ctx f
       declare ctx.env name { v := c }
     | _ => pure ()
     declareLexical n ctx ss
+termination_by structural n _ _ => n
 
 def evalStmts : Nat → Ctx → List Stmt → M Compl
   | 0, _, _ => throw (.halt "fuel")
@@ -616,12 +762,14 @@ def evalStmts : Nat → Ctx → List Stmt → M Compl
     match c with
     | .normal => evalStmts n ctx ss
     | _ => pure c
+termination_by structural n _ _ => n
 
 def evalBlock : Nat → Ctx → List Stmt → M Compl
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, ctx, ss => do
     let ctx ← enterBlock n ctx ss
     evalStmts n ctx ss
+termination_by structural n _ _ => n
 
 /-- InitializeReferencedBinding / PutValue for a name (§9.1.1.1.5, §6.2.5.6). -/
 def assignName : Nat → Ctx → String → Value → M Unit
@@ -642,6 +790,7 @@ def assignName : Nat → Ctx → String → Value → M Unit
       let g := h.realm.globalObj
       if (h.findProp g x 1000).isSome || !ctx.strict then putV n (.obj g) x v ctx.strict
       else throwErr .reference s!"{x} is not defined"
+termination_by structural n _ _ _ => n
 
 def lookup : Nat → Ctx → String → M Value
   | 0, _, _ => throw (.halt "fuel")
@@ -657,6 +806,7 @@ def lookup : Nat → Ctx → String → M Value
       let g := h.realm.globalObj
       if (h.findProp g x 1000).isSome then getV n (.obj g) x
       else throwErr .reference s!"{x} is not defined"
+termination_by structural n _ _ => n
 
 /-- PutValue on an assignment target, after its parts are evaluated. -/
 def putTarget : Nat → Ctx → Expr → Option Value → Option String → Value → M Unit
@@ -666,6 +816,7 @@ def putTarget : Nat → Ctx → Expr → Option Value → Option String → Valu
     | .ident x, _, _ => assignName n ctx x v
     | _, some b, some k => putV n b k v ctx.strict
     | _, _, _ => throwErr .syntax "Invalid assignment target"
+termination_by structural n _ _ _ _ _ => n
 
 /-- Evaluate the base and key of a target (the Reference of §6.2.5). -/
 def evalRef : Nat → Ctx → Expr → M (Option Value × Option String)
@@ -680,6 +831,7 @@ def evalRef : Nat → Ctx → Expr → M (Option Value × Option String)
       if let .null := b then throwErr .type "Cannot read properties of null"
       pure (some b, some (← toKey n kv))
     | _ => pure (none, none)
+termination_by structural n _ _ => n
 
 def getRef : Nat → Ctx → Expr → Option Value → Option String → M Value
   | 0, _, _, _, _ => throw (.halt "fuel")
@@ -688,13 +840,22 @@ def getRef : Nat → Ctx → Expr → Option Value → Option String → M Value
     | .ident x, _, _ => lookup n ctx x
     | _, some b, some k => getV n b k
     | _, _, _ => evalExpr n ctx e
+termination_by structural n _ _ _ _ => n
 
 def evalArgs : Nat → Ctx → List Expr → Array Value → M (Array Value)
   | 0, _, _, _ => throw (.halt "fuel")
   | _ + 1, _, [], acc => pure acc
   | n + 1, ctx, a :: as, acc => do
-    let v ← evalExpr n ctx a
-    evalArgs n ctx as (acc.push v)
+    match a with
+    | .spread e =>
+      let it ← getIterator n (← evalExpr n ctx e)
+      let vs ← iterToArray n it #[]
+      evalArgs n ctx as (acc ++ vs)
+    | .ident "" => evalArgs n ctx as (acc.push .undef)
+    | _ =>
+      let v ← evalExpr n ctx a
+      evalArgs n ctx as (acc.push v)
+termination_by structural n _ _ _ => n
 
 def evalProps : Nat → Ctx → Nat → List PropDef → M Unit
   | 0, _, _, _ => throw (.halt "fuel")
@@ -704,25 +865,35 @@ def evalProps : Nat → Ctx → Nat → List PropDef → M Unit
       | .lit s => pure s
       | .computed e => do toKey n (← evalExpr n ctx e)
     match p with
+    | .spread e =>
+      let src ← evalExpr n ctx e
+      copyDataProps n id src []
     | .init k e =>
       let key ← keyOf k
       let v ← match e with
-        | .func f => if f.name.isNone then makeClosure ctx f key else evalExpr n ctx e
+        | .func f => if f.name.isNone then makeClosure ctx f (← nameOfKey key) (.obj id) else evalExpr n ctx e
+        | .classE (.mk none h c ms) => evalClass n ctx (.mk none h c ms) (← nameOfKey key)
         | _ => evalExpr n ctx e
-      defineOwn id key (.data v true true true)
+      if key == "__proto__" && (match k with | .lit _ => true | _ => false) &&
+          (match e with | .func _ => false | _ => true) then
+        match v with
+        | .obj _ | .null => modifyObj id fun o => { o with proto := v }
+        | _ => pure ()
+      else defineOwn id key (.data v true true true)
     | .getter k f =>
       let key ← keyOf k
-      let g ← makeClosure ctx f ("get " ++ key)
+      let g ← makeClosure ctx f ("get " ++ (← nameOfKey key)) (.obj id)
       let old := (← getObj id).props.get? key
       let s := match old with | some (.acc _ s _ _) => s | _ => .undef
       defineOwn id key (.acc g s true true)
     | .setter k f =>
       let key ← keyOf k
-      let s ← makeClosure ctx f ("set " ++ key)
+      let s ← makeClosure ctx f ("set " ++ (← nameOfKey key)) (.obj id)
       let old := (← getObj id).props.get? key
       let g := match old with | some (.acc g _ _ _) => g | _ => .undef
       defineOwn id key (.acc g s true true)
     evalProps n ctx id ps
+termination_by structural n _ _ _ => n
 
 /-- Evaluation of expressions (§13). -/
 def evalExpr : Nat → Ctx → Expr → M Value
@@ -736,6 +907,48 @@ def evalExpr : Nat → Ctx → Expr → M Value
     | .ident x => lookup n ctx x
     | .this => pure ctx.thisV
     | .array es => newArray (← evalArgs n ctx es #[])
+    | .spread _ => throwErr .syntax "unexpected spread"
+    | .template cooked subs =>
+      let parts ← evalArgs n ctx subs #[]
+      let mut out := cooked.headD ""
+      let mut i := 0
+      for v in parts do
+        let str ← match v with
+          | .sym _ => throwErr .type "Cannot convert a Symbol value to a string"
+          | _ => toStr n v
+        out := out ++ str ++ cooked.getD (i + 1) ""
+        i := i + 1
+      pure (.str out)
+    | .tagged tag cooked raw subs =>
+      let (f, thisV) ← match tag with
+        | .member o k => do let b ← evalExpr n ctx o; pure (← getV n b k, b)
+        | _ => do pure (← evalExpr n ctx tag, Value.undef)
+      let strs ← newArray (cooked.toArray.map .str)
+      let raws ← newArray (raw.toArray.map .str)
+      if let .obj sid := strs then
+        defineOwn sid "raw" (.data raws false false false)
+      let _ ← callNative n .objectFreeze .undef #[raws] none
+      let _ ← callNative n .objectFreeze .undef #[strs] none
+      let argv ← evalArgs n ctx subs #[strs]
+      if !(← isCallable f) then throwErr .type "tag is not a function"
+      callV n f thisV argv
+    | .assignPat p rhs =>
+      let v ← evalExpr n ctx rhs
+      bindPat n ctx p v .assign
+      pure v
+    | .classE c => evalClass n ctx c ""
+    | .newTarget => pure ctx.newTarget
+    | .yieldE .. => throwErr .syntax "yield in this position is not supported"
+    | .superMember k =>
+      let proto ← homeProto ctx
+      getSuper n proto k ctx.thisV
+    | .superIndex k =>
+      let key ← toKey n (← evalExpr n ctx k)
+      let proto ← homeProto ctx
+      getSuper n proto key ctx.thisV
+    | .superCall args =>
+      let argv ← evalArgs n ctx args #[]
+      superCall n ctx argv
     | .object ps =>
       let id ← newObject
       evalProps n ctx id ps
@@ -847,8 +1060,16 @@ def evalExpr : Nat → Ctx → Expr → M Value
           let b ← evalExpr n ctx o
           let key ← toKey n (← evalExpr n ctx k)
           pure (← getV n b key, b)
+        | .superMember k =>
+          let proto ← homeProto ctx
+          pure (← getSuper n proto k ctx.thisV, ctx.thisV)
         | _ => pure (← evalExpr n ctx callee, Value.undef)
       let argv ← evalArgs n ctx args #[]
+      -- a direct eval (§19.2.1.1, PerformEval with direct = true)
+      if let .ident "eval" := callee then
+        if let .obj fid := f then
+          if fid == (← realm).evalFn then
+            return ← directEval n ctx (argD argv 0)
       if !(← isCallable f) then
         let what := match callee with
           | .ident x => x | .member _ k => k | _ => "expression"
@@ -857,7 +1078,11 @@ def evalExpr : Nat → Ctx → Expr → M Value
     | .new callee args =>
       let f ← evalExpr n ctx callee
       let argv ← evalArgs n ctx args #[]
-      construct n f argv
+      if !(← isConstructor f) then
+        let what := match callee with
+          | .ident x => x | .member _ k => k | _ => "expression"
+        throwErr .type s!"{what} is not a constructor"
+      construct n f argv f
     | .member o k => getV n (← evalExpr n ctx o) k
     | .index o k =>
       let b ← evalExpr n ctx o
@@ -881,6 +1106,7 @@ def loopNext (labels : List String) : Compl → Option Compl
   | .brk none => some .normal
   | .brk (some l) => if labels.contains l then some .normal else some (.brk (some l))
   | .ret v => some (.ret v)
+termination_by structural n _ _ => n
 
 def whileLoop : Nat → Ctx → List String → Expr → Stmt → M Compl
   | 0, _, _, _, _ => throw (.halt "fuel")
@@ -891,6 +1117,7 @@ def whileLoop : Nat → Ctx → List String → Expr → Stmt → M Compl
     match loopNext labels r with
     | some out => pure out
     | none => whileLoop n ctx labels c body
+termination_by structural n _ _ _ _ => n
 
 def doLoop : Nat → Ctx → List String → Stmt → Expr → M Compl
   | 0, _, _, _, _ => throw (.halt "fuel")
@@ -902,6 +1129,7 @@ def doLoop : Nat → Ctx → List String → Stmt → Expr → M Compl
     | none =>
       if !(toBool (← evalExpr n ctx c)) then return .normal
       doLoop n ctx labels body c
+termination_by structural n _ _ _ _ => n
 
 /-- ForBodyEvaluation (§14.7.4.3) with CreatePerIterationEnvironment for `let`. -/
 def forLoop : Nat → Ctx → List String → List String → Option Expr → Option Expr → Stmt → Bool → M Compl
@@ -917,6 +1145,7 @@ def forLoop : Nat → Ctx → List String → List String → Option Expr → Op
     match loopNext labels r with
     | some out => pure out
     | none => forLoop n ctx labels perIter test update body false
+termination_by structural n _ _ _ _ _ _ _ => n
 
 def copyEnv : Nat → Ctx → List String → M Ctx
   | 0, _, _ => throw (.halt "fuel")
@@ -927,8 +1156,9 @@ def copyEnv : Nat → Ctx → List String → M Ctx
     for x in names do
       if let some b := old.vars.get? x then declare e x b
     pure { ctx with env := e }
+termination_by structural n _ _ => n
 
-def forInLoop : Nat → Ctx → List String → Option DeclKind → Expr → Value → List String → Stmt → M Compl
+def forInLoop : Nat → Ctx → List String → Option DeclKind → Pat → Value → List String → Stmt → M Compl
   | 0, _, _, _, _, _, _, _ => throw (.halt "fuel")
   | _ + 1, _, _, _, _, _, [], _ => pure .normal
   | n + 1, ctx, labels, kind, target, obj, k :: ks, body => do
@@ -938,19 +1168,53 @@ def forInLoop : Nat → Ctx → List String → Option DeclKind → Expr → Val
       | .obj id => pure ((← get).findProp id k 1000).isSome
       | _ => pure true
     if !present then return ← forInLoop n ctx labels kind target obj ks body
-    let ctx' ← match kind, target with
-      | some .letK, .ident x | some .constK, .ident x => do
-        let e ← newEnv (some ctx.env)
-        declare e x { v := .str k, mutable := kind == some .letK }
-        pure { ctx with env := e }
-      | _, _ => do
-        let (b, key) ← evalRef n ctx target
-        putTarget n ctx target b key (.str k)
-        pure ctx
+    let ctx' ← bindIter n ctx kind target (.str k)
     let r ← evalStmt n ctx' [] body
     match loopNext labels r with
     | some out => pure out
     | none => forInLoop n ctx labels kind target obj ks body
+termination_by structural n _ _ _ _ _ _ _ => n
+
+/-- ForIn/OfBodyEvaluation (§14.7.5.7): bind the next value, in a new environment
+for `let` and `const`. -/
+def bindIter : Nat → Ctx → Option DeclKind → Pat → Value → M Ctx
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, kind, target, v => do
+    match kind with
+    | some .letK | some .constK =>
+      let e ← newEnv (some ctx.env)
+      for x in target.names do declare e x { v := .undef, mutable := true, init := false }
+      let ctx' := { ctx with env := e }
+      bindPat n ctx' target v (.declare e (kind == some .letK))
+      pure ctx'
+    | some .var => bindPat n ctx target v .var; pure ctx
+    | none => bindPat n ctx target v .assign; pure ctx
+termination_by structural n _ _ _ _ => n
+
+/-- for-of (§14.7.5.7 with iterationKind iterate): IteratorClose on every exit
+that is not the end of the iterator. -/
+def forOfLoop : Nat → Ctx → List String → Option DeclKind → Pat → Value → Stmt → M Compl
+  | 0, _, _, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, labels, kind, target, it, body => do
+    tick
+    match ← iterStep n it with
+    | none => pure .normal
+    | some v =>
+      let r ← tryCatch (do
+          let ctx' ← bindIter n ctx kind target v
+          let c ← evalStmt n ctx' [] body
+          pure (Except.ok c))
+        (fun a => pure (Except.error a))
+      match r with
+      | .error (.throw e) =>
+        let _ ← tryCatch (iterClose n it) (fun _ => pure ())
+        throw (.throw e)
+      | .error a => throw a
+      | .ok c =>
+        match loopNext labels c with
+        | some out => iterClose n it; pure out
+        | none => forOfLoop n ctx labels kind target it body
+termination_by structural n _ _ _ _ _ _ => n
 
 /-- CaseBlockEvaluation (§14.12.4). -/
 def switchFind : Nat → Ctx → Value → List Case → Nat → M (Option Nat)
@@ -962,6 +1226,7 @@ def switchFind : Nat → Ctx → Value → List Case → Nat → M (Option Nat)
       let v ← evalExpr n ctx e
       if strictEq d v then pure (some i) else switchFind n ctx d cs (i + 1)
     | none => switchFind n ctx d cs (i + 1)
+termination_by structural n _ _ _ _ => n
 
 def runCases : Nat → Ctx → List Case → M Compl
   | 0, _, _ => throw (.halt "fuel")
@@ -971,25 +1236,24 @@ def runCases : Nat → Ctx → List Case → M Compl
     match r with
     | .normal => runCases n ctx cs
     | _ => pure r
+termination_by structural n _ _ => n
 
 def evalDecls : Nat → Ctx → DeclKind → List Decl → M Unit
   | 0, _, _, _ => throw (.halt "fuel")
   | _ + 1, _, _, [] => pure ()
-  | n + 1, ctx, kind, (.mk x init) :: ds => do
+  | n + 1, ctx, kind, (.mk p init) :: ds => do
     match kind with
     | .var =>
       if let some e := init then
-        let v ← match e with
-          | .func f => if f.name.isNone then makeClosure ctx f x else evalExpr n ctx e
-          | _ => evalExpr n ctx e
-        assignName n ctx x v
+        let v ← evalNamed n ctx e p
+        bindPat n ctx p v .var
     | _ =>
       let v ← match init with
-        | some (.func f) => if f.name.isNone then makeClosure ctx f x else evalExpr n ctx (.func f)
-        | some e => evalExpr n ctx e
+        | some e => evalNamed n ctx e p
         | none => pure .undef
-      declare ctx.env x { v, mutable := kind == .letK }
+      bindPat n ctx p v (.declare ctx.env (kind == .letK))
     evalDecls n ctx kind ds
+termination_by structural n _ _ _ => n
 
 /-- Evaluation of statements (§14). `labels` is the label set of a loop. -/
 def evalStmt : Nat → Ctx → List String → Stmt → M Compl
@@ -1017,10 +1281,9 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
         let env ← newEnv (some ctx.env)
         let ctx' := { ctx with env }
         for d in ds do
-          match d with
-          | .mk x _ => declare env x { v := .undef, mutable := k == .letK, init := false }
+          for x in d.names do declare env x { v := .undef, mutable := k == .letK, init := false }
         evalDecls n ctx' k ds
-        let names := ds.map fun d => match d with | .mk x _ => x
+        let names := ds.flatMap Decl.names
         forLoop n ctx' labels (if k == .letK then names else []) test update body true
       | some (.expr e) =>
         let _ ← evalExpr n ctx e
@@ -1030,6 +1293,14 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
       let o ← evalExpr n ctx obj
       let keys ← enumKeys o
       forInLoop n ctx labels kind target o keys.toList body
+    | .forOf kind target obj body =>
+      let o ← evalExpr n ctx obj
+      let it ← getIterator n o
+      forOfLoop n ctx labels kind target it body
+    | .classDecl name c =>
+      let v ← evalClass n ctx c name
+      declare ctx.env name { v }
+      pure .normal
     | .block ss => evalBlock n ctx ss
     | .throwS e => throw (.throw (← evalExpr n ctx e))
     | .tryS body param handler fin =>
@@ -1039,7 +1310,9 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
         | .error (.throw v), some hs =>
           tryCatch (do
             let env ← newEnv (some ctx.env)
-            if let some p := param then declare env p { v }
+            if let some p := param then
+              for x in p.names do declare env x { v := .undef, init := false }
+              bindPat n { ctx with env } p v (.declare env true)
             let c ← evalBlock n { ctx with env } hs
             pure (Except.ok c))
             (fun a => pure (Except.error a))
@@ -1081,6 +1354,598 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
         | .brk (some l) => if labels.contains l then pure .normal else pure r
         | _ => pure r
     | .empty => pure .normal
+termination_by structural n _ _ _ => n
+
+/-- BindingInitialization and DestructuringAssignmentEvaluation (§8.6.2,
+§13.15.5). -/
+def bindPat : Nat → Ctx → Pat → Value → BindMode → M Unit
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, p, v, mode => do
+    match p with
+    | .id x =>
+      match mode with
+      | .declare env mutable => declare env x { v, mutable }
+      | _ => assignName n ctx x v
+    | .target e =>
+      let (b, k) ← evalRef n ctx e
+      putTarget n ctx e b k v
+    | .obj props rest =>
+      match v with
+      | .undef | .null => throwErr .type "Cannot destructure 'undefined' or 'null'"
+      | _ => pure ()
+      let used ← bindProps n ctx props v mode []
+      if let some r := rest then
+        let o ← newObject
+        copyDataProps n o v used
+        bindPat n ctx r (.obj o) mode
+    | .arr elems rest =>
+      let it ← getIterator n v
+      let r ← tryCatch (do
+          let done ← bindElems n ctx elems it mode false
+          let done ← match rest with
+            | some rp =>
+              if done then
+                bindPat n ctx rp (← newArray #[]) mode
+                pure true
+              else
+                let vs ← iterToArray n it #[]
+                bindPat n ctx rp (← newArray vs) mode
+                pure true
+            | none => pure done
+          pure (Except.ok done))
+        (fun a => pure (Except.error a))
+      match r with
+      | .ok done => if !done then iterClose n it
+      | .error (.throw e) =>
+        let _ ← tryCatch (iterClose n it) (fun _ => pure ())
+        throw (.throw e)
+      | .error a => throw a
+termination_by structural n _ _ _ _ => n
+
+def bindProps : Nat → Ctx → List PatProp → Value → BindMode → List String → M (List String)
+  | 0, _, _, _, _, _ => throw (.halt "fuel")
+  | _ + 1, _, [], _, _, used => pure used
+  | n + 1, ctx, (.mk k p d) :: ps, v, mode, used => do
+    let key ← match k with
+      | .lit s => pure s
+      | .computed e => do toKey n (← evalExpr n ctx e)
+    let x ← getV n v key
+    let x ← match x, d with
+      | .undef, some e => evalNamed n ctx e p
+      | _, _ => pure x
+    bindPat n ctx p x mode
+    bindProps n ctx ps v mode (key :: used)
+termination_by structural n _ _ _ _ _ => n
+
+/-- The elements of an array pattern; answers whether the iterator is done. -/
+def bindElems : Nat → Ctx → List (Option PatElem) → Value → BindMode → Bool → M Bool
+  | 0, _, _, _, _, _ => throw (.halt "fuel")
+  | _ + 1, _, [], _, _, done => pure done
+  | n + 1, ctx, e :: es, it, mode, done => do
+    let (x, done) ← if done then pure (Value.undef, true) else do
+      match ← iterStep n it with
+      | some x => pure (x, false)
+      | none => pure (Value.undef, true)
+    match e with
+    | none => bindElems n ctx es it mode done
+    | some (.mk p d) =>
+      let x ← match x, d with
+        | .undef, some e => evalNamed n ctx e p
+        | _, _ => pure x
+      bindPat n ctx p x mode
+      bindElems n ctx es it mode done
+termination_by structural n _ _ _ _ _ => n
+
+/-- CopyDataProperties (§7.3.25): own enumerable properties, except `excluded`. -/
+def copyDataProps : Nat → Nat → Value → List String → M Unit
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, target, src, excluded => do
+    match src with
+    | .undef | .null => pure ()
+    | _ =>
+      let sid ← toObj n src
+      let o ← getObj sid
+      for k in o.ownKeys do
+        if !excluded.contains k then
+          match (← getObj sid).getOwn k with
+          | some p =>
+            if p.enumerable then
+              let v ← getV n (.obj sid) k
+              defineOwn target k (.data v true true true)
+          | none => pure ()
+termination_by structural n _ _ _ => n
+
+/-- GetIterator (§7.4.2) with the sync kind. -/
+def getIterator : Nat → Value → M Value
+  | 0, _ => throw (.halt "fuel")
+  | n + 1, v => do
+    let m ← match v with
+      | .undef | .null => throwErr .type "object is not iterable"
+      | _ => getV n v (symKey symIterator)
+    if !(← isCallable m) then throwErr .type "object is not iterable"
+    let it ← callV n m v #[]
+    if !it.isObj then throwErr .type "Result of the Symbol.iterator method is not an object"
+    pure it
+termination_by structural n _ => n
+
+/-- IteratorStepValue (§7.4.10): `none` when done. -/
+def iterStep : Nat → Value → M (Option Value)
+  | 0, _ => throw (.halt "fuel")
+  | n + 1, it => do
+    let next ← getV n it "next"
+    let r ← callV n next it #[]
+    if !r.isObj then throwErr .type "Iterator result is not an object"
+    if toBool (← getV n r "done") then pure none
+    else pure (some (← getV n r "value"))
+termination_by structural n _ => n
+
+/-- IteratorClose (§7.4.11) after a normal or break completion. -/
+def iterClose : Nat → Value → M Unit
+  | 0, _ => throw (.halt "fuel")
+  | n + 1, it => do
+    let ret ← getV n it "return"
+    match ret with
+    | .undef | .null => pure ()
+    | f =>
+      let r ← callV n f it #[]
+      if !r.isObj then throwErr .type "Iterator result is not an object"
+termination_by structural n _ => n
+
+def iterToArray : Nat → Value → Array Value → M (Array Value)
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, it, acc => do
+    tick
+    match ← iterStep n it with
+    | some v => iterToArray n it (acc.push v)
+    | none => pure acc
+termination_by structural n _ _ => n
+
+/-- `super.k`: [[Get]] on the home object's prototype with `this` as receiver. -/
+def getSuper : Nat → Value → String → Value → M Value
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, proto, k, thisV => do
+    match proto with
+    | .obj pid => getProto n pid k thisV
+    | _ => throwErr .type s!"Cannot read properties of null (reading '{k}')"
+termination_by structural n _ _ _ => n
+
+/-- `super(...)` (§13.3.7.1): run the parent constructor on this object. -/
+def superCall : Nat → Ctx → Array Value → M Value
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, args => do
+    let parent ← match ctx.fnObj with
+      | .obj fid => pure (← getObj fid).proto
+      | _ => throwErr .syntax "'super' keyword unexpected here"
+    match parent with
+    | .obj pid =>
+      match (← getObj pid).kind with
+      | .closure fd env capThis capNT home _ =>
+        if fd.arrow || fd.kind == .method then throwErr .type "Super constructor is not a constructor"
+        let r ← callClosure n fd env capThis capNT home parent ctx.thisV ctx.newTarget args
+        if let .obj _ := r then
+          if !(strictEq r ctx.thisV) then
+            -- a parent that returns another object: copy it into this one
+            if let .obj tid := ctx.thisV then
+              if let .obj rid := r then
+                let ro ← getObj rid
+                modifyObj tid fun o => { o with kind := ro.kind, props := ro.props, keys := ro.keys }
+      | .native _ | .bound .. =>
+        let r ← construct n parent args ctx.newTarget
+        if let .obj tid := ctx.thisV then
+          if let .obj rid := r then
+            let ro ← getObj rid
+            let merge (o : Obj) : Obj :=
+              let props := ro.props.fold (fun m k p => m.insert k p) o.props
+              let keys := o.keys ++ ro.keys.filter (!o.keys.contains ·)
+              { o with kind := ro.kind, props := props, keys := keys }
+            modifyObj tid merge
+      | _ => throwErr .type "Super constructor is not a constructor"
+    | _ => throwErr .type "Super constructor null of anonymous class is not a constructor"
+    initFields n ctx ctx.fnObj ctx.thisV
+    pure ctx.thisV
+termination_by structural n _ _ => n
+
+/-- ClassDefinitionEvaluation (§15.7.14). `nameHint` names an anonymous class. -/
+def evalClass : Nat → Ctx → ClassDef → String → M Value
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, .mk name heritage ctor members, nameHint => do
+    let r ← realm
+    let cenv ← newEnv (some ctx.env)
+    if let some x := name then declare cenv x { v := .undef, mutable := false, init := false }
+    let cctx : Ctx := { ctx with env := cenv, strict := true }
+    let (protoParent, ctorParent) ← match heritage with
+      | none => pure (Value.obj r.objectProto, Value.obj r.functionProto)
+      | some h =>
+        let sc ← evalExpr n cctx h
+        match sc with
+        | .null => pure (Value.null, Value.obj r.functionProto)
+        | _ =>
+          if !(← isConstructor sc) then throwErr .type "Class extends value is not a constructor or null"
+          let pp ← getV n sc "prototype"
+          match pp with
+          | .obj _ | .null => pure (pp, sc)
+          | _ => throwErr .type "Class extends value does not have valid prototype property"
+    let proto ← alloc { proto := protoParent }
+    let derived := heritage.isSome
+    let fd := match ctor with
+      | some f => f
+      | none =>
+        if derived then
+          FunDef.mk none [] (some (.id "args")) [.expr (.superCall [.spread (.ident "args")])] [] false true (.ctor true) false
+        else FunDef.mk none [] none [] [] false true (.ctor false) false
+    let cname := name.getD nameHint
+    let fid ← alloc { proto := ctorParent, kind := .closure fd cenv .undef .undef (.obj proto) #[] }
+    defineOwn fid "length" (.data (.num (Float.ofNat fd.expectedArgs)) false false true)
+    defineOwn fid "name" (.data (.str cname) false false true)
+    defineOwn fid "prototype" (.data (.obj proto) false false false)
+    setHidden proto "constructor" (.obj fid)
+    let fields ← defineMembers n cctx fid proto members #[]
+    modifyObj fid fun o => match o.kind with
+      | .closure f e t nt h _ => { o with kind := .closure f e t nt h fields }
+      | k => { o with kind := k }
+    if let some x := name then declare cenv x { v := .obj fid, mutable := false }
+    pure (.obj fid)
+termination_by structural n _ _ _ => n
+
+/-- ClassElementEvaluation for each member; answers the instance fields. -/
+def defineMembers : Nat → Ctx → Nat → Nat → List Member → Array (String × Value) → M (Array (String × Value))
+  | 0, _, _, _, _, _ => throw (.halt "fuel")
+  | _ + 1, _, _, _, [], acc => pure acc
+  | n + 1, ctx, fid, proto, (.mk static kind k f) :: ms, acc => do
+    let target := if static then fid else proto
+    let key ← match k with
+      | .lit s => pure s
+      | .computed e => do toKey n (← evalExpr n { ctx with thisV := .obj fid } e)
+    if static && key == "prototype" && kind != .field then
+      throwErr .type "Classes may not have a static property named 'prototype'"
+    let nm ← nameOfKey key
+    match kind with
+    | .method =>
+      let m ← makeClosure ctx f nm (.obj target)
+      setHidden target key m
+      defineMembers n ctx fid proto ms acc
+    | .getter =>
+      let g ← makeClosure ctx f ("get " ++ nm) (.obj target)
+      let s := match (← getObj target).props.get? key with | some (.acc _ s _ _) => s | _ => .undef
+      defineOwn target key (.acc g s false true)
+      defineMembers n ctx fid proto ms acc
+    | .setter =>
+      let s ← makeClosure ctx f ("set " ++ nm) (.obj target)
+      let g := match (← getObj target).props.get? key with | some (.acc g _ _ _) => g | _ => .undef
+      defineOwn target key (.acc g s false true)
+      defineMembers n ctx fid proto ms acc
+    | .field =>
+      let init ← makeClosure ctx f nm (.obj target)
+      if static then
+        let v ← callV n init (.obj fid) #[]
+        defineOwn fid key (.data v true true true)
+        defineMembers n ctx fid proto ms acc
+      else defineMembers n ctx fid proto ms (acc.push (key, init))
+termination_by structural n _ _ _ _ _ => n
+
+/-- PerformEval (§19.2.1.1) for a direct call: the code sees the caller's scope. -/
+def directEval : Nat → Ctx → Value → M Value
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, src => do
+    match src with
+    | .str code =>
+      match parseScript code ctx.strict with
+      | .error e => throwErr .syntax ((e.drop 13).toString)
+      | .ok sc =>
+        let env ← newEnv (some ctx.env)
+        let ectx := { ctx with env, strict := sc.strict }
+        -- var declarations of sloppy eval code go to the caller's variable scope
+        for x in sc.vars do
+          if sc.strict then declare env x { v := .undef }
+          else if ((← get).findEnv x 100000 (some ctx.env)).isNone then
+            if ctx.env == 0 then
+              let g := (← realm).globalObj
+              if ((← getObj g).getOwn x).isNone then defineOwn g x (.data .undef true true true)
+            else declare ctx.env x { v := .undef }
+        let ectx ← enterBlock n ectx sc.body
+        evalCompletion n ectx sc.body .undef
+    | v => pure v
+termination_by structural n _ _ => n
+
+/-- Statements with their completion value (§8.2, UpdateEmpty), as eval needs. -/
+def evalCompletion : Nat → Ctx → List Stmt → Value → M Value
+  | 0, _, _, _ => throw (.halt "fuel")
+  | _ + 1, _, [], v => pure v
+  | n + 1, ctx, s :: rest, v => do
+    match s with
+    | .expr e => let x ← evalExpr n ctx e; evalCompletion n ctx rest x
+    | _ =>
+      match ← evalStmt n ctx [] s with
+      | .normal => evalCompletion n ctx rest v
+      | _ => pure v
+termination_by structural n _ _ _ => n
+
+/-- Run a generator's frames until it yields, returns or throws (§27.5.3.3
+GeneratorResume). `input` is what the caller sent: a value for `next`, a
+completion for `throw` and `return`. Answers the yielded value and the frames to
+keep, or the return value. -/
+def genRun : Nat → List GFrame → GInput → M GOut
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, frames, input => do
+    tick
+    match input with
+    | .throwV v => genUnwind n frames (.throw v)
+    | .retV v => genUnwind n frames (.ret v)
+    | .send v =>
+    match frames with
+    | [] => pure (.done .undef)
+    | f :: rest =>
+      match f with
+      | .resume ctx target =>
+        let r ← tryCatch (do
+            if let some (p, m) := target then bindPat n ctx p v m
+            pure none)
+          (fun a => pure (some a))
+        match r with
+        | some (.throw e) => genUnwind n rest (.throw e)
+        | some a => throw a
+        | none => genRun n rest (.send .undef)
+      | .delegate ctx it target =>
+        let r ← tryCatch (do
+            let next ← getV n it "next"
+            let res ← callV n next it #[v]
+            if !res.isObj then throwErr .type "Iterator result is not an object"
+            pure (Except.ok res))
+          (fun a => pure (Except.error a))
+        match r with
+        | .error (.throw e) => genUnwind n rest (.throw e)
+        | .error a => throw a
+        | .ok res =>
+          if toBool (← getV n res "done") then
+            let x ← getV n res "value"
+            genRun n (.resume ctx target :: rest) (.send x)
+          else pure (.yielded (← getV n res "value") (f :: rest))
+      | .pending c =>
+        -- the finally block ended normally: go on with the completion it held
+        genUnwind n rest c
+      | .block _ [] => genRun n rest (.send .undef)
+      | .block ctx (s :: ss) =>
+        if !s.hasYield then
+          let r ← tryCatch (do let c ← evalStmt n ctx [] s; pure (Except.ok c))
+            (fun a => pure (Except.error a))
+          match r with
+          | .error (.throw e) => genUnwind n (.block ctx ss :: rest) (.throw e)
+          | .error a => throw a
+          | .ok .normal => genRun n (.block ctx ss :: rest) (.send .undef)
+          | .ok (.ret x) => genUnwind n (.block ctx ss :: rest) (.ret x)
+          | .ok (.brk l) => genUnwind n (.block ctx ss :: rest) (.brk l)
+          | .ok (.cont l) => genUnwind n (.block ctx ss :: rest) (.cont l)
+        else genEnter n ctx [] s (.block ctx ss :: rest)
+      | .loopW ctx labels c body =>
+        let t ← genEval n ctx c
+        match t with
+        | .error e => genUnwind n rest (.throw e)
+        | .ok t =>
+          if toBool t then genRun n (.block ctx [body] :: f :: rest) (.send .undef)
+          else genRun n rest (.send .undef)
+      | .loopDo ctx labels body c =>
+        let t ← genEval n ctx c
+        match t with
+        | .error e => genUnwind n rest (.throw e)
+        | .ok t =>
+          if toBool t then genRun n (.block ctx [body] :: f :: rest) (.send .undef)
+          else genRun n rest (.send .undef)
+      | .loopFor ctx labels perIter test update body first =>
+        let ctx ← if perIter.isEmpty then pure ctx else copyEnv n ctx perIter
+        let r ← tryCatch (do
+            if !first then
+              if let some u := update then let _ ← evalExpr n ctx u
+            match test with
+            | some t => pure (Except.ok (toBool (← evalExpr n ctx t)))
+            | none => pure (Except.ok true))
+          (fun a => pure (Except.error a))
+        match r with
+        | .error (.throw e) => genUnwind n rest (.throw e)
+        | .error a => throw a
+        | .ok false => genRun n rest (.send .undef)
+        | .ok true =>
+          genRun n (.block ctx [body] :: .loopFor ctx labels perIter test update body false :: rest) (.send .undef)
+      | .loopOf ctx labels kind target it body =>
+        let r ← tryCatch (do pure (Except.ok (← iterStep n it))) (fun a => pure (Except.error a))
+        match r with
+        | .error (.throw e) => genUnwind n rest (.throw e)
+        | .error a => throw a
+        | .ok none => genRun n rest (.send .undef)
+        | .ok (some x) =>
+          let r ← tryCatch (do pure (Except.ok (← bindIter n ctx kind target x)))
+            (fun a => pure (Except.error a))
+          match r with
+          | .error (.throw e) =>
+            let _ ← tryCatch (iterClose n it) (fun _ => pure ())
+            genUnwind n rest (.throw e)
+          | .error a => throw a
+          | .ok ctx' => genRun n (.block ctx' [body] :: f :: rest) (.send .undef)
+      | .tryF ctx _ _ (some fs) _ =>
+        let ctx' ← enterBlock n ctx fs
+        genRun n (.block ctx' fs :: rest) (.send .undef)
+      | .tryF .. => genRun n rest (.send .undef)
+termination_by structural n _ _ => n
+
+/-- Evaluate a `yield`-free expression, catching a thrown value. -/
+def genEval : Nat → Ctx → Expr → M (Except Value Value)
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, e => do
+    let r ← tryCatch (do pure (Except.ok (← evalExpr n ctx e))) (fun a => pure (Except.error a))
+    match r with
+    | .ok v => pure (.ok v)
+    | .error (.throw v) => pure (.error v)
+    | .error a => throw a
+termination_by structural n _ _ => n
+
+/-- Start a statement that holds a `yield`, on top of `rest`. -/
+def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, labels, s, rest => do
+    let yieldAt (arg : Option Expr) (delegate : Bool) (target : Option (Pat × BindMode)) : M GOut := do
+      let v ← match arg with
+        | some e => genEval n ctx e
+        | none => pure (.ok .undef)
+      match v with
+      | .error e => genUnwind n rest (.throw e)
+      | .ok v =>
+        if delegate then
+          let r ← tryCatch (do pure (Except.ok (← getIterator n v))) (fun a => pure (Except.error a))
+          match r with
+          | .error (.throw e) => genUnwind n rest (.throw e)
+          | .error a => throw a
+          | .ok it => genRun n (.delegate ctx it target :: rest) (.send .undef)
+        else pure (.yielded v (.resume ctx target :: rest))
+    match s with
+    | .expr (.yieldE d arg) => yieldAt arg d none
+    | .expr (.assign none t (.yieldE d arg)) =>
+      match t with
+      | .ident x => yieldAt arg d (some (.id x, .assign))
+      | .member .. | .index .. => yieldAt arg d (some (.target t, .assign))
+      | _ => genUnsupported n rest
+    | .decl k [Decl.mk p (some (.yieldE d arg))] =>
+      let m : BindMode := match k with
+        | .var => .var
+        | .letK => .declare ctx.env true
+        | .constK => .declare ctx.env false
+      yieldAt arg d (some (p, m))
+    | .ret (some (.yieldE d arg)) =>
+      -- `return yield x`: the value sent back is the return value
+      let _ := d
+      let v ← match arg with
+        | some e => genEval n ctx e
+        | none => pure (.ok .undef)
+      match v with
+      | .error e => genUnwind n rest (.throw e)
+      | .ok v => pure (.yielded v (.resume ctx (some (.id "%ret", .declare ctx.env true)) ::
+          .block ctx [.ret (some (.ident "%ret"))] :: rest))
+    | .block ss =>
+      let ctx' ← enterBlock n ctx ss
+      genRun n (.block ctx' ss :: rest) (.send .undef)
+    | .ifS c t e =>
+      if c.hasYield then genUnsupported n rest else
+      match ← genEval n ctx c with
+      | .error x => genUnwind n rest (.throw x)
+      | .ok v =>
+        if toBool v then genRun n (.block ctx [t] :: rest) (.send .undef)
+        else match e with
+          | some e => genRun n (.block ctx [e] :: rest) (.send .undef)
+          | none => genRun n rest (.send .undef)
+    | .whileS c body =>
+      if c.hasYield then genUnsupported n rest
+      else genRun n (.loopW ctx labels c body :: rest) (.send .undef)
+    | .doWhile body c =>
+      if c.hasYield then genUnsupported n rest
+      else genRun n (.block ctx [body] :: .loopDo ctx labels body c :: rest) (.send .undef)
+    | .forS init test update body =>
+      let ok := !(test.any Expr.hasYield) && !(update.any Expr.hasYield) &&
+        (match init with | some (.expr e) => !e.hasYield | some (.decl _ ds) => !(ds.any Decl.hasYield) | none => true)
+      if !ok then genUnsupported n rest else
+      let r ← tryCatch (do
+          match init with
+          | some (.decl .var ds) => evalDecls n ctx .var ds; pure (Except.ok (ctx, ([] : List String)))
+          | some (.decl k ds) =>
+            let env ← newEnv (some ctx.env)
+            let ctx' := { ctx with env }
+            for d in ds do
+              for x in d.names do declare env x { v := .undef, mutable := k == .letK, init := false }
+            evalDecls n ctx' k ds
+            pure (Except.ok (ctx', if k == .letK then ds.flatMap Decl.names else []))
+          | some (.expr e) => let _ ← evalExpr n ctx e; pure (Except.ok (ctx, []))
+          | none => pure (Except.ok (ctx, [])))
+        (fun a => pure (Except.error a))
+      match r with
+      | .error (.throw x) => genUnwind n rest (.throw x)
+      | .error a => throw a
+      | .ok (ctx', perIter) => genRun n (.loopFor ctx' labels perIter test update body true :: rest) (.send .undef)
+    | .forOf kind target obj body =>
+      if obj.hasYield then genUnsupported n rest else
+      let r ← tryCatch (do pure (Except.ok (← getIterator n (← evalExpr n ctx obj))))
+        (fun a => pure (Except.error a))
+      match r with
+      | .error (.throw x) => genUnwind n rest (.throw x)
+      | .error a => throw a
+      | .ok it => genRun n (.loopOf ctx labels kind target it body :: rest) (.send .undef)
+    | .tryS body param handler fin =>
+      let ctx' ← enterBlock n ctx body
+      genRun n (.block ctx' body :: .tryF ctx param handler fin 0 :: rest) (.send .undef)
+    | .labeled l body => genEnter n ctx (l :: labels) body rest
+    | _ => genUnsupported n rest
+termination_by structural n _ _ _ _ => n
+
+def genUnsupported : Nat → List GFrame → M GOut
+  | 0, _ => throw (.halt "fuel")
+  | n + 1, rest => do
+    genUnwind n rest (.throw (← mkError .syntax "yield in this position is not supported"))
+termination_by structural n _ => n
+
+/-- Unwind the frames with an abrupt completion: loops take their `break` and
+`continue`, `try` takes a throw, `finally` runs, `for`-`of` closes its iterator. -/
+def genUnwind : Nat → List GFrame → GCompl → M GOut
+  | 0, _, _ => throw (.halt "fuel")
+  | _ + 1, [], c =>
+    match c with
+    | .ret v => pure (.done v)
+    | .throw v => throw (.throw v)
+    | _ => pure (.done .undef)
+  | n + 1, f :: rest, c => do
+    match f, c with
+    | .loopW _ labels _ _, .brk l | .loopDo _ labels _ _, .brk l | .loopFor _ labels _ _ _ _ _, .brk l =>
+      if l.isNone || labels.contains (l.getD "") then genRun n rest (.send .undef)
+      else genUnwind n rest c
+    | .loopW _ labels _ _, .cont l | .loopDo _ labels _ _, .cont l | .loopFor _ labels _ _ _ _ _, .cont l =>
+      if l.isNone || labels.contains (l.getD "") then genRun n (f :: rest) (.send .undef)
+      else genUnwind n rest c
+    | .loopOf _ labels _ _ it _, .brk l =>
+      if l.isNone || labels.contains (l.getD "") then
+        iterClose n it; genRun n rest (.send .undef)
+      else iterClose n it; genUnwind n rest c
+    | .loopOf _ labels _ _ it _, .cont l =>
+      if l.isNone || labels.contains (l.getD "") then genRun n (f :: rest) (.send .undef)
+      else iterClose n it; genUnwind n rest c
+    | .loopOf _ _ _ _ it _, .ret _ => iterClose n it; genUnwind n rest c
+    | .loopOf _ _ _ _ it _, .throw _ =>
+      let _ ← tryCatch (iterClose n it) (fun _ => pure ())
+      genUnwind n rest c
+    | .delegate _ it _, .throw v =>
+      let th ← getV n it "throw"
+      match th with
+      | .undef | .null =>
+        let _ ← tryCatch (iterClose n it) (fun _ => pure ())
+        genUnwind n rest (.throw (← mkError .type "The iterator does not provide a 'throw' method"))
+      | _ =>
+        let res ← callV n th it #[v]
+        if !res.isObj then throwErr .type "Iterator result is not an object"
+        if toBool (← getV n res "done") then genRun n rest (.send (← getV n res "value"))
+        else pure (.yielded (← getV n res "value") (f :: rest))
+    | .delegate _ it _, .ret v =>
+      let rt ← getV n it "return"
+      match rt with
+      | .undef | .null => genUnwind n rest c
+      | _ =>
+        let res ← callV n rt it #[v]
+        if !res.isObj then throwErr .type "Iterator result is not an object"
+        if toBool (← getV n res "done") then genUnwind n rest (.ret (← getV n res "value"))
+        else pure (.yielded (← getV n res "value") (f :: rest))
+    | .tryF ctx param (some hs) fin 0, .throw v =>
+      let env ← newEnv (some ctx.env)
+      let ctx' := { ctx with env }
+      let r ← tryCatch (do
+          if let some p := param then
+            for x in p.names do declare env x { v := .undef, init := false }
+            bindPat n ctx' p v (.declare env true)
+          pure none)
+        (fun a => pure (some a))
+      match r with
+      | some (.throw e) => genUnwind n (.tryF ctx param none fin 1 :: rest) (.throw e)
+      | some a => throw a
+      | none =>
+        let ctx'' ← enterBlock n ctx' hs
+        genRun n (.block ctx'' hs :: .tryF ctx param (some hs) fin 1 :: rest) (.send .undef)
+    | .tryF ctx _ _ (some fs) _, _ =>
+      let ctx' ← enterBlock n ctx fs
+      genRun n (.block ctx' fs :: .pending c :: rest) (.send .undef)
+    | _, _ => genUnwind n rest c
+termination_by structural n _ _ => n
 
 /-- Built-in functions. `newTarget` is set for `new`. -/
 def callNative : Nat → Native → Value → Array Value → Option Value → M Value
@@ -1089,6 +1954,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
     let a0 := argD args 0
     let a1 := argD args 1
     let r ← realm
+    let id_ := id
     match id with
     | .print =>
       let parts ← args.toList.mapM (toStr n)
@@ -1108,12 +1974,12 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
     | .objectKeys =>
       let id ← toObj n a0
       let o ← getObj id
-      let ks := o.ownKeys.filter fun k => match o.getOwn k with
+      let ks := o.ownStrKeys.filter fun k => match o.getOwn k with
         | some p => p.enumerable | none => false
       newArray (ks.map .str)
     | .objectGetOwnPropertyNames =>
       let id ← toObj n a0
-      newArray ((← getObj id).ownKeys.map .str)
+      newArray ((← getObj id).ownStrKeys.map .str)
     | .objectGetPrototypeOf =>
       let id ← toObj n a0
       pure (← getObj id).proto
@@ -1218,7 +2084,8 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | .null => pure (.str "[object Null]")
       | _ =>
         let id ← toObj n thisV
-        let tag := match (← getObj id).kind with
+        let custom ← getV n (.obj id) (symKey symToStringTag)
+        let builtin := match (← getObj id).kind with
           | .array _ => "Array"
           | .closure .. | .native _ | .bound .. => "Function"
           | .error => "Error"
@@ -1227,10 +2094,21 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
           | .prim (.num _) => "Number"
           | .prim (.str _) => "String"
           | _ => "Object"
+        let tag := match custom with | .str t => t | _ => builtin
         pure (.str s!"[object {tag}]")
     | .objectProtoToLocaleString => callV n (← getV n thisV "toString") thisV #[]
     | .objectProtoValueOf => pure (.obj (← toObj n thisV))
-    | .functionCtor => throwErr .eval "The Function constructor is not supported"
+    | .functionCtor =>
+      let strs ← args.toList.mapM (toStr n)
+      let (ps, body) := match strs.reverse with
+        | [] => ([], "")
+        | b :: rest => (rest.reverse, b)
+      let src := "(function anonymous(" ++ ",".intercalate ps ++ "\n) {\n" ++ body ++ "\n})"
+      match parseScript src false with
+      | .error e => throwErr .syntax ((e.drop 13).toString)
+      | .ok { body := [.expr e], .. } =>
+        evalExpr n { env := 0, thisV := .obj r.globalObj, strict := false } e
+      | .ok _ => throwErr .syntax "invalid function body"
     | .functionProto => pure .undef
     | .functionProtoCall =>
       if !(← isCallable thisV) then throwErr .type "Function.prototype.call called on non-function"
@@ -1400,7 +2278,9 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | _ => pure thisV
       | _ => pure thisV
     | .stringCtor =>
-      let s ← if args.isEmpty then pure "" else toStr n a0
+      let s ← match a0, newTarget with
+        | .sym id, none => pure ("Symbol(" ++ (← get).syms.getD id "" ++ ")")
+        | _, _ => if args.isEmpty then pure "" else toStr n a0
       match newTarget with
       | some _ => pure (.obj (← alloc { proto := .obj r.stringProto, kind := .prim (.str s) }))
       | none => pure (.str s)
@@ -1472,9 +2352,150 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       pure (.str (if nm.isEmpty then msg else if msg.isEmpty then nm else nm ++ ": " ++ msg))
     | .throwTypeError => throwErr .type "'caller', 'callee', and 'arguments' properties may not be accessed"
     | .jsonStringify => jsonStr n a0 0
+    | .eval =>
+      match a0 with
+      | .str _ => directEval n { env := 0, thisV := .obj r.globalObj, strict := false } a0
+      | v => pure v
+    | .symbolCtor =>
+      if newTarget.isSome then throwErr .type "Symbol is not a constructor"
+      let d ← match a0 with | .undef => pure "" | v => toStr n v
+      let id ← modifyGet fun h => (h.syms.size, { h with syms := h.syms.push d })
+      pure (.sym id)
+    | .symbolToString | .symbolDescription | .symbolValueOf =>
+      let v ← thisPrim thisV
+      match v with
+      | .sym id =>
+        let d := (← get).syms.getD id ""
+        match id_ with
+        | .symbolToString => pure (.str ("Symbol(" ++ d ++ ")"))
+        | .symbolDescription => pure (.str d)
+        | _ => pure v
+      | _ => throwErr .type "Symbol.prototype method requires that 'this' be a Symbol"
+    | .objectGetOwnPropertySymbols =>
+      let id ← toObj n a0
+      let ks := (← getObj id).ownKeys.filter isSymKey
+      newArray (ks.filterMap fun k => (symOfKey? k).map .sym)
+    | .objectAssign =>
+      let tid ← toObj n a0
+      for src in args.extract 1 args.size do
+        match src with
+        | .undef | .null => pure ()
+        | _ =>
+          let sid ← toObj n src
+          for k in (← getObj sid).ownKeys do
+            match (← getObj sid).getOwn k with
+            | some p => if p.enumerable then putV n (.obj tid) k (← getV n (.obj sid) k) true
+            | none => pure ()
+      pure (.obj tid)
+    | .objectEntries | .objectValues =>
+      let id ← toObj n a0
+      let o ← getObj id
+      let ks := o.ownStrKeys.filter fun k => match o.getOwn k with | some p => p.enumerable | none => false
+      let vs ← ks.mapM fun k => do
+        let v ← getV n (.obj id) k
+        if id_ == .objectEntries then newArray #[.str k, v] else pure v
+      newArray vs
+    | .arrayValues | .arrayKeys | .arrayEntries =>
+      let o ← toObj n thisV
+      let mode := match id_ with | .arrayKeys => 1 | .arrayEntries => 2 | _ => 0
+      pure (.obj (← alloc { proto := .obj r.arrayIterProto, kind := .iter (.obj o) 0 mode }))
+    | .stringIterator =>
+      match thisV with
+      | .undef | .null => throwErr .type "String.prototype[Symbol.iterator] called on null or undefined"
+      | _ =>
+        let s ← toStr n thisV
+        pure (.obj (← alloc { proto := .obj r.arrayIterProto, kind := .iter (.str s) 0 3 }))
+    | .iterNext =>
+      let id ← match thisV with
+        | .obj id => pure id
+        | _ => throwErr .type "next method called on incompatible receiver"
+      match (← getObj id).kind with
+      | .iter target idx mode =>
+        let result (v : Value) (done : Bool) : M Value := do
+          let o ← newObject
+          defineOwn o "value" (.data v true true true)
+          defineOwn o "done" (.data (.bool done) true true true)
+          pure (.obj o)
+        match target with
+        | .undef => result .undef true
+        | .str s =>
+          let cs := charsOf s
+          if idx < cs.size then
+            modifyObj id fun o => { o with kind := .iter target (idx + 1) mode }
+            result (.str (String.singleton cs[idx]!)) false
+          else
+            modifyObj id fun o => { o with kind := .iter .undef idx mode }
+            result .undef true
+        | _ =>
+          let len ← match target with
+            | .obj tid => match (← getObj tid).kind with
+              | .array es => pure es.size
+              | _ => do pure (toIntegerOrInf (← toNum n (← getV n target "length"))).toUInt64.toNat
+            | _ => pure 0
+          if idx < len then
+            modifyObj id fun o => { o with kind := .iter target (idx + 1) mode }
+            match mode with
+            | 1 => result (.num (Float.ofNat idx)) false
+            | 2 =>
+              let v ← getV n target (toString idx)
+              result (← newArray #[.num (Float.ofNat idx), v]) false
+            | _ => result (← getV n target (toString idx)) false
+          else
+            modifyObj id fun o => { o with kind := .iter .undef idx mode }
+            result .undef true
+      | _ => throwErr .type "next method called on incompatible receiver"
+    | .iterSelf => pure thisV
+    | .arrayFrom =>
+      let mapFn := a1
+      let usingIter ← match a0 with
+        | .undef | .null => throwErr .type "Array.from requires an array-like or iterable"
+        | _ => getV n a0 (symKey symIterator)
+      let vs ← match usingIter with
+        | .undef | .null => elemsOf n a0
+        | _ => do iterToArray n (← getIterator n a0) #[]
+      let vs ← match mapFn with
+        | .undef => pure vs
+        | f => (List.range vs.size).toArray.mapM fun i => callV n f (argD args 2) #[vs[i]!, .num (Float.ofNat i)]
+      newArray vs
+    | .arrayOf => newArray args
+    | .dateNow => pure (.num 0)
+    | .genNext | .genReturn | .genThrow =>
+      let gid ← match thisV with
+        | .obj g => pure g
+        | _ => throwErr .type "next method called on incompatible receiver"
+      match (← getObj gid).kind with
+      | .gen frames st =>
+        let result (v : Value) (done : Bool) : M Value := do
+          let o ← newObject
+          defineOwn o "value" (.data v true true true)
+          defineOwn o "done" (.data (.bool done) true true true)
+          pure (.obj o)
+        if st == 2 then throwErr .type "Generator is already running"
+        let setG (fs : List GFrame) (s : Nat) : M Unit :=
+          modifyObj gid fun o => { o with kind := .gen fs s }
+        if st == 3 || (st == 0 && id_ != .genNext) then
+          setG [] 3
+          match id_ with
+          | .genNext => result .undef true
+          | .genReturn => result a0 true
+          | _ => throw (.throw a0)
+        else
+          setG frames 2
+          let input := match id_ with
+            | .genNext => GInput.send a0
+            | .genReturn => .retV a0
+            | _ => .throwV a0
+          let r ← tryCatch (do pure (Except.ok (← genRun n frames input)))
+            (fun a => pure (Except.error a))
+          match r with
+          | .error a => setG [] 3; throw a
+          | .ok (.yielded v fs) => setG fs 1; result v false
+          | .ok (.done v) => setG [] 3; result v true
+      | _ => throwErr .type "next method called on incompatible receiver"
     | _ =>
       -- string methods and Math
       stringOrMath n id thisV args
+termination_by structural n _ _ _ _ => n
 
 def genericPush : Nat → Value → Array Value → M Value
   | 0, _, _ => throw (.halt "fuel")
@@ -1484,6 +2505,7 @@ def genericPush : Nat → Value → Array Value → M Value
     for i in [0:args.size] do putV n thisV (toString (l + i)) args[i]! true
     putV n thisV "length" (.num (Float.ofNat (l + args.size))) true
     pure (.num (Float.ofNat (l + args.size)))
+termination_by structural n _ _ => n
 
 /-- The elements of an array, or of an array-like object (`length` and indices). -/
 def elemsOf : Nat → Value → M (Array Value)
@@ -1499,6 +2521,7 @@ def elemsOf : Nat → Value → M (Array Value)
     | .str s => pure ((charsOf s).map fun c => .str (String.singleton c))
     | .undef | .null => throwErr .type "Array.prototype method called on null or undefined"
     | _ => pure #[]
+termination_by structural n _ => n
 
 def iterArray : Nat → Native → Value → Value → Value → Array Value → Nat → Array Value → M Value
   | 0, _, _, _, _, _, _, _ => throw (.halt "fuel")
@@ -1521,6 +2544,7 @@ def iterArray : Nat → Native → Value → Value → Value → Array Value →
       | .arrayEvery => pure (.bool true)
       | .arrayFindIndex => pure (.num (-1))
       | _ => pure .undef
+termination_by structural n _ _ _ _ _ _ _ => n
 
 def reduceArray : Nat → Value → Value → Array Value → Nat → Value → M Value
   | 0, _, _, _, _, _ => throw (.halt "fuel")
@@ -1529,6 +2553,7 @@ def reduceArray : Nat → Value → Value → Array Value → Nat → Value → 
       let acc ← callV n f .undef #[acc, es[i], .num (Float.ofNat i), arr]
       reduceArray n f arr es (i + 1) acc
     else pure acc
+termination_by structural n _ _ _ _ _ => n
 
 /-- SortCompare (§23.1.3.30.2): `true` when `a` goes after `b`. -/
 def sortGt : Nat → Value → Value → Value → M Bool
@@ -1546,6 +2571,7 @@ def sortGt : Nat → Value → Value → Value → M Bool
       | _ =>
         let r ← toNum n (← callV n cmp .undef #[a, b])
         pure (r > 0)
+termination_by structural n _ _ _ => n
 
 def mergeSort : Nat → Value → List Value → M (List Value)
   | 0, _, _ => throw (.halt "fuel")
@@ -1555,6 +2581,7 @@ def mergeSort : Nat → Value → List Value → M (List Value)
     let l ← mergeSort n cmp (xs.take k)
     let r ← mergeSort n cmp (xs.drop k)
     merge n cmp l r #[]
+termination_by structural n _ _ => n
 
 def merge : Nat → Value → List Value → List Value → Array Value → M (List Value)
   | 0, _, _, _, _ => throw (.halt "fuel")
@@ -1563,6 +2590,7 @@ def merge : Nat → Value → List Value → List Value → Array Value → M (L
   | n + 1, cmp, a :: as, b :: bs, acc => do
     if ← sortGt n cmp a b then merge n cmp (a :: as) bs (acc.push b)
     else merge n cmp as (b :: bs) (acc.push a)
+termination_by structural n _ _ _ _ => n
 
 /-- PropertyDescriptor from an object (§6.2.6.5 ToPropertyDescriptor), defined
 with ValidateAndApplyPropertyDescriptor's defaults for a new property. -/
@@ -1618,6 +2646,7 @@ def defineFromDescriptor : Nat → Nat → String → Value → M Unit
             defineOwn id k (.data v w e c)
             let _ := i
         | _, _ => defineOwn id k (.data v w e c)
+termination_by structural n _ _ _ => n
 
 /-- JSON.stringify (§25.5.2) without `replacer` and `space`. -/
 def jsonStr : Nat → Value → Nat → M Value
@@ -1640,6 +2669,7 @@ def jsonStr : Nat → Value → Nat → M Value
     | .bool b => pure (.str (if b then "true" else "false"))
     | .num x => pure (.str (if x.isFinite then numToString x else "null"))
     | .str s => pure (.str (quote s))
+    | .sym _ => pure .undef
     | .obj id =>
       let o ← getObj id
       match o.kind with
@@ -1652,12 +2682,13 @@ def jsonStr : Nat → Value → Nat → M Value
           | _ => pure "null"
         pure (.str ("[" ++ ",".intercalate parts ++ "]"))
       | _ =>
-        let ks := o.ownKeys.filter fun k => match o.getOwn k with | some p => p.enumerable | none => false
+        let ks := o.ownStrKeys.filter fun k => match o.getOwn k with | some p => p.enumerable | none => false
         let parts ← ks.toList.filterMapM fun k => do
           match ← jsonStr n (← getV n v k) (depth + 1) with
           | .str s => pure (some (quote k ++ ":" ++ s))
           | _ => pure none
         pure (.str ("{" ++ ",".intercalate parts ++ "}"))
+termination_by structural n _ _ => n
 
 def stringOrMath : Nat → Native → Value → Array Value → M Value
   | 0, _, _, _ => throw (.halt "fuel")
@@ -1771,6 +2802,7 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
             | l => do pure (toUint32 (← toNum n l))
           newArray ((parts.extract 0 lim).map .str)
       | _ => throwErr .type "not a function"
+termination_by structural n _ _ _ => n
 
 end
 
@@ -1797,8 +2829,14 @@ def initRealm : M Unit := do
     let p ← alloc { proto := .obj errorProto }
     errorProtos := errorProtos.push p
   let gl ← mk
-  let rl : Realm := Realm.mk gl objectProto functionProto arrayProto stringProto numberProto
-    booleanProto errorProtos 0
+  let symbolProto ← mk
+  let iterProto ← mk
+  let arrayIterProto ← alloc { proto := .obj iterProto }
+  let rl : Realm :=
+    { globalObj := gl, objectProto := objectProto, functionProto := functionProto,
+      arrayProto := arrayProto, stringProto := stringProto, numberProto := numberProto,
+      booleanProto := booleanProto, errorProtos := errorProtos, symbolProto := symbolProto,
+      iterProto := iterProto, arrayIterProto := arrayIterProto }
   modify fun h => { h with realm := rl }
   let g := gl
   let thrower ← mkNative .throwTypeError "" 0
@@ -1921,6 +2959,45 @@ def initRealm : M Unit := do
   let console ← mk
   setHidden g "console" (.obj console)
   method console "log" .print 0
+  -- eval, Symbol, iterators, Date.now
+  let ev ← mkNative .eval "eval" 1
+  setHidden g "eval" ev
+  if let .obj e := ev then modify fun h => { h with realm := { h.realm with evalFn := e } }
+  let symC ← ctorWith "Symbol" .symbolCtor 0 symbolProto
+  setHidden g "Symbol" symC
+  if let .obj sc := symC then
+    for i in [0:wellKnown.size] do
+      defineOwn sc (wellKnown[i]!) (.data (.sym i) false false false)
+  method symbolProto "toString" .symbolToString 0
+  method symbolProto "valueOf" .symbolValueOf 0
+  defineOwn symbolProto "description" (.acc (← mkNative .symbolDescription "get description" 0) .undef false true)
+  defineOwn symbolProto (symKey symToStringTag) (.data (.str "Symbol") false false true)
+  setHidden iterProto (symKey symIterator) (← mkNative .iterSelf "[Symbol.iterator]" 0)
+  method arrayIterProto "next" .iterNext 0
+  let genProto ← alloc { proto := .obj iterProto }
+  modify fun h => { h with realm := { h.realm with generatorProto := genProto } }
+  method genProto "next" .genNext 1
+  method genProto "return" .genReturn 1
+  method genProto "throw" .genThrow 1
+  defineOwn genProto (symKey symToStringTag) (.data (.str "Generator") false false true)
+  defineOwn arrayIterProto (symKey symToStringTag) (.data (.str "Array Iterator") false false true)
+  let values ← mkNative .arrayValues "values" 0
+  setHidden arrayProto "values" values
+  setHidden arrayProto (symKey symIterator) values
+  method arrayProto "keys" .arrayKeys 0
+  method arrayProto "entries" .arrayEntries 0
+  setHidden stringProto (symKey symIterator) (← mkNative .stringIterator "[Symbol.iterator]" 0)
+  if let .obj ac := arrayC then
+    method ac "from" .arrayFrom 1
+    method ac "of" .arrayOf 0
+  if let .obj oc := objectC then
+    method oc "getOwnPropertySymbols" .objectGetOwnPropertySymbols 1
+    method oc "assign" .objectAssign 2
+    method oc "entries" .objectEntries 1
+    method oc "values" .objectValues 1
+  let date ← mk
+  setHidden g "Date" (.obj date)
+  method date "now" .dateNow 0
 
 /-- A fresh realm. -/
 def freshHeap : Heap :=
@@ -1947,10 +3024,12 @@ def runScriptM (s : Script) : M Unit := do
     match st with
     | .decl .letK ds | .decl .constK ds =>
       for d in ds do
-        match d with
-        | .mk x _ =>
+        for x in d.names do
           if ((← getBinding 0 x)).isSome then throwErr .syntax s!"Identifier '{x}' has already been declared"
           declare 0 x { v := .undef, mutable := (match st with | .decl .letK _ => true | _ => false), init := false }
+    | .classDecl x _ =>
+      if ((← getBinding 0 x)).isSome then throwErr .syntax s!"Identifier '{x}' has already been declared"
+      declare 0 x { v := .undef, init := false }
     | _ => pure ()
   let _ ← evalStmts defaultFuel ctx s.body
   pure ()

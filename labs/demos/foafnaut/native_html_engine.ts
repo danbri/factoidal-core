@@ -383,6 +383,9 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     /** The node under a window point, for a click that page scripts receive. */
     nodeAt:(source:string,width:number,height:number,options:Record<string,unknown>)=>
       (documentCall(source,{...options,op:"nodeAt"},width,height) as {node:number|null}).node,
+    /** The node under a window point and the coordinates of its pointer events (WebHit). */
+    pointerAt:(source:string,width:number,height:number,options:Record<string,unknown>)=>
+      documentCall(source,{...options,op:"nodeAt"},width,height) as {node:number|null}&Record<string,number>,
     // Lean decides what a menu command and a pointer release mean.
     // `state` gives the tab count, the scroll and the view, from which Lean answers a tab or a scroll.
     command:(command:number,textScalePercent:number,history?:History,focused=false,state:CommandState={})=>documentCall("",{op:"command",command,textScalePercent,focused,...state,...(history?{history}:{})}) as

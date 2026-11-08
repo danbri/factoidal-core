@@ -252,6 +252,9 @@ structure Style where
   lineCap : LineCap := .butt
   lineJoin : LineJoin := .miter
   miterLimit : Float := 4
+  /-- SVG 2 §15.6 `pointer-events` of an SVG shape (HTML paint keeps the initial
+  value). It changes no pixel; hit testing reads it. -/
+  pointerEvents : String := "visiblePainted"
   deriving Repr
 /-- Rectangular clip in an independent local frame. Content and clip frames
 remain distinct so a viewport can clip before a viewBox mapping. -/
@@ -275,6 +278,9 @@ structure Primitive where
   groupPath : List (Option String) := []
   clips : List ClipRect := []
   pathLength : Option Float := none
+  /-- The source path of the SVG element that painted it, from the root element of its
+  document (`NativeSVG.Primitive.element`); empty for HTML paint. Not drawn. -/
+  element : List Nat := []
   deriving Repr
 structure PaintItem where
   /-- Index in the source DOM arena, shared by boxes, glyphs and input targets. -/

@@ -65,7 +65,7 @@ def fromStyle (s : NativeSVG.Style) : Rendering.Style :=
    rule := match s.rule with | .nonzero => .nonzero | .evenodd => .evenodd,
    lineCap := match s.lineCap with | .butt => .butt | .round => .round | .square => .square,
    lineJoin := match s.lineJoin with | .miter => .miter | .round => .round | .bevel => .bevel,
-   miterLimit := s.miterLimit}
+   miterLimit := s.miterLimit,pointerEvents := s.pointerEvents}
 def toStyle (s : Rendering.Style) : NativeSVG.Style :=
   {fill := toPaint s.fill,stroke := toPaint s.stroke,currentColor := toColor s.currentColor,
    strokeWidth := s.strokeWidth,dashArray := s.dashArray.map toLength,dashOffset := toLength s.dashOffset,
@@ -73,16 +73,16 @@ def toStyle (s : Rendering.Style) : NativeSVG.Style :=
    rule := match s.rule with | .nonzero => .nonzero | .evenodd => .evenodd,
    lineCap := match s.lineCap with | .butt => .butt | .round => .round | .square => .square,
    lineJoin := match s.lineJoin with | .miter => .miter | .round => .round | .bevel => .bevel,
-   miterLimit := s.miterLimit}
+   miterLimit := s.miterLimit,pointerEvents := s.pointerEvents}
 def fromClip (clip : NativeSVG.ClipRect) : Rendering.ClipRect :=
   ⟨clip.x,clip.y,clip.width,clip.height,clip.transform⟩
 def toClip (clip : Rendering.ClipRect) : NativeSVG.ClipRect :=
   ⟨clip.x,clip.y,clip.width,clip.height,clip.transform⟩
 
 def fromPrimitive (p : NativeSVG.Primitive) : Rendering.Primitive :=
-  ⟨fromGeometry p.geometry,fromStyle p.style,p.opacity,p.transform,p.dashParts.map (·.map fromPiece),p.groupPath,p.clips.map fromClip,p.pathLength⟩
+  ⟨fromGeometry p.geometry,fromStyle p.style,p.opacity,p.transform,p.dashParts.map (·.map fromPiece),p.groupPath,p.clips.map fromClip,p.pathLength,p.element⟩
 def toPrimitive (p : Rendering.Primitive) : NativeSVG.Primitive :=
-  ⟨toGeometry p.geometry,toStyle p.style,p.opacity,p.transform,p.dashParts.map (·.map toPiece),p.groupPath,p.clips.map toClip,p.pathLength⟩
+  ⟨toGeometry p.geometry,toStyle p.style,p.opacity,p.transform,p.dashParts.map (·.map toPiece),p.groupPath,p.clips.map toClip,p.pathLength,p.element⟩
 
 def fromNode : NativeSVG.DisplayNode → Rendering.Node
   | .paint p => .paint ⟨none,fromPrimitive p⟩
@@ -121,7 +121,7 @@ def toScene (s : Rendering.Scene) : Except String NativeSVG.Scene :=
   cases p <;> simp [toPiece,fromPiece]
 @[simp] theorem style_roundtrip (s : NativeSVG.Style) : toStyle (fromStyle s) = s := by
   cases s with
-  | mk fill stroke color width dash offset fillOpacity strokeOpacity visible rule cap join limit =>
+  | mk fill stroke color width dash offset fillOpacity strokeOpacity visible rule cap join limit pointer =>
     cases rule <;> cases cap <;> cases join <;>
       simp [toStyle,fromStyle,List.map_map,Function.comp_def]
 @[simp] theorem clip_roundtrip (clip : NativeSVG.ClipRect) : toClip (fromClip clip) = clip := by
@@ -130,7 +130,7 @@ def toScene (s : Rendering.Scene) : Except String NativeSVG.Scene :=
 
 @[simp] theorem primitive_roundtrip (p : NativeSVG.Primitive) : toPrimitive (fromPrimitive p) = p := by
   cases p with
-  | mk geometry style opacity transform parts groups clips pathLength =>
+  | mk geometry style opacity transform parts groups clips pathLength element =>
     cases parts <;> simp [toPrimitive,fromPrimitive,List.map_map,Function.comp_def]
 
 @[simp] theorem node_roundtrip (node : NativeSVG.DisplayNode) : toNode (fromNode node) = node := by

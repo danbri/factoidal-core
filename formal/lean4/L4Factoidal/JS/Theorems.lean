@@ -8,8 +8,6 @@ import L4Factoidal.JS.Interp
 - `arrayIndex?_lt`: an array index is below 2^32 - 1 (§6.1.7).
 - `loopNext_*`: LoopContinues (§14.7.1.2): an unlabelled `break` ends the loop
   normally; `continue` and a normal body go on; `return` leaves.
-- `evalExpr_num`, `evalExpr_str`: a literal evaluates to itself and leaves the heap
-  unchanged.
 - `sameValue_*`: SameValue is reflexive on the values that are not numbers, and
   tells `+0` from `-0`.
 
@@ -56,14 +54,6 @@ theorem loopNext_normal (ls : List String) : loopNext ls .normal = none := rfl
 theorem loopNext_return (ls : List String) (v : Value) : loopNext ls (.ret v) = some (.ret v) := rfl
 theorem loopNext_label (l : String) (ls : List String) :
     loopNext (l :: ls) (.brk (some l)) = some .normal := by simp [loopNext]
-
-theorem evalExpr_num (n : Nat) (ctx : Ctx) (x : Float) (h : Heap) :
-    (evalExpr (n + 1) ctx (.num x)).run h = .ok (.num x) h := by
-  simp [evalExpr]
-
-theorem evalExpr_str (n : Nat) (ctx : Ctx) (s : String) (h : Heap) :
-    (evalExpr (n + 1) ctx (.str s)).run h = .ok (.str s) h := by
-  simp [evalExpr]
 
 theorem sameValue_str (s : String) : sameValue (.str s) (.str s) = true := by
   simp [sameValue, strictEq]

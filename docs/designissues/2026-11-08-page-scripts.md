@@ -94,6 +94,60 @@ frame back to back. The loop is `EventLoop.Driver.advanceGo`, and
 `run_html.ts` start no turn while a frame is asked for or being drawn, so each presented
 frame has at most one turn before it.
 
+### Pointer input
+
+A host asks `nodeAt` for the window point. Lean takes the smallest layout box there; when
+that box is an embedded `svg` (or inside one), the target is the shape under the point
+(`WebHit.svgTarget`): each SVG primitive keeps the source path of the element that
+painted it (`NativeSVG.Primitive.element`; a `use` instance is its `use` element), and
+`NativeSVG.Scene.hitTestWith` takes the topmost primitive at the point in painter order,
+with the sampler's coverage, clips and transforms, under the primitive's
+`pointer-events` (SVG 2 §15.6: `none`, `visiblePainted` (initial), `visibleFill`,
+`visibleStroke`, `visible`, `painted`, `fill`, `stroke`, `all`). The answer has the node
+and the event's coordinates: `clientX/Y` (in the page's viewport), `pageX/Y` (plus the
+scroll) and `offsetX/Y` (from the target's box; an SVG shape's box is its outer `svg`'s).
+
+The host passes that answer to `scriptSession pointer` with `kind` (down, move, up,
+cancel), `button`, `buttons` and `pointerType`. Lean (`Page.Session.pointer`) dispatches
+`pointerdown` then `mousedown`; `pointerup`, `mouseup`, then `click` at the common
+ancestor of the press and release targets; `pointermove` and `mousemove`;
+`pointercancel` (a press that scrolled). A canceled `pointerdown` drops the compatibility
+mouse events of its press, not the click. At most one move is dispatched in a frame (16
+ms of the clock): a later move in the same frame replaces the one that waits, which is
+dispatched at the next turn of a later frame (`nextWake` says when). The event data
+reaches the prelude through `node_query` op 16 while Lean dispatches: no change to the
+guest's exports. A move or a press changes no DOM by itself, so no layout.
+
+### Layout reads
+
+`innerWidth`/`innerHeight` are the viewport the host gives at `start` (`width`, `height`
+less the full chrome of `shell`) and at `resize` (which also dispatches `resize` at the
+window). `clientWidth/Height/Left/Top`, `offsetWidth/Height/Left/Top`,
+`getBoundingClientRect`, `getClientRects` and SVG `getBBox` ask Lean (`node_query` ops
+17 and 18). Lean lays the arena out as a render with the session's `layout` request
+(`WebDocument.measure`, `layOutDOM`: no parse) when a read first asks, and keeps that
+layout until a DOM write or a resize, as a browser forces one layout for a read after
+writes. Each turn's `layouts` counts the layouts made for reads. An SVG element inside
+an `svg` has no CSS box: its client box is zero and its rectangle is the bounds of what
+it painted (`WebHit.elementBounds`); `getBBox` is in the element's user space, exact for
+shapes and groups of shapes (a path's bounds are those of its control points).
+
+### The script clock
+
+The event loop's clock is virtual and moves by rule, so runs replay. Script time is the
+instructions a script ran at `instructionsPerMs` (100 000 by default, a stated rate near
+QuickJS on the native and Wasm engines; `start` may give another), in whole milliseconds
+from a mark (`Page.ScriptClock`). `performance.now()` and `Date.now()` read the later of
+the loop's clock and script time. The loop's clock moves up to script time before a timer
+or an animation frame is requested and after each run of the module, so a timer set after
+a long script is due its delay after the time it was set at. A host moving the clock past
+script time moves the mark. Readings never go back (`ScriptClock.read_monotone`,
+`read_read`) and the loop's clock never goes back (`sync_ge`); a page that runs fewer than
+`instructionsPerMs` instructions between moves of the clock sees the clock alone
+(`ms_mark`). The WPT runner gives a rate of a trillion a millisecond (script time as good
+as off): testharness.js times a file out after 10 s of browser time, and this engine runs
+many more instructions than a browser for the same work.
+
 ## 4. Cost
 
 The contract: a turn's answer says `changed` exactly when the turn recorded a DOM change
@@ -133,7 +187,7 @@ Measured on the owner's Mac, native engine library (2026-11-08):
 - Promise jobs are QuickJS's own queue (one queue, in order, as HTML's microtask queue);
   Lean decides when a checkpoint runs, not the order inside it. A host click's listeners
   get one checkpoint after the whole dispatch, not one after each listener.
-- No layout reads from script (`offsetWidth` is 0); `style` is the `style` attribute.
+- `style` is the `style` attribute; `getComputedStyle` returns it too. `scrollTop` is 0.
 - No `innerHTML` setter, no `Range`, no `TreeWalker`.
 - Iframes: only in the WPT bench (`wasmvm-bench page`, `Limits.frames`). Markup iframes:
   the bench parses each `src` document (XML for `.xml`, `.xhtml` and `.svg`, else HTML;
@@ -173,3 +227,9 @@ attribute values, the structural pseudo-classes with `An+B [of S]`, `:not`, `:is
 `:where`, `:scope`, `:lang`, `:link`, `:checked`, `:disabled`, `:enabled`. User-state
 pseudo-classes match nothing; the four legacy pseudo-elements never match. The JavaScript
 selector engine of the prelude is gone.
+
+DOMParser (2026-11-08): `parseFromString` makes the document with Lean's HTML parser
+(`text/html`) or namespace-aware XML parser (the four XML types), grafted into the arena
+(`create_node` kinds 11 and 12, so the command list replays it). An XML source that is not
+namespace-well-formed gives a document whose element is `parsererror` with the parser's
+message.

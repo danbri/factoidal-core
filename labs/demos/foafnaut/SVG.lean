@@ -347,6 +347,9 @@ structure Style where
   lineCap : LineCap := .butt
   lineJoin : LineJoin := .miter
   miterLimit : Float := 4
+  /-- SVG 2 §15.6 `pointer-events` (inherited): which parts of a shape a pointer hits.
+      It changes no pixel; `Scene.hitTestWith` reads it. -/
+  pointerEvents : String := "visiblePainted"
   deriving Repr
 private def attr (attrs : List NamespaceAttribute) (key : String) : Option String :=
   (attrs.find? (fun a => a.name.namespace_.isNone && a.name.localPart == key)).map (·.value)
@@ -364,7 +367,7 @@ private def relativeLength (source : String) (base : Float) : Except String Floa
 
 private def common := ["id","fill","stroke","color","fill-opacity","stroke-opacity","stroke-width",
   "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule","stroke-dasharray","stroke-dashoffset",
-  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity"]
+  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity","pointer-events"]
 /-- SVG Tiny 1.2 §11.13 and §11.16: elements that define a paint and draw nothing. -/
 private def paintServers := ["linearGradient","radialGradient","solidColor"]
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
@@ -606,6 +609,9 @@ private def dashArray (lengths : LengthContext) (source : String) : Except Strin
   if tokens.length > 64 then throw "dash pattern exceeds 64 entries"
   NativeSVGDash.normalizeLengths (← tokens.mapM fun token => do
     pure {value:= ← relativeLength token lengths.diagonal,percentage:=(trim token).endsWith "%"})
+/-- SVG 2 §15.6: the values of `pointer-events` for SVG elements. -/
+def pointerEventsValues : List String :=
+  ["auto","bounding-box","visiblePainted","visibleFill","visibleStroke","visible","painted","fill","stroke","all","none"]
 private def readStyle (lengths : LengthContext) (paints : PaintContext) (attrs : List NamespaceAttribute) (parent : Style) : Except String Style := do
   let mut style := parent
   if let some value := attr attrs "color" then
@@ -628,6 +634,12 @@ private def readStyle (lengths : LengthContext) (paints : PaintContext) (attrs :
     | "visible" => style := {style with visible:=true}
     | "hidden" | "collapse" => style := {style with visible:=false}
     | _ => throw s!"unsupported visibility: {value}"
+  if let some value := attr attrs "pointer-events" then
+    let v := trim value
+    if v != "inherit" then
+      match pointerEventsValues.find? (·.toLower == v.toLower) with
+      | some known => style := {style with pointerEvents:=known}
+      | none => throw s!"unsupported pointer-events: {value}"
   let width ← inheritedNumber lengths attrs "stroke-width" parent.strokeWidth
   if width < 0 then throw "negative stroke-width"
   let fillOpacity ← inheritedNumber lengths attrs "fill-opacity" parent.fillOpacity
@@ -770,6 +782,10 @@ structure Primitive (contourType : Type := NativeSVGPath.Contour) where
   groupPath : List (Option String) := []
   clips : List ClipRect := []
   pathLength : Option Float := none
+  /-- The source path of the SVG element that painted it (child indices from the root
+      of the document the reader was given), for hit testing: a `use` instance is its
+      `use` element. Not drawn. -/
+  element : List Nat := []
   deriving Repr
 
 abbrev BackendPrimitive := Primitive NativeSVGPath.LinearContour
@@ -810,6 +826,14 @@ inductive DisplayNode where
   | group (id : Option String) (transform : Transform) (children : List DisplayNode)
   | clipped (id : Option String) (contentTransform : Transform) (clip : ClipRect) (children : List DisplayNode)
   deriving Repr
+
+/-- Every painted leaf belongs to the element at `owner` (the `use` element of an
+    instance). Nothing drawn changes. -/
+def DisplayNode.ownedBy (owner : List Nat) : DisplayNode → DisplayNode
+  | .paint p => .paint {p with element := owner}
+  | .group id t children => .group id t (children.map (DisplayNode.ownedBy owner))
+  | .clipped id t clip children => .clipped id t clip (children.map (DisplayNode.ownedBy owner))
+termination_by n => sizeOf n
 
 mutual
   def DisplayNode.paintCount : DisplayNode → Nat
@@ -1435,7 +1459,8 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         let targetTree ← readNode references rules paints fuel
           {lengths,parent:=cumulative,style:=inherited,path:=target.path,ancestors:=active,instanceRoot:=true,baseURL:=target.parentBase}
           (.element targetName targetAttrs targetChildren)
-        return [.group (attr attrs "id") transform targetTree]
+        -- SVG 2 §5.6.3: a pointer on the instance hits the `use` element.
+        return [.group (attr attrs "id") transform (targetTree.map (DisplayNode.ownedBy path))]
       else if tag == "svg" || tag == "symbol" then
         validateAttrs tag attrs ["x","y","width","height","viewBox","preserveAspectRatio","overflow","transform","opacity","version"]
         if !(← containerVisible attrs) then return []
@@ -1486,7 +1511,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         let ((ax,ay,aw,ah),map) ← imagePlacement x y w h bitmap (attr attrs "preserveAspectRatio")
         -- fill-opacity is not a property of an image; `opacity` is.
         let painted := {inherited with fill:=.image ⟨map,id,bitmap⟩,stroke:=.none,fillOpacity:=1}
-        return [.paint {geometry:=.rect ax ay aw ah,style:=painted,opacity:=max 0 (min 1 opacity),transform}]
+        return [.paint {geometry:=.rect ax ay aw ah,style:=painted,opacity:=max 0 (min 1 opacity),transform,element:=path}]
       else if tag == "g" then
         validateAttrs tag attrs ["transform","clip-path"]
         let transform ← checkedTransform (← elementTransform parent ((attr attrs "transform").getD ""))
@@ -1527,7 +1552,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
           let dashParts ← match g with
             | .path _ => pure none
             | _ => do dashedParts (← g.compile identityTransform) inherited authorLength
-          pure (.paint {geometry:=g,style:=inherited,opacity:=max 0 (min 1 opacity),transform,dashParts,pathLength:=authorLength})
+          pure (.paint {geometry:=g,style:=inherited,opacity:=max 0 (min 1 opacity),transform,dashParts,pathLength:=authorLength,element:=path})
         if displaySuppressed attrs then return []
         return painted
 
@@ -1899,7 +1924,7 @@ theorem ReferenceContext.create_existing (context : ReferenceContext) :
 /-- SVG 2 §5.1: render an already namespace-expanded SVG fragment, including
     one supplied by an HTML foreign-content parser. The caller owns DOM parsing;
     root validation, SVG style, geometry and viewport semantics remain here. -/
-private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeight : Nat)
+private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeight : Float)
     (inheritedStyle : Style) (images : Option NativeImage.Store)
     (referenceSource : Unit → Except String (ReferenceContext × List Nat × Option String)) : Except String Scene := do
   let .element name attrs children := root | throw "SVG root must be an element"
@@ -1911,13 +1936,13 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
     if let some source := attr attrs key then
       let viewportUnit := (trim source).endsWith "vw" || (trim source).endsWith "vh"
       let size ← if (trim source).endsWith "%" || viewportUnit then
-        if outputWidth == 0 || outputHeight == 0 then throw "percentage root dimensions require explicit host output viewport"
+        if outputWidth <= 0 || outputHeight <= 0 then throw "percentage root dimensions require explicit host output viewport"
         -- The host output size already holds the viewport unit's computed value.
         else if viewportUnit then pure 0
-        else relativeLength source (Float.ofNat (if key == "width" then outputWidth else outputHeight))
+        else relativeLength source (if key == "width" then outputWidth else outputHeight)
       else lengthNumber source
       if size < 0 then throw "negative root dimensions"
-  let (w,h) ← if outputWidth > 0 && outputHeight > 0 then pure (Float.ofNat outputWidth,Float.ofNat outputHeight)
+  let (w,h) ← if outputWidth > 0 && outputHeight > 0 then pure (outputWidth,outputHeight)
     else if outputWidth != 0 || outputHeight != 0 then throw "both output dimensions are required"
     else do
       let rw ← need (attr attrs "width") "root width required unless explicit output viewport is supplied"
@@ -1953,7 +1978,7 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
 def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
     (inheritedStyle : Style := {}) (documentURL : Option String := none)
     (images : Option NativeImage.Store := none) : Except String Scene :=
-  parseRootWithContext root outputWidth outputHeight inheritedStyle images fun _ => do
+  parseRootWithContext root (Float.ofNat outputWidth) (Float.ofNat outputHeight) inheritedStyle images fun _ => do
     let context ← ReferenceContext.create root documentURL
     let base := match root with
       | .element _ attrs _ => NativeSVGReferences.elementBase attrs documentURL
@@ -1962,9 +1987,11 @@ def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
 
 /-- Select an SVG root from the indexed original document in Lean. The caller
     may normalize only root attributes after its own Lean HTML/CSS computation;
-    original children, reference targets, source identity and bases are retained. -/
-def parseRootInContext (context : ReferenceContext) (rootSourcePath : List Nat)
-    (outputWidth outputHeight : Nat := 0) (inheritedStyle : Style := {})
+    original children, reference targets, source identity and bases are retained.
+    The output viewport may be fractional (CSS pixels of an HTML layout): the viewBox
+    maps onto it exactly, and the backing raster is the next whole pixel. -/
+def parseRootInContextSized (context : ReferenceContext) (rootSourcePath : List Nat)
+    (outputWidth outputHeight : Float := 0) (inheritedStyle : Style := {})
     (rootAttributeNormalizer : List NamespaceAttribute → Except String (List NamespaceAttribute) := fun attrs => .ok attrs)
     (images : Option NativeImage.Store := none) : Except String Scene := do
   let initialBase := context.initialBaseURL.orElse (fun _ => context.documentURL)
@@ -1974,6 +2001,14 @@ def parseRootInContext (context : ReferenceContext) (rootSourcePath : List Nat)
   let attrs ← rootAttributeNormalizer originalAttrs
   parseRootWithContext (.element name attrs children) outputWidth outputHeight inheritedStyle images
     (fun _ => .ok (context,entry.path,base))
+
+/-- `parseRootInContextSized` at a viewport of whole pixels. -/
+def parseRootInContext (context : ReferenceContext) (rootSourcePath : List Nat)
+    (outputWidth outputHeight : Nat := 0) (inheritedStyle : Style := {})
+    (rootAttributeNormalizer : List NamespaceAttribute → Except String (List NamespaceAttribute) := fun attrs => .ok attrs)
+    (images : Option NativeImage.Store := none) : Except String Scene :=
+  parseRootInContextSized context rootSourcePath (Float.ofNat outputWidth) (Float.ofNat outputHeight)
+    inheritedStyle rootAttributeNormalizer images
 
 def parse (xml : String) (outputWidth outputHeight : Nat := 0)
     (documentURL : Option String := none) : Except String Scene := do
@@ -3100,6 +3135,43 @@ def Scene.hitTestAt (s : Scene) (screenX screenY : Float) : Option (Fin s.primit
   for (index,primitive,recordBase) in records.toList.reverse do
     let (fillHit,strokeHit) := primitive.coverageAt data recordBase position
     if fillHit || strokeHit then
+      return some ⟨index.val,by rw [← s.compiled_length]; exact index.isLt⟩
+  return none
+
+/-- SVG 2 §15.6: whether a hit on the fill or the stroke region of a shape counts,
+    under its `pointer-events`. "Painted" means a paint other than `none`. -/
+def pointerAccepts (style : Style) (fillHit strokeHit : Bool) : Bool :=
+  let painted := fun (p : Paint) => match p with | .none => false | _ => true
+  let paintedHit := (fillHit && painted style.fill) || (strokeHit && painted style.stroke)
+  match style.pointerEvents with
+  | "none" => false
+  | "visibleFill" => style.visible && fillHit
+  | "visibleStroke" => style.visible && strokeHit
+  | "visible" => style.visible && (fillHit || strokeHit)
+  | "painted" => paintedHit
+  | "fill" => fillHit
+  | "stroke" => strokeHit
+  | "all" | "bounding-box" => fillHit || strokeHit
+  | _ => style.visible && paintedHit
+
+/-- As `hitTestAt`, the topmost paint item at a viewport coordinate in painter order, with
+    the same coverage predicates, but a hit counts only when the primitive's
+    `pointer-events` accepts it (`pointerAccepts`): the target of a pointer event. -/
+def Scene.hitTestWith (s : Scene) (screenX screenY : Float) : Option (Fin s.primitives.length) := Id.run do
+  if screenX < 0 || screenY < 0 || screenX >= s.mapping.viewportWidth || screenY >= s.mapping.viewportHeight then
+    return none
+  let position := ((screenX-s.mapping.tx)/s.mapping.sx+s.mapping.minX,
+    (screenY-s.mapping.ty)/s.mapping.sy+s.mapping.minY)
+  let data := s.data
+  let mut records : Array (Fin s.compiled.length × BackendPrimitive × Nat) := #[]
+  let mut base := 8
+  for (index,primitive) in (List.finRange s.compiled.length).zip s.compiled do
+    records := records.push (index,primitive,base)
+    base := base+primitive.rowCount*4
+  for (index,primitive,recordBase) in records.toList.reverse do
+    if primitive.style.pointerEvents == "none" then continue
+    let (fillHit,strokeHit) := primitive.coverageAt data recordBase position
+    if pointerAccepts primitive.style fillHit strokeHit then
       return some ⟨index.val,by rw [← s.compiled_length]; exact index.isLt⟩
   return none
 
