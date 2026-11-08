@@ -6,7 +6,7 @@ layout: hub.njk
 
 # foafnaut2525 project status
 
-6 November 2026. The engine that this note describes renders it too: choose Project status in the Lean HTML page below. The rendering is plain ASCII text with no script.
+8 November 2026. The engine that this note describes renders it too: choose Project status in the Lean HTML page below. The rendering is plain ASCII text with no script.
 
 foafnaut2525 is a web rendering engine written in Lean. It aims to become a browser. It is not the FOAF social network application that it is named after.
 
@@ -14,38 +14,38 @@ foafnaut2525 is a web rendering engine written in Lean. It aims to become a brow
 
 - The engine parses HTML, computes CSS, lays out text and boxes, and draws with WebGPU.
 - It runs in a web page, in its own macOS window, and as a sandboxed guest.
-- Page scripts run in a local development bundle. Real sites mostly do not load yet.
-- The rendered note uses an ASCII bitmap font. Real fonts are the next large step.
+- Page scripts run in QuickJS-NG inside WasmVM, a WebAssembly engine written in Lean; Lean's event loop and DOM decide every callback and every change. BubblePopJS, a JavaScript engine written in Lean, is the second script engine.
+- Pages can draw with WebGPU and WebGL 1 and 2; Lean checks every command first. Without WebGPU, a CPU renderer draws the same pixels.
+- Real sites mostly do not load yet.
 
-## This week
+## Since 6 November
 
-- The browser has a face: tabs, an address bar for URLs, searches and commands, settings, scrolling, back and forward, zoom, copy and view source. All of it is drawn by Lean.
-- XML pages run their XSLT stylesheet, version 1.0 or 3.0 and 4.0, then render the result.
-- SVG text draws from SVG fonts, and all 496 W3C SVG Tiny tests are scored with WebGPU pixels.
-- The macOS app is built by CI from current code: run foafnaut --install-latest.
-- Frame time fell from 2,278 ms to 209 ms, for the same image. Each screen tile now has its own list of primitives.
-- The native window draws. It lays pages out again during a window drag.
-- The Lean text shaper and the font safety policy are on main.
-- Every frame now writes a timing record, and a repeatable sweep measures it with no person.
+- WasmVM runs QuickJS-NG, HarfBuzz and media decoders, and on the Hub it translates guest WebAssembly for the browser's own engine: 36 to 216 times faster.
+- Page scripts: timers, animation frames, Promises, clicks and pointer events, forms, DOMParser, MutationObserver and layout reads.
+- Arabic letters join, and mixed left-to-right and right-to-left text is ordered by the Unicode bidi algorithm. Emoji draw from Noto Emoji.
+- Momentum scrolling, swipes for back and forward, a folding address bar, Copy address and Paste and go, and printing.
+- Links work anywhere on a long page, with theorems that every link region is kept.
+- Text starts larger, and settings have large text-size buttons.
 
 ## Measured scores
 
 - HTML tree construction: 1,963 pass, 10 fail (out of 1,973).
 - HTML tokenizer: 7,047 pass, 6 fail (out of 7,053).
-- WPT SVG and HTML images: 29 match, 21 mismatch, 264 unsupported, 30 rejected, 257 unavailable (out of 601).
-- WPT scripted documents: 0 complete passes (out of 784); 103 assertions pass, 1,342 fail.
-- W3C SVG Tiny 1.2, WebGPU pixels against the W3C images: 0 match, 72 close, 421 mismatch, 2 refused, 1 not read (out of 496). No test passes yet. Our 1-pixel lines are anti-aliased, and the 2008 reference snaps them, so a strict match needs more than correct drawing. A blank image scores 1 match, 495 mismatch.
+- WPT SVG and HTML images: 39 match, 68 mismatch, 214 unsupported, 23 rejected, 257 unavailable (out of 601).
+- WPT scripted documents (dom, events, timers, microtasks, event loops), QuickJS-NG in WasmVM: 12,605 of 13,705 subtests pass (8 November).
+- Test262 sample (436 files), QuickJS-NG in WasmVM: 431 pass. BubblePopJS: 5,618 of 6,297 in a 70-directory language subset (8 November).
+- W3C SVG Tiny 1.2, WebGPU pixels against the W3C images: 0 match, 157 close, 336 mismatch, 2 refused, 1 not read (out of 496). No test passes yet. Our 1-pixel lines are anti-aliased, and the 2008 reference snaps them, so a strict match needs more than correct drawing. A blank image scores 1 match, 495 mismatch.
 - HarfBuzz 15.0.0 shaping suite: 4,175 pass, 533 fail, 169 refused (out of 4,877 applicable).
 
-The match and close bands are ours, not a W3C verdict. The WPT image score still comes from the old CPU test tool. These suites are separate. Their numbers do not add up to one browser score. Most were measured on 3 or 4 November.
+The match and close bands are ours, not a W3C verdict. The WPT image score still comes from the old CPU test tool. These suites are separate. Their numbers do not add up to one browser score. The script scores are from 8 November; the others were measured between 4 and 7 November.
 
 ## What comes next
 
 - A named release every day: one to three, never four.
-- Real fonts, with outlines and shaping in Lean.
-- Faster layout. It is now the largest part of a frame. This note takes about 2 seconds to lay out in the browser, and 63 ms to draw.
+- BubblePopJS as the default script engine in the macOS app, with a switch in settings.
+- Module scripts and fetch from scripts.
+- Indic shaping.
 - Pages from the real web.
-- The interactive FOAF graph inside the browser.
 
 ## Read more
 

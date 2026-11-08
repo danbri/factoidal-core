@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.34.0 (2026-11-08)
 
+- `foafnaut` command: `--url` and `--html` open a page or a file (`file:` URLs too), and other options are passed to the app.
 - XMPP: `xmpp-serve --proxy-protocol` (`proxyProtocol` in `createXmppServer`): every connection, on every listener, must start with a PROXY protocol v2 header, read before TLS, and the failed-login limit counts the client address it names. So the limit per client address can stay on behind Fly's proxy, where `--no-address-limit` was needed. The header is decided in Lean (`L4Factoidal/Net/ProxyProtocol.lean`, new wasm op `proxyHeaderParse`, theorems `parse_signature`, `parse_more_bounded`, `parse_proxy_le`); a connection without a valid header in 10 seconds (`proxyHeaderTimeoutMs`) is closed. Without the flag no header is read.
 - XMPP: the server keeps no client address. The limit counts an HMAC-SHA-256 tag of the address (IPv6 by its /64) under a random key that is in memory only and new at each start (`LoginLimit.addressTag`; `xmppOpen` takes `addressKey`; `xmppSessionOpen` and `xmppWsOpen` answer `addressTag`, its first 12 digits). The "connection from" log line shows the tag, not the address and port.
 - XMPP: the server pings a bound session that has been silent, and closes it if it stays silent, so a dead connection frees its resource. A ping is XEP-0199 on TCP and a ping frame on a WebSocket; any byte from the client counts as an answer. `xmpp-serve --ping-interval SECONDS` (default 30, 0 disables) and `--ping-timeout SECONDS` (default 20); `pingIntervalMs` and `pingTimeoutMs` in `createXmppServer`. New ops `xmppSessionPing` and `xmppWsPing`.
