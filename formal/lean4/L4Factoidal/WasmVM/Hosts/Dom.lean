@@ -53,9 +53,7 @@ inductive Command where
   | createElement (name : String) (result : Nat)
   | appendChild (parent child : Nat)
   | removeAttribute (node : Nat) (name : String)
-  /-- `createTextNode` (kind 0), `createComment` (1), `createDocumentFragment` (2),
-  `createProcessingInstruction` (5; `data` is the target, U+0000, the data),
-  `createCDATASection` (6). -/
+  /-- A node of `createKind` (kind + 16 × document; see there). -/
   | createNode (kind : Nat) (data : String) (result : Nat)
   /-- `createElementNS(namespace, qualifiedName)`; the namespace "" is null. -/
   | createElementNS (ns qname : String) (result : Nat)
@@ -327,6 +325,7 @@ def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   | 7 => (s, ret (if x.type == .document then n else x.doc))
   | 8 => (s, ret (if x.type == .element && x.ns == some htmlNS && (d.get x.doc).htmlDoc then 1 else 0))
   | 9 => opt x.content
+  | 10 => (s, ret (if x.htmlDoc then 1 else 0))
   | _ => (s, ret (-2))
 
 /-- `nodeName` (DOM §4.4). -/
@@ -355,6 +354,8 @@ def nodeStringOf (d : Dom) (n which : Nat) : Except Int String :=
   | 4 => opt (d.textContent n)
   | 5 => opt x.pfx
   | 6 => .ok (x.attrs.foldl (fun acc a => acc ++ a.qname ++ "\x00" ++ a.value ++ "\x00") "")
+  | 7 => .ok x.pubId
+  | 8 => .ok x.sysId
   | _ => .error (-2)
 
 def le32 (v : Nat) : ByteArray := ⟨#[(v % 256).toUInt8, (v / 256 % 256).toUInt8, (v / 65536 % 256).toUInt8, (v / 16777216 % 256).toUInt8]⟩
@@ -370,50 +371,82 @@ def answerList (mem : Nat) (st : StoreOf M) (buf cap : Nat) : Except Int (Array 
     (r.1, match r.2 with | .values #[.i32 _] => ret xs.size | other => other)
   | .error e => (st, ret e)
 
-/-- `createElementNS` (DOM §4.5) without the namespace checks of "validate and extract"
-beyond the name: a prefix needs a namespace. -/
-def createElementNS (d : Dom) (ns qname : String) : Except DomError (Dom × Nat) :=
+/-- `createElementNS` (DOM §4.5) in document `doc`, without the namespace checks of
+"validate and extract" beyond the name: a prefix needs a namespace. -/
+def createElementNS (d : Dom) (ns qname : String) (doc : Nat := 0) : Except DomError (Dom × Nat) :=
   match qname.splitOn ":" with
   | [l] => if !Dom.validElementLocalName l then .error .invalidCharacter
-    else .ok (d.create { type := .element, doc := 0, ns := if ns.isEmpty then none else some ns, lname := l })
+    else .ok (d.create { type := .element, doc, ns := if ns.isEmpty then none else some ns, lname := l })
   | [p, l] =>
     if p.isEmpty || !Dom.validElementLocalName l then .error .invalidCharacter
     else if ns.isEmpty then .error .notSupported
-    else .ok (d.create { type := .element, doc := 0, ns := some ns, pfx := some p, lname := l })
+    else .ok (d.create { type := .element, doc, ns := some ns, pfx := some p, lname := l })
   | _ => .error .invalidCharacter
 
-/-- `createProcessingInstruction(target, data)` (kind 5, `data` is target, U+0000, data)
-and `createCDATASection(data)` (kind 6), of the document node 0. -/
-def createOther (d : Dom) (kind : Nat) (data : String) : Res Nat :=
-  match kind, data.splitOn "\x00" with
-  | 5, [target, body] => d.createProcessingInstruction 0 target body
-  | 5, _ => (d, .error .invalidCharacter)
-  | _, _ => d.createCDATASection 0 data
+/-- A new document node (its own node document); `html` for an HTML document. -/
+def newDocument (d : Dom) (html : Bool) : Dom × Nat :=
+  let (d, doc) := d.push { type := .document, htmlDoc := html }
+  (d.setNode doc fun n => { n with doc := doc }, doc)
+
+/-- `createHTMLDocument(title)` (DOM §4.5.1): a doctype, `html`, `head`, the `title` with
+its text when a title is given, and `body`. -/
+def createHTMLDocument (d : Dom) (title : Option String) : Dom × Nat := Id.run do
+  let (d, doc) := newDocument d true
+  let el := fun (d : Dom) (name : String) => d.create { type := .element, doc, ns := some htmlNS, lname := name }
+  let (d, dt) := d.create { type := .doctype, doc, lname := "html" }
+  let d := d.linkChild doc dt none
+  let (d, html) := el d "html"
+  let d := d.linkChild doc html none
+  let (d, head) := el d "head"
+  let d := d.linkChild html head none
+  let d := match title with
+    | some t =>
+      let (d, te) := el d "title"
+      let d := d.linkChild head te none
+      let (d, tx) := d.createTextNode doc t
+      d.linkChild te tx none
+    | none => d
+  let (d, body) := el d "body"
+  return (d.linkChild html body none, doc)
+
+/-- `create_node(kind + 16 × doc, data)`: the node a script makes, in document `doc`.
+Kinds: 0 `createTextNode`, 1 `createComment`, 2 `createDocumentFragment`, 3
+`createElement`, 4 `createElementNS` (`data` is namespace, U+0000, qualified name), 5
+`createProcessingInstruction` (target, U+0000, data), 6 `createCDATASection`, 7
+`createHTMLDocument` with the title `data`, 10 the same with no title, 8 an XML document
+(`createDocument`, `new Document()`), 9 `createDocumentType` (name, U+0000, public id,
+U+0000, system id). -/
+def createKind (d : Dom) (kind : Nat) (data : String) : Res Nat :=
+  let doc := kind / 16
+  let ok := fun (r : Dom × Nat) => ((r.1, .ok r.2) : Res Nat)
+  if kind % 16 ∉ [7, 8, 10] && (doc ≥ d.size || (d.get doc).type != .document) then (d, .error .notSupported) else
+  match kind % 16, data.splitOn "\x00" with
+  | 0, _ => ok (d.createTextNode doc data)
+  | 1, _ => ok (d.createComment doc data)
+  | 2, _ => ok (d.createDocumentFragment doc)
+  | 3, _ => d.createElement doc data
+  | 4, [ns, q] => match createElementNS d ns q doc with
+    | .ok r => ok r
+    | .error e => (d, .error e)
+  | 5, [target, body] => d.createProcessingInstruction doc target body
+  | 6, _ => d.createCDATASection doc data
+  | 7, _ => ok (createHTMLDocument d (some data))
+  | 10, _ => ok (createHTMLDocument d none)
+  | 8, _ => ok (newDocument d false)
+  | 9, [name, pub, sys] => d.createDocumentType doc name pub sys
+  | _, _ => (d, .error .invalidCharacter)
 
 def createNode (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
   match readStr mem st (arg args 1) (arg args 2) maxString with
   | .error e => (s, codeOrTrap e)
   | .ok data =>
-    match arg args 0 with
-    | 0 => let (d, n) := s.dom.createTextNode 0 data; addCommandAnswer s (.createNode 0 data n) d n
-    | 1 => let (d, n) := s.dom.createComment 0 data; addCommandAnswer s (.createNode 1 data n) d n
-    | 2 => let (d, n) := s.dom.createDocumentFragment 0; addCommandAnswer s (.createNode 2 "" n) d n
-    | 3 =>
-      match s.dom.createElement 0 data with
-      | (_, .error e) => (s, ret (domErr e))
-      | (d, .ok n) => addCommandAnswer s (.createElement data n) d n
-    | 4 =>
-      match data.splitOn "\x00" with
-      | [ns, qname] =>
-        match createElementNS s.dom ns qname with
-        | .error e => (s, ret (domErr e))
-        | .ok (d, n) => addCommandAnswer s (.createElementNS ns qname n) d n
-      | _ => (s, ret (-2))
-    | 5 | 6 =>
-      match createOther s.dom (arg args 0) data with
-      | (_, .error e) => (s, ret (domErr e))
-      | (d, .ok n) => addCommandAnswer s (.createNode (arg args 0) data n) d n
-    | _ => (s, ret (-2))
+    let kind := arg args 0
+    match createKind s.dom kind data with
+    | (_, .error e) => (s, ret (domErr e))
+    | (d, .ok n) =>
+      -- `createElement` of the page's own document keeps its first command form.
+      let c := if kind == 3 then Command.createElement data n else Command.createNode kind data n
+      addCommandAnswer s c d n
 
 def insertBefore (args : Array Value) (s : State) : State × HostResult :=
   let p := arg args 0
@@ -653,15 +686,9 @@ def Command.apply (d : Dom) : Command → Except String Dom
     if (d.get n).type != .element then throw "script command: target must be an element"
     return removeAttr d n k
   | .createNode k data r =>
-    match k with
-    | 0 => made r (d.createTextNode 0 data)
-    | 1 => made r (d.createComment 0 data)
-    | 2 => made r (d.createDocumentFragment 0)
-    | 5 | 6 =>
-      match createOther d k data with
-      | (d, .ok n) => made r (d, n)
-      | (_, .error e) => .error s!"script command: {e.name}"
-    | _ => .error "script command: unknown node kind"
+    match createKind d k data with
+    | (d, .ok n) => made r (d, n)
+    | (_, .error e) => .error s!"script command: {e.name}"
   | .createElementNS ns q r =>
     match L4Factoidal.WasmVM.Hosts.Dom.createElementNS d ns q with
     | .ok x => made r x

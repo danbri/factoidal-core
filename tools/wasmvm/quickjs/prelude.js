@@ -17,7 +17,7 @@
   'use strict';
   // The natives, with every change of the tree also queued as a mutation record (DOM §4.3)
   // for MutationObserver. The change itself is Lean's; this only reports it.
-  const n = Object.assign({}, n0);
+  const n = Object.create(n0); // the natives are not enumerable: inherit them
   const WINDOW = 0x0FFFFFFF;
   let nextTarget = 0x10000000;
   const define = (o, name, value) => Object.defineProperty(o, name, { value, writable: true, configurable: true });
@@ -341,7 +341,7 @@
         if (p === Symbol.iterator) return function* () { for (const i of ids()) yield wrap(i); };
         return Reflect.get(t, p, recv);
       },
-      has(t, p) { if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) return Number(p) < ids().length; return Reflect.has(t, p); },
+      has(t, p) { if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) return Number(p) < ids().length; return p === 'length' || Reflect.has(t, p); },
       ownKeys() { return [...ids().keys()].map(String); },
       getOwnPropertyDescriptor(t, p) {
         if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p) && Number(p) < ids().length)
@@ -698,8 +698,8 @@
   class ProcessingInstruction extends CharacterData { get target() { return str(nodeId(this), 0); } }
   class DocumentType extends Node {
     get name() { return str(nodeId(this), 0); }
-    get publicId() { return ''; }
-    get systemId() { return ''; }
+    get publicId() { return str(nodeId(this), 7) ?? ''; }
+    get systemId() { return str(nodeId(this), 8) ?? ''; }
   }
   class DocumentFragment extends Node {
     constructor() { return wrap(chk(n.create(2, ''))); }
@@ -707,14 +707,14 @@
   }
   let readyState = 'loading';
   class Document extends Node {
-    constructor() { throw new TypeError('Illegal constructor'); }
-    get URL() { return location.href; }
-    get documentURI() { return location.href; }
+    constructor() { return wrap(chk(n.create(8, ''))); }
+    get URL() { return this === document ? location.href : 'about:blank'; }
+    get documentURI() { return this.URL; }
     get compatMode() { return 'CSS1Compat'; }
     get characterSet() { return 'UTF-8'; }
     get charset() { return 'UTF-8'; }
     get inputEncoding() { return 'UTF-8'; }
-    get contentType() { return 'text/html'; }
+    get contentType() { return info(nodeId(this), 10) === 1 ? 'text/html' : 'application/xml'; }
     get readyState() { return readyState; }
     get defaultView() { return this === document ? window : null; }
     get location() { return this === document ? location : null; }
@@ -733,20 +733,23 @@
     get currentScript() { return currentScript; }
     getElementById(id) { return wrap(n.byId(String(id))); }
     getElementsByName(name) { return staticList(elementsOf(nodeId(this)).filter(k => n.attr(k, 'name') === String(name)).map(wrap)); }
-    createElement(name, options) { return wrap(chk(n.create(3, String(name)))); }
+    // Each node is made in this document: kind + 16 × its node number (Hosts.Dom.createKind).
+    createElement(name, options) { return wrap(chk(n.create(3 + 16 * nodeId(this), String(name)))); }
     createElementNS(ns, qname) {
-      if (ns === 'http://www.w3.org/1999/xhtml') return this.createElement(String(qname).split(':').pop());
-      return wrap(chk(n.create(4, (ns ?? '') + '\u0000' + String(qname))));
+      if (ns === 'http://www.w3.org/1999/xhtml' && !String(qname).includes(':')) return this.createElement(String(qname));
+      return wrap(chk(n.create(4 + 16 * nodeId(this), (ns ?? '') + '\u0000' + String(qname))));
     }
-    createTextNode(data) { return wrap(chk(n.create(0, String(data)))); }
-    createComment(data) { return wrap(chk(n.create(1, String(data)))); }
-    createDocumentFragment() { return wrap(chk(n.create(2, ''))); }
-    createProcessingInstruction(target, data) { return wrap(chk(n.create(5, String(target) + '\u0000' + String(data)))); }
-    createCDATASection(data) { return wrap(chk(n.create(6, String(data)))); }
+    createTextNode(data) { return wrap(chk(n.create(0 + 16 * nodeId(this), String(data)))); }
+    createComment(data) { return wrap(chk(n.create(1 + 16 * nodeId(this), String(data)))); }
+    createDocumentFragment() { return wrap(chk(n.create(2 + 16 * nodeId(this), ''))); }
+    createProcessingInstruction(target, data) { return wrap(chk(n.create(5 + 16 * nodeId(this), String(target) + '\u0000' + String(data)))); }
+    createCDATASection(data) { return wrap(chk(n.create(6 + 16 * nodeId(this), String(data)))); }
     createEvent(name) {
       const map = { event: Event, events: Event, htmlevents: Event, customevent: CustomEvent, mouseevent: MouseEvent,
         mouseevents: MouseEvent, uievent: UIEvent, uievents: UIEvent, keyboardevent: KeyboardEvent, focusevent: FocusEvent,
-        errorevent: ErrorEvent };
+        errorevent: ErrorEvent, svgevents: Event, messageevent: Event, hashchangeevent: Event, storageevent: Event,
+        beforeunloadevent: Event, compositionevent: UIEvent, devicemotionevent: Event, deviceorientationevent: Event,
+        dragevent: MouseEvent, textevent: UIEvent };
       const C = map[String(name).toLowerCase()];
       if (!C) throw new DOMException('The provided event type is not supported.', 'NotSupportedError');
       const e = new C('');
@@ -756,10 +759,27 @@
     importNode(node, deep = false) { return node.cloneNode(deep); }
     adoptNode(node) { if (node.parentNode) node.parentNode.removeChild(node); return node; }
     elementFromPoint() { return null; }
-    get implementation() { return implementation; }
+    get implementation() { let i = implementations.get(this); if (!i) { i = Object.create(DOMImplementation.prototype); implDoc.set(i, nodeId(this)); implementations.set(this, i); } return i; }
   }
-  const implementation = Object.freeze({ hasFeature: () => true });
+  // DOMImplementation (DOM §4.5.1): documents and doctypes made in the arena by Lean.
+  const implementations = new WeakMap(), implDoc = new WeakMap();
+  class DOMImplementation {
+    constructor() { throw new TypeError('Illegal constructor'); }
+    createHTMLDocument(title) { return wrap(chk(n.create(title === undefined ? 10 : 7, title === undefined ? '' : String(title)))); }
+    createDocument(ns, qname, doctype = null) {
+      const d = wrap(chk(n.create(8, '')));
+      const el = qname === null || qname === '' ? null : d.createElementNS(ns, qname);
+      if (doctype) d.appendChild(doctype);
+      if (el) d.appendChild(el);
+      return d;
+    }
+    createDocumentType(name, publicId, systemId) {
+      return wrap(chk(n.create(9 + 16 * implDoc.get(this), String(name) + '\u0000' + String(publicId) + '\u0000' + String(systemId))));
+    }
+    hasFeature() { return true; }
+  }
   class HTMLDocument extends Document {}
+  class XMLDocument extends Document {}
   mix(Element, parentNode); mix(Document, parentNode); mix(DocumentFragment, parentNode);
   mix(Element, childNode); mix(CharacterData, childNode, ['remove', 'before', 'after', 'replaceWith', 'previousElementSibling', 'nextElementSibling']);
   mix(DocumentType, childNode, ['remove', 'before', 'after', 'replaceWith']);
@@ -774,7 +794,7 @@
       case 4: return CDATASection.prototype;
       case 7: return ProcessingInstruction.prototype;
       case 8: return Comment.prototype;
-      case 9: return HTMLDocument.prototype;
+      case 9: return info(id, 10) === 1 ? HTMLDocument.prototype : XMLDocument.prototype;
       case 10: return DocumentType.prototype;
       case 11: return DocumentFragment.prototype;
       default: return Node.prototype;
@@ -1093,7 +1113,7 @@
   def('open', () => null);
   for (const [k, v] of Object.entries({ EventTarget, Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, ErrorEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, CharacterData, Text, CDATASection, Comment,
-    ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, NodeList, HTMLCollection, NamedNodeMap,
+    ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap,
     DOMTokenList, DOMException, AbortController, AbortSignal, Window, MutationObserver, MutationRecord, ...named })) def(k, v);
 
   // Content event handler attributes (HTML §8.1.8.1): onclick="..." and <body onload>.
