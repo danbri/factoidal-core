@@ -147,7 +147,19 @@ private def menu (number : Nat) (percent : Nat := 100) : Option String :=
   (WebDocument.run "" (json [("op",.string "command"),("command",.number (toString number)),("textScalePercent",.number (toString percent))]) 1 1).toOption
 #guard menu 1 == some "{\"action\":\"zoomIn\",\"textScalePercent\":110}"
 #guard menu 2 == some "{\"action\":\"zoomOut\",\"textScalePercent\":90}"
-#guard menu 3 200 == some "{\"action\":\"zoomReset\",\"textScalePercent\":150}"
+#guard menu 3 300 == some "{\"action\":\"zoomReset\",\"textScalePercent\":200}"
+-- On a 3x phone (zoomUnit 300) the reset is 200% of a usual browser's text: zoom 600.
+#guard historyField' [("op",.string "command"),("command",.number "3"),("textScalePercent",.number "450"),("zoomUnit",.number "300")] "textScalePercent" == some (.number "600")
+-- The settings page's text size (foafnaut:zoom/...): Lean answers the zoom and what it shows.
+private def zoomLink (argument : String) (percent unit : Nat) : List (String × JSON.Json) :=
+  [("op",.string "textZoom"),("zoom",.string argument),("textScalePercent",.number (toString percent)),("zoomUnit",.number (toString unit))]
+#guard historyField' (zoomLink "up" 600 300) "textScalePercent" == some (.number "675")
+#guard historyField' (zoomLink "up" 600 300) "shown" == some (.number "225")
+#guard historyField' (zoomLink "down" 200 100) "textScalePercent" == some (.number "175")
+#guard historyField' (zoomLink "400" 600 300) "textScalePercent" == some (.number "1200")
+#guard historyField' (zoomLink "" 450 300) "shown" == some (.number "150") && (historyField' (zoomLink "" 450 300) "refused").isNone
+#guard historyField' (zoomLink "big" 450 300) "textScalePercent" == some (.number "450") && (historyField' (zoomLink "big" 450 300) "refused").isSome
+#guard historyField' (zoomLink "" 600 300) "max" == some (.number "3000") && historyField' (zoomLink "" 600 300) "default" == some (.number "600")
 #guard menu 4 == some "{\"action\":\"copy\",\"target\":\"page\",\"textScalePercent\":100}"
 -- Edit commands act on the address bar when it has the focus; paste always does (issue 1268).
 private def focusedMenu (number : Nat) : Option JSON.Json :=

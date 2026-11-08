@@ -50,7 +50,7 @@ Deno.test("published Lean owns zoom, selection and copied text",async()=>{
     const document=await prepareHTML(engine,inputURL(dir+"/page.html",true));
     assert.deepEqual(engine.command(1,100),{action:"zoomIn",textScalePercent:110});
     assert.deepEqual(engine.command(2,100),{action:"zoomOut",textScalePercent:90});
-    assert.deepEqual(engine.command(3,200),{action:"zoomReset",textScalePercent:150});
+    assert.deepEqual(engine.command(3,300),{action:"zoomReset",textScalePercent:200});
     assert.equal(engine.command(5,100).action,"selectAll");
     assert.equal(engine.pointerUp([10,10,11,10]),"click");
     assert.equal(engine.pointerUp([10,10,60,10]),"select");

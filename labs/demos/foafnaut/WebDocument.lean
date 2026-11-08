@@ -403,8 +403,32 @@ def press (request : JSON.Json) : Except String String := do
       return (JSON.Json.object [("control",.null),("sourceNode",.number (toString target.sourceNode)),
         ("href",.string target.href),("rects",.array (rects.map rect))]).toString
 
+/-- `zoomUnit`: the screen's device pixels for each CSS pixel, in percent; 100 if absent. -/
+private def zoomUnit (request : JSON.Json) : Nat :=
+  match request.field? "zoomUnit" with
+  | some (.number n) => match n.toNat? with | some u => if u = 0 then 100 else u | none => 100
+  | _ => 100
+
+/-- The text size of the settings page (`foafnaut:zoom/up`, `/down`, `/reset`, `/150`): from
+`zoom` (absent or empty: no change), `textScalePercent` and `zoomUnit`, the zoom to use and
+the text size the reader sees, with the default, the range and the step as zooms on this
+screen. A `zoom` that is not a size is refused and changes nothing. -/
+def textZoomAnswer (request : JSON.Json) : Except String String := do
+  let percent ← scalePercent request
+  let unit := zoomUnit request
+  let argument := match request.field? "zoom" with | some (.string a) => a | _ => ""
+  let ask := WebSelection.ZoomAsk.parse argument
+  let next := match ask with | some a => WebSelection.textZoom a percent unit | none => percent
+  let n := fun (k : Nat) => JSON.Json.number (toString k)
+  let refused := if ask.isNone && !argument.isEmpty then [("refused",JSON.Json.string s!"not a text size: {argument}")] else []
+  return (JSON.Json.object ([("textScalePercent",n next),("shown",n (WebSelection.shownPercent next unit)),
+    ("default",n (WebSelection.unitPercent WebSelection.defaultPercent unit)),
+    ("min",n (WebSelection.unitPercent WebSelection.minPercent unit)),("max",n (WebSelection.unitPercent WebSelection.maxShown unit)),
+    ("step",n WebSelection.textStep)] ++ refused)).toString
+
 /-- Input decisions need no document, so they do not parse one. -/
 private def inputOp (op : String) (request : JSON.Json) : Except String (Option String) := do
+  if op == "textZoom" then return some (← textZoomAnswer request)
   if op == "command" then
     let some (.number raw) := request.field? "command" | throw "command number required"
     let some command := raw.toNat? | throw "command must be natural"
@@ -426,7 +450,7 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
       then [("refused",JSON.Json.string "find in page is not implemented: https://github.com/danbri/factoidal/issues/1280")] else []
     let fields := [("action",JSON.Json.string action)] ++
       (if WebShell.addressCommands.contains action then [("target",JSON.Json.string target)] else []) ++
-      [("textScalePercent",.number (toString (WebSelection.commandPercent command percent)))] ++ tab ++ scrollTo ++ refused
+      [("textScalePercent",.number (toString (WebSelection.commandPercent command percent (zoomUnit request))))] ++ tab ++ scrollTo ++ refused
     if (request.field? "history").isNone then return some (JSON.Json.object fields).toString
     let (next,url) := WebHistory.apply command (← history request)
     return some (JSON.Json.object (fields ++ historyFields next url)).toString

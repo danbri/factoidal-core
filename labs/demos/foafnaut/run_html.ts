@@ -272,7 +272,9 @@ async function main() {
   };
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.
-  const view:PageView={textScalePercent:150};
+  // Text zoom 200 (WebSelection.defaultPercent; it was 150): this window keeps zoom unit 100,
+  // so the settings page shows it as 200%.
+  const view:PageView={textScalePercent:200};
   let press:number[]|undefined,lastCopied:string|undefined,loading=false;
   // The press on screen (issue 1268): Lean's `press` answer (a chrome control, or the link's
   // node for `:active`, and the rectangles that the composite darkens), the time its event was
@@ -490,6 +492,36 @@ async function main() {
   const pageRow=(y:number)=>current?y-current.layers.layers.top+shownOffset:y;
   const windowRow=(y:number)=>current?y+current.layers.layers.top-shownOffset:y;
   const settingsURL=new URL("./pages/settings.html",import.meta.url).href;
+  // The settings page's text size: Lean's textZoom (asked once; an older engine keeps the zoom
+  // of before: a number is the zoom, up, down and reset are window commands 1, 2 and 3).
+  let zoomOps:boolean|undefined;
+  const textZoom=(argument="")=>{
+    if(zoomOps===false)return undefined;
+    try{const answer=engine.textZoom(argument,view.textScalePercent??200);zoomOps=true;return answer;}
+    catch{zoomOps=false;return undefined;}
+  };
+  const zoomTo=(next:number)=>{
+    if(next===view.textScalePercent)return;
+    view.textScalePercent=next;view.selection=undefined;dirty=true;
+    trace("native-html-zoom",{textScalePercent:next});
+    browserState?.settings({textZoom:next});
+    if(document.url===settingsURL)navigate(settingsURL,false);
+  };
+  const zoomCommand=(argument:string)=>{
+    if(!argument){navigate(settingsURL);return;}
+    const answer=textZoom(argument);
+    if(answer)zoomTo(answer.textScalePercent);
+    else if(/^[0-9]+$/.test(argument))zoomTo(Math.max(50,Number(argument)));
+    else if(["up","down","reset"].includes(argument))windowCommand(["up","down","reset"].indexOf(argument)+1);
+  };
+  // The settings page with the text size now where it says <!--foafnaut:text-size-->.
+  const settingsSource=async()=>{
+    const source=await Deno.readTextFile(new URL(settingsURL));
+    const size=textZoom();
+    return source.replace("<!--foafnaut:text-size-->",size
+      ?`<h2 class="size">Text size: ${size.shown}%</h2>`
+      :"<h2>Text size</h2><p>The engine of this window is older: these sizes are the text zoom itself, and A+ and A\u2212 step by a tenth.</p>");
+  };
   const shellCommand=(name:string,argument:string)=>{
     if(name==="back")windowCommand(6);
     else if(name==="forward")windowCommand(7);
@@ -500,7 +532,7 @@ async function main() {
     else if(name==="graph")navigate(graphURL);
     else if(name==="source")viewSource().catch(error=>refuse(document.url,error));
     else if(name==="theme"){theme=argument||(theme==="next"?"arcade":"next");dirty=true;browserState?.settings({theme});}
-    else if(name==="zoom"&&/^[0-9]+$/.test(argument)){view.textScalePercent=Math.max(50,Number(argument));dirty=true;browserState?.settings({textZoom:view.textScalePercent});}
+    else if(name==="zoom")zoomCommand(argument);
     else if(STATE_COMMANDS.includes(name)){
       if(!browserState){refuse(`foafnaut:${name}`,"Browser state is off (--no-state, a sweep or a check)");return;}
       browserState.command(name,argument,{url:document.url,title:document.title??""}).then(page=>{if(page)navigate(page);}).catch(error=>refuse(`foafnaut:${name}`,error));
@@ -632,11 +664,7 @@ async function main() {
       if(answer.url)navigate(answer.url,false);
       remember(answer as HistoryAnswer,answer.action);
     }
-    if(answer.textScalePercent!==view.textScalePercent){
-      view.textScalePercent=answer.textScalePercent;view.selection=undefined;dirty=true;
-      trace("native-html-zoom",{textScalePercent:answer.textScalePercent});
-      browserState?.settings({textZoom:answer.textScalePercent});
-    }
+    zoomTo(answer.textScalePercent);
     if(answer.action==="focusAddress")focusAddress();
     if(answer.action==="newTab")newTab();
     // Lean answers the tab to show and the scroll; the host shows them.
@@ -688,7 +716,7 @@ async function main() {
     const from=document.url;
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):prepareHTML(lean,target,current.signal)).then(next=>{
+    (STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):prepareHTML(lean,target,current.signal)).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");

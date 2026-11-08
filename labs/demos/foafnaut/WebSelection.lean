@@ -171,21 +171,112 @@ def commandName : Nat → String
   | 39 => "stop"
   | _ => "none"
 
-/-- Text size of a new window on a desktop screen. -/
-def defaultPercent : Nat := 150
+/-! ### Text size as the reader sees it
 
-def commandPercent (command percent : Nat) : Nat :=
+The text zoom (`textScalePercent`) is device pixels of text for each CSS pixel, in percent.
+A host whose screen has `unit`/100 device pixels to its CSS pixel (`zoomUnit`: 100 on a 1x
+screen, 300 on a 3x phone; the native window keeps 100) shows the reader the zoom divided
+by that: the text size, 100 being the size a usual browser gives. The settings page steps
+and sets the text size; the host gets the zoom back. -/
+
+/-- Text size of a new window, in percent of a usual browser's: 200 (it was 150). -/
+def defaultPercent : Nat := 200
+
+/-- The largest text size the settings page and a pinch reach. -/
+def maxShown : Nat := 1000
+
+/-- One step of A+ or A−: 25 points of text size, on the multiples of 25. -/
+def textStep : Nat := 25
+
+/-- The text size the reader sees for a zoom on a screen of `unit`, to the nearest 5. -/
+def shownPercent (percent unit : Nat) : Nat :=
+  (percent*200 + 5*max 1 unit) / (10*max 1 unit) * 5
+
+/-- The zoom for a text size on a screen of `unit`, on multiples of 5, at least `minPercent`. -/
+def unitPercent (shown unit : Nat) : Nat :=
+  max minPercent ((shown*max 1 unit + 250)/500*5)
+
+/-- A text size within the settings range. -/
+def clampShown (n : Nat) : Nat := max minPercent (min maxShown n)
+
+/-- A+: the next multiple of `textStep` above. -/
+def stepUp (s : Nat) : Nat := clampShown ((s/textStep + 1)*textStep)
+
+/-- A−: the multiple of `textStep` below. -/
+def stepDown (s : Nat) : Nat := clampShown ((s + textStep - 1)/textStep*textStep - textStep)
+
+/-- What a `foafnaut:zoom/ARGUMENT` link asks. -/
+inductive ZoomAsk where
+  | up
+  | down
+  | reset
+  | to (shown : Nat)
+  deriving Repr, DecidableEq
+
+/-- `up`, `down`, `reset` or a whole number of percent; anything else is not a size. -/
+def ZoomAsk.parse (argument : String) : Option ZoomAsk :=
+  if argument == "up" then some .up
+  else if argument == "down" then some .down
+  else if argument == "reset" then some .reset
+  else if !argument.isEmpty && argument.length <= 6 && argument.all Char.isDigit then argument.toNat?.map .to
+  else none
+
+/-- The text size an ask gives, from the text size `s`. -/
+def zoomShown : ZoomAsk → Nat → Nat
+  | .up, s => stepUp s
+  | .down, s => stepDown s
+  | .reset, _ => defaultPercent
+  | .to n, _ => clampShown n
+
+/-- The zoom an ask gives, from the zoom `percent` on a screen of `unit`. -/
+def textZoom (ask : ZoomAsk) (percent unit : Nat) : Nat :=
+  unitPercent (zoomShown ask (shownPercent percent unit)) unit
+
+theorem clampShown_bounds (n : Nat) : minPercent ≤ clampShown n ∧ clampShown n ≤ maxShown := by
+  unfold clampShown minPercent maxShown; omega
+
+theorem zoomShown_bounds (ask : ZoomAsk) (s : Nat) :
+    minPercent ≤ zoomShown ask s ∧ zoomShown ask s ≤ maxShown := by
+  cases ask with
+  | up => exact clampShown_bounds _
+  | down => exact clampShown_bounds _
+  | reset => simp only [zoomShown, defaultPercent, minPercent, maxShown]; omega
+  | to n => exact clampShown_bounds _
+
+/-- A+ always grows a text size below the largest; A− always shrinks one above the smallest. -/
+theorem stepUp_grows (s : Nat) (h : s < maxShown) : s < stepUp s := by
+  unfold stepUp clampShown textStep minPercent maxShown at *; omega
+
+theorem stepDown_shrinks (s : Nat) (h : minPercent < s) : stepDown s < s := by
+  unfold stepDown clampShown textStep minPercent maxShown at *; omega
+
+/-- The zoom of a link is never below the smallest that layout takes (`scalePercent`). -/
+theorem textZoom_min (ask : ZoomAsk) (percent unit : Nat) : minPercent ≤ textZoom ask percent unit := by
+  unfold textZoom unitPercent; omega
+
+/-- Window command 3 (zoom reset) gives the default text size on a screen of `unit`. -/
+def commandPercent (command percent : Nat) (unit : Nat := 100) : Nat :=
   match command with
   | 1 => zoomIn percent
   | 2 => zoomOut percent
-  | 3 => defaultPercent
+  | 3 => unitPercent defaultPercent unit
   | _ => percent
 
 #guard zoomIn 100 == 110 && zoomIn 105 == 115 && zoomIn 150 == 165 && zoomIn 250 == 275
 #guard zoomIn 2000 == 2200 && zoomIn 1 == 2
 #guard zoomOut 100 == 90 && zoomOut 50 == 50 && zoomOut 105 == 95 && zoomOut 165 == 150
 #guard zoomOut 51 == 50 && zoomOut 10 == 10 && zoomOut 2200 == 2000
-#guard commandPercent 3 175 == 150 && commandPercent 4 175 == 175
+#guard commandPercent 3 175 == 200 && commandPercent 4 175 == 175 && commandPercent 3 175 300 == 600
+-- A 3x phone starts at 600 and shows 200%; A+ gives 225% (675), A− 175% (525).
+#guard shownPercent 600 300 == 200 && textZoom .up 600 300 == 675 && textZoom .down 600 300 == 525
+#guard textZoom (.to 400) 600 300 == 1200 && textZoom (.to 5000) 100 100 == 1000 && textZoom (.to 10) 300 300 == 150
+#guard textZoom .reset 450 300 == 600 && textZoom .reset 150 100 == 200 && textZoom .reset 330 263 == 525
+-- Off the steps (a pinch left 210%), A+ and A− go to the steps beside it.
+#guard textZoom .up 210 100 == 225 && textZoom .down 210 100 == 200 && textZoom .down 50 100 == 50 && textZoom .up 1000 100 == 1000
+#guard ZoomAsk.parse "up" == some .up && ZoomAsk.parse "150" == some (.to 150) && ZoomAsk.parse "" == none && ZoomAsk.parse "1e3" == none
+-- Every text size on the steps of 5 comes back as itself on 1x, 1.5x, 2x, 2.625x and 3x screens.
+#guard [100,150,200,263,300].all fun u => (List.range 191).all fun i => let s := 50+5*i;
+  shownPercent (unitPercent s u) u == s
 -- Zoom in then out comes back on the steps from 100 up.
 #guard (List.range 40).all fun i => let p := 100+5*i; zoomOut (zoomIn p) == p || p % 10 != 0
 #guard (List.range 2000).all fun p => zoomIn p > p && (p <= minPercent || (zoomOut p < p && zoomOut p >= minPercent))

@@ -1,16 +1,16 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Settings</title><style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:white}main{width:640px}h1{margin:0;font-size:21px;line-height:28px;color:#184078}h2{margin:0;padding-top:14px;font-size:16px;line-height:24px;color:#184078}p{margin:0;padding-top:6px}.check{padding-top:10px;font-size:18px;line-height:40px}.box{display:inline-block;width:32px;height:32px;border:3px solid #184078;background:white;vertical-align:middle}.tick{display:block;margin:6px;width:20px;height:20px;background:#184078}</style></head><body><main>
+<html lang="en"><head><meta charset="utf-8"><title>Settings</title><style>body{margin:16px;font-size:14px;line-height:20px;color:#102030;background:white}h1{margin:0;font-size:22px;line-height:30px;color:#184078}h2{margin:0;padding-top:16px;font-size:17px;line-height:26px;color:#184078}p{margin:0;padding-top:6px}.check{padding-top:10px;font-size:18px;line-height:40px}.box{display:inline-block;width:32px;height:32px;border:3px solid #184078;background:white;vertical-align:middle}.tick{display:block;margin:6px;width:20px;height:20px;background:#184078}.size{padding-top:8px;font-size:20px;line-height:30px;font-weight:bold;color:#000000}.sample{padding-top:4px;font-size:16px;line-height:24px;color:#000000}.steps{padding-top:12px}.steps a,.presets a{display:inline-block;margin:0 12px 12px 0;padding:0 18px;border:4px solid #0b2a66;font-weight:bold;text-decoration:none}.steps a{font-size:18px;line-height:36px;background:#0b2a66;color:#ffffff}.presets a{font-size:15px;line-height:32px;background:#ffffff;color:#0b2a66}</style></head><body><main>
 <h1>Settings</h1>
+<!--foafnaut:text-size-->
+<p class="steps"><a href="foafnaut:zoom/down">&nbsp;A&#x2212;&nbsp;</a> <a href="foafnaut:zoom/up">&nbsp;A+&nbsp;</a></p>
+<p class="sample">This line is at the size chosen.</p>
+<p class="presets"><a href="foafnaut:zoom/100">100%</a> <a href="foafnaut:zoom/150">150%</a> <a href="foafnaut:zoom/200">200%</a> <a href="foafnaut:zoom/300">300%</a> <a href="foafnaut:zoom/400">400%</a></p>
+<p>200% is the default. A+ and A&#x2212; step by 25%. A pinch, or Control and the mouse wheel, sets any size.</p>
 <h2>Browser UI</h2>
 <!--foafnaut:classic-ui-->
 <h2>Theme</h2>
 <p>- <a href="foafnaut:theme/next">NeXT grey</a></p>
 <p>- <a href="foafnaut:theme/arcade">Arcade night</a></p>
-<h2>Text size</h2>
-<p>- <a href="foafnaut:zoom/100">Small</a></p>
-<p>- <a href="foafnaut:zoom/125">Medium</a></p>
-<p>- <a href="foafnaut:zoom/150">Large</a></p>
-<p>- <a href="foafnaut:zoom/200">Huge</a></p>
 <h2>The address bar</h2>
 <p>Type a URL, or words to search, or a command.</p>
 <p>- :back and :forward</p>
@@ -19,8 +19,8 @@
 <p>- :graph opens the interactive FOAF graph</p>
 <p>- :source shows this page's source</p>
 <p>- :new and :close</p>
-<p>- :zoom 150</p>
+<p>- :zoom 150, :zoom up and :zoom down</p>
 <p>- :theme arcade</p>
 <p>- :open https://example.org opens your system browser</p>
-<p>Settings last until the window closes. Saving them is not built yet.</p>
+<p>The browser keeps these settings: a reload or a new window starts with them.</p>
 </main></body></html>

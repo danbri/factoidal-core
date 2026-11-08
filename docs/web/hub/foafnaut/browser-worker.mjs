@@ -50,7 +50,7 @@ let firstFrameSeen;const firstFrame=new Promise(resolve=>{firstFrameSeen=resolve
 // order it arrived; only moves and scrolls are merged.
 let ready=false,currentStamp,pendingStamp,pendingMove,pendingScroll,flushPort;
 const early=[];
-let width=800,height=600,scale=1,theme='next',percent=150,pages=1,pinchBase;
+let width=800,height=600,scale=1,theme='next',percent=200,pages=1,pinchBase,pinchMax=1000;
 // The folding chrome (owner, 2026-11-08). With the classic UI (the default) the chrome is
 // always full. Off, a scroll down first folds the chrome, up to the strip with the domain,
 // and a scroll up first unfolds it: the rows the chrome gives up or takes back come out of
@@ -131,6 +131,36 @@ const shell=()=>({tabs:tabs.map((tab,i)=>{const page=i===active?doc:tab.doc;retu
   canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,
   ...(folding()?{collapsible:true,collapse:foldPercent()}:{}),...(swipeHint?{swipe:swipeHint}:{})});
 /** This engine draws a folding chrome: it answers shellInfo with the op chromeLayer. */
+// The text size of the settings page (WebSelection.textZoom, op textZoom): Lean answers the
+// zoom for foafnaut:zoom/up, /down, /reset and /PERCENT, and the text size the reader sees,
+// on a screen of this pixel ratio (zoomUnit: device pixels for each CSS pixel, in percent).
+// An engine without the op (asked once) keeps the zoom of before: a number is the zoom, and
+// up, down and reset are window commands 1, 2 and 3 (Lean's zoom in, out and reset).
+let zoomOps;
+const zoomUnit=()=>Math.round(scale*100);
+function textZoom(argument=''){
+  if(zoomOps===false||!module)return undefined;
+  try{const answer=call('',{op:'textZoom',zoom:argument,textScalePercent:percent,zoomUnit:zoomUnit()});
+    if(typeof answer.shown!=='number')throw Error('no text size');zoomOps=true;return answer;}
+  catch{zoomOps=false;return undefined;}
+}
+/** A new zoom: drawn, kept in the browser state, and shown on the settings page. */
+function zoomTo(next){
+  if(next===percent)return;
+  percent=next;request();zoomKept();
+}
+function zoomKept(){
+  browserState?.settings({textZoom:percent}).catch(()=>{});
+  if(doc?.url===settingsURL)navigate(settingsURL,false);
+}
+function zoomCommand(argument){
+  // :zoom with no size opens the settings page, where the text size is.
+  if(!argument){navigate(settingsURL);return;}
+  const answer=textZoom(argument);
+  if(answer)zoomTo(answer.textScalePercent);
+  else if(/^[0-9]+$/.test(argument))zoomTo(Math.max(50,Number(argument)));
+  else if(['up','down','reset'].includes(argument))command(['up','down','reset'].indexOf(argument)+1);
+}
 function canFold(){
   if(engineFolds===undefined){
     try{const answer=call('',{op:'shellInfo',shell:{scale},width});engineFolds=answer.collapse===true&&(answer.ops??[]).includes('chromeLayer');}
@@ -277,8 +307,16 @@ async function fetchText(url){
 }
 // The settings page has the checkbox of the classic UI where it says <!--foafnaut:classic-ui-->,
 // in the state of now. Lean draws it as it draws the rest of the page.
-const classicMark='<!--foafnaut:classic-ui-->';
+const classicMark='<!--foafnaut:classic-ui-->',sizeMark='<!--foafnaut:text-size-->';
 function settingsSource(source){
+  // The text size now, in big type, as the heading of its controls (the page's sample line
+  // is 16 CSS pixels, a usual browser's body text, so it is at that size).
+  if(source.includes(sizeMark)){
+    const size=textZoom();
+    source=source.replace(sizeMark,size
+      ?`<h2 class="size">Text size: ${size.shown}%</h2>`
+      :'<h2>Text size</h2><p>The engine this page loaded is older: these sizes are of the text for each device pixel, and A+ and A\u2212 step by a tenth. The next engine release counts them as a usual browser does.</p>');
+  }
   if(!source.includes(classicMark))return source;
   const box=`<span class="box">${classicUI?'<span class="tick"></span>':''}</span>`;
   const row=canFold()
@@ -759,11 +797,11 @@ function menuPress(data,how){
   if(answer.menu)openMenu();
 }
 function command(id,text=''){
-  const answer=call('',{op:'command',command:id,textScalePercent:percent,history:history.history,focused,
+  const answer=call('',{op:'command',command:id,textScalePercent:percent,zoomUnit:zoomUnit(),history:history.history,focused,
     tabs:tabs.length,active,scroll:Math.round(scroll),view:height,scrollLimit:Math.floor(scrollLimit()),scale});
   if(answer.target==='address'){if(!focused)focusAddress();edit(answer.action,text);return;}
   if(['back','forward','reload'].includes(answer.action)){if(answer.url)navigate(answer.url,false);history=answer;request();}
-  if(answer.textScalePercent!==percent){percent=answer.textScalePercent;request();browserState?.settings({textZoom:percent}).catch(()=>{});}
+  zoomTo(answer.textScalePercent);
   if(answer.action==='focusAddress')focusAddress();
   if(answer.action==='newTab')newTab();
   if(answer.action==='closeTab')closeTab(active);
@@ -938,7 +976,7 @@ function shellCommand(name,argument){
     browserState?.settings({classicUI}).catch(()=>{});
     if(doc?.url===settingsURL)navigate(settingsURL,false);else request();
   }
-  else if(name==='zoom'&&/^[0-9]+$/.test(argument)){percent=Math.max(50,Number(argument));request();browserState?.settings({textZoom:percent}).catch(()=>{});}
+  else if(name==='zoom')zoomCommand(argument);
   else if(['bookmarks','history'].includes(name))navigate('foafnaut:'+name);
   else if(['bookmark','unbookmark','pod','sync'].includes(name))stateCommand(name,argument);
   else if(name==='wasm')navigate(wasmURL+(argument?'/'+argument:''));
@@ -1140,9 +1178,10 @@ async function startEngine(createModule){
 async function start(data){
   ({width,height,scale}=data);
   // Page text in CSS pixels, as a browser has it: the canvas is in device pixels, so the
-  // starting text zoom follows the pixel ratio (150 on a 1x screen, 450 on a 3x phone).
-  // Before this, a phone drew page text at about 5 CSS px. A saved zoom still wins.
-  percent=Math.max(50,Math.round(150*scale/5)*5);
+  // starting text zoom follows the pixel ratio: twice a usual browser's text (200 on a 1x
+  // screen, 600 on a 3x phone; WebSelection.defaultPercent). It was 150 times the ratio.
+  // A saved zoom still wins.
+  percent=Math.max(50,Math.round(200*scale/5)*5);
   checkMode=data.check===true;statsMode=data.stats===true;
   // ?layers=0: one Lean frame for each scroll, as before the two-layer view.
   if(data.layers===false)layered=false;
@@ -1215,8 +1254,9 @@ function hasPrintOps(){
   }
   return printOps;
 }
-/** The text zoom on paper: the zoom on screen for one device pixel, 150 by default. */
-const printPercent=()=>Math.max(50,Math.min(1000,Math.round(percent/scale/5)*5));
+/** The text zoom on paper: three quarters of the zoom on screen for one device pixel, so 150
+ * at the default (200 on screen) as before the larger screen default. */
+const printPercent=()=>Math.max(50,Math.min(1000,Math.round(percent*3/4/scale/5)*5));
 // The prepared pages are of this document, its source, its scripts' DOM changes, text zoom and
 // theme. While Command/Control+P waits, script changes do not start them again.
 const printFits=job=>!!job&&job.doc===doc&&job.source===doc.source&&(printWanted||job.commands===doc.commands)&&job.percent===percent&&job.scale===scale&&job.theme===theme;
@@ -1364,13 +1404,18 @@ function apply(data){
   if(data.type==='wheel')wheel(data);
   if(data.type==='command')command(data.command);
   // A touch pinch: the zoom at its start times the finger ratio, in steps of 5 percent,
-  // from Lean's smallest (50) to 1000. Lean lays the page out again at each new step.
+  // from Lean's smallest (50) to Lean's largest text size on this screen (textZoom max;
+  // 1000 with an engine without it). Lean lays the page out again at each new step; the
+  // zoom at the end is kept, as the settings page's is.
   if(data.type==='pinch'){
-    if(data.phase==='start')pinchBase=percent;
+    if(data.phase==='start'){pinchBase=percent;pinchMax=textZoom()?.max??1000;}
     else if(data.phase==='move'&&pinchBase&&Number.isFinite(data.ratio)){
-      const next=Math.max(50,Math.min(1000,Math.round(pinchBase*data.ratio/5)*5));
+      const next=Math.max(50,Math.min(pinchMax,Math.round(pinchBase*data.ratio/5)*5));
       if(next!==percent){percent=next;request();}
-    }else if(data.phase==='end')pinchBase=undefined;
+    }else if(data.phase==='end'){
+      if(pinchBase&&pinchBase!==percent)zoomKept();
+      pinchBase=undefined;
+    }
   }
   if(data.type==='paste')command(14,data.text);
   if(data.type==='press'){

@@ -98,7 +98,12 @@ try{
     const set=await open('page=settings.html&stats=1&layers=0',width,height);
     await set.until(f=>f.url===settingsURL,60000);await settle(set);
     let links=await linksOf(set);
-    const box=links?.find(l=>l[1]==='foafnaut:classic/off');
+    let box=links?.find(l=>l[1]==='foafnaut:classic/off');
+    // The checkbox is below the text size controls: a finger brings it into the view.
+    for(let i=0;box&&i<6&&box[3]+box[5]/2>height-60;i++){
+      await set.drag(200,600,600-Math.min(450,Math.round(box[3]+box[5]/2-height/2)),8,16,200);await settle(set);
+      links=await linksOf(set);box=links?.find(l=>l[1]==='foafnaut:classic/off');
+    }
     if(!box){console.log(`NOT RUN: ${run.name}: the folding chrome (this engine keeps the classic chrome)`);await set.close();return;}
     if(shots)await set.shot(path.join(shots,`${run.name}-settings-classic.png`));
     await set.tap(Math.round(box[2]+box[4]/2),Math.round(box[3]+box[5]/2));

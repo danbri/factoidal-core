@@ -398,6 +398,11 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // `state` gives the tab count, the scroll and the view, from which Lean answers a tab or a scroll.
     command:(command:number,textScalePercent:number,history?:History,focused=false,state:CommandState={})=>documentCall("",{op:"command",command,textScalePercent,focused,...state,...(history?{history}:{})}) as
       {action:string;target?:"address"|"page";textScalePercent:number;tab?:number;scrollTo?:number;refused?:string}&Partial<HistoryAnswer>,
+    // The settings page's text size (WebSelection.textZoom): the zoom for `zoom` (up, down,
+    // reset, a percent; empty: no change) and the text size shown. An older engine answers
+    // "unknown document operation".
+    textZoom:(zoom:string,textScalePercent:number,zoomUnit=100)=>documentCall("",{op:"textZoom",zoom,textScalePercent,zoomUnit}) as
+      {textScalePercent:number;shown:number;default:number;min:number;max:number;step:number;refused?:string},
     // The tab icon from the Base64 bytes of an icon resource, for a screen of `scale`.
     iconPrepare:(base64:string,scale:number)=>documentCall("",{op:"iconPrepare",base64,scale}) as TabIcon,
     // A key that the macOS menu did not take: the command of Lean's key table, or null.

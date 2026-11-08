@@ -71,13 +71,14 @@ Deno.test("fallback fonts draw what the first font lacks (Wasm)",()=>check());
 Deno.test({name:"fallback fonts draw what the first font lacks (native library)",ignore:noLibrary,fn:()=>check(library)});
 
 // The writing-systems page with its thirteen fallback fonts, as a 390 CSS px phone at 3
-// device pixels to the CSS pixel opens it: text zoom 450 (150 times the pixel ratio).
+// device pixels to the CSS pixel opens it: text zoom 600 (the default text size, 200%, times
+// the pixel ratio; it was 450), and at 1200 (the settings page's 400%).
 // The page is mostly tables, whose cells and rows the layout puts in translated groups.
 // Each frame and each band must hold only the glyphs near the view
 // (WebDocument.nearNodes), not every glyph of the page: before, both passed the storage
 // budget (NativeSVG.maxDataFloats) at zoom 300 and 450.
 const page="showcase-scripts.html";
-async function scriptsAtPhoneZoom(nativeEngine?:string){
+async function scriptsAtPhoneZoom(nativeEngine?:string,zoom=600){
   // @ts-ignore plain JavaScript module of the Hub
   const {fontsFor}=await import("../../../docs/web/hub/foafnaut/font-coverage.mjs");
   const engine=await loadHTML(nativeEngine,"bytes");
@@ -89,10 +90,10 @@ async function scriptsAtPhoneZoom(nativeEngine?:string){
   const width=390*3,height=844*3;
   const shell={tabs:[{title:""}],active:0,address:"",cursor:0,anchor:0,focused:false,canBack:false,canForward:false,
     loading:false,scale:3,theme:"next",pages:1,scroll:0,collapsible:true,collapse:0};
-  const options={url:"file:///"+page,textScalePercent:450,checks:false};
+  const options={url:"file:///"+page,textScalePercent:zoom,checks:false};
   const first=engine.compile(source,width,height,{...options,shell});
   const bottom=Math.max(...first.webRender.boxes.map(b=>b[2]+b[4]));
-  assert(bottom>4*height,`the page at zoom 450 is ${bottom} rows, expected a tall page`);
+  assert(bottom>4*height,`the page at zoom ${zoom} is ${bottom} rows, expected a tall page`);
   // Every frame and band down the page draws; none holds more than a band's share.
   let most=first.data.length;
   for(let scroll=0;scroll<bottom;scroll+=height){
@@ -103,8 +104,9 @@ async function scriptsAtPhoneZoom(nativeEngine?:string){
   }
   assert(most<=1048576,`a frame or band of ${most} floats`);
 }
-Deno.test("the writing-systems page draws at text zoom 450 on a 390 px phone (Wasm)",()=>scriptsAtPhoneZoom());
-Deno.test({name:"the writing-systems page draws at text zoom 450 on a 390 px phone (native library)",ignore:noLibrary,fn:()=>scriptsAtPhoneZoom(library)});
+Deno.test("the writing-systems page draws at text zoom 600 on a 390 px phone (Wasm)",()=>scriptsAtPhoneZoom());
+Deno.test("the writing-systems page draws at text zoom 1200 on a 390 px phone (Wasm)",()=>scriptsAtPhoneZoom(undefined,1200));
+Deno.test({name:"the writing-systems page draws at text zoom 600 on a 390 px phone (native library)",ignore:noLibrary,fn:()=>scriptsAtPhoneZoom(library)});
 
 // Emoji (issue 1276): Noto Emoji, the outline emoji font of the Hub, after Noto Sans. Each
 // sequence is one glyph of that font through its ligatures, with any U+FE0F hidden at no
