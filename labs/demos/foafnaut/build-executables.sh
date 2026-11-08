@@ -51,15 +51,18 @@ deno compile --no-check --no-config --no-npm --node-modules-dir=none --unstable-
   --output "$OUT/native-webgpu-svg-darwin-arm64.tmp" "$LAB/run_svg.ts"
 mv "$OUT/native-webgpu-svg-darwin-arm64.tmp" "$OUT/native-webgpu-svg-darwin-arm64"
 # The native HTML window. Builds supplies the checked web-render engine; a local
-# package with no engine has no window program, and says so.
+# package with no engine has no window program, and says so. It holds Noto Sans and the
+# fallback fonts of the Hub's table (docs/web/hub/foafnaut/fallback-fonts.mjs), with their
+# licences and the CJK coverage file; it reads a fallback font only for a page that needs it
+# (native_html_fonts.ts).
 if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   mkdir -p "$LAB/.build/native-html/runtime"
   cp "$LAB/.build/web-render/engines/web-render."{mjs,wasm} "$LAB/.build/native-html/runtime/"
   deno compile --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-net --allow-ffi --allow-env=HOME \
     --include "$LAB/.build/native-html/runtime/web-render.wasm" \
-    --include "$LAB/../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf" \
-    --include "$LAB/../../../third_party/fonts/noto-sans/OFL.txt" \
+    --include "$LAB/../../../third_party/fonts" \
+    --include "$LAB/../../../docs/web/hub/foafnaut/font-coverage.mjs" --include "$LAB/../../../docs/web/hub/foafnaut/fallback-fonts.mjs" \
     --include "$LAB/.build/engines/render-plan.wasm" \
     --include "$LAB/native-html/default.html" --include "$LAB/native-html/next.html" --include "$LAB/pages" \
     --include "$LAB/native_html_worker.ts" \
