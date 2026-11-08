@@ -44,6 +44,8 @@ def commandJson : L4Factoidal.WasmVM.Hosts.Dom.Command → JSON.Json
   | .normalize n => .object [("op",.string "normalize"),("nodeId",num n)]
   | .setAttributeNS n ns q v => .object [("op",.string "setAttributeNS"),("nodeId",num n),("namespace",.string ns),("name",.string q),("value",.string v)]
   | .removeAttributeNS n ns l => .object [("op",.string "removeAttributeNS"),("nodeId",num n),("namespace",.string ns),("name",.string l)]
+  | .adoptNode n doc => .object [("op",.string "adoptNode"),("nodeId",num n),("document",num doc)]
+  | .importNode n doc deep r => .object [("op",.string "importNode"),("source",num n),("document",num doc),("deep",.bool deep),("nodeId",num r)]
 where num (n : Nat) : JSON.Json := .number (toString n)
 
 private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.Hosts.Dom.Command := do
@@ -67,6 +69,13 @@ private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.H
   | "createElementNS" => exactly ["namespace","name","nodeId"]; return .createElementNS (← str "namespace") (← attrName "name") (← node "nodeId")
   | "setAttributeNS" => exactly ["nodeId","namespace","name","value"]; return .setAttributeNS (← node "nodeId") (← str "namespace") (← attrName "name") (← str "value")
   | "removeAttributeNS" => exactly ["nodeId","namespace","name"]; return .removeAttributeNS (← node "nodeId") (← str "namespace") (← attrName "name")
+  | "adoptNode" => exactly ["nodeId","document"]; return .adoptNode (← node "nodeId") (← node "document")
+  | "importNode" =>
+    exactly ["source","document","deep","nodeId"]
+    let deep ← match ← field command "deep" with
+      | .bool b => pure b
+      | _ => throw "script command: deep must be a boolean"
+    return .importNode (← node "source") (← node "document") deep (← node "nodeId")
   | "createNode" => exactly ["kind","data","nodeId"]; return .createNode (← node "kind") (← str "data") (← node "nodeId")
   | "appendChild" => exactly ["parent","nodeId"]; return .appendChild (← node "parent") (← node "nodeId")
   | "insertBefore" =>

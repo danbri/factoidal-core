@@ -709,8 +709,8 @@ def cloneSingle (d : Dom) (src : NodeId) (doc : Option NodeId) : Dom × NodeId :
 /-- `cloneNode(deep)` (DOM §4.4, "clone a node"), with the cloning steps of an
 HTML `template` element: a deep clone also clones the template contents. A loop
 over a work list of (source, copy parent) pairs. -/
-def cloneNode (d : Dom) (src : NodeId) (deep : Bool) : Dom × NodeId := Id.run do
-  let (d0, top) := d.cloneSingle src none
+def cloneNode (d : Dom) (src : NodeId) (deep : Bool) (doc : Option NodeId := none) : Dom × NodeId := Id.run do
+  let (d0, top) := d.cloneSingle src doc
   let mut d := d0
   if !deep then return (d, top)
   let docOf (d : Dom) (copy : NodeId) : NodeId :=

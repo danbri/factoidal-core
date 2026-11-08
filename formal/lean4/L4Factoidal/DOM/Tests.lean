@@ -6,6 +6,7 @@ has no `moveBefore`. Each expected result is read from the steps of the
 algorithm in whatwg/dom `3c53f93a`.
 -/
 import L4Factoidal.DOM.OfHtml
+import L4Factoidal.DOM.Selectors
 
 namespace L4Factoidal.DOM.Tests
 
@@ -102,5 +103,35 @@ def nsDoc1 : Dom :=
 #guard (let d := (nsDoc1.setAttributeNS (el nsDoc1 "p") (some xmlnsNS) "xmlns:a" "urnB").1
   (d.getAttributeNS? (el d "p") (some xmlnsNS) "a", (d.get (el d "p")).attrs.size)) == (some "urnB", 2)
 #guard (nsDoc1.removeAttributeNS (el nsDoc1 "p") (some xmlnsNS) "a").getAttributeNS? (el nsDoc1 "p") (some xmlnsNS) "a" == none
+
+/-! ## Other documents: `importNode` (a clone into a document) and `graft` -/
+
+-- a deep clone into another document: every node of the copy is in that document
+#guard (let (d, other) := (doc0.push { type := .document, htmlDoc := true })
+  let d := d.setNode other fun n => { n with doc := other }
+  let (d, c) := d.cloneNode (el d "p") true (some other)
+  (d.treeOrder c).toList.all fun k => (d.get k).doc == other) == true
+-- a grafted document keeps its shape, moved past the old nodes
+#guard (let (d, root) := doc0.graft tpl
+  (root == doc0.size, d.size == doc0.size + tpl.size, (d.get root).type == .document,
+    kidNames d ((d.get (root + el tpl "template")).content.getD 0))) == (true, true, true, ["p"])
+
+/-! ## Selectors (DOM.Selectors) -/
+
+def selDoc : Dom := parseHtmlDocument
+  "<body><ul id=u><li class='a b'>1</li><li lang=en-GB>2</li><li id=t3 align=Center>3</li></ul><p>x</p></body>"
+def qsa (sel : String) : Option (List String) :=
+  (Selectors.parse sel).map fun l => (Selectors.querySelectorAll selDoc 0 l).toList.map fun k =>
+    (((selDoc.get k).attrs.find? (·.lname == "id")).map (·.value)).getD (selDoc.get k).lname
+#guard qsa "li.a" == some ["li"]
+#guard qsa "ul > li:nth-child(2n+1)" == some ["li", "t3"]
+#guard qsa "li:not(.a):lang(en)" == some ["li"]
+#guard qsa "[align=center]" == some ["t3"]
+#guard qsa "#u ~ p, li:last-child" == some ["t3", "p"]
+#guard qsa "body > li" == some []
+#guard qsa "li + #t3" == some ["t3"]
+#guard qsa "#\\74 3" == some ["t3"]
+#guard qsa "*|li:is(#t3)" == some ["t3"]
+#guard (["", "div,", ".5cm", "ns|div", ":example", ">*", "[*=test]", "div::example"].map Selectors.parse).all (·.isNone)
 
 end L4Factoidal.DOM.Tests

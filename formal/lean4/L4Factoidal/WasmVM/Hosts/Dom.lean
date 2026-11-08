@@ -36,6 +36,7 @@ the only memory a DOM import can change is at most `capacity` bytes at that buff
 import L4Factoidal.WasmVM.Api
 import L4Factoidal.DOM.Arena
 import L4Factoidal.PageGpu.Wire
+import L4Factoidal.DOM.Selectors
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.WasmVM L4Factoidal.DOM
@@ -67,6 +68,10 @@ inductive Command where
   | setAttributeNS (node : Nat) (ns qname value : String)
   /-- `removeAttributeNS(namespace, localName)`; the namespace "" is null. -/
   | removeAttributeNS (node : Nat) (ns lname : String)
+  /-- `document.adoptNode(node)` of document `doc`. -/
+  | adoptNode (node doc : Nat)
+  /-- `document.importNode(node, deep)` of document `doc` made node `result`. -/
+  | importNode (node doc : Nat) (deep : Bool) (result : Nat)
   deriving BEq, Repr, Inhabited
 
 /-- A request to the event loop. -/
@@ -97,6 +102,13 @@ structure State where
   that the host has not taken yet (a turn of `scriptSession` takes them). -/
   gpu : L4Factoidal.PageGpu.State := {}
   gpuOut : Array L4Factoidal.PageGpu.HostCmd := #[]
+  /-- Whether an `iframe` that becomes connected gets a browsing context (HTML §4.8.5).
+  A host that replays the command list over the parsed document for layout keeps this
+  off: a frame's document is not a command. -/
+  framing : Bool := false
+  /-- Navigations the page started and the embedder has not answered: an `iframe` and
+  the URL of its `src` ("" for its initial `about:blank`, whose `load` event is due). -/
+  navigations : Array (Nat × String) := #[]
   deriving Inhabited
 
 /-- Bounds, as in `WebRenderScript`. -/
@@ -289,7 +301,12 @@ def setAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) :
       if name.utf8ByteSize > maxAttrName then (s, ret (-5)) else
       match s.dom.setAttribute n name v with
       | (_, .error e) => (s, ret (domErr e))
-      | (d, .ok ()) => addCommand s (.setAttribute n name v) d
+      | (d, .ok ()) =>
+        let (s, r) := addCommand s (.setAttribute n name v) d
+        -- HTML §4.8.5: setting `src` of an iframe with a browsing context navigates it.
+        if Dom.isHtmlElement (s.dom.get n) "iframe" && Dom.asciiLower name == "src" && s.frames.any (·.1 == n) then
+          ({ s with navigations := s.navigations.push (n, v) }, r)
+        else (s, r)
 
 def createElement (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
   match readStr mem st (arg args 0) (arg args 1) maxAttrName with
@@ -488,14 +505,58 @@ def createNode (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : S
       let c := if kind == 3 then Command.createElement data n else Command.createNode kind data n
       addCommandAnswer s c d n
 
+/-- The document of an `iframe` with no `src` (HTML §7.3.1 "about:blank"): an HTML
+document with `html`, `head` and `body` and no doctype. -/
+def aboutBlank : Dom := Id.run do
+  let el := fun (d : Dom) (name : String) => d.create { type := .element, doc := 0, ns := some htmlNS, lname := name }
+  let d : Dom := { nodes := #[{ type := .document, doc := 0 }] }
+  let (d, html) := el d "html"
+  let d := d.linkChild 0 html none
+  let (d, head) := el d "head"
+  let d := d.linkChild html head none
+  let (d, body) := el d "body"
+  return d.linkChild html body none
+
+/-- The `src` URL of an `iframe` element, when it has a non-empty one. -/
+def frameSrc (d : Dom) (el : Nat) : Option String :=
+  match attrValue? d el "src" with
+  | some v => if v.trimAscii.toString.isEmpty then none else some v
+  | none => none
+
+/-- HTML §4.8.5 "iframe insertion steps", for the nodes `inserted` (each with its
+subtree): each `iframe` element that is now connected, in a document that has a browsing
+context (the page's or a frame's), and has no browsing context of its own gets
+one, with an `about:blank` document (`Dom.graft`), and its navigation: its `src` URL, or
+"" (the `load` event of `about:blank`). Only with `framing`. -/
+def connectFrames (s : State) (inserted : Array Nat) : State := Id.run do
+  if !s.framing then return s
+  let mut s := s
+  for top in inserted do
+    -- only in a document with a browsing context: the page's, or a frame's
+    let root := s.dom.root top
+    if (s.dom.get root).type != .document || !(root == 0 || s.frames.any (·.2 == root)) then continue
+    for k in s.dom.treeOrder top do
+      if Dom.isHtmlElement (s.dom.get k) "iframe" && !(s.frames.any (·.1 == k)) then
+        let (d, doc) := s.dom.graft aboutBlank
+        s := { s with dom := d, frames := s.frames.push (k, doc),
+                      navigations := s.navigations.push (k, (frameSrc d k).getD "") }
+  return s
+
+/-- The nodes an insertion of `n` inserts: the children of a fragment, else `n`. -/
+def insertedBy (d : Dom) (n : Nat) : Array Nat :=
+  if (d.get n).type == .fragment then (d.get n).kids else #[n]
+
 def insertBefore (args : Array Value) (s : State) : State × HostResult :=
   let p := arg args 0
   let n := arg args 1
   let c := optNode (arg args 2)
   if !isNode s.dom p || !isNode s.dom n || !(c.all (isNode s.dom)) then (s, ret (-2)) else
+  let moved := insertedBy s.dom n
   match s.dom.insertBefore p n c with
   | (_, .error e) => (s, ret (domErr e))
-  | (d, .ok ()) => addCommand s (if c.isNone then .appendChild p n else .insertBefore p n c) d
+  | (d, .ok ()) =>
+    let (s, r) := addCommand s (if c.isNone then .appendChild p n else .insertBefore p n c) d
+    (connectFrames s moved, r)
 
 def removeChild (args : Array Value) (s : State) : State × HostResult :=
   let p := arg args 0
@@ -510,9 +571,12 @@ def replaceChild (args : Array Value) (s : State) : State × HostResult :=
   let n := arg args 1
   let c := arg args 2
   if !isNode s.dom p || !isNode s.dom n || !isNode s.dom c then (s, ret (-2)) else
+  let moved := insertedBy s.dom n
   match s.dom.replace c n p with
   | (_, .error e) => (s, ret (domErr e))
-  | (d, .ok ()) => addCommand s (.replaceChild p n c) d
+  | (d, .ok ()) =>
+    let (s, r) := addCommand s (.replaceChild p n c) d
+    (connectFrames s moved, r)
 
 /-- `removeAttribute(qualifiedName)` (DOM §4.9): the first attribute with that
 qualified name (lower case on an HTML element of an HTML document). -/
@@ -544,12 +608,23 @@ def cloneNode (args : Array Value) (s : State) : State × HostResult :=
   let (d, c) := s.dom.cloneNode n deep
   addCommandAnswer s (.cloneNode n deep c) d c
 
-/-- `tree_op(a, b, which)`: 1 `isEqualNode` (1 or 0); 2 `normalize()` of `a`. -/
+/-- `tree_op(a, b, which)`: 1 `isEqualNode` (1 or 0); 2 `normalize()` of `a`; 3
+`b.adoptNode(a)` (DOM §4.5: a document is NotSupportedError); 4 and 5
+`b.importNode(a, deep)` (shallow, deep; the new node). -/
 def treeOp (args : Array Value) (s : State) : State × HostResult :=
   let a := arg args 0
   let b := arg args 1
   if !isNode s.dom a then (s, ret (-2)) else
+  let isDoc := fun (k : Nat) => (s.dom.get k).type == .document
   match arg args 2 with
+  | 3 => if !isNode s.dom b || !isDoc b then (s, ret (-2)) else if isDoc a then (s, ret (-10))
+    -- the template contents of a template element stay where they are
+    else if (s.dom.get a).type == .fragment && (s.dom.get a).host.isSome then (s, ret 0)
+    else addCommand s (.adoptNode a b) (s.dom.adopt a b)
+  | 4 | 5 => if !isNode s.dom b || !isDoc b then (s, ret (-2)) else if isDoc a then (s, ret (-10)) else
+    let deep := arg args 2 == 5
+    let (d, c) := s.dom.cloneNode a deep (some b)
+    addCommandAnswer s (.importNode a b deep c) d c
   | 1 => if !isNode s.dom b then (s, ret (-2)) else (s, ret (if s.dom.isEqualNode a b then 1 else 0))
   | 2 => addCommand s (.normalize a) (s.dom.normalize a)
   | _ => (s, ret (-2))
@@ -589,7 +664,11 @@ answer (-1 for null). Ops: 0 `lookupNamespaceURI(s)` (U+0000 alone is the prefix
 name and value, each followed by U+0000 (the empty string is null); 3 "" when `s` is a
 valid attribute local name, else -3; 4 "validate and extract" (DOM §1.4) of an attribute
 "namespace U+0000 qualifiedName": namespace, prefix and local name, each followed by U+0000,
-or the error. Ops 3 and 4 do not read the node. -/
+or the error. Ops 3 and 4 do not read the node. 5 `getElementById(s)` in the subtree of
+the node (DOM §4.2.4), as a decimal node number. 6 `querySelectorAll(s)`: the node numbers,
+separated by spaces; 7 `querySelector(s)`: the first, or ""; 8 `matches(s)`: "1" or "0";
+9 `closest(s)`: a node number, or -1 (DOM.Selectors). An invalid selector is -12
+(SyntaxError). -/
 def nodeQueryOf (d : Dom) (n op : Nat) (q : String) : Except Int String :=
   if op == 3 then (if Dom.validAttributeLocalName q then .ok "" else .error (-3)) else
   if op == 4 then
@@ -604,6 +683,20 @@ def nodeQueryOf (d : Dom) (n op : Nat) (q : String) : Except Int String :=
   match op with
   | 0 => opt (d.lookupNamespaceURI n (if q == "\x00" then none else some q))
   | 1 => opt (d.lookupPrefix n (some q))
+  | 6 | 7 => match Selectors.parse q with
+    | none => .error (-12)
+    | some l => .ok (" ".intercalate ((Selectors.querySelectorAll d n l (op == 7)).toList.map toString))
+  | 8 => match Selectors.parse q with
+    | none => .error (-12)
+    | some l => .ok (if Selectors.elementMatches d n l then "1" else "0")
+  | 9 => match Selectors.parse q with
+    | none => .error (-12)
+    | some l => match Selectors.closest d n l with
+      | some k => .ok (toString k)
+      | none => .error (-1)
+  | 5 => match d.getElementById n q with
+    | some k => .ok (toString k)
+    | none => .error (-1)
   | 2 => .ok ((d.get n).attrs.foldl (fun acc a =>
       acc ++ a.ns.getD "" ++ "\x00" ++ a.pfx.getD "" ++ "\x00" ++ a.lname ++ "\x00" ++ a.value ++ "\x00") "")
   | _ => .error (-2)
@@ -832,5 +925,13 @@ def Command.apply (d : Dom) : Command → Except String Dom
     checkNode d n
     if (d.get n).type != .element then throw "script command: target must be an element"
     return d.removeAttributeNS n (some ns) l
+  | .adoptNode n doc => do
+    checkNode d n; checkNode d doc
+    if (d.get doc).type != .document || (d.get n).type == .document then throw "script command: NotSupportedError"
+    return d.adopt n doc
+  | .importNode n doc deep r => do
+    checkNode d n; checkNode d doc
+    if (d.get doc).type != .document || (d.get n).type == .document then throw "script command: NotSupportedError"
+    made r (d.cloneNode n deep (some doc))
 
 end L4Factoidal.WasmVM.Hosts.Dom

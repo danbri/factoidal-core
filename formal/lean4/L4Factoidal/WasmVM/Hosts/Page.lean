@@ -73,6 +73,8 @@ structure Limits where
   gpuPage : Nat := 0
   /-- Console lines a page may write (`Hosts.Dom.State.logLimit`). -/
   logs : Nat := 1024
+  /-- Nested browsing contexts for `iframe` elements (`Hosts.Dom.State.framing`). -/
+  frames : Bool := false
   deriving Inhabited
 
 /-- The exports of the module, by function address. -/
@@ -283,6 +285,17 @@ def Session.setUrl (s : Session) (url : String) : Session :=
 def Session.setScript (s : Session) (node : Int) : Session :=
   (s.run s.fx.page #[.i32 1, .i32 0, i32v node]).1
 
+/-- Queue the `load` event of each new `about:blank` frame (HTML §4.8.5 "iframe load
+event steps", as a task). -/
+def Session.blankLoads (s : Session) : Session := Id.run do
+  let navs := s.host.dom.navigations
+  if navs.all (!·.2.isEmpty) then return s
+  let mut s := s
+  for (el, url) in navs do
+    if url.isEmpty then
+      s := { s with host := { s.host with loop := s.host.loop.queueTask .domManipulation 0 (some { type := "load", target := el }) } }
+  return { s with host := { s.host with dom := { s.host.dom with navigations := navs.filter (!·.2.isEmpty) } } }
+
 /-- The microtask checkpoint: run promise jobs until none is pending, at most `limits.jobs`. -/
 def Session.runJobs (s : Session) : Session := Id.run do
   let mut s := s
@@ -292,7 +305,7 @@ def Session.runJobs (s : Session) : Session := Id.run do
     | (s', some 0) => s := s'; break
     | (s', some _) => s := { s' with jobs := s'.jobs + 1 }
     | (s', none) => s := s'; break
-  return s
+  return s.blankLoads
 
 /-- Event flags of `qjs_dispatch`: 1 bubbles, 2 cancelable, 4 composed. -/
 def flagsOf (type : String) : Nat :=
@@ -408,6 +421,8 @@ def Session.settle (s : Session) (budgetMs : Nat) (maxTasks : Nat := 100000) : S
     let (s', _) := s.advance s.loop.clock 1000
     s := s'
     if s.quiet then return (s, true)
+    -- A navigation waits for the embedder: give the session back (not quiet).
+    if s.host.dom.navigations.any (!·.2.isEmpty) then return (s, false)
     let next := match s.loop.timers, s.nextFrame with
       | t :: _, some f => min t.due f
       | t :: _, none => t.due
@@ -500,17 +515,23 @@ def prepare (bytes : ByteArray) (lim : Limits := {}) : Except String Module' := 
   let base ← instantiatePage m emptyDocument lim
   return { m with base := some base }
 
-/-- The document of an `iframe` with no `src` (HTML §7.3.1 "about:blank"): an HTML
-document with `html`, `head` and `body` and no doctype. -/
-def aboutBlank : Arena := Id.run do
-  let el := fun (d : Arena) (name : String) => d.create { type := .element, doc := 0, ns := some L4Factoidal.DOM.htmlNS, lname := name }
-  let d : Arena := { nodes := #[{ type := .document, doc := 0 }] }
-  let (d, html) := el d "html"
-  let d := d.linkChild 0 html none
-  let (d, head) := el d "head"
-  let d := d.linkChild html head none
-  let (d, body) := el d "body"
-  return d.linkChild html body none
+/-- The navigations that wait for the embedder: an `iframe` and its `src` URL. The
+`load` events of `about:blank` documents are queued here, as tasks. -/
+def Session.frameLoads (s : Session) : Array (Nat × String) :=
+  s.host.dom.navigations.filter (!·.2.isEmpty)
+
+/-- The embedder's answer to the navigation of `el`: its new document (`none` when it
+could not be loaded, which keeps the old one). The document joins the arena and the
+`load` event at `el` is queued. -/
+def Session.attachFrame (s : Session) (el : Nat) (doc : Option Arena) : Session := Id.run do
+  let h := s.host.dom
+  let navs := h.navigations.filter (·.1 != el)
+  let mut h := { h with navigations := navs }
+  if let some d := doc then
+    let (dom, root) := h.dom.graft d
+    h := { h with dom, frames := (h.frames.filter (·.1 != el)).push (el, root) }
+  let s := { s with host := { s.host with dom := h } }
+  return s.setLoop (s.loop.queueTask .networking 0 (some { type := "load", target := el }))
 
 /-- Start a page: its classic scripts in document order (each with the current script set
 and a microtask checkpoint after it), `DOMContentLoaded` at the document, then the `load`
@@ -529,10 +550,10 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
       dom := d
       framed := framed.push (el, root)
   let s : Session ← match m.base with
-    | some b => pure { b with host := { dom := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed } }, limits := lim, steps := 0 }
+    | some b => pure { b with host := { dom := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames } }, limits := lim, steps := 0 }
     | none => do
       let s ← instantiatePage m dom lim
-      pure { s with host := { s.host with dom := { s.host.dom with frames := framed } } }
+      pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames } } }
   let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage } } }
   let s := (s.run s.fx.page #[.i32 2, .i32 0, .i32 0]).1
   let mut s := s.setUrl url

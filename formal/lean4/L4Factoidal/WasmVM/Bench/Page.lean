@@ -53,10 +53,11 @@ starts with `/`) or beside the page, as XML for `.xml`, `.xhtml` and `.svg`, els
 A file that is missing or not well-formed gives no frame. -/
 def frameDocument (root dir : System.FilePath) (src : Option String) : IO (Option Dom) := do
   match src with
-  | none => return some Hosts.Page.aboutBlank
+  | none => return some Hosts.Dom.aboutBlank
   | some src =>
+    let src := if src.startsWith "http://web-platform.test/" then (src.drop 24).toString else src
     let path := ((src.splitOn "#").head!.splitOn "?").head!
-    if path.isEmpty || path == "about:blank" then return some Hosts.Page.aboutBlank
+    if path.isEmpty || path == "about:blank" then return some Hosts.Dom.aboutBlank
     if path.startsWith "http:" || path.startsWith "https:" || path.startsWith "data:" then return none
     let file : System.FilePath := if path.startsWith "/" then root / (path.drop 1).toString else dir / path
     let text ← try IO.FS.readFile file catch _ => return none
@@ -116,13 +117,23 @@ def run (args : List String) : IO UInt32 := do
     for (node, src) in iframeElements dom do
       if let some fd ← frameDocument root dir src then frames := frames.push (node, fd)
     let a ← IO.monoNanosNow
-    match start m dom ("http://web-platform.test/" ++ f) scripts { commands, logs := 100000 } frames with
+    match start m dom ("http://web-platform.test/" ++ f) scripts { commands, logs := 100000, frames := true } frames with
     | .error e =>
       bad := bad + 1
       IO.println (Json.mkObj [("file", .str f), ("error", .str e)]).compress
     | .ok s =>
       let b ← IO.monoNanosNow
-      let (s, quiet) := s.settle settleMs
+      -- Settle; answer the navigations of iframes the page made; settle again.
+      let (s0, quiet0) := s.settle settleMs
+      let mut s := s0
+      let mut quiet := quiet0
+      for _ in [0:256] do
+        let loads := s.frameLoads
+        if loads.isEmpty || s.loop.clock ≥ settleMs then break
+        for (el, url) in loads do
+          s := s.attachFrame el (← frameDocument root dir (some url))
+        let (s', q) := s.settle (settleMs - s.loop.clock)
+        s := s'; quiet := q
       let c ← IO.monoNanosNow
       IO.println (Json.mkObj [("file", .str f), ("quiet", .bool quiet), ("clock", jn s.loop.clock),
         ("logs", .arr (s.logs.map .str)), ("errors", .arr (s.errors.map .str)),

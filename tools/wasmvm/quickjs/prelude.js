@@ -52,6 +52,7 @@
       case -9: throw new DOMException('The object can not be found here.', 'NotFoundError');
       case -10: throw new DOMException('The operation is not supported.', 'NotSupportedError');
       case -11: throw new DOMException('The operation is not allowed by Namespaces in XML.', 'NamespaceError');
+      case -12: throw new DOMException('The string is not a valid selector.', 'SyntaxError');
       default: throw new TypeError('DOM error ' + code);
     }
   };
@@ -446,11 +447,13 @@
     const target = Object.create(proto ?? NodeList.prototype);
     return new Proxy(target, {
       get(t, p, recv) {
-        if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) return wrap(ids()[Number(p)] ?? -1);
+        if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) { const k = ids()[Number(p)]; return k === undefined ? undefined : wrap(k); }
         if (p === 'length') return ids().length;
-        if (p === Symbol.iterator) return function* () { for (const i of ids()) yield wrap(i); };
         return Reflect.get(t, p, recv);
       },
+      // Indexed properties have no setter (WebIDL §3.9): an assignment fails.
+      set(t, p, v, recv) { if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) return false; return Reflect.set(t, p, v, recv); },
+      defineProperty(t, p, desc) { if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) return false; return Reflect.defineProperty(t, p, desc); },
       has(t, p) { if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) return Number(p) < ids().length; return p === 'length' || Reflect.has(t, p); },
       ownKeys() { return [...ids().keys()].map(String); },
       getOwnPropertyDescriptor(t, p) {
@@ -463,29 +466,27 @@
   class NodeList {
     constructor() { throw new TypeError('Illegal constructor'); }
     item(i) { return this[i >>> 0] ?? null; }
-    forEach(f, thisArg) { const xs = [...this]; for (let i = 0; i < xs.length; i++) f.call(thisArg, xs[i], i, this); }
-    entries() { return [...this].entries(); }
-    keys() { return [...this].keys(); }
-    values() { return [...this].values(); }
   }
+  // An interface with an indexed getter and `iterable` (WebIDL §3.7.10) takes the Array ones.
+  for (const k of ['forEach', 'entries', 'keys', 'values']) define(NodeList.prototype, k, Array.prototype[k]);
+  define(NodeList.prototype, Symbol.iterator, Array.prototype.values);
   class HTMLCollection {
     constructor() { throw new TypeError('Illegal constructor'); }
     item(i) { return this[i >>> 0] ?? null; }
     namedItem(name) { for (const e of this) if (e.id === name || e.getAttribute('name') === name) return e; return null; }
   }
+  define(HTMLCollection.prototype, Symbol.iterator, Array.prototype.values);
   const liveCollection = ids => liveList(ids, HTMLCollection.prototype);
   const staticList = xs => {
     const o = Object.create(NodeList.prototype);
     xs.forEach((x, i) => Object.defineProperty(o, i, { value: x, enumerable: true }));
     Object.defineProperty(o, 'length', { value: xs.length });
-    o[Symbol.iterator] = function* () { yield* xs; };
     return o;
   };
   const collection = xs => {
     const o = Object.create(HTMLCollection.prototype);
     xs.forEach((x, i) => Object.defineProperty(o, i, { value: x, enumerable: true }));
     Object.defineProperty(o, 'length', { value: xs.length });
-    o[Symbol.iterator] = function* () { yield* xs; };
     return o;
   };
   const descendants = id => {
@@ -572,8 +573,8 @@
     prepend(...xs) { chk(n.insert(nodeId(this), convertNodes(xs), info(nodeId(this), 2))); },
     append(...xs) { chk(n.insert(nodeId(this), convertNodes(xs), -1)); },
     replaceChildren(...xs) { const node = convertNodes(xs); const id = nodeId(this); for (const k of kids(id)) chk(n.remove(id, k)); chk(n.insert(id, node, -1)); },
-    querySelector(sel) { return select(this, sel, true)[0] ?? null; },
-    querySelectorAll(sel) { return staticList(select(this, sel, false)); },
+    querySelector(sel) { if (arguments.length < 1) throw new TypeError('querySelector: 1 argument required'); return select(this, sel, true)[0] ?? null; },
+    querySelectorAll(sel) { if (arguments.length < 1) throw new TypeError('querySelectorAll: 1 argument required'); return staticList(select(this, sel, false)); },
     // DOM §4.2.6.2 "list of elements with qualified name": in an HTML document, an HTML element
     // matches the ASCII lower case of the name.
     getElementsByTagName(name) { const id = nodeId(this); name = String(name); const lower = name.replace(/[A-Z]/g, c => c.toLowerCase());
@@ -678,9 +679,9 @@
     }
     getAttributeNames() { const s = str(nodeId(this), 6) ?? ''; const xs = s === '' ? [] : s.split('\u0000'); return xs.filter((x, i) => i % 2 === 0 && i + 1 < xs.length); }
     get attributes() { let m = attrMaps.get(this); if (!m) attrMaps.set(this, m = namedNodeMap(this)); return m; }
-    matches(sel) { return matches(nodeId(this), parse(String(sel))); }
-    webkitMatchesSelector(sel) { return this.matches(sel); }
-    closest(sel) { const p = parse(String(sel)); let k = nodeId(this); while (k >= 0 && info(k, 0) === 1) { if (matches(k, p)) return wrap(k); k = info(k, 1); } return null; }
+    matches(sel) { if (arguments.length < 1) throw new TypeError('matches: 1 argument required'); return selectorQuery(nodeId(this), 8, sel) === '1'; }
+    webkitMatchesSelector(sel) { if (arguments.length < 1) throw new TypeError('webkitMatchesSelector: 1 argument required'); return this.matches(sel); }
+    closest(sel) { if (arguments.length < 1) throw new TypeError('closest: 1 argument required'); const k = selectorQuery(nodeId(this), 9, sel); return k === null ? null : wrap(Number(k)); }
     insertAdjacentElement(where, el) { return insertAdjacent(this, where, el); }
     insertAdjacentText(where, text) { insertAdjacent(this, where, document.createTextNode(text)); }
     get innerHTML() { return kids(nodeId(this)).map(serialize).join(''); }
@@ -913,6 +914,17 @@
   Object.defineProperty(named.HTMLTemplateElement.prototype, 'content', { get() { return wrap(info(nodeId(this), 9)); }, configurable: true });
   // An iframe's document is Lean's (Hosts.Page.start `frames`, node_info 11). The frames share
   // this realm: a frame's window is a view of this window with its own document.
+  // Reflected content attributes (HTML §2.6.1): strings, and URLs resolved against the
+  // document's URL.
+  const reflectString = (C, names) => { for (const k of names) Object.defineProperty(C.prototype, k, {
+    get() { return this.getAttribute(k.toLowerCase()) ?? ''; }, set(v) { this.setAttribute(k.toLowerCase(), String(v)); }, configurable: true, enumerable: true }); };
+  const reflectURL = (C, names) => { for (const k of names) Object.defineProperty(C.prototype, k, {
+    get() { const v = this.getAttribute(k); if (v === null) return ''; try { return new URL(v, document.URL).href; } catch { return v; } },
+    set(v) { this.setAttribute(k, String(v)); }, configurable: true, enumerable: true }); };
+  reflectURL(named.HTMLIFrameElement, ['src']); reflectString(named.HTMLIFrameElement, ['srcdoc', 'name', 'width', 'height', 'allow']);
+  reflectURL(named.HTMLImageElement, ['src']); reflectString(named.HTMLImageElement, ['alt']);
+  reflectURL(named.HTMLScriptElement, ['src']);
+  reflectURL(named.HTMLLinkElement, ['href']); reflectString(named.HTMLLinkElement, ['rel', 'type', 'media']);
   Object.defineProperties(named.HTMLIFrameElement.prototype, {
     contentDocument: { get() { return wrap(info(nodeId(this), 11)); }, configurable: true },
     contentWindow: { get() { const d = info(nodeId(this), 11); return d < 0 ? null : frameWindow(d); }, configurable: true },
@@ -1158,7 +1170,7 @@
   }
   class DocumentFragment extends Node {
     constructor() { return wrap(chk(n.create(2, ''))); }
-    getElementById(id) { return elementsOf(nodeId(this)).map(wrap).find(e => e.id === String(id)) ?? null; }
+    getElementById(id) { id = String(id); if (id === '') return null; const k = chk(n.query(nodeId(this), 5, id)); return k === null ? null : wrap(Number(k)); }
   }
   let readyState = 'loading';
   class Document extends Node {
@@ -1186,7 +1198,7 @@
     get images() { return this.getElementsByTagName('img'); }
     get links() { const id = nodeId(this); return liveCollection(() => elementsOf(id).filter(k => ['a', 'area'].includes(str(k, 0)) && n.attr(k, 'href') !== null)); }
     get currentScript() { return currentScript; }
-    getElementById(id) { id = String(id); return id === '' ? null : wrap(n.byId(id)); }
+    getElementById(id) { id = String(id); if (id === '') return null; const k = chk(n.query(nodeId(this), 5, id)); return k === null ? null : wrap(Number(k)); }
     getElementsByName(name) { return staticList(elementsOf(nodeId(this)).filter(k => n.attr(k, 'name') === String(name)).map(wrap)); }
     // Each node is made in this document: kind + 16 × its node number (Hosts.Dom.createKind).
     createElement(name, options) { return wrap(chk(n.create(3 + 16 * nodeId(this), String(name)))); }
@@ -1223,8 +1235,20 @@
       state(e).initialized = false;
       return e;
     }
-    importNode(node, deep = false) { return node.cloneNode(deep); }
-    adoptNode(node) { if (node.parentNode) node.parentNode.removeChild(node); return node; }
+    // DOM §4.5: importNode clones into this document; adoptNode moves a node here (Lean's
+    // Dom.cloneNode with a document, Dom.adopt).
+    importNode(node, options = false) {
+      const deep = typeof options === 'object' && options !== null ? !options.selfOnly : !!options;
+      if (node instanceof Attr) { const c = node.cloneNode(); attrState.get(c).doc = nodeId(this); return c; }
+      return wrap(chk(n.treeOp(nodeId(node), nodeId(this), deep ? 5 : 4)));
+    }
+    adoptNode(node) {
+      if (node instanceof Attr) { const a = attrState.get(node); if (a.el) node.ownerElement.removeAttributeNode(node); a.doc = nodeId(this); return node; }
+      const id = nodeId(node);
+      if (info(id, 0) === 9) throw new DOMException('A document can not be adopted.', 'NotSupportedError');
+      if (info(id, 0) !== 11 && info(id, 1) >= 0) node.parentNode.removeChild(node);
+      chk(n.treeOp(id, nodeId(this), 3)); return node;
+    }
     elementFromPoint() { return null; }
     get implementation() { let i = implementations.get(this); if (!i) { i = Object.create(DOMImplementation.prototype); implDoc.set(i, nodeId(this)); implementations.set(this, i); } return i; }
   }
@@ -1253,6 +1277,14 @@
   mix(Element, parentNode); mix(Document, parentNode); mix(DocumentFragment, parentNode);
   mix(Element, childNode); mix(CharacterData, childNode, ['remove', 'before', 'after', 'replaceWith', 'previousElementSibling', 'nextElementSibling']);
   mix(DocumentType, childNode, ['remove', 'before', 'after', 'replaceWith']);
+  // [Unscopable] (DOM §4.2.6, §4.2.8).
+  const unscopable = (C, names) => {
+    const u = Object.assign(Object.create(null), C.prototype[Symbol.unscopables] ?? {});
+    for (const k of names) u[k] = true;
+    Object.defineProperty(C.prototype, Symbol.unscopables, { value: u, configurable: true });
+  };
+  for (const C of [Element, Document, DocumentFragment]) unscopable(C, ['prepend', 'append', 'replaceChildren']);
+  for (const C of [Element, CharacterData, DocumentType]) unscopable(C, ['before', 'after', 'replaceWith', 'remove']);
   addHandlers(HTMLElement.prototype); addHandlers(Document.prototype); addHandlers(SVGElement.prototype);
   protoOf = (id, t) => {
     switch (t) {
@@ -1273,125 +1305,16 @@
   const docBody = () => { const b = document.body; return b ? nodeId(b) : -1; };
   const docElement = () => kids(0).find(k => info(k, 0) === 1) ?? -1;
 
-  // ---- selectors: type, #id, .class, [attr], [attr=v], *, :first-child, :last-child,
-  // :not(simple), with descendant, child, next-sibling and subsequent-sibling combinators --
-  const parse = sel => {
-    const groups = [];
-    sel = sel.replace(/\r\n?|\f/g, '\n').replace(/\u0000/g, '\uFFFD');
-    for (const g of splitTop(sel, ',')) {
-      const src = g.replace(/^[ \t\n]+|[ \t\n]+$/g, '');
-      if (src === '') throw new DOMException(`'${sel}' is not a valid selector`, 'SyntaxError');
-      const parts = []; let comb = null; let i = 0;
-      const re = /[ \t\n]*([>+~])[ \t\n]*|[ \t\n]+/y;
-      while (i < src.length) {
-        re.lastIndex = i;
-        const m = re.exec(src);
-        if (m && m.index === i) { comb = m[1] ?? ' '; i = re.lastIndex; continue; }
-        const [compound, next] = readCompound(src, i, sel);
-        parts.push({ comb: parts.length === 0 ? null : (comb ?? ' '), compound }); comb = null; i = next;
-      }
-      if (comb && comb !== ' ') throw new DOMException(`'${sel}' is not a valid selector`, 'SyntaxError');
-      groups.push(parts);
-    }
-    return groups;
+  // ---- selectors: Lean's (DOM.Selectors, node_query 6-9); a SyntaxError is -12 ------------
+  const selectorQuery = (id, op, sel) => {
+    sel = String(sel);
+    const r = n.query(id, op, sel);
+    if (r === -12) throw new DOMException(`'${sel}' is not a valid selector`, 'SyntaxError');
+    return chk(r);
   };
-  const splitTop = (s, c) => { const out = []; let depth = 0, cur = '', q = null, esc = false;
-    for (const ch of s) { if (esc) { cur += ch; esc = false; continue; } if (ch === '\\') { cur += ch; esc = true; continue; }
-      if (q) { cur += ch; if (ch === q) q = null; continue; }
-      if (ch === '"' || ch === "'") q = ch; if (ch === '(' || ch === '[') depth++; if (ch === ')' || ch === ']') depth--;
-      if (ch === c && depth === 0) { out.push(cur); cur = ''; } else cur += ch; }
-    out.push(cur); return out; };
-  // CSS Syntax §4.3: identifiers with escapes. `sel` was preprocessed (§3.3: CR LF, CR and
-  // FF are LF; U+0000 is U+FFFD).
-  const isHex = c => /[0-9A-Fa-f]/.test(c ?? '');
-  const nameStart = c => c !== undefined && (/[A-Za-z_]/.test(c) || c.codePointAt(0) >= 0x80);
-  const nameChar = c => nameStart(c) || /[0-9-]/.test(c ?? '');
-  const validEscape = (s, i) => s[i] === '\\' && s[i + 1] !== '\n';
-  const startsIdent = (s, i) => s[i] === '-' ? (nameStart(s[i + 1]) || s[i + 1] === '-' || validEscape(s, i + 1)) : (nameStart(s[i]) || validEscape(s, i));
-  const readIdent = (s, i, sel) => {
-    if (!startsIdent(s, i)) throw new DOMException(`'${sel}' is not a valid selector`, 'SyntaxError');
-    let out = '';
-    for (;;) {
-      const c = s[i];
-      if (validEscape(s, i)) {
-        i++;
-        if (i >= s.length) { out += '�'; break; }
-        if (isHex(s[i])) {
-          let h = ''; while (h.length < 6 && isHex(s[i])) h += s[i++];
-          if (/[ \t\n]/.test(s[i] ?? '')) i++;
-          const v = parseInt(h, 16);
-          out += v === 0 || (v >= 0xD800 && v <= 0xDFFF) || v > 0x10FFFF ? '�' : String.fromCodePoint(v);
-        } else { const ch = String.fromCodePoint(s.codePointAt(i)); out += ch; i += ch.length; }
-      } else if (nameChar(c)) { const ch = String.fromCodePoint(s.codePointAt(i)); out += ch; i += ch.length; }
-      else break;
-    }
-    return [out, i];
-  };
-  const readCompound = (s, i, sel) => {
-    const tests = []; const start = i;
-    if (s[i] === '*') { i++; } else if (startsIdent(s, i)) { const [t, j] = readIdent(s, i, sel); tests.push({ kind: 'tag', name: t.toLowerCase() }); i = j; }
-    for (;;) {
-      const c = s[i];
-      if (c === '#') { const [t, j] = readIdent(s, i + 1, sel); tests.push({ kind: 'id', name: t }); i = j; }
-      else if (c === '.') { const [t, j] = readIdent(s, i + 1, sel); tests.push({ kind: 'class', name: t }); i = j; }
-      else if (c === '[') {
-        const end = s.indexOf(']', i); if (end < 0) throw new DOMException(`'${sel}' is not a valid selector`, 'SyntaxError');
-        const body = s.slice(i + 1, end).trim(); const m = /^([A-Za-z_][\w-]*)\s*(?:([~|^$*]?=)\s*(?:"([^"]*)"|'([^']*)'|([^\s"']+)))?\s*(i)?$/.exec(body);
-        if (!m) throw new DOMException(`'${sel}' is not a valid selector`, 'SyntaxError');
-        tests.push({ kind: 'attr', name: m[1].toLowerCase(), op: m[2] ?? null, value: m[3] ?? m[4] ?? m[5] ?? '' }); i = end + 1;
-      } else if (c === ':') {
-        const m = /:(first-child|last-child|only-child|root|empty|checked|disabled|enabled|not)(\()?/y; m.lastIndex = i; const r = m.exec(s);
-        if (!r || r.index !== i) throw new DOMException(`'${sel}' is not a valid selector`, 'SyntaxError');
-        if (r[1] === 'not') {
-          let depth = 1, j = m.lastIndex; while (j < s.length && depth > 0) { if (s[j] === '(') depth++; if (s[j] === ')') depth--; j++; }
-          tests.push({ kind: 'not', inner: parse(s.slice(m.lastIndex, j - 1)) }); i = j;
-        } else { tests.push({ kind: 'pseudo', name: r[1] }); i = m.lastIndex; }
-      } else break;
-    }
-    if (i === start) throw new DOMException(`'${sel}' is not a valid selector`, 'SyntaxError');
-    return [tests, i];
-  };
-  const testOne = (k, t) => {
-    switch (t.kind) {
-      case 'tag': return (info(k, 8) === 1 ? str(k, 0) : str(k, 0).toLowerCase()) === t.name;
-      case 'id': return n.attr(k, 'id') === t.name;
-      case 'class': return (n.attr(k, 'class') ?? '').split(/[ \t\n\f\r]+/).includes(t.name);
-      case 'attr': {
-        const v = n.attr(k, t.name); if (v === null || typeof v === 'number') return false;
-        switch (t.op) { case null: return true; case '=': return v === t.value; case '~=': return v.split(/\s+/).includes(t.value);
-          case '|=': return v === t.value || v.startsWith(t.value + '-'); case '^=': return t.value !== '' && v.startsWith(t.value);
-          case '$=': return t.value !== '' && v.endsWith(t.value); case '*=': return t.value !== '' && v.includes(t.value); }
-        return false;
-      }
-      case 'pseudo': {
-        const p = info(k, 1); const sibs = p >= 0 ? kids(p).filter(x => info(x, 0) === 1) : [k];
-        switch (t.name) { case 'first-child': return sibs[0] === k; case 'last-child': return sibs[sibs.length - 1] === k;
-          case 'only-child': return sibs.length === 1; case 'root': return p >= 0 && info(p, 0) === 9;
-          case 'empty': return kids(k).every(c => { const ct = info(c, 0); return ct !== 1 && !(ct === 3 && str(c, 3) !== ''); });
-          case 'checked': return n.attr(k, 'checked') !== null; case 'disabled': return n.attr(k, 'disabled') !== null;
-          case 'enabled': return n.attr(k, 'disabled') === null; }
-        return false;
-      }
-      case 'not': return !matches(k, t.inner);
-    }
-    return false;
-  };
-  const matchParts = (k, parts, idx) => {
-    if (!parts[idx].compound.every(t => testOne(k, t))) return false;
-    if (idx === 0) return true;
-    const comb = parts[idx].comb;
-    if (comb === '>') { const p = info(k, 1); return p >= 0 && info(p, 0) === 1 && matchParts(p, parts, idx - 1); }
-    if (comb === ' ') { let p = info(k, 1); while (p >= 0 && info(p, 0) === 1) { if (matchParts(p, parts, idx - 1)) return true; p = info(p, 1); } return false; }
-    const prevEl = x => { let s = info(x, 4); while (s >= 0 && info(s, 0) !== 1) s = info(s, 4); return s; };
-    if (comb === '+') { const s = prevEl(k); return s >= 0 && matchParts(s, parts, idx - 1); }
-    if (comb === '~') { let s = prevEl(k); while (s >= 0) { if (matchParts(s, parts, idx - 1)) return true; s = prevEl(s); } return false; }
-    return false;
-  };
-  const matches = (k, groups) => groups.some(parts => matchParts(k, parts, parts.length - 1));
   const select = (root, sel, first) => {
-    const groups = parse(String(sel)); const out = [];
-    for (const k of elementsOf(nodeId(root))) if (matches(k, groups)) { out.push(wrap(k)); if (first) break; }
-    return out;
+    const r = selectorQuery(nodeId(root), first ? 7 : 6, sel);
+    return r === null || r === '' ? [] : r.split(' ').map(k => wrap(Number(k)));
   };
 
   // ---- AbortController and AbortSignal (DOM §3) --------------------------------------

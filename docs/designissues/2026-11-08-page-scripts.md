@@ -112,10 +112,14 @@ Measured on the owner's Mac, native engine library (2026-11-08):
   get one checkpoint after the whole dispatch, not one after each listener.
 - No layout reads from script (`offsetWidth` is 0); `style` is the `style` attribute.
 - No `innerHTML` setter, no `Range`, no `TreeWalker`.
-- Iframes: only in the WPT bench (`wasmvm-bench page`), and only those in the page's
-  markup. The bench parses each `src` document (XML for `.xml`, `.xhtml` and `.svg`, else
-  HTML; `about:blank` with no `src`) and `Hosts.Page.start` grafts it into the page's
-  arena (`Dom.graft`); `node_info` 11 gives an iframe's document. The frames share the
+- Iframes: only in the WPT bench (`wasmvm-bench page`, `Limits.frames`). Markup iframes:
+  the bench parses each `src` document (XML for `.xml`, `.xhtml` and `.svg`, else HTML;
+  `about:blank` with no `src`) and `Hosts.Page.start` grafts it into the page's arena
+  (`Dom.graft`). An iframe a script connects to a document with a browsing context gets an
+  `about:blank` document at once (`Hosts.Dom.connectFrames`) and a navigation to its `src`,
+  which `settle` hands back to the embedder (`Session.frameLoads`); the bench answers with
+  `Session.attachFrame`, which queues the `load` event. Setting `src` navigates again.
+  `node_info` 11 gives an iframe's document. The frames share the
   page's script realm: a frame's `window` is a view of the page's window with its own
   `document`, so a frame's constructors are the page's. The engine (`scriptSession`)
   passes no frames: a frame's nodes are not commands, so the layout replay of the
@@ -138,3 +142,11 @@ name contains U+0000); the import `node_query` (string in, string out) answers t
 lookups and the namespaced attribute list. `Attr` objects name an attribute of the arena
 (element, namespace, local name); a removed or new `Attr` keeps its own value. A guest
 built with `node_query` needs an engine that serves it.
+
+Selectors (2026-11-08): `querySelector`, `querySelectorAll`, `matches` and `closest` are
+Lean's (`DOM.Selectors`, `node_query` 6 to 9): CSS identifier and string tokens with
+escapes, namespace prefixes, attribute selectors with flags and HTML's case-insensitive
+attribute values, the structural pseudo-classes with `An+B [of S]`, `:not`, `:is`,
+`:where`, `:scope`, `:lang`, `:link`, `:checked`, `:disabled`, `:enabled`. User-state
+pseudo-classes match nothing; the four legacy pseudo-elements never match. The JavaScript
+selector engine of the prelude is gone.
