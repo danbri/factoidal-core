@@ -14,6 +14,7 @@ the same session.
 -/
 import L4Factoidal.WasmVM.Hosts.Page
 import L4Factoidal.DOM.OfHtml
+import L4Factoidal.DOM.OfXml
 import Lean.Data.Json
 
 namespace L4Factoidal.WasmVM.Bench.Page
@@ -38,6 +39,31 @@ def readScript (root dir : System.FilePath) (src : String) : IO String := do
   let path := (src.splitOn "?").head!
   let file : System.FilePath := if path.startsWith "/" then root / (path.drop 1).toString else dir / path
   try IO.FS.readFile file catch _ => return s!"throw new Error('script not found: {src}')"
+
+/-- The `iframe` elements of the page in tree order, with their `src`. -/
+def iframeElements (d : Dom) : Array (Nat × Option String) := Id.run do
+  let mut out := #[]
+  for id in d.treeOrder 0 do
+    let n := d.get id
+    if n.type == .element && Dom.isHtmlElement n "iframe" then out := out.push (id, attrVal n "src")
+  return out
+
+/-- The document of a frame: `about:blank` with no `src`; a file under ROOT (a path that
+starts with `/`) or beside the page, as XML for `.xml`, `.xhtml` and `.svg`, else HTML.
+A file that is missing or not well-formed gives no frame. -/
+def frameDocument (root dir : System.FilePath) (src : Option String) : IO (Option Dom) := do
+  match src with
+  | none => return some Hosts.Page.aboutBlank
+  | some src =>
+    let path := ((src.splitOn "#").head!.splitOn "?").head!
+    if path.isEmpty || path == "about:blank" then return some Hosts.Page.aboutBlank
+    if path.startsWith "http:" || path.startsWith "https:" || path.startsWith "data:" then return none
+    let file : System.FilePath := if path.startsWith "/" then root / (path.drop 1).toString else dir / path
+    let text ← try IO.FS.readFile file catch _ => return none
+    if path.endsWith ".xml" || path.endsWith ".xhtml" || path.endsWith ".svg" then
+      let ct := if path.endsWith ".xhtml" then "application/xhtml+xml" else if path.endsWith ".svg" then "image/svg+xml" else "application/xml"
+      return (parseXmlDocument text).toOption.map fun d => d.setNode 0 fun n => { n with contentType := ct }
+    return some (parseHtmlDocument text)
 
 def bodyText (d : Dom) : String := Id.run do
   let some b := (d.treeOrder 0 false).find? (fun k => Dom.isHtmlElement (d.get k) "body") | return ""
@@ -86,8 +112,11 @@ def run (args : List String) : IO UInt32 := do
         | some s => readScript root dir s
         | none => pure text
       scripts := scripts.push (node, source)
+    let mut frames := #[]
+    for (node, src) in iframeElements dom do
+      if let some fd ← frameDocument root dir src then frames := frames.push (node, fd)
     let a ← IO.monoNanosNow
-    match start m dom ("http://web-platform.test/" ++ f) scripts { commands, logs := 100000 } with
+    match start m dom ("http://web-platform.test/" ++ f) scripts { commands, logs := 100000 } frames with
     | .error e =>
       bad := bad + 1
       IO.println (Json.mkObj [("file", .str f), ("error", .str e)]).compress

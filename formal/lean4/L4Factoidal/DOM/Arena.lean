@@ -100,6 +100,9 @@ structure Node where
   content : Option NodeId := none
   /-- A document's type (DOM §4.5): `true` for "html", `false` for "xml". -/
   htmlDoc : Bool := true
+  /-- A document's content type (DOM §4.5); "" is the default of its type, "text/html"
+  or "application/xml". -/
+  contentType : String := ""
 deriving Inhabited, Repr
 
 structure Dom where
@@ -108,7 +111,7 @@ deriving Inhabited
 
 /-- The names of `DOMException` (WebIDL §2.8.1) that these algorithms throw. -/
 inductive DomError where
-  | hierarchyRequest | notFound | invalidCharacter | notSupported
+  | hierarchyRequest | notFound | invalidCharacter | notSupported | namespace
 deriving BEq, DecidableEq, Inhabited, Repr
 
 def DomError.name : DomError → String
@@ -116,6 +119,7 @@ def DomError.name : DomError → String
   | .notFound => "NotFoundError"
   | .invalidCharacter => "InvalidCharacterError"
   | .notSupported => "NotSupportedError"
+  | .namespace => "NamespaceError"
 
 /-- The result of an operation that can throw: the arena after it (the same
 arena when it throws) and the value or the exception. The arena is given back
@@ -467,7 +471,7 @@ def createElement (d : Dom) (doc : NodeId) (localName : String) : Res NodeId :=
   else
     let htmlDoc := (d.get doc).htmlDoc
     let lname := if htmlDoc then asciiLower localName else localName
-    let ns := if htmlDoc then some htmlNS else none
+    let ns := if htmlDoc || (d.get doc).contentType == "application/xhtml+xml" then some htmlNS else none
     let (d, id) := d.create { type := .element, doc, ns, lname }
     (d, .ok id)
 
@@ -507,6 +511,114 @@ def setAttribute (d : Dom) (el : NodeId) (qualifiedName value : String) : Res Un
     match (d.get el).attrs.findIdx? (·.qname == q) with
     | some i => (d.setNode el fun e => { e with attrs := e.attrs.modify i fun a => { a with value } }, .ok ())
     | none => (d.setNode el fun e => { e with attrs := e.attrs.push { lname := q, value } }, .ok ())
+
+/-! ## Namespaces (DOM §1.4) and the namespaced attribute methods (DOM §4.9) -/
+
+/-- "Valid namespace prefix" (DOM §1.4): not empty, and no ASCII whitespace, U+0000,
+"/" or ">". -/
+def validNamespacePrefix (p : String) : Bool :=
+  !p.isEmpty && !(p.toList.any fun x => isAsciiWhitespace x || x == '\x00' || x == '/' || x == '>')
+
+/-- "Validate and extract" (DOM §1.4) a namespace and qualified name, for an element
+(`attr := false`) or an attribute: the namespace (the empty string is null), the
+prefix and the local name. The prefix is what comes before the first ":"; the local
+name is all the rest. -/
+def validateAndExtract (ns : Option String) (qname : String) (attr : Bool) :
+    Except DomError (Option String × Option String × String) := do
+  let ns := if ns == some "" then none else ns
+  let (pfx, lname) := match qname.splitOn ":" with
+    | [] | [_] => (none, qname)
+    | p :: rest => (some p, ":".intercalate rest)
+  if let some p := pfx then
+    if !validNamespacePrefix p then throw .invalidCharacter
+  if attr && !validAttributeLocalName lname then throw .invalidCharacter
+  if !attr && !validElementLocalName lname then throw .invalidCharacter
+  if pfx.isSome && ns.isNone then throw .namespace
+  if pfx == some "xml" && ns != some xmlNS then throw .namespace
+  if (qname == "xmlns" || pfx == some "xmlns") && ns != some xmlnsNS then throw .namespace
+  if ns == some xmlnsNS && qname != "xmlns" && pfx != some "xmlns" then throw .namespace
+  return (ns, pfx, lname)
+
+/-- The index of the attribute of `el` with namespace `ns` and local name `lname`. -/
+def attrIndexNS (d : Dom) (el : NodeId) (ns : Option String) (lname : String) : Option Nat :=
+  let ns := if ns == some "" then none else ns
+  (d.get el).attrs.findIdx? fun a => a.ns == ns && a.lname == lname
+
+/-- `getAttributeNS(namespace, localName)` (DOM §4.9). -/
+def getAttributeNS? (d : Dom) (el : NodeId) (ns : Option String) (lname : String) : Option String :=
+  (d.attrIndexNS el ns lname).bind fun i => (d.get el).attrs[i]?.map (·.value)
+
+/-- `setAttributeNS(namespace, qualifiedName, value)` (DOM §4.9): validate and extract,
+then "set an attribute value": an attribute with that namespace and local name keeps its
+prefix and gets the value; otherwise a new attribute is appended. -/
+def setAttributeNS (d : Dom) (el : NodeId) (ns : Option String) (qname value : String) : Res Unit :=
+  match validateAndExtract ns qname true with
+  | .error e => (d, .error e)
+  | .ok (ns, pfx, lname) =>
+    match d.attrIndexNS el ns lname with
+    | some i => (d.setNode el fun e => { e with attrs := e.attrs.modify i fun a => { a with value } }, .ok ())
+    | none => (d.setNode el fun e => { e with attrs := e.attrs.push { ns, pfx, lname, value } }, .ok ())
+
+/-- `removeAttributeNS(namespace, localName)` (DOM §4.9). -/
+def removeAttributeNS (d : Dom) (el : NodeId) (ns : Option String) (lname : String) : Dom :=
+  match d.attrIndexNS el ns lname with
+  | some i => d.setNode el fun e => { e with attrs := e.attrs.eraseIdxIfInBounds i }
+  | none => d
+
+/-- The parent of `n` when it is an element. -/
+def parentElement (d : Dom) (n : NodeId) : Option NodeId :=
+  (d.get n).parent.bind fun p => if (d.get p).type == .element then some p else none
+
+/-- The document element of document `n`. -/
+def documentElement (d : Dom) (n : NodeId) : Option NodeId :=
+  (d.get n).kids.find? fun k => (d.get k).type == .element
+
+/-- "Locate a namespace" for `prefix` (DOM §4.4), `fuel` steps up the tree. -/
+def locateNamespace (d : Dom) (pfx : Option String) : Nat → NodeId → Option String
+  | 0, _ => none
+  | fuel + 1, n =>
+    let x := d.get n
+    let up := fun (k : Option NodeId) => k.bind (d.locateNamespace pfx fuel)
+    match x.type with
+    | .element =>
+      if pfx == some "xml" then some xmlNS
+      else if pfx == some "xmlns" then some xmlnsNS
+      else if x.ns.isSome && x.pfx == pfx then x.ns
+      else
+        let decl := x.attrs.find? fun a => a.ns == some xmlnsNS &&
+          ((a.pfx == some "xmlns" && some a.lname == pfx) || (a.pfx.isNone && a.lname == "xmlns" && pfx.isNone))
+        match decl with
+        | some a => if a.value.isEmpty then none else some a.value
+        | none => up (d.parentElement n)
+    | .document => up (d.documentElement n)
+    | .doctype | .fragment => none
+    | _ => up (d.parentElement n)
+
+/-- `lookupNamespaceURI(prefix)` (DOM §4.4); the empty prefix is null. -/
+def lookupNamespaceURI (d : Dom) (n : NodeId) (pfx : Option String) : Option String :=
+  d.locateNamespace (if pfx == some "" then none else pfx) (d.size + 1) n
+
+/-- "Locate a namespace prefix" for `ns` on element `n` (DOM §4.4). -/
+def locatePrefix (d : Dom) (ns : String) : Nat → NodeId → Option String
+  | 0, _ => none
+  | fuel + 1, n =>
+    let x := d.get n
+    if x.ns == some ns && x.pfx.isSome then x.pfx
+    else match x.attrs.find? (fun a => a.pfx == some "xmlns" && a.value == ns) with
+      | some a => some a.lname
+      | none => (d.parentElement n).bind (d.locatePrefix ns fuel)
+
+/-- `lookupPrefix(namespace)` (DOM §4.4). -/
+def lookupPrefix (d : Dom) (n : NodeId) (ns : Option String) : Option String :=
+  match ns with
+  | none | some "" => none
+  | some ns =>
+    let start := match (d.get n).type with
+      | .element => some n
+      | .document => d.documentElement n
+      | .doctype | .fragment => none
+      | _ => d.parentElement n
+    start.bind (d.locatePrefix ns (d.size + 1))
 
 /-! ## Node interface methods (DOM §4.4) -/
 
@@ -590,7 +702,7 @@ def cloneSingle (d : Dom) (src : NodeId) (doc : Option NodeId) : Dom × NodeId :
   let x := d.get src
   let n : Node := { type := x.type, doc := doc.getD x.doc, ns := x.ns, pfx := x.pfx, lname := x.lname,
                     attrs := x.attrs, data := x.data, pubId := x.pubId, sysId := x.sysId,
-                    htmlDoc := x.htmlDoc }
+                    htmlDoc := x.htmlDoc, contentType := x.contentType }
   let (d, id) := d.create n
   if x.type == .document then (d.setNode id fun y => { y with doc := id }, id) else (d, id)
 
@@ -656,6 +768,24 @@ def getElementById (d : Dom) (n : NodeId) (id : String) : Option NodeId :=
   (d.treeOrder n false).find? fun k =>
     let x := d.get k
     x.type == .element && x.attrs.any fun a => a.ns.isNone && a.lname == "id" && a.value == id
+
+/-! ## Documents of other browsing contexts -/
+
+/-- Append every node of arena `src` to `d`, its node numbers moved by `d.size`: a
+document parsed on its own (an `iframe`'s document) joins the arena of the page, so that
+scripts reach both through the same node numbers. The answer is the new number of
+`src`'s node 0. -/
+def graft (d src : Dom) : Dom × NodeId :=
+  let k := d.size
+  let move := fun (x : Node) => { x with
+    doc := x.doc + k, parent := x.parent.map (· + k), kids := x.kids.map (· + k),
+    host := x.host.map (· + k), content := x.content.map (· + k) }
+  ({ nodes := d.nodes ++ src.nodes.map move }, k)
+
+theorem graft_size (d src : Dom) : (d.graft src).1.size = d.size + src.size := by
+  simp [graft, size]
+
+theorem graft_root (d src : Dom) : (d.graft src).2 = d.size := rfl
 
 /-! ## The tree invariant -/
 

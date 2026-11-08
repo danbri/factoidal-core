@@ -148,6 +148,8 @@ def commandJson : Hosts.Dom.Command → Json
   | .replaceChild p n c => Json.mkObj [("op", Json.str "replaceChild"), ("parent", jn p), ("nodeId", jn n), ("child", jn c)]
   | .cloneNode n d r => Json.mkObj [("op", Json.str "cloneNode"), ("source", jn n), ("deep", Json.bool d), ("nodeId", jn r)]
   | .normalize n => Json.mkObj [("op", Json.str "normalize"), ("nodeId", jn n)]
+  | .setAttributeNS n ns q v => Json.mkObj [("op", Json.str "setAttributeNS"), ("nodeId", jn n), ("namespace", Json.str ns), ("name", Json.str q), ("value", Json.str v)]
+  | .removeAttributeNS n ns l => Json.mkObj [("op", Json.str "removeAttributeNS"), ("nodeId", jn n), ("namespace", Json.str ns), ("name", Json.str l)]
 
 /-- One turn: its commands, logs and whether the default was prevented. -/
 structure Batch where

@@ -62,6 +62,10 @@ inductive Command where
   | replaceChild (parent node child : Nat)
   | cloneNode (node : Nat) (deep : Bool) (result : Nat)
   | normalize (node : Nat)
+  /-- `setAttributeNS(namespace, qualifiedName, value)`; the namespace "" is null. -/
+  | setAttributeNS (node : Nat) (ns qname value : String)
+  /-- `removeAttributeNS(namespace, localName)`; the namespace "" is null. -/
+  | removeAttributeNS (node : Nat) (ns lname : String)
   deriving BEq, Repr, Inhabited
 
 /-- A request to the event loop. -/
@@ -86,6 +90,8 @@ structure State where
   commandLimit : Nat := 4096
   /-- The most console lines a page may write (`maxLogs` by default). -/
   logLimit : Nat := 1024
+  /-- The nested browsing contexts: an `iframe` element and its content document. -/
+  frames : Array (Nat × Nat) := #[]
   deriving Inhabited
 
 /-- Bounds, as in `WebRenderScript`. -/
@@ -104,7 +110,7 @@ inductive Import where
   | getAttribute | setAttribute | createElement | appendChild | addEventListener
   | setTimer | clearTimer | consoleLog
   | nodeInfo | nodeString | nodeChildren | createNode | insertBefore | removeChild
-  | replaceChild | removeAttribute | cloneNode | treeOp
+  | replaceChild | removeAttribute | cloneNode | treeOp | nodeQuery
   deriving DecidableEq, Repr, Inhabited
 
 namespace Import
@@ -113,7 +119,7 @@ def all : List Import :=
   [getElementById, documentElement, tagName, textContentGet, textContentSet, getAttribute,
    setAttribute, createElement, appendChild, addEventListener, setTimer, clearTimer, consoleLog,
    nodeInfo, nodeString, nodeChildren, createNode, insertBefore, removeChild, replaceChild,
-   removeAttribute, cloneNode, treeOp]
+   removeAttribute, cloneNode, treeOp, nodeQuery]
 
 def name : Import → String
   | getElementById => "get_element_by_id" | documentElement => "document_element"
@@ -125,7 +131,7 @@ def name : Import → String
   | nodeInfo => "node_info" | nodeString => "node_string" | nodeChildren => "node_children"
   | createNode => "create_node" | insertBefore => "insert_before" | removeChild => "remove_child"
   | replaceChild => "replace_child" | removeAttribute => "remove_attribute"
-  | cloneNode => "clone_node" | treeOp => "tree_op"
+  | cloneNode => "clone_node" | treeOp => "tree_op" | nodeQuery => "node_query"
 
 /-- Number of i32 parameters; every import answers one i32. -/
 def arity : Import → Nat
@@ -134,6 +140,7 @@ def arity : Import → Nat
   | appendChild => 2 | addEventListener => 4 | setTimer => 3 | clearTimer => 1 | consoleLog => 2
   | nodeInfo => 2 | nodeString => 4 | nodeChildren => 4 | createNode => 3 | insertBefore => 3
   | removeChild => 2 | replaceChild => 3 | removeAttribute => 3 | cloneNode => 2 | treeOp => 3
+  | nodeQuery => 6
 
 def type (f : Import) : FuncType := ⟨Array.replicate f.arity .i32, #[.i32]⟩
 
@@ -143,10 +150,10 @@ def ofName? (s : String) : Option Import := all.find? (·.name == s)
 that write a string into VM memory. -/
 def outBuffer : Import → Option (Nat × Nat)
   | tagName => some (1, 2) | textContentGet => some (1, 2) | getAttribute => some (3, 4)
-  | nodeString => some (2, 3) | nodeChildren => some (2, 3)
+  | nodeString => some (2, 3) | nodeChildren => some (2, 3) | nodeQuery => some (4, 5)
   | _ => none
 
-theorem all_length : all.length = 23 := rfl
+theorem all_length : all.length = 24 := rfl
 theorem all_names_distinct : (all.map name).Nodup := by decide
 theorem ofName?_name (f : Import) : ofName? f.name = some f := by cases f <;> rfl
 
@@ -176,13 +183,25 @@ def domErr : DomError → Int
   | .hierarchyRequest => -4
   | .notFound => -9
   | .notSupported => -10
+  | .namespace => -11
 
 def isElement (d : Dom) (n : Nat) : Bool := n < d.size && (d.get n).type == .element
 
-/-- The value of attribute `name` (no namespace) of element `n`. -/
+/-- A namespaced attribute argument: "namespace U+0000 name" (the namespace "" is
+null). A name with no U+0000 is not namespaced: no valid name contains U+0000. -/
+def nsName? (name : String) : Option (Option String × String) :=
+  match name.splitOn "\x00" with
+  | [ns, q] => some (if ns.isEmpty then none else some ns, q)
+  | _ => none
+
+/-- The value of attribute `name` of element `n`: `getAttribute(qualifiedName)`, or
+`getAttributeNS(namespace, localName)` for "namespace U+0000 localName". -/
 def attrValue? (d : Dom) (n : Nat) (name : String) : Option String :=
-  let q := if (d.get n).ns == some htmlNS then Dom.asciiLower name else name
-  ((d.get n).attrs.find? (fun a => a.qname == q)).map (·.value)
+  match nsName? name with
+  | some (ns, l) => d.getAttributeNS? n ns l
+  | none =>
+    let q := if (d.get n).ns == some htmlNS && (d.get (d.get n).doc).htmlDoc then Dom.asciiLower name else name
+    ((d.get n).attrs.find? (fun a => a.qname == q)).map (·.value)
 
 /-- The first HTML element named `name` in tree order. -/
 def firstNamed (d : Dom) (name : String) : Option Nat :=
@@ -249,13 +268,21 @@ def textContentSet (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M)
 def setAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
   let n := arg args 0
   if !isElement s.dom n then (s, ret (-2)) else
-  match readStr mem st (arg args 1) (arg args 2) maxAttrName, readStr mem st (arg args 3) (arg args 4) maxString with
+  match readStr mem st (arg args 1) (arg args 2) (maxAttrName + maxString), readStr mem st (arg args 3) (arg args 4) maxString with
   | .error e, _ => (s, codeOrTrap e)
   | _, .error e => (s, codeOrTrap e)
   | .ok name, .ok v =>
-    match s.dom.setAttribute n name v with
-    | (_, .error e) => (s, ret (domErr e))
-    | (d, .ok ()) => addCommand s (.setAttribute n name v) d
+    match nsName? name with
+    | some (ns, q) =>
+      if q.utf8ByteSize > maxAttrName then (s, ret (-5)) else
+      match s.dom.setAttributeNS n ns q v with
+      | (_, .error e) => (s, ret (domErr e))
+      | (d, .ok ()) => addCommand s (.setAttributeNS n (ns.getD "") q v) d
+    | none =>
+      if name.utf8ByteSize > maxAttrName then (s, ret (-5)) else
+      match s.dom.setAttribute n name v with
+      | (_, .error e) => (s, ret (domErr e))
+      | (d, .ok ()) => addCommand s (.setAttribute n name v) d
 
 def createElement (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
   match readStr mem st (arg args 0) (arg args 1) maxAttrName with
@@ -307,7 +334,8 @@ def consoleLog (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : S
 /-- `node_info(node, which)`: 0 `nodeType`; 1 parent; 2 first child; 3 last child;
 4 previous sibling; 5 next sibling; 6 number of children; 7 node document; 8 1 when an
 HTML element of an HTML document, else 0; 9 the template contents of a `template`
-element. -1 none, -2 no such node. -/
+element; 10 1 for an HTML document; 11 the content document of an `iframe` element; 12
+the `iframe` element whose content document this is. -1 none, -2 no such node. -/
 def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   let d := s.dom
   let n := arg args 0
@@ -326,6 +354,8 @@ def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   | 8 => (s, ret (if x.type == .element && x.ns == some htmlNS && (d.get x.doc).htmlDoc then 1 else 0))
   | 9 => opt x.content
   | 10 => (s, ret (if x.htmlDoc then 1 else 0))
+  | 11 => opt ((s.frames.find? (·.1 == n)).map (·.2))
+  | 12 => opt ((s.frames.find? (·.2 == n)).map (·.1))
   | _ => (s, ret (-2))
 
 /-- `nodeName` (DOM §4.4). -/
@@ -341,7 +371,8 @@ def nodeName (d : Dom) (n : Nat) : String :=
 
 /-- `node_string(node, which, buf, cap)`: 0 local name (the name of a doctype, the
 target of a processing instruction); 1 `nodeName`; 2 namespace; 3 data; 4
-`textContent`; 5 prefix; 6 the attributes, name and value, each followed by U+0000. -/
+`textContent`; 5 prefix; 6 the attributes, name and value, each followed by U+0000; 7
+public id and 8 system id of a doctype; 9 the content type of a document. -/
 def nodeStringOf (d : Dom) (n which : Nat) : Except Int String :=
   if !isNode d n then .error (-2) else
   let x := d.get n
@@ -356,6 +387,8 @@ def nodeStringOf (d : Dom) (n which : Nat) : Except Int String :=
   | 6 => .ok (x.attrs.foldl (fun acc a => acc ++ a.qname ++ "\x00" ++ a.value ++ "\x00") "")
   | 7 => .ok x.pubId
   | 8 => .ok x.sysId
+  | 9 => if x.type != .document then .error (-1)
+    else .ok (if !x.contentType.isEmpty then x.contentType else if x.htmlDoc then "text/html" else "application/xml")
   | _ => .error (-2)
 
 def le32 (v : Nat) : ByteArray := ⟨#[(v % 256).toUInt8, (v / 256 % 256).toUInt8, (v / 65536 % 256).toUInt8, (v / 16777216 % 256).toUInt8]⟩
@@ -371,17 +404,12 @@ def answerList (mem : Nat) (st : StoreOf M) (buf cap : Nat) : Except Int (Array 
     (r.1, match r.2 with | .values #[.i32 _] => ret xs.size | other => other)
   | .error e => (st, ret e)
 
-/-- `createElementNS` (DOM §4.5) in document `doc`, without the namespace checks of
-"validate and extract" beyond the name: a prefix needs a namespace. -/
-def createElementNS (d : Dom) (ns qname : String) (doc : Nat := 0) : Except DomError (Dom × Nat) :=
-  match qname.splitOn ":" with
-  | [l] => if !Dom.validElementLocalName l then .error .invalidCharacter
-    else .ok (d.create { type := .element, doc, ns := if ns.isEmpty then none else some ns, lname := l })
-  | [p, l] =>
-    if p.isEmpty || !Dom.validElementLocalName l then .error .invalidCharacter
-    else if ns.isEmpty then .error .notSupported
-    else .ok (d.create { type := .element, doc, ns := some ns, pfx := some p, lname := l })
-  | _ => .error .invalidCharacter
+/-- `createElementNS` (DOM §4.5) in document `doc`: "validate and extract"
+(`Dom.validateAndExtract`), then an element with that namespace, prefix and local name
+(no custom elements). The namespace "" is null. -/
+def createElementNS (d : Dom) (ns qname : String) (doc : Nat := 0) : Except DomError (Dom × Nat) := do
+  let (ns, pfx, lname) ← Dom.validateAndExtract (some ns) qname false
+  return d.create { type := .element, doc, ns, pfx, lname }
 
 /-- A new document node (its own node document); `html` for an HTML document. -/
 def newDocument (d : Dom) (html : Bool) : Dom × Nat :=
@@ -432,7 +460,12 @@ def createKind (d : Dom) (kind : Nat) (data : String) : Res Nat :=
   | 6, _ => d.createCDATASection doc data
   | 7, _ => ok (createHTMLDocument d (some data))
   | 10, _ => ok (createHTMLDocument d none)
-  | 8, _ => ok (newDocument d false)
+  | 8, _ =>
+    -- `createDocument(namespace, …)` (DOM §4.5.1 steps 5-7): the content type follows
+    -- the namespace given as `data`.
+    let (d, doc) := newDocument d false
+    let ct := if data == htmlNS then "application/xhtml+xml" else if data == svgNS then "image/svg+xml" else ""
+    ok (d.setNode doc fun n => { n with contentType := ct }, doc)
   | 9, [name, pub, sys] => d.createDocumentType doc name pub sys
   | _, _ => (d, .error .invalidCharacter)
 
@@ -477,6 +510,9 @@ def replaceChild (args : Array Value) (s : State) : State × HostResult :=
 /-- `removeAttribute(qualifiedName)` (DOM §4.9): the first attribute with that
 qualified name (lower case on an HTML element of an HTML document). -/
 def removeAttr (d : Dom) (n : Nat) (name : String) : Dom :=
+  match nsName? name with
+  | some (ns, l) => d.removeAttributeNS n ns l
+  | none =>
   let x := d.get n
   let q := if x.ns == some htmlNS && (d.get x.doc).htmlDoc then Dom.asciiLower name else name
   match x.attrs.findIdx? (·.qname == q) with
@@ -486,13 +522,17 @@ def removeAttr (d : Dom) (n : Nat) (name : String) : Dom :=
 def removeAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
   let n := arg args 0
   if !isElement s.dom n then (s, ret (-2)) else
-  match readStr mem st (arg args 1) (arg args 2) maxAttrName with
+  match readStr mem st (arg args 1) (arg args 2) (maxAttrName + maxString) with
   | .error e => (s, codeOrTrap e)
-  | .ok name => addCommand s (.removeAttribute n name) (removeAttr s.dom n name)
+  | .ok name => match nsName? name with
+    | some (ns, l) => addCommand s (.removeAttributeNS n (ns.getD "") l) (s.dom.removeAttributeNS n ns l)
+    | none =>
+      if name.utf8ByteSize > maxAttrName then (s, ret (-5))
+      else addCommand s (.removeAttribute n name) (removeAttr s.dom n name)
 
 def cloneNode (args : Array Value) (s : State) : State × HostResult :=
   let n := arg args 0
-  if !isNode s.dom n || (s.dom.get n).type == .document then (s, ret (-10)) else
+  if !isNode s.dom n then (s, ret (-2)) else
   let deep := arg args 1 != 0
   let (d, c) := s.dom.cloneNode n deep
   addCommandAnswer s (.cloneNode n deep c) d c
@@ -531,10 +571,40 @@ def textContentGet (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M)
 def getAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : StoreOf M × HostResult :=
   let n := arg args 0
   if !isElement s.dom n then (st, ret (-2)) else
-  match readStr mem st (arg args 1) (arg args 2) maxAttrName with
+  match readStr mem st (arg args 1) (arg args 2) (maxAttrName + maxString) with
   | .error e => (st, codeOrTrap e)
   | .ok name => answerStr mem st (arg args 3) (arg args 4)
       (match attrValue? s.dom n name with | some v => .ok v | none => .error (-1))
+
+/-- `node_query(node, op, s, len, buf, cap)`: a string question about a node, a string
+answer (-1 for null). Ops: 0 `lookupNamespaceURI(s)` (U+0000 alone is the prefix null);
+1 `lookupPrefix(s)`; 2 the attributes of an element, each as namespace, prefix, local
+name and value, each followed by U+0000 (the empty string is null); 3 "" when `s` is a
+valid attribute local name, else -3; 4 "validate and extract" (DOM §1.4) of an attribute
+"namespace U+0000 qualifiedName": namespace, prefix and local name, each followed by U+0000,
+or the error. Ops 3 and 4 do not read the node. -/
+def nodeQueryOf (d : Dom) (n op : Nat) (q : String) : Except Int String :=
+  if op == 3 then (if Dom.validAttributeLocalName q then .ok "" else .error (-3)) else
+  if op == 4 then
+    match nsName? q with
+    | none => .error (-2)
+    | some (ns, qn) => match Dom.validateAndExtract ns qn true with
+      | .ok (ns, p, l) => .ok (ns.getD "" ++ "\x00" ++ p.getD "" ++ "\x00" ++ l ++ "\x00")
+      | .error e => .error (domErr e)
+  else
+  if !isNode d n then .error (-2) else
+  let opt := fun (o : Option String) => match o with | some v => Except.ok v | none => .error (-1)
+  match op with
+  | 0 => opt (d.lookupNamespaceURI n (if q == "\x00" then none else some q))
+  | 1 => opt (d.lookupPrefix n (some q))
+  | 2 => .ok ((d.get n).attrs.foldl (fun acc a =>
+      acc ++ a.ns.getD "" ++ "\x00" ++ a.pfx.getD "" ++ "\x00" ++ a.lname ++ "\x00" ++ a.value ++ "\x00") "")
+  | _ => .error (-2)
+
+def nodeQuery (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : StoreOf M × HostResult :=
+  match readStr mem st (arg args 2) (arg args 3) maxString with
+  | .error e => (st, codeOrTrap e)
+  | .ok q => answerStr mem st (arg args 4) (arg args 5) (nodeQueryOf s.dom (arg args 0) (arg args 1) q)
 
 /-- One import: the new state, the new store and the answer. -/
 def call (mem : Nat) (f : Import) (args : Array Value) (s : State) (st : StoreOf M) :
@@ -565,6 +635,7 @@ def call (mem : Nat) (f : Import) (args : Array Value) (s : State) (st : StoreOf
   | .removeAttribute => pure1 (removeAttribute mem args s st)
   | .cloneNode => pure1 (cloneNode args s)
   | .treeOp => pure1 (treeOp args s)
+  | .nodeQuery => write (nodeQuery mem args s st)
 
 /-! ## What a DOM import can do to VM memory -/
 
@@ -605,6 +676,13 @@ theorem getAttribute_within (mem : Nat) (args : Array Value) (s : State) (st : S
     · exact .inl rfl
     · exact answerStr_within ..
 
+theorem nodeQuery_within (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) :
+    WritesWithin mem (arg args 4) (arg args 5) st (nodeQuery mem args s st).1 := by
+  unfold nodeQuery
+  split
+  · exact .inl rfl
+  · exact answerStr_within ..
+
 /-- A DOM import changes VM memory only at its output buffer, by at most its capacity
 bytes; an import with no output buffer does not change the store at all. -/
 theorem call_writes_within (mem : Nat) (f : Import) (args : Array Value) (s : State) (st : StoreOf M) :
@@ -617,6 +695,7 @@ theorem call_writes_within (mem : Nat) (f : Import) (args : Array Value) (s : St
   · exact getAttribute_within ..
   · exact answerStr_within ..
   · exact answerList_within ..
+  · exact nodeQuery_within ..
 
 /-- A DOM import changes the store only by `writeMem`: never memory growth, tables,
 globals or functions. (A corollary of `call_writes_within`.) -/
@@ -701,8 +780,15 @@ def Command.apply (d : Dom) : Command → Except String Dom
   | .replaceChild p n c => do checkNode d p; checkNode d n; checkNode d c; res (d.replace c n p)
   | .cloneNode n deep r => do
     checkNode d n
-    if (d.get n).type == .document then throw "script command: NotSupportedError"
     made r (d.cloneNode n deep)
   | .normalize n => do checkNode d n; return d.normalize n
+  | .setAttributeNS n ns q v => do
+    checkNode d n
+    if (d.get n).type != .element then throw "script command: target must be an element"
+    res (d.setAttributeNS n (some ns) q v)
+  | .removeAttributeNS n ns l => do
+    checkNode d n
+    if (d.get n).type != .element then throw "script command: target must be an element"
+    return d.removeAttributeNS n (some ns) l
 
 end L4Factoidal.WasmVM.Hosts.Dom

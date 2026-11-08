@@ -498,15 +498,39 @@ def prepare (bytes : ByteArray) (lim : Limits := {}) : Except String Module' := 
   let base ← instantiatePage m emptyDocument lim
   return { m with base := some base }
 
+/-- The document of an `iframe` with no `src` (HTML §7.3.1 "about:blank"): an HTML
+document with `html`, `head` and `body` and no doctype. -/
+def aboutBlank : Arena := Id.run do
+  let el := fun (d : Arena) (name : String) => d.create { type := .element, doc := 0, ns := some L4Factoidal.DOM.htmlNS, lname := name }
+  let d : Arena := { nodes := #[{ type := .document, doc := 0 }] }
+  let (d, html) := el d "html"
+  let d := d.linkChild 0 html none
+  let (d, head) := el d "head"
+  let d := d.linkChild html head none
+  let (d, body) := el d "body"
+  return d.linkChild html body none
+
 /-- Start a page: its classic scripts in document order (each with the current script set
 and a microtask checkpoint after it), `DOMContentLoaded` at the document, then the `load`
 event at the window as a task, and the tasks that are due at time 0. `scripts` are the
-script element's node and its source. -/
-def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Limits := {}) :
-    Except String Session := do
+script element's node and its source. `frames` are the `iframe` elements whose documents
+the embedder loaded, each with its document parsed on its own: each joins the page's arena
+(`Dom.graft`), and its `load` event at the `iframe` is a task before the window's. The
+frames share the page's script realm. -/
+def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Limits := {})
+    (frames : Array (Nat × Arena) := #[]) : Except String Session := do
+  let mut dom := dom
+  let mut framed : Array (Nat × Nat) := #[]
+  for (el, doc) in frames do
+    if el < dom.size then
+      let (d, root) := dom.graft doc
+      dom := d
+      framed := framed.push (el, root)
   let s ← match m.base with
-    | some b => pure { b with host := { dom := { dom, commandLimit := lim.commands, logLimit := lim.logs } }, limits := lim, steps := 0 }
-    | none => instantiatePage m dom lim
+    | some b => pure { b with host := { dom := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed } }, limits := lim, steps := 0 }
+    | none => do
+      let s ← instantiatePage m dom lim
+      pure { s with host := { s.host with dom := { s.host.dom with frames := framed } } }
   let s := (s.run s.fx.page #[.i32 2, .i32 0, .i32 0]).1
   let mut s := s.setUrl url
   for (node, src) in scripts do
@@ -516,6 +540,8 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
     s := s.runJobs
   s := s.setScript (-1)
   s := (s.dispatch 0 "DOMContentLoaded").1
+  for (el, _) in framed do
+    s := s.setLoop (s.loop.queueTask .domManipulation 0 (some { type := "load", target := el }))
   s := s.setLoop (s.loop.queueTask .domManipulation 0 (some { type := "load", target := windowId }))
   return (s.advance 0).1
 

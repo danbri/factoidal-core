@@ -42,6 +42,8 @@ def commandJson : L4Factoidal.WasmVM.Hosts.Dom.Command → JSON.Json
   | .replaceChild p n c => .object [("op",.string "replaceChild"),("parent",num p),("nodeId",num n),("child",num c)]
   | .cloneNode n d r => .object [("op",.string "cloneNode"),("source",num n),("deep",.bool d),("nodeId",num r)]
   | .normalize n => .object [("op",.string "normalize"),("nodeId",num n)]
+  | .setAttributeNS n ns q v => .object [("op",.string "setAttributeNS"),("nodeId",num n),("namespace",.string ns),("name",.string q),("value",.string v)]
+  | .removeAttributeNS n ns l => .object [("op",.string "removeAttributeNS"),("nodeId",num n),("namespace",.string ns),("name",.string l)]
 where num (n : Nat) : JSON.Json := .number (toString n)
 
 private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.Hosts.Dom.Command := do
@@ -63,6 +65,8 @@ private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.H
   | "removeAttribute" => exactly ["nodeId","name"]; return .removeAttribute (← node "nodeId") (← attrName "name")
   | "createElement" => exactly ["name","nodeId"]; return .createElement (← attrName "name") (← node "nodeId")
   | "createElementNS" => exactly ["namespace","name","nodeId"]; return .createElementNS (← str "namespace") (← attrName "name") (← node "nodeId")
+  | "setAttributeNS" => exactly ["nodeId","namespace","name","value"]; return .setAttributeNS (← node "nodeId") (← str "namespace") (← attrName "name") (← str "value")
+  | "removeAttributeNS" => exactly ["nodeId","namespace","name"]; return .removeAttributeNS (← node "nodeId") (← str "namespace") (← attrName "name")
   | "createNode" => exactly ["kind","data","nodeId"]; return .createNode (← node "kind") (← str "data") (← node "nodeId")
   | "appendChild" => exactly ["parent","nodeId"]; return .appendChild (← node "parent") (← node "nodeId")
   | "insertBefore" =>

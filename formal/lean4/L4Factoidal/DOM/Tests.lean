@@ -64,4 +64,43 @@ def tpl : Dom := parseHtmlDocument "<template><p>x</p></template>"
 #guard (let (d, c) := tpl.cloneNode (el tpl "template") true
   kidNames d ((d.get c).content.getD 0)) == ["p"]
 
+/-! ## Namespaces (DOM §1.4 "validate and extract", §4.4 "locate a namespace") -/
+
+/-- "Validate and extract", with the error as a value. -/
+def vae (ns : Option String) (q : String) (attr : Bool := false) :
+    DomError ⊕ (Option String × Option String × String) :=
+  match Dom.validateAndExtract ns q attr with
+  | .ok r => .inr r
+  | .error e => .inl e
+-- the prefix is what comes before the first ":"; the local name is all the rest
+#guard vae (some "http://example.com/") "f:o:o" == .inr (some "http://example.com/", some "f", "o:o")
+#guard vae (some "") "foo" == .inr (none, none, "foo")
+#guard vae none "f:oo" == .inl .namespace
+#guard vae (some "http://example.com/") "xml:foo" == .inl .namespace
+#guard vae (some xmlNS) "xml:foo" == .inr (some xmlNS, some "xml", "foo")
+#guard vae (some "http://example.com/") "xmlns" == .inl .namespace
+#guard vae (some xmlnsNS) "foo" == .inl .namespace
+#guard vae (some xmlnsNS) "xmlns:foo" true == .inr (some xmlnsNS, some "xmlns", "foo")
+#guard vae (some "http://example.com/") ":foo" == .inl .invalidCharacter
+#guard vae (some "http://example.com/") "f:" == .inl .invalidCharacter
+#guard vae none "0" true == .inr (none, none, "0")
+#guard vae none "0" == .inl .invalidCharacter
+
+def nsDoc : Dom := parseHtmlDocument "<body><p><i>x</i></p></body>"
+def nsDoc1 : Dom :=
+  let d := nsDoc
+  let d := (d.setAttributeNS (el d "p") (some xmlnsNS) "xmlns:a" "urnA").1
+  (d.setAttributeNS (el d "p") (some xmlnsNS) "xmlns" "urnD").1
+-- a declaration on an ancestor; the HTML namespace of the element itself
+#guard nsDoc1.lookupNamespaceURI (el nsDoc1 "i") (some "a") == some "urnA"
+#guard nsDoc1.lookupNamespaceURI (el nsDoc1 "p") none == some htmlNS
+#guard nsDoc1.lookupNamespaceURI (el nsDoc1 "i") (some "xml") == some xmlNS
+#guard nsDoc1.lookupNamespaceURI 0 none == some htmlNS
+#guard nsDoc1.lookupPrefix (el nsDoc1 "i") (some "urnA") == some "a"
+#guard nsDoc1.lookupPrefix (el nsDoc1 "i") (some "") == none
+-- setAttributeNS keeps the prefix of an existing attribute; removeAttributeNS by local name
+#guard (let d := (nsDoc1.setAttributeNS (el nsDoc1 "p") (some xmlnsNS) "xmlns:a" "urnB").1
+  (d.getAttributeNS? (el d "p") (some xmlnsNS) "a", (d.get (el d "p")).attrs.size)) == (some "urnB", 2)
+#guard (nsDoc1.removeAttributeNS (el nsDoc1 "p") (some xmlnsNS) "a").getAttributeNS? (el nsDoc1 "p") (some xmlnsNS) "a" == none
+
 end L4Factoidal.DOM.Tests

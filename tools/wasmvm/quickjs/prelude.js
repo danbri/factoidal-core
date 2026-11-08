@@ -51,6 +51,7 @@
       case -5: throw new RangeError('DOM budget exceeded');
       case -9: throw new DOMException('The object can not be found here.', 'NotFoundError');
       case -10: throw new DOMException('The operation is not supported.', 'NotSupportedError');
+      case -11: throw new DOMException('The operation is not allowed by Namespaces in XML.', 'NamespaceError');
       default: throw new TypeError('DOM error ' + code);
     }
   };
@@ -129,15 +130,31 @@
       this.initEvent(type, bubbles, cancelable); state(this).detail = detail;
     }
   }
+  // UI Events §3-§7 and HTML: the event interfaces and their init dictionaries. A member
+  // getter reads the state; `legacyOnly` makes an interface that createEvent can make but
+  // `new` can not (BeforeUnloadEvent, TextEvent).
+  let legacyMaking = false;
+  const getters = (C, names) => { for (const k of names) Object.defineProperty(C.prototype, k, { get() { return state(this)[k]; }, configurable: true, enumerable: true }); };
+  const initOf = init => init == null ? {} : init;
   class UIEvent extends Event {
-    constructor(type, init = undefined) { super(type, init); const s = state(this); s.view = init?.view ?? null; s.detail = init?.detail ?? 0; }
+    constructor(type, init = undefined) {
+      super(type, init); const s = state(this), d = initOf(init);
+      if (d.view !== undefined && d.view !== null && d.view !== window) throw new TypeError("member view is not of type 'Window'");
+      s.view = d.view ?? null; s.detail = d.detail === undefined ? 0 : (d.detail | 0); s.which = d.which === undefined ? 0 : d.which >>> 0;
+    }
     get view() { return state(this).view ?? null; }
     get detail() { return state(this).detail ?? 0; }
+    get which() { return state(this).which ?? 0; }
+    initUIEvent(type, bubbles = false, cancelable = false, view = null, detail = 0) {
+      if (state(this).dispatching) return;
+      this.initEvent(type, bubbles, cancelable); Object.assign(state(this), { view, detail: detail | 0 });
+    }
   }
+  const modifiers = (s, d) => { for (const k of ['ctrlKey', 'shiftKey', 'altKey', 'metaKey']) s[k] = !!d[k]; };
   class MouseEvent extends UIEvent {
     constructor(type, init = undefined) {
       super(type, init);
-      const s = state(this), d = init ?? {};
+      const s = state(this), d = initOf(init);
       for (const k of ['screenX', 'screenY', 'clientX', 'clientY', 'button', 'buttons']) s[k] = Number(d[k] ?? 0);
       for (const k of ['ctrlKey', 'shiftKey', 'altKey', 'metaKey']) s[k] = !!d[k];
       s.relatedTarget = d.relatedTarget ?? null;
@@ -145,12 +162,105 @@
   }
   for (const k of ['screenX', 'screenY', 'clientX', 'clientY', 'button', 'buttons', 'ctrlKey', 'shiftKey', 'altKey', 'metaKey', 'relatedTarget'])
     Object.defineProperty(MouseEvent.prototype, k, { get() { return state(this)[k]; }, configurable: true });
-  class KeyboardEvent extends UIEvent {
-    constructor(type, init = undefined) { super(type, init); const s = state(this); s.key = String(init?.key ?? ''); s.code = String(init?.code ?? ''); }
-    get key() { return state(this).key; }
-    get code() { return state(this).code; }
+  class WheelEvent extends MouseEvent {
+    constructor(type, init = undefined) {
+      super(type, init); const s = state(this), d = initOf(init);
+      for (const k of ['deltaX', 'deltaY', 'deltaZ']) s[k] = Number(d[k] ?? 0);
+      s.deltaMode = (d.deltaMode ?? 0) >>> 0;
+    }
   }
-  class FocusEvent extends UIEvent {}
+  getters(WheelEvent, ['deltaX', 'deltaY', 'deltaZ', 'deltaMode']);
+  consts(WheelEvent, { DOM_DELTA_PIXEL: 0, DOM_DELTA_LINE: 1, DOM_DELTA_PAGE: 2 });
+  consts(WheelEvent.prototype, { DOM_DELTA_PIXEL: 0, DOM_DELTA_LINE: 1, DOM_DELTA_PAGE: 2 });
+  class KeyboardEvent extends UIEvent {
+    constructor(type, init = undefined) {
+      super(type, init); const s = state(this), d = initOf(init);
+      modifiers(s, d);
+      s.key = String(d.key ?? ''); s.code = String(d.code ?? ''); s.location = (d.location ?? 0) >>> 0;
+      s.repeat = !!d.repeat; s.isComposing = !!d.isComposing; s.charCode = (d.charCode ?? 0) >>> 0; s.keyCode = (d.keyCode ?? 0) >>> 0;
+    }
+    getModifierState(k) { const s = state(this); return { Control: s.ctrlKey, Shift: s.shiftKey, Alt: s.altKey, Meta: s.metaKey }[String(k)] ?? false; }
+  }
+  getters(KeyboardEvent, ['key', 'code', 'location', 'repeat', 'isComposing', 'charCode', 'keyCode', 'ctrlKey', 'shiftKey', 'altKey', 'metaKey']);
+  const keyLocations = { DOM_KEY_LOCATION_STANDARD: 0, DOM_KEY_LOCATION_LEFT: 1, DOM_KEY_LOCATION_RIGHT: 2, DOM_KEY_LOCATION_NUMPAD: 3 };
+  consts(KeyboardEvent, keyLocations); consts(KeyboardEvent.prototype, keyLocations);
+  class FocusEvent extends UIEvent {
+    constructor(type, init = undefined) {
+      super(type, init); const r = initOf(init).relatedTarget;
+      if (r !== undefined && r !== null && !(r instanceof EventTarget)) throw new TypeError("member relatedTarget is not of type 'EventTarget'");
+      state(this).relatedTarget = r ?? null;
+    }
+  }
+  getters(FocusEvent, ['relatedTarget']);
+  class CompositionEvent extends UIEvent {
+    constructor(type, init = undefined) { super(type, init); state(this).data = String(initOf(init).data ?? ''); }
+  }
+  getters(CompositionEvent, ['data']);
+  class InputEvent extends UIEvent {
+    constructor(type, init = undefined) {
+      super(type, init); const s = state(this), d = initOf(init);
+      s.data = d.data === undefined || d.data === null ? null : String(d.data); s.isComposing = !!d.isComposing; s.inputType = String(d.inputType ?? '');
+    }
+  }
+  getters(InputEvent, ['data', 'isComposing', 'inputType']);
+  class DragEvent extends MouseEvent {
+    constructor(type, init = undefined) { super(type, init); state(this).dataTransfer = initOf(init).dataTransfer ?? null; }
+  }
+  getters(DragEvent, ['dataTransfer']);
+  class HashChangeEvent extends Event {
+    constructor(type, init = undefined) { super(type, init); const d = initOf(init); state(this).oldURL = String(d.oldURL ?? ''); state(this).newURL = String(d.newURL ?? ''); }
+  }
+  getters(HashChangeEvent, ['oldURL', 'newURL']);
+  class MessageEvent extends Event {
+    constructor(type, init = undefined) {
+      super(type, init); const s = state(this), d = initOf(init);
+      s.data = d.data === undefined ? null : d.data; s.origin = String(d.origin ?? ''); s.lastEventId = String(d.lastEventId ?? '');
+      s.source = d.source ?? null; s.ports = Object.freeze([...(d.ports ?? [])]);
+    }
+    initMessageEvent(type, bubbles = false, cancelable = false, data = null, origin = '', lastEventId = '', source = null, ports = []) {
+      if (state(this).dispatching) return;
+      this.initEvent(type, bubbles, cancelable);
+      Object.assign(state(this), { data, origin: String(origin), lastEventId: String(lastEventId), source, ports: Object.freeze([...ports]) });
+    }
+  }
+  getters(MessageEvent, ['data', 'origin', 'lastEventId', 'source', 'ports']);
+  class StorageEvent extends Event {
+    constructor(type, init = undefined) {
+      super(type, init); const s = state(this), d = initOf(init);
+      for (const k of ['key', 'oldValue', 'newValue']) s[k] = d[k] === undefined || d[k] === null ? null : String(d[k]);
+      s.url = String(d.url ?? ''); s.storageArea = d.storageArea ?? null;
+    }
+  }
+  getters(StorageEvent, ['key', 'oldValue', 'newValue', 'url', 'storageArea']);
+  class DeviceMotionEvent extends Event {
+    constructor(type, init = undefined) {
+      super(type, init); const s = state(this), d = initOf(init);
+      s.acceleration = d.acceleration ?? null; s.accelerationIncludingGravity = d.accelerationIncludingGravity ?? null;
+      s.rotationRate = d.rotationRate ?? null; s.interval = Number(d.interval ?? 0);
+    }
+  }
+  getters(DeviceMotionEvent, ['acceleration', 'accelerationIncludingGravity', 'rotationRate', 'interval']);
+  class DeviceOrientationEvent extends Event {
+    constructor(type, init = undefined) {
+      super(type, init); const s = state(this), d = initOf(init);
+      for (const k of ['alpha', 'beta', 'gamma']) s[k] = d[k] === undefined || d[k] === null ? null : Number(d[k]);
+      s.absolute = !!d.absolute;
+    }
+  }
+  getters(DeviceOrientationEvent, ['alpha', 'beta', 'gamma', 'absolute']);
+  class BeforeUnloadEvent extends Event {
+    constructor(type) { if (!legacyMaking) throw new TypeError('Illegal constructor'); super(type); state(this).returnValue = ''; }
+    get returnValue() { return state(this).returnValue; }
+    set returnValue(v) { state(this).returnValue = String(v); }
+  }
+  class TextEvent extends UIEvent {
+    constructor(type) { if (!legacyMaking) throw new TypeError('Illegal constructor'); super(type); state(this).data = ''; }
+    get data() { return state(this).data; }
+    initTextEvent(type, bubbles = false, cancelable = false, view = null, data = 'undefined') {
+      if (state(this).dispatching) return;
+      this.initUIEvent(type, bubbles, cancelable, view, 0); state(this).data = String(data);
+    }
+  }
   class ErrorEvent extends Event {
     constructor(type, init = undefined) {
       super(type, init);
@@ -413,9 +523,10 @@
     get previousSibling() { return wrap(info(nodeId(this), 4)); }
     get nextSibling() { return wrap(info(nodeId(this), 5)); }
     get nodeValue() { const t = this.nodeType; return (t === 3 || t === 4 || t === 7 || t === 8) ? str(nodeId(this), 3) : null; }
-    set nodeValue(v) { const t = this.nodeType; if (t === 3 || t === 4 || t === 7 || t === 8) chk(n.setText(nodeId(this), v === null ? '' : String(v))); }
+    // nodeValue and textContent are DOMString?: null and undefined are the empty string.
+    set nodeValue(v) { const t = this.nodeType; if (t === 3 || t === 4 || t === 7 || t === 8) chk(n.setText(nodeId(this), v == null ? '' : String(v))); }
     get textContent() { return str(nodeId(this), 4); }
-    set textContent(v) { chk(n.setText(nodeId(this), v === null ? '' : String(v))); }
+    set textContent(v) { chk(n.setText(nodeId(this), v == null ? '' : String(v))); }
     normalize() { chk(n.treeOp(nodeId(this), 0, 2)); }
     cloneNode(deep = false) { return wrap(chk(n.clone(nodeId(this), deep ? 1 : 0))); }
     isEqualNode(other) { return other === null || other === undefined ? false : chk(n.treeOp(nodeId(this), nodeId(other), 1)) === 1; }
@@ -438,8 +549,10 @@
       const a = nodeId(this); let k = nodeId(other);
       for (;;) { if (k === a) return true; k = info(k, 1); if (k < 0) return false; }
     }
-    lookupNamespaceURI(prefix) { return (prefix === null || prefix === '') && isElement(this) ? this.namespaceURI : null; }
-    isDefaultNamespace(ns) { return (ns === '' ? null : ns) === this.lookupNamespaceURI(null); }
+    // Locate a namespace and a namespace prefix (DOM §4.4) are Lean's (Dom.lookupNamespaceURI).
+    lookupNamespaceURI(prefix) { return chk(n.query(nodeId(this), 0, prefix === null || prefix === undefined || prefix === '' ? '\u0000' : String(prefix))); }
+    lookupPrefix(ns) { return ns === null || ns === undefined || ns === '' ? null : chk(n.query(nodeId(this), 1, String(ns))); }
+    isDefaultNamespace(ns) { return (ns === '' || ns === undefined ? null : ns) === this.lookupNamespaceURI(null); }
     insertBefore(node, child) {
       if (arguments.length < 2) throw new TypeError('insertBefore: 2 arguments required');
       const c = child === null || child === undefined ? -1 : nodeId(child);
@@ -461,8 +574,13 @@
     replaceChildren(...xs) { const node = convertNodes(xs); const id = nodeId(this); for (const k of kids(id)) chk(n.remove(id, k)); chk(n.insert(id, node, -1)); },
     querySelector(sel) { return select(this, sel, true)[0] ?? null; },
     querySelectorAll(sel) { return staticList(select(this, sel, false)); },
-    getElementsByTagName(name) { const id = nodeId(this); name = String(name);
-      return liveCollection(() => elementsOf(id).filter(k => name === '*' || str(k, 0) === (info(k, 8) === 1 ? name.toLowerCase() : name) || str(k, 1) === name)); },
+    // DOM §4.2.6.2 "list of elements with qualified name": in an HTML document, an HTML element
+    // matches the ASCII lower case of the name.
+    getElementsByTagName(name) { const id = nodeId(this); name = String(name); const lower = name.replace(/[A-Z]/g, c => c.toLowerCase());
+      return liveCollection(() => elementsOf(id).filter(k => { if (name === '*') return true;
+        const p = str(k, 5), q = p === null ? str(k, 0) : p + ':' + str(k, 0); return q === (info(k, 8) === 1 ? lower : name); })); },
+    getElementsByTagNameNS(ns, localName) { const id = nodeId(this); ns = ns === null || ns === undefined || ns === '' ? null : String(ns); localName = String(localName);
+      return liveCollection(() => elementsOf(id).filter(k => (ns === '*' || str(k, 2) === ns) && (localName === '*' || str(k, 0) === localName))); },
     getElementsByClassName(names) { const id = nodeId(this); const want = String(names).split(/[ \t\n\f\r]+/).filter(Boolean);
       return liveCollection(() => want.length === 0 ? [] : elementsOf(id).filter(k => { const c = (n.attr(k, 'class') ?? '').split(/[ \t\n\f\r]+/); return want.every(w => c.includes(w)); })); },
   };
@@ -490,7 +608,8 @@
   const tokenList = (el, attr) => {
     const o = Object.create(DOMTokenList.prototype);
     const get = () => (el.getAttribute(attr) ?? '').split(/[ \t\n\f\r]+/).filter(Boolean).filter((x, i, a) => a.indexOf(x) === i);
-    const set = xs => el.setAttribute(attr, xs.join(' '));
+    // The update steps (DOM §7.1): no attribute and no tokens leaves the attribute absent.
+    const set = xs => { if (xs.length === 0 && !el.hasAttribute(attr)) return; el.setAttribute(attr, xs.join(' ')); };
     const check = t => { t = String(t); if (t === '') throw new DOMException('empty token', 'SyntaxError');
       if (/[ \t\n\f\r]/.test(t)) throw new DOMException('token has white space', 'InvalidCharacterError'); return t; };
     Object.defineProperties(o, {
@@ -503,7 +622,8 @@
       toggle: { value: (t, force) => { t = check(t); const xs = get(); const has = xs.includes(t);
         if (has && force !== true) { set(xs.filter(x => x !== t)); return false; }
         if (!has && force !== false) { xs.push(t); set(xs); return true; } return has; } },
-      replace: { value: (a, b) => { a = check(a); b = check(b); const xs = get(); const i = xs.indexOf(a); if (i < 0) return false; xs[i] = b; set(xs.filter((x, j, all) => all.indexOf(x) === j)); return true; } },
+      replace: { value: (a, b) => { a = String(a); b = String(b);
+        if (a === '' || b === '') throw new DOMException('empty token', 'SyntaxError'); a = check(a); b = check(b); const xs = get(); const i = xs.indexOf(a); if (i < 0) return false; xs[i] = b; set(xs.filter((x, j, all) => all.indexOf(x) === j)); return true; } },
       toString: { value: () => el.getAttribute(attr) ?? '' },
       [Symbol.iterator]: { value: function* () { yield* get(); } },
     });
@@ -521,36 +641,43 @@
     get className() { return n.attr(nodeId(this), 'class') ?? ''; }
     set className(v) { chk(n.setAttr(nodeId(this), 'class', String(v))); }
     get classList() { let l = tokenLists.get(this); if (!l) tokenLists.set(this, l = tokenList(this, 'class')); return l; }
+    set classList(v) { this.classList.value = v; }
     getAttribute(name) { const r = n.attr(nodeId(this), String(name)); return typeof r === 'number' ? fail(r) : r; }
-    getAttributeNS(ns, name) { return ns === null || ns === '' ? this.getAttribute(name) : null; }
+    // The namespaced forms pass "namespace U+0000 name" (Hosts.Dom.nsName?).
+    getAttributeNS(ns, name) { const r = n.attr(nodeId(this), nsArg(ns) + '\u0000' + String(name)); return typeof r === 'number' ? fail(r) : r; }
     hasAttribute(name) { return this.getAttribute(name) !== null; }
+    hasAttributeNS(ns, name) { return this.getAttributeNS(ns, name) !== null; }
     hasAttributes() { return this.getAttributeNames().length > 0; }
     setAttribute(name, value) {
       if (arguments.length < 2) throw new TypeError('setAttribute: 2 arguments required');
       chk(n.setAttr(nodeId(this), String(name), String(value)));
       if (/^on/i.test(String(name))) contentHandler(this, String(name).toLowerCase().slice(2), String(value));
     }
-    setAttributeNS(ns, name, value) { this.setAttribute(name, value); }
-    removeAttribute(name) { chk(n.removeAttr(nodeId(this), String(name))); }
-    removeAttributeNS(ns, name) { this.removeAttribute(name); }
+    setAttributeNS(ns, name, value) {
+      if (arguments.length < 3) throw new TypeError('setAttributeNS: 3 arguments required');
+      chk(n.setAttr(nodeId(this), nsArg(ns) + '\u0000' + String(name), String(value)));
+    }
+    removeAttribute(name) { const a = attrNodes(this).find(x => x.name === lowerIfHtml(this, String(name))); if (a) detachAttr(a); chk(n.removeAttr(nodeId(this), String(name))); }
+    removeAttributeNS(ns, name) { const a = attrNode(this, nsArg(ns) || null, String(name)); if (a) detachAttr(a); chk(n.removeAttr(nodeId(this), nsArg(ns) + '\u0000' + String(name))); }
     toggleAttribute(name, force) {
+      name = String(name);
+      chk(n.query(0, 3, name));
       const has = this.hasAttribute(name);
       if (has && force !== true) { this.removeAttribute(name); return false; }
-      if (!has && force !== false) { this.setAttribute(name, ''); return true; }
+      if (!has && (force === undefined || force === true)) { this.setAttribute(name, ''); return true; }
       return has;
     }
-    getAttributeNames() { const s = str(nodeId(this), 6) ?? ''; const xs = s === '' ? [] : s.split('\u0000'); return xs.filter((x, i) => i % 2 === 0 && i + 1 < xs.length); }
-    get attributes() {
-      const s = str(nodeId(this), 6) ?? ''; const xs = s === '' ? [] : s.split('\u0000'); const out = [];
-      for (let i = 0; i + 1 < xs.length; i += 2) out.push({ name: xs[i], localName: xs[i], value: xs[i + 1], namespaceURI: null, prefix: null, specified: true });
-      const o = Object.create(NamedNodeMap.prototype);
-      out.forEach((a, i) => { o[i] = a; });
-      Object.defineProperty(o, 'length', { value: out.length });
-      o.getNamedItem = name => out.find(a => a.name === String(name)) ?? null;
-      o.item = i => out[i >>> 0] ?? null;
-      o[Symbol.iterator] = function* () { yield* out; };
-      return o;
+    getAttributeNode(name) { name = lowerIfHtml(this, String(name)); return attrNodes(this).find(a => a.name === name) ?? null; }
+    getAttributeNodeNS(ns, name) { return attrNode(this, nsArg(ns) || null, String(name)); }
+    setAttributeNode(attr) { return setAttrNode(this, attr); }
+    setAttributeNodeNS(attr) { return setAttrNode(this, attr); }
+    removeAttributeNode(attr) {
+      if (!(attr instanceof Attr) || attrState.get(attr).el !== this) throw new DOMException('The attribute is not on this element.', 'NotFoundError');
+      const a = attrState.get(attr);
+      detachAttr(attr); chk(n.removeAttr(nodeId(this), (a.ns ?? '') + '\u0000' + a.lname)); return attr;
     }
+    getAttributeNames() { const s = str(nodeId(this), 6) ?? ''; const xs = s === '' ? [] : s.split('\u0000'); return xs.filter((x, i) => i % 2 === 0 && i + 1 < xs.length); }
+    get attributes() { let m = attrMaps.get(this); if (!m) attrMaps.set(this, m = namedNodeMap(this)); return m; }
     matches(sel) { return matches(nodeId(this), parse(String(sel))); }
     webkitMatchesSelector(sel) { return this.matches(sel); }
     closest(sel) { const p = parse(String(sel)); let k = nodeId(this); while (k >= 0 && info(k, 0) === 1) { if (matches(k, p)) return wrap(k); k = info(k, 1); } return null; }
@@ -559,7 +686,129 @@
     get innerHTML() { return kids(nodeId(this)).map(serialize).join(''); }
     get outerHTML() { return serialize(nodeId(this)); }
   }
+  // ---- Attr and NamedNodeMap (DOM §4.9.1, §4.9.2) ----------------------------------------
+  // The attributes are Lean's, on their element (Hosts.Dom node_query 2 lists them). An Attr
+  // names one of them (element, namespace, local name); a removed or new Attr keeps its own
+  // value until it is set on an element. One Attr object per attribute.
+  const nsArg = ns => ns === null || ns === undefined ? '' : String(ns);
+  const lowerIfHtml = (el, name) => info(nodeId(el), 8) === 1 ? name.replace(/[A-Z]/g, c => c.toLowerCase()) : name;
+  const attrState = new WeakMap(), attrObjects = new Map(), attrMaps = new WeakMap();
+  const attrKey = (id, ns, lname) => id + '\u0000' + (ns ?? '') + '\u0000' + lname;
+  const newAttr = (fields) => { const o = Object.create(Attr.prototype); attrState.set(o, fields); return o; };
+  const attrList = id => {
+    const s = chk(n.query(id, 2, '')) ?? '', xs = s === '' ? [] : s.split('\u0000'), out = [];
+    for (let i = 0; i + 3 < xs.length; i += 4) out.push({ ns: xs[i] || null, pfx: xs[i + 1] || null, lname: xs[i + 2], value: xs[i + 3] });
+    return out;
+  };
+  const attrNodes = el => {
+    const id = nodeId(el);
+    return attrList(id).map(a => {
+      const key = attrKey(id, a.ns, a.lname);
+      let o = attrObjects.get(key);
+      if (!o) { o = newAttr({ el, ns: a.ns, pfx: a.pfx, lname: a.lname, value: a.value, doc: info(id, 7) }); attrObjects.set(key, o); }
+      return o;
+    });
+  };
+  const attrNode = (el, ns, lname) => attrNodes(el).find(a => { const s = attrState.get(a); return s.ns === ns && s.lname === lname; }) ?? null;
+  const detachAttr = attr => {
+    const a = attrState.get(attr);
+    if (!a.el) return;
+    const id = nodeId(a.el), v = n.attr(id, (a.ns ?? '') + '\u0000' + a.lname);
+    if (typeof v === 'string') a.value = v;
+    attrObjects.delete(attrKey(id, a.ns, a.lname)); a.el = null;
+  };
+  const setAttrNode = (el, attr) => {
+    if (!(attr instanceof Attr)) throw new TypeError("parameter is not of type 'Attr'");
+    const a = attrState.get(attr);
+    if (a.el !== null && a.el !== el) throw new DOMException('The attribute is in use by another element.', 'InUseAttributeError');
+    const old = attrNode(el, a.ns, a.lname);
+    if (old === attr) return attr;
+    const value = a.value;
+    if (old) detachAttr(old);
+    const id = nodeId(el);
+    chk(n.setAttr(id, a.ns === null && a.pfx === null ? a.lname : (a.ns ?? '') + '\u0000' + (a.pfx === null ? '' : a.pfx + ':') + a.lname, value));
+    a.el = el; a.doc = info(id, 7); attrObjects.set(attrKey(id, a.ns, a.lname), attr);
+    return old;
+  };
+  class Attr extends Node {
+    get nodeType() { return 2; }
+    get nodeName() { return this.name; }
+    get name() { const a = attrState.get(this); return a.pfx === null ? a.lname : a.pfx + ':' + a.lname; }
+    get localName() { return attrState.get(this).lname; }
+    get namespaceURI() { return attrState.get(this).ns; }
+    get prefix() { return attrState.get(this).pfx; }
+    get ownerElement() { return attrState.get(this).el; }
+    get specified() { return true; }
+    get value() {
+      const a = attrState.get(this);
+      if (a.el) { const v = n.attr(nodeId(a.el), (a.ns ?? '') + '\u0000' + a.lname); if (typeof v === 'string') return a.value = v; }
+      return a.value;
+    }
+    set value(v) {
+      const a = attrState.get(this); v = String(v);
+      if (a.el) chk(n.setAttr(nodeId(a.el), (a.ns ?? '') + '\u0000' + (a.pfx === null ? '' : a.pfx + ':') + a.lname, v));
+      else a.value = v;
+    }
+    get nodeValue() { return this.value; }
+    set nodeValue(v) { this.value = v == null ? '' : v; }
+    get textContent() { return this.value; }
+    set textContent(v) { this.value = v == null ? '' : v; }
+    get ownerDocument() { return wrap(attrState.get(this).doc); }
+    get parentNode() { return null; }
+    get parentElement() { return null; }
+    get firstChild() { return null; }
+    get lastChild() { return null; }
+    get previousSibling() { return null; }
+    get nextSibling() { return null; }
+    get childNodes() { return staticList([]); }
+    hasChildNodes() { return false; }
+    get isConnected() { return false; }
+    getRootNode() { return this; }
+    cloneNode() { const a = attrState.get(this); return newAttr({ el: null, ns: a.ns, pfx: a.pfx, lname: a.lname, value: this.value, doc: a.doc }); }
+    isEqualNode(o) { return o instanceof Attr && o.namespaceURI === this.namespaceURI && o.localName === this.localName && o.value === this.value; }
+    contains(o) { return o === this; }
+    lookupNamespaceURI(prefix) { const el = this.ownerElement; return el ? el.lookupNamespaceURI(prefix) : null; }
+    lookupPrefix(ns) { const el = this.ownerElement; return el ? el.lookupPrefix(ns) : null; }
+    appendChild() { throw new DOMException('An Attr has no children.', 'HierarchyRequestError'); }
+    insertBefore() { throw new DOMException('An Attr has no children.', 'HierarchyRequestError'); }
+  }
   class NamedNodeMap { constructor() { throw new TypeError('Illegal constructor'); } }
+  const namedNodeMap = el => {
+    const target = Object.create(NamedNodeMap.prototype);
+    const names = () => { const xs = attrNodes(el), out = [];
+      for (const a of xs) { const q = a.name; if (out.includes(q)) continue; if (info(nodeId(el), 8) === 1 && /[A-Z]/.test(q)) continue; out.push(q); } return out; };
+    const index = p => typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p);
+    const proxy = new Proxy(target, {
+      get(t, p, r) {
+        if (index(p)) return attrNodes(el)[Number(p)];
+        if (p === Symbol.iterator) return function* () { yield* attrNodes(el); };
+        if (p === 'length') return attrNodes(el).length;
+        if (typeof p === 'string' && !(p in t) && names().includes(p)) return el.getAttributeNode(p);
+        return Reflect.get(t, p, r);
+      },
+      has(t, p) { if (index(p)) return Number(p) < attrNodes(el).length; if (typeof p === 'string' && names().includes(p)) return true; return Reflect.has(t, p); },
+      ownKeys(t) { return [...attrNodes(el).keys()].map(String).concat(names()); },
+      getOwnPropertyDescriptor(t, p) {
+        if (index(p) && Number(p) < attrNodes(el).length) return { value: attrNodes(el)[Number(p)], enumerable: true, configurable: true, writable: false };
+        if (typeof p === 'string' && !(p in t) && names().includes(p)) return { value: el.getAttributeNode(p), enumerable: false, configurable: true, writable: false };
+        return undefined;
+      },
+    });
+    mapOwners.set(proxy, el);
+    return proxy;
+  };
+  const mapOwners = new WeakMap();
+  const attrMapOwner = m => { const el = mapOwners.get(m); if (!el) throw new TypeError('Illegal invocation'); return el; };
+  for (const [k, f] of Object.entries({
+    item(i) { return attrNodes(attrMapOwner(this))[i >>> 0] ?? null; },
+    getNamedItem(name) { return attrMapOwner(this).getAttributeNode(name); },
+    getNamedItemNS(ns, name) { return attrMapOwner(this).getAttributeNodeNS(ns, name); },
+    setNamedItem(a) { return attrMapOwner(this).setAttributeNode(a); },
+    setNamedItemNS(a) { return attrMapOwner(this).setAttributeNodeNS(a); },
+    removeNamedItem(name) { const el = attrMapOwner(this), a = el.getAttributeNode(name); if (!a) throw new DOMException('No such attribute.', 'NotFoundError'); return el.removeAttributeNode(a); },
+    removeNamedItemNS(ns, name) { const el = attrMapOwner(this), a = el.getAttributeNodeNS(ns, name); if (!a) throw new DOMException('No such attribute.', 'NotFoundError'); return el.removeAttributeNode(a); },
+  })) define(NamedNodeMap.prototype, k, f);
+  Object.defineProperty(NamedNodeMap.prototype, 'length', { get() { return attrNodes(attrMapOwner(this)).length; }, configurable: true });
   const insertAdjacent = (el, where, node) => {
     switch (String(where).toLowerCase()) {
       case 'beforebegin': if (!el.parentNode) return null; el.parentNode.insertBefore(node, el); return node;
@@ -648,13 +897,31 @@
     ['HTMLSelectElement', ['select']], ['HTMLOptionElement', ['option']], ['HTMLTextAreaElement', ['textarea']],
     ['HTMLIFrameElement', ['iframe']], ['HTMLCanvasElement', ['canvas']], ['HTMLTemplateElement', ['template']],
     ['HTMLDetailsElement', ['details']], ['HTMLFieldSetElement', ['fieldset']], ['HTMLDialogElement', ['dialog']],
-    ['HTMLVideoElement', ['video']], ['HTMLAudioElement', ['audio']], ['HTMLSlotElement', ['slot']]];
+    ['HTMLVideoElement', ['video']], ['HTMLAudioElement', ['audio']], ['HTMLSlotElement', ['slot']],
+    ['HTMLAreaElement', ['area']], ['HTMLBaseElement', ['base']], ['HTMLTableCaptionElement', ['caption']],
+    ['HTMLTableColElement', ['col', 'colgroup']], ['HTMLDataElement', ['data']], ['HTMLDataListElement', ['datalist']],
+    ['HTMLModElement', ['del', 'ins']], ['HTMLDirectoryElement', ['dir']], ['HTMLDListElement', ['dl']],
+    ['HTMLEmbedElement', ['embed']], ['HTMLFontElement', ['font']], ['HTMLFrameElement', ['frame']],
+    ['HTMLFrameSetElement', ['frameset']], ['HTMLLegendElement', ['legend']], ['HTMLMapElement', ['map']],
+    ['HTMLMeterElement', ['meter']], ['HTMLObjectElement', ['object']], ['HTMLOptGroupElement', ['optgroup']],
+    ['HTMLOutputElement', ['output']], ['HTMLParamElement', ['param']], ['HTMLProgressElement', ['progress']],
+    ['HTMLQuoteElement', ['q', 'blockquote']], ['HTMLSourceElement', ['source']],
+    ['HTMLTableSectionElement', ['tbody', 'thead', 'tfoot']], ['HTMLTimeElement', ['time']], ['HTMLTrackElement', ['track']],
+    ['HTMLMenuElement', ['menu']], ['HTMLPictureElement', ['picture']], ['HTMLMarqueeElement', ['marquee']]];
   const named = {};
   for (const [name, tags] of elementClasses) named[name] = htmlClass(name, tags);
   Object.defineProperty(named.HTMLTemplateElement.prototype, 'content', { get() { return wrap(info(nodeId(this), 9)); }, configurable: true });
+  // An iframe's document is Lean's (Hosts.Page.start `frames`, node_info 11). The frames share
+  // this realm: a frame's window is a view of this window with its own document.
+  Object.defineProperties(named.HTMLIFrameElement.prototype, {
+    contentDocument: { get() { return wrap(info(nodeId(this), 11)); }, configurable: true },
+    contentWindow: { get() { const d = info(nodeId(this), 11); return d < 0 ? null : frameWindow(d); }, configurable: true },
+  });
   for (const t of ['address', 'article', 'aside', 'footer', 'header', 'hgroup', 'main', 'nav', 'section', 'b', 'i', 'em', 'strong',
-    'small', 'code', 'abbr', 'cite', 'dfn', 'kbd', 'mark', 'q', 's', 'samp', 'sub', 'sup', 'u', 'var', 'bdi', 'bdo', 'dd', 'dt',
-    'figcaption', 'figure', 'noscript', 'ruby', 'rt', 'rp', 'summary', 'wbr', 'center', 'tt', 'big', 'nobr', 'acronym']) htmlClasses[t] = HTMLElement;
+    'small', 'code', 'abbr', 'cite', 'dfn', 'kbd', 'mark', 's', 'samp', 'sub', 'sup', 'u', 'var', 'bdi', 'bdo', 'dd', 'dt',
+    'figcaption', 'figure', 'noscript', 'ruby', 'rt', 'rp', 'summary', 'wbr', 'center', 'tt', 'big', 'nobr', 'acronym',
+    'basefont', 'noframes', 'noembed', 'plaintext', 'search', 'strike']) htmlClasses[t] = HTMLElement;
+  for (const t of ['listing', 'xmp']) htmlClasses[t] = named.HTMLPreElement;
   class SVGElement extends Element {}
   class CharacterData extends Node {
     get data() { return str(nodeId(this), 3); }
@@ -714,9 +981,9 @@
     get characterSet() { return 'UTF-8'; }
     get charset() { return 'UTF-8'; }
     get inputEncoding() { return 'UTF-8'; }
-    get contentType() { return info(nodeId(this), 10) === 1 ? 'text/html' : 'application/xml'; }
+    get contentType() { return str(nodeId(this), 9); }
     get readyState() { return readyState; }
-    get defaultView() { return this === document ? window : null; }
+    get defaultView() { return this === document ? window : (info(nodeId(this), 12) >= 0 ? frameWindow(nodeId(this)) : null); }
     get location() { return this === document ? location : null; }
     get doctype() { return wrap(kids(nodeId(this)).find(k => info(k, 0) === 10) ?? -1); }
     get documentElement() { return wrap(kids(nodeId(this)).find(k => info(k, 0) === 1) ?? -1); }
@@ -731,13 +998,24 @@
     get images() { return this.getElementsByTagName('img'); }
     get links() { const id = nodeId(this); return liveCollection(() => elementsOf(id).filter(k => ['a', 'area'].includes(str(k, 0)) && n.attr(k, 'href') !== null)); }
     get currentScript() { return currentScript; }
-    getElementById(id) { return wrap(n.byId(String(id))); }
+    getElementById(id) { id = String(id); return id === '' ? null : wrap(n.byId(id)); }
     getElementsByName(name) { return staticList(elementsOf(nodeId(this)).filter(k => n.attr(k, 'name') === String(name)).map(wrap)); }
     // Each node is made in this document: kind + 16 × its node number (Hosts.Dom.createKind).
     createElement(name, options) { return wrap(chk(n.create(3 + 16 * nodeId(this), String(name)))); }
     createElementNS(ns, qname) {
-      if (ns === 'http://www.w3.org/1999/xhtml' && !String(qname).includes(':')) return this.createElement(String(qname));
-      return wrap(chk(n.create(4 + 16 * nodeId(this), (ns ?? '') + '\u0000' + String(qname))));
+      if (arguments.length < 2) throw new TypeError('createElementNS: 2 arguments required');
+      return wrap(chk(n.create(4 + 16 * nodeId(this), nsArg(ns) + '\u0000' + String(qname))));
+    }
+    createAttribute(name) {
+      if (arguments.length < 1) throw new TypeError('createAttribute: 1 argument required');
+      name = String(name); chk(n.query(0, 3, name));
+      if (info(nodeId(this), 10) === 1) name = name.replace(/[A-Z]/g, c => c.toLowerCase());
+      return newAttr({ el: null, ns: null, pfx: null, lname: name, value: '', doc: nodeId(this) });
+    }
+    createAttributeNS(ns, qname) {
+      if (arguments.length < 2) throw new TypeError('createAttributeNS: 2 arguments required');
+      const [ns2, pfx, lname] = chk(n.query(0, 4, nsArg(ns) + '\u0000' + String(qname))).split('\u0000');
+      return newAttr({ el: null, ns: ns2 || null, pfx: pfx || null, lname, value: '', doc: nodeId(this) });
     }
     createTextNode(data) { return wrap(chk(n.create(0 + 16 * nodeId(this), String(data)))); }
     createComment(data) { return wrap(chk(n.create(1 + 16 * nodeId(this), String(data)))); }
@@ -747,12 +1025,13 @@
     createEvent(name) {
       const map = { event: Event, events: Event, htmlevents: Event, customevent: CustomEvent, mouseevent: MouseEvent,
         mouseevents: MouseEvent, uievent: UIEvent, uievents: UIEvent, keyboardevent: KeyboardEvent, focusevent: FocusEvent,
-        errorevent: ErrorEvent, svgevents: Event, messageevent: Event, hashchangeevent: Event, storageevent: Event,
-        beforeunloadevent: Event, compositionevent: UIEvent, devicemotionevent: Event, deviceorientationevent: Event,
-        dragevent: MouseEvent, textevent: UIEvent };
-      const C = map[String(name).toLowerCase()];
+        svgevents: Event, messageevent: MessageEvent, hashchangeevent: HashChangeEvent, storageevent: StorageEvent,
+        beforeunloadevent: BeforeUnloadEvent, compositionevent: CompositionEvent, devicemotionevent: DeviceMotionEvent,
+        deviceorientationevent: DeviceOrientationEvent, dragevent: DragEvent, textevent: TextEvent };
+      const C = Object.prototype.hasOwnProperty.call(map, String(name).toLowerCase()) ? map[String(name).toLowerCase()] : undefined;
       if (!C) throw new DOMException('The provided event type is not supported.', 'NotSupportedError');
-      const e = new C('');
+      legacyMaking = true;
+      let e; try { e = new C(''); } finally { legacyMaking = false; }
       state(e).initialized = false;
       return e;
     }
@@ -767,8 +1046,11 @@
     constructor() { throw new TypeError('Illegal constructor'); }
     createHTMLDocument(title) { return wrap(chk(n.create(title === undefined ? 10 : 7, title === undefined ? '' : String(title)))); }
     createDocument(ns, qname, doctype = null) {
-      const d = wrap(chk(n.create(8, '')));
-      const el = qname === null || qname === '' ? null : d.createElementNS(ns, qname);
+      if (arguments.length < 2) throw new TypeError('createDocument: 2 arguments required');
+      if (doctype !== null && doctype !== undefined && !(doctype instanceof DocumentType)) throw new TypeError("parameter 3 is not of type 'DocumentType'");
+      qname = qname === null ? '' : String(qname);
+      const d = wrap(chk(n.create(8, nsArg(ns))));
+      const el = qname === '' ? null : d.createElementNS(ns, qname);
       if (doctype) d.appendChild(doctype);
       if (el) d.appendChild(el);
       return d;
@@ -807,11 +1089,12 @@
   // :not(simple), with descendant, child, next-sibling and subsequent-sibling combinators --
   const parse = sel => {
     const groups = [];
+    sel = sel.replace(/\r\n?|\f/g, '\n').replace(/\u0000/g, '\uFFFD');
     for (const g of splitTop(sel, ',')) {
-      const src = g.trim();
+      const src = g.replace(/^[ \t\n]+|[ \t\n]+$/g, '');
       if (src === '') throw new DOMException(`'${sel}' is not a valid selector`, 'SyntaxError');
       const parts = []; let comb = null; let i = 0;
-      const re = /\s*([>+~])\s*|\s+/y;
+      const re = /[ \t\n]*([>+~])[ \t\n]*|[ \t\n]+/y;
       while (i < src.length) {
         re.lastIndex = i;
         const m = re.exec(src);
@@ -824,16 +1107,41 @@
     }
     return groups;
   };
-  const splitTop = (s, c) => { const out = []; let depth = 0, cur = '', q = null;
-    for (const ch of s) { if (q) { cur += ch; if (ch === q) q = null; continue; }
+  const splitTop = (s, c) => { const out = []; let depth = 0, cur = '', q = null, esc = false;
+    for (const ch of s) { if (esc) { cur += ch; esc = false; continue; } if (ch === '\\') { cur += ch; esc = true; continue; }
+      if (q) { cur += ch; if (ch === q) q = null; continue; }
       if (ch === '"' || ch === "'") q = ch; if (ch === '(' || ch === '[') depth++; if (ch === ')' || ch === ']') depth--;
       if (ch === c && depth === 0) { out.push(cur); cur = ''; } else cur += ch; }
     out.push(cur); return out; };
-  const ident = /-?(?:[A-Za-z_ -￿]|\\.)(?:[A-Za-z0-9_\- -￿]|\\.)*/y;
-  const readIdent = (s, i, sel) => { ident.lastIndex = i; const m = ident.exec(s); if (!m || m.index !== i) throw new DOMException(`'${sel}' is not a valid selector`, 'SyntaxError'); return [m[0].replace(/\\(.)/g, '$1'), ident.lastIndex]; };
+  // CSS Syntax §4.3: identifiers with escapes. `sel` was preprocessed (§3.3: CR LF, CR and
+  // FF are LF; U+0000 is U+FFFD).
+  const isHex = c => /[0-9A-Fa-f]/.test(c ?? '');
+  const nameStart = c => c !== undefined && (/[A-Za-z_]/.test(c) || c.codePointAt(0) >= 0x80);
+  const nameChar = c => nameStart(c) || /[0-9-]/.test(c ?? '');
+  const validEscape = (s, i) => s[i] === '\\' && s[i + 1] !== '\n';
+  const startsIdent = (s, i) => s[i] === '-' ? (nameStart(s[i + 1]) || s[i + 1] === '-' || validEscape(s, i + 1)) : (nameStart(s[i]) || validEscape(s, i));
+  const readIdent = (s, i, sel) => {
+    if (!startsIdent(s, i)) throw new DOMException(`'${sel}' is not a valid selector`, 'SyntaxError');
+    let out = '';
+    for (;;) {
+      const c = s[i];
+      if (validEscape(s, i)) {
+        i++;
+        if (i >= s.length) { out += '�'; break; }
+        if (isHex(s[i])) {
+          let h = ''; while (h.length < 6 && isHex(s[i])) h += s[i++];
+          if (/[ \t\n]/.test(s[i] ?? '')) i++;
+          const v = parseInt(h, 16);
+          out += v === 0 || (v >= 0xD800 && v <= 0xDFFF) || v > 0x10FFFF ? '�' : String.fromCodePoint(v);
+        } else { const ch = String.fromCodePoint(s.codePointAt(i)); out += ch; i += ch.length; }
+      } else if (nameChar(c)) { const ch = String.fromCodePoint(s.codePointAt(i)); out += ch; i += ch.length; }
+      else break;
+    }
+    return [out, i];
+  };
   const readCompound = (s, i, sel) => {
     const tests = []; const start = i;
-    if (s[i] === '*') { i++; } else if (/[A-Za-z_\\]/.test(s[i] ?? '')) { const [t, j] = readIdent(s, i, sel); tests.push({ kind: 'tag', name: t.toLowerCase() }); i = j; }
+    if (s[i] === '*') { i++; } else if (startsIdent(s, i)) { const [t, j] = readIdent(s, i, sel); tests.push({ kind: 'tag', name: t.toLowerCase() }); i = j; }
     for (;;) {
       const c = s[i];
       if (c === '#') { const [t, j] = readIdent(s, i + 1, sel); tests.push({ kind: 'id', name: t }); i = j; }
@@ -967,14 +1275,24 @@
       queueRecord('childList', parent, { addedNodes: nodes(added), removedNodes: nodes(removed), previousSibling: wrap(prev), nextSibling: wrap(next) });
   };
   const attrName = (id, name) => info(id, 8) === 1 ? name.toLowerCase() : name;
+  // A namespaced name is "namespace U+0000 qualified name" (set) or "namespace U+0000 local
+  // name" (remove): the record names the local name and the namespace.
+  const recordName = (id, name) => {
+    const i = name.indexOf('\u0000');
+    if (i < 0) return { key: name, attributeName: attrName(id, name), attributeNamespace: null };
+    const ns = name.slice(0, i), q = name.slice(i + 1), c = q.indexOf(':'), l = c < 0 ? q : q.slice(c + 1);
+    return { key: ns + '\u0000' + l, attributeName: l, attributeNamespace: ns === '' ? null : ns };
+  };
   n.setAttr = (id, name, value) => {
-    const old = observed.size ? n0.attr(id, name) : null, r = n0.setAttr(id, name, value);
-    if (r === 0 && observed.size) queueRecord('attributes', id, { attributeName: attrName(id, name), oldValue: typeof old === 'string' ? old : null }, attrName(id, name));
+    if (!observed.size) return n0.setAttr(id, name, value);
+    const rn = recordName(id, name), old = n0.attr(id, rn.key), r = n0.setAttr(id, name, value);
+    if (r === 0) queueRecord('attributes', id, { attributeName: rn.attributeName, attributeNamespace: rn.attributeNamespace, oldValue: typeof old === 'string' ? old : null }, rn.attributeName);
     return r;
   };
   n.removeAttr = (id, name) => {
-    const old = observed.size ? n0.attr(id, name) : null, r = n0.removeAttr(id, name);
-    if (r === 0 && typeof old === 'string') queueRecord('attributes', id, { attributeName: attrName(id, name), oldValue: old }, attrName(id, name));
+    if (!observed.size) return n0.removeAttr(id, name);
+    const rn = recordName(id, name), old = n0.attr(id, rn.key), r = n0.removeAttr(id, name);
+    if (r === 0 && typeof old === 'string') queueRecord('attributes', id, { attributeName: rn.attributeName, attributeNamespace: rn.attributeNamespace, oldValue: old }, rn.attributeName);
     return r;
   };
   n.setText = (id, value) => {
@@ -1055,6 +1373,19 @@
   const window = globalThis;
   ids.set(window, WINDOW);
   const document = wrap(0);
+  const frameWindows = new Map();
+  const frameWindow = doc => {
+    let w = frameWindows.get(doc);
+    if (w) return w;
+    const own = { document: () => wrap(doc), window: () => w, self: () => w, frames: () => w, globalThis: () => w,
+      parent: () => window, top: () => window, frameElement: () => wrap(info(doc, 12)), length: () => 0 };
+    w = new Proxy(window, {
+      get(t, p) { return Object.prototype.hasOwnProperty.call(own, p) ? own[p]() : Reflect.get(t, p, t); },
+      has(t, p) { return Object.prototype.hasOwnProperty.call(own, p) || Reflect.has(t, p); },
+    });
+    frameWindows.set(doc, w);
+    return w;
+  };
   let href = 'about:blank';
   const location = {
     get href() { return href; }, toString() { return href; },
@@ -1112,8 +1443,10 @@
   def('alert', () => {}); def('confirm', () => false); def('prompt', () => null);
   def('open', () => null);
   for (const [k, v] of Object.entries({ EventTarget, Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, ErrorEvent,
+    WheelEvent, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
+    DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, CharacterData, Text, CDATASection, Comment,
-    ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap,
+    ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr,
     DOMTokenList, DOMException, AbortController, AbortSignal, Window, MutationObserver, MutationRecord, ...named })) def(k, v);
 
   // Content event handler attributes (HTML §8.1.8.1): onclick="..." and <body onload>.

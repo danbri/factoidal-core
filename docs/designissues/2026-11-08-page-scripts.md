@@ -31,7 +31,7 @@ script, natively or on the Hub.
   and `performance.now()` read it); nothing else of WASI is granted.
 - `formal/lean4/L4Factoidal/WasmVM/Hosts/Dom.lean`: 10 more imports (`node_info`,
   `node_string`, `node_children`, `create_node`, `insert_before`, `remove_child`,
-  `replace_child`, `remove_attribute`, `clone_node`, `tree_op`) and their commands, and
+  `replace_child`, `remove_attribute`, `clone_node`, `tree_op`, `node_query`) and their commands, and
   `Command.apply`, the replay of a command. `call_writes_within` still holds for all 23
   imports (the two new imports that write VM memory write only their output buffer).
 - `tools/wasmvm/quickjs/prelude.js`: the page objects (build-quickjs.sh puts it into the
@@ -111,8 +111,15 @@ Measured on the owner's Mac, native engine library (2026-11-08):
   Lean decides when a checkpoint runs, not the order inside it. A host click's listeners
   get one checkpoint after the whole dispatch, not one after each listener.
 - No layout reads from script (`offsetWidth` is 0); `style` is the `style` attribute.
-- No `innerHTML` setter, no `Range`, no `TreeWalker`, no `MutationObserver`, no
-  `document.implementation.createHTMLDocument`, no iframes or other windows.
+- No `innerHTML` setter, no `Range`, no `TreeWalker`.
+- Iframes: only in the WPT bench (`wasmvm-bench page`), and only those in the page's
+  markup. The bench parses each `src` document (XML for `.xml`, `.xhtml` and `.svg`, else
+  HTML; `about:blank` with no `src`) and `Hosts.Page.start` grafts it into the page's
+  arena (`Dom.graft`); `node_info` 11 gives an iframe's document. The frames share the
+  page's script realm: a frame's `window` is a view of the page's window with its own
+  `document`, so a frame's constructors are the page's. The engine (`scriptSession`)
+  passes no frames: a frame's nodes are not commands, so the layout replay of the
+  command list would not see them.
 - A page may make at most 4096 commands (the bound of `WebRenderScript`); the WPT runner
   allows 200 000 because it lays nothing out.
 
@@ -122,3 +129,12 @@ Measured on the owner's Mac, native engine library (2026-11-08):
 tests of `html/webappapis/timers`, `html/webappapis/microtask-queuing`, `dom/events`,
 `dom/nodes` and `html/webappapis/scripting/event-loops` at wpt ce5ca396. Counts: the
 baseline `tests/browser-wpt/testharness-20261108.json`.
+
+Namespaces (2026-11-08): `Dom.validateAndExtract` (DOM §1.4) for `createElementNS`,
+`createAttributeNS` and `setAttributeNS`; `getAttributeNS`, `removeAttributeNS`,
+`lookupNamespaceURI` and `lookupPrefix` (DOM §4.4 "locate a namespace") are Lean's. The
+namespaced attribute imports pass "namespace U+0000 name" in the name argument (no valid
+name contains U+0000); the import `node_query` (string in, string out) answers the
+lookups and the namespaced attribute list. `Attr` objects name an attribute of the arena
+(element, namespace, local name); a removed or new `Attr` keeps its own value. A guest
+built with `node_query` needs an engine that serves it.

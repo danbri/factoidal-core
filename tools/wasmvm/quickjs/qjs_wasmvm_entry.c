@@ -48,7 +48,7 @@
  *
  *   -1 none (no such element, no such attribute)    -2 not a node of the right type
  *   -3 InvalidCharacterError    -4 HierarchyRequestError    -5 over a budget
- *   -6 denied    -9 NotFoundError    -10 NotSupportedError
+ *   -6 denied    -9 NotFoundError    -10 NotSupportedError    -11 NamespaceError
  *
  * Timers, listeners and animation frames only record a request: the host keeps the
  * callback id, and its event loop decides when (and whether) to run it, with qjs_call.
@@ -93,6 +93,8 @@ DOM_IMPORT(dispatch_plan) int32_t dom_dispatch_plan(int32_t target, const char *
                                                     char *buf, int32_t cap);
 DOM_IMPORT(request_frame) int32_t dom_request_frame(int32_t callback);
 DOM_IMPORT(cancel_frame) int32_t dom_cancel_frame(int32_t id);
+DOM_IMPORT(node_query) int32_t dom_node_query(int32_t node, int32_t op, const char *s, int32_t slen,
+                                              char *buf, int32_t cap);
 
 static JSRuntime *rt;
 static JSContext *ctx;
@@ -162,6 +164,9 @@ static int32_t rd_attr(int32_t node, int32_t which, const char *s, int32_t slen,
 static int32_t rd_kids(int32_t node, int32_t which, const char *s, int32_t slen, char *buf, int32_t cap) {
   (void) s; (void) slen; return dom_node_children(node, which, buf, cap);
 }
+static int32_t rd_query(int32_t node, int32_t op, const char *s, int32_t slen, char *buf, int32_t cap) {
+  return dom_node_query(node, op, s, slen, buf, cap);
+}
 static int32_t rd_plan(int32_t node, int32_t bubbles, const char *s, int32_t slen, char *buf, int32_t cap) {
   return dom_dispatch_plan(node, s, slen, bubbles, buf, cap);
 }
@@ -193,6 +198,14 @@ static JSValue n_kids(JSContext *c, JSValueConst this_val, int argc, JSValueCons
 static JSValue n_attr(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
   I32(0, node); STR(1, s, len);
   JSValue r = string_result(c, rd_attr, node, 0, s, (int32_t) len);
+  JS_FreeCString(c, s);
+  if (JS_IsNumber(r)) { int32_t code; JS_ToInt32(c, &code, r); if (code == -1) return JS_NULL; }
+  return r;
+}
+/* query(node, op, s): a string answer, null for none, or a negative error code. */
+static JSValue n_query(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, node); I32(1, op); STR(2, s, len);
+  JSValue r = string_result(c, rd_query, node, op, s, (int32_t) len);
   JS_FreeCString(c, s);
   if (JS_IsNumber(r)) { int32_t code; JS_ToInt32(c, &code, r); if (code == -1) return JS_NULL; }
   return r;
@@ -358,6 +371,7 @@ static const JSCFunctionListEntry native_fns[] = {
   JS_CFUNC_DEF("str", 2, n_str),
   JS_CFUNC_DEF("kids", 1, n_kids),
   JS_CFUNC_DEF("attr", 2, n_attr),
+  JS_CFUNC_DEF("query", 3, n_query),
   JS_CFUNC_DEF("setAttr", 3, n_set_attr),
   JS_CFUNC_DEF("removeAttr", 2, n_remove_attr),
   JS_CFUNC_DEF("setText", 2, n_set_text),
@@ -589,6 +603,7 @@ int32_t dom_unlisten(int32_t callback) { return -6; }
 int32_t dom_dispatch_plan(int32_t target, const char *type, int32_t tlen, int32_t bubbles, char *buf, int32_t cap) { return -6; }
 int32_t dom_request_frame(int32_t callback) { return -6; }
 int32_t dom_cancel_frame(int32_t id) { return -6; }
+int32_t dom_node_query(int32_t node, int32_t op, const char *s, int32_t slen, char *buf, int32_t cap) { return -6; }
 
 /* qjs-native FILE...: for each file, one line: FILE <tab> status <tab> text (400 bytes, one line) */
 int main(int argc, char **argv) {
