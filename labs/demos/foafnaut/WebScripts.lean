@@ -519,7 +519,7 @@ def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSO
   let commands := min 1048576 ((natField request "commandLimit").getD 4096)
   let logs := min 1048576 ((natField request "logLimit").getD 1024)
   let id := held.nextSession
-  let lim : Page.Limits := { commands, logs, gpuPage := id }
+  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := entropy id }
   let made := show Except String (Array (Nat × String) × Array String × DOM.Dom) from do
     let dom ← parse html url
     let (scripts, missing) ← scriptSources dom request

@@ -345,6 +345,8 @@ integers (made an Array), or a `TypeError` with this message. -/
 inductive HostAns where
   | val (v : Value)
   | ints (xs : Array Int)
+  /-- A new ArrayBuffer with these bytes. -/
+  | bytes (b : ByteArray)
   | err (msg : String)
   deriving Inhabited
 

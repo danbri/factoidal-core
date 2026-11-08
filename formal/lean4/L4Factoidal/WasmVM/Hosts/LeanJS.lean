@@ -52,7 +52,7 @@ def natives : Array (String × Nat) :=
   #[("byId", 1), ("info", 2), ("str", 2), ("kids", 1), ("attr", 2), ("query", 3), ("setAttr", 3),
     ("removeAttr", 2), ("setText", 2), ("create", 2), ("insert", 3), ("remove", 2), ("replace", 3),
     ("clone", 2), ("treeOp", 3), ("listen", 4), ("unlisten", 1), ("plan", 3), ("timer", 3),
-    ("clearTimer", 1), ("frame", 1), ("cancelFrame", 1), ("log", 1), ("gpu", 3)]
+    ("clearTimer", 1), ("frame", 1), ("cancelFrame", 1), ("log", 1), ("gpu", 3), ("api", 3)]
 
 /-! ## The natives: each is an import of `foafnaut_dom`, served by `Hosts.Page` -/
 
@@ -187,6 +187,17 @@ def serveNative (h : Host) (k : Nat) (args : Array JS.HostArg) : Host × JS.Host
     if msg.size > outCap then (h, .val (.num (-5))) else
     let (h, r, o) := callImport h "gpu_command" [i 0, .int 0, .str msg, .out]
     (h, strAns r o false)
+  | 24 =>
+    -- api(op, flags, bytes, ...args): the argument block of `web_api` (Hosts.WebApi).
+    let rest := (args.toList.drop 3).map bytesOf
+    let block := rest.foldl (fun acc b => acc ++ Hosts.WebApi.u32le b.size ++ b) (Hosts.WebApi.u32le rest.length)
+    if block.size > outCap then (h, .val (.num (-5))) else
+    let (h, r, o) := callImport h "web_api" [i 0, i 1, .str block, .out]
+    let asBytes := match a 2 with | .val (.bool b) => b | _ => false
+    match r with
+    | .ok n => if n < 0 then (h, .val (.num (Float.ofInt n)))
+      else if asBytes then (h, .bytes (o.extract 0 n.toNat)) else (h, strAns r o false)
+    | .error m => (h, .err m)
   | _ => (h, .err "foafnaut_dom: no such native")
 
 /-- The host's natives with the script clock: the instructions run so far are the steps of
@@ -321,7 +332,7 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage
   let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu }
   let s := { base with limits := lim, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
-  let mut s := s.setHost { dom := domHost, reads, time }
+  let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy } }
   s := (s.api? "start" #[]).1
   s := (s.api? "url" #[.str url]).1
   for (node, src) in scripts do

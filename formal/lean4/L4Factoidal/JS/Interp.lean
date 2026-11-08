@@ -644,6 +644,7 @@ def callHost (k : Nat) (args : Array Value) : M Value := do
     match ans with
     | .val v => pure v
     | .ints xs => newArray (xs.map fun i => .num (Float.ofInt i))
+    | .bytes b => newBuffer b
     | .err m => throwErr .type m
 
 /-- The host's clock in ns (0 with no host). -/
