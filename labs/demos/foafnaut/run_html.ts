@@ -2,13 +2,15 @@ import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type Shell
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
-import {inputURL,navigationURL,loadFontFile,prepareHTML,refusalHTML,type PageView} from "./native_html_document.ts";
+import {inputURL,loadFontFile,prepareHTML,refusalHTML,type PageView} from "./native_html_document.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {nativePreflight} from "./native_preflight.ts";
 import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
 import {createHTMLWindowSession} from "./native_html_session.ts";
 import {hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
 import {cleanupUI} from "./ui_cleanup.ts";
+import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
+import type {LinkRoute} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
 import type {UIEvent} from "./ui_engine.ts";
@@ -392,6 +394,19 @@ async function main() {
     else if(name==="sparql-step")navigate(sparqlNext);
     else navigate(settingsURL);
   };
+  // Where a link or an address goes: Lean's route (WebRoute.lean), done as it says. This
+  // browser loads every web site itself and reads local files from a local page. With an
+  // engine from before the op, link-route.mjs gives the same answers (issue 1274).
+  const site={origin:"",pages:new URL("./pages/",import.meta.url).href,files:true};
+  const router=createRouter((request:Record<string,unknown>)=>engine.shellRoute(request));
+  const followRoute=(route:LinkRoute)=>{
+    trace("native-html-route",route);
+    if(route.route==="command")shellCommand(route.name,route.argument);
+    else if(route.route==="system")try{native!.openURL(route.url);}catch(error){refuse(route.url,error);}
+    else if(route.route==="refuse")refuse(route.url,route.reason);
+    // A page link loads only with --follow-links; the browser's own pages always do.
+    else if(route.route!=="navigate"||follow)navigate(route.url);
+  };
   const go=(answer:ReturnType<typeof engine.shellSubmit>)=>{
     trace("native-html-go",answer);
     if(answer.go==="system")try{native!.openURL(answer.url);}catch(error){refuse(answer.url,error);}
@@ -680,7 +695,9 @@ async function main() {
         const graph=(document as Page).graph;
         if(graph&&!focused&&(event.kind===3||event.kind===4||event.kind===9||(event.kind===5&&!(event.b&2)))){graphInput(event.kind,event.a,event.b);return;}
         if(event.kind===5&&focused&&!(event.b&2)){
-          if(event.a===36){const target=field.address;leaveAddress();go(engine.shellSubmit(target));}
+          if(event.a===36){const target=field.address;leaveAddress();
+            const route=router.address({...site,address:target,base:document.baseURL||document.url}) as LinkRoute|undefined;
+            if(route)followRoute(route);else go(engine.shellSubmit(target));}
           else if(event.a===53)leaveAddress();
           // Shift, Option and Command change what the key does; Lean decides.
           else edit(engine.shellKey(shell(),event.a,event.b));
@@ -728,9 +745,7 @@ async function main() {
           if(view.selection){view.selection=undefined;dirty=true;}
           const target=engine.hit(frame,released[0],pageRow(released[1]));
           if(target){console.log(JSON.stringify({type:"native-html-link",...target,url:document.url}));
-            const answer=engine.shellLink(target.href);
-            if(answer.go!=="page"||answer.url===graphURL)go(answer);
-            else if(follow)try{navigate(navigationURL(target.href,document.baseURL,document.url));}catch(error){console.error("Native HTML link refused:",String(error));}}
+            followRoute(router.route({...site,href:target.href,base:document.baseURL||document.url}) as LinkRoute);}
         }
     };
     while(running){

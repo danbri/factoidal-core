@@ -340,6 +340,16 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
   if op == "sourcePage" then
     return some (JSON.Json.object [("source",.string (WebShell.sourcePage (str request "kind") (str request "url") (str request "source")))]).toString
   if op == "shellLink" then return some (WebShell.link (str request "href")).json.toString
+  -- Where a link or an address goes (WebRoute; owner, 2026-11-08): the final action, which
+  -- the hosts do with no URL test of their own. `origin` is the site the browser loads
+  -- pages from ("" for every site), `pages` its folder of pages, `files` whether it reads
+  -- local files, `base` the address of the page the link is on.
+  if op == "shellRoute" then
+    let site : WebRoute.Site := {origin := str request "origin",pages := str request "pages",files := request.field? "files" == some (.bool true)}
+    let route := match request.field? "address" with
+      | some (.string address) => WebShell.routeAddress site (str request "base") address
+      | _ => WebRoute.route site (str request "base") (str request "href")
+    return some (WebShell.routeJson route).toString
   -- WebAssembly run by Lean's own engine, WasmVM (WebWasm; issue 1244).
   if let some answer ← WebWasm.op op request then return some answer
   -- Bookmarks, history, settings and tabs as LWS resources (WebState; browser_state_test.ts).

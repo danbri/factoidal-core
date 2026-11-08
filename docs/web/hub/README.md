@@ -606,6 +606,34 @@ check (`document.documentElement.scrollWidth <= clientWidth`) runs on
 every page after the toolbar has mounted, so it also covers the
 toolbar/editor chrome added by this change.
 
+## Foafnaut Hub: the link check before every Pages deploy
+
+Where a link of the Foafnaut Hub goes is decided by one Lean function,
+`WebRoute.route` (`labs/demos/foafnaut/WebRoute.lean`, with its theorems),
+through the engine op `shellRoute`. The worker (`foafnaut/browser-worker.mjs`)
+does what it answers and tests no URL itself. An engine from before the op
+gets the same rules in JavaScript (`foafnaut/link-route.mjs`), and
+`labs/demos/foafnaut/link_route_test.ts` (in `test.sh`) checks that the two
+agree on a few thousand links.
+
+**Run this before every Pages deploy**, from the repository root:
+
+```
+node labs/demos/foafnaut/hub_links_check.mjs
+```
+
+It serves the Hub files and demo pages of the working tree, once with the
+runtime published on the live site and once with the local engine build
+(`labs/demos/foafnaut/.build/web-render/engines`, or `--runtime DIR`), opens
+the demo index in headless Chrome, clicks every link on it (including
+`foafnaut:graph`), and fails when a link of the site is handed to the host
+browser, is refused, or loads another address than the rules say, or when
+back (and forward, after the graph) does not return. A run says NOT RUN for
+an engine it can not find; a deploy needs both runs to pass. The bug it
+guards against: `foafnaut:graph` was routed by Lean as a page and then handed
+to the host browser by a second URL test in the worker, so the click bounced
+back (issue 1268).
+
 ## Constraints every cell must respect
 
 - **Same-origin only (strict pages).** Every import in `hub.njk` is a

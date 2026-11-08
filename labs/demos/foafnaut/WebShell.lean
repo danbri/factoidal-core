@@ -1,4 +1,5 @@
 import WebRender
+import WebRoute
 
 /-! The browser's own face: tabs, the address bar and its buttons, drawn into the
 same scene as the page, so one WebGPU pass draws the window. All of it is pixel
@@ -443,8 +444,8 @@ def addressCommands : List String := ["copy","selectAll","cut","paste","undo","r
 
 /-! ### What an address and a link mean -/
 
-/-- Pages this engine can not draw yet go to the host's default browser. -/
-def externalHosts := ["github.com","www.github.com","duckduckgo.com"]
+/-- Pages this engine can not draw yet go to the host's default browser (WebRoute). -/
+def externalHosts := WebRoute.externalHosts
 
 private def hostOf (url : String) : String :=
   match url.splitOn "://" with
@@ -498,6 +499,27 @@ def submit (input : String) : Go :=
   else if (value.splitOn "://").length > 1 || value.startsWith "file:" || value.startsWith "about:" then link value
   else if !value.contains ' ' && value.contains '.' then link ("https://" ++ value)
   else .system ("https://duckduckgo.com/?q=" ++ encodeQuery value)
+
+/-- Where an address typed in the bar goes (WebRoute): a URL as a link would, a
+`:command` as `foafnaut:command/argument`, and a search or `:open URL` to the system. -/
+def routeAddress (site : WebRoute.Site) (base input : String) : WebRoute.Route :=
+  let value := input.trimAscii.toString
+  if (value.toList.take 9).map Char.toLower == WebRoute.foafnautPrefix then WebRoute.route site base value else
+  match submit value with
+  | .page url => WebRoute.route site base url
+  | .command name argument => WebRoute.commandRoute site name argument
+  | .system url => match WebRoute.route site base url with
+    | .navigate address => .system address
+    | other => other
+
+/-- The answer of the op `shellRoute` (docs/web/hub/foafnaut/link-route.mjs). -/
+def routeJson : WebRoute.Route → JSON.Json
+  | .page name url => .object [("route",.string "page"),("name",.string name),("url",.string url)]
+  | .graph => .object [("route",.string "graph"),("url",.string WebRoute.graphURL)]
+  | .navigate url => .object [("route",.string "navigate"),("url",.string url)]
+  | .system url => .object [("route",.string "system"),("url",.string url)]
+  | .command name argument => .object [("route",.string "command"),("name",.string name),("argument",.string argument)]
+  | .refuse url reason => .object [("route",.string "refuse"),("url",.string url),("reason",.string reason)]
 
 def Go.json : Go → JSON.Json
   | .page url => .object [("go",.string "page"),("url",.string url)]
@@ -585,6 +607,16 @@ def Shell.editJson (s : Shell) : JSON.Json :=
 -- The graph is a page: a link or `:graph` loads it in the tab and pushes it on the history.
 #guard link "foafnaut:graph" == .page graphURL && submit ":graph" == .page graphURL
 #guard link "foafnaut:settings" == .command "settings" ""
+-- The address bar routes as a link does (WebRoute).
+private def hubSite : WebRoute.Site := {origin := "https://x.org",pages := "https://x.org/p/"}
+#guard routeAddress hubSite "https://x.org/p/index.html" ":graph" == .graph
+#guard routeAddress hubSite "https://x.org/p/index.html" "foafnaut:graph" == .graph
+#guard routeAddress hubSite "https://x.org/p/index.html" ":settings" == .page "settings" "https://x.org/p/settings.html"
+#guard routeAddress hubSite "https://x.org/p/index.html" ":zoom 150" == .command "zoom" "150"
+#guard routeAddress hubSite "https://x.org/p/index.html" "x.org/p/a.html" == .navigate "https://x.org/p/a.html"
+#guard routeAddress hubSite "https://x.org/p/index.html" "lean browser" == .system "https://duckduckgo.com/?q=lean+browser"
+#guard routeAddress hubSite "https://x.org/p/index.html" ":open https://x.org/a" == .system "https://x.org/a"
+#guard routeAddress hubSite "https://x.org/p/index.html" ":open foafnaut:graph" == .graph
 -- A struct literal sets the anchor too: `anchor := 0` would select from the start.
 #guard (({address := "ac",cursor := 1,anchor := 1} : Shell).typed "b").address == "abc"
 #guard (({address := "abc",cursor := 3,anchor := 3} : Shell).key 51).address == "ab"

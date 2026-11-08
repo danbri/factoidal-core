@@ -46,6 +46,9 @@ export type SparqlCapabilityPlan = {bgp:number;family:number;approximate:boolean
 export type SparqlExplain = {ok:true;form:string;operators:SparqlOperator[];root:number;capability:SparqlCapabilityPlan[];
   capabilityWholeQuery:boolean;answer:string;ns:number;vars:string[];rows:Record<string,string|null>[];rowCount:number};
 export type ShellGo = {go:"page";url:string}|{go:"system";url:string}|{go:"command";name:string;argument:string};
+/** Where a link or an address goes (WebRoute.lean, docs/web/hub/foafnaut/link-route.mjs). */
+export type LinkRoute = {route:"page";name:string;url:string}|{route:"graph";url:string}|{route:"navigate";url:string}|
+  {route:"system";url:string}|{route:"command";name:string;argument:string}|{route:"refuse";url:string;reason:string};
 export type HTMLResource = {nodeId:number;url:string;source:string};
 type Module = {ccall(name:string,result:string|null,types:string[],values:unknown[]):number;
   UTF8ToString(pointer:number):string;HEAPU8:Uint8Array;_malloc?(size:number):number;_free?(pointer:number):void};
@@ -336,6 +339,9 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     /** The page foafnaut:sparql; `argument` is the address after `foafnaut:sparql/`. */
     sparqlPage:(argument:string)=>documentCall("",{op:"sparqlPage",argument}) as {source:string;title:string;next:string},
     shellLink:(href:string)=>documentCall("",{op:"shellLink",href}) as ShellGo,
+    // The final action for a link (`href`) or a typed address (`address`). An older engine
+    // answers "unknown document operation" (link-route.mjs then answers instead).
+    shellRoute:(request:Record<string,unknown>)=>documentCall("",{...request,op:"shellRoute"}) as LinkRoute,
     // Browser state (WebState.lean): bookmarks, history, settings and tabs as LWS resources.
     state:(op:string,request:Record<string,unknown>={})=>documentCall("",{...request,op}),
     // Lean decides what a menu command and a pointer release mean.

@@ -7,11 +7,17 @@ let post=(message,transfer)=>self.postMessage(message,transfer);
 // Bookmarks, history and settings in this browser's IndexedDB, in the resource format Lean
 // decides for the native browser's local pod (browser-state.mjs, WebState.lean).
 import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './browser-state.mjs';
+// Where a link or an address goes: Lean's route (WebRoute.lean), done as it says; with an
+// engine from before the op, the same rules in JavaScript (link-route.mjs, issue 1274).
+import {createRouter} from './link-route.mjs';
 let browserState,stateReason='starting';
 const statePages=['foafnaut:bookmarks','foafnaut:history'];
 const inWorker=typeof WorkerGlobalScope!=='undefined'&&self instanceof WorkerGlobalScope;
 const pagesBase=new URL('./pages/',import.meta.url).href,siteOrigin=new URL(import.meta.url).origin;
 const homeURL=pagesBase+'index.html',settingsURL=pagesBase+'settings.html';
+// The site this browser loads pages from: other sites go to the host browser.
+const site={origin:siteOrigin,pages:pagesBase,files:false};
+const router=createRouter(request=>call('',request));
 let module,createSession,session,createSurface,hashPixels,surface,surfaceCanvas,checkMode=false,statsMode=false;
 // The two-layer view (issue 1268, layers.mjs): undefined until the first render with a canvas
 // says whether this engine answers layers:true; false for an engine that answers one frame.
@@ -331,12 +337,13 @@ function show(next,remember=true){
   if(remember){history=push(history.history,next.url);pages++;}
   request();
 }
-const pageFor=url=>statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
+const pageFor=url=>url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
 async function navigate(url,remember=true){
   const mine=++serial;loading=true;request();
   const stamp=currentStamp;
   let next;try{next=await pageFor(url);}catch(error){next=refusal(url,String(error.message??error));}
-  if(mine===serial){const before=currentStamp;currentStamp=stamp;try{show(next,remember);}finally{currentStamp=before;}}
+  if(mine===serial){const before=currentStamp;currentStamp=stamp;try{show(next,remember);}finally{currentStamp=before;}
+    if(next.start){const frame=next.start;delete next.start;graphFrame(next,frame);}}
 }
 // An edit in the address bar. Lean gives the new state and the text for the clipboard,
 // which the page writes (issue 1268).
@@ -383,12 +390,15 @@ function tick(){
     tick();
   },33);
 }
-async function openGraph(){
+// The FOAF graph is a page of the tab (issue 1268): it goes into the tab's history like any
+// page, so back leaves it and forward comes back to it (WebRoute.history_roundtrip).
+const graphURL='foafnaut:graph';
+async function graphPage(){
   const {source:rdf}=await fetchText(pagesBase+'foaf-demo.ttl');
   const frame=call('',{op:'graphStart',rdf,width,height,shell:shell()});
-  const page={url:'foafnaut:graph',title:'FOAF graph',source:'',sources:[],graph:{model:frame.model,clock:false,last:0}};
+  const page={url:graphURL,title:'FOAF graph',source:'',sources:[],graph:{model:frame.model,clock:false,last:0},start:frame};
   page.source=call('',{op:'graphPage',model:frame.model}).source;
-  keep();tabs.push({doc:page,history:push({entries:[],index:0},page.url),scroll:0});showTab(tabs.length-1);graphFrame(page,frame);
+  return page;
 }
 function keep(){tabs[active]={doc,history,scroll};}
 function showTab(index){serial++;loading=false;setFocus(false);active=index;({doc,history,scroll}=tabs[index]);field=showURL(doc.url);request();}
@@ -486,7 +496,7 @@ function shellCommand(name,argument){
   if(name==='back')command(6);else if(name==='forward')command(7);else if(name==='reload')command(8);
   else if(name==='new')newTab();else if(name==='close')closeTab(active);
   else if(name==='home')navigate(homeURL);else if(name==='source')viewSource();
-  else if(name==='graph')openGraph().catch(error=>{doc=refusal('foafnaut:graph',String(error.message??error));request();});
+  else if(name==='graph')navigate(graphURL);
   else if(name==='theme'){theme=argument||(theme==='next'?'arcade':'next');request();browserState?.settings({theme}).catch(()=>{});}
   else if(name==='zoom'&&/^[0-9]+$/.test(argument)){percent=Math.max(50,Number(argument));request();browserState?.settings({textZoom:percent}).catch(()=>{});}
   else if(['bookmarks','history'].includes(name))navigate('foafnaut:'+name);
@@ -517,11 +527,17 @@ async function openState(){
   const saved=await browserState.read();
   if(saved.settings){theme=saved.settings.theme;percent=saved.settings.textZoom;request();}
 }
-function go(answer){
+// Lean's route for a link or an address (link-route.mjs), done as it says. This host tests
+// no URL: a refused link shows Lean's reason and stays out of the history.
+function follow(route){
+  if(route.route==='command')shellCommand(route.name,route.argument);
+  else if(route.route==='system')post({type:'open',url:route.url});
+  else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
+  else navigate(route.url);
+}
+// An address typed in the bar, with an engine from before the route op (issue 1274).
+function legacyGo(answer){
   if(answer.go==='command')shellCommand(answer.name,answer.argument);
-  // Pages of the browser itself (foafnaut:graph, foafnaut:wasm, ...): Lean answers them as
-  // pages since issue 1268, so they are never handed to the host browser.
-  else if(answer.url==='foafnaut:graph')shellCommand('graph','');
   else if(answer.url?.startsWith('foafnaut:'))navigate(answer.url);
   else if(answer.go==='system'||!answer.url.startsWith(siteOrigin))post({type:'open',url:answer.url});
   else navigate(answer.url);
@@ -601,7 +617,9 @@ async function draw(){
       post({type:'frame',width,height,title:shown.title,rgba:rgba?.buffer,presented:!rgba,inputAt,
         stats:{path,layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
           pixelHash,primitives:frame.primitiveCount,url:shown.url,address:field.address,scroll,tabs:tabs.length,theme,percent,
-          leanRenders:leanRenders-calls,leanCalls,rows:Math.round(frame.data.length/4),...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{})}},rgba?[rgba.buffer]:[]);
+          leanRenders:leanRenders-calls,leanCalls,rows:Math.round(frame.data.length/4),...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{}),
+          // For hub_links_check.mjs: the links of a one-frame view, and who routes them.
+          ...(statsMode&&layered===false?{links:frame.webRender.links,routes:router.lean?'lean':'fallback'}:{})}},rgba?[rgba.buffer]:[]);
       if(!phasesPosted){phasesPosted=true;post({type:'phases',phases});firstFrameSeen();}
     }catch(error){
       incoming=undefined;
@@ -742,14 +760,13 @@ function apply(data){
   if(data.type==='release'&&frame&&!data.scrolled){
     if(call('',{op:'shellHit',shell:shell(),x:data.x,y:data.y,width}).control)return;
     const target=hit(data.x,data.y);
-    if(target?.href){
-      const answer=call('',{op:'shellLink',href:target.href});
-      if(answer.go==='page')go({go:'page',url:new URL(target.href,doc.baseURL||doc.url).href});else go(answer);
-    }
+    if(target?.href)follow(router.route({...site,href:target.href,base:doc.baseURL||doc.url}));
   }
   if(data.type==='text'&&focused){const {clipboard:_,...next}=call('',{op:'shellText',shell:shell(),text:data.text});field=next;request();}
   if(data.type==='key'&&focused){
-    if(data.key===36){const target=field.address;leaveAddress();go(call('',{op:'shellSubmit',address:target}));}
+    if(data.key===36){const target=field.address;leaveAddress();
+      const route=router.address({...site,address:target,base:doc.baseURL||doc.url});
+      if(route)follow(route);else legacyGo(call('',{op:'shellSubmit',address:target}));}
     else if(data.key===53)leaveAddress();
     else{field=call('',{op:'shellKey',shell:shell(),key:data.key,modifiers:data.modifiers??0});request();}
   }
