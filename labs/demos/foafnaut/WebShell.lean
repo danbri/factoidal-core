@@ -488,6 +488,9 @@ def submit (input : String) : Go :=
   let value := input.trimAscii.toString
   if value.startsWith ":" then
     match ((value.drop 1).toString.splitOn " ").filter (· != "") with
+    -- `:sparql QUERY` keeps the whole rest of the line, encoded (WebSparql).
+    | "sparql" :: _ :: _ =>
+      command "sparql" ("q=" ++ encodeQuery ((((value.drop 1).toString.trimAscii.toString.drop 6).toString).trimAscii.toString))
     | [name] => command name ""
     | ["open",url] => .system url
     | name::argument::_ => command name argument
@@ -571,6 +574,8 @@ def Shell.editJson (s : Shell) : JSON.Json :=
 #guard submit "lean browser" == .system "https://duckduckgo.com/?q=lean+browser"
 #guard submit ":zoom 150" == .command "zoom" "150"
 #guard submit ":source" == .command "source" ""
+#guard submit ":sparql SELECT ?s WHERE { ?s a <x:y> }" == .command "sparql" "q=SELECT+%3Fs+WHERE+%7B+%3Fs+a+%3Cx%3Ay%3E+%7D"
+#guard link "foafnaut:sparql/q=ASK+%7B%7D" == .command "sparql" "q=ASK+%7B%7D"
 #guard (sourcePage "Source" "file:///a.html" "<p>\n  x</p>").contains '&'
 #guard ((sourcePage "Source" "a" (String.ofList (List.replicate 8001 'x'))).splitOn "first 8000").length == 2
 #guard submit ":open https://x.org" == .system "https://x.org"

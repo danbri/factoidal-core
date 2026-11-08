@@ -44,7 +44,7 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
   };
   // The same names as REMOTE_CALLS in native_html_worker.ts (not imported: that module runs
   // worker code at load). A merge dropped printLayout here once, and the window could not print.
-  const names:RemoteCall[]=["xmlStylesheet","xslt","inspect","fontRequests","graphStart","graphEvent","graphPage","sourcePage","wasmPage","selectedText","compile","compileLayers","printLayout"];
+  const names:RemoteCall[]=["xmlStylesheet","xslt","inspect","fontRequests","graphStart","graphEvent","graphPage","sourcePage","wasmPage","sparqlPage","selectedText","compile","compileLayers","printLayout"];
   const engine=Object.fromEntries(names.map(name=>[name,async(...args:unknown[])=>(await call(name,...args)).value])) as CompileClient["engine"];
   return {
     get alive(){return alive;},

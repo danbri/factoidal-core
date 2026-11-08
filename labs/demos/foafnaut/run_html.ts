@@ -102,7 +102,7 @@ async function main() {
   // Every engine call that can take more than about 2 ms runs in one worker, in order. `lean` is that
   // engine (promises), or the main-thread engine when the worker can not start (said once, loudly) or in --check-engine.
   let worker:CompileClient|undefined,mainFont=false;
-  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"wasmPage"|"printLayout">;
+  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"wasmPage"|"sparqlPage"|"printLayout">;
   let lean:Lean=engine;
   // The engine that runs Lean's renders: the native library in the worker, or Wasm (in the
   // worker, or on the main thread, which has only the Wasm engine). Said at start and in the summary.
@@ -285,6 +285,22 @@ async function main() {
     const answer=await lean.wasmPage(request);
     return await prepareHTML(lean,target,undefined,answer.source);
   };
+  // foafnaut:sparql (owner, 2026-11-08): the SPARQL planner drawn as live debug. Lean parses, plans and
+  // runs the query and writes the page; the address after `foafnaut:sparql/` is `q=QUERY&step=N`.
+  // `:sparql-step` goes to the address Lean gives as the next step.
+  const sparqlURL="foafnaut:sparql";let sparqlNext=sparqlURL;
+  const isSparql=(target:string)=>target===sparqlURL||target.startsWith(sparqlURL+"/");
+  const sparqlPage=async(target:string)=>{
+    let answer:{source:string;next?:string};
+    try{answer=await lean.sparqlPage(target.slice(sparqlURL.length+1));}
+    catch(error){
+      if(!/unknown document operation/.test(String(error)))throw error;
+      answer={source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title></head><body>'+
+        "<h1>The SPARQL planner page needs a newer engine</h1><p>This engine is older and does not have the SPARQL planner ops.</p></body></html>"};
+    }
+    sparqlNext=answer.next??sparqlURL;
+    return await prepareHTML(lean,target,undefined,answer.source);
+  };
   // The system pointer for a window point: Lean answers from the chrome, the graph model or the
   // link regions of the frame on screen. One small main-thread call for each coalesced move; the
   // window library is told only when the answer changes (issue 1268).
@@ -367,6 +383,8 @@ async function main() {
       browserState.command(name,argument,{url:document.url,title:document.title??""}).then(page=>{if(page)navigate(page);}).catch(error=>refuse(`foafnaut:${name}`,error));
     }
     else if(name==="wasm")navigate(wasmURL+(argument?"/"+argument:""));
+    else if(name==="sparql")navigate(sparqlURL+(argument?"/"+argument:""));
+    else if(name==="sparql-step")navigate(sparqlNext);
     else navigate(settingsURL);
   };
   const go=(answer:ReturnType<typeof engine.shellSubmit>)=>{
@@ -461,7 +479,7 @@ async function main() {
     const from=document.url;
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):prepareHTML(lean,target,current.signal)).then(next=>{
+    (STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):prepareHTML(lean,target,current.signal)).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");

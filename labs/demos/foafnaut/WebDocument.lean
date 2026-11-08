@@ -11,6 +11,7 @@ import WebGraph
 import WebEventLoop
 import WebWasm
 import WebState
+import WebSparql
 import L4Factoidal.Rendering.SfntProfile
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
@@ -336,6 +337,8 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
   if let some answer ← WebWasm.op op request then return some answer
   -- Bookmarks, history, settings and tabs as LWS resources (WebState; browser_state_test.ts).
   if let some answer ← WebState.op op request then return some answer
+  -- The SPARQL planner drawn as live debug (WebSparql; owner, 2026-11-08).
+  if let some answer ← WebSparql.op op request then return some answer
   if op == "pointerUp" then
     let (ax,ay,fx,fy) ← points ((request.field? "selection").getD .null)
     return some (JSON.Json.object [("action",.string (if WebSelection.isClick ax ay fx fy then "click" else "select"))]).toString

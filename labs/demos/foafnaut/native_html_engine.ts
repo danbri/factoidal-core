@@ -37,6 +37,12 @@ export type WasmRun = {engine:string;bytes:number;stage:string;outcome:string;me
   stages?:{decode:number;validate:number;instantiate:number};exports?:{name:string;kind:string;params?:string[];results?:string[]}[];
   imports?:{module:string;name:string}[];instructions?:number;ns?:number;perSecond?:number;fuel?:number;prints?:string[]};
 export type WasmSpecSample = {pass:number;fail:number;notRun:number;files:{name:string;pass:number;fail:number;notRun:number;ns:number;fails:string[]}[]};
+/** An operator of a SPARQL plan, in execution order; `children` are earlier operators. */
+export type SparqlOperator = {id:number;kind:string;label:string;why:string;children:number[];estimate:number|null;actual:number|null;ns:number};
+export type SparqlCapabilityPlan = {bgp:number;family:number;approximate:boolean;cost:number;rows:number;note:string;
+  steps:{source:string;args:string;inputs:string;estimatedCalls:number;estimatedRows:number;estimatedCost:number;rows:number}[]};
+export type SparqlExplain = {ok:true;form:string;operators:SparqlOperator[];root:number;capability:SparqlCapabilityPlan[];
+  capabilityWholeQuery:boolean;answer:string;ns:number;vars:string[];rows:Record<string,string|null>[];rowCount:number};
 export type ShellGo = {go:"page";url:string}|{go:"system";url:string}|{go:"command";name:string;argument:string};
 export type HTMLResource = {nodeId:number;url:string;source:string};
 type Module = {ccall(name:string,result:string|null,types:string[],values:unknown[]):number;
@@ -262,6 +268,12 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     wasmSpecSample:()=>documentCall("",{op:"wasmSpecSample"}) as WasmSpecSample,
     /** The page foafnaut:wasm, as HTML that Lean then lays out. */
     wasmPage:(request:Partial<WasmRequest>&{url?:string}={})=>documentCall("",{...request,op:"wasmPage"}) as {source:string;title:string},
+    // The SPARQL planner drawn as live debug (WebSparql.lean). An older engine answers
+    // "unknown document operation".
+    sparqlInfo:()=>documentCall("",{op:"sparqlInfo"}) as {engine:string;ops:string[];datasets:string[];examples:{name:string;query:string}[]},
+    sparqlExplain:(request:{query:string;dataset?:string;data?:string;run?:boolean})=>documentCall("",{...request,op:"sparqlExplain"}) as SparqlExplain,
+    /** The page foafnaut:sparql; `argument` is the address after `foafnaut:sparql/`. */
+    sparqlPage:(argument:string)=>documentCall("",{op:"sparqlPage",argument}) as {source:string;title:string;next:string},
     shellLink:(href:string)=>documentCall("",{op:"shellLink",href}) as ShellGo,
     // Browser state (WebState.lean): bookmarks, history, settings and tabs as LWS resources.
     state:(op:string,request:Record<string,unknown>={})=>documentCall("",{...request,op}),

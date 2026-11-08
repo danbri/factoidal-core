@@ -175,6 +175,27 @@ async function statePage(url){
   const answer=await browserState.page(url.slice(9));
   return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
 }
+// foafnaut:sparql (owner, 2026-11-08): the SPARQL planner drawn as live debug. Lean parses,
+// plans and runs the query and writes the page; the address after `foafnaut:sparql/` is
+// `q=QUERY&step=N`. An engine from before these ops answers sparqlInfo with "unknown document
+// operation" (no new export is called, issue 1274), and the page then says that it needs a
+// newer engine.
+const sparqlURL='foafnaut:sparql';
+let engineSparql;
+function hasSparql(){
+  if(engineSparql===undefined){try{engineSparql=Array.isArray(call('',{op:'sparqlInfo'}).ops);}catch{engineSparql=false;}}
+  return engineSparql;
+}
+const sparqlNeedsEngine=url=>({url,title:'Needs a newer engine',sources:[],source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title>'+
+  '<style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}h1{margin:0 0 8px 0;font-size:22px;line-height:28px;color:#184078}p{margin:0 0 8px 0}</style></head><body>'+
+  '<h1>The SPARQL planner page needs a newer engine</h1><p>This page draws how Factoidal plans and runs a SPARQL query, from the Lean engine.</p>'+
+  '<p>The engine this page loaded is older and does not have it. The next engine release carries it.</p></body></html>'});
+function sparqlPage(url){
+  if(!hasSparql())return sparqlNeedsEngine(url);
+  const answer=call('',{op:'sparqlPage',argument:url.slice(sparqlURL.length+1)});
+  return {url,title:answer.title,source:answer.source,next:answer.next,sources:[{kind:'Generated page',url,source:answer.source}]};
+}
+const isSparql=url=>url===sparqlURL||url.startsWith(sparqlURL+'/');
 function show(next,remember=true){
   if(remember&&doc&&!next.title?.startsWith('Page refused'))browserState?.visit(next.url,next.title??'',doc.url).catch(()=>{});
   doc=next;if(!focused)field=showURL(next.url);scroll=0;loading=false;
@@ -184,7 +205,7 @@ function show(next,remember=true){
 async function navigate(url,remember=true){
   const mine=++serial;loading=true;request();
   const stamp=currentStamp;
-  let next;try{next=await (statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):prepare(url));}catch(error){next=refusal(url,String(error.message??error));}
+  let next;try{next=await (statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url));}catch(error){next=refusal(url,String(error.message??error));}
   if(mine===serial){const before=currentStamp;currentStamp=stamp;try{show(next,remember);}finally{currentStamp=before;}}
 }
 // An edit in the address bar. Lean gives the new state and the text for the clipboard,
@@ -266,6 +287,8 @@ function shellCommand(name,argument){
   else if(['bookmarks','history'].includes(name))navigate('foafnaut:'+name);
   else if(['bookmark','unbookmark','pod','sync'].includes(name))stateCommand(name,argument);
   else if(name==='wasm')navigate(wasmURL+(argument?'/'+argument:''));
+  else if(name==='sparql')navigate(sparqlURL+(argument?'/'+argument:''));
+  else if(name==='sparql-step')navigate(doc?.next??sparqlURL);
   else navigate(settingsURL);
 }
 // :bookmark [tags], :unbookmark, :pod URL. :sync needs the LWS client in the page, which the Hub
@@ -375,6 +398,7 @@ async function start(data){
   openState().catch(error=>{stateReason=String(error.message??error);});
   // A new window starts in the address bar with the address selected (issue 1268).
   if(data.page&&/^[a-z0-9-]+\.(html|xml)$/.test(data.page))navigate(pagesBase+data.page);
+  else if(data.page==='sparql')navigate(sparqlURL);
   else if(data.page==='wasm'||/^wasm\/[a-z0-9-]+\.wasm(#[A-Za-z0-9_-]+)?$/.test(data.page??''))navigate('foafnaut:'+data.page);
   else focusAddress();
   for(const message of early.splice(0))receive(message);
