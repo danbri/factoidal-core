@@ -27,7 +27,8 @@
   const codes = { IndexSizeError: 1, HierarchyRequestError: 3, WrongDocumentError: 4, InvalidCharacterError: 5,
     NoModificationAllowedError: 7, NotFoundError: 8, NotSupportedError: 9, InvalidStateError: 11, SyntaxError: 12,
     InvalidModificationError: 13, NamespaceError: 14, InvalidAccessError: 15, TypeMismatchError: 17,
-    SecurityError: 18, NetworkError: 19, AbortError: 20, TimeoutError: 23, DataCloneError: 25 };
+    SecurityError: 18, NetworkError: 19, AbortError: 20, URLMismatchError: 21, QuotaExceededError: 22, TimeoutError: 23,
+    InvalidNodeTypeError: 24, DataCloneError: 25 };
   class DOMException extends Error {
     constructor(message = '', name = 'Error') {
       super(String(message));
@@ -1534,8 +1535,8 @@
     get URL() { return this === document ? location.href : 'about:blank'; }
     get documentURI() { return this.URL; }
     get compatMode() { return 'CSS1Compat'; }
-    get characterSet() { return 'UTF-8'; }
-    get charset() { return 'UTF-8'; }
+    get characterSet() { return this === document ? docEncoding() : 'UTF-8'; }
+    get charset() { return this.characterSet; }
     get inputEncoding() { return 'UTF-8'; }
     get contentType() { return str(nodeId(this), 9); }
     get readyState() { return readyState; }
@@ -1965,7 +1966,654 @@
   def('requestAnimationFrame', f => { if (typeof f !== 'function') throw new TypeError('requestAnimationFrame needs a function'); return chk(n.frame(register(f))); });
   def('cancelAnimationFrame', id => { n.cancelFrame(Number(id) | 0); });
   def('reportError', e => report(e));
-  def('structuredClone', v => JSON.parse(JSON.stringify(v)));
+  // ==== basics: web APIs over Lean (Encoding, URL, base64, crypto, structuredClone, performance) ====
+  // Record: docs/designissues/2026-11-08-page-scripts.md, "Web APIs over Lean". The algorithms
+  // are Lean's (L4Factoidal.WasmVM.Hosts.WebApi: WHATWG.Encoding, WHATWG.URL, WHATWG.Base64,
+  // Crypto.WebCrypto); one `n.api` call is one whole operation (bytes as bytes). This section
+  // only converts arguments (WebIDL), shapes objects and makes promises. Each API is installed
+  // lazily: a getter on the global object that, on first use, probes `n.api` once and either
+  // defines the API or leaves it undefined (an engine without the op). Nothing here runs at
+  // page start.
+  // `call(op, args, flags, bytes)`: the native `n.api(op, flags, bytes, ...args)`.
+  const apiCall = (op, args, flags = 0, bytes = false) => n0.api(op, flags, bytes, ...args);
+  const apiOn = (() => { let on; return () => on ??= (typeof n0.api === 'function' && apiCall(1, []) === '1'); })();
+  const lazy = (name, make) => Object.defineProperty(globalThis, name, { configurable: true, enumerable: false,
+    get() {
+      const v = apiOn() ? make() : undefined;
+      if (v === undefined) { delete globalThis[name]; return undefined; }
+      define(globalThis, name, v); return v;
+    },
+    set(v) { define(globalThis, name, v); } });
+  const apiError = (r, what) => {
+    switch (r) {
+      case -3: throw new DOMException(what, 'InvalidCharacterError');
+      case -5: throw new RangeError(what + ': over a budget');
+      case -21: throw new RangeError(what);
+      case -22: throw new DOMException(what, 'OperationError');
+      case -23: throw new DOMException(what, 'NotSupportedError');
+      default: throw new TypeError(what);
+    }
+  };
+  const api = (op, args, flags, bytes, what) => { const r = apiCall(op, args, flags, bytes); return typeof r === 'number' ? apiError(r, what) : r; };
+  // WebIDL conversions.
+  // USVString: a lone surrogate becomes U+FFFD. BubblePopJS strings are code points, never
+  // lone surrogates, and need nothing.
+  const usv = x => { const s = String(x); return typeof s.toWellFormed === 'function' ? s.toWellFormed() : s; };
+  const dict = (x, what) => { if (x === undefined || x === null) return {}; if (typeof x !== 'object' && typeof x !== 'function') throw new TypeError(what + ': the options are not an object'); return x; };
+  const isShared = x => typeof SharedArrayBuffer === 'function' && x instanceof SharedArrayBuffer;
+  const bufferSource = (x, what) => {
+    if (x instanceof ArrayBuffer || isShared(x)) return new Uint8Array(x);
+    if (ArrayBuffer.isView(x)) return new Uint8Array(x.buffer, x.byteOffset, x.byteLength);
+    throw new TypeError(what + ": parameter is not of type 'BufferSource'");
+  };
+  const brand = (map, o, what) => { const s = map.get(o); if (!s) throw new TypeError('Illegal invocation: ' + what); return s; };
+  const setTag = (C, tag) => Object.defineProperty(C.prototype, Symbol.toStringTag, { value: tag, configurable: true });
+
+  // ---- Encoding Standard §7: TextDecoder, TextEncoder ----------------------------------
+  lazy('TextDecoder', () => {
+    const decoders = new WeakMap();
+    let nextHandle = 1;
+    // A decoder dropped in the middle of a stream: Lean forgets its state.
+    const finished = typeof FinalizationRegistry === 'function'
+      ? new FinalizationRegistry(h => { apiCall(3, ['utf-8', String(h), ''], 0, false); }) : null;
+    class TextDecoder {
+      constructor(label = 'utf-8', options = undefined) {
+        const l = String(label), o = dict(options, "Failed to construct 'TextDecoder'");
+        const fatal = !!o.fatal, ignoreBOM = !!o.ignoreBOM;
+        const name = apiCall(2, [l], 0, false);
+        if (typeof name !== 'string') throw new RangeError(`Failed to construct 'TextDecoder': The encoding label provided ('${l}') is invalid.`);
+        decoders.set(this, { name, fatal, ignoreBOM, handle: 0 });
+      }
+      get encoding() { return brand(decoders, this, 'TextDecoder').name; }
+      get fatal() { return brand(decoders, this, 'TextDecoder').fatal; }
+      get ignoreBOM() { return brand(decoders, this, 'TextDecoder').ignoreBOM; }
+      decode(input = undefined, options = undefined) {
+        const s = brand(decoders, this, 'TextDecoder');
+        const bytes = input === undefined ? '' : bufferSource(input, "Failed to execute 'decode' on 'TextDecoder'");
+        const stream = !!dict(options, "Failed to execute 'decode' on 'TextDecoder'").stream;
+        if (stream && s.handle === 0) { s.handle = nextHandle++; finished?.register(this, s.handle, s); }
+        const h = s.handle;
+        if (!stream && h !== 0) { s.handle = 0; finished?.unregister(s); }
+        const r = apiCall(3, [s.name, String(h), bytes], (s.fatal ? 1 : 0) | (s.ignoreBOM ? 2 : 0) | (stream ? 4 : 0), false);
+        if (typeof r === 'number') apiError(r, r === -20 ? "Failed to execute 'decode' on 'TextDecoder': The encoded data was not valid." : 'TextDecoder');
+        return r;
+      }
+    }
+    setTag(TextDecoder, 'TextDecoder');
+    return TextDecoder;
+  });
+  lazy('TextEncoder', () => {
+    const encoders = new WeakSet();
+    class TextEncoder {
+      constructor() { encoders.add(this); }
+      get encoding() { if (!encoders.has(this)) throw new TypeError('Illegal invocation'); return 'utf-8'; }
+      encode(input = '') {
+        if (!encoders.has(this)) throw new TypeError('Illegal invocation');
+        return new Uint8Array(api(4, [usv(input)], 0, true, 'TextEncoder'));
+      }
+      encodeInto(source, destination) {
+        if (!encoders.has(this)) throw new TypeError('Illegal invocation');
+        if (!(destination instanceof Uint8Array)) throw new TypeError("Failed to execute 'encodeInto' on 'TextEncoder': parameter 2 is not of type 'Uint8Array'.");
+        const r = api(5, [usv(source), String(destination.length)], 0, true, 'TextEncoder');
+        const v = new DataView(r), read = v.getUint32(0, true), written = v.getUint32(4, true);
+        destination.set(new Uint8Array(r, 8, written));
+        return { read, written };
+      }
+    }
+    setTag(TextEncoder, 'TextEncoder');
+    return TextEncoder;
+  });
+
+  // ---- URL Standard §6: URL, URLSearchParams ----------------------------------------------
+  // A URL's state is its attributes as Lean answers them (op 10 parse, op 11 a setter); the
+  // URL record is its href, which the URL parser gives back (the standard's serializer
+  // round trip). URLSearchParams keeps its list; parsing and serializing are Lean's.
+  const urlParts = new WeakMap(), paramState = new WeakMap();
+  const PARTS = ['href', 'origin', 'protocol', 'username', 'password', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'];
+  const splitPrefixed = s => { const out = []; let i = 0; while (i < s.length) { const j = s.indexOf(':', i), k = Number(s.slice(i, j)); out.push(s.slice(j + 1, j + 1 + k)); i = j + 1 + k; } return out; };
+  const parseQuery = q => { const xs = splitPrefixed(api(12, [q], 1, false, 'URLSearchParams')); const list = []; for (let i = 0; i + 1 < xs.length; i += 2) list.push([xs[i], xs[i + 1]]); return list; };
+  let URLSearchParamsC;
+  const makeURLSearchParams = () => {
+    if (URLSearchParamsC) return URLSearchParamsC;
+    const serialize = list => api(13, list.flat(), 0, false, 'URLSearchParams');
+    const update = s => {
+      if (!s.url) return;
+      const u = urlParts.get(s.url);
+      const r = apiCall(11, [u.parts[0], 'search', serialize(s.list)], 0, false);
+      if (typeof r === 'string') u.parts = r.split('\0');
+    };
+    const st = o => brand(paramState, o, 'URLSearchParams');
+    const iterProto = Object.create(Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]())), {
+      next: { value() { const it = this; if (!it || !it.target) throw new TypeError('Illegal invocation'); const list = st(it.target).list;
+        if (it.index >= list.length) return { value: undefined, done: true };
+        const [k, v] = list[it.index++]; return { value: it.kind === 'key' ? k : it.kind === 'value' ? v : [k, v], done: false }; }, writable: true, configurable: true },
+      [Symbol.toStringTag]: { value: 'URLSearchParams Iterator', configurable: true } });
+    const iterate = (o, kind) => { st(o); const it = Object.create(iterProto); it.target = o; it.kind = kind; it.index = 0; return it; };
+    class URLSearchParams {
+      constructor(init = '') {
+        const list = [];
+        if (init !== null && (typeof init === 'object' || typeof init === 'function')) {
+          if (init[Symbol.iterator] !== undefined) {
+            for (const pair of init) {
+              if (pair === null || (typeof pair !== 'object' && typeof pair !== 'function')) throw new TypeError("Failed to construct 'URLSearchParams': The provided value cannot be converted to a sequence.");
+              const p = [...pair];
+              if (p.length !== 2) throw new TypeError("Failed to construct 'URLSearchParams': Sequence initializer must only contain pair elements");
+              list.push([usv(p[0]), usv(p[1])]);
+            }
+          } else {
+            for (const k of Reflect.ownKeys(init)) {
+              const d = Reflect.getOwnPropertyDescriptor(init, k);
+              if (d === undefined || !d.enumerable) continue;
+              if (typeof k === 'symbol') throw new TypeError("Failed to construct 'URLSearchParams': a key is a symbol");
+              list.push([usv(k), usv(init[k])]);
+            }
+          }
+        } else list.push(...parseQuery(usv(init)));
+        paramState.set(this, { list, url: null });
+      }
+      get size() { return st(this).list.length; }
+      append(name, value) { if (arguments.length < 2) throw new TypeError("Failed to execute 'append' on 'URLSearchParams': 2 arguments required"); const s = st(this); s.list.push([usv(name), usv(value)]); update(s); }
+      delete(name, value = undefined) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'delete' on 'URLSearchParams': 1 argument required");
+        const s = st(this), k = usv(name), v = value === undefined ? undefined : usv(value);
+        s.list = s.list.filter(p => !(p[0] === k && (v === undefined || p[1] === v))); update(s);
+      }
+      get(name) { if (arguments.length < 1) throw new TypeError("Failed to execute 'get' on 'URLSearchParams': 1 argument required"); const k = usv(name), p = st(this).list.find(p => p[0] === k); return p ? p[1] : null; }
+      getAll(name) { if (arguments.length < 1) throw new TypeError("Failed to execute 'getAll' on 'URLSearchParams': 1 argument required"); const k = usv(name); return st(this).list.filter(p => p[0] === k).map(p => p[1]); }
+      has(name, value = undefined) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'has' on 'URLSearchParams': 1 argument required");
+        const k = usv(name), v = value === undefined ? undefined : usv(value);
+        return st(this).list.some(p => p[0] === k && (v === undefined || p[1] === v));
+      }
+      set(name, value) {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'set' on 'URLSearchParams': 2 arguments required");
+        const s = st(this), k = usv(name), v = usv(value);
+        const i = s.list.findIndex(p => p[0] === k);
+        if (i < 0) s.list.push([k, v]); else { s.list[i] = [k, v]; s.list = s.list.filter((p, j) => j <= i || p[0] !== k); }
+        update(s);
+      }
+      // Stable, by the code units of the names (URL §6.2): JavaScript compares strings so.
+      sort() { const s = st(this); s.list.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0); update(s); }
+      toString() { return serialize(st(this).list); }
+      forEach(f, thisArg = undefined) {
+        if (typeof f !== 'function') throw new TypeError("Failed to execute 'forEach' on 'URLSearchParams': parameter 1 is not of type 'Function'.");
+        const s = st(this);
+        for (let i = 0; i < s.list.length; i++) { const [k, v] = s.list[i]; f.call(thisArg, v, k, this); }
+      }
+      entries() { return iterate(this, 'key+value'); }
+      keys() { return iterate(this, 'key'); }
+      values() { return iterate(this, 'value'); }
+    }
+    Object.defineProperty(URLSearchParams.prototype, Symbol.iterator, { value: URLSearchParams.prototype.entries, writable: true, configurable: true });
+    setTag(URLSearchParams, 'URLSearchParams');
+    URLSearchParamsC = URLSearchParams;
+    return URLSearchParams;
+  };
+  lazy('URLSearchParams', makeURLSearchParams);
+  lazy('URL', () => {
+    const parse = (url, base) => {
+      const r = base === undefined ? apiCall(10, [usv(url)], 0, false) : apiCall(10, [usv(url), usv(base)], 1, false);
+      return typeof r === 'string' ? r.split('\0') : null;
+    };
+    const parts = o => brand(urlParts, o, 'URL');
+    const queryOf = u => u.parts[9].startsWith('?') ? u.parts[9].slice(1) : '';
+    const reparams = u => { if (u.params) paramState.get(u.params).list = parseQuery(queryOf(u)); };
+    const setter = (o, attr, v) => {
+      const u = parts(o);
+      const r = apiCall(11, [u.parts[0], attr, usv(v)], 0, false);
+      if (typeof r !== 'string') { if (attr === 'href') throw new TypeError(`Failed to set the 'href' property on 'URL': Invalid URL`); return; }
+      u.parts = r.split('\0');
+      if (attr === 'href' || attr === 'search') reparams(u);
+    };
+    class URL {
+      constructor(url, base = undefined) {
+        if (arguments.length < 1) throw new TypeError("Failed to construct 'URL': 1 argument required, but only 0 present.");
+        const p = parse(url, base);
+        if (p === null) throw new TypeError(`Failed to construct 'URL': Invalid URL`);
+        urlParts.set(this, { parts: p, params: null });
+      }
+      static canParse(url, base = undefined) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'canParse' on 'URL': 1 argument required");
+        return parse(url, base) !== null;
+      }
+      static parse(url, base = undefined) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'parse' on 'URL': 1 argument required");
+        const p = parse(url, base);
+        if (p === null) return null;
+        const o = Object.create(URL.prototype); urlParts.set(o, { parts: p, params: null }); return o;
+      }
+      get searchParams() {
+        const u = parts(this);
+        if (!u.params) { const P = makeURLSearchParams(); u.params = new P(''); const s = paramState.get(u.params); s.list = parseQuery(queryOf(u)); s.url = this; }
+        return u.params;
+      }
+      toString() { return parts(this).parts[0]; }
+      toJSON() { return parts(this).parts[0]; }
+    }
+    PARTS.forEach((k, i) => {
+      const d = { get() { return parts(this).parts[i]; }, enumerable: true, configurable: true };
+      if (k !== 'origin') d.set = function (v) { setter(this, k, v); };
+      Object.defineProperty(URL.prototype, k, d);
+    });
+    setTag(URL, 'URL');
+    return URL;
+  });
+  // The webkitURL alias (URL §6.1).
+  lazy('webkitURL', () => globalThis.URL);
+
+  // ---- HTML §8.3: atob, btoa (forgiving-base64 of Infra, in Lean) ---------------------------
+  lazy('atob', () => function atob(data) {
+    if (arguments.length < 1) throw new TypeError("Failed to execute 'atob' on 'Window': 1 argument required, but only 0 present.");
+    return api(20, [String(data)], 0, false, "Failed to execute 'atob' on 'Window': The string to be decoded is not correctly encoded.");
+  });
+  lazy('btoa', () => function btoa(data) {
+    if (arguments.length < 1) throw new TypeError("Failed to execute 'btoa' on 'Window': 1 argument required, but only 0 present.");
+    return api(21, [String(data)], 0, false, "Failed to execute 'btoa' on 'Window': The string to be encoded contains characters outside of the Latin1 range.");
+  });
+
+  // ---- Web Cryptography: crypto, SubtleCrypto, CryptoKey ------------------------------------
+  // Lean: the generator (HMAC_DRBG seeded by the embedder's entropy), the hashes, HMAC, HKDF
+  // and PBKDF2. Algorithms whose primitives the engine does not link (AES, ECDSA, ECDH,
+  // Ed25519, X25519, RSA) are not supported: their operations reject NotSupportedError.
+  // Every operation's promise is settled by a task of Lean's event loop, so a long digest
+  // never runs inside the caller's turn.
+  let CryptoKeyC, cryptoKeys;
+  lazy('crypto', () => {
+    const random = typeof apiCall(30, ['0'], 0, true) !== 'number';
+    const intArrays = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array,
+      ...(typeof BigInt64Array === 'function' ? [BigInt64Array, BigUint64Array] : [])];
+    cryptoKeys = new WeakMap();
+    const keyOf = k => brand(cryptoKeys, k, 'CryptoKey');
+    class CryptoKey {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      get type() { return keyOf(this).type; }
+      get extractable() { return keyOf(this).extractable; }
+      get algorithm() { return keyOf(this).algorithmObject; }
+      get usages() { return keyOf(this).usagesObject; }
+    }
+    setTag(CryptoKey, 'CryptoKey');
+    CryptoKeyC = CryptoKey;
+    const makeKey = (type, extractable, algorithm, usages, data) => {
+      const k = Object.create(CryptoKey.prototype);
+      cryptoKeys.set(k, { type, extractable, algorithm, usages, data, algorithmObject: algorithm, usagesObject: usages });
+      return k;
+    };
+    const fail = (name, message) => { throw new DOMException(message, name); };
+    // A task of the event loop (HTML "queue a global task") settles the promise.
+    const later = f => new Promise((resolve, reject) => { timer(0, () => { try { resolve(f()); } catch (e) { reject(e); } }, 0, []); });
+    const start = f => { try { return f(); } catch (e) { return Promise.reject(e); } };
+    const hashes = ['SHA-1', 'SHA-256', 'SHA-384', 'SHA-512'];
+    const known = ['AES-CTR', 'AES-CBC', 'AES-GCM', 'AES-KW', 'HMAC', 'SHA-1', 'SHA-256', 'SHA-384', 'SHA-512', 'HKDF', 'PBKDF2',
+      'ECDSA', 'ECDH', 'RSASSA-PKCS1-v1_5', 'RSA-PSS', 'RSA-OAEP', 'Ed25519', 'X25519'];
+    const hashLen = { 'SHA-1': 160, 'SHA-256': 256, 'SHA-384': 384, 'SHA-512': 512 };
+    const blockLen = { 'SHA-1': 512, 'SHA-256': 512, 'SHA-384': 1024, 'SHA-512': 1024 };
+    // Web Crypto §18.4 "normalize an algorithm": the registered name, matched ASCII
+    // case-insensitively; the dictionary members an operation reads.
+    const nameOf = alg => {
+      if (typeof alg === 'string') alg = { name: alg };
+      else if (alg === null || typeof alg !== 'object') throw new TypeError('Algorithm: not an object');
+      if (alg.name === undefined) throw new TypeError("Algorithm: Missing or not an AlgorithmIdentifier: name");
+      const name = String(alg.name), up = name.toUpperCase();
+      const reg = known.find(k => k.toUpperCase() === up);
+      return [alg, reg];
+    };
+    const supported = { digest: hashes, sign: ['HMAC'], verify: ['HMAC'], generateKey: ['HMAC'], importKey: ['HMAC', 'HKDF', 'PBKDF2'],
+      deriveBits: ['HKDF', 'PBKDF2'], get: ['HMAC'], exportKey: ['HMAC'] };
+    const normalize = (op, a) => {
+      const [alg, reg] = nameOf(a);
+      if (!reg || !supported[op].includes(reg)) fail('NotSupportedError', `Algorithm: Unrecognized name or not supported for ${op}`);
+      const out = { name: reg };
+      const hashMember = (required) => {
+        if (alg.hash === undefined) { if (required) throw new TypeError("Algorithm: Missing required member 'hash'"); return; }
+        const h = normalize('digest', alg.hash); out.hash = { name: h.name };
+      };
+      const bytes = (k) => { if (alg[k] === undefined) throw new TypeError(`Algorithm: Missing required member '${k}'`); return bufferSource(alg[k], 'Algorithm').slice(); };
+      const ulong = (k, required) => {
+        if (alg[k] === undefined) { if (required) throw new TypeError(`Algorithm: Missing required member '${k}'`); return undefined; }
+        const x = Number(alg[k]); if (!Number.isFinite(x)) throw new TypeError(`Algorithm: '${k}' is not a number`);
+        return (Math.trunc(x) % 4294967296 + 4294967296) % 4294967296;
+      };
+      if (reg === 'HMAC' && (op === 'generateKey' || op === 'importKey')) { hashMember(true); out.length = ulong('length', false); }
+      if (reg === 'HMAC' && op === 'get') { hashMember(true); out.length = ulong('length', false); }
+      if (reg === 'HKDF' && op === 'deriveBits') { hashMember(true); out.salt = bytes('salt'); out.info = bytes('info'); }
+      if (reg === 'PBKDF2' && op === 'deriveBits') { hashMember(true); out.salt = bytes('salt'); out.iterations = ulong('iterations', true); }
+      return out;
+    };
+    const usageNames = ['encrypt', 'decrypt', 'sign', 'verify', 'deriveKey', 'deriveBits', 'wrapKey', 'unwrapKey'];
+    const usagesOf = us => { const out = []; for (const u of us) { const s = String(u); if (!usageNames.includes(s)) throw new TypeError(`KeyUsage: '${s}' is not a valid enum value`); if (!out.includes(s)) out.push(s); } return out; };
+    const allowed = { HMAC: ['sign', 'verify'], HKDF: ['deriveKey', 'deriveBits'], PBKDF2: ['deriveKey', 'deriveBits'] };
+    const checkUsages = (name, us) => { for (const u of us) if (!allowed[name].includes(u)) fail('SyntaxError', `Cannot create a key using the specified key usages.`); };
+    const b64u = { enc: b => api(21, [String.fromCharCode(...new Uint8Array(b))], 0, false, 'base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_'),
+      dec: s => { if (/[^A-Za-z0-9_-]/.test(s)) fail('DataError', 'JWK: not base64url'); const r = apiCall(20, [s.replace(/-/g, '+').replace(/_/g, '/')], 0, false); if (typeof r !== 'string') fail('DataError', 'JWK: not base64url'); return Uint8Array.from(r, c => c.charCodeAt(0)); } };
+    const hmacJwkAlg = { 'SHA-1': 'HS1', 'SHA-256': 'HS256', 'SHA-384': 'HS384', 'SHA-512': 'HS512' };
+    const subtleMethods = {
+      digest(algorithm, data) {
+        return start(() => { const a = normalize('digest', algorithm); const d = bufferSource(data, 'digest').slice();
+          return later(() => api(32, [a.name, d], 0, true, 'digest')); });
+      },
+      generateKey(algorithm, extractable, keyUsages) {
+        return start(() => {
+          const a = normalize('generateKey', algorithm), us = usagesOf(keyUsages);
+          return later(() => {
+            checkUsages(a.name, us);
+            const len = a.length === undefined ? blockLen[a.hash.name] : a.length;
+            if (len === 0) fail('OperationError', 'HMAC: the length is 0');
+            if (us.length === 0) fail('SyntaxError', 'Usages cannot be empty when creating a key.');
+            const bytes = new Uint8Array(api(30, [String(Math.ceil(len / 8))], 0, true, 'generateKey'));
+            if (len % 8) bytes[bytes.length - 1] &= 0xFF << (8 - len % 8);
+            return makeKey('secret', !!extractable, { name: 'HMAC', hash: { name: a.hash.name }, length: len }, us, bytes);
+          });
+        });
+      },
+      importKey(format, keyData, algorithm, extractable, keyUsages) {
+        return start(() => {
+          const f = String(format);
+          if (!['raw', 'pkcs8', 'spki', 'jwk'].includes(f)) throw new TypeError(`KeyFormat: '${f}' is not a valid enum value`);
+          let raw = null, jwk = null;
+          if (f === 'jwk') { if (keyData === null || typeof keyData !== 'object' || ArrayBuffer.isView(keyData) || keyData instanceof ArrayBuffer) throw new TypeError('JsonWebKey: not an object'); jwk = keyData; }
+          else raw = bufferSource(keyData, 'importKey').slice();
+          const a = normalize('importKey', algorithm), us = usagesOf(keyUsages);
+          return later(() => {
+            if (a.name !== 'HMAC') {
+              if (f !== 'raw') fail('NotSupportedError', `${a.name}: only raw keys`);
+              checkUsages(a.name, us);
+              if (extractable) fail('SyntaxError', `${a.name} keys are not extractable`);
+              if (us.length === 0) fail('SyntaxError', 'Usages cannot be empty when creating a key.');
+              return makeKey('secret', false, { name: a.name }, us, raw);
+            }
+            checkUsages(a.name, us);
+            if (f === 'jwk') {
+              if (jwk.kty !== 'oct') fail('DataError', 'JWK: kty is not oct');
+              if (typeof jwk.k !== 'string') fail('DataError', 'JWK: no k');
+              raw = b64u.dec(jwk.k);
+              if (jwk.alg !== undefined && jwk.alg !== hmacJwkAlg[a.hash.name]) fail('DataError', 'JWK: alg does not match the hash');
+              if (us.length && jwk.use !== undefined && jwk.use !== 'sig') fail('DataError', 'JWK: use is not sig');
+              if (jwk.key_ops !== undefined) { const ops = [...jwk.key_ops].map(String); if (new Set(ops).size !== ops.length || us.some(u => !ops.includes(u))) fail('DataError', 'JWK: key_ops'); }
+              if (jwk.ext === false && extractable) fail('DataError', 'JWK: ext is false');
+            } else if (f !== 'raw') fail('NotSupportedError', 'HMAC: raw or jwk keys');
+            let len = raw.length * 8;
+            if (len === 0) fail('DataError', 'HMAC: the key is empty');
+            if (a.length !== undefined) { if (a.length > len || a.length <= len - 8) fail('DataError', 'HMAC: the length does not match the key'); len = a.length; }
+            if (us.length === 0) fail('SyntaxError', 'Usages cannot be empty when creating a key.');
+            return makeKey('secret', !!extractable, { name: 'HMAC', hash: { name: a.hash.name }, length: len }, us, raw);
+          });
+        });
+      },
+      exportKey(format, key) {
+        return start(() => {
+          const f = String(format);
+          if (!['raw', 'pkcs8', 'spki', 'jwk'].includes(f)) throw new TypeError(`KeyFormat: '${f}' is not a valid enum value`);
+          const k = keyOf(key);
+          return later(() => {
+            if (k.algorithm.name !== 'HMAC') fail('NotSupportedError', `${k.algorithm.name}: keys are not exportable`);
+            if (!k.extractable) fail('InvalidAccessError', 'The key is not extractable');
+            if (f === 'raw') return k.data.slice().buffer;
+            if (f === 'jwk') return { kty: 'oct', k: b64u.enc(k.data), alg: hmacJwkAlg[k.algorithm.hash.name], key_ops: k.usages.slice(), ext: k.extractable };
+            fail('NotSupportedError', 'HMAC: raw or jwk keys');
+          });
+        });
+      },
+      sign(algorithm, key, data) {
+        return start(() => { const a = normalize('sign', algorithm), k = keyOf(key), d = bufferSource(data, 'sign').slice();
+          return later(() => {
+            if (a.name !== k.algorithm.name) fail('InvalidAccessError', 'The key is not of the algorithm');
+            if (!k.usages.includes('sign')) fail('InvalidAccessError', 'The key may not sign');
+            return api(33, [k.algorithm.hash.name, k.data, d], 0, true, 'sign');
+          }); });
+      },
+      verify(algorithm, key, signature, data) {
+        return start(() => { const a = normalize('verify', algorithm), k = keyOf(key), sig = bufferSource(signature, 'verify').slice(), d = bufferSource(data, 'verify').slice();
+          return later(() => {
+            if (a.name !== k.algorithm.name) fail('InvalidAccessError', 'The key is not of the algorithm');
+            if (!k.usages.includes('verify')) fail('InvalidAccessError', 'The key may not verify');
+            return new Uint8Array(api(34, [k.algorithm.hash.name, k.data, d, sig], 0, true, 'verify'))[0] === 1;
+          }); });
+      },
+      deriveBits(algorithm, baseKey, length = null) {
+        return start(() => { const a = normalize('deriveBits', algorithm), k = keyOf(baseKey);
+          const len = length === null || length === undefined ? null : (Math.trunc(Number(length)) % 4294967296 + 4294967296) % 4294967296;
+          return later(() => {
+            if (a.name !== k.algorithm.name) fail('InvalidAccessError', 'The key is not of the algorithm');
+            if (!k.usages.includes('deriveBits')) fail('InvalidAccessError', 'The key may not derive bits');
+            return derive(a, k, len);
+          }); });
+      },
+      deriveKey(algorithm, baseKey, derivedKeyType, extractable, keyUsages) {
+        return start(() => { const a = normalize('deriveBits', algorithm), k = keyOf(baseKey);
+          const ti = normalize('importKey', derivedKeyType), t = normalize('get', derivedKeyType), us = usagesOf(keyUsages);
+          return later(() => {
+            if (a.name !== k.algorithm.name) fail('InvalidAccessError', 'The key is not of the algorithm');
+            if (!k.usages.includes('deriveKey')) fail('InvalidAccessError', 'The key may not derive keys');
+            const len = t.length === undefined ? blockLen[t.hash.name] : t.length;
+            if (len === 0) throw new TypeError('HMAC: the length is 0');
+            const bits = new Uint8Array(derive(a, k, len));
+            checkUsages('HMAC', us);
+            if (us.length === 0) fail('SyntaxError', 'Usages cannot be empty when creating a key.');
+            return makeKey('secret', !!extractable, { name: 'HMAC', hash: { name: ti.hash.name }, length: len }, us, bits);
+          }); });
+      },
+      encrypt() { return Promise.reject(new DOMException('Algorithm: Unrecognized name or not supported for encrypt', 'NotSupportedError')); },
+      decrypt() { return Promise.reject(new DOMException('Algorithm: Unrecognized name or not supported for decrypt', 'NotSupportedError')); },
+      wrapKey() { return Promise.reject(new DOMException('Algorithm: Unrecognized name or not supported for wrapKey', 'NotSupportedError')); },
+      unwrapKey() { return Promise.reject(new DOMException('Algorithm: Unrecognized name or not supported for unwrapKey', 'NotSupportedError')); },
+    };
+    const derive = (a, k, len) => {
+      if (len === null) fail('OperationError', `${a.name}: the length is null`);
+      if (len % 8) fail('OperationError', `${a.name}: the length is not a multiple of 8`);
+      if (a.name === 'HKDF') return api(35, [a.hash.name, k.data, a.salt, a.info, String(len / 8)], 0, true, 'HKDF: the length is too large');
+      if (a.iterations === 0) fail('OperationError', 'PBKDF2: iterations is 0');
+      return api(36, [a.hash.name, k.data, a.salt, String(a.iterations), String(len / 8)], 0, true, 'PBKDF2');
+    };
+    class SubtleCrypto { constructor() { throw new TypeError('Illegal constructor'); } }
+    for (const [k, f] of Object.entries(subtleMethods)) define(SubtleCrypto.prototype, k, f);
+    setTag(SubtleCrypto, 'SubtleCrypto');
+    const subtle = Object.create(SubtleCrypto.prototype);
+    class Crypto { constructor() { throw new TypeError('Illegal constructor'); } get subtle() { return subtle; } }
+    if (random) {
+      define(Crypto.prototype, 'getRandomValues', function getRandomValues(array) {
+        if (!(intArrays.some(C => array instanceof C))) throw new DOMException("Failed to execute 'getRandomValues' on 'Crypto': The provided ArrayBufferView is of type that is not an integer array.", 'TypeMismatchError');
+        if (array.byteLength > 65536) throw new DOMException(`Failed to execute 'getRandomValues' on 'Crypto': The ArrayBufferView's byte length (${array.byteLength}) exceeds the number of bytes of entropy available via this API (65536).`, 'QuotaExceededError');
+        new Uint8Array(array.buffer, array.byteOffset, array.byteLength).set(new Uint8Array(api(30, [String(array.byteLength)], 0, true, 'getRandomValues')));
+        return array;
+      });
+      define(Crypto.prototype, 'randomUUID', function randomUUID() { return api(31, [], 0, false, 'randomUUID'); });
+    }
+    setTag(Crypto, 'Crypto');
+    define(globalThis, 'Crypto', Crypto); define(globalThis, 'SubtleCrypto', SubtleCrypto); define(globalThis, 'CryptoKey', CryptoKey);
+    return Object.create(Crypto.prototype);
+  });
+  for (const k of ['Crypto', 'SubtleCrypto', 'CryptoKey'])
+    Object.defineProperty(globalThis, k, { configurable: true, enumerable: false, get() { void globalThis.crypto; const d = Object.getOwnPropertyDescriptor(globalThis, k); return d && 'value' in d ? d.value : undefined; } });
+
+  // ---- HTML §2.7: structuredClone ------------------------------------------------------
+  // StructuredSerializeInternal and StructuredDeserialize in one walk (the two halves meet
+  // in the same realm, so the record between them is not built). The memory map keeps
+  // repeated and cyclic references. Platform objects other than DOMException are not
+  // serializable.
+  const cloneError = what => new DOMException(`Failed to execute 'structuredClone' on 'Window': ${what} could not be cloned.`, 'DataCloneError');
+  const errorNames = ['Error', 'EvalError', 'RangeError', 'ReferenceError', 'SyntaxError', 'TypeError', 'URIError'];
+  const typedArrays = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array,
+    ...(typeof BigInt64Array === 'function' ? [BigInt64Array, BigUint64Array] : []), ...(typeof Float16Array === 'function' ? [Float16Array] : [])];
+  const isPlatform = v => v instanceof EventTarget || ev.has(v) || v instanceof DOMRectReadOnly || (cryptoKeys !== undefined && cryptoKeys.has(v)) ||
+    urlParts.has(v) || paramState.has(v);
+  const has = (o, p) => Object.prototype.hasOwnProperty.call(o, p);
+  const slotted = [Promise, WeakMap, WeakSet, globalThis.WeakRef, globalThis.FinalizationRegistry, Symbol];
+  const structuredCloneOf = (value, memory) => {
+    if (typeof value === 'symbol') throw cloneError('Symbol()');
+    if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return value;
+    if (memory.has(value)) return memory.get(value);
+    if (typeof value === 'function') throw cloneError(String(value).slice(0, 40));
+    let out;
+    const keep = o => { memory.set(value, o); return o; };
+    const tag = Object.prototype.toString.call(value);
+    // Boolean, Number, BigInt and String objects: each valueOf throws for any other object.
+    for (const P of [Boolean, Number, BigInt, String]) {
+      let x, ok = true;
+      try { x = P.prototype.valueOf.call(value); } catch { ok = false; }
+      if (ok) return keep(Object(x));
+    }
+    if (value instanceof Date) return keep(new Date(Date.prototype.getTime.call(value)));
+    if (value instanceof RegExp) return keep(new RegExp(value.source, value.flags));
+    if (isShared(value)) throw cloneError('SharedArrayBuffer');
+    if (value instanceof ArrayBuffer) {
+      if (value.detached) throw cloneError('An ArrayBuffer is detached and');
+      return keep(value.resizable ? (() => { const b = new ArrayBuffer(value.byteLength, { maxByteLength: value.maxByteLength }); new Uint8Array(b).set(new Uint8Array(value)); return b; })() : value.slice(0));
+    }
+    if (ArrayBuffer.isView(value)) {
+      if (value.buffer.detached) throw cloneError('An ArrayBufferView is detached and');
+      const buffer = structuredCloneOf(value.buffer, memory);
+      if (value instanceof DataView) return keep(new DataView(buffer, value.byteOffset, value.byteLength));
+      const C = typedArrays.find(T => value instanceof T);
+      return keep(new C(buffer, value.byteOffset, value.length));
+    }
+    if (value instanceof Map) {
+      out = keep(new Map());
+      const entries = [...Map.prototype.entries.call(value)];
+      for (const [k, v] of entries) out.set(structuredCloneOf(k, memory), structuredCloneOf(v, memory));
+      return out;
+    }
+    if (value instanceof Set) {
+      out = keep(new Set());
+      const entries = [...Set.prototype.values.call(value)];
+      for (const v of entries) out.add(structuredCloneOf(v, memory));
+      return out;
+    }
+    if (value instanceof DOMException) {
+      return keep(new DOMException(String(value.message), String(value.name)));
+    }
+    if (isPlatform(value)) throw cloneError(Object.prototype.toString.call(value));
+    if (value instanceof Error) {
+      const nameProp = value.name;
+      const name = errorNames.includes(nameProp) ? nameProp : 'Error';
+      const d = Object.getOwnPropertyDescriptor(value, 'message');
+      const C = globalThis[name];
+      out = keep(d && 'value' in d ? new C(String(d.value)) : new C());
+      const sd = Object.getOwnPropertyDescriptor(value, 'stack');
+      if (sd && 'value' in sd && typeof sd.value === 'string') define(out, 'stack', sd.value);
+      if (has(value, 'cause')) define(out, 'cause', structuredCloneOf(value.cause, memory));
+      return out;
+    }
+    if (Array.isArray(value)) out = keep(new Array(value.length));
+    else {
+      // An object with internal slots of its own, or an exotic one, is not serializable.
+      if (tag === '[object Arguments]' || slotted.some(C => typeof C === 'function' && value instanceof C)) throw cloneError(tag);
+      out = keep({});
+    }
+    for (const k of Object.keys(value)) {
+      if (!has(value, k)) continue;
+      out[k] = structuredCloneOf(value[k], memory);
+    }
+    return out;
+  };
+  def('structuredClone', function structuredClone(value, options = undefined) {
+    if (arguments.length < 1) throw new TypeError("Failed to execute 'structuredClone' on 'Window': 1 argument required, but only 0 present.");
+    const o = dict(options, "Failed to execute 'structuredClone' on 'Window'");
+    const transfer = o.transfer === undefined ? [] : [...o.transfer];
+    const memory = new Map();
+    for (const t of transfer) {
+      if (!(t instanceof ArrayBuffer) || isShared(t)) throw cloneError('A value in the transfer list');
+      if (memory.has(t)) throw new DOMException("Failed to execute 'structuredClone' on 'Window': ArrayBuffer at index is a duplicate of an earlier ArrayBuffer.", 'DataCloneError');
+      if (t.detached) throw cloneError('An ArrayBuffer is detached and');
+      memory.set(t, null);
+    }
+    // The transferred buffers move: their new objects are made now, and the old ones are
+    // detached after the walk (HTML StructuredSerializeWithTransfer step 5).
+    for (const t of transfer) memory.set(t, t.slice(0));
+    const out = structuredCloneOf(value, memory);
+    for (const t of transfer) t.transfer();
+    return out;
+  });
+
+  // ---- User Timing: performance.mark, measure ---------------------------------------------
+  // performance.now and timeOrigin are QuickJS-NG's, on the WASI clock, which is Lean's script
+  // clock (Hosts.Page.ScriptClock). The entries are this list.
+  if (typeof performance === 'object' && performance !== null && typeof performance.mark !== 'function') {
+    const entries = [];
+    class PerformanceEntry {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      toJSON() { return { name: this.name, entryType: this.entryType, startTime: this.startTime, duration: this.duration }; }
+    }
+    const entry = (C, name, entryType, startTime, duration, detail) => {
+      const e = Object.create(C.prototype);
+      for (const [k, v] of Object.entries({ name, entryType, startTime, duration, detail })) Object.defineProperty(e, k, { value: v, enumerable: true });
+      return e;
+    };
+    const time = (x, what) => { const t = Number(x); if (!(t >= 0)) throw new TypeError(`${what}: the time is negative or not a number`); return t; };
+    class PerformanceMark extends PerformanceEntry {
+      constructor(name, options = undefined) {
+        const o = dict(options, "Failed to construct 'PerformanceMark'");
+        const e = entry(new.target, String(name), 'mark', o.startTime === undefined ? performance.now() : time(o.startTime, 'PerformanceMark'), 0,
+          o.detail === undefined ? null : structuredClone(o.detail));
+        return e;
+      }
+    }
+    class PerformanceMeasure extends PerformanceEntry {}
+    const markTime = (m, what) => {
+      if (typeof m === 'number') return time(m, what);
+      const name = String(m);
+      for (let i = entries.length - 1; i >= 0; i--) if (entries[i].entryType === 'mark' && entries[i].name === name) return entries[i].startTime;
+      throw new DOMException(`Failed to execute 'measure' on 'Performance': The mark '${name}' does not exist.`, 'SyntaxError');
+    };
+    const methods = {
+      mark(name, options = undefined) { const e = new PerformanceMark(name, options); entries.push(e); return e; },
+      measure(name, startOrOptions = undefined, endMark = undefined) {
+        let start, end, detail = null, duration;
+        if (startOrOptions !== null && typeof startOrOptions === 'object' && !Array.isArray(startOrOptions)) {
+          const o = startOrOptions;
+          if (endMark !== undefined) throw new TypeError("Failed to execute 'measure' on 'Performance': end must not be given with options");
+          if (o.start === undefined && o.end === undefined && o.duration === undefined && o.detail === undefined) { start = 0; end = performance.now(); }
+          else {
+            if (o.start !== undefined && o.end !== undefined && o.duration !== undefined) throw new TypeError("Failed to execute 'measure' on 'Performance': start, end and duration together");
+            if (o.start === undefined && o.end === undefined) throw new TypeError("Failed to execute 'measure' on 'Performance': no start nor end");
+            if (o.duration !== undefined) duration = time(o.duration, 'measure');
+            end = o.end !== undefined ? markTime(o.end, 'measure') : (o.start !== undefined && duration !== undefined ? markTime(o.start, 'measure') + duration : performance.now());
+            start = o.start !== undefined ? markTime(o.start, 'measure') : (duration !== undefined ? end - duration : 0);
+            detail = o.detail === undefined ? null : structuredClone(o.detail);
+          }
+        } else {
+          start = startOrOptions === undefined ? 0 : markTime(startOrOptions, 'measure');
+          end = endMark === undefined ? performance.now() : markTime(endMark, 'measure');
+        }
+        const e = entry(PerformanceMeasure, String(name), 'measure', start, end - start, detail);
+        entries.push(e); return e;
+      },
+      getEntries() { return entries.slice().sort((a, b) => a.startTime - b.startTime); },
+      getEntriesByType(type) { const t = String(type); return this.getEntries().filter(e => e.entryType === t); },
+      getEntriesByName(name, type = undefined) { const x = String(name); return this.getEntries().filter(e => e.name === x && (type === undefined || e.entryType === String(type))); },
+      clearMarks(name = undefined) { for (let i = entries.length - 1; i >= 0; i--) if (entries[i].entryType === 'mark' && (name === undefined || entries[i].name === String(name))) entries.splice(i, 1); },
+      clearMeasures(name = undefined) { for (let i = entries.length - 1; i >= 0; i--) if (entries[i].entryType === 'measure' && (name === undefined || entries[i].name === String(name))) entries.splice(i, 1); },
+      toJSON() { return { timeOrigin: performance.timeOrigin }; },
+    };
+    for (const [k, f] of Object.entries(methods)) define(performance, k, f);
+    for (const [k, C] of Object.entries({ PerformanceEntry, PerformanceMark, PerformanceMeasure })) { setTag(C, k); def(k, C); }
+  }
+  // ---- The document's encoding; HTMLHyperlinkElementUtils (HTML §4.6.6) on a and area -----
+  // The encoding is Lean's (op 9: the page's meta charset declaration), and is fixed once
+  // read, as a document's encoding is. An element's URL is parsed with it (op 10, flag 2),
+  // so a query is percent-encoded in the document's encoding.
+  const docEncoding = (() => { let e; return () => e ??= (apiOn() ? apiCall(9, []) : 'UTF-8'); })();
+  for (const C of [named.HTMLAnchorElement, named.HTMLAreaElement]) {
+    const urlOf = el => {
+      const v = el.getAttribute('href');
+      if (v === null || !apiOn()) return null;
+      const r = apiCall(10, [v, document.baseURI, docEncoding()], 3);
+      return typeof r === 'string' ? r.split('\0') : null;
+    };
+    PARTS.forEach((k, i) => {
+      const d = { get() { const u = urlOf(this); return u ? u[i] : k === 'href' ? (this.getAttribute('href') ?? '') : k === 'protocol' ? ':' : ''; },
+        enumerable: true, configurable: true };
+      if (k === 'href') d.set = function (v) { this.setAttribute('href', String(v)); };
+      else if (k !== 'origin') d.set = function (v) {
+        const u = urlOf(this);
+        if (!u) return;
+        const r = apiCall(11, [u[0], k, usv(v)]);
+        if (typeof r === 'string') this.setAttribute('href', r.split('\0')[0]);
+      };
+      Object.defineProperty(C.prototype, k, d);
+    });
+    define(C.prototype, 'toString', function toString() { return this.href; });
+  }
+  // ==== end of basics ====
   def('getComputedStyle', el => el.style);
   def('matchMedia', q => ({ matches: false, media: String(q), addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }));
   def('postMessage', () => {});

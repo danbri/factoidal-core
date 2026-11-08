@@ -101,6 +101,13 @@ DOM_IMPORT(node_query) int32_t dom_node_query(int32_t node, int32_t op, const ch
  * length of Lean's refusal message, 0 when accepted. */
 DOM_IMPORT(gpu_command) int32_t dom_gpu_command(int32_t op, int32_t unused, const char *s, int32_t slen,
                                                 char *buf, int32_t cap);
+/* web_api(op, flags, args, len, out, cap): one operation of the web APIs that Lean serves
+ * (Encoding, URL, base64, crypto; L4Factoidal.WasmVM.Hosts.WebApi). `args` is a u32 count
+ * and each argument as a u32 length and its bytes. The answer is the length of the result
+ * bytes, written at `out` when they fit in `cap`; otherwise Lean keeps them and op 0 takes
+ * them, so an operation runs once. Negative: an error code. */
+DOM_IMPORT(web_api) int32_t dom_web_api(int32_t op, int32_t flags, const char *s, int32_t slen,
+                                        char *buf, int32_t cap);
 
 static JSRuntime *rt;
 static JSContext *ctx;
@@ -235,6 +242,67 @@ static JSValue n_gpu(JSContext *c, JSValueConst this_val, int argc, JSValueConst
   JS_FreeCString(c, h); if (ps) JS_FreeCString(c, ps);
   JSValue r = string_result(c, rd_gpu, op, 0, buf, (int32_t) (hl + 1 + pl));
   free(buf);
+  return r;
+}
+/* api(op, flags, bytes, ...args): one web API operation. Each argument is a string or a
+ * number (sent in UTF-8), an ArrayBuffer or a Uint8Array (its bytes, nothing copied in
+ * JavaScript). The answer: a string (the result's UTF-8), or an ArrayBuffer when `bytes`
+ * is true, or a negative error code. */
+static void put_u32(uint8_t *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
+static JSValue n_api(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, op); I32(1, flags);
+  int bytes = argc > 2 && JS_ToBool(c, argv[2]);
+  int k = argc > 3 ? argc - 3 : 0;
+  if (k > 64) return JS_NewInt32(c, -5);
+  const uint8_t *ptrs[64]; size_t lens[64]; const char *strs[64]; JSValue vals[64];
+  size_t total = 4;
+  int ok = 1;
+  for (int i = 0; i < k; i++) {
+    vals[i] = JS_DupValue(c, argv[3 + i]);
+    strs[i] = 0; ptrs[i] = 0; lens[i] = 0;
+    if (!ok) continue;
+    if (JS_IsString(vals[i]) || JS_IsNumber(vals[i])) {
+      strs[i] = JS_ToCStringLen(c, &lens[i], vals[i]);
+      if (!strs[i]) { ok = 0; continue; }
+      ptrs[i] = (const uint8_t *) strs[i];
+    } else {
+      size_t n = 0;
+      uint8_t *p = JS_GetUint8Array(c, &n, vals[i]);
+      if (!p) { JS_FreeValue(c, JS_GetException(c)); p = JS_GetArrayBuffer(c, &n, vals[i]); }
+      if (!p) { JS_FreeValue(c, JS_GetException(c)); n = 0; } /* a detached buffer is empty */
+      ptrs[i] = p; lens[i] = n;
+    }
+    total += 4 + lens[i];
+  }
+  JSValue r = JS_UNDEFINED;
+  uint8_t *block = 0;
+  if (!ok) r = JS_EXCEPTION;
+  else if (total > (size_t) (1 << 26)) r = JS_NewInt32(c, -5);
+  else if (!(block = malloc(total))) r = JS_NewInt32(c, -5);
+  else {
+    put_u32(block, (uint32_t) k);
+    size_t at = 4;
+    for (int i = 0; i < k; i++) {
+      put_u32(block + at, (uint32_t) lens[i]); at += 4;
+      if (lens[i]) memcpy(block + at, ptrs[i], lens[i]);
+      at += lens[i];
+    }
+  }
+  for (int i = 0; i < k; i++) { if (strs[i]) JS_FreeCString(c, strs[i]); JS_FreeValue(c, vals[i]); }
+  if (!block) return r;
+  static char small[4096];
+  int32_t n = dom_web_api(op, flags, (const char *) block, (int32_t) total, small, (int32_t) sizeof small);
+  free(block);
+  if (n < 0) return JS_NewInt32(c, n);
+  char *out = small;
+  if (n > (int32_t) sizeof small) {
+    out = malloc((size_t) n);
+    if (!out) return JS_NewInt32(c, -5);
+    int32_t m = dom_web_api(0, 0, 0, 0, out, n);
+    if (m != n) { free(out); return JS_NewInt32(c, m < 0 ? m : -5); }
+  }
+  r = bytes ? JS_NewArrayBufferCopy(c, (const uint8_t *) out, (size_t) n) : JS_NewStringLen(c, out, (size_t) n);
+  if (out != small) free(out);
   return r;
 }
 static JSValue n_set_attr(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
@@ -417,6 +485,7 @@ static const JSCFunctionListEntry native_fns[] = {
   JS_CFUNC_DEF("cancelFrame", 1, n_cancel_frame),
   JS_CFUNC_DEF("log", 1, n_log),
   JS_CFUNC_DEF("gpu", 3, n_gpu),
+  JS_CFUNC_DEF("api", 3, n_api),
 };
 
 __attribute__((export_name("qjs_new")))
