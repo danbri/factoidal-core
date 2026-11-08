@@ -623,6 +623,10 @@ async function startEngine(createModule){
 }
 async function start(data){
   ({width,height,scale}=data);
+  // Page text in CSS pixels, as a browser has it: the canvas is in device pixels, so the
+  // starting text zoom follows the pixel ratio (150 on a 1x screen, 450 on a 3x phone).
+  // Before this, a phone drew page text at about 5 CSS px. A saved zoom still wins.
+  percent=Math.max(50,Math.round(150*scale/5)*5);
   checkMode=data.check===true;statsMode=data.stats===true;
   // ?layers=0: one Lean frame for each scroll, as before the two-layer view.
   if(data.layers===false)layered=false;
