@@ -7,7 +7,7 @@ import type {ScriptTurn} from "./native_html_engine.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {nativePreflight} from "./native_preflight.ts";
 import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
-import {createHTMLWindowSession} from "./native_html_session.ts";
+import {createHTMLWindowSession,type PresentTarget} from "./native_html_session.ts";
 import {hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
 import {cleanupUI} from "./ui_cleanup.ts";
 import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
@@ -19,10 +19,10 @@ import type {UIEvent} from "./ui_engine.ts";
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let scrollSweep=false;
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false;
+  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -32,6 +32,10 @@ async function main() {
     else if(arg==="--trace-input")traceInput=true;
     else if(arg==="--check-pixels")checkAll=true;
     else if(arg==="--perf-summary")perfSummary=true;
+    // No visible window (issue 1268): frames are drawn into a GPU texture of the window size, and
+    // events go through the window library's queue as before, from a window that is never shown.
+    // Sweeps then run with the screen locked, the display asleep, or on a machine with no display.
+    else if(arg==="--offscreen")offscreen=true;
     // Browser state in a local LWS server (native_state.ts): on in an interactive window, off in sweeps and checks.
     else if(arg==="--no-state")stateOff=true;
     else if(arg==="--state-dir"){stateDir=args.shift();if(!stateDir)throw new Error("--state-dir needs a folder");}
@@ -73,14 +77,14 @@ async function main() {
       [2,700,450],[3,720,470],[4,720,470],"back","url:index.html","right","url:foafnaut:graph","left","url:index.html"];
     // A trackpad swipe back and one forward (WebGesture.lean), as kind 12 events: began,
     // 400 backing px across, ended. A vertical one and a short one go nowhere.
-    else if(arg==="--swipe-sweep")commands=["link","url:foafnaut:graph",[12,0,65537],[12,400,65540],[12,0,65544],"url:index.html",
+    else if(arg==="--swipe-sweep"&&(swipeSweep=true))commands=["link","url:foafnaut:graph",[12,0,65537],[12,400,65540],[12,0,65544],"url:index.html",
       [12,0,65537],[12,-400,65540],[12,0,65544],"url:foafnaut:graph",[12,0,65537],[11,-600,0],[12,-60,65540],[12,0,65544],"url:foafnaut:graph",
       [12,0,65537],[12,100,65540],[12,0,65544],"url:foafnaut:graph"];
     else throw new Error(`Unknown native HTML argument: ${arg}`);
   }
   // Lean engine for compile: --native-engine PATH, else libweb-render.dylib beside the program, else Wasm.
   // The app goes into the Dock and Command-Tab, with its menu, before the engine loads (issue 1268).
-  const early=check||Deno.build.os!=="darwin"?undefined:await nativePreflight(()=>loadNativeWindow());
+  const early=check||offscreen||Deno.build.os!=="darwin"?undefined:await nativePreflight(()=>loadNativeWindow());
   early?.appStart();
   if(nativeEngine&&wasmEngine)throw new Error("Use one of --native-engine and --wasm-engine");
   if(wasmEngine)nativeEngine=undefined;
@@ -468,6 +472,8 @@ async function main() {
   // negative dx), and Lean says what they mean; its momentum is left alone. A Mac window gets
   // no touch-screen touches. An engine without the op has no swipes.
   const gestures=(()=>{try{return engine.gesture({action:"info"});}catch{return undefined;}})();
+  // The swipe sweep needs the op; with an older engine it is not run, with exit code 4 (sweeps.sh says NOT RUN).
+  if(swipeSweep&&!gestures){console.error("Native HTML: NOT RUN: --swipe-sweep needs the engine op gesture, which this engine does not have");worker?.terminate();Deno.exitCode=4;return;}
   let wheelSum:{dx:number;dy:number}|undefined;
   const gestureWheel=(a:number,b:number)=>{
     const phase=b&0xff,momentum=(b>>8)&0xff,enabled=(b&65536)!==0;
@@ -483,17 +489,23 @@ async function main() {
     if(ended)wheelSum=undefined;
     if(answer.navigate)windowCommand(answer.direction==="back"?6:7);
   };
+  // Lean chose to hand this URL to the system browser. Off screen it is traced and not opened,
+  // so a sweep never opens a browser window on the person's screen.
+  const openSystem=(target:string)=>{
+    if(offscreen){trace("native-html-system-url",{url:target,opened:false,why:"offscreen"});return;}
+    try{native!.openURL(target);}catch(error){refuse(target,error);}
+  };
   const followRoute=(route:LinkRoute)=>{
     trace("native-html-route",route);
     if(route.route==="command")shellCommand(route.name,route.argument);
-    else if(route.route==="system")try{native!.openURL(route.url);}catch(error){refuse(route.url,error);}
+    else if(route.route==="system")openSystem(route.url);
     else if(route.route==="refuse")refuse(route.url,route.reason);
     // A page link loads only with --follow-links; the browser's own pages always do.
     else if(route.route!=="navigate"||follow)navigate(route.url);
   };
   const go=(answer:ReturnType<typeof engine.shellSubmit>)=>{
     trace("native-html-go",answer);
-    if(answer.go==="system")try{native!.openURL(answer.url);}catch(error){refuse(answer.url,error);}
+    if(answer.go==="system")openSystem(answer.url);
     else if(answer.go==="page")navigate(answer.url);
     else shellCommand(answer.name,answer.argument);
   };
@@ -643,7 +655,7 @@ async function main() {
   const latencyFrom=()=>native?.eventClock()===null?"dequeued":"queued";
   // Exit summary: input to present latency, and frame totals. Always traced; --perf-summary also prints it.
   const summary=()=>{
-    const line={type:"native-html-perf-summary",inputEventsDropped:native?.eventsDropped()??0,inputLatency:{from:latencyFrom(),count:latencies.length,p50Ms:percentile(latencies,0.5),p95Ms:percentile(latencies,0.95),maxMs:latencies.length?Math.max(...latencies):null},
+    const line={type:"native-html-perf-summary",present:offscreen?"offscreen-texture":"window",inputEventsDropped:native?.eventsDropped()??0,inputLatency:{from:latencyFrom(),count:latencies.length,p50Ms:percentile(latencies,0.5),p95Ms:percentile(latencies,0.95),maxMs:latencies.length?Math.max(...latencies):null},
       engine:engineRan,compileBackend:engineRan.startsWith("native")?"native":"wasm",layered,
       scrollPresents:{count:shifts.length,totalMsP50:percentile(shifts,0.5),totalMsP95:percentile(shifts,0.95),maxMs:shifts.length?Math.round(Math.max(...shifts)*10)/10:null},
       frames:{presented:totals.length,checked:checkedFrames,compiledInWorker:workerFrames,compiledOnMain:mainFrames,totalMsP50:percentile(totals,0.5),totalMsP95:percentile(totals,0.95)},
@@ -657,7 +669,8 @@ async function main() {
       press:{overlay:{count:pressOverlayMs.length,p50Ms:percentile(pressOverlayMs,0.5),maxMs:pressOverlayMs.length?Math.round(Math.max(...pressOverlayMs)*10)/10:null},
         frame:{count:pressFrameMs.length,p50Ms:percentile(pressFrameMs,0.5),maxMs:pressFrameMs.length?Math.round(Math.max(...pressFrameMs)*10)/10:null}}};
     trace(line.type,line);
-    if(perfSummary)console.log(`engine: ${engineRan}\ninput latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
+    // Off screen, "presented" means drawn and submitted to the texture: no compositor, no display.
+    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
   };
   try {
     device=await adapter.requestDevice();native=early??await nativePreflight(()=>loadNativeWindow());
@@ -669,9 +682,15 @@ async function main() {
     if(pasted){native.writeClipboard(pasted);lastCopied=pasted;commands=["v",[5,36,0],"settle"];}
     // The window title is the page title, as in Safari.
     const windowTitle=(page:typeof document)=>page.title||"foafnaut";
-    const handles=native.create(800,500,windowTitle(document));
-    const surface=new Deno.UnsafeWindowSurface(cocoaSurfaceOptions(handles,width,height));
-    native.showAfterSurface();
+    // Off screen the backing scale is 2, as on a Retina display, so the sweeps' backing-pixel
+    // coordinates mean the same on every machine.
+    let target:PresentTarget={offscreen:true};
+    if(offscreen)native.createOffscreen(800,500,2,windowTitle(document));
+    else{
+      const handles=native.create(800,500,windowTitle(document));
+      target=new Deno.UnsafeWindowSurface(cocoaSurfaceOptions(handles,width,height));
+      native.showAfterSurface();
+    }
     // A new window starts in the address bar with the address selected (issue 1268).
     focusAddress();
     // Saved settings (theme, text zoom), and with --restore-session the tabs of the last run.
@@ -684,7 +703,7 @@ async function main() {
     device.addEventListener("uncapturederror",event=>{console.error("Native HTML GPU error:",(event as GPUUncapturedErrorEvent).error.message);running=false;Deno.exitCode=1;});
     device.lost.then(info=>{if(running){console.error("Native HTML GPU lost:",info.message);running=false;Deno.exitCode=1;}});
     // One session for the window's life. It keeps the pipeline and buffers (issue 1268).
-    session=await createHTMLWindowSession(device,surface,native);
+    session=await createHTMLWindowSession(device,target,native);
     gpuFlush();
     // Lean's compile runs in a worker so this loop keeps pumping. If the worker
     // can not start or dies, compile runs here instead, and the trace says so.
@@ -692,6 +711,8 @@ async function main() {
     // in sweeps and with --check-pixels; interactively, once after input has been idle.
     everyFrame=checkAll||(!idleChecksOnly&&(!!sweep||!!commands));
     const IDLE_CHECK_MS=500,QUEUE_WARN=1024;
+    // Off screen the texture can always take a frame; a window can not while it is hidden or occluded.
+    const canPresent=()=>offscreen||native!.canPresent();
     const STAMPED=new Set([2,4,5,11]);
     const KIND_NAMES:Record<number,string>={2:"pointer-down",4:"pointer-up",5:"key",11:"scroll"};
     // Events carry the time the window library queued them (see the event loop).
@@ -774,7 +795,10 @@ async function main() {
       if(nextDocument!==document)prefetched=undefined;
       checked=nextDocument;
       if(nextDocument!==document)view.selection=undefined;
-      if(nextDocument!==document){scroll=0;if(!focused)field=showURL(nextDocument.url);}frame=next;document=nextDocument;candidate=undefined;native!.setTitle(windowTitle(document));
+      if(nextDocument!==document){scroll=0;if(!focused)field=showURL(nextDocument.url);}frame=next;document=nextDocument;
+      // A page chosen while this frame was drawn stays the candidate: the next frame shows it.
+      if(candidate===nextDocument)candidate=undefined;
+      native!.setTitle(windowTitle(document));
       // A new page under a pointer that has not moved.
       if(lastPointer)pointAt(lastPointer[0],lastPointer[1]);
       console.log(JSON.stringify({type:"native-html-presented",url:document.url,width:sentWidth,height:sentHeight,primitives:frame.primitiveCount,links:frame.webRender.links.length,frames:session!.frames}));
@@ -913,7 +937,7 @@ async function main() {
         const now=performance.now();graphInput(7,Math.min(1000,Math.floor(now-clock.last)),0);clock.last=now;
       }
       // A covered, hidden or minimized window can not present. Say so, once.
-      if(dirty&&!native.canPresent()&&!waiting){waiting=true;waitingSince=performance.now();trace("native-html-waiting",{reason:"window can not present",surface:native.surfaceState()});}
+      if(dirty&&!canPresent()&&!waiting){waiting=true;waitingSince=performance.now();trace("native-html-waiting",{reason:"window can not present",surface:native.surfaceState()});}
       // A person's window draws when it is seen again. A sweep has no one to wait for:
       // it ends with a result, and exit code 3 says that no frames could be drawn.
       if(waiting&&(sweep||commands)&&performance.now()-waitingSince>20000){
@@ -924,7 +948,7 @@ async function main() {
       if(fatal)throw fatal;
       // A press or a release: present the composite with Lean's press rectangles, or with none.
       // No Lean call; it waits only for GPU work already asked for.
-      if(pressPresent&&!shifting&&current&&native.canPresent()){
+      if(pressPresent&&!shifting&&current&&canPresent()){
         pressPresent=false;
         const start=performance.now(),p=pressed;
         shifting=session!.shift(shownOffset,false).then(result=>{
@@ -938,7 +962,7 @@ async function main() {
       if(pressed&&!pressed.asked&&!dirty&&!rendering&&performance.now()-pressed.at>=PRESS_FRAME_MS){pressed.asked=true;dirty=true;}
       // A scroll in the band: present the composite at the new offset. A Lean frame in the
       // worker does not wait for this, and this does not wait for it.
-      if(shiftPending&&!shifting&&current&&native.canPresent()){
+      if(shiftPending&&!shifting&&current&&canPresent()){
         shiftPending=false;
         const stamps=awaitingShift;awaitingShift=[];
         // Past the band on screen, a prefetched band of the same state that keeps the scroll is drawn
@@ -995,10 +1019,10 @@ async function main() {
           });
         }
       }
-      if(dirty&&native.canPresent()&&!rendering){
+      if(dirty&&canPresent()&&!rendering){
         waiting=false;
         rendering=renderFrame().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
-      } else if(!everyFrame&&!dirty&&!rendering&&!shifting&&!shiftPending&&!pressed&&!pressPresent&&session?.frames&&!session.lastChecked&&native.canPresent()&&performance.now()-lastActivity>=IDLE_CHECK_MS){
+      } else if(!everyFrame&&!dirty&&!rendering&&!shifting&&!shiftPending&&!pressed&&!pressPresent&&session?.frames&&!session.lastChecked&&canPresent()&&performance.now()-lastActivity>=IDLE_CHECK_MS){
         // Interactive frames are not read back. When input has been idle, the last frame is drawn again with the checks.
         rendering=idleCheck().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
       }

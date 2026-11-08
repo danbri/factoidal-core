@@ -20,10 +20,25 @@ static NSWindow *window;
 static NSView *content;
 static id delegate;
 static int traceInput;
+// Off-screen mode (issue 1268): the window is made but never shown, so the event queue,
+// the menu key matching and printing work with the screen locked or with no display. The
+// host draws into a GPU texture. The backing scale is fixed, so sweeps see the same sizes
+// on every machine; the clipboard is a private pasteboard, not the person's.
+static double offscreenScale;
+static NSPasteboard *pasteboard(void) {
+  static NSPasteboard *own;
+  if (offscreenScale<=0) return [NSPasteboard generalPasteboard];
+  if (!own) own=[NSPasteboard pasteboardWithUniqueName];
+  return own;
+}
 static int rawMoveTraced,viewMoveTraced;
+static NSSize backingSize(NSView *view) {
+  if (offscreenScale>0) return NSMakeSize(view.bounds.size.width*offscreenScale,view.bounds.size.height*offscreenScale);
+  return [view convertRectToBacking:view.bounds].size;
+}
 static NSPoint framebufferPoint(NSView *view,NSPoint local) {
   NSRect bounds=view.bounds;
-  NSSize backing=[view convertRectToBacking:bounds].size;
+  NSSize backing=backingSize(view);
   NGPoint point=ng_framebuffer_point((NGPoint){local.x,local.y},
     (NGPoint){bounds.origin.x,bounds.origin.y},
     (NGPoint){bounds.size.width,bounds.size.height},(NGPoint){backing.width,backing.height});
@@ -84,9 +99,9 @@ uint32_t ng_events_dropped(void) { return eventsDropped; }
 uint32_t ng_event_clock(void) { return eventTime(); }
 static void resizeEvent(void) {
   if (!content) return;
-  NSRect rect = [content convertRectToBacking:content.bounds];
-  content.layer.contentsScale = window.backingScaleFactor;
-  enqueue(1, (int32_t)llround(rect.size.width), (int32_t)llround(rect.size.height));
+  NSSize size = backingSize(content);
+  content.layer.contentsScale = offscreenScale>0 ? offscreenScale : window.backingScaleFactor;
+  enqueue(1, (int32_t)llround(size.width), (int32_t)llround(size.height));
 }
 
 // The pointer Lean chose: 0 arrow, 1 pointing hand, 2 I-beam. The host sends it only when it changes.
@@ -186,7 +201,7 @@ void ng_set_content_size(uint32_t width, uint32_t height) {
 void ng_set_input_trace(int enabled) { traceInput=enabled;rawMoveTraced=0;viewMoveTraced=0; }
 int ng_can_present(void) { return canPresent(); }
 void ng_show_after_surface(void) {
-  if (!pthread_main_np()) return;
+  if (!pthread_main_np() || offscreenScale>0) return;
   @autoreleasepool {
     // UnsafeWindowSurface can request pathless FFI permission from Terminal,
     // obscuring our window. Restore focus once after that constructor returns.
@@ -215,8 +230,8 @@ void ng_surface_state(double *out) {
     out[3]=content.window==window;
     out[4]=[content.layer isKindOfClass:[CAMetalLayer class]];
     out[5]=content.bounds.size.width; out[6]=content.bounds.size.height;
-    NSRect backing=[content convertRectToBacking:content.bounds];
-    out[7]=backing.size.width; out[8]=backing.size.height;
+    NSSize backing=backingSize(content);
+    out[7]=backing.width; out[8]=backing.height;
     out[9]=content.layer.contentsScale;
     out[10]=content.layer.bounds.size.width; out[11]=content.layer.bounds.size.height;
     if (out[4]) {
@@ -242,7 +257,7 @@ void ng_set_title(const char *title) {
 char *ng_clipboard_copy(void) {
   if (!pthread_main_np()) return NULL;
   @autoreleasepool {
-    NSString *text=[[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString] ?: @"";
+    NSString *text=[pasteboard() stringForType:NSPasteboardTypeString] ?: @"";
     NSData *bytes=[text dataUsingEncoding:NSUTF8StringEncoding];
     if (!bytes || bytes.length>1048576) return NULL;
     char *copy=malloc(bytes.length+1);
@@ -257,7 +272,7 @@ int ng_clipboard_write(const char *text) {
   @autoreleasepool {
     NSString *value=[NSString stringWithUTF8String:text];
     if (!value) return 0;
-    NSPasteboard *board=[NSPasteboard generalPasteboard];
+    NSPasteboard *board=pasteboard();
     [board clearContents];
     return [board setString:value forType:NSPasteboardTypeString] ? 1 : 0;
   }
@@ -367,7 +382,7 @@ int ng_test_key(const char *key,int shift) {
 }
 // A sweep must present. Float above other windows, and take no focus from them.
 void ng_test_raise(void) {
-  if (!pthread_main_np() || !window) return;
+  if (!pthread_main_np() || !window || offscreenScale>0) return;
   window.level=NSFloatingWindowLevel;[window orderFrontRegardless];
 }
 void ng_test_event(uint32_t kind,int32_t a,int32_t b) { enqueue(kind,a,b); }
@@ -376,7 +391,7 @@ void ng_test_event(uint32_t kind,int32_t a,int32_t b) { enqueue(kind,a,b); }
 // stops bouncing at once; ng_create calls it too. It runs once.
 static int appStarted;
 void ng_app_start(void) {
-  if (!pthread_main_np() || appStarted) return;
+  if (!pthread_main_np() || appStarted || offscreenScale>0) return;
   appStarted=1;
   @autoreleasepool {
     // A wrapper app runs a program outside its bundle, so macOS would show the file
@@ -430,6 +445,35 @@ void *ng_create(uint32_t width, uint32_t height) {
     return (__bridge void *)content;
   }
 }
+// The same window and view as ng_create, never ordered on screen: no Dock icon, no
+// activation, no focus taken. Events reach the same queue (ng_test_event, and the
+// resize events of ng_set_content_size); the host draws into a GPU texture.
+void *ng_create_offscreen(uint32_t width, uint32_t height, double scale) {
+  if (!pthread_main_np() || window || appStarted || !(scale>0)) return NULL;
+  offscreenScale=scale;
+  @autoreleasepool {
+    [NSApplication sharedApplication];
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+    delegate = [[NGDelegate alloc] init];
+    NSApp.delegate = delegate;
+    installMenu();
+    [NSApp finishLaunching];
+    window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,width,height)
+      styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable
+      backing:NSBackingStoreBuffered defer:NO];
+    window.releasedWhenClosed = NO;
+    window.contentMinSize = NSMakeSize(192,128);
+    window.contentMaxSize = NSMakeSize(2048,2048);
+    window.delegate = delegate;
+    content = [[NGView alloc] initWithFrame:NSMakeRect(0,0,width,height)];
+    content.wantsLayer = YES;
+    window.contentView = content;
+    [window makeFirstResponder:content];
+    resizeEvent();
+    return (__bridge void *)content;
+  }
+}
+int ng_offscreen(void) { return offscreenScale>0; }
 // Window edge drag, done here so JS keeps running. In [NSApp sendEvent:] AppKit
 // tracks a resize in its own loop until the mouse is up, and this host only runs
 // JS between pumps, so Lean could not lay out the page during the drag.
@@ -571,7 +615,7 @@ int32_t ng_print(const uint8_t *rgba,uint32_t count,uint32_t width,uint32_t heig
     operation.showsPrintPanel=path==nil;
     operation.showsProgressPanel=path==nil;
     BOOL done=[operation runOperation];
-    if (window) [window makeKeyAndOrderFront:nil];
+    if (window && offscreenScale<=0) [window makeKeyAndOrderFront:nil];
     return done?(int32_t)count:0;
   }
 }

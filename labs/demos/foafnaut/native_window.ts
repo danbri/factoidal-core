@@ -38,6 +38,7 @@ export function loadNativeWindow() {
     ng_app_state: { parameters: ["buffer"], result: "void", optional: true },
     ng_print_paper: { parameters: ["buffer"], result: "void", optional: true },
     ng_print: { parameters: ["buffer","u32","u32","u32","f64","f64","buffer","buffer"], result: "i32", optional: true },
+    ng_create_offscreen: { parameters: ["u32","u32","f64"], result: "pointer", optional: true },
   } as const);
   const symbols = library.symbols;
   const isMainThread = () => symbols.ng_is_main_thread() === 1;
@@ -97,6 +98,15 @@ export function loadNativeWindow() {
       if (!windowHandle) throw new Error("Native NSWindow handle is unavailable");
       if (title) symbols.ng_set_title(new TextEncoder().encode(title+"\0"));
       return {windowHandle,displayHandle:pointer};
+    },
+    // A window that is never shown (issue 1268, --offscreen): the same event queue, menu and
+    // print path; the host draws into a GPU texture. `scale` is the fixed backing scale.
+    createOffscreen(width:number,height:number,scale:number,title?:string) {
+      if(!symbols.ng_create_offscreen)throw new Error("This window library has no off-screen window; rebuild it (build-executables.sh)");
+      const pointer=symbols.ng_create_offscreen(width,height,scale);
+      if(!pointer)throw new Error("Off-screen NSView creation failed, or a window already exists");
+      if(title)symbols.ng_set_title(new TextEncoder().encode(title+"\0"));
+      return {displayHandle:pointer};
     },
     setTitle:(title:string)=>symbols.ng_set_title(new TextEncoder().encode(title+"\0")),
     pump() {

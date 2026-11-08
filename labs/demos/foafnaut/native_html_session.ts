@@ -24,11 +24,19 @@ export type DrawResult={presented:boolean;checked:boolean;pixelHash:string;steps
 type Native={prepareSurface():void;surfaceState():unknown;canPresent():boolean};
 type Growing={buffer:GPUBuffer;capacity:number};
 
-export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.UnsafeWindowSurface,native:Native) {
+/** Where frames go: the window's surface, or (--offscreen, issue 1268) a GPU texture of the
+ * window size. Off screen, a frame is "presented" when it is drawn and its commands are
+ * submitted to that texture; the pixel checks read the same texture. */
+export type PresentTarget=Deno.UnsafeWindowSurface|{offscreen:true};
+
+export async function createHTMLWindowSession(device:GPUDevice,target:PresentTarget,native:Native) {
   // The Lean svg-offscreen plan always answers rgba8unorm, which a macOS window
   // surface does not support; the surface and pipeline use its preferred format.
+  // Off screen the texture has the same format, so every draw is the same.
   const format=navigator.gpu.getPreferredCanvasFormat();
-  const context=surface.getContext("webgpu") as GPUCanvasContext;
+  const surface="offscreen" in target?undefined:target;
+  const context=surface?.getContext("webgpu") as GPUCanvasContext|undefined;
+  let offscreenTexture:GPUTexture|undefined;
   const stats:SessionStats={pipelineBuilds:0,planRequests:0,configures:0,uniformBuffers:0,tileBuffers:0,bindGroups:0};
   // The plan is a pure function of these inputs on one device (render_plan.ts).
   const plans=new Map<string,RenderPlan>();
@@ -40,13 +48,21 @@ export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.Unsa
     const key=`${width}x${height}`;
     if(lifecycle&&configured===key)return;
     configured=key;stats.configures++;
-    const driver={
+    const driver=surface&&context?{
       configure(w:number,h:number){
         surface.width=w;surface.height=h;
         context.configure({device,format,alphaMode:"opaque",usage:textureUsage(plan.texture!.usage)});
       },
       prepare:()=>native.prepareSurface(),acquire:()=>context.getCurrentTexture(),
       present:()=>surface.present(),state:()=>native.surfaceState(),ready:()=>native.canPresent(),
+    }:{
+      configure(w:number,h:number){
+        offscreenTexture?.destroy();
+        offscreenTexture=device.createTexture({size:[w,h],format,usage:textureUsage(plan.texture!.usage)|GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC});
+      },
+      // The draw has already submitted its commands to the texture: nothing more to hand over.
+      prepare:()=>{},acquire:()=>offscreenTexture!,present:()=>{},
+      state:()=>({offscreen:true,format,width:offscreenTexture?.width??0,height:offscreenTexture?.height??0}),ready:()=>true,
     };
     if(!lifecycle){lifecycle=new SurfaceLifecycle<GPUTexture>(driver,format);}
     else lifecycle.setDriver(driver);
@@ -202,7 +218,8 @@ export async function createHTMLWindowSession(device:GPUDevice,surface:Deno.Unsa
     get stats(){return {...stats,layers:{...layered.stats}};},
     dispose(){
       if(disposed)return;disposed=true;
-      if(lifecycle)context.unconfigure();
+      if(lifecycle)context?.unconfigure();
+      offscreenTexture?.destroy();
       readback?.buffer.destroy();uniform?.buffer.destroy();tiles?.buffer.destroy();layered.dispose();
     },
   };

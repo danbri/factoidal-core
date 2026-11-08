@@ -131,6 +131,13 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # frame at each scroll tried, on this machine's GPU. With no GPU adapter it says NOT RUN.
   deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/scroll_layers_check.ts"
+  # Every run_html.ts sweep with --offscreen, native and Wasm engines (issue 1268): no window is
+  # shown, so it runs with the screen locked and on CI. About 65 s on an M1.
+  if [ "$(uname -s)" = Darwin ] && [ -f "$LAB/.build/native/libnative-window.dylib" ]; then
+    bash "$LAB/sweeps.sh"
+  else
+    echo 'NOT RUN: sweeps.sh needs macOS and the window library'
+  fi
 else
   echo 'NOT RUN: native_html_test.ts needs the web-render engine, which this build does not have yet'
 fi
