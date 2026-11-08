@@ -5,10 +5,10 @@ WebAssembly engine).
 
 | | |
 |---|---|
-| Generator | SpecTec from https://github.com/Wasm-DSL/spectec branch `lean4-wip`, commit `16b70bde873d7ded498f9b81fd13ddcee95281fa`, with the five patches in `tools/wasmvm/spectec-patches/` |
+| Generator | SpecTec from https://github.com/Wasm-DSL/spectec branch `lean4-wip`, commit `16b70bde873d7ded498f9b81fd13ddcee95281fa`, with the six patches in `tools/wasmvm/spectec-patches/` |
 | Input | `third_party/wasm-spec/specification/wasm-3.0/[012345]*.spectec` (WebAssembly/spec `f3268fa9dcb7d3a60d09546e743e7281e75cddb0`) |
-| Output | `Wasm-f3268fa9.lean`, 12,854 lines, SHA-256 `944724783582ce90c2d90a8a7259d727fea7266509089aa7412e7bd69e1ea6c5` |
-| Made | 2026-11-08 (patch 0005; first made 2026-11-07), OCaml 5.2.1, dune, menhir 20260209, mdx 2.7.0, zarith 1.14 |
+| Output | `Wasm-f3268fa9.lean`, 12,854 lines, SHA-256 `a2c2c44637c104d3d9e7799bd7ca412cbbb443dc2e87db7b1bf8209f06d0f7f8` |
+| Made | 2026-11-08 (patches 0005, 0006; first made 2026-11-07), OCaml 5.2.1, dune, menhir 20260209, mdx 2.7.0, zarith 1.14 |
 | Consumer | `tools/wasmvm/port-spec.py` ports it to `formal/lean4/L4Factoidal/WasmVM/Spec/Wasm30.lean` |
 | Licence | Derived from the SpecTec sources (W3C Software and Document Notice and License, `third_party/wasm-spec/specification/LICENSE-W3C-from-document-core.txt`); generator Apache-2.0 (see `../README.md`) |
 

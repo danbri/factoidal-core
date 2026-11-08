@@ -11,7 +11,7 @@ Apply with `git am tools/wasmvm/spectec-patches/*.patch` in a checkout of that c
 The build and the generation command are in
 `third_party/spectec-lean4/generated/README.md`.
 
-Patches 0001, 0003, 0004 and 0005 do not change the output for the branch's own spec: with
+Patches 0001, 0003, 0004, 0005 and 0006 do not change the output for the branch's own spec: with
 them and the unpatched `print.ml`, the branch's `spectec/test-lean4/Wasm.lean` is
 reproduced byte for byte (checked 2026-11-07).
 
@@ -22,6 +22,7 @@ reproduced byte for byte (checked 2026-11-07).
 | 0003 | `src/frontend/eval.ml` | Two differently named variant types that each define their own case list are not equivalent. In `f3268fa9`, `Lnn = Inn \| Fnn \| Pnn` has the same cases as `lanetype = numtype \| packtype`, so the frontend elaborated no injection, but the Lean output has one inductive type per variant and needs `lanetype_Lnn`. Aliases (`syntax Lnn = lanetype` on the branch) still reduce. |
 | 0004 | `src/il/eval.ml` | The same rule in the IL: `addrtype` and `Inn` are both `I32 \| I64` in `f3268fa9` and were treated as the same type, so the type-family pass printed `.mk_num__0 at` with `at : addrtype` where `Inn` is needed. Now an `Inn_addrtype` injection is printed. |
 | 0005 | `src/middlend/elsesimp.ml` | **Else simplification lost the pattern and the quantifier.** A rule with `-- otherwise` gets the premise `~ before(e)`, where each rule of the relation `before` is an earlier rule's left side `e_i` with its premises `prems_i`: so `not (exists binds_i, e_i = e /\ prems_i)`. The pass replaced it with `not prems_i` and added the binders of `prems_i` to the outer rule: `exists x, not` in place of `not exists x`, with `e_i = e` dropped. In `f3268fa9`, `throw_ref-handler-next` got two free `x` and two free `val*`, so it could skip any catch clause (`catch_all` too), and `table.copy-zero`/`-le`/`-gt` tested the bounds of tables `x_1`, `x_2` that are not the instruction's. Now the pass simplifies only when every `before` rule's left side is `e` itself and its boolean premises use no other variable; otherwise the `before` relation is printed, as for `br_on_cast-fail`. New in the output: `Step_read_before_throw_ref_handler_next`, `Step_read_before_table_copy_gt`. |
+| 0006 | `backend-lean4/print.ml` | **Slices had the wrong end.** SpecTec `e1[e2 : e3]` is the slice of LENGTH `e3` from `e2`; it was printed as `List.extract e1 e2 e3`, and Lean's `List.extract l start stop` takes an END index. So every slice was `[e2, e3)`, empty when `e2 >= e3`: `load_num_val` (`nbytes_ nt c == List.extract BYTES (i + offset) 4`) could hold only for addresses below 4, and the vector, `memory.init`-style and lane rules had the same defect (46 lines). Now printed as `List.take e3 (List.drop e2 e1)`. |
 
 Not patched, and still a backend limit: 29 functions that have SpecTec clauses are
 printed as `opaque` (see `docs/designissues/2026-11-07-wasmvm-spec-layer.md`).

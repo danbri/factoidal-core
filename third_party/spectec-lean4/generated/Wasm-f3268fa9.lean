@@ -8624,7 +8624,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I32) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I32) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I32) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I32) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I32) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I32) M_2) c_lst)) c_lst_lst) v) ->
@@ -8636,7 +8636,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I64) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I32) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I64) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I64) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I32) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I32) M_2) c_lst)) c_lst_lst) v) ->
@@ -8648,7 +8648,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .F32) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I32) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .F32) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .F32) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I32) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I32) M_2) c_lst)) c_lst_lst) v) ->
@@ -8660,7 +8660,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .F64) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I32) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .F64) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .F64) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I32) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I32) M_2) c_lst)) c_lst_lst) v) ->
@@ -8672,7 +8672,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I8) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I32) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I8) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I8) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I32) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I32) M_2) c_lst)) c_lst_lst) v) ->
@@ -8684,7 +8684,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I16) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I32) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I16) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I16) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I32) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I32) M_2) c_lst)) c_lst_lst) v) ->
@@ -8696,7 +8696,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I32) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I64) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I32) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I32) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I64) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I64) M_2) c_lst)) c_lst_lst) v) ->
@@ -8708,7 +8708,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I64) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I64) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I64) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I64) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I64) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I64) M_2) c_lst)) c_lst_lst) v) ->
@@ -8720,7 +8720,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .F32) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I64) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .F32) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .F32) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I64) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I64) M_2) c_lst)) c_lst_lst) v) ->
@@ -8732,7 +8732,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .F64) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I64) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .F64) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .F64) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I64) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I64) M_2) c_lst)) c_lst_lst) v) ->
@@ -8744,7 +8744,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I8) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I64) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I8) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I8) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I64) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I64) M_2) c_lst)) c_lst_lst) v) ->
@@ -8756,7 +8756,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I16) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I64) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I16) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I16) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I64) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I64) M_2) c_lst)) c_lst_lst) v) ->
@@ -8768,7 +8768,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I32) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .F32) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I32) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I32) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F32) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F32) M_2) c_lst)) c_lst_lst) v) ->
@@ -8780,7 +8780,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I64) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .F32) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I64) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I64) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F32) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F32) M_2) c_lst)) c_lst_lst) v) ->
@@ -8792,7 +8792,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .F32) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .F32) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .F32) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .F32) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F32) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F32) M_2) c_lst)) c_lst_lst) v) ->
@@ -8804,7 +8804,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .F64) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .F32) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .F64) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .F64) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F32) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F32) M_2) c_lst)) c_lst_lst) v) ->
@@ -8816,7 +8816,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I8) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .F32) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I8) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I8) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F32) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F32) M_2) c_lst)) c_lst_lst) v) ->
@@ -8828,7 +8828,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I16) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .F32) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I16) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I16) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F32) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F32) M_2) c_lst)) c_lst_lst) v) ->
@@ -8840,7 +8840,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I32) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .F64) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I32) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I32) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F64) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F64) M_2) c_lst)) c_lst_lst) v) ->
@@ -8852,7 +8852,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I64) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .F64) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I64) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I64) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F64) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F64) M_2) c_lst)) c_lst_lst) v) ->
@@ -8864,7 +8864,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .F32) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .F64) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .F32) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .F32) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F64) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F64) M_2) c_lst)) c_lst_lst) v) ->
@@ -8876,7 +8876,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .F64) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .F64) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .F64) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .F64) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F64) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F64) M_2) c_lst)) c_lst_lst) v) ->
@@ -8888,7 +8888,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I8) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .F64) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I8) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I8) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F64) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F64) M_2) c_lst)) c_lst_lst) v) ->
@@ -8900,7 +8900,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I16) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .F64) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I16) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I16) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F64) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .F64) M_2) c_lst)) c_lst_lst) v) ->
@@ -8912,7 +8912,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I32) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I8) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I32) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I32) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I8) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I8) M_2) c_lst)) c_lst_lst) v) ->
@@ -8924,7 +8924,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I64) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I8) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I64) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I64) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I8) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I8) M_2) c_lst)) c_lst_lst) v) ->
@@ -8936,7 +8936,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .F32) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I8) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .F32) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .F32) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I8) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I8) M_2) c_lst)) c_lst_lst) v) ->
@@ -8948,7 +8948,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .F64) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I8) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .F64) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .F64) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I8) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I8) M_2) c_lst)) c_lst_lst) v) ->
@@ -8960,7 +8960,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I8) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I8) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I8) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I8) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I8) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I8) M_2) c_lst)) c_lst_lst) v) ->
@@ -8972,7 +8972,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I16) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I8) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I16) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I16) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I8) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I8) M_2) c_lst)) c_lst_lst) v) ->
@@ -8984,7 +8984,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I32) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I16) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I32) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I32) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I16) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I16) M_2) c_lst)) c_lst_lst) v) ->
@@ -8996,7 +8996,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I64) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I16) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I64) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I64) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I16) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I16) M_2) c_lst)) c_lst_lst) v) ->
@@ -9008,7 +9008,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .F32) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I16) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .F32) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .F32) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I16) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I16) M_2) c_lst)) c_lst_lst) v) ->
@@ -9020,7 +9020,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .F64) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I16) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .F64) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .F64) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I16) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I16) M_2) c_lst)) c_lst_lst) v) ->
@@ -9032,7 +9032,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I8) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I16) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I8) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I8) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I16) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I16) M_2) c_lst)) c_lst_lst) v) ->
@@ -9044,7 +9044,7 @@ inductive fun_vcvtop__ : shape -> shape -> vcvtop__ -> vec_ -> vec_ -> Prop wher
     Forall (fun (c_1 : lane_) => (wf_lane_ (fun_lanetype (.X (lanetype_Lnn .I16) M_1)) c_1)) c_1_lst ->
     Forall (fun (c_lst : (List lane_)) => Forall (fun (c : lane_) => (wf_lane_ (lanetype_Lnn .I16) c)) c_lst) c_lst_lst ->
     (var_0 == (some v_half)) ->
-    (c_1_lst == (List.extract (lanes_ (.X (lanetype_Lnn .I16) M_1) v_1) (fun_half v_half 0 (proj_dim_0 M_2)) (proj_dim_0 M_2))) ->
+    (c_1_lst == (List.take (proj_dim_0 M_2) (List.drop (fun_half v_half 0 (proj_dim_0 M_2)) (lanes_ (.X (lanetype_Lnn .I16) M_1) v_1)))) ->
     (c_lst_lst == (setproduct_ lane_ var_1_lst)) ->
     ((List.length (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I16) M_2) c_lst)) c_lst_lst)) > 0) ->
     (List.contains (List.map (fun (c_lst : (List lane_)) => (inv_lanes_ (.X (lanetype_Lnn .I16) M_2) c_lst)) c_lst_lst) v) ->
@@ -11985,7 +11985,7 @@ inductive Step_read : config -> (List instr) -> Prop where
     (wf_num_ (numtype_addrtype «at») i) ->
     (wf_num_ nt c) ->
     ((proj_num__0 i) != none) ->
-    ((nbytes_ nt c) == (List.extract ((fun_mem z x).BYTES) ((proj_uN_0 (Option.get! (proj_num__0 i))) + (proj_uN_0 (ao.OFFSET))) (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat (size nt))) / (Rat.ofInt (Int.ofNat 8))))))) ->
+    ((nbytes_ nt c) == (List.take (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat (size nt))) / (Rat.ofInt (Int.ofNat 8))))) (List.drop ((proj_uN_0 (Option.get! (proj_num__0 i))) + (proj_uN_0 (ao.OFFSET))) ((fun_mem z x).BYTES)))) ->
     Step_read (.mk_config z [(.CONST (numtype_addrtype «at») i), (.LOAD nt none x ao)]) [(.CONST nt c)]
   | load_pack_oob : forall (z : state) («at» : addrtype) (i : num_) (v_Inn : Inn) (v_n : n) (v_sx : sx) (x : idx) (ao : memarg), 
     (wf_num_ (numtype_addrtype «at») i) ->
@@ -11995,7 +11995,7 @@ inductive Step_read : config -> (List instr) -> Prop where
   | load_pack_val : forall (z : state) («at» : addrtype) (i : num_) (v_Inn : Inn) (v_n : n) (v_sx : sx) (x : idx) (ao : memarg) (c : iN), 
     (wf_num_ (numtype_addrtype «at») i) ->
     ((proj_num__0 i) != none) ->
-    ((ibytes_ v_n c) == (List.extract ((fun_mem z x).BYTES) ((proj_uN_0 (Option.get! (proj_num__0 i))) + (proj_uN_0 (ao.OFFSET))) (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat v_n)) / (Rat.ofInt (Int.ofNat 8))))))) ->
+    ((ibytes_ v_n c) == (List.take (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat v_n)) / (Rat.ofInt (Int.ofNat 8))))) (List.drop ((proj_uN_0 (Option.get! (proj_num__0 i))) + (proj_uN_0 (ao.OFFSET))) ((fun_mem z x).BYTES)))) ->
     Step_read (.mk_config z [(.CONST (numtype_addrtype «at») i), (.LOAD (numtype_Inn v_Inn) (some (.mk_loadop__0 v_Inn (.mk_loadop_Inn (.mk_sz v_n) v_sx))) x ao)]) [(.CONST (numtype_Inn v_Inn) (.mk_num__0 v_Inn (extend__ v_n (size (numtype_Inn v_Inn)) v_sx c)))]
   | vload_num_oob : forall (z : state) («at» : addrtype) (i : num_) (x : idx) (ao : memarg), 
     (wf_num_ (numtype_addrtype «at») i) ->
@@ -12005,7 +12005,7 @@ inductive Step_read : config -> (List instr) -> Prop where
   | vload_num_val : forall (z : state) («at» : addrtype) (i : num_) (x : idx) (ao : memarg) (c : vec_), 
     (wf_num_ (numtype_addrtype «at») i) ->
     ((proj_num__0 i) != none) ->
-    ((vbytes_ .V128 c) == (List.extract ((fun_mem z x).BYTES) ((proj_uN_0 (Option.get! (proj_num__0 i))) + (proj_uN_0 (ao.OFFSET))) (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat (vsize .V128))) / (Rat.ofInt (Int.ofNat 8))))))) ->
+    ((vbytes_ .V128 c) == (List.take (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat (vsize .V128))) / (Rat.ofInt (Int.ofNat 8))))) (List.drop ((proj_uN_0 (Option.get! (proj_num__0 i))) + (proj_uN_0 (ao.OFFSET))) ((fun_mem z x).BYTES)))) ->
     Step_read (.mk_config z [(.CONST (numtype_addrtype «at») i), (.VLOAD .V128 none x ao)]) [(.VCONST .V128 c)]
   | vload_pack_oob : forall (z : state) («at» : addrtype) (i : num_) (v_K : K) (v_M : M) (v_sx : sx) (x : idx) (ao : memarg), 
     (wf_num_ (numtype_addrtype «at») i) ->
@@ -12016,7 +12016,7 @@ inductive Step_read : config -> (List instr) -> Prop where
     (wf_num_ (numtype_addrtype «at») i) ->
     Forall (fun (j : iN) => (wf_lane_ (fun_lanetype (.X (lanetype_Jnn v_Jnn) v_M)) (.mk_lane__2 v_Jnn (extend__ v_K (jsizenn v_Jnn) v_sx j)))) j_lst ->
     Forall (fun (j : iN) => ((proj_num__0 i) != none)) j_lst ->
-    Forall₂ (fun (j : iN) (k : Nat) => ((ibytes_ v_K j) == (List.extract ((fun_mem z x).BYTES) (((proj_uN_0 (Option.get! (proj_num__0 i))) + (proj_uN_0 (ao.OFFSET))) + (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat (k * v_K))) / (Rat.ofInt (Int.ofNat 8)))))) (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat v_K)) / (Rat.ofInt (Int.ofNat 8)))))))) j_lst k_lst ->
+    Forall₂ (fun (j : iN) (k : Nat) => ((ibytes_ v_K j) == (List.take (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat v_K)) / (Rat.ofInt (Int.ofNat 8))))) (List.drop (((proj_uN_0 (Option.get! (proj_num__0 i))) + (proj_uN_0 (ao.OFFSET))) + (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat (k * v_K))) / (Rat.ofInt (Int.ofNat 8)))))) ((fun_mem z x).BYTES))))) j_lst k_lst ->
     ((c == (inv_lanes_ (.X (lanetype_Jnn v_Jnn) v_M) (List.map (fun (j : iN) => (.mk_lane__2 v_Jnn (extend__ v_K (jsizenn v_Jnn) v_sx j))) j_lst))) && ((jsizenn v_Jnn) == (v_K * 2))) ->
     Step_read (.mk_config z [(.CONST (numtype_addrtype «at») i), (.VLOAD .V128 (some (.SHAPEX_ (.mk_sz v_K) v_M v_sx)) x ao)]) [(.VCONST .V128 c)]
   | vload_splat_oob : forall (z : state) («at» : addrtype) (i : num_) (v_N : N) (x : idx) (ao : memarg), 
@@ -12028,7 +12028,7 @@ inductive Step_read : config -> (List instr) -> Prop where
     (wf_num_ (numtype_addrtype «at») i) ->
     (wf_lane_ (fun_lanetype (.X (lanetype_Jnn v_Jnn) v_M)) (.mk_lane__2 v_Jnn (.mk_uN (proj_uN_0 j)))) ->
     ((proj_num__0 i) != none) ->
-    ((ibytes_ v_N j) == (List.extract ((fun_mem z x).BYTES) ((proj_uN_0 (Option.get! (proj_num__0 i))) + (proj_uN_0 (ao.OFFSET))) (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat v_N)) / (Rat.ofInt (Int.ofNat 8))))))) ->
+    ((ibytes_ v_N j) == (List.take (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat v_N)) / (Rat.ofInt (Int.ofNat 8))))) (List.drop ((proj_uN_0 (Option.get! (proj_num__0 i))) + (proj_uN_0 (ao.OFFSET))) ((fun_mem z x).BYTES)))) ->
     (v_N == (jsize v_Jnn)) ->
     ((Rat.ofInt (Int.ofNat (proj_dim_0 v_M))) == ((Rat.ofInt (Int.ofNat 128)) / (Rat.ofInt (Int.ofNat v_N)))) ->
     (c == (inv_lanes_ (.X (lanetype_Jnn v_Jnn) v_M) (List.replicate (proj_dim_0 v_M) (.mk_lane__2 v_Jnn (.mk_uN (proj_uN_0 j)))))) ->
@@ -12041,7 +12041,7 @@ inductive Step_read : config -> (List instr) -> Prop where
   | vload_zero_val : forall (z : state) («at» : addrtype) (i : num_) (v_N : N) (x : idx) (ao : memarg) (c : vec_) (j : iN), 
     (wf_num_ (numtype_addrtype «at») i) ->
     ((proj_num__0 i) != none) ->
-    ((ibytes_ v_N j) == (List.extract ((fun_mem z x).BYTES) ((proj_uN_0 (Option.get! (proj_num__0 i))) + (proj_uN_0 (ao.OFFSET))) (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat v_N)) / (Rat.ofInt (Int.ofNat 8))))))) ->
+    ((ibytes_ v_N j) == (List.take (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat v_N)) / (Rat.ofInt (Int.ofNat 8))))) (List.drop ((proj_uN_0 (Option.get! (proj_num__0 i))) + (proj_uN_0 (ao.OFFSET))) ((fun_mem z x).BYTES)))) ->
     (c == (extend__ v_N 128 .U j)) ->
     Step_read (.mk_config z [(.CONST (numtype_addrtype «at») i), (.VLOAD .V128 (some (.ZERO (.mk_sz v_N))) x ao)]) [(.VCONST .V128 c)]
   | vload_lane_oob : forall (z : state) («at» : addrtype) (i : num_) (c_1 : vec_) (v_N : N) (x : idx) (ao : memarg) (j : laneidx), 
@@ -12053,7 +12053,7 @@ inductive Step_read : config -> (List instr) -> Prop where
     (wf_num_ (numtype_addrtype «at») i) ->
     (wf_lane_ (fun_lanetype (.X (lanetype_Jnn v_Jnn) v_M)) (.mk_lane__2 v_Jnn (.mk_uN (proj_uN_0 k)))) ->
     ((proj_num__0 i) != none) ->
-    ((ibytes_ v_N k) == (List.extract ((fun_mem z x).BYTES) ((proj_uN_0 (Option.get! (proj_num__0 i))) + (proj_uN_0 (ao.OFFSET))) (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat v_N)) / (Rat.ofInt (Int.ofNat 8))))))) ->
+    ((ibytes_ v_N k) == (List.take (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat v_N)) / (Rat.ofInt (Int.ofNat 8))))) (List.drop ((proj_uN_0 (Option.get! (proj_num__0 i))) + (proj_uN_0 (ao.OFFSET))) ((fun_mem z x).BYTES)))) ->
     (v_N == (jsize v_Jnn)) ->
     ((Rat.ofInt (Int.ofNat (proj_dim_0 v_M))) == ((Rat.ofInt (Int.ofNat (vsize .V128))) / (Rat.ofInt (Int.ofNat v_N)))) ->
     (c == (inv_lanes_ (.X (lanetype_Jnn v_Jnn) v_M) (List.modify (lanes_ (.X (lanetype_Jnn v_Jnn) v_M) c_1) (proj_uN_0 j) (fun (_ : lane_) => (.mk_lane__2 v_Jnn (.mk_uN (proj_uN_0 k))))))) ->
@@ -12178,7 +12178,7 @@ inductive Step_read : config -> (List instr) -> Prop where
   | array_new_elem_alloc : forall (z : state) (i : num_) (v_n : n) (x : idx) (y : idx) (ref_lst : (List ref)), 
     (wf_num_ .I32 i) ->
     ((proj_num__0 i) != none) ->
-    (ref_lst == (List.extract ((fun_elem z y).REFS) (proj_uN_0 (Option.get! (proj_num__0 i))) v_n)) ->
+    (ref_lst == (List.take v_n (List.drop (proj_uN_0 (Option.get! (proj_num__0 i))) ((fun_elem z y).REFS)))) ->
     Step_read (.mk_config z [(.CONST .I32 i), (.CONST .I32 (.mk_num__0 .I32 (.mk_uN v_n))), (.ARRAY_NEW_ELEM x y)]) ((List.map (fun (v_ref : ref) => (instr_ref v_ref)) ref_lst) ++ [(.ARRAY_NEW_FIXED x (.mk_uN v_n))])
   | array_new_data_oob : forall (z : state) (i : num_) (v_n : n) (x : idx) (y : idx) (mut_opt : (Option «mut»)) (zt : storagetype), 
     (wf_num_ .I32 i) ->
@@ -12193,7 +12193,7 @@ inductive Step_read : config -> (List instr) -> Prop where
     Forall (fun (c : lit_) => (wf_lit_ zt c)) c_lst ->
     (Expand (fun_type z x) (.ARRAY (.mk_fieldtype mut_opt zt))) ->
     ((proj_num__0 i) != none) ->
-    ((concatn_ byte (List.map (fun (c : lit_) => (zbytes_ zt c)) c_lst) (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat (zsize zt))) / (Rat.ofInt (Int.ofNat 8)))))) == (List.extract ((fun_data z y).BYTES) (proj_uN_0 (Option.get! (proj_num__0 i))) (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat (v_n * (zsize zt)))) / (Rat.ofInt (Int.ofNat 8))))))) ->
+    ((concatn_ byte (List.map (fun (c : lit_) => (zbytes_ zt c)) c_lst) (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat (zsize zt))) / (Rat.ofInt (Int.ofNat 8)))))) == (List.take (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat (v_n * (zsize zt)))) / (Rat.ofInt (Int.ofNat 8))))) (List.drop (proj_uN_0 (Option.get! (proj_num__0 i))) ((fun_data z y).BYTES)))) ->
     Step_read (.mk_config z [(.CONST .I32 i), (.CONST .I32 (.mk_num__0 .I32 (.mk_uN v_n))), (.ARRAY_NEW_DATA x y)]) ((List.map (fun (var_0 : lit_) => (const (Option.get! (cunpack zt)) var_0)) var_0_lst) ++ [(.ARRAY_NEW_FIXED x (.mk_uN v_n))])
   | array_get_null : forall (z : state) (i : num_) (sx_opt : (Option sx)) (x : idx), 
     (wf_num_ .I32 i) ->
@@ -12366,7 +12366,7 @@ inductive Step_read : config -> (List instr) -> Prop where
     (wf_lit_ zt c) ->
     (¬(Step_read_before_array_init_data_num (.mk_config z [(.REF_ARRAY_ADDR a), (.CONST .I32 i), (.CONST .I32 j), (.CONST .I32 (.mk_num__0 .I32 (.mk_uN v_n))), (.ARRAY_INIT_DATA x y)]))) ->
     (Expand (fun_type z x) (.ARRAY (.mk_fieldtype mut_opt zt))) ->
-    ((zbytes_ zt c) == (List.extract ((fun_data z y).BYTES) (proj_uN_0 (Option.get! (proj_num__0 j))) (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat (zsize zt))) / (Rat.ofInt (Int.ofNat 8))))))) ->
+    ((zbytes_ zt c) == (List.take (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat (zsize zt))) / (Rat.ofInt (Int.ofNat 8))))) (List.drop (proj_uN_0 (Option.get! (proj_num__0 j))) ((fun_data z y).BYTES)))) ->
     Step_read (.mk_config z [(.REF_ARRAY_ADDR a), (.CONST .I32 i), (.CONST .I32 j), (.CONST .I32 (.mk_num__0 .I32 (.mk_uN v_n))), (.ARRAY_INIT_DATA x y)]) [(.REF_ARRAY_ADDR a), (.CONST .I32 i), (const (Option.get! (cunpack zt)) var_0), (.ARRAY_SET x), (.REF_ARRAY_ADDR a), (.CONST .I32 (.mk_num__0 .I32 (.mk_uN ((proj_uN_0 (Option.get! (proj_num__0 i))) + 1)))), (.CONST .I32 (.mk_num__0 .I32 (.mk_uN ((proj_uN_0 (Option.get! (proj_num__0 j))) + (Int.toNat (Rat.floor ((Rat.ofInt (Int.ofNat (zsize zt))) / (Rat.ofInt (Int.ofNat 8))))))))), (.CONST .I32 (.mk_num__0 .I32 (.mk_uN (Int.toNat ((Int.ofNat v_n) - (Int.ofNat 1)))))), (.ARRAY_INIT_DATA x y)]
 
 /- Recursive Definition at: third_party/wasm-spec/specification/wasm-3.0/4.3-execution.instructions.spectec:5.1-5.88 -/

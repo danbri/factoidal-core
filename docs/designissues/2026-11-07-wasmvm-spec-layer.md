@@ -18,11 +18,11 @@ The file is GENERATED (Iron Rule 2). The chain is:
 1. SpecTec sources of the WebAssembly 3.0 spec, pinned at WebAssembly/spec
    `f3268fa9` in `third_party/wasm-spec/specification/wasm-3.0/`.
 2. Joachim Breitner's SpecTec-to-Lean 4 backend (`print.ml`), on Wasm-DSL/spectec
-   branch `lean4-wip`, commit `16b70bde`, with five patches of ours
+   branch `lean4-wip`, commit `16b70bde`, with six patches of ours
    (`tools/wasmvm/spectec-patches/`, sections 9a and 9b). Its output for our
    pinned spec, `Wasm-f3268fa9.lean` (12,854 lines), is vendored at
    `third_party/spectec-lean4/generated/` with its exact command (SHA-256
-   `94472478...`). Until the regeneration of 2026-11-07 the input was the
+   `a2c2c446...`). Until the regeneration of 2026-11-07 the input was the
    branch's own output for its February copy of the spec,
    `third_party/spectec-lean4/spectec/test-lean4/Wasm.lean`, which is kept.
 3. `tools/wasmvm/port-spec.py` rewrites that file for Lean v4.33.1 and our
@@ -41,7 +41,7 @@ theorems lists `propext` and `Quot.sound` only.
 
 ## 2. What is in the layer
 
-Counts in `Wasm30.lean` since the regeneration from `f3268fa9` with patch 0005
+Counts in `Wasm30.lean` since the regeneration from `f3268fa9` with patches 0005 and 0006
 (section 9b): 534 `inductive`
 (types and relations), 17 `structure`, 314 `def`, 57 `abbrev`, 77 `opaque`
 (section 4). As generated, before the rule `builtin-definitions`: 270 `def`,
@@ -437,7 +437,9 @@ By the cheapest route of section 9. One opam switch `spectec` (OCaml 5.2.1;
 Still open: the 29 functions of section 4 (a backend limit), and the binary
 format (G3).
 
-## 9b. Generator defect: "otherwise" lost its pattern (fixed 2026-11-08)
+## 9b. Generator defects found by the engine proofs (2026-11-08)
+
+First defect (fixed, patch `0005`): "otherwise" lost its pattern.
 
 Found from the engine proofs: the generated `Step_read.throw_ref_handler_next` bound
 `x` and `val_lst` twice and apart from the clause it skips, with the premise
@@ -466,7 +468,15 @@ changed (`strip-trailing-whitespace`, 1255 to 1260: the new multi-line rules) an
 new input hash. `Proofs/Proposals.lean` `skip_clauses` now proves the negated
 premise by cases on the four `before` rules.
 
-Second defect, found at the same time and NOT fixed: the backend prints an iteration
+Second defect, found while proving loads (fixed 2026-11-08, patch `0006`, in
+`backend-lean4/print.ml`): a SpecTec slice `e1[e2 : e3]` (start and LENGTH) was
+printed as `List.extract e1 e2 e3`, and Lean's `List.extract` takes an END index.
+So `Step_read.load_num_val`, which compares the loaded bytes with
+`List.extract BYTES (i + offset) 4`, could hold only for addresses below 4; every
+other load could not step. 46 lines changed (loads, vector loads and lanes); now
+`List.take e3 (List.drop e2 e1)`. No port rule count changed.
+
+Third defect, NOT fixed: the backend prints an iteration
 `x^n` as the list `x*` and drops `|x*| = n`. So in the generated relations the arity
 of a label, a block and a call is not tied to the number of values: `Step_read.block`
 and `loop` (`val^m` with `t_1^m`), `Step_pure.br_label_zero` (`val^n` with the label's

@@ -1,0 +1,33 @@
+From 178f5f7a636e17598225f7296e359ea140ddca3b Mon Sep 17 00:00:00 2001
+From: Dan Brickley <danbri@danbri.org>
+Date: Sun, 8 Nov 2026 01:03:48 +0000
+Subject: [PATCH] print.ml: print a SpecTec slice e1[e2 : e3] as List.take e3
+ (List.drop e2 e1)
+
+SpecTec's slice takes a start and a LENGTH. Lean core's List.extract l start stop
+takes an end index, so the printed (List.extract e1 e2 e3) was the slice
+[e2, e3), empty whenever e2 >= e3. In WebAssembly 3.0 that made every load from
+an address at or above the access width impossible (load_num_val compares the
+loaded bytes with List.extract BYTES (i + offset) 4).
+---
+ spectec/backend-lean4/print.ml | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/spectec/backend-lean4/print.ml b/spectec/backend-lean4/print.ml
+index b7edaad..40d3998 100644
+--- a/spectec/backend-lean4/print.ml
++++ b/spectec/backend-lean4/print.ml
+@@ -293,7 +293,9 @@ and render_exp exp_type exp =
+   | CatE ({it = ListE [e1]; _}, e2) when exp_type = LHS -> parens (r_func e1 ^ " :: " ^ r_func e2) 
+   | CatE (e1, e2) -> parens (r_func e1 ^ " ++ " ^ r_func e2)
+   | IdxE (e1, e2) -> parens (r_func e1 ^ "[" ^ r_func e2 ^ "]!")
+-  | SliceE (e1, e2, e3) -> parens ("List.extract " ^ r_func e1 ^ " " ^ r_func e2 ^ " " ^ r_func e3)
++  (* SpecTec `e1[e2 : e3]` is the slice of length e3 from e2. Lean's `List.extract l start stop`
++     takes an end index, so `List.extract e1 e2 e3` was the wrong slice. *)
++  | SliceE (e1, e2, e3) -> parens ("List.take " ^ r_func e3 ^ " (List.drop " ^ r_func e2 ^ " " ^ r_func e1 ^ ")")
+   | UpdE (e1, p, e2) -> render_path_start p e1 false e2
+   | ExtE (e1, p, e2) -> render_path_start p e1 true e2
+   | CallE (id, args) -> parens (render_id id.it ^ " " ^ String.concat " " (List.map (render_arg exp_type) args))
+-- 
+2.50.1 (Apple Git-155)
+

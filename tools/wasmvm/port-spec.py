@@ -32,7 +32,7 @@ import port_builtins  # noqa: E402  (rule builtin-definitions, kept in its own f
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_INPUT = ROOT / "third_party/spectec-lean4/generated/Wasm-f3268fa9.lean"
 OUTPUT = ROOT / "formal/lean4/L4Factoidal/WasmVM/Spec/Wasm30.lean"
-INPUT_SHA256 = "944724783582ce90c2d90a8a7259d727fea7266509089aa7412e7bd69e1ea6c5"
+INPUT_SHA256 = "a2c2c44637c104d3d9e7799bd7ca412cbbb443dc2e87db7b1bf8209f06d0f7f8"
 NAMESPACE = "L4Factoidal.WasmVM.Spec"
 
 RULES = []  # (name, reason, count) in the order applied; filled by `rule`
