@@ -157,9 +157,9 @@ def firstNamed (d : Dom) (name : String) : Option Nat :=
 A pointer outside memory traps. -/
 def putOut (mem : Nat) (st : StoreOf M) (buf cap : Nat) (b : ByteArray) : StoreOf M × HostResult :=
   if b.size ≤ cap then
-    match st.writeMem mem buf b with
-    | .ok st' => (st', ret b.size)
-    | .error e => (st, .trap s!"foafnaut_dom: {e}")
+    match st.writeMemS mem buf b with
+    | (st', true) => (st', ret b.size)
+    | (st', false) => (st', .trap "foafnaut_dom: out of bounds memory access")
   else (st, ret b.size)
 
 /-- A string result, or an error code (nothing written). -/
@@ -304,8 +304,8 @@ theorem putOut_within (mem : Nat) (st : StoreOf M) (buf cap : Nat) (b : ByteArra
   split
   · rename_i h
     split
-    · rename_i st' hw; exact .inr ⟨b, h, hw⟩
-    · exact .inl rfl
+    · rename_i st' hw; exact .inr ⟨b, h, StoreOf.writeMem_of_writeMemS hw⟩
+    · rename_i st' hw; exact .inl (StoreOf.writeMemS_false hw)
   · exact .inl rfl
 
 theorem answerStr_within (mem : Nat) (st : StoreOf M) (buf cap : Nat) (r : Except Int String) :

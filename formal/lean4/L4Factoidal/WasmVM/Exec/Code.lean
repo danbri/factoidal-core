@@ -254,6 +254,132 @@ structure CompiledFunc where
 
 def CompiledFunc.nLocals (f : CompiledFunc) : Nat := f.nParams + f.localInit.size
 
+/-! ### Fresh copies of compiled code
+
+A value that a `Task` returns is marked multi-threaded, with everything it reaches. The
+reference count of a multi-threaded object is changed with atomic operations, in
+`lean_inc_ref_cold`/`lean_dec_ref_cold`. `run` changes the count of the op it reads at
+every instruction (`lean_array_uget`, then a decrement after the case reads the
+fields), so code compiled in parallel (`validateParallel`) ran every op through these
+calls: the VP8 decoder ran 137 million instructions a second with such code and 183
+with serially compiled code (measured 2026-11-08). `compileAll` copies the code that
+the tasks give: each op is rebuilt, which allocates a new object (the old one is shared,
+so it is not reused), and the copy is single-threaded. Each `fresh` is the identity
+(`Op.fresh_id`, `CompiledFunc.fresh_eq`). -/
+
+/-- Zero, behind a call the compiler does not look through. `fresh` adds it to every
+`Nat` field: rebuilding a constructor from its own fields is compiled to the identity
+(the object is returned, still multi-threaded), and adding an unknown number is not. -/
+@[noinline] def freshZero : Nat := 0
+
+/-- The op unchanged when `k` is not 1 (`k` is `freshZero`): keeps `Op.num` from being
+compiled to the identity. -/
+@[inline] def keepNumOp (k : Nat) (op : NumOp) : NumOp := if k = 1 then .i32_eqz else op
+
+def BrTarget.freshWith (k : Nat) (t : BrTarget) : BrTarget :=
+  { pc := t.pc + k, keep := t.keep + k, height := t.height + k }
+
+def CatchTarget.freshWith (k : Nat) (c : CatchTarget) : CatchTarget :=
+  { tag := c.tag.map (· + k), pc := c.pc + k, height := c.height + k, exnBelow := c.exnBelow,
+    payload := c.payload, exnAbove := c.exnAbove }
+
+def Handler.freshWith (k : Nat) (h : Handler) : Handler :=
+  { start := h.start + k, stop := h.stop + k, catches := h.catches.map (CatchTarget.freshWith k),
+    next := h.next.map (· + k) }
+
+def Op.freshWith (k : Nat) : Op → Op
+  | .unreachable => .unreachable
+  | .br t => .br (t.freshWith k)
+  | .brIf t => .brIf (t.freshWith k)
+  | .jump pc => .jump (pc + k)
+  | .jumpIf pc => .jumpIf (pc + k)
+  | .jumpUnless pc => .jumpUnless (pc + k)
+  | .brTable ts d => .brTable (ts.map (BrTarget.freshWith k)) (d.freshWith k)
+  | .return_ keep => .return_ (keep + k)
+  | .call f => .call (f + k)
+  | .callIndirect type table => .callIndirect (type + k) (table + k)
+  | .drop => .drop
+  | .select => .select
+  | .localGet x => .localGet (x + k)
+  | .localSet x => .localSet (x + k)
+  | .localTee x => .localTee (x + k)
+  | .globalGet x => .globalGet (x + k)
+  | .globalSet x => .globalSet (x + k)
+  | .tableGet x => .tableGet (x + k)
+  | .tableSet x => .tableSet (x + k)
+  | .tableSize x => .tableSize (x + k)
+  | .tableGrow x => .tableGrow (x + k)
+  | .tableFill x => .tableFill (x + k)
+  | .tableCopy dst src => .tableCopy (dst + k) (src + k)
+  | .tableInit table elem => .tableInit (table + k) (elem + k)
+  | .elemDrop x => .elemDrop (x + k)
+  | .load op mem offset => .load op (mem + k) (offset + k)
+  | .store op mem offset => .store op (mem + k) (offset + k)
+  | .memorySize mem => .memorySize (mem + k)
+  | .memoryGrow mem => .memoryGrow (mem + k)
+  | .memoryInit data mem => .memoryInit (data + k) (mem + k)
+  | .dataDrop x => .dataDrop (x + k)
+  | .memoryCopy dst src => .memoryCopy (dst + k) (src + k)
+  | .memoryFill mem => .memoryFill (mem + k)
+  | .const v => .const (v + k.toUInt64)
+  | .refIsNull => .refIsNull
+  | .refFunc f => .refFunc (f + k)
+  | .num op => .num (keepNumOp k op)
+  | .llBin x y op => .llBin (x + k) (y + k) (keepNumOp k op)
+  | .lcBin x c op => .lcBin (x + k) (c + k.toUInt64) (keepNumOp k op)
+  | .cBin c op => .cBin (c + k.toUInt64) (keepNumOp k op)
+  | .lUn x op => .lUn (x + k) (keepNumOp k op)
+  | .binSet op z => .binSet (keepNumOp k op) (z + k)
+  | .lcBinSet x c op z => .lcBinSet (x + k) (c + k.toUInt64) (keepNumOp k op) (z + k)
+  | .llBinJump x y op t onZero => .llBinJump (x + k) (y + k) (keepNumOp k op) (t + k) onZero
+  | .lcBinJump x c op t onZero => .lcBinJump (x + k) (c + k.toUInt64) (keepNumOp k op) (t + k) onZero
+  | .binJump op t onZero => .binJump (keepNumOp k op) (t + k) onZero
+  | .throw tag n => .throw (tag + k) (n + k)
+  | .throwRef => .throwRef
+  | .rethrow slot => .rethrow (slot + k)
+  | .returnCall f => .returnCall (f + k)
+  | .returnCallIndirect type table => .returnCallIndirect (type + k) (table + k)
+  | .callRef => .callRef
+  | .returnCallRef => .returnCallRef
+  | .refAsNonNull => .refAsNonNull
+  | .brOnNull t => .brOnNull (t.freshWith k)
+  | .brOnNonNull t => .brOnNonNull (t.freshWith k)
+  | .handlers hs => .handlers (hs.map (Handler.freshWith k))
+
+/-- A new copy of an op (see above). -/
+def Op.fresh (o : Op) : Op := o.freshWith freshZero
+
+/-- A new copy of an array of slot bits. -/
+def freshBits (a : Array UInt64) : Array UInt64 := a.foldl (·.push ·) (Array.mkEmpty a.size)
+
+/-- A new, single-threaded copy of a compiled function (see above). -/
+def CompiledFunc.fresh (f : CompiledFunc) : CompiledFunc :=
+  { type := f.type + freshZero, nParams := f.nParams + freshZero, localInit := freshBits f.localInit,
+    maxHeight := f.maxHeight + freshZero, code := f.code.map Op.fresh }
+
+theorem BrTarget.freshWith_zero : BrTarget.freshWith 0 = id := funext fun _ => rfl
+theorem CatchTarget.freshWith_zero : CatchTarget.freshWith 0 = id := funext fun c => by
+  cases c with | mk tag => cases tag <;> rfl
+theorem Handler.freshWith_zero : Handler.freshWith 0 = id := funext fun h => by
+  cases h with | mk start stop catches next =>
+  cases next <;> simp [Handler.freshWith, CatchTarget.freshWith_zero]
+
+theorem Op.fresh_id : Op.fresh = id := funext fun o => by
+  cases o <;> simp [Op.fresh, freshZero, Op.freshWith, BrTarget.freshWith_zero, Handler.freshWith_zero, keepNumOp]
+
+theorem freshBits_eq (a : Array UInt64) : freshBits a = a := by
+  unfold freshBits
+  rw [← Array.foldl_toList]
+  suffices ∀ (l : List UInt64) (acc : Array UInt64), l.foldl (·.push ·) acc = acc ++ l.toArray by
+    rw [this]; simp
+  intro l; induction l with
+  | nil => intro acc; simp
+  | cons x xs ih => intro acc; simp [ih]
+
+theorem CompiledFunc.fresh_eq (f : CompiledFunc) : f.fresh = f := by
+  cases f; simp [CompiledFunc.fresh, freshBits_eq, Op.fresh_id, freshZero]
+
+
 /-- The handler table of compiled code (empty when the function has no `try`). -/
 def handlersOf (code : Array Op) : Array Handler :=
   match code.back? with

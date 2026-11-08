@@ -21,6 +21,7 @@ docs/designissues/2026-11-07-wasmvm-engine.md, "HarfBuzz in the VM").
 -/
 import L4Factoidal.WasmVM.WasiIO
 import L4Factoidal.WasmVM.Bench.Engine
+import L4Factoidal.WasmVM.Bench.Sample
 import Lean.Data.Json
 
 namespace L4Factoidal.WasmVM.Bench.HarfBuzz
@@ -75,7 +76,12 @@ def outCap : Nat := 512
 def shape (l : Loaded) (caps : Caps IO) (font flen textPtr tlen out : Nat) : IO (Loaded × Array Glyph) := do
   let args := #[.i32 font.toUInt32, .i32 flen.toUInt32, .i32 textPtr.toUInt32, .i32 tlen.toUInt32,
     .i32 out.toUInt32, .i32 outCap.toUInt32]
-  let (l, o) ← l.run caps "hbw_shape" args { fuel := 100000000000 } noExtra
+  let (l, o) ← if ← Sample.enabled then do
+      let ⟨st, inst, mem, bs⟩ := l
+      let some (.func fa) := st.export? inst "hbw_shape" | throw (IO.userError "no hbw_shape")
+      let (st, o, _) ← Sample.runIO st fa args { fuel := 100000000000 } (host caps mem bs noExtra)
+      pure (⟨st, inst, mem, bs⟩, o)
+    else l.run caps "hbw_shape" args { fuel := 100000000000 } noExtra
   match o with
   | .values #[.i32 n] =>
     if n.toNat > outCap then throw (IO.userError s!"hbw_shape gave {i32At (le32 n.toNat) 0}")
@@ -179,6 +185,7 @@ def run (path : String) (n : Nat) : IO UInt32 := do
     IO.println s!"  {verdict}"
     IO.println s!"  {perSec} calls per second ({n} calls, {(t1 - t0) / 1000000} ms); {steps.map toString |>.getD "?"} instructions per call, {mips} million instructions per second"
   IO.println s!"compared with native hb-shape: {agree} same, {differ} differ, {noNative} not compared"
+  Sample.report "HarfBuzz hbw_shape, all cases"
   return if differ == 0 then 0 else 1
 
 end L4Factoidal.WasmVM.Bench.HarfBuzz

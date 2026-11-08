@@ -125,9 +125,9 @@ def initTable (st : StoreOf M) (ta d : Nat) (vals : Array UInt64) : Except Trap 
   else .ok { st with tables := st.tables.modify ta fun t => { t with elems := vals.foldl (init := (t.elems, d)) (fun (a, i) v => (a.set! i v, i + 1)) |>.1 } }
 
 def initMem (st : StoreOf M) (ma d : Nat) (bytes : ByteArray) : Except Trap (StoreOf M) :=
-  let m := st.mems[ma]!
-  if d + bytes.size > LinearMemory.size m.data then .error .memOOB
-  else .ok { st with mems := st.mems.modify ma fun mi => { mi with data := LinearMemory.writeBytes mi.data d bytes 0 bytes.size } }
+  match st.writeMemS ma d bytes with
+  | (st, true) => .ok st
+  | (_, false) => .error .memOOB
 
 /-- Instantiate. Returns the store (changed even on a trap) and either the instance
 address with the start function's address, or the error. -/

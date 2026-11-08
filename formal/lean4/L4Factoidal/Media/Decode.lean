@@ -13,6 +13,7 @@ randomness, environment or output). The one other import,
 `env.emscripten_notify_memory_growth`, does nothing.
 -/
 import L4Factoidal.WasmVM.WasiIO
+import L4Factoidal.WasmVM.Bench.Sample
 import L4Factoidal.Media.Ogg
 import L4Factoidal.Media.WebM
 import L4Factoidal.Media.Yuv
@@ -47,6 +48,10 @@ def Module.call (m : Module) (name : String) (args : Array Value) : IO (Module �
   match st.export? inst name with
   | some (.func fa) =>
     let t0 ← IO.monoNanosNow
+    if ← WasmVM.Bench.Sample.enabled then
+      let (st, o, n) ← WasmVM.Bench.Sample.runIO st fa args budget (host caps mem bs noExtra)
+      let t1 ← IO.monoNanosNow
+      return (⟨st, inst, mem, bs, buf, cap, steps + n, ns + (t1 - t0)⟩, o)
     let (st, o, n) := invokeSteps st fa args budget
     let mut st := st
     let mut o := o

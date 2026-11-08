@@ -27,6 +27,7 @@ QuickJS-NG v0.18.0 `qjs-wasi-reactor.wasm` that the Foafnaut script engine runs 
 -/
 import L4Factoidal.WasmVM.WasiIO
 import L4Factoidal.WasmVM.Hosts.Dom
+import L4Factoidal.WasmVM.Bench.Sample
 import L4Factoidal.DOM.OfHtml
 import Lean.Data.Json
 
@@ -75,7 +76,9 @@ def Vm.run (v : Vm) (name : String) (args : Array Value) (fuel : Nat := 10000000
   match st.export? inst name with
   | some (.func fa) =>
     let t0 ← IO.monoNanosNow
-    let (st, o, n) ← runIOSteps st fa args { fuel } (host (capsOf clock) mem bs (extra ref mem))
+    let h := host (capsOf clock) mem bs (extra ref mem)
+    let (st, o, n) ← if ← Sample.enabled then Sample.runIO st fa args { fuel } h
+      else runIOSteps st fa args { fuel } h
     let t1 ← IO.monoNanosNow
     return (⟨st, inst, mem, bs, ref, clock⟩, o, n, t1 - t0)
   | _ => return (⟨st, inst, mem, bs, ref, clock⟩, .trap (.host s!"no export {name}"), 0, 0)
@@ -454,12 +457,15 @@ def run (path : String) (reactor : Option String) : IO UInt32 := do
     let mips := if t.ns == 0 then 0 else t.steps * 1000 / t.ns
     IO.println s!"{if ok then "ok  " else "FAIL"} {what}: {got}{if ok then "" else s!" (expected {want})"} [{t.steps} instr, {t.ns / 1000} us, {mips} M instr/s]"
   IO.println s!"plain JavaScript: {passes} pass, {fails} fail; {totalSteps} instructions in {totalNs / 1000000} ms ({if totalNs == 0 then 0 else totalSteps * 1000 / totalNs} M instr/s)"
+  Sample.report "QuickJS plain cases"
   -- A longer run for the speed figure.
   let (v', t) ← v.eval "(() => { let s = 0; for (let i = 0; i < 200000; i++) s = (s + i * i) % 1000003; const o = []; for (let i = 0; i < 2000; i++) o.push({ k: 'k' + i, v: i }); return s + ' ' + JSON.stringify(o).length })()"
   v := v'
   IO.println s!"speed: loop and JSON: {t.text}: {t.steps} instructions in {t.ns / 1000000} ms = {if t.ns == 0 then 0 else t.steps * 1000 / t.ns} M instr/s"
+  Sample.report "QuickJS loop and JSON"
   let (_, t) ← v.eval "function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2) }; fib(24)"
   IO.println s!"speed: fib(24) = {t.text}: {t.steps} instructions in {t.ns / 1000000} ms = {if t.ns == 0 then 0 else t.steps * 1000 / t.ns} M instr/s"
+  Sample.report "QuickJS fib(24)"
   IO.println "\n# Scripted pages (Lean DOM, Lean dispatch)"
   let mut same := 0
   let mut differ := 0

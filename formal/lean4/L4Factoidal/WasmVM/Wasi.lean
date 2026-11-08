@@ -218,6 +218,13 @@ def fits (mem : Nat) (st : StoreOf M) (off n : Nat) : Bool :=
 
 def errno (st : StoreOf M) (e : Errno) : StoreOf M × HostResult := (st, .values #[.i32 e.toUInt32])
 
+/-- Write `bytes` at `off` and answer success, or `fault` when they do not fit. The
+store is never held twice, so the write is in place (`StoreOf.writeMemS`). -/
+def answerPut (mem : Nat) (st : StoreOf M) (off : Nat) (bytes : ByteArray) : StoreOf M × HostResult :=
+  match st.writeMemS mem off bytes with
+  | (st, true) => errno st Errno.success
+  | (st, false) => errno st Errno.fault
+
 /-- The answer of a step that only writes memory. -/
 def answer (st : StoreOf M) : Except Errno (StoreOf M) → StoreOf M × HostResult
   | .ok st' => errno st' Errno.success
@@ -274,9 +281,9 @@ def fdWrite (caps : Caps m) (mem : Nat) (args : Array Value) (st : StoreOf M) :
     match gather mem st (arg32 args 1) (arg32 args 2) with
     | .error e => pure (errno st e)
     | .ok bytes =>
-      match put mem st (arg32 args 3) (le32 bytes.size) with
-      | .error e => pure (errno st e)
-      | .ok st' => do write bytes; pure (errno st' Errno.success)
+      match st.writeMemS mem (arg32 args 3) (le32 bytes.size) with
+      | (st, false) => pure (errno st Errno.fault)
+      | (st, true) => do write bytes; pure (errno st Errno.success)
 
 /-- `clock_time_get(id, precision, ptime)`. The precision is a hint; it is not used. -/
 def clockTimeGet (caps : Caps m) (mem : Nat) (args : Array Value) (st : StoreOf M) :
@@ -287,7 +294,7 @@ def clockTimeGet (caps : Caps m) (mem : Nat) (args : Array Value) (st : StoreOf 
   | none => pure (errno st Errno.notcapable)
   | some read => do
     let t ← read
-    pure (answer st (put mem st (arg32 args 2) (le64 t)))
+    pure (answerPut mem st (arg32 args 2) (le64 t))
 
 /-- `random_get(buf, buf_len)`. -/
 def randomGet (caps : Caps m) (mem : Nat) (args : Array Value) (st : StoreOf M) :
@@ -299,7 +306,7 @@ def randomGet (caps : Caps m) (mem : Nat) (args : Array Value) (st : StoreOf M) 
     if !fits mem st buf n then pure (errno st Errno.fault) else do
     let bytes ← gen n
     if bytes.size != n then pure (errno st Errno.io)
-    else pure (answer st (put mem st buf bytes))
+    else pure (answerPut mem st buf bytes)
 
 /-- One call of WASI function `f` with the memory at store address `mem`. -/
 def call (caps : Caps m) (mem : Nat) (f : Fn) (args : Array Value) (st : StoreOf M) :
@@ -314,7 +321,7 @@ def call (caps : Caps m) (mem : Nat) (f : Fn) (args : Array Value) (st : StoreOf
     if id > 3 then pure (errno st Errno.inval) else
     match caps.clockRes id.toUInt32 with
     | none => pure (errno st Errno.notcapable)
-    | some r => pure (answer st (put mem st (arg32 args 1) (le64 r)))
+    | some r => pure (answerPut mem st (arg32 args 1) (le64 r))
   | .clock_time_get => clockTimeGet caps mem args st
   | .random_get => randomGet caps mem args st
   | .fd_write => fdWrite caps mem args st
@@ -322,7 +329,7 @@ def call (caps : Caps m) (mem : Nat) (f : Fn) (args : Array Value) (st : StoreOf
     let fd := arg32 args 0
     if fd > 2 then pure (errno st Errno.badf) else
     let rights := if fd != 0 && (sinkOf caps fd).isSome then rightFdWrite else 0
-    pure (answer st (put mem st (arg32 args 1) (fdstat filetypeCharacterDevice rights)))
+    pure (answerPut mem st (arg32 args 1) (fdstat filetypeCharacterDevice rights))
   | .proc_exit => pure (st, .exit (arg32 args 0))
   | .sched_yield => pure (errno st Errno.success)
   | f => pure (errno st f.denyErrno)

@@ -784,7 +784,7 @@ def compileAll (c : Ctx) (m : Module) (nImp : Nat) (parallel : Bool) :
     match acc with
     | .error e => .error e
     | .ok a => match t.get with
-      | .ok b => .ok (a ++ b)
+      | .ok b => .ok (a ++ b.map CompiledFunc.fresh)
       | .error e => .error e
 
 def validateWith (parallel : Bool) (m : Module) : Except ValidationError ValidModule := do

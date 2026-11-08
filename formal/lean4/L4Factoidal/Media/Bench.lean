@@ -80,6 +80,7 @@ def video (dir : System.FilePath) (file : String) (limit : Option Nat) (out : Op
   let fps := fun (ns : Nat) => if ns == 0 then 0 else k.toFloat * 1e9 / ns.toFloat
   IO.println s!"{file}: VP8 {t.width}x{t.height}, {fs.size} frames; {k} pictures decoded"
   IO.println s!"  decode: {ms v.decodeNs} ms, {v.decodeSteps / max 1 k} instructions a frame ({mips v.decodeSteps v.decodeNs} million per second), {fmt2 (fps v.decodeNs)} frames per second"
+  WasmVM.Bench.Sample.report "VP8 decode"
   IO.println s!"  I420 copy out of WasmVM: {ms v.copyNs} ms; I420 to RGBA in Lean: {ms v.convertNs} ms"
   IO.println s!"  the module's own RGBA of the first picture is the same as Lean's: {v.crossCheck}"
   IO.println s!"  decode, copy and convert: {fmt2 (fps (v.decodeNs + v.copyNs + v.convertNs))} frames per second"

@@ -75,10 +75,15 @@ if [ "$MODE" = --native ]; then
     case "$source" in *'/.lake/'*) name="Core_$(echo "$source" | sed 's|.*/ir/||;s|/|_|g;s|\.c$||')";; esac
     object="$BUILD/obj-native/$name.o"
     printf 'NATIVE %s %s\n' "$name" "$(date -u)"
-    leanc -O2 -c "$source" -o "$object"
+    # -O3 -DNDEBUG as Lake compiles Lean's C. Without NDEBUG every inline function of
+    # lean.h that reads an object (lean_ctor_get, lean_array_get_core, ...) runs its
+    # assert: the native library ran WasmVM at half the speed of the Wasm engine
+    # (fib 58 against 119 million instructions a second; WasmVM record, "In the Foafnaut
+    # engine").
+    leanc -O3 -DNDEBUG -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
-  leanc -O2 -o "$BUILD/web-render-native" "${OBJECTS[@]}"
+  leanc -O3 -o "$BUILD/web-render-native" "${OBJECTS[@]}"
   echo "WEB_RENDER_NATIVE=$BUILD/web-render-native"
   # The same objects and the Wasm C shim, as a library the desktop app opens through FFI.
   # Native output is the same bytes as Wasm output (native_html_test.ts checks this).
@@ -91,7 +96,7 @@ if [ "$MODE" = --native ]; then
   esac
   # The desktop app is macOS only, so other hosts make no library.
   if [ -n "$LIBRARY" ]; then
-  "${CC:-cc}" -O2 -I "$TOOLCHAIN/include" -c "$LAB/web_render_shim.c" -o "$BUILD/obj-native/web_render_shim.o"
+  "${CC:-cc}" -O3 -DNDEBUG -I "$TOOLCHAIN/include" -c "$LAB/web_render_shim.c" -o "$BUILD/obj-native/web_render_shim.o"
   # Static Lean runtime from the same toolchain: the library needs no Lean at run time.
   "${CC:-cc}" -O2 -o "$LIBRARY" "${LIBRARY_OBJECTS[@]}" "$BUILD/obj-native/web_render_shim.o" \
     "$LEANLIB/libInit.a" "$LEANLIB/libStd.a" "$LEANLIB/libleancpp.a" "$LEANLIB/libleanrt.a" \

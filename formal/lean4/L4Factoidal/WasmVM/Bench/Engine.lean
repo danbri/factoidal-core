@@ -25,20 +25,53 @@ def timeIt (f : Unit → α) : IO (α × Nat) := do
   let t1 ← IO.monoNanosNow
   return (r, t1 - t0)
 
-def runExport (st : Store) (ia : Nat) (name : String) (arg : Nat) : IO Unit := do
-  let some (.func fa) := st.export? ia name | IO.println s!"no export {name}"
+/-- Run an export once; gives the instructions run and million instructions a second. -/
+def runExport (st : Store) (ia : Nat) (name : String) (arg : Nat) : IO (Nat × Nat) := do
+  let some (.func fa) := st.export? ia name | IO.println s!"no export {name}"; return (0, 0)
   let ((_, o, steps), ns) ← timeIt fun _ => invokeSteps st fa #[.i32 arg.toUInt32] { fuel := 100000000000 }
   let mips := if ns == 0 then 0 else steps * 1000 / ns
   IO.println s!"{name}({arg}): {o.describe}; {steps} instructions in {ns / 1000000} ms = {mips} million per second"
+  return (steps, mips)
 
 def engine (n : Nat) : IO Unit := do
   let .ok m := decode benchModule | IO.println "decode failed"
   let .ok vm := validate m | IO.println "invalid"
   let (st, r) := instantiateRun (M := ByteMem) (fun _ _ st => (st, .values #[])) {} vm #[]
   let .ok ia := r | IO.println "instantiation failed"
-  runExport st ia "sum" n
-  runExport st ia "memsum" n
-  runExport st ia "fib" (if n ≥ 10000000 then 30 else 25)
+  let _ ← runExport st ia "sum" n
+  let _ ← runExport st ia "memsum" n
+  let _ ← runExport st ia "fib" (if n ≥ 10000000 then 30 else 25)
+
+/-- The ratchet (`wasmvm-bench engine --check`). Each benchmark must run exactly the
+instructions of the unfused code (a fused op charges the fuel of its parts:
+`Proofs.Cost.fused_charges_parts`), and at least a floor of million instructions a
+second: the speed measured when the floor was set, less a margin for a loaded machine.
+Raise a floor when the engine gets faster; never lower one without saying why in the
+record (docs/designissues/2026-11-07-wasmvm-engine.md, "Cost model and ratchet"). The
+best of `tries` runs counts. -/
+def floors : List (String × Nat × Nat × Nat) :=
+  -- export, argument, exact instructions, floor (million per second)
+  [("sum", 10000000, 140000008, 240), ("memsum", 10000000, 240000004, 140), ("fib", 30, 28271637, 120)]
+
+def check (tries : Nat := 3) : IO UInt32 := do
+  let .ok m := decode benchModule | IO.println "decode failed"; return 1
+  let .ok vm := validate m | IO.println "invalid"; return 1
+  let (st, r) := instantiateRun (M := ByteMem) (fun _ _ st => (st, .values #[])) {} vm #[]
+  let .ok ia := r | IO.println "instantiation failed"; return 1
+  let mut bad := 0
+  for (name, arg, want, floor) in floors do
+    let mut best := 0
+    let mut steps := 0
+    for _ in [0:tries] do
+      let (s, mips) ← runExport st ia name arg
+      steps := s
+      best := max best mips
+    if steps != want then
+      IO.println s!"FAIL {name}: {steps} instructions, expected exactly {want}"; bad := bad + 1
+    else if best < floor then
+      IO.println s!"FAIL {name}: best {best} million instructions a second, floor {floor}"; bad := bad + 1
+    else IO.println s!"ok   {name}: {steps} instructions; best {best} M/s (floor {floor})"
+  return if bad == 0 then 0 else 1
 
 /-- Decode and validate a module file, serial and with function bodies in parallel. -/
 def decodeFile (path : String) : IO Unit := do

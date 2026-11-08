@@ -28,6 +28,7 @@ def main (args : List String) : IO UInt32 := do
     return (← L4Factoidal.WasmVM.Bench.Test262.run w d rest.head? ((rest.drop 1).head? >>= String.toNat? |>.getD 2000000000))
   | "wasi" :: _ => return (if (← L4Factoidal.WasmVM.Tests.Wasi.run) then 0 else 1)
   | "memtest" :: _ => return (if (← L4Factoidal.WasmVM.Tests.Memory.run) then 0 else 1)
+  | "engine" :: "--check" :: _ => return (← L4Factoidal.WasmVM.Bench.Engine.check)
   | "engine" :: rest => L4Factoidal.WasmVM.Bench.Engine.engine ((rest.head? >>= String.toNat?).getD 10000000)
-  | _ => IO.println "usage: wasmvm-bench repr [N] | engine [N] | decode FILE | memtest | proposals | wasi | harfbuzz WASM [N] | qjs WASM [REACTOR] | test262 WASM DIR [NATIVE [FUEL]] | l4core FILE | profile DIR"
+  | _ => IO.println "usage: wasmvm-bench repr [N] | engine [N] | engine --check | decode FILE | memtest | proposals | wasi | harfbuzz WASM [N] | qjs WASM [REACTOR] | test262 WASM DIR [NATIVE [FUEL]] | l4core FILE | profile DIR"
   return 0

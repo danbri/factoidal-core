@@ -16,6 +16,7 @@ import L4Factoidal.WasmVM.WasiIO
 import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.WasmVM.Proofs.Numerics
 import L4Factoidal.WasmVM.Proofs.Fuse
+import L4Factoidal.WasmVM.Proofs.Cost
 import L4Factoidal.WasmVM.Proofs.Proposals
 import L4Factoidal.WasmVM.Proofs.Slots
 import L4Factoidal.WasmVM.Proofs.Memory

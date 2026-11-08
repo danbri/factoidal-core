@@ -168,14 +168,42 @@ def readMem (st : StoreOf M) (a off n : Nat) : Except String ByteArray :=
   | some m => if off + n ≤ LinearMemory.size m.data then .ok (LinearMemory.readBytes m.data off n)
     else .error "out of bounds memory access"
 
+/-- Whether `n` bytes at `off` are inside memory `a`. -/
+def memFits (st : StoreOf M) (a off n : Nat) : Bool :=
+  match st.mems[a]? with
+  | some mi => off + n ≤ LinearMemory.size mi.data
+  | none => false
+
+/-- Bounds-checked write into memory `a`, giving back the store on both paths: the
+store and whether the bytes were written. A caller that needs the old store when the
+write fails must use this, not `writeMem` with the old store kept: a store held twice
+makes the write copy the whole memory. (`l4_init` of `l4factoidal.wasm` spent 97% of
+its 18 s copying 16 MiB at each WASI `clock_time_get`, measured 2026-11-08.) The
+memory instance is taken apart (`⟨data, max⟩`), as in `Run.storeMem`. -/
+def writeMemS (st : StoreOf M) (a off : Nat) (bytes : ByteArray) : StoreOf M × Bool :=
+  if st.memFits a off bytes.size then
+    ({ st with mems := st.mems.modify a fun ⟨data, max⟩ =>
+        ⟨LinearMemory.writeBytes data off bytes 0 bytes.size, max⟩ }, true)
+  else (st, false)
+
 /-- Bounds-checked write into memory `a` (for host functions). -/
 def writeMem (st : StoreOf M) (a off : Nat) (bytes : ByteArray) : Except String (StoreOf M) :=
-  match st.mems[a]? with
-  | none => .error "unknown memory"
-  | some m =>
-    if off + bytes.size ≤ LinearMemory.size m.data then
-      .ok { st with mems := st.mems.modify a fun mi => { mi with data := LinearMemory.writeBytes mi.data off bytes 0 bytes.size } }
-    else .error "out of bounds memory access"
+  if st.mems.size ≤ a then .error "unknown memory" else
+  match st.writeMemS a off bytes with
+  | (st, true) => .ok st
+  | (_, false) => .error "out of bounds memory access"
+
+theorem writeMemS_false {st st' : StoreOf M} {a off : Nat} {b : ByteArray}
+    (h : st.writeMemS a off b = (st', false)) : st' = st := by
+  unfold writeMemS at h; split at h <;> simp_all
+
+theorem writeMem_of_writeMemS {st st' : StoreOf M} {a off : Nat} {b : ByteArray}
+    (h : st.writeMemS a off b = (st', true)) : st.writeMem a off b = .ok st' := by
+  have hf : st.memFits a off b.size = true := by
+    unfold writeMemS at h; split at h <;> simp_all
+  have ha : ¬ st.mems.size ≤ a := by
+    intro hle; unfold memFits at hf; simp [Array.getElem?_eq_none hle] at hf
+  unfold writeMem; rw [if_neg ha, h]
 
 /-- Grow memory `a` by `delta` pages (for host functions such as Emscripten's
 `emscripten_resize_heap`); `none` when the memory's maximum or the store's page limit
