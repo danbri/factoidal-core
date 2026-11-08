@@ -23,7 +23,8 @@ match an element, and the four combinators. Anything else is a SyntaxError.
 Matching walks up the tree from the subject, with a fuel bound of the arena size for each
 walk. It recurses once per compound of a complex selector (at most `maxCompounds`) and once
 per nesting level of `:not()`/`:is()` (at most `maxNesting`); nothing here recurses once per
-node of the document.
+node of the document. The parser and the matcher are total: each takes fuel (`parseFuel`,
+`matchFuel`) that these bounds never exhaust.
 -/
 import L4Factoidal.DOM.Arena
 
@@ -257,141 +258,10 @@ per nesting level, so these bound its stack. A longer selector is refused as inv
 def maxCompounds : Nat := 1024
 def maxNesting : Nat := 32
 
-mutual
-/-- A selector list: complex selectors separated by commas. `depth` bounds nesting. -/
-partial def selectorList (depth : Nat) : PM (List Complex) := do
-  if depth == 0 then fail
-  let mut out := #[]
-  for _ in [0:(← get).cs.size + 1] do
-    let _ ← skipWs
-    out := out.push (← complex depth)
-    let _ ← skipWs
-    match ← peek with
-    | some ',' => bump
-    | _ => break
-  return out.toList
-
-partial def complex (depth : Nat) : PM Complex := do
-  let mut parts : Array (Char × List Simple) := #[]
-  let mut comb := ' '
-  for _ in [0:(← get).cs.size + 1] do
-    let c ← compound depth
-    parts := parts.push (comb, c)
-    -- a bound on the compounds of one complex selector: matching recurses once per compound
-    if parts.size > maxCompounds then fail
-    let ws ← skipWs
-    match ← peek with
-    | some ',' | some ')' | none => break
-    | some c =>
-      if c == '>' || c == '+' || c == '~' then
-        bump
-        comb := c
-        let _ ← skipWs
-      else if ws then comb := ' '
-      else fail
-  return .mk parts.toList
-
-partial def compound (depth : Nat) : PM (List Simple) := do
-  let mut out : Array Simple := #[]
-  -- type selector with an optional namespace prefix
-  let start := (← get).i
-  match ← peek with
-  | some '*' =>
-    bump
-    if (← peek) == some '|' && (← peek 1) != some '=' then
-      bump
-      if (← peek) == some '*' then
-        bump
-        out := out.push (.type .any none)
-      else out := out.push (.type .any (some (← ident)))
-    else out := out.push (.type .default none)
-  | some '|' =>
-    bump
-    if (← peek) == some '*' then
-      bump
-      out := out.push (.type .none none)
-    else out := out.push (.type .none (some (← ident)))
-  | _ =>
-    if ← startsIdent then
-      let name ← ident
-      if (← peek) == some '|' && (← peek 1) != some '=' then fail -- an undeclared prefix
-      out := out.push (.type .default (some name))
-  for _ in [0:(← get).cs.size + 1] do
-    match ← peek with
-    | some '#' =>
-      bump
-      if !(← startsIdent) then
-        -- a hash token may start with a digit or "-" + digit in CSS, but an ID selector
-        -- needs an identifier
-        fail
-      out := out.push (.id (← ident))
-    | some '.' =>
-      bump
-      out := out.push (.cls (← ident))
-    | some '[' =>
-      bump
-      out := out.push (← attrSel)
-    | some ':' =>
-      bump
-      if (← peek) == some ':' then
-        bump
-        let n := lowerAscii (← ident)
-        if legacyPseudoElements.contains n then out := out.push .never else fail
-      else
-        let n := lowerAscii (← ident)
-        if (← peek) == some '(' then
-          bump
-          let _ ← skipWs
-          match n with
-          | "not" =>
-            let l ← selectorList (depth - 1)
-            let _ ← skipWs
-            expectClose
-            out := out.push (.not l)
-          | "is" | "where" | "matches" | "-webkit-any" =>
-            let l ← selectorList (depth - 1)
-            let _ ← skipWs
-            expectClose
-            out := out.push (.is l)
-          | "lang" =>
-            let t ← argText
-            bump
-            let ranges := (t.splitOn ",").map (fun r => (r.trimAscii.toString.dropWhile (· == '"')).toString.takeWhile (· != '"') |>.toString)
-            out := out.push (.lang ranges)
-          | "nth-child" | "nth-last-child" | "nth-of-type" | "nth-last-of-type" =>
-            let kind := match n with
-              | "nth-child" => NthKind.child | "nth-last-child" => .lastChild
-              | "nth-of-type" => .ofType | _ => .lastOfType
-            -- the An+B part runs to `of` (nth-child only) or `)`
-            let p0 := (← get).i
-            let t ← argText
-            let (ab, ofPart) := match (t.splitOn " of ") with
-              | [x] => (x, false)
-              | x :: _ => (x, true)
-              | [] => (t, false)
-            let some (a, b) := anPlusB ab | fail
-            if ofPart then
-              if kind != .child && kind != .lastChild then fail
-              set { (← get) with i := p0 + ab.length + 4 }
-              let l ← selectorList (depth - 1)
-              let _ ← skipWs
-              expectClose
-              out := out.push (.nth kind a b (some l))
-            else
-              bump
-              out := out.push (.nth kind a b none)
-          | _ => fail
-        else if legacyPseudoElements.contains n then out := out.push .never
-        else if plainPseudoClasses.contains n then out := out.push (.pseudo n)
-        else fail
-    | _ => break
-  if (← get).i == start then fail
-  return out.toList
-
-partial def expectClose : PM Unit := do
+def expectClose : PM Unit := do
   if (← peek) == some ')' then bump else fail
 
-partial def attrSel : PM Simple := do
+def attrSel : PM Simple := do
   let _ ← skipWs
   let mut ns := NsSel.default
   let mut name := ""
@@ -439,12 +309,154 @@ partial def attrSel : PM Simple := do
   if (← peek) != some ']' then fail
   bump
   return .attr ns name op value ci cs
+
+/-- The parser's fuel: each nesting level of a selector list takes three steps
+(`selectorList`, `complex`, `compound`), so `maxNesting` levels are allowed. -/
+def parseFuel : Nat := 3 * maxNesting
+
+mutual
+/-- A selector list: complex selectors separated by commas. The fuel bounds nesting
+(`parseFuel`). -/
+def selectorList : Nat → PM (List Complex)
+  | 0 => fail
+  | fuel + 1 => do
+    let mut out := #[]
+    for _ in [0:(← get).cs.size + 1] do
+      let _ ← skipWs
+      out := out.push (← complex fuel)
+      let _ ← skipWs
+      match ← peek with
+      | some ',' => bump
+      | _ => break
+    return out.toList
+
+def complex : Nat → PM Complex
+  | 0 => fail
+  | fuel + 1 => do
+    let mut parts : Array (Char × List Simple) := #[]
+    let mut comb := ' '
+    for _ in [0:(← get).cs.size + 1] do
+      let c ← compound fuel
+      parts := parts.push (comb, c)
+      -- a bound on the compounds of one complex selector: matching recurses once per compound
+      if parts.size > maxCompounds then fail
+      let ws ← skipWs
+      match ← peek with
+      | some ',' | some ')' | none => break
+      | some c =>
+        if c == '>' || c == '+' || c == '~' then
+          bump
+          comb := c
+          let _ ← skipWs
+        else if ws then comb := ' '
+        else fail
+    return .mk parts.toList
+
+def compound : Nat → PM (List Simple)
+  | 0 => fail
+  | fuel + 1 => do
+    let mut out : Array Simple := #[]
+    -- type selector with an optional namespace prefix
+    let start := (← get).i
+    match ← peek with
+    | some '*' =>
+      bump
+      if (← peek) == some '|' && (← peek 1) != some '=' then
+        bump
+        if (← peek) == some '*' then
+          bump
+          out := out.push (.type .any none)
+        else out := out.push (.type .any (some (← ident)))
+      else out := out.push (.type .default none)
+    | some '|' =>
+      bump
+      if (← peek) == some '*' then
+        bump
+        out := out.push (.type .none none)
+      else out := out.push (.type .none (some (← ident)))
+    | _ =>
+      if ← startsIdent then
+        let name ← ident
+        if (← peek) == some '|' && (← peek 1) != some '=' then fail -- an undeclared prefix
+        out := out.push (.type .default (some name))
+    for _ in [0:(← get).cs.size + 1] do
+      match ← peek with
+      | some '#' =>
+        bump
+        if !(← startsIdent) then
+          -- a hash token may start with a digit or "-" + digit in CSS, but an ID selector
+          -- needs an identifier
+          fail
+        out := out.push (.id (← ident))
+      | some '.' =>
+        bump
+        out := out.push (.cls (← ident))
+      | some '[' =>
+        bump
+        out := out.push (← attrSel)
+      | some ':' =>
+        bump
+        if (← peek) == some ':' then
+          bump
+          let n := lowerAscii (← ident)
+          if legacyPseudoElements.contains n then out := out.push .never else fail
+        else
+          let n := lowerAscii (← ident)
+          if (← peek) == some '(' then
+            bump
+            let _ ← skipWs
+            match n with
+            | "not" =>
+              let l ← selectorList fuel
+              let _ ← skipWs
+              expectClose
+              out := out.push (.not l)
+            | "is" | "where" | "matches" | "-webkit-any" =>
+              let l ← selectorList fuel
+              let _ ← skipWs
+              expectClose
+              out := out.push (.is l)
+            | "lang" =>
+              let t ← argText
+              bump
+              let ranges := (t.splitOn ",").map (fun r => (r.trimAscii.toString.dropWhile (· == '"')).toString.takeWhile (· != '"') |>.toString)
+              out := out.push (.lang ranges)
+            | "nth-child" | "nth-last-child" | "nth-of-type" | "nth-last-of-type" =>
+              let kind := match n with
+                | "nth-child" => NthKind.child | "nth-last-child" => .lastChild
+                | "nth-of-type" => .ofType | _ => .lastOfType
+              -- the An+B part runs to `of` (nth-child only) or `)`
+              let p0 := (← get).i
+              let t ← argText
+              let (ab, ofPart) := match (t.splitOn " of ") with
+                | [x] => (x, false)
+                | x :: _ => (x, true)
+                | [] => (t, false)
+              let some (a, b) := anPlusB ab | fail
+              if ofPart then
+                if kind != .child && kind != .lastChild then fail
+                set { (← get) with i := p0 + ab.length + 4 }
+                let l ← selectorList fuel
+                let _ ← skipWs
+                expectClose
+                out := out.push (.nth kind a b (some l))
+              else
+                bump
+                out := out.push (.nth kind a b none)
+            | _ => fail
+          else if legacyPseudoElements.contains n then out := out.push .never
+          else if plainPseudoClasses.contains n then out := out.push (.pseudo n)
+          else fail
+      | _ => break
+    if (← get).i == start then fail
+    return out.toList
+
 end
 
 /-- Parse a selectors string; `none` when it is invalid (a SyntaxError). -/
 def parse (s : String) : Option (List Complex) :=
   match (do
-      let l ← selectorList maxNesting
+      let l ← selectorList parseFuel
       let _ ← skipWs
       if !(← atEnd) then fail
       return l : PM (List Complex)).run { cs := preprocess s } with
@@ -538,81 +550,91 @@ def langOf (d : Dom) (k : NodeId) : Option String := Id.run do
       cur := x.parent
   return none
 
-mutual
-partial def matchSimple (d : Dom) (scope : Option NodeId) (k : NodeId) : Simple → Bool
-  | .type ns name =>
-    let x := d.get k
-    let nsOk := match ns with
-      | .default | .any => true
-      | .none => x.ns.isNone
-    nsOk && match name with
-      | none => true
-      | some n => x.lname == (if htmlOf d k then lowerAscii n else n)
-  | .id v => (d.get k).attrs.any fun a => a.ns.isNone && a.lname == "id" && a.value == v
-  | .cls v => match attrVal? d k "class" with
-    | some c => (wsSplit c).contains v
-    | none => false
-  | .attr ns name op value ci cs =>
-    let ins := ci || (!cs && htmlOf d k && caseInsensitiveAttrs.contains (lowerAscii name))
-    (attrsMatching d k ns name).any fun a =>
-      if ins then attrValueMatches op (lowerAscii a.value) (lowerAscii value) else attrValueMatches op a.value value
-  | .pseudo n =>
-    let x := d.get k
-    let sibs := elementSiblings d k
-    let sameType := sibs.filter fun c => (d.get c).lname == x.lname && (d.get c).ns == x.ns
-    match n with
-    | "root" => match x.parent with | some p => (d.get p).type == .document | none => false
-    | "empty" => x.kids.all fun c =>
-        let y := d.get c
-        y.type != .element && !((y.type == .text || y.type == .cdata) && !y.data.isEmpty)
-    | "first-child" => x.parent.isSome && sibs[0]? == some k
-    | "last-child" => x.parent.isSome && sibs.back? == some k
-    | "only-child" => x.parent.isSome && sibs.size == 1
-    | "first-of-type" => x.parent.isSome && sameType[0]? == some k
-    | "last-of-type" => x.parent.isSome && sameType.back? == some k
-    | "only-of-type" => x.parent.isSome && sameType.size == 1
-    | "scope" => match scope with | some s => s == k | none => x.parent.any fun p => (d.get p).type == .document
-    | "link" | "any-link" => isHtml d k ["a", "area"] && (attrVal? d k "href").isSome
-    | "checked" =>
-      (isHtml d k ["input"] && (attrVal? d k "checked").isSome &&
-        ["checkbox", "radio"].contains (lowerAscii ((attrVal? d k "type").getD ""))) ||
-      (isHtml d k ["option"] && (attrVal? d k "selected").isSome)
-    | "disabled" => disabledEl d k
-    | "enabled" => isHtml d k ["button", "input", "select", "textarea", "optgroup", "option", "fieldset"] && !disabledEl d k
-    | "defined" => true
-    | _ => false
-  | .nth kind a b of =>
-    let x := d.get k
-    if x.parent.isNone then false else
-    let sibs := elementSiblings d k
-    let pool := match kind, of with
-      | .child, some l | .lastChild, some l => sibs.filter fun c => matchList d scope c l
-      | .ofType, _ | .lastOfType, _ => sibs.filter fun c => (d.get c).lname == x.lname && (d.get c).ns == x.ns
-      | _, _ => sibs
-    match pool.toList.findIdx? (· == k) with
-    | none => false
-    | some i =>
-      let pos := match kind with | .child | .ofType => i + 1 | _ => pool.size - i
-      nthOk a b pos
-  | .not l => !matchList d scope k l
-  | .is l => matchList d scope k l
-  | .lang ranges => match langOf d k with
-    | some v => ranges.any fun r =>
-        let r := lowerAscii r
-        let v := lowerAscii v
-        r == "*" || v == r || v.startsWith (r ++ "-")
-    | none => false
-  | .never => false
+/-- The matcher's fuel: a step per compound of a complex selector and a few per nesting
+level of `:not()`/`:is()`/`:nth-child(… of …)`; with the parser's bounds it is never
+exhausted. -/
+def matchFuel : Nat := (maxNesting + 1) * (maxCompounds + 8)
 
-partial def matchCompound (d : Dom) (scope : Option NodeId) (k : NodeId) (c : List Simple) : Bool :=
-  (d.get k).type == .element && c.all (matchSimple d scope k)
+mutual
+def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple → Bool
+  | 0, _, _ => false
+  | fuel + 1, k, s =>
+    match s with
+    | .type ns name =>
+      let x := d.get k
+      let nsOk := match ns with
+        | .default | .any => true
+        | .none => x.ns.isNone
+      nsOk && match name with
+        | none => true
+        | some n => x.lname == (if htmlOf d k then lowerAscii n else n)
+    | .id v => (d.get k).attrs.any fun a => a.ns.isNone && a.lname == "id" && a.value == v
+    | .cls v => match attrVal? d k "class" with
+      | some c => (wsSplit c).contains v
+      | none => false
+    | .attr ns name op value ci cs =>
+      let ins := ci || (!cs && htmlOf d k && caseInsensitiveAttrs.contains (lowerAscii name))
+      (attrsMatching d k ns name).any fun a =>
+        if ins then attrValueMatches op (lowerAscii a.value) (lowerAscii value) else attrValueMatches op a.value value
+    | .pseudo n =>
+      let x := d.get k
+      let sibs := elementSiblings d k
+      let sameType := sibs.filter fun c => (d.get c).lname == x.lname && (d.get c).ns == x.ns
+      match n with
+      | "root" => match x.parent with | some p => (d.get p).type == .document | none => false
+      | "empty" => x.kids.all fun c =>
+          let y := d.get c
+          y.type != .element && !((y.type == .text || y.type == .cdata) && !y.data.isEmpty)
+      | "first-child" => x.parent.isSome && sibs[0]? == some k
+      | "last-child" => x.parent.isSome && sibs.back? == some k
+      | "only-child" => x.parent.isSome && sibs.size == 1
+      | "first-of-type" => x.parent.isSome && sameType[0]? == some k
+      | "last-of-type" => x.parent.isSome && sameType.back? == some k
+      | "only-of-type" => x.parent.isSome && sameType.size == 1
+      | "scope" => match scope with | some s => s == k | none => x.parent.any fun p => (d.get p).type == .document
+      | "link" | "any-link" => isHtml d k ["a", "area"] && (attrVal? d k "href").isSome
+      | "checked" =>
+        (isHtml d k ["input"] && (attrVal? d k "checked").isSome &&
+          ["checkbox", "radio"].contains (lowerAscii ((attrVal? d k "type").getD ""))) ||
+        (isHtml d k ["option"] && (attrVal? d k "selected").isSome)
+      | "disabled" => disabledEl d k
+      | "enabled" => isHtml d k ["button", "input", "select", "textarea", "optgroup", "option", "fieldset"] && !disabledEl d k
+      | "defined" => true
+      | _ => false
+    | .nth kind a b of =>
+      let x := d.get k
+      if x.parent.isNone then false else
+      let sibs := elementSiblings d k
+      let pool := match kind, of with
+        | .child, some l | .lastChild, some l => sibs.filter fun c => matchList d scope fuel c l
+        | .ofType, _ | .lastOfType, _ => sibs.filter fun c => (d.get c).lname == x.lname && (d.get c).ns == x.ns
+        | _, _ => sibs
+      match pool.toList.findIdx? (· == k) with
+      | none => false
+      | some i =>
+        let pos := match kind with | .child | .ofType => i + 1 | _ => pool.size - i
+        nthOk a b pos
+    | .not l => !matchList d scope fuel k l
+    | .is l => matchList d scope fuel k l
+    | .lang ranges => match langOf d k with
+      | some v => ranges.any fun r =>
+          let r := lowerAscii r
+          let v := lowerAscii v
+          r == "*" || v == r || v.startsWith (r ++ "-")
+      | none => false
+    | .never => false
+
+def matchCompound (d : Dom) (scope : Option NodeId) : Nat → NodeId → List Simple → Bool
+  | 0, _, _ => false
+  | fuel + 1, k, c => (d.get k).type == .element && c.all (matchSimple d scope fuel k)
 
 /-- The parts are reversed: the subject first, each with the combinator between it and the
 part to its left. -/
-partial def matchFrom (d : Dom) (scope : Option NodeId) (k : NodeId) : List (Char × List Simple) → Bool
-  | [] => true
-  | (comb, c) :: rest =>
-    if !matchCompound d scope k c then false else
+def matchFrom (d : Dom) (scope : Option NodeId) : Nat → NodeId → List (Char × List Simple) → Bool
+  | 0, _, _ => false
+  | _ + 1, _, [] => true
+  | fuel + 1, k, (comb, c) :: rest =>
+    if !matchCompound d scope fuel k c then false else
     match rest with
     | [] => true
     | _ =>
@@ -623,42 +645,43 @@ partial def matchFrom (d : Dom) (scope : Option NodeId) (k : NodeId) : List (Cha
         | some i => if i == 0 then none else sibs[i - 1]?
         | none => none
       match comb with
-      | '>' => match up k with | some p => matchFrom d scope p rest | none => false
-      | '+' => match prevEl k with | some p => matchFrom d scope p rest | none => false
+      | '>' => match up k with | some p => matchFrom d scope fuel p rest | none => false
+      | '+' => match prevEl k with | some p => matchFrom d scope fuel p rest | none => false
       | '~' => Id.run do
         let mut cur := prevEl k
         for _ in [0:d.size + 1] do
           match cur with
           | none => return false
-          | some p => if matchFrom d scope p rest then return true else cur := prevEl p
+          | some p => if matchFrom d scope fuel p rest then return true else cur := prevEl p
         return false
       | _ => Id.run do
         let mut cur := up k
         for _ in [0:d.size + 1] do
           match cur with
           | none => return false
-          | some p => if matchFrom d scope p rest then return true else cur := up p
+          | some p => if matchFrom d scope fuel p rest then return true else cur := up p
         return false
 
 /-- A complex selector, matched from its subject (the last compound) leftwards. -/
-partial def matchComplex (d : Dom) (scope : Option NodeId) (k : NodeId) (c : Complex) : Bool :=
-  match c with
-  | .mk parts => matchFrom d scope k parts.reverse
+def matchComplex (d : Dom) (scope : Option NodeId) : Nat → NodeId → Complex → Bool
+  | 0, _, _ => false
+  | fuel + 1, k, .mk parts => matchFrom d scope fuel k parts.reverse
 
-partial def matchList (d : Dom) (scope : Option NodeId) (k : NodeId) (l : List Complex) : Bool :=
-  l.any (matchComplex d scope k)
+def matchList (d : Dom) (scope : Option NodeId) : Nat → NodeId → List Complex → Bool
+  | 0, _, _ => false
+  | fuel + 1, k, l => l.any (matchComplex d scope fuel k)
 end
 
 /-- `element.matches(selectors)` with `scope` the element (DOM §4.9). -/
 def elementMatches (d : Dom) (k : NodeId) (l : List Complex) : Bool :=
-  (d.get k).type == .element && matchList d (some k) k l
+  (d.get k).type == .element && matchList d (some k) matchFuel k l
 
 /-- `querySelectorAll(selectors)` (DOM §4.2.6): the descendant elements of `root` that
 match, in tree order, with `root` as the scoping root. -/
 def querySelectorAll (d : Dom) (root : NodeId) (l : List Complex) (first : Bool := false) : Array NodeId := Id.run do
   let mut out := #[]
   for k in d.treeOrder root false do
-    if (d.get k).type == .element && matchList d (some root) k l then
+    if (d.get k).type == .element && matchList d (some root) matchFuel k l then
       out := out.push k
       if first then return out
   return out
@@ -672,7 +695,7 @@ def closest (d : Dom) (k : NodeId) (l : List Complex) : Option NodeId := Id.run 
     | none => return none
     | some p =>
       if (d.get p).type != .element then return none
-      if matchList d (some k) p l then return some p
+      if matchList d (some k) matchFuel p l then return some p
       cur := (d.get p).parent
   return none
 
