@@ -2,7 +2,8 @@
 // Lean decides what every click, key and address means.
 const canvas=document.querySelector('#page'),keys=document.querySelector('#keys'),note=document.querySelector('#note'),statsLine=document.querySelector('#stats');
 // ?check=1 keeps the readback path with Lean's pixel checks; ?check=surface draws to the
-// canvas and reads each frame back to check it; ?stats=1 shows the frame timings.
+// canvas and reads each frame back to check it; ?stats=1 shows the frame timings;
+// ?layers=0 asks Lean for a whole frame at each scroll, with no two-layer view.
 const query=new URLSearchParams(location.search),checkParam=query.get('check'),showStats=query.get('stats')==='1'||checkParam!==null;
 // A sandboxed guest has an opaque origin and can not start a worker. The loop then
 // runs here; it needs no extra capability.
@@ -44,11 +45,13 @@ worker.onmessage=({data})=>{
     if(statsLine&&showStats){
       const s=window.foafnautFrame;
       statsLine.hidden=false;
-      statsLine.textContent=`${s.path} layout ${s.layoutMs} ms, draw ${s.drawMs} ms, total ${s.totalMs} ms`+
+      statsLine.textContent=`${s.path} layout ${s.layoutMs} ms, draw ${s.drawMs} ms, total ${s.totalMs} ms`+(s.leanRenders===undefined?'':`, Lean renders ${s.leanRenders}`)+
         (latency===undefined?'':`, input to frame ${latency} ms`)+(s.pixelHash?`, pixels ${s.pixelHash}`:'');
     }
   }
   if(data.type==='keys')keyTable=data.table;
+  // When each loading step ended (epoch ms): the engine compiled and started, the font, the page, the first frame.
+  if(data.type==='phases')window.foafnautPhases=data.phases;
   // Copy and cut in the address bar: Lean chose the text; the key press still counts as a user action.
   if(data.type==='clipboard')navigator.clipboard?.writeText(data.text).catch(()=>{note.hidden=false;note.textContent='The browser did not allow writing to the clipboard.';});
   if(data.type==='focus'){focused=data.focused;if(focused)keys.focus({preventScroll:true});else keys.blur();}
@@ -60,7 +63,7 @@ worker.onerror=event=>{note.hidden=false;note.textContent='The browser worker fa
 // to an OffscreenCanvas with WebGPU. If not, or with ?check=1, the worker reads each frame
 // back and the page paints it with putImageData.
 function begin(surface){
-  const options={...size(),page:query.get('page'),check:checkParam==='1'||checkParam==='surface',stats:showStats,platform:mac?'mac':'other'};
+  const options={...size(),page:query.get('page'),check:checkParam==='1'||checkParam==='surface',stats:showStats,platform:mac?'mac':'other',...(query.get('layers')==='0'?{layers:false}:{})};
   if(surface&&checkParam!=='1'){
     const offscreen=canvas.transferControlToOffscreen();
     window.foafnautSurface=true;
@@ -68,7 +71,7 @@ function begin(surface){
   }else{window.foafnautSurface=false;send({type:'start',...options});}
 }
 const canTransfer=worker instanceof Worker&&typeof canvas.transferControlToOffscreen==='function'&&typeof OffscreenCanvas==='function';
-if(canTransfer)send({type:'hello'});else begin(false);
+if(canTransfer)send({type:'hello',page:query.get('page')});else begin(false);
 addEventListener('resize',()=>send({type:'resize',...size()}));
 // Keep focus where the loop puts it: the press must not move it back to the page.
 canvas.addEventListener('mousedown',event=>event.preventDefault());

@@ -13,6 +13,19 @@ const inWorker=typeof WorkerGlobalScope!=='undefined'&&self instanceof WorkerGlo
 const pagesBase=new URL('./pages/',import.meta.url).href,siteOrigin=new URL(import.meta.url).origin;
 const homeURL=pagesBase+'index.html',settingsURL=pagesBase+'settings.html';
 let module,createSession,session,createSurface,hashPixels,surface,surfaceCanvas,checkMode=false,statsMode=false;
+// The two-layer view (issue 1268, layers.mjs): undefined until the first render with a canvas
+// says whether this engine answers layers:true; false for an engine that answers one frame.
+// `current` is the band on screen and the state it was made for; a scroll inside its keep
+// range only moves the composite.
+let layered,layerSurface,current,shownOffset=0,shiftPending=false,prefetched,motion,bandMs=100,prefetchTimer;
+// layers.mjs, imported beside the engine (a static import would hold this script back
+// until it and the plan engine it imports had loaded).
+let L;const layersModule=import('./layers.mjs');layersModule.catch(()=>{});
+// A band is asked for when a scroll needs one. A page's first frame, and a frame after a change
+// that is not a scroll, is one Lean frame, which costs about half a band; the band for it is
+// made when the page is idle.
+let bandWanted=false,bandTimer;
+let firstFrameSeen;const firstFrame=new Promise(resolve=>{firstFrameSeen=resolve;});
 // Input that arrives before the engine is ready, and moves and scrolls that arrive while a
 // frame builds, wait here. Every press, release, key, text and command is applied in the
 // order it arrived; only moves and scrolls are merged.
@@ -24,7 +37,44 @@ const showURL=url=>({address:url,cursor:url.length,anchor:url.length,undo:null,r
 let field=showURL(''),focused=false,loading=false,scroll=0,active=0;
 let doc,history,frame,home,checked,dirty=false,drawing=false,serial=0,ticking=false;
 const tabs=[];
+// Loading (issue 1268): the engine's own WebAssembly module, its fonts and the first pages are
+// fetched as soon as this script runs, side by side, and the module compiles while it downloads.
+// Before, each waited for the one before it: on a slow phone network the engine started about
+// four seconds later, and the fonts and pages came one after another after it.
+const runtimeBase=new URL('../html-webgpu/runtime/',import.meta.url);
+const phases={workerStart:performance.timeOrigin+performance.now()};
+const phase=name=>{phases[name]??=performance.timeOrigin+performance.now();};
+let phasesPosted=false;
+const preloaded=new Map();
+function fetchEarly(url,kind){
+  if(!preloaded.has(url)){const p=fetch(url).then(r=>{if(!r.ok)throw Error(`HTTP ${r.status}`);return kind==='text'?r.text().then(text=>({url:r.url||url,source:text})):r.arrayBuffer();});p.catch(()=>{});preloaded.set(url,p);}
+  return preloaded.get(url);
+}
+// The engine's module (web-render.wasm): streaming compile, else a compile of the bytes.
+const engineCompiled=(async()=>{
+  const url=new URL('web-render.wasm',runtimeBase);
+  try{if(typeof WebAssembly.compileStreaming==='function')return await WebAssembly.compileStreaming(fetch(url,{credentials:'same-origin'}));}
+  catch(error){console.warn('foafnaut: streaming compile failed, compiling the bytes:',String(error));}
+  const response=await fetch(url,{credentials:'same-origin'});
+  if(!response.ok)throw Error(`HTTP ${response.status}`);
+  return WebAssembly.compile(await response.arrayBuffer());
+})().then(compiled=>{phase('engineCompiled');return compiled;});
+engineCompiled.catch(()=>{});
+const runtimeModules=[import('../html-webgpu/runtime/web-render.mjs'),import('../html-webgpu/runtime/gpu-transport.mjs')];
+for(const p of runtimeModules)p.catch(()=>{});
+// The plan engine's module goes into the HTTP cache now; its own loader reads it at the first draw.
+fetch(new URL('render-plan.wasm',runtimeBase),{credentials:'same-origin'}).then(r=>r.arrayBuffer()).catch(()=>{});
+const notoSans='./fonts/noto-sans/NotoSans-Regular.ttf';
+// Fonts after Noto Sans, for the characters it lacks. Lean picks the font for each one.
+const fallbackFonts=[['./fonts/noto-sans-armenian/NotoSansArmenian-Regular.ttf','Noto Sans Armenian']];
+fetchEarly(new URL(notoSans,import.meta.url).href,'bytes');
+for(const [path] of fallbackFonts)fetchEarly(new URL(path,import.meta.url).href,'bytes');
+fetchEarly(pagesBase+'index.html','text');
+const pageURL=page=>page&&/^[a-z0-9-]+\.(html|xml)$/.test(page)?pagesBase+page:undefined;
+// Lean calls made, for ?stats=1 and the tests: a scroll inside a band makes none.
+let leanCalls=0,leanRenders=0;
 function call(source,options,w=1,h=1){
+  leanCalls++;
   const pointer=module.ccall('web_document_call','number',['string','string','number','number'],[source,JSON.stringify(options),w,h]);
   if(!pointer)throw Error('Lean engine allocation failed');
   try{const result=JSON.parse(module.UTF8ToString(pointer));if(result?.error)throw Error(result.error);return result;}
@@ -50,6 +100,7 @@ function frameFloats(frame){
 // answers JSON text with Base64.
 const textDecoder=new TextDecoder();
 function render(source,options,w,h){
+  leanCalls++;leanRenders++;
   if(typeof module._web_document_call_bin!=='function')return frameFloats(call(source,options,w,h));
   const pointer=module.ccall('web_document_call_bin','number',['string','string','number','number','number'],[source,JSON.stringify(options),w,h,0]);
   if(!pointer)throw Error('Lean engine allocation failed');
@@ -63,8 +114,12 @@ function render(source,options,w,h){
   offset+=headSize;
   const sections=[];
   for(let i=0;i<count;i++){const length=view.getUint32(12+4*i,true);sections.push([offset,length]);offset+=(length+3)&~3;}
-  if(typeof frame.dataSection==='number'){const [o,l]=sections[frame.dataSection];frame.data=new Float32Array(buffer,o,l/4);delete frame.dataSection;}
-  if(typeof frame.tilesSection==='number'){const [o,l]=sections[frame.tilesSection];frame.tiles=new Uint32Array(buffer,o,l/4);delete frame.tilesSection;}
+  // A render with layers has a scene for the chrome and one for the page band, each with its sections.
+  for(const scene of [frame,frame.page,frame.chrome]){
+    if(!scene||typeof scene!=='object')continue;
+    if(typeof scene.dataSection==='number'){const [o,l]=sections[scene.dataSection];scene.data=new Float32Array(buffer,o,l/4);delete scene.dataSection;}
+    if(typeof scene.tilesSection==='number'){const [o,l]=sections[scene.tilesSection];scene.tiles=new Uint32Array(buffer,o,l/4);delete scene.tilesSection;}
+  }
   return frame;
 }
 // A font file into the engine. As bytes it goes into the engine's heap: a font above about
@@ -94,34 +149,43 @@ function fontLoad(bytes,family,sha,fallback=false){
   }finally{module._free(input);}
 }
 async function fontFile(path){
-  const response=await fetch(new URL(path,import.meta.url));
-  if(!response.ok)throw Error(`HTTP ${response.status}`);
-  const bytes=new Uint8Array(await response.arrayBuffer());
+  const bytes=new Uint8Array(await fetchEarly(new URL(path,import.meta.url).href,'bytes'));
   const sha=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
   return {bytes,sha};
 }
-// Fonts after Noto Sans, for the characters it lacks. Lean picks the font for each one.
-const fallbackFonts=[['./fonts/noto-sans-armenian/NotoSansArmenian-Regular.ttf','Noto Sans Armenian']];
 // Noto Sans is the default face. Lean reads and shapes it; if it does not load, the
 // page stays in the bitmap face. Fallback fonts need an engine that takes fonts as
 // bytes: an older one would read a fallback font as a replacement.
 async function loadFont(){
-  let primary;
   try{
-    const {bytes,sha}=await fontFile('./fonts/noto-sans/NotoSans-Regular.ttf');
-    primary=fontLoad(bytes,'Noto Sans',sha);
-  }catch(error){console.warn('foafnaut: bitmap font, because Noto Sans did not load:',String(error));return;}
-  // Only an engine that holds several fonts answers with `fonts` (the count held). An older
-  // engine would take a fallback font as a replacement for Noto Sans, or abort on the
-  // fallback argument: on 2026-11-07 the published engine did both (issue 1274).
-  if(typeof primary?.fonts!=='number')return;
-  fontBytesTakeFallback=true;
-  for(const [path,family] of fallbackFonts){
-    try{const {bytes,sha}=await fontFile(path);fontLoad(bytes,family,sha,true);}
-    catch(error){console.warn(`foafnaut: no ${family}:`,String(error));}
+    const {bytes,sha}=await fontFile(notoSans);
+    const primary=fontLoad(bytes,'Noto Sans',sha);
+    // Only an engine that holds several fonts answers with `fonts` (the count held). An older
+    // engine would take a fallback font as a replacement for Noto Sans, or abort on the
+    // fallback argument: on 2026-11-07 the published engine did both (issue 1274).
+    if(typeof primary?.fonts==='number')fontBytesTakeFallback=true;
+  }catch(error){console.warn('foafnaut: bitmap font, because Noto Sans did not load:',String(error));}
+}
+// The fallback fonts. A font that has come by the first frame goes in before it; the first
+// frame does not wait for one still on its way, and the page is drawn again when it comes.
+let fallbacksLoaded=false;
+async function loadFallbackFonts(wait){
+  if(!fontBytesTakeFallback||fallbacksLoaded)return;
+  const files=fallbackFonts.map(([path,family])=>fontFile(path).then(file=>({...file,family}),error=>({error,family})));
+  if(wait!==undefined){
+    const late=Symbol();
+    if(await Promise.race([Promise.all(files),new Promise(r=>setTimeout(r,wait,late))])===late)return;
   }
+  fallbacksLoaded=true;
+  for(const file of await Promise.all(files)){
+    if(file.error){console.warn(`foafnaut: no ${file.family}:`,String(file.error));continue;}
+    try{fontLoad(file.bytes,file.family,file.sha,true);}catch(error){console.warn(`foafnaut: no ${file.family}:`,String(error));}
+  }
+  if(wait===undefined&&doc){current=undefined;prefetched=undefined;request();}
 }
 async function fetchText(url){
+  // A page fetched early is used once; a reload fetches it again.
+  if(preloaded.has(url)){const page=preloaded.get(url);preloaded.delete(url);try{return await page;}catch{/* fetch it again */}}
   const response=await fetch(url);if(!response.ok)throw Error(`HTTP ${response.status}`);
   return {url:response.url||url,source:await response.text()};
 }
@@ -225,10 +289,11 @@ function show(next,remember=true){
   if(remember){history=push(history.history,next.url);pages++;}
   request();
 }
+const pageFor=url=>statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
 async function navigate(url,remember=true){
   const mine=++serial;loading=true;request();
   const stamp=currentStamp;
-  let next;try{next=await (statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url));}catch(error){next=refusal(url,String(error.message??error));}
+  let next;try{next=await pageFor(url);}catch(error){next=refusal(url,String(error.message??error));}
   if(mine===serial){const before=currentStamp;currentStamp=stamp;try{show(next,remember);}finally{currentStamp=before;}}
 }
 // An edit in the address bar. Lean gives the new state and the text for the clipboard,
@@ -285,7 +350,7 @@ async function openGraph(){
 }
 function keep(){tabs[active]={doc,history,scroll};}
 function showTab(index){serial++;loading=false;setFocus(false);active=index;({doc,history,scroll}=tabs[index]);field=showURL(doc.url);request();}
-function newTab(){keep();tabs.push({doc:home,history:push({entries:[],index:0},homeURL),scroll:0});showTab(tabs.length-1);focusAddress();}
+function newTab(){if(!home)return;keep();tabs.push({doc:home,history:push({entries:[],index:0},homeURL),scroll:0});showTab(tabs.length-1);focusAddress();}
 function closeTab(index){if(tabs.length===1)return;keep();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));}
 function setFocus(value){if(focused!==value){focused=value;post({type:'focus',focused});}}
 // Lean selects the whole address when the bar takes the focus; typing then replaces it.
@@ -295,10 +360,84 @@ function focusAddress(){
   setFocus(true);request();
 }
 function leaveAddress(){setFocus(false);field=showURL(doc.url);request();}
-function scrollBy(amount){
+function scrollLimit(){
   const bottom=Math.max(0,...(frame?.webRender.boxes??[]).map(box=>box[2]+box[4]));
-  const next=Math.max(0,Math.min(Math.max(0,bottom-height+60*scale),scroll+Math.round(amount)));
-  if(next!==scroll){scroll=next;request();}
+  return Math.max(0,bottom-height+60*scale);
+}
+// The request for a frame of this page at a scroll; its signature leaves the scroll out, so
+// a band made at one scroll is known to be for the same state at another.
+const renderOptions=at=>({op:'render',url:doc.url,...(doc.images?{images:doc.images}:{}),textScalePercent:percent,shell:{...shell(),scroll:at},live:doc===checked,binary:true});
+const signature=options=>JSON.stringify({...options,images:undefined,shell:{...options.shell,scroll:0}});
+// The graph page keeps its document and changes its source: the band must be of this source.
+const canShift=()=>!!(layerSurface&&current&&current.doc===doc&&current.source===doc.source&&current.width===width&&current.height===height&&current.sig===signature(renderOptions(scroll)));
+// A band made ahead (prefetch) that shows this scroll for the state of now.
+const swapReady=()=>!!(prefetched&&prefetched.doc===doc&&prefetched.source===doc.source&&prefetched.width===width&&prefetched.height===height
+  &&L.keeps(prefetched.answer.layers,scroll)&&prefetched.sig===signature(renderOptions(scroll)));
+function scrollBy(amount){
+  const next=Math.max(0,Math.min(scrollLimit(),scroll+Math.round(amount)));
+  if(next===scroll)return;
+  const at=performance.now(),delta=next-scroll;scroll=next;
+  // Scroll speed and direction (scroll_prefetch.ts trackMotion): when the next band is asked for.
+  if(!motion||at-motion.at>250)motion={direction:Math.sign(delta),rowsPerMs:0,at};
+  else{const instant=Math.abs(delta)/Math.max(1,at-motion.at),direction=Math.sign(delta);
+    motion={direction,rowsPerMs:direction===motion.direction?(motion.rowsPerMs+instant)/2:instant,at};}
+  // Inside the band on screen, a scroll only moves the composite: no Lean call. Past it, a
+  // band made ahead for the same state is shown; with none, Lean makes one.
+  if(canShift()){
+    clearTimeout(bandTimer);
+    shiftPending=true;
+    if(!L.keeps(current.answer.layers,scroll)&&!swapReady()){dirty=true;bandWanted=true;}
+    if(currentStamp!==undefined&&(pendingStamp===undefined||currentStamp<pendingStamp))pendingStamp=currentStamp;
+    if(!drawing)draw();
+  }else{bandWanted=layered!==false&&!!L;request();}
+}
+// The band for the frame on screen, made while the page is idle: from then on a scroll inside
+// it is a composite. Its first answer also says whether this engine makes layers at all.
+function scheduleBand(){
+  clearTimeout(bandTimer);
+  if(layered===false||!L||!doc||canShift())return;
+  bandTimer=setTimeout(async()=>{
+    if(drawing||dirty||shiftPending||canShift()||layered===false)return;
+    const options=renderOptions(scroll),shownDoc=doc,at=scroll;
+    let answer;
+    try{answer=L.layersOf(render(doc.source,{...options,layers:true},width,height));}catch{return;}
+    layered=!!answer;
+    if(!answer||doc!==shownDoc||dirty)return;
+    drawing=true;
+    try{
+      layerSurface??=await L.createLayerSurface(surfaceCanvas,{check:checkMode,waitForGpu:statsMode});
+      if(!layerSurface)return;
+      // Into the layer textures only: the screen already shows this state.
+      await layerSurface.drawLayers(answer);
+      current={answer,doc:shownDoc,source:shownDoc.source,width,height,sig:signature(options)};
+      shownOffset=L.clampOffset(answer.layers,at).offset;frame=answer.page;
+      if(scroll!==at)shiftPending=true;
+    }catch(error){console.warn('foafnaut: the band was not drawn:',String(error));current=undefined;}
+    finally{drawing=false;}
+    if(shiftPending||dirty)draw();
+  },60);
+}
+// Near the edge of the keep range, or moving fast enough to pass it within two frames and the
+// time of a band, Lean makes the next band while the page is otherwise idle. It runs on this
+// thread, so it waits until no input is queued.
+function schedulePrefetch(){
+  clearTimeout(prefetchTimer);
+  if(!canShift()||!motion||!motion.direction)return;
+  const band=current.answer.layers,reach=L.keepReach(band),down=motion.direction>0,limit=scrollLimit();
+  if(reach<=0||!L.keeps(band,scroll)||(down?band.keepTo>=limit:band.keepFrom<=0))return;
+  const distance=down?band.keepTo-scroll:scroll-band.keepFrom;
+  if(distance>256&&motion.rowsPerMs*(2*1000/60+bandMs)<distance)return;
+  const target=Math.max(0,Math.min(limit,down?band.keepTo+reach:band.keepFrom-reach));
+  if(prefetched&&prefetched.doc===doc&&prefetched.target===target&&prefetched.sig===current.sig)return;
+  prefetchTimer=setTimeout(()=>{
+    if(drawing||dirty||shiftPending||!canShift())return;
+    const options=renderOptions(target),sig=signature(options);
+    if(sig!==current.sig)return;
+    try{
+      const answer=L.layersOf(render(doc.source,{...options,layers:true},width,height));
+      if(answer)prefetched={answer,target,sig,doc,source:doc.source,width,height};
+    }catch{/* the ordinary frame path answers at the edge */}
+  },20);
 }
 function shellCommand(name,argument){
   if(name==='back')command(6);else if(name==='forward')command(7);else if(name==='reload')command(8);
@@ -350,51 +489,105 @@ function chrome(control){
   else if(name==='tabs'){keep();showTab((active+1)%tabs.length);}
 }
 function hit(x,y){
+  // With layers, links are in the rows of the page band: the composite maps the window row to them.
+  if(current&&frame===current.answer.page)y=y-current.answer.layers.top+shownOffset;
   const pointer=module.ccall('web_render_hit','number',['string','number','number','number','number'],[JSON.stringify(frame.webRender.links??[]),frame.width,frame.height,x,y]);
   try{return JSON.parse(module.UTF8ToString(pointer));}finally{module.ccall('web_render_free',null,['number'],[pointer]);}
 }
 function request(){dirty=true;if(currentStamp!==undefined&&(pendingStamp===undefined||currentStamp<pendingStamp))pendingStamp=currentStamp;if(!drawing)draw();}
 async function draw(){
   drawing=true;
-  while(dirty){
-    dirty=false;
-    const start=performance.now(),inputAt=pendingStamp;pendingStamp=undefined;
+  while(dirty||shiftPending){
+    // Past the band, the frame path below shows a band made ahead, or asks Lean for one.
+    if(!dirty&&canShift()&&L.keeps(current.answer.layers,scroll)){await shift();continue;}
+    dirty=false;shiftPending=false;
+    const start=performance.now(),inputAt=pendingStamp,shown=doc;pendingStamp=undefined;
+    const calls=leanRenders;
     try{
       // A page already on screen had Lean's full probe set on its first frame.
-      const next=render(doc.source,{op:'render',url:doc.url,...(doc.images?{images:doc.images}:{}),textScalePercent:percent,shell:shell(),live:doc===checked,binary:true},width,height);
+      const options=renderOptions(scroll),wantLayers=layered!==false&&bandWanted;bandWanted=false;
+      let next,layers,swapped=false;
+      if(layered&&swapReady()){layers=prefetched.answer;prefetched=undefined;swapped=true;}
+      else{
+        next=render(doc.source,wantLayers?{...options,layers:true}:options,width,height);
+        // An engine with no layers answers one frame: this page then draws frames as before.
+        if(wantLayers){layers=L.layersOf(next);layered=!!layers;}
+      }
       checked=doc;
       const laid=performance.now();
-      let rgba,pixelHash,gpuMs;
-      if(surfaceCanvas){
+      if(!swapped)bandMs=laid-start;
+      phase('firstLayout');
+      let rgba,pixelHash,gpuMs,path;
+      // The layer surface draws every frame when this engine makes layers or may (the first
+      // frame comes before its band says), with one device for the canvas.
+      if(layers||layerSurface||layered!==false){
+        // With no canvas in this thread, each frame is read back and the page paints it.
+        layerSurface??=await L.createLayerSurface(surfaceCanvas,{check:checkMode,waitForGpu:statsMode});
+        if(!layerSurface)throw Error('A WebGPU adapter is unavailable in this browser.');
+        let pixels;
+        if(layers){
+          await layerSurface.drawLayers(layers);
+          const {offset}=L.clampOffset(layers.layers,scroll);
+          pixels=await layerSurface.composite(width,height,offset);
+          current={answer:layers,doc,source:doc.source,width,height,sig:signature(options)};shownOffset=offset;frame=layers.page;
+          path=swapped?'band':'layers';
+        }else{pixels=await layerSurface.drawSingle(next);frame=next;path='frame';}
+        pixelHash=pixels?L.hashPixels(pixels):undefined;
+        if(!surfaceCanvas){rgba=pixels;path+='-readback';}
+      }else if(surfaceCanvas){
         // Straight to the canvas: no readback unless ?check=surface asked for it.
         surface??=await createSurface(surfaceCanvas,{check:checkMode,waitForGpu:statsMode});
         if(!surface)throw Error('A WebGPU adapter is unavailable in this browser.');
         const result=await surface.draw(next);
-        pixelHash=result.pixelHash||undefined;gpuMs=Math.round(result.gpuMs);
+        pixelHash=result.pixelHash||undefined;gpuMs=Math.round(result.gpuMs);frame=next;path='surface';
       }else{
         if(session&&(typeof session.update!=='function'||!(await session.update(next)))){session.close();session=undefined;}
         session??=await createSession(next,'svg-offscreen');
         if(!session)throw Error('A WebGPU adapter is unavailable in this browser.');
         rgba=await session.draw();
         if(hashPixels)pixelHash=hashPixels(rgba);
+        frame=next;path='readback';
       }
-      frame=next;
       const done=performance.now();
-      post({type:'frame',width:next.width,height:next.height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,inputAt,
-        stats:{path:surfaceCanvas?'surface':'readback',layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
-          pixelHash,primitives:next.primitiveCount,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent}},rgba?[rgba.buffer]:[]);
+      phase('firstFrame');
+      post({type:'frame',width,height,title:shown.title,rgba:rgba?.buffer,presented:!rgba,inputAt,
+        stats:{path,layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
+          pixelHash,primitives:frame.primitiveCount,url:shown.url,address:field.address,scroll,tabs:tabs.length,theme,percent,
+          leanRenders:leanRenders-calls,leanCalls,rows:Math.round(frame.data.length/4),...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{})}},rgba?[rgba.buffer]:[]);
+      if(!phasesPosted){phasesPosted=true;post({type:'phases',phases});firstFrameSeen();}
     }catch(error){
       session?.close();session=undefined;
       try{surface?.close();}catch{/* the frame is over */}surface=undefined;
+      try{layerSurface?.close();}catch{/* the frame is over */}layerSurface=undefined;current=undefined;prefetched=undefined;
       if(doc.title==='Page refused'){post({type:'error',error:String(error.message??error)});break;}
       doc=refusal(doc.url,String(error.message??error));dirty=true;
     }
   }
   drawing=false;
+  schedulePrefetch();scheduleBand();
+}
+// A scroll inside the band on screen: the composite at the new offset, with no Lean call.
+async function shift(){
+  shiftPending=false;
+  const start=performance.now(),inputAt=pendingStamp;pendingStamp=undefined;
+  try{
+    const {offset}=L.clampOffset(current.answer.layers,scroll);
+    const pixels=await layerSurface.composite(width,height,offset);
+    shownOffset=offset;
+    const done=performance.now(),rgba=surfaceCanvas?undefined:pixels;
+    post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,inputAt,
+      stats:{path:surfaceCanvas?'shift':'shift-readback',layoutMs:0,drawMs:Math.round(done-start),totalMs:Math.round(done-start),pixelHash:pixels?L.hashPixels(pixels):undefined,
+        primitives:0,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent,leanRenders:0,leanCalls,rows:Math.round(current.answer.page.data.length/4),bandTop:current.answer.layers.bandTop,offset}},rgba?[rgba.buffer]:[]);
+  }catch(error){
+    console.warn('foafnaut: composite failed, drawing a Lean frame:',String(error));
+    try{layerSurface?.close();}catch{/* gone */}layerSurface=undefined;current=undefined;dirty=true;
+  }
 }
 // The page asks first whether this worker can draw to an OffscreenCanvas with WebGPU,
 // because a canvas can be handed over once.
-async function hello(){
+async function hello(data){
+  // The page asked for: its fetch starts now, beside the engine's.
+  const first=pageURL(data?.page);if(first)fetchEarly(first,'text');
   let surfaceOk=false;
   try{
     const transport=await import('../html-webgpu/runtime/gpu-transport.mjs');
@@ -403,27 +596,52 @@ async function hello(){
   }catch{surfaceOk=false;}
   post({type:'caps',surface:surfaceOk});
 }
+// The engine from the module compiled while it downloaded (engineCompiled). The loader is
+// given the compiled module; with none, it fetches and compiles as before.
+async function startEngine(createModule){
+  let compiled;
+  try{compiled=await engineCompiled;}catch(error){console.warn('foafnaut: the engine module did not compile early:',String(error));}
+  if(!compiled)return createModule();
+  let fail;const failed=new Promise((_,reject)=>{fail=reject;});
+  return Promise.race([failed,createModule({instantiateWasm(imports,done){
+    WebAssembly.instantiate(compiled,imports).then(instance=>{
+      // The instance's own export says how many arguments the bytes font call takes (a Wasm
+      // function's length is its parameter count): five is the engine with the fallback
+      // argument, so even the first font goes in as bytes, with no Base64 (issue 1274).
+      if(instance.exports.web_document_font_call_bin?.length===5)fontBytesTakeFallback=true;
+      done(instance,compiled);},fail);return {};}})]);
+}
 async function start(data){
   ({width,height,scale}=data);
   checkMode=data.check===true;statsMode=data.stats===true;
+  // ?layers=0: one Lean frame for each scroll, as before the two-layer view.
+  if(data.layers===false)layered=false;
   if(!navigator.gpu)throw Error('This browser does not provide WebGPU.');
-  const [{default:createModule},transport]=await Promise.all([
-    import('../html-webgpu/runtime/web-render.mjs'),import('../html-webgpu/runtime/gpu-transport.mjs')]);
-  module=await createModule();createSession=transport.createOffscreenSession;hashPixels=transport.hashPixels;
+  const wanted=pageURL(data.page)??(data.page==='sparql'?sparqlURL:undefined)??(data.page==='wasm'||/^wasm\/[a-z0-9-]+\.wasm(#[A-Za-z0-9_-]+)?$/.test(data.page??'')?'foafnaut:'+data.page:undefined);
+  if(wanted?.startsWith('http'))fetchEarly(wanted,'text');
+  const [{default:createModule},transport]=await Promise.all(runtimeModules);
+  try{L=await layersModule;}catch(error){layered=false;console.warn('foafnaut: no layers:',String(error));}
+  module=await startEngine(createModule);phase('engineReady');
+  createSession=transport.createOffscreenSession;hashPixels=transport.hashPixels;
   if(data.canvas&&typeof transport.createSurfaceSession==='function'){surfaceCanvas=data.canvas;createSurface=transport.createSurfaceSession;}
-  await loadFont();
+  await loadFont();await loadFallbackFonts(250);phase('fontReady');
   home=await prepare(homeURL);
-  history=push({entries:[],index:0},homeURL);doc=home;field=showURL(home.url);tabs.push({doc,history,scroll:0});
+  // A page asked for in the address is the first frame: the demo index is not drawn first.
+  let first=home;
+  if(wanted){try{first=await pageFor(wanted);}catch(error){first=refusal(wanted,String(error.message??error));}}
+  phase('pageReady');
+  history=push({entries:[],index:0},homeURL);
+  if(first!==home){history=push(history.history,first.url);pages++;}
+  doc=first;field=showURL(first.url);tabs.push({doc,history,scroll:0});
   // The page keeps the keys of Lean's table for a host with no menu, and needs them at once.
   // An engine from before these ops (issue 1268) has no key table and no address edits.
   try{post({type:'keys',table:call('',{op:'keyTable',platform:data.platform==='mac'?'mac':'other'})});}catch{/* older engine */}
   ready=true;
-  openState().catch(error=>{stateReason=String(error.message??error);});
+  openState().then(()=>{if(first!==home&&!first.title?.startsWith('Page refused'))browserState?.visit(first.url,first.title??'',homeURL).catch(()=>{});})
+    .catch(error=>{stateReason=String(error.message??error);});
   // A new window starts in the address bar with the address selected (issue 1268).
-  if(data.page&&/^[a-z0-9-]+\.(html|xml)$/.test(data.page))navigate(pagesBase+data.page);
-  else if(data.page==='sparql')navigate(sparqlURL);
-  else if(data.page==='wasm'||/^wasm\/[a-z0-9-]+\.wasm(#[A-Za-z0-9_-]+)?$/.test(data.page??''))navigate('foafnaut:'+data.page);
-  else focusAddress();
+  if(wanted)request();else focusAddress();
+  firstFrame.then(()=>loadFallbackFonts());
   for(const message of early.splice(0))receive(message);
 }
 function flush(){
@@ -432,7 +650,7 @@ function flush(){
   if(scrolled)handle(scrolled);
 }
 function receive(data){
-  if(data.type==='hello'){hello();return;}
+  if(data.type==='hello'){hello(data);return;}
   if(data.type==='start'){start(data).catch(error=>post({type:'error',error:String(error.message??error)}));return;}
   if(!ready){early.push(data);return;}
   if(data.type==='move'||data.type==='scroll'){
