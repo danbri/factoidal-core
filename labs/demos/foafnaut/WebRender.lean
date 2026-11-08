@@ -149,9 +149,10 @@ def styleRules (dom : DOM.Dom) : Except String (List Rendering.CSS.Rule) := do
 /-- SVG embedding is injected only at the frontend adapter boundary. Tests can
 supply an independent shape producer without changing CSS/layout semantics. -/
 def renderDOM (dom : DOM.Dom) (width height : Nat)
-    (embedding : Rendering.Layout.Embedding) : Except String (Rendering.Scene × Array Rendering.Layout.Box) := do
+    (embedding : Rendering.Layout.Embedding) (pictures : Rendering.Layout.Pictures := Rendering.Layout.noPictures) :
+    Except String (Rendering.Scene × Array Rendering.Layout.Box) := do
   let rules ← styleRules dom
-  Rendering.Layout.render dom rules asciiFont embedding width height
+  Rendering.Layout.render dom rules asciiFont embedding width height 1 {} pictures
 
 end WebRender
 
@@ -198,33 +199,62 @@ def embedding (dom : DOM.Dom) (id : Nat) (style : Rendering.CSS.Computed) (width
   let scene ← NativeSVG.parseRoot root width.toUInt32.toNat height.toUInt32.toNat inherited
   return placeSVG scene id style width height
 
-/-- One source-bound index per render, shared by all embedded SVG roots. SVG text is
-lowered to glyph paths first, with `fonts`, the fonts that draw HTML text
+/-- HTML §4.8.4.3: the `src` of each HTML `img`, by node, as a key of the image store
+(`NativeSVG.imageKey`: a `data:` URI as it stands, another URL resolved). -/
+def htmlImageKeys (dom : DOM.Dom) (base : Option String) : List (Nat × String) := Id.run do
+  let mut out : Array (Nat × String) := #[]
+  for id in [0:dom.size] do
+    let n := dom.get id
+    if DOM.Dom.isHtmlElement n "img" then
+      let src := (Rendering.CSS.attrValue n "src").trimAscii.toString
+      if !src.isEmpty then out := out.push (id,NativeSVG.imageKey base src)
+  return out.toList
+
+/-- The picture of each `img` whose image decoded within the limits of the store. -/
+def picturesOf (store : NativeImage.Store) (keys : List (Nat × String)) : Rendering.Layout.Pictures :=
+  let found := keys.foldl (fun (out : Std.TreeMap Nat Rendering.Layout.Picture) (id,key) =>
+    match store.get? key with
+    | some (.ok (n,bitmap)) => out.insert id ⟨n,bitmap⟩
+    | _ => out) {}
+  fun id => found.get? id
+
+/-- The embedding of SVG roots and the pictures of `img` elements, from one image
+store: each image decodes once, and the ids of bitmaps do not collide. One
+source-bound index per render, shared by all embedded SVG roots. SVG text is lowered
+to glyph paths first, with `fonts`, the fonts that draw HTML text
 (`NativeSVGText.lowerDocument`); each element keeps its source path. -/
-def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none)
+def makeReplaced (dom : DOM.Dom) (documentURL : Option String := none)
     (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
-    Except String Rendering.Layout.Embedding := do
+    Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures) := do
+  let imgs := htmlImageKeys dom documentURL
   if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
-    return embedding dom
+    return (embedding dom,picturesOf (NativeSVG.imageStoreOf (imgs.map (·.2)) images) imgs)
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
   let (root,tree) ← documentNamespaceTree dom
   let (tree,_) := NativeSVGText.lowerDocument fonts tree
   let context ← NativeSVG.ReferenceContext.create tree documentURL
   -- Each image decodes once for the document, not once for each SVG root.
-  let store := NativeSVG.imageStore tree documentURL images
-  return fun id style width height => do
+  let store := NativeSVG.imageStoreOf (NativeSVG.imageKeys tree documentURL ++ imgs.map (·.2)) images
+  return (fun id style width height => do
     if Float.ofNat width.toUInt32.toNat != width || Float.ofNat height.toUInt32.toNat != height then
       throw "unsupported fractional embedded SVG viewport"
     let path ← sourcePath dom root (dom.size+1) id []
     let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
     let scene ← NativeSVG.parseRootInContext context path width.toUInt32.toNat height.toUInt32.toNat inherited embeddedAttributes (some store)
-    return placeSVG scene id style width height
+    return placeSVG scene id style width height,picturesOf store imgs)
+
+/-- The SVG embedding of `makeReplaced`. -/
+def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none)
+    (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
+    Except String Rendering.Layout.Embedding :=
+  Prod.fst <$> makeReplaced dom documentURL images fonts
 
 def render (html : String) (width height : Nat) : Except String (Rendering.Scene × Array Rendering.Layout.Box) := do
   if html.length > 1048576 then throw "unsupported HTML input exceeding 1048576 characters"
   let dom := DOM.parseHtmlDocument html
-  renderDOM dom width height (← makeEmbedding dom)
+  let (embedding,pictures) ← makeReplaced dom
+  renderDOM dom width height embedding pictures
 
 private def array (xs : List String) := "[" ++ String.intercalate "," xs ++ "]"
 private def runJSON (r : Rendering.GlyphRun) : String :=

@@ -9,12 +9,12 @@ open DOM CSS Layout
 
 theorem inline_zero_refuses (dom : Dom) (styles : Array Computed)
     (embedding : Embedding) (available : Float) (id : Nat) :
-    inlineItems dom styles embedding available 0 id =
+    inlineItems dom styles embedding noPictures available 0 id =
       .error "unsupported HTML nesting depth (maximum 64)" := rfl
 
 theorem block_zero_refuses (dom : Dom) (styles : Array Computed)
     (font : FontProfile) (embedding : Embedding) (id : Nat) (x y available : Float) :
-    block dom styles font embedding 0 id x y available =
+    block dom styles font embedding noPictures 0 id x y available =
       .error "unsupported HTML nesting depth (maximum 64)" := rfl
 
 private def font : FontProfile :=

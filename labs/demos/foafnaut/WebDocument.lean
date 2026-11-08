@@ -76,12 +76,16 @@ def suppliedImages (request : JSON.Json) : Except String (List (String × ByteAr
     found := (key,← NativeImage.base64 data.toUTF8 0)::found
   return found
 
-/-- `image` references that the host must fetch, by key and URL. -/
+/-- SVG `image` and HTML `img` references that the host must fetch, by key and URL,
+in document order. A page with more than `maxDocumentImages` gets the first ones;
+the others show their alt text. -/
 private def imageRequests (dom : DOM.Dom) (base : String) : Except String (List JSON.Json) := do
-  if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then return []
-  let (_,tree) ← WebRender.documentNamespaceTree dom
-  let keys := (NativeSVG.imageKeys tree (some base)).filter (!·.toLower.startsWith "data:")
-  if keys.length > maxDocumentImages then throw s!"document images exceed {maxDocumentImages}"
+  let svgKeys ← if dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS) then do
+      let (_,tree) ← WebRender.documentNamespaceTree dom
+      pure (NativeSVG.imageKeys tree (some base))
+    else pure []
+  let htmlKeys := (WebRender.htmlImageKeys dom (some base)).map (·.2)
+  let keys := ((svgKeys ++ htmlKeys).eraseDups.filter (!·.toLower.startsWith "data:")).take maxDocumentImages
   return keys.map fun key => .object [("key",.string key),("url",.string key)]
 
 /-- The document tree: the XML syntax of HTML for a `.xht` or `.xhtml` URL (HTML §14,
@@ -670,12 +674,12 @@ def layOut (key : LayoutKey) : Except String Laid := do
   let url := baseURL dom (str request "url")
   -- SVG text is drawn with the fonts of the HTML text.
   let svgFonts := (loaded.map (·.fonts)).getD #[]
-  let embedding ← match graph with
-    | some m => pure (WebGraph.embedding m)
-    | none => WebRender.makeEmbedding dom (if url.isEmpty then none else some url) (← suppliedImages request) svgFonts
+  let (embedding,pictures) ← match graph with
+    | some m => pure (WebGraph.embedding m,Rendering.Layout.noPictures)
+    | none => WebRender.makeReplaced dom (if url.isEmpty then none else some url) (← suppliedImages request) svgFonts
   -- A window shorter than the chrome still lays out, on one row.
   let state ← elementState dom url request
-  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding key.width (max 1 (key.height-key.top)) textScale state
+  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding key.width (max 1 (key.height-key.top)) textScale state pictures
   let hoverRules := rules.any fun rule => rule.selectors.any fun sel => sel.parts.any (·.pseudo.contains .hover)
   return {scene := scene,boxes := boxes,face := face,hoverRules}
 

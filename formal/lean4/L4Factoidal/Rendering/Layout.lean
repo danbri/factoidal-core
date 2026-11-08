@@ -75,9 +75,6 @@ structure Result where
 abbrev Embedding := Nat → CSS.Computed → Float → Float → Except String (List Node)
 
 private def checkSVGBox (s : Computed) : Except String Unit := do
-  if s.margin.top != 0 || s.margin.right != 0 || s.margin.bottom != 0 || s.margin.left != 0 ||
-      s.padding.top != 0 || s.padding.right != 0 || s.padding.bottom != 0 || s.padding.left != 0 then
-    throw "unsupported embedded SVG margin or padding"
   if let .percent _ := s.height then
     throw "unsupported percentage SVG height without definite containing height"
 
@@ -104,225 +101,7 @@ def svgSize (node : DOM.Node) (style : Computed) (available : Float) : Except St
   | none,none,some (rw,rh) => return (max 0 available,max 0 (available*rh/rw))
   | _,_,_ => return (max 0 (width.getD 300),max 0 (height.getD 150))
 
-inductive Inline where
-  | word (source : Nat) (style : Computed) (text : String) (start : Nat)
-  | space (source : Nat) (style : Computed)
-  | lineBreak (style : Computed)
-  | replaced (source : Nat) (width height : Float) (nodes : List Node)
-  /-- An `inline-block` from `openAtomic` to `closeAtomic`, laid out (`atomize`): its
-  margin box and its content at the origin. -/
-  | atomic (source : Nat) (width height : Float) (inner : Result)
-  /-- Bounds of an `inline-block` in the flat list that `inlineItems` gives. -/
-  | openAtomic (source : Nat) (style : Computed)
-  | closeAtomic
-  deriving Repr
 
-private def textItems (id : Nat) (style : Computed) (text : String) : List Inline := Id.run do
-  let mut result : List Inline := []
-  let mut word := ""
-  let mut start := 0
-  let mut index := 0
-  let mut spaced := false
-  for c in text.toList do
-    if [' ','\n','\r','\t'].contains c || c.toNat == 12 then
-      if !word.isEmpty then
-        result := .word id style word start :: result
-        word := ""
-      if style.preformatted && c == '\n' then
-        result := .lineBreak style :: result
-        spaced := true
-      else
-        if !spaced then result := .space id style :: result
-        spaced := true
-    else
-      if word.isEmpty then start := index
-      word := word.push c
-      spaced := false
-    index := index+1
-  if !word.isEmpty then result := .word id style word start :: result
-  return result.reverse
-
-/-- Inline descendants are flattened in DOM order; the nesting budget is a
-profile error, never a silent truncation. Siblings use a fold. The recursive
-call receives the predecessor `fuel`; the compiled sibling fold is a loop.
-This lower-level API accepts arbitrary fuel and therefore has stack depth
-O(fuel), not a universal constant bound. Production rendering shares the
-fixed 64-level budget from `render` with `block`; FontRequests uses fuel 1
-only for a text node. See `docs/20261103-layout-stack-audit.md`. -/
-def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (available : Float) :
-    Nat → Nat → Except String (Array Inline)
-  | 0, _ => throw "unsupported HTML nesting depth (maximum 64)"
-  | fuel+1, id => do
-    let n := dom.get id
-    let s := styles[id]!
-    if s.display == .none then return #[]
-    if n.type == .text then return (textItems id s n.data).toArray
-    if n.type != .element then return #[]
-    -- No image decoder yet: an image stands as its description, and stays a link.
-    if n.lname == "img" then
-      let alt := CSS.attrValue n "alt"
-      return (textItems id s (if alt.isEmpty then "[image]" else s!"[{alt}]")).toArray
-    if n.lname == "br" then return #[.lineBreak s]
-    if n.ns == some DOM.svgNS then
-      let (width,height) ← svgSize n s available
-      if width <= 0 || height <= 0 then return #[]
-      return #[.replaced id width height (← embedding id s width height)]
-    -- A block inside an inline (old pages often have one) breaks the line around it.
-    -- An inline-block is one atomic box: `atomize` lays out what is between its bounds.
-    let mut out : Array Inline := if s.display.isBlockLevel then #[.lineBreak s]
-      else if s.display == .inlineBlock then #[.openAtomic id s] else #[]
-    for child in n.kids do out := out ++ (← inlineItems dom styles embedding available fuel child)
-    return if s.display.isBlockLevel then out.push (.lineBreak s)
-      else if s.display == .inlineBlock then out.push .closeAtomic else out
-
-private def translate (x y : Float) : Transform := ⟨1,0,0,1,x,y⟩
-private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Array Node := Id.run do
-  let mut out := #[]
-  if !s.visible then return out
-  let scale := run.fontSize/font.unitsPerEm
-  for g in run.glyphs do
-    for geometry in font.outline g.index do
-      let primitive : Primitive := {geometry,style := {fill := .solid s.color}, transform := ⟨scale,0,0,scale,g.x,g.y⟩}
-      out := out.push (.paint ⟨some run.source,primitive⟩)
-  if s.underline && !run.glyphs.isEmpty then
-    let left := (run.glyphs[0]?).map (·.x) |>.getD 0
-    let top := (run.glyphs[0]?).map (·.y) |>.getD 0
-    let width := run.glyphs.foldl (fun w g => w+g.advance) 0
-    let thickness := max 1 (run.fontSize/14)
-    let baseline := top+font.ascent*scale
-    out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
-  return out
-
-private def itemWidth (font : FontProfile) : Inline → Except String Float
-  | .word _ s text _ => do
-    match ← font.word s text with
-    | none => return font.advance*s.fontSize/font.unitsPerEm*Float.ofNat text.length
-    | some word => return word.advance*s.fontSize/font.unitsPerEm
-  | .replaced _ w _ _ | .atomic _ w _ _ => pure w
-  | _ => pure 0
-
-private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Computed)
-    (left baseline width : Float) : Array Node := Id.run do
-  if !s.visible then return #[]
-  let scale := run.fontSize/word.unitsPerEm
-  let mut out := #[]
-  for (glyph,position) in word.glyphs.zip run.glyphs do
-    for geometry in glyph.geometry do
-      out := out.push (.paint ⟨some run.source,{geometry,style := {fill := .solid s.color}, transform := ⟨scale,0,0,scale,position.x,position.y⟩}⟩)
-  if s.underline && width > 0 then
-    let thickness := max 1 (run.fontSize/14)
-    out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness, style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
-  return out
-
-/-- A laid-out box moved by `(dx,dy)`: its paint in a translated group, its boxes and
-its glyph positions moved by the same amount. -/
-private def shiftResult (dx dy : Float) (r : Result) : Result :=
-  let boxes := r.boxes.map fun b => {b with x := b.x+dx, y := b.y+dy}
-  let runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}}
-  {r with nodes := #[.group none (translate dx dy) r.nodes.toList], boxes, runs}
-
-/-- All inline participants share the line baseline, computed before any glyph
-position or replaced-element position is emitted. -/
-private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
-    (x y : Float) (strut : Option Computed) : Except String Result := do
-  let mut ascent : Float := 0
-  let mut descent : Float := 0
-  if let some style := strut then
-    let leading := lineLeading font style
-    ascent := font.ascent*style.fontSize/font.unitsPerEm+leading
-    descent := font.descent*style.fontSize/font.unitsPerEm+leading
-  for (_,item) in items do
-    match item with
-    | .word _ s _ _ | .space _ s | .lineBreak s =>
-      let leading := lineLeading font s
-      ascent := max ascent (font.ascent*s.fontSize/font.unitsPerEm+leading)
-      descent := max descent (font.descent*s.fontSize/font.unitsPerEm+leading)
-    | .replaced _ _ h _ | .atomic _ _ h _ => ascent := max ascent h
-    | .openAtomic _ _ | .closeAtomic => pure ()
-  let mut out : Result := {height := ascent+descent}
-  for (offset,item) in items do
-    match item with
-    | .word source s text start =>
-      let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm
-      let leading := lineLeading font s
-      match ← font.word s text with
-      | none =>
-        -- A character this font has no glyph for shows as a question mark.
-        let chars := text.toList.map fun c => if font.admits c.toNat then c else '?'
-        let advance := font.advance*s.fontSize/font.unitsPerEm
-        let glyphs := chars.toArray.mapIdx fun i c =>
-          ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
-        let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source,x+offset,top-leading,advance*Float.ofNat chars.length,s.lineHeight⟩}
-      | some word =>
-        let scale := s.fontSize/word.unitsPerEm
-        let width := word.advance*s.fontSize/font.unitsPerEm
-        let glyphs := word.glyphs.map fun glyph =>
-          ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
-        let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source,x+offset,top-leading,width,s.lineHeight⟩}
-    | .space source s =>
-      let advance ← spaceWidth font s
-      let leading := lineLeading font s
-      let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm-leading
-      out := {out with boxes := out.boxes.push ⟨source,x+offset,top,advance,s.lineHeight⟩}
-      if s.underline && s.visible then
-        let thickness := max 1 (s.fontSize/14)
-        out := {out with nodes := out.nodes.push (.paint ⟨some source,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
-    | .replaced source width height nodes =>
-      let top := y+ascent-height
-      out := {out with nodes := out.nodes.push (.group none (translate (x+offset) top) nodes), boxes := out.boxes.push ⟨source,x+offset,top,width,height⟩}
-    | .atomic source width height inner =>
-      let top := y+ascent-height
-      let moved := shiftResult (x+offset) top inner
-      -- `inner` holds the border box of the inline-block first, then its content boxes.
-      let _ := width
-      out := {out with nodes := out.nodes ++ moved.nodes, runs := out.runs ++ moved.runs, boxes := out.boxes ++ moved.boxes}
-    | _ => pure ()
-  return out
-
-private def appendResult (a b : Result) : Result :=
-  {nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs, height := a.height+b.height}
-
-/-- Word wrapping constructs line participants first. The font profile and
-positioned glyph runs are consumed to paint the actual word geometry. -/
-def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Float)
-    (strut : Option Computed := none) : Except String Result := do
-  let mut out : Result := {}
-  let mut cursorX : Float := 0
-  let mut pendingSpace : Option (Nat × Computed) := none
-  let mut line : Array (Float × Inline) := #[]
-  for item in items do
-    match item with
-    | .space source s => pendingSpace := some (source,s)
-    | .lineBreak _ =>
-      let row ← lineLayout font (line.push (cursorX,item)) x (y+out.height) strut
-      out := appendResult out {row with height := if row.height > 0 then row.height else 19.2}
-      line := #[]
-      cursorX := 0
-      pendingSpace := none
-    | _ =>
-      let width ← itemWidth font item
-      let gap ← if cursorX > 0 then match pendingSpace with
-        | some (_,s) => spaceWidth font s
-        | none => pure 0
-        else pure 0
-      if cursorX > 0 && cursorX+gap+width > available then
-        out := appendResult out (← lineLayout font line x (y+out.height) strut)
-        line := #[]
-        cursorX := 0
-      else
-        if gap > 0 then
-          if let some (source,s) := pendingSpace then line := line.push (cursorX,.space source s)
-        cursorX := cursorX+gap
-      line := line.push (cursorX,item)
-      cursorX := cursorX+width
-      pendingSpace := none
-  if !line.isEmpty then out := appendResult out (← lineLayout font line x (y+out.height) strut)
-  return out
-
-private def append (a b : Result) : Result :=
-  {nodes := a.nodes ++ b.nodes,boxes := a.boxes ++ b.boxes,runs := a.runs ++ b.runs, height := a.height+b.height}
 private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
   match s.background with
   | none => #[]
@@ -354,6 +133,418 @@ def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.r
 private def decorations (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
   background id s x y w h ++ borderNodes id s x y w h
 
+/-- The content of a replaced element that Lean decoded or drew: the image of an
+`img`, and in time the poster or frame of a `video` or the bitmap of a `canvas`.
+`id` names the bitmap in the paint table, so one bitmap used twice is stored once. -/
+structure Picture where
+  id : Nat
+  bitmap : Bitmap
+/-- The picture of an element, by DOM node. `none` when it has none, or when its
+image is missing, broken or refused: an `img` then shows its `alt` text. -/
+abbrev Pictures := Nat → Option Picture
+def noPictures : Pictures := fun _ => none
+
+/-- No maximum (`max-width: none`). -/
+def unbounded : Float := 1.0e30
+
+/-- CSS 2.1 §10.4, the table for a replaced element whose `width` and `height` are
+both auto: the intrinsic size `w` by `h` within the limits, with its ratio kept where
+the limits allow it. -/
+def constrainBoth (w h minW maxW minH maxH : Float) : Float × Float :=
+  let maxW := max minW maxW
+  let maxH := max minH maxH
+  if w <= 0 || h <= 0 then (min maxW (max minW w),min maxH (max minH h))
+  else if w > maxW && h > maxH then
+    if maxW/w <= maxH/h then (maxW,max minH (maxW*h/w)) else (max minW (maxH*w/h),maxH)
+  else if w < minW && h < minH then
+    if minW/w <= minH/h then (min maxW (minH*w/h),minH) else (minW,min maxH (minW*h/w))
+  else if w < minW && h > maxH then (minW,maxH)
+  else if w > maxW && h < minH then (maxW,minH)
+  else if w > maxW then (maxW,max (maxW*h/w) minH)
+  else if w < minW then (minW,min (minW*h/w) maxH)
+  else if h > maxH then (max (maxH*w/h) minW,maxH)
+  else if h < minH then (min (minH*w/h) maxW,minH)
+  else (w,h)
+
+/-- CSS 2.1 §10.3.2 and §10.6.2, with the limits of §10.4 and §10.7: the used content
+width and height of a replaced element. `intrinsic` is the size of its content when it
+has one, which gives the ratio too; with none, 300 by 150. `available` is the width of
+the containing block. It is 0 while widths are measured, and then a percentage counts
+as auto (CSS Sizing 3 §5.2.1). A percentage height counts as auto: this profile has
+no definite containing block height. -/
+def replacedSize (s : Computed) (intrinsic : Option (Float × Float)) (available : Float) : Float × Float :=
+  let horizontal := fun (l : CSS.Length) => match l with
+    | .px n => some n
+    | .percent p => if available <= 0 then none else some (available*p)
+    | _ => none
+  let vertical := fun (l : CSS.Length) => match l with | .px n => some n | _ => none
+  let minW := (horizontal s.minWidth).getD 0
+  let maxW := (horizontal s.maxWidth).getD unbounded
+  let minH := (vertical s.minHeight).getD 0
+  let maxH := (vertical s.maxHeight).getD unbounded
+  -- §10.4: a minimum wins over a maximum.
+  let clampW := fun (w : Float) => max 0 (max minW (min maxW w))
+  let clampH := fun (h : Float) => max 0 (max minH (min maxH h))
+  let ratio := intrinsic.bind fun (w,h) => if w > 0 && h > 0 then some (w/h) else none
+  match horizontal s.width,vertical s.height with
+  | some w,some h => (clampW w,clampH h)
+  | some w,none =>
+    let w := clampW w
+    (w,clampH (match ratio with | some r => w/r | none => (intrinsic.map Prod.snd).getD 150))
+  | none,some h =>
+    let h := clampH h
+    (clampW (match ratio with | some r => h*r | none => (intrinsic.map Prod.fst).getD 300),h)
+  | none,none => match intrinsic with
+    | some (w,h) => constrainBoth w h minW maxW minH maxH
+    | none => (clampW 300,clampH 150)
+
+/-- The intrinsic size of a picture: its pixels, one CSS pixel each. -/
+def Picture.size (p : Picture) : Float × Float :=
+  (Float.ofNat p.bitmap.width,Float.ofNat p.bitmap.height)
+
+/-- CSS Images 3 §5.5: the scale of content of `iw` by `ih` in a box of `w` by `h`. -/
+def fitScale (fit : ObjectFit) (iw ih w h : Float) : Float × Float :=
+  match fit with
+  | .fill => (w/iw,h/ih)
+  | .contain => let k := min (w/iw) (h/ih); (k,k)
+  | .cover => let k := max (w/iw) (h/ih); (k,k)
+  | .none => (1,1)
+  | .scaleDown => let k := min 1 (min (w/iw) (h/ih)); (k,k)
+
+/-- The paint of a picture in the content box `x`, `y`, `w`, `h`: one rectangle filled
+with the image, centred (`object-position: 50% 50%`) and cut to the box by its own
+geometry, as the SVG `image` with `slice` is. -/
+def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float) : List Node :=
+  let (iw,ih) := picture.size
+  if !s.visible || w <= 0 || h <= 0 || iw <= 0 || ih <= 0 then [] else
+  let (sx,sy) := fitScale s.objectFit iw ih w h
+  let dx := x+(w-iw*sx)/2
+  let dy := y+(h-ih*sy)/2
+  let left := max x dx
+  let top := max y dy
+  let right := min (x+w) (dx+iw*sx)
+  let bottom := min (y+h) (dy+ih*sy)
+  if right <= left || bottom <= top then [] else
+  let map : Transform := ⟨1/sx,0,0,1/sy,-dx/sx,-dy/sy⟩
+  let paint : Paint := .image ⟨map,picture.id,picture.bitmap⟩
+  [Node.paint ⟨some id,{geometry := .rect left top (right-left) (bottom-top),style := {fill := paint}}⟩]
+
+/-- A replaced element's margin box at the origin, for content `w` by `h`: its outer
+width and height, and its background, border and content. `content` paints the
+content box at the point it is given. -/
+def replacedBox (id : Nat) (s : Computed) (w h : Float) (content : Float → Float → List Node) :
+    Float × Float × List Node :=
+  let m := s.margin
+  let b := s.borderEdges
+  let p := s.padding
+  let bw := b.left+p.left+w+p.right+b.right
+  let bh := b.top+p.top+h+p.bottom+b.bottom
+  (m.left+bw+m.right,m.top+bh+m.bottom,
+   (decorations id s m.left m.top bw bh).toList ++ content (m.left+b.left+p.left) (m.top+b.top+p.top))
+
+/-- The width that margins, borders and padding add to a box. -/
+private def horizontalEdges (s : Computed) : Float :=
+  s.margin.left+s.margin.right+s.borderEdges.left+s.borderEdges.right+s.padding.left+s.padding.right
+
+inductive Inline where
+  | word (source : Nat) (style : Computed) (text : String) (start : Nat)
+  | space (source : Nat) (style : Computed)
+  | lineBreak (style : Computed)
+  /-- A replaced element (`img`, inline `svg`): its margin box and paint at the origin. -/
+  | replaced (source : Nat) (style : Computed) (width height : Float) (nodes : List Node)
+  /-- An `inline-block` from `openAtomic` to `closeAtomic`, laid out (`atomize`): its
+  margin box and its content at the origin. -/
+  | atomic (source : Nat) (width height : Float) (inner : Result)
+  /-- Bounds of an `inline-block` in the flat list that `inlineItems` gives. -/
+  | openAtomic (source : Nat) (style : Computed)
+  | closeAtomic
+  deriving Repr
+
+private def textItems (id : Nat) (style : Computed) (text : String) : List Inline := Id.run do
+  let mut result : List Inline := []
+  let mut word := ""
+  let mut start := 0
+  let mut index := 0
+  let mut spaced := false
+  -- The column in the line, for the tab stops of preformatted text (every 8 columns).
+  let mut column := 0
+  for c in text.toList do
+    if [' ','\n','\r','\t'].contains c || c.toNat == 12 then
+      if !word.isEmpty then
+        result := .word id style word start :: result
+        word := ""
+      if style.preformatted then
+        -- CSS Text 3 §4.1.1 `white-space: pre`: each space and tab stays, and each newline breaks.
+        if c == '\n' then
+          result := .lineBreak style :: result
+          column := 0
+        else if c != '\r' then
+          let count := if c == '\t' then 8-column%8 else 1
+          for _ in [0:count] do result := .space id style :: result
+          column := column+count
+      else
+        if !spaced then result := .space id style :: result
+      spaced := true
+    else
+      if word.isEmpty then start := index
+      word := word.push c
+      spaced := false
+      column := column+1
+    index := index+1
+  if !word.isEmpty then result := .word id style word start :: result
+  return result.reverse
+
+/-- What an `img` with no picture shows: its `alt` text in brackets, nothing for
+`alt=""` (an image that adds nothing), and `[image]` with no `alt`. -/
+private def altItems (id : Nat) (s : Computed) (n : DOM.Node) : Array Inline :=
+  if !CSS.hasAttribute n "alt" then (textItems id s "[image]").toArray
+  else
+    let alt := CSS.attrValue n "alt"
+    if alt.isEmpty then #[] else (textItems id s s!"[{alt}]").toArray
+
+/-- An inline element's background goes behind its text (CSS 2.1 §14.2). Text has no
+background of its own, so its words and spaces take the element's. -/
+private def withBackground (s : Computed) : Inline → Inline
+  | .word id t text start => if t.background.isNone then .word id {t with background := s.background} text start else .word id t text start
+  | .space id t => if t.background.isNone then .space id {t with background := s.background} else .space id t
+  | other => other
+
+/-- Inline descendants are flattened in DOM order; the nesting budget is a
+profile error, never a silent truncation. Siblings use a fold. The recursive
+call receives the predecessor `fuel`; the compiled sibling fold is a loop.
+This lower-level API accepts arbitrary fuel and therefore has stack depth
+O(fuel), not a universal constant bound. Production rendering shares the
+fixed 64-level budget from `render` with `block`; FontRequests uses fuel 1
+only for a text node. See `docs/20261103-layout-stack-audit.md`. -/
+def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (pictures : Pictures)
+    (available : Float) : Nat → Nat → Except String (Array Inline)
+  | 0, _ => throw "unsupported HTML nesting depth (maximum 64)"
+  | fuel+1, id => do
+    let n := dom.get id
+    let s := styles[id]!
+    if s.display == .none then return #[]
+    if n.type == .text then return (textItems id s n.data).toArray
+    if n.type != .element then return #[]
+    -- A replaced element with a picture: an `img`, and later a `video` or `canvas`.
+    if let some picture := pictures id then
+      let (w,h) := replacedSize s (some picture.size) available
+      let (ow,oh,nodes) := replacedBox id s w h (fun x y => pictureNodes id s picture x y w h)
+      return #[.replaced id s ow oh nodes]
+    -- An image that is missing, broken or refused stands as its description, and stays a link.
+    if n.lname == "img" then return altItems id s n
+    if n.lname == "br" then return #[.lineBreak s]
+    if n.ns == some DOM.svgNS then
+      let (width,height) ← svgSize n s available
+      if width <= 0 || height <= 0 then return #[]
+      let inner ← embedding id s width height
+      -- The SVG producer paints the root's background itself.
+      let (ow,oh,nodes) := replacedBox id {s with background := none} width height
+        (fun x y => [.group none ⟨1,0,0,1,x,y⟩ inner])
+      return #[.replaced id s ow oh nodes]
+    -- A block inside an inline (old pages often have one) breaks the line around it.
+    -- An inline-block is one atomic box: `atomize` lays out what is between its bounds.
+    let mut out : Array Inline := if s.display.isBlockLevel then #[.lineBreak s]
+      else if s.display == .inlineBlock then #[.openAtomic id s] else #[]
+    for child in n.kids do out := out ++ (← inlineItems dom styles embedding pictures available fuel child)
+    if s.display == .inline && s.background.isSome then out := out.map (withBackground s)
+    return if s.display.isBlockLevel then out.push (.lineBreak s)
+      else if s.display == .inlineBlock then out.push .closeAtomic else out
+
+private def translate (x y : Float) : Transform := ⟨1,0,0,1,x,y⟩
+private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Array Node := Id.run do
+  let mut out := #[]
+  if !s.visible then return out
+  let scale := run.fontSize/font.unitsPerEm
+  for g in run.glyphs do
+    for geometry in font.outline g.index do
+      let primitive : Primitive := {geometry,style := {fill := .solid s.color}, transform := ⟨scale,0,0,scale,g.x,g.y⟩}
+      out := out.push (.paint ⟨some run.source,primitive⟩)
+  if s.underline && !run.glyphs.isEmpty then
+    let left := (run.glyphs[0]?).map (·.x) |>.getD 0
+    let top := (run.glyphs[0]?).map (·.y) |>.getD 0
+    let width := run.glyphs.foldl (fun w g => w+g.advance) 0
+    let thickness := max 1 (run.fontSize/14)
+    let baseline := top+font.ascent*scale
+    out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
+  return out
+
+private def itemWidth (font : FontProfile) : Inline → Except String Float
+  | .word _ s text _ => do
+    match ← font.word s text with
+    | none => return font.advance*s.fontSize/font.unitsPerEm*Float.ofNat text.length
+    | some word => return word.advance*s.fontSize/font.unitsPerEm
+  | .replaced _ _ w _ _ | .atomic _ w _ _ => pure w
+  | _ => pure 0
+
+private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Computed)
+    (left baseline width : Float) : Array Node := Id.run do
+  if !s.visible then return #[]
+  let scale := run.fontSize/word.unitsPerEm
+  let mut out := #[]
+  for (glyph,position) in word.glyphs.zip run.glyphs do
+    for geometry in glyph.geometry do
+      out := out.push (.paint ⟨some run.source,{geometry,style := {fill := .solid s.color}, transform := ⟨scale,0,0,scale,position.x,position.y⟩}⟩)
+  if s.underline && width > 0 then
+    let thickness := max 1 (run.fontSize/14)
+    out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness, style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
+  return out
+
+/-- A laid-out box moved by `(dx,dy)`: its paint in a translated group, its boxes and
+its glyph positions moved by the same amount. -/
+private def shiftResult (dx dy : Float) (r : Result) : Result :=
+  let boxes := r.boxes.map fun b => {b with x := b.x+dx, y := b.y+dy}
+  let runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}}
+  {r with nodes := #[.group none (translate dx dy) r.nodes.toList], boxes, runs}
+
+/-- CSS 2.1 §10.6.1: the background of inline text covers its content area, the
+font's ascent and descent, from `top`. -/
+private def textBackground (font : FontProfile) (source : Nat) (s : Computed) (x top width : Float) : Array Node :=
+  match s.background with
+  | some c =>
+    if !s.visible || width <= 0 then #[] else
+    #[.paint ⟨some source,{geometry := .rect x top width ((font.ascent+font.descent)*s.fontSize/font.unitsPerEm),style := {fill := .solid c}}⟩]
+  | none => #[]
+
+/-- All inline participants share the line baseline, computed before any glyph
+position or replaced-element position is emitted. -/
+private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
+    (x y : Float) (strut : Option Computed) : Except String Result := do
+  let mut ascent : Float := 0
+  let mut descent : Float := 0
+  let mut tallTop : Float := 0
+  let mut tallBottom : Float := 0
+  if let some style := strut then
+    let leading := lineLeading font style
+    ascent := font.ascent*style.fontSize/font.unitsPerEm+leading
+    descent := font.descent*style.fontSize/font.unitsPerEm+leading
+  for (_,item) in items do
+    match item with
+    | .word _ s _ _ | .space _ s | .lineBreak s =>
+      let leading := lineLeading font s
+      ascent := max ascent (font.ascent*s.fontSize/font.unitsPerEm+leading)
+      descent := max descent (font.descent*s.fontSize/font.unitsPerEm+leading)
+    | .replaced _ s _ h _ => match s.verticalAlign with
+      | .baseline => ascent := max ascent h
+      -- CSS 2.1 §10.8.1: the middle on the baseline plus half the x-height, here half an em.
+      | .middle =>
+        ascent := max ascent (h/2+s.fontSize/4)
+        descent := max descent (h/2-s.fontSize/4)
+      | .top => tallTop := max tallTop h
+      | .bottom => tallBottom := max tallBottom h
+    | .atomic _ _ h _ => ascent := max ascent h
+    | .openAtomic _ _ | .closeAtomic => pure ()
+  -- A box aligned to the top or bottom of the line makes the line tall enough for it.
+  if tallBottom > ascent+descent then ascent := tallBottom-descent
+  if tallTop > ascent+descent then descent := tallTop-ascent
+  let mut out : Result := {height := ascent+descent}
+  for (offset,item) in items do
+    match item with
+    | .word source s text start =>
+      let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm
+      let leading := lineLeading font s
+      if s.background.isSome then
+        out := {out with nodes := out.nodes ++ textBackground font source s (x+offset) top (← itemWidth font item)}
+      match ← font.word s text with
+      | none =>
+        -- A character this font has no glyph for shows as a question mark.
+        let chars := text.toList.map fun c => if font.admits c.toNat then c else '?'
+        let advance := font.advance*s.fontSize/font.unitsPerEm
+        let glyphs := chars.toArray.mapIdx fun i c =>
+          ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
+        let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
+        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source,x+offset,top-leading,advance*Float.ofNat chars.length,s.lineHeight⟩}
+      | some word =>
+        let scale := s.fontSize/word.unitsPerEm
+        let width := word.advance*s.fontSize/font.unitsPerEm
+        let glyphs := word.glyphs.map fun glyph =>
+          ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
+        let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
+        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source,x+offset,top-leading,width,s.lineHeight⟩}
+    | .space source s =>
+      let advance ← spaceWidth font s
+      let leading := lineLeading font s
+      let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm-leading
+      out := {out with nodes := out.nodes ++ textBackground font source s (x+offset) (top+leading) advance,
+                       boxes := out.boxes.push ⟨source,x+offset,top,advance,s.lineHeight⟩}
+      if s.underline && s.visible then
+        let thickness := max 1 (s.fontSize/14)
+        out := {out with nodes := out.nodes.push (.paint ⟨some source,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
+    | .replaced source s width height nodes =>
+      let top := match s.verticalAlign with
+        | .baseline => y+ascent-height
+        | .middle => y+ascent-s.fontSize/4-height/2
+        | .top => y
+        | .bottom => y+ascent+descent-height
+      -- The box is the border box, inside the margins.
+      let m := s.margin
+      out := {out with nodes := out.nodes.push (.group none (translate (x+offset) top) nodes),
+                       boxes := out.boxes.push ⟨source,x+offset+m.left,top+m.top,width-m.left-m.right,height-m.top-m.bottom⟩}
+    | .atomic source width height inner =>
+      let top := y+ascent-height
+      let moved := shiftResult (x+offset) top inner
+      -- `inner` holds the border box of the inline-block first, then its content boxes.
+      let _ := width
+      out := {out with nodes := out.nodes ++ moved.nodes, runs := out.runs ++ moved.runs, boxes := out.boxes ++ moved.boxes}
+    | _ => pure ()
+  return out
+
+private def appendResult (a b : Result) : Result :=
+  {nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs, height := a.height+b.height}
+
+/-- A word of preformatted text: it never wraps. -/
+private def preformatted : Inline → Bool
+  | .word _ s _ _ => s.preformatted
+  | _ => false
+
+/-- Word wrapping constructs line participants first. The font profile and
+positioned glyph runs are consumed to paint the actual word geometry. -/
+def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Float)
+    (strut : Option Computed := none) : Except String Result := do
+  let mut out : Result := {}
+  let mut cursorX : Float := 0
+  let mut pendingSpace : Option (Nat × Computed) := none
+  let mut line : Array (Float × Inline) := #[]
+  for item in items do
+    match item with
+    | .space source s =>
+      if s.preformatted then
+        -- A preserved space is placed where it stands, and lines do not wrap.
+        if let some (source,s) := pendingSpace then
+          if cursorX > 0 then
+            line := line.push (cursorX,.space source s)
+            cursorX := cursorX+(← spaceWidth font s)
+        line := line.push (cursorX,item)
+        cursorX := cursorX+(← spaceWidth font s)
+        pendingSpace := none
+      else pendingSpace := some (source,s)
+    | .lineBreak _ =>
+      let row ← lineLayout font (line.push (cursorX,item)) x (y+out.height) strut
+      out := appendResult out {row with height := if row.height > 0 then row.height else 19.2}
+      line := #[]
+      cursorX := 0
+      pendingSpace := none
+    | _ =>
+      let width ← itemWidth font item
+      let gap ← if cursorX > 0 then match pendingSpace with
+        | some (_,s) => spaceWidth font s
+        | none => pure 0
+        else pure 0
+      if cursorX > 0 && cursorX+gap+width > available && !preformatted item then
+        out := appendResult out (← lineLayout font line x (y+out.height) strut)
+        line := #[]
+        cursorX := 0
+      else
+        if gap > 0 then
+          if let some (source,s) := pendingSpace then line := line.push (cursorX,.space source s)
+        cursorX := cursorX+gap
+      line := line.push (cursorX,item)
+      cursorX := cursorX+width
+      pendingSpace := none
+  if !line.isEmpty then out := appendResult out (← lineLayout font line x (y+out.height) strut)
+  return out
+
+private def append (a b : Result) : Result :=
+  {nodes := a.nodes ++ b.nodes,boxes := a.boxes ++ b.boxes,runs := a.runs ++ b.runs, height := a.height+b.height}
 /-- CSS 2.2 §10.3.9 and §10.6.6: an inline-block with `width:auto` is as wide as its
 widest line (at most the room); its content is laid out at the origin inside its
 border and padding. Its bottom margin edge sits on the line's baseline, as a
@@ -481,7 +672,7 @@ Text is measured with `inlineLayout` itself: with no room, every break opportuni
 taken (min-content); with unbounded room, none is (max-content). A table's widths are
 those of its columns (`Table.columns`). Fuel is shared with `layoutTask`: one level per
 element or table. -/
-def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding) :
+def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding) (pictures : Pictures) :
     Nat → Task → Except String (Float × Float)
   | 0, _ => throw "unsupported HTML nesting depth (maximum 64)"
   | fuel+1, task => do
@@ -498,16 +689,16 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
         | .run run =>
           let (a,b) ← inlineWidths inline
           inline := #[]
-          let (c,d) ← intrinsic dom styles font embedding fuel (.table none container run)
+          let (c,d) ← intrinsic dom styles font embedding pictures fuel (.table none container run)
           widths := (max widths.1 (max a c),max widths.2 (max b d))
         | .node k =>
           if (styles[k]!).display.isBlockLevel then
             let (a,b) ← inlineWidths inline
             inline := #[]
-            let (c,d) ← intrinsic dom styles font embedding fuel (.box k)
+            let (c,d) ← intrinsic dom styles font embedding pictures fuel (.box k)
             widths := (max widths.1 (max a c),max widths.2 (max b d))
           else
-            inline := inline ++ (← inlineItems dom styles embedding 0 fuel k)
+            inline := inline ++ (← inlineItems dom styles embedding pictures 0 fuel k)
       let (a,b) ← inlineWidths inline
       return (max widths.1 a,max widths.2 b)
     let tableWidths (element : Option Nat) (container : Nat) (kids : Array Nat) : Except String (Float × Float) := do
@@ -516,7 +707,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
       let mut measures : Array Table.Measure := #[]
       for cell in grid.cells do
         let (c,ks) := cellContents dom cell.source
-        measures := measures.push (cellMeasure (cellStyle styles cell.source) (← intrinsic dom styles font embedding fuel (.contents c ks)))
+        measures := measures.push (cellMeasure (cellStyle styles cell.source) (← intrinsic dom styles font embedding pictures fuel (.contents c ks)))
       let cols := Table.columns grid.columns grid.cells measures (grid.columnElements.map (columnMeasure styles)) frame.hs
       let spacing := if grid.columns == 0 then 0 else frame.hs*Float.ofNat (grid.columns+1)
       let edges := frame.padding.left+frame.padding.right
@@ -534,14 +725,18 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
       let s := styles[id]!
       if s.display == .none then return (0,0)
       if s.display.isTable then return (← tableWidths (some id) (n.parent.getD 0) n.kids)
+      if let some picture := pictures id then
+        let w := (replacedSize s (some picture.size) 0).1+horizontalEdges s
+        return (w,w)
       if n.ns == some DOM.svgNS then
-        let (w,_) ← svgSize n s 0
+        let w := (← svgSize n s 0).1+horizontalEdges s
         return (w,w)
       let edges := s.margin.left+s.margin.right+s.padding.left+s.padding.right
       match s.width with
       | .px w => return (w+edges,w+edges)
       | _ =>
-        let lead := if n.lname == "li" then (textItems id s (listMarker dom id)).toArray else #[]
+        let lead := if n.lname == "li" then (textItems id s (listMarker dom id)).toArray
+          else if n.lname == "img" then altItems id s n else #[]
         let (a,b) ← flowWidths id n.kids lead
         return (a+edges,b+edges)
 
@@ -553,7 +748,7 @@ Every descent to `layoutTask`, `intrinsic` or `inlineItems` passes the predecess
 stack depth O(fuel); production `render` starts it with the fixed budget 64.
 The budget is shared across block, table and inline descendants, never reset for
 a formatting context. See `docs/20261103-layout-stack-audit.md`. -/
-def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding) :
+def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding) (pictures : Pictures) :
     Nat → Task → Float → Float → Float → Except String Result
   | 0, _, _, _, _ => throw "unsupported HTML nesting depth (maximum 64)"
   | fuel+1, task, x, y, available => do
@@ -569,16 +764,16 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           if !inline.isEmpty then
             content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
             inline := #[]
-          content := append content (← layoutTask dom styles font embedding fuel (.table none container run) innerX (innerY+content.height) width)
+          content := append content (← layoutTask dom styles font embedding pictures fuel (.table none container run) innerX (innerY+content.height) width)
         | .node child =>
           let cs := styles[child]!
           if cs.display.isBlockLevel then
             if !inline.isEmpty then
               content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
               inline := #[]
-            content := append content (← layoutTask dom styles font embedding fuel (.box child) innerX (innerY+content.height) width)
+            content := append content (← layoutTask dom styles font embedding pictures fuel (.box child) innerX (innerY+content.height) width)
           else
-            inline := inline ++ (← inlineItems dom styles embedding width fuel child)
+            inline := inline ++ (← inlineItems dom styles embedding pictures width fuel child)
       if !inline.isEmpty then content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
       return content
     -- A table box (CSS 2.1 §17): captions, then the grid, then bottom captions.
@@ -591,7 +786,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let mut measures : Array Table.Measure := #[]
       for cell in grid.cells do
         let (c,ks) := cellContents dom cell.source
-        measures := measures.push (cellMeasure (cellStyle styles cell.source) (← intrinsic dom styles font embedding fuel (.contents c ks)))
+        measures := measures.push (cellMeasure (cellStyle styles cell.source) (← intrinsic dom styles font embedding pictures fuel (.contents c ks)))
       let elements := grid.columnElements.map (columnMeasure styles)
       let cols := Table.columns grid.columns grid.cells measures elements hs
       let spacing := if grid.columns == 0 then 0 else hs*Float.ofNat (grid.columns+1)
@@ -621,7 +816,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let (c,ks) := cellContents dom cell.source
         let w := Table.spanSize widths cell.col cell.colSpan hs
         let left := innerX+colX.getD cell.col 0+cs.padding.left
-        let r ← layoutTask dom styles font embedding fuel (.contents c ks) left cs.padding.top (max 0 (w-cs.padding.left-cs.padding.right))
+        let r ← layoutTask dom styles font embedding pictures fuel (.contents c ks) left cs.padding.top (max 0 (w-cs.padding.left-cs.padding.right))
         let own := (CSS.resolve 0 cs.height).getD 0
         let outer := max (r.height+cs.padding.top+cs.padding.bottom) (own+cs.padding.top+cs.padding.bottom)
         laid := laid.push (r,outer)
@@ -641,7 +836,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let mut top := y+frame.margin.top
       for caption in grid.captions do
         if !(styles[caption]!).captionBottom then
-          let r ← layoutTask dom styles font embedding fuel (.box caption) outerX top borderWidth
+          let r ← layoutTask dom styles font embedding pictures fuel (.box caption) outerX top borderWidth
           out := append out r
           top := top+r.height
       let innerY := top+frame.padding.top
@@ -674,7 +869,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       top := top+borderHeight
       for caption in grid.captions do
         if (styles[caption]!).captionBottom then
-          let r ← layoutTask dom styles font embedding fuel (.box caption) outerX top borderWidth
+          let r ← layoutTask dom styles font embedding pictures fuel (.box caption) outerX top borderWidth
           out := append out r
           top := top+r.height
       return {out with height := top-y+frame.margin.bottom}
@@ -697,11 +892,21 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         (available-margin.left-margin.right-border.left-border.right-padding.left-padding.right))
       let innerX := outerX+border.left+padding.left
       let innerY := outerY+border.top+padding.top
+      -- A block-level replaced element: its margin box at the start of the line.
+      let replaced := fun (w h : Float) (content : Float → Float → List Node) (s : Computed) =>
+        let (ow,oh,nodes) := replacedBox id s w h content
+        ({nodes := #[.group none (translate x y) nodes],
+          boxes := #[⟨id,outerX,outerY,ow-margin.left-margin.right,oh-margin.top-margin.bottom⟩],height := oh} : Result)
+      if let some picture := pictures id then
+        let (w,h) := replacedSize s (some picture.size) available
+        return replaced w h (fun cx cy => pictureNodes id s picture cx cy w h) s
       if n.ns == some DOM.svgNS then
         let (sw,sh) ← svgSize n s available
         let nodes ← embedding id s sw sh
-        return {nodes := #[.group none (translate outerX outerY) nodes], boxes := #[⟨id,outerX,outerY,sw,sh⟩],height := margin.top+sh+margin.bottom}
-      let content ← flow s id n.kids (if n.lname == "li" then (textItems id s (listMarker dom id)).toArray else #[]) innerX innerY width
+        return replaced sw sh (fun cx cy => [.group none (translate cx cy) nodes]) {s with background := none}
+      let lead := if n.lname == "li" then (textItems id s (listMarker dom id)).toArray
+        else if n.lname == "img" then altItems id s n else #[]
+      let content ← flow s id n.kids lead innerX innerY width
       let height := match s.height with
         | .percent _ => content.height
         | _ => max 0 ((CSS.resolve 0 s.height).getD content.height)
@@ -716,8 +921,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
 
 /-- An element's block box: `layoutTask` of `.box id`. -/
 def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding)
-    (fuel id : Nat) (x y available : Float) : Except String Result :=
-  layoutTask dom styles font embedding fuel (.box id) x y available
+    (pictures : Pictures) (fuel id : Nat) (x y available : Float) : Except String Result :=
+  layoutTask dom styles font embedding pictures fuel (.box id) x y available
 
 /-- The nearest HTML anchor with an href attribute, including href="". -/
 def anchorAncestor (dom : Dom) : Nat → Nat → Option (Nat × String)
@@ -780,14 +985,35 @@ def linkRegions (dom : Dom) (styles : Array Computed) (boxes : Array Box)
         if right > left && bottom > top then out.push ⟨source,href,left,top,right-left,bottom-top⟩ else out
       else out) #[]
 
-/-- Existing DOM input, explicit viewport and font data, immutable scene output. -/
+/-- CSS 2.1 §14.2: the background of the root element, or of `body` when the root
+has none, paints the whole canvas, and not the element's own box. -/
+def canvasBackground (dom : Dom) (styles : Array Computed) : Option (Nat × Color) := Id.run do
+  let some root := (dom.get 0).kids.find? (fun k => (dom.get k).type == .element) | return none
+  if let some c := (styles[root]?).bind (·.background) then return some (root,c)
+  if (dom.get root).lname != "html" then return none
+  let some body := (dom.get root).kids.find? (fun k => (dom.get k).lname == "body") | return none
+  return ((styles[body]?).bind (·.background)).map (body,·)
+
+/-- Existing DOM input, explicit viewport and font data, immutable scene output.
+`pictures` holds the decoded content of replaced elements. -/
 def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding : Embedding)
-    (width height : Nat) (textScale : Float := 1) (state : CSS.ElementState := {}) : Except String (Scene × Array Box) := do
+    (width height : Nat) (textScale : Float := 1) (state : CSS.ElementState := {})
+    (pictures : Pictures := noPictures) : Except String (Scene × Array Box) := do
   if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported viewport: require dimensions 1 to 4096"
+  let vw := Float.ofNat width
+  let vh := Float.ofNat height
   let styles := (← CSS.computeAll dom rules textScale state).map fun s =>
-    {s with width := s.width.atViewport (Float.ofNat width) (Float.ofNat height),
-            height := s.height.atViewport (Float.ofNat width) (Float.ofNat height)}
-  let result ← block dom styles font embedding 64 0 0 0 (Float.ofNat width)
+    {s with width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
+            minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
+            minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh}
+  let canvas := canvasBackground dom styles
+  let styles := match canvas with
+    | some (id,_) => styles.modify id fun s => {s with background := none}
+    | none => styles
+  let result ← block dom styles font embedding pictures 64 0 0 0 vw
+  let result : Result := match canvas with
+    | some (id,c) => {result with nodes := #[Node.paint ⟨some id,{geometry := .rect 0 0 vw (max vh result.height),style := {fill := .solid c}}⟩] ++ result.nodes}
+    | none => result
   if result.nodes.size > 1048576 then throw "HTML paint count exceeds 1048576"
   let links := linkRegions dom styles result.boxes (Float.ofNat width) (Float.ofNat height)
   if links.size > 49152 || links.any (fun link => link.href.utf8ByteSize > 2048) then

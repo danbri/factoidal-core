@@ -16,6 +16,10 @@ lists each page and what the engine must do with it.
   change). A page marked `appRefused` renders in `check-demo-pages.py` but the window
   refuses it, so the bytes test skips it. `showcase_gaps_test.ts` holds one expected
   failure for each gap these pages show, with its issue.
+- `showcase-images.html` (handwritten) shows HTML `img` drawn by Lean. Its pictures,
+  `images-landscape.png` and `images-badge.png`, come from `../tools/image-pages.py`
+  (Python standard library only); `images-missing.png` does not exist on purpose, so
+  the page shows alt text for it.
 - `source/foaf-graph.svg` comes from `native-webgpu-ui-darwin-arm64 --demo foafnaut
   --emit-svg`, and `source/solving-showcase.svg` from the macOS package. The interactive
   demos (spring network, vector playground, responsive layout) are Lean UI programs with

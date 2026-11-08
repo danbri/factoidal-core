@@ -64,16 +64,16 @@ export function prefetchTarget(band:Band,scroll:number,motion:Motion,rule:Prefet
 
 /** The document state a render request is for, with the scroll left out: a band made for
  * one state shows any scroll in its keep range for that state and no other. Large values
- * are compared by identity (the resources) or by value (the graph model), not as JSON. */
-export type StateKey={document:unknown;width:number;height:number;resources:unknown;graphModel:unknown;rest:string};
+ * are compared by identity (the resources and images) or by value (the graph model), not as JSON. */
+export type StateKey={document:unknown;width:number;height:number;resources:unknown;images?:unknown;graphModel:unknown;rest:string};
 export function stateKey(document:unknown,options:Record<string,unknown>,width:number,height:number):StateKey {
-  const {resources,graphModel,shell,...rest}=options;
+  const {resources,images,graphModel,shell,...rest}=options;
   let shellRest:unknown=shell;
   if(shell&&typeof shell==="object"){const {scroll:_scroll,...others}=shell as Record<string,unknown>;shellRest=others;}
-  return {document,width,height,resources,graphModel,rest:JSON.stringify([rest,shellRest])};
+  return {document,width,height,resources,images,graphModel,rest:JSON.stringify([rest,shellRest])};
 }
 export function sameState(a:StateKey,b:StateKey):boolean {
-  return a.document===b.document&&a.width===b.width&&a.height===b.height&&a.resources===b.resources&&a.graphModel===b.graphModel&&a.rest===b.rest;
+  return a.document===b.document&&a.width===b.width&&a.height===b.height&&a.resources===b.resources&&a.images===b.images&&a.graphModel===b.graphModel&&a.rest===b.rest;
 }
 
 /** True when a prefetched band can be shown at `scroll` in place of a Lean frame: the same

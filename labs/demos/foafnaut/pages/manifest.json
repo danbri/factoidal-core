@@ -157,6 +157,17 @@
    ]
   },
   {
+   "page": "showcase-images.html",
+   "title": "Images",
+   "handwritten": true,
+   "size": [
+    900,
+    1500
+   ],
+   "shows": "img as a replaced element drawn by Lean: inline on the baseline, vertical-align middle, block, width only, max-width 100% in a narrow box, border and padding, object-fit, alt text for a missing image, and pre keeping its spaces",
+   "doesNotShow": "srcset, picture, lazy loading, images from other sites, and object-position other than the centre"
+  },
+  {
    "page": "print-showcase.html",
    "title": "Print showcase",
    "handwritten": true,

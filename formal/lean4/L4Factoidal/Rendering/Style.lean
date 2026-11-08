@@ -49,6 +49,9 @@ def Display.isBlockContainer (d : Display) : Bool :=
 /-- `vertical-align` as it applies to table cells (CSS 2.1 §17.5.3). -/
 inductive VerticalAlign where | baseline | top | middle | bottom
   deriving Repr, BEq
+/-- CSS Images 3 §5.5 `object-fit`: how a replaced element's content fills its box. -/
+inductive ObjectFit where | fill | contain | cover | none | scaleDown
+  deriving Repr, BEq
 /-- CSS Backgrounds 3 §4.2 line styles of this profile. -/
 inductive BorderStyle where | none | solid | inset | outset
   deriving Repr, BEq
@@ -85,6 +88,12 @@ structure Computed where
   verticalAlign : VerticalAlign := .baseline
   /-- `table-layout: fixed`. -/
   tableFixed : Bool := false
+  /-- CSS 2.1 §10.4 and §10.7: `auto` is 0 for a minimum and `none` for a maximum. -/
+  minWidth : Length := .auto
+  maxWidth : Length := .auto
+  minHeight : Length := .auto
+  maxHeight : Length := .auto
+  objectFit : ObjectFit := .fill
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -97,7 +106,8 @@ def htmlProperties : List String :=
    "color","background","background-color","font-size","font-family",
    "line-height","visibility","overflow","text-decoration","text-decoration-line",
    "border","border-width","border-style","border-color",
-   "border-spacing","border-collapse","caption-side","vertical-align","table-layout"]
+   "border-spacing","border-collapse","caption-side","vertical-align","table-layout",
+   "min-width","max-width","min-height","max-height","object-fit"]
 
 /-- CSS Backgrounds 3 §4.3: the computed border width is 0 when the style is none. -/
 def Computed.borderEdges (s : Computed) : Edges :=
@@ -403,6 +413,15 @@ private def borderStyle (source : String) : Except String BorderStyle :=
   | "inset" => pure .inset
   | "outset" => pure .outset
   | _ => throw "unsupported CSS border style"
+/-- A `min-*` or `max-*` value: `none` and `auto` are `auto` here; a negative length is
+invalid (CSS 2.1 §10.4). -/
+private def limit (source : String) : Except String Length := do
+  let v := (trim source).toLower
+  if v == "none" || v == "auto" then return .auto
+  match ← length v with
+  | .px n => if n < 0 then throw "negative CSS size limit" else return .px n
+  | .percent n => if n < 0 then throw "negative CSS size limit" else return .percent n
+  | other => return other
 private def apply (s : Computed) (d : Declaration) : Except String Computed := do
   match d.property with
   | "display" => match d.value with
@@ -493,6 +512,17 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "bottom" | "text-bottom" => return {s with verticalAlign := .bottom}
     | "baseline" | "sub" | "super" => return {s with verticalAlign := .baseline}
     | _ => throw "unsupported CSS vertical-align"
+  | "min-width" => return {s with minWidth := ← limit d.value}
+  | "max-width" => return {s with maxWidth := ← limit d.value}
+  | "min-height" => return {s with minHeight := ← limit d.value}
+  | "max-height" => return {s with maxHeight := ← limit d.value}
+  | "object-fit" => match (trim d.value).toLower with
+    | "fill" => return {s with objectFit := .fill}
+    | "contain" => return {s with objectFit := .contain}
+    | "cover" => return {s with objectFit := .cover}
+    | "none" => return {s with objectFit := .none}
+    | "scale-down" => return {s with objectFit := .scaleDown}
+    | _ => throw "unsupported CSS object-fit"
   | "font-family" =>
     let raw := trim d.value
     let quoted := (raw.startsWith "'" && raw.endsWith "'") || (raw.startsWith "\"" && raw.endsWith "\"")
@@ -607,6 +637,16 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
     | _ => pure ()
   return s
 
+/-- HTML §15.4.3: the `width` and `height` attributes of `img`, `video` and `canvas`
+map to the `width` and `height` properties, below author CSS. -/
+private def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
+  if !["img","video","canvas"].contains n.lname then return s
+  let mut s := s
+  if let some w := dimensionAttribute (attrValue n "width") then s := {s with width := w}
+  if let some h := dimensionAttribute (attrValue n "height") then
+    if let .px _ := h then s := {s with height := h}
+  return s
+
 private def lexLE : List Nat → List Nat → Bool
   | [], _ => true
   | _::_, [] => false
@@ -657,7 +697,7 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
     margin := startMargin n.lname fontSize,
     borderSpacingX := parent.borderSpacingX, borderSpacingY := parent.borderSpacingY,
     borderCollapse := parent.borderCollapse, captionBottom := parent.captionBottom}
-  if n.ns == some DOM.htmlNS || n.ns.isNone then initial := tableHints dom id initial parent
+  if n.ns == some DOM.htmlNS || n.ns.isNone then initial := replacedHints n (tableHints dom id initial parent)
   -- SVG presentation attributes have lower priority than author CSS.
   -- These properties affect HTML layout/inheritance, so compute them here.
   if svgViewport then

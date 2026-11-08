@@ -20,6 +20,8 @@ export type Inspection = {
   title:string;
   scripts:{kind:string;type:string;src:string}[];
   stylesheets:{nodeId:number;url:string}[];
+  /** Images that Lean wants (SVG `image`, HTML `img`), by store key; an older engine lists none for `img`. */
+  images?:{key:string;url:string}[];
 };
 export type History = {entries:string[];index:number};
 /** The answer of a font load: the font's family and glyph count, and how many fonts the engine holds. */

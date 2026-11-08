@@ -136,7 +136,30 @@ async function prepare(url){
     sources.push({kind:'XSLT source',url:xsl.url,source:xsl.source},{kind:'Generated page',url:page.url,source:page.source});
   }
   const facts=call(page.source,{op:'inspect',url:page.url});
-  return {url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources};
+  const images=await pageImages(facts.images);
+  return {url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...(images.length?{images}:{})};
+}
+// Lean lists the images a page wants (SVG image, HTML img) by key. The page fetches only
+// those of this site, with size caps, and gives the bytes back with the key. One that
+// fails is left out and shows its alt text. An engine that lists no images gets none,
+// so an older engine never sees the field (issue 1274).
+const maxImageBytes=4194304,maxPageImageBytes=6291456;
+async function pageImages(wanted){
+  const images=[];let total=0;
+  for(const {key,url} of wanted??[]){
+    try{
+      const target=new URL(url);if(target.origin!==siteOrigin)continue;
+      const response=await fetch(target);if(!response.ok)continue;
+      if(Number(response.headers.get('content-length')??0)>maxImageBytes){response.body?.cancel();continue;}
+      const bytes=new Uint8Array(await response.arrayBuffer());
+      if(bytes.length>maxImageBytes||total+bytes.length>maxPageImageBytes)continue;
+      total+=bytes.length;
+      let text='';
+      for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+      images.push({key,base64:btoa(text)});
+    }catch{}
+  }
+  return images;
 }
 // foafnaut:wasm (issue 1244): WebAssembly run by WasmVM, the engine written in Lean, inside this
 // Lean engine. The host browser's WebAssembly never runs the module: the page only fetches its
@@ -338,7 +361,7 @@ async function draw(){
     const start=performance.now(),inputAt=pendingStamp;pendingStamp=undefined;
     try{
       // A page already on screen had Lean's full probe set on its first frame.
-      const next=render(doc.source,{op:'render',url:doc.url,textScalePercent:percent,shell:shell(),live:doc===checked,binary:true},width,height);
+      const next=render(doc.source,{op:'render',url:doc.url,...(doc.images?{images:doc.images}:{}),textScalePercent:percent,shell:shell(),live:doc===checked,binary:true},width,height);
       checked=doc;
       const laid=performance.now();
       let rgba,pixelHash,gpuMs;

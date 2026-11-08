@@ -37,7 +37,7 @@ def svg(path, title):
 FEATURED = ['showcase-dataviz.html', 'showcase-lettering.html', 'showcase-tables-svg.html',
             'svg-gallery.html', 'solving-showcase.html', 'books-svg.xml']
 # Text and layout pages, linked next (owner, 2026-11-07, on the writing systems page).
-TEXT = ['showcase-scripts.html', 'showcase-tables.html', 'showcase-emoji.html', 'print-showcase.html']
+TEXT = ['showcase-scripts.html', 'showcase-tables.html', 'showcase-images.html', 'showcase-emoji.html', 'print-showcase.html']
 # Pages that combine two or more parts: XSLT, SVG, fonts, tables, print, RDF and SPARQL (owner, 2026-11-08:
 # "Think of creative demo pages and exciting combinations of our technologies!").
 COMBINATIONS = ['foaf-people.xml', 'sparql-results.xml', 'feed.xml', 'sitemap.xml', 'lab-files.xml',

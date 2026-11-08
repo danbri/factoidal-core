@@ -319,6 +319,16 @@ private def contains (text part : String) : Bool := (text.splitOn part).length >
   "image is not PNG or JPEG"
 #guard contains (WebDocument.compile imagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":3}" 40 40) "document images must be an array"
 
+-- HTML `img` (Layout `Picture`): `inspect` lists its key; with the bytes it is drawn as an
+-- image, and with none (missing, broken, or an older host) as its alt text.
+private def imgPage := "<body style='margin:0'><img src='a.png' alt='Gone' style='display:block'></body>"
+#guard contains (WebDocument.compile imgPage "{\"op\":\"inspect\",\"url\":\"https://e.test/p/\"}" 40 40)
+  "\"images\":[{\"key\":\"https://e.test/p/a.png\",\"url\":\"https://e.test/p/a.png\"}]"
+private def imgDrawn := WebDocument.compile imgPage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"" ++ imageBytes ++ "\"}]}") 40 40
+#guard !contains imgDrawn "\"error\"" && !contains imgDrawn "[Gone]"
+#guard contains (WebDocument.compile imgPage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 40 40) "\"text\":\"[Gone]\""
+#guard contains (WebDocument.compile imgPage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"aGk=\"}]}") 40 40) "\"text\":\"[Gone]\""
+
 /-! The FOAF graph page with no SVG text (issue 1268). `WebGraph.directScene` builds the
 scene from the model; these differential guards (not a proof) check that it is the scene
 of the SVG text of `NativeSceneSVG.serialize`: the same artifact (every primitive, in the

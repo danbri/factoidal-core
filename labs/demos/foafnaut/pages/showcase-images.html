@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Images</title>
+<style>
+body{margin:16px;font-size:14px;line-height:20px;color:#22303c;background:#fbfaf6}
+h1{margin:0;font-size:24px;line-height:32px;color:#184078}
+h2{margin:0;padding-top:18px;font-size:18px;line-height:26px;color:#184078}
+p{margin:0;padding-top:6px}
+.note{color:#5b6876;font-size:13px}
+.narrow{width:120px;padding:4px;border:1px solid #9aa8b6;background:white}
+.frame{border:2px solid #184078;padding:4px;background:white}
+.fit{width:96px;height:96px;border:1px solid #9aa8b6;background:#e8edf2}
+pre{margin:6px 0 0 0;padding:6px;background:#eef1f4;font-size:13px;line-height:18px}
+</style></head><body><main>
+<p><a href="index.html">Demo index</a></p>
+<h1>Images</h1>
+<p>The Lean engine decodes PNG and JPEG and draws <code>img</code> elements itself. The host only fetches the bytes
+of images from the page's own site.</p>
+<p class="note">An engine from before this page draws each image as its alt text in brackets.</p>
+
+<h2>In a line of text</h2>
+<p>A badge <img src="images-badge.png" alt="badge"> sits on the baseline, and one with
+<code>vertical-align: middle</code> <img src="images-badge.png" alt="badge" style="vertical-align:middle"> is centred on the text.</p>
+
+<h2>As a block</h2>
+<img src="images-landscape.png" alt="A landscape" style="display:block;margin:8px 0 0 0">
+<p class="note">160 by 96 pixels, drawn at its own size.</p>
+
+<h2>Width only</h2>
+<p><img src="images-landscape.png" alt="A landscape" width="320"></p>
+<p class="note"><code>width="320"</code>: the height follows the ratio, 192.</p>
+
+<h2>max-width: 100% in a narrow box</h2>
+<div class="narrow"><img src="images-landscape.png" alt="A landscape" style="max-width:100%"></div>
+<p class="note">The box is 120 pixels wide, so the image is 120 by 72.</p>
+
+<h2>Border and padding</h2>
+<p><img class="frame" src="images-landscape.png" alt="A landscape" width="120"></p>
+
+<h2>object-fit</h2>
+<p><img class="fit" src="images-landscape.png" alt="fill" style="object-fit:fill">
+<img class="fit" src="images-landscape.png" alt="contain" style="object-fit:contain">
+<img class="fit" src="images-landscape.png" alt="cover" style="object-fit:cover">
+<img class="fit" src="images-badge.png" alt="none" style="object-fit:none"></p>
+<p class="note">fill, contain, cover and none, each in a 96 by 96 box.</p>
+
+<h2>A missing image</h2>
+<p>Here is <img src="images-missing.png" alt="the alt text of a missing image"> in its place.</p>
+
+<h2>Preformatted text</h2>
+<pre>name      width  height
+badge        48      48
+landscape   160      96</pre>
+</main></body></html>

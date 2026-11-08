@@ -77,7 +77,7 @@ def forDOM (dom : Dom) (rules : List CSS.Rule) (textScale : Float := 1) : Except
         continue
       if node.type == .text then
         let block ← context dom styles (dom.size+1) id
-        let items ← Layout.inlineItems dom styles noEmbedding 0 1 id
+        let items ← Layout.inlineItems dom styles noEmbedding Layout.noPictures 0 1 id
         for item in items do
           match item with
           | .word _ s text _ =>

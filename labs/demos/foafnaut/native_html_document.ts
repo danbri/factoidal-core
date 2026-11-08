@@ -49,6 +49,53 @@ export async function readSource(url:string,signal?:AbortSignal):Promise<{url:st
   sourceBound(source);
   return {url:finalURL,source,bytes:bytes.length};
 }
+/** Limits on image bytes: each image, and all images of a page (Lean takes at most
+8 MiB of Base64 text for a page, which is 6 MiB of bytes). */
+export const MAX_IMAGE_BYTES=4*1048576, MAX_PAGE_IMAGE_BYTES=6*1048576;
+/** An image may come from the page's own origin only: a file page reads local files, an
+HTTP page its own scheme, host and port. There is no proxy. */
+export function imageAllowed(url:string,documentURL:string) {
+  const target=new URL(url),page=new URL(documentURL);
+  if(page.protocol==="file:")return target.protocol==="file:";
+  return target.protocol!=="file:"&&target.origin===page.origin;
+}
+async function readBytes(url:string,limit:number,signal?:AbortSignal):Promise<Uint8Array> {
+  const parsed=new URL(inputURL(url));
+  if(parsed.protocol==="file:") {
+    if((await Deno.stat(parsed)).size>limit)throw new Error("image too large");
+    return await Deno.readFile(parsed);
+  }
+  const response=await fetch(parsed,{signal:AbortSignal.any([AbortSignal.timeout(10000),...(signal?[signal]:[])])});
+  if(!response.ok){await response.body?.cancel();throw new Error(`HTTP ${response.status}`);}
+  const reader=response.body?.getReader();if(!reader)throw new Error("no body");
+  const chunks:Uint8Array[]=[];let length=0;
+  try {
+    while(true){const next=await reader.read();if(next.done)break;
+      length+=next.value.length;if(length>limit)throw new Error("image too large");chunks.push(next.value);}
+  } finally {await reader.cancel();}
+  const bytes=new Uint8Array(length);let offset=0;
+  for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+  return bytes;
+}
+/** Fetch the images Lean listed, as `{key,base64}` records for the compile request. */
+export async function fetchImages(wanted:{key:string;url:string}[],documentURL:string,signal?:AbortSignal) {
+  const images:{key:string;base64:string}[]=[];let total=0;
+  for(const {key,url} of wanted) {
+    signal?.throwIfAborted();
+    try {
+      if(!imageAllowed(url,documentURL))continue;
+      const bytes=await readBytes(url,MAX_IMAGE_BYTES,signal);
+      if(total+bytes.length>MAX_PAGE_IMAGE_BYTES)continue;
+      total+=bytes.length;
+      let text="";
+      for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+      images.push({key,base64:btoa(text)});
+    } catch(error) {
+      if(signal?.aborted)throw error;
+    }
+  }
+  return images;
+}
 /** A refused page must say so in the window, not only in a log. */
 export function refusalHTML(url:string,message:string) {
   const text=(s:string)=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
@@ -88,7 +135,10 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     resourceBytes+=resource.bytes;if(resourceBytes>MAX_RESOURCE_BYTES)throw new Error("Native HTML stylesheets exceed 4 MiB");
     resources.push({nodeId:descriptor.nodeId,url:resource.url,source:resource.source});
   }
-  const options={url:document.url,resources};
+  // Lean lists the images it wants; the host fetches each one of the page's origin, with
+  // size caps. One that fails or is refused is left out, and the page shows its alt text.
+  const images=await fetchImages(inspection.images??[],document.url,signal);
+  const options={url:document.url,resources,...(images.length?{images}:{})};
   // Pages show in the font of loadFontFile, or else in the Lean bitmap face.
   signal?.throwIfAborted();
   return {

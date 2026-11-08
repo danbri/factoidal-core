@@ -2,3 +2,5 @@
 *.log
 *.ppm
 *.png
+# The pictures of the Images demo page, written by tools/image-pages.py (1.4 KB in all).
+!pages/images-*.png
