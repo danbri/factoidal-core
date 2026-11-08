@@ -418,14 +418,21 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
 
 /-! ### The loop -/
 
+/-- Stop the loop: the result of `run` (store, registers, fuel left, event). One
+function, not inlined, so the exits of `run` share one call instead of each building
+the result inline (see "The dispatch loop in C" in the record). -/
+@[noinline] def stop (st : StoreOf M) (stack : Slots) (sp fp pc : USize) (code : Array Op)
+    (inst : ModuleInst) (frames : Array Frame) (fuel : Nat) (ev : Event) : StoreOf M × Machine × Nat × Event :=
+  (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, ev)
+
 @[specialize] def run (lim : RunLimits) (st : StoreOf M) (stack : Slots) (sp fp pc : USize)
     (code : Array Op) (inst : ModuleInst) (frames : Array Frame) :
     Nat → StoreOf M × Machine × Nat × Event
-  | 0 => (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, 0, .outOfFuel)
+  | 0 => stop st stack sp fp pc code inst frames 0 .outOfFuel
   | fuel + 1 =>
     if h : pc < code.usize then
     match code.uget pc (pc_ok h) with
-    | .unreachable => (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap .unreachable)
+    | .unreachable => stop st stack sp fp pc code inst frames fuel (.trap .unreachable)
     | .jump t => run lim st stack sp fp t.toUSize code inst frames fuel
     | .jumpIf t =>
       let c := rd stack (sp - 1)
@@ -451,7 +458,7 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
       let ku := k.toUSize
       let stack := if sp - ku == fp then stack else moveDown stack (sp - ku) fp k
       let sp := fp + ku
-      if frames.isEmpty then (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .done) else
+      if frames.isEmpty then stop st stack sp fp pc code inst frames fuel (.done) else
       let f := frames.back!
       run lim st stack sp f.fp f.pc f.code f.inst frames.pop fuel
     | .call f =>
@@ -459,22 +466,22 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
       match enter lim st stack sp fp code inst frames fa (pc + 1) with
       | .ok stack sp fp code inst frames => run lim st stack sp fp 0 code inst frames fuel
       | .host id fa args stack sp =>
-        (st, ⟨stack, sp, fp, pc + 1, code, inst, frames⟩, fuel, .hostCall id fa args)
-      | .trap t stack => (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap t)
+        stop st stack sp fp (pc + 1) code inst frames fuel (.hostCall id fa args)
+      | .trap t stack => stop st stack sp fp pc code inst frames fuel (.trap t)
     | .callIndirect ti x =>
       let i := (rd stack (sp - 1)).toNat
       let tab := st.tables[inst.tables[x]!]!
-      if i ≥ tab.elems.size then (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap .undefinedElement) else
+      if i ≥ tab.elems.size then stop st stack sp fp pc code inst frames fuel (.trap .undefinedElement) else
       let r := tab.elems[i]!
-      if r == nullRef then (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap .uninitializedElement) else
+      if r == nullRef then stop st stack sp fp pc code inst frames fuel (.trap .uninitializedElement) else
       let fa := r.toNat
       if (st.funcs[fa]!).typeId != inst.typeIds[ti]! then
-        (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap .indirectTypeMismatch) else
+        stop st stack sp fp pc code inst frames fuel (.trap .indirectTypeMismatch) else
       match enter lim st stack (sp - 1) fp code inst frames fa (pc + 1) with
       | .ok stack sp fp code inst frames => run lim st stack sp fp 0 code inst frames fuel
       | .host id fa args stack sp =>
-        (st, ⟨stack, sp, fp, pc + 1, code, inst, frames⟩, fuel, .hostCall id fa args)
-      | .trap t stack => (st, ⟨stack, sp - 1, fp, pc, code, inst, frames⟩, fuel, .trap t)
+        stop st stack sp fp (pc + 1) code inst frames fuel (.hostCall id fa args)
+      | .trap t stack => stop st stack (sp - 1) fp pc code inst frames fuel (.trap t)
     | .drop =>
       let x := Simple.exec fp .drop stack sp
       run lim st x.stack x.sp fp (pc + 1) code inst frames fuel
@@ -503,7 +510,7 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
       let tab := st.tables[inst.tables[x]!]!
       if h : i < tab.elems.size then
         run lim st (wr stack (sp - 1) tab.elems[i]) sp fp (pc + 1) code inst frames fuel
-      else (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap .tableOOB)
+      else stop st stack sp fp pc code inst frames fuel (.trap .tableOOB)
     | .tableSet x =>
       let v := rd stack (sp - 1)
       let i := (rd stack (sp - 2)).toNat
@@ -511,7 +518,7 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
       if i < (st.tables[ta]!).elems.size then
         let st := { st with tables := st.tables.modify ta fun t => { t with elems := t.elems.set! i v } }
         run lim st stack (sp - 2) fp (pc + 1) code inst frames fuel
-      else (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap .tableOOB)
+      else stop st stack sp fp pc code inst frames fuel (.trap .tableOOB)
     | .tableSize x =>
       let n := (st.tables[inst.tables[x]!]!).elems.size
       run lim st (wr stack sp n.toUInt64) (sp + 1) fp (pc + 1) code inst frames fuel
@@ -533,7 +540,7 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
       let i := (rd stack (sp - 3)).toNat
       let ta := inst.tables[x]!
       if i + n > (st.tables[ta]!).elems.size then
-        (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap .tableOOB) else
+        stop st stack sp fp pc code inst frames fuel (.trap .tableOOB) else
       let st := { st with tables := st.tables.modify ta fun t => { t with elems := fillArr t.elems i v n } }
       run lim st stack (sp - 3) fp (pc + 1) code inst frames fuel
     | .tableCopy dx sx =>
@@ -543,7 +550,7 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
       let td := inst.tables[dx]!
       let src := (st.tables[inst.tables[sx]!]!).elems
       if s + n > src.size || d + n > (st.tables[td]!).elems.size then
-        (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap .tableOOB) else
+        stop st stack sp fp pc code inst frames fuel (.trap .tableOOB) else
       let slice := src.extract s (s + n)
       let st := { st with tables := st.tables.modify td fun t => { t with elems := copyArr t.elems slice 0 d n } }
       run lim st stack (sp - 3) fp (pc + 1) code inst frames fuel
@@ -554,7 +561,7 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
       let ta := inst.tables[x]!
       let seg := st.elems[inst.elems[e]!]!
       if s + n > seg.size || d + n > (st.tables[ta]!).elems.size then
-        (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap .tableOOB) else
+        stop st stack sp fp pc code inst frames fuel (.trap .tableOOB) else
       let st := { st with tables := st.tables.modify ta fun t => { t with elems := copyArr t.elems seg s d n } }
       run lim st stack (sp - 3) fp (pc + 1) code inst frames fuel
     | .elemDrop e =>
@@ -565,14 +572,14 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
       let d := memData st inst mem
       if h : ea + LoadOp.width op ≤ LinearMemory.size d then
         run lim st (wr stack (sp - 1) (loadVal d ea op h)) sp fp (pc + 1) code inst frames fuel
-      else (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap .memOOB)
+      else stop st stack sp fp pc code inst frames fuel (.trap .memOOB)
     | .store op mem off =>
       let v := rd stack (sp - 1)
       let ea := (rd stack (sp - 2)).toNat + off
       let ma := inst.mems[mem]!
       if ea + op.width ≤ LinearMemory.size (st.mems[ma]!).data then
         run lim (storeMem st ma ea v op) stack (sp - 2) fp (pc + 1) code inst frames fuel
-      else (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap .memOOB)
+      else stop st stack sp fp pc code inst frames fuel (.trap .memOOB)
     | .memorySize mem =>
       let n := LinearMemory.size (memData st inst mem) / pageSize
       run lim st (wr stack sp n.toUInt64) (sp + 1) fp (pc + 1) code inst frames fuel
@@ -595,7 +602,7 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
       let ma := inst.mems[mem]!
       let src := st.datas[inst.datas[di]!]!
       if s + n > src.size || d + n > LinearMemory.size (st.mems[ma]!).data then
-        (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap .memOOB) else
+        stop st stack sp fp pc code inst frames fuel (.trap .memOOB) else
       let st := { st with mems := st.mems.modify ma fun mi =>
         { mi with data := LinearMemory.writeBytes mi.data d src s n } }
       run lim st stack (sp - 3) fp (pc + 1) code inst frames fuel
@@ -609,7 +616,7 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
       let da := inst.mems[dm]!
       let sa := inst.mems[sm]!
       if s + n > LinearMemory.size (st.mems[sa]!).data || d + n > LinearMemory.size (st.mems[da]!).data then
-        (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap .memOOB) else
+        stop st stack sp fp pc code inst frames fuel (.trap .memOOB) else
       let st := if da == sa then
           { st with mems := st.mems.modify da fun mi => { mi with data := LinearMemory.copyWithin mi.data s d n } }
         else
@@ -622,7 +629,7 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
       let d := (rd stack (sp - 3)).toNat
       let ma := inst.mems[mem]!
       if d + n > LinearMemory.size (st.mems[ma]!).data then
-        (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap .memOOB) else
+        stop st stack sp fp pc code inst frames fuel (.trap .memOOB) else
       let st := { st with mems := st.mems.modify ma fun mi => { mi with data := LinearMemory.fill mi.data d v n } }
       run lim st stack (sp - 3) fp (pc + 1) code inst frames fuel
     | .const v =>
@@ -637,13 +644,13 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
     | .num op =>
       if op.isBinary then
         match (if op.mayTrap then op.trapBin (rd stack (sp - 2)) (rd stack (sp - 1)) else none) with
-        | some t => (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap t)
+        | some t => stop st stack sp fp pc code inst frames fuel (.trap t)
         | none =>
           let x := Simple.exec fp (.bin op) stack sp
           run lim st x.stack x.sp fp (pc + 1) code inst frames fuel
       else
         match (if op.mayTrap then op.trapUn (rd stack (sp - 1)) else none) with
-        | some t => (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap t)
+        | some t => stop st stack sp fp pc code inst frames fuel (.trap t)
         | none =>
           let x := Simple.exec fp (.un op) stack sp
           run lim st x.stack x.sp fp (pc + 1) code inst frames fuel
@@ -735,7 +742,7 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
       match cold lim st stack sp fp pc code inst frames o with
       | .go st stack sp fp pc code inst frames => run lim st stack sp fp pc code inst frames fuel
       | .stop st m ev => (st, m, fuel, ev)
-    else (st, ⟨stack, sp, fp, pc, code, inst, frames⟩, fuel, .trap (.host "pc out of range"))
+    else stop st stack sp fp pc code inst frames fuel (.trap (.host "pc out of range"))
 
 /-- Run from a stopped machine. -/
 @[inline] def runM (lim : RunLimits) (st : StoreOf M) (m : Machine) (fuel : Nat) :
