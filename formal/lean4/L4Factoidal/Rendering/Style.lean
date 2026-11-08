@@ -1,5 +1,6 @@
 import L4Factoidal.Rendering.Scene
 import L4Factoidal.DOM.OfHtml
+import L4Factoidal.Unicode.Bidi
 import Std.Data.TreeMap
 
 /-! Computed styles for an explicitly bounded CSS block/inline profile.
@@ -52,8 +53,17 @@ inductive VerticalAlign where | baseline | top | middle | bottom
 /-- CSS Images 3 §5.5 `object-fit`: how a replaced element's content fills its box. -/
 inductive ObjectFit where | fill | contain | cover | none | scaleDown
   deriving Repr, BEq
-/-- CSS Text 3 §6.1 `text-align` of this profile; with no bidi, `start` is `left`. -/
-inductive TextAlign where | start | right | center
+/-- CSS Text 3 §6.1 `text-align` of this profile. `start` and `end_` (`end`)
+follow `direction`; `left` and `right` do not. -/
+inductive TextAlign where | start | right | center | left | end_
+  deriving Repr, BEq
+/-- CSS Writing Modes 3 §2.1 `direction` (inherited). -/
+inductive Direction where | ltr | rtl
+  deriving Repr, BEq
+/-- CSS Writing Modes 3 §2.2 `unicode-bidi` (not inherited): how an inline box
+takes part in the Unicode Bidirectional Algorithm (§2.4.2 gives the bidi
+control characters of each value). -/
+inductive UnicodeBidi where | normal | embed | isolate | bidiOverride | isolateOverride | plaintext
   deriving Repr, BEq
 /-- CSS Backgrounds 3 §4.2 line styles of this profile. -/
 inductive BorderStyle where | none | solid | inset | outset
@@ -99,6 +109,10 @@ structure Computed where
   objectFit : ObjectFit := .fill
   /-- `text-align` (inherited): where the lines of a block container sit. -/
   textAlign : TextAlign := .start
+  /-- `direction` (inherited), from CSS or the HTML `dir` attribute. -/
+  direction : Direction := .ltr
+  /-- `unicode-bidi` (not inherited). -/
+  unicodeBidi : UnicodeBidi := .normal
   /-- `margin-left: auto` and `margin-right: auto` (CSS 2.1 §10.3.3): the used margin
   takes the room a block-level box leaves; `margin` holds 0 on such a side. -/
   autoMarginLeft : Bool := false
@@ -116,7 +130,8 @@ def htmlProperties : List String :=
    "line-height","visibility","overflow","text-decoration","text-decoration-line",
    "border","border-width","border-style","border-color",
    "border-spacing","border-collapse","caption-side","vertical-align","table-layout",
-   "min-width","max-width","min-height","max-height","object-fit","text-align"]
+   "min-width","max-width","min-height","max-height","object-fit","text-align",
+   "direction","unicode-bidi"]
 
 /-- CSS Backgrounds 3 §4.3: the computed border width is 0 when the style is none. -/
 def Computed.borderEdges (s : Computed) : Edges :=
@@ -462,10 +477,24 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with left := 0}, autoMarginLeft := true}
     return {s with margin := {s.margin with left := ← edgePixel d.value}, autoMarginLeft := false}
   | "text-align" => match (trim d.value).toLower with
-    | "left" | "start" => return {s with textAlign := .start}
-    | "right" | "end" => return {s with textAlign := .right}
+    | "start" => return {s with textAlign := .start}
+    | "left" => return {s with textAlign := .left}
+    | "right" => return {s with textAlign := .right}
+    | "end" => return {s with textAlign := .end_}
     | "center" => return {s with textAlign := .center}
     | _ => throw "unsupported CSS text-align"
+  | "direction" => match (trim d.value).toLower with
+    | "ltr" => return {s with direction := .ltr}
+    | "rtl" => return {s with direction := .rtl}
+    | _ => throw "unsupported CSS direction"
+  | "unicode-bidi" => match (trim d.value).toLower with
+    | "normal" => return {s with unicodeBidi := .normal}
+    | "embed" => return {s with unicodeBidi := .embed}
+    | "isolate" => return {s with unicodeBidi := .isolate}
+    | "bidi-override" => return {s with unicodeBidi := .bidiOverride}
+    | "isolate-override" => return {s with unicodeBidi := .isolateOverride}
+    | "plaintext" => return {s with unicodeBidi := .plaintext}
+    | _ => throw "unsupported CSS unicode-bidi"
   | "padding-top" => return {s with padding := {s.padding with top := ← edgePixel d.value}}
   | "padding-right" => return {s with padding := {s.padding with right := ← edgePixel d.value}}
   | "padding-bottom" => return {s with padding := {s.padding with bottom := ← edgePixel d.value}}
@@ -592,6 +621,29 @@ private def startMargin (tag : String) (size : Float) : Edges :=
 private def headingScale : String → Float
   | "h1" => 2 | "h2" => 1.5 | "h3" => 1.17 | "h5" => 0.83 | "h6" => 0.67 | _ => 1
 
+/-- HTML §3.2.6.4 `dir=auto`: the direction of the first character of bidi class
+L, R or AL in the element's text, skipping `bdi`, `script`, `style` and
+`textarea` elements and elements with their own `dir`; left to right if there is
+none. One pass over a work list, at most the size of the arena. -/
+def autoDirection (dom : Dom) (id : Nat) : Direction := Id.run do
+  let mut pending : List Nat := (dom.get id).kids.toList
+  for _ in [:dom.size+1] do
+    match pending with
+    | [] => return .ltr
+    | k::rest =>
+      let n := dom.get k
+      pending := rest
+      if n.type == .text then
+        for c in n.data.toList do
+          match Unicode.bidiClassOf c with
+          | .L => return .ltr
+          | .R | .AL => return .rtl
+          | _ => pure ()
+      else if n.type == .element && !["bdi","script","style","textarea"].contains n.lname &&
+          !hasAttribute n "dir" then
+        pending := n.kids.toList ++ pending
+  return .ltr
+
 /-- The HTML rendering section's display for table elements (HTML §15.3.8). -/
 private def tableDisplay : String → Display
   | "table" => .table | "caption" => .tableCaption | "thead" => .tableHeaderGroup
@@ -715,7 +767,18 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
     margin := startMargin n.lname fontSize,
     borderSpacingX := parent.borderSpacingX, borderSpacingY := parent.borderSpacingY,
     borderCollapse := parent.borderCollapse, captionBottom := parent.captionBottom,
-    textAlign := parent.textAlign}
+    textAlign := parent.textAlign, direction := parent.direction}
+  -- HTML §3.2.6.4 and §15.3.5: the `dir` attribute sets `direction` and isolates the
+  -- element; `bdi` isolates, and `bdo` overrides with isolation. Author CSS wins.
+  if n.ns == some DOM.htmlNS || n.ns.isNone then
+    let dirAttr := (attrValue n "dir").toLower
+    if dirAttr == "rtl" then initial := {initial with direction := .rtl}
+    else if dirAttr == "ltr" then initial := {initial with direction := .ltr}
+    else if dirAttr == "auto" || (n.lname == "bdi" && !hasAttribute n "dir") then
+      initial := {initial with direction := autoDirection dom id}
+    if n.lname == "bdo" then initial := {initial with unicodeBidi := .isolateOverride}
+    else if ["rtl","ltr","auto"].contains dirAttr || n.lname == "bdi" then
+      initial := {initial with unicodeBidi := .isolate}
   if n.ns == some DOM.htmlNS || n.ns.isNone then initial := replacedHints n (tableHints dom id initial parent)
   -- SVG presentation attributes have lower priority than author CSS.
   -- These properties affect HTML layout/inheritance, so compute them here.
@@ -787,7 +850,7 @@ def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1)
         display := .inline, width := .auto, height := .auto,
         margin := {}, padding := {}, background := none, clipOverflow := false,
         borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
-        autoMarginLeft := false, autoMarginRight := false}
+        autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal}
       styles := styles.set! id style
       pending := n.kids.toList ++ rest
   throw "DOM style traversal exceeds arena bound"

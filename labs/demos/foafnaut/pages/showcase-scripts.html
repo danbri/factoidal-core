@@ -40,9 +40,9 @@ td.bad{background:#c4455a;color:white;font-size:12px;width:64px}
 <table>
 <tr><td class="fb">Draws</td><td><p class="name">Armenian, 11 of 11, from the fallback font Noto Sans Armenian</p>
 <p class="sample" lang="hy">Բարեւ աշխարհ</p></td></tr>
-<tr><td class="fb">Draws</td><td><p class="name">Arabic, 12 of 12, Noto Sans Arabic; not yet joined or right to left</p>
+<tr><td class="fb">Draws</td><td><p class="name">Arabic, 12 of 12, Noto Sans Arabic; letters joined, right to left</p>
 <p class="sample" lang="ar" dir="rtl">مرحبا بالعالم</p></td></tr>
-<tr><td class="fb">Draws</td><td><p class="name">Hebrew, 8 of 8, Noto Sans Hebrew; not yet right to left</p>
+<tr><td class="fb">Draws</td><td><p class="name">Hebrew, 8 of 8, Noto Sans Hebrew; right to left</p>
 <p class="sample" lang="he" dir="rtl">שלום עולם</p></td></tr>
 <tr><td class="fb">Draws</td><td><p class="name">Devanagari, 21 of 22 from Noto Sans Devanagari (the middle dot from Noto Sans); conjuncts not yet formed</p>
 <p class="sample" lang="hi">नमस्ते दुनिया · क्ष त्र ज्ञ</p></td></tr>
@@ -66,26 +66,26 @@ td.bad{background:#c4455a;color:white;font-size:12px;width:64px}
 <p class="sample">∑ ∫ √ ∞ ≠ ≤ ≥ → ⇒ ∀ ∃ ∈ ∅ ℕ ℝ</p></td></tr>
 </table>
 <h2>Right to left and mixed direction</h2>
-<p>In a browser, each <code>dir="rtl"</code> line below starts at the right edge, and its words run from
+<p>Each <code>dir="rtl"</code> line below starts at the right edge, and its words run from
 right to left. Latin words and numbers inside it keep their own left-to-right order (the Unicode
-Bidirectional Algorithm, UAX 9). Here the Hebrew and Arabic letters come from fallback fonts but run left to right, so the order of the
-Latin words and numbers shows what the engine does.</p>
+Bidirectional Algorithm, UAX 9), as in a browser. Lean finds the levels, reorders each line and
+shapes each run in its direction; the Hebrew and Arabic letters come from fallback fonts.</p>
 <table>
-<tr><td class="bad">Not yet</td><td><p class="name">A Hebrew paragraph, dir="rtl"</p>
+<tr><td class="fb">Draws</td><td><p class="name">A Hebrew paragraph, dir="rtl"</p>
 <p class="sample rtl" dir="rtl" lang="he">שלום עולם, זה עמוד בדיקה.</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Latin and a number inside Hebrew, dir="rtl"</p>
+<tr><td class="fb">Draws</td><td><p class="name">Latin and a number inside Hebrew, dir="rtl"</p>
 <p class="sample rtl" dir="rtl" lang="he">התוכנה foafnaut כתובה ב-Lean 4 משנת 2026.</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Hebrew inside an English line, dir="ltr"</p>
+<tr><td class="fb">Draws</td><td><p class="name">Hebrew inside an English line, dir="ltr"</p>
 <p class="sample" lang="en">The Hebrew word שלום means peace, and the Arabic word سلام too.</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Arabic with Arabic-Indic digits, dir="rtl"</p>
+<tr><td class="fb">Draws</td><td><p class="name">Arabic with Arabic-Indic digits, dir="rtl"</p>
 <p class="sample rtl" dir="rtl" lang="ar">السعر ١٢٣٫٤٥ دينار</p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">Latin text in a bdo element with dir="rtl": a browser draws it reversed</p>
+<tr><td class="ok">Draws</td><td><p class="name">Latin text in a bdo element with dir="rtl": a browser draws it reversed</p>
 <p class="sample"><bdo dir="rtl">Lean draws this text</bdo></p></td></tr>
-<tr><td class="bad">Not yet</td><td><p class="name">An English line with dir="rtl": a browser puts the full stop at the left end</p>
+<tr><td class="ok">Draws</td><td><p class="name">An English line with dir="rtl": a browser puts the full stop at the left end</p>
 <p class="sample rtl" dir="rtl">Hello, world.</p></td></tr>
 </table>
 <div class="about">
 <p>One line per writing system; each count is the sample's characters that the font maps. Fallback fonts (<a href="https://github.com/danbri/factoidal/issues/1274">issue 1274</a>) are fetched only for a page that needs them.</p>
-<p>Not yet: bidirectional layout and right-to-left shaping (<a href="https://github.com/danbri/factoidal/issues/1275">issue 1275</a>), so Arabic letters are unjoined and right-to-left text runs left to right; Indic conjuncts, which need the Indic shaper.</p>
+<p>Right to left (<a href="https://github.com/danbri/factoidal/issues/1275">issue 1275</a>): Lean shapes Arabic with its joining forms, as HarfBuzz's Arabic shaper does, and lays out bidirectional text by UAX 9. Not yet: Indic conjuncts and vowel-sign reordering, which need the Indic shaper.</p>
 </div>
 </main></body></html>

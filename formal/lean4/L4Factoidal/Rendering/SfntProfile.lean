@@ -321,10 +321,14 @@ def profile (fonts : Array Font) (memo : Memo) : Except String Layout.FontProfil
         let word ← wordIn fonts text px
         pure (if px < flatBelow then flatWord word else word)
     return {word with pixelSize := px}
+  -- A word in a direction other than its script's (bidi levels in layout) is not in the memo.
+  let shapedWordDir := fun (text : String) (px : Nat) (rtl : Bool) => do
+    let word ← wordIn fonts text px (some rtl)
+    return {(if px < flatBelow then flatWord word else word) with pixelSize := px}
   return {
     family := f.family,unitsPerEm := space.unitsPerEm,advance := 0,ascent := space.ascent,
     descent := space.descent,outline := fun _ => [],admits := fun _ => false,cssFamilies := [f.family],
     fontSha256 := some f.sha256,faceIndex := f.faceIndex,scalable := true,
-    shapedWord := some shapedWord}
+    shapedWord := some shapedWord,shapedWordDir := some shapedWordDir}
 
 end L4Factoidal.Rendering.SfntProfile

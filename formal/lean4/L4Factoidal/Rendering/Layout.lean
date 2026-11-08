@@ -1,10 +1,23 @@
 import L4Factoidal.Rendering.Style
 import L4Factoidal.Rendering.FontFace
 import L4Factoidal.Rendering.TableLayout
+import L4Factoidal.Unicode.ScriptDirection
 
 /-! Block flow and inline word wrapping over the existing DOM arena. This
-profile excludes floats, positioning, bidi, flex/grid, margin collapse and
-inline box decorations. Those features are refused rather than approximated. -/
+profile excludes floats, positioning, flex/grid, margin collapse and inline box
+decorations. Those features are refused rather than approximated.
+
+Bidirectional text (UAX #9, `Unicode.Bidi`; https://github.com/danbri/factoidal/issues/1275):
+the paragraph direction is the block container's `direction` (from CSS or the HTML
+`dir` attribute; `unicode-bidi: plaintext` takes it from the first strong character).
+An inline box with `unicode-bidi` (an element with `dir`, `bdi`, `bdo`) adds the bidi
+control characters of CSS Writing Modes 3 §2.4.2 around its content. Each word is cut
+where its resolved level changes, and each piece is shaped in the direction of its
+level. Lines break as before, never inside a word; each line is then reordered by
+rule L1 and L2 (`Unicode.reorderByLevels`) by moving its items, which stay in logical
+order in the result, so selection and hit testing read glyph runs in document order.
+`text-align: start` and `end` follow the direction. A block with no right-to-left
+character, no bidi control and direction ltr takes none of this path. -/
 namespace L4Factoidal.Rendering.Layout
 open DOM CSS
 
@@ -23,6 +36,10 @@ structure FontProfile where
   faceIndex : Nat := 0
   /-- A pure lookup of externally shaped, checked font data, never host layout. -/
   shapedWord : Option (String → Nat → Except String FontProvider.Word) := none
+  /-- The same, shaped right to left (`true`) or left to right: for a piece of text
+  whose bidi level is not the direction of its script (`shapedWord` takes the
+  script's direction). With none, `shapedWord` serves. -/
+  shapedWordDir : Option (String → Nat → Bool → Except String FontProvider.Word) := none
   /-- Outlines scale to any size, so a fractional size is not refused. -/
   scalable : Bool := false
 
@@ -32,14 +49,20 @@ def FontProfile.ofFace (face : FontProvider.Face) : FontProfile :=
    cssFamilies := [face.family],fontSha256 := some face.fontSha256,faceIndex := face.faceIndex,
    shapedWord := some face.lookup}
 
-private def FontProfile.word (font : FontProfile) (style : Computed) (text : String) : Except String (Option FontProvider.Word) := do
+/-- A word shaped by the font. `rtl`: the direction of its bidi level, when that is
+not the direction of its script (see `shapedWordDir`). -/
+private def FontProfile.word (font : FontProfile) (style : Computed) (text : String)
+    (rtl : Option Bool := none) : Except String (Option FontProvider.Word) := do
   match font.shapedWord with
   | none => return none
   | some shape =>
     let size := if font.scalable then max 1 (min 512 style.fontSize.round.toUInt32.toNat) else style.fontSize.toUInt32.toNat
     if !font.scalable && (Float.ofNat size != style.fontSize || size == 0 || size > 512) then
       throw "unsupported shaped font size: integer pixels 1 to 512 required"
-    let word ← shape text size
+    let word ← match rtl, font.shapedWordDir with
+      | some r, some shapeDir =>
+        if r == Unicode.ScriptDirection.guessRtl text then shape text size else shapeDir text size r
+      | _, _ => shape text size
     if word.text != text || word.pixelSize != size || font.fontSha256 != some word.fontSha256 ||
         word.faceIndex != font.faceIndex || word.family != font.family ||
         word.unitsPerEm != font.unitsPerEm || word.ascent != font.ascent || word.descent != font.descent then
@@ -266,7 +289,11 @@ inductive Inline where
   /-- Bounds of an `inline-block` in the flat list that `inlineItems` gives. -/
   | openAtomic (source : Nat) (style : Computed)
   | closeAtomic
+  /-- A bidi control character that an inline box with `unicode-bidi` adds (CSS
+  Writing Modes 3 §2.4.2): no width, no paint. -/
+  | bidiMark (c : Char)
   deriving Repr
+instance : Inhabited Inline := ⟨.closeAtomic⟩
 
 private def textItems (id : Nat) (style : Computed) (text : String) : List Inline := Id.run do
   let mut result : List Inline := []
@@ -317,6 +344,27 @@ private def withBackground (s : Computed) : Inline → Inline
   | .space id t => if t.background.isNone then .space id {t with background := s.background} else .space id t
   | other => other
 
+/-- CSS Writing Modes 3 §2.4.2: the bidi control characters at the start of an
+inline box with `unicode-bidi`, and at its end. -/
+def bidiOpen (s : Computed) : Array Char :=
+  let rtl := s.direction == .rtl
+  let iso := if rtl then '\u2067' else '\u2066'
+  let emb := if rtl then '\u202B' else '\u202A'
+  let ovr := if rtl then '\u202E' else '\u202D'
+  match s.unicodeBidi with
+  | .normal => #[]
+  | .embed => #[emb]
+  | .isolate => #[iso]
+  | .bidiOverride => #[ovr]
+  | .isolateOverride => #[iso, ovr]
+  | .plaintext => #['\u2068']
+def bidiClose (s : Computed) : Array Char :=
+  match s.unicodeBidi with
+  | .normal => #[]
+  | .embed | .bidiOverride => #['\u202C']
+  | .isolate | .plaintext => #['\u2069']
+  | .isolateOverride => #['\u202C', '\u2069']
+
 /-- Inline descendants are flattened in DOM order; the nesting budget is a
 profile error, never a silent truncation. Siblings use a fold. The recursive
 call receives the predecessor `fuel`; the compiled sibling fold is a loop.
@@ -351,12 +399,14 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
       return #[.replaced id s ow oh nodes]
     -- A block inside an inline (old pages often have one) breaks the line around it.
     -- An inline-block is one atomic box: `atomize` lays out what is between its bounds.
+    -- An inline box with `unicode-bidi` is wrapped in its bidi control characters.
     let mut out : Array Inline := if s.display.isBlockLevel then #[.lineBreak s]
-      else if s.display == .inlineBlock then #[.openAtomic id s] else #[]
+      else if s.display == .inlineBlock then #[.openAtomic id s]
+      else (bidiOpen s).map .bidiMark
     for child in n.kids do out := out ++ (← inlineItems dom styles embedding pictures available fuel child)
     if s.display == .inline && s.background.isSome then out := out.map (withBackground s)
     return if s.display.isBlockLevel then out.push (.lineBreak s)
-      else if s.display == .inlineBlock then out.push .closeAtomic else out
+      else if s.display == .inlineBlock then out.push .closeAtomic else out ++ (bidiClose s).map .bidiMark
 
 private def translate (x y : Float) : Transform := ⟨1,0,0,1,x,y⟩
 private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Array Node := Id.run do
@@ -376,9 +426,9 @@ private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Ar
     out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
   return out
 
-private def itemWidth (font : FontProfile) : Inline → Except String Float
+private def itemWidth (font : FontProfile) (rtl : Option Bool := none) : Inline → Except String Float
   | .word _ s text _ => do
-    match ← font.word s text with
+    match ← font.word s text rtl with
     | none => return font.advance*s.fontSize/font.unitsPerEm*Float.ofNat text.length
     | some word => return word.advance*s.fontSize/font.unitsPerEm
   | .replaced _ _ w _ _ | .atomic _ w _ _ => pure w
@@ -416,7 +466,7 @@ private def textBackground (font : FontProfile) (source : Nat) (s : Computed) (x
 /-- All inline participants share the line baseline, computed before any glyph
 position or replaced-element position is emitted. -/
 private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
-    (x y : Float) (strut : Option Computed) : Except String Result := do
+    (x y : Float) (strut : Option Computed) (dirs : Array (Option Bool) := #[]) : Except String Result := do
   let mut ascent : Float := 0
   let mut descent : Float := 0
   let mut tallTop : Float := 0
@@ -440,19 +490,21 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       | .top => tallTop := max tallTop h
       | .bottom => tallBottom := max tallBottom h
     | .atomic _ _ h _ => ascent := max ascent h
-    | .openAtomic _ _ | .closeAtomic => pure ()
+    | .openAtomic _ _ | .closeAtomic | .bidiMark _ => pure ()
   -- A box aligned to the top or bottom of the line makes the line tall enough for it.
   if tallBottom > ascent+descent then ascent := tallBottom-descent
   if tallTop > ascent+descent then descent := tallTop-ascent
   let mut out : Result := {height := ascent+descent}
-  for (offset,item) in items do
+  for k in [0:items.size] do
+    let (offset,item) := items[k]!
+    let rtl := dirs[k]?.getD none
     match item with
     | .word source s text start =>
       let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm
       let leading := lineLeading font s
       if s.background.isSome then
-        out := {out with nodes := out.nodes ++ textBackground font source s (x+offset) top (← itemWidth font item)}
-      match ← font.word s text with
+        out := {out with nodes := out.nodes ++ textBackground font source s (x+offset) top (← itemWidth font rtl item)}
+      match ← font.word s text rtl with
       | none =>
         -- A character this font has no glyph for shows as a question mark.
         let chars := text.toList.map fun c => if font.admits c.toNat then c else '?'
@@ -504,21 +556,137 @@ private def preformatted : Inline → Bool
   | .word _ s _ _ => s.preformatted
   | _ => false
 
+/-- The characters an item stands for in its paragraph, for UAX #9: a forced line
+break is a paragraph separator, a replaced or atomic box an object replacement
+character (CSS Writing Modes 3 §2.4.1). -/
+private def bidiChars : Inline → Array Char
+  | .word _ _ text _ => text.toList.toArray
+  | .space _ _ => #[' ']
+  | .lineBreak _ => #[' ']
+  | .replaced .. | .atomic .. => #['￼']
+  | .bidiMark c => #[c]
+  | .openAtomic _ _ | .closeAtomic => #[]
+
+/-- A class that makes a block take the bidi path: right-to-left letters, Arabic
+digits and the explicit formatting characters. -/
+private def bidiClassNeeds (c : Char) : Bool :=
+  match Unicode.bidiClassOf c with
+  | .R | .AL | .AN | .LRE | .LRO | .RLE | .RLO | .PDF | .LRI | .RLI | .FSI | .PDI => true
+  | _ => false
+
+/-- The block needs UAX #9: it is right to left or plaintext, or has an inline box
+with `unicode-bidi`, or a character of `bidiClassNeeds`. Otherwise every level is 0
+and the order is logical (`Unicode.reorderByLevels_even`). -/
+def needsBidi (rtl plain : Bool) (items : Array Inline) : Bool :=
+  rtl || plain || items.any fun
+    | .bidiMark _ => true
+    | .word _ _ text _ => text.any bidiClassNeeds
+    | _ => false
+
+/-- Items with their resolved levels: words cut where the level changes, the level
+of each item, whether it continues the word before it (no break opportunity), and
+its paragraph level. -/
+structure BidiItems where
+  items : Array Inline
+  levels : Array Nat
+  glue : Array Bool
+  paraLevels : Array Nat
+
+/-- UAX #9 P1 to I2 over the items of a block (`Unicode.levelsOfText`). A character
+that X9 removes takes the level before it. -/
+def bidiItems (items : Array Inline) (paraDir : Unicode.ParaDir) : BidiItems := Id.run do
+  let mut cs : Array Char := #[]
+  let mut starts : Array Nat := #[]
+  for it in items do
+    starts := starts.push cs.size
+    cs := cs ++ bidiChars it
+  let mut lv : Array Nat := Array.replicate cs.size 0
+  let mut pl : Array Nat := Array.replicate cs.size 0
+  for ((a, b), lvs, p) in Unicode.levelsOfText cs paraDir do
+    let mut last := p
+    for k in [0:b-a] do
+      let l := (lvs[k]?.getD none).getD last
+      lv := lv.set! (a+k) l
+      pl := pl.set! (a+k) p
+      last := l
+  let mut out : BidiItems := ⟨#[], #[], #[], #[]⟩
+  for i in [0:items.size] do
+    let st := starts[i]!
+    let para := pl[st]?.getD (pl.back?.getD 0)
+    match items[i]! with
+    | .word source s text start =>
+      let chars := text.toList.toArray
+      let mut from_ := 0
+      for k in [1:chars.size+1] do
+        if k == chars.size || lv[st+k]! != lv[st+from_]! then
+          out := {items := out.items.push (.word source s (String.ofList (chars.extract from_ k).toList) (start+from_)),
+                  levels := out.levels.push lv[st+from_]!, glue := out.glue.push (from_ > 0),
+                  paraLevels := out.paraLevels.push para}
+          from_ := k
+    | other =>
+      out := {items := out.items.push other, levels := out.levels.push (lv[st]?.getD para),
+              glue := out.glue.push false, paraLevels := out.paraLevels.push para}
+  return out
+
+/-- UAX #9 L1 and L2 for one line of `line` (offsets in logical order, the line
+`lineEnd` wide), whose items have `levels` and paragraph levels `paras`: trailing
+spaces, the line break and trailing bidi controls get the paragraph level, then
+each item moves to its place in visual order. Items stay in logical order; each
+gets its new offset and its direction (odd level: right to left). -/
+def bidiLine (line : Array (Float × Inline)) (levels paras : Array Nat) (lineEnd : Float) :
+    Array (Float × Inline) × Array (Option Bool) := Id.run do
+  let n := line.size
+  let mut ls := levels
+  for q in [0:n] do
+    let j := n-1-q
+    match line[j]!.2 with
+    | .space _ _ | .lineBreak _ | .bidiMark _ => ls := ls.set! j (paras[j]?.getD 0)
+    | _ => break
+  let order := Unicode.reorderByLevels (Array.range n) ls
+  let width := fun (j : Nat) => (if j+1 < n then line[j+1]!.1 else lineEnd) - line[j]!.1
+  let mut xs : Array Float := Array.replicate n 0
+  let mut pen : Float := 0
+  for j in order do
+    xs := xs.set! j pen
+    pen := pen+width j
+  return ((Array.range n).map fun j => (xs[j]!, line[j]!.2), ls.map fun l => some (l % 2 == 1))
+
 /-- Word wrapping constructs line participants first. The font profile and
-positioned glyph runs are consumed to paint the actual word geometry. -/
-def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Float)
+positioned glyph runs are consumed to paint the actual word geometry. With bidi
+(`needsBidi`), words are cut by level first, a word's pieces stay on one line, and
+each line is reordered (`bidiLine`). -/
+def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : Float)
     (strut : Option Computed := none) : Except String Result := do
+  let rtlBlock := strut.any (·.direction == .rtl)
+  let plain := strut.any (·.unicodeBidi == .plaintext)
+  let bidi := needsBidi rtlBlock plain items0
+  let bi : BidiItems := if bidi then bidiItems items0 (if plain then .auto else if rtlBlock then .rtl else .ltr)
+    else ⟨items0, #[], #[], #[]⟩
+  let items := bi.items
+  let dirOf := fun (k : Nat) => if bidi then (bi.levels[k]?.map (· % 2 == 1)) else none
+  let glued := fun (k : Nat) => bi.glue[k]?.getD false
   -- CSS Text 3 §6.1 `text-align` of the block container (`strut`): a line `w` wide starts
-  -- this far in. A line wider than the room starts at the left edge.
+  -- this far in; `start` and `end` follow the direction. A line wider than the room
+  -- starts at the left edge.
+  let rtlAlign := if plain then (bi.paraLevels[0]?.getD 0) % 2 == 1 else rtlBlock
   let indent := fun (w : Float) => match (strut.map (·.textAlign)).getD .start with
-    | .start => 0
+    | .start => if rtlAlign then max 0 (available-w) else 0
+    | .end_ => if rtlAlign then 0 else max 0 (available-w)
+    | .left => 0
     | .right => max 0 (available-w)
     | .center => max 0 ((available-w)/2)
+  -- A finished line: reordered when there is bidi.
+  let place := fun (line : Array (Float × Inline)) (idx : Array Nat) (lineEnd : Float) =>
+    if bidi then bidiLine line (idx.map fun k => bi.levels[k]?.getD 0) (idx.map fun k => bi.paraLevels[k]?.getD 0) lineEnd
+    else (line, #[])
   let mut out : Result := {}
   let mut cursorX : Float := 0
   let mut pendingSpace : Option (Nat × Computed) := none
+  let mut pendingK : Nat := 0
   let mut line : Array (Float × Inline) := #[]
-  for item in items do
+  let mut lineIdx : Array Nat := #[]
+  for k in [0:items.size] do
+    let item := items[k]!
     match item with
     | .space source s =>
       if s.preformatted then
@@ -526,35 +694,67 @@ def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Fl
         if let some (source,s) := pendingSpace then
           if cursorX > 0 then
             line := line.push (cursorX,.space source s)
+            lineIdx := lineIdx.push pendingK
             cursorX := cursorX+(← spaceWidth font s)
         line := line.push (cursorX,item)
+        lineIdx := lineIdx.push k
         cursorX := cursorX+(← spaceWidth font s)
         pendingSpace := none
-      else pendingSpace := some (source,s)
+      else
+        pendingSpace := some (source,s)
+        pendingK := k
+    | .bidiMark _ =>
+      -- No width and no break: a space before it is placed first, to keep logical order.
+      if let some (source,s) := pendingSpace then
+        if cursorX > 0 then
+          line := line.push (cursorX,.space source s)
+          lineIdx := lineIdx.push pendingK
+          cursorX := cursorX+(← spaceWidth font s)
+        pendingSpace := none
+      line := line.push (cursorX,item)
+      lineIdx := lineIdx.push k
     | .lineBreak _ =>
-      let row ← lineLayout font (line.push (cursorX,item)) (x+indent cursorX) (y+out.height) strut
+      let (row,dirs) := place (line.push (cursorX,item)) (lineIdx.push k) cursorX
+      let row ← lineLayout font row (x+indent cursorX) (y+out.height) strut dirs
       out := appendResult out {row with height := if row.height > 0 then row.height else 19.2}
       line := #[]
+      lineIdx := #[]
       cursorX := 0
       pendingSpace := none
     | _ =>
-      let width ← itemWidth font item
+      let width ← itemWidth font (dirOf k) item
+      -- The pieces of a word cut by bidi levels go on one line together.
+      let mut whole := width
+      if bidi && !glued k then
+        let mut j := k+1
+        for _ in [0:items.size] do
+          if j < items.size && glued j then
+            whole := whole+(← itemWidth font (dirOf j) items[j]!)
+            j := j+1
+          else break
       let gap ← if cursorX > 0 then match pendingSpace with
         | some (_,s) => spaceWidth font s
         | none => pure 0
         else pure 0
-      if cursorX > 0 && cursorX+gap+width > available && !preformatted item then
-        out := appendResult out (← lineLayout font line (x+indent cursorX) (y+out.height) strut)
+      if cursorX > 0 && cursorX+gap+whole > available && !preformatted item && !glued k then
+        let (row,dirs) := place line lineIdx cursorX
+        out := appendResult out (← lineLayout font row (x+indent cursorX) (y+out.height) strut dirs)
         line := #[]
+        lineIdx := #[]
         cursorX := 0
       else
         if gap > 0 then
-          if let some (source,s) := pendingSpace then line := line.push (cursorX,.space source s)
+          if let some (source,s) := pendingSpace then
+            line := line.push (cursorX,.space source s)
+            lineIdx := lineIdx.push pendingK
         cursorX := cursorX+gap
       line := line.push (cursorX,item)
+      lineIdx := lineIdx.push k
       cursorX := cursorX+width
       pendingSpace := none
-  if !line.isEmpty then out := appendResult out (← lineLayout font line (x+indent cursorX) (y+out.height) strut)
+  if !line.isEmpty then
+    let (row,dirs) := place line lineIdx cursorX
+    out := appendResult out (← lineLayout font row (x+indent cursorX) (y+out.height) strut dirs)
   return out
 
 private def append (a b : Result) : Result :=
@@ -570,10 +770,12 @@ private def atomicBox (font : FontProfile) (id : Nat) (s : Computed) (items : Ar
   let m := s.margin
   let room := max 0 (available-m.left-m.right-b.left-b.right-p.left-p.right)
   let fixed := CSS.resolve available s.width
-  let content ← inlineLayout font items 0 0 (fixed.getD room) (some {s with textAlign := .start})
+  let content ← inlineLayout font items 0 0 (fixed.getD room) (some {s with textAlign := .left})
   let used := fixed.getD (content.boxes.foldl (fun w box => max w (box.x+box.width)) 0)
   -- Lines are aligned in the width the box has (`text-align`), once it is known.
-  let content ← if s.textAlign == .start then pure content else inlineLayout font items 0 0 used (some s)
+  let leftAligned := s.textAlign == .left || (s.textAlign == .start && s.direction == .ltr) ||
+    (s.textAlign == .end_ && s.direction == .rtl)
+  let content ← if leftAligned then pure content else inlineLayout font items 0 0 used (some s)
   let height := match s.height with
     | .percent _ => content.height
     | _ => max 0 ((CSS.resolve 0 s.height).getD content.height)

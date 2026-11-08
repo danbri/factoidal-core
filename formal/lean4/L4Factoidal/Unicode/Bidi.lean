@@ -506,21 +506,20 @@ where
         go (a.swap i j (by omega) h.2) (i + 1) (j - 1) f
       else a
 
-/-- L2: the visual order, left to right, of the characters that have a
-level; the input is the output of `levels`. From the highest level down to
-the lowest odd level, every maximal run at that level or higher is
-reversed. -/
-def visualOrder (lv : Array (Option Nat)) : Array Nat := Id.run do
-  let mut ord : Array Nat := #[]
-  let mut ls : Array Nat := #[]
-  for i in [0:lv.size] do
-    match lv[i]! with
-    | some l => ord := ord.push i; ls := ls.push l
-    | none => pure ()
-  let m := ord.size
+/-- The lowest odd level of `ls`, or `start` when it has none below it. -/
+def lowestOdd (ls : Array Nat) (start : Nat) : Nat :=
+  ls.foldl (fun acc l => if l % 2 == 1 then min acc l else acc) start
+
+/-- L2 over positions `ord` with levels `ls` (the same size): from the highest
+level down to the lowest odd level, every maximal run at that level or higher
+is reversed. With no odd level, nothing moves. -/
+def reorderByLevels (ord ls : Array Nat) : Array Nat :=
   let hi := ls.foldl max 0
-  let lowOdd := ls.foldl (fun acc l => if l % 2 == 1 then min acc l else acc) (hi + 1)
-  if lowOdd > hi then return ord
+  if lowestOdd ls (hi + 1) > hi then ord else Id.run do
+  let m := ord.size
+  let lowOdd := lowestOdd ls (hi + 1)
+  let mut ord := ord
+  let mut ls := ls
   for s in [0:hi - lowOdd + 1] do
     let cur := hi - s
     let mut start := 0
@@ -533,6 +532,17 @@ def visualOrder (lv : Array (Option Nat)) : Array Nat := Id.run do
           ls := revRange ls start k
           inRun := false
   pure ord
+
+/-- L2: the visual order, left to right, of the characters that have a
+level; the input is the output of `levels` (`reorderByLevels`). -/
+def visualOrder (lv : Array (Option Nat)) : Array Nat := Id.run do
+  let mut ord : Array Nat := #[]
+  let mut ls : Array Nat := #[]
+  for i in [0:lv.size] do
+    match lv[i]! with
+    | some l => ord := ord.push i; ls := ls.push l
+    | none => pure ()
+  pure (reorderByLevels ord ls)
 
 /-- `levels` over code points: the classes from `bidiClassOf`, the bracket
 information from BidiBrackets.txt. -/

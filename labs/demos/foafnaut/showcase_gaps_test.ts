@@ -104,11 +104,21 @@ Deno.test("expected failure, issue 1274: Hebrew, Arabic, Devanagari, Thai and CJ
     assert.ok(ids(run(`<p>${text}</p>`,text)).every(id=>id!==0),text);
 });
 
-Deno.test("expected failure, issue 1275: dir=rtl is ignored",()=>{
-  // Latin, so the font has the glyphs: a right-to-left paragraph should start at the right edge.
+Deno.test("issue 1275: dir=rtl starts at the right edge, and right-to-left words run right to left",()=>{
+  // Latin keeps its own left-to-right order inside a right-to-left paragraph (UAX #9),
+  // and the line starts at the right edge.
   const body="<p dir='rtl'>first second</p>";
-  assert.ok(left(run(body,"first"))<left(run(body,"second")),stillGap("1275"));
-  assert.ok(left(run(body,"first"))<100,stillGap("1275"));
+  assert.ok(left(run(body,"first"))<left(run(body,"second")));
+  assert.ok(left(run(body,"first"))>400);
+  // Hebrew words run right to left (Noto Sans has no Hebrew: .notdef boxes, but placed).
+  const hebrew="<p dir='rtl'>שלום עולם</p>";
+  assert.ok(left(run(hebrew,"שלום"))>left(run(hebrew,"עולם")));
+  // The same words in a left-to-right paragraph still run right to left, from the left edge.
+  const inLtr="<p>A שלום עולם B</p>";
+  assert.ok(left(run(inLtr,"שלום"))>left(run(inLtr,"עולם")));
+  assert.ok(left(run(inLtr,"A"))<left(run(inLtr,"עולם")) && left(run(inLtr,"שלום"))<left(run(inLtr,"B")));
+  // text-align:start follows the direction; left does not.
+  assert.ok(left(run("<p dir='rtl' style='text-align:left'>first</p>","first"))<100);
 });
 
 // Issue 1276: with Noto Emoji after Noto Sans, emoji draw in one colour (fallback_fonts_test.ts,

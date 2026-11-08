@@ -14,6 +14,8 @@ structure Cell where
   width : Float
   height : Float
   text : String
+  /-- The glyph is in a right-to-left run: its logical end is its left edge. -/
+  rtl : Bool := false
   deriving Repr, Inhabited
 
 inductive Selection where
@@ -27,24 +29,31 @@ def shift (s : Selection) (top : Float) : Selection :=
   | .all => .all
   | .span ax ay fx fy => .span ax (ay-top) fx (fy-top)
 
-/-- Layout emits runs in document order, one for each word. The clusters of a
-run count characters from the start of its text node, so the first cluster is
-the base of the run text. -/
+/-- Layout emits runs in document (logical) order, one for each word or each piece
+of a word at one bidi level. The clusters of a run count characters from the start
+of its text node, so the lowest cluster is the base of the run text. A right-to-left
+run has its glyphs in drawing order, so its clusters fall along it: its cells are
+taken from the end, so that cells are in logical order
+(https://github.com/danbri/factoidal/issues/1275). -/
 def cells (runs : Array GlyphRun) : Array Cell := Id.run do
   let mut out := #[]
   for (run,index) in runs.zipIdx do
     let chars := run.text.toList
     let base := run.glyphs.foldl (fun low g => min low g.clusterStart)
       ((run.glyphs[0]?).map (·.clusterStart) |>.getD 0)
-    for g in run.glyphs do
+    let rtl := match run.glyphs[0]?, run.glyphs.back? with
+      | some a, some b => a.clusterStart > b.clusterStart
+      | _, _ => false
+    for g in (if rtl then run.glyphs.reverse else run.glyphs) do
       let text := String.ofList ((chars.drop (g.clusterStart-base)).take (g.clusterEnd-g.clusterStart))
-      out := out.push {run:=index,source:=run.source,x:=g.x,y:=g.y,width:=g.advance,height:=run.fontSize,text}
+      out := out.push {run:=index,source:=run.source,x:=g.x,y:=g.y,width:=g.advance,height:=run.fontSize,text,rtl}
   return out
 
 /-- A glyph is before a point when its line is above the point, or when the
-point is on its line and past the middle of the glyph. -/
+point is on its line and past the middle of the glyph in the glyph's direction:
+to its right, or to its left for a right-to-left glyph. -/
 private def Cell.before (c : Cell) (x y : Float) : Bool :=
-  c.y+c.height <= y || (c.y <= y && c.x+c.width/2 <= x)
+  c.y+c.height <= y || (c.y <= y && (if c.rtl then x <= c.x+c.width/2 else c.x+c.width/2 <= x))
 
 /-- The caret position of a point: one past the last glyph before the point. -/
 def caret (items : Array Cell) (x y : Float) : Nat :=
@@ -70,7 +79,7 @@ def text (items : Array Cell) (selection : Selection) : String := Id.run do
   for c in (items.extract low high) do
     if let some p := previous then
       if !sameLine p c then out := out ++ (if p.source == c.source then " " else "\n")
-      else if p.run != c.run && c.x > p.x+p.width+0.5 then out := out ++ " "
+      else if p.run != c.run && (c.x > p.x+p.width+0.5 || p.x > c.x+c.width+0.5) then out := out ++ " "
     out := out ++ c.text
     previous := some c
   return out
@@ -86,7 +95,10 @@ def lineRects (items : Array Cell) (selection : Selection) : Array (Float × Flo
       if sameLine first c then
         let top := min y c.y
         let bottom := max (y+h) (c.y+c.height)
-        out := out.pop.push (x,top,c.x+c.width-x,bottom-top)
+        -- Right-to-left glyphs extend the rectangle to the left.
+        let left := min x c.x
+        let right := max (x+w) (c.x+c.width)
+        out := out.pop.push (left,top,right-left,bottom-top)
       else
         out := out.push (c.x,c.y,c.width,c.height)
         line := some c
@@ -190,6 +202,15 @@ private def sample := cells #[sampleRun 1 "one" 0 0,sampleRun 1 "two" 24 0 4,sam
 #guard text sample (.span 500 500 500 500) == ""
 #guard (lineRects sample .all).size == 3
 #guard (lineRects sample (.span 5 5 5 5)).size == 0
+-- A right-to-left run: glyphs in drawing order, clusters falling. Cells and the selected
+-- text are in logical order, and a drag from the right edge selects from the start.
+private def rtlRun : GlyphRun := ⟨1,"test",10,"abc",#[
+  ({index := 0,x := 0,y := 0,advance := 6,clusterStart := 2,clusterEnd := 3} : Glyph),
+  {index := 0,x := 6,y := 0,advance := 6,clusterStart := 1,clusterEnd := 2},
+  {index := 0,x := 12,y := 0,advance := 6,clusterStart := 0,clusterEnd := 1}]⟩
+#guard text (cells #[rtlRun]) .all == "abc"
+#guard text (cells #[rtlRun]) (.span 18 5 5 5) == "ab"
+#guard (lineRects (cells #[rtlRun]) .all) == #[(0,0,18,10)]
 -- Expected failure, https://github.com/danbri/factoidal/issues/1281: the page selection is
 -- marks over the text only, one rectangle for each line; no glyph is drawn again in
 -- `selectionText`. When the glyphs get the selection text colour, this fails: change it.
