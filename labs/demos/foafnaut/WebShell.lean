@@ -53,6 +53,8 @@ structure Shell where
   /-- The chrome may fold (the classic UI is off): a band then covers the view under the
   strip, so a change of `collapse` needs no new band. -/
   collapsible : Bool := false
+  /-- A back or forward swipe under way (WebGesture.hint): −100 .. 100, negative for back. -/
+  swipe : Int := 0
   deriving Repr, BEq
 
 private structure Theme where
@@ -338,6 +340,27 @@ private def edgeNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.Nod
     if i % 2 == 0 then out := paint t.accent (i*block) y (block-2*unit s) (edge s) :: out
   return out
 
+/-- The hint of a back or forward swipe (WebGesture): a dark tile with the back or forward
+arrow, which comes in from its edge across the navigation row as the swipe goes on, and an
+ink line along the chrome's edge from that side. At 100 the tile is the accent colour:
+lifting the finger now goes. A folded chrome (`collapse` above 0) has room only for the line. -/
+private def swipeNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.Node :=
+  if s.swipe == 0 then [] else
+  let u := unit s
+  let size := 28*u
+  let percent := min 100 s.swipe.natAbs
+  let inset := min (width-min width size) (64*u*percent/100)
+  let back := s.swipe < 0
+  let x := if back then inset else width-size-inset
+  let y := tabRow s width+(navRow s-size)/2
+  let box : Box := {name := "swipe",x,y,w := size,h := size}
+  let done := percent >= 100
+  let lineY := height s width-edge s
+  let fill := width*percent/100
+  (if s.collapse == 0 then [paint (if done then t.accent else t.ink) x y size size] ++
+    iconAt s (if done then t.ink else t.base) (if back then "back" else "forward") box else []) ++
+    [paint t.ink (if back then 0 else width-fill) lineY fill (edge s)]
+
 /-- The controls of the full chrome in theme `t`, with no edge. -/
 private def controlNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.Node := Id.run do
   let u := unit s
@@ -421,12 +444,12 @@ fold, the chrome is shorter (`height`), and the domain shrinks to the middle of 
 and fades in over the second half. -/
 def nodes (s : Shell) (width : Nat) : List Rendering.Node :=
   let t := themeOf s
-  if s.collapse == 0 then controlNodes s t width ++ edgeNodes s t width else
+  if s.collapse == 0 then controlNodes s t width ++ edgeNodes s t width ++ swipeNodes s t width else
   let p := min 100 s.collapse
   let lift := fullHeight s width-height s width
   let slide : Rendering.Transform := ⟨1,0,0,1,0,-(Float.ofNat lift)⟩
   [paint t.base 0 0 width (height s width),.group none slide (controlNodes {s with collapse := 0} (fade t (2*p)) width)] ++
-    domainNodes s t width p ++ edgeNodes s t width
+    domainNodes s t width p ++ edgeNodes s t width ++ swipeNodes s t width
 
 /-- Put a page rendered below the chrome and the chrome into one scene. -/
 def compose (s : Shell) (page : Rendering.Scene) (width height' : Nat) : Rendering.Scene :=
@@ -694,7 +717,9 @@ def Shell.ofJson (j : JSON.Json) : Shell :=
     focused := flag j "focused",canBack := flag j "canBack",canForward := flag j "canForward",
     loading := flag j "loading",scale := max 1 (nat j "scale" 1),theme := str j "theme" "next",pages := nat j "pages",
     scroll := nat j "scroll", pressed := str j "pressed",
-    collapse := min 100 (nat j "collapse"), collapsible := flag j "collapsible" }
+    collapse := min 100 (nat j "collapse"), collapsible := flag j "collapsible",
+    swipe := match j.field? "swipe" with
+      | some (.number value) => max (-100) (min 100 (value.toInt?.getD 0)) | _ => 0 }
 
 private def Snapshot.json (v : Snapshot) : JSON.Json :=
   .object [("address",.string v.address),("cursor",.number (toString v.cursor)),("anchor",.number (toString v.anchor))]
@@ -791,5 +816,8 @@ private def deep : Shell := (({} : Shell).edit "focus" "http://x.org/one/two").1
 #guard domainOf "https://danbri.github.io/factoidal/web/hub/" == "danbri.github.io" && domainOf "foafnaut:graph" == "foafnaut:graph"
 #guard domainOf "http://u@x.org:8080?q#f" == "x.org:8080"
 #guard (Shell.ofJson (.object [("collapse",.number "250"),("collapsible",.bool true)])).collapse == 100
+-- A swipe's hint (WebGesture): kept from the host's shell, drawn only while it is not 0.
+#guard (Shell.ofJson (.object [("swipe",.number "-60")])).swipe == -60 && (Shell.ofJson (.object [("swipe",.number "900")])).swipe == 100
+#guard (nodes {swipe := -60} 800).length > (nodes {} 800).length && (nodes {swipe := 0} 800).length == (nodes {} 800).length
 
 end WebShell

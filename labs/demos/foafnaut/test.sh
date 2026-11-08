@@ -94,6 +94,10 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # link must get the same route. Wasm and native.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/link_route_test.ts"
+  # Back and forward swipes (WebGesture.lean): Lean's op gesture on generated touches and
+  # trackpad swipes, against the conventions and the theorems. Wasm and native.
+  deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-ffi "$LAB/gesture_test.ts"
   # The SPARQL planner page (WebSparql.lean): plans, rows and the drawn page, Wasm and native.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/native_html_sparql_test.ts"

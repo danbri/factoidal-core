@@ -6,6 +6,7 @@ import L4Factoidal.Syntax.IriResolve
 import WebSelection
 import WebHistory
 import WebShell
+import WebGesture
 import WebPrint
 import WebGraph
 import WebEventLoop
@@ -351,6 +352,8 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
       | some (.string address) => WebShell.routeAddress site (str request "base") address
       | _ => WebRoute.route site (str request "base") (str request "href")
     return some (WebShell.routeJson route).toString
+  -- Back and forward swipes (WebGesture): `action` info, touch or wheel.
+  if let some answer ← WebGesture.op op request then return some answer
   -- WebAssembly run by Lean's own engine, WasmVM (WebWasm; issue 1244).
   if let some answer ← WebWasm.op op request then return some answer
   -- Bookmarks, history, settings and tabs as LWS resources (WebState; browser_state_test.ts).

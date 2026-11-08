@@ -46,6 +46,8 @@ export type SparqlCapabilityPlan = {bgp:number;family:number;approximate:boolean
 export type SparqlExplain = {ok:true;form:string;operators:SparqlOperator[];root:number;capability:SparqlCapabilityPlan[];
   capabilityWholeQuery:boolean;answer:string;ns:number;vars:string[];rows:Record<string,string|null>[];rowCount:number};
 export type ShellGo = {go:"page";url:string}|{go:"system";url:string}|{go:"command";name:string;argument:string};
+/** What a touch or a trackpad gesture means (WebGesture.lean, op gesture). */
+export type GestureAnswer = {phase:"pending"|"swipe"|"other";direction:"back"|"forward"|null;progress:number;navigate:boolean;hint:number};
 /** Where a link or an address goes (WebRoute.lean, docs/web/hub/foafnaut/link-route.mjs). */
 export type LinkRoute = {route:"page";name:string;url:string}|{route:"graph";url:string}|{route:"navigate";url:string}|
   {route:"system";url:string}|{route:"command";name:string;argument:string}|{route:"refuse";url:string;reason:string};
@@ -347,6 +349,9 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // The final action for a link (`href`) or a typed address (`address`). An older engine
     // answers "unknown document operation" (link-route.mjs then answers instead).
     shellRoute:(request:Record<string,unknown>)=>documentCall("",{...request,op:"shellRoute"}) as LinkRoute,
+    // A back or forward swipe (WebGesture.lean): `action` info, touch or wheel. An older engine
+    // answers "unknown document operation"; a host then has no swipes.
+    gesture:(request:Record<string,unknown>)=>documentCall("",{...request,op:"gesture"}) as GestureAnswer,
     // Browser state (WebState.lean): bookmarks, history, settings and tabs as LWS resources.
     state:(op:string,request:Record<string,unknown>={})=>documentCall("",{...request,op}),
     // Page scripts run by Lean (WebScripts.lean): QuickJS-NG in WasmVM on the page's arena,
