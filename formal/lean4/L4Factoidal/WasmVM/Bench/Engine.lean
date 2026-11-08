@@ -51,7 +51,7 @@ record (docs/designissues/2026-11-07-wasmvm-engine.md, "Cost model and ratchet")
 best of `tries` runs counts. -/
 def floors : List (String × Nat × Nat × Nat) :=
   -- export, argument, exact instructions, floor (million per second)
-  [("sum", 10000000, 140000008, 240), ("memsum", 10000000, 240000004, 140), ("fib", 30, 28271637, 120)]
+  [("sum", 10000000, 140000008, 240), ("memsum", 10000000, 240000004, 140), ("fib", 30, 28271637, 110)]
 
 def check (tries : Nat := 3) : IO UInt32 := do
   let .ok m := decode benchModule | IO.println "decode failed"; return 1

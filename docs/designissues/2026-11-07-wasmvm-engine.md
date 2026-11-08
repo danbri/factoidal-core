@@ -576,6 +576,145 @@ specialised for `ByteMem` (`Run.run_at_..._spec`), after the changes above:
 - Before `NumOp.evalBin` was `@[inline]`, every binary op called it (a second
   `switch` behind a call).
 
+## Speed pass 2: real workloads (2026-11-08)
+
+Issues https://github.com/danbri/factoidal/issues/1244 and
+https://github.com/danbri/factoidal/issues/1292 (cost theorems as a ratchet). Apple
+M1, other sessions building on the machine; every "before/after" pair below was
+measured with both binaries on the same quiet machine, runs interleaved. The guest
+modules are frozen copies (QuickJS-NG 0.18.0 with the entry point of this commit,
+`harfbuzz-wasmvm.wasm`, `vp8-wasmvm.wasm`), so the numbers do not move with the
+guests.
+
+| Benchmark | before | after | factor |
+|---|---|---|---|
+| `engine` sum, M instructions/s | 354 | 359 to 381 | 1.0 to 1.08 |
+| `engine` memsum | 203 | 207 to 228 | 1.0 to 1.1 |
+| `engine` fib(30) | 178 | 177 | 1.0 |
+| HarfBuzz `hbw_shape`, shapes a second (6 cases) | 2399 to 4542 | 3538 to 6196 | 1.36 to 1.48 |
+| QuickJS fib(24) | 1252 ms (116 M/s) | 819 ms (177 M/s) | 1.53 |
+| QuickJS loop and JSON | 2548 ms (129 M/s) | 1636 ms (201 M/s) | 1.56 |
+| VP8 320x180, decode only | 12.7 fps (137 M/s) | 17.9 fps (194 M/s) | 1.41 |
+| `l4factoidal.wasm` `l4_init` | 17.9 s | 2.8 s | 6.3 |
+
+The 2x target for QuickJS and VP8 is NOT reached: 1.5x and 1.4x.
+
+### What was slow, found by sampling (`sample PID`), not by guessing
+
+1. **Multi-threaded code objects.** `Wasi.load` (QuickJS, HarfBuzz, the media
+   decoders) compiles with `validateParallel`. A `Task`'s result is marked
+   multi-threaded with everything it reaches, and the reference count of a
+   multi-threaded object changes by atomic operations in
+   `lean_inc_ref_cold`/`lean_dec_ref_cold`. `run` changes the count of the op it reads
+   at every instruction, so every instruction of these guests went through two
+   atomic calls (14% of VP8 samples in `lean_dec_ref_cold`; the benchmark module,
+   validated serially, never showed it). `compileAll` now copies what the tasks give
+   (`CompiledFunc.fresh`): each op is rebuilt, which allocates a new single-threaded
+   object. The compiler turns `match o with | .br t => .br t` back into `o`, so each
+   `Nat` field gets `+ freshZero`, a `@[noinline]` zero (and `keepNumOp` for
+   `Op.num`). `CompiledFunc.fresh_eq`, `Op.fresh_id`: the copy is the identity.
+   Effect: QuickJS 1.40x, VP8 1.28x, HarfBuzz 1.3x.
+2. **Host writes copied the whole memory.** `Wasi.answer st (put mem st ..)` and
+   `fd_write` kept the old store for their error path, so the write saw a shared store
+   and copied the memory. `l4_init` spent 97% of its time in `memmove` (16 MiB at each
+   of 8553 `clock_time_get`). `StoreOf.writeMemS` gives the store back on both paths;
+   Wasi, the data segments of `instantiate` and the DOM host (`putOut`) use it.
+   `writeMem_of_writeMemS`, `writeMemS_false`: `putOut_within` and `call_store` are
+   proved as before. `l4_init` 17.9 s to 3.1 s.
+3. **Register spills at the dispatch head.** In the ARM64 code of `run`, `pc`, `sp`
+   and the slot array were in stack slots, loaded at every instruction: each of the
+   dozens of exits built the result (four allocations) inline, and the calls on those
+   paths left too few registers for the loop. All exits now call one `@[noinline]
+   Run.stop` (the result tuple; the proofs unfold through it). `pc` and the code array
+   stay in registers. sum 353 to 379, QuickJS 7%, VP8 7%.
+
+### Fused ops, second set: measured and NOT kept
+
+Profiles of the real workloads (`WASMVM_PROFILE=1`, `Bench/Sample.lean`: 48
+instructions recorded one at a time out of every 3048, a fused op counted as its first
+part):
+
+| Pair | QuickJS fib(24) | VP8 |
+|---|---|---|
+| `local.get; const` | 7.1% | 10.0% |
+| `local.set; local.get` | 5.4% | 1.1% |
+| `local.tee; local.get` | 1.5% | 6.4% |
+| `local.tee; const` | 4.1% | 1.5% |
+| `local.get; i32.load` (all widths) | 4.2% | 1.5% |
+| binary op; `local.tee` | 2.4% | 7.0% |
+| compare; `select` | 0 | 4.6% |
+| `call` (all) | 0.2% | 0.2% |
+
+QuickJS's own calls are not Wasm calls: its interpreter loop is loads, stores,
+`br_table` and local traffic, so calls and returns are not what bounds it.
+
+Ten fused ops were built from this table, each with the existing one-lemma pattern
+(`Op.parts`, `fuseAt`, `fusedSimple`, a case of `run`), and `fuseAt_sound`,
+`fuse_agrees` and `fused_refines` covered them without new lemmas (the tactic of
+`fuseAt_sound` became `repeat' split at h`). Measured, interleaved with the build
+without them:
+
+| Variant | sum | fib | QuickJS fib(24) | VP8 fps |
+|---|---|---|---|---|
+| without | 379 | 178 | 822 ms | 18.0 |
+| ten new ops | 274 | 151 | 1031 ms | 14.7 |
+| three new ops (`binTee`, `teeGet`, `setGet`) | 290 | 150 | 1119 ms | 13.8 |
+| the ten as cases of `run`, but `fuse` never makes them | 269 | 146 | 1271 ms | 11.6 |
+| the three as constructors only, no case in `run` | 378 | 179 | 861 ms | 18.0 |
+
+Every case added to `run`, used or not, made every benchmark 20 to 25% slower: the C
+compiler spills the loop registers again. Moving the table and bulk-memory ops out of
+`run` into `cold` did not give that room back (3% slower). So the fused ops of this
+pass are not in the engine. Further fusion needs a smaller loop first (fewer
+loop-carried arguments: `lim`, `inst`, `frames` and the code change only at calls and
+returns, and could be one object), or fused ops executed by one case.
+
+Also tried and not kept: `enter` as `@[noinline]` (fib 177 to 103).
+
+### Calls and returns
+
+Not changed. `call` allocates one `Frame` and pushes it; `return` pops it. fib(30) is
+177 M/s. A cheaper frame (no allocation, return data in the slots) is open; it changes
+`run`'s arguments and so the proofs of `RefineRun`, and the profiles show QuickJS and
+VP8 do not need it.
+
+### Code as bytes, memory 0 as a loop argument, the last slot check
+
+Not done. Found on the way: the reference-count change on the op read at each
+instruction is two plain stores for single-threaded code (item 1 removed the atomic
+form). Lean's compiler reads an array element borrowed (`lean_array_uget_borrowed`)
+when the array stays alive across the element's uses (`ExplicitRC`, "derived
+borrows"); in `run` it does not, because some branches consume the code array while
+the op is still in use.
+
+### Native library slower than the Wasm engine
+
+`build-web-render.sh --native` compiled the Lean C with `leanc -O2` and without
+`-DNDEBUG`. In `lean.h`, `assert` is active without `NDEBUG` (64 uses, among them
+`lean_ctor_get`, `lean_ctor_set`, the array accessors), so every field read of the
+interpreter made a check. Lake builds with `-O3 -DNDEBUG`, and the Wasm build of the
+same script has `-DNDEBUG`. The native build now uses `-O3 -DNDEBUG`. Not measured in
+the native library here (its build needs the full core `.lake`, which this machine had
+no disk for); the cause is from the flags and `lean.h`. `build-web-state.sh` has the
+same `-O2` without `-DNDEBUG` (not WasmVM; left to its owner).
+
+### Cost model and ratchet
+
+- `Proofs/Cost.lean`: `cost o` is the Wasm instructions an op stands for (its parts,
+  else 1); `cost_fused`, `fuseAt_parts`; `fused_charges_parts`: at a pc where `fuse`
+  put a fused op, `run` on the fused code with `cost f + n` fuel (one case of the loop)
+  and `run` on the original code (one case per part) reach the same registers with
+  `n` left. So fusion never changes the instruction count a run reports.
+- Left as a statement: a dispatch count of whole runs (`run` with a counter, proved
+  equal to `run` on everything but the counter; then dispatches ≤ fuel and
+  `= fuel − Σ (cost f − 1)` over the fused ops run).
+- `wasmvm-bench engine --check`: each benchmark must run exactly its unfused
+  instruction count (sum 140 000 008, memsum 240 000 004, fib 28 271 637) and at least
+  a floor of million instructions a second, best of 3: sum 240, memsum 140, fib 110
+  (today 359 to 381, 207 to 228, 177 on a quiet machine; 298, 179, 137 while other
+  sessions built, so the floors leave about 20% under the loaded figures). Raise a
+  floor when the engine gets faster; never lower one without a line here saying why.
+
 ## Exception handling
 
 Issue 1244, 2026-11-08. Code: `Valid.lean` (compile), `Exec/Code.lean` (`Handler`,
@@ -841,9 +980,9 @@ under it; kept: the owner wants the engine testable on the Hub.
 Results in the engine (`wasmPage`, this Mac): spec sample 1709 pass, 0 fail (both
 engines). Million instructions per second, native library / Wasm engine in Deno (V8) /
 Wasm engine on the Hub page in Chromium: fib(22) 58 / 119 / 78, sum 90 / 246 / 170,
-memsum 69 / 168 / 190, tail calls 59 / 115 / 120. The native library is slower than
-the Wasm engine and than `lake exe wasmvm-bench` (sum 369): not looked into yet (the
-library is built with `leanc -O2` and links the static Lean runtime).
+memsum 69 / 168 / 190, tail calls 59 / 115 / 120. The native library was slower than
+the Wasm engine and than `lake exe wasmvm-bench` (sum 369): it was compiled without
+`-DNDEBUG`, so `lean.h`'s asserts ran (fixed 2026-11-08, "Speed pass 2").
 
 ## QuickJS in WasmVM
 
@@ -1179,11 +1318,19 @@ engine's steps keep the counts, but the theorems do not yet say so.
 | Trusted inline C stores (`Bytes.st16/32/64`) | no: the proofs are about the Lean bodies; the C `memcpy` is trusted to equal them ("Trusted pieces") |
 | No stack-overflow check inside a function | in `R` as `fp + maxH ≤ slots` and `Comp`'s push bound; `maxHeight_sound` (compiler) open |
 | `cold` ops, tail calls, exceptions | no (statements above) |
+| Single-threaded copies of parallel-compiled code (`CompiledFunc.fresh`) | yes: `CompiledFunc.fresh_eq`, `Op.fresh_id` (the copy is the identity) |
+| In-place host writes (`StoreOf.writeMemS`) | yes: `writeMem_of_writeMemS`, `writeMemS_false`; `putOut_within` unchanged |
+| Exits of `run` through `Run.stop` | definitional: `stop` is the result tuple; every proof about `run` unfolds through it |
+| Fused ops charge the fuel of their parts | yes: `Proofs.Cost.fused_charges_parts`; checked on the benchmarks by `engine --check` |
 
 
 ## Next
 
-1. Speed (now 4.7 to 9.2 times stage 1; target 10x): memory 0 held as a loop
+1. Speed (see "Speed pass 2" for the state on 2026-11-08: QuickJS 1.5x, VP8 1.4x of
+   the 2x asked). First a smaller loop: fewer loop-carried arguments of `run` (`lim`,
+   `inst`, `frames`, code change only at calls and returns), so that fused ops can be
+   added without the spills that each new case brought; then the fused ops of the
+   profiles. Older items: memory 0 held as a loop
    argument during a run (a load now reads `st.mems[inst.mems[0]]` with reference
    counts, a store rebuilds the store record); code as bytecode in a `ByteArray`
    (no reference counts per instruction); the last slot check removed with
