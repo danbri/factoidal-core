@@ -44,13 +44,15 @@ COMBINATIONS = ['books-xslt4.xml', 'foaf-people.xml', 'sparql-results.xml', 'fee
                 'engine-pipeline.xml', 'typography-lab.xml', 'print-poster.html', 'svg-text-labels.html']
 # Pages written for features that are still in progress; the manifest says what each one needs.
 NEXT = ['timers-and-clicks.html']
+# A scripted page linked beside foafnaut:graph at the top: the same kind of graph, drawn by the page's own JavaScript.
+TOP = ['foaf-explorer.html']
 SVG_TINY_SCORES = 'https://danbri.github.io/factoidal/web/hub/render-scores/#svg-tiny-pixels'
 
 
 def index():
     # foafnaut:graph is a built-in page: the interactive graph, run by the Lean app.
     titles = {p['page']: p['title'] for p in manifest['pages']}
-    missing = [page for page in FEATURED + TEXT + COMBINATIONS + NEXT if page not in titles]
+    missing = [page for page in TOP + FEATURED + TEXT + COMBINATIONS + NEXT if page not in titles]
     if missing:
         raise SystemExit(f'featured pages not in manifest.json: {missing}')
     link = lambda page: f'<p><a href="{page}">{html.escape(titles[page])}</a></p>'
@@ -59,11 +61,12 @@ def index():
     combinations = '\n'.join(link(page) for page in COMBINATIONS)
     later = '\n'.join(link(page) for page in NEXT)
     rest = '\n'.join(link(p['page']) for p in manifest['pages']
-                     if p['page'] != 'index.html' and not p.get('showcase') and p['page'] not in FEATURED + TEXT + COMBINATIONS + NEXT)
+                     if p['page'] != 'index.html' and not p.get('showcase') and p['page'] not in TOP + FEATURED + TEXT + COMBINATIONS + NEXT)
     return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Demo pages</title>'
             f'<style>{STYLE}h2{{margin:0;padding-top:14px;font-size:17px;line-height:24px;color:#184078}}</style></head><body><main>\n<h1>foafnaut2525 demo pages</h1>\n'
             f'<p>Every page here is rendered by the Lean engine with WebGPU.</p>\n'
             f'<p><a href="foafnaut:graph">Interactive FOAF graph</a></p>\n'
+            + ''.join(link(page) + '\n' for page in TOP) +
             f'<h2>Drawn with SVG</h2>\n{featured}\n'
             f'<p><a href="{SVG_TINY_SCORES}">SVG Tiny 1.2 test suite results (web)</a></p>\n'
             f'<h2>Text and layout</h2>\n{text}\n'

@@ -54,6 +54,15 @@
    "source": "source/markdown-sample.md"
   },
   {
+   "page": "foaf-explorer.html",
+   "title": "FOAF explorer (JavaScript)",
+   "handwritten": true,
+   "needs": "page scripts in foafnaut (QuickJS in the Lean Wasm VM): requestAnimationFrame, createElementNS, setAttribute and click events",
+   "appRefused": "does not execute scripts",
+   "shows": "a FOAF graph explored by expansion: a tap brings in a person's friends; the page's own force layout (springs, repulsion, cooling) writes one transform per moved person and one path for all links per frame, and stops when it settles; ?debug shows fps and script time",
+   "doesNotShow": "dragging: script events carry no pointer coordinates in foafnaut yet"
+  },
+  {
    "page": "foaf-graph.html",
    "title": "FOAF graph (static)",
    "source": "source/foaf-graph.svg",
