@@ -953,7 +953,9 @@ theorem anchorAncestor_is_anchor (dom : Dom) (fuel start id : Nat) (href : Strin
       | none => simp [parent] at found
       | some p => exact ih p (by simpa [parent] using found)
 
-private def clipLinkBox (dom : Dom) (clips : Std.TreeMap Nat Box) : Nat → Nat → Box → Box
+/-- A link box cut to the boxes of its ancestors that clip their overflow (`clips`, by
+source node), walking up the parents with `fuel` steps. -/
+def clipLinkBox (dom : Dom) (clips : Std.TreeMap Nat Box) : Nat → Nat → Box → Box
   | 0, _, box => box
   | fuel+1, id, box =>
     let box := match clips.get? id with
@@ -966,24 +968,39 @@ private def clipLinkBox (dom : Dom) (clips : Std.TreeMap Nat Box) : Nat → Nat 
     | none => box
     | some parent => clipLinkBox dom clips fuel parent box
 
+/-- The boxes of the elements that clip their overflow, by source node. -/
+def linkClips (dom : Dom) (styles : Array Computed) (boxes : Array Box) : Std.TreeMap Nat Box :=
+  boxes.foldl (fun (out : Std.TreeMap Nat Box) box =>
+    if (styles[box.source]!).clipOverflow && (dom.get box.source).type == .element then out.insert box.source box else out) {}
+
+/-- The link region of one layout box: none when the box is in no anchor, is hidden, or
+is empty once clipped by its ancestors and by `[0,width) × [0,height)`. -/
+def linkRegionOf (dom : Dom) (styles : Array Computed) (clips : Std.TreeMap Nat Box)
+    (width height : Float) (box : Box) : Option LinkRegion :=
+  match anchorAncestor dom (dom.size+1) box.source with
+  | none => none
+  | some (source,href) =>
+    let box := clipLinkBox dom clips (dom.size+1) box.source box
+    if (styles[box.source]!).visible && box.width > 0 && box.height > 0 then
+      let left := max 0 box.x
+      let top := max 0 box.y
+      let right := min width (box.x+box.width)
+      let bottom := min height (box.y+box.height)
+      if right > left && bottom > top then some ⟨source,href,left,top,right-left,bottom-top⟩ else none
+    else none
+
 /-- Link fragments come from the same visible layout boxes as glyphs and
-replaced elements. Collapsed spaces produce boxes only when retained on a line. -/
+replaced elements. Collapsed spaces produce boxes only when retained on a line.
+In box order, one region per box at most (`LinkTheorems.mem_linkRegions`). -/
 def linkRegions (dom : Dom) (styles : Array Computed) (boxes : Array Box)
     (width height : Float) : Array LinkRegion :=
-  let clipBoxes := boxes.foldl (fun (out : Std.TreeMap Nat Box) box =>
-    if (styles[box.source]!).clipOverflow && (dom.get box.source).type == .element then out.insert box.source box else out) {}
-  boxes.foldl (fun (out : Array LinkRegion) (box : Box) =>
-    match anchorAncestor dom (dom.size+1) box.source with
-    | none => out
-    | some (source,href) =>
-      let box := clipLinkBox dom clipBoxes (dom.size+1) box.source box
-      if (styles[box.source]!).visible && box.width > 0 && box.height > 0 then
-        let left := max 0 box.x
-        let top := max 0 box.y
-        let right := min width (box.x+box.width)
-        let bottom := min height (box.y+box.height)
-        if right > left && bottom > top then out.push ⟨source,href,left,top,right-left,bottom-top⟩ else out
-      else out) #[]
+  boxes.filterMap (linkRegionOf dom styles (linkClips dom styles boxes) width height)
+
+/-- The height down to which `render` keeps link regions: the foot of the document, or the
+viewport when the document is shorter. A host that scrolls a band of the page with no new
+layout (the Hub, issue 1268) hit-tests links below the first screen with this list, so it
+must not be the viewport alone (`LinkTheorems.render_link_complete`). -/
+def linkHeight (viewport document : Float) : Float := max viewport document
 
 /-- CSS 2.1 §14.2: the background of the root element, or of `body` when the root
 has none, paints the whole canvas, and not the element's own box. -/
@@ -1018,7 +1035,7 @@ def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding :
   -- Links are kept down to the foot of the document, not the viewport: a host that scrolls
   -- a band of the page with no new layout (the Hub, issue 1268) hit-tests links below the
   -- first screen with this list.
-  let links := linkRegions dom styles result.boxes (Float.ofNat width) (max vh result.height)
+  let links := linkRegions dom styles result.boxes (Float.ofNat width) (linkHeight vh result.height)
   if links.size > 49152 || links.any (fun link => link.href.utf8ByteSize > 2048) then
     throw "unsupported link region count or href exceeding 2048 UTF-8 bytes"
   return (⟨width,height,⟨1,1,0,0,0,0,Float.ofNat width,Float.ofNat height⟩, result.nodes.toList,result.runs,links⟩,result.boxes)

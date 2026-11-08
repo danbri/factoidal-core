@@ -446,7 +446,12 @@ def pageLayer (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band) 
     height := b.height
     mapping := {page.mapping with viewportHeight := Float.ofNat b.height}
     tree := [.group none ⟨1,0,0,1,0,-lift⟩ (keep ++ extra)]
-    links := page.links.map (fun link => {link with y := link.y-lift})}
+    links := Rendering.moveLinks (· - lift) page.links}
+
+/-- The page layer keeps every link of the page, moved up by the band's top and nothing
+else (`LinkTheorems.moveLinks_getElem`, `LinkTheorems.hitLink_band`; issue 1268). -/
+theorem pageLayer_links (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band) :
+    (pageLayer page extra b).links = Rendering.moveLinks (· - Float.ofNat b.top) page.links := rfl
 
 /-- The chrome layer: window rows `0 .. WebShell.height`. -/
 def chromeLayer (shell : WebShell.Shell) (page : Rendering.Scene) (width : Nat) : Rendering.Scene :=

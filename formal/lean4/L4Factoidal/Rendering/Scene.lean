@@ -336,6 +336,34 @@ theorem hitLink_mem (regions : List LinkRegion) (x y : Float) (target : LinkRegi
   have member := List.mem_of_find?_eq_some hit
   simpa using member
 
+/-- The region moved down the page by `f` (a band of the page, a page below a chrome):
+the same source, address, column and size. -/
+def LinkRegion.moveY (f : Float → Float) (r : LinkRegion) : LinkRegion := {r with y := f r.y}
+
+/-- Every region moved by `f`, in the same order. `WebDocument.pageLayer` and
+`WebShell.compose` move the page's links with this. -/
+def moveLinks (f : Float → Float) (regions : Array LinkRegion) : Array LinkRegion :=
+  regions.map (LinkRegion.moveY f)
+
+/-- A hit on moved regions is the hit on the regions themselves at another row, when each
+region holds the point after the move exactly when it held the point at `y'` before it. -/
+theorem hitLink_moveY (f : Float → Float) (regions : List LinkRegion) (x y y' : Float)
+    (agree : ∀ r ∈ regions, (r.moveY f).contains x y = r.contains x y') :
+    hitLink (regions.map (LinkRegion.moveY f)) x y = (hitLink regions x y').map (LinkRegion.moveY f) := by
+  unfold hitLink
+  rw [← List.map_reverse]
+  have agree' : ∀ r ∈ regions.reverse, (r.moveY f).contains x y = r.contains x y' := by
+    intro r m; exact agree r (List.mem_reverse.mp m)
+  generalize regions.reverse = rs at agree'
+  induction rs with
+  | nil => rfl
+  | cons r rs ih =>
+    simp only [List.map_cons, List.find?_cons]
+    rw [agree' r (List.mem_cons_self ..)]
+    split
+    · rfl
+    · exact ih (fun q m => agree' q (List.mem_cons_of_mem _ m))
+
 structure Scene where
   width : Nat
   height : Nat

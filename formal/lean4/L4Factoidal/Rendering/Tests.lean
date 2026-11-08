@@ -1,5 +1,6 @@
 import L4Factoidal.Rendering.Layout
 import L4Factoidal.Rendering.Links
+import L4Factoidal.Rendering.LinkTheorems
 
 namespace L4Factoidal.Rendering.Tests
 open DOM CSS Layout
@@ -110,6 +111,8 @@ private def spacedLink := run "<div style='width:60px'><a href='url'>AA BB</a></
 private def lowLink := run "<p style='height:300px;margin:0'>x</p><a href='low'>AA</a>" css
 #guard (lowLink.toOption.map fun r => r.1.links.toList.map (fun a => (a.href,a.y))) == some [("low",300)]
 #guard (lowLink.toOption.bind fun r => hitLink r.1.links.toList 3 303 |>.map (·.href)) == some "low"
+-- The same link in a band from page row 200 (`WebDocument.pageLayer`): layer row 103.
+#guard (lowLink.toOption.bind fun r => hitLink (moveLinks (· - 200) r.1.links).toList 3 103 |>.map (·.href)) == some "low"
 private def clippedLink := run "<div style='height:7px;overflow:clip'><a href='url'>AA BB</a></div>" css
 #guard (clippedLink.toOption.map fun r => r.1.links.size) == some 1
 #guard (clippedLink.toOption.bind fun r => hitLink r.1.links.toList 3 3 |>.map (·.href)) == some "url"
@@ -161,6 +164,19 @@ private def framedPaint := (framedClip.lower identity []).head?
 #guard (framedPaint.map fun p => (p.source,p.primitive.groupPath)) == some (some 9,[some "parent",some "viewport"])
 #print axioms anchorAncestor_is_anchor
 #print axioms hitLink_mem
+-- Link completeness and band moves (issue 1268; LinkTheorems.lean).
+#print axioms FloatOrder.le_trans
+#print axioms FloatOrder.lt_of_lt_of_le
+#print axioms FloatOrder.lt_min_max
+#print axioms LinkTheorems.linkRegions_complete
+#print axioms LinkTheorems.linkRegions_complete_document
+#print axioms LinkTheorems.render_links
+#print axioms LinkTheorems.render_link_complete
+#print axioms LinkTheorems.linkRegions_eq_before
+#print axioms LinkTheorems.moveLinks_getElem
+#print axioms LinkTheorems.mem_moveLinks
+#print axioms LinkTheorems.hitLink_band
+#print axioms hitLink_moveY
 
 #print axioms Node.lower_eq_lowerTR
 #print axioms Node.lowerList_eq_lowerListTR

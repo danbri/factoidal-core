@@ -218,3 +218,32 @@ the same state (`shownFor`); the fixture found the model swapping where the host
   `run_html.ts`, the Hub worker and the model's `prefetched`, and is left for the next round.
 - An underline that comes on hover (`a:hover{text-decoration:underline}`) lays out: its
   rectangle is placed by the line layout.
+
+## 7. Links to the foot of the page (link-theorems, 2026-11-08)
+
+The bug of 0e4f29e01: `render` passed the viewport height to `linkRegions`, so a link
+below the first screen had no region and a click on it in the Hub's band did nothing. The
+owner: "Derive a theorem from this to protect us." `formal/lean4/L4Factoidal/Rendering/LinkTheorems.lean`:
+
+| Theorem | Statement |
+|---|---|
+| `linkRegions_complete` | A box in an anchor, visible, not empty once clipped (`linkBox`), inside `[0,width) × [0,height)`, has a region with the anchor's source node and href, at the box's corner. |
+| `linkRegions_complete_document` | At `linkHeight vh doc` (= `max vh doc`, what `render` passes), the only vertical condition is that the box ends at or above `doc`, for any `vh`. False with `vh` alone, which is the bug. |
+| `render_links` | `render`'s links are `linkRegions` over the boxes it returns, at `linkHeight vh result.height`, where `result` is the layout (`block …`) those boxes come from. |
+| `render_link_complete` | The two together: every such box of a rendered page that ends at or above the foot of its layout has a region in the scene. |
+| `linkRegions_eq_before` | `linkRegions` (now `filterMap linkRegionOf`) equals the fold of 0e4f29e01 word for word: the change of shape changes no render. |
+| `moveLinks_getElem`, `mem_moveLinks` | Moving the links of a band or of a page under the chrome keeps every link, same source, href, x, width, height; y moved only. `WebDocument.pageLayer_links` and `WebShell.compose_links` (both `rfl`) say those functions are such moves. |
+| `hitLink_band` (with `hitLink_moveY`, `band_row`) | A hit at page-layer row `row` is the page's own hit at row `row + band.top`, moved; window row `y` of a band is page row `y - top + scroll`. Given that the move is exact in `Float` for each link at that point (hypothesis `exact`: true for whole numbers below 2^53, not proved). |
+
+`Float` order: Lean 4.33 defines `<` and `≤` on `Float` through its IEEE model
+(`Float.Model.UnpackedFloat`) but proves nothing about them.
+`L4Factoidal/Rendering/FloatOrder.lean` proves `le_trans` and `lt_of_lt_of_le` (every
+`Float`, `NaN` included) by a key in `Int × Int × Int` whose lexicographic order is the
+model's comparison, and from them `lt_min_max`: `t < b ≤ H → t < min (max v H) b`.
+
+Axioms of all of these: `propext`, `Classical.choice`, `Quot.sound` at most (audit in
+`Rendering/Tests.lean`). No `sorry`, `native_decide` or `bv_decide`. A guard in
+`Tests.lean` checks the hit through a band on the `lowLink` page.
+
+Not proved: that every box of a layout ends at or above `result.height` (true of normal
+flow, not stated); the `Float` exactness of a move by whole rows.

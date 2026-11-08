@@ -329,7 +329,13 @@ def compose (s : Shell) (page : Rendering.Scene) (width height' : Nat) : Renderi
     height := height'
     mapping := {page.mapping with viewportHeight := Float.ofNat height'}
     tree := [.group none shift page.tree] ++ nodes s width
-    links := page.links.map (fun link => {link with y := link.y+top})}
+    links := Rendering.moveLinks (· + top) page.links}
+
+/-- The page under the chrome keeps every link of the page, moved down by the chrome less
+the scroll and nothing else (`LinkTheorems.moveLinks_getElem`; issue 1268). -/
+theorem compose_links (s : Shell) (page : Rendering.Scene) (width height' : Nat) :
+    (compose s page width height').links =
+      Rendering.moveLinks (· + (Float.ofNat (height s width)-Float.ofNat s.scroll)) page.links := rfl
 
 /-! ### Editing the address -/
 
