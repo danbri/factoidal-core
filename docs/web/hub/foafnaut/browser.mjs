@@ -79,6 +79,7 @@ canvas.addEventListener('mousedown',event=>event.preventDefault());
 // trackpad. The page sends the ratio of finger distances since the pinch began, and the
 // worker sets the zoom from it. A pinch ends any press, without a click.
 const touches=new Map();let pinch;
+const tapSlop=10;
 const fingerGap=()=>{const [a,b]=[...touches.values()];return Math.hypot(a.x-b.x,a.y-b.y);};
 canvas.addEventListener('pointerdown',event=>{
   if(event.pointerType==='touch')touches.set(event.pointerId,{x:event.clientX,y:event.clientY});
@@ -87,15 +88,19 @@ canvas.addEventListener('pointerdown',event=>{
     moved=undefined;pinch={gap:Math.max(1,fingerGap())};send({type:'pinch',phase:'start'});return;
   }
   if(pinch)return;
-  moved={y:event.clientY,scrolled:false};send({type:'press',...point(event)});
+  moved={y:event.clientY,startX:event.clientX,startY:event.clientY,scrolled:false};send({type:'press',...point(event)});
 });
 canvas.addEventListener('pointermove',event=>{
   if(touches.has(event.pointerId))touches.set(event.pointerId,{x:event.clientX,y:event.clientY});
   if(pinch){if(touches.size===2)send({type:'pinch',phase:'move',ratio:fingerGap()/pinch.gap});return;}
+  // A finger drifts a few pixels during a tap. Until it has gone further than the
+  // tap slop, the touch is still a tap: no scroll and no drag.
+  const touch=event.pointerType==='touch';
+  if(moved&&touch&&!moved.scrolled&&Math.hypot(event.clientX-moved.startX,event.clientY-moved.startY)<tapSlop)return;
   if(moved&&event.buttons)send({type:'move',...point(event)});
-  if(!moved||event.pointerType!=='touch')return;
+  if(!moved||!touch)return;
   const step=moved.y-event.clientY;if(Math.abs(step)<2)return;
-  moved={y:event.clientY,scrolled:true};send({type:'scroll',amount:step*scale()});
+  moved={...moved,y:event.clientY,scrolled:true};send({type:'scroll',amount:step*scale()});
 });
 const lift=event=>{
   touches.delete(event.pointerId);
