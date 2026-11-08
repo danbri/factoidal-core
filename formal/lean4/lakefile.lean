@@ -302,6 +302,11 @@ lean_exe «frame-cost-cases» where root := `Harness.FrameCostCases
 @[default_target] lean_lib PageGpu where
   roots := #[`L4Factoidal.PageGpu]
 
+-- Canvas 2D for page scripts, drawn by Lean: colours, paths, strokes, coverage, operators,
+-- text, images, the wire, and their theorems (docs/designissues/2026-11-08-canvas-2d.md).
+@[default_target] lean_lib PageCanvas where
+  roots := #[`L4Factoidal.PageCanvas]
+
 -- WasmVM measurements (issue 1244): `lake exe wasmvm-bench`.
 lean_exe «wasmvm-bench» where root := `L4Factoidal.WasmVM.Bench
 -- The official core test suite (third_party/wasm-spec/test/core-json): `lake exe wasmvm-spectest`.
