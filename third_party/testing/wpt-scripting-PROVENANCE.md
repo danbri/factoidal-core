@@ -12,6 +12,15 @@
     `resources/testdriver-actions.js`, `resources/testdriver-vendor.js`;
   - `dom/common.js`, `dom/constants.js`, `common/dummy.xml`, `common/dummy.xhtml`;
   - the repository `LICENSE.md`.
+- Added on 2026-11-08 for the DOM breadth work (Range, Selection, traversal, markup
+  setters, reflection, getComputedStyle), from the same commit `ce5ca396`, unchanged:
+  - `dom/ranges/` (without `crashtests/` and `tentative/`), `dom/traversal/` (without
+    `unfinished/`, with `support/`);
+  - the files of `selection/` (not its subfolders);
+  - from `html/dom/`: `reflection-*.html`, `reflection.js`, `elements-*.js`,
+    `original-harness.js`, `new-harness.js`;
+  - the files of `domparsing/`, with `domparsing/resources/`;
+  - from `css/cssom/`: `getComputedStyle*` and `support/`.
 - Not copied: WPT's `resources/testharnessreport.js`. The runner serves this
   repository's own `tests/browser-wpt/testharnessreport.js` in its place, as every WPT
   runner supplies its own.
