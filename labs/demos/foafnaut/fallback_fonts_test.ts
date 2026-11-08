@@ -42,3 +42,26 @@ Deno.test("a page fetches only the fonts its characters need", async()=>{
   assert(JSON.stringify(await fontsFor("<p>\u{9F98}</p>",coverage))!=="[]","a rare Han character needs a font");
   assert((await fontsFor("<p>caf\u00e9 \u2122 \u20ac</p>",()=>{throw new Error("coverage read");})).length===0,"Latin page");
 });
+
+// Emoji (issue 1276): Noto Emoji, monochrome outlines, at its default weight. A page with an
+// emoji fetches it alone; a page with none never does, and no other demo page has one.
+Deno.test("only a page with emoji fetches the emoji font", async()=>{
+  const emoji=fallbackFonts.find((f:{family:string})=>f.family==="Noto Emoji");
+  if(emoji===undefined)throw new Error("no Noto Emoji in the table");
+  assert(emoji===fallbackFonts[fallbackFonts.length-1],"Noto Emoji is the last fallback font");
+  assert(emoji.bytes<1000000,`Noto Emoji is ${emoji.bytes} bytes`);
+  const page=await families("showcase-emoji.html");
+  assert(JSON.stringify(page)===JSON.stringify(["Noto Emoji"]),"emoji page: "+page);
+  for(const name of ["index.html","showcase.html","showcase-scripts.html","showcase-textpath.html"])
+    assert(!(await families(name)).includes("Noto Emoji"),`${name} fetches the emoji font`);
+  for await(const entry of Deno.readDir(pages)){
+    if(!/\.(html|xml)$/.test(entry.name)||entry.name==="showcase-emoji.html")continue;
+    assert(!(await families(entry.name)).includes("Noto Emoji"),`${entry.name} fetches the emoji font`);
+  }
+  const wants=async(text:string)=>(await fontsFor(text,coverage)).some((f:{family:string})=>f.family==="Noto Emoji");
+  // Symbols that Noto Sans or Noto Sans Math has stay in those fonts: no emoji font for them.
+  assert(!(await wants("<p>\u00a9 \u00ae \u2122 \u2194 \u25b6 \u2665 \u2b50 # * 1</p>")),"text symbols fetch the emoji font");
+  // An emoji, a character only the emoji font has, or a presentation selector or keycap mark.
+  for(const text of ["\u{1F600}","\u2714","\u2665\uFE0F","1\uFE0F\u20E3","&#x1F44D;&#x1F3FD;","\u{1F1EC}\u{1F1E7}"])
+    assert(await wants(`<p>${text}</p>`),`no emoji font for ${JSON.stringify(text)}`);
+});

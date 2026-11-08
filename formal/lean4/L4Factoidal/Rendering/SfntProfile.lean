@@ -128,19 +128,35 @@ def staysWithBase (c : Nat) : Bool :=
   (0x20D0 ≤ c && c ≤ 0x20FF) || (0xFE20 ≤ c && c ≤ 0xFE2F) || c == 0x200C || c == 0x200D ||
   (0xFE00 ≤ c && c ≤ 0xFE0F) || (0xE0100 ≤ c && c ≤ 0xE01EF)
 
+/-- Characters after a base that ask for a font with an emoji form of it: the
+emoji presentation selector U+FE0F and the combining enclosing keycap U+20E3. -/
+def asksForEmoji (c : Nat) : Bool := c == 0xFE0F || c == 0x20E3
+
 /-- A word in runs: the index of a font in `fonts`, and the characters it draws.
 Each character goes to the first font that has it. A character in `staysWithBase`
-keeps the font of the run before it when that font has it. A character that no
-font has stays in the run before it (the first font at the start), and shows as
-that font's .notdef glyph. -/
+keeps the font of the run before it when that font has it. A character followed by
+U+FE0F or U+20E3 (`asksForEmoji`) goes to the first font that has both, when one
+does: the digit of a keycap and a symbol with emoji presentation (U+2665 U+FE0F)
+come from the emoji font with their selector, not from the text font, so the
+font's sequences can form. A character that no font has stays in the run before
+it (the first font at the start), and shows as that font's .notdef glyph. -/
 def runsOf (fonts : Array Font) (text : String) : Array (Nat × String) := Id.run do
   let mut runs : Array (Nat × String) := #[]
-  for c in text.toList do
+  let chars := text.toList.toArray
+  for k in [0:chars.size] do
+    let c := chars[k]!
     let last := runs.back?.map (·.1)
     let keep := match last with
       | some i => staysWithBase c.toNat && (fonts[i]?.map fun (f : Font) => f.has c).getD false
       | none => false
-    let pick := if keep then last.getD 0 else (fonts.findIdx? fun (f : Font) => f.has c).getD (last.getD 0)
+    let emoji := match chars[k + 1]? with
+      | some n => if asksForEmoji n.toNat && !staysWithBase c.toNat then
+          fonts.findIdx? fun (f : Font) => f.has c && f.has n else none
+      | none => none
+    let pick := if keep then last.getD 0 else
+      match emoji with
+      | some i => i
+      | none => (fonts.findIdx? fun (f : Font) => f.has c).getD (last.getD 0)
     runs := match runs.back? with
       | some (i,s) => if i == pick then runs.pop.push (i,s.push c) else runs.push (pick,c.toString)
       | none => runs.push (pick,c.toString)

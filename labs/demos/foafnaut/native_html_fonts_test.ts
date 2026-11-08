@@ -105,3 +105,32 @@ async function scriptsAtPhoneZoom(nativeEngine?:string){
 }
 Deno.test("the writing-systems page draws at text zoom 450 on a 390 px phone (Wasm)",()=>scriptsAtPhoneZoom());
 Deno.test({name:"the writing-systems page draws at text zoom 450 on a 390 px phone (native library)",ignore:noLibrary,fn:()=>scriptsAtPhoneZoom(library)});
+
+// Emoji (issue 1276): Noto Emoji, the outline emoji font of the Hub, after Noto Sans. Each
+// sequence is one glyph of that font through its ligatures, with any U+FE0F hidden at no
+// width: a ZWJ family, a ZWJ sequence with U+FE0F inside it (GSUB passes over the
+// selector), a skin tone, a flag, a tag sequence, and keycaps whose digit Noto Sans also
+// has (SfntProfile.runsOf gives the digit to the font that has it and U+FE0F).
+const emojiFont=fonts+"noto-emoji/NotoEmoji-Regular.ttf";
+const emojiSequences=["\u{1F600}","❤️","♥️","\u{1F44D}\u{1F3FD}","\u{1F468}‍\u{1F469}‍\u{1F467}‍\u{1F466}",
+  "\u{1F3F3}️‍\u{1F308}","\u{1F1EC}\u{1F1E7}","\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}","1️⃣","#️⃣"];
+async function emoji(nativeEngine?:string){
+  const engine=await loadHTML(nativeEngine,"bytes");
+  await loadFontFile(engine,sans,"Noto Sans");
+  const digits="<!doctype html><p>Call 1, 2 or # and * \u00a9 \u2122</p>";
+  const plain=frame(engine,digits);
+  assert.equal((await loadFontFile(engine,emojiFont,"Noto Emoji","bytes",true)).fonts,2);
+  for(const text of emojiSequences){
+    const scene:HTMLArtifact=engine.compile(`<!doctype html><p>${text}</p>`,600,120,{checks:false,url:"file:///emoji.html"});
+    const run=(scene.webRender.glyphRuns as {text:string;glyphs:number[][]}[]).find(r=>r.text===text);
+    assert(run,`no glyph run for ${JSON.stringify(text)}`);
+    // A glyph row is [id, x, y, advance, ...]; .notdef is id 0.
+    const drawn=run.glyphs.filter(g=>g[3]>0);
+    assert.equal(drawn.length,1,`${JSON.stringify(text)}: ${drawn.length} glyphs with width`);
+    assert.notEqual(drawn[0][0],0,`${JSON.stringify(text)} is .notdef`);
+  }
+  // Digits, # and * with no selector stay in Noto Sans: the page is as it was.
+  assert(same(plain,frame(engine,digits)),"plain digits and symbols changed with the emoji font");
+}
+Deno.test("emoji and emoji sequences draw from Noto Emoji (Wasm)",()=>emoji());
+Deno.test({name:"emoji and emoji sequences draw from Noto Emoji (native library)",ignore:noLibrary,fn:()=>emoji(library)});

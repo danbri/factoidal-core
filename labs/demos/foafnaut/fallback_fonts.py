@@ -8,12 +8,20 @@ too large to fetch for one line of Chinese, so they are cut (pyftsubset) into sl
 kana and CJK punctuation, the common Han characters, the rest of the Han characters,
 and Hangul. Each file goes in third_party/fonts/<dir>/ with its OFL.txt.
 
+Emoji come last, from Noto Emoji, the monochrome outline emoji font of google/fonts: a
+variable font (weight 300 to 700, 1.98 MB) whose `gvar` deltas are half its size. The
+engine draws the default outlines and reads no variations, so the font is instanced at
+its default weight, 400 (fontTools varLib.instancer), and subset with the options of the
+CJK slices, keeping every character and the `ccmp` ligatures of its sequences (ZWJ,
+skin tones, flags, tags, keycaps).
+
 docs/web/hub/foafnaut/fallback-fonts.mjs gets, for each font in order, the characters
 it adds: those in its cmap that Noto Sans and the fonts before it lack. The Hub worker
 fetches a font only when a page has one of its characters.
 """
 import argparse, hashlib, os, shutil, subprocess, sys, urllib.request
 from fontTools.ttLib import TTFont
+from fontTools.varLib import instancer
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 FONTS = os.path.join(ROOT, 'third_party', 'fonts')
@@ -21,6 +29,9 @@ TABLE = os.path.join(ROOT, 'docs', 'web', 'hub', 'foafnaut', 'fallback-fonts.mjs
 NOTO = 'https://raw.githubusercontent.com/notofonts/notofonts.github.io/86ce02c0fe7890f5936c5dffb26fca0797d1be64/fonts'
 CJK = 'https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans'
 OFL = 'https://raw.githubusercontent.com/notofonts/{repo}/main/OFL.txt'
+EMOJI = 'https://raw.githubusercontent.com/google/fonts/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/notoemoji'
+# SHA-256 of NotoEmoji[wght].ttf (3.002) at that commit.
+EMOJI_SHA256 = 'de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608d27551'
 
 # (directory, family, script repository, file name); Armenian is already vendored.
 SCRIPTS = [
@@ -127,6 +138,19 @@ def main():
         subset(source, unicodes, os.path.join(cjkDir, name))
         fonts.append(('noto-sans-cjk', family, os.path.join(cjkDir, name)))
     shutil.copy(cjkLicence, os.path.join(cjkDir, 'OFL.txt'))
+    # Noto Emoji at its default weight, after every other font.
+    emoji = fetch(f'{EMOJI}/NotoEmoji%5Bwght%5D.ttf', os.path.join(args.cache, 'NotoEmoji-wght.ttf'))
+    got = hashlib.sha256(open(emoji, 'rb').read()).hexdigest()
+    if got != EMOJI_SHA256:
+        sys.exit(f'NotoEmoji[wght].ttf has SHA-256 {got}, not {EMOJI_SHA256}')
+    static = os.path.join(args.cache, 'NotoEmoji-400.ttf')
+    font = TTFont(emoji)
+    instancer.instantiateVariableFont(font, {'wght': 400}, inplace=True)
+    font.save(static)
+    emojiDir = os.path.join(FONTS, 'noto-emoji')
+    subset(static, set(TTFont(static, lazy=True).getBestCmap()), os.path.join(emojiDir, 'NotoEmoji-Regular.ttf'))
+    shutil.copy(fetch(f'{EMOJI}/OFL.txt', os.path.join(args.cache, 'OFL-emoji.txt')), os.path.join(emojiDir, 'OFL.txt'))
+    fonts.append(('noto-emoji', 'Noto Emoji', os.path.join(emojiDir, 'NotoEmoji-Regular.ttf')))
     # What each font adds: its cmap less Noto Sans and the fonts before it.
     held = set(TTFont(os.path.join(FONTS, 'noto-sans', 'NotoSans-Regular.ttf'), lazy=True).getBestCmap())
     rows = []

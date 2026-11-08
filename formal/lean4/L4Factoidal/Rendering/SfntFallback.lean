@@ -198,7 +198,13 @@ def position (b : ByteArray) (dir : Array TableRecord) (upem : Nat) (advances : 
         j := j + 1
       -- position_around_base (base i, marks up to j).
       let base := out[i]!
-      if j > i + 1 then
+      -- Marks of class 0, such as U+FE0F after the ligature of an emoji sequence,
+      -- are not placed (HarfBuzz `position_around_base`): a ligature followed by
+      -- only those has nothing to place.
+      let placed := (List.range (j - (i + 1))).any fun k =>
+        let g := out[i + 1 + k]!
+        isMark g && recategorize g.codepoint (modifiedCcc g.codepoint) != 0
+      if j > i + 1 && (placed || !base.ligated) then
         if base.ligated then
           throw s!"font.layout.unsupported: fallback mark positioning on a ligature glyph (https://github.com/danbri/factoidal/issues/1233)"
         -- No base extents: HarfBuzz zeroes the marks (already zero) and stops.

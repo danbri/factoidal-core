@@ -16,7 +16,10 @@ mark attachment type use the GDEF glyph and mark attachment classes of the
 current glyphs. Nested lookups of a context rule apply in record order at the
 matched positions, with recursion bounded at depth 8. Refused, with a message
 naming the lookup: types 3 and 8. Mark filtering sets apply as in HarfBuzz.
-Feature variations (`rvrn` substitutions chosen by axis values) are not read;
+Variation selectors match when they are the glyph wanted and are skipped
+otherwise, as HarfBuzz does for default ignorables (`may_skip` SKIP_MAYBE;
+`skipMaybe`): the emoji sequence U+1F3F3 U+FE0F U+200D U+1F308 ligates over
+its U+FE0F. Feature variations (`rvrn` substitutions chosen by axis values) are not read;
 the default feature table is used. OpenType GSUB chapter is the reference;
 HarfBuzz is the differential oracle.
 -/
@@ -114,10 +117,57 @@ inductive Step where
   /-- Replace glyph i by `lig` and delete these later positions. -/
   | ligate (lig : Nat) (remove : List Nat)
 
-/-- Apply one subtable of type 1, 2 or 4 at position i. `next k` gives the next
-position after k that the lookup flags do not skip. -/
+/-- A glyph that GSUB matching may skip (HarfBuzz `may_skip` gives SKIP_MAYBE):
+it is matched when it is the glyph wanted and skipped otherwise. HarfBuzz does
+this for every default ignorable but ZWNJ, ZWJ in some lookups, and the hidden
+characters; Lean does it for the variation selectors U+FE00 to U+FE0F and
+U+E0100 to U+E01EF only. The other default ignorables (ZWSP, bidi controls, ...)
+are kept as before: HarfBuzz's USE shaper stops matching at a syllable edge,
+which Lean does not track, and skipping ZWSP there joined syllables that
+HarfBuzz keeps apart (HarfBuzz suite, use-javanese.tests). A glyph GSUB
+substituted is no longer ignorable. -/
+def skipMaybe (g : NominalGlyph) : Bool :=
+  let c := g.codepoint
+  !g.substituted && ((0xFE00 ≤ c && c ≤ 0xFE0F) || (0xE0100 ≤ c && c ≤ 0xE01EF))
+
+def nextOf (keep : Array Bool) (k : Nat) : Option Nat :=
+  ((List.range (keep.size - k - 1)).map (k + 1 + ·)).find? (keep[·]!)
+def prevOf (keep : Array Bool) (k : Nat) : Option Nat :=
+  ((List.range k).reverse).find? (keep[·]!)
+
+/-- The next position after `k` that the lookup flags keep (`keep`) and `test`
+accepts, passing over kept positions that `test` refuses only where `maybe`
+holds (HarfBuzz `skipping_iterator_t::match`). -/
+def nextMatching (keep : Array Bool) (maybe : Nat → Bool) (k : Nat) (test : Nat → Except String Bool) :
+    Except String (Option Nat) := do
+  let mut pos := k
+  for _ in [0:keep.size] do
+    match nextOf keep pos with
+    | none => return none
+    | some p =>
+      if ← test p then return some p
+      if !maybe p then return none
+      pos := p
+  return none
+
+/-- As `nextMatching`, backward from before `k`. -/
+def prevMatching (keep : Array Bool) (maybe : Nat → Bool) (k : Nat) (test : Nat → Except String Bool) :
+    Except String (Option Nat) := do
+  let mut pos := k
+  for _ in [0:keep.size] do
+    match prevOf keep pos with
+    | none => return none
+    | some p =>
+      if ← test p then return some p
+      if !maybe p then return none
+      pos := p
+  return none
+
+/-- Apply one subtable of type 1, 2 or 4 at position i. `keep` marks the
+positions that the lookup flags do not skip, and `maybe` the variation
+selectors that ligature matching passes over (`skipMaybe`). -/
 def applySubtable (b : ByteArray) (ltype sub : Nat) (ids : Array Nat) (i : Nat)
-    (next : Nat → Option Nat) : Except String Step := do
+    (keep : Array Bool) (maybe : Nat → Bool := fun _ => false) : Except String Step := do
   need b sub 6 "subtable header"
   let fmt := u16 b sub
   let some ci ← coverage b (sub + u16 b (sub + 2)) ids[i]! | return .none
@@ -158,14 +208,11 @@ def applySubtable (b : ByteArray) (ltype sub : Nat) (ids : Array Nat) (i : Nat)
       let mut matched : List Nat := []
       let mut ok := true
       for c in [0:comps - 1] do
-        match next pos with
+        let want := u16 b (lig + 4 + 2 * c)
+        match ← nextMatching keep maybe pos (fun p => pure (ids[p]! == want)) with
         | some p =>
-          if ids[p]! == u16 b (lig + 4 + 2 * c) then
-            matched := matched ++ [p]
-            pos := p
-          else
-            ok := false
-            break
+          matched := matched ++ [p]
+          pos := p
         | none =>
           ok := false
           break
@@ -225,37 +272,32 @@ def unskipped (c : Ctx) (flag : Nat × Option Nat) (run : Array NominalGlyph) : 
   if flag.2.isNone && flag.1 &&& 0xFF0E == 0 then pure (Array.replicate run.size true) else
   run.mapM fun g => do pure !(← skipsWithSet c.b c.gdef? flag.1 flag.2 (← gdefClasses c.b c.gdef? g.id) g.id)
 
-def nextOf (keep : Array Bool) (k : Nat) : Option Nat :=
-  ((List.range (keep.size - k - 1)).map (k + 1 + ·)).find? (keep[·]!)
-def prevOf (keep : Array Bool) (k : Nat) : Option Nat :=
-  ((List.range k).reverse).find? (keep[·]!)
-
-/-- Match `n` glyphs forward from after position `k` (exclusive) with `test`. -/
-def matchForward (keep : Array Bool) (k n : Nat) (test : Nat → Nat → Except String Bool) :
-    Except String (Option (List Nat)) := do
+/-- Match `n` glyphs forward from after position `k` (exclusive) with `test`,
+passing over refused positions where `maybe` holds. -/
+def matchForward (keep : Array Bool) (k n : Nat) (test : Nat → Nat → Except String Bool)
+    (maybe : Nat → Bool := fun _ => false) : Except String (Option (List Nat)) := do
   let mut pos := k
   let mut acc : List Nat := []
   for j in [0:n] do
-    let some p := nextOf keep pos | return none
-    unless ← test j p do return none
+    let some p ← nextMatching keep maybe pos (test j) | return none
     acc := acc ++ [p]
     pos := p
   return some acc
 
 /-- Match `n` glyphs backward from before position `k`. -/
-def matchBackward (keep : Array Bool) (k n : Nat) (test : Nat → Nat → Except String Bool) :
-    Except String Bool := do
+def matchBackward (keep : Array Bool) (k n : Nat) (test : Nat → Nat → Except String Bool)
+    (maybe : Nat → Bool := fun _ => false) : Except String Bool := do
   let mut pos := k
   for j in [0:n] do
-    let some p := prevOf keep pos | return false
-    unless ← test j p do return false
+    let some p ← prevMatching keep maybe pos (test j) | return false
     pos := p
   return true
 
 /-- Match a context (type 5) or chained context (type 6) subtable at i.
 Result: the input positions (first is i) and the (sequence index, lookup)
 records. -/
-def matchContext (b : ByteArray) (t s : Nat) (ids : Array Nat) (keep : Array Bool) (i : Nat) :
+def matchContext (b : ByteArray) (t s : Nat) (ids : Array Nat) (keep : Array Bool) (i : Nat)
+    (maybe : Nat → Bool := fun _ => false) :
     Except String (Option (List Nat × List (Nat × Nat))) := do
   need b s 2 "context header"
   let fmt := u16 b s
@@ -272,24 +314,24 @@ def matchContext (b : ByteArray) (t s : Nat) (ids : Array Nat) (keep : Array Boo
       let sc := u16 b (r + 2)
       if gc == 0 then return none
       need b (r + 4) (2 * (gc - 1)) "context rule input"
-      let some inp ← matchForward keep i (gc - 1) (fun j p => do pure ((← val p) == u16 b (r + 4 + 2 * j))) | return none
+      let some inp ← matchForward keep i (gc - 1) (fun j p => do pure ((← val p) == u16 b (r + 4 + 2 * j))) maybe | return none
       return some (i :: inp, ← records (r + 4 + 2 * (gc - 1)) sc)
     else
       need b r 2 "chain rule"
       let bc := u16 b r
       need b (r + 2) (2 * bc + 2) "chain rule backtrack"
-      let ok ← matchBackward keep i bc (fun j p => do pure ((← bval p) == u16 b (r + 2 + 2 * j)))
+      let ok ← matchBackward keep i bc (fun j p => do pure ((← bval p) == u16 b (r + 2 + 2 * j))) maybe
       if !ok then return none
       let ir := r + 2 + 2 * bc
       let ic := u16 b ir
       if ic == 0 then return none
       need b (ir + 2) (2 * (ic - 1) + 2) "chain rule input"
-      let some inp ← matchForward keep i (ic - 1) (fun j p => do pure ((← val p) == u16 b (ir + 2 + 2 * j))) | return none
+      let some inp ← matchForward keep i (ic - 1) (fun j p => do pure ((← val p) == u16 b (ir + 2 + 2 * j))) maybe | return none
       let lr := ir + 2 + 2 * (ic - 1)
       let lc := u16 b lr
       need b (lr + 2) (2 * lc + 2) "chain rule lookahead"
       let last := (inp.getLast?).getD i
-      let some _ ← matchForward keep last lc (fun j p => do pure ((← lval p) == u16 b (lr + 2 + 2 * j))) | return none
+      let some _ ← matchForward keep last lc (fun j p => do pure ((← lval p) == u16 b (lr + 2 + 2 * j))) maybe | return none
       let sr := lr + 2 + 2 * lc
       return some (i :: inp, ← records (sr + 2) (u16 b sr))
   let ruleSet (set : Nat) (val bval lval : Nat → Except String Nat) :
@@ -332,7 +374,7 @@ def matchContext (b : ByteArray) (t s : Nat) (ids : Array Nat) (keep : Array Boo
       if gc == 0 then return none
       need b (s + 6) (2 * gc) "context coverages"
       unless ← cov (u16 b (s + 6)) i do return none
-      let some inp ← matchForward keep i (gc - 1) (fun j p => cov (u16 b (s + 6 + 2 * (j + 1))) p) | return none
+      let some inp ← matchForward keep i (gc - 1) (fun j p => cov (u16 b (s + 6 + 2 * (j + 1))) p) maybe | return none
       return some (i :: inp, ← records (s + 6 + 2 * gc) sc)
     else
       need b s 4 "chain format 3"
@@ -343,14 +385,14 @@ def matchContext (b : ByteArray) (t s : Nat) (ids : Array Nat) (keep : Array Boo
       if ic == 0 then return none
       need b (ir + 2) (2 * ic + 2) "chain input coverages"
       unless ← cov (u16 b (ir + 2)) i do return none
-      let ok ← matchBackward keep i bc (fun j p => cov (u16 b (s + 4 + 2 * j)) p)
+      let ok ← matchBackward keep i bc (fun j p => cov (u16 b (s + 4 + 2 * j)) p) maybe
       if !ok then return none
-      let some inp ← matchForward keep i (ic - 1) (fun j p => cov (u16 b (ir + 2 + 2 * (j + 1))) p) | return none
+      let some inp ← matchForward keep i (ic - 1) (fun j p => cov (u16 b (ir + 2 + 2 * (j + 1))) p) maybe | return none
       let lr := ir + 2 + 2 * ic
       let lc := u16 b lr
       need b (lr + 2) (2 * lc + 2) "chain lookahead coverages"
       let last := (inp.getLast?).getD i
-      let some _ ← matchForward keep last lc (fun j p => cov (u16 b (lr + 2 + 2 * j)) p) | return none
+      let some _ ← matchForward keep last lc (fun j p => cov (u16 b (lr + 2 + 2 * j)) p) maybe | return none
       let sr := lr + 2 + 2 * lc
       return some (i :: inp, ← records (sr + 2) (u16 b sr))
   else throw s!"font.file.malformed: context format {fmt}"
@@ -438,9 +480,10 @@ def applyAt (c : Ctx) : Nat → Nat → Array NominalGlyph → Nat → SubM (Opt
     let keep ← unskipped c flag run
     if !keep[i]! then return none
     let ids := run.map (·.id)
+    let maybe (p : Nat) : Bool := skipMaybe run[p]!
     for (t, s) in subs do
       if t == 5 || t == 6 then
-        let some (inputs, recs) ← matchContext c.b t s ids keep i | continue
+        let some (inputs, recs) ← matchContext c.b t s ids keep i maybe | continue
         let mut cur := run
         let mut pos : List (Option Nat) := inputs.map some
         for (seq, nested) in recs do
@@ -459,7 +502,7 @@ def applyAt (c : Ctx) : Nat → Nat → Array NominalGlyph → Nat → SubM (Opt
         let lastIn := (pos.filterMap id).foldl max i
         return some (cur, lastIn + 1)
       else
-        let step ← applySubtable c.b t s ids i (nextOf keep)
+        let step ← applySubtable c.b t s ids i keep maybe
         match step with
         | .none => pure ()
         | _ =>

@@ -111,7 +111,10 @@ Deno.test("expected failure, issue 1275: dir=rtl is ignored",()=>{
   assert.ok(left(run(body,"first"))<100,stillGap("1275"));
 });
 
-Deno.test("expected failure, issue 1276: emoji draw as .notdef",()=>{
+// Issue 1276: with Noto Emoji after Noto Sans, emoji draw in one colour (fallback_fonts_test.ts,
+// native_html_fonts_test.ts). The gap left is colour glyphs; with the window's font alone,
+// as here, an emoji is still .notdef.
+Deno.test("expected failure, issue 1276: emoji draw as .notdef in Noto Sans alone",()=>{
   for(const text of ["😀","🌍"])
     assert.deepEqual(ids(run(`<p>${text}</p>`,text)),[0],stillGap("1276")+` (${text})`);
 });

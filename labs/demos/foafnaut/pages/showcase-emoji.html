@@ -55,6 +55,7 @@ SVG, not font glyphs.</p>
 </g>
 </svg>
 <div class="about">
-<p>Not yet: emoji (<a href="https://github.com/danbri/factoidal/issues/1276">issue 1276</a>). Noto Sans has no emoji glyphs and the engine no colour glyphs, so each emoji draws as an empty box, and a sequence of code points (ZWJ family, skin tone, flag) as several boxes.</p>
+<p>Emoji draw from Noto Emoji, an outline font in one colour (SIL Open Font License), which the browser fetches only for a page with emoji (<a href="https://github.com/danbri/factoidal/issues/1276">issue 1276</a>). Each emoji is one glyph, and so is each sequence: the font's ligatures join ZWJ sequences, flags, the Scottish tag sequence and keycaps. A skin tone draws as the plain emoji, since the font has one form, and text and emoji presentation look alike.</p>
+<p>Not yet: colour glyphs (the COLR and CPAL tables above).</p>
 </div>
 </main></body></html>
