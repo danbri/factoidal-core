@@ -1,5 +1,6 @@
 import L4Factoidal.WasmVM.Hosts.Page
 import L4Factoidal.WasmVM.Hosts.PageAot
+import L4Factoidal.WasmVM.Hosts.LeanJS
 import L4Factoidal.DOM.OfXml
 import WebRenderScript
 import WebWasm
@@ -56,6 +57,13 @@ program waits for the guest, the answer is `{"session","aot":ASK,"writes"}`; the
 the ask and calls `resume` with the reply, and passes each import call of the guest to
 `host`. The host decides nothing: it copies bytes and calls the functions Lean names.
 
+**BubblePopJS** (docs/designissues/2026-11-08-lean-js-engine.md, section 11), the
+JavaScript engine written in Lean. With `engine:"bubblepop"` in `start`, the page's
+scripts run in it (`Hosts.LeanJS`): no guest module, the same prelude, the same imports served by
+`Hosts.Page` on the same arena, the same typed commands, and the same event code
+(`Hosts.PageEvents`). Every later action of that session runs on it; the answers have the
+same fields, and `engine:"bubblepop"`. `info` lists the engines (`engines`).
+
 The cost contract: `changed` is true exactly when the turn recorded a DOM change. A
 host renders again only then; the render request carries the command list, which is part
 of the layout key (`WebDocument.layoutFields`), so a render with the same list reuses the
@@ -93,6 +101,9 @@ structure Before where
 def Before.of (s : Page.Session) : Before :=
   { changes := s.changes, steps := s.steps, jobs := s.jobs, tasks := s.tasks, layouts := s.layouts }
 
+def Before.ofLean (s : LeanJS.Session) : Before :=
+  { changes := s.changes, steps := s.steps, jobs := s.jobs, tasks := s.tasks, layouts := s.layouts }
+
 /-- A turn on the AOT path, waiting for the host. `fresh`: the program, before the
 host has made the page's instance; `paused`: stopped at an ask. -/
 inductive Stage where
@@ -124,6 +135,10 @@ structure Held where
   turn : Option Turn := none
   /-- The size of the guest's memory after the last AOT turn. -/
   memSize : Nat := 0
+  /-- The Lean engine's realm with the page objects, made at its first page. -/
+  leanBase : Option LeanJS.Session := none
+  /-- The session on the Lean engine. -/
+  leanSession : Option (Nat × LeanJS.Session × Marks) := none
 
 instance : Inhabited Held := ⟨{}⟩
 
@@ -179,16 +194,38 @@ def commandsJson (s : Page.Session) : JSON.Json :=
   .array (s.commands.toList.map WebRenderScript.commandJson)
 
 
+/-- What a turn's answer reads of a session, on either engine. -/
+structure View where
+  host : Page.Host
+  steps : Nat
+  jobs : Nat
+  tasks : Nat
+  errors : Array String
+  nextFrame : Option Nat
+  moveWake : Option Nat
+  quiet : Bool
+
+def View.ofPage (s : Page.Session) : View :=
+  { host := s.host, steps := s.steps, jobs := s.jobs, tasks := s.tasks, errors := s.errors,
+    nextFrame := s.nextFrame, moveWake := s.moveWake, quiet := s.quiet }
+
+def View.ofLean (s : LeanJS.Session) : View :=
+  let e := LeanJS.engine
+  { host := s.host, steps := s.steps, jobs := s.jobs, tasks := s.tasks, errors := s.errors,
+    nextFrame := e.nextFrame s, moveWake := e.moveWake s, quiet := e.quiet s }
+
 /-- The answer of a turn. -/
-def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (full : Bool) (ns : Nat)
+def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full : Bool) (ns : Nat)
     (extra : List (String × JSON.Json) := []) : String × Marks :=
-  let changed := s.changes != before.changes
-  let loop := s.loop
+  let dom := s.host.dom
+  let changed := dom.changes != before.changes
+  let loop := s.host.loop
+  let logs := dom.logs
   let fields : List (String × JSON.Json) := [
     ("session",num id),("clock",num loop.clock),("changed",.bool changed),
-    ("commandCount",num s.commands.size),("changes",num s.changes)] ++
-    (if changed || full then [("commands",commandsJson s)] else []) ++ [
-    ("logs",.array ((s.logs.extract marks.logs s.logs.size).toList.map .string)),
+    ("commandCount",num dom.commands.size),("changes",num dom.changes)] ++
+    (if changed || full then [("commands",.array (dom.commands.toList.map WebRenderScript.commandJson))] else []) ++ [
+    ("logs",.array ((logs.extract marks.logs logs.size).toList.map .string)),
     ("errors",.array ((s.errors.extract marks.errors s.errors.size).toList.map .string)),
     ("timers",num loop.timers.length),
     ("nextTimer",match loop.timers with | t :: _ => num t.due | [] => .null),
@@ -198,19 +235,28 @@ def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (
       | t :: ts => num (ts.foldl min t)),
     ("quiet",.bool s.quiet),
     ("instructions",num (s.steps - before.steps)),("jobs",num (s.jobs - before.jobs)),
-    ("tasks",num (s.tasks - before.tasks)),("layouts",num (s.layouts - before.layouts)),("ns",num ns)] ++ extra
+    ("tasks",num (s.tasks - before.tasks)),("layouts",num (s.host.reads.layouts - before.layouts)),("ns",num ns)] ++ extra
   let text := (JSON.Json.object fields).toString
   -- The page's GPU commands, validated by Lean (L4Factoidal.PageGpu): the host replays them
   -- on its WebGPU device. They need no layout; the canvas rectangles come with a render.
-  let gpu := s.host.dom.gpuOut
+  let gpu := dom.gpuOut
   let text := if gpu.isEmpty then text else
-    (text.dropEnd 1).toString ++ ",\"gpuPage\":" ++ toString s.host.dom.gpu.page ++ ",\"gpu\":[" ++
+    (text.dropEnd 1).toString ++ ",\"gpuPage\":" ++ toString dom.gpu.page ++ ",\"gpu\":[" ++
       ",".intercalate (gpu.toList.map PageGpu.Wire.HostCmd.json) ++ "]}"
-  (text, { logs := s.logs.size, errors := s.errors.size })
+  (text, { logs := logs.size, errors := s.errors.size })
+
+def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (full : Bool) (ns : Nat)
+    (extra : List (String × JSON.Json) := []) : String × Marks :=
+  turnAnswerOf id before (View.ofPage s) marks full ns extra
 
 /-- The session after a turn answer: the GPU commands it carried are the host's now. -/
 def drained (s : Page.Session) : Page.Session :=
   { s with host := { s.host with dom := { s.host.dom with gpuOut := #[] } } }
+
+def drainedLean (s : LeanJS.Session) : LeanJS.Session :=
+  if s.host.dom.gpuOut.isEmpty then s else
+  let h := s.host
+  s.setHost { h with dom := { h.dom with gpuOut := #[] } }
 
 /-- The page's arena, parsed as `WebDocument.prepareDOM` parses it, so node numbers agree
 with a render's replay of the commands. -/
@@ -446,6 +492,73 @@ def hostCall (held : Held) (aot : PageAot.Prepared) (t : Turn) (request : JSON.J
       | .exit n => .object [("exit",num n)]
     ({ held with turn := some t }, .ok answer.toString)
 
+/-! ## BubblePopJS, the engine written in Lean -/
+
+/-- The answer of a turn of the Lean engine; the session is kept. -/
+def leanTurn (held : Held) (id : Nat) (before : Before) (s : LeanJS.Session) (marks : Marks) (full : Bool) (ns : Nat) :
+    Held × Except String String :=
+  let (answer, marks) := turnAnswerOf id before (View.ofLean s) marks full ns [("engine",.string "bubblepop")]
+  ({ held with leanSession := some (id, drainedLean s, marks) }, .ok answer)
+
+/-- `start` on the Lean engine: its realm is made at the first page (the prelude runs
+once), and each page starts from it with its own arena. -/
+def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSON.Json → Option Page.Measure) :
+    Held × Except String String :=
+  let url := str request "url"
+  let commands := min 1048576 ((natField request "commandLimit").getD 4096)
+  let logs := min 1048576 ((natField request "logLimit").getD 1024)
+  let id := held.nextSession
+  let lim : Page.Limits := { commands, logs, gpuPage := id }
+  let made := show Except String (Array (Nat × String) × Array String × DOM.Dom) from do
+    let dom ← parse html url
+    let (scripts, missing) ← scriptSources dom request
+    return (scripts, missing, dom)
+  match made with
+  | .error e => (held, .error s!"scriptSession: {e}")
+  | .ok (scripts, missing, dom) =>
+    let (base, ns0) := WebWasm.timed fun _ => match held.leanBase with
+      | some b => Except.ok b
+      | none => LeanJS.prepare
+    match base with
+    | .error e => (held, .error s!"scriptSession: BubblePopJS: {e}")
+    | .ok base =>
+      let (vw, vh) := (viewport request).getD (800, 600)
+      let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh }
+      let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
+      let (s, ns) := WebWasm.timed fun _ =>
+        let s := LeanJS.start base dom url scripts lim reads { instructionsPerMs := rate }
+        missing.foldl LeanJS.Session.fail s
+      leanTurn { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1 }
+        id {} s {} true (ns0 + ns)
+
+/-- A later action on the Lean engine's session (the actions of `act`). -/
+def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s : LeanJS.Session) (marks : Marks) :
+    Held × Except String String :=
+  let full := request.field? "full" == some (.bool true)
+  let e := LeanJS.engine
+  let before := Before.ofLean s
+  let run := fun (f : LeanJS.Session → LeanJS.Session) =>
+    let (s', ns) := WebWasm.timed fun _ => f s
+    leanTurn held id before s' marks full ns
+  let keep := fun (msg : String) => ({ held with leanSession := some (id, s, marks) }, Except.error msg)
+  match action with
+  | "click" =>
+    match natField request "node" with
+    | some node => run (e.click · node)
+    | none => keep "scriptSession: click needs node"
+  | "pointer" =>
+    match pointerKind (str request "kind"), natField request "node" with
+    | some kind, some node => run (e.pointer · kind node (pointerInit request))
+    | _, _ => keep "scriptSession: pointer needs kind (down, move, up, cancel) and node"
+  | "resize" =>
+    match viewport request with
+    | some (w, h) => run fun s => let s := e.resize s w h; (e.advance s (e.loop s).clock).1
+    | none => keep "scriptSession: resize needs width and height"
+  | "advance" => run fun s => e.flushMove (e.advance s ((e.loop s).clock + ((natField request "ms").getD 0))).1
+  | "settle" => run fun s => (e.settle (e.flushMove s) ((natField request "budgetMs").getD 30000)).1
+  | "turn" => run fun s => let s := e.flushMove s; (e.advance s (e.loop s).clock).1
+  | _ => keep "scriptSession: unknown action"
+
 /-- One action on what the engine holds. `measure` lays out an arena for the layout reads
 of its scripts (`WebDocument.measure`), with the `layout` request of `start`. -/
 def act (held : Held) (action html : String) (request : JSON.Json)
@@ -467,11 +580,12 @@ def act (held : Held) (action html : String) (request : JSON.Json)
     match held.turn, held.aot with
     | some t, some aot => hostCall held aot t request
     | _, _ => (held, .error "scriptSession: no turn waits for the host")
-  | "close" => ({ held with session := none, turn := none }, .ok "{\"closed\":true}")
+  | "close" => ({ held with session := none, turn := none, leanSession := none }, .ok "{\"closed\":true}")
   | _ =>
   if held.turn.isSome then (held, .error "scriptSession: a turn waits for the host") else
   match action with
   | "start" =>
+    if str request "engine" == "bubblepop" then startLean held html request measure else
     match held.module, held.aot with
     | none, some aot =>
       -- The AOT path: Lean asks the host for a fresh instance, then runs the program.
@@ -491,7 +605,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession } #[] missing
           reads { instructionsPerMs := rate }
         let id := held.nextSession
-        beginTurn { held with session := none, nextSession := id + 1 } id {} {} true true prog
+        beginTurn { held with session := none, leanSession := none, nextSession := id + 1 } id {} {} true true prog
     | none, none => (held, .error "scriptSession: no guest module; load it first")
     | some m, _ =>
       let url := str request "url"
@@ -511,8 +625,13 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let id := held.nextSession
         let (answer, marks) := turnAnswer id {} s {} true ns
         let s := drained s
-        ({ held with session := some (id, s, marks), nextSession := id + 1 }, .ok answer)
+        ({ held with session := some (id, s, marks), leanSession := none, nextSession := id + 1 }, .ok answer)
   | _ =>
+    match held.leanSession with
+    | some (id, s, marks) =>
+      if natField request "session" == some id then actLean { held with leanSession := none } action request id s marks
+      else (held, .error "scriptSession: not the current session")
+    | none =>
     match held.session with
     | none => (held, .error "scriptSession: no session")
     | some (id, s, marks) =>
@@ -563,7 +682,8 @@ def op (name html : String) (request : JSON.Json) (measure : JSON.Json → Optio
   if action == "info" then
     let (loaded, bytes, aot) := peek request
     return some (JSON.Json.object [("ops",.array (actions.map .string)),("module",.bool loaded),
-      ("bytes",num bytes),("engine",.string "QuickJS-NG in WasmVM"),("aot",.bool true),("aotLoaded",.bool aot)]).toString
+      ("bytes",num bytes),("engine",.string "QuickJS-NG in WasmVM"),("aot",.bool true),("aotLoaded",.bool aot),
+      ("engines",.array [.string "quickjs", .string "bubblepop"])]).toString
   let (held, answer) := act (take request) action html request measure
   let n := keep held request
   return some (← answer.map (withNext n))
