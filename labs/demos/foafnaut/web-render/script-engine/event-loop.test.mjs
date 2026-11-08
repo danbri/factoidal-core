@@ -38,7 +38,8 @@ test('Lean eventLoop operation: setTimer ids, step order, clamp, dispatch plan',
   act('queueMicrotask', { callback: 7 });
   assert.deepEqual(act('step').run, { kind: 'microtask', callback: 7, source: null, timer: null, event: null, now: 0 });
   assert.equal(act('step').run, null);
-  assert.deepEqual(act('advance', { target: 100 }), { fired: 2, settled: true, state });
+  // advance stops the clock at the first due timer (10), so the target (100) is not reached yet.
+  assert.deepEqual(act('advance', { target: 100 }), { fired: 2, settled: false, state });
   assert.deepEqual([act('step').run.callback, act('step').run.callback], [5, 6]);
   const plan = call('', { op: 'eventLoop', action: 'dispatch', path: [1, 2], bubbles: true,
     listeners: [{ node: 2, capture: false, callback: 1 }, { node: 1, capture: true, callback: 2 }, { node: 1, capture: false, callback: 3 }] });
