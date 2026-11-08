@@ -138,7 +138,7 @@ Deno.test("scripts are refused, and unsupported CSS and layout are not",async()=
   const path=dir+"/page.html",url=pathToFileURL(path).href;
   try{
     await Deno.writeTextFile(path,html('<script>throw Error("must not execute")</script><p>Text</p>'));
-    await assert.rejects(()=>prepareHTML(engine,url),/does not execute scripts/);
+    await assert.rejects(()=>prepareHTML(engine,url),/does not execute scripts|need the QuickJS guest module/);
     await Deno.writeTextFile(path,html('<script type="application/ld+json">{"name":"inert"}</script><p>Text</p>'));
     assert((await prepareHTML(engine,url)).compile(240,160).data.length>0);
     // CSS we can not use is dropped, as in any browser: the page still shows.

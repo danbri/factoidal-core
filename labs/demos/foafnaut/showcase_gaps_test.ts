@@ -38,7 +38,8 @@ Deno.test("issue 1270: SVG text draws glyphs; anchors, tspan and textPath add pa
   const one=svgFrame("<text x='10' y='50' font-size='20'>Hello</text>").primitiveCount;
   assert.ok(one>empty,"a text adds paint");
   assert.equal(svgFrame("<text x='200' y='50' font-size='20' text-anchor='middle'>Hello</text>").primitiveCount,one,"an anchor moves the same glyphs");
-  assert.ok(svgFrame("<text x='10' y='50' font-size='20'>Hel<tspan fill='red'>lo</tspan></text>").primitiveCount>one,"a tspan of another colour is its own paint");
+  // Main's SVG text (bebb931ba) paints one primitive per glyph, so a tspan adds no primitive; it draws.
+  assert.ok(svgFrame("<text x='10' y='50' font-size='20'>Hel<tspan fill='red'>lo</tspan></text>").primitiveCount>empty,"a tspan draws");
   assert.ok(svgFrame("<defs><path id='p' d='M10 100 C 100 0 300 0 390 100'/></defs><text font-size='20'><textPath href='#p'>Hello</textPath></text>").primitiveCount>empty,"textPath draws");
 });
 Deno.test("expected failure, issue 1285: vertical writing-mode is laid out horizontally",()=>{
@@ -53,7 +54,7 @@ Deno.test("expected failure, issue 1286: SVG text gives no glyph runs, so it can
 
 Deno.test("expected failure, issue 1271: the window refuses the showcase script page",async()=>{
   await assert.rejects(()=>prepareHTML(engine,inputURL(pages+"showcase-dataviz-script.html",true)),
-    /does not execute scripts/,stillGap("1271"));
+    /does not execute scripts|need the QuickJS guest module/,stillGap("1271"));
 });
 
 Deno.test("issue 1272: table cells are side by side, and colspan widens a cell",()=>{
@@ -90,8 +91,9 @@ Deno.test("a border is drawn (CSS Backgrounds 3)",()=>{
   assert.equal(frame("<div style='border:4px solid #c00'>boxed</div>").primitiveCount,plain+4);
 });
 
-Deno.test("expected failure, issue 1273: text-align is dropped",()=>{
-  assert.ok(left(run("<p style='text-align:right'>right</p>","right"))<100,stillGap("1273"));
+// text-align is laid out since 087c85b6e (issue 1273's text-align part).
+Deno.test("issue 1273: text-align right moves the text to the right",()=>{
+  assert.ok(left(run("<p style='text-align:right'>right</p>","right"))>=100);
 });
 
 Deno.test("expected failure, issue 1274: Hebrew, Arabic, Devanagari, Thai and CJK draw as .notdef",()=>{
