@@ -140,7 +140,7 @@ by 1 or 2 shows up.
 A binary32 CPU form (Lean `Float32`) would come closer but still not equal: GPU
 arithmetic is not IEEE-exact in WGSL. It matters more for microcontrollers (section 10).
 
-## 5. Data layout on the CPU
+## 5. Data layout and the fast form
 
 The CPU reads the same two arrays the GPU binds. `Scene.data` is an `Array Float` (boxed
 binary64), `Scene.tiles` an `Array Nat`; the records are the Lean primitives that wrote
@@ -148,10 +148,35 @@ those rows, so the CPU reads geometry from the floats (paths, rectangles) and pa
 the Lean records (`GradientRecord.colorAt`, `ImageRecord.colorAt`), as `Scene.checks`
 does.
 
-The fast form keeps, for one tile row at a time, each tile's prepared records with their
-pixel boxes, and for one pixel row the records whose box meets that row. The output is one
-`ByteArray` of `width × rows × 4`, made with its full capacity and pushed in order by a
-tail-recursive loop that alone holds it, so each push is in place (no copy on write).
+`Scene.rasterFast` does the reference's work in this order:
+
+1. Each record is prepared once (`Primitive.prepareSample`): its inverse transform, its
+   conditions with their data folded in, clips as a plain loop (`clipPass`), a constant
+   paint row made once (`constantPaint`).
+2. Each record gets its conservative pixel box (`Primitive.screenBox`, the box the tile
+   lists come from).
+3. For each pixel row: the records of that row of tiles whose box meets the row, each
+   made ready for the row once however many tiles list it (`rowPrep`). A path fill learns,
+   for each of the row's sixteen sample lines, the edges that cross the line
+   (`pathSpansAt`); at a sample on one of those lines (its local `y` equal) only those
+   edges are tested (`pathHitSpans`), elsewhere all are.
+4. For each pixel: `adaptiveSampleAt` with the pixel's coordinates converted once; each
+   sample folds the records whose box meets the pixel's column; a record that covers no
+   sample is skipped (its step would add 0 and keep the colour).
+5. A dashed stroke (`prepareCoverageCulled`) tests a piece only when the point is in the
+   piece's box (`pieceBox`). A stroked path is drawn as dash pieces (strips, disks,
+   triangles), up to a few hundred for one ellipse, so this decides SVG-heavy pages.
+
+Steps 1 and 4's coordinate conversion are proved (section 7). Steps 2, 3's span lists, 4's
+skip and 5 rest on facts about IEEE arithmetic and geometry that Lean's opaque `Float`
+cannot state (a step with no coverage is the identity; a point outside a conservative box
+is not covered; equal `Float`s compare alike). The `#guard`s in `SVGRaster.lean` check
+`rasterFast` against `rasterSpec` byte for byte on a scene with every kind of record, and
+the differential test checks the result against the GPU on every demo page.
+
+The output is one `ByteArray` of `width × rows × 4`, made with its full capacity and
+pushed in order by a tail-recursive loop that alone holds it, so each push is in place
+(no copy on write).
 
 ## 6. The op and the hosts
 
@@ -180,35 +205,80 @@ In `SVGRaster.lean`:
   gives the reference sample.
 - `rasterPrepared_eq`: each pixel of the prepared form is the reference pixel.
 
-In `SVG.lean`:
+In `SVG.lean` and `GraphicsPrepared.lean` (each a refinement of the code the GPU probes
+already ran, and `@[csimp]` where the compiler should use the fast form everywhere):
 
-- `pathWindingFrom_eq`: the edge loop is the fold over the edge indices.
-- `pathHitFast_eq`: `pathHitFast` is `pathHit` (the expression-tree winding test), so
-  `Primitive.prepareCoverage_correct` and with it `prepareSample_correct` still hold with
-  the plain-code path test.
+- `pathWindingFrom_eq`, `pathHitFast_eq`: the path fill test as a loop of plain Float
+  code is `pathHit`, the expression-tree winding test (`edgeUp_eq`, `edgeDown_eq` by
+  `rfl`: the same operations in the same order).
+- `polygonWindingFrom_eq`, `windingHitFast_eq`: the same for polygons (`windingHit`).
+- `Primitive.prepareLocal_correct`, `Primitive.prepareCoverage_correct`: the prepared
+  coverage, now with clips (`clipped`) and dashes (`local`) prepared too, is
+  `Primitive.coverageAt`; `Primitive.prepareSample_correct` follows.
+- `Expr.eval_eq_evalFast` (`@[csimp]`): literals come from `literalFloat`, not a bignum
+  conversion at each evaluation.
+- `Transform.apply_eq_fast` (`@[csimp]`, by `rfl`): the affine map written out, not
+  through the scalar-operations record.
 
-`#print axioms` for each: section 9.
-
-Not proved: that skipping a record whose pixel box misses the pixel changes nothing. It
-needs the box to be conservative (the same assumption as the GPU's tile lists) and that a
-step with no coverage is the identity in IEEE arithmetic (`0·c + a·(1-0) = a` for finite
-`c` and `a ≥ 0`), which Lean's opaque `Float` cannot state. The differential test checks
-`rasterFast` against `rasterSpec` byte for byte on small scenes (`#guard`) and against the
-GPU on every demo page.
+`#print axioms` for every one of them: `[propext, Classical.choice, Quot.sound]`; no
+`sorry`, no `native_decide`, no `bv_decide`.
 
 ## 8. Differential test
 
 `cpu_render_diff_check.mjs` (run by `test.sh`): for each `pages/*.html` at 800 × 600
-with Noto Sans and text zoom 150, and each SVG file of
-`tests/external/svg-wpt/upstream/svg/shapes`, the native engine answers the scene and its
-CPU pixels; headless Chrome (`--enable-unsafe-webgpu`) draws the scene with the Hub's
+with Noto Sans and text zoom 150, and each SVG file of the svg-wpt `shapes`,
+`pservers/reftests` and `painting/reftests` folders, the native engine answers the scene
+and its CPU pixels; headless Chrome (`--enable-unsafe-webgpu`) draws the scene with the Hub's
 `layers.mjs` (`drawSingle`, readback), and the page compares.
 
 Results: section 9.
 
 ## 9. Results
 
-(filled in below by the measurements of this change)
+Measured 2026-11-08 on an Apple M1 (macOS), headless Chrome with WebGPU on Metal.
+
+**Differential test** (`cpu_render_diff_check.mjs`, 800 × 600): 149 scenes, all pass.
+
+| Set | Scenes | Pixels | Pixels that differ | Over 8 | Largest |
+|---|---|---|---|---|---|
+| Demo pages (`pages/*.html`) | 28 | 13,440,000 | 125,423 (0.93%) | 33 | 28 |
+| svg-wpt shapes, pservers, painting reftests | 121 (79 drawn) | 58,080,000 | 1,599 | 1 | 32 |
+
+Nearly every differing pixel differs by 1 in one channel (the histogram bucket for 1 holds
+all but 37 of them): a channel whose exact value is near `n+0.5` after `×255`, or a
+gradient interpolated in binary32. The pixels over the tolerance are edge pixels where
+one sample fell on the other side of a glyph or shape edge (differences of 13 to 32, one
+sixteenth to one quarter of the edge contrast). The worst page has 6 such pixels of
+480,000. Five SVG files are refused by the engine before any drawing (an external paint
+URL, `paint-order`); 42 draw nothing (scripted tests).
+
+**Frame time** (`cpu_render_bench.mjs`, 800 × 600 window, text zoom 150, Noto Sans; the
+median of three; "Lean" is the render a GPU host asks for, "CPU draw" is the extra time of
+`cpu:true`):
+
+| Page | Form | Lean, native | CPU draw, native | Lean, Wasm (Node) | CPU draw, Wasm |
+|---|---|---|---|---|---|
+| index.html | frame (600 rows) | 7 ms | 861 ms | 15 ms | 1364 ms |
+| index.html | band (chrome + 1,624 rows) | 9 ms | 2295 ms | 16 ms | 3686 ms |
+| status.html (long text) | frame | 12 ms | 1036 ms | 19 ms | 1623 ms |
+| status.html | band | 22 ms | 2435 ms | 40 ms | 3897 ms |
+| svg-gallery.html (SVG) | frame | 0.6 ms | 2223 ms | 0.7 ms | 3823 ms |
+| svg-gallery.html | band | 1.6 ms | 2518 ms | 5 ms | 4767 ms |
+
+The GPU draws the same scenes in 8 to 270 ms from a cold pipeline in headless Chrome
+(the `gpuMs` of the differential test, which includes the readback) and in a few
+milliseconds warm. So the CPU backend is a correct fallback, not yet a fast one: about
+1.8 µs a pixel natively for the text pages and 4.6 µs for the SVG page, and 1.6 to 1.7
+times that in Wasm. A scroll inside a band is a row copy (0 to 1 ms in the Hub, no Lean call), so the
+cost is paid once a band. The steps in section 5 took the SVG page from 20.7 s to 2.2 s
+and the text pages from 1.7 s to 0.86 s.
+
+**Hub** (`hub_cpu_check.mjs`, Chrome with `--disable-blink-features=WebGPU`, this
+change's Wasm engine): `status.html` shows; every frame has `stats.cpu`; the first frame
+takes 2.4 s; six scrolls inside the band are row copies of 0 to 1 ms with no Lean render;
+the frame differs from the same page in a Chrome with WebGPU in 880 pixels of 480,000, 2
+of them by more than 8. With the published engine (no `cpuInfo`) the page says "This
+browser does not provide WebGPU." as before.
 
 ## 10. Microcontrollers
 
@@ -237,4 +307,21 @@ runtime does (allocation and reference counts; issue 1295). The parts that chang
 
 ## 11. What is left
 
-See section 9's list.
+- **Speed.** Per sample the fast form still allocates (Lean `Float` pairs, colour
+  records, closures over `List Float` paint rows): the profile is mostly allocation.
+  Next: an unboxed form that reads the binary32 words (`Scene.float32Bytes`, the tile
+  words) into `FloatArray`s and keeps the colour in scalars; a tile whose list is empty
+  filled white without sampling; the first four samples shared between a pixel and the
+  next when no record's box changes; and drawing the view's rows of a band first, the
+  margins after.
+- **Proofs.** The culling steps of section 5 are tested, not proved. A form over
+  binary32 words with `Float32` would let a statement name the exact operations; the
+  IEEE facts would still be assumptions.
+- **Native window.** `native_window.m` has no path that shows RGBA bytes in the window;
+  the native CPU path is the library and `web-render-native` (headless). A window blit
+  (`CGImage` from the bytes, as `ng_print` does for pages) is the next native step.
+- **Page GPU canvases** stay blank with no GPU.
+- **Press rectangles** are not drawn on the CPU Hub (none are on the GPU Hub either);
+  `compositePress` in Lean is ready for a host that wants them.
+- **Microcontrollers** (section 10): the binary32 form, the Lean runtime on the P4, and
+  the PPA and 2D-DMA bindings.

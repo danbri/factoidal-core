@@ -1,7 +1,8 @@
 // The CPU raster (SVGRaster.lean) against WebGPU, pixel for pixel
 // (docs/designissues/2026-11-08-cpu-render-backend.md).
 //
-// For each demo page (pages/*.html) and each SVG test file, the native engine answers one
+// For each demo page (pages/*.html) and each SVG test file (svg-wpt shapes, pservers and
+// painting reftests by default), the native engine answers one
 // scene with its CPU pixels (web-render-native --document-bin with cpu:true, or --svg with
 // --cpu-out). Headless Chrome with WebGPU draws the same scene through the Hub's layer
 // surface (docs/web/hub/foafnaut/layers.mjs, drawSingle with readback) and the page compares
@@ -36,7 +37,7 @@ if(!fs.existsSync(native)){console.log('NOT RUN: no native engine at',native,'(b
 
 const pagesDir=path.join(lab,'pages');
 const pageNames=opt('--pages','')?opt('--pages','').split(','):fs.readdirSync(pagesDir).filter(n=>n.endsWith('.html')).sort();
-const svgArg=opt('--svg',path.join(root,'tests/external/svg-wpt/upstream/svg/shapes'));
+const svgArg=opt('--svg',['shapes','pservers/reftests','painting/reftests'].map(d=>path.join(root,'tests/external/svg-wpt/upstream/svg',d)).join(','));
 const svgFiles=svgArg?svgArg.split(',').flatMap(p=>fs.existsSync(p)&&fs.statSync(p).isDirectory()?fs.readdirSync(p).filter(n=>n.endsWith('.svg')).sort().map(n=>path.join(p,n)):fs.existsSync(p)?[p]:[]):[];
 
 // 1. The native engine's scenes and CPU pixels.

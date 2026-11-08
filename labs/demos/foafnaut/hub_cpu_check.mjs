@@ -106,16 +106,17 @@ try{
     if(!shifts.length)fail('no scroll was a copy of the CPU layers');
     for(const f of shifts)if(f.leanRenders!==0)fail('a copy frame made a Lean render',JSON.stringify(f));
     if(gpuCompare){
-      for(let i=0;i<6;i++)await page.wheel(-60);await page.settle(800);
+      for(let i=0;i<6;i++){const n=await count();await page.wheel(-60);await waitFrame(n);}await page.settle(3000);
       const cpu=await page.pixels();
       const openGpu=await browser(true),gpuPage=await openGpu(`page=${pageName}&stats=1&check=1`);
-      const gsaid=await gpuPage.settle();if(gsaid)fail('the GPU page refused:',gsaid);
+      const gsaid=await gpuPage.settle(5000);if(gsaid)fail('the GPU page refused:',gsaid);
       const gpu=await gpuPage.pixels(),last=(await gpuPage.frames()).at(-1);
       if(cpu.length!==gpu.length)fail('canvas sizes differ',cpu.length,gpu.length);
       else{
         let differ=0,over=0,worst=0;
         for(let i=0;i<cpu.length;i+=4){let d=0;for(let c=0;c<3;c++)d=Math.max(d,Math.abs(cpu[i+c]-gpu[i+c]));if(d){differ++;worst=Math.max(worst,d);}if(d>8)over++;}
-        console.log(JSON.stringify({check:'cpu-against-gpu',page:pageName,gpuPath:last?.path,pixels:cpu.length/4,differ,over,worst}));
+        const cpuLast=(await page.frames()).at(-1);
+        console.log(JSON.stringify({check:'cpu-against-gpu',page:pageName,scroll:[cpuLast?.scroll,last?.scroll],gpuPath:last?.path,pixels:cpu.length/4,differ,over,worst}));
         if(over>0.002*cpu.length/4)fail('the CPU Hub frame differs from the GPU one in',over,'pixels');
       }
       await gpuPage.close();
