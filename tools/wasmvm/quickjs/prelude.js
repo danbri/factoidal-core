@@ -651,8 +651,11 @@
     hasAttributes() { return this.getAttributeNames().length > 0; }
     setAttribute(name, value) {
       if (arguments.length < 2) throw new TypeError('setAttribute: 2 arguments required');
-      chk(n.setAttr(nodeId(this), String(name), String(value)));
-      if (/^on/i.test(String(name))) contentHandler(this, String(name).toLowerCase().slice(2), String(value));
+      const k = String(name), v = String(value);
+      chk(n.setAttr(nodeId(this), k, v));
+      // An event handler content attribute: a name that starts with "on", in any case.
+      if (k.length >= 2 && (k.charCodeAt(0) | 32) === 111 && (k.charCodeAt(1) | 32) === 110)
+        contentHandler(this, k.toLowerCase().slice(2), v);
     }
     setAttributeNS(ns, name, value) {
       if (arguments.length < 3) throw new TypeError('setAttributeNS: 3 arguments required');
