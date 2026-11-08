@@ -56,7 +56,7 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   mkdir -p "$LAB/.build/native-html/runtime"
   cp "$LAB/.build/web-render/engines/web-render."{mjs,wasm} "$LAB/.build/native-html/runtime/"
   deno compile --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
-    --allow-read --allow-net --allow-ffi \
+    --allow-read --allow-net --allow-ffi --allow-env=HOME \
     --include "$LAB/.build/native-html/runtime/web-render.wasm" \
     --include "$LAB/../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf" \
     --include "$LAB/../../../third_party/fonts/noto-sans/OFL.txt" \
@@ -169,4 +169,14 @@ shasum -a 256 native-webgpu-ui-darwin-arm64 native-webgpu-lean-darwin-arm64 \
   source-SHA256SUMS tool-versions.txt runtime-object-witness.txt > "$OUT/SHA256SUMS"
 if [ -x native-webgpu-html-darwin-arm64 ]; then shasum -a 256 native-webgpu-html-darwin-arm64 >> "$OUT/SHA256SUMS"; fi
 if [ -f libweb-render.dylib ]; then shasum -a 256 libweb-render.dylib >> "$OUT/SHA256SUMS"; fi
+# The compiled browser must start as the app starts it (issue 1268). On 2026-11-08 the binary
+# had no env permission, run_html.ts read HOME to find the script guest, and the app stopped
+# at start while every test of run_html.ts from source passed. One off-screen graph sweep.
+if [ -x "$OUT/native-webgpu-html-darwin-arm64" ]; then
+  START_RC=0
+  (cd "$OUT" && timeout 180 ./native-webgpu-html-darwin-arm64 --offscreen --no-state --idle-checks-only --graph-sweep >"$OUT/start-check.log" 2>&1) || START_RC=$?
+  if [ "$START_RC" != 0 ]; then echo "compiled foafnaut did not start (rc $START_RC):" >&2; grep -v '^{' "$OUT/start-check.log" | head -20 >&2; exit 1; fi
+  rm -f "$OUT/start-check.log"
+  echo 'Compiled foafnaut started off screen and passed the graph sweep'
+fi
 echo "Foafnaut native release directory: $OUT"
