@@ -63,6 +63,13 @@ async function main() {
     else if(arg==="--graph-sweep")commands=["graph",[2,800,565],[3,900,640],[3,1000,720],[4,1000,720]];
     // Twenty scroll steps of 120 backing pixels down the page: per-step frame time and input latency.
     else if(arg==="--scroll-sweep"){commands=Array.from({length:20},()=>[11,-120,0]);scrollSweep=true;}
+    // Scroll to the end of the page, then check that the last row of the layout is in the
+    // view, and hold the window still for a screenshot (issue 1270 report: long SVG pages).
+    else if(arg==="--scroll-end-sweep")commands=[...Array.from({length:60},()=>[11,-600,0]),...Array.from({length:20},()=>"hold"),"end"];
+    // Each page link of the page (showcase.html): wheel steps down to it (in the band and
+    // past it), the hand pointer over it, a click at its drawn place, the page it names,
+    // and back (issue 1268 report: a showcase link below the first screen did nothing).
+    else if(arg==="--link-scroll-sweep")commands=["pageLinks"];
     else if(arg==="--history-sweep")commands=["left","link","left","right","[","]","]","[","link1","]","[","]"];
     // Press and hold a link, then the reload button, then release each (issue 1268): the
     // press acknowledgement, the Lean frame of a held press, and the release.
@@ -203,11 +210,12 @@ async function main() {
   let resizeAt:number|undefined,frameNumber=0,waiting=false,waitingSince=0;
   const trace=(type:string,fields:Record<string,unknown>)=>console.log(JSON.stringify({type,t:Math.round(performance.now()),...fields}));
   const ms=(start:number,end:number)=>Math.round((end-start)*10)/10;
+  let refusing=0;
   let candidate:Awaited<ReturnType<typeof prepareHTML>>|undefined;
   const refuse=(target:string,error:unknown)=>{
     console.error("Native HTML refused:",target,String(error));
     trace("native-html-refused",{url:target,reason:String(error)});
-    prepareHTML(lean,target,undefined,refusalHTML(target,String(error))).then(next=>{if(running){candidate=next;dirty=true;}})
+    refusing++;prepareHTML(lean,target,undefined,refusalHTML(target,String(error))).then(next=>{if(running){candidate=next;dirty=true;}}).finally(()=>refusing--)
       .catch(failure=>console.error("Native HTML refusal page failed:",String(failure)));
   };
   // A turn of a page's script session: its logs, and a new frame only when the DOM changed
@@ -389,6 +397,9 @@ async function main() {
   const focusAddress=()=>{const {clipboard:_,...next}=engine.shellEdit(shell(),"focus",document.url);field=next;focused=true;dirty=true;};
   const leaveAddress=()=>{focused=false;field=showURL(document.url);dirty=true;};
   const scrollLimit=()=>{
+    // Lean's limit for the layers on screen (WebDocument.scrollLimit): the view then ends at the last page row.
+    const limit=current?.layers.layers.scrollLimit;
+    if(typeof limit==="number")return limit;
     const boxes=frame.webRender.boxes as number[][]|undefined;
     const bottom=Math.max(0,...(boxes??[]).map(box=>box[2]+box[4]));
     return Math.max(0,bottom-height+Math.round(60*scale));
@@ -774,12 +785,14 @@ async function main() {
       if(nextDocument!==document)prefetched=undefined;
       checked=nextDocument;
       if(nextDocument!==document)view.selection=undefined;
-      if(nextDocument!==document){scroll=0;if(!focused)field=showURL(nextDocument.url);}frame=next;document=nextDocument;candidate=undefined;native!.setTitle(windowTitle(document));
+      if(nextDocument!==document){scroll=0;if(!focused)field=showURL(nextDocument.url);}frame=next;document=nextDocument;
+      // A page that a navigation prepared while this frame was drawn is still to come: keep it.
+      if(candidate===nextDocument)candidate=undefined;else if(candidate)dirty=true;native!.setTitle(windowTitle(document));
       // A new page under a pointer that has not moved.
       if(lastPointer)pointAt(lastPointer[0],lastPointer[1]);
       console.log(JSON.stringify({type:"native-html-presented",url:document.url,width:sentWidth,height:sentHeight,primitives:frame.primitiveCount,links:frame.webRender.links.length,frames:session!.frames}));
     };
-    let lastRequest:RequestRecord|undefined;
+    let lastRequest:RequestRecord|undefined,urlWaitSince:number|undefined;
     const idleCheck=async()=>{
       const idleStart=performance.now();
       let result;
@@ -1034,13 +1047,55 @@ async function main() {
           native.testEvent(2,pressAt[0],pressAt[1]);
         }
         else if(step==="release")native.testEvent(4,pressAt[0],pressAt[1]);
+        else if(step==="end"){
+          // The page's last row: the bottom of the lowest layout box. The view is the window below the chrome.
+          const boxes=frame.webRender.boxes as number[][],bottom=Math.max(0,...boxes.map(box=>box[2]+box[4]));
+          const top=current?.layers.layers.top??0,ok=scroll+height-top>=bottom;
+          trace("native-html-test-end",{scroll,limit:scrollLimit(),bottom,view:height-top,ok});
+          if(!ok){console.error(`Native HTML scroll sweep: the view ends at row ${scroll+height-top}, the page at row ${bottom}`);Deno.exitCode=1;}
+        }
+        // A page on its way (loading, or prepared and not yet drawn, or a refusal page coming):
+        // check the URL after it is shown, at most 20 s later.
+        else if(typeof step==="string"&&step.startsWith("url:")&&(loading||candidate||rendering||refusing>0)&&(urlWaitSince??=performance.now())>performance.now()-20000){
+          commands.unshift(step);stepAt=performance.now()+50;
+        }
         else if(typeof step==="string"&&step.startsWith("url:")){
+          urlWaitSince=undefined;
           const ok=document.url.endsWith(step.slice(4));trace("native-html-test-url",{expected:step.slice(4),url:document.url,ok});
           if(!ok){console.error(`Native HTML sweep: expected a page ending ${step.slice(4)}, shown ${document.url}`);Deno.exitCode=1;}
         }
         else if(typeof step==="string"&&step.startsWith("pointer:")){
           const ok=pointerShown===step.slice(8);trace("native-html-test-pointer",{expected:step.slice(8),pointer:pointerShown,ok});
           if(!ok){console.error(`Native HTML sweep: expected the ${step.slice(8)} pointer, shown ${pointerShown}`);Deno.exitCode=1;}
+        }
+        else if(step==="pageLinks"){
+          // The local pages the links name, each once, in page order.
+          const hrefs=[...new Set((frame.webRender.links as unknown[][]).map(link=>String(link[1])).filter(href=>/^[a-z0-9-]+\.html$/.test(href)&&href!=="index.html"))];
+          trace("native-html-test-links",{count:hrefs.length,hrefs});
+          if(hrefs.length<5){console.error(`Native HTML link sweep: ${hrefs.length} page links on the first frame`);Deno.exitCode=1;}
+          const start=document.url.slice(document.url.lastIndexOf("/")+1);
+          // Each link from the top; then the last one again from the end of the page, so the
+          // way back up leaves the band of the end and the click is on a new band.
+          const last=hrefs.at(-1)!;
+          commands!.unshift(...hrefs.flatMap(href=>[`reveal:${href}`,"hold","hold",`over:${href}`,"pointer:hand",`click:${href}`,`url:${href}`,"[",`url:${start}`]),
+            ...Array.from({length:16},()=>[11,-400,0]),"hold","hold","hold",`reveal:${last}`,"hold","hold",`over:${last}`,"pointer:hand",`click:${last}`,`url:${last}`);
+        }
+        else if(typeof step==="string"&&/^(reveal|over|click):/.test(step)){
+          // The link's region in page rows: band rows plus the band top of the layers on screen.
+          const href=step.slice(step.indexOf(":")+1),bandTop=current?.layers.layers.bandTop??0;
+          const link=(frame.webRender.links as number[][]).find(l=>String(l[1])===href);
+          if(!link){console.error(`Native HTML link sweep: no region for ${href} at scroll ${scroll}`);Deno.exitCode=1;}
+          else if(step.startsWith("reveal:")){
+            // Wheel steps of at most 400 rows, so a long way crosses the band edge on the way.
+            let rest=Math.round(link[3]+bandTop+link[5]/2-scroll-(height-(current?.layers.layers.top??0))/2);
+            while(rest!==0){const d=Math.max(-400,Math.min(400,rest));native.testEvent(11,-d,0);rest-=d;}
+          } else {
+            const x=Math.round(link[2]+link[4]/2),y=Math.round(windowRow(link[3]+link[5]/2)),top=current?.layers.layers.top??0;
+            const inView=y>=top&&y<height;
+            trace("native-html-test-link",{step,scroll,x,y,inView});
+            if(!inView){console.error(`Native HTML link sweep: ${href} is drawn at row ${y}, outside the view`);Deno.exitCode=1;}
+            if(step.startsWith("over:"))native.testEvent(3,x,y);else{native.testEvent(2,x,y);native.testEvent(4,x,y);}
+          }
         }
         else if(step==="overLink"){
           const link=frame.webRender.links[0] as number[];

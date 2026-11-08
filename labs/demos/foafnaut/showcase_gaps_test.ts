@@ -25,9 +25,30 @@ const left=(r:Run)=>r.glyphs[0][1];
 const stillGap=(issue:string)=>`expected failure of ${ISSUE}${issue} no longer fails: make this test assert the correct result and close the issue`;
 
 // Issue 1270 is closed: SVG text, tspan and textPath are drawn (svg_text_test.ts).
-Deno.test("issue 1270: the showcase textPath page renders",async()=>{
-  const doc=await prepareHTML(engine,inputURL(pages+"showcase-textpath.html",true));
-  assert.ok((doc.compile(900,1100) as unknown as {primitiveCount:number}).primitiveCount>0);
+const svgFrame=(svg:string)=>frame(`<svg width="400" height="200" viewBox="0 0 400 200">${svg}</svg>`);
+Deno.test("issue 1270: the showcase textPath and lettering pages render, with SVG text",async()=>{
+  for(const name of ["showcase-textpath.html","showcase-lettering.html","showcase-dataviz.html","showcase-tables-svg.html"]){
+    const doc=await prepareHTML(engine,inputURL(pages+name,true));
+    const f=await doc.compile(900,700) as unknown as {primitiveCount:number};
+    assert.ok(f.primitiveCount>0,name);
+  }
+});
+Deno.test("issue 1270: SVG text draws glyphs; anchors, tspan and textPath add paint",()=>{
+  const empty=svgFrame("").primitiveCount;
+  const one=svgFrame("<text x='10' y='50' font-size='20'>Hello</text>").primitiveCount;
+  assert.ok(one>empty,"a text adds paint");
+  assert.equal(svgFrame("<text x='200' y='50' font-size='20' text-anchor='middle'>Hello</text>").primitiveCount,one,"an anchor moves the same glyphs");
+  assert.ok(svgFrame("<text x='10' y='50' font-size='20'>Hel<tspan fill='red'>lo</tspan></text>").primitiveCount>one,"a tspan of another colour is its own paint");
+  assert.ok(svgFrame("<defs><path id='p' d='M10 100 C 100 0 300 0 390 100'/></defs><text font-size='20'><textPath href='#p'>Hello</textPath></text>").primitiveCount>empty,"textPath draws");
+});
+Deno.test("expected failure, issue 1285: vertical writing-mode is laid out horizontally",()=>{
+  // The same frame with and without writing-mode: vertical text would place the glyphs differently.
+  const text=(mode:string)=>engine.compile(`<!doctype html><html><body><svg width="200" height="200"><text x="100" y="20" font-size="20"${mode}>ABC</text></svg></body></html>`,400,300,options) as unknown as {data:ArrayLike<number>};
+  const a=Array.from(text("").data),b=Array.from(text(" writing-mode='vertical-rl'").data);
+  assert.deepEqual(a,b,stillGap("1285"));
+});
+Deno.test("expected failure, issue 1286: SVG text gives no glyph runs, so it can not be selected",()=>{
+  assert.equal(runs("<svg width='200' height='100'><text x='10' y='50'>Selectable</text></svg>").filter(r=>r.text==="Selectable").length,0,stillGap("1286"));
 });
 
 Deno.test("expected failure, issue 1271: the window refuses the showcase script page",async()=>{
@@ -91,4 +112,23 @@ Deno.test("expected failure, issue 1275: dir=rtl is ignored",()=>{
 Deno.test("expected failure, issue 1276: emoji draw as .notdef",()=>{
   for(const text of ["😀","🌍"])
     assert.deepEqual(ids(run(`<p>${text}</p>`,text)),[0],stillGap("1276")+` (${text})`);
+});
+
+// Owner report (issues 1268, 1270): the data visualisation and lettering pages did not
+// scroll to the end. Lean's scroll limit with the layers: at the limit, the view ends at
+// the last row of the layout, and the band made there holds that view.
+Deno.test("the scroll limit reaches the last row of long SVG pages",async()=>{
+  const W=1600,H=1000,scale=2;
+  for(const name of ["showcase-dataviz.html","showcase-lettering.html","solving-showcase.html","showcase.html"]){
+    const doc=await prepareHTML(engine,inputURL(pages+name,true));
+    const shell=(scroll:number)=>({tabs:[{title:doc.title??""}],active:0,address:doc.url,cursor:0,focused:false,canBack:false,canForward:false,
+      loading:false,scale,theme:"next",pages:1,scroll});
+    const at=(scroll:number)=>engine.compileLayers(doc.source,W,H,{...doc.request(W,H).options,textScalePercent:150,shell:shell(scroll),checks:false});
+    const first=at(0),place=first.layers;
+    const bottom=Math.max(...(first.page.webRender.boxes as number[][]).map(b=>b[2]+b[4]));
+    assert.equal(typeof place.scrollLimit,"number",name);
+    assert.equal(place.scrollLimit!+place.view,Math.max(Math.ceil(bottom),place.view),`${name}: the view at the limit ends at the last row`);
+    const end=at(place.scrollLimit!).layers;
+    assert.ok(end.bandTop<=place.scrollLimit! && place.scrollLimit!+place.view<=end.bandTop+end.bandHeight,`${name}: the band at the limit holds the view`);
+  }
 });

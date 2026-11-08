@@ -234,6 +234,19 @@ out of `SVGForgiving.lean` with no change of behaviour.
 - Not done: vertical text (drawn horizontally), `textLength`, bidirectional reordering,
   `textPath` to a basic shape, CSS rules from style sheets for font properties.
 
+## The showcase generator (2026-11-08)
+
+`labs/demos/foafnaut/tools/showcase-pages.mjs` replaces `showcase-pages.py` (owner,
+2026-11-07: "The python scripts should be simple node JS so we can move them into browser
+when JS is unlocked."). It is plain ECMAScript with no packages: each layout (bars, lines,
+tidy tree, circle packing, force layout, lettering, tables) is a pure function from data
+to an SVG string, and only `main` reads the Lean files and writes the pages. Every label
+is SVG `text`, `tspan` or `textPath`, with no glyph outlines, so the pages are about 6
+times smaller. It writes `showcase-dataviz.html`, `showcase-lettering.html`,
+`showcase-textpath.html` (the lettering page's twin, with `writing-mode` and glyph
+rotation) and `showcase-tables-svg.html`. The force layout uses a seeded mulberry32 in
+place of Python's random, so node positions differ from the Python pages.
+
 ## Result
 
 The current result and the table of each remaining file:

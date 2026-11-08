@@ -11,7 +11,7 @@ export type HTMLArtifact = {
 /** A render with `layers:true` (WebDocument.layersJSON): the chrome layer in window
 rows, the page layer in band rows from page row `bandTop`, and the WGSL that puts them
 in the window. `keepFrom`..`keepTo` are the scrolls that this band shows with no new render. */
-export type HTMLLayerPlace = {top:number;view:number;bandTop:number;bandHeight:number;keepFrom:number;keepTo:number;composite:string;hoverRules?:boolean};
+export type HTMLLayerPlace = {top:number;view:number;bandTop:number;bandHeight:number;keepFrom:number;keepTo:number;composite:string;hoverRules?:boolean;scrollLimit?:number};
 /** Lean's answer to a pointer press: the chrome control or the link pressed, and the rectangles the composite darkens. */
 export type PressAnswer = {control:string|null;sourceNode?:number|null;href?:string;rects:number[][]};
 export type HTMLLayers = {layers:HTMLLayerPlace;page:HTMLArtifact;chrome:HTMLArtifact};
