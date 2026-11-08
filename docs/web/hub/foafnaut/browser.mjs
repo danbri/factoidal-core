@@ -94,7 +94,13 @@ canvas.addEventListener('mousedown',event=>event.preventDefault());
 const touches=new Map();let pinch;
 const tapSlop=10;
 const fingerGap=()=>{const [a,b]=[...touches.values()];return Math.hypot(a.x-b.x,a.y-b.y);};
+// A finger whose lift never reached the canvas (the app left mid-touch, a system gesture)
+// would stay in touches, and every later one-finger tap would start a pinch and click
+// nothing. The primary pointer begins a new gesture, so it clears whatever is left.
+const forgetTouches=()=>{touches.clear();if(pinch){send({type:'pinch',phase:'end'});pinch=undefined;}};
+addEventListener('visibilitychange',()=>{if(document.hidden){forgetTouches();moved=undefined;}});
 canvas.addEventListener('pointerdown',event=>{
+  if(event.isPrimary)forgetTouches();
   if(event.pointerType==='touch')touches.set(event.pointerId,{x:event.clientX,y:event.clientY});
   if(touches.size===2&&!pinch){
     if(moved)send({type:'release',scrolled:true,...point(event)});
