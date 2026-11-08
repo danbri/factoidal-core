@@ -71,6 +71,11 @@ async function main() {
     // "url:X" fails the run unless the page shown ends with X; "back" presses the chrome's back button.
     else if(arg==="--back-sweep")commands=["overLink","pointer:hand",[3,640,780],"pointer:arrow","link","url:foafnaut:graph",[2,640,500],[4,640,500],"[","url:index.html","]","url:foafnaut:graph",
       [2,700,450],[3,720,470],[4,720,470],"back","url:index.html","right","url:foafnaut:graph","left","url:index.html"];
+    // A trackpad swipe back and one forward (WebGesture.lean), as kind 12 events: began,
+    // 400 backing px across, ended. A vertical one and a short one go nowhere.
+    else if(arg==="--swipe-sweep")commands=["link","url:foafnaut:graph",[12,0,65537],[12,400,65540],[12,0,65544],"url:index.html",
+      [12,0,65537],[12,-400,65540],[12,0,65544],"url:foafnaut:graph",[12,0,65537],[11,-600,0],[12,-60,65540],[12,0,65544],"url:foafnaut:graph",
+      [12,0,65537],[12,100,65540],[12,0,65544],"url:foafnaut:graph"];
     else throw new Error(`Unknown native HTML argument: ${arg}`);
   }
   // Lean engine for compile: --native-engine PATH, else libweb-render.dylib beside the program, else Wasm.
@@ -235,10 +240,10 @@ async function main() {
   // The address bar's text, cursor, selection and undo step: a Lean value (WebShell.editJson).
   type Field=Omit<ShellEdit,"clipboard">;
   const showURL=(url:string):Field=>({address:url,cursor:url.length,anchor:url.length,undo:null,redo:null,typing:false});
-  let field=showURL(document.url),focused=false,theme="next",pages=1,scale=1,active=0,scroll=0;
+  let field=showURL(document.url),focused=false,theme="next",pages=1,scale=1,active=0,scroll=0,swipeHint=0;
   const tabs:{document:typeof document;history:typeof history;scroll:number}[]=[{document,history,scroll:0}];
   const shell=()=>({tabs:tabs.map((tab,index)=>({title:(index===active?document:tab.document).title??""})),active,...field,focused,
-    canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,pressed:pressed?.control??""});
+    canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,pressed:pressed?.control??"",...(swipeHint?{swipe:swipeHint}:{})});
   // The URLs of the session history of every tab: Lean matches `:visited` against them.
   const visited=()=>[...new Set([...tabs.flatMap((tab,index)=>(index===active?history:tab.history).history.entries)])].slice(-100);
   const shown=()=>({...view,shell:shell(),visited:visited(),
@@ -447,6 +452,27 @@ async function main() {
   // engine from before the op, link-route.mjs gives the same answers (issue 1274).
   const site={origin:"",pages:new URL("./pages/",import.meta.url).href,files:true};
   const router=createRouter((request:Record<string,unknown>)=>engine.shellRoute(request));
+  // Back and forward swipes on the trackpad (WebGesture.lean). The window sends kind 12 for each
+  // scroll of a trackpad gesture: its horizontal movement and phase (native_window.m). The
+  // deltas of one gesture are added up, in CSS px and the DOM sign (content moving right is a
+  // negative dx), and Lean says what they mean; its momentum is left alone. A Mac window gets
+  // no touch-screen touches. An engine without the op has no swipes.
+  const gestures=(()=>{try{return engine.gesture({action:"info"});}catch{return undefined;}})();
+  let wheelSum:{dx:number;dy:number}|undefined;
+  const gestureWheel=(a:number,b:number)=>{
+    const phase=b&0xff,momentum=(b>>8)&0xff,enabled=(b&65536)!==0;
+    if(!gestures||momentum||!enabled)return;
+    if(phase&(1|32))wheelSum={dx:0,dy:0};
+    if(!wheelSum)return;
+    wheelSum.dx-=a/scale;
+    const ended=(phase&(8|16))!==0;
+    const answer=engine.gesture({action:"wheel",dx:Math.round(wheelSum.dx),dy:Math.round(wheelSum.dy),ended:(phase&8)!==0});
+    trace("native-html-gesture",{dx:Math.round(wheelSum.dx),dy:Math.round(wheelSum.dy),phase,answer});
+    const hint=ended||answer.navigate?0:answer.hint;
+    if(hint!==swipeHint){swipeHint=hint;dirty=true;}
+    if(ended)wheelSum=undefined;
+    if(answer.navigate)windowCommand(answer.direction==="back"?6:7);
+  };
   const followRoute=(route:LinkRoute)=>{
     trace("native-html-route",route);
     if(route.route==="command")shellCommand(route.name,route.argument);
@@ -764,7 +790,8 @@ async function main() {
           if(event.a===121||event.a===49)scrollBy(page);
           if(event.a===116)scrollBy(-page);
         }
-        if(event.kind===11)scrollBy(-event.a);
+        if(event.kind===11){if(wheelSum)wheelSum.dy-=event.a/scale;scrollBy(-event.a);}
+        if(event.kind===12)gestureWheel(event.a,event.b);
         if(event.kind===5&&event.a===15)windowCommand(8);
         if(event.kind===10)windowCommand(event.a);
         if(event.kind===2){

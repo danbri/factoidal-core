@@ -65,6 +65,7 @@ static void enqueue(uint32_t type, int32_t a, int32_t b) {
     // The time stays that of the first event, so latency counts from it.
     if ((type == 1 || type == 3) && last->type == type) { last->a = a; last->b = b; return; }
     if (type == 11 && last->type == 11) { last->a += a; return; }
+    if (type == 12 && last->type == 12 && last->b == b) { last->a += a; return; }
   }
   if (eventHead + eventCount == eventCapacity) {
     if (eventHead) { memmove(events, events + eventHead, eventCount * sizeof(struct NGEvent)); eventHead = 0; }
@@ -123,6 +124,15 @@ void ng_set_cursor(int kind) {
   CGFloat scale=self.window.backingScaleFactor;
   CGFloat step=event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY*16;
   enqueue(11,(int32_t)(step*scale),0);
+  // Kind 12, a trackpad gesture across (back and forward swipes, WebGesture.lean): a is the
+  // horizontal content movement in backing pixels (right is positive, as Cocoa has it); b is
+  // the gesture phase (NSEventPhase: 1 began, 4 changed, 8 ended, 16 cancelled, 32 may
+  // begin), its momentum phase times 256, and 65536 when System Settings has "Swipe between
+  // pages" on. A mouse wheel has no phase and sends none. An older host ignores the kind.
+  NSEventPhase phase=event.phase,momentum=event.momentumPhase;
+  if (phase==NSEventPhaseNone && momentum==NSEventPhaseNone) return;
+  int32_t flags=(int32_t)(phase&0xff)|(int32_t)((momentum&0xff)<<8)|(NSEvent.isSwipeTrackingFromScrollEventsEnabled?65536:0);
+  enqueue(12,(int32_t)(event.scrollingDeltaX*scale),flags);
 }
 - (void)keyDown:(NSEvent *)event {
   NSEventModifierFlags flags=event.modifierFlags;
