@@ -774,13 +774,22 @@ def nodeQuery (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : St
 def maxGpuOut : Nat := 65536
 
 /-- One page GPU command (`L4Factoidal.PageGpu.Wire.decode`, then `PageGpu.step`): the
-new state and the answer text, "" when accepted, else the refusal (at most 900 bytes,
-so the guest's first buffer holds it and the import runs once). -/
+new state and the answer text: "" when accepted (a WebGL program: its interface, JSON,
+starting with `{`), else the refusal (at most 900 bytes, so the guest's first buffer
+holds it and the import runs once). -/
 @[irreducible] def gpuStep (s : State) (op : Nat) (bytes : ByteArray) : State × String :=
   match L4Factoidal.PageGpu.Wire.decode op bytes >>= L4Factoidal.PageGpu.step s.gpu with
   | .ok (g, out) =>
     if s.gpuOut.size + out.length > maxGpuOut then (s, "gpu: too many commands waiting for the host")
-    else ({ s with gpu := g, gpuOut := s.gpuOut ++ out.toArray }, "")
+    else
+      -- A linked WebGL program answers its interface (attribute locations, uniform offsets).
+      let answer := match op, L4Factoidal.PageGpu.Wire.decode op bytes with
+        | 9, .ok (.createProgram _ vs fs) =>
+          match L4Factoidal.PageGpu.Glsl.compileProgram vs fs with
+          | .ok (_, info) => info.json
+          | .error _ => ""
+        | _, _ => ""
+      ({ s with gpu := g, gpuOut := s.gpuOut ++ out.toArray }, answer)
   | .error e => (s, String.ofList (e.toList.take 900))
 
 /-- `gpu_command(op, unused, ptr, len, buf, cap)`. -/

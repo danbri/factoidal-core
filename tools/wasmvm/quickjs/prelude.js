@@ -1110,14 +1110,182 @@
       return { width, height, format: 'rgba8unorm', createView: () => ({ canvas }), destroy() {} };
     }
   }
+  // ---- WebGL 1 and 2 on the same Lean-validated layer (record, sections 6 and 6b) ----------
+  // Page-facing state only (bound buffer, current program, attribute pointers, uniform values,
+  // the clear colour); every object and every draw is a gpu_command that Lean validates. A
+  // program is linked by Lean (op 9: GLSL ES 3.00 or 1.00 to the WGSL subset), which answers
+  // the attribute locations and uniform offsets. The draws of a task are one render pass on
+  // the canvas, sent after the task (as a WebGL drawing buffer is presented after it).
+  const GL = {
+    DEPTH_BUFFER_BIT: 0x100, STENCIL_BUFFER_BIT: 0x400, COLOR_BUFFER_BIT: 0x4000,
+    POINTS: 0, LINES: 1, LINE_LOOP: 2, LINE_STRIP: 3, TRIANGLES: 4, TRIANGLE_STRIP: 5, TRIANGLE_FAN: 6,
+    ARRAY_BUFFER: 0x8892, ELEMENT_ARRAY_BUFFER: 0x8893, STREAM_DRAW: 0x88E0, STATIC_DRAW: 0x88E4, DYNAMIC_DRAW: 0x88E8,
+    BYTE: 0x1400, UNSIGNED_BYTE: 0x1401, SHORT: 0x1402, UNSIGNED_SHORT: 0x1403, INT: 0x1404, UNSIGNED_INT: 0x1405, FLOAT: 0x1406,
+    FRAGMENT_SHADER: 0x8B30, VERTEX_SHADER: 0x8B31, COMPILE_STATUS: 0x8B81, LINK_STATUS: 0x8B82, DELETE_STATUS: 0x8B80,
+    NO_ERROR: 0, INVALID_ENUM: 0x500, INVALID_VALUE: 0x501, INVALID_OPERATION: 0x502, OUT_OF_MEMORY: 0x505,
+    DEPTH_TEST: 0x0B71, BLEND: 0x0BE2, CULL_FACE: 0x0B44, SCISSOR_TEST: 0x0C11,
+    SRC_ALPHA: 0x0302, ONE_MINUS_SRC_ALPHA: 0x0303, ONE: 1, ZERO: 0, VERSION: 0x1F02, RENDERER: 0x1F01, VENDOR: 0x1F00,
+    SHADING_LANGUAGE_VERSION: 0x8B8C, MAX_VERTEX_ATTRIBS: 0x8869, MAX_TEXTURE_SIZE: 0x0D33,
+  };
+  const glModes = { 0: 3, 1: 2, 4: 0, 5: 1 };
+  class WebGLObject {}
+  class WebGLBuffer extends WebGLObject {}
+  class WebGLShader extends WebGLObject {}
+  class WebGLProgram extends WebGLObject {}
+  class WebGLUniformLocation { constructor(program, offset, type) { this.program = program; this.offset = offset; this.type = type; } }
+  const glContextFor = (canvas, version) => {
+    const gpuSend = (op, header, payload) => {
+      const r = n.gpu(op, header.map(x => String(Math.max(0, Math.floor(Number(x) || 0)))).join(' '), payload ?? '');
+      return typeof r === 'number' ? 'gpu: import error ' + r : r;
+    };
+    let error = 0, canvasId = 0, arrayBuffer = null, program = null, clear = [0, 0, 0, 0], draws = [], flushQueued = false;
+    const attribs = [];
+    const fail = (message, code = GL.INVALID_OPERATION) => { if (!error) error = code; console.warn('WebGL: ' + message); };
+    const send = (op, header, payload) => { const m = gpuSend(op, header, payload); if (m && !m.startsWith('{')) { fail(m); return null; } return m; };
+    const ensureCanvas = () => {
+      if (canvasId) return canvasId;
+      const id = gpuNext++;
+      if (send(1, [id, nodeId(canvas), canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150)]) !== null) canvasId = id;
+      return canvasId;
+    };
+    const flush = () => {
+      flushQueued = false;
+      if (!draws.length || !ensureCanvas()) { draws = []; return; }
+      const header = [canvasId, ...clear.map(unorm), draws.length];
+      for (const d of draws) header.push(...d);
+      draws = [];
+      send(7, header);
+    };
+    const pipelineFor = (p, layouts, mode) => {
+      const key = JSON.stringify([layouts, mode]);
+      let entry = p.pipelines.get(key);
+      if (entry) return entry;
+      const id = gpuNext++, header = [id, p.id, mode, layouts.length];
+      for (const l of layouts) header.push(l.stride, 1, l.format, l.offset, l.location);
+      if (send(5, header, 'vs\nfs') === null) return null;
+      entry = { id, bind: 0 };
+      if (p.uniformBuffer) {
+        const bind = gpuNext++;
+        if (send(6, [bind, id, p.uniformBuffer]) !== null) entry.bind = bind;
+      }
+      p.pipelines.set(key, entry);
+      return entry;
+    };
+    const setUniform = (loc, values, ints) => {
+      if (!loc) return;
+      if (loc.program !== program) { fail('uniform location of another program'); return; }
+      const view = ints ? new Int32Array(program.uniformData, loc.offset, values.length) : new Float32Array(program.uniformData, loc.offset, values.length);
+      for (let i = 0; i < values.length; i++) view[i] = values[i];
+      program.uniformDirty = true;
+    };
+    const ctx = {
+      canvas, drawingBufferWidth: canvasSize(canvas, 'width', 300), drawingBufferHeight: canvasSize(canvas, 'height', 150),
+      getError() { const e = error; error = 0; return e; },
+      getContextAttributes: () => ({ alpha: true, antialias: false, depth: false, stencil: false, premultipliedAlpha: true, preserveDrawingBuffer: false }),
+      getExtension: () => null, getSupportedExtensions: () => [], isContextLost: () => false,
+      getParameter(p) {
+        if (p === GL.VERSION) return version === 2 ? 'WebGL 2.0 (Foafnaut, Lean-validated)' : 'WebGL 1.0 (Foafnaut, Lean-validated)';
+        if (p === GL.SHADING_LANGUAGE_VERSION) return version === 2 ? 'WebGL GLSL ES 3.00' : 'WebGL GLSL ES 1.0';
+        if (p === GL.VENDOR || p === GL.RENDERER) return 'Foafnaut';
+        if (p === GL.MAX_VERTEX_ATTRIBS) return 16;
+        if (p === GL.MAX_TEXTURE_SIZE) return 2048;
+        return null;
+      },
+      viewport() {}, scissor() {}, enable() {}, disable() {}, blendFunc() {}, depthFunc() {}, cullFace() {}, frontFace() {},
+      lineWidth() {}, pixelStorei() {}, colorMask() {}, depthMask() {}, flush() {}, finish() {},
+      clearColor(r, g, b, a) { clear = [r, g, b, a]; },
+      clear(mask) { /* every frame of a page canvas starts cleared to the clear colour (loadOp: clear) */ },
+      createBuffer() { const b = new WebGLBuffer(); b.gpu = 0; b.size = 0; return b; },
+      deleteBuffer(b) { if (b?.gpu) send(8, [b.gpu]); if (b) b.gpu = 0; },
+      bindBuffer(target, b) { if (target === GL.ARRAY_BUFFER) arrayBuffer = b; else if (b) fail('only ARRAY_BUFFER in this slice', GL.INVALID_ENUM); },
+      bufferData(target, data, usage) {
+        if (target !== GL.ARRAY_BUFFER || !arrayBuffer) { fail('bufferData needs a bound ARRAY_BUFFER'); return; }
+        const bytes = typeof data === 'number' ? new ArrayBuffer(data) : gpuBytes(data);
+        const b = arrayBuffer, size = bytes.byteLength;
+        if (b.gpu && b.size !== size) { send(8, [b.gpu]); b.gpu = 0; }
+        if (!b.gpu) { const id = gpuNext++; if (send(2, [id, size, 32 | 8]) === null) return; b.gpu = id; b.size = size; }
+        if (size) send(3, [b.gpu, 0], bytes);
+      },
+      bufferSubData(target, offset, data) {
+        if (target !== GL.ARRAY_BUFFER || !arrayBuffer?.gpu) { fail('bufferSubData needs a bound ARRAY_BUFFER with data'); return; }
+        send(3, [arrayBuffer.gpu, offset], gpuBytes(data));
+      },
+      createShader(type) { const s = new WebGLShader(); s.type = type; s.source = ''; return s; },
+      shaderSource(s, src) { s.source = String(src); },
+      compileShader() {},
+      getShaderParameter(s, p) { return p === GL.COMPILE_STATUS ? true : null; },
+      getShaderInfoLog: () => '', deleteShader() {},
+      createProgram() { const p = new WebGLProgram(); p.shaders = []; p.pipelines = new Map(); return p; },
+      attachShader(p, s) { p.shaders.push(s); }, detachShader() {}, deleteProgram() {},
+      bindAttribLocation() { fail('bindAttribLocation: use layout(location = n); Lean assigns locations'); },
+      linkProgram(p) {
+        const vs = p.shaders.find(s => s.type === GL.VERTEX_SHADER), fs = p.shaders.find(s => s.type === GL.FRAGMENT_SHADER);
+        if (!vs || !fs) { p.log = 'a program needs a vertex and a fragment shader'; return; }
+        p.id = gpuNext++;
+        const answer = gpuSend(9, [p.id], vs.source + '\u0000' + fs.source);
+        if (!answer.startsWith('{')) { p.log = answer; p.linked = false; console.warn('WebGL: ' + answer); return; }
+        p.info = JSON.parse(answer); p.linked = true; p.log = '';
+        if (p.info.uniformSize) {
+          const id = gpuNext++;
+          if (send(2, [id, p.info.uniformSize, 64 | 8]) !== null) p.uniformBuffer = id;
+          p.uniformData = new ArrayBuffer(p.info.uniformSize); p.uniformDirty = true;
+        }
+      },
+      getProgramParameter(p, q) { return q === GL.LINK_STATUS ? !!p.linked : null; },
+      getProgramInfoLog: p => p.log ?? '',
+      useProgram(p) { program = p; },
+      getAttribLocation(p, name) { const l = p.info?.attributes[name]; return l === undefined ? -1 : l; },
+      getUniformLocation(p, name) { const u = p.info?.uniforms[name]; return u ? new WebGLUniformLocation(p, u[0], u[1]) : null; },
+      enableVertexAttribArray(i) { (attribs[i] ??= {}).enabled = true; },
+      disableVertexAttribArray(i) { (attribs[i] ??= {}).enabled = false; },
+      vertexAttribPointer(i, size, type, normalized, stride, offset) {
+        if (type !== GL.FLOAT || size < 1 || size > 4) { fail('only FLOAT attributes of 1 to 4 components', GL.INVALID_ENUM); return; }
+        Object.assign(attribs[i] ??= {}, { buffer: arrayBuffer, size, stride: stride || size * 4, offset });
+      },
+      uniform1f(l, x) { setUniform(l, [x]); }, uniform2f(l, x, y) { setUniform(l, [x, y]); },
+      uniform3f(l, x, y, z) { setUniform(l, [x, y, z]); }, uniform4f(l, x, y, z, w) { setUniform(l, [x, y, z, w]); },
+      uniform1i(l, x) { setUniform(l, [x], true); }, uniform2i(l, x, y) { setUniform(l, [x, y], true); },
+      uniform1fv(l, v) { setUniform(l, v); }, uniform2fv(l, v) { setUniform(l, v); }, uniform3fv(l, v) { setUniform(l, v); },
+      uniform4fv(l, v) { setUniform(l, v); },
+      uniformMatrix4fv(l, transpose, v) { setUniform(l, v); }, uniformMatrix2fv(l, transpose, v) { setUniform(l, v); },
+      uniformMatrix3fv(l, transpose, v) {
+        // mat3 columns are 16 bytes apart in the uniform buffer.
+        const out = []; for (let c = 0; c < 3; c++) out.push(v[3 * c], v[3 * c + 1], v[3 * c + 2], 0);
+        setUniform(l, out);
+      },
+      drawArrays(mode, first, count) {
+        const p = program;
+        if (!p?.linked) { fail('drawArrays with no linked program'); return; }
+        const layouts = [], vbufs = [];
+        for (const [name, location] of Object.entries(p.info.attributes)) {
+          const a = attribs[location];
+          if (!a?.enabled || !a.buffer?.gpu) { fail(`attribute ${name} has no buffer`); return; }
+          layouts.push({ stride: a.stride, format: a.size, offset: a.offset, location }); vbufs.push(a.buffer.gpu);
+        }
+        const pipeline = pipelineFor(p, layouts, glModes[mode] ?? 99);
+        if (!pipeline) return;
+        if (p.uniformBuffer && p.uniformDirty) { send(3, [p.uniformBuffer, 0], p.uniformData.slice(0)); p.uniformDirty = false; }
+        draws.push([pipeline.id, pipeline.bind, vbufs.length, ...vbufs, count, 1, first, 0]);
+        if (!flushQueued) { flushQueued = true; Promise.resolve().then(flush); }
+      },
+    };
+    Object.assign(ctx, GL);
+    ensureCanvas();
+    return ctx;
+  };
   Object.defineProperties(named.HTMLCanvasElement.prototype, {
     width: { get() { return canvasSize(this, 'width', 300); }, set(v) { this.setAttribute('width', String(v >>> 0)); }, configurable: true },
     height: { get() { return canvasSize(this, 'height', 150); }, set(v) { this.setAttribute('height', String(v >>> 0)); }, configurable: true },
     getContext: { value(kind) {
-      if (kind !== 'webgpu') return null;
-      const id = nodeId(this);
-      if (!gpuContexts.has(id)) gpuContexts.set(id, new GPUCanvasContext(this));
-      return gpuContexts.get(id);
+      // One context kind per canvas, as in HTML.
+      const id = nodeId(this), held = gpuContexts.get(id);
+      if (held) return held.kind === kind ? held.context : null;
+      let context = null;
+      if (kind === 'webgpu') context = new GPUCanvasContext(this);
+      else if (kind === 'webgl2') context = glContextFor(this, 2);
+      else if (kind === 'webgl' || kind === 'experimental-webgl') context = glContextFor(this, 1);
+      if (context) gpuContexts.set(id, { kind, context });
+      return context;
     }, writable: true, configurable: true },
   });
   for (const t of ['address', 'article', 'aside', 'footer', 'header', 'hgroup', 'main', 'nav', 'section', 'b', 'i', 'em', 'strong',
@@ -1534,6 +1702,9 @@
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
   def('GPUColorWrite', GPUColorWrite); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
   def('GPUCanvasContext', GPUCanvasContext); def('GPUDevice', GPUDevice);
+  def('WebGLRenderingContext', Object.freeze({ ...GL })); def('WebGL2RenderingContext', Object.freeze({ ...GL }));
+  def('WebGLBuffer', WebGLBuffer); def('WebGLShader', WebGLShader); def('WebGLProgram', WebGLProgram);
+  def('WebGLUniformLocation', WebGLUniformLocation);
   def('history', Object.freeze({ length: 1, state: null, pushState() {}, replaceState() {}, back() {}, forward() {}, go() {} }));
   def('screen', Object.freeze({ width: 800, height: 600, availWidth: 800, availHeight: 600, colorDepth: 24, pixelDepth: 24 }));
   def('innerWidth', 800); def('innerHeight', 600); def('devicePixelRatio', 1); def('scrollX', 0); def('scrollY', 0);

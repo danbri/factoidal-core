@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>WebGL 1 and 2, checked by Lean</title>
+<style>
+body{margin:0;padding:16px;font-size:15px;line-height:22px;color:#22303c;background:#f3f1f8}
+h1{margin:0;font-size:26px;line-height:34px;color:#4a2f8a}
+h2{margin:0;padding-top:20px;font-size:18px;line-height:26px;color:#4a2f8a}
+p{margin:0;padding-top:6px}
+.note{color:#5d5a6b;font-size:13px;line-height:19px}
+.out{color:#4a2f8a}
+canvas{display:block;width:300px;height:300px;margin-top:10px;border:1px solid #d9d3e8;background:white}
+code{color:#7a3e12}
+</style></head><body><main>
+<p><a href="index.html">Demo index</a></p>
+<h1>WebGL 1 and 2, checked by Lean</h1>
+<p>Two canvases, one with <code>getContext('webgl2')</code> and GLSL ES 3.00, one with <code>getContext('webgl')</code>
+and GLSL ES 1.00. Lean parses both dialects with one front end, translates each program to the same small WGSL subset
+as WebGPU pages use, checks it, clamps its indices and bounds-checks every buffer write and draw.</p>
+<h2>WebGL 2</h2>
+<canvas id="gl2" width="300" height="300"></canvas>
+<p id="status2" class="out">The script has not run.</p>
+<h2>WebGL 1</h2>
+<canvas id="gl1" width="300" height="300"></canvas>
+<p id="status1" class="out">The script has not run.</p>
+<p class="note">Record: <code>docs/designissues/2026-11-08-page-gpu.md</code>, sections 6 and 6b. Lean: <code>formal/lean4/L4Factoidal/PageGpu/Glsl.lean</code>.</p>
+<script>
+const vs300 = `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(location = 1) in vec3 color;
+uniform float angle;
+out vec3 vcolor;
+void main() {
+  float s = sin(angle);
+  float c = cos(angle);
+  vcolor = color;
+  gl_Position = vec4(pos.x * c - pos.y * s, pos.x * s + pos.y * c, 0.0, 1.0);
+}`;
+const fs300 = `#version 300 es
+precision mediump float;
+in vec3 vcolor;
+out vec4 outColor;
+void main() { outColor = vec4(vcolor, 1.0); }`;
+const vs100 = `attribute vec2 pos;
+attribute vec3 color;
+uniform float angle;
+varying vec3 vcolor;
+void main() {
+  vcolor = color;
+  float k = 0.75 + 0.25 * cos(angle * 2.0);
+  gl_Position = vec4(pos * k, 0.0, 1.0);
+}`;
+const fs100 = `#ifdef GL_ES
+precision mediump float;
+#endif
+varying vec3 vcolor;
+void main() { gl_FragColor = vec4(vcolor.bgr, 1.0); }`;
+function setup(id, kind, vsSrc, fsSrc, statusId) {
+  const status = document.getElementById(statusId);
+  const gl = document.getElementById(id).getContext(kind);
+  if (!gl) { status.textContent = 'No ' + kind + ' context in this engine.'; return null; }
+  const shader = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
+  const program = gl.createProgram();
+  gl.attachShader(program, shader(gl.VERTEX_SHADER, vsSrc));
+  gl.attachShader(program, shader(gl.FRAGMENT_SHADER, fsSrc));
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) { status.textContent = 'Lean refused the program: ' + gl.getProgramInfoLog(program); return null; }
+  const data = new Float32Array([0, 0.8, 0.95, 0.35, 0.35, -0.7, -0.45, 0.3, 0.75, 0.4, 0.7, -0.45, 0.35, 0.45, 0.95]);
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  const pos = gl.getAttribLocation(program, 'pos'), color = gl.getAttribLocation(program, 'color');
+  gl.enableVertexAttribArray(pos); gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 20, 0);
+  gl.enableVertexAttribArray(color); gl.vertexAttribPointer(color, 3, gl.FLOAT, false, 20, 8);
+  const angle = gl.getUniformLocation(program, 'angle');
+  status.textContent = 'Drawing with ' + gl.getParameter(gl.VERSION) + '; Lean gave pos location ' + pos + ', color location ' + color + '.';
+  return t => {
+    gl.clearColor(0.97, 0.96, 0.99, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(program);
+    gl.uniform1f(angle, t / 1000);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  };
+}
+const draws = [setup('gl2', 'webgl2', vs300, fs300, 'status2'), setup('gl1', 'webgl', vs100, fs100, 'status1')].filter(Boolean);
+let last = -1000;
+const frame = t => {
+  requestAnimationFrame(frame);
+  if (t - last < 41) return; // about 24 frames a second
+  last = t;
+  for (const d of draws) d(t);
+};
+if (draws.length) requestAnimationFrame(frame);
+</script>
+</main></body></html>

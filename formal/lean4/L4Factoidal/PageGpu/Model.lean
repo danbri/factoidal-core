@@ -14,6 +14,7 @@ host commands. It is built in three parts so that each theorem has one place to 
   quotas (`apply_inv`).
 -/
 import L4Factoidal.PageGpu.Wgsl
+import L4Factoidal.PageGpu.Glsl
 
 namespace L4Factoidal.PageGpu
 
@@ -84,6 +85,9 @@ inductive Command where
   | createBuffer (id size usage : Nat)
   | writeBuffer (id offset : Nat) (data : ByteArray)
   | createShader (id : Nat) (code : String)
+  /-- A WebGL program (`linkProgram`): GLSL ES vertex and fragment shaders, translated by
+  `Glsl.compileProgram` into one WGSL module with entry points `vs` and `fs`. -/
+  | createProgram (id : Nat) (vs fs : String)
   | createPipeline (id shader : Nat) (vs fs : String) (layouts : List VLayout) (topology : Topology)
   /-- Group 0, binding 0: a uniform buffer, for `pipeline`'s layout. -/
   | createBindGroup (id pipeline buffer : Nat)
@@ -294,6 +298,10 @@ def plan (s : State) : Command → Except String (Change × List HostCmd)
     return (.none, [.writeBuffer (s.gid id) offset data])
   | .createShader id code => do
     let m ← Wgsl.compile code
+    let text := m.print
+    return (.add id (.shader m text.utf8ByteSize), [.createShader (s.gid id) text])
+  | .createProgram id vs fs => do
+    let (m, _) ← Glsl.compileProgram vs fs
     let text := m.print
     return (.add id (.shader m text.utf8ByteSize), [.createShader (s.gid id) text])
   | .createPipeline id sh vs fs layouts topology => do

@@ -4,7 +4,7 @@
 // device (page-gpu.mjs) and blits the page canvas into the page layer at Lean's rectangle.
 // Checks, in headless Chrome with WebGPU: frames with the path "page-gpu" (no Lean layout);
 // passes and blits counted by the replay; no replay errors. The frame rate is printed.
-//   node labs/demos/foafnaut/hub_page_gpu_check.mjs [--runtime DIR] [--guest FILE] [--shot FILE]
+//   node labs/demos/foafnaut/hub_page_gpu_check.mjs [--runtime DIR] [--guest FILE] [--shot FILE] [--page webgl-triangle.html]
 // --runtime: an engine with gpu_command (build-web-render.sh --wasm); --guest: a QuickJS guest
 // built from this prelude (tools/wasmvm/build-quickjs.sh).
 import http from 'node:http';import zlib from 'node:zlib';import fs from 'node:fs';import path from 'node:path';
@@ -13,6 +13,7 @@ const opt=(name,fallback)=>{const i=process.argv.indexOf(name);return i>0?proces
 const hubDir=fileURLToPath(new URL('../../../docs/web/hub/foafnaut/',import.meta.url));
 const pagesDir=fileURLToPath(new URL('./pages/',import.meta.url));
 const runtimeDir=opt('--runtime',fileURLToPath(new URL('./.build/web-render/engines/',import.meta.url)));
+const pageName=opt('--page','webgpu-triangle.html');
 const guest=opt('--guest',`${process.env.HOME}/working/qjs-wasm/qjs-wasmvm.wasm`),shotFile=opt('--shot','');
 const LIVE='https://danbri.github.io';
 const CHROME=process.env.CHROME??'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -64,7 +65,7 @@ try{
   await s('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});
   await s('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{let f;window.__frames=[];
     Object.defineProperty(window,'foafnautFrame',{configurable:true,get(){return f;},set(v){f=v;window.__frames.push({t:performance.now(),...v});}});})();`});
-  await s('Page.navigate',{url:base+'?page=webgpu-triangle.html&stats=1'});
+  await s('Page.navigate',{url:base+`?page=${pageName}&stats=1`});
   const evaluate=async expression=>{const r=await s('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.text);return r.result.value;};
   const t0=Date.now();let gpuFrames=[];
   while(Date.now()-t0<60000){
@@ -88,7 +89,7 @@ try{
     const st=gpuFrames.at(-1).pageGpu;
     if(!st||st.passes<10||st.blits<10||st.errors)fail('replay stats',JSON.stringify(st));
   }
-  const replayWarnings=logs.filter(l=>/page GPU|WebGPU:/.test(l));
+  const replayWarnings=logs.filter(l=>/page GPU|WebGPU:|WebGL:/.test(l));
   if(replayWarnings.length)fail('console:',replayWarnings.slice(0,5).join(' | '));
   if(shotFile){const r=await s('Page.captureScreenshot',{format:'png'});fs.writeFileSync(shotFile,Buffer.from(r.data,'base64'));console.log('screenshot',shotFile);}
 }finally{chrome.kill();server.close();fs.rmSync(profile,{recursive:true,force:true});}

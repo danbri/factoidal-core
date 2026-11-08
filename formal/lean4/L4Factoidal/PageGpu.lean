@@ -9,6 +9,7 @@ L4Factoidal.PageGpu: the GPU API of page scripts, validated by Lean
 - `PageGpu.Tests`: `#guard` cases and the `#print axioms` audit.
 -/
 import L4Factoidal.PageGpu.Wgsl
+import L4Factoidal.PageGpu.Glsl
 import L4Factoidal.PageGpu.Model
 import L4Factoidal.PageGpu.Theorems
 import L4Factoidal.PageGpu.Wire

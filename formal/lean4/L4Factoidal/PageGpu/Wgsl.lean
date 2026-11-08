@@ -266,6 +266,8 @@ nested construct uses one unit, so nesting is at most the fuel the caller gives
 structure PS where
   toks : Array Tok
   pos : Nat := 0
+  /-- GLSL ES type names as constructors (`vec4(...)`, `float(...)`; `PageGpu.Glsl`). -/
+  glsl : Bool := false
 
 abbrev P := StateT PS (Except String)
 
@@ -338,6 +340,16 @@ def ty : Nat → P Ty
         return .mat (cs[3]!.toNat - '0'.toNat) (cs[5]!.toNat - '0'.toNat)
     return .named name
 
+/-- GLSL ES type names, as the WGSL types they translate to. -/
+def glslTy? : String → Option Ty
+  | "float" => some (.scalar .f32) | "int" => some (.scalar .i32) | "uint" => some (.scalar .u32)
+  | "bool" => some (.scalar .bool)
+  | "vec2" => some (.vec 2 .f32) | "vec3" => some (.vec 3 .f32) | "vec4" => some (.vec 4 .f32)
+  | "ivec2" => some (.vec 2 .i32) | "ivec3" => some (.vec 3 .i32) | "ivec4" => some (.vec 4 .i32)
+  | "uvec2" => some (.vec 2 .u32) | "uvec3" => some (.vec 3 .u32) | "uvec4" => some (.vec 4 .u32)
+  | "mat2" => some (.mat 2 2) | "mat3" => some (.mat 3 3) | "mat4" => some (.mat 4 4)
+  | _ => none
+
 def precOf : String → Option Nat
   | "||" => some 1 | "&&" => some 2
   | "==" | "!=" | "<" | "<=" | ">" | ">=" => some 3
@@ -402,6 +414,11 @@ def primary (fuel : Nat) : P Expr :=
     | some (.ident "true") => advance; return .lit (.bool true)
     | some (.ident "false") => advance; return .lit (.bool false)
     | some (.ident name) =>
+      if (← get).glsl then
+        if let some t := glslTy? name then
+          if (← peekAt 1) == some (.sym "(") then
+            advance; advance
+            return .call (.ty t) (← args fuel)
       if builtins.contains name then
         if (← peekAt 1) == some (.sym "(") then
           advance; advance
@@ -987,17 +1004,20 @@ def Module.print (m : Module) : String :=
   String.join (m.consts.map fun (n, t, e) => s!"const {n}{optTyPrint t} = {e.print};\n") ++
   String.join (m.fns.map Fn.print)
 
-/-- What a page's shader becomes: parsed, validated, hardened, and the hardened module
-validated again (clamping adds nodes and cost). The host gets
-`(compile src).map Module.print`. -/
+/-- What every page shader becomes, WGSL or translated GLSL: validated, hardened, and the
+hardened module validated again (clamping adds nodes and cost). The host gets
+`Module.print` of the result. -/
+def finish (m : Module) : Except String Module :=
+  if validate m then
+    match harden m with
+    | some h => if validate h then .ok h else .error "shader: over the cost bound after index clamping"
+    | none => .error "shader: an index whose base has no known length"
+  else .error "shader: not in the WGSL subset"
+
+/-- WGSL text from a page: `parse`, then `finish`. -/
 def compile (src : String) : Except String Module := do
   let m ← parse src
-  if !validate m then throw "shader: not in the WGSL subset"
-  match harden m with
-  | some h =>
-    if !validate h then throw "shader: over the cost bound after index clamping"
-    return h
-  | none => throw "shader: an index whose base has no known length"
+  finish m
 
 /-! ## Interface of entry points (for pipelines) -/
 
