@@ -7,7 +7,9 @@
 // engine and changes its fonts in order, and keeps copies of the frames it compares.
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLArtifact,type HTMLEngine} from "./native_html_engine.ts";
-import {loadFontFile} from "./native_html_document.ts";
+import {loadFontFile,prepareHTML,setFontHost,type PageEngine} from "./native_html_document.ts";
+import {startCompileWorker} from "./native_html_compile.ts";
+import {fallbackFontHost,fontFilePath,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 
 const fonts=new URL("../../../third_party/fonts/",import.meta.url).pathname;
 const sans=fonts+"noto-sans/NotoSans-Regular.ttf",armenian=fonts+"noto-sans-armenian/NotoSansArmenian-Regular.ttf";
@@ -136,3 +138,89 @@ async function emoji(nativeEngine?:string){
 }
 Deno.test("emoji and emoji sequences draw from Noto Emoji (Wasm)",()=>emoji());
 Deno.test({name:"emoji and emoji sequences draw from Noto Emoji (native library)",ignore:noLibrary,fn:()=>emoji(library)});
+
+// The native window's fallback fonts (native_html_fonts.ts): for each page, the fonts of the
+// Hub's table that its characters need go into the engine worker before the first layout,
+// read as bytes, and stay held. Arabic, Hebrew, Devanagari, Thai and Han then draw with no
+// .notdef glyph (id 0), where Noto Sans alone draws them as .notdef.
+
+const scriptSamples={Arabic:"مرحبا بالعالم",Hebrew:"שלום עולם",Devanagari:"नमस्ते दुनिया",Thai:"สวัสดีชาวโลก",Han:"你好世界"};
+const scriptsPage="<!doctype html><title>Scripts</title>"+Object.entries(scriptSamples).map(([name,text])=>`<p>${name}: ${text}</p>`).join("");
+/** The .notdef glyphs (id 0) drawn in each sample's line. */
+function notdefs(scene:HTMLArtifact){
+  const runs=scene.webRender.glyphRuns as {text:string;glyphs:number[][]}[];
+  return Object.fromEntries(Object.entries(scriptSamples).map(([name,text])=>{
+    const mine=runs.filter(run=>[...run.text].some(ch=>ch.codePointAt(0)!>0x7f&&text.includes(ch)));
+    assert(mine.length,`no glyph run for the ${name} sample`);
+    return [name,mine.reduce((n,run)=>n+run.glyphs.filter(g=>g[0]===0).length,0)];
+  }));
+}
+async function nativeHostDraws(nativeEngine?:string){
+  const client=await startCompileWorker({path:sans,family:"Noto Sans"},nativeEngine);
+  try{
+    const answers:PageFonts[]=[];
+    const open=async(html:string,name:string)=>{
+      const page=await prepareHTML(client.engine as unknown as PageEngine,`file:///${name}.html`,undefined,html);
+      return await page.compile(900,600,{checks:false} as Record<string,unknown>) as unknown as HTMLArtifact;
+    };
+    // With Noto Sans alone (no font host), every sample is .notdef.
+    setFontHost(undefined);
+    const plain=notdefs(await open(scriptsPage,"plain"));
+    for(const [name,count] of Object.entries(plain))assert(count>0,`${name} drew with Noto Sans alone`);
+    // As run_html.ts: the worker chooses the page's fonts and reads them beside its engine.
+    setFontHost(async source=>{answers.push(await client.pageFonts(source));});
+    // A page of Latin text with a character Noto Sans has loads no font.
+    await open("<!doctype html><p>Caf\u00e9 \u2014 plain text.</p>","latin");
+    assert.deepEqual(answers.map(a=>[a.loaded,a.held]),[[[],[]]]);
+    // The page with the samples: its fonts, in table order, then not one .notdef.
+    const drawn=notdefs(await open(scriptsPage,"scripts"));
+    assert.deepEqual(drawn,{Arabic:0,Hebrew:0,Devanagari:0,Thai:0,Han:0});
+    const families=["Noto Sans Hebrew","Noto Sans Arabic","Noto Sans Devanagari","Noto Sans Thai","Noto Sans JP Han"];
+    assert.deepEqual(answers[1].loaded,families);
+    assert.deepEqual(answers[1].held.map(font=>font.family),families);
+    // The fonts stay held: the same page again loads nothing and draws the same.
+    assert.deepEqual(notdefs(await open(scriptsPage,"again")),drawn);
+    assert.deepEqual(answers[2].loaded,[]);
+    assert.equal(answers[2].held.length,5);
+  }finally{setFontHost(undefined);client.terminate();}
+}
+Deno.test("the native host draws Arabic, Hebrew, Devanagari, Thai and Han with no .notdef (Wasm worker)",()=>nativeHostDraws());
+Deno.test({name:"the native host draws Arabic, Hebrew, Devanagari, Thai and Han with no .notdef (native library worker)",ignore:noLibrary,fn:()=>nativeHostDraws(library)});
+
+// What each page costs: a Latin page reads nothing, not even the table module; a page with
+// a character Noto Sans has reads the table only; a script outside CJK loads its font with
+// no coverage file; Han reads the coverage file once; held fonts are not asked for again.
+Deno.test("fallback fonts per page: a Latin page loads none and reads no file",async()=>{
+  const loads:string[][]=[],reads:string[]=[];
+  const host=fallbackFontHost(async(fonts:FallbackFont[])=>{
+    for(const font of fonts)Deno.statSync(font.path);
+    loads.push(fonts.map(font=>font.family));return fonts.map(font=>({family:font.family,fonts:2}));
+  },{readText:path=>{reads.push(path);return Deno.readTextFile(path);}});
+  assert.deepEqual(await host.page("<!doctype html><p>Plain text, &amp; an entity.</p>"),{loaded:[],failed:[],held:[]});
+  assert.equal(host.stats.tableLoaded,false);
+  assert.deepEqual(await host.page("<p>Café © 2026 — €5</p>"),{loaded:[],failed:[],held:[]});
+  assert.equal(host.stats.tableLoaded,true);
+  assert.deepEqual([loads,reads],[[],[]]);
+  assert.deepEqual((await host.page("<p>Hebrew by reference: &#x5d0;&#1489;</p>")).loaded,["Noto Sans Hebrew"]);
+  assert.deepEqual((await host.page("<p>Բարեւ ש</p>")).loaded,["Noto Sans Armenian"]);
+  assert.deepEqual(reads,[]);
+  assert.deepEqual((await host.page("<p>你好，世界</p>")).loaded,["Noto Sans JP Kana","Noto Sans JP Han"]);
+  // At most once in a process: another test may have had font-coverage.mjs read it already.
+  assert(reads.length<=1&&reads.every(path=>path===fontFilePath("./fonts/noto-sans-cjk/coverage.json")));
+  assert.deepEqual((await host.page("<p>世界 ש</p>")).loaded,[]);
+  assert(reads.length<=1);
+  assert.equal(loads.length,3);
+  // A font that fails is not held, so a later page asks for it again.
+  const failing=fallbackFontHost(async fonts=>fonts.map(font=>({family:font.family,error:"no"})));
+  assert.deepEqual(await failing.page("<p>ส</p>"),{loaded:[],failed:["Noto Sans Thai"],held:[]});
+  assert.deepEqual(failing.held(),[]);
+});
+// Every font and coverage file of the Hub's table is in third_party/fonts, where the app holds them.
+Deno.test("every file of the fallback font table is in third_party/fonts",async()=>{
+  // @ts-ignore plain JavaScript module of the Hub
+  const {fallbackFonts}=await import("../../../docs/web/hub/foafnaut/fallback-fonts.mjs");
+  for(const font of fallbackFonts as {path:string;bytes:number;coverage?:string}[]){
+    assert.equal(Deno.statSync(fontFilePath(font.path)).size,font.bytes,font.path);
+    if(font.coverage)assert(Deno.statSync(fontFilePath(font.coverage)).isFile,font.coverage);
+  }
+});
