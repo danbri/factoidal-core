@@ -29,7 +29,8 @@ record, with `@@unscopables`), and more early errors (escaped keywords, `switch`
 redeclarations, `eval`/`arguments` in strict assignment patterns). Stage 5 added
 Promise (`then`, `catch`, `finally`, `resolve`, `reject`, `all`), the job queue,
 `async` functions, arrows and methods with `await`, and `yield`/`await` inside
-expressions (section 6a). `lake exe leanjs` runs a script, Test262 files
+expressions (section 6a). Stage 6 added async generators, private class members
+(`#x` fields, methods, accessors, `#x in o`) and class static blocks. `lake exe leanjs` runs a script, Test262 files
 or the benchmarks.
 
 Measured results are in section 9 (Test262 counts) and section 10 (speed).
@@ -214,8 +215,19 @@ after the suspension: a difference from §13.3.6 when they have side effects. A
 `await e` as a `yield`; the function's object is a coroutine (`Kind.coro`) with the
 promise it returns. At each suspension `asyncStep` resolves the awaited value to a
 promise and queues the resumption as its reaction (§27.7.5.3 Await); the end of the
-frames resolves the promise and a throw rejects it. Async generators are not built
-(255 Test262 failures in the subset are async generator methods).
+frames resolves the promise and a throw rejects it.
+
+Async generators (stage 6) use the same frames. In an async generator the parser
+marks `await e` (`yield` of a `%await` call), so the machine tells an await
+(`GOut.awaited`) from a yield. The object (`Kind.agen`) keeps a queue of requests
+(`next`, `return`, `throw`, each with its promise) and serves them one at a time
+(`agenDrain`, `agenRun`; §27.6.3). Not done: the await of a yielded value before the
+request resolves, and `for await`.
+
+Private names (stage 6) are properties under a key that starts with U+10FFFE
+(`privKey`), hidden from every key listing; reading or writing a private name that
+the object does not have throws a `TypeError`. Two classes that declare the same
+private name share the key, so the brand check of §7.3.31 is not exact.
 
 ## 7. Strings and numbers
 
@@ -337,6 +349,16 @@ Remaining failures by cause (stage 5): async generator methods 255; early errors
 detected 196; private class members 80; `yield` in a conditional position 32; call
 depth 31; class static blocks 17.
 
+Stage 6 (async generators, private members, static blocks): **5,616 pass, 681 fail, 4
+skip (89.2 % of 6,297 run)**: 731 negative passes, 4,885 of 5,292 positive tests
+(92.3 %). 171 of the 225 async tests pass. 73 negative tests that passed only because
+the parser refused private names or async generators fail now; no positive test was
+lost.
+
+Remaining failures by cause (stage 6): early errors not detected 269; `yield` in a
+conditional position 32; call depth 31; the rest are single semantic differences
+(each cause under 35 tests).
+
 ## 10. Speed
 
 The same two scripts as the QuickJS measurement in `2026-11-07-wasmvm-engine.md`
@@ -380,10 +402,11 @@ small objects as shapes with slot arrays, and caches property lookups.
 
 ## 12. Next steps
 
-1. Language: async generators and `for await`; private class members and static
-   blocks; the remaining early errors; regular expression literals (the repository's
+1. Language: the remaining early errors (269 tests, now the largest group); `for
+   await`; exact private-name brands; regular expression literals (the repository's
    `L4Factoidal.Regex` engines are candidates); `yield` in conditional positions
-   (lift into `if` statements).
+   (lift into `if` statements); a call depth limit set from the native stack rather
+   than 400.
 2. Built-ins in Test262 order: Object, Function, Array, String, Number, Math, JSON,
    Error, Symbol, Map/Set, Promise, RegExp (the repository's `L4Factoidal.Regex`
    engines are candidates), Date (on the virtual clock).

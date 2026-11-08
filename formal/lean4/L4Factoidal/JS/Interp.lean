@@ -137,7 +137,7 @@ def makeClosure (ctx : Ctx) (f : FunDef) (nameHint : String := "") (home : Value
   defineOwn id "length" (.data (.num (Float.ofNat f.expectedArgs)) false false true)
   defineOwn id "name" (.data (.str (f.name.getD nameHint)) false false true)
   if f.gen then
-    let p ← alloc { proto := .obj r.generatorProto }
+    let p ← alloc { proto := .obj (if f.async then r.asyncGenProto else r.generatorProto) }
     defineOwn id "prototype" (.data (.obj p) true false false)
   else if f.kind == .normal && !f.async then
     let p ← newObject
@@ -168,7 +168,7 @@ def nameOfKey (key : String) : M String := do
   | some id =>
     let d := (← get).syms.getD id ""
     pure (if d.isEmpty && id ≥ wellKnown.size then "" else "[" ++ d ++ "]")
-  | none => pure key
+  | none => pure (if isPrivKey key then "#" ++ (key.drop 1).toString else key)
 
 
 
@@ -454,7 +454,9 @@ def getV : Nat → Value → String → M Value
     match v with
     | .obj id =>
       match (← get).findProp id key 1000 with
-      | none => pure .undef
+      | none =>
+        if isPrivKey key then throwErr .type s!"Cannot read private member #{(key.drop 1).toString} from an object whose class did not declare it"
+        pure .undef
       | some (.data x ..) => pure x
       | some (.acc g _ _ _) => if g.isObj then callV n g v #[] else pure .undef
     | .str s =>
@@ -497,6 +499,8 @@ def putV : Nat → Value → String → Value → Bool → M Unit
         modifyObj id fun o => { o with kind := .array es' }
         return
       | _, _ => pure ()
+      if isPrivKey key && ((← get).findProp id key 1000).isNone then
+        throwErr .type s!"Cannot write private member #{(key.drop 1).toString} to an object whose class did not declare it"
       match o.getOwn key with
       | some (.data _ w e c) =>
         if w then
@@ -821,6 +825,12 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
     for v in fd.vars do
       if !((← getBinding fenv v).isSome) then declare fenv v { v := .undef }
     if fd.kind == .ctor false then initFields n ctx fnObj thisV
+    if fd.gen && fd.async then
+      let p ← getV n fnObj "prototype"
+      let ctx' ← enterBlock n ctx fd.body
+      let g ← alloc { proto := if p.isObj then p else .obj r.asyncGenProto, kind := .agen [.block ctx' fd.body] 0 #[] }
+      modify fun h => { h with depth := h.depth - 1 }
+      return .obj g
     if fd.gen then
       -- a generator function returns its generator, suspended at the start (§27.5.3.1)
       let p ← getV n fnObj "prototype"
@@ -1812,11 +1822,19 @@ def evalClass : Nat → Ctx → ClassDef → String → M Value
     defineOwn fid "name" (.data (.str cname) false false true)
     defineOwn fid "prototype" (.data (.obj proto) false false false)
     setHidden proto "constructor" (.obj fid)
-    let fields ← defineMembers n cctx fid proto members #[]
+    -- the class binding is initialised before static fields and blocks run (§15.7.14)
+    let statics := members.filter fun m => match m with
+      | .mk true .field .. | .mk true .staticBlock .. => true
+      | _ => false
+    let others := members.filter fun m => match m with
+      | .mk true .field .. | .mk true .staticBlock .. => false
+      | _ => true
+    let fields ← defineMembers n cctx fid proto others #[]
     modifyObj fid fun o => match o.kind with
       | .closure f e t nt h _ => { o with kind := .closure f e t nt h fields }
       | k => { o with kind := k }
     if let some x := name then declare cenv x { v := .obj fid, mutable := false }
+    let _ ← defineMembers n cctx fid proto statics #[]
     pure (.obj fid)
 termination_by structural n _ _ _ => n
 
@@ -1846,6 +1864,10 @@ def defineMembers : Nat → Ctx → Nat → Nat → List Member → Array (Strin
       let s ← makeClosure ctx f ("set " ++ nm) (.obj target)
       let g := match (← getObj target).props.get? key with | some (.acc g _ _ _) => g | _ => .undef
       defineOwn target key (.acc g s false true)
+      defineMembers n ctx fid proto ms acc
+    | .staticBlock =>
+      let init ← makeClosure ctx f "" (.obj fid)
+      let _ ← callV n init (.obj fid) #[]
       defineMembers n ctx fid proto ms acc
     | .field =>
       let init ← makeClosure ctx f nm (.obj target)
@@ -2015,6 +2037,10 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
   | 0, _, _, _, _ => throw (.halt "fuel")
   | n + 1, ctx, labels, s, rest => do
     let yieldAt (arg : Option Expr) (delegate : Bool) (target : Option (Pat × BindMode)) : M GOut := do
+      if let some (.call (.ident "%await") [e]) := arg then
+        return ← match ← genEval n ctx e with
+          | .error x => genUnwind n rest (.throw x)
+          | .ok v => pure (.awaited v (.resume ctx target :: rest))
       let v ← match arg with
         | some e => genEval n ctx e
         | none => pure (.ok .undef)
@@ -2200,7 +2226,7 @@ def asyncStep : Nat → Nat → GInput → M Unit
       | .error (.throw e) => modifyObj co (fun o => { o with kind := .coro [] pid }); rejectPromise n pid e
       | .error a => throw a
       | .ok (.done v) => modifyObj co (fun o => { o with kind := .coro [] pid }); resolvePromise n pid v
-      | .ok (.yielded v fs) =>
+      | .ok (.yielded v fs) | .ok (.awaited v fs) =>
         modifyObj co fun o => { o with kind := .coro fs pid }
         let p ← promiseResolve n v
         let r ← realm
@@ -2297,6 +2323,65 @@ def runJobs : Nat → M Unit
     | some (.halt w) => throw (.halt w)
     | _ => runJobs n
 termination_by structural n => n
+
+/-- An iterator result object (§7.4.14 CreateIteratorResultObject). -/
+def iterResult : Nat → Value → Bool → M Value
+  | _, v, done => do
+    let o ← newObject
+    defineOwn o "value" (.data v true true true)
+    defineOwn o "done" (.data (.bool done) true true true)
+    pure (.obj o)
+termination_by structural n _ _ => n
+
+/-- Serve the request queue of an async generator (§27.6.3.7 AsyncGeneratorDrainQueue). -/
+def agenDrain : Nat → Nat → M Unit
+  | 0, _ => throw (.halt "fuel")
+  | n + 1, gid => do
+    match (← getObj gid).kind with
+    | .agen frames st queue =>
+      if st == 2 || queue.isEmpty then return
+      let (input, pid) := queue.getD 0 (GInput.send .undef, 0)
+      let pop : M Unit := modifyObj gid fun o => match o.kind with
+        | .agen fs s q => { o with kind := .agen fs s (q.extract 1 q.size) }
+        | k => { o with kind := k }
+      let finished := st == 3 || (st == 0 && (match input with | .send _ => false | _ => true))
+      if finished then
+        modifyObj gid fun o => { o with kind := .agen [] 3 ((match o.kind with | .agen _ _ q => q | _ => #[])) }
+        pop
+        match input with
+        | .send _ => resolvePromise n pid (← iterResult n .undef true)
+        | .retV v => resolvePromise n pid (← iterResult n v true)
+        | .throwV e => rejectPromise n pid e
+        agenDrain n gid
+      else
+        modifyObj gid fun o => { o with kind := .agen frames 2 ((match o.kind with | .agen _ _ q => q | _ => #[])) }
+        agenRun n gid frames input
+    | _ => pure ()
+termination_by structural n _ => n
+
+/-- Run an async generator from a resumption, for the request at the head of its queue. -/
+def agenRun : Nat → Nat → List GFrame → GInput → M Unit
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, gid, frames, input => do
+    let r ← tryCatch (do pure (Except.ok (← genRun n frames input))) (fun a => pure (Except.error a))
+    let q := match (← getObj gid).kind with | .agen _ _ q => q | _ => #[]
+    let pid := (q.getD 0 (GInput.send .undef, 0)).2
+    let set (fs : List GFrame) (s : Nat) (q : Array (GInput × Nat)) : M Unit :=
+      modifyObj gid fun o => { o with kind := .agen fs s q }
+    match r with
+    | .error (.throw e) => set [] 3 (q.extract 1 q.size); rejectPromise n pid e; agenDrain n gid
+    | .error a => throw a
+    | .ok (.done v) => set [] 3 (q.extract 1 q.size); resolvePromise n pid (← iterResult n v true); agenDrain n gid
+    | .ok (.yielded v fs) => set fs 1 (q.extract 1 q.size); resolvePromise n pid (← iterResult n v false); agenDrain n gid
+    | .ok (.awaited v fs) =>
+      set fs 2 q
+      let p ← promiseResolve n v
+      let rr ← realm
+      let f ← nativeFn .agenResume
+      let onF ← alloc { proto := .obj rr.functionProto, kind := .bound f .undef #[.obj gid, .num 0] }
+      let onR ← alloc { proto := .obj rr.functionProto, kind := .bound f .undef #[.obj gid, .num 1] }
+      performThen n p (.obj onF) (.obj onR) .undef
+termination_by structural n _ _ _ => n
 
 /-- Built-in functions. `newTarget` is set for `new`. -/
 def callNative : Nat → Native → Value → Array Value → Option Value → M Value
@@ -2938,6 +3023,32 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | .obj p => resolvePromise n p a1
         | _ => pure ()
       pure .undef
+    | .agenNext | .agenReturn | .agenThrow =>
+      let pid ← newPromise
+      match thisV with
+      | .obj gid =>
+        match (← getObj gid).kind with
+        | .agen fs st q =>
+          let input := match id_ with
+            | .agenNext => GInput.send a0
+            | .agenReturn => .retV a0
+            | _ => .throwV a0
+          modifyObj gid fun o => { o with kind := .agen fs st (q.push (input, pid)) }
+          agenDrain n gid
+        | _ => rejectPromise n pid (← mkError .type "not an async generator")
+      | _ => rejectPromise n pid (← mkError .type "not an async generator")
+      pure (.obj pid)
+    | .agenResume =>
+      match a0 with
+      | .obj gid =>
+        match (← getObj gid).kind with
+        | .agen fs _ _ =>
+          let input := if (match a1 with | .num m => m == 1 | _ => false) then GInput.throwV (argD args 2)
+            else .send (argD args 2)
+          agenRun n gid fs input
+        | _ => pure ()
+        pure .undef
+      | _ => pure .undef
     | .asyncResume =>
       match a0 with
       | .obj co =>
@@ -2998,6 +3109,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
           match r with
           | .error a => setG [] 3; throw a
           | .ok (.yielded v fs) => setG fs 1; result v false
+          | .ok (.awaited _ _) => setG [] 3; throwErr .syntax "await outside an async function"
           | .ok (.done v) => setG [] 3; result v true
       | _ => throwErr .type "next method called on incompatible receiver"
     | _ =>
@@ -3504,6 +3616,14 @@ def initRealm : M Unit := do
     method oc "assign" .objectAssign 2
     method oc "entries" .objectEntries 1
     method oc "values" .objectValues 1
+  let asyncIterProto ← mk
+  setHidden asyncIterProto (symKey 1) (← mkNative .iterSelf "[Symbol.asyncIterator]" 0)
+  let asyncGenProto ← alloc { proto := .obj asyncIterProto }
+  modify fun h => { h with realm := { h.realm with asyncGenProto := asyncGenProto } }
+  method asyncGenProto "next" .agenNext 1
+  method asyncGenProto "return" .agenReturn 1
+  method asyncGenProto "throw" .agenThrow 1
+  defineOwn asyncGenProto (symKey symToStringTag) (.data (.str "AsyncGenerator") false false true)
   let promiseProto ← mk
   let promiseC ← ctorWith "Promise" .promiseCtor 1 promiseProto
   setHidden g "Promise" promiseC

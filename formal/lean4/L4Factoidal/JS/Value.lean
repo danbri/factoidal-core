@@ -87,6 +87,7 @@ inductive Native where
   | promiseRejectStatic | promiseAll | promiseResolveFn | promiseRejectFn | promiseReactionJob
   | promiseThenableJob | promiseAllElement | promiseFinallyF | promiseFinallyR | promiseValueThunk
   | promiseThrower | asyncResume
+  | agenNext | agenReturn | agenThrow | agenResume
   deriving BEq, Repr, Inhabited
 
 /-- What a running function sees. -/
@@ -153,6 +154,8 @@ inductive GInput where
 /-- What a generator step ends with. -/
 inductive GOut where
   | yielded (v : Value) (frames : List GFrame)
+  /-- An `await` in an async generator. -/
+  | awaited (v : Value) (frames : List GFrame)
   | done (v : Value)
 
 inductive Kind where
@@ -177,6 +180,9 @@ inductive Kind where
   | promise (state : Nat) (result : Value) (reactions : Array (Value × Value × Value)) (locked : Bool)
   /-- A running async function (§27.7): its frames and the promise it returns. -/
   | coro (frames : List GFrame) (promise : Nat)
+  /-- An async generator (§27.6): frames, state (0 start, 1 suspended at a yield,
+  2 running or awaiting, 3 completed) and the queue of requests with their promises. -/
+  | agen (frames : List GFrame) (state : Nat) (queue : Array (GInput × Nat))
   | native (id : Native)
   | bound (target thisV : Value) (args : Array Value)
   /-- A Boolean, Number or String object (`[[BooleanData]]` etc.). -/
@@ -226,6 +232,7 @@ structure Realm where
   bigintProto : Nat := 0
   promiseProto : Nat := 0
   promiseCtor : Nat := 0
+  asyncGenProto : Nat := 0
   deriving Inhabited
 
 /-- The error constructors, by their index in `Realm.errorProtos`. -/
@@ -364,7 +371,7 @@ def Obj.ownKeys (o : Obj) : Array String :=
     | .array es => (List.range es.size).toArray.map toString
     | .prim (.str s) => (List.range s.length).toArray.map toString
     | _ => #[]
-  let ks := o.keys.filter fun k => o.props.contains k
+  let ks := o.keys.filter fun k => o.props.contains k && !isPrivKey k
   let (ints, rest) := ks.partition fun k => (arrayIndex? k).isSome
   let ints := (ints.toList.mergeSort fun a b => (arrayIndex? a).getD 0 ≤ (arrayIndex? b).getD 0).toArray
   let extra := match o.kind with

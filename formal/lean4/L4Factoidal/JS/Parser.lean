@@ -381,10 +381,10 @@ def parseStmt : Nat → P Stmt
         semi; return .decl .letK ds
       if t.text == "async" && isK t2 "function" && !t2.nl then
         advance; advance
-        if ← atP "*" then fail "async generators are not supported"
+        let g ← eatP "*"
         let name ← bindingName
         addVar name
-        let f ← parseFunction n (some name) .normal 2
+        let f ← parseFunction n (some name) .normal (if g then 3 else 2)
         return .funDecl name f
       parseExprStmt n
     else parseExprStmt n
@@ -555,7 +555,7 @@ def parseFunction : Nat → Option String → FunKind → Nat → P FunDef
   | n + 1, name, kind, gen => do
     expectP "("
     let outerGen := (← get).inGen
-    modify fun s => { s with inGen := gen == 1 }
+    modify fun s => { s with inGen := gen == 1 || gen == 3 }
     let (ps, rest) ← parseParams n #[]
     modify fun s => { s with inGen := outerGen }
     parseBody n name ps rest kind gen
@@ -594,7 +594,7 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
       fail "duplicate parameter name not allowed in this context"
     set { outer with vars := #[], usesArgs := false, strict, inFun := true, loops := 0,
                      breakables := 0, labels := [],
-                     inGen := gen == 1, inAsync := gen == 2 }
+                     inGen := gen == 1 || gen == 3, inAsync := gen == 2 || gen == 3 }
     let body ← parseBlock n
     let inner ← get
     let usesArgs := inner.usesArgs
@@ -602,7 +602,8 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
     set { inner with vars := outer.vars, strict := outer.strict, inFun := outer.inFun,
                      loops := outer.loops, breakables := outer.breakables, labels := outer.labels,
                      inGen := outer.inGen, inAsync := outer.inAsync, usesArgs := outer.usesArgs || (arrow && usesArgs) }
-    return FunDef.mk name params rest body inner.vars.toList (usesArgs && !arrow) strict kind (gen == 1) (gen == 2)
+    return FunDef.mk name params rest body inner.vars.toList (usesArgs && !arrow) strict kind
+      (gen == 1 || gen == 3) (gen == 2 || gen == 3)
 
 /-- An arrow function after its parameters and `=>`. -/
 def parseArrowBody : Nat → List PatElem → Option Pat → Nat → P Expr
@@ -759,6 +760,7 @@ def parseUnary : Nat → P Expr
       if t.kind == .ident && t.text == "await" && !t.escaped && (← get).inAsync then
         advance
         let e ← parseUnary n
+        if (← get).inGen then return .yieldE false (some (.call (.ident "%await") [e]))
         return .yieldE false (some e)
       parsePostfix n
 
@@ -807,7 +809,11 @@ def parseTail : Nat → Expr → Bool → P Expr
       let nt ← peek
       if nt.kind == .ident || nt.kind == .kw then
         advance; parseTail n (.member e nt.text) allowCall
-      else if isP nt "#" then fail "private names are not supported"
+      else if isP nt "#" then
+        advance
+        let pt ← peek
+        if !(pt.kind == .ident || pt.kind == .kw) then fail "expected a private name"
+        advance; parseTail n (.member e (privKey pt.text)) allowCall
       else fail "expected a property name"
     else if isP t "[" then
       advance
@@ -849,9 +855,9 @@ def parsePrimary : Nat → P Expr
     | .ident =>
       if t.text == "async" && !t.escaped && isK (← peekAt 1) "function" && !(← peekAt 1).nl then
         advance; advance
-        if ← atP "*" then fail "async generators are not supported"
+        let g ← eatP "*"
         let name ← if (← peek).kind == .ident then pure (some (← bindingName)) else pure none
-        return .func (← parseFunction n name .normal 2)
+        return .func (← parseFunction n name .normal (if g then 3 else 2))
       if t.escaped && (keywords.contains t.text ||
           ((← get).strict && ["implements", "interface", "package", "private", "protected",
             "public", "static", "yield", "let"].contains t.text)) then
@@ -901,6 +907,12 @@ def parsePrimary : Nat → P Expr
       | "[" => advance; return .array (← parseArray n [])
       | "{" => advance; return .object (← parseObject n [])
       | "/" | "/=" => fail "regular expression literals are not supported"
+      | "#" =>
+        -- `#x in o` (§13.10.1)
+        advance
+        let pt ← peek
+        if !(pt.kind == .ident || pt.kind == .kw) || !isK (← peekAt 1) "in" then fail "unexpected private name"
+        advance; return .str (privKey pt.text)
       | _ => fail "unexpected token"
     | .eof => fail "unexpected end of input"
 
@@ -924,6 +936,11 @@ def parsePropKey : Nat → P PropKey
       let e ← parseAssign n false
       expectP "]"
       return .computed e
+    if isP t "#" then
+      advance
+      let nt ← peek
+      if nt.kind == .ident || nt.kind == .kw then advance; return .lit (privKey nt.text)
+      fail "expected a private name"
     match propName? t with
     | some s => advance; return .lit s
     | none => fail "expected a property name"
@@ -956,12 +973,12 @@ def parseObject : Nat → List PropDef → P (List PropDef)
         pure (PropDef.init k (.func f))
       else if t.kind == .ident && t.text == "async" && !t2.nl && !(isP t2 ":" || isP t2 "(" || isP t2 "," || isP t2 "}" || isP t2 "=") then
         advance
-        if ← atP "*" then fail "async generator methods are not supported"
+        let g ← eatP "*"
         let k ← parsePropKey n
         expectP "("
         let og := (← get).inAsync
         let (ps, rest) ← parseParams n #[]
-        let f ← parseBody n none ps rest .method 2
+        let f ← parseBody n none ps rest .method (if g then 3 else 2)
         modify fun s => { s with inAsync := og }
         pure (PropDef.init k (.func f))
       else if t.kind == .ident && (isP t2 "," || isP t2 "}") then
@@ -1075,22 +1092,23 @@ def parseMembers : Nat → Bool → Option FunDef → List Member → P (Option 
     let static := t0.kind == .ident && t0.text == "static" &&
       !(isP t1 "(" || isP t1 "=" || isP t1 ";" || isP t1 "}")
     if static then advance
-    if static && (← atP "{") then fail "class static blocks are not supported"
+    if static && (← atP "{") then
+      let f ← parseBody n none [] none .method 0
+      return ← parseMembers n derived ctor (.mk true .staticBlock (.lit "") f :: acc)
     let t ← peek
     let t2 ← peekAt 1
     let gen := isP t "*"
     if gen then advance
     let t ← peek
     let t2 ← peekAt 1
-    if isP t "#" then fail "private class members are not supported"
     let isAsync := t.kind == .ident && t.text == "async" && !t2.nl && !(isP t2 "(" || isP t2 "=" || isP t2 ";" || isP t2 "}")
+    let mut gen := gen
     if isAsync then
       advance
-      if ← atP "*" then fail "async generator methods are not supported"
+      if ← eatP "*" then gen := true
     let accessor := t.kind == .ident && (t.text == "get" || t.text == "set") &&
       !(isP t2 "(" || isP t2 "=" || isP t2 ";" || isP t2 "}")
     if accessor then advance
-    if ← atP "#" then fail "private class members are not supported"
     let kt ← peek
     let k ← parsePropKey n
     if ← atP "(" then
@@ -1101,7 +1119,7 @@ def parseMembers : Nat → Bool → Option FunDef → List Member → P (Option 
         if ctor.isSome then fail "a class may only have one constructor"
         let f ← parseBody n none ps rest (.ctor derived) 0
         return ← parseMembers n derived (some f) acc
-      let f ← parseBody n none ps rest .method (if isAsync then 2 else if gen then 1 else 0)
+      let f ← parseBody n none ps rest .method (if isAsync && gen then 3 else if isAsync then 2 else if gen then 1 else 0)
       let kind := if accessor then (if t.text == "get" then MemberKind.getter else .setter) else .method
       parseMembers n derived ctor (.mk static kind k f :: acc)
     else

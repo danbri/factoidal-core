@@ -47,7 +47,15 @@ inductive FunKind where
 /-- Members of a class body (§15.7). -/
 inductive MemberKind where
   | method | getter | setter | field
+  /-- `static { ... }` (§15.7.11 ClassStaticBlock). -/
+  | staticBlock
   deriving BEq, Repr, Inhabited, DecidableEq
+
+/-- The property key of a private name `#x` (§6.2.12): a string that starts with
+U+10FFFE. Like Symbol keys (`Value.lean`), source text can make the same string; and
+two classes with the same private name share it. Record, section 5. -/
+def privKey (name : String) : String := String.singleton (Char.ofNat 0x10FFFE) ++ name
+def isPrivKey (k : String) : Bool := k.front == Char.ofNat 0x10FFFE
 
 mutual
 /-- Expressions. -/
