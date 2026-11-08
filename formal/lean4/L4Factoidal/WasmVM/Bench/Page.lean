@@ -57,12 +57,16 @@ def run (args : List String) : IO UInt32 := do
   let (wasm, root, rest) ← match args with
     | w :: r :: rest => pure (w, r, rest)
     | _ => throw (IO.userError "usage: wasmvm-bench page WASM ROOT FILE... [--settle MS] [--commands N]")
-  let rec opts : List String → List String × Nat × Nat
-    | "--settle" :: v :: xs => let (f, _, c) := opts xs; (f, v.toNat!, c)
-    | "--commands" :: v :: xs => let (f, s, _) := opts xs; (f, s, v.toNat!)
-    | x :: xs => let (f, s, c) := opts xs; (x :: f, s, c)
-    | [] => ([], 30000, 4096)
-  let (files, settleMs, commands) := opts rest
+  let mut files : Array String := #[]
+  let mut settleMs := 30000
+  let mut commands := 4096
+  let xs := rest.toArray
+  let mut i := 0
+  while i < xs.size do
+    match xs[i]! with
+    | "--settle" => settleMs := (xs[i+1]?.bind String.toNat?).getD settleMs; i := i + 2
+    | "--commands" => commands := (xs[i+1]?.bind String.toNat?).getD commands; i := i + 2
+    | f => files := files.push f; i := i + 1
   let t0 ← IO.monoNanosNow
   let bytes ← IO.FS.readBinFile wasm
   let m ← match prepare bytes with
