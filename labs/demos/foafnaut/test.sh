@@ -134,6 +134,13 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # Chrome pixels (issue 1268): a selected address changes only the address box, in the selection colour.
   deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/chrome_pixels_check.ts"
+  # Every run_html.ts sweep with --offscreen, native and Wasm engines (issue 1268): no window is
+  # shown, so it runs with the screen locked and on CI. About 65 s on an M1.
+  if [ "$(uname -s)" = Darwin ] && [ -f "$LAB/.build/native/libnative-window.dylib" ]; then
+    bash "$LAB/sweeps.sh"
+  else
+    echo 'NOT RUN: sweeps.sh needs macOS and the window library'
+  fi
 else
   echo 'NOT RUN: native_html_test.ts needs the web-render engine, which this build does not have yet'
 fi
