@@ -4,6 +4,19 @@ const canvas=document.querySelector('#page'),keys=document.querySelector('#keys'
 // ?check=1 keeps the readback path with Lean's pixel checks; ?check=surface draws to the
 // canvas and reads each frame back to check it; ?stats=1 shows the frame timings;
 // ?layers=0 asks Lean for a whole frame at each scroll, with no two-layer view.
+// The host browser's history follows the pages shown: the Hub address gets the page address
+// after #, with no https:// and no default port. A # in it is %23, and a % before 23 or 25 is
+// %25, so the fragment reads back exactly (2026-11-08).
+const hashOf=url=>{
+  let text=url;
+  try{if(!url.startsWith('foafnaut:')){const u=new URL(url);text=(u.protocol==='https:'?'':u.protocol+'//')+u.host+u.pathname+u.search+u.hash;}}catch{}
+  return text.replace(/%(?=2[35])/gi,'%25').replace(/#/g,'%23');
+};
+const addressOf=hash=>{
+  const text=hash.replace(/%23/gi,'#').replace(/%25(?=2[35])/gi,'%');
+  return !text||/^(foafnaut:|https?:\/\/)/.test(text)?text:'https://'+text;
+};
+const hubAddress=()=>location.hash.length>1?addressOf(location.hash.slice(1)):'';
 const query=new URLSearchParams(location.search),checkParam=query.get('check'),showStats=query.get('stats')==='1'||checkParam!==null;
 // A sandboxed guest has an opaque origin and can not start a worker. The loop then
 // runs here; it needs no extra capability.
@@ -49,6 +62,13 @@ worker.onmessage=({data})=>{
         (latency===undefined?'':`, input to frame ${latency} ms`)+(s.pixelHash?`, pixels ${s.pixelHash}`:'');
     }
   }
+  if(data.type==='location'){
+    const want=location.pathname+location.search+(data.home?'':'#'+hashOf(data.url));
+    if(want!==location.pathname+location.search+location.hash){
+      if(data.push&&!fromHost)history.pushState(null,'',want);else history.replaceState(null,'',want);
+    }
+    fromHost=false;
+  }
   if(data.type==='keys')keyTable=data.table;
   // When each loading step ended (epoch ms): the engine compiled and started, the font, the page, the first frame.
   if(data.type==='phases')window.foafnautPhases=data.phases;
@@ -78,7 +98,7 @@ worker.onerror=event=>{note.hidden=false;note.textContent='The browser worker fa
 // to an OffscreenCanvas with WebGPU. If not, or with ?check=1, the worker reads each frame
 // back and the page paints it with putImageData.
 function begin(surface){
-  const options={...size(),page:query.get('page'),check:checkParam==='1'||checkParam==='surface',stats:showStats,platform:mac?'mac':'other',...(query.get('layers')==='0'?{layers:false}:{})};
+  const options={...size(),page:query.get('page'),...(hubAddress()?{address:hubAddress()}:{}),check:checkParam==='1'||checkParam==='surface',stats:showStats,platform:mac?'mac':'other',...(query.get('layers')==='0'?{layers:false}:{})};
   if(surface&&checkParam!=='1'){
     const offscreen=canvas.transferControlToOffscreen();
     window.foafnautSurface=true;
@@ -88,8 +108,16 @@ function begin(surface){
 const canTransfer=worker instanceof Worker&&typeof canvas.transferControlToOffscreen==='function'&&typeof OffscreenCanvas==='function';
 if(canTransfer)send({type:'hello',page:query.get('page')});else begin(false);
 addEventListener('resize',()=>{fling.stop();send({type:'resize',...size()});});
+// Back and forward in the host browser: the engine shows that address, not as a new entry.
+let fromHost=false;
+addEventListener('popstate',()=>{fling.stop();fromHost=true;send({type:'visit',address:hubAddress()||new URL('pages/index.html',location.href).href});});
 // Keep focus where the loop puts it: the press must not move it back to the page.
 canvas.addEventListener('mousedown',event=>event.preventDefault());
+// A long press or a right click is the inner browser's, not the outer page's menu; a touch
+// drag never scrolls or bounces the outer page (iOS ignores overscroll-behavior on body).
+canvas.addEventListener('contextmenu',event=>event.preventDefault());
+for(const name of ['touchstart','touchmove'])canvas.addEventListener(name,event=>{if(event.cancelable)event.preventDefault();},{passive:false});
+addEventListener('selectstart',event=>{if(event.target!==keys)event.preventDefault();});
 // Two fingers on a touch screen are a pinch: Lean's text zoom, as Ctrl+wheel is on a
 // trackpad. The page sends the ratio of finger distances since the pinch began, and the
 // worker sets the zoom from it. A pinch ends any press, without a click.

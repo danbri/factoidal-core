@@ -424,7 +424,21 @@ function show(next,remember=true){
   if(remember&&doc&&!next.title?.startsWith('Page refused'))browserState?.visit(next.url,next.title??'',doc.url).catch(()=>{});
   doc=next;if(!focused)field=showURL(next.url);scroll=0;loading=false;
   if(remember){history=push(history.history,next.url);pages++;}
+  post({type:'location',url:next.url,home:next.url===homeURL,push:remember});
   request();
+}
+// An address from the host browser's history or from the Hub address (#…): Lean's link rules
+// route it as a typed address. One that leaves this site is refused, not opened: only the
+// person's own tap may open a host tab.
+function visit(address){
+  // The address is absolute (the page made it from a URL), so the link rules route it, with
+  // their fallback on an engine from before the route op.
+  const route=router.route({...site,href:address,base:homeURL});
+  if(!route)return;
+  if(route.route==='system')show(refusal(route.url,'This address is not on this site. Type it in the address bar to open it.'),false);
+  else if(route.route==='command')shellCommand(route.name,route.argument);
+  else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
+  else navigate(route.url,false);
 }
 const pageFor=url=>url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
 async function navigate(url,remember=true){
@@ -803,7 +817,8 @@ async function start(data){
   openState().then(()=>{if(first!==home&&!first.title?.startsWith('Page refused'))browserState?.visit(first.url,first.title??'',homeURL).catch(()=>{});})
     .catch(error=>{stateReason=String(error.message??error);});
   // A new window starts in the address bar with the address selected (issue 1268).
-  if(wanted)request();else focusAddress();
+  if(data.address)visit(data.address);
+  else if(wanted)request();else focusAddress();
   for(const message of early.splice(0))receive(message);
 }
 function flush(){
@@ -829,6 +844,7 @@ function handle(data){
   try{apply(data);}finally{currentStamp=undefined;}
 }
 function apply(data){
+  if(data.type==='visit'){visit(data.address);return;}
   if(data.type==='resize'){({width,height,scale}=data);if(doc.graph)graphInput(1,width,height);request();}
   if(data.type==='scroll')scrollBy(data.amount);
   if(data.type==='command')command(data.command);
