@@ -463,13 +463,27 @@ def chromeLayer (shell : WebShell.Shell) (page : Rendering.Scene) (width : Nat) 
     glyphRuns := #[]
     links := #[]}
 
+/-- The chrome top the band of a folding chrome is made for: the folded strip, the
+smallest the chrome gets (`WebShell.strip_le_height`). -/
+def bandTop (shell : WebShell.Shell) (width : Nat) : Nat :=
+  WebShell.height {shell with collapse := 100} width
+
+/-- The chrome layer alone, for a change of `collapse` (op `chromeLayer`): its scene is the
+chrome's nodes, rows `0 .. top`. No layout and no page. -/
+def chromeScene (shell : WebShell.Shell) (width : Nat) : Rendering.Scene :=
+  let top := max 1 (WebShell.height shell width)
+  {width,height := top,mapping := {viewportWidth := Float.ofNat width,viewportHeight := Float.ofNat top},
+   tree := WebShell.nodes shell width}
+
 /-- The answer to a render with `layers:true`. -/
 def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
     (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false) :
     Except String (String × Array ByteArray) := do
   let top := WebShell.height shell width
-  let view := max 1 (height-top)
+  -- A chrome that may fold: the band covers the view under the strip, the most it shows,
+  -- so a change of `collapse` keeps the band and only the chrome layer is drawn again.
+  let view := max 1 (height-(if shell.collapsible then bandTop shell width else top))
   let b := band shell.scroll view
   let (pageText,pageSections) ← WebRender.artifactWith (pageLayer page extra b) boxes face live form checks tree
   let (chromeText,chromeSections) ←
@@ -813,6 +827,21 @@ theorem layoutRequest_congr (a b : JSON.Json) (agree : ∀ k ∈ layoutFields, a
   unfold layoutRequest
   rw [same _ agree]
 
+/-- The chrome height that the layout key holds: the full chrome, whatever its fold. -/
+def layoutTop (shell : Option WebShell.Shell) (width : Nat) : Nat :=
+  (shell.map (fun value => WebShell.fullHeight value width)).getD 0
+
+/-- A folding step makes no layout (owner, 2026-11-08): the key's chrome height does not
+read `collapse` (nor the scroll), and `layoutRequest_congr` says the shell is no layout
+field, so two requests that differ only in their shell's fold have the same key. -/
+theorem layoutTop_collapse (shell : WebShell.Shell) (collapse scroll width : Nat) :
+    layoutTop (some {shell with collapse,scroll}) width = layoutTop (some shell) width := rfl
+
+/-- With the classic UI (`collapse = 0`) the key holds the chrome on screen, as before. -/
+theorem layoutTop_classic (shell : WebShell.Shell) (width : Nat) (classic : shell.collapse = 0) :
+    layoutTop (some shell) width = WebShell.height shell width :=
+  (WebShell.height_classic shell width classic).symm
+
 /-- The chrome height, which the key holds as `top`, does not read the scroll. -/
 theorem shell_height_scroll (shell : WebShell.Shell) (scroll width : Nat) :
     WebShell.height {shell with scroll} width = WebShell.height shell width := rfl
@@ -924,6 +953,26 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
       ("ops",.array (["imageLoad","imageLoadBin","imageDrop","frameWork"].map .string)),
       ("maxImages",number maxHeldImages),("maxBytes",number maxHeldImageBytes),
       ("held",number (heldImages request).length),("layoutSlots",number layoutSlots)]).toString,#[])
+  -- The folding chrome (owner, 2026-11-08). A host asks `shellInfo` before it sends a shell
+  -- with `collapse` or calls `chromeLayer`: an older engine answers "unknown document
+  -- operation" and the host keeps the classic chrome (issue 1274). `full` and `strip` are
+  -- the chrome's rows unfolded and folded, for the `width` and `shell` of the request.
+  if str request "op" == "shellInfo" then
+    let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
+    let w := natField request "width"
+    let number := fun (n : Nat) => JSON.Json.number (toString n)
+    return ((JSON.Json.object [("collapse",.bool true),("ops",.array [.string "chromeLayer"]),
+      ("full",number (WebShell.fullHeight shell w)),("strip",number (bandTop shell w))]).toString,#[])
+  -- The chrome layer alone at the shell's fold, `width` wide: no layout, no page band.
+  if str request "op" == "chromeLayer" then
+    let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
+    let live := request.field? "live" == some (.bool true)
+    let form : NativeSVG.DataForm := if bytes then .sections 0
+      else if request.field? "binary" == some (.bool true) then .base64 else .decimal
+    let checks := request.field? "checks" != some (.bool false)
+    let scene := chromeScene shell width
+    let (text,sections) ← WebRender.artifactWith scene #[] none live form checks false
+    return ("{\"top\":" ++ toString scene.height ++ ",\"chrome\":" ++ text ++ "}",sections)
   if str request "op" == "imageDrop" then
     let held := keepImages [] request
     return ((JSON.Json.object [("held",.number (toString held.length))]).toString,#[])
@@ -958,9 +1007,11 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
       return (WebRenderFontRequests.requestsJSON (← WebRenderFontRequests.collectDOMWithRules dom rules textScale),#[])
     throw "unknown document operation"
   let shell := (request.field? "shell").map WebShell.Shell.ofJson
+  -- `top` is the chrome on screen; the layout reads the full chrome (`layoutTop`), so a
+  -- folding chrome lays nothing out again.
   let top := (shell.map (fun value => WebShell.height value width)).getD 0
   let fonts := ((heldFont request).map HeldFont.names).getD []
-  let key : LayoutKey := ⟨html,layoutRequest request,width,height,top,fonts,
+  let key : LayoutKey := ⟨html,layoutRequest request,width,height,layoutTop shell width,fonts,
     heldNamed request (← namedImages request),requestPointer request⟩
   let laid ← laidOut key
   let scene := laid.scene

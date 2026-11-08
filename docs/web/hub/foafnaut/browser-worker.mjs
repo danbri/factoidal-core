@@ -41,6 +41,14 @@ let firstFrameSeen;const firstFrame=new Promise(resolve=>{firstFrameSeen=resolve
 let ready=false,currentStamp,pendingStamp,pendingMove,pendingScroll,flushPort;
 const early=[];
 let width=800,height=600,scale=1,theme='next',percent=150,pages=1,pinchBase;
+// The folding chrome (owner, 2026-11-08). With the classic UI (the default) the chrome is
+// always full. Off, a scroll down first folds the chrome, up to the strip with the domain,
+// and a scroll up first unfolds it: the rows the chrome gives up or takes back come out of
+// the scroll, so the page follows the finger. Lean draws the chrome at every fold
+// (WebShell.nodes with `collapse`); the host only keeps the folded rows (`folded`, backing
+// pixels) and sends the fold in percent. An engine that does not answer shellInfo keeps
+// the classic chrome (issue 1274).
+let classicUI=true,folded=0,engineFolds,foldRowsKey='',foldRowsValue=0,chromeRenders=0;
 // The address bar's text, cursor, selection and undo step: a Lean value (WebShell.editJson).
 const showURL=url=>({address:url,cursor:url.length,anchor:url.length,undo:null,redo:null,typing:false});
 let field=showURL(''),focused=false,loading=false,scroll=0,active=0;
@@ -110,7 +118,33 @@ function call(source,options,w=1,h=1){
   finally{module.ccall('web_render_free',null,['number'],[pointer]);}
 }
 const shell=()=>({tabs:tabs.map((tab,i)=>({title:(i===active?doc:tab.doc)?.title??''})),active,...field,focused,
-  canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll});
+  canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,
+  ...(folding()?{collapsible:true,collapse:foldPercent()}:{})});
+/** This engine draws a folding chrome: it answers shellInfo with the op chromeLayer. */
+function canFold(){
+  if(engineFolds===undefined){
+    try{const answer=call('',{op:'shellInfo',shell:{scale},width});engineFolds=answer.collapse===true&&(answer.ops??[]).includes('chromeLayer');}
+    catch{engineFolds=false;}
+  }
+  return engineFolds;
+}
+const folding=()=>!classicUI&&canFold();
+/** The rows the chrome gives up when it folds all the way, from Lean (shellInfo). */
+function foldRows(){
+  const key=`${width}|${scale}`;
+  if(key!==foldRowsKey){
+    try{const answer=call('',{op:'shellInfo',shell:{scale},width});foldRowsValue=Math.max(0,answer.full-answer.strip);}catch{foldRowsValue=0;}
+    foldRowsKey=key;
+  }
+  return foldRowsValue;
+}
+const foldPercent=()=>{const rows=foldRows();return rows?Math.max(0,Math.min(100,Math.round(100*folded/rows))):0;};
+/** Unfold the chrome (a new page, the address bar, a tap on the strip). */
+function unfold(){
+  if(!folded)return;
+  folded=0;
+  if(canShift()){shiftPending=true;if(!drawing)draw();}else request();
+}
 const push=(state,url)=>call('',{op:'historyPush',history:state,url});
 const refusal=(url,message)=>{
   const text=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;');
@@ -128,8 +162,8 @@ function frameFloats(frame){
 // raw sections (WebDocument.packAnswer), with no Base64. A runtime with no such export
 // answers JSON text with Base64.
 const textDecoder=new TextDecoder();
-function render(source,options,w,h){
-  leanCalls++;leanRenders++;
+function render(source,options,w,h,chromeOnly=false){
+  leanCalls++;if(chromeOnly)chromeRenders++;else leanRenders++;
   if(typeof module._web_document_call_bin!=='function')return frameFloats(call(source,options,w,h));
   const pointer=module.ccall('web_document_call_bin','number',['string','string','number','number','number'],[source,JSON.stringify(options),w,h,0]);
   if(!pointer)throw Error('Lean engine allocation failed');
@@ -228,8 +262,21 @@ async function fetchText(url){
   const response=await fetch(url);if(!response.ok)throw Error(`HTTP ${response.status}`);
   return {url:response.url||url,source:await response.text()};
 }
+// The settings page has the checkbox of the classic UI where it says <!--foafnaut:classic-ui-->,
+// in the state of now. Lean draws it as it draws the rest of the page.
+const classicMark='<!--foafnaut:classic-ui-->';
+function settingsSource(source){
+  if(!source.includes(classicMark))return source;
+  const box=`<span class="box">${classicUI?'<span class="tick"></span>':''}</span>`;
+  const row=canFold()
+    ?`<p class="check"><a href="foafnaut:classic/${classicUI?'off':'on'}">${box} Classic browser UI</a></p>`+
+      `<p>On: the whole chrome stays at the top. Off: scrolling down folds it away to the site's name at the very top, and scrolling up brings it back.</p>`
+    :`<p class="check">${box} Classic browser UI</p><p>The engine this page loaded is older and always shows the whole chrome. The next engine release can fold it as you scroll.</p>`;
+  return source.replace(classicMark,row);
+}
 async function prepare(url){
   const page=await fetchText(url);
+  if(url===settingsURL)page.source=settingsSource(page.source);
   const sources=[{kind:'Source',url:page.url,source:page.source}];
   const sheet=call(page.source,{op:'xmlStylesheet',url:page.url});
   if(sheet.url){
@@ -422,7 +469,7 @@ function sparqlPage(url){
 const isSparql=url=>url===sparqlURL||url.startsWith(sparqlURL+'/');
 function show(next,remember=true){
   if(remember&&doc&&!next.title?.startsWith('Page refused'))browserState?.visit(next.url,next.title??'',doc.url).catch(()=>{});
-  doc=next;if(!focused)field=showURL(next.url);scroll=0;loading=false;
+  doc=next;if(!focused)field=showURL(next.url);scroll=0;loading=false;folded=0;
   if(remember){history=push(history.history,next.url);pages++;}
   post({type:'location',url:next.url,home:next.url===homeURL,push:remember});
   request();
@@ -510,6 +557,7 @@ function closeTab(index){if(tabs.length===1)return;keep();tabs.splice(index,1);s
 function setFocus(value){if(focused!==value){focused=value;post({type:'focus',focused});}}
 // Lean selects the whole address when the bar takes the focus; typing then replaces it.
 function focusAddress(){
+  folded=0;
   try{const {clipboard:_,...next}=call('',{op:'shellEdit',shell:shell(),action:'focus',text:doc.url});field=next;}
   catch{field=showURL(doc.url);/* older engine: no selection */}
   setFocus(true);request();
@@ -522,17 +570,26 @@ function scrollLimit(){
 // The request for a frame of this page at a scroll; its signature leaves the scroll out, so
 // a band made at one scroll is known to be for the same state at another.
 const renderOptions=at=>({op:'render',url:doc.url,...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),textScalePercent:percent,shell:{...shell(),scroll:at},live:doc===checked,binary:true});
-const signature=options=>JSON.stringify({...options,images:undefined,shell:{...options.shell,scroll:0}});
+const signature=options=>JSON.stringify({...options,images:undefined,shell:{...options.shell,scroll:0,collapse:undefined}});
 // The graph page keeps its document and changes its source: the band must be of this source.
 const canShift=()=>!!(layerSurface&&current&&current.doc===doc&&current.source===doc.source&&current.width===width&&current.height===height&&current.sig===signature(renderOptions(scroll)));
 // A band made ahead (prefetch) that shows this scroll for the state of now.
 const swapReady=()=>!!(prefetched&&prefetched.doc===doc&&prefetched.source===doc.source&&prefetched.width===width&&prefetched.height===height
   &&L.keeps(prefetched.answer.layers,scroll)&&prefetched.sig===signature(renderOptions(scroll)));
 function scrollBy(amount){
+  // A folding chrome takes its rows from the scroll first: down folds it, up unfolds it.
+  let refolded=false;
+  if(folding()&&amount){
+    const rows=foldRows(),before=folded;
+    if(rows&&(amount<0||scrollLimit()>0)){folded=Math.max(0,Math.min(rows,folded+Math.round(amount)));amount-=folded-before;refolded=folded!==before;}
+  }
   const want=scroll+Math.round(amount),next=Math.max(0,Math.min(scrollLimit(),want));
   // At the top or bottom: the page stops a touch fling there.
-  if(next!==want)post({type:'edge',direction:Math.sign(amount)});
-  if(next===scroll)return;
+  if(next!==want&&!refolded)post({type:'edge',direction:Math.sign(amount)});
+  if(next===scroll){
+    if(refolded){if(canShift()){shiftPending=true;if(!drawing)draw();}else request();}
+    return;
+  }
   const at=performance.now(),delta=next-scroll;scroll=next;
   // Scroll speed and direction (scroll_prefetch.ts trackMotion): when the next band is asked for.
   if(!motion||at-motion.at>250)motion={direction:Math.sign(delta),rowsPerMs:0,at};
@@ -567,9 +624,9 @@ function scheduleBand(){
       // Into the layer textures only: the screen already shows this state.
       incoming=answer;
       await layerSurface.drawLayers(answer);
-      current={answer,doc:shownDoc,source:shownDoc.source,width,height,sig:signature(options)};
+      current={answer,doc:shownDoc,source:shownDoc.source,width,height,sig:signature(options),fold:options.shell.collapse??0};
       shownOffset=L.clampOffset(answer.layers,at).offset;frame=answer.page;
-      if(scroll!==at)shiftPending=true;
+      if(scroll!==at||current.fold!==foldNow())shiftPending=true;
     }catch(error){console.warn('foafnaut: the band was not drawn:',String(error));current=undefined;}
     finally{drawing=false;incoming=undefined;}
     if(shiftPending||dirty)draw();
@@ -593,7 +650,7 @@ function schedulePrefetch(){
     if(sig!==current.sig)return;
     try{
       const answer=L.layersOf(render(doc.source,{...options,layers:true},width,height));
-      if(answer)prefetched={answer,target,sig,doc,source:doc.source,width,height};
+      if(answer)prefetched={answer,target,sig,doc,source:doc.source,width,height,fold:options.shell.collapse??0};
     }catch{/* the ordinary frame path answers at the edge */}
   },20);
 }
@@ -603,6 +660,12 @@ function shellCommand(name,argument){
   else if(name==='home')navigate(homeURL);else if(name==='source')viewSource();
   else if(name==='graph')navigate(graphURL);
   else if(name==='theme'){theme=argument||(theme==='next'?'arcade':'next');request();browserState?.settings({theme}).catch(()=>{});}
+  else if(name==='classic'){
+    // The settings checkbox: foafnaut:classic/on, /off, or a toggle with no argument.
+    classicUI=argument==='on'?true:argument==='off'?false:!classicUI;folded=0;
+    browserState?.settings({classicUI}).catch(()=>{});
+    if(doc?.url===settingsURL)navigate(settingsURL,false);else request();
+  }
   else if(name==='zoom'&&/^[0-9]+$/.test(argument)){percent=Math.max(50,Number(argument));request();browserState?.settings({textZoom:percent}).catch(()=>{});}
   else if(['bookmarks','history'].includes(name))navigate('foafnaut:'+name);
   else if(['bookmark','unbookmark','pod','sync'].includes(name))stateCommand(name,argument);
@@ -630,7 +693,10 @@ async function openState(){
   let store;try{store=await indexedDbStore();}catch{store=memoryStore('/','this tab only (no IndexedDB)');}
   browserState=createBrowserState({call:stateCall,store});stateReason='';
   const saved=await browserState.read();
-  if(saved.settings){theme=saved.settings.theme;percent=saved.settings.textZoom;request();}
+  if(saved.settings){theme=saved.settings.theme;percent=saved.settings.textZoom;
+    // An engine from before the setting does not keep it: the classic chrome then.
+    if(typeof saved.settings.classicUI==='boolean')classicUI=saved.settings.classicUI;
+    if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
 }
 // Lean's route for a link or an address (link-route.mjs), done as it says. This host tests
 // no URL: a refused link shows Lean's reason and stays out of the history.
@@ -655,6 +721,7 @@ function chrome(control){
   else if(name==='tab'&&Number(index)!==active){keep();showTab(Number(index));}
   else if(name==='close')closeTab(Number(index));
   else if(name==='tabs'){keep();showTab((active+1)%tabs.length);}
+  else if(name==='expand')unfold();
 }
 function hit(x,y){
   // With layers, links are in the rows of the page band: the composite maps the window row to them.
@@ -662,6 +729,8 @@ function hit(x,y){
   const pointer=module.ccall('web_render_hit','number',['string','number','number','number','number'],[JSON.stringify(frame.webRender.links??[]),frame.width,frame.height,x,y]);
   try{return JSON.parse(module.UTF8ToString(pointer));}finally{module.ccall('web_render_free',null,['number'],[pointer]);}
 }
+/** The fold the shell sends now: 0 with the classic chrome. */
+const foldNow=()=>folding()?foldPercent():0;
 function request(){dirty=true;if(currentStamp!==undefined&&(pendingStamp===undefined||currentStamp<pendingStamp))pendingStamp=currentStamp;if(!drawing)draw();}
 async function draw(){
   drawing=true;
@@ -674,8 +743,8 @@ async function draw(){
     try{
       // A page already on screen had Lean's full probe set on its first frame.
       const options=renderOptions(scroll),wantLayers=layered!==false&&bandWanted;bandWanted=false;
-      let next,layers,swapped=false;
-      if(layered&&swapReady()){layers=prefetched.answer;prefetched=undefined;swapped=true;}
+      let next,layers,swapped=false,fold=options.shell.collapse??0;
+      if(layered&&swapReady()){layers=prefetched.answer;fold=prefetched.fold;prefetched=undefined;swapped=true;}
       else{
         next=render(doc.source,wantLayers?{...options,layers:true}:options,width,height);
         // An engine with no layers answers one frame: this page then draws frames as before.
@@ -698,8 +767,10 @@ async function draw(){
           await layerSurface.drawLayers(layers);
           const {offset}=L.clampOffset(layers.layers,scroll);
           pixels=await layerSurface.composite(width,height,offset);
-          current={answer:layers,doc,source:doc.source,width,height,sig:signature(options)};shownOffset=offset;frame=layers.page;
+          current={answer:layers,doc,source:doc.source,width,height,sig:signature(options),fold};shownOffset=offset;frame=layers.page;
           path=swapped?'band':'layers';
+          // A band made at another fold: the chrome layer is drawn again at the next shift.
+          if(fold!==foldNow())shiftPending=true;
         }else{pixels=await layerSurface.drawSingle(next);frame=next;path='frame';}
         pixelHash=pixels?L.hashPixels(pixels):undefined;
         if(!surfaceCanvas){rgba=pixels;path+='-readback';}
@@ -722,7 +793,7 @@ async function draw(){
       post({type:'frame',width,height,title:shown.title,rgba:rgba?.buffer,presented:!rgba,inputAt,
         stats:{path,layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
           pixelHash,primitives:frame.primitiveCount,url:shown.url,address:field.address,scroll,tabs:tabs.length,theme,percent,
-          leanRenders:leanRenders-calls,leanCalls,rows:Math.round(frame.data.length/4),...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{}),
+          leanRenders:leanRenders-calls,leanCalls,chromeRenders,collapse:foldNow(),rows:Math.round(frame.data.length/4),...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{}),
           // For hub_links_check.mjs: the links of a one-frame view, and who routes them.
           ...(statsMode&&layered===false?{links:frame.webRender.links,routes:router.lean?'lean':'fallback'}:{})}},rgba?[rgba.buffer]:[]);
       if(!phasesPosted){phasesPosted=true;post({type:'phases',phases});firstFrameSeen();}
@@ -743,13 +814,23 @@ async function shift(){
   shiftPending=false;
   const start=performance.now(),inputAt=pendingStamp;pendingStamp=undefined;
   try{
+    // The fold changed: Lean draws the chrome layer alone (no layout, no page band) and
+    // the composite takes its new top.
+    const fold=foldNow();let chromeMs;
+    if(current.fold!==fold){
+      const at=performance.now(),held=current;
+      const answer=render('',{op:'chromeLayer',shell:shell(),binary:true,live:doc===checked},width,height,true);
+      await layerSurface.setChrome(answer.chrome,answer.top);
+      if(current===held){current={...current,answer:{...current.answer,chrome:answer.chrome,layers:{...current.answer.layers,top:answer.top}},fold};}
+      chromeMs=Math.round(performance.now()-at);
+    }
     const {offset}=L.clampOffset(current.answer.layers,scroll);
     const pixels=await layerSurface.composite(width,height,offset);
     shownOffset=offset;
     const done=performance.now(),rgba=surfaceCanvas?undefined:pixels;
     post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,inputAt,
       stats:{path:surfaceCanvas?'shift':'shift-readback',layoutMs:0,drawMs:Math.round(done-start),totalMs:Math.round(done-start),pixelHash:pixels?L.hashPixels(pixels):undefined,
-        primitives:0,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent,leanRenders:0,leanCalls,rows:Math.round(current.answer.page.data.length/4),bandTop:current.answer.layers.bandTop,offset}},rgba?[rgba.buffer]:[]);
+        primitives:0,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent,leanRenders:0,leanCalls,chromeRenders,collapse:fold,chromeMs,top:current.answer.layers.top,rows:Math.round(current.answer.page.data.length/4),bandTop:current.answer.layers.bandTop,offset}},rgba?[rgba.buffer]:[]);
   }catch(error){
     console.warn('foafnaut: composite failed, drawing a Lean frame:',String(error));
     try{layerSurface?.close();}catch{/* gone */}layerSurface=undefined;current=undefined;dirty=true;
@@ -845,7 +926,7 @@ function handle(data){
 }
 function apply(data){
   if(data.type==='visit'){visit(data.address);return;}
-  if(data.type==='resize'){({width,height,scale}=data);if(doc.graph)graphInput(1,width,height);request();}
+  if(data.type==='resize'){({width,height,scale}=data);folded=Math.min(folded,foldRows());if(doc.graph)graphInput(1,width,height);request();}
   if(data.type==='scroll')scrollBy(data.amount);
   if(data.type==='command')command(data.command);
   // A touch pinch: the zoom at its start times the finger ratio, in steps of 5 percent,

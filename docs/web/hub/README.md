@@ -634,6 +634,21 @@ guards against: `foafnaut:graph` was routed by Lean as a page and then handed
 to the host browser by a second URL test in the worker, so the click bounced
 back (issue 1268).
 
+### Touch feel: fling and the folding chrome
+
+`labs/demos/foafnaut/hub_feel_check.mjs` (same stand-in server and runs) drives
+the Hub with touch input. A touch fling glides on after the lift as iOS
+UIScrollView does (velocity of the last 100 ms of moves, times 0.998 per ms;
+`browser.mjs`), each step a scroll message, so inside a band it is a composite
+shift with no Lean render; a tap during a fling only stops it. With "Classic
+browser UI" off in settings (default on; kept with the browser state), a scroll
+down folds the chrome to a strip with the domain and a scroll up unfolds it: the
+host sends the fold in percent (`shell.collapse`), Lean draws the chrome at that
+fold (`WebShell.nodes`, op `chromeLayer`: the chrome layer alone, no layout) and
+the composite's `top` follows it. The layout key holds the full chrome
+(`WebDocument.layoutTop_collapse`), so a fold lays nothing out. An engine that
+does not answer `shellInfo` keeps the classic chrome.
+
 ## Constraints every cell must respect
 
 - **Same-origin only (strict pages).** Every import in `hub.njk` is a

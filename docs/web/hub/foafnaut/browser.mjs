@@ -58,7 +58,7 @@ worker.onmessage=({data})=>{
     if(statsLine&&showStats){
       const s=window.foafnautFrame;
       statsLine.hidden=false;
-      statsLine.textContent=`${s.path} layout ${s.layoutMs} ms, draw ${s.drawMs} ms, total ${s.totalMs} ms`+(s.leanRenders===undefined?'':`, Lean renders ${s.leanRenders}`)+
+      statsLine.textContent=`${s.path} layout ${s.layoutMs} ms, draw ${s.drawMs} ms, total ${s.totalMs} ms`+(s.leanRenders===undefined?'':`, Lean renders ${s.leanRenders}`)+(s.chromeRenders?`, chrome layers ${s.chromeRenders}`:'')+(s.collapse?`, fold ${s.collapse}%`:'')+
         (latency===undefined?'':`, input to frame ${latency} ms`)+(s.pixelHash?`, pixels ${s.pixelHash}`:'');
     }
   }

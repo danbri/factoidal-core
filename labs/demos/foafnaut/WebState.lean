@@ -12,7 +12,7 @@ server on 127.0.0.1 (the native browser), to IndexedDB (the Hub), and to a remot
 Vocabulary: schema.org where it fits (`BookmarkAction`, `ViewAction`, `WebPage`, `url`,
 `name`, `keywords`, `startTime`, `dateModified`), and a small `foafnaut:` namespace for
 the rest (`Settings`, `Session`, `HistoryDay`, `visit`, `from`, `theme`, `textZoom`,
-`font`, `fontFallback`, `remotePod`, `tab`, `activeTab`, `scroll`, `deleted`).
+`classicUI`, `font`, `fontFallback`, `remotePod`, `tab`, `activeTab`, `scroll`, `deleted`).
 
 Merge rules:
 * history: one resource per UTC day; its visits are a set. Merge is set union of the
@@ -357,6 +357,9 @@ structure Settings where
   theme : String := "next"
   /-- Text size in percent; the browsers start at 150. -/
   textZoom : Nat := 150
+  /-- The classic chrome, always full (owner, 2026-11-08: on by default). Off, the chrome
+  folds to the domain as the page scrolls down. -/
+  classicUI : Bool := true
   fonts : List String := []
   fallback : List String := []
   remotePod : String := ""
@@ -365,14 +368,21 @@ structure Settings where
 
 def Settings.doc (s : Settings) : Json :=
   document "foafnaut:Settings" ([("foafnaut:theme", .string s.theme), ("foafnaut:textZoom", num s.textZoom),
+    ("foafnaut:classicUI", .bool s.classicUI),
     ("foafnaut:font", .array (s.fonts.map .string)), ("foafnaut:fontFallback", .array (s.fallback.map .string))] ++
     (if s.remotePod.isEmpty then [] else [("foafnaut:remotePod", .string s.remotePod)]) ++
     [("dateModified", .string (isoOf s.modified))])
 
 def Settings.ofDoc (j : Json) : Settings :=
   { theme := str j "foafnaut:theme" "next", textZoom := max 50 (natField j "foafnaut:textZoom" 150),
+    classicUI := (match j.field? "foafnaut:classicUI" with | some (.bool b) => b | _ => true),
     fonts := strings j "foafnaut:font", fallback := strings j "foafnaut:fontFallback",
     remotePod := str j "foafnaut:remotePod", modified := (millisOf (str j "dateModified")).getD 0 }
+
+-- The classic UI is on unless a settings document says false; it survives a round trip.
+#guard (Settings.ofDoc (Json.object [])).classicUI
+#guard !(Settings.ofDoc ({classicUI := false} : Settings).doc).classicUI
+#guard (Settings.ofDoc ({} : Settings).doc).classicUI
 
 structure Tab where
   url : String
@@ -582,6 +592,7 @@ def op (name : String) (request : Json) : Except String (Option String) := do
     let fallback := match request.field? "fallback" with | some _ => strings request "fallback" | none => old.fallback
     let s : Settings := {
       theme := str request "theme" old.theme, textZoom := max 50 (natField request "textZoom" old.textZoom),
+      classicUI := (match request.field? "classicUI" with | some (.bool b) => b | _ => old.classicUI),
       fonts := fonts, fallback := fallback, remotePod := str request "remotePod" old.remotePod, modified := now }
     return some (write base settingsPath s.doc.toString)
   if name == "stateSession" then
@@ -611,7 +622,7 @@ def op (name : String) (request : Json) : Except String (Option String) := do
         ("tags", .array (b.tags.map .string)), ("added", num b.added)])),
       ("visits", num vs.length),
       ("settings", match settings with
-        | some s => .object [("theme", .string s.theme), ("textZoom", num s.textZoom), ("fonts", .array (s.fonts.map .string)),
+        | some s => .object [("theme", .string s.theme), ("textZoom", num s.textZoom), ("classicUI", .bool s.classicUI), ("fonts", .array (s.fonts.map .string)),
             ("fallback", .array (s.fallback.map .string)), ("remotePod", .string s.remotePod)]
         | none => .null),
       ("session", match session with

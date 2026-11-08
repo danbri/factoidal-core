@@ -53,7 +53,7 @@ def graphURL : String := "foafnaut:graph"
 (`foafnaut:theme/arcade`, `foafnaut:zoom/150`). -/
 def commands : List String :=
   ["back","forward","reload","new","close","home","source","theme","zoom",
-   "bookmark","unbookmark","pod","sync","sparql-step"]
+   "bookmark","unbookmark","pod","sync","sparql-step","classic"]
 
 /-- What the browser loads itself. -/
 structure Site where
@@ -343,6 +343,7 @@ private def native : Site := {pages := "file:///lab/pages/",files := true}
 #guard route hub here "foafnaut:sparql/q=ASK+%7B%7D" == .page "sparql" "foafnaut:sparql/q=ASK+%7B%7D"
 #guard route hub here "foafnaut:wasm" == .page "wasm" "foafnaut:wasm"
 #guard route hub here "foafnaut:theme/arcade" == .command "theme" "arcade"
+#guard route hub here "foafnaut:classic/off" == .command "classic" "off"
 #guard route hub here "foafnaut:nothing" == .refuse "foafnaut:nothing" "this browser has no such page"
 #guard route hub here "status.html" == .navigate "https://danbri.github.io/factoidal-core/web/hub/foafnaut/pages/status.html"
 #guard route hub here "../x/./y.html?a b#c d" == .navigate "https://danbri.github.io/factoidal-core/web/hub/foafnaut/x/y.html?a%20b#c%20d"

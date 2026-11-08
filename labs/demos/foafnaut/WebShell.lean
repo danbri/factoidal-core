@@ -46,6 +46,13 @@ structure Shell where
   scroll : Nat := 0
   /-- The control the pointer is pressed on (`:active`), or "". -/
   pressed : String := ""
+  /-- How far the chrome has folded away as the page scrolls down (owner, 2026-11-08), in
+  percent: 0 is the full chrome, 100 the strip that shows only the domain. The host sets
+  it from the scroll's direction and distance; with the classic UI it stays 0. -/
+  collapse : Nat := 0
+  /-- The chrome may fold (the classic UI is off): a band then covers the view under the
+  strip, so a change of `collapse` needs no new band. -/
+  collapsible : Bool := false
   deriving Repr, BEq
 
 private structure Theme where
@@ -78,7 +85,53 @@ private def narrow (s : Shell) (width : Nat) : Bool := width/unit s < 560
 private def tabRow (s : Shell) (width : Nat) : Nat := if narrow s width then 0 else 26*unit s
 private def navRow (s : Shell) : Nat := 36*unit s
 private def edge (s : Shell) : Nat := 3*unit s
-def height (s : Shell) (width : Nat) : Nat := tabRow s width+navRow s+edge s
+/-- The full chrome, as the classic UI always has it. The layout reads this one, so a
+change of `collapse` lays nothing out again (`WebDocument.layoutTop_collapse`). -/
+def fullHeight (s : Shell) (width : Nat) : Nat := tabRow s width+navRow s+edge s
+/-- One lettering pixel of the folded strip: two thirds of `dot`. -/
+private def smallDot (s : Shell) : Nat := max 1 (dot s*2/3)
+/-- The folded chrome: one line of small lettering, and the edge. -/
+def stripHeight (s : Shell) : Nat := 7*smallDot s+8*unit s+edge s
+/-- `a` moved towards `b` by `p` percent (`p ≤ 100`), in whole pixels. -/
+def lerp (a b p : Nat) : Nat := if a ≤ b then a+(b-a)*p/100 else a-(a-b)*p/100
+/-- The chrome's height on screen: from `fullHeight` at collapse 0 to the strip at 100,
+in proportion. -/
+def height (s : Shell) (width : Nat) : Nat :=
+  let full := fullHeight s width
+  full-(full-min full (stripHeight s))*min 100 s.collapse/100
+
+theorem height_classic (s : Shell) (width : Nat) (h : s.collapse = 0) : height s width = fullHeight s width := by
+  simp [height,h]
+
+/-- The fold over plain numbers: `F` rows unfolded, `D` rows that fold away, `c` percent. -/
+private theorem fold_part_le (D c : Nat) : D*min 100 c/100 ≤ D := by
+  apply Nat.div_le_of_le_mul
+  rw [Nat.mul_comm 100]
+  exact Nat.mul_le_mul_left D (Nat.min_le_left 100 c)
+
+private theorem fold_antitone (F D : Nat) {a b : Nat} (le : a ≤ b) : F-D*min 100 b/100 ≤ F-D*min 100 a/100 := by
+  have : D*min 100 a/100 ≤ D*min 100 b/100 := Nat.div_le_div_right (Nat.mul_le_mul_left D (by omega))
+  omega
+
+theorem height_le_full (s : Shell) (width : Nat) : height s width ≤ fullHeight s width :=
+  Nat.sub_le _ _
+
+/-- The chrome never folds smaller than the strip (or the full chrome, if that is smaller). -/
+theorem strip_le_height (s : Shell) (width : Nat) : min (fullHeight s width) (stripHeight s) ≤ height s width := by
+  have part := fold_part_le (fullHeight s width-min (fullHeight s width) (stripHeight s)) s.collapse
+  have : min (fullHeight s width) (stripHeight s) ≤ fullHeight s width := Nat.min_le_left _ _
+  show min (fullHeight s width) (stripHeight s) ≤
+    fullHeight s width-(fullHeight s width-min (fullHeight s width) (stripHeight s))*min 100 s.collapse/100
+  omega
+
+/-- Folding further never makes the chrome taller: the height falls as `collapse` rises. -/
+theorem height_antitone (s : Shell) (width : Nat) {a b : Nat} (le : a ≤ b) :
+    height {s with collapse := b} width ≤ height {s with collapse := a} width :=
+  fold_antitone (fullHeight s width) (fullHeight s width-min (fullHeight s width) (stripHeight s)) le
+
+/-- The full chrome does not read the collapse or the scroll. -/
+theorem fullHeight_collapse (s : Shell) (collapse scroll width : Nat) :
+    fullHeight {s with collapse,scroll} width = fullHeight s width := rfl
 
 private structure Box where
   name : String
@@ -143,6 +196,8 @@ def pressBox (s : Shell) (width : Nat) (name : String) : Option (Nat × Nat × N
 /-- The control under a point; none means the page. Close wins over its tab. -/
 def hit (s : Shell) (width x y : Nat) : Option String :=
   if y >= height s width then none else
+  -- A folded chrome has one control: a tap unfolds it, as on a phone.
+  if s.collapse > 0 then some "expand" else
   match ((boxes s width).filter (·.contains x y)).getLast? with
   | some box => some box.name
   | none => some "chrome"
@@ -283,9 +338,8 @@ private def edgeNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.Nod
     if i % 2 == 0 then out := paint t.accent (i*block) y (block-2*unit s) (edge s) :: out
   return out
 
-/-- The chrome as scene nodes. It is drawn over the page. -/
-def nodes (s : Shell) (width : Nat) : List Rendering.Node := Id.run do
-  let t := themeOf s
+/-- The controls of the full chrome in theme `t`, with no edge. -/
+private def controlNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.Node := Id.run do
   let u := unit s
   let row := tabRow s width
   let mut out := [paint t.back 0 0 width row,paint t.base 0 row width (navRow s)]
@@ -319,7 +373,60 @@ def nodes (s : Shell) (width : Nat) : List Rendering.Node := Id.run do
     let x := width-(label.length*charWidth s)-16*u
     let y := (row-7*dot s)/2+u
     out := out ++ bitmapNodes t.coin (icon "coin") 7 (x-10*dot s) y (dot s) ++ text t.coin label x y (dot s)
-  return out ++ edgeNodes s t width
+  return out
+
+/-- Colour `c` faded `p` percent of the way to `to`: the chrome has no alpha, and over
+its own opaque face this is the same as `c` at opacity `1-p`. -/
+private def mix (c to : Rendering.Color) (p : Nat) : Rendering.Color :=
+  let f := Float.ofNat (min 100 p)/100
+  ⟨c.r+(to.r-c.r)*f,c.g+(to.g-c.g)*f,c.b+(to.b-c.b)*f⟩
+/-- The theme with every colour faded `p` percent into the chrome's face. -/
+private def fade (t : Theme) (p : Nat) : Theme :=
+  let m := fun c => mix c t.base p
+  ⟨t.base,m t.light,m t.dark,m t.ink,m t.well,m t.wellInk,m t.back,m t.muted,m t.accent,m t.coin,m t.selected⟩
+
+/-- The site part of an address: the host of `scheme://host/...`; other addresses
+(`foafnaut:graph`) whole. -/
+def domainOf (address : String) : String :=
+  match address.splitOn "://" with
+  | [_,rest] =>
+    let host := (rest.splitOn "/").headD rest
+    let host := (host.splitOn "?").headD host
+    let host := (host.splitOn "#").headD host
+    -- No user part: what follows the last `@`.
+    (host.splitOn "@").getLastD host
+  | _ => address
+
+/-- The domain as the chrome folds: from where the address text starts in the bar, at
+the bar's lettering size, to the middle of the strip in small lettering; it fades in. -/
+private def domainNodes (s : Shell) (t : Theme) (width : Nat) (p : Nat) : List Rendering.Node :=
+  let u := unit s
+  let shown := domainOf s.address
+  let size := lerp (dot s) (smallDot s) p
+  let label := fit s shown (width-16*u)
+  let wide := label.length*6*size
+  let bar := ((boxes {s with collapse := 0} width).find? (·.name == "address")).getD ⟨"address",0,0,width,28*u⟩
+  let x0 := bar.x+22*u
+  -- The bar's text slides up with the bar (`nodes`); the domain leaves it and comes to rest.
+  let y0 := bar.y+(bar.h-7*dot s)/2-(fullHeight s width-height s width)
+  let x1 := (width-min width wide)/2
+  let y1 := (stripHeight s-edge s-7*smallDot s)/2
+  -- It shows only in the second half of the fold, after the controls have faded out, so
+  -- the two texts never lie over each other half drawn.
+  text (mix t.base t.ink (2*p-100)) label (lerp x0 x1 p) (lerp y0 y1 p) size
+
+/-- The chrome as scene nodes. It is drawn over the page. With `collapse` above 0 it is
+folding: the controls slide up and fade into the chrome's face over the first half of the
+fold, the chrome is shorter (`height`), and the domain shrinks to the middle of the strip
+and fades in over the second half. -/
+def nodes (s : Shell) (width : Nat) : List Rendering.Node :=
+  let t := themeOf s
+  if s.collapse == 0 then controlNodes s t width ++ edgeNodes s t width else
+  let p := min 100 s.collapse
+  let lift := fullHeight s width-height s width
+  let slide : Rendering.Transform := ⟨1,0,0,1,0,-(Float.ofNat lift)⟩
+  [paint t.base 0 0 width (height s width),.group none slide (controlNodes {s with collapse := 0} (fade t (2*p)) width)] ++
+    domainNodes s t width p ++ edgeNodes s t width
 
 /-- Put a page rendered below the chrome and the chrome into one scene. -/
 def compose (s : Shell) (page : Rendering.Scene) (width height' : Nat) : Rendering.Scene :=
@@ -586,7 +693,8 @@ def Shell.ofJson (j : JSON.Json) : Shell :=
     anchor := min (nat j "anchor" cursor) address.length,undo := step "undo",redo := step "redo",typing := flag j "typing",
     focused := flag j "focused",canBack := flag j "canBack",canForward := flag j "canForward",
     loading := flag j "loading",scale := max 1 (nat j "scale" 1),theme := str j "theme" "next",pages := nat j "pages",
-    scroll := nat j "scroll", pressed := str j "pressed" }
+    scroll := nat j "scroll", pressed := str j "pressed",
+    collapse := min 100 (nat j "collapse"), collapsible := flag j "collapsible" }
 
 private def Snapshot.json (v : Snapshot) : JSON.Json :=
   .object [("address",.string v.address),("cursor",.number (toString v.cursor)),("anchor",.number (toString v.anchor))]
@@ -674,5 +782,14 @@ private def deep : Shell := (({} : Shell).edit "focus" "http://x.org/one/two").1
 #guard reprStr (nodes {pressed := "address"} 1000) == reprStr (nodes {} 1000)
 #guard reprStr (nodes {pressed := "back"} 1000) == reprStr (nodes {} 1000)
 #guard (Shell.ofJson (.object [("pressed",.string "home")])).pressed == "home"
+-- The folding chrome (owner, 2026-11-08): classic at 0, the strip at 100, a tap on it unfolds.
+#guard height {} 400 == fullHeight {} 400 && height {collapse := 100} 400 == stripHeight {}
+#guard height {collapse := 50} 400 < height {} 400 && height {collapse := 50} 400 > height {collapse := 100} 400
+#guard hit {collapse := 100} 400 10 5 == some "expand" && hit {collapse := 100} 400 10 (stripHeight {}) == none
+#guard reprStr (nodes {collapse := 0} 1000) == reprStr (nodes {} 1000)
+#guard reprStr (nodes {collapse := 40,address := "https://x.org/a"} 1000) != reprStr (nodes {address := "https://x.org/a"} 1000)
+#guard domainOf "https://danbri.github.io/factoidal/web/hub/" == "danbri.github.io" && domainOf "foafnaut:graph" == "foafnaut:graph"
+#guard domainOf "http://u@x.org:8080?q#f" == "x.org:8080"
+#guard (Shell.ofJson (.object [("collapse",.number "250"),("collapsible",.bool true)])).collapse == 100
 
 end WebShell

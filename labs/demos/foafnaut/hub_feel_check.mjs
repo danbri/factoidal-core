@@ -7,6 +7,10 @@
 // - A tap during a fling only stops it: no click, no navigation.
 // - A fling stops at the top of the page.
 // - A tap with no fling still follows a link.
+// - The folding chrome (an engine that answers shellInfo): the settings checkbox turns the
+//   classic UI off; a scroll down folds the chrome to the strip (fold 100, top shrinks) with
+//   no Lean render inside a band, only chrome layers; a scroll up unfolds it; a link tapped
+//   under a folded chrome goes where it says; a tap on the strip unfolds it.
 //
 //   node labs/demos/foafnaut/hub_feel_check.mjs [--runtime DIR] [--only published|local]
 // CHROME=/path/to/chrome overrides the browser. Exit 1 on a failure; NOT RUN with no browser.
@@ -67,23 +71,119 @@ try{
     const touch=async(type,points)=>s('Input.dispatchTouchEvent',{type,touchPoints:points.map(([x,y])=>({x,y}))});
     return {
       evaluate,
-      frames:(from=0)=>evaluate(`window.__frames.slice(${from}).map(f=>({t:f.t,path:f.path,scroll:f.scroll,leanRenders:f.leanRenders,url:f.url,bandTop:f.bandTop}))`),
+      frames:(from=0)=>evaluate(`window.__frames.slice(${from}).map(f=>({t:f.t,path:f.path,scroll:f.scroll,leanRenders:f.leanRenders,url:f.url,bandTop:f.bandTop,collapse:f.collapse,top:f.top,chromeRenders:f.chromeRenders}))`),
       count:()=>evaluate('window.__frames.length'),
       async until(test,limit=30000){const t=Date.now();let st;
         while(Date.now()-t<limit){await sleep(150);st=await evaluate('window.__frames.at(-1)??null').catch(()=>undefined);if(st&&test(st))return st;}
         return st;},
       // A finger from (x,y0) to (x,y1) in `steps` moves `ms` apart, then lifted.
-      async drag(x,y0,y1,steps,ms){await s('Page.bringToFront');
+      // With `hold`, the finger rests that long before the lift: no fling.
+      async drag(x,y0,y1,steps,ms,hold=0){await s('Page.bringToFront');
         await touch('touchStart',[[x,y0]]);
         for(let i=1;i<=steps;i++){await sleep(ms);await touch('touchMove',[[x,Math.round(y0+(y1-y0)*i/steps)]]);}
+        if(hold)await sleep(hold);
         await touch('touchEnd',[]);},
       async tap(x,y){await s('Page.bringToFront');await touch('touchStart',[[x,y]]);await sleep(40);await touch('touchEnd',[]);},
+      async shot(file){const r=await s('Page.captureScreenshot',{format:'png'});fs.writeFileSync(file,Buffer.from(r.data,'base64'));},
       close:()=>send('Target.closeTarget',{targetId})};
   }
   // Settled: no new frame for `quiet` ms.
   async function settle(page,quiet=600,limit=10000){
     const t=Date.now();let n=await page.count(),since=Date.now();
     while(Date.now()-t<limit){await sleep(100);const m=await page.count();if(m!==n){n=m;since=Date.now();}else if(Date.now()-since>=quiet)return;}
+  }
+  async function foldCheck(run,open,settle,width,height){
+    const settingsURL=base+'pages/settings.html',pageURL=base+'pages/sitemap.xml',shots=opt('--shots','');
+    const linksOf=page=>page.evaluate('window.__frames.at(-1)?.links??null');
+    const set=await open('page=settings.html&stats=1&layers=0',width,height);
+    await set.until(f=>f.url===settingsURL,60000);await settle(set);
+    let links=await linksOf(set);
+    const box=links?.find(l=>l[1]==='foafnaut:classic/off');
+    if(!box){console.log(`NOT RUN: ${run.name}: the folding chrome (this engine keeps the classic chrome)`);await set.close();return;}
+    if(shots)await set.shot(path.join(shots,`${run.name}-settings-classic.png`));
+    await set.tap(Math.round(box[2]+box[4]/2),Math.round(box[3]+box[5]/2));
+    const n0=await set.count();
+    await set.until(async()=>true,500);await settle(set);
+    links=await linksOf(set);
+    if(!links?.some(l=>l[1]==='foafnaut:classic/on'))fail(run.name,'the checkbox did not turn the classic UI off',JSON.stringify(links?.filter(l=>l[1].startsWith('foafnaut:'))));
+    if(shots)await set.shot(path.join(shots,`${run.name}-settings-folding.png`));
+    void n0;await set.close();
+    // The setting is kept (IndexedDB): a new window folds.
+    const page=await open('page=sitemap.xml&stats=1',width,height);
+    await page.until(f=>f.url===pageURL,60000);
+    await page.drag(200,500,490,2,16);
+    await page.until(f=>f.bandTop!==undefined,20000);await settle(page);
+    // Unfold first (that small drag folded a little).
+    await page.drag(200,300,360,6,16);await settle(page);
+    let n=await page.count();
+    const start=(await page.frames(n-1))[0];
+    // A slow drag down (no fling): 120 px in 12 steps of 50 ms.
+    await page.drag(200,600,480,12,50,200);await settle(page);
+    let frames=await page.frames(n);
+    const folded=frames.at(-1),renders=frames.reduce((a,f)=>a+(f.leanRenders??0),0);
+    const chromes=(folded.chromeRenders??0)-(start.chromeRenders??0);
+    console.log(JSON.stringify({run:run.name,fold:{from:{scroll:start.scroll,collapse:start.collapse,top:start.top},to:{scroll:folded.scroll,collapse:folded.collapse,top:folded.top},frames:frames.length,leanRenders:renders,chromeLayers:chromes,paths:frames.reduce((a,f)=>(a[f.path]=(a[f.path]??0)+1,a),{})}}));
+    if(folded.collapse!==100)fail(run.name,'a scroll down of 120 px did not fold the chrome:',folded.collapse);
+    if(!(folded.top<start.top||start.top===undefined))fail(run.name,'the chrome did not get shorter:',start.top,'->',folded.top);
+    if(renders!==0)fail(run.name,'folding inside a band made',renders,'Lean renders');
+    if(!(chromes>0))fail(run.name,'no chrome layer was drawn while folding');
+    const ups=frames.map(f=>f.collapse).filter(c=>c!==undefined);
+    if(ups.some((c,i)=>i&&c<ups[i-1]))fail(run.name,'the fold went back during a scroll down',JSON.stringify(ups));
+    // The page followed the finger: what the chrome gave up came out of the scroll.
+    const moved=folded.scroll-start.scroll,gave=(start.top??0)-(folded.top??0);
+    if(Math.abs(moved+gave-120)>6)fail(run.name,'the page did not follow the finger: scroll',moved,'+ chrome',gave,'!= 120');
+    if(shots)await page.shot(path.join(shots,`${run.name}-folded.png`));
+    // Half way back: a scroll up of a quarter of the folding rows.
+    n=await page.count();
+    await page.drag(200,400,400+Math.max(4,Math.round(gave/2)),4,50);await settle(page);
+    frames=await page.frames(n);
+    const half=frames.at(-1);
+    console.log(JSON.stringify({run:run.name,unfold:{collapse:half.collapse,top:half.top,scroll:half.scroll,leanRenders:frames.reduce((a,f)=>a+(f.leanRenders??0),0)}}));
+    if(!(half.collapse>0&&half.collapse<100))fail(run.name,'a short scroll up did not unfold part way:',half.collapse);
+    if(shots)await page.shot(path.join(shots,`${run.name}-half.png`));
+    // Fold again, then a tap on the strip unfolds the chrome.
+    await page.drag(200,600,500,10,40);await settle(page);
+    const strip=(await page.frames((await page.count())-1))[0];
+    await page.tap(200,Math.max(2,Math.floor((strip.top??10)/2)));await settle(page);
+    const open_=(await page.frames((await page.count())-1))[0];
+    console.log(JSON.stringify({run:run.name,tapStrip:{before:strip.collapse,after:open_.collapse,url:open_.url}}));
+    if(strip.collapse!==100||open_.collapse!==0)fail(run.name,'a tap on the folded strip did not unfold the chrome',strip.collapse,open_.collapse);
+    if(open_.url!==pageURL)fail(run.name,'a tap on the strip left the page');
+    await page.close();
+    // A link under a folded chrome, in a one-frame view: Lean's links follow the chrome's top.
+    const flat=await open('page=sitemap.xml&stats=1&layers=0',width,height);
+    await flat.until(f=>f.url===pageURL,60000);await settle(flat);
+    await flat.drag(200,600,480,12,50,200);await settle(flat);
+    const fl=await flat.evaluate('window.__frames.at(-1)');
+    const row=fl?.links?.find(l=>l[3]>30&&l[3]+l[5]<height-10);
+    // Where a tap on the link went: the tab's address, or a host tab for another site.
+    const want=row&&new URL(row[1],pageURL).href,elsewhere=want&&new URL(want).origin!==new URL(pageURL).origin;
+    const outcome=async page=>{
+      const st=await page.until(f=>f.url!==pageURL,elsewhere?3000:20000);void st;
+      return elsewhere?((await page.evaluate('window.__opened')).at(-1)):(await page.evaluate('window.__frames.at(-1).url'));
+    };
+    if(fl?.collapse!==100||!row)fail(run.name,'one-frame view: no fold or no link',fl?.collapse,fl?.scroll,JSON.stringify(fl?.links?.map(l=>[l[1],Math.round(l[3])])));
+    else{
+      await flat.tap(Math.round(row[2]+row[4]/2),Math.round(row[3]+row[5]/2));
+      const went=await outcome(flat);
+      console.log(JSON.stringify({run:run.name,foldedTap:row[1],at:Math.round(row[3]),went}));
+      if(went!==want)fail(run.name,'a tap on',row[1],'under the folded chrome went to',went);
+      // The same drag in the two-layer view: the same link at the same place (hit testing
+      // there maps the window row through the composite's top, which follows the fold).
+      const lay=await open('page=sitemap.xml&stats=1',width,height);
+      await lay.until(f=>f.url===pageURL,60000);await settle(lay);await sleep(400);
+      await lay.drag(200,600,480,12,50,200);await settle(lay);
+      const ls=await lay.evaluate('window.__frames.at(-1)');
+      if(ls?.scroll!==fl.scroll||ls?.collapse!==fl.collapse)fail(run.name,'two-layer view: the same drag gave scroll',ls?.scroll,'fold',ls?.collapse,'not',fl.scroll,fl.collapse);
+      else{
+        await lay.tap(Math.round(row[2]+row[4]/2),Math.round(row[3]+row[5]/2));
+        const wentL=await outcome(lay);
+        console.log(JSON.stringify({run:run.name,layeredFoldedTap:row[1],went:wentL,path:ls.path,top:ls.top}));
+        if(wentL!==want)fail(run.name,'two-layer view: a tap on',row[1],'under the folded chrome went to',wentL);
+      }
+      await lay.close();
+    }
+    await flat.close();
   }
   const runs=[{name:'published',runtime:''},{name:'local',runtime:localRuntime}].filter(r=>!only||r.name===only);
   for(const run of runs){
@@ -155,6 +255,7 @@ try{
       if(went?.url!==want)fail(run.name,'a tap on',row[1],'went to',went?.url);
     }
     await flat.close();
+    await foldCheck(run,open,settle,width,height);
   }
 }catch(error){fail(String(error?.stack??error));}
 finally{chrome.kill('SIGKILL');server.close();await sleep(300);try{fs.rmSync(profile,{recursive:true,force:true});}catch{/* Chrome still closing */}}

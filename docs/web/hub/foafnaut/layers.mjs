@@ -180,6 +180,14 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
       await drawScene(page,answer.page,check);
       shown=answer;
     },
+    /** A new chrome layer alone (Lean's chromeLayer answer: a fold of the chrome), `top`
+     * rows high: the page layer stays, and the next composite shows it under this chrome. */
+    async setChrome(scene,top){
+      ensure();
+      if(!shown)throw Error('setChrome before any layers were drawn');
+      await drawScene(chrome,scene,check);
+      shown={...shown,chrome:scene,layers:{...shown.layers,top}};
+    },
     /** The layers on screen at this offset (Lean's composite WGSL), into the canvas or into
      * target. With readback, the pixels come back (RGBA). */
     async composite(width,height,offset,{target,readBack=check}={}){
