@@ -56,7 +56,8 @@ th{background:#e8eef6}
 
 <h2>What pages can use</h2>
 <p>Timers, animation frames, microtasks and Promises; clicks and pointer events with coordinates; taps on SVG shapes; createElement and createElementNS; selectors matched by Lean; DOMParser; MutationObserver; forms, checkboxes and radio buttons; layout reads such as clientWidth and getBoundingClientRect; WebGPU and WebGL drawing, each command checked by Lean.</p>
-<p>Not yet: module scripts and fetch from scripts, so the ObservableHQ notebooks the rest of the Hub uses do not run here; the innerHTML setter; Range and TreeWalker; lone surrogates in strings.</p>
+<p>Computed by Lean, one call for each operation: TextDecoder and TextEncoder (every encoding of the Encoding Standard, with fatal, ignoreBOM and streaming); URL and URLSearchParams (the WHATWG URL parser, every setter); atob and btoa; crypto.getRandomValues and crypto.randomUUID (a Lean generator seeded by the host); crypto.subtle digest (SHA-1, SHA-256, SHA-384, SHA-512), HMAC, HKDF and PBKDF2, each promise settled by a task. Also structuredClone, and performance.mark and performance.measure.</p>
+<p>Not yet: module scripts and fetch from scripts, so the ObservableHQ notebooks the rest of the Hub uses do not run here; the innerHTML setter; Range and TreeWalker; lone surrogates in strings; AES, ECDSA, ECDH, Ed25519, X25519 and RSA in crypto.subtle; TextDecoderStream (no streams yet).</p>
 
 <div class="about">
 <p>Demos: <a href="foaf-explorer.html">FOAF explorer</a>, <a href="timers-and-clicks.html">Timers and clicks</a>, <a href="webgpu-triangle.html">WebGPU triangle</a>, <a href="webgl-triangle.html">WebGL 1 and 2</a>. Records: docs/designissues/2026-11-08-page-scripts.md, 2026-11-08-wasmvm-aot.md, 2026-11-08-lean-js-engine.md and 2026-11-08-page-gpu.md.</p>
