@@ -47,7 +47,8 @@ let failures=0;
 const fail=(...m)=>{failures++;console.log('FAIL',...m);};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 try{
-  let ws;for(let i=0;i<100&&!ws;i++){try{ws=(await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()).webSocketDebuggerUrl;}catch{await sleep(100);}}
+  let ws;for(let i=0;i<300&&!ws;i++){try{ws=(await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()).webSocketDebuggerUrl;}catch{await sleep(100);}}
+  if(!ws)throw Error("Chrome did not start: no answer on /json/version after 30 s");
   const socket=new WebSocket(ws);await new Promise((r,j)=>{socket.onopen=r;socket.onerror=j;});
   let id=0;const waiting=new Map(),logs=[];
   socket.onmessage=({data})=>{const m=JSON.parse(data);

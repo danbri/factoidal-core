@@ -103,7 +103,8 @@ const chrome=spawn(CHROME,['--headless=new',`--remote-debugging-port=${port}`,`-
 let failures=0;const report=[];
 const fail=(...m)=>{failures++;console.log('FAIL',...m);};
 try{
-  let ws;for(let i=0;i<100&&!ws;i++){try{ws=(await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()).webSocketDebuggerUrl;}catch{await new Promise(r=>setTimeout(r,100));}}
+  let ws;for(let i=0;i<300&&!ws;i++){try{ws=(await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()).webSocketDebuggerUrl;}catch{await new Promise(r=>setTimeout(r,100));}}
+  if(!ws)throw Error("Chrome did not start: no answer on /json/version after 30 s");
   const socket=new WebSocket(ws);await new Promise((r,j)=>{socket.onopen=r;socket.onerror=j;});
   let id=0;const waiting=new Map();
   socket.onmessage=({data})=>{const m=JSON.parse(data);if(m.id&&waiting.has(m.id)){const [r,j]=waiting.get(m.id);waiting.delete(m.id);m.error?j(Error(JSON.stringify(m.error))):r(m.result);}};
