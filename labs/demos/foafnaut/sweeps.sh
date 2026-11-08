@@ -3,6 +3,9 @@
 # into a GPU texture, events go through the window library's queue. It runs with the screen
 # locked, with the display asleep, and on a machine with no display (CI).
 # One line for each sweep and engine: rc, seconds, and the offscreen latency summary.
+# The latency here includes the pixel check of every frame (a sweep checks each frame). For
+# input latency without it, run the sweep with --idle-checks-only: on 2026-11-08 the graph
+# click was 195 ms here and 27.6 ms with --idle-checks-only (native engine).
 # Exit 0 only when every run exits 0, or 4 (not run: the engine lacks an op the sweep needs). Usage: sweeps.sh [--only NAME]... [--wasm-only]
 set -uo pipefail
 LAB=$(cd "$(dirname "$0")" && pwd)
@@ -67,7 +70,7 @@ for raw in open(sys.argv[1],errors="replace"):
         except ValueError: pass
 if not line: print("no perf summary"); sys.exit()
 l,f,s=line["inputLatency"],line["frames"],line["scrollPresents"]
-print(f'{line.get("present","window")}: input latency {l["count"]} events p50 {l["p50Ms"]} p95 {l["p95Ms"]} max {l["maxMs"]} ms; '
+print(f'{line.get("present","window")}: input latency (with a pixel check of every frame) {l["count"]} events p50 {l["p50Ms"]} p95 {l["p95Ms"]} max {l["maxMs"]} ms; '
       f'frames {f["presented"]} presented, {f["checked"]} checked, p50 {f["totalMsP50"]} ms; scroll presents {s["count"]}, p50 {s["totalMsP50"]} ms')
 EOF
 )
