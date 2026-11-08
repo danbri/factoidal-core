@@ -28,6 +28,7 @@ QuickJS-NG v0.18.0 `qjs-wasi-reactor.wasm` that the Foafnaut script engine runs 
 import L4Factoidal.WasmVM.WasiIO
 import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.WasmVM.Bench.Sample
+import L4Factoidal.WasmVM.Hosts.Page
 import L4Factoidal.DOM.OfHtml
 import Lean.Data.Json
 
@@ -35,80 +36,12 @@ namespace L4Factoidal.WasmVM.Bench.QuickJS
 open L4Factoidal.WasmVM L4Factoidal.WasmVM.Wasi L4Factoidal.DOM
 open Lean (Json)
 
-abbrev DomState := Hosts.Dom.State
-
 def jn (n : Nat) : Json := .num (Lean.JsonNumber.fromNat n)
 
-/-- A loaded QuickJS module and the DOM host's state. -/
-structure Vm where
-  store : Store
-  inst : Nat
-  mem : Nat
-  bindings : Array Binding
-  dom : IO.Ref DomState
-  /-- The virtual clock, in nanoseconds: the only clock the module sees. -/
-  clock : IO.Ref UInt64
-
-/-- WASI capabilities: the virtual clock (realtime and monotonic) and nothing else.
-QuickJS-NG aborts in `JS_NewRuntime` without a clock, so one is granted; it is the
-event loop's clock, not the host's. -/
-def capsOf (clock : IO.Ref UInt64) : Caps IO :=
-  { clock := fun id => if id ≤ 1 then some clock.get else none,
-    clockRes := fun id => if id ≤ 1 then some 1000000 else none }
-
-def extraNames (mo nm : String) : Bool :=
-  Hosts.Dom.accepts mo nm || (mo == "env" && nm == "emscripten_notify_memory_growth")
-
-def extra (ref : IO.Ref DomState) (mem : Nat) (mo nm : String) (args : Array Value) (st : Store) :
-    IO (Store × HostResult) := do
-  if mo == Hosts.Dom.moduleName then
-    let s ← ref.get
-    ref.set default
-    let (s, st, r) := Hosts.Dom.serve mem nm args s st
-    ref.set s
-    return (st, r)
-  else return (st, .values #[])
-
-/-- Run export `name`: the outcome, the instructions run and the nanoseconds taken. -/
-def Vm.run (v : Vm) (name : String) (args : Array Value) (fuel : Nat := 100000000000) :
-    IO (Vm × Outcome × Nat × Nat) := do
-  let ⟨st, inst, mem, bs, ref, clock⟩ := v
-  match st.export? inst name with
-  | some (.func fa) =>
-    let t0 ← IO.monoNanosNow
-    let h := host (capsOf clock) mem bs (extra ref mem)
-    let (st, o, n) ← if ← Sample.enabled then Sample.runIO st fa args { fuel } h
-      else runIOSteps st fa args { fuel } h
-    let t1 ← IO.monoNanosNow
-    return (⟨st, inst, mem, bs, ref, clock⟩, o, n, t1 - t0)
-  | _ => return (⟨st, inst, mem, bs, ref, clock⟩, .trap (.host s!"no export {name}"), 0, 0)
-
-def Vm.i32 (v : Vm) (name : String) (args : Array Value) : IO (Vm × Nat) := do
-  let (v, o, _, _) ← v.run name args
-  match o with
-  | .values #[.i32 r] => return (v, r.toNat)
-  | o => throw (IO.userError s!"{name}: {o.describe}")
-
-/-- Copy `b` into the module (with a NUL after it). -/
-def Vm.put (v : Vm) (b : ByteArray) : IO (Vm × Nat) := do
-  let (v, p) ← v.i32 "qjs_alloc" #[.i32 (b.size + 1).toUInt32]
-  if p == 0 then throw (IO.userError "qjs_alloc gave 0")
-  let ⟨st, inst, mem, bs, ref, clock⟩ := v
-  match st.writeMem mem p (b.push 0) with
-  | .ok st => return (⟨st, inst, mem, bs, ref, clock⟩, p)
-  | .error e => throw (IO.userError e)
-
-/-- A result block: status (0 normal, 1 exception) and text; frees the block. -/
-def Vm.result (v : Vm) (p : Nat) : IO (Vm × Nat × String) := do
-  if p == 0 then throw (IO.userError "no result block")
-  let hdr ← match v.store.readMem v.mem p 8 with
-    | .ok b => pure b | .error e => throw (IO.userError e)
-  let status := u32At hdr 0
-  let len := u32At hdr 4
-  let body ← match v.store.readMem v.mem (p + 8) len with
-    | .ok b => pure b | .error e => throw (IO.userError e)
-  let (v, _, _, _) ← v.run "qjs_free" #[.i32 p.toUInt32]
-  return (v, status, (String.fromUTF8? body).getD "<not UTF-8>")
+/-- Since 2026-11-08 the module runs as a page session (`Hosts.Page`): the WASI clock is
+the event loop's, `foafnaut_dom` is served on a Lean DOM arena, and Lean runs the
+microtask checkpoint (`runJobs`). -/
+abbrev Vm := Hosts.Page.Session
 
 structure Timed where
   status : Nat
@@ -116,45 +49,23 @@ structure Timed where
   steps : Nat
   ns : Nat
 
-def Vm.eval (v : Vm) (src : String) : IO (Vm × Timed) := do
-  let b := src.toUTF8
-  let (v, p) ← v.put b
-  let (v, o, n, ns) ← v.run "qjs_eval" #[.i32 p.toUInt32, .i32 b.size.toUInt32]
-  let (v, _, _, _) ← v.run "qjs_free" #[.i32 p.toUInt32]
-  match o with
-  | .values #[.i32 r] =>
-    let (v, status, text) ← v.result r.toNat
-    return (v, ⟨status, text, n, ns⟩)
-  | o => return (v, ⟨2, s!"VM: {o.describe}", n, ns⟩)
+/-- Evaluate `src`, then the microtask checkpoint; the instructions and the wall time. -/
+def evalTimed (v : Vm) (src : String) : IO (Vm × Timed) := do
+  let t0 ← IO.monoNanosNow
+  let n0 := v.steps
+  let (v, status, text) := v.eval src
+  let v := v.runJobs
+  let t1 ← IO.monoNanosNow
+  return (v, ⟨status, text, v.steps - n0, t1 - t0⟩)
 
-def i32v (x : Int) : Value := .i32 (Int.toNat (x % 4294967296)).toUInt32
-
-def Vm.call (v : Vm) (cb : Nat) (target : Int) (event : Nat) : IO (Vm × Timed) := do
-  let (v, o, n, ns) ← v.run "qjs_call" #[i32v cb, i32v target, i32v event]
-  match o with
-  | .values #[.i32 r] =>
-    let (v, status, text) ← v.result r.toNat
-    return (v, ⟨status, text, n, ns⟩)
-  | o => return (v, ⟨2, s!"VM: {o.describe}", n, ns⟩)
-
-/-- Load the module, run `_initialize` and `qjs_new` on the arena `dom`. -/
-def start (bytes : ByteArray) (dom : Dom) : IO Vm := do
-  let ref ← IO.mkRef ({ dom } : DomState)
-  let clock ← IO.mkRef (0 : UInt64)
-  let r ← load (capsOf clock) bytes {} extraNames (fun mo nm args st => do
-      -- The start function runs before the memory is known; it makes no DOM calls.
-      extra ref 0 mo nm args st)
-  let l ← match r with
-    | .ok l => pure l
-    | .error e => throw (IO.userError s!"load: {e}")
-  let v : Vm := ⟨l.store, l.inst, l.mem, l.bindings, ref, clock⟩
-  let (v, o, _, _) ← v.run "_initialize" #[]
-  match o with
-  | .values _ => pure ()
-  | o => throw (IO.userError s!"_initialize: {o.describe}")
-  let (v, r) ← v.i32 "qjs_new" #[]
-  if r != 0 then throw (IO.userError s!"qjs_new gave {r}")
-  return v
+/-- Load the module on the arena of `html`, run `_initialize`, `qjs_new` and page mode. -/
+def start (bytes : ByteArray) (html : String) : IO (Hosts.Page.Module' × Vm) := do
+  let m ← match Hosts.Page.prepare bytes with
+    | .ok m => pure m
+    | .error e => throw (IO.userError e)
+  match Hosts.Page.instantiatePage m (parseHtmlDocument html) with
+  | .ok v => return (m, v)
+  | .error e => throw (IO.userError e)
 
 /-! ## Plain JavaScript -/
 
@@ -229,6 +140,14 @@ def commandJson : Hosts.Dom.Command → Json
   | .setAttribute n k v => Json.mkObj [("op", Json.str "setAttribute"), ("nodeId", jn n), ("name", Json.str k), ("value", Json.str v)]
   | .createElement k n => Json.mkObj [("op", Json.str "createElement"), ("name", Json.str k), ("nodeId", jn n)]
   | .appendChild p c => Json.mkObj [("op", Json.str "appendChild"), ("parent", jn p), ("nodeId", jn c)]
+  | .removeAttribute n k => Json.mkObj [("op", Json.str "removeAttribute"), ("nodeId", jn n), ("name", Json.str k)]
+  | .createNode k d n => Json.mkObj [("op", Json.str "createNode"), ("kind", jn k), ("data", Json.str d), ("nodeId", jn n)]
+  | .createElementNS ns q n => Json.mkObj [("op", Json.str "createElementNS"), ("namespace", Json.str ns), ("name", Json.str q), ("nodeId", jn n)]
+  | .insertBefore p c b => Json.mkObj [("op", Json.str "insertBefore"), ("parent", jn p), ("nodeId", jn c), ("before", match b with | some k => jn k | none => Json.null)]
+  | .removeChild p c => Json.mkObj [("op", Json.str "removeChild"), ("parent", jn p), ("nodeId", jn c)]
+  | .replaceChild p n c => Json.mkObj [("op", Json.str "replaceChild"), ("parent", jn p), ("nodeId", jn n), ("child", jn c)]
+  | .cloneNode n d r => Json.mkObj [("op", Json.str "cloneNode"), ("source", jn n), ("deep", Json.bool d), ("nodeId", jn r)]
+  | .normalize n => Json.mkObj [("op", Json.str "normalize"), ("nodeId", jn n)]
 
 /-- One turn: its commands, logs and whether the default was prevented. -/
 structure Batch where
@@ -243,68 +162,10 @@ def Batch.json (b : Batch) : Json :=
   Json.mkObj [("commands", Json.arr b.commands), ("logs", Json.arr (b.logs.map Json.str)),
     ("defaultPrevented", Json.bool b.prevented)]
 
-/-- The host's commands and logs since the marks. -/
-def take (v : Vm) (mc ml : Nat) : IO (Array Json × Array String × Nat × Nat) := do
-  let s ← v.dom.get
-  return ((s.commands.extract mc s.commands.size).map commandJson, s.logs.extract ml s.logs.size,
-    s.commands.size, s.logs.size)
-
-/-- Dispatch a click to `node`: Lean picks the listeners (target only, in the order
-they were added) and runs each; one event number per dispatch. -/
-def click (v : Vm) (node : Nat) (event : Nat) : IO (Vm × Bool × Array String × Nat × Nat) := do
-  let s ← v.dom.get
-  let cbs := s.requests.filterMap fun r => match r with
-    | .listen n "click" cb => if n == node then some cb else none
-    | _ => none
-  let mut v := v
-  let mut prevented := false
-  let mut errors := #[]
-  let mut steps := 0
-  let mut ns := 0
-  for cb in cbs do
-    let (v', t) ← v.call cb node event
-    v := v'
-    steps := steps + t.steps; ns := ns + t.ns
-    if t.status != 0 then errors := errors.push t.text
-    if t.text == "prevented" then prevented := true
-  return (v, prevented, errors, steps, ns)
-
-/-- Run timers in virtual time until none is left (at most `limit` firings). -/
-def runTimers (v : Vm) (limit : Nat := 200) : IO (Vm × Nat × Array String) := do
-  let mut v := v
-  let mut now := 0
-  let mut seen := 0
-  -- (timer id, callback, due, interval when repeating, sequence)
-  let mut timers : Array (Nat × Nat × Nat × Option Nat × Nat) := #[]
-  let mut seq := 0
-  let mut fired := 0
-  let mut errors := #[]
-  for _ in [0:limit] do
-    let s ← v.dom.get
-    for r in s.requests.extract seen s.requests.size do
-      match r with
-      | .timer id cb d rep =>
-        timers := timers.push (id, cb, now + d, if rep then some (max d 1) else none, seq); seq := seq + 1
-      | .clearTimer id => timers := timers.filter (·.1 != id)
-      | _ => pure ()
-    seen := s.requests.size
-    if timers.isEmpty then break
-    let best := timers.foldl (init := timers[0]!) fun b t =>
-      if t.2.2.1 < b.2.2.1 || (t.2.2.1 == b.2.2.1 && t.2.2.2.2 < b.2.2.2.2) then t else b
-    let (id, cb, due, rep, _) := best
-    now := due
-    v.clock.set (now.toUInt64 * 1000000)
-    timers := timers.filter (·.1 != id)
-    if let some d := rep then
-      timers := timers.push (id, cb, now + d, rep, seq); seq := seq + 1
-    let (v', t) ← v.call cb (-1) 0
-    v := v'
-    fired := fired + 1
-    if t.status != 0 then errors := errors.push t.text
-    if rep.isNone then
-      let (v', _, _, _) ← v.run "qjs_release" #[.i32 cb.toUInt32]
-      v := v'
-  return (v, fired, errors)
+/-- The host's commands, logs and errors since the marks. -/
+def take (v : Vm) (mc ml me : Nat) : Array Json × Array String × Array String :=
+  ((v.commands.extract mc v.commands.size).map commandJson, v.logs.extract ml v.logs.size,
+    v.errors.extract me v.errors.size)
 
 /-- A page and the `id`s of the elements to click, in order. -/
 structure Page where
@@ -314,43 +175,39 @@ structure Page where
   /-- Expected text of the body after the clicks and timers, when there is no reference. -/
   expect : Option String := none
 
-def runPage (bytes : ByteArray) (p : Page) : IO (Array Batch × Dom × Array Nat × Json × Array String) := do
-  let dom := parseHtmlDocument p.html (scripting := true)
+def runPage (m : Hosts.Page.Module') (p : Page) : IO (Array Batch × Dom × Array Nat × Json × Array String) := do
+  let dom := parseHtmlDocument p.html
   let snap := snapshot dom
   let srcs := scripts dom
-  let mut v ← start bytes dom
-  let mut batches := #[]
-  let mut mc := 0
-  let mut ml := 0
-  let mut errors := #[]
-  let mut steps := 0
-  let mut ns := 0
-  for src in srcs do
-    let (v', t) ← v.eval src
-    v := v'
-    steps := steps + t.steps; ns := ns + t.ns
-    if t.status != 0 then errors := errors.push t.text
-  let (cs, ls, mc', ml') ← take v mc ml
-  mc := mc'; ml := ml'
-  batches := batches.push ({ commands := cs, logs := ls, prevented := false, errors, steps, ns } : Batch)
+  let scriptNodes := (dom.treeOrder 0).filter fun k => Dom.isHtmlElement (dom.get k) "script"
+  let t0 ← IO.monoNanosNow
+  let v ← match Hosts.Page.start m dom "about:blank" (scriptNodes.zip srcs) with
+    | .ok v => pure v
+    | .error e => throw (IO.userError e)
+  let t1 ← IO.monoNanosNow
+  let (cs, ls, es) := take v 0 0 0
+  let mut v := v
+  let mut batches := #[({ commands := cs, logs := ls, prevented := false, errors := es, steps := v.steps, ns := t1 - t0 } : Batch)]
   let mut clickIds := #[]
-  let mut event := 1
   for target in p.clicks do
     let node := (dom.getElementById 0 target).getD 0
     clickIds := clickIds.push node
-    let (v', prevented, errs, cSteps, cNs) ← click v node event
+    let (mc, ml, me, n0) := (v.commands.size, v.logs.size, v.errors.size, v.steps)
+    let a ← IO.monoNanosNow
+    -- A click is a task of the user interaction source; the bench dispatches it at once
+    -- to read `defaultPrevented`, as `Session.click` does when its task runs.
+    let (v', prevented) := v.dispatch node "click"
     v := v'
-    event := event + 1
-    let (cs, ls, mc', ml') ← take v mc ml
-    mc := mc'; ml := ml'
-    batches := batches.push ({ commands := cs, logs := ls, prevented, errors := errs, steps := cSteps, ns := cNs } : Batch)
-  let (v2, fired, terrs) ← runTimers v
+    let b ← IO.monoNanosNow
+    let (cs, ls, es) := take v mc ml me
+    batches := batches.push ({ commands := cs, logs := ls, prevented, errors := es, steps := v.steps - n0, ns := b - a } : Batch)
+  let (mc, ml, me, n0) := (v.commands.size, v.logs.size, v.errors.size, v.steps)
+  let (v2, _) := v.settle 60000
   v := v2
-  if fired > 0 then
-    let (cs, ls, _, _) ← take v mc ml
-    batches := batches.push ({ commands := cs, logs := ls, prevented := false, errors := terrs, steps := 0, ns := 0 } : Batch)
-  let s ← v.dom.get
-  return (batches, s.dom, clickIds, Json.mkObj [("nodes", snap), ("sources", Json.arr (srcs.map Json.str)),
+  if v.tasks > 0 && (v.commands.size > mc || v.logs.size > ml) then
+    let (cs, ls, es) := take v mc ml me
+    batches := batches.push ({ commands := cs, logs := ls, prevented := false, errors := es, steps := v.steps - n0, ns := 0 } : Batch)
+  return (batches, v.host.dom.dom, clickIds, Json.mkObj [("nodes", snap), ("sources", Json.arr (srcs.map Json.str)),
     ("clicks", Json.arr (clickIds.map fun n => jn n))], srcs)
 
 def fixtureDir : System.FilePath := "../../labs/demos/foafnaut/web-render/fixtures"
@@ -437,9 +294,9 @@ def reference (reactor : String) (req : Json) : IO (Except String (Array Json)) 
 def run (path : String) (reactor : Option String) : IO UInt32 := do
   let bytes ← IO.FS.readBinFile path
   let t0 ← IO.monoNanosNow
-  let v ← start bytes {}
+  let (m, v) ← start bytes "<!doctype html><title>plain</title>"
   let t1 ← IO.monoNanosNow
-  IO.println s!"module: {bytes.size} bytes; load, _initialize and qjs_new: {(t1 - t0) / 1000000} ms"
+  IO.println s!"module: {bytes.size} bytes; decode, validate, instantiate, _initialize and qjs_new: {(t1 - t0) / 1000000} ms"
   IO.println s!"imports: {v.bindings.toList.map fun b => match b with | .wasi f => f.name | .extra m x => s!"{m}.{x}"}"
   let mut v := v
   let mut fails := 0
@@ -448,7 +305,7 @@ def run (path : String) (reactor : Option String) : IO UInt32 := do
   let mut totalNs := 0
   IO.println "\n# Plain JavaScript"
   for (what, src, want) in plainCases do
-    let (v', t) ← v.eval src
+    let (v', t) ← evalTimed v src
     v := v'
     totalSteps := totalSteps + t.steps; totalNs := totalNs + t.ns
     let got := (t.text.splitOn "\n").head!
@@ -459,11 +316,11 @@ def run (path : String) (reactor : Option String) : IO UInt32 := do
   IO.println s!"plain JavaScript: {passes} pass, {fails} fail; {totalSteps} instructions in {totalNs / 1000000} ms ({if totalNs == 0 then 0 else totalSteps * 1000 / totalNs} M instr/s)"
   Sample.report "QuickJS plain cases"
   -- A longer run for the speed figure.
-  let (v', t) ← v.eval "(() => { let s = 0; for (let i = 0; i < 200000; i++) s = (s + i * i) % 1000003; const o = []; for (let i = 0; i < 2000; i++) o.push({ k: 'k' + i, v: i }); return s + ' ' + JSON.stringify(o).length })()"
+  let (v', t) ← evalTimed v "(() => { let s = 0; for (let i = 0; i < 200000; i++) s = (s + i * i) % 1000003; const o = []; for (let i = 0; i < 2000; i++) o.push({ k: 'k' + i, v: i }); return s + ' ' + JSON.stringify(o).length })()"
   v := v'
   IO.println s!"speed: loop and JSON: {t.text}: {t.steps} instructions in {t.ns / 1000000} ms = {if t.ns == 0 then 0 else t.steps * 1000 / t.ns} M instr/s"
   Sample.report "QuickJS loop and JSON"
-  let (_, t) ← v.eval "function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2) }; fib(24)"
+  let (_, t) ← evalTimed v "function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2) }; fib(24)"
   IO.println s!"speed: fib(24) = {t.text}: {t.steps} instructions in {t.ns / 1000000} ms = {if t.ns == 0 then 0 else t.steps * 1000 / t.ns} M instr/s"
   Sample.report "QuickJS fib(24)"
   IO.println "\n# Scripted pages (Lean DOM, Lean dispatch)"
@@ -471,7 +328,7 @@ def run (path : String) (reactor : Option String) : IO UInt32 := do
   let mut differ := 0
   let mut notCompared := 0
   for p in ← pages do
-    let (batches, dom, _, req, _) ← runPage bytes p
+    let (batches, dom, _, req, _) ← runPage m p
     IO.println s!"{p.name}:"
     for b in batches do
       IO.println s!"  turn: {(Json.arr b.commands).compress} logs {b.logs.toList} prevented {b.prevented}{if b.errors.isEmpty then "" else s!" errors {b.errors.toList}"} [{b.steps} instr, {b.ns / 1000} us]"

@@ -12,6 +12,7 @@ import WebEventLoop
 import WebWasm
 import WebState
 import WebSparql
+import WebScripts
 import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.FrameCost.Band
 import L4Factoidal.FrameCost.Lru
@@ -535,7 +536,10 @@ list, 0 to replace the list. The answer is the `fontLoad` answer. -/
 def fontLoadBin (bytes : ByteArray) (family sha256 : String) (fallback : UInt32) : String :=
   let request := JSON.Json.object [("op",.string "fontLoad"),("fontFamily",.string family),
     ("fontSha256",.string sha256),("fontBytes",.number (toString bytes.size)),("fallback",.bool (fallback != 0))]
-  match loadFontBytes bytes family sha256 (fallback != 0) request with
+  -- The guest module of page scripts comes the same way, as bytes (WebScripts).
+  let loaded := if family == "guest:quickjs" then WebScripts.loadModuleBytes bytes request
+    else loadFontBytes bytes family sha256 (fallback != 0) request
+  match loaded with
   | .ok value => value | .error message => WebRender.errorJSON message
 
 /-! ### Held images (issues 1268, 1274 and 1292)
@@ -933,8 +937,10 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     let (source,engine) ← WebXslt.transform html (str request "stylesheet") (str request "url") (str request "stylesheetURL")
     return ((JSON.Json.object [("source",.string source),("engine",.string engine)]).toString,#[])
   if let some answer ← inputOp (str request "op" "render") request then return (answer,#[])
+  -- Page scripts run by Lean: QuickJS in WasmVM on the page's arena (WebScripts).
+  if let some answer ← WebScripts.op (str request "op" "render") html request then return (answer,#[])
   let op := str request "op" "render"
-  if op != "render" && op != "selectedText" && op != "printLayout" then
+  if op != "render" && op != "selectedText" && op != "printLayout" && op != "nodeAt" then
     let dom ← prepareDOM html request
     validateResources dom request
     let _ ← classicScripts (WebRenderScript.scriptRecords dom)
@@ -969,6 +975,17 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   -- Pointer positions are in window coordinates; the page starts below the chrome.
   let moved := Float.ofNat top-Float.ofNat ((shell.map (·.scroll)).getD 0)
   let chosen := (← selection request).map (fun value => WebSelection.shift value moved)
+  -- The node under a window point (`x`, `y`), for a click that page scripts receive: the
+  -- smallest layout box that holds the point, in page rows (`y` below the chrome, plus
+  -- the scroll). Lean's DOM, not the host, then dispatches the click (WebScripts).
+  if op == "nodeAt" then
+    let px := Float.ofNat (natField request "x")
+    let py := Float.ofNat (natField request "y") - Float.ofNat top + Float.ofNat ((shell.map (·.scroll)).getD 0)
+    let inside := boxes.filter fun b => b.x ≤ px && px < b.x + b.width && b.y ≤ py && py < b.y + b.height
+    let best := inside.foldl (init := none) fun acc b => match acc with
+      | some (a : Rendering.Layout.Box) => if b.width * b.height ≤ a.width * a.height then some b else some a
+      | none => some b
+    return ((JSON.Json.object [("node",match best with | some b => .number (toString b.source) | none => .null)]).toString,#[])
   let items := WebSelection.cells scene.glyphRuns
   if op == "selectedText" then
     return ((JSON.Json.object [("text",.string (match chosen with

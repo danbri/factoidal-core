@@ -210,7 +210,9 @@ async function prepare(url){
   }
   const facts=call(page.source,{op:'inspect',url:page.url});
   const images=await pageImages(facts.images);
-  return {url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images};
+  const next={url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images};
+  if(facts.scripts?.some(s=>s.kind==='classic')&&await hasScripts())await startScripts(next,facts.scripts);
+  return next;
 }
 // Lean lists the images a page wants (SVG image, HTML img) by key. The page fetches only
 // those of this site, with size caps, and gives the bytes back with the key. One that
@@ -272,6 +274,62 @@ async function pageImageBytes(wanted){
     }catch{}
   }
   return images;
+}
+// Page scripts run by Lean (WebScripts.lean): QuickJS-NG compiled to WebAssembly runs in
+// WasmVM inside this engine, on the page's Lean DOM, and the Lean event loop decides every
+// callback. The host browser's JavaScript never runs a page script. Only when the engine
+// answers scriptSession info AND the guest module (docs/web/hub/wasm-guests/, published beside
+// the engine runtime by factoidal-builds) loads; otherwise the page shows without its scripts, as before. An
+// older engine answers "unknown document operation" (no new export is called, issue 1274).
+let engineScripts;
+async function hasScripts(){
+  if(engineScripts!==undefined)return engineScripts;
+  engineScripts=false;
+  try{if(!call('',{op:'scriptSession',action:'info'}).ops?.includes('start'))return false;}catch{return false;}
+  try{
+    const response=await fetch(new URL('../wasm-guests/qjs-wasmvm.wasm',import.meta.url));
+    if(!response.ok)return false;
+    const bytes=new Uint8Array(await response.arrayBuffer());
+    // An engine with scriptSession takes the five arguments of the bytes call.
+    fontBytesTakeFallback=true;
+    fontLoad(bytes,'guest:quickjs','',false);
+    engineScripts=true;
+  }catch(error){console.warn('foafnaut: page scripts off:',String(error.message??error));}
+  return engineScripts;
+}
+async function startScripts(page,scripts){
+  const resources=[];
+  for(const s of scripts)if(s.kind==='classic'&&s.src){
+    try{const r=await fetchText(s.url);resources.push({nodeId:s.nodeId,source:r.source});page.sources.push({kind:'Script',url:r.url,source:r.source});}
+    catch(error){console.warn('foafnaut: script not fetched:',s.url,String(error.message??error));}
+  }
+  const turn=call(page.source,{op:'scriptSession',action:'start',url:page.url,resources});
+  page.script={session:turn.session,turn,epoch:performance.now()-turn.clock};
+  scriptTurn(page,turn);
+}
+// A turn's logs, and a new frame only when the DOM changed: no DOM change, no layout (the
+// commands are part of the render request and so of the layout key).
+function scriptTurn(page,turn){
+  for(const line of turn.logs)console.log('page:',line);
+  for(const line of turn.errors)console.warn('page error:',line);
+  if(page.script)page.script.turn=turn;
+  if(turn.changed&&turn.commands){page.commands=turn.commands;if(page===doc)request();}
+}
+// Timers and animation frames: the page's virtual clock follows real time since its scripts started.
+setInterval(()=>{
+  const script=doc?.script;
+  if(!script||script.turn.nextWake===null||script.turn.nextWake===undefined)return;
+  const elapsed=performance.now()-script.epoch;
+  if(elapsed<script.turn.nextWake)return;
+  try{scriptTurn(doc,call('',{op:'scriptSession',action:'advance',session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock))}));}
+  catch(error){console.warn('foafnaut: page script timers:',String(error.message??error));script.turn.nextWake=null;}
+},16);
+function scriptClick(x,y){
+  const script=doc?.script;if(!script)return;
+  try{
+    const node=call(doc.source,{op:'nodeAt',url:doc.url,textScalePercent:percent,shell:shell(),...(doc.commands?{commands:doc.commands}:{}),x,y},width,height).node;
+    if(typeof node==='number')scriptTurn(doc,call('',{op:'scriptSession',action:'click',session:script.session,node}));
+  }catch(error){console.warn('foafnaut: page script click:',String(error.message??error));}
 }
 // foafnaut:wasm (issue 1244): WebAssembly run by WasmVM, the engine written in Lean, inside this
 // Lean engine. The host browser's WebAssembly never runs the module: the page only fetches its
@@ -418,7 +476,7 @@ function scrollLimit(){
 }
 // The request for a frame of this page at a scroll; its signature leaves the scroll out, so
 // a band made at one scroll is known to be for the same state at another.
-const renderOptions=at=>({op:'render',url:doc.url,...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),textScalePercent:percent,shell:{...shell(),scroll:at},live:doc===checked,binary:true});
+const renderOptions=at=>({op:'render',url:doc.url,...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),textScalePercent:percent,shell:{...shell(),scroll:at},live:doc===checked,binary:true});
 const signature=options=>JSON.stringify({...options,images:undefined,shell:{...options.shell,scroll:0}});
 // The graph page keeps its document and changes its source: the band must be of this source.
 const canShift=()=>!!(layerSurface&&current&&current.doc===doc&&current.source===doc.source&&current.width===width&&current.height===height&&current.sig===signature(renderOptions(scroll)));
@@ -759,6 +817,7 @@ function apply(data){
   if(data.type==='release'&&doc.graph){graphInput(4,data.x,data.y);return;}
   if(data.type==='release'&&frame&&!data.scrolled){
     if(call('',{op:'shellHit',shell:shell(),x:data.x,y:data.y,width}).control)return;
+    scriptClick(data.x,data.y);
     const target=hit(data.x,data.y);
     if(target?.href)follow(router.route({...site,href:target.href,base:doc.baseURL||doc.url}));
   }

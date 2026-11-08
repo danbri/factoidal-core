@@ -53,7 +53,14 @@ def run (wasm dir : String) (nativeExe : Option String) (fuel : Nat := 200000000
   let nat ← match nativeExe with
     | some e => native e files
     | none => pure {}
-  let mut v ← start bytes {}
+  let restart := fun (_ : Unit) => show IO (Vm × Nat) from do
+    let (_, v) ← start bytes "<!doctype html><title>Test262</title>"
+    let fa ← match v.store.export? v.inst "qjs_test262" with
+      | some (.func a) => pure a
+      | _ => throw (IO.userError "the module has no export qjs_test262")
+    pure ({ v with limits := { v.limits with fuel } }, fa)
+  let (v0, t262) ← restart ()
+  let mut v := v0
   let mut pass := 0
   let mut fail := 0
   let mut nativePass := 0
@@ -66,18 +73,21 @@ def run (wasm dir : String) (nativeExe : Option String) (fuel : Nat := 200000000
     let src ← IO.FS.readFile f
     let (expect, path) := header src
     let b := src.toUTF8
-    let (v1, p) ← v.put b
-    let (v2, o, n, t) ← v1.run "qjs_test262" #[.i32 p.toUInt32, .i32 b.size.toUInt32] fuel
-    steps := steps + n; ns := ns + t
-    let (status, text, v3) ← match o with
-      | .values #[.i32 r] => do
-        let (v3, _, _, _) ← v2.run "qjs_free" #[.i32 p.toUInt32]
-        let (v3, s, x) ← v3.result r.toNat
-        pure (s, x, some v3)
-      | o => pure (2, s!"VM: {o.describe}", none)
+    let t0 ← IO.monoNanosNow
+    let n0 := v.steps
+    let (v1, p) := v.put b
+    let (v2, o) := v1.run t262 #[.i32 (p.getD 0).toUInt32, .i32 b.size.toUInt32]
+    let t1 ← IO.monoNanosNow
+    steps := steps + (v2.steps - n0); ns := ns + (t1 - t0)
+    let (status, text, v3) := match o with
+      | .values #[.i32 r] =>
+        let v3 := v2.freePtr (p.getD 0)
+        let (v3, s, x) := v3.result r.toNat
+        (s, x, some v3)
+      | o => (2, s!"VM: {o.describe}", none)
     match v3 with
     | some v' => v := v'
-    | none => reloads := reloads + 1; v ← start bytes {}
+    | none => reloads := reloads + 1; v := (← restart ()).1
     let ok := verdict expect status text
     if ok then pass := pass + 1
     else

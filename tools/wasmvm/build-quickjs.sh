@@ -50,6 +50,19 @@ if [ "$got" != "$QJS_SHA256" ]; then
 fi
 [ -d "$SRC" ] || tar xzf "$TAR" -C "$WORK/src"
 
+# The JavaScript prelude (quickjs/prelude.js) goes into the module as a C string.
+mkdir -p "$WORK/gen"
+python3 - "$HERE/quickjs/prelude.js" "$WORK/gen/prelude.h" <<'PY'
+import sys
+# Three-digit octal escapes for everything but plain printable ASCII: an octal escape
+# ends after three digits, so a following digit can not join it. Lines of 64 bytes.
+data = open(sys.argv[1], 'rb').read()
+def esc(b):
+    return chr(b) if 32 <= b < 127 and b not in (34, 63, 92) else '\\%03o' % b
+lines = ['"' + ''.join(esc(b) for b in data[i:i + 64]) + '"' for i in range(0, len(data), 64)]
+open(sys.argv[2], 'w').write('static const char prelude[] =\n' + '\n'.join(lines) + ';\n')
+PY
+
 build() {
   local opt=$1 out=$2
   local obj=$WORK/obj$opt
@@ -60,7 +73,7 @@ build() {
       -I"$SRC" -c "$SRC/$f.c" -o "$obj/$f.o"
     objs+=("$obj/$f.o")
   done
-  "$EMCC" "$opt" -mno-simd128 -I"$SRC" -c "$HERE/quickjs/qjs_wasmvm_entry.c" -o "$obj/entry.o"
+  "$EMCC" "$opt" -mno-simd128 -I"$SRC" -I"$WORK/gen" -c "$HERE/quickjs/qjs_wasmvm_entry.c" -o "$obj/entry.o"
   "$EMCC" "$opt" -fno-exceptions -mno-simd128 "${objs[@]}" "$obj/entry.o" \
     -sSTANDALONE_WASM --no-entry -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=4MB -sSTACK_SIZE=1MB \
     -sERROR_ON_UNDEFINED_SYMBOLS=0 \

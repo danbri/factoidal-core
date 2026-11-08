@@ -2,7 +2,8 @@ import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type Shell
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
-import {inputURL,loadFontFile,prepareHTML,refusalHTML,type PageView} from "./native_html_document.ts";
+import {inputURL,loadFontFile,prepareHTML,refusalHTML,setScriptHost,type PageView} from "./native_html_document.ts";
+import type {ScriptTurn} from "./native_html_engine.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {nativePreflight} from "./native_preflight.ts";
 import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
@@ -18,10 +19,10 @@ import type {UIEvent} from "./ui_engine.ts";
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let scrollSweep=false;
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false;
+  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -44,6 +45,8 @@ async function main() {
     else if(arg==="--no-press-look")pressLook=false;
     else if(arg==="--native-engine"){nativeEngine=args.shift();if(!nativeEngine)throw new Error("--native-engine needs a dylib path");}
     else if(arg==="--font")fontFile=args.shift();
+    else if(arg==="--quickjs-wasm"){quickjsWasm=args.shift();if(!quickjsWasm)throw new Error("--quickjs-wasm needs a file");}
+    else if(arg==="--no-scripts")scriptsOff=true;
     else if(arg==="--bitmap-font")bitmapFont=true;
     else if(arg==="--resize-sweep")sweep=[[800,500],[700,500],[600,500],[500,500],[400,500],[800,300],[800,500]];
     else if(arg==="--paste-sweep")pasted=args.shift();
@@ -136,6 +139,41 @@ async function main() {
     }
     if(worker){lean=worker.engine as unknown as Lean;sayEngine("worker");}
   }
+  // Page scripts (WebScripts.lean): the QuickJS guest module goes into the engine that runs
+  // the renders (the worker), once. The engine must answer scriptSession info first: an older
+  // engine has no such op, and then a page with scripts is refused as before (issue 1274).
+  type ScriptCall=(name:"scriptInfo"|"scriptLoad"|"scriptSession"|"nodeAt",...args:unknown[])=>Promise<unknown>;
+  const scriptCall:ScriptCall=async(name,...args)=>worker?await worker.engine[name](...args)
+    :(engine as unknown as Record<string,(...a:unknown[])=>unknown>)[name](...args);
+  let scriptsOn=false;
+  // The real time at which each session's virtual clock was 0.
+  const scriptEpochs=new Map<number,number>();
+  // The guest module: --quickjs-wasm FILE, else a local build (tools/wasmvm/build-quickjs.sh),
+  // else the one tools/fetch-builds.sh --set foafnaut-web installs.
+  const installed=decodeURIComponent(new URL("../../../docs/web/hub/wasm-guests/qjs-wasmvm.wasm",import.meta.url).pathname);
+  const local=`${Deno.env.get("HOME")}/working/qjs-wasm/qjs-wasmvm.wasm`;
+  const quickjsPath=quickjsWasm??[local,installed].find(p=>{try{return Deno.statSync(p).isFile;}catch{return false;}})??local;
+  if(!scriptsOff&&!check) {
+    try{
+      const bytes=await Deno.readFile(quickjsPath);
+      const t0=performance.now();
+      await scriptCall("scriptInfo");
+      const loaded=await scriptCall("scriptLoad",bytes);
+      scriptsOn=true;
+      setScriptHost({start:async(source,pageURL,resources)=>{
+        const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources}) as ScriptTurn;
+        scriptEpochs.set(turn.session,performance.now()-turn.clock);
+        for(const line of turn.logs)console.log(`page: ${line}`);
+        for(const line of turn.errors)console.error(`page error: ${line}`);
+        console.log(JSON.stringify({type:"native-html-script",cause:"start",t:Math.round(performance.now()),session:turn.session,
+          commands:turn.commandCount,instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake}));
+        return turn;
+      }});
+      console.log(JSON.stringify({type:"native-html-scripts",state:"on",module:quickjsPath,loaded,ms:Math.round(performance.now()-t0)}));
+    }catch(error){
+      console.log(JSON.stringify({type:"native-html-scripts",state:"off",module:quickjsPath,reason:String(error instanceof Error?error.message:error)}));
+    }
+  }
   let document=await prepareHTML(lean,url),width=1280,height=800;
   // The first compile runs in the worker too: it warms the worker, and no frame is compiled on the main thread.
   let frame:HTMLArtifact=await document.compile(width,height);
@@ -166,6 +204,16 @@ async function main() {
     trace("native-html-refused",{url:target,reason:String(error)});
     prepareHTML(lean,target,undefined,refusalHTML(target,String(error))).then(next=>{if(running){candidate=next;dirty=true;}})
       .catch(failure=>console.error("Native HTML refusal page failed:",String(failure)));
+  };
+  // A turn of a page's script session: its logs, and a new frame only when the DOM changed
+  // (no DOM change, no layout; the commands are part of the layout key).
+  let scriptBusy=false;
+  const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
+    for(const line of turn.logs)console.log(`page: ${line}`);
+    for(const line of turn.errors)console.error(`page error: ${line}`);
+    trace("native-html-script",{cause,session:turn.session,clock:turn.clock,changed:turn.changed,commands:turn.commandCount,
+      instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake});
+    if(page.applyTurn(turn)&&page===document)dirty=true;
   };
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.
@@ -743,6 +791,15 @@ async function main() {
           const released=press;press=undefined;
           if(engine.pointerUp(released)!=="click")return;
           if(view.selection){view.selection=undefined;dirty=true;}
+          // A page with scripts: Lean finds the node under the point, and the click is a task of
+          // the page's event loop; Lean runs the listeners in QuickJS and changes its DOM.
+          if(scriptsOn&&document.script){
+            const page=document,session=document.script.session;
+            scriptCall("nodeAt",page.source,width,height,{...requestAt(page,scroll).options,x:released[0],y:released[1]})
+              .then(node=>typeof node==="number"?scriptCall("scriptSession","",{action:"click",session,node}) as Promise<ScriptTurn>:undefined)
+              .then(turn=>{if(turn)scriptTurn(page,turn,"click");})
+              .catch(error=>console.error("Native HTML: page script click failed:",String(error)));
+          }
           const target=engine.hit(frame,released[0],pageRow(released[1]));
           if(target){console.log(JSON.stringify({type:"native-html-link",...target,url:document.url}));
             followRoute(router.route({...site,href:target.href,base:document.baseURL||document.url}) as LinkRoute);}
@@ -930,6 +987,19 @@ async function main() {
         }
         else if(typeof step==="string")trace("native-html-test-key",{key:step,handled:native.testKey(step,"+_Z".includes(step))});
         else if(step)native.testEvent(step[0],step[1],step[2]);else{if(native.readClipboard()===lastCopied)native.writeClipboard(savedClipboard);running=false;}
+      }
+      // Page script timers and animation frames: the virtual clock of the page's event loop
+      // follows real time since the page's scripts started. Lean decides what runs.
+      const script=document.script;
+      if(scriptsOn&&script&&!scriptBusy&&script.turn.nextWake!==null){
+        const elapsed=performance.now()-(scriptEpochs.get(script.session)??performance.now());
+        if(elapsed>=script.turn.nextWake){
+          const page=document;scriptBusy=true;
+          (scriptCall("scriptSession","",{action:"advance",session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock))}) as Promise<ScriptTurn>)
+            .then(turn=>scriptTurn(page,turn,"timers"))
+            .catch(error=>console.error("Native HTML: page script timers failed:",String(error)))
+            .finally(()=>{scriptBusy=false;});
+        }
       }
       // Wake at least every 8 ms to pump; wake at once when a frame ends.
       const nap=new Promise(resolve=>setTimeout(resolve,8));

@@ -14,6 +14,7 @@ import L4Factoidal.WasmVM.Api
 import L4Factoidal.WasmVM.Wasi
 import L4Factoidal.WasmVM.WasiIO
 import L4Factoidal.WasmVM.Hosts.Dom
+import L4Factoidal.WasmVM.Hosts.Page
 import L4Factoidal.WasmVM.Proofs.Numerics
 import L4Factoidal.WasmVM.Proofs.Fuse
 import L4Factoidal.WasmVM.Proofs.Cost

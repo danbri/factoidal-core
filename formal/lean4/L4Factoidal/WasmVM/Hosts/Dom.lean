@@ -41,13 +41,29 @@ open L4Factoidal.WasmVM L4Factoidal.DOM
 
 def moduleName : String := "foafnaut_dom"
 
-/-- A typed DOM command: what the page did to the arena. -/
+/-- A typed DOM command: what the page did to the arena. Each one is a DOM algorithm of
+`DOM.Arena`; a node a command makes is the next node of the arena, so the same list
+replayed over the same parsed document makes the same node numbers
+(`labs/demos/foafnaut/WebRenderScript.lean` replays it for layout). -/
 inductive Command where
+  /-- `textContent` of any node (the data of a CharacterData node). -/
   | setTextContent (node : Nat) (value : String)
   | setAttribute (node : Nat) (name value : String)
   /-- `createElement(name)` made node `result`. -/
   | createElement (name : String) (result : Nat)
   | appendChild (parent child : Nat)
+  | removeAttribute (node : Nat) (name : String)
+  /-- `createTextNode` (kind 0), `createComment` (1), `createDocumentFragment` (2),
+  `createProcessingInstruction` (5; `data` is the target, U+0000, the data),
+  `createCDATASection` (6). -/
+  | createNode (kind : Nat) (data : String) (result : Nat)
+  /-- `createElementNS(namespace, qualifiedName)`; the namespace "" is null. -/
+  | createElementNS (ns qname : String) (result : Nat)
+  | insertBefore (parent node : Nat) (child : Option Nat)
+  | removeChild (parent child : Nat)
+  | replaceChild (parent node child : Nat)
+  | cloneNode (node : Nat) (deep : Bool) (result : Nat)
+  | normalize (node : Nat)
   deriving BEq, Repr, Inhabited
 
 /-- A request to the event loop. -/
@@ -66,6 +82,12 @@ structure State where
   requests : Array Request := #[]
   logs : Array String := #[]
   nextTimer : Nat := 1
+  /-- The most commands a page may make. A page that the engine lays out keeps
+  `maxCommands`, the bound of `WebRenderScript`; a test runner that lays nothing out
+  may allow more. -/
+  commandLimit : Nat := 4096
+  /-- The most console lines a page may write (`maxLogs` by default). -/
+  logLimit : Nat := 1024
   deriving Inhabited
 
 /-- Bounds, as in `WebRenderScript`. -/
@@ -76,18 +98,24 @@ def maxNodes : Nat := 1048576
 def maxRequests : Nat := 4096
 def maxLogs : Nat := 1024
 
-/-- The imports of `foafnaut_dom`. -/
+/-- The imports of `foafnaut_dom`. The first 13 are those of the first build
+(2026-11-08); the node imports after them came with page scripts in the engine
+(`WasmVM.Hosts.Page`). -/
 inductive Import where
   | getElementById | documentElement | tagName | textContentGet | textContentSet
   | getAttribute | setAttribute | createElement | appendChild | addEventListener
   | setTimer | clearTimer | consoleLog
+  | nodeInfo | nodeString | nodeChildren | createNode | insertBefore | removeChild
+  | replaceChild | removeAttribute | cloneNode | treeOp
   deriving DecidableEq, Repr, Inhabited
 
 namespace Import
 
 def all : List Import :=
   [getElementById, documentElement, tagName, textContentGet, textContentSet, getAttribute,
-   setAttribute, createElement, appendChild, addEventListener, setTimer, clearTimer, consoleLog]
+   setAttribute, createElement, appendChild, addEventListener, setTimer, clearTimer, consoleLog,
+   nodeInfo, nodeString, nodeChildren, createNode, insertBefore, removeChild, replaceChild,
+   removeAttribute, cloneNode, treeOp]
 
 def name : Import → String
   | getElementById => "get_element_by_id" | documentElement => "document_element"
@@ -96,12 +124,18 @@ def name : Import → String
   | setAttribute => "set_attribute" | createElement => "create_element"
   | appendChild => "append_child" | addEventListener => "add_event_listener"
   | setTimer => "set_timer" | clearTimer => "clear_timer" | consoleLog => "console_log"
+  | nodeInfo => "node_info" | nodeString => "node_string" | nodeChildren => "node_children"
+  | createNode => "create_node" | insertBefore => "insert_before" | removeChild => "remove_child"
+  | replaceChild => "replace_child" | removeAttribute => "remove_attribute"
+  | cloneNode => "clone_node" | treeOp => "tree_op"
 
 /-- Number of i32 parameters; every import answers one i32. -/
 def arity : Import → Nat
   | getElementById => 2 | documentElement => 1 | tagName => 3 | textContentGet => 3
   | textContentSet => 3 | getAttribute => 5 | setAttribute => 5 | createElement => 2
   | appendChild => 2 | addEventListener => 4 | setTimer => 3 | clearTimer => 1 | consoleLog => 2
+  | nodeInfo => 2 | nodeString => 4 | nodeChildren => 4 | createNode => 3 | insertBefore => 3
+  | removeChild => 2 | replaceChild => 3 | removeAttribute => 3 | cloneNode => 2 | treeOp => 3
 
 def type (f : Import) : FuncType := ⟨Array.replicate f.arity .i32, #[.i32]⟩
 
@@ -111,9 +145,10 @@ def ofName? (s : String) : Option Import := all.find? (·.name == s)
 that write a string into VM memory. -/
 def outBuffer : Import → Option (Nat × Nat)
   | tagName => some (1, 2) | textContentGet => some (1, 2) | getAttribute => some (3, 4)
+  | nodeString => some (2, 3) | nodeChildren => some (2, 3)
   | _ => none
 
-theorem all_length : all.length = 13 := rfl
+theorem all_length : all.length = 23 := rfl
 theorem all_names_distinct : (all.map name).Nodup := by decide
 theorem ofName?_name (f : Import) : ofName? f.name = some f := by cases f <;> rfl
 
@@ -140,7 +175,9 @@ def readStr (mem : Nat) (st : StoreOf M) (ptr len bound : Nat) : Except Int Stri
 
 def domErr : DomError → Int
   | .invalidCharacter => -3
-  | _ => -4
+  | .hierarchyRequest => -4
+  | .notFound => -9
+  | .notSupported => -10
 
 def isElement (d : Dom) (n : Nat) : Bool := n < d.size && (d.get n).type == .element
 
@@ -171,8 +208,19 @@ def answerStr (mem : Nat) (st : StoreOf M) (buf cap : Nat) : Except Int String �
 def codeOrTrap (e : Int) : HostResult := if e == -8 then .trap "foafnaut_dom: string outside memory" else ret e
 
 def addCommand (s : State) (c : Command) (d : Dom) : State × HostResult :=
-  if s.commands.size ≥ maxCommands || d.size > maxNodes then (s, ret (-5))
+  if s.commands.size ≥ s.commandLimit || d.size > maxNodes then (s, ret (-5))
   else ({ s with dom := d, commands := s.commands.push c }, ret 0)
+
+/-- A node argument: -1 (any value of 2^31 or more) is none. -/
+def optNode (v : Nat) : Option Nat := if v ≥ 2147483648 then none else some v
+
+def isNode (d : Dom) (n : Nat) : Bool := n < d.size
+
+/-- `addCommand` that answers `r` in place of 0 on success. -/
+def addCommandAnswer (s : State) (c : Command) (d : Dom) (r : Int) : State × HostResult :=
+  match addCommand s c d with
+  | (s', .values #[.i32 0]) => (s', ret r)
+  | other => other
 
 /-! ## The imports that do not write VM memory: `State → State × HostResult` -/
 
@@ -191,10 +239,14 @@ def documentElement (args : Array Value) (s : State) : State × HostResult :=
 
 def textContentSet (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
   let n := arg args 0
-  if !isElement s.dom n then (s, ret (-2)) else
+  if !isNode s.dom n then (s, ret (-2)) else
   match readStr mem st (arg args 1) (arg args 2) maxString with
   | .error e => (s, codeOrTrap e)
-  | .ok v => addCommand s (.setTextContent n v) (s.dom.setTextContent n v)
+  | .ok v =>
+    -- On a document or doctype, setting `textContent` does nothing (DOM §4.4).
+    let t := (s.dom.get n).type
+    if t == .document || t == .doctype then (s, ret 0)
+    else addCommand s (.setTextContent n v) (s.dom.setTextContent n v)
 
 def setAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
   let n := arg args 0
@@ -249,7 +301,186 @@ def clearTimer (args : Array Value) (s : State) : State × HostResult :=
 def consoleLog (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
   match readStr mem st (arg args 0) (arg args 1) maxString with
   | .error e => (s, codeOrTrap e)
-  | .ok t => if s.logs.size ≥ maxLogs then (s, ret (-5)) else ({ s with logs := s.logs.push t }, ret 0)
+  | .ok t => if s.logs.size ≥ s.logLimit then (s, ret (-5)) else ({ s with logs := s.logs.push t }, ret 0)
+
+
+/-! ## Node imports (page scripts in the engine) -/
+
+/-- `node_info(node, which)`: 0 `nodeType`; 1 parent; 2 first child; 3 last child;
+4 previous sibling; 5 next sibling; 6 number of children; 7 node document; 8 1 when an
+HTML element of an HTML document, else 0; 9 the template contents of a `template`
+element. -1 none, -2 no such node. -/
+def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
+  let d := s.dom
+  let n := arg args 0
+  if !isNode d n then (s, ret (-2)) else
+  let x := d.get n
+  let opt := fun (o : Option Nat) => match o with | some k => (s, ret k) | none => (s, ret (-1))
+  match arg args 1 with
+  | 0 => (s, ret x.type.code)
+  | 1 => opt x.parent
+  | 2 => opt x.kids[0]?
+  | 3 => opt x.kids.back?
+  | 4 => opt (d.previousSibling n)
+  | 5 => opt (d.nextSibling n)
+  | 6 => (s, ret x.kids.size)
+  | 7 => (s, ret (if x.type == .document then n else x.doc))
+  | 8 => (s, ret (if x.type == .element && x.ns == some htmlNS && (d.get x.doc).htmlDoc then 1 else 0))
+  | 9 => opt x.content
+  | _ => (s, ret (-2))
+
+/-- `nodeName` (DOM §4.4). -/
+def nodeName (d : Dom) (n : Nat) : String :=
+  let x := d.get n
+  match x.type with
+  | .element =>
+    let q := match x.pfx with | some p => p ++ ":" ++ x.lname | none => x.lname
+    if x.ns == some htmlNS && (d.get x.doc).htmlDoc then q.toUpper else q
+  | .text => "#text" | .cdata => "#cdata-section" | .comment => "#comment"
+  | .document => "#document" | .fragment => "#document-fragment"
+  | .doctype | .pi => x.lname
+
+/-- `node_string(node, which, buf, cap)`: 0 local name (the name of a doctype, the
+target of a processing instruction); 1 `nodeName`; 2 namespace; 3 data; 4
+`textContent`; 5 prefix; 6 the attributes, name and value, each followed by U+0000. -/
+def nodeStringOf (d : Dom) (n which : Nat) : Except Int String :=
+  if !isNode d n then .error (-2) else
+  let x := d.get n
+  let opt := fun (o : Option String) => match o with | some v => Except.ok v | none => .error (-1)
+  match which with
+  | 0 => .ok x.lname
+  | 1 => .ok (nodeName d n)
+  | 2 => opt x.ns
+  | 3 => if Dom.isCharacterData x then .ok x.data else .error (-1)
+  | 4 => opt (d.textContent n)
+  | 5 => opt x.pfx
+  | 6 => .ok (x.attrs.foldl (fun acc a => acc ++ a.qname ++ "\x00" ++ a.value ++ "\x00") "")
+  | _ => .error (-2)
+
+def le32 (v : Nat) : ByteArray := ⟨#[(v % 256).toUInt8, (v / 256 % 256).toUInt8, (v / 65536 % 256).toUInt8, (v / 16777216 % 256).toUInt8]⟩
+
+/-- A list of i32 values as little-endian bytes; the answer of `putOut` counts bytes, so
+an i32 list answers its length in values (`answerList`). -/
+def i32Bytes (xs : Array Nat) : ByteArray := xs.foldl (fun b v => b ++ le32 v) ByteArray.empty
+
+/-- Write a list of i32 values when it fits, and answer its length in values. -/
+def answerList (mem : Nat) (st : StoreOf M) (buf cap : Nat) : Except Int (Array Nat) → StoreOf M × HostResult
+  | .ok xs =>
+    let r := putOut mem st buf cap (i32Bytes xs)
+    (r.1, match r.2 with | .values #[.i32 _] => ret xs.size | other => other)
+  | .error e => (st, ret e)
+
+/-- `createElementNS` (DOM §4.5) without the namespace checks of "validate and extract"
+beyond the name: a prefix needs a namespace. -/
+def createElementNS (d : Dom) (ns qname : String) : Except DomError (Dom × Nat) :=
+  match qname.splitOn ":" with
+  | [l] => if !Dom.validElementLocalName l then .error .invalidCharacter
+    else .ok (d.create { type := .element, doc := 0, ns := if ns.isEmpty then none else some ns, lname := l })
+  | [p, l] =>
+    if p.isEmpty || !Dom.validElementLocalName l then .error .invalidCharacter
+    else if ns.isEmpty then .error .notSupported
+    else .ok (d.create { type := .element, doc := 0, ns := some ns, pfx := some p, lname := l })
+  | _ => .error .invalidCharacter
+
+/-- `createProcessingInstruction(target, data)` (kind 5, `data` is target, U+0000, data)
+and `createCDATASection(data)` (kind 6), of the document node 0. -/
+def createOther (d : Dom) (kind : Nat) (data : String) : Res Nat :=
+  match kind, data.splitOn "\x00" with
+  | 5, [target, body] => d.createProcessingInstruction 0 target body
+  | 5, _ => (d, .error .invalidCharacter)
+  | _, _ => d.createCDATASection 0 data
+
+def createNode (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
+  match readStr mem st (arg args 1) (arg args 2) maxString with
+  | .error e => (s, codeOrTrap e)
+  | .ok data =>
+    match arg args 0 with
+    | 0 => let (d, n) := s.dom.createTextNode 0 data; addCommandAnswer s (.createNode 0 data n) d n
+    | 1 => let (d, n) := s.dom.createComment 0 data; addCommandAnswer s (.createNode 1 data n) d n
+    | 2 => let (d, n) := s.dom.createDocumentFragment 0; addCommandAnswer s (.createNode 2 "" n) d n
+    | 3 =>
+      match s.dom.createElement 0 data with
+      | (_, .error e) => (s, ret (domErr e))
+      | (d, .ok n) => addCommandAnswer s (.createElement data n) d n
+    | 4 =>
+      match data.splitOn "\x00" with
+      | [ns, qname] =>
+        match createElementNS s.dom ns qname with
+        | .error e => (s, ret (domErr e))
+        | .ok (d, n) => addCommandAnswer s (.createElementNS ns qname n) d n
+      | _ => (s, ret (-2))
+    | 5 | 6 =>
+      match createOther s.dom (arg args 0) data with
+      | (_, .error e) => (s, ret (domErr e))
+      | (d, .ok n) => addCommandAnswer s (.createNode (arg args 0) data n) d n
+    | _ => (s, ret (-2))
+
+def insertBefore (args : Array Value) (s : State) : State × HostResult :=
+  let p := arg args 0
+  let n := arg args 1
+  let c := optNode (arg args 2)
+  if !isNode s.dom p || !isNode s.dom n || !(c.all (isNode s.dom)) then (s, ret (-2)) else
+  match s.dom.insertBefore p n c with
+  | (_, .error e) => (s, ret (domErr e))
+  | (d, .ok ()) => addCommand s (if c.isNone then .appendChild p n else .insertBefore p n c) d
+
+def removeChild (args : Array Value) (s : State) : State × HostResult :=
+  let p := arg args 0
+  let c := arg args 1
+  if !isNode s.dom p || !isNode s.dom c then (s, ret (-2)) else
+  match s.dom.preRemove c p with
+  | (_, .error e) => (s, ret (domErr e))
+  | (d, .ok ()) => addCommand s (.removeChild p c) d
+
+def replaceChild (args : Array Value) (s : State) : State × HostResult :=
+  let p := arg args 0
+  let n := arg args 1
+  let c := arg args 2
+  if !isNode s.dom p || !isNode s.dom n || !isNode s.dom c then (s, ret (-2)) else
+  match s.dom.replace c n p with
+  | (_, .error e) => (s, ret (domErr e))
+  | (d, .ok ()) => addCommand s (.replaceChild p n c) d
+
+/-- `removeAttribute(qualifiedName)` (DOM §4.9): the first attribute with that
+qualified name (lower case on an HTML element of an HTML document). -/
+def removeAttr (d : Dom) (n : Nat) (name : String) : Dom :=
+  let x := d.get n
+  let q := if x.ns == some htmlNS && (d.get x.doc).htmlDoc then Dom.asciiLower name else name
+  match x.attrs.findIdx? (·.qname == q) with
+  | some i => d.setNode n fun e => { e with attrs := e.attrs.eraseIdxIfInBounds i }
+  | none => d
+
+def removeAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
+  let n := arg args 0
+  if !isElement s.dom n then (s, ret (-2)) else
+  match readStr mem st (arg args 1) (arg args 2) maxAttrName with
+  | .error e => (s, codeOrTrap e)
+  | .ok name => addCommand s (.removeAttribute n name) (removeAttr s.dom n name)
+
+def cloneNode (args : Array Value) (s : State) : State × HostResult :=
+  let n := arg args 0
+  if !isNode s.dom n || (s.dom.get n).type == .document then (s, ret (-10)) else
+  let deep := arg args 1 != 0
+  let (d, c) := s.dom.cloneNode n deep
+  addCommandAnswer s (.cloneNode n deep c) d c
+
+/-- `tree_op(a, b, which)`: 1 `isEqualNode` (1 or 0); 2 `normalize()` of `a`. -/
+def treeOp (args : Array Value) (s : State) : State × HostResult :=
+  let a := arg args 0
+  let b := arg args 1
+  if !isNode s.dom a then (s, ret (-2)) else
+  match arg args 2 with
+  | 1 => if !isNode s.dom b then (s, ret (-2)) else (s, ret (if s.dom.isEqualNode a b then 1 else 0))
+  | 2 => addCommand s (.normalize a) (s.dom.normalize a)
+  | _ => (s, ret (-2))
+
+def nodeString (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : StoreOf M × HostResult :=
+  answerStr mem st (arg args 2) (arg args 3) (nodeStringOf s.dom (arg args 0) (arg args 1))
+
+/-- `node_children(node, _, buf, cap)`: the children, as i32 node numbers. -/
+def nodeChildren (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : StoreOf M × HostResult :=
+  let n := arg args 0
+  answerList mem st (arg args 2) (arg args 3) (if isNode s.dom n then .ok (s.dom.get n).kids else .error (-2))
 
 /-! ## The imports that write a string into VM memory -/
 
@@ -291,6 +522,16 @@ def call (mem : Nat) (f : Import) (args : Array Value) (s : State) (st : StoreOf
   | .setTimer => pure1 (setTimer args s)
   | .clearTimer => pure1 (clearTimer args s)
   | .consoleLog => pure1 (consoleLog mem args s st)
+  | .nodeInfo => pure1 (nodeInfo args s)
+  | .nodeString => write (nodeString mem args s st)
+  | .nodeChildren => write (nodeChildren mem args s st)
+  | .createNode => pure1 (createNode mem args s st)
+  | .insertBefore => pure1 (insertBefore args s)
+  | .removeChild => pure1 (removeChild args s)
+  | .replaceChild => pure1 (replaceChild args s)
+  | .removeAttribute => pure1 (removeAttribute mem args s st)
+  | .cloneNode => pure1 (cloneNode args s)
+  | .treeOp => pure1 (treeOp args s)
 
 /-! ## What a DOM import can do to VM memory -/
 
@@ -314,6 +555,12 @@ theorem answerStr_within (mem : Nat) (st : StoreOf M) (buf cap : Nat) (r : Excep
   | ok s => exact putOut_within mem st buf cap s.toUTF8
   | error e => exact .inl rfl
 
+theorem answerList_within (mem : Nat) (st : StoreOf M) (buf cap : Nat) (r : Except Int (Array Nat)) :
+    WritesWithin mem buf cap st (answerList mem st buf cap r).1 := by
+  cases r with
+  | ok xs => exact putOut_within mem st buf cap (i32Bytes xs)
+  | error e => exact .inl rfl
+
 theorem getAttribute_within (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) :
     WritesWithin mem (arg args 3) (arg args 4) st (getAttribute mem args s st).1 := by
   unfold getAttribute
@@ -335,6 +582,8 @@ theorem call_writes_within (mem : Nat) (f : Import) (args : Array Value) (s : St
   · exact answerStr_within ..
   · exact answerStr_within ..
   · exact getAttribute_within ..
+  · exact answerStr_within ..
+  · exact answerList_within ..
 
 /-- A DOM import changes the store only by `writeMem`: never memory growth, tables,
 globals or functions. (A corollary of `call_writes_within`.) -/
@@ -366,4 +615,67 @@ def serve (mem : Nat) (nm : String) (args : Array Value) (s : State) (st : Store
     else call mem f args s st
 
 end
+
+/-! ## Replaying commands
+
+`Command.apply` is the change each command made, as the arena operation the import ran.
+A host that keeps the command list replays it over the same parsed document to get the
+same arena (`WebRenderScript.applyCommands`, before layout). A command that makes a node
+names the node it made; a replay that would make another node number is refused. -/
+
+def checkNode (d : Dom) (n : Nat) : Except String Unit :=
+  if n < d.size then .ok () else .error "script command: unknown nodeId"
+
+def made (r : Nat) : Dom × Nat → Except String Dom
+  | (d, n) => if n == r then .ok d else .error "script command: replay made another node"
+
+def res : Res Unit → Except String Dom
+  | (d, .ok ()) => .ok d
+  | (_, .error e) => .error s!"script command: {e.name}"
+
+def Command.apply (d : Dom) : Command → Except String Dom
+  | .setTextContent n v => do
+    checkNode d n
+    let t := (d.get n).type
+    if t == .document || t == .doctype then throw "script command: target must not be a document"
+    return d.setTextContent n v
+  | .setAttribute n k v => do
+    checkNode d n
+    if (d.get n).type != .element then throw "script command: target must be an element"
+    res (d.setAttribute n k v)
+  | .createElement k r =>
+    match d.createElement 0 k with
+    | (d, .ok n) => made r (d, n)
+    | (_, .error e) => .error s!"script command: {e.name}"
+  | .appendChild p c => do checkNode d p; checkNode d c; res (d.appendChild p c)
+  | .removeAttribute n k => do
+    checkNode d n
+    if (d.get n).type != .element then throw "script command: target must be an element"
+    return removeAttr d n k
+  | .createNode k data r =>
+    match k with
+    | 0 => made r (d.createTextNode 0 data)
+    | 1 => made r (d.createComment 0 data)
+    | 2 => made r (d.createDocumentFragment 0)
+    | 5 | 6 =>
+      match createOther d k data with
+      | (d, .ok n) => made r (d, n)
+      | (_, .error e) => .error s!"script command: {e.name}"
+    | _ => .error "script command: unknown node kind"
+  | .createElementNS ns q r =>
+    match L4Factoidal.WasmVM.Hosts.Dom.createElementNS d ns q with
+    | .ok x => made r x
+    | .error e => .error s!"script command: {e.name}"
+  | .insertBefore p n c => do
+    checkNode d p; checkNode d n
+    if let some k := c then checkNode d k
+    res (d.insertBefore p n c)
+  | .removeChild p c => do checkNode d p; checkNode d c; res (d.preRemove c p)
+  | .replaceChild p n c => do checkNode d p; checkNode d n; checkNode d c; res (d.replace c n p)
+  | .cloneNode n deep r => do
+    checkNode d n
+    if (d.get n).type == .document then throw "script command: NotSupportedError"
+    made r (d.cloneNode n deep)
+  | .normalize n => do checkNode d n; return d.normalize n
+
 end L4Factoidal.WasmVM.Hosts.Dom

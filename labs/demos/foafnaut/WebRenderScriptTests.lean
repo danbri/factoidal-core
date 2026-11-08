@@ -28,3 +28,23 @@ private def command (id : Nat) (value : String) : JSON.Json :=
   | _ => false
 #guard match WebRenderScript.applyCommands dom (.array (List.replicate 4097 (command target "bad"))) with
   | .error _ => true | _ => false
+-- The commands of page scripts in the engine (WebScripts): a replay makes the same nodes.
+private def list := (dom.getElementById 0 "change").getD 0
+private def made := dom.size
+#guard match WebRenderScript.applyCommands dom (.array [
+    .object [("op",.string "createElement"),("name",.string "li"),("nodeId",.number (toString made))],
+    .object [("op",.string "createNode"),("kind",.number "0"),("data",.string "new item"),("nodeId",.number (toString (made+1)))],
+    .object [("op",.string "appendChild"),("parent",.number (toString made)),("nodeId",.number (toString (made+1)))],
+    .object [("op",.string "insertBefore"),("parent",.number (toString ((dom.get list).parent.getD 0))),
+      ("nodeId",.number (toString made)),("before",.number (toString list))],
+    .object [("op",.string "removeAttribute"),("nodeId",.number (toString list)),("name",.string "id")]]) with
+  | .ok result => result.textContent made == some "new item" && result.getElementById 0 "change" == none
+  | .error _ => false
+-- A replay that would make another node number is refused.
+#guard match WebRenderScript.applyCommands dom (.array [
+    .object [("op",.string "createElement"),("name",.string "li"),("nodeId",.number (toString (made+5)))]]) with
+  | .error _ => true | _ => false
+-- An unknown field is refused.
+#guard match WebRenderScript.applyCommands dom (.array [
+    .object [("op",.string "removeChild"),("parent",.number "1"),("nodeId",.number "2"),("extra",.bool true)]]) with
+  | .error _ => true | _ => false

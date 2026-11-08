@@ -1,6 +1,7 @@
 import WebRender
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JSON.Serialize
+import L4Factoidal.WasmVM.Hosts.Dom
 
 /-! Scripting boundary: Lean owns the arena, script discovery and mutations.
 The separate QuickJS heap receives element handles and emits typed commands.
@@ -25,27 +26,66 @@ private def nodeId (value : JSON.Json) : Except String Nat := do
   if id > 1048576 then throw "script command: nodeId exceeds bound"
   return id
 
-private def applyCommand (dom : DOM.Dom) (command : JSON.Json) : Except String DOM.Dom := do
+/-- The JSON form of a command of `WasmVM.Hosts.Dom.Command`, the typed commands of page
+scripts (QuickJS in WasmVM, `WebScripts`). The keys of each form are exactly these. -/
+def commandJson : L4Factoidal.WasmVM.Hosts.Dom.Command → JSON.Json
+  | .setTextContent n v => .object [("op",.string "setTextContent"),("nodeId",num n),("value",.string v)]
+  | .setAttribute n k v => .object [("op",.string "setAttribute"),("nodeId",num n),("name",.string k),("value",.string v)]
+  | .createElement k n => .object [("op",.string "createElement"),("name",.string k),("nodeId",num n)]
+  | .appendChild p c => .object [("op",.string "appendChild"),("parent",num p),("nodeId",num c)]
+  | .removeAttribute n k => .object [("op",.string "removeAttribute"),("nodeId",num n),("name",.string k)]
+  | .createNode k d n => .object [("op",.string "createNode"),("kind",num k),("data",.string d),("nodeId",num n)]
+  | .createElementNS ns q n => .object [("op",.string "createElementNS"),("namespace",.string ns),("name",.string q),("nodeId",num n)]
+  | .insertBefore p c b => .object [("op",.string "insertBefore"),("parent",num p),("nodeId",num c),
+      ("before",match b with | some k => num k | none => .null)]
+  | .removeChild p c => .object [("op",.string "removeChild"),("parent",num p),("nodeId",num c)]
+  | .replaceChild p n c => .object [("op",.string "replaceChild"),("parent",num p),("nodeId",num n),("child",num c)]
+  | .cloneNode n d r => .object [("op",.string "cloneNode"),("source",num n),("deep",.bool d),("nodeId",num r)]
+  | .normalize n => .object [("op",.string "normalize"),("nodeId",num n)]
+where num (n : Nat) : JSON.Json := .number (toString n)
+
+private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.Hosts.Dom.Command := do
   let .object fields := command | throw "script command: expected object"
   let keys := fields.map Prod.fst
   if keys.eraseDups.length != keys.length then throw "script command: duplicate key"
   let operation ← field command "op" >>= string
-  let id ← field command "nodeId" >>= nodeId
-  let some node := dom.nodes[id]? | throw "script command: unknown nodeId"
-  if node.type != .element then throw "script command: target must be an element"
-  let value ← field command "value" >>= string
-  if operation == "setTextContent" then
-    if keys.length != 3 then throw "script command: unexpected field"
-    return dom.setTextContent id value
-  else if operation == "setAttribute" then
-    if keys.length != 4 then throw "script command: unexpected field"
-    let name ← field command "name" >>= string
-    if name.utf8ByteSize > 256 then throw "script command: attribute name exceeds bound"
-    let (updated,result) := dom.setAttribute id name value
-    match result with
-    | .ok () => return updated
-    | .error error => throw s!"script command: {error.name}"
-  else throw "script command: unsupported operation"
+  let exactly := fun (names : List String) =>
+    if keys.length == names.length + 1 && names.all keys.contains then Except.ok () else .error "script command: unexpected field"
+  let node := fun (name : String) => field command name >>= nodeId
+  let str := fun (name : String) => field command name >>= string
+  let attrName := fun (name : String) => do
+    let v ← str name
+    if v.utf8ByteSize > 256 then throw "script command: attribute name exceeds bound"
+    return v
+  match operation with
+  | "setTextContent" => exactly ["nodeId","value"]; return .setTextContent (← node "nodeId") (← str "value")
+  | "setAttribute" => exactly ["nodeId","name","value"]; return .setAttribute (← node "nodeId") (← attrName "name") (← str "value")
+  | "removeAttribute" => exactly ["nodeId","name"]; return .removeAttribute (← node "nodeId") (← attrName "name")
+  | "createElement" => exactly ["name","nodeId"]; return .createElement (← attrName "name") (← node "nodeId")
+  | "createElementNS" => exactly ["namespace","name","nodeId"]; return .createElementNS (← str "namespace") (← attrName "name") (← node "nodeId")
+  | "createNode" => exactly ["kind","data","nodeId"]; return .createNode (← node "kind") (← str "data") (← node "nodeId")
+  | "appendChild" => exactly ["parent","nodeId"]; return .appendChild (← node "parent") (← node "nodeId")
+  | "insertBefore" =>
+    exactly ["parent","nodeId","before"]
+    let before ← match ← field command "before" with
+      | .null => pure none
+      | other => some <$> nodeId other
+    return .insertBefore (← node "parent") (← node "nodeId") before
+  | "removeChild" => exactly ["parent","nodeId"]; return .removeChild (← node "parent") (← node "nodeId")
+  | "replaceChild" => exactly ["parent","nodeId","child"]; return .replaceChild (← node "parent") (← node "nodeId") (← node "child")
+  | "cloneNode" =>
+    exactly ["source","deep","nodeId"]
+    let deep ← match ← field command "deep" with
+      | .bool b => pure b
+      | _ => throw "script command: deep must be a boolean"
+    return .cloneNode (← node "source") deep (← node "nodeId")
+  | "normalize" => exactly ["nodeId"]; return .normalize (← node "nodeId")
+  | _ => throw "script command: unsupported operation"
+
+/-- One command: its JSON form read, then the arena operation the script ran
+(`WasmVM.Hosts.Dom.Command.apply`). -/
+private def applyCommand (dom : DOM.Dom) (command : JSON.Json) : Except String DOM.Dom := do
+  (← commandOf command).apply dom
 
 /-- A rejected batch returns no arena. Callers retain their old DOM. The MVP
 replays the cumulative list over the original parsed document in each request.

@@ -60,6 +60,10 @@ module.exports = function(eleventyConfig) {
   if (fs.existsSync(path.join(__dirname, "web/hub/html-webgpu/runtime"))) {
     eleventyConfig.addPassthroughCopy("web/hub/html-webgpu/runtime");
   }
+  // WasmVM guest modules (QuickJS-NG for page scripts), installed by Builds (foafnaut-web).
+  if (fs.existsSync(path.join(__dirname, "web/hub/wasm-guests"))) {
+    eleventyConfig.addPassthroughCopy("web/hub/wasm-guests");
+  }
 
   // Browser-host facade. Lean's LWS client still makes every protocol decision;
   // the compositor injects its already loaded engine and fetch transport.

@@ -18,7 +18,7 @@ export type HTMLLayers = {layers:HTMLLayerPlace;page:HTMLArtifact;chrome:HTMLArt
 export type Inspection = {
   baseURL:string;
   title:string;
-  scripts:{kind:string;type:string;src:string}[];
+  scripts:{kind:string;type:string;src:string;nodeId:number;url:string}[];
   stylesheets:{nodeId:number;url:string}[];
   /** Images that Lean wants (SVG `image`, HTML `img`), by store key; an older engine lists none for `img`. */
   images?:{key:string;url:string}[];
@@ -50,6 +50,11 @@ export type ShellGo = {go:"page";url:string}|{go:"system";url:string}|{go:"comma
 export type LinkRoute = {route:"page";name:string;url:string}|{route:"graph";url:string}|{route:"navigate";url:string}|
   {route:"system";url:string}|{route:"command";name:string;argument:string}|{route:"refuse";url:string;reason:string};
 export type HTMLResource = {nodeId:number;url:string;source:string};
+/** One turn of a script session (WebScripts.turnAnswer). `commands` is the whole command
+list, given only when `changed`: a host lays the page out again only then. */
+export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCount:number;commands?:unknown[];
+  logs:string[];errors:string[];timers:number;nextTimer:number|null;frames:number;nextWake:number|null;quiet:boolean;
+  instructions:number;jobs:number;tasks:number;ns:number};
 type Module = {ccall(name:string,result:string|null,types:string[],values:unknown[]):number;
   UTF8ToString(pointer:number):string;HEAPU8:Uint8Array;_malloc?(size:number):number;_free?(pointer:number):void};
 const encoder = new TextEncoder();
@@ -344,6 +349,20 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     shellRoute:(request:Record<string,unknown>)=>documentCall("",{...request,op:"shellRoute"}) as LinkRoute,
     // Browser state (WebState.lean): bookmarks, history, settings and tabs as LWS resources.
     state:(op:string,request:Record<string,unknown>={})=>documentCall("",{...request,op}),
+    // Page scripts run by Lean (WebScripts.lean): QuickJS-NG in WasmVM on the page's arena,
+    // the Lean event loop deciding each callback. An older engine answers "unknown document
+    // operation" to scriptInfo; a host then keeps refusing scripted pages (issue 1274).
+    scriptInfo:()=>documentCall("",{op:"scriptSession",action:"info"}) as {ops:string[];module:boolean;bytes:number;engine:string},
+    /** The guest module, as bytes through the font byte call (family `guest:quickjs`). */
+    scriptLoad:(bytes:Uint8Array)=>{
+      const result=JSON.parse(backends.font(bytes,"guest:quickjs","",false));
+      if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
+      return result as {module:boolean;bytes:number};
+    },
+    scriptSession:(source:string,request:Record<string,unknown>)=>documentCall(source,{...request,op:"scriptSession"}) as ScriptTurn,
+    /** The node under a window point, for a click that page scripts receive. */
+    nodeAt:(source:string,width:number,height:number,options:Record<string,unknown>)=>
+      (documentCall(source,{...options,op:"nodeAt"},width,height) as {node:number|null}).node,
     // Lean decides what a menu command and a pointer release mean.
     command:(command:number,textScalePercent:number,history?:History,focused=false)=>documentCall("",{op:"command",command,textScalePercent,focused,...(history?{history}:{})}) as
       {action:string;target?:"address"|"page";textScalePercent:number}&Partial<HistoryAnswer>,

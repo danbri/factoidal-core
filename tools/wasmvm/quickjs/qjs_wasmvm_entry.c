@@ -7,28 +7,36 @@
  * WASI Preview 1 (from the C library; the Lean host grants nothing by default) and
  * the module `foafnaut_dom`, below. It exports:
  *
- *   qjs_new() -> 0 | negative      make the runtime and context, install `document`,
- *                                  `console`, the timer functions and `queueMicrotask`
+ *   qjs_new() -> 0 | negative      make the runtime and context and run the prelude
+ *                                  (prelude.js): `document`, `window`, nodes, events,
+ *                                  `console`, timers, animation frames, `queueMicrotask`
  *   qjs_alloc(n) -> ptr, qjs_free(ptr)
  *   qjs_eval(src_ptr, src_len) -> result ptr
  *                                  run a classic script (global scope, so `let` and
  *                                  `class` bindings are shared between scripts)
- *   qjs_call(callback_id, target_node, event) -> result ptr
- *                                  run one callback the host registered earlier:
- *                                  an event listener with the click event's target
- *                                  node, or a timer with target -1. The host runs
- *                                  the listeners of one dispatch in its own order;
- *                                  calls with the same event number share one event
- *                                  object, so preventDefault is seen by later listeners
+ *   qjs_call(callback_id, target, arg) -> result ptr
+ *                                  run one callback the host registered earlier: a
+ *                                  timer (target -1) or an animation frame callback
+ *                                  (target -2, arg the frame time in ms)
+ *   qjs_dispatch(target, type_ptr, type_len, flags) -> result ptr
+ *                                  dispatch an event of the user agent; the host gives
+ *                                  the listener order (import dispatch_plan)
+ *   qjs_run_job() -> 1 | 0 | -1    run one pending promise job (a microtask)
+ *   qjs_page_mode(on)              on: the host runs the microtask checkpoint (no
+ *                                  checkpoint at the end of an export) and script
+ *                                  exceptions are reported as an ErrorEvent
+ *   qjs_page(op, ptr, len)         0: the document URL; 1: the current script node;
+ *                                  2: a page starts (content event handler attributes)
  *   qjs_release(callback_id)       forget a callback (a timer that has fired)
  *
- * Each of qjs_eval and qjs_call ends with a microtask checkpoint: it runs pending
- * promise jobs until none is left. A result is a block the host frees with qjs_free:
+ * Without page mode, each of qjs_eval and qjs_call ends with a microtask checkpoint: it
+ * runs pending promise jobs until none is left. A result is a block the host frees with
+ * qjs_free:
  *
  *   u32 status   0 normal, 1 an exception was thrown (the text is its message and stack)
  *   u32 length   bytes of text
  *   text         UTF-8: the completion value as a string (qjs_eval), or
- *                "prevented" / "" (qjs_call of an event listener)
+ *                "prevented" / "" (qjs_dispatch)
  *
  * The DOM is not in this module. Each DOM operation is one import of `foafnaut_dom`;
  * the Lean host turns it into a typed command on its DOM arena
@@ -38,12 +46,13 @@
  * capacity, and returns the full length; when that is larger, this module asks again
  * with a large enough buffer. Negative results are errors:
  *
- *   -1 none (no such element, no such attribute)    -2 not an element node
+ *   -1 none (no such element, no such attribute)    -2 not a node of the right type
  *   -3 InvalidCharacterError    -4 HierarchyRequestError    -5 over a budget
- *   -6 denied
+ *   -6 denied    -9 NotFoundError    -10 NotSupportedError
  *
- * Timers and listeners only record a request: the host keeps the callback id, and its
- * event loop decides when (and whether) to run it, with qjs_call.
+ * Timers, listeners and animation frames only record a request: the host keeps the
+ * callback id, and its event loop decides when (and whether) to run it, with qjs_call.
+ * The functions stay in the prelude, by number.
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -59,25 +68,39 @@
 #endif
 
 DOM_IMPORT(get_element_by_id) int32_t dom_get_element_by_id(const char *id, int32_t len);
-DOM_IMPORT(document_element) int32_t dom_document_element(int32_t which);
-DOM_IMPORT(tag_name) int32_t dom_tag_name(int32_t node, char *buf, int32_t cap);
-DOM_IMPORT(text_content_get) int32_t dom_text_content_get(int32_t node, char *buf, int32_t cap);
 DOM_IMPORT(text_content_set) int32_t dom_text_content_set(int32_t node, const char *s, int32_t len);
 DOM_IMPORT(get_attribute) int32_t dom_get_attribute(int32_t node, const char *name, int32_t nlen,
                                                     char *buf, int32_t cap);
 DOM_IMPORT(set_attribute) int32_t dom_set_attribute(int32_t node, const char *name, int32_t nlen,
                                                     const char *value, int32_t vlen);
-DOM_IMPORT(create_element) int32_t dom_create_element(const char *name, int32_t len);
-DOM_IMPORT(append_child) int32_t dom_append_child(int32_t parent, int32_t child);
-DOM_IMPORT(add_event_listener) int32_t dom_add_event_listener(int32_t node, const char *type,
-                                                              int32_t tlen, int32_t callback);
 DOM_IMPORT(set_timer) int32_t dom_set_timer(int32_t callback, int32_t delay_ms, int32_t repeat);
 DOM_IMPORT(clear_timer) int32_t dom_clear_timer(int32_t timer);
 DOM_IMPORT(console_log) int32_t dom_console_log(const char *s, int32_t len);
+/* Added 2026-11-08 for page scripts in the engine (docs/designissues/2026-11-08-page-scripts.md). */
+DOM_IMPORT(node_info) int32_t dom_node_info(int32_t node, int32_t which);
+DOM_IMPORT(node_string) int32_t dom_node_string(int32_t node, int32_t which, char *buf, int32_t cap);
+DOM_IMPORT(node_children) int32_t dom_node_children(int32_t node, int32_t unused, char *buf, int32_t cap);
+DOM_IMPORT(create_node) int32_t dom_create_node(int32_t kind, const char *s, int32_t len);
+DOM_IMPORT(insert_before) int32_t dom_insert_before(int32_t parent, int32_t node, int32_t child);
+DOM_IMPORT(remove_child) int32_t dom_remove_child(int32_t parent, int32_t child);
+DOM_IMPORT(replace_child) int32_t dom_replace_child(int32_t parent, int32_t node, int32_t child);
+DOM_IMPORT(remove_attribute) int32_t dom_remove_attribute(int32_t node, const char *name, int32_t nlen);
+DOM_IMPORT(clone_node) int32_t dom_clone_node(int32_t node, int32_t deep);
+DOM_IMPORT(tree_op) int32_t dom_tree_op(int32_t a, int32_t b, int32_t which);
+DOM_IMPORT(listen) int32_t dom_listen(int32_t target, const char *type, int32_t tlen, int32_t callback, int32_t capture);
+DOM_IMPORT(unlisten) int32_t dom_unlisten(int32_t callback);
+DOM_IMPORT(dispatch_plan) int32_t dom_dispatch_plan(int32_t target, const char *type, int32_t tlen, int32_t bubbles,
+                                                    char *buf, int32_t cap);
+DOM_IMPORT(request_frame) int32_t dom_request_frame(int32_t callback);
+DOM_IMPORT(cancel_frame) int32_t dom_cancel_frame(int32_t id);
 
 static JSRuntime *rt;
 static JSContext *ctx;
-static JSValue dispatch_fn; /* the prelude's dispatcher: (callback id, target node) */
+static JSValue dispatch_fn; /* the object the prelude returns: call, dispatch, report, script, url, release */
+/* Page mode (qjs_page_mode(1)): no microtask checkpoint at the end of qjs_eval, qjs_call and
+ * qjs_dispatch (the host runs the jobs with qjs_run_job, when its event loop says), and an
+ * exception that a script throws is reported (an ErrorEvent at the window). */
+static int page_mode;
 
 __attribute__((export_name("qjs_alloc")))
 void *qjs_alloc(int32_t n) { return malloc((size_t) n); }
@@ -87,249 +110,184 @@ void qjs_free(void *p) { free(p); }
 
 /* ---- helpers ---------------------------------------------------------------- */
 
-static JSValue dom_error(JSContext *c, int32_t code) {
-  switch (code) {
-  case -2: return JS_ThrowTypeError(c, "not an element node");
-  case -3: {
-    JSValue e = JS_NewError(c);
-    JS_SetPropertyStr(c, e, "name", JS_NewString(c, "InvalidCharacterError"));
-    JS_SetPropertyStr(c, e, "message", JS_NewString(c, "InvalidCharacterError"));
-    return JS_Throw(c, e);
-  }
-  case -4: {
-    JSValue e = JS_NewError(c);
-    JS_SetPropertyStr(c, e, "name", JS_NewString(c, "HierarchyRequestError"));
-    JS_SetPropertyStr(c, e, "message", JS_NewString(c, "HierarchyRequestError"));
-    return JS_Throw(c, e);
-  }
-  case -5: return JS_ThrowRangeError(c, "DOM budget exceeded");
-  case -6: return JS_ThrowTypeError(c, "denied by the host");
-  default: return JS_ThrowTypeError(c, "DOM error %d", (int) code);
-  }
-}
-
 static int arg_i32(JSContext *c, JSValueConst v, int32_t *out) { return JS_ToInt32(c, out, v); }
 
-/* A string an import writes: ask with a small buffer, then with one of the full size. */
-typedef int32_t (*reader)(int32_t node, const char *a, int32_t alen, char *buf, int32_t cap);
+/* An import that writes bytes into a buffer (pointer, capacity) and answers the full
+ * length, or a negative code: ask with a small buffer, then with one of the full size.
+ * `unit` is 1 for a UTF-8 string and 4 for a list of i32 (the answer counts units). */
+typedef int32_t (*reader)(int32_t a, int32_t b, const char *s, int32_t slen, char *buf, int32_t cap);
 
-static JSValue read_string(JSContext *c, reader f, int32_t node, const char *a, int32_t alen,
-                           int null_on_minus_one) {
-  char small[256];
-  int32_t n = f(node, a, alen, small, (int32_t) sizeof small);
-  if (n == -1 && null_on_minus_one) return JS_NULL;
-  if (n < 0) return dom_error(c, n);
-  if (n <= (int32_t) sizeof small) return JS_NewStringLen(c, small, (size_t) n);
-  if (n > (1 << 24)) return dom_error(c, -5);
-  char *big = malloc((size_t) n);
-  if (!big) return JS_ThrowOutOfMemory(c);
-  int32_t m = f(node, a, alen, big, n);
-  JSValue r = (m >= 0 && m <= n) ? JS_NewStringLen(c, big, (size_t) m) : dom_error(c, m < 0 ? m : -5);
-  free(big);
+static int32_t read_bytes(reader f, int32_t a, int32_t b, const char *s, int32_t slen, int unit, char **out) {
+  static char small[1024];
+  int32_t n = f(a, b, s, slen, small, (int32_t) sizeof small);
+  if (n < 0) return n;
+  if ((int64_t) n * unit <= (int64_t) sizeof small) { *out = small; return n; }
+  if ((int64_t) n * unit > (1 << 26)) return -5;
+  char *big = malloc((size_t) n * unit);
+  if (!big) return -5;
+  int32_t m = f(a, b, s, slen, big, n * unit);
+  if (m < 0 || m > n) { free(big); return m < 0 ? m : -5; }
+  *out = big;
+  return m;
+}
+
+static JSValue string_result(JSContext *c, reader f, int32_t a, int32_t b, const char *s, int32_t slen) {
+  char *p = 0;
+  int32_t n = read_bytes(f, a, b, s, slen, 1, &p);
+  if (n < 0) return JS_NewInt32(c, n);
+  JSValue r = JS_NewStringLen(c, p, (size_t) n);
+  if (n > 1024) free(p);
   return r;
 }
 
-static int32_t rd_tag(int32_t node, const char *a, int32_t alen, char *buf, int32_t cap) {
-  (void) a; (void) alen; return dom_tag_name(node, buf, cap);
+static JSValue list_result(JSContext *c, reader f, int32_t a, int32_t b, const char *s, int32_t slen) {
+  char *p = 0;
+  int32_t n = read_bytes(f, a, b, s, slen, 4, &p);
+  if (n < 0) return JS_NewInt32(c, n);
+  JSValue arr = JS_NewArray(c);
+  for (int32_t i = 0; i < n; i++) {
+    int32_t v; memcpy(&v, p + 4 * i, 4);
+    JS_SetPropertyUint32(c, arr, (uint32_t) i, JS_NewInt32(c, v));
+  }
+  if ((int64_t) n * 4 > 1024) free(p);
+  return arr;
 }
-static int32_t rd_text(int32_t node, const char *a, int32_t alen, char *buf, int32_t cap) {
-  (void) a; (void) alen; return dom_text_content_get(node, buf, cap);
+
+static int32_t rd_string(int32_t node, int32_t which, const char *s, int32_t slen, char *buf, int32_t cap) {
+  (void) s; (void) slen; return dom_node_string(node, which, buf, cap);
 }
-static int32_t rd_attr(int32_t node, const char *a, int32_t alen, char *buf, int32_t cap) {
-  return dom_get_attribute(node, a, alen, buf, cap);
+static int32_t rd_attr(int32_t node, int32_t which, const char *s, int32_t slen, char *buf, int32_t cap) {
+  (void) which; return dom_get_attribute(node, s, slen, buf, cap);
+}
+static int32_t rd_kids(int32_t node, int32_t which, const char *s, int32_t slen, char *buf, int32_t cap) {
+  (void) s; (void) slen; return dom_node_children(node, which, buf, cap);
+}
+static int32_t rd_plan(int32_t node, int32_t bubbles, const char *s, int32_t slen, char *buf, int32_t cap) {
+  return dom_dispatch_plan(node, s, slen, bubbles, buf, cap);
 }
 
 /* ---- the native object the prelude receives (never a global) ---------------- */
 
+#define I32(k, v) int32_t v; if (arg_i32(c, argv[k], &v)) return JS_EXCEPTION
+#define STR(k, v, l) size_t l; const char *v = JS_ToCStringLen(c, &l, argv[k]); if (!v) return JS_EXCEPTION
+
 static JSValue n_by_id(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
-  size_t len; const char *s = JS_ToCStringLen(c, &len, argv[0]);
-  if (!s) return JS_EXCEPTION;
+  STR(0, s, len);
   int32_t r = dom_get_element_by_id(s, (int32_t) len);
   JS_FreeCString(c, s);
   return JS_NewInt32(c, r);
 }
-
-static JSValue n_root(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
-  int32_t which; if (arg_i32(c, argv[0], &which)) return JS_EXCEPTION;
-  return JS_NewInt32(c, dom_document_element(which));
+static JSValue n_info(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, node); I32(1, which);
+  return JS_NewInt32(c, dom_node_info(node, which));
 }
-
-static JSValue n_tag(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
-  int32_t node; if (arg_i32(c, argv[0], &node)) return JS_EXCEPTION;
-  return read_string(c, rd_tag, node, 0, 0, 0);
+static JSValue n_str(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, node); I32(1, which);
+  return string_result(c, rd_string, node, which, 0, 0);
 }
-
-static JSValue n_get_text(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
-  int32_t node; if (arg_i32(c, argv[0], &node)) return JS_EXCEPTION;
-  return read_string(c, rd_text, node, 0, 0, 1);
+static JSValue n_kids(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, node);
+  JSValue r = list_result(c, rd_kids, node, 0, 0, 0);
+  return JS_IsNumber(r) ? JS_NewArray(c) : r;
 }
-
-static JSValue n_set_text(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
-  int32_t node; if (arg_i32(c, argv[0], &node)) return JS_EXCEPTION;
-  size_t len; const char *s = JS_ToCStringLen(c, &len, argv[1]);
-  if (!s) return JS_EXCEPTION;
-  int32_t r = dom_text_content_set(node, s, (int32_t) len);
+static JSValue n_attr(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, node); STR(1, s, len);
+  JSValue r = string_result(c, rd_attr, node, 0, s, (int32_t) len);
   JS_FreeCString(c, s);
-  return r < 0 ? dom_error(c, r) : JS_UNDEFINED;
-}
-
-static JSValue n_get_attr(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
-  int32_t node; if (arg_i32(c, argv[0], &node)) return JS_EXCEPTION;
-  size_t len; const char *s = JS_ToCStringLen(c, &len, argv[1]);
-  if (!s) return JS_EXCEPTION;
-  JSValue r = read_string(c, rd_attr, node, s, (int32_t) len, 1);
-  JS_FreeCString(c, s);
+  if (JS_IsNumber(r)) { int32_t code; JS_ToInt32(c, &code, r); if (code == -1) return JS_NULL; }
   return r;
 }
-
 static JSValue n_set_attr(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
-  int32_t node; if (arg_i32(c, argv[0], &node)) return JS_EXCEPTION;
-  size_t nl, vl;
-  const char *nm = JS_ToCStringLen(c, &nl, argv[1]);
-  if (!nm) return JS_EXCEPTION;
-  const char *v = JS_ToCStringLen(c, &vl, argv[2]);
+  I32(0, node); STR(1, nm, nl);
+  size_t vl; const char *v = JS_ToCStringLen(c, &vl, argv[2]);
   if (!v) { JS_FreeCString(c, nm); return JS_EXCEPTION; }
   int32_t r = dom_set_attribute(node, nm, (int32_t) nl, v, (int32_t) vl);
   JS_FreeCString(c, nm); JS_FreeCString(c, v);
-  return r < 0 ? dom_error(c, r) : JS_UNDEFINED;
+  return JS_NewInt32(c, r);
 }
-
-static JSValue n_create(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
-  size_t len; const char *s = JS_ToCStringLen(c, &len, argv[0]);
-  if (!s) return JS_EXCEPTION;
-  int32_t r = dom_create_element(s, (int32_t) len);
+static JSValue n_remove_attr(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, node); STR(1, nm, nl);
+  int32_t r = dom_remove_attribute(node, nm, (int32_t) nl);
+  JS_FreeCString(c, nm);
+  return JS_NewInt32(c, r);
+}
+static JSValue n_set_text(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, node); STR(1, s, len);
+  int32_t r = dom_text_content_set(node, s, (int32_t) len);
   JS_FreeCString(c, s);
-  return r < 0 ? dom_error(c, r) : JS_NewInt32(c, r);
+  return JS_NewInt32(c, r);
 }
-
-static JSValue n_append(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
-  int32_t p, k;
-  if (arg_i32(c, argv[0], &p) || arg_i32(c, argv[1], &k)) return JS_EXCEPTION;
-  int32_t r = dom_append_child(p, k);
-  return r < 0 ? dom_error(c, r) : JS_UNDEFINED;
+static JSValue n_create(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, kind); STR(1, s, len);
+  int32_t r = dom_create_node(kind, s, (int32_t) len);
+  JS_FreeCString(c, s);
+  return JS_NewInt32(c, r);
 }
-
+static JSValue n_insert(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, p); I32(1, k); I32(2, before);
+  return JS_NewInt32(c, dom_insert_before(p, k, before));
+}
+static JSValue n_remove(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, p); I32(1, k);
+  return JS_NewInt32(c, dom_remove_child(p, k));
+}
+static JSValue n_replace(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, p); I32(1, k); I32(2, old);
+  return JS_NewInt32(c, dom_replace_child(p, k, old));
+}
+static JSValue n_clone(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, k); I32(1, deep);
+  return JS_NewInt32(c, dom_clone_node(k, deep));
+}
+static JSValue n_tree_op(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, a); I32(1, b); I32(2, which);
+  return JS_NewInt32(c, dom_tree_op(a, b, which));
+}
 static JSValue n_listen(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
-  int32_t node, cb;
-  if (arg_i32(c, argv[0], &node) || arg_i32(c, argv[2], &cb)) return JS_EXCEPTION;
-  size_t len; const char *t = JS_ToCStringLen(c, &len, argv[1]);
-  if (!t) return JS_EXCEPTION;
-  int32_t r = dom_add_event_listener(node, t, (int32_t) len, cb);
+  I32(0, target); I32(2, cb); I32(3, capture); STR(1, t, len);
+  int32_t r = dom_listen(target, t, (int32_t) len, cb, capture);
   JS_FreeCString(c, t);
-  return r < 0 ? dom_error(c, r) : JS_UNDEFINED;
+  return JS_NewInt32(c, r);
 }
-
+static JSValue n_unlisten(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, cb);
+  return JS_NewInt32(c, dom_unlisten(cb));
+}
+static JSValue n_plan(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, target); I32(2, bubbles); STR(1, t, len);
+  JSValue r = list_result(c, rd_plan, target, bubbles, t, (int32_t) len);
+  JS_FreeCString(c, t);
+  return r;
+}
 static JSValue n_timer(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
-  int32_t cb, delay, rep;
-  if (arg_i32(c, argv[0], &cb) || arg_i32(c, argv[1], &delay) || arg_i32(c, argv[2], &rep))
-    return JS_EXCEPTION;
-  int32_t r = dom_set_timer(cb, delay < 0 ? 0 : delay, rep ? 1 : 0);
-  return r < 0 ? dom_error(c, r) : JS_NewInt32(c, r);
+  I32(0, cb); I32(1, delay); I32(2, rep);
+  return JS_NewInt32(c, dom_set_timer(cb, delay < 0 ? 0 : delay, rep ? 1 : 0));
 }
-
 static JSValue n_clear_timer(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
-  int32_t t; if (arg_i32(c, argv[0], &t)) return JS_EXCEPTION;
+  I32(0, t);
   dom_clear_timer(t);
   return JS_UNDEFINED;
 }
-
+static JSValue n_frame(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, cb);
+  return JS_NewInt32(c, dom_request_frame(cb));
+}
+static JSValue n_cancel_frame(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, id);
+  dom_cancel_frame(id);
+  return JS_UNDEFINED;
+}
 static JSValue n_log(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
-  size_t len; const char *s = JS_ToCStringLen(c, &len, argv[0]);
-  if (!s) return JS_EXCEPTION;
+  STR(0, s, len);
   dom_console_log(s, (int32_t) len);
   JS_FreeCString(c, s);
   return JS_UNDEFINED;
 }
 
-/* ---- the prelude: the DOM objects page scripts see, in JavaScript ----------- */
+/* ---- the prelude: tools/wasmvm/quickjs/prelude.js, as a C string (prelude.h is made
+ * by build-quickjs.sh) ------------------------------------------------------------ */
 
-static const char prelude[] =
-"(function (n) {\n"
-"  'use strict';\n"
-"  const callbacks = new Map(); let nextCallback = 1;\n"
-"  const register = f => { const id = nextCallback++; callbacks.set(id, f); return id; };\n"
-"  const elements = new Map();\n"
-"  const wrap = id => id < 0 ? null : (elements.get(id) ?? make(id));\n"
-"  const ids = new WeakMap();\n"
-"  const idOf = e => { const id = ids.get(e); if (id === undefined) throw new TypeError('not a node'); return id; };\n"
-"  const listeners = new Map();\n"
-"  class Element {\n"
-"    get nodeId() { return idOf(this); }\n"
-"    get tagName() { return n.tag(idOf(this)).toUpperCase(); }\n"
-"    get localName() { return n.tag(idOf(this)); }\n"
-"    get id() { return n.getAttr(idOf(this), 'id') ?? ''; }\n"
-"    set id(v) { n.setAttr(idOf(this), 'id', String(v)); }\n"
-"    get textContent() { return n.getText(idOf(this)); }\n"
-"    set textContent(v) { n.setText(idOf(this), v === null ? '' : String(v)); }\n"
-"    getAttribute(name) { return n.getAttr(idOf(this), String(name)); }\n"
-"    hasAttribute(name) { return n.getAttr(idOf(this), String(name)) !== null; }\n"
-"    setAttribute(name, value) { n.setAttr(idOf(this), String(name), String(value)); }\n"
-"    appendChild(child) { n.append(idOf(this), idOf(child)); return child; }\n"
-"    append(...xs) { for (const x of xs) n.append(idOf(this), idOf(x)); }\n"
-"    addEventListener(type, callback) {\n"
-"      if (typeof callback !== 'function') return;\n"
-"      const id = idOf(this), key = id + ' ' + type;\n"
-"      let list = listeners.get(key); if (!list) listeners.set(key, list = []);\n"
-"      if (list.includes(callback)) return;\n"
-"      list.push(callback);\n"
-"      const self = this;\n"
-"      n.listen(id, String(type), register(event => callback.call(self, event)));\n"
-"    }\n"
-"    get onclick() { return handlers.get(this) ?? null; }\n"
-"    set onclick(f) {\n"
-"      if (!handlers.has(this)) { const self = this; n.listen(idOf(this), 'click', register(event => { const h = handlers.get(self); if (typeof h === 'function' && h.call(self, event) === false) event.preventDefault(); })); }\n"
-"      handlers.set(this, typeof f === 'function' ? f : null);\n"
-"    }\n"
-"  }\n"
-"  const handlers = new WeakMap();\n"
-"  const make = id => { const e = Object.create(Element.prototype); ids.set(e, id); elements.set(id, e); return e; };\n"
-"  const document = Object.freeze({\n"
-"    getElementById: id => wrap(n.byId(String(id))),\n"
-"    querySelector(sel) {\n"
-"      sel = String(sel);\n"
-"      if (/^#[A-Za-z_][A-Za-z0-9_-]*$/.test(sel)) return wrap(n.byId(sel.slice(1)));\n"
-"      if (sel === 'body') return wrap(n.root(1));\n"
-"      if (sel === 'html') return wrap(n.root(0));\n"
-"      throw new SyntaxError('only #id, body and html selectors are supported');\n"
-"    },\n"
-"    createElement: name => wrap(n.create(String(name))),\n"
-"    get documentElement() { return wrap(n.root(0)); },\n"
-"    get body() { return wrap(n.root(1)); },\n"
-"    get head() { return wrap(n.root(2)); },\n"
-"  });\n"
-"  const timer = (repeat, f, delay, args) => {\n"
-"    const run = typeof f === 'function' ? () => f(...args) : () => (0, eval)(String(f));\n"
-"    return n.timer(register(run), Number(delay) || 0, repeat);\n"
-"  };\n"
-"  const def = (name, value) => Object.defineProperty(globalThis, name, { value, writable: true, configurable: true });\n"
-"  def('document', document);\n"
-"  def('window', globalThis);\n"
-"  def('self', globalThis);\n"
-"  def('console', Object.freeze({ log: (...xs) => n.log(xs.map(String).join(' ')),\n"
-"    error: (...xs) => n.log(xs.map(String).join(' ')), warn: (...xs) => n.log(xs.map(String).join(' ')) }));\n"
-"  def('setTimeout', (f, delay, ...args) => timer(0, f, delay, args));\n"
-"  def('setInterval', (f, delay, ...args) => timer(1, f, delay, args));\n"
-"  def('clearTimeout', id => n.clearTimer(Number(id) | 0));\n"
-"  def('clearInterval', id => n.clearTimer(Number(id) | 0));\n"
-"  def('queueMicrotask', f => { if (typeof f !== 'function') throw new TypeError('queueMicrotask needs a function'); Promise.resolve().then(() => f()); });\n"
-"  def('Element', Element);\n"
-"  let current = null;\n"
-"  return {\n"
-"    call(id, target, seq) {\n"
-"      const f = callbacks.get(id); if (!f) throw new TypeError('unknown callback ' + id);\n"
-"      if (target < 0) { f(); return ''; }\n"
-"      if (!current || current.seq !== seq) {\n"
-"        let prevented = false;\n"
-"        const node = wrap(target);\n"
-"        current = { seq, event: Object.freeze({ type: 'click', target: node, currentTarget: node, cancelable: true,\n"
-"          get defaultPrevented() { return prevented; }, preventDefault() { prevented = true; } }) };\n"
-"      }\n"
-"      f(current.event);\n"
-"      return current.event.defaultPrevented ? 'prevented' : '';\n"
-"    },\n"
-"    release(id) { callbacks.delete(id); }\n"
-"  };\n"
-"})";
+#include "prelude.h"
 
 /* ---- results ---------------------------------------------------------------- */
 
@@ -372,6 +330,17 @@ static uint8_t *result_of_exception(void) {
   return r;
 }
 
+/* Page mode: report the exception (an ErrorEvent at the window, HTML "report an
+ * exception"), and answer it as status 1 too. */
+static uint8_t *report_exception(void) {
+  JSValue e = JS_GetException(ctx);
+  JSValue f = JS_GetPropertyStr(ctx, dispatch_fn, "report");
+  JSValue v = JS_Call(ctx, f, dispatch_fn, 1, (JSValueConst *) &e);
+  JS_FreeValue(ctx, f); JS_FreeValue(ctx, v);
+  JS_Throw(ctx, e);
+  return result_of_exception();
+}
+
 /* The microtask checkpoint: run promise jobs until none is left. */
 static void checkpoint(void) {
   JSContext *c1;
@@ -385,17 +354,26 @@ static void checkpoint(void) {
 
 static const JSCFunctionListEntry native_fns[] = {
   JS_CFUNC_DEF("byId", 1, n_by_id),
-  JS_CFUNC_DEF("root", 1, n_root),
-  JS_CFUNC_DEF("tag", 1, n_tag),
-  JS_CFUNC_DEF("getText", 1, n_get_text),
-  JS_CFUNC_DEF("setText", 2, n_set_text),
-  JS_CFUNC_DEF("getAttr", 2, n_get_attr),
+  JS_CFUNC_DEF("info", 2, n_info),
+  JS_CFUNC_DEF("str", 2, n_str),
+  JS_CFUNC_DEF("kids", 1, n_kids),
+  JS_CFUNC_DEF("attr", 2, n_attr),
   JS_CFUNC_DEF("setAttr", 3, n_set_attr),
-  JS_CFUNC_DEF("create", 1, n_create),
-  JS_CFUNC_DEF("append", 2, n_append),
-  JS_CFUNC_DEF("listen", 3, n_listen),
+  JS_CFUNC_DEF("removeAttr", 2, n_remove_attr),
+  JS_CFUNC_DEF("setText", 2, n_set_text),
+  JS_CFUNC_DEF("create", 2, n_create),
+  JS_CFUNC_DEF("insert", 3, n_insert),
+  JS_CFUNC_DEF("remove", 2, n_remove),
+  JS_CFUNC_DEF("replace", 3, n_replace),
+  JS_CFUNC_DEF("clone", 2, n_clone),
+  JS_CFUNC_DEF("treeOp", 3, n_tree_op),
+  JS_CFUNC_DEF("listen", 4, n_listen),
+  JS_CFUNC_DEF("unlisten", 1, n_unlisten),
+  JS_CFUNC_DEF("plan", 3, n_plan),
   JS_CFUNC_DEF("timer", 3, n_timer),
   JS_CFUNC_DEF("clearTimer", 1, n_clear_timer),
+  JS_CFUNC_DEF("frame", 1, n_frame),
+  JS_CFUNC_DEF("cancelFrame", 1, n_cancel_frame),
   JS_CFUNC_DEF("log", 1, n_log),
 };
 
@@ -428,9 +406,9 @@ uint8_t *qjs_eval(const char *src, int32_t len) {
   memcpy(copy, src, (size_t) len); copy[len] = 0;
   JSValue v = JS_Eval(ctx, copy, (size_t) len, "<page-script>", JS_EVAL_TYPE_GLOBAL);
   free(copy);
-  uint8_t *r = JS_IsException(v) ? result_of_exception() : result_of_value(v, 0);
+  uint8_t *r = JS_IsException(v) ? (page_mode ? report_exception() : result_of_exception()) : result_of_value(v, 0);
   JS_FreeValue(ctx, v);
-  checkpoint();
+  if (!page_mode) checkpoint();
   return r;
 }
 
@@ -443,8 +421,49 @@ uint8_t *qjs_call(int32_t callback, int32_t target, int32_t event) {
   JS_FreeValue(ctx, call);
   uint8_t *r = JS_IsException(v) ? result_of_exception() : result_of_value(v, 0);
   JS_FreeValue(ctx, v);
-  checkpoint();
+  if (!page_mode) checkpoint();
   return r;
+}
+
+/* qjs_dispatch(target, type_ptr, type_len, flags): an event of the user agent (trusted) at
+ * node `target` (0 the document, 0x0FFFFFFF the window); flags 1 bubbles, 2 cancelable,
+ * 4 composed. The listener order comes from the host (foafnaut_dom.dispatch_plan). Text:
+ * "prevented" when a listener canceled it. */
+__attribute__((export_name("qjs_dispatch")))
+uint8_t *qjs_dispatch(int32_t target, const char *type, int32_t tlen, int32_t flags) {
+  if (!ctx) return result(1, "qjs_new was not called", 22);
+  JSValue f = JS_GetPropertyStr(ctx, dispatch_fn, "dispatch");
+  JSValue args[3] = { JS_NewInt32(ctx, target), JS_NewStringLen(ctx, type, (size_t) tlen), JS_NewInt32(ctx, flags) };
+  JSValue v = JS_Call(ctx, f, dispatch_fn, 3, args);
+  JS_FreeValue(ctx, f); JS_FreeValue(ctx, args[1]);
+  uint8_t *r = JS_IsException(v) ? result_of_exception() : result_of_value(v, 0);
+  JS_FreeValue(ctx, v);
+  if (!page_mode) checkpoint();
+  return r;
+}
+
+/* qjs_run_job() -> 1 a job ran, 0 none was pending, -1 a job threw (the host's event loop
+ * runs the microtask checkpoint, one job at a time). */
+__attribute__((export_name("qjs_run_job")))
+int32_t qjs_run_job(void) {
+  if (!rt) return 0;
+  JSContext *c1;
+  int r = JS_ExecutePendingJob(rt, &c1);
+  return r > 0 ? 1 : (r == 0 ? 0 : -1);
+}
+
+__attribute__((export_name("qjs_page_mode")))
+void qjs_page_mode(int32_t on) { page_mode = on != 0; }
+
+/* qjs_page(op, ptr, len): 0 the document URL is the string; 1 the current script is node
+ * `len` (-1 none); 2 a page starts on the host's arena (content event handler attributes). */
+__attribute__((export_name("qjs_page")))
+void qjs_page(int32_t op, const char *s, int32_t len) {
+  if (!ctx) return;
+  JSValue f = JS_GetPropertyStr(ctx, dispatch_fn, op == 0 ? "url" : op == 1 ? "script" : "start");
+  JSValue arg = op == 0 ? JS_NewStringLen(ctx, s, (size_t) len) : JS_NewInt32(ctx, len);
+  JSValue v = JS_Call(ctx, f, dispatch_fn, 1, &arg);
+  JS_FreeValue(ctx, f); JS_FreeValue(ctx, arg); JS_FreeValue(ctx, v);
 }
 
 __attribute__((export_name("qjs_release")))
@@ -549,18 +568,27 @@ uint8_t *qjs_test262(const char *src, int32_t len) {
 #ifdef QJS_NATIVE
 #include <stdio.h>
 int32_t dom_get_element_by_id(const char *id, int32_t len) { return -6; }
-int32_t dom_document_element(int32_t which) { return -6; }
-int32_t dom_tag_name(int32_t node, char *buf, int32_t cap) { return -6; }
-int32_t dom_text_content_get(int32_t node, char *buf, int32_t cap) { return -6; }
 int32_t dom_text_content_set(int32_t node, const char *s, int32_t len) { return -6; }
 int32_t dom_get_attribute(int32_t node, const char *name, int32_t nlen, char *buf, int32_t cap) { return -6; }
 int32_t dom_set_attribute(int32_t node, const char *name, int32_t nlen, const char *value, int32_t vlen) { return -6; }
-int32_t dom_create_element(const char *name, int32_t len) { return -6; }
-int32_t dom_append_child(int32_t parent, int32_t child) { return -6; }
-int32_t dom_add_event_listener(int32_t node, const char *type, int32_t tlen, int32_t callback) { return -6; }
 int32_t dom_set_timer(int32_t callback, int32_t delay_ms, int32_t repeat) { return -6; }
 int32_t dom_clear_timer(int32_t timer) { return -6; }
 int32_t dom_console_log(const char *s, int32_t len) { return -6; }
+int32_t dom_node_info(int32_t node, int32_t which) { return -2; }
+int32_t dom_node_string(int32_t node, int32_t which, char *buf, int32_t cap) { return -2; }
+int32_t dom_node_children(int32_t node, int32_t unused, char *buf, int32_t cap) { return 0; }
+int32_t dom_create_node(int32_t kind, const char *s, int32_t len) { return -6; }
+int32_t dom_insert_before(int32_t parent, int32_t node, int32_t child) { return -6; }
+int32_t dom_remove_child(int32_t parent, int32_t child) { return -6; }
+int32_t dom_replace_child(int32_t parent, int32_t node, int32_t child) { return -6; }
+int32_t dom_remove_attribute(int32_t node, const char *name, int32_t nlen) { return -6; }
+int32_t dom_clone_node(int32_t node, int32_t deep) { return -6; }
+int32_t dom_tree_op(int32_t a, int32_t b, int32_t which) { return -6; }
+int32_t dom_listen(int32_t target, const char *type, int32_t tlen, int32_t callback, int32_t capture) { return -6; }
+int32_t dom_unlisten(int32_t callback) { return -6; }
+int32_t dom_dispatch_plan(int32_t target, const char *type, int32_t tlen, int32_t bubbles, char *buf, int32_t cap) { return -6; }
+int32_t dom_request_frame(int32_t callback) { return -6; }
+int32_t dom_cancel_frame(int32_t id) { return -6; }
 
 /* qjs-native FILE...: for each file, one line: FILE <tab> status <tab> text (400 bytes, one line) */
 int main(int argc, char **argv) {

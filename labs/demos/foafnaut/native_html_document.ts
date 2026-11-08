@@ -1,6 +1,6 @@
 import {pathToFileURL} from "node:url";
 import {resolve} from "node:path";
-import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource} from "./native_html_engine.ts";
+import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource,type ScriptTurn} from "./native_html_engine.ts";
 
 /** The view state of a page. Lean applies it; the host only keeps the values. */
 export type PageView={textScalePercent?:number;selection?:"all"|number[];shell?:unknown;live?:boolean};
@@ -131,6 +131,12 @@ export function refusalHTML(url:string,message:string) {
   const text=(s:string)=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`;
 }
+/** Page scripts (WebScripts.lean): the engine that holds the script session. A host sets
+one when its engine answers `scriptSession` info and the QuickJS guest module is loaded;
+with none, a page with scripts is refused, as before. */
+export type ScriptHost={start(source:string,url:string,resources:{nodeId:number;source:string}[]):Promise<ScriptTurn>|ScriptTurn};
+let scriptHost:ScriptHost|undefined;
+export function setScriptHost(host:ScriptHost|undefined){scriptHost=host;}
 /** The engine, or the same calls in a worker, which answer promises. prepareHTML awaits every call. */
 export type PageEngine=(Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText">&ImageHolder)|ImageHolder&{
   xmlStylesheet(...a:Parameters<HTMLEngine["xmlStylesheet"]>):Promise<ReturnType<HTMLEngine["xmlStylesheet"]>>;
@@ -153,8 +159,9 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     sources.push({kind:"XSLT source",url:sheet.url,source:sheet.source},{kind:"Generated page",url:document.url,source:document.source});
   }
   const inspection=await engine.inspect(document.source,{url:document.url});
-  if(inspection.scripts.some(script=>script.kind!=="data"))
-    throw new Error("Native HTML milestone does not execute scripts; classic/module script input is refused");
+  const scripted=inspection.scripts.some(script=>script.kind!=="data");
+  if(scripted&&!scriptHost)
+    throw new Error("Page scripts need the QuickJS guest module (--quickjs-wasm FILE) and an engine with scriptSession; this page is refused");
   if(inspection.stylesheets.length>MAX_RESOURCES)throw new Error("Native HTML exceeds 16 external stylesheets");
   let resourceBytes=0;
   for(const descriptor of inspection.stylesheets) {
@@ -169,11 +176,31 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // size caps. One that fails or is refused is left out, and the page shows its alt text.
   // An engine that holds images gets each one once, and renders name them.
   const images=await imageOptions(engine,await fetchImageBytes(inspection.images??[],document.url,signal));
-  const options={url:document.url,resources,...images};
+  const options:Record<string,unknown>={url:document.url,resources,...images};
+  // Page scripts: Lean runs them (WebScripts). The host only fetches the bytes of `src`
+  // scripts, as for stylesheets. The script session's commands are part of each render
+  // request, so a render replays them over the parsed page.
+  let script:{session:number;turn:ScriptTurn}|undefined;
+  if(scripted&&scriptHost) {
+    const supplied:{nodeId:number;source:string}[]=[];
+    for(const descriptor of inspection.scripts) {
+      if(descriptor.kind!=="classic"||!descriptor.src)continue;
+      signal?.throwIfAborted();
+      navigationURL(descriptor.url,inspection.baseURL,document.url);
+      const resource=await readSource(descriptor.url,signal);
+      sources.push({kind:"Script",url:resource.url,source:resource.source});
+      supplied.push({nodeId:descriptor.nodeId,source:resource.source});
+    }
+    const turn=await scriptHost.start(document.source,document.url,supplied);
+    script={session:turn.session,turn};
+    if(turn.commands?.length)options.commands=turn.commands;
+  }
   // Pages show in the font of loadFontFile, or else in the Lean bitmap face.
   signal?.throwIfAborted();
   return {
-    url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,
+    url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,script,
+    /** A later turn of the page's script session: its commands, when the DOM changed. */
+    applyTurn:(turn:ScriptTurn)=>{if(script)script.turn=turn;if(turn.changed&&turn.commands)options.commands=turn.commands;return turn.changed;},
     // What compile needs, as plain data, so the engine in a worker can run it.
     request:(_width:number,_height:number,view:PageView={})=>({source:document.source,options:{...options,...view} as Record<string,unknown>}),
     compile:(width:number,height:number,view:PageView={})=>engine.compile(document.source,width,height,{...options,...view}),
