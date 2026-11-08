@@ -48,7 +48,7 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "engine.mjs", "worker.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/html-webgpu/${name}`);
   }
-  for (const name of ["browser.mjs", "browser-worker.mjs"]) {
+  for (const name of ["browser.mjs", "browser-worker.mjs", "browser-state.mjs"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/foafnaut/${name}`);
   }
   eleventyConfig.addPassthroughCopy({ "../labs/demos/foafnaut/pages": "web/hub/foafnaut/pages" });
