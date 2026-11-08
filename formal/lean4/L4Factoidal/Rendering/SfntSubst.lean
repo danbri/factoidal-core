@@ -77,10 +77,13 @@ def featureLookups (b : ByteArray) (tbl : Nat) (tags : List String) (stages : Li
   need b (featureList + 2) (6 * nfl) "feature records"
   let indices := (List.range nf).map (fun k => u16 b (lang + 6 + 2 * k)) ++ (if required == 0xFFFF then [] else [required])
   -- One flag for each (stage, lookup index); reading them in order gives the
-  -- sorted, distinct list with no recursion.
+  -- sorted, distinct list with no recursion. The flags run to the largest lookup
+  -- index the features name, not to 65536: this runs for every word shaped, and
+  -- 65536 flags for each stage were most of the time of a page's first layout.
   let nStages := max stages.length 2
   let stageOf (tag : String) : Option Nat := stages.findIdx? (·.contains tag)
-  let mut used : Array Bool := Array.replicate (nStages * 65536) false
+  let mut named : Array (Nat × Nat) := #[]
+  let mut width := 1
   for fi in indices do
     if fi ≥ nfl then throw "font.file.malformed: GSUB feature index"
     let r := featureList + 2 + 6 * fi
@@ -92,10 +95,15 @@ def featureLookups (b : ByteArray) (tbl : Nat) (tags : List String) (stages : Li
       need b (f + 4) (2 * nl) "feature lookups"
       for j in [0:nl] do
         let stage := (stageOf tag).getD 1
-        used := used.set! (stage * 65536 + u16 b (f + 4 + 2 * j)) true
+        let lookup := u16 b (f + 4 + 2 * j)
+        named := named.push (stage, lookup)
+        width := max width (lookup + 1)
+  let mut used : Array Bool := Array.replicate (nStages * width) false
+  for (stage, lookup) in named do
+    used := used.set! (stage * width + lookup) true
   let mut out : Array (Nat × Nat) := #[]
-  for k in [0:nStages * 65536] do
-    if used[k]! then out := out.push (k / 65536, k % 65536)
+  for k in [0:nStages * width] do
+    if used[k]! then out := out.push (k / width, k % width)
   return out.toList
 
 /-- The result of one lookup at one position. -/
@@ -210,8 +218,11 @@ def lookupInfo (c : Ctx) (l : Nat) : Except String (Nat × (Nat × Option Nat) �
       throw s!"font.layout.unsupported: GSUB lookup {l} has type {t} (https://github.com/danbri/factoidal/issues/1233)"
   return (if ltype == 7 then (subs[0]?.map (·.1)).getD 7 else ltype, (flag, set?), subs)
 
-/-- Positions that a lookup flag does not skip. -/
+/-- Positions that a lookup flag does not skip. A flag with no ignore bits, no mark
+attachment type and no mark filtering set skips nothing, so no GDEF class is read:
+this runs at each position of each lookup of each word. -/
 def unskipped (c : Ctx) (flag : Nat × Option Nat) (run : Array NominalGlyph) : Except String (Array Bool) :=
+  if flag.2.isNone && flag.1 &&& 0xFF0E == 0 then pure (Array.replicate run.size true) else
   run.mapM fun g => do pure !(← skipsWithSet c.b c.gdef? flag.1 flag.2 (← gdefClasses c.b c.gdef? g.id) g.id)
 
 def nextOf (keep : Array Bool) (k : Nat) : Option Nat :=

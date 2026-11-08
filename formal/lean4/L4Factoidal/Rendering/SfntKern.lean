@@ -65,9 +65,18 @@ def classOf (b : ByteArray) (off g : Nat) : Except String Nat := do
   else if fmt == 2 then
     let n := u16 b (off + 2)
     need b (off + 4) (6 * n) "class ranges"
-    for k in [0:n] do
-      let r := off + 4 + 6 * k
-      if u16 b r ≤ g && g ≤ u16 b (r + 2) then return u16 b (r + 4)
+    -- The ranges are sorted by first glyph (OpenType ClassDef format 2), so a binary
+    -- search finds the range, as HarfBuzz does: this runs for each glyph of each lookup
+    -- of each word. 17 halvings cover 65536 ranges; a loop, not recursion.
+    let mut lo := 0
+    let mut hi := n
+    for _ in [0:17] do
+      if lo ≥ hi then break
+      let mid := (lo + hi) / 2
+      let r := off + 4 + 6 * mid
+      if g < u16 b r then hi := mid
+      else if u16 b (r + 2) < g then lo := mid + 1
+      else return u16 b (r + 4)
     return 0
   else throw s!"font.file.malformed: class definition format {fmt}"
 
