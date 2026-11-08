@@ -534,7 +534,7 @@ private def mix (c to : Rendering.Color) (p : Nat) : Rendering.Color :=
 /-- The theme with every colour faded `p` percent into the chrome's face. -/
 private def fade (t : Theme) (p : Nat) : Theme :=
   let m := fun c => mix c t.base p
-  ⟨t.base,m t.light,m t.dark,m t.ink,m t.well,m t.wellInk,m t.back,m t.muted,m t.accent,m t.coin,m t.selected⟩
+  ⟨t.base,m t.light,m t.dark,m t.ink,m t.well,m t.wellInk,m t.back,m t.muted,m t.accent,m t.coin,m t.selected,m t.selectedInk⟩
 
 /-- The site part of an address: the host of `scheme://host/...`; other addresses
 (`foafnaut:graph`) whole. -/
