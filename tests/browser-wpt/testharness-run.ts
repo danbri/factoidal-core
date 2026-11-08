@@ -42,6 +42,11 @@ import {fileURLToPath as fromFileUrl} from "node:url";
 const args=Deno.args,opt=(name:string,fallback="")=>{const i=args.indexOf(name);return i>=0?args[i+1]:fallback;};
 const here=dirname(fromFileUrl(import.meta.url)),root=resolve(here,"../.."),
   wpt=resolve(opt("--wpt-root",join(root,"third_party/testing/wpt-scripting")));
+// The pinned WPT copies, one tree to the tests: a path is in the first copy that has it
+// (the --wpt-root checkout, or wpt-scripting, first).
+const roots=[wpt,...["wpt-encoding","wpt-url","wpt-webapis"].map(r=>join(root,"third_party/testing",r))];
+const exists=(p:string)=>{try{Deno.statSync(p);return true;}catch{return false;}};
+const wptFile=(path:string)=>join(roots.find(r=>exists(join(r,path)))??wpt,path);
 const engineKind=opt("--engine","native");
 const scriptEngine=opt("--script-engine","quickjs");
 const quickjs=opt("--quickjs-wasm",join(Deno.env.get("HOME")??"","working/qjs-wasm/qjs-wasmvm.wasm"));
@@ -70,17 +75,17 @@ export type Case={file:string;harness:string;kind?:string;message?:string|null;s
 /** The tests of a directory: its own files that are testharness tests a window runs. */
 export function testsOf(dir:string):{file:string;skip?:string}[] {
   const out:{file:string;skip?:string}[]=[];
-  for(const e of [...Deno.readDirSync(join(wpt,dir))].sort((a,b)=>a.name<b.name?-1:1)) {
+  for(const e of [...Deno.readDirSync(wptFile(dir))].sort((a,b)=>a.name<b.name?-1:1)) {
     if(!e.isFile)continue;
     const n=e.name,file=`${dir}/${n}`;
     if(n.endsWith(".any.js")||n.endsWith(".window.js")) {
-      const meta=metaOf(Deno.readTextFileSync(join(wpt,file)));
+      const meta=metaOf(Deno.readTextFileSync(wptFile(file)));
       const globals=meta.filter(([k])=>k==="global").map(([,v])=>v).join(",");
       if(globals&&!/(^|,)\s*(window|default)\b/.test(globals)&&n.endsWith(".any.js"))out.push({file,skip:"no window global"});
       else out.push({file});
     } else if(n.endsWith(".worker.js"))out.push({file,skip:"worker"});
     else if(n.endsWith(".html")||n.endsWith(".xhtml")) {
-      const text=Deno.readTextFileSync(join(wpt,file));
+      const text=Deno.readTextFileSync(wptFile(file));
       if(!text.includes("/resources/testharness.js"))continue;
       if(n.includes("-manual"))out.push({file,skip:"manual"});
       else if(n.includes(".sub."))out.push({file,skip:"needs wptserve substitution"});
@@ -101,7 +106,7 @@ function metaOf(text:string):[string,string][] {
 const escapeHTML=(s:string)=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
 /** The page wptserve makes for a .any.js (window variant) or .window.js test. */
 export function wrapper(file:string):string {
-  const meta=metaOf(Deno.readTextFileSync(join(wpt,file)));
+  const meta=metaOf(Deno.readTextFileSync(wptFile(file)));
   const title=meta.find(([k])=>k==="title")?.[1];
   const long=meta.some(([k,v])=>k==="timeout"&&v==="long");
   const scripts=meta.filter(([k])=>k==="script").map(([,v])=>v);
@@ -119,8 +124,8 @@ function scriptFile(url:string):string|undefined {
   if(u.pathname==="/resources/testharnessreport.js")return join(here,"testharnessreport.js");
   // wptserve's one rewrite (tools/serve/serve.py `rewrites`).
   const pathname=u.pathname==="/resources/WebIDLParser.js"?"/resources/webidl2/lib/webidl2.js":u.pathname;
-  const path=join(wpt,decodeURIComponent(pathname));
-  return path.startsWith(wpt)?path:undefined;
+  const path=wptFile(decodeURIComponent(pathname));
+  return roots.some(r=>path.startsWith(r+"/"))?path:undefined;
 }
 
 function resultOf(file:string,logs:string[]):Case {
@@ -238,7 +243,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>}> {
     catch(e){if(!guest||!/no guest module/.test(String(e)))throw e;engine.scriptLoad(guest);return engine.scriptSession(html,request);}
   };
   return {info,run:async(file,page)=>{
-    const html=page?page.html:file.endsWith(".js")?wrapper(file):await Deno.readTextFile(join(wpt,file));
+    const html=page?page.html:file.endsWith(".js")?wrapper(file):await Deno.readTextFile(wptFile(file));
     const url=page?page.url:`${origin}/${pageOf(file)}`;
     const t0=performance.now();
     const facts=engine.inspect(html,{url}) as unknown as {scripts:{nodeId:number;src:string;url:string}[]};
@@ -266,9 +271,18 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>}> {
 async function benchBackend():Promise<{run:Run;info:Record<string,unknown>}> {
   const exe=opt("--bench",join(root,"formal/lean4/.lake/build/bin/wasmvm-bench"));
   const served=await Deno.makeTempDir({prefix:"wpt-served-"});
-  for(const d of ["dom","html","common"])await Deno.symlink(join(wpt,d),join(served,d));
-  await Deno.mkdir(join(served,"resources"));
-  for(const e of Deno.readDirSync(join(wpt,"resources")))await Deno.symlink(join(wpt,"resources",e.name),join(served,"resources",e.name));
+  // The union of the pinned copies: a directory in several copies is made, its entries linked.
+  const merge=async(rel:string)=>{
+    const dirs=roots.map(r=>join(r,rel)).filter(d=>exists(d)&&Deno.statSync(d).isDirectory);
+    await Deno.mkdir(join(served,rel),{recursive:true});
+    const names=new Set<string>();for(const d of dirs)for(const e of Deno.readDirSync(d))names.add(e.name);
+    for(const name of names){
+      const r=rel?`${rel}/${name}`:name,has=dirs.filter(d=>exists(join(d,name)));
+      if((has.length>1||r==="resources")&&Deno.statSync(join(has[0],name)).isDirectory)await merge(r);
+      else if(!exists(join(served,r)))await Deno.symlink(join(has[0],name),join(served,r));
+    }
+  };
+  await merge("");
   await Deno.symlink(join(here,"testharnessreport.js"),join(served,"resources/testharnessreport.js"));
   const gen=join(served,"generated");
   return {info:{engine:"wasmvm-bench page"},run:async(file:string)=>{
