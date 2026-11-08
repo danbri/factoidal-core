@@ -362,17 +362,34 @@ async function pageImageBytes(wanted){
 // the engine runtime by factoidal-builds) loads; otherwise the page shows without its scripts, as before. An
 // older engine answers "unknown document operation" (no new export is called, issue 1274).
 let engineScripts,scriptOps=[];
+// AOT (docs/designissues/2026-11-08-wasmvm-aot.md): an engine whose scriptSession info says
+// aot:true translates the guest (validated by Lean) into a module for this browser's own
+// WebAssembly engine, which then runs QuickJS at near native speed. Lean still decides
+// everything: it asks for the instance and for each run of an export (drive), every import
+// of the guest is a Lean host function (aotImports), and the DOM commands and the event
+// loop stay Lean's. This code only copies bytes and calls what Lean names. Without aot in
+// the info, or when the module does not compile, the guest runs in WasmVM as before.
+let aot,guest;
 async function hasScripts(){
   if(engineScripts!==undefined)return engineScripts;
   engineScripts=false;
-  try{scriptOps=call('',{op:'scriptSession',action:'info'}).ops??[];if(!scriptOps.includes('start'))return false;}catch{return false;}
+  let info;
+  try{info=call('',{op:'scriptSession',action:'info'});scriptOps=info.ops??[];if(!scriptOps.includes('start'))return false;}catch{return false;}
   try{
     const response=await fetch(new URL('../wasm-guests/qjs-wasmvm.wasm',import.meta.url));
     if(!response.ok)return false;
     const bytes=new Uint8Array(await response.arrayBuffer());
     // An engine with scriptSession takes the five arguments of the bytes call.
     fontBytesTakeFallback=true;
-    fontLoad(bytes,'guest:quickjs','',false);
+    if(info.aot===true&&typeof module._web_document_call_bin==='function'){
+      try{
+        fontLoad(bytes,'guest:quickjs-aot','',false);
+        const {head,sections}=callSections('',{op:'scriptSession',action:'aotModule'});
+        aot={head,compiled:await WebAssembly.compile(sections[0])};
+      }catch(error){aot=undefined;console.warn('foafnaut: page scripts in WasmVM, not AOT:',String(error.message??error));}
+    }
+    if(!aot)fontLoad(bytes,'guest:quickjs','',false);
+    scriptStats.path=aot?'aot':'wasmvm';
     engineScripts=true;
   }catch(error){console.warn('foafnaut: page scripts off:',String(error.message??error));}
   return engineScripts;
@@ -388,6 +405,82 @@ function startPendingScripts(page){
     catch(error){console.warn('foafnaut: page scripts did not start:',String(error.message??error));}
   },120);
 }
+// A request answered as bytes: the JSON head and its raw sections (WebDocument.packAnswer).
+function callSections(source,options){
+  const pointer=module.ccall('web_document_call_bin','number',['string','string','number','number','number'],[source,JSON.stringify(options),1,1,0]);
+  if(!pointer)throw Error('Lean engine allocation failed');
+  let buffer;
+  try{const heap=module.HEAPU8;buffer=heap.slice(pointer,pointer+new DataView(heap.buffer,pointer,4).getUint32(0,true)).buffer;}
+  finally{module.ccall('web_render_free',null,['number'],[pointer]);}
+  const view=new DataView(buffer),headSize=view.getUint32(4,true),count=view.getUint32(8,true);
+  let offset=12+4*count;
+  const head=JSON.parse(textDecoder.decode(new Uint8Array(buffer,offset,headSize)));
+  if(head?.error)throw Error(head.error);
+  offset+=headSize;
+  const sections=[];
+  for(let i=0;i<count;i++){const length=view.getUint32(12+4*i,true);sections.push(new Uint8Array(buffer,offset,length));offset+=(length+3)&~3;}
+  return {head,sections};
+}
+const toBase64=bytes=>{let text='';for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(text);};
+function writeGuest(writes){
+  if(!writes?.length)return;
+  const memory=new Uint8Array(guest.exports[aot.head.memory].buffer);
+  for(const [at,data] of writes){const text=atob(data);for(let i=0;i<text.length;i++)memory[at+i]=text.charCodeAt(i);}
+}
+// The guest's imports: import k calls Lean's host function for binding k with the bytes of
+// the ranges Lean's table says it reads, and copies back what Lean wrote.
+function aotImports(session){
+  const imports={};
+  aot.head.imports.forEach((imp,k)=>{
+    imports[imp.name]=(...args)=>{
+      const memory=new Uint8Array(guest.exports[aot.head.memory].buffer),reads=[];
+      for(const [p,l,bound] of imp.reads){const at=args[p]>>>0,length=args[l]>>>0;if(length<=bound&&at+length<=memory.length)reads.push([at,toBase64(memory.subarray(at,at+length))]);}
+      scriptStats.hostCalls++;
+      const answer=call('',{op:'scriptSession',action:'host',session,id:k,args:args.map(a=>typeof a==='bigint'?String(a):a),
+        memSize:memory.length,reads,fuel:String(guest.exports[aot.head.fuel].value)},1,1,false);
+      if(answer.trap!==undefined)throw new WebAssembly.RuntimeError(answer.trap);
+      if(answer.exit!==undefined)throw Object.assign(Error('exit'),{aotExit:answer.exit});
+      writeGuest(answer.writes);
+      return imp.results[0]==='i64'?BigInt(answer.results[0]):answer.results[0];
+    };
+  });
+  return imports;
+}
+// Do what Lean asks until the turn's answer comes: a fresh instance, a run of an export with
+// the fuel Lean gives, or bytes of the guest's memory.
+function drive(answer){
+  try{
+    while(answer?.aot){
+      writeGuest(answer.writes);
+      const ask=answer.aot;let reply;
+      if(ask.do==='instantiate'){
+        try{guest=new WebAssembly.Instance(aot.compiled,{[aot.head.importModule]:aotImports(answer.session)});reply={memSize:guest.exports[aot.head.memory].buffer.byteLength};}
+        catch(error){reply={error:String(error.message??error)};}
+      }else if(ask.do==='invoke'){
+        const fuel=guest.exports[aot.head.fuel];fuel.value=BigInt(ask.fuel);
+        try{const r=guest.exports[ask.export](...ask.args);reply={values:r===undefined?[]:[r>>>0]};}
+        catch(error){reply=error?.aotExit!==undefined?{exit:error.aotExit}:{trap:String(error.message??error)};}
+        reply.fuel=String(fuel.value);reply.memSize=guest.exports[aot.head.memory].buffer.byteLength;
+      }else if(ask.do==='read'){
+        const memory=new Uint8Array(guest.exports[aot.head.memory].buffer);
+        reply=ask.ptr+ask.len<=memory.length?{bytes:toBase64(memory.subarray(ask.ptr,ask.ptr+ask.len))}:{error:'out of bounds memory access'};
+      }else reply={error:'unknown ask'};
+      answer=call('',{op:'scriptSession',action:'resume',session:answer.session,reply},1,1,false);
+    }
+    if(aot)writeGuest(answer?.writes);
+  }catch(error){try{call('',{op:'scriptSession',action:'close'});}catch{}throw error;}
+  return answer;
+}
+// One scriptSession action: the call, then what it asks of the guest (AOT); timed for the stats.
+function scriptCall(source,request){
+  const t0=performance.now();let answer;
+  try{answer=drive(call(source,request));}catch(error){scriptStats.error=String(error.message??error);throw error;}
+  scriptStats.turns++;scriptStats.lastMs=Math.round((performance.now()-t0)*100)/100;scriptStats.ms+=scriptStats.lastMs;
+  scriptStats.instructions=answer?.instructions;
+  return answer;
+}
+// Page script timings for ?stats=1 and the measurements (window.foafnautFrame.scripts).
+const scriptStats={path:'none',turns:0,ms:0,lastMs:0,hostCalls:0,instructions:0};
 async function startScripts(page,scripts){
   const resources=[];
   for(const s of scripts)if(s.kind==='classic'&&s.src){
@@ -397,7 +490,9 @@ async function startScripts(page,scripts){
   // The viewport and the render request that lays the page out for its scripts' layout
   // reads (clientWidth, getBoundingClientRect); an engine without them ignores the fields.
   const layout={url:page.url,...(page.images?{images:page.images}:{}),...(page.heldImages?{heldImages:page.heldImages}:{}),textScalePercent:percent};
-  const turn=call(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,shell:shell(),layout});
+  // The first page of a session starts before the history exists: no shell then.
+  const turn=scriptCall(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,...(history?{shell:shell()}:{}),layout});
+  scriptStats.startMs=scriptStats.lastMs;
   page.script={session:turn.session,turn,epoch:performance.now()-turn.clock};
   scriptTurn(page,turn);
 }
@@ -453,7 +548,7 @@ async function gpuShow(){
       post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,
         stats:{path:surfaceCanvas?'page-gpu':'page-gpu-readback',layoutMs:0,drawMs:Math.round(done-start),totalMs:Math.round(done-start),
           primitives:0,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent,leanRenders:0,leanCalls,chromeRenders,
-          pageGpu:layerSurface.pageGpuStats,bandTop:current.answer.layers.bandTop,offset}},rgba?[rgba.buffer]:[]);
+          pageGpu:layerSurface.pageGpuStats,scripts:{...scriptStats},bandTop:current.answer.layers.bandTop,offset}},rgba?[rgba.buffer]:[]);
     }while(gpuAgain);
   }catch(error){console.warn('foafnaut: page GPU frame:',String(error.message??error));}
   finally{gpuBusy=false;}
@@ -470,14 +565,14 @@ setInterval(()=>{
   // advance (each one running every frame it missed): the virtual clock moves at most
   // 100 ms past the page's own clock per advance, and the epoch slips by the rest.
   if(elapsed-script.turn.clock>100){script.epoch+=elapsed-script.turn.clock-100;elapsed=script.turn.clock+100;}
-  try{scriptTurn(doc,call('',{op:'scriptSession',action:'advance',session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock))}));}
+  try{scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'advance',session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock))}));}
   catch(error){console.warn('foafnaut: page script timers:',String(error.message??error));script.turn.nextWake=null;}
 },16);
 function scriptClick(x,y){
   const script=doc?.script;if(!script)return;
   try{
     const node=call(doc.source,{op:'nodeAt',url:doc.url,textScalePercent:percent,shell:shell(),...(doc.commands?{commands:doc.commands}:{}),x,y},width,height).node;
-    if(typeof node==='number')scriptTurn(doc,call('',{op:'scriptSession',action:'click',session:script.session,node}));
+    if(typeof node==='number')scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'click',session:script.session,node}));
   }catch(error){console.warn('foafnaut: page script click:',String(error.message??error));}
 }
 // Pointer input for page scripts: Lean finds the target and its coordinates (nodeAt), then
@@ -490,13 +585,13 @@ function scriptPointer(kind,x,y,pointerType){
     const at=call(doc.source,{op:'nodeAt',url:doc.url,textScalePercent:percent,shell:shell(),...(doc.commands?{commands:doc.commands}:{}),x,y},width,height);
     if(typeof at.node!=='number')return;
     const down=kind==='down'||kind==='move';
-    scriptTurn(doc,call('',{op:'scriptSession',action:'pointer',session:script.session,kind,...at,button:0,buttons:down?1:0,
+    scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'pointer',session:script.session,kind,...at,button:0,buttons:down?1:0,
       pressure:down?0.5:0,pointerType:pointerType??'mouse'}));
   }catch(error){console.warn('foafnaut: page script pointer:',String(error.message??error));}
 }
 function scriptResize(){
   const script=doc?.script;if(!script||!scriptOps.includes('resize'))return;
-  try{scriptTurn(doc,call('',{op:'scriptSession',action:'resize',session:script.session,width,height,shell:shell()}));}
+  try{scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'resize',session:script.session,width,height,shell:shell()}));}
   catch(error){console.warn('foafnaut: page script resize:',String(error.message??error));}
 }
 // foafnaut:wasm (issue 1244): WebAssembly run by WasmVM, the engine written in Lean, inside this
@@ -925,7 +1020,7 @@ async function draw(){
       post({type:'frame',width,height,title:shown.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
         stats:{path,layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
           pixelHash,primitives:frame.primitiveCount,url:shown.url,address:field.address,scroll,tabs:tabs.length,theme,percent,
-          leanRenders:leanRenders-calls,leanCalls,chromeRenders,collapse:foldNow(),rows:Math.round(frame.data.length/4),...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{}),
+          leanRenders:leanRenders-calls,leanCalls,chromeRenders,collapse:foldNow(),rows:Math.round(frame.data.length/4),scripts:{...scriptStats},...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{}),
           // For hub_links_check.mjs: the links of a one-frame view, and who routes them.
           ...(statsMode&&layered===false?{links:frame.webRender.links,routes:router.lean?'lean':'fallback'}:{})}},rgba?[rgba.buffer]:[]);
       if(!phasesPosted){phasesPosted=true;post({type:'phases',phases});firstFrameSeen();}
@@ -962,7 +1057,7 @@ async function shift(){
     const done=performance.now(),rgba=surfaceCanvas?undefined:pixels;
     post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
       stats:{path:surfaceCanvas?'shift':'shift-readback',layoutMs:0,drawMs:Math.round(done-start),totalMs:Math.round(done-start),pixelHash:pixels?L.hashPixels(pixels):undefined,
-        primitives:0,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent,leanRenders:0,leanCalls,chromeRenders,collapse:fold,chromeMs,top:current.answer.layers.top,rows:Math.round(current.answer.page.data.length/4),bandTop:current.answer.layers.bandTop,offset}},rgba?[rgba.buffer]:[]);
+        primitives:0,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent,leanRenders:0,leanCalls,chromeRenders,collapse:fold,chromeMs,scripts:{...scriptStats},top:current.answer.layers.top,rows:Math.round(current.answer.page.data.length/4),bandTop:current.answer.layers.bandTop,offset}},rgba?[rgba.buffer]:[]);
   }catch(error){
     console.warn('foafnaut: composite failed, drawing a Lean frame:',String(error));
     try{layerSurface?.close();}catch{/* gone */}layerSurface=undefined;current=undefined;dirty=true;

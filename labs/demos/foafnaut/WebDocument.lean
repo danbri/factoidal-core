@@ -787,7 +787,7 @@ def fontLoadBin (bytes : ByteArray) (family sha256 : String) (fallback : UInt32)
   let request := JSON.Json.object [("op",.string "fontLoad"),("fontFamily",.string family),
     ("fontSha256",.string sha256),("fontBytes",.number (toString bytes.size)),("fallback",.bool (fallback != 0))]
   -- The guest module of page scripts comes the same way, as bytes (WebScripts).
-  let loaded := if family == "guest:quickjs" then WebScripts.loadModuleBytes bytes request
+  let loaded := if family == "guest:quickjs" || family == "guest:quickjs-aot" then WebScripts.loadModuleBytes family bytes request
     else loadFontBytes bytes family sha256 (fallback != 0) request
   match loaded with
   | .ok value => value | .error message => WebRender.errorJSON message
@@ -1274,7 +1274,7 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     return ((JSON.Json.object [("source",.string source),("engine",.string engine)]).toString,#[])
   if let some answer ← inputOp (str request "op" "render") request then return (answer,#[])
   -- Page scripts run by Lean: QuickJS in WasmVM on the page's arena (WebScripts).
-  if let some answer ← WebScripts.op (str request "op" "render") html request (fun r => some (measure r)) then return (answer,#[])
+  if let some answer ← WebScripts.opSections (str request "op" "render") html request (fun r => some (measure r)) then return answer
   let op := str request "op" "render"
   if op != "render" && op != "selectedText" && op != "printLayout" && op != "nodeAt" then
     let dom ← prepareDOM html request
