@@ -113,10 +113,13 @@ def Loaded.run (l : Loaded) (caps : Caps IO) (name : String) (args : Array Value
     (extra : String → String → Array Value → Store → IO (Store × HostResult) :=
       fun _ _ _ st => pure (st, .trap "no host function")) :
     IO (Loaded × Outcome) := do
-  match l.store.export? l.inst name with
+  -- Take the store out of `l` first: while `l` also held it, the run's first memory
+  -- write copied the whole memory.
+  let ⟨st, inst, mem, bs⟩ := l
+  match st.export? inst name with
   | some (.func fa) =>
-    let (st, o) ← runIO l.store fa args lim (host caps l.mem l.bindings extra)
-    return ({ l with store := st }, o)
-  | _ => return (l, .trap (.host s!"no export {name}"))
+    let (st, o) ← runIO st fa args lim (host caps mem bs extra)
+    return (⟨st, inst, mem, bs⟩, o)
+  | _ => return (⟨st, inst, mem, bs⟩, .trap (.host s!"no export {name}"))
 
 end L4Factoidal.WasmVM.Wasi

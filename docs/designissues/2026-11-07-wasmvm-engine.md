@@ -36,7 +36,7 @@ only (the spec-test runner also imports `Lean.Data.Json`).
 | `SpecTest` | `lake exe wasmvm-spectest` |
 | `Tests.Memory`, `Tests.Proposals`, `Tests.Wasi` | run after the spec tests (legacy exceptions, 10^6 tail calls, `try_table` cost, WASI) |
 | `Wasi`, `WasiIO` | WASI Preview 1 host, deny by default (`Tests.Wasi`: `lake exe wasmvm-bench wasi`) |
-| `Bench` | `lake exe wasmvm-bench` (`Bench.Core`: `l4core FILE` loads `l4factoidal.wasm`) |
+| `Bench` | `lake exe wasmvm-bench` (`Bench.Core`: `l4core FILE` loads `l4factoidal.wasm`; `Bench.HarfBuzz`: `harfbuzz WASM`) |
 
 ## API
 
@@ -716,6 +716,80 @@ file: /dev/urandom". The first fix served it as a file of constant bytes; since
 18 s for `l4_init` is the module initialisers run by the interpreter (it calls
 `clock_time_get` 8697 times); not measured further.
 
+## HarfBuzz in the VM
+
+2026-11-08. HarfBuzz 15.0.0 (MIT, "Old MIT" licence in its `COPYING`;
+https://github.com/harfbuzz/harfbuzz, tag `15.0.0`, commit 35f656a1a2) compiled to a
+standalone WebAssembly module and shaping text inside WasmVM. Licence policy:
+permissive, so it is fine to use; the binary is NOT in the repository. The owner
+decides later whether it is vendored or built.
+
+**Build** (`tools/wasmvm/build-harfbuzz.sh [WORKDIR]`, default `~/working/hb-wasm`):
+a shallow clone at the pinned tag (the script checks the commit), then Emscripten
+6.0.8 (`/opt/homebrew/bin/emcc`) on the amalgamated `src/harfbuzz.cc` and the entry
+point `tools/wasmvm/harfbuzz/hb_wasmvm_entry.c`:
+
+    emcc -Oz -std=c++17 -fno-exceptions -fno-rtti -DHB_NO_MT -mno-simd128 -c harfbuzz.cc
+    emcc -Oz -mno-simd128 -c hb_wasmvm_entry.c
+    emcc -Oz -fno-exceptions -mno-simd128 harfbuzz.o entry.o \
+      -sSTANDALONE_WASM --no-entry -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=4MB
+
+No threads (`HB_NO_MT`), no C++ exceptions, no SIMD. HarfBuzz's own OpenType shapers
+are in the default build; its experimental Wasm shaper (`HB_HAS_WASM`) is off unless a
+build defines it, and this one does not.
+
+| Build | size | instructions per call (the 6 strings) | calls per second |
+|---|---|---|---|
+| `-Oz` (the script's default) | 591 580 bytes | 16 858 to 36 383 | 2631 to 4810 |
+| `-O2` (`HB_BOTH=1`) | 916 953 bytes | 11 506 to 26 571 | 3654 to 6824 |
+
+**Imports**: `wasi_snapshot_preview1` `fd_write`, `fd_close`, `fd_seek`,
+`environ_sizes_get`, `environ_get` (HarfBuzz reads `HB_OPTIONS` with `getenv`), and
+`env.emscripten_notify_memory_growth` (the harness gives a function that does
+nothing). Capabilities given: an empty environment and output forwarded; no clock, no
+randomness, no files. **Wasm features used** (`wasm-tools print`): sign extension
+(`i32.extend8_s`, `i32.extend16_s`, `i64.extend16_s`), non-trapping float-to-int
+(`i32/i64.trunc_sat_*`), bulk memory (`memory.copy`, `memory.fill`); no SIMD, no
+exceptions, no tail calls. `wasm-tools validate` passes with the MVP plus those and
+no SIMD. WasmVM runs all of them, so no instruction is missing.
+
+**Entry point** (`hbw_shape(font, font_len, text, text_len, out, out_cap) -> count`):
+UTF-8 text, segment properties guessed (`hb_buffer_guess_segment_properties`, as
+`hb-shape` does), font scale = units per em, no features; 6 i32 per glyph (id,
+cluster as a UTF-8 byte offset, x and y advance, x and y offset), in font units. The
+face and font of the last font pointer are kept, so many strings with one font load
+it once. `hbw_alloc`, `hbw_free` give the host memory to write into.
+
+**Run** (`lake exe wasmvm-bench harfbuzz WASM [N]`, `Bench/HarfBuzz.lean`): load
+with the WASI host (114 ms for decode, validate, link and instantiate of the `-Oz`
+build; 170 ms for `-O2`), `_initialize`, copy the fonts
+`third_party/fonts/noto-sans/NotoSans-Regular.ttf` and
+`third_party/fonts/noto-sans-armenian/NotoSansArmenian-Regular.ttf` into its memory,
+shape, and compare with the native `hb-shape` 15.0.0 (Homebrew; the same release)
+run with `--no-glyph-names --utf8-clusters --output-format=json`. Glyph ids, clusters,
+advances and offsets:
+
+| Case | Text | Font | Result (WasmVM, glyph@cluster+advance<offset>) | Native |
+|---|---|---|---|---|
+| ffi ligature | `office` | Noto Sans | 82@0+605, 1656@1+946, 70@4+480, 72@5+564 | same |
+| kerning | `AVATAR Wo` | Noto Sans | 36@0+599, 57@1+560, 36@2+569, 55@3+486, 36@4+639, 53@5+622, 3@6+260, 58@7+910, 82@8+605 | same |
+| combining marks | `e` U+0301 `a` U+0308 U+0323 | Noto Sans | 171@0+564 (composed é), 759@3+561, 2662@3+0<-279,0> | same |
+| stacked marks | `x` U+0301 U+0302 U+0303 | Noto Sans | 91@0+529, 2665@0+0<6,0>, 2667@0+0<-268,229>, 2671@0+0<42,458> | same |
+| Armenian | `Բարև ձեզ` | Noto Sans Armenian | 9@0+696, 55@2+920, 87@4+597, 94@6+630, 6@8+260, 71@9+599, 59@11+597, 60@13+600 | same |
+| Armenian ligature | U+FB13 ` մն` | Noto Sans Armenian | 102@0+1195, 6@3+260, 102@4+1195 | same |
+
+**6 of 6 agree with native HarfBuzz; 0 differences.** The Lean shaper
+(`Rendering/SfntShape.lean`) was not compared in this step; the native tool covers
+all six cases.
+
+**Speed** (500 calls per string, Apple M1, other builds running): 2631 to 4810
+shaping calls per second for the `-Oz` build, 3654 to 6824 for `-O2`; 80 to 97
+million Wasm instructions per second, about half of `fib` in the engine benchmark
+(this code is call- and memory-heavy). Native HarfBuzz speed was not measured here.
+
+`WasiIO.Loaded.run` takes the store out of the `Loaded` record before the run: while
+the record also held it, the first memory write of a run would copy the whole memory.
+
 ## Trusted pieces
 
 Code whose meaning is not checked by Lean's kernel, in the engine and its tools. Lean's
@@ -795,7 +869,7 @@ Open obligations (stated, not proved):
    compares through `Step_pure.relop`), then `Run.step_refines` with the abstraction to
    `Spec.config`.
 3. Proposals in the order of the planned uses: SIMD (HarfBuzz builds use it when
-   enabled), memory64, GC. Exceptions, tail calls and `call_ref` are done (stage 2).
+   enabled; ours is built without it, "HarfBuzz in the VM"), memory64, GC. Exceptions, tail calls and `call_ref` are done (stage 2).
    Why `l4factoidal.wasm`'s `l4_init` takes 18 s (its host now has real randomness:
    "WASI Preview 1").
 4. Parallel compile by chunks of equal byte size; decode without the per-section
