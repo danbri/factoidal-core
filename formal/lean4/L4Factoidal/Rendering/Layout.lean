@@ -242,6 +242,14 @@ def replacedBox (id : Nat) (s : Computed) (w h : Float) (content : Float → Flo
   (m.left+bw+m.right,m.top+bh+m.bottom,
    (decorations id s m.left m.top bw bh).toList ++ content (m.left+b.left+p.left) (m.top+b.top+p.top))
 
+/-- CSS 2.1 §10.3.3: how far `margin-left: auto` moves a block-level box whose margin
+box is `outer` wide in a containing block `available` wide. Both auto: half the room
+each, so the box is centred; only the left: all of it. No room: none. -/
+def autoMarginShift (s : Computed) (available outer : Float) : Float :=
+  let free := available-outer
+  if free <= 0 || !s.autoMarginLeft then 0
+  else if s.autoMarginRight then free/2 else free
+
 /-- The width that margins, borders and padding add to a box. -/
 private def horizontalEdges (s : Computed) : Float :=
   s.margin.left+s.margin.right+s.borderEdges.left+s.borderEdges.right+s.padding.left+s.padding.right
@@ -500,6 +508,12 @@ private def preformatted : Inline → Bool
 positioned glyph runs are consumed to paint the actual word geometry. -/
 def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Float)
     (strut : Option Computed := none) : Except String Result := do
+  -- CSS Text 3 §6.1 `text-align` of the block container (`strut`): a line `w` wide starts
+  -- this far in. A line wider than the room starts at the left edge.
+  let indent := fun (w : Float) => match (strut.map (·.textAlign)).getD .start with
+    | .start => 0
+    | .right => max 0 (available-w)
+    | .center => max 0 ((available-w)/2)
   let mut out : Result := {}
   let mut cursorX : Float := 0
   let mut pendingSpace : Option (Nat × Computed) := none
@@ -518,7 +532,7 @@ def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Fl
         pendingSpace := none
       else pendingSpace := some (source,s)
     | .lineBreak _ =>
-      let row ← lineLayout font (line.push (cursorX,item)) x (y+out.height) strut
+      let row ← lineLayout font (line.push (cursorX,item)) (x+indent cursorX) (y+out.height) strut
       out := appendResult out {row with height := if row.height > 0 then row.height else 19.2}
       line := #[]
       cursorX := 0
@@ -530,7 +544,7 @@ def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Fl
         | none => pure 0
         else pure 0
       if cursorX > 0 && cursorX+gap+width > available && !preformatted item then
-        out := appendResult out (← lineLayout font line x (y+out.height) strut)
+        out := appendResult out (← lineLayout font line (x+indent cursorX) (y+out.height) strut)
         line := #[]
         cursorX := 0
       else
@@ -540,7 +554,7 @@ def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Fl
       line := line.push (cursorX,item)
       cursorX := cursorX+width
       pendingSpace := none
-  if !line.isEmpty then out := appendResult out (← lineLayout font line x (y+out.height) strut)
+  if !line.isEmpty then out := appendResult out (← lineLayout font line (x+indent cursorX) (y+out.height) strut)
   return out
 
 private def append (a b : Result) : Result :=
@@ -556,8 +570,10 @@ private def atomicBox (font : FontProfile) (id : Nat) (s : Computed) (items : Ar
   let m := s.margin
   let room := max 0 (available-m.left-m.right-b.left-b.right-p.left-p.right)
   let fixed := CSS.resolve available s.width
-  let content ← inlineLayout font items 0 0 (fixed.getD room) (some s)
+  let content ← inlineLayout font items 0 0 (fixed.getD room) (some {s with textAlign := .start})
   let used := fixed.getD (content.boxes.foldl (fun w box => max w (box.x+box.width)) 0)
+  -- Lines are aligned in the width the box has (`text-align`), once it is known.
+  let content ← if s.textAlign == .start then pure content else inlineLayout font items 0 0 used (some s)
   let height := match s.height with
     | .percent _ => content.height
     | _ => max 0 ((CSS.resolve 0 s.height).getD content.height)
@@ -628,7 +644,7 @@ private def Result.shiftY (r : Result) (dy : Float) : Result :=
 its parent's, with no box edges (an anonymous box has none). -/
 private def anonymousBox (base : Computed) : Computed :=
   {base with padding := {}, margin := {}, background := none, width := .auto, height := .auto,
-             verticalAlign := .baseline}
+             verticalAlign := .baseline, autoMarginLeft := false, autoMarginRight := false}
 private def cellStyle (styles : Array Computed) : Table.Source → Computed
   | .element id => styles[id]!
   | .anonymous parent _ => anonymousBox styles[parent]!
@@ -806,7 +822,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         else Table.distribute cols target
       let contentWidth := max contentWidth (Table.extent widths hs)
       let borderWidth := contentWidth+padX
-      let outerX := x+frame.margin.left
+      let outerX := x+autoMarginShift ts available (frame.margin.left+borderWidth+frame.margin.right)+frame.margin.left
       let innerX := outerX+frame.padding.left
       let colX := Table.offsets widths hs
       -- Each cell laid out once, at its column and at the top; moved down when the rows are known.
@@ -886,17 +902,26 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let margin := s.margin
       let padding := s.padding
       let border := s.borderEdges
-      let outerX := x+margin.left
+      let edgesX := border.left+border.right+padding.left+padding.right
+      -- CSS 2.1 §10.4: the width, then `max-width`, then `min-width` (a minimum wins).
+      let width := (CSS.resolve available s.width).getD (available-margin.left-margin.right-edgesX)
+      let width := match CSS.resolve available s.maxWidth with
+        | some m => min width m
+        | none => width
+      let width := max 0 (max ((CSS.resolve available s.minWidth).getD 0) width)
+      -- §10.3.3: auto margins share the room the box leaves.
+      let shift := autoMarginShift s available (margin.left+width+edgesX+margin.right)
+      let outerX := x+shift+margin.left
       let outerY := y+margin.top
-      let width := max 0 ((CSS.resolve available s.width).getD
-        (available-margin.left-margin.right-border.left-border.right-padding.left-padding.right))
       let innerX := outerX+border.left+padding.left
       let innerY := outerY+border.top+padding.top
-      -- A block-level replaced element: its margin box at the start of the line.
+      -- A block-level replaced element: its margin box at the start of the line, or where
+      -- its auto margins put it.
       let replaced := fun (w h : Float) (content : Float → Float → List Node) (s : Computed) =>
         let (ow,oh,nodes) := replacedBox id s w h content
-        ({nodes := #[.group none (translate x y) nodes],
-          boxes := #[⟨id,outerX,outerY,ow-margin.left-margin.right,oh-margin.top-margin.bottom⟩],height := oh} : Result)
+        let dx := autoMarginShift s available ow
+        ({nodes := #[.group none (translate (x+dx) y) nodes],
+          boxes := #[⟨id,x+dx+margin.left,outerY,ow-margin.left-margin.right,oh-margin.top-margin.bottom⟩],height := oh} : Result)
       if let some picture := pictures id then
         let (w,h) := replacedSize s (some picture.size) available
         return replaced w h (fun cx cy => pictureNodes id s picture cx cy w h) s

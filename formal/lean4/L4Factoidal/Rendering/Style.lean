@@ -52,6 +52,9 @@ inductive VerticalAlign where | baseline | top | middle | bottom
 /-- CSS Images 3 §5.5 `object-fit`: how a replaced element's content fills its box. -/
 inductive ObjectFit where | fill | contain | cover | none | scaleDown
   deriving Repr, BEq
+/-- CSS Text 3 §6.1 `text-align` of this profile; with no bidi, `start` is `left`. -/
+inductive TextAlign where | start | right | center
+  deriving Repr, BEq
 /-- CSS Backgrounds 3 §4.2 line styles of this profile. -/
 inductive BorderStyle where | none | solid | inset | outset
   deriving Repr, BEq
@@ -94,6 +97,12 @@ structure Computed where
   minHeight : Length := .auto
   maxHeight : Length := .auto
   objectFit : ObjectFit := .fill
+  /-- `text-align` (inherited): where the lines of a block container sit. -/
+  textAlign : TextAlign := .start
+  /-- `margin-left: auto` and `margin-right: auto` (CSS 2.1 §10.3.3): the used margin
+  takes the room a block-level box leaves; `margin` holds 0 on such a side. -/
+  autoMarginLeft : Bool := false
+  autoMarginRight : Bool := false
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -107,7 +116,7 @@ def htmlProperties : List String :=
    "line-height","visibility","overflow","text-decoration","text-decoration-line",
    "border","border-width","border-style","border-color",
    "border-spacing","border-collapse","caption-side","vertical-align","table-layout",
-   "min-width","max-width","min-height","max-height","object-fit"]
+   "min-width","max-width","min-height","max-height","object-fit","text-align"]
 
 /-- CSS Backgrounds 3 §4.3: the computed border width is 0 when the style is none. -/
 def Computed.borderEdges (s : Computed) : Edges :=
@@ -445,9 +454,18 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   | "margin" => return {s with margin := ← edgeValues d.value}
   | "padding" => return {s with padding := ← edgeValues d.value}
   | "margin-top" => return {s with margin := {s.margin with top := ← edgePixel d.value}}
-  | "margin-right" => return {s with margin := {s.margin with right := ← edgePixel d.value}}
+  | "margin-right" =>
+    if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with right := 0}, autoMarginRight := true}
+    return {s with margin := {s.margin with right := ← edgePixel d.value}, autoMarginRight := false}
   | "margin-bottom" => return {s with margin := {s.margin with bottom := ← edgePixel d.value}}
-  | "margin-left" => return {s with margin := {s.margin with left := ← edgePixel d.value}}
+  | "margin-left" =>
+    if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with left := 0}, autoMarginLeft := true}
+    return {s with margin := {s.margin with left := ← edgePixel d.value}, autoMarginLeft := false}
+  | "text-align" => match (trim d.value).toLower with
+    | "left" | "start" => return {s with textAlign := .start}
+    | "right" | "end" => return {s with textAlign := .right}
+    | "center" => return {s with textAlign := .center}
+    | _ => throw "unsupported CSS text-align"
   | "padding-top" => return {s with padding := {s.padding with top := ← edgePixel d.value}}
   | "padding-right" => return {s with padding := {s.padding with right := ← edgePixel d.value}}
   | "padding-bottom" => return {s with padding := {s.padding with bottom := ← edgePixel d.value}}
@@ -696,7 +714,8 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
     display := if hidden then .none else if block then .block else tableDisplay n.lname,
     margin := startMargin n.lname fontSize,
     borderSpacingX := parent.borderSpacingX, borderSpacingY := parent.borderSpacingY,
-    borderCollapse := parent.borderCollapse, captionBottom := parent.captionBottom}
+    borderCollapse := parent.borderCollapse, captionBottom := parent.captionBottom,
+    textAlign := parent.textAlign}
   if n.ns == some DOM.htmlNS || n.ns.isNone then initial := replacedHints n (tableHints dom id initial parent)
   -- SVG presentation attributes have lower priority than author CSS.
   -- These properties affect HTML layout/inheritance, so compute them here.
@@ -767,7 +786,8 @@ def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1)
       let style ← if n.type == .element && !svgDescendant then computed dom id rules parent state else pure {parent with
         display := .inline, width := .auto, height := .auto,
         margin := {}, padding := {}, background := none, clipOverflow := false,
-        borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none}
+        borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
+        autoMarginLeft := false, autoMarginRight := false}
       styles := styles.set! id style
       pending := n.kids.toList ++ rest
   throw "DOM style traversal exceeds arena bound"

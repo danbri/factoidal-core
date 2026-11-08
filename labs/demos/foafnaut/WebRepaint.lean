@@ -51,7 +51,7 @@ def sameShape (a b : Computed) : Bool :=
   | ⟨display,width,height,margin,padding,_color,background,fontSize,fontFamily,lineHeight,
     lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
     _borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
-    minWidth,maxWidth,minHeight,maxHeight,objectFit⟩ =>
+    minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,autoMarginLeft,autoMarginRight⟩ =>
   display == b.display && lengthEq width b.width && lengthEq height b.height &&
   edgesEq margin b.margin && edgesEq padding b.padding &&
   background.isSome == b.background.isSome && fontSize == b.fontSize && fontFamily == b.fontFamily &&
@@ -63,7 +63,8 @@ def sameShape (a b : Computed) : Bool :=
   borderCollapse == b.borderCollapse && captionBottom == b.captionBottom &&
   verticalAlign == b.verticalAlign && tableFixed == b.tableFixed &&
   lengthEq minWidth b.minWidth && lengthEq maxWidth b.maxWidth &&
-  lengthEq minHeight b.minHeight && lengthEq maxHeight b.maxHeight && objectFit == b.objectFit
+  lengthEq minHeight b.minHeight && lengthEq maxHeight b.maxHeight && objectFit == b.objectFit &&
+  textAlign == b.textAlign && autoMarginLeft == b.autoMarginLeft && autoMarginRight == b.autoMarginRight
 
 /-- The same style, colours included. -/
 def same (a b : Computed) : Bool :=

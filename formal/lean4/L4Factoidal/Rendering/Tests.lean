@@ -74,6 +74,59 @@ private def paddingAt (source : String) := (computedAt "<div id='x'></div>" sour
 #guard ((run "<div style='height:7px;padding-bottom:3px'>A</div><div>B</div>" css).toOption.bind
   (fun r => r.1.glyphRuns[1]? >>= fun g => g.glyphs[0]? |>.map (·.y))) == some 10
 
+/-! `text-align` (CSS Text 3 §6.1), `min-width`/`max-width` of a block (CSS 2.1 §10.4)
+and auto horizontal margins (§10.3.3). The viewport is 120 wide; a glyph is 6 wide. -/
+private def flat := "body{margin:0;font-size:7px;line-height:7px} p{margin:0}"
+/-- The x of the first glyph of each run. -/
+private def runXs (html : String) (extra : String := "") : Option (List Float) :=
+  (run html (flat ++ extra)).toOption.map fun r => r.1.glyphRuns.toList.filterMap fun g => g.glyphs[0]?.map (·.x)
+#guard runXs "<p style='text-align:center'>AA</p>" == some [54]
+#guard runXs "<p style='text-align:right'>AA</p>" == some [108]
+#guard runXs "<p style='text-align:left'>AA</p>" == some [0]
+#guard runXs "<p style='text-align:start'>AA</p>" == some [0]
+-- Inherited, and each line on its own: "AAAA" and "BB" in 30px.
+#guard runXs "<section style='text-align:center'><p style='width:30px'>AAAA BB</p></section>" == some [3,9]
+#guard runXs "<section style='text-align:right'><p style='width:30px'>AAAA BB</p></section>" == some [6,18]
+-- A line wider than the room starts at the left edge.
+#guard runXs "<p style='text-align:center;width:6px'>AAAA</p>" == some [0]
+-- An inline-block is as wide as its text, so its line is centred in the line it sits in.
+#guard runXs "<p style='text-align:center'><span style='display:inline-block'>AA</span></p>" == some [54]
+#guard ((computedAt "<div style='text-align:center'><p><b id='x'>A</b></p></div>" "" "x").toOption.map
+  (·.textAlign == .center)) == some true
+#guard ((computedAt "<div id='x' style='text-align:justify'></div>" "" "x").toOption.map (·.textAlign == .start)) == some true
+-- Auto margins centre a block with a width or a max-width; one auto margin takes all the room.
+#guard runXs "<main style='width:60px;margin:0 auto'>A</main>" == some [30]
+#guard runXs "<main style='max-width:60px;margin:0 auto'>A</main>" == some [30]
+#guard runXs "<main style='max-width:60px;margin-left:auto'>A</main>" == some [60]
+#guard runXs "<main style='max-width:60px'>A</main>" == some [0]
+#guard runXs "<main style='margin:0 auto'>A</main>" == some [0]
+-- max-width limits the line length: "AAAA BB" wraps at 30px.
+#guard runXs "<p style='max-width:30px'>AAAA BB</p>" == some [0,0]
+-- A min-width wins over a max-width (§10.4).
+#guard runXs "<main style='min-width:80px;max-width:60px;margin:0 auto;text-align:right'>A</main>" == some [94]
+-- Auto margins and text-align together.
+#guard runXs "<main style='width:60px;margin:0 auto;text-align:center'>AA</main>" == some [54]
+-- A block-level replaced element (an inline svg with display:block) with auto margins.
+private def emptySVG : Embedding := fun _ _ _ _ => pure []
+private def svgBoxX (style : String) : Option Float := do
+  let dom := DOM.parseHtmlDocument s!"<body style='margin:0'><svg id='s' width='40' height='10' style='{style}'></svg></body>"
+  let id ← dom.getElementById 0 "s"
+  let r ← (Layout.render dom [] font emptySVG 120 100).toOption
+  (r.2.find? (·.source == id)).map (·.x)
+#guard svgBoxX "display:block;margin:0 auto" == some 40
+#guard svgBoxX "display:block;margin-left:auto" == some 80
+#guard svgBoxX "display:block" == some 0
+-- An inline svg in a centred line.
+#guard svgBoxX "" == some 0
+private def svgInCentre : Option Float := do
+  let dom := DOM.parseHtmlDocument "<body style='margin:0;text-align:center'><svg id='s' width='40' height='10'></svg></body>"
+  let id ← dom.getElementById 0 "s"
+  let r ← (Layout.render dom [] font emptySVG 120 100).toOption
+  (r.2.find? (·.source == id)).map (·.x)
+#guard svgInCentre == some 40
+-- A table with auto margins is centred at its own width.
+#guard runXs "<table style='margin:0 auto;border-spacing:0'><tr><td style='padding:0'>AA</td></tr></table>" == some [54]
+
 /-- Mutation reaches the real DOM arena: re-rendering recomputes style/layout. -/
 private def mutated : Except String (List Float × List Float) := do
   let dom := DOM.parseHtmlDocument "<body style='margin:0;font-size:7px;line-height:7px'><div id='x' style='width:24px'>AA BB</div>"
