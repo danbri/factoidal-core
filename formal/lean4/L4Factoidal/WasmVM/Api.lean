@@ -127,6 +127,25 @@ private def finish (st : StoreOf M) (results : Array ValType) (r : StoreOf M × 
         { m with stack, sp := sp.toUSize }
     finish st k.results (Run.runM lim.run st m lim.fuel)
 
+/-- `resume`, also giving the number of instructions run (for hosts that show counts). -/
+@[specialize] def resumeSteps (st : StoreOf M) (k : Suspended) (r : HostResult) (lim : Budget := {}) :
+    StoreOf M × Outcome × Nat :=
+  match r with
+  | .trap msg => (st, .trap (.host msg), 0)
+  | .exit s => (st, .exit s, 0)
+  | .values vs =>
+    let m := k.machine
+    let m := match k.hostResults with
+      | none => m
+      | some _ =>
+        let (stack, sp) := vs.foldl (init := (m.stack, m.sp.toNat)) fun (s, i) v =>
+          ((if i < s.count then Run.wr s i.toUSize v.toBits
+            else Slots.wr (Slots.grow s (i + 1 - s.count)) i.toUSize v.toBits), i + 1)
+        { m with stack, sp := sp.toUSize }
+    let r := Run.runM lim.run st m lim.fuel
+    let (st', o) := finish st k.results r
+    (st', o, lim.fuel - r.2.2.1)
+
 /-- A pure host: host function id, arguments, store → store and result. -/
 abbrev PureHost (M : Type) := Nat → Array Value → StoreOf M → StoreOf M × HostResult
 

@@ -95,7 +95,7 @@ async function main() {
   // Every engine call that can take more than about 2 ms runs in one worker, in order. `lean` is that
   // engine (promises), or the main-thread engine when the worker can not start (said once, loudly) or in --check-engine.
   let worker:CompileClient|undefined,mainFont=false;
-  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"printLayout">;
+  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"wasmPage"|"printLayout">;
   let lean:Lean=engine;
   // The engine that runs Lean's renders: the native library in the worker, or Wasm (in the
   // worker, or on the main thread, which has only the Wasm engine). Said at start and in the summary.
@@ -262,6 +262,22 @@ async function main() {
     await graphFrame(page,frame);
     return page as typeof document;
   };
+  // foafnaut:wasm (issue 1244): WebAssembly run by WasmVM, Lean's engine, inside this engine. The page is
+  // Lean's HTML; `:wasm NAME.wasm#export` adds a module from the pages folder, read here and run by Lean.
+  const wasmURL="foafnaut:wasm",pagesURL=new URL("./pages/",import.meta.url);
+  const wasmPage=async(target:string)=>{
+    const argument=target.slice(wasmURL.length+1),request:Record<string,unknown>={};
+    if(argument){
+      const [path,exportName]=argument.split("#"),file=new URL(path,pagesURL);
+      if(!file.href.startsWith(pagesURL.href)||!file.pathname.endsWith(".wasm"))throw new Error("Only .wasm files of the pages folder are run");
+      const bytes=await Deno.readFile(file);
+      if(bytes.length>1048576)throw new Error(`The module has ${bytes.length} bytes; the page takes at most 1048576`);
+      let text="";for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+      Object.assign(request,{url:file.href,wasmBase64:btoa(text)},exportName?{export:exportName}:{});
+    }
+    const answer=await lean.wasmPage(request);
+    return await prepareHTML(lean,target,undefined,answer.source);
+  };
   // The system pointer for a window point: Lean answers from the chrome, the graph model or the
   // link regions of the frame on screen. One small main-thread call for each coalesced move; the
   // window library is told only when the answer changes (issue 1268).
@@ -339,6 +355,7 @@ async function main() {
     else if(name==="source")viewSource().catch(error=>refuse(document.url,error));
     else if(name==="theme"){theme=argument||(theme==="next"?"arcade":"next");dirty=true;}
     else if(name==="zoom"&&/^[0-9]+$/.test(argument)){view.textScalePercent=Math.max(50,Number(argument));dirty=true;}
+    else if(name==="wasm")navigate(wasmURL+(argument?"/"+argument:""));
     else navigate(settingsURL);
   };
   const go=(answer:ReturnType<typeof engine.shellSubmit>)=>{
@@ -428,7 +445,7 @@ async function main() {
   const navigate=(target:string,push=true)=>{
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (target===graphURL?graphPage():prepareHTML(lean,target,current.signal)).then(next=>{
+    (target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):prepareHTML(lean,target,current.signal)).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");

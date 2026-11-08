@@ -59,6 +59,8 @@ def index():
             f'<h2>Drawn with SVG</h2>\n{featured}\n'
             f'<p><a href="{SVG_TINY_SCORES}">SVG Tiny 1.2 test suite results (web)</a></p>\n'
             f'<h2>Text and layout</h2>\n{text}\n'
+            # foafnaut:wasm is a built-in page: WebAssembly run by WasmVM, Lean's engine, in this engine (issue 1244).
+            f'<h2>Engine</h2>\n<p><a href="foafnaut:wasm">WebAssembly, run by Lean (WasmVM)</a></p>\n'
             f'<h2>More pages</h2>\n{rest}\n</main></body></html>\n')
 
 

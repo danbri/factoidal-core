@@ -29,6 +29,14 @@ export type GraphFrame = {model:string;commands:string[]};
 /** The address bar's edit state; the host keeps it and sends it back in `shell`. */
 export type ShellEdit = {address:string;cursor:number;anchor:number;undo:unknown;redo:unknown;typing:boolean};
 export type PrintLayout = {contentHeight:number;pages:[number,number][]};
+export type WasmValue = {type:string;value:string;shown?:string};
+export type WasmRequest = {wasmBase64:string;export?:string;args?:WasmValue[];fuel?:number};
+export type WasmInfo = {engine:string;ops:string[];maxModuleBytes:number;defaultFuel:number;maxFuel:number;pageLimit:number;imports:string[]};
+/** A run: the stage reached, and the values, trap or exception, with counts and time. */
+export type WasmRun = {engine:string;bytes:number;stage:string;outcome:string;message?:string;values?:WasmValue[];
+  stages?:{decode:number;validate:number;instantiate:number};exports?:{name:string;kind:string;params?:string[];results?:string[]}[];
+  imports?:{module:string;name:string}[];instructions?:number;ns?:number;perSecond?:number;fuel?:number;prints?:string[]};
+export type WasmSpecSample = {pass:number;fail:number;notRun:number;files:{name:string;pass:number;fail:number;notRun:number;ns:number;fails:string[]}[]};
 export type ShellGo = {go:"page";url:string}|{go:"system";url:string}|{go:"command";name:string;argument:string};
 export type HTMLResource = {nodeId:number;url:string;source:string};
 type Module = {ccall(name:string,result:string|null,types:string[],values:unknown[]):number;
@@ -247,6 +255,13 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     graphEvent:(model:string,kind:number,a:number,b:number,width:number,shell:unknown)=>documentCall("",{op:"graphEvent",model,kind,a,b,width,shell}) as GraphFrame,
     graphPage:(model:string)=>(documentCall("",{op:"graphPage",model}) as {source:string}).source,
     sourcePage:(kind:string,url:string,source:string)=>(documentCall("",{op:"sourcePage",kind,url,source}) as {source:string}).source,
+    // WebAssembly run by WasmVM, Lean's engine, inside this engine (WebWasm.lean, issue 1244).
+    // Modules are Base64 in the request; values use the spec-test JSON form.
+    wasmInfo:()=>documentCall("",{op:"wasmInfo"}) as WasmInfo,
+    wasmRun:(request:WasmRequest)=>documentCall("",{...request,op:"wasmRun"}) as WasmRun,
+    wasmSpecSample:()=>documentCall("",{op:"wasmSpecSample"}) as WasmSpecSample,
+    /** The page foafnaut:wasm, as HTML that Lean then lays out. */
+    wasmPage:(request:Partial<WasmRequest>&{url?:string}={})=>documentCall("",{...request,op:"wasmPage"}) as {source:string;title:string},
     shellLink:(href:string)=>documentCall("",{op:"shellLink",href}) as ShellGo,
     // Lean decides what a menu command and a pointer release mean.
     command:(command:number,textScalePercent:number,history?:History,focused=false)=>documentCall("",{op:"command",command,textScalePercent,focused,...(history?{history}:{})}) as

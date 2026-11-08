@@ -70,7 +70,8 @@ resume      : Store → Suspended → Array Value → Limits → Store × Outcom
   payload).
 - **Limits**: fuel (instructions), maximum call depth, maximum memory pages (applied
   under the module's own maximum at `memory.grow`).
-- **Host ABI for later** (Deno, browser, Mac app; not wired now): the same JSON op
+- **Host ABI** (Deno, browser, Mac app; a first form is wired in the Foafnaut engine,
+  see "In the Foafnaut engine" below; the full form is later): the same JSON op
   style as the other factoidal ops. `wasm.load {bytes:base64} → {module:id}`,
   `wasm.instantiate {module, imports:{name:{kind,…}}} → {instance:id}`,
   `wasm.invoke {instance, export, args:[{type,value}], fuel} → {result | trap | suspended:id}`,
@@ -790,6 +791,53 @@ million Wasm instructions per second, about half of `fib` in the engine benchmar
 `WasiIO.Loaded.run` takes the store out of the `Loaded` record before the run: while
 the record also held it, the first memory write of a run would copy the whole memory.
 
+## In the Foafnaut engine: `wasmRun` and `foafnaut:wasm`
+
+WasmVM is compiled into the Foafnaut engine (`labs/demos/foafnaut/WebWasm.lean`, in
+`build-web-render.sh`), so the Hub page and the native Foafnaut browser run WebAssembly
+with Lean. The host browser's own WebAssembly runs only the Foafnaut engine; it never
+runs the user's module. Document ops, in the JSON op form of the other engine ops:
+
+- `wasmInfo`: engine name, ops and limits. Hosts call it first; an engine from before
+  these ops answers "unknown document operation" (an error answer of an existing
+  export, so an old engine is never asked to run a missing export, issue 1274).
+- `wasmRun {wasmBase64, export?, args?, fuel?}`: stage reached (`decode`, `limits`,
+  `validate`, `link`, `instantiate`, `start`, `run`), exports with their types, the
+  values (spec-test JSON form, with a `shown` text), trap or uncaught exception,
+  instructions run (`invokeSteps`, and `resumeSteps`, added to `Api.lean` for runs
+  with host calls), nanoseconds and instructions per second, and what the print
+  functions printed.
+- `wasmSpecSample`: six files of the core suite (fac, i32, i64, conversions, call,
+  loop; `WebWasmSample.lean`, made by `web-wasm/make-spec-sample.py`) and the 13 legacy
+  exception cases of `Tests.Proposals`.
+- `wasmPage {wasmBase64?, url?, export?}`: the page `foafnaut:wasm` as HTML, which the
+  engine then lays out like any page. Address bar `:wasm`, or `:wasm NAME.wasm#export`
+  for a module of the pages folder (same origin; `pages/hello-wasm.wasm` is one); Hub
+  URL `?page=wasm` or `?page=wasm/hello-wasm.wasm#main`.
+
+Imports: a module that imports from `wasi_snapshot_preview1` gets the WASI host
+(`WasmVM.Wasi`, deny by default) with only `fd_write` to stdout and stderr granted,
+into the page's output, and one program argument; no clock, randomness, environment or
+files (`pages/hello-wasi.wasm` is the demo). Any other module gets the `spectest` set
+(print functions log their arguments). Everything else is refused at link time. Limits, checked in Lean: module 4 MiB, fuel
+10^8 by default and 2*10^9 at most, 512 memory pages (32 MiB), table minimum 10^6,
+call depth 10^4, 2^20 operand slots, 10^4 host calls. Times come from the host clock
+through `WebWasm.timed`, whose logical model is time 0.
+
+Size, 2026-11-08 (macOS arm64; the baseline is the build of the same renderer sources
+without WasmVM): `libweb-render.dylib` 45.71 MB to 48.58 MB (+2.87 MB);
+`web-render.wasm` 16.88 MB to 18.32 MB (+1.44 MB). Most of it is the interpreter loop (`Exec/Run`, and
+its copy specialised into `WebWasm`), the validator, the decoder and the two test
+modules; the spec sample text is 0.39 MB. The native library is over the 2 MB mark, the Wasm engine
+under it; kept: the owner wants the engine testable on the Hub.
+
+Results in the engine (`wasmPage`, this Mac): spec sample 1709 pass, 0 fail (both
+engines). Million instructions per second, native library / Wasm engine in Deno (V8) /
+Wasm engine on the Hub page in Chromium: fib(22) 58 / 119 / 78, sum 90 / 246 / 170,
+memsum 69 / 168 / 190, tail calls 59 / 115 / 120. The native library is slower than
+the Wasm engine and than `lake exe wasmvm-bench` (sum 369): not looked into yet (the
+library is built with `leanc -O2` and links the static Lean runtime).
+
 ## Trusted pieces
 
 Code whose meaning is not checked by Lean's kernel, in the engine and its tools. Lean's
@@ -874,4 +922,5 @@ Open obligations (stated, not proved):
    "WASI Preview 1").
 4. Parallel compile by chunks of equal byte size; decode without the per-section
    copy (`b.extract 0 e`).
-5. The JSON op form for the hosts, and the Emscripten build of the engine.
+5. The JSON op form for the hosts: done for the Foafnaut engine (`wasmRun`,
+   `foafnaut:wasm`, above); handles for instances and suspended runs, and WASI there.

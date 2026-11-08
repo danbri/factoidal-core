@@ -133,6 +133,38 @@ async function prepare(url){
   const facts=call(page.source,{op:'inspect',url:page.url});
   return {url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources};
 }
+// foafnaut:wasm (issue 1244): WebAssembly run by WasmVM, the engine written in Lean, inside this
+// Lean engine. The host browser's WebAssembly never runs the module: the page only fetches its
+// bytes (same origin, .wasm only) and Lean decodes, checks and runs them. Lean draws the page.
+// An engine from before these ops answers wasmInfo with "unknown document operation" (no new
+// export is called, issue 1274), and the page then says that it needs a newer engine.
+const wasmURL='foafnaut:wasm',maxWasmBytes=1048576;
+let engineWasm;
+function hasWasm(){
+  if(engineWasm===undefined){try{engineWasm=call('',{op:'wasmInfo'}).engine==='WasmVM';}catch{engineWasm=false;}}
+  return engineWasm;
+}
+const wasmNeedsEngine=url=>({url,title:'Needs a newer engine',sources:[],source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title>'+
+  '<style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:#f4f4ee}h1{margin:0 0 8px 0;font-size:22px;line-height:28px;color:#a0186a}p{margin:0 0 8px 0}</style></head><body>'+
+  '<h1>WebAssembly in Lean needs a newer engine</h1><p>This page runs WebAssembly modules with WasmVM, the WebAssembly engine written in Lean, inside the Foafnaut engine.</p>'+
+  '<p>The engine this page loaded is older and does not have it. The next engine release carries it.</p></body></html>'});
+async function wasmModule(argument){
+  const [path,exportName]=argument.split('#');
+  const url=new URL(path,pagesBase);
+  if(url.origin!==siteOrigin||!url.pathname.endsWith('.wasm'))throw Error('Only .wasm files of this site are run');
+  const response=await fetch(url);if(!response.ok)throw Error(`HTTP ${response.status}`);
+  const bytes=new Uint8Array(await response.arrayBuffer());
+  if(bytes.length>maxWasmBytes)throw Error(`The module has ${bytes.length} bytes; the page takes at most ${maxWasmBytes}`);
+  let text='';
+  for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+  return {url:url.href,wasmBase64:btoa(text),...(exportName?{export:exportName}:{})};
+}
+async function wasmPage(url){
+  if(!hasWasm())return wasmNeedsEngine(url);
+  const argument=url.slice(wasmURL.length+1);
+  const answer=call('',{op:'wasmPage',...(argument?await wasmModule(argument):{})});
+  return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
+}
 function show(next,remember=true){
   doc=next;if(!focused)field=showURL(next.url);scroll=0;loading=false;
   if(remember){history=push(history.history,next.url);pages++;}
@@ -141,7 +173,7 @@ function show(next,remember=true){
 async function navigate(url,remember=true){
   const mine=++serial;loading=true;request();
   const stamp=currentStamp;
-  let next;try{next=await prepare(url);}catch(error){next=refusal(url,String(error.message??error));}
+  let next;try{next=await (url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):prepare(url));}catch(error){next=refusal(url,String(error.message??error));}
   if(mine===serial){const before=currentStamp;currentStamp=stamp;try{show(next,remember);}finally{currentStamp=before;}}
 }
 // An edit in the address bar. Lean gives the new state and the text for the clipboard,
@@ -220,6 +252,7 @@ function shellCommand(name,argument){
   else if(name==='graph')openGraph().catch(error=>{doc=refusal('foafnaut:graph',String(error.message??error));request();});
   else if(name==='theme'){theme=argument||(theme==='next'?'arcade':'next');request();}
   else if(name==='zoom'&&/^[0-9]+$/.test(argument)){percent=Math.max(50,Number(argument));request();}
+  else if(name==='wasm')navigate(wasmURL+(argument?'/'+argument:''));
   else navigate(settingsURL);
 }
 function go(answer){
@@ -306,7 +339,9 @@ async function start(data){
   try{post({type:'keys',table:call('',{op:'keyTable',platform:data.platform==='mac'?'mac':'other'})});}catch{/* older engine */}
   ready=true;
   // A new window starts in the address bar with the address selected (issue 1268).
-  if(data.page&&/^[a-z0-9-]+\.(html|xml)$/.test(data.page))navigate(pagesBase+data.page);else focusAddress();
+  if(data.page&&/^[a-z0-9-]+\.(html|xml)$/.test(data.page))navigate(pagesBase+data.page);
+  else if(data.page==='wasm'||/^wasm\/[a-z0-9-]+\.wasm(#[A-Za-z0-9_-]+)?$/.test(data.page??''))navigate('foafnaut:'+data.page);
+  else focusAddress();
   for(const message of early.splice(0))receive(message);
 }
 function flush(){
