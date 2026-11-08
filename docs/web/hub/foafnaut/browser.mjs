@@ -47,7 +47,7 @@ let keyTable=[];
 worker.onmessage=({data})=>{
   if(data.type==='caps')return begin(data.surface);
   if(data.type==='frame'){
-    note.hidden=true;
+    if(!note.classList.contains('ask'))note.hidden=true;
     if(data.rgba){
       canvas.width=data.width;canvas.height=data.height;
       canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data.rgba),data.width,data.height),0,0);
@@ -65,7 +65,7 @@ worker.onmessage=({data})=>{
   if(data.type==='location'){
     const want=location.pathname+location.search+(data.home?'':'#'+hashOf(data.url));
     if(want!==location.pathname+location.search+location.hash){
-      if(data.push&&!fromHost)history.pushState(null,'',want);else history.replaceState(null,'',want);
+      if(data.push&&!fromHost)history.pushState(pageState,'',want);else history.replaceState(pageState,'',want);
     }
     fromHost=false;
   }
@@ -110,7 +110,28 @@ if(canTransfer)send({type:'hello',page:query.get('page')});else begin(false);
 addEventListener('resize',()=>{fling.stop();send({type:'resize',...size()});});
 // Back and forward in the host browser: the engine shows that address, not as a new entry.
 let fromHost=false;
-addEventListener('popstate',()=>{fling.stop();fromHost=true;send({type:'visit',address:hubAddress()||new URL('pages/index.html',location.href).href});});
+// A guard entry sits under the session's first page, so one back too many does not leave the
+// Hub at once: it asks first, before or after the engine has loaded. Stay goes back to the page;
+// Leave goes past the guard. A reload on a page entry keeps the guard it already has.
+const guardState={foafnaut:'guard'},pageState={foafnaut:'page'};
+if(history.state?.foafnaut!=='page'){history.replaceState(guardState,'');history.pushState(pageState,'');}
+function askToLeave(){
+  history.pushState(pageState,'');
+  const stay=document.createElement('button'),leave=document.createElement('button');
+  stay.textContent='Stay';leave.textContent='Leave';
+  for(const b of [stay,leave])b.style.cssText='font:16px sans-serif;margin:12px 8px 0;padding:8px 18px';
+  const before=note.hidden?null:[...note.childNodes];
+  const restore=()=>{if(before&&!window.foafnautFrame){note.replaceChildren(...before);note.hidden=false;}else note.hidden=true;note.classList.remove('ask');};
+  stay.onclick=restore;
+  leave.onclick=()=>{note.textContent='Leaving the browser session...';history.go(-2);};
+  note.replaceChildren('Leave this browser session?',document.createElement('br'),stay,leave);
+  note.classList.add('ask');note.hidden=false;stay.focus({preventScroll:true});
+}
+addEventListener('popstate',event=>{
+  fling.stop();
+  if(event.state?.foafnaut==='guard'){askToLeave();return;}
+  fromHost=true;send({type:'visit',address:hubAddress()||new URL('pages/index.html',location.href).href});
+});
 // Keep focus where the loop puts it: the press must not move it back to the page.
 canvas.addEventListener('mousedown',event=>event.preventDefault());
 // A long press or a right click is the inner browser's, not the outer page's menu; a touch
