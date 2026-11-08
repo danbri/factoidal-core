@@ -5,6 +5,7 @@ import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH
 import {inputURL,loadFontFile,prepareHTML,refusalHTML,setFontHost,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
+import {addEntries,consoleRequest,noteDiagnostics} from "./native_console.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {nativePreflight} from "./native_preflight.ts";
 import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
@@ -20,10 +21,10 @@ import type {UIEvent} from "./ui_engine.ts";
 async function main() {
   const args=[...Deno.args];
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--be-liberal-in-what-we-accept]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Option-Command-J opens the console tab (foafnaut:console). --be-liberal-in-what-we-accept draws a page without what Lean may skip (module scripts, unreadable media conditions, stylesheets not fetched, scripts when they are off) and lists each skip in the console; the default refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let scrollSweep=false;
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false;
+  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -52,6 +53,8 @@ async function main() {
     else if(arg==="--font")fontFile=args.shift();
     else if(arg==="--quickjs-wasm"){quickjsWasm=args.shift();if(!quickjsWasm)throw new Error("--quickjs-wasm needs a file");}
     else if(arg==="--no-scripts")scriptsOff=true;
+    // Liberal mode (WebAccept.lean): Lean skips what it may skip and says so in the console.
+    else if(arg==="--be-liberal-in-what-we-accept")cliLiberal=true;
     else if(arg==="--bitmap-font")bitmapFont=true;
     else if(arg==="--resize-sweep")sweep=[[800,500],[700,500],[600,500],[500,500],[400,500],[800,300],[800,500]];
     else if(arg==="--paste-sweep")pasted=args.shift();
@@ -238,7 +241,7 @@ async function main() {
       catch(error){if(!scriptEngines.includes("bubblepop"))throw error;
         console.log(JSON.stringify({type:"native-html-scripts",engine:"quickjs",state:"off",module:quickjsPath,reason:String(error instanceof Error?error.message:error)}));}
       scriptsOn=true;
-      setScriptHost({start:async(source,pageURL,resources,encoding)=>{
+      setScriptHost({start:async(source,pageURL,resources,encoding,mode={})=>{
         // The setting: Lean's plan says which engine runs the page, or why none does.
         let plan=await askPlan(scriptSetting);
         if(plan.run&&!scriptEngines.includes(plan.engine))plan=await askPlan(scriptSetting,`this engine has no ${plan.name}`);
@@ -250,7 +253,7 @@ async function main() {
         const at=(()=>{try{return {width,height,shell:shell(),textScalePercent:view.textScalePercent??100};}
           catch{return {width:1280,height:800,textScalePercent:150};}})();
         const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,
-          ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent},
+          ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent,...mode},
           ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{})}) as ScriptTurn;
         scriptEpochs.set(turn.session,performance.now()-turn.clock);sessionEngines.set(turn.session,plan.engine);
         // The start turn makes the page's GPU objects (canvas, buffers, pipelines); the later turns use them.
@@ -266,7 +269,9 @@ async function main() {
       console.log(JSON.stringify({type:"native-html-scripts",state:"off",module:quickjsPath,reason:String(error instanceof Error?error.message:error)}));
     }
   }
-  let document=await prepareHTML(lean,url),width=1280,height=800;
+  // Liberal mode: the command line, else the saved setting (read when the window opens).
+  let liberal=cliLiberal;
+  let document=await prepareHTML(lean,url,undefined,undefined,{liberal}),width=1280,height=800;
   // The first compile runs in the worker too: it warms the worker, and no frame is compiled on the main thread.
   let frame:HTMLArtifact=await document.compile(width,height);
   console.log(JSON.stringify({type:"native-html-loaded",url:document.url,primitives:frame.primitiveCount,links:frame.webRender.links.length,width,height}));
@@ -294,7 +299,9 @@ async function main() {
   const refuse=(target:string,error:unknown)=>{
     console.error("Native HTML refused:",target,String(error));
     trace("native-html-refused",{url:target,reason:String(error)});
-    refusing++;prepareHTML(lean,target,undefined,refusalHTML(target,String(error))).then(next=>{if(running){candidate=next;dirty=true;}}).finally(()=>refusing--)
+    refusing++;prepareHTML(lean,target,undefined,refusalHTML(target,String(error))).then(next=>{
+      addEntries(next,[{source:"System",severity:"error",feature:"page",where:target,message:String(error),action:"page refused"}]);
+      if(running){candidate=next;dirty=true;}}).finally(()=>refusing--)
       .catch(failure=>console.error("Native HTML refusal page failed:",String(failure)));
   };
   // A turn of a page's script session: its logs, and a new frame only when the DOM changed
@@ -480,6 +487,32 @@ async function main() {
     sparqlNext=answer.next??sparqlURL;
     return await prepareHTML(lean,target,undefined,answer.source);
   };
+  // foafnaut:console (WebConsole.lean): the console of a tab as a page, written and drawn by Lean
+  // from the entries this host kept (native_console.ts). `foafnaut:console/N` is the console of tab
+  // N; with no number, of the page shown when it was asked for (or that a console tab showed).
+  const consoleURL="foafnaut:console",consoleSources=new WeakMap<object,typeof document>();
+  let consoleFrom:typeof document|undefined;
+  const isConsole=(target:string)=>target===consoleURL||target.startsWith(consoleURL+"/");
+  const tabPage=(index:number)=>index===active?document:tabs[index]?.document;
+  const consolePage=async(target:string)=>{
+    const number=Number(target.slice(consoleURL.length+1));
+    let source=Number.isInteger(number)&&number>0&&tabPage(number-1)?tabPage(number-1)!:consoleFrom??document;
+    consoleFrom=undefined;
+    source=consoleSources.get(source)??source;
+    const index=Math.max(0,tabs.findIndex((_,i)=>consoleSources.get(tabPage(i)!)===source||tabPage(i)===source));
+    let answer:{source:string};
+    try{answer=engine.consolePage(consoleRequest(source,index,tabs.map((_,i)=>tabPage(i)!)));}
+    catch(error){
+      if(!/unknown document operation/.test(String(error)))throw error;
+      answer={source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title></head><body>'+
+        "<h1>The console needs a newer engine</h1><p>This engine is older and does not have the console op.</p></body></html>"};
+    }
+    const page=await prepareHTML(lean,target,undefined,answer.source);
+    consoleSources.set(page,source);
+    return page;
+  };
+  // Option-Command-J and View > Console: the console of the page shown, in a new tab.
+  const openConsole=()=>{const source=document;newTab();leaveAddress();consoleFrom=source;navigate(consoleURL);};
   // The system pointer for a window point: Lean answers from the chrome, the graph model or the
   // link regions of the frame on screen. One small main-thread call for each coalesced move; the
   // window library is told only when the answer changes (issue 1268).
@@ -582,7 +615,10 @@ async function main() {
     const open="<!--foafnaut:scripts-->",close="<!--/foafnaut:scripts-->",i=source.indexOf(open),j=source.indexOf(close);
     if(planOp&&scriptsOn&&i>=0&&j>i)try{source=source.slice(0,i+open.length)+await scriptCall("scriptChoices",scriptSetting,scriptHostKind())+source.slice(j);}catch{/* the static links */}
     const size=textZoom();
-    return source.replace("<!--foafnaut:text-size-->",size
+    const box=`<span class="box">${liberal?'<span class="tick"></span>':""}</span>`;
+    return source.replace("<!--foafnaut:liberal-->",`<p class="check"><a href="foafnaut:liberal/${liberal?"off":"on"}">${box} Be liberal in what we accept</a></p>`+
+      "<p>On: a page with a feature this browser does not support is drawn without it (a module script, a stylesheet that did not load, a media condition it can not read), and the console (Option-Command-J) lists what was skipped. Off: such a page is refused.</p>")
+      .replace("<!--foafnaut:text-size-->",size
       ?`<h2 class="size">Text size: ${size.shown}%</h2>`
       :"<h2>Text size</h2><p>The engine of this window is older: these sizes are the text zoom itself, and A+ and A\u2212 step by a tenth.</p>");
   };
@@ -604,6 +640,12 @@ async function main() {
         trace("native-html-script-setting",{setting:scriptSetting});
         if(document.url===settingsURL)navigate(settingsURL,false);else dirty=true;
       }).catch(error=>refuse(`foafnaut:scripts/${argument}`,error));
+    }
+    else if(name==="liberal"){
+      // The Settings checkbox: foafnaut:liberal/on, /off, or a toggle. Pages load in the new mode from now on.
+      liberal=argument==="on"?true:argument==="off"?false:!liberal;
+      browserState?.settings({liberal});trace("native-html-liberal",{liberal});
+      if(document.url===settingsURL)navigate(settingsURL,false);
     }
     else if(STATE_COMMANDS.includes(name)){
       if(!browserState){refuse(`foafnaut:${name}`,"Browser state is off (--no-state, a sweep or a check)");return;}
@@ -747,6 +789,7 @@ async function main() {
     if(answer.refused)console.error(`Native HTML ${answer.action}: ${answer.refused}`);
     if(answer.action==="closeTab")closeTab(active);
     if(answer.action==="settings")navigate(settingsURL);
+    if(answer.action==="console")openConsole();
     if(answer.action==="print")printDocument().catch(error=>console.error("Native HTML print failed:",String(error)));
     if(answer.action==="viewSource")viewSource().catch(error=>refuse(document.url,error));
     if(answer.action==="selectAll"){view.selection="all";dirty=true;}
@@ -792,7 +835,7 @@ async function main() {
     // is answered on screen before the new page is prepared and laid out.
     dirty=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):prepareHTML(lean,target,current.signal)).then(next=>{
+    (STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):prepareHTML(lean,target,current.signal,undefined,{liberal})).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
@@ -856,7 +899,9 @@ async function main() {
     // Saved settings (theme, text zoom), and with --restore-session the tabs of the last run.
     browserState?.read().then(saved=>{
       if(saved.settings){theme=saved.settings.theme;view.textScalePercent=saved.settings.textZoom;dirty=true;
-        if(typeof saved.settings.scripts==="string")scriptSetting=saved.settings.scripts;}
+        if(typeof saved.settings.scripts==="string")scriptSetting=saved.settings.scripts;
+        if(!cliLiberal&&typeof saved.settings.liberal==="boolean"&&saved.settings.liberal!==liberal){
+          liberal=saved.settings.liberal;if(liberal&&document.title==="Page refused")navigate(document.url,false);}}
       if(restoreSession)(saved.session?.tabs??[]).forEach((tab:{url:string},index:number)=>{if(index>0)newTab();navigate(tab.url);});
     }).catch(()=>{/* state off: said once in the log */});
     scale=Math.max(1,Math.round(native.surfaceState().contentsScale||1));
@@ -916,6 +961,8 @@ async function main() {
         }
         awaiting=[...stamps,...awaiting];candidate=undefined;dirty=false;refuse(nextDocument.url,error);return;
       }
+      // Liberal mode: what Lean skipped goes to the page's console.
+      noteDiagnostics(nextDocument,nextLayers??next);
       const compiled=performance.now();
       // A newer page was chosen while this one compiled: drop this scene.
       if((candidate??document)!==nextDocument){awaiting=[...stamps,...awaiting];dirty=true;return;}

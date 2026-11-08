@@ -12,7 +12,7 @@ server on 127.0.0.1 (the native browser), to IndexedDB (the Hub), and to a remot
 Vocabulary: schema.org where it fits (`BookmarkAction`, `ViewAction`, `WebPage`, `url`,
 `name`, `keywords`, `startTime`, `dateModified`), and a small `foafnaut:` namespace for
 the rest (`Settings`, `Session`, `HistoryDay`, `visit`, `from`, `theme`, `textZoom`,
-`classicUI`, `font`, `fontFallback`, `remotePod`, `tab`, `activeTab`, `scroll`, `deleted`).
+`classicUI`, `liberal`, `font`, `fontFallback`, `remotePod`, `tab`, `activeTab`, `scroll`, `deleted`).
 
 Merge rules:
 * history: one resource per UTC day; its visits are a set. Merge is set union of the
@@ -363,6 +363,9 @@ structure Settings where
   /-- The page script engine (`WebRenderScript.engines`: "bubblepop", "quickjs", "none"); ""
   for the host's default (`WebRenderScript.defaultEngine`). -/
   scripts : String := ""
+  /-- Liberal mode (`WebAccept`, the Settings checkbox "Be liberal in what we accept"):
+  off unless a settings document says true. -/
+  liberal : Bool := false
   fonts : List String := []
   fallback : List String := []
   remotePod : String := ""
@@ -371,7 +374,7 @@ structure Settings where
 
 def Settings.doc (s : Settings) : Json :=
   document "foafnaut:Settings" ([("foafnaut:theme", .string s.theme), ("foafnaut:textZoom", num s.textZoom),
-    ("foafnaut:classicUI", .bool s.classicUI)] ++
+    ("foafnaut:classicUI", .bool s.classicUI), ("foafnaut:liberal", .bool s.liberal)] ++
     (if s.scripts.isEmpty then [] else [("foafnaut:scripts", .string s.scripts)]) ++
     [("foafnaut:font", .array (s.fonts.map .string)), ("foafnaut:fontFallback", .array (s.fallback.map .string))] ++
     (if s.remotePod.isEmpty then [] else [("foafnaut:remotePod", .string s.remotePod)]) ++
@@ -381,6 +384,7 @@ def Settings.ofDoc (j : Json) : Settings :=
   { theme := str j "foafnaut:theme" "next", textZoom := max 50 (natField j "foafnaut:textZoom" 150),
     classicUI := (match j.field? "foafnaut:classicUI" with | some (.bool b) => b | _ => true),
     scripts := str j "foafnaut:scripts",
+    liberal := j.field? "foafnaut:liberal" == some (.bool true),
     fonts := strings j "foafnaut:font", fallback := strings j "foafnaut:fontFallback",
     remotePod := str j "foafnaut:remotePod", modified := (millisOf (str j "dateModified")).getD 0 }
 
@@ -391,6 +395,7 @@ def Settings.ofDoc (j : Json) : Settings :=
 -- The page script engine: the host's default until a choice; a choice survives a round trip.
 #guard (Settings.ofDoc (Json.object [])).scripts == ""
 #guard (Settings.ofDoc ({scripts := "quickjs"} : Settings).doc).scripts == "quickjs"
+#guard !(Settings.ofDoc (Json.object [])).liberal && (Settings.ofDoc ({liberal := true} : Settings).doc).liberal
 
 structure Tab where
   url : String
@@ -604,6 +609,7 @@ def op (name : String) (request : Json) : Except String (Option String) := do
       scripts := (match request.field? "scripts" with
         | some (.string v) => if v.isEmpty || ["bubblepop", "quickjs", "none"].contains v then v else old.scripts
         | _ => old.scripts),
+      liberal := (match request.field? "liberal" with | some (.bool b) => b | _ => old.liberal),
       fonts := fonts, fallback := fallback, remotePod := str request "remotePod" old.remotePod, modified := now }
     return some (write base settingsPath s.doc.toString)
   if name == "stateSession" then
@@ -633,7 +639,7 @@ def op (name : String) (request : Json) : Except String (Option String) := do
         ("tags", .array (b.tags.map .string)), ("added", num b.added)])),
       ("visits", num vs.length),
       ("settings", match settings with
-        | some s => .object [("theme", .string s.theme), ("textZoom", num s.textZoom), ("classicUI", .bool s.classicUI), ("scripts", .string s.scripts), ("fonts", .array (s.fonts.map .string)),
+        | some s => .object [("theme", .string s.theme), ("textZoom", num s.textZoom), ("classicUI", .bool s.classicUI), ("scripts", .string s.scripts), ("liberal", .bool s.liberal), ("fonts", .array (s.fonts.map .string)),
             ("fallback", .array (s.fallback.map .string)), ("remotePod", .string s.remotePod)]
         | none => .null),
       ("session", match session with

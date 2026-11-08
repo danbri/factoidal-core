@@ -1,6 +1,7 @@
 import {pathToFileURL} from "node:url";
 import {resolve} from "node:path";
 import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource,type ScriptTurn} from "./native_html_engine.ts";
+import {addEntries,noteDiagnostics,noteTurn} from "./native_console.ts";
 
 /** The view state of a page. Lean applies it; the host only keeps the values. */
 export type PageView={textScalePercent?:number;selection?:"all"|number[];shell?:unknown;live?:boolean};
@@ -84,19 +85,21 @@ async function readBytes(url:string,limit:number,signal?:AbortSignal):Promise<Ui
   for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   return bytes;
 }
-/** Fetch the images Lean listed, as `{key,bytes}`. */
-export async function fetchImageBytes(wanted:{key:string;url:string}[],documentURL:string,signal?:AbortSignal) {
+/** Fetch the images Lean listed, as `{key,bytes}`. `failed` hears of each image that was not read. */
+export async function fetchImageBytes(wanted:{key:string;url:string}[],documentURL:string,signal?:AbortSignal,
+  failed?:(url:string,reason:string)=>void) {
   const images:{key:string;bytes:Uint8Array}[]=[];let total=0;
   for(const {key,url} of wanted) {
     signal?.throwIfAborted();
     try {
-      if(!imageAllowed(url,documentURL))continue;
+      if(!imageAllowed(url,documentURL)){failed?.(url,"not of the page's origin");continue;}
       const bytes=await readBytes(url,MAX_IMAGE_BYTES,signal);
-      if(total+bytes.length>MAX_PAGE_IMAGE_BYTES)continue;
+      if(total+bytes.length>MAX_PAGE_IMAGE_BYTES){failed?.(url,"past the limit on the image bytes of a page");continue;}
       total+=bytes.length;
       images.push({key,bytes});
     } catch(error) {
       if(signal?.aborted)throw error;
+      failed?.(url,String(error instanceof Error?error.message:error));
     }
   }
   return images;
@@ -143,7 +146,7 @@ one when its engine answers `scriptSession` info (with BubblePopJS, or the Quick
 guest module loaded); with none, a page with scripts is refused, as before. `start`
 answers no turn when the setting says the scripts do not run (`scriptPlan`), and throws
 when they are refused. */
-export type ScriptHost={start(source:string,url:string,resources:{nodeId:number;source:string}[],encoding?:string):Promise<ScriptTurn|undefined>|ScriptTurn|undefined};
+export type ScriptHost={start(source:string,url:string,resources:{nodeId:number;source:string}[],encoding?:string,mode?:Record<string,unknown>):Promise<ScriptTurn|undefined>|ScriptTurn|undefined};
 let scriptHost:ScriptHost|undefined;
 export function setScriptHost(host:ScriptHost|undefined){scriptHost=host;}
 // Fallback fonts (native_html_fonts.ts): given the page source, puts the fonts it needs into
@@ -159,9 +162,19 @@ export type PageEngine=((Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compi
   compile(...a:Parameters<HTMLEngine["compile"]>):Promise<ReturnType<HTMLEngine["compile"]>>;
   selectedText(...a:Parameters<HTMLEngine["selectedText"]>):Promise<ReturnType<HTMLEngine["selectedText"]>>;
 })&{decodeDocument?:PageDecoder};
-export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string) {
+/** How a page is accepted. `liberal`: liberal mode (WebAccept.lean, --be-liberal-in-what-we-accept
+and the Settings checkbox): Lean skips what it may skip and says so, and this host passes on
+the fetches that failed instead of refusing the page. */
+export type AcceptOptions={liberal?:boolean};
+export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string,accept:AcceptOptions={}) {
   const decode:PageDecoder|undefined=typeof engine.decodeDocument==="function"?(b,c)=>engine.decodeDocument!(b,c):undefined;
   const document:{url:string;source:string;bytes:number;encoding?:string}=inline===undefined?await readSource(url,signal,decode):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
+  // The page's console (native_console.ts): System entries now, script lines later.
+  const page={};
+  const fetchFailed=(feature:string,where:string,message:string,action:string)=>
+    addEntries(page,[{source:"System",severity:"error",feature,where,message,action}]);
+  // Liberal mode is a field of every request; scripting:false tells Lean that no page script runs here.
+  const mode:Record<string,unknown>=accept.liberal?{liberal:true,...(scriptHost?{}:{scripting:false})}:{};
   // View source shows each input and the result. Lean makes the page.
   const sources=[{kind:"Source",url:document.url,source:document.source}];
   // Lean finds the stylesheet and runs it. The host only fetches the bytes.
@@ -174,31 +187,46 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     sources.push({kind:"XSLT source",url:sheet.url,source:sheet.source},{kind:"Generated page",url:document.url,source:document.source});
   }
   const fonts=fontHost?.(document.source).catch(error=>console.error("Native HTML: fallback fonts:",String(error)));
-  const inspection=await engine.inspect(document.source,{url:document.url});
+  const inspection=await engine.inspect(document.source,{url:document.url,...mode});
+  noteDiagnostics(page,inspection,false);
   const scripted=inspection.scripts.some(script=>script.kind!=="data");
   if(scripted&&!scriptHost)
     throw new Error("Page scripts need the QuickJS guest module (--quickjs-wasm FILE) and an engine with scriptSession; this page is refused");
-  if(inspection.stylesheets.length>MAX_RESOURCES)throw new Error("Native HTML exceeds 16 external stylesheets");
+  if(inspection.stylesheets.length>MAX_RESOURCES&&!accept.liberal)throw new Error("Native HTML exceeds 16 external stylesheets");
+  // In liberal mode a stylesheet that is not read goes to Lean as a failure, with the reason;
+  // Lean draws the page without it and says so (WebAccept.Skip.stylesheetMissing).
+  const resourceFailures:{nodeId:number;url:string;reason:string}[]=[];
   let resourceBytes=0;
-  for(const descriptor of inspection.stylesheets) {
+  for(const [index,descriptor] of inspection.stylesheets.entries()) {
     signal?.throwIfAborted();
-    // The URL and owning node are selected and resolved by Lean.
-    navigationURL(descriptor.url,inspection.baseURL,document.url);
-    const resource=await readSource(descriptor.url,signal);
-    resourceBytes+=resource.bytes;if(resourceBytes>MAX_RESOURCE_BYTES)throw new Error("Native HTML stylesheets exceed 4 MiB");
-    resources.push({nodeId:descriptor.nodeId,url:resource.url,source:resource.source});
+    try{
+      if(index>=MAX_RESOURCES)throw new Error("Native HTML exceeds 16 external stylesheets");
+      // The URL and owning node are selected and resolved by Lean.
+      navigationURL(descriptor.url,inspection.baseURL,document.url);
+      const resource=await readSource(descriptor.url,signal);
+      if(resourceBytes+resource.bytes>MAX_RESOURCE_BYTES)throw new Error("Native HTML stylesheets exceed 4 MiB");
+      resourceBytes+=resource.bytes;
+      resources.push({nodeId:descriptor.nodeId,url:resource.url,source:resource.source});
+    }catch(error){
+      if(!accept.liberal||signal?.aborted)throw error;
+      resourceFailures.push({nodeId:descriptor.nodeId,url:descriptor.url,reason:String(error instanceof Error?error.message:error)});
+    }
   }
   // Lean lists the images it wants; the host fetches each one of the page's origin, with
   // size caps. One that fails or is refused is left out, and the page shows its alt text.
   // An engine that holds images gets each one once, and renders name them.
-  const images=await imageOptions(engine,await fetchImageBytes(inspection.images??[],document.url,signal));
+  const images=await imageOptions(engine,await fetchImageBytes(inspection.images??[],document.url,signal,
+    (imageURL,reason)=>fetchFailed("image",imageURL,`image not read: ${reason}`,"alt text shown")));
   // The tab icon that Lean chose (WebDocument.iconURL), by the rules of images: the page's
   // own origin only. One that fails or is refused leaves the tab with no icon.
   let iconBase64:string|undefined;
   if(inspection.icon)try{
     if(imageAllowed(inspection.icon,document.url))iconBase64=base64(await readBytes(inspection.icon,MAX_ICON_BYTES,signal));
-  }catch(error){if(signal?.aborted)throw error;console.error(`Native HTML icon refused: ${inspection.icon}: ${String(error instanceof Error?error.message:error)}`);}
-  const options:Record<string,unknown>={url:document.url,resources,...images};
+  }catch(error){if(signal?.aborted)throw error;console.error(`Native HTML icon refused: ${inspection.icon}: ${String(error instanceof Error?error.message:error)}`);
+    fetchFailed("tab icon",inspection.icon,`icon not read: ${String(error instanceof Error?error.message:error)}`,"tab shown with no icon");}
+  // `diagnostics:true` asks Lean for the skips in the answer: the first frame only (noteDiagnostics).
+  const options:Record<string,unknown>={url:document.url,resources,...images,...mode,...(resourceFailures.length?{resourceFailures}:{}),
+    ...(accept.liberal?{diagnostics:true}:{})};
   // Page scripts: Lean runs them (WebScripts). The host only fetches the bytes of `src`
   // scripts, as for stylesheets. The script session's commands are part of each render
   // request, so a render replays them over the parsed page.
@@ -209,30 +237,52 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     for(const descriptor of inspection.scripts) {
       if(descriptor.kind!=="classic"||!descriptor.src)continue;
       signal?.throwIfAborted();
-      navigationURL(descriptor.url,inspection.baseURL,document.url);
-      const resource=await readSource(descriptor.url,signal);
-      sources.push({kind:"Script",url:resource.url,source:resource.source});
-      supplied.push({nodeId:descriptor.nodeId,source:resource.source});
+      try{
+        navigationURL(descriptor.url,inspection.baseURL,document.url);
+        const resource=await readSource(descriptor.url,signal);
+        sources.push({kind:"Script",url:resource.url,source:resource.source});
+        supplied.push({nodeId:descriptor.nodeId,source:resource.source});
+      }catch(error){
+        // Liberal mode: a script that is not fetched does not run, as in a browser after a failed fetch.
+        if(!accept.liberal||signal?.aborted)throw error;
+        fetchFailed("script",descriptor.url,`script not read: ${String(error instanceof Error?error.message:error)}`,"script not run");
+      }
     }
-    const turn=await scriptHost.start(document.source,document.url,supplied,document.encoding);
+    // Liberal mode: when the script engine refuses to start (the setting names an engine this
+    // host does not have), the page is drawn with its scripts not run, as Lean's scriptsOff skip.
+    const turn=await Promise.resolve(scriptHost.start(document.source,document.url,supplied,document.encoding,mode)).catch(error=>{
+      if(!accept.liberal||signal?.aborted)throw error;
+      addEntries(page,[{source:"System",severity:"warning",feature:"page scripts",where:document.url,
+        message:String(error instanceof Error?error.message:error),action:"scripts not run"}]);
+      return undefined;
+    });
     if(turn){
+      noteTurn(page,turn);
       script={session:turn.session,turn};
       if(turn.commands?.length)options.commands=turn.commands;
     }
   }
   // Pages show in the font of loadFontFile, or else in the Lean bitmap face.
   signal?.throwIfAborted();
-  return {
+  return Object.assign(page,{
     url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,script,iconBase64,
     /** Whether the page has classic scripts (they run, or the setting says why not). */
     scripted,
+    /** The mode the page was prepared in: a change of the setting loads it again. */
+    liberal:!!accept.liberal,
+    /** A render answered with the skips: later renders do not ask for them. */
+    diagnosticsSeen:()=>{delete options.diagnostics;},
     /** A later turn of the page's script session: its commands, when the DOM changed. */
-    applyTurn:(turn:ScriptTurn)=>{if(script)script.turn=turn;if(turn.changed&&turn.commands)options.commands=turn.commands;return turn.changed;},
+    applyTurn:(turn:ScriptTurn)=>{noteTurn(page,turn);if(script)script.turn=turn;if(turn.changed&&turn.commands)options.commands=turn.commands;return turn.changed;},
     // What compile needs, as plain data, so the engine in a worker can run it.
     request:(_width:number,_height:number,view:PageView={})=>({source:document.source,options:{...options,...view} as Record<string,unknown>}),
-    compile:(width:number,height:number,view:PageView={})=>engine.compile(document.source,width,height,{...options,...view}),
+    compile:(width:number,height:number,view:PageView={})=>{
+      const frame=engine.compile(document.source,width,height,{...options,...view});
+      Promise.resolve(frame).then(answer=>noteDiagnostics(page,answer),()=>{});
+      return frame;
+    },
     selectedText:(width:number,height:number,view:PageView={})=>engine.selectedText(document.source,width,height,{...options,...view}),
-  };
+  });
 }
 
 /** Give the engine a font file. Lean reads it, shapes words and takes outlines; this only moves bytes.

@@ -360,6 +360,8 @@ static void installMenu(void) {
   commandItem(viewMenu,@"Stop",@".",39);
   [viewMenu addItem:[NSMenuItem separatorItem]];
   commandItem(viewMenu,@"View Source",@"u",13);
+  // The console tab (foafnaut:console): Option-Command-J, as in Safari and Chrome.
+  commandItem(viewMenu,@"Console",@"j",40).keyEquivalentModifierMask=NSEventModifierFlagCommand|NSEventModifierFlagOption;
   commandItem(viewMenu,@"Actual Size",@"0",3);
   commandItem(viewMenu,@"Zoom In",@"=",1);
   hiddenCommand(viewMenu,@"Zoom In",@"+",1);

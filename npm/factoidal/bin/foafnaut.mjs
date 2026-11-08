@@ -33,6 +33,9 @@ App options, passed to the app as they are:
   --font FILE       load this font file
   --bitmap-font     use the baked-in ASCII font only
   --follow-links    open links that a page asks for at load
+  --be-liberal-in-what-we-accept  draw a page without the features this browser may skip
+                    (module scripts, unreadable media conditions, stylesheets that did not
+                    load) and list them in the console (Option-Command-J); the default refuses
 
 Also: foafnaut-latest, foafnaut-bleedingedge. Environment: FOAFNAUT_HOME, and
 FOAFNAUT_APP, which chooses the app outright. Page data goes to the app. Its trace
@@ -108,7 +111,7 @@ async function installLatest() {
 }
 
 // App options that take no value, and those that take one.
-const APP_FLAGS = ['--perf-summary', '--check-pixels', '--wasm-engine', '--bitmap-font', '--follow-links', '--idle-checks-only', '--trace-input'];
+const APP_FLAGS = ['--perf-summary', '--check-pixels', '--wasm-engine', '--bitmap-font', '--follow-links', '--idle-checks-only', '--trace-input', '--be-liberal-in-what-we-accept'];
 const APP_VALUES = ['--native-engine', '--font'];
 
 function pageArgs(page) {

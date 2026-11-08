@@ -44,7 +44,7 @@ def systemSchemes : List String := ["mailto","tel","sms"]
 argument after a slash (`foafnaut:sparql/q=...`, `foafnaut:wasm/NAME.wasm#export`).
 The graph page is `graphURL`: the graph app draws it. -/
 def builtinPages : List (String × Bool) :=
-  [("bookmarks",false),("history",false),("settings",false),("wasm",true),("sparql",true)]
+  [("bookmarks",false),("history",false),("settings",false),("wasm",true),("sparql",true),("console",true)]
 
 /-- The FOAF graph is a page of the browser, drawn by the graph app (issue 1268). -/
 def graphURL : String := "foafnaut:graph"
@@ -53,7 +53,7 @@ def graphURL : String := "foafnaut:graph"
 (`foafnaut:theme/arcade`, `foafnaut:zoom/150`). -/
 def commands : List String :=
   ["back","forward","reload","new","close","home","source","theme","zoom",
-   "bookmark","unbookmark","pod","sync","sparql-step","classic"]
+   "bookmark","unbookmark","pod","sync","sparql-step","classic","liberal"]
 
 /-- What the browser loads itself. -/
 structure Site where
@@ -342,6 +342,9 @@ private def native : Site := {pages := "file:///lab/pages/",files := true}
 #guard route hub here "foafnaut:settings" == .page "settings" "https://danbri.github.io/factoidal-core/web/hub/foafnaut/pages/settings.html"
 #guard route hub here "foafnaut:sparql/q=ASK+%7B%7D" == .page "sparql" "foafnaut:sparql/q=ASK+%7B%7D"
 #guard route hub here "foafnaut:wasm" == .page "wasm" "foafnaut:wasm"
+#guard route hub here "foafnaut:console" == .page "console" "foafnaut:console"
+#guard route hub here "foafnaut:console/2" == .page "console" "foafnaut:console/2"
+#guard route hub here "foafnaut:liberal/on" == .command "liberal" "on"
 #guard route hub here "foafnaut:theme/arcade" == .command "theme" "arcade"
 #guard route hub here "foafnaut:classic/off" == .command "classic" "off"
 #guard route hub here "foafnaut:nothing" == .refuse "foafnaut:nothing" "this browser has no such page"
@@ -509,13 +512,14 @@ theorem builtin_resolves (site : Site) (base : String) :
     ∀ p ∈ builtinPages, route site base ("foafnaut:" ++ p.1) = .page p.1 (pageURL site p.1) := by
   intro p hp
   simp only [builtinPages, List.mem_cons, List.not_mem_nil, or_false] at hp
-  rcases hp with rfl | rfl | rfl | rfl | rfl <;>
+  rcases hp with rfl | rfl | rfl | rfl | rfl | rfl <;>
     simp only [route, analyze_foafnaut, decide, foafnautRoute]
   · rw [show builtin ((trimEnd "bookmarks".toList).filter (!isTabOrNewline ·)) = .page "bookmarks" none by decide]; rfl
   · rw [show builtin ((trimEnd "history".toList).filter (!isTabOrNewline ·)) = .page "history" none by decide]; rfl
   · rw [show builtin ((trimEnd "settings".toList).filter (!isTabOrNewline ·)) = .page "settings" none by decide]; rfl
   · rw [show builtin ((trimEnd "wasm".toList).filter (!isTabOrNewline ·)) = .page "wasm" none by decide]; rfl
   · rw [show builtin ((trimEnd "sparql".toList).filter (!isTabOrNewline ·)) = .page "sparql" none by decide]; rfl
+  · rw [show builtin ((trimEnd "console".toList).filter (!isTabOrNewline ·)) = .page "console" none by decide]; rfl
 
 /-- `foafnaut:graph` runs the graph app. -/
 theorem graph_resolves (site : Site) (base : String) : route site base graphURL = .graph := by

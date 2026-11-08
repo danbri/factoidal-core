@@ -21,6 +21,8 @@ import L4Factoidal.Rendering.ComputedValues
 import WebRepaint
 import L4Factoidal.WHATWG.Encoding.Sniff
 import WebHit
+import WebAccept
+import WebConsole
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
 orders supplied CSS, collects font requests and renders the resulting arena.
@@ -38,13 +40,55 @@ private def stylesheet (n : DOM.Node) : Bool :=
 /-- The media type of a request: "print" when the host prints, else "screen". -/
 def medium (request : JSON.Json) : String := if str request "media" == "print" then "print" else "screen"
 
-private def activeSheet (medium : String) (n : DOM.Node) : Except String Bool := do
-  if Rendering.CSS.hasAttribute n "disabled" || !["","text/css"].contains (attr n "type") then return false
-  let media := (attr n "media").toLower
-  if media == "" || media == "all" || media == medium then return true
-  if media == "print" || media == "screen" then return false
-  throw "unsupported stylesheet media condition"
+/-- The media environment of a layout (`MediaQuery.Env`): the media type, and the viewport
+in CSS px, `width` by `rows` device pixels at the text scale `percent` (a text scale of 200%
+on a 1600 px wide window is an 800 px wide viewport, as a page zoom of 200% is). Pages are
+drawn in light colours: `prefers-color-scheme: dark` does not hold. -/
+def mediaEnv (medium : String) (width rows percent : Nat) : Rendering.MediaQuery.Env :=
+  let css := fun (n : Nat) => n.toFloat * 100 / (max 1 percent).toFloat
+  {medium, width := some (css width), height := some (css rows), dark := some false}
 
+private def sheetTyped (n : DOM.Node) : Bool :=
+  !Rendering.CSS.hasAttribute n "disabled" && ["","text/css"].contains (attr n "type")
+
+/-- Where a sheet is, for a diagnostic. -/
+private def sheetWhere (n : DOM.Node) (id : Nat) : String :=
+  let tag := if DOM.Dom.isHtmlElement n "style" then "style" else "link"
+  let href := attr n "href"
+  let media := attr n "media"
+  s!"<{tag}> node {id}" ++ (if href.isEmpty then "" else " href=\"" ++ href ++ "\"") ++
+    (if media.isEmpty then "" else " media=\"" ++ media ++ "\"")
+
+private def mediaRefusal : String := "unsupported stylesheet media condition"
+
+/-- Whether a `style` or stylesheet `link` applies in `env`. A `media` attribute that
+`MediaQuery` can not read is a skip point. -/
+private def activeSheetIn (m : WebAccept.Mode) (env : Rendering.MediaQuery.Env) (n : DOM.Node) (id : Nat) :
+    Except String (Bool × List WebAccept.Diagnostic) :=
+  if !sheetTyped n then .ok (false,[]) else
+  match Rendering.MediaQuery.holds env (attr n "media") with
+  | some b => .ok (b,[])
+  | none => WebAccept.skip m .mediaCondition (sheetWhere n id) mediaRefusal false
+
+/-- Whether the host fetches a stylesheet `link`: its `media` can hold on a screen or on
+paper at some viewport size. -/
+private def fetchSheetIn (m : WebAccept.Mode) (n : DOM.Node) (id : Nat) : Except String (Bool × List WebAccept.Diagnostic) :=
+  if !sheetTyped n then .ok (false,[]) else
+  match Rendering.MediaQuery.parse (attr n "media") with
+  | some qs => .ok (qs.isEmpty || qs.any (fun q => q.negated ||
+      Rendering.MediaQuery.typeMatches {medium := "screen"} q.type || Rendering.MediaQuery.typeMatches {medium := "print"} q.type),[])
+  | none => WebAccept.skip m .mediaCondition (sheetWhere n id) mediaRefusal false
+
+/-- The request's scripting: `scripting:false` when the host runs no page scripts. Only a
+liberal request carries it. -/
+def scripting (request : JSON.Json) : Bool := request.field? "scripting" != some (.bool false)
+
+/-- The reason the host gives for a stylesheet it could not fetch (`resourceFailures`). -/
+private def failure (request : JSON.Json) (id : Nat) : Option String :=
+  match request.field? "resourceFailures" with
+  | some (.array fs) => (fs.find? fun f => f.field? "nodeId" == some (.number (toString id))).map fun f =>
+      str f "reason" "not fetched"
+  | _ => none
 private def validateResources (dom : DOM.Dom) (request : JSON.Json) : Except String Unit := do
   let .array resources := (request.field? "resources").getD (.array []) | throw "document resources must be an array"
   if resources.length > 64 then throw "document resource limit exceeded"
@@ -226,17 +270,24 @@ def documentTitle (dom : DOM.Dom) : String := Id.run do
       return " ".intercalate ((spaced.splitOn " ").filter (· != ""))
   return ""
 
-private def supplied (request : JSON.Json) (id : Nat) : Except String String := do
+/-- The supplied source of a stylesheet `link`, none when the host supplied none. -/
+private def supplied (request : JSON.Json) (id : Nat) : Except String (Option String) := do
   let .array resources := (request.field? "resources").getD (.array [])
     | throw "document resources must be an array"
   if resources.length > 64 then throw "document resource limit exceeded"
   let foundResources := resources.filter (fun r => r.field? "nodeId" == some (.number (toString id)))
-  let [resource] := foundResources | throw s!"stylesheet resource missing or duplicated for node {id}"
-  let some (.string source) := resource.field? "source" | throw "stylesheet source must be a string"
-  if source.utf8ByteSize > 1048576 then throw "stylesheet exceeds 1MiB"
-  return source
+  match foundResources with
+  | [] => return none
+  | [resource] =>
+    let some (.string source) := resource.field? "source" | throw "stylesheet source must be a string"
+    if source.utf8ByteSize > 1048576 then throw "stylesheet exceeds 1MiB"
+    return some source
+  | _ => throw s!"stylesheet resource missing or duplicated for node {id}"
 
-def rules (dom : DOM.Dom) (request : JSON.Json) : Except String (List Rendering.CSS.Rule) := do
+/-- The rules of the document's sheets in `env`, with the skip points of mode `m`: a `media`
+that can not be read, a stylesheet the host could not fetch, and sheets past 2 MiB. -/
+def rulesIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env) :
+    Except String (List Rendering.CSS.Rule × List WebAccept.Diagnostic) := do
   -- Preserve the existing SVG/HTML stylesheet boundary validation. This copy
   -- removes only the external-fetch refusal; it is never used for layout.
   let validation := {dom with nodes := dom.nodes.map (fun n =>
@@ -244,45 +295,100 @@ def rules (dom : DOM.Dom) (request : JSON.Json) : Except String (List Rendering.
   WebRender.validateStyleBoundaries validation
   let mut sheets : List String := []
   let mut bytes := 0
+  let mut ds : List WebAccept.Diagnostic := []
   for id in dom.treeOrder 0 do
     let n := dom.get id
-    let source ← if DOM.Dom.isHtmlElement n "style" then do
-        if ← activeSheet (medium request) n then pure ((dom.textContent id).getD "") else pure ""
-      else if stylesheet n && Rendering.CSS.hasAttribute n "href" then do
-        if ← activeSheet (medium request) n then supplied request id else pure ""
-      else pure ""
+    let inline := DOM.Dom.isHtmlElement n "style"
+    if !inline && !(stylesheet n && Rendering.CSS.hasAttribute n "href") then continue
+    let (active,d) ← activeSheetIn m env n id
+    ds := ds ++ d
+    if !active then continue
+    let mut source := ""
+    if inline then source := (dom.textContent id).getD ""
+    else
+      match failure request id with
+      | some reason =>
+        let (_,d) ← WebAccept.skip m .stylesheetMissing (sheetWhere n id) s!"stylesheet not loaded: {reason}" ()
+        ds := ds ++ d
+      | none => match ← supplied request id with
+        | some text => source := text
+        | none =>
+          let (_,d) ← WebAccept.skip m .stylesheetMissing (sheetWhere n id)
+            s!"stylesheet resource missing or duplicated for node {id}" ()
+          ds := ds ++ d
+    if bytes+source.utf8ByteSize > 2097152 then
+      let (_,d) ← WebAccept.skip m .stylesheetBytes (sheetWhere n id) "document stylesheets exceed 2MiB" ()
+      ds := ds ++ d
+      continue
     bytes := bytes+source.utf8ByteSize
-    if bytes > 2097152 then throw "document stylesheets exceed 2MiB"
     sheets := source::sheets
-  Rendering.CSS.parseFor (medium request) (String.intercalate "\n" sheets.reverse)
+  return (← Rendering.CSS.parseIn env (String.intercalate "\n" sheets.reverse),ds)
+
+/-- The rules of a request, in its mode (`WebAccept.accept`). `env` is the media environment;
+with none given, the media type of the request and no viewport. -/
+def rules (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env := {medium := medium request}) :
+    Except String (List Rendering.CSS.Rule) :=
+  (WebAccept.accept (WebAccept.mode request) fun m => rulesIn m dom request env).map (·.1)
+
+private def scriptWhere (script : JSON.Json) : String :=
+  let src := str script "src"
+  let id := match script.field? "nodeId" with | some (.number n) => n | _ => "?"
+  s!"<script> node {id}" ++ (if src.isEmpty then "" else " src=\"" ++ src ++ "\"")
 
 /-- Script MIME classification has one owner: the Lean scripting snapshot.
 All callers use its normalized kind, including whitespace/case and legacy
-classic JavaScript MIME types. Modules stay an explicit profile refusal. -/
-private def classicScripts (scripts : List JSON.Json) : Except String (List JSON.Json) := do
-  if scripts.any (fun script => str script "kind" == "module") then
-    throw "unsupported JavaScript module script"
-  return scripts.filter (fun script => str script "kind" == "classic")
+classic JavaScript MIME types. A module script is a skip point (not run, as in a
+browser with no module scripts); so are the classic scripts when `scripting` is off. -/
+private def classicScriptsIn (m : WebAccept.Mode) (scripting : Bool) (scripts : List JSON.Json) :
+    Except String (List JSON.Json × List WebAccept.Diagnostic) := do
+  let mut ds : List WebAccept.Diagnostic := []
+  for script in scripts do
+    if str script "kind" == "module" then
+      let (_,d) ← WebAccept.skip m .moduleScript (scriptWhere script) "unsupported JavaScript module script" ()
+      ds := ds ++ d
+  let classic := scripts.filter (fun script => str script "kind" == "classic")
+  if !scripting && !classic.isEmpty then
+    let (_,d) ← WebAccept.skip m .scriptsOff s!"{classic.length} classic scripts"
+      "page scripts are off in this browser; this page is refused" ()
+    return ([],ds ++ d)
+  return (classic,ds)
 
-def inspect (dom : DOM.Dom) (url : String) : Except String JSON.Json := do
+/-- The classic scripts of a request, in its mode. -/
+private def classicScripts (request : JSON.Json) (scripts : List JSON.Json) : Except String (List JSON.Json) :=
+  (WebAccept.accept (WebAccept.mode request) fun m => classicScriptsIn m (scripting request) scripts).map (·.1)
+
+def inspectIn (m : WebAccept.Mode) (dom : DOM.Dom) (url : String) (scripting : Bool) :
+    Except String (JSON.Json × List WebAccept.Diagnostic) := do
   let base := baseURL dom url
   let snapshot := WebRenderScript.snapshot dom
   let mut sheets : List JSON.Json := []
+  let mut ds : List WebAccept.Diagnostic := []
   for id in dom.treeOrder 0 do
     let n := dom.get id
     -- The host fetches the sheets of the screen and of print: it prints the page it shows.
-    if stylesheet n && Rendering.CSS.hasAttribute n "href" && ((← activeSheet "screen" n) || (← activeSheet "print" n)) then
-      sheets := .object [("nodeId",.number (toString id)),("href",.string (attr n "href")),
-        ("url",.string (Syntax.resolveIri base (attr n "href")))]::sheets
-  let scripts ← classicScripts (WebRenderScript.scriptRecords dom)
+    if stylesheet n && Rendering.CSS.hasAttribute n "href" then
+      let (fetch,d) ← fetchSheetIn m n id
+      ds := ds ++ d
+      if fetch then
+        sheets := .object [("nodeId",.number (toString id)),("href",.string (attr n "href")),
+          ("url",.string (Syntax.resolveIri base (attr n "href")))]::sheets
+  let (scripts,d) ← classicScriptsIn m scripting (WebRenderScript.scriptRecords dom)
   let scripts := scripts.map fun script =>
     match script with
     | .object fields => .object (fields ++ [("url",.string (Syntax.resolveIri base (str script "src")))])
     | other => other
-  return .object [("nodes",(snapshot.field? "nodes").getD (.array [])),
+  return (.object [("nodes",(snapshot.field? "nodes").getD (.array [])),
     ("scripts",.array scripts),("stylesheets",.array sheets.reverse),("images",.array (← imageRequests dom base)),
     ("baseURL",.string base),("title",.string (documentTitle dom)),
-    ("icon",match iconURL dom base with | some url => .string url | none => .null)]
+    ("icon",match iconURL dom base with | some url => .string url | none => .null)],ds ++ d)
+
+/-- What the host fetches for a page, in the mode of `request`. In liberal mode the answer
+has `diagnostics`, the skips (`WebAccept.Diagnostic.json`), when there are any. -/
+def inspect (dom : DOM.Dom) (url : String) (request : JSON.Json := .object []) : Except String JSON.Json := do
+  let (answer,ds) ← WebAccept.accept (WebAccept.mode request) fun m => inspectIn m dom url (scripting request)
+  match answer, ds with
+  | .object fields, _ :: _ => return .object (fields ++ [("diagnostics",WebAccept.diagnosticsJSON ds)])
+  | _, _ => return answer
 
 private def float (j : JSON.Json) : Except String Float :=
   match j with
@@ -431,6 +537,8 @@ def textZoomAnswer (request : JSON.Json) : Except String String := do
 /-- Input decisions need no document, so they do not parse one. -/
 private def inputOp (op : String) (request : JSON.Json) : Except String (Option String) := do
   if op == "textZoom" then return some (← textZoomAnswer request)
+  -- The console tab (WebConsole): the page of the entries the host kept for a tab.
+  if op == "consolePage" then return some (WebConsole.answer request)
   if op == "command" then
     let some (.number raw) := request.field? "command" | throw "command number required"
     let some command := raw.toNat? | throw "command must be natural"
@@ -1033,7 +1141,7 @@ the height of the chrome, which the key holds as `top`; `selection`, `live`, `bi
 here: the pointer state is painted (`WebRepaint`), and is in the key, as `pointer`,
 only for a frame whose pointer styles change geometry. -/
 def layoutFields : List String := ["commands","resources","images","heldImages","url","fontData","textScalePercent","graphModel",
-  "visited","media"]
+  "visited","media","liberal","scripting","resourceFailures"]
 
 /-- The request with only `layoutFields`, in that order. -/
 def layoutRequest (request : JSON.Json) : JSON.Json :=
@@ -1075,6 +1183,8 @@ structure Laid where
   textScale : Float := 1
   state : Rendering.CSS.ElementState := {}
   styles : Thunk (Except String (Array Rendering.CSS.Computed)) := Thunk.pure (.ok #[])
+  /-- What liberal mode skipped (`WebAccept`); empty in strict mode. -/
+  diagnostics : List WebAccept.Diagnostic := []
 
 /-- The element state of a request (Selectors 4 §9): `hover` and `active` are node ids
 of the page (a link's `sourceNode`); `visited` lists URLs of the session history. A
@@ -1107,14 +1217,67 @@ def withPointer (dom : DOM.Dom) (state : Rendering.CSS.ElementState) (pointer : 
   let inside := fun (id : Option Nat) => id.bind fun n => if n < dom.size then some n else none
   {state with hover := inside pointer.1, active := inside pointer.2}
 
-/-- `layOut` after the parse: the layout of the arena `dom`, `width` by `rows` CSS pixels.
-A script session's layout reads (`measure`) lay its arena out here, with no parse. -/
-def layOutDOM (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom) (width rows : Nat)
-    (held : List (String × String)) (pointer : Option Nat × Option Nat) : Except String Laid := do
+/-- The arena with the children of each node `limit` levels below the root taken out of
+the tree, and the number of nodes that lost them. -/
+def pruneDeep (dom : DOM.Dom) (limit : Nat) : DOM.Dom × Nat := Id.run do
+  let mut d := dom
+  let mut cut := 0
+  let mut pending : List (Nat × Nat) := [(0,0)]
+  for _ in [:dom.size+1] do
+    match pending with
+    | [] => break
+    | (id,depth)::rest =>
+      pending := rest
+      let n := d.get id
+      if depth >= limit && !n.kids.isEmpty then
+        d := d.setNode id fun n => {n with kids := #[]}
+        cut := cut+1
+      else
+        pending := n.kids.toList.map (·,depth+1) ++ pending
+  return (d,cut)
+
+/-- The note that liberal mode puts at the top of a page it drew with skips: a link to the
+console tab (`foafnaut:console`), drawn by this engine as page content. A document with no
+`body` gets no note. -/
+def partialNote (dom : DOM.Dom) : DOM.Dom := Id.run do
+  let some body := (dom.treeOrder 0).find? (fun id => DOM.Dom.isHtmlElement (dom.get id) "body") | return dom
+  let doc := (dom.get body).doc
+  let style := "display:block;margin:0;padding:6px 12px;background-color:#fff1b8;color:#4a3300;" ++
+    "border:2px solid #b08a1e;font-size:14px;line-height:20px;text-decoration:none;text-align:left"
+  let attrs : Array DOM.Attr := #[{lname := "href", value := "foafnaut:console"},{lname := "style", value := style}]
+  let html := some DOM.htmlNS
+  let link : DOM.Node := {type := .element, doc := doc, ns := html, lname := "a", attrs := attrs}
+  let text : DOM.Node := {type := .text, doc := doc, data := "Partial page \u2014 see console"}
+  let (d,a) := dom.push link
+  let (d,t) := d.push text
+  let d := d.linkChild a t none
+  d.linkChild body a (d.get body).kids[0]?
+
+/-- The arena with every inline `svg` root (an SVG `svg` element whose parent is not SVG) taken
+out of the tree, and how many. -/
+def stripSvg (dom : DOM.Dom) : DOM.Dom × Nat := Id.run do
+  let roots := (dom.treeOrder 0).toList.filter fun id =>
+    let n := dom.get id
+    n.type == .element && n.ns == some DOM.svgNS && n.lname == "svg" &&
+      (n.parent.map fun p => (dom.get p).ns != some DOM.svgNS).getD false
+  return (roots.foldl DOM.Dom.remove dom,roots.length)
+
+private def depthRefusal : String := "unsupported HTML nesting depth (maximum 64)"
+/-- The mark of a refusal of the SVG embedding in a liberal layout (a control character, so no
+refusal text starts with it). -/
+private def svgMark : String := "\u0001svg: "
+
+/-- `layOutDOM` in mode `m`, with its skip points. A liberal run is made only after a strict
+run refused (`WebAccept.accept`), so it puts `partialNote` on the page. -/
+def layOutDOMIn (m : WebAccept.Mode) (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom)
+    (width rows : Nat) (held : List (String × String)) (pointer : Option Nat × Option Nat) :
+    Except String (Laid × List WebAccept.Diagnostic) := do
   validateResources dom request
-  let _ ← classicScripts (WebRenderScript.scriptRecords dom)
-  let textScale := Float.ofNat (← scalePercent request) / 100
-  let rules ← rules dom request
+  let (_,d1) ← classicScriptsIn m (scripting request) (WebRenderScript.scriptRecords dom)
+  let percent ← scalePercent request
+  let textScale := Float.ofNat percent / 100
+  let (rules,d2) ← rulesIn m dom request (mediaEnv (medium request) width rows percent)
+  let dom := if m == .liberal && graph.isNone then partialNote dom else dom
   if width == 0 || rows == 0 || width > 4096 || rows > 4096 then throw "unsupported document viewport"
   let fontData := str request "fontData"
   if !fontData.isEmpty then
@@ -1132,19 +1295,93 @@ def layOutDOM (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom :
   -- SVG text is drawn with the fonts of the HTML text.
   let svgFonts := (loaded.map (·.fonts)).getD #[]
   let images := (← suppliedImages request) ++ heldBytes request held
-  let (embedding,pictures) ← match graph with
-    | some m => pure (WebGraph.embedding m,Rendering.Layout.noPictures)
-    | none => WebRender.makeReplaced dom (if url.isEmpty then none else some url) images svgFonts
+  -- The SVG of the page is read here. In liberal mode a refusal of it (the SVG reader reads all
+  -- inline `svg` roots of the document together) lays the page out with no inline `svg`.
+  let documentURL := if url.isEmpty then none else some url
+  let (embedding,pictures,dom,d0) ← match graph with
+    | some g => pure (WebGraph.embedding g,Rendering.Layout.noPictures,dom,([] : List WebAccept.Diagnostic))
+    | none => match WebRender.makeReplaced dom documentURL images svgFonts, m with
+      | .ok (e,p), _ => pure (e,p,dom,[])
+      | .error e, .strict => throw e
+      | .error e, .liberal =>
+        let (bare,n) := stripSvg dom
+        if n == 0 then throw e else
+        match WebRender.makeReplaced bare documentURL images svgFonts with
+        | .ok (e',p) => pure (e',p,bare,[{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}])
+        | .error _ => throw e
   -- A window shorter than the chrome still lays out, on one row.
   let state := withPointer dom (← elementState dom url request) pointer
-  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding width rows textScale state pictures
+  let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.render d rules font e width rows textScale state pictures
+  -- Inline SVG that the SVG reader refuses is a skip point: in liberal mode the refusals of the
+  -- embedding are marked (`svgMark`), and a marked one makes the layout run again with every
+  -- refused `svg` not drawn, as a browser without that SVG feature would leave it out.
+  let marked : Rendering.Layout.Embedding := fun id s w h => (embedding id s w h).mapError (svgMark ++ ·)
+  let quiet : Rendering.Layout.Embedding := fun id s w h => match embedding id s w h with
+    | .ok nodes => .ok nodes
+    | .error _ => .ok []
+  let unmark := fun (e : String) => if e.startsWith svgMark then (e.drop svgMark.length).toString else e
+  let (first,used,d3) := match m with
+    | .strict => (draw dom embedding,embedding,([] : List WebAccept.Diagnostic))
+    | .liberal => match draw dom marked with
+      | .error e =>
+        if e.startsWith svgMark then
+          (draw dom quiet,quiet,[{skip := .svgContent, «where» := "inline svg", refusal := unmark e}])
+        else (.error e,quiet,[])
+      | ok => (ok,quiet,[])
+  -- Nesting deeper than layout reads is a skip point: liberal mode draws the page with the
+  -- content below some depth taken out, the first of these depths that lays out.
+  let (scene,boxes,dom,d4) ← match first with
+    | .ok (scene,boxes) => pure (scene,boxes,dom,([] : List WebAccept.Diagnostic))
+    | .error e =>
+      let e := unmark e
+      match m with
+      | .strict => throw e
+      | .liberal =>
+        if e == depthRefusal then
+          let tries := [48,40,32,24,16].map (pruneDeep dom)
+          match tries.findSome? (fun (d,cut) => match draw d used with | .ok r => some (r,d,cut) | .error _ => none) with
+          | some ((scene,boxes),d,cut) =>
+            pure (scene,boxes,d,[{skip := .nestingDepth, «where» := s!"{cut} elements", refusal := e}])
+          | none => throw e
+        else
+          -- A layout refusal of inline SVG (an SVG box that layout can not size, as BBC News's
+          -- percentage heights): the page with no inline `svg`, when that lays out.
+          let (bare,n) := stripSvg dom
+          if n == 0 then throw e else
+          match draw bare used with
+          | .ok (scene,boxes) => pure (scene,boxes,bare,[{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}])
+          | .error _ => throw e
   let hoverRules := rules.any fun rule => rule.selectors.any fun sel => sel.parts.any (·.pseudo.contains .hover)
   let laid : Laid := {scene := scene,boxes := boxes,face := face,hoverRules := hoverRules}
-  return {laid with dom := dom}
+  return ({laid with dom := dom}
     |> fun l => {l with rules := rules}
     |> fun l => {l with textScale := textScale}
     |> fun l => {l with state := state}
-    |> fun l => {l with styles := Thunk.mk fun _ => Rendering.CSS.computeAll dom rules textScale state}
+    |> fun l => {l with styles := Thunk.mk fun _ => Rendering.CSS.computeAll dom rules textScale state},d1 ++ d2 ++ d0 ++ d3 ++ d4)
+
+/-- `layOut` after the parse: the layout of the arena `dom`, `width` by `rows` CSS pixels,
+in the mode of the request (`WebAccept.accept`). A script session's layout reads
+(`measure`) lay its arena out here, with no parse. -/
+def layOutDOM (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom) (width rows : Nat)
+    (held : List (String × String)) (pointer : Option Nat × Option Nat) : Except String Laid := do
+  let (laid,ds) ← WebAccept.accept (WebAccept.mode request) fun m => layOutDOMIn m request graph dom width rows held pointer
+  return {laid with diagnostics := ds}
+
+/-- Liberal mode is a conservative extension of strict mode for layout: when the strict
+layout of a request succeeds, the liberal layout is the same, with no diagnostics. -/
+theorem layOut_liberal_conservative (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom)
+    (width rows : Nat) (held : List (String × String)) (pointer : Option Nat × Option Nat)
+    (laid : Laid) (ds : List WebAccept.Diagnostic)
+    (h : WebAccept.accept .strict (fun m => layOutDOMIn m request graph dom width rows held pointer) = .ok (laid,ds)) :
+    WebAccept.accept .liberal (fun m => layOutDOMIn m request graph dom width rows held pointer) = .ok (laid,[]) ∧ ds = [] :=
+  WebAccept.liberal_conservative _ laid ds h
+
+/-- The same for what the host fetches (`inspect`). -/
+theorem inspect_liberal_conservative (dom : DOM.Dom) (url : String) (scripting : Bool) (j : JSON.Json)
+    (ds : List WebAccept.Diagnostic)
+    (h : WebAccept.accept .strict (fun m => inspectIn m dom url scripting) = .ok (j,ds)) :
+    WebAccept.accept .liberal (fun m => inspectIn m dom url scripting) = .ok (j,[]) ∧ ds = [] :=
+  WebAccept.liberal_conservative _ j ds h
 
 /-- Parse, script check, cascade and layout of a render. It reads only the key: the
 request it reads is `key.request`, which has only `layoutFields`. With `graphModel`
@@ -1443,6 +1680,14 @@ private def cachedFrame (key : LayoutKey) : Except String Laid :=
 /-- `cpu:true`: each scene of a bytes answer also carries its CPU pixels. -/
 private def cpuPixels (request : JSON.Json) : Bool := request.field? "cpu" == some (.bool true)
 
+/-- A render answer in liberal mode says what it skipped, when the request asks
+(`diagnostics:true`; a host asks on the first frame of a page): `diagnostics`
+(`WebAccept.Diagnostic.json`) at the end of its JSON head. Other frames pay nothing. -/
+def withDiagnostics (request : JSON.Json) (laid : Laid) (answer : String × Array ByteArray) : String × Array ByteArray :=
+  let (text,sections) := answer
+  if request.field? "diagnostics" != some (.bool true) || laid.diagnostics.isEmpty || !text.endsWith "}" then answer
+  else ((text.dropEnd 1).toString ++ ",\"diagnostics\":" ++ (WebAccept.diagnosticsJSON laid.diagnostics).toString ++ "}",sections)
+
 /-- A document request, with `laidOut` as the layout of a render. `run` passes the
 kept layout; `runUncached` passes `layOut`, so that tests compare the two. With
 `bytes`, a render answer names its storage floats and tile words as sections
@@ -1514,8 +1759,8 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   if op != "render" && op != "selectedText" && op != "printLayout" && op != "nodeAt" then
     let dom ← prepareDOM html request
     validateResources dom request
-    let _ ← classicScripts (WebRenderScript.scriptRecords dom)
-    if op == "inspect" then return ((← inspect dom (str request "url")).toString,#[])
+    if op == "inspect" then return ((← inspect dom (str request "url") request).toString,#[])
+    let _ ← classicScripts request (WebRenderScript.scriptRecords dom)
     let textScale := Float.ofNat (← scalePercent request) / 100
     let rules ← rules dom request
     if op == "droppedCSS" then
@@ -1537,8 +1782,9 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   -- Printing (issue 1268): the host lays the document out at the paper width, with
   -- `media:"print"`, and `height` the rows of one page. The answer is the pages.
   if op == "printLayout" then
-    let dom ← prepareDOM html request
-    let sheet ← rules dom request
+    -- The document and rules of the layout: its media environment, and in liberal mode its skips.
+    let dom := laid.dom
+    let sheet := laid.rules
     let styles ← Rendering.CSS.computeAll dom sheet
     let content := WebPrint.contentHeight boxes
     let pages := WebPrint.paginate (WebPrint.pieces dom sheet styles boxes) content height
@@ -1581,12 +1827,12 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     return ← WebRender.artifactWith page boxes face live form checks tree
   if let some value := shell then
     if request.field? "layers" == some (.bool true) then
-      return ← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
-        (canvasBoxes laid.dom boxes)
+      return withDiagnostics request laid (← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
+        (canvasBoxes laid.dom boxes))
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
   let page := {scene with tree := near ++ marks}
-  WebRender.artifactWith (match shell with
+  withDiagnostics request laid <$> WebRender.artifactWith (match shell with
     | some value => WebShell.compose value page width height
     | none => page) boxes face live form checks tree
 

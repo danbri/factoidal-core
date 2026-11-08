@@ -54,6 +54,9 @@ def bottomCommand : Nat := 36
 def lineDownCommand : Nat := 37
 def lineUpCommand : Nat := 38
 def stopCommand : Nat := 39
+/-- The console tab (`foafnaut:console`): Option-Command-J, as Safari and Chrome on macOS;
+Control-Alt-J elsewhere (Control-Shift-J belongs to the host browser on the Hub). -/
+def consoleCommand : Nat := 40
 
 /-- Keys that the common desktop browsers (Safari, Chrome, Firefox, Edge) share, for
 one platform: `primary` is Command on macOS and Control elsewhere. -/
@@ -84,11 +87,12 @@ def keyTable : List (String × String × String × Nat) :=
    -- Safari and Chrome: Shift-Command-[ and ] change tab; Command-Up and Down go to the ends.
    ("mac","shift+command","{",previousTabCommand),("mac","shift+command","}",nextTabCommand),
    ("mac","command","ArrowUp",topCommand),("mac","command","ArrowDown",bottomCommand),
-   ("mac","command",".",stopCommand)] ++ shared "mac" "command" ++
+   ("mac","command",".",stopCommand),("mac","alt+command","j",consoleCommand)] ++ shared "mac" "command" ++
   [("other","alt","ArrowLeft",backCommand),("other","alt","ArrowRight",forwardCommand),
    ("other","control","y",17),("other","","F5",reloadCommand),("other","control","F5",reloadCommand),
    ("other","control","PageDown",nextTabCommand),("other","control","PageUp",previousTabCommand),
-   ("other","control","Home",topCommand),("other","control","End",bottomCommand)] ++ shared "other" "control"
+   ("other","control","Home",topCommand),("other","control","End",bottomCommand),
+   ("other","control+alt","j",consoleCommand)] ++ shared "other" "control"
 
 /-- The modifier name of `keyTable` for the bits that the window library sends:
 1 Shift, 2 Command, 4 Option (alt), 8 Control. -/
@@ -181,6 +185,7 @@ private def toGraph : History := (({} : History).push "file:///pages/index.html"
 #guard keyCommand "other" "" "Escape" == some stopCommand && keyCommand "mac" "command" "." == some stopCommand
 -- One command for each platform, modifier and key: the first match is the only match.
 #guard (keyTable.map fun (p,m,k,_) => (p,m,k)).eraseDups.length == keyTable.length
+#guard keyCommand "mac" "alt+command" "j" == some consoleCommand && keyCommand "other" "control+alt" "j" == some consoleCommand
 #guard modifierName 0 == "" && modifierName 1 == "shift" && modifierName 3 == "shift+command" && modifierName 9 == "shift+control"
 #guard pageKey 49 0 == some pageDownCommand && pageKey 49 1 == some pageUpCommand && pageKey 126 2 == some topCommand
 #guard pageKey 53 0 == some stopCommand && pageKey 48 8 == some nextTabCommand && pageKey 0 0 == none

@@ -64,7 +64,8 @@ private def linkId := ((externalDOM.treeOrder 0).find? fun id => DOM.Dom.isHtmlE
 #guard size "<link rel=stylesheet href=one.css disabled><p id=target>A</p>" [] == some 16
 #guard size "<style media=print>p{font-size:90px}</style><p id=target>A</p>" [] == some 16
 #guard size "<style media=print>p{display:grid;unknown-print-property:unsupported}</style><p id=target>A</p>" [] == some 16
-#guard size "<style media='screen and (min-width:1px)'>p{font-size:90px}</style><p id=target>A</p>" [] == none
+-- A media feature with no viewport (no width given to `rules`) does not hold (MediaQuery).
+#guard size "<style media='screen and (min-width:1px)'>p{font-size:90px}</style><p id=target>A</p>" [] == some 16
 #guard size "<link rel=stylesheet href=one.css type=text/plain><p id=target>A</p>" [] == some 16
 
 
@@ -544,3 +545,85 @@ private def xhtmlWidth (url : String) : Option String := do
 #guard xhtmlWidth "https://example.test/a.html" == some (reprStr Rendering.CSS.Length.auto)
 -- Not well-formed XML is refused, as an XML user agent shows a parse error.
 #guard (WebDocument.prepareDOM "<html xmlns=\"http://www.w3.org/1999/xhtml\"><p></html>" (json [("url",.string "a.xht")])).toOption.isNone
+
+/-! ### Media queries against the viewport, and liberal mode (WebAccept)
+
+Each blocking construct of the real sites of 8 November has an original case here:
+a `media` condition on a `link` or `style`, a module script, a stylesheet that was not
+fetched, and nesting deeper than layout reads. -/
+private def liberal : String × JSON.Json := ("liberal",.bool true)
+private def asks : String × JSON.Json := ("diagnostics",.bool true)
+private def sizeAt (w : Nat) (html : String) (sources : List String) (fields : List (String × JSON.Json) := []) : Option Float := do
+  let dom := DOM.parseHtmlDocument html
+  let rules ← (WebDocument.rules dom (withSheets dom sources fields) (WebDocument.mediaEnv "screen" w 600 100)).toOption
+  let styles ← (Rendering.CSS.computeAll dom rules).toOption
+  let id ← dom.getElementById 0 "target"
+  return (← styles[id]?).fontSize
+-- The viewport of a layout in CSS px: device pixels over the text scale.
+#guard (WebDocument.mediaEnv "screen" 1600 1000 200).width == some 800
+#guard sizeAt 800 "<style media='(min-width: 500px)'>p{font-size:30px}</style><p id=target>A</p>" [] == some 30
+#guard sizeAt 400 "<style media='(min-width: 500px)'>p{font-size:30px}</style><p id=target>A</p>" [] == some 16
+#guard sizeAt 800 "<link rel=stylesheet href=wide.css media='screen and (min-width: 500px)'><p id=target>A</p>" ["p{font-size:30px}"] == some 30
+#guard sizeAt 400 "<link rel=stylesheet href=wide.css media='only screen and (min-width: 500px)'><p id=target>A</p>" ["p{font-size:30px}"] == some 16
+#guard sizeAt 400 "<style>@media (max-width: 600px){p{font-size:12px}} @media print{p{font-size:50px}}</style><p id=target>A</p>" [] == some 12
+#guard sizeAt 800 "<style>@media (max-width: 600px){p{font-size:12px}}</style><p id=target>A</p>" [] == some 16
+#guard sizeAt 800 "<style media='not print'>p{font-size:20px}</style><style media='(prefers-color-scheme: dark)'>p{font-size:40px}</style><p id=target>A</p>" [] == some 20
+-- A media condition that can not be read: strict refuses the page, liberal does not apply the sheet.
+#guard sizeAt 800 "<style media='(hover: hover)'>p{font-size:30px}</style><p id=target>A</p>" [] == none
+#guard sizeAt 800 "<style media='(hover: hover)'>p{font-size:30px}</style><p id=target>A</p>" [] [liberal] == some 16
+#guard sizeAt 800 "<link rel=stylesheet href=a.css media='screen or print'><p id=target>A</p>" ["p{font-size:30px}"] [liberal] == some 16
+-- An external stylesheet that was not fetched: strict refuses, liberal draws without it.
+#guard (WebDocument.rules externalDOM (json [liberal])).toOption.isSome
+#guard (WebDocument.rules externalDOM (json [("resourceFailures",.array [json [("nodeId",.number (toString linkId)),("reason",.string "HTTP 404")]])])).toOption.isNone
+#guard (WebDocument.rules externalDOM (json [liberal,("resourceFailures",.array [json [("nodeId",.number (toString linkId)),("reason",.string "HTTP 404")]])])).toOption.isSome
+-- Malformed resources stay refused in both modes.
+#guard (WebDocument.rules externalDOM (json [liberal,("resources",.array [resource linkId "p{}",resource linkId "p{}"])])).toOption.isNone
+#guard (WebDocument.rules externalDOM (json [liberal,("resources",.string "bad")])).toOption.isNone
+-- Module scripts: strict refuses; liberal leaves them out and says so once each.
+private def moduleDOM := DOM.parseHtmlDocument "<script type=module>import x from './x.js'</script><script>var a=1</script><p>A</p>"
+private def diagnosticsOf (j : JSON.Json) : Nat := match j.field? "diagnostics" with | some (.array ds) => ds.length | _ => 0
+#guard (WebDocument.inspect moduleDOM "https://e.test/").toOption.isNone
+#guard match WebDocument.inspect moduleDOM "https://e.test/" (json [liberal]) with
+  | .ok j => diagnosticsOf j == 1 && (match j.field? "scripts" with | some (.array [_]) => true | _ => false)
+  | _ => false
+-- Scripts off (the host runs no page scripts): liberal leaves the classic scripts out too.
+#guard match WebDocument.inspect moduleDOM "https://e.test/" (json [liberal,("scripting",.bool false)]) with
+  | .ok j => diagnosticsOf j == 2 && j.field? "scripts" == some (.array [])
+  | _ => false
+-- A document that strict mode accepts: liberal mode gives the same answer and no diagnostics.
+#guard (WebDocument.inspect urlDOM "https://example.test/a/page.html" (json [liberal])).toOption == some inspected
+
+-- Renders: the answer, its diagnostics, and the note that links to the console.
+private def renderText (html : String) (fields : List (String × JSON.Json)) : String :=
+  (WebDocument.runUncached html (json ([("op",.string "render"),("url",.string "https://e.test/p.html")] ++ fields)) 400 300).toOption.getD ""
+private def mentions (text part : String) : Nat := (text.splitOn part).length - 1
+private def modulePage := "<!doctype html><title>M</title><script type=module>import x from './x.js'</script><p>Words</p>"
+#guard renderText modulePage [] == ""
+#guard mentions (renderText modulePage [liberal,asks]) "\"diagnostics\"" == 1
+#guard mentions (renderText modulePage [liberal]) "\"diagnostics\"" == 0
+#guard mentions (renderText modulePage [liberal]) "foafnaut:console" ≥ 1
+#guard mentions (renderText modulePage [liberal,asks]) "\"feature\":\"module script\"" == 1
+private def plainPage := "<!doctype html><title>P</title><style media='(min-width: 100px)'>p{color:red}</style><p>Words <a href=x.html>link</a></p>"
+#guard renderText plainPage [] != ""
+#guard renderText plainPage [liberal] == renderText plainPage []
+#guard mentions (renderText plainPage [liberal,asks]) "diagnostics" == 0
+-- Nesting deeper than layout reads (64 levels): strict refuses, liberal draws the page
+-- without the deepest content and says so.
+private def deepPage := "<!doctype html><title>D</title><p>Top</p>" ++ String.join (List.replicate 80 "<div>") ++ "deep" ++
+  String.join (List.replicate 80 "</div>")
+#guard renderText deepPage [] == ""
+#guard mentions (renderText deepPage [liberal,asks]) "\"feature\":\"nesting depth\"" == 1
+#guard mentions (renderText deepPage [liberal]) "foafnaut:console" ≥ 1
+-- Inline SVG the SVG reader refuses (here the attribute `focusable`, as on gov.uk): strict
+-- refuses the page, liberal draws it without that svg.
+private def svgPage := "<!doctype html><title>S</title><p>Icon <svg width=\"16\" height=\"16\" viewBox=\"0 0 32 32\" focusable=\"false\"><path d=\"M0 0h32v32H0z\"/></svg> here</p>"
+#guard renderText svgPage [] == ""
+#guard mentions (renderText svgPage [liberal,asks]) "\"feature\":\"inline SVG\"" == 1
+-- An SVG box that layout can not size (a percentage height with no definite containing height):
+-- strict refuses, liberal lays the page out with no inline svg.
+private def svgBoxPage := "<!doctype html><title>B</title><div><svg width=\"10\" height=\"100%\" viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\"/></svg></div><p>Words</p>"
+#guard renderText svgBoxPage [] == ""
+#guard mentions (renderText svgBoxPage [liberal,asks]) "\"feature\":\"inline SVG\"" == 1
+-- The console page lists the entries a host kept.
+#guard mentions (WebConsole.answer (json [("tab",.number "1"),("entries",.array [json [("source",.string "System"),
+  ("severity",.string "warning"),("feature",.string "module script"),("message",.string "unsupported JavaScript module script")]])])) "module script" ≥ 1

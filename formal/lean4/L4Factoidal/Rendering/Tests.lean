@@ -247,6 +247,16 @@ private def rulesFor (medium source : String) : Nat := ((CSS.parseFor medium sou
 #guard rules "@media screen, projection { .a { color: red } } p{color:blue}" == 2
 #guard rulesFor "print" "@media only print, (max-width:1px) { p{color:red} }" == 1
 #guard rulesFor "print" "@media not print { p{color:red} } @media all { p{color:blue} }" == 1
+-- Media features against the viewport the host gives (MediaQuery, CSS px).
+private def rulesAt (width : Float) (source : String) : Nat :=
+  ((CSS.parseIn {width := some width, height := some 600, dark := some false} source).toOption.map List.length).getD 999
+#guard rulesAt 800 "@media (min-width: 500px) { .a { color: red } } p{color:blue}" == 2
+#guard rulesAt 400 "@media (min-width: 500px) { .a { color: red } } p{color:blue}" == 1
+#guard rulesAt 400 "@media screen and (max-width: 600px) { .a { color: red } } @media print { p{color:red} }" == 1
+#guard rulesAt 800 "@media (prefers-color-scheme: dark) { p{color:white} } @media not (prefers-color-scheme: dark) { p{color:black} }" == 1
+#guard rulesAt 800 "@media (hover: hover) { p{color:red} } p{color:blue}" == 1
+-- SVG width and height attributes in em and rem (BBC News icons: width="1em"), in both modes.
+#guard (CSS.computeAll (DOM.parseHtmlDocument "<p><svg width='1em' height='2rem' viewBox='0 0 32 32'></svg></p>") []).toOption.isSome
 #guard CSS.mediaMatches "print" "all" && !CSS.mediaMatches "screen" "print" && !CSS.mediaMatches "print" "print and (color)"
 #guard rules "@import 'x.css'; @charset \"utf-8\"; p{color:blue}" == 1
 #guard rules "a:focus, p{color:red} p{color:blue}" == 1

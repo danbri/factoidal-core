@@ -12,6 +12,23 @@ import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './br
 import {createRouter} from './link-route.mjs';
 let browserState,stateReason='starting';
 const statePages=['foafnaut:bookmarks','foafnaut:history'];
+// Liberal mode (WebAccept.lean, the Settings checkbox "Be liberal in what we accept"): a page
+// is prepared with liberal:true; Lean skips what it may skip and says so in the console.
+let liberal=false;
+// The console of each page (foafnaut:console, WebConsole.lean): what its scripts wrote, and
+// System entries: Lean's diagnostics, refusals and fetches that failed. Lean writes the page.
+const consoleURL='foafnaut:console',MAX_CONSOLE=1000;
+function addEntries(page,list){
+  if(!page)return;
+  page.console??=[];page.consoleKeys??=new Set();
+  for(const entry of list){
+    if(page.console.length>=MAX_CONSOLE)return;
+    if(entry.source==='System'){const key=JSON.stringify([entry.feature,entry.where,entry.message]);if(page.consoleKeys.has(key))continue;page.consoleKeys.add(key);}
+    page.console.push(entry);
+  }
+}
+// Lean puts the skips in a render answer when asked (diagnostics:true): the first frame of a page only.
+const noteDiagnostics=(page,answer)=>{if(page)page.diagnosticsSeen=true;if(Array.isArray(answer?.diagnostics))addEntries(page,answer.diagnostics);};
 const inWorker=typeof WorkerGlobalScope!=='undefined'&&self instanceof WorkerGlobalScope;
 const pagesBase=new URL('./pages/',import.meta.url).href,siteOrigin=new URL(import.meta.url).origin;
 const homeURL=pagesBase+'index.html',settingsURL=pagesBase+'settings.html';
@@ -188,7 +205,9 @@ function unfold(){
 const push=(state,url)=>call('',{op:'historyPush',history:state,url});
 const refusal=(url,message)=>{
   const text=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;');
-  return {url,title:'Page refused',source:`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`};
+  const page={url,title:'Page refused',source:`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`};
+  addEntries(page,[{source:'System',severity:'error',feature:'page',where:url,message:String(message),action:'page refused'}]);
+  return page;
 };
 // Lean sends the storage floats as the bytes the GPU reads. This only decodes them.
 function frameFloats(frame){
@@ -335,6 +354,10 @@ function settingsSource(source){
       ?`<h2 class="size">Text size: ${size.shown}%</h2>`
       :'<h2>Text size</h2><p>The engine this page loaded is older: these sizes are of the text for each device pixel, and A+ and A\u2212 step by a tenth. The next engine release counts them as a usual browser does.</p>');
   }
+  // Liberal mode: the checkbox, in the state of now. Lean draws it as the rest of the page.
+  const liberalBox=`<span class="box">${liberal?'<span class="tick"></span>':''}</span>`;
+  source=source.replace('<!--foafnaut:liberal-->',`<p class="check"><a href="foafnaut:liberal/${liberal?'off':'on'}">${liberalBox} Be liberal in what we accept</a></p>`+
+    '<p>On: a page with a feature this browser does not support is drawn without it (a module script, a stylesheet it did not load, a media condition it can not read), and the console (:console, or Control-Alt-J) lists what was skipped. Off: such a page is refused.</p>');
   if(!source.includes(classicMark))return source;
   const box=`<span class="box">${classicUI?'<span class="tick"></span>':''}</span>`;
   const row=canFold()
@@ -360,9 +383,10 @@ async function prepare(url){
     sources.push({kind:'XSLT source',url:xsl.url,source:xsl.source},{kind:'Generated page',url:page.url,source:page.source});
   }
   await loadFallbackFonts(page.source,fallbackWait);
-  const facts=call(page.source,{op:'inspect',url:page.url});
+  const facts=call(page.source,{op:'inspect',url:page.url,...(liberal?{liberal:true}:{})});
   const images=await pageImages(facts.images);
-  const next={url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images};
+  const next={url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images,liberal};
+  if(Array.isArray(facts.diagnostics))addEntries(next,facts.diagnostics);
   if(facts.icon){const icon=await tabIcon(facts.icon);if(icon)next.icon=icon;}
   // The page is drawn first and its scripts start after that frame, as deferred scripts do:
   // a slow start turn (QuickJS in WasmVM) no longer keeps the page blank.
@@ -593,11 +617,12 @@ async function startScripts(page,scripts){
   const resources=[];
   for(const s of scripts)if(s.kind==='classic'&&s.src){
     try{const r=await fetchText(s.url);resources.push({nodeId:s.nodeId,source:r.source});page.sources.push({kind:'Script',url:r.url,source:r.source});}
-    catch(error){console.warn('foafnaut: script not fetched:',s.url,String(error.message??error));}
+    catch(error){console.warn('foafnaut: script not fetched:',s.url,String(error.message??error));
+      addEntries(page,[{source:'System',severity:'error',feature:'script',where:s.url,message:`script not read: ${String(error.message??error)}`,action:'script not run'}]);}
   }
   // The viewport and the render request that lays the page out for its scripts' layout
   // reads (clientWidth, getBoundingClientRect); an engine without them ignores the fields.
-  const layout={url:page.url,...(page.images?{images:page.images}:{}),...(page.heldImages?{heldImages:page.heldImages}:{}),textScalePercent:percent};
+  const layout={url:page.url,...(page.liberal?{liberal:true}:{}),...(page.images?{images:page.images}:{}),...(page.heldImages?{heldImages:page.heldImages}:{}),textScalePercent:percent};
   // The setting: Lean's plan says which engine runs the page, or why none does.
   let plan=planFor(scriptSetting,1);
   if(plan.run&&!scriptEngines.includes(plan.engine))plan=planFor(scriptSetting,1,`this engine has no ${plan.name}`);
@@ -616,6 +641,7 @@ async function startScripts(page,scripts){
 function scriptTurn(page,turn){
   for(const line of turn.logs)console.log('page:',line);
   for(const line of turn.errors)console.warn('page error:',line);
+  addEntries(page,[...turn.logs.map(message=>({source:'page',severity:'log',message})),...turn.errors.map(message=>({source:'page',severity:'error',message}))]);
   if(page.script)page.script.turn=turn;
   // The start turn comes before the page is shown: its commands make the objects.
   if(turn.gpu?.length)gpuTake(turn.gpuPage,turn.gpu);
@@ -790,7 +816,23 @@ function visit(address){
   else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
   else navigate(route.url,false);
 }
-const pageFor=url=>url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
+// foafnaut:console: the console of a tab, as Lean writes it (op consolePage). `/N` is tab N; with
+// no number, the page shown when it was asked for, or the page that a console tab shows.
+let consoleFrom;
+function consolePage(url){
+  const pageOf=i=>i===active?doc:tabs[i]?.doc;
+  const n=Number(url.slice(consoleURL.length+1));
+  let source=Number.isInteger(n)&&n>0&&pageOf(n-1)?pageOf(n-1):consoleFrom??doc;consoleFrom=undefined;
+  source=source?.consoleSource??source;
+  const index=Math.max(0,tabs.findIndex((_,i)=>pageOf(i)===source||pageOf(i)?.consoleSource===source));
+  let answer;
+  try{answer=call('',{op:'consolePage',tab:index+1,title:source?.title??'',url:source?.url??'',entries:source?.console??[],
+    tabs:tabs.map((_,i)=>({url:pageOf(i)?.url??'',title:pageOf(i)?.title??''}))});}
+  catch{return {...sparqlNeedsEngine(url),source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title></head><body><h1>The console needs a newer engine</h1><p>The engine this page loaded does not have the console op.</p></body></html>'};}
+  return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}],consoleSource:source};
+}
+function openConsole(){const source=doc;newTab();setFocus(false);consoleFrom=source;navigate(consoleURL);}
+const pageFor=url=>url===consoleURL||url.startsWith(consoleURL+'/')?consolePage(url):url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
 async function navigate(url,remember=true){
   const mine=++serial;loading=true;request();
   const stamp=currentStamp;
@@ -860,6 +902,7 @@ function command(id,text=''){
   if(answer.action==='reopenTab'){const tab=closedTabs.pop();if(tab){keep();tabs.push(tab);showTab(tabs.length-1);}}
   if(answer.refused)post({type:'error',error:answer.refused});
   if(answer.action==='settings')navigate(settingsURL);
+  if(answer.action==='console')openConsole();
   if(answer.action==='viewSource')viewSource();
   if(answer.action==='print')printNow();
 }
@@ -921,7 +964,7 @@ function scrollLimit(){
 }
 // The request for a frame of this page at a scroll; its signature leaves the scroll out, so
 // a band made at one scroll is known to be for the same state at another.
-const renderOptions=at=>({op:'render',url:doc.url,...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),textScalePercent:percent,shell:{...shell(),scroll:at},live:doc===checked,binary:true});
+const renderOptions=at=>({op:'render',url:doc.url,...(doc.liberal?{liberal:true,...(doc.diagnosticsSeen?{}:{diagnostics:true})}:{}),...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),textScalePercent:percent,shell:{...shell(),scroll:at},live:doc===checked,binary:true});
 const signature=options=>JSON.stringify({...options,images:undefined,shell:{...options.shell,scroll:0,collapse:undefined}});
 // The graph page keeps its document and changes its source: the band must be of this source.
 const canShift=()=>!!(layerSurface&&current&&current.doc===doc&&current.source===doc.source&&current.width===width&&current.height===height&&current.sig===signature(renderOptions(scroll)));
@@ -1030,6 +1073,12 @@ function shellCommand(name,argument){
       if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
     catch(error){doc=refusal('foafnaut:scripts/'+argument,String(error.message??error));request();}
   }
+  else if(name==='liberal'){
+    // The settings checkbox: foafnaut:liberal/on, /off, or a toggle. Pages load in the new mode from now on.
+    liberal=argument==='on'?true:argument==='off'?false:!liberal;
+    browserState?.settings({liberal}).catch(()=>{});
+    if(doc?.url===settingsURL)navigate(settingsURL,false);
+  }
   else if(['bookmarks','history'].includes(name))navigate('foafnaut:'+name);
   else if(['bookmark','unbookmark','pod','sync'].includes(name))stateCommand(name,argument);
   else if(name==='wasm')navigate(wasmURL+(argument?'/'+argument:''));
@@ -1060,6 +1109,7 @@ async function openState(){
     // An engine from before the setting does not keep it: the classic chrome then.
     if(typeof saved.settings.classicUI==='boolean')classicUI=saved.settings.classicUI;
     if(typeof saved.settings.scripts==='string')scriptSetting=saved.settings.scripts;
+    if(typeof saved.settings.liberal==='boolean')liberal=saved.settings.liberal;
     if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
 }
 // Lean's route for a link or an address (link-route.mjs), done as it says. This host tests
@@ -1111,6 +1161,7 @@ async function draw(){
       if(layered&&swapReady()){layers=prefetched.answer;fold=prefetched.fold;prefetched=undefined;swapped=true;}
       else{
         next=render(doc.source,wantLayers?{...options,layers:true}:options,width,height);
+        noteDiagnostics(doc,next);
         // An engine with no layers answers one frame: this page then draws frames as before.
         if(wantLayers){layers=L.layersOf(next);layered=!!layers;}
       }
@@ -1315,7 +1366,7 @@ const printPercent=()=>Math.max(50,Math.min(1000,Math.round(percent*3/4/scale/5)
 // theme. While Command/Control+P waits, script changes do not start them again.
 const printFits=job=>!!job&&job.doc===doc&&job.source===doc.source&&(printWanted||job.commands===doc.commands)&&job.percent===percent&&job.scale===scale&&job.theme===theme;
 function printOptions(){
-  return {url:doc.url,...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),
+  return {url:doc.url,...(doc.liberal?{liberal:true}:{}),...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),
     textScalePercent:printPercent(),media:'print'};
 }
 async function printPNG(frame){

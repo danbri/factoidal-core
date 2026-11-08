@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Media conditions</title>
+<link rel="stylesheet" href="wide.css" media="(min-width: 500px)">
+<style media="(max-width: 499px)">p.narrow{color:#a01010}</style>
+<style media="(hover: hover)">p{background-color:#ffe0e0}</style>
+</head><body>
+<h1>Media conditions</h1>
+<p class="wide">Green and larger in a window at least 500 CSS pixels wide.</p>
+<p class="narrow">Red in a window narrower than 500 CSS pixels.</p>
+<p>The third sheet asks for (hover: hover), which this browser does not read: strict mode refuses the page, liberal mode leaves that sheet out.</p>
+</body></html>

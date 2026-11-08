@@ -1,6 +1,7 @@
 import L4Factoidal.Rendering.Scene
 import L4Factoidal.DOM.OfHtml
 import L4Factoidal.Unicode.Bidi
+import L4Factoidal.Rendering.MediaQuery
 import Std.Data.TreeMap
 
 /-! Computed styles for an explicitly bounded CSS block/inline profile.
@@ -298,17 +299,19 @@ def mediaMatches (medium queries : String) : Bool :=
     | [kind] => kind == medium || kind == "all"
     | _ => false
 
-/-- Rules of a sheet for the media type `medium` ("screen" or "print"). The rules of
-an `@media` block whose query list holds for `medium` are read in place; other
-at-rules are skipped whole, as is an `@media` block in an `@media` block. A rule
-with a selector this profile can not read is dropped whole, as CSS drops an
-invalid selector list. Only the first 131072 characters of a sheet are read. -/
-def parseFor (medium source : String) : Except String (List Rule) := do
+/-- Rules of a sheet in the media environment `env` (`MediaQuery.Env`: the media type,
+and the viewport and colour scheme when the host gives them). The rules of an `@media`
+block whose query list holds in `env` (`MediaQuery.applies`) are read in place; a list
+that `MediaQuery` can not read does not hold. Other at-rules are skipped whole, as is an
+`@media` block in an `@media` block. A rule with a selector this profile can not read
+is dropped whole, as CSS drops an invalid selector list. Only the first 131072
+characters of a sheet are read. -/
+def parseIn (env : MediaQuery.Env) (source : String) : Except String (List Rule) := do
   let mut out : List Rule := []
   for (head,body) in topLevel (comments (source.take 131072).toString) do
     let head := trim head
     let blocks := if !head.startsWith "@" then [(head,body)]
-      else if (head.take 6).toString.toLower == "@media" && mediaMatches medium (head.drop 6).toString
+      else if (head.take 6).toString.toLower == "@media" && MediaQuery.applies env (head.drop 6).toString
         then topLevel body
       else []
     for (inner,content) in blocks do
@@ -316,6 +319,10 @@ def parseFor (medium source : String) : Except String (List Rule) := do
         if let .ok selectors := (inner.splitOn ",").mapM selector then
           out := ⟨selectors,← declarations content⟩ :: out
   return out.reverse
+
+/-- Rules of a sheet for the media type `medium` ("screen" or "print") with no viewport:
+an `@media` query with a width or colour-scheme feature does not hold. -/
+def parseFor (medium source : String) : Except String (List Rule) := parseIn {medium} source
 /-- `id` is `target` or one of its ancestors. The walk is bounded by the arena size. -/
 def inclusiveAncestor (dom : Dom) (id : Nat) : Nat → Option Nat → Bool
   | 0, _ => false
@@ -789,7 +796,11 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
     for property in ["width","height"] do
       let value := trim (attrValue n property)
       if !value.isEmpty then
+        -- `em` is the font size of the element (CSS Values 4 §6.1.1; BBC News draws its icons
+        -- with width="1em"), `rem` that of the initial 16 px.
         let dimension ← if value == "auto" || value.endsWith "px" || value.endsWith "%" || value.endsWith "vw" || value.endsWith "vh" then length value
+          else if value.endsWith "rem" then pure (.px ((← number (value.dropEnd 3).toString) * 16))
+          else if value.endsWith "em" then pure (.px ((← number (value.dropEnd 2).toString) * initial.fontSize))
           else pure (.px (← number value))
         initial := if property == "width" then {initial with width := dimension}
           else {initial with height := dimension}

@@ -1,0 +1,71 @@
+// Liberal mode and the console (WebAccept.lean, WebConsole.lean; docs/designissues/
+// 2026-11-08-liberal-mode-and-console.md) through the host path of the native browser
+// (prepareHTML: Lean inspects, the host fetches, Lean lays out and draws), on the original
+// fixtures of fixtures/liberal/. For each fixture: strict mode refuses it, liberal mode draws
+// it with the System entries Lean gave and the note that links to foafnaut:console; on the
+// demo pages, which strict mode accepts, liberal mode draws the same frame with no entries.
+// Run on the Wasm engine and, when it is built, the native library. --allow-read --allow-ffi.
+import {strict as assert} from "node:assert";
+import {loadHTML,type HTMLEngine} from "./native_html_engine.ts";
+import {prepareHTML} from "./native_html_document.ts";
+import {consoleOf,consoleRequest} from "./native_console.ts";
+
+const library=new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;
+const noLibrary=(()=>{try{Deno.statSync(library);return false;}catch{return true;}})();
+const fixture=(name:string)=>new URL(`./fixtures/liberal/${name}`,import.meta.url).href;
+const page=(name:string)=>new URL(`./pages/${name}`,import.meta.url).href;
+
+const cases:{name:string;refusal:RegExp;features:string[]}[]=[
+  {name:"media.html",refusal:/unsupported stylesheet media condition/,features:["stylesheet media condition"]},
+  {name:"module.html",refusal:/unsupported JavaScript module script|Page scripts need/,features:["module script"]},
+  {name:"missing-css.html",refusal:/No such file|not found|os error 2/i,features:["external stylesheet"]},
+  {name:"svg.html",refusal:/unsupported/,features:["inline SVG"]},
+  {name:"sample.html",refusal:/./,features:["stylesheet media condition","external stylesheet","module script"]},
+];
+
+async function runs(engine:HTMLEngine){
+  const out:unknown[]=[];
+  for(const c of cases){
+    await assert.rejects(async()=>{const doc=await prepareHTML(engine,fixture(c.name));engine.compile(doc.source,800,600,doc.request(800,600).options);},c.refusal,`strict ${c.name}`);
+    const doc=await prepareHTML(engine,fixture(c.name),undefined,undefined,{liberal:true});
+    const frame=await doc.compile(800,600,{textScalePercent:100});
+    const system=consoleOf(doc).filter(e=>e.source==="System");
+    for(const feature of c.features)assert(system.some(e=>e.feature===feature),`${c.name}: no System entry for ${feature}: ${JSON.stringify(system)}`);
+    assert(system.every(e=>e.action&&e.message),`${c.name}: an entry without action or message`);
+    assert(frame.webRender.links.some(link=>link[1]==="foafnaut:console"),`${c.name}: no note linking to foafnaut:console`);
+    // The console page: Lean writes it from the entries and draws it.
+    const consolePage=engine.consolePage(consoleRequest(doc,0,[doc]));
+    assert.match(consolePage.title,new RegExp(`Console \\(${system.length} System`));
+    for(const feature of c.features)assert(consolePage.source.includes(feature),`${c.name}: console page lacks ${feature}`);
+    const shown=await prepareHTML(engine,"foafnaut:console",undefined,consolePage.source);
+    assert(engine.compile(shown.source,800,600,shown.request(800,600).options).primitiveCount>20);
+    out.push({name:c.name,features:system.map(e=>e.feature),primitives:frame.primitiveCount});
+  }
+  // A media condition this engine reads, in both modes: the sheet applies at 800 CSS px and
+  // not at 400 (the viewport in CSS px is the width over the text scale).
+  const bottom=(frame:{webRender:Record<string,unknown>})=>Math.max(0,...((frame.webRender.boxes as number[][]|undefined)??[]).map(b=>b[2]+b[4]));
+  const tall='<!doctype html><title>T</title><style media="screen and (min-width: 500px)">div{height:300px}</style><div>x</div>';
+  for(const liberal of [false,true]){
+    const doc=await prepareHTML(engine,fixture("tall.html"),undefined,tall,{liberal});
+    const wide=await doc.compile(800,600,{textScalePercent:100}),narrow=await doc.compile(400,600,{textScalePercent:100});
+    assert(bottom(wide)>=300&&bottom(narrow)<300,`min-width: ${bottom(wide)} at 800, ${bottom(narrow)} at 400`);
+    const zoomed=await doc.compile(800,600,{textScalePercent:200});
+    assert(bottom(zoomed)<300,`min-width at 200%: ${bottom(zoomed)} (400 CSS px)`);
+  }
+  // Pages that strict mode accepts: the same frame in liberal mode, and no System entry.
+  for(const name of ["index.html","showcase-tables.html","settings.html","print-showcase.html"]){
+    const strict=await prepareHTML(engine,page(name));
+    const liberal=await prepareHTML(engine,page(name),undefined,undefined,{liberal:true});
+    const a=await strict.compile(900,1200,{textScalePercent:150}),b=await liberal.compile(900,1200,{textScalePercent:150});
+    assert.equal(b.primitiveCount,a.primitiveCount,name);
+    assert.deepEqual(Array.from(b.data),Array.from(a.data),`${name}: liberal frame differs`);
+    assert.equal(b.diagnostics,undefined,name);
+    assert.equal(consoleOf(liberal).filter(e=>e.source==="System").length,0,name);
+  }
+  return out;
+}
+
+Deno.test("liberal mode skips, reports and draws the note; strict refuses (Wasm)",async()=>{await runs(await loadHTML());});
+Deno.test({name:"liberal mode (native library), as the Wasm engine",ignore:noLibrary,fn:async()=>{
+  assert.equal(JSON.stringify(await runs(await loadHTML(library))),JSON.stringify(await runs(await loadHTML())));
+}});

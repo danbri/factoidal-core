@@ -169,6 +169,7 @@ def commandName : Nat → String
   | 37 => "lineDown"
   | 38 => "lineUp"
   | 39 => "stop"
+  | 40 => "console"
   | _ => "none"
 
 /-! ### Text size as the reader sees it

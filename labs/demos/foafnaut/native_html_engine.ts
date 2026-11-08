@@ -9,6 +9,8 @@ export type HTMLArtifact = {
   abi:string; width:number; height:number; data:number[]|Float32Array; wgsl:string; tiles:number[]|Uint32Array;
   primitiveCount:number; checks:{x:number;y:number;rgb:number[]}[];
   webRender:{links:unknown[][];[name:string]:unknown};
+  /** In liberal mode, what Lean skipped to draw the page (WebAccept). */
+  diagnostics?:{source:"System";severity:string;feature:string;where:string;action:string;message:string}[];
 };
 /** A render with `layers:true` (WebDocument.layersJSON): the chrome layer in window
 rows, the page layer in band rows from page row `bandTop`, and the WGSL that puts them
@@ -16,7 +18,9 @@ in the window. `keepFrom`..`keepTo` are the scrolls that this band shows with no
 export type HTMLLayerPlace = {top:number;view:number;bandTop:number;bandHeight:number;keepFrom:number;keepTo:number;composite:string;hoverRules?:boolean;scrollLimit?:number};
 /** Lean's answer to a pointer press: the chrome control or the link pressed, and the rectangles the composite darkens. */
 export type PressAnswer = {control:string|null;sourceNode?:number|null;href?:string;rects:number[][]};
-export type HTMLLayers = {layers:HTMLLayerPlace;page:HTMLArtifact;chrome:HTMLArtifact};
+/** A skip of liberal mode (WebAccept.Diagnostic.json): what Lean did not draw or run, and why. */
+export type Diagnostic = {source:"System";severity:string;feature:string;where:string;action:string;message:string};
+export type HTMLLayers = {layers:HTMLLayerPlace;page:HTMLArtifact;chrome:HTMLArtifact;diagnostics?:Diagnostic[]};
 export type Inspection = {
   baseURL:string;
   title:string;
@@ -26,6 +30,8 @@ export type Inspection = {
   images?:{key:string;url:string}[];
   /** The icon Lean chose for the tab (HTML §4.6.7.8), or null. */
   icon?:string|null;
+  /** In liberal mode, what Lean skipped (none in strict mode). */
+  diagnostics?:Diagnostic[];
 };
 /** A tab icon as Lean prepared it (WebDocument.iconPrepare). */
 export type TabIcon={kind:"svg";source:string}|{kind:"bitmap";width:number;height:number;rgba:string};
@@ -361,7 +367,9 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       const place=result.layers as HTMLLayerPlace|undefined;
       if(!place||!["top","view","bandTop","bandHeight","keepFrom","keepTo"].every(k=>Number.isSafeInteger((place as Record<string,unknown>)[k]))||typeof place.composite!=="string")
         throw new Error("Unexpected published Lean HTML layers ABI");
-      return {layers:place,page:sceneOf(result.page,width,place.bandHeight),chrome:sceneOf(result.chrome,width,Math.max(1,place.top))};
+      const layers:HTMLLayers={layers:place,page:sceneOf(result.page,width,place.bandHeight),chrome:sceneOf(result.chrome,width,Math.max(1,place.top))};
+      if(Array.isArray(result.diagnostics))layers.diagnostics=result.diagnostics as Diagnostic[];
+      return layers;
     },
     // Lean decides what a chrome click, a key, an address and a link mean.
     shellHit:(shell:unknown,x:number,y:number,width:number)=>(documentCall("",{op:"shellHit",shell,x,y,width}) as {control:string|null}).control,
@@ -401,6 +409,8 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     sparqlExplain:(request:{query:string;dataset?:string;data?:string;run?:boolean})=>documentCall("",{...request,op:"sparqlExplain"}) as SparqlExplain,
     /** The page foafnaut:sparql; `argument` is the address after `foafnaut:sparql/`. */
     sparqlPage:(argument:string)=>documentCall("",{op:"sparqlPage",argument}) as {source:string;title:string;next:string},
+    /** The console tab of a page (WebConsole): Lean writes the page from the entries the host kept. */
+    consolePage:(request:Record<string,unknown>)=>documentCall("",{...request,op:"consolePage"}) as {source:string;title:string},
     shellLink:(href:string)=>documentCall("",{op:"shellLink",href}) as ShellGo,
     // The final action for a link (`href`) or a typed address (`address`). An older engine
     // answers "unknown document operation" (link-route.mjs then answers instead).

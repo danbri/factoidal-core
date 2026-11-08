@@ -32,10 +32,11 @@ Deno.test("expected failure, issue 1279 gap 4: the Hub page does not print throu
   assert.ok(!hub.includes("printLayout"),stillGap(4));
 });
 
-Deno.test("expected failure, issue 1279 gap 5: @media with a feature query does not hold in print",()=>{
-  // (min-width: 1px) holds on any page, so the paragraph should not print.
+Deno.test("issue 1279 gap 5, closed for width features: @media print and (min-width: 1px) holds in print",()=>{
+  // MediaQuery.lean evaluates width features against the paper width (2026-11-08), so the
+  // paragraph is not printed. @page (below) stays a gap.
   const text=printed(html("@media print and (min-width: 1px){.gone{display:none}}","<p>Kept</p><p class='gone'>Hidden in print</p>"));
-  assert.ok(text.includes("Hidden in print"),stillGap(5));
+  assert.ok(text.includes("Kept")&&!text.includes("Hidden in print"),text);
 });
 
 Deno.test("expected failure, issue 1279 gap 5: @page size is not read",()=>{
