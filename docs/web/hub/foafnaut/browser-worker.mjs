@@ -18,7 +18,7 @@ const homeURL=pagesBase+'index.html',settingsURL=pagesBase+'settings.html';
 // The site this browser loads pages from: other sites go to the host browser.
 const site={origin:siteOrigin,pages:pagesBase,files:false};
 const router=createRouter(request=>call('',request));
-let module,createSession,session,createSurface,hashPixels,surface,surfaceCanvas,checkMode=false,statsMode=false;
+let module,createSession,renderOffscreen,session,createSurface,hashPixels,surface,surfaceCanvas,checkMode=false,statsMode=false;
 // The two-layer view (issue 1268, layers.mjs): undefined until the first render with a canvas
 // says whether this engine answers layers:true; false for an engine that answers one frame.
 // `current` is the band on screen and the state it was made for; a scroll inside its keep
@@ -110,8 +110,8 @@ fetchEarly(pagesBase+'index.html','text');
 const pageURL=page=>page&&/^[a-z0-9-]+\.(html|xml)$/.test(page)?pagesBase+page:undefined;
 // Lean calls made, for ?stats=1 and the tests: a scroll inside a band makes none.
 let leanCalls=0,leanRenders=0;
-function call(source,options,w=1,h=1){
-  leanCalls++;
+function call(source,options,w=1,h=1,counted=true){
+  if(counted)leanCalls++;
   const pointer=module.ccall('web_document_call','number',['string','string','number','number'],[source,JSON.stringify(options),w,h]);
   if(!pointer)throw Error('Lean engine allocation failed');
   try{const result=JSON.parse(module.UTF8ToString(pointer));if(result?.error)throw Error(result.error);return result;}
@@ -162,9 +162,9 @@ function frameFloats(frame){
 // raw sections (WebDocument.packAnswer), with no Base64. A runtime with no such export
 // answers JSON text with Base64.
 const textDecoder=new TextDecoder();
-function render(source,options,w,h,chromeOnly=false){
-  leanCalls++;if(chromeOnly)chromeRenders++;else leanRenders++;
-  if(typeof module._web_document_call_bin!=='function')return frameFloats(call(source,options,w,h));
+function render(source,options,w,h,chromeOnly=false,counted=true){
+  if(counted){leanCalls++;if(chromeOnly)chromeRenders++;else leanRenders++;}
+  if(typeof module._web_document_call_bin!=='function')return frameFloats(call(source,options,w,h,counted));
   const pointer=module.ccall('web_document_call_bin','number',['string','string','number','number','number'],[source,JSON.stringify(options),w,h,0]);
   if(!pointer)throw Error('Lean engine allocation failed');
   let buffer;
@@ -512,6 +512,7 @@ function command(id,text=''){
   if(answer.action==='closeTab')closeTab(active);
   if(answer.action==='settings')navigate(settingsURL);
   if(answer.action==='viewSource')viewSource();
+  if(answer.action==='print')printNow();
 }
 function viewSource(){
   for(const item of doc.sources??[]){
@@ -807,7 +808,7 @@ async function draw(){
     }
   }
   drawing=false;
-  schedulePrefetch();scheduleBand();
+  schedulePrefetch();scheduleBand();schedulePrint();
 }
 // A scroll inside the band on screen: the composite at the new offset, with no Lean call.
 async function shift(){
@@ -880,7 +881,7 @@ async function start(data){
   const [{default:createModule},transport]=await Promise.all(runtimeModules);
   try{L=await layersModule;}catch(error){layered=false;console.warn('foafnaut: no layers:',String(error));}
   module=await startEngine(createModule);phase('engineReady');
-  createSession=transport.createOffscreenSession;hashPixels=transport.hashPixels;
+  createSession=transport.createOffscreenSession;renderOffscreen=transport.render;hashPixels=transport.hashPixels;
   if(data.canvas&&typeof transport.createSurfaceSession==='function'){surfaceCanvas=data.canvas;createSurface=transport.createSurfaceSession;}
   await loadFont();phase('fontReady');
   home=await prepare(homeURL);
@@ -903,6 +904,107 @@ async function start(data){
   if(data.address)visit(data.address);
   else if(wanted)request();else focusAddress();
   for(const message of early.splice(0))receive(message);
+}
+// Printing (issue 1268). The canvas is drawn by WebGPU and does not print, so the page
+// prints images that Lean draws: Lean lays the current document out for the paper with the
+// print media rules and says where the pages break (op printLayout); it draws each page
+// (render with printPage); the GPU reads it back and it becomes a PNG. The page only places
+// the images in its print-only container (browser.mjs). The paper is A4 inside 36-point
+// margins (index.njk @page), at 2 device pixels a point; CSS text is 150% at the default
+// text zoom, so 16 CSS pixels print as 12 points, as in the native browser (native_print.ts).
+// The browser's own print (menu, share sheet) can not wait for this worker, so the pages
+// of the document on screen are made ahead, one Lean call at a time, after the page has
+// been idle for a while; any input puts the work off again. Until they are ready, an image
+// of the view on screen prints instead. Command/Control+P (Lean's key table, command 18)
+// waits for the pages and then prints. An engine without printLayout prints the view only.
+const PRINT_POINTS=[523,769],PRINT_PIXELS_PER_POINT=2,PRINT_MAX_PAGES=30,PRINT_IDLE_MS=1500,PRINT_VIEW_IDLE_MS=400;
+const printWidth=PRINT_POINTS[0]*PRINT_PIXELS_PER_POINT,printHeight=PRINT_POINTS[1]*PRINT_PIXELS_PER_POINT;
+let printOps,printJob,printTimer,printBusy=false,printWanted=false;
+/** This engine paginates for print: it answers printLayout (asked once). */
+function hasPrintOps(){
+  if(printOps===undefined){
+    try{printOps=Array.isArray(call('<!doctype html><html><head><title>print</title></head><body><p>print</p></body></html>',
+      {op:'printLayout',url:pagesBase+'print-probe.html',media:'print',textScalePercent:150},printWidth,printHeight,false).pages);}
+    catch{printOps=false;}
+  }
+  return printOps;
+}
+/** The text zoom on paper: the zoom on screen for one device pixel, 150 by default. */
+const printPercent=()=>Math.max(50,Math.min(1000,Math.round(percent/scale/5)*5));
+// The prepared pages are of this document, its source, its scripts' DOM changes, text zoom and
+// theme. While Command/Control+P waits, script changes do not start them again.
+const printFits=job=>!!job&&job.doc===doc&&job.source===doc.source&&(printWanted||job.commands===doc.commands)&&job.percent===percent&&job.scale===scale&&job.theme===theme;
+function printOptions(){
+  return {url:doc.url,...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),
+    textScalePercent:printPercent(),media:'print'};
+}
+async function printPNG(frame){
+  const rgba=await renderOffscreen(frame,'svg-offscreen');
+  if(!rgba)throw Error('A WebGPU adapter is unavailable in this browser.');
+  const canvas=new OffscreenCanvas(frame.width,frame.height);
+  canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba.buffer,rgba.byteOffset,rgba.byteLength),frame.width,frame.height),0,0);
+  return canvas.convertToBlob({type:'image/png'});
+}
+/** Tell the page what it can print now. */
+function printPost(go=false){
+  const job=printJob;
+  post({type:'print',go,ready:!!job?.done,pages:job?.done?job.pages:[],total:job?.total??0,
+    view:job?.view?.blob,viewOnly:!!job?.viewOnly,width:printWidth,height:printHeight,
+    viewWidth:job?.view?.width,viewHeight:job?.view?.height,error:job?.error,longestStepMs:job?.longest??0});
+}
+/** The view image is made sooner after the page settles than the pages: it costs one draw. */
+const printViewStale=()=>!printFits(printJob)||!printJob.done&&(!printJob.view||printJob.view.scroll!==scroll||printJob.view.width!==width||printJob.view.height!==height);
+function schedulePrint(delay){
+  clearTimeout(printTimer);
+  if(!ready||typeof OffscreenCanvas!=='function')return;
+  delay??=printViewStale()?PRINT_VIEW_IDLE_MS:PRINT_IDLE_MS;
+  printTimer=setTimeout(printStep,printWanted?0:delay);
+}
+/** One step of the print work: the view image, the page breaks, or one page. */
+async function printStep(){
+  if(printBusy||!ready||!doc)return;
+  if(!printWanted&&(drawing||dirty||shiftPending||pendingMove||pendingScroll)){schedulePrint();return;}
+  if(!printFits(printJob)){
+    printJob={doc,source:doc.source,commands:doc.commands,percent,scale,theme,pages:[],breaks:undefined,total:0,done:false,viewOnly:false};
+    printPost();
+  }
+  const job=printJob;
+  // An engine with no print ops prints the view: it follows the scroll.
+  if(job.done&&job.viewOnly&&!job.error&&job.view&&(job.view.scroll!==scroll||job.view.width!==width||job.view.height!==height))job.done=false;
+  if(job.done){if(printWanted){printWanted=false;printPost(true);}return;}
+  printBusy=true;let viewMade=false;const began=performance.now();
+  try{
+    if(!job.view||(job.view.scroll!==scroll||job.view.width!==width||job.view.height!==height)&&!printWanted){
+      // The view on screen, chrome and all: the layout is the one on screen, so Lean only draws.
+      const at=scroll,w=width,h=height;
+      const frame=render(doc.source,{...renderOptions(at),live:false,checks:false},w,h,false,false);
+      job.view={blob:await printPNG(frame),scroll:at,width:w,height:h};viewMade=true;
+      if(!hasPrintOps()){job.viewOnly=true;job.done=true;}
+    }else if(!job.breaks){
+      const layout=call(doc.source,{...printOptions(),op:'printLayout'},printWidth,printHeight,false);
+      job.total=layout.pages.length;job.breaks=layout.pages.slice(0,PRINT_MAX_PAGES);
+    }else{
+      const [top,rows]=job.breaks[job.pages.length];
+      const frame=render(doc.source,{...printOptions(),op:'render',binary:true,checks:false,printPage:[top,rows]},printWidth,printHeight,false,false);
+      job.pages.push(await printPNG(frame));
+    }
+    if(job.breaks&&job.pages.length>=job.breaks.length)job.done=true;
+  }catch(error){
+    // A page Lean or the GPU could not draw: the view prints, with the reason.
+    job.error=String(error.message??error);job.viewOnly=true;job.done=true;
+  }finally{printBusy=false;job.longest=Math.max(job.longest??0,Math.round(performance.now()-began));}
+  if(job!==printJob)return schedulePrint();
+  if(job.done&&printWanted){printWanted=false;printPost(true);return;}
+  if(job.done||viewMade)printPost();
+  if(!job.done)schedulePrint(printWanted?0:30);
+}
+/** Command 18: the pages of this document, then the host's print. */
+function printNow(){
+  // With no OffscreenCanvas there are no images: the host prints what it can.
+  if(typeof OffscreenCanvas!=='function'){printPost(true);return;}
+  printWanted=true;
+  post({type:'print-status',preparing:!(printFits(printJob)&&printJob.done)});
+  schedulePrint(0);
 }
 // Back and forward swipes. Lean (WebGesture.lean, op gesture) says what
 // a touch from the window's edge or a trackpad's horizontal swipe means; the worker puts
@@ -946,6 +1048,8 @@ function receive(data){
   if(data.type==='hello'){hello(data);return;}
   if(data.type==='start'){start(data).catch(error=>post({type:'error',error:String(error.message??error)}));return;}
   if(!ready){early.push(data);return;}
+  // Input puts off the print pages made ahead (an explicit print goes on).
+  if(!printWanted)schedulePrint();
   if(data.type==='move'||data.type==='scroll'){
     if(data.type==='move')pendingMove=data;
     else pendingScroll=pendingScroll?{...data,amount:pendingScroll.amount+data.amount,t:pendingScroll.t}:data;

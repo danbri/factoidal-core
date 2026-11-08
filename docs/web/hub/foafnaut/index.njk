@@ -24,6 +24,22 @@ eleventyExcludeFromCollections: true
     #stats{position:fixed;left:0;bottom:0;margin:0;padding:2px 6px;font:11px monospace;background:#000c;color:#fff;pointer-events:none}
     #note{position:fixed;left:16px;right:16px;top:45%;font:16px monospace;text-align:center;color:#000}
     #note:has(a),#note.ask{background:#fff;border:2px solid #000;padding:12px;z-index:2}
+    /* Printing (issue 1268): the WebGPU canvas does not print. The print-only container
+       holds images that Lean drew of the printed pages (browser-worker.mjs); the paper is
+       A4 inside 36-point margins, the size Lean paginates for. */
+    #print{display:none}
+    @media screen{#print{display:none}}
+    @media print{
+      @page{size:A4 portrait;margin:36pt}
+      html,body{position:static;height:auto;overflow:visible;background:#fff}
+      body>*:not(#print){display:none!important}
+      #print{display:block}
+      #print img{display:block;width:523pt;height:769pt;break-after:page;break-inside:avoid}
+      #print img:last-of-type{break-after:auto}
+      #print img.short{height:740pt;object-fit:contain;object-position:top left}
+      #print img.view{width:auto;height:auto;max-width:523pt;max-height:740pt}
+      #print p{font:9pt sans-serif;margin:4pt 0 0;color:#000}
+    }
   </style>
 </head>
 <body>
@@ -31,6 +47,7 @@ eleventyExcludeFromCollections: true
   <input id="keys" aria-label="Address" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
   <p id="stats" role="status" hidden></p>
   <p id="note" role="status">Starting the Lean engine...</p>
+  <div id="print" aria-hidden="true"></div>
   <noscript>foafnaut needs JavaScript, WebAssembly and WebGPU.</noscript>
   <script type="module" src="{{ '/web/hub/foafnaut/browser.mjs' | url }}?v={{ buildVersion }}"></script>
 </body>

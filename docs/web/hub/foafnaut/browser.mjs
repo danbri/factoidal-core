@@ -11,7 +11,7 @@
     next.searchParams.set('v',latest.build);location.replace(next);
   }).catch(()=>{});
 }
-const canvas=document.querySelector('#page'),keys=document.querySelector('#keys'),note=document.querySelector('#note'),statsLine=document.querySelector('#stats');
+const printBox=document.querySelector('#print'),canvas=document.querySelector('#page'),keys=document.querySelector('#keys'),note=document.querySelector('#note'),statsLine=document.querySelector('#stats');
 // ?check=1 keeps the readback path with Lean's pixel checks; ?check=surface draws to the
 // canvas and reads each frame back to check it; ?stats=1 shows the frame timings;
 // ?layers=0 asks Lean for a whole frame at each scroll, with no two-layer view.
@@ -107,7 +107,37 @@ worker.onmessage=({data})=>{
   if(data.type==='gestures')edgeZone=data.edgeZone;
   if(data.type==='swipe'&&moved?.edge?.id===data.id)swipeAnswer(data.phase);
   if(data.type==='error'){note.hidden=false;note.textContent=data.error;}
+  if(data.type==='print-status'&&data.preparing){note.textContent='Preparing pages\u2026';note.hidden=false;}
+  if(data.type==='print')printPages(data);
 };
+// Printing (issue 1268): the WebGPU canvas does not print, so the print-only container
+// holds the images the worker made of the printed pages, drawn by Lean (browser-worker.mjs),
+// or of the view on screen when the pages are not ready. The page only places them.
+let printURLs=[];
+function printPages(data){
+  // An index from before the print container (an HTTP cache keeps it for minutes) prints as before.
+  if(!printBox){if(data.go){note.hidden=true;window.print();}return;}
+  for(const url of printURLs)URL.revokeObjectURL(url);
+  printURLs=[];
+  const images=[],line=text=>{const p=document.createElement('p');p.textContent=text;return p;};
+  const image=(blob,className)=>{const url=URL.createObjectURL(blob),img=new Image();printURLs.push(url);img.src=url;img.alt='';if(className)img.className=className;images.push(img);return img;};
+  const parts=[];
+  if(data.ready&&!data.viewOnly&&data.pages.length){
+    const cut=data.total>data.pages.length;
+    data.pages.forEach((blob,i)=>parts.push(image(blob,cut&&i===data.pages.length-1?'short':'')));
+    if(cut)parts.push(line(`Printed the first ${data.pages.length} of ${data.total} pages.`));
+  }else if(data.view){
+    parts.push(image(data.view,'view'));
+    parts.push(line(data.error?`Only the view on screen printed: ${data.error}`:data.viewOnly?'Only the view on screen printed: this engine does not lay pages out for print.':'Only the view on screen printed: the pages of this document were not ready yet.'));
+  }else parts.push(line('Nothing printed: the page was still being prepared.'));
+  printBox.replaceChildren(...parts);
+  // For the checks: what prints now, and the longest step of the work (Lean call, GPU, PNG).
+  window.foafnautPrint={ready:data.ready,pages:data.pages.length,total:data.total,view:!!data.view,viewOnly:data.viewOnly,longestStepMs:data.longestStepMs};
+  if(data.go){
+    note.hidden=true;
+    Promise.all(images.map(img=>img.decode().catch(()=>{}))).then(()=>window.print());
+  }
+}
 worker.onerror=event=>{note.hidden=false;note.textContent='The browser worker failed: '+event.message;};
 // A canvas can be handed to the worker once, so the worker says first whether it can draw
 // to an OffscreenCanvas with WebGPU. If not, or with ?check=1, the worker reads each frame

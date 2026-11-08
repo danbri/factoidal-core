@@ -665,6 +665,32 @@ swipes and nothing else changes. `labs/demos/foafnaut/hub_gesture_check.mjs` (sa
 stand-in server and runs) checks edge swipes, taps and vertical drags at the edge,
 trackpad swipes and the fling.
 
+### Printing
+
+The WebGPU canvas does not print, so the Hub prints images that Lean drew. Lean lays
+the document on screen out for A4 inside 36-point margins with the print media rules
+(op `printLayout`, `WebPrint.paginate`) and draws each page (a render with
+`printPage`); the worker reads each page back from the GPU at 2 device pixels a point
+and makes a PNG; the page puts them in its print-only container (`#print` in
+`foafnaut/index.njk`: hidden on screen, the only thing shown in print). Text is 150 %
+at the default text zoom (16 CSS px print as 12 pt), as in the native browser.
+Command/Control+P (Lean's key table, command 18) shows "Preparing pages…", waits for
+the pages and then calls `window.print()`. The browser's own print (menu, share sheet)
+can not wait for the worker, so the pages of the document on screen are made ahead:
+an image of the view on screen 0.4 s after the page settles, then the page breaks and
+one page per step from 1.5 s, each step after the last; any input puts the work off
+again. Until the pages are ready the view prints, with a one-line note. The pages are
+dropped when the document, its source, its scripts' DOM changes, the text zoom or the
+theme changes; at most 30 are kept, and the last says so when there were more. An
+engine without `printLayout` (asked once) prints the view only. A page whose scripts
+change it more often than the idle times above never gets its pages made ahead;
+Command/Control+P still prints it.
+`labs/demos/foafnaut/hub_print_check.mjs` (same stand-in server and runs, but this
+checkout's `index.njk` too) checks the PDF that Chrome makes for the demo index,
+showcase-scripts, print-poster and print-showcase, the view image, Command/Control+P,
+the drop on a text zoom and the 30-page cap. The native browser prints through the
+same Lean ops (`native_print.ts`, Command-P in `run_html.ts`).
+
 ## Constraints every cell must respect
 
 - **Same-origin only (strict pages).** Every import in `hub.njk` is a
