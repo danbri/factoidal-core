@@ -385,6 +385,24 @@ module.exports = function(eleventyConfig) {
   // hand-maintained filename list. Runs once after the full build (and
   // once per rebuild under --serve/--watch), so it always sees the
   // finished _site tree.
+  // The Foafnaut browser on the Hub: version.json names this build, and every
+  // relative script or Wasm address inside its modules carries ?v=<build>, so a
+  // deploy loads as one consistent set. browser.mjs fetches version.json past the
+  // cache and reloads once at ?v=<build> when the page it came in is older.
+  eleventyConfig.on("eleventy.after", ({ dir }) => {
+    const hub = path.join(path.resolve(__dirname, dir.output), "web/hub/foafnaut");
+    if (!fs.existsSync(hub)) return;
+    fs.writeFileSync(path.join(hub, "version.json"), JSON.stringify({ build: BUILD_VERSION }) + "\n");
+    for (const name of fs.readdirSync(hub)) {
+      if (!name.endsWith(".mjs")) continue;
+      const file = path.join(hub, name);
+      const text = fs.readFileSync(file, "utf8").replace(
+        /(['"])((?:\.{1,2}\/)?[A-Za-z0-9_\/.-]+\.(?:mjs|wasm))\1/g,
+        (_, q, ref) => `${q}${ref}?v=${BUILD_VERSION}${q}`);
+      fs.writeFileSync(file, text);
+    }
+  });
+
   eleventyConfig.on("eleventy.after", ({ dir }) => {
     const outputDir = path.resolve(__dirname, dir.output);
     const swPath = path.join(outputDir, "sw.js");

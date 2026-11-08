@@ -11,6 +11,7 @@ eleventyExcludeFromCollections: true
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; connect-src 'self' https://cdn.jsdelivr.net{% if podConnections %} https: http://127.0.0.1:* http://localhost:*{% endif %}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
   <meta name="theme-color" content="#aaaaaa">
+  <meta name="foafnaut-build" content="{{ buildVersion }}">
   <title>foafnaut</title>
   <style>
     /* Touches belong to the browser drawn in the canvas: the outer page neither scrolls,
@@ -31,6 +32,6 @@ eleventyExcludeFromCollections: true
   <p id="stats" role="status" hidden></p>
   <p id="note" role="status">Starting the Lean engine...</p>
   <noscript>foafnaut needs JavaScript, WebAssembly and WebGPU.</noscript>
-  <script type="module" src="{{ '/web/hub/foafnaut/browser.mjs' | url }}"></script>
+  <script type="module" src="{{ '/web/hub/foafnaut/browser.mjs' | url }}?v={{ buildVersion }}"></script>
 </body>
 </html>

@@ -1,5 +1,16 @@
 // The page only forwards input and shows frames. The worker runs the browser loop;
 // Lean decides what every click, key and address means.
+// A page from an older deploy (an HTTP cache keeps the HTML for up to ten minutes)
+// reloads once at the newest build's address, so a fixed engine is not a reload late.
+{
+  const build=document.querySelector('meta[name="foafnaut-build"]')?.content;
+  if(build)fetch(new URL('version.json',import.meta.url),{cache:'no-store'}).then(r=>r.ok?r.json():undefined).then(latest=>{
+    if(!latest?.build||latest.build===build)return;
+    const next=new URL(location.href);
+    if(next.searchParams.get('v')===latest.build)return;
+    next.searchParams.set('v',latest.build);location.replace(next);
+  }).catch(()=>{});
+}
 const canvas=document.querySelector('#page'),keys=document.querySelector('#keys'),note=document.querySelector('#note'),statsLine=document.querySelector('#stats');
 // ?check=1 keeps the readback path with Lean's pixel checks; ?check=surface draws to the
 // canvas and reads each frame back to check it; ?stats=1 shows the frame timings;

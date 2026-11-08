@@ -71,6 +71,15 @@ function isLiveModePage(url) {
   return url.pathname.includes("/web/hub-live/");
 }
 
+// The Foafnaut browser (web/hub/foafnaut/), its engine runtime
+// (web/hub/html-webgpu/runtime/) and the WasmVM guests (web/hub/wasm-guests/)
+// are network only. Stale-while-revalidate answered the first load after a
+// deploy with the previous engine and scripts, so a fixed engine reached a
+// reader one load late, and the multi-megabyte Wasm filled this cache.
+function isFoafnaut(url) {
+  return /\/web\/hub\/(?:foafnaut|html-webgpu\/runtime|wasm-guests)\//.test(url.pathname);
+}
+
 self.addEventListener("install", (event) => {
   self.skipWaiting();
   event.waitUntil(
@@ -163,6 +172,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return; // cross-origin: network only, no caching
   if (isLiveModePage(url)) return; // live-mode twin: network only, no caching (see isLiveModePage above)
+  if (isFoafnaut(url)) return; // the Foafnaut browser and its engine: network only (see isFoafnaut above)
 
   if (request.mode === "navigate") {
     event.respondWith(networkFirst(request));
