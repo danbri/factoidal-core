@@ -68,6 +68,10 @@ def out (src : String) : List String :=
   ["3 5 true 0"]
 #guard out "async function* g() { var x = await Promise.resolve(1); yield x; yield x + 1 } var it = g(); it.next().then(r => { print(r.value, r.done); return it.next() }).then(r => print(r.value)).then(() => it.next()).then(r => print(r.done))" ==
   ["1 false", "2", "true"]
+#guard out "var m = new Map([[1, 'a'], [NaN, 'b']]); m.set(-0, 'z'); var s = new Set([1, 2, 2, 3]); s.delete(2); print(m.get(NaN), m.get(0), m.size, [...s].join(), [...m.keys()].length, Reflect.ownKeys({a: 1, [Symbol.iterator]: 2}).length)" ==
+  ["b z 3 1,3 3 2"]
+#guard out "print([1, [2, [3, [4]]]].flat(2).length, 'abc'.padStart(5, '-'), 'a-b-c'.replaceAll('-', '+'), [5, 6].at(-1), Math.hypot(3, 4), Math.clz32(1))" ==
+  ["4 --abc a+b+c 6 5 31"]
 #guard out "1 +" == ["SyntaxError: unexpected end of input at end of input (offset 3)"]
 
 end L4Factoidal.JS.Tests

@@ -30,7 +30,12 @@ redeclarations, `eval`/`arguments` in strict assignment patterns). Stage 5 added
 Promise (`then`, `catch`, `finally`, `resolve`, `reject`, `all`), the job queue,
 `async` functions, arrows and methods with `await`, and `yield`/`await` inside
 expressions (section 6a). Stage 6 added async generators, private class members
-(`#x` fields, methods, accessors, `#x in o`) and class static blocks. `lake exe leanjs` runs a script, Test262 files
+(`#x` fields, methods, accessors, `#x in o`) and class static blocks. Stage 7 added
+built-ins: Map, Set, WeakMap, WeakSet, Reflect, `Object.defineProperties`/`seal`/
+`isSealed`/`getOwnPropertyDescriptors`/`fromEntries`, `Array.prototype.flat`/`flatMap`/
+`at`/`findLast`/`findLastIndex`, `String.prototype.padStart`/`padEnd`/`at`/
+`codePointAt`/`trimStart`/`trimEnd`/`replace`/`replaceAll` (string patterns),
+`String.fromCodePoint`, `Number.isFinite`/`isNaN`/`isSafeInteger`, and more of Math. `lake exe leanjs` runs a script, Test262 files
 or the benchmarks.
 
 Measured results are in section 9 (Test262 counts) and section 10 (speed).
@@ -359,6 +364,29 @@ Remaining failures by cause (stage 6): early errors not detected 269; `yield` in
 conditional position 32; call depth 31; the rest are single semantic differences
 (each cause under 35 tests).
 
+Stage 7 (built-ins): 5,618 pass, 679 fail, 4 skip (89.2 % of 6,297 run); no stage-6
+pass lost.
+
+### 9a. The QuickJS sample: built-ins included
+
+The subset above is `test/language` only. To compare with QuickJS on the same files,
+the 436 tests of the QuickJS-in-WasmVM measurement (`test262-sample.py 500 1244`:
+random over `built-ins`, `language` and `annexB`, same Test262 commit) run with
+`tools/leanjs/test262-sample.sh`:
+
+| Engine | Pass of 436 |
+|---|---|
+| QuickJS-NG in WasmVM (2 G instructions per test) | 431 (98.8 %) |
+| QuickJS-NG native | 434 (99.5 %) |
+| Lean JS, stage 6 | 226 (51.8 %) |
+| Lean JS, stage 7 | 247 (56.7 %) |
+
+The failures are mostly built-ins that are not there yet: TypedArray, ArrayBuffer and
+DataView (about 30), RegExp (about 30, with regular expression literals), Date, Proxy,
+Iterator helpers, and 21 negative tests whose early error the parser misses. Apple's
+EU bar (80 % of Test262 without a JIT) is not met by the Lean engine yet; on this
+sample QuickJS in WasmVM meets it.
+
 ## 10. Speed
 
 The same two scripts as the QuickJS measurement in `2026-11-07-wasmvm-engine.md`
@@ -407,9 +435,10 @@ small objects as shapes with slot arrays, and caches property lookups.
    `L4Factoidal.Regex` engines are candidates); `yield` in conditional positions
    (lift into `if` statements); a call depth limit set from the native stack rather
    than 400.
-2. Built-ins in Test262 order: Object, Function, Array, String, Number, Math, JSON,
-   Error, Symbol, Map/Set, Promise, RegExp (the repository's `L4Factoidal.Regex`
-   engines are candidates), Date (on the virtual clock).
+2. Built-ins, by the failures of section 9a: TypedArray, ArrayBuffer and DataView;
+   RegExp (the repository's `L4Factoidal.Regex` engines are candidates); Date (on the
+   virtual clock); Proxy; Iterator helpers; then a vendored built-ins subset of
+   Test262, as for `language`.
 3. UTF-16 strings (section 7).
 4. The fast form: slot-resolved names, shapes, inline caches; each with a theorem
    that it computes what the definitional evaluator computes, as for WasmVM.

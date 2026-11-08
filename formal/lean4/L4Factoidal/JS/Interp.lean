@@ -89,7 +89,7 @@ def isConstructor (v : Value) : M Bool := do
     | .closure f .. => pure (f.kind != .arrow && f.kind != .method && !f.gen && !f.async)
     | .native nid => pure (match nid with
         | .objectCtor | .functionCtor | .arrayCtor | .stringCtor | .numberCtor | .booleanCtor
-        | .errorCtor _ | .symbolCtor | .promiseCtor => true
+        | .errorCtor _ | .symbolCtor | .promiseCtor | .mapCtor _ => true
         | _ => false)
     | .bound .. => pure true
     | _ => pure false
@@ -161,6 +161,19 @@ def protoOf (v : Value) : M Value := do
   | _ => pure .null
 
 def keyOfNum (x : Float) : String := numToString x
+
+/-- The next live entry of a collection at or after `i`. -/
+def collNext (es : Array (Option (Value × Value))) : Nat → Nat → Option Nat
+  | _, 0 => none
+  | i, f + 1 => if i ≥ es.size then none else match es[i]! with
+    | some _ => some i
+    | none => collNext es (i + 1) f
+
+/-- The index of a live entry whose key is SameValueZero to `k`. -/
+def collFind (es : Array (Option (Value × Value))) (k : Value) : Option Nat :=
+  (List.range es.size).find? fun i => match es[i]! with
+    | some (k', _) => sameValueZero k k'
+    | none => false
 
 /-- The `name` of a function stored under a property key (§10.2.9 SetFunctionName). -/
 def nameOfKey (key : String) : M String := do
@@ -294,6 +307,30 @@ def enqueue (f : Value) (args : Array Value) : M Unit :=
 def nativeFn (id : Native) : M Value := do
   let r ← realm
   pure (.obj (← alloc { proto := .obj r.functionProto, kind := .native id }))
+
+/-- Array.prototype.flat's FlattenIntoArray (§23.1.3.13.1) on dense arrays. -/
+def flattenArr (d : Nat) (vs : Array Value) : Nat → M (Array Value)
+  | 0 => pure vs
+  | f + 1 => do
+    let mut out := #[]
+    for v in vs do
+      match v with
+      | .obj vid =>
+        match (← getObj vid).kind with
+        | .array inner => if d > 0 then out := out ++ (← flattenArr (d - 1) inner f) else out := out.push v
+        | _ => out := out.push v
+      | _ => out := out.push v
+    pure out
+
+/-- The start of each match of `pat` in `s`, left to right, without overlap. -/
+def allPositions (s pat : String) (from_ : Nat) (fuel : Nat) : List Nat :=
+  go from_ fuel #[]
+where
+  go (from_ : Nat) : Nat → Array Nat → List Nat
+    | 0, acc => acc.toList
+    | f + 1, acc => match indexOfFrom s pat from_ with
+      | some p => go (p + (if pat.isEmpty then 1 else pat.length)) f (acc.push p)
+      | none => acc.toList
 
 /-! ## Lifting `yield` and `await` out of expressions
 
@@ -2863,6 +2900,19 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
             modifyObj id fun o => { o with kind := .iter .undef idx mode }
             result .undef true
         | _ =>
+          if let .obj tid := target then
+            if let .coll _ es := (← getObj tid).kind then
+              match collNext es idx es.size with
+              | none =>
+                modifyObj id fun o => { o with kind := .iter .undef idx mode }
+                return ← result .undef true
+              | some i =>
+                modifyObj id fun o => { o with kind := .iter target (i + 1) mode }
+                let (k, v) := (es[i]!).getD (.undef, .undef)
+                return ← match mode with
+                  | 5 => result k false
+                  | 6 => result v false
+                  | _ => do result (← newArray #[k, v]) false
           let len ← match target with
             | .obj tid => match (← getObj tid).kind with
               | .array es => pure es.size
@@ -3049,6 +3099,245 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | _ => pure ()
         pure .undef
       | _ => pure .undef
+    | .mapCtor k =>
+      let nt ← match newTarget with
+        | some nt => pure nt
+        | none => throwErr .type "Constructor requires 'new'"
+      let pp ← getV n nt "prototype"
+      let o ← alloc { proto := pp, kind := .coll k #[] }
+      match a0 with
+      | .undef | .null => pure ()
+      | it =>
+        let adder ← getV n (.obj o) (if k == 0 || k == 2 then "set" else "add")
+        if !(← isCallable adder) then throwErr .type "adder is not a function"
+        let items ← iterToArray n (← getIterator n it) #[]
+        for item in items do
+          if k == 0 || k == 2 then
+            if !item.isObj then throwErr .type "Iterator value is not an entry object"
+            let key ← getV n item "0"
+            let v ← getV n item "1"
+            let _ ← callV n adder (.obj o) #[key, v]
+          else let _ ← callV n adder (.obj o) #[item]
+      pure (.obj o)
+    | .mapGet | .mapSet | .mapHas | .mapDelete | .mapClear | .mapSize | .mapForEach | .setAdd
+    | .mapIter _ =>
+      let (cid, ck, es) ← match thisV with
+        | .obj c => match (← getObj c).kind with
+          | .coll k es => pure (c, k, es)
+          | _ => throwErr .type "method called on incompatible receiver"
+        | _ => throwErr .type "method called on incompatible receiver"
+      let weak := ck ≥ 2
+      let setEs (es : Array (Option (Value × Value))) : M Unit :=
+        modifyObj cid fun o => { o with kind := .coll ck es }
+      let key := match a0 with
+        | .num x => if x == 0 then Value.num 0 else a0
+        | _ => a0
+      match id_ with
+      | .mapGet => pure (match collFind es key with | some i => ((es[i]!).map (·.2)).getD .undef | none => .undef)
+      | .mapHas => pure (.bool (collFind es key).isSome)
+      | .mapSet | .setAdd =>
+        if weak && !key.isObj then throwErr .type "Invalid value used as weak collection key"
+        let v := if id_ == .setAdd then key else a1
+        match collFind es key with
+        | some i => setEs (es.set! i (some (key, v)))
+        | none => setEs (es.push (some (key, v)))
+        pure thisV
+      | .mapDelete =>
+        match collFind es key with
+        | some i => setEs (es.set! i none); pure (.bool true)
+        | none => pure (.bool false)
+      | .mapClear => setEs (es.map fun _ => none); pure .undef
+      | .mapSize => pure (.num (Float.ofNat (es.filter Option.isSome).size))
+      | .mapForEach =>
+        if !(← isCallable a0) then throwErr .type "callback is not a function"
+        let mut i := 0
+        for _ in [0:1000000] do
+          let es ← match (← getObj cid).kind with | .coll _ es => pure es | _ => pure #[]
+          match collNext es i es.size with
+          | none => break
+          | some j =>
+            let (k, v) := (es[j]!).getD (.undef, .undef)
+            let _ ← callV n a0 a1 #[v, k, thisV]
+            i := j + 1
+        pure .undef
+      | .mapIter mode =>
+        pure (.obj (← alloc { proto := .obj r.arrayIterProto, kind := .iter thisV 0 mode }))
+      | _ => pure .undef
+    | .reflect op =>
+      let needObj : M Unit := if !a0.isObj then throwErr .type "Reflect method called on a non-object" else pure ()
+      match op with
+      | 0 => needObj; newArray ((← getObj (← toObj n a0)).ownKeys.filter (!isPrivKey ·) |>.map fun k =>
+          match symOfKey? k with | some i => Value.sym i | none => .str k)
+      | 1 => needObj; callNative n .objectGetPrototypeOf .undef args none
+      | 2 => needObj
+             match a0, a1 with
+             | .obj id, .obj _ | .obj id, .null => modifyObj id (fun o => { o with proto := a1 }); pure (.bool true)
+             | _, _ => throwErr .type "Object prototype may only be an Object or null"
+      | 3 => needObj; let k ← toKey n a1; pure (.bool ((← get).findProp (← toObj n a0) k 1000).isSome)
+      | 4 => needObj; getV n a0 (← toKey n a1)
+      | 5 =>
+        needObj
+        let ok ← tryCatch (do putV n a0 (← toKey n a1) (argD args 2) true; pure true) (fun e => match e with
+          | .throw _ => pure false
+          | a => throw a)
+        pure (.bool ok)
+      | 6 =>
+        needObj
+        let ok ← tryCatch (do let _ ← callNative n .objectDefineProperty .undef args none; pure true) (fun e => match e with
+          | .throw _ => pure false
+          | a => throw a)
+        pure (.bool ok)
+      | 7 =>
+        needObj
+        let id ← toObj n a0
+        let k ← toKey n a1
+        match (← getObj id).getOwn k with
+        | none => pure (.bool true)
+        | some p => if p.configurable then deleteOwn id k; pure (.bool true) else pure (.bool false)
+      | 8 =>
+        if !(← isCallable a0) then throwErr .type "Reflect.apply target is not callable"
+        let argv ← elemsOf n (argD args 2)
+        callV n a0 a1 argv
+      | 9 =>
+        if !(← isConstructor a0) then throwErr .type "Reflect.construct target is not a constructor"
+        let argv ← elemsOf n a1
+        construct n a0 argv (if args.size > 2 then argD args 2 else a0)
+      | 10 => needObj; callNative n .objectGetOwnPropertyDescriptor .undef args none
+      | 11 => needObj; callNative n .objectIsExtensible .undef args none
+      | _ => needObj; let _ ← callNative n .objectPreventExtensions .undef args none; pure (.bool true)
+    | .objectDefineProperties =>
+      match a0 with
+      | .obj id =>
+        let pid ← toObj n a1
+        for k in (← getObj pid).ownKeys do
+          match (← getObj pid).getOwn k with
+          | some p => if p.enumerable then defineFromDescriptor n id k (← getV n (.obj pid) k)
+          | none => pure ()
+        pure a0
+      | _ => throwErr .type "Object.defineProperties called on non-object"
+    | .objectSeal =>
+      match a0 with
+      | .obj id =>
+        let o ← getObj id
+        let props := o.props.fold (fun (m : Std.HashMap String PropV) k p => m.insert k (match p with
+          | .data v w e _ => .data v w e false
+          | .acc g s e _ => .acc g s e false)) {}
+        modifyObj id fun o => { o with props, extensible := false }
+        pure a0
+      | _ => pure a0
+    | .objectIsSealed =>
+      match a0 with
+      | .obj id =>
+        let o ← getObj id
+        pure (.bool (!o.extensible && o.ownKeys.all fun k => match o.getOwn k with
+          | some p => !p.configurable | none => true))
+      | _ => pure (.bool true)
+    | .objectGetOwnPropertyDescriptors =>
+      let id ← toObj n a0
+      let res ← newObject
+      for k in (← getObj id).ownKeys do
+        let d ← callNative n .objectGetOwnPropertyDescriptor .undef #[.obj id, match symOfKey? k with | some i => .sym i | none => .str k] none
+        defineOwn res k (.data d true true true)
+      pure (.obj res)
+    | .objectFromEntries =>
+      let res ← newObject
+      let items ← iterToArray n (← getIterator n a0) #[]
+      for item in items do
+        let k ← toKey n (← getV n item "0")
+        defineOwn res k (.data (← getV n item "1") true true true)
+      pure (.obj res)
+    | .arrayFlat | .arrayFlatMap =>
+      let es ← elemsOf n thisV
+      let es ← if id_ == .arrayFlatMap then do
+          if !(← isCallable a0) then throwErr .type "flatMap mapper is not callable"
+          (List.range es.size).toArray.mapM fun i => callV n a0 a1 #[es[i]!, .num (Float.ofNat i), thisV]
+        else pure es
+      let depth := if id_ == .arrayFlatMap then 1 else match a0 with
+        | .undef => 1
+        | .num d => if d.isNaN || d < 1 then 0 else (if d > 1000 then 1000 else d.toUInt64.toNat)
+        | _ => 1
+      newArray (← flattenArr depth es (depth + 1))
+    | .arrayAt | .stringAt =>
+      let es ← if id_ == .arrayAt then elemsOf n thisV else do
+        pure ((charsOf (← toStr n (← thisPrim thisV))).map fun c => Value.str (String.singleton c))
+      let k := toIntegerOrInf (← toNum n a0)
+      let i := if k < 0 then Float.ofNat es.size + k else k
+      if i < 0 || i ≥ Float.ofNat es.size then pure .undef else pure es[i.toUInt64.toNat]!
+    | .arrayFindLast | .arrayFindLastIndex =>
+      if !(← isCallable a0) then throwErr .type "callback is not a function"
+      let es ← elemsOf n thisV
+      let mut found : Option Nat := none
+      for j in [0:es.size] do
+        let i := es.size - 1 - j
+        if found.isNone then
+          if toBool (← callV n a0 a1 #[es[i]!, .num (Float.ofNat i), thisV]) then found := some i
+      match found with
+      | some i => pure (if id_ == .arrayFindLast then es[i]! else .num (Float.ofNat i))
+      | none => pure (if id_ == .arrayFindLast then .undef else .num (-1))
+    | .stringPadStart | .stringPadEnd =>
+      let s ← toStr n (← thisPrim thisV)
+      let len := toIntegerOrInf (← toNum n a0)
+      let fill ← match a1 with | .undef => pure " " | v => toStr n v
+      let cur := s.length
+      if len ≤ Float.ofNat cur || fill.isEmpty then pure (.str s) else
+      let need := len.toUInt64.toNat - cur
+      let reps := String.join (List.replicate (need / fill.length + 1) fill)
+      let pad := String.ofList (reps.toList.take need)
+      pure (.str (if id_ == .stringPadStart then pad ++ s else s ++ pad))
+    | .stringCodePointAt =>
+      let cs := charsOf (← toStr n (← thisPrim thisV))
+      let i := toIntegerOrInf (← toNum n a0)
+      if i < 0 || i ≥ Float.ofNat cs.size then pure .undef else pure (.num (Float.ofNat cs[i.toUInt64.toNat]!.toNat))
+    | .stringTrimStart | .stringTrimEnd =>
+      let s ← toStr n (← thisPrim thisV)
+      let cs := s.toList
+      pure (.str (if id_ == .stringTrimStart then String.ofList (cs.dropWhile isStrWs)
+        else String.ofList (cs.reverse.dropWhile isStrWs).reverse))
+    | .stringReplace | .stringReplaceAll =>
+      let s ← toStr n (← thisPrim thisV)
+      let pat ← toStr n a0
+      let fnRepl ← isCallable a1
+      let replStr ← if fnRepl then pure "" else toStr n a1
+      let positions : List Nat :=
+        if id_ == .stringReplaceAll then
+          allPositions s pat 0 (s.length + 2)
+        else match indexOfFrom s pat 0 with | some p => [p] | none => []
+      let mut out := ""
+      let mut last := 0
+      for p in positions do
+        out := out ++ substr s last p
+        let r ← if fnRepl then toStr n (← callV n a1 .undef #[.str pat, .num (Float.ofNat p), .str s])
+          else pure ((replStr.replace "$&" pat).replace "$$" "$")
+        out := out ++ r
+        last := p + pat.length
+      pure (.str (out ++ substr s last s.length))
+    | .stringFromCodePoint =>
+      let cs ← args.toList.mapM fun a => do
+        let x ← toNum n a
+        if !isIntegral x || x < 0 || x > 1114111 then throwErr .range s!"Invalid code point {numToString x}"
+        pure (charOfCode x.toUInt64.toNat)
+      pure (.str (String.ofList cs))
+    | .numberIsFinite => pure (.bool (match a0 with | .num x => x.isFinite | _ => false))
+    | .numberIsNaN => pure (.bool (match a0 with | .num x => x.isNaN | _ => false))
+    | .numberIsSafeInteger => pure (.bool (match a0 with | .num x => isIntegral x && x.abs ≤ 9007199254740991.0 | _ => false))
+    | .math1 op =>
+      let x ← toNum n a0
+      pure (.num (match op with
+        | 0 => Float.cbrt x | 1 => Float.log2 x | 2 => Float.log10 x | 3 => Float.sinh x
+        | 4 => Float.cosh x | 5 => Float.tanh x | 6 => Float.asin x | 7 => Float.acos x
+        | 8 => Float.asinh x | 9 => Float.acosh x | 10 => Float.atanh x
+        | 11 => Float.exp x - 1 | 12 => Float.log (1 + x)
+        | _ => x.toFloat32.toFloat))
+    | .mathHypot =>
+      let xs ← args.toList.mapM (toNum n)
+      if xs.any Float.isInf then pure (.num inf)
+      else pure (.num (Float.sqrt (xs.foldl (fun a x => a + x * x) 0)))
+    | .mathImul =>
+      let a := toInt32 (← toNum n a0); let b := toInt32 (← toNum n a1)
+      pure (intV (toInt32 (Float.ofInt (a * b % 4294967296))))
+    | .mathClz32 =>
+      let x := toUint32 (← toNum n a0)
+      pure (.num (Float.ofNat (if x == 0 then 32 else 31 - Nat.log2 x)))
     | .asyncResume =>
       match a0 with
       | .obj co =>
@@ -3573,6 +3862,67 @@ def initRealm : M Unit := do
   defineOwn math "LN2" (.data (.num 0.6931471805599453) false false false)
   defineOwn math "LN10" (.data (.num 2.302585092994046) false false false)
   defineOwn math "SQRT2" (.data (.num 1.4142135623730951) false false false)
+  -- Map, Set, WeakMap, WeakSet
+  for (k, nm) in [(0, "Map"), (1, "Set"), (2, "WeakMap"), (3, "WeakSet")] do
+    let p ← mk
+    setHidden g nm (← ctorWith nm (.mapCtor k) 0 p)
+    defineOwn p (symKey symToStringTag) (.data (.str nm) false false true)
+    let isMap := k == 0 || k == 2
+    if isMap then
+      method p "get" .mapGet 1
+      method p "set" .mapSet 2
+    else method p "add" .setAdd 1
+    method p "has" .mapHas 1
+    method p "delete" .mapDelete 1
+    if k < 2 then
+      method p "clear" .mapClear 0
+      method p "forEach" .mapForEach 1
+      defineOwn p "size" (.acc (← mkNative .mapSize "get size" 0) .undef false true)
+      let entries ← mkNative (.mapIter 4) "entries" 0
+      let values ← mkNative (.mapIter 6) "values" 0
+      setHidden p "entries" entries
+      setHidden p "values" values
+      if isMap then
+        method p "keys" (.mapIter 5) 0
+        setHidden p (symKey symIterator) entries
+      else
+        setHidden p "keys" values
+        setHidden p (symKey symIterator) values
+  -- Reflect
+  let reflect ← mk
+  setHidden g "Reflect" (.obj reflect)
+  for (nm, op, l) in [("ownKeys", 0, 1), ("getPrototypeOf", 1, 1), ("setPrototypeOf", 2, 2),
+      ("has", 3, 2), ("get", 4, 2), ("set", 5, 3), ("defineProperty", 6, 3),
+      ("deleteProperty", 7, 2), ("apply", 8, 3), ("construct", 9, 2),
+      ("getOwnPropertyDescriptor", 10, 2), ("isExtensible", 11, 1), ("preventExtensions", 12, 1)] do
+    method reflect nm (.reflect op) l
+  if let .obj oc := objectC then
+    method oc "defineProperties" .objectDefineProperties 2
+    method oc "seal" .objectSeal 1
+    method oc "isSealed" .objectIsSealed 1
+    method oc "getOwnPropertyDescriptors" .objectGetOwnPropertyDescriptors 1
+    method oc "fromEntries" .objectFromEntries 1
+  for (nm, f, l) in [("flat", Native.arrayFlat, 0), ("flatMap", .arrayFlatMap, 1), ("at", .arrayAt, 1),
+      ("findLast", .arrayFindLast, 1), ("findLastIndex", .arrayFindLastIndex, 1)] do
+    method arrayProto nm f l
+  for (nm, f, l) in [("padStart", Native.stringPadStart, 1), ("padEnd", .stringPadEnd, 1),
+      ("at", .stringAt, 1), ("codePointAt", .stringCodePointAt, 1), ("trimStart", .stringTrimStart, 0),
+      ("trimEnd", .stringTrimEnd, 0), ("replace", .stringReplace, 2), ("replaceAll", .stringReplaceAll, 2)] do
+    method stringProto nm f l
+  if let .obj sc := stringC then method sc "fromCodePoint" .stringFromCodePoint 1
+  if let .obj nc := numberC then
+    method nc "isFinite" .numberIsFinite 1
+    method nc "isNaN" .numberIsNaN 1
+    method nc "isSafeInteger" .numberIsSafeInteger 1
+    setHidden nc "parseFloat" (← ownValue g "parseFloat")
+    setHidden nc "parseInt" (← ownValue g "parseInt")
+  for (nm, op) in [("cbrt", 0), ("log2", 1), ("log10", 2), ("sinh", 3), ("cosh", 4), ("tanh", 5),
+      ("asin", 6), ("acos", 7), ("asinh", 8), ("acosh", 9), ("atanh", 10), ("expm1", 11),
+      ("log1p", 12), ("fround", 13)] do
+    method math nm (.math1 op) 1
+  method math "hypot" .mathHypot 2
+  method math "imul" .mathImul 2
+  method math "clz32" .mathClz32 1
   -- JSON, console
   let json ← mk
   setHidden g "JSON" (.obj json)

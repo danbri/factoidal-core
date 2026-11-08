@@ -88,6 +88,16 @@ inductive Native where
   | promiseThenableJob | promiseAllElement | promiseFinallyF | promiseFinallyR | promiseValueThunk
   | promiseThrower | asyncResume
   | agenNext | agenReturn | agenThrow | agenResume
+  | mapCtor (kind : Nat) | mapGet | mapSet | mapHas | mapDelete | mapClear | mapSize | mapForEach
+  | mapIter (mode : Nat) | setAdd
+  | reflect (op : Nat)
+  | objectDefineProperties | objectSeal | objectIsSealed | objectGetOwnPropertyDescriptors
+  | objectFromEntries
+  | arrayFlat | arrayFlatMap | arrayAt | arrayFindLast | arrayFindLastIndex
+  | stringPadStart | stringPadEnd | stringAt | stringCodePointAt | stringTrimStart | stringTrimEnd
+  | stringReplace | stringReplaceAll | stringFromCodePoint
+  | numberIsFinite | numberIsNaN | numberIsSafeInteger
+  | math1 (op : Nat) | mathHypot | mathImul | mathClz32
   deriving BEq, Repr, Inhabited
 
 /-- What a running function sees. -/
@@ -174,6 +184,10 @@ inductive Kind where
   /-- A generator object (§27.5): its frames and state (0 suspended at the start,
   1 suspended at a yield, 2 running, 3 completed). -/
   | gen (frames : List GFrame) (state : Nat)
+  /-- A Map, Set, WeakMap or WeakSet (§24): entries in insertion order; a deleted
+  entry is `none` so that live iterators keep their place (§24.1.3.5). `kind`: 0 Map,
+  1 Set, 2 WeakMap, 3 WeakSet. -/
+  | coll (kind : Nat) (entries : Array (Option (Value × Value)))
   /-- A Promise (§27.2.6): state (0 pending, 1 fulfilled, 2 rejected), result,
   reactions (on fulfilled, on rejected, derived promise or `undefined`), and whether
   a resolving function has been called (`[[AlreadyResolved]]`, kept per promise). -/

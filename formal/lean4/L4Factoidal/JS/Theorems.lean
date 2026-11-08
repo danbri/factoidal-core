@@ -13,7 +13,7 @@ import L4Factoidal.JS.Interp
 
 The evaluator is a Lean function, so it is deterministic by construction: the same
 script and heap give the same outcome and heap. Each function of the parser and of
-the evaluator is total (structural recursion on its fuel); no `partial def`.
+the evaluator is total (structural recursion on its fuel); no partial definitions.
 -/
 
 namespace L4Factoidal.JS
