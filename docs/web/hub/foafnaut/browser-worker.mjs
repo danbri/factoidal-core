@@ -25,6 +25,9 @@ let L;const layersModule=import('./layers.mjs');layersModule.catch(()=>{});
 // that is not a scroll, is one Lean frame, which costs about half a band; the band for it is
 // made when the page is idle.
 let bandWanted=false,bandTimer;
+// A band on its way to the screen: Lean has made it and the GPU is drawing it. A scroll that
+// comes meanwhile is measured against it, not against the band it replaces.
+let incoming;
 let firstFrameSeen;const firstFrame=new Promise(resolve=>{firstFrameSeen=resolve;});
 // Input that arrives before the engine is ready, and moves and scrolls that arrive while a
 // frame builds, wait here. Every press, release, key, text and command is applied in the
@@ -383,10 +386,10 @@ function scrollBy(amount){
     motion={direction,rowsPerMs:direction===motion.direction?(motion.rowsPerMs+instant)/2:instant,at};}
   // Inside the band on screen, a scroll only moves the composite: no Lean call. Past it, a
   // band made ahead for the same state is shown; with none, Lean makes one.
-  if(canShift()){
+  if(canShift()||incoming){
     clearTimeout(bandTimer);
     shiftPending=true;
-    if(!L.keeps(current.answer.layers,scroll)&&!swapReady()){dirty=true;bandWanted=true;}
+    if(!L.keeps((incoming??current.answer).layers,scroll)&&!swapReady()){dirty=true;bandWanted=true;}
     if(currentStamp!==undefined&&(pendingStamp===undefined||currentStamp<pendingStamp))pendingStamp=currentStamp;
     if(!drawing)draw();
   }else{bandWanted=layered!==false&&!!L;request();}
@@ -408,12 +411,13 @@ function scheduleBand(){
       layerSurface??=await L.createLayerSurface(surfaceCanvas,{check:checkMode,waitForGpu:statsMode});
       if(!layerSurface)return;
       // Into the layer textures only: the screen already shows this state.
+      incoming=answer;
       await layerSurface.drawLayers(answer);
       current={answer,doc:shownDoc,source:shownDoc.source,width,height,sig:signature(options)};
       shownOffset=L.clampOffset(answer.layers,at).offset;frame=answer.page;
       if(scroll!==at)shiftPending=true;
     }catch(error){console.warn('foafnaut: the band was not drawn:',String(error));current=undefined;}
-    finally{drawing=false;}
+    finally{drawing=false;incoming=undefined;}
     if(shiftPending||dirty)draw();
   },60);
 }
@@ -530,6 +534,7 @@ async function draw(){
         if(!layerSurface)throw Error('A WebGPU adapter is unavailable in this browser.');
         let pixels;
         if(layers){
+          incoming=layers;
           await layerSurface.drawLayers(layers);
           const {offset}=L.clampOffset(layers.layers,scroll);
           pixels=await layerSurface.composite(width,height,offset);
@@ -552,7 +557,7 @@ async function draw(){
         if(hashPixels)pixelHash=hashPixels(rgba);
         frame=next;path='readback';
       }
-      const done=performance.now();
+      const done=performance.now();incoming=undefined;
       phase('firstFrame');
       post({type:'frame',width,height,title:shown.title,rgba:rgba?.buffer,presented:!rgba,inputAt,
         stats:{path,layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
@@ -560,6 +565,7 @@ async function draw(){
           leanRenders:leanRenders-calls,leanCalls,rows:Math.round(frame.data.length/4),...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{})}},rgba?[rgba.buffer]:[]);
       if(!phasesPosted){phasesPosted=true;post({type:'phases',phases});firstFrameSeen();}
     }catch(error){
+      incoming=undefined;
       session?.close();session=undefined;
       try{surface?.close();}catch{/* the frame is over */}surface=undefined;
       try{layerSurface?.close();}catch{/* the frame is over */}layerSurface=undefined;current=undefined;prefetched=undefined;
