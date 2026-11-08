@@ -136,7 +136,7 @@ try{
   }
   await send('Target.closeTarget',{targetId});
 }catch(error){fail(String(error?.stack??error));}
-finally{chrome.kill('SIGKILL');server.close();fs.rmSync(profile,{recursive:true,force:true});fs.rmSync(work,{recursive:true,force:true});}
+finally{chrome.kill('SIGKILL');server.close();try{fs.rmSync(profile,{recursive:true,force:true,maxRetries:10,retryDelay:100});}catch{/* Chrome still closing */}fs.rmSync(work,{recursive:true,force:true});}
 const ok=report.filter(r=>r.verdict==='pass').length,sum=k=>report.reduce((t,r)=>t+(r[k]??0),0);
 const summary={scenes:report.length,pass:ok,refused:scenes.length-drawn.length,pixels:sum('pixels'),differ:sum('differ'),over:sum('over'),
   max:Math.max(0,...report.map(r=>r.max??0)),tolerance,budget};

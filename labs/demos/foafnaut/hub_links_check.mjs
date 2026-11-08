@@ -152,6 +152,6 @@ try{
     await short.close();
   }
 }catch(error){fail(String(error?.stack??error));}
-finally{chrome.kill('SIGKILL');server.close();fs.rmSync(profile,{recursive:true,force:true});}
+finally{chrome.kill('SIGKILL');server.close();try{fs.rmSync(profile,{recursive:true,force:true,maxRetries:10,retryDelay:100});}catch{/* Chrome still closing */}}
 console.log(failures?`hub links check: ${failures} failures`:'hub links check: pass');
 process.exit(failures?1:0);
