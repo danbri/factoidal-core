@@ -48,9 +48,9 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "engine.mjs", "worker.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/html-webgpu/${name}`);
   }
-  for (const name of ["browser.mjs", "browser-worker.mjs", "browser-state.mjs", "layers.mjs", "link-route.mjs", "fallback-fonts.mjs", "font-coverage.mjs"]) {
-    eleventyConfig.addPassthroughCopy(`web/hub/foafnaut/${name}`);
-  }
+  // Every module of the Hub browser, so a new one is never left off the site (page-gpu.mjs,
+  // and before it browser-state.mjs, were missing from a list of names).
+  eleventyConfig.addPassthroughCopy("web/hub/foafnaut/*.mjs");
   eleventyConfig.addPassthroughCopy({ "../labs/demos/foafnaut/pages": "web/hub/foafnaut/pages" });
   eleventyConfig.addPassthroughCopy({ "../third_party/fonts/noto-sans": "web/hub/foafnaut/fonts/noto-sans" });
   // Fallback fonts (labs/demos/foafnaut/fallback_fonts.py); the Hub fetches each only for a page that needs it.
