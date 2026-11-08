@@ -26,7 +26,10 @@ positions, redeclarations in a block or script, duplicate parameters where they 
 not allowed, strict-mode reserved words. Stage 4 added BigInt (literals, arithmetic,
 comparison with Numbers, `BigInt()`), the `with` statement (an object environment
 record, with `@@unscopables`), and more early errors (escaped keywords, `switch`
-redeclarations, `eval`/`arguments` in strict assignment patterns). `lake exe leanjs` runs a script, Test262 files
+redeclarations, `eval`/`arguments` in strict assignment patterns). Stage 5 added
+Promise (`then`, `catch`, `finally`, `resolve`, `reject`, `all`), the job queue,
+`async` functions, arrows and methods with `await`, and `yield`/`await` inside
+expressions (section 6a). `lake exe leanjs` runs a script, Test262 files
 or the benchmarks.
 
 Measured results are in section 9 (Test262 counts) and section 10 (speed).
@@ -162,7 +165,11 @@ The fuel is `2^40` per script; the step budget, not the fuel, stops long scripts
 
 ## 6. Job queue and the event loop
 
-Not built tonight. The design:
+Stage 5 built the engine side. `Heap.jobs` is the job queue of §9.5
+(HostEnqueuePromiseJob): a function and its arguments. Promise reactions, thenable
+resolution and `await` resumptions are jobs. `runScript` runs the jobs after the
+script until none is left, as a microtask checkpoint does (`runJobs`, oldest first).
+In a page the same queue is what the event loop drains. The design for that:
 
 - ECMA-262 jobs (§9.5 HostEnqueuePromiseJob) are host-defined. In HTML a Promise job
   is a microtask. The Lean event loop (`L4Factoidal.EventLoop`) already has the
@@ -197,10 +204,18 @@ and close `for`-`of` iterators. The generator object holds its frames in the hea
 
 Supported `yield` positions: an expression statement (`yield e;`, `yield* e;`), the
 right side of an assignment to a name or property, a declaration initialiser, and
-`return yield e`. A `yield` inside another expression (`f(yield x)`) throws a
-`SyntaxError` at run time; Test262 has 30 such tests in the subset. `async` functions
-can use the same machine, with `await` as a suspension point and the Promise jobs on
-the event loop's microtask queue (section 6).
+`return yield e`. A `yield` inside another expression that is evaluated
+unconditionally is moved before its statement (`f(yield x)` becomes `let %y0 = yield
+x; f(%y0)`; `liftStmt`). The callee and the operands to the left are then evaluated
+after the suspension: a difference from §13.3.6 when they have side effects. A
+`yield` under `&&`, `||`, `??` or `?:` is refused with a `SyntaxError` at run time.
+
+`async` functions use the same machine. In an async function the parser reads
+`await e` as a `yield`; the function's object is a coroutine (`Kind.coro`) with the
+promise it returns. At each suspension `asyncStep` resolves the awaited value to a
+promise and queues the resumption as its reaction (§27.7.5.3 Await); the end of the
+frames resolves the promise and a throw rejects it. Async generators are not built
+(255 Test262 failures in the subset are async generator methods).
 
 ## 7. Strings and numbers
 
@@ -310,6 +325,18 @@ members 79; `async` methods 58; `yield` inside an expression 35; call depth 31; 
 static blocks 17; the rest are single semantic differences (about 280, each cause
 under 35 tests).
 
+Stage 5 (Promise, jobs, async functions, lifted `yield`): the runner now also runs the
+225 tests with `flags: [async]` (with `harness/doneprintHandle.js`; a pass is the
+`Test262:AsyncTestComplete` line), so 6,297 run and 4 are skipped (3 modules, 1 missing
+include). **5,404 pass, 893 fail (85.8 % of 6,297 run)**: 804 negative passes, 4,600
+of 5,292 positive tests (86.9 %). 21 of the 225 async tests pass; 200 of them are
+async generators. 26 negative tests that passed at stage 4 only because `async` was
+refused fail now; no positive test was lost.
+
+Remaining failures by cause (stage 5): async generator methods 255; early errors not
+detected 196; private class members 80; `yield` in a conditional position 32; call
+depth 31; class static blocks 17.
+
 ## 10. Speed
 
 The same two scripts as the QuickJS measurement in `2026-11-07-wasmvm-engine.md`
@@ -353,10 +380,10 @@ small objects as shapes with slot arrays, and caches property lookups.
 
 ## 12. Next steps
 
-1. Language: `async`/`await` on the generator machine with Promise jobs on the event
-   loop; `yield` inside expressions (lift it into a temporary before the statement);
-   the remaining early errors; BigInt; private class members; regular expression
-   literals (the repository's `L4Factoidal.Regex` engines are candidates).
+1. Language: async generators and `for await`; private class members and static
+   blocks; the remaining early errors; regular expression literals (the repository's
+   `L4Factoidal.Regex` engines are candidates); `yield` in conditional positions
+   (lift into `if` statements).
 2. Built-ins in Test262 order: Object, Function, Array, String, Number, Math, JSON,
    Error, Symbol, Map/Set, Promise, RegExp (the repository's `L4Factoidal.Regex`
    engines are candidates), Date (on the virtual clock).

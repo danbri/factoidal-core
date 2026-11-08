@@ -86,10 +86,10 @@ def newArray (es : Array Value) : M Value := do
 def isConstructor (v : Value) : M Bool := do
   match v with
   | .obj id => match (← getObj id).kind with
-    | .closure f .. => pure (f.kind != .arrow && f.kind != .method && !f.gen)
+    | .closure f .. => pure (f.kind != .arrow && f.kind != .method && !f.gen && !f.async)
     | .native nid => pure (match nid with
         | .objectCtor | .functionCtor | .arrayCtor | .stringCtor | .numberCtor | .booleanCtor
-        | .errorCtor _ | .symbolCtor => true
+        | .errorCtor _ | .symbolCtor | .promiseCtor => true
         | _ => false)
     | .bound .. => pure true
     | _ => pure false
@@ -139,7 +139,7 @@ def makeClosure (ctx : Ctx) (f : FunDef) (nameHint : String := "") (home : Value
   if f.gen then
     let p ← alloc { proto := .obj r.generatorProto }
     defineOwn id "prototype" (.data (.obj p) true false false)
-  else if f.kind == .normal then
+  else if f.kind == .normal && !f.async then
     let p ← newObject
     setHidden p "constructor" (.obj id)
     defineOwn id "prototype" (.data (.obj p) true false false)
@@ -282,6 +282,102 @@ def parseFloatStr (s : String) : Float :=
       let f := if last == 'e' || last == 'E' || last == '+' || last == '-' then nan else strToNumber pre
       if f.isNaN then go k else f
   go n
+
+def newPromise : M Nat := do
+  let r ← realm
+  alloc { proto := .obj r.promiseProto, kind := .promise 0 .undef #[] false }
+
+def enqueue (f : Value) (args : Array Value) : M Unit :=
+  modify fun h => { h with jobs := h.jobs.push (f, args) }
+
+/-- A function object for a native, without `name` and `length` (internal use). -/
+def nativeFn (id : Native) : M Value := do
+  let r ← realm
+  pure (.obj (← alloc { proto := .obj r.functionProto, kind := .native id }))
+
+/-! ## Lifting `yield` and `await` out of expressions
+
+The generator machine suspends only at statement level. A `yield` (or an `await`,
+which the parser reads as a `yield` in an async function) inside an expression is
+moved before its statement when it is evaluated unconditionally: `f(await p)`
+becomes `let %y0 = await p; f(%y0)`. The callee and operands to its left are then
+evaluated after the suspension, not before: a known difference from §13.3.6 when
+they have side effects. `yield` inside `&&`, `||`, `??`, `?:`, functions and classes
+stays, and the machine refuses that statement. -/
+
+abbrev Lift := StateM (Nat × Array (String × Bool × Option Expr))
+
+def liftName (k : Nat) : String := "%y" ++ toString k
+
+mutual
+def liftE : Nat → Expr → Lift Expr
+  | 0, e => pure e
+  | n + 1, e => do
+    match e with
+    | .yieldE d arg =>
+      let arg ← match arg with
+        | some a => do pure (some (← liftE n a))
+        | none => pure none
+      let (k, acc) ← get
+      set (k + 1, acc.push (liftName k, d, arg))
+      pure (.ident (liftName k))
+    | .unary op a => pure (.unary op (← liftE n a))
+    | .binary op a b => do let a ← liftE n a; let b ← liftE n b; pure (.binary op a b)
+    | .call f args => do let f ← liftE n f; pure (.call f (← liftL n args))
+    | .new f args => do let f ← liftE n f; pure (.new f (← liftL n args))
+    | .member o k => pure (.member (← liftE n o) k)
+    | .index o k => do let o ← liftE n o; pure (.index o (← liftE n k))
+    | .array es => pure (.array (← liftL n es))
+    | .template c subs => pure (.template c (← liftL n subs))
+    | .spread a => pure (.spread (← liftE n a))
+    | .seq a b => do let a ← liftE n a; pure (.seq a (← liftE n b))
+    | .assign op t v => do
+      let t ← match t with
+        | .member o k => do pure (Expr.member (← liftE n o) k)
+        | _ => pure t
+      pure (.assign op t (← liftE n v))
+    | .object ps => pure (.object (← liftP n ps))
+    | _ => pure e
+termination_by structural n _ => n
+
+def liftL : Nat → List Expr → Lift (List Expr)
+  | 0, es => pure es
+  | _ + 1, [] => pure []
+  | n + 1, e :: es => do let e ← liftE n e; pure (e :: (← liftL n es))
+termination_by structural n _ => n
+
+def liftP : Nat → List PropDef → Lift (List PropDef)
+  | 0, ps => pure ps
+  | _ + 1, [] => pure []
+  | n + 1, p :: ps => do
+    let p ← match p with
+      | .init (.lit k) v => do pure (PropDef.init (.lit k) (← liftE n v))
+      | .spread v => do pure (PropDef.spread (← liftE n v))
+      | _ => pure p
+    pure (p :: (← liftP n ps))
+termination_by structural n _ => n
+end
+
+/-- A statement with its lifted `yield`s before it, or `none` when nothing moved. -/
+def liftStmt (seed : Nat) (s : Stmt) : Option (List Stmt) :=
+  let run (e : Expr) : Expr × Array (String × Bool × Option Expr) :=
+    let (e', (_, acc)) := (liftE 10000 e).run (seed, #[])
+    (e', acc)
+  let pre (acc : Array (String × Bool × Option Expr)) : List Stmt :=
+    acc.toList.map fun (x, d, a) => Stmt.decl .letK [Decl.mk (.id x) (some (.yieldE d a))]
+  let wrap (e : Expr) (mk : Expr → Stmt) : Option (List Stmt) :=
+    match e with
+    | .yieldE _ _ => none
+    | _ =>
+      let (e', acc) := run e
+      if acc.isEmpty then none else some (pre acc ++ [mk e'])
+  match s with
+  | .expr e => wrap e .expr
+  | .ret (some e) => wrap e (fun x => .ret (some x))
+  | .throwS e => wrap e .throwS
+  | .decl k [Decl.mk p (some e)] => wrap e (fun x => .decl k [Decl.mk p (some x)])
+  | .ifS c t f => wrap c (fun x => .ifS x t f)
+  | _ => none
 
 /-! ## BigInt (§6.1.6.2) -/
 
@@ -733,6 +829,14 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
                       kind := .gen [.block ctx' fd.body] 0 }
       modify fun h => { h with depth := h.depth - 1 }
       return .obj g
+    if fd.async then
+      -- an async function runs until its first await and returns its promise (§27.7.5.1)
+      let pid ← newPromise
+      let ctx' ← enterBlock n ctx fd.body
+      let co ← alloc { kind := .coro [.block ctx' fd.body] pid }
+      asyncStep n co (.send .undef)
+      modify fun h => { h with depth := h.depth - 1 }
+      return .obj pid
     let c ← evalBody n ctx fd.body
     modify fun h => { h with depth := h.depth - 1 }
     match c with
@@ -1700,8 +1804,8 @@ def evalClass : Nat → Ctx → ClassDef → String → M Value
       | some f => f
       | none =>
         if derived then
-          FunDef.mk none [] (some (.id "args")) [.expr (.superCall [.spread (.ident "args")])] [] false true (.ctor true) false
-        else FunDef.mk none [] none [] [] false true (.ctor false) false
+          FunDef.mk none [] (some (.id "args")) [.expr (.superCall [.spread (.ident "args")])] [] false true (.ctor true) false false
+        else FunDef.mk none [] none [] [] false true (.ctor false) false false
     let cname := name.getD nameHint
     let fid ← alloc { proto := ctorParent, kind := .closure fd cenv .undef .undef (.obj proto) #[] }
     defineOwn fid "length" (.data (.num (Float.ofNat fd.expectedArgs)) false false true)
@@ -1930,7 +2034,7 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       match t with
       | .ident x => yieldAt arg d (some (.id x, .assign))
       | .member .. | .index .. => yieldAt arg d (some (.target t, .assign))
-      | _ => genUnsupported n rest
+      | _ => genLift n ctx s rest
     | .decl k [Decl.mk p (some (.yieldE d arg))] =>
       let m : BindMode := match k with
         | .var => .var
@@ -1951,7 +2055,7 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       let ctx' ← enterBlock n ctx ss
       genRun n (.block ctx' ss :: rest) (.send .undef)
     | .ifS c t e =>
-      if c.hasYield then genUnsupported n rest else
+      if c.hasYield then genLift n ctx s rest else
       match ← genEval n ctx c with
       | .error x => genUnwind n rest (.throw x)
       | .ok v =>
@@ -1998,13 +2102,22 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       let ctx' ← enterBlock n ctx body
       genRun n (.block ctx' body :: .tryF ctx param handler fin 0 :: rest) (.send .undef)
     | .labeled l body => genEnter n ctx (l :: labels) body rest
-    | _ => genUnsupported n rest
+    | _ => genLift n ctx s rest
 termination_by structural n _ _ _ _ => n
 
 def genUnsupported : Nat → List GFrame → M GOut
   | 0, _ => throw (.halt "fuel")
   | n + 1, rest => do
     genUnwind n rest (.throw (← mkError .syntax "yield in this position is not supported"))
+termination_by structural n _ => n
+
+/-- A statement whose `yield`s are inside expressions: lift them, or refuse. -/
+def genLift : Nat → Ctx → Stmt → List GFrame → M GOut
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, s, rest => do
+    match liftStmt (← get).envs.size s with
+    | some ss => genRun n (.block ctx ss :: rest) (.send .undef)
+    | none => genUnsupported n rest
 termination_by structural n _ => n
 
 /-- Unwind the frames with an abrupt completion: loops take their `break` and
@@ -2075,6 +2188,115 @@ def genUnwind : Nat → List GFrame → GCompl → M GOut
       genRun n (.block ctx' fs :: .pending c :: rest) (.send .undef)
     | _, _ => genUnwind n rest c
 termination_by structural n _ _ => n
+
+/-- Run an async function's frames to its next await or its end (§27.7.5.3 Await). -/
+def asyncStep : Nat → Nat → GInput → M Unit
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, co, input => do
+    match (← getObj co).kind with
+    | .coro frames pid =>
+      let r ← tryCatch (do pure (Except.ok (← genRun n frames input))) (fun a => pure (Except.error a))
+      match r with
+      | .error (.throw e) => modifyObj co (fun o => { o with kind := .coro [] pid }); rejectPromise n pid e
+      | .error a => throw a
+      | .ok (.done v) => modifyObj co (fun o => { o with kind := .coro [] pid }); resolvePromise n pid v
+      | .ok (.yielded v fs) =>
+        modifyObj co fun o => { o with kind := .coro fs pid }
+        let p ← promiseResolve n v
+        let r ← realm
+        let onF ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .asyncResume) .undef #[.obj co, .num 0] }
+        let onR ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .asyncResume) .undef #[.obj co, .num 1] }
+        performThen n p (.obj onF) (.obj onR) .undef
+    | _ => pure ()
+termination_by structural n _ _ => n
+
+/-- PromiseResolve (§27.2.4.7.1) with the intrinsic Promise. -/
+def promiseResolve : Nat → Value → M Nat
+  | 0, _ => throw (.halt "fuel")
+  | n + 1, v => do
+    match v with
+    | .obj id =>
+      match (← getObj id).kind with
+      | .promise .. =>
+        let c ← getV n v "constructor"
+        if strictEq c (.obj (← realm).promiseCtor) then return id
+        let p ← newPromise
+        resolvePromise n p v
+        pure p
+      | _ =>
+        let p ← newPromise
+        resolvePromise n p v
+        pure p
+    | _ =>
+      let p ← newPromise
+      resolvePromise n p v
+      pure p
+termination_by structural n _ => n
+
+/-- Promise Resolve Functions (§27.2.1.3.2), without the AlreadyResolved check. -/
+def resolvePromise : Nat → Nat → Value → M Unit
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, pid, x => do
+    match x with
+    | .obj xid =>
+      if xid == pid then
+        return ← rejectPromise n pid (← mkError .type "Chaining cycle detected for promise")
+      let r ← tryCatch (do pure (Except.ok (← getV n x "then"))) (fun a => pure (Except.error a))
+      match r with
+      | .error (.throw e) => rejectPromise n pid e
+      | .error a => throw a
+      | .ok th =>
+        if ← isCallable th then
+          enqueue (← nativeFn .promiseThenableJob) #[.obj pid, x, th]
+        else settlePromise n pid 1 x
+    | _ => settlePromise n pid 1 x
+termination_by structural n _ _ => n
+
+def rejectPromise : Nat → Nat → Value → M Unit
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, pid, e => settlePromise n pid 2 e
+termination_by structural n _ _ => n
+
+/-- FulfillPromise / RejectPromise (§27.2.1.4, §27.2.1.7): reactions become jobs. -/
+def settlePromise : Nat → Nat → Nat → Value → M Unit
+  | 0, _, _, _ => throw (.halt "fuel")
+  | _ + 1, pid, st, v => do
+    match (← getObj pid).kind with
+    | .promise 0 _ reactions _ =>
+      modifyObj pid fun o => { o with kind := .promise st v #[] true }
+      let job ← nativeFn .promiseReactionJob
+      for (onF, onR, derived) in reactions do
+        enqueue job #[if st == 1 then onF else onR, derived, v, .bool (st == 2)]
+    | _ => pure ()
+termination_by structural n _ _ _ => n
+
+/-- PerformPromiseThen (§27.2.5.4.1). -/
+def performThen : Nat → Nat → Value → Value → Value → M Unit
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | _ + 1, pid, onF, onR, derived => do
+    match (← getObj pid).kind with
+    | .promise 0 v rs l => modifyObj pid fun o => { o with kind := .promise 0 v (rs.push (onF, onR, derived)) l }
+    | .promise st v _ _ =>
+      enqueue (← nativeFn .promiseReactionJob) #[if st == 1 then onF else onR, derived, v, .bool (st == 2)]
+    | _ => pure ()
+termination_by structural n _ _ _ _ => n
+
+/-- Run the queued jobs, oldest first, until none is left (a microtask checkpoint). -/
+def runJobs : Nat → M Unit
+  | 0 => throw (.halt "fuel")
+  | n + 1 => do
+    let h ← get
+    if h.jobHead ≥ h.jobs.size then
+      set { h with jobs := #[], jobHead := 0 }
+      return
+    let (f, args) := h.jobs[h.jobHead]!
+    set { h with jobHead := h.jobHead + 1 }
+    tick
+    let r ← tryCatch (do let _ ← callV n f .undef args; pure none) (fun a => pure (some a))
+    match r with
+    | some (.halt w) => throw (.halt w)
+    | _ => runJobs n
+termination_by structural n => n
 
 /-- Built-in functions. `newTarget` is set for `new`. -/
 def callNative : Nat → Native → Value → Array Value → Option Value → M Value
@@ -2588,6 +2810,142 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       newArray vs
     | .arrayOf => newArray args
     | .dateNow => pure (.num 0)
+    | .promiseCtor =>
+      let nt ← match newTarget with
+        | some nt => pure nt
+        | none => throwErr .type "Promise constructor cannot be invoked without 'new'"
+      if !(← isCallable a0) then throwErr .type "Promise resolver is not a function"
+      let pid ← newPromise
+      let pp ← getV n nt "prototype"
+      if pp.isObj then modifyObj pid fun o => { o with proto := pp }
+      let res ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj pid] }
+      let rej ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseRejectFn) .undef #[.obj pid] }
+      let x ← tryCatch (do let _ ← callV n a0 .undef #[.obj res, .obj rej]; pure none) (fun a => pure (some a))
+      match x with
+      | some (.throw e) => let _ ← callV n (.obj rej) .undef #[e]
+      | some a => throw a
+      | none => pure ()
+      pure (.obj pid)
+    | .promiseResolveFn | .promiseRejectFn =>
+      match a0 with
+      | .obj pid =>
+        match (← getObj pid).kind with
+        | .promise st v rs false =>
+          modifyObj pid fun o => { o with kind := .promise st v rs true }
+          if id_ == .promiseResolveFn then resolvePromise n pid a1 else rejectPromise n pid a1
+        | _ => pure ()
+        pure .undef
+      | _ => pure .undef
+    | .promiseThen =>
+      let pid ← match thisV with
+        | .obj p => match (← getObj p).kind with
+          | .promise .. => pure p
+          | _ => throwErr .type "Promise.prototype.then called on an incompatible receiver"
+        | _ => throwErr .type "Promise.prototype.then called on an incompatible receiver"
+      let d ← newPromise
+      let onF := if ← isCallable a0 then a0 else .undef
+      let onR := if ← isCallable a1 then a1 else .undef
+      performThen n pid onF onR (.obj d)
+      pure (.obj d)
+    | .promiseCatch =>
+      let th ← getV n thisV "then"
+      if !(← isCallable th) then throwErr .type "then is not a function"
+      callV n th thisV #[.undef, a0]
+    | .promiseFinally =>
+      let th ← getV n thisV "then"
+      if !(← isCallable th) then throwErr .type "then is not a function"
+      if !(← isCallable a0) then return ← callV n th thisV #[a0, a0]
+      let f ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseFinallyF) .undef #[a0] }
+      let g ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseFinallyR) .undef #[a0] }
+      callV n th thisV #[.obj f, .obj g]
+    | .promiseFinallyF | .promiseFinallyR =>
+      let res ← callV n a0 .undef #[]
+      let p ← promiseResolve n res
+      let kf ← nativeFn (if id_ == .promiseFinallyF then .promiseValueThunk else .promiseThrower)
+      let k ← alloc { proto := .obj r.functionProto, kind := .bound kf .undef #[a1] }
+      let d ← newPromise
+      performThen n p (.obj k) .undef (.obj d)
+      pure (.obj d)
+    | .promiseValueThunk => pure a0
+    | .promiseThrower => throw (.throw a0)
+    | .promiseResolveStatic => pure (.obj (← promiseResolve n a0))
+    | .promiseRejectStatic =>
+      let p ← newPromise
+      rejectPromise n p a0
+      pure (.obj p)
+    | .promiseReactionJob =>
+      -- args: handler, derived promise, argument, rejected?
+      let handler := a0
+      let derived := a1
+      let arg := argD args 2
+      let rejected := toBool (argD args 3)
+      if ← isCallable handler then
+        let x ← tryCatch (do pure (Except.ok (← callV n handler .undef #[arg]))) (fun a => pure (Except.error a))
+        match derived, x with
+        | .obj d, .ok v => resolvePromise n d v
+        | .obj d, .error (.throw e) => rejectPromise n d e
+        | _, .error (.halt w) => throw (.halt w)
+        | _, _ => pure ()
+      else
+        match derived with
+        | .obj d => if rejected then rejectPromise n d arg else resolvePromise n d arg
+        | _ => pure ()
+      pure .undef
+    | .promiseThenableJob =>
+      match a0 with
+      | .obj pid =>
+        let res ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj pid] }
+        let rej ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseRejectFn) .undef #[.obj pid] }
+        let x ← tryCatch (do let _ ← callV n (argD args 2) a1 #[.obj res, .obj rej]; pure none) (fun a => pure (some a))
+        match x with
+        | some (.throw e) => let _ ← callV n (.obj rej) .undef #[e]
+        | some a => throw a
+        | none => pure ()
+        pure .undef
+      | _ => pure .undef
+    | .promiseAll =>
+      let res ← newPromise
+      let x ← tryCatch (do
+          let it ← getIterator n a0
+          let items ← iterToArray n it #[]
+          let vals ← newArray (Array.replicate items.size .undef)
+          let counter ← newObject
+          setHidden counter "n" (.num (Float.ofNat items.size + 1))
+          for i in [0:items.size] do
+            let p ← promiseResolve n items[i]!
+            let elF ← nativeFn .promiseAllElement
+            let elArgs : Array Value := #[.obj res, vals, .obj counter, .num (Float.ofNat i)]
+            let el ← alloc { proto := .obj r.functionProto, kind := .bound elF .undef elArgs }
+            let rj ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseRejectFn) .undef #[.obj res] }
+            performThen n p (.obj el) (.obj rj) .undef
+          let _ ← callNative n .promiseAllElement .undef #[.obj res, vals, .obj counter, .num (-1), .undef] none
+          pure none)
+        (fun a => pure (some a))
+      match x with
+      | some (.throw e) => rejectPromise n res e
+      | some a => throw a
+      | none => pure ()
+      pure (.obj res)
+    | .promiseAllElement =>
+      -- args: result promise, values, counter, index, value
+      let idx := match argD args 3 with | .num i => i | _ => -1
+      if idx ≥ 0 then putV n a1 (numToString idx) (argD args 4) true
+      let c := argD args 2
+      let k ← toNum n (← getV n c "n")
+      putV n c "n" (.num (k - 1)) true
+      if k - 1 == 0 then
+        match a0 with
+        | .obj p => resolvePromise n p a1
+        | _ => pure ()
+      pure .undef
+    | .asyncResume =>
+      match a0 with
+      | .obj co =>
+        let input := if (match a1 with | .num m => m == 1 | _ => false) then GInput.throwV (argD args 2)
+          else .send (argD args 2)
+        asyncStep n co input
+        pure .undef
+      | _ => pure .undef
     | .bigintCtor =>
       if newTarget.isSome then throwErr .type "BigInt is not a constructor"
       match ← toPrim n a0 "number" with
@@ -3146,6 +3504,18 @@ def initRealm : M Unit := do
     method oc "assign" .objectAssign 2
     method oc "entries" .objectEntries 1
     method oc "values" .objectValues 1
+  let promiseProto ← mk
+  let promiseC ← ctorWith "Promise" .promiseCtor 1 promiseProto
+  setHidden g "Promise" promiseC
+  if let .obj pc := promiseC then
+    modify fun h => { h with realm := { h.realm with promiseProto := promiseProto, promiseCtor := pc } }
+    method pc "resolve" .promiseResolveStatic 1
+    method pc "reject" .promiseRejectStatic 1
+    method pc "all" .promiseAll 1
+  method promiseProto "then" .promiseThen 2
+  method promiseProto "catch" .promiseCatch 1
+  method promiseProto "finally" .promiseFinally 1
+  defineOwn promiseProto (symKey symToStringTag) (.data (.str "Promise") false false true)
   let bigintProto ← mk
   modify fun h => { h with realm := { h.realm with bigintProto := bigintProto } }
   setHidden g "BigInt" (← ctorWith "BigInt" .bigintCtor 1 bigintProto)
@@ -3189,6 +3559,7 @@ def runScriptM (s : Script) : M Unit := do
       declare 0 x { v := .undef, init := false }
     | _ => pure ()
   let _ ← evalStmts defaultFuel ctx s.body
+  runJobs defaultFuel
   pure ()
 
 /-- The result of running a script. -/

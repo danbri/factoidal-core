@@ -2202,3 +2202,7 @@ L4Factoidal_JS_superCall  # (c) super(...): the parent constructor is a call, as
 L4Factoidal_JS_gen*  # (b)(c) the generator machine (JS/Interp.lean): frame steps are self tail calls; nesting is the statement nesting around a yield; calls as L4Factoidal_JS_call*
 L4Factoidal_JS_*_anyYield  # (b) does a statement or expression hold a yield (JS/Syntax.lean): depth is the nesting of the source; fuel 100000
 L4Factoidal_JS_*_hasYieldF  # (b) as L4Factoidal_JS_*_anyYield
+L4Factoidal_JS_lift*  # (b) moving yield/await out of an expression (JS/Interp.lean): depth is the nesting of the expression; fuel 10000
+L4Factoidal_JS_asyncStep  # (c) one step of an async function: genRun to the next await, as L4Factoidal_JS_gen*; resumption is a later job, not a nested call
+L4Factoidal_JS_promiseResolve  # (c) PromiseResolve: one [[Get]] of constructor or then, as L4Factoidal_JS_get*
+L4Factoidal_JS_resolvePromise  # (c) Promise resolve functions: one [[Get]] of then, as L4Factoidal_JS_get*; a thenable is a queued job, not a nested call

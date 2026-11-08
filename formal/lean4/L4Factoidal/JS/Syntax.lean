@@ -126,6 +126,7 @@ constructor. `params` are patterns with initialisers; `rest` is `...p`. -/
 inductive FunDef where
   | mk (name : Option String) (params : List PatElem) (rest : Option Pat) (body : List Stmt)
       (vars : List String) (usesArgs : Bool) (strict : Bool) (kind : FunKind) (gen : Bool)
+      (async : Bool)
 
 /-- A class (§15.7): name, heritage, constructor, members. A field is a member whose
 function returns the initial value. -/
@@ -177,7 +178,7 @@ inductive Stmt where
 end
 
 instance : Inhabited Expr := ⟨.null⟩
-instance : Inhabited FunDef := ⟨.mk none [] none [] [] false false .normal false⟩
+instance : Inhabited FunDef := ⟨.mk none [] none [] [] false false .normal false false⟩
 instance : Inhabited Stmt := ⟨.empty⟩
 instance : Inhabited PropDef := ⟨.init (.lit "") .null⟩
 instance : Inhabited PropKey := ⟨.lit ""⟩
@@ -193,12 +194,13 @@ def FunDef.rest : FunDef → Option Pat | .mk _ _ r .. => r
 def FunDef.body : FunDef → List Stmt | .mk _ _ _ b .. => b
 def FunDef.vars : FunDef → List String | .mk _ _ _ _ v .. => v
 def FunDef.usesArgs : FunDef → Bool | .mk _ _ _ _ _ u .. => u
-def FunDef.strict : FunDef → Bool | .mk _ _ _ _ _ _ s _ _ => s
-def FunDef.kind : FunDef → FunKind | .mk _ _ _ _ _ _ _ k _ => k
-def FunDef.gen : FunDef → Bool | .mk _ _ _ _ _ _ _ _ g => g
+def FunDef.strict : FunDef → Bool | .mk _ _ _ _ _ _ s _ _ _ => s
+def FunDef.kind : FunDef → FunKind | .mk _ _ _ _ _ _ _ k _ _ => k
+def FunDef.gen : FunDef → Bool | .mk _ _ _ _ _ _ _ _ g _ => g
+def FunDef.async : FunDef → Bool | .mk _ _ _ _ _ _ _ _ _ a => a
 def FunDef.arrow (f : FunDef) : Bool := f.kind == .arrow
 def FunDef.withName (f : FunDef) (n : String) : FunDef :=
-  match f with | .mk _ p r b v u s k g => .mk (some n) p r b v u s k g
+  match f with | .mk _ p r b v u s k g a => .mk (some n) p r b v u s k g a
 
 /-- The `length` of a function: parameters before the first initialiser or rest (§15.1.5). -/
 def FunDef.expectedArgs (f : FunDef) : Nat :=

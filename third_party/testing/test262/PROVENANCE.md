@@ -15,7 +15,7 @@ Only the files that `lake exe leanjs test262` runs for the Lean JavaScript engin
 (`formal/lean4/L4Factoidal/JS/`, record
 `docs/designissues/2026-11-08-lean-js-engine.md`):
 
-- `harness/`: `assert.js`, `sta.js`, `propertyHelper.js`, `compareArray.js`,
+- `harness/`: `assert.js`, `sta.js`, `propertyHelper.js`, `compareArray.js`, `doneprintHandle.js`, `asyncHelpers.js`,
   `tcoHelper.js` (the includes that the tests below name, except
   `resizableArrayBufferUtils.js`, which one test names; that test is skipped).
 - `test/language/`: 6,301 files in 70 directories of `expressions/` and

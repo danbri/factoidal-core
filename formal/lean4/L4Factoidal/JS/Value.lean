@@ -83,6 +83,10 @@ inductive Native where
   | functionHasInstance
   | genNext | genReturn | genThrow
   | bigintCtor | bigintToString | bigintValueOf
+  | promiseCtor | promiseThen | promiseCatch | promiseFinally | promiseResolveStatic
+  | promiseRejectStatic | promiseAll | promiseResolveFn | promiseRejectFn | promiseReactionJob
+  | promiseThenableJob | promiseAllElement | promiseFinallyF | promiseFinallyR | promiseValueThunk
+  | promiseThrower | asyncResume
   deriving BEq, Repr, Inhabited
 
 /-- What a running function sees. -/
@@ -167,6 +171,12 @@ inductive Kind where
   /-- A generator object (§27.5): its frames and state (0 suspended at the start,
   1 suspended at a yield, 2 running, 3 completed). -/
   | gen (frames : List GFrame) (state : Nat)
+  /-- A Promise (§27.2.6): state (0 pending, 1 fulfilled, 2 rejected), result,
+  reactions (on fulfilled, on rejected, derived promise or `undefined`), and whether
+  a resolving function has been called (`[[AlreadyResolved]]`, kept per promise). -/
+  | promise (state : Nat) (result : Value) (reactions : Array (Value × Value × Value)) (locked : Bool)
+  /-- A running async function (§27.7): its frames and the promise it returns. -/
+  | coro (frames : List GFrame) (promise : Nat)
   | native (id : Native)
   | bound (target thisV : Value) (args : Array Value)
   /-- A Boolean, Number or String object (`[[BooleanData]]` etc.). -/
@@ -214,6 +224,8 @@ structure Realm where
   evalFn : Nat := 0
   generatorProto : Nat := 0
   bigintProto : Nat := 0
+  promiseProto : Nat := 0
+  promiseCtor : Nat := 0
   deriving Inhabited
 
 /-- The error constructors, by their index in `Realm.errorProtos`. -/
@@ -255,6 +267,10 @@ structure Heap where
   depth : Nat := 0
   maxDepth : Nat := 400
   rng : UInt64 := 0x2545F4914F6CDD1D
+  /-- The job queue (§9.5 HostEnqueuePromiseJob): a function and its arguments.
+  In a page these are the microtasks of the Lean event loop (record, section 6). -/
+  jobs : Array (Value × Array Value) := #[]
+  jobHead : Nat := 0
   realm : Realm := {}
   /-- The description of each Symbol; the well-known ones first (`wellKnown`). -/
   syms : Array String := wellKnown.map ("Symbol." ++ ·)

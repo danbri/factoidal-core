@@ -80,20 +80,26 @@ def runTest (root : System.FilePath) (base : Heap) (path : System.FilePath) : IO
   let src ← IO.FS.readFile path
   let m := parseMeta src
   if m.flags.contains "module" then return .skip "module"
-  if m.flags.contains "async" then return .skip "async"
+  let isAsync := m.flags.contains "async"
   if m.negPhase == some "resolution" then return .skip "resolution"
   let strict := m.flags.contains "onlyStrict"
   let raw := m.flags.contains "raw"
   let mut h := if raw then freshHeap else base
   if !raw then
-    for inc in m.includes do
+    for inc in (if isAsync then ["doneprintHandle.js"] else []) ++ m.includes do
       let p := root / "harness" / inc
       if !(← p.pathExists) then return .skip s!"include {inc}"
       match runScript h (← IO.FS.readFile p) with
       | (.ok, h') => h := h'
       | _ => return .skip s!"include {inc} failed"
   let hRun := { h with steps := 20000000 }
-  let (o, _) := runScript hRun src strict
+  let (o, hOut) := runScript hRun src strict
+  if isAsync && m.negPhase.isNone then
+    match o with
+    | .ok =>
+      if hOut.out.contains "Test262:AsyncTestComplete" then return .pass false
+      else return .fail ("async: " ++ (" ".intercalate hOut.out.toList).take 160)
+    | _ => pure ()
   match m.negPhase, m.negType, o with
   | none, _, .ok => pure (.pass false)
   | none, _, .syntaxError e => pure (.fail e)
