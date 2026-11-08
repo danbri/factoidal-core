@@ -34,14 +34,15 @@ def run : IO Unit := do
   let root (children : String) := "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'>" ++ children ++ "</svg>"
   check ((NativeSVG.parse (root (String.join (List.replicate 49153 "<circle r='1'/>")))).isOk == false) "primitive budget ignored"
   check ((NativeSVG.parse (String.ofList (List.replicate 1048577 'x'))).isOk == false) "character budget ignored"
-  let glyphs : Scene := {
-    width:=32
-    height:=24
-    background:=⟨255,255,255⟩
-    shapes:=List.replicate 2050 (.glyph ⟨0,0⟩ 1 ⟨31,31,31,31,31,31,31⟩ ⟨0,0,0⟩)}
-  let .ok glyphXML := NativeSceneSVG.serialize glyphs | throw (IO.userError "glyph serialization")
-  let .ok overBudget := parseJson (NativeSVG.compile glyphXML 0 0) | throw (IO.userError "error artifact JSON")
-  check ((overBudget.getString? "error").getD "" |>.startsWith "storage data") s!"batched path storage budget ignored: {(overBudget.getString? "error").getD "no error"} ({glyphXML.length} characters)"
+  -- Sixty dashed lines of 4000 dashes: about 4.8 million storage floats from 4509
+  -- characters, past `maxDataFloats` (4194304). Forty lines (about 3.2 million) fit.
+  let dashed (n : Nat) := root (String.join (List.replicate n
+    "<line x1='0' y1='8' x2='8000' y2='8' stroke='black' stroke-dasharray='1'/>"))
+  let .ok fits := parseJson (NativeSVG.compile (dashed 40) 0 0) | throw (IO.userError "dashed artifact JSON")
+  check (fits.field? "error" == none) "forty dashed lines refused"
+  let .ok overBudget := parseJson (NativeSVG.compile (dashed 60) 0 0) | throw (IO.userError "error artifact JSON")
+  check ((overBudget.getString? "error").getD "" == s!"storage data exceeds {NativeSVG.maxDataFloats} floats")
+    s!"batched path storage budget ignored: {(overBudget.getString? "error").getD "no error"}"
   IO.println "3 SVG storage-capacity native groups passed; no GPU result"
 
 #eval run

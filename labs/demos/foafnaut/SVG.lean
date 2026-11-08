@@ -23,7 +23,14 @@ namespace NativeSVG
 -- Bounded storage-backed profile, sized from generated 8/16-person scenes.
 def maxInputChars : Nat := 1048576
 def maxPrimitives : Nat := 49152
-def maxDataFloats : Nat := 1048576
+/-- Storage floats of one scene: 16 MiB of binary32. A page frame or band holds only the
+glyphs near its rows (`WebDocument.nearNodes`), so its data grows with the rows drawn and
+the text zoom, not with the page. The writing-systems page on a 3x phone needs at most
+1.04 million floats in a band at text zoom 300 and 0.76 million at 450; a band of dense
+small text on a 4096-pixel square window, by the same density, about 3 million.
+WebGPU guarantees 128 MiB of storage binding and 256 MiB of buffer; the hosts allocate
+buffers to size. `RenderPlan.maxSceneFloats` is the same number. -/
+def maxDataFloats : Nat := 4194304
 def maxInspectorNodes : Nat := 16384
 open NativeGraphics
 open L4Factoidal.XML
@@ -1688,7 +1695,7 @@ private def compilePrimitivesLoop (mapping : Mapping) : List Primitive →
   | primitive::rest,acc,rows,cursor => do
     let compiled ← compilePrimitive mapping cursor primitive
     let rows := rows+compiled.storageRows
-    if rows*4 > maxDataFloats then throw "storage data exceeds 1048576 floats"
+    if rows*4 > maxDataFloats then throw s!"storage data exceeds {maxDataFloats} floats"
     compilePrimitivesLoop mapping rest (compiled::acc) rows (cursor+compiled.paintWords.length)
 
 /-- Canonical Float path geometry becomes checked linear backend geometry once,
@@ -3547,7 +3554,7 @@ private def Scene.jsonWith (s : Scene) (live : Bool) (form : DataForm) (checks t
   -- `s.data` is built only for the probes and the decimal text; the size and the
   -- binary text come from the scene with no array of floats (`Scene.dataSize_eq`,
   -- `Scene.float32Bytes_eq_fast`).
-  if s.dataSize > maxDataFloats then throw "storage data exceeds 1048576 floats"
+  if s.dataSize > maxDataFloats then throw s!"storage data exceeds {maxDataFloats} floats"
   let tiles := s.tiles
   -- The last word of `tiles` is the size of the paint table.
   if tiles.back! > maxPaintTableWords then throw s!"paint table exceeds {maxPaintTableWords} words"

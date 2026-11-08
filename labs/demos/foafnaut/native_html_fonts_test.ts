@@ -69,3 +69,39 @@ async function check(nativeEngine?:string){
 
 Deno.test("fallback fonts draw what the first font lacks (Wasm)",()=>check());
 Deno.test({name:"fallback fonts draw what the first font lacks (native library)",ignore:noLibrary,fn:()=>check(library)});
+
+// The writing-systems page with its thirteen fallback fonts, as a 390 CSS px phone at 3
+// device pixels to the CSS pixel opens it: text zoom 450 (150 times the pixel ratio).
+// The page is mostly tables, whose cells and rows the layout puts in translated groups.
+// Each frame and each band must hold only the glyphs near the view
+// (WebDocument.nearNodes), not every glyph of the page: before, both passed the storage
+// budget (NativeSVG.maxDataFloats) at zoom 300 and 450.
+const page="showcase-scripts.html";
+async function scriptsAtPhoneZoom(nativeEngine?:string){
+  // @ts-ignore plain JavaScript module of the Hub
+  const {fontsFor}=await import("../../../docs/web/hub/foafnaut/font-coverage.mjs");
+  const engine=await loadHTML(nativeEngine,"bytes");
+  await loadFontFile(engine,sans,"Noto Sans");
+  const source=await Deno.readTextFile(new URL("pages/"+page,import.meta.url));
+  const wanted=await fontsFor(source,async(path:string)=>JSON.parse(await Deno.readTextFile(fonts+path.replace("./fonts/",""))));
+  assert.equal(wanted.length,13);
+  for(const font of wanted)await loadFontFile(engine,fonts+font.path.replace("./fonts/",""),font.family,"bytes",true);
+  const width=390*3,height=844*3;
+  const shell={tabs:[{title:""}],active:0,address:"",cursor:0,anchor:0,focused:false,canBack:false,canForward:false,
+    loading:false,scale:3,theme:"next",pages:1,scroll:0,collapsible:true,collapse:0};
+  const options={url:"file:///"+page,textScalePercent:450,checks:false};
+  const first=engine.compile(source,width,height,{...options,shell});
+  const bottom=Math.max(...first.webRender.boxes.map(b=>b[2]+b[4]));
+  assert(bottom>4*height,`the page at zoom 450 is ${bottom} rows, expected a tall page`);
+  // Every frame and band down the page draws; none holds more than a band's share.
+  let most=first.data.length;
+  for(let scroll=0;scroll<bottom;scroll+=height){
+    const frame=engine.compile(source,width,height,{...options,shell:{...shell,scroll}});
+    const band=engine.compileLayers(source,width,height,{...options,shell:{...shell,scroll}});
+    assert(frame.primitiveCount>0&&band.page.primitiveCount>0,`nothing drawn at scroll ${scroll}`);
+    most=Math.max(most,frame.data.length,band.page.data.length);
+  }
+  assert(most<=1048576,`a frame or band of ${most} floats`);
+}
+Deno.test("the writing-systems page draws at text zoom 450 on a 390 px phone (Wasm)",()=>scriptsAtPhoneZoom());
+Deno.test({name:"the writing-systems page draws at text zoom 450 on a 390 px phone (native library)",ignore:noLibrary,fn:()=>scriptsAtPhoneZoom(library)});

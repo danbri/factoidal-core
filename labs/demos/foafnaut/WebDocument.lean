@@ -374,6 +374,44 @@ private def inWindow (top bottom : Float) : Rendering.Node → Bool
     (t.a == 1 && t.f == 0) || (top <= t.f && t.f <= bottom)
   | _ => true
 
+/-- A glyph far from the window: a paint with a source node whose transform puts it
+above `top` or below `bottom`. Glyphs carry their place in their transform; other paint
+in a group (an embedded SVG's shapes) may not, so it stays. -/
+private def farGlyph (top bottom : Float) : Rendering.Node → Bool
+  | .paint p => p.source.isSome && !inWindow top bottom (.paint p)
+  | _ => false
+
+/-- A translation with no scale, rotation or skew: the layout's table cells and rows,
+moved blocks and inline-blocks (`Layout.translate`). -/
+private def isTranslation (t : Rendering.Transform) : Bool :=
+  t.a == 1 && t.b == 0 && t.c == 0 && t.d == 1
+
+mutual
+/-- A node with the glyphs far from the window `top .. bottom` left out of each group
+or clip that only translates, in its own rows: the window moved up by its translation. -/
+private def nearInside (top bottom : Float) : Rendering.Node → Rendering.Node
+  | .group id t children =>
+    if isTranslation t then .group id t (nearNested (top-t.f) (bottom-t.f) children) else .group id t children
+  | .clipped id t clip children =>
+    if isTranslation t then .clipped id t clip (nearNested (top-t.f) (bottom-t.f) children)
+    else .clipped id t clip children
+  | node => node
+private def nearNested (top bottom : Float) : List Rendering.Node → List Rendering.Node
+  | [] => []
+  | node :: rest =>
+    if farGlyph top bottom node then nearNested top bottom rest
+    else nearInside top bottom node :: nearNested top bottom rest
+end
+
+/-- The nodes of a page near the window `top .. bottom`. At the top level a paint goes
+by `inWindow`; inside a group or clip that only translates (the layout puts table
+cells, table rows, moved blocks and inline-blocks in one) each glyph goes by its place
+in the group's rows. Before, every group stayed whole, so a page of tables kept the
+glyphs of the whole page in each frame and band, and a tall page at a large text zoom
+passed `NativeSVG.maxDataFloats`. Any other group stays whole. -/
+def nearNodes (top bottom : Float) (nodes : List Rendering.Node) : List Rendering.Node :=
+  (nodes.filter (inWindow top bottom)).map (nearInside top bottom)
+
 /-! ### Two layers: the chrome and a band of the page (issue 1268)
 
 With `layers:true` and a shell, a render answers two artifacts. The chrome layer
@@ -444,7 +482,7 @@ def compositeShader : String :=
 `bandMargin` of the band. `extra` (the selection) is not filtered. -/
 def pageLayer (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band) : Rendering.Scene :=
   let lift := Float.ofNat b.top
-  let keep := page.tree.filter (inWindow (lift-Float.ofNat bandMargin) (lift+Float.ofNat (b.height+bandMargin)))
+  let keep := nearNodes (lift-Float.ofNat bandMargin) (lift+Float.ofNat (b.height+bandMargin)) page.tree
   {page with
     height := b.height
     mapping := {page.mapping with viewportHeight := Float.ofNat b.height}
@@ -1071,7 +1109,7 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     if request.field? "layers" == some (.bool true) then
       return ← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
-  let near := scene.tree.filter (inWindow (scrolled-512) (scrolled+Float.ofNat height+512))
+  let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
   let page := {scene with tree := near ++ marks}
   WebRender.artifactWith (match shell with
     | some value => WebShell.compose value page width height
