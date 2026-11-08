@@ -41,9 +41,9 @@ TEXT = ['showcase-scripts.html', 'showcase-tables.html', 'showcase-emoji.html', 
 # Pages that combine two or more parts: XSLT, SVG, fonts, tables, print, RDF and SPARQL (owner, 2026-11-08:
 # "Think of creative demo pages and exciting combinations of our technologies!").
 COMBINATIONS = ['foaf-people.xml', 'sparql-results.xml', 'feed.xml', 'sitemap.xml', 'lab-files.xml',
-                'engine-pipeline.xml', 'typography-lab.xml', 'print-poster.html']
+                'engine-pipeline.xml', 'typography-lab.xml', 'print-poster.html', 'svg-text-labels.html']
 # Pages written for features that are still in progress; the manifest says what each one needs.
-NEXT = ['timers-and-clicks.html', 'svg-text-labels.html']
+NEXT = ['timers-and-clicks.html']
 SVG_TINY_SCORES = 'https://danbri.github.io/factoidal/web/hub/render-scores/#svg-tiny-pixels'
 
 

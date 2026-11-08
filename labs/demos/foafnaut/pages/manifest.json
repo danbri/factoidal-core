@@ -271,10 +271,8 @@
    "page": "svg-text-labels.html",
    "title": "SVG text labels",
    "handwritten": true,
-   "needs": "SVG text and textPath with real fonts (the svg-text work)",
-   "refused": "unsupported attribute on text",
    "issue": "https://github.com/danbri/factoidal/issues/1270",
-   "shows": "when the engine draws SVG text: names in Noto Sans and Noto Sans Armenian beside their circles, and a caption along an arc"
+   "shows": "SVG text drawn with the held fonts: names in Noto Sans and Noto Sans Armenian beside their circles, and a caption along an arc (since bebb931ba)"
   }
  ]
 }

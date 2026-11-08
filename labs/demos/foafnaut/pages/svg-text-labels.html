@@ -7,11 +7,10 @@ p{margin:0;padding-top:6px}.note{color:#5b6876;font-size:13px;line-height:19px}s
 </style></head><body><main>
 <p><a href="index.html">Demo index</a> · <a href="foaf-people.xml">The same chart with glyph-outline labels</a></p>
 <h1>SVG text labels</h1>
-<p class="note">Needs the next engine. This page labels a small FOAF chart with SVG <code>&lt;text&gt;</code>, <code>text-anchor</code> and
-<code>&lt;textPath&gt;</code>, as a browser draws it. Today the engine refuses the whole page with "unsupported attribute on text"
-(<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>). When the svg-text work lands, the names below sit beside
-their circles in Noto Sans, Armenian from the fallback font, and the caption runs along the arc. Until then,
-<a href="foaf-people.xml">foaf-people.xml</a> shows the same kind of chart with labels that XSLT sets as glyph outlines.</p>
+<p class="note">This page labels a small FOAF chart with SVG <code>&lt;text&gt;</code>, <code>text-anchor</code> and
+<code>&lt;textPath&gt;</code>. The engine draws them with the held fonts and the Lean shaper (issue 1270, fixed in bebb931ba):
+names in Noto Sans, Armenian from the fallback font, and the caption along the arc. <a href="foaf-people.xml">foaf-people.xml</a>
+shows the same kind of chart with labels that XSLT sets as glyph outlines, which every engine version draws.</p>
 <svg width="640" height="420" viewBox="0 0 640 420">
 <defs>
 <radialGradient id="n" cx="0.35" cy="0.3" r="0.75"><stop offset="0" stop-color="white"/><stop offset="0.3" stop-color="#2d63a8"/><stop offset="1" stop-color="#1d2433"/></radialGradient>
