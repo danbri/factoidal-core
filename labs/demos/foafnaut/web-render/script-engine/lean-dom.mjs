@@ -34,3 +34,47 @@ export async function createLeanDOM({ source, url, commands = [], moduleURL }, e
     return result;
   };
 }
+
+// The HTML event loop of the page (Lean `L4Factoidal.EventLoop`, op `eventLoop`).
+// Lean decides which callback runs next, the timer and frame ids, and the order
+// of event listeners. This object keeps the loop state between calls; QuickJS
+// only runs the callbacks it is told to run. No host timer decides any order.
+export async function createLeanLoop({ moduleURL, engine } = {}) {
+  if (!engine) {
+    const { default: createModule } = await import(moduleURL);
+    engine = await createModule();
+  }
+  const call = request => {
+    const pointer = engine.ccall('web_document_call', 'number', ['string','string','number','number'], ['', JSON.stringify(request), 1, 1]);
+    if (!pointer) throw Error('Lean event loop allocation failed');
+    let text;
+    try { text = engine.UTF8ToString(pointer); }
+    finally { engine.ccall('web_render_free', null, ['number'], [pointer]); }
+    const answer = JSON.parse(text);
+    if (answer.error) throw Error(answer.error);
+    return answer;
+  };
+  let state = call({ op: 'eventLoop', action: 'init' }).state;
+  const loop = {
+    engine,
+    get clock() { return state.clock; },
+    // The due time of the first armed timer, or null; and whether frame callbacks wait.
+    get nextDue() { return state.timers.length ? state.timers[0][2] : null; },
+    get framesWaiting() { return state.frames.length > 0; },
+    act(action, fields = {}) {
+      if (action === 'dispatch' || action === 'afterStop') return call({ op: 'eventLoop', action, ...fields });
+      const answer = call({ op: 'eventLoop', action, ...fields, state });
+      state = answer.state;
+      delete answer.state;
+      return answer;
+    },
+    // The capability QuickJS calls: one JSON action in, its answer out, without the state.
+    capability(wire) {
+      const request = JSON.parse(wire);
+      if (!request || typeof request.action !== 'string' || ['init','step','advance','render','frameStep'].includes(request.action)) throw Error('Event loop action not allowed from page script');
+      const { action, ...fields } = request;
+      return JSON.stringify(loop.act(action, fields));
+    }
+  };
+  return loop;
+}

@@ -8,6 +8,7 @@ import WebHistory
 import WebShell
 import WebPrint
 import WebGraph
+import WebEventLoop
 import WebWasm
 import L4Factoidal.Rendering.SfntProfile
 
@@ -326,6 +327,7 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
       .object [("modifier",.string m),("key",.string k),("command",.number (toString c))])).toString
   if op == "shellSubmit" then return some (WebShell.submit (str request "address")).json.toString
   if let some answer ← WebGraph.op op request then return some answer
+  if let some answer ← WebEventLoop.op op request then return some answer
   if op == "sourcePage" then
     return some (JSON.Json.object [("source",.string (WebShell.sourcePage (str request "kind") (str request "url") (str request "source")))]).toString
   if op == "shellLink" then return some (WebShell.link (str request "href")).json.toString

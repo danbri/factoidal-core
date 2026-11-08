@@ -1,0 +1,68 @@
+<!doctype html>
+<html><head><title>Timers and events</title><style>
+body { background: #f7f4e9; color: #17243a; padding: 24px; }
+p { font-size: 20px; }
+button, div.box { display: block; margin: 8px 0; padding: 12px; background: #d8e8f5; color: #17243a; }
+</style></head><body>
+<h1>Timers and events</h1>
+<!-- The Lean event loop (L4Factoidal.EventLoop) decides the order of every callback here. -->
+<p>Order: <span id="order">waiting</span></p>
+<p>Interval count: <span id="count">0</span></p>
+<p>Timeout chain: <span id="chain"></span></p>
+<p>Animation frames: <span id="frames">0</span></p>
+<div class="box" id="outer">
+  <button id="inner">Click (bubbles to the box)</button>
+  <button id="stopper">Click (stops at the button)</button>
+</div>
+<p>Events: <span id="events"></span></p>
+<script>
+// 1. A task, a microtask and a Promise reaction: "sync micro promise timeout".
+const order = [];
+const show = () => { document.getElementById('order').textContent = order.join(' '); };
+setTimeout(() => { order.push('timeout'); show(); }, 0);
+queueMicrotask(() => { order.push('micro'); show(); });
+Promise.resolve().then(() => { order.push('promise'); show(); });
+order.push('sync');
+show();
+
+// 2. A counter by setInterval, cleared at 5.
+let count = 0;
+const interval = setInterval(() => {
+  document.getElementById('count').textContent = String(++count);
+  if (count === 5) clearInterval(interval);
+}, 100);
+
+// 3. A chain of timeouts: each one sets the next.
+const chain = [];
+const link = name => () => {
+  chain.push(name);
+  document.getElementById('chain').textContent = chain.join(' ');
+  if (name === 'a') setTimeout(link('b'), 20);
+  if (name === 'b') setTimeout(link('c'), 20);
+};
+setTimeout(link('a'), 20);
+// A cleared timeout never runs.
+clearTimeout(setTimeout(() => { chain.push('cleared'); }, 10));
+
+// 4. Listeners: capture on the box, at the target, bubbling to the box.
+const events = [];
+const note = text => { events.push(text); document.getElementById('events').textContent = events.join(', '); };
+const outer = document.getElementById('outer');
+outer.addEventListener('click', event => note('capture ' + event.target.getAttribute('id')), true);
+outer.addEventListener('click', event => note('bubble ' + event.target.getAttribute('id') + ' phase ' + event.eventPhase));
+document.getElementById('inner').addEventListener('click', event => {
+  note('target inner phase ' + event.eventPhase);
+  queueMicrotask(() => note('micro after inner'));
+});
+document.getElementById('stopper').addEventListener('click', event => { note('stop'); event.stopPropagation(); });
+document.getElementById('stopper').addEventListener('click', () => note('same node still runs'));
+
+// 5. An animation of three frames.
+let frames = 0;
+const step = now => {
+  document.getElementById('frames').textContent = String(++frames) + ' at ' + now;
+  if (frames < 3) requestAnimationFrame(step);
+};
+requestAnimationFrame(step);
+</script>
+</body></html>

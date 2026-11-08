@@ -24,9 +24,9 @@ export function validateBatch(batch, allowedIds) {
 }
 
 export function createScriptSession({ workerFactory = () => new Worker(workerURL, { type: 'module' }), wasmURL = defaultWasmURL.href, wasmBytes, watchdogMs, leanModuleURL = defaultLeanURL.href } = {}) {
-  let worker, pending, nextId = 0, started = false, ids = new Set(), listenerIds = new Set();
+  let worker, pending, nextId = 0, started = false, ids = new Set(), listenerIds = new Set(), eventLoop = false;
   const reset = () => {
-    const old = worker; worker = undefined; started = false; ids = new Set(); listenerIds = new Set();
+    const old = worker; worker = undefined; started = false; ids = new Set(); listenerIds = new Set(); eventLoop = false;
     if (pending) { clearTimeout(pending.timer); pending.reject(Error('Script session reset')); pending = undefined; }
     old?.terminate();
   };
@@ -61,7 +61,9 @@ export function createScriptSession({ workerFactory = () => new Worker(workerURL
     } catch (error) { reset(); throw error; }
   };
   return {
-    async start({ nodes, source, sources = source === undefined ? [] : [source], budgetMs, document } = {}) {
+    // `eventLoop`: timers, microtasks, frames and listener order from Lean
+    // (default: on when a Lean `document` is given; it needs the Lean engine).
+    async start({ nodes, source, sources = source === undefined ? [] : [source], budgetMs, document, eventLoop: wantLoop } = {}) {
       reset();
       if (!Array.isArray(nodes) || nodes.length > 16384 || !boundedString(JSON.stringify(nodes), 2097152)) throw Error('Script DOM snapshot exceeds budget');
       ids = new Set();
@@ -81,7 +83,7 @@ export function createScriptSession({ workerFactory = () => new Worker(workerURL
         worker.on('error', error => { if (worker === activeWorker) fail(error); });
       }
       try {
-        await call('initialize', { wasmURL, wasmBytes, document, leanModuleURL }, 5000);
+        eventLoop = (await call('initialize', { wasmURL, wasmBytes, document, leanModuleURL, eventLoop: wantLoop }, 5000)).eventLoop === true;
         const batch = accept(await call('start', { nodes, sources, budgetMs }, watchdogMs ?? budgetMs + 500));
         started = true;
         return batch;
@@ -89,10 +91,25 @@ export function createScriptSession({ workerFactory = () => new Worker(workerURL
     },
     async dispatch(event, { budgetMs } = {}) {
       if (!started) throw Error('Script session is not running');
-      if (!event || event.type !== 'click' || !validId(event.nodeId) || !listenerIds.has(event.nodeId)) throw Error('Unknown script click target');
+      // With the event loop the event goes to its target and bubbles; any element may be the target.
+      if (!event || event.type !== 'click' || !validId(event.nodeId) || !(eventLoop ? ids : listenerIds).has(event.nodeId)) throw Error('Unknown script click target');
       budgetMs = budget(budgetMs);
       return accept(await call('dispatch', { event: { type: 'click', nodeId: event.nodeId }, budgetMs }, watchdogMs ?? budgetMs + 500));
     },
+    // Move the page's virtual clock on by `ms` milliseconds; Lean runs the due timers in order.
+    async advance(ms, { budgetMs } = {}) {
+      if (!started || !eventLoop) throw Error('Script event loop is not running');
+      if (!Number.isInteger(ms) || ms < 0 || ms > 86400000) throw Error('Clock step must be 0 to 86400000 ms');
+      budgetMs = budget(budgetMs);
+      return accept(await call('advance', { ms, budgetMs }, watchdogMs ?? budgetMs + 500));
+    },
+    // One rendering opportunity: the animation frame callbacks (HTML "update the rendering").
+    async frame({ budgetMs } = {}) {
+      if (!started || !eventLoop) throw Error('Script event loop is not running');
+      budgetMs = budget(budgetMs);
+      return accept(await call('frame', { budgetMs }, watchdogMs ?? budgetMs + 500));
+    },
+    get eventLoop() { return eventLoop; },
     reset
   };
 }

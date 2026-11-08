@@ -94,7 +94,11 @@ def snapshot (dom : DOM.Dom) : JSON.Json := Id.run do
       nodes := .object [
         ("id",.number (toString id)), ("tagName",.string node.lname),
         ("attributes",.object (attrs.map fun attr => (attr.qname,.string attr.value))),
-        ("textContent",.string ((dom.textContent id).getD ""))] :: nodes
+        ("textContent",.string ((dom.textContent id).getD "")),
+        -- The parent element, for the event path of DOM §2.9; null at the root element.
+        ("parent",match node.parent with
+          | some p => if (dom.get p).type == .element then .number (toString p) else .null
+          | none => .null)] :: nodes
   return .object [("schema",.string "factoidal-script-dom-v1"),
     ("nodes",.array nodes.reverse),("scripts",.array (scriptRecords dom))]
 
