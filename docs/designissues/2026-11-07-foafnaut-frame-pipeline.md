@@ -503,3 +503,21 @@ compiled program in use did not give.
 Related measurement: `sweeps.sh` input latency includes a pixel check of every frame (a sweep
 sets `everyFrame`). The graph click is 195 ms there and 27.6 ms with `--idle-checks-only`
 (native engine, off screen); in a window it is 23 ms.
+
+### Where a frame on a kept layout goes (measured 2026-11-08)
+
+The index page (1,063 primitives, 229 links), native engine, `compileLayers` at 1600 by 1000
+with `checks:false`, 10 calls each: the same request 28.7 ms; `active` toggled 53.1 ms;
+scroll toggled 31.9 ms. `frameWork`: 0 layouts, 10 kept, so the layout cache works. With
+`checks` left on, each call is about 60 ms more. A `sample` profile of the same request
+repeated (2,693 samples in the library): `layersJSON` 2,420, of which `WebRender.artifactWith`
+1,342 (`Scene.make`, `DisplayNode.lowerTR`, `Scene.tiles`, `compilePrimitivesLoop`) and
+`Scene.jsonWith` 629 with `float32BytesFast` 581. So a frame on a kept layout builds the
+whole scene and its bytes again. The next step is in Lean: keep the lowered scene and its
+bytes with the layout, and write again only the primitives that a pointer state changes.
+
+A host cache of whole Lean answers by state (scroll left out) was tried and dropped: in the
+press, graph and scroll sweeps it gave 0 hits, because the release frame differs from the
+idle frame (`live`, `loading` after a link, the address, the tab title).
+
+The `press` call costs about 1 ms with the 229 links (0.02 ms with none); not the cost.
