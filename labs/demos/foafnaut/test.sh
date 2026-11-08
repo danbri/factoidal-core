@@ -34,6 +34,14 @@ for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LA
 deno check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
   "$LAB/run_ui.ts" "$LAB/run_lean.ts" "$LAB/run_svg.ts" "$LAB/run_foaf_svg.ts" "${TESTS[@]}"
 deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --allow-read "${TESTS[@]}"
+# Frame cost ratchet: frame_cost_test.ts (above) replays the cases of the Lean model
+# (L4Factoidal/FrameCost); the fixture must be the model's output.
+FRAME_COST_CASES="$LAB/../../../formal/lean4/.lake/build/bin/frame-cost-cases"
+if [ -x "$FRAME_COST_CASES" ]; then
+  "$FRAME_COST_CASES" --check "$LAB/fixtures/frame_cost_cases.json"
+else
+  echo 'NOT RUN: frame-cost-cases --check needs `lake build frame-cost-cases` in formal/lean4'
+fi
 # Browser state (WebState.lean): local LWS servers in temporary folders, through the
 # `factoidal` command, and Lean through web-state (build-web-state.sh).
 if [ -x "$LAB/.build/web-state/web-state" ] && command -v factoidal >/dev/null; then

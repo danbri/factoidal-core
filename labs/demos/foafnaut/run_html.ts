@@ -18,6 +18,7 @@ async function main() {
   if(args.includes("--help")){
     console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session]\nCommand-Q quits; R reloads; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints. HTML/CSS/layout/link picking run in published Lean WASM. No scripts, scrolling, WebView or supplied fonts in this milestone.");return;
   }
+  let scrollSweep=false;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
@@ -56,7 +57,7 @@ async function main() {
     else if(arg==="--print-pdf"){printPDF=args.shift();if(!printPDF)throw new Error("--print-pdf needs a file path");commands=["print"];}
     else if(arg==="--graph-sweep")commands=["graph",[2,800,565],[3,900,640],[3,1000,720],[4,1000,720]];
     // Twenty scroll steps of 120 backing pixels down the page: per-step frame time and input latency.
-    else if(arg==="--scroll-sweep")commands=Array.from({length:20},()=>[11,-120,0]);
+    else if(arg==="--scroll-sweep"){commands=Array.from({length:20},()=>[11,-120,0]);scrollSweep=true;}
     else if(arg==="--history-sweep")commands=["left","link","left","right","[","]","]","[","link1","]","[","]"];
     // Press and hold a link, then the reload button, then release each (issue 1268): the
     // press acknowledgement, the Lean frame of a held press, and the release.
@@ -330,6 +331,7 @@ async function main() {
   const scrollBy=(amount:number)=>{
     const next=Math.max(0,Math.min(scrollLimit(),scroll+Math.round(amount)));
     if(next===scroll)return;
+    frameCost.scrollEvents++;frameCost.scrollRows+=Math.abs(next-scroll);
     scroll=next;motion=trackMotion(motion,scroll,performance.now());
     // Inside the band of the layers on screen, a scroll only moves the composite: no Lean call.
     // Lean's keep range says when to ask for a new band; until it comes, the view stays in the old one.
@@ -343,6 +345,9 @@ async function main() {
   let prefetched:{key:StateKey;layers:HTMLLayers;target:number;record:RequestRecord}|undefined;
   let prefetching:{key:StateKey;target:number;reach:number}|undefined;
   const prefetchStats={sent:0,ready:0,swaps:0,dropped:0,stale:0,missed:0};
+  // Frame cost ratchet (L4Factoidal/FrameCost, section Ratchet): Lean frames and rows
+  // scrolled after the first frame. --scroll-sweep fails when the frames pass the bound.
+  const frameCost={leanFrames:0,scrollEvents:0,scrollRows:0,reach:0};
   // The request that a frame of `page` at this scroll sends to Lean, and its state with no scroll.
   const requestAt=(page:typeof document,at:number)=>{
     const view0=shown();view0.shell={...view0.shell,scroll:at};
@@ -511,7 +516,7 @@ async function main() {
       pumpGapAfterFirstFrameMs:{count:pumpGapsLate.length,p50:percentile(pumpGapsLate,0.5),p95:percentile(pumpGapsLate,0.95),max:pumpGapsLate.length?Math.round(Math.max(...pumpGapsLate)*10)/10:null},
       slowCalls,
       pumpGapMs:{p50:percentile(pumpGaps,0.5),p95:percentile(pumpGaps,0.95),max:pumpGaps.length?Math.round(Math.max(...pumpGaps)*10)/10:null},
-      prefetch:prefetchStats,queueMax,sessionStats:session?.stats,
+      prefetch:prefetchStats,frameCost,queueMax,sessionStats:session?.stats,
       // Pointer press to the present that shows it: the composite darkening, and the Lean frame of a held press.
       press:{overlay:{count:pressOverlayMs.length,p50Ms:percentile(pressOverlayMs,0.5),maxMs:pressOverlayMs.length?Math.round(Math.max(...pressOverlayMs)*10)/10:null},
         frame:{count:pressFrameMs.length,p50Ms:percentile(pressFrameMs,0.5),maxMs:pressFrameMs.length?Math.round(Math.max(...pressFrameMs)*10)/10:null}}};
@@ -562,6 +567,7 @@ async function main() {
     const renderFrame=async()=>{
       const nextDocument=candidate??document;
       const frameStart=performance.now();
+      if(session?.frames)frameCost.leanFrames++;
       const stamps=awaiting;awaiting=[];
       // An interactive frame asks Lean for no CPU probe (checks:false, about a fifth of a
       // frame); the idle check below asks for the same frame with its probe and checks it.
@@ -921,6 +927,15 @@ async function main() {
     worker?.terminate();
     await browserState?.close().catch(error=>console.error("Native HTML: browser state did not close:",String(error)));
     try{summary();}catch(error){console.error("Native HTML summary failed:",String(error));}
+    // The bound of FrameCost.band_render_bound, with one more frame for a prefetch that came late.
+    if(scrollSweep&&layered&&current){
+      frameCost.reach=keepReach(current.layers.layers);
+      const bound=Math.floor(frameCost.scrollRows/(frameCost.reach+1))+1;
+      if(frameCost.leanFrames>bound||prefetchStats.sent>bound){
+        console.error(`Native HTML frame cost ratchet: ${frameCost.leanFrames} Lean frames and ${prefetchStats.sent} prefetches over ${frameCost.scrollRows} rows; the bound is ${bound} each`);
+        Deno.exitCode=1;
+      } else console.log(`frame cost: ${frameCost.leanFrames} Lean frames, ${prefetchStats.sent} prefetches over ${frameCost.scrollRows} rows (bound ${bound} each)`);
+    }
     if(!cleanupUI({session,device,native}))Deno.exitCode=1;
   }
 }

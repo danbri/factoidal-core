@@ -283,6 +283,13 @@ extern_lib libl4hostread pkg := do
 @[default_target] lean_lib EventLoop where
   roots := #[`L4Factoidal.EventLoop]
 
+-- Frame scheduling in the Foafnaut hosts with a cost semantics, and its cost theorems
+-- (docs/designissues/2026-11-08-cost-theorems.md). Only Lean core.
+@[default_target] lean_lib FrameCost where
+  roots := #[`L4Factoidal.FrameCost]
+-- The event sequences that labs/demos/foafnaut/frame_cost_test.ts replays.
+lean_exe «frame-cost-cases» where root := `L4Factoidal.FrameCost.Cases
+
 -- WasmVM measurements (issue 1244): `lake exe wasmvm-bench`.
 lean_exe «wasmvm-bench» where root := `L4Factoidal.WasmVM.Bench
 -- The official core test suite (third_party/wasm-spec/test/core-json): `lake exe wasmvm-spectest`.
