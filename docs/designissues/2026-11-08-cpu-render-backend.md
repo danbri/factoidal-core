@@ -275,9 +275,11 @@ and the text pages from 1.7 s to 0.86 s.
 
 **Hub** (`hub_cpu_check.mjs`, Chrome with `--disable-blink-features=WebGPU`, this
 change's Wasm engine): `status.html` shows; every frame has `stats.cpu`; the first frame
-takes 2.4 s; six scrolls inside the band are row copies of 0 to 1 ms with no Lean render;
-the frame differs from the same page in a Chrome with WebGPU in 880 pixels of 480,000, 2
-of them by more than 8. With the published engine (no `cpuInfo`) the page says "This
+takes 2.0 to 2.4 s; six scrolls inside the band are row copies of 0 to 1 ms with no Lean
+render. Against the same page in a Chrome with WebGPU, one run differed in 880 pixels of
+480,000 (2 by more than 8); other runs differed in many more, because the two Hubs had
+loaded different fallback fonts by their last frames (the CPU frame's hash was the same
+in every run), so the check reports this comparison and does not fail on it. With the published engine (no `cpuInfo`) the page says "This
 browser does not provide WebGPU." as before.
 
 ## 10. Microcontrollers

@@ -727,6 +727,7 @@ private def formSame : NativeSVG.DataForm → NativeSVG.DataForm → Bool
   | .decimal,.decimal => true
   | .base64,.base64 => true
   | .sections a,.sections b => a == b
+  | .sectionsCpu a,.sectionsCpu b => a == b
   | _,_ => false
 
 /- The kept answer is used only when the scene, the boxes, the face and the extra nodes
