@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="engine-pipeline.xsl"?>
+<!-- How foafnaut makes a page, stage by stage. The stylesheet engine-pipeline.xsl
+     draws this file as an SVG diagram and a table. Lean files are paths in the repository;
+     L4F/ is formal/lean4/L4Factoidal/ and foafnaut/ is labs/demos/foafnaut/. -->
+<pipeline name="How foafnaut draws a page" date="2026-11-08">
+ <stage id="fetch" by="host" label="Fetch bytes">
+  <does>The host (JavaScript in a worker, or Deno) fetches the page and its stylesheets. It reads no markup.</does>
+  <file>docs/web/hub/foafnaut/browser-worker.mjs</file><file>foafnaut/native_html_document.ts</file>
+ </stage>
+ <stage id="xslt" by="lean" label="XSLT" optional="yes">
+  <does>An XML page that names a stylesheet with &lt;?xml-stylesheet?&gt; is transformed. Version 1.x runs in XSLT/, versions 2.0 to 4.0 in XSLT4/. This page went through this stage.</does>
+  <file>foafnaut/WebXslt.lean</file><file>L4F/XSLT4/Interp.lean</file>
+  <proof>L4F/XSLT4/Theorems.lean</proof>
+ </stage>
+ <stage id="parse" by="lean" label="Parse HTML">
+  <does>The WHATWG tokenizer and tree builder make a DOM arena.</does>
+  <file>L4F/HTML/Tokenizer.lean</file><file>L4F/HTML/TreeBuilder.lean</file><file>L4F/DOM/Arena.lean</file>
+  <proof>L4F/DOM/Theorems.lean</proof>
+ </stage>
+ <stage id="script" by="both" label="Scripts" optional="yes">
+  <does>QuickJS runs page scripts in a separate heap. A script changes the DOM only through typed commands that Lean checks and applies.</does>
+  <file>foafnaut/WebRenderScript.lean</file><file>foafnaut/web-render/script-engine/guest.mjs</file>
+ </stage>
+ <stage id="style" by="lean" label="Style">
+  <does>CSS rules are matched and cascaded into computed styles, for a bounded block, inline and table profile.</does>
+  <file>L4F/Rendering/Style.lean</file>
+ </stage>
+ <stage id="fonts" by="lean" label="Fonts and shaping">
+  <does>Lean reads the font files (Noto Sans, with Noto Sans Armenian as a fallback), substitutes and positions glyphs, and takes the outlines.</does>
+  <file>L4F/Rendering/LeanFontShape.lean</file><file>L4F/Rendering/SfntGpos.lean</file><file>L4F/Rendering/SfntFallback.lean</file>
+ </stage>
+ <stage id="layout" by="lean" label="Layout">
+  <does>Block flow, inline word wrapping and table layout give each box its place.</does>
+  <file>L4F/Rendering/Layout.lean</file><file>L4F/Rendering/TableLayout.lean</file>
+ </stage>
+ <stage id="svg" by="lean" label="SVG geometry">
+  <does>Paths, curves, strokes, dashes, gradients and transforms become triangles and paint.</does>
+  <file>foafnaut/SVGPath.lean</file><file>foafnaut/SVGStroke.lean</file><file>foafnaut/SVGDash.lean</file>
+  <proof>foafnaut/SVGStrokeProofs.lean</proof><proof>foafnaut/SVGDashProofs.lean</proof>
+ </stage>
+ <stage id="scene" by="lean" label="Paint list">
+  <does>Every box, glyph and shape goes into one list of painted primitives.</does>
+  <file>L4F/Rendering/Scene.lean</file><file>foafnaut/WebRender.lean</file>
+ </stage>
+ <stage id="plan" by="lean" label="GPU plan">
+  <does>Lean writes the WebGPU buffers, the WGSL shader and every command in order.</does>
+  <file>foafnaut/RenderPlan.lean</file>
+ </stage>
+ <stage id="draw" by="host" label="WebGPU draw">
+  <does>The host submits the commands that Lean wrote. It makes no layout or paint decision.</does>
+  <file>foafnaut/gpu_transport.ts</file>
+ </stage>
+</pipeline>

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Print-ready poster and cards</title>
+<style>
+body{margin:0;padding:16px;font-size:14px;line-height:20px;color:#1d2433;background:#9aa3ad}
+p{margin:0;padding-top:6px}
+.screen{margin-bottom:14px;padding:10px 12px;background:#fff7d6;color:#5a4300;width:571px}
+.sheet{width:563px;margin-bottom:18px;padding:16px;background:white;border:1px solid #6b7480}
+.kicker{margin:0;font-size:12px;letter-spacing:3px;color:#c4455a}
+h1{margin:0;padding-top:4px;font-size:52px;line-height:58px;color:#1d3557}
+.lede{font-size:17px;line-height:25px;color:#33415c}
+svg{display:block}
+h2{margin:0;padding-top:16px;font-size:20px;line-height:28px;color:#1d3557}
+.card{margin-top:12px;padding:12px 14px;background:#f2f5fa;border:1px solid #c9d2dc;break-inside:avoid}
+.card h3{margin:0;font-size:18px;line-height:24px;color:#c4455a}
+.small{font-size:12px;line-height:17px;color:#5b6876}
+.chapter{break-before:page}
+@media print {
+  body{background:white;padding:0}
+  .screen{display:none}
+  .sheet{border:0;padding:0;margin:0;width:auto}
+  .card{background:white;border:1px solid #1d2433}
+  h1,h2{color:black}
+}
+</style></head><body><main>
+<p class="screen">On screen this is three sheets of paper on a grey desk. Print it (File, Print, or Command-P in the Mac app; the
+<code>:print</code> command on the Hub) and the <code>@media print</code> rules remove this note, the desk, the borders and the colours of the cards,
+and each sheet starts a new page. Back to the <a href="index.html">demo index</a>.</p>
+
+<div class="sheet">
+<p class="kicker">FOAFNAUT · A BROWSER ENGINE IN LEAN</p>
+<h1>Every pixel from Lean</h1>
+<p class="lede">HTML, CSS, SVG, XSLT and fonts: parsed, styled, laid out and painted by Lean 4 code, then drawn by WebGPU.</p>
+<svg width="563" height="300" viewBox="0 0 563 300">
+<defs>
+<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d3557"/><stop offset="1" stop-color="#457b9d"/></linearGradient>
+<radialGradient id="sun" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#ffe8a3"/><stop offset="0.6" stop-color="#f4a261"/><stop offset="1" stop-color="#e76f51"/></radialGradient>
+<radialGradient id="node" cx="0.35" cy="0.3" r="0.75"><stop offset="0" stop-color="white"/><stop offset="0.3" stop-color="#a8dadc"/><stop offset="1" stop-color="#1d3557"/></radialGradient>
+</defs>
+<rect x="0" y="0" width="563" height="300" rx="14" fill="url(#sky)"/>
+<circle cx="440" cy="92" r="58" fill="url(#sun)"/>
+<path d="M 0 230 C 90 190 170 250 280 215 C 380 185 460 240 563 205 L 563 300 L 0 300 Z" fill="#2a9d8f"/>
+<path d="M 0 262 C 120 236 220 282 330 252 C 420 230 500 268 563 250 L 563 300 L 0 300 Z" fill="#264653"/>
+<g stroke="#f1faee" stroke-width="2.5" fill="none" stroke-dasharray="7 5">
+<path d="M 70 80 Q 140 40 200 110"/><path d="M 200 110 Q 260 160 330 120"/><path d="M 70 80 Q 90 160 150 180"/>
+<path d="M 150 180 Q 250 200 330 120"/><path d="M 200 110 L 150 180"/>
+</g>
+<circle cx="70" cy="80" r="16" fill="url(#node)"/><circle cx="200" cy="110" r="22" fill="url(#node)"/>
+<circle cx="330" cy="120" r="14" fill="url(#node)"/><circle cx="150" cy="180" r="18" fill="url(#node)"/>
+</svg>
+<p class="small">The picture is SVG: two gradients for the sky and the sun, cubic curves for the hills, quadratic curves with dashes for the links,
+and radial gradients for the nodes. Everything on this sheet is drawn by the engine, on screen and on paper.</p>
+</div>
+
+<div class="sheet chapter">
+<h2>Cards to cut out, 1 to 3</h2>
+<p class="small">Each card has <code>break-inside: avoid</code>, so a page edge does not cut it.</p>
+<div class="card"><h3>1. Parse</h3><p>The WHATWG HTML tokenizer and tree builder, and an XML parser for XML pages, written in Lean. The DOM arena has Lean proofs about
+its insert and replace operations.</p></div>
+<div class="card"><h3>2. Transform</h3><p>An XML page that names an XSLT stylesheet is transformed by Lean before layout. XSLT 1.0, and 2.0 to 4.0. Try the
+<a href="feed.xml">feed reader</a> and the <a href="lab-files.xml">tables that compute</a>.</p></div>
+<div class="card"><h3>3. Style and lay out</h3><p>CSS selectors and the cascade, block and inline flow, word wrapping and tables. The print rules on this page are
+in the same style sheet as the screen rules.</p></div>
+</div>
+
+<div class="sheet chapter">
+<h2>Cards to cut out, 4 to 6</h2>
+<div class="card"><h3>4. Shape</h3><p>Lean reads the font files, applies their substitutions and positions, and falls back to a second font for
+characters the first one lacks: Հայերեն.</p></div>
+<div class="card"><h3>5. Paint</h3><p>SVG paths, strokes, dashes, gradients and transforms become one list of painted primitives, with proofs about
+stroke edges and dash patterns.</p></div>
+<div class="card"><h3>6. Draw</h3><p>Lean writes the WebGPU buffers, the shader and the command order. The host only submits them, and for print
+hands the page images to the system print panel.</p></div>
+<p class="small">Not shown: page numbers, running headers and <code>@page</code> margins, which the print path does not apply yet.</p>
+</div>
+</main></body></html>

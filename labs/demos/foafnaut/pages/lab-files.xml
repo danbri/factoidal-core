@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="lab-files.xsl"?>
+<!-- The files of labs/demos/foafnaut at commit 6ec78f73a of danbri/factoidal (8 November 2026), by kind.
+     files: number of files; lines: text lines (0 for binary files); bytes: size in the repository;
+     proofs: Lean files whose name has Proofs. Written once with git ls-tree and git grep -c. -->
+<files of="labs/demos/foafnaut" commit="6ec78f73a" date="2026-11-08">
+ <kind name="Lean" files="92" lines="17244" bytes="1349265" proofs="5"/>
+ <kind name="HTML" files="34" lines="1422" bytes="888255"/>
+ <kind name="TypeScript" files="59" lines="5855" bytes="389481"/>
+ <kind name="JavaScript" files="56" lines="3188" bytes="271444"/>
+ <kind name="Markdown" files="16" lines="1574" bytes="94107"/>
+ <kind name="SVG" files="7" lines="132" bytes="82539"/>
+ <kind name="Python" files="9" lines="1176" bytes="60262"/>
+ <kind name="Shell" files="9" lines="667" bytes="41058"/>
+ <kind name="Other" files="17" lines="793" bytes="38600"/>
+ <kind name="C" files="11" lines="652" bytes="34016"/>
+ <kind name="JSON" files="6" lines="867" bytes="22911"/>
+ <kind name="CSS" files="2" lines="6" bytes="7197"/>
+ <kind name="XSLT" files="3" lines="57" bytes="3296"/>
+ <kind name="Turtle" files="3" lines="36" bytes="1954"/>
+ <kind name="XML" files="3" lines="24" bytes="1726"/>
+ <kind name="Wasm" files="2" lines="0" bytes="460"/>
+</files>

@@ -162,6 +162,117 @@
     1046,
     1540
    ]
+  },
+  {
+   "page": "foaf-people.xml",
+   "title": "FOAF to SVG through XSLT",
+   "combination": true,
+   "size": [
+    900,
+    1500
+   ],
+   "shows": "RDF/XML FOAF read by XSLT 3.0; people on a circle with math:sin and math:cos; knows links as curves, mutual links found; a table; interests counted; Latin, Armenian (fallback font), Greek and Cyrillic names",
+   "doesNotShow": "Factoidal's RDF parser (the stylesheet reads one RDF/XML layout); SVG text (labels are glyph outlines set by XSLT, issue 1270)"
+  },
+  {
+   "page": "sparql-results.xml",
+   "title": "SPARQL results through XSLT",
+   "combination": true,
+   "size": [
+    900,
+    1500
+   ],
+   "shows": "real SPARQL 1.1 results from Factoidal's engine over foaf-people.xml, as Query Results XML; XSLT makes a table from the variables and a two-sided bar chart",
+   "doesNotShow": "a query run by the browser: the query ran once, ahead of time, with the factoidal command"
+  },
+  {
+   "page": "feed.xml",
+   "title": "A feed reader with no JavaScript",
+   "combination": true,
+   "size": [
+    900,
+    1500
+   ],
+   "issue": "https://github.com/danbri/factoidal/issues/1287",
+   "shows": "an Atom feed with an XSLT 3.0 stylesheet: entries sorted and grouped by day, dates in words, a strip chart of entries each day",
+   "doesNotShow": "a built-in feed view for a feed that names no stylesheet; RSS 2.0 and RSS 1.0 (issue 1287)"
+  },
+  {
+   "page": "sitemap.xml",
+   "title": "Sitemap explorer",
+   "combination": true,
+   "size": [
+    900,
+    1500
+   ],
+   "issue": "https://github.com/danbri/factoidal/issues/1287",
+   "shows": "a sitemap of these demo pages: XSLT 3.0 date arithmetic, sorting by lastmod, grouping, a bar chart of pages changed each day, priority bars in table cells",
+   "doesNotShow": "a built-in sitemap view; re-sorting by a click"
+  },
+  {
+   "page": "lab-files.xml",
+   "title": "Tables that compute",
+   "combination": true,
+   "size": [
+    900,
+    1800
+   ],
+   "shows": "file counts, lines and bytes of labs/demos/foafnaut; XSLT computes totals, shares and means into a CSS table, and draws a ring chart with SVG arcs and a bar chart",
+   "doesNotShow": "numbers aligned right or bold totals (text-align and font-weight are dropped, issue 1273)",
+   "issue": "https://github.com/danbri/factoidal/issues/1273"
+  },
+  {
+   "page": "engine-pipeline.xml",
+   "title": "The engine explains itself",
+   "combination": true,
+   "size": [
+    900,
+    1900
+   ],
+   "shows": "an XML description of foafnaut's stages, drawn by XSLT 3.0 as an SVG diagram with gradients, dashes and glyph-outline labels, and as a table of Lean files and proof files",
+   "doesNotShow": "SVG text (issue 1270)"
+  },
+  {
+   "page": "typography-lab.xml",
+   "title": "Typography lab",
+   "combination": true,
+   "size": [
+    900,
+    2300
+   ],
+   "shows": "the Lean shaper (kerning, ligatures, mark positioning, fallback font) beside the same strings set as unshaped glyph outlines by XSLT; a size ladder",
+   "doesNotShow": "bold or italic: one face, and font-weight and font-style are dropped (expected failure, issue 1273)",
+   "issue": "https://github.com/danbri/factoidal/issues/1273"
+  },
+  {
+   "page": "print-poster.html",
+   "title": "Print-ready poster and cards",
+   "combination": true,
+   "handwritten": true,
+   "size": [
+    900,
+    1600
+   ],
+   "shows": "three sheets on screen; on paper, @media print rules hide the screen note and colours, break-before starts each sheet on a page, break-inside: avoid keeps each card whole (3 pages on A4)",
+   "doesNotShow": "page numbers, running headers and @page margins"
+  },
+  {
+   "page": "timers-and-clicks.html",
+   "title": "Timers and clicks",
+   "handwritten": true,
+   "needs": "page scripts in foafnaut (QuickJS in the Lean Wasm VM) for part 1, and an event loop for part 2",
+   "appRefused": "does not execute scripts",
+   "shows": "today: the static page; with scripts: click listeners, textContent and setAttribute on SVG shapes; with an event loop: a setTimeout countdown",
+   "doesNotShow": "any script effect on this engine yet; the page says so in its text"
+  },
+  {
+   "page": "svg-text-labels.html",
+   "title": "SVG text labels",
+   "handwritten": true,
+   "needs": "SVG text and textPath with real fonts (the svg-text work)",
+   "refused": "unsupported attribute on text",
+   "issue": "https://github.com/danbri/factoidal/issues/1270",
+   "shows": "when the engine draws SVG text: names in Noto Sans and Noto Sans Armenian beside their circles, and a caption along an arc"
   }
  ]
 }

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="feed.xsl"?>
+<!-- A self-written Atom 1.0 feed (RFC 4287) for a demo page. Each entry is a real
+     commit on the main branch of danbri/factoidal; the summaries are written for this file. -->
+<feed xmlns="http://www.w3.org/2005/Atom">
+ <title>Foafnaut notes</title>
+ <subtitle>What changed in the Lean browser engine, one entry for each step</subtitle>
+ <id>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/feed.xml</id>
+ <link rel="self" href="https://danbri.github.io/factoidal/web/hub/foafnaut/pages/feed.xml"/>
+ <link rel="alternate" href="https://danbri.github.io/factoidal/web/hub/foafnaut/"/>
+ <updated>2026-11-08T01:45:13Z</updated>
+ <author><name>Foafnaut demo pages</name></author>
+ <entry>
+  <title>WebAssembly runs inside the engine</title>
+  <id>https://github.com/danbri/factoidal/commit/1ab843b7c</id>
+  <link href="https://github.com/danbri/factoidal/commit/1ab843b7c"/>
+  <updated>2026-11-08T01:45:13Z</updated>
+  <category term="Wasm"/>
+  <summary>The page foafnaut:wasm runs a WebAssembly module in the WasmVM, which is written in Lean, inside the engine.</summary>
+ </entry>
+ <entry>
+  <title>Two-finger pinch sets the text zoom</title>
+  <id>https://github.com/danbri/factoidal/commit/c585d21e0</id>
+  <link href="https://github.com/danbri/factoidal/commit/c585d21e0"/>
+  <updated>2026-11-07T22:25:58Z</updated>
+  <category term="Hub"/>
+  <summary>On a touch screen, a pinch on the Hub page changes the text zoom that Lean applies when it lays out the page.</summary>
+ </entry>
+ <entry>
+  <title>Fallback fonts</title>
+  <id>https://github.com/danbri/factoidal/commit/efb5b8d28</id>
+  <link href="https://github.com/danbri/factoidal/commit/efb5b8d28"/>
+  <updated>2026-11-07T18:16:06Z</updated>
+  <category term="Fonts"/>
+  <summary>The engine holds more than one font. A character that Noto Sans lacks, such as Armenian, is drawn from Noto Sans Armenian.</summary>
+ </entry>
+ <entry>
+  <title>Table layout in Lean</title>
+  <id>https://github.com/danbri/factoidal/commit/caf0e2a52</id>
+  <link href="https://github.com/danbri/factoidal/commit/caf0e2a52"/>
+  <updated>2026-11-07T17:17:37Z</updated>
+  <category term="Layout"/>
+  <summary>CSS tables: columns sized from their cells, colspan, rowspan, captions, header and footer groups. Checked against WPT css-tables.</summary>
+ </entry>
+ <entry>
+  <title>Printing</title>
+  <id>https://github.com/danbri/factoidal/commit/0f3cfdd67</id>
+  <link href="https://github.com/danbri/factoidal/commit/0f3cfdd67"/>
+  <updated>2026-11-07T16:41:55Z</updated>
+  <category term="Print"/>
+  <summary>Lean lays the page out for paper with the print media type, says where the pages break, and draws each page.</summary>
+ </entry>
+ <entry>
+  <title>Images in SVG</title>
+  <id>https://github.com/danbri/factoidal/commit/1f532de8e</id>
+  <link href="https://github.com/danbri/factoidal/commit/1f532de8e"/>
+  <updated>2026-11-07T04:20:22Z</updated>
+  <category term="SVG"/>
+  <summary>The SVG image element, with PNG and JPEG decoders written in Lean.</summary>
+ </entry>
+ <entry>
+  <title>XML pages through their XSLT stylesheet</title>
+  <id>https://github.com/danbri/factoidal/commit/e30570c1a</id>
+  <link href="https://github.com/danbri/factoidal/commit/e30570c1a"/>
+  <updated>2026-11-05T21:45:53Z</updated>
+  <category term="XSLT"/>
+  <summary>An XML page that names a stylesheet with xml-stylesheet is transformed by Lean before it is laid out. This feed is shown that way.</summary>
+ </entry>
+ <entry>
+  <title>Page scripts in QuickJS</title>
+  <id>https://github.com/danbri/factoidal/commit/285f83448</id>
+  <link href="https://github.com/danbri/factoidal/commit/285f83448"/>
+  <updated>2026-11-03T10:34:55Z</updated>
+  <category term="Scripts"/>
+  <summary>Page scripts run in an isolated QuickJS heap. They change the DOM only through commands that Lean checks.</summary>
+ </entry>
+</feed>

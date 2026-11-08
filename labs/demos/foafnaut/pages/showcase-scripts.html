@@ -1,83 +1,94 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Writing systems and direction</title>
 <style>
-body{margin:16px;font-size:14px;line-height:20px;color:#22303c;background:white}
-h1{margin:0;font-size:24px;line-height:32px;color:#184078}
-h2{margin:0;padding-top:20px;font-size:18px;line-height:26px;color:#184078}
+body{margin:0;padding:16px;font-size:14px;line-height:20px;color:#22303c;background:#f4f6f9}
+h1{margin:0;font-size:26px;line-height:34px;color:#184078}
+h2{margin:0;padding-top:22px;font-size:18px;line-height:26px;color:#184078}
 p{margin:0;padding-top:6px}
-.note{color:#5b6876;font-size:13px}
-.row{margin:8px 0 0 0;padding:6px 12px 8px 12px;background:#f6f8fb}
-.ok{background:#eef6ef}
-.bad{background:#fbefec}
+.note{color:#5b6876;font-size:13px;line-height:19px}
+table{width:100%;margin-top:8px;border-collapse:collapse;background:white;border:1px solid #d3d9e1}
+td{padding:6px 12px;border-top:1px solid #e3e8ee;vertical-align:top}
+td.ok{background:#2f8a55;color:white;font-size:12px;width:64px}
+td.fb{background:#1f7a8c;color:white;font-size:12px;width:64px}
+td.bad{background:#c4455a;color:white;font-size:12px;width:64px}
 .name{color:#5b6876;font-size:12px;line-height:16px;padding-top:0}
-.sample{font-size:22px;line-height:32px;padding-top:2px}
+.sample{font-size:24px;line-height:34px;padding-top:2px}
 .rtl{text-align:right;direction:rtl}
+.key{margin-top:8px}
 </style></head><body><main>
 <p><a href="showcase.html">Showcase</a> · <a href="index.html">Demo index</a></p>
 <h1>Writing systems and direction</h1>
-<p>One line per writing system, in the one font the window has: Noto Sans Regular, 3,884 glyphs.
-Green rows are in the font. Red rows are not, and draw as empty boxes (.notdef). The counts are
-characters of the sample that the font maps, read from its cmap table.</p>
-<p class="note">Gaps: no fallback font (<a href="https://github.com/danbri/factoidal/issues/1274">issue 1274</a>);
-no bidirectional layout or right-to-left shaping (<a href="https://github.com/danbri/factoidal/issues/1275">issue 1275</a>).</p>
+<p>One line per writing system. The engine holds two fonts: Noto Sans Regular (3,884 glyphs) and, for the
+characters that it lacks, Noto Sans Armenian Regular. Green rows draw from Noto Sans, blue rows from the fallback font.
+Red rows are in neither font and draw as empty boxes (.notdef). The counts are characters of the sample that a font maps,
+read from its cmap table.</p>
+<p class="note">Fallback fonts landed with <a href="https://github.com/danbri/factoidal/issues/1274">issue 1274</a>; only Armenian has a fallback font so far.
+Gaps: no bidirectional layout or right-to-left shaping (<a href="https://github.com/danbri/factoidal/issues/1275">issue 1275</a>).</p>
 
 <h2>In the font</h2>
-<div class="row ok"><p class="name">Latin with diacritics, 64 of 64</p>
-<p class="sample" lang="und-Latn">Café, naïve, façade, coöperate, Ångström, Øresund, Łódź, Škoda, Ţară, Ğ, ẞ</p></div>
-<div class="row ok"><p class="name">Combining marks (base letter + U+0301, U+0308, U+0303, U+0328), 9 of 9; GPOS mark positioning</p>
-<p class="sample">e&#x301; a&#x308; n&#x303; o&#x328;&#x301; · precomposed: é ä ñ ǫ́</p></div>
-<div class="row ok"><p class="name">Vietnamese, two marks on one letter, 26 of 26</p>
-<p class="sample" lang="vi">Tiếng Việt: Hà Nội, Đà Nẵng, Huế</p></div>
-<div class="row ok"><p class="name">Greek, monotonic and polytonic, 22 of 22</p>
-<p class="sample" lang="el">Καλημέρα κόσμε · ἀρχή, ᾠδή</p></div>
-<div class="row ok"><p class="name">Cyrillic, Russian, Uzbek and Ukrainian letters, 27 of 27</p>
-<p class="sample" lang="ru">Привет, мир · Ўзбек, Їжак, Ґанок</p></div>
-<div class="row ok"><p class="name">Ligatures (GSUB liga) and currency signs, all in the font</p>
-<p class="sample">office, affluent, flag · € £ ¥ ₹ ₪ © ® ™ § ¶ † ‡ … ‰</p></div>
-
-<h2>Not in the font</h2>
-<div class="row bad"><p class="name">Arabic, right to left, joining forms, 0 of 12</p>
-<p class="sample" lang="ar" dir="rtl">مرحبا بالعالم</p></div>
-<div class="row bad"><p class="name">Hebrew, right to left, 0 of 8</p>
-<p class="sample" lang="he" dir="rtl">שלום עולם</p></div>
-<div class="row bad"><p class="name">Devanagari, conjuncts and vowel signs, 1 of 22 (the middle dot)</p>
-<p class="sample" lang="hi">नमस्ते दुनिया · क्ष त्र ज्ञ</p></div>
-<div class="row bad"><p class="name">Bengali, 0 of 8</p>
-<p class="sample" lang="bn">ওহে বিশ্ব</p></div>
-<div class="row bad"><p class="name">Tamil, 0 of 12</p>
-<p class="sample" lang="ta">வணக்கம் உலகம்</p></div>
-<div class="row bad"><p class="name">Thai, no spaces between words, 0 of 12</p>
-<p class="sample" lang="th">สวัสดีชาวโลก</p></div>
-<div class="row bad"><p class="name">Georgian, 0 of 16</p>
-<p class="sample" lang="ka">გამარჯობა მსოფლიო</p></div>
-<div class="row bad"><p class="name">Armenian, 0 of 11</p>
-<p class="sample" lang="hy">Բարեւ աշխարհ</p></div>
-<div class="row bad"><p class="name">Ethiopic, 0 of 6</p>
-<p class="sample" lang="am">ሰላም ልዑል</p></div>
-<div class="row bad"><p class="name">Chinese (simplified), 0 of 5</p>
-<p class="sample" lang="zh-Hans">你好，世界</p></div>
-<div class="row bad"><p class="name">Japanese: hiragana, katakana, kanji, 0 of 15</p>
-<p class="sample" lang="ja">こんにちは世界・カタカナ・漢字</p></div>
-<div class="row bad"><p class="name">Korean (Hangul), 0 of 7</p>
-<p class="sample" lang="ko">안녕하세요 세계</p></div>
-<div class="row bad"><p class="name">Mathematical symbols, 2 of 15</p>
-<p class="sample">∑ ∫ √ ∞ ≠ ≤ ≥ → ⇒ ∀ ∃ ∈ ∅ ℕ ℝ</p></div>
-
+<table>
+<tr><td class="ok">Draws</td><td><p class="name">Latin with diacritics, 64 of 64</p>
+<p class="sample" lang="und-Latn">Café, naïve, façade, coöperate, Ångström, Øresund, Łódź, Škoda, Ţară, Ğ, ẞ</p></td></tr>
+<tr><td class="ok">Draws</td><td><p class="name">Combining marks (base letter + U+0301, U+0308, U+0303, U+0328), 9 of 9; GPOS mark positioning</p>
+<p class="sample">e&#x301; a&#x308; n&#x303; o&#x328;&#x301; · precomposed: é ä ñ ǫ́</p></td></tr>
+<tr><td class="ok">Draws</td><td><p class="name">Vietnamese, two marks on one letter, 26 of 26</p>
+<p class="sample" lang="vi">Tiếng Việt: Hà Nội, Đà Nẵng, Huế</p></td></tr>
+<tr><td class="ok">Draws</td><td><p class="name">Greek, monotonic and polytonic, 22 of 22</p>
+<p class="sample" lang="el">Καλημέρα κόσμε · ἀρχή, ᾠδή</p></td></tr>
+<tr><td class="ok">Draws</td><td><p class="name">Cyrillic, Russian, Uzbek and Ukrainian letters, 27 of 27</p>
+<p class="sample" lang="ru">Привет, мир · Ўзбек, Їжак, Ґанок</p></td></tr>
+<tr><td class="ok">Draws</td><td><p class="name">Ligatures (GSUB liga) and currency signs, all in the font</p>
+<p class="sample">office, affluent, flag · € £ ¥ ₹ ₪ © ® ™ § ¶ † ‡ … ‰</p></td></tr>
+</table>
+<h2>From the fallback font</h2>
+<table>
+<tr><td class="fb">Draws</td><td><p class="name">Armenian, 11 of 11, from the fallback font Noto Sans Armenian</p>
+<p class="sample" lang="hy">Բարեւ աշխարհ</p></td></tr>
+</table>
+<h2>Not in either font</h2>
+<table>
+<tr><td class="bad">Not yet</td><td><p class="name">Arabic, right to left, joining forms, 0 of 12</p>
+<p class="sample" lang="ar" dir="rtl">مرحبا بالعالم</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Hebrew, right to left, 0 of 8</p>
+<p class="sample" lang="he" dir="rtl">שלום עולם</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Devanagari, conjuncts and vowel signs, 1 of 22 (the middle dot)</p>
+<p class="sample" lang="hi">नमस्ते दुनिया · क्ष त्र ज्ञ</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Bengali, 0 of 8</p>
+<p class="sample" lang="bn">ওহে বিশ্ব</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Tamil, 0 of 12</p>
+<p class="sample" lang="ta">வணக்கம் உலகம்</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Thai, no spaces between words, 0 of 12</p>
+<p class="sample" lang="th">สวัสดีชาวโลก</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Georgian, 0 of 16</p>
+<p class="sample" lang="ka">გამარჯობა მსოფლიო</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Ethiopic, 0 of 6</p>
+<p class="sample" lang="am">ሰላም ልዑል</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Chinese (simplified), 0 of 5</p>
+<p class="sample" lang="zh-Hans">你好，世界</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Japanese: hiragana, katakana, kanji, 0 of 15</p>
+<p class="sample" lang="ja">こんにちは世界・カタカナ・漢字</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Korean (Hangul), 0 of 7</p>
+<p class="sample" lang="ko">안녕하세요 세계</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Mathematical symbols, 2 of 15</p>
+<p class="sample">∑ ∫ √ ∞ ≠ ≤ ≥ → ⇒ ∀ ∃ ∈ ∅ ℕ ℝ</p></td></tr>
+</table>
 <h2>Right to left and mixed direction</h2>
 <p>In a browser, each <code>dir="rtl"</code> line below starts at the right edge, and its words run from
 right to left. Latin words and numbers inside it keep their own left-to-right order (the Unicode
 Bidirectional Algorithm, UAX 9). Here the Hebrew and Arabic letters are boxes, so the order of the
 Latin words and numbers shows what the engine does.</p>
-<div class="row bad"><p class="name">A Hebrew paragraph, dir="rtl"</p>
-<p class="sample rtl" dir="rtl" lang="he">שלום עולם, זה עמוד בדיקה.</p></div>
-<div class="row bad"><p class="name">Latin and a number inside Hebrew, dir="rtl"</p>
-<p class="sample rtl" dir="rtl" lang="he">התוכנה foafnaut כתובה ב-Lean 4 משנת 2026.</p></div>
-<div class="row bad"><p class="name">Hebrew inside an English line, dir="ltr"</p>
-<p class="sample" lang="en">The Hebrew word שלום means peace, and the Arabic word سلام too.</p></div>
-<div class="row bad"><p class="name">Arabic with Arabic-Indic digits, dir="rtl"</p>
-<p class="sample rtl" dir="rtl" lang="ar">السعر ١٢٣٫٤٥ دينار</p></div>
-<div class="row bad"><p class="name">Latin text in a bdo element with dir="rtl": a browser draws it reversed</p>
-<p class="sample"><bdo dir="rtl">Lean draws this text</bdo></p></div>
-<div class="row bad"><p class="name">An English line with dir="rtl": a browser puts the full stop at the left end</p>
-<p class="sample rtl" dir="rtl">Hello, world.</p></div>
+<table>
+<tr><td class="bad">Not yet</td><td><p class="name">A Hebrew paragraph, dir="rtl"</p>
+<p class="sample rtl" dir="rtl" lang="he">שלום עולם, זה עמוד בדיקה.</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Latin and a number inside Hebrew, dir="rtl"</p>
+<p class="sample rtl" dir="rtl" lang="he">התוכנה foafnaut כתובה ב-Lean 4 משנת 2026.</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Hebrew inside an English line, dir="ltr"</p>
+<p class="sample" lang="en">The Hebrew word שלום means peace, and the Arabic word سلام too.</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Arabic with Arabic-Indic digits, dir="rtl"</p>
+<p class="sample rtl" dir="rtl" lang="ar">السعر ١٢٣٫٤٥ دينار</p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">Latin text in a bdo element with dir="rtl": a browser draws it reversed</p>
+<p class="sample"><bdo dir="rtl">Lean draws this text</bdo></p></td></tr>
+<tr><td class="bad">Not yet</td><td><p class="name">An English line with dir="rtl": a browser puts the full stop at the left end</p>
+<p class="sample rtl" dir="rtl">Hello, world.</p></td></tr>
+</table>
 </main></body></html>

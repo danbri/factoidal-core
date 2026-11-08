@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="foaf-people.xsl"?>
+<!-- Synthetic FOAF data for a demo page: the people are invented. RDF/XML in the
+     "striped" layout (one rdf:Description per person, rdf:resource for links);
+     foaf-people.xsl reads this layout, not every possible RDF/XML layout. -->
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+         xmlns:foaf="http://xmlns.com/foaf/0.1/">
+ <foaf:Person rdf:about="https://example.org/friends/alice">
+  <foaf:name>Alice</foaf:name><foaf:nick>alice</foaf:nick>
+  <foaf:knows rdf:resource="https://example.org/friends/bob"/>
+  <foaf:knows rdf:resource="https://example.org/friends/ani"/>
+  <foaf:knows rdf:resource="https://example.org/friends/eleni"/>
+  <foaf:topic_interest rdf:resource="https://example.org/topics/xslt"/>
+ </foaf:Person>
+ <foaf:Person rdf:about="https://example.org/friends/bob">
+  <foaf:name>Bob</foaf:name><foaf:nick>bob</foaf:nick>
+  <foaf:knows rdf:resource="https://example.org/friends/alice"/>
+  <foaf:knows rdf:resource="https://example.org/friends/maria"/>
+  <foaf:topic_interest rdf:resource="https://example.org/topics/svg"/>
+ </foaf:Person>
+ <foaf:Person rdf:about="https://example.org/friends/ani">
+  <foaf:name>Անի</foaf:name><foaf:nick>ani</foaf:nick>
+  <foaf:knows rdf:resource="https://example.org/friends/aram"/>
+  <foaf:knows rdf:resource="https://example.org/friends/alice"/>
+  <foaf:topic_interest rdf:resource="https://example.org/topics/fonts"/>
+ </foaf:Person>
+ <foaf:Person rdf:about="https://example.org/friends/aram">
+  <foaf:name>Արամ</foaf:name><foaf:nick>aram</foaf:nick>
+  <foaf:knows rdf:resource="https://example.org/friends/ani"/>
+  <foaf:knows rdf:resource="https://example.org/friends/hiro"/>
+  <foaf:topic_interest rdf:resource="https://example.org/topics/fonts"/>
+  <foaf:topic_interest rdf:resource="https://example.org/topics/lean"/>
+ </foaf:Person>
+ <foaf:Person rdf:about="https://example.org/friends/eleni">
+  <foaf:name>Ελένη</foaf:name><foaf:nick>eleni</foaf:nick>
+  <foaf:knows rdf:resource="https://example.org/friends/farah"/>
+  <foaf:topic_interest rdf:resource="https://example.org/topics/rdf"/>
+ </foaf:Person>
+ <foaf:Person rdf:about="https://example.org/friends/maria">
+  <foaf:name>Мария</foaf:name><foaf:nick>maria</foaf:nick>
+  <foaf:knows rdf:resource="https://example.org/friends/bob"/>
+  <foaf:knows rdf:resource="https://example.org/friends/farah"/>
+  <foaf:topic_interest rdf:resource="https://example.org/topics/svg"/>
+  <foaf:topic_interest rdf:resource="https://example.org/topics/rdf"/>
+ </foaf:Person>
+ <foaf:Person rdf:about="https://example.org/friends/farah">
+  <foaf:name>Farah</foaf:name><foaf:nick>farah</foaf:nick>
+  <foaf:knows rdf:resource="https://example.org/friends/grace"/>
+  <foaf:knows rdf:resource="https://example.org/friends/maria"/>
+  <foaf:topic_interest rdf:resource="https://example.org/topics/lean"/>
+ </foaf:Person>
+ <foaf:Person rdf:about="https://example.org/friends/grace">
+  <foaf:name>Grace</foaf:name><foaf:nick>grace</foaf:nick>
+  <foaf:knows rdf:resource="https://example.org/friends/hiro"/>
+  <foaf:knows rdf:resource="https://example.org/friends/alice"/>
+  <foaf:topic_interest rdf:resource="https://example.org/topics/xslt"/>
+  <foaf:topic_interest rdf:resource="https://example.org/topics/rdf"/>
+ </foaf:Person>
+ <foaf:Person rdf:about="https://example.org/friends/hiro">
+  <foaf:name>Hiro</foaf:name><foaf:nick>hiro</foaf:nick>
+  <foaf:knows rdf:resource="https://example.org/friends/grace"/>
+  <foaf:topic_interest rdf:resource="https://example.org/topics/lean"/>
+ </foaf:Person>
+ <rdf:Description rdf:about="https://example.org/topics/xslt"><rdfs:label>XSLT</rdfs:label></rdf:Description>
+ <rdf:Description rdf:about="https://example.org/topics/svg"><rdfs:label>SVG</rdfs:label></rdf:Description>
+ <rdf:Description rdf:about="https://example.org/topics/fonts"><rdfs:label>Fonts</rdfs:label></rdf:Description>
+ <rdf:Description rdf:about="https://example.org/topics/lean"><rdfs:label>Lean</rdfs:label></rdf:Description>
+ <rdf:Description rdf:about="https://example.org/topics/rdf"><rdfs:label>RDF</rdfs:label></rdf:Description>
+</rdf:RDF>

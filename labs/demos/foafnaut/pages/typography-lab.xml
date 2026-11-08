@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="typography-lab.xsl"?>
+<!-- Samples for the typography lab. Each is drawn twice: as HTML text, which the Lean
+     shaper sets, and as glyph outlines placed by the stylesheet with no shaping. -->
+<lab font="Noto Sans Regular" fallback="Noto Sans Armenian Regular">
+ <sample tests="Kerning (GPOS pair positioning)" what="Pairs such as AV, To, Wa and Ty sit closer when the font's kerning is applied.">AVATAR To Wa Ty LT P.</sample>
+ <sample tests="Ligatures (GSUB liga)" what="Noto Sans has fi, fl, ff, ffi and ffl ligatures. Shaped, each pair or triple is one glyph.">fifty office waffle flow</sample>
+ <sample tests="Combining marks (GPOS mark)" what="e with U+0301, a with U+0308 and U+0323, e with U+0323 and U+0302: the marks must sit over and under their base.">é ạ̈ ệ ñ̃</sample>
+ <sample tests="Precomposed letters" what="The same letters as single code points, for comparison.">é ä ệ ñ</sample>
+ <sample tests="Fallback font (Armenian)" what="Noto Sans has no Armenian. These glyphs come from the second font, Noto Sans Armenian.">Բարեւ, աշխարհ</sample>
+ <sample tests="Greek and Cyrillic" what="Both are in Noto Sans.">Καλημέρα · Доброе утро</sample>
+ <sample tests="Digits and punctuation" what="Proportional digits, quotes, dashes and the ellipsis.">“1,234.50” – 7/8 — 99% …</sample>
+</lab>
