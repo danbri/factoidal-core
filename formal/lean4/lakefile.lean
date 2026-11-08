@@ -278,6 +278,11 @@ extern_lib libl4hostread pkg := do
 @[default_target] lean_lib WasmVM where
   roots := #[`L4Factoidal.WasmVM]
 
+-- The HTML event loop, timers and DOM event dispatch order as a pure model, with
+-- its theorems (docs/designissues/2026-11-08-event-loop.md). Only Lean core.
+@[default_target] lean_lib EventLoop where
+  roots := #[`L4Factoidal.EventLoop]
+
 -- WasmVM measurements (issue 1244): `lake exe wasmvm-bench`.
 lean_exe «wasmvm-bench» where root := `L4Factoidal.WasmVM.Bench
 -- The official core test suite (third_party/wasm-spec/test/core-json): `lake exe wasmvm-spectest`.
