@@ -2,7 +2,8 @@ import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type Shell
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
-import {inputURL,loadFontFile,prepareHTML,refusalHTML,setScriptHost,type PageView} from "./native_html_document.ts";
+import {inputURL,loadFontFile,prepareHTML,refusalHTML,setFontHost,setScriptHost,type PageView} from "./native_html_document.ts";
+import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {nativePreflight} from "./native_preflight.ts";
@@ -138,15 +139,40 @@ async function main() {
     console.log(`engine: ${engineRan}`);
     console.log(JSON.stringify({type:"native-html-engine",t:Math.round(performance.now()),engine:engineRan,where}));
   };
+  // Fallback fonts for the characters the first font lacks (native_html_fonts.ts: the Hub's
+  // table and choice), per page, before its first layout, into the engine that lays pages out.
+  // The worker chooses and reads them beside its engine; the main thread only looks for a
+  // character above ASCII. The main-thread engine takes them only when its first font answered
+  // with a count of fonts held (an older engine would take them as replacements).
+  let mainFallbacks=false,workerFonts:FallbackFont[]|undefined=[];
+  const mainFonts=fallbackFontHost(fonts=>loadFallbackFonts(engine,fonts));
+  const pageFonts=async(source:string)=>{
+    if(!mayNeedFallbackFonts(source))return;
+    const start=performance.now(),where=worker?.alive?"worker":"main";
+    let answer:PageFonts;
+    if(worker?.alive&&workerFonts){
+      // A worker engine that holds one font says so once; its pages then get none.
+      try{answer=await worker.pageFonts(source);workerFonts=answer.held;}
+      catch(error){if(!worker?.alive)throw error;workerFonts=undefined;console.error("Native HTML: no fallback fonts:",String(error));return;}
+    }
+    else if(mainFallbacks&&workerFont)answer=await mainFonts.page(source);
+    else return;
+    if(answer.loaded.length||answer.failed.length)console.log(JSON.stringify({type:"native-html-fonts",t:Math.round(performance.now()),where,
+      ms:Math.round((performance.now()-start)*10)/10,fonts:answer.loaded,...(answer.failed.length?{failed:answer.failed}:{}),held:answer.held.length}));
+  };
   const useMainEngine=async(reason:string)=>{
     console.error("Native HTML: ENGINE WORKER UNAVAILABLE, so Lean runs on the main thread and the window can miss input:",reason);
     console.log(JSON.stringify({type:"native-html-worker",state:"main-thread-fallback",reason}));
     worker=undefined;lean=engine;sayEngine("main-thread");
-    if(workerFont&&!mainFont){mainFont=true;try{await loadFontFile(engine,workerFont.path,workerFont.family);}catch(error){if(fontFile)throw error;workerFont=undefined;}}
+    if(workerFont&&!mainFont){mainFont=true;try{
+      mainFallbacks=typeof (await loadFontFile(engine,workerFont.path,workerFont.family))?.fonts==="number";
+      // The fallback fonts the worker held, so the pages open keep their scripts.
+      if(mainFallbacks&&workerFonts?.length)await mainFonts.add(workerFonts);
+    }catch(error){if(fontFile)throw error;workerFont=undefined;}}
   };
   if(check){
     sayEngine("main-thread");
-    if(workerFont)try{await loadFontFile(engine,workerFont.path,workerFont.family);}catch(error){if(fontFile)throw error;console.error("Native HTML: bitmap font, because Noto Sans did not load:",String(error));}
+    if(workerFont)try{mainFallbacks=typeof (await loadFontFile(engine,workerFont.path,workerFont.family))?.fonts==="number";}catch(error){if(fontFile)throw error;console.error("Native HTML: bitmap font, because Noto Sans did not load:",String(error));}
   } else {
     try{worker=await startCompileWorker(workerFont,nativeEngine);}
     catch(error){
@@ -159,6 +185,8 @@ async function main() {
     }
     if(worker){lean=worker.engine as unknown as Lean;sayEngine("worker");}
   }
+  // With the bitmap face (safe mode) a page gets no fallback fonts.
+  if(workerFont)setFontHost(pageFonts);
   // Page scripts (WebScripts.lean): the QuickJS guest module goes into the engine that runs
   // the renders (the worker), once. The engine must answer scriptSession info first: an older
   // engine has no such op, and then a page with scripts is refused as before (issue 1274).

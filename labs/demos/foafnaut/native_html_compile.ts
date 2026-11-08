@@ -3,6 +3,7 @@
 // rejects its calls; the caller decides what to do and says so in the trace.
 import type {HTMLArtifact,HTMLLayers} from "./native_html_engine.ts";
 import type {RemoteCall,WorkerReply,WorkerRequest} from "./native_html_worker.ts";
+import type {PageFonts} from "./native_html_fonts.ts";
 
 export type CompileClient={
   call(name:RemoteCall,...args:unknown[]):Promise<{value:unknown;workerMs:number}>;
@@ -11,6 +12,8 @@ export type CompileClient={
   /** A layers render at low priority (a scroll prefetch): it runs when no other call waits,
    * and a newer one replaces it while it has not started. Undefined when it was dropped. */
   prefetchLayers(source:string,width:number,height:number,options:Record<string,unknown>):Promise<{layers:HTMLLayers;workerMs:number}|undefined>;
+  /** The fallback fonts a page needs, chosen and loaded in the worker, before later calls. */
+  pageFonts(source:string):Promise<PageFonts&{workerMs:number}>;
   /** Drop the low-priority call that has not started, if there is one. */
   dropLow():void;
   /** Ordinary calls sent and not yet answered. */
@@ -55,6 +58,11 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
       return {layers:reply.value as HTMLLayers,workerMs:reply.ms};
     },
     dropLow(){if(alive)send({op:"dropLow"}).catch(()=>{});},
+    async pageFonts(source){
+      const reply=await send({op:"pageFonts",source});
+      if(!reply.ok)throw new Error(reply.error);
+      return {...reply.value as PageFonts,workerMs:reply.ms};
+    },
     call,engine,
     async compile(source,width,height,options){
       const {value,workerMs}=await call("compile",source,width,height,options);

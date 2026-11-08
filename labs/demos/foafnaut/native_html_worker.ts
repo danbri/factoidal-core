@@ -11,24 +11,38 @@
 // started runs to its end: a Lean call can not be stopped.
 import {loadHTML,type HTMLArtifact,type HTMLEngine} from "./native_html_engine.ts";
 import {loadFontFile} from "./native_html_document.ts";
+import {fallbackFontHost,loadFallbackFonts} from "./native_html_fonts.ts";
 
 /** The engine methods a caller may run in the worker. */
 export const REMOTE_CALLS=["xmlStylesheet","xslt","inspect","fontRequests","graphStart","graphEvent","graphPage","sourcePage","wasmPage","sparqlPage","selectedText","compile","compileLayers","printLayout","imageInfo","imageLoad","imageDrop","frameWork","requestBytes","scriptInfo","scriptLoad","scriptSession","nodeAt","pointerAt","scriptPlan","scriptSetting","scriptChoices"] as const;
 export type RemoteCall=typeof REMOTE_CALLS[number];
 export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string};nativeEngine?:string}
   |{id:number;op:"call";name:RemoteCall;args:unknown[];low?:boolean}
-  |{id:number;op:"dropLow"};
+  |{id:number;op:"dropLow"}
+  // The fallback fonts a page needs (native_html_fonts.ts): chosen and read here, as bytes,
+  // into this engine, before the calls sent after it.
+  |{id:number;op:"pageFonts";source:string};
 export type WorkerReply={id:number;ok:true;value?:unknown;ms:number}|{id:number;ok:false;error:string;dropped?:boolean};
 
 let engine:Promise<HTMLEngine>|undefined;
+// Only an engine that answers its first font with `fonts` (the count held) adds a fallback
+// font after it; an older one would take it as a replacement (issue 1274).
+let fallbackFonts:ReturnType<typeof fallbackFontHost>|undefined;
 const scope=globalThis as unknown as {onmessage:(event:MessageEvent<WorkerRequest>)=>void;postMessage(message:unknown,transfer?:Transferable[]):void};
 const handle=async(request:WorkerRequest)=>{
   try{
     const start=performance.now();
     if(request.op==="init"){
       engine=loadHTML(request.nativeEngine);const e=await engine;
-      if(request.font)await loadFontFile(e,request.font.path,request.font.family);
+      if(request.font&&typeof (await loadFontFile(e,request.font.path,request.font.family))?.fonts==="number")
+        fallbackFonts=fallbackFontHost(fonts=>loadFallbackFonts(e,fonts));
       scope.postMessage({id:request.id,ok:true,ms:performance.now()-start} satisfies WorkerReply);
+      return;
+    }
+    if(request.op==="pageFonts"){
+      if(!fallbackFonts)throw new Error("this engine has no first font, or holds one font: no fallback fonts");
+      const value=await fallbackFonts.page(request.source);
+      scope.postMessage({id:request.id,ok:true,value,ms:performance.now()-start} satisfies WorkerReply);
       return;
     }
     if(request.op!=="call")return;

@@ -141,6 +141,11 @@ when they are refused. */
 export type ScriptHost={start(source:string,url:string,resources:{nodeId:number;source:string}[]):Promise<ScriptTurn|undefined>|ScriptTurn|undefined};
 let scriptHost:ScriptHost|undefined;
 export function setScriptHost(host:ScriptHost|undefined){scriptHost=host;}
+// Fallback fonts (native_html_fonts.ts): given the page source, puts the fonts it needs into
+// the engine that lays it out. Started when the source is known; awaited before the page's
+// scripts start and before it is returned to be laid out.
+let fontHost:((source:string)=>Promise<unknown>)|undefined;
+export function setFontHost(host:typeof fontHost){fontHost=host;}
 /** The engine, or the same calls in a worker, which answer promises. prepareHTML awaits every call. */
 export type PageEngine=(Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText">&ImageHolder)|ImageHolder&{
   xmlStylesheet(...a:Parameters<HTMLEngine["xmlStylesheet"]>):Promise<ReturnType<HTMLEngine["xmlStylesheet"]>>;
@@ -162,6 +167,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     sources[0].kind="XML source";
     sources.push({kind:"XSLT source",url:sheet.url,source:sheet.source},{kind:"Generated page",url:document.url,source:document.source});
   }
+  const fonts=fontHost?.(document.source).catch(error=>console.error("Native HTML: fallback fonts:",String(error)));
   const inspection=await engine.inspect(document.source,{url:document.url});
   const scripted=inspection.scripts.some(script=>script.kind!=="data");
   if(scripted&&!scriptHost)
@@ -191,6 +197,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // scripts, as for stylesheets. The script session's commands are part of each render
   // request, so a render replays them over the parsed page.
   let script:{session:number;turn:ScriptTurn}|undefined;
+  await fonts;
   if(scripted&&scriptHost) {
     const supplied:{nodeId:number;source:string}[]=[];
     for(const descriptor of inspection.scripts) {
