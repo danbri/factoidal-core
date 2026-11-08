@@ -202,6 +202,38 @@ Lean reads only what the host supplies under the broker's policy; the document l
 16; the size limit is that of image bytes; ids can not meet those of the page, by the
 prefix. Tests: `SVGForgivingTests.lean`.
 
+## Text with SFNT fonts and textPath (2026-11-08)
+
+https://github.com/danbri/factoidal/issues/1270. `labs/demos/foafnaut/SVGText.lean` holds
+the text state that both text paths read (`TextState`, `textRuns`, `spaceRuns`), moved
+out of `SVGForgiving.lean` with no change of behaviour.
+
+- When no SVG font is known, `lowerSfnt` draws a `text` with the SFNT fonts that draw
+  HTML text. Each run is shaped by `SfntProfile.wordIn`, with the same fallback list.
+  `font-family` puts the first held font of that family in front; else the primary font
+  is used. Each glyph becomes one `path` with its outline in user units, placed by
+  `translate` and `rotate`.
+- It reads `font-size`, `font-family`, `text-anchor`, `letter-spacing`, `word-spacing`,
+  `x`, `y`, `dx`, `dy` and `rotate` lists, `xml:space`, `tspan`, and these properties in a
+  `style` attribute. A run the shaper refuses is logged and not drawn; the page stays.
+  Right-to-left text shows as HTML text shows it (one glyph for each character, in
+  reverse order).
+- In an HTML page, `WebRender.makeEmbedding` lowers every SVG `text` in place before the
+  strict reader runs (`lowerDocument`). Other SVG elements lose their text properties
+  after they are read, so `<g font-family=...>` no longer refuses a page.
+- `textPath`: the path (by `href`, or the SVG 2 `path` attribute) is flattened with its
+  own `transform`; `vertices` gives each point its distance along the path. Each glyph
+  goes at the point of its advance midpoint, plus `startOffset` and the `text-anchor`
+  shift of the whole `textPath`, turned to the tangent. A glyph whose midpoint is off
+  the path is not drawn. `side="right"` reverses the path; `method="stretch"` is drawn as
+  `align`. Proved: the points keep their order, and a placed point is on the line of two
+  neighbouring vertices. Not proved (no `Float` order lemmas): distances do not decrease,
+  and the point is between the two vertices; `SVGTextTests.lean` checks both.
+- The SVG Tiny pixel run gives the host an SVG font, so it does not use this path. The
+  CLI option `--svg-sfnt FILE` gives the forgiving pass an SFNT font.
+- Not done: vertical text (drawn horizontally), `textLength`, bidirectional reordering,
+  `textPath` to a basic shape, CSS rules from style sheets for font properties.
+
 ## Result
 
 The current result and the table of each remaining file:

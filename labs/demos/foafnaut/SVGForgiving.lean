@@ -1,4 +1,5 @@
 import SVG
+import SVGText
 import L4Factoidal.Unicode.Bidi
 import Std.Data.HashMap
 
@@ -14,11 +15,8 @@ import Std.Data.HashMap
 namespace NativeSVGForgiving
 
 open L4Factoidal.XML
+open NativeSVGText
 
-private def svgURI := "http://www.w3.org/2000/svg"
-private def xmlURI := "http://www.w3.org/XML/1998/namespace"
-/-- XML nesting limit of this pass; the strict reader stops at 32 groups. -/
-private def maxDepth : Nat := 64
 /-- Strict parses allowed for one document. Each one is a full reader run. -/
 private def maxParses : Nat := 4000
 
@@ -31,19 +29,6 @@ private def silent := ["title","desc","metadata"]
 
 private def isSpace (s : String) : Bool :=
   s.toList.all (fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r')
-
-/-- `xml:id` is an ID (XML ID 1.0); the strict reader reads only `id`. -/
-private def renameId (attrs : List NamespaceAttribute) : List NamespaceAttribute :=
-  attrs.map fun a =>
-    if a.name.namespace_ == some xmlURI && a.name.localPart == "id"
-    then {a with name:={namespace_:=none,localPart:="id"}} else a
-
-private def plainAttr (attrs : List NamespaceAttribute) (key : String) : Option String :=
-  (attrs.find? (fun a => a.name.namespace_.isNone && a.name.localPart == key)).map (·.value)
-private def mkAttr (key value : String) : NamespaceAttribute :=
-  {name:={namespace_:=none,localPart:=key},value}
-private def svgElement (tag : String) (attrs : List NamespaceAttribute) (children : List NamespaceNode) : NamespaceNode :=
-  .element {namespace_:=some svgURI,localPart:=tag} attrs children
 
 /-! ### SVG fonts and text
 
@@ -90,14 +75,6 @@ structure SVGFont where
   kernRules : Array KernRule := #[]
   missing : Glyph := ⟨"",500,"",[],none,[]⟩
 instance : Inhabited SVGFont := ⟨{}⟩
-
-private def float (source : Option String) (fallback : Float) : Float :=
-  match source with
-  | none => fallback
-  | some s =>
-    let s := s.trimAscii.toString
-    let s := if s.endsWith "px" then (s.dropEnd 2).toString else s
-    match (NativeSVG.number s) with | .ok value => value | .error _ => fallback
 
 private def fontElements : Nat → NamespaceNode → List NamespaceNode
   | 0,_ => []
@@ -236,141 +213,11 @@ private def arabicForms (chars : Array Char) : Array (Option String) := Id.run d
     before := arabicDual c
   return forms
 
-/-- Attributes of a text element that the strict reader paints with. -/
-private def paintKeys := ["fill","stroke","fill-opacity","stroke-opacity","color","display","visibility","opacity",
-  "stroke-linejoin","stroke-linecap","stroke-miterlimit"]
-
-private structure TextState where
-  size : Float := 16
-  anchor : String := "start"
-  family : String := ""
-  variant : String := "normal"
-  lang : String := ""
-  strokeWidth : Float := 1
-  /-- `line-increment`, SVG Tiny 1.2 §10.11.4; `none` is `auto`. -/
-  lineIncrement : Option Float := none
-  textAlign : String := "start"
-  displayAlign : String := "before"
-  preserveSpace : Bool := false
-
-/-- A value of a keyword property: only a listed keyword changes it. -/
-private def keyword (attrs : List NamespaceAttribute) (key : String) (allowed : List String) (old : String) : String :=
-  match plainAttr attrs key with
-  | some value => let value := value.trimAscii.toString; if allowed.contains value then value else old
-  | none => old
-
-private def lineIncrementOf (attrs : List NamespaceAttribute) (old : Option Float) : Option Float :=
-  match plainAttr attrs "line-increment" with
-  | none => old
-  | some value =>
-    let value := value.trimAscii.toString
-    if value == "inherit" then old else if value == "auto" then none else
-    match NativeSVG.number value with
-    | .ok n => if n >= 0 then some n else old
-    | .error _ => old
-
-private def spaceOf (attrs : List NamespaceAttribute) (old : Bool) : Bool :=
-  match attrs.find? (fun a => a.name.namespace_ == some xmlURI && a.name.localPart == "space") with
-  | some a => a.value == "preserve"
-  | none => old
-
-private def TextState.read (s : TextState) (attrs : List NamespaceAttribute) : TextState :=
-  { size := float (plainAttr attrs "font-size") s.size,
-    anchor := (plainAttr attrs "text-anchor").getD s.anchor,
-    family := (plainAttr attrs "font-family").getD s.family,
-    variant := keyword attrs "font-variant" ["normal","small-caps"] s.variant,
-    lang := match attrs.find? (fun a => a.name.namespace_ == some xmlURI && a.name.localPart == "lang") with
-      | some a => a.value
-      | none => s.lang,
-    strokeWidth := float (plainAttr attrs "stroke-width") s.strokeWidth,
-    lineIncrement := lineIncrementOf attrs s.lineIncrement,
-    textAlign := keyword attrs "text-align" ["start","center","end"] s.textAlign,
-    -- §10.11.6: for SVG, `auto` is `before`.
-    displayAlign := match plainAttr attrs "display-align" with
-      | some value => if value.trimAscii.toString == "auto" then "before"
-        else keyword attrs "display-align" ["before","center","after"] s.displayAlign
-      | none => s.displayAlign,
-    preserveSpace := spaceOf attrs s.preserveSpace }
-
 /-- CSS Fonts: the first named family with a font of the wanted variant, else the
     default font. -/
 private def chooseFont (fonts : List SVGFont) (family variant : String) : Option SVGFont :=
   let names := (family.splitOn ",").map (fun n => (n.trimAscii.toString.replace "'" "").replace "\"" "")
   (names.findSome? (fun name => fonts.find? (fun f => f.family == name && f.variant == variant))).orElse (fun _ => fonts.getLast?)
-
-private structure Run where
-  text : String
-  size : Float
-  strokeWidth : Float
-  paint : List NamespaceAttribute
-  xs : List Float := []
-  ys : List Float := []
-  dx : Float := 0
-  dy : Float := 0
-  /-- A `tbreak`: the text is empty, and the line ends here. -/
-  lineBreak : Bool := false
-  increment : Option Float := none
-  preserveSpace : Bool := false
-  anchor : String := "start"
-  lang : String := ""
-
-private def paintOf (attrs : List NamespaceAttribute) : List NamespaceAttribute :=
-  attrs.filter fun a => a.name.namespace_.isNone && paintKeys.contains a.name.localPart
-
-private def numberList (attrs : List NamespaceAttribute) (key : String) : List Float :=
-  match plainAttr attrs key with
-  | none => []
-  | some s => ((s.splitOn " ").flatMap (·.splitOn ",") |>.filter (· != "")).map (fun n => float (some n) 0)
-
-/-- Text runs in order. A later unsupported child is logged and skipped. -/
-private def textRuns (area : Bool) : Nat → TextState → List NamespaceAttribute → NamespaceNode → List Run × List String
-  | 0,_,_,_ => ([],[])
-  | _,state,paint,.other raw => match raw with
-    | .text t | .cdata t => ([{text := t, size := state.size, strokeWidth := state.strokeWidth, paint := paint, increment := state.lineIncrement, preserveSpace := state.preserveSpace, anchor := state.anchor, lang := state.lang}],[])
-    | _ => ([],[])
-  | fuel+1,state,paint,.element name attrs children =>
-    if area && name.localPart == "tbreak" then
-      ([{text := "", size := state.size, strokeWidth := state.strokeWidth, paint := paint, lineBreak := true, increment := lineIncrementOf attrs state.lineIncrement}],[])
-    else if name.localPart != "tspan" then ([],["element in text: " ++ name.localPart]) else
-    let inner := state.read attrs
-    let results := children.map (textRuns area fuel inner (paint ++ paintOf attrs))
-    let runs := results.flatMap (·.1)
-    let runs := match runs with
-      | run::rest =>
-        let placed : Run := { run with
-          xs := numberList attrs "x"
-          ys := numberList attrs "y"
-          dx := (numberList attrs "dx").headD 0
-          dy := (numberList attrs "dy").headD 0 }
-        placed::rest
-      | [] => []
-    (runs,results.flatMap (·.2))
-
-/-- `xml:space="default"`: newlines go, tabs become spaces, and spaces collapse.
-    Leading and trailing spaces of the whole text go in `lowerText`. -/
-private def collapse (s : String) : String :=
-  let kept := s.toList.filter (fun c => c != '\n' && c != '\r')
-  let spaced := kept.map (fun c => if c == '\t' then ' ' else c)
-  String.ofList (spaced.foldr (fun c acc => match acc with
-    | ' '::_ => if c == ' ' then acc else c::acc
-    | _ => c::acc) [])
-
-/-- `xml:space="preserve"`: newlines and tabs become spaces, and nothing goes. -/
-private def preserved (s : String) : String :=
-  String.ofList (s.toList.map fun c => if c == '\n' || c == '\t' || c == '\r' then ' ' else c)
-
-/-- Tell each glyph path of a run the bounding box of the whole text, x0 y0 x1 y1. -/
-private def markGlyphs (box : Float × Float × Float × Float) : NamespaceNode → NamespaceNode
-  | .element name attrs paths =>
-    let (x0,y0,x1,y1) := box
-    let mark : NamespaceAttribute := {name:={namespace_:=some NativeSVG.internalURI,localPart:=NativeSVG.textBoxAttribute},value:=s!"{x0} {y0} {x1-x0} {y1-y0}"}
-    .element name attrs (paths.map fun
-      | .element n a c => .element n (a ++ [mark]) c
-      | node => node)
-  | node => node
-
-private def rightToLeftLanguage (lang : String) : Bool :=
-  ["ar","he","fa","ur","yi"].contains ((lang.toLower.splitOn "-").headD "")
 
 /-- One glyph of a text, in logical order. -/
 private structure Placed where
@@ -398,14 +245,9 @@ private structure Position where
 private def lowerText (font : SVGFont) (fallback : Option SVGFont) (state : TextState) (attrs : List NamespaceAttribute)
     (children : List NamespaceNode) : NamespaceNode × List String := Id.run do
   let state := state.read attrs
-  let results := children.map (textRuns false maxDepth state [])
-  let raw := (results.flatMap (·.1)).map (fun r =>
-    {r with text:=if r.preserveSpace then preserved r.text else collapse r.text})
+  let results := children.map (textRuns false false maxDepth state [])
   -- Default xml:space: no leading or trailing space on the whole text.
-  let lastIndex := raw.length-1
-  let runs := raw.zipIdx.map fun (r,i) =>
-    let text := if i == 0 && !r.preserveSpace then r.text.trimAsciiStart.toString else r.text
-    {r with text:=if i == lastIndex && !r.preserveSpace then text.trimAsciiEnd.toString else text}
+  let runs := spaceRuns (results.flatMap (·.1))
   let xs := numberList attrs "x"
   let ys := numberList attrs "y"
   let rotations := numberList attrs "rotate"
@@ -646,7 +488,7 @@ private def lineSize (runs : Array Run) (cells : Array Cell) (line : AreaLine) :
 private def lowerArea (font : SVGFont) (state : TextState) (attrs : List NamespaceAttribute)
     (children : List NamespaceNode) : NamespaceNode × List String := Id.run do
   let state := state.read attrs
-  let results := children.map (textRuns true maxDepth state [])
+  let results := children.map (textRuns true false maxDepth state [])
   let runs := (results.flatMap (·.1)).toArray
   let dimension := fun (key : String) => match plainAttr attrs key with
     | none => none
@@ -783,7 +625,7 @@ private def textInstance (targets : Std.HashMap String NamespaceNode) (attrs : L
 /-- Remove foreign and unread elements, stray text and the content of silent
     elements, and lower `text` when a font is known. Returns the new tree and
     one log line for each removal. -/
-private def normalise (fonts : List SVGFont) (targets : Std.HashMap String NamespaceNode) : Nat → TextState → Bool → NamespaceNode → Option NamespaceNode × List String
+private def normalise (fonts : List SVGFont) (sfnt : Array NativeSVGText.Font) (targets : Std.HashMap String NamespaceNode) : Nat → TextState → Bool → NamespaceNode → Option NamespaceNode × List String
   | 0,_,_,_ => (none,["element: nesting exceeds 64"])
   | _,_,_,.other (.comment c) => (some (.other (.comment c)),[])
   | _,_,keepText,.other raw => match raw with
@@ -798,6 +640,10 @@ private def normalise (fonts : List SVGFont) (targets : Std.HashMap String Names
       match chooseFont fonts inner.family inner.variant with
       | some font => let (node,log) := lowerText font fonts.getLast? state attrs children; (some node,log)
       | none => (none,["element: text"])
+    else if name.localPart == "text" && !sfnt.isEmpty then
+      -- No SVG font: the SFNT fonts of the host draw the text, as they draw HTML text.
+      let (node,log) := lowerSfnt sfnt targets.get? state attrs children
+      (some node,log)
     else if name.localPart == "textArea" && !fonts.isEmpty then
       match chooseFont fonts (state.read attrs).family (state.read attrs).variant with
       | some font => let (node,log) := lowerArea font state attrs children; (some node,log)
@@ -808,21 +654,21 @@ private def normalise (fonts : List SVGFont) (targets : Std.HashMap String Names
         | .element n a _ => n.namespace_ == some svgURI && conditionsPass fonts a | _ => false
       let chosen := children.find? selected
       let inner := state.read attrs
-      let result := (chosen.toList).map (normalise fonts targets fuel inner false)
+      let result := (chosen.toList).map (normalise fonts sfnt targets fuel inner false)
       -- A child that is not drawn can still be referenced, so it stays as a definition.
       let unused := children.eraseIdx (children.findIdx selected)
-      let kept := unused.map (normalise fonts targets fuel inner false)
+      let kept := unused.map (normalise fonts sfnt targets fuel inner false)
       (some (svgElement "g" (renameId attrs) (result.filterMap (·.1) ++ [svgElement "defs" [] (kept.filterMap (·.1))])),
         result.flatMap (·.2) ++ kept.flatMap (·.2))
     else if name.localPart == "a" then
       -- A link draws its content. Link regions are not part of this pass.
       let inner := state.read attrs
-      let results := children.map (normalise fonts targets fuel inner false)
+      let results := children.map (normalise fonts sfnt targets fuel inner false)
       (some (svgElement "g" (renameId attrs) (results.filterMap (·.1))),results.flatMap (·.2))
     else if name.localPart == "use" && !fonts.isEmpty && (textInstance targets attrs).isSome then
       let inner := state.read attrs
       let target := (textInstance targets attrs).getD (.other (.comment ""))
-      let (node,log) := normalise fonts targets fuel inner false target
+      let (node,log) := normalise fonts sfnt targets fuel inner false target
       let x := float (plainAttr attrs "x") 0
       let y := float (plainAttr attrs "y") 0
       let frame := ((plainAttr attrs "transform").getD "") ++ s!" translate({x},{y})"
@@ -834,7 +680,7 @@ private def normalise (fonts : List SVGFont) (targets : Std.HashMap String Names
     else
       let keepText := name.localPart == "style"
       let inner := state.read attrs
-      let results := children.map (normalise fonts targets fuel inner keepText)
+      let results := children.map (normalise fonts sfnt targets fuel inner keepText)
       (some (.element name (renameId attrs) (results.filterMap (·.1))),results.flatMap (·.2))
 
 /-- Remove `key` from the elements named `tag`, or from all elements when `tag` is
@@ -1143,9 +989,11 @@ private def externalFonts (root : NamespaceNode) (documentURL : Option String)
   return (fonts,missing)
 
 /-- Parse as a browser would: draw what the strict reader can draw. A document
-    that is not well-formed XML stays an error. -/
+    that is not well-formed XML stays an error. Text with no SVG font is drawn with
+    the SFNT fonts `sfnt`, the first being the primary font (`NativeSVGText.lowerSfnt`). -/
 def parse (xml : String) (width height : Nat) (font : Option SVGFont := none)
-    (images : List (String × ByteArray) := []) (documentURL : Option String := none) :
+    (images : List (String × ByteArray) := []) (documentURL : Option String := none)
+    (sfnt : Array NativeSVGText.Font := #[]) :
     Except String (NativeSVG.Scene × List String) := do
   if xml.length > NativeSVG.maxInputChars then throw "SVG input exceeds 1048576 characters"
   let root ← parseNamespaceView xml
@@ -1155,7 +1003,7 @@ def parse (xml : String) (width height : Nat) (font : Option SVGFont := none)
   let targets := (idTargets maxDepth root).foldl (fun map (id,node) =>
     if map.contains id then map else map.insert id node) ({} : Std.HashMap String NamespaceNode)
   let (linkedFonts,_) := externalFonts root documentURL images
-  let (some root,log) := normalise (fontsIn root ++ linkedFonts ++ font.toList) targets maxDepth {} false root | throw "root element is not read"
+  let (some root,log) := normalise (fontsIn root ++ linkedFonts ++ font.toList) sfnt targets maxDepth {} false root | throw "root element is not read"
   let store := NativeSVG.imageStore root documentURL images
   let (some root,imageLog) := dropBrokenImages store maxDepth documentURL root | throw "root element is not read"
   repair width height 1024 {root,dropped:=rootLog ++ imports.log ++ log ++ imageLog,parses:=0,documentURL,images:=store}

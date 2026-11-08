@@ -15,11 +15,12 @@ private def pixels (scene : Rendering.Scene) (w h : Nat) : Except String String 
 
 /-- WebGPU artifact of one SVG file, with the log of what the forgiving pass removed. -/
 private def svgArtifact (source : String) (w h : Nat) (font : Option String)
-    (images : List (String × ByteArray)) (documentURL : Option String) : String :=
+    (images : List (String × ByteArray)) (documentURL : Option String)
+    (sfnt : Array Rendering.SfntProfile.Font := #[]) : String :=
   let quoted := fun (line : String) => "\"" ++ (line.replace "\\" "\\\\" |>.replace "\"" "\\\"") ++ "\""
   let parsed := do
     let font ← font.mapM NativeSVGForgiving.SVGFont.parse
-    NativeSVGForgiving.parse source w h font images documentURL
+    NativeSVGForgiving.parse source w h font images documentURL sfnt
   match parsed >>= fun (scene,dropped) =>
       (scene.artifact).map (fun artifact => (artifact,scene.compiled.length,dropped)) with
   | .error message => WebRender.errorJSON message
@@ -69,6 +70,10 @@ private def localImages (document root : System.FilePath) (source : String) :
 def main (args : List String) : IO UInt32 := do
   match args with
   | path::width::height::flags =>
+    -- `--svg-sfnt FILE` last: text that has no SVG font is drawn with this SFNT font.
+    let (flags,sfntFile) := match flags.reverse with
+      | file::"--svg-sfnt"::rest => (rest.reverse,some file)
+      | _ => (flags,none)
     let (svgFont,resources,svgRun) := match flags with
       | ["--svg"] => (none,none,true)
       | ["--svg","--svg-font",font] => (some font,none,true)
@@ -84,7 +89,14 @@ def main (args : List String) : IO UInt32 := do
       let (images,documentURL) ← match resources with
         | some root => localImages path root source
         | none => pure ([],none)
-      IO.println (svgArtifact source w h font images documentURL)
+      let sfnt ← match sfntFile with
+        | none => pure #[]
+        | some file =>
+          let bytes ← IO.FS.readBinFile file
+          match Rendering.SfntProfile.Font.read bytes ((System.FilePath.mk file).fileStem.getD "font") "cli" with
+          | .ok f => pure #[f]
+          | .error e => throw (IO.userError s!"SFNT font refused: {e}")
+      IO.println (svgArtifact source w h font images documentURL sfnt)
       return 0
     if flags == ["--svg-profile"] then
       let some w := width.toNat? | throw (IO.userError "invalid width")

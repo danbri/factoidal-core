@@ -1,4 +1,5 @@
 import WebRenderSVG
+import SVGText
 import Font
 import L4Factoidal.Rendering.Layout
 import L4Factoidal.Rendering.Links
@@ -197,14 +198,18 @@ def embedding (dom : DOM.Dom) (id : Nat) (style : Rendering.CSS.Computed) (width
   let scene ← NativeSVG.parseRoot root width.toUInt32.toNat height.toUInt32.toNat inherited
   return placeSVG scene id style width height
 
-/-- One source-bound index per render, shared by all embedded SVG roots. -/
+/-- One source-bound index per render, shared by all embedded SVG roots. SVG text is
+lowered to glyph paths first, with `fonts`, the fonts that draw HTML text
+(`NativeSVGText.lowerDocument`); each element keeps its source path. -/
 def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none)
-    (images : List (String × ByteArray) := []) : Except String Rendering.Layout.Embedding := do
+    (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
+    Except String Rendering.Layout.Embedding := do
   if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
     return embedding dom
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
   let (root,tree) ← documentNamespaceTree dom
+  let (tree,_) := NativeSVGText.lowerDocument fonts tree
   let context ← NativeSVG.ReferenceContext.create tree documentURL
   -- Each image decodes once for the document, not once for each SVG root.
   let store := NativeSVG.imageStore tree documentURL images

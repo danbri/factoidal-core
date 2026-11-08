@@ -6,7 +6,7 @@
 Writes pages/showcase-dataviz.html, showcase-lettering.html and showcase-tables-svg.html. The other
 showcase pages are written by hand.
 
-The engine does not draw SVG <text> yet (https://github.com/danbri/factoidal/issues/1270),
+The pages were made before the engine drew SVG <text> (https://github.com/danbri/factoidal/issues/1270),
 so every label here is a glyph outline from the bundled Noto Sans Regular, read with
 fontTools at generation time and written as an SVG <path>. The layouts (bars, lines,
 tidy tree, circle packing, force-directed graph) are computed here, in the manner of
@@ -432,7 +432,7 @@ def dataviz():
     force, nodes, links = force_chart(files)
     body = f'''<p>Five chart layouts in the manner of D3, made with no library. A Python program
 (<code>tools/showcase-pages.py</code>) computes each layout and writes plain SVG; the Lean engine
-draws it. The labels are glyph outlines from Noto Sans, because SVG text is not drawn yet
+draws it. The labels are glyph outlines from Noto Sans, made before the engine drew SVG text
 (<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>).</p>
 <p class="note">The page does not use script. The desktop window refuses a page with a script,
 and the script binding has no timers, so the charts can not animate yet; see
@@ -521,10 +521,9 @@ def lettering():
     body = f'''<p>Lettering on circles, waves and spirals, and rotated words. Each letter is a
 glyph outline from Noto Sans, placed and turned by <code>tools/showcase-pages.py</code> and drawn
 by the Lean SVG path renderer.</p>
-<p class="note">This is the workaround. The engine does not draw SVG <code>text</code> or
-<code>textPath</code>; a page that uses them is refused whole
-(<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>). The page
-<a href="showcase-textpath.html">showcase-textpath.html</a> has the same lettering as real SVG text, to show the refusal.</p>
+<p class="note">This page was the workaround before the engine drew SVG <code>text</code> and
+<code>textPath</code> (<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>). The page
+<a href="showcase-textpath.html">showcase-textpath.html</a> has the same lettering as real SVG text, for comparison.</p>
 <h2>A badge: text around a circle</h2>
 <div class="figure">{"".join(badge)}</div>
 <h2>A wave</h2>
@@ -608,8 +607,8 @@ a caption bar, a header row with a rule, zebra rows, numbers aligned right on th
 that spans two columns, and a totals row. <code>tools/showcase-pages.py</code> computes the column
 positions; the labels are glyph outlines from Noto Sans.</p>
 <p class="note">This is the workaround. HTML table layout is not implemented
-(<a href="https://github.com/danbri/factoidal/issues/1272">issue 1272</a>), and SVG text is not drawn
-(<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>).</p>
+(<a href="https://github.com/danbri/factoidal/issues/1272">issue 1272</a>). The labels were made
+before the engine drew SVG text (<a href="https://github.com/danbri/factoidal/issues/1270">issue 1270</a>).</p>
 <h2>Numbers aligned right, with a total</h2>
 <div class="figure">{first}</div>
 <h2>A cell that spans two columns</h2>

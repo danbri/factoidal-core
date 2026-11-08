@@ -24,9 +24,10 @@ const ids=(r:Run)=>r.glyphs.map(g=>g[0]);
 const left=(r:Run)=>r.glyphs[0][1];
 const stillGap=(issue:string)=>`expected failure of ${ISSUE}${issue} no longer fails: make this test assert the correct result and close the issue`;
 
-Deno.test("expected failure, issue 1270: SVG text refuses the showcase textPath page",async()=>{
+// Issue 1270 is closed: SVG text, tspan and textPath are drawn (svg_text_test.ts).
+Deno.test("issue 1270: the showcase textPath page renders",async()=>{
   const doc=await prepareHTML(engine,inputURL(pages+"showcase-textpath.html",true));
-  assert.throws(()=>doc.compile(900,700),/unsupported (attribute on text|SVG element: text)/,stillGap("1270"));
+  assert.ok((doc.compile(900,1100) as unknown as {primitiveCount:number}).primitiveCount>0);
 });
 
 Deno.test("expected failure, issue 1271: the window refuses the showcase script page",async()=>{

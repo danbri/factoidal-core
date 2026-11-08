@@ -197,6 +197,10 @@ private def transformList (source : String) : Except String Transform := do
     result ← checkedTransform (result.compose nextTransform)
   return result
 
+/-- A `transform` attribute value as a matrix; the empty value is the identity.
+    `SVGText` reads the transform of the path of a `textPath` with it. -/
+def transformOf (source : String) : Except String Transform := transformList source
+
 /-- The transform of an element under `parent`, its CTM below the root mapping.
     SVG Tiny 1.2 §7.7.5: `ref(svg)` and `ref(svg, x, y)` are the whole value. The
     CTM of the element is then the root `viewBox` mapping and the translation by

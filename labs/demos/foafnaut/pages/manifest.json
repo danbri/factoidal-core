@@ -131,8 +131,10 @@
    "title": "SVG text and textPath",
    "showcase": true,
    "handwritten": true,
-   "refused": "unsupported attribute on text",
-   "issue": "https://github.com/danbri/factoidal/issues/1270"
+   "size": [
+    900,
+    1100
+   ]
   },
   {
    "page": "showcase-scripts.html",

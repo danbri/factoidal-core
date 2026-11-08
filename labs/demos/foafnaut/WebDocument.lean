@@ -660,9 +660,11 @@ def layOut (key : LayoutKey) : Except String Laid := do
       Rendering.SfntProfile.profile held.fonts (keepWords words request)
     | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   let url := baseURL dom (str request "url")
+  -- SVG text is drawn with the fonts of the HTML text.
+  let svgFonts := (loaded.map (·.fonts)).getD #[]
   let embedding ← match graph with
     | some m => pure (WebGraph.embedding m)
-    | none => WebRender.makeEmbedding dom (if url.isEmpty then none else some url) (← suppliedImages request)
+    | none => WebRender.makeEmbedding dom (if url.isEmpty then none else some url) (← suppliedImages request) svgFonts
   -- A window shorter than the chrome still lays out, on one row.
   let state ← elementState dom url request
   let (scene,boxes) ← Rendering.Layout.render dom rules font embedding key.width (max 1 (key.height-key.top)) textScale state
