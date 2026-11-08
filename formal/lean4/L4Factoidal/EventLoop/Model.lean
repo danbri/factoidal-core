@@ -300,4 +300,77 @@ def Input.apply : Input → State → State × Output
   | .render, st => (st.render, {})
   | .frameStep, st => let (st, run) := st.frameStep; (st, { run })
 
+/-! ## A host's advance: at most one animation frame per advance
+
+HTML §8.1.7.3 "update the rendering" runs at most once per rendering opportunity, with
+the time of that opportunity. A host whose clock is behind (a slow turn, a busy worker)
+does not get every missed frame back to back: it gets one frame, at the latest frame
+time it reached. Timers due before that time still run first, in order; timers due
+after it, up to the target, run after it.
+
+`Driver` is the host: a state `σ` that holds a loop `State` and runs what the loop
+gives (`run`: a callback in the script engine, which may change the loop through its
+calls). `Driver.advanceGo` is the loop of `WasmVM.Hosts.Page.Session.advance`.
+`advanceGo_frames` (in `Theorems`): one advance runs at most one frame batch.
+-/
+
+/-- The frame interval of the virtual clock, in milliseconds. -/
+def frameInterval : Nat := 16
+
+/-- The time of the one animation frame that an advance from `clock` to `target` may
+run: the last frame time at or before `target`, when it is not before `clock` and not
+the time of the last frame (`last`). -/
+def frameSlot (clock target : Nat) (last : Option Nat) : Option Nat :=
+  let f := target / frameInterval * frameInterval
+  if clock ≤ f ∧ last ≠ some f then some f else none
+
+/-- A host of the event loop: its state holds a loop `State`; `run` runs a `Run`. -/
+structure Driver (σ : Type) where
+  loop : σ → State
+  setLoop : σ → State → σ
+  run : σ → Run → σ
+
+namespace Driver
+variable {σ : Type} (d : Driver σ)
+
+/-- The callbacks of the frame being run, in order, at most `fuel`. -/
+def frameGo : Nat → σ → σ
+  | 0, s => s
+  | fuel + 1, s =>
+    let (l, r) := (d.loop s).frameStep
+    let s := d.setLoop s l
+    match r with
+    | some r => frameGo fuel (d.run s r)
+    | none => s
+
+/-- "Update the rendering", the animation frame step: the callbacks requested so far
+form the batch (`State.render`); each runs, in order. -/
+def frame (s : σ) : σ :=
+  let s := d.setLoop s (d.loop s).render
+  d.frameGo ((d.loop s).frameBatch.length + 1) s
+
+/-- Run the loop until the clock is at `target` and no task waits, or `fuel` steps.
+`slot` is the frame time not yet used (`frameSlot`): the clock stops there, and the
+frame batch runs once when callbacks wait; after it, `slot` is `none`. The answer: the
+state, `frames` plus the frame batches run, and whether the fuel ran out. Every call is
+a tail call. -/
+def advanceGo (target : Nat) : Nat → Option Nat → σ → Nat → σ × Nat × Bool
+  | 0, _, s, frames => (s, frames, true)
+  | fuel + 1, slot, s, frames =>
+    let (l, r) := (d.loop s).step
+    let s := d.setLoop s l
+    match r with
+    | some r => advanceGo target fuel slot (d.run s r) frames
+    | none =>
+      let goal := match slot with | some f => min f target | none => target
+      let (l, fired) := (d.loop s).advanceTo goal
+      let s := d.setLoop s l
+      if fired.isEmpty ∧ slot = some l.clock then
+        if l.frames.isEmpty then advanceGo target fuel none s frames
+        else advanceGo target fuel none (d.frame s) (frames + 1)
+      else if fired.isEmpty ∧ target ≤ l.clock then (s, frames, false)
+      else advanceGo target fuel slot s frames
+
+end Driver
+
 end L4Factoidal.EventLoop

@@ -16,6 +16,9 @@ import L4Factoidal.EventLoop.Dispatch
 5. `plan_ordered`, `plan_node`, `plan_no_bubbles`, `afterStop_same_node`:
    dispatch visits capture listeners root first, then the target, then bubble
    listeners target first; `stopPropagation` ends the walk at the next node.
+6. `Driver.advanceGo_frames`, `Driver.advanceGo_no_slot`, `Driver.frameSlot_between`,
+   `Driver.frameSlot_ne_last`: one advance of a host runs at most one animation frame
+   batch, at a frame time between the clock and the target, never twice at one time.
 -/
 namespace L4Factoidal.EventLoop
 
@@ -502,5 +505,83 @@ theorem afterStop_same_node {path : List Nat} {ls : List Listener} {bubbles : Bo
   exact (Option.some.inj a).symm
 
 end Dispatch
+
+/-! ## 6. One animation frame per advance -/
+
+namespace Driver
+variable {σ : Type} (d : Driver σ)
+
+/-- An advance runs at most one frame batch: the frames it counts are at most one more
+than it started with, and none more once its frame slot is used (`slot = none`). -/
+theorem advanceGo_frames (target : Nat) :
+    ∀ (fuel : Nat) (slot : Option Nat) (s : σ) (frames : Nat),
+      (d.advanceGo target fuel slot s frames).2.1 ≤ frames + (if slot.isSome then 1 else 0) := by
+  intro fuel
+  induction fuel with
+  | zero => intro slot s frames; simp [advanceGo]
+  | succ fuel ih =>
+    intro slot s frames
+    cases slot with
+    | none =>
+      simp only [advanceGo]
+      split
+      · exact ih _ _ _
+      · split
+        · next h => exact absurd h.2 (by simp)
+        · split
+          · simp
+          · exact ih _ _ _
+    | some f =>
+      simp only [advanceGo]
+      split
+      · exact ih _ _ _
+      · split
+        · split
+          · exact Nat.le_trans (ih _ _ _) (by simp)
+          · exact Nat.le_trans (ih _ _ _) (by simp)
+        · split
+          · simp
+          · exact ih _ _ _
+
+/-- With no frame slot, an advance runs no frame batch. -/
+theorem advanceGo_no_slot (target fuel : Nat) (s : σ) (frames : Nat) :
+    (d.advanceGo target fuel none s frames).2.1 = frames := by
+  have := d.advanceGo_frames target fuel none s frames
+  have h2 : frames ≤ (d.advanceGo target fuel none s frames).2.1 := by
+    clear this
+    induction fuel generalizing s frames with
+    | zero => simp [advanceGo]
+    | succ fuel ih =>
+      simp only [advanceGo]
+      split
+      · exact ih _ _
+      · split
+        · split
+          · exact ih _ _
+          · exact Nat.le_trans (Nat.le_succ _) (ih _ _)
+        · split
+          · simp
+          · exact ih _ _
+  simp at this; omega
+
+/-- The frame slot is at most the target, and at least the clock. -/
+theorem frameSlot_between {clock target f : Nat} {last : Option Nat}
+    (h : frameSlot clock target last = some f) : clock ≤ f ∧ f ≤ target := by
+  simp only [frameSlot] at h
+  split at h
+  · rename_i hc; cases h
+    exact ⟨hc.1, Nat.div_mul_le_self target frameInterval⟩
+  · cases h
+
+/-- A slot is never the time of the last frame: two advances never run a frame at the
+same time. -/
+theorem frameSlot_ne_last {clock target f : Nat} {last : Option Nat}
+    (h : frameSlot clock target last = some f) : last ≠ some f := by
+  simp only [frameSlot] at h
+  split at h
+  · rename_i hc; cases h; exact hc.2
+  · cases h
+
+end Driver
 
 end L4Factoidal.EventLoop

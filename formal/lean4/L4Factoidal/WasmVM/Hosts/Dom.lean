@@ -37,6 +37,7 @@ import L4Factoidal.WasmVM.Api
 import L4Factoidal.DOM.Arena
 import L4Factoidal.PageGpu.Wire
 import L4Factoidal.DOM.Selectors
+import Std.Data.HashMap
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.WasmVM L4Factoidal.DOM
@@ -86,7 +87,17 @@ inductive Request where
 /-- The host's state: the arena and what the page asked for. -/
 structure State where
   dom : Dom
+  /-- The commands, compacted (`addCommand`): a write of an attribute or of character
+  data takes the place of the last write of the same one, so the list is bounded by the
+  DOM's size, not by the number of changes. -/
   commands : Array Command := #[]
+  /-- Changes recorded since the start, including those that took the place of an
+  earlier write. A host lays the page out again only when this grew. -/
+  changes : Nat := 0
+  /-- The last write of each attribute (node, ASCII-lowercase name) and of each node's
+  character data (node, ""), as its index in `commands`, since the last command that
+  reads them (`Command.reads`). -/
+  writes : Std.HashMap (Nat × String) Nat := {}
   requests : Array Request := #[]
   logs : Array String := #[]
   nextTimer : Nat := 1
@@ -243,9 +254,57 @@ def answerStr (mem : Nat) (st : StoreOf M) (buf cap : Nat) : Except Int String �
 /-- A trap for an argument string outside memory, otherwise the code. -/
 def codeOrTrap (e : Int) : HostResult := if e == -8 then .trap "foafnaut_dom: string outside memory" else ret e
 
+/-- Character data: the nodes whose `textContent` setter changes only their data. -/
+def charData (d : Dom) (n : Nat) : Bool := Dom.isCharacterData (d.get n)
+
+/-- What a command writes and nothing else reads until it is written again: an
+attribute (node, ASCII-lowercase name: the names that may be one attribute) or the
+data of a character data node (node, ""; an attribute name is never empty). `d` is the
+arena before the command. -/
+def Command.writeKey (d : Dom) : Command → Option (Nat × String)
+  | .setAttribute n k _ => some (n, Dom.asciiLower k)
+  | .removeAttribute n k => some (n, Dom.asciiLower k)
+  | .setTextContent n _ => if charData d n then some (n, "") else none
+  | _ => none
+
+/-- `c` writes the same thing as `p` in the same way: the same attribute name, or the
+same node's data. Then `c` may take `p`'s place. -/
+def Command.sameWrite : Command → Command → Bool
+  | .setAttribute n k _, .setAttribute m j _ => n == m && k == j
+  | .removeAttribute n k, .removeAttribute m j => n == m && k == j
+  | .setTextContent n _, .setTextContent m _ => n == m
+  | _, _ => false
+
+/-- The commands that read attributes or character data (`cloneNode`, `importNode`,
+`normalize`), the namespaced attribute writes (whose attribute may be one that
+`writeKey` names otherwise), and `adoptNode` (a node's document decides how
+`setAttribute` names an attribute): a write before one of them stays before it. -/
+def Command.reads : Command → Bool
+  | .cloneNode .. | .importNode .. | .normalize _ | .setAttributeNS .. | .removeAttributeNS ..
+  | .adoptNode .. => true
+  | _ => false
+
+/-- Record command `c`, whose result is the arena `d`. A write of an attribute or of
+character data whose last write since the last reading command (`Command.reads`) is
+of the same kind (`Command.sameWrite`) takes that write's place in the list: no
+command between them reads what they write, so the replay gives the same arena, with
+attributes in the order of their first write. So a page that animates attributes keeps
+a list bounded by its DOM, and the 4096-command bound counts distinct writes. -/
 def addCommand (s : State) (c : Command) (d : Dom) : State × HostResult :=
-  if s.commands.size ≥ s.commandLimit || d.size > maxNodes then (s, ret (-5))
-  else ({ s with dom := d, commands := s.commands.push c }, ret 0)
+  if d.size > maxNodes then (s, ret (-5)) else
+  let key := c.writeKey s.dom
+  let prior := (key.bind s.writes.get?).filter fun i =>
+    match s.commands[i]? with
+    | some p => p.sameWrite c
+    | none => false
+  match prior with
+  | some i => ({ s with dom := d, commands := s.commands.set! i c, changes := s.changes + 1 }, ret 0)
+  | none =>
+    if s.commands.size ≥ s.commandLimit then (s, ret (-5)) else
+    let writes := if c.reads then {} else match key with
+      | some k => s.writes.insert k s.commands.size
+      | none => s.writes
+    ({ s with dom := d, commands := s.commands.push c, changes := s.changes + 1, writes }, ret 0)
 
 /-- A node argument: -1 (any value of 2^31 or more) is none. -/
 def optNode (v : Nat) : Option Nat := if v ≥ 2147483648 then none else some v
@@ -282,6 +341,8 @@ def textContentSet (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M)
     -- On a document or doctype, setting `textContent` does nothing (DOM §4.4).
     let t := (s.dom.get n).type
     if t == .document || t == .doctype then (s, ret 0)
+    -- The same data again changes nothing: no command, no layout.
+    else if charData s.dom n && (s.dom.get n).data == v then (s, ret 0)
     else addCommand s (.setTextContent n v) (s.dom.setTextContent n v)
 
 def setAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
@@ -291,18 +352,21 @@ def setAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) :
   | .error e, _ => (s, codeOrTrap e)
   | _, .error e => (s, codeOrTrap e)
   | .ok name, .ok v =>
+    -- The same value again changes nothing: no command, no layout.
+    let record := fun (c : Command) (d : Dom) =>
+      if (d.get n).attrs == (s.dom.get n).attrs then (s, ret 0) else addCommand s c d
     match nsName? name with
     | some (ns, q) =>
       if q.utf8ByteSize > maxAttrName then (s, ret (-5)) else
       match s.dom.setAttributeNS n ns q v with
       | (_, .error e) => (s, ret (domErr e))
-      | (d, .ok ()) => addCommand s (.setAttributeNS n (ns.getD "") q v) d
+      | (d, .ok ()) => record (.setAttributeNS n (ns.getD "") q v) d
     | none =>
       if name.utf8ByteSize > maxAttrName then (s, ret (-5)) else
       match s.dom.setAttribute n name v with
       | (_, .error e) => (s, ret (domErr e))
       | (d, .ok ()) =>
-        let (s, r) := addCommand s (.setAttribute n name v) d
+        let (s, r) := record (.setAttribute n name v) d
         -- HTML §4.8.5: setting `src` of an iframe with a browsing context navigates it.
         if Dom.isHtmlElement (s.dom.get n) "iframe" && Dom.asciiLower name == "src" && s.frames.any (·.1 == n) then
           ({ s with navigations := s.navigations.push (n, v) }, r)

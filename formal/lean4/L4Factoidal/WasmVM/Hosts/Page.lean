@@ -373,39 +373,21 @@ def Session.nextFrame (s : Session) : Option Nat :=
   let t := (s.loop.clock + 15) / 16 * 16
   some (if s.lastFrame == some t then t + 16 else t)
 
-/-- HTML "update the rendering", the animation frame step: the callbacks requested so far
-run, in order, each with a microtask checkpoint after it. -/
-def Session.frame (s : Session) : Session := Id.run do
-  let mut s := s.setLoop s.loop.render
-  s := { s with lastFrame := some s.loop.clock }
-  for _ in [0:s.loop.frameBatch.length + 1] do
-    let (l, r) := s.loop.frameStep
-    s := s.setLoop l
-    match r with
-    | some r => s := s.runTask r
-    | none => break
-  return s
+/-- The session as a host of the event loop (`EventLoop.Driver`): the loop's runs are
+callbacks in the module. -/
+def Session.driver : L4Factoidal.EventLoop.Driver Session :=
+  { loop := Session.loop, setLoop := Session.setLoop, run := Session.runTask }
 
 /-- Run the event loop until the virtual clock is at `target` and no task waits, or
-`maxTasks` steps have run. The clock stops at each due timer and frame time. The answer
-says whether the loop ran out of steps. -/
-def Session.advance (s : Session) (target : Nat) (maxTasks : Nat := 100000) : Session × Bool := Id.run do
-  let mut s := s
-  for _ in [0:maxTasks] do
-    let (l, r) := s.loop.step
-    s := s.setLoop l
-    match r with
-    | some r => s := s.runTask r
-    | none =>
-      let frameAt := s.nextFrame.filter (· ≤ target)
-      let goal := match frameAt with | some f => min f target | none => target
-      let (l, fired) := s.loop.advanceTo goal
-      s := s.setLoop l
-      if frameAt == some s.loop.clock && fired.isEmpty then
-        s := s.frame
-      else if fired.isEmpty && s.loop.clock ≥ target then
-        return (s, false)
-  return (s, true)
+`maxTasks` steps have run. The clock stops at each due timer, in order. At most one
+animation frame batch runs, at the last frame time the advance reaches
+(`EventLoop.frameSlot`; `EventLoop.Driver.advanceGo_frames`): a host that fell behind
+gets one frame with the latest time, as a browser does, not every missed frame. The
+answer says whether the loop ran out of steps. -/
+def Session.advance (s : Session) (target : Nat) (maxTasks : Nat := 100000) : Session × Bool :=
+  let slot := L4Factoidal.EventLoop.frameSlot s.loop.clock target s.lastFrame
+  let (s, frames, out) := Session.driver.advanceGo target maxTasks slot s 0
+  ({ s with lastFrame := if frames == 0 then s.lastFrame else slot }, out)
 
 /-- No task, timer or animation frame waits. -/
 def Session.quiet (s : Session) : Bool :=
@@ -574,8 +556,12 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
 def Session.commands (s : Session) : Array Hosts.Dom.Command := s.host.dom.commands
 def Session.logs (s : Session) : Array String := s.host.dom.logs
 
-/-- The cost contract of a turn: the arena changed exactly when the command list grew,
-so a host lays the page out again only then (`changed`). -/
-def changed (before after : Session) : Bool := after.commands.size != before.commands.size
+/-- Changes recorded since the start (`Hosts.Dom.State.changes`). -/
+def Session.changes (s : Session) : Nat := s.host.dom.changes
+
+/-- The cost contract of a turn: the arena changed exactly when a change was recorded,
+so a host lays the page out again only then (`changed`). A write of the value an
+attribute or data already has records nothing. -/
+def changed (before after : Session) : Bool := after.changes != before.changes
 
 end L4Factoidal.WasmVM.Hosts.Page

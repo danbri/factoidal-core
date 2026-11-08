@@ -29,12 +29,13 @@ argument for `start`:
   until no task, timer or frame waits), `turn` (run what is due now), `close`.
 
 Every answer but `info` and `close` is a turn: `session`, `clock`, `changed`,
-`commandCount`, `commands` (the whole list, in the JSON form of
-`WebRenderScript.commandJson`, only when `changed` or `full:true`), the new `logs` and
+`commandCount`, `commands` (the whole list, compacted: one write per attribute and per
+character data, so bounded by the DOM, in the JSON form of `WebRenderScript.commandJson`,
+only when `changed` or `full:true`), `changes` (all changes since the start), the new `logs` and
 `errors`, `timers`, `nextTimer`, `frames`, `nextWake`, `quiet`, `instructions`, `jobs`,
 `tasks` and `ns`.
 
-The cost contract: `changed` is true exactly when the command list grew in the turn. A
+The cost contract: `changed` is true exactly when the turn recorded a DOM change. A
 host renders again only then; the render request carries the command list, which is part
 of the layout key (`WebDocument.layoutFields`), so a render with the same list reuses the
 kept layout (`WebDocument.lookupLayout_eq`). No DOM change: no layout.
@@ -110,21 +111,21 @@ def commandsJson (s : Page.Session) : JSON.Json :=
 /-- Counts of a session before a turn. Only counts: a turn that kept the whole session
 alive would copy the module's memory at its first write. -/
 structure Before where
-  commands : Nat := 0
+  changes : Nat := 0
   steps : Nat := 0
   jobs : Nat := 0
   tasks : Nat := 0
 
-def Before.of (s : Page.Session) : Before := ⟨s.commands.size, s.steps, s.jobs, s.tasks⟩
+def Before.of (s : Page.Session) : Before := ⟨s.changes, s.steps, s.jobs, s.tasks⟩
 
 /-- The answer of a turn. -/
 def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (full : Bool) (ns : Nat)
     (extra : List (String × JSON.Json) := []) : String × Marks :=
-  let changed := s.commands.size != before.commands
+  let changed := s.changes != before.changes
   let loop := s.loop
   let fields : List (String × JSON.Json) := [
     ("session",num id),("clock",num loop.clock),("changed",.bool changed),
-    ("commandCount",num s.commands.size)] ++
+    ("commandCount",num s.commands.size),("changes",num s.changes)] ++
     (if changed || full then [("commands",commandsJson s)] else []) ++ [
     ("logs",.array ((s.logs.extract marks.logs s.logs.size).toList.map .string)),
     ("errors",.array ((s.errors.extract marks.errors s.errors.size).toList.map .string)),

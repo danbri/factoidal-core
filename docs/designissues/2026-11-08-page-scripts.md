@@ -81,19 +81,35 @@ of the same invoke), and skips a listener removed during the dispatch.
 
 `advance(ms)` and `settle(budget)` run the loop: `EventLoop.State.step` gives the next
 task (a timer callback, an event); when none is runnable, `advanceTo` moves the clock to
-the next timer or animation frame time (every 16 ms of virtual time while a frame is
-requested), and the timers due then become tasks. After each task Lean runs the
+the next timer, and the timers due then become tasks. After each task Lean runs the
 microtask checkpoint with `qjs_run_job`.
+
+One advance runs at most one animation frame batch, as a browser runs "update the
+rendering" at most once per rendering opportunity: at the last 16 ms frame time the
+advance reaches (`EventLoop.frameSlot`), never at the time of the frame before. Timers
+due before that time run first, in order; timers due after it run after it. A host
+that fell behind (a slow turn) gets one frame with the latest time, not every missed
+frame back to back. The loop is `EventLoop.Driver.advanceGo`, and
+`Driver.advanceGo_frames` proves the bound. Hosts pace frames: the Hub worker and
+`run_html.ts` start no turn while a frame is asked for or being drawn, so each presented
+frame has at most one turn before it.
 
 ## 4. Cost
 
-The contract: a turn's answer says `changed` exactly when the command list grew. A host
-renders again only then. The render request carries the command list, which is a field of
-the layout key (`WebDocument.layoutFields`), so a render with the same list reuses the
-kept layout (`WebDocument.lookupLayout_eq`). No DOM change, no layout. The scripted-page
-test checks that a turn with no change has no commands. A Lean theorem of the contract
-(the command list only grows, so equal length means equal list) is not written yet; the
-"perf-theorems" work proves the frame contracts.
+The contract: a turn's answer says `changed` exactly when the turn recorded a DOM change
+(`Hosts.Dom.State.changes` grew). A host renders again only then. The render request
+carries the command list, which is a field of the layout key (`WebDocument.layoutFields`),
+so a render with the same list reuses the kept layout (`WebDocument.lookupLayout_eq`). No
+DOM change, no layout. Writing the value an attribute or a text node already has records
+nothing. The scripted-page test checks that a turn with no change has no commands.
+
+The command list is compacted (`Hosts.Dom.addCommand`): a write of an attribute, or of
+the data of a text node, takes the place of the last write of the same one, when no
+command between them reads it (`cloneNode` and `normalize` read). The replay gives the
+same arena, with attributes in the order of their first write;
+`WasmVM.Tests.DomCommands` checks it against the replay of every command. So the list,
+and the render request, are bounded by the DOM, not by the number of changes: an
+animation of twelve SVG transforms keeps twelve commands however long it runs.
 
 Measured on the owner's Mac, native engine library (2026-11-08):
 
@@ -124,8 +140,8 @@ Measured on the owner's Mac, native engine library (2026-11-08):
   `document`, so a frame's constructors are the page's. The engine (`scriptSession`)
   passes no frames: a frame's nodes are not commands, so the layout replay of the
   command list would not see them.
-- A page may make at most 4096 commands (the bound of `WebRenderScript`); the WPT runner
-  allows 200 000 because it lays nothing out.
+- A page may keep at most 4096 commands after compaction (the bound of
+  `WebRenderScript`); the WPT runner allows 200 000 because it lays nothing out.
 
 ## 6. WPT
 
