@@ -1,4 +1,5 @@
 import L4Factoidal.XPath4.Atomic
+import L4Factoidal.JS.Str
 
 /-!
 # L4Factoidal.JS.Lexer — ECMAScript tokens (§12)
@@ -86,8 +87,9 @@ def hex4 (cs : Array Char) (i : Nat) : Option Nat := do
   let c ← hexVal (charAt cs (i+2)); let d ← hexVal (charAt cs (i+3))
   pure (((a * 16 + b) * 16 + c) * 16 + d)
 
-def charOfCode (n : Nat) : Char :=
-  if n ≥ 0xD800 && n ≤ 0xDFFF then Char.ofNat 0xFFFD else Char.ofNat n
+/-- The string of one code point of an escape: a surrogate is a lone code unit
+(`Str.ofCodePoint`, §6.1.4), not U+FFFD. -/
+def codeStr (n : Nat) : String := Str.ofCodePoint n
 
 /-- The escape sequence at `i` (a backslash) of a string or template literal
 (§12.9.4.1, §12.9.6): its value and the index after it. In a template, legacy
@@ -114,7 +116,7 @@ def escapeAt (cs : Array Char) (i : Nat) (tmpl : Bool) : Except String (String �
       if charAt cs j != '}' || j == i + 3 then .error "SyntaxError: invalid Unicode escape" else
       let v := digitsVal cs 16 cs.size (i + 3) j 0
       if v > 0x10FFFF then .error "SyntaxError: undefined Unicode code-point"
-      else .ok (String.singleton (charOfCode v), j + 1)
+      else .ok (codeStr v, j + 1)
     else
       match hex4 cs (i + 2) with
       | none => .error "SyntaxError: invalid Unicode escape"
@@ -122,11 +124,10 @@ def escapeAt (cs : Array Char) (i : Nat) (tmpl : Bool) : Except String (String �
         if hi ≥ 0xD800 && hi ≤ 0xDBFF && charAt cs (i + 6) == '\\' && charAt cs (i + 7) == 'u' then
           match hex4 cs (i + 8) with
           | some lo =>
-            if lo ≥ 0xDC00 && lo ≤ 0xDFFF then
-              .ok (String.singleton (Char.ofNat (0x10000 + (hi - 0xD800) * 0x400 + (lo - 0xDC00))), i + 12)
-            else .ok (String.singleton (charOfCode hi), i + 6)
-          | none => .ok (String.singleton (charOfCode hi), i + 6)
-        else .ok (String.singleton (charOfCode hi), i + 6)
+            if lo ≥ 0xDC00 && lo ≤ 0xDFFF then .ok (Str.ofUnits [hi, lo], i + 12)
+            else .ok (codeStr hi, i + 6)
+          | none => .ok (codeStr hi, i + 6)
+        else .ok (codeStr hi, i + 6)
   | c' =>
     if c' == '0' && !(charAt cs (i + 2)).isDigit then one (Char.ofNat 0)
     else if c'.isDigit && tmpl then .error "SyntaxError: octal escape sequences are not allowed in template literals"
@@ -146,9 +147,9 @@ def scanStr (cs : Array Char) (q : Char) : Nat → Nat → String → Except Str
   | fuel + 1, i, acc =>
     if i ≥ cs.size then .error "SyntaxError: unterminated string literal" else
     let c := cs[i]!
-    if c == q then .ok (acc, i + 1)
+    if c == q then .ok (Str.canonical acc, i + 1)
     else if c == '\n' || c == '\r' then .error "SyntaxError: unterminated string literal"
-    else if c != '\\' then scanStr cs q fuel (i + 1) (acc.push c)
+    else if c != '\\' then scanStr cs q fuel (i + 1) (if Str.isLoneChar c then acc ++ Str.ofHost (String.singleton c) else acc.push c)
     else match escapeAt cs i false with
       | .error e => .error e
       | .ok (t, j) => scanStr cs q fuel j (acc ++ t)
@@ -168,12 +169,12 @@ def scanTmpl (cs : Array Char) : Nat → Nat → String → String → Tmpl → 
   | fuel + 1, i, cooked, raw, t =>
     if i ≥ cs.size then .error "SyntaxError: unterminated template literal" else
     let c := cs[i]!
-    if c == '`' then .ok ({ t with cooked := t.cooked.push cooked, raw := t.raw.push raw }, i + 1)
+    if c == '`' then .ok ({ t with cooked := t.cooked.push (Str.canonical cooked), raw := t.raw.push (Str.ofHost raw) }, i + 1)
     else if c == '$' && charAt cs (i + 1) == '{' then
       match matchBrace cs fuel (i + 2) 1 with
       | .error e => .error e
       | .ok j =>
-        let t := { t with cooked := t.cooked.push cooked, raw := t.raw.push raw,
+        let t := { t with cooked := t.cooked.push (Str.canonical cooked), raw := t.raw.push (Str.ofHost raw),
                           subs := t.subs.push (slice cs (i + 2) j) }
         scanTmpl cs fuel (j + 1) "" "" t
     else if c == '\\' then
@@ -183,6 +184,8 @@ def scanTmpl (cs : Array Char) : Nat → Nat → String → String → Tmpl → 
     else if c == '\r' then
       let j := if charAt cs (i + 1) == '\n' then i + 2 else i + 1
       scanTmpl cs fuel j (cooked.push '\n') (raw.push '\n') t
+    else if Str.isLoneChar c then
+      scanTmpl cs fuel (i + 1) (cooked ++ Str.ofHost (String.singleton c)) (raw.push c) t
     else scanTmpl cs fuel (i + 1) (cooked.push c) (raw.push c) t
 
 /-- The index of the `}` that closes a substitution opened before `i`. -/
@@ -242,7 +245,7 @@ def scanIdent (cs : Array Char) : Nat → Nat → String → Bool → Except Str
       | .ok (x, j) =>
         match x.toList with
         | [d] =>
-          if (if acc.isEmpty then isIdStart d else isIdPart d) && d != '\\' then
+          if (if acc.isEmpty then isIdStart d else isIdPart d) && d != '\\' && !Str.isLoneChar d then
             scanIdent cs fuel j (acc.push d) true
           else .error "SyntaxError: invalid identifier escape"
         | _ => .error "SyntaxError: invalid identifier escape"

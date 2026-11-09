@@ -2,6 +2,7 @@ import Std.Data.HashMap
 import L4Factoidal.JS.Syntax
 import L4Factoidal.JS.Number
 import L4Factoidal.JS.Regex
+import L4Factoidal.JS.Str
 
 /-!
 # L4Factoidal.JS.Value — values, objects, environments, the heap (§6, §9, §10)
@@ -126,6 +127,32 @@ inductive Native where
   | uriFn (which : Nat)
   /-- A native of the embedding host: `HeapOf.hostCall` with this number. -/
   | host (k : Nat)
+  /-- ArrayBuffer (§25.1.6) accessors: 0 `byteLength`, 1 `maxByteLength`, 2 `resizable`,
+  3 `detached`; `resize`; `transfer` and `transferToFixedLength`. -/
+  | bufferGetter (which : Nat) | bufferResize | bufferTransfer (fixed : Bool)
+  /-- SharedArrayBuffer (§25.2): the constructor, 0 `byteLength`, 1 `maxByteLength`,
+  2 `growable`; `grow`; `slice`. -/
+  | sharedCtor | sharedGetter (which : Nat) | sharedGrow | sharedSlice
+  /-- %TypedArray% (§23.2.1): the constructor (which throws), `from`, `of`, the accessors
+  (0 `buffer`, 1 `byteLength`, 2 `byteOffset`, 3 `length`, 4 `@@toStringTag`) and the
+  methods that answer a typed array or work on its bytes (`typedMethods`). -/
+  | typedArrayCtor | typedFrom | typedOf | typedGetter (which : Nat) | typedMethod (which : Nat)
+  /-- Atomics (§25.4) on integer typed arrays, without waiting (`atomicsOps`). -/
+  | atomics (op : Nat)
+  /-- `String.prototype.isWellFormed` and `toWellFormed` (§22.1.3.10, §22.1.3.32). -/
+  | stringIsWellFormed | stringToWellFormed
+  /-- Date.prototype methods (§21.4.4, `dateMethodNames`), `Date.UTC`, `Date.parse`. -/
+  | dateMethod (k : Nat) | dateUTC | dateParse
+  /-- Iterator (§27.1.3): the constructor, `Iterator.from`, the lazy methods that make an
+  iterator helper (0 `map`, 1 `filter`, 2 `take`, 3 `drop`, 4 `flatMap`), the eager ones
+  (0 `reduce`, 1 `toArray`, 2 `forEach`, 3 `some`, 4 `every`, 5 `find`), and `next` and
+  `return` of a helper (and of the wrapper of `Iterator.from`). -/
+  | iteratorCtor | iteratorFrom | iterLazy (k : Nat) | iterEager (k : Nat) | helperNext | helperReturn
+  /-- `Promise.race` (0) and `Promise.allSettled` (1) (§27.2.4.5, §27.2.4.2), and the
+  function that records one settled element of `allSettled` (0 fulfilled, 1 rejected). -/
+  | promiseCombinator (k : Nat) | promiseSettleElement (rejected : Nat)
+  /-- `Number.prototype.toExponential` and `toPrecision` (§21.1.3.2, §21.1.3.5). -/
+  | numberToExponential | numberToPrecision
   deriving BEq, Repr, Inhabited
 
 /-- What a running function sees. -/
@@ -221,7 +248,11 @@ def VKey.of : Value → VKey
 /-- The typed array element types: name, bytes per element. -/
 def typedNames : Array (String × Nat) :=
   #[("Int8Array", 1), ("Uint8Array", 1), ("Uint8ClampedArray", 1), ("Int16Array", 2), ("Uint16Array", 2),
-    ("Int32Array", 4), ("Uint32Array", 4), ("Float32Array", 4), ("Float64Array", 8)]
+    ("Int32Array", 4), ("Uint32Array", 4), ("Float32Array", 4), ("Float64Array", 8),
+    ("BigInt64Array", 8), ("BigUint64Array", 8)]
+
+/-- The element types whose values are BigInts (§23.2: `BigInt64Array`, `BigUint64Array`). -/
+def typedIsBig (ty : Nat) : Bool := ty == 9 || ty == 10
 
 inductive Kind where
   | ordinary
@@ -319,6 +350,12 @@ structure Realm where
   typedProtos : Array Nat := #[]
   dataViewProto : Nat := 0
   dateProto : Nat := 0
+  sharedBufferProto : Nat := 0
+  /-- %TypedArray% (§23.2.1), the constructor every typed array constructor inherits. -/
+  typedArrayCtor : Nat := 0
+  /-- %IteratorHelperPrototype% and %WrapForValidIteratorPrototype% (§27.1.2.1, §27.1.3.2.1.1). -/
+  iterHelperProto : Nat := 0
+  wrapIterProto : Nat := 0
   deriving Inhabited
 
 /-- The error constructors, by their index in `Realm.errorProtos`. -/
@@ -481,10 +518,10 @@ def Obj.getOwn (o : Obj) (key : String) : Option PropV :=
       | some i => if h : i < es.size then some (.data es[i] true true true) else o.props.get? key
       | none => o.props.get? key
   | .prim (.str s) =>
-    if key == "length" then some (.data (.num (Float.ofNat (utf16Length s))) false false false)
+    if key == "length" then some (.data (.num (Float.ofNat (Str.jsLength s))) false false false)
     else match arrayIndex? key with
-      | some i => match s.toList[i]? with
-        | some c => some (.data (.str (String.singleton c)) false true false)
+      | some i => match Str.unitStrAt? s i with
+        | some c => some (.data (.str c) false true false)
         | none => o.props.get? key
       | none => o.props.get? key
   | _ => o.props.get? key
@@ -493,7 +530,7 @@ def Obj.getOwn (o : Obj) (key : String) : Option PropV :=
 def Obj.ownKeys (o : Obj) : Array String :=
   let idx := match o.kind with
     | .array es => (List.range es.size).toArray.map toString
-    | .prim (.str s) => (List.range s.length).toArray.map toString
+    | .prim (.str s) => (List.range (Str.jsLength s)).toArray.map toString
     | _ => #[]
   let ks := o.keys.filter fun k => o.props.contains k && !isPrivKey k
   let (ints, rest) := ks.partition fun k => (arrayIndex? k).isSome

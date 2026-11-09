@@ -90,4 +90,23 @@ def outWith (steps : Nat) (src : String) : List String :=
 #guard outWith 2000000 "try { 'x'.repeat(2 ** 30) } catch (e) { print(e.name) }" == ["RangeError"]
 #guard outWith 1000000 "var a = new Array(4000000000)" == ["halted step budget exhausted"]
 
+/-! Strings are UTF-16 code units (§6.1.4; `JS/Str.lean`). -/
+#guard out "var s = 'a\\u{1F600}b'; print(s.length, s.charCodeAt(1), s.charCodeAt(2), s.codePointAt(1), [...s].length)" ==
+  ["4 55357 56832 128512 3"]
+#guard out "print('\\uD800'.length, '\\uD800'.charCodeAt(0), String.fromCharCode(0xD83D, 0xDE00) === '\\u{1F600}')" ==
+  ["1 55296 true"]
+#guard out "var s = '\\u{1F600}'; print(s.slice(0, 1) + s.slice(1) === s, JSON.stringify('\\uD800'), '\\uD800'.isWellFormed())" ==
+  ["true \"\\ud800\" false"]
+
+/-! Typed arrays, ArrayBuffer, SharedArrayBuffer, Atomics. -/
+#guard out "var TA = Object.getPrototypeOf(Int8Array); print(TA.name, Int16Array.of(1, 2).join(), new Uint8Array([1, 2, 3, 4, 5]).copyWithin(0, 3).join())" ==
+  ["TypedArray 1,2 4,5,3,4,5"]
+#guard out "var b = new ArrayBuffer(4, { maxByteLength: 8 }); b.resize(8); var c = b.transfer(); print(b.byteLength, b.detached, c.byteLength)" ==
+  ["0 true 8"]
+#guard out "var a = new Int32Array(new SharedArrayBuffer(8)); Atomics.store(a, 0, 5); print(Atomics.add(a, 0, 2), Atomics.load(a, 0), new BigInt64Array([-1n])[0])" ==
+  ["5 7 -1"]
+
+#guard out "var d = new Date(Date.UTC(2026, 10, 9, 3, 4, 5)); print(d.toISOString(), d.getMonth(), d.getDay(), Date.parse(d.toString()) === d.getTime())" ==
+  ["2026-11-09T03:04:05.000Z 10 1 true"]
+
 end L4Factoidal.JS.Tests

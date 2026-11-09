@@ -1,5 +1,7 @@
 import L4Factoidal.JS.Value
 import L4Factoidal.JS.Parser
+import L4Factoidal.JS.Date
+import L4Factoidal.JS.NumFmt
 import L4Factoidal.JSON.Parser
 
 /-!
@@ -123,6 +125,7 @@ def isConstructor (v : Value) : M Bool := do
         | .objectCtor | .functionCtor | .arrayCtor | .stringCtor | .numberCtor | .booleanCtor
         | .errorCtor _ | .symbolCtor | .promiseCtor | .mapCtor _ | .regexpCtor | .proxyCtor
         | .bufferCtor | .typedCtor _ | .dateCtor | .dataViewCtor => true
+        | .sharedCtor | .typedArrayCtor | .iteratorCtor => true
         | _ => false)
     | .bound .. => pure true
     | _ => pure false
@@ -249,6 +252,8 @@ def typedRead (ty : Nat) (bytes : ByteArray) (at_ : Nat) : Value :=
   | 5 => let x := u 4; .num (Float.ofInt (if x ≥ 2147483648 then (x : Int) - 4294967296 else x))
   | 6 => .num (Float.ofNat (u 4))
   | 7 => .num (Float32.ofBits (u 4).toUInt32).toFloat
+  | 9 => let x := u 8; .big (if x ≥ 2 ^ 63 then (x : Int) - 2 ^ 64 else x)
+  | 10 => .big (u 8)
   | _ => .num (Float.ofBits (u 8).toUInt64)
 
 /-- ToUint8Clamp (§7.1.12): round half to even, clamped to 0..255. -/
@@ -298,7 +303,7 @@ def enumKeys (v : Value) : M (Array String) := do
     | _ + 1, _, _, acc => acc
   match v with
   | .obj _ => pure (go 1000 v #[] #[])
-  | .str s => pure ((List.range s.length).toArray.map toString)
+  | .str s => pure ((List.range (Str.jsLength s)).toArray.map toString)
   | _ => pure #[]
 
 def numV (x : Float) : Value := .num x
@@ -322,9 +327,12 @@ def relIndex (x : Float) (len : Nat) : Nat :=
     if k < 0 then 0 else k.toUInt64.toNat
   else if r > len.toFloat then len else r.toUInt64.toNat
 
-def charsOf (s : String) : Array Char := s.toList.toArray
+/-- The code units of a string, one character each (`Str.unitChars`): every string method
+indexes this, so indices are UTF-16 code unit indices (§6.1.4). -/
+def charsOf (s : String) : Array Char := Str.unitChars s
 
-def substr (s : String) (i j : Nat) : String := String.ofList ((charsOf s).extract i j).toList
+/-- Code units `i` to `j` (exclusive) of a string. -/
+def substr (s : String) (i j : Nat) : String := Str.sliceUnits s i j
 
 def indexOfFrom (s pat : String) (from_ : Nat) : Option Nat :=
   let cs := charsOf s; let ps := charsOf pat
@@ -349,7 +357,16 @@ def lastIndexOfStr (s pat : String) : Option Nat :=
 
 def splitOn (s sep : String) : Array String :=
   if sep.isEmpty then (charsOf s).map String.singleton
-  else (s.splitOn sep).toArray
+  else if Str.isBmp s && Str.isBmp sep then (s.splitOn sep).toArray
+  else
+    -- a separator may match half of a surrogate pair: split on the code units
+    let n := Str.jsLength sep
+    let rec go : Nat → Nat → Array String → Array String
+      | 0, last, acc => acc.push (substr s last (Str.jsLength s))
+      | f + 1, last, acc => match indexOfFrom s sep last with
+        | some p => go f (p + n) (acc.push (substr s last p))
+        | none => acc.push (substr s last (Str.jsLength s))
+    go (Str.jsLength s + 1) 0 #[]
 
 /-- `parseInt` (§19.2.5). -/
 def parseIntStr (s : String) (radix : Int) : Float :=
@@ -425,7 +442,7 @@ where
   go (from_ : Nat) : Nat → Array Nat → List Nat
     | 0, acc => acc.toList
     | f + 1, acc => match indexOfFrom s pat from_ with
-      | some p => go (p + (if pat.isEmpty then 1 else pat.length)) f (acc.push p)
+      | some p => go (p + (if pat.isEmpty then 1 else Str.jsLength pat)) f (acc.push p)
       | none => acc.toList
 
 /-! ## Lifting `yield` and `await` out of expressions
@@ -626,19 +643,112 @@ def elemSize (ty : Nat) : Nat := (typedNames[ty]?.map (·.2)).getD 1
 
 /-- A new ArrayBuffer with these bytes. -/
 def newBuffer (bytes : ByteArray) : M Value := do
+  -- `byteLength` is an accessor of ArrayBuffer.prototype (§25.1.6.2)
   let id ← alloc { proto := .obj (← realm).bufferProto, kind := .buffer bytes }
-  defineOwn id "byteLength" (.data (.num (Float.ofNat bytes.size)) false false true)
   pure (.obj id)
 
 /-- A new typed array of type `ty` over the ArrayBuffer object `buf`. -/
 def newTyped (ty buf off len : Nat) : M Value := do
   let r ← realm
+  -- `length`, `byteLength`, `byteOffset` and `buffer` are accessors of
+  -- %TypedArray%.prototype (§23.2.3)
   let id ← alloc { proto := .obj (r.typedProtos.getD ty r.objectProto), kind := .typed ty buf off len }
-  defineOwn id "length" (.data (.num (Float.ofNat len)) false false true)
-  defineOwn id "byteLength" (.data (.num (Float.ofNat (len * elemSize ty))) false false true)
-  defineOwn id "byteOffset" (.data (.num (Float.ofNat off)) false false true)
-  defineOwn id "buffer" (.data (.obj buf) false false true)
   pure (.obj id)
+
+/-- The 8 bytes of a BigInt stored as `BigInt64` or `BigUint64` (§25.1.3.17: modulo 2^64). -/
+def bigBytes (i : Int) : ByteArray :=
+  let u := (i.emod (2 ^ 64)).toNat
+  ByteArray.mk ((List.range 8).toArray.map fun k => (u / 2 ^ (8 * k) % 256).toUInt8)
+
+/-- Write a value (a Number, or a BigInt for the BigInt types) into element `i` of a typed
+array. -/
+def typedWriteV (ty buf off i : Nat) (v : Value) : M Unit :=
+  let bs := match v with
+    | .big b => bigBytes b
+    | .num x => typedBytes ty x
+    | _ => typedBytes ty nan
+  modifyObj buf fun bo => match bo.kind with
+    | .buffer bytes =>
+      let at_ := off + i * elemSize ty
+      if at_ + bs.size ≤ bytes.size then
+        let bo := { bo with kind := .buffer ByteArray.empty }
+        { bo with kind := .buffer (bs.copySlice 0 bytes at_ bs.size) }
+      else bo
+    | _ => bo
+
+/-- The hidden slots of an ArrayBuffer: its maximum length (resizable), whether it is
+detached, whether it is a SharedArrayBuffer. -/
+def bufMaxKey : String := privKey "%ArrayBufferMaxByteLength"
+def bufDetachedKey : String := privKey "%ArrayBufferDetached"
+def bufSharedKey : String := privKey "%ArrayBufferShared"
+
+def hiddenNum (o : Obj) (k : String) : Option Nat :=
+  match o.props.get? k with
+  | some (.data (.num x) ..) => some x.toUInt64.toNat
+  | _ => none
+
+def hiddenFlag (o : Obj) (k : String) : Bool :=
+  match o.props.get? k with
+  | some (.data (.bool b) ..) => b
+  | _ => false
+
+/-- IsDetachedBuffer (§25.1.3.4). -/
+def isDetached (o : Obj) : Bool := hiddenFlag o bufDetachedKey
+
+/-- The element count of a typed array as its buffer now is (§10.4.5.12
+TypedArrayLength): 0 when the buffer is detached or too small for the view. -/
+def liveLen (ty buf off len : Nat) : M Nat := do
+  let bo ← getObj buf
+  pure (if isDetached bo || off + len * elemSize ty > (bufferBytes bo).size then 0 else len)
+
+/-- The hidden slots of an iterator helper (§27.1.2.1): the underlying iterator and its
+`next`, the kind (`Native.iterLazy`, 5 the wrapper of `Iterator.from`), the callback or
+limit, the count, the inner iterator of `flatMap`, done and running. -/
+def helperIt : String := privKey "%HelperIterated"
+def helperNextKey : String := privKey "%HelperNext"
+def helperKind : String := privKey "%HelperKind"
+def helperFn : String := privKey "%HelperFn"
+def helperCount : String := privKey "%HelperCount"
+def helperInner : String := privKey "%HelperInner"
+def helperDone : String := privKey "%HelperDone"
+def helperRunning : String := privKey "%HelperRunning"
+
+/-- The hidden slot of a Date object (`[[DateValue]]` is its `.prim (.num t)`). -/
+def dateKey : String := privKey "%DateValue"
+
+/-- The time value of a Date object. -/
+def thisDate? (v : Value) : M (Option Float) := do
+  match v with
+  | .obj oid =>
+    let o ← getObj oid
+    match o.kind with
+    | .prim (.num t) => pure (if hiddenFlag o dateKey then some t else none)
+    | _ => pure none
+  | _ => pure none
+
+/-- The time of year, month, and optional date, hours, minutes, seconds, ms (Numbers), as
+the Date constructor and Date.UTC take them: a year 0 to 99 is 1900 to 1999. -/
+def dateOfParts (xs : Array Float) : Float :=
+  let y := xs.getD 0 (0.0 / 0.0)
+  let yi := toIntegerOrInf y
+  let yr := if !y.isNaN && 0 ≤ yi && yi ≤ 99 then 1900 + yi else y
+  Date.makeDate (Date.makeDay yr (xs.getD 1 0) (xs.getD 2 1))
+    (Date.makeTime (xs.getD 3 0) (xs.getD 4 0) (xs.getD 5 0) (xs.getD 6 0))
+
+/-- The methods of Date.prototype (`Native.dateMethod`): name, number, length. Local time
+is UTC, so `getHours` and `getUTCHours` are one method. -/
+def dateMethodNames : List (String × Nat × Nat) :=
+  [("getDate", 0, 0), ("getDay", 1, 0), ("getFullYear", 2, 0), ("getHours", 3, 0), ("getMilliseconds", 4, 0),
+   ("getMinutes", 5, 0), ("getMonth", 6, 0), ("getSeconds", 7, 0), ("getTimezoneOffset", 8, 0), ("getYear", 9, 0),
+   ("getUTCDate", 0, 0), ("getUTCDay", 1, 0), ("getUTCFullYear", 2, 0), ("getUTCHours", 3, 0),
+   ("getUTCMilliseconds", 4, 0), ("getUTCMinutes", 5, 0), ("getUTCMonth", 6, 0), ("getUTCSeconds", 7, 0),
+   ("setDate", 20, 1), ("setFullYear", 21, 3), ("setHours", 22, 4), ("setMilliseconds", 23, 1),
+   ("setMinutes", 24, 3), ("setMonth", 25, 2), ("setSeconds", 26, 2), ("setTime", 27, 1), ("setYear", 28, 1),
+   ("setUTCDate", 20, 1), ("setUTCFullYear", 21, 3), ("setUTCHours", 22, 4), ("setUTCMilliseconds", 23, 1),
+   ("setUTCMinutes", 24, 3), ("setUTCMonth", 25, 2), ("setUTCSeconds", 26, 2),
+   ("toDateString", 30, 0), ("toISOString", 31, 0), ("toJSON", 32, 1), ("toLocaleDateString", 33, 0),
+   ("toLocaleString", 34, 0), ("toLocaleTimeString", 35, 0), ("toString", 36, 0), ("toTimeString", 37, 0),
+   ("toUTCString", 38, 0)]
 
 /-- Write a number into element `i` of a typed array. -/
 def typedWrite (ty buf off i : Nat) (x : Float) : M Unit :=
@@ -705,7 +815,7 @@ def hostNowNs : M Float := do
 def substitution (rep : String) (matched : String) (pos : Nat) (cs : Array Char)
     (caps : Array (Option String)) (names : Array (String × Nat)) : String := Id.run do
   let r := rep.toList.toArray
-  let tailAt := pos + matched.length
+  let tailAt := pos + Str.jsLength matched
   let mut out := ""
   let mut i := 0
   for _ in [0:r.size + 1] do
@@ -715,8 +825,8 @@ def substitution (rep : String) (matched : String) (pos : Nat) (cs : Array Char)
     let d := r[i+1]!
     if d == '$' then out := out.push '$'; i := i + 2
     else if d == '&' then out := out ++ matched; i := i + 2
-    else if d == '`' then out := out ++ String.ofList (cs.extract 0 pos).toList; i := i + 2
-    else if d == '\'' then out := out ++ String.ofList (cs.extract tailAt cs.size).toList; i := i + 2
+    else if d == '`' then out := out ++ Str.ofUnitChars (cs.extract 0 pos); i := i + 2
+    else if d == '\'' then out := out ++ Str.ofUnitChars (cs.extract tailAt cs.size); i := i + 2
     else if d.isDigit then
       let one := d.toNat - 48
       let two := if i + 2 < r.size && r[i+2]!.isDigit then some (one * 10 + (r[i+2]!.toNat - 48)) else none
@@ -736,9 +846,26 @@ def substitution (rep : String) (matched : String) (pos : Nat) (cs : Array Char)
         i := i + 3 + k
       | none => out := out.push '$'; i := i + 1
     else out := out.push '$'; i := i + 1
-  return out
+  return Str.canonical out
 
-set_option maxHeartbeats 2000000 in
+/-- QuoteJSONString (§25.5.2.3) for surrogates: a code unit of a surrogate that is not part
+of a pair is written as `\\uXXXX`, in lower-case hexadecimal (well-formed JSON.stringify). -/
+def jsonLone (s : String) : String :=
+  if Str.isAscii s || s.all (fun c : Char => !Str.isLoneChar c) then s else Id.run do
+    let us := (Str.units s).toArray
+    let mut out := ""
+    let mut i := 0
+    for _ in [0:us.size] do
+      if i ≥ us.size then break
+      let u := us[i]!
+      if Str.isHigh u && i + 1 < us.size && Str.isLow us[i+1]! then
+        out := out ++ Str.ofUnits [u, us[i+1]!]; i := i + 2
+      else if Str.isSurrogate u then
+        out := out ++ "\\u" ++ String.ofList ((Nat.toDigits 16 u).leftpad 4 '0'); i := i + 1
+      else out := out.push (Char.ofNat u); i := i + 1
+    return out
+
+set_option maxHeartbeats 4000000 in
 mutual
 
 /-- `[[Get]]` on any value (§7.3.2 GetV). -/
@@ -756,7 +883,7 @@ def getV : Nat → Value → String → M Value
           | none => getV n t key
         | .typed ty b off len =>
           match arrayIndex? key with
-          | some i => if i < len then pure (typedRead ty (bufferBytes (← getObj b)) (off + i * elemSize ty)) else pure .undef
+          | some i => if i < (← liveLen ty b off len) then pure (typedRead ty (bufferBytes (← getObj b)) (off + i * elemSize ty)) else pure .undef
           | none => pure .undef
         | _ =>
           if isPrivKey key then throwErr .type s!"Cannot read private member #{(key.drop 1).toString} from an object whose class did not declare it"
@@ -764,10 +891,10 @@ def getV : Nat → Value → String → M Value
       | some (.data x ..) => pure x
       | some (.acc g _ _ _) => if g.isObj then callV n g v #[] else pure .undef
     | .str s =>
-      if key == "length" then pure (.num (Float.ofNat (utf16Length s)))
+      if key == "length" then pure (.num (Float.ofNat (Str.jsLength s)))
       else match arrayIndex? key with
-        | some i => match s.toList[i]? with
-          | some c => pure (.str (String.singleton c))
+        | some i => match Str.unitStrAt? s i with
+          | some c => pure (.str c)
           | none => getProto n (← realm).stringProto key v
         | none => getProto n (← realm).stringProto key v
     | .num _ => getProto n (← realm).numberProto key v
@@ -808,9 +935,9 @@ def hasProp : Nat → Nat → String → M Bool
       match ← proxyTrap n hnd "has" with
       | some f => pure (toBool (← callV n f hnd #[t, keyValue k]))
       | none => match t with | .obj tid => hasProp n tid k | _ => pure false
-    | .typed _ _ _ len =>
+    | .typed ty b off len =>
       match arrayIndex? k with
-      | some i => pure (i < len)
+      | some i => pure (i < (← liveLen ty b off len))
       | none => pure ((← get).findProp id k 1000).isSome
     | _ => pure ((← get).findProp id k 1000).isSome
 termination_by structural n _ _ => n
@@ -835,7 +962,7 @@ def ownKeysOf : Nat → Nat → M (Array String)
       match ← proxyTrap n hnd "ownKeys" with
       | some f => (← elemsOf n (← callV n f hnd #[t])).mapM (toKey n)
       | none => match t with | .obj tid => ownKeysOf n tid | _ => pure #[]
-    | .typed _ _ _ len => pure ((List.range len).toArray.map toString ++ o.ownKeys)
+    | .typed ty b off len => pure ((List.range (← liveLen ty b off len)).toArray.map toString ++ o.ownKeys)
     | _ => pure o.ownKeys
 termination_by structural n _ => n
 
@@ -860,7 +987,7 @@ def ownDesc : Nat → Nat → String → M (Option PropV)
       | none => match t with | .obj tid => ownDesc n tid k | _ => pure none
     | .typed ty b off len =>
       match arrayIndex? k with
-      | some i => if i < len then pure (some (.data (typedRead ty (bufferBytes (← getObj b)) (off + i * elemSize ty)) true true true)) else pure none
+      | some i => if i < (← liveLen ty b off len) then pure (some (.data (typedRead ty (bufferBytes (← getObj b)) (off + i * elemSize ty)) true true true)) else pure none
       | none => pure (o.getOwn k)
     | _ => pure (o.getOwn k)
 termination_by structural n _ _ => n
@@ -882,8 +1009,9 @@ def putV : Nat → Value → String → Value → Bool → M Unit
         return
       | .typed ty b off len =>
         if let some i := arrayIndex? key then
-          let x ← toNum n val
-          if i < len then typedWrite ty b off i x
+          -- §10.4.5.16 TypedArraySetElement: the value is converted first
+          let x ← typedConv n ty val
+          if i < (← liveLen ty b off len) then typedWriteV ty b off i x
           return
       | _ => pure ()
       match o.kind, key with
@@ -968,6 +1096,29 @@ def toNum : Nat → Value → M Float
     | .big _ => throwErr .type "Cannot convert a BigInt value to a number"
     | .obj _ => toNum n (← toPrim n v "number")
 termination_by structural n _ => n
+
+/-- ToBigInt (§7.1.13). -/
+def toBigInt : Nat → Value → M Int
+  | 0, _ => throw (.halt "fuel")
+  | n + 1, v => do
+    match ← toPrim n v "number" with
+    | .big i => pure i
+    | .bool b => pure (if b then 1 else 0)
+    | .str t => match strToBigInt t with
+      | some i => pure i
+      | none => throwErr .syntax s!"Cannot convert {t} to a BigInt"
+    | .num _ => throwErr .type "Cannot convert a Number to a BigInt"
+    | .sym _ => throwErr .type "Cannot convert a Symbol value to a BigInt"
+    | _ => throwErr .type "Cannot convert undefined or null to a BigInt"
+termination_by structural n _ => n
+
+/-- The value stored into a typed array of type `ty`: ToBigInt for the BigInt types,
+else ToNumber (§10.4.5.16). -/
+def typedConv : Nat → Nat → Value → M Value
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, ty, v => do
+    if typedIsBig ty then pure (.big (← toBigInt n v)) else pure (.num (← toNum n v))
+termination_by structural n _ _ => n
 
 /-- ToString (§7.1.17). -/
 def toStr : Nat → Value → M String
@@ -1123,12 +1274,12 @@ def binop : Nat → BinOp → Value → Value → M Value
     | .add =>
       match a, b with
       | .num x, .num y => pure (.num (x + y))
-      | .str x, .str y => pure (.str (x ++ y))
+      | .str x, .str y => pure (.str (Str.jsAppend x y))
       | _, _ =>
         let pa ← toPrim n a "default"
         let pb ← toPrim n b "default"
         match pa, pb with
-        | .str _, _ | _, .str _ => pure (.str ((← toStr n pa) ++ (← toStr n pb)))
+        | .str _, _ | _, .str _ => pure (.str (Str.jsAppend (← toStr n pa) (← toStr n pb)))
         | .big x, .big y => pure (.big (x + y))
         | .big _, _ | _, .big _ => throwErr .type "Cannot mix BigInt and other types, use explicit conversions"
         | _, _ => pure (.num ((← toNum n pa) + (← toNum n pb)))
@@ -1552,7 +1703,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
         let str ← match v with
           | .sym _ => throwErr .type "Cannot convert a Symbol value to a string"
           | _ => toStr n v
-        out := out ++ str ++ cooked.getD (i + 1) ""
+        out := Str.jsAppend (Str.jsAppend out str) (cooked.getD (i + 1) "")
         i := i + 1
       pure (.str out)
     | .tagged tag cooked raw subs =>
@@ -2834,7 +2985,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
     match id with
     | .print =>
       let parts ← args.toList.mapM (toStr n)
-      modify fun h => { h with out := h.out.push (" ".intercalate parts) }
+      modify fun h => { h with out := h.out.push (Str.toHost (" ".intercalate parts)) }
       pure .undef
     | .isNaN => pure (.bool (← toNum n a0).isNaN)
     | .isFinite => pure (.bool (← toNum n a0).isFinite)
@@ -3102,7 +3253,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let parts ← es.toList.mapM fun v => match v with
         | .undef | .null => pure ""
         | v => toStr n v
-      pure (.str (sep.intercalate parts))
+      pure (.str (Str.canonical (sep.intercalate parts)))
     | .arrayIndexOf | .arrayIncludes =>
       let es ← elemsOf n thisV
       let start := relIndex (← toNum n a1) es.size
@@ -3171,8 +3322,8 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | some _ => pure (.obj (← alloc { proto := .obj r.stringProto, kind := .prim (.str s) }))
       | none => pure (.str s)
     | .stringFromCharCode =>
-      let cs ← args.toList.mapM fun a => do pure (charOfCode ((toUint32 (← toNum n a)) % 65536))
-      pure (.str (String.ofList cs))
+      let us ← args.toList.mapM fun a => do pure ((toUint32 (← toNum n a)) % 65536)
+      pure (.str (Str.ofCodeUnits us))
     | .stringToString =>
       match ← thisPrim thisV with
       | .str s => pure (.str s)
@@ -3202,15 +3353,10 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | _ =>
         let d := toIntegerOrInf (← toNum n a0)
         if d < 0 || d > 100 then throwErr .range "toFixed() digits argument must be between 0 and 100"
-        if x.abs ≥ 1e21 || x.isNaN then pure (.str (numToString x)) else
-        let k := d.toUInt64.toNat
-        let scaled := x.abs * Float.ofNat (10 ^ k)
-        let m := (scaled + 0.5).floor
-        let ms := toString (truncInt m)
-        let ms := if ms.length ≤ k then String.ofList (List.replicate (k + 1 - ms.length) '0') ++ ms else ms
-        let body := if k == 0 then ms
-          else String.ofList (ms.toList.take (ms.length - k)) ++ "." ++ String.ofList (ms.toList.drop (ms.length - k))
-        pure (.str ((if x < 0 && m != 0 then "-" else "") ++ body))
+        if x.abs ≥ 1e21 || !x.isFinite then pure (.str (numToString x)) else
+        -- exact digits (JS/NumFmt.lean)
+        let (neg, num, den) := NumFmt.ofFloat x
+        pure (.str (NumFmt.fixed neg num den d.toUInt64.toNat))
     | .numberIsInteger => pure (.bool (match a0 with | .num x => isIntegral x | _ => false))
     | .booleanCtor =>
       let b := toBool a0
@@ -3310,8 +3456,11 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | .str s =>
           let cs := charsOf s
           if idx < cs.size then
-            modifyObj id fun o => { o with kind := .iter target (idx + 1) mode }
-            result (.str (String.singleton cs[idx]!)) false
+            -- a surrogate pair is one code point (§22.1.5.1 %StringIteratorPrototype%.next)
+            let pair := idx + 1 < cs.size && Str.isHigh (Str.charUnit cs[idx]!) && Str.isLow (Str.charUnit cs[idx + 1]!)
+            let w := if pair then 2 else 1
+            modifyObj id fun o => { o with kind := .iter target (idx + w) mode }
+            result (.str (Str.ofUnitChars (cs.extract idx (idx + w)))) false
           else
             modifyObj id fun o => { o with kind := .iter .undef idx mode }
             result .undef true
@@ -3477,6 +3626,41 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | some a => throw a
       | none => pure ()
       pure (.obj res)
+    | .promiseCombinator k =>
+      let res ← newPromise
+      let x ← tryCatch (do
+          let it ← getIterator n a0
+          let items ← iterToArray n it #[]
+          let vals ← newArray (Array.replicate items.size .undef)
+          let counter ← newObject
+          setHidden counter "n" (.num (Float.ofNat items.size + 1))
+          for i in [0:items.size] do
+            let p ← promiseResolve n items[i]!
+            if k == 0 then
+              let rs ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj res] }
+              let rj ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseRejectFn) .undef #[.obj res] }
+              performThen n p (.obj rs) (.obj rj) .undef
+            else
+              let elArgs : Array Value := #[.obj res, vals, .obj counter, .num (Float.ofNat i)]
+              let onF ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.promiseSettleElement 0)) .undef elArgs }
+              let onR ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.promiseSettleElement 1)) .undef elArgs }
+              performThen n p (.obj onF) (.obj onR) .undef
+          if k != 0 then
+            let _ ← callNative n .promiseAllElement .undef #[.obj res, vals, .obj counter, .num (-1), .undef] none
+          pure none)
+        (fun a => pure (some a))
+      match x with
+      | some (.throw e) => rejectPromise n res e
+      | some a => throw a
+      | none => pure ()
+      pure (.obj res)
+    | .promiseSettleElement rejected =>
+      -- args: result promise, values, counter, index, value: the value becomes
+      -- { status, value } or { status, reason } (§27.2.4.2.2, §27.2.4.2.3)
+      let o ← newObject
+      defineOwn o "status" (.data (.str (if rejected == 1 then "rejected" else "fulfilled")) true true true)
+      defineOwn o (if rejected == 1 then "reason" else "value") (.data (argD args 4) true true true)
+      callNative n .promiseAllElement .undef #[a0, a1, argD args 2, argD args 3, .obj o] none
     | .promiseAllElement =>
       -- args: result promise, values, counter, index, value
       let idx := match argD args 3 with | .num i => i | _ => -1
@@ -3622,6 +3806,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         callV n a0 a1 argv
       | 9 =>
         if !(← isConstructor a0) then throwErr .type "Reflect.construct target is not a constructor"
+        if args.size > 2 && !(← isConstructor (argD args 2)) then throwErr .type "Reflect.construct newTarget is not a constructor"
         let argv ← elemsOf n a1
         construct n a0 argv (if args.size > 2 then argD args 2 else a0)
       | 10 => needObj; callNative n .objectGetOwnPropertyDescriptor .undef args none
@@ -3700,19 +3885,28 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let s ← toStr n (← thisPrim thisV)
       let len := toIntegerOrInf (← toNum n a0)
       let fill ← match a1 with | .undef => pure " " | v => toStr n v
-      let cur := s.length
+      let cur := Str.jsLength s
       if len ≤ Float.ofNat cur || fill.isEmpty then pure (.str s) else
       let need := len.toUInt64.toNat - cur
       if need > maxStringBytes then throwErr .range "Invalid string length"
       charge (need / 64)
-      let reps := String.join (List.replicate (need / fill.length + 1) fill)
-      let pad := String.ofList (reps.toList.take need)
-      pure (.str (if id_ == .stringPadStart then pad ++ s else s ++ pad))
+      let reps := String.join (List.replicate (need / Str.jsLength fill + 1) fill)
+      let pad := substr reps 0 need
+      pure (.str (if id_ == .stringPadStart then Str.jsAppend pad s else Str.jsAppend s pad))
     | .stringCodePointAt =>
       let cs := charsOf (← toStr n (← thisPrim thisV))
       let i := toIntegerOrInf (← toNum n a0)
-      if i < 0 || i ≥ Float.ofNat cs.size then pure .undef else pure (.num (Float.ofNat cs[i.toUInt64.toNat]!.toNat))
+      if i < 0 || i ≥ Float.ofNat cs.size then pure .undef else
+      -- §11.1.4 CodePointAt: a high surrogate followed by a low one is their code point
+      let k := i.toUInt64.toNat
+      let u := Str.charUnit cs[k]!
+      let l := Str.charUnit (cs.getD (k + 1) ' ')
+      pure (.num (Float.ofNat (if Str.isHigh u && k + 1 < cs.size && Str.isLow l
+        then 0x10000 + (u - 0xD800) * 0x400 + (l - 0xDC00) else u)))
     | .stringTrimStart | .stringTrimEnd =>
+      match ← thisPrim thisV with
+      | .undef | .null => throwErr .type "String.prototype.trimStart/trimEnd called on null or undefined"
+      | _ => pure ()
       let s ← toStr n (← thisPrim thisV)
       let cs := s.toList
       pure (.str (if id_ == .stringTrimStart then String.ofList (cs.dropWhile isStrWs)
@@ -3725,7 +3919,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let replStr ← if fnRepl then pure "" else toStr n a1
       let positions : List Nat :=
         if id_ == .stringReplaceAll then
-          allPositions s pat 0 (s.length + 2)
+          allPositions s pat 0 (Str.jsLength s + 2)
         else match indexOfFrom s pat 0 with | some p => [p] | none => []
       let mut out := ""
       let mut last := 0
@@ -3734,14 +3928,14 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         let r ← if fnRepl then toStr n (← callV n a1 .undef #[.str pat, .num (Float.ofNat p), .str s])
           else pure ((replStr.replace "$&" pat).replace "$$" "$")
         out := out ++ r
-        last := p + pat.length
-      pure (.str (out ++ substr s last s.length))
+        last := p + Str.jsLength pat
+      pure (.str (Str.canonical (out ++ substr s last (Str.jsLength s))))
     | .stringFromCodePoint =>
       let cs ← args.toList.mapM fun a => do
         let x ← toNum n a
         if !isIntegral x || x < 0 || x > 1114111 then throwErr .range s!"Invalid code point {numToString x}"
-        pure (charOfCode x.toUInt64.toNat)
-      pure (.str (String.ofList cs))
+        pure (Str.ofCodePoint x.toUInt64.toNat)
+      pure (.str (Str.canonical (String.join cs)))
     | .numberIsFinite => pure (.bool (match a0 with | .num x => x.isFinite | _ => false))
     | .numberIsNaN => pure (.bool (match a0 with | .num x => x.isNaN | _ => false))
     | .numberIsSafeInteger => pure (.bool (match a0 with | .num x => isIntegral x && x.abs ≤ 9007199254740991.0 | _ => false))
@@ -3852,6 +4046,12 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
     | .dataViewCtor | .dataViewGet _ | .dataViewSet _
     | .dateGetTime | .perfNow | .host _ | .uriFn _ =>
       extraNative n id thisV args newTarget
+    | .bufferGetter _ | .bufferResize | .bufferTransfer _ | .sharedCtor | .sharedGetter _ | .sharedGrow
+    | .sharedSlice | .typedArrayCtor | .typedFrom | .typedOf | .typedGetter _ | .typedMethod _ | .atomics _
+    | .stringIsWellFormed | .stringToWellFormed | .dateMethod _ | .dateUTC | .dateParse
+    | .iteratorCtor | .iteratorFrom | .iterLazy _ | .iterEager _ | .helperNext | .helperReturn
+    | .numberToExponential | .numberToPrecision =>
+      moreNative n id thisV args newTarget
     | _ =>
       -- string methods and Math
       stringOrMath n id thisV args
@@ -4018,7 +4218,8 @@ def jsonStr : Nat → Value → Nat → M Value
       "\"" ++ s.foldl (fun acc c => acc ++ match c with
         | '"' => "\\\"" | '\\' => "\\\\" | '\n' => "\\n" | '\r' => "\\r" | '\t' => "\\t"
         | '\x08' => "\\b" | '\x0c' => "\\f"
-        | c => if c.toNat < 32 then "\\u" ++ String.ofList ((Nat.toDigits 16 c.toNat).leftpad 4 '0') else String.singleton c) "" ++ "\""
+        | c => if c.toNat < 32 then "\\u" ++ String.ofList ((Nat.toDigits 16 c.toNat).leftpad 4 '0') else String.singleton c) ""
+        |> jsonLone |> (· ++ "\"")
     let v ← match v with
       | .obj _ =>
         let tj ← getV n v "toJSON"
@@ -4086,7 +4287,7 @@ def matchArray : Nat → Re.Compiled → String → Array (Option (Nat × Nat)) 
   | _ + 1, re, s, caps => do
     let cs := charsOf s
     let vals := caps.map fun c => match c with
-      | some (a, b) => Value.str (String.ofList (cs.extract a b).toList)
+      | some (a, b) => Value.str (Str.ofUnitChars (cs.extract a b))
       | none => .undef
     let arr ← newArray vals
     let .obj aid := arr | pure arr
@@ -4142,7 +4343,10 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       | .obj oid => match (← getObj oid).kind with
         | .regexp re src f =>
           pure (match which with
-            | 0 => .str src | 1 => .str f | 2 => .bool re.flags.global | 3 => .bool re.flags.icase
+            | 0 => .str src
+            -- §22.2.6.4 get flags: in the order "dgimsuvy"
+            | 1 => .str (String.ofList ("dgimsuvy".toList.filter fun c => f.contains c))
+            | 2 => .bool re.flags.global | 3 => .bool re.flags.icase
             | 4 => .bool re.flags.multiline | 5 => .bool re.flags.sticky | 6 => .bool re.flags.unicode
             | _ => .bool re.flags.dotAll)
         | _ => pure (if which == 0 then .str "(?:)" else if which == 1 then .str "" else .undef)
@@ -4172,7 +4376,7 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
         | none => break
         | some caps =>
           let (a, b) := match caps[0]? with | some (some p) => p | _ => (0, 0)
-          out := out.push (← if id == .stringMatch then pure (.str (String.ofList (cs.extract a b).toList)) else matchArray n re s caps)
+          out := out.push (← if id == .stringMatch then pure (.str (Str.ofUnitChars (cs.extract a b))) else matchArray n re s caps)
           if a == b then putV n rx "lastIndex" (.num (Float.ofNat (b + 1))) true
       if id == .stringMatch then
         return ← (if out.isEmpty then pure .null else newArray out)
@@ -4202,9 +4406,9 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       for caps in found do
         let (a, b) := match caps[0]? with | some (some p) => p | _ => (0, 0)
         if a < last then continue
-        let matched := String.ofList (cs.extract a b).toList
+        let matched := Str.ofUnitChars (cs.extract a b)
         let capStrs : Array (Option String) := (caps.extract 1 caps.size).map fun c =>
-          c.map fun (x, y) => String.ofList (cs.extract x y).toList
+          c.map fun (x, y) => Str.ofUnitChars (cs.extract x y)
         let rep ← if fnRepl then do
             let capVals := capStrs.map fun c => match c with | some t => Value.str t | none => .undef
             let groups ← if re.names.isEmpty then pure #[] else do
@@ -4213,9 +4417,9 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
               pure #[Value.obj o]
             toStr n (← callV n a1 .undef (#[.str matched] ++ capVals ++ #[.num (Float.ofNat a), .str s] ++ groups))
           else pure (substitution replStr matched a cs capStrs re.names)
-        out := out ++ String.ofList (cs.extract last a).toList ++ rep
+        out := out ++ Str.ofUnitChars (cs.extract last a) ++ rep
         last := b
-      pure (.str (out ++ String.ofList (cs.extract last cs.size).toList))
+      pure (.str (out ++ Str.ofUnitChars (cs.extract last cs.size)))
     | .stringSplit =>
       let s ← toStr n (← thisPrim thisV)
       let cs := charsOf s
@@ -4239,14 +4443,14 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
           let e := match caps[0]? with | some (some (_, b)) => min b cs.size | _ => q
           if e == p then q := q + 1
           else
-            out := out.push (.str (String.ofList (cs.extract p q).toList))
+            out := out.push (.str (Str.ofUnitChars (cs.extract p q)))
             if out.size == lim then return ← newArray out
             for c in caps.extract 1 caps.size do
-              out := out.push (match c with | some (x, y) => .str (String.ofList (cs.extract x y).toList) | none => .undef)
+              out := out.push (match c with | some (x, y) => .str (Str.ofUnitChars (cs.extract x y)) | none => .undef)
               if out.size == lim then return ← newArray out
             p := e
             q := p
-      out := out.push (.str (String.ofList (cs.extract p cs.size).toList))
+      out := out.push (.str (Str.ofUnitChars (cs.extract p cs.size)))
       newArray out
     | .proxyCtor =>
       needNew "Proxy"
@@ -4261,13 +4465,34 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       needNew "ArrayBuffer"
       let len := toIntegerOrInf (← toNum n a0)
       if len < 0 || len > 268435456 then throwErr .range "Invalid array buffer length"
-      newBuffer (ByteArray.mk (Array.replicate len.toUInt64.toNat 0))
+      -- §25.1.4.1: the `maxByteLength` option makes a resizable buffer
+      let max ← match a1 with
+        | .obj _ => do
+          match ← getV n a1 "maxByteLength" with
+          | .undef => pure none
+          | v =>
+            let m := toIntegerOrInf (← toNum n v)
+            if m < 0 || m > 268435456 then throwErr .range "Invalid array buffer max length"
+            pure (some m)
+        | _ => pure none
+      if let some m := max then
+        if len > m then throwErr .range "byteLength exceeds maxByteLength"
+      let buf ← newBuffer (ByteArray.mk (Array.replicate len.toUInt64.toNat 0))
+      if let (.obj bid, some m) := (buf, max) then
+        defineOwn bid bufMaxKey (.data (.num m) true false false)
+      -- the prototype is the new target's (OrdinaryCreateFromConstructor)
+      if let (.obj bid, some nt) := (buf, newTarget) then
+        let p ← getV n nt "prototype"
+        if p.isObj then modifyObj bid fun o => { o with proto := p }
+      pure buf
     | .bufferSlice =>
       let bytes ← match thisV with
         | .obj oid => match (← getObj oid).kind with
           | .buffer b => pure b
           | _ => throwErr .type "ArrayBuffer.prototype.slice called on incompatible receiver"
         | _ => throwErr .type "ArrayBuffer.prototype.slice called on incompatible receiver"
+      if let .obj oid := thisV then
+        if isDetached (← getObj oid) then throwErr .type "ArrayBuffer.prototype.slice called on a detached ArrayBuffer"
       let a := relIndex (toIntegerOrInf (← toNum n a0)) bytes.size
       let b ← match a1 with
         | .undef => pure bytes.size
@@ -4285,12 +4510,13 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       let fromList (xs : Array Value) : M Value := do
         let buf ← newBuffer (ByteArray.mk (Array.replicate (xs.size * es) 0))
         let .obj bid := buf | pure buf
-        for i in [0:xs.size] do typedWrite ty bid 0 i (← toNum n xs[i]!)
+        for i in [0:xs.size] do typedWriteV ty bid 0 i (← typedConv n ty xs[i]!)
         newTyped ty bid 0 xs.size
       match a0 with
       | .obj oid =>
         match (← getObj oid).kind with
         | .buffer bytes =>
+          if isDetached (← getObj oid) then throwErr .type "Cannot construct a typed array on a detached ArrayBuffer"
           let off := (toIntegerOrInf (← toNum n a1)).toUInt64.toNat
           if off % es != 0 then throwErr .range s!"start offset of {(typedNames[ty]?.map (·.1)).getD ""} should be a multiple of {es}"
           let len ← match argD args 2 with
@@ -4302,6 +4528,9 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
           newTyped ty oid off len
         | .typed sty sb soff slen =>
           let bytes := bufferBytes (← getObj sb)
+          let slen ← liveLen sty sb soff slen
+          -- §23.2.5.1.2 InitializeTypedArrayFromTypedArray: BigInts and Numbers do not mix
+          if typedIsBig sty != typedIsBig ty then throwErr .type "Content types of the typed arrays differ"
           fromList ((List.range slen).toArray.map fun i => typedRead sty bytes (soff + i * elemSize sty))
         | _ =>
           let itf ← getV n a0 (symKey symIterator)
@@ -4393,39 +4622,56 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
         | _ => throwErr .type "not a typed array"
       match id with
       | .typedSet =>
-        let at_ := (toIntegerOrInf (← toNum n a1)).toUInt64.toNat
+        let at_ := toIntegerOrInf (← toNum n a1)
+        if at_ < 0 then throwErr .range "offset is out of bounds"
+        let at_ := at_.toUInt64.toNat
+        let len ← liveLen ty b off len
         let xs ← elemsOf n a0
         if at_ + xs.size > len then throwErr .range "offset is out of bounds"
-        for i in [0:xs.size] do typedWrite ty b off (at_ + i) (← toNum n xs[i]!)
+        for i in [0:xs.size] do typedWriteV ty b off (at_ + i) (← typedConv n ty xs[i]!)
         pure .undef
       | .typedSubarray =>
+        let len ← liveLen ty b off len
         let a := relIndex (toIntegerOrInf (← toNum n a0)) len
         let e ← match a1 with
           | .undef => pure len
           | v => do pure (relIndex (toIntegerOrInf (← toNum n v)) len)
         newTyped ty b (off + a * elemSize ty) (if e > a then e - a else 0)
       | _ =>
-        let x ← toNum n a0
-        let a ← match a1 with | .undef => pure 0 | v => do pure (relIndex (toIntegerOrInf (← toNum n v)) len)
-        let e ← match argD args 2 with | .undef => pure len | v => do pure (relIndex (toIntegerOrInf (← toNum n v)) len)
-        for i in [a:e] do typedWrite ty b off i x
+        -- §23.2.3.9 %TypedArray%.prototype.fill: value, then the indices, then detachment
+        let x ← typedConv n ty a0
+        let len0 ← liveLen ty b off len
+        let a ← match a1 with | .undef => pure 0 | v => do pure (relIndex (toIntegerOrInf (← toNum n v)) len0)
+        let e ← match argD args 2 with | .undef => pure len0 | v => do pure (relIndex (toIntegerOrInf (← toNum n v)) len0)
+        let len ← liveLen ty b off len
+        if len == 0 && len0 > 0 then throwErr .type "Cannot fill a typed array whose buffer is detached"
+        for i in [a:min e len] do typedWriteV ty b off i x
         pure thisV
     | .dateCtor =>
-      let now := ((← hostNowNs) / 1000000).floor
-      if newTarget.isNone then return .str (numToString now)
-      let t ← match a0 with
-        | .undef => pure now
-        | .obj oid => match (← getObj oid).kind with
-          | .prim (.num t) => pure t
-          | _ => toNum n a0
-        | v => toNum n v
-      pure (.obj (← alloc { proto := .obj r.dateProto, kind := .prim (.num t) }))
+      -- §21.4.2.1 Date (local time is UTC here: JS/Date.lean)
+      let now := Date.timeClip ((← hostNowNs) / 1000000).floor
+      let some nt := newTarget | return .str (Date.toStr now)
+      let t ← if args.size == 0 then pure now
+        else if args.size == 1 then do
+          match ← thisDate? a0 with
+          | some t => pure t
+          | none =>
+            let v ← toPrim n a0 "default"
+            match v with
+            | .str s => pure (Date.parse s)
+            | v => pure (Date.timeClip (← toNum n v))
+        else do
+          let mut xs : Array Float := #[]
+          for i in [0:min 7 args.size] do xs := xs.push (← toNum n args[i]!)
+          pure (Date.timeClip (dateOfParts xs))
+      let p ← getV n nt "prototype"
+      let id ← alloc { proto := if p.isObj then p else .obj r.dateProto, kind := .prim (.num t) }
+      defineOwn id dateKey (.data (.bool true) true false false)
+      pure (.obj id)
     | .dateGetTime =>
-      match thisV with
-      | .obj oid => match (← getObj oid).kind with
-        | .prim (.num t) => pure (.num t)
-        | _ => throwErr .type "this is not a Date object."
-      | _ => throwErr .type "this is not a Date object."
+      match ← thisDate? thisV with
+      | some t => pure (.num t)
+      | none => throwErr .type "this is not a Date object."
     | .perfNow => pure (.num ((← hostNowNs) / 1000000))
     | .uriFn which =>
       let s ← toStr n a0
@@ -4548,75 +4794,715 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
       | .undef | .null => throwErr .type "String.prototype method called on null or undefined"
       | _ => pure ()
       let s ← toStr n tp
-      let cs := charsOf s
       match id with
       | .stringCharAt =>
         let i := toIntegerOrInf (← toNum n a0)
-        pure (.str (if i < 0 || i ≥ Float.ofNat cs.size then "" else String.singleton cs[i.toUInt64.toNat]!))
+        pure (.str (if i < 0 then "" else (Str.unitStrAt? s i.toUInt64.toNat).getD ""))
       | .stringCharCodeAt =>
         let i := toIntegerOrInf (← toNum n a0)
-        pure (.num (if i < 0 || i ≥ Float.ofNat cs.size then nan else Float.ofNat cs[i.toUInt64.toNat]!.toNat))
-      | .stringIndexOf =>
-        let p ← toStr n a0
-        let st := relIndex (toIntegerOrInf (← toNum n a1)) cs.size
-        let st := if (toIntegerOrInf (← toNum n a1)) < 0 then 0 else st
-        pure (.num (match indexOfFrom s p st with | some i => Float.ofNat i | none => -1))
-      | .stringLastIndexOf =>
-        let p ← toStr n a0
-        pure (.num (match lastIndexOfStr s p with | some i => Float.ofNat i | none => -1))
-      | .stringIncludes =>
-        let p ← toStr n a0
-        pure (.bool (indexOfFrom s p 0).isSome)
-      | .stringStartsWith =>
-        let p ← toStr n a0
-        pure (.bool (s.startsWith p))
-      | .stringEndsWith =>
-        let p ← toStr n a0
-        pure (.bool (s.endsWith p))
-      | .stringSlice =>
-        let st := relIndex (← toNum n a0) cs.size
-        let en ← match a1 with | .undef => pure cs.size | v => do pure (relIndex (← toNum n v) cs.size)
-        pure (.str (if st < en then substr s st en else ""))
-      | .stringSubstring =>
-        let clamp (x : Float) : Nat :=
-          let x := toIntegerOrInf x
-          if x < 0 then 0 else if x > Float.ofNat cs.size then cs.size else x.toUInt64.toNat
-        let st := clamp (← toNum n a0)
-        let en ← match a1 with | .undef => pure cs.size | v => do pure (clamp (← toNum n v))
-        pure (.str (substr s (min st en) (max st en)))
-      | .stringSubstr =>
-        let st := relIndex (← toNum n a0) cs.size
-        let len ← match a1 with
-          | .undef => pure (cs.size - st)
-          | v => do
-            let l := toIntegerOrInf (← toNum n v)
-            pure (if l < 0 then 0 else min l.toUInt64.toNat (cs.size - st))
-        pure (.str (substr s st (st + len)))
-      | .stringToUpperCase => pure (.str s.toUpper)
-      | .stringToLowerCase => pure (.str s.toLower)
-      | .stringTrim => pure (.str (trimJs s))
-      | .stringRepeat =>
-        let c := toIntegerOrInf (← toNum n a0)
-        if c < 0 || c.isInf then throwErr .range "Invalid count value"
-        let bytes := c.toUInt64.toNat * s.utf8ByteSize
-        if bytes > maxStringBytes then throwErr .range "Invalid string length"
-        charge (bytes / 64)
-        pure (.str (String.join (List.replicate c.toUInt64.toNat s)))
-      | .stringConcat =>
-        let parts ← args.toList.mapM (toStr n)
-        pure (.str (s ++ String.join parts))
-      | .stringSplit =>
-        match a0 with
-        | .undef => newArray #[.str s]
-        | v =>
-          let sep ← toStr n v
-          let parts := splitOn s sep
-          let lim ← match a1 with
-            | .undef => pure parts.size
-            | l => do pure (toUint32 (← toNum n l))
-          newArray ((parts.extract 0 lim).map .str)
-      | _ => throwErr .type "not a function"
+        pure (.num (if i < 0 then nan else match Str.unitAt? s i.toUInt64.toNat with
+          | some u => Float.ofNat u
+          | none => nan))
+      | _ =>
+        let cs := charsOf s
+        match id with
+        | .stringIndexOf =>
+          let p ← toStr n a0
+          let st := relIndex (toIntegerOrInf (← toNum n a1)) cs.size
+          let st := if (toIntegerOrInf (← toNum n a1)) < 0 then 0 else st
+          pure (.num (match indexOfFrom s p st with | some i => Float.ofNat i | none => -1))
+        | .stringLastIndexOf =>
+          let p ← toStr n a0
+          pure (.num (match lastIndexOfStr s p with | some i => Float.ofNat i | none => -1))
+        | .stringIncludes =>
+          let p ← toStr n a0
+          pure (.bool (indexOfFrom s p 0).isSome)
+        | .stringStartsWith =>
+          let p ← toStr n a0
+          pure (.bool (if Str.isBmp s && Str.isBmp p then s.startsWith p
+            else (charsOf p).toList.isPrefixOf cs.toList))
+        | .stringEndsWith =>
+          let p ← toStr n a0
+          pure (.bool (if Str.isBmp s && Str.isBmp p then s.endsWith p
+            else (charsOf p).toList.isSuffixOf cs.toList))
+        | .stringSlice =>
+          let st := relIndex (← toNum n a0) cs.size
+          let en ← match a1 with | .undef => pure cs.size | v => do pure (relIndex (← toNum n v) cs.size)
+          pure (.str (if st < en then substr s st en else ""))
+        | .stringSubstring =>
+          let clamp (x : Float) : Nat :=
+            let x := toIntegerOrInf x
+            if x < 0 then 0 else if x > Float.ofNat cs.size then cs.size else x.toUInt64.toNat
+          let st := clamp (← toNum n a0)
+          let en ← match a1 with | .undef => pure cs.size | v => do pure (clamp (← toNum n v))
+          pure (.str (substr s (min st en) (max st en)))
+        | .stringSubstr =>
+          let st := relIndex (← toNum n a0) cs.size
+          let len ← match a1 with
+            | .undef => pure (cs.size - st)
+            | v => do
+              let l := toIntegerOrInf (← toNum n v)
+              pure (if l < 0 then 0 else min l.toUInt64.toNat (cs.size - st))
+          pure (.str (substr s st (st + len)))
+        | .stringToUpperCase => pure (.str s.toUpper)
+        | .stringToLowerCase => pure (.str s.toLower)
+        | .stringTrim => pure (.str (trimJs s))
+        | .stringRepeat =>
+          let c := toIntegerOrInf (← toNum n a0)
+          if c < 0 || c.isInf then throwErr .range "Invalid count value"
+          let bytes := c.toUInt64.toNat * s.utf8ByteSize
+          if bytes > maxStringBytes then throwErr .range "Invalid string length"
+          charge (bytes / 64)
+          pure (.str (Str.canonical (String.join (List.replicate c.toUInt64.toNat s))))
+        | .stringConcat =>
+          let parts ← args.toList.mapM (toStr n)
+          pure (.str (Str.canonical (s ++ String.join parts)))
+        | .stringSplit =>
+          match a0 with
+          | .undef => newArray #[.str s]
+          | v =>
+            let sep ← toStr n v
+            let parts := splitOn s sep
+            let lim ← match a1 with
+              | .undef => pure parts.size
+              | l => do pure (toUint32 (← toNum n l))
+            newArray ((parts.extract 0 lim).map .str)
+        | _ => throwErr .type "not a function"
 termination_by structural n _ _ _ => n
+
+/-- ArrayBuffer `resize` and `transfer` and its accessors, SharedArrayBuffer, %TypedArray%
+(the constructor, `from`, `of`, the accessors and the methods that answer typed arrays),
+Atomics without waiting, and `String.prototype.isWellFormed`/`toWellFormed`. -/
+def moreNative : Nat → Native → Value → Array Value → Option Value → M Value
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, id, thisV, args, newTarget => do
+    let a0 := argD args 0
+    let a1 := argD args 1
+    let r ← realm
+    let thisBuf (shared : Bool) (what : String) : M (Nat × Obj) := do
+      match thisV with
+      | .obj oid =>
+        let o ← getObj oid
+        match o.kind with
+        | .buffer _ =>
+          if hiddenFlag o bufSharedKey == shared then pure (oid, o)
+          else throwErr .type s!"{what} called on incompatible receiver"
+        | _ => throwErr .type s!"{what} called on incompatible receiver"
+      | _ => throwErr .type s!"{what} called on incompatible receiver"
+    let thisTyped (what : String) : M (Nat × Nat × Nat × Nat) := do
+      match thisV with
+      | .obj oid => match (← getObj oid).kind with
+        | .typed ty b off len => pure (ty, b, off, len)
+        | _ => throwErr .type s!"{what}: this is not a typed array"
+      | _ => throwErr .type s!"{what}: this is not a typed array"
+    -- a new typed array of type `ty` holding these (already converted) values
+    let fresh (ty : Nat) (xs : Array Value) : M Value := do
+      let buf ← newBuffer (ByteArray.mk (Array.replicate (xs.size * elemSize ty) 0))
+      let .obj bid := buf | pure buf
+      for i in [0:xs.size] do typedWriteV ty bid 0 i xs[i]!
+      newTyped ty bid 0 xs.size
+    let valuesOf (ty b off len : Nat) : M (Array Value) := do
+      let len ← liveLen ty b off len
+      let bytes := bufferBytes (← getObj b)
+      pure ((List.range len).toArray.map fun i => typedRead ty bytes (off + i * elemSize ty))
+    let maxOption : M (Option Float) := do
+      match a1 with
+      | .obj _ => match ← getV n a1 "maxByteLength" with
+        | .undef => pure none
+        | v => do
+          let m := toIntegerOrInf (← toNum n v)
+          if m < 0 || m > 268435456 then throwErr .range "Invalid array buffer max length"
+          pure (some m)
+      | _ => pure none
+    let resized (bytes : ByteArray) (l : Nat) : ByteArray :=
+      if l ≤ bytes.size then bytes.extract 0 l else bytes ++ ByteArray.mk (Array.replicate (l - bytes.size) 0)
+    match id with
+    | .bufferGetter which =>
+      let (_, o) ← thisBuf false "ArrayBuffer.prototype accessor"
+      let size := if isDetached o then 0 else (bufferBytes o).size
+      match which with
+      | 0 => pure (.num (Float.ofNat size))
+      | 1 => pure (.num (Float.ofNat (if isDetached o then 0 else (hiddenNum o bufMaxKey).getD size)))
+      | 2 => pure (.bool (hiddenNum o bufMaxKey).isSome)
+      | _ => pure (.bool (isDetached o))
+    | .bufferResize =>
+      let (oid, o) ← thisBuf false "ArrayBuffer.prototype.resize"
+      let some m := hiddenNum o bufMaxKey | throwErr .type "ArrayBuffer.prototype.resize called on a fixed-length ArrayBuffer"
+      let l := toIntegerOrInf (← toNum n a0)
+      if isDetached (← getObj oid) then throwErr .type "ArrayBuffer.prototype.resize called on a detached ArrayBuffer"
+      if l < 0 || l > Float.ofNat m then throwErr .range "Invalid length for ArrayBuffer.prototype.resize"
+      modifyObj oid fun bo => match bo.kind with
+        | .buffer bytes =>
+          let bo := { bo with kind := .buffer ByteArray.empty }
+          { bo with kind := .buffer (resized bytes l.toUInt64.toNat) }
+        | _ => bo
+      pure .undef
+    | .bufferTransfer fixed =>
+      -- §25.1.6.9 ArrayBufferCopyAndDetach
+      let (oid, o) ← thisBuf false "ArrayBuffer.prototype.transfer"
+      let bytes := bufferBytes o
+      let l ← match a0 with
+        | .undef => pure bytes.size
+        | v => do
+          let l := toIntegerOrInf (← toNum n v)
+          if l < 0 || l > 268435456 then throwErr .range "Invalid array buffer length"
+          pure l.toUInt64.toNat
+      if isDetached (← getObj oid) then throwErr .type "Cannot transfer a detached ArrayBuffer"
+      let max := if fixed then none else hiddenNum o bufMaxKey
+      if let some m := max then
+        if l > m then throwErr .range "Invalid length for ArrayBuffer.prototype.transfer"
+      let nb ← newBuffer (resized bytes l)
+      if let (.obj nid, some m) := (nb, max) then
+        defineOwn nid bufMaxKey (.data (.num (Float.ofNat m)) true false false)
+      modifyObj oid fun bo => { bo with kind := .buffer ByteArray.empty }
+      defineOwn oid bufDetachedKey (.data (.bool true) true false false)
+      pure nb
+    | .sharedCtor =>
+      let some nt := newTarget | throwErr .type "Constructor SharedArrayBuffer requires 'new'"
+      let len := toIntegerOrInf (← toNum n a0)
+      if len < 0 || len > 268435456 then throwErr .range "Invalid array buffer length"
+      let max ← maxOption
+      if let some m := max then
+        if len > m then throwErr .range "byteLength exceeds maxByteLength"
+      let p ← getV n nt "prototype"
+      let sid ← alloc { proto := if p.isObj then p else .obj r.sharedBufferProto,
+                        kind := .buffer (ByteArray.mk (Array.replicate len.toUInt64.toNat 0)) }
+      defineOwn sid bufSharedKey (.data (.bool true) true false false)
+      if let some m := max then defineOwn sid bufMaxKey (.data (.num m) true false false)
+      pure (.obj sid)
+    | .sharedGetter which =>
+      let (_, o) ← thisBuf true "SharedArrayBuffer.prototype accessor"
+      let size := (bufferBytes o).size
+      match which with
+      | 0 => pure (.num (Float.ofNat size))
+      | 1 => pure (.num (Float.ofNat ((hiddenNum o bufMaxKey).getD size)))
+      | _ => pure (.bool (hiddenNum o bufMaxKey).isSome)
+    | .sharedGrow =>
+      let (oid, o) ← thisBuf true "SharedArrayBuffer.prototype.grow"
+      let some m := hiddenNum o bufMaxKey | throwErr .type "SharedArrayBuffer.prototype.grow called on a fixed-length SharedArrayBuffer"
+      let l := toIntegerOrInf (← toNum n a0)
+      let size := (bufferBytes o).size
+      if l < Float.ofNat size || l > Float.ofNat m then throwErr .range "Invalid length for SharedArrayBuffer.prototype.grow"
+      modifyObj oid fun bo => match bo.kind with
+        | .buffer bytes =>
+          let bo := { bo with kind := .buffer ByteArray.empty }
+          { bo with kind := .buffer (resized bytes l.toUInt64.toNat) }
+        | _ => bo
+      pure .undef
+    | .sharedSlice =>
+      let (_, o) ← thisBuf true "SharedArrayBuffer.prototype.slice"
+      let bytes := bufferBytes o
+      let a := relIndex (toIntegerOrInf (← toNum n a0)) bytes.size
+      let b ← match a1 with
+        | .undef => pure bytes.size
+        | v => do pure (relIndex (toIntegerOrInf (← toNum n v)) bytes.size)
+      let sid ← alloc { proto := .obj r.sharedBufferProto, kind := .buffer (bytes.extract a (max a b)) }
+      defineOwn sid bufSharedKey (.data (.bool true) true false false)
+      pure (.obj sid)
+    | .typedArrayCtor => throwErr .type "Abstract class TypedArray not directly constructable"
+    | .typedOf | .typedFrom =>
+      -- §23.2.2.1 %TypedArray%.from, §23.2.2.2 %TypedArray%.of: `this` makes the array
+      if !(← isConstructor thisV) then throwErr .type "TypedArray.from/of: this is not a constructor"
+      let items ← if id == .typedOf then pure args else do
+        let mapFn := a1
+        let mapping := match mapFn with | .undef => false | _ => true
+        if mapping && !(← isCallable mapFn) then throwErr .type "TypedArray.from: the map function is not callable"
+        let usingIter ← match a0 with
+          | .undef | .null => pure Value.undef
+          | _ => getV n a0 (symKey symIterator)
+        let vs ← match usingIter with
+          | .undef | .null => do elemsOf n (.obj (← toObj n a0))
+          | f => do
+            if !(← isCallable f) then throwErr .type "TypedArray.from: @@iterator is not callable"
+            iterToArray n (← getIterator n a0) #[]
+        if mapping then
+          let mut out := #[]
+          for i in [0:vs.size] do out := out.push (← callV n mapFn (argD args 2) #[vs[i]!, .num (Float.ofNat i)])
+          pure out
+        else pure vs
+      let ta ← construct n thisV #[.num (Float.ofNat items.size)] thisV
+      match ta with
+      | .obj tid => match (← getObj tid).kind with
+        | .typed ty b off len =>
+          if (← liveLen ty b off len) < items.size then throwErr .type "TypedArray.from/of: the new typed array is too short"
+        | _ => throwErr .type "TypedArray.from/of: the constructor did not make a typed array"
+      | _ => throwErr .type "TypedArray.from/of: the constructor did not make a typed array"
+      for i in [0:items.size] do putV n ta (toString i) items[i]! true
+      pure ta
+    | .typedGetter which =>
+      let info : Option (Nat × Nat × Nat × Nat) ← match thisV with
+        | .obj oid => do
+          match (← getObj oid).kind with
+          | .typed ty b off len => pure (some (ty, b, off, len))
+          | _ => pure none
+        | _ => pure none
+      let some (ty, b, off, len) := info
+        | if which == 4 then pure .undef else throwErr .type "TypedArray accessor called on incompatible receiver"
+      let live ← liveLen ty b off len
+      let gone := live == 0 && len > 0 || isDetached (← getObj b)
+      match which with
+      | 0 => pure (.obj b)
+      | 1 => pure (.num (Float.ofNat (live * elemSize ty)))
+      | 2 => pure (.num (Float.ofNat (if gone then 0 else off)))
+      | 3 => pure (.num (Float.ofNat live))
+      | _ => pure (.str ((typedNames[ty]?.map (·.1)).getD ""))
+    | .typedMethod which =>
+      let (ty, b, off, len) ← thisTyped "TypedArray method"
+      let xs ← valuesOf ty b off len
+      let size := xs.size
+      let writeAll (vs : Array Value) : M Unit := do
+        let live ← liveLen ty b off len
+        for i in [0:min vs.size live] do typedWriteV ty b off i vs[i]!
+      -- §23.2.3.29 SortCompare: numeric order, -0 before +0, NaN last; or the comparator
+      let numLe (x y : Value) : Bool := match x, y with
+        | .num p, .num q => if p.isNaN then q.isNaN else if q.isNaN then true
+          else p < q || (p == q && (isNegZero p || !isNegZero q))
+        | .big p, .big q => p ≤ q
+        | _, _ => true
+      let sorted (cmp : Value) : M (Array Value) := do
+        match cmp with
+        | .undef => pure (xs.toList.mergeSort numLe).toArray
+        | _ =>
+          if !(← isCallable cmp) then throwErr .type "The comparison function must be callable"
+          pure (← mergeSort n cmp xs.toList).toArray
+      let callback (f : Value) : M Unit := do
+        if !(← isCallable f) then throwErr .type "callback is not a function"
+      match which with
+      | 0 =>
+        -- copyWithin (§23.2.3.6): the elements move as the bytes would
+        let to := relIndex (toIntegerOrInf (← toNum n a0)) size
+        let from_ := relIndex (toIntegerOrInf (← toNum n a1)) size
+        let fin ← match argD args 2 with
+          | .undef => pure size
+          | v => do pure (relIndex (toIntegerOrInf (← toNum n v)) size)
+        let live ← liveLen ty b off len
+        if live == 0 && size > 0 then throwErr .type "Cannot copy within a detached typed array"
+        let count := min (fin - from_) (min (size - to) (live - min live from_))
+        let mut ys := xs
+        for i in [0:count] do
+          if from_ + i < xs.size && to + i < ys.size then ys := ys.set! (to + i) xs[from_ + i]!
+        writeAll ys
+        pure thisV
+      | 1 => writeAll xs.reverse; pure thisV
+      | 2 =>
+        let st := relIndex (toIntegerOrInf (← toNum n a0)) size
+        let en ← match a1 with
+          | .undef => pure size
+          | v => do pure (relIndex (toIntegerOrInf (← toNum n v)) size)
+        let vs ← valuesOf ty b off len
+        fresh ty (vs.extract st (max st en))
+      | 3 => writeAll (← sorted a0); pure thisV
+      | 4 =>
+        let k := toIntegerOrInf (← toNum n a0)
+        let i := if k < 0 then Float.ofNat size + k else k
+        if i < 0 || i ≥ Float.ofNat size then pure .undef else pure xs[i.toUInt64.toNat]!
+      | 5 =>
+        -- lastIndexOf (§23.2.3.20): strict equality, from the end
+        let start ← if args.size > 1 then do
+            let k := toIntegerOrInf (← toNum n a1)
+            pure (if k < 0 then Float.ofNat size + k else k)
+          else pure (Float.ofNat size - 1)
+        if start < 0 then return .num (-1)
+        let st := min (size - 1) start.toUInt64.toNat
+        let live ← liveLen ty b off len
+        let found := (List.range (st + 1)).reverse.find? fun i => i < live && strictEq xs[i]! a0
+        pure (.num (match found with | some i => Float.ofNat i | none => -1))
+      | 6 =>
+        callback a0
+        let mut kept := #[]
+        for i in [0:size] do
+          if toBool (← callV n a0 a1 #[xs[i]!, .num (Float.ofNat i), thisV]) then kept := kept.push xs[i]!
+        fresh ty kept
+      | 7 =>
+        callback a0
+        let mut out := #[]
+        for i in [0:size] do
+          out := out.push (← typedConv n ty (← callV n a0 a1 #[xs[i]!, .num (Float.ofNat i), thisV]))
+        fresh ty out
+      | 8 => fresh ty xs.reverse
+      | 9 =>
+        match a0 with
+        | .undef => pure ()
+        | f => callback f
+        fresh ty (← sorted a0)
+      | 10 =>
+        -- with (§23.2.3.36): the index is checked against the length after the value converts
+        let k := toIntegerOrInf (← toNum n a0)
+        let i := if k < 0 then Float.ofNat size + k else k
+        let v ← typedConv n ty a1
+        let live ← liveLen ty b off len
+        if i < 0 || i ≥ Float.ofNat live then throwErr .range "Invalid typed array index"
+        fresh ty (xs.set! i.toUInt64.toNat v)
+      | 11 | 12 =>
+        callback a0
+        let mut found : Option Nat := none
+        for j in [0:size] do
+          let i := size - 1 - j
+          if found.isNone then
+            if toBool (← callV n a0 a1 #[xs[i]!, .num (Float.ofNat i), thisV]) then found := some i
+        match found with
+        | some i => pure (if which == 11 then xs[i]! else .num (Float.ofNat i))
+        | none => pure (if which == 11 then .undef else .num (-1))
+      | _ =>
+        -- reduceRight (§23.2.3.24)
+        callback a0
+        if size == 0 && args.size < 2 then throwErr .type "Reduce of empty array with no initial value"
+        let mut acc := if args.size ≥ 2 then a1 else xs[size - 1]!
+        let last := if args.size ≥ 2 then size else size - 1
+        for j in [0:last] do
+          let i := last - 1 - j
+          acc ← callV n a0 .undef #[acc, xs[i]!, .num (Float.ofNat i), thisV]
+        pure acc
+    | .atomics op =>
+      if op == 4 then
+        let k := toIntegerOrInf (← toNum n a0)
+        return .bool (k == 1 || k == 2 || k == 4 || k == 8)
+      -- ValidateIntegerTypedArray (§25.4.3.1), ValidateAtomicAccess (§25.4.3.2)
+      let (ty, b, off, len) ← match a0 with
+        | .obj oid => match (← getObj oid).kind with
+          | .typed ty b off len => pure (ty, b, off, len)
+          | _ => throwErr .type "Atomics operation on an object that is not a typed array"
+        | _ => throwErr .type "Atomics operation on a value that is not a typed array"
+      let okTy := if op == 10 then ty == 5 || ty == 9 else [0, 1, 3, 4, 5, 6, 9, 10].contains ty
+      if !okTy then throwErr .type "Atomics operation on a typed array of the wrong element type"
+      if isDetached (← getObj b) then throwErr .type "Atomics operation on a detached ArrayBuffer"
+      let idx := toIntegerOrInf (← toNum n a1)
+      if idx < 0 || idx > 9007199254740991 then throwErr .range "Invalid atomic access index"
+      if idx ≥ Float.ofNat (← liveLen ty b off len) then throwErr .range "Invalid atomic access index"
+      let i := idx.toUInt64.toNat
+      let at_ := off + i * elemSize ty
+      let read : M Value := do pure (typedRead ty (bufferBytes (← getObj b)) at_)
+      if op == 10 then
+        -- notify: no agent waits here
+        let _ ← toNum n (argD args 2)
+        return .num 0
+      if op == 5 then return ← read
+      let v ← typedConv n ty (argD args 2)
+      if op == 7 then
+        let v := match v with | .num x => .num (let k := toIntegerOrInf x; if k == 0 then 0 else k) | v => v
+        typedWriteV ty b off i v
+        return v
+      let asInt : Value → Int := fun x => match x with
+        | .big i => i
+        | .num x => toInt32Wide x
+        | _ => 0
+      let mk : Int → Value := fun i => if typedIsBig ty then .big i else .num (Float.ofInt i)
+      let raw : Value → ByteArray := fun x => match x with
+        | .big i => bigBytes i
+        | .num x => typedBytes ty x
+        | _ => ByteArray.empty
+      let old ← read
+      let o := asInt old
+      let x := asInt v
+      let newV? : Option Value ← match op with
+        | 0 => pure (some (mk (o + x)))
+        | 1 => pure (some (mk (bigBits Nat.land o x)))
+        | 2 => do
+          let rep ← typedConv n ty (argD args 3)
+          pure (if (raw v).data == (raw old).data then some rep else none)
+        | 3 => pure (some v)
+        | 6 => pure (some (mk (bigBits Nat.lor o x)))
+        | 8 => pure (some (mk (o - x)))
+        | _ => pure (some (mk (bigBits Nat.xor o x)))
+      if let some nv := newV? then typedWriteV ty b off i nv
+      pure old
+    | .iteratorCtor =>
+      -- §27.1.3.1 Iterator: abstract; a subclass may construct
+      let some nt := newTarget | throwErr .type "Constructor Iterator requires 'new'"
+      if strictEq nt (← getV n (.obj r.globalObj) "Iterator") then throwErr .type "Abstract class Iterator not directly constructable"
+      let p ← getV n nt "prototype"
+      pure (.obj (← alloc { proto := if p.isObj then p else .obj r.iterProto }))
+    | .iteratorFrom =>
+      -- §27.1.3.2.1 Iterator.from: GetIteratorFlattenable, then wrap unless it inherits Iterator.prototype
+      let it ← match a0 with
+        | .str _ => getIterator n a0
+        | .obj _ => do
+          let m ← getV n a0 (symKey symIterator)
+          match m with
+          | .undef | .null => pure a0
+          | f =>
+            if !(← isCallable f) then throwErr .type "Iterator.from: @@iterator is not callable"
+            let it ← callV n f a0 #[]
+            if !it.isObj then throwErr .type "Iterator.from: the iterator is not an object"
+            pure it
+        | _ => throwErr .type "Iterator.from called on a non-object"
+      let next ← getV n it "next"
+      if ← instOf n it (← getV n (.obj r.globalObj) "Iterator") then return it
+      let w ← alloc { proto := .obj r.wrapIterProto }
+      defineOwn w helperIt (.data it true false false)
+      defineOwn w helperNextKey (.data next true false false)
+      defineOwn w helperKind (.data (.num 5) true false false)
+      pure (.obj w)
+    | .iterLazy k =>
+      -- §27.1.4.{5,4,12,3,6}: GetIteratorDirect, the argument checked, a helper made
+      if !thisV.isObj then throwErr .type "Iterator.prototype method called on a non-object"
+      let lim ← if k == 2 || k == 3 then do
+          let x ← toNum n a0
+          if x.isNaN then
+            iterClose n thisV
+            throwErr .range "Iterator helper limit is NaN"
+          let x := toIntegerOrInf x
+          if x < 0 then
+            iterClose n thisV
+            throwErr .range "Iterator helper limit is negative"
+          pure (Value.num x)
+        else do
+          if !(← isCallable a0) then
+            iterClose n thisV
+            throwErr .type "Iterator helper callback is not a function"
+          pure a0
+      let next ← getV n thisV "next"
+      let h ← alloc { proto := .obj r.iterHelperProto }
+      defineOwn h helperIt (.data thisV true false false)
+      defineOwn h helperNextKey (.data next true false false)
+      defineOwn h helperKind (.data (.num (Float.ofNat k)) true false false)
+      defineOwn h helperFn (.data lim true false false)
+      defineOwn h helperCount (.data (.num 0) true false false)
+      defineOwn h helperInner (.data .undef true false false)
+      pure (.obj h)
+    | .iterEager k =>
+      if !thisV.isObj then throwErr .type "Iterator.prototype method called on a non-object"
+      if k != 1 && !(← isCallable a0) then
+        iterClose n thisV
+        throwErr .type "Iterator.prototype method: the callback is not a function"
+      let next ← getV n thisV "next"
+      let step : M (Option Value) := do
+        let r ← callV n next thisV #[]
+        if !r.isObj then throwErr .type "Iterator result is not an object"
+        if toBool (← getV n r "done") then pure none else pure (some (← getV n r "value"))
+      -- a callback that throws closes the iterator, then the error goes on (§7.4.12)
+      let guarded (f : M Value) : M Value := tryCatch f fun e => do
+        match e with
+        | .throw _ =>
+          tryCatch (iterClose n thisV) fun _ => pure ()
+          throw e
+        | _ => throw e
+      let mut acc := if k == 0 then a1 else .undef
+      let mut haveAcc := k != 0 || args.size ≥ 2
+      let mut out : Array Value := #[]
+      let mut i := 0
+      for _ in [0:1000000000] do
+        let some v ← step | break
+        if k == 0 && !haveAcc then
+          acc := v; haveAcc := true
+        else if k == 0 then
+          acc ← guarded (callV n a0 .undef #[acc, v, .num (Float.ofNat i)])
+        else if k == 1 then out := out.push v
+        else
+          let res ← guarded (callV n a0 .undef #[v, .num (Float.ofNat i)])
+          if k == 3 && toBool res then
+            iterClose n thisV
+            return .bool true
+          if k == 4 && !toBool res then
+            iterClose n thisV
+            return .bool false
+          if k == 5 && toBool res then
+            iterClose n thisV
+            return v
+        i := i + 1
+      match k with
+      | 0 => if haveAcc then pure acc else throwErr .type "Reduce of empty iterator with no initial value"
+      | 1 => newArray out
+      | 3 => pure (.bool false)
+      | 4 => pure (.bool true)
+      | _ => pure .undef
+    | .helperNext | .helperReturn =>
+      let some (hid, o) ← (match thisV with
+          | .obj i => do
+            let o ← getObj i
+            pure (if (o.props.get? helperKind).isSome then some (i, o) else none)
+          | _ => pure none)
+        | throwErr .type "Iterator helper method called on an incompatible receiver"
+      let field (k : String) : Value := match o.props.get? k with | some (.data v ..) => v | _ => .undef
+      let it := field helperIt
+      let kind := match field helperKind with | .num x => x.toUInt64.toNat | _ => 0
+      let setF (k : String) (v : Value) : M Unit := defineOwn hid k (.data v true false false)
+      let result (v : Value) (done : Bool) : M Value := do
+        let ro ← newObject
+        defineOwn ro "value" (.data v true true true)
+        defineOwn ro "done" (.data (.bool done) true true true)
+        pure (.obj ro)
+      if kind == 5 then
+        -- %WrapForValidIteratorPrototype%: the wrapped iterator's own next and return
+        if id == .helperNext then return ← callV n (field helperNextKey) it #[]
+        let ret ← getV n it "return"
+        match ret with
+        | .undef | .null => return ← result .undef true
+        | f => return ← callV n f it #[]
+      if hiddenFlag o helperRunning then throwErr .type "Iterator helper is already running"
+      if id == .helperReturn then
+        if !(hiddenFlag o helperDone) then
+          setF helperDone (.bool true)
+          match field helperInner with
+          | .obj _ => tryCatch (iterClose n (field helperInner)) fun _ => pure ()
+          | _ => pure ()
+          iterClose n it
+        return ← result .undef true
+      if hiddenFlag o helperDone then return ← result .undef true
+      let next := field helperNextKey
+      let fn := field helperFn
+      let stepOuter : M (Option Value) := do
+        let r ← callV n next it #[]
+        if !r.isObj then throwErr .type "Iterator result is not an object"
+        if toBool (← getV n r "done") then pure none else pure (some (← getV n r "value"))
+      let finish : M Value := do setF helperDone (.bool true); result .undef true
+      let callFn (args : Array Value) : M Value :=
+        tryCatch (callV n fn .undef args) fun e => do
+          match e with
+          | .throw _ =>
+            setF helperDone (.bool true)
+            tryCatch (iterClose n it) fun _ => pure ()
+            throw e
+          | _ => throw e
+      setF helperRunning (.bool true)
+      let out ← tryCatch (do
+        let mut answer : Option Value := none
+        for _ in [0:1000000000] do
+          let o ← getObj hid
+          let count := match o.props.get? helperCount with | some (.data (.num x) ..) => x.toUInt64.toNat | _ => 0
+          let lim := match fn with | .num x => x | _ => 0
+          if kind == 2 && Float.ofNat count ≥ lim then
+            setF helperDone (.bool true)
+            iterClose n it
+            answer := some (← result .undef true); break
+          if kind == 4 then
+            match o.props.get? helperInner with
+            | some (.data inner ..) =>
+              if inner.isObj then
+                let r ← callV n (← getV n inner "next") inner #[]
+                if !r.isObj then throwErr .type "Iterator result is not an object"
+                if !toBool (← getV n r "done") then
+                  answer := some (← result (← getV n r "value") false); break
+                setF helperInner .undef
+            | _ => pure ()
+          let some v ← stepOuter
+            | answer := some (← finish)
+              break
+          setF helperCount (.num (Float.ofNat (count + 1)))
+          match kind with
+          | 0 => answer := some (← result (← callFn #[v, .num (Float.ofNat count)]) false); break
+          | 1 =>
+            if toBool (← callFn #[v, .num (Float.ofNat count)]) then
+              answer := some (← result v false)
+              break
+          | 2 =>
+            answer := some (← result v false)
+            break
+          | 3 =>
+            if Float.ofNat count ≥ lim then
+              answer := some (← result v false)
+              break
+          | _ =>
+            -- flatMap: GetIteratorFlattenable(mapped, reject strings)
+            let mapped ← callFn #[v, .num (Float.ofNat count)]
+            if !mapped.isObj then
+              setF helperDone (.bool true); iterClose n it
+              throwErr .type "flatMap: the mapper did not return an object"
+            let m ← getV n mapped (symKey symIterator)
+            let inner ← match m with
+              | .undef | .null => pure mapped
+              | f => callV n f mapped #[]
+            if !inner.isObj then throwErr .type "flatMap: the inner iterator is not an object"
+            setF helperInner inner
+        pure answer) fun e => do setF helperRunning (.bool false); throw e
+      setF helperRunning (.bool false)
+      match out with
+      | some v => pure v
+      | none => finish
+    | .numberToExponential | .numberToPrecision =>
+      let x ← match ← thisPrim thisV with
+        | .num x => pure x
+        | _ => throwErr .type "Number.prototype method requires that 'this' be a Number"
+      if id == .numberToPrecision && (a0 matches .undef) then return .str (numToString x)
+      let f := toIntegerOrInf (← toNum n a0)
+      if !x.isFinite then return .str (numToString x)
+      let (neg, num, den) := NumFmt.ofFloat x
+      if id == .numberToExponential then
+        if f < 0 || f > 100 then throwErr .range "toExponential() argument must be between 0 and 100"
+        if a0 matches .undef then
+          -- as many digits as Number::toString gives
+          return .str (NumFmt.expo neg num den (if num == 0 then 0 else NumFmt.shortestFrac x))
+        pure (.str (NumFmt.expo neg num den f.toUInt64.toNat))
+      else
+        if f < 1 || f > 100 then throwErr .range "toPrecision() argument must be between 1 and 100"
+        pure (.str (NumFmt.precision neg num den f.toUInt64.toNat))
+    | .dateUTC =>
+      let mut xs : Array Float := #[]
+      for i in [0:min 7 args.size] do xs := xs.push (← toNum n args[i]!)
+      pure (.num (Date.timeClip (dateOfParts xs)))
+    | .dateParse => pure (.num (Date.parse (← toStr n a0)))
+    | .dateMethod k =>
+      if k == 32 then
+        -- toJSON (§21.4.4.37)
+        let o ← toObj n thisV
+        let tv ← toPrim n (.obj o) "number"
+        if let .num x := tv then
+          if !x.isFinite then return .null
+        let f ← getV n (.obj o) "toISOString"
+        if !(← isCallable f) then throwErr .type "toISOString is not a function"
+        return ← callV n f (.obj o) #[]
+      if k == 39 then
+        -- @@toPrimitive (§21.4.4.45)
+        if !thisV.isObj then throwErr .type "Date.prototype[Symbol.toPrimitive] called on a non-object"
+        match a0 with
+        | .str "string" | .str "default" => return ← tryMethods n thisV ["toString", "valueOf"]
+        | .str "number" => return ← tryMethods n thisV ["valueOf", "toString"]
+        | _ => throwErr .type "Invalid hint"
+      let some t ← thisDate? thisV | throwErr .type "this is not a Date object."
+      let oid := match thisV with | .obj i => i | _ => 0
+      let p := Date.parts t
+      if k < 20 then
+        if t.isNaN then return .num t
+        return .num (match k with
+          | 0 => Float.ofNat p.date | 1 => Float.ofNat p.weekDay | 2 => Float.ofInt p.year
+          | 3 => Float.ofNat p.hours | 4 => Float.ofNat p.ms | 5 => Float.ofNat p.minutes
+          | 6 => Float.ofNat p.month | 7 => Float.ofNat p.seconds | 8 => 0
+          | _ => Float.ofInt (p.year - 1900))
+      if k < 30 then
+        let set (v : Float) : M Value := do
+          modifyObj oid fun o => { o with kind := .prim (.num v) }
+          pure (.num v)
+        if k == 27 then return ← set (Date.timeClip (← toNum n a0))
+        if k == 28 then
+          -- setYear (Annex B.2.3.2)
+          let y ← toNum n a0
+          if y.isNaN then return ← set y
+          let yi := toIntegerOrInf y
+          let yr := if 0 ≤ yi && yi ≤ 99 then 1900 + yi else y
+          let t := if t.isNaN then 0 else t
+          let q := Date.parts t
+          return ← set (Date.timeClip (Date.makeDate (Date.makeDay yr (Float.ofNat q.month) (Float.ofNat q.date))
+            (Float.ofInt ((Date.toInt t).emod Date.msPerDay))))
+        -- the arguments replace parts from `first` on, at most `most` of them (§21.4.4.20 to §21.4.4.28)
+        let (first, most) := match k with
+          | 20 => (2, 1) | 21 => (0, 3) | 22 => (3, 4) | 23 => (6, 1) | 24 => (4, 3) | 25 => (1, 2) | _ => (5, 2)
+        let mut given : Array Float := #[]
+        for i in [0:min most (max 1 args.size)] do given := given.push (← toNum n (argD args i))
+        if t.isNaN && k != 21 then return .num t
+        let q := Date.parts (if t.isNaN then 0 else t)
+        let mut cs : Array Float := #[Float.ofInt q.year, Float.ofNat q.month, Float.ofNat q.date, Float.ofNat q.hours,
+          Float.ofNat q.minutes, Float.ofNat q.seconds, Float.ofNat q.ms]
+        for i in [0:given.size] do cs := cs.set! (first + i) given[i]!
+        return ← set (Date.timeClip (Date.makeDate (Date.makeDay cs[0]! cs[1]! cs[2]!)
+          (Date.makeTime cs[3]! cs[4]! cs[5]! cs[6]!)))
+      if t.isNaN then
+        if k == 31 then throwErr .range "Invalid time value"
+        return .str "Invalid Date"
+      pure (.str (match k with
+        | 30 | 33 => Date.dateString t
+        | 31 => Date.isoString t
+        | 35 | 37 => Date.timeString t
+        | 38 => Date.utcString t
+        | _ => Date.toStr t))
+    | .stringIsWellFormed | .stringToWellFormed =>
+      let tp ← thisPrim thisV
+      match tp with
+      | .undef | .null => throwErr .type "String.prototype method called on null or undefined"
+      | _ => pure ()
+      let s ← toStr n tp
+      if id == .stringIsWellFormed then pure (.bool (Str.isWellFormed s)) else pure (.str (Str.toWellFormed s))
+    | _ => throwErr .type "not a function"
+termination_by structural n _ _ _ _ => n
 
 end
 
@@ -4628,6 +5514,22 @@ def ctorWith (name : String) (id : Native) (len : Nat) (proto : Nat) : M Value :
     defineOwn cid "prototype" (.data (.obj proto) false false false)
   setHidden proto "constructor" c
   pure c
+
+/-- An accessor property with a getter only, not enumerable (as built-in accessors are). -/
+def getter (target : Nat) (name : String) (id : Native) : M Unit := do
+  defineOwn target name (.acc (← mkNative id ("get " ++ name) 0) .undef false true)
+
+/-- The methods of %TypedArray%.prototype that answer typed arrays or need the element
+type (`Native.typedMethod`): name, number, length. -/
+def typedMethodNames : List (String × Nat × Nat) :=
+  [("copyWithin", 0, 2), ("reverse", 1, 0), ("slice", 2, 2), ("sort", 3, 1), ("at", 4, 1),
+   ("lastIndexOf", 5, 1), ("filter", 6, 1), ("map", 7, 1), ("toReversed", 8, 0), ("toSorted", 9, 1),
+   ("with", 10, 2), ("findLast", 11, 1), ("findLastIndex", 12, 1), ("reduceRight", 13, 1)]
+
+/-- The functions of Atomics (`Native.atomics`): name, number, length. -/
+def atomicsNames : List (String × Nat × Nat) :=
+  [("add", 0, 3), ("and", 1, 3), ("compareExchange", 2, 4), ("exchange", 3, 3), ("isLockFree", 4, 1),
+   ("load", 5, 2), ("or", 6, 3), ("store", 7, 3), ("sub", 8, 3), ("xor", 9, 3), ("notify", 10, 3)]
 
 def initRealm : M Unit := do
   let objectProto ← alloc {}
@@ -4738,6 +5640,8 @@ def initRealm : M Unit := do
   method numberProto "toString" .numberToString 1
   method numberProto "valueOf" .numberValueOf 0
   method numberProto "toFixed" .numberToFixed 1
+  method numberProto "toExponential" .numberToExponential 1
+  method numberProto "toPrecision" .numberToPrecision 1
   setHidden g "Boolean" (← ctorWith "Boolean" .booleanCtor 1 booleanProto)
   method booleanProto "toString" .booleanToString 0
   method booleanProto "valueOf" .booleanValueOf 0
@@ -4889,6 +5793,8 @@ def initRealm : M Unit := do
     method pc "resolve" .promiseResolveStatic 1
     method pc "reject" .promiseRejectStatic 1
     method pc "all" .promiseAll 1
+    method pc "race" (.promiseCombinator 0) 1
+    method pc "allSettled" (.promiseCombinator 1) 1
   method promiseProto "then" .promiseThen 2
   method promiseProto "catch" .promiseCatch 1
   method promiseProto "finally" .promiseFinally 1
@@ -4911,6 +5817,13 @@ def initRealm : M Unit := do
   if let .obj dc := dateC then method dc "now" .dateNow 0
   method dateProto "getTime" .dateGetTime 0
   method dateProto "valueOf" .dateGetTime 0
+  for (nm, k, l) in dateMethodNames do method dateProto nm (.dateMethod k) l
+  setHidden dateProto "toGMTString" ((← getObj dateProto).getOwn "toUTCString" |>.map (fun p => match p with
+    | .data v .. => v | _ => .undef) |>.getD .undef)
+  defineOwn dateProto (symKey symToPrimitive) (.data (← mkNative (.dateMethod 39) "[Symbol.toPrimitive]" 1) false false true)
+  if let .obj dc := dateC then
+    method dc "UTC" .dateUTC 7
+    method dc "parse" .dateParse 1
   -- performance.now() (High Resolution Time §4.3): the host's clock in ms.
   let perf ← mk
   setHidden g "performance" (.obj perf)
@@ -4968,6 +5881,69 @@ def initRealm : M Unit := do
     method dataViewProto ("get" ++ nm) (.dataViewGet ty) 1
     method dataViewProto ("set" ++ nm) (.dataViewSet ty) 2
   defineOwn bufferProto (symKey symToStringTag) (.data (.str "ArrayBuffer") false false true)
+  -- %TypedArray% (§23.2.1, §23.2.2): the constructor that every typed array constructor
+  -- inherits, with `from` and `of`; its prototype holds the accessors and methods
+  let taC ← mkNative .typedArrayCtor "TypedArray" 0
+  if let .obj tc := taC then
+    defineOwn tc "prototype" (.data (.obj typedProto) false false false)
+    method tc "from" .typedFrom 1
+    method tc "of" .typedOf 0
+    modify fun h => { h with realm := { h.realm with typedArrayCtor := tc } }
+    for p in typedProtos do
+      if let some (.data (.obj c) ..) := (← getObj p).getOwn "constructor" then
+        modifyObj c fun o => { o with proto := .obj tc }
+  setHidden typedProto "constructor" taC
+  for (nm, w) in [("buffer", 0), ("byteLength", 1), ("byteOffset", 2), ("length", 3)] do
+    getter typedProto nm (.typedGetter w)
+  defineOwn typedProto (symKey symToStringTag)
+    (.acc (← mkNative (.typedGetter 4) "get [Symbol.toStringTag]" 0) .undef false true)
+  for (nm, k, l) in typedMethodNames do method typedProto nm (.typedMethod k) l
+  -- ArrayBuffer (§25.1.6): accessors, `resize`, `transfer`
+  for (nm, w) in [("byteLength", 0), ("maxByteLength", 1), ("resizable", 2), ("detached", 3)] do
+    getter bufferProto nm (.bufferGetter w)
+  method bufferProto "resize" .bufferResize 1
+  method bufferProto "transfer" (.bufferTransfer false) 0
+  method bufferProto "transferToFixedLength" (.bufferTransfer true) 0
+  -- SharedArrayBuffer (§25.2)
+  let sharedProto ← mk
+  modify fun h => { h with realm := { h.realm with sharedBufferProto := sharedProto } }
+  setHidden g "SharedArrayBuffer" (← ctorWith "SharedArrayBuffer" .sharedCtor 1 sharedProto)
+  for (nm, w) in [("byteLength", 0), ("maxByteLength", 1), ("growable", 2)] do
+    getter sharedProto nm (.sharedGetter w)
+  method sharedProto "grow" .sharedGrow 1
+  method sharedProto "slice" .sharedSlice 2
+  defineOwn sharedProto (symKey symToStringTag) (.data (.str "SharedArrayBuffer") false false true)
+  -- Atomics (§25.4), without `wait`
+  let atomicsObj ← mk
+  for (nm, k, l) in atomicsNames do method atomicsObj nm (.atomics k) l
+  defineOwn atomicsObj (symKey symToStringTag) (.data (.str "Atomics") false false true)
+  setHidden g "Atomics" (.obj atomicsObj)
+  -- Iterator (§27.1.3) and the iterator helpers (§27.1.4)
+  let ip := (← realm).iterProto
+  let iterC ← mkNative .iteratorCtor "Iterator" 0
+  if let .obj ic := iterC then
+    defineOwn ic "prototype" (.data (.obj ip) false false false)
+    method ic "from" .iteratorFrom 1
+  setHidden g "Iterator" iterC
+  setHidden ip "constructor" iterC
+  for (nm, k) in [("map", 0), ("filter", 1), ("take", 2), ("drop", 3), ("flatMap", 4)] do
+    method ip nm (.iterLazy k) 1
+  for (nm, k, l) in [("reduce", 0, 1), ("toArray", 1, 0), ("forEach", 2, 1), ("some", 3, 1), ("every", 4, 1), ("find", 5, 1)] do
+    method ip nm (.iterEager k) l
+  if ((← getObj ip).getOwn (symKey symToStringTag)).isNone then
+    setHidden ip (symKey symToStringTag) (.str "Iterator")
+  let helperProto ← alloc { proto := .obj ip }
+  method helperProto "next" .helperNext 0
+  method helperProto "return" .helperReturn 0
+  defineOwn helperProto (symKey symToStringTag) (.data (.str "Iterator Helper") false false true)
+  let wrapProto ← alloc { proto := .obj ip }
+  method wrapProto "next" .helperNext 0
+  method wrapProto "return" .helperReturn 0
+  modify fun h => { h with realm := { h.realm with iterHelperProto := helperProto, wrapIterProto := wrapProto } }
+  -- String.prototype.isWellFormed and toWellFormed (§22.1.3.10, §22.1.3.32)
+  let sp := (← realm).stringProto
+  method sp "isWellFormed" .stringIsWellFormed 0
+  method sp "toWellFormed" .stringToWellFormed 0
 
 /-- A fresh realm. -/
 def freshHeapOf (host : Option H) (hostCall : H → Nat → Array HostArg → Nat → H × HostAns) : HeapOf H :=
