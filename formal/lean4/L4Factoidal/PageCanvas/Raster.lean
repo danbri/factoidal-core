@@ -110,15 +110,13 @@ structure Coverage where
   cov : FloatArray
   spans : Array (Nat × Nat) := #[]
 
-/-- Insert a crossing into an array sorted by `x` (few crossings on one row). -/
-private def insertSorted (xs : Array (Float × Int)) (x : Float) (d : Int) : Array (Float × Int) := Id.run do
-  let mut i := xs.size
-  while i > 0 && xs[i-1]!.1 > x do i := i - 1
-  return xs.insertIdx! i (x, d)
+/-- The x of edge `e` at height `y` (clamped to the edge's rows). -/
+@[inline] def edgeXAt (y : Float) (e : Edge) : Float :=
+  e.x0 + (max e.y0 (min e.y1 y) - e.y0) * (e.x1 - e.x0) / (e.y1 - e.y0)
 
 /-- Sorted by `key`, stable: a bottom-up merge sort (no recursion; n log n whatever the
 input, also when many keys are equal, as for shapes drawn over each other). -/
-def sortBy {α} [Inhabited α] (key : α → Float) (xs : Array α) : Array α := Id.run do
+@[specialize] def sortBy {α} [Inhabited α] (key : α → Float) (xs : Array α) : Array α := Id.run do
   let n := xs.size
   let mut a := xs
   let mut width := 1
@@ -155,6 +153,11 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray × A
   let mut next := 0
   let bx := nf box.x
   let wgt := 1 / nf subRows
+  -- The sample rows' places in a pixel row, once a call.
+  let offs : FloatArray := Id.run do
+    let mut o := FloatArray.emptyWithCapacity subRows
+    for s in [0:subRows] do o := o.push ((nf s + fHalf) * wgt)
+    return o
   -- One row's sums, kept zero outside the columns a row touched.
   let mut diff := fzeros (box.w + 2)
   let mut direct := fzeros (box.w + 2)
@@ -170,33 +173,52 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray × A
       continue
     -- The active edges in order of x at the middle of the row, once a row: the crossings of
     -- each sample row then come nearly sorted, and an insertion sort is linear on them.
-    let mid := row + 0.5
-    let key := fun (e : Edge) => e.x0 + (max e.y0 (min e.y1 mid) - e.y0) * (e.x1 - e.x0) / (e.y1 - e.y0)
-    -- Usually in order from the row before: an insertion pass, linear then; a merge sort
-    -- when the pass would move many edges.
+    let mid := row + fHalf
+    -- Usually in order from the row before: an insertion pass in place over the edges and a
+    -- flat array of their keys, linear then; a merge sort when it would move many edges.
+    let mut ks := FloatArray.emptyWithCapacity active.size
+    for e in active do ks := ks.push (edgeXAt mid e)
+    let lim := 4 * active.size
     let mut moves := 0
-    let mut sorted : Array Edge := Array.emptyWithCapacity active.size
-    for e in active do
-      let k := key e
-      let mut i := sorted.size
-      while i > 0 && key sorted[i-1]! > k && moves ≤ 4 * active.size do
-        i := i - 1
+    let mut act := active
+    for i in [1:act.size] do
+      if moves > lim then break
+      let k := ks[i]!
+      let e := act[i]!
+      let mut j := i
+      while j > 0 && ks[j-1]! > k && moves ≤ lim do
+        ks := ks.set! j ks[j-1]!
+        act := act.set! j act[j-1]!
+        j := j - 1
         moves := moves + 1
-      sorted := sorted.insertIdx! i e
-    active := if moves > 4 * active.size then sortBy key active else sorted
+      ks := ks.set! j k
+      act := act.set! j e
+    active := if moves > lim then sortBy (edgeXAt mid) act else act
+    -- A sample row's crossings, sorted by x as they come (nearly in order already): flat
+    -- arrays kept for the row, as many places as active edges.
+    let mut cx := fzeros active.size
+    let mut cd : Array Int := Array.replicate active.size 0
     let mut lo := box.w + 1
     let mut hi := 0
     for s in [0:subRows] do
-      let ys := row + (nf s + 0.5) * wgt
-      let mut xs : Array (Float × Int) := #[]
+      let ys := row + offs[s]!
+      let mut m := 0
       for e in active do
         if e.y0 <= ys && ys < e.y1 then
           let x := e.x0 + (ys - e.y0) * (e.x1 - e.x0) / (e.y1 - e.y0)
-          xs := xs.push (x, e.dir)
-      xs := xs.foldl (fun acc (x, d) => insertSorted acc x d) (Array.emptyWithCapacity xs.size)
+          let mut i := m
+          while i > 0 && cx[i-1]! > x do
+            cx := cx.set! i cx[i-1]!
+            cd := cd.set! i cd[i-1]!
+            i := i - 1
+          cx := cx.set! i x
+          cd := cd.set! i e.dir
+          m := m + 1
       let mut wind : Int := 0
-      let mut start := 0.0
-      for (x, d) in xs do
+      let mut start : Float := 0
+      for t in [0:m] do
+        let x := cx[t]!
+        let d := cd[t]!
         let before := wind
         wind := wind + d
         let wasIn := if rule == .nonzero then before != 0 else before % 2 != 0
@@ -223,7 +245,7 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray × A
       spans := spans.push (0, 0)
     else
       spans := spans.push (lo, hiC)
-    let mut run := 0.0
+    let mut run : Float := 0
     let base := j * box.w
     for i in [lo:hi+1] do
       run := run + diff[i]!
@@ -306,7 +328,7 @@ def Op.unbounded : Op → Bool
 
 /-- Separable blend functions B(Cb, Cs), Compositing and Blending §10.2. -/
 def blendChannel (o : Op) (cb cs : Float) : Float :=
-  let hard := fun (cb cs : Float) => if cs <= 0.5 then cb * 2 * cs else let s := 2 * cs - 1; cb + s - cb * s
+  let hard := fun (cb cs : Float) => if cs <= fHalf then cb * 2 * cs else let s := 2 * cs - 1; cb + s - cb * s
   match o with
   | .multiply => cb * cs
   | .screen => cb + cs - cb * cs
@@ -317,9 +339,9 @@ def blendChannel (o : Op) (cb cs : Float) : Float :=
   | .colorBurn => if cb >= 1 then 1 else if cs <= 0 then 0 else 1 - min 1 ((1 - cb) / cs)
   | .hardLight => hard cb cs
   | .softLight =>
-    if cs <= 0.5 then cb - (1 - 2 * cs) * cb * (1 - cb)
+    if cs <= fHalf then cb - (1 - 2 * cs) * cb * (1 - cb)
     else
-      let d := if cb <= 0.25 then ((16 * cb - 12) * cb + 4) * cb else Float.sqrt cb
+      let d := if cb <= fQuarter then ((16 * cb - 12) * cb + 4) * cb else Float.sqrt cb
       cb + (2 * cs - 1) * (d - cb)
   | .difference => (cb - cs).abs
   | .exclusion => cb + cs - 2 * cb * cs

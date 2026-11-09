@@ -17,6 +17,20 @@ namespace L4Factoidal.PageCanvas
 through `OfScientific`, which is slow in a pixel loop). Exact below 2^53. -/
 @[inline] def nf (n : Nat) : Float := n.toUInt64.toFloat
 
+/-! Float constants as module constants. A decimal literal (`0.5`) is
+`OfScientific.ofScientific`, and in a loop the compiler can leave it there: a big-number
+conversion at each pass (2026-11-09: most of the time of colour-emoji drawing went to the
+`0.5` of each sample row). `@[noinline]` keeps each one a value computed once. -/
+@[noinline] def fHalf : Float := 0.5
+@[noinline] def fQuarter : Float := 0.25
+@[noinline] def fEps6 : Float := 1e-6
+@[noinline] def fEps9 : Float := 1e-9
+@[noinline] def fJoinSmall : Float := 0.02
+/-- The flatness of fills and stroke outlines, in device pixels. -/
+@[noinline] def fFlat : Float := 0.1
+/-- The flatness of clips and hit tests. -/
+@[noinline] def fFlatFine : Float := 0.05
+
 /-- `n` zero Floats, pushed (an `Array.replicate` of Floats boxes each one first). -/
 def fzeros (n : Nat) : FloatArray := Id.run do
   let mut a := FloatArray.emptyWithCapacity n

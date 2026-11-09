@@ -222,7 +222,7 @@ def boxBlur (w h r : Nat) (src : FloatArray) (horizontal : Bool) : FloatArray :=
   let k := 1 / nf (2 * r + 1)
   for l in [0:lines] do
     let at_ := fun (i : Nat) => if horizontal then l * w + i else i * w + l
-    let mut sum := 0.0
+    let mut sum : Float := 0
     for i in [0:min r len] do sum := sum + src[at_ i]!
     for i in [0:len] do
       if i + r < len then sum := sum + src[at_ (i + r)]!
@@ -248,7 +248,7 @@ def shadowDraw (W H : Nat) (st : DrawState) (d : Draw) (es : Array Edge) (rule :
     for i in [0:box.w] do
       let c := cov.cov[j * box.w + i]!
       if c <= 0 then continue
-      let s := d.ready.atF (nf (box.x + i) + 0.5 - ox) (nf (box.y + j) + 0.5 - oy)
+      let s := d.ready.atF (nf (box.x + i) + fHalf - ox) (nf (box.y + j) + fHalf - oy)
       a := a.set! ((box.y + j) * W + box.x + i) (c * s.a)
   let sigma := st.shadowBlur / 2
   let r := if sigma <= 0 then 0 else (sigma * 0.94).round.toUInt64.toNat   -- three boxes of 2r+1 ≈ σ√12/√3
@@ -296,14 +296,14 @@ def Run.drawPolys (r : Run) (c : Canvas) (polys : Array Poly) (rule : FillRule) 
 
 /-- Fill a path in device space. -/
 def Run.fillDevice (r : Run) (c : Canvas) (p : Path) (rule : FillRule) : Canvas :=
-  r.drawPolys c (p.flatten 0.1) rule c.stack.cur.fill
+  r.drawPolys c (p.flatten fFlat) rule c.stack.cur.fill
 
 /-- Stroke a path given in user space (HTML: the line width and dashes are in the
 coordinate space of the current transform). -/
 def Run.strokeUser (r : Run) (c : Canvas) (p : Path) (style : Style) : Canvas :=
   let st := c.stack.cur
-  let k := max 1e-9 st.ctm.stretch
-  let tol := 0.1 / k
+  let k := max fEps9 st.ctm.stretch
+  let tol := fFlat / k
   -- A segment's end is square to its chord: finer curves for wide lines keep caps true.
   let hw := st.line.width * k / 2
   let polys := mapPolys st.ctm (strokePolys st.line (p.flatten (tol / max 1 (hw * hw))) tol)
@@ -763,7 +763,7 @@ def Run.step (r : Run) (cmd : Cmd) : Run :=
       | some p => (r.strokeUser c p c.stack.cur.stroke, r)
       | none => (c, r)
   | .clip path rule => r.withCur fun c r =>
-      let cov := coverage c.width c.height (edgesOf ((r.devicePath c path).flatten 0.1)) rule
+      let cov := coverage c.width c.height (edgesOf ((r.devicePath c path).flatten fFlat)) rule
       let n := c.width * c.height
       let old := c.stack.cur.clip
       let mask := Id.run do
@@ -795,12 +795,12 @@ def Run.step (r : Run) (cmd : Cmd) : Run :=
         let x0 := x + Text.alignShift st.align st.direction (width * sx)
         let y0 := y + Text.baselineShift st.baseline sh - sh.word.ascent * sh.scale
         -- The outline flattened once for this flatness (0.1 device pixels at this scale).
-        let k := max 1e-9 (st.ctm.mul (Matrix.scale sx 1)).stretch
+        let k := max fEps9 (st.ctm.mul (Matrix.scale sx 1)).stretch
         let key := st.font.text ++ "\x00" ++ s ++ "\x00" ++ toString (k * 64).round
         let (r, polys) := match r.store.textPolys.get? key with
           | some ps => (r, ps)
           | none =>
-            let ps := (Text.outlinePath sh 0 0 1).flatten (0.1 / k)
+            let ps := (Text.outlinePath sh 0 0 1).flatten (fFlat / k)
             let cache := if r.store.textPolys.size ≥ 1024 then {} else r.store.textPolys
             ({ r with store := { r.store with textPolys := cache.insert key ps } }, ps)
         let m := st.ctm.mul ((Matrix.translate x0 y0).mul (Matrix.scale sx 1))
@@ -998,8 +998,8 @@ def onEdge (polys : Array Poly) (x y : Float) : Bool := Id.run do
       let by_ := p.pts[2*j+1]!
       let cross := (bx - ax) * (y - ay) - (by_ - ay) * (x - ax)
       let len := Float.sqrt ((bx - ax) ^ 2 + (by_ - ay) ^ 2)
-      if cross.abs <= 1e-6 * max 1 len && min ax bx - 1e-9 <= x && x <= max ax bx + 1e-9 &&
-          min ay by_ - 1e-9 <= y && y <= max ay by_ + 1e-9 then return true
+      if cross.abs <= fEps6 * max 1 len && min ax bx - fEps9 <= x && x <= max ax bx + fEps9 &&
+          min ay by_ - fEps9 <= y && y <= max ay by_ + fEps9 then return true
   return false
 
 /-- A query of a page script: its answer and the store after it. -/
@@ -1042,7 +1042,7 @@ def Store.answer (s : Store) (env : Env) (q : Query) : Store × String :=
         let x0 := Text.alignShift st.align st.direction width
         -- The ink box from the outline's control points (they hold the curves).
         let p := Text.outlinePath sh x0 (base - a) 1
-        let pts := p.flatten 0.05
+        let pts := p.flatten fFlatFine
         let (minX, minY, maxX, maxY) := pts.foldl (init := (1e30, 1e30, -1e30, -1e30)) fun acc poly =>
           (List.range poly.count).foldl (fun (a, b, c, d) i =>
             (min a poly.pts[2*i]!, min b poly.pts[2*i+1]!, max c poly.pts[2*i]!, max d poly.pts[2*i+1]!)) acc
@@ -1057,7 +1057,7 @@ def Store.answer (s : Store) (env : Env) (q : Query) : Store × String :=
     | some c =>
       if !finite [x, y] then (s, "0") else
       let r : Run := { store := s, env }
-      let polys := (r.devicePath c path).flatten 0.05
+      let polys := (r.devicePath c path).flatten fFlatFine
       (s, if inside rule (winding polys x y) || onEdge polys x y then "1" else "0")
   | .inStroke id path x y =>
     match canvas id with
@@ -1069,7 +1069,7 @@ def Store.answer (s : Store) (env : Env) (q : Query) : Store × String :=
       | none => (s, "0")
       | some p =>
         let st := c.stack.cur
-        let tol := 0.05 / max 1e-9 st.ctm.stretch
+        let tol := fFlatFine / max fEps9 st.ctm.stretch
         let polys := mapPolys st.ctm (strokePolys st.line (p.flatten tol) tol)
         (s, if winding polys x y != 0 || onEdge polys x y then "1" else "0")
   | .transform id =>

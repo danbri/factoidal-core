@@ -219,8 +219,8 @@ that does not repeat, transparent. -/
 def samplePattern (p : Pattern) (smooth : Bool) (u v : Float) : Px :=
   if !u.isFinite || !v.isFinite then Px.zero else
   if !smooth then patternTexel p (floorInt u) (floorInt v) else
-  let fx := u - 0.5
-  let fy := v - 0.5
+  let fx := u - fHalf
+  let fy := v - fHalf
   let x0 := floorInt fx
   let y0 := floorInt fy
   let tx := fx - fx.floor
@@ -259,6 +259,6 @@ def Ready.atF (r : Ready) (px py : Float) : Px :=
 @[inline] def Ready.at (r : Ready) (x y : Nat) : Px :=
   match r with
   | .solid p => p
-  | _ => r.atF (nf x + 0.5) (nf y + 0.5)
+  | _ => r.atF (nf x + fHalf) (nf y + fHalf)
 
 end L4Factoidal.PageCanvas
