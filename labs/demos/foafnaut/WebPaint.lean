@@ -383,7 +383,8 @@ A zoomed group (scale 40) puts most of each glyph far outside the canvas, and ev
 curve of it would be cut into lines finer than a sixty-fourth of a pixel by the backend
 (`NativeSVGCurves.flatten`), which costs time and edges for ink that is never seen.
 `cull` replaces each quadratic or cubic segment whose control points lie, in canvas
-pixels, all outside the canvas widened by a margin, by the line to its end point. The
+pixels, all outside the canvas widened by a margin, by the line to its end point, and
+cuts a long curve that crosses the canvas so that the same holds for its pieces. The
 region between a curve and its chord lies in the hull of its control points, so no
 winding number changes inside the widened canvas: the pixels drawn are the same. The
 margin holds the anti-aliasing reach (2 pixels) and, for a stroke, half the stroke
@@ -401,9 +402,58 @@ def outside (t : Transform) (x0 y0 x1 y1 : Float) (points : List Point) : Bool :
   let ps := points.map (apply t)
   ps.all (·.x < x0) || ps.all (·.x > x1) || ps.all (·.y < y0) || ps.all (·.y > y1)
 
+/-- Most steps of the work on one curve. -/
+def maxPieces : Nat := 4096
+
 private def solidPaint : Paint → Bool
   | .none | .solid _ | .current => true
   | _ => false
+
+private def mid (a b : Point) : Point := ⟨(a.x+b.x)/2,(a.y+b.y)/2⟩
+
+private def controls (start : Point) : PathSegment → List Point
+  | .quadratic c p => [start,c,p]
+  | .cubic a b p => [start,a,b,p]
+  | .line p | .arc _ _ _ _ _ p => [start,p]
+
+/-- A curve cut in two at its middle, by de Casteljau: the same curve in two pieces. -/
+private def halves (start : Point) : PathSegment → Option ((PathSegment × Point) × PathSegment)
+  | .quadratic c p =>
+    let l := mid start c; let r := mid c p; let m := mid l r
+    some ((.quadratic l m,m),.quadratic r p)
+  | .cubic a b p =>
+    let ab := mid start a; let bc := mid a b; let cd := mid b p
+    let abc := mid ab bc; let bcd := mid bc cd; let m := mid abc bcd
+    some ((.cubic ab abc m,m),.cubic bcd cd p)
+  | _ => none
+
+/-- The pieces of one curve, in order: a piece whose points are all off the canvas is the
+line to its end; a piece larger than half the canvas that crosses it is cut in two, so that
+only what is on the canvas keeps its curves (a glyph at scale 200 has one curve as long as
+thousands of pixels: flattened whole, it passes the backend's limit of points). At most
+12 cuts deep, and at most `maxPieces` steps; the rest stays as it is. -/
+def cullCurve (t : Transform) (x0 y0 x1 y1 : Float) (start : Point) (seg : PathSegment) : Array PathSegment := Id.run do
+  let reach := max (x1-x0) (y1-y0)/2
+  let mut pending : List (Point × PathSegment × Nat) := [(start,seg,0)]
+  let mut out : Array PathSegment := #[]
+  for _ in [:maxPieces] do
+    match pending with
+    | [] => return out
+    | (a,piece,depth)::rest =>
+      let points := controls a piece
+      if outside t x0 y0 x1 y1 points then
+        out := out.push (.line (segmentEnd piece))
+        pending := rest
+      else
+        let ps := points.map (apply t)
+        let span := max ((ps.map (·.x)).foldl max (-1e300)-(ps.map (·.x)).foldl min 1e300)
+          ((ps.map (·.y)).foldl max (-1e300)-(ps.map (·.y)).foldl min 1e300)
+        match (if span > reach && depth < 12 then halves a piece else none) with
+        | some ((l,m),r) => pending := (a,l,depth+1)::(m,r,depth+1)::rest
+        | none =>
+          out := out.push piece
+          pending := rest
+  return out ++ (pending.map (·.2.1)).toArray
 
 /-- One contour with its off-canvas curves made lines. -/
 def cullContour (t : Transform) (x0 y0 x1 y1 : Float) : Contour → Contour
@@ -412,11 +462,9 @@ def cullContour (t : Transform) (x0 y0 x1 y1 : Float) : Contour → Contour
     let mut current := start
     let mut out : Array PathSegment := #[]
     for seg in segments do
-      let next := match seg with
-        | .quadratic c p => if outside t x0 y0 x1 y1 [current,c,p] then PathSegment.line p else seg
-        | .cubic a b p => if outside t x0 y0 x1 y1 [current,a,b,p] then PathSegment.line p else seg
-        | other => other
-      out := out.push next
+      match seg with
+      | .quadratic .. | .cubic .. => out := out ++ cullCurve t x0 y0 x1 y1 current seg
+      | other => out := out.push other
       current := segmentEnd seg
     return .path start out.toList closed
 

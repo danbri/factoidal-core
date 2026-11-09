@@ -660,3 +660,26 @@ private def scaledBy (k : Nat) : Bool :=
 #guard WebScripts.viewport (json [("width",.number "2880"),("height",.number "1800"),("zoomUnit",.number "200")]) == some (1440,900)
 #guard WebScripts.viewport (json [("width",.number "1440"),("height",.number "900")]) == some (1440,900)
 #guard WebDocument.layoutInputs 2880 1800 400 200 == (1440,900,200)
+
+/-! `WebPaint.cull`: curves off the canvas made lines and long curves cut draw the same
+pixels (the CPU raster of the backend, with and without it). -/
+private def cullPixels (svg : String) : Option Nat :=
+  let html := "<!doctype html><style>body{margin:0}</style>" ++ svg
+  match WebDocument.layOut ⟨html,WebDocument.layoutRequest (json []),80,60,0,[],[],(none,none)⟩ with
+  | .error _ => none
+  | .ok laid =>
+    match WebRenderSVG.toScene laid.scene, WebRenderSVG.toScene (WebPaint.cull laid.scene) with
+    | .ok a,.ok b =>
+      let x := (a.rasterFast 0 a.height).data; let y := (b.rasterFast 0 b.height).data
+      if x.size != y.size then none else
+      some ((List.range x.size).foldl (fun n i => if x[i]! != y[i]! then n+1 else n) 0)
+    | _,_ => none
+private def bigCurves (k : String) : String :=
+  "<svg width='80' height='60' viewBox='0 0 80 60'><g transform='translate(40 30) scale(" ++ k ++ ") translate(-40 -30)'>" ++
+  "<path d='M10 50 Q40 -20 70 50 C60 70 20 70 10 50Z' fill='#204080'/><path d='M38 28 C39 26 42 26 43 28 C44 31 41 33 40 33 C39 33 37 31 38 28Z' fill='#d04020'/></g></svg>"
+#guard cullPixels (bigCurves "1") == some 0
+#guard cullPixels (bigCurves "8") == some 0
+#guard cullPixels (bigCurves "40") == some 0
+#guard cullPixels (bigCurves "200") == some 0
+
+

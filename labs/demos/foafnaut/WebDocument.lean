@@ -2251,9 +2251,9 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
   let page := {scene with tree := near ++ marks}
-  withDiagnostics request laid <$> WebRender.artifactWith (match shell with
+  withDiagnostics request laid <$> WebRender.artifactWith (WebPaint.cull (match shell with
     | some value => WebShell.compose value page width height
-    | none => page) boxes face live form checks tree
+    | none => page)) boxes face live form checks tree
 
 /-- The JSON text answer: storage floats in Base64 (`binary:true`) or decimal. -/
 def runWith (laidOut : LayoutKey → Except String Laid) (html : String) (request : JSON.Json) (width height : Nat) :

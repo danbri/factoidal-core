@@ -153,9 +153,9 @@ function sameFontMark(engine:HTMLEngine){
 function bigScale(engine:HTMLEngine){
   const shell={tabs:[{title:"t"}],active:0,address:pageURL,focused:false,canBack:false,canForward:false,loading:false,scale:1,theme:"light",pages:1,scroll:0,pressed:""};
   const at=(k:number)=>{const t=performance.now();const f=engine.compileLayers(svgPage(`translate(200 100) scale(${k}) translate(-200 -100)`),400,260,{url:pageURL,shell,checks:false});return {floats:f.page.data.length,ms:Math.round(performance.now()-t)};};
-  const one=at(1),forty=at(40),twoHundred=at(200);
-  for(const big of [forty,twoHundred])assert(big.floats<=one.floats*4,`floats at scale 1: ${one.floats}, large: ${big.floats}`);
-  return {one,forty,twoHundred};
+  const one=at(1),forty=at(40),twoHundred=at(200),thousand=at(1000);
+  for(const big of [forty,twoHundred,thousand])assert(big.floats<=one.floats*4,`floats at scale 1: ${one.floats}, large: ${big.floats}`);
+  return {one,forty,twoHundred,thousand};
 }
 
 // Combining marks against HarfBuzz: `hb-shape` 15 on the PATH is the oracle (as in the
@@ -214,6 +214,6 @@ for(const [name,path] of [["Wasm engine",undefined],["native library",library]] 
   Deno.test({name:`paint-only: animateTransform lays out once, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(animationCounts(await engineWithFont(path))));}});
   Deno.test({name:`same-font mark: Noto Sans n + U+0308 as HarfBuzz places it, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(sameFontMark(await engineWithFont(path))));}});
   Deno.test({name:`combining marks placed as HarfBuzz 15 places them (hb-shape), ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(await oracleMarks(await engineWithFont(path))));}});
-  Deno.test({name:`a group at scale 40 and 200 compiles, its data bounded, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(bigScale(await engineWithFont(path))));}});
+  Deno.test({name:`a group at scale 40, 200 and 1000 compiles, its data bounded, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(bigScale(await engineWithFont(path))));}});
   Deno.test({name:`hostile text: 10,000 marks, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(zalgo(await engineWithFont(path))));}});
 }

@@ -51,8 +51,9 @@ abbrev Shown := Key × Nat
 /-- A host session. -/
 structure Session where
   key : Key
-  /-- What the frame paints on its layout (0: nothing): the hover and active state,
-  and paint-only values (`Event.paintOnly`). -/
+  /-- What the frame paints on its layout (0: nothing): one number for the hover and
+  active state and the paint-only values (`Event.paintOnly`). The engine holds them apart;
+  a change of either is one render here, which is the cost the model states. -/
   paint : Nat
   scroll : Nat
   /-- The largest scroll of the page. -/

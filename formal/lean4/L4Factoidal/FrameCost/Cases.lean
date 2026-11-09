@@ -58,8 +58,9 @@ def event (x : Nat) (s : Session) : Event × Nat :=
     (.navigate p (if p == 0 then 3000 else 9000),x)
   else if kind < 85 then (.fontLoad,x)
   else if kind < 88 then
+    -- Painted values other than the pointer states 0 to 2, as a host's requests differ.
     let (v,x) := pick x 4
-    (.paintOnly (v+1),x)
+    (.paintOnly (v+3),x)
   else (.tick,x)
 
 def eventJSON : Event → String
