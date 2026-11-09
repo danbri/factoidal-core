@@ -622,6 +622,21 @@ def hostPlan (st : KeyStore) (method : String) (a : Args) : Res (List (String ×
     checkUsages (allowedUsages alg (importType alg format j)) us
     if (alg == .hkdf || alg == .pbkdf2) && ext then throw .syntax
     if format == "jwk" then jwkCommon j us ext (useOf alg)
+    -- A P-256 public point is Lean's to check (hostile input), not left to the host.
+    if (alg == .ecdsa || alg == .ecdh) && (p.str? "namedCurve") == some "P-256" then
+      let point : Option ByteArray :=
+        if format == "raw" || format == "raw-public" then some data
+        else if format == "spki" then
+          match readSpki data.toList with
+          | some (oid, _, key) => if oid == oidEcPublicKey then some (ByteArray.mk key.toArray) else none
+          | none => none
+        else if format == "jwk" then
+          match (j.str? "x").bind unb64?, (j.str? "y").bind unb64? with
+          | some x, some y => if x.size == 32 && y.size == 32 then some (ByteArray.mk #[4] ++ x ++ y) else none
+          | _, _ => none
+        else none
+      if let some pt := point then
+        if pt.size == 65 && pt.get! 0 == 4 && !p256OnCurve (pt.extract 1 65) then throw .data
     let keyData := if format == "jwk" then jwkJsonOf j else bytesJ data
     return ([("op", .string "importKey"), ("format", .string format), ("keyData", keyData),
       ("algorithm", ← algJson st "importKey" p), ("extractable", .bool ext), ("usages", usagesJ us)], .key ext)
