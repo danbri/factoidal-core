@@ -316,6 +316,8 @@ export function named(name:string):Named {
 
 // ---- the engine backend -------------------------------------------------------------
 type Run=(file:string,page?:{html?:string;url:string})=>Promise<Case>;
+/** A script turn, with the worker script fetches it waits for (an engine with Workers). */
+type ScriptTurnWithFetches={session:number;logs:string[];errors:string[];instructions:number;fetches?:{id:number;url:string;kind?:string}[]};
 async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engine?:unknown}> {
   const {loadHTML}=await import("../../labs/demos/foafnaut/native_html_engine.ts");
   const engine=await loadHTML(engineKind==="wasm"?undefined:opt("--native-engine",join(root,"labs/demos/foafnaut/.build/web-render/engines/libweb-render.dylib")));
@@ -360,6 +362,17 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
     const path=scriptFile(url);if(!path)return undefined;
     try{return await Deno.readFile(path);}catch{return undefined;}
   };
+  /** The host's answer to one script fetch of a worker: status 0 is a network error. */
+  const hostFetch=async(f:{id:number;url:string}):Promise<{id:number;status:number;url:string;contentType:string;source:string}>=>{
+    const failed={id:f.id,status:0,url:f.url,contentType:"",source:""};
+    if(http&&new URL(f.url).pathname!=="/resources/testharnessreport.js"){
+      try{const r=await http.fetch(f.url);
+        return {id:f.id,status:r.status,url:(r as Response&{finalURL?:string}).finalURL??f.url,contentType:r.headers.get("content-type")??"",source:await r.text()};}
+      catch{return failed;}
+    }
+    const source=await readText(f.url);
+    return source===undefined?failed:{id:f.id,status:200,url:f.url,contentType:"text/javascript",source};
+  };
   const decode=(bytes:Uint8Array,contentType:string)=>{
     const decoded=(engine as {decodeDocument?:(b:Uint8Array,c:string)=>{encoding:string;source:string}|undefined}).decodeDocument?.(bytes,contentType);
     return {html:decoded?decoded.source:new TextDecoder().decode(bytes),encoding:decoded?.encoding};
@@ -395,8 +408,10 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       const data:Record<string,string>={};
       for(const n of names){const t=await readText(new URL(n,url).href);if(t!==undefined)data[n]=t;}
       if(names.length){
+        // An XML page (.xhtml) parses the script as XML: its text goes in a CDATA section.
+        const xml=/\.(xhtml|xht|xml|svg)$/.test(new URL(url).pathname),shim=shimScript(data);
         const at=html.search(/<script/i);
-        html=html.slice(0,at<0?html.length:at)+shimScript(data)+html.slice(at<0?html.length:at);
+        html=html.slice(0,at<0?html.length:at)+(xml?shim.replace(/^<script>([\s\S]*)<\/script>\n$/,(_,body:string)=>`<script>//<![CDATA[\n${body.replace(/\]\]>/g,"]]]]><![CDATA[>")}\n//]]></script>\n`):shim)+html.slice(at<0?html.length:at);
         facts=engine.inspect(html,{url}) as unknown as Facts;
       }
     }
@@ -423,8 +438,25 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       ...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
     const logs=[...turn.logs],errors=[...turn.errors];
     let instructions=turn.instructions;
+    // A worker's script and its importScripts: a turn lists what it waits for (fetches, each
+    // id once), the host fetches them and answers with action "fetched"; the turn then runs
+    // what is due, and the page settles again (the workers record).
+    type Fetch={id:number;url:string;kind?:string};
+    const answered=new Set<number>();
+    const take=(t:ScriptTurnWithFetches)=>{logs.push(...t.logs);errors.push(...t.errors);instructions+=t.instructions;};
+    const startFetches=(turn as ScriptTurnWithFetches).fetches??[];
     turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:70000});
-    logs.push(...turn.logs);errors.push(...turn.errors);instructions+=turn.instructions;
+    take(turn);
+    let pending:Fetch[]=[...startFetches,...((turn as ScriptTurnWithFetches).fetches??[])].filter(f=>!answered.has(f.id));
+    for(let round=0;pending.length&&round<1000;round++){
+      for(const f of pending)answered.add(f.id);
+      const results=await Promise.all(pending.map(hostFetch));
+      const given=engine.scriptSession("",{action:"fetched",session:turn.session,results}) as ScriptTurnWithFetches;
+      take(given);
+      turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:70000});
+      take(turn);
+      pending=[...(given.fetches??[]),...((turn as ScriptTurnWithFetches).fetches??[])].filter((f,i,all)=>!answered.has(f.id)&&all.findIndex(g=>g.id===f.id)===i);
+    }
     engine.scriptSession("",{action:"close"});
     return {...resultOf(file,logs),ms:Math.round(performance.now()-t0),instructions,clock:turn.clock,...(errors.length?{errors:errors.slice(0,5)}:{})};
   }};
