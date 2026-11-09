@@ -107,4 +107,59 @@ private def sameRules (env : MediaQuery.Env) (source : String) : Bool :=
 #guard sameRules {width := some 800} sheet
 #guard ((parseIn {width := some 800} mediaSheet).toOption.map List.length) == some 6
 
+/-! Pages with shadow trees: the scoped buckets (`ScopedIndex`) against the plain loop
+(`matchedRulesIn`, the premise of `CSS.computeAllIn_eq_linear`), on every node, and the
+styles of `computeAllIn` against `computeAllInLinear`. -/
+private def scopedRules (dom : DOM.Dom) (docCss shadowCss : String) : Except String (List Rule) := do
+  let doc ← CSS.parse docCss
+  let sr := ((List.range dom.size).filter (dom.isShadowRoot ·))
+  let inner ← CSS.parse shadowCss
+  return doc ++ sr.foldr (fun r acc => inner.map (fun x => {x with scope := some r}) ++ acc) []
+
+def agreesIn (html docCss shadowCss : String) (state : ElementState := {}) : Bool :=
+  let dom := DOM.parseHtmlDocument html
+  match scopedRules dom docCss shadowCss with
+  | .error _ => false
+  | .ok rules =>
+    let ts := TreeScope.of dom
+    let ix := ScopedIndex.build rules
+    let ks := ElemKeys.of dom
+    (List.range dom.size).all fun id =>
+      fingerprint (ix.matched (ks.get dom) ts id state) == fingerprint (matchedRulesIn ts id rules state)
+
+def stylesAgreeIn (html docCss shadowCss : String) (state : ElementState := {}) : Bool :=
+  let dom := DOM.parseHtmlDocument html
+  match scopedRules dom docCss shadowCss with
+  | .error _ => false
+  | .ok rules =>
+    let ts := TreeScope.of dom
+    match computeAllIn ts dom.flat rules 1 state, computeAllInLinear ts dom.flat rules 1 state with
+    | .ok a, .ok b => reprStr a == reprStr b
+    | .error a, .error b => a == b
+    | _, _ => false
+
+private def shadowPage :=
+  "<html><body><div id='h' class='a'><template shadowrootmode='open'><style></style><p id='in' class='b'>s <span class='c'>t</span></p>" ++
+  "<slot></slot><slot name='n'></slot><div id='h2'><template shadowrootmode='open'><p class='b'>u</p><slot></slot></template><i class='b' slot='q'>v</i></div></template>" ++
+  "<b id='lt' class='a'>x</b><em slot='n'>y</em></div><p id='out' class='b'>o</p></body></html>"
+private def shadowDocCss :=
+  "p{color:#010101}.b{color:#020202}#h{color:#030303}.a{margin:0}*{padding:0}#out .b{color:#040404}" ++
+  ":host{color:#050505}::slotted(b){color:#060606}"
+private def shadowInnerCss :=
+  ".b{color:#070707}p span{color:#080808}:host{color:#090909}:host(.a){color:#0a0a0a}:host #in{color:#0b0b0b}" ++
+  "::slotted(b){color:#0c0c0c}::slotted(*){margin:1px}slot::slotted(.a){color:#0d0d0d}.c:hover{color:#0e0e0e}"
+
+#guard agreesIn shadowPage shadowDocCss shadowInnerCss
+#guard agreesIn shadowPage shadowDocCss shadowInnerCss {hover := some 8, active := some 12}
+#guard agreesIn shadowPage shadowDocCss ""
+#guard agreesIn shadowPage "" shadowInnerCss
+#guard stylesAgreeIn shadowPage shadowDocCss shadowInnerCss
+#guard stylesAgreeIn shadowPage shadowDocCss shadowInnerCss {hover := some 8}
+
+-- A page with no shadow tree never takes the scoped path: `:host` and `::slotted()` rules
+-- go in no bucket, and match nothing.
+#guard ((CSS.parse ":host{color:red}::slotted(b){color:red}").toOption.map fun rs =>
+  let ix := RuleIndex.build rs
+  (ix.universal.size, ix.byTag.size, ix.byClass.size, ix.byId.size)) == some ((RuleIndex.build []).universal.size, (RuleIndex.build []).byTag.size, 0, (RuleIndex.build []).byId.size)
+
 end L4Factoidal.Rendering.CascadeTests

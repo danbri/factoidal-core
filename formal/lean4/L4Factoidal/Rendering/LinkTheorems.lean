@@ -106,9 +106,9 @@ private theorem throw_bind_ne {ε α β : Type} {e : ε} {f : α → Except ε �
 `render` answers are `linkRegions` over the boxes it answers, at the viewport width and at
 `linkHeight vh doc`, where `doc` is the height of the layout those boxes come from. -/
 theorem render_links {dom : Dom} {rules : List CSS.Rule} {font : FontProfile} {embedding : Embedding}
-    {width height : Nat} {textScale : Float} {state : CSS.ElementState} {pictures : Pictures}
+    {width height : Nat} {textScale : Float} {state : CSS.ElementState} {pictures : Pictures} {treeScope : Option CSS.TreeScope}
     {scene : Scene} {boxes : Array Box}
-    (ok : render dom rules font embedding width height textScale state pictures = .ok (scene,boxes)) :
+    (ok : render dom rules font embedding width height textScale state pictures treeScope = .ok (scene,boxes)) :
     ∃ (styles : Array Computed) (result : Result),
       block dom styles font embedding pictures 64 0 0 0 (Float.ofNat width) = .ok result ∧
       boxes = result.boxes ∧
@@ -135,8 +135,8 @@ and ending at or above the foot of that layout (`result.height`) has a region in
 scene's links, at any viewport height. -/
 theorem render_link_complete {dom : Dom} {rules : List CSS.Rule} {font : FontProfile}
     {embedding : Embedding} {width height : Nat} {textScale : Float} {state : CSS.ElementState}
-    {pictures : Pictures} {scene : Scene} {boxes : Array Box}
-    (ok : render dom rules font embedding width height textScale state pictures = .ok (scene,boxes)) :
+    {pictures : Pictures} {treeScope : Option CSS.TreeScope} {scene : Scene} {boxes : Array Box}
+    (ok : render dom rules font embedding width height textScale state pictures treeScope = .ok (scene,boxes)) :
     ∃ (styles : Array Computed) (result : Result),
       block dom styles font embedding pictures 64 0 0 0 (Float.ofNat width) = .ok result ∧
       boxes = result.boxes ∧

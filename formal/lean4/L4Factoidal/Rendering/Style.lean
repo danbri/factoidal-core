@@ -152,15 +152,21 @@ structure Compound where
   id : Option String := none
   classes : List String := []
   pseudo : List PseudoClass := []
+  /-- `:host` or `:host(compound)` (CSS Scoping 1 §3.2.1): it matches only the shadow host
+  of the rule's shadow tree, and the other fields test that host. -/
+  host : Bool := false
   deriving Repr
 structure Selector where
   /-- Rightmost compound first; ancestors follow. -/
   parts : List Compound
   specificity : Nat × Nat × Nat
+  /-- `::slotted(compound)` after the rightmost compound (CSS Scoping 1 §3.2.2): the
+  selector matches an element assigned to a slot that `parts` matches. -/
+  slotted : Option Compound := none
   deriving Repr
 /-- A selector that names `:visited` anywhere. Such a rule sets only colours. -/
 def Selector.visitedDependent (sel : Selector) : Bool :=
-  sel.parts.any (·.pseudo.contains .visited)
+  sel.parts.any (·.pseudo.contains .visited) || (sel.slotted.any (·.pseudo.contains .visited))
 
 /-- The element state the host says (Selectors Level 4 §9.1-§9.2, HTML §4.16.3):
 the element the pointer designates, the element being activated (each with its
@@ -173,6 +179,9 @@ structure ElementState where
 structure Rule where
   selectors : List Selector
   declarations : List Declaration
+  /-- The shadow root whose style sheet the rule is from (CSS Scoping 1 §3.1); none for
+  the document's. -/
+  scope : Option Nat := none
   deriving Repr
 
 def attrValue (n : DOM.Node) (key : String) : String :=
@@ -186,7 +195,7 @@ private def ident (s : String) : Bool := !s.isEmpty && s.toList.all (fun c => c.
 private def pseudoClass : String → Option PseudoClass
   | "link" => some .link | "visited" => some .visited | "any-link" => some .anyLink
   | "hover" => some .hover | "active" => some .active | _ => none
-private def compound (s : String) : Except String Compound := do
+private def compoundBody (s : String) : Except String Compound := do
   let chunks := s.toList.foldl (fun (acc : List String) c =>
     if c == '#' || c == '.' || c == ':' then String.singleton c :: acc
     else match acc with | [] => [String.singleton c] | a::rest => (a.push c)::rest) []
@@ -207,13 +216,34 @@ private def compound (s : String) : Except String Compound := do
     else if ident chunk then out := {out with tag := some chunk.toLower}
     else throw s!"unsupported CSS selector: {s}"
   return out
+/-- A compound, or `:host` and `:host(compound)` (CSS Scoping 1 §3.2.1). -/
+private def compound (s : String) : Except String Compound := do
+  if s == ":host" then return {host := true}
+  if s.startsWith ":host(" && s.endsWith ")" then
+    let inner ← compoundBody ((s.drop 6).dropEnd 1).toString
+    return {inner with host := true}
+  compoundBody s
+private def compoundSpecificity (n : Nat × Nat × Nat) (p : Compound) : Nat × Nat × Nat :=
+  (n.1 + (if p.id.isSome then 1 else 0), n.2.1 + p.classes.length + p.pseudo.length + (if p.host then 1 else 0),
+    n.2.2 + (if p.tag.isSome then 1 else 0))
 private def selector (s : String) : Except String Selector := do
-  let parts ← (words (trim s)).mapM compound
+  let ws := words (trim s)
+  -- `::slotted(compound)` ends the last compound (CSS Scoping 1 §3.2.2).
+  let (ws, slotted) ← match ws.getLast? with
+    | some w =>
+      match w.splitOn "::slotted(" with
+      | [before, inner] => do
+        if !inner.endsWith ")" then throw "unsupported ::slotted() selector"
+        let c ← compoundBody (inner.dropEnd 1).toString
+        pure (ws.dropLast ++ [if before.isEmpty then "*" else before], some c)
+      | _ => pure (ws, none)
+    | none => pure (ws, none)
+  let parts ← ws.mapM compound
   if parts.isEmpty || parts.length > 16 then throw "CSS selector exceeds supported depth"
-  let specificity := parts.foldl (fun (n : Nat × Nat × Nat) p =>
-    (n.1 + (if p.id.isSome then 1 else 0), n.2.1 + p.classes.length + p.pseudo.length,
-      n.2.2 + (if p.tag.isSome then 1 else 0))) (0,0,0)
-  return ⟨parts.reverse,specificity⟩
+  let specificity := (parts ++ slotted.toList).foldl compoundSpecificity (0,0,0)
+  -- `::slotted` is a pseudo-element: one more in the last count.
+  let specificity := if slotted.isSome then (specificity.1, specificity.2.1, specificity.2.2 + 1) else specificity
+  return {parts := parts.reverse, specificity, slotted}
 
 private def expandEdges (key value : String) (important : Bool) : Except String (List Declaration) := do
   let values ← match words value with
@@ -318,7 +348,7 @@ def parseInBlocks (env : MediaQuery.Env) (source : String) : Except String (List
     for (inner,content) in blocks do
       if !(trim inner).startsWith "@" then
         if let .ok selectors := (inner.splitOn ",").mapM selector then
-          out := ⟨selectors,← declarations content⟩ :: out
+          out := {selectors, declarations := ← declarations content} :: out
   return out.reverse
 
 /-- The rules of a sheet, each with the query list of its `@media` block (none outside
@@ -335,7 +365,7 @@ def parseRaw (source : String) : Except String (List (Option String × Rule)) :=
     for (query,inner,content) in blocks do
       if !(trim inner).startsWith "@" then
         if let .ok selectors := (inner.splitOn ",").mapM selector then
-          out := (query,⟨selectors,← declarations content⟩) :: out
+          out := (query,{selectors, declarations := ← declarations content}) :: out
   return out.reverse
 
 /-- The rules of `parseRaw` that hold in the media environment `env`: those outside an
@@ -386,12 +416,16 @@ def ElemKey.read (n : DOM.Node) : ElemKey := ⟨words (attrValue n "class"), att
 /-- The keys of each node, read from the arena when asked: the reference. -/
 def readKeys (dom : Dom) : Nat → ElemKey := fun i => ElemKey.read (dom.get i)
 
-private def compoundMatchesK (keys : Nat → ElemKey) (dom : Dom) (state : ElementState) (id : Nat) (s : Compound) : Bool :=
+/-- The fields of a compound on element `id`, the test of `:host` apart. -/
+private def compoundFieldsK (keys : Nat → ElemKey) (dom : Dom) (state : ElementState) (id : Nat) (s : Compound) : Bool :=
   let n := dom.get id
   n.type == .element && (s.tag.map (· == n.lname)).getD true &&
     (s.id.map (· == (keys id).id)).getD true &&
     s.classes.all ((keys id).classes.contains ·) &&
     s.pseudo.all (pseudoMatches dom state id n)
+/-- A compound on element `id` of a tree with no shadow scope: `:host` matches nothing. -/
+private def compoundMatchesK (keys : Nat → ElemKey) (dom : Dom) (state : ElementState) (id : Nat) (s : Compound) : Bool :=
+  !s.host && compoundFieldsK keys dom state id s
 private def matchAncestorsK (keys : Nat → ElemKey) (dom : Dom) (state : ElementState) : Nat → Option Nat → Compound → Option Nat
   | 0, _, _ => none
   | _+1, none, _ => none
@@ -407,7 +441,7 @@ private def partsMatchK (keys : Nat → ElemKey) (dom : Dom) (state : ElementSta
 def selectorMatchesK (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (sel : Selector) (state : ElementState := {}) : Bool :=
   match sel.parts with
   | [] => false
-  | head::rest => compoundMatchesK keys dom state id head && partsMatchK keys dom state rest (dom.get id).parent
+  | head::rest => sel.slotted.isNone && compoundMatchesK keys dom state id head && partsMatchK keys dom state rest (dom.get id).parent
 
 def selectorMatches (dom : Dom) (id : Nat) (sel : Selector) (state : ElementState := {}) : Bool :=
   selectorMatchesK (readKeys dom) dom id sel state
@@ -436,6 +470,77 @@ theorem ElemKeys.get_of (dom : Dom) : (ElemKeys.of dom).get dom = readKeys dom :
 theorem selectorMatchesK_of (dom : Dom) (id : Nat) (sel : Selector) (state : ElementState) :
     selectorMatchesK ((ElemKeys.of dom).get dom) dom id sel state = selectorMatches dom id sel state := by
   rw [ElemKeys.get_of]; rfl
+
+/-! ### Selectors of shadow trees (CSS Scoping 1 §3)
+
+A page with a shadow tree is laid out on its flat tree (`DOM.Dom.flat`); its selectors
+match on the node tree, each rule in its own tree: a rule of the document's style sheets
+matches elements of the document tree, a rule of a shadow tree's `style` elements matches
+elements of that shadow tree, its `:host` the shadow host, and its `::slotted()` the
+elements assigned to its slots. A page with no shadow tree never takes this path. -/
+
+/-- The node tree of a flat-tree layout and each node's shadow root (none in the document
+tree). -/
+structure TreeScope where
+  tree : Dom
+  scopes : Array (Option Nat)
+  deriving Inhabited
+
+def TreeScope.of (tree : Dom) : TreeScope := Id.run do
+  let mut scopes := Array.replicate tree.size (none : Option Nat)
+  for i in [0:tree.size] do
+    if tree.isShadowRoot i then
+      for k in tree.treeOrder i do scopes := scopes.set! k (some i)
+  return {tree, scopes}
+
+/-- The shadow root of node `id`'s tree; none in the document tree. -/
+def TreeScope.scopeOf (ts : TreeScope) (id : Nat) : Option Nat := ts.scopes.getD id none
+
+def hostOfScope (ts : TreeScope) (scope : Option Nat) : Option Nat :=
+  scope.bind fun r => (ts.tree.get r).host
+
+/-- A compound of a rule of tree `scope`: a `:host` compound matches only the host of that
+tree, and no other compound matches it (the host is featureless there). -/
+private def compoundInK (keys : Nat → ElemKey) (ts : TreeScope) (state : ElementState) (scope : Option Nat) (id : Nat) (s : Compound) : Bool :=
+  s.host == (hostOfScope ts scope == some id) && compoundFieldsK keys ts.tree state id s
+
+/-- The next node up for a selector of tree `scope`: the parent, and from that tree's
+shadow root its host. -/
+private def upIn (ts : TreeScope) (scope : Option Nat) (n : Nat) : Option Nat :=
+  match (ts.tree.get n).parent with
+  | some p => some p
+  | none => if scope == some n then (ts.tree.get n).host else none
+
+private def matchAncestorsInK (keys : Nat → ElemKey) (ts : TreeScope) (state : ElementState) (scope : Option Nat) : Nat → Option Nat → Compound → Option Nat
+  | 0, _, _ => none
+  | _+1, none, _ => none
+  | f+1, some id, sel =>
+    if compoundInK keys ts state scope id sel then some id else matchAncestorsInK keys ts state scope f (upIn ts scope id) sel
+private def partsInK (keys : Nat → ElemKey) (ts : TreeScope) (state : ElementState) (scope : Option Nat) : List Compound → Option Nat → Bool
+  | [], _ => true
+  | sel::rest, ancestor => match matchAncestorsInK keys ts state scope (ts.tree.size+1) ancestor sel with
+    | none => false
+    | some id => partsInK keys ts state scope rest (upIn ts scope id)
+
+/-- `sel`, of a rule of tree `scope`, matches element `id` (keys from `keys`). -/
+def selectorMatchesInK (keys : Nat → ElemKey) (ts : TreeScope) (state : ElementState) (scope : Option Nat) (id : Nat) (sel : Selector) : Bool :=
+  match sel.parts with
+  | [] => false
+  | head::rest =>
+    match sel.slotted with
+    | none =>
+      (head.host || ts.scopeOf id == scope) &&
+        compoundInK keys ts state scope id head && partsInK keys ts state scope rest (upIn ts scope id)
+    | some c =>
+      scope.isSome && compoundFieldsK keys ts.tree state id c &&
+      match ts.tree.findSlot id with
+      | some sl => ts.scopeOf sl == scope && compoundInK keys ts state scope sl head &&
+          partsInK keys ts state scope rest (upIn ts scope sl)
+      | none => false
+
+/-- `selectorMatchesInK` with the arena's keys: the reference. -/
+def selectorMatchesIn (ts : TreeScope) (state : ElementState) (scope : Option Nat) (id : Nat) (sel : Selector) : Bool :=
+  selectorMatchesInK (readKeys ts.tree) ts state scope id sel
 
 /-- Strict finite decimal conversion for CSS lengths; exponent syntax is outside
 this first profile, and malformed declarations are refused. -/
@@ -848,7 +953,10 @@ are those of the plain loop (`matchedRules`); `RuleIndex.matched_eq` checks this
 the test pages (`CascadeTests.lean`) and `computeAll_eq_linear` lifts it to the styles. -/
 inductive Bucket where
   | id (s : String) | cls (s : String) | tag (s : String) | any
-def Compound.bucket (c : Compound) : Bucket :=
+  /-- A selector no element of a tree without shadow scope matches: `:host` and `::slotted()`. -/
+  | never
+/-- The bucket of a compound by its fields alone. -/
+def Compound.fieldBucket (c : Compound) : Bucket :=
   match c.id with
   | some i => .id i
   | none => match c.classes with
@@ -856,7 +964,10 @@ def Compound.bucket (c : Compound) : Bucket :=
     | [] => match c.tag with
       | some t => .tag t
       | none => .any
+def Compound.bucket (c : Compound) : Bucket :=
+  if c.host then .never else c.fieldBucket
 def Selector.bucket (sel : Selector) : Bucket :=
+  if sel.slotted.isSome then .never else
   match sel.parts with
   | [] => .any
   | c :: _ => c.bucket
@@ -866,6 +977,31 @@ def Bucket.admits (k : ElemKey) (lname : String) : Bucket → Bool
   | .cls c => k.classes.contains c
   | .tag t => t == lname
   | .any => true
+  | .never => false
+
+/-- A compound's fields that match an element have the element in the compound's bucket. -/
+private theorem compoundFieldsK_admits (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (c : Compound)
+    (state : ElementState) (hc : compoundFieldsK keys dom state id c = true) :
+    c.fieldBucket.admits (keys id) (dom.get id).lname = true := by
+  unfold compoundFieldsK at hc
+  simp only [Bool.and_eq_true] at hc
+  obtain ⟨⟨⟨⟨_, htag⟩, hid⟩, hcls⟩, _⟩ := hc
+  cases hi : c.id with
+  | some i =>
+    rw [hi] at hid
+    simpa [Compound.fieldBucket, hi, Bucket.admits] using hid
+  | none =>
+    cases hk : c.classes with
+    | cons k ks =>
+      rw [hk] at hcls
+      simp only [List.all_cons, Bool.and_eq_true] at hcls
+      simpa [Compound.fieldBucket, hi, hk, Bucket.admits] using hcls.1
+    | nil =>
+      cases ht : c.tag with
+      | some t =>
+        rw [ht] at htag
+        simpa [Compound.fieldBucket, hi, hk, ht, Bucket.admits] using htag
+      | none => simp [Compound.fieldBucket, hi, hk, ht, Bucket.admits]
 
 /-- A selector that matches an element has the element in its bucket. -/
 theorem selectorMatchesK_admits (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (sel : Selector)
@@ -873,30 +1009,69 @@ theorem selectorMatchesK_admits (keys : Nat → ElemKey) (dom : Dom) (id : Nat) 
     sel.bucket.admits (keys id) (dom.get id).lname = true := by
   unfold selectorMatchesK at h
   cases hp : sel.parts with
-  | nil => simp [Selector.bucket, hp, Bucket.admits]
+  | nil => simp [hp] at h
   | cons c rest =>
     rw [hp] at h
     simp only [Bool.and_eq_true] at h
-    have hc := h.1
+    obtain ⟨⟨hs, hc⟩, _⟩ := h
     unfold compoundMatchesK at hc
-    simp only [Bool.and_eq_true] at hc
-    obtain ⟨⟨⟨⟨_, htag⟩, hid⟩, hcls⟩, _⟩ := hc
-    cases hi : c.id with
-    | some i =>
-      rw [hi] at hid
-      simpa [Selector.bucket, hp, Compound.bucket, hi, Bucket.admits] using hid
+    simp only [Bool.and_eq_true, Bool.not_eq_true'] at hc
+    have hsome : sel.slotted.isSome = false := by
+      cases hsl : sel.slotted with
+      | none => rfl
+      | some _ => rw [hsl] at hs; simp at hs
+    have := compoundFieldsK_admits keys dom id c state hc.2
+    simpa [Selector.bucket, hsome, hp, Compound.bucket, hc.1] using this
+
+/-- A selector of tree `scope` that matches element `id` has it where the scoped index
+(`ScopedIndex`) looks: under `::slotted(c)`, in the bucket of `c` with a slot of that tree
+assigned; under a `:host` compound, as that tree's host; otherwise, in the bucket of the
+rightmost compound and in that tree. -/
+theorem selectorMatchesInK_admits (keys : Nat → ElemKey) (ts : TreeScope) (state : ElementState)
+    (scope : Option Nat) (id : Nat) (sel : Selector)
+    (h : selectorMatchesInK keys ts state scope id sel = true) :
+    match sel.slotted, sel.parts with
+    | some c, _ => c.fieldBucket.admits (keys id) (ts.tree.get id).lname = true ∧
+        ∃ sl, ts.tree.findSlot id = some sl ∧ ts.scopeOf sl = scope
+    | none, c :: _ =>
+      if c.host then hostOfScope ts scope = some id
+      else c.fieldBucket.admits (keys id) (ts.tree.get id).lname = true ∧ ts.scopeOf id = scope
+    | none, [] => False := by
+  unfold selectorMatchesInK at h
+  cases hp : sel.parts with
+  | nil => simp [hp] at h
+  | cons c rest =>
+    rw [hp] at h
+    simp only at h
+    cases hs : sel.slotted with
     | none =>
-      cases hk : c.classes with
-      | cons k ks =>
-        rw [hk] at hcls
-        simp only [List.all_cons, Bool.and_eq_true] at hcls
-        simpa [Selector.bucket, hp, Compound.bucket, hi, hk, Bucket.admits] using hcls.1
-      | nil =>
-        cases ht : c.tag with
-        | some t =>
-          rw [ht] at htag
-          simpa [Selector.bucket, hp, Compound.bucket, hi, hk, ht, Bucket.admits] using htag
-        | none => simp [Selector.bucket, hp, Compound.bucket, hi, hk, ht, Bucket.admits]
+      simp only [hs, Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq] at h
+      obtain ⟨⟨hscope, hc⟩, _⟩ := h
+      unfold compoundInK at hc
+      simp only [Bool.and_eq_true] at hc
+      obtain ⟨hhost, hfields⟩ := hc
+      cases hh : c.host with
+      | true =>
+        simp only [hh, if_true]
+        rw [hh] at hhost
+        have : (hostOfScope ts scope == some id) = true := by simpa using hhost
+        exact beq_iff_eq.mp this
+      | false =>
+        simp only [hh, Bool.false_eq_true, if_false]
+        refine ⟨compoundFieldsK_admits keys ts.tree id c state hfields, ?_⟩
+        rcases hscope with hb | hsc
+        · rw [hh] at hb; cases hb
+        · exact hsc
+    | some cc =>
+      simp only [hs, Bool.and_eq_true] at h
+      obtain ⟨⟨_, hfields⟩, hslot⟩ := h
+      refine ⟨compoundFieldsK_admits keys ts.tree id cc state hfields, ?_⟩
+      cases hfs : ts.tree.findSlot id with
+      | none => rw [hfs] at hslot; cases hslot
+      | some sl =>
+        rw [hfs] at hslot
+        simp only [Bool.and_eq_true, beq_iff_eq] at hslot
+        exact ⟨sl, rfl, hslot.1.1⟩
 
 /-- The rules in buckets: `entries` is `ruleEntries`, and each bucket lists the entries
 (by index, ascending, each once) with a selector in that bucket. -/
@@ -914,22 +1089,33 @@ private def bucketAdd (m : Std.HashMap String (List Nat)) (k : String) (i : Nat)
 private def bucketArrays (m : Std.HashMap String (List Nat)) : Std.HashMap String (Array Nat) :=
   m.map fun _ l => l.reverse.toArray
 
+/-- Buckets being filled, descending by entry. -/
+structure RuleIndexB where
+  byId : Std.HashMap String (List Nat) := {}
+  byClass : Std.HashMap String (List Nat) := {}
+  byTag : Std.HashMap String (List Nat) := {}
+  universal : List Nat := []
+  deriving Inhabited
+
+def RuleIndexB.add (b : RuleIndexB) (bk : Bucket) (i : Nat) : RuleIndexB :=
+  match bk with
+  | .id k => {b with byId := bucketAdd b.byId k i}
+  | .cls k => {b with byClass := bucketAdd b.byClass k i}
+  | .tag k => {b with byTag := bucketAdd b.byTag k i}
+  | .any => if b.universal.head? != some i then {b with universal := i :: b.universal} else b
+  | .never => b
+
+def RuleIndexB.finish (b : RuleIndexB) (entries : Array (Nat × Rule)) : RuleIndex :=
+  ⟨entries, bucketArrays b.byId, bucketArrays b.byClass, bucketArrays b.byTag, b.universal.reverse.toArray⟩
+
 /-- The buckets of `rules` (and the user agent's): one pass over the selectors. -/
 def RuleIndex.build (rules : List Rule) : RuleIndex := Id.run do
   let entries := (ruleEntries rules).toArray
-  let mut byId : Std.HashMap String (List Nat) := {}
-  let mut byClass : Std.HashMap String (List Nat) := {}
-  let mut byTag : Std.HashMap String (List Nat) := {}
-  let mut universal : List Nat := []
+  let mut b : RuleIndexB := {}
   for h : i in [:entries.size] do
     for sel in entries[i].2.selectors do
-      match sel.bucket with
-      | .id k => byId := bucketAdd byId k i
-      | .cls k => byClass := bucketAdd byClass k i
-      | .tag k => byTag := bucketAdd byTag k i
-      | .any => if universal.head? != some i then universal := i :: universal
-  let ix : RuleIndex := ⟨entries, bucketArrays byId, bucketArrays byClass, bucketArrays byTag, universal.reverse.toArray⟩
-  return ix
+      b := b.add sel.bucket i
+  return b.finish entries
 
 /-- The union of two ascending arrays, ascending, each value once: one pass, no recursion. -/
 def RuleIndex.mergeAsc (a b : Array Nat) : Array Nat := Id.run do
@@ -996,10 +1182,110 @@ def RuleIndex.matched (ix : RuleIndex) (keys : Nat → ElemKey) (dom : Dom) (id 
     | some e => matchEntry keys dom id state e
     | none => none
 
+/-! ### Rule buckets on a page with shadow trees
+
+The same buckets, one set per tree: an element tries the user agent's rules, the rules
+of its own tree, the `:host` rules of the tree it hosts, and the `::slotted()` rules of the
+tree its parent hosts (the shadow root its slot is in). Numbers index the one entry
+array of `ruleEntries`, so the union stays in sheet order as in `RuleIndex.matched`.
+Nothing here runs on a page with no shadow host (`computeFor`, `computeAll`). -/
+
+/-- The buckets of the rules of one tree. -/
+structure TreeRules where
+  normal : RuleIndex
+  /-- Rules with a `:host` compound rightmost: tried only on that tree's host. -/
+  hostRules : Array Nat := #[]
+  slotted : RuleIndex
+
+/-- A tree's rules while being filled. -/
+structure TreeRulesB where
+  normal : RuleIndexB := {}
+  hostRules : List Nat := []
+  slotted : RuleIndexB := {}
+  deriving Inhabited
+
+/-- The rules of each tree, in buckets: `doc` the document's, `shadow` by shadow root. -/
+structure ScopedIndex where
+  entries : Array (Nat × Rule)
+  ua : RuleIndex
+  doc : TreeRules
+  shadow : Std.HashMap Nat TreeRules := {}
+  empty : TreeRules
+
+private def TreeRulesB.add (b : TreeRulesB) (sel : Selector) (i : Nat) : TreeRulesB :=
+  match sel.slotted with
+  | some c => {b with slotted := b.slotted.add c.fieldBucket i}
+  | none => match sel.parts with
+    | [] => b
+    | c :: _ => if c.host then
+        (if b.hostRules.head? != some i then {b with hostRules := i :: b.hostRules} else b)
+      else {b with normal := b.normal.add c.fieldBucket i}
+
+private def TreeRulesB.finish (b : TreeRulesB) (entries : Array (Nat × Rule)) : TreeRules :=
+  {normal := b.normal.finish entries, hostRules := b.hostRules.reverse.toArray, slotted := b.slotted.finish entries}
+
+/-- The scoped buckets of `rules` (and the user agent's): one pass over the selectors. -/
+def ScopedIndex.build (rules : List Rule) : ScopedIndex := Id.run do
+  let entries := (ruleEntries rules).toArray
+  let mut ua : RuleIndexB := {}
+  let mut doc : TreeRulesB := {}
+  let mut shadow : Std.HashMap Nat TreeRulesB := {}
+  for h : i in [:entries.size] do
+    let (origin,rule) := entries[i]
+    for sel in rule.selectors do
+      if origin == 0 then
+        ua := ua.add sel.bucket i
+      else match rule.scope with
+        | none => doc := doc.add sel i
+        | some r => shadow := shadow.insert r ((shadow.getD r {}).add sel i)
+  let none_ : TreeRulesB := {}
+  return {entries, ua := ua.finish entries, doc := doc.finish entries,
+          shadow := shadow.map fun _ b => b.finish entries, empty := none_.finish entries}
+
+/-- The rules of tree `scope`. -/
+def ScopedIndex.treeOf (ix : ScopedIndex) (scope : Option Nat) : TreeRules :=
+  match scope with
+  | none => ix.doc
+  | some r => ix.shadow.getD r ix.empty
+
+/-- The entries that element `id` (keys `k`) may match: those of the buckets above,
+ascending, each once. -/
+def ScopedIndex.candidates (ix : ScopedIndex) (ts : TreeScope) (k : ElemKey) (id : Nat) : Array Nat := Id.run do
+  let n := ts.tree.get id
+  let scope := ts.scopeOf id
+  let own := ix.treeOf scope
+  let mut runs : Array (Array Nat) := #[ix.ua.candidates k n.lname, own.normal.candidates k n.lname]
+  if let some r := n.shadow then
+    runs := runs.push (ix.treeOf (some r)).hostRules
+  if let some p := n.parent then
+    if let some r := (ts.tree.get p).shadow then
+      runs := runs.push ((ix.treeOf (some r)).slotted.candidates k n.lname)
+  return RuleIndex.mergeRuns runs
+
+/-- The entry `e` as a match of element `id` in its tree: the user agent's rules match in
+the element's tree, an author rule in the tree of its sheet. -/
+def matchEntryIn (keys : Nat → ElemKey) (ts : TreeScope) (id : Nat) (state : ElementState) (e : Nat × Rule) : Option Match :=
+  let scope := if e.1 == 0 then ts.scopeOf id else e.2.scope
+  let m := e.2.selectors.filter (selectorMatchesInK keys ts state scope id ·)
+  if m.isEmpty then none else some (e.1,e.2,m)
+
+/-- The reference on a page with shadow trees: every rule tried, in order. -/
+def matchedRulesIn (ts : TreeScope) (id : Nat) (rules : List Rule) (state : ElementState := {}) : List Match :=
+  (ruleEntries rules).filterMap (matchEntryIn (readKeys ts.tree) ts id state)
+
+/-- The rules that match element `id`, from its buckets. -/
+def ScopedIndex.matched (ix : ScopedIndex) (keys : Nat → ElemKey) (ts : TreeScope) (id : Nat) (state : ElementState := {}) : List Match :=
+  (ix.candidates ts (keys id) id).toList.filterMap fun i =>
+    match ix.entries[i]? with
+    | some e => matchEntryIn keys ts id state e
+    | none => none
+
 /-- Winning declarations are keyed by property, with importance, origin, specificity
 and source order compared lexicographically (CSS Cascade 4 §6.1). The user agent
 origin (`userAgentRules`) is below the author origin. Inheritance is applied first.
-`matched` are the rules that match the element, in sheet order (`matchedRules`). -/
+`matched` are the rules that match the element, in sheet order (`matchedRules`). In one
+list position with the origin, a shadow tree's normal declarations lose to the document's
+and its important ones win (CSS Cascade 4 §6.1 "context"), above the style attribute. -/
 def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Computed) : Except String Computed := do
   let n := dom.get id
   let block := ["html","body","div","p","section","main","article","header","footer","nav","aside",
@@ -1057,12 +1343,13 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     let onlyVisited := matched.all (·.visitedDependent)
     for d in rule.declarations do
       if !onlyVisited || visitedProperties.contains d.property then
-        let key := [if d.important then 1 else 0,origin,0,specificity.1,specificity.2.1,specificity.2.2,order]
+        let context := if (origin == 1 && rule.scope.isSome) == d.important then 1 else 0
+        let key := [if d.important then 1 else 0,origin*2+context,0,specificity.1,specificity.2.1,specificity.2.2,order]
         if (winners.get? d.property).all (fun old => lexLE old.1 key) then
           winners := winners.insert d.property (key,d)
       order := order+1
   for d in ← declarations (attrValue n "style") do
-    let key := [if d.important then 1 else 0,1,1,0,0,0,order]
+    let key := [if d.important then 1 else 0,2+(if d.important then 0 else 1),1,0,0,0,order]
     if (winners.get? d.property).all (fun old => lexLE old.1 key) then winners := winners.insert d.property (key,d)
     order := order+1
   -- Font size precedes line-height and inheritance-sensitive dependent values.
@@ -1127,6 +1414,26 @@ def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1)
   let ks := ElemKeys.of dom
   computeAllWith (fun id => ix.matched (ks.get dom) dom id state) dom textScale
 
+/-- The styles on a page with shadow trees, laid out on `dom` (its flat tree): the element
+keys read once, the rules in buckets per tree. -/
+def computeAllIn (ts : TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
+    (state : ElementState := {}) : Except String (Array Computed) :=
+  let ix := ScopedIndex.build rules
+  let ks := ElemKeys.of ts.tree
+  computeAllWith (fun id => ix.matched (ks.get ts.tree) ts id state) dom textScale
+
+/-- The reference for `computeAllIn`: every rule tried for every element. -/
+def computeAllInLinear (ts : TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
+    (state : ElementState := {}) : Except String (Array Computed) :=
+  computeAllWith (fun id => matchedRulesIn ts id rules state) dom textScale
+
+/-- `computeAll` for a page with no shadow tree; `computeAllIn` for one with shadow trees. -/
+def computeFor (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
+    (state : ElementState := {}) : Except String (Array Computed) :=
+  match treeScope with
+  | none => computeAll dom rules textScale state
+  | some ts => computeAllIn ts dom rules textScale state
+
 /-- The buckets give the styles of the plain loop wherever they give its matches. -/
 theorem computeAll_eq_linear (dom : Dom) (rules : List Rule) (textScale : Float) (state : ElementState)
     (h : ∀ id, (RuleIndex.build rules).matched ((ElemKeys.of dom).get dom) dom id state = matchedRules dom id rules state) :
@@ -1135,6 +1442,19 @@ theorem computeAll_eq_linear (dom : Dom) (rules : List Rule) (textScale : Float)
   simp only []
   rw [show (fun id => (RuleIndex.build rules).matched ((ElemKeys.of dom).get dom) dom id state) =
     (fun id => matchedRules dom id rules state) from funext h]
+
+/-- Scoped buckets give the styles of the plain loop wherever they give its matches. -/
+theorem computeAllIn_eq_linear (ts : TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float) (state : ElementState)
+    (h : ∀ id, (ScopedIndex.build rules).matched ((ElemKeys.of ts.tree).get ts.tree) ts id state = matchedRulesIn ts id rules state) :
+    computeAllIn ts dom rules textScale state = computeAllInLinear ts dom rules textScale state := by
+  unfold computeAllIn computeAllInLinear
+  simp only []
+  rw [show (fun id => (ScopedIndex.build rules).matched ((ElemKeys.of ts.tree).get ts.tree) ts id state) =
+    (fun id => matchedRulesIn ts id rules state) from funext h]
+
+/-- With no shadow tree, nothing about the cascade differs. -/
+theorem computeFor_none (dom : Dom) (rules : List Rule) (textScale : Float) (state : ElementState) :
+    computeFor none dom rules textScale state = computeAll dom rules textScale state := rfl
 
 end L4Factoidal.Rendering.CSS
 
