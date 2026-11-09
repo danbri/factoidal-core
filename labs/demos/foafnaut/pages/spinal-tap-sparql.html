@@ -3,8 +3,9 @@
 <link rel="icon" type="image/svg+xml" href="foafnaut-icon.svg">
 <style>
 /* The Fraktur letters (U+1D504 to U+1D537) come from Noto Sans Math (OFL;
-   third_party/fonts/noto-sans-math), Foafnaut's fallback font for them. Other browsers get the
-   same face here, so the diaeresis drawn over the n sits where it does in Foafnaut. First the
+   third_party/fonts/noto-sans-math), Foafnaut's fallback font for them; other browsers get the
+   same face here. The font has U+0308 but no mark anchor on these letters: HarfBuzz (so Chrome)
+   leaves the dots after the letter, and Foafnaut puts them on its ink (issue 368). First the
    Hub's copy (web/hub/foafnaut/fonts, beside pages/), then the repository's. */
 @font-face { font-family:'Noto Sans Math'; font-display:swap;
   src:url('../fonts/noto-sans-math/NotoSansMath-Regular.ttf') format('truetype'),
@@ -52,8 +53,8 @@ td.empty { background:#070709; border:0 }
 <p class="nav"><a href="index.html">Demo index</a> · a SPARQL client for Wikidata, through QLever</p>
 <!-- The wordmark: the band's name in Mathematical Fraktur letters (real text, Noto Sans Math),
      with chrome fill, a black cut line and a flame edge: three uses of one group. Fraktur has no
-     dotless i, so it is 𝔦. The diaeresis over the 𝔫 is drawn here as two diamonds: U+0308 after a
-     Fraktur letter comes from another font, and Foafnaut does not place such marks yet. -->
+     dotless i, so it is 𝔦. The diaeresis over the 𝔫 is U+0308 in the text: the shaper places it
+     on the 𝔫 (Noto Sans Math has no mark anchor there; issue 368), so copy and paste keep it. -->
 <div class="mark" aria-label="Spinal Tap"><svg width="728" height="200" viewBox="0 0 728 200"><title>Spinal Tap</title>
 <defs>
 <linearGradient id="chrome" gradientUnits="userSpaceOnUse" x1="0" y1="35" x2="0" y2="180">
@@ -62,8 +63,7 @@ td.empty { background:#070709; border:0 }
 <linearGradient id="flame" gradientUnits="userSpaceOnUse" x1="0" y1="35" x2="0" y2="180">
 <stop offset="0" stop-color="#ffd23a"/><stop offset="0.5" stop-color="#ff6a00"/><stop offset="1" stop-color="#b3120a"/>
 </linearGradient>
-<g id="wm"><text x="31.8" y="150" font-size="150" font-family="'Noto Sans Math', serif">𝔖𝔭𝔦𝔫𝔞𝔩 𝔗𝔞𝔭</text>
-<path d="M267.1 44 277.1 54 267.1 64 257.1 54ZM299.1 44 309.1 54 299.1 64 289.1 54Z"/></g>
+<g id="wm"><text x="31.8" y="150" font-size="150" font-family="'Noto Sans Math', serif">𝔖𝔭𝔦𝔫̈𝔞𝔩 𝔗𝔞𝔭</text></g>
 </defs>
 <use href="#wm" fill="none" stroke="url(#flame)" stroke-width="12" stroke-linejoin="round"/>
 <use href="#wm" fill="none" stroke="#000" stroke-width="5" stroke-linejoin="round"/>
@@ -72,18 +72,17 @@ td.empty { background:#070709; border:0 }
 <p class="lede">Seven SPARQL queries about the band, the films and the people in them. Every fact on the cards is a row from Wikidata.</p>
 
 <!-- The zoom: the band's name in Fraktur letters, scaled from 1 to 40 and back round the
-     diaeresis of the 𝔫 (the eye flies between its two diamonds); then it fades into "𝔉𝔬𝔞𝔣𝔫𝔞𝔲𝔱",
-     this browser's name, with the same diamonds over 𝔬 and 𝔫. Text stays sharp at every scale:
-     Lean draws the glyph outlines. Only transforms and opacity change: paint only. -->
+     diaeresis of the 𝔫 (the eye flies between its two dots); then it fades into "𝔉𝔬̈𝔞𝔣𝔫̈𝔞𝔲𝔱",
+     this browser's name, with the same dots over 𝔬 and 𝔫. The dots are U+0308 in the text.
+     Text stays sharp at every scale: Lean draws the glyph outlines. Only transforms and
+     opacity change: paint only, no layout. The stage grows with the marks of "Gain". -->
 <div class="stage" style="overflow:clip" aria-label="Spinal Tap, then Foafnaut">
 <svg id="zoomsvg" width="728" height="150" viewBox="0 0 728 150"><title>Spinal Tap, then Foafnaut</title>
-<rect width="728" height="150" fill="#0d0d11"/>
+<rect id="stagebg" width="728" height="150" fill="#0d0d11"/>
 <g transform="translate(320.8 52.8)"><g id="zoom">
-<g transform="translate(-320.8 -52.8)"><text id="gothic" x="186.8" y="104" font-size="80" font-family="'Noto Sans Math', serif" fill="#eef1f5" stroke="#ff6a00" stroke-width="1.2">𝔖𝔭𝔦𝔫𝔞𝔩 𝔗𝔞𝔭</text>
-<path id="gothicdots" d="M312 47.3 317.5 52.8 312 58.3 306.5 52.8ZM329.6 47.3 335.1 52.8 329.6 58.3 324.1 52.8Z" fill="#eef1f5" stroke="#ff6a00" stroke-width="1.2"/></g>
+<g transform="translate(-320.8 -52.8)"><text id="gothic" x="186.8" y="104" font-size="80" font-family="'Noto Sans Math', serif" fill="#eef1f5" stroke="#ff6a00" stroke-width="1.2">𝔖𝔭𝔦𝔫̈𝔞𝔩 𝔗𝔞𝔭</text></g>
 </g></g>
-<text id="signoff" opacity="0" x="225.5" y="104" font-size="80" font-family="'Noto Sans Math', serif" fill="#e2b85a" stroke="#ff3b12" stroke-width="1.2">𝔉𝔬𝔞𝔣𝔫𝔞𝔲𝔱</text>
-<path id="signoffdots" opacity="0" d="M283.3 47.3 288.8 52.8 283.3 58.3 277.8 52.8ZM300.9 47.3 306.4 52.8 300.9 58.3 295.4 52.8ZM380.9 47.3 386.4 52.8 380.9 58.3 375.4 52.8ZM398.5 47.3 404 52.8 398.5 58.3 393 52.8Z" fill="#e2b85a" stroke="#ff3b12" stroke-width="1.2"/>
+<text id="signoff" opacity="0" x="225.5" y="104" font-size="80" font-family="'Noto Sans Math', serif" fill="#e2b85a" stroke="#ff3b12" stroke-width="1.2">𝔉𝔬̈𝔞𝔣𝔫̈𝔞𝔲𝔱</text>
 </svg>
 <p class="stagebar"><button id="zoombtn">Zoom in</button><button id="gainbtn">Gain 0: turn it up</button><span id="gainknob"></span> <span id="zoominfo">Scale 1 to 40 and back, between the two dots over the 𝔫, then 𝔉𝔬𝔞𝔣𝔫𝔞𝔲𝔱.</span></p>
 </div>
@@ -509,12 +508,12 @@ tools();
 // it, else one transform a frame from requestAnimationFrame. ----
 const SVGNS = 'http://www.w3.org/2000/svg';
 const zoom = $('zoom'), gothic = $('gothic');
-const outgoing = [gothic, $('gothicdots')], incoming = [$('signoff'), $('signoffdots')];
+const outgoing = [gothic], incoming = [$('signoff')];
 const ZOOM_MS = 7000, FADE_MS = 1400, TOTAL_MS = ZOOM_MS + FADE_MS;
 const smil = (() => { try { return typeof document.createElementNS(SVGNS, 'animateTransform').beginElement === 'function'; } catch (e) { return false; } })();
-// A Foafnaut without declarative animation lays out the page again for each transform, so
-// there the zoom waits for the button and stops at 12 (logged for the engine, 2026-11-09).
-const foafnaut = navigator.userAgent === 'Foafnaut', slowZoom = foafnaut && !smil, PEAK = slowZoom ? 12 : 40;
+// Foafnaut paints a transform or an opacity that a script sets with no layout (WebPaint), so
+// the scripted zoom runs to 40 there too.
+const slowZoom = false, PEAK = 40;
 let anims = [], frames = [], zoomRunning = false;
 function animation(tag, target, attrs) {
   const a = document.createElementNS(SVGNS, tag);
@@ -572,8 +571,9 @@ function holdAt(ms) {
 $('zoombtn').addEventListener('click', startZoom);
 
 // ---- Up to eleven: 0 to 11 combining marks on each letter of the gothic name (Zalgo text).
-// Each mark is a real combining character; the shaper stacks them, the stage clips them. ----
-const LETTERS = ['𝔖', '𝔭', '𝔦', '𝔫', '𝔞', '𝔩', ' ', '𝔗', '𝔞', '𝔭'];
+// Each mark is a real combining character; the shaper stacks them (at most 30 on a letter, the
+// Stream-Safe Text Format), and the stage grows to hold them (fitStage). ----
+const LETTERS = ['𝔖', '𝔭', '𝔦', '𝔫\u0308', '𝔞', '𝔩', ' ', '𝔗', '𝔞', '𝔭'];
 const ABOVE = [0x300, 0x301, 0x302, 0x303, 0x304, 0x306, 0x307, 0x308, 0x30a, 0x30b, 0x30c, 0x311, 0x313, 0x314, 0x33d, 0x346, 0x34a, 0x350, 0x357, 0x35b];
 const BELOW = [0x316, 0x317, 0x318, 0x319, 0x31c, 0x31d, 0x31e, 0x31f, 0x320, 0x323, 0x324, 0x325, 0x326, 0x329, 0x32a, 0x32b, 0x32c, 0x32d, 0x32e, 0x330];
 let gain = 0;
@@ -590,9 +590,19 @@ function zalgo(level) {
   }
   return out;
 }
+// The stage holds the marks: its box grows to the text's ink box (getBBox) and back, once a
+// click (one layout); the zoom then only changes transforms.
+function fitStage() {
+  const svg = $('zoomsvg'), bg = $('stagebg'), b = gothic.getBBox(), pad = 12;
+  const top = Math.min(0, b.y - pad), bottom = Math.max(150, b.y + b.height + pad), h = bottom - top;
+  svg.setAttribute('viewBox', '0 ' + top.toFixed(1) + ' 728 ' + h.toFixed(1));
+  svg.setAttribute('height', h.toFixed(0));
+  bg.setAttribute('y', top.toFixed(1)); bg.setAttribute('height', h.toFixed(1));
+}
 function setGain(g) {
   gain = g;
   gothic.firstChild.nodeValue = zalgo(gain);
+  fitStage();
   setHTML($('gainknob'), '<svg width="30" height="30" viewBox="0 0 30 30">' + knob(15, 15, gain) + '</svg>');
   $('gainbtn').textContent = gain === 11 ? 'Gain 11: back to 0' : 'Gain ' + gain + ': turn it up';
 }
@@ -608,7 +618,7 @@ function engineReport() {
     '<b>cards</b> ' + built.cards + ' in one batch (' + innerSetter + ')' + (built.ms > 0 ? ', ' + built.ms.toFixed(1) + ' ms' : ''),
     '<b>zoom</b> to ' + PEAK + ': ' + (smil ? 'SVG animateTransform, on the engine clock' : 'requestAnimationFrame, one transform a frame') +
       (median ? ', frame ' + median.toFixed(1) + ' ms (' + Math.round(1000 / median) + ' fps)' : ''),
-    '<b>lettering</b> Mathematical Fraktur letters as SVG text in Noto Sans Math, chrome by three uses of one group; the diaeresis over 𝔫 drawn as SVG' +
+    '<b>lettering</b> Mathematical Fraktur letters as SVG text in Noto Sans Math, chrome by three uses of one group; the diaeresis over 𝔫 is U+0308, placed by the shaper' +
       (gain ? '; ' + gain * 9 + ' combining marks stacked' : ''),
     '<b>start</b> ' + (startMs > 0 ? startMs.toFixed(1) + ' ms of script to the first cards' : 'first cards in the first script turn')];
   setHTML($('eng'), parts.join(' · '));
