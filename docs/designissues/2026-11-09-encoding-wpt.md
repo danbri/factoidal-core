@@ -100,11 +100,38 @@ the decode (`Page.Limits.encoding`, prelude op 9), `HTMLHyperlinkElementUtils` (
   (read only) and `document.URL`. `common/blank.html` (empty in WPT) is vendored in
   `third_party/testing/wpt-encoding/common/`.
 - decode: shadowframes' frame documents decode the frame's bytes with the header's
-  charset; the outer page's `onload` waits for frames. In shadowframes' run on BubblePopJS
-  the 38 decode names it ran passed 35,081 of 35,659; the only failures are the Big5
-  `?14001-last` variants (289 subtests a name): the test's decoder builds code points above
-  U+FFFF from two `String.fromCharCode` surrogates, and BubblePopJS strings are code
-  points, so each lone surrogate becomes U+FFFD (a BubblePopJS string-model limit).
+  charset; the outer page's `onload` waits for frames. Nothing more was needed for the
+  `-decode` pages (BubblePopJS's UTF-16 strings, on main since `ebc9a643c`, carry the
+  surrogate pairs that the Big5 `?14001-last` variants build). The frame's encoding is
+  kept per iframe (`Dom.State.frameEncodings`, from the `frame` action's decode or its
+  `encoding` field) and answers `characterSet` and `inputEncoding` of a same-origin frame
+  (op 172) and a form's document encoding in a frame.
+
+## Results
+
+BubblePopJS, native engine (b1: wip/frames + this work), the pinned WPT copies with the
+runner applying `.headers`; subtests passed of Chrome's on wpt.fyi, names by family:
+
+| family | before (main 0f89690b6) | after | Chrome |
+|---|---:|---:|---:|
+| encode-form | 0 | 550,053 | 550,054 |
+| encode-href | 216,479 | 216,479 | 216,479 |
+| decode (legacy-mb) | 0 | 360,788 | 361,145 |
+| other names | not run on main | 11,869 | 24,720 |
+
+So 1,139,189 of `encoding/`'s 1,152,398 subtests (98.9%), and 50.2% of all of WPT from
+this directory. The one encode-form miss is `iso2022jp-encode-form-errors-stateful.html`
+(a `data:` URL frame and `postMessage` to its parent). The 357 decode misses are worker
+variants (`gb18030-decoder`, `gbk-decoder`). Of the other names, 12,851 missing subtests are
+mostly worker, shared worker and service worker variants; the window pages' gaps are
+`single-byte-decoder.any.html?XMLHttpRequest` (no XMLHttpRequest),
+`textdecoder-mistakes` (times out), `encodeInto` and `streams` pieces, and idlharness.
+
+Page time (a loaded machine: Lean builds and three runners at once): encode-form median
+4.2 s, p90 7.4 s, largest 15.3 s; decode 7.8 s, 11.0 s, 22.9 s; encode-href 4.3 s, 8.2 s,
+14.2 s (before: 3.0 s, 8.5 s, 15.4 s, with the machine less loaded). Script instructions
+per encode-href page moved by at most 1,016 of about 2.5 million (0.04%). The same three
+encode-form pages on QuickJS-NG in WasmVM pass too (36 to 52 s each).
 
 ## Theorems and checks (HTML.FormSubmission)
 
@@ -141,8 +168,8 @@ code points) is a property of the index tables; it is checked by the WPT pages, 
 
 - POST (request bodies), `multipart/form-data` and `text/plain` encodings, the `form`
   attribute's form owner, `dirname`, top-level navigation by a form.
-- The document's encoding of a frame document (forms in frames use UTF-8 unless the
-  page passes the page's encoding).
-- Big5 decode `?14001-last` (1,445 subtests): BubblePopJS lone surrogates.
+- A frame document without a decode from the embedder (`srcdoc`, `about:blank`) is UTF-8
+  for `characterSet`; HTML says an `about:blank` takes its creator's encoding.
+- `data:` URL frames (the one encode-form page above).
 - The 146 "other" names: workers variants (counted 0), idlharness (needs fetch of
   `/interfaces/*.idl`), XMLHttpRequest variants.
