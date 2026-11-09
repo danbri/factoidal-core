@@ -651,6 +651,20 @@ def wordEnd (value : String) (i : Nat) : Nat :=
   let word := ((after.drop gap).takeWhile wordChar).length
   min value.length (i+gap+word)
 
+/-- Left and Right move, and Delete removes, one extended grapheme cluster (UAX #29): an
+emoji sequence (ZWJ, skin tone, flag, keycap) or a letter with its marks is one step. -/
+def graphemeBefore (value : String) (i : Nat) : Nat :=
+  let breaks := L4Factoidal.Unicode.Segmentation.graphemeBreaks value.toList.toArray
+  breaks.foldl (fun best b => if b < i then max best b else best) 0
+def graphemeAfter (value : String) (i : Nat) : Nat :=
+  let breaks := L4Factoidal.Unicode.Segmentation.graphemeBreaks value.toList.toArray
+  breaks.foldl (fun best b => if b > i then min best b else best) value.length
+
+-- A family (three people joined by ZWJ) is one step; plain letters are one each.
+private def family : String := String.ofList ([0x61,0x1F468,0x200D,0x1F469,0x200D,0x1F467,0x62].map Char.ofNat)
+#guard graphemeBefore family 6 == 1 && graphemeAfter family 1 == 6 && graphemeAfter family 6 == 7
+#guard graphemeBefore "abc" 2 == 1 && graphemeAfter "abc" 2 == 3 && graphemeBefore "abc" 0 == 0
+
 /-- Modifier bits of a key event: 1 Shift, 2 Command, 4 Option, 8 Control. -/
 def shiftBit : Nat := 1
 def commandBit : Nat := 2
@@ -672,17 +686,17 @@ def Shell.key (s : Shell) (code : Nat) (modifiers : Nat := 0) : Shell :=
   | 51 =>
     if s.lo < s.hi then replaceRange s s.lo s.hi "" false
     else if s.cursor == 0 then s
-    else replaceRange s (if line then 0 else if word then wordStart s.address s.cursor else s.cursor-1) s.cursor "" false
+    else replaceRange s (if line then 0 else if word then wordStart s.address s.cursor else graphemeBefore s.address s.cursor) s.cursor "" false
   | 117 =>
     if s.lo < s.hi then replaceRange s s.lo s.hi "" false
     else if s.cursor >= size then s
-    else replaceRange s s.cursor (if line then size else if word then wordEnd s.address s.cursor else s.cursor+1) "" false
+    else replaceRange s s.cursor (if line then size else if word then wordEnd s.address s.cursor else graphemeAfter s.address s.cursor) "" false
   | 123 =>
     if !extend && s.lo < s.hi && !word && !line then moveTo s s.lo false
-    else moveTo s (if line then 0 else if word then wordStart s.address s.cursor else s.cursor-1) extend
+    else moveTo s (if line then 0 else if word then wordStart s.address s.cursor else graphemeBefore s.address s.cursor) extend
   | 124 =>
     if !extend && s.lo < s.hi && !word && !line then moveTo s s.hi false
-    else moveTo s (if line then size else if word then wordEnd s.address s.cursor else s.cursor+1) extend
+    else moveTo s (if line then size else if word then wordEnd s.address s.cursor else graphemeAfter s.address s.cursor) extend
   | 115 | 126 => moveTo s 0 extend
   | 119 | 125 => moveTo s size extend
   | _ => s
