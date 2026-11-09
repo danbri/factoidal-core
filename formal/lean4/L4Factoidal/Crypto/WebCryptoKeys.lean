@@ -94,12 +94,16 @@ def KeyType.name : KeyType → String
 portable AES (record, "What stays off"), and RSA keys are future work. -/
 inductive Alg where
   | hmac | hkdf | pbkdf2 | ecdsa | ecdh | ed25519 | x25519 | chacha | rsaPkcs1 | rsaPss | rsaOaep
+  | aesCtr | aesCbc | aesGcm | aesKw
   deriving DecidableEq, Repr, Inhabited
 
 def Alg.name : Alg → String
   | .hmac => "HMAC" | .hkdf => "HKDF" | .pbkdf2 => "PBKDF2" | .ecdsa => "ECDSA" | .ecdh => "ECDH"
   | .ed25519 => "Ed25519" | .x25519 => "X25519" | .chacha => "ChaCha20-Poly1305"
   | .rsaPkcs1 => "RSASSA-PKCS1-v1_5" | .rsaPss => "RSA-PSS" | .rsaOaep => "RSA-OAEP"
+  | .aesCtr => "AES-CTR" | .aesCbc => "AES-CBC" | .aesGcm => "AES-GCM" | .aesKw => "AES-KW"
+
+def Alg.isAes (a : Alg) : Bool := a == .aesCtr || a == .aesCbc || a == .aesGcm || a == .aesKw
 
 def Alg.isRsa (a : Alg) : Bool := a == .rsaPkcs1 || a == .rsaPss || a == .rsaOaep
 
@@ -144,6 +148,9 @@ structure Key where
   pub : ByteArray := ByteArray.empty
   /-- RSA keys: their parts (`material` is then `d`, or `n` for a public key). -/
   rsa : Option RsaParts := none
+  /-- On the Hub: the browser's CryptoKey that holds this key (a number in the host's
+  table); Lean then holds no key bytes at all (`material` is empty). -/
+  host : Option Nat := none
   deriving Inhabited
 
 /-- The usages a key of this algorithm and type may have (§23-§34, and the modern
@@ -160,6 +167,8 @@ def allowedUsages : Alg → KeyType → List Usage
   | .rsaPkcs1, _ | .rsaPss, _ => [.verify]
   | .rsaOaep, .privateKey => [.decrypt, .unwrapKey]
   | .rsaOaep, _ => [.encrypt, .wrapKey]
+  | .aesKw, _ => [.wrapKey, .unwrapKey]
+  | .aesCtr, _ | .aesCbc, _ | .aesGcm, _ => [.encrypt, .decrypt, .wrapKey, .unwrapKey]
 
 /-- The usage check of every import and generate step: SyntaxError when a usage is not
 the algorithm's. -/
@@ -216,11 +225,27 @@ def registered : List String :=
    "PBKDF2", "ECDSA", "ECDH", "RSASSA-PKCS1-v1_5", "RSA-PSS", "RSA-OAEP", "Ed25519", "X25519",
    "ChaCha20-Poly1305"]
 
-def normalizeSpec (op name : String) : Res (String × List String) :=
+def normalizeSpec (op name : String) (host : Bool := false) : Res (String × List String) :=
   match (registered.find? (WebCrypto.asciiUpper · == WebCrypto.asciiUpper name)) with
   | none => .error .notSupported
   | some reg =>
     let r (ms : List String) : Res (String × List String) := .ok (reg, ms)
+    -- AES is registered only where the browser does the primitives (the Hub, `host`):
+    -- HACL* has no portable AES (record, section 9).
+    let aes := host && (reg == "AES-CTR" || reg == "AES-CBC" || reg == "AES-GCM" || reg == "AES-KW")
+    if aes then
+      match op with
+      | "generateKey" | "get key length" => r ["length:l!"]
+      | "importKey" => r []
+      | "encrypt" | "decrypt" =>
+        match reg with
+        | "AES-CTR" => r ["counter:b!", "length:o!"]
+        | "AES-CBC" => r ["iv:b!"]
+        | "AES-GCM" => r ["additionalData:b", "iv:b!", "tagLength:o"]
+        | _ => .error .notSupported
+      | "wrapKey" | "unwrapKey" => if reg == "AES-KW" then r [] else .error .notSupported
+      | _ => .error .notSupported
+    else
     match op, reg with
     | "digest", "SHA-1" | "digest", "SHA-256" | "digest", "SHA-384" | "digest", "SHA-512" => r []
     | "generateKey", "HMAC" | "importKey", "HMAC" | "get key length", "HMAC" => r ["hash:h!", "length:l"]
@@ -245,7 +270,8 @@ def normalizeSpec (op name : String) : Res (String × List String) :=
     | _, _ => .error .notSupported
 
 def algOf? (name : String) : Option Alg :=
-  [Alg.hmac, .hkdf, .pbkdf2, .ecdsa, .ecdh, .ed25519, .x25519, .chacha, .rsaPkcs1, .rsaPss, .rsaOaep].find? (·.name == name)
+  [Alg.hmac, .hkdf, .pbkdf2, .ecdsa, .ecdh, .ed25519, .x25519, .chacha, .rsaPkcs1, .rsaPss, .rsaOaep,
+   .aesCtr, .aesCbc, .aesGcm, .aesKw].find? (·.name == name)
 
 /-! ## The store -/
 
@@ -841,6 +867,7 @@ def exportBody (k : Key) (format : String) : Res Exported := do
     | "spki", _ | "pkcs8", _ => throw .invalidAccess
     | _, _ => throw .notSupported
   | .hkdf | .pbkdf2 => throw .notSupported
+  | .aesCtr | .aesCbc | .aesGcm | .aesKw => throw .notSupported
 
 /-- §14.3.10 exportKey: InvalidAccessError unless the key is extractable; only then are
 its bytes read (`exportKey_extractable`, `exportKey_blind`). -/

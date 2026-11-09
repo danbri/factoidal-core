@@ -196,6 +196,9 @@ structure Limits where
   /-- Entropy from the embedder's own generator, which seeds the page's
   `crypto.getRandomValues` (`Hosts.WebApi`); empty leaves it off. -/
   entropy : ByteArray := ByteArray.empty
+  /-- crypto.subtle's primitives are the host's (the Hub: the browser's crypto.subtle);
+  Lean decides every rule and asks the host for each primitive (`Hosts.WebApi`, host mode). -/
+  cryptoHost : Bool := false
   /-- The encoding the host decoded the page with (`document.characterSet`); "" if unknown. -/
   encoding : String := ""
   deriving Inhabited
@@ -983,7 +986,7 @@ def instantiatePage (m : Module') (dom : Arena) (lim : Limits := {}) : Except St
     | some (.func a) => Except.ok a
     | _ => Except.error s!"the module has no export {name}"
   let (fx, init, qnew, mode) ← Exports.of fa
-  let host : Host := { dom := { dom, commandLimit := lim.commands, logLimit := lim.logs }, web := { entropy := lim.entropy, docEncoding := lim.encoding } }
+  let host : Host := { dom := { dom, commandLimit := lim.commands, logLimit := lim.logs }, web := { entropy := lim.entropy, docEncoding := lim.encoding, hostMode := lim.cryptoHost } }
   let s : Session := { store := st, inst := ia, mem := memOf st ia, bindings := bs, host, fx, limits := lim }
   (s.initP init qnew mode).runLocal
 
@@ -1071,11 +1074,11 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
   let s : Session ← match m.base with
     | some b =>
       let domHost : DomHost := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames }
-      let host : Host := { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding } }
+      let host : Host := { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding, hostMode := lim.cryptoHost } }
       pure { b with host, limits := lim, steps := 0 }
     | none => do
       let s ← instantiatePage m dom lim
-      let web : Hosts.WebApi.State := { entropy := lim.entropy, docEncoding := lim.encoding }
+      let web : Hosts.WebApi.State := { entropy := lim.entropy, docEncoding := lim.encoding, hostMode := lim.cryptoHost }
       pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames }, reads, time, web } }
   let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage } } }
   return (s.startP url scripts framed).runLocal

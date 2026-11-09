@@ -2814,6 +2814,29 @@
       if (typeof r === 'number') raise(r, what);
       return unpack(r);
     };
+    // On the Hub (host mode, n.api 44) the primitives are the browser's: Lean makes its
+    // checks, then answers "pending" and asks the host; when the host answers, Lean queues
+    // the callback registered here as a task, and it takes the answer (n.api 43). Natively
+    // the operation runs in a task of its own (`later`).
+    const hostMode = apiCall(44, [], 0, false) === 'host';
+    const run = (args, what, decode, keep) => {
+      if (!hostMode) return later(() => decode(call(args, what)), keep);
+      return new Promise((resolve, reject) => {
+        let id;
+        const cb = register(() => {
+          callbacks.delete(cb); void keep;
+          const r = apiCall(43, [String(id)], 0, true);
+          if (typeof r === 'number') { try { raise(r, what); } catch (e) { reject(e); } return; }
+          try { resolve(decode(unpack(r))); } catch (e) { reject(e); }
+        });
+        const r = apiCall(41, [...args, 'wake', String(cb)], 0, true);
+        if (typeof r === 'number') { callbacks.delete(cb); try { raise(r, what); } catch (e) { reject(e); } return; }
+        const f = unpack(r);
+        if (ascii(f[0]) === 'pending') { id = ascii(f[1]); return; }
+        callbacks.delete(cb);
+        try { resolve(decode(f)); } catch (e) { reject(e); }
+      });
+    };
     // A CryptoKey from Lean's fields at `i` ("key", handle, type, extractable, usages, name, n, pairs).
     const makeKey = (f, i) => {
       const handle = +ascii(f[i + 1]), us = ascii(f[i + 4]), np = +ascii(f[i + 6]);
@@ -2850,13 +2873,14 @@
     const subtleMethods = {
       digest(algorithm, data) {
         return start(() => { const a = normalize('digest', algorithm); const d = copyBytes(bufferSource(data, 'digest'));
+          if (hostMode) return run(['digest', 'a:name', a.name, 'data', d], 'digest', bytesAnswer);
           return later(() => { const r = apiCall(32, [a.name, d], 0, true); if (typeof r === 'number') raise(r, 'digest'); return r; }); });
       },
       generateKey(algorithm, extractable, keyUsages) {
         return start(() => {
           const us = usagesOf(keyUsages), a = normalize('generateKey', algorithm);
           const args = ['generateKey', 'extractable', extractable ? '1' : '0', ...usagePairs(us), ...a.pairs];
-          return later(() => keyAnswer(call(args, 'generateKey')));
+          return run(args, 'generateKey', keyAnswer);
         });
       },
       importKey(format, keyData, algorithm, extractable, keyUsages) {
@@ -2871,29 +2895,31 @@
           const data = isBuffer ? copyBytes(bufferSource(keyData, 'importKey')) : null;
           const args = ['importKey', 'format', f, 'extractable', extractable ? '1' : '0', ...usagePairs(us), ...a.pairs,
             ...(data ? ['data', data] : jwk)];
-          return later(() => { try { return keyAnswer(call(args, 'importKey')); } finally { if (data) data.fill(0); } });
+          const p = run(args, 'importKey', keyAnswer);
+          if (data) p.then(() => data.fill(0), () => data.fill(0));
+          return p;
         });
       },
       exportKey(format, key) {
         return start(() => {
           const f = formatOf(format), k = keyOf(key);
-          return later(() => { const r = call(['exportKey', 'format', f, 'key', String(k.handle)], 'exportKey'); return ascii(r[0]) === 'jwk' ? jwkAnswer(r) : bytesAnswer(r); }, [key]);
+          return run(['exportKey', 'format', f, 'key', String(k.handle)], 'exportKey', r => ascii(r[0]) === 'jwk' ? jwkAnswer(r) : bytesAnswer(r), [key]);
         });
       },
       sign(algorithm, key, data) {
         return start(() => { const a = normalize('sign', algorithm), k = keyOf(key), d = copyBytes(bufferSource(data, 'sign'));
-          return later(() => bytesAnswer(call(['sign', 'key', String(k.handle), 'data', d, ...a.pairs], 'sign')), [key]); });
+          return run(['sign', 'key', String(k.handle), 'data', d, ...a.pairs], 'sign', bytesAnswer, [key]); });
       },
       verify(algorithm, key, signature, data) {
         return start(() => { const a = normalize('verify', algorithm), k = keyOf(key);
           const sig = copyBytes(bufferSource(signature, 'verify')), d = copyBytes(bufferSource(data, 'verify'));
-          return later(() => ascii(call(['verify', 'key', String(k.handle), 'signature', sig, 'data', d, ...a.pairs], 'verify')[1]) === '1', [key]); });
+          return run(['verify', 'key', String(k.handle), 'signature', sig, 'data', d, ...a.pairs], 'verify', r => ascii(r[1]) === '1', [key]); });
       },
       deriveBits(algorithm, baseKey, length = null) {
         return start(() => {
           const len = length === null || length === undefined ? 'null' : String(enforceRange(length, 4294967295, 'length'));
           const a = normalize('deriveBits', algorithm), k = keyOf(baseKey);
-          return later(() => bytesAnswer(call(['deriveBits', 'baseKey', String(k.handle), 'length', len, ...a.pairs], 'deriveBits')), [baseKey, ...a.keys]);
+          return run(['deriveBits', 'baseKey', String(k.handle), 'length', len, ...a.pairs], 'deriveBits', bytesAnswer, [baseKey, ...a.keys]);
         });
       },
       deriveKey(algorithm, baseKey, derivedKeyType, extractable, keyUsages) {
@@ -2902,21 +2928,21 @@
           const t = normalize('importKey', derivedKeyType, 't:');
           normalize('get key length', derivedKeyType, 't:');
           const args = ['deriveKey', 'baseKey', String(k.handle), 'extractable', extractable ? '1' : '0', ...usagePairs(us), ...a.pairs, ...t.pairs];
-          return later(() => keyAnswer(call(args, 'deriveKey')), [baseKey, ...a.keys]);
+          return run(args, 'deriveKey', keyAnswer, [baseKey, ...a.keys]);
         });
       },
       encrypt(algorithm, key, data) {
         return start(() => { const a = normalize('encrypt', algorithm), k = keyOf(key), d = copyBytes(bufferSource(data, 'encrypt'));
-          return later(() => bytesAnswer(call(['encrypt', 'key', String(k.handle), 'data', d, ...a.pairs], 'encrypt')), [key]); });
+          return run(['encrypt', 'key', String(k.handle), 'data', d, ...a.pairs], 'encrypt', bytesAnswer, [key]); });
       },
       decrypt(algorithm, key, data) {
         return start(() => { const a = normalize('decrypt', algorithm), k = keyOf(key), d = copyBytes(bufferSource(data, 'decrypt'));
-          return later(() => bytesAnswer(call(['decrypt', 'key', String(k.handle), 'data', d, ...a.pairs], 'decrypt')), [key]); });
+          return run(['decrypt', 'key', String(k.handle), 'data', d, ...a.pairs], 'decrypt', bytesAnswer, [key]); });
       },
       wrapKey(format, key, wrappingKey, wrapAlgorithm) {
         return start(() => {
           const f = formatOf(format), a = normalizeEither('wrapKey', 'encrypt', wrapAlgorithm), k = keyOf(key), w = keyOf(wrappingKey);
-          return later(() => bytesAnswer(call(['wrapKey', 'format', f, 'key', String(k.handle), 'wrappingKey', String(w.handle), ...a.pairs], 'wrapKey')), [key, wrappingKey]);
+          return run(['wrapKey', 'format', f, 'key', String(k.handle), 'wrappingKey', String(w.handle), ...a.pairs], 'wrapKey', bytesAnswer, [key, wrappingKey]);
         });
       },
       unwrapKey(format, wrappedKey, unwrappingKey, unwrapAlgorithm, unwrappedKeyAlgorithm, extractable, keyUsages) {
@@ -2926,7 +2952,7 @@
           const w = keyOf(unwrappingKey), d = copyBytes(bufferSource(wrappedKey, 'unwrapKey'));
           const args = ['unwrapKey', 'format', f, 'unwrappingKey', String(w.handle), 'data', d, 'extractable', extractable ? '1' : '0',
             ...usagePairs(us), ...a.pairs, ...t.pairs];
-          return later(() => keyAnswer(call(args, 'unwrapKey')), [unwrappingKey]);
+          return run(args, 'unwrapKey', keyAnswer, [unwrappingKey]);
         });
       },
     };

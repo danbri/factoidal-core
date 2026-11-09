@@ -4,7 +4,10 @@
 // docs/designissues/2026-11-09-hacl-web-crypto.md, "Vectors" and "Performance".
 //
 //   deno run -A tests/crypto/webcrypto_engine.ts [--native-engine DYLIB | --wasm]
-//     [--quickjs-wasm FILE] [--script-engine quickjs|bubblepop] [--bench] [--vectors]
+//     [--quickjs-wasm FILE] [--script-engine quickjs|bubblepop] [--bench] [--vectors] [--crypto-host]
+//
+// --crypto-host: the Hub's arrangement, the primitives done by the host's crypto.subtle
+// (here Deno's) through docs/web/hub/foafnaut/crypto-host.mjs, Lean deciding the rest.
 //
 // Each page runs in its own script session; its console lines carry the results. A timing
 // is the wall time of one session (start and settle) less that of a page that does the same
@@ -18,21 +21,32 @@ const {loadHTML}=await import("../../labs/demos/foafnaut/native_html_engine.ts")
 const wasm=args.includes("--wasm");
 const engine=await loadHTML(wasm?undefined:opt("--native-engine",join(root,"labs/demos/foafnaut/.build/web-render/engines/libweb-render.dylib")));
 const bubblepop=opt("--script-engine","quickjs")==="bubblepop";
+const {cryptoHost,settleCrypto}=await import("../../docs/web/hub/foafnaut/crypto-host.mjs");
+const host=args.includes("--crypto-host")?cryptoHost(crypto.subtle):undefined;
 if(!bubblepop)engine.scriptLoad(await Deno.readFile(opt("--quickjs-wasm",join(Deno.env.get("HOME")??"","working/qjs-wasm/qjs-wasmvm.wasm"))));
 
-function run(script:string):{logs:string[];ms:number} {
+async function run(script:string):Promise<{logs:string[];ms:number}> {
   const html=`<!doctype html><meta charset=utf-8><body><script>${script}</script>`;
   const t0=performance.now();
-  let turn=engine.scriptSession(html,{action:"start",url:"https://web-platform.test/crypto.html",commandLimit:200000,logLimit:100000,
-    instructionsPerMs:1e12,...(bubblepop?{engine:"bubblepop"}:{})});
-  const logs=[...turn.logs];
-  turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:600000});
-  logs.push(...turn.logs);
+  // deno-lint-ignore no-explicit-any
+  let turn:any=engine.scriptSession(html,{action:"start",url:"https://web-platform.test/crypto.html",commandLimit:200000,logLimit:100000,
+    instructionsPerMs:1e12,...(bubblepop?{engine:"bubblepop"}:{}),...(host?{cryptoHost:true}:{})});
+  const session=turn.session,logs=[...turn.logs];
+  // deno-lint-ignore no-explicit-any
+  const act=(r:any)=>engine.scriptSession("",{...r,session});
+  for(;;){
+    // deno-lint-ignore no-explicit-any
+    if(host&&turn.crypto?.length)turn=await settleCrypto(host,turn,act,(t:any)=>logs.push(...t.logs));
+    turn=engine.scriptSession("",{action:"settle",session,budgetMs:600000});
+    logs.push(...turn.logs);
+    if(!host||!turn.crypto?.length)break;
+  }
   engine.scriptSession("",{action:"close"});
+  host?.clear();
   return {logs,ms:performance.now()-t0};
 }
 
-const vectors=String.raw`
+const vectors=()=>`const HOST = ${!!host};`+String.raw`
 const hex = s => { const u = new Uint8Array(s.length / 2); for (let i = 0; i < u.length; i++) u[i] = parseInt(s.substr(2 * i, 2), 16); return u; };
 const toHex = b => Array.from(new Uint8Array(b), x => x.toString(16).padStart(2, '0')).join('');
 const S = crypto.subtle, out = [];
@@ -102,8 +116,10 @@ const rejects = async (n, p, name) => { try { await p; ok(n + ' (no error)', fal
   await rejects('P-256 x >= p', S.importKey('raw', (() => { const u = new Uint8Array(q); u.fill(255, 1, 33); return u; })(), {name: 'ECDSA', namedCurve: 'P-256'}, true, ['verify']), 'DataError');
   await rejects('P-256 zero private (jwk d)', S.importKey('jwk', {kty: 'EC', crv: 'P-256', d: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     x: 'YP7UuiVanTHJYet0xjVtaMBJuJI7Yfps5mliLmDyn7Y', y: 'eQP-EAi4vJmkGunpVii8ZPLxsgwtfp9Rd6PClNRGIpk'}, {name: 'ECDSA', namedCurve: 'P-256'}, false, ['sign']), 'DataError');
-  await rejects('P-384 not in HACL*', S.generateKey({name: 'ECDSA', namedCurve: 'P-384'}, false, ['sign']), 'NotSupportedError');
-  // RFC 8439 §2.8.2.
+  if (HOST) ok('P-384 by the host', !!(await S.generateKey({name: 'ECDSA', namedCurve: 'P-384'}, false, ['sign'])).privateKey);
+  else await rejects('P-384 not in HACL*', S.generateKey({name: 'ECDSA', namedCurve: 'P-384'}, false, ['sign']), 'NotSupportedError');
+  // RFC 8439 §2.8.2 (HACL* only: browsers have no ChaCha20-Poly1305 in WebCrypto).
+  if (HOST) { await rejects('ChaCha20-Poly1305 not in the host', S.importKey('raw', new Uint8Array(32), 'ChaCha20-Poly1305', false, ['encrypt']), 'NotSupportedError'); } else {
   const ck = await S.importKey('raw', hex('808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f'), 'ChaCha20-Poly1305', false, ['encrypt', 'decrypt']);
   const pt = new TextEncoder().encode("Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.");
   const prm = {name: 'ChaCha20-Poly1305', iv: hex('070000004041424344454647'), additionalData: hex('50515253c0c1c2c3c4c5c6c7')};
@@ -111,7 +127,7 @@ const rejects = async (n, p, name) => { try { await p; ok(n + ' (no error)', fal
   ok('ChaCha20-Poly1305 RFC 8439 §2.8.2', toHex(ct).endsWith('1ae10b594f09e26a7e902ecbd0600691') && toHex(ct).startsWith('d31a8d34648e60db7b86afbc53ef7ec2'));
   ok('ChaCha20-Poly1305 decrypt', new TextDecoder().decode(await S.decrypt(prm, ck, ct)) === new TextDecoder().decode(pt));
   const ct2 = new Uint8Array(ct); ct2[0] ^= 1;
-  await rejects('ChaCha20-Poly1305 forged', S.decrypt(prm, ck, ct2), 'OperationError');
+  await rejects('ChaCha20-Poly1305 forged', S.decrypt(prm, ck, ct2), 'OperationError'); }
   // Hostile arguments.
   await rejects('Ed25519 31-byte key', S.importKey('raw', new Uint8Array(31), 'Ed25519', true, ['verify']), 'DataError');
   await rejects('JWK x not base64url', S.importKey('jwk', {kty: 'OKP', crv: 'Ed25519', x: '+/+/'}, 'Ed25519', true, ['verify']), 'DataError');
@@ -142,7 +158,7 @@ const benches:[string,string,string][]=[
 ];
 
 if(args.includes("--vectors")||!args.includes("--bench")) {
-  const r=run(vectors);
+  const r=await run(vectors());
   const lines=r.logs.flatMap(l=>l.split("\n")).filter(l=>/^(PASS|FAIL) /.test(l));
   for(const l of lines)console.log(l);
   const fails=lines.filter(l=>l.startsWith("FAIL")).length;
@@ -155,7 +171,7 @@ if(args.includes("--bench")) {
     const wrap=(s:string)=>`(async () => { ${s} console.log('bench done'); })().catch(e => console.log('bench error ' + e));`;
     const times:number[]=[];let note="";
     for(let i=0;i<reps;i++){
-      const w=run(wrap(work)),b=run(wrap(base));
+      const w=await run(wrap(work)),b=await run(wrap(base));
       if(!w.logs.some(l=>l.includes("bench done")))note=" "+(w.logs.find(l=>l.includes("bench error"))??"no result");
       times.push(w.ms-b.ms);
     }

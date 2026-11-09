@@ -187,7 +187,7 @@ counter): the close answer reports it, so a test can see that wiping happened. -
 private unsafe def zeroedImpl (_ : Nat) : Nat := unsafeBaseIO Crypto.WebHacl.wipedSoFar
 @[implemented_by zeroedImpl, noinline] private opaque zeroedSoFar (n : Nat) : Nat
 
-def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close",
+def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close", "crypto",
   "aotModule", "resume", "host"]
 
 /-- An answer object with `nextSession` first: the value `keep` answered, so the
@@ -265,7 +265,10 @@ def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full :
       | t :: ts => num (ts.foldl min t)),
     ("quiet",.bool s.quiet),
     ("instructions",num (s.steps - before.steps)),("jobs",num (s.jobs - before.jobs)),
-    ("tasks",num (s.tasks - before.tasks)),("layouts",num (s.host.reads.layouts - before.layouts)),("ns",num ns)] ++ extra
+    ("tasks",num (s.tasks - before.tasks)),("layouts",num (s.host.reads.layouts - before.layouts)),("ns",num ns)] ++
+    -- crypto.subtle on the Hub: the primitives Lean asks the browser for (`WebApi`, host
+    -- mode); the host answers each with the `crypto` action.
+    (if s.host.web.hostReqs.isEmpty then [] else [("crypto",.array s.host.web.hostReqs.toList)]) ++ extra
   let text := (JSON.Json.object fields).toString
   -- The page's GPU commands, validated by Lean (L4Factoidal.PageGpu): the host replays them
   -- on its WebGPU device. They need no layout; the canvas rectangles come with a render.
@@ -284,12 +287,13 @@ def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (
 
 /-- The session after a turn answer: the GPU commands it carried are the host's now. -/
 def drained (s : Page.Session) : Page.Session :=
-  { s with host := { s.host with dom := { s.host.dom with gpuOut := #[], canvas := s.host.dom.canvas.sent } } }
+  { s with host := { s.host with dom := { s.host.dom with gpuOut := #[], canvas := s.host.dom.canvas.sent },
+                                web := { s.host.web with hostReqs := #[] } } }
 
 def drainedLean (s : LeanJS.Session) : LeanJS.Session :=
-  if s.host.dom.gpuOut.isEmpty && s.host.dom.canvas.drawn.isEmpty then s else
+  if s.host.dom.gpuOut.isEmpty && s.host.dom.canvas.drawn.isEmpty && s.host.web.hostReqs.isEmpty then s else
   let h := s.host
-  s.setHost { h with dom := { h.dom with gpuOut := #[], canvas := h.dom.canvas.sent } }
+  s.setHost { h with dom := { h.dom with gpuOut := #[], canvas := h.dom.canvas.sent }, web := { h.web with hostReqs := #[] } }
 
 /-- What Canvas 2D draws with, given anew before each action (fonts and images the engine
 holds may have changed since the page started). -/
@@ -549,7 +553,7 @@ def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSO
   let commands := min 1048576 ((natField request "commandLimit").getD 4096)
   let logs := min 1048576 ((natField request "logLimit").getD 1024)
   let id := held.nextSession
-  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := entropy id, encoding := str request "encoding" }
+  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := entropy id, encoding := str request "encoding", cryptoHost := request.field? "cryptoHost" == some (.bool true) }
   let made := show Except String (Array (Nat × String) × Array String × DOM.Dom) from do
     let dom ← parse html url
     let (scripts, missing) ← scriptSources dom request
@@ -598,6 +602,14 @@ def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s 
   | "advance" => run fun s => e.flushMove (e.advance s ((e.loop s).clock + ((natField request "ms").getD 0))).1
   | "settle" => run fun s => (e.settle (e.flushMove s) ((natField request "budgetMs").getD 30000)).1
   | "turn" => run fun s => let s := e.flushMove s; (e.advance s (e.loop s).clock).1
+  | "crypto" => run fun s =>
+    let h := s.host
+    let (web, wake) := Hosts.WebApi.hostDone h.web ((natField request "id").getD 0) ((request.field? "answer").getD .null)
+    let s := s.setHost { h with web }
+    let s := match wake with
+      | some w => e.setLoop s ((e.loop s).queueTask .networking w)
+      | none => s
+    (e.advance s (e.loop s).clock).1
   | _ => keep "scriptSession: unknown action"
 
 /-- One action on what the engine holds. `measure` lays out an arena for the layout reads
@@ -648,7 +660,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let (vw, vh) := (viewport request).getD (800, 600)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
-        let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding" } #[] missing
+        let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding", cryptoHost := request.field? "cryptoHost" == some (.bool true) } #[] missing
           reads { instructionsPerMs := rate }
         let id := held.nextSession
         beginTurn { held with session := none, leanSession := none, nextSession := id + 1 } id {} {} true true prog
@@ -663,7 +675,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let (vw, vh) := (viewport request).getD (800, 600)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
-        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding" } #[] reads { instructionsPerMs := rate }
+        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding", cryptoHost := request.field? "cryptoHost" == some (.bool true) } #[] reads { instructionsPerMs := rate }
         return missing.foldl Page.Session.fail s
       match started with
       | (.error e, _) => (held, .error s!"scriptSession: {e}")
@@ -716,6 +728,16 @@ def act (held : Held) (action html : String) (request : JSON.Json)
           return (← s.settleP ((natField request "budgetMs").getD 30000)).1
       | "turn" => run fun s => do
           let s ← s.flushMoveP
+          return (← s.advanceP s.loop.clock).1
+      -- The host's answer to a crypto request (the Hub): Lean makes the page's answer and
+      -- queues the page's callback as a task, then runs the turn.
+      | "crypto" => run fun s => do
+          let (web, wake) := Hosts.WebApi.hostDone s.host.web ((natField request "id").getD 0)
+            ((request.field? "answer").getD .null)
+          let s := { s with host := { s.host with web } }
+          let s := match wake with
+            | some w => s.setLoop (s.loop.queueTask .networking w)
+            | none => s
           return (← s.advanceP s.loop.clock).1
       | _ => ({ held with session := some (id, s, marks) }, .error "scriptSession: unknown action")
 

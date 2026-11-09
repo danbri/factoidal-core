@@ -13,7 +13,7 @@
 // get the window wrapper that wptserve gives them.
 //
 //   deno run -A tests/browser-wpt/testharness-run.ts [--engine native|wasm|bench] [--script-engine quickjs|bubblepop] [--exclude a,b] [--wpt-root DIR]
-//     [--native-engine DYLIB] [--quickjs-wasm FILE] [--dirs a,b] [--only SUBSTRING]
+//     [--native-engine DYLIB] [--quickjs-wasm FILE] [--dirs a,b] [--only SUBSTRING] [--crypto-host]
 //     [--out FILE] [--baseline FILE] [--bench EXE] [--instructions-per-ms N]
 //     [--wpt-root DIR --list FILE [--jsonl FILE] [--wpt-commit SHA] [--test262-inline]]
 //
@@ -66,6 +66,9 @@ const origin="http://web-platform.test",secureOrigin="https://web-platform.test"
 // file name, so run this runner with a bench built from the same tree.
 const scriptRate=Number(opt("--instructions-per-ms","1000000000000"));
 const statusNames=["PASS","FAIL","TIMEOUT","NOTRUN","PRECONDITION_FAILED"];
+// --crypto-host: crypto.subtle as on the Hub (the host's primitives, Lean's rules).
+const {cryptoHost:makeCryptoHost,settleCrypto}=await import("../../docs/web/hub/foafnaut/crypto-host.mjs");
+const cryptoHost=args.includes("--crypto-host")?makeCryptoHost(crypto.subtle):undefined;
 const harnessNames=["OK","ERROR","TIMEOUT","PRECONDITION_FAILED"];
 
 type Subtest={name:string;status:string;message?:string|null};
@@ -294,11 +297,22 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>}> {
         if(path)try{engine.imageLoad(await Deno.readFile(path),key,key);}catch{/* not vendored or refused */}
       }
     let turn=start(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
-      ...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
+      ...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{}),...(cryptoHost?{cryptoHost:true}:{})});
     const logs=[...turn.logs],errors=[...turn.errors];
     let instructions=turn.instructions;
-    turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:70000});
-    logs.push(...turn.logs);errors.push(...turn.errors);instructions+=turn.instructions;
+    const session=turn.session;
+    // deno-lint-ignore no-explicit-any
+    const seen=(t:any)=>{logs.push(...t.logs);errors.push(...t.errors);instructions+=t.instructions;};
+    for(let rounds=0;;rounds++){
+      // --crypto-host: the Hub's arrangement, crypto.subtle's primitives by the host's
+      // (Deno's) crypto.subtle, Lean deciding the rest (docs/web/hub/foafnaut/crypto-host.mjs).
+      // deno-lint-ignore no-explicit-any
+      if(cryptoHost&&turn.crypto?.length)await settleCrypto(cryptoHost,turn,(r:any)=>engine.scriptSession("",{...r,session}),seen);
+      turn=engine.scriptSession("",{action:"settle",session,budgetMs:70000});
+      seen(turn);
+      if(!cryptoHost||!turn.crypto?.length||rounds>100000)break;
+    }
+    cryptoHost?.clear();
     engine.scriptSession("",{action:"close"});
     return {...resultOf(file,logs),ms:Math.round(performance.now()-t0),instructions,clock:turn.clock,...(errors.length?{errors:errors.slice(0,5)}:{})};
   }};

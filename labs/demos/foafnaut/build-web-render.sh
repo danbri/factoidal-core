@@ -84,6 +84,9 @@ HACL="$ROOT/third_party/hacl"
 # ffi/hacl_rsa.c: the externs of Crypto/RsaNative and Crypto/RsaOaep, which WebCryptoKeys imports for
 # EME-OAEP (their compiled code names them; the web engine calls its own RSA entries).
 HACL_SOURCES=("$PROJECT/ffi/hacl_webcrypto.c" "$PROJECT/ffi/hacl_webcrypto_core.c" "$PROJECT/ffi/hacl_rsa.c")
+# The Hub's web-render.wasm links no HACL*: the browser's crypto.subtle does the primitives
+# (WebApi host mode; labs/demos/foafnaut/crypto_host.mjs). Its core refuses every primitive.
+HUB_CRYPTO_SOURCES=("$PROJECT/ffi/hacl_webcrypto.c" "$PROJECT/ffi/hacl_webcrypto_nohacl.c")
 for unit in Hacl_Hash_SHA1 Hacl_Hash_SHA2 Hacl_HMAC Hacl_Hash_Blake2s Hacl_Hash_Blake2b Hacl_Ed25519 \
   Hacl_Curve25519_51 Hacl_P256 Hacl_AEAD_Chacha20Poly1305 Hacl_Chacha20 Hacl_MAC_Poly1305 Hacl_Bignum Hacl_Bignum64 Hacl_RSAPSS Lib_Memzero0; do
   HACL_SOURCES+=("$HACL/src/$unit.c")
@@ -158,7 +161,8 @@ else
     emcc "${FLAGS[@]}" -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
-  for source in "${HACL_SOURCES[@]}"; do
+  rm -f "$BUILD/obj-wasm/"hacl_*.o
+  for source in "${HUB_CRYPTO_SOURCES[@]}"; do
     object="$BUILD/obj-wasm/hacl_$(basename "$source" .c).o"
     printf 'WASM %s %s\n' "$(basename "$source" .c)" "$(date -u)"
     emcc "${FLAGS[@]}" -I "$HACL/include" -c "$source" -o "$object"

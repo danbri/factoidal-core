@@ -10,6 +10,10 @@ import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './br
 // Where a link or an address goes: Lean's route (WebRoute.lean), done as it says; with an
 // engine from before the op, the same rules in JavaScript (link-route.mjs, issue 1274).
 import {createRouter} from './link-route.mjs';
+// crypto.subtle of page scripts: Lean decides, the browser's crypto.subtle does the
+// primitives (record docs/designissues/2026-11-09-hacl-web-crypto.md, "The Hub").
+import {cryptoHost as makeCryptoHost} from './crypto-host.mjs';
+const cryptoHost=globalThis.crypto?.subtle?makeCryptoHost(globalThis.crypto.subtle):undefined;
 let browserState,stateReason='starting';
 const statePages=['foafnaut:bookmarks','foafnaut:history'];
 const inWorker=typeof WorkerGlobalScope!=='undefined'&&self instanceof WorkerGlobalScope;
@@ -605,8 +609,9 @@ async function startScripts(page,scripts){
   page.scriptEngine=plan.engine;
   if(!plan.run){if(plan.notice)console.warn('foafnaut:',plan.notice);if(page===doc)request();return;}
   // The first page of a session starts before the history exists: no shell then.
+  cryptoHost?.clear();
   const turn=scriptCall(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,...(history?{shell:shell()}:{}),layout,
-    ...(plan.engine==='bubblepop'?{engine:'bubblepop'}:{}),...(page.encoding?{encoding:page.encoding}:{})});
+    ...(plan.engine==='bubblepop'?{engine:'bubblepop'}:{}),...(page.encoding?{encoding:page.encoding}:{}),...(cryptoHost?{cryptoHost:true}:{})});
   scriptStats.startMs=scriptStats.lastMs;scriptStats.engine=plan.engine;
   page.script={session:turn.session,turn,epoch:performance.now()-turn.clock,engine:plan.engine};
   scriptTurn(page,turn);
@@ -620,6 +625,20 @@ function scriptTurn(page,turn){
   // The start turn comes before the page is shown: its commands make the objects.
   if(turn.gpu?.length)gpuTake(turn.gpuPage,turn.gpu);
   if(turn.changed&&turn.commands){page.commands=turn.commands;if(page===doc)request();}
+  if(turn.crypto?.length)scriptCrypto(page,turn.crypto);
+}
+// The crypto requests of a turn: the browser does each primitive, then Lean takes the answer
+// in a turn of its own (the `crypto` action), which settles the page's promise.
+function scriptCrypto(page,requests){
+  const session=page.script?.session;
+  for(const r of requests){
+    if(!cryptoHost)continue;
+    cryptoHost.run(r).then(answer=>{
+      if(r.op==='drop'||!page.script||page.script.session!==session)return;
+      try{scriptTurn(page,scriptCall('',{op:'scriptSession',action:'crypto',session:page.script.session,id:r.id,answer}));}
+      catch(error){console.warn('foafnaut: page script crypto:',String(error.message??error));}
+    });
+  }
 }
 // Page GPU commands (docs/designissues/2026-11-08-page-gpu.md): Lean validated each one
 // (L4Factoidal.PageGpu) and gives them in the turn; the layer surface replays them and draws

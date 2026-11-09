@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parent.parent
 C = ROOT / "formal/lean4/ffi/hacl_webcrypto.c"
 CORE = ROOT / "formal/lean4/ffi/hacl_webcrypto_core.c"
 LEAN = ROOT / "formal/lean4/L4Factoidal/Crypto/WebHacl.lean"
-NO_PRE = {"l4_web_hacl_ct_eq", "l4_web_hacl_wipe", "l4_web_hacl_wiped"}
+NO_PRE = {"l4_web_hacl_ct_eq", "l4_web_hacl_wipe", "l4_web_hacl_wiped", "l4_web_hacl_linked"}
 
 findings = []
 c = C.read_text()
