@@ -388,6 +388,11 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
     | .ok (st, f) => ({ s with keys := st }, .ok (pack f))
     | .error e => fail e
   | "exportKey" => (s, errInt (exportOp s.keys a))
+  -- structuredClone of a CryptoKey: a second handle to the same key (its own lifetime).
+  | "cloneKey" =>
+    match errInt (do let k ← keyOf s.keys a "key"; addKey s.keys k) with
+    | .ok (st, f) => ({ s with keys := st }, .ok (pack f))
+    | .error e => fail e
   | "sign" =>
     match errInt (keyOf s.keys a "key") with
     | .error e => fail e

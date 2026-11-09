@@ -2706,7 +2706,7 @@
   //   n.api 40 normalize(op, name) -> "Registered\nmember:type[!]..." (the dictionary to read)
   //   n.api 41 subtle(method, k1, v1, ...) -> packed fields (`unpack`)
   //   n.api 42 drop(handle): the page's CryptoKey was collected; Lean zeroes the key bytes.
-  let CryptoKeyC, cryptoKeys;
+  let CryptoKeyC, cryptoKeys, cloneCryptoKey;
   lazy('crypto', () => {
     const random = typeof apiCall(30, ['0'], 0, true) !== 'number';
     const subtleOn = typeof apiCall(40, ['digest', 'SHA-256'], 0, false) === 'string';
@@ -2731,8 +2731,10 @@
       if (name === 'TypeError') throw new TypeError(what);
       throw new DOMException(what, name);
     };
-    // A task of the event loop (HTML "queue a global task") settles the promise.
-    const later = f => new Promise((resolve, reject) => { timer(0, () => { try { resolve(f()); } catch (e) { reject(e); } }, 0, []); });
+    // A task of the event loop (HTML "queue a global task") settles the promise. `keep`
+    // holds the operation's CryptoKeys until the task has run: a key the page dropped in
+    // the meantime must not be collected (and its bytes wiped in Lean) before its use.
+    const later = (f, keep) => new Promise((resolve, reject) => { timer(0, () => { try { resolve(f(keep)); } catch (e) { reject(e); } }, 0, []); });
     const start = f => { try { return f(); } catch (e) { return Promise.reject(e); } };
     // WebIDL conversions.
     const domString = v => { if (typeof v === 'symbol') throw new TypeError('Cannot convert a Symbol to a string'); return String(v); };
@@ -2790,7 +2792,7 @@
       const r = apiCall(40, [op, domString(nm)], 0, false);
       if (typeof r === 'number') raise(r, `Algorithm: Unrecognized name or not supported for ${op}`);
       const [reg, ...ms] = r.split('\n');
-      const pairs = [prefix + 'name', reg];
+      const pairs = [prefix + 'name', reg], keys = [];
       for (const m of ms) {
         const i = m.indexOf(':'), k = m.slice(0, i), req = m.endsWith('!'), t = m.slice(i + 1, req ? -1 : undefined);
         const v = alg[k];
@@ -2800,11 +2802,11 @@
         else if (t === 'b') x = copyBytes(bufferSource(v, 'Algorithm'));
         else if (t === 'l') x = String(enforceRange(v, 4294967295, k));
         else if (t === 'o') x = String(enforceRange(v, 255, k));
-        else if (t === 'k') x = String(keyOf(v).handle);
+        else if (t === 'k') { x = String(keyOf(v).handle); keys.push(v); }
         else x = domString(v);
         pairs.push(prefix + k, x);
       }
-      return { name: reg, pairs };
+      return { name: reg, pairs, keys };
     };
     const call = (args, what) => {
       const r = apiCall(41, args, 0, true);
@@ -2873,23 +2875,23 @@
       exportKey(format, key) {
         return start(() => {
           const f = formatOf(format), k = keyOf(key);
-          return later(() => { const r = call(['exportKey', 'format', f, 'key', String(k.handle)], 'exportKey'); return ascii(r[0]) === 'jwk' ? jwkAnswer(r) : bytesAnswer(r); });
+          return later(() => { const r = call(['exportKey', 'format', f, 'key', String(k.handle)], 'exportKey'); return ascii(r[0]) === 'jwk' ? jwkAnswer(r) : bytesAnswer(r); }, [key]);
         });
       },
       sign(algorithm, key, data) {
         return start(() => { const a = normalize('sign', algorithm), k = keyOf(key), d = copyBytes(bufferSource(data, 'sign'));
-          return later(() => bytesAnswer(call(['sign', 'key', String(k.handle), 'data', d, ...a.pairs], 'sign'))); });
+          return later(() => bytesAnswer(call(['sign', 'key', String(k.handle), 'data', d, ...a.pairs], 'sign')), [key]); });
       },
       verify(algorithm, key, signature, data) {
         return start(() => { const a = normalize('verify', algorithm), k = keyOf(key);
           const sig = copyBytes(bufferSource(signature, 'verify')), d = copyBytes(bufferSource(data, 'verify'));
-          return later(() => ascii(call(['verify', 'key', String(k.handle), 'signature', sig, 'data', d, ...a.pairs], 'verify')[1]) === '1'); });
+          return later(() => ascii(call(['verify', 'key', String(k.handle), 'signature', sig, 'data', d, ...a.pairs], 'verify')[1]) === '1', [key]); });
       },
       deriveBits(algorithm, baseKey, length = null) {
         return start(() => {
           const len = length === null || length === undefined ? 'null' : String(enforceRange(length, 4294967295, 'length'));
           const a = normalize('deriveBits', algorithm), k = keyOf(baseKey);
-          return later(() => bytesAnswer(call(['deriveBits', 'baseKey', String(k.handle), 'length', len, ...a.pairs], 'deriveBits')));
+          return later(() => bytesAnswer(call(['deriveBits', 'baseKey', String(k.handle), 'length', len, ...a.pairs], 'deriveBits')), [baseKey, ...a.keys]);
         });
       },
       deriveKey(algorithm, baseKey, derivedKeyType, extractable, keyUsages) {
@@ -2898,21 +2900,21 @@
           const t = normalize('importKey', derivedKeyType, 't:');
           normalize('get key length', derivedKeyType, 't:');
           const args = ['deriveKey', 'baseKey', String(k.handle), 'extractable', extractable ? '1' : '0', ...usagePairs(us), ...a.pairs, ...t.pairs];
-          return later(() => keyAnswer(call(args, 'deriveKey')));
+          return later(() => keyAnswer(call(args, 'deriveKey')), [baseKey, ...a.keys]);
         });
       },
       encrypt(algorithm, key, data) {
         return start(() => { const a = normalize('encrypt', algorithm), k = keyOf(key), d = copyBytes(bufferSource(data, 'encrypt'));
-          return later(() => bytesAnswer(call(['encrypt', 'key', String(k.handle), 'data', d, ...a.pairs], 'encrypt'))); });
+          return later(() => bytesAnswer(call(['encrypt', 'key', String(k.handle), 'data', d, ...a.pairs], 'encrypt')), [key]); });
       },
       decrypt(algorithm, key, data) {
         return start(() => { const a = normalize('decrypt', algorithm), k = keyOf(key), d = copyBytes(bufferSource(data, 'decrypt'));
-          return later(() => bytesAnswer(call(['decrypt', 'key', String(k.handle), 'data', d, ...a.pairs], 'decrypt'))); });
+          return later(() => bytesAnswer(call(['decrypt', 'key', String(k.handle), 'data', d, ...a.pairs], 'decrypt')), [key]); });
       },
       wrapKey(format, key, wrappingKey, wrapAlgorithm) {
         return start(() => {
           const f = formatOf(format), a = normalizeEither('wrapKey', 'encrypt', wrapAlgorithm), k = keyOf(key), w = keyOf(wrappingKey);
-          return later(() => bytesAnswer(call(['wrapKey', 'format', f, 'key', String(k.handle), 'wrappingKey', String(w.handle), ...a.pairs], 'wrapKey')));
+          return later(() => bytesAnswer(call(['wrapKey', 'format', f, 'key', String(k.handle), 'wrappingKey', String(w.handle), ...a.pairs], 'wrapKey')), [key, wrappingKey]);
         });
       },
       unwrapKey(format, wrappedKey, unwrappingKey, unwrapAlgorithm, unwrappedKeyAlgorithm, extractable, keyUsages) {
@@ -2922,7 +2924,7 @@
           const w = keyOf(unwrappingKey), d = copyBytes(bufferSource(wrappedKey, 'unwrapKey'));
           const args = ['unwrapKey', 'format', f, 'unwrappingKey', String(w.handle), 'data', d, 'extractable', extractable ? '1' : '0',
             ...usagePairs(us), ...a.pairs, ...t.pairs];
-          return later(() => keyAnswer(call(args, 'unwrapKey')));
+          return later(() => keyAnswer(call(args, 'unwrapKey')), [unwrappingKey]);
         });
       },
     };
@@ -2940,6 +2942,9 @@
       });
       define(Crypto.prototype, 'randomUUID', function randomUUID() { return api(31, [], 0, false, 'randomUUID'); });
     }
+    // StructuredSerialize of a CryptoKey (§15.4 "serializable"): the copy has its own handle
+    // to the same key in Lean, so the page's dropping one does not wipe the other's.
+    cloneCryptoKey = key => { keyOf(key); return keyAnswer(call(['cloneKey', 'key', String(keyOf(key).handle)], 'structuredClone')); };
     setTag(Crypto, 'Crypto');
     define(globalThis, 'Crypto', Crypto); define(globalThis, 'SubtleCrypto', SubtleCrypto); define(globalThis, 'CryptoKey', CryptoKey);
     return Object.create(Crypto.prototype);
@@ -3004,6 +3009,7 @@
     if (value instanceof DOMException) {
       return keep(new DOMException(String(value.message), String(value.name)));
     }
+    if (cryptoKeys !== undefined && cryptoKeys.has(value)) return keep(cloneCryptoKey(value)); // haclweb
     if (isPlatform(value)) throw cloneError(Object.prototype.toString.call(value));
     if (value instanceof Error) {
       const nameProp = value.name;

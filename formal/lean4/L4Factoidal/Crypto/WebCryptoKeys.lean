@@ -683,7 +683,9 @@ def exportBody (k : Key) (format : String) : Res Exported := do
 /-- §14.3.10 exportKey: InvalidAccessError unless the key is extractable; only then are
 its bytes read (`exportKey_extractable`, `exportKey_blind`). -/
 def exportKey (k : Key) (format : String) : Res Exported :=
-  if k.extractable then exportBody k format else .error .invalidAccess
+  -- §14.3.10 step 6 (an algorithm with no export: NotSupportedError) before step 7.
+  if k.algo.alg == .hkdf || k.algo.alg == .pbkdf2 then .error .notSupported
+  else if k.extractable then exportBody k format else .error .invalidAccess
 
 /-! ## Generate (§14.3.6) -/
 
@@ -873,9 +875,11 @@ def crypt (enc : Bool) (algName : String) (p : Args) (k : Key) (data : ByteArray
 theorem exportKey_extractable {k : Key} {f : String} {e : Exported} (h : exportKey k f = .ok e) :
     k.extractable = true := by
   unfold exportKey at h
-  cases hk : k.extractable
-  · simp [hk] at h
-  · rfl
+  split at h
+  · cases h
+  · cases hk : k.extractable
+    · simp [hk] at h
+    · rfl
 
 /-- A key whose bytes are replaced: what an observer could not tell apart, if the API
 leaked nothing of them. -/
@@ -886,7 +890,11 @@ InvalidAccessError, and nothing else. -/
 theorem exportKey_blind (k : Key) (f : String) (h : k.extractable = false) :
     exportKey k f = exportKey k.blind f := by
   have hb : k.blind.extractable = false := h
-  unfold exportKey; rw [if_neg (by simp [h]), if_neg (by simp [hb])]
+  have ha : k.blind.algo = k.algo := rfl
+  unfold exportKey; rw [ha]
+  split
+  · rfl
+  · rw [if_neg (by simp [h]), if_neg (by simp [hb])]
 
 /-- The store with the bytes of every non-extractable key replaced. -/
 def KeyStore.blind (st : KeyStore) : KeyStore :=
